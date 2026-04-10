@@ -69,7 +69,7 @@ auto CollectTriggerSlotSummary(
   }
 
   for (const auto& plan : module_plans) {
-    const auto& body = design.module_bodies.at(plan.body_id.value);
+    const auto& body = *plan.body;
     for (const auto& proc_id : plan.body_processes) {
       const auto& process = body.arena[proc_id];
       if (process.kind == mir::ProcessKind::kFinal) continue;

@@ -41,7 +41,6 @@
 #include "lyra/mir/operand.hpp"
 #include "lyra/mir/operator.hpp"
 #include "lyra/mir/place.hpp"
-#include "lyra/mir/place_type.hpp"
 #include "lyra/mir/routine.hpp"
 #include "lyra/mir/rvalue.hpp"
 #include "lyra/mir/terminator.hpp"
@@ -266,8 +265,7 @@ auto LowerStrobeEffect(
 
   // Create builder for the program function
   MirBuilder program_builder(
-      original_ctx.mir_arena, &program_ctx, builder.GetOriginMap(),
-      builder.GetBodyId());
+      original_ctx.mir_arena, &program_ctx, builder.GetOriginMap());
 
   // Create entry block
   BlockIndex entry = program_builder.CreateBlock();
@@ -306,7 +304,10 @@ auto LowerStrobeEffect(
       .temp_metadata = std::move(program_ctx.temp_metadata),
       .param_local_slots = {},
       .param_origins = {},
+      .decision_sites = {},
       .abi_contract = {},
+      .monitor_check_meta = std::nullopt,
+      .monitor_setup_meta = std::nullopt,
   };
   mir::FunctionId program_id =
       original_ctx.mir_arena->AddFunction(std::move(program));
@@ -571,8 +572,7 @@ auto LowerMonitorCheckProgram(
   };
 
   MirBuilder program_builder(
-      original_ctx.mir_arena, &program_ctx, original_builder.GetOriginMap(),
-      original_builder.GetBodyId());
+      original_ctx.mir_arena, &program_ctx, original_builder.GetOriginMap());
 
   BlockIndex entry = program_builder.CreateBlock();
   program_builder.SetCurrentBlock(entry);
@@ -612,7 +612,15 @@ auto LowerMonitorCheckProgram(
       .temp_metadata = std::move(program_ctx.temp_metadata),
       .param_local_slots = {},
       .param_origins = {},
+      .decision_sites = {},
       .abi_contract = {},
+      .monitor_check_meta =
+          mir::MonitorCheckMeta{
+              .offsets = layout.offsets,
+              .byte_sizes = layout.byte_sizes,
+              .total_size = layout.total_size,
+          },
+      .monitor_setup_meta = std::nullopt,
   };
   mir::FunctionId program_id =
       original_ctx.mir_arena->AddFunction(std::move(program));
@@ -656,8 +664,7 @@ auto LowerMonitorSetupProgram(
   };
 
   MirBuilder program_builder(
-      original_ctx.mir_arena, &program_ctx, original_builder.GetOriginMap(),
-      original_builder.GetBodyId());
+      original_ctx.mir_arena, &program_ctx, original_builder.GetOriginMap());
 
   BlockIndex entry = program_builder.CreateBlock();
   program_builder.SetCurrentBlock(entry);
@@ -698,7 +705,11 @@ auto LowerMonitorSetupProgram(
       .temp_metadata = std::move(program_ctx.temp_metadata),
       .param_local_slots = {},
       .param_origins = {},
+      .decision_sites = {},
       .abi_contract = {},
+      .monitor_check_meta = std::nullopt,
+      .monitor_setup_meta =
+          mir::MonitorSetupMeta{.check_program = check_program_id},
   };
   mir::FunctionId program_id =
       original_ctx.mir_arena->AddFunction(std::move(program));
@@ -1059,84 +1070,6 @@ auto LowerConditional(
   return callback_result;
 }
 
-// Structured result of deferred action shape validation.
-// Distinguishes absent action from a valid call action, preserving the
-// information Phase 3 needs to build thunk plans without re-traversal.
-struct DeferredActionShape {
-  // The call expression data if the action is a user function call.
-  // Null for system calls and absent actions.
-  const hir::CallExpressionData* call = nullptr;
-  // True if the action is a system call ($display, $error, etc.)
-  bool is_system_call = false;
-};
-
-// Validate a deferred assertion action block and extract its shape.
-// Returns nullopt if the action is absent (no action). Returns the
-// action shape if the action is a legal single subroutine call.
-// Returns an error diagnostic if the action shape is not representable.
-auto ValidateDeferredActionShape(
-    std::optional<hir::StatementId> action_id, const hir::Arena& hir_arena,
-    SourceSpan span, const char* action_label)
-    -> Result<std::optional<DeferredActionShape>> {
-  if (!action_id.has_value()) return std::nullopt;
-
-  const auto& stmt = hir_arena[*action_id];
-
-  // Unwrap a single-statement block.
-  const hir::Statement* inner = &stmt;
-  if (const auto* block = std::get_if<hir::BlockStatementData>(&stmt.data)) {
-    if (block->statements.size() != 1) {
-      return std::unexpected(
-          Diagnostic::Unsupported(
-              span,
-              std::format(
-                  "deferred assertion {} must be a single subroutine call",
-                  action_label),
-              UnsupportedCategory::kFeature));
-    }
-    inner = &hir_arena[block->statements[0]];
-  }
-
-  // Must be an expression statement.
-  const auto* expr_stmt =
-      std::get_if<hir::ExpressionStatementData>(&inner->data);
-  if (expr_stmt == nullptr) {
-    return std::unexpected(
-        Diagnostic::Unsupported(
-            span,
-            std::format(
-                "deferred assertion {} must be a single subroutine call",
-                action_label),
-            UnsupportedCategory::kFeature));
-  }
-
-  // The expression must be a call or system call.
-  const auto& expr = hir_arena[expr_stmt->expression];
-  if (const auto* call = std::get_if<hir::CallExpressionData>(&expr.data)) {
-    return DeferredActionShape{.call = call, .is_system_call = false};
-  }
-  if (std::holds_alternative<hir::SystemCallExpressionData>(expr.data)) {
-    return DeferredActionShape{.call = nullptr, .is_system_call = true};
-  }
-
-  return std::unexpected(
-      Diagnostic::Unsupported(
-          span,
-          std::format(
-              "deferred assertion {} must be a single subroutine call",
-              action_label),
-          UnsupportedCategory::kFeature));
-}
-
-// Check whether a TypeId is a managed runtime type that cannot be captured
-// by value into a deferred assertion payload.
-auto IsManagedType(TypeId type_id, const TypeArena& types) -> bool {
-  const auto& type = types[type_id];
-  auto kind = type.Kind();
-  return kind == TypeKind::kString || kind == TypeKind::kDynamicArray ||
-         kind == TypeKind::kQueue || kind == TypeKind::kAssociativeArray;
-}
-
 // Resolve the semantic type of a lowered MIR operand using the lowering
 // context. Handles constants (inline type), places (root type for
 // unprojected, InternalError for projected), and temps (temp_metadata).
@@ -1167,6 +1100,10 @@ auto ResolveLoweredOperandType(const mir::Operand& op, const Context& ctx)
     case mir::Operand::Kind::kPoison:
       throw common::InternalError(
           "ResolveLoweredOperandType", "poison operand in deferred capture");
+    case mir::Operand::Kind::kExternalRef:
+      throw common::InternalError(
+          "ResolveLoweredOperandType",
+          "external ref operand in deferred capture");
   }
   throw common::InternalError(
       "ResolveLoweredOperandType", "unknown operand kind");
@@ -1211,148 +1148,6 @@ auto LookupRequiredPlace(SymbolId sym, SourceSpan span, Context& ctx)
 // Returns the constant as a MIR operand, or an error if the expression
 // is not a compile-time constant. This is a pure operation -- it does
 // not emit any MIR instructions.
-auto ResolveDeferredRefConstantIndex(
-    hir::ExpressionId index_expr_id, Context& ctx, SourceSpan elem_span)
-    -> Result<mir::Operand> {
-  const auto& index_expr = (*ctx.hir_arena)[index_expr_id];
-  const auto* const_data =
-      std::get_if<hir::ConstantExpressionData>(&index_expr.data);
-  if (const_data == nullptr) {
-    return std::unexpected(
-        Diagnostic::Unsupported(
-            elem_span,
-            "deferred ref actual array index must be a compile-time constant",
-            UnsupportedCategory::kFeature));
-  }
-  const Constant& constant = (*ctx.active_constant_arena)[const_data->constant];
-  return mir::Operand::Const(constant);
-}
-
-// Resolve an HIR expression to a MIR PlaceId for deferred ref actual
-// binding. Handles simple variable references and projected lvalues
-// (struct member access, unpacked array element with constant index).
-// This is a pure operation -- it does not emit MIR instructions.
-// Only arena place allocation for projections.
-//
-// Returns the resolved PlaceId, or an error if the expression cannot be
-// resolved to a stable place for deferred ref binding.
-auto ResolveDeferredRefActualAsPlace(
-    hir::ExpressionId expr_id, Context& ctx, MirBuilder& builder)
-    -> Result<mir::PlaceId> {
-  const auto& expr = (*ctx.hir_arena)[expr_id];
-
-  if (const auto* name_ref =
-          std::get_if<hir::NameRefExpressionData>(&expr.data)) {
-    return LookupRequiredPlace(name_ref->symbol, expr.span, ctx);
-  }
-
-  if (const auto* member =
-          std::get_if<hir::MemberAccessExpressionData>(&expr.data)) {
-    auto base = ResolveDeferredRefActualAsPlace(member->base, ctx, builder);
-    if (!base) return std::unexpected(base.error());
-
-    common::OriginId origin = builder.RecordProjectionOrigin(expr_id);
-    mir::Projection proj{
-        .info = mir::FieldProjection{.field_index = member->field_index},
-        .origin = origin,
-    };
-    return ctx.DerivePlace(*base, std::move(proj));
-  }
-
-  if (const auto* elem =
-          std::get_if<hir::ElementAccessExpressionData>(&expr.data)) {
-    auto base = ResolveDeferredRefActualAsPlace(elem->base, ctx, builder);
-    if (!base) return std::unexpected(base.error());
-
-    auto index_val =
-        ResolveDeferredRefConstantIndex(elem->index, ctx, expr.span);
-    if (!index_val) return std::unexpected(index_val.error());
-
-    common::OriginId origin = builder.RecordProjectionOrigin(expr_id);
-    mir::Projection proj{
-        .info = mir::IndexProjection{.index = *index_val},
-        .origin = origin,
-    };
-    return ctx.DerivePlace(*base, std::move(proj));
-  }
-
-  if (const auto* hier =
-          std::get_if<hir::HierarchicalRefExpressionData>(&expr.data)) {
-    return LookupRequiredPlace(hier->target, expr.span, ctx);
-  }
-
-  return std::unexpected(
-      Diagnostic::Unsupported(
-          expr.span,
-          "deferred ref actual must be a variable, struct member, "
-          "or array element",
-          UnsupportedCategory::kFeature));
-}
-
-// Query the root object info for a resolved place.
-// Returns the root's storage class kind and type kind.
-struct RootObjectInfo {
-  mir::PlaceRoot::Kind storage;
-  TypeKind type_kind;
-};
-
-auto GetPlaceRootObjectInfo(mir::PlaceId place, const Context& ctx)
-    -> RootObjectInfo {
-  const mir::Place& resolved = ctx.ResolvePlace(place);
-  const mir::PlaceRoot& root = resolved.root;
-  return RootObjectInfo{
-      .storage = root.kind,
-      .type_kind = (*ctx.type_arena)[root.type].Kind(),
-  };
-}
-
-// Validate that a place is legal as a deferred ref actual (LRM 16.4).
-// Rejects automatic storage and dynamic root types.
-auto ValidateDeferredRefRootLegality(
-    mir::PlaceId place, SourceSpan span, size_t param_index, const Context& ctx)
-    -> Result<void> {
-  RootObjectInfo root = GetPlaceRootObjectInfo(place, ctx);
-
-  if (mir::IsProcessLocalRoot(root.storage)) {
-    return std::unexpected(
-        Diagnostic::Unsupported(
-            span,
-            std::format(
-                "deferred assertion action parameter {} is ref to "
-                "automatic variable (illegal per LRM 16.4)",
-                param_index),
-            UnsupportedCategory::kFeature));
-  }
-
-  if (root.type_kind == TypeKind::kDynamicArray ||
-      root.type_kind == TypeKind::kQueue ||
-      root.type_kind == TypeKind::kAssociativeArray) {
-    return std::unexpected(
-        Diagnostic::Unsupported(
-            span,
-            std::format(
-                "deferred assertion action parameter {} is ref to "
-                "dynamic variable (illegal per LRM 16.4)",
-                param_index),
-            UnsupportedCategory::kFeature));
-  }
-
-  return {};
-}
-
-// Check exact type equivalence for ref/const-ref passing (LRM 13.5.2).
-// Centralized so future type canonicalization changes don't silently
-// alter ref legality.
-auto AreExactlyEquivalentRefTypes(
-    TypeId actual, TypeId formal, const TypeArena& /*types*/) -> bool {
-  return actual == formal;
-}
-
-// Per-field capture plan: source expression + destination semantic type.
-// Both payload packing (encounter-time lowering) and thunk decode (LLVM
-// emission) must agree on the type. The captured_type is the formal's
-// semantic type -- LowerExpression already produces a value coerced to
-// this type via HIR's implicit cast wrapping.
 struct DeferredCapturedValuePlan {
   hir::ExpressionId expr_id;
   TypeId captured_type;
@@ -1367,151 +1162,6 @@ struct DeferredAssertionActionBuildResult {
   std::vector<DeferredCapturedValuePlan> snapshot_captures;
 };
 
-auto CountSnapshotActuals(
-    const std::vector<mir::DeferredAssertionActual>& actuals) -> size_t {
-  return static_cast<size_t>(
-      std::count_if(actuals.begin(), actuals.end(), [](const auto& a) {
-        return a.kind == mir::DeferredActualKind::kSnapshotValue;
-      }));
-}
-
-// Build a semantic DeferredUserCallAction for a user subroutine call in
-// a deferred assertion action. Pure semantic: no payload layout, no thunk
-// allocation, no ref-slot numbering.
-//
-// Restrictions (LRM 16.4):
-// - Return type must be void
-// - No managed types for by-value formals
-// - No out/inout formals
-// - Ref/const-ref formals must bind non-automatic, non-dynamic storage
-auto BuildDeferredAssertionAction(
-    const hir::CallExpressionData& call_data, SourceSpan span,
-    MirBuilder& builder) -> Result<DeferredAssertionActionBuildResult> {
-  Context& ctx = builder.GetContext();
-  const auto& types = *ctx.type_arena;
-
-  mir::Callee callee = ctx.ResolveCallTarget(call_data.callee);
-
-  auto* func_id_ptr = std::get_if<mir::FunctionId>(&callee);
-  auto* design_ref_ptr = std::get_if<mir::DesignFunctionRef>(&callee);
-  if (func_id_ptr == nullptr && design_ref_ptr == nullptr) {
-    return std::unexpected(
-        Diagnostic::Unsupported(
-            span, "deferred assertion action callee must be a user subroutine",
-            UnsupportedCategory::kFeature));
-  }
-
-  const mir::FunctionSignature& sig = ctx.ResolveCallSignature(callee);
-
-  if (sig.return_type != ctx.builtin_types.void_type) {
-    return std::unexpected(
-        Diagnostic::Unsupported(
-            span, "deferred assertion action subroutine must be void",
-            UnsupportedCategory::kFeature));
-  }
-
-  if (sig.params.size() != call_data.arguments.size()) {
-    throw common::InternalError(
-        "BuildDeferredAssertionAction",
-        std::format(
-            "param count {} != argument count {}", sig.params.size(),
-            call_data.arguments.size()));
-  }
-
-  std::vector<mir::DeferredAssertionActual> actuals;
-  std::vector<DeferredCapturedValuePlan> snapshot_captures;
-
-  for (size_t i = 0; i < sig.params.size(); ++i) {
-    const auto& param = sig.params[i];
-
-    switch (param.kind) {
-      case mir::PassingKind::kValue: {
-        if (IsManagedType(param.type, types)) {
-          return std::unexpected(
-              Diagnostic::Unsupported(
-                  span,
-                  std::format(
-                      "deferred assertion action parameter {} has managed "
-                      "type (string/queue/dynamic array not supported)",
-                      i),
-                  UnsupportedCategory::kFeature));
-        }
-        actuals.push_back(
-            mir::DeferredAssertionActual{
-                .kind = mir::DeferredActualKind::kSnapshotValue,
-                .type = param.type,
-            });
-        snapshot_captures.push_back(
-            DeferredCapturedValuePlan{
-                .expr_id = call_data.arguments[i],
-                .captured_type = param.type,
-            });
-        break;
-      }
-
-      case mir::PassingKind::kRef:
-      case mir::PassingKind::kConstRef: {
-        auto place_result = ResolveDeferredRefActualAsPlace(
-            call_data.arguments[i], ctx, builder);
-        if (!place_result) return std::unexpected(place_result.error());
-        mir::PlaceId place = *place_result;
-
-        auto legality = ValidateDeferredRefRootLegality(place, span, i, ctx);
-        if (!legality) return std::unexpected(legality.error());
-
-        const mir::Place& resolved = ctx.ResolvePlace(place);
-        TypeId actual_type = mir::TypeOfPlace(types, resolved);
-        if (!AreExactlyEquivalentRefTypes(actual_type, param.type, types)) {
-          return std::unexpected(
-              Diagnostic::Unsupported(
-                  span,
-                  std::format(
-                      "deferred assertion action parameter {} ref type "
-                      "mismatch",
-                      i),
-                  UnsupportedCategory::kFeature));
-        }
-
-        auto actual_kind = (param.kind == mir::PassingKind::kRef)
-                               ? mir::DeferredActualKind::kLiveRef
-                               : mir::DeferredActualKind::kConstLiveRef;
-        actuals.push_back(
-            mir::DeferredAssertionActual{
-                .kind = actual_kind,
-                .type = param.type,
-                .ref_place = place,
-            });
-        break;
-      }
-
-      case mir::PassingKind::kOut:
-      case mir::PassingKind::kInOut:
-        throw common::InternalError(
-            "BuildDeferredAssertionAction",
-            std::format(
-                "out/inout parameter {} in deferred assertion action", i));
-    }
-  }
-
-  mir::FunctionId target_func_id;
-  if (func_id_ptr != nullptr) {
-    target_func_id = *func_id_ptr;
-  } else {
-    target_func_id = ctx.ResolveCallee(design_ref_ptr->symbol);
-  }
-
-  return DeferredAssertionActionBuildResult{
-      .action =
-          mir::DeferredUserCallAction{
-              .callee = target_func_id,
-              .actuals = std::move(actuals),
-          },
-      .snapshot_captures = std::move(snapshot_captures),
-  };
-}
-
-// Emit the default fail effect for immediate assertions when no explicit
-// else action is provided. Uses assertion-specific report intent with origin.
 auto EmitDefaultImmediateAssertionFail(
     MirBuilder& builder, hir::ImmediateAssertionKind kind,
     common::OriginId origin) -> Result<void> {
@@ -1644,78 +1294,193 @@ auto MapDeferredAssertionKind(hir::ImmediateAssertionKind kind)
   }
 }
 
-// Dedicated lowering entry point for observed deferred immediate assertions
-// (assert #0, assume #0, cover #0). Validates action shapes, allocates a
-// deferred assertion site, evaluates condition, and emits
-// EnqueueDeferredAssertionEffect in the appropriate branch arm.
-auto LowerObservedDeferredImmediateAssertion(
-    const hir::ImmediateAssertionStatementData& data, SourceSpan span,
+// Lower an HIR CaptureTarget to a MIR PlaceId.
+// Resolves the root symbol to a place, then applies each projection in the
+// capture path. Uses the shared Projection vocabulary from assign_target.hpp.
+// All legality was validated at HIR time by ExtractHirCaptureTarget();
+// this is purely translational. Only MemberProjection and IndexProjection
+// are expected (other projection kinds are rejected at HIR time).
+//
+// Projection origin: all projection steps use a single origin derived from
+// the capture target's source expression. This is an intentional
+// normalized-origin policy for deferred capture targets -- the HIR legality
+// gate produces one normalized path per capture, and the origin identifies
+// the outermost expression that produced that path.
+auto LowerHirCaptureTargetToPlace(
+    const hir::HirCaptureTarget& target, Context& ctx, MirBuilder& builder)
+    -> Result<mir::PlaceId> {
+  auto root = LookupRequiredPlace(target.root_symbol, target.span, ctx);
+  if (!root) return std::unexpected(root.error());
+
+  common::OriginId origin = builder.RecordProjectionOrigin(target.source_expr);
+  const auto& hir_arena = *ctx.hir_arena;
+
+  mir::PlaceId place = *root;
+  for (const auto& proj : target.path) {
+    mir::Projection mir_proj = std::visit(
+        [&](const auto& p) -> mir::Projection {
+          using T = std::decay_t<decltype(p)>;
+          if constexpr (std::is_same_v<T, hir::MemberProjection>) {
+            return mir::Projection{
+                .info =
+                    mir::FieldProjection{
+                        .field_index = static_cast<int>(p.field.value)},
+                .origin = origin,
+            };
+          } else if constexpr (std::is_same_v<T, hir::IndexProjection>) {
+            // The index was validated as a compile-time constant at HIR
+            // time by ExtractHirCaptureTarget. Read the constant directly
+            // from the HIR arena -- do not re-enter general expression
+            // lowering for a validated constant.
+            const auto& index_expr = hir_arena[p.index];
+            const auto* const_data =
+                std::get_if<hir::ConstantExpressionData>(&index_expr.data);
+            if (const_data == nullptr) {
+              throw common::InternalError(
+                  "LowerHirCaptureTargetToPlace",
+                  "capture target index is not a constant expression "
+                  "(HIR legality gate should have rejected this)");
+            }
+            const Constant& constant =
+                (*ctx.active_constant_arena)[const_data->constant];
+            return mir::Projection{
+                .info =
+                    mir::IndexProjection{
+                        .index = mir::Operand::Const(constant)},
+                .origin = origin,
+            };
+          } else {
+            throw common::InternalError(
+                "LowerHirCaptureTargetToPlace",
+                "unexpected projection kind in deferred capture target");
+          }
+        },
+        proj);
+    place = ctx.DerivePlace(place, std::move(mir_proj));
+  }
+  return place;
+}
+
+// Lower one HIR capture to a MIR actual + optional snapshot plan.
+auto LowerDeferredCaptureToMirActual(
+    const hir::DeferredCapture& capture, Context& ctx, MirBuilder& builder,
+    std::vector<mir::DeferredAssertionActual>& actuals,
+    std::vector<DeferredCapturedValuePlan>& snapshot_captures) -> Result<void> {
+  return std::visit(
+      [&](const auto& cap) -> Result<void> {
+        using T = std::decay_t<decltype(cap)>;
+        if constexpr (std::is_same_v<T, hir::ValueCapture>) {
+          actuals.push_back(
+              mir::DeferredAssertionActual{
+                  .kind = mir::DeferredActualKind::kSnapshotValue,
+                  .type = cap.type,
+              });
+          snapshot_captures.push_back(
+              DeferredCapturedValuePlan{
+                  .expr_id = cap.expr,
+                  .captured_type = cap.type,
+              });
+          return {};
+        } else if constexpr (std::is_same_v<T, hir::RefCapture>) {
+          auto place = LowerHirCaptureTargetToPlace(cap.target, ctx, builder);
+          if (!place) return std::unexpected(place.error());
+          actuals.push_back(
+              mir::DeferredAssertionActual{
+                  .kind = mir::DeferredActualKind::kLiveRef,
+                  .type = cap.type,
+                  .ref_place = *place,
+              });
+          return {};
+        } else if constexpr (std::is_same_v<T, hir::ConstRefCapture>) {
+          auto place = LowerHirCaptureTargetToPlace(cap.target, ctx, builder);
+          if (!place) return std::unexpected(place.error());
+          actuals.push_back(
+              mir::DeferredAssertionActual{
+                  .kind = mir::DeferredActualKind::kConstLiveRef,
+                  .type = cap.type,
+                  .ref_place = *place,
+              });
+          return {};
+        }
+      },
+      capture);
+}
+
+// Lower an HIR DeferredAction to MIR DeferredUserCallAction.
+// Resolves callee SymbolId -> FunctionId, converts captures to MIR actuals,
+// and resolves ref capture targets to PlaceIds via
+// LowerHirCaptureTargetToPlace.
+auto LowerDeferredActionToMir(
+    const hir::DeferredAction& action, SourceSpan span, MirBuilder& builder)
+    -> Result<DeferredAssertionActionBuildResult> {
+  Context& ctx = builder.GetContext();
+
+  mir::FunctionId callee = ctx.ResolveCallee(action.callee_symbol);
+  if (callee == mir::kInvalidFunctionId) {
+    return std::unexpected(
+        Diagnostic::Unsupported(
+            span, "deferred assertion callee could not be resolved",
+            UnsupportedCategory::kFeature));
+  }
+
+  std::vector<mir::DeferredAssertionActual> actuals;
+  std::vector<DeferredCapturedValuePlan> snapshot_captures;
+
+  for (const auto& capture : action.captures) {
+    auto result = LowerDeferredCaptureToMirActual(
+        capture, ctx, builder, actuals, snapshot_captures);
+    if (!result) return std::unexpected(result.error());
+  }
+
+  // Capture callee ABI metadata now while the body arena is still active.
+  // Thunk compilation runs after the body arena scope has ended, so it
+  // cannot look up the MIR function from the ambient context arena.
+  const auto& callee_func = (*ctx.mir_arena)[callee];
+  bool accepts_decision_owner = callee_func.abi_contract.accepts_decision_owner;
+
+  return DeferredAssertionActionBuildResult{
+      .action =
+          mir::DeferredUserCallAction{
+              .callee = callee,
+              .actuals = std::move(actuals),
+              .accepts_decision_owner = accepts_decision_owner,
+          },
+      .snapshot_captures = std::move(snapshot_captures),
+  };
+}
+
+// Lower a DeferredAssertionStatementData (observed deferred assertion).
+// Consumes the inline-owned DeferredAction directly from the HIR node.
+// Does not reconstruct semantics from pass_action/fail_action child
+// statements -- those are source-shaped children kept for fidelity only.
+auto LowerDeferredAssertion(
+    const hir::DeferredAssertionStatementData& data, SourceSpan span,
     MirBuilder& builder) -> Result<void> {
-  const auto& hir_arena = *builder.GetContext().hir_arena;
   auto origin = builder.GetCurrentOrigin();
   bool is_cover = data.kind == hir::ImmediateAssertionKind::kCover;
 
-  auto pass_shape = ValidateDeferredActionShape(
-      data.pass_action, hir_arena, span, "pass action");
-  if (!pass_shape) return std::unexpected(pass_shape.error());
-
-  auto fail_shape = ValidateDeferredActionShape(
-      data.fail_action, hir_arena, span, "fail action");
-  if (!fail_shape) return std::unexpected(fail_shape.error());
-
-  // Reject system task actions for now (first cut: user subroutine only).
-  if (pass_shape->has_value() && (*pass_shape)->is_system_call) {
-    return std::unexpected(
-        Diagnostic::Unsupported(
-            span,
-            "deferred assertion system task pass action not yet supported",
-            UnsupportedCategory::kFeature));
-  }
-  if (fail_shape->has_value() && (*fail_shape)->is_system_call) {
-    return std::unexpected(
-        Diagnostic::Unsupported(
-            span,
-            "deferred assertion system task fail action not yet supported",
-            UnsupportedCategory::kFeature));
-  }
-
-  // Build semantic actions for user-supplied pass/fail actions.
   std::optional<DeferredAssertionActionBuildResult> pass_result;
   std::optional<DeferredAssertionActionBuildResult> fail_result;
 
-  if (pass_shape->has_value() && (*pass_shape)->call != nullptr) {
+  if (data.deferred_pass_action.has_value()) {
     auto result =
-        BuildDeferredAssertionAction(*(*pass_shape)->call, span, builder);
+        LowerDeferredActionToMir(*data.deferred_pass_action, span, builder);
     if (!result) return std::unexpected(result.error());
     pass_result = std::move(*result);
   }
 
-  if (fail_shape->has_value() && (*fail_shape)->call != nullptr) {
+  if (data.deferred_fail_action.has_value()) {
     auto result =
-        BuildDeferredAssertionAction(*(*fail_shape)->call, span, builder);
+        LowerDeferredActionToMir(*data.deferred_fail_action, span, builder);
     if (!result) return std::unexpected(result.error());
     fail_result = std::move(*result);
   }
 
-  // Validate snapshot ordering invariant before any emission.
-  auto validate_snapshot_projection =
-      [](const DeferredAssertionActionBuildResult& r) {
-        if (r.snapshot_captures.size() !=
-            CountSnapshotActuals(r.action.actuals)) {
-          throw common::InternalError(
-              "LowerObservedDeferredImmediateAssertion",
-              "snapshot capture count mismatch with semantic actuals");
-        }
-      };
-  if (pass_result.has_value()) validate_snapshot_projection(*pass_result);
-  if (fail_result.has_value()) validate_snapshot_projection(*fail_result);
-
-  // Build site metadata with semantic action descriptors.
   mir::DeferredAssertionSiteInfo site_info{
       .span = span,
       .origin = origin,
       .kind = MapDeferredAssertionKind(data.kind),
-      .has_default_fail_report = false,
+      .has_default_fail_report = data.has_default_fail_report,
       .fail_action = std::nullopt,
       .pass_action = std::nullopt,
   };
@@ -1731,18 +1496,20 @@ auto LowerObservedDeferredImmediateAssertion(
   } else {
     if (fail_result.has_value()) {
       site_info.fail_action = std::move(fail_result->action);
-    } else {
-      site_info.has_default_fail_report = true;
     }
     if (pass_result.has_value()) {
       site_info.pass_action = std::move(pass_result->action);
     }
   }
 
+  // Site allocation stores only static deferred-action metadata (callee,
+  // ref-place bindings, assertion kind, origin). Snapshot values are
+  // encounter-time only: they are evaluated in the decision-arm callbacks
+  // below and carried exclusively by EnqueueDeferredAssertionEffect,
+  // never pre-stored in the site.
   auto site_id =
       builder.GetContext().AllocateDeferredAssertionSite(std::move(site_info));
 
-  // Helper: lower snapshot captures and emit enqueue effect.
   auto emit_enqueue =
       [](Result<void>& cb_result, MirBuilder& b,
          mir::DeferredAssertionSiteId sid,
@@ -1768,7 +1535,6 @@ auto LowerObservedDeferredImmediateAssertion(
             });
       };
 
-  // Emit condition evaluation + branch + enqueue effect.
   Result<void> callback_result;
 
   std::vector<MirBuilder::DecisionArmBuilder> arms;
@@ -1814,15 +1580,15 @@ auto LowerObservedDeferredImmediateAssertion(
       is_cover
           ? std::nullopt
           : std::optional<std::function<void(MirBuilder&)>>(
-                [&callback_result, &emit_enqueue, site_id,
-                 &fail_result](MirBuilder& b) {
+                [&callback_result, &emit_enqueue, site_id, &fail_result,
+                 has_default = data.has_default_fail_report](MirBuilder& b) {
                   if (!callback_result) return;
                   if (fail_result.has_value()) {
                     emit_enqueue(
                         callback_result, b, site_id,
                         mir::DeferredAssertionDisposition::kFailAction,
                         &fail_result->snapshot_captures);
-                  } else {
+                  } else if (has_default) {
                     emit_enqueue(
                         callback_result, b, site_id,
                         mir::DeferredAssertionDisposition::kDefaultFailReport,
@@ -1841,16 +1607,12 @@ auto LowerObservedDeferredImmediateAssertion(
   return callback_result;
 }
 
-// Dispatch immediate assertion lowering by kind and timing.
+// Dispatch immediate assertion lowering by kind.
+// Only handles simple (non-deferred) assertions. Deferred assertions
+// are routed through the DeferredAssertionStatementData visitor arm.
 auto LowerImmediateAssertion(
     const hir::ImmediateAssertionStatementData& data, SourceSpan span,
     MirBuilder& builder) -> Result<void> {
-  // Hard split: deferred assertions use a dedicated lowering path with
-  // different execution model. Do not fall through to simple immediate.
-  if (data.timing == hir::ImmediateAssertionTiming::kObservedDeferred) {
-    return LowerObservedDeferredImmediateAssertion(data, span, builder);
-  }
-
   switch (data.kind) {
     case hir::ImmediateAssertionKind::kAssert:
     case hir::ImmediateAssertionKind::kAssume:
@@ -2398,7 +2160,8 @@ auto LowerEventWait(
               .plan = {},
               .dep_slots = {},
               .mapping = mapping,
-              .element_type = {}};
+              .element_type = {},
+              .pending_external_refs = {}};
         }
       }
 
@@ -2629,7 +2392,8 @@ auto LowerEventWait(
               .plan = {},
               .dep_slots = {},
               .mapping = mapping,
-              .element_type = {}};
+              .element_type = {},
+              .pending_external_refs = {}};
         }
       }
 
@@ -2735,7 +2499,8 @@ auto LowerEventWait(
               .mapping = mapping,
               .element_type = elem_type_id,
               .num_elements = 0,
-              .is_container = true};
+              .is_container = true,
+              .pending_external_refs = {}};
         }
       } else if (is_dynamic) {
         // Dynamic unpacked: lower base array to get root slot, lower
@@ -2813,7 +2578,8 @@ auto LowerEventWait(
               .dep_slots = {},
               .mapping = mapping,
               .element_type = arr_info.element_type,
-              .num_elements = arr_info.range.Size()};
+              .num_elements = arr_info.range.Size(),
+              .pending_external_refs = {}};
         }
       } else {
         // Constant index or non-unpacked: lower whole expression,
@@ -2889,17 +2655,26 @@ auto LowerEventWait(
             triggers.push_back(
                 {.signal = {},
                  .edge = common::EdgeKind::kPosedge,
+                 .observed_place = std::nullopt,
+                 .late_bound = std::nullopt,
                  .unresolved_external_ref = ref_id});
             triggers.push_back(
                 {.signal = {},
                  .edge = common::EdgeKind::kNegedge,
+                 .observed_place = std::nullopt,
+                 .late_bound = std::nullopt,
                  .unresolved_external_ref = ref_id});
             continue;
         }
         triggers.push_back(
-            {.signal = {}, .edge = edge, .unresolved_external_ref = ref_id});
+            {.signal = {},
+             .edge = edge,
+             .observed_place = std::nullopt,
+             .late_bound = std::nullopt,
+             .unresolved_external_ref = ref_id});
         continue;
-      } else if (signal_op.kind == mir::Operand::Kind::kUse) {
+      }
+      if (signal_op.kind == mir::Operand::Kind::kUse) {
         place_id = std::get<mir::PlaceId>(signal_op.payload);
       } else {
         throw common::InternalError(
@@ -2933,12 +2708,14 @@ auto LowerEventWait(
           {.signal = signal_ref,
            .edge = common::EdgeKind::kPosedge,
            .observed_place = obs_place,
-           .late_bound = late_bound_info});
+           .late_bound = late_bound_info,
+           .unresolved_external_ref = std::nullopt});
       triggers.push_back(
           {.signal = signal_ref,
            .edge = common::EdgeKind::kNegedge,
            .observed_place = obs_place,
-           .late_bound = late_bound_info});
+           .late_bound = late_bound_info,
+           .unresolved_external_ref = std::nullopt});
     } else {
       common::EdgeKind edge = common::EdgeKind::kAnyChange;
       switch (hir_trigger.edge) {
@@ -2958,7 +2735,8 @@ auto LowerEventWait(
           {.signal = signal_ref,
            .edge = edge,
            .observed_place = obs_place,
-           .late_bound = late_bound_info});
+           .late_bound = late_bound_info,
+           .unresolved_external_ref = std::nullopt});
     }
   }
 
@@ -3187,6 +2965,12 @@ auto LowerStatement(hir::StatementId stmt_id, MirBuilder& builder)
         } else if constexpr (std::is_same_v<
                                  T, hir::ImmediateAssertionStatementData>) {
           result = LowerImmediateAssertion(data, stmt.span, builder);
+        } else if constexpr (std::is_same_v<
+                                 T, hir::DeferredAssertionStatementData>) {
+          // Temporary: delegate to existing deferred lowering via compat
+          // shim. This will be replaced when HIR-to-MIR lowering is
+          // switched to consume inline-owned DeferredAction directly.
+          result = LowerDeferredAssertion(data, stmt.span, builder);
         } else {
           throw common::InternalError(
               "LowerStatement", "unhandled statement kind");

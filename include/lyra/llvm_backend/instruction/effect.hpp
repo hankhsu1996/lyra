@@ -11,11 +11,12 @@ class SlotAccessResolver;
 
 auto LowerEffectOp(
     Context& context, const mir::EffectOp& effect_op,
-    const ActiveExecutionMode& mode) -> Result<void>;
+    const ActiveExecutionMode& mode, const BodySiteContext& site_ctx)
+    -> Result<void>;
 
 auto LowerEffectOp(
     Context& context, SlotAccessResolver& resolver,
-    const mir::EffectOp& effect_op, const ActiveExecutionMode& mode)
-    -> Result<void>;
+    const mir::EffectOp& effect_op, const ActiveExecutionMode& mode,
+    const BodySiteContext& site_ctx) -> Result<void>;
 
 }  // namespace lyra::lowering::mir_to_llvm

@@ -13,15 +13,11 @@
 #include "lyra/common/overloaded.hpp"
 #include "lyra/common/source_span.hpp"
 #include "lyra/hir/routine.hpp"
-#include "lyra/lowering/origin_map_lookup.hpp"
 #include "lyra/mir/arena.hpp"
 #include "lyra/mir/design.hpp"
 #include "lyra/mir/handle.hpp"
 #include "lyra/mir/module.hpp"
-#include "lyra/mir/place.hpp"
 #include "lyra/mir/routine.hpp"
-#include "lyra/mir/statement.hpp"
-#include "lyra/mir/terminator.hpp"
 
 namespace lyra::driver {
 
@@ -29,8 +25,7 @@ namespace {
 
 auto ResolveHirKind(
     const mir::Process& process, const lowering::OriginMap& origin_map,
-    const hir::Design& hir_design, const hir::Arena& global_hir_arena)
-    -> std::optional<hir::ProcessKind> {
+    const hir::Arena& global_hir_arena) -> std::optional<hir::ProcessKind> {
   if (process.origin == common::OriginId::Invalid()) {
     return std::nullopt;
   }
@@ -42,15 +37,13 @@ auto ResolveHirKind(
   if (proc_id == nullptr) {
     return std::nullopt;
   }
-  const hir::Arena& arena =
-      lowering::ResolveHirArena(hir_design, global_hir_arena, entry->body_id);
-  return arena[*proc_id].kind;
+  return global_hir_arena[*proc_id].kind;
 }
 
 auto ResolveSourceLocation(
     const mir::Process& process, const lowering::OriginMap& origin_map,
-    const hir::Design& hir_design, const hir::Arena& global_hir_arena,
-    const SourceManager& source_manager) -> std::string {
+    const hir::Arena& global_hir_arena, const SourceManager& source_manager)
+    -> std::string {
   if (process.origin == common::OriginId::Invalid()) {
     return "";
   }
@@ -58,12 +51,11 @@ auto ResolveSourceLocation(
   if (!entry) {
     return "";
   }
-  const hir::Arena& arena =
-      lowering::ResolveHirArena(hir_design, global_hir_arena, entry->body_id);
   return std::visit(
       common::Overloaded{
           [&](hir::ProcessId proc_id) -> std::string {
-            return FormatSourceLocation(arena[proc_id].span, source_manager);
+            return FormatSourceLocation(
+                global_hir_arena[proc_id].span, source_manager);
           },
           [](const auto&) -> std::string { return ""; },
       },
@@ -107,7 +99,7 @@ auto ClassifyProcessKind(
 
 auto CollectProcessStats(
     const mir::Design& design, const mir::Arena& design_arena,
-    const lowering::OriginMap& design_origins, const hir::Design& hir_design,
+    const lowering::OriginMap& design_origins,
     const hir::Arena& global_hir_arena, const SourceManager& source_manager,
     const LlvmStats& llvm_stats) -> ProcessStatsData {
   struct ProcessRef {
@@ -131,7 +123,7 @@ auto CollectProcessStats(
       continue;
     }
     const auto& mir_module = std::get<mir::Module>(element);
-    const auto& body = mir::GetModuleBody(design, mir_module);
+    const auto& body = *mir_module.body;
     for (mir::ProcessId pid : body.processes) {
       if (body.arena[pid].kind != mir::ProcessKind::kFinal) {
         process_refs.push_back({pid, &body.arena});
@@ -159,10 +151,9 @@ auto CollectProcessStats(
   for (size_t i = 0; i < process_refs.size(); ++i) {
     const auto& process = (*process_refs[i].arena)[process_refs[i].id];
 
-    auto hir_kind =
-        ResolveHirKind(process, design_origins, hir_design, global_hir_arena);
+    auto hir_kind = ResolveHirKind(process, design_origins, global_hir_arena);
     auto source_loc = ResolveSourceLocation(
-        process, design_origins, hir_design, global_hir_arena, source_manager);
+        process, design_origins, global_hir_arena, source_manager);
 
     uint32_t mir_stmts = 0;
     for (const auto& block : process.blocks) {

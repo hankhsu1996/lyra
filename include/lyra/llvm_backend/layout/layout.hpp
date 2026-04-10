@@ -34,8 +34,6 @@
 
 namespace lyra::lowering::mir_to_llvm {
 
-struct SlotInfo;
-
 // Patches for 4-state X-encoding initialization, grouped by store width.
 // Each patch contains the byte offset (from base) and the mask to write.
 // After memset(0), these patches set the unknown plane bits for scalar 4-state
@@ -456,6 +454,11 @@ struct Layout {
   // slot positions. This is NOT the count of owned-local slots only.
   std::vector<uint32_t> instance_slot_counts;
 
+  // Per-instance owning body id. Parallel to instance_slot_counts.
+  // Used to resolve an instance-owned slot to its body-local slot descriptor
+  // without a separate topology lookup.
+  std::vector<mir::ModuleBodyId> instance_body_ids;
+
   // Constructor metadata: shared process-state schemas and per-process
   // constructor records. Computed from the process layout loop.
 
@@ -470,14 +473,10 @@ struct Layout {
     // Used only as a codegen anchor to access frame layout for emission.
     // Never used to derive schema identity or grouping.
     size_t representative_process_index = 0;
-    // Schema identity components for naming emission and debug assertions.
+    // Schema naming components. Module schemas carry a body-local process
+    // ordinal; connection schemas carry a connection-process index.
     // Not the source of truth for grouping (grouping is structural).
-    std::optional<mir::ModuleBodyId> body_id;
-    // Dense non-final body-local process ordinal.
     std::optional<uint32_t> proc_within_body;
-    // For connection schemas: the connection-process semantic index
-    // used for naming. This is the canonical naming component for
-    // connection schemas.
     std::optional<uint32_t> conn_index;
   };
 
@@ -492,6 +491,11 @@ struct Layout {
   // Do not reorder.
   struct BodyRealizationInfo {
     mir::ModuleBodyId body_id;
+    // Direct pointer into mir::Design::module_bodies. Parallel to body_id,
+    // used for structural fetches that previously re-indexed through
+    // design.module_bodies.at(body_id.value). body_id stays for dedup
+    // keys, timescale indexing, origin provenance, and debug naming.
+    const mir::ModuleBody* body = nullptr;
     uint32_t slot_count = 0;
     // Body-local byte layout. Per-slot offsets in BodyByteOffset domain.
     // Sole authority for body-local addressing in spec compilation.
@@ -676,20 +680,12 @@ enum class VarTypeKind : uint8_t {
   kString,    // string
 };
 
-// Type info for a design slot (for layout and initialization)
+// Type info for a design slot (for variable registration).
 struct SlotTypeInfo {
   VarTypeKind kind = VarTypeKind::kIntegral;
   uint32_t width = 0;
   bool is_signed = false;
   bool is_four_state = false;
-};
-
-// Input for slot type information (provided by caller)
-struct SlotInfo {
-  common::SlotId slot_id;
-  TypeId type_id;            // For LLVM type derivation (actual type)
-  SlotTypeInfo type_info{};  // For variable registration (width, signedness)
-  mir::StorageShape storage_shape = mir::StorageShape::kInlineValue;
 };
 
 // Get the LLVM type for a TypeId. Handles all type kinds: integrals, reals,
@@ -700,11 +696,11 @@ auto GetLlvmTypeForTypeId(
     llvm::LLVMContext& ctx, TypeId type_id, const TypeArena& types,
     bool force_two_state) -> llvm::Type*;
 
-// Build SlotInfo list from slot descriptors.
-// Derives type metadata (kind, width, signedness) for runtime/initialization.
-auto BuildSlotInfo(
-    std::span<const mir::SlotDesc> slots, const TypeArena& types,
-    bool force_two_state) -> std::vector<SlotInfo>;
+// Classify a slot's type into the variable-registration metadata
+// (kind/width/signedness/4-state). Pure function of a single type.
+auto ClassifySlotTypeInfo(
+    TypeId type_id, const TypeArena& types, bool force_two_state)
+    -> SlotTypeInfo;
 
 // Check if a type is "scalar patchable" - i.e., maps to a single 4-state
 // storage object (struct {iW, iW} where W is 8/16/32/64).
@@ -718,10 +714,12 @@ auto IsScalarPatchable(
 // DataLayout is needed only for TargetStorageAbi (pointer size/alignment).
 // Per-instance slot range for layout construction. Describes one
 // instance's contiguous slot range within the design slot table.
+// body_slots is a view into the owning mir::ModuleBody's slots vector;
+// its size must equal slot_count.
 struct InstanceSlotRange {
   uint32_t base_slot = 0;
   uint32_t slot_count = 0;
-  mir::ModuleBodyId body_id;
+  std::span<const mir::SlotDesc> body_slots;
 };
 
 // Body-local state region sizes produced from body-local storage spec
@@ -750,10 +748,16 @@ struct SlotOwnerInfo {
 auto ResolveInstanceOwnedFlatSlot(const Layout& layout, uint32_t flat_slot_id)
     -> SlotOwnerInfo;
 
+// Build a design layout from package slot descriptors and per-instance
+// slot descriptor views. The flat slot table is never materialized: this
+// function iterates (package_slots, instance_ranges) in order and stamps
+// per-slot byte offsets, storage specs, and owned-data offsets.
+// Precondition: for every range, range.body_slots.size() == range.slot_count.
+// When instance_ranges is empty, package_slots is laid out as a single group
+// (preliminary layout with no appendix).
 auto BuildDesignLayout(
-    const std::vector<SlotInfo>& slots, const TypeArena& types,
+    std::span<const mir::SlotDesc> package_slots, const TypeArena& types,
     const llvm::DataLayout& dl, bool force_two_state,
-    uint32_t num_package_slots,
     std::span<const InstanceSlotRange> instance_ranges) -> DesignLayout;
 
 // Body-owned storage layout: slot specs resolved from body-local MIR
@@ -783,10 +787,11 @@ auto BuildBodyLayout(
 
 // Per-module-instance layout-planning entry.
 // Borrowed view into MIR data; valid only for the synchronous BuildLayout call.
-// Do not store beyond the call scope.
+// Do not store beyond the call scope. body is a direct pointer into
+// mir::Design::module_bodies; stable as long as the vector is not resized.
 struct LayoutModulePlan {
   std::span<const mir::ProcessId> body_processes;
-  mir::ModuleBodyId body_id;
+  const mir::ModuleBody* body = nullptr;
   uint32_t design_state_base_slot = 0;
   uint32_t slot_count = 0;
 };

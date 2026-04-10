@@ -114,11 +114,16 @@ struct Design {
   // this table.
   std::vector<ImmediateCoverSiteInfo> immediate_cover_sites;
 
-  // Per-site metadata for deferred immediate assertion statements.
-  // One entry per deferred assertion site, indexed by DeferredAssertionSiteId.
-  // Populated during HIR-to-MIR lowering. Runtime site metadata table is
-  // built from this. Semantic only: no thunk IDs, payload layout, or
-  // backend-specific data.
+  // Design-global deferred assertion site table, indexed by
+  // DeferredAssertionSiteId (the MIR effect handle). This is the
+  // concatenation of all body-owned site vectors in module_bodies order:
+  //   deferred_assertion_sites ==
+  //   concat(module_bodies[0].deferred_assertion_sites,
+  //                                     module_bodies[1].deferred_assertion_sites,
+  //                                     ...)
+  // Body-local vectors are the ownership shape; this is the indexing table.
+  // Populated during HIR-to-MIR lowering. Semantic only: no thunk IDs,
+  // payload layout, or backend-specific data.
   std::vector<DeferredAssertionSiteInfo> deferred_assertion_sites;
 
   // Maximum body-local event count across all module bodies.
@@ -127,10 +132,5 @@ struct Design {
   // is for diagnostics only.
   size_t max_body_local_events = 0;
 };
-
-inline auto GetModuleBody(const Design& design, const Module& mod)
-    -> const ModuleBody& {
-  return design.module_bodies.at(mod.body_id.value);
-}
 
 }  // namespace lyra::mir

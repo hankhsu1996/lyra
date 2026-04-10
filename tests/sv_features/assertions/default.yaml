@@ -188,14 +188,13 @@ cases:
       error:
         contains: ["concurrent assertion statements are unsupported"]
 
-  # Still-unsupported form tests
-
   - name: deferred_assertion_true_no_error
     description: Deferred #0 true assertion produces no error
     sv: |
       module Test;
-        int x = 5;
+        int x;
         initial begin
+          x = 5;
           assert #0 (x > 0);
           $display("PASS");
           $finish;
@@ -209,8 +208,9 @@ cases:
     description: Deferred #0 false assertion reports failure at settle boundary
     sv: |
       module Test;
-        int x = 0;
+        int x;
         initial begin
+          x = 0;
           assert #0 (x > 0);
           $display("AFTER");
           $finish;
@@ -218,18 +218,22 @@ cases:
       endmodule
     expect:
       stdout:
-        contains: ["AFTER", "Immediate assertion failed"]
+        contains:
+          - "AFTER"
+          - "Immediate assertion failed"
 
   - name: deferred_assertion_two_process_independence
     description: Two distinct processes with deferred assertions produce independent reports
     sv: |
       module Test;
-        int x = 0;
-        int y = 0;
+        int x;
+        int y;
         initial begin
+          x = 0;
           assert #0 (x > 0);
         end
         initial begin
+          y = 0;
           assert #0 (y > 0);
         end
         initial begin
@@ -245,8 +249,9 @@ cases:
     description: Deferred cover #0 records a hit at settle boundary
     sv: |
       module Test;
-        int x = 5;
+        int x;
         initial begin
+          x = 5;
           cover #0 (x > 0);
           $finish;
         end
@@ -258,14 +263,17 @@ cases:
     description: Deferred cover #0 with false condition records no hit
     sv: |
       module Test;
-        int x = 0;
+        int x;
         initial begin
+          x = 0;
           cover #0 (x > 0);
           $finish;
         end
       endmodule
     expect:
       cover_hits: [0]
+
+  # Still-unsupported form tests
 
   - name: deferred_assertion_illegal_action_error
     description: Deferred assertion with non-call action rejected by slang parser

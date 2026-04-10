@@ -187,18 +187,22 @@ cases:
 
   - name: deferred_assert_ref_reject_automatic
     description: >
-      Reject automatic (process-local) variable as deferred ref actual.
-      LRM 16.4 explicitly bans this.
+      Reject automatic (task-local) variable as deferred ref actual.
+      LRM 16.4 explicitly bans passing automatic-lifetime variables
+      to ref formals in deferred assertion actions.
     sv: |
       module Test;
         function automatic void report_ref(ref int val);
           $display("REF: %0d", val);
         endfunction
 
-        initial begin
+        task automatic helper();
           int local_var = 10;
           assert #0 (0) else report_ref(local_var);
-          $display("AFTER");
+        endtask
+
+        initial begin
+          helper();
           $finish;
         end
       endmodule
@@ -255,4 +259,129 @@ cases:
     expect:
       error:
         contains:
-          - "compile-time constant"
+          - "unsupported ref-capture expression form"
+
+  - name: deferred_assert_pass_action_executes
+    description: >
+      Deferred #0 assertion pass action fires when condition is true.
+      Both pass and fail branches are present; only pass fires.
+    sv: |
+      module Test;
+        function void report_pass(int val);
+          $display("PASS_ACTION: %0d", val);
+        endfunction
+        function void report_fail(int val);
+          $display("FAIL_ACTION: %0d", val);
+        endfunction
+
+        initial begin
+          int x = 42;
+          assert #0 (x > 0) report_pass(x); else report_fail(x);
+          $display("DONE");
+          $finish;
+        end
+      endmodule
+    expect:
+      stdout:
+        contains:
+          - "PASS_ACTION: 42"
+          - "DONE"
+        not_contains:
+          - "FAIL_ACTION"
+
+  - name: deferred_assume_fail_action
+    description: >
+      Deferred #0 assume with user fail action. Assume semantics
+      are identical to assert for simulation; fail action fires
+      when condition is false.
+    sv: |
+      module Test;
+        function void report_fail(int val);
+          $display("ASSUME_FAIL: %0d", val);
+        endfunction
+
+        initial begin
+          int x = 0;
+          assume #0 (x > 0) else report_fail(x);
+          $display("DONE");
+          $finish;
+        end
+      endmodule
+    expect:
+      stdout:
+        contains:
+          - "ASSUME_FAIL: 0"
+          - "DONE"
+
+  - name: deferred_assume_pass_action
+    description: >
+      Deferred #0 assume with user pass action fires on success.
+    sv: |
+      module Test;
+        function void on_pass(int val);
+          $display("ASSUME_PASS: %0d", val);
+        endfunction
+
+        initial begin
+          int x = 7;
+          assume #0 (x > 0) on_pass(x);
+          $display("DONE");
+          $finish;
+        end
+      endmodule
+    expect:
+      stdout:
+        contains:
+          - "ASSUME_PASS: 7"
+          - "DONE"
+
+  - name: deferred_cover_user_pass_action
+    description: >
+      Deferred #0 cover with user pass action. The pass action fires
+      when the cover condition is true (cover hit).
+    sv: |
+      module Test;
+        function void on_cover(int val);
+          $display("COVER_HIT: %0d", val);
+        endfunction
+
+        initial begin
+          int x = 5;
+          cover #0 (x > 0) on_cover(x);
+          $display("DONE");
+          $finish;
+        end
+      endmodule
+    expect:
+      stdout:
+        contains:
+          - "COVER_HIT: 5"
+          - "DONE"
+
+  - name: deferred_assert_both_branches_fail
+    description: >
+      Both pass and fail branches present; fail fires when condition
+      is false. Verifies correct branch dispatch.
+    sv: |
+      module Test;
+        function void report_pass(int val);
+          $display("PASS: %0d", val);
+        endfunction
+        function void report_fail(int val);
+          $display("FAIL: %0d", val);
+        endfunction
+
+        initial begin
+          int x = 0;
+          assert #0 (x > 0) report_pass(x); else report_fail(x);
+          $display("DONE");
+          $finish;
+        end
+      endmodule
+    expect:
+      stdout:
+        contains:
+          - "FAIL: 0"
+          - "DONE"
+        not_contains:
+          - "PASS"

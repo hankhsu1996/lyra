@@ -264,7 +264,12 @@ void EliminateRedundantBoundsChecks(Design& design, Arena& design_arena) {
     std::visit(
         common::Overloaded{
             [&](const Module& mod) {
-              auto& body = design.module_bodies.at(mod.body_id.value);
+              // Resolve to mutable body via pointer-to-index. mod.body is a
+              // const view; this pass has non-const Design ownership and
+              // needs mutable arena access.
+              auto body_idx =
+                  static_cast<size_t>(mod.body - design.module_bodies.data());
+              auto& body = design.module_bodies[body_idx];
               for (auto fid : body.functions)
                 optimize_function(fid, body.arena);
               for (auto pid : body.processes) optimize_process(pid, body.arena);

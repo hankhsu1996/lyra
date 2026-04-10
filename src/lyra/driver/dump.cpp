@@ -267,9 +267,12 @@ auto DumpLlvm(const CompilationInput& input) -> int {
   }
 
   lowering::OriginMapLookup origin_lookup(
-      &mir_result->design_origins, &mir_result->body_origins,
-      &hir_result.design, hir_result.hir_arena.get());
+      &mir_result->design_origins, hir_result.hir_arena.get());
   lowering::DiagnosticContext diag_ctx(origin_lookup);
+
+  auto origin_provenance = lowering::BuildBodyOriginProvenance(
+      mir_result->body_origins, hir_result.design,
+      mir_result->design.module_bodies);
 
   lowering::mir_to_llvm::LoweringInput llvm_input{
       .design = &mir_result->design,
@@ -278,7 +281,7 @@ auto DumpLlvm(const CompilationInput& input) -> int {
       .type_arena = hir_result.type_arena.get(),
       .diag_ctx = &diag_ctx,
       .source_manager = hir_result.source_manager.get(),
-      .origin_lookup = &origin_lookup,
+      .origin_provenance = &origin_provenance,
       .fs_base_dir = input.fs_base_dir.string(),
       .plusargs = {},
       .feature_flags = 0,

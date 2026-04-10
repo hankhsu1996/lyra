@@ -6,9 +6,7 @@
 #include "lyra/common/internal_error.hpp"
 #include "lyra/common/overloaded.hpp"
 #include "lyra/common/type_queries.hpp"
-#include "lyra/llvm_backend/codegen_session.hpp"
 #include "lyra/llvm_backend/layout/layout.hpp"
-#include "lyra/mir/design.hpp"
 
 namespace lyra::lowering::mir_to_llvm {
 
@@ -63,57 +61,23 @@ auto ComputeTraceBitWidth(TypeId type_id, const TypeArena& types) -> uint32_t {
   return 0;
 }
 
-namespace {
-
-struct ValidatedCanonicalOwner {
-  uint32_t raw_owner = 0;
-};
-
-auto ValidateCanonicalOwner(
-    ObservableOwnerSlotId owner_id, const DesignLayout& layout,
-    const RealizationData& realization) -> ValidatedCanonicalOwner {
-  const uint32_t owner = owner_id.Raw();
-
-  // Companion table consistency checks.
-  if (owner >= layout.slot_storage_specs.size()) {
+auto ComputeCanonicalObservableShape(
+    ObservableOwnerSlotId owner, const DesignLayout& layout, TypeId slot_type,
+    mir::SlotKind slot_kind, const TypeArena& type_arena)
+    -> CanonicalObservableShape {
+  const uint32_t raw = owner.Raw();
+  if (raw >= layout.slot_storage_specs.size()) {
     throw common::InternalError(
-        "ValidateCanonicalOwner",
-        std::format("slot_storage_specs missing canonical owner {}", owner));
-  }
-  if (owner >= realization.slot_kinds.size()) {
-    throw common::InternalError(
-        "ValidateCanonicalOwner",
-        std::format("slot_kinds missing canonical owner {}", owner));
-  }
-  if (owner >= realization.slot_types.size()) {
-    throw common::InternalError(
-        "ValidateCanonicalOwner",
-        std::format("slot_types missing canonical owner {}", owner));
+        "ComputeCanonicalObservableShape",
+        std::format("slot_storage_specs missing canonical owner {}", raw));
   }
 
-  return ValidatedCanonicalOwner{.raw_owner = owner};
-}
-
-auto ComputeCanonicalTraceShape(
-    ValidatedCanonicalOwner validated, const RealizationData& realization,
-    const TypeArena& type_arena) -> CanonicalTraceShape {
-  return CanonicalTraceShape{
-      .bit_width = ComputeTraceBitWidth(
-          realization.slot_types[validated.raw_owner], type_arena),
-      .trace_kind =
-          MapSlotKindToTraceKind(realization.slot_kinds[validated.raw_owner]),
-  };
-}
-
-auto ComputeCanonicalStorageShape(
-    ValidatedCanonicalOwner validated, const DesignLayout& layout)
-    -> CanonicalStorageShape {
-  const SlotStorageSpec& spec = layout.slot_storage_specs[validated.raw_owner];
+  const SlotStorageSpec& spec = layout.slot_storage_specs[raw];
   runtime::SlotStorageKind storage_kind = ClassifySlotStorageKind(spec);
 
   std::optional<Packed4LaneShape> packed4_lanes;
   if (storage_kind == runtime::SlotStorageKind::kPacked4) {
-    const PackedStorageSpec& packed = std::get<PackedStorageSpec>(spec.data);
+    const auto& packed = std::get<PackedStorageSpec>(spec.data);
     uint32_t lane_bytes = packed.LaneByteSize();
     packed4_lanes = Packed4LaneShape{
         .value_lane_byte_offset = 0,
@@ -123,24 +87,18 @@ auto ComputeCanonicalStorageShape(
     };
   }
 
-  return CanonicalStorageShape{
-      .storage_kind = storage_kind,
-      .total_bytes = spec.TotalByteSize(),
-      .packed4_lanes = packed4_lanes,
-  };
-}
-
-}  // namespace
-
-auto ComputeCanonicalObservableShape(
-    ObservableOwnerSlotId owner, const DesignLayout& layout,
-    const RealizationData& realization, const TypeArena& type_arena)
-    -> CanonicalObservableShape {
-  ValidatedCanonicalOwner validated =
-      ValidateCanonicalOwner(owner, layout, realization);
   return CanonicalObservableShape{
-      .trace = ComputeCanonicalTraceShape(validated, realization, type_arena),
-      .storage = ComputeCanonicalStorageShape(validated, layout),
+      .trace =
+          CanonicalTraceShape{
+              .bit_width = ComputeTraceBitWidth(slot_type, type_arena),
+              .trace_kind = MapSlotKindToTraceKind(slot_kind),
+          },
+      .storage =
+          CanonicalStorageShape{
+              .storage_kind = storage_kind,
+              .total_bytes = spec.TotalByteSize(),
+              .packed4_lanes = packed4_lanes,
+          },
   };
 }
 

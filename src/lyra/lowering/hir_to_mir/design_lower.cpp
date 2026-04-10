@@ -182,8 +182,7 @@ auto LowerDesign(
     return std::unexpected(std::move(diag));
   }
 
-  mir::ImmediateCoverSiteRegistry cover_site_registry;
-  mir::DeferredAssertionSiteRegistry deferred_assertion_site_registry;
+  // (Per-body site registries are allocated below, after spec_map is defined.)
 
   mir::Design result;
   result.num_design_slots = decls.num_design_slots;
@@ -227,7 +226,7 @@ auto LowerDesign(
         const hir::Process& proc = (*input.hir_arena)[hir_proc_id];
         Result<mir::ProcessId> mir_proc_result = LowerProcess(
             hir_proc_id, proc, input, mir_arena, init_view, origin_map,
-            &result.generated_functions, hir::kInvalidModuleBodyId);
+            &result.generated_functions);
         if (!mir_proc_result) {
           return std::unexpected(mir_proc_result.error());
         }
@@ -298,9 +297,23 @@ auto LowerDesign(
   std::vector<Result<MirBodyLoweringResult>> body_results;
   body_results.reserve(spec_map.groups.size());
 
+  // Per-body site registries. Each body gets a fresh registry so site IDs
+  // are body-local (0-based per body). Design-global tables are built by
+  // concatenation in Phase 2.
+  auto num_groups = spec_map.groups.size();
+  std::vector<mir::ImmediateCoverSiteRegistry> cover_site_registries(
+      num_groups);
+  std::vector<mir::DeferredAssertionSiteRegistry> deferred_site_registries(
+      num_groups);
+
   auto spec_groups =
       BuildMirSpecGroups(spec_map, static_cast<uint32_t>(hir_modules.size()));
-  for (const auto& group : spec_groups) {
+  // Phase 1 loop index g becomes the MIR ModuleBodyId for this body
+  // (Phase 2 assembles module_bodies by sequential push_back in the
+  // same group order). All per-body maps built here are keyed by g
+  // (i.e. the future mir::ModuleBodyId.value), not by hir::ModuleBodyId.
+  for (size_t g = 0; g < spec_groups.size(); ++g) {
+    const auto& group = spec_groups[g];
     uint32_t rep_idx = group.representative_module_index;
     if (rep_idx >= hir_modules.size()) {
       throw common::InternalError(
@@ -321,8 +334,9 @@ auto LowerDesign(
         rep_mod, *input.symbol_table, *input.type_arena, body_arena);
 
     // Capture body-local slot mappings for InstanceSlotResolver.
+    // Keyed by MIR body group index (== future mir::ModuleBodyId.value).
     {
-      auto& entries = body_local_slots_by_body[rep_mod.body_id.value];
+      auto& entries = body_local_slots_by_body[static_cast<uint32_t>(g)];
       for (const auto& [sym, place_id] : body_decls.places) {
         const auto& place = body_arena[place_id];
         if (place.root.kind == mir::PlaceRoot::Kind::kModuleSlot) {
@@ -337,8 +351,8 @@ auto LowerDesign(
 
     body_results.push_back(LowerModule(
         hir_body, body_input, std::move(body_arena), mir_arena, decls,
-        body_decls, rep_mod.body_id, &cover_site_registry,
-        &deferred_assertion_site_registry, &cross_instance_places));
+        body_decls, &cover_site_registries[g], &deferred_site_registries[g],
+        &cross_instance_places));
   }
 
   // Phase 2: Assemble body results in stable group order.
@@ -381,9 +395,22 @@ auto LowerDesign(
   }
   result.max_body_local_events = max_events;
 
-  result.immediate_cover_sites = cover_site_registry.TakeSites();
-  result.deferred_assertion_sites =
-      deferred_assertion_site_registry.TakeSites();
+  // Build design-global site tables by concatenating per-body registries.
+  // Site IDs in MIR effects are body-local (0-based per body). The design-
+  // global tables are the concatenation of all body-local tables in body
+  // order, used only at assembly/emission time for runtime table building.
+  for (size_t g = 0; g < result.module_bodies.size(); ++g) {
+    auto& body = result.module_bodies[g];
+    body.immediate_cover_sites = cover_site_registries[g].TakeSites();
+    body.deferred_assertion_sites = deferred_site_registries[g].TakeSites();
+    result.immediate_cover_sites.insert(
+        result.immediate_cover_sites.end(), body.immediate_cover_sites.begin(),
+        body.immediate_cover_sites.end());
+    result.deferred_assertion_sites.insert(
+        result.deferred_assertion_sites.end(),
+        body.deferred_assertion_sites.begin(),
+        body.deferred_assertion_sites.end());
+  }
 
   // Build DPI export wrapper descriptors now that body-local function maps
   // are available. Module-scoped exports need these maps to resolve their
@@ -391,7 +418,7 @@ auto LowerDesign(
   {
     // Collect module-scoped export targets with multi-body collision
     // detection. For each module-scoped export symbol, collect all
-    // (body_id, function_id) pairs across specialization groups.
+    // (body pointer, function_id) pairs across specialization groups.
     struct ModuleExportResolution {
       std::string c_name;
       SourceSpan span;
@@ -418,7 +445,8 @@ auto LowerDesign(
         }
         resolution.targets.push_back(
             mir::ModuleExportCalleeKey{
-                .body_id = body_id, .function_id = func_it->second});
+                .body = &result.module_bodies[g],
+                .function_id = func_it->second});
       }
     }
 
@@ -509,8 +537,9 @@ auto LowerDesign(
   for (const auto& group : spec_groups) {
     uint32_t rep_idx = group.representative_module_index;
     const hir::Module& rep_mod = *hir_modules[rep_idx];
+    auto mir_body_id = spec_to_body.at(group.spec_id);
     const auto& body_slots_for_header =
-        body_local_slots_by_body.at(rep_mod.body_id.value);
+        body_local_slots_by_body.at(mir_body_id.value);
 
     // Build sym -> (LocalSlotId, TypeId) lookup from body-local slots.
     std::unordered_map<SymbolId, common::LocalSlotId, SymbolIdHash> sym_to_slot;
@@ -582,10 +611,12 @@ auto LowerDesign(
         throw common::InternalError(
             "LowerDesign", "no body lowered for specialization");
       }
-      result.elements.emplace_back(
-          mir::Module{.instance_sym = mod.symbol, .body_id = it->second});
-
+      // Safe pointer capture: Phase 2 finished pushing to module_bodies
+      // before Phase 2b began, so &module_bodies[i] is stable for the
+      // lifetime of the design.
       const auto& body = result.module_bodies.at(it->second.value);
+      result.elements.emplace_back(
+          mir::Module{.instance_sym = mod.symbol, .body = &body});
       auto slot_count = static_cast<uint32_t>(body.slots.size());
 
       // Build InstanceConstBlock directly from HIR param values.
@@ -993,7 +1024,7 @@ auto LowerDesign(
           auto per_instance_places = BuildPerInstancePlaces(
               *hir_modules[construction.objects[parent_oi.value].path_index],
               *hir_modules[rep_path], body_local_slots_by_body.at(body_group),
-              *input.symbol_table, parent_body.arena);
+              parent_body.arena);
           auto func_result = LowerExprAsBodyFunction(
               binding.parent_rvalue, result_type, input, decls,
               parent_body.arena, per_instance_places);
@@ -1059,7 +1090,7 @@ auto LowerDesign(
           hir_modules.data(), hir_modules.size()));
 
   CanonicalizeExternalRefPaths(
-      result, provisionals_by_body, topo, construction, oi_to_durable_child);
+      result, provisionals_by_body, topo, oi_to_durable_child);
 
   // After canonicalization, provisionals_by_body is scratch-only.
   // BuildResolvedExternalRefBindings consumes the canonical recipe.
@@ -1081,8 +1112,7 @@ auto LowerDesign(
       const auto& recipe = body.connection_recipes[r];
       if (IsFullyBindableRecipe(recipe)) {
         bound_connections.push_back(BindConnectionRecipe(
-            recipe, r, body, mir::ModuleBodyId{body_idx},
-            common::ObjectIndex{oi}, topo, construction));
+            recipe, r, body, common::ObjectIndex{oi}, topo, construction));
       } else if (
           recipe.source.kind == mir::ConnectionSourceRecipe::Kind::kFunction) {
         // This adapter only supports kDriveParentToChild with
@@ -1107,7 +1137,7 @@ auto LowerDesign(
         expr_connections.push_back(
             mir::CompiledConnectionExpr{
                 .kind = recipe.kind,
-                .parent_body_id = mir::ModuleBodyId{body_idx},
+                .parent_arena = &body.arena,
                 .expr_function = recipe.source.function,
                 .parent_object_index = common::ObjectIndex{oi},
                 .child_object_index = common::ObjectIndex{child_oi},

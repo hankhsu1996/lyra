@@ -1,5 +1,7 @@
 #pragma once
 
+#include <optional>
+
 #include <slang/text/SourceLocation.h>
 
 #include "lyra/common/source_span.hpp"
@@ -8,6 +10,10 @@
 #include "lyra/lowering/ast_to_hir/expression.hpp"
 #include "lyra/lowering/ast_to_hir/module_lowerer.hpp"
 #include "lyra/lowering/ast_to_hir/symbol_registrar.hpp"
+
+namespace slang::ast {
+class Statement;
+}
 
 namespace lyra::lowering::ast_to_hir {
 
@@ -35,5 +41,32 @@ struct StatementLoweringEnv {
     return LowerScopedExpression(expr, *ctx, *registrar, *frame);
   }
 };
+
+// Normalized result of lowering and validating a deferred assertion action
+// branch (pass or fail). Produced once after child-action lowering; consumed
+// by deferred assertion semantic construction. Moves syntax-shape ownership
+// out of feature-specific deferred code.
+enum class LoweredActionBranchKind {
+  kAbsent,           // no branch present in source
+  kValidSingleCall,  // branch is a supported single user subroutine call
+  kInvalid,  // branch present but unsupported shape (diagnostic emitted)
+};
+
+struct LoweredActionBranch {
+  LoweredActionBranchKind kind = LoweredActionBranchKind::kAbsent;
+  std::optional<hir::StatementId> statement_id;
+  // Expression ID of the call expression inside the lowered action.
+  // Stored as ID (not pointer) because the arena may reallocate when
+  // subsequent branches are lowered, invalidating raw pointers.
+  hir::ExpressionId call_expr_id = hir::kInvalidExpressionId;
+};
+
+// Lower an optional child action statement and normalize it into a
+// LoweredActionBranch. Validates the supported single-call grammar and
+// extracts the HIR CallExpressionData.
+auto LowerAndNormalizeActionBranch(
+    const slang::ast::Statement* slang_action, ScopeLowerer& lowerer,
+    const hir::Arena& arena, SourceSpan span, const char* branch_label)
+    -> LoweredActionBranch;
 
 }  // namespace lyra::lowering::ast_to_hir

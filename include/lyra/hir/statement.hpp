@@ -7,6 +7,7 @@
 
 #include "lyra/common/source_span.hpp"
 #include "lyra/common/symbol_types.hpp"
+#include "lyra/hir/deferred_assertion.hpp"
 #include "lyra/hir/fwd.hpp"
 #include "lyra/hir/rvalue.hpp"
 
@@ -32,6 +33,7 @@ enum class StatementKind {
   kNamedEventWait,
   kEventTrigger,
   kImmediateAssertion,
+  kDeferredAssertion,
 };
 
 // unique/unique0/priority qualifier for if and case statements
@@ -212,22 +214,50 @@ enum class ImmediateAssertionKind : uint8_t {
 };
 
 // Immediate assertion timing (LRM 16.3, 16.4)
+// Used during AST-to-HIR lowering to determine which statement kind to
+// produce. Not stored on the final HIR nodes: simple assertions become
+// ImmediateAssertionStatementData, deferred become
+// DeferredAssertionStatementData.
 enum class ImmediateAssertionTiming : uint8_t {
   kSimple,
   kObservedDeferred,  // assert #0 / assume #0 / cover #0
   // kFinalDeferred later
 };
 
-// Immediate assertion statement (LRM 16.3, 16.4)
-// Represents procedural assert/assume/cover, both simple and deferred #0.
+// Simple immediate assertion statement (LRM 16.3)
+// Represents procedural assert/assume/cover with immediate (non-deferred)
+// evaluation. Source-shaped: pass/fail actions are child statement nodes.
+// For observed deferred assertions (assert #0 / assume #0 / cover #0),
+// see DeferredAssertionStatementData.
 struct ImmediateAssertionStatementData {
   ImmediateAssertionKind kind = ImmediateAssertionKind::kAssert;
-  ImmediateAssertionTiming timing = ImmediateAssertionTiming::kSimple;
   ExpressionId condition;
   std::optional<StatementId> pass_action;
   std::optional<StatementId> fail_action;
 
   auto operator==(const ImmediateAssertionStatementData&) const
+      -> bool = default;
+};
+
+// Observed deferred assertion statement (LRM 16.4)
+// Represents assert #0 / assume #0 / cover #0 with deferred evaluation.
+// Inline-owns its deferred action semantic content. No side table,
+// no site id -- the statement directly owns what happens when the
+// deferred action fires, just like a closure owns its captures.
+// Source-shaped child statements are kept for source fidelity; the
+// deferred actions are the semantic truth.
+struct DeferredAssertionStatementData {
+  ImmediateAssertionKind kind = ImmediateAssertionKind::kAssert;
+  ExpressionId condition;
+  // Source-shaped action statements (kept for source fidelity / dump).
+  std::optional<StatementId> pass_action;
+  std::optional<StatementId> fail_action;
+  // Semantic deferred actions (inline-owned).
+  bool has_default_fail_report = false;
+  std::optional<DeferredAction> deferred_fail_action;
+  std::optional<DeferredAction> deferred_pass_action;
+
+  auto operator==(const DeferredAssertionStatementData&) const
       -> bool = default;
 };
 
@@ -238,7 +268,8 @@ using StatementData = std::variant<
     DoWhileLoopStatementData, RepeatLoopStatementData, BreakStatementData,
     ContinueStatementData, TerminateStatementData, ReturnStatementData,
     DelayStatementData, EventWaitStatementData, NamedEventWaitStatementData,
-    EventTriggerStatementData, ImmediateAssertionStatementData>;
+    EventTriggerStatementData, ImmediateAssertionStatementData,
+    DeferredAssertionStatementData>;
 
 struct Statement {
   StatementKind kind;

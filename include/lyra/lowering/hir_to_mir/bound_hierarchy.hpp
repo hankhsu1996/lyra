@@ -10,7 +10,6 @@
 #include "lyra/common/module_identity.hpp"
 #include "lyra/common/symbol_types.hpp"
 #include "lyra/mir/external_ref.hpp"
-#include "lyra/mir/handle.hpp"
 
 namespace lyra::hir {
 struct Module;
@@ -129,7 +128,7 @@ void CanonicalizeExternalRefPaths(
     mir::Design& design,
     const std::unordered_map<uint32_t, std::vector<ProvisionalNonLocalTarget>>&
         provisionals_by_body,
-    const BoundHierarchyIndex& topo, const mir::ConstructionInput& construction,
+    const BoundHierarchyIndex& topo,
     const std::unordered_map<uint32_t, mir::DurableChildId>&
         oi_to_durable_child);
 
@@ -162,8 +161,8 @@ auto IsFullyBindableRecipe(const mir::ConnectionRecipe& recipe) -> bool;
 // override any semantic fields from the recipe.
 auto BindConnectionRecipe(
     const mir::ConnectionRecipe& recipe, uint32_t recipe_index,
-    const mir::ModuleBody& parent_body, mir::ModuleBodyId parent_body_id,
-    common::ObjectIndex parent_object_index, const BoundHierarchyIndex& topo,
-    const mir::ConstructionInput& construction) -> mir::BoundConnection;
+    const mir::ModuleBody& parent_body, common::ObjectIndex parent_object_index,
+    const BoundHierarchyIndex& topo, const mir::ConstructionInput& construction)
+    -> mir::BoundConnection;
 
 }  // namespace lyra::lowering::hir_to_mir

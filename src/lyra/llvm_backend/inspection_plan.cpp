@@ -7,7 +7,6 @@
 #include "lyra/llvm_backend/codegen_session.hpp"
 #include "lyra/llvm_backend/layout/layout.hpp"
 #include "lyra/llvm_backend/layout/storage_types.hpp"
-#include "lyra/mir/design.hpp"
 
 namespace lyra::lowering::mir_to_llvm {
 
@@ -17,23 +16,13 @@ auto BuildInspectionPlan(
   InspectionPlan plan;
 
   const auto& layout = *session.layout;
-  const auto& provenance = session.realization.slot_trace_provenance;
 
   for (const auto& ref : refs) {
     auto slot_value = static_cast<uint32_t>(ref.slot_id.value);
-    if (slot_value >= provenance.size()) {
-      throw common::InternalError(
-          "BuildInspectionPlan",
-          std::format(
-              "slot_id {} out of range for provenance (size {})", slot_value,
-              provenance.size()));
-    }
+    auto abs_off =
+        ArenaByteOffset{layout.design.GetStorageByteOffset(ref.slot_id)};
 
-    const auto& prov = provenance[slot_value];
-
-    if (prov.scope_kind == mir::SlotScopeKind::kPackage) {
-      auto abs_off =
-          ArenaByteOffset{layout.design.GetStorageByteOffset(ref.slot_id)};
+    if (slot_value < layout.num_package_slots) {
       plan.globals.push_back(
           InspectedGlobalVar{
               .name = ref.name,
@@ -41,9 +30,8 @@ auto BuildInspectionPlan(
               .placement = DesignGlobalPlacement{abs_off},
           });
     } else {
-      auto instance_id = prov.scope_ref;
-      auto abs_off =
-          ArenaByteOffset{layout.design.GetStorageByteOffset(ref.slot_id)};
+      auto owner = ResolveInstanceOwnedFlatSlot(layout, slot_value);
+      auto instance_id = owner.instance_id.value;
       auto instance_base =
           layout.GetInstanceStorageBase(ModuleIndex{instance_id});
       if (!instance_base.abs_byte_offset.has_value()) {

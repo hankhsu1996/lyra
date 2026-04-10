@@ -16,7 +16,6 @@ namespace lyra::lowering::mir_to_llvm {
 
 class Context;
 struct Layout;
-struct SlotInfo;
 
 // Extract back-edge site inputs from accumulated codegen origins.
 auto PrepareBackEdgeSiteInputs(

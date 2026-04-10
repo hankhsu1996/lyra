@@ -81,8 +81,7 @@ auto RunJit(const ValidatedCompilationInput& input) -> int {
   auto compilation = std::move(*result);
 
   lowering::OriginMapLookup origin_lookup(
-      &compilation.mir.design_origins, &compilation.mir.body_origins,
-      &compilation.hir.design, compilation.hir.hir_arena.get());
+      &compilation.mir.design_origins, compilation.hir.hir_arena.get());
   lowering::DiagnosticContext diag_ctx(origin_lookup);
 
   uint32_t feature_flags = 0;
@@ -113,6 +112,10 @@ auto RunJit(const ValidatedCompilationInput& input) -> int {
     feature_flags |= runtime::ToUint32(runtime::FeatureFlag::kDumpSuspended);
   }
 
+  auto origin_provenance = lowering::BuildBodyOriginProvenance(
+      compilation.mir.body_origins, compilation.hir.design,
+      compilation.mir.design.module_bodies);
+
   lowering::mir_to_llvm::LoweringInput llvm_input{
       .design = &compilation.mir.design,
       .construction = &compilation.mir.construction,
@@ -120,7 +123,7 @@ auto RunJit(const ValidatedCompilationInput& input) -> int {
       .type_arena = compilation.hir.type_arena.get(),
       .diag_ctx = &diag_ctx,
       .source_manager = compilation.hir.source_manager.get(),
-      .origin_lookup = &origin_lookup,
+      .origin_provenance = &origin_provenance,
       .fs_base_dir = input.input.fs_base_dir.string(),
       .plusargs = input.input.plusargs,
       .feature_flags = feature_flags,
@@ -172,9 +175,8 @@ auto RunJit(const ValidatedCompilationInput& input) -> int {
     output.PrintLlvmStats(llvm_stats, input.input.stats_top_n);
     auto ps = CollectProcessStats(
         compilation.mir.design, *compilation.mir.design_arena,
-        compilation.mir.design_origins, compilation.hir.design,
-        *compilation.hir.hir_arena, *compilation.hir.source_manager,
-        llvm_stats);
+        compilation.mir.design_origins, *compilation.hir.hir_arena,
+        *compilation.hir.source_manager, llvm_stats);
     output.PrintProcessStats(ps);
   }
 

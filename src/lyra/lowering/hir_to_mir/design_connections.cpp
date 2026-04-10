@@ -1,4 +1,3 @@
-#include <cstdint>
 #include <expected>
 #include <optional>
 #include <utility>
@@ -6,13 +5,11 @@
 #include <vector>
 
 #include "lyra/common/diagnostic/diagnostic.hpp"
-#include "lyra/common/internal_error.hpp"
 #include "lyra/common/local_slot_id.hpp"
 #include "lyra/hir/arena.hpp"
 #include "lyra/hir/expression.hpp"
 #include "lyra/hir/fwd.hpp"
 #include "lyra/hir/module.hpp"
-#include "lyra/lowering/ast_to_hir/port_binding.hpp"
 #include "lyra/lowering/hir_to_mir/builder.hpp"
 #include "lyra/lowering/hir_to_mir/context.hpp"
 #include "lyra/lowering/hir_to_mir/design_internal.hpp"
@@ -21,31 +18,12 @@
 #include "lyra/mir/arena.hpp"
 #include "lyra/mir/basic_block.hpp"
 #include "lyra/mir/connection_endpoint.hpp"
-#include "lyra/mir/construction_input.hpp"
 #include "lyra/mir/handle.hpp"
-#include "lyra/mir/module_body.hpp"
 #include "lyra/mir/operand.hpp"
 #include "lyra/mir/place.hpp"
 #include "lyra/mir/routine.hpp"
-#include "lyra/mir/terminator.hpp"
 
 namespace lyra::lowering::hir_to_mir {
-
-namespace {
-
-// Extract the referenced SymbolId from a simple NameRef expression.
-// Internal helper -- not exposed through the header.
-auto TryExtractNameRefSymbol(hir::ExpressionId expr_id, const hir::Arena& arena)
-    -> std::optional<SymbolId> {
-  const auto& expr = arena[expr_id];
-  if (expr.kind != hir::ExpressionKind::kNameRef) {
-    return std::nullopt;
-  }
-  const auto& data = std::get<hir::NameRefExpressionData>(expr.data);
-  return data.symbol;
-}
-
-}  // namespace
 
 // Recursively find any NameRef symbol in an expression tree.
 auto FindAnyNameRef(hir::ExpressionId expr_id, const hir::Arena& arena)
@@ -87,8 +65,8 @@ auto FindAnyNameRef(hir::ExpressionId expr_id, const hir::Arena& arena)
 // LocalSlotId from canonical body-local slot data (not manual ordering).
 auto BuildPerInstancePlaces(
     const hir::Module& inst_mod, const hir::Module& rep_mod,
-    const std::vector<BodyLocalSlotEntry>& body_slots,
-    const SymbolTable& symbol_table, mir::Arena& body_arena) -> PlaceMap {
+    const std::vector<BodyLocalSlotEntry>& body_slots, mir::Arena& body_arena)
+    -> PlaceMap {
   // Build representative symbol -> LocalSlotId from canonical body-local data.
   std::unordered_map<SymbolId, common::LocalSlotId, SymbolIdHash>
       rep_sym_to_slot;
@@ -145,18 +123,32 @@ auto LowerExprAsBodyFunction(
       .body_places = &per_instance_places,
       .design_places = &decls.design_places,
       .local_places = {},
+      .design_place_cache = {},
+      .body_events = nullptr,
       .next_local_id = 0,
       .next_temp_id = 0,
       .local_types = {},
       .temp_types = {},
       .temp_metadata = {},
       .builtin_types = input.builtin_types,
+      .symbol_to_mir_function = nullptr,
+      .design_functions = nullptr,
+      .dpi_imports = nullptr,
+      .cross_instance_places = nullptr,
+      .generated_functions = nullptr,
       .return_slot = std::nullopt,
       .return_type = result_type,
       .design_slots = &decls.slots,
+      .body_slots = nullptr,
+      .cover_site_registry = nullptr,
+      .deferred_assertion_site_registry = nullptr,
+      .materialize_count = 0,
+      .external_refs = nullptr,
+      .provisional_targets = nullptr,
+      .external_ref_cache = {},
   };
 
-  MirBuilder builder(&body_arena, &ctx, nullptr, hir::kInvalidModuleBodyId);
+  MirBuilder builder(&body_arena, &ctx, nullptr);
 
   BlockIndex entry_idx = builder.CreateBlock();
   builder.SetCurrentBlock(entry_idx);
@@ -184,9 +176,15 @@ auto LowerExprAsBodyFunction(
       .temp_metadata = std::move(ctx.temp_metadata),
       .param_local_slots = {},
       .param_origins = {},
+      .decision_sites = {},
+      .abi_contract = {},
+      .monitor_check_meta = std::nullopt,
+      .monitor_setup_meta = std::nullopt,
   };
 
-  return body_arena.AddFunction(std::move(func));
+  mir::FunctionId func_id = body_arena.AddFunction(std::move(func));
+  body_arena.MarkModuleScoped(func_id);
+  return func_id;
 }
 
 }  // namespace lyra::lowering::hir_to_mir

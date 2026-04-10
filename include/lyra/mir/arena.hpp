@@ -89,6 +89,13 @@ class Arena final {
     functions_[id.value] = std::move(func);
   }
 
+  // Mark a function as module-scoped. Called for all functions in a module
+  // body after their bodies are set. Sets needs_module_binding on the
+  // function's ABI contract so the backend can read it directly from the arena.
+  void MarkModuleScoped(FunctionId id) {
+    functions_[id.value].abi_contract.needs_module_binding = true;
+  }
+
   // Propagate accepts_decision_owner through internal call graph.
   // If function A calls function B (local or design-global), and B accepts
   // a decision owner, then A must also accept (to carry decision_owner_id).

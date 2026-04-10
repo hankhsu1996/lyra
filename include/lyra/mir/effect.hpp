@@ -194,16 +194,16 @@ struct CoverSiteId {
 };
 
 // Record a hit for an immediate cover statement (LRM 16.3).
-// Emitted on the true arm of the cover condition. site_id is allocated
-// during HIR-to-MIR lowering (design-global) and lowered to a runtime
-// counter increment by the backend.
+// Emitted on the true arm of the cover condition. site_id is body-local
+// (0-based per body). The backend applies a per-body base offset to
+// produce the design-global runtime index.
 struct CoverHitEffect {
   CoverSiteId site_id;
 };
 
-// Dense index for a deferred immediate assertion site. Allocated during
-// HIR-to-MIR lowering (design-global). Used to index into the runtime
-// site metadata table.
+// Dense index for a deferred immediate assertion site. Body-local
+// (0-based per body). The backend applies a per-body base offset to
+// produce the design-global runtime index.
 struct DeferredAssertionSiteId {
   uint32_t value = UINT32_MAX;
 

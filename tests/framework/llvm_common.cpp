@@ -66,9 +66,8 @@ class TestSimulationHooks : public lowering::mir_to_llvm::SimulationHooks {
   }
 
   void EmitPostSimulationReports(
-      lowering::mir_to_llvm::Context& context,
-      const std::vector<lowering::mir_to_llvm::SlotInfo>& /*slots*/,
-      llvm::Value* /*design_state*/, llvm::Value* /*abi_ptr*/) override {
+      lowering::mir_to_llvm::Context& context, llvm::Value* /*design_state*/,
+      llvm::Value* /*abi_ptr*/) override {
     if (emit_time_report_) {
       lowering::mir_to_llvm::EmitTimeReport(context);
     }
@@ -320,8 +319,7 @@ auto PrepareLlvmModule(
 
   // Create diagnostic context for LLVM backend error reporting
   auto origin_lookup = std::make_unique<lowering::OriginMapLookup>(
-      &mir_result->design_origins, &mir_result->body_origins,
-      &hir_result.design, hir_result.hir_arena.get());
+      &mir_result->design_origins, hir_result.hir_arena.get());
   auto diag_ctx = std::make_unique<lowering::DiagnosticContext>(*origin_lookup);
 
   // Lower MIR to LLVM IR
@@ -346,6 +344,10 @@ auto PrepareLlvmModule(
     feature_flags |= runtime::ToUint32(runtime::FeatureFlag::kDumpSlotMeta);
   }
 
+  auto origin_provenance = lowering::BuildBodyOriginProvenance(
+      mir_result->body_origins, hir_result.design,
+      mir_result->design.module_bodies);
+
   lowering::mir_to_llvm::LoweringInput llvm_input{
       .design = &mir_result->design,
       .construction = &mir_result->construction,
@@ -353,7 +355,7 @@ auto PrepareLlvmModule(
       .type_arena = hir_result.type_arena.get(),
       .diag_ctx = diag_ctx.get(),
       .source_manager = hir_result.source_manager.get(),
-      .origin_lookup = origin_lookup.get(),
+      .origin_provenance = &origin_provenance,
       .hooks = g_hooks_holder->hooks.get(),
       .fs_base_dir = fs_base_dir,
       .plusargs = test_case.plusargs,

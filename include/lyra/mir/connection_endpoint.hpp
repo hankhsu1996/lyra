@@ -12,6 +12,8 @@
 
 namespace lyra::mir {
 
+class Arena;
+
 // Bound location: a specific slot on a specific object in the
 // construction topology. Shared identity type for external ref
 // bindings, connection endpoints, and resolution artifacts.
@@ -33,7 +35,7 @@ struct ResolvedObservation {
 // use BoundConnection instead.
 struct CompiledConnectionExpr {
   PortConnection::Kind kind = PortConnection::Kind::kDriveParentToChild;
-  ModuleBodyId parent_body_id;
+  const Arena* parent_arena = nullptr;
   FunctionId expr_function;
   common::ObjectIndex parent_object_index;
   common::ObjectIndex child_object_index;
@@ -54,7 +56,6 @@ struct CompiledConnectionExpr {
 struct BoundConnection {
   uint32_t recipe_index = 0;
   PortConnection::Kind kind = PortConnection::Kind::kDriveParentToChild;
-  ModuleBodyId parent_body_id;
   common::ObjectIndex parent_object_index;
   BoundEndpoint child_target;
   BoundEndpoint parent_source;

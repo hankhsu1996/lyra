@@ -13,7 +13,6 @@
 #include "lyra/common/source_manager.hpp"
 #include "lyra/common/type_arena.hpp"
 #include "lyra/llvm_backend/inspection_plan.hpp"
-#include "lyra/llvm_backend/layout/layout.hpp"
 #include "lyra/llvm_backend/lowering_reports.hpp"
 #include "lyra/lowering/diagnostic_context.hpp"
 #include "lyra/lowering/origin_map_lookup.hpp"
@@ -59,23 +58,21 @@ class SimulationHooks {
   // Called after DesignState is initialized (before any processes run).
   // Use for: pre-simulation setup, initial state inspection.
   virtual void OnAfterInitializeDesignState(
-      Context& /*context*/, const std::vector<SlotInfo>& /*slots*/,
-      llvm::Value* /*design_state*/) {
+      Context& /*context*/, llvm::Value* /*design_state*/) {
   }
 
   // Called after init processes complete, before module processes start.
   // Use for: inspecting state after package initialization.
   virtual void OnBeforeRunSimulation(
-      Context& /*context*/, const std::vector<SlotInfo>& /*slots*/,
-      llvm::Value* /*design_state*/) {
+      Context& /*context*/, llvm::Value* /*design_state*/) {
   }
 
   // Called after backend-emitted variable inspection is already emitted.
   // For non-inspection post-simulation reports (e.g., time report).
   // Variable inspection is backend-owned via GetTrackedVariables().
   virtual void EmitPostSimulationReports(
-      Context& /*context*/, const std::vector<SlotInfo>& /*slots*/,
-      llvm::Value* /*design_state*/, llvm::Value* /*abi_ptr*/) {
+      Context& /*context*/, llvm::Value* /*design_state*/,
+      llvm::Value* /*abi_ptr*/) {
   }
 };
 
@@ -97,7 +94,9 @@ struct LoweringInput {
   const TypeArena* type_arena = nullptr;
   const lowering::DiagnosticContext* diag_ctx = nullptr;
   const SourceManager* source_manager = nullptr;
-  lowering::OriginMapLookup* origin_lookup = nullptr;
+  // Per-body origin provenance for body-local diagnostic resolution.
+  // Indexed by ModuleBodyId::value. Nullable (diagnostics degrade gracefully).
+  const lowering::BodyOriginProvenance* origin_provenance = nullptr;
   SimulationHooks* hooks = nullptr;   // Optional instrumentation (nullable)
   std::string fs_base_dir;            // Base directory for file I/O (absolute)
   std::vector<std::string> plusargs;  // Command-line plusargs for $plusargs
@@ -134,12 +133,11 @@ auto DumpLlvmIr(const LoweringResult& result) -> std::string;
 
 // Emit variable registration calls for runtime inspection.
 // Consumes a typed InspectionPlan built by BuildInspectionPlan.
-// Uses std::visit to pattern-match DesignGlobalPlacement vs
-// InstanceOwnedPlacement for each variable.
+// Classifies each tracked slot's type metadata on demand from the design
+// and layout -- no prebuilt type metadata vector.
 void EmitVariableInspection(
-    Context& context, const InspectionPlan& plan,
-    const std::vector<SlotInfo>& slots, llvm::Value* design_state,
-    llvm::Value* abi_ptr);
+    Context& context, const InspectionPlan& plan, const mir::Design& design,
+    llvm::Value* design_state, llvm::Value* abi_ptr);
 
 // Emit time report call for test harness.
 void EmitTimeReport(Context& context);

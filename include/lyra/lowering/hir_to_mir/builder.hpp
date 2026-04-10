@@ -60,7 +60,6 @@ class MirBuilder {
   // a builder-local allocator is used (package/design-global path).
   MirBuilder(
       mir::Arena* arena, Context* ctx, OriginMap* origin_map,
-      hir::ModuleBodyId body_id,
       DecisionSiteAllocator* decision_allocator = nullptr);
 
   // Instruction emission.
@@ -330,9 +329,6 @@ class MirBuilder {
   auto GetOriginMap() -> OriginMap* {
     return origin_map_;
   }
-  [[nodiscard]] auto GetBodyId() const -> hir::ModuleBodyId {
-    return body_id_;
-  }
 
   void PushLoop(LoopContext ctx);
   void PopLoop();
@@ -410,7 +406,6 @@ class MirBuilder {
   common::OriginId current_origin_ = common::OriginId::Invalid();
   std::optional<InstructionHirSource>
       current_hir_source_;  // For deferred recording
-  hir::ModuleBodyId body_id_ = hir::kInvalidModuleBodyId;
   bool finished_ = false;
   BlockIndex exit_block_ = kInvalidBlockIndex;  // Single-exit form
   std::vector<mir::Process::MirDecisionSiteRecord> decision_site_records_;

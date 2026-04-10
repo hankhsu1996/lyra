@@ -38,11 +38,11 @@ auto LoadObserverContextFields(
 }
 
 void EnterObserverSpecializationLocalContext(
-    Context& context, mir::FunctionId func_id, llvm::Value* observer_ctx_ptr) {
-  const auto& lowering = context.GetModuleFunctionLowering(func_id);
-  context.SetSpecSlotInfo(lowering.spec_slot_info);
-  context.SetConnectionNotificationMask(lowering.connection_notification_mask);
-
+    Context& context, [[maybe_unused]] mir::FunctionId func_id,
+    llvm::Value* observer_ctx_ptr) {
+  // spec_slot_info and connection_notification_mask are already set on
+  // Context by SpecLocalScope at session start. All body functions share
+  // the same body-level spec context.
   auto& builder = context.GetBuilder();
   auto& llvm_ctx = context.GetLlvmContext();
   auto fields = LoadObserverContextFields(builder, llvm_ctx, observer_ctx_ptr);

@@ -508,6 +508,38 @@ void Dumper::Dump(StatementId id) {
       }
       break;
     }
+    case StatementKind::kDeferredAssertion: {
+      const auto& data = std::get<DeferredAssertionStatementData>(stmt.data);
+      switch (data.kind) {
+        case ImmediateAssertionKind::kAssert:
+          *out_ << "assert #0 (";
+          break;
+        case ImmediateAssertionKind::kAssume:
+          *out_ << "assume #0 (";
+          break;
+        case ImmediateAssertionKind::kCover:
+          *out_ << "cover #0 (";
+          break;
+      }
+      Dump(data.condition);
+      *out_ << ")";
+      if (data.pass_action) {
+        *out_ << " ";
+        Dump(*data.pass_action);
+      }
+      if (data.fail_action) {
+        if (!data.pass_action) {
+          *out_ << " ";
+        }
+        PrintIndent();
+        *out_ << "else ";
+        Dump(*data.fail_action);
+      }
+      if (!data.pass_action && !data.fail_action) {
+        *out_ << ";\n";
+      }
+      break;
+    }
   }
 }
 

@@ -46,8 +46,7 @@ Context::Context(
     std::unique_ptr<llvm::LLVMContext> llvm_ctx,
     std::unique_ptr<llvm::Module> module,
     const lowering::DiagnosticContext* diag_ctx,
-    const SourceManager* source_manager,
-    lowering::OriginMapLookup* origin_lookup, bool force_two_state)
+    const SourceManager* source_manager, bool force_two_state)
     : arena_(&arena),
       design_arena_(&arena),
       types_(types),
@@ -57,8 +56,7 @@ Context::Context(
       llvm_module_(std::move(module)),
       builder_(*llvm_context_),
       diag_ctx_(diag_ctx),
-      source_manager_(source_manager),
-      origin_lookup_(origin_lookup) {
+      source_manager_(source_manager) {
 }
 
 auto Context::GetElemOpsForType(TypeId elem_type) -> Result<ElemOpsInfo> {
@@ -848,24 +846,30 @@ void Context::ReleaseOwnedTemps() {
   owned_temps_.clear();
 }
 
-void Context::RegisterUserFunction(
-    mir::FunctionId func_id, llvm::Function* llvm_func) {
-  user_functions_[func_id] = llvm_func;
+Context::DeclaredFunctionScope::DeclaredFunctionScope(
+    Context& ctx,
+    const absl::flat_hash_map<mir::FunctionId, llvm::Function*>& funcs)
+    : ctx_(ctx) {
+  ctx_.declared_functions_ = &funcs;
 }
 
-auto Context::GetUserFunction(mir::FunctionId func_id) const
+Context::DeclaredFunctionScope::~DeclaredFunctionScope() {
+  ctx_.declared_functions_ = nullptr;
+}
+
+auto Context::GetDeclaredFunction(mir::FunctionId func_id) const
     -> llvm::Function* {
-  auto it = user_functions_.find(func_id);
-  if (it == user_functions_.end()) {
+  if (declared_functions_ == nullptr) {
     throw common::InternalError(
-        "GetUserFunction",
-        std::format("user function {} not found", func_id.value));
+        "GetDeclaredFunction", "no declared-function scope active");
+  }
+  auto it = declared_functions_->find(func_id);
+  if (it == declared_functions_->end()) {
+    throw common::InternalError(
+        "GetDeclaredFunction",
+        std::format("function {} not found in current scope", func_id.value));
   }
   return it->second;
-}
-
-auto Context::HasUserFunction(mir::FunctionId func_id) const -> bool {
-  return user_functions_.contains(func_id);
 }
 
 void Context::RegisterDesignFunction(
@@ -881,89 +885,6 @@ auto Context::GetDesignFunction(SymbolId symbol) const
     throw common::InternalError(
         "GetDesignFunction",
         std::format("design function (symbol {}) not found", symbol.value));
-  }
-  return it->second;
-}
-
-void Context::RegisterModuleScopedFunction(
-    mir::FunctionId func_id, ModuleFunctionLowering lowering) {
-  auto [it, inserted] = module_function_lowering_.emplace(func_id, lowering);
-  if (!inserted) {
-    throw common::InternalError(
-        "RegisterModuleScopedFunction",
-        std::format(
-            "function {} registered twice (must be registered once per "
-            "specialization, not per instance)",
-            func_id.value));
-  }
-}
-
-auto Context::IsModuleScopedFunction(mir::FunctionId func_id) const -> bool {
-  return module_function_lowering_.contains(func_id);
-}
-
-auto Context::GetModuleFunctionLowering(mir::FunctionId func_id) const
-    -> const ModuleFunctionLowering& {
-  auto it = module_function_lowering_.find(func_id);
-  if (it == module_function_lowering_.end()) {
-    throw common::InternalError(
-        "GetModuleFunctionLowering",
-        std::format(
-            "function {} not registered as module-scoped", func_id.value));
-  }
-  return it->second;
-}
-
-void Context::RegisterMonitorLayout(
-    mir::FunctionId check_program, MonitorLayout layout) {
-  monitor_layouts_.emplace(check_program, std::move(layout));
-}
-
-auto Context::GetMonitorLayout(mir::FunctionId check_program) const
-    -> const MonitorLayout* {
-  auto it = monitor_layouts_.find(check_program);
-  if (it == monitor_layouts_.end()) {
-    return nullptr;
-  }
-  return &it->second;
-}
-
-void Context::RegisterMonitorSetupInfo(
-    mir::FunctionId setup_program, MonitorSetupInfo info) {
-  monitor_setup_infos_.emplace(setup_program, std::move(info));
-}
-
-auto Context::GetMonitorSetupInfo(mir::FunctionId setup_program) const
-    -> const MonitorSetupInfo* {
-  auto it = monitor_setup_infos_.find(setup_program);
-  if (it == monitor_setup_infos_.end()) {
-    return nullptr;
-  }
-  return &it->second;
-}
-
-void Context::RegisterDeferredAssertionSiteInfo(
-    mir::DeferredAssertionSiteId site_id,
-    const mir::DeferredAssertionSiteInfo* info) {
-  if (info == nullptr) {
-    throw common::InternalError(
-        "RegisterDeferredAssertionSiteInfo",
-        std::format("null info for site {}", site_id.Index()));
-  }
-  auto [it, inserted] =
-      deferred_assertion_sites_.emplace(site_id.Index(), info);
-  if (!inserted) {
-    throw common::InternalError(
-        "RegisterDeferredAssertionSiteInfo",
-        std::format("duplicate registration for site {}", site_id.Index()));
-  }
-}
-
-auto Context::GetDeferredAssertionSiteInfo(mir::DeferredAssertionSiteId site_id)
-    const -> const mir::DeferredAssertionSiteInfo* {
-  auto it = deferred_assertion_sites_.find(site_id.Index());
-  if (it == deferred_assertion_sites_.end()) {
-    return nullptr;
   }
   return it->second;
 }

@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstdint>
+#include <optional>
 #include <vector>
 
 #include "lyra/common/origin_id.hpp"
@@ -93,11 +94,29 @@ inline auto IsObserverProgram(RuntimeProgramKind kind) -> bool {
          kind == RuntimeProgramKind::kMonitorCheck;
 }
 
+// Monitor check program metadata: snapshot buffer layout for comparison logic.
+// Populated at MIR construction time in LowerMonitorEffect, read by the
+// backend's DefineMonitorCheckProgram and EmitMonitorSetupEpilogue.
+// Present iff runtime_kind == kMonitorCheck.
+struct MonitorCheckMeta {
+  std::vector<uint32_t> offsets;
+  std::vector<uint32_t> byte_sizes;
+  uint32_t total_size = 0;
+};
+
+// Monitor setup program metadata: reference to the paired check program.
+// The backend reads the check program's MonitorCheckMeta from the arena
+// for layout data. Present iff runtime_kind == kMonitorSetup.
+struct MonitorSetupMeta {
+  FunctionId check_program;
+};
+
 // ABI contract: what hidden context a callable accepts.
 // Formed at callable-definition policy level, not derived from body.
 // Orthogonal to BodyExecutionRequirement; verifier checks compatibility.
 struct CallableAbiContract {
   // Module binding group: this_ptr + instance_ptr + instance_id.
+  // Set by Arena::MarkModuleScoped() for all functions in a module body.
   bool needs_module_binding = false;
   // Active decision owner context may be threaded to this callable.
   bool accepts_decision_owner = false;
@@ -169,6 +188,10 @@ struct Function {
   // Formed from callable-definition policy, independent of body_requirement.
   // The verifier checks that body_requirement is satisfiable by this contract.
   CallableAbiContract abi_contract;
+
+  // Runtime-kind-specific metadata. Populated at MIR construction time.
+  std::optional<MonitorCheckMeta> monitor_check_meta;
+  std::optional<MonitorSetupMeta> monitor_setup_meta;
 };
 
 // Compute the body execution requirement for a function by walking all
@@ -179,7 +202,7 @@ auto ComputeBodyExecutionRequirement(const Function& func)
 // Seed the ABI contract for a callable from intrinsic body requirement.
 // Sets accepts_decision_owner = true iff this body directly contains
 // deferred-check-owner-required effects. Observer programs never accept (own
-// ABI). needs_module_binding is set separately by the backend.
+// ABI). needs_module_binding is set separately by Arena::MarkModuleScoped().
 //
 // This is the seed step only. PropagateDeferredOwnerAbi() must run
 // after all bodies are set to propagate through the call graph: if A

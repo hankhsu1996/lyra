@@ -17,7 +17,6 @@
 #include "lyra/mir/connection_recipe.hpp"
 #include "lyra/mir/construction_input.hpp"
 #include "lyra/mir/design.hpp"
-#include "lyra/mir/place.hpp"
 
 namespace lyra::lowering::hir_to_mir {
 
@@ -262,7 +261,7 @@ void CanonicalizeExternalRefPaths(
     mir::Design& design,
     const std::unordered_map<uint32_t, std::vector<ProvisionalNonLocalTarget>>&
         provisionals_by_body,
-    const BoundHierarchyIndex& topo, const mir::ConstructionInput& construction,
+    const BoundHierarchyIndex& topo,
     const std::unordered_map<uint32_t, mir::DurableChildId>&
         oi_to_durable_child) {
   for (uint32_t body_idx = 0; body_idx < design.module_bodies.size();
@@ -360,7 +359,8 @@ void BuildResolvedExternalRefBindings(
           mir::ResolvedExternalRefBinding{
               .target_object = common::ObjectIndex{target_oi},
               .target_local_slot = recipe.target_slot,
-              .type = body.external_refs[i].type});
+              .type = body.external_refs[i].type,
+              .global_slot = std::nullopt});
     }
   }
 }
@@ -378,9 +378,9 @@ auto IsFullyBindableRecipe(const mir::ConnectionRecipe& recipe) -> bool {
 
 auto BindConnectionRecipe(
     const mir::ConnectionRecipe& recipe, uint32_t recipe_index,
-    const mir::ModuleBody& parent_body, mir::ModuleBodyId parent_body_id,
-    common::ObjectIndex parent_object_index, const BoundHierarchyIndex& topo,
-    const mir::ConstructionInput& construction) -> mir::BoundConnection {
+    const mir::ModuleBody& parent_body, common::ObjectIndex parent_object_index,
+    const BoundHierarchyIndex& topo, const mir::ConstructionInput& construction)
+    -> mir::BoundConnection {
   if (!IsFullyBindableRecipe(recipe)) {
     throw common::InternalError(
         "BindConnectionRecipe",
@@ -426,7 +426,6 @@ auto BindConnectionRecipe(
   return mir::BoundConnection{
       .recipe_index = recipe_index,
       .kind = recipe.kind,
-      .parent_body_id = parent_body_id,
       .parent_object_index = parent_object_index,
       .child_target = child_ep,
       .parent_source = parent_ep,

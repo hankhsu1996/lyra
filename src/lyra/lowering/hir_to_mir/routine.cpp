@@ -120,8 +120,7 @@ auto BuildFunctionSignature(
 auto LowerFunctionBody(
     const hir::Function& function, const LoweringInput& input,
     mir::Arena& mir_arena, const DeclView& decl_view, OriginMap* origin_map,
-    hir::ModuleBodyId body_id, DecisionSiteAllocator* decision_allocator)
-    -> Result<mir::Function> {
+    DecisionSiteAllocator* decision_allocator) -> Result<mir::Function> {
   Context ctx{
       .mir_arena = &mir_arena,
       .design_arena = decl_view.design_arena,
@@ -155,7 +154,7 @@ auto LowerFunctionBody(
       .external_ref_cache = {},
   };
 
-  MirBuilder builder(&mir_arena, &ctx, origin_map, body_id, decision_allocator);
+  MirBuilder builder(&mir_arena, &ctx, origin_map, decision_allocator);
   BlockIndex entry_idx = builder.CreateBlock();
   BlockIndex exit_idx = builder.CreateBlock();
   builder.SetExitBlock(exit_idx);
@@ -217,6 +216,8 @@ auto LowerFunctionBody(
       .materialize_count = ctx.materialize_count,
       .decision_sites = std::move(decision_sites),
       .abi_contract = {},
+      .monitor_check_meta = std::nullopt,
+      .monitor_setup_meta = std::nullopt,
   };
 }
 
@@ -256,7 +257,7 @@ auto BuildTaskSignature(
 
 auto LowerTaskBody(
     const hir::Task& task, const LoweringInput& input, mir::Arena& mir_arena,
-    const DeclView& decl_view, OriginMap* origin_map, hir::ModuleBodyId body_id,
+    const DeclView& decl_view, OriginMap* origin_map,
     DecisionSiteAllocator* decision_allocator) -> Result<mir::Function> {
   TypeId void_type = input.builtin_types.void_type;
   Context ctx{
@@ -289,7 +290,7 @@ auto LowerTaskBody(
       .external_ref_cache = {},
   };
 
-  MirBuilder builder(&mir_arena, &ctx, origin_map, body_id, decision_allocator);
+  MirBuilder builder(&mir_arena, &ctx, origin_map, decision_allocator);
   BlockIndex entry_idx = builder.CreateBlock();
   BlockIndex exit_idx = builder.CreateBlock();
   builder.SetExitBlock(exit_idx);
@@ -333,6 +334,8 @@ auto LowerTaskBody(
       .materialize_count = ctx.materialize_count,
       .decision_sites = std::move(decision_sites),
       .abi_contract = {},
+      .monitor_check_meta = std::nullopt,
+      .monitor_setup_meta = std::nullopt,
   };
 }
 

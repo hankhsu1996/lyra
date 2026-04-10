@@ -102,8 +102,7 @@ auto LowerProcess(
     const LoweringInput& input, mir::Arena& mir_arena,
     const DeclView& decl_view, OriginMap* origin_map,
     std::vector<mir::FunctionId>* generated_functions,
-    hir::ModuleBodyId body_id, DecisionSiteAllocator* decision_allocator)
-    -> Result<mir::ProcessId> {
+    DecisionSiteAllocator* decision_allocator) -> Result<mir::ProcessId> {
   Context ctx{
       .mir_arena = &mir_arena,
       .design_arena = decl_view.design_arena,
@@ -139,7 +138,7 @@ auto LowerProcess(
       .external_ref_cache = {},
   };
 
-  MirBuilder builder(&mir_arena, &ctx, origin_map, body_id, decision_allocator);
+  MirBuilder builder(&mir_arena, &ctx, origin_map, decision_allocator);
 
   BlockIndex entry_idx = builder.CreateBlock();
   builder.SetCurrentBlock(entry_idx);
@@ -200,7 +199,7 @@ auto LowerProcess(
   // designated initializer ordering requirements)
   common::OriginId origin = common::OriginId::Invalid();
   if (origin_map != nullptr) {
-    origin = origin_map->Record(mir_proc_id, hir_proc_id, body_id);
+    origin = origin_map->Record(mir_proc_id, hir_proc_id);
   }
 
   mir::Process mir_process{

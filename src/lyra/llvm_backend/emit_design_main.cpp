@@ -33,6 +33,7 @@
 #include "lyra/llvm_backend/runtime_abi_codegen.hpp"
 #include "lyra/llvm_backend/type_ops/default_init.hpp"
 #include "lyra/llvm_backend/type_ops/four_state_init.hpp"
+#include "lyra/lowering/origin_map_lookup.hpp"
 #include "lyra/mir/deferred_assertion_site.hpp"
 #include "lyra/mir/handle.hpp"
 #include "lyra/realization/build_design_metadata.hpp"
@@ -254,23 +255,6 @@ auto EmitPerSchemaFrameInitFunctions(Context& context, const Layout& layout)
     const auto& schema = layout.state_schemas[si];
     if (!schema.needs_4state_init) continue;
 
-    // Validate schema identity metadata consistency.
-    if (schema.body_id.has_value()) {
-      if (!schema.proc_within_body.has_value() ||
-          schema.conn_index.has_value()) {
-        throw common::InternalError(
-            "EmitPerSchemaFrameInitFunctions",
-            "module schema has inconsistent identity fields");
-      }
-    } else {
-      if (schema.proc_within_body.has_value() ||
-          !schema.conn_index.has_value()) {
-        throw common::InternalError(
-            "EmitPerSchemaFrameInitFunctions",
-            "connection schema has inconsistent identity fields");
-      }
-    }
-
     if (schema.representative_process_index >= layout.processes.size()) {
       throw common::InternalError(
           "EmitPerSchemaFrameInitFunctions",
@@ -279,10 +263,9 @@ auto EmitPerSchemaFrameInitFunctions(Context& context, const Layout& layout)
 
     // Generate function name from schema identity.
     std::string fn_name;
-    if (schema.body_id) {
-      fn_name = std::format(
-          "schema_{}_{}_frame_init", schema.body_id->value,
-          *schema.proc_within_body);
+    if (schema.proc_within_body.has_value()) {
+      fn_name =
+          std::format("schema_s{}_{}_frame_init", si, *schema.proc_within_body);
     } else {
       fn_name = std::format("conn_{}_frame_init", *schema.conn_index);
     }
@@ -1064,13 +1047,6 @@ auto EmitBodyRealizationDescs(
     uint32_t body_id_val = info.body_id.value;
     auto num_procs = static_cast<uint32_t>(info.process_schema_indices.size());
 
-    if (funcs.body_id != info.body_id) {
-      throw common::InternalError(
-          "EmitBodyRealizationDescs",
-          std::format(
-              "body_id mismatch at index {}: compiled {} vs info {}", bi,
-              funcs.body_id.value, body_id_val));
-    }
     if (funcs.functions.size() != num_procs) {
       throw common::InternalError(
           "EmitBodyRealizationDescs",
@@ -1887,8 +1863,10 @@ struct ConstructorEmissionResult {
 // Returns the global pointer (or nullptr if no deferred sites).
 auto EmitDeferredAssertionSiteMetaGlobal(
     Context& context, const std::vector<mir::DeferredAssertionSiteInfo>& sites,
-    std::span<const DeferredSiteCompiledArtifact> artifacts)
-    -> llvm::Constant* {
+    std::span<const DeferredSiteCompiledArtifact> artifacts,
+    std::span<const lowering::BodyOriginProvenance::Entry* const>
+        site_origin_entries,
+    std::span<const uint32_t> site_cover_bases) -> llvm::Constant* {
   if (sites.empty()) return nullptr;
 
   if (artifacts.size() != sites.size()) {
@@ -1923,23 +1901,41 @@ auto EmitDeferredAssertionSiteMetaGlobal(
     auto kind_val = static_cast<uint8_t>(site.kind);
 
     // Derive cover_site_id from semantic action variant.
+    // cover_site_id in the action is body-local; apply per-site cover base
+    // to produce the design-global runtime index.
     uint32_t cover_id = UINT32_MAX;
     if (site.pass_action.has_value()) {
       const auto* cover_hit =
           std::get_if<mir::DeferredCoverHitAction>(&*site.pass_action);
       if (cover_hit != nullptr) {
-        cover_id = cover_hit->cover_site_id.Index();
+        uint32_t cover_base =
+            (si < site_cover_bases.size()) ? site_cover_bases[si] : 0;
+        cover_id = cover_base + cover_hit->cover_site_id.Index();
       }
     }
 
     // Resolve source location from canonical OriginId.
+    // Sites are body-local; resolve from the owning body's origin table
+    // instead of the design-global OriginMapLookup (which has no active
+    // BodyScope at this point).
     llvm::Constant* file_ptr = llvm::ConstantPointerNull::get(ptr_ty);
     uint32_t line = 0;
     uint32_t col = 0;
     if (site.origin.IsValid()) {
+      std::optional<lowering::BodyLocalOriginResolver> site_resolver;
+      std::optional<lowering::DiagnosticContext> site_diag;
+      const lowering::DiagnosticContext* site_diag_ptr =
+          &context.GetDiagnosticContext();
+      if (si < site_origin_entries.size() &&
+          site_origin_entries[si] != nullptr &&
+          site_origin_entries[si]->arena != nullptr) {
+        site_resolver.emplace(
+            site_origin_entries[si]->origins, *site_origin_entries[si]->arena);
+        site_diag.emplace(*site_resolver);
+        site_diag_ptr = &*site_diag;
+      }
       auto loc = ResolveProcessOrigin(
-          site.origin, &context.GetDiagnosticContext(),
-          context.GetSourceManager());
+          site.origin, site_diag_ptr, context.GetSourceManager());
       if (loc.line > 0 && !loc.file.empty()) {
         auto* str_const =
             llvm::ConstantDataArray::getString(llvm_ctx, loc.file, true);
@@ -2146,9 +2142,8 @@ void EmitRunSimulation(
 
 void EmitMainExit(
     Context& context, llvm::Value* design_state,
-    const std::vector<SlotInfo>& slot_info, const EmitDesignMainInput& input,
-    llvm::BasicBlock* exit_block, llvm::Value* abi_alloca,
-    const ConstructorEmissionResult& ctor_result,
+    const EmitDesignMainInput& input, llvm::BasicBlock* exit_block,
+    llvm::Value* abi_alloca, const ConstructorEmissionResult& ctor_result,
     const InspectionPlan& inspection_plan) {
   auto& builder = context.GetBuilder();
   auto& ctx = context.GetLlvmContext();
@@ -2162,12 +2157,11 @@ void EmitMainExit(
   // Backend-owned variable inspection from typed placement descriptors.
   if (!inspection_plan.IsEmpty()) {
     EmitVariableInspection(
-        context, inspection_plan, slot_info, design_state, abi_alloca);
+        context, inspection_plan, *input.design, design_state, abi_alloca);
   }
 
   if (input.hooks != nullptr) {
-    input.hooks->EmitPostSimulationReports(
-        context, slot_info, design_state, abi_alloca);
+    input.hooks->EmitPostSimulationReports(context, design_state, abi_alloca);
   }
 
   if (ctor_result.result_handle != nullptr) {
@@ -2186,6 +2180,7 @@ auto BuildEmitDesignMainInput(const lowering::mir_to_llvm::LoweringInput& input)
       .design_arena = input.mir_arena,
       .diag_ctx = input.diag_ctx,
       .source_manager = input.source_manager,
+      .origin_provenance = input.origin_provenance,
       .hooks = input.hooks,
       .main_abi = input.main_abi,
       .fs_base_dir = input.fs_base_dir,
@@ -2524,7 +2519,6 @@ auto EmitDesignMain(
   ForwardingAnalysisReport forwarding_report;
   auto& context = *session.context;
   const auto& layout = *session.layout;
-  const auto& slot_info = session.slot_info;
   const auto& process_funcs = session.process_funcs;
   size_t num_init = session.num_init_processes;
   const auto& realization = session.realization;
@@ -2608,14 +2602,13 @@ auto EmitDesignMain(
     EmitRuntimeInit(context, main_func, input);
 
     if (input.hooks != nullptr) {
-      input.hooks->OnAfterInitializeDesignState(
-          context, slot_info, design_state);
+      input.hooks->OnAfterInitializeDesignState(context, design_state);
     }
 
     EmitInitProcesses(context, design_state, layout, process_funcs, num_init);
 
     if (input.hooks != nullptr) {
-      input.hooks->OnBeforeRunSimulation(context, slot_info, design_state);
+      input.hooks->OnBeforeRunSimulation(context, design_state);
     }
 
     auto plusargs = BuildPlusargs(context, main_func, input);
@@ -2661,9 +2654,31 @@ auto EmitDesignMain(
       slot_trace_for_abi = ctor_result.slot_trace;
     }
 
+    // Build per-site origin entry and cover base mappings from body-owned
+    // site counts. Each site's origin/cover-base is determined by its
+    // owning body.
+    std::vector<const lowering::BodyOriginProvenance::Entry*>
+        site_origin_entries;
+    std::vector<uint32_t> site_cover_bases;
+    {
+      auto num_sites = input.design->deferred_assertion_sites.size();
+      site_origin_entries.reserve(num_sites);
+      site_cover_bases.reserve(num_sites);
+      uint32_t cover_base = 0;
+      for (const auto& body : input.design->module_bodies) {
+        const auto* entry = (input.origin_provenance != nullptr)
+                                ? input.origin_provenance->Find(&body)
+                                : nullptr;
+        for (size_t s = 0; s < body.deferred_assertion_sites.size(); ++s) {
+          site_origin_entries.push_back(entry);
+          site_cover_bases.push_back(cover_base);
+        }
+        cover_base += static_cast<uint32_t>(body.immediate_cover_sites.size());
+      }
+    }
     auto* deferred_site_meta_global = EmitDeferredAssertionSiteMetaGlobal(
         context, input.design->deferred_assertion_sites,
-        session.deferred_site_artifacts);
+        session.deferred_site_artifacts, site_origin_entries, site_cover_bases);
     auto* abi_alloca = BuildRuntimeAbi(
         context, meta_globals, wait_site_meta, num_connection,
         input.feature_flags, input.signal_trace_path, design_state,
@@ -2684,14 +2699,13 @@ auto EmitDesignMain(
     EmitRuntimeInit(context, main_func, input);
 
     if (input.hooks != nullptr) {
-      input.hooks->OnAfterInitializeDesignState(
-          context, slot_info, design_state);
+      input.hooks->OnAfterInitializeDesignState(context, design_state);
     }
 
     EmitInitProcesses(context, design_state, layout, process_funcs, num_init);
 
     if (input.hooks != nullptr) {
-      input.hooks->OnBeforeRunSimulation(context, slot_info, design_state);
+      input.hooks->OnBeforeRunSimulation(context, design_state);
     }
   }
 
@@ -2707,8 +2721,8 @@ auto EmitDesignMain(
   }
 
   EmitMainExit(
-      context, design_state, slot_info, input, exit_block, abi_for_exit,
-      ctor_result, inspection_plan);
+      context, design_state, input, exit_block, abi_for_exit, ctor_result,
+      inspection_plan);
 
   return LoweringReport{
       .forwarding_analysis = std::move(forwarding_report),

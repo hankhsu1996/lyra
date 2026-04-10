@@ -9,14 +9,13 @@
 namespace lyra::mir {
 
 // Per-site metadata for an immediate cover statement.
-// One entry per cover statement in the design, indexed by CoverSiteId.
 struct ImmediateCoverSiteInfo {
   SourceSpan span;
 };
 
 // Dense allocator for immediate cover sites during HIR-to-MIR lowering.
-// Owned by the design lowering scope; shared across all body/process
-// lowering contexts via pointer. Produces design-global CoverSiteId values.
+// One registry per body; produces body-local CoverSiteId values (0-based
+// per body). Design-global indices are computed at assembly time.
 class ImmediateCoverSiteRegistry {
  public:
   auto Allocate(SourceSpan span) -> CoverSiteId {

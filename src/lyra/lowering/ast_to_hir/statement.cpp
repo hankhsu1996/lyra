@@ -3,9 +3,11 @@
 #include <format>
 #include <optional>
 
+#include <slang/ast/expressions/CallExpression.h>
 #include <slang/ast/statements/ConditionalStatements.h>
 #include <slang/ast/statements/LoopStatements.h>
 #include <slang/ast/statements/MiscStatements.h>
+#include <slang/ast/symbols/SubroutineSymbols.h>
 
 #include "lyra/common/diagnostic/diagnostic_sink.hpp"
 #include "lyra/common/type.hpp"
@@ -14,6 +16,7 @@
 #include "lyra/hir/fwd.hpp"
 #include "lyra/hir/statement.hpp"
 #include "lyra/lowering/ast_to_hir/context.hpp"
+#include "lyra/lowering/ast_to_hir/detail/statement_lowering.hpp"
 #include "lyra/lowering/ast_to_hir/expression.hpp"
 #include "lyra/lowering/ast_to_hir/module_lowerer.hpp"
 #include "lyra/lowering/ast_to_hir/statement_assert.hpp"
@@ -160,6 +163,128 @@ auto LowerStatement(const slang::ast::Statement& stmt, ScopeLowerer& lowerer)
           std::format("unsupported statement kind '{}'", toString(stmt.kind)));
       return hir::kInvalidStatementId;
   }
+}
+
+namespace {
+
+// Extract the call ExpressionId from a lowered action StatementId.
+// Returns kInvalidExpressionId if the statement shape doesn't match.
+auto ExtractCallExprIdFromLoweredAction(
+    hir::StatementId action_id, const hir::Arena& arena) -> hir::ExpressionId {
+  const auto& stmt = arena[action_id];
+  const hir::Statement* inner = &stmt;
+
+  if (const auto* block = std::get_if<hir::BlockStatementData>(&stmt.data)) {
+    if (block->statements.size() != 1) return hir::kInvalidExpressionId;
+    inner = &arena[block->statements[0]];
+  }
+
+  const auto* expr_stmt =
+      std::get_if<hir::ExpressionStatementData>(&inner->data);
+  if (expr_stmt == nullptr) return hir::kInvalidExpressionId;
+
+  const auto& expr = arena[expr_stmt->expression];
+  if (std::get_if<hir::CallExpressionData>(&expr.data) == nullptr) {
+    return hir::kInvalidExpressionId;
+  }
+  return expr_stmt->expression;
+}
+
+}  // namespace
+
+auto LowerAndNormalizeActionBranch(
+    const slang::ast::Statement* slang_action, ScopeLowerer& lowerer,
+    const hir::Arena& arena, SourceSpan span, const char* branch_label)
+    -> LoweredActionBranch {
+  // Step 1: absent branch.
+  if (slang_action == nullptr) {
+    return {.kind = LoweredActionBranchKind::kAbsent};
+  }
+
+  // Step 2: lower the child statement.
+  auto result = LowerStatement(*slang_action, lowerer);
+  if (!result.has_value()) {
+    // LowerStatement returns nullopt for Empty statements (no-op).
+    // slang emits Empty as ifTrue for bare `assert #0 (cond);` with
+    // no user action. Treat as absent, not as a lowering error.
+    return {.kind = LoweredActionBranchKind::kAbsent};
+  }
+  if (!*result) {
+    return {.kind = LoweredActionBranchKind::kInvalid};
+  }
+  hir::StatementId stmt_id = *result;
+
+  // Step 3: validate slang action shape -- must be a single user call.
+  const slang::ast::Statement* inner = slang_action;
+  if (inner->kind == slang::ast::StatementKind::Block) {
+    const auto& block = inner->as<slang::ast::BlockStatement>();
+    if (block.body.kind == slang::ast::StatementKind::List) {
+      const auto& list = block.body.as<slang::ast::StatementList>();
+      if (list.list.size() != 1) {
+        lowerer.Ctx().sink->Unsupported(
+            span,
+            std::format(
+                "deferred assertion {} must be a single subroutine call",
+                branch_label),
+            UnsupportedCategory::kFeature);
+        return {
+            .kind = LoweredActionBranchKind::kInvalid, .statement_id = stmt_id};
+      }
+      inner = list.list[0];
+    } else {
+      inner = &block.body;
+    }
+  }
+
+  if (inner->kind != slang::ast::StatementKind::ExpressionStatement) {
+    lowerer.Ctx().sink->Unsupported(
+        span,
+        std::format(
+            "deferred assertion {} must be a single subroutine call",
+            branch_label),
+        UnsupportedCategory::kFeature);
+    return {.kind = LoweredActionBranchKind::kInvalid, .statement_id = stmt_id};
+  }
+
+  const auto& expr_stmt = inner->as<slang::ast::ExpressionStatement>();
+  if (expr_stmt.expr.kind != slang::ast::ExpressionKind::Call) {
+    lowerer.Ctx().sink->Unsupported(
+        span,
+        std::format(
+            "deferred assertion {} must be a single subroutine call",
+            branch_label),
+        UnsupportedCategory::kFeature);
+    return {.kind = LoweredActionBranchKind::kInvalid, .statement_id = stmt_id};
+  }
+
+  const auto& call = expr_stmt.expr.as<slang::ast::CallExpression>();
+  if (std::get_if<const slang::ast::SubroutineSymbol*>(&call.subroutine) ==
+      nullptr) {
+    lowerer.Ctx().sink->Unsupported(
+        span,
+        std::format(
+            "deferred assertion {} system task action not yet supported",
+            branch_label),
+        UnsupportedCategory::kFeature);
+    return {.kind = LoweredActionBranchKind::kInvalid, .statement_id = stmt_id};
+  }
+
+  // Step 4: extract HIR call expression ID (not pointer -- the arena
+  // may reallocate when subsequent branches are lowered).
+  auto call_expr_id = ExtractCallExprIdFromLoweredAction(stmt_id, arena);
+  if (!call_expr_id) {
+    throw common::InternalError(
+        "LowerAndNormalizeActionBranch",
+        std::format(
+            "slang action is a call but HIR did not produce "
+            "CallExpressionData for {} branch",
+            branch_label));
+  }
+
+  return {
+      .kind = LoweredActionBranchKind::kValidSingleCall,
+      .statement_id = stmt_id,
+      .call_expr_id = call_expr_id};
 }
 
 }  // namespace lyra::lowering::ast_to_hir

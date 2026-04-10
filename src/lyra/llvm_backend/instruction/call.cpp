@@ -276,11 +276,11 @@ auto LowerCall(
             const auto& arena = context.GetMirArena();
             const auto& func = arena[func_id];
             ResolvedCallee resolved{
-                .llvm_func = context.GetUserFunction(func_id),
+                .llvm_func = context.GetDeclaredFunction(func_id),
                 .signature = &func.signature,
                 .return_type = func.signature.return_type,
                 .uses_sret = context.FunctionUsesSret(func_id),
-                .is_module_scoped = context.IsModuleScopedFunction(func_id),
+                .is_module_scoped = func.abi_contract.needs_module_binding,
                 .accepts_decision_owner =
                     func.abi_contract.accepts_decision_owner,
                 .func_id = func_id,
@@ -296,7 +296,7 @@ auto LowerCall(
                 .return_type = func.signature.return_type,
                 .uses_sret = func.signature.return_policy ==
                              mir::ReturnPolicy::kSretOutParam,
-                .is_module_scoped = false,
+                .is_module_scoped = func.abi_contract.needs_module_binding,
                 .accepts_decision_owner =
                     func.abi_contract.accepts_decision_owner,
                 .func_id = entry.func_id,

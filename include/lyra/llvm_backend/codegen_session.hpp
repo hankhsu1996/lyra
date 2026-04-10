@@ -15,8 +15,8 @@
 #include "lyra/llvm_backend/layout/layout.hpp"
 #include "lyra/llvm_backend/lowering_reports.hpp"
 #include "lyra/llvm_backend/process.hpp"
-#include "lyra/mir/arena.hpp"
-#include "lyra/mir/construction_input.hpp"
+#include "lyra/lowering/origin_map_lookup.hpp"
+#include "lyra/mir/deferred_assertion_site.hpp"
 #include "lyra/mir/handle.hpp"
 #include "lyra/runtime/construction_program_abi.hpp"
 
@@ -34,8 +34,9 @@ struct SpecInstanceBinding {
 
 // Specialization-owned MIR content: identity + behavioral IR references.
 // Does not contain backend layout or codegen routing data.
+// body is the canonical identity -- numeric body_id is derived when needed.
 struct SpecCompilationUnit {
-  mir::ModuleBodyId body_id;
+  const mir::ModuleBody* body = nullptr;
   std::vector<mir::ProcessId> processes;
   std::vector<mir::FunctionId> functions;
   std::vector<SpecInstanceBinding> instances;
@@ -49,7 +50,7 @@ struct SpecProcessView {
   uint32_t nonfinal_proc_ordinal;  // Dense non-final body-local process ordinal
   uint32_t layout_process_index;   // Matching entry in layout.processes
   mir::ProcessId process_id;
-  std::string func_name;  // body_{body_id}_proc_{nonfinal_proc_ordinal}
+  std::string func_name;  // body_{idx}_proc_{nonfinal_proc_ordinal}
 };
 
 // Narrow backend view for compiling one specialization body.
@@ -68,8 +69,6 @@ enum class SpecSlotAccessKind : uint8_t {
 };
 
 struct SpecSlotInfo {
-  // Body identity for this specialization.
-  mir::ModuleBodyId body_id;
   // Stable index into Layout::body_realization_infos for this body.
   static constexpr uint32_t kInvalidBodyInfoIndex = UINT32_MAX;
   uint32_t body_realization_info_index = kInvalidBodyInfoIndex;
@@ -127,11 +126,25 @@ struct ConnectionNotificationMask {
 // specialization body. Owns specialization-local backend data (MIR
 // membership, layout, codegen routing). Does not reference orchestrator
 // storage -- the specialization compiler reads only from this object.
+// body is the canonical identity -- no numeric body_id.
 struct CompiledModuleSpecInput {
-  mir::ModuleBodyId body_id;
+  const mir::ModuleBody* body = nullptr;
   std::vector<mir::ProcessId> processes;
   std::vector<mir::FunctionId> functions;
   SpecCodegenView view;
+  // LLVM symbol naming prefix, precomputed from body index.
+  // E.g., "body_3" for the fourth specialization body.
+  std::string name_prefix;
+  // Origin provenance for this body's diagnostic resolution.
+  // Null when origin provenance is unavailable.
+  const lowering::BodyOriginProvenance::Entry* origin_entry = nullptr;
+  // Per-body deferred assertion sites (from body-owned storage).
+  std::span<const mir::DeferredAssertionSiteInfo> deferred_sites;
+  // Base indices for body-local-to-global remapping. MIR effects carry
+  // body-local site IDs; the backend adds the base to produce design-global
+  // runtime indices.
+  uint32_t deferred_site_base_index = 0;
+  uint32_t cover_site_base_index = 0;
   // Specialization-local state. Owned by CompileDesignProcesses,
   // consumed by CompileModuleSpecSession via SpecLocalScope.
   const SpecSlotInfo* spec_slot_info = nullptr;
@@ -139,12 +152,10 @@ struct CompiledModuleSpecInput {
 };
 
 // Process codegen product of compiling one specialization body.
-// Contains process functions and wait sites produced by
-// CompileModuleSpecSession. Body-local user functions are registered as
-// Context side effects (not returned here) because no downstream consumer
-// currently needs them as explicit products.
+// All compilation (processes, thunks) is performed inside the session.
+// The caller never reads ambient Context state between sessions.
 struct CompiledModuleSpec {
-  mir::ModuleBodyId body_id;
+  const mir::ModuleBody* body = nullptr;
   // Parallel to input.view.processes: one compiled function per body process
   std::vector<llvm::Function*> process_functions;
   std::vector<WaitSiteEntry> wait_sites;
@@ -152,6 +163,15 @@ struct CompiledModuleSpec {
   // process. Index by body process ordinal to get trigger facts.
   // scheduled_process_index is NOT yet set (stamped per-instance later).
   std::vector<std::optional<ProcessTriggerEntry>> process_triggers;
+  // Design-global base index for deferred site concatenation.
+  uint32_t deferred_site_base_index = 0;
+  // Per-body compiled deferred assertion thunk artifacts.
+  // Parallel to body's deferred_assertion_sites. Compiled inside the
+  // session while declared functions are in scope.
+  std::vector<DeferredSiteCompiledArtifact> deferred_artifacts;
+  // Body-local declared functions: (FunctionId, llvm::Function*).
+  // Captured inside the session for DPI export wrapper resolution.
+  std::vector<std::pair<mir::FunctionId, llvm::Function*>> declared_functions;
 };
 
 // Pure-data construction program: pooled paths, pooled param payloads, and
@@ -164,22 +184,11 @@ struct ConstructionProgramData {
 };
 
 // Design-derived inputs for the realization/assembly phase, extracted during
-// CompileDesignProcesses. This is a partial bundle -- only the fields that
-// assembly and metadata lowering currently consume. Not the full realization
-// model. Indexed forms are explicit so each helper can take narrow views.
+// CompileDesignProcesses. Carries the pure-data construction program built
+// by lowering, serialized to LLVM globals by emission, and replayed by the
+// runtime constructor. Entries are in strict ModuleIndex order. Runtime
+// relies on this order for instance_id and flat slot-base allocation.
 struct RealizationData {
-  // Indexed by slot_id.value.
-  std::vector<TypeId> slot_types;
-  std::vector<mir::SlotKind> slot_kinds;
-
-  // Compact slot trace provenance from mir::Design (parallel to slot_types).
-  std::vector<mir::SlotTraceProvenance> slot_trace_provenance;
-  std::vector<char> slot_trace_string_pool;
-
-  // Pure-data construction program. Built by lowering, serialized to LLVM
-  // globals by emission, replayed by the runtime constructor. Entries are in
-  // strict ModuleIndex order. Runtime relies on this order for instance_id
-  // and flat slot-base allocation.
   ConstructionProgramData construction_program;
 };
 
@@ -198,7 +207,6 @@ struct CodegenSession {
   RealizationData realization;
   std::vector<llvm::Function*> process_funcs;
   std::vector<WaitSiteEntry> wait_sites;
-  std::vector<SlotInfo> slot_info;
   size_t num_init_processes = 0;
   // Per-body compiled process functions for body
   // realization descriptor emission. Parallel to
@@ -206,7 +214,6 @@ struct CodegenSession {
   // body_realization_infos[i]. Each inner vector is parallel to the
   // body's non-final process list.
   struct BodyCompiledFuncs {
-    mir::ModuleBodyId body_id;
     std::vector<llvm::Function*> functions;
   };
   std::vector<BodyCompiledFuncs> body_compiled_funcs;
@@ -227,19 +234,11 @@ auto CompileDesignProcesses(const LoweringInput& input)
 // entrypoint. Registers monitors, declares/defines body-local functions,
 // generates shared/template process functions, and returns an explicit product.
 // Does not inspect design-global state, package functions, or wrapper logic.
+// All body-specific data is carried on the input -- no design or provenance
+// parameter needed.
 auto CompileModuleSpecSession(
-    Context& context, const mir::Arena& arena,
-    const CompiledModuleSpecInput& input) -> Result<CompiledModuleSpec>;
-
-// Extract design-derived realization data from narrow inputs.
-// Setup helper: called from CompileDesignProcesses during orchestration,
-// not part of per-spec compilation. Declared here because RealizationData
-// (its return type) is defined in this header.
-auto ExtractRealizationData(
-    const mir::ConstructionInput& construction,
-    std::span<const mir::SlotDesc> slots,
-    std::span<const mir::SlotTraceProvenance> slot_trace_provenance,
-    std::span<const char> slot_trace_string_pool) -> RealizationData;
+    Context& context, const CompiledModuleSpecInput& input,
+    const mir::ConstructionInput* construction) -> Result<CompiledModuleSpec>;
 
 // Backend phase: extract LLVM ownership from a completed session.
 auto FinalizeModule(CodegenSession session, LoweringReport report)

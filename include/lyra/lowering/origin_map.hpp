@@ -70,7 +70,6 @@ using HirSource = std::variant<
 struct OriginEntry {
   MirNode mir_node;
   HirSource hir_source;
-  hir::ModuleBodyId body_id;
 };
 
 // Maps MIR constructs back to their HIR sources for error reporting.
@@ -80,8 +79,7 @@ class OriginMap {
   OriginMap() = default;
 
   // Core API (variant-based).
-  auto Record(MirNode mir_node, HirSource hir_source, hir::ModuleBodyId body_id)
-      -> common::OriginId;
+  auto Record(MirNode mir_node, HirSource hir_source) -> common::OriginId;
 
   // Lookup an origin entry by ID. Returns nullopt for invalid IDs.
   [[nodiscard]] auto Resolve(common::OriginId id) const
@@ -99,53 +97,37 @@ class OriginMap {
   }
 
   // Typed overloads - prevent cross-kind misuse at call sites.
-  auto Record(
-      mir::FunctionId mir, hir::FunctionId hir, hir::ModuleBodyId body_id)
-      -> common::OriginId {
-    return Record(MirNode{mir}, HirSource{hir}, body_id);
+  auto Record(mir::FunctionId mir, hir::FunctionId hir) -> common::OriginId {
+    return Record(MirNode{mir}, HirSource{hir});
   }
-  auto Record(mir::ProcessId mir, hir::ProcessId hir, hir::ModuleBodyId body_id)
-      -> common::OriginId {
-    return Record(MirNode{mir}, HirSource{hir}, body_id);
+  auto Record(mir::ProcessId mir, hir::ProcessId hir) -> common::OriginId {
+    return Record(MirNode{mir}, HirSource{hir});
   }
-  auto Record(StatementRef mir, hir::StatementId hir, hir::ModuleBodyId body_id)
-      -> common::OriginId {
-    return Record(MirNode{mir}, HirSource{hir}, body_id);
+  auto Record(StatementRef mir, hir::StatementId hir) -> common::OriginId {
+    return Record(MirNode{mir}, HirSource{hir});
   }
-  auto Record(
-      StatementRef mir, hir::ExpressionId hir, hir::ModuleBodyId body_id)
-      -> common::OriginId {
-    return Record(MirNode{mir}, HirSource{hir}, body_id);
+  auto Record(StatementRef mir, hir::ExpressionId hir) -> common::OriginId {
+    return Record(MirNode{mir}, HirSource{hir});
   }
-  auto Record(
-      TerminatorRef mir, hir::StatementId hir, hir::ModuleBodyId body_id)
-      -> common::OriginId {
-    return Record(MirNode{mir}, HirSource{hir}, body_id);
+  auto Record(TerminatorRef mir, hir::StatementId hir) -> common::OriginId {
+    return Record(MirNode{mir}, HirSource{hir});
   }
-  auto Record(
-      TerminatorRef mir, hir::ExpressionId hir, hir::ModuleBodyId body_id)
-      -> common::OriginId {
-    return Record(MirNode{mir}, HirSource{hir}, body_id);
+  auto Record(TerminatorRef mir, hir::ExpressionId hir) -> common::OriginId {
+    return Record(MirNode{mir}, HirSource{hir});
   }
-  auto Record(
-      PrologueParamRef mir, FunctionParamRef hir, hir::ModuleBodyId body_id)
-      -> common::OriginId {
-    return Record(MirNode{mir}, HirSource{hir}, body_id);
+  auto Record(PrologueParamRef mir, FunctionParamRef hir) -> common::OriginId {
+    return Record(MirNode{mir}, HirSource{hir});
   }
-  auto Record(mir::FunctionId mir, hir::TaskId hir, hir::ModuleBodyId body_id)
-      -> common::OriginId {
-    return Record(MirNode{mir}, HirSource{hir}, body_id);
+  auto Record(mir::FunctionId mir, hir::TaskId hir) -> common::OriginId {
+    return Record(MirNode{mir}, HirSource{hir});
   }
-  auto Record(PrologueParamRef mir, TaskParamRef hir, hir::ModuleBodyId body_id)
-      -> common::OriginId {
-    return Record(MirNode{mir}, HirSource{hir}, body_id);
+  auto Record(PrologueParamRef mir, TaskParamRef hir) -> common::OriginId {
+    return Record(MirNode{mir}, HirSource{hir});
   }
 
   // Source-only entry for projections (no MIR construct to reference).
-  auto Record(
-      std::monostate mir, hir::ExpressionId hir, hir::ModuleBodyId body_id)
-      -> common::OriginId {
-    return Record(MirNode{mir}, HirSource{hir}, body_id);
+  auto Record(std::monostate mir, hir::ExpressionId hir) -> common::OriginId {
+    return Record(MirNode{mir}, HirSource{hir});
   }
 
  private:

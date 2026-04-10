@@ -24,7 +24,6 @@
 #include "lyra/lowering/diagnostic_context.hpp"
 #include "lyra/mir/arena.hpp"
 #include "lyra/mir/construction_input.hpp"
-#include "lyra/mir/deferred_assertion_site.hpp"
 #include "lyra/mir/external_ref.hpp"
 #include "lyra/mir/handle.hpp"
 #include "lyra/mir/routine.hpp"
@@ -32,10 +31,6 @@
 
 namespace lyra {
 class SourceManager;
-}
-
-namespace lyra::lowering {
-class OriginMapLookup;
 }
 
 namespace lyra::mir {
@@ -187,7 +182,6 @@ class Context {
       std::unique_ptr<llvm::Module> module,
       const lowering::DiagnosticContext* diag_ctx,
       const SourceManager* source_manager = nullptr,
-      lowering::OriginMapLookup* origin_lookup = nullptr,
       bool force_two_state = false);
 
   [[nodiscard]] auto GetLlvmContext() -> llvm::LLVMContext& {
@@ -235,6 +229,27 @@ class Context {
     Context& ctx_;
     const mir::Arena* saved_;
   };
+  // Scoped diagnostic context guard: temporarily replaces diag_ctx_ for one
+  // compilation session. Restores previous context on destruction.
+  class DiagnosticScope {
+   public:
+    DiagnosticScope(Context& ctx, const lowering::DiagnosticContext* diag_ctx)
+        : ctx_(ctx), saved_(ctx.diag_ctx_) {
+      ctx_.diag_ctx_ = diag_ctx;
+    }
+    ~DiagnosticScope() {
+      ctx_.diag_ctx_ = saved_;
+    }
+    DiagnosticScope(const DiagnosticScope&) = delete;
+    auto operator=(const DiagnosticScope&) -> DiagnosticScope& = delete;
+    DiagnosticScope(DiagnosticScope&&) = delete;
+    auto operator=(DiagnosticScope&&) -> DiagnosticScope& = delete;
+
+   private:
+    Context& ctx_;
+    const lowering::DiagnosticContext* saved_;
+  };
+
   [[nodiscard]] auto GetTypeArena() const -> const TypeArena& {
     return types_;
   }
@@ -903,11 +918,6 @@ class Context {
     return source_manager_;
   }
 
-  // Access origin lookup for body-scoped OriginId resolution.
-  [[nodiscard]] auto GetOriginLookup() const -> lowering::OriginMapLookup* {
-    return origin_lookup_;
-  }
-
   // Register an owned string temp that needs release at end of statement
   void RegisterOwnedTemp(llvm::Value* handle);
 
@@ -917,11 +927,29 @@ class Context {
   // Release all registered owned temps (called by StatementScope destructor)
   void ReleaseOwnedTemps();
 
-  // User function registry for function calls
-  void RegisterUserFunction(mir::FunctionId func_id, llvm::Function* llvm_func);
-  [[nodiscard]] auto GetUserFunction(mir::FunctionId func_id) const
+  // Session-scoped declared-function lookup. Installed by
+  // DeclaredFunctionScope for the duration of a declare/define pass
+  // (Phase 3 or per-body session). Not persistent across sessions.
+  [[nodiscard]] auto GetDeclaredFunction(mir::FunctionId func_id) const
       -> llvm::Function*;
-  [[nodiscard]] auto HasUserFunction(mir::FunctionId func_id) const -> bool;
+
+  // RAII guard for declared-function lookup scope.
+  // The caller owns the map; this scope installs a non-owning pointer.
+  class DeclaredFunctionScope {
+   public:
+    DeclaredFunctionScope(
+        Context& ctx,
+        const absl::flat_hash_map<mir::FunctionId, llvm::Function*>& funcs);
+    ~DeclaredFunctionScope();
+    DeclaredFunctionScope(const DeclaredFunctionScope&) = delete;
+    auto operator=(const DeclaredFunctionScope&)
+        -> DeclaredFunctionScope& = delete;
+    DeclaredFunctionScope(DeclaredFunctionScope&&) = delete;
+    auto operator=(DeclaredFunctionScope&&) -> DeclaredFunctionScope& = delete;
+
+   private:
+    Context& ctx_;
+  };
 
   // Design-global function registry (keyed by SymbolId).
   // Used for DesignFunctionRef resolution in body MIR.
@@ -936,63 +964,7 @@ class Context {
   [[nodiscard]] auto GetDesignFunction(SymbolId symbol) const
       -> const DesignFunctionEntry&;
 
-  // Module-scoped function lowering metadata.
-  // Module-scoped functions use kSpecializationLocal addressing for
-  // module-local slot access. How the specialization-local context is
-  // received (ObserverContext* vs exploded args) is determined by
-  // mir::IsObserverProgram(runtime_kind), not by this struct.
-  //
-  // spec_slot_info is specialization-owned addressing data (owned by
-  // SpecSlotInfo, shared across all instances of the same specialization).
-  struct ModuleFunctionLowering {
-    const SpecSlotInfo* spec_slot_info = nullptr;
-    const ConnectionNotificationMask* connection_notification_mask = nullptr;
-  };
-  void RegisterModuleScopedFunction(
-      mir::FunctionId func_id, ModuleFunctionLowering lowering);
-  void ClearModuleScopedFunctions() {
-    module_function_lowering_.clear();
-  }
-  [[nodiscard]] auto IsModuleScopedFunction(mir::FunctionId func_id) const
-      -> bool;
-  [[nodiscard]] auto GetModuleFunctionLowering(mir::FunctionId func_id) const
-      -> const ModuleFunctionLowering&;
-
-  // Monitor layout: snapshot encoding info (codegen artifact, not in MIR).
-  // Keyed by check_program FunctionId. Contains only layout info (offsets,
-  // sizes). format_ops come from the check program's own DisplayEffect
-  // (correct MIR context).
-  struct MonitorLayout {
-    std::vector<uint32_t> offsets;     // Per-operand offset into buffer
-    std::vector<uint32_t> byte_sizes;  // Per-operand byte size
-    uint32_t total_size = 0;           // Total buffer size
-  };
-  void RegisterMonitorLayout(
-      mir::FunctionId check_program, MonitorLayout layout);
-  [[nodiscard]] auto GetMonitorLayout(mir::FunctionId check_program) const
-      -> const MonitorLayout*;
-
-  // Monitor setup program marker (codegen artifact, not stored in MIR).
-  // When present, LLVM lowering appends serialization + registration.
-  // Layout is looked up via check_program (single source of truth).
-  struct MonitorSetupInfo {
-    mir::FunctionId check_program;
-  };
-  void RegisterMonitorSetupInfo(
-      mir::FunctionId setup_program, MonitorSetupInfo info);
-  [[nodiscard]] auto GetMonitorSetupInfo(mir::FunctionId setup_program) const
-      -> const MonitorSetupInfo*;
-
   // Deferred assertion site info (borrowed pointer into design sites).
-  // Keyed by site ID. Used by enqueue codegen to derive ref binding
-  // metadata from the site action + target signature in lockstep.
-  void RegisterDeferredAssertionSiteInfo(
-      mir::DeferredAssertionSiteId site_id,
-      const mir::DeferredAssertionSiteInfo* info);
-  [[nodiscard]] auto GetDeferredAssertionSiteInfo(
-      mir::DeferredAssertionSiteId site_id) const
-      -> const mir::DeferredAssertionSiteInfo*;
-
   // Build LLVM function type from MIR function signature.
   // Package-scoped: (DesignState*, Engine*, args...)
   // Module-scoped:  (DesignState*, Engine*, this_ptr*,
@@ -1254,7 +1226,6 @@ class Context {
   llvm::Value* dynamic_instance_id_ = nullptr;
   const SpecSlotInfo* spec_slot_info_ = nullptr;
   const ConnectionNotificationMask* connection_notification_mask_ = nullptr;
-
   // External ref resolution state. Env carries bindings + construction
   // for ResolveExternalRefRoot.
   std::optional<ExternalRefResolutionEnv> ext_ref_env_;
@@ -1268,14 +1239,13 @@ class Context {
   // Source manager for resolving SourceSpan -> file/line/col
   const SourceManager* source_manager_ = nullptr;
 
-  // Origin lookup for body-scoped OriginId resolution (mutable for BodyScope)
-  lowering::OriginMapLookup* origin_lookup_ = nullptr;
-
   // Owned string temps that need release at end of current statement
   std::vector<llvm::Value*> owned_temps_;
 
-  // User function registry: FunctionId -> llvm::Function*
-  absl::flat_hash_map<mir::FunctionId, llvm::Function*> user_functions_;
+  // Session-scoped declared-function lookup (non-owning pointer).
+  // Installed by DeclaredFunctionScope; null between sessions.
+  const absl::flat_hash_map<mir::FunctionId, llvm::Function*>*
+      declared_functions_ = nullptr;
 
   // Design-global function registry: SymbolId -> llvm::Function*
   // For DesignFunctionRef resolution in body MIR.
@@ -1286,23 +1256,6 @@ class Context {
   };
   absl::flat_hash_map<SymbolId, DesignFunctionEntry, SymbolIdHash>
       design_functions_;
-
-  // Module-scoped functions: lowering metadata keyed by FunctionId.
-  absl::flat_hash_map<mir::FunctionId, ModuleFunctionLowering>
-      module_function_lowering_;
-
-  // Monitor layouts (codegen artifact, not MIR semantics).
-  // Keyed by check_program FunctionId - single source of truth for encoding.
-  absl::flat_hash_map<mir::FunctionId, MonitorLayout> monitor_layouts_;
-
-  // Monitor setup program markers (codegen artifact, not MIR semantics).
-  // Just stores check_program reference; layout is looked up from
-  // monitor_layouts_.
-  absl::flat_hash_map<mir::FunctionId, MonitorSetupInfo> monitor_setup_infos_;
-
-  // Deferred assertion site info (borrowed pointers into design sites).
-  absl::flat_hash_map<uint32_t, const mir::DeferredAssertionSiteInfo*>
-      deferred_assertion_sites_;
 
   // SSA temp bindings: temp_id -> TempValue (explicit semantic contract).
   // Temps defined by block params (split PHI nodes) or statements.
