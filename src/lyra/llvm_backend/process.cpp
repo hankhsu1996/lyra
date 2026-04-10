@@ -756,10 +756,9 @@ auto ResolveObservationRange(Context& context, const mir::WaitTrigger& trigger)
   };
   const SlotStorageSpec* slot_spec_ptr = nullptr;
   if (place.root.kind == mir::PlaceRoot::Kind::kModuleSlot &&
-      context.GetSpecSlotInfo() != nullptr &&
-      context.GetSpecLayoutContract() != nullptr) {
+      context.GetSpecSlotInfo() != nullptr) {
     auto local_slot = static_cast<uint32_t>(place.root.id);
-    slot_spec_ptr = &context.GetSpecSlotInfo()->GetSlotSpec(
+    slot_spec_ptr = &SpecSlotInfo::GetSlotSpec(
         local_slot, *context.GetSpecLayoutContract());
   } else {
     auto slot_id = common::SlotId{static_cast<uint32_t>(place.root.id)};

@@ -647,12 +647,6 @@ class Context {
     return connection_notification_mask_;
   }
 
-  // Resolve the current body's BodyRealizationInfo from Layout.
-  // Requires spec_slot_info_ to be set (module-body codegen context).
-  // Throws InternalError if spec_slot_info_ is null or body_info is null.
-  [[nodiscard]] auto GetCurrentBodyRealizationInfo() const
-      -> const Layout::BodyRealizationInfo&;
-
   // Explicit access APIs for module-local slot pointer formation.
   // Callers must choose the correct API based on the slot's storage shape.
 

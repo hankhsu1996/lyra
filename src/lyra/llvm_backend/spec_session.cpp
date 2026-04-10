@@ -79,6 +79,11 @@ auto CompileModuleSpecSession(
   Context::SpecLocalScope spec_scope(
       context, input.spec_slot_info, input.connection_notification_mask,
       std::move(ext_ref_env));
+  if (input.layout_contract == nullptr) {
+    throw common::InternalError(
+        "CompileModuleSpecSession",
+        "SpecLayoutContract is required for CU compilation");
+  }
   Context::SpecLayoutScope layout_scope(context, input.layout_contract);
 
   BodySiteContext site_ctx{
@@ -122,11 +127,7 @@ auto CompileModuleSpecSession(
 
   for (size_t pi = 0; pi < input.view.processes.size(); ++pi) {
     const auto& proc_view = input.view.processes[pi];
-    if (input.layout_contract != nullptr) {
-      context.SetCurrentProcess(input.layout_contract->process_layouts[pi]);
-    } else {
-      context.SetCurrentProcess(proc_view.layout_process_index);
-    }
+    context.SetCurrentProcess(input.layout_contract->process_layouts[pi]);
 
     const auto& mir_process = body.arena[proc_view.process_id];
     auto func_result = GenerateSharedProcessFunction(
