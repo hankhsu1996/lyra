@@ -371,8 +371,8 @@ void Engine::ClearProcessSubscriptions(ProcessHandle handle) {
 // Only called on the can_refresh path (WaitShapeKind::kStatic), so all
 // sub_refs are snapshot-bearing (kEdge or kChange). Rebind watchers and
 // container subs are structurally impossible here.
-void Engine::RefreshInstalledSnapshots(ProcessHandle handle) {
-  if (handle.process_id >= num_processes_) return;
+auto Engine::RefreshInstalledSnapshots(ProcessHandle handle) -> bool {
+  if (handle.process_id >= num_processes_) return false;
 
   auto& proc_state = process_states_[handle.process_id];
 
@@ -403,9 +403,10 @@ void Engine::RefreshInstalledSnapshots(ProcessHandle handle) {
     }
   }
   if (global_unchanged && local_unchanged) {
-    return;
+    return false;
   }
 
+  bool needs_reinstall = false;
   for (const auto& ref : proc_state.sub_refs) {
     // R5: Domain-aware dirty check and slot resolution.
     std::span<const uint8_t> storage;
@@ -428,9 +429,17 @@ void Engine::RefreshInstalledSnapshots(ProcessHandle handle) {
     switch (ref.kind) {
       case SubKind::kEdge: {
         auto& sub = ResolveEdgeSub(ref);
+        auto& group = ResolveSubSlot(ref).edge_groups[ref.edge_group];
+        uint8_t current_byte = storage[group.byte_offset];
+        uint8_t current_bit = (current_byte >> group.bit_index) & 1;
+        // If the observed bit changed since the last flush, the refresh
+        // path cannot safely update group.last_bit (it's shared across
+        // all subscribers). Signal the caller to fall back to full
+        // reinstall which creates a fresh group with correct baselines.
+        if (current_bit != group.last_bit) {
+          needs_reinstall = true;
+        }
         if (sub.cold_idx != UINT32_MAX) {
-          auto& group = ResolveSubSlot(ref).edge_groups[ref.edge_group];
-          uint8_t current_byte = storage[group.byte_offset];
           auto& cold = edge_cold_pool_[sub.cold_idx];
           cold.edge_last_byte = current_byte;
           cold.has_edge_last_byte = true;
@@ -483,6 +492,7 @@ void Engine::RefreshInstalledSnapshots(ProcessHandle handle) {
     }
     stamp.epoch = inst->observability.local_flush_epoch;
   }
+  return needs_reinstall;
 }
 
 void Engine::InstallTriggers(
@@ -929,7 +939,14 @@ void Engine::ReconcilePostActivation(ProcessHandle handle) {
         break;
       }
 
-      RefreshInstalledSnapshots(handle);
+      if (RefreshInstalledSnapshots(handle)) {
+        // A same-delta blocking write changed an observed edge bit.
+        // group.last_bit is shared state and cannot be updated here.
+        // Fall back to full reinstall to get a fresh group baseline.
+        const auto& descriptor = wait_site_meta_.Get(suspend->wait_site_id);
+        ResetInstalledWait(handle);
+        InstallWaitSite(handle, suspend, descriptor);
+      }
       break;
     }
 

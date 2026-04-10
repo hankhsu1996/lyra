@@ -1055,7 +1055,7 @@ class Engine {
   void InstallWaitSite(
       ProcessHandle handle, SuspendRecord* suspend,
       const CompiledWaitSite& descriptor);
-  void RefreshInstalledSnapshots(ProcessHandle handle);
+  auto RefreshInstalledSnapshots(ProcessHandle handle) -> bool;
 
   // Late-bound rebinding: re-read index value, recompute edge target.
   void RebindSubscription(uint32_t edge_target_id);

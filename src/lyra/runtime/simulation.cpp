@@ -209,6 +209,19 @@ extern "C" void LyraSuspendWait(
   }
 }
 
+// Fast path for static-wait processes (e.g., always_ff with fixed triggers).
+// Called on re-suspend when the trigger set is identical to a previously-
+// installed wait site. Skips trigger array rebuild, memcpy, overflow
+// release, and DPI suspension check -- all unnecessary when the trigger
+// data in the SuspendRecord is already correct from the first activation.
+extern "C" void LyraSuspendWaitStatic(
+    void* state, uint32_t resume_block, uint32_t wait_site_id) {
+  auto* suspend = static_cast<lyra::runtime::SuspendRecord*>(state);
+  suspend->tag = lyra::runtime::SuspendTag::kWait;
+  suspend->resume_block = resume_block;
+  suspend->wait_site_id = wait_site_id;
+}
+
 extern "C" void LyraSuspendWaitWithLateBound(
     void* state, uint32_t resume_block, const void* triggers,
     uint32_t num_triggers, const void* headers, uint32_t num_headers,
@@ -358,7 +371,22 @@ void DescriptorProcessDispatch(
   uint32_t proc_idx = handle.process_id;
   void* state = dctx->states[proc_idx];
   auto* suspend = static_cast<lyra::runtime::SuspendRecord*>(state);
-  SuspendReset(suspend);
+
+  // Fast path: if the process is resuming from a static wait (no heap-
+  // allocated trigger data), skip the full 992-byte SuspendRecord zeroing.
+  // The body will call LyraSuspendWaitStatic which only writes 3 fields.
+  // For the first activation (resume_block=0) or non-wait states, fall
+  // through to full reset.
+  if (resume.block_index != 0 &&
+      suspend->tag == lyra::runtime::SuspendTag::kWait &&
+      suspend->triggers_ptr == suspend->inline_triggers.data()) {
+    // Lightweight reset: clear only the tag so that if the body exits
+    // without calling any suspend (e.g., $finish), ReconcilePostActivation
+    // sees kFinished and handles cleanup correctly.
+    suspend->tag = lyra::runtime::SuspendTag::kFinished;
+  } else {
+    SuspendReset(suspend);
+  }
 
   lyra::runtime::ProcessOutcome outcome{};
   outcome.tag = UINT32_MAX;
