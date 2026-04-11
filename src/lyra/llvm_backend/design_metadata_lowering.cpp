@@ -17,7 +17,6 @@
 #include "lyra/common/source_manager.hpp"
 #include "lyra/llvm_backend/context.hpp"
 #include "lyra/llvm_backend/layout/layout.hpp"
-#include "lyra/llvm_backend/observable_descriptor_utils.hpp"
 #include "lyra/llvm_backend/process_meta_utils.hpp"
 #include "lyra/lowering/diagnostic_context.hpp"
 #include "lyra/runtime/back_edge_site_meta.hpp"
@@ -148,7 +147,9 @@ auto ExtractConnectionDescriptorEntries(const Layout& layout)
     uint32_t dst_local_id = 0;
     if (entry.dst_slot.value >= layout.num_package_slots) {
       dst_is_local = 1;
-      auto owner = ResolveInstanceOwnedFlatSlot(layout, entry.dst_slot.value);
+      auto owner = ResolveInstanceOwnedFlatSlot(
+          layout.num_package_slots, layout.instance_slot_counts,
+          entry.dst_slot.value);
       dst_instance_id = owner.instance_id.value;
       dst_local_id = owner.local_signal_id.value;
     }
@@ -159,8 +160,9 @@ auto ExtractConnectionDescriptorEntries(const Layout& layout)
     uint32_t trigger_local_id = 0;
     if (entry.trigger_slot.value >= layout.num_package_slots) {
       trigger_is_local = 1;
-      auto owner =
-          ResolveInstanceOwnedFlatSlot(layout, entry.trigger_slot.value);
+      auto owner = ResolveInstanceOwnedFlatSlot(
+          layout.num_package_slots, layout.instance_slot_counts,
+          entry.trigger_slot.value);
       trigger_instance_id = owner.instance_id.value;
       trigger_local_id = owner.local_signal_id.value;
     }

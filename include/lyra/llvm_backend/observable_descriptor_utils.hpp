@@ -25,8 +25,6 @@ enum class SlotKind : uint8_t;
 
 namespace lyra::lowering::mir_to_llvm {
 
-struct DesignLayout;
-
 // Typed wrapper for an unvalidated observable owner slot coordinate.
 // Use ComputeCanonicalObservableShape() to validate canonical-ness.
 struct ObservableOwnerSlotId {
@@ -86,11 +84,10 @@ auto MapSlotKindToTraceKind(mir::SlotKind kind) -> runtime::TraceSignalKind;
 auto ComputeTraceBitWidth(TypeId type_id, const TypeArena& types) -> uint32_t;
 
 // Compute alias-group-invariant observable shape from the canonical owner.
-// The result is derived from owner-canonical layout/type/kind data and is
+// The result is derived from owner-canonical storage/type/kind data and is
 // independent of any alias-slot-local declaration kind or storage row.
-// Throws InternalError if owner is out of range in the layout.
 auto ComputeCanonicalObservableShape(
-    ObservableOwnerSlotId owner, const DesignLayout& layout, TypeId slot_type,
+    const SlotStorageSpec& owner_spec, TypeId slot_type,
     mir::SlotKind slot_kind, const TypeArena& type_arena)
     -> CanonicalObservableShape;
 

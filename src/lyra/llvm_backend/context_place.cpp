@@ -350,7 +350,8 @@ auto Context::EmitSignalCoord(const mir::SignalRef& sig) -> SignalCoordExpr {
   // local identity with a resolved target instance pointer. This happens
   // for design-level connection processes writing to child port signals.
   if (sig.id >= layout_.num_package_slots) {
-    auto owner = ResolveInstanceOwnedFlatSlot(layout_, sig.id);
+    auto owner = ResolveInstanceOwnedFlatSlot(
+        layout_.num_package_slots, layout_.instance_slot_counts, sig.id);
     auto& builder = GetBuilder();
     auto* i32_ty = llvm::Type::getInt32Ty(GetLlvmContext());
     auto* target_inst = builder.CreateCall(

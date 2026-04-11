@@ -381,7 +381,8 @@ void EmitVariableInspection(
       return ClassifySlotTypeInfo(
           design.slots[gsi].type, types, force_two_state);
     }
-    auto owner = ResolveInstanceOwnedFlatSlot(layout, gsi);
+    auto owner = ResolveInstanceOwnedFlatSlot(
+        layout.num_package_slots, layout.instance_slot_counts, gsi);
     auto body_id = layout.instance_body_ids[owner.instance_id.value];
     const auto& body = design.module_bodies.at(body_id.value);
     return ClassifySlotTypeInfo(

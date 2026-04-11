@@ -30,7 +30,8 @@ auto BuildInspectionPlan(
               .placement = DesignGlobalPlacement{abs_off},
           });
     } else {
-      auto owner = ResolveInstanceOwnedFlatSlot(layout, slot_value);
+      auto owner = ResolveInstanceOwnedFlatSlot(
+          layout.num_package_slots, layout.instance_slot_counts, slot_value);
       auto instance_id = owner.instance_id.value;
       auto instance_base =
           layout.GetInstanceStorageBase(ModuleIndex{instance_id});

@@ -6,7 +6,7 @@
 #include "lyra/common/internal_error.hpp"
 #include "lyra/common/overloaded.hpp"
 #include "lyra/common/type_queries.hpp"
-#include "lyra/llvm_backend/layout/layout.hpp"
+#include "lyra/mir/design.hpp"
 
 namespace lyra::lowering::mir_to_llvm {
 
@@ -62,17 +62,8 @@ auto ComputeTraceBitWidth(TypeId type_id, const TypeArena& types) -> uint32_t {
 }
 
 auto ComputeCanonicalObservableShape(
-    ObservableOwnerSlotId owner, const DesignLayout& layout, TypeId slot_type,
-    mir::SlotKind slot_kind, const TypeArena& type_arena)
-    -> CanonicalObservableShape {
-  const uint32_t raw = owner.Raw();
-  if (raw >= layout.slot_storage_specs.size()) {
-    throw common::InternalError(
-        "ComputeCanonicalObservableShape",
-        std::format("slot_storage_specs missing canonical owner {}", raw));
-  }
-
-  const SlotStorageSpec& spec = layout.slot_storage_specs[raw];
+    const SlotStorageSpec& spec, TypeId slot_type, mir::SlotKind slot_kind,
+    const TypeArena& type_arena) -> CanonicalObservableShape {
   runtime::SlotStorageKind storage_kind = ClassifySlotStorageKind(spec);
 
   std::optional<Packed4LaneShape> packed4_lanes;

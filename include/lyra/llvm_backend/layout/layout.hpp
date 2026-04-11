@@ -714,8 +714,9 @@ struct SlotOwnerInfo {
   runtime::LocalSignalId local_signal_id;
 };
 
-auto ResolveInstanceOwnedFlatSlot(const Layout& layout, uint32_t flat_slot_id)
-    -> SlotOwnerInfo;
+auto ResolveInstanceOwnedFlatSlot(
+    uint32_t num_package_slots, std::span<const uint32_t> instance_slot_counts,
+    uint32_t flat_slot_id) -> SlotOwnerInfo;
 
 // Build a design layout from package slot descriptors and per-instance
 // slot descriptor views. The flat slot table is never materialized: this

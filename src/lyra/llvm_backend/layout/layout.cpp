@@ -1629,11 +1629,12 @@ auto Layout::GetInstanceSlotCount(ModuleIndex idx) const -> uint32_t {
   return instance_slot_counts[idx.value];
 }
 
-auto ResolveInstanceOwnedFlatSlot(const Layout& layout, uint32_t flat_slot_id)
-    -> SlotOwnerInfo {
-  uint32_t running_base = layout.num_package_slots;
-  for (uint32_t mi = 0; mi < layout.instance_slot_counts.size(); ++mi) {
-    uint32_t count = layout.instance_slot_counts[mi];
+auto ResolveInstanceOwnedFlatSlot(
+    uint32_t num_package_slots, std::span<const uint32_t> instance_slot_counts,
+    uint32_t flat_slot_id) -> SlotOwnerInfo {
+  uint32_t running_base = num_package_slots;
+  for (uint32_t mi = 0; mi < instance_slot_counts.size(); ++mi) {
+    uint32_t count = instance_slot_counts[mi];
     if (flat_slot_id < running_base + count) {
       return {
           .instance_id = runtime::InstanceId{mi},
@@ -1648,8 +1649,7 @@ auto ResolveInstanceOwnedFlatSlot(const Layout& layout, uint32_t flat_slot_id)
       std::format(
           "flat slot {} not found in any instance slot range "
           "(num_package_slots={}, num_instances={})",
-          flat_slot_id, layout.num_package_slots,
-          layout.instance_slot_counts.size()));
+          flat_slot_id, num_package_slots, instance_slot_counts.size()));
 }
 
 auto BuildLayout(
