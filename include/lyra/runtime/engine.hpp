@@ -1386,9 +1386,10 @@ class Engine {
   // Instead of scheduling connection processes through the full engine,
   // connections are evaluated inline during signal propagation.
   struct BatchedConnection {
-    uint32_t src_slot_id;  // flat, for ResolveSlotBytes (read-only)
+    const uint8_t* src_ptr;  // precomputed source storage pointer
+    uint8_t* dst_ptr;        // precomputed destination storage pointer
     uint32_t byte_size;
-    ConnectionTarget dst;
+    ConnectionTarget dst;  // typed target for dirty-mark dispatch
   };
   // All batched connections (for initial evaluation).
   std::vector<BatchedConnection> all_connections_;
