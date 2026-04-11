@@ -32,8 +32,12 @@ struct RuntimeInstanceStorage {
   uint64_t appendix_size = 0;
 
   // Deferred inline region: mirrors inline_base layout for NBA writes.
-  // Simple local <= writes go here; committed in the NBA phase.
+  // Local owned-inline <= writes go here; committed in the NBA phase.
   std::byte* deferred_inline_base = nullptr;
+
+  // Deferred appendix region: mirrors appendix_base layout for NBA writes.
+  // Local owned-container <= writes go here; committed in the NBA phase.
+  std::byte* deferred_appendix_base = nullptr;
 
   // Span accessors for owned storage regions. Non-const overloads return
   // mutable spans for write access; const overloads return read-only spans.
@@ -49,6 +53,9 @@ struct RuntimeInstanceStorage {
   }
   [[nodiscard]] auto DeferredInlineRegion() -> std::span<std::byte> {
     return {deferred_inline_base, inline_size};
+  }
+  [[nodiscard]] auto DeferredAppendixRegion() -> std::span<std::byte> {
+    return {deferred_appendix_base, appendix_size};
   }
   // NOLINTEND(readability-make-member-function-const)
   [[nodiscard]] auto InlineRegion() const -> std::span<const std::byte> {
@@ -66,10 +73,10 @@ void FreeRuntimeInstanceStorage(RuntimeInstanceStorage& storage);
 // Per-instance set of local signals with pending deferred (NBA) writes.
 // Lightweight sparse-set: O(1) mark, O(pending_count) iterate and clear.
 //
-// All local owned-inline NBA writes go through instance-owned deferred
-// storage. The pending set tracks which signals have uncommitted writes
-// and whether the deferred slot has been initialized this delta (for
-// copy-on-first-touch of partial writes).
+// All local owned NBA writes (inline and container-backed) go through
+// instance-owned deferred storage. The pending set tracks which signals
+// have uncommitted writes and whether the deferred slot has been
+// initialized this delta (for copy-on-first-touch of partial writes).
 struct NbaPendingSet {
   std::vector<uint8_t> seen;
   std::vector<LocalSignalId> list;
@@ -177,7 +184,8 @@ enum class RuntimeInstanceStorageField : unsigned {
   kAppendixBase = 2,
   kAppendixSize = 3,
   kDeferredInlineBase = 4,
-  kFieldCount = 5,
+  kDeferredAppendixBase = 5,
+  kFieldCount = 6,
 };
 
 // Strongly typed field indices for RuntimeInstance.
@@ -210,6 +218,10 @@ static_assert(
 static_assert(
     offsetof(RuntimeInstanceStorage, deferred_inline_base) ==
     offsetof(RuntimeInstanceStorage, appendix_size) + sizeof(uint64_t));
+static_assert(
+    offsetof(RuntimeInstanceStorage, deferred_appendix_base) ==
+    offsetof(RuntimeInstanceStorage, deferred_inline_base) +
+        sizeof(std::byte*));
 
 // Hard binary contract assertions for RuntimeInstance.
 // Field order must match RuntimeInstanceField enum and LLVM struct type.

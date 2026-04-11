@@ -195,26 +195,37 @@ void Engine::CommitDeferredLocalNbas() {
       continue;
     }
     const auto& layout = *inst->observability.layout;
-    auto current_region = inst->storage.InlineRegion();
-    auto deferred_region = inst->storage.DeferredInlineRegion();
 
     for (LocalSignalId lid : pending.list) {
       if (pending.seen[lid.value] == 0) continue;
       const auto& meta = layout.slot_meta[lid.value];
-      auto current_slot =
-          current_region.subspan(meta.instance_rel_off, meta.total_bytes);
-      auto deferred_slot =
-          deferred_region.subspan(meta.instance_rel_off, meta.total_bytes);
+
+      std::span<std::byte> current_slot;
+      std::span<std::byte> deferred_slot;
+      uint32_t compare_bytes = 0;
+      if (meta.is_container) {
+        uint32_t appendix_off =
+            meta.backing_rel_off -
+            static_cast<uint32_t>(inst->storage.inline_size);
+        current_slot = inst->storage.AppendixRegion().subspan(
+            appendix_off, meta.backing_bytes);
+        deferred_slot = inst->storage.DeferredAppendixRegion().subspan(
+            appendix_off, meta.backing_bytes);
+        compare_bytes = meta.backing_bytes;
+      } else {
+        current_slot = inst->storage.InlineRegion().subspan(
+            meta.instance_rel_off, meta.total_bytes);
+        deferred_slot = inst->storage.DeferredInlineRegion().subspan(
+            meta.instance_rel_off, meta.total_bytes);
+        compare_bytes = meta.total_bytes;
+      }
 
       ++stats_.core.nba_entries;
       if (std::memcmp(
-              current_slot.data(), deferred_slot.data(), meta.total_bytes) !=
-          0) {
-        std::memcpy(
-            current_slot.data(), deferred_slot.data(), meta.total_bytes);
+              current_slot.data(), deferred_slot.data(), compare_bytes) != 0) {
+        std::memcpy(current_slot.data(), deferred_slot.data(), compare_bytes);
         ++stats_.core.nba_changed;
-        MarkLocalSignalDirtyRange(
-            *inst, lid, 0, meta.total_bytes, instance_idx);
+        MarkLocalSignalDirtyRange(*inst, lid, 0, compare_bytes, instance_idx);
       }
     }
 

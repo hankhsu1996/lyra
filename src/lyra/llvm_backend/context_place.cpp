@@ -573,11 +573,34 @@ auto Context::IsOwnedInlineSlot(mir::PlaceId place_id) const -> bool {
          SpecSlotAccessKind::kOwnedInline;
 }
 
+auto Context::IsOwnedContainerSlot(mir::PlaceId place_id) const -> bool {
+  const auto& place = LookupPlace(place_id);
+  if (place.root.kind != mir::PlaceRoot::Kind::kModuleSlot) return false;
+  if (spec_slot_info_ == nullptr) return false;
+  auto local_slot_id = static_cast<uint32_t>(place.root.id);
+  if (local_slot_id >= spec_slot_info_->access_kinds.size()) return false;
+  return spec_slot_info_->access_kinds[local_slot_id] ==
+         SpecSlotAccessKind::kOwnedContainer;
+}
+
 auto Context::GetSlotBodyByteOffset(mir::PlaceId place_id) const -> uint32_t {
   const auto& place = LookupPlace(place_id);
   auto local_slot_id = static_cast<uint32_t>(place.root.id);
   return static_cast<uint32_t>(
       spec_slot_info_->inline_offsets[local_slot_id].value);
+}
+
+auto Context::GetContainerBodyByteOffset(mir::PlaceId place_id) const
+    -> uint32_t {
+  const auto& place = LookupPlace(place_id);
+  auto local_slot_id = static_cast<uint32_t>(place.root.id);
+  const auto& appendix_off = spec_slot_info_->appendix_offsets[local_slot_id];
+  if (!appendix_off.has_value()) {
+    throw common::InternalError(
+        "Context::GetContainerBodyByteOffset",
+        std::format("slot {} is not an owned container", local_slot_id));
+  }
+  return static_cast<uint32_t>(appendix_off->value);
 }
 
 auto Context::ComputeStaticProjectionOffset(mir::PlaceId place_id)

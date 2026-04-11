@@ -1145,21 +1145,48 @@ extern "C" void LyraStoreStringGlobal(
   StoreStringTyped(eng, GlobalSignalId{id}, slot, str);
 }
 
+// Resolve a body-relative byte offset to a subspan in the deferred region.
+// Offsets < inline_size resolve to deferred_inline_base.
+// Offsets >= inline_size resolve to deferred_appendix_base.
+inline auto ResolveDeferredSubspan(
+    lyra::runtime::RuntimeInstanceStorage& storage, uint32_t body_offset,
+    uint32_t size) -> std::span<std::byte> {
+  auto inline_size = static_cast<uint32_t>(storage.inline_size);
+  if (body_offset < inline_size) {
+    return storage.DeferredInlineRegion().subspan(body_offset, size);
+  }
+  return storage.DeferredAppendixRegion().subspan(
+      body_offset - inline_size, size);
+}
+
+// Resolve a body-relative byte offset to a subspan in the current region.
+inline auto ResolveCurrentSubspan(
+    lyra::runtime::RuntimeInstanceStorage& storage, uint32_t body_offset,
+    uint32_t size) -> std::span<std::byte> {
+  auto inline_size = static_cast<uint32_t>(storage.inline_size);
+  if (body_offset < inline_size) {
+    return storage.InlineRegion().subspan(body_offset, size);
+  }
+  return storage.AppendixRegion().subspan(body_offset - inline_size, size);
+}
+
 // Copy-on-first-touch: ensure deferred storage for signal `id` contains a
 // valid full-slot snapshot. Called before any partial write to a signal that
 // hasn't been touched yet this delta. After this, all bytes in the deferred
 // slot match the current slot, so subsequent partial writes accumulate
 // correctly and the commit can compare the full slot.
+// Works for both inline and container-backed slots.
 inline void EnsureDeferredSlotInitialized(
     RuntimeInstance* instance, lyra::runtime::NbaPendingSet& pending,
     uint32_t id) {
   if (pending.slot_initialized[id] != 0) return;
   const auto& meta = instance->observability.layout->slot_meta[id];
-  auto current = instance->storage.InlineRegion().subspan(
-      meta.instance_rel_off, meta.total_bytes);
-  auto deferred = instance->storage.DeferredInlineRegion().subspan(
-      meta.instance_rel_off, meta.total_bytes);
-  std::memcpy(deferred.data(), current.data(), meta.total_bytes);
+  uint32_t off =
+      meta.is_container ? meta.backing_rel_off : meta.instance_rel_off;
+  uint32_t bytes = meta.is_container ? meta.backing_bytes : meta.total_bytes;
+  auto current = ResolveCurrentSubspan(instance->storage, off, bytes);
+  auto deferred = ResolveDeferredSubspan(instance->storage, off, bytes);
+  std::memcpy(deferred.data(), current.data(), bytes);
   pending.slot_initialized[id] = 1;
 }
 
@@ -1179,7 +1206,7 @@ extern "C" void LyraDeferredWriteLocal(
   }
 
   auto deferred_slot =
-      instance->storage.DeferredInlineRegion().subspan(body_offset, bsz);
+      ResolveDeferredSubspan(instance->storage, body_offset, bsz);
   std::memcpy(deferred_slot.data(), vp, bsz);
   pending.MarkPending(LocalSignalId{id});
   AsEngine(eng)->MarkInstanceNbaPending(pending.instance_idx);
@@ -1198,7 +1225,7 @@ extern "C" void LyraDeferredMaskedWriteLocal(
   EnsureDeferredSlotInitialized(instance, pending, id);
 
   auto deferred_slot =
-      instance->storage.DeferredInlineRegion().subspan(body_offset, bsz);
+      ResolveDeferredSubspan(instance->storage, body_offset, bsz);
   auto val_span = std::span(static_cast<const std::byte*>(vp), bsz);
   auto mask_span = std::span(static_cast<const std::byte*>(mp), bsz);
   for (uint32_t i = 0; i < bsz; ++i) {
@@ -1222,12 +1249,12 @@ extern "C" void LyraDeferredCanonicalPackedWriteLocal(
 
   EnsureDeferredSlotInitialized(instance, pending, id);
 
-  auto deferred = instance->storage.DeferredInlineRegion();
-  std::memcpy(
-      deferred.subspan(body_offset, region_bsz).data(), val, region_bsz);
-  std::memcpy(
-      deferred.subspan(body_offset + second_region_offset, region_bsz).data(),
-      unk, region_bsz);
+  auto deferred_val =
+      ResolveDeferredSubspan(instance->storage, body_offset, region_bsz);
+  std::memcpy(deferred_val.data(), val, region_bsz);
+  auto deferred_unk = ResolveDeferredSubspan(
+      instance->storage, body_offset + second_region_offset, region_bsz);
+  std::memcpy(deferred_unk.data(), unk, region_bsz);
   pending.MarkPending(LocalSignalId{id});
   AsEngine(eng)->MarkInstanceNbaPending(pending.instance_idx);
 }

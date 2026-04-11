@@ -26,6 +26,17 @@ struct InstanceSlotMeta {
   uint32_t total_bytes = 0;
   SlotStorageKind kind = SlotStorageKind::kPacked2;
   PackedPlanes planes;
+  // True if this slot is an owned container (backing data in appendix).
+  // When true, backing_rel_off/backing_bytes locate the actual data in the
+  // appendix region (body-relative offset >= inline_size).
+  // instance_rel_off still points to the OwnedStorageHandle in inline region.
+  bool is_container = false;
+  // Body-relative byte offset of the backing data (appendix region).
+  // Valid only when is_container is true.
+  uint32_t backing_rel_off = 0;
+  // Byte size of the backing data.
+  // Valid only when is_container is true.
+  uint32_t backing_bytes = 0;
 };
 
 // Instance-owned trace metadata for one body -- shared across all instances

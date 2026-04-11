@@ -321,8 +321,10 @@ struct PackedNbaPolicy {
   SignalCoordExpr signal_id;
   // Instance-owned deferred storage routing. When true, local packed NBA
   // writes go to deferred storage instead of generic nba_queue_.
-  // slot_body_offset is the byte offset of the root slot from inline_base.
-  bool is_local_owned_inline = false;
+  // slot_body_offset is the byte offset of the root slot's data:
+  //   inline slots: offset from inline_base (< inline_size)
+  //   container slots: offset from body base (>= inline_size, in appendix)
+  bool is_local_owned = false;
   uint32_t slot_body_offset = 0;
 };
 

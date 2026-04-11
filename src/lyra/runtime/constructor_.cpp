@@ -643,6 +643,8 @@ void Constructor::AddInstance(
   instance->storage.appendix_size = realized_appendix_size;
   instance->storage.deferred_inline_base =
       AllocateOwnedInlineStorage(realized_inline_size);
+  instance->storage.deferred_appendix_base =
+      AllocateOwnedAppendixStorage(realized_appendix_size);
 
   // Invariant: zero-slot bodies must not carry instance-state init.
   if (body_.slot_count == 0) {

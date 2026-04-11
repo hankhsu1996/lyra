@@ -935,7 +935,7 @@ void EmitNarrow2StateNbaCall(
   auto* val_alloca = builder.CreateAlloca(buf_ty, nullptr, "nba.val.a");
   EncodePlaneValueToByteBuffer(builder, llvm_ctx, val_alloca, 0, store_val);
 
-  if (policy.is_local_owned_inline) {
+  if (policy.is_local_owned) {
     // Deferred byte-range write: body_offset = slot_body_offset + byte_offset
     auto* byte_off_i32 = builder.CreateTrunc(
         builder.CreateZExtOrTrunc(access.byte_offset, builder.getInt64Ty()),
@@ -1003,7 +1003,7 @@ void EmitNarrow4StateNbaCall(
   auto* unk_alloca = builder.CreateAlloca(buf_ty, nullptr, "nba.unk.a");
   EncodePlaneValueToByteBuffer(builder, llvm_ctx, unk_alloca, 0, unk_store);
 
-  if (policy.is_local_owned_inline) {
+  if (policy.is_local_owned) {
     // Deferred canonical packed write: two planes in deferred storage.
     // body_offset = slot_body_offset + byte_offset (val plane position)
     auto* byte_off_i32 = builder.CreateTrunc(
@@ -1101,7 +1101,7 @@ void EmitFullWidthMaskedNbaCall(
     EncodePlaneValueToByteBuffer(
         builder, llvm_ctx, mask_alloca, plane_bytes, mask_shifted);
 
-    if (policy.is_local_owned_inline) {
+    if (policy.is_local_owned) {
       auto* body_offset =
           llvm::ConstantInt::get(i32_ty, policy.slot_body_offset);
       builder.CreateCall(
@@ -1134,7 +1134,7 @@ void EmitFullWidthMaskedNbaCall(
     EncodePlaneValueToByteBuffer(
         builder, llvm_ctx, mask_alloca, 0, mask_shifted);
 
-    if (policy.is_local_owned_inline) {
+    if (policy.is_local_owned) {
       auto* body_offset =
           llvm::ConstantInt::get(i32_ty, policy.slot_body_offset);
       builder.CreateCall(

@@ -39,6 +39,8 @@ void FreeRuntimeInstanceStorage(RuntimeInstanceStorage& storage) {
   storage.appendix_base = nullptr;
   delete[] storage.deferred_inline_base;
   storage.deferred_inline_base = nullptr;
+  delete[] storage.deferred_appendix_base;
+  storage.deferred_appendix_base = nullptr;
 }
 
 // NOLINTEND(cppcoreguidelines-owning-memory)

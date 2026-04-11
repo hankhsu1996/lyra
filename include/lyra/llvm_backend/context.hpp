@@ -858,7 +858,10 @@ class Context {
   // BitRangeProjection helpers
   [[nodiscard]] auto HasBitRangeProjection(mir::PlaceId place_id) const -> bool;
   [[nodiscard]] auto IsOwnedInlineSlot(mir::PlaceId place_id) const -> bool;
+  [[nodiscard]] auto IsOwnedContainerSlot(mir::PlaceId place_id) const -> bool;
   [[nodiscard]] auto GetSlotBodyByteOffset(mir::PlaceId place_id) const
+      -> uint32_t;
+  [[nodiscard]] auto GetContainerBodyByteOffset(mir::PlaceId place_id) const
       -> uint32_t;
   // Compute byte offset within a slot for static FieldProjection /
   // UnionMemberProjection chains. Returns (sub_offset, sub_size) if all

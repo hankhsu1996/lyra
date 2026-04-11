@@ -79,6 +79,9 @@ struct SpecSlotInfo {
   // For kInlineValue: offset of the slot's value bytes from body base.
   // For kOwnedContainer: offset of the OwnedStorageHandle from body base.
   std::vector<BodyByteOffset> inline_offsets;
+  // Per-slot appendix byte offset (for kOwnedContainer backing data).
+  // nullopt for non-container slots.
+  std::vector<std::optional<BodyByteOffset>> appendix_offsets;
   // Per-slot storage shape.
   std::vector<mir::StorageShape> shapes;
   // Per-slot access classification.
