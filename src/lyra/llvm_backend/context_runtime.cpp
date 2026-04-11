@@ -707,15 +707,46 @@ auto Context::GetLyraDeferredWriteLocal() -> llvm::Function* {
   if (lyra_deferred_write_local_ == nullptr) {
     auto* ptr_ty = llvm::PointerType::getUnqual(*llvm_context_);
     auto* i32_ty = llvm::Type::getInt32Ty(*llvm_context_);
-    // (eng, inst, vp, bsz, id, body_offset)
+    // (eng, inst, vp, bsz, id, body_offset, is_partial)
     auto* fn_type = llvm::FunctionType::get(
         llvm::Type::getVoidTy(*llvm_context_),
-        {ptr_ty, ptr_ty, ptr_ty, i32_ty, i32_ty, i32_ty}, false);
+        {ptr_ty, ptr_ty, ptr_ty, i32_ty, i32_ty, i32_ty, i32_ty}, false);
     lyra_deferred_write_local_ = llvm::Function::Create(
         fn_type, llvm::Function::ExternalLinkage, "LyraDeferredWriteLocal",
         llvm_module_.get());
   }
   return lyra_deferred_write_local_;
+}
+
+auto Context::GetLyraDeferredMaskedWriteLocal() -> llvm::Function* {
+  if (lyra_deferred_masked_write_local_ == nullptr) {
+    auto* ptr_ty = llvm::PointerType::getUnqual(*llvm_context_);
+    auto* i32_ty = llvm::Type::getInt32Ty(*llvm_context_);
+    // (eng, inst, vp, mp, bsz, id, body_offset)
+    auto* fn_type = llvm::FunctionType::get(
+        llvm::Type::getVoidTy(*llvm_context_),
+        {ptr_ty, ptr_ty, ptr_ty, ptr_ty, i32_ty, i32_ty, i32_ty}, false);
+    lyra_deferred_masked_write_local_ = llvm::Function::Create(
+        fn_type, llvm::Function::ExternalLinkage,
+        "LyraDeferredMaskedWriteLocal", llvm_module_.get());
+  }
+  return lyra_deferred_masked_write_local_;
+}
+
+auto Context::GetLyraDeferredCanonicalPackedWriteLocal() -> llvm::Function* {
+  if (lyra_deferred_canonical_packed_write_local_ == nullptr) {
+    auto* ptr_ty = llvm::PointerType::getUnqual(*llvm_context_);
+    auto* i32_ty = llvm::Type::getInt32Ty(*llvm_context_);
+    // (eng, inst, val, unk, region_bsz, id, body_offset, second_region_offset)
+    auto* fn_type = llvm::FunctionType::get(
+        llvm::Type::getVoidTy(*llvm_context_),
+        {ptr_ty, ptr_ty, ptr_ty, ptr_ty, i32_ty, i32_ty, i32_ty, i32_ty},
+        false);
+    lyra_deferred_canonical_packed_write_local_ = llvm::Function::Create(
+        fn_type, llvm::Function::ExternalLinkage,
+        "LyraDeferredCanonicalPackedWriteLocal", llvm_module_.get());
+  }
+  return lyra_deferred_canonical_packed_write_local_;
 }
 
 auto Context::GetLyraScheduleNbaLocal() -> llvm::Function* {

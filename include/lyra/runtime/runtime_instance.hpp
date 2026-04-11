@@ -65,23 +65,27 @@ void FreeRuntimeInstanceStorage(RuntimeInstanceStorage& storage);
 
 // Per-instance set of local signals with pending deferred (NBA) writes.
 // Lightweight sparse-set: O(1) mark, O(pending_count) iterate and clear.
+//
+// All local owned-inline NBA writes go through instance-owned deferred
+// storage. The pending set tracks which signals have uncommitted writes
+// and whether the deferred slot has been initialized this delta (for
+// copy-on-first-touch of partial writes).
 struct NbaPendingSet {
   std::vector<uint8_t> seen;
   std::vector<LocalSignalId> list;
-  // Cross-lane ordering: tracks signals that have generic-queue NBA writes
-  // this delta. When set, subsequent simple-lane writes to the same signal
-  // must fall back to the generic queue to preserve write ordering.
-  std::vector<uint8_t> in_generic;
-  std::vector<LocalSignalId> generic_list;
+  // Per-signal: whether deferred storage contains a valid full-slot
+  // snapshot for this signal in the current delta. Set on first write
+  // (whole-slot sets implicitly; partial triggers copy-on-first-touch).
+  // Reset in Clear().
+  std::vector<uint8_t> slot_initialized;
   // Cached engine-level instance index. Set once during init,
   // avoids per-write GetInstanceIndex lookup.
   uint32_t instance_idx = UINT32_MAX;
 
   void Init(uint32_t local_signal_count, uint32_t idx) {
     seen.assign(local_signal_count, 0);
-    in_generic.assign(local_signal_count, 0);
+    slot_initialized.assign(local_signal_count, 0);
     list.reserve(local_signal_count);
-    generic_list.reserve(local_signal_count);
     instance_idx = idx;
   }
 
@@ -92,22 +96,12 @@ struct NbaPendingSet {
     }
   }
 
-  void MarkGeneric(LocalSignalId lid) {
-    if (in_generic[lid.value] == 0) {
-      in_generic[lid.value] = 1;
-      generic_list.push_back(lid);
-    }
-  }
-
   void Clear() {
     for (auto lid : list) {
       seen[lid.value] = 0;
+      slot_initialized[lid.value] = 0;
     }
     list.clear();
-    for (auto lid : generic_list) {
-      in_generic[lid.value] = 0;
-    }
-    generic_list.clear();
   }
 
   [[nodiscard]] auto IsInitialized() const -> bool {

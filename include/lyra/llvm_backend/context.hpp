@@ -319,6 +319,9 @@ class Context {
   [[nodiscard]] auto GetLyraStoreStringLocal() -> llvm::Function*;
   [[nodiscard]] auto GetLyraStoreStringGlobal() -> llvm::Function*;
   [[nodiscard]] auto GetLyraDeferredWriteLocal() -> llvm::Function*;
+  [[nodiscard]] auto GetLyraDeferredMaskedWriteLocal() -> llvm::Function*;
+  [[nodiscard]] auto GetLyraDeferredCanonicalPackedWriteLocal()
+      -> llvm::Function*;
   [[nodiscard]] auto GetLyraScheduleNbaLocal() -> llvm::Function*;
   [[nodiscard]] auto GetLyraScheduleNbaGlobal() -> llvm::Function*;
   [[nodiscard]] auto GetLyraScheduleNbaCanonicalPackedLocal()
@@ -857,6 +860,13 @@ class Context {
   [[nodiscard]] auto IsOwnedInlineSlot(mir::PlaceId place_id) const -> bool;
   [[nodiscard]] auto GetSlotBodyByteOffset(mir::PlaceId place_id) const
       -> uint32_t;
+  // Compute byte offset within a slot for static FieldProjection /
+  // UnionMemberProjection chains. Returns (sub_offset, sub_size) if all
+  // projections are statically resolvable, nullopt otherwise (IndexProjection
+  // or BitRangeProjection present). UnionMemberProjection contributes
+  // zero offset; FieldProjection contributes struct field byte offset.
+  [[nodiscard]] auto ComputeStaticProjectionOffset(mir::PlaceId place_id)
+      -> std::optional<std::pair<uint32_t, uint32_t>>;
   [[nodiscard]] auto GetBitRangeProjection(mir::PlaceId place_id) const
       -> const mir::BitRangeProjection&;
   // LLVM type of the base value that GetPlacePointer() points to.
@@ -1101,6 +1111,8 @@ class Context {
   llvm::Function* lyra_store_string_local_ = nullptr;
   llvm::Function* lyra_store_string_global_ = nullptr;
   llvm::Function* lyra_deferred_write_local_ = nullptr;
+  llvm::Function* lyra_deferred_masked_write_local_ = nullptr;
+  llvm::Function* lyra_deferred_canonical_packed_write_local_ = nullptr;
   llvm::Function* lyra_schedule_nba_local_ = nullptr;
   llvm::Function* lyra_schedule_nba_global_ = nullptr;
   llvm::Function* lyra_schedule_nba_canonical_packed_local_ = nullptr;

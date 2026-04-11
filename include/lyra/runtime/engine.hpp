@@ -950,8 +950,6 @@ class Engine {
   void ExecuteInactiveRegion();
   void ExecuteNbaRegion();
   void CommitDeferredLocalNbas();
-  void EvictDeferredNba(RuntimeInstance& inst, LocalSignalId lid);
-  void MarkLocalNbaGeneric(RuntimeInstance& inst, LocalSignalId lid);
   void ExecutePostponedRegion();
   void FlushDirtySlots();
 

@@ -580,6 +580,44 @@ auto Context::GetSlotBodyByteOffset(mir::PlaceId place_id) const -> uint32_t {
       spec_slot_info_->inline_offsets[local_slot_id].value);
 }
 
+auto Context::ComputeStaticProjectionOffset(mir::PlaceId place_id)
+    -> std::optional<std::pair<uint32_t, uint32_t>> {
+  const auto& place = LookupPlace(place_id);
+  if (place.projections.empty()) return std::nullopt;
+
+  const auto& dl = llvm_module_->getDataLayout();
+  TypeId current_type = place.root.type;
+  uint32_t byte_offset = 0;
+
+  for (const auto& proj : place.projections) {
+    if (const auto* field = std::get_if<mir::FieldProjection>(&proj.info)) {
+      auto struct_type_result = BuildLlvmTypeForTypeId(*this, current_type);
+      if (!struct_type_result) return std::nullopt;
+      auto* struct_ty = llvm::dyn_cast<llvm::StructType>(*struct_type_result);
+      if (struct_ty == nullptr) return std::nullopt;
+      const auto* layout = dl.getStructLayout(struct_ty);
+      byte_offset +=
+          static_cast<uint32_t>(layout->getElementOffset(field->field_index));
+      const auto& struct_info = types_[current_type].AsUnpackedStruct();
+      current_type =
+          struct_info.fields[static_cast<size_t>(field->field_index)].type;
+      continue;
+    }
+    if (const auto* umem =
+            std::get_if<mir::UnionMemberProjection>(&proj.info)) {
+      const auto& union_info = types_[current_type].AsUnpackedUnion();
+      current_type = union_info.members[umem->member_index].type;
+      continue;
+    }
+    return std::nullopt;
+  }
+
+  auto final_ty_result = BuildLlvmTypeForTypeId(*this, current_type);
+  if (!final_ty_result) return std::nullopt;
+  auto sub_size = static_cast<uint32_t>(dl.getTypeStoreSize(*final_ty_result));
+  return std::pair{byte_offset, sub_size};
+}
+
 auto Context::GetPlaceLlvmType(mir::PlaceId place_id) -> Result<llvm::Type*> {
   const auto& place = LookupPlace(place_id);
 

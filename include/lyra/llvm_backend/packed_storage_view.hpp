@@ -35,30 +35,30 @@ class Context;
 // - non-canonical (process locals): LLVM-managed alloca storage where plane
 //   layout follows LLVM struct alignment rules. Byte-addressable localized
 //   access is not valid for non-canonical storage.
+// Backing-domain classification for packed storage.
+// Enforces the invariant: canonical backing has no local type; local backing
+// requires a non-null LLVM type.
+class PackedStorageBacking {
+ public:
+  [[nodiscard]] auto IsCanonical() const -> bool {
+    return is_canonical_;
+  }
+  [[nodiscard]] auto RequireLocalType() const -> llvm::Type*;
+  void SetCanonical();
+  void SetLocal(llvm::Type* local_llvm_type);
+
+ private:
+  bool is_canonical_ = false;
+  llvm::Type* local_llvm_type_ = nullptr;
+};
+
 struct PackedStorageView {
   llvm::Value* base_ptr = nullptr;
   uint32_t total_semantic_bits = 0;
   uint32_t storage_plane_byte_size = 0;
   uint32_t unk_plane_offset_bytes = 0;
   bool is_four_state = false;
-
-  // Backing-domain accessors. Only used by load/store boundary functions
-  // (LoadLanePlanes, StoreLanePlanes) and classification helpers.
-  // Lane-domain algebra should not call these.
-  [[nodiscard]] auto IsCanonicalBacking() const -> bool {
-    return backing_.is_canonical;
-  }
-
-  [[nodiscard]] auto RequireLocalBackingType() const -> llvm::Type*;
-
-  void SetCanonicalBacking();
-  void SetLocalBacking(llvm::Type* local_llvm_type);
-
- private:
-  struct BackingInfo {
-    bool is_canonical = false;
-    llvm::Type* local_llvm_type = nullptr;
-  } backing_;
+  PackedStorageBacking backing;
 };
 
 // A single step in a packed projection path.
@@ -319,6 +319,11 @@ struct PackedNbaPolicy {
   llvm::Value* engine_ptr = nullptr;
   llvm::Value* notify_base_ptr = nullptr;
   SignalCoordExpr signal_id;
+  // Instance-owned deferred storage routing. When true, local packed NBA
+  // writes go to deferred storage instead of generic nba_queue_.
+  // slot_body_offset is the byte offset of the root slot from inline_base.
+  bool is_local_owned_inline = false;
+  uint32_t slot_body_offset = 0;
 };
 
 // Localized subview deferred/NBA write.
