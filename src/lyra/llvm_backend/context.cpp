@@ -528,6 +528,8 @@ auto Context::LoadExternalRef(mir::ExternalRefId ref_id)
   return builder_.CreateLoad(llvm_type, ptr, "ext_ref_load");
 }
 
+// External refs are never instance-owned, so they always route through
+// the generic NBA queue (never deferred storage).
 auto Context::EmitExternalRefSignalCoord(mir::ExternalRefId ref_id)
     -> SignalCoordExpr {
   return SignalCoordExpr::ExtRef(ref_id.value);

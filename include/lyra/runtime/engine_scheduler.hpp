@@ -82,8 +82,17 @@ struct NbaNotifyLocal {
 };
 using NbaNotifySignal = std::variant<NbaNotifyGlobal, NbaNotifyLocal>;
 
-// NBA queue entry: deferred write committed in the NBA region.
+// Generic NBA queue entry: deferred write committed in the NBA region.
 // Common header (write target + notification) plus typed payload.
+//
+// ARCHITECTURAL INVARIANT:
+// The generic nba_queue_ serves only non-instance-owned targets:
+//   - Global/package signals (NbaNotifyGlobal)
+//   - Cross-instance local signals (NbaNotifyLocal where the writing
+//     process belongs to a different instance than the target)
+// Instance-owned local signals use per-instance deferred storage
+// (RuntimeInstanceStorage::deferred_inline_base / deferred_appendix_base)
+// committed by CommitDeferredLocalNbas, not this queue.
 struct NbaEntry {
   void* write_ptr;
   const void* notify_base_ptr;

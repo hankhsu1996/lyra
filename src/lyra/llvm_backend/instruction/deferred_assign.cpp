@@ -162,8 +162,17 @@ auto CoerceValueToShape(
   return nullptr;
 }
 
-// Canonical deferred store core parameterized by TypeId.
-// Handles value/mask construction uniformly via StoreShape classification.
+// Generic NBA queue path for non-instance-owned targets.
+//
+// ARCHITECTURAL INVARIANT:
+// This function emits calls to LyraScheduleNba{Local,Global}, which enqueue
+// onto the generic nba_queue_. Only the following targets are permitted:
+//   - Global/package signals (SignalCoordExpr::kGlobal)
+//   - Cross-instance local signals (SignalCoordExpr::kLocalCrossInstance)
+//   - ExternalRefId targets (always global)
+// Instance-owned local signals (same-instance, owned inline or container)
+// MUST use EmitDeferredWriteLocal instead. The ownership gate in
+// LowerDeferredAssign enforces this at codegen time.
 auto EmitDeferredStoreCore(
     Context& context, const mir::DeferredAssign& deferred,
     const StoreShape& shape, llvm::Value* write_ptr,
@@ -212,12 +221,52 @@ auto EmitDeferredStoreCore(
   return {};
 }
 
+// Instance-owned deferred byte-range write for local NBA.
+// Handles whole-slot and sub-slot writes. Identity-based: passes
+// (local_signal_id, body_byte_offset, is_partial) instead of
+// current-storage pointers. body_byte_offset is an LLVM Value to
+// support both static (field/union) and dynamic (index) offsets.
+auto EmitDeferredWriteLocal(
+    Context& context, const mir::DeferredAssign& deferred,
+    const StoreShape& shape, llvm::Value* body_byte_offset,
+    const SignalCoordExpr& signal_id, TypeId target_type, bool is_partial)
+    -> Result<void> {
+  auto& builder = context.GetBuilder();
+  auto& llvm_ctx = context.GetLlvmContext();
+
+  auto raw_or_err = LowerRhsRaw(context, deferred.rhs, target_type);
+  if (!raw_or_err) return std::unexpected(raw_or_err.error());
+
+  llvm::Value* source_value = CoerceValueToShape(context, *raw_or_err, shape);
+  auto* val_alloca = builder.CreateAlloca(shape.storage_ty, nullptr, "nba.val");
+  builder.CreateStore(source_value, val_alloca);
+
+  uint32_t byte_size =
+      (shape.kind == StoreKind::kAggregateBytes)
+          ? shape.byte_size
+          : static_cast<uint32_t>(
+                context.GetModule().getDataLayout().getTypeStoreSize(
+                    shape.storage_ty));
+
+  auto* i32_ty = llvm::Type::getInt32Ty(llvm_ctx);
+  builder.CreateCall(
+      context.GetLyraDeferredWriteLocal(),
+      {context.GetEnginePointer(),
+       signal_id.GetInstancePointer(context.GetInstancePointer()), val_alloca,
+       llvm::ConstantInt::get(i32_ty, byte_size), signal_id.Emit(builder),
+       body_byte_offset, llvm::ConstantInt::get(i32_ty, is_partial ? 1 : 0)});
+  return {};
+}
+
 // BitRangeProjection NBA: route through packed storage view module.
 // The storage layer owns subview classification and emission shape;
-// this function is a thin routing wrapper.
+// this function is a thin routing wrapper. The ownership flag is forwarded
+// to PackedNbaPolicy so the packed dispatch can route local owned-inline
+// targets to deferred storage.
 auto LowerDeferredAssignBitRange(
     Context& context, const mir::DeferredAssign& deferred,
-    const SignalCoordExpr& signal_id, mir::PlaceId dest) -> Result<void> {
+    const SignalCoordExpr& signal_id, mir::PlaceId dest, bool is_local_owned)
+    -> Result<void> {
   auto path = ExtractPackedAccessPath(context, dest);
   if (!path) return std::unexpected(path.error());
 
@@ -228,38 +277,44 @@ auto LowerDeferredAssignBitRange(
       context, deferred.rhs, subview->semantic_bit_width, subview->result_type);
   if (!rvalue) return std::unexpected(rvalue.error());
 
+  uint32_t slot_body_offset = 0;
+  if (is_local_owned) {
+    slot_body_offset = context.IsOwnedContainerSlot(dest)
+                           ? context.GetContainerBodyByteOffset(dest)
+                           : context.GetSlotBodyByteOffset(dest);
+  }
+
   PackedNbaPolicy nba_policy{
       .engine_ptr = context.GetEnginePointer(),
       .notify_base_ptr = context.GetStorageRootPointer(dest),
       .signal_id = signal_id,
+      .is_local_owned = is_local_owned,
+      .slot_body_offset = slot_body_offset,
   };
 
   return EmitDeferredStoreToPackedSubview(
       context, *subview, *rvalue, nba_policy);
 }
 
-// IndexProjection NBA: array element write with OOB guard.
-// Uses StoreShape classification and EmitDeferredStoreCore.
-auto LowerDeferredAssignWithOobGuard(
-    Context& context, const mir::DeferredAssign& deferred,
-    const StoreShape& shape, const SignalCoordExpr& signal_id,
-    mir::PlaceId dest) -> Result<void> {
-  auto& builder = context.GetBuilder();
-  auto& llvm_ctx = context.GetLlvmContext();
+// Extract array bounds info from a place with IndexProjection.
+// Returns (IndexProjection*, array_size) for the first IndexProjection found.
+struct IndexProjectionInfo {
+  const mir::IndexProjection* proj = nullptr;
+  uint64_t array_size = 0;
+};
+
+auto ExtractIndexProjectionInfo(Context& context, mir::PlaceId dest)
+    -> IndexProjectionInfo {
   const auto& types = context.GetTypeArena();
   const auto& place = context.LookupPlace(dest);
 
-  // Walk projections to find the first IndexProjection and compute the array
-  // type AT that projection site. This handles cases like s.field[i] where the
-  // root type is a struct but the indexed type is an array field.
   const mir::IndexProjection* idx_proj = nullptr;
   TypeId array_type_id = place.root.type;
   for (const auto& proj : place.projections) {
     if (const auto* idx = std::get_if<mir::IndexProjection>(&proj.info)) {
       idx_proj = idx;
-      break;  // array_type_id is now the array being indexed
+      break;
     }
-    // Advance type through non-index projections
     const Type& cur_type = types[array_type_id];
     if (const auto* fp = std::get_if<mir::FieldProjection>(&proj.info)) {
       array_type_id = cur_type.AsUnpackedStruct()
@@ -272,44 +327,91 @@ auto LowerDeferredAssignWithOobGuard(
         const auto* bp = std::get_if<mir::BitRangeProjection>(&proj.info)) {
       array_type_id = bp->element_type;
     }
-    // SliceProjection and DerefProjection not yet supported
   }
 
   const Type& arr_type = types[array_type_id];
   if (arr_type.Kind() != TypeKind::kUnpackedArray) {
     throw common::InternalError(
-        "LowerDeferredAssignWithOobGuard",
+        "ExtractIndexProjectionInfo",
         std::format(
             "expected UnpackedArray at IndexProjection, got {}",
             ToString(arr_type.Kind())));
   }
-  auto arr_size = arr_type.AsUnpackedArray().range.Size();
+  return {
+      .proj = idx_proj, .array_size = arr_type.AsUnpackedArray().range.Size()};
+}
 
-  // Compute bounds check
+// IndexProjection NBA: array element write with OOB guard.
+// For local owned targets, uses deferred byte-range write with
+// dynamic body_offset. For non-local, uses generic EmitDeferredStoreCore.
+auto LowerDeferredAssignWithOobGuard(
+    Context& context, const mir::DeferredAssign& deferred,
+    const StoreShape& shape, const SignalCoordExpr& signal_id,
+    mir::PlaceId dest, bool is_local_owned) -> Result<void> {
+  auto& builder = context.GetBuilder();
+  auto& llvm_ctx = context.GetLlvmContext();
+  const auto& types = context.GetTypeArena();
+
+  auto [idx_proj, arr_size] = ExtractIndexProjectionInfo(context, dest);
+
   auto index_or_err = LowerOperand(context, idx_proj->index);
   if (!index_or_err) return std::unexpected(index_or_err.error());
   llvm::Value* index = *index_or_err;
   auto* arr_size_val = llvm::ConstantInt::get(index->getType(), arr_size);
   auto* in_bounds = builder.CreateICmpULT(index, arr_size_val, "nba.inbounds");
 
-  // Create conditional branch
   auto* func = builder.GetInsertBlock()->getParent();
   auto* schedule_bb = llvm::BasicBlock::Create(llvm_ctx, "nba.schedule", func);
   auto* skip_bb = llvm::BasicBlock::Create(llvm_ctx, "nba.skip", func);
   builder.CreateCondBr(in_bounds, schedule_bb, skip_bb);
 
-  // Schedule block: compute pointers and emit via shared core
   builder.SetInsertPoint(schedule_bb);
-  auto write_ptr_or_err = context.GetPlacePointer(dest);
-  if (!write_ptr_or_err) return std::unexpected(write_ptr_or_err.error());
-  llvm::Value* write_ptr = *write_ptr_or_err;
-  llvm::Value* notify_base_ptr = context.GetStorageRootPointer(dest);
 
-  TypeId dest_type = mir::TypeOfPlace(types, context.LookupPlace(dest));
-  auto result = EmitDeferredStoreCore(
-      context, deferred, shape, write_ptr, notify_base_ptr, signal_id,
-      dest_type);
-  if (!result) return result;
+  if (is_local_owned) {
+    // Compute dynamic body_offset: base_offset + (write_ptr - slot_root).
+    // GetPlacePointer applies all projections (field + index), so
+    // ptr - root = sub-slot offset.
+    // For inline slots: base is the inline slot offset.
+    // For container slots: base is the appendix backing data offset.
+    auto write_ptr_or_err = context.GetPlacePointer(dest);
+    if (!write_ptr_or_err) return std::unexpected(write_ptr_or_err.error());
+    llvm::Value* write_ptr = *write_ptr_or_err;
+    llvm::Value* slot_root = context.GetStorageRootPointer(dest);
+
+    auto* i32_ty = llvm::Type::getInt32Ty(llvm_ctx);
+    auto* sub_offset = builder.CreatePtrDiff(
+        llvm::Type::getInt8Ty(llvm_ctx), write_ptr, slot_root, "nba.suboff");
+    auto* sub_offset_i32 = builder.CreateTrunc(sub_offset, i32_ty);
+    uint32_t slot_body_off = context.IsOwnedContainerSlot(dest)
+                                 ? context.GetContainerBodyByteOffset(dest)
+                                 : context.GetSlotBodyByteOffset(dest);
+    auto* body_offset = builder.CreateAdd(
+        llvm::ConstantInt::get(i32_ty, slot_body_off), sub_offset_i32,
+        "nba.bodyoff");
+
+    TypeId dest_type = mir::TypeOfPlace(types, context.LookupPlace(dest));
+    auto result = EmitDeferredWriteLocal(
+        context, deferred, shape, body_offset, signal_id, dest_type, true);
+    if (!result) return result;
+  } else {
+    if (signal_id.GetKind() == SignalCoordExpr::Kind::kLocal) {
+      if (context.IsOwnedInlineSlot(dest) ||
+          context.IsOwnedContainerSlot(dest)) {
+        throw common::InternalError(
+            "LowerDeferredAssignWithOobGuard",
+            "same-instance owned signal reached generic NBA queue fallback");
+      }
+    }
+    auto write_ptr_or_err = context.GetPlacePointer(dest);
+    if (!write_ptr_or_err) return std::unexpected(write_ptr_or_err.error());
+    llvm::Value* write_ptr = *write_ptr_or_err;
+    llvm::Value* notify_base_ptr = context.GetStorageRootPointer(dest);
+    TypeId dest_type = mir::TypeOfPlace(types, context.LookupPlace(dest));
+    auto result = EmitDeferredStoreCore(
+        context, deferred, shape, write_ptr, notify_base_ptr, signal_id,
+        dest_type);
+    if (!result) return result;
+  }
   builder.CreateBr(skip_bb);
 
   builder.SetInsertPoint(skip_bb);
@@ -333,25 +435,88 @@ auto LowerDeferredAssign(Context& context, const mir::DeferredAssign& deferred)
                                   : context.EmitExternalRefSignalCoord(
                                         std::get<mir::ExternalRefId>(dest));
 
+  // ROUTING INVARIANT: local owned state <= must use deferred storage.
+  //
+  // Same-instance owned signals (inline or container) go through
+  // EmitDeferredWriteLocal -> LyraDeferredWriteLocal, writing to
+  // per-instance deferred storage committed in CommitDeferredLocalNbas.
+  //
+  // Everything else (global, package, cross-instance, ExternalRefId)
+  // goes through EmitDeferredStoreCore -> LyraScheduleNba{Local,Global},
+  // enqueuing onto the generic nba_queue_.
+  //
+  // ExternalRefId always produces SignalCoordExpr::Global -- it never
+  // reaches the ownership gate (dest_place is nullptr for external refs).
+  bool is_local_owned_inline = dest_place != nullptr && signal_id.IsLocal() &&
+                               context.IsOwnedInlineSlot(*dest_place);
+  bool is_local_owned_container = dest_place != nullptr &&
+                                  signal_id.IsLocal() &&
+                                  context.IsOwnedContainerSlot(*dest_place);
+  bool is_local_owned = is_local_owned_inline || is_local_owned_container;
+
   // Case 1: BitRangeProjection (PlaceId-only, external refs have no
-  // projections).
+  // projections). PackedNbaPolicy carries the ownership flag so the packed
+  // subview dispatch can route to deferred storage for local targets.
   if (dest_place != nullptr && context.HasBitRangeProjection(*dest_place)) {
     return LowerDeferredAssignBitRange(
-        context, deferred, signal_id, *dest_place);
+        context, deferred, signal_id, *dest_place, is_local_owned);
   }
 
   // Classify destination once via MIR type.
   StoreShape shape = ClassifyDeferredStoreByType(context, dest_type);
 
-  // Case 2: IndexProjection (PlaceId-only).
+  // Case 2: IndexProjection (PlaceId-only). Dynamic offset, always partial.
   if (dest_place != nullptr &&
       HasIndexProjection(context.LookupPlace(*dest_place))) {
     return LowerDeferredAssignWithOobGuard(
-        context, deferred, shape, signal_id, *dest_place);
+        context, deferred, shape, signal_id, *dest_place, is_local_owned);
   }
 
-  // Case 3: Simple full-width write. Works for both PlaceId and ExternalRefId.
-  // Resolve write pointer and notify base from WriteTarget.
+  // Case 3: Full-width write or static field/union projection chain.
+  auto* i32_ty = llvm::Type::getInt32Ty(context.GetLlvmContext());
+
+  if (is_local_owned) {
+    // For inline slots: body_offset is the inline slot offset.
+    // For container slots: body_offset is the appendix backing data offset.
+    uint32_t slot_body_off =
+        is_local_owned_inline ? context.GetSlotBodyByteOffset(*dest_place)
+                              : context.GetContainerBodyByteOffset(*dest_place);
+    const auto& projs = context.LookupPlace(*dest_place).projections;
+
+    if (!projs.empty()) {
+      auto static_proj = context.ComputeStaticProjectionOffset(*dest_place);
+      if (!static_proj.has_value()) {
+        throw common::InternalError(
+            "LowerDeferredAssign",
+            "local owned target has unsupported projection chain "
+            "that reached Case 3 (not BitRange, not Index)");
+      }
+      auto [sub_offset, sub_size] = *static_proj;
+      auto* body_offset =
+          llvm::ConstantInt::get(i32_ty, slot_body_off + sub_offset);
+      return EmitDeferredWriteLocal(
+          context, deferred, shape, body_offset, signal_id, dest_type, true);
+    }
+    // Whole-slot write: no projections.
+    auto* body_offset = llvm::ConstantInt::get(i32_ty, slot_body_off);
+    return EmitDeferredWriteLocal(
+        context, deferred, shape, body_offset, signal_id, dest_type, false);
+  }
+
+  // Non-local fallback: global, external ref, or cross-instance targets.
+  // Invariant: if we reach here with a same-instance local signal, the
+  // ownership gate above must have determined it is NOT instance-owned.
+  // A same-instance owned signal reaching the generic queue is a bug.
+  if (dest_place != nullptr &&
+      signal_id.GetKind() == SignalCoordExpr::Kind::kLocal) {
+    if (context.IsOwnedInlineSlot(*dest_place) ||
+        context.IsOwnedContainerSlot(*dest_place)) {
+      throw common::InternalError(
+          "LowerDeferredAssign",
+          "same-instance owned signal reached generic NBA queue fallback");
+    }
+  }
+
   llvm::Value* write_ptr = nullptr;
   llvm::Value* notify_base_ptr = nullptr;
   if (dest_place != nullptr) {
@@ -364,6 +529,7 @@ auto LowerDeferredAssign(Context& context, const mir::DeferredAssign& deferred)
     write_ptr = context.EmitExternalRefAddress(ref_id);
     notify_base_ptr = write_ptr;
   }
+
   return EmitDeferredStoreCore(
       context, deferred, shape, write_ptr, notify_base_ptr, signal_id,
       dest_type);

@@ -1,0 +1,213 @@
+feature: nba_routing
+description: >
+  NBA routing boundary regression tests. Verifies that instance-owned
+  local signals use deferred storage (nba_stats.deferred_local) and
+  global/package/ExternalRefId signals use the generic queue
+  (nba_stats.generic_queue). These tests lock in the architectural
+  invariant: local owned state never touches the generic queue.
+
+cases:
+  - name: owned_inline_whole_slot
+    description: >
+      Module-level scalar with whole-slot NBA routes through
+      deferred local storage, not the generic queue.
+    sv: |
+      module Test;
+        logic [31:0] x;
+        int result;
+        initial begin
+          x = 32'hAAAA_BBBB;
+          x <= 32'h1234_5678;
+          #0;
+          result = x;
+        end
+      endmodule
+    expect:
+      variables:
+        result: "0x12345678"
+      nba_stats:
+        deferred_local: 1
+        generic_queue: 0
+
+  - name: owned_inline_field_projection
+    description: >
+      NBA to a struct field (static field projection) routes through
+      deferred local storage.
+    sv: |
+      module Test;
+        typedef struct packed {
+          logic [15:0] hi;
+          logic [15:0] lo;
+        } pair_t;
+        pair_t p;
+        int result;
+        initial begin
+          p = '0;
+          p.lo <= 16'hBEEF;
+          #0;
+          result = p;
+        end
+      endmodule
+    expect:
+      variables:
+        result: "0x0000BEEF"
+      nba_stats:
+        deferred_local: 1
+        generic_queue: 0
+
+  - name: owned_inline_union_member
+    description: >
+      NBA to a packed union member routes through deferred local storage.
+    sv: |
+      module Test;
+        typedef union packed {
+          logic [31:0] bits;
+          logic [31:0] word;
+        } overlay_t;
+        overlay_t u;
+        int result;
+        initial begin
+          u.bits = 32'hFFFF_FFFF;
+          u.word <= 32'hDEAD_BEEF;
+          #0;
+          result = u.bits;
+        end
+      endmodule
+    expect:
+      variables:
+        result: "0xDEADBEEF"
+      nba_stats:
+        deferred_local: 1
+        generic_queue: 0
+
+  - name: owned_inline_index_projection
+    description: >
+      NBA to an array element (dynamic index projection with OOB guard)
+      routes through deferred local storage.
+    sv: |
+      module Test;
+        int arr [4];
+        int result;
+        initial begin
+          arr[0] = 0;
+          arr[1] = 0;
+          arr[2] = 0;
+          arr[3] = 0;
+          arr[2] <= 999;
+          #0;
+          result = arr[2];
+        end
+      endmodule
+    expect:
+      variables:
+        result: 999
+      nba_stats:
+        deferred_local: 1
+        generic_queue: 0
+
+  - name: owned_inline_packed_bit_range
+    description: >
+      NBA to a packed bit-range (masked merge path) routes through
+      deferred local storage, not the generic queue.
+    sv: |
+      module Test;
+        logic [31:0] x;
+        int result;
+        initial begin
+          x = 32'hFF00_FF00;
+          x[15:8] <= 8'hAB;
+          #0;
+          result = x;
+        end
+      endmodule
+    expect:
+      variables:
+        result: "0xFF00AB00"
+      nba_stats:
+        deferred_local: 1
+        generic_queue: 0
+
+  - name: owned_container_local
+    description: >
+      NBA to a module-level array in a parameterized module uses
+      owned-container storage shape. The deferred write routes through
+      deferred appendix storage, not the generic queue.
+    sv: |
+      module inner #(parameter int N = 4);
+        int arr [N];
+        int result;
+        initial begin
+          for (int i = 0; i < N; i++) arr[i] = 0;
+          arr[1] <= 42;
+          #0;
+          result = arr[1];
+        end
+      endmodule
+
+      module Test;
+        int result;
+        inner #(.N(4)) u();
+        assign result = u.result;
+      endmodule
+    expect:
+      variables:
+        result: 42
+      nba_stats:
+        deferred_local: 1
+        generic_queue: 0
+
+  - name: package_global_nba
+    description: >
+      NBA to a package-scoped variable routes through the generic
+      queue (global signal), not deferred local storage.
+    sv: |
+      package pkg;
+        int g;
+      endpackage
+
+      module Test;
+        int result;
+        initial begin
+          pkg::g = 0;
+          pkg::g <= 77;
+          #0;
+          result = pkg::g;
+        end
+      endmodule
+    expect:
+      variables:
+        result: 77
+      nba_stats:
+        deferred_local: 0
+        generic_queue: 1
+
+  - name: mixed_local_and_global
+    description: >
+      Mixed NBA writes: one to a local owned signal (deferred storage)
+      and one to a package global (generic queue). Both counters should
+      increment, confirming the routing boundary splits correctly.
+    sv: |
+      package pkg;
+        int g;
+      endpackage
+
+      module Test;
+        logic [31:0] x;
+        int r_local, r_global;
+        initial begin
+          x = '0;
+          pkg::g = 0;
+          x <= 32'hAAAA;
+          pkg::g <= 55;
+          #0;
+          r_local = x;
+          r_global = pkg::g;
+        end
+      endmodule
+    expect:
+      variables:
+        r_local: "0x0000AAAA"
+        r_global: 55
+      nba_stats:
+        deferred_local: 1
+        generic_queue: 1

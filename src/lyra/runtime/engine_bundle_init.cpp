@@ -385,6 +385,7 @@ void Engine::InitModuleInstancesFromBundles(
       populated[entry.local_signal_id] = 1;
 
       auto lid = entry.local_signal_id;
+      bool is_container = entry.backing_rel_off != 0;
       layout.slot_meta[lid] = InstanceSlotMeta{
           .instance_rel_off = entry.storage_byte_offset,
           .total_bytes = entry.total_bytes,
@@ -396,6 +397,9 @@ void Engine::InitModuleInstancesFromBundles(
                   .unk_off = entry.unk_lane_offset,
                   .unk_bytes = entry.unk_lane_bytes,
               },
+          .is_container = is_container,
+          .backing_rel_off = entry.backing_rel_off,
+          .backing_bytes = is_container ? entry.total_bytes : 0U,
       };
 
       auto local_name =
@@ -446,6 +450,10 @@ void Engine::InitModuleInstancesFromBundles(
     if (local_count > 0) {
       bundle.instance->observability.Init();
     }
+
+    // Initialize deferred-NBA pending set sized to local signal count.
+    bundle.instance->nba_pending.Init(
+        local_count, GetInstanceIndex(bundle.instance_id));
 
     // R5: populate process-to-instance mapping for subscription routing.
     for (uint32_t p = 0; p < bundle.num_module_processes; ++p) {

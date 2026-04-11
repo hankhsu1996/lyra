@@ -89,7 +89,7 @@ auto MakeObservableDescriptorEntry(
     uint32_t storage_byte_offset, uint32_t local_name_pool_off,
     const ObservableDescriptorOwnerRefFields& refs,
     const ObservableDescriptorShapeFields& sf, uint32_t storage_domain,
-    uint32_t local_signal_id = UINT32_MAX)
+    uint32_t local_signal_id = UINT32_MAX, uint32_t backing_rel_off = 0)
     -> runtime::ObservableDescriptorEntry {
   return runtime::ObservableDescriptorEntry{
       .storage_byte_offset = storage_byte_offset,
@@ -106,6 +106,7 @@ auto MakeObservableDescriptorEntry(
       .flags = refs.flags,
       .storage_domain = storage_domain,
       .local_signal_id = local_signal_id,
+      .backing_rel_off = backing_rel_off,
   };
 }
 
@@ -929,8 +930,16 @@ void ExtractBodyObservableDescriptors(
           narrow_u64_to_u32(body_offset.value, "body-local byte offset");
 
       uint32_t body_local_signal_id = gsi - base_slot;
+      uint32_t backing_off = 0;
+      if (layout.design.owned_data_offsets[gsi].has_value()) {
+        auto backing_body_off =
+            *layout.design.owned_data_offsets[gsi] - owned_base->value;
+        backing_off = narrow_u64_to_u32(
+            backing_body_off, "container backing body offset");
+      }
       tmpl.entries.push_back(MakeObservableDescriptorEntry(
-          storage_offset, name_off, refs, sf, domain, body_local_signal_id));
+          storage_offset, name_off, refs, sf, domain, body_local_signal_id,
+          backing_off));
     }
 
     // Validate dense population.

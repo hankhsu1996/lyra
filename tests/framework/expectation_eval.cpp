@@ -236,6 +236,35 @@ auto EvaluateExpectations(
     }
   }
 
+  if (test_case.expected_nba_stats.has_value()) {
+    const auto& expected = *test_case.expected_nba_stats;
+    const auto& actual = result.artifacts.nba_stats;
+    if (!actual.captured) {
+      return {
+          .passed = false,
+          .failure_message = "nba_stats expected but not captured from engine",
+      };
+    }
+    if (expected.generic_queue.has_value() &&
+        actual.generic_queue != *expected.generic_queue) {
+      return {
+          .passed = false,
+          .failure_message = std::format(
+              "nba_stats.generic_queue mismatch: expected {}, got {}",
+              *expected.generic_queue, actual.generic_queue),
+      };
+    }
+    if (expected.deferred_local.has_value() &&
+        actual.deferred_local != *expected.deferred_local) {
+      return {
+          .passed = false,
+          .failure_message = std::format(
+              "nba_stats.deferred_local mismatch: expected {}, got {}",
+              *expected.deferred_local, actual.deferred_local),
+      };
+    }
+  }
+
   if (!test_case.expected_files.empty()) {
     for (const auto& [filename, expected] : test_case.expected_files) {
       auto it = result.artifacts.produced_files.find(filename);

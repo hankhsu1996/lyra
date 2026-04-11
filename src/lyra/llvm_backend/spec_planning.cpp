@@ -220,10 +220,12 @@ auto BuildSpecSlotInfos(
     auto slot_count = body_info.slot_count;
 
     info.inline_offsets.reserve(slot_count);
+    info.appendix_offsets.reserve(slot_count);
     info.shapes.reserve(slot_count);
     info.access_kinds.reserve(slot_count);
     for (uint32_t s = 0; s < slot_count; ++s) {
       info.inline_offsets.push_back(body_layout.inline_offsets[s]);
+      info.appendix_offsets.push_back(body_layout.appendix_offsets[s]);
       auto shape = body.slots[s].storage_shape;
       info.shapes.push_back(shape);
       bool is_container = shape == mir::StorageShape::kOwnedContainer;

@@ -92,6 +92,9 @@ void Engine::InitConnectionBatch(std::span<const ConnectionDescriptor> descs) {
       }
     }
 
+    const auto* src_ptr = ResolveSlotBytes(d.src_slot_id);
+    auto* dst_ptr = ResolveConnectionDstMut(dst);
+
     sorted.push_back(
         IndexedConn{
             .trigger_is_local = trigger_is_local,
@@ -100,7 +103,8 @@ void Engine::InitConnectionBatch(std::span<const ConnectionDescriptor> descs) {
             .trigger_global_id = trigger_global_id,
             .conn =
                 BatchedConnection{
-                    .src_slot_id = d.src_slot_id,
+                    .src_ptr = src_ptr,
+                    .dst_ptr = dst_ptr,
                     .byte_size = d.byte_size,
                     .dst = dst,
                 },
@@ -200,8 +204,8 @@ void Engine::InitConnectionBatch(std::span<const ConnectionDescriptor> descs) {
 void Engine::EvaluateAllConnections() {
   if (all_connections_.empty()) return;
   for (const auto& conn : all_connections_) {
-    const auto* src = ResolveSlotBytes(conn.src_slot_id);
-    auto* dst = ResolveConnectionDstMut(conn.dst);
+    const auto* src = conn.src_ptr;
+    auto* dst = conn.dst_ptr;
     if (std::memcmp(dst, src, conn.byte_size) != 0) {
       std::memcpy(dst, src, conn.byte_size);
       std::visit(
@@ -512,15 +516,10 @@ void Engine::PromoteGlobalFrontier() {
 
 void Engine::FlushAndPropagateConnections() {
   // Check whether there is any work to do across both domains.
+  // Use the sparse delta_dirty_instances_ index for local dirty check
+  // instead of scanning all instances -- O(1) vs O(N).
   bool has_global_dirty = !update_set_.DeltaDirtySlots().empty();
-  bool has_local_dirty = false;
-  for (auto* inst : instances_) {
-    if (inst->observability.local_signal_count > 0 &&
-        !inst->observability.local_updates.DeltaDirtySignals().empty()) {
-      has_local_dirty = true;
-      break;
-    }
-  }
+  bool has_local_dirty = !delta_dirty_instances_.empty();
 
   if (detailed_stats_enabled_) {
     auto pending = update_set_.DeltaDirtySlots().size();
@@ -701,8 +700,8 @@ void Engine::FlushAndPropagateConnections() {
         for (uint32_t ci = start; ci < start + count; ++ci) {
           if (detailed) ++stats_.detailed.conn_considered;
           const auto& conn = all_connections_[ci];
-          const auto* src = ResolveSlotBytes(conn.src_slot_id);
-          auto* dst = ResolveConnectionDstMut(conn.dst);
+          const auto* src = conn.src_ptr;
+          auto* dst = conn.dst_ptr;
           if (detailed) ++stats_.detailed.conn_memcmp_executed;
           if (std::memcmp(dst, src, conn.byte_size) != 0) {
             if (detailed) ++stats_.detailed.conn_memcpy_executed;
@@ -725,8 +724,8 @@ void Engine::FlushAndPropagateConnections() {
           for (uint32_t ci = start; ci < start + count; ++ci) {
             if (detailed) ++stats_.detailed.conn_considered;
             const auto& conn = all_connections_[ci];
-            const auto* src = ResolveSlotBytes(conn.src_slot_id);
-            auto* dst = ResolveConnectionDstMut(conn.dst);
+            const auto* src = conn.src_ptr;
+            auto* dst = conn.dst_ptr;
             if (detailed) ++stats_.detailed.conn_memcmp_executed;
             if (std::memcmp(dst, src, conn.byte_size) != 0) {
               if (detailed) ++stats_.detailed.conn_memcpy_executed;

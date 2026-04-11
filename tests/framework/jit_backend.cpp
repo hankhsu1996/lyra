@@ -12,6 +12,7 @@
 #include "lyra/common/opt_level.hpp"
 #include "lyra/llvm_backend/execution.hpp"
 #include "lyra/runtime/cover_hook.hpp"
+#include "lyra/runtime/nba_stats_hook.hpp"
 #include "lyra/runtime/output_sink.hpp"
 #include "tests/framework/dpi_test_support.hpp"
 #include "tests/framework/llvm_common.hpp"
@@ -61,6 +62,7 @@ auto RunJitBackend(
   // Compile using in-process ORC JIT with host process symbols.
   // DPI object files are added directly to the JIT symbol space.
   std::string captured_output;
+  NbaRoutingStatsResult nba_stats;
   auto t_backend = Clock::now();
   lowering::mir_to_llvm::JitCompileOptions jit_opts{
       .opt_level = OptLevel::kO0,
@@ -96,6 +98,12 @@ auto RunJitBackend(
         [&cover_hits](std::vector<uint64_t> hits) {
           cover_hits = std::move(hits);
         });
+    runtime::NbaStatsCallbackScope nba_scope(
+        [&nba_stats](runtime::NbaRoutingStats stats) {
+          nba_stats.generic_queue = stats.generic_queue;
+          nba_stats.deferred_local = stats.deferred_local;
+          nba_stats.captured = true;
+        });
     exit_code = session->Run();
   }
   result.artifacts.timings.execute =
@@ -117,6 +125,7 @@ auto RunJitBackend(
   result.artifacts.variables = std::move(parsed.variables);
   result.artifacts.final_time = parsed.final_time;
   result.artifacts.cover_hits = std::move(cover_hits);
+  result.artifacts.nba_stats = nba_stats;
   result.artifacts.timings.total =
       std::chrono::duration<double>(Clock::now() - t_total).count();
 

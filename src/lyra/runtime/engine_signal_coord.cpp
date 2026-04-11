@@ -53,6 +53,16 @@ void Engine::MarkLocalSignalDirtyRange(
   MarkInstanceDeltaDirty(instance_idx);
 }
 
+void Engine::MarkLocalSignalDirtyFull(
+    RuntimeInstance& inst, LocalSignalId lid, uint32_t instance_idx) {
+  auto& obs = inst.observability;
+  if (obs.local_has_observers[lid.value] == 0 && !trace_manager_.IsEnabled()) {
+    return;
+  }
+  obs.local_updates.MarkSlotDirtyFull(lid);
+  MarkInstanceDeltaDirty(instance_idx);
+}
+
 // --- Instance-owned local paths (source of truth: per-instance containers) ---
 
 void Engine::MarkDirty(ObjectSignalRef signal) {
@@ -67,7 +77,7 @@ void Engine::MarkDirtyRange(
       *signal.instance, signal.local, byte_off, byte_size);
 }
 
-void Engine::ScheduleNba(
+void Engine::ScheduleNbaCrossInstanceLocal(
     ObjectSignalRef notify_signal, void* write_ptr, const void* notify_base_ptr,
     const void* value_ptr, const void* mask_ptr, uint32_t byte_size) {
   NbaNotifySignal notify{NbaNotifyLocal{
@@ -77,7 +87,7 @@ void Engine::ScheduleNba(
       write_ptr, notify_base_ptr, value_ptr, mask_ptr, byte_size, notify);
 }
 
-void Engine::ScheduleNbaCanonicalPacked(
+void Engine::ScheduleNbaCanonicalPackedCrossInstanceLocal(
     ObjectSignalRef notify_signal, void* write_ptr, const void* notify_base_ptr,
     const void* value_ptr, const void* unk_ptr, uint32_t region_byte_size,
     uint32_t second_region_offset) {
@@ -107,7 +117,7 @@ void Engine::MarkDirtyRange(
   MarkDirtyRange(signal.value, byte_off, byte_size);
 }
 
-void Engine::ScheduleNba(
+void Engine::ScheduleNbaGlobal(
     GlobalSignalId notify_signal, void* write_ptr, const void* notify_base_ptr,
     const void* value_ptr, const void* mask_ptr, uint32_t byte_size) {
   NbaNotifySignal notify{NbaNotifyGlobal{notify_signal}};
@@ -115,7 +125,7 @@ void Engine::ScheduleNba(
       write_ptr, notify_base_ptr, value_ptr, mask_ptr, byte_size, notify);
 }
 
-void Engine::ScheduleNbaCanonicalPacked(
+void Engine::ScheduleNbaCanonicalPackedGlobal(
     GlobalSignalId notify_signal, void* write_ptr, const void* notify_base_ptr,
     const void* value_ptr, const void* unk_ptr, uint32_t region_byte_size,
     uint32_t second_region_offset) {
@@ -189,6 +199,11 @@ void Engine::SetInstances(std::span<const RuntimeInstance* const> instances) {
   delta_dirty_instances_.reserve(n);
   timeslot_dirty_instances_.clear();
   timeslot_dirty_instances_.reserve(n);
+
+  // Initialize deferred-NBA pending sparse index.
+  in_nba_pending_.assign(n, 0);
+  nba_pending_instances_.clear();
+  nba_pending_instances_.reserve(n);
 }
 
 void InstanceIdTraceResolver::Build(

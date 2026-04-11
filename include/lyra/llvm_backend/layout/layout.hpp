@@ -413,6 +413,8 @@ struct Layout {
   size_t num_module_process_base = 0;
   // Connection processes evaluated as batch memcpy
   std::vector<ConnectionKernelEntry> connection_kernel_entries;
+  // Number of relay slots eliminated by compile-time connection elimination.
+  uint32_t relay_slots_eliminated = 0;
   // ProcessStateHeader type: {SuspendRecord, DesignState*}
   llvm::StructType* header_type = nullptr;
   // SuspendRecord type (opaque blob matching C++ struct size)

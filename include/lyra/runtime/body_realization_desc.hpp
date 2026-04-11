@@ -286,9 +286,13 @@ struct ObservableDescriptorEntry {
   // Defines the canonical LocalSignalId for this signal within the body.
   // Set at descriptor emission time. UINT32_MAX for design-global entries.
   uint32_t local_signal_id = UINT32_MAX;
+  // Body-relative byte offset of the container backing data (appendix region).
+  // Non-zero only for owned-container slots (kOwnedContainer storage shape).
+  // For non-container slots, this is 0.
+  uint32_t backing_rel_off = 0;
 };
 
-static_assert(sizeof(ObservableDescriptorEntry) == 56);
+static_assert(sizeof(ObservableDescriptorEntry) == 60);
 static_assert(offsetof(ObservableDescriptorEntry, storage_byte_offset) == 0);
 static_assert(offsetof(ObservableDescriptorEntry, total_bytes) == 4);
 static_assert(offsetof(ObservableDescriptorEntry, storage_kind) == 8);
@@ -303,6 +307,7 @@ static_assert(offsetof(ObservableDescriptorEntry, storage_owner_ref) == 40);
 static_assert(offsetof(ObservableDescriptorEntry, flags) == 44);
 static_assert(offsetof(ObservableDescriptorEntry, storage_domain) == 48);
 static_assert(offsetof(ObservableDescriptorEntry, local_signal_id) == 52);
+static_assert(offsetof(ObservableDescriptorEntry, backing_rel_off) == 56);
 static_assert(std::is_trivially_copyable_v<ObservableDescriptorEntry>);
 static_assert(std::is_standard_layout_v<ObservableDescriptorEntry>);
 

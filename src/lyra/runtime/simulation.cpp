@@ -26,6 +26,7 @@
 #include "lyra/runtime/engine_types.hpp"
 #include "lyra/runtime/feature_flags.hpp"
 #include "lyra/runtime/iteration_limit.hpp"
+#include "lyra/runtime/nba_stats_hook.hpp"
 #include "lyra/runtime/output_sink.hpp"
 #include "lyra/runtime/process_frame.hpp"
 #include "lyra/runtime/process_meta.hpp"
@@ -780,6 +781,19 @@ extern "C" void LyraRunSimulation(
     }
   }
 
+  // Invoke NBA stats callback if registered (test framework hook).
+  {
+    auto callback = lyra::runtime::GetNbaStatsCallback();
+    if (callback) {
+      const auto& stats = engine.GetStats().core;
+      callback(
+          lyra::runtime::NbaRoutingStats{
+              .generic_queue = stats.nba_generic_queue,
+              .deferred_local = stats.nba_deferred_local,
+          });
+    }
+  }
+
   // Release string-typed slot handles before engine destruction.
   // The engine owns the slot meta registry needed for address resolution.
   engine.ReleaseStringSlots();
@@ -1145,27 +1159,144 @@ extern "C" void LyraStoreStringGlobal(
   StoreStringTyped(eng, GlobalSignalId{id}, slot, str);
 }
 
+// Resolve a body-relative byte offset to a subspan in the deferred region.
+// Offsets < inline_size resolve to deferred_inline_base.
+// Offsets >= inline_size resolve to deferred_appendix_base.
+inline auto ResolveDeferredSubspan(
+    lyra::runtime::RuntimeInstanceStorage& storage, uint32_t body_offset,
+    uint32_t size) -> std::span<std::byte> {
+  auto inline_size = static_cast<uint32_t>(storage.inline_size);
+  if (body_offset < inline_size) {
+    return storage.DeferredInlineRegion().subspan(body_offset, size);
+  }
+  return storage.DeferredAppendixRegion().subspan(
+      body_offset - inline_size, size);
+}
+
+// Resolve a body-relative byte offset to a subspan in the current region.
+inline auto ResolveCurrentSubspan(
+    lyra::runtime::RuntimeInstanceStorage& storage, uint32_t body_offset,
+    uint32_t size) -> std::span<std::byte> {
+  auto inline_size = static_cast<uint32_t>(storage.inline_size);
+  if (body_offset < inline_size) {
+    return storage.InlineRegion().subspan(body_offset, size);
+  }
+  return storage.AppendixRegion().subspan(body_offset - inline_size, size);
+}
+
+// Copy-on-first-touch: ensure deferred storage for signal `id` contains a
+// valid full-slot snapshot. Called before any partial write to a signal that
+// hasn't been touched yet this delta. After this, all bytes in the deferred
+// slot match the current slot, so subsequent partial writes accumulate
+// correctly and the commit can compare the full slot.
+// Works for both inline and container-backed slots.
+inline void EnsureDeferredSlotInitialized(
+    RuntimeInstance* instance, lyra::runtime::NbaPendingSet& pending,
+    uint32_t id) {
+  if (pending.slot_initialized[id] != 0) return;
+  const auto& meta = instance->observability.layout->slot_meta[id];
+  uint32_t off =
+      meta.is_container ? meta.backing_rel_off : meta.instance_rel_off;
+  uint32_t bytes = meta.is_container ? meta.backing_bytes : meta.total_bytes;
+  auto current = ResolveCurrentSubspan(instance->storage, off, bytes);
+  auto deferred = ResolveDeferredSubspan(instance->storage, off, bytes);
+  std::memcpy(deferred.data(), current.data(), bytes);
+  pending.slot_initialized[id] = 1;
+}
+
+// Instance-owned deferred byte-range write for local NBA.
+// Handles both whole-slot and sub-slot (field, array element, byte-addressable
+// packed subview) writes. Identity-based: no current-storage pointers.
+extern "C" void LyraDeferredWriteLocal(
+    void* eng, void* inst, const void* vp, uint32_t bsz, uint32_t id,
+    uint32_t body_offset, uint32_t is_partial) {
+  auto* instance = static_cast<RuntimeInstance*>(inst);
+  auto& pending = instance->nba_pending;
+
+  if (is_partial != 0) {
+    EnsureDeferredSlotInitialized(instance, pending, id);
+  } else {
+    pending.slot_initialized[id] = 1;
+  }
+
+  auto deferred_slot =
+      ResolveDeferredSubspan(instance->storage, body_offset, bsz);
+  std::memcpy(deferred_slot.data(), vp, bsz);
+  pending.MarkPending(LocalSignalId{id});
+  AsEngine(eng)->MarkInstanceNbaPending(pending.instance_idx);
+}
+
+// Instance-owned deferred masked-merge write for local NBA.
+// For bit-addressable packed subview writes where the store uses a mask.
+// Always partial: copy-on-first-touch, then apply mask merge in deferred
+// storage.
+extern "C" void LyraDeferredMaskedWriteLocal(
+    void* eng, void* inst, const void* vp, const void* mp, uint32_t bsz,
+    uint32_t id, uint32_t body_offset) {
+  auto* instance = static_cast<RuntimeInstance*>(inst);
+  auto& pending = instance->nba_pending;
+
+  EnsureDeferredSlotInitialized(instance, pending, id);
+
+  auto deferred_slot =
+      ResolveDeferredSubspan(instance->storage, body_offset, bsz);
+  auto val_span = std::span(static_cast<const std::byte*>(vp), bsz);
+  auto mask_span = std::span(static_cast<const std::byte*>(mp), bsz);
+  for (uint32_t i = 0; i < bsz; ++i) {
+    deferred_slot[i] =
+        (deferred_slot[i] & ~mask_span[i]) | (val_span[i] & mask_span[i]);
+  }
+  pending.MarkPending(LocalSignalId{id});
+  AsEngine(eng)->MarkInstanceNbaPending(pending.instance_idx);
+}
+
+// Instance-owned deferred canonical packed two-plane write for local NBA.
+// For byte-addressable 4-state packed subview writes with val+unk planes.
+// Always partial: copy-on-first-touch, then write both planes in deferred
+// storage.
+extern "C" void LyraDeferredCanonicalPackedWriteLocal(
+    void* eng, void* inst, const void* val, const void* unk,
+    uint32_t region_bsz, uint32_t id, uint32_t body_offset,
+    uint32_t second_region_offset) {
+  auto* instance = static_cast<RuntimeInstance*>(inst);
+  auto& pending = instance->nba_pending;
+
+  EnsureDeferredSlotInitialized(instance, pending, id);
+
+  auto deferred_val =
+      ResolveDeferredSubspan(instance->storage, body_offset, region_bsz);
+  std::memcpy(deferred_val.data(), val, region_bsz);
+  auto deferred_unk = ResolveDeferredSubspan(
+      instance->storage, body_offset + second_region_offset, region_bsz);
+  std::memcpy(deferred_unk.data(), unk, region_bsz);
+  pending.MarkPending(LocalSignalId{id});
+  AsEngine(eng)->MarkInstanceNbaPending(pending.instance_idx);
+}
+
+// Generic NBA queue entry points for cross-instance local and global targets.
+// Instance-owned local targets use LyraDeferredWriteLocal and friends above.
 extern "C" void LyraScheduleNbaLocal(
     void* eng, void* inst, void* wp, const void* nb, const void* vp,
     const void* mp, uint32_t bsz, uint32_t id) {
-  AsEngine(eng)->ScheduleNba(MakeLocalRef(inst, id), wp, nb, vp, mp, bsz);
+  AsEngine(eng)->ScheduleNbaCrossInstanceLocal(
+      MakeLocalRef(inst, id), wp, nb, vp, mp, bsz);
 }
 extern "C" void LyraScheduleNbaGlobal(
     void* eng, void* wp, const void* nb, const void* vp, const void* mp,
     uint32_t bsz, uint32_t id) {
-  AsEngine(eng)->ScheduleNba(GlobalSignalId{id}, wp, nb, vp, mp, bsz);
+  AsEngine(eng)->ScheduleNbaGlobal(GlobalSignalId{id}, wp, nb, vp, mp, bsz);
 }
 
 extern "C" void LyraScheduleNbaCanonicalPackedLocal(
     void* eng, void* inst, void* wp, const void* nb, const void* vp,
     const void* up, uint32_t rsz, uint32_t sro, uint32_t id) {
-  AsEngine(eng)->ScheduleNbaCanonicalPacked(
+  AsEngine(eng)->ScheduleNbaCanonicalPackedCrossInstanceLocal(
       MakeLocalRef(inst, id), wp, nb, vp, up, rsz, sro);
 }
 extern "C" void LyraScheduleNbaCanonicalPackedGlobal(
     void* eng, void* wp, const void* nb, const void* vp, const void* up,
     uint32_t rsz, uint32_t sro, uint32_t id) {
-  AsEngine(eng)->ScheduleNbaCanonicalPacked(
+  AsEngine(eng)->ScheduleNbaCanonicalPackedGlobal(
       GlobalSignalId{id}, wp, nb, vp, up, rsz, sro);
 }
 

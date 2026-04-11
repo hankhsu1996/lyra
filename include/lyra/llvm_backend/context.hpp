@@ -318,6 +318,10 @@ class Context {
   [[nodiscard]] auto GetLyraStorePackedGlobal() -> llvm::Function*;
   [[nodiscard]] auto GetLyraStoreStringLocal() -> llvm::Function*;
   [[nodiscard]] auto GetLyraStoreStringGlobal() -> llvm::Function*;
+  [[nodiscard]] auto GetLyraDeferredWriteLocal() -> llvm::Function*;
+  [[nodiscard]] auto GetLyraDeferredMaskedWriteLocal() -> llvm::Function*;
+  [[nodiscard]] auto GetLyraDeferredCanonicalPackedWriteLocal()
+      -> llvm::Function*;
   [[nodiscard]] auto GetLyraScheduleNbaLocal() -> llvm::Function*;
   [[nodiscard]] auto GetLyraScheduleNbaGlobal() -> llvm::Function*;
   [[nodiscard]] auto GetLyraScheduleNbaCanonicalPackedLocal()
@@ -583,8 +587,9 @@ class Context {
       -> Result<llvm::Value*>;
 
   // Compute the typed signal coordinate for an external ref's storage.
-  // Returns a runtime-loaded GlobalRuntime signal coord from the per-instance
-  // ext_ref_bindings table.
+  // Returns a runtime-loaded signal coord from the per-instance
+  // ext_ref_bindings table. External refs are never instance-owned,
+  // so they always route through the generic NBA queue.
   [[nodiscard]] auto EmitExternalRefSignalCoord(mir::ExternalRefId ref_id)
       -> SignalCoordExpr;
 
@@ -853,6 +858,19 @@ class Context {
 
   // BitRangeProjection helpers
   [[nodiscard]] auto HasBitRangeProjection(mir::PlaceId place_id) const -> bool;
+  [[nodiscard]] auto IsOwnedInlineSlot(mir::PlaceId place_id) const -> bool;
+  [[nodiscard]] auto IsOwnedContainerSlot(mir::PlaceId place_id) const -> bool;
+  [[nodiscard]] auto GetSlotBodyByteOffset(mir::PlaceId place_id) const
+      -> uint32_t;
+  [[nodiscard]] auto GetContainerBodyByteOffset(mir::PlaceId place_id) const
+      -> uint32_t;
+  // Compute byte offset within a slot for static FieldProjection /
+  // UnionMemberProjection chains. Returns (sub_offset, sub_size) if all
+  // projections are statically resolvable, nullopt otherwise (IndexProjection
+  // or BitRangeProjection present). UnionMemberProjection contributes
+  // zero offset; FieldProjection contributes struct field byte offset.
+  [[nodiscard]] auto ComputeStaticProjectionOffset(mir::PlaceId place_id)
+      -> std::optional<std::pair<uint32_t, uint32_t>>;
   [[nodiscard]] auto GetBitRangeProjection(mir::PlaceId place_id) const
       -> const mir::BitRangeProjection&;
   // LLVM type of the base value that GetPlacePointer() points to.
@@ -1096,6 +1114,9 @@ class Context {
   llvm::Function* lyra_store_packed_global_ = nullptr;
   llvm::Function* lyra_store_string_local_ = nullptr;
   llvm::Function* lyra_store_string_global_ = nullptr;
+  llvm::Function* lyra_deferred_write_local_ = nullptr;
+  llvm::Function* lyra_deferred_masked_write_local_ = nullptr;
+  llvm::Function* lyra_deferred_canonical_packed_write_local_ = nullptr;
   llvm::Function* lyra_schedule_nba_local_ = nullptr;
   llvm::Function* lyra_schedule_nba_global_ = nullptr;
   llvm::Function* lyra_schedule_nba_canonical_packed_local_ = nullptr;

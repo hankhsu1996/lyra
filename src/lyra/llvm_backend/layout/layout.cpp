@@ -950,11 +950,12 @@ auto BuildRuntimeInstanceStorageType(llvm::LLVMContext& ctx)
     -> llvm::StructType* {
   auto* ptr_ty = llvm::PointerType::getUnqual(ctx);
   auto* i64_ty = llvm::Type::getInt64Ty(ctx);
-  // { inline_base, inline_size, appendix_base, appendix_size }
+  // { inline_base, inline_size, appendix_base, appendix_size,
+  //   deferred_inline_base, deferred_appendix_base }
   using F = lyra::runtime::RuntimeInstanceStorageField;
   constexpr auto kFieldCount = static_cast<size_t>(F::kFieldCount);
-  std::array<llvm::Type*, kFieldCount> fields = {
-      ptr_ty, i64_ty, ptr_ty, i64_ty};
+  std::array<llvm::Type*, kFieldCount> fields = {ptr_ty, i64_ty, ptr_ty,
+                                                 i64_ty, ptr_ty, ptr_ty};
   return llvm::StructType::create(ctx, fields, "RuntimeInstanceStorage");
 }
 
