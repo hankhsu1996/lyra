@@ -10,12 +10,12 @@ namespace lyra::lowering::mir_to_llvm {
 class SlotAccessResolver;
 
 auto LowerStatement(
-    Context& context, const mir::Statement& statement,
+    Context& context, const CuFacts& facts, const mir::Statement& statement,
     const ActiveExecutionMode& mode, const BodySiteContext& site_ctx)
     -> Result<void>;
 
 auto LowerStatement(
-    Context& context, SlotAccessResolver& resolver,
+    Context& context, const CuFacts& facts, SlotAccessResolver& resolver,
     const mir::Statement& statement, const ActiveExecutionMode& mode,
     const BodySiteContext& site_ctx) -> Result<void>;
 

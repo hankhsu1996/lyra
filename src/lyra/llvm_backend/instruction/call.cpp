@@ -20,6 +20,7 @@
 #include "lyra/llvm_backend/compute/operand.hpp"
 #include "lyra/llvm_backend/compute/rvalue.hpp"
 #include "lyra/llvm_backend/context.hpp"
+#include "lyra/llvm_backend/cu_facts.hpp"
 #include "lyra/llvm_backend/dpi_abi.hpp"
 #include "lyra/llvm_backend/lifecycle.hpp"
 #include "lyra/llvm_backend/ownership.hpp"
@@ -44,8 +45,9 @@ struct ResolvedCallee {
 };
 
 auto LowerUserCallImpl(
-    Context& context, const mir::Call& call, const ResolvedCallee& resolved,
-    const ActiveExecutionMode& mode) -> Result<void> {
+    Context& context, const CuFacts& facts, const mir::Call& call,
+    const ResolvedCallee& resolved, const ActiveExecutionMode& mode)
+    -> Result<void> {
   auto& builder = context.GetBuilder();
   llvm::Function* callee = resolved.llvm_func;
   TypeId return_type = resolved.return_type;
@@ -240,17 +242,17 @@ auto LowerUserCallImpl(
 }
 
 auto LowerSystemTfCall(
-    Context& context, const mir::Call& call, SystemTfOpcode opcode)
-    -> Result<void> {
+    Context& context, const CuFacts& facts, const mir::Call& call,
+    SystemTfOpcode opcode) -> Result<void> {
   switch (opcode) {
     case SystemTfOpcode::kValuePlusargs:
-      return LowerValuePlusargsCall(context, call);
+      return LowerValuePlusargsCall(context, facts, call);
     case SystemTfOpcode::kFgets:
-      return LowerFgetsCall(context, call);
+      return LowerFgetsCall(context, facts, call);
     case SystemTfOpcode::kFread:
-      return LowerFreadCall(context, call);
+      return LowerFreadCall(context, facts, call);
     case SystemTfOpcode::kFscanf:
-      return LowerFscanfCall(context, call);
+      return LowerFscanfCall(context, facts, call);
     default:
       throw common::InternalError(
           "LowerSystemTfCall", std::format(
@@ -262,14 +264,14 @@ auto LowerSystemTfCall(
 }  // namespace
 
 auto LowerCall(
-    Context& context, SlotAccessResolver& /*resolver*/, const mir::Call& call,
-    const ActiveExecutionMode& mode) -> Result<void> {
-  return LowerCall(context, call, mode);
+    Context& context, const CuFacts& facts, SlotAccessResolver& /*resolver*/,
+    const mir::Call& call, const ActiveExecutionMode& mode) -> Result<void> {
+  return LowerCall(context, facts, call, mode);
 }
 
 auto LowerCall(
-    Context& context, const mir::Call& call, const ActiveExecutionMode& mode)
-    -> Result<void> {
+    Context& context, const CuFacts& facts, const mir::Call& call,
+    const ActiveExecutionMode& mode) -> Result<void> {
   return std::visit(
       common::Overloaded{
           [&](mir::FunctionId func_id) -> Result<void> {
@@ -285,7 +287,7 @@ auto LowerCall(
                     func.abi_contract.accepts_decision_owner,
                 .func_id = func_id,
             };
-            return LowerUserCallImpl(context, call, resolved, mode);
+            return LowerUserCallImpl(context, facts, call, resolved, mode);
           },
           [&](const mir::DesignFunctionRef& ref) -> Result<void> {
             const auto& entry = context.GetDesignFunction(ref.symbol);
@@ -301,16 +303,17 @@ auto LowerCall(
                     func.abi_contract.accepts_decision_owner,
                 .func_id = entry.func_id,
             };
-            return LowerUserCallImpl(context, call, resolved, mode);
+            return LowerUserCallImpl(context, facts, call, resolved, mode);
           },
           [&](SystemTfOpcode opcode) -> Result<void> {
-            return LowerSystemTfCall(context, call, opcode);
+            return LowerSystemTfCall(context, facts, call, opcode);
           },
       },
       call.callee);
 }
 
-auto LowerValuePlusargsCall(Context& context, const mir::Call& call)
+auto LowerValuePlusargsCall(
+    Context& context, const CuFacts& facts, const mir::Call& call)
     -> Result<void> {
   auto& builder = context.GetBuilder();
   const auto& types = context.GetTypeArena();
@@ -388,7 +391,9 @@ auto LowerValuePlusargsCall(Context& context, const mir::Call& call)
   return {};
 }
 
-auto LowerFgetsCall(Context& context, const mir::Call& call) -> Result<void> {
+auto LowerFgetsCall(
+    Context& context, const CuFacts& facts, const mir::Call& call)
+    -> Result<void> {
   auto& builder = context.GetBuilder();
 
   // Validate shape: 1 in_arg (descriptor), optional ret (count), 1 writeback
@@ -443,7 +448,9 @@ auto LowerFgetsCall(Context& context, const mir::Call& call) -> Result<void> {
       context, wb.dest, output_val, wb.type, OwnershipPolicy::kMove);
 }
 
-auto LowerFreadCall(Context& context, const mir::Call& call) -> Result<void> {
+auto LowerFreadCall(
+    Context& context, const CuFacts& facts, const mir::Call& call)
+    -> Result<void> {
   auto& builder = context.GetBuilder();
   const auto& types = context.GetTypeArena();
 
@@ -606,7 +613,9 @@ auto LowerFreadCall(Context& context, const mir::Call& call) -> Result<void> {
   return {};
 }
 
-auto LowerFscanfCall(Context& context, const mir::Call& call) -> Result<void> {
+auto LowerFscanfCall(
+    Context& context, const CuFacts& facts, const mir::Call& call)
+    -> Result<void> {
   auto& builder = context.GetBuilder();
 
   // Validate shape: 2 in_args (descriptor, format), optional ret (count),

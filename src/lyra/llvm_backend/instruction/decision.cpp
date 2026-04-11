@@ -10,11 +10,12 @@
 #include "lyra/common/internal_error.hpp"
 #include "lyra/llvm_backend/compute/operand.hpp"
 #include "lyra/llvm_backend/context.hpp"
+#include "lyra/llvm_backend/cu_facts.hpp"
 
 namespace lyra::lowering::mir_to_llvm {
 
 auto LowerRecordDecisionObservation(
-    Context& ctx, llvm::Value* decision_owner_id,
+    Context& ctx, const CuFacts& facts, llvm::Value* decision_owner_id,
     const mir::RecordDecisionObservation& obs) -> Result<void> {
   if (decision_owner_id == nullptr) {
     throw common::InternalError(
@@ -38,7 +39,8 @@ auto LowerRecordDecisionObservation(
 }
 
 auto LowerRecordDecisionObservationDynamic(
-    Context& ctx, llvm::Value* decision_owner_id, SlotAccessResolver& resolver,
+    Context& ctx, const CuFacts& facts, llvm::Value* decision_owner_id,
+    SlotAccessResolver& resolver,
     const mir::RecordDecisionObservationDynamic& obs) -> Result<void> {
   if (decision_owner_id == nullptr) {
     throw common::InternalError(

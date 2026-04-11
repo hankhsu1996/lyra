@@ -58,7 +58,7 @@ struct StandaloneProcessProducts {
 };
 
 auto CompileStandaloneProcesses(
-    Context& context, const mir::Arena* mir_arena,
+    Context& context, const CuFacts& facts, const mir::Arena* mir_arena,
     std::span<const LayoutModulePlan> module_plans,
     std::span<const ScheduledProcess> scheduled_processes,
     std::span<const ProcessLayout> process_layouts, size_t num_init_processes,
@@ -94,8 +94,8 @@ auto CompileStandaloneProcesses(
           .deferred_sites = {},
       };
       auto func_result = GenerateProcessFunction(
-          context, mir_process, std::format("process_{}", i), execution_kind,
-          standalone_sites);
+          context, facts, mir_process, std::format("process_{}", i),
+          execution_kind, standalone_sites);
       if (!func_result) return std::unexpected(func_result.error());
       products.process_funcs.push_back(func_result->function);
       products.wait_sites.insert(
@@ -282,10 +282,11 @@ auto CompileDesignProcesses(const LoweringInput& input)
       *input.design, *layout, topology.module_plans, input.origin_provenance,
       dpi_exports);
 
-  auto globals_result = CompileGlobalFunctions(*context, input);
+  auto globals_result = CompileGlobalFunctions(*context, *facts, input);
   if (!globals_result) return std::unexpected(globals_result.error());
 
-  auto specs_result = CompileSpecializations(*context, input, spec_plan);
+  auto specs_result =
+      CompileSpecializations(*context, *facts, input, spec_plan);
   if (!specs_result) return std::unexpected(specs_result.error());
   auto specs = std::move(*specs_result);
 
@@ -297,7 +298,7 @@ auto CompileDesignProcesses(const LoweringInput& input)
   }
 
   auto standalone_result = CompileStandaloneProcesses(
-      *context, input.mir_arena, topology.module_plans,
+      *context, *facts, input.mir_arena, topology.module_plans,
       layout->scheduled_processes, layout->processes,
       layout->num_init_processes, layout->num_module_process_base,
       layout->connection_realization_infos,

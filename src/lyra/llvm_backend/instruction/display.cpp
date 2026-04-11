@@ -19,6 +19,7 @@
 #include "lyra/llvm_backend/compute/cast.hpp"
 #include "lyra/llvm_backend/compute/operand.hpp"
 #include "lyra/llvm_backend/context.hpp"
+#include "lyra/llvm_backend/cu_facts.hpp"
 #include "lyra/llvm_backend/format_lowering.hpp"
 #include "lyra/llvm_backend/slot_access.hpp"
 #include "lyra/mir/effect.hpp"
@@ -376,7 +377,7 @@ auto LowerFormatOps(
 // Resolver-aware implementations (the real implementations).
 
 auto LowerDisplayEffect(
-    Context& context, SlotAccessResolver& resolver,
+    Context& context, const CuFacts& facts, SlotAccessResolver& resolver,
     const mir::DisplayEffect& display) -> Result<void> {
   if (display.descriptor) {
     auto& builder = context.GetBuilder();
@@ -422,10 +423,11 @@ auto LowerDisplayEffect(
 
 // Canonical wrapper (thin forwarding to resolver-aware implementation).
 
-auto LowerDisplayEffect(Context& context, const mir::DisplayEffect& display)
+auto LowerDisplayEffect(
+    Context& context, const CuFacts& facts, const mir::DisplayEffect& display)
     -> Result<void> {
   CanonicalSlotAccess canonical(context);
-  return LowerDisplayEffect(context, canonical, display);
+  return LowerDisplayEffect(context, facts, canonical, display);
 }
 
 }  // namespace lyra::lowering::mir_to_llvm

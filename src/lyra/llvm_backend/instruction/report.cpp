@@ -8,6 +8,7 @@
 
 #include "lyra/common/diagnostic/diagnostic.hpp"
 #include "lyra/llvm_backend/context.hpp"
+#include "lyra/llvm_backend/cu_facts.hpp"
 #include "lyra/llvm_backend/format_lowering.hpp"
 #include "lyra/llvm_backend/slot_access.hpp"
 #include "lyra/mir/effect.hpp"
@@ -40,7 +41,7 @@ auto MapReportContinuation(mir::ReportContinuation c) -> uint8_t {
 }  // namespace
 
 auto LowerReportEffect(
-    Context& context, SlotAccessResolver& resolver,
+    Context& context, const CuFacts& facts, SlotAccessResolver& resolver,
     const mir::ReportEffect& report) -> Result<void> {
   auto& builder = context.GetBuilder();
   auto* ptr_ty = llvm::PointerType::getUnqual(context.GetLlvmContext());
@@ -76,10 +77,11 @@ auto LowerReportEffect(
   return {};
 }
 
-auto LowerReportEffect(Context& context, const mir::ReportEffect& report)
+auto LowerReportEffect(
+    Context& context, const CuFacts& facts, const mir::ReportEffect& report)
     -> Result<void> {
   CanonicalSlotAccess canonical(context);
-  return LowerReportEffect(context, canonical, report);
+  return LowerReportEffect(context, facts, canonical, report);
 }
 
 }  // namespace lyra::lowering::mir_to_llvm

@@ -8,21 +8,20 @@ namespace lyra::lowering::mir_to_llvm {
 
 class SlotAccessResolver;
 
-// Lower blocking assignment (immediate write).
-auto LowerAssign(Context& context, const mir::Assign& assign) -> Result<void>;
-
-// Resolver-aware: route module-slot reads/writes through the resolver.
 auto LowerAssign(
-    Context& context, SlotAccessResolver& resolver, const mir::Assign& assign)
+    Context& context, const CuFacts& facts, const mir::Assign& assign)
     -> Result<void>;
 
-// Lower guarded assignment (conditional immediate write).
-auto LowerGuardedAssign(Context& context, const mir::GuardedAssign& guarded)
-    -> Result<void>;
+auto LowerAssign(
+    Context& context, const CuFacts& facts, SlotAccessResolver& resolver,
+    const mir::Assign& assign) -> Result<void>;
 
-// Resolver-aware overload.
 auto LowerGuardedAssign(
-    Context& context, SlotAccessResolver& resolver,
+    Context& context, const CuFacts& facts, const mir::GuardedAssign& guarded)
+    -> Result<void>;
+
+auto LowerGuardedAssign(
+    Context& context, const CuFacts& facts, SlotAccessResolver& resolver,
     const mir::GuardedAssign& guarded) -> Result<void>;
 
 }  // namespace lyra::lowering::mir_to_llvm

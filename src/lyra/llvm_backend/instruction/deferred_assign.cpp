@@ -15,6 +15,7 @@
 #include "lyra/llvm_backend/commit.hpp"
 #include "lyra/llvm_backend/commit/signal_id_expr.hpp"
 #include "lyra/llvm_backend/compute/operand.hpp"
+#include "lyra/llvm_backend/cu_facts.hpp"
 #include "lyra/llvm_backend/instruction/assign_core.hpp"
 #include "lyra/llvm_backend/layout/layout.hpp"
 #include "lyra/llvm_backend/packed_storage_view.hpp"
@@ -174,14 +175,14 @@ auto CoerceValueToShape(
 // MUST use EmitDeferredWriteLocal instead. The ownership gate in
 // LowerDeferredAssign enforces this at codegen time.
 auto EmitDeferredStoreCore(
-    Context& context, const mir::DeferredAssign& deferred,
+    Context& context, const CuFacts& facts, const mir::DeferredAssign& deferred,
     const StoreShape& shape, llvm::Value* write_ptr,
     llvm::Value* notify_base_ptr, const SignalCoordExpr& signal_id,
     TypeId target_type) -> Result<void> {
   auto& builder = context.GetBuilder();
   auto& llvm_ctx = context.GetLlvmContext();
 
-  auto raw_or_err = LowerRhsRaw(context, deferred.rhs, target_type);
+  auto raw_or_err = LowerRhsRaw(context, facts, deferred.rhs, target_type);
   if (!raw_or_err) return std::unexpected(raw_or_err.error());
 
   llvm::Value* source_value = CoerceValueToShape(context, *raw_or_err, shape);
@@ -227,14 +228,15 @@ auto EmitDeferredStoreCore(
 // current-storage pointers. body_byte_offset is an LLVM Value to
 // support both static (field/union) and dynamic (index) offsets.
 auto EmitDeferredWriteLocal(
-    Context& context, const mir::DeferredAssign& deferred,
+    Context& context, const CuFacts& facts,
+    const mir::DeferredAssign& deferred,
     const StoreShape& shape, llvm::Value* body_byte_offset,
     const SignalCoordExpr& signal_id, TypeId target_type, bool is_partial)
     -> Result<void> {
   auto& builder = context.GetBuilder();
   auto& llvm_ctx = context.GetLlvmContext();
 
-  auto raw_or_err = LowerRhsRaw(context, deferred.rhs, target_type);
+  auto raw_or_err = LowerRhsRaw(context, facts, deferred.rhs, target_type);
   if (!raw_or_err) return std::unexpected(raw_or_err.error());
 
   llvm::Value* source_value = CoerceValueToShape(context, *raw_or_err, shape);
@@ -264,7 +266,8 @@ auto EmitDeferredWriteLocal(
 // to PackedNbaPolicy so the packed dispatch can route local owned-inline
 // targets to deferred storage.
 auto LowerDeferredAssignBitRange(
-    Context& context, const mir::DeferredAssign& deferred,
+    Context& context, const CuFacts& facts,
+    const mir::DeferredAssign& deferred,
     const SignalCoordExpr& signal_id, mir::PlaceId dest, bool is_local_owned)
     -> Result<void> {
   auto path = ExtractPackedAccessPath(context, dest);
@@ -274,7 +277,8 @@ auto LowerDeferredAssignBitRange(
   if (!subview) return std::unexpected(subview.error());
 
   auto rvalue = detail::LowerRhsToPackedRValue(
-      context, deferred.rhs, subview->semantic_bit_width, subview->result_type);
+      context, facts, deferred.rhs, subview->semantic_bit_width,
+      subview->result_type);
   if (!rvalue) return std::unexpected(rvalue.error());
 
   uint32_t slot_body_offset = 0;
@@ -345,7 +349,8 @@ auto ExtractIndexProjectionInfo(Context& context, mir::PlaceId dest)
 // For local owned targets, uses deferred byte-range write with
 // dynamic body_offset. For non-local, uses generic EmitDeferredStoreCore.
 auto LowerDeferredAssignWithOobGuard(
-    Context& context, const mir::DeferredAssign& deferred,
+    Context& context, const CuFacts& facts,
+    const mir::DeferredAssign& deferred,
     const StoreShape& shape, const SignalCoordExpr& signal_id,
     mir::PlaceId dest, bool is_local_owned) -> Result<void> {
   auto& builder = context.GetBuilder();
@@ -391,7 +396,7 @@ auto LowerDeferredAssignWithOobGuard(
 
     TypeId dest_type = mir::TypeOfPlace(types, context.LookupPlace(dest));
     auto result = EmitDeferredWriteLocal(
-        context, deferred, shape, body_offset, signal_id, dest_type, true);
+        context, facts, deferred, shape, body_offset, signal_id, dest_type, true);
     if (!result) return result;
   } else {
     if (signal_id.GetKind() == SignalCoordExpr::Kind::kLocal) {
@@ -408,7 +413,7 @@ auto LowerDeferredAssignWithOobGuard(
     llvm::Value* notify_base_ptr = context.GetStorageRootPointer(dest);
     TypeId dest_type = mir::TypeOfPlace(types, context.LookupPlace(dest));
     auto result = EmitDeferredStoreCore(
-        context, deferred, shape, write_ptr, notify_base_ptr, signal_id,
+        context, facts, deferred, shape, write_ptr, notify_base_ptr, signal_id,
         dest_type);
     if (!result) return result;
   }
@@ -420,13 +425,14 @@ auto LowerDeferredAssignWithOobGuard(
 
 }  // namespace
 
-auto LowerDeferredAssign(Context& context, const mir::DeferredAssign& deferred)
+auto LowerDeferredAssign(
+    Context& context, const CuFacts& facts, const mir::DeferredAssign& deferred)
     -> Result<void> {
   const auto& dest = deferred.dest;
   const auto* dest_place = std::get_if<mir::PlaceId>(&dest);
 
   // Resolve destination type and signal coord from WriteTarget.
-  TypeId dest_type = detail::ResolveDestType(context, dest);
+  TypeId dest_type = detail::ResolveDestType(context, facts, dest);
 
   // Signal coord: for PlaceId use existing resolver, for ExternalRefId use
   // direct helper.
@@ -459,7 +465,7 @@ auto LowerDeferredAssign(Context& context, const mir::DeferredAssign& deferred)
   // subview dispatch can route to deferred storage for local targets.
   if (dest_place != nullptr && context.HasBitRangeProjection(*dest_place)) {
     return LowerDeferredAssignBitRange(
-        context, deferred, signal_id, *dest_place, is_local_owned);
+        context, facts, deferred, signal_id, *dest_place, is_local_owned);
   }
 
   // Classify destination once via MIR type.
@@ -469,7 +475,8 @@ auto LowerDeferredAssign(Context& context, const mir::DeferredAssign& deferred)
   if (dest_place != nullptr &&
       HasIndexProjection(context.LookupPlace(*dest_place))) {
     return LowerDeferredAssignWithOobGuard(
-        context, deferred, shape, signal_id, *dest_place, is_local_owned);
+        context, facts, deferred, shape, signal_id, *dest_place,
+        is_local_owned);
   }
 
   // Case 3: Full-width write or static field/union projection chain.
@@ -500,7 +507,7 @@ auto LowerDeferredAssign(Context& context, const mir::DeferredAssign& deferred)
     // Whole-slot write: no projections.
     auto* body_offset = llvm::ConstantInt::get(i32_ty, slot_body_off);
     return EmitDeferredWriteLocal(
-        context, deferred, shape, body_offset, signal_id, dest_type, false);
+        context, facts, deferred, shape, body_offset, signal_id, dest_type, false);
   }
 
   // Non-local fallback: global, external ref, or cross-instance targets.
@@ -531,12 +538,12 @@ auto LowerDeferredAssign(Context& context, const mir::DeferredAssign& deferred)
   }
 
   return EmitDeferredStoreCore(
-      context, deferred, shape, write_ptr, notify_base_ptr, signal_id,
+      context, facts, deferred, shape, write_ptr, notify_base_ptr, signal_id,
       dest_type);
 }
 
 auto LowerDeferredAssign(
-    Context& context, SlotAccessResolver& resolver,
+    Context& context, const CuFacts& facts, SlotAccessResolver& resolver,
     const mir::DeferredAssign& deferred) -> Result<void> {
   // DeferredAssign destinations are never managed (kDeferredWrite is
   // ineligible), but the RHS operands may read managed module slots.
@@ -545,7 +552,7 @@ auto LowerDeferredAssign(
   if (auto* al = dynamic_cast<ActivationLocalSlotAccess*>(&resolver)) {
     al->SyncToCanonical();
   }
-  return LowerDeferredAssign(context, deferred);
+  return LowerDeferredAssign(context, facts, deferred);
 }
 
 }  // namespace lyra::lowering::mir_to_llvm

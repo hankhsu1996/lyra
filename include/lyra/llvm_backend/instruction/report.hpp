@@ -126,11 +126,12 @@ inline void EmitInternalErrorAbort(Context& context, std::string_view message) {
 
 class SlotAccessResolver;
 
-auto LowerReportEffect(Context& context, const mir::ReportEffect& report)
+auto LowerReportEffect(
+    Context& context, const CuFacts& facts, const mir::ReportEffect& report)
     -> Result<void>;
 
 auto LowerReportEffect(
-    Context& context, SlotAccessResolver& resolver,
+    Context& context, const CuFacts& facts, SlotAccessResolver& resolver,
     const mir::ReportEffect& report) -> Result<void>;
 
 }  // namespace lyra::lowering::mir_to_llvm

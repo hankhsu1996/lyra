@@ -93,10 +93,10 @@ auto LowerFopenRvalue(Context& context, const mir::FopenRvalueInfo& info)
 }  // namespace
 
 auto LowerRvalue(
-    Context& context, const mir::Rvalue& rvalue, TypeId result_type)
-    -> Result<RvalueValue> {
+    Context& context, const CuFacts& facts, const mir::Rvalue& rvalue,
+    TypeId result_type) -> Result<RvalueValue> {
   CanonicalSlotAccess canonical(context);
-  return LowerRvalue(context, canonical, rvalue, result_type);
+  return LowerRvalue(context, facts, canonical, rvalue, result_type);
 }
 
 // Intentionally canonical-only rvalue kinds (no module-slot operand reads):
@@ -105,9 +105,9 @@ auto LowerRvalue(
 // module-slot places as operands.
 
 auto LowerRvalue(
-    Context& context, SlotAccessResolver& resolver, const mir::Rvalue& rvalue,
-    TypeId result_type) -> Result<RvalueValue> {
-  const auto& types = context.GetTypeArena();
+    Context& context, const CuFacts& facts, SlotAccessResolver& resolver,
+    const mir::Rvalue& rvalue, TypeId result_type) -> Result<RvalueValue> {
+  const auto& types = *facts.types;
 
   return std::visit(
       common::Overloaded{
@@ -197,7 +197,7 @@ auto LowerRvalue(
             return LowerFopenRvalue(context, info);
           },
           [&](const mir::SystemTfRvalueInfo& info) -> Result<RvalueValue> {
-            return LowerSystemTfRvalue(context, resolver, rvalue, info);
+            return LowerSystemTfRvalue(context, facts, resolver, rvalue, info);
           },
           [&](const mir::ArrayQueryRvalueInfo& info) -> Result<RvalueValue> {
             return LowerArrayQueryRvalue(

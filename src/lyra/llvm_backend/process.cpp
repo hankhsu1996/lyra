@@ -48,6 +48,7 @@
 #include "lyra/llvm_backend/context.hpp"
 #include "lyra/llvm_backend/context_scope.hpp"
 #include "lyra/llvm_backend/contract_executor.hpp"
+#include "lyra/llvm_backend/cu_facts.hpp"
 #include "lyra/llvm_backend/deferred_thunk_abi.hpp"
 #include "lyra/llvm_backend/instruction/display.hpp"
 #include "lyra/llvm_backend/instruction/report.hpp"
@@ -1765,9 +1766,9 @@ static auto MaterializeAllocaStorage(
 }
 
 auto GenerateProcessFunction(
-    Context& context, const mir::Process& process, const std::string& name,
-    ProcessExecutionKind execution_kind, const BodySiteContext& site_ctx)
-    -> Result<ProcessCodegenResult> {
+    Context& context, const CuFacts& facts, const mir::Process& process,
+    const std::string& name, ProcessExecutionKind execution_kind,
+    const BodySiteContext& site_ctx) -> Result<ProcessCodegenResult> {
   // Process-level origin scope for errors during code generation.
   // If process.origin is Invalid, this is a no-op.
   OriginScope proc_scope(context, process.origin);
@@ -1951,7 +1952,8 @@ auto GenerateProcessFunction(
     }
 
     for (const auto& instruction : block.statements) {
-      auto result = LowerStatement(context, instruction, exec_mode, site_ctx);
+      auto result =
+          LowerStatement(context, facts, instruction, exec_mode, site_ctx);
       if (!result) return std::unexpected(result.error());
     }
 
@@ -1995,8 +1997,9 @@ auto GenerateProcessFunction(
 }
 
 auto GenerateSharedProcessFunction(
-    Context& context, const mir::Process& process, const std::string& name,
-    const BodySiteContext& site_ctx) -> Result<ProcessCodegenResult> {
+    Context& context, const CuFacts& facts, const mir::Process& process,
+    const std::string& name, const BodySiteContext& site_ctx)
+    -> Result<ProcessCodegenResult> {
   OriginScope proc_scope(context, process.origin);
   std::vector<WaitSiteEntry> wait_sites;
   std::vector<common::OriginId> back_edge_origins;
@@ -2152,7 +2155,7 @@ auto GenerateSharedProcessFunction(
     for (uint32_t si = 0; si < block.statements.size(); ++si) {
       executor.ExecutePreStatement(bi, si);
       auto result = LowerStatement(
-          context, resolver, block.statements[si], exec_mode, site_ctx);
+          context, facts, resolver, block.statements[si], exec_mode, site_ctx);
       if (!result) return std::unexpected(result.error());
       executor.ExecutePostStatement(bi, si);
     }
@@ -2198,8 +2201,8 @@ auto GenerateSharedProcessFunction(
 }
 
 auto DeclareMirFunction(
-    Context& context, mir::FunctionId func_id, const std::string& name)
-    -> Result<llvm::Function*> {
+    Context& context, const CuFacts& facts, mir::FunctionId func_id,
+    const std::string& name) -> Result<llvm::Function*> {
   auto& module = context.GetModule();
   auto& llvm_ctx = context.GetLlvmContext();
   const auto& arena = context.GetMirArena();
@@ -2258,8 +2261,8 @@ namespace {
 // arg_base: LLVM arg index where (design, engine, observer_ctx) starts.
 //   0 for monitor-check (no sret), arg_offset for strobe/setup (may have sret).
 auto SetupObserverProgramEntry(
-    Context& context, mir::FunctionId func_id, llvm::Function* llvm_func,
-    unsigned arg_base) -> llvm::Value* {
+    Context& context, const CuFacts& facts, mir::FunctionId func_id,
+    llvm::Function* llvm_func, unsigned arg_base) -> llvm::Value* {
   auto* design_arg = llvm_func->getArg(arg_base);
   design_arg->setName("design");
   context.SetDesignPointer(design_arg);
@@ -2546,9 +2549,9 @@ struct PlaceCollector {
 // Evaluates expressions, compares against prev_buffer, and only prints if
 // values changed.
 auto DefineMonitorCheckProgram(
-    Context& context, mir::FunctionId func_id, llvm::Function* llvm_func,
-    const mir::MonitorCheckMeta& layout, const BodySiteContext& site_ctx)
-    -> Result<void> {
+    Context& context, const CuFacts& facts, mir::FunctionId func_id,
+    llvm::Function* llvm_func, const mir::MonitorCheckMeta& layout,
+    const BodySiteContext& site_ctx) -> Result<void> {
   // Observer programs are simulation-only (engine passed as explicit param).
   // No decision owner for observer programs.
   ExecutionContractScope contract_scope(
@@ -2580,7 +2583,7 @@ auto DefineMonitorCheckProgram(
   // Observer program entry: design, engine, observer_ctx, prev_buf.
   // SetupObserverProgramEntry handles the common (design, engine, observer_ctx)
   // triple and conditionally enters specialization-local mode.
-  SetupObserverProgramEntry(context, func_id, llvm_func, 0);
+  SetupObserverProgramEntry(context, facts, func_id, llvm_func, 0);
 
   auto* prev_buf_arg = llvm_func->getArg(3);
   prev_buf_arg->setName("prev_buf");
@@ -2669,7 +2672,8 @@ auto DefineMonitorCheckProgram(
           continue;
         }
       }
-      auto result = LowerStatement(context, instruction, exec_mode, site_ctx);
+      auto result =
+          LowerStatement(context, facts, instruction, exec_mode, site_ctx);
       if (!result) return std::unexpected(result.error());
     }
 
@@ -2814,7 +2818,7 @@ auto DefineMonitorCheckProgram(
       if (const auto* effect = std::get_if<mir::Effect>(&instruction.data)) {
         if (const auto* display =
                 std::get_if<mir::DisplayEffect>(&effect->op)) {
-          auto result = LowerDisplayEffect(context, *display);
+          auto result = LowerDisplayEffect(context, facts, *display);
           if (!result) return std::unexpected(result.error());
           break;
         }
@@ -2852,7 +2856,7 @@ auto DefineMonitorCheckProgram(
 // LyraMonitorRegister. Called at end of setup program's exit block, before
 // return.
 auto EmitMonitorSetupEpilogue(
-    Context& context, mir::FunctionId setup_program_id,
+    Context& context, const CuFacts& facts, mir::FunctionId setup_program_id,
     const mir::MonitorSetupMeta& setup_meta, llvm::Value* design_ptr,
     llvm::Value* engine_ptr) -> Result<void> {
   auto& builder = context.GetBuilder();
@@ -3002,7 +3006,7 @@ auto EmitMonitorSetupEpilogue(
 //
 // First cut: user subroutine calls with all by-value actuals only.
 auto DefineDeferredAssertionThunk(
-    Context& context, llvm::Function* llvm_func,
+    Context& context, const CuFacts& facts, llvm::Function* llvm_func,
     const mir::DeferredUserCallAction& action,
     const DeferredCalleeBackendInfo& callee_backend) -> Result<void> {
   auto plan = DeriveDeferredCallPlan(action);
@@ -3146,7 +3150,8 @@ auto DefineDeferredAssertionThunk(
 }
 
 auto CompileDeferredAssertionArtifacts(
-    Context& context, std::span<const mir::DeferredAssertionSiteInfo> sites,
+    Context& context, const CuFacts& facts,
+    std::span<const mir::DeferredAssertionSiteInfo> sites,
     std::span<const DeferredSiteCalleeInfo> callee_info,
     std::string_view name_prefix)
     -> Result<std::vector<DeferredSiteCompiledArtifact>> {
@@ -3175,8 +3180,8 @@ auto CompileDeferredAssertionArtifacts(
     auto* fn = llvm::Function::Create(
         fn_type, llvm::Function::InternalLinkage, name, &module);
 
-    auto result =
-        DefineDeferredAssertionThunk(context, fn, action, callee_backend);
+    auto result = DefineDeferredAssertionThunk(
+        context, facts, fn, action, callee_backend);
     if (!result) return std::unexpected(result.error());
 
     auto plan = DeriveDeferredCallPlan(action);
@@ -3228,8 +3233,9 @@ auto CompileDeferredAssertionArtifacts(
 }
 
 auto DefineMirFunction(
-    Context& context, mir::FunctionId func_id, llvm::Function* llvm_func,
-    const BodySiteContext& site_ctx) -> Result<void> {
+    Context& context, const CuFacts& facts, mir::FunctionId func_id,
+    llvm::Function* llvm_func, const BodySiteContext& site_ctx)
+    -> Result<void> {
   const auto& arena = context.GetMirArena();
   const auto& func = arena[func_id];
 
@@ -3238,7 +3244,7 @@ auto DefineMirFunction(
   if (const auto* check_meta =
           std::get_if<mir::MonitorCheckProgramMeta>(&func.runtime_meta)) {
     return DefineMonitorCheckProgram(
-        context, func_id, llvm_func, check_meta->meta, site_ctx);
+        context, facts, func_id, llvm_func, check_meta->meta, site_ctx);
   }
 
   auto& llvm_ctx = context.GetLlvmContext();
@@ -3304,7 +3310,7 @@ auto DefineMirFunction(
   if (is_observer) {
     // SetupObserverProgramEntry handles design/engine/observer_ctx setup
     // and conditionally enters specialization-local mode.
-    SetupObserverProgramEntry(context, func_id, llvm_func, arg_offset);
+    SetupObserverProgramEntry(context, facts, func_id, llvm_func, arg_offset);
     context_arg_count = 0;
   } else {
     // Non-observer: set design/engine on context (observer path does this
@@ -3499,7 +3505,8 @@ auto DefineMirFunction(
 
     // Lower all instructions
     for (const auto& instruction : block.statements) {
-      auto result = LowerStatement(context, instruction, exec_mode, site_ctx);
+      auto result =
+          LowerStatement(context, facts, instruction, exec_mode, site_ctx);
       if (!result) return std::unexpected(result.error());
     }
 
@@ -3574,7 +3581,7 @@ auto DefineMirFunction(
   if (const auto* setup_meta =
           std::get_if<mir::MonitorSetupProgramMeta>(&func.runtime_meta)) {
     auto result = EmitMonitorSetupEpilogue(
-        context, func_id, setup_meta->meta, design_arg, engine_arg);
+        context, facts, func_id, setup_meta->meta, design_arg, engine_arg);
     if (!result) return std::unexpected(result.error());
   }
 

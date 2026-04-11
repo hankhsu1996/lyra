@@ -19,6 +19,7 @@
 #include "lyra/llvm_backend/compute/four_state_ops.hpp"
 #include "lyra/llvm_backend/compute/operand.hpp"
 #include "lyra/llvm_backend/context.hpp"
+#include "lyra/llvm_backend/cu_facts.hpp"
 #include "lyra/llvm_backend/deferred_thunk_abi.hpp"
 #include "lyra/llvm_backend/format_lowering.hpp"
 #include "lyra/llvm_backend/instruction/decision.hpp"
@@ -40,7 +41,8 @@ namespace lyra::lowering::mir_to_llvm {
 
 namespace {
 
-auto LowerTimeFormatEffect(Context& context, const mir::TimeFormatEffect& tf)
+auto LowerTimeFormatEffect(
+    Context& context, const CuFacts& facts, const mir::TimeFormatEffect& tf)
     -> Result<void> {
   auto& builder = context.GetBuilder();
   auto& llvm_ctx = context.GetLlvmContext();
@@ -64,7 +66,8 @@ auto LowerTimeFormatEffect(Context& context, const mir::TimeFormatEffect& tf)
   return {};
 }
 
-auto LowerStrobeEffect(Context& context, const mir::StrobeEffect& strobe)
+auto LowerStrobeEffect(
+    Context& context, const CuFacts& facts, const mir::StrobeEffect& strobe)
     -> Result<void> {
   // Get the strobe program function (already declared via DeclareMirFunction)
   llvm::Function* program_fn = context.GetDeclaredFunction(strobe.program);
@@ -92,7 +95,8 @@ auto LowerStrobeEffect(Context& context, const mir::StrobeEffect& strobe)
   return {};
 }
 
-auto LowerMonitorEffect(Context& context, const mir::MonitorEffect& monitor)
+auto LowerMonitorEffect(
+    Context& context, const CuFacts& facts, const mir::MonitorEffect& monitor)
     -> Result<void> {
   // Get the setup program (already declared via DeclareMirFunction).
   // The setup program handles: initial print, serialization, and registration.
@@ -120,8 +124,8 @@ auto LowerMonitorEffect(Context& context, const mir::MonitorEffect& monitor)
 }
 
 auto LowerMonitorControlEffect(
-    Context& context, const mir::MonitorControlEffect& control)
-    -> Result<void> {
+    Context& context, const CuFacts& facts,
+    const mir::MonitorControlEffect& control) -> Result<void> {
   auto& builder = context.GetBuilder();
 
   // Get engine pointer
@@ -338,7 +342,8 @@ auto LowerElementFillRuntime(
   return {};
 }
 
-auto LowerFillPackedEffect(Context& context, const mir::FillPackedEffect& fill)
+auto LowerFillPackedEffect(
+    Context& context, const CuFacts& facts, const mir::FillPackedEffect& fill)
     -> Result<void> {
   auto& builder = context.GetBuilder();
   const auto& types = context.GetTypeArena();
@@ -393,7 +398,8 @@ auto LowerFillPackedEffect(Context& context, const mir::FillPackedEffect& fill)
   return LowerElementFillRuntime(context, t, fs);
 }
 
-auto LowerMemIOEffect(Context& context, const mir::MemIOEffect& mem_io)
+auto LowerMemIOEffect(
+    Context& context, const CuFacts& facts, const mir::MemIOEffect& mem_io)
     -> Result<void> {
   auto& builder = context.GetBuilder();
   auto& llvm_ctx = context.GetLlvmContext();
@@ -551,44 +557,44 @@ auto BodySiteContext::GetDeferredSiteInfo(uint32_t body_local_id) const
 }
 
 auto LowerEffectOp(
-    Context& context, const mir::EffectOp& effect_op,
+    Context& context, const CuFacts& facts, const mir::EffectOp& effect_op,
     const ActiveExecutionMode& mode, const BodySiteContext& site_ctx)
     -> Result<void> {
   CanonicalSlotAccess canonical(context);
-  return LowerEffectOp(context, canonical, effect_op, mode, site_ctx);
+  return LowerEffectOp(context, facts, canonical, effect_op, mode, site_ctx);
 }
 auto LowerEffectOp(
-    Context& context, SlotAccessResolver& resolver,
+    Context& context, const CuFacts& facts, SlotAccessResolver& resolver,
     const mir::EffectOp& effect_op, const ActiveExecutionMode& mode,
     const BodySiteContext& site_ctx) -> Result<void> {
   return std::visit(
       common::Overloaded{
           [&](const mir::DisplayEffect& display) -> Result<void> {
-            return LowerDisplayEffect(context, resolver, display);
+            return LowerDisplayEffect(context, facts, resolver, display);
           },
           [&](const mir::ReportEffect& report) -> Result<void> {
-            return LowerReportEffect(context, resolver, report);
+            return LowerReportEffect(context, facts, resolver, report);
           },
           [&](const mir::MemIOEffect& mem_io) -> Result<void> {
-            return LowerMemIOEffect(context, mem_io);
+            return LowerMemIOEffect(context, facts, mem_io);
           },
           [&](const mir::TimeFormatEffect& tf) -> Result<void> {
-            return LowerTimeFormatEffect(context, tf);
+            return LowerTimeFormatEffect(context, facts, tf);
           },
           [&](const mir::SystemTfEffect& effect) -> Result<void> {
-            return LowerSystemTfEffect(context, resolver, effect);
+            return LowerSystemTfEffect(context, facts, resolver, effect);
           },
           [&](const mir::StrobeEffect& strobe) -> Result<void> {
-            return LowerStrobeEffect(context, strobe);
+            return LowerStrobeEffect(context, facts, strobe);
           },
           [&](const mir::MonitorEffect& monitor) -> Result<void> {
-            return LowerMonitorEffect(context, monitor);
+            return LowerMonitorEffect(context, facts, monitor);
           },
           [&](const mir::MonitorControlEffect& control) -> Result<void> {
-            return LowerMonitorControlEffect(context, control);
+            return LowerMonitorControlEffect(context, facts, control);
           },
           [&](const mir::FillPackedEffect& fill) -> Result<void> {
-            return LowerFillPackedEffect(context, fill);
+            return LowerFillPackedEffect(context, facts, fill);
           },
           [&](const mir::RecordDecisionObservation& obs) -> Result<void> {
             if (mode.decision_owner_id == nullptr) {
@@ -600,7 +606,7 @@ auto LowerEffectOp(
                       UnsupportedCategory::kFeature));
             }
             return LowerRecordDecisionObservation(
-                context, mode.decision_owner_id, obs);
+                context, facts, mode.decision_owner_id, obs);
           },
           [&](const mir::RecordDecisionObservationDynamic& obs)
               -> Result<void> {
@@ -613,7 +619,7 @@ auto LowerEffectOp(
                       UnsupportedCategory::kFeature));
             }
             return LowerRecordDecisionObservationDynamic(
-                context, mode.decision_owner_id, resolver, obs);
+                context, facts, mode.decision_owner_id, resolver, obs);
           },
           [&](const mir::CoverHitEffect& hit) -> Result<void> {
             auto& builder = context.GetBuilder();

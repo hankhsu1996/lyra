@@ -8,6 +8,7 @@
 namespace lyra::lowering::mir_to_llvm {
 
 class Context;
+struct CuFacts;
 class SlotAccessResolver;
 
 // Decision observation lowering requires an explicit decision_owner_id.
@@ -16,11 +17,12 @@ class SlotAccessResolver;
 // accidentally read ambient nullable state.
 
 auto LowerRecordDecisionObservation(
-    Context& ctx, llvm::Value* decision_owner_id,
+    Context& ctx, const CuFacts& facts, llvm::Value* decision_owner_id,
     const mir::RecordDecisionObservation& obs) -> Result<void>;
 
 auto LowerRecordDecisionObservationDynamic(
-    Context& ctx, llvm::Value* decision_owner_id, SlotAccessResolver& resolver,
+    Context& ctx, const CuFacts& facts, llvm::Value* decision_owner_id,
+    SlotAccessResolver& resolver,
     const mir::RecordDecisionObservationDynamic& obs) -> Result<void>;
 
 }  // namespace lyra::lowering::mir_to_llvm

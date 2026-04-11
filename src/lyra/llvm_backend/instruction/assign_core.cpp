@@ -10,13 +10,16 @@
 #include "lyra/llvm_backend/compute/compute.hpp"
 #include "lyra/llvm_backend/compute/four_state_ops.hpp"
 #include "lyra/llvm_backend/compute/operand.hpp"
+#include "lyra/llvm_backend/cu_facts.hpp"
 #include "lyra/llvm_backend/layout/layout.hpp"
 #include "lyra/llvm_backend/slot_access.hpp"
 #include "lyra/mir/place_type.hpp"
 
 namespace lyra::lowering::mir_to_llvm::detail {
 
-auto ResolveDestType(Context& context, const mir::WriteTarget& dest) -> TypeId {
+auto ResolveDestType(
+    Context& context, const CuFacts& facts, const mir::WriteTarget& dest)
+    -> TypeId {
   if (const auto* place = std::get_if<mir::PlaceId>(&dest)) {
     return mir::TypeOfPlace(
         context.GetTypeArena(), context.LookupPlace(*place));
@@ -26,32 +29,32 @@ auto ResolveDestType(Context& context, const mir::WriteTarget& dest) -> TypeId {
 
 // No-resolver TypeId overload.
 auto LowerRhsRaw(
-    Context& context, const mir::RightHandSide& rhs, TypeId target_type)
-    -> Result<llvm::Value*> {
+    Context& context, const CuFacts& facts, const mir::RightHandSide& rhs,
+    TypeId target_type) -> Result<llvm::Value*> {
   CanonicalSlotAccess canonical(context);
-  return LowerRhsRaw(context, canonical, rhs, target_type);
+  return LowerRhsRaw(context, facts, canonical, rhs, target_type);
 }
 
 // No-resolver PlaceId overload.
 auto LowerRhsRaw(
-    Context& context, const mir::RightHandSide& rhs, mir::PlaceId target)
-    -> Result<llvm::Value*> {
+    Context& context, const CuFacts& facts, const mir::RightHandSide& rhs,
+    mir::PlaceId target) -> Result<llvm::Value*> {
   CanonicalSlotAccess canonical(context);
-  return LowerRhsRaw(context, canonical, rhs, target);
+  return LowerRhsRaw(context, facts, canonical, rhs, target);
 }
 
 // PlaceId overload: derives TypeId from Place and forwards.
 auto LowerRhsRaw(
-    Context& context, SlotAccessResolver& resolver,
+    Context& context, const CuFacts& facts, SlotAccessResolver& resolver,
     const mir::RightHandSide& rhs, mir::PlaceId target)
     -> Result<llvm::Value*> {
   const auto& types = context.GetTypeArena();
   TypeId target_type = mir::TypeOfPlace(types, context.LookupPlace(target));
-  return LowerRhsRaw(context, resolver, rhs, target_type);
+  return LowerRhsRaw(context, facts, resolver, rhs, target_type);
 }
 
 auto LowerRhsRaw(
-    Context& context, SlotAccessResolver& resolver,
+    Context& context, const CuFacts& facts, SlotAccessResolver& resolver,
     const mir::RightHandSide& rhs, TypeId target_type) -> Result<llvm::Value*> {
   return std::visit(
       common::Overloaded{
@@ -77,7 +80,7 @@ auto LowerRhsRaw(
           [&](const mir::Rvalue& rvalue) -> Result<llvm::Value*> {
             const auto& types = context.GetTypeArena();
             auto rv_result =
-                LowerRvalue(context, resolver, rvalue, target_type);
+                LowerRvalue(context, facts, resolver, rvalue, target_type);
             if (!rv_result) return std::unexpected(rv_result.error());
             if (IsPacked(types[target_type]) &&
                 context.IsPackedFourState(types[target_type])) {
@@ -106,15 +109,15 @@ auto LowerRhsRaw(
 using PackedRValue = lyra::lowering::mir_to_llvm::PackedRValue;
 
 auto LowerRhsToPackedRValue(
-    Context& context, const mir::RightHandSide& rhs, uint32_t semantic_bits,
-    TypeId result_type) -> Result<PackedRValue> {
+    Context& context, const CuFacts& facts, const mir::RightHandSide& rhs,
+    uint32_t semantic_bits, TypeId result_type) -> Result<PackedRValue> {
   CanonicalSlotAccess canonical(context);
   return LowerRhsToPackedRValue(
-      context, canonical, rhs, semantic_bits, result_type);
+      context, facts, canonical, rhs, semantic_bits, result_type);
 }
 
 auto LowerRhsToPackedRValue(
-    Context& context, SlotAccessResolver& resolver,
+    Context& context, const CuFacts& facts, SlotAccessResolver& resolver,
     const mir::RightHandSide& rhs, uint32_t semantic_bits, TypeId result_type)
     -> Result<PackedRValue> {
   return std::visit(
@@ -142,7 +145,7 @@ auto LowerRhsToPackedRValue(
           },
           [&](const mir::Rvalue& rvalue) -> Result<PackedRValue> {
             auto rv_result =
-                LowerRvalue(context, resolver, rvalue, result_type);
+                LowerRvalue(context, facts, resolver, rvalue, result_type);
             if (!rv_result) return std::unexpected(rv_result.error());
             // Invariant: rv_result->unknown is either nullptr (provably
             // 2-state) or a non-null SSA value (4-state). A 4-state

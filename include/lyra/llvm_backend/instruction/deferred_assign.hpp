@@ -17,12 +17,13 @@ class SlotAccessResolver;
 // - kScalar2State: 2-state packed scalar (integer mask)
 // - kScalar4State: 4-state packed scalar ({val, unk} struct mask)
 // - kAggregateBytes: Aggregate types (byte-level 0xFF mask via runtime)
-auto LowerDeferredAssign(Context& context, const mir::DeferredAssign& deferred)
+auto LowerDeferredAssign(
+    Context& context, const CuFacts& facts, const mir::DeferredAssign& deferred)
     -> Result<void>;
 
 // Resolver-aware overload.
 auto LowerDeferredAssign(
-    Context& context, SlotAccessResolver& resolver,
+    Context& context, const CuFacts& facts, SlotAccessResolver& resolver,
     const mir::DeferredAssign& deferred) -> Result<void>;
 
 }  // namespace lyra::lowering::mir_to_llvm

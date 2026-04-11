@@ -11,6 +11,7 @@
 #include "lyra/llvm_backend/commit.hpp"
 #include "lyra/llvm_backend/compute/operand.hpp"
 #include "lyra/llvm_backend/context.hpp"
+#include "lyra/llvm_backend/cu_facts.hpp"
 #include "lyra/llvm_backend/layout/union_storage.hpp"
 #include "lyra/llvm_backend/lifecycle.hpp"
 #include "lyra/llvm_backend/slot_access.hpp"
@@ -306,7 +307,8 @@ auto GetKeyAllocaSize(Context& ctx, TypeId key_type) -> uint32_t {
 
 }  // namespace
 
-auto LowerAssocOp(Context& ctx, const mir::AssocOp& op) -> Result<void> {
+auto LowerAssocOp(Context& ctx, const CuFacts& facts, const mir::AssocOp& op)
+    -> Result<void> {
   auto& builder = ctx.GetBuilder();
   auto* ptr_ty = llvm::PointerType::getUnqual(ctx.GetLlvmContext());
   auto* i32_ty = llvm::Type::getInt32Ty(ctx.GetLlvmContext());
@@ -685,11 +687,11 @@ auto LowerAssocOp(Context& ctx, const mir::AssocOp& op) -> Result<void> {
 }
 
 auto LowerAssocOp(
-    Context& ctx, SlotAccessResolver& /*resolver*/, const mir::AssocOp& op)
-    -> Result<void> {
+    Context& ctx, const CuFacts& facts, SlotAccessResolver& /*resolver*/,
+    const mir::AssocOp& op) -> Result<void> {
   // AssocOp is a boundary statement -- sync happens before it.
   // Delegate to canonical version.
-  return LowerAssocOp(ctx, op);
+  return LowerAssocOp(ctx, facts, op);
 }
 
 }  // namespace lyra::lowering::mir_to_llvm

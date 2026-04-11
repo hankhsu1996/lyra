@@ -13,6 +13,7 @@
 #include "absl/container/flat_hash_map.h"
 #include "lyra/common/internal_error.hpp"
 #include "lyra/llvm_backend/context.hpp"
+#include "lyra/llvm_backend/cu_facts.hpp"
 #include "lyra/llvm_backend/deferred_thunk_abi.hpp"
 #include "lyra/llvm_backend/execution_mode.hpp"
 #include "lyra/llvm_backend/lower.hpp"
@@ -56,8 +57,9 @@ auto CaptureDeferredCalleeInfoForBody(
 }  // namespace
 
 auto CompileModuleSpecSession(
-    Context& context, const CompiledModuleSpecInput& input)
-    -> Result<CompiledModuleSpec> {
+    Context& context, const CuFacts& facts,
+    const CompiledModuleSpecInput& input,
+    const mir::ConstructionInput* construction) -> Result<CompiledModuleSpec> {
   const auto& body = *input.body;
   Context::ArenaScope arena_scope(context, &body.arena);
 
@@ -101,7 +103,7 @@ auto CompileModuleSpecSession(
   for (mir::FunctionId func_id : input.functions) {
     if (!seen_func_ids.insert(func_id.value).second) continue;
     auto llvm_func_or_err = DeclareMirFunction(
-        context, func_id,
+        context, facts, func_id,
         std::format("{}_func_{}", input.name_prefix, func_id.value));
     if (!llvm_func_or_err) return std::unexpected(llvm_func_or_err.error());
     declared_funcs.emplace_back(func_id, *llvm_func_or_err);
@@ -112,7 +114,8 @@ auto CompileModuleSpecSession(
 
   // Step 2: Define all body functions.
   for (const auto& [func_id, llvm_func] : declared_funcs) {
-    auto result = DefineMirFunction(context, func_id, llvm_func, site_ctx);
+    auto result =
+        DefineMirFunction(context, facts, func_id, llvm_func, site_ctx);
     if (!result) return std::unexpected(result.error());
   }
 
@@ -132,8 +135,6 @@ auto CompileModuleSpecSession(
     const auto& proc_view = input.view.processes[pi];
     context.SetCurrentProcess(input.layout_contract->process_layouts[pi]);
 
-    // Advance per-process bases: each process within the body gets bases
-    // offset by the cumulative count from prior processes.
     BodySiteContext proc_site_ctx = site_ctx;
     proc_site_ctx.wait_site_base =
         input.wait_site_base_index +
@@ -144,7 +145,7 @@ auto CompileModuleSpecSession(
 
     const auto& mir_process = body.arena[proc_view.process_id];
     auto func_result = GenerateSharedProcessFunction(
-        context, mir_process, proc_view.func_name, proc_site_ctx);
+        context, facts, mir_process, proc_view.func_name, proc_site_ctx);
     if (!func_result) return std::unexpected(func_result.error());
 
     product.process_functions.push_back(func_result->function);
@@ -161,13 +162,11 @@ auto CompileModuleSpecSession(
   }
 
   // Step 4: Compile deferred assertion thunks while session state is valid.
-  // Callee captures and thunk codegen happen here, inside the session,
-  // because declared functions are in scope.
   if (!input.deferred_sites.empty()) {
     auto callee_info =
         CaptureDeferredCalleeInfoForBody(context, input.deferred_sites);
     auto artifacts = CompileDeferredAssertionArtifacts(
-        context, input.deferred_sites, callee_info, input.name_prefix);
+        context, facts, input.deferred_sites, callee_info, input.name_prefix);
     if (!artifacts) return std::unexpected(artifacts.error());
     product.deferred_artifacts = std::move(*artifacts);
   }
@@ -193,7 +192,8 @@ auto CompileModuleSpecSession(
   return product;
 }
 
-auto CompileGlobalFunctions(Context& context, const LoweringInput& input)
+auto CompileGlobalFunctions(
+    Context& context, const CuFacts& facts, const LoweringInput& input)
     -> Result<void> {
   std::vector<mir::FunctionId> global_func_ids;
   std::unordered_set<uint32_t> seen_func_ids;
@@ -217,7 +217,7 @@ auto CompileGlobalFunctions(Context& context, const LoweringInput& input)
   global_func_map.reserve(global_func_ids.size());
   for (mir::FunctionId func_id : global_func_ids) {
     auto llvm_func_or_err = DeclareMirFunction(
-        context, func_id, std::format("global_func_{}", func_id.value));
+        context, facts, func_id, std::format("global_func_{}", func_id.value));
     if (!llvm_func_or_err) return std::unexpected(llvm_func_or_err.error());
     global_func_map[func_id] = *llvm_func_or_err;
   }
@@ -225,7 +225,8 @@ auto CompileGlobalFunctions(Context& context, const LoweringInput& input)
   Context::DeclaredFunctionScope func_scope(context, global_func_map);
   for (const auto& [func_id, llvm_func] : global_func_map) {
     BodySiteContext no_sites;
-    auto result = DefineMirFunction(context, func_id, llvm_func, no_sites);
+    auto result =
+        DefineMirFunction(context, facts, func_id, llvm_func, no_sites);
     if (!result) return std::unexpected(result.error());
 
     const auto& func = (*input.mir_arena)[func_id];
@@ -238,8 +239,8 @@ auto CompileGlobalFunctions(Context& context, const LoweringInput& input)
 }
 
 auto CompileSpecializations(
-    Context& context, const LoweringInput& input, const SpecPlan& spec_plan)
-    -> Result<SpecializationProducts> {
+    Context& context, const CuFacts& facts, const LoweringInput& input,
+    const SpecPlan& spec_plan) -> Result<SpecializationProducts> {
   SpecializationProducts products;
   products.deferred_site_artifacts.resize(
       input.design->deferred_assertion_sites.size());
@@ -251,27 +252,22 @@ auto CompileSpecializations(
   uint32_t running_back_edge_base = 0;
 
   for (const auto& spec_input : spec_plan.inputs) {
-    // Set incremental bases for wait-site and back-edge numbering.
-    // These cannot be pre-computed during planning because counts depend
-    // on codegen decisions (bounded latch elimination, etc.).
     auto input_with_bases = spec_input;
     input_with_bases.wait_site_base_index = running_wait_base;
     input_with_bases.back_edge_site_base_index = running_back_edge_base;
 
-    auto product =
-        CompileModuleSpecSession(context, input_with_bases, input.construction);
+    auto product = CompileModuleSpecSession(
+        context, facts, input_with_bases, input.construction);
     if (!product) return std::unexpected(product.error());
 
     running_wait_base += static_cast<uint32_t>(product->wait_sites.size());
     running_back_edge_base +=
         static_cast<uint32_t>(product->back_edge_origins.size());
 
-    // Splice per-body module export callees into positional array.
     for (const auto& entry : product->module_export_entries) {
       products.module_export_callees[entry.wrapper_index] = entry.info;
     }
 
-    // Merge per-body deferred artifacts into design-global array.
     for (uint32_t di = 0; di < product->deferred_artifacts.size(); ++di) {
       products.deferred_site_artifacts[product->deferred_site_base_index + di] =
           std::move(product->deferred_artifacts[di]);

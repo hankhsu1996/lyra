@@ -17,6 +17,7 @@
 #include "lyra/llvm_backend/compute/compute.hpp"
 #include "lyra/llvm_backend/compute/operand.hpp"
 #include "lyra/llvm_backend/context.hpp"
+#include "lyra/llvm_backend/cu_facts.hpp"
 #include "lyra/llvm_backend/instruction/assign_core.hpp"
 #include "lyra/llvm_backend/layout/union_storage.hpp"
 #include "lyra/llvm_backend/ownership.hpp"
@@ -209,10 +210,10 @@ auto LowerManagedStructLiteral(
 // preprocessing (aggregate literals, 4-state packing), then routes
 // through DispatchWrite. Does not own semantic write-shape decisions.
 auto LowerRvalueAssign(
-    Context& context, const mir::WriteTarget& target, const mir::Rvalue& rvalue)
-    -> Result<void> {
+    Context& context, const CuFacts& facts, const mir::WriteTarget& target,
+    const mir::Rvalue& rvalue) -> Result<void> {
   const auto& types = context.GetTypeArena();
-  TypeId result_type = detail::ResolveDestType(context, target);
+  TypeId result_type = detail::ResolveDestType(context, facts, target);
   const Type& type = types[result_type];
 
   // Aggregate literal special case: some write shapes cannot be represented
@@ -247,7 +248,7 @@ auto LowerRvalueAssign(
   }
 
   // Standard path: evaluate rvalue to raw LLVM value(s)
-  auto rv_result = LowerRvalue(context, rvalue, result_type);
+  auto rv_result = LowerRvalue(context, facts, rvalue, result_type);
   if (!rv_result) return std::unexpected(rv_result.error());
 
   // Packed types: non-lossy PackedRValue transport via PackedRValueSource.
@@ -272,15 +273,18 @@ auto LowerRvalueAssign(
 
 }  // namespace
 
-auto LowerAssign(Context& context, const mir::Assign& assign) -> Result<void> {
-  CanonicalSlotAccess canonical(context);
-  return LowerAssign(context, canonical, assign);
-}
-
-auto LowerGuardedAssign(Context& context, const mir::GuardedAssign& guarded)
+auto LowerAssign(
+    Context& context, const CuFacts& facts, const mir::Assign& assign)
     -> Result<void> {
   CanonicalSlotAccess canonical(context);
-  return LowerGuardedAssign(context, canonical, guarded);
+  return LowerAssign(context, facts, canonical, assign);
+}
+
+auto LowerGuardedAssign(
+    Context& context, const CuFacts& facts, const mir::GuardedAssign& guarded)
+    -> Result<void> {
+  CanonicalSlotAccess canonical(context);
+  return LowerGuardedAssign(context, facts, canonical, guarded);
 }
 // Single resolver-aware write path for managed immediate assignments.
 //
@@ -310,8 +314,8 @@ auto CommitManagedImmediate(
 }
 
 auto LowerAssign(
-    Context& context, SlotAccessResolver& resolver, const mir::Assign& assign)
-    -> Result<void> {
+    Context& context, const CuFacts& facts, SlotAccessResolver& resolver,
+    const mir::Assign& assign) -> Result<void> {
   const auto& dest = assign.dest;
   auto* dest_place = std::get_if<mir::PlaceId>(&dest);
 
@@ -325,13 +329,13 @@ auto LowerAssign(
       auto subview = ResolvePackedSubview(context, *path);
       if (!subview) return std::unexpected(subview.error());
       auto packed = LowerRhsToPackedRValue(
-          context, resolver, assign.rhs, subview->semantic_bit_width,
+          context, facts, resolver, assign.rhs, subview->semantic_bit_width,
           subview->result_type);
       if (!packed) return std::unexpected(packed.error());
       return StoreBitRange(context, *dest_place, *packed);
     }
     auto rhs_raw_or_err =
-        LowerRhsRaw(context, resolver, assign.rhs, *dest_place);
+        LowerRhsRaw(context, facts, resolver, assign.rhs, *dest_place);
     if (!rhs_raw_or_err) return std::unexpected(rhs_raw_or_err.error());
     return CommitManagedImmediate(
         context, resolver, *dest_place, *rhs_raw_or_err,
@@ -344,7 +348,7 @@ auto LowerAssign(
     auto subview = ResolvePackedSubview(context, *path);
     if (!subview) return std::unexpected(subview.error());
     auto packed = LowerRhsToPackedRValue(
-        context, resolver, assign.rhs, subview->semantic_bit_width,
+        context, facts, resolver, assign.rhs, subview->semantic_bit_width,
         subview->result_type);
     if (!packed) return std::unexpected(packed.error());
     return StoreBitRange(context, *dest_place, *packed);
@@ -353,7 +357,7 @@ auto LowerAssign(
   // Shared path: resolve destination type and build write plan.
   // Works for both PlaceId and ExternalRefId destinations.
   const auto& types = context.GetTypeArena();
-  TypeId type_id = detail::ResolveDestType(context, dest);
+  TypeId type_id = detail::ResolveDestType(context, facts, dest);
   auto plan = BuildWritePlan(type_id, types);
 
   // Field-by-field and union memcpy: route through DispatchWrite (operand
@@ -369,7 +373,7 @@ auto LowerAssign(
                   DetermineOwnership(context, operand));
             },
             [&](const mir::Rvalue& rvalue) -> Result<void> {
-              return LowerRvalueAssign(context, dest, rvalue);
+              return LowerRvalueAssign(context, facts, dest, rvalue);
             },
         },
         assign.rhs);
@@ -380,7 +384,7 @@ auto LowerAssign(
       IsPacked(types[type_id])) {
     uint32_t semantic_bits = PackedBitWidth(types[type_id], types);
     auto packed = LowerRhsToPackedRValue(
-        context, resolver, assign.rhs, semantic_bits, type_id);
+        context, facts, resolver, assign.rhs, semantic_bits, type_id);
     if (!packed) return std::unexpected(packed.error());
     auto policy = std::visit(
         common::Overloaded{
@@ -399,7 +403,8 @@ auto LowerAssign(
   }
 
   // Default: evaluate RHS as raw value, commit through canonical path.
-  auto rhs_raw_or_err = LowerRhsRaw(context, resolver, assign.rhs, type_id);
+  auto rhs_raw_or_err =
+      LowerRhsRaw(context, facts, resolver, assign.rhs, type_id);
   if (!rhs_raw_or_err) return std::unexpected(rhs_raw_or_err.error());
   auto policy = std::visit(
       common::Overloaded{
@@ -416,13 +421,13 @@ auto LowerAssign(
 }
 
 auto LowerGuardedAssign(
-    Context& context, SlotAccessResolver& resolver,
+    Context& context, const CuFacts& facts, SlotAccessResolver& resolver,
     const mir::GuardedAssign& guarded) -> Result<void> {
   const auto& dest = guarded.dest;
   auto* dest_place = std::get_if<mir::PlaceId>(&dest);
   auto& builder = context.GetBuilder();
   const auto& types = context.GetTypeArena();
-  TypeId dest_type_id = detail::ResolveDestType(context, dest);
+  TypeId dest_type_id = detail::ResolveDestType(context, facts, dest);
 
   // Bit-range is PlaceId-only (external refs have no projections).
   bool is_bit_range =
@@ -437,19 +442,19 @@ auto LowerGuardedAssign(
     auto subview = ResolvePackedSubview(context, *path);
     if (!subview) return std::unexpected(subview.error());
     auto packed = LowerRhsToPackedRValue(
-        context, resolver, guarded.rhs, subview->semantic_bit_width,
+        context, facts, resolver, guarded.rhs, subview->semantic_bit_width,
         subview->result_type);
     if (!packed) return std::unexpected(packed.error());
     packed_rhs = *packed;
   } else if (is_packed_dest) {
     uint32_t semantic_bits = PackedBitWidth(types[dest_type_id], types);
     auto packed = LowerRhsToPackedRValue(
-        context, resolver, guarded.rhs, semantic_bits, dest_type_id);
+        context, facts, resolver, guarded.rhs, semantic_bits, dest_type_id);
     if (!packed) return std::unexpected(packed.error());
     packed_rhs = *packed;
   } else {
     auto rhs_raw_or_err =
-        LowerRhsRaw(context, resolver, guarded.rhs, dest_type_id);
+        LowerRhsRaw(context, facts, resolver, guarded.rhs, dest_type_id);
     if (!rhs_raw_or_err) return std::unexpected(rhs_raw_or_err.error());
     rhs_raw = *rhs_raw_or_err;
   }

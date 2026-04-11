@@ -16,6 +16,7 @@
 #include "lyra/llvm_backend/commit.hpp"
 #include "lyra/llvm_backend/compute/operand.hpp"
 #include "lyra/llvm_backend/context.hpp"
+#include "lyra/llvm_backend/cu_facts.hpp"
 #include "lyra/llvm_backend/lifecycle.hpp"
 #include "lyra/llvm_backend/slot_access.hpp"
 #include "lyra/mir/arena.hpp"
@@ -272,7 +273,8 @@ auto LowerQueueInsert(Context& context, const mir::BuiltinCall& call)
 
 }  // namespace
 
-auto LowerBuiltinCall(Context& context, const mir::BuiltinCall& call)
+auto LowerBuiltinCall(
+    Context& context, const CuFacts& facts, const mir::BuiltinCall& call)
     -> Result<void> {
   switch (call.method) {
     case mir::BuiltinMethod::kArrayDelete:
@@ -302,11 +304,11 @@ auto LowerBuiltinCall(Context& context, const mir::BuiltinCall& call)
 }
 
 auto LowerBuiltinCall(
-    Context& context, SlotAccessResolver& /*resolver*/,
+    Context& context, const CuFacts& facts, SlotAccessResolver& /*resolver*/,
     const mir::BuiltinCall& call) -> Result<void> {
   // BuiltinCalls are boundary statements -- sync happens before them.
   // Delegate to canonical version.
-  return LowerBuiltinCall(context, call);
+  return LowerBuiltinCall(context, facts, call);
 }
 
 }  // namespace lyra::lowering::mir_to_llvm

@@ -38,12 +38,13 @@ struct SpecializationProducts {
 };
 
 // Declare and define all design-global functions (packages + generated).
-auto CompileGlobalFunctions(Context& context, const LoweringInput& input)
+auto CompileGlobalFunctions(
+    Context& context, const CuFacts& facts, const LoweringInput& input)
     -> Result<void>;
 
 // Compile all specializations, merging per-session products.
 auto CompileSpecializations(
-    Context& context, const LoweringInput& input, const SpecPlan& spec_plan)
-    -> Result<SpecializationProducts>;
+    Context& context, const CuFacts& facts, const LoweringInput& input,
+    const SpecPlan& spec_plan) -> Result<SpecializationProducts>;
 
 }  // namespace lyra::lowering::mir_to_llvm

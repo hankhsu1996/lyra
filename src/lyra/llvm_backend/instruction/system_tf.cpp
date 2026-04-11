@@ -12,6 +12,7 @@
 #include "lyra/common/system_tf.hpp"
 #include "lyra/llvm_backend/compute/operand.hpp"
 #include "lyra/llvm_backend/context.hpp"
+#include "lyra/llvm_backend/cu_facts.hpp"
 #include "lyra/llvm_backend/slot_access.hpp"
 #include "lyra/mir/effect.hpp"
 #include "lyra/mir/rvalue.hpp"
@@ -19,20 +20,22 @@
 namespace lyra::lowering::mir_to_llvm {
 
 auto LowerSystemTfRvalue(
-    Context& context, const mir::Rvalue& rvalue,
+    Context& context, const CuFacts& facts, const mir::Rvalue& rvalue,
     const mir::SystemTfRvalueInfo& info) -> Result<RvalueValue> {
   CanonicalSlotAccess canonical(context);
-  return LowerSystemTfRvalue(context, canonical, rvalue, info);
+  return LowerSystemTfRvalue(context, facts, canonical, rvalue, info);
 }
 
-auto LowerSystemTfEffect(Context& context, const mir::SystemTfEffect& effect)
+auto LowerSystemTfEffect(
+    Context& context, const CuFacts& facts, const mir::SystemTfEffect& effect)
     -> Result<void> {
   CanonicalSlotAccess canonical(context);
-  return LowerSystemTfEffect(context, canonical, effect);
+  return LowerSystemTfEffect(context, facts, canonical, effect);
 }
 auto LowerSystemTfRvalue(
-    Context& context, SlotAccessResolver& resolver, const mir::Rvalue& rvalue,
-    const mir::SystemTfRvalueInfo& info) -> Result<RvalueValue> {
+    Context& context, const CuFacts& facts, SlotAccessResolver& resolver,
+    const mir::Rvalue& rvalue, const mir::SystemTfRvalueInfo& info)
+    -> Result<RvalueValue> {
   switch (info.opcode) {
     case SystemTfOpcode::kFopen:
       throw common::InternalError(
@@ -108,7 +111,7 @@ auto LowerSystemTfRvalue(
 }
 
 auto LowerSystemTfEffect(
-    Context& context, SlotAccessResolver& resolver,
+    Context& context, const CuFacts& facts, SlotAccessResolver& resolver,
     const mir::SystemTfEffect& effect) -> Result<void> {
   switch (effect.opcode) {
     case SystemTfOpcode::kFclose: {
