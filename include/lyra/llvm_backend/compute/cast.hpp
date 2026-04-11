@@ -4,6 +4,7 @@
 #include "lyra/common/type.hpp"
 #include "lyra/llvm_backend/compute/compute.hpp"
 #include "lyra/llvm_backend/context.hpp"
+#include "lyra/llvm_backend/cu_facts.hpp"
 #include "lyra/mir/rvalue.hpp"
 
 namespace lyra::lowering::mir_to_llvm {
@@ -12,13 +13,13 @@ class SlotAccessResolver;
 
 // Cast lowering - returns computed value with unknown plane for 4-state.
 auto LowerCastRvalue(
-    Context& context, const mir::Rvalue& rvalue, TypeId destination_type)
-    -> Result<RvalueValue>;
+    Context& context, const CuFacts& facts, const mir::Rvalue& rvalue,
+    TypeId destination_type) -> Result<RvalueValue>;
 
 // Bitcast lowering - returns computed value with unknown plane for 4-state.
 auto LowerBitCastRvalue(
-    Context& context, const mir::Rvalue& rvalue, TypeId destination_type)
-    -> Result<RvalueValue>;
+    Context& context, const CuFacts& facts, const mir::Rvalue& rvalue,
+    TypeId destination_type) -> Result<RvalueValue>;
 
 // Convert time value (integer or real) to u64 ticks for %t formatting.
 // Real values: truncate toward zero (LRM 21.2.1.2), clamp to [0, UINT64_MAX].
@@ -27,11 +28,11 @@ auto LowerTimeToTicks64(Context& context, llvm::Value* time_value)
 
 // Resolver-aware overloads.
 auto LowerCastRvalue(
-    Context& context, SlotAccessResolver& resolver, const mir::Rvalue& rvalue,
-    TypeId destination_type) -> Result<RvalueValue>;
+    Context& context, const CuFacts& facts, SlotAccessResolver& resolver,
+    const mir::Rvalue& rvalue, TypeId destination_type) -> Result<RvalueValue>;
 
 auto LowerBitCastRvalue(
-    Context& context, SlotAccessResolver& resolver, const mir::Rvalue& rvalue,
-    TypeId destination_type) -> Result<RvalueValue>;
+    Context& context, const CuFacts& facts, SlotAccessResolver& resolver,
+    const mir::Rvalue& rvalue, TypeId destination_type) -> Result<RvalueValue>;
 
 }  // namespace lyra::lowering::mir_to_llvm

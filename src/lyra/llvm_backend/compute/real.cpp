@@ -20,6 +20,7 @@
 #include "lyra/common/type_queries.hpp"
 #include "lyra/llvm_backend/compute/operand.hpp"
 #include "lyra/llvm_backend/context.hpp"
+#include "lyra/llvm_backend/cu_facts.hpp"
 #include "lyra/llvm_backend/slot_access.hpp"
 #include "lyra/lowering/diagnostic_context.hpp"
 #include "lyra/mir/operand.hpp"
@@ -34,10 +35,11 @@ auto IsRealKind(TypeKind kind) -> bool {
   return kind == TypeKind::kReal || kind == TypeKind::kShortReal;
 }
 
-auto GetOperandFloatType(Context& context, const mir::Operand& operand)
+auto GetOperandFloatType(
+    Context& context, const CuFacts& facts, const mir::Operand& operand)
     -> llvm::Type* {
   TypeId tid = GetOperandTypeId(context, operand);
-  const auto& types = context.GetTypeArena();
+  const auto& types = *facts.types;
   if (!IsRealKind(types[tid].Kind())) {
     throw common::InternalError(
         "GetOperandFloatType", "operand must be real or shortreal");
@@ -82,13 +84,13 @@ auto MapToFcmpPredicate(mir::BinaryOp op) -> llvm::CmpInst::Predicate {
 }
 
 auto LowerRealUnaryValue(
-    Context& context, SlotAccessResolver& resolver,
+    Context& context, const CuFacts& facts, SlotAccessResolver& resolver,
     const mir::UnaryRvalueInfo& info, const std::vector<mir::Operand>& operands,
     TypeId result_type) -> Result<llvm::Value*> {
   auto& builder = context.GetBuilder();
-  const auto& types = context.GetTypeArena();
+  const auto& types = *facts.types;
 
-  llvm::Type* float_ty = GetOperandFloatType(context, operands[0]);
+  llvm::Type* float_ty = GetOperandFloatType(context, facts, operands[0]);
   auto operand_or_err = LowerOperand(context, resolver, operands[0]);
   if (!operand_or_err) return std::unexpected(operand_or_err.error());
   llvm::Value* operand = *operand_or_err;
@@ -119,14 +121,14 @@ auto LowerRealUnaryValue(
 }
 
 auto LowerRealBinaryValue(
-    Context& context, SlotAccessResolver& resolver,
+    Context& context, const CuFacts& facts, SlotAccessResolver& resolver,
     const mir::BinaryRvalueInfo& info,
     const std::vector<mir::Operand>& operands, TypeId result_type)
     -> Result<llvm::Value*> {
   auto& builder = context.GetBuilder();
-  const auto& types = context.GetTypeArena();
+  const auto& types = *facts.types;
 
-  llvm::Type* float_ty = GetOperandFloatType(context, operands[0]);
+  llvm::Type* float_ty = GetOperandFloatType(context, facts, operands[0]);
   auto lhs_or_err = LowerOperand(context, resolver, operands[0]);
   if (!lhs_or_err) return std::unexpected(lhs_or_err.error());
   llvm::Value* lhs = *lhs_or_err;
@@ -214,8 +216,9 @@ auto LowerRealBinaryValue(
 
 }  // namespace
 
-auto IsRealMathRvalue(Context& context, const mir::Rvalue& rvalue) -> bool {
-  const auto& types = context.GetTypeArena();
+auto IsRealMathRvalue(
+    const CuFacts& facts, Context& context, const mir::Rvalue& rvalue) -> bool {
+  const auto& types = *facts.types;
 
   return std::visit(
       common::Overloaded{
@@ -234,24 +237,24 @@ auto IsRealMathRvalue(Context& context, const mir::Rvalue& rvalue) -> bool {
 }
 
 auto LowerRealRvalue(
-    Context& context, const mir::Rvalue& rvalue, TypeId result_type)
-    -> Result<RvalueValue> {
+    Context& context, const CuFacts& facts, const mir::Rvalue& rvalue,
+    TypeId result_type) -> Result<RvalueValue> {
   CanonicalSlotAccess canonical(context);
-  return LowerRealRvalue(context, canonical, rvalue, result_type);
+  return LowerRealRvalue(context, facts, canonical, rvalue, result_type);
 }
 
 auto LowerRealRvalue(
-    Context& context, SlotAccessResolver& resolver, const mir::Rvalue& rvalue,
-    TypeId result_type) -> Result<RvalueValue> {
+    Context& context, const CuFacts& facts, SlotAccessResolver& resolver,
+    const mir::Rvalue& rvalue, TypeId result_type) -> Result<RvalueValue> {
   auto result_or_err = std::visit(
       common::Overloaded{
           [&](const mir::UnaryRvalueInfo& info) -> Result<llvm::Value*> {
             return LowerRealUnaryValue(
-                context, resolver, info, rvalue.operands, result_type);
+                context, facts, resolver, info, rvalue.operands, result_type);
           },
           [&](const mir::BinaryRvalueInfo& info) -> Result<llvm::Value*> {
             return LowerRealBinaryValue(
-                context, resolver, info, rvalue.operands, result_type);
+                context, facts, resolver, info, rvalue.operands, result_type);
           },
           [&](const mir::CastRvalueInfo&) -> Result<llvm::Value*> {
             throw common::InternalError(

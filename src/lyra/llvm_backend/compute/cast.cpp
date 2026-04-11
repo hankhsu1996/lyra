@@ -18,6 +18,7 @@
 #include "lyra/llvm_backend/compute/operand.hpp"
 #include "lyra/llvm_backend/compute/ops.hpp"
 #include "lyra/llvm_backend/context.hpp"
+#include "lyra/llvm_backend/cu_facts.hpp"
 #include "lyra/llvm_backend/emit_string_conv.hpp"
 #include "lyra/llvm_backend/slot_access.hpp"
 #include "lyra/llvm_backend/value_repr.hpp"
@@ -88,8 +89,8 @@ auto GetTargetBitWidth(const TypeArena& types, TypeId destination_type)
 }
 
 auto LoadFourStateOperand(
-    Context& context, SlotAccessResolver& resolver, const mir::Operand& operand)
-    -> Result<FourStateValue> {
+    Context& context, const CuFacts& facts, SlotAccessResolver& resolver,
+    const mir::Operand& operand) -> Result<FourStateValue> {
   auto& builder = context.GetBuilder();
 
   bool is_four_state = IsOperandFourState(context, operand);
@@ -110,24 +111,25 @@ auto LoadFourStateOperand(
 }  // namespace
 
 auto LowerCastRvalue(
-    Context& context, const mir::Rvalue& rvalue, TypeId destination_type)
-    -> Result<RvalueValue> {
+    Context& context, const CuFacts& facts, const mir::Rvalue& rvalue,
+    TypeId destination_type) -> Result<RvalueValue> {
   CanonicalSlotAccess canonical(context);
-  return LowerCastRvalue(context, canonical, rvalue, destination_type);
+  return LowerCastRvalue(context, facts, canonical, rvalue, destination_type);
 }
 
 auto LowerBitCastRvalue(
-    Context& context, const mir::Rvalue& rvalue, TypeId destination_type)
-    -> Result<RvalueValue> {
+    Context& context, const CuFacts& facts, const mir::Rvalue& rvalue,
+    TypeId destination_type) -> Result<RvalueValue> {
   CanonicalSlotAccess canonical(context);
-  return LowerBitCastRvalue(context, canonical, rvalue, destination_type);
+  return LowerBitCastRvalue(
+      context, facts, canonical, rvalue, destination_type);
 }
 
 auto LowerCastRvalue(
-    Context& context, SlotAccessResolver& resolver, const mir::Rvalue& rvalue,
-    TypeId destination_type) -> Result<RvalueValue> {
+    Context& context, const CuFacts& facts, SlotAccessResolver& resolver,
+    const mir::Rvalue& rvalue, TypeId destination_type) -> Result<RvalueValue> {
   auto& builder = context.GetBuilder();
-  const auto& types = context.GetTypeArena();
+  const auto& types = *facts.types;
   const auto& info = std::get<mir::CastRvalueInfo>(rvalue.info);
   const mir::Operand& source_operand = rvalue.operands[0];
 
@@ -190,9 +192,9 @@ auto LowerCastRvalue(
       return context.ReadTempValue(temp_id->value).domain ==
              ValueDomain::kFourState;
     }
-    return IsPacked(src_type) && context.IsPackedFourState(src_type);
+    return IsPacked(src_type) && IsPackedFourState(facts, src_type);
   }();
-  bool tgt_is_4s = IsPacked(tgt_type) && context.IsPackedFourState(tgt_type);
+  bool tgt_is_4s = IsPacked(tgt_type) && IsPackedFourState(facts, tgt_type);
 
   if (src_is_float && tgt_is_float) {
     auto source_or_err = LowerOperand(context, resolver, source_operand);
@@ -256,7 +258,8 @@ auto LowerCastRvalue(
   uint32_t source_bits = GetSemanticBitWidth(types, info.source_type);
 
   if (src_is_4s) {
-    auto fs_or_err = LoadFourStateOperand(context, resolver, source_operand);
+    auto fs_or_err =
+        LoadFourStateOperand(context, facts, resolver, source_operand);
     if (!fs_or_err) return std::unexpected(fs_or_err.error());
     auto fs = *fs_or_err;
     fs = ResizeFourStatePlanes(builder, fs, elem_type, is_signed, source_bits);
@@ -277,10 +280,10 @@ auto LowerCastRvalue(
 }
 
 auto LowerBitCastRvalue(
-    Context& context, SlotAccessResolver& resolver, const mir::Rvalue& rvalue,
-    TypeId destination_type) -> Result<RvalueValue> {
+    Context& context, const CuFacts& facts, SlotAccessResolver& resolver,
+    const mir::Rvalue& rvalue, TypeId destination_type) -> Result<RvalueValue> {
   auto& llvm_ctx = context.GetLlvmContext();
-  const auto& types = context.GetTypeArena();
+  const auto& types = *facts.types;
   const auto& info = std::get<mir::BitCastRvalueInfo>(rvalue.info);
 
   const Type& src_type = types[info.source_type];

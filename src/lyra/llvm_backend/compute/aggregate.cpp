@@ -18,6 +18,7 @@
 #include "lyra/common/type_arena.hpp"
 #include "lyra/llvm_backend/compute/operand.hpp"
 #include "lyra/llvm_backend/context.hpp"
+#include "lyra/llvm_backend/cu_facts.hpp"
 #include "lyra/llvm_backend/layout/union_storage.hpp"
 #include "lyra/lowering/diagnostic_context.hpp"
 #include "lyra/mir/arena.hpp"
@@ -83,10 +84,10 @@ auto LowerUnpackedStructAggregateValue(
 }
 
 auto LowerQueueAggregateValue(
-    Context& context, const mir::Rvalue& rvalue, TypeId result_type)
-    -> Result<llvm::Value*> {
+    Context& context, const CuFacts& facts, const mir::Rvalue& rvalue,
+    TypeId result_type) -> Result<llvm::Value*> {
   auto& builder = context.GetBuilder();
-  const auto& types = context.GetTypeArena();
+  const auto& types = *facts.types;
   const Type& target_type = types[result_type];
 
   auto* i64_ty = llvm::Type::getInt64Ty(context.GetLlvmContext());
@@ -136,9 +137,10 @@ auto LowerQueueAggregateValue(
 }  // namespace
 
 auto LowerAggregateRvalue(
-    Context& context, const mir::Rvalue& rvalue, TypeId result_type,
-    const mir::AggregateRvalueInfo& /*info*/) -> Result<RvalueValue> {
-  const auto& types = context.GetTypeArena();
+    Context& context, const CuFacts& facts, const mir::Rvalue& rvalue,
+    TypeId result_type, const mir::AggregateRvalueInfo& /*info*/)
+    -> Result<RvalueValue> {
+  const auto& types = *facts.types;
   const Type& target_type = types[result_type];
 
   Result<llvm::Value*> result_or_err =
@@ -158,7 +160,8 @@ auto LowerAggregateRvalue(
           context, rvalue, result_type, target_type);
       break;
     case TypeKind::kQueue:
-      result_or_err = LowerQueueAggregateValue(context, rvalue, result_type);
+      result_or_err =
+          LowerQueueAggregateValue(context, facts, rvalue, result_type);
       break;
     default:
       break;

@@ -20,6 +20,7 @@
 #include "lyra/llvm_backend/compute/operand.hpp"
 #include "lyra/llvm_backend/compute/rvalue.hpp"
 #include "lyra/llvm_backend/context.hpp"
+#include "lyra/llvm_backend/cu_facts.hpp"
 #include "lyra/llvm_backend/slot_access.hpp"
 #include "lyra/lowering/diagnostic_context.hpp"
 #include "lyra/mir/builtin.hpp"
@@ -30,11 +31,11 @@ namespace lyra::lowering::mir_to_llvm {
 namespace {
 
 auto LowerDynArrayBuiltinValue(
-    Context& context, SlotAccessResolver& resolver, const mir::Rvalue& rvalue,
-    TypeId result_type, const mir::BuiltinCallRvalueInfo& info)
-    -> Result<llvm::Value*> {
+    Context& context, const CuFacts& facts, SlotAccessResolver& resolver,
+    const mir::Rvalue& rvalue, TypeId result_type,
+    const mir::BuiltinCallRvalueInfo& info) -> Result<llvm::Value*> {
   auto& builder = context.GetBuilder();
-  const auto& types = context.GetTypeArena();
+  const auto& types = *facts.types;
 
   switch (info.method) {
     case mir::BuiltinMethod::kNewArray: {
@@ -108,9 +109,9 @@ auto LowerDynArrayBuiltinValue(
 }
 
 auto LowerQueueBuiltinValue(
-    Context& context, SlotAccessResolver& resolver, const mir::Rvalue& rvalue,
-    TypeId result_type, const mir::BuiltinCallRvalueInfo& info)
-    -> Result<llvm::Value*> {
+    Context& context, const CuFacts& facts, SlotAccessResolver& resolver,
+    const mir::Rvalue& rvalue, TypeId result_type,
+    const mir::BuiltinCallRvalueInfo& info) -> Result<llvm::Value*> {
   auto& builder = context.GetBuilder();
 
   switch (info.method) {
@@ -150,15 +151,15 @@ auto LowerQueueBuiltinValue(
 }
 
 auto LowerEnumNextPrevValue(
-    Context& context, SlotAccessResolver& resolver, const mir::Rvalue& rvalue,
-    TypeId result_type, const mir::BuiltinCallRvalueInfo& info)
-    -> Result<llvm::Value*> {
+    Context& context, const CuFacts& facts, SlotAccessResolver& resolver,
+    const mir::Rvalue& rvalue, TypeId result_type,
+    const mir::BuiltinCallRvalueInfo& info) -> Result<llvm::Value*> {
   if (!info.enum_type.has_value()) {
     throw common::InternalError(
         "LowerEnumNextPrev", "enum_type must be set for enum builtin");
   }
   auto& builder = context.GetBuilder();
-  const auto& types = context.GetTypeArena();
+  const auto& types = *facts.types;
 
   TypeId enum_type_id = *info.enum_type;
   const Type& enum_type = types[enum_type_id];
@@ -170,7 +171,7 @@ auto LowerEnumNextPrevValue(
   }
 
   uint32_t bit_width = PackedBitWidth(enum_type, types);
-  if (context.IsPackedFourState(enum_type)) {
+  if (IsPackedFourState(facts, enum_type)) {
     throw common::InternalError(
         "LowerEnumNextPrev", "4-state enums not supported");
   }
@@ -255,20 +256,21 @@ auto LowerEnumNextPrevValue(
 }
 
 auto LowerEnumNameValue(
-    Context& context, SlotAccessResolver& resolver, const mir::Rvalue& rvalue,
-    const mir::BuiltinCallRvalueInfo& info) -> Result<llvm::Value*> {
+    Context& context, const CuFacts& facts, SlotAccessResolver& resolver,
+    const mir::Rvalue& rvalue, const mir::BuiltinCallRvalueInfo& info)
+    -> Result<llvm::Value*> {
   if (!info.enum_type.has_value()) {
     throw common::InternalError(
         "LowerEnumName", "enum_type must be set for enum builtin");
   }
   auto& builder = context.GetBuilder();
-  const auto& types = context.GetTypeArena();
+  const auto& types = *facts.types;
 
   TypeId enum_type_id = *info.enum_type;
   const Type& enum_type = types[enum_type_id];
   const auto& enum_info = enum_type.AsEnum();
   auto member_count = static_cast<uint32_t>(enum_info.members.size());
-  if (context.IsPackedFourState(enum_type)) {
+  if (IsPackedFourState(facts, enum_type)) {
     throw common::InternalError("LowerEnumName", "4-state enums not supported");
   }
 
@@ -372,29 +374,32 @@ auto LowerEnumNameValue(
 }
 
 auto LowerEnumBuiltinValue(
-    Context& context, SlotAccessResolver& resolver, const mir::Rvalue& rvalue,
-    TypeId result_type, const mir::BuiltinCallRvalueInfo& info)
-    -> Result<llvm::Value*> {
+    Context& context, const CuFacts& facts, SlotAccessResolver& resolver,
+    const mir::Rvalue& rvalue, TypeId result_type,
+    const mir::BuiltinCallRvalueInfo& info) -> Result<llvm::Value*> {
   if (info.method == mir::BuiltinMethod::kEnumNext ||
       info.method == mir::BuiltinMethod::kEnumPrev) {
-    return LowerEnumNextPrevValue(context, resolver, rvalue, result_type, info);
+    return LowerEnumNextPrevValue(
+        context, facts, resolver, rvalue, result_type, info);
   }
-  return LowerEnumNameValue(context, resolver, rvalue, info);
+  return LowerEnumNameValue(context, facts, resolver, rvalue, info);
 }
 
 }  // namespace
 
 auto LowerBuiltinRvalue(
-    Context& context, const mir::Rvalue& rvalue, TypeId result_type,
-    const mir::BuiltinCallRvalueInfo& info) -> Result<RvalueValue> {
+    Context& context, const CuFacts& facts, const mir::Rvalue& rvalue,
+    TypeId result_type, const mir::BuiltinCallRvalueInfo& info)
+    -> Result<RvalueValue> {
   CanonicalSlotAccess canonical(context);
-  return LowerBuiltinRvalue(context, canonical, rvalue, result_type, info);
+  return LowerBuiltinRvalue(
+      context, facts, canonical, rvalue, result_type, info);
 }
 
 auto LowerBuiltinRvalue(
-    Context& context, SlotAccessResolver& resolver, const mir::Rvalue& rvalue,
-    TypeId result_type, const mir::BuiltinCallRvalueInfo& info)
-    -> Result<RvalueValue> {
+    Context& context, const CuFacts& facts, SlotAccessResolver& resolver,
+    const mir::Rvalue& rvalue, TypeId result_type,
+    const mir::BuiltinCallRvalueInfo& info) -> Result<RvalueValue> {
   Result<llvm::Value*> result_or_err =
       std::unexpected(context.GetDiagnosticContext().MakeUnsupported(
           context.GetCurrentOrigin(),
@@ -407,7 +412,7 @@ auto LowerBuiltinRvalue(
     case mir::BuiltinMethod::kArraySize:
     case mir::BuiltinMethod::kArrayDelete:
       result_or_err = LowerDynArrayBuiltinValue(
-          context, resolver, rvalue, result_type, info);
+          context, facts, resolver, rvalue, result_type, info);
       break;
     case mir::BuiltinMethod::kQueueSize:
     case mir::BuiltinMethod::kQueueDelete:
@@ -417,14 +422,14 @@ auto LowerBuiltinRvalue(
     case mir::BuiltinMethod::kQueuePopBack:
     case mir::BuiltinMethod::kQueuePopFront:
     case mir::BuiltinMethod::kQueueInsert:
-      result_or_err =
-          LowerQueueBuiltinValue(context, resolver, rvalue, result_type, info);
+      result_or_err = LowerQueueBuiltinValue(
+          context, facts, resolver, rvalue, result_type, info);
       break;
     case mir::BuiltinMethod::kEnumNext:
     case mir::BuiltinMethod::kEnumPrev:
     case mir::BuiltinMethod::kEnumName:
-      result_or_err =
-          LowerEnumBuiltinValue(context, resolver, rvalue, result_type, info);
+      result_or_err = LowerEnumBuiltinValue(
+          context, facts, resolver, rvalue, result_type, info);
       break;
   }
 

@@ -149,14 +149,14 @@ auto FinalizeCompute(
 }
 
 auto LowerPackedCoreRvalue(
-    Context& context, const mir::Rvalue& rvalue, TypeId result_type)
-    -> Result<RvalueValue> {
+    Context& context, const CuFacts& facts, const mir::Rvalue& rvalue,
+    TypeId result_type) -> Result<RvalueValue> {
   CanonicalSlotAccess canonical(context);
-  return LowerPackedCoreRvalue(context, canonical, rvalue, result_type);
+  return LowerPackedCoreRvalue(context, facts, canonical, rvalue, result_type);
 }
 auto LowerPackedCoreRvalue(
-    Context& context, SlotAccessResolver& resolver, const mir::Rvalue& rvalue,
-    TypeId result_type) -> Result<RvalueValue> {
+    Context& context, const CuFacts& facts, SlotAccessResolver& resolver,
+    const mir::Rvalue& rvalue, TypeId result_type) -> Result<RvalueValue> {
   auto type_info_or_err = GetTypeInfoFromType(context, result_type);
   if (!type_info_or_err) return std::unexpected(type_info_or_err.error());
   PlaceTypeInfo type_info = *type_info_or_err;

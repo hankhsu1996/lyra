@@ -14,6 +14,7 @@
 #include "lyra/common/type.hpp"
 #include "lyra/llvm_backend/compute/operand.hpp"
 #include "lyra/llvm_backend/context.hpp"
+#include "lyra/llvm_backend/cu_facts.hpp"
 #include "lyra/llvm_backend/slot_access.hpp"
 #include "lyra/mir/rvalue.hpp"
 
@@ -131,19 +132,20 @@ auto MakeXResult(bool is_four_state, llvm::LLVMContext& llvm_ctx) -> DimResult {
 }  // namespace
 
 auto LowerArrayQueryRvalue(
-    Context& context, const mir::Rvalue& rvalue,
+    Context& context, const CuFacts& facts, const mir::Rvalue& rvalue,
     const mir::ArrayQueryRvalueInfo& info, TypeId result_type)
     -> Result<RvalueValue> {
   CanonicalSlotAccess canonical(context);
-  return LowerArrayQueryRvalue(context, canonical, rvalue, info, result_type);
+  return LowerArrayQueryRvalue(
+      context, facts, canonical, rvalue, info, result_type);
 }
 
 auto LowerArrayQueryRvalue(
-    Context& context, SlotAccessResolver& resolver, const mir::Rvalue& rvalue,
-    const mir::ArrayQueryRvalueInfo& info, TypeId result_type)
-    -> Result<RvalueValue> {
+    Context& context, const CuFacts& facts, SlotAccessResolver& resolver,
+    const mir::Rvalue& rvalue, const mir::ArrayQueryRvalueInfo& info,
+    TypeId result_type) -> Result<RvalueValue> {
   auto& builder = context.GetBuilder();
-  const auto& types = context.GetTypeArena();
+  const auto& types = *facts.types;
   auto& llvm_ctx = context.GetLlvmContext();
   auto* i32_ty = llvm::Type::getInt32Ty(llvm_ctx);
 
@@ -153,7 +155,7 @@ auto LowerArrayQueryRvalue(
       res_type.Kind() == TypeKind::kPackedStruct ||
       res_type.Kind() == TypeKind::kEnum ||
       res_type.Kind() == TypeKind::kPackedArray) {
-    is_four_state = context.IsPackedFourState(res_type);
+    is_four_state = IsPackedFourState(facts, res_type);
   }
 
   if (info.kind == ArrayQuerySysFnKind::kDimensions) {

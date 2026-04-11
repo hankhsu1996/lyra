@@ -18,6 +18,7 @@
 #include "lyra/llvm_backend/compute/operand.hpp"
 #include "lyra/llvm_backend/compute/ops.hpp"
 #include "lyra/llvm_backend/context.hpp"
+#include "lyra/llvm_backend/cu_facts.hpp"
 #include "lyra/llvm_backend/format_lowering.hpp"
 #include "lyra/llvm_backend/slot_access.hpp"
 #include "lyra/lowering/diagnostic_context.hpp"
@@ -72,10 +73,10 @@ auto LowerStringReplicateValue(
 }
 
 auto LowerSFormatRvalueValue(
-    Context& context, const mir::SFormatRvalueInfo& info,
+    Context& context, const CuFacts& facts, const mir::SFormatRvalueInfo& info,
     const std::vector<mir::Operand>& operands) -> Result<llvm::Value*> {
   CanonicalSlotAccess canonical(context);
-  return LowerSFormatRvalueValue(context, canonical, info, operands);
+  return LowerSFormatRvalueValue(context, facts, canonical, info, operands);
 }
 
 auto LowerStringBinaryOp(
@@ -222,13 +223,13 @@ auto LowerStringReplicateValue(
 }
 
 auto LowerSFormatRvalueValue(
-    Context& context, SlotAccessResolver& resolver,
+    Context& context, const CuFacts& facts, SlotAccessResolver& resolver,
     const mir::SFormatRvalueInfo& info,
     const std::vector<mir::Operand>& operands) -> Result<llvm::Value*> {
   if (info.has_runtime_format) {
     auto& builder = context.GetBuilder();
     auto& llvm_ctx = context.GetLlvmContext();
-    const auto& types = context.GetTypeArena();
+    const auto& types = *facts.types;
 
     auto* ptr_ty = llvm::PointerType::getUnqual(llvm_ctx);
     auto* i8_ty = llvm::Type::getInt8Ty(llvm_ctx);

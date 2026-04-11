@@ -7,6 +7,7 @@
 
 #include "lyra/common/diagnostic/diagnostic.hpp"
 #include "lyra/llvm_backend/context.hpp"
+#include "lyra/llvm_backend/cu_facts.hpp"
 #include "lyra/mir/operand.hpp"
 #include "lyra/mir/rvalue.hpp"
 
@@ -36,7 +37,7 @@ auto LowerStringReplicateValue(
 // Evaluate $sformatf/$sformat/$swrite and return the new string handle.
 // Does NOT store to any place - caller must handle storage.
 auto LowerSFormatRvalueValue(
-    Context& context, const mir::SFormatRvalueInfo& info,
+    Context& context, const CuFacts& facts, const mir::SFormatRvalueInfo& info,
     const std::vector<mir::Operand>& operands) -> Result<llvm::Value*>;
 
 // Resolver-aware overloads.
@@ -57,7 +58,7 @@ auto LowerStringReplicateValue(
     const std::vector<mir::Operand>& operands) -> Result<llvm::Value*>;
 
 auto LowerSFormatRvalueValue(
-    Context& context, SlotAccessResolver& resolver,
+    Context& context, const CuFacts& facts, SlotAccessResolver& resolver,
     const mir::SFormatRvalueInfo& info,
     const std::vector<mir::Operand>& operands) -> Result<llvm::Value*>;
 
