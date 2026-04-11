@@ -2,6 +2,8 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <span>
+#include <vector>
 
 #include "lyra/common/ext_ref_binding.hpp"
 #include "lyra/runtime/instance_event_state.hpp"
@@ -13,20 +15,105 @@ namespace lyra::runtime {
 
 // Per-instance owned storage.
 // Each RuntimeInstance owns its module-local state. Storage is always
-// heap-allocated via AllocateOwnedInlineStorage / AllocateOwnedAppendixStorage
-// and freed by FreeRuntimeInstanceStorage.
+// heap-allocated via AllocateOwnedStorage and freed by
+// FreeRuntimeInstanceStorage.
 // The inline region holds fixed-offset slot data; the appendix region holds
 // backing data for owned containers.
+//
+// Binary contract: field order and types must match the LLVM struct type
+// emitted by BuildRuntimeInstanceStorageType. Codegen accesses these fields
+// via GEP, so the layout is a hard ABI. Raw pointers are intentional --
+// unique_ptr would change the struct layout.
 struct RuntimeInstanceStorage {
   std::byte* inline_base = nullptr;
   uint64_t inline_size = 0;
 
   std::byte* appendix_base = nullptr;
   uint64_t appendix_size = 0;
+
+  // Deferred inline region: mirrors inline_base layout for NBA writes.
+  // Simple local <= writes go here; committed in the NBA phase.
+  std::byte* deferred_inline_base = nullptr;
+
+  // Span accessors for owned storage regions. Non-const overloads return
+  // mutable spans for write access; const overloads return read-only spans.
+  // The non-const versions do not modify the struct itself (shallow const),
+  // but provide mutable access to the pointed-to storage -- same pattern as
+  // std::vector::data().
+  // NOLINTBEGIN(readability-make-member-function-const)
+  [[nodiscard]] auto InlineRegion() -> std::span<std::byte> {
+    return {inline_base, inline_size};
+  }
+  [[nodiscard]] auto AppendixRegion() -> std::span<std::byte> {
+    return {appendix_base, appendix_size};
+  }
+  [[nodiscard]] auto DeferredInlineRegion() -> std::span<std::byte> {
+    return {deferred_inline_base, inline_size};
+  }
+  // NOLINTEND(readability-make-member-function-const)
+  [[nodiscard]] auto InlineRegion() const -> std::span<const std::byte> {
+    return {inline_base, inline_size};
+  }
+  [[nodiscard]] auto DeferredInlineRegion() const
+      -> std::span<const std::byte> {
+    return {deferred_inline_base, inline_size};
+  }
 };
 
 // Free any owned storage in an instance's storage record.
 void FreeRuntimeInstanceStorage(RuntimeInstanceStorage& storage);
+
+// Per-instance set of local signals with pending deferred (NBA) writes.
+// Lightweight sparse-set: O(1) mark, O(pending_count) iterate and clear.
+struct NbaPendingSet {
+  std::vector<uint8_t> seen;
+  std::vector<LocalSignalId> list;
+  // Cross-lane ordering: tracks signals that have generic-queue NBA writes
+  // this delta. When set, subsequent simple-lane writes to the same signal
+  // must fall back to the generic queue to preserve write ordering.
+  std::vector<uint8_t> in_generic;
+  std::vector<LocalSignalId> generic_list;
+  // Cached engine-level instance index. Set once during init,
+  // avoids per-write GetInstanceIndex lookup.
+  uint32_t instance_idx = UINT32_MAX;
+
+  void Init(uint32_t local_signal_count, uint32_t idx) {
+    seen.assign(local_signal_count, 0);
+    in_generic.assign(local_signal_count, 0);
+    list.reserve(local_signal_count);
+    generic_list.reserve(local_signal_count);
+    instance_idx = idx;
+  }
+
+  void MarkPending(LocalSignalId lid) {
+    if (seen[lid.value] == 0) {
+      seen[lid.value] = 1;
+      list.push_back(lid);
+    }
+  }
+
+  void MarkGeneric(LocalSignalId lid) {
+    if (in_generic[lid.value] == 0) {
+      in_generic[lid.value] = 1;
+      generic_list.push_back(lid);
+    }
+  }
+
+  void Clear() {
+    for (auto lid : list) {
+      seen[lid.value] = 0;
+    }
+    list.clear();
+    for (auto lid : generic_list) {
+      in_generic[lid.value] = 0;
+    }
+    generic_list.clear();
+  }
+
+  [[nodiscard]] auto IsInitialized() const -> bool {
+    return instance_idx != UINT32_MAX;
+  }
+};
 
 // Runtime-owned representation of one module instance.
 //
@@ -81,6 +168,11 @@ struct RuntimeInstance {
   // Populated by Engine::InitModuleInstancesFromBundles from body-local
   // event count. Not part of the binary contract with codegen.
   RuntimeInstanceEventState event_state;
+
+  // Per-instance pending NBA set for instance-owned deferred writes.
+  // Tracks which local signals have pending deferred values in
+  // storage.deferred_inline_base. Not part of the binary contract.
+  NbaPendingSet nba_pending;
 };
 
 // Strongly typed field indices for RuntimeInstanceStorage.
@@ -90,7 +182,8 @@ enum class RuntimeInstanceStorageField : unsigned {
   kInlineSize = 1,
   kAppendixBase = 2,
   kAppendixSize = 3,
-  kFieldCount = 4,
+  kDeferredInlineBase = 4,
+  kFieldCount = 5,
 };
 
 // Strongly typed field indices for RuntimeInstance.
@@ -120,6 +213,9 @@ static_assert(
 static_assert(
     offsetof(RuntimeInstanceStorage, appendix_size) ==
     offsetof(RuntimeInstanceStorage, appendix_base) + sizeof(std::byte*));
+static_assert(
+    offsetof(RuntimeInstanceStorage, deferred_inline_base) ==
+    offsetof(RuntimeInstanceStorage, appendix_size) + sizeof(uint64_t));
 
 // Hard binary contract assertions for RuntimeInstance.
 // Field order must match RuntimeInstanceField enum and LLVM struct type.

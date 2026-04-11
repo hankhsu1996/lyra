@@ -318,6 +318,7 @@ class Context {
   [[nodiscard]] auto GetLyraStorePackedGlobal() -> llvm::Function*;
   [[nodiscard]] auto GetLyraStoreStringLocal() -> llvm::Function*;
   [[nodiscard]] auto GetLyraStoreStringGlobal() -> llvm::Function*;
+  [[nodiscard]] auto GetLyraDeferredWriteLocal() -> llvm::Function*;
   [[nodiscard]] auto GetLyraScheduleNbaLocal() -> llvm::Function*;
   [[nodiscard]] auto GetLyraScheduleNbaGlobal() -> llvm::Function*;
   [[nodiscard]] auto GetLyraScheduleNbaCanonicalPackedLocal()
@@ -853,6 +854,9 @@ class Context {
 
   // BitRangeProjection helpers
   [[nodiscard]] auto HasBitRangeProjection(mir::PlaceId place_id) const -> bool;
+  [[nodiscard]] auto IsOwnedInlineSlot(mir::PlaceId place_id) const -> bool;
+  [[nodiscard]] auto GetSlotBodyByteOffset(mir::PlaceId place_id) const
+      -> uint32_t;
   [[nodiscard]] auto GetBitRangeProjection(mir::PlaceId place_id) const
       -> const mir::BitRangeProjection&;
   // LLVM type of the base value that GetPlacePointer() points to.
@@ -1096,6 +1100,7 @@ class Context {
   llvm::Function* lyra_store_packed_global_ = nullptr;
   llvm::Function* lyra_store_string_local_ = nullptr;
   llvm::Function* lyra_store_string_global_ = nullptr;
+  llvm::Function* lyra_deferred_write_local_ = nullptr;
   llvm::Function* lyra_schedule_nba_local_ = nullptr;
   llvm::Function* lyra_schedule_nba_global_ = nullptr;
   llvm::Function* lyra_schedule_nba_canonical_packed_local_ = nullptr;

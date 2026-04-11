@@ -70,6 +70,7 @@ void Engine::MarkDirtyRange(
 void Engine::ScheduleNba(
     ObjectSignalRef notify_signal, void* write_ptr, const void* notify_base_ptr,
     const void* value_ptr, const void* mask_ptr, uint32_t byte_size) {
+  MarkLocalNbaGeneric(*notify_signal.instance, notify_signal.local);
   NbaNotifySignal notify{NbaNotifyLocal{
       .instance_id = notify_signal.instance->instance_id,
       .signal = notify_signal.local}};
@@ -81,6 +82,7 @@ void Engine::ScheduleNbaCanonicalPacked(
     ObjectSignalRef notify_signal, void* write_ptr, const void* notify_base_ptr,
     const void* value_ptr, const void* unk_ptr, uint32_t region_byte_size,
     uint32_t second_region_offset) {
+  MarkLocalNbaGeneric(*notify_signal.instance, notify_signal.local);
   NbaNotifySignal notify{NbaNotifyLocal{
       .instance_id = notify_signal.instance->instance_id,
       .signal = notify_signal.local}};
@@ -189,6 +191,11 @@ void Engine::SetInstances(std::span<const RuntimeInstance* const> instances) {
   delta_dirty_instances_.reserve(n);
   timeslot_dirty_instances_.clear();
   timeslot_dirty_instances_.reserve(n);
+
+  // Initialize deferred-NBA pending sparse index.
+  in_nba_pending_.assign(n, 0);
+  nba_pending_instances_.clear();
+  nba_pending_instances_.reserve(n);
 }
 
 void InstanceIdTraceResolver::Build(

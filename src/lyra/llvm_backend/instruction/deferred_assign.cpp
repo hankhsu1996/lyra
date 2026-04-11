@@ -212,6 +212,42 @@ auto EmitDeferredStoreCore(
   return {};
 }
 
+// Instance-owned deferred write for simple local full-overwrite NBA.
+// Writes new value directly to per-instance deferred storage and marks
+// the local signal pending. No NbaEntry, no SmallByteBuffer, no variant.
+// Identity-based: passes (local_signal_id, body_byte_offset) instead of
+// current-storage pointer, so the runtime fast path has no pointer arithmetic.
+auto EmitDeferredWriteLocal(
+    Context& context, const mir::DeferredAssign& deferred,
+    const StoreShape& shape, uint32_t body_byte_offset,
+    const SignalCoordExpr& signal_id, TypeId target_type) -> Result<void> {
+  auto& builder = context.GetBuilder();
+  auto& llvm_ctx = context.GetLlvmContext();
+
+  auto raw_or_err = LowerRhsRaw(context, deferred.rhs, target_type);
+  if (!raw_or_err) return std::unexpected(raw_or_err.error());
+
+  llvm::Value* source_value = CoerceValueToShape(context, *raw_or_err, shape);
+  auto* val_alloca = builder.CreateAlloca(shape.storage_ty, nullptr, "nba.val");
+  builder.CreateStore(source_value, val_alloca);
+
+  uint32_t byte_size =
+      (shape.kind == StoreKind::kAggregateBytes)
+          ? shape.byte_size
+          : static_cast<uint32_t>(
+                context.GetModule().getDataLayout().getTypeStoreSize(
+                    shape.storage_ty));
+
+  auto* i32_ty = llvm::Type::getInt32Ty(llvm_ctx);
+  builder.CreateCall(
+      context.GetLyraDeferredWriteLocal(),
+      {context.GetEnginePointer(),
+       signal_id.GetInstancePointer(context.GetInstancePointer()), val_alloca,
+       llvm::ConstantInt::get(i32_ty, byte_size), signal_id.Emit(builder),
+       llvm::ConstantInt::get(i32_ty, body_byte_offset)});
+  return {};
+}
+
 // BitRangeProjection NBA: route through packed storage view module.
 // The storage layer owns subview classification and emission shape;
 // this function is a thin routing wrapper.
@@ -364,6 +400,18 @@ auto LowerDeferredAssign(Context& context, const mir::DeferredAssign& deferred)
     write_ptr = context.EmitExternalRefAddress(ref_id);
     notify_base_ptr = write_ptr;
   }
+
+  // Instance-owned deferred write fast path: local target, no projections
+  // (full slot write), owned-inline storage. Writes directly to per-instance
+  // deferred storage instead of building NbaEntry into nba_queue_.
+  if (dest_place != nullptr && signal_id.IsLocal() &&
+      context.LookupPlace(*dest_place).projections.empty() &&
+      context.IsOwnedInlineSlot(*dest_place)) {
+    auto body_offset = context.GetSlotBodyByteOffset(*dest_place);
+    return EmitDeferredWriteLocal(
+        context, deferred, shape, body_offset, signal_id, dest_type);
+  }
+
   return EmitDeferredStoreCore(
       context, deferred, shape, write_ptr, notify_base_ptr, signal_id,
       dest_type);

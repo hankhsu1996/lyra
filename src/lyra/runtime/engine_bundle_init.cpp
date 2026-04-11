@@ -447,6 +447,10 @@ void Engine::InitModuleInstancesFromBundles(
       bundle.instance->observability.Init();
     }
 
+    // Initialize deferred-NBA pending set sized to local signal count.
+    bundle.instance->nba_pending.Init(
+        local_count, GetInstanceIndex(bundle.instance_id));
+
     // R5: populate process-to-instance mapping for subscription routing.
     for (uint32_t p = 0; p < bundle.num_module_processes; ++p) {
       uint32_t proc_idx = bundle.module_proc_base + p;

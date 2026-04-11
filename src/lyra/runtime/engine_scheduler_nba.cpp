@@ -6,6 +6,7 @@
 #include "lyra/common/internal_error.hpp"
 #include "lyra/runtime/engine.hpp"
 #include "lyra/runtime/engine_scheduler.hpp"
+#include "lyra/runtime/instance_observability.hpp"
 #include "lyra/runtime/runtime_instance.hpp"
 #include "lyra/runtime/slot_meta.hpp"
 
@@ -184,7 +185,86 @@ auto ApplyNba(const NbaCanonicalPackedTwoPlane& p, void* write_ptr)
       .second_region_offset = p.second_region_offset};
 }
 
+void Engine::EvictDeferredNba(RuntimeInstance& inst, LocalSignalId lid) {
+  auto& pending = inst.nba_pending;
+  if (pending.seen[lid.value] == 0) return;
+
+  const auto& meta = inst.observability.layout->slot_meta[lid.value];
+  auto deferred_slot = inst.storage.DeferredInlineRegion().subspan(
+      meta.instance_rel_off, meta.total_bytes);
+
+  // For the simple lane (no projections), write_ptr == notify_base_ptr.
+  // Compute current-storage pointer for the NbaEntry target.
+  auto* current_ptr =
+      inst.storage.InlineRegion().subspan(meta.instance_rel_off).data();
+
+  NbaNotifySignal notify{
+      NbaNotifyLocal{.instance_id = inst.instance_id, .signal = lid}};
+  NbaEntry entry;
+  entry.write_ptr = current_ptr;
+  entry.notify_base_ptr = current_ptr;
+  entry.notify_signal = notify;
+  NbaFullOverwrite p;
+  p.byte_size = meta.total_bytes;
+  p.value.AssignCopy(deferred_slot.data(), meta.total_bytes);
+  entry.payload = std::move(p);
+  nba_queue_.push_back(std::move(entry));
+
+  pending.seen[lid.value] = 0;
+}
+
+void Engine::MarkLocalNbaGeneric(RuntimeInstance& inst, LocalSignalId lid) {
+  auto& pending = inst.nba_pending;
+  if (!pending.IsInitialized()) return;
+  if (lid.value >= pending.in_generic.size()) return;
+
+  EvictDeferredNba(inst, lid);
+  pending.MarkGeneric(lid);
+  MarkInstanceNbaPending(pending.instance_idx);
+}
+
+void Engine::CommitDeferredLocalNbas() {
+  for (uint32_t instance_idx : nba_pending_instances_) {
+    auto* inst = instances_[instance_idx];
+    auto& pending = inst->nba_pending;
+    if (inst->observability.layout == nullptr) {
+      pending.Clear();
+      in_nba_pending_[instance_idx] = 0;
+      continue;
+    }
+    const auto& layout = *inst->observability.layout;
+    auto current_region = inst->storage.InlineRegion();
+    auto deferred_region = inst->storage.DeferredInlineRegion();
+
+    for (LocalSignalId lid : pending.list) {
+      if (pending.seen[lid.value] == 0) continue;
+      const auto& meta = layout.slot_meta[lid.value];
+      auto current_slot =
+          current_region.subspan(meta.instance_rel_off, meta.total_bytes);
+      auto deferred_slot =
+          deferred_region.subspan(meta.instance_rel_off, meta.total_bytes);
+
+      ++stats_.core.nba_entries;
+      if (std::memcmp(
+              current_slot.data(), deferred_slot.data(), meta.total_bytes) !=
+          0) {
+        std::memcpy(
+            current_slot.data(), deferred_slot.data(), meta.total_bytes);
+        ++stats_.core.nba_changed;
+        MarkLocalSignalDirtyRange(
+            *inst, lid, 0, meta.total_bytes, instance_idx);
+      }
+    }
+
+    pending.Clear();
+    in_nba_pending_[instance_idx] = 0;
+  }
+  nba_pending_instances_.clear();
+}
+
 void Engine::ExecuteNbaRegion() {
+  CommitDeferredLocalNbas();
+
   if (nba_queue_.empty()) {
     return;
   }

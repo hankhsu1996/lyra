@@ -1145,6 +1145,29 @@ extern "C" void LyraStoreStringGlobal(
   StoreStringTyped(eng, GlobalSignalId{id}, slot, str);
 }
 
+extern "C" void LyraDeferredWriteLocal(
+    void* eng, void* inst, const void* vp, uint32_t bsz, uint32_t id,
+    uint32_t body_offset) {
+  auto* instance = static_cast<RuntimeInstance*>(inst);
+  auto& pending = instance->nba_pending;
+
+  // Cross-lane conflict: if this signal already has generic-queue writes
+  // this delta, fall back to the generic queue to preserve write ordering.
+  if (pending.in_generic[id] != 0) {
+    auto* wp = instance->storage.InlineRegion().subspan(body_offset).data();
+    AsEngine(eng)->ScheduleNba(
+        ObjectSignalRef{.instance = instance, .local = LocalSignalId{id}}, wp,
+        wp, vp, nullptr, bsz);
+    return;
+  }
+
+  auto deferred_slot =
+      instance->storage.DeferredInlineRegion().subspan(body_offset, bsz);
+  std::memcpy(deferred_slot.data(), vp, bsz);
+  pending.MarkPending(LocalSignalId{id});
+  AsEngine(eng)->MarkInstanceNbaPending(pending.instance_idx);
+}
+
 extern "C" void LyraScheduleNbaLocal(
     void* eng, void* inst, void* wp, const void* nb, const void* vp,
     const void* mp, uint32_t bsz, uint32_t id) {

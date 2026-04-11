@@ -300,6 +300,15 @@ class Engine {
       const void* unk_ptr, uint32_t region_byte_size,
       uint32_t second_region_offset, NbaNotifySignal notify_signal);
 
+  // Mark an instance as having pending deferred local NBA writes.
+  // Called by LyraDeferredWriteLocal after writing to deferred storage.
+  void MarkInstanceNbaPending(uint32_t instance_idx) {
+    if (in_nba_pending_[instance_idx] == 0) {
+      in_nba_pending_[instance_idx] = 1;
+      nba_pending_instances_.push_back(instance_idx);
+    }
+  }
+
   // Register a strobe observer for the Postponed region.
   // Executes at end of time slot with final signal values.
   void RegisterStrobe(
@@ -940,6 +949,9 @@ class Engine {
   void ExecuteActiveRegion();
   void ExecuteInactiveRegion();
   void ExecuteNbaRegion();
+  void CommitDeferredLocalNbas();
+  void EvictDeferredNba(RuntimeInstance& inst, LocalSignalId lid);
+  void MarkLocalNbaGeneric(RuntimeInstance& inst, LocalSignalId lid);
   void ExecutePostponedRegion();
   void FlushDirtySlots();
 
@@ -1212,8 +1224,15 @@ class Engine {
   // once per delta (dedup guard prevents overwrite).
   std::vector<WakeTraceInfo> wake_trace_;
 
-  // NBA queue: deferred writes committed in ExecuteRegion(kNBA)
+  // NBA queue: deferred writes committed in ExecuteRegion(kNBA).
+  // Generic fallback for global, masked, canonical-packed, container,
+  // cross-instance, and dynamic-index NBA writes.
   std::vector<NbaEntry> nba_queue_;
+
+  // Instance-owned deferred NBA: sparse index of instances with pending
+  // deferred local writes. Same pattern as delta_dirty_instances_.
+  std::vector<uint8_t> in_nba_pending_;
+  std::vector<uint32_t> nba_pending_instances_;
 
   // Dense per-slot subscription storage (indexed by slot_id, sized in
   // InitSlotMeta). Four typed vectors per slot for branch-free flush scans.

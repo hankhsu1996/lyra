@@ -563,6 +563,23 @@ auto Context::GetStorageRootPointer(mir::PlaceId place_id) -> llvm::Value* {
   return GetSlotRootPointer(LookupPlace(place_id).root);
 }
 
+auto Context::IsOwnedInlineSlot(mir::PlaceId place_id) const -> bool {
+  const auto& place = LookupPlace(place_id);
+  if (place.root.kind != mir::PlaceRoot::Kind::kModuleSlot) return false;
+  if (spec_slot_info_ == nullptr) return false;
+  auto local_slot_id = static_cast<uint32_t>(place.root.id);
+  if (local_slot_id >= spec_slot_info_->access_kinds.size()) return false;
+  return spec_slot_info_->access_kinds[local_slot_id] ==
+         SpecSlotAccessKind::kOwnedInline;
+}
+
+auto Context::GetSlotBodyByteOffset(mir::PlaceId place_id) const -> uint32_t {
+  const auto& place = LookupPlace(place_id);
+  auto local_slot_id = static_cast<uint32_t>(place.root.id);
+  return static_cast<uint32_t>(
+      spec_slot_info_->inline_offsets[local_slot_id].value);
+}
+
 auto Context::GetPlaceLlvmType(mir::PlaceId place_id) -> Result<llvm::Type*> {
   const auto& place = LookupPlace(place_id);
 
