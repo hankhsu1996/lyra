@@ -1442,6 +1442,26 @@ auto EmitLateBoundData(
       .num_dep_slots = total_dep_slots};
 }
 
+// Check whether two trigger vectors are structurally identical for wait-site
+// deduplication. Both must be fully static (no late_bound, no container).
+auto TriggersMatchForDedup(
+    const std::vector<mir::WaitTrigger>& a,
+    const std::vector<mir::WaitTrigger>& b) -> bool {
+  if (a.size() != b.size()) return false;
+  for (size_t i = 0; i < a.size(); ++i) {
+    if (a[i].signal != b[i].signal) return false;
+    if (a[i].edge != b[i].edge) return false;
+    if (a[i].observed_place != b[i].observed_place) return false;
+    if (a[i].late_bound.has_value() || b[i].late_bound.has_value()) {
+      return false;
+    }
+    if (a[i].unresolved_external_ref != b[i].unresolved_external_ref) {
+      return false;
+    }
+  }
+  return true;
+}
+
 auto LowerWait(
     Context& context, const mir::Wait& wait, llvm::BasicBlock* exit_block,
     std::vector<WaitSiteEntry>& wait_sites) -> Result<void> {
@@ -1455,6 +1475,52 @@ auto LowerWait(
 
   auto num_triggers = static_cast<uint32_t>(wait.triggers.size());
 
+  // Emit late-bound data (headers + plan ops pool + dep slots pool).
+  auto lb_data = EmitLateBoundData(context, wait.triggers);
+
+  bool has_late_bound = (lb_data.num_headers > 0);
+  bool has_container = std::ranges::any_of(wait.triggers, [](const auto& t) {
+    return t.late_bound && t.late_bound->is_container;
+  });
+  bool is_static = !has_late_bound && !has_container;
+
+  // Static-wait fast path: if a previous wait site in this process has
+  // identical static triggers AND the same resume block, reuse its
+  // wait_site_id and emit LyraSuspendWaitStatic instead of rebuilding
+  // the trigger array. The resume_block must match because installed
+  // subscriptions carry a fixed resume_block from install time --
+  // EnqueueProcessWakeup reads it from the subscription, not the
+  // SuspendRecord.
+  if (is_static) {
+    for (const auto& prev : wait_sites) {
+      if (prev.has_late_bound || prev.has_container) continue;
+      if (prev.canonical_triggers == nullptr) continue;
+      if (prev.resume_block != wait.resume.value) continue;
+      if (TriggersMatchForDedup(*prev.canonical_triggers, wait.triggers)) {
+        uint32_t reused_id = prev.original_wait_site_id;
+        builder.CreateCall(
+            context.GetLyraSuspendWaitStatic(),
+            {context.GetStatePointer(),
+             llvm::ConstantInt::get(i32_ty, wait.resume.value),
+             llvm::ConstantInt::get(i32_ty, reused_id)});
+        builder.CreateBr(exit_block);
+        return {};
+      }
+    }
+  }
+
+  // First occurrence: allocate a new wait_site_id and emit full trigger setup.
+  uint32_t wait_site_id = context.NextWaitSiteId();
+  wait_sites.push_back(
+      WaitSiteEntry{
+          .resume_block = wait.resume.value,
+          .num_triggers = num_triggers,
+          .has_late_bound = has_late_bound,
+          .has_container = has_container,
+          .original_wait_site_id = wait_site_id,
+          .canonical_triggers = is_static ? &wait.triggers : nullptr});
+  auto* wait_site_id_val = llvm::ConstantInt::get(i32_ty, wait_site_id);
+
   // WaitTriggerRecord layout:
   // {i32 signal_id, i8 edge, i8 bit_index, i8 kind, i8 flags,
   //  i32 byte_offset, i32 byte_size, i32 container_elem_stride,
@@ -1462,23 +1528,6 @@ auto LowerWait(
   auto* trigger_type = llvm::StructType::get(
       llvm_ctx, {i32_ty, i8_ty, i8_ty, i8_ty, i8_ty, i32_ty, i32_ty, i32_ty,
                  i32_ty, i32_ty});
-
-  // Emit late-bound data (headers + plan ops pool + dep slots pool).
-  auto lb_data = EmitLateBoundData(context, wait.triggers);
-
-  // Allocate wait-site ID and record entry for the caller.
-  bool has_late_bound = (lb_data.num_headers > 0);
-  bool has_container = std::ranges::any_of(wait.triggers, [](const auto& t) {
-    return t.late_bound && t.late_bound->is_container;
-  });
-  uint32_t wait_site_id = context.NextWaitSiteId();
-  wait_sites.push_back(
-      WaitSiteEntry{
-          .resume_block = wait.resume.value,
-          .num_triggers = num_triggers,
-          .has_late_bound = has_late_bound,
-          .has_container = has_container});
-  auto* wait_site_id_val = llvm::ConstantInt::get(i32_ty, wait_site_id);
 
   // Compile-time branching: different codegen for small vs large trigger counts
   if (num_triggers <= runtime::kInlineTriggerCapacity) {

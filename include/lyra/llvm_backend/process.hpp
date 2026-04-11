@@ -36,10 +36,17 @@ enum class ProcessExecutionKind {
 // Per-wait-site entry produced during process codegen.
 // Index = wait_site_id (assigned sequentially via Context::NextWaitSiteId).
 struct WaitSiteEntry {
-  uint32_t resume_block;
-  uint32_t num_triggers;
-  bool has_late_bound;
-  bool has_container;
+  uint32_t resume_block = 0;
+  uint32_t num_triggers = 0;
+  bool has_late_bound = false;
+  bool has_container = false;
+  // Static-wait deduplication: when a later Wait terminator has identical
+  // static triggers, it reuses this wait_site_id and emits
+  // LyraSuspendWaitStatic instead of rebuilding the trigger array.
+  uint32_t original_wait_site_id = 0;
+  // Non-owning pointer to the MIR trigger vector for dedup comparison.
+  // Set only for static (no late_bound, no container) wait sites.
+  const std::vector<mir::WaitTrigger>* canonical_triggers = nullptr;
 };
 
 // Canonical compile-time process trigger fact.

@@ -12,6 +12,7 @@
 #include "lyra/common/opt_level.hpp"
 #include "lyra/llvm_backend/emit.hpp"
 #include "lyra/llvm_backend/lower.hpp"
+#include "lyra/llvm_backend/target_policy.hpp"
 #include "tests/framework/dpi_test_support.hpp"
 #include "tests/framework/llvm_common.hpp"
 #include "tests/framework/output_protocol.hpp"
@@ -62,8 +63,8 @@ auto RunAotBackend(
 
   // Emit object file + link (both counted as "backend")
   auto t_backend = Clock::now();
-  auto target_machine =
-      lowering::mir_to_llvm::CreateHostTargetMachine(OptLevel::kO0);
+  auto target_machine = lowering::mir_to_llvm::CreateTargetMachine(
+      lowering::mir_to_llvm::IsaPolicy::kPortable, OptLevel::kO0);
   auto obj_path = aot_dir / "test.o";
   auto emit_result = lowering::mir_to_llvm::EmitObjectFile(
       *prep_result->llvm_result.module, *target_machine, obj_path);

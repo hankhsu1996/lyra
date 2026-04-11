@@ -5,7 +5,6 @@
 #include <format>
 #include <iterator>
 #include <memory>
-#include <mutex>
 #include <optional>
 #include <span>
 #include <string>
@@ -14,18 +13,12 @@
 #include <variant>
 #include <vector>
 
-#include <llvm/ADT/StringMap.h>
 #include <llvm/IR/Constants.h>
 #include <llvm/IR/DerivedTypes.h>
 #include <llvm/IR/Function.h>
 #include <llvm/IR/IRBuilder.h>
 #include <llvm/IR/Module.h>
-#include <llvm/MC/TargetRegistry.h>
-#include <llvm/Support/TargetSelect.h>
 #include <llvm/Support/raw_ostream.h>
-#include <llvm/Target/TargetMachine.h>
-#include <llvm/TargetParser/Host.h>
-#include <llvm/TargetParser/SubtargetFeature.h>
 
 #include "lyra/common/internal_error.hpp"
 #include "lyra/llvm_backend/behavioral_trigger_contracts.hpp"
@@ -40,58 +33,13 @@
 #include "lyra/llvm_backend/runtime_data_extraction.hpp"
 #include "lyra/llvm_backend/spec_planning.hpp"
 #include "lyra/llvm_backend/spec_session.hpp"
+#include "lyra/llvm_backend/target_policy.hpp"
 #include "lyra/mir/construction_input.hpp"
 #include "lyra/mir/module.hpp"
 
 namespace lyra::lowering::mir_to_llvm {
 
 namespace {
-
-void InitializeLlvmTargets() {
-  static std::once_flag flag;
-  std::call_once(flag, [] {
-    llvm::InitializeNativeTarget();
-    llvm::InitializeNativeTargetAsmPrinter();
-    llvm::InitializeNativeTargetAsmParser();
-  });
-}
-
-void SetHostDataLayout(llvm::Module& module) {
-  InitializeLlvmTargets();
-
-  std::string triple = llvm::sys::getDefaultTargetTriple();
-  std::string cpu = llvm::sys::getHostCPUName().str();
-
-  llvm::StringMap<bool> feature_map;
-  llvm::sys::getHostCPUFeatures(feature_map);
-  llvm::SubtargetFeatures subtarget_features;
-  for (const auto& kv : feature_map) {
-    if (kv.getValue()) {
-      subtarget_features.AddFeature(kv.getKey().str());
-    }
-  }
-  std::string features = subtarget_features.getString();
-
-  std::string error;
-  const llvm::Target* target =
-      llvm::TargetRegistry::lookupTarget(triple, error);
-  if (target == nullptr) {
-    throw common::InternalError(
-        "SetHostDataLayout",
-        std::format("failed to lookup target for '{}': {}", triple, error));
-  }
-
-  std::unique_ptr<llvm::TargetMachine> tm(target->createTargetMachine(
-      triple, cpu, features, llvm::TargetOptions(), std::nullopt));
-  if (tm == nullptr) {
-    throw common::InternalError(
-        "SetHostDataLayout",
-        std::format("failed to create TargetMachine for '{}'", triple));
-  }
-
-  module.setTargetTriple(triple);
-  module.setDataLayout(tm->createDataLayout());
-}
 
 // Connection trigger writeback entry: collected during standalone process
 // compilation, applied to layout in one narrow pass.
@@ -299,7 +247,7 @@ auto CompileDesignProcesses(const LoweringInput& input)
   // Backend setup.
   auto llvm_ctx = std::make_unique<llvm::LLVMContext>();
   auto module = std::make_unique<llvm::Module>("lyra_module", *llvm_ctx);
-  SetHostDataLayout(*module);
+  SetModuleDataLayout(*module);
 
   // Topology + layout.
   auto topology = BuildTopologyPlan(input);

@@ -73,6 +73,10 @@ struct RuntimeInstanceObservability {
   LocalUpdateSet local_updates;
   std::vector<uint8_t> trace_select;
   std::vector<SlotSubscriptions> local_signal_subs;
+  // Per-signal observer flag: 1 if any edge/change/container/rebind subscriber
+  // exists for this local signal. Used to skip dirty marking for unwatched
+  // signals. Updated at subscription install/remove time.
+  std::vector<uint8_t> local_has_observers;
   std::vector<uint32_t> activation_gen;
 
   // R5: Per-instance comb trigger map, indexed by LocalSignalId.value.

@@ -91,6 +91,30 @@ auto Engine::ResolveSubSlot(
   return signal_subs_[slot_id];
 }
 
+void Engine::UpdateObserverFlag(
+    uint32_t signal_id, bool is_local, InstanceId instance_id) {
+  auto& slot = ResolveSubSlot(signal_id, is_local, instance_id);
+  uint8_t has = 0;
+  if (!slot.edge_groups.empty()) {
+    for (const auto& g : slot.edge_groups) {
+      if (!g.posedge_subs.empty() || !g.negedge_subs.empty()) {
+        has = 1;
+        break;
+      }
+    }
+  }
+  if (has == 0 && !slot.change_subs.empty()) has = 1;
+  if (has == 0 && !slot.container_subs.empty()) has = 1;
+  if (has == 0 && !slot.rebind_subs.empty()) has = 1;
+
+  if (is_local) {
+    GetInstanceMut(instance_id).observability.local_has_observers[signal_id] =
+        has;
+  } else {
+    global_has_observers_[signal_id] = has;
+  }
+}
+
 namespace {
 
 // Backpatch a moved subscription's SubRef after swap-and-pop removal.
@@ -242,6 +266,7 @@ void Engine::RemoveEdgeSub(const SubRef& ref) {
     }
   }
   vec.pop_back();
+  UpdateObserverFlag(ref.signal_id, ref.is_local, ref.instance_id);
 }
 
 void Engine::RemoveChangeSub(const SubRef& ref) {
@@ -260,6 +285,7 @@ void Engine::RemoveChangeSub(const SubRef& ref) {
         index);
   }
   vec.pop_back();
+  UpdateObserverFlag(ref.signal_id, ref.is_local, ref.instance_id);
 }
 
 void Engine::RemoveRebindWatcherSub(const SubRef& ref) {
@@ -278,6 +304,7 @@ void Engine::RemoveRebindWatcherSub(const SubRef& ref) {
         index);
   }
   vec.pop_back();
+  UpdateObserverFlag(ref.signal_id, ref.is_local, ref.instance_id);
 }
 
 void Engine::RemoveContainerSub(const SubRef& ref) {
@@ -306,6 +333,7 @@ void Engine::RemoveContainerSub(const SubRef& ref) {
     }
   }
   vec.pop_back();
+  UpdateObserverFlag(ref.signal_id, ref.is_local, ref.instance_id);
 }
 
 void Engine::ClearInstalledSubscriptions(ProcessHandle handle) {
@@ -371,8 +399,8 @@ void Engine::ClearProcessSubscriptions(ProcessHandle handle) {
 // Only called on the can_refresh path (WaitShapeKind::kStatic), so all
 // sub_refs are snapshot-bearing (kEdge or kChange). Rebind watchers and
 // container subs are structurally impossible here.
-void Engine::RefreshInstalledSnapshots(ProcessHandle handle) {
-  if (handle.process_id >= num_processes_) return;
+auto Engine::RefreshInstalledSnapshots(ProcessHandle handle) -> bool {
+  if (handle.process_id >= num_processes_) return false;
 
   auto& proc_state = process_states_[handle.process_id];
 
@@ -403,9 +431,10 @@ void Engine::RefreshInstalledSnapshots(ProcessHandle handle) {
     }
   }
   if (global_unchanged && local_unchanged) {
-    return;
+    return false;
   }
 
+  bool needs_reinstall = false;
   for (const auto& ref : proc_state.sub_refs) {
     // R5: Domain-aware dirty check and slot resolution.
     std::span<const uint8_t> storage;
@@ -428,9 +457,17 @@ void Engine::RefreshInstalledSnapshots(ProcessHandle handle) {
     switch (ref.kind) {
       case SubKind::kEdge: {
         auto& sub = ResolveEdgeSub(ref);
+        auto& group = ResolveSubSlot(ref).edge_groups[ref.edge_group];
+        uint8_t current_byte = storage[group.byte_offset];
+        uint8_t current_bit = (current_byte >> group.bit_index) & 1;
+        // If the observed bit changed since the last flush, the refresh
+        // path cannot safely update group.last_bit (it's shared across
+        // all subscribers). Signal the caller to fall back to full
+        // reinstall which creates a fresh group with correct baselines.
+        if (current_bit != group.last_bit) {
+          needs_reinstall = true;
+        }
         if (sub.cold_idx != UINT32_MAX) {
-          auto& group = ResolveSubSlot(ref).edge_groups[ref.edge_group];
-          uint8_t current_byte = storage[group.byte_offset];
           auto& cold = edge_cold_pool_[sub.cold_idx];
           cold.edge_last_byte = current_byte;
           cold.has_edge_last_byte = true;
@@ -483,6 +520,7 @@ void Engine::RefreshInstalledSnapshots(ProcessHandle handle) {
     }
     stamp.epoch = inst->observability.local_flush_epoch;
   }
+  return needs_reinstall;
 }
 
 void Engine::InstallTriggers(
@@ -929,7 +967,14 @@ void Engine::ReconcilePostActivation(ProcessHandle handle) {
         break;
       }
 
-      RefreshInstalledSnapshots(handle);
+      if (RefreshInstalledSnapshots(handle)) {
+        // A same-delta blocking write changed an observed edge bit.
+        // group.last_bit is shared state and cannot be updated here.
+        // Fall back to full reinstall to get a fresh group baseline.
+        const auto& descriptor = wait_site_meta_.Get(suspend->wait_site_id);
+        ResetInstalledWait(handle);
+        InstallWaitSite(handle, suspend, descriptor);
+      }
       break;
     }
 
@@ -1057,6 +1102,7 @@ auto Engine::SubscribeGlobalChange(
           .instance_id = handle.instance_id});
   ++proc_state.subscription_count;
   ++live_subscription_count_;
+  global_has_observers_[signal.value] = 1;
   return sub_idx;
 }
 
@@ -1119,6 +1165,7 @@ auto Engine::SubscribeLocalChange(
           .instance_id = signal.instance_id});
   ++proc_state.subscription_count;
   ++live_subscription_count_;
+  inst.observability.local_has_observers[signal.signal.value] = 1;
   return sub_idx;
 }
 
@@ -1197,6 +1244,7 @@ auto Engine::SubscribeGlobalEdge(
           .instance_id = handle.instance_id});
   ++proc_state.subscription_count;
   ++live_subscription_count_;
+  global_has_observers_[signal.value] = 1;
   return sub_idx;
 }
 
@@ -1268,6 +1316,7 @@ auto Engine::SubscribeLocalEdge(
           .instance_id = signal.instance_id});
   ++proc_state.subscription_count;
   ++live_subscription_count_;
+  inst.observability.local_has_observers[signal.signal.value] = 1;
   return sub_idx;
 }
 
@@ -1459,6 +1508,7 @@ auto Engine::SubscribeGlobalContainerElement(
           .instance_id = handle.instance_id});
   ++proc_state.subscription_count;
   ++live_subscription_count_;
+  global_has_observers_[signal.value] = 1;
   return sub_idx;
 }
 
@@ -1517,6 +1567,7 @@ auto Engine::SubscribeLocalContainerElement(
           .instance_id = signal.instance_id});
   ++proc_state.subscription_count;
   ++live_subscription_count_;
+  inst.observability.local_has_observers[signal.signal.value] = 1;
   return sub_idx;
 }
 
@@ -1664,6 +1715,7 @@ void Engine::InstallRebindDepWatchers(
                   .instance_id = dep_instance_id});
           ++proc_state.subscription_count;
           ++live_subscription_count_;
+          UpdateObserverFlag(dep_signal_id, dep_is_local, dep_instance_id);
         },
         dep);
   }

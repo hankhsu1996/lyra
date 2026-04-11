@@ -1,109 +1,16 @@
 #include "lyra/llvm_backend/emit.hpp"
 
-#include <cstdio>
-#include <cstdlib>
 #include <format>
-#include <memory>
-#include <mutex>
 #include <string>
 
 #include <llvm/IR/LegacyPassManager.h>
 #include <llvm/IR/Module.h>
-#include <llvm/MC/TargetRegistry.h>
 #include <llvm/Support/CodeGen.h>
 #include <llvm/Support/FileSystem.h>
-#include <llvm/Support/TargetSelect.h>
 #include <llvm/Support/raw_ostream.h>
 #include <llvm/Target/TargetMachine.h>
-#include <llvm/TargetParser/Host.h>
-#include <llvm/TargetParser/SubtargetFeature.h>
-
-#include "lyra/common/internal_error.hpp"
 
 namespace lyra::lowering::mir_to_llvm {
-
-namespace {
-
-void InitializeLlvmTargets() {
-  static std::once_flag flag;
-  std::call_once(flag, [] {
-    llvm::InitializeNativeTarget();
-    llvm::InitializeNativeTargetAsmPrinter();
-    llvm::InitializeNativeTargetAsmParser();
-  });
-}
-
-auto ToCodeGenOpt(OptLevel level) -> llvm::CodeGenOpt::Level {
-  switch (level) {
-    case OptLevel::kO0:
-      return llvm::CodeGenOpt::None;
-    case OptLevel::kO1:
-      return llvm::CodeGenOpt::Less;
-    case OptLevel::kO2:
-      return llvm::CodeGenOpt::Default;
-    case OptLevel::kO3:
-      return llvm::CodeGenOpt::Aggressive;
-  }
-  throw common::InternalError("ToCodeGenOpt", "unknown OptLevel");
-}
-
-}  // namespace
-
-auto CreateHostTargetMachine(OptLevel opt_level)
-    -> std::unique_ptr<llvm::TargetMachine> {
-  InitializeLlvmTargets();
-
-  std::string triple = llvm::sys::getDefaultTargetTriple();
-  std::string cpu = llvm::sys::getHostCPUName().str();
-
-  llvm::StringMap<bool> feature_map;
-  llvm::sys::getHostCPUFeatures(feature_map);
-  llvm::SubtargetFeatures subtarget_features;
-  for (const auto& kv : feature_map) {
-    if (kv.getValue()) {
-      subtarget_features.AddFeature(kv.getKey().str());
-    }
-  }
-  std::string features = subtarget_features.getString();
-
-  std::string error;
-  const llvm::Target* target =
-      llvm::TargetRegistry::lookupTarget(triple, error);
-  if (target == nullptr) {
-    throw common::InternalError(
-        "CreateHostTargetMachine",
-        std::format("failed to lookup target for '{}': {}", triple, error));
-  }
-
-  // Diagnostic: log exact target selection when LYRA_DUMP_TARGET is set.
-  // Captures the CPU name, feature string, and triple that LLVM will
-  // use for AOT code generation. Critical for diagnosing cross-machine
-  // cache artifacts that target the wrong CPU.
-  if (std::getenv("LYRA_DUMP_TARGET") != nullptr) {
-    auto msg = std::format(
-        "=== LYRA TARGET SELECTION ===\n"
-        "  triple:   {}\n"
-        "  cpu:      {}\n"
-        "  features: {}\n"
-        "  opt:      {}\n"
-        "  reloc:    PIC\n"
-        "=== END TARGET SELECTION ===\n",
-        triple, cpu, features, opt_level == OptLevel::kO2 ? "O2" : "O0");
-    fputs(msg.c_str(), stderr);
-  }
-
-  std::unique_ptr<llvm::TargetMachine> tm(target->createTargetMachine(
-      triple, cpu, features, llvm::TargetOptions(),
-      llvm::Reloc::PIC_,  // Required for shared library linking
-      std::nullopt, ToCodeGenOpt(opt_level)));
-  if (tm == nullptr) {
-    throw common::InternalError(
-        "CreateHostTargetMachine",
-        std::format("failed to create TargetMachine for '{}'", triple));
-  }
-
-  return tm;
-}
 
 auto EmitObjectFile(
     llvm::Module& module, llvm::TargetMachine& target_machine,

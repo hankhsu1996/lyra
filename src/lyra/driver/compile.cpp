@@ -13,6 +13,7 @@
 #include "lyra/llvm_backend/ir_optimize.hpp"
 #include "lyra/llvm_backend/link_request.hpp"
 #include "lyra/llvm_backend/lower.hpp"
+#include "lyra/llvm_backend/target_policy.hpp"
 #include "lyra/llvm_backend/toolchain.hpp"
 #include "lyra/lowering/diagnostic_context.hpp"
 #include "lyra/lowering/origin_map_lookup.hpp"
@@ -125,8 +126,8 @@ auto Compile(
         *llvm_result->module, input.input.opt_level);
   }
 
-  auto target_machine =
-      lowering::mir_to_llvm::CreateHostTargetMachine(input.input.opt_level);
+  auto target_machine = lowering::mir_to_llvm::CreateTargetMachine(
+      lowering::mir_to_llvm::IsaPolicy::kPortable, input.input.opt_level);
 
   auto obj_path = options.output_dir / (options.name + ".o");
   {

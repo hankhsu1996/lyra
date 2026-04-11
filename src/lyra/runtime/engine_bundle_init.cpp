@@ -443,6 +443,7 @@ void Engine::InitModuleInstancesFromBundles(
     update_set_.Init(total_slots, sizes);
   }
   signal_subs_.resize(total_slots);
+  global_has_observers_.assign(total_slots, 0);
   activation_slot_gen_.resize(total_slots, 0);
 
   ValidateInstanceOwnedSlotMeta();
@@ -772,6 +773,9 @@ void Engine::InitModuleInstancesFromBundles(
           obs.local_comb_trigger_map[local_id] = {
               .start = start, .count = count};
           obs.local_comb_trigger_slots.push_back(LocalSignalId{local_id});
+          if (local_id < obs.local_has_observers.size()) {
+            obs.local_has_observers[local_id] = 1;
+          }
         }
       }
     }

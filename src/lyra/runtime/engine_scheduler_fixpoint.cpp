@@ -189,6 +189,9 @@ void Engine::InitConnectionBatch(std::span<const ConnectionDescriptor> descs) {
         }
         obs.local_conn_trigger_map[local_id] = {
             .start = start, .count = conn_base + i - start};
+        if (local_id < obs.local_has_observers.size()) {
+          obs.local_has_observers[local_id] = 1;
+        }
       }
     }
   }
@@ -425,6 +428,9 @@ void Engine::InitCombKernels(
         }
         obs.local_comb_trigger_map[local_id] = {.start = start, .count = count};
         obs.local_comb_trigger_slots.push_back(LocalSignalId{local_id});
+        if (local_id < obs.local_has_observers.size()) {
+          obs.local_has_observers[local_id] = 1;
+        }
       }
     }
   }
