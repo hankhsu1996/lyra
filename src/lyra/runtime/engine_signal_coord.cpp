@@ -53,6 +53,16 @@ void Engine::MarkLocalSignalDirtyRange(
   MarkInstanceDeltaDirty(instance_idx);
 }
 
+void Engine::MarkLocalSignalDirtyFull(
+    RuntimeInstance& inst, LocalSignalId lid, uint32_t instance_idx) {
+  auto& obs = inst.observability;
+  if (obs.local_has_observers[lid.value] == 0 && !trace_manager_.IsEnabled()) {
+    return;
+  }
+  obs.local_updates.MarkSlotDirtyFull(lid);
+  MarkInstanceDeltaDirty(instance_idx);
+}
+
 // --- Instance-owned local paths (source of truth: per-instance containers) ---
 
 void Engine::MarkDirty(ObjectSignalRef signal) {

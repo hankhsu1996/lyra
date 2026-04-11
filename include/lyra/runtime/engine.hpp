@@ -1379,6 +1379,11 @@ class Engine {
   void MarkLocalSignalDirtyRange(
       RuntimeInstance& inst, LocalSignalId lid, uint32_t byte_off,
       uint32_t byte_size, uint32_t instance_idx);
+  // Fast path for full-extent local dirty marking. Skips range
+  // validation and size comparison. Used by CommitDeferredLocalNbas
+  // where all writes are whole-slot.
+  void MarkLocalSignalDirtyFull(
+      RuntimeInstance& inst, LocalSignalId lid, uint32_t instance_idx);
 
   UpdateSet update_set_;
 

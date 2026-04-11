@@ -234,7 +234,7 @@ void Engine::CommitDeferredLocalNbas() {
               current_slot.data(), deferred_slot.data(), compare_bytes) != 0) {
         std::memcpy(current_slot.data(), deferred_slot.data(), compare_bytes);
         ++stats_.core.nba_changed;
-        MarkLocalSignalDirtyRange(*inst, lid, 0, compare_bytes, instance_idx);
+        MarkLocalSignalDirtyFull(*inst, lid, instance_idx);
       }
     }
 

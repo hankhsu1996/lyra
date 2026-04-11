@@ -32,6 +32,15 @@ class LocalUpdateSet {
       common::MutationKind kind = common::MutationKind::kValueWrite,
       common::EpochEffect epoch = common::EpochEffect::kNone) -> bool;
 
+  // Fast path for full-extent dirty marking with default kind/epoch.
+  // Skips bounds validation and range-size comparison. Caller must
+  // guarantee signal is within range (i.e., Contains(signal) is true).
+  void MarkSlotDirtyFull(LocalSignalId signal) {
+    TouchSignal(
+        signal, common::MutationKind::kValueWrite, common::EpochEffect::kNone);
+    delta_ranges_[signal.value].MarkFullExtent();
+  }
+
   // Mark a byte range within a local signal as dirty.
   void MarkDirtyRange(
       LocalSignalId signal, uint32_t byte_off, uint32_t byte_size,
