@@ -293,7 +293,8 @@ auto CompileDesignProcesses(const LoweringInput& input)
   if (input.dpi_export_wrappers != nullptr &&
       !input.dpi_export_wrappers->empty()) {
     auto export_result = dpi::EmitDpiExportWrappers(
-        *context, *input.dpi_export_wrappers, specs.module_export_callees);
+        *context, *facts, *input.dpi_export_wrappers,
+        specs.module_export_callees);
     if (!export_result) return std::unexpected(export_result.error());
   }
 

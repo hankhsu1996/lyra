@@ -22,6 +22,7 @@
 #include "lyra/llvm_backend/compute/four_state_ops.hpp"
 #include "lyra/llvm_backend/compute/operand.hpp"
 #include "lyra/llvm_backend/context.hpp"
+#include "lyra/llvm_backend/cu_facts.hpp"
 #include "lyra/llvm_backend/value_repr.hpp"
 #include "lyra/mir/dpi_verify.hpp"
 #include "lyra/runtime/dpi_export_context.hpp"
@@ -254,13 +255,13 @@ struct DpiFourStateValue {
 };
 
 auto LowerDpiFourStateOperand(
-    Context& ctx, const mir::Operand& op, TypeId sv_type)
+    Context& ctx, const CuFacts& facts, const mir::Operand& op, TypeId sv_type)
     -> Result<DpiFourStateValue> {
   auto raw = LowerOperandRaw(ctx, op);
   if (!raw) return std::unexpected(raw.error());
   auto& b = ctx.GetBuilder();
   auto [val, unk] = ExtractFourStateOrZero(b, *raw);
-  uint32_t width = GetSemanticWidth(sv_type, ctx.GetTypeArena());
+  uint32_t width = GetSemanticWidth(sv_type, *facts.types);
 
   // Canonicalize: mask to semantic width so backing-width garbage bits never
   // leak into svLogicVecVal words during encode.
@@ -560,7 +561,7 @@ struct DpiArgLoweringState {
 // Handles string, kLogicScalar, and 2-state scalar types.
 // Rejects packed-vector, kVoid, and kInvalid -- those are not scalar paths.
 auto MarshalDpiScalarInput(
-    Context& context, const mir::Operand& operand,
+    Context& context, const CuFacts& facts, const mir::Operand& operand,
     const mir::DpiParamDesc& param) -> Result<llvm::Value*> {
   if (IsPackedVecDpiType(param.abi_type) ||
       param.abi_type == DpiAbiTypeClass::kVoid ||
@@ -576,7 +577,7 @@ auto MarshalDpiScalarInput(
     return MarshalInputString(context, *val);
   }
   if (param.abi_type == DpiAbiTypeClass::kLogicScalar) {
-    auto fsv = LowerDpiFourStateOperand(context, operand, param.sv_type);
+    auto fsv = LowerDpiFourStateOperand(context, facts, operand, param.sv_type);
     if (!fsv) return std::unexpected(fsv.error());
     auto& b = context.GetBuilder();
     auto* i1 = llvm::Type::getInt1Ty(b.getContext());
@@ -592,7 +593,7 @@ auto MarshalDpiScalarInput(
 // Marshal a 4-state packed vector input to svLogicVecVal storage.
 // Accepts kLogicVecNarrow and kLogicVecWide.
 auto MarshalDpiLogicVecInput(
-    Context& context, const mir::Operand& operand,
+    Context& context, const CuFacts& facts, const mir::Operand& operand,
     const mir::DpiParamDesc& param) -> Result<llvm::Value*> {
   if (!IsFourStateVecDpiType(param.abi_type)) {
     throw common::InternalError(
@@ -601,7 +602,7 @@ auto MarshalDpiLogicVecInput(
             "expected 4-state vector ABI class, got {}",
             static_cast<int>(param.abi_type)));
   }
-  auto fsv = LowerDpiFourStateOperand(context, operand, param.sv_type);
+  auto fsv = LowerDpiFourStateOperand(context, facts, operand, param.sv_type);
   if (!fsv) return std::unexpected(fsv.error());
   auto& b = context.GetBuilder();
   auto& llvm_ctx = context.GetLlvmContext();
@@ -614,7 +615,7 @@ auto MarshalDpiLogicVecInput(
 // Marshal a 2-state wide packed vector input to svBitVecVal storage.
 // Only accepts kBitVecWide.
 auto MarshalDpiBitVecInput(
-    Context& context, const mir::Operand& operand,
+    Context& context, const CuFacts& facts, const mir::Operand& operand,
     const mir::DpiParamDesc& param) -> Result<llvm::Value*> {
   if (param.abi_type != DpiAbiTypeClass::kBitVecWide) {
     throw common::InternalError(
@@ -626,7 +627,7 @@ auto MarshalDpiBitVecInput(
   if (!val) return std::unexpected(val.error());
   auto& b = context.GetBuilder();
   auto& llvm_ctx = context.GetLlvmContext();
-  uint32_t width = GetSemanticWidth(param.sv_type, context.GetTypeArena());
+  uint32_t width = GetSemanticWidth(param.sv_type, *facts.types);
   uint32_t wc = GetDpiLogicWordCount(width);
   auto* arr_ty = GetDpiBitVecStorageType(llvm_ctx, wc);
   return BuildDpiBitVecStorage(b, *val, width, arr_ty);
@@ -635,7 +636,7 @@ auto MarshalDpiBitVecInput(
 // Populate a by-pointer staged temp with the marshaled input value.
 // Only valid for by-pointer arguments (output, inout, or packed-vector input).
 auto InitializeDpiByPointerArgStorage(
-    Context& context, const mir::Operand& operand,
+    Context& context, const CuFacts& facts, const mir::Operand& operand,
     const mir::DpiParamDesc& param, llvm::AllocaInst* alloca) -> Result<void> {
   if (param.passing != mir::DpiPassingMode::kByPointer) {
     throw common::InternalError(
@@ -643,15 +644,15 @@ auto InitializeDpiByPointerArgStorage(
   }
   llvm::Value* storage = nullptr;
   if (IsFourStateVecDpiType(param.abi_type)) {
-    auto s = MarshalDpiLogicVecInput(context, operand, param);
+    auto s = MarshalDpiLogicVecInput(context, facts, operand, param);
     if (!s) return std::unexpected(s.error());
     storage = *s;
   } else if (param.abi_type == DpiAbiTypeClass::kBitVecWide) {
-    auto s = MarshalDpiBitVecInput(context, operand, param);
+    auto s = MarshalDpiBitVecInput(context, facts, operand, param);
     if (!s) return std::unexpected(s.error());
     storage = *s;
   } else {
-    auto s = MarshalDpiScalarInput(context, operand, param);
+    auto s = MarshalDpiScalarInput(context, facts, operand, param);
     if (!s) return std::unexpected(s.error());
     storage = *s;
   }
@@ -664,13 +665,13 @@ auto InitializeDpiByPointerArgStorage(
 // ---------------------------------------------------------------------------
 
 auto PrepareDpiCallArgs(
-    Context& context, const mir::DpiCall& call,
+    Context& context, const CuFacts& facts, const mir::DpiCall& call,
     std::vector<llvm::Value*>& abi_args,
     std::vector<DpiArgLoweringState>& arg_states) -> Result<void> {
   const auto& sig = call.callee.signature;
   auto& builder = context.GetBuilder();
   auto& llvm_ctx = context.GetLlvmContext();
-  const auto& types = context.GetTypeArena();
+  const auto& types = *facts.types;
 
   for (size_t i = 0; i < call.args.size(); ++i) {
     const auto& binding = call.args[i];
@@ -679,7 +680,7 @@ auto PrepareDpiCallArgs(
 
     if (param.passing == mir::DpiPassingMode::kByValue) {
       auto marshaled =
-          MarshalDpiScalarInput(context, *binding.input_value, param);
+          MarshalDpiScalarInput(context, facts, *binding.input_value, param);
       if (!marshaled) return std::unexpected(marshaled.error());
       abi_args.push_back(*marshaled);
     } else {
@@ -690,7 +691,7 @@ auto PrepareDpiCallArgs(
 
       if (binding.input_value) {
         auto result = InitializeDpiByPointerArgStorage(
-            context, *binding.input_value, param, alloca);
+            context, facts, *binding.input_value, param, alloca);
         if (!result) return std::unexpected(result.error());
       }
 
@@ -705,11 +706,11 @@ auto PrepareDpiCallArgs(
 // ---------------------------------------------------------------------------
 
 auto CommitDpiOutputWritebacks(
-    Context& context, const mir::DpiCall& call,
+    Context& context, const CuFacts& facts, const mir::DpiCall& call,
     const std::vector<DpiArgLoweringState>& arg_states) -> Result<void> {
   auto& builder = context.GetBuilder();
   auto& llvm_ctx = context.GetLlvmContext();
-  const auto& types = context.GetTypeArena();
+  const auto& types = *facts.types;
 
   for (size_t i = 0; i < call.args.size(); ++i) {
     if (arg_states[i].staged_tmp == nullptr) {
@@ -766,11 +767,11 @@ auto CommitDpiOutputWritebacks(
 // ---------------------------------------------------------------------------
 
 auto DecodeIndirectDpiReturn(
-    Context& context, const mir::DpiReturnDesc& result, llvm::Value* raw)
-    -> llvm::Value* {
+    Context& context, const CuFacts& facts, const mir::DpiReturnDesc& result,
+    llvm::Value* raw) -> llvm::Value* {
   auto& b = context.GetBuilder();
   auto& llvm_ctx = context.GetLlvmContext();
-  uint32_t width = GetSemanticWidth(result.sv_type, context.GetTypeArena());
+  uint32_t width = GetSemanticWidth(result.sv_type, *facts.types);
   auto* backing_ty = GetBackingLlvmType(llvm_ctx, width);
 
   switch (result.abi_type) {
@@ -814,11 +815,11 @@ auto NormalizeToDpiFourStateReturn(
 }
 
 auto EncodeIndirectDpiReturn(
-    Context& context, const mir::DpiReturnDesc& result, llvm::Value* ret_val)
-    -> llvm::Value* {
+    Context& context, const CuFacts& facts, const mir::DpiReturnDesc& result,
+    llvm::Value* ret_val) -> llvm::Value* {
   auto& b = context.GetBuilder();
   auto& llvm_ctx = context.GetLlvmContext();
-  uint32_t width = GetSemanticWidth(result.sv_type, context.GetTypeArena());
+  uint32_t width = GetSemanticWidth(result.sv_type, *facts.types);
 
   switch (result.abi_type) {
     case DpiAbiTypeClass::kLogicVecNarrow:
@@ -842,12 +843,12 @@ auto EncodeIndirectDpiReturn(
 }
 
 auto CommitDpiReturnValue(
-    Context& context, const mir::DpiCall& call, llvm::CallInst* call_inst,
-    llvm::Value* indirect_ret_ptr) -> Result<void> {
+    Context& context, const CuFacts& facts, const mir::DpiCall& call,
+    llvm::CallInst* call_inst, llvm::Value* indirect_ret_ptr) -> Result<void> {
   const auto& sig = call.callee.signature;
   auto& builder = context.GetBuilder();
   auto& llvm_ctx = context.GetLlvmContext();
-  const auto& types = context.GetTypeArena();
+  const auto& types = *facts.types;
 
   if (sig.result.kind == mir::DpiReturnKind::kVoid) {
     return {};
@@ -872,7 +873,8 @@ auto CommitDpiReturnValue(
         llvm_ctx, sig.result.abi_type, sig.result.sv_type, types);
     llvm::Value* raw =
         builder.CreateLoad(storage_ty, indirect_ret_ptr, "dpi.ret.raw");
-    llvm::Value* decoded = DecodeIndirectDpiReturn(context, sig.result, raw);
+    llvm::Value* decoded =
+        DecodeIndirectDpiReturn(context, facts, sig.result, raw);
     builder.CreateStore(decoded, *tmp_ptr);
   } else if (sig.result.abi_type == DpiAbiTypeClass::kLogicScalar) {
     uint32_t width = GetSemanticWidth(sig.result.sv_type, types);
@@ -957,10 +959,10 @@ auto GetLlvmDpiStorageType(
 }
 
 auto BuildDpiImportFunctionType(
-    Context& context, const mir::DpiSignature& sig, bool is_context)
-    -> llvm::FunctionType* {
+    Context& context, const CuFacts& facts, const mir::DpiSignature& sig,
+    bool is_context) -> llvm::FunctionType* {
   auto& llvm_ctx = context.GetLlvmContext();
-  const auto& types = context.GetTypeArena();
+  const auto& types = *facts.types;
 
   bool indirect_ret = sig.result.kind == mir::DpiReturnKind::kIndirect;
 
@@ -991,12 +993,12 @@ auto BuildDpiImportFunctionType(
 }
 
 auto GetOrDeclareDpiImport(
-    Context& context, const std::string& c_name, const mir::DpiSignature& sig,
-    bool is_context) -> llvm::Function* {
+    Context& context, const CuFacts& facts, const std::string& c_name,
+    const mir::DpiSignature& sig, bool is_context) -> llvm::Function* {
   mir::ValidateDpiSignatureContract(sig, "GetOrDeclareDpiImport");
 
   auto& module = context.GetModule();
-  auto* fn_type = BuildDpiImportFunctionType(context, sig, is_context);
+  auto* fn_type = BuildDpiImportFunctionType(context, facts, sig, is_context);
 
   if (auto* existing = module.getFunction(c_name)) {
     if (existing->getFunctionType() != fn_type) {
@@ -1167,8 +1169,8 @@ void EndContextImportCall(Context& context, const DpiContextCallState& st) {
 }
 
 auto LowerDpiImportCall(
-    Context& context, const mir::DpiCall& call, const ActiveExecutionMode& mode)
-    -> Result<void> {
+    Context& context, const CuFacts& facts, const mir::DpiCall& call,
+    const ActiveExecutionMode& mode) -> Result<void> {
   const auto& ref = call.callee;
   const auto& sig = ref.signature;
   mir::ValidateDpiSignatureContract(sig, "LowerDpiImportCall");
@@ -1176,17 +1178,17 @@ auto LowerDpiImportCall(
 
   // Phase A: all fallible work completes before scope push.
   llvm::Function* fn =
-      GetOrDeclareDpiImport(context, ref.c_name, sig, ref.is_context);
+      GetOrDeclareDpiImport(context, facts, ref.c_name, sig, ref.is_context);
   auto& builder = context.GetBuilder();
   auto& llvm_ctx = context.GetLlvmContext();
-  const auto& types = context.GetTypeArena();
+  const auto& types = *facts.types;
 
   std::vector<llvm::Value*> user_abi_args;
   std::vector<DpiArgLoweringState> arg_states(call.args.size());
   user_abi_args.reserve(call.args.size());
 
   auto prep_result =
-      PrepareDpiCallArgs(context, call, user_abi_args, arg_states);
+      PrepareDpiCallArgs(context, facts, call, user_abi_args, arg_states);
   if (!prep_result) return std::unexpected(prep_result.error());
 
   // Indirect return: allocate staged result storage.
@@ -1222,11 +1224,12 @@ auto LowerDpiImportCall(
   // --- End non-fallible region ---
 
   // Phase C.1: writeback output/inout params.
-  auto wb_result = CommitDpiOutputWritebacks(context, call, arg_states);
+  auto wb_result = CommitDpiOutputWritebacks(context, facts, call, arg_states);
   if (!wb_result) return std::unexpected(wb_result.error());
 
   // Phase C.2: handle return value.
-  return CommitDpiReturnValue(context, call, call_inst, indirect_ret_ptr);
+  return CommitDpiReturnValue(
+      context, facts, call, call_inst, indirect_ret_ptr);
 }
 
 namespace {
@@ -1339,20 +1342,20 @@ void StoreForeignDpiStorage(
 }
 
 auto DecodeExportByPointerArg(
-    Context& context, llvm::Value* foreign_ptr, const mir::DpiParamDesc& param)
-    -> llvm::Value* {
+    Context& context, const CuFacts& facts, llvm::Value* foreign_ptr,
+    const mir::DpiParamDesc& param) -> llvm::Value* {
   auto& b = context.GetBuilder();
   auto& llvm_ctx = context.GetLlvmContext();
   llvm::Type* storage_ty = GetLlvmDpiStorageType(
-      llvm_ctx, param.abi_type, param.sv_type, context.GetTypeArena());
+      llvm_ctx, param.abi_type, param.sv_type, *facts.types);
   llvm::Value* raw = LoadForeignDpiStorage(context, foreign_ptr, storage_ty);
   if (IsFourStateVecDpiType(param.abi_type)) {
-    uint32_t width = GetSemanticWidth(param.sv_type, context.GetTypeArena());
+    uint32_t width = GetSemanticWidth(param.sv_type, *facts.types);
     auto* backing_ty = GetBackingLlvmType(llvm_ctx, width);
     return DecodeDpiLogicVecStorage(b, raw, width, backing_ty);
   }
   if (param.abi_type == DpiAbiTypeClass::kBitVecWide) {
-    uint32_t width = GetSemanticWidth(param.sv_type, context.GetTypeArena());
+    uint32_t width = GetSemanticWidth(param.sv_type, *facts.types);
     auto* backing_ty = GetBackingLlvmType(llvm_ctx, width);
     return DecodeDpiBitVecStorage(b, raw, width, backing_ty);
   }
@@ -1370,12 +1373,12 @@ auto ToI1(llvm::IRBuilder<>& b, llvm::Value* v) -> llvm::Value* {
 }
 
 auto EncodeExportByPointerValue(
-    Context& context, llvm::Value* canonical, const mir::DpiParamDesc& param)
-    -> llvm::Value* {
+    Context& context, const CuFacts& facts, llvm::Value* canonical,
+    const mir::DpiParamDesc& param) -> llvm::Value* {
   auto& b = context.GetBuilder();
   auto& llvm_ctx = context.GetLlvmContext();
   if (IsFourStateVecDpiType(param.abi_type)) {
-    uint32_t width = GetSemanticWidth(param.sv_type, context.GetTypeArena());
+    uint32_t width = GetSemanticWidth(param.sv_type, *facts.types);
     auto* val = b.CreateExtractValue(canonical, {0}, "exp.enc.val");
     auto* unk = b.CreateExtractValue(canonical, {1}, "exp.enc.unk");
     uint32_t wc = GetDpiLogicWordCount(width);
@@ -1385,7 +1388,7 @@ auto EncodeExportByPointerValue(
     return BuildDpiLogicVecStorage(b, fsv, arr_ty, word_ty);
   }
   if (param.abi_type == DpiAbiTypeClass::kBitVecWide) {
-    uint32_t width = GetSemanticWidth(param.sv_type, context.GetTypeArena());
+    uint32_t width = GetSemanticWidth(param.sv_type, *facts.types);
     uint32_t wc = GetDpiLogicWordCount(width);
     auto* arr_ty = GetDpiBitVecStorageType(llvm_ctx, wc);
     return BuildDpiBitVecStorage(b, canonical, width, arr_ty);
@@ -1400,9 +1403,10 @@ auto EncodeExportByPointerValue(
 }  // namespace
 
 void PrepareExportUserArgs(
-    Context& context, const mir::DpiSignature& sig, llvm::Function* wrapper,
-    llvm::Function* internal_fn, unsigned user_arg_base,
-    unsigned wrapper_arg_base, std::vector<llvm::Value*>& internal_args,
+    Context& context, const CuFacts& facts, const mir::DpiSignature& sig,
+    llvm::Function* wrapper, llvm::Function* internal_fn,
+    unsigned user_arg_base, unsigned wrapper_arg_base,
+    std::vector<llvm::Value*>& internal_args,
     std::vector<ExportByPointerState>& by_pointer_states) {
   auto& b = context.GetBuilder();
   auto& llvm_ctx = context.GetLlvmContext();
@@ -1431,8 +1435,7 @@ void PrepareExportUserArgs(
               "logic-scalar export param unexpectedly lowered as pointer");
         }
         if (internal_ty->isStructTy()) {
-          uint32_t width =
-              GetSemanticWidth(param.sv_type, context.GetTypeArena());
+          uint32_t width = GetSemanticWidth(param.sv_type, *facts.types);
           llvm::Value* decoded =
               BuildLyraLogicScalarValue(b, llvm_ctx, wrapper_arg, width);
           internal_args.push_back(decoded);
@@ -1467,24 +1470,22 @@ void PrepareExportUserArgs(
         // The wrapper must reuse that ABI source of truth instead of deriving
         // an independent local type model.
         auto* expected_value_ty = GetCallableAbiLlvmType(
-            llvm_ctx, param.sv_type, context.GetTypeArena(),
-            context.IsForceTwoState());
+            llvm_ctx, param.sv_type, *facts.types, facts.force_two_state);
 
         bool is_packed = IsPackedVecDpiType(param.abi_type);
 
         llvm::Value* canonical = nullptr;
         if (!dir_has_output || param.direction == ParameterDirection::kInOut) {
           if (is_packed) {
-            canonical = DecodeExportByPointerArg(context, wrapper_arg, param);
+            canonical =
+                DecodeExportByPointerArg(context, facts, wrapper_arg, param);
           } else {
             llvm::Type* storage_ty = GetLlvmDpiStorageType(
-                llvm_ctx, param.abi_type, param.sv_type,
-                context.GetTypeArena());
+                llvm_ctx, param.abi_type, param.sv_type, *facts.types);
             llvm::Value* raw =
                 LoadForeignDpiStorage(context, wrapper_arg, storage_ty);
             if (param.abi_type == DpiAbiTypeClass::kLogicScalar) {
-              uint32_t width =
-                  GetSemanticWidth(param.sv_type, context.GetTypeArena());
+              uint32_t width = GetSemanticWidth(param.sv_type, *facts.types);
               canonical = BuildLyraLogicScalarValue(b, llvm_ctx, raw, width);
             } else if (param.abi_type == DpiAbiTypeClass::kString) {
               canonical = MaterializeStringWriteback(context, raw);
@@ -1527,7 +1528,8 @@ void PrepareExportUserArgs(
 }
 
 void CommitExportByPointerWritebacks(
-    Context& context, const std::vector<ExportByPointerState>& states) {
+    Context& context, const CuFacts& facts,
+    const std::vector<ExportByPointerState>& states) {
   auto& b = context.GetBuilder();
 
   for (const auto& state : states) {
@@ -1538,7 +1540,7 @@ void CommitExportByPointerWritebacks(
 
     if (IsPackedVecDpiType(param.abi_type)) {
       llvm::Value* encoded =
-          EncodeExportByPointerValue(context, canonical, param);
+          EncodeExportByPointerValue(context, facts, canonical, param);
       StoreForeignDpiStorage(context, state.foreign_ptr, encoded);
     } else if (param.abi_type == DpiAbiTypeClass::kLogicScalar) {
       auto* val = b.CreateExtractValue(canonical, {0}, "exp.wb.ls.val");
@@ -1557,8 +1559,8 @@ void CommitExportByPointerWritebacks(
 }
 
 void EmitExportReturn(
-    Context& context, const mir::DpiSignature& sig, llvm::Value* ret_val,
-    llvm::Value* indirect_ret_ptr) {
+    Context& context, const CuFacts& facts, const mir::DpiSignature& sig,
+    llvm::Value* ret_val, llvm::Value* indirect_ret_ptr) {
   auto& b = context.GetBuilder();
   if (sig.result.kind == mir::DpiReturnKind::kVoid) {
     b.CreateRetVoid();
@@ -1571,7 +1573,7 @@ void EmitExportReturn(
           "kIndirect export return missing wrapper result pointer");
     }
     llvm::Value* encoded =
-        EncodeIndirectDpiReturn(context, sig.result, ret_val);
+        EncodeIndirectDpiReturn(context, facts, sig.result, ret_val);
     StoreForeignDpiStorage(context, indirect_ret_ptr, encoded);
     b.CreateRetVoid();
     return;
@@ -1713,7 +1715,8 @@ auto EmitDecisionOwnerGuard(
 }
 
 auto EmitDpiExportWrappers(
-    Context& context, const std::vector<mir::DpiExportWrapperDesc>& exports,
+    Context& context, const CuFacts& facts,
+    const std::vector<mir::DpiExportWrapperDesc>& exports,
     std::span<const std::optional<ModuleExportCalleeInfo>>
         module_export_callees) -> Result<void> {
   if (exports.empty()) return {};
@@ -1721,7 +1724,7 @@ auto EmitDpiExportWrappers(
   auto& llvm_ctx = context.GetLlvmContext();
   auto& module = context.GetModule();
 
-  const auto& types = context.GetTypeArena();
+  const auto& types = *facts.types;
 
   for (size_t ei = 0; ei < exports.size(); ++ei) {
     const auto& desc = exports[ei];
@@ -1749,7 +1752,7 @@ auto EmitDpiExportWrappers(
       auto binding = EmitResolvePackageBinding(context);
       const auto& entry = context.GetDesignFunction(desc.target.package_symbol);
 
-      const auto& callee_func = context.GetDesignArena()[entry.func_id];
+      const auto& callee_func = (*facts.design_arena)[entry.func_id];
 
       llvm::Function* internal_fn = entry.llvm_func;
       if (internal_fn == nullptr) {
@@ -1780,13 +1783,14 @@ auto EmitDpiExportWrappers(
       }
       std::vector<ExportByPointerState> bp_states;
       PrepareExportUserArgs(
-          context, desc.signature, wrapper, internal_fn,
+          context, facts, desc.signature, wrapper, internal_fn,
           static_cast<unsigned>(args.size()), wrapper_arg_idx, args, bp_states);
       auto* ret_val = builder.CreateCall(internal_fn, args);
-      CommitExportByPointerWritebacks(context, bp_states);
+      CommitExportByPointerWritebacks(context, facts, bp_states);
 
       builder.CreateCall(context.GetLyraPopDpiExportCallContext());
-      EmitExportReturn(context, desc.signature, ret_val, indirect_ret_ptr);
+      EmitExportReturn(
+          context, facts, desc.signature, ret_val, indirect_ret_ptr);
 
     } else {
       // Module path: resolve instance binding + direct call to module callee.
@@ -1824,13 +1828,14 @@ auto EmitDpiExportWrappers(
       }
       std::vector<ExportByPointerState> bp_states;
       PrepareExportUserArgs(
-          context, desc.signature, wrapper, internal_fn,
+          context, facts, desc.signature, wrapper, internal_fn,
           static_cast<unsigned>(args.size()), wrapper_arg_idx, args, bp_states);
       auto* ret_val = builder.CreateCall(internal_fn, args);
-      CommitExportByPointerWritebacks(context, bp_states);
+      CommitExportByPointerWritebacks(context, facts, bp_states);
 
       builder.CreateCall(context.GetLyraPopDpiExportCallContext());
-      EmitExportReturn(context, desc.signature, ret_val, indirect_ret_ptr);
+      EmitExportReturn(
+          context, facts, desc.signature, ret_val, indirect_ret_ptr);
     }
   }
 
