@@ -21,8 +21,7 @@ auto ResolveDestType(
     Context& context, const CuFacts& facts, const mir::WriteTarget& dest)
     -> TypeId {
   if (const auto* place = std::get_if<mir::PlaceId>(&dest)) {
-    return mir::TypeOfPlace(
-        context.GetTypeArena(), context.LookupPlace(*place));
+    return mir::TypeOfPlace(*facts.types, context.LookupPlace(*place));
   }
   return context.GetExternalRefType(std::get<mir::ExternalRefId>(dest));
 }
@@ -48,7 +47,7 @@ auto LowerRhsRaw(
     Context& context, const CuFacts& facts, SlotAccessResolver& resolver,
     const mir::RightHandSide& rhs, mir::PlaceId target)
     -> Result<llvm::Value*> {
-  const auto& types = context.GetTypeArena();
+  const auto& types = *facts.types;
   TypeId target_type = mir::TypeOfPlace(types, context.LookupPlace(target));
   return LowerRhsRaw(context, facts, resolver, rhs, target_type);
 }
@@ -62,12 +61,12 @@ auto LowerRhsRaw(
             auto raw_or_err = LowerOperandRaw(context, resolver, operand);
             if (!raw_or_err) return std::unexpected(raw_or_err.error());
             llvm::Value* raw = *raw_or_err;
-            const auto& types = context.GetTypeArena();
+            const auto& types = *facts.types;
             if (!raw->getType()->isStructTy() && IsPacked(types[target_type]) &&
-                context.IsPackedFourState(types[target_type])) {
+                IsPackedFourState(facts, types[target_type])) {
               auto* llvm_type = GetLlvmTypeForTypeId(
                   context.GetLlvmContext(), target_type, types,
-                  context.IsForceTwoState());
+                  facts.force_two_state);
               auto* struct_type = llvm::cast<llvm::StructType>(llvm_type);
               auto* elem_type = struct_type->getElementType(0);
               auto& builder = context.GetBuilder();
@@ -78,15 +77,15 @@ auto LowerRhsRaw(
             return raw;
           },
           [&](const mir::Rvalue& rvalue) -> Result<llvm::Value*> {
-            const auto& types = context.GetTypeArena();
+            const auto& types = *facts.types;
             auto rv_result =
                 LowerRvalue(context, facts, resolver, rvalue, target_type);
             if (!rv_result) return std::unexpected(rv_result.error());
             if (IsPacked(types[target_type]) &&
-                context.IsPackedFourState(types[target_type])) {
+                IsPackedFourState(facts, types[target_type])) {
               auto* llvm_type = GetLlvmTypeForTypeId(
                   context.GetLlvmContext(), target_type, types,
-                  context.IsForceTwoState());
+                  facts.force_two_state);
               auto* struct_type = llvm::cast<llvm::StructType>(llvm_type);
               auto* elem_type = struct_type->getElementType(0);
               auto& builder = context.GetBuilder();

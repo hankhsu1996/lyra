@@ -94,8 +94,9 @@ auto StoreBitRange(
 
 // Forward declaration for mutual recursion
 auto StoreManagedStructLiteralToPtr(
-    Context& context, llvm::Value* target_ptr, TypeId struct_type_id,
-    const std::vector<mir::Operand>& operands) -> Result<void>;
+    Context& context, const CuFacts& facts, llvm::Value* target_ptr,
+    TypeId struct_type_id, const std::vector<mir::Operand>& operands)
+    -> Result<void>;
 
 // Determine ownership policy for a field assignment from an operand.
 // Constants produce freshly-owned values (kMove); place/temp references
@@ -128,9 +129,9 @@ auto MaterializeOperandAsPtr(
 
 // Store a single field from an operand, handling managed types recursively.
 auto StoreFieldFromOperand(
-    Context& context, llvm::Value* field_ptr, TypeId field_type_id,
-    const mir::Operand& operand) -> Result<void> {
-  const auto& types = context.GetTypeArena();
+    Context& context, const CuFacts& facts, llvm::Value* field_ptr,
+    TypeId field_type_id, const mir::Operand& operand) -> Result<void> {
+  const auto& types = *facts.types;
   const Type& field_type = types[field_type_id];
 
   if (field_type.Kind() == TypeKind::kString) {
@@ -161,10 +162,11 @@ auto StoreFieldFromOperand(
 
 // Store struct literal fields to target pointer.
 auto StoreManagedStructLiteralToPtr(
-    Context& context, llvm::Value* target_ptr, TypeId struct_type_id,
-    const std::vector<mir::Operand>& operands) -> Result<void> {
+    Context& context, const CuFacts& facts, llvm::Value* target_ptr,
+    TypeId struct_type_id, const std::vector<mir::Operand>& operands)
+    -> Result<void> {
   auto& builder = context.GetBuilder();
-  const auto& types = context.GetTypeArena();
+  const auto& types = *facts.types;
   const Type& struct_type = types[struct_type_id];
   const auto& struct_info = struct_type.AsUnpackedStruct();
 
@@ -183,7 +185,7 @@ auto StoreManagedStructLiteralToPtr(
         builder.CreateStructGEP(llvm_struct, target_ptr, field_idx);
 
     auto result =
-        StoreFieldFromOperand(context, field_ptr, field.type, operand);
+        StoreFieldFromOperand(context, facts, field_ptr, field.type, operand);
     if (!result) return result;
   }
 
@@ -192,13 +194,13 @@ auto StoreManagedStructLiteralToPtr(
 
 // Lower a managed struct literal aggregate assignment.
 auto LowerManagedStructLiteral(
-    Context& context, const mir::WriteTarget& target, const mir::Rvalue& rvalue,
-    TypeId struct_type_id) -> Result<void> {
+    Context& context, const CuFacts& facts, const mir::WriteTarget& target,
+    const mir::Rvalue& rvalue, TypeId struct_type_id) -> Result<void> {
   auto target_ptr = context.GetWriteDestPointer(target);
   if (!target_ptr) return std::unexpected(target_ptr.error());
 
   auto result = StoreManagedStructLiteralToPtr(
-      context, *target_ptr, struct_type_id, rvalue.operands);
+      context, facts, *target_ptr, struct_type_id, rvalue.operands);
   if (!result) return result;
 
   CommitNotifyAggregateIfDesignSlot(context, target);
@@ -212,7 +214,7 @@ auto LowerManagedStructLiteral(
 auto LowerRvalueAssign(
     Context& context, const CuFacts& facts, const mir::WriteTarget& target,
     const mir::Rvalue& rvalue) -> Result<void> {
-  const auto& types = context.GetTypeArena();
+  const auto& types = *facts.types;
   TypeId result_type = detail::ResolveDestType(context, facts, target);
   const Type& type = types[result_type];
 
@@ -223,7 +225,8 @@ auto LowerRvalueAssign(
     auto plan = BuildWritePlan(result_type, types);
 
     if (plan.op == WriteOp::kCommitFieldByFieldStruct) {
-      return LowerManagedStructLiteral(context, target, rvalue, result_type);
+      return LowerManagedStructLiteral(
+          context, facts, target, rvalue, result_type);
     }
     if (plan.op == WriteOp::kCommitFieldByFieldArray) {
       return std::unexpected(context.GetDiagnosticContext().MakeUnsupported(
@@ -306,9 +309,10 @@ auto LowerGuardedAssign(
 // Managed non-projected writes only. Bit-range projections are handled
 // directly by callers using non-lossy PackedRValue transport.
 auto CommitManagedImmediate(
-    Context& context, SlotAccessResolver& resolver, mir::PlaceId dest,
-    llvm::Value* value, OwnershipPolicy policy) -> Result<void> {
-  const auto& types = context.GetTypeArena();
+    Context& context, const CuFacts& facts, SlotAccessResolver& resolver,
+    mir::PlaceId dest, llvm::Value* value, OwnershipPolicy policy)
+    -> Result<void> {
+  const auto& types = *facts.types;
   TypeId type_id = mir::TypeOfPlace(types, context.LookupPlace(dest));
   return resolver.CommitSlotValue(dest, value, type_id, policy);
 }
@@ -338,7 +342,7 @@ auto LowerAssign(
         LowerRhsRaw(context, facts, resolver, assign.rhs, *dest_place);
     if (!rhs_raw_or_err) return std::unexpected(rhs_raw_or_err.error());
     return CommitManagedImmediate(
-        context, resolver, *dest_place, *rhs_raw_or_err,
+        context, facts, resolver, *dest_place, *rhs_raw_or_err,
         OwnershipPolicy::kMove);
   }
 
@@ -356,7 +360,7 @@ auto LowerAssign(
 
   // Shared path: resolve destination type and build write plan.
   // Works for both PlaceId and ExternalRefId destinations.
-  const auto& types = context.GetTypeArena();
+  const auto& types = *facts.types;
   TypeId type_id = detail::ResolveDestType(context, facts, dest);
   auto plan = BuildWritePlan(type_id, types);
 
@@ -426,7 +430,7 @@ auto LowerGuardedAssign(
   const auto& dest = guarded.dest;
   auto* dest_place = std::get_if<mir::PlaceId>(&dest);
   auto& builder = context.GetBuilder();
-  const auto& types = context.GetTypeArena();
+  const auto& types = *facts.types;
   TypeId dest_type_id = detail::ResolveDestType(context, facts, dest);
 
   // Bit-range is PlaceId-only (external refs have no projections).
@@ -490,7 +494,8 @@ auto LowerGuardedAssign(
     if (!result) return result;
   } else if (dest_place != nullptr && resolver.ManagesPlace(*dest_place)) {
     auto result = CommitManagedImmediate(
-        context, resolver, *dest_place, rhs_raw, OwnershipPolicy::kClone);
+        context, facts, resolver, *dest_place, rhs_raw,
+        OwnershipPolicy::kClone);
     if (!result) return result;
   } else {
     auto result = DispatchWrite(

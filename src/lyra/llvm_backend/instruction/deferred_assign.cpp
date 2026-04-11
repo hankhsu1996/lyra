@@ -53,17 +53,17 @@ struct StoreShape {
 // Uses MIR type for semantic classification; LLVM type only for mechanical
 // emission. Includes backstop: if MIR says scalar but LLVM disagrees, fall back
 // to AggregateBytes (safe, always works).
-auto ClassifyDeferredStoreByType(Context& context, TypeId type_id)
-    -> StoreShape {
-  const auto& types = context.GetTypeArena();
+auto ClassifyDeferredStoreByType(
+    Context& context, const CuFacts& facts, TypeId type_id) -> StoreShape {
+  const auto& types = *facts.types;
   const Type& type = types[type_id];
   auto* storage_ty = GetLlvmTypeForTypeId(
-      context.GetLlvmContext(), type_id, types, context.IsForceTwoState());
+      context.GetLlvmContext(), type_id, types, facts.force_two_state);
   const auto& dl = context.GetModule().getDataLayout();
 
   bool is_scalar_mir = IsPacked(type);
   if (is_scalar_mir) {
-    bool is_four_state = context.IsPackedFourState(type);
+    bool is_four_state = IsPackedFourState(facts, type);
     uint32_t bit_width = (type.Kind() == TypeKind::kIntegral)
                              ? type.AsIntegral().bit_width
                              : PackedBitWidth(type, types);
@@ -469,7 +469,7 @@ auto LowerDeferredAssign(
   }
 
   // Classify destination once via MIR type.
-  StoreShape shape = ClassifyDeferredStoreByType(context, dest_type);
+  StoreShape shape = ClassifyDeferredStoreByType(context, facts, dest_type);
 
   // Case 2: IndexProjection (PlaceId-only). Dynamic offset, always partial.
   if (dest_place != nullptr &&
@@ -502,7 +502,8 @@ auto LowerDeferredAssign(
       auto* body_offset =
           llvm::ConstantInt::get(i32_ty, slot_body_off + sub_offset);
       return EmitDeferredWriteLocal(
-          context, deferred, shape, body_offset, signal_id, dest_type, true);
+          context, facts, deferred, shape, body_offset, signal_id, dest_type,
+          true);
     }
     // Whole-slot write: no projections.
     auto* body_offset = llvm::ConstantInt::get(i32_ty, slot_body_off);
