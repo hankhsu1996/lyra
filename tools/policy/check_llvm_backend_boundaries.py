@@ -373,6 +373,7 @@ FOUR_STATE_INTRINSIC_ALLOWED_SRC = {
 
 FOUR_STATE_INTRINSIC_ALLOWED_HPP = {
     "include/lyra/llvm_backend/context.hpp",
+    "include/lyra/llvm_backend/cu_facts.hpp",
     "include/lyra/llvm_backend/layout/layout_four_state.hpp",
 }
 

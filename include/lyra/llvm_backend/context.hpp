@@ -15,11 +15,10 @@
 #include "lyra/common/slot_id.hpp"
 #include "lyra/common/symbol_types.hpp"
 #include "lyra/common/type_arena.hpp"
-#include "lyra/common/type_queries.hpp"
-#include "lyra/common/type_utils.hpp"
 #include "lyra/llvm_backend/commit/signal_id_expr.hpp"
 #include "lyra/llvm_backend/compute/temp_value.hpp"
 #include "lyra/llvm_backend/context_scope.hpp"
+#include "lyra/llvm_backend/cu_facts.hpp"
 #include "lyra/llvm_backend/layout/layout.hpp"
 #include "lyra/lowering/diagnostic_context.hpp"
 #include "lyra/mir/arena.hpp"
@@ -177,12 +176,10 @@ class Context {
 
  public:
   Context(
-      const mir::Arena& arena, const TypeArena& types, const Layout& layout,
+      const mir::Arena& arena, const CuFacts& facts,
       std::unique_ptr<llvm::LLVMContext> llvm_ctx,
       std::unique_ptr<llvm::Module> module,
-      const lowering::DiagnosticContext* diag_ctx,
-      const SourceManager* source_manager = nullptr,
-      bool force_two_state = false);
+      const lowering::DiagnosticContext* diag_ctx);
 
   [[nodiscard]] auto GetLlvmContext() -> llvm::LLVMContext& {
     return *llvm_context_;
@@ -200,8 +197,9 @@ class Context {
 
   // Get the design arena for cross-domain resolution.
   // Always valid -- set once at Context construction, never changed.
+  // MIGRATION SHIM: will be removed when callers use CuFacts directly.
   [[nodiscard]] auto GetDesignArena() const -> const mir::Arena& {
-    return *design_arena_;
+    return *facts_->design_arena;
   }
 
   // Canonical Place lookup from the body arena.
@@ -250,23 +248,21 @@ class Context {
     const lowering::DiagnosticContext* saved_;
   };
 
+  // MIGRATION SHIMS: will be removed when callers use CuFacts directly.
   [[nodiscard]] auto GetTypeArena() const -> const TypeArena& {
-    return types_;
+    return *facts_->types;
   }
   [[nodiscard]] auto GetLayout() const -> const Layout& {
-    return layout_;
+    return *facts_->layout;
   }
-
   [[nodiscard]] auto IsForceTwoState() const -> bool {
-    return force_two_state_;
+    return facts_->force_two_state;
   }
   [[nodiscard]] auto IsFourState(TypeId type_id) const -> bool {
-    if (force_two_state_) return false;
-    return lyra::IsIntrinsicallyFourState(type_id, types_);
+    return mir_to_llvm::IsFourState(*facts_, type_id);
   }
   [[nodiscard]] auto IsPackedFourState(const Type& type) const -> bool {
-    if (force_two_state_) return false;
-    return lyra::IsIntrinsicallyPackedFourState(type, types_);
+    return mir_to_llvm::IsPackedFourState(*facts_, type);
   }
 
   [[nodiscard]] auto GetLyraPrintLiteral() -> llvm::Function*;
@@ -494,17 +490,9 @@ class Context {
   [[nodiscard]] auto GetFrameFieldIndex(mir::PlaceId place_id) const
       -> uint32_t;
 
-  // Per-process setup (set before generating each process function).
-  // Design-global index path: used by standalone (init/connection) processes.
-  void SetCurrentProcess(size_t process_index);
-  // CU-local path: bind a specific ProcessLayout directly.
-  // Used by specialization compilation to avoid indexing design-global arrays.
+  // Bind a specific ProcessLayout for the current process being compiled.
   void SetCurrentProcess(const ProcessLayout* layout);
-  [[nodiscard]] auto GetCurrentProcessIndex() const -> size_t;
-  // CU-local process layout access. Returns the ProcessLayout bound by
-  // SetCurrentProcess(const ProcessLayout*). Falls back to
-  // layout_.processes[current_process_index_] if no direct binding is set
-  // (standalone process path).
+  // Returns the ProcessLayout bound by SetCurrentProcess.
   [[nodiscard]] auto GetCurrentProcessLayout() const -> const ProcessLayout&;
 
   // Slot addressing mode -- controls how kModuleSlot roots are lowered.
@@ -959,8 +947,9 @@ class Context {
   }
 
   // Access source manager for origin resolution.
+  // MIGRATION SHIM: will be removed when callers use CuFacts directly.
   [[nodiscard]] auto GetSourceManager() const -> const SourceManager* {
-    return source_manager_;
+    return facts_->source_manager;
   }
 
   // Register an owned string temp that needs release at end of statement
@@ -1069,10 +1058,10 @@ class Context {
       -> Result<llvm::Value*>;
 
   const mir::Arena* arena_;
-  const mir::Arena* design_arena_ = nullptr;
-  const TypeArena& types_;
-  const Layout& layout_;
-  bool force_two_state_ = false;
+  // Bridge pointer during CuFacts migration. Context does not own these facts;
+  // it forwards through this pointer. Will be removed when all callers
+  // take const CuFacts& explicitly.
+  const CuFacts* facts_ = nullptr;
 
   std::unique_ptr<llvm::LLVMContext> llvm_context_;
   std::unique_ptr<llvm::Module> llvm_module_;
@@ -1244,11 +1233,8 @@ class Context {
   // Cached union storage info (per union TypeId)
   absl::flat_hash_map<TypeId, CachedUnionInfo> union_storage_cache_;
 
-  // Current process index (set before generating each process).
-  // Used by standalone (init/connection) path to index layout_.processes.
-  size_t current_process_index_ = 0;
-  // CU-local direct process layout binding. When non-null, process layout
-  // accessors use this instead of layout_.processes[current_process_index_].
+  // Current process layout binding. Set by SetCurrentProcess before
+  // generating each process function.
   const ProcessLayout* current_process_layout_ = nullptr;
   // CU-local layout contract. Installed by SpecLayoutScope.
   const SpecLayoutContract* spec_layout_contract_ = nullptr;
@@ -1278,9 +1264,6 @@ class Context {
 
   // Diagnostic context for error reporting (resolves OriginId -> SourceSpan)
   const lowering::DiagnosticContext* diag_ctx_ = nullptr;
-
-  // Source manager for resolving SourceSpan -> file/line/col
-  const SourceManager* source_manager_ = nullptr;
 
   // Owned string temps that need release at end of current statement
   std::vector<llvm::Value*> owned_temps_;

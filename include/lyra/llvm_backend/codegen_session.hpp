@@ -13,6 +13,7 @@
 #include "lyra/common/diagnostic/diagnostic.hpp"
 #include "lyra/common/ext_ref_binding.hpp"
 #include "lyra/common/origin_id.hpp"
+#include "lyra/llvm_backend/cu_facts.hpp"
 #include "lyra/llvm_backend/deferred_thunk_abi.hpp"
 #include "lyra/llvm_backend/dpi_abi.hpp"
 #include "lyra/llvm_backend/layout/layout.hpp"
@@ -268,6 +269,7 @@ struct RealizationData {
 // must have stable addresses to keep the reference valid.
 struct CodegenSession {
   std::unique_ptr<Layout> layout;
+  std::unique_ptr<CuFacts> facts;
   std::unique_ptr<Context> context;
   RealizationData realization;
   std::vector<llvm::Function*> process_funcs;

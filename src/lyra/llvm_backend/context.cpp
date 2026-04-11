@@ -42,25 +42,20 @@
 namespace lyra::lowering::mir_to_llvm {
 
 Context::Context(
-    const mir::Arena& arena, const TypeArena& types, const Layout& layout,
+    const mir::Arena& arena, const CuFacts& facts,
     std::unique_ptr<llvm::LLVMContext> llvm_ctx,
     std::unique_ptr<llvm::Module> module,
-    const lowering::DiagnosticContext* diag_ctx,
-    const SourceManager* source_manager, bool force_two_state)
+    const lowering::DiagnosticContext* diag_ctx)
     : arena_(&arena),
-      design_arena_(&arena),
-      types_(types),
-      layout_(layout),
-      force_two_state_(force_two_state),
+      facts_(&facts),
       llvm_context_(std::move(llvm_ctx)),
       llvm_module_(std::move(module)),
       builder_(*llvm_context_),
-      diag_ctx_(diag_ctx),
-      source_manager_(source_manager) {
+      diag_ctx_(diag_ctx) {
 }
 
 auto Context::GetElemOpsForType(TypeId elem_type) -> Result<ElemOpsInfo> {
-  const Type& type = types_[elem_type];
+  const Type& type = (*facts_->types)[elem_type];
   auto* ptr_ty = llvm::PointerType::getUnqual(*llvm_context_);
   auto* null_ptr =
       llvm::ConstantPointerNull::get(llvm::cast<llvm::PointerType>(ptr_ty));
@@ -125,9 +120,9 @@ auto Context::GetOrCreateEnumValuesGlobal(TypeId enum_type)
     return it->second;
   }
 
-  const Type& type = types_[enum_type];
+  const Type& type = (*facts_->types)[enum_type];
   const auto& enum_info = type.AsEnum();
-  uint32_t bit_width = PackedBitWidth(type, types_);
+  uint32_t bit_width = PackedBitWidth(type, *facts_->types);
   uint32_t storage_bits =
       GetBackingLlvmType(*llvm_context_, bit_width)->getIntegerBitWidth();
   auto* elem_type = llvm::Type::getIntNTy(*llvm_context_, storage_bits);
@@ -156,24 +151,24 @@ auto Context::GetOrCreateEnumValuesGlobal(TypeId enum_type)
 }
 
 auto Context::GetHeaderType() const -> llvm::StructType* {
-  return layout_.header_type;
+  return facts_->layout->header_type;
 }
 
 auto Context::GetRuntimeInstanceType() const -> llvm::StructType* {
-  return layout_.runtime_instance_type;
+  return facts_->layout->runtime_instance_type;
 }
 
 auto Context::GetRuntimeInstanceStorageType() const -> llvm::StructType* {
-  return layout_.runtime_instance_storage_type;
+  return facts_->layout->runtime_instance_storage_type;
 }
 
 auto Context::GetDesignArenaSize() const -> uint64_t {
-  return layout_.design.arena_size;
+  return facts_->layout->design.arena_size;
 }
 
 auto Context::ResolveDesignSlotIndex(common::SlotId slot_id) const -> uint32_t {
-  auto it = layout_.design.slot_to_index.find(slot_id);
-  if (it == layout_.design.slot_to_index.end()) {
+  auto it = facts_->layout->design.slot_to_index.find(slot_id);
+  if (it == facts_->layout->design.slot_to_index.end()) {
     throw common::InternalError(
         "ResolveDesignSlotIndex", "design slot not found in layout");
   }
@@ -182,16 +177,16 @@ auto Context::ResolveDesignSlotIndex(common::SlotId slot_id) const -> uint32_t {
 
 auto Context::GetDesignSlotByteOffset(common::SlotId slot_id) const
     -> uint64_t {
-  return layout_.design.GetStorageByteOffset(slot_id);
+  return facts_->layout->design.GetStorageByteOffset(slot_id);
 }
 
 auto Context::GetDesignSlotStorageSpec(common::SlotId slot_id) const
     -> const SlotStorageSpec& {
-  return layout_.design.GetStorageSpec(slot_id);
+  return facts_->layout->design.GetStorageSpec(slot_id);
 }
 
 auto Context::GetDesignStorageSpecArena() const -> const StorageSpecArena& {
-  return layout_.design.storage_spec_arena;
+  return facts_->layout->design.storage_spec_arena;
 }
 
 auto Context::GetProcessFrameType() const -> llvm::StructType* {
@@ -252,7 +247,7 @@ auto Context::GetOrCreatePlaceStorage(const mir::PlaceRoot& root)
   }
 
   TypeId type_id = root.type;
-  const Type& type = types_[type_id];
+  const Type& type = (*facts_->types)[type_id];
 
   llvm::Type* llvm_type = nullptr;
   if (type.Kind() == TypeKind::kIntegral) {
@@ -274,7 +269,7 @@ auto Context::GetOrCreatePlaceStorage(const mir::PlaceRoot& root)
       type.Kind() == TypeKind::kChandle) {
     llvm_type = llvm::PointerType::getUnqual(*llvm_context_);
   } else if (IsPacked(type)) {
-    auto width = PackedBitWidth(type, types_);
+    auto width = PackedBitWidth(type, *facts_->types);
     if (IsPackedFourState(type)) {
       llvm_type = GetBackingFourStateType(*llvm_context_, width);
     } else {
@@ -396,15 +391,6 @@ auto Context::TryGetTempConstantInt(int temp_id) const -> llvm::ConstantInt* {
   return llvm::dyn_cast<llvm::ConstantInt>(tv.value);
 }
 
-void Context::SetCurrentProcess(size_t process_index) {
-  current_process_index_ = process_index;
-  current_process_layout_ = nullptr;
-  state_ptr_ = nullptr;
-  design_ptr_ = nullptr;
-  frame_ptr_ = nullptr;
-  engine_ptr_ = nullptr;
-}
-
 void Context::SetCurrentProcess(const ProcessLayout* layout) {
   current_process_layout_ = layout;
   state_ptr_ = nullptr;
@@ -413,15 +399,8 @@ void Context::SetCurrentProcess(const ProcessLayout* layout) {
   engine_ptr_ = nullptr;
 }
 
-auto Context::GetCurrentProcessIndex() const -> size_t {
-  return current_process_index_;
-}
-
 auto Context::GetCurrentProcessLayout() const -> const ProcessLayout& {
-  if (current_process_layout_ != nullptr) {
-    return *current_process_layout_;
-  }
-  return layout_.processes[current_process_index_];
+  return *current_process_layout_;
 }
 
 void Context::SetSlotAddressingMode(SlotAddressingMode mode) {
@@ -531,7 +510,7 @@ auto Context::LoadExternalRef(mir::ExternalRefId ref_id)
     -> Result<llvm::Value*> {
   auto root = ResolveExternalRefRoot(ref_id);
   auto* ptr = GetDesignGlobalSlotPointer(root.global_slot_value);
-  const Type& type = types_[root.type];
+  const Type& type = (*facts_->types)[root.type];
 
   // Canonical 4-state load for design-global slots (same logic as
   // LoadPlaceValue for kDesignGlobal roots).
@@ -540,7 +519,7 @@ auto Context::LoadExternalRef(mir::ExternalRefId ref_id)
   }
 
   auto* llvm_type = GetLlvmTypeForTypeId(
-      *llvm_context_, root.type, types_, IsForceTwoState());
+      *llvm_context_, root.type, *facts_->types, IsForceTwoState());
   return builder_.CreateLoad(llvm_type, ptr, "ext_ref_load");
 }
 
@@ -912,7 +891,7 @@ auto Context::BuildUserFunctionType(
       param_types.push_back(ptr_ty);
     } else {
       auto abi_info = ClassifyCallableValueAbi(
-          *llvm_context_, param.type, types_, force_two_state_);
+          *llvm_context_, param.type, *facts_->types, facts_->force_two_state);
       if (!abi_info) {
         return std::unexpected(
             GetDiagnosticContext().MakeUnsupported(
@@ -934,13 +913,14 @@ auto Context::BuildUserFunctionType(
   if (uses_sret) {
     llvm_ret_type = llvm::Type::getVoidTy(*llvm_context_);
   } else {
-    const Type& ret_type = types_[sig.return_type];
+    const Type& ret_type = (*facts_->types)[sig.return_type];
 
     if (ret_type.Kind() == TypeKind::kVoid) {
       llvm_ret_type = llvm::Type::getVoidTy(*llvm_context_);
     } else {
       auto abi_info = ClassifyCallableValueAbi(
-          *llvm_context_, sig.return_type, types_, force_two_state_);
+          *llvm_context_, sig.return_type, *facts_->types,
+          facts_->force_two_state);
       if (!abi_info) {
         return std::unexpected(
             GetDiagnosticContext().MakeUnsupported(

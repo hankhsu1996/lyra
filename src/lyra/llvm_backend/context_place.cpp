@@ -91,7 +91,7 @@ auto Context::ComputePlacePointer(
 
     // FieldProjection: struct field access
     if (const auto* field = std::get_if<mir::FieldProjection>(&proj.info)) {
-      const Type& cur_type = types_[current_type];
+      const Type& cur_type = (*facts_->types)[current_type];
       if (cur_type.Kind() != TypeKind::kUnpackedStruct) {
         throw common::InternalError(
             "GetPlacePointer", std::format(
@@ -124,7 +124,7 @@ auto Context::ComputePlacePointer(
     // changes)
     if (const auto* umem =
             std::get_if<mir::UnionMemberProjection>(&proj.info)) {
-      const Type& cur_type = types_[current_type];
+      const Type& cur_type = (*facts_->types)[current_type];
       if (cur_type.Kind() != TypeKind::kUnpackedUnion) {
         throw common::InternalError(
             "GetPlacePointer",
@@ -155,7 +155,7 @@ auto Context::ComputePlacePointer(
           "GetPlacePointer", "unsupported projection kind in LLVM backend");
     }
 
-    const Type& cur_type = types_[current_type];
+    const Type& cur_type = (*facts_->types)[current_type];
     if (cur_type.Kind() == TypeKind::kDynamicArray ||
         cur_type.Kind() == TypeKind::kQueue) {
       // Load the handle, call ElementPtr
@@ -349,9 +349,10 @@ auto Context::EmitSignalCoord(const mir::SignalRef& sig) -> SignalCoordExpr {
   // R5: Design-global signals that are actually instance-owned must emit
   // local identity with a resolved target instance pointer. This happens
   // for design-level connection processes writing to child port signals.
-  if (sig.id >= layout_.num_package_slots) {
+  if (sig.id >= facts_->layout->num_package_slots) {
     auto owner = ResolveInstanceOwnedFlatSlot(
-        layout_.num_package_slots, layout_.instance_slot_counts, sig.id);
+        facts_->layout->num_package_slots, facts_->layout->instance_slot_counts,
+        sig.id);
     auto& builder = GetBuilder();
     auto* i32_ty = llvm::Type::getInt32Ty(GetLlvmContext());
     auto* target_inst = builder.CreateCall(
@@ -383,7 +384,8 @@ auto ValidateDesignGlobalSignal(
 auto Context::EmitMutationTargetSignalCoord(const mir::SignalRef& sig)
     -> SignalCoordExpr {
   if (sig.scope == mir::SignalRef::Scope::kDesignGlobal) {
-    return EmitSignalCoord(ValidateDesignGlobalSignal(sig, layout_.design));
+    return EmitSignalCoord(
+        ValidateDesignGlobalSignal(sig, facts_->layout->design));
   }
   if (sig.scope == mir::SignalRef::Scope::kModuleLocal) {
     return EmitSignalCoord(sig);
@@ -646,8 +648,8 @@ auto Context::ComputeStaticProjectionOffset(mir::PlaceId place_id)
 auto Context::GetPlaceLlvmType(mir::PlaceId place_id) -> Result<llvm::Type*> {
   const auto& place = LookupPlace(place_id);
 
-  TypeId type_id = mir::TypeOfPlace(types_, place);
-  const Type& type = types_[type_id];
+  TypeId type_id = mir::TypeOfPlace(*facts_->types, place);
+  const Type& type = (*facts_->types)[type_id];
 
   if (type.Kind() == TypeKind::kIntegral) {
     uint32_t bit_width = type.AsIntegral().bit_width;
@@ -670,7 +672,7 @@ auto Context::GetPlaceLlvmType(mir::PlaceId place_id) -> Result<llvm::Type*> {
     return llvm::PointerType::getUnqual(*llvm_context_);
   }
   if (IsPacked(type)) {
-    auto width = PackedBitWidth(type, types_);
+    auto width = PackedBitWidth(type, *facts_->types);
     if (IsPackedFourState(type)) {
       return GetBackingFourStateType(*llvm_context_, width);
     }
@@ -718,7 +720,7 @@ auto Context::GetPlaceBaseType(mir::PlaceId place_id) -> Result<llvm::Type*> {
     if (std::holds_alternative<mir::BitRangeProjection>(proj.info)) {
       break;
     }
-    const Type& t = types_[base_type_id];
+    const Type& t = (*facts_->types)[base_type_id];
     if (t.Kind() == TypeKind::kUnpackedArray) {
       base_type_id = t.AsUnpackedArray().element_type;
     } else if (t.Kind() == TypeKind::kDynamicArray) {
@@ -753,7 +755,7 @@ auto Context::TryLoadCanonicalFourStateValue(llvm::Value* ptr, const Type& type)
   uint32_t bit_width = 0;
   if (IsPacked(type)) {
     if (!IsPackedFourState(type)) return std::nullopt;
-    bit_width = PackedBitWidth(type, types_);
+    bit_width = PackedBitWidth(type, *facts_->types);
   } else if (type.Kind() == TypeKind::kIntegral) {
     if (!IsPackedFourState(type)) return std::nullopt;
     bit_width = type.AsIntegral().bit_width;
@@ -770,8 +772,8 @@ auto Context::LoadPlaceValue(mir::PlaceId place_id) -> Result<llvm::Value*> {
   if (!ptr_result) return std::unexpected(ptr_result.error());
 
   const auto& place = LookupPlace(place_id);
-  TypeId type_id = mir::TypeOfPlace(types_, place);
-  const Type& type = types_[type_id];
+  TypeId type_id = mir::TypeOfPlace(*facts_->types, place);
+  const Type& type = (*facts_->types)[type_id];
 
   // Canonical 4-state load only for design storage (module slots, design
   // globals). Process-local variables use LLVM struct layout which differs
@@ -797,8 +799,8 @@ auto Context::LoadPlaceBaseValue(mir::PlaceId place_id)
   if (!ptr_result) return std::unexpected(ptr_result.error());
 
   const auto& place = LookupPlace(place_id);
-  TypeId base_type_id = mir::TypeOfPlaceBase(types_, place);
-  const Type& type = types_[base_type_id];
+  TypeId base_type_id = mir::TypeOfPlaceBase(*facts_->types, place);
+  const Type& type = (*facts_->types)[base_type_id];
 
   auto root_kind = place.root.kind;
   if (root_kind == mir::PlaceRoot::Kind::kModuleSlot ||
@@ -969,12 +971,12 @@ auto Context::GetRuntimeSignalSlot(const mir::SignalRef& sig) const
 
 auto Context::EmitIsTraceObservedOwnerSlot(uint32_t owner_slot)
     -> llvm::Value* {
-  if (owner_slot >= layout_.design.slots.size()) {
+  if (owner_slot >= facts_->layout->design.slots.size()) {
     throw common::InternalError(
         "Context::EmitIsTraceObservedOwnerSlot",
         std::format(
             "owner slot {} out of range (design has {} slots)", owner_slot,
-            layout_.design.slots.size()));
+            facts_->layout->design.slots.size()));
   }
   auto& builder = GetBuilder();
   auto* i32_ty = llvm::Type::getInt32Ty(GetLlvmContext());

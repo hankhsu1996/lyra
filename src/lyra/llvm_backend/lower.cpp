@@ -61,7 +61,8 @@ auto CompileStandaloneProcesses(
     Context& context, const mir::Arena* mir_arena,
     std::span<const LayoutModulePlan> module_plans,
     std::span<const ScheduledProcess> scheduled_processes,
-    size_t num_init_processes, size_t num_module_process_base,
+    std::span<const ProcessLayout> process_layouts, size_t num_init_processes,
+    size_t num_module_process_base,
     std::span<const Layout::ConnectionRealizationInfo> connection_infos,
     uint32_t wait_site_base, uint32_t back_edge_site_base)
     -> Result<StandaloneProcessProducts> {
@@ -70,7 +71,7 @@ auto CompileStandaloneProcesses(
   uint32_t conn_ordinal = 0;
 
   for (size_t i = 0; i < scheduled_processes.size(); ++i) {
-    context.SetCurrentProcess(i);
+    context.SetCurrentProcess(&process_layouts[i]);
 
     const auto& bp = scheduled_processes[i];
     const mir::Arena& proc_arena =
@@ -260,10 +261,17 @@ auto CompileDesignProcesses(const LoweringInput& input)
       topology.module_plans, *input.design, *input.mir_arena,
       *input.construction, *layout);
 
+  auto facts = std::make_unique<CuFacts>(CuFacts{
+      .design_arena = input.mir_arena,
+      .types = input.type_arena,
+      .layout = layout.get(),
+      .force_two_state = input.force_two_state,
+      .source_manager = input.source_manager,
+  });
+
   auto context = std::make_unique<Context>(
-      *input.mir_arena, *input.type_arena, *layout, std::move(llvm_ctx),
-      std::move(module), input.diag_ctx, input.source_manager,
-      input.force_two_state);
+      *input.mir_arena, *facts, std::move(llvm_ctx), std::move(module),
+      input.diag_ctx);
 
   // Specialization planning + compilation.
   std::span<const mir::DpiExportWrapperDesc> dpi_exports;
@@ -290,8 +298,9 @@ auto CompileDesignProcesses(const LoweringInput& input)
 
   auto standalone_result = CompileStandaloneProcesses(
       *context, input.mir_arena, topology.module_plans,
-      layout->scheduled_processes, layout->num_init_processes,
-      layout->num_module_process_base, layout->connection_realization_infos,
+      layout->scheduled_processes, layout->processes,
+      layout->num_init_processes, layout->num_module_process_base,
+      layout->connection_realization_infos,
       static_cast<uint32_t>(specs.wait_sites.size()),
       static_cast<uint32_t>(specs.back_edge_origins.size()));
   if (!standalone_result) return std::unexpected(standalone_result.error());
@@ -344,6 +353,7 @@ auto CompileDesignProcesses(const LoweringInput& input)
 
   return CodegenSession{
       .layout = std::move(layout),
+      .facts = std::move(facts),
       .context = std::move(context),
       .realization = std::move(realization),
       .process_funcs = std::move(standalone.process_funcs),
