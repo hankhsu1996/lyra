@@ -49,6 +49,7 @@ struct SlotUsageSummary {
   bool has_non_downstream_trigger_role = false;
   bool is_non_connection_trigger = false;
   bool is_process_body_read = false;
+  bool is_container = false;
 };
 
 // Build per-slot usage summaries from connection kernels and trigger summary.
@@ -66,6 +67,18 @@ auto BuildSlotUsageSummaries(
 // true means "this slot may be bypassable in realized routing/fanout".
 auto IsTrivialRelayCandidate(const SlotUsageSummary& summary) -> bool;
 
+// Identity-copy comb: a module body process that just copies one slot
+// to another (e.g., `assign data_out = data_reg`). When the output slot
+// is a relay candidate, downstream connections are rewritten to read
+// from the source slot directly. The comb itself continues to execute
+// inline (cheaper than full process activation) but its output becomes
+// dead storage -- no downstream connections or subscriptions observe it.
+struct IdentityCopyComb {
+  common::SlotId src_slot;
+  common::SlotId dst_slot;
+  common::SlotId trigger_slot;
+};
+
 // Connection analysis result for a design.
 // Carries the original connection edges (using original slot IDs, no
 // canonical-owner rewriting), per-slot usage summaries, and per-slot
@@ -74,6 +87,10 @@ struct ConnectionAnalysisResult {
   std::vector<ConnectionKernelEntry> connection_edges;
   std::vector<SlotUsageSummary> slot_usage;
   std::vector<bool> is_relay_candidate;
+  // Identity-copy combs detected during analysis. Consumed by
+  // EliminateRelayConnections to extend relay elimination to
+  // comb-backed pass-throughs.
+  std::vector<IdentityCopyComb> identity_copy_combs;
 };
 
 // Analyze connections for a design. Produces connection edges using original

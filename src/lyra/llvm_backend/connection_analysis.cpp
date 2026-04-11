@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cstdint>
+#include <unordered_map>
 
 #include "lyra/common/overloaded.hpp"
 #include "lyra/mir/effect.hpp"
@@ -192,9 +193,81 @@ auto IsTrivialRelayCandidate(const SlotUsageSummary& summary) -> bool {
   if (summary.has_non_downstream_trigger_role) return false;
   if (summary.is_non_connection_trigger) return false;
   if (summary.is_process_body_read) return false;
+  if (summary.is_container) return false;
 
   return true;
 }
+
+namespace {
+
+// Detect identity-copy comb processes: single-block looping processes
+// with exactly one Assign statement that copies one module slot to
+// another, triggered by the source slot via anychange Wait.
+auto CollectIdentityCopyCombs(std::span<const LayoutModulePlan> module_plans)
+    -> std::vector<IdentityCopyComb> {
+  std::vector<IdentityCopyComb> results;
+
+  for (uint32_t mi = 0; mi < module_plans.size(); ++mi) {
+    const auto& plan = module_plans[mi];
+    const auto& body = *plan.body;
+    uint32_t slot_base = plan.design_state_base_slot;
+
+    for (uint32_t pi = 0; pi < plan.body_processes.size(); ++pi) {
+      const auto& process = body.arena[plan.body_processes[pi]];
+      if (process.kind != mir::ProcessKind::kLooping) continue;
+      if (process.blocks.size() != 1) continue;
+
+      const auto& block = process.blocks[0];
+      if (block.statements.size() != 1) continue;
+
+      const auto* assign = std::get_if<mir::Assign>(&block.statements[0].data);
+      if (assign == nullptr) continue;
+
+      // Destination must be a module slot.
+      const auto* dst_place_id = std::get_if<mir::PlaceId>(&assign->dest);
+      if (dst_place_id == nullptr) continue;
+      const auto& dst_place = body.arena[*dst_place_id];
+      if (dst_place.root.kind != mir::PlaceRoot::Kind::kModuleSlot) continue;
+      if (!dst_place.projections.empty()) continue;
+
+      // RHS must be a simple use of another module slot (no projections).
+      const auto* rhs_op = std::get_if<mir::Operand>(&assign->rhs);
+      if (rhs_op == nullptr) continue;
+      if (rhs_op->kind != mir::Operand::Kind::kUse) continue;
+      auto src_place_id = std::get<mir::PlaceId>(rhs_op->payload);
+      const auto& src_place = body.arena[src_place_id];
+      if (src_place.root.kind != mir::PlaceRoot::Kind::kModuleSlot) continue;
+      if (!src_place.projections.empty()) continue;
+
+      // Terminator must be a Wait on the source slot with kAnyChange.
+      const auto* wait = std::get_if<mir::Wait>(&block.terminator.data);
+      if (wait == nullptr) continue;
+      if (wait->triggers.size() != 1) continue;
+      const auto& trigger = wait->triggers[0];
+      if (trigger.edge != common::EdgeKind::kAnyChange) continue;
+      if (trigger.signal.scope != mir::SignalRef::Scope::kModuleLocal) continue;
+      if (trigger.signal.id != static_cast<uint32_t>(src_place.root.id)) {
+        continue;
+      }
+
+      uint32_t src_global =
+          slot_base + static_cast<uint32_t>(src_place.root.id);
+      uint32_t dst_global =
+          slot_base + static_cast<uint32_t>(dst_place.root.id);
+
+      results.push_back(
+          IdentityCopyComb{
+              .src_slot = common::SlotId{src_global},
+              .dst_slot = common::SlotId{dst_global},
+              .trigger_slot = common::SlotId{src_global},
+          });
+    }
+  }
+
+  return results;
+}
+
+}  // namespace
 
 auto AnalyzeConnections(
     std::vector<ConnectionKernelEntry> kernel_entries,
@@ -208,8 +281,52 @@ auto AnalyzeConnections(
   auto trigger_summary =
       CollectTriggerSlotSummary(module_plans, design, design_arena);
 
+  auto identity_combs = CollectIdentityCopyCombs(module_plans);
+
   auto usage_summaries =
       BuildSlotUsageSummaries(kernel_entries, trigger_summary, num_slots);
+
+  // Mark container slots as non-eliminable. Package-level slots come from
+  // design.slots; instance-local slots come from module body slots.
+  auto num_package_slots = static_cast<uint32_t>(design.slots.size());
+  for (uint32_t s = 0; s < num_package_slots && s < num_slots; ++s) {
+    if (design.slots[s].IsOwnedContainer()) {
+      usage_summaries[s].is_container = true;
+    }
+  }
+  for (const auto& plan : module_plans) {
+    const auto& body_slots = plan.body->slots;
+    for (uint32_t ls = 0; ls < body_slots.size(); ++ls) {
+      uint32_t global = plan.design_state_base_slot + ls;
+      if (global < num_slots && body_slots[ls].IsOwnedContainer()) {
+        usage_summaries[global].is_container = true;
+      }
+    }
+  }
+
+  // For identity-copy combs, mark the output slot as having an upstream
+  // writer and the input slot as having a downstream consumer. This lets
+  // IsTrivialRelayCandidate classify comb-backed pass-throughs alongside
+  // connection-backed relays, without injecting synthetic connections.
+  for (const auto& ic : identity_combs) {
+    auto dst = ic.dst_slot.value;
+    auto src = ic.src_slot.value;
+    if (dst < num_slots) {
+      // The comb writes to dst -- count as an upstream writer.
+      // Use a sentinel index (UINT32_MAX) to distinguish from real
+      // connection indices.
+      usage_summaries[dst].upstream_conn_indices.push_back(UINT32_MAX);
+    }
+    if (src < num_slots) {
+      // The comb reads from src -- this is a downstream use of src,
+      // self-triggered (src == trigger) and full-slot.
+      usage_summaries[src].downstream_src_uses.push_back({
+          .conn_index = UINT32_MAX,
+          .self_triggered = true,
+          .full_slot_trigger = true,
+      });
+    }
+  }
 
   std::vector<bool> relay_candidates(num_slots, false);
   for (uint32_t i = 0; i < num_slots; ++i) {
@@ -220,6 +337,7 @@ auto AnalyzeConnections(
       .connection_edges = std::move(kernel_entries),
       .slot_usage = std::move(usage_summaries),
       .is_relay_candidate = std::move(relay_candidates),
+      .identity_copy_combs = std::move(identity_combs),
   };
 }
 
@@ -227,6 +345,12 @@ auto EliminateRelayConnections(ConnectionAnalysisResult& analysis) -> uint32_t {
   auto& edges = analysis.connection_edges;
   const auto& slot_usage = analysis.slot_usage;
   const auto& is_relay = analysis.is_relay_candidate;
+
+  // Build dst_slot -> identity-copy-comb lookup for comb-backed relays.
+  std::unordered_map<uint32_t, const IdentityCopyComb*> comb_by_dst;
+  for (const auto& ic : analysis.identity_copy_combs) {
+    comb_by_dst[ic.dst_slot.value] = &ic;
+  }
 
   std::vector<bool> edge_deleted(edges.size(), false);
   uint32_t eliminated = 0;
@@ -239,36 +363,52 @@ auto EliminateRelayConnections(ConnectionAnalysisResult& analysis) -> uint32_t {
     // Safety: exactly 1 upstream writer.
     if (summary.upstream_conn_indices.size() != 1) continue;
     uint32_t up_idx = summary.upstream_conn_indices[0];
-    if (edge_deleted[up_idx]) continue;
-    const auto& up_edge = edges[up_idx];
 
-    // Safety: upstream must be port-binding origin.
-    if (up_edge.origin != metadata::ConnectionKernelOrigin::kPortBinding) {
-      continue;
+    // Determine upstream source: either a real connection edge or an
+    // identity-copy comb (sentinel UINT32_MAX).
+    bool upstream_is_comb = (up_idx == UINT32_MAX);
+    common::SlotId upstream_src{};
+    common::SlotId upstream_trigger{};
+    common::EdgeKind upstream_edge = common::EdgeKind::kAnyChange;
+
+    if (upstream_is_comb) {
+      auto it = comb_by_dst.find(slot);
+      if (it == comb_by_dst.end()) continue;
+      upstream_src = it->second->src_slot;
+      upstream_trigger = it->second->trigger_slot;
+    } else {
+      if (edge_deleted[up_idx]) continue;
+      const auto& up_edge = edges[up_idx];
+      if (up_edge.origin != metadata::ConnectionKernelOrigin::kPortBinding) {
+        continue;
+      }
+      if (up_edge.trigger_observation.has_value() &&
+          up_edge.trigger_observation->byte_size > 0) {
+        continue;
+      }
+      upstream_src = up_edge.src_slot;
+      upstream_trigger = up_edge.trigger_slot;
+      upstream_edge = up_edge.trigger_edge;
     }
 
-    // Safety: upstream must be full-slot copy (no sub-slot observation).
-    if (up_edge.trigger_observation.has_value() &&
-        up_edge.trigger_observation->byte_size > 0) {
-      continue;
-    }
-
-    // Check all downstream edges.
+    // Check all downstream edges (must be real connections, not combs).
     bool all_safe = true;
     for (const auto& down_use : summary.downstream_src_uses) {
+      if (down_use.conn_index == UINT32_MAX) {
+        // Downstream is another comb -- skip this relay (chained combs
+        // not handled in this first cut).
+        all_safe = false;
+        break;
+      }
       if (edge_deleted[down_use.conn_index]) {
         all_safe = false;
         break;
       }
       const auto& down_edge = edges[down_use.conn_index];
-
-      // Safety: port-binding origin.
       if (down_edge.origin != metadata::ConnectionKernelOrigin::kPortBinding) {
         all_safe = false;
         break;
       }
-
-      // Safety: self-triggered, full-slot.
       if (!down_use.self_triggered || !down_use.full_slot_trigger) {
         all_safe = false;
         break;
@@ -276,17 +416,22 @@ auto EliminateRelayConnections(ConnectionAnalysisResult& analysis) -> uint32_t {
     }
     if (!all_safe) continue;
 
-    // Rewrite downstream edges to read from the upstream source.
+    // Rewrite downstream connection edges to read from upstream source.
     for (const auto& down_use : summary.downstream_src_uses) {
+      if (down_use.conn_index == UINT32_MAX) continue;
       auto& down_edge = edges[down_use.conn_index];
-      down_edge.src_slot = up_edge.src_slot;
-      down_edge.trigger_slot = up_edge.trigger_slot;
-      down_edge.trigger_edge = up_edge.trigger_edge;
-      down_edge.trigger_observation = up_edge.trigger_observation;
+      down_edge.src_slot = upstream_src;
+      down_edge.trigger_slot = upstream_trigger;
+      down_edge.trigger_edge = upstream_edge;
+      down_edge.trigger_observation = std::nullopt;
     }
 
-    // Delete the upstream edge (U -> R).
-    edge_deleted[up_idx] = true;
+    // Delete the upstream edge if it is a real connection.
+    // Comb-backed upstreams continue to execute inline (cheaper than
+    // full process activation) -- only the downstream routing is removed.
+    if (!upstream_is_comb) {
+      edge_deleted[up_idx] = true;
+    }
     ++eliminated;
   }
 
