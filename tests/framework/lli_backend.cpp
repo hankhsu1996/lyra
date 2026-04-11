@@ -55,7 +55,7 @@ auto RunLliBackend(
       result.execution.error_message = "Failed to write IR file";
       return result;
     }
-    out << lowering::mir_to_llvm::DumpLlvmIr(prep_result->llvm_result);
+    out << lowering::mir_to_llvm::DumpLlvmIr(*prep_result->llvm_result.module);
   }
   result.artifacts.timings.backend =
       std::chrono::duration<double>(Clock::now() - t_backend).count();

@@ -5,18 +5,17 @@
 #include <vector>
 
 #include <llvm/IR/Constant.h>
-#include <llvm/IR/IRBuilder.h>
+#include <llvm/IR/LLVMContext.h>
+#include <llvm/IR/Module.h>
 #include <llvm/IR/Value.h>
 
 #include "lyra/common/origin_id.hpp"
+#include "lyra/llvm_backend/layout/layout.hpp"
 #include "lyra/llvm_backend/lowering_reports.hpp"
 #include "lyra/lowering/diagnostic_context.hpp"
 #include "lyra/metadata/design_metadata.hpp"
 
 namespace lyra::lowering::mir_to_llvm {
-
-class Context;
-struct Layout;
 
 // Extract back-edge site inputs from pre-assembled origin array.
 auto PrepareBackEdgeSiteInputs(
@@ -25,10 +24,12 @@ auto PrepareBackEdgeSiteInputs(
     const SourceManager* source_manager)
     -> std::vector<metadata::BackEdgeSiteInput>;
 
-// Extract connection descriptor entries from canonical layout.
-// Trigger observation data is pre-resolved in the layout; no arena access
-// needed.
-auto ExtractConnectionDescriptorEntries(const Layout& layout)
+// Extract connection descriptor entries from layout components.
+// Trigger observation data is pre-resolved; no arena access needed.
+auto ExtractConnectionDescriptorEntries(
+    std::span<const ConnectionKernelEntry> kernel_entries,
+    const DesignLayout& design, uint32_t num_package_slots,
+    std::span<const uint32_t> instance_slot_counts)
     -> std::vector<metadata::ConnectionDescriptorEntry>;
 
 // Find port-binding forwarding candidates. Analysis only -- does not
@@ -37,7 +38,10 @@ auto ExtractConnectionDescriptorEntries(const Layout& layout)
 // (like active trace references) are flagged but do not exclude.
 auto FindPortBindingForwardingCandidates(
     std::span<const metadata::ConnectionDescriptorEntry> connections,
-    const Layout& layout) -> std::vector<PortBindingForwardingCandidate>;
+    uint32_t num_slots,
+    std::span<const Layout::BodyRuntimeDescriptors> body_runtime_descriptors,
+    const OwnedTriggerTemplate& connection_triggers)
+    -> std::vector<PortBindingForwardingCandidate>;
 
 // Result of emitting DesignMetadata as LLVM globals.
 struct MetadataGlobals {
@@ -53,7 +57,7 @@ struct MetadataGlobals {
 // table packing or serialization. All tables in DesignMetadata are already
 // runtime-shaped.
 auto EmitDesignMetadataGlobals(
-    Context& context, const metadata::DesignMetadata& metadata)
-    -> MetadataGlobals;
+    llvm::Module& mod, llvm::LLVMContext& ctx,
+    const metadata::DesignMetadata& metadata) -> MetadataGlobals;
 
 }  // namespace lyra::lowering::mir_to_llvm

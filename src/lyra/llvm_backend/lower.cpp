@@ -178,29 +178,23 @@ struct FinalPackaging {
 };
 
 auto BuildFinalPackaging(
-    const mir::Design& design, const mir::ConstructionInput& construction,
-    const Layout& layout,
+    std::span<const mir::DesignElement> design_elements,
+    std::span<const Layout::BodyRealizationInfo> body_realization_infos,
+    std::span<const Layout::BodyRuntimeDescriptors> body_runtime_descriptors,
+    uint32_t num_instances,
     std::unordered_map<const mir::ModuleBody*, std::vector<llvm::Function*>>
         body_to_compiled_funcs) -> FinalPackaging {
-  if (construction.objects.size() != construction.const_blocks.size()) {
-    throw common::InternalError(
-        "BuildFinalPackaging",
-        std::format(
-            "construction objects/const_blocks size mismatch: {} vs {}",
-            construction.objects.size(), construction.const_blocks.size()));
-  }
-
   FinalPackaging pkg;
 
-  for (const auto& info : layout.body_realization_infos) {
+  for (size_t bi = 0; bi < body_realization_infos.size(); ++bi) {
+    const auto& info = body_realization_infos[bi];
     auto it = body_to_compiled_funcs.find(info.body);
     if (it == body_to_compiled_funcs.end()) {
       throw common::InternalError(
           "BuildFinalPackaging",
           std::format("no compiled functions for body {}", info.body_id.value));
     }
-    const auto& rt = layout.body_runtime_descriptors
-                         [&info - layout.body_realization_infos.data()];
+    const auto& rt = body_runtime_descriptors[bi];
     if (it->second.size() != rt.process_schema_indices.size()) {
       throw common::InternalError(
           "BuildFinalPackaging",
@@ -216,13 +210,12 @@ auto BuildFinalPackaging(
   }
 
   std::unordered_map<const mir::ModuleBody*, uint32_t> body_to_group;
-  for (size_t gi = 0; gi < layout.body_realization_infos.size(); ++gi) {
-    body_to_group[layout.body_realization_infos[gi].body] =
-        static_cast<uint32_t>(gi);
+  for (size_t gi = 0; gi < body_realization_infos.size(); ++gi) {
+    body_to_group[body_realization_infos[gi].body] = static_cast<uint32_t>(gi);
   }
   {
     uint32_t mi = 0;
-    for (const auto& element : design.elements) {
+    for (const auto& element : design_elements) {
       const auto* mod = std::get_if<mir::Module>(&element);
       if (mod == nullptr) continue;
       auto it = body_to_group.find(mod->body);
@@ -235,13 +228,12 @@ auto BuildFinalPackaging(
       ++mi;
     }
   }
-  if (pkg.instance_body_group.size() != layout.instance_storage_bases.size()) {
+  if (pkg.instance_body_group.size() != num_instances) {
     throw common::InternalError(
         "BuildFinalPackaging",
         std::format(
             "instance_body_group size {} != instance count {}",
-            pkg.instance_body_group.size(),
-            layout.instance_storage_bases.size()));
+            pkg.instance_body_group.size(), num_instances));
   }
 
   return pkg;
@@ -304,8 +296,19 @@ auto CompileDesignProcesses(const LoweringInput& input)
       standalone.connection_trigger_writebacks, *layout);
 
   // Final packaging + runtime data extraction.
+  if (input.construction->objects.size() !=
+      input.construction->const_blocks.size()) {
+    throw common::InternalError(
+        "CompileDesignProcesses",
+        std::format(
+            "construction objects/const_blocks size mismatch: {} vs {}",
+            input.construction->objects.size(),
+            input.construction->const_blocks.size()));
+  }
   auto packaging = BuildFinalPackaging(
-      *input.design, *input.construction, *layout,
+      input.design->elements, layout->body_realization_infos,
+      layout->body_runtime_descriptors,
+      static_cast<uint32_t>(layout->instance_storage_bases.size()),
       std::move(specs.body_to_compiled_funcs));
 
   auto runtime_products = ExtractRuntimeData(
@@ -442,10 +445,10 @@ void EmitTimeReport(Context& context) {
   context.GetBuilder().CreateCall(context.GetLyraReportTime());
 }
 
-auto DumpLlvmIr(const LoweringResult& result) -> std::string {
+auto DumpLlvmIr(const llvm::Module& module) -> std::string {
   std::string ir;
   llvm::raw_string_ostream stream(ir);
-  result.module->print(stream, nullptr);
+  module.print(stream, nullptr);
   return ir;
 }
 

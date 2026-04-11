@@ -399,7 +399,7 @@ auto PrepareLlvmModule(
   }
 
   if (test_case.dump_llvm_ir) {
-    compiler_output += lowering::mir_to_llvm::DumpLlvmIr(*llvm_result);
+    compiler_output += lowering::mir_to_llvm::DumpLlvmIr(*llvm_result->module);
   }
 
   double llvm_lower_seconds =

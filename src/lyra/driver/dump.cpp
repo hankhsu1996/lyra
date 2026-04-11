@@ -306,7 +306,7 @@ auto DumpLlvm(const CompilationInput& input) -> int {
     return 1;
   }
 
-  std::cout << lowering::mir_to_llvm::DumpLlvmIr(*llvm_result);
+  std::cout << lowering::mir_to_llvm::DumpLlvmIr(*llvm_result->module);
 
   output.Flush();
   return 0;

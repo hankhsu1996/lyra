@@ -129,7 +129,7 @@ struct LoweringResult {
 
 auto LowerMirToLlvm(const LoweringInput& input) -> Result<LoweringResult>;
 
-auto DumpLlvmIr(const LoweringResult& result) -> std::string;
+auto DumpLlvmIr(const llvm::Module& module) -> std::string;
 
 // Emit variable registration calls for runtime inspection.
 // Consumes a typed InspectionPlan built by BuildInspectionPlan.

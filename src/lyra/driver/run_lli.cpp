@@ -200,7 +200,7 @@ auto RunLli(const ValidatedCompilationInput& input) -> int {
       output.Flush();
       return 1;
     }
-    out << lowering::mir_to_llvm::DumpLlvmIr(*llvm_result);
+    out << lowering::mir_to_llvm::DumpLlvmIr(*llvm_result->module);
   }
 
   std::vector<std::string> tried_paths;

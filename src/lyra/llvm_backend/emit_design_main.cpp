@@ -209,12 +209,13 @@ void EmitRuntimeInit(
 }
 
 void EmitInitProcesses(
-    Context& context, llvm::Value* design_state, const Layout& layout,
+    Context& context, llvm::Value* design_state,
+    std::span<const ProcessLayout> processes,
     const std::vector<llvm::Function*>& process_funcs, size_t num_init) {
   auto& builder = context.GetBuilder();
 
   for (size_t i = 0; i < num_init; ++i) {
-    const auto& proc_layout = layout.processes[i];
+    const auto& proc_layout = processes[i];
 
     auto* process_state = builder.CreateAlloca(
         proc_layout.state_type, nullptr, std::format("init_state_{}", i));
@@ -286,15 +287,21 @@ auto BuildDesignMetadataOutputs(
     Context& context, const Layout& layout, const EmitDesignMainInput& input,
     std::span<const common::OriginId> back_edge_origins)
     -> DesignMetadataOutputs {
-  auto conn_desc_entries = ExtractConnectionDescriptorEntries(layout);
+  auto conn_desc_entries = ExtractConnectionDescriptorEntries(
+      layout.connection_kernel_entries, layout.design, layout.num_package_slots,
+      layout.instance_slot_counts);
   auto back_edge_site_inputs = PrepareBackEdgeSiteInputs(
       back_edge_origins, input.diag_ctx, input.source_manager);
 
   // Port-binding forwarding candidate analysis (analysis only, no transform).
   ForwardingAnalysisReport forwarding_report;
   if (input.collect_forwarding_analysis) {
-    forwarding_report = ForwardingAnalysisReport(
-        FindPortBindingForwardingCandidates(conn_desc_entries, layout));
+    forwarding_report =
+        ForwardingAnalysisReport(FindPortBindingForwardingCandidates(
+            conn_desc_entries,
+            static_cast<uint32_t>(layout.design.slots.size()),
+            layout.body_runtime_descriptors,
+            layout.connection_templates.triggers));
   }
 
   metadata::DesignMetadataInputs metadata_inputs{
@@ -304,7 +311,8 @@ auto BuildDesignMetadataOutputs(
   auto metadata = realization::BuildDesignMetadata(metadata_inputs);
 
   return DesignMetadataOutputs{
-      .globals = EmitDesignMetadataGlobals(context, metadata),
+      .globals = EmitDesignMetadataGlobals(
+          context.GetModule(), context.GetLlvmContext(), metadata),
       .forwarding_analysis = std::move(forwarding_report),
   };
 }
@@ -700,7 +708,8 @@ auto EmitDesignMain(
       input.hooks->OnAfterInitializeDesignState(context, design_state);
     }
 
-    EmitInitProcesses(context, design_state, layout, process_funcs, num_init);
+    EmitInitProcesses(
+        context, design_state, layout.processes, process_funcs, num_init);
 
     if (input.hooks != nullptr) {
       input.hooks->OnBeforeRunSimulation(context, design_state);
@@ -798,7 +807,8 @@ auto EmitDesignMain(
       input.hooks->OnAfterInitializeDesignState(context, design_state);
     }
 
-    EmitInitProcesses(context, design_state, layout, process_funcs, num_init);
+    EmitInitProcesses(
+        context, design_state, layout.processes, process_funcs, num_init);
 
     if (input.hooks != nullptr) {
       input.hooks->OnBeforeRunSimulation(context, design_state);
