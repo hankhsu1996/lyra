@@ -512,15 +512,10 @@ void Engine::PromoteGlobalFrontier() {
 
 void Engine::FlushAndPropagateConnections() {
   // Check whether there is any work to do across both domains.
+  // Use the sparse delta_dirty_instances_ index for local dirty check
+  // instead of scanning all instances -- O(1) vs O(N).
   bool has_global_dirty = !update_set_.DeltaDirtySlots().empty();
-  bool has_local_dirty = false;
-  for (auto* inst : instances_) {
-    if (inst->observability.local_signal_count > 0 &&
-        !inst->observability.local_updates.DeltaDirtySignals().empty()) {
-      has_local_dirty = true;
-      break;
-    }
-  }
+  bool has_local_dirty = !delta_dirty_instances_.empty();
 
   if (detailed_stats_enabled_) {
     auto pending = update_set_.DeltaDirtySlots().size();
