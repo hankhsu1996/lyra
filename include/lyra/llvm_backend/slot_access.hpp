@@ -11,6 +11,7 @@
 #include "lyra/common/diagnostic/diagnostic.hpp"
 #include "lyra/common/type.hpp"
 #include "lyra/llvm_backend/activation_local.hpp"
+#include "lyra/llvm_backend/cu_facts.hpp"
 #include "lyra/llvm_backend/ownership.hpp"
 #include "lyra/mir/handle.hpp"
 #include "lyra/mir/terminator.hpp"

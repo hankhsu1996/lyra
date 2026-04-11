@@ -204,7 +204,7 @@ auto LowerUserCallImpl(
       if (!tmp_type) return std::unexpected(tmp_type.error());
       llvm::Value* ret_val = builder.CreateLoad(*tmp_type, *tmp_ptr);
       return CommitValue(
-          context, *call.ret->dest, ret_val, return_type,
+          context, facts, *call.ret->dest, ret_val, return_type,
           OwnershipPolicy::kMove);
     }
     // Expression form: Use(ret.tmp) handled by outer Assign
@@ -231,7 +231,7 @@ auto LowerUserCallImpl(
       builder.CreateStore(call_result, *tmp_ptr);
     }
     return CommitValue(
-        context, *call.ret->dest, call_result, return_type,
+        context, facts, *call.ret->dest, call_result, return_type,
         OwnershipPolicy::kMove);
   }
 
@@ -358,7 +358,7 @@ auto LowerValuePlusargsCall(
     // Commit only if statement form (dest has value)
     if (call.ret->dest.has_value()) {
       auto result = CommitValue(
-          context, *call.ret->dest, success, call.ret->type,
+          context, facts, *call.ret->dest, success, call.ret->type,
           OwnershipPolicy::kMove);
       if (!result) return result;
     }
@@ -383,7 +383,7 @@ auto LowerValuePlusargsCall(
   llvm::Value* output_val =
       builder.CreateLoad(*output_llvm_type, *output_tmp_ptr);
   auto commit_result = CommitValue(
-      context, wb.dest, output_val, output_type, OwnershipPolicy::kMove);
+      context, facts, wb.dest, output_val, output_type, OwnershipPolicy::kMove);
   if (!commit_result) return commit_result;
   builder.CreateBr(merge_bb);
 
@@ -392,7 +392,7 @@ auto LowerValuePlusargsCall(
 }
 
 auto LowerFgetsCall(
-    Context& context, const CuFacts& /*facts*/, const mir::Call& call)
+    Context& context, const CuFacts& facts, const mir::Call& call)
     -> Result<void> {
   auto& builder = context.GetBuilder();
 
@@ -433,7 +433,7 @@ auto LowerFgetsCall(
     // Commit only if statement form (dest has value)
     if (call.ret->dest.has_value()) {
       auto result = CommitValue(
-          context, *call.ret->dest, count, call.ret->type,
+          context, facts, *call.ret->dest, count, call.ret->type,
           OwnershipPolicy::kMove);
       if (!result) return result;
     }
@@ -445,7 +445,7 @@ auto LowerFgetsCall(
   llvm::Value* output_val =
       builder.CreateLoad(*output_llvm_type, *output_tmp_ptr);
   return CommitValue(
-      context, wb.dest, output_val, wb.type, OwnershipPolicy::kMove);
+      context, facts, wb.dest, output_val, wb.type, OwnershipPolicy::kMove);
 }
 
 auto LowerFreadCall(
@@ -594,7 +594,7 @@ auto LowerFreadCall(
     // Commit only if statement form (dest has value)
     if (call.ret->dest.has_value()) {
       auto result = CommitValue(
-          context, *call.ret->dest, bytes_read, call.ret->type,
+          context, facts, *call.ret->dest, bytes_read, call.ret->type,
           OwnershipPolicy::kMove);
       if (!result) return result;
     }
@@ -608,14 +608,14 @@ auto LowerFreadCall(
     llvm::Value* output_val =
         builder.CreateLoad(*output_llvm_type, target_ptr_val);
     return CommitValue(
-        context, wb.dest, output_val, wb.type, OwnershipPolicy::kMove);
+        context, facts, wb.dest, output_val, wb.type, OwnershipPolicy::kMove);
   }
   // kDirectToDest: runtime wrote directly, no commit needed
   return {};
 }
 
 auto LowerFscanfCall(
-    Context& context, const CuFacts& /*facts*/, const mir::Call& call)
+    Context& context, const CuFacts& facts, const mir::Call& call)
     -> Result<void> {
   auto& builder = context.GetBuilder();
 
@@ -688,7 +688,7 @@ auto LowerFscanfCall(
     // Commit only if statement form (dest has value)
     if (call.ret->dest.has_value()) {
       auto result = CommitValue(
-          context, *call.ret->dest, items_read, call.ret->type,
+          context, facts, *call.ret->dest, items_read, call.ret->type,
           OwnershipPolicy::kMove);
       if (!result) return result;
     }
@@ -729,7 +729,7 @@ auto LowerFscanfCall(
       llvm::Value* output_val =
           builder.CreateLoad(*output_llvm_type, *output_tmp_ptr);
       auto commit_result = CommitValue(
-          context, wb.dest, output_val, wb.type, OwnershipPolicy::kMove);
+          context, facts, wb.dest, output_val, wb.type, OwnershipPolicy::kMove);
       if (!commit_result) return commit_result;
 
       // After commit, continue to next check or merge

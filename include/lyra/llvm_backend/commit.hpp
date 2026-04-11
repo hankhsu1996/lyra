@@ -7,6 +7,7 @@
 #include "lyra/common/diagnostic/diagnostic.hpp"
 #include "lyra/common/type.hpp"
 #include "lyra/llvm_backend/commit/signal_id_expr.hpp"
+#include "lyra/llvm_backend/cu_facts.hpp"
 #include "lyra/llvm_backend/ownership.hpp"
 #include "lyra/llvm_backend/packed_storage_view.hpp"
 #include "lyra/mir/handle.hpp"
@@ -22,8 +23,9 @@ struct WriteTarget;
 // write dispatch boundary. Retained for callers (assoc_op, call, etc.) that
 // have an already-loaded llvm::Value*.
 auto CommitValue(
-    Context& ctx, mir::PlaceId target, llvm::Value* raw_value, TypeId type_id,
-    OwnershipPolicy policy) -> Result<void>;
+    Context& ctx, const CuFacts& facts, mir::PlaceId target,
+    llvm::Value* raw_value, TypeId type_id, OwnershipPolicy policy)
+    -> Result<void>;
 
 // Non-lossy packed value commit. Accepts a PackedRValue with preserved
 // 2-state/4-state semantics (unk == nullptr means provably 2-state).
@@ -67,12 +69,14 @@ void CommitMoveCleanupIfTemp(
 // with string-containing struct (not yet supported).
 // Caller ensures NeedsFieldByField(struct_type_id, types) is true.
 auto CommitStructFieldByField(
-    Context& ctx, const mir::WriteTarget& target, mir::PlaceId source,
-    TypeId struct_type_id, OwnershipPolicy policy) -> Result<void>;
+    Context& ctx, const CuFacts& facts, const mir::WriteTarget& target,
+    mir::PlaceId source, TypeId struct_type_id, OwnershipPolicy policy)
+    -> Result<void>;
 
 auto CommitArrayFieldByField(
-    Context& ctx, const mir::WriteTarget& target, mir::PlaceId source,
-    TypeId array_type_id, OwnershipPolicy policy) -> Result<void>;
+    Context& ctx, const CuFacts& facts, const mir::WriteTarget& target,
+    mir::PlaceId source, TypeId array_type_id, OwnershipPolicy policy)
+    -> Result<void>;
 
 // Resolve design signal ID for a target place (after alias resolution).
 // Returns SignalCoordExpr if design slot, nullopt if not.
@@ -87,8 +91,9 @@ namespace detail {
 // Callers should not reimplement field traversal or managed dispatch for
 // unpacked structs containing managed fields.
 auto TransferManagedStructFields(
-    Context& ctx, llvm::Value* source_ptr, llvm::Value* target_ptr,
-    TypeId struct_type_id, OwnershipPolicy policy) -> Result<void>;
+    Context& ctx, const CuFacts& facts, llvm::Value* source_ptr,
+    llvm::Value* target_ptr, TypeId struct_type_id, OwnershipPolicy policy)
+    -> Result<void>;
 
 // Field-level store for struct field-by-field assignment.
 // No WriteTarget (fields don't have signal_id), no notify.

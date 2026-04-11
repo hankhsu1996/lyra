@@ -755,7 +755,7 @@ auto CommitDpiOutputWritebacks(
       decoded = CoerceFromDpiAbiType(context, raw, param.abi_type, *dest_type);
     }
     auto result = CommitValue(
-        context, *binding.writeback_dest, decoded, param.sv_type,
+        context, facts, *binding.writeback_dest, decoded, param.sv_type,
         OwnershipPolicy::kMove);
     if (!result) return std::unexpected(result.error());
   }
@@ -893,7 +893,7 @@ auto CommitDpiReturnValue(
   if (call.ret->dest.has_value()) {
     llvm::Value* ret_val = builder.CreateLoad(*tmp_type, *tmp_ptr);
     return CommitValue(
-        context, *call.ret->dest, ret_val, call.ret->type,
+        context, facts, *call.ret->dest, ret_val, call.ret->type,
         OwnershipPolicy::kMove);
   }
 

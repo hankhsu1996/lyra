@@ -14,6 +14,7 @@
 #include "lyra/llvm_backend/commit.hpp"
 #include "lyra/llvm_backend/commit/access.hpp"
 #include "lyra/llvm_backend/context.hpp"
+#include "lyra/llvm_backend/cu_facts.hpp"
 #include "lyra/llvm_backend/layout/union_storage.hpp"
 #include "lyra/llvm_backend/lifecycle.hpp"
 #include "lyra/llvm_backend/ownership.hpp"
@@ -27,19 +28,21 @@ namespace lyra::lowering::mir_to_llvm {
 namespace {
 
 auto AssignArrayFieldByFieldInternal(
-    Context& context, llvm::Value* source_ptr, llvm::Value* target_ptr,
-    TypeId array_type_id, OwnershipPolicy policy) -> Result<void>;
+    Context& context, const CuFacts& facts, llvm::Value* source_ptr,
+    llvm::Value* target_ptr, TypeId array_type_id, OwnershipPolicy policy)
+    -> Result<void>;
 
 auto AssignStructFieldByFieldInternal(
-    Context& context, llvm::Value* source_ptr, llvm::Value* target_ptr,
-    TypeId struct_type_id, OwnershipPolicy policy) -> Result<void>;
+    Context& context, const CuFacts& facts, llvm::Value* source_ptr,
+    llvm::Value* target_ptr, TypeId struct_type_id, OwnershipPolicy policy)
+    -> Result<void>;
 
 auto AssignElement(
-    Context& context, llvm::Value* source_elem_ptr,
+    Context& context, const CuFacts& facts, llvm::Value* source_elem_ptr,
     llvm::Value* target_elem_ptr, llvm::Type* elem_llvm_type,
     TypeId elem_type_id, OwnershipPolicy policy) -> Result<void> {
   auto& builder = context.GetBuilder();
-  const auto& types = context.GetTypeArena();
+  const auto& types = *facts.types;
   const Type& elem_type = types[elem_type_id];
 
   if (elem_type.Kind() == TypeKind::kString) {
@@ -55,7 +58,8 @@ auto AssignElement(
   if (elem_type.Kind() == TypeKind::kUnpackedStruct) {
     if (NeedsFieldByField(elem_type_id, types)) {
       return AssignStructFieldByFieldInternal(
-          context, source_elem_ptr, target_elem_ptr, elem_type_id, policy);
+          context, facts, source_elem_ptr, target_elem_ptr, elem_type_id,
+          policy);
     }
     llvm::Value* val =
         builder.CreateLoad(elem_llvm_type, source_elem_ptr, "ae.agg");
@@ -66,7 +70,8 @@ auto AssignElement(
   if (elem_type.Kind() == TypeKind::kUnpackedArray) {
     if (NeedsFieldByField(elem_type_id, types)) {
       return AssignArrayFieldByFieldInternal(
-          context, source_elem_ptr, target_elem_ptr, elem_type_id, policy);
+          context, facts, source_elem_ptr, target_elem_ptr, elem_type_id,
+          policy);
     }
     llvm::Value* val =
         builder.CreateLoad(elem_llvm_type, source_elem_ptr, "ae.arr");
@@ -81,11 +86,11 @@ auto AssignElement(
 }
 
 auto AssignStructField(
-    Context& context, llvm::Value* source_field_ptr,
+    Context& context, const CuFacts& facts, llvm::Value* source_field_ptr,
     llvm::Value* target_field_ptr, llvm::Type* field_llvm_type,
     TypeId field_type_id, OwnershipPolicy policy) -> Result<void> {
   auto& builder = context.GetBuilder();
-  const auto& types = context.GetTypeArena();
+  const auto& types = *facts.types;
   const Type& field_type = types[field_type_id];
 
   if (field_type.Kind() == TypeKind::kString) {
@@ -101,7 +106,8 @@ auto AssignStructField(
   if (field_type.Kind() == TypeKind::kUnpackedStruct) {
     if (NeedsFieldByField(field_type_id, types)) {
       return AssignStructFieldByFieldInternal(
-          context, source_field_ptr, target_field_ptr, field_type_id, policy);
+          context, facts, source_field_ptr, target_field_ptr, field_type_id,
+          policy);
     }
     llvm::Value* val =
         builder.CreateLoad(field_llvm_type, source_field_ptr, "sf.agg");
@@ -112,7 +118,8 @@ auto AssignStructField(
   if (field_type.Kind() == TypeKind::kUnpackedArray) {
     if (NeedsFieldByField(field_type_id, types)) {
       return AssignArrayFieldByFieldInternal(
-          context, source_field_ptr, target_field_ptr, field_type_id, policy);
+          context, facts, source_field_ptr, target_field_ptr, field_type_id,
+          policy);
     }
     llvm::Value* val =
         builder.CreateLoad(field_llvm_type, source_field_ptr, "sf.arr");
@@ -127,10 +134,11 @@ auto AssignStructField(
 }
 
 auto AssignStructFieldByFieldInternal(
-    Context& context, llvm::Value* source_ptr, llvm::Value* target_ptr,
-    TypeId struct_type_id, OwnershipPolicy policy) -> Result<void> {
+    Context& context, const CuFacts& facts, llvm::Value* source_ptr,
+    llvm::Value* target_ptr, TypeId struct_type_id, OwnershipPolicy policy)
+    -> Result<void> {
   auto& builder = context.GetBuilder();
-  const auto& types = context.GetTypeArena();
+  const auto& types = *facts.types;
   const Type& struct_type = types[struct_type_id];
   const auto& struct_info = struct_type.AsUnpackedStruct();
 
@@ -152,18 +160,19 @@ auto AssignStructFieldByFieldInternal(
     llvm::Type* field_llvm_type = llvm_struct->getElementType(field_idx);
 
     auto result = AssignStructField(
-        context, src_field_ptr, tgt_field_ptr, field_llvm_type, field.type,
-        policy);
+        context, facts, src_field_ptr, tgt_field_ptr, field_llvm_type,
+        field.type, policy);
     if (!result) return result;
   }
   return {};
 }
 
 auto AssignArrayFieldByFieldInternal(
-    Context& context, llvm::Value* source_ptr, llvm::Value* target_ptr,
-    TypeId array_type_id, OwnershipPolicy policy) -> Result<void> {
+    Context& context, const CuFacts& facts, llvm::Value* source_ptr,
+    llvm::Value* target_ptr, TypeId array_type_id, OwnershipPolicy policy)
+    -> Result<void> {
   auto& builder = context.GetBuilder();
-  const auto& types = context.GetTypeArena();
+  const auto& types = *facts.types;
   const Type& type = types[array_type_id];
   const auto& arr_info = type.AsUnpackedArray();
   uint32_t count = arr_info.range.Size();
@@ -204,7 +213,7 @@ auto AssignArrayFieldByFieldInternal(
       llvm_array_type, target_ptr, {zero, phi}, "arr.asgn.tgt");
 
   auto result = AssignElement(
-      context, src_elem_ptr, tgt_elem_ptr, elem_llvm_type, elem_type_id,
+      context, facts, src_elem_ptr, tgt_elem_ptr, elem_llvm_type, elem_type_id,
       policy);
   if (!result) return result;
 
@@ -223,8 +232,9 @@ auto AssignArrayFieldByFieldInternal(
 }  // namespace
 
 auto CommitArrayFieldByField(
-    Context& ctx, const mir::WriteTarget& target, mir::PlaceId source,
-    TypeId array_type_id, OwnershipPolicy policy) -> Result<void> {
+    Context& ctx, const CuFacts& facts, const mir::WriteTarget& target,
+    mir::PlaceId source, TypeId array_type_id, OwnershipPolicy policy)
+    -> Result<void> {
   if (policy == OwnershipPolicy::kMove) {
     const auto& arena = ctx.GetMirArena();
     const auto& src_place = arena[source];
@@ -242,7 +252,7 @@ auto CommitArrayFieldByField(
   llvm::Value* source_ptr = *source_ptr_or_err;
 
   auto result = AssignArrayFieldByFieldInternal(
-      ctx, source_ptr, target_wt->ptr, array_type_id, policy);
+      ctx, facts, source_ptr, target_wt->ptr, array_type_id, policy);
   if (!result) return result;
 
   CommitNotifyAggregateIfDesignSlot(ctx, target);

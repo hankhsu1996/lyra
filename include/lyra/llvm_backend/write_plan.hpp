@@ -16,6 +16,7 @@
 namespace lyra::lowering::mir_to_llvm {
 
 class Context;
+struct CuFacts;
 
 // Canonical semantic classification of write strategy.
 // Single backend-wide authority. No callsite may re-derive write shape
@@ -83,14 +84,16 @@ using WriteSource =
 // Accepts mir::WriteTarget (PlaceId | ExternalRefId) -- root resolution
 // is handled internally via commit::Access::GetWriteTarget.
 auto DispatchWrite(
-    Context& ctx, const mir::WriteTarget& target, const WriteSource& source,
-    TypeId type_id, OwnershipPolicy policy) -> Result<void>;
+    Context& ctx, const CuFacts& facts, const mir::WriteTarget& target,
+    const WriteSource& source, TypeId type_id, OwnershipPolicy policy)
+    -> Result<void>;
 
 // Execute a pre-built write plan against a source.
 // Separated from DispatchWrite so callers (e.g. LowerRvalueAssign) can
 // inspect the plan before execution for special-case routing.
 auto ExecuteWritePlan(
-    Context& ctx, const mir::WriteTarget& target, const WriteSource& source,
-    const WritePlan& plan, OwnershipPolicy policy) -> Result<void>;
+    Context& ctx, const CuFacts& facts, const mir::WriteTarget& target,
+    const WriteSource& source, const WritePlan& plan, OwnershipPolicy policy)
+    -> Result<void>;
 
 }  // namespace lyra::lowering::mir_to_llvm

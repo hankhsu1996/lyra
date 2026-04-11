@@ -40,7 +40,7 @@ auto AssignPlace(
   TypeId type_id = detail::ResolveDestType(context, facts, target);
   OwnershipPolicy policy = DetermineOwnership(context, source);
   return DispatchWrite(
-      context, target, OperandSource{&source}, type_id, policy);
+      context, facts, target, OperandSource{&source}, type_id, policy);
 }
 
 }  // namespace lyra::lowering::mir_to_llvm

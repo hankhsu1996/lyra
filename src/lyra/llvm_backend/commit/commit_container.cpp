@@ -8,6 +8,7 @@
 #include "lyra/llvm_backend/commit.hpp"
 #include "lyra/llvm_backend/commit/access.hpp"
 #include "lyra/llvm_backend/context.hpp"
+#include "lyra/llvm_backend/cu_facts.hpp"
 #include "lyra/llvm_backend/lifecycle.hpp"
 #include "lyra/llvm_backend/lifecycle/detail.hpp"
 #include "lyra/llvm_backend/ownership.hpp"
@@ -20,8 +21,8 @@ namespace {
 // Handles destroy-old, store-new, and notify if design place.
 // The new_handle must already have the correct ownership (cloned if needed).
 void StoreContainerToWriteTarget(
-    Context& ctx, llvm::Value* new_handle, const WriteTarget& wt,
-    TypeId type_id) {
+    Context& ctx, const CuFacts& facts, llvm::Value* new_handle,
+    const WriteTarget& wt, TypeId type_id) {
   auto& builder = ctx.GetBuilder();
   auto* ptr_ty = llvm::PointerType::getUnqual(ctx.GetLlvmContext());
 
@@ -54,7 +55,7 @@ void StoreContainerToWriteTarget(
           {ctx.GetEnginePointer(), wt.ptr, new_handle,
            wt.canonical_signal_id->Emit(builder)});
     }
-    const auto& types = ctx.GetTypeArena();
+    const auto& types = *facts.types;
     if (types[type_id].Kind() == TypeKind::kAssociativeArray) {
       builder.CreateCall(ctx.GetLyraAssocRelease(), {old_handle});
     } else {
@@ -91,9 +92,10 @@ void StoreContainerToWriteTarget(
 // Container (DynArray, Queue) store: clone if kClone, then store via
 // WriteTarget
 auto CommitContainerValue(
-    Context& ctx, const WriteTarget& wt, llvm::Value* handle,
-    OwnershipPolicy policy, TypeId type_id) -> Result<void> {
-  const auto& types = ctx.GetTypeArena();
+    Context& ctx, const CuFacts& facts, const WriteTarget& wt,
+    llvm::Value* handle, OwnershipPolicy policy, TypeId type_id)
+    -> Result<void> {
+  const auto& types = *facts.types;
   const Type& type = types[type_id];
 
   if (type.Kind() != TypeKind::kDynamicArray &&
@@ -107,7 +109,7 @@ auto CommitContainerValue(
     handle = CloneLeafValue(ctx, handle, type_id);
   }
   // kMove: handle already has ownership, no clone needed
-  StoreContainerToWriteTarget(ctx, handle, wt, type_id);
+  StoreContainerToWriteTarget(ctx, facts, handle, wt, type_id);
   return {};
 }
 

@@ -31,7 +31,7 @@ auto CanonicalSlotAccess::LoadSlotValue(mir::PlaceId place_id)
 auto CanonicalSlotAccess::CommitSlotValue(
     mir::PlaceId target, llvm::Value* value, TypeId type_id,
     OwnershipPolicy policy) -> Result<void> {
-  return CommitValue(ctx_, target, value, type_id, policy);
+  return CommitValue(ctx_, ctx_.GetFacts(), target, value, type_id, policy);
 }
 
 auto CanonicalSlotAccess::ManagesPlace(mir::PlaceId /*place_id*/) const
@@ -86,7 +86,7 @@ auto ActivationLocalSlotAccess::CommitSlotValue(
     OwnershipPolicy policy) -> Result<void> {
   const auto* storage = FindManagedStorage(target);
   if (storage == nullptr) {
-    return CommitValue(ctx_, target, value, type_id, policy);
+    return CommitValue(ctx_, ctx_.GetFacts(), target, value, type_id, policy);
   }
   ctx_.GetBuilder().CreateStore(value, storage->shadow_ptr);
   return {};

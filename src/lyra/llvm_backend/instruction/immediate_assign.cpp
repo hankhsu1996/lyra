@@ -149,7 +149,7 @@ auto StoreFieldFromOperand(
     auto src_ptr = MaterializeOperandAsPtr(context, operand, field_type_id);
     if (!src_ptr) return std::unexpected(src_ptr.error());
     return detail::TransferManagedStructFields(
-        context, *src_ptr, field_ptr, field_type_id,
+        context, facts, *src_ptr, field_ptr, field_type_id,
         OwnershipForFieldOperand(operand));
   }
 
@@ -263,14 +263,14 @@ auto LowerRvalueAssign(
     packed.unk = rv_result->unknown;
     packed.semantic_bits = semantic_bits;
     return DispatchWrite(
-        context, target,
+        context, facts, target,
         PackedRValueSource{.rvalue = packed, .type_id = result_type},
         result_type, OwnershipPolicy::kMove);
   }
 
   // Non-packed types: raw value transport.
   return DispatchWrite(
-      context, target, RawValueSource{rv_result->value}, result_type,
+      context, facts, target, RawValueSource{rv_result->value}, result_type,
       OwnershipPolicy::kMove);
 }
 
@@ -373,7 +373,7 @@ auto LowerAssign(
         common::Overloaded{
             [&](const mir::Operand& operand) -> Result<void> {
               return DispatchWrite(
-                  context, dest, OperandSource{&operand}, type_id,
+                  context, facts, dest, OperandSource{&operand}, type_id,
                   DetermineOwnership(context, operand));
             },
             [&](const mir::Rvalue& rvalue) -> Result<void> {
@@ -401,7 +401,7 @@ auto LowerAssign(
         },
         assign.rhs);
     return DispatchWrite(
-        context, dest,
+        context, facts, dest,
         PackedRValueSource{.rvalue = *packed, .type_id = type_id}, type_id,
         policy);
   }
@@ -421,7 +421,7 @@ auto LowerAssign(
       },
       assign.rhs);
   return DispatchWrite(
-      context, dest, RawValueSource{*rhs_raw_or_err}, type_id, policy);
+      context, facts, dest, RawValueSource{*rhs_raw_or_err}, type_id, policy);
 }
 
 auto LowerGuardedAssign(
@@ -488,7 +488,7 @@ auto LowerGuardedAssign(
     if (!result) return result;
   } else if (is_packed_dest) {
     auto result = DispatchWrite(
-        context, dest,
+        context, facts, dest,
         PackedRValueSource{.rvalue = *packed_rhs, .type_id = dest_type_id},
         dest_type_id, OwnershipPolicy::kClone);
     if (!result) return result;
@@ -499,7 +499,7 @@ auto LowerGuardedAssign(
     if (!result) return result;
   } else {
     auto result = DispatchWrite(
-        context, dest, RawValueSource{rhs_raw}, dest_type_id,
+        context, facts, dest, RawValueSource{rhs_raw}, dest_type_id,
         OwnershipPolicy::kClone);
     if (!result) return result;
   }
