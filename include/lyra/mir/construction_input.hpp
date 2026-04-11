@@ -3,6 +3,7 @@
 #include <cstdint>
 #include <vector>
 
+#include "lyra/common/ext_ref_binding.hpp"
 #include "lyra/common/integral_constant.hpp"
 #include "lyra/common/module_identity.hpp"
 #include "lyra/common/symbol_types.hpp"
@@ -49,12 +50,12 @@ struct ConstructionInput {
   std::vector<InstanceConstBlock> const_blocks;
   std::vector<ObjectRecord> objects;
 
-  // Per-instance resolved external-ref global slot tables.
-  // Parallel to objects: instance_ext_ref_slots[oi] contains the resolved
-  // design-global slot for each external ref in the body's recipe list.
-  // Empty vector for instances whose body has no external refs.
-  // Computed by BuildPerInstanceExternalRefSlotTables during design lowering.
-  std::vector<std::vector<uint32_t>> instance_ext_ref_slots;
+  // Per-instance resolved external-ref runtime bindings.
+  // Parallel to objects. Each inner vector has one binding per ext-ref recipe
+  // in the owning body. Empty for instances whose body has no external refs.
+  // Computed by BuildPerInstanceExtRefRuntimeBindings during design lowering.
+  std::vector<std::vector<common::ResolvedExtRefBinding>>
+      instance_ext_ref_bindings;
 };
 
 }  // namespace lyra::mir

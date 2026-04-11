@@ -1644,19 +1644,26 @@ void LyraConstructionResultDestroy(void* result_raw) {
       static_cast<lyra::runtime::ConstructionResult*>(result_raw));
 }
 
-void LyraConstructionResultSetExtRefSlots(
-    void* result_raw, const uint32_t* pool, uint32_t pool_size,
-    const uint32_t* offsets, uint32_t num_instances) {
+void LyraConstructionResultSetExtRefBindings(
+    void* result_raw, const void* pool_raw, uint32_t pool_count,
+    const uint32_t* offsets, const uint32_t* counts, uint32_t num_instances) {
   if (result_raw == nullptr) return;
   auto& result = *static_cast<lyra::runtime::ConstructionResult*>(result_raw);
-  auto pool_span = std::span(pool, pool_size);
+  auto pool = std::span(
+      static_cast<const lyra::common::ResolvedExtRefBinding*>(pool_raw),
+      pool_count);
   auto offset_span = std::span(offsets, num_instances);
-  auto count =
+  auto count_span = std::span(counts, num_instances);
+  auto n =
       std::min(static_cast<size_t>(num_instances), result.instances.size());
-  for (size_t i = 0; i < count; ++i) {
-    if (offset_span[i] != UINT32_MAX && !pool_span.empty()) {
-      result.instances[i]->ext_ref_slots =
-          pool_span.subspan(offset_span[i]).data();
+  for (size_t i = 0; i < n; ++i) {
+    if (offset_span[i] == UINT32_MAX) {
+      result.instances[i]->ext_ref_bindings = nullptr;
+      result.instances[i]->ext_ref_binding_count = 0;
+    } else {
+      result.instances[i]->ext_ref_bindings =
+          pool.subspan(offset_span[i]).data();
+      result.instances[i]->ext_ref_binding_count = count_span[i];
     }
   }
 }

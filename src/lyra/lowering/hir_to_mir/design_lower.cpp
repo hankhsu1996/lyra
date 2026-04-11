@@ -1073,9 +1073,9 @@ auto LowerDesign(
   // provisionals for target_sym). CanonicalizeExternalRefPaths fills
   // target.path with DurableChildId entries (needs provisionals for
   // topology walk, but resolves through oi_to_durable_child, not
-  // debug_instance_sym). BuildPerInstanceExternalRefSlotTables walks
+  // debug_instance_sym). BuildPerInstanceExtRefBindings walks
   // each recipe from each instance's actual position to compute
-  // per-instance resolved global slot tables.
+  // per-instance resolved ext-ref runtime bindings.
   auto topo = BuildBoundHierarchyIndex(
       construction, parent_to_children, body_to_representative,
       oi_to_durable_child);
@@ -1090,8 +1090,9 @@ auto LowerDesign(
       result, provisionals_by_body, topo, oi_to_durable_child);
 
   // After canonicalization, provisionals_by_body is scratch-only.
-  // Build per-instance resolved global slot tables from canonical recipes.
-  BuildPerInstanceExternalRefSlotTables(result, construction, topo);
+  // Build per-instance resolved ext-ref runtime bindings from canonical
+  // recipes.
+  BuildPerInstanceExtRefBindings(result, construction, topo);
 
   // Propagate decision owner acceptance through design-global call graph.
   mir_arena.PropagateDeferredOwnerAbi();

@@ -11,6 +11,7 @@
 #include <llvm/IR/Function.h>
 
 #include "lyra/common/diagnostic/diagnostic.hpp"
+#include "lyra/common/ext_ref_binding.hpp"
 #include "lyra/llvm_backend/deferred_thunk_abi.hpp"
 #include "lyra/llvm_backend/layout/layout.hpp"
 #include "lyra/llvm_backend/lowering_reports.hpp"
@@ -181,11 +182,13 @@ struct ConstructionProgramData {
   std::vector<uint8_t> path_pool;
   std::vector<uint8_t> param_pool;
   std::vector<runtime::ConstructionProgramEntry> entries;
-  // Per-instance external-ref resolved global slot tables, packed flat.
-  // ext_ref_offsets[i] is the offset into ext_ref_pool for instance i
+  // Per-instance ext-ref binding records, packed flat.
+  // ext_ref_binding_offsets[i] is the index into binding_pool for instance i
   // (UINT32_MAX if that instance has no external refs).
-  std::vector<uint32_t> ext_ref_pool;
-  std::vector<uint32_t> ext_ref_offsets;
+  // ext_ref_binding_counts[i] is the number of bindings for instance i.
+  std::vector<common::ResolvedExtRefBinding> ext_ref_binding_pool;
+  std::vector<uint32_t> ext_ref_binding_offsets;
+  std::vector<uint32_t> ext_ref_binding_counts;
 };
 
 // Design-derived inputs for the realization/assembly phase, extracted during

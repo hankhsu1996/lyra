@@ -257,15 +257,10 @@ auto Context::GetWriteTarget(mir::PlaceId place_id) -> Result<WriteTarget> {
 auto Context::GetWriteTarget(mir::ExternalRefId ref_id) -> Result<WriteTarget> {
   auto root = ResolveExternalRefRoot(ref_id);
   auto* ptr = GetDesignGlobalSlotPointer(root.global_slot_value);
-  // External-ref signal identity is per-instance. The global_slot is
-  // already runtime-loaded from instance_ptr->ext_ref_slots[ref_id].
-  // Use GlobalRuntime to carry the runtime value through the commit layer.
-  auto signal_coord = SignalCoordExpr::GlobalRuntime(root.global_slot_value);
-  // External ref targets always require static dirty propagation.
-  // They are cross-instance writes that must always notify; the
-  // design-level contract bitmaps may not cover instance-owned slots.
-  // Since static propagation is unconditional, mutation_signal is not
-  // consulted (no trace-observation gating needed).
+  // External-ref dirty notification resolves through per-instance
+  // target tables to the target instance's local signal. Storage
+  // addressing still uses the design-global slot pointer.
+  auto signal_coord = SignalCoordExpr::ExtRef(ref_id.value);
   return WriteTarget{
       .ptr = ptr,
       .canonical_signal_id = signal_coord,

@@ -27,6 +27,9 @@ class SignalCoordExpr {
     kLocal,
     kLocalCrossInstance,
     kGlobal,
+    // External-ref write: dirty notification resolves through per-instance
+    // ext-ref target tables at runtime. value_ carries the ext-ref index.
+    kExtRef,
   };
 
   static auto Local(uint32_t id) -> SignalCoordExpr {
@@ -59,11 +62,21 @@ class SignalCoordExpr {
 
   // Runtime-loaded global signal. The slot ID is an LLVM Value loaded
   // at runtime (e.g., from per-instance ext_ref_slots). Used by external-ref
-  // write paths where the target slot varies per instance.
+  // read address resolution.
   static auto GlobalRuntime(llvm::Value* slot_value) -> SignalCoordExpr {
     SignalCoordExpr e;
     e.kind_ = Kind::kGlobal;
     e.runtime_value_ = slot_value;
+    return e;
+  }
+
+  // External-ref write notification. Dirty mark resolves through
+  // per-instance ext-ref target tables to the target instance's local signal.
+  // value_ is the ext-ref recipe index.
+  static auto ExtRef(uint32_t ref_index) -> SignalCoordExpr {
+    SignalCoordExpr e;
+    e.kind_ = Kind::kExtRef;
+    e.value_ = ref_index;
     return e;
   }
 
@@ -75,6 +88,9 @@ class SignalCoordExpr {
   }
   [[nodiscard]] auto IsGlobal() const -> bool {
     return kind_ == Kind::kGlobal;
+  }
+  [[nodiscard]] auto IsExtRef() const -> bool {
+    return kind_ == Kind::kExtRef;
   }
 
   [[nodiscard]] auto Value() const -> uint32_t {

@@ -251,12 +251,13 @@ auto BuildConstructionProgram(
     std::span<const uint32_t> instance_body_group, const Layout& layout,
     const mir::InstanceTable& instance_table,
     std::span<const std::vector<uint8_t>> param_payloads,
-    const std::vector<std::vector<uint32_t>>& instance_ext_ref_slots)
-    -> ConstructionProgramData {
+    const std::vector<std::vector<common::ResolvedExtRefBinding>>&
+        instance_ext_ref_bindings) -> ConstructionProgramData {
   auto instance_count = static_cast<uint32_t>(instance_body_group.size());
   ConstructionProgramData prog;
   prog.entries.reserve(instance_count);
-  prog.ext_ref_offsets.reserve(instance_count);
+  prog.ext_ref_binding_offsets.reserve(instance_count);
+  prog.ext_ref_binding_counts.reserve(instance_count);
 
   for (uint32_t mi = 0; mi < instance_count; ++mi) {
     runtime::ConstructionProgramEntry entry{};
@@ -280,16 +281,19 @@ auto BuildConstructionProgram(
     entry.realized_inline_size = sizes.inline_bytes;
     entry.realized_appendix_size = sizes.appendix_bytes;
 
-    // Pack per-instance ext_ref slots into flat pool.
-    if (mi < instance_ext_ref_slots.size() &&
-        !instance_ext_ref_slots[mi].empty()) {
-      prog.ext_ref_offsets.push_back(
-          static_cast<uint32_t>(prog.ext_ref_pool.size()));
-      const auto& slots = instance_ext_ref_slots[mi];
-      prog.ext_ref_pool.insert(
-          prog.ext_ref_pool.end(), slots.begin(), slots.end());
+    // Pack per-instance ext-ref binding records into flat pool.
+    if (mi < instance_ext_ref_bindings.size() &&
+        !instance_ext_ref_bindings[mi].empty()) {
+      auto offset = static_cast<uint32_t>(prog.ext_ref_binding_pool.size());
+      prog.ext_ref_binding_offsets.push_back(offset);
+      prog.ext_ref_binding_counts.push_back(
+          static_cast<uint32_t>(instance_ext_ref_bindings[mi].size()));
+      const auto& bindings = instance_ext_ref_bindings[mi];
+      prog.ext_ref_binding_pool.insert(
+          prog.ext_ref_binding_pool.end(), bindings.begin(), bindings.end());
     } else {
-      prog.ext_ref_offsets.push_back(UINT32_MAX);
+      prog.ext_ref_binding_offsets.push_back(UINT32_MAX);
+      prog.ext_ref_binding_counts.push_back(0);
     }
 
     prog.entries.push_back(entry);
@@ -586,22 +590,38 @@ void ExtractBodyTriggerTemplates(
         if (fact.has_observed_place) {
           flags |= runtime::kTriggerTemplateFlagHasObservedPlace;
         }
-        if (fact.signal.scope == mir::SignalRef::Scope::kDesignGlobal) {
+        if (fact.external_ref_index.has_value()) {
+          flags |= runtime::kTriggerTemplateFlagExternalRef;
+          bp.triggers.entries.push_back(
+              runtime::TriggerTemplateEntry{
+                  .slot_id = *fact.external_ref_index,
+                  .edge = static_cast<uint32_t>(fact.edge),
+                  .flags = flags,
+              });
+        } else if (fact.signal.scope == mir::SignalRef::Scope::kDesignGlobal) {
           flags |= runtime::kTriggerTemplateFlagDesignGlobal;
-        } else if (fact.signal.id >= info.slot_count) {
-          throw common::InternalError(
-              "ExtractBodyTriggerTemplates",
-              std::format(
-                  "body {} proc {} trigger slot_id {} >= slot_count {}",
-                  info.body_id.value, nonfinal_proc_ordinal, fact.signal.id,
-                  info.slot_count));
+          bp.triggers.entries.push_back(
+              runtime::TriggerTemplateEntry{
+                  .slot_id = fact.signal.id,
+                  .edge = static_cast<uint32_t>(fact.edge),
+                  .flags = flags,
+              });
+        } else {
+          if (fact.signal.id >= info.slot_count) {
+            throw common::InternalError(
+                "ExtractBodyTriggerTemplates",
+                std::format(
+                    "body {} proc {} trigger slot_id {} >= slot_count {}",
+                    info.body_id.value, nonfinal_proc_ordinal, fact.signal.id,
+                    info.slot_count));
+          }
+          bp.triggers.entries.push_back(
+              runtime::TriggerTemplateEntry{
+                  .slot_id = fact.signal.id,
+                  .edge = static_cast<uint32_t>(fact.edge),
+                  .flags = flags,
+              });
         }
-        bp.triggers.entries.push_back(
-            runtime::TriggerTemplateEntry{
-                .slot_id = fact.signal.id,
-                .edge = static_cast<uint32_t>(fact.edge),
-                .flags = flags,
-            });
       }
       auto range_count =
           static_cast<uint32_t>(bp.triggers.entries.size() - range_start);
@@ -1077,7 +1097,7 @@ void ExtractBodyInitDescriptors(
 
   construction_program = BuildConstructionProgram(
       instance_body_group, layout, input.construction->instance_table,
-      param_payloads, input.construction->instance_ext_ref_slots);
+      param_payloads, input.construction->instance_ext_ref_bindings);
 
   // Validate construction program.
   for (size_t i = 0; i < construction_program.entries.size(); ++i) {

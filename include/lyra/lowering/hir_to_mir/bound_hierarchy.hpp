@@ -112,11 +112,12 @@ void FinalizeExternalRefTargetSlots(
     const BoundHierarchyIndex& topo, const mir::ConstructionInput& construction,
     std::span<const hir::Module* const> hir_modules);
 
-// Build per-instance external-ref resolved global slot tables.
+// Build per-instance resolved ext-ref runtime bindings.
 // For each realized object, walks each external ref recipe from that
-// object's actual position in the hierarchy and computes the final
-// design-global slot. Results stored in construction.instance_ext_ref_slots.
-void BuildPerInstanceExternalRefSlotTables(
+// object's actual position and produces a ResolvedExtRefBinding with
+// storage slot, target instance, and target local signal.
+// Results stored in construction.instance_ext_ref_bindings.
+void BuildPerInstanceExtRefBindings(
     const mir::Design& design, mir::ConstructionInput& construction,
     const BoundHierarchyIndex& topo);
 

@@ -803,7 +803,13 @@ void EmitPackedStoreNotification(
     builder.CreateCondBr(should_mark, dirty_bb, done_bb);
 
     builder.SetInsertPoint(dirty_bb);
-    if (policy.signal_id->IsLocal()) {
+    if (policy.signal_id->IsExtRef()) {
+      builder.CreateCall(
+          ctx.GetLyraMarkDirtyExtRef(),
+          {policy.engine_ptr, ctx.GetInstancePointer(),
+           policy.signal_id->Emit(builder), dirty_range.byte_offset,
+           dirty_range.byte_size});
+    } else if (policy.signal_id->IsLocal()) {
       builder.CreateCall(
           ctx.GetLyraMarkDirtyLocal(),
           {policy.engine_ptr,
@@ -982,7 +988,15 @@ void EmitNarrow4StateNbaCall(
   auto* unk_alloca = builder.CreateAlloca(buf_ty, nullptr, "nba.unk.a");
   EncodePlaneValueToByteBuffer(builder, llvm_ctx, unk_alloca, 0, unk_store);
 
-  if (policy.signal_id.IsLocal()) {
+  if (policy.signal_id.IsExtRef()) {
+    builder.CreateCall(
+        ctx.GetLyraScheduleNbaCanonicalPackedExtRef(),
+        {policy.engine_ptr, ctx.GetInstancePointer(),
+         policy.signal_id.Emit(builder), write_ptr, policy.notify_base_ptr,
+         val_alloca, unk_alloca, llvm::ConstantInt::get(i32_ty, narrow_bytes),
+         llvm::ConstantInt::get(
+             i32_ty, access.storage.unk_plane_offset_bytes)});
+  } else if (policy.signal_id.IsLocal()) {
     builder.CreateCall(
         ctx.GetLyraScheduleNbaCanonicalPackedLocal(),
         {policy.engine_ptr,
@@ -1420,7 +1434,24 @@ void EmitGuardedLyraStorePacked(
   auto* i32_ty = llvm::Type::getInt32Ty(llvm_ctx);
 
   auto emit_call = [&]() {
-    if (policy.signal_id->IsLocal()) {
+    if (policy.signal_id->IsExtRef()) {
+      // External-ref: store directly, then notify via ext-ref resolution.
+      builder.CreateCall(
+          ctx.GetLyraStorePackedGlobal(),
+          {policy.engine_ptr, dst_ptr, src_ptr,
+           llvm::ConstantInt::get(i32_ty, byte_size),
+           // Use a sentinel global_slot=UINT32_MAX to suppress global dirty
+           // mark. The actual dirty notification comes from MarkDirtyExtRef
+           // below.
+           llvm::ConstantInt::get(i32_ty, UINT32_MAX),
+           llvm::ConstantInt::get(i32_ty, 0),
+           llvm::ConstantInt::get(i32_ty, 0)});
+      builder.CreateCall(
+          ctx.GetLyraMarkDirtyExtRef(),
+          {policy.engine_ptr, ctx.GetInstancePointer(),
+           policy.signal_id->Emit(builder), llvm::ConstantInt::get(i32_ty, 0),
+           llvm::ConstantInt::get(i32_ty, 0)});
+    } else if (policy.signal_id->IsLocal()) {
       builder.CreateCall(
           ctx.GetLyraStorePackedLocal(),
           {policy.engine_ptr,

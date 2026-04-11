@@ -472,13 +472,17 @@ auto Context::ResolveExternalRefRoot(mir::ExternalRefId ref_id)
   }
   TypeId type = recipes[ref_id.value].type;
 
-  // Load global_slot from per-instance ext_ref_slots table via instance_ptr.
-  auto* slots_ptr = EmitLoadExtRefSlotsPtr();
-  auto* slot_ptr = builder_.CreateGEP(
-      llvm::Type::getInt32Ty(*llvm_context_), slots_ptr,
-      builder_.getInt32(ref_id.value), "ext_ref_slot_ptr");
+  // Load storage_slot from per-instance ext_ref_bindings[ref_id].storage_slot.
+  auto* bindings_ptr = EmitLoadExtRefBindingsPtr();
+  auto* binding_ty = GetExtRefBindingType();
+  auto* binding_ptr = builder_.CreateGEP(
+      binding_ty, bindings_ptr, builder_.getInt32(ref_id.value),
+      "ext_ref_binding_ptr");
+  auto* storage_slot_ptr = builder_.CreateStructGEP(
+      binding_ty, binding_ptr, 0, "ext_ref_storage_slot_ptr");
   auto* global_slot = builder_.CreateLoad(
-      llvm::Type::getInt32Ty(*llvm_context_), slot_ptr, "ext_ref_global_slot");
+      llvm::Type::getInt32Ty(*llvm_context_), storage_slot_ptr,
+      "ext_ref_storage_slot");
 
   return ResolvedExternalRefRoot{
       .global_slot_value = global_slot,
@@ -543,21 +547,45 @@ auto Context::LoadExternalRef(mir::ExternalRefId ref_id)
 
 auto Context::EmitExternalRefSignalCoord(mir::ExternalRefId ref_id)
     -> SignalCoordExpr {
-  auto root = ResolveExternalRefRoot(ref_id);
-  return SignalCoordExpr::GlobalRuntime(root.global_slot_value);
+  return SignalCoordExpr::ExtRef(ref_id.value);
 }
 
-auto Context::EmitLoadExtRefSlotsPtr() -> llvm::Value* {
+auto Context::GetExternalRefTargetLocalSlot(mir::ExternalRefId ref_id) const
+    -> uint32_t {
+  if (!ext_ref_env_.has_value() || ext_ref_env_->recipes == nullptr) {
+    throw common::InternalError(
+        "GetExternalRefTargetLocalSlot", "no external ref env");
+  }
+  const auto& recipes = *ext_ref_env_->recipes;
+  if (ref_id.value >= recipes.size()) {
+    throw common::InternalError(
+        "GetExternalRefTargetLocalSlot",
+        std::format(
+            "ref_id {} out of range ({})", ref_id.value, recipes.size()));
+  }
+  return recipes[ref_id.value].target.target_slot.value;
+}
+
+auto Context::EmitLoadExtRefBindingsPtr() -> llvm::Value* {
   if (instance_ptr_ == nullptr) {
     throw common::InternalError(
-        "EmitLoadExtRefSlotsPtr", "instance_ptr not set");
+        "EmitLoadExtRefBindingsPtr", "instance_ptr not set");
   }
   using IF = lyra::runtime::RuntimeInstanceField;
   auto* ptr = builder_.CreateStructGEP(
       GetRuntimeInstanceType(), instance_ptr_,
-      static_cast<unsigned>(IF::kExtRefSlots), "ext_ref_slots_ptr");
+      static_cast<unsigned>(IF::kExtRefBindings), "ext_ref_bindings_field");
   return builder_.CreateLoad(
-      llvm::PointerType::getUnqual(*llvm_context_), ptr, "ext_ref_slots");
+      llvm::PointerType::getUnqual(*llvm_context_), ptr, "ext_ref_bindings");
+}
+
+auto Context::GetExtRefBindingType() -> llvm::StructType* {
+  if (ext_ref_binding_type_ == nullptr) {
+    auto* i32_ty = llvm::Type::getInt32Ty(*llvm_context_);
+    ext_ref_binding_type_ = llvm::StructType::get(
+        *llvm_context_, {i32_ty, i32_ty, i32_ty}, "ExtRefBinding");
+  }
+  return ext_ref_binding_type_;
 }
 
 auto Context::GetWriteDestPointer(const mir::WriteTarget& dest)

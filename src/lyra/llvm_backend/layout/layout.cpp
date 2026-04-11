@@ -967,11 +967,13 @@ auto BuildRuntimeInstanceType(
   auto* ptr_ty = llvm::PointerType::getUnqual(ctx);
   auto* i32_ty = llvm::Type::getInt32Ty(ctx);
   // { instance_id, body, storage, path_c_str, owner_ordinal,
-  //   module_proc_base, num_module_processes, ext_ref_slots }
+  //   module_proc_base, num_module_processes, ext_ref_bindings,
+  //   ext_ref_binding_count }
   using F = lyra::runtime::RuntimeInstanceField;
   constexpr auto kFieldCount = static_cast<size_t>(F::kFieldCount);
-  std::array<llvm::Type*, kFieldCount> fields = {
-      i32_ty, ptr_ty, storage_type, ptr_ty, i32_ty, i32_ty, i32_ty, ptr_ty};
+  std::array<llvm::Type*, kFieldCount> fields = {i32_ty, ptr_ty, storage_type,
+                                                 ptr_ty, i32_ty, i32_ty,
+                                                 i32_ty, ptr_ty, i32_ty};
   return llvm::StructType::create(ctx, fields, "RuntimeInstance");
 }
 

@@ -133,7 +133,13 @@ void CommitNotifyAggregateIfDesignSlot(
   auto& builder = ctx.GetBuilder();
 
   auto emit_notify = [&]() {
-    if (wt.canonical_signal_id->IsLocal()) {
+    if (wt.canonical_signal_id->IsExtRef()) {
+      builder.CreateCall(
+          ctx.GetLyraMarkDirtyExtRef(),
+          {ctx.GetEnginePointer(), ctx.GetInstancePointer(),
+           wt.canonical_signal_id->Emit(builder), builder.getInt32(0),
+           builder.getInt32(0)});
+    } else if (wt.canonical_signal_id->IsLocal()) {
       builder.CreateCall(
           ctx.GetLyraNotifySignalLocal(),
           {ctx.GetEnginePointer(),

@@ -237,27 +237,34 @@ void FinalizeExternalRefTargetSlots(
   }
 }
 
-void BuildPerInstanceExternalRefSlotTables(
+void BuildPerInstanceExtRefBindings(
     const mir::Design& design, mir::ConstructionInput& construction,
     const BoundHierarchyIndex& topo) {
   auto num_objects = static_cast<uint32_t>(construction.objects.size());
-  construction.instance_ext_ref_slots.resize(num_objects);
+  construction.instance_ext_ref_bindings.resize(num_objects);
 
   for (uint32_t oi = 0; oi < num_objects; ++oi) {
     uint32_t body_idx = construction.objects[oi].body_group;
     const auto& body = design.module_bodies[body_idx];
     if (body.external_refs.empty()) continue;
 
-    auto& table = construction.instance_ext_ref_slots[oi];
-    table.reserve(body.external_refs.size());
+    auto& out = construction.instance_ext_ref_bindings[oi];
+    out.reserve(body.external_refs.size());
 
-    for (size_t i = 0; i < body.external_refs.size(); ++i) {
-      const auto& recipe = body.external_refs[i].target;
+    for (const auto& ext_ref : body.external_refs) {
+      const auto& recipe = ext_ref.target;
       uint32_t target_oi = WalkCanonicalPath(recipe, oi, topo, construction);
       const auto& target_obj = construction.objects[target_oi];
-      uint32_t global_slot =
-          target_obj.design_state_base_slot + recipe.target_slot.value;
-      table.push_back(global_slot);
+      // target_oi == InstanceId.value by construction program order.
+      out.push_back(
+          common::ResolvedExtRefBinding{
+              .storage_slot =
+                  common::SlotId{
+                      target_obj.design_state_base_slot +
+                      recipe.target_slot.value},
+              .target_instance_id = target_oi,
+              .target_local_signal = recipe.target_slot,
+          });
     }
   }
 }

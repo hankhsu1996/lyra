@@ -77,10 +77,6 @@
 
 namespace lyra::lowering::mir_to_llvm {
 
-// Forward declaration for ExtractProcessTriggerEntry.
-auto ExtractProcessTriggerEntry(Context& context, const mir::Process& process)
-    -> std::optional<ProcessTriggerEntry>;
-
 namespace {
 
 // Validate that a process meets the init execution contract:
@@ -1056,46 +1052,54 @@ auto TriggerKindFromEdge(common::EdgeKind edge) -> runtime::TriggerInstallKind {
 void FillTriggerArray(
     Context& context, llvm::Value* base_ptr, llvm::Type* trigger_type,
     llvm::Type* array_type, const std::vector<mir::WaitTrigger>& triggers) {
-  // Normalize unresolved external ref triggers to topology-resolved identity.
-  auto resolved_triggers = triggers;
-  for (auto& trigger : resolved_triggers) {
-    if (trigger.unresolved_external_ref.has_value()) {
-      trigger.signal = context.NormalizeExternalRefSignalIdentity(
-          *trigger.unresolved_external_ref);
-      trigger.unresolved_external_ref = std::nullopt;
-    }
-  }
-
   auto& builder = context.GetBuilder();
   auto& llvm_ctx = context.GetLlvmContext();
   auto* i8_ty = llvm::Type::getInt8Ty(llvm_ctx);
   auto* i32_ty = llvm::Type::getInt32Ty(llvm_ctx);
 
-  for (uint32_t i = 0; i < resolved_triggers.size(); ++i) {
+  for (uint32_t i = 0; i < triggers.size(); ++i) {
     auto* elem_ptr = builder.CreateConstGEP2_32(array_type, base_ptr, 0, i);
 
     // Write signal_id (field 0).
     // R5: local signals emit body-local LocalSignalId directly (no flat
     // base addition). Global signals emit GlobalSignalId. The domain
     // is recorded in the flags field (kTriggerLocalSignal).
+    // External-ref triggers emit cross-instance local identity: the
+    // target's local signal id (compile-time constant from recipe).
     auto* signal_ptr = builder.CreateStructGEP(trigger_type, elem_ptr, 0);
-    auto signal_expr = context.EmitSignalCoord(resolved_triggers[i].signal);
-    bool is_local_signal = signal_expr.IsLocal();
-    builder.CreateStore(signal_expr.Emit(builder), signal_ptr);
+    bool is_ext_ref = triggers[i].unresolved_external_ref.has_value();
+    SignalCoordExpr signal_expr =
+        is_ext_ref
+            ? SignalCoordExpr::Local(0)  // placeholder, overwritten below
+            : context.EmitSignalCoord(triggers[i].signal);
+    bool is_local_signal = is_ext_ref || signal_expr.IsLocal();
+    if (is_ext_ref) {
+      // External-ref trigger: load target local signal from binding record.
+      auto ref_id = *triggers[i].unresolved_external_ref;
+      auto* binding_ty = context.GetExtRefBindingType();
+      auto* bindings_ptr = context.EmitLoadExtRefBindingsPtr();
+      auto* binding_ptr = builder.CreateGEP(
+          binding_ty, bindings_ptr, builder.getInt32(ref_id.value),
+          "ext_ref_binding_sig");
+      auto* local_ptr = builder.CreateStructGEP(
+          binding_ty, binding_ptr, 2, "binding_local_sig");
+      auto* local_val = builder.CreateLoad(i32_ty, local_ptr, "ext_ref_local");
+      builder.CreateStore(local_val, signal_ptr);
+    } else {
+      builder.CreateStore(signal_expr.Emit(builder), signal_ptr);
+    }
 
     // Write edge (field 1)
     auto* edge_ptr = builder.CreateStructGEP(trigger_type, elem_ptr, 1);
     builder.CreateStore(
-        llvm::ConstantInt::get(
-            i8_ty, static_cast<uint8_t>(resolved_triggers[i].edge)),
+        llvm::ConstantInt::get(i8_ty, static_cast<uint8_t>(triggers[i].edge)),
         edge_ptr);
 
     // Write kind (field 3) -- determined by trigger classification.
-    bool is_container = resolved_triggers[i].late_bound &&
-                        resolved_triggers[i].late_bound->is_container;
-    auto install_kind = is_container
-                            ? runtime::TriggerInstallKind::kContainer
-                            : TriggerKindFromEdge(resolved_triggers[i].edge);
+    bool is_container =
+        triggers[i].late_bound && triggers[i].late_bound->is_container;
+    auto install_kind = is_container ? runtime::TriggerInstallKind::kContainer
+                                     : TriggerKindFromEdge(triggers[i].edge);
     auto* kind_ptr = builder.CreateStructGEP(trigger_type, elem_ptr, 3);
     builder.CreateStore(
         llvm::ConstantInt::get(i8_ty, static_cast<uint8_t>(install_kind)),
@@ -1104,28 +1108,24 @@ void FillTriggerArray(
     if (is_container) {
       // Container element: emit dynamic container target.
       // container_elem_stride and flags are set by EmitDynamicContainerTarget.
-      EmitDynamicContainerTarget(
-          context, elem_ptr, trigger_type, resolved_triggers[i]);
-    } else if (
-        resolved_triggers[i].late_bound &&
-        resolved_triggers[i].late_bound->element_type) {
+      EmitDynamicContainerTarget(context, elem_ptr, trigger_type, triggers[i]);
+    } else if (triggers[i].late_bound && triggers[i].late_bound->element_type) {
       // Dynamic unpacked array element.
       // container_elem_stride = 0 (non-container), flags set by Emit*.
       auto* stride_ptr = builder.CreateStructGEP(trigger_type, elem_ptr, 7);
       builder.CreateStore(llvm::ConstantInt::get(i32_ty, 0), stride_ptr);
       EmitDynamicUnpackedBitTarget(
-          context, elem_ptr, trigger_type, resolved_triggers[i]);
-    } else if (resolved_triggers[i].late_bound) {
+          context, elem_ptr, trigger_type, triggers[i]);
+    } else if (triggers[i].late_bound) {
       // Dynamic bit-select.
       // container_elem_stride = 0 (non-container), flags set by Emit*.
       auto* stride_ptr = builder.CreateStructGEP(trigger_type, elem_ptr, 7);
       builder.CreateStore(llvm::ConstantInt::get(i32_ty, 0), stride_ptr);
-      EmitDynamicBitTarget(
-          context, elem_ptr, trigger_type, resolved_triggers[i]);
+      EmitDynamicBitTarget(context, elem_ptr, trigger_type, triggers[i]);
     } else {
       // Static path: resolve observation range at compile time.
       // Always active, container_elem_stride = 0.
-      auto range = ResolveObservationRange(context, resolved_triggers[i]);
+      auto range = ResolveObservationRange(context, triggers[i]);
       auto* bit_idx_ptr = builder.CreateStructGEP(trigger_type, elem_ptr, 2);
       builder.CreateStore(
           llvm::ConstantInt::get(i8_ty, range.bit_index), bit_idx_ptr);
@@ -1148,7 +1148,43 @@ void FillTriggerArray(
 
     // R5: set domain flags and cross-instance identity. Done after the
     // per-kind path because each path writes its own flags value.
-    if (is_local_signal) {
+    if (is_ext_ref) {
+      // External-ref trigger: cross-instance local identity.
+      // Load target identity from per-instance binding record.
+      auto ref_id = *triggers[i].unresolved_external_ref;
+      auto* binding_ty = context.GetExtRefBindingType();
+      auto* bindings_ptr = context.EmitLoadExtRefBindingsPtr();
+      auto* binding_ptr = builder.CreateGEP(
+          binding_ty, bindings_ptr, builder.getInt32(ref_id.value),
+          "ext_ref_binding_ptr");
+
+      uint8_t local_flags =
+          runtime::kTriggerLocalSignal | runtime::kTriggerCrossInstanceLocal;
+      auto* flags_ptr = builder.CreateStructGEP(trigger_type, elem_ptr, 4);
+      auto* current = builder.CreateLoad(i8_ty, flags_ptr, "trigger.flags");
+      auto* with_local = builder.CreateOr(
+          current, llvm::ConstantInt::get(i8_ty, local_flags),
+          "trigger.flags.local");
+      builder.CreateStore(with_local, flags_ptr);
+
+      // target_instance_id (field 8): from binding.target_instance_id (field
+      // 1).
+      auto* target_inst_id_ptr = builder.CreateStructGEP(
+          binding_ty, binding_ptr, 1, "binding_target_inst_id_ptr");
+      auto* target_inst_id = builder.CreateLoad(
+          i32_ty, target_inst_id_ptr, "ext_ref_target_inst_id");
+      auto* inst_id_ptr = builder.CreateStructGEP(trigger_type, elem_ptr, 8);
+      builder.CreateStore(target_inst_id, inst_id_ptr);
+
+      // target_local_signal_id (field 9): from binding.target_local_signal
+      // (field 2).
+      auto* target_local_ptr = builder.CreateStructGEP(
+          binding_ty, binding_ptr, 2, "binding_target_local_ptr");
+      auto* target_local =
+          builder.CreateLoad(i32_ty, target_local_ptr, "ext_ref_target_local");
+      auto* local_id_ptr = builder.CreateStructGEP(trigger_type, elem_ptr, 9);
+      builder.CreateStore(target_local, local_id_ptr);
+    } else if (is_local_signal) {
       uint8_t local_flags = runtime::kTriggerLocalSignal;
       auto cross_id = signal_expr.GetInstanceIdOverride();
       if (cross_id.has_value()) {
@@ -1927,7 +1963,7 @@ auto GenerateProcessFunction(
   return ProcessCodegenResult{
       .function = func,
       .wait_sites = std::move(wait_sites),
-      .process_trigger = ExtractProcessTriggerEntry(context, process)};
+      .process_trigger = ExtractProcessTriggerEntry(process)};
 }
 
 auto GenerateSharedProcessFunction(
@@ -2129,7 +2165,7 @@ auto GenerateSharedProcessFunction(
   return ProcessCodegenResult{
       .function = func,
       .wait_sites = std::move(wait_sites),
-      .process_trigger = ExtractProcessTriggerEntry(context, process)};
+      .process_trigger = ExtractProcessTriggerEntry(process)};
 }
 
 auto DeclareMirFunction(
@@ -3549,7 +3585,7 @@ auto DefineMirFunction(
   return {};
 }
 
-auto ExtractProcessTriggerEntry(Context& context, const mir::Process& process)
+auto ExtractProcessTriggerEntry(const mir::Process& process)
     -> std::optional<ProcessTriggerEntry> {
   ProcessTriggerEntry entry;
   bool found_wait = false;
@@ -3569,16 +3605,21 @@ auto ExtractProcessTriggerEntry(Context& context, const mir::Process& process)
           has_rebindable = true;
         }
       }
-      mir::SignalRef signal = t.signal;
       if (t.unresolved_external_ref.has_value()) {
-        signal = context.NormalizeExternalRefSignalIdentity(
-            *t.unresolved_external_ref);
+        entry.triggers.push_back({
+            .signal = {},
+            .edge = t.edge,
+            .has_observed_place = t.observed_place.has_value(),
+            .external_ref_index = t.unresolved_external_ref->value,
+        });
+      } else {
+        entry.triggers.push_back({
+            .signal = t.signal,
+            .edge = t.edge,
+            .has_observed_place = t.observed_place.has_value(),
+            .external_ref_index = std::nullopt,
+        });
       }
-      entry.triggers.push_back({
-          .signal = signal,
-          .edge = t.edge,
-          .has_observed_place = t.observed_place.has_value(),
-      });
     }
   }
 

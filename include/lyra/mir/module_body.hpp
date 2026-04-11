@@ -58,7 +58,7 @@ struct ModuleBody {
   // Specialization-scoped: contains only instance-invariant data (upward_count,
   // canonical durable child path, target_local_slot, type, access_kind).
   // No concrete target_object. Per-instance resolution happens at construction
-  // time via ConstructionInput::instance_ext_ref_slots.
+  // time via ConstructionInput::instance_ext_ref_bindings.
   std::vector<ExternalAccessRecipe> external_refs;
 
   // B2: Child instantiation sites for this body.

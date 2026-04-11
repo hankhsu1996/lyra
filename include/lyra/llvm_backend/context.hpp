@@ -324,12 +324,16 @@ class Context {
       -> llvm::Function*;
   [[nodiscard]] auto GetLyraScheduleNbaCanonicalPackedGlobal()
       -> llvm::Function*;
+  [[nodiscard]] auto GetLyraScheduleNbaExtRef() -> llvm::Function*;
+  [[nodiscard]] auto GetLyraScheduleNbaCanonicalPackedExtRef()
+      -> llvm::Function*;
   [[nodiscard]] auto GetLyraIsTraceObservedLocal() -> llvm::Function*;
   [[nodiscard]] auto GetLyraIsTraceObservedGlobal() -> llvm::Function*;
   [[nodiscard]] auto GetLyraNotifyContainerMutationLocal() -> llvm::Function*;
   [[nodiscard]] auto GetLyraNotifyContainerMutationGlobal() -> llvm::Function*;
   [[nodiscard]] auto GetLyraNotifySignalLocal() -> llvm::Function*;
   [[nodiscard]] auto GetLyraNotifySignalGlobal() -> llvm::Function*;
+  [[nodiscard]] auto GetLyraMarkDirtyExtRef() -> llvm::Function*;
   [[nodiscard]] auto GetLyraTerminate() -> llvm::Function*;
   [[nodiscard]] auto GetLyraGetTime() -> llvm::Function*;
   [[nodiscard]] auto GetLyraInitRuntime() -> llvm::Function*;
@@ -600,8 +604,16 @@ class Context {
   [[nodiscard]] auto EmitExternalRefSignalCoord(mir::ExternalRefId ref_id)
       -> SignalCoordExpr;
 
-  // Load ext_ref_slots pointer from RuntimeInstance via instance_ptr_.
-  [[nodiscard]] auto EmitLoadExtRefSlotsPtr() -> llvm::Value*;
+  // Get the target local slot for an external ref from the recipe.
+  // Compile-time constant, used for cross-instance local trigger identity.
+  [[nodiscard]] auto GetExternalRefTargetLocalSlot(
+      mir::ExternalRefId ref_id) const -> uint32_t;
+
+  // Load ext_ref_bindings pointer from RuntimeInstance via instance_ptr_.
+  [[nodiscard]] auto EmitLoadExtRefBindingsPtr() -> llvm::Value*;
+
+  // Get the LLVM struct type for ResolvedExtRefBinding: {i32, i32, i32}.
+  [[nodiscard]] auto GetExtRefBindingType() -> llvm::StructType*;
 
   // Resolve a WriteTarget to a storage pointer.
   // PlaceId: delegates to GetPlacePointer.
@@ -1097,8 +1109,10 @@ class Context {
   llvm::Function* lyra_resolve_slot_ptr_ = nullptr;
   llvm::Function* lyra_resolve_instance_ptr_ = nullptr;
   // R3 typed coordination helpers.
+  llvm::StructType* ext_ref_binding_type_ = nullptr;
   llvm::Function* lyra_mark_dirty_local_ = nullptr;
   llvm::Function* lyra_mark_dirty_global_ = nullptr;
+  llvm::Function* lyra_mark_dirty_ext_ref_ = nullptr;
   llvm::Function* lyra_store_packed_local_ = nullptr;
   llvm::Function* lyra_store_packed_global_ = nullptr;
   llvm::Function* lyra_store_string_local_ = nullptr;
@@ -1107,6 +1121,8 @@ class Context {
   llvm::Function* lyra_schedule_nba_global_ = nullptr;
   llvm::Function* lyra_schedule_nba_canonical_packed_local_ = nullptr;
   llvm::Function* lyra_schedule_nba_canonical_packed_global_ = nullptr;
+  llvm::Function* lyra_schedule_nba_ext_ref_ = nullptr;
+  llvm::Function* lyra_schedule_nba_canonical_packed_ext_ref_ = nullptr;
   llvm::Function* lyra_is_trace_observed_local_ = nullptr;
   llvm::Function* lyra_is_trace_observed_global_ = nullptr;
   llvm::Function* lyra_notify_container_mutation_local_ = nullptr;
