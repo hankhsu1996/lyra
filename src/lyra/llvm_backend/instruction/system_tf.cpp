@@ -22,14 +22,14 @@ namespace lyra::lowering::mir_to_llvm {
 auto LowerSystemTfRvalue(
     Context& context, const CuFacts& facts, const mir::Rvalue& rvalue,
     const mir::SystemTfRvalueInfo& info) -> Result<RvalueValue> {
-  CanonicalSlotAccess canonical(context);
+  CanonicalSlotAccess canonical(context, facts);
   return LowerSystemTfRvalue(context, facts, canonical, rvalue, info);
 }
 
 auto LowerSystemTfEffect(
     Context& context, const CuFacts& facts, const mir::SystemTfEffect& effect)
     -> Result<void> {
-  CanonicalSlotAccess canonical(context);
+  CanonicalSlotAccess canonical(context, facts);
   return LowerSystemTfEffect(context, facts, canonical, effect);
 }
 auto LowerSystemTfRvalue(
@@ -82,7 +82,8 @@ auto LowerSystemTfRvalue(
             std::format("expected 1 arg, got {}", rvalue.operands.size()));
       }
       auto& builder = context.GetBuilder();
-      auto desc_or_err = LowerOperand(context, resolver, rvalue.operands[0]);
+      auto desc_or_err =
+          LowerOperand(context, facts, resolver, rvalue.operands[0]);
       if (!desc_or_err) return std::unexpected(desc_or_err.error());
       llvm::Value* result = builder.CreateCall(
           context.GetLyraFgetc(), {context.GetEnginePointer(), *desc_or_err},
@@ -96,9 +97,11 @@ auto LowerSystemTfRvalue(
             std::format("expected 2 args, got {}", rvalue.operands.size()));
       }
       auto& builder = context.GetBuilder();
-      auto char_or_err = LowerOperand(context, resolver, rvalue.operands[0]);
+      auto char_or_err =
+          LowerOperand(context, facts, resolver, rvalue.operands[0]);
       if (!char_or_err) return std::unexpected(char_or_err.error());
-      auto desc_or_err = LowerOperand(context, resolver, rvalue.operands[1]);
+      auto desc_or_err =
+          LowerOperand(context, facts, resolver, rvalue.operands[1]);
       if (!desc_or_err) return std::unexpected(desc_or_err.error());
       llvm::Value* result = builder.CreateCall(
           context.GetLyraUngetc(),
@@ -121,7 +124,7 @@ auto LowerSystemTfEffect(
             std::format("expected 1 arg, got {}", effect.args.size()));
       }
       auto& builder = context.GetBuilder();
-      auto desc_or_err = LowerOperand(context, resolver, effect.args[0]);
+      auto desc_or_err = LowerOperand(context, facts, resolver, effect.args[0]);
       if (!desc_or_err) return std::unexpected(desc_or_err.error());
       builder.CreateCall(
           context.GetLyraFclose(), {context.GetEnginePointer(), *desc_or_err});
@@ -138,7 +141,8 @@ auto LowerSystemTfEffect(
         desc_val = llvm::ConstantInt::get(i32_ty, 0);
       } else {
         has_desc = llvm::ConstantInt::get(i1_ty, 1);
-        auto desc_or_err = LowerOperand(context, resolver, effect.args[0]);
+        auto desc_or_err =
+            LowerOperand(context, facts, resolver, effect.args[0]);
         if (!desc_or_err) return std::unexpected(desc_or_err.error());
         desc_val = *desc_or_err;
       }

@@ -8,9 +8,13 @@
 namespace lyra::lowering::mir_to_llvm {
 
 ContractExecutor::ContractExecutor(
-    Context& ctx, const ProcessActivationPlan& plan,
+    Context& ctx, const CuFacts& facts, const ProcessActivationPlan& plan,
     std::vector<ManagedSlotStorage> storage)
-    : ctx_(ctx), plan_(plan), storage_(std::move(storage)), canonical_(ctx) {
+    : ctx_(ctx),
+      facts_(facts),
+      plan_(plan),
+      storage_(std::move(storage)),
+      canonical_(ctx, facts) {
   for (size_t si = 0; si < plan_.segments.size(); ++si) {
     for (uint32_t bi : plan_.segments[si].blocks) {
       block_to_segment_[bi] = si;
@@ -56,7 +60,7 @@ auto ContractExecutor::GetOrCreateResolver(size_t segment_index)
     }
   }
   auto [inserted, _] = segment_resolvers_.emplace(
-      segment_index, ActivationLocalSlotAccess(ctx_, seg_storage));
+      segment_index, ActivationLocalSlotAccess(ctx_, facts_, seg_storage));
   return inserted->second;
 }
 

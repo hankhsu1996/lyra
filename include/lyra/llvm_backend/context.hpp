@@ -195,13 +195,6 @@ class Context {
     return *arena_;
   }
 
-  // Get the design arena for cross-domain resolution.
-  // Always valid -- set once at Context construction, never changed.
-  // MIGRATION SHIM: will be removed when callers use CuFacts directly.
-  [[nodiscard]] auto GetDesignArena() const -> const mir::Arena& {
-    return *facts_->design_arena;
-  }
-
   // Canonical Place lookup from the body arena.
   // All place consumers must use this instead of raw arena access.
   [[nodiscard]] auto LookupPlace(mir::PlaceId place_id) const
@@ -247,30 +240,6 @@ class Context {
     Context& ctx_;
     const lowering::DiagnosticContext* saved_;
   };
-
-  // Transitional accessor: returns the full CuFacts struct.
-  // Prefer using CuFacts passed via function parameter where available.
-  // Will be removed once all callers have explicit facts.
-  [[nodiscard]] auto GetFacts() const -> const CuFacts& {
-    return *facts_;
-  }
-
-  // MIGRATION SHIMS: will be removed when callers use CuFacts directly.
-  [[nodiscard]] auto GetTypeArena() const -> const TypeArena& {
-    return *facts_->types;
-  }
-  [[nodiscard]] auto GetLayout() const -> const Layout& {
-    return *facts_->layout;
-  }
-  [[nodiscard]] auto IsForceTwoState() const -> bool {
-    return facts_->force_two_state;
-  }
-  [[nodiscard]] auto IsFourState(TypeId type_id) const -> bool {
-    return mir_to_llvm::IsFourState(*facts_, type_id);
-  }
-  [[nodiscard]] auto IsPackedFourState(const Type& type) const -> bool {
-    return mir_to_llvm::IsPackedFourState(*facts_, type);
-  }
 
   [[nodiscard]] auto GetLyraPrintLiteral() -> llvm::Function*;
   [[nodiscard]] auto GetLyraWarnRateLimited() -> llvm::Function*;
@@ -951,12 +920,6 @@ class Context {
   [[nodiscard]] auto GetDiagnosticContext() const
       -> const lowering::DiagnosticContext& {
     return *diag_ctx_;
-  }
-
-  // Access source manager for origin resolution.
-  // MIGRATION SHIM: will be removed when callers use CuFacts directly.
-  [[nodiscard]] auto GetSourceManager() const -> const SourceManager* {
-    return facts_->source_manager;
   }
 
   // Register an owned string temp that needs release at end of statement

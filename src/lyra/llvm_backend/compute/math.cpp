@@ -72,7 +72,7 @@ auto LowerMathIntegralClog2(
   llvm::Value* operand_unk = nullptr;
 
   if (operand_is_four_state) {
-    auto raw_or_err = LowerOperandRaw(context, resolver, operands[0]);
+    auto raw_or_err = LowerOperandRaw(context, facts, resolver, operands[0]);
     if (!raw_or_err) return std::unexpected(raw_or_err.error());
     llvm::Value* raw = *raw_or_err;
     operand_val = builder.CreateExtractValue(raw, 0, "clog2.op.val");
@@ -82,7 +82,8 @@ auto LowerMathIntegralClog2(
     operand_unk = builder.CreateZExtOrTrunc(
         operand_unk, result_llvm_type, "clog2.unk.coerce");
   } else {
-    auto operand_val_or_err = LowerOperand(context, resolver, operands[0]);
+    auto operand_val_or_err =
+        LowerOperand(context, facts, resolver, operands[0]);
     if (!operand_val_or_err) return std::unexpected(operand_val_or_err.error());
     operand_val = *operand_val_or_err;
     operand_val = builder.CreateZExtOrTrunc(
@@ -264,7 +265,7 @@ auto LowerMathCallValue(
   llvm::Type* float_ty = GetOperandFloatType(context, facts, operands[0]);
 
   if (expected_arity == 1) {
-    auto operand_or_err = LowerOperand(context, resolver, operands[0]);
+    auto operand_or_err = LowerOperand(context, facts, resolver, operands[0]);
     if (!operand_or_err) return std::unexpected(operand_or_err.error());
     auto result_or_err =
         LowerRealMathFnUnary(context, info.fn, *operand_or_err, float_ty);
@@ -272,9 +273,9 @@ auto LowerMathCallValue(
     return RvalueValue::TwoState(*result_or_err);
   }
 
-  auto lhs_or_err = LowerOperand(context, resolver, operands[0]);
+  auto lhs_or_err = LowerOperand(context, facts, resolver, operands[0]);
   if (!lhs_or_err) return std::unexpected(lhs_or_err.error());
-  auto rhs_or_err = LowerOperand(context, resolver, operands[1]);
+  auto rhs_or_err = LowerOperand(context, facts, resolver, operands[1]);
   if (!rhs_or_err) return std::unexpected(rhs_or_err.error());
   auto result_or_err = LowerRealMathFnBinary(
       context, info.fn, *lhs_or_err, *rhs_or_err, float_ty);
@@ -291,7 +292,7 @@ auto IsMathRvalue(const mir::Rvalue& rvalue) -> bool {
 auto LowerMathRvalue(
     Context& context, const CuFacts& facts, const mir::Rvalue& rvalue,
     TypeId result_type) -> Result<RvalueValue> {
-  CanonicalSlotAccess canonical(context);
+  CanonicalSlotAccess canonical(context, facts);
   return LowerMathRvalue(context, facts, canonical, rvalue, result_type);
 }
 

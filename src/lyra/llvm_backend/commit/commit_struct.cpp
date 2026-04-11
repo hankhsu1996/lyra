@@ -97,7 +97,7 @@ auto AssignStructFieldByField(
 
   // Get LLVM struct type for GEP operations
   auto llvm_struct_type_result =
-      BuildLlvmTypeForTypeId(context, struct_type_id);
+      BuildLlvmTypeForTypeId(context, facts, struct_type_id);
   if (!llvm_struct_type_result)
     return std::unexpected(llvm_struct_type_result.error());
   llvm::Type* llvm_struct_type = *llvm_struct_type_result;

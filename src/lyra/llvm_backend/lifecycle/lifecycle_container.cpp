@@ -20,12 +20,13 @@ auto GetContainerHandleType(Context& ctx) -> llvm::Type* {
 
 }  // namespace
 
-void DestroyContainer(Context& ctx, llvm::Value* ptr, TypeId type_id) {
+void DestroyContainer(
+    Context& ctx, const CuFacts& facts, llvm::Value* ptr, TypeId type_id) {
   auto& builder = ctx.GetBuilder();
   auto* handle_ty = GetContainerHandleType(ctx);
   auto* handle = builder.CreateLoad(handle_ty, ptr, "destroy.ctr");
 
-  const auto& types = *ctx.GetFacts().types;
+  const auto& types = *facts.types;
   if (types[type_id].Kind() == TypeKind::kAssociativeArray) {
     builder.CreateCall(ctx.GetLyraAssocRelease(), {handle});
   } else {
@@ -33,9 +34,10 @@ void DestroyContainer(Context& ctx, llvm::Value* ptr, TypeId type_id) {
   }
 }
 
-auto CloneContainer(Context& ctx, llvm::Value* handle, TypeId type_id)
+auto CloneContainer(
+    Context& ctx, const CuFacts& facts, llvm::Value* handle, TypeId type_id)
     -> llvm::Value* {
-  const auto& types = *ctx.GetFacts().types;
+  const auto& types = *facts.types;
   if (types[type_id].Kind() == TypeKind::kAssociativeArray) {
     return ctx.GetBuilder().CreateCall(ctx.GetLyraAssocClone(), {handle});
   }
@@ -50,8 +52,9 @@ void MoveCleanupContainer(Context& ctx, llvm::Value* ptr) {
 }
 
 void CopyInitContainer(
-    Context& ctx, llvm::Value* dst_ptr, llvm::Value* src_ptr, TypeId type_id) {
-  const auto& types = *ctx.GetFacts().types;
+    Context& ctx, const CuFacts& facts, llvm::Value* dst_ptr,
+    llvm::Value* src_ptr, TypeId type_id) {
+  const auto& types = *facts.types;
   const Type& type = types[type_id];
 
   auto& builder = ctx.GetBuilder();

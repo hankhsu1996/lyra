@@ -7,6 +7,7 @@
 #include <llvm/IR/Function.h>
 
 #include "lyra/llvm_backend/codegen_session.hpp"
+#include "lyra/llvm_backend/cu_facts.hpp"
 
 namespace llvm {
 class Value;
@@ -74,7 +75,8 @@ struct RealizationEmissionResult {
 // the runtime constructor function. Returns the constructor-produced
 // values needed by the main emission phase.
 auto EmitRealizationAndConstructor(
-    Context& context, const Layout& layout, llvm::Value* design_state,
+    Context& context, const CuFacts& facts, const Layout& layout,
+    llvm::Value* design_state,
     std::span<const CodegenSession::BodyCompiledFuncs> body_compiled_funcs,
     const std::vector<llvm::Function*>& process_funcs, size_t num_init,
     const ConstructionProgramData& construction_program)

@@ -270,7 +270,7 @@ auto LowerDeferredAssignBitRange(
     const mir::DeferredAssign& deferred,
     const SignalCoordExpr& signal_id, mir::PlaceId dest, bool is_local_owned)
     -> Result<void> {
-  auto path = ExtractPackedAccessPath(context, dest);
+  auto path = ExtractPackedAccessPath(context, facts, dest);
   if (!path) return std::unexpected(path.error());
 
   auto subview = ResolvePackedSubview(context, *path);
@@ -307,9 +307,10 @@ struct IndexProjectionInfo {
   uint64_t array_size = 0;
 };
 
-auto ExtractIndexProjectionInfo(Context& context, mir::PlaceId dest)
+auto ExtractIndexProjectionInfo(
+    Context& context, const CuFacts& facts, mir::PlaceId dest)
     -> IndexProjectionInfo {
-  const auto& types = context.GetTypeArena();
+  const auto& types = *facts.types;
   const auto& place = context.LookupPlace(dest);
 
   const mir::IndexProjection* idx_proj = nullptr;
@@ -355,11 +356,12 @@ auto LowerDeferredAssignWithOobGuard(
     mir::PlaceId dest, bool is_local_owned) -> Result<void> {
   auto& builder = context.GetBuilder();
   auto& llvm_ctx = context.GetLlvmContext();
-  const auto& types = context.GetTypeArena();
+  const auto& types = *facts.types;
 
-  auto [idx_proj, arr_size] = ExtractIndexProjectionInfo(context, dest);
+  auto [idx_proj, arr_size] = ExtractIndexProjectionInfo(context, facts, dest);
 
-  auto index_or_err = LowerOperand(context, idx_proj->index);
+  // Compute bounds check
+  auto index_or_err = LowerOperand(context, facts, idx_proj->index);
   if (!index_or_err) return std::unexpected(index_or_err.error());
   llvm::Value* index = *index_or_err;
   auto* arr_size_val = llvm::ConstantInt::get(index->getType(), arr_size);

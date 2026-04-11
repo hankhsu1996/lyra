@@ -147,7 +147,7 @@ auto AssignStructFieldByFieldInternal(
   const auto& struct_info = struct_type.AsUnpackedStruct();
 
   auto llvm_struct_type_result =
-      BuildLlvmTypeForTypeId(context, struct_type_id);
+      BuildLlvmTypeForTypeId(context, facts, struct_type_id);
   if (!llvm_struct_type_result)
     return std::unexpected(llvm_struct_type_result.error());
   llvm::Type* llvm_struct_type = *llvm_struct_type_result;
@@ -182,7 +182,7 @@ auto AssignArrayFieldByFieldInternal(
   uint32_t count = arr_info.range.Size();
   TypeId elem_type_id = arr_info.element_type;
 
-  auto llvm_type_result = BuildLlvmTypeForTypeId(context, array_type_id);
+  auto llvm_type_result = BuildLlvmTypeForTypeId(context, facts, array_type_id);
   if (!llvm_type_result) return std::unexpected(llvm_type_result.error());
   auto* llvm_array_type = llvm::cast<llvm::ArrayType>(*llvm_type_result);
   llvm::Type* elem_llvm_type = llvm_array_type->getElementType();

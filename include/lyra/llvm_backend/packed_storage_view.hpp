@@ -22,6 +22,7 @@ struct SignalRef;
 namespace lyra::lowering::mir_to_llvm {
 
 class Context;
+struct CuFacts;
 
 // Descriptor for one packed storage root.
 //
@@ -294,7 +295,8 @@ void EmitPackedStoreNotification(
 // Resolves the storage view eagerly. The place must have at least one
 // BitRangeProjection. Currently only extracts BitRangeProjection-backed
 // steps; does not handle packed struct fields or part-selects.
-auto ExtractPackedAccessPath(Context& ctx, mir::PlaceId place_id)
+auto ExtractPackedAccessPath(
+    Context& ctx, const CuFacts& facts, mir::PlaceId place_id)
     -> Result<PackedAccessPath>;
 
 // Resolve a packed access path into a localized subview descriptor.
@@ -339,8 +341,8 @@ auto EmitDeferredStoreToPackedSubview(
 // Canonical storage uses the packed ABI layout (GetStorageByteSize /
 // FourStateUnknownLaneOffset). Non-canonical uses LLVM alloca layout.
 auto BuildWholeValueStorageView(
-    Context& ctx, llvm::Value* base_ptr, TypeId type_id, bool is_canonical)
-    -> PackedStorageView;
+    Context& ctx, const CuFacts& facts, llvm::Value* base_ptr, TypeId type_id,
+    bool is_canonical) -> PackedStorageView;
 
 // Build a PackedStorageView for canonical whole-object byte storage with
 // full-slot notification semantics. Used for union memcpy and similar
@@ -407,8 +409,8 @@ auto NotifyPackedStorageWritten(
 // Runs the full pipeline: extract path -> resolve subview -> emit load ->
 // convert to legacy LLVM value form.
 auto LoadPackedPlace(
-    Context& ctx, mir::PlaceId place_id, llvm::Type* target_type)
-    -> Result<llvm::Value*>;
+    Context& ctx, const CuFacts& facts, mir::PlaceId place_id,
+    llvm::Type* target_type) -> Result<llvm::Value*>;
 
 // Build PackedRValue from a raw LLVM value whose type shape is the
 // authoritative 2-state/4-state representation.

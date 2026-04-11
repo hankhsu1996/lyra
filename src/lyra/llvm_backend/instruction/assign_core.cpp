@@ -30,7 +30,7 @@ auto ResolveDestType(
 auto LowerRhsRaw(
     Context& context, const CuFacts& facts, const mir::RightHandSide& rhs,
     TypeId target_type) -> Result<llvm::Value*> {
-  CanonicalSlotAccess canonical(context);
+  CanonicalSlotAccess canonical(context, facts);
   return LowerRhsRaw(context, facts, canonical, rhs, target_type);
 }
 
@@ -38,7 +38,7 @@ auto LowerRhsRaw(
 auto LowerRhsRaw(
     Context& context, const CuFacts& facts, const mir::RightHandSide& rhs,
     mir::PlaceId target) -> Result<llvm::Value*> {
-  CanonicalSlotAccess canonical(context);
+  CanonicalSlotAccess canonical(context, facts);
   return LowerRhsRaw(context, facts, canonical, rhs, target);
 }
 
@@ -58,7 +58,8 @@ auto LowerRhsRaw(
   return std::visit(
       common::Overloaded{
           [&](const mir::Operand& operand) -> Result<llvm::Value*> {
-            auto raw_or_err = LowerOperandRaw(context, resolver, operand);
+            auto raw_or_err =
+                LowerOperandRaw(context, facts, resolver, operand);
             if (!raw_or_err) return std::unexpected(raw_or_err.error());
             llvm::Value* raw = *raw_or_err;
             const auto& types = *facts.types;
@@ -110,7 +111,7 @@ using PackedRValue = lyra::lowering::mir_to_llvm::PackedRValue;
 auto LowerRhsToPackedRValue(
     Context& context, const CuFacts& facts, const mir::RightHandSide& rhs,
     uint32_t semantic_bits, TypeId result_type) -> Result<PackedRValue> {
-  CanonicalSlotAccess canonical(context);
+  CanonicalSlotAccess canonical(context, facts);
   return LowerRhsToPackedRValue(
       context, facts, canonical, rhs, semantic_bits, result_type);
 }
@@ -138,7 +139,7 @@ auto LowerRhsToPackedRValue(
               result.semantic_bits = semantic_bits;
               return result;
             }
-            auto raw = LowerOperandRaw(context, resolver, operand);
+            auto raw = LowerOperandRaw(context, facts, resolver, operand);
             if (!raw) return std::unexpected(raw.error());
             return BuildPackedRValueFromRaw(context, *raw, semantic_bits);
           },

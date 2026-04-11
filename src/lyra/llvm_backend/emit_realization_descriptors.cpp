@@ -18,6 +18,7 @@
 #include "lyra/common/internal_error.hpp"
 #include "lyra/common/type.hpp"
 #include "lyra/llvm_backend/context.hpp"
+#include "lyra/llvm_backend/cu_facts.hpp"
 #include "lyra/llvm_backend/emit_descriptor_utils.hpp"
 #include "lyra/llvm_backend/layout/layout.hpp"
 #include "lyra/llvm_backend/type_ops/default_init.hpp"
@@ -132,12 +133,13 @@ auto EncodeBodyDescriptorRef(
            llvm::ConstantInt::get(i32_ty, pkg.num_decision_tables)});
 }
 
-auto EmitPerSchemaFrameInitFunctions(Context& context, const Layout& layout)
+auto EmitPerSchemaFrameInitFunctions(
+    Context& context, const CuFacts& facts, const Layout& layout)
     -> std::vector<llvm::Function*> {
   auto& ctx = context.GetLlvmContext();
   auto& mod = context.GetModule();
   auto* ptr_ty = llvm::PointerType::getUnqual(ctx);
-  bool force_two_state = context.IsForceTwoState();
+  bool force_two_state = facts.force_two_state;
 
   std::vector<llvm::Function*> init_fns(layout.state_schemas.size(), nullptr);
 
@@ -187,15 +189,14 @@ auto EmitPerSchemaFrameInitFunctions(Context& context, const Layout& layout)
 
     // Apply composite 4-state initialization.
     auto* frame_type = proc_layout.frame.llvm_type;
-    const auto& types = context.GetTypeArena();
+    const auto& types = *facts.types;
     for (uint32_t fi = 0; fi < proc_layout.frame.field_types.size(); ++fi) {
       TypeId type_id = proc_layout.frame.field_types[fi];
-      if (!context.IsFourState(type_id)) continue;
+      if (!IsFourState(facts, type_id)) continue;
       if (IsScalarPatchable(type_id, types, force_two_state)) continue;
       auto* field_ptr =
           context.GetBuilder().CreateStructGEP(frame_type, frame_ptr, fi);
-      EmitSVDefaultInitAfterZero(
-          context, context.GetFacts(), field_ptr, type_id);
+      EmitSVDefaultInitAfterZero(context, facts, field_ptr, type_id);
     }
 
     context.GetBuilder().CreateRetVoid();
@@ -747,7 +748,8 @@ auto EmitConstructorFunction(
 }  // namespace
 
 auto EmitRealizationAndConstructor(
-    Context& context, const Layout& layout, llvm::Value* design_state,
+    Context& context, const CuFacts& facts, const Layout& layout,
+    llvm::Value* design_state,
     std::span<const CodegenSession::BodyCompiledFuncs> body_compiled_funcs,
     const std::vector<llvm::Function*>& process_funcs, size_t num_init,
     const ConstructionProgramData& construction_program)
@@ -757,7 +759,7 @@ auto EmitRealizationAndConstructor(
       layout.num_module_process_base - layout.num_init_processes);
 
   // Emit per-schema frame-init functions and state schemas.
-  auto init_fns = EmitPerSchemaFrameInitFunctions(context, layout);
+  auto init_fns = EmitPerSchemaFrameInitFunctions(context, facts, layout);
   auto* schemas_ptr = EmitProcessStateSchemas(context, layout, init_fns);
   auto num_schemas = static_cast<uint32_t>(layout.state_schemas.size());
 

@@ -30,11 +30,11 @@ namespace lyra::lowering::mir_to_llvm {
 namespace {
 
 auto LowerUnpackedArrayAggregateValue(
-    Context& context, const mir::Rvalue& rvalue, TypeId result_type)
-    -> Result<llvm::Value*> {
+    Context& context, const CuFacts& facts, const mir::Rvalue& rvalue,
+    TypeId result_type) -> Result<llvm::Value*> {
   auto& builder = context.GetBuilder();
 
-  auto arr_type_result = BuildLlvmTypeForTypeId(context, result_type);
+  auto arr_type_result = BuildLlvmTypeForTypeId(context, facts, result_type);
   if (!arr_type_result) return std::unexpected(arr_type_result.error());
   llvm::Type* arr_type = *arr_type_result;
   llvm::Type* elem_type = arr_type->getArrayElementType();
@@ -42,7 +42,7 @@ auto LowerUnpackedArrayAggregateValue(
   llvm::Value* aggregate = llvm::UndefValue::get(arr_type);
   for (size_t i = 0; i < rvalue.operands.size(); ++i) {
     auto elem_result =
-        LowerOperandAsStorage(context, rvalue.operands[i], elem_type);
+        LowerOperandAsStorage(context, facts, rvalue.operands[i], elem_type);
     if (!elem_result) return std::unexpected(elem_result.error());
     llvm::Value* elem = *elem_result;
     aggregate =
@@ -52,8 +52,8 @@ auto LowerUnpackedArrayAggregateValue(
 }
 
 auto LowerUnpackedStructAggregateValue(
-    Context& context, const mir::Rvalue& rvalue, TypeId result_type,
-    const Type& target_type) -> Result<llvm::Value*> {
+    Context& context, const CuFacts& facts, const mir::Rvalue& rvalue,
+    TypeId result_type, const Type& target_type) -> Result<llvm::Value*> {
   auto& builder = context.GetBuilder();
   const auto& struct_info = target_type.AsUnpackedStruct();
 
@@ -65,7 +65,7 @@ auto LowerUnpackedStructAggregateValue(
             rvalue.operands.size(), struct_info.fields.size()));
   }
 
-  auto struct_type_result = BuildLlvmTypeForTypeId(context, result_type);
+  auto struct_type_result = BuildLlvmTypeForTypeId(context, facts, result_type);
   if (!struct_type_result) return std::unexpected(struct_type_result.error());
   llvm::Type* struct_type = *struct_type_result;
 
@@ -74,7 +74,7 @@ auto LowerUnpackedStructAggregateValue(
     llvm::Type* field_type = llvm::cast<llvm::StructType>(struct_type)
                                  ->getElementType(static_cast<unsigned>(i));
     auto field_val_result =
-        LowerOperandAsStorage(context, rvalue.operands[i], field_type);
+        LowerOperandAsStorage(context, facts, rvalue.operands[i], field_type);
     if (!field_val_result) return std::unexpected(field_val_result.error());
     llvm::Value* field_val = *field_val_result;
     aggregate = builder.CreateInsertValue(
@@ -116,7 +116,7 @@ auto LowerQueueAggregateValue(
         context.GetLyraDynArrayElementPtr(),
         {handle, llvm::ConstantInt::get(i64_ty, i)}, "q.lit.ep");
     auto val_result = LowerOperandAsStorage(
-        context, rvalue.operands[i], elem_ops.elem_llvm_type);
+        context, facts, rvalue.operands[i], elem_ops.elem_llvm_type);
     if (!val_result) return std::unexpected(val_result.error());
     llvm::Value* val = *val_result;
 
@@ -153,11 +153,11 @@ auto LowerAggregateRvalue(
   switch (target_type.Kind()) {
     case TypeKind::kUnpackedArray:
       result_or_err =
-          LowerUnpackedArrayAggregateValue(context, rvalue, result_type);
+          LowerUnpackedArrayAggregateValue(context, facts, rvalue, result_type);
       break;
     case TypeKind::kUnpackedStruct:
       result_or_err = LowerUnpackedStructAggregateValue(
-          context, rvalue, result_type, target_type);
+          context, facts, rvalue, result_type, target_type);
       break;
     case TypeKind::kQueue:
       result_or_err =

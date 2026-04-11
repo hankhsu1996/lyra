@@ -33,8 +33,8 @@ auto CommitValue(
 // For non-design targets (process locals): direct LLVM store, outside
 // the packed-store policy architecture.
 void CommitPackedValue(
-    Context& ctx, const mir::WriteTarget& target, const PackedRValue& rvalue,
-    TypeId type_id);
+    Context& ctx, const CuFacts& facts, const mir::WriteTarget& target,
+    const PackedRValue& rvalue, TypeId type_id);
 
 // Notify queue/container mutation (handle unchanged, content changed).
 // Invariant: handle at target unchanged, but logical content mutated

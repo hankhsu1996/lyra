@@ -27,12 +27,13 @@ namespace lyra::lowering::mir_to_llvm {
 namespace {
 
 // Resolve source to a raw LLVM value, lowering operand if needed.
-auto ResolveRawValue(Context& ctx, const WriteSource& source)
+auto ResolveRawValue(
+    Context& ctx, const CuFacts& facts, const WriteSource& source)
     -> Result<llvm::Value*> {
   if (const auto* rv = std::get_if<RawValueSource>(&source)) {
     return rv->value;
   }
-  return LowerOperandRaw(ctx, *std::get<OperandSource>(source).operand);
+  return LowerOperandRaw(ctx, facts, *std::get<OperandSource>(source).operand);
 }
 
 // Extract PlaceId from operand source. InternalError if source is not an
@@ -59,7 +60,7 @@ auto EmitManagedScalarWrite(
     Context& ctx, const CuFacts& facts, const mir::WriteTarget& target,
     const WriteSource& source, TypeId type_id, OwnershipPolicy policy)
     -> Result<void> {
-  auto raw = ResolveRawValue(ctx, source);
+  auto raw = ResolveRawValue(ctx, facts, source);
   if (!raw) return std::unexpected(raw.error());
 
   // Move cleanup: null-out source handle if moving from temp
@@ -89,9 +90,9 @@ auto EmitManagedScalarWrite(
 }
 
 auto EmitPointerScalarWrite(
-    Context& ctx, const mir::WriteTarget& target, const WriteSource& source)
-    -> Result<void> {
-  auto raw = ResolveRawValue(ctx, source);
+    Context& ctx, const CuFacts& facts, const mir::WriteTarget& target,
+    const WriteSource& source) -> Result<void> {
+  auto raw = ResolveRawValue(ctx, facts, source);
   if (!raw) return std::unexpected(raw.error());
 
   auto wt = commit::Access::GetWriteTarget(ctx, target);
@@ -102,9 +103,9 @@ auto EmitPointerScalarWrite(
 }
 
 auto EmitPlainAggregateStore(
-    Context& ctx, const mir::WriteTarget& target, const WriteSource& source)
-    -> Result<void> {
-  auto raw = ResolveRawValue(ctx, source);
+    Context& ctx, const CuFacts& facts, const mir::WriteTarget& target,
+    const WriteSource& source) -> Result<void> {
+  auto raw = ResolveRawValue(ctx, facts, source);
   if (!raw) return std::unexpected(raw.error());
 
   auto wt = commit::Access::GetWriteTarget(ctx, target);
@@ -155,7 +156,7 @@ auto EmitPackedOrFloatWrite(
   // Non-lossy packed path: PackedRValueSource carries preserved
   // 2-state/4-state semantics directly to CommitPackedValue.
   if (const auto* packed = std::get_if<PackedRValueSource>(&source)) {
-    CommitPackedValue(ctx, target, packed->rvalue, packed->type_id);
+    CommitPackedValue(ctx, facts, target, packed->rvalue, packed->type_id);
     return {};
   }
 
@@ -164,7 +165,7 @@ auto EmitPackedOrFloatWrite(
   // assoc_op, call, etc.) that produce raw llvm::Value* and route through
   // CommitValue -> DispatchWrite. The raw value's LLVM type is authoritative:
   // scalar means 2-state, struct {iN,iN} means 4-state.
-  auto raw = ResolveRawValue(ctx, source);
+  auto raw = ResolveRawValue(ctx, facts, source);
   if (!raw) return std::unexpected(raw.error());
 
   const auto& types = *facts.types;
@@ -190,7 +191,7 @@ auto EmitPackedOrFloatWrite(
   }
 
   auto rvalue = BuildPackedRValueFromRaw(ctx, store_value, semantic_bits);
-  CommitPackedValue(ctx, target, rvalue, type_id);
+  CommitPackedValue(ctx, facts, target, rvalue, type_id);
   return {};
 }
 
@@ -224,7 +225,7 @@ auto EmitUnionMemcpyWrite(
   const auto& wt = *wt_or_err;
   llvm::Value* target_ptr = wt.ptr;
 
-  auto info = GetUnionStorageInfo(ctx, type_id);
+  auto info = GetUnionStorageInfo(ctx, facts, type_id);
   if (!info) return std::unexpected(info.error());
 
   TypeId src_type = mir::TypeOfPlace(types, ctx.GetMirArena()[source_place]);
@@ -300,10 +301,10 @@ auto ExecuteWritePlan(
           ctx, facts, target, source, plan.type_id, policy);
 
     case WriteOp::kCommitPointerScalar:
-      return EmitPointerScalarWrite(ctx, target, source);
+      return EmitPointerScalarWrite(ctx, facts, target, source);
 
     case WriteOp::kStorePlainAggregate:
-      return EmitPlainAggregateStore(ctx, target, source);
+      return EmitPlainAggregateStore(ctx, facts, target, source);
 
     case WriteOp::kCommitPackedOrFloatScalar:
       return EmitPackedOrFloatWrite(ctx, facts, target, source, plan.type_id);

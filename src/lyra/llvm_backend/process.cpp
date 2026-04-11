@@ -468,11 +468,11 @@ void VerifyLlvmFunction(llvm::Function* func, const char* caller) {
 }
 
 auto LoadConditionAsI1(
-    Context& context, SlotAccessResolver& resolver, const mir::Operand& operand)
-    -> Result<llvm::Value*> {
+    Context& context, const CuFacts& facts, SlotAccessResolver& resolver,
+    const mir::Operand& operand) -> Result<llvm::Value*> {
   auto& builder = context.GetBuilder();
 
-  auto cond_val_or_err = LowerOperandRaw(context, resolver, operand);
+  auto cond_val_or_err = LowerOperandRaw(context, facts, resolver, operand);
   if (!cond_val_or_err) return std::unexpected(cond_val_or_err.error());
   llvm::Value* cond_val = *cond_val_or_err;
 
@@ -498,13 +498,13 @@ auto LoadConditionAsI1(
 }
 
 auto LowerEdgeArgs(
-    Context& context, SlotAccessResolver& resolver,
+    Context& context, const CuFacts& facts, SlotAccessResolver& resolver,
     const std::vector<mir::Operand>& args)
     -> Result<std::vector<llvm::Value*>> {
   std::vector<llvm::Value*> llvm_args;
   llvm_args.reserve(args.size());
   for (const auto& arg : args) {
-    auto val_or_err = LowerOperandRaw(context, resolver, arg);
+    auto val_or_err = LowerOperandRaw(context, facts, resolver, arg);
     if (!val_or_err) return std::unexpected(val_or_err.error());
     llvm_args.push_back(*val_or_err);
   }
@@ -579,14 +579,14 @@ void EmitBackEdgeGuard(
 }
 
 auto LowerJump(
-    Context& context, SlotAccessResolver& resolver, const mir::Jump& jump,
-    const std::vector<llvm::BasicBlock*>& blocks, PhiWiringState& phi_state)
-    -> Result<void> {
+    Context& context, const CuFacts& facts, SlotAccessResolver& resolver,
+    const mir::Jump& jump, const std::vector<llvm::BasicBlock*>& blocks,
+    PhiWiringState& phi_state) -> Result<void> {
   auto* current_bb = context.GetBuilder().GetInsertBlock();
 
   std::vector<llvm::Value*> arg_values;
   if (!jump.args.empty()) {
-    auto args_or_err = LowerEdgeArgs(context, resolver, jump.args);
+    auto args_or_err = LowerEdgeArgs(context, facts, resolver, jump.args);
     if (!args_or_err) return std::unexpected(args_or_err.error());
     arg_values = std::move(*args_or_err);
   }
@@ -605,30 +605,33 @@ auto LowerJump(
 }
 
 auto LowerJump(
-    Context& context, const mir::Jump& jump,
+    Context& context, const CuFacts& facts, const mir::Jump& jump,
     const std::vector<llvm::BasicBlock*>& blocks, PhiWiringState& phi_state)
     -> Result<void> {
-  CanonicalSlotAccess canonical(context);
-  return LowerJump(context, canonical, jump, blocks, phi_state);
+  CanonicalSlotAccess canonical(context, facts);
+  return LowerJump(context, facts, canonical, jump, blocks, phi_state);
 }
 
 auto LowerBranch(
-    Context& context, SlotAccessResolver& resolver, const mir::Branch& branch,
-    const std::vector<llvm::BasicBlock*>& blocks, PhiWiringState& phi_state)
-    -> Result<void> {
+    Context& context, const CuFacts& facts, SlotAccessResolver& resolver,
+    const mir::Branch& branch, const std::vector<llvm::BasicBlock*>& blocks,
+    PhiWiringState& phi_state) -> Result<void> {
   auto* current_bb = context.GetBuilder().GetInsertBlock();
-  auto cond_or_err = LoadConditionAsI1(context, resolver, branch.condition);
+  auto cond_or_err =
+      LoadConditionAsI1(context, facts, resolver, branch.condition);
   if (!cond_or_err) return std::unexpected(cond_or_err.error());
 
   std::vector<llvm::Value*> then_llvm_args;
   std::vector<llvm::Value*> else_llvm_args;
   if (!branch.then_args.empty()) {
-    auto args_or_err = LowerEdgeArgs(context, resolver, branch.then_args);
+    auto args_or_err =
+        LowerEdgeArgs(context, facts, resolver, branch.then_args);
     if (!args_or_err) return std::unexpected(args_or_err.error());
     then_llvm_args = std::move(*args_or_err);
   }
   if (!branch.else_args.empty()) {
-    auto args_or_err = LowerEdgeArgs(context, resolver, branch.else_args);
+    auto args_or_err =
+        LowerEdgeArgs(context, facts, resolver, branch.else_args);
     if (!args_or_err) return std::unexpected(args_or_err.error());
     else_llvm_args = std::move(*args_or_err);
   }
@@ -654,11 +657,11 @@ auto LowerBranch(
 }
 
 auto LowerBranch(
-    Context& context, const mir::Branch& branch,
+    Context& context, const CuFacts& facts, const mir::Branch& branch,
     const std::vector<llvm::BasicBlock*>& blocks, PhiWiringState& phi_state)
     -> Result<void> {
-  CanonicalSlotAccess canonical(context);
-  return LowerBranch(context, canonical, branch, blocks, phi_state);
+  CanonicalSlotAccess canonical(context, facts);
+  return LowerBranch(context, facts, canonical, branch, blocks, phi_state);
 }
 
 void LowerReturn(Context& context, llvm::BasicBlock* exit_block) {
@@ -666,8 +669,8 @@ void LowerReturn(Context& context, llvm::BasicBlock* exit_block) {
 }
 
 auto LowerFinish(
-    Context& context, const mir::Finish& finish, common::OriginId origin,
-    llvm::BasicBlock* exit_block) -> Result<void> {
+    Context& context, const CuFacts& facts, const mir::Finish& finish,
+    common::OriginId origin, llvm::BasicBlock* exit_block) -> Result<void> {
   auto& builder = context.GetBuilder();
   auto& llvm_ctx = context.GetLlvmContext();
   auto* i32_ty = llvm::Type::getInt32Ty(llvm_ctx);
@@ -678,14 +681,15 @@ auto LowerFinish(
     llvm::Value* msg_handle = llvm::ConstantPointerNull::get(ptr_ty);
     bool owns_msg = false;
     if (finish.message.has_value()) {
-      auto msg_or_err = LowerOperand(context, *finish.message);
+      auto msg_or_err = LowerOperand(context, facts, *finish.message);
       if (!msg_or_err) return std::unexpected(msg_or_err.error());
       msg_handle = *msg_or_err;
       owns_msg = true;
     }
 
     auto lowered_origin = LowerOptionalReportOrigin(
-        origin.IsValid() ? std::optional{origin} : std::nullopt, context);
+        origin.IsValid() ? std::optional{origin} : std::nullopt, context,
+        facts);
 
     EmitAbiReportCall(
         context, static_cast<uint8_t>(runtime::ReportKind::kFatalTermination),
@@ -704,7 +708,7 @@ auto LowerFinish(
   auto kind_val = static_cast<uint32_t>(finish.kind);
   llvm::Value* message = llvm::ConstantPointerNull::get(ptr_ty);
   if (finish.message.has_value()) {
-    auto msg_or_err = LowerOperand(context, *finish.message);
+    auto msg_or_err = LowerOperand(context, facts, *finish.message);
     if (!msg_or_err) return std::unexpected(msg_or_err.error());
     message = *msg_or_err;
   }
@@ -793,8 +797,8 @@ auto ResolveObservationRange(Context& context, const mir::WaitTrigger& trigger)
 // emits bounds checking. Stores results into the WaitTriggerRecord fields.
 // On OOB, byte_size=0 is stored as a sentinel for the runtime.
 void EmitDynamicBitTarget(
-    Context& context, llvm::Value* elem_ptr, llvm::Type* trigger_type,
-    const mir::WaitTrigger& trigger) {
+    Context& context, const CuFacts& facts, llvm::Value* elem_ptr,
+    llvm::Type* trigger_type, const mir::WaitTrigger& trigger) {
   auto& builder = context.GetBuilder();
   auto& llvm_ctx = context.GetLlvmContext();
   auto* i8_ty = llvm::Type::getInt8Ty(llvm_ctx);
@@ -808,7 +812,7 @@ void EmitDynamicBitTarget(
   const auto& bit_range = std::get<mir::BitRangeProjection>(last_proj.info);
 
   // Lower the bit_offset operand to get the LLVM Value.
-  auto offset_or_err = LowerOperand(context, bit_range.bit_offset);
+  auto offset_or_err = LowerOperand(context, facts, bit_range.bit_offset);
   if (!offset_or_err) {
     throw common::InternalError(
         "EmitDynamicBitTarget", "failed to lower storage offset operand");
@@ -876,7 +880,7 @@ void EmitDynamicUnpackedBitTarget(
   const auto& last_proj = place.projections.back();
   const auto& bit_range = std::get<mir::BitRangeProjection>(last_proj.info);
 
-  auto offset_or_err = LowerOperand(context, bit_range.bit_offset);
+  auto offset_or_err = LowerOperand(context, facts, bit_range.bit_offset);
   if (!offset_or_err) {
     throw common::InternalError(
         "EmitDynamicUnpackedBitTarget", "failed to lower index operand");
@@ -959,7 +963,7 @@ void EmitDynamicContainerTarget(
   const auto& last_proj = place.projections.back();
   const auto& bit_range = std::get<mir::BitRangeProjection>(last_proj.info);
 
-  auto offset_or_err = LowerOperand(context, bit_range.bit_offset);
+  auto offset_or_err = LowerOperand(context, facts, bit_range.bit_offset);
   if (!offset_or_err) {
     throw common::InternalError(
         "EmitDynamicContainerTarget", "failed to lower index operand");
@@ -1141,7 +1145,8 @@ void FillTriggerArray(
       // container_elem_stride = 0 (non-container), flags set by Emit*.
       auto* stride_ptr = builder.CreateStructGEP(trigger_type, elem_ptr, 7);
       builder.CreateStore(llvm::ConstantInt::get(i32_ty, 0), stride_ptr);
-      EmitDynamicBitTarget(context, elem_ptr, trigger_type, resolved_triggers[i]);
+      EmitDynamicBitTarget(
+          context, facts, elem_ptr, trigger_type, resolved_triggers[i]);
     } else {
       // Static path: resolve observation range at compile time.
       // Always active, container_elem_stride = 0.
@@ -1700,17 +1705,17 @@ auto LowerTerminator(
   return std::visit(
       common::Overloaded{
           [&](const mir::Jump& t) -> Result<void> {
-            return LowerJump(context, resolver, t, blocks, phi_state);
+            return LowerJump(context, facts, resolver, t, blocks, phi_state);
           },
           [&](const mir::Branch& t) -> Result<void> {
-            return LowerBranch(context, resolver, t, blocks, phi_state);
+            return LowerBranch(context, facts, resolver, t, blocks, phi_state);
           },
           [&](const mir::Return&) -> Result<void> {
             LowerReturn(context, exit_block);
             return {};
           },
           [&](const mir::Finish& f) -> Result<void> {
-            return LowerFinish(context, f, term.origin, exit_block);
+            return LowerFinish(context, facts, f, term.origin, exit_block);
           },
           [&](const mir::Delay& d) -> Result<void> {
             LowerDelay(context, d, exit_block);
@@ -1748,7 +1753,7 @@ auto LowerTerminator(
     const std::vector<llvm::BasicBlock*>& blocks, llvm::BasicBlock* exit_block,
     PhiWiringState& phi_state, uint32_t wait_site_base,
     std::vector<WaitSiteEntry>& wait_sites) -> Result<void> {
-  CanonicalSlotAccess canonical(context);
+  CanonicalSlotAccess canonical(context, facts);
   return LowerTerminator(
       context, facts, canonical, term, blocks, exit_block, phi_state,
       wait_site_base, wait_sites);
@@ -2092,11 +2097,12 @@ auto GenerateSharedProcessFunction(
   std::vector<ManagedSlotStorage> managed_storage;
   if (shared_proc_layout_for_plan.activation_plan.has_value()) {
     managed_storage = CreateManagedSlotStorage(
-        *shared_proc_layout_for_plan.activation_plan, context);
+        *shared_proc_layout_for_plan.activation_plan, context, facts);
   } else {
     auto local_plan = BuildProcessActivationPlan(
         process, context.GetMirArena(), *facts.types);
-    managed_storage = CreateManagedSlotStorageAsAllocas(local_plan, context);
+    managed_storage =
+        CreateManagedSlotStorageAsAllocas(local_plan, context, facts);
   }
 
   // Resume dispatch (same logic as GenerateProcessFunction)
@@ -2145,7 +2151,7 @@ auto GenerateSharedProcessFunction(
           ? *shared_proc_layout_for_plan.activation_plan
           : kEmptyPlan;
   ContractExecutor executor(
-      context, activation_plan, std::move(managed_storage));
+      context, facts, activation_plan, std::move(managed_storage));
 
   for (size_t i = 0; i < process.blocks.size(); ++i) {
     const auto& block = process.blocks[i];
@@ -2696,10 +2702,10 @@ auto DefineMonitorCheckProgram(
     auto term_result = std::visit(
         common::Overloaded{
             [&](const mir::Jump& t) -> Result<void> {
-              return LowerJump(context, t, llvm_blocks, phi_state);
+              return LowerJump(context, facts, t, llvm_blocks, phi_state);
             },
             [&](const mir::Branch& t) -> Result<void> {
-              return LowerBranch(context, t, llvm_blocks, phi_state);
+              return LowerBranch(context, facts, t, llvm_blocks, phi_state);
             },
             [&](const mir::Return&) -> Result<void> {
               // At Return: evaluate operands from check program's DisplayEffect
@@ -2718,7 +2724,7 @@ auto DefineMonitorCheckProgram(
                   uint32_t offset = layout.offsets[j];
 
                   // Evaluate the operand
-                  auto val_result = LowerOperand(context, *op.value);
+                  auto val_result = LowerOperand(context, facts, *op.value);
                   if (!val_result) {
                     return std::unexpected(val_result.error());
                   }
@@ -2958,7 +2964,7 @@ auto EmitMonitorSetupEpilogue(
       uint32_t offset = layout->offsets[i];
 
       // Lower the operand to get current value
-      auto val_result = LowerOperandRaw(context, *op.value);
+      auto val_result = LowerOperandRaw(context, facts, *op.value);
       if (!val_result) return std::unexpected(val_result.error());
       llvm::Value* value = *val_result;
 
@@ -3531,10 +3537,10 @@ auto DefineMirFunction(
     auto term_result = std::visit(
         common::Overloaded{
             [&](const mir::Jump& t) -> Result<void> {
-              return LowerJump(context, t, llvm_blocks, phi_state);
+              return LowerJump(context, facts, t, llvm_blocks, phi_state);
             },
             [&](const mir::Branch& t) -> Result<void> {
-              return LowerBranch(context, t, llvm_blocks, phi_state);
+              return LowerBranch(context, facts, t, llvm_blocks, phi_state);
             },
             [&](const mir::Return& t) -> Result<void> {
               // Handle return value based on return policy
@@ -3559,7 +3565,7 @@ auto DefineMirFunction(
                       func.signature.return_type);
                 } else if (return_value_ptr != nullptr) {
                   // Direct return: load value and store to return slot
-                  auto val_result = LowerOperandRaw(context, *t.value);
+                  auto val_result = LowerOperandRaw(context, facts, *t.value);
                   if (!val_result) return std::unexpected(val_result.error());
                   builder.CreateStore(*val_result, return_value_ptr);
                 }

@@ -22,6 +22,7 @@
 #include "lyra/llvm_backend/compute/real.hpp"
 #include "lyra/llvm_backend/compute/string.hpp"
 #include "lyra/llvm_backend/context.hpp"
+#include "lyra/llvm_backend/cu_facts.hpp"
 #include "lyra/llvm_backend/format_lowering.hpp"
 #include "lyra/llvm_backend/instruction/system_tf.hpp"
 #include "lyra/llvm_backend/slot_access.hpp"
@@ -35,13 +36,13 @@ namespace {
 // Returns 1 if a plusarg matching the query prefix exists, 0 otherwise.
 // Query is stored in info.query as TypedOperand for packed-to-string coercion.
 auto LowerTestPlusargsRvalue(
-    Context& context, const mir::TestPlusargsRvalueInfo& info)
-    -> Result<RvalueValue> {
+    Context& context, const CuFacts& facts,
+    const mir::TestPlusargsRvalueInfo& info) -> Result<RvalueValue> {
   auto& builder = context.GetBuilder();
 
   llvm::Value* result = nullptr;
   auto status = WithStringHandle(
-      context, info.query.operand, info.query.type,
+      context, facts, info.query.operand, info.query.type,
       [&](llvm::Value* query_handle) -> Result<void> {
         result = builder.CreateCall(
             context.GetLyraPlusargsTest(),
@@ -57,7 +58,8 @@ auto LowerTestPlusargsRvalue(
 // - MCD mode: $fopen(filename) - opens for writing, returns multi-channel desc
 // - FD mode: $fopen(filename, mode) - opens with mode, returns file descriptor
 // Uses nested WithStringHandle for automatic handle release.
-auto LowerFopenRvalue(Context& context, const mir::FopenRvalueInfo& info)
+auto LowerFopenRvalue(
+    Context& context, const CuFacts& facts, const mir::FopenRvalueInfo& info)
     -> Result<RvalueValue> {
   auto& builder = context.GetBuilder();
 
@@ -65,12 +67,12 @@ auto LowerFopenRvalue(Context& context, const mir::FopenRvalueInfo& info)
 
   // Use nested WithStringHandle for filename (and optionally mode)
   auto status = WithStringHandle(
-      context, info.filename.operand, info.filename.type,
+      context, facts, info.filename.operand, info.filename.type,
       [&](llvm::Value* filename_handle) -> Result<void> {
         if (info.mode) {
           // FD mode: $fopen(filename, mode) - nested WithStringHandle
           return WithStringHandle(
-              context, info.mode->operand, info.mode->type,
+              context, facts, info.mode->operand, info.mode->type,
               [&](llvm::Value* mode_handle) -> Result<void> {
                 result = builder.CreateCall(
                     context.GetLyraFopenFd(),
@@ -95,7 +97,7 @@ auto LowerFopenRvalue(Context& context, const mir::FopenRvalueInfo& info)
 auto LowerRvalue(
     Context& context, const CuFacts& facts, const mir::Rvalue& rvalue,
     TypeId result_type) -> Result<RvalueValue> {
-  CanonicalSlotAccess canonical(context);
+  CanonicalSlotAccess canonical(context, facts);
   return LowerRvalue(context, facts, canonical, rvalue, result_type);
 }
 
@@ -160,7 +162,7 @@ auto LowerRvalue(
           [&](const mir::ConcatRvalueInfo& info) -> Result<RvalueValue> {
             if (types[info.result_type].Kind() == TypeKind::kString) {
               auto val_or_err = LowerStringConcatValue(
-                  context, resolver, info, rvalue.operands);
+                  context, facts, resolver, info, rvalue.operands);
               if (!val_or_err) return std::unexpected(val_or_err.error());
               return RvalueValue::TwoState(*val_or_err);
             }
@@ -170,7 +172,7 @@ auto LowerRvalue(
           [&](const mir::ReplicateRvalueInfo& info) -> Result<RvalueValue> {
             if (types[info.result_type].Kind() == TypeKind::kString) {
               auto val_or_err = LowerStringReplicateValue(
-                  context, resolver, info, rvalue.operands);
+                  context, facts, resolver, info, rvalue.operands);
               if (!val_or_err) return std::unexpected(val_or_err.error());
               return RvalueValue::TwoState(*val_or_err);
             }
@@ -198,10 +200,10 @@ auto LowerRvalue(
                 context, facts, resolver, rvalue, result_type);
           },
           [&](const mir::TestPlusargsRvalueInfo& info) -> Result<RvalueValue> {
-            return LowerTestPlusargsRvalue(context, info);
+            return LowerTestPlusargsRvalue(context, facts, info);
           },
           [&](const mir::FopenRvalueInfo& info) -> Result<RvalueValue> {
-            return LowerFopenRvalue(context, info);
+            return LowerFopenRvalue(context, facts, info);
           },
           [&](const mir::SystemTfRvalueInfo& info) -> Result<RvalueValue> {
             return LowerSystemTfRvalue(context, facts, resolver, rvalue, info);
@@ -212,13 +214,13 @@ auto LowerRvalue(
           },
           [&](const mir::SelectRvalueInfo&) -> Result<RvalueValue> {
             auto cond_or_err =
-                LowerOperand(context, resolver, rvalue.operands[0]);
+                LowerOperand(context, facts, resolver, rvalue.operands[0]);
             if (!cond_or_err) return std::unexpected(cond_or_err.error());
             auto true_or_err =
-                LowerOperandRaw(context, resolver, rvalue.operands[1]);
+                LowerOperandRaw(context, facts, resolver, rvalue.operands[1]);
             if (!true_or_err) return std::unexpected(true_or_err.error());
             auto false_or_err =
-                LowerOperandRaw(context, resolver, rvalue.operands[2]);
+                LowerOperandRaw(context, facts, resolver, rvalue.operands[2]);
             if (!false_or_err) return std::unexpected(false_or_err.error());
             auto& builder = context.GetBuilder();
             llvm::Value* cond_i1 = *cond_or_err;
@@ -254,7 +256,7 @@ auto LowerRvalue(
                   context.GetLyraSystemCmd(), {engine, null_ptr});
             } else {
               auto status = WithStringHandle(
-                  context, info.command->operand, info.command->type,
+                  context, facts, info.command->operand, info.command->type,
                   [&](llvm::Value* handle) -> Result<void> {
                     result = builder.CreateCall(
                         context.GetLyraSystemCmd(), {engine, handle});

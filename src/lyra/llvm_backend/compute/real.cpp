@@ -91,7 +91,7 @@ auto LowerRealUnaryValue(
   const auto& types = *facts.types;
 
   llvm::Type* float_ty = GetOperandFloatType(context, facts, operands[0]);
-  auto operand_or_err = LowerOperand(context, resolver, operands[0]);
+  auto operand_or_err = LowerOperand(context, facts, resolver, operands[0]);
   if (!operand_or_err) return std::unexpected(operand_or_err.error());
   llvm::Value* operand = *operand_or_err;
 
@@ -129,10 +129,10 @@ auto LowerRealBinaryValue(
   const auto& types = *facts.types;
 
   llvm::Type* float_ty = GetOperandFloatType(context, facts, operands[0]);
-  auto lhs_or_err = LowerOperand(context, resolver, operands[0]);
+  auto lhs_or_err = LowerOperand(context, facts, resolver, operands[0]);
   if (!lhs_or_err) return std::unexpected(lhs_or_err.error());
   llvm::Value* lhs = *lhs_or_err;
-  auto rhs_or_err = LowerOperand(context, resolver, operands[1]);
+  auto rhs_or_err = LowerOperand(context, facts, resolver, operands[1]);
   if (!rhs_or_err) return std::unexpected(rhs_or_err.error());
   llvm::Value* rhs = *rhs_or_err;
 
@@ -239,7 +239,7 @@ auto IsRealMathRvalue(
 auto LowerRealRvalue(
     Context& context, const CuFacts& facts, const mir::Rvalue& rvalue,
     TypeId result_type) -> Result<RvalueValue> {
-  CanonicalSlotAccess canonical(context);
+  CanonicalSlotAccess canonical(context, facts);
   return LowerRealRvalue(context, facts, canonical, rvalue, result_type);
 }
 

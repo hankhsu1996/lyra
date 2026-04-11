@@ -79,9 +79,9 @@ auto BuildStorePolicy(Context& ctx, mir::PlaceId target) -> PackedStorePolicy {
 
 // Packed subview write via the packed storage view module.
 auto StoreBitRange(
-    Context& ctx, mir::PlaceId target, const PackedRValue& rvalue)
-    -> Result<void> {
-  auto path = ExtractPackedAccessPath(ctx, target);
+    Context& ctx, const CuFacts& facts, mir::PlaceId target,
+    const PackedRValue& rvalue) -> Result<void> {
+  auto path = ExtractPackedAccessPath(ctx, facts, target);
   if (!path) return std::unexpected(path.error());
 
   auto subview = ResolvePackedSubview(ctx, *path);
@@ -112,12 +112,12 @@ auto OwnershipForFieldOperand(const mir::Operand& operand) -> OwnershipPolicy {
 // that would otherwise be misinterpreted as 4-state {value, unknown} pairs.
 // The returned pointer is a temporary alloca valid for the current function.
 auto MaterializeOperandAsPtr(
-    Context& context, const mir::Operand& operand, TypeId type_id)
-    -> Result<llvm::Value*> {
-  auto val_or_err = LowerOperandRaw(context, operand);
+    Context& context, const CuFacts& facts, const mir::Operand& operand,
+    TypeId type_id) -> Result<llvm::Value*> {
+  auto val_or_err = LowerOperandRaw(context, facts, operand);
   if (!val_or_err) return std::unexpected(val_or_err.error());
 
-  auto llvm_type_result = BuildLlvmTypeForTypeId(context, type_id);
+  auto llvm_type_result = BuildLlvmTypeForTypeId(context, facts, type_id);
   if (!llvm_type_result) return std::unexpected(llvm_type_result.error());
 
   auto& builder = context.GetBuilder();
@@ -135,7 +135,7 @@ auto StoreFieldFromOperand(
   const Type& field_type = types[field_type_id];
 
   if (field_type.Kind() == TypeKind::kString) {
-    auto val_or_err = LowerOperand(context, operand);
+    auto val_or_err = LowerOperand(context, facts, operand);
     if (!val_or_err) return std::unexpected(val_or_err.error());
     detail::CommitStringField(
         context, field_ptr, *val_or_err, OwnershipForFieldOperand(operand));
@@ -146,7 +146,8 @@ auto StoreFieldFromOperand(
       NeedsFieldByField(field_type_id, types)) {
     // Nested managed struct: materialize the operand to a pointer, then
     // delegate to the canonical lifecycle-aware struct transfer path.
-    auto src_ptr = MaterializeOperandAsPtr(context, operand, field_type_id);
+    auto src_ptr =
+        MaterializeOperandAsPtr(context, facts, operand, field_type_id);
     if (!src_ptr) return std::unexpected(src_ptr.error());
     return detail::TransferManagedStructFields(
         context, facts, *src_ptr, field_ptr, field_type_id,
@@ -154,7 +155,7 @@ auto StoreFieldFromOperand(
   }
 
   // Plain field: compute operand -> store (no notify)
-  auto val_or_err = LowerOperand(context, operand);
+  auto val_or_err = LowerOperand(context, facts, operand);
   if (!val_or_err) return std::unexpected(val_or_err.error());
   detail::CommitPlainField(context, field_ptr, *val_or_err);
   return {};
@@ -171,7 +172,7 @@ auto StoreManagedStructLiteralToPtr(
   const auto& struct_info = struct_type.AsUnpackedStruct();
 
   auto llvm_struct_type_result =
-      BuildLlvmTypeForTypeId(context, struct_type_id);
+      BuildLlvmTypeForTypeId(context, facts, struct_type_id);
   if (!llvm_struct_type_result)
     return std::unexpected(llvm_struct_type_result.error());
   auto* llvm_struct = llvm::cast<llvm::StructType>(*llvm_struct_type_result);
@@ -279,14 +280,14 @@ auto LowerRvalueAssign(
 auto LowerAssign(
     Context& context, const CuFacts& facts, const mir::Assign& assign)
     -> Result<void> {
-  CanonicalSlotAccess canonical(context);
+  CanonicalSlotAccess canonical(context, facts);
   return LowerAssign(context, facts, canonical, assign);
 }
 
 auto LowerGuardedAssign(
     Context& context, const CuFacts& facts, const mir::GuardedAssign& guarded)
     -> Result<void> {
-  CanonicalSlotAccess canonical(context);
+  CanonicalSlotAccess canonical(context, facts);
   return LowerGuardedAssign(context, facts, canonical, guarded);
 }
 // Single resolver-aware write path for managed immediate assignments.
@@ -328,7 +329,7 @@ auto LowerAssign(
   // branches are only reachable for PlaceId destinations.
   if (dest_place != nullptr && resolver.ManagesPlace(*dest_place)) {
     if (context.HasBitRangeProjection(*dest_place)) {
-      auto path = ExtractPackedAccessPath(context, *dest_place);
+      auto path = ExtractPackedAccessPath(context, facts, *dest_place);
       if (!path) return std::unexpected(path.error());
       auto subview = ResolvePackedSubview(context, *path);
       if (!subview) return std::unexpected(subview.error());
@@ -336,7 +337,7 @@ auto LowerAssign(
           context, facts, resolver, assign.rhs, subview->semantic_bit_width,
           subview->result_type);
       if (!packed) return std::unexpected(packed.error());
-      return StoreBitRange(context, *dest_place, *packed);
+      return StoreBitRange(context, facts, *dest_place, *packed);
     }
     auto rhs_raw_or_err =
         LowerRhsRaw(context, facts, resolver, assign.rhs, *dest_place);
@@ -347,7 +348,7 @@ auto LowerAssign(
   }
 
   if (dest_place != nullptr && context.HasBitRangeProjection(*dest_place)) {
-    auto path = ExtractPackedAccessPath(context, *dest_place);
+    auto path = ExtractPackedAccessPath(context, facts, *dest_place);
     if (!path) return std::unexpected(path.error());
     auto subview = ResolvePackedSubview(context, *path);
     if (!subview) return std::unexpected(subview.error());
@@ -355,7 +356,7 @@ auto LowerAssign(
         context, facts, resolver, assign.rhs, subview->semantic_bit_width,
         subview->result_type);
     if (!packed) return std::unexpected(packed.error());
-    return StoreBitRange(context, *dest_place, *packed);
+    return StoreBitRange(context, facts, *dest_place, *packed);
   }
 
   // Shared path: resolve destination type and build write plan.
@@ -441,7 +442,7 @@ auto LowerGuardedAssign(
   llvm::Value* rhs_raw = nullptr;
 
   if (is_bit_range) {
-    auto path = ExtractPackedAccessPath(context, *dest_place);
+    auto path = ExtractPackedAccessPath(context, facts, *dest_place);
     if (!path) return std::unexpected(path.error());
     auto subview = ResolvePackedSubview(context, *path);
     if (!subview) return std::unexpected(subview.error());
@@ -464,7 +465,7 @@ auto LowerGuardedAssign(
   }
 
   // Guard check (coerce to i1).
-  auto guard_or_err = LowerOperand(context, resolver, guarded.guard);
+  auto guard_or_err = LowerOperand(context, facts, resolver, guarded.guard);
   if (!guard_or_err) return std::unexpected(guard_or_err.error());
   llvm::Value* guard = *guard_or_err;
   if (guard->getType()->getIntegerBitWidth() > 1) {
@@ -484,7 +485,7 @@ auto LowerGuardedAssign(
   builder.SetInsertPoint(do_write_bb);
 
   if (is_bit_range) {
-    auto result = StoreBitRange(context, *dest_place, *packed_rhs);
+    auto result = StoreBitRange(context, facts, *dest_place, *packed_rhs);
     if (!result) return result;
   } else if (is_packed_dest) {
     auto result = DispatchWrite(

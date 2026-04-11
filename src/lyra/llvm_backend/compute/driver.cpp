@@ -112,12 +112,13 @@ auto LowerGuardedUse(
 
 // RuntimeQuery does not read module-slot operands (queries runtime state).
 auto LowerRuntimeQuery(
-    Context& context, const mir::RuntimeQueryRvalueInfo& info,
+    Context& context, const CuFacts& facts,
+    const mir::RuntimeQueryRvalueInfo& info,
     const PackedComputeContext& packed_context) -> Result<ComputeResult> {
   if (packed_context.is_four_state) {
-    return LowerRuntimeQuery4State(context, info, packed_context);
+    return LowerRuntimeQuery4State(context, facts, info, packed_context);
   }
-  return LowerRuntimeQuery2State(context, info, packed_context);
+  return LowerRuntimeQuery2State(context, facts, info, packed_context);
 }
 }  // namespace
 
@@ -151,7 +152,7 @@ auto FinalizeCompute(
 auto LowerPackedCoreRvalue(
     Context& context, const CuFacts& facts, const mir::Rvalue& rvalue,
     TypeId result_type) -> Result<RvalueValue> {
-  CanonicalSlotAccess canonical(context);
+  CanonicalSlotAccess canonical(context, facts);
   return LowerPackedCoreRvalue(context, facts, canonical, rvalue, result_type);
 }
 auto LowerPackedCoreRvalue(
@@ -229,7 +230,7 @@ auto LowerPackedCoreRvalue(
           },
           [&](const mir::RuntimeQueryRvalueInfo& info)
               -> Result<ComputeResult> {
-            return LowerRuntimeQuery(context, info, packed_context);
+            return LowerRuntimeQuery(context, facts, info, packed_context);
           },
           [&](const auto& /*info*/) -> Result<ComputeResult> {
             return std::unexpected(

@@ -22,6 +22,7 @@
 #include "lyra/common/type_arena.hpp"
 #include "lyra/llvm_backend/codegen_session.hpp"
 #include "lyra/llvm_backend/context.hpp"
+#include "lyra/llvm_backend/cu_facts.hpp"
 #include "lyra/llvm_backend/deferred_thunk_abi.hpp"
 #include "lyra/llvm_backend/design_metadata_lowering.hpp"
 #include "lyra/llvm_backend/emit_realization_descriptors.hpp"
@@ -106,11 +107,11 @@ auto EmitWaitSiteMetaTable(
 }
 
 void InitializeProcessState(
-    Context& context, llvm::Value* process_state, llvm::Value* design_state,
-    const ProcessLayout& proc_layout) {
+    Context& context, const CuFacts& facts, llvm::Value* process_state,
+    llvm::Value* design_state, const ProcessLayout& proc_layout) {
   auto& builder = context.GetBuilder();
   auto* state_type = proc_layout.state_type;
-  bool force_two_state = context.IsForceTwoState();
+  bool force_two_state = facts.force_two_state;
 
   EmitMemsetZero(context, process_state, state_type);
   context.EmitStoreDesignPtr(process_state, design_state);
@@ -123,17 +124,17 @@ void InitializeProcessState(
 
   EmitApply4StatePatches(context, frame_ptr, frame_layout.four_state_patches);
 
-  const auto& types = context.GetTypeArena();
+  const auto& types = *facts.types;
   for (uint32_t i = 0; i < frame_layout.field_types.size(); ++i) {
     TypeId type_id = frame_layout.field_types[i];
-    if (!context.IsFourState(type_id)) {
+    if (!IsFourState(facts, type_id)) {
       continue;
     }
     if (IsScalarPatchable(type_id, types, force_two_state)) {
       continue;
     }
     auto* field_ptr = builder.CreateStructGEP(frame_type, frame_ptr, i);
-    EmitSVDefaultInitAfterZero(context, context.GetFacts(), field_ptr, type_id);
+    EmitSVDefaultInitAfterZero(context, facts, field_ptr, type_id);
   }
 }
 
@@ -210,7 +211,7 @@ void EmitRuntimeInit(
 }
 
 void EmitInitProcesses(
-    Context& context, llvm::Value* design_state,
+    Context& context, const CuFacts& facts, llvm::Value* design_state,
     std::span<const ProcessLayout> processes,
     const std::vector<llvm::Function*>& process_funcs, size_t num_init) {
   auto& builder = context.GetBuilder();
@@ -221,7 +222,8 @@ void EmitInitProcesses(
     auto* process_state = builder.CreateAlloca(
         proc_layout.state_type, nullptr, std::format("init_state_{}", i));
 
-    InitializeProcessState(context, process_state, design_state, proc_layout);
+    InitializeProcessState(
+        context, facts, process_state, design_state, proc_layout);
 
     builder.CreateCall(
         context.GetLyraRunProcessSync(), {process_funcs[i], process_state});
@@ -321,7 +323,8 @@ auto BuildDesignMetadataOutputs(
 // Emit a global constant array of LyraDeferredAssertionSiteMeta structs.
 // Returns the global pointer (or nullptr if no deferred sites).
 auto EmitDeferredAssertionSiteMetaGlobal(
-    Context& context, const std::vector<mir::DeferredAssertionSiteInfo>& sites,
+    Context& context, const CuFacts& facts,
+    const std::vector<mir::DeferredAssertionSiteInfo>& sites,
     std::span<const DeferredSiteCompiledArtifact> artifacts,
     std::span<const lowering::BodyOriginProvenance::Entry* const>
         site_origin_entries,
@@ -394,7 +397,7 @@ auto EmitDeferredAssertionSiteMetaGlobal(
         site_diag_ptr = &*site_diag;
       }
       auto loc = ResolveProcessOrigin(
-          site.origin, site_diag_ptr, context.GetSourceManager());
+          site.origin, site_diag_ptr, facts.source_manager);
       if (loc.line > 0 && !loc.file.empty()) {
         auto* str_const =
             llvm::ConstantDataArray::getString(llvm_ctx, loc.file, true);
@@ -603,7 +606,7 @@ void EmitRunSimulation(
 }
 
 void EmitMainExit(
-    Context& context, llvm::Value* design_state,
+    Context& context, const CuFacts& facts, llvm::Value* design_state,
     const EmitDesignMainInput& input, const Layout& layout,
     const TypeArena& types, bool force_two_state, llvm::BasicBlock* exit_block,
     llvm::Value* abi_alloca, const RealizationEmissionResult& ctor_result,
@@ -620,8 +623,8 @@ void EmitMainExit(
   // Backend-owned variable inspection from typed placement descriptors.
   if (!inspection_plan.IsEmpty()) {
     EmitVariableInspection(
-        context, inspection_plan, *input.design, layout, types, force_two_state,
-        design_state, abi_alloca);
+        context, facts, inspection_plan, *input.design, layout, types,
+        force_two_state, design_state, abi_alloca);
   }
 
   if (input.hooks != nullptr) {
@@ -661,6 +664,7 @@ auto EmitDesignMain(
     const EmitDesignMainInput& input) -> Result<LoweringReport> {
   ForwardingAnalysisReport forwarding_report;
   auto& context = *session.context;
+  const auto& facts = *session.facts;
   const auto& layout = *session.layout;
   const auto& process_funcs = session.process_funcs;
   size_t num_init = session.num_init_processes;
@@ -696,7 +700,7 @@ auto EmitDesignMain(
 
     if (num_simulation > 0) {
       ctor_result = EmitRealizationAndConstructor(
-          context, layout, design_state, session.body_compiled_funcs,
+          context, facts, layout, design_state, session.body_compiled_funcs,
           process_funcs, num_init, realization.construction_program);
       connection_funcs = ctor_result.connection_funcs;
       states_array = ctor_result.states_array;
@@ -712,7 +716,8 @@ auto EmitDesignMain(
     }
 
     EmitInitProcesses(
-        context, design_state, layout.processes, process_funcs, num_init);
+        context, facts, design_state, layout.processes, process_funcs,
+        num_init);
 
     if (input.hooks != nullptr) {
       input.hooks->OnBeforeRunSimulation(context, design_state);
@@ -785,7 +790,7 @@ auto EmitDesignMain(
       }
     }
     auto* deferred_site_meta_global = EmitDeferredAssertionSiteMetaGlobal(
-        context, input.design->deferred_assertion_sites,
+        context, facts, input.design->deferred_assertion_sites,
         session.deferred_site_artifacts, site_origin_entries, site_cover_bases);
     auto* abi_alloca = BuildRuntimeAbi(
         context, meta_globals, wait_site_meta, num_connection,
@@ -811,7 +816,8 @@ auto EmitDesignMain(
     }
 
     EmitInitProcesses(
-        context, design_state, layout.processes, process_funcs, num_init);
+        context, facts, design_state, layout.processes, process_funcs,
+        num_init);
 
     if (input.hooks != nullptr) {
       input.hooks->OnBeforeRunSimulation(context, design_state);
@@ -830,8 +836,8 @@ auto EmitDesignMain(
   }
 
   EmitMainExit(
-      context, design_state, input, layout, context.GetTypeArena(),
-      context.IsForceTwoState(), exit_block, abi_for_exit, ctor_result,
+      context, facts, design_state, input, layout, *facts.types,
+      facts.force_two_state, exit_block, abi_for_exit, ctor_result,
       inspection_plan);
 
   return LoweringReport{

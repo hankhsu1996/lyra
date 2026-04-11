@@ -94,7 +94,8 @@ auto LowerQueueDelete(
   return {};
 }
 
-auto LowerQueueDeleteAt(Context& context, const mir::BuiltinCall& call)
+auto LowerQueueDeleteAt(
+    Context& context, const CuFacts& facts, const mir::BuiltinCall& call)
     -> Result<void> {
   auto& builder = context.GetBuilder();
   auto* ptr_ty = llvm::PointerType::getUnqual(context.GetLlvmContext());
@@ -106,7 +107,7 @@ auto LowerQueueDeleteAt(Context& context, const mir::BuiltinCall& call)
 
   llvm::Value* handle = builder.CreateLoad(ptr_ty, recv_ptr, "q.delat.h");
 
-  auto index_or_err = LowerOperand(context, call.args[0]);
+  auto index_or_err = LowerOperand(context, facts, call.args[0]);
   if (!index_or_err) return std::unexpected(index_or_err.error());
   llvm::Value* index = *index_or_err;
 
@@ -130,8 +131,8 @@ auto LowerQueuePushBack(
   if (!qi_result) return std::unexpected(qi_result.error());
   auto qi = *qi_result;
 
-  auto val_or_err =
-      LowerOperandAsStorage(context, call.args[0], qi.elem_ops.elem_llvm_type);
+  auto val_or_err = LowerOperandAsStorage(
+      context, facts, call.args[0], qi.elem_ops.elem_llvm_type);
   if (!val_or_err) return std::unexpected(val_or_err.error());
   llvm::Value* val = *val_or_err;
 
@@ -163,8 +164,8 @@ auto LowerQueuePushFront(
   if (!qi_result) return std::unexpected(qi_result.error());
   auto qi = *qi_result;
 
-  auto val_or_err =
-      LowerOperandAsStorage(context, call.args[0], qi.elem_ops.elem_llvm_type);
+  auto val_or_err = LowerOperandAsStorage(
+      context, facts, call.args[0], qi.elem_ops.elem_llvm_type);
   if (!val_or_err) return std::unexpected(val_or_err.error());
   llvm::Value* val = *val_or_err;
 
@@ -251,13 +252,13 @@ auto LowerQueueInsert(
   auto qi = *qi_result;
 
   // args[0] = index, args[1] = value
-  auto index_or_err = LowerOperand(context, call.args[0]);
+  auto index_or_err = LowerOperand(context, facts, call.args[0]);
   if (!index_or_err) return std::unexpected(index_or_err.error());
   llvm::Value* index = *index_or_err;
   index = builder.CreateSExtOrTrunc(index, i64_ty, "q.ins.idx");
 
-  auto val_or_err =
-      LowerOperandAsStorage(context, call.args[1], qi.elem_ops.elem_llvm_type);
+  auto val_or_err = LowerOperandAsStorage(
+      context, facts, call.args[1], qi.elem_ops.elem_llvm_type);
   if (!val_or_err) return std::unexpected(val_or_err.error());
   llvm::Value* val = *val_or_err;
 
@@ -287,7 +288,7 @@ auto LowerBuiltinCall(
     case mir::BuiltinMethod::kQueueDelete:
       return LowerQueueDelete(context, facts, call);
     case mir::BuiltinMethod::kQueueDeleteAt:
-      return LowerQueueDeleteAt(context, call);
+      return LowerQueueDeleteAt(context, facts, call);
     case mir::BuiltinMethod::kQueuePushBack:
       return LowerQueuePushBack(context, facts, call);
     case mir::BuiltinMethod::kQueuePushFront:

@@ -109,7 +109,8 @@ auto Context::ComputePlacePointer(
                 field_idx, struct_info.fields.size()));
       }
 
-      auto struct_type_result = BuildLlvmTypeForTypeId(*this, current_type);
+      auto struct_type_result =
+          BuildLlvmTypeForTypeId(*this, *facts_, current_type);
       if (!struct_type_result)
         return std::unexpected(struct_type_result.error());
       llvm::Type* struct_type = *struct_type_result;
@@ -161,7 +162,7 @@ auto Context::ComputePlacePointer(
       // Load the handle, call ElementPtr
       auto* ptr_ty = llvm::PointerType::getUnqual(*llvm_context_);
       llvm::Value* handle = builder_.CreateLoad(ptr_ty, ptr, "da.handle");
-      auto index_result = LowerOperand(*this, idx->index);
+      auto index_result = LowerOperand(*this, *facts_, idx->index);
       if (!index_result) return std::unexpected(index_result.error());
       llvm::Value* index = builder_.CreateSExtOrTrunc(
           *index_result, llvm::Type::getInt64Ty(*llvm_context_), "da.idx");
@@ -172,10 +173,11 @@ auto Context::ComputePlacePointer(
                          : cur_type.AsDynamicArray().element_type;
     } else {
       // Unpacked array: GEP into fixed array
-      auto array_type_result = BuildLlvmTypeForTypeId(*this, current_type);
+      auto array_type_result =
+          BuildLlvmTypeForTypeId(*this, *facts_, current_type);
       if (!array_type_result) return std::unexpected(array_type_result.error());
       llvm::Type* array_type = *array_type_result;
-      auto index_result = LowerOperand(*this, idx->index);
+      auto index_result = LowerOperand(*this, *facts_, idx->index);
       if (!index_result) return std::unexpected(index_result.error());
       ptr = builder_.CreateGEP(
           array_type, ptr, {builder_.getInt32(0), *index_result},
@@ -653,7 +655,7 @@ auto Context::GetPlaceLlvmType(mir::PlaceId place_id) -> Result<llvm::Type*> {
 
   if (type.Kind() == TypeKind::kIntegral) {
     uint32_t bit_width = type.AsIntegral().bit_width;
-    if (IsPackedFourState(type)) {
+    if (IsPackedFourState(*facts_, type)) {
       return GetBackingFourStateType(*llvm_context_, bit_width);
     }
     return GetBackingLlvmType(*llvm_context_, bit_width);
@@ -673,7 +675,7 @@ auto Context::GetPlaceLlvmType(mir::PlaceId place_id) -> Result<llvm::Type*> {
   }
   if (IsPacked(type)) {
     auto width = PackedBitWidth(type, *facts_->types);
-    if (IsPackedFourState(type)) {
+    if (IsPackedFourState(*facts_, type)) {
       return GetBackingFourStateType(*llvm_context_, width);
     }
     return GetBackingLlvmType(*llvm_context_, width);
@@ -682,7 +684,7 @@ auto Context::GetPlaceLlvmType(mir::PlaceId place_id) -> Result<llvm::Type*> {
   if (type.Kind() == TypeKind::kUnpackedArray ||
       type.Kind() == TypeKind::kUnpackedStruct ||
       type.Kind() == TypeKind::kUnpackedUnion) {
-    return BuildLlvmTypeForTypeId(*this, type_id);
+    return BuildLlvmTypeForTypeId(*this, *facts_, type_id);
   }
 
   return std::unexpected(
@@ -742,7 +744,7 @@ auto Context::GetPlaceBaseType(mir::PlaceId place_id) -> Result<llvm::Type*> {
     }
   }
 
-  return BuildLlvmTypeForTypeId(*this, base_type_id);
+  return BuildLlvmTypeForTypeId(*this, *facts_, base_type_id);
 }
 
 // Shared logic: if the type is 4-state packed, load via canonical storage
@@ -754,10 +756,10 @@ auto Context::TryLoadCanonicalFourStateValue(llvm::Value* ptr, const Type& type)
   // Must check before calling IsPackedFourState which requires a packed type.
   uint32_t bit_width = 0;
   if (IsPacked(type)) {
-    if (!IsPackedFourState(type)) return std::nullopt;
+    if (!IsPackedFourState(*facts_, type)) return std::nullopt;
     bit_width = PackedBitWidth(type, *facts_->types);
   } else if (type.Kind() == TypeKind::kIntegral) {
-    if (!IsPackedFourState(type)) return std::nullopt;
+    if (!IsPackedFourState(*facts_, type)) return std::nullopt;
     bit_width = type.AsIntegral().bit_width;
   } else {
     return std::nullopt;
@@ -842,7 +844,7 @@ auto Context::ComposeBitRange(mir::PlaceId place_id)
       continue;
     }
     const auto& br = std::get<mir::BitRangeProjection>(proj.info);
-    auto br_offset_result = LowerOperand(*this, br.bit_offset);
+    auto br_offset_result = LowerOperand(*this, *facts_, br.bit_offset);
     if (!br_offset_result) return std::unexpected(br_offset_result.error());
     llvm::Value* br_offset =
         builder_.CreateZExtOrTrunc(*br_offset_result, offset_ty);
@@ -887,7 +889,7 @@ auto Context::RequiresBehavioralDirtyPropagation(
         ->slot_has_cross_body_behavioral_trigger[local_slot];
   }
   if (sig.scope == mir::SignalRef::Scope::kDesignGlobal) {
-    const auto& layout = GetLayout();
+    const auto& layout = *facts_->layout;
     auto slot = static_cast<uint32_t>(sig.id);
     if (slot >= layout.slot_has_design_behavioral_trigger.size()) {
       throw common::InternalError(
@@ -916,7 +918,7 @@ auto Context::RequiresConnectionNotification(const mir::SignalRef& sig) const
     return connection_notification_mask_->IsRequired(local_slot);
   }
   if (sig.scope == mir::SignalRef::Scope::kDesignGlobal) {
-    const auto& layout = GetLayout();
+    const auto& layout = *facts_->layout;
     auto slot = static_cast<uint32_t>(sig.id);
     if (slot >= layout.slot_has_connection_trigger.size()) {
       throw common::InternalError(
@@ -940,7 +942,7 @@ auto Context::RequiresStaticDirtyPropagation(const mir::SignalRef& sig) const
 
 auto Context::GetRuntimeSignalSlot(const mir::SignalRef& sig) const
     -> uint32_t {
-  const auto& layout = GetLayout();
+  const auto& layout = *facts_->layout;
   uint32_t owner_slot = 0;
 
   if (sig.scope == mir::SignalRef::Scope::kModuleLocal) {

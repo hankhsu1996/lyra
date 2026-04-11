@@ -257,7 +257,7 @@ struct DpiFourStateValue {
 auto LowerDpiFourStateOperand(
     Context& ctx, const CuFacts& facts, const mir::Operand& op, TypeId sv_type)
     -> Result<DpiFourStateValue> {
-  auto raw = LowerOperandRaw(ctx, op);
+  auto raw = LowerOperandRaw(ctx, facts, op);
   if (!raw) return std::unexpected(raw.error());
   auto& b = ctx.GetBuilder();
   auto [val, unk] = ExtractFourStateOrZero(b, *raw);
@@ -572,7 +572,7 @@ auto MarshalDpiScalarInput(
             "non-scalar DPI ABI class {}", static_cast<int>(param.abi_type)));
   }
   if (param.abi_type == DpiAbiTypeClass::kString) {
-    auto val = LowerOperand(context, operand);
+    auto val = LowerOperand(context, facts, operand);
     if (!val) return std::unexpected(val.error());
     return MarshalInputString(context, *val);
   }
@@ -585,7 +585,7 @@ auto MarshalDpiScalarInput(
     auto* unk1 = b.CreateTrunc(fsv->unk, i1, "dpi.ls.unk");
     return EncodeSvLogic(b, val1, unk1);
   }
-  auto val = LowerOperand(context, operand);
+  auto val = LowerOperand(context, facts, operand);
   if (!val) return std::unexpected(val.error());
   return CoerceToDpiAbiType(context, *val, param.abi_type);
 }
@@ -623,7 +623,7 @@ auto MarshalDpiBitVecInput(
                                      "expected kBitVecWide, got ABI class {}",
                                      static_cast<int>(param.abi_type)));
   }
-  auto val = LowerOperand(context, operand);
+  auto val = LowerOperand(context, facts, operand);
   if (!val) return std::unexpected(val.error());
   auto& b = context.GetBuilder();
   auto& llvm_ctx = context.GetLlvmContext();

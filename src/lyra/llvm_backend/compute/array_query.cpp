@@ -135,7 +135,7 @@ auto LowerArrayQueryRvalue(
     Context& context, const CuFacts& facts, const mir::Rvalue& rvalue,
     const mir::ArrayQueryRvalueInfo& info, TypeId result_type)
     -> Result<RvalueValue> {
-  CanonicalSlotAccess canonical(context);
+  CanonicalSlotAccess canonical(context, facts);
   return LowerArrayQueryRvalue(
       context, facts, canonical, rvalue, info, result_type);
 }
@@ -167,7 +167,8 @@ auto LowerArrayQueryRvalue(
     return RvalueValue::TwoState(val);
   }
 
-  auto dim_raw_or_err = LowerOperandRaw(context, resolver, rvalue.operands[1]);
+  auto dim_raw_or_err =
+      LowerOperandRaw(context, facts, resolver, rvalue.operands[1]);
   if (!dim_raw_or_err) return std::unexpected(dim_raw_or_err.error());
   llvm::Value* dim_raw = *dim_raw_or_err;
 
@@ -226,7 +227,7 @@ auto LowerArrayQueryRvalue(
         result_unk = x.unknown;
       } else if (dim_info.is_variable_sized) {
         auto handle_or_err =
-            LowerOperand(context, resolver, rvalue.operands[0]);
+            LowerOperand(context, facts, resolver, rvalue.operands[0]);
         if (!handle_or_err) return std::unexpected(handle_or_err.error());
         auto* size = builder.CreateCall(
             context.GetLyraDynArraySize(), {*handle_or_err}, "aq.da.size");
@@ -253,7 +254,7 @@ auto LowerArrayQueryRvalue(
         dr = MakeXResult(is_four_state, llvm_ctx);
       } else if (dim_info.is_variable_sized) {
         auto handle_or_err =
-            LowerOperand(context, resolver, rvalue.operands[0]);
+            LowerOperand(context, facts, resolver, rvalue.operands[0]);
         if (!handle_or_err) return std::unexpected(handle_or_err.error());
         auto* runtime_size = builder.CreateCall(
             context.GetLyraDynArraySize(), {*handle_or_err}, "aq.da.size");

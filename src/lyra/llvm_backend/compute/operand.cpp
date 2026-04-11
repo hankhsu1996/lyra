@@ -35,25 +35,27 @@ namespace lyra::lowering::mir_to_llvm {
 
 namespace {
 
-auto LoadBitRange(Context& context, mir::PlaceId place_id)
+auto LoadBitRange(Context& context, const CuFacts& facts, mir::PlaceId place_id)
     -> Result<llvm::Value*> {
   auto elem_type_result = context.GetPlaceLlvmType(place_id);
   if (!elem_type_result) return std::unexpected(elem_type_result.error());
-  return LoadPackedPlace(context, place_id, *elem_type_result);
+  return LoadPackedPlace(context, facts, place_id, *elem_type_result);
 }
 
 }  // namespace
 
-auto LowerOperandRaw(Context& context, const mir::Operand& operand)
+auto LowerOperandRaw(
+    Context& context, const CuFacts& facts, const mir::Operand& operand)
     -> Result<llvm::Value*> {
-  CanonicalSlotAccess canonical(context);
-  return LowerOperandRaw(context, canonical, operand);
+  CanonicalSlotAccess canonical(context, facts);
+  return LowerOperandRaw(context, facts, canonical, operand);
 }
 
-auto LowerOperand(Context& context, const mir::Operand& operand)
+auto LowerOperand(
+    Context& context, const CuFacts& facts, const mir::Operand& operand)
     -> Result<llvm::Value*> {
-  CanonicalSlotAccess canonical(context);
-  return LowerOperand(context, canonical, operand);
+  CanonicalSlotAccess canonical(context, facts);
+  return LowerOperand(context, facts, canonical, operand);
 }
 
 auto CoerceToStorageType(
@@ -104,17 +106,18 @@ auto CoerceToStorageType(
 }
 
 auto LowerOperandAsStorage(
-    Context& context, const mir::Operand& operand, llvm::Type* target_type)
-    -> Result<llvm::Value*> {
-  auto val_or_err = LowerOperandRaw(context, operand);
+    Context& context, const CuFacts& facts, const mir::Operand& operand,
+    llvm::Type* target_type) -> Result<llvm::Value*> {
+  auto val_or_err = LowerOperandRaw(context, facts, operand);
   if (!val_or_err) return std::unexpected(val_or_err.error());
   return CoerceToStorageType(context, *val_or_err, target_type);
 }
 
 auto LowerOperandAsStorage(
-    Context& context, SlotAccessResolver& resolver, const mir::Operand& operand,
-    llvm::Type* target_type) -> Result<llvm::Value*> {
-  auto val_or_err = LowerOperandRaw(context, resolver, operand);
+    Context& context, const CuFacts& facts, SlotAccessResolver& resolver,
+    const mir::Operand& operand, llvm::Type* target_type)
+    -> Result<llvm::Value*> {
+  auto val_or_err = LowerOperandRaw(context, facts, resolver, operand);
   if (!val_or_err) return std::unexpected(val_or_err.error());
   return CoerceToStorageType(context, *val_or_err, target_type);
 }
@@ -222,17 +225,18 @@ auto LowerConstant(
 }
 
 auto LowerOperandRaw(
-    Context& context, SlotAccessResolver& resolver, const mir::Operand& operand)
-    -> Result<llvm::Value*> {
+    Context& context, const CuFacts& facts, SlotAccessResolver& resolver,
+    const mir::Operand& operand) -> Result<llvm::Value*> {
   return std::visit(
       common::Overloaded{
-          [&context](const Constant& constant) -> Result<llvm::Value*> {
-            return LowerConstant(context.GetFacts(), context, constant);
+          [&facts, &context](const Constant& constant) -> Result<llvm::Value*> {
+            return LowerConstant(facts, context, constant);
           },
-          [&context, &resolver](mir::PlaceId place_id) -> Result<llvm::Value*> {
+          [&context, &facts,
+           &resolver](mir::PlaceId place_id) -> Result<llvm::Value*> {
             // Projected reads (bit-range) are canonical-only in v1.
             if (context.HasBitRangeProjection(place_id)) {
-              return LoadBitRange(context, place_id);
+              return LoadBitRange(context, facts, place_id);
             }
             const auto& place = context.GetMirArena()[place_id];
             if (place.root.kind == mir::PlaceRoot::Kind::kModuleSlot &&
@@ -250,9 +254,9 @@ auto LowerOperandRaw(
 }
 
 auto LowerOperand(
-    Context& context, SlotAccessResolver& resolver, const mir::Operand& operand)
-    -> Result<llvm::Value*> {
-  auto val_or_err = LowerOperandRaw(context, resolver, operand);
+    Context& context, const CuFacts& facts, SlotAccessResolver& resolver,
+    const mir::Operand& operand) -> Result<llvm::Value*> {
+  auto val_or_err = LowerOperandRaw(context, facts, resolver, operand);
   if (!val_or_err) return std::unexpected(val_or_err.error());
   llvm::Value* val = *val_or_err;
 

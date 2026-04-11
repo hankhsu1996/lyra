@@ -18,13 +18,15 @@ namespace detail {
 
 // Destroy helpers (defined in lifecycle_*.cpp files)
 void DestroyString(Context& ctx, llvm::Value* ptr);
-void DestroyContainer(Context& ctx, llvm::Value* ptr, TypeId type_id);
+void DestroyContainer(
+    Context& ctx, const CuFacts& facts, llvm::Value* ptr, TypeId type_id);
 void DestroyStruct(
     Context& ctx, const CuFacts& facts, llvm::Value* ptr, TypeId type_id);
 
 // Clone helpers (defined in lifecycle_*.cpp files)
 auto CloneString(Context& ctx, llvm::Value* handle) -> llvm::Value*;
-auto CloneContainer(Context& ctx, llvm::Value* handle, TypeId type_id)
+auto CloneContainer(
+    Context& ctx, const CuFacts& facts, llvm::Value* handle, TypeId type_id)
     -> llvm::Value*;
 
 // MoveCleanup leaf helpers (defined in lifecycle_*.cpp files)
@@ -36,7 +38,8 @@ void MoveCleanupStruct(
 // CopyInit helpers (defined in lifecycle_*.cpp files)
 void CopyInitString(Context& ctx, llvm::Value* dst_ptr, llvm::Value* src_ptr);
 void CopyInitContainer(
-    Context& ctx, llvm::Value* dst_ptr, llvm::Value* src_ptr, TypeId type_id);
+    Context& ctx, const CuFacts& facts, llvm::Value* dst_ptr,
+    llvm::Value* src_ptr, TypeId type_id);
 void CopyInitStruct(
     Context& ctx, const CuFacts& facts, llvm::Value* dst_ptr,
     llvm::Value* src_ptr, TypeId type_id);
@@ -72,7 +75,7 @@ void Destroy(
     case TypeKind::kDynamicArray:
     case TypeKind::kQueue:
     case TypeKind::kAssociativeArray:
-      detail::DestroyContainer(ctx, ptr, type_id);
+      detail::DestroyContainer(ctx, facts, ptr, type_id);
       return;
 
     case TypeKind::kUnpackedStruct:
@@ -113,7 +116,7 @@ auto CloneLeafValue(
     case TypeKind::kDynamicArray:
     case TypeKind::kQueue:
     case TypeKind::kAssociativeArray:
-      return detail::CloneContainer(ctx, value, type_id);
+      return detail::CloneContainer(ctx, facts, value, type_id);
 
     case TypeKind::kUnpackedStruct:
       throw common::InternalError(
@@ -142,7 +145,7 @@ void CopyInit(
 
   // POD types: simple load + store
   if (!mir_to_llvm::TypeContainsManaged(type_id, types)) {
-    detail::CopyInitPod(ctx, dst_ptr, src_ptr, type_id);
+    detail::CopyInitPod(ctx, facts, dst_ptr, src_ptr, type_id);
     return;
   }
 
@@ -157,7 +160,7 @@ void CopyInit(
     case TypeKind::kDynamicArray:
     case TypeKind::kQueue:
     case TypeKind::kAssociativeArray:
-      detail::CopyInitContainer(ctx, dst_ptr, src_ptr, type_id);
+      detail::CopyInitContainer(ctx, facts, dst_ptr, src_ptr, type_id);
       return;
 
     case TypeKind::kUnpackedStruct:
@@ -196,7 +199,7 @@ void MoveInit(
 
   // POD types: simple load + store (no cleanup needed)
   if (!mir_to_llvm::TypeContainsManaged(type_id, types)) {
-    detail::CopyInitPod(ctx, dst_ptr, src_ptr, type_id);
+    detail::CopyInitPod(ctx, facts, dst_ptr, src_ptr, type_id);
     return;
   }
 

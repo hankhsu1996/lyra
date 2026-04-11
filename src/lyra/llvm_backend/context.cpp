@@ -86,7 +86,7 @@ auto Context::GetElemOpsForType(TypeId elem_type) -> Result<ElemOpsInfo> {
   }
 
   // POD types: compute size from DataLayout, no clone/destroy needed
-  auto llvm_type = BuildLlvmTypeForTypeId(*this, elem_type);
+  auto llvm_type = BuildLlvmTypeForTypeId(*this, *facts_, elem_type);
   if (!llvm_type) return std::unexpected(llvm_type.error());
   auto byte_size = static_cast<int32_t>(
       llvm_module_->getDataLayout().getTypeAllocSize(*llvm_type));
@@ -252,7 +252,7 @@ auto Context::GetOrCreatePlaceStorage(const mir::PlaceRoot& root)
   llvm::Type* llvm_type = nullptr;
   if (type.Kind() == TypeKind::kIntegral) {
     uint32_t bit_width = type.AsIntegral().bit_width;
-    if (IsPackedFourState(type)) {
+    if (IsPackedFourState(*facts_, type)) {
       llvm_type = GetBackingFourStateType(*llvm_context_, bit_width);
     } else {
       llvm_type = GetBackingLlvmType(*llvm_context_, bit_width);
@@ -270,7 +270,7 @@ auto Context::GetOrCreatePlaceStorage(const mir::PlaceRoot& root)
     llvm_type = llvm::PointerType::getUnqual(*llvm_context_);
   } else if (IsPacked(type)) {
     auto width = PackedBitWidth(type, *facts_->types);
-    if (IsPackedFourState(type)) {
+    if (IsPackedFourState(*facts_, type)) {
       llvm_type = GetBackingFourStateType(*llvm_context_, width);
     } else {
       llvm_type = GetBackingLlvmType(*llvm_context_, width);
@@ -279,7 +279,7 @@ auto Context::GetOrCreatePlaceStorage(const mir::PlaceRoot& root)
       type.Kind() == TypeKind::kUnpackedStruct ||
       type.Kind() == TypeKind::kUnpackedArray ||
       type.Kind() == TypeKind::kUnpackedUnion) {
-    auto llvm_type_result = BuildLlvmTypeForTypeId(*this, type_id);
+    auto llvm_type_result = BuildLlvmTypeForTypeId(*this, *facts_, type_id);
     if (!llvm_type_result) return std::unexpected(llvm_type_result.error());
     llvm_type = *llvm_type_result;
   } else {
@@ -318,7 +318,7 @@ void Context::InitializePlaceStorage(llvm::AllocaInst* alloca, TypeId type_id) {
   // EmitSVDefaultInit may create new basic blocks (e.g., for large 4-state
   // unpacked array init loops), which is only valid at the current control
   // flow point, not in the entry block after allocas.
-  EmitSVDefaultInit(*this, GetFacts(), alloca, type_id);
+  EmitSVDefaultInit(*this, *facts_, alloca, type_id);
 }
 
 // GetDesignFieldIndex removed -- DesignState is byte arena, not struct.
@@ -519,7 +519,7 @@ auto Context::LoadExternalRef(mir::ExternalRefId ref_id)
   }
 
   auto* llvm_type = GetLlvmTypeForTypeId(
-      *llvm_context_, root.type, *facts_->types, IsForceTwoState());
+      *llvm_context_, root.type, *facts_->types, facts_->force_two_state);
   return builder_.CreateLoad(llvm_type, ptr, "ext_ref_load");
 }
 

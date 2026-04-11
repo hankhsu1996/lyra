@@ -24,6 +24,7 @@
 namespace lyra::lowering::mir_to_llvm {
 
 class Context;
+struct CuFacts;
 struct Layout;
 
 // Abstract interface for simulation instrumentation hooks.
@@ -137,9 +138,9 @@ auto DumpLlvmIr(const llvm::Module& module) -> std::string;
 // Classifies each tracked slot's type metadata on demand from the design
 // and layout -- no prebuilt type metadata vector.
 void EmitVariableInspection(
-    Context& context, const InspectionPlan& plan, const mir::Design& design,
-    const Layout& layout, const TypeArena& types, bool force_two_state,
-    llvm::Value* design_state, llvm::Value* abi_ptr);
+    Context& context, const CuFacts& facts, const InspectionPlan& plan,
+    const mir::Design& design, const Layout& layout, const TypeArena& types,
+    bool force_two_state, llvm::Value* design_state, llvm::Value* abi_ptr);
 
 // Emit time report call for test harness.
 void EmitTimeReport(Context& context);

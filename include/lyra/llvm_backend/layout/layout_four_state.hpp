@@ -11,7 +11,8 @@ namespace lyra::lowering::mir_to_llvm {
 //
 // These compose the intrinsic type fact with the force_two_state override
 // for code that runs before Context exists (layout construction).
-// Session/codegen code must use Context::IsFourState / IsPackedFourState.
+// Session/codegen code must use IsFourState / IsPackedFourState from
+// cu_facts.hpp.
 
 inline auto IsLayoutPackedFourState(
     const Type& type, const TypeArena& types, bool force_two_state) -> bool {

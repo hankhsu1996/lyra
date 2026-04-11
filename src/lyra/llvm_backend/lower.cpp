@@ -26,6 +26,7 @@
 #include "lyra/llvm_backend/codegen_session.hpp"
 #include "lyra/llvm_backend/connection_lowering.hpp"
 #include "lyra/llvm_backend/context.hpp"
+#include "lyra/llvm_backend/cu_facts.hpp"
 #include "lyra/llvm_backend/dpi_abi.hpp"
 #include "lyra/llvm_backend/layout/layout.hpp"
 #include "lyra/llvm_backend/layout_pipeline.hpp"
@@ -378,9 +379,9 @@ auto FinalizeModule(CodegenSession session, LoweringReport report)
 }
 
 void EmitVariableInspection(
-    Context& context, const InspectionPlan& plan, const mir::Design& design,
-    const Layout& layout, const TypeArena& types, bool force_two_state,
-    llvm::Value* design_state, llvm::Value* abi_ptr) {
+    Context& context, const CuFacts& facts, const InspectionPlan& plan,
+    const mir::Design& design, const Layout& layout, const TypeArena& types,
+    bool force_two_state, llvm::Value* design_state, llvm::Value* abi_ptr) {
   if (plan.IsEmpty()) {
     return;
   }
@@ -443,8 +444,8 @@ void EmitVariableInspection(
     for (const auto& var : plan.instance_owned) {
       auto* inst = EmitLoadAbiInstancePtr(
           context, abi_ptr, var.placement.owner_instance_id);
-      auto* addr =
-          EmitInstanceOwnedByteAddress(context, inst, var.placement.rel_off);
+      auto* addr = EmitInstanceOwnedByteAddress(
+          context, facts, inst, var.placement.rel_off);
       emit_register(addr, var.name, var.slot_id);
     }
     builder.CreateBr(skip_bb);

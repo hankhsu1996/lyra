@@ -6,6 +6,7 @@
 #include "lyra/llvm_backend/commit.hpp"
 #include "lyra/llvm_backend/commit/access.hpp"
 #include "lyra/llvm_backend/context.hpp"
+#include "lyra/llvm_backend/cu_facts.hpp"
 #include "lyra/llvm_backend/packed_storage_view.hpp"
 #include "lyra/mir/handle.hpp"
 
@@ -20,8 +21,8 @@ void CommitPlainField(Context& ctx, llvm::Value* ptr, llvm::Value* value) {
 }  // namespace detail
 
 void CommitPackedValue(
-    Context& ctx, const mir::WriteTarget& target, const PackedRValue& rvalue,
-    TypeId type_id) {
+    Context& ctx, const CuFacts& facts, const mir::WriteTarget& target,
+    const PackedRValue& rvalue, TypeId type_id) {
   auto wt_or_err = commit::Access::GetWriteTarget(ctx, target);
   if (!wt_or_err) {
     throw common::InternalError(
@@ -47,7 +48,7 @@ void CommitPackedValue(
   }
 
   // Design target: route through PSV with store plan.
-  auto view = BuildWholeValueStorageView(ctx, wt.ptr, type_id, true);
+  auto view = BuildWholeValueStorageView(ctx, facts, wt.ptr, type_id, true);
   auto policy = BuildStorePolicyFromContext(
       ctx, wt.canonical_signal_id,
       wt.mutation_signal ? &*wt.mutation_signal : nullptr);

@@ -12,21 +12,23 @@ namespace lyra::lowering::mir_to_llvm {
 class SlotAccessResolver;
 
 // Lower a MIR operand to an LLVM Value (coerces 4-state to 2-state integer)
-auto LowerOperand(Context& context, const mir::Operand& operand)
+auto LowerOperand(
+    Context& context, const CuFacts& facts, const mir::Operand& operand)
     -> Result<llvm::Value*>;
 
 // Lower a MIR operand without 4-state coercion (returns struct for 4-state)
-auto LowerOperandRaw(Context& context, const mir::Operand& operand)
+auto LowerOperandRaw(
+    Context& context, const CuFacts& facts, const mir::Operand& operand)
     -> Result<llvm::Value*>;
 
 // Resolver-aware overloads: route module-slot reads through the resolver.
 auto LowerOperandRaw(
-    Context& context, SlotAccessResolver& resolver, const mir::Operand& operand)
-    -> Result<llvm::Value*>;
+    Context& context, const CuFacts& facts, SlotAccessResolver& resolver,
+    const mir::Operand& operand) -> Result<llvm::Value*>;
 
 auto LowerOperand(
-    Context& context, SlotAccessResolver& resolver, const mir::Operand& operand)
-    -> Result<llvm::Value*>;
+    Context& context, const CuFacts& facts, SlotAccessResolver& resolver,
+    const mir::Operand& operand) -> Result<llvm::Value*>;
 
 // Lower a MIR operand as a storage representation matching target_type exactly.
 // Used for aggregate element insertion where LLVM demands type-exact values.
@@ -37,12 +39,13 @@ auto LowerOperand(
 //   - 4-state {iN, iN} -> 4-state {iM, iM}  (ZExtOrTrunc both planes)
 // Any other combination throws InternalError.
 auto LowerOperandAsStorage(
-    Context& context, const mir::Operand& operand, llvm::Type* target_type)
-    -> Result<llvm::Value*>;
+    Context& context, const CuFacts& facts, const mir::Operand& operand,
+    llvm::Type* target_type) -> Result<llvm::Value*>;
 
 auto LowerOperandAsStorage(
-    Context& context, SlotAccessResolver& resolver, const mir::Operand& operand,
-    llvm::Type* target_type) -> Result<llvm::Value*>;
+    Context& context, const CuFacts& facts, SlotAccessResolver& resolver,
+    const mir::Operand& operand, llvm::Type* target_type)
+    -> Result<llvm::Value*>;
 
 // Canonical operand-to-place resolution.
 // PlaceId -> returns the PlaceId directly.

@@ -157,7 +157,7 @@ auto LowerUserCallImpl(
       }
 
       auto val_result = LowerOperandAsStorage(
-          context, call.in_args[in_arg_idx], abi_info->llvm_type);
+          context, facts, call.in_args[in_arg_idx], abi_info->llvm_type);
       if (!val_result) return std::unexpected(val_result.error());
       args.push_back(*val_result);
       ++in_arg_idx;
@@ -332,7 +332,7 @@ auto LowerValuePlusargsCall(
   }
 
   // Lower query operand
-  auto query_or_err = LowerOperand(context, call.in_args[0]);
+  auto query_or_err = LowerOperand(context, facts, call.in_args[0]);
   if (!query_or_err) return std::unexpected(query_or_err.error());
 
   // Get output tmp pointer (kStaged: tmp is present)
@@ -410,7 +410,7 @@ auto LowerFgetsCall(
   }
 
   // Lower descriptor operand
-  auto desc_or_err = LowerOperand(context, call.in_args[0]);
+  auto desc_or_err = LowerOperand(context, facts, call.in_args[0]);
   if (!desc_or_err) return std::unexpected(desc_or_err.error());
 
   // Get output tmp pointer (kStaged: tmp is present)
@@ -468,19 +468,19 @@ auto LowerFreadCall(
   }
 
   // Lower operands
-  auto desc_or_err = LowerOperand(context, call.in_args[0]);
+  auto desc_or_err = LowerOperand(context, facts, call.in_args[0]);
   if (!desc_or_err) return std::unexpected(desc_or_err.error());
 
-  auto width_or_err = LowerOperand(context, call.in_args[1]);
+  auto width_or_err = LowerOperand(context, facts, call.in_args[1]);
   if (!width_or_err) return std::unexpected(width_or_err.error());
 
-  auto is_mem_or_err = LowerOperand(context, call.in_args[2]);
+  auto is_mem_or_err = LowerOperand(context, facts, call.in_args[2]);
   if (!is_mem_or_err) return std::unexpected(is_mem_or_err.error());
 
-  auto start_or_err = LowerOperand(context, call.in_args[3]);
+  auto start_or_err = LowerOperand(context, facts, call.in_args[3]);
   if (!start_or_err) return std::unexpected(start_or_err.error());
 
-  auto count_or_err = LowerOperand(context, call.in_args[4]);
+  auto count_or_err = LowerOperand(context, facts, call.in_args[4]);
   if (!count_or_err) return std::unexpected(count_or_err.error());
 
   const auto& wb = call.writebacks[0];
@@ -628,9 +628,9 @@ auto LowerFscanfCall(
   }
 
   // Lower operands
-  auto desc_or_err = LowerOperand(context, call.in_args[0]);
+  auto desc_or_err = LowerOperand(context, facts, call.in_args[0]);
   if (!desc_or_err) return std::unexpected(desc_or_err.error());
-  auto format_or_err = LowerOperand(context, call.in_args[1]);
+  auto format_or_err = LowerOperand(context, facts, call.in_args[1]);
   if (!format_or_err) return std::unexpected(format_or_err.error());
 
   auto* i32_ty = llvm::Type::getInt32Ty(builder.getContext());

@@ -21,15 +21,15 @@
 namespace lyra::lowering::mir_to_llvm::detail {
 
 void ForEachArrayElementPtr(
-    Context& ctx, llvm::Value* array_ptr, TypeId array_type_id,
-    ArrayElementCallback callback) {
-  const auto& types = *ctx.GetFacts().types;
+    Context& ctx, const CuFacts& facts, llvm::Value* array_ptr,
+    TypeId array_type_id, ArrayElementCallback callback) {
+  const auto& types = *facts.types;
   const Type& type = types[array_type_id];
   const auto& arr_info = type.AsUnpackedArray();
   uint32_t count = arr_info.range.Size();
   TypeId elem_type_id = arr_info.element_type;
 
-  auto llvm_type_result = BuildLlvmTypeForTypeId(ctx, array_type_id);
+  auto llvm_type_result = BuildLlvmTypeForTypeId(ctx, facts, array_type_id);
   if (!llvm_type_result) {
     throw common::InternalError(
         "ForEachArrayElementPtr", "failed to get LLVM type for array");
@@ -88,7 +88,7 @@ void DestroyArray(
   }
 
   ForEachArrayElementPtr(
-      ctx, array_ptr, array_type_id,
+      ctx, facts, array_ptr, array_type_id,
       [&](llvm::Value* elem_ptr, TypeId elem_type) {
         Destroy(ctx, facts, elem_ptr, elem_type);
       });
@@ -107,7 +107,7 @@ void MoveCleanupArray(
   }
 
   ForEachArrayElementPtr(
-      ctx, array_ptr, array_type_id,
+      ctx, facts, array_ptr, array_type_id,
       [&](llvm::Value* elem_ptr, TypeId elem_type) {
         MoveCleanup(ctx, facts, elem_ptr, elem_type);
       });
@@ -119,15 +119,16 @@ using PairedArrayElementCallback =
     llvm::function_ref<void(llvm::Value*, llvm::Value*, TypeId)>;
 
 void ForEachArrayElementPtrPaired(
-    Context& ctx, llvm::Value* dst_ptr, llvm::Value* src_ptr,
-    TypeId array_type_id, PairedArrayElementCallback callback) {
-  const auto& types = *ctx.GetFacts().types;
+    Context& ctx, const CuFacts& facts, llvm::Value* dst_ptr,
+    llvm::Value* src_ptr, TypeId array_type_id,
+    PairedArrayElementCallback callback) {
+  const auto& types = *facts.types;
   const Type& type = types[array_type_id];
   const auto& arr_info = type.AsUnpackedArray();
   uint32_t count = arr_info.range.Size();
   TypeId elem_type_id = arr_info.element_type;
 
-  auto llvm_type_result = BuildLlvmTypeForTypeId(ctx, array_type_id);
+  auto llvm_type_result = BuildLlvmTypeForTypeId(ctx, facts, array_type_id);
   if (!llvm_type_result) {
     throw common::InternalError(
         "ForEachArrayElementPtrPaired", "failed to get LLVM type for array");
@@ -181,7 +182,7 @@ void CopyInitArray(
     Context& ctx, const CuFacts& facts, llvm::Value* dst_ptr,
     llvm::Value* src_ptr, TypeId array_type_id) {
   ForEachArrayElementPtrPaired(
-      ctx, dst_ptr, src_ptr, array_type_id,
+      ctx, facts, dst_ptr, src_ptr, array_type_id,
       [&](llvm::Value* dst_elem, llvm::Value* src_elem, TypeId elem_type) {
         CopyInit(ctx, facts, dst_elem, src_elem, elem_type);
       });
@@ -191,7 +192,7 @@ void MoveInitArray(
     Context& ctx, const CuFacts& facts, llvm::Value* dst_ptr,
     llvm::Value* src_ptr, TypeId array_type_id) {
   ForEachArrayElementPtrPaired(
-      ctx, dst_ptr, src_ptr, array_type_id,
+      ctx, facts, dst_ptr, src_ptr, array_type_id,
       [&](llvm::Value* dst_elem, llvm::Value* src_elem, TypeId elem_type) {
         MoveInit(ctx, facts, dst_elem, src_elem, elem_type);
       });

@@ -20,7 +20,8 @@
 
 namespace lyra::lowering::mir_to_llvm {
 
-CanonicalSlotAccess::CanonicalSlotAccess(Context& ctx) : ctx_(ctx) {
+CanonicalSlotAccess::CanonicalSlotAccess(Context& ctx, const CuFacts& facts)
+    : ctx_(ctx), facts_(facts) {
 }
 
 auto CanonicalSlotAccess::LoadSlotValue(mir::PlaceId place_id)
@@ -31,7 +32,7 @@ auto CanonicalSlotAccess::LoadSlotValue(mir::PlaceId place_id)
 auto CanonicalSlotAccess::CommitSlotValue(
     mir::PlaceId target, llvm::Value* value, TypeId type_id,
     OwnershipPolicy policy) -> Result<void> {
-  return CommitValue(ctx_, ctx_.GetFacts(), target, value, type_id, policy);
+  return CommitValue(ctx_, facts_, target, value, type_id, policy);
 }
 
 auto CanonicalSlotAccess::ManagesPlace(mir::PlaceId /*place_id*/) const
@@ -50,8 +51,9 @@ void CanonicalSlotAccess::SyncAndReloadSpecific(
 }
 
 ActivationLocalSlotAccess::ActivationLocalSlotAccess(
-    Context& ctx, std::span<const ManagedSlotStorage> storage)
-    : ctx_(ctx) {
+    Context& ctx, const CuFacts& facts,
+    std::span<const ManagedSlotStorage> storage)
+    : ctx_(ctx), facts_(facts) {
   for (const auto& s : storage) {
     managed_[s.slot.id] = s;
   }
@@ -86,7 +88,7 @@ auto ActivationLocalSlotAccess::CommitSlotValue(
     OwnershipPolicy policy) -> Result<void> {
   const auto* storage = FindManagedStorage(target);
   if (storage == nullptr) {
-    return CommitValue(ctx_, ctx_.GetFacts(), target, value, type_id, policy);
+    return CommitValue(ctx_, facts_, target, value, type_id, policy);
   }
   ctx_.GetBuilder().CreateStore(value, storage->shadow_ptr);
   return {};
@@ -124,7 +126,7 @@ void ActivationLocalSlotAccess::SyncSlot(const ManagedSlotStorage& storage) {
   // Mutation-target: resolve to storage owner for dirty-mark identity.
   auto signal_id = ctx_.EmitMutationTargetSignalCoord(storage.slot);
 
-  const auto& types = ctx_.GetTypeArena();
+  const auto& types = *facts_.types;
   const Type& type = types[storage.root_type];
   auto kind = type.Kind();
   if (kind == TypeKind::kEnum) {
@@ -151,8 +153,8 @@ void ActivationLocalSlotAccess::SyncSlot(const ManagedSlotStorage& storage) {
   // scalar iN means 2-state. This is the activation-local sync path
   // where the local alloca type IS the variable's declared type.
   auto rvalue = BuildPackedRValueFromRaw(ctx_, store_val, semantic_bits);
-  auto view =
-      BuildWholeValueStorageView(ctx_, canonical_ptr, storage.root_type, true);
+  auto view = BuildWholeValueStorageView(
+      ctx_, facts_, canonical_ptr, storage.root_type, true);
   auto policy = BuildStorePolicyFromContext(ctx_, signal_id, &storage.slot);
 
   auto result = StorePackedValue(ctx_, view, rvalue, policy);
@@ -196,7 +198,8 @@ void ActivationLocalSlotAccess::SyncAndReloadSpecific(
   }
 }
 
-auto CreateManagedSlotStorage(const ProcessActivationPlan& plan, Context& ctx)
+auto CreateManagedSlotStorage(
+    const ProcessActivationPlan& plan, Context& ctx, const CuFacts& facts)
     -> std::vector<ManagedSlotStorage> {
   const auto& proc_layout = ctx.GetCurrentProcessLayout();
   const auto& frame = proc_layout.frame;
@@ -230,11 +233,11 @@ auto CreateManagedSlotStorage(const ProcessActivationPlan& plan, Context& ctx)
 }
 
 auto CreateManagedSlotStorageAsAllocas(
-    const ProcessActivationPlan& plan, Context& ctx)
+    const ProcessActivationPlan& plan, Context& ctx, const CuFacts& facts)
     -> std::vector<ManagedSlotStorage> {
   auto& llvm_ctx = ctx.GetLlvmContext();
-  const auto& types = ctx.GetTypeArena();
-  bool force_two_state = ctx.IsForceTwoState();
+  const auto& types = *facts.types;
+  bool force_two_state = facts.force_two_state;
 
   std::unordered_set<uint32_t> seen_slot_ids;
   std::vector<ManagedSlotStorage> result;

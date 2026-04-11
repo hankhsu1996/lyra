@@ -50,11 +50,11 @@ auto LowerRecordDecisionObservationDynamic(
   auto& builder = ctx.GetBuilder();
   auto& llvm_ctx = ctx.GetLlvmContext();
 
-  auto mc = LowerOperand(ctx, resolver, obs.match_class);
+  auto mc = LowerOperand(ctx, facts, resolver, obs.match_class);
   if (!mc) return std::unexpected(mc.error());
-  auto sk = LowerOperand(ctx, resolver, obs.selected_kind);
+  auto sk = LowerOperand(ctx, facts, resolver, obs.selected_kind);
   if (!sk) return std::unexpected(sk.error());
-  auto sa = LowerOperand(ctx, resolver, obs.selected_arm);
+  auto sa = LowerOperand(ctx, facts, resolver, obs.selected_arm);
   if (!sa) return std::unexpected(sa.error());
 
   auto* i8_ty = llvm::Type::getInt8Ty(llvm_ctx);

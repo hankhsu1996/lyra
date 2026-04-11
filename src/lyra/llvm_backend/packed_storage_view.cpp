@@ -16,6 +16,7 @@
 #include "lyra/common/type.hpp"
 #include "lyra/llvm_backend/compute/operand.hpp"
 #include "lyra/llvm_backend/context.hpp"
+#include "lyra/llvm_backend/cu_facts.hpp"
 #include "lyra/llvm_backend/layout/storage_contract.hpp"
 #include "lyra/llvm_backend/layout/union_storage.hpp"
 #include "lyra/llvm_backend/storage_boundary.hpp"
@@ -78,17 +79,18 @@ auto IsBitRangeStepProvablyByteAligned(const mir::BitRangeProjection& br)
 //
 // This helper exists so that the implicit "skip BitRange" behavior of
 // Context::GetPlacePointer is not relied on silently throughout the module.
-auto ResolvePackedStorageRoot(Context& ctx, mir::PlaceId place_id)
+auto ResolvePackedStorageRoot(
+    Context& ctx, const CuFacts& facts, mir::PlaceId place_id)
     -> Result<PackedStorageView> {
   const auto& arena = ctx.GetMirArena();
-  const auto& types = ctx.GetTypeArena();
+  const auto& types = *facts.types;
   const auto& place = arena[place_id];
 
   // TypeOfPlaceBase skips BitRangeProjection suffix.
   TypeId base_type_id = mir::TypeOfPlaceBase(types, place);
   const Type& base_type = types[base_type_id];
   uint32_t total_bits = PackedBitWidth(base_type, types);
-  bool is_four_state = ctx.IsPackedFourState(base_type);
+  bool is_four_state = IsPackedFourState(facts, base_type);
   uint32_t storage_plane_byte_size = GetStorageByteSize(total_bits);
 
   // GetPlacePointer skips BitRangeProjection suffix.
@@ -107,7 +109,7 @@ auto ResolvePackedStorageRoot(Context& ctx, mir::PlaceId place_id)
   view.is_four_state = is_four_state;
 
   if (!is_canonical) {
-    auto llvm_type_result = BuildLlvmTypeForTypeId(ctx, base_type_id);
+    auto llvm_type_result = BuildLlvmTypeForTypeId(ctx, facts, base_type_id);
     if (!llvm_type_result) return std::unexpected(llvm_type_result.error());
     view.backing.SetLocal(*llvm_type_result);
   } else {
@@ -117,12 +119,13 @@ auto ResolvePackedStorageRoot(Context& ctx, mir::PlaceId place_id)
   return view;
 }
 
-auto ExtractPackedAccessPath(Context& ctx, mir::PlaceId place_id)
+auto ExtractPackedAccessPath(
+    Context& ctx, const CuFacts& facts, mir::PlaceId place_id)
     -> Result<PackedAccessPath> {
   const auto& arena = ctx.GetMirArena();
   const auto& place = arena[place_id];
 
-  auto storage_result = ResolvePackedStorageRoot(ctx, place_id);
+  auto storage_result = ResolvePackedStorageRoot(ctx, facts, place_id);
   if (!storage_result) return std::unexpected(storage_result.error());
 
   PackedAccessPath path;
@@ -151,7 +154,7 @@ auto ExtractPackedAccessPath(Context& ctx, mir::PlaceId place_id)
       step.result_type = br->element_type;
       step.is_provably_byte_aligned = IsBitRangeStepProvablyByteAligned(*br);
 
-      auto offset_result = LowerOperand(ctx, br->bit_offset);
+      auto offset_result = LowerOperand(ctx, facts, br->bit_offset);
       if (!offset_result) return std::unexpected(offset_result.error());
       step.dynamic_bit_offset = *offset_result;
 
@@ -1249,9 +1252,9 @@ auto BuildPackedStorePlan(
 }
 
 auto BuildWholeValueStorageView(
-    Context& ctx, llvm::Value* base_ptr, TypeId type_id, bool is_canonical)
-    -> PackedStorageView {
-  const auto& types = ctx.GetTypeArena();
+    Context& ctx, const CuFacts& facts, llvm::Value* base_ptr, TypeId type_id,
+    bool is_canonical) -> PackedStorageView {
+  const auto& types = *facts.types;
   const Type& type = types[type_id];
   auto kind = type.Kind();
   if (kind == TypeKind::kEnum) {
@@ -1268,7 +1271,7 @@ auto BuildWholeValueStorageView(
     is_four_state = false;
   } else {
     total_bits = PackedBitWidth(type, types);
-    is_four_state = ctx.IsPackedFourState(type);
+    is_four_state = IsPackedFourState(facts, type);
   }
   uint32_t storage_plane_byte_size = GetStorageByteSize(total_bits);
 
@@ -1281,7 +1284,7 @@ auto BuildWholeValueStorageView(
   view.is_four_state = is_four_state;
 
   if (!is_canonical) {
-    auto llvm_type_result = BuildLlvmTypeForTypeId(ctx, type_id);
+    auto llvm_type_result = BuildLlvmTypeForTypeId(ctx, facts, type_id);
     if (!llvm_type_result) {
       throw common::InternalError(
           "BuildWholeValueStorageView",
@@ -1962,9 +1965,9 @@ auto BuildPackedRValueFromRaw(
 }
 
 auto LoadPackedPlace(
-    Context& ctx, mir::PlaceId place_id, llvm::Type* target_type)
-    -> Result<llvm::Value*> {
-  auto path_result = ExtractPackedAccessPath(ctx, place_id);
+    Context& ctx, const CuFacts& facts, mir::PlaceId place_id,
+    llvm::Type* target_type) -> Result<llvm::Value*> {
+  auto path_result = ExtractPackedAccessPath(ctx, facts, place_id);
   if (!path_result) return std::unexpected(path_result.error());
 
   auto subview_result = ResolvePackedSubview(ctx, *path_result);

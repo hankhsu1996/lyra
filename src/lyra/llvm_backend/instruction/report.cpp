@@ -50,20 +50,20 @@ auto LowerReportEffect(
   if (report.ops.empty()) {
     msg_handle = llvm::ConstantPointerNull::get(ptr_ty);
   } else {
-    auto validate_result = ValidateFormatOps(context, report.ops);
+    auto validate_result = ValidateFormatOps(context, facts, report.ops);
     if (!validate_result) return validate_result;
 
     auto* buf = builder.CreateCall(
         context.GetLyraStringFormatStart(), {}, "report.buf");
     for (const auto& op : report.ops) {
-      auto result = LowerFormatOpToBuffer(context, resolver, buf, op);
+      auto result = LowerFormatOpToBuffer(context, facts, resolver, buf, op);
       if (!result) return result;
     }
     msg_handle = builder.CreateCall(
         context.GetLyraStringFormatFinish(), {buf}, "report.msg");
   }
 
-  auto origin = LowerOptionalReportOrigin(report.origin, context);
+  auto origin = LowerOptionalReportOrigin(report.origin, context, facts);
 
   EmitAbiReportCall(
       context, MapReportIntent(report.intent),
@@ -80,7 +80,7 @@ auto LowerReportEffect(
 auto LowerReportEffect(
     Context& context, const CuFacts& facts, const mir::ReportEffect& report)
     -> Result<void> {
-  CanonicalSlotAccess canonical(context);
+  CanonicalSlotAccess canonical(context, facts);
   return LowerReportEffect(context, facts, canonical, report);
 }
 

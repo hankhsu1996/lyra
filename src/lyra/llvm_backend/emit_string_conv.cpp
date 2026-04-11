@@ -6,12 +6,14 @@
 
 #include "lyra/common/internal_error.hpp"
 #include "lyra/common/type_queries.hpp"
+#include "lyra/llvm_backend/context.hpp"
+#include "lyra/llvm_backend/cu_facts.hpp"
 
 namespace lyra::lowering::mir_to_llvm {
 
 auto EmitPackedToString(
-    Context& context, llvm::Value* packed_value, const Type& packed_type)
-    -> llvm::Value* {
+    Context& context, const CuFacts& facts, llvm::Value* packed_value,
+    const Type& packed_type) -> llvm::Value* {
   // Guardrail: must be called with a packed type
   if (!IsPacked(packed_type)) {
     throw common::InternalError(
@@ -20,7 +22,7 @@ auto EmitPackedToString(
 
   auto& builder = context.GetBuilder();
   auto& llvm_ctx = context.GetLlvmContext();
-  const auto& types = context.GetTypeArena();
+  const auto& types = *facts.types;
 
   // Compute bit width from type (single source of truth)
   uint32_t bit_width = PackedBitWidth(packed_type, types);

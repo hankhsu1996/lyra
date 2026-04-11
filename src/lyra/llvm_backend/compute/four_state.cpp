@@ -38,10 +38,10 @@ namespace {
 // via ExtractFourStateOrZero. Callers are responsible for width adaptation
 // to their result type.
 auto LowerOperandFourState(
-    Context& context, SlotAccessResolver& resolver, const mir::Operand& operand)
-    -> Result<FourStateValue> {
+    const CuFacts& facts, Context& context, SlotAccessResolver& resolver,
+    const mir::Operand& operand) -> Result<FourStateValue> {
   auto& builder = context.GetBuilder();
-  auto loaded_or_err = LowerOperandRaw(context, resolver, operand);
+  auto loaded_or_err = LowerOperandRaw(context, facts, resolver, operand);
   if (!loaded_or_err) return std::unexpected(loaded_or_err.error());
   return ExtractFourStateOrZero(builder, *loaded_or_err);
 }
@@ -60,19 +60,20 @@ auto AreAllOperandsTwoState(
 }
 
 auto LowerConcatRvalue4State(
-    Context& context, const mir::ConcatRvalueInfo& info,
+    Context& context, const CuFacts& facts, const mir::ConcatRvalueInfo& info,
     const std::vector<mir::Operand>& operands,
     const PackedComputeContext& packed_context) -> Result<ComputeResult> {
-  CanonicalSlotAccess canonical(context);
+  CanonicalSlotAccess canonical(context, facts);
   return LowerConcatRvalue4State(
       context, canonical, info, operands, packed_context);
 }
 
 auto LowerReplicateRvalue4State(
-    Context& context, const mir::ReplicateRvalueInfo& info,
+    Context& context, const CuFacts& facts,
+    const mir::ReplicateRvalueInfo& info,
     const std::vector<mir::Operand>& operands,
     const PackedComputeContext& packed_context) -> Result<ComputeResult> {
-  CanonicalSlotAccess canonical(context);
+  CanonicalSlotAccess canonical(context, facts);
   return LowerReplicateRvalue4State(
       context, canonical, info, operands, packed_context);
 }
@@ -198,34 +199,36 @@ auto LowerReduction4State(
 // - LowerRegularUnary4State for shape-preserving ops (N-bit -> N-bit)
 // - LowerReduction4State for reducing ops (N-bit -> 1-bit)
 auto LowerUnaryRvalue4State(
-    Context& context, const mir::UnaryRvalueInfo& info,
+    Context& context, const CuFacts& facts, const mir::UnaryRvalueInfo& info,
     const std::vector<mir::Operand>& operands,
     const PackedComputeContext& packed_context) -> Result<ComputeResult> {
-  CanonicalSlotAccess canonical(context);
+  CanonicalSlotAccess canonical(context, facts);
   return LowerUnaryRvalue4State(
       context, canonical, info, operands, packed_context);
 }
 
 auto LowerGuardedUse4State(
-    Context& context, const mir::GuardedUseRvalueInfo& info,
+    Context& context, const CuFacts& facts,
+    const mir::GuardedUseRvalueInfo& info,
     const std::vector<mir::Operand>& operands,
     const PackedComputeContext& packed_context) -> Result<ComputeResult> {
-  CanonicalSlotAccess canonical(context);
+  CanonicalSlotAccess canonical(context, facts);
   return LowerGuardedUse4State(
       context, canonical, info, operands, packed_context);
 }
 
 auto LowerBinaryRvalue4State(
-    Context& context, const mir::BinaryRvalueInfo& info,
+    Context& context, const CuFacts& facts, const mir::BinaryRvalueInfo& info,
     const std::vector<mir::Operand>& operands,
     const PackedComputeContext& packed_context) -> Result<ComputeResult> {
-  CanonicalSlotAccess canonical(context);
+  CanonicalSlotAccess canonical(context, facts);
   return LowerBinaryRvalue4State(
       context, canonical, info, operands, packed_context);
 }
 
 auto LowerRuntimeQuery4State(
-    Context& context, const mir::RuntimeQueryRvalueInfo& info,
+    Context& context, const CuFacts& facts,
+    const mir::RuntimeQueryRvalueInfo& info,
     const PackedComputeContext& packed_context) -> Result<ComputeResult> {
   llvm::Type* elem_type = packed_context.element_type;
 
@@ -249,7 +252,7 @@ auto LowerCaseMatchOp(
     const CuFacts& facts, Context& context, const mir::BinaryRvalueInfo& info,
     const std::vector<mir::Operand>& operands, llvm::Type* storage_type)
     -> Result<llvm::Value*> {
-  CanonicalSlotAccess canonical(context);
+  CanonicalSlotAccess canonical(context, facts);
   return LowerCaseMatchOp(
       facts, context, canonical, info, operands, storage_type);
 }
@@ -258,7 +261,7 @@ auto LowerCaseEqualityOp(
     const CuFacts& facts, Context& context, const mir::BinaryRvalueInfo& info,
     const std::vector<mir::Operand>& operands, llvm::Type* storage_type)
     -> Result<llvm::Value*> {
-  CanonicalSlotAccess canonical(context);
+  CanonicalSlotAccess canonical(context, facts);
   return LowerCaseEqualityOp(
       facts, context, canonical, info, operands, storage_type);
 }
@@ -268,17 +271,20 @@ auto LowerBinaryRvalue4State(
     const mir::BinaryRvalueInfo& info,
     const std::vector<mir::Operand>& operands,
     const PackedComputeContext& packed_context) -> Result<ComputeResult> {
+  const auto& facts = *packed_context.facts;
   llvm::Type* elem_type = packed_context.element_type;
   uint32_t semantic_width = packed_context.bit_width;
 
   auto& builder = context.GetBuilder();
   auto* zero = llvm::ConstantInt::get(elem_type, 0);
 
-  auto lhs_or_err = LowerOperandFourState(context, resolver, operands[0]);
+  auto lhs_or_err =
+      LowerOperandFourState(facts, context, resolver, operands[0]);
   if (!lhs_or_err) return std::unexpected(lhs_or_err.error());
   auto lhs = *lhs_or_err;
 
-  auto rhs_or_err = LowerOperandFourState(context, resolver, operands[1]);
+  auto rhs_or_err =
+      LowerOperandFourState(facts, context, resolver, operands[1]);
   if (!rhs_or_err) return std::unexpected(rhs_or_err.error());
   auto rhs = *rhs_or_err;
 
@@ -337,9 +343,9 @@ auto LowerBinaryRvalue4State(
     auto* match_type =
         llvm::Type::getIntNTy(context.GetLlvmContext(), operand_width);
 
-    auto lhs_4s = LowerOperandFourState(context, resolver, operands[0]);
+    auto lhs_4s = LowerOperandFourState(facts, context, resolver, operands[0]);
     if (!lhs_4s) return std::unexpected(lhs_4s.error());
-    auto rhs_4s = LowerOperandFourState(context, resolver, operands[1]);
+    auto rhs_4s = LowerOperandFourState(facts, context, resolver, operands[1]);
     if (!rhs_4s) return std::unexpected(rhs_4s.error());
 
     lhs_4s->value =
@@ -506,7 +512,9 @@ auto LowerUnaryRvalue4State(
     Context& context, SlotAccessResolver& resolver,
     const mir::UnaryRvalueInfo& info, const std::vector<mir::Operand>& operands,
     const PackedComputeContext& packed_context) -> Result<ComputeResult> {
-  auto src_or_err = LowerOperandFourState(context, resolver, operands[0]);
+  const auto& facts = *packed_context.facts;
+  auto src_or_err =
+      LowerOperandFourState(facts, context, resolver, operands[0]);
   if (!src_or_err) return std::unexpected(src_or_err.error());
 
   if (IsReductionOp(info.op) || info.op == mir::UnaryOp::kLogicalNot) {
@@ -523,6 +531,7 @@ auto LowerConcatRvalue4State(
     const mir::ConcatRvalueInfo& /*info*/,
     const std::vector<mir::Operand>& operands,
     const PackedComputeContext& packed_context) -> Result<ComputeResult> {
+  const auto& facts = *packed_context.facts;
   llvm::Type* elem_type = packed_context.element_type;
 
   auto& builder = context.GetBuilder();
@@ -534,7 +543,8 @@ auto LowerConcatRvalue4State(
 
   uint32_t first_width =
       GetOperandPackedWidth(*packed_context.facts, context, operands[0]);
-  auto first_or_err = LowerOperandFourState(context, resolver, operands[0]);
+  auto first_or_err =
+      LowerOperandFourState(facts, context, resolver, operands[0]);
   if (!first_or_err) return std::unexpected(first_or_err.error());
   auto first = *first_or_err;
 
@@ -549,7 +559,8 @@ auto LowerConcatRvalue4State(
   for (size_t i = 1; i < operands.size(); ++i) {
     uint32_t op_width =
         GetOperandPackedWidth(*packed_context.facts, context, operands[i]);
-    auto op_or_err = LowerOperandFourState(context, resolver, operands[i]);
+    auto op_or_err =
+        LowerOperandFourState(facts, context, resolver, operands[i]);
     if (!op_or_err) return std::unexpected(op_or_err.error());
     auto op = *op_or_err;
 
@@ -575,6 +586,7 @@ auto LowerReplicateRvalue4State(
     const mir::ReplicateRvalueInfo& info,
     const std::vector<mir::Operand>& operands,
     const PackedComputeContext& packed_context) -> Result<ComputeResult> {
+  const auto& facts = *packed_context.facts;
   llvm::Type* elem_type = packed_context.element_type;
 
   auto& builder = context.GetBuilder();
@@ -586,7 +598,8 @@ auto LowerReplicateRvalue4State(
 
   uint32_t op_width =
       GetOperandPackedWidth(*packed_context.facts, context, operands[0]);
-  auto elem_or_err = LowerOperandFourState(context, resolver, operands[0]);
+  auto elem_or_err =
+      LowerOperandFourState(facts, context, resolver, operands[0]);
   if (!elem_or_err) return std::unexpected(elem_or_err.error());
   auto elem = *elem_or_err;
 
@@ -617,12 +630,13 @@ auto LowerGuardedUse4State(
     const mir::GuardedUseRvalueInfo& info,
     const std::vector<mir::Operand>& operands,
     const PackedComputeContext& packed_context) -> Result<ComputeResult> {
+  const auto& facts = *packed_context.facts;
   llvm::Type* elem_type = packed_context.element_type;
   uint32_t semantic_width = packed_context.bit_width;
 
   auto& builder = context.GetBuilder();
 
-  auto valid_or_err = LowerOperand(context, resolver, operands[0]);
+  auto valid_or_err = LowerOperand(context, facts, resolver, operands[0]);
   if (!valid_or_err) return std::unexpected(valid_or_err.error());
   llvm::Value* valid = *valid_or_err;
   if (valid->getType()->getIntegerBitWidth() > 1) {
@@ -642,7 +656,8 @@ auto LowerGuardedUse4State(
 
   builder.SetInsertPoint(do_read_bb);
   auto place_operand = mir::Operand::Use(info.place);
-  auto read_fs_or_err = LowerOperandFourState(context, resolver, place_operand);
+  auto read_fs_or_err =
+      LowerOperandFourState(facts, context, resolver, place_operand);
   if (!read_fs_or_err) return std::unexpected(read_fs_or_err.error());
   auto read_fs = *read_fs_or_err;
   // This is the one intentional result-width adaptation site after the
@@ -689,11 +704,13 @@ auto LowerCaseMatchOp(
   auto* elem_type =
       llvm::Type::getIntNTy(context.GetLlvmContext(), operand_width);
 
-  auto lhs_or_err = LowerOperandFourState(context, resolver, operands[0]);
+  auto lhs_or_err =
+      LowerOperandFourState(facts, context, resolver, operands[0]);
   if (!lhs_or_err) return std::unexpected(lhs_or_err.error());
   auto lhs = *lhs_or_err;
 
-  auto rhs_or_err = LowerOperandFourState(context, resolver, operands[1]);
+  auto rhs_or_err =
+      LowerOperandFourState(facts, context, resolver, operands[1]);
   if (!rhs_or_err) return std::unexpected(rhs_or_err.error());
   auto rhs = *rhs_or_err;
 
@@ -742,11 +759,13 @@ auto LowerCaseEqualityOp(
   uint32_t cmp_width = std::max(lhs_width, rhs_width);
   auto* elem_type = llvm::Type::getIntNTy(context.GetLlvmContext(), cmp_width);
 
-  auto lhs_or_err = LowerOperandFourState(context, resolver, operands[0]);
+  auto lhs_or_err =
+      LowerOperandFourState(facts, context, resolver, operands[0]);
   if (!lhs_or_err) return std::unexpected(lhs_or_err.error());
   auto lhs = *lhs_or_err;
 
-  auto rhs_or_err = LowerOperandFourState(context, resolver, operands[1]);
+  auto rhs_or_err =
+      LowerOperandFourState(facts, context, resolver, operands[1]);
   if (!rhs_or_err) return std::unexpected(rhs_or_err.error());
   auto rhs = *rhs_or_err;
 

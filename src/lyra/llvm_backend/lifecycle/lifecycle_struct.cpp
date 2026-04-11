@@ -26,7 +26,8 @@ void ForEachManagedFieldPtr(
   const Type& type = types[struct_type_id];
   const auto& struct_info = type.AsUnpackedStruct();
 
-  auto llvm_struct_type_result = BuildLlvmTypeForTypeId(ctx, struct_type_id);
+  auto llvm_struct_type_result =
+      BuildLlvmTypeForTypeId(ctx, facts, struct_type_id);
   if (!llvm_struct_type_result) {
     throw common::InternalError(
         "ForEachManagedFieldPtr", "failed to get LLVM type for struct");
@@ -55,7 +56,8 @@ void ForEachFieldPtrPaired(
   const Type& type = types[struct_type_id];
   const auto& struct_info = type.AsUnpackedStruct();
 
-  auto llvm_struct_type_result = BuildLlvmTypeForTypeId(ctx, struct_type_id);
+  auto llvm_struct_type_result =
+      BuildLlvmTypeForTypeId(ctx, facts, struct_type_id);
   if (!llvm_struct_type_result) {
     throw common::InternalError(
         "ForEachFieldPtrPaired", "failed to get LLVM type for struct");

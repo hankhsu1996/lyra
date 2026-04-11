@@ -50,7 +50,8 @@ auto LowerDynArrayBuiltinValue(
       if (!elem_ops_result) return std::unexpected(elem_ops_result.error());
       auto elem_ops = *elem_ops_result;
 
-      auto size_or_err = LowerOperand(context, resolver, rvalue.operands[0]);
+      auto size_or_err =
+          LowerOperand(context, facts, resolver, rvalue.operands[0]);
       if (!size_or_err) return std::unexpected(size_or_err.error());
       llvm::Value* size = *size_or_err;
       auto* i64_ty = llvm::Type::getInt64Ty(context.GetLlvmContext());
@@ -61,7 +62,8 @@ auto LowerDynArrayBuiltinValue(
 
       llvm::Value* handle = nullptr;
       if (rvalue.operands.size() >= 2) {
-        auto src_or_err = LowerOperand(context, resolver, rvalue.operands[1]);
+        auto src_or_err =
+            LowerOperand(context, facts, resolver, rvalue.operands[1]);
         if (!src_or_err) return std::unexpected(src_or_err.error());
         llvm::Value* src = *src_or_err;
         handle = builder.CreateCall(
@@ -79,7 +81,8 @@ auto LowerDynArrayBuiltinValue(
     }
 
     case mir::BuiltinMethod::kArraySize: {
-      auto handle_or_err = LowerOperand(context, resolver, rvalue.operands[0]);
+      auto handle_or_err =
+          LowerOperand(context, facts, resolver, rvalue.operands[0]);
       if (!handle_or_err) return std::unexpected(handle_or_err.error());
       llvm::Value* handle = *handle_or_err;
 
@@ -116,7 +119,8 @@ auto LowerQueueBuiltinValue(
 
   switch (info.method) {
     case mir::BuiltinMethod::kQueueSize: {
-      auto handle_or_err = LowerOperand(context, resolver, rvalue.operands[0]);
+      auto handle_or_err =
+          LowerOperand(context, facts, resolver, rvalue.operands[0]);
       if (!handle_or_err) return std::unexpected(handle_or_err.error());
       llvm::Value* handle = *handle_or_err;
 
@@ -182,7 +186,8 @@ auto LowerEnumNextPrevValue(
   if (!value_type_or_err) return std::unexpected(value_type_or_err.error());
   llvm::Type* value_type = *value_type_or_err;
 
-  auto current_val_or_err = LowerOperand(context, resolver, rvalue.operands[0]);
+  auto current_val_or_err =
+      LowerOperand(context, facts, resolver, rvalue.operands[0]);
   if (!current_val_or_err) return std::unexpected(current_val_or_err.error());
   llvm::Value* current_val = *current_val_or_err;
   current_val = builder.CreateZExtOrTrunc(current_val, value_type, "enum.val");
@@ -213,7 +218,8 @@ auto LowerEnumNextPrevValue(
 
   llvm::Value* step = nullptr;
   if (rvalue.operands.size() > 1) {
-    auto step_or_err = LowerOperand(context, resolver, rvalue.operands[1]);
+    auto step_or_err =
+        LowerOperand(context, facts, resolver, rvalue.operands[1]);
     if (!step_or_err) return std::unexpected(step_or_err.error());
     step = *step_or_err;
     step = builder.CreateIntCast(step, i32_ty, false, "enum.step");
@@ -290,7 +296,8 @@ auto LowerEnumNameValue(
   auto* enum_val_type =
       llvm::Type::getIntNTy(context.GetLlvmContext(), storage_bits);
 
-  auto current_val_or_err = LowerOperand(context, resolver, rvalue.operands[0]);
+  auto current_val_or_err =
+      LowerOperand(context, facts, resolver, rvalue.operands[0]);
   if (!current_val_or_err) return std::unexpected(current_val_or_err.error());
   llvm::Value* current_val = *current_val_or_err;
   current_val =
@@ -391,7 +398,7 @@ auto LowerBuiltinRvalue(
     Context& context, const CuFacts& facts, const mir::Rvalue& rvalue,
     TypeId result_type, const mir::BuiltinCallRvalueInfo& info)
     -> Result<RvalueValue> {
-  CanonicalSlotAccess canonical(context);
+  CanonicalSlotAccess canonical(context, facts);
   return LowerBuiltinRvalue(
       context, facts, canonical, rvalue, result_type, info);
 }

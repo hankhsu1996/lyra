@@ -144,8 +144,8 @@ void LowerModulePathOp(Context& context) {
 }
 
 auto LowerStringOp(
-    Context& context, SlotAccessResolver& resolver, const mir::FormatOp& op)
-    -> Result<void> {
+    Context& context, const CuFacts& facts, SlotAccessResolver& resolver,
+    const mir::FormatOp& op) -> Result<void> {
   if (!op.value.has_value()) {
     return {};
   }
@@ -184,7 +184,7 @@ auto LowerStringOp(
   builder.CreateStore(llvm::ConstantInt::get(i8_ty, flags), flags_ptr);
 
   return WithStringHandle(
-      context, resolver, *op.value, op.type,
+      context, facts, resolver, *op.value, op.type,
       [&](llvm::Value* h) -> Result<void> {
         builder.CreateCall(context.GetLyraPrintString(), {h, spec_alloca});
         return {};
@@ -192,8 +192,8 @@ auto LowerStringOp(
 }
 
 auto LowerTimeOp(
-    Context& context, SlotAccessResolver& resolver, const mir::FormatOp& op)
-    -> Result<void> {
+    Context& context, const CuFacts& facts, SlotAccessResolver& resolver,
+    const mir::FormatOp& op) -> Result<void> {
   auto& builder = context.GetBuilder();
   auto& llvm_ctx = context.GetLlvmContext();
 
@@ -206,7 +206,7 @@ auto LowerTimeOp(
 
   llvm::Value* data_ptr = nullptr;
   if (op.value.has_value()) {
-    auto value_or_err = LowerOperand(context, resolver, *op.value);
+    auto value_or_err = LowerOperand(context, facts, resolver, *op.value);
     if (!value_or_err) return std::unexpected(value_or_err.error());
     llvm::Value* ticks = LowerTimeToTicks64(context, *value_or_err);
     auto* alloca = builder.CreateAlloca(i64_ty);
@@ -286,13 +286,13 @@ auto LowerValueOp(
 
   if (op.value.has_value()) {
     if (value_kind != runtime::RuntimeValueKind::kIntegral) {
-      auto value_or_err = LowerOperand(context, resolver, *op.value);
+      auto value_or_err = LowerOperand(context, facts, resolver, *op.value);
       if (!value_or_err) return std::unexpected(value_or_err.error());
       auto* alloca = builder.CreateAlloca((*value_or_err)->getType());
       builder.CreateStore(*value_or_err, alloca);
       data_ptr = alloca;
     } else if (is_four_state) {
-      auto raw_or_err = LowerOperandRaw(context, resolver, *op.value);
+      auto raw_or_err = LowerOperandRaw(context, facts, resolver, *op.value);
       if (!raw_or_err) return std::unexpected(raw_or_err.error());
       llvm::Value* raw = *raw_or_err;
 
@@ -313,7 +313,7 @@ auto LowerValueOp(
             builder, unknown_plane, width, false, llvm_ctx);
       }
     } else {
-      auto value_or_err = LowerOperand(context, resolver, *op.value);
+      auto value_or_err = LowerOperand(context, facts, resolver, *op.value);
       if (!value_or_err) return std::unexpected(value_or_err.error());
       llvm::Value* value = *value_or_err;
 
@@ -353,10 +353,10 @@ auto LowerFormatOps(
         LowerLiteralOp(context, op);
         break;
       case FormatKind::kString:
-        result = LowerStringOp(context, resolver, op);
+        result = LowerStringOp(context, facts, resolver, op);
         break;
       case FormatKind::kTime:
-        result = LowerTimeOp(context, resolver, op);
+        result = LowerTimeOp(context, facts, resolver, op);
         break;
       case FormatKind::kModulePath:
         LowerModulePathOp(context);
@@ -382,20 +382,20 @@ auto LowerDisplayEffect(
   if (display.descriptor) {
     auto& builder = context.GetBuilder();
 
-    auto validate_result = ValidateFormatOps(context, display.ops);
+    auto validate_result = ValidateFormatOps(context, facts, display.ops);
     if (!validate_result) return validate_result;
 
     auto* buf = builder.CreateCall(context.GetLyraStringFormatStart(), {});
 
     for (const auto& op : display.ops) {
-      auto result = LowerFormatOpToBuffer(context, resolver, buf, op);
+      auto result = LowerFormatOpToBuffer(context, facts, resolver, buf, op);
       if (!result) return result;
     }
 
     auto* message =
         builder.CreateCall(context.GetLyraStringFormatFinish(), {buf});
 
-    auto desc_or = LowerOperand(context, resolver, *display.descriptor);
+    auto desc_or = LowerOperand(context, facts, resolver, *display.descriptor);
     if (!desc_or) return std::unexpected(desc_or.error());
 
     auto* engine = context.GetEnginePointer();
@@ -426,7 +426,7 @@ auto LowerDisplayEffect(
 auto LowerDisplayEffect(
     Context& context, const CuFacts& facts, const mir::DisplayEffect& display)
     -> Result<void> {
-  CanonicalSlotAccess canonical(context);
+  CanonicalSlotAccess canonical(context, facts);
   return LowerDisplayEffect(context, facts, canonical, display);
 }
 

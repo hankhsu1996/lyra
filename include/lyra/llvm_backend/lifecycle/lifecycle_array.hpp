@@ -18,8 +18,8 @@ using ArrayElementCallback = llvm::function_ref<void(llvm::Value*, TypeId)>;
 // Generates an LLVM loop with constant trip count (from type table).
 // The callback receives (element_ptr, element_type) for each index.
 void ForEachArrayElementPtr(
-    Context& ctx, llvm::Value* array_ptr, TypeId array_type_id,
-    ArrayElementCallback callback);
+    Context& ctx, const CuFacts& facts, llvm::Value* array_ptr,
+    TypeId array_type_id, ArrayElementCallback callback);
 
 // Destroy all elements in an unpacked array.
 // Early-exits if element type doesn't contain managed content.

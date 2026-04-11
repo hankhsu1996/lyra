@@ -13,6 +13,7 @@
 #include "lyra/common/origin_id.hpp"
 #include "lyra/common/severity.hpp"
 #include "lyra/llvm_backend/context.hpp"
+#include "lyra/llvm_backend/cu_facts.hpp"
 #include "lyra/llvm_backend/process_meta_utils.hpp"
 #include "lyra/mir/effect.hpp"
 #include "lyra/runtime/reporting.hpp"
@@ -30,7 +31,8 @@ struct LoweredOrigin {
 // Resolves OriginId to {file, line, col} LLVM constants.
 // Returns null/zero values if origin is absent or unresolvable.
 inline auto LowerOptionalReportOrigin(
-    std::optional<common::OriginId> origin, Context& ctx) -> LoweredOrigin {
+    std::optional<common::OriginId> origin, Context& ctx, const CuFacts& facts)
+    -> LoweredOrigin {
   auto& builder = ctx.GetBuilder();
   auto& llvm_ctx = ctx.GetLlvmContext();
   auto* i32_ty = llvm::Type::getInt32Ty(llvm_ctx);
@@ -42,7 +44,7 @@ inline auto LowerOptionalReportOrigin(
     // enclosing MIR Statement).
     auto resolve_id = origin->IsValid() ? *origin : ctx.GetCurrentOrigin();
     auto loc = ResolveProcessOrigin(
-        resolve_id, &ctx.GetDiagnosticContext(), ctx.GetSourceManager());
+        resolve_id, &ctx.GetDiagnosticContext(), facts.source_manager);
     if (loc.line > 0 && !loc.file.empty()) {
       return {
           .file_ptr = builder.CreateGlobalStringPtr(loc.file),

@@ -132,7 +132,7 @@ void EmitSVDefaultInitImpl(
     }
 
     case TypeKind::kUnpackedStruct: {
-      auto llvm_type_result = BuildLlvmTypeForTypeId(ctx, type_id);
+      auto llvm_type_result = BuildLlvmTypeForTypeId(ctx, facts, type_id);
       if (!llvm_type_result) {
         throw common::InternalError(
             "EmitSVDefaultInitImpl", "failed to build LLVM type for struct");
@@ -150,7 +150,7 @@ void EmitSVDefaultInitImpl(
     }
 
     case TypeKind::kUnpackedArray: {
-      auto llvm_type_result = BuildLlvmTypeForTypeId(ctx, type_id);
+      auto llvm_type_result = BuildLlvmTypeForTypeId(ctx, facts, type_id);
       if (!llvm_type_result) {
         throw common::InternalError(
             "EmitSVDefaultInitImpl", "failed to build LLVM type for array");
@@ -243,7 +243,7 @@ void EmitSVDefaultInitImpl(
 
     case TypeKind::kUnpackedUnion: {
       if (!already_zeroed) {
-        auto llvm_type_result = BuildLlvmTypeForTypeId(ctx, type_id);
+        auto llvm_type_result = BuildLlvmTypeForTypeId(ctx, facts, type_id);
         if (!llvm_type_result) {
           throw common::InternalError(
               "EmitSVDefaultInitImpl", "failed to build LLVM type for union");

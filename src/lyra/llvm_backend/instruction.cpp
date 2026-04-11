@@ -32,7 +32,7 @@ auto LowerStatement(
     Context& context, const CuFacts& facts, const mir::Statement& statement,
     const ActiveExecutionMode& mode, const BodySiteContext& site_ctx)
     -> Result<void> {
-  CanonicalSlotAccess canonical(context);
+  CanonicalSlotAccess canonical(context, facts);
   return LowerStatement(context, facts, canonical, statement, mode, site_ctx);
 }
 
@@ -106,7 +106,8 @@ auto LowerStatement(
                             .unknown = src.unknown};
                         return {};
                       }
-                      auto op_result = LowerOperandRaw(context, resolver, op);
+                      auto op_result =
+                          LowerOperandRaw(context, facts, resolver, op);
                       if (!op_result) return std::unexpected(op_result.error());
                       llvm::Value* raw = *op_result;
                       if (raw->getType()->isStructTy()) {

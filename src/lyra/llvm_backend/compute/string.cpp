@@ -51,36 +51,38 @@ enum class RuntimeFormatValueKind : int32_t {
 }  // namespace
 
 auto LowerStringBinaryOp(
-    Context& context, const mir::BinaryRvalueInfo& info,
+    Context& context, const CuFacts& facts, const mir::BinaryRvalueInfo& info,
     const std::vector<mir::Operand>& operands, llvm::Type* result_type)
     -> Result<llvm::Value*> {
-  CanonicalSlotAccess canonical(context);
-  return LowerStringBinaryOp(context, canonical, info, operands, result_type);
+  CanonicalSlotAccess canonical(context, facts);
+  return LowerStringBinaryOp(
+      context, facts, canonical, info, operands, result_type);
 }
 
 auto LowerStringConcatValue(
-    Context& context, const mir::ConcatRvalueInfo& info,
+    Context& context, const CuFacts& facts, const mir::ConcatRvalueInfo& info,
     const std::vector<mir::Operand>& operands) -> Result<llvm::Value*> {
-  CanonicalSlotAccess canonical(context);
-  return LowerStringConcatValue(context, canonical, info, operands);
+  CanonicalSlotAccess canonical(context, facts);
+  return LowerStringConcatValue(context, facts, canonical, info, operands);
 }
 
 auto LowerStringReplicateValue(
-    Context& context, const mir::ReplicateRvalueInfo& info,
+    Context& context, const CuFacts& facts,
+    const mir::ReplicateRvalueInfo& info,
     const std::vector<mir::Operand>& operands) -> Result<llvm::Value*> {
-  CanonicalSlotAccess canonical(context);
-  return LowerStringReplicateValue(context, canonical, info, operands);
+  CanonicalSlotAccess canonical(context, facts);
+  return LowerStringReplicateValue(context, facts, canonical, info, operands);
 }
 
 auto LowerSFormatRvalueValue(
     Context& context, const CuFacts& facts, const mir::SFormatRvalueInfo& info,
     const std::vector<mir::Operand>& operands) -> Result<llvm::Value*> {
-  CanonicalSlotAccess canonical(context);
+  CanonicalSlotAccess canonical(context, facts);
   return LowerSFormatRvalueValue(context, facts, canonical, info, operands);
 }
 
 auto LowerStringBinaryOp(
-    Context& context, SlotAccessResolver& resolver,
+    Context& context, const CuFacts& facts, SlotAccessResolver& resolver,
     const mir::BinaryRvalueInfo& info,
     const std::vector<mir::Operand>& operands, llvm::Type* result_type)
     -> Result<llvm::Value*> {
@@ -95,10 +97,10 @@ auto LowerStringBinaryOp(
         UnsupportedCategory::kOperation));
   }
 
-  auto lhs_or_err = LowerOperand(context, resolver, operands[0]);
+  auto lhs_or_err = LowerOperand(context, facts, resolver, operands[0]);
   if (!lhs_or_err) return std::unexpected(lhs_or_err.error());
   llvm::Value* lhs = *lhs_or_err;
-  auto rhs_or_err = LowerOperand(context, resolver, operands[1]);
+  auto rhs_or_err = LowerOperand(context, facts, resolver, operands[1]);
   if (!rhs_or_err) return std::unexpected(rhs_or_err.error());
   llvm::Value* rhs = *rhs_or_err;
 
@@ -150,7 +152,7 @@ auto LowerStringBinaryOp(
 }
 
 auto LowerStringConcatValue(
-    Context& context, SlotAccessResolver& resolver,
+    Context& context, const CuFacts& facts, SlotAccessResolver& resolver,
     const mir::ConcatRvalueInfo& /*info*/,
     const std::vector<mir::Operand>& operands) -> Result<llvm::Value*> {
   auto& builder = context.GetBuilder();
@@ -163,7 +165,7 @@ auto LowerStringConcatValue(
   std::vector<llvm::Value*> handles;
   handles.reserve(operands.size());
   for (const auto& operand : operands) {
-    auto handle_or_err = LowerOperand(context, resolver, operand);
+    auto handle_or_err = LowerOperand(context, facts, resolver, operand);
     if (!handle_or_err) return std::unexpected(handle_or_err.error());
     llvm::Value* handle = *handle_or_err;
     handles.push_back(handle);
@@ -189,7 +191,7 @@ auto LowerStringConcatValue(
 }
 
 auto LowerStringReplicateValue(
-    Context& context, SlotAccessResolver& resolver,
+    Context& context, const CuFacts& facts, SlotAccessResolver& resolver,
     const mir::ReplicateRvalueInfo& info,
     const std::vector<mir::Operand>& operands) -> Result<llvm::Value*> {
   auto& builder = context.GetBuilder();
@@ -199,7 +201,7 @@ auto LowerStringReplicateValue(
 
   auto count = static_cast<int64_t>(info.count);
 
-  auto handle_or_err = LowerOperand(context, resolver, operands[0]);
+  auto handle_or_err = LowerOperand(context, facts, resolver, operands[0]);
   if (!handle_or_err) return std::unexpected(handle_or_err.error());
   llvm::Value* handle = *handle_or_err;
 
@@ -236,7 +238,7 @@ auto LowerSFormatRvalueValue(
     auto* i32_ty = llvm::Type::getInt32Ty(llvm_ctx);
     auto* i64_ty = llvm::Type::getInt64Ty(llvm_ctx);
 
-    auto fmt_or_err = LowerOperand(context, resolver, operands[0]);
+    auto fmt_or_err = LowerOperand(context, facts, resolver, operands[0]);
     if (!fmt_or_err) return std::unexpected(fmt_or_err.error());
     llvm::Value* fmt_handle = *fmt_or_err;
 
@@ -296,11 +298,11 @@ auto LowerSFormatRvalueValue(
 
       auto* data_slot = builder.CreateGEP(ptr_ty, data_array, {idx_val});
       if (kind == RuntimeFormatValueKind::kString) {
-        auto val_or_err = LowerOperand(context, resolver, operands[i]);
+        auto val_or_err = LowerOperand(context, facts, resolver, operands[i]);
         if (!val_or_err) return std::unexpected(val_or_err.error());
         builder.CreateStore(*val_or_err, data_slot);
       } else {
-        auto val_or_err = LowerOperand(context, resolver, operands[i]);
+        auto val_or_err = LowerOperand(context, facts, resolver, operands[i]);
         if (!val_or_err) return std::unexpected(val_or_err.error());
         llvm::Value* val = *val_or_err;
 
@@ -358,14 +360,14 @@ auto LowerSFormatRvalueValue(
 
   auto& builder = context.GetBuilder();
 
-  auto validate_result = ValidateFormatOps(context, info.ops);
+  auto validate_result = ValidateFormatOps(context, facts, info.ops);
   if (!validate_result) return std::unexpected(validate_result.error());
 
   llvm::Value* buf =
       builder.CreateCall(context.GetLyraStringFormatStart(), {}, "sformat.buf");
 
   for (const auto& op : info.ops) {
-    auto result = LowerFormatOpToBuffer(context, buf, op);
+    auto result = LowerFormatOpToBuffer(context, facts, buf, op);
     if (!result) return std::unexpected(result.error());
   }
 

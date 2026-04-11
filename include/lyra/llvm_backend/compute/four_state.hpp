@@ -18,37 +18,40 @@ class SlotAccessResolver;
 
 // Lower 4-state binary rvalue.
 auto LowerBinaryRvalue4State(
-    Context& context, const mir::BinaryRvalueInfo& info,
+    Context& context, const CuFacts& facts, const mir::BinaryRvalueInfo& info,
     const std::vector<mir::Operand>& operands,
     const PackedComputeContext& packed_context) -> Result<ComputeResult>;
 
 // Lower 4-state unary rvalue.
 auto LowerUnaryRvalue4State(
-    Context& context, const mir::UnaryRvalueInfo& info,
+    Context& context, const CuFacts& facts, const mir::UnaryRvalueInfo& info,
     const std::vector<mir::Operand>& operands,
     const PackedComputeContext& packed_context) -> Result<ComputeResult>;
 
 // Lower 4-state packed concatenation rvalue.
 auto LowerConcatRvalue4State(
-    Context& context, const mir::ConcatRvalueInfo& info,
+    Context& context, const CuFacts& facts, const mir::ConcatRvalueInfo& info,
     const std::vector<mir::Operand>& operands,
     const PackedComputeContext& packed_context) -> Result<ComputeResult>;
 
 // Lower 4-state packed replication rvalue.
 auto LowerReplicateRvalue4State(
-    Context& context, const mir::ReplicateRvalueInfo& info,
+    Context& context, const CuFacts& facts,
+    const mir::ReplicateRvalueInfo& info,
     const std::vector<mir::Operand>& operands,
     const PackedComputeContext& packed_context) -> Result<ComputeResult>;
 
 // Lower 4-state guarded use (bounds-checked array read).
 auto LowerGuardedUse4State(
-    Context& context, const mir::GuardedUseRvalueInfo& info,
+    Context& context, const CuFacts& facts,
+    const mir::GuardedUseRvalueInfo& info,
     const std::vector<mir::Operand>& operands,
     const PackedComputeContext& packed_context) -> Result<ComputeResult>;
 
 // Lower 4-state runtime query (e.g., $time).
 auto LowerRuntimeQuery4State(
-    Context& context, const mir::RuntimeQueryRvalueInfo& info,
+    Context& context, const CuFacts& facts,
+    const mir::RuntimeQueryRvalueInfo& info,
     const PackedComputeContext& packed_context) -> Result<ComputeResult>;
 
 // Lower case match op (casez/casex) - returns 2-state result.
