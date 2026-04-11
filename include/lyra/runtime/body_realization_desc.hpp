@@ -134,6 +134,10 @@ inline constexpr uint32_t kTriggerTemplateFlagHasObservedPlace = 1U << 0;
 // slot_id is body-relative and constructor adds the per-instance
 // slot-base offset (legacy flat relocation, still globally indexed).
 inline constexpr uint32_t kTriggerTemplateFlagDesignGlobal = 1U << 1;
+// Slot ID is an external-ref recipe index (body-local). Constructor
+// resolves via the per-instance ext_ref_bindings to a design-global
+// slot at realization time. Mutually exclusive with kDesignGlobal.
+inline constexpr uint32_t kTriggerTemplateFlagExternalRef = 1U << 2;
 
 // Named values for OwnedTriggerTemplate::proc_groupable entries.
 // Restricts the uint8_t transport type to a binary contract.

@@ -452,129 +452,69 @@ auto Context::LookupPlace(mir::PlaceId place_id) const -> const mir::Place& {
   return (*arena_)[place_id];
 }
 
-// V3: Direct external-ref helpers -- consume resolved binding directly
-// for operand loads, type queries, signal coordinates, and write-path
-// root resolution. All external-ref resolution flows through
-// ResolveExternalRefRoot.
+// External-ref helpers. Recipes provide compile-time type info; actual
+// slot resolution uses per-instance data loaded from RuntimeInstance.
 
-auto Context::ResolveExternalRefRoot(mir::ExternalRefId ref_id) const
+auto Context::ResolveExternalRefRoot(mir::ExternalRefId ref_id)
     -> ResolvedExternalRefRoot {
-  if (!ext_ref_env_.has_value() || ext_ref_env_->bindings == nullptr) {
+  if (!ext_ref_env_.has_value() || ext_ref_env_->recipes == nullptr) {
     throw common::InternalError(
         "ResolveExternalRefRoot",
-        "env not installed -- kSpecializationLocal scope missing "
-        "SetExternalRefResolutionEnv");
+        "env not installed -- missing SetExternalRefResolutionEnv");
   }
-  const auto& bindings = *ext_ref_env_->bindings;
-  if (ref_id.value >= bindings.size()) {
-    throw common::InternalError(
-        "ResolveExternalRefRoot",
-        std::format(
-            "external ref {} out of range (bindings size {})", ref_id.value,
-            bindings.size()));
-  }
-  const auto& binding = bindings[ref_id.value];
-  if (ext_ref_env_->construction == nullptr) {
-    throw common::InternalError(
-        "ResolveExternalRefRoot", "construction not set in env");
-  }
-  const auto& objects = ext_ref_env_->construction->objects;
-  if (binding.target_object.value >= objects.size()) {
+  const auto& recipes = *ext_ref_env_->recipes;
+  if (ref_id.value >= recipes.size()) {
     throw common::InternalError(
         "ResolveExternalRefRoot",
         std::format(
-            "target_object {} out of range (objects size {})",
-            binding.target_object.value, objects.size()));
+            "external ref {} out of range (recipes size {})", ref_id.value,
+            recipes.size()));
   }
-  const auto& obj = objects[binding.target_object.value];
-  if (binding.target_local_slot.value >= obj.slot_count) {
-    throw common::InternalError(
-        "ResolveExternalRefRoot",
-        std::format(
-            "target_local_slot {} out of range for object {} "
-            "(slot_count {})",
-            binding.target_local_slot.value, binding.target_object.value,
-            obj.slot_count));
-  }
-  uint32_t base = obj.design_state_base_slot;
-  uint32_t local = binding.target_local_slot.value;
-  if (local > UINT32_MAX - base) {
-    throw common::InternalError(
-        "ResolveExternalRefRoot",
-        std::format(
-            "design_state_base_slot {} + target_local_slot {} overflows "
-            "uint32_t",
-            base, local));
-  }
-  auto global_slot = base + local;
+  TypeId type = recipes[ref_id.value].type;
+
+  // Load storage_slot from per-instance ext_ref_bindings[ref_id].storage_slot.
+  auto* bindings_ptr = EmitLoadExtRefBindingsPtr();
+  auto* binding_ty = GetExtRefBindingType();
+  auto* binding_ptr = builder_.CreateGEP(
+      binding_ty, bindings_ptr, builder_.getInt32(ref_id.value),
+      "ext_ref_binding_ptr");
+  auto* storage_slot_ptr = builder_.CreateStructGEP(
+      binding_ty, binding_ptr, 0, "ext_ref_storage_slot_ptr");
+  auto* global_slot = builder_.CreateLoad(
+      llvm::Type::getInt32Ty(*llvm_context_), storage_slot_ptr,
+      "ext_ref_storage_slot");
+
   return ResolvedExternalRefRoot{
-      .global_slot = global_slot,
-      .type = binding.type,
+      .global_slot_value = global_slot,
+      .type = type,
   };
 }
 
-auto Context::GetExternalRefBinding(mir::ExternalRefId ref_id) const
-    -> const mir::ResolvedExternalRefBinding& {
-  if (!ext_ref_env_.has_value() || ext_ref_env_->bindings == nullptr) {
-    throw common::InternalError(
-        "GetExternalRefBinding",
-        "env not installed -- missing SetExternalRefResolutionEnv");
-  }
-  const auto& bindings = *ext_ref_env_->bindings;
-  if (ref_id.value >= bindings.size()) {
-    throw common::InternalError(
-        "GetExternalRefBinding",
-        std::format(
-            "external ref {} out of range (bindings size {})", ref_id.value,
-            bindings.size()));
-  }
-  return bindings[ref_id.value];
-}
-
-auto Context::GetConstruction() const -> const mir::ConstructionInput& {
-  if (!ext_ref_env_.has_value() || ext_ref_env_->construction == nullptr) {
-    throw common::InternalError(
-        "GetConstruction", "construction not set in env");
-  }
-  return *ext_ref_env_->construction;
-}
-
-auto Context::NormalizeExternalRefSignalIdentity(
-    mir::ExternalRefId ref_id) const -> mir::SignalRef {
-  const auto& binding = GetExternalRefBinding(ref_id);
-  if (binding.IsPackageOrGlobal()) {
-    return mir::SignalRef{
-        .scope = mir::SignalRef::Scope::kDesignGlobal,
-        .id = binding.GlobalSlotId()};
-  }
-  const auto& objects = GetConstruction().objects;
-  if (binding.target_object.value >= objects.size()) {
-    throw common::InternalError(
-        "NormalizeExternalRefSignalIdentity",
-        std::format(
-            "target_object {} out of range (objects size {})",
-            binding.target_object.value, objects.size()));
-  }
-  const auto& obj = objects[binding.target_object.value];
-  return mir::SignalRef{
-      .scope = mir::SignalRef::Scope::kDesignGlobal,
-      .id = obj.design_state_base_slot + binding.target_local_slot.value};
-}
-
 auto Context::GetExternalRefType(mir::ExternalRefId ref_id) const -> TypeId {
-  return ResolveExternalRefRoot(ref_id).type;
+  if (!ext_ref_env_.has_value() || ext_ref_env_->recipes == nullptr) {
+    throw common::InternalError("GetExternalRefType", "env not installed");
+  }
+  const auto& recipes = *ext_ref_env_->recipes;
+  if (ref_id.value >= recipes.size()) {
+    throw common::InternalError(
+        "GetExternalRefType",
+        std::format(
+            "external ref {} out of range (recipes size {})", ref_id.value,
+            recipes.size()));
+  }
+  return recipes[ref_id.value].type;
 }
 
 auto Context::EmitExternalRefAddress(mir::ExternalRefId ref_id)
     -> llvm::Value* {
   auto root = ResolveExternalRefRoot(ref_id);
-  return GetDesignGlobalSlotPointer(root.global_slot);
+  return GetDesignGlobalSlotPointer(root.global_slot_value);
 }
 
 auto Context::LoadExternalRef(mir::ExternalRefId ref_id)
     -> Result<llvm::Value*> {
   auto root = ResolveExternalRefRoot(ref_id);
-  auto* ptr = GetDesignGlobalSlotPointer(root.global_slot);
+  auto* ptr = GetDesignGlobalSlotPointer(root.global_slot_value);
   const Type& type = types_[root.type];
 
   // Canonical 4-state load for design-global slots (same logic as
@@ -588,10 +528,31 @@ auto Context::LoadExternalRef(mir::ExternalRefId ref_id)
   return builder_.CreateLoad(llvm_type, ptr, "ext_ref_load");
 }
 
-auto Context::EmitExternalRefSignalCoord(mir::ExternalRefId ref_id) const
+auto Context::EmitExternalRefSignalCoord(mir::ExternalRefId ref_id)
     -> SignalCoordExpr {
-  auto root = ResolveExternalRefRoot(ref_id);
-  return SignalCoordExpr::Global(root.global_slot);
+  return SignalCoordExpr::ExtRef(ref_id.value);
+}
+
+auto Context::EmitLoadExtRefBindingsPtr() -> llvm::Value* {
+  if (instance_ptr_ == nullptr) {
+    throw common::InternalError(
+        "EmitLoadExtRefBindingsPtr", "instance_ptr not set");
+  }
+  using IF = lyra::runtime::RuntimeInstanceField;
+  auto* ptr = builder_.CreateStructGEP(
+      GetRuntimeInstanceType(), instance_ptr_,
+      static_cast<unsigned>(IF::kExtRefBindings), "ext_ref_bindings_field");
+  return builder_.CreateLoad(
+      llvm::PointerType::getUnqual(*llvm_context_), ptr, "ext_ref_bindings");
+}
+
+auto Context::GetExtRefBindingType() -> llvm::StructType* {
+  if (ext_ref_binding_type_ == nullptr) {
+    auto* i32_ty = llvm::Type::getInt32Ty(*llvm_context_);
+    ext_ref_binding_type_ = llvm::StructType::get(
+        *llvm_context_, {i32_ty, i32_ty, i32_ty}, "ExtRefBinding");
+  }
+  return ext_ref_binding_type_;
 }
 
 auto Context::GetWriteDestPointer(const mir::WriteTarget& dest)

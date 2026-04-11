@@ -52,10 +52,16 @@ struct WaitSiteEntry {
 // Canonical compile-time process trigger fact.
 // Captures the signal identity and edge kind from a MIR WaitTrigger.
 // G13 metadata, separate from runtime wait-site plumbing.
+// For external-ref triggers, signal is unused and external_ref_index
+// carries the body-local external-ref recipe index. Resolution to a
+// concrete design-global slot happens at construction time.
 struct ProcessTriggerFact {
-  mir::SignalRef signal;
-  common::EdgeKind edge;
-  bool has_observed_place;
+  mir::SignalRef signal = {};
+  common::EdgeKind edge = common::EdgeKind::kAnyChange;
+  bool has_observed_place = false;
+  // External-ref recipe index (body-local). When set, signal is unused
+  // and the template entry carries kTriggerTemplateFlagExternalRef.
+  std::optional<uint32_t> external_ref_index;
 };
 
 // Canonical compile-time process trigger entry.

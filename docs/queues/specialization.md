@@ -35,6 +35,7 @@ For the stable architecture: see [compilation-model.md](../compilation-model.md)
   - [ ] F1-impl -- Per-group isolated compilation with deterministic merge
 - [ ] F2 -- Specialization caching
 - [x] I1 -- Constructor-time container construction recipes
+- [ ] Compilation unit isolation enforcement (I-1 through I-5)
 - [ ] Documentation: natural model, ownership boundaries, and runtime model docs need alignment
 - [ ] CI policy gates: specialization invariants and natural model regression checks
 
@@ -167,6 +168,45 @@ Several docs need alignment with the natural model and R-series runtime model mi
 - runtime.md, change-propagation.md, and module-hierarchy.md describe mechanisms without referencing the natural model or noting current-state mismatches
 
 The code already implements the correct projection for types. The docs need to catch up with both the type ownership model and the broader natural model / runtime model direction.
+
+## Compilation unit isolation enforcement
+
+The specialization-scoped IR principle is documented in architecture-principles.md, but enforcement today relies on convention and code review. Violations recur because the wrong thing is merely discouraged, not structurally impossible. The goal is to make boundary violations unrepresentable or prohibitively expensive.
+
+### I-1: Backend must not link frontend/slang
+
+The LLVM backend library currently transitively includes slang headers. This allows backend code to reach frontend AST objects, instance symbols, and scope trees. The backend build target should not depend on the slang library. Frontend types must not appear in any backend header or source file.
+
+Target: remove slang from the backend's dependency closure. Any data the backend needs from the frontend must cross the HIR/MIR serialization boundary as owned, frontend-free types.
+
+### I-2: HIR as owned quarantine boundary
+
+HIR currently carries slang pointers (SymbolId referencing slang symbols, source locations pointing into slang source buffers). After AST-to-HIR lowering, subsequent phases should not require the slang compilation to remain alive. HIR should be fully owned and reconstructable without frontend memory.
+
+Target: HIR types carry no pointers into the slang AST. After HIR is built, the frontend world can be dropped. This makes "sneak a frontend pointer into MIR/backend" structurally impossible.
+
+### I-3: No design-wide query API in backend codegen
+
+Backend codegen (Context, SpecLocalScope, spec_session) currently receives ConstructionInput, which provides a design-wide object table queryable by body_group. This enables body-group-indexed scanning for "first instance" or "representative" lookups that violate compilation unit isolation.
+
+Target: codegen receives only specialization-scoped data (recipes, layout, slot info) and runtime-instance-reachable handles. No ConstructionInput, no Design, no body-group-to-objects query. Per-instance data is loaded at runtime via instance_ptr, not looked up at codegen time via design-wide tables.
+
+### I-4: Opaque typed IDs across layers
+
+A single body_group uint32_t can be used to re-open the whole design-level world from any layer. Different layers should use opaque typed IDs that cannot be directly cross-referenced without explicit conversion at an owning boundary.
+
+Target: separate opaque ID types per layer (HIR, MIR, codegen, runtime). No raw uint32_t body/instance indices cross layer boundaries without typed wrappers that restrict what queries are available.
+
+### I-5: CI forbidden-dependency checks
+
+Static enforcement of include/dependency rules:
+
+- `llvm_backend/` must not include `slang/` headers
+- `llvm_backend/context*.cpp` must not include `construction_input.hpp`
+- Codegen-facing structs (CompiledModuleSpecInput, SpecLocalScope, ExternalRefResolutionEnv) must not carry body_group, object_index, or construction-level grouping keys
+- New fields on codegen-facing structs that carry design-topology identity must fail CI
+
+Target: policy check script (like check_exceptions.py) that enforces these rules on every PR.
 
 ## CI policy gates
 

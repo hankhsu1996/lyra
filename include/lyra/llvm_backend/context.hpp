@@ -23,7 +23,6 @@
 #include "lyra/llvm_backend/layout/layout.hpp"
 #include "lyra/lowering/diagnostic_context.hpp"
 #include "lyra/mir/arena.hpp"
-#include "lyra/mir/construction_input.hpp"
 #include "lyra/mir/external_ref.hpp"
 #include "lyra/mir/handle.hpp"
 #include "lyra/mir/routine.hpp"
@@ -325,12 +324,16 @@ class Context {
       -> llvm::Function*;
   [[nodiscard]] auto GetLyraScheduleNbaCanonicalPackedGlobal()
       -> llvm::Function*;
+  [[nodiscard]] auto GetLyraScheduleNbaExtRef() -> llvm::Function*;
+  [[nodiscard]] auto GetLyraScheduleNbaCanonicalPackedExtRef()
+      -> llvm::Function*;
   [[nodiscard]] auto GetLyraIsTraceObservedLocal() -> llvm::Function*;
   [[nodiscard]] auto GetLyraIsTraceObservedGlobal() -> llvm::Function*;
   [[nodiscard]] auto GetLyraNotifyContainerMutationLocal() -> llvm::Function*;
   [[nodiscard]] auto GetLyraNotifyContainerMutationGlobal() -> llvm::Function*;
   [[nodiscard]] auto GetLyraNotifySignalLocal() -> llvm::Function*;
   [[nodiscard]] auto GetLyraNotifySignalGlobal() -> llvm::Function*;
+  [[nodiscard]] auto GetLyraMarkDirtyExtRef() -> llvm::Function*;
   [[nodiscard]] auto GetLyraTerminate() -> llvm::Function*;
   [[nodiscard]] auto GetLyraGetTime() -> llvm::Function*;
   [[nodiscard]] auto GetLyraInitRuntime() -> llvm::Function*;
@@ -510,11 +513,12 @@ class Context {
   void SetConnectionNotificationMask(const ConnectionNotificationMask* mask) {
     connection_notification_mask_ = mask;
   }
-  // B2: External ref resolution environment. Installed as a unit by
-  // SpecLocalScope; cleared on scope exit. All fields must be consistent.
+  // External ref resolution environment. Installed as a unit by
+  // SpecLocalScope; cleared on scope exit.
+  // Contains only specialization-scoped data (recipes for type/access info).
+  // Per-instance data is loaded at runtime from instance_ptr->ext_ref_bindings.
   struct ExternalRefResolutionEnv {
-    const std::vector<mir::ResolvedExternalRefBinding>* bindings = nullptr;
-    const mir::ConstructionInput* construction = nullptr;
+    const std::vector<mir::ExternalAccessRecipe>* recipes = nullptr;
   };
   void SetExternalRefResolutionEnv(std::optional<ExternalRefResolutionEnv> env);
 
@@ -548,49 +552,28 @@ class Context {
     Context& ctx_;
   };
 
-  // V3: Direct external-ref helpers. Consume ResolvedExternalRefBinding
-  // directly for reads (operand loads, type queries) and writes
-  // (immediate/deferred assign). No synthetic PlaceId, no scratch arena.
+  // External-ref helpers. Recipes are specialization-scoped; actual slot
+  // resolution uses per-instance data loaded from RuntimeInstance at runtime.
 
-  // Resolved external-ref root: carries the design-global slot ID and type
-  // as a single result. All external-ref address/type/signal-coord helpers
-  // derive from this.
+  // Resolved external-ref root: carries the design-global slot as a
+  // runtime-loaded LLVM Value and the type as compile-time data.
   struct ResolvedExternalRefRoot {
-    uint32_t global_slot = 0;
+    llvm::Value* global_slot_value = nullptr;
     TypeId type = {};
   };
 
-  // Canonical external-ref resolution: binding -> design-global slot + type.
-  // Used by all external-ref helpers (read and write paths).
-  // All invariant checks (env installed, bindings present, target_object in
-  // range, local_slot within target object's domain, no overflow) are
-  // enforced here.
-  [[nodiscard]] auto ResolveExternalRefRoot(mir::ExternalRefId ref_id) const
+  // Resolve external ref to runtime global_slot + type.
+  // Emits LLVM IR that loads the design-global slot from the current
+  // instance's ext_ref_bindings table.
+  [[nodiscard]] auto ResolveExternalRefRoot(mir::ExternalRefId ref_id)
       -> ResolvedExternalRefRoot;
 
-  // Access the resolved binding for an external ref.
-  [[nodiscard]] auto GetExternalRefBinding(mir::ExternalRefId ref_id) const
-      -> const mir::ResolvedExternalRefBinding&;
-
-  // Access the construction input (objects, instance table).
-  [[nodiscard]] auto GetConstruction() const -> const mir::ConstructionInput&;
-
-  // Normalize an ExternalRefId to topology-resolved signal identity.
-  // Uses ResolvedExternalRefBinding (target_object + target_local_slot)
-  // to compute the design-global slot via topology facts. EmitSignalCoord
-  // then reclassifies instance-owned signals to local runtime identity.
-  // This is the canonical normalization for sensitivity, trigger,
-  // index-plan, and write-path signal identity.
-  [[nodiscard]] auto NormalizeExternalRefSignalIdentity(
-      mir::ExternalRefId ref_id) const -> mir::SignalRef;
-
-  // Get the type of an external ref from its resolved root.
+  // Get the type of an external ref from its recipe.
   [[nodiscard]] auto GetExternalRefType(mir::ExternalRefId ref_id) const
       -> TypeId;
 
   // Emit LLVM IR computing a pointer to the external ref's storage.
-  // Backend-internal address arithmetic via ResolveExternalRefRoot ->
-  // GetDesignGlobalSlotPointer. Not a rebuilt Place.
+  // Loads the global slot from per-instance data, then resolves to pointer.
   [[nodiscard]] auto EmitExternalRefAddress(mir::ExternalRefId ref_id)
       -> llvm::Value*;
 
@@ -600,9 +583,16 @@ class Context {
       -> Result<llvm::Value*>;
 
   // Compute the typed signal coordinate for an external ref's storage.
-  // Always returns SignalCoordExpr::Global(global_slot).
-  [[nodiscard]] auto EmitExternalRefSignalCoord(mir::ExternalRefId ref_id) const
+  // Returns a runtime-loaded GlobalRuntime signal coord from the per-instance
+  // ext_ref_bindings table.
+  [[nodiscard]] auto EmitExternalRefSignalCoord(mir::ExternalRefId ref_id)
       -> SignalCoordExpr;
+
+  // Load ext_ref_bindings pointer from RuntimeInstance via instance_ptr_.
+  [[nodiscard]] auto EmitLoadExtRefBindingsPtr() -> llvm::Value*;
+
+  // Get the LLVM struct type for ResolvedExtRefBinding: {i32, i32, i32}.
+  [[nodiscard]] auto GetExtRefBindingType() -> llvm::StructType*;
 
   // Resolve a WriteTarget to a storage pointer.
   // PlaceId: delegates to GetPlacePointer.
@@ -649,6 +639,11 @@ class Context {
 
   // Design-global storage: design_ptr + struct GEP via field index.
   [[nodiscard]] auto GetDesignGlobalSlotPointer(uint32_t global_slot_id)
+      -> llvm::Value*;
+
+  // Design-global storage with runtime-loaded slot ID.
+  // Used by external-ref resolution where the slot varies per instance.
+  [[nodiscard]] auto GetDesignGlobalSlotPointer(llvm::Value* global_slot_id)
       -> llvm::Value*;
 
   // Central dispatch: resolve a design-storage root (kModuleSlot or
@@ -710,7 +705,7 @@ class Context {
   // Legacy runtime-interop: resolve a signal reference to a design-global
   // slot index for runtime APIs that still use flat slot identity (trace
   // observation, packed store notifications). For module-local signals,
-  // maps through ResolveLegacyRepresentativeDesignSlot. For design-global
+  // maps through ResolveRepresentativeDesignSlot. For design-global
   // signals, returns the id directly.
   // Must NOT be used for spec compilation decisions -- only for runtime
   // signal identity at the codegen->runtime boundary.
@@ -1093,8 +1088,10 @@ class Context {
   llvm::Function* lyra_resolve_slot_ptr_ = nullptr;
   llvm::Function* lyra_resolve_instance_ptr_ = nullptr;
   // R3 typed coordination helpers.
+  llvm::StructType* ext_ref_binding_type_ = nullptr;
   llvm::Function* lyra_mark_dirty_local_ = nullptr;
   llvm::Function* lyra_mark_dirty_global_ = nullptr;
+  llvm::Function* lyra_mark_dirty_ext_ref_ = nullptr;
   llvm::Function* lyra_store_packed_local_ = nullptr;
   llvm::Function* lyra_store_packed_global_ = nullptr;
   llvm::Function* lyra_store_string_local_ = nullptr;
@@ -1103,6 +1100,8 @@ class Context {
   llvm::Function* lyra_schedule_nba_global_ = nullptr;
   llvm::Function* lyra_schedule_nba_canonical_packed_local_ = nullptr;
   llvm::Function* lyra_schedule_nba_canonical_packed_global_ = nullptr;
+  llvm::Function* lyra_schedule_nba_ext_ref_ = nullptr;
+  llvm::Function* lyra_schedule_nba_canonical_packed_ext_ref_ = nullptr;
   llvm::Function* lyra_is_trace_observed_local_ = nullptr;
   llvm::Function* lyra_is_trace_observed_global_ = nullptr;
   llvm::Function* lyra_notify_container_mutation_local_ = nullptr;

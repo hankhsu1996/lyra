@@ -256,21 +256,17 @@ auto Context::GetWriteTarget(mir::PlaceId place_id) -> Result<WriteTarget> {
 
 auto Context::GetWriteTarget(mir::ExternalRefId ref_id) -> Result<WriteTarget> {
   auto root = ResolveExternalRefRoot(ref_id);
-  auto* ptr = GetDesignGlobalSlotPointer(root.global_slot);
-  // Derive mutation identity from the same binding-based normalization
-  // used by sensitivity/trigger transport. EmitSignalCoord reclassifies
-  // instance-owned signals to local runtime identity.
-  auto mutation_sig = NormalizeExternalRefSignalIdentity(ref_id);
-  auto signal_coord = EmitSignalCoord(mutation_sig);
-  // External ref targets always require static dirty propagation.
-  // They are cross-instance writes that must always notify; the
-  // design-level contract bitmaps may not cover instance-owned slots.
+  auto* ptr = GetDesignGlobalSlotPointer(root.global_slot_value);
+  // External-ref dirty notification resolves through per-instance
+  // target tables to the target instance's local signal. Storage
+  // addressing still uses the design-global slot pointer.
+  auto signal_coord = SignalCoordExpr::ExtRef(ref_id.value);
   return WriteTarget{
       .ptr = ptr,
       .canonical_signal_id = signal_coord,
       .dirty_off = 0,
       .dirty_size = 0,
-      .mutation_signal = mutation_sig,
+      .mutation_signal = std::nullopt,
       .requires_static_dirty_propagation = true,
   };
 }
@@ -514,6 +510,19 @@ auto Context::GetDesignGlobalSlotPointer(uint32_t global_slot_id)
   return builder_.CreateGEP(
       llvm::Type::getInt8Ty(*llvm_context_), design_ptr_,
       builder_.getInt64(offset), "design_global_slot_ptr");
+}
+
+auto Context::GetDesignGlobalSlotPointer(llvm::Value* global_slot_id)
+    -> llvm::Value* {
+  // Runtime-loaded slot ID: must use engine resolver (simulation context).
+  if (engine_ptr_ != nullptr) {
+    return builder_.CreateCall(
+        GetLyraResolveSlotPtr(), {engine_ptr_, global_slot_id},
+        "resolved_slot_ptr");
+  }
+  throw common::InternalError(
+      "GetDesignGlobalSlotPointer(Value*)",
+      "runtime-loaded slot ID requires engine context");
 }
 
 auto Context::GetSlotRootPointer(const mir::PlaceRoot& root) -> llvm::Value* {
@@ -808,11 +817,11 @@ auto Context::RequiresBehavioralDirtyPropagation(
     bool behavioral = body_info.slot_has_behavioral_trigger[local_slot];
     if (behavioral) return true;
 
-    // Check design-global behavioral triggers projected from other bodies.
-    // Covers cross-body dependents like hierarchical sensitivity
-    // (e.g., always_ff @(posedge child.clk) in a parent module).
+    // Check design-global behavioral triggers for package/init signals.
+    // Body-local slots are projected to their representative design-global
+    // equivalent for this check.
     const auto& spec = *GetSpecSlotInfo();
-    auto global_slot = layout_.ResolveLegacyRepresentativeDesignSlot(
+    auto global_slot = layout_.ResolveRepresentativeDesignSlot(
         spec.body_realization_info_index, local_slot);
     if (global_slot < layout_.slot_has_design_behavioral_trigger.size()) {
       if (layout_.slot_has_design_behavioral_trigger[global_slot]) return true;
@@ -886,7 +895,7 @@ auto Context::GetLegacyRuntimeSignalSlot(const mir::SignalRef& sig) const
     }
     const auto& spec = *GetSpecSlotInfo();
     auto local_slot = static_cast<uint32_t>(sig.id);
-    owner_slot = layout_.ResolveLegacyRepresentativeDesignSlot(
+    owner_slot = layout_.ResolveRepresentativeDesignSlot(
         spec.body_realization_info_index, local_slot);
   } else if (sig.scope == mir::SignalRef::Scope::kDesignGlobal) {
     owner_slot = static_cast<uint32_t>(sig.id);

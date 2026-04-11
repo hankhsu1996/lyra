@@ -522,4 +522,13 @@ auto LyraConstructionResultGetInstanceBundleCount(void* result) -> uint32_t;
 
 void LyraConstructionResultDestroy(void* result);
 
+// Set per-instance ext-ref binding records.
+// pool: flat array of ResolvedExtRefBinding records for all instances.
+// offsets[i]: index into pool for instance i (UINT32_MAX = no ext refs).
+// counts[i]: number of bindings for instance i.
+// Called after LyraConstructorFinalize, before simulation.
+void LyraConstructionResultSetExtRefBindings(
+    void* result, const void* pool, uint32_t pool_count,
+    const uint32_t* offsets, const uint32_t* counts, uint32_t num_instances);
+
 }  // extern "C"

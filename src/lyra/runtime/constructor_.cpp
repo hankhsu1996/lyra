@@ -1643,3 +1643,27 @@ void LyraConstructionResultDestroy(void* result_raw) {
   std::unique_ptr<lyra::runtime::ConstructionResult> result(
       static_cast<lyra::runtime::ConstructionResult*>(result_raw));
 }
+
+void LyraConstructionResultSetExtRefBindings(
+    void* result_raw, const void* pool_raw, uint32_t pool_count,
+    const uint32_t* offsets, const uint32_t* counts, uint32_t num_instances) {
+  if (result_raw == nullptr) return;
+  auto& result = *static_cast<lyra::runtime::ConstructionResult*>(result_raw);
+  auto pool = std::span(
+      static_cast<const lyra::common::ResolvedExtRefBinding*>(pool_raw),
+      pool_count);
+  auto offset_span = std::span(offsets, num_instances);
+  auto count_span = std::span(counts, num_instances);
+  auto n =
+      std::min(static_cast<size_t>(num_instances), result.instances.size());
+  for (size_t i = 0; i < n; ++i) {
+    if (offset_span[i] == UINT32_MAX) {
+      result.instances[i]->ext_ref_bindings = nullptr;
+      result.instances[i]->ext_ref_binding_count = 0;
+    } else {
+      result.instances[i]->ext_ref_bindings =
+          pool.subspan(offset_span[i]).data();
+      result.instances[i]->ext_ref_binding_count = count_span[i];
+    }
+  }
+}

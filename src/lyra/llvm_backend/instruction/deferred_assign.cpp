@@ -189,7 +189,13 @@ auto EmitDeferredStoreCore(
                     shape.storage_ty));
 
   auto* i32_ty = llvm::Type::getInt32Ty(llvm_ctx);
-  if (signal_id.IsLocal()) {
+  if (signal_id.IsExtRef()) {
+    builder.CreateCall(
+        context.GetLyraScheduleNbaExtRef(),
+        {context.GetEnginePointer(), context.GetInstancePointer(),
+         signal_id.Emit(builder), write_ptr, notify_base_ptr, val_alloca,
+         null_ptr, llvm::ConstantInt::get(i32_ty, byte_size)});
+  } else if (signal_id.IsLocal()) {
     builder.CreateCall(
         context.GetLyraScheduleNbaLocal(),
         {context.GetEnginePointer(),

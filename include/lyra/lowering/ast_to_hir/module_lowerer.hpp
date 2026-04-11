@@ -15,6 +15,10 @@ namespace lyra::lowering::ast_to_hir {
 struct LoweringFrame {
   int unit_power;  // Scope's timeunit as power of 10 (e.g., -9 for 1ns)
   int global_precision_power;  // Compilation-wide finest precision
+  // The slang instance being lowered. Used by hierarchical reference path
+  // extraction to determine whether a path element is an ancestor
+  // self-reference or a real child traversal step. Null for package lowering.
+  const slang::ast::InstanceSymbol* instance = nullptr;
 };
 
 /// Drives AST->HIR lowering for a single module or package.

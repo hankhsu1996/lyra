@@ -152,9 +152,34 @@ auto BuildModuleTriggerDescriptors(
 
       for (uint32_t t = 0; t < range.count; ++t) {
         const auto& te = triggers.entries[range.start + t];
+        bool is_ext_ref = (te.flags & kTriggerTemplateFlagExternalRef) != 0;
         bool is_global = (te.flags & kTriggerTemplateFlagDesignGlobal) != 0;
 
-        if (is_global) {
+        if (is_ext_ref) {
+          // External-ref trigger: resolve to object-local identity on
+          // the target instance via the binding record.
+          auto bindings = std::span(
+              bundle.instance->ext_ref_bindings,
+              bundle.instance->ext_ref_binding_count);
+          if (te.slot_id >= bindings.size()) {
+            throw common::InternalError(
+                "BuildModuleTriggerDescriptors",
+                std::format(
+                    "instance {} ext-ref trigger index {} >= binding "
+                    "count {}",
+                    bundle.instance_id, te.slot_id, bindings.size()));
+          }
+          const auto& binding = bindings[te.slot_id];
+          descriptors.push_back(
+              ProcessTriggerDescriptor{
+                  .scheduled_process_index = proc_idx,
+                  .slot_id = binding.target_local_signal.value,
+                  .edge = static_cast<common::EdgeKind>(te.edge),
+                  .is_groupable = groupable,
+                  .is_local = true,
+                  .instance_id = InstanceId{binding.target_instance_id},
+              });
+        } else if (is_global) {
           if (te.slot_id >= total_slot_count) {
             throw common::InternalError(
                 "BuildModuleTriggerDescriptors",

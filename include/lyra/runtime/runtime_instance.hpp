@@ -3,6 +3,7 @@
 #include <cstddef>
 #include <cstdint>
 
+#include "lyra/common/ext_ref_binding.hpp"
 #include "lyra/runtime/instance_event_state.hpp"
 #include "lyra/runtime/instance_observability.hpp"
 #include "lyra/runtime/process_frame.hpp"
@@ -63,6 +64,14 @@ struct RuntimeInstance {
   uint32_t module_proc_base = 0;
   uint32_t num_module_processes = 0;
 
+  // Per-instance resolved ext-ref binding records.
+  // One entry per external-ref recipe in the body. Each record carries
+  // storage slot (address), target instance, and target local signal
+  // (behavioral identity). Null if the body has no external refs.
+  // Part of the binary contract with codegen (accessed via GEP).
+  const common::ResolvedExtRefBinding* ext_ref_bindings = nullptr;
+  uint32_t ext_ref_binding_count = 0;
+
   // R5: Per-instance observability state.
   // Populated by Engine::InitModuleInstancesFromBundles. Not part of the
   // binary contract with codegen (not accessed via GEP, no LLVM struct type).
@@ -94,7 +103,9 @@ enum class RuntimeInstanceField : unsigned {
   kOwnerOrdinal = 4,
   kModuleProcBase = 5,
   kNumModuleProcesses = 6,
-  kFieldCount = 7,
+  kExtRefBindings = 7,
+  kExtRefBindingCount = 8,
+  kFieldCount = 9,
 };
 
 // Hard binary contract assertions for RuntimeInstanceStorage.
@@ -130,6 +141,9 @@ static_assert(
 static_assert(
     offsetof(RuntimeInstance, num_module_processes) ==
     offsetof(RuntimeInstance, module_proc_base) + sizeof(uint32_t));
+static_assert(
+    offsetof(RuntimeInstance, ext_ref_bindings) >
+    offsetof(RuntimeInstance, num_module_processes));
 
 // Allocate zero-initialized owned storage for an instance's inline region.
 auto AllocateOwnedInlineStorage(uint64_t size) -> std::byte*;

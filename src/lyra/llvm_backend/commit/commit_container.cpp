@@ -31,7 +31,17 @@ void StoreContainerToWriteTarget(
 
   auto emit_notifying_store = [&]() {
     auto* old_handle = builder.CreateLoad(ptr_ty, wt.ptr, "ctr.old");
-    if (wt.canonical_signal_id->IsLocal()) {
+    if (wt.canonical_signal_id->IsExtRef()) {
+      builder.CreateCall(
+          ctx.GetLyraStoreDynArrayGlobal(),
+          {ctx.GetEnginePointer(), wt.ptr, new_handle,
+           builder.getInt32(UINT32_MAX)});
+      builder.CreateCall(
+          ctx.GetLyraMarkDirtyExtRef(),
+          {ctx.GetEnginePointer(), ctx.GetInstancePointer(),
+           wt.canonical_signal_id->Emit(builder), builder.getInt32(0),
+           builder.getInt32(0)});
+    } else if (wt.canonical_signal_id->IsLocal()) {
       auto* inst_ptr =
           wt.canonical_signal_id->GetInstancePointer(ctx.GetInstancePointer());
       builder.CreateCall(

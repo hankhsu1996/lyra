@@ -27,6 +27,9 @@ class SignalCoordExpr {
     kLocal,
     kLocalCrossInstance,
     kGlobal,
+    // External-ref write: dirty notification resolves through per-instance
+    // ext-ref target tables at runtime. value_ carries the ext-ref index.
+    kExtRef,
   };
 
   static auto Local(uint32_t id) -> SignalCoordExpr {
@@ -57,6 +60,16 @@ class SignalCoordExpr {
     return e;
   }
 
+  // External-ref write/NBA notification. Dirty mark resolves through
+  // per-instance ext-ref target tables to the target instance's local signal.
+  // value_ is the ext-ref recipe index.
+  static auto ExtRef(uint32_t ref_index) -> SignalCoordExpr {
+    SignalCoordExpr e;
+    e.kind_ = Kind::kExtRef;
+    e.value_ = ref_index;
+    return e;
+  }
+
   [[nodiscard]] auto GetKind() const -> Kind {
     return kind_;
   }
@@ -65,6 +78,9 @@ class SignalCoordExpr {
   }
   [[nodiscard]] auto IsGlobal() const -> bool {
     return kind_ == Kind::kGlobal;
+  }
+  [[nodiscard]] auto IsExtRef() const -> bool {
+    return kind_ == Kind::kExtRef;
   }
 
   [[nodiscard]] auto Value() const -> uint32_t {
@@ -96,9 +112,11 @@ class SignalCoordExpr {
     return std::nullopt;
   }
 
-  // Emit the semantic id value as an LLVM i32 constant.
-  // This is the raw local or global id, NOT a dense coordination coordinate.
+  // Emit the semantic id value as an LLVM i32 value.
+  // For compile-time-constant signals, returns ConstantInt.
+  // For runtime-loaded signals (GlobalRuntime), returns the pre-loaded value.
   [[nodiscard]] auto Emit(llvm::IRBuilder<>& builder) const -> llvm::Value* {
+    if (runtime_value_ != nullptr) return runtime_value_;
     auto& ctx = builder.getContext();
     return llvm::ConstantInt::get(llvm::Type::getInt32Ty(ctx), value_);
   }
@@ -110,6 +128,9 @@ class SignalCoordExpr {
   uint32_t value_ = 0;
   llvm::Value* instance_override_ = nullptr;
   runtime::InstanceId instance_id_override_ = runtime::InstanceId{0};
+  // Non-null for GlobalRuntime: the signal ID is a runtime-loaded LLVM
+  // value, not a compile-time constant. Emit() returns this directly.
+  llvm::Value* runtime_value_ = nullptr;
 };
 
 }  // namespace lyra::lowering::mir_to_llvm

@@ -1110,6 +1110,21 @@ extern "C" void LyraMarkDirtyGlobal(
   MarkDirtyTyped(AsEngine(eng), GlobalSignalId{id}, off, size);
 }
 
+extern "C" void LyraMarkDirtyExtRef(
+    void* eng, void* inst, uint32_t ref_id, uint32_t off, uint32_t size) {
+  auto* instance = static_cast<lyra::runtime::RuntimeInstance*>(inst);
+  auto bindings =
+      std::span(instance->ext_ref_bindings, instance->ext_ref_binding_count);
+  const auto& binding = bindings[ref_id];
+  auto target_instance_id =
+      lyra::runtime::InstanceId{binding.target_instance_id};
+  auto* engine = AsEngine(eng);
+  auto& target = engine->GetInstanceMut(target_instance_id);
+  MarkDirtyTyped(
+      engine, MakeLocalRef(&target, binding.target_local_signal.value), off,
+      size);
+}
+
 extern "C" void LyraStorePackedLocal(
     void* eng, void* inst, void* slot, const void* val, uint32_t bsz,
     uint32_t id, uint32_t off, uint32_t dsz) {
@@ -1152,6 +1167,34 @@ extern "C" void LyraScheduleNbaCanonicalPackedGlobal(
     uint32_t rsz, uint32_t sro, uint32_t id) {
   AsEngine(eng)->ScheduleNbaCanonicalPacked(
       GlobalSignalId{id}, wp, nb, vp, up, rsz, sro);
+}
+
+extern "C" void LyraScheduleNbaExtRef(
+    void* eng, void* inst, uint32_t ref_id, void* wp, const void* nb,
+    const void* vp, const void* mp, uint32_t bsz) {
+  auto* owner = static_cast<lyra::runtime::RuntimeInstance*>(inst);
+  auto bindings =
+      std::span(owner->ext_ref_bindings, owner->ext_ref_binding_count);
+  const auto& binding = bindings[ref_id];
+  lyra::runtime::NbaNotifySignal notify{lyra::runtime::NbaNotifyLocal{
+      .instance_id = lyra::runtime::InstanceId{binding.target_instance_id},
+      .signal = lyra::runtime::LocalSignalId{binding.target_local_signal.value},
+  }};
+  AsEngine(eng)->ScheduleNba(wp, nb, vp, mp, bsz, notify);
+}
+
+extern "C" void LyraScheduleNbaCanonicalPackedExtRef(
+    void* eng, void* inst, uint32_t ref_id, void* wp, const void* nb,
+    const void* vp, const void* up, uint32_t rsz, uint32_t sro) {
+  auto* owner = static_cast<lyra::runtime::RuntimeInstance*>(inst);
+  auto bindings =
+      std::span(owner->ext_ref_bindings, owner->ext_ref_binding_count);
+  const auto& binding = bindings[ref_id];
+  lyra::runtime::NbaNotifySignal notify{lyra::runtime::NbaNotifyLocal{
+      .instance_id = lyra::runtime::InstanceId{binding.target_instance_id},
+      .signal = lyra::runtime::LocalSignalId{binding.target_local_signal.value},
+  }};
+  AsEngine(eng)->ScheduleNbaCanonicalPacked(wp, nb, vp, up, rsz, sro, notify);
 }
 
 // R5: Resolve RuntimeInstance* from InstanceId at runtime.

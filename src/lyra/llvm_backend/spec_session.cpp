@@ -19,7 +19,6 @@
 #include "lyra/llvm_backend/process.hpp"
 #include "lyra/lowering/origin_map_lookup.hpp"
 #include "lyra/mir/arena.hpp"
-#include "lyra/mir/construction_input.hpp"
 #include "lyra/mir/deferred_assertion_site.hpp"
 #include "lyra/mir/routine.hpp"
 
@@ -57,8 +56,8 @@ auto CaptureDeferredCalleeInfoForBody(
 }  // namespace
 
 auto CompileModuleSpecSession(
-    Context& context, const CompiledModuleSpecInput& input,
-    const mir::ConstructionInput* construction) -> Result<CompiledModuleSpec> {
+    Context& context, const CompiledModuleSpecInput& input)
+    -> Result<CompiledModuleSpec> {
   const auto& body = *input.body;
   Context::ArenaScope arena_scope(context, &body.arena);
 
@@ -73,10 +72,9 @@ auto CompileModuleSpecSession(
   }
 
   std::optional<Context::ExternalRefResolutionEnv> ext_ref_env;
-  if (!body.resolved_external_ref_bindings.empty()) {
-    ext_ref_env = Context::ExternalRefResolutionEnv{
-        .bindings = &body.resolved_external_ref_bindings,
-        .construction = construction};
+  if (!body.external_refs.empty()) {
+    ext_ref_env =
+        Context::ExternalRefResolutionEnv{.recipes = &body.external_refs};
   }
   Context::SpecLocalScope spec_scope(
       context, input.spec_slot_info, input.connection_notification_mask,
@@ -206,8 +204,7 @@ auto CompileSpecializations(
       input.design->deferred_assertion_sites.size());
 
   for (const auto& spec_input : spec_plan.inputs) {
-    auto product =
-        CompileModuleSpecSession(context, spec_input, input.construction);
+    auto product = CompileModuleSpecSession(context, spec_input);
     if (!product) return std::unexpected(product.error());
 
     // Merge DPI export callees.
