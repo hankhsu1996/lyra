@@ -522,4 +522,12 @@ auto LyraConstructionResultGetInstanceBundleCount(void* result) -> uint32_t;
 
 void LyraConstructionResultDestroy(void* result);
 
+// Set per-instance external-ref resolved global slot table pointers.
+// pool/pool_size: flat array of uint32_t global_slot values for all instances.
+// offsets/num_instances: per-instance offset into pool (UINT32_MAX = no ext
+// refs). Called after LyraConstructorFinalize, before simulation.
+void LyraConstructionResultSetExtRefSlots(
+    void* result, const uint32_t* pool, uint32_t pool_size,
+    const uint32_t* offsets, uint32_t num_instances);
+
 }  // extern "C"

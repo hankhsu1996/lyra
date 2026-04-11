@@ -48,6 +48,13 @@ struct ConstructionInput {
   InstanceTable instance_table;
   std::vector<InstanceConstBlock> const_blocks;
   std::vector<ObjectRecord> objects;
+
+  // Per-instance resolved external-ref global slot tables.
+  // Parallel to objects: instance_ext_ref_slots[oi] contains the resolved
+  // design-global slot for each external ref in the body's recipe list.
+  // Empty vector for instances whose body has no external refs.
+  // Computed by BuildPerInstanceExternalRefSlotTables during design lowering.
+  std::vector<std::vector<uint32_t>> instance_ext_ref_slots;
 };
 
 }  // namespace lyra::mir

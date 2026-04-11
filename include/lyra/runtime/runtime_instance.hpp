@@ -63,6 +63,13 @@ struct RuntimeInstance {
   uint32_t module_proc_base = 0;
   uint32_t num_module_processes = 0;
 
+  // Per-instance external-ref resolved global slot table.
+  // Points to a flat array of design-global slot IDs, one per external ref
+  // in the body's recipe list. Null if the body has no external refs.
+  // Populated at construction time; codegen loads from this via GEP.
+  // Part of the binary contract with codegen.
+  const uint32_t* ext_ref_slots = nullptr;
+
   // R5: Per-instance observability state.
   // Populated by Engine::InitModuleInstancesFromBundles. Not part of the
   // binary contract with codegen (not accessed via GEP, no LLVM struct type).
@@ -94,7 +101,8 @@ enum class RuntimeInstanceField : unsigned {
   kOwnerOrdinal = 4,
   kModuleProcBase = 5,
   kNumModuleProcesses = 6,
-  kFieldCount = 7,
+  kExtRefSlots = 7,
+  kFieldCount = 8,
 };
 
 // Hard binary contract assertions for RuntimeInstanceStorage.
@@ -130,6 +138,9 @@ static_assert(
 static_assert(
     offsetof(RuntimeInstance, num_module_processes) ==
     offsetof(RuntimeInstance, module_proc_base) + sizeof(uint32_t));
+static_assert(
+    offsetof(RuntimeInstance, ext_ref_slots) >
+    offsetof(RuntimeInstance, num_module_processes));
 
 // Allocate zero-initialized owned storage for an instance's inline region.
 auto AllocateOwnedInlineStorage(uint64_t size) -> std::byte*;

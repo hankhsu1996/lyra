@@ -1643,3 +1643,20 @@ void LyraConstructionResultDestroy(void* result_raw) {
   std::unique_ptr<lyra::runtime::ConstructionResult> result(
       static_cast<lyra::runtime::ConstructionResult*>(result_raw));
 }
+
+void LyraConstructionResultSetExtRefSlots(
+    void* result_raw, const uint32_t* pool, uint32_t pool_size,
+    const uint32_t* offsets, uint32_t num_instances) {
+  if (result_raw == nullptr) return;
+  auto& result = *static_cast<lyra::runtime::ConstructionResult*>(result_raw);
+  auto pool_span = std::span(pool, pool_size);
+  auto offset_span = std::span(offsets, num_instances);
+  auto count =
+      std::min(static_cast<size_t>(num_instances), result.instances.size());
+  for (size_t i = 0; i < count; ++i) {
+    if (offset_span[i] != UINT32_MAX && !pool_span.empty()) {
+      result.instances[i]->ext_ref_slots =
+          pool_span.subspan(offset_span[i]).data();
+    }
+  }
+}

@@ -2221,6 +2221,7 @@ struct ConstructorRuntimeFuncs {
   llvm::Function* result_get_instance_bundles;
   llvm::Function* result_get_instance_bundle_count;
   llvm::Function* result_destroy;
+  llvm::Function* result_set_ext_ref_slots;
 };
 
 auto DeclareConstructorRuntimeFuncs(Context& context)
@@ -2301,6 +2302,9 @@ auto DeclareConstructorRuntimeFuncs(Context& context)
           "LyraConstructionResultGetInstanceBundleCount", i32_ty, {ptr_ty}),
       .result_destroy =
           declare("LyraConstructionResultDestroy", void_ty, {ptr_ty}),
+      .result_set_ext_ref_slots = declare(
+          "LyraConstructionResultSetExtRefSlots", void_ty,
+          {ptr_ty, ptr_ty, i32_ty, ptr_ty, i32_ty}),
   };
 }
 
@@ -2423,6 +2427,27 @@ auto EmitConstructorFunction(
 
   // Finalize: returns a single constructor-owned result handle.
   auto* result = builder.CreateCall(rt.finalize, {ctor}, "ctor_result");
+
+  // Set per-instance external-ref resolved global slot table pointers.
+  if (!prog.ext_ref_pool.empty()) {
+    auto* ext_ref_pool_ptr = new llvm::GlobalVariable(
+        context.GetModule(),
+        llvm::ArrayType::get(i32_ty, prog.ext_ref_pool.size()), true,
+        llvm::GlobalValue::PrivateLinkage,
+        llvm::ConstantDataArray::get(ctx, prog.ext_ref_pool),
+        "__lyra_ext_ref_pool");
+    auto* ext_ref_offsets_ptr = new llvm::GlobalVariable(
+        context.GetModule(),
+        llvm::ArrayType::get(i32_ty, prog.ext_ref_offsets.size()), true,
+        llvm::GlobalValue::PrivateLinkage,
+        llvm::ConstantDataArray::get(ctx, prog.ext_ref_offsets),
+        "__lyra_ext_ref_offsets");
+    auto pool_size = static_cast<uint32_t>(prog.ext_ref_pool.size());
+    builder.CreateCall(
+        rt.result_set_ext_ref_slots,
+        {result, ext_ref_pool_ptr, llvm::ConstantInt::get(i32_ty, pool_size),
+         ext_ref_offsets_ptr, llvm::ConstantInt::get(i32_ty, entry_count)});
+  }
 
   // Extract states, counts, and process metadata from the result.
   auto* states_array =

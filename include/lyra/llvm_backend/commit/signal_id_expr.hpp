@@ -57,6 +57,16 @@ class SignalCoordExpr {
     return e;
   }
 
+  // Runtime-loaded global signal. The slot ID is an LLVM Value loaded
+  // at runtime (e.g., from per-instance ext_ref_slots). Used by external-ref
+  // write paths where the target slot varies per instance.
+  static auto GlobalRuntime(llvm::Value* slot_value) -> SignalCoordExpr {
+    SignalCoordExpr e;
+    e.kind_ = Kind::kGlobal;
+    e.runtime_value_ = slot_value;
+    return e;
+  }
+
   [[nodiscard]] auto GetKind() const -> Kind {
     return kind_;
   }
@@ -96,9 +106,11 @@ class SignalCoordExpr {
     return std::nullopt;
   }
 
-  // Emit the semantic id value as an LLVM i32 constant.
-  // This is the raw local or global id, NOT a dense coordination coordinate.
+  // Emit the semantic id value as an LLVM i32 value.
+  // For compile-time-constant signals, returns ConstantInt.
+  // For runtime-loaded signals (GlobalRuntime), returns the pre-loaded value.
   [[nodiscard]] auto Emit(llvm::IRBuilder<>& builder) const -> llvm::Value* {
+    if (runtime_value_ != nullptr) return runtime_value_;
     auto& ctx = builder.getContext();
     return llvm::ConstantInt::get(llvm::Type::getInt32Ty(ctx), value_);
   }
@@ -110,6 +122,9 @@ class SignalCoordExpr {
   uint32_t value_ = 0;
   llvm::Value* instance_override_ = nullptr;
   runtime::InstanceId instance_id_override_ = runtime::InstanceId{0};
+  // Non-null for GlobalRuntime: the signal ID is a runtime-loaded LLVM
+  // value, not a compile-time constant. Emit() returns this directly.
+  llvm::Value* runtime_value_ = nullptr;
 };
 
 }  // namespace lyra::lowering::mir_to_llvm

@@ -237,22 +237,27 @@ void FinalizeExternalRefTargetSlots(
   }
 }
 
-void EnforceExternalRefSingleInstanceGuard(
-    const mir::Design& design, const mir::ConstructionInput& construction) {
-  std::unordered_map<uint32_t, uint32_t> objects_per_body;
-  for (const auto& obj : construction.objects) {
-    ++objects_per_body[obj.body_group];
-  }
-  for (uint32_t body_idx = 0; body_idx < design.module_bodies.size();
-       ++body_idx) {
-    if (design.module_bodies[body_idx].external_refs.empty()) continue;
-    if (objects_per_body[body_idx] > 1) {
-      throw common::InternalError(
-          "EnforceExternalRefSingleInstanceGuard",
-          std::format(
-              "body group {} has {} instances but active external refs -- "
-              "multi-instance spec with external refs not yet supported",
-              body_idx, objects_per_body[body_idx]));
+void BuildPerInstanceExternalRefSlotTables(
+    const mir::Design& design, mir::ConstructionInput& construction,
+    const BoundHierarchyIndex& topo) {
+  auto num_objects = static_cast<uint32_t>(construction.objects.size());
+  construction.instance_ext_ref_slots.resize(num_objects);
+
+  for (uint32_t oi = 0; oi < num_objects; ++oi) {
+    uint32_t body_idx = construction.objects[oi].body_group;
+    const auto& body = design.module_bodies[body_idx];
+    if (body.external_refs.empty()) continue;
+
+    auto& table = construction.instance_ext_ref_slots[oi];
+    table.reserve(body.external_refs.size());
+
+    for (size_t i = 0; i < body.external_refs.size(); ++i) {
+      const auto& recipe = body.external_refs[i].target;
+      uint32_t target_oi = WalkCanonicalPath(recipe, oi, topo, construction);
+      const auto& target_obj = construction.objects[target_oi];
+      uint32_t global_slot =
+          target_obj.design_state_base_slot + recipe.target_slot.value;
+      table.push_back(global_slot);
     }
   }
 }
@@ -335,34 +340,6 @@ auto WalkCanonicalPath(
     oi = topo.ResolveChildByDurableId(parent_bg, step.child);
   }
   return oi;
-}
-
-void BuildResolvedExternalRefBindings(
-    mir::Design& design, const BoundHierarchyIndex& topo,
-    const mir::ConstructionInput& construction) {
-  // Guard already enforced by EnforceExternalRefSingleInstanceGuard
-  // before this pass runs.
-  for (uint32_t body_idx = 0; body_idx < design.module_bodies.size();
-       ++body_idx) {
-    auto& body = design.module_bodies[body_idx];
-    if (body.external_refs.empty()) continue;
-
-    uint32_t rep_oi = topo.rep_object_for_body.at(body_idx);
-    auto& bindings = body.resolved_external_ref_bindings;
-    bindings.reserve(body.external_refs.size());
-
-    for (size_t i = 0; i < body.external_refs.size(); ++i) {
-      const auto& recipe = body.external_refs[i].target;
-      uint32_t target_oi =
-          WalkCanonicalPath(recipe, rep_oi, topo, construction);
-      bindings.push_back(
-          mir::ResolvedExternalRefBinding{
-              .target_object = common::ObjectIndex{target_oi},
-              .target_local_slot = recipe.target_slot,
-              .type = body.external_refs[i].type,
-              .global_slot = std::nullopt});
-    }
-  }
 }
 
 auto IsFullyBindableRecipe(const mir::ConnectionRecipe& recipe) -> bool {

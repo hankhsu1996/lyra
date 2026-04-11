@@ -6,7 +6,6 @@
 
 namespace lyra::mir {
 class Arena;
-struct ConstructionInput;
 struct Design;
 }  // namespace lyra::mir
 
@@ -21,7 +20,6 @@ namespace lyra::lowering::mir_to_llvm {
 // Must complete before codegen reads RequiresDirtyPropagation.
 void PopulateBehavioralTriggerContracts(
     std::span<const LayoutModulePlan> module_plans, const mir::Design& design,
-    const mir::Arena& design_arena, const mir::ConstructionInput* construction,
-    Layout& layout);
+    const mir::Arena& design_arena, Layout& layout);
 
 }  // namespace lyra::lowering::mir_to_llvm

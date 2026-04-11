@@ -23,7 +23,6 @@
 #include "lyra/llvm_backend/layout/layout.hpp"
 #include "lyra/lowering/diagnostic_context.hpp"
 #include "lyra/mir/arena.hpp"
-#include "lyra/mir/construction_input.hpp"
 #include "lyra/mir/external_ref.hpp"
 #include "lyra/mir/handle.hpp"
 #include "lyra/mir/routine.hpp"
@@ -510,11 +509,12 @@ class Context {
   void SetConnectionNotificationMask(const ConnectionNotificationMask* mask) {
     connection_notification_mask_ = mask;
   }
-  // B2: External ref resolution environment. Installed as a unit by
-  // SpecLocalScope; cleared on scope exit. All fields must be consistent.
+  // External ref resolution environment. Installed as a unit by
+  // SpecLocalScope; cleared on scope exit.
+  // Contains only specialization-scoped data (recipes for type/access info).
+  // Per-instance data is loaded at runtime from instance_ptr->ext_ref_slots.
   struct ExternalRefResolutionEnv {
-    const std::vector<mir::ResolvedExternalRefBinding>* bindings = nullptr;
-    const mir::ConstructionInput* construction = nullptr;
+    const std::vector<mir::ExternalAccessRecipe>* recipes = nullptr;
   };
   void SetExternalRefResolutionEnv(std::optional<ExternalRefResolutionEnv> env);
 
@@ -548,49 +548,44 @@ class Context {
     Context& ctx_;
   };
 
-  // V3: Direct external-ref helpers. Consume ResolvedExternalRefBinding
-  // directly for reads (operand loads, type queries) and writes
-  // (immediate/deferred assign). No synthetic PlaceId, no scratch arena.
+  // External-ref helpers. Recipes are specialization-scoped; actual slot
+  // resolution uses per-instance data loaded from RuntimeInstance at runtime.
 
-  // Resolved external-ref root: carries the design-global slot ID and type
-  // as a single result. All external-ref address/type/signal-coord helpers
-  // derive from this.
+  // Resolved external-ref root: carries the design-global slot as a
+  // runtime-loaded LLVM Value and the type as compile-time data.
   struct ResolvedExternalRefRoot {
-    uint32_t global_slot = 0;
+    llvm::Value* global_slot_value = nullptr;
     TypeId type = {};
   };
 
-  // Canonical external-ref resolution: binding -> design-global slot + type.
-  // Used by all external-ref helpers (read and write paths).
-  // All invariant checks (env installed, bindings present, target_object in
-  // range, local_slot within target object's domain, no overflow) are
-  // enforced here.
-  [[nodiscard]] auto ResolveExternalRefRoot(mir::ExternalRefId ref_id) const
+  // Resolve external ref to runtime global_slot + type.
+  // Emits LLVM IR that loads the design-global slot from the current
+  // instance's ext_ref_slots table.
+  [[nodiscard]] auto ResolveExternalRefRoot(mir::ExternalRefId ref_id)
       -> ResolvedExternalRefRoot;
 
-  // Access the resolved binding for an external ref.
-  [[nodiscard]] auto GetExternalRefBinding(mir::ExternalRefId ref_id) const
-      -> const mir::ResolvedExternalRefBinding&;
-
-  // Access the construction input (objects, instance table).
-  [[nodiscard]] auto GetConstruction() const -> const mir::ConstructionInput&;
-
   // Normalize an ExternalRefId to topology-resolved signal identity.
-  // Uses ResolvedExternalRefBinding (target_object + target_local_slot)
-  // to compute the design-global slot via topology facts. EmitSignalCoord
-  // then reclassifies instance-owned signals to local runtime identity.
-  // This is the canonical normalization for sensitivity, trigger,
-  // index-plan, and write-path signal identity.
+  // Returns a compile-time constant SignalRef for trigger/sensitivity
+  // metadata. Per-instance external refs require per-instance trigger
+  // resolution (not yet implemented); this function uses the global_slot
+  // loaded from the current instance's ext_ref_slots table at construction
+  // time, which is correct for single-instance bodies and representative-
+  // correct for multi-instance bodies in the trigger/sensitivity path.
+  //
+  // TODO(hankhsu): Per-instance trigger/sensitivity resolution. The signal
+  // identity returned here is a compile-time constant derived from the
+  // per-instance table built at construction time. For multi-instance
+  // bodies, each instance would need its own trigger entries. This is a
+  // separate architectural change.
   [[nodiscard]] auto NormalizeExternalRefSignalIdentity(
       mir::ExternalRefId ref_id) const -> mir::SignalRef;
 
-  // Get the type of an external ref from its resolved root.
+  // Get the type of an external ref from its recipe.
   [[nodiscard]] auto GetExternalRefType(mir::ExternalRefId ref_id) const
       -> TypeId;
 
   // Emit LLVM IR computing a pointer to the external ref's storage.
-  // Backend-internal address arithmetic via ResolveExternalRefRoot ->
-  // GetDesignGlobalSlotPointer. Not a rebuilt Place.
+  // Loads the global slot from per-instance data, then resolves to pointer.
   [[nodiscard]] auto EmitExternalRefAddress(mir::ExternalRefId ref_id)
       -> llvm::Value*;
 
@@ -600,9 +595,13 @@ class Context {
       -> Result<llvm::Value*>;
 
   // Compute the typed signal coordinate for an external ref's storage.
-  // Always returns SignalCoordExpr::Global(global_slot).
-  [[nodiscard]] auto EmitExternalRefSignalCoord(mir::ExternalRefId ref_id) const
+  // Returns a runtime-loaded GlobalRuntime signal coord from the per-instance
+  // ext_ref_slots table.
+  [[nodiscard]] auto EmitExternalRefSignalCoord(mir::ExternalRefId ref_id)
       -> SignalCoordExpr;
+
+  // Load ext_ref_slots pointer from RuntimeInstance via instance_ptr_.
+  [[nodiscard]] auto EmitLoadExtRefSlotsPtr() -> llvm::Value*;
 
   // Resolve a WriteTarget to a storage pointer.
   // PlaceId: delegates to GetPlacePointer.
@@ -649,6 +648,11 @@ class Context {
 
   // Design-global storage: design_ptr + struct GEP via field index.
   [[nodiscard]] auto GetDesignGlobalSlotPointer(uint32_t global_slot_id)
+      -> llvm::Value*;
+
+  // Design-global storage with runtime-loaded slot ID.
+  // Used by external-ref resolution where the slot varies per instance.
+  [[nodiscard]] auto GetDesignGlobalSlotPointer(llvm::Value* global_slot_id)
       -> llvm::Value*;
 
   // Central dispatch: resolve a design-storage root (kModuleSlot or

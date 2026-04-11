@@ -256,21 +256,22 @@ auto Context::GetWriteTarget(mir::PlaceId place_id) -> Result<WriteTarget> {
 
 auto Context::GetWriteTarget(mir::ExternalRefId ref_id) -> Result<WriteTarget> {
   auto root = ResolveExternalRefRoot(ref_id);
-  auto* ptr = GetDesignGlobalSlotPointer(root.global_slot);
-  // Derive mutation identity from the same binding-based normalization
-  // used by sensitivity/trigger transport. EmitSignalCoord reclassifies
-  // instance-owned signals to local runtime identity.
-  auto mutation_sig = NormalizeExternalRefSignalIdentity(ref_id);
-  auto signal_coord = EmitSignalCoord(mutation_sig);
+  auto* ptr = GetDesignGlobalSlotPointer(root.global_slot_value);
+  // External-ref signal identity is per-instance. The global_slot is
+  // already runtime-loaded from instance_ptr->ext_ref_slots[ref_id].
+  // Use GlobalRuntime to carry the runtime value through the commit layer.
+  auto signal_coord = SignalCoordExpr::GlobalRuntime(root.global_slot_value);
   // External ref targets always require static dirty propagation.
   // They are cross-instance writes that must always notify; the
   // design-level contract bitmaps may not cover instance-owned slots.
+  // Since static propagation is unconditional, mutation_signal is not
+  // consulted (no trace-observation gating needed).
   return WriteTarget{
       .ptr = ptr,
       .canonical_signal_id = signal_coord,
       .dirty_off = 0,
       .dirty_size = 0,
-      .mutation_signal = mutation_sig,
+      .mutation_signal = std::nullopt,
       .requires_static_dirty_propagation = true,
   };
 }
@@ -514,6 +515,19 @@ auto Context::GetDesignGlobalSlotPointer(uint32_t global_slot_id)
   return builder_.CreateGEP(
       llvm::Type::getInt8Ty(*llvm_context_), design_ptr_,
       builder_.getInt64(offset), "design_global_slot_ptr");
+}
+
+auto Context::GetDesignGlobalSlotPointer(llvm::Value* global_slot_id)
+    -> llvm::Value* {
+  // Runtime-loaded slot ID: must use engine resolver (simulation context).
+  if (engine_ptr_ != nullptr) {
+    return builder_.CreateCall(
+        GetLyraResolveSlotPtr(), {engine_ptr_, global_slot_id},
+        "resolved_slot_ptr");
+  }
+  throw common::InternalError(
+      "GetDesignGlobalSlotPointer(Value*)",
+      "runtime-loaded slot ID requires engine context");
 }
 
 auto Context::GetSlotRootPointer(const mir::PlaceRoot& root) -> llvm::Value* {

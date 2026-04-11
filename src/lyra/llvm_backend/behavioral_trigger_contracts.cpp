@@ -11,8 +11,6 @@
 #include "lyra/common/internal_error.hpp"
 #include "lyra/mir/arena.hpp"
 #include "lyra/mir/basic_block.hpp"
-#include "lyra/mir/construction_input.hpp"
-#include "lyra/mir/external_ref.hpp"
 #include "lyra/mir/module.hpp"
 #include "lyra/mir/terminator.hpp"
 
@@ -79,27 +77,10 @@ auto BuildBodyBehavioralDirtyTriggerBitmaps(
   return result;
 }
 
-auto ResolveExternalRefToDesignGlobalSlot(
-    mir::ExternalRefId ref_id,
-    const std::vector<mir::ResolvedExternalRefBinding>& bindings,
-    const mir::ConstructionInput& construction) -> std::optional<uint32_t> {
-  if (ref_id.value >= bindings.size()) return std::nullopt;
-  const auto& binding = bindings[ref_id.value];
-  if (binding.IsPackageOrGlobal()) {
-    return binding.GlobalSlotId();
-  }
-  if (binding.target_object.value >= construction.objects.size()) {
-    return std::nullopt;
-  }
-  const auto& obj = construction.objects[binding.target_object.value];
-  return obj.design_state_base_slot + binding.target_local_slot.value;
-}
-
 auto BuildDesignGlobalBehavioralTriggerBitmap(
     std::span<const LayoutModulePlan> module_plans, const mir::Design& design,
     const mir::Arena& design_arena, const DesignLayout& design_layout,
-    const BodyBehavioralTriggerBitmaps& body_bitmaps,
-    const mir::ConstructionInput* construction) -> std::vector<bool> {
+    const BodyBehavioralTriggerBitmaps& body_bitmaps) -> std::vector<bool> {
   auto num_slots = design_layout.slots.size();
   std::vector<bool> bitmap(num_slots, false);
 
@@ -146,14 +127,10 @@ auto BuildDesignGlobalBehavioralTriggerBitmap(
         const auto* wait = std::get_if<mir::Wait>(&block.terminator.data);
         if (wait == nullptr) continue;
         for (const auto& trigger : wait->triggers) {
-          if (trigger.unresolved_external_ref.has_value() &&
-              construction != nullptr) {
-            auto slot = ResolveExternalRefToDesignGlobalSlot(
-                *trigger.unresolved_external_ref,
-                body.resolved_external_ref_bindings, *construction);
-            if (slot.has_value()) {
-              mark_global_slot(common::SlotId{*slot});
-            }
+          if (trigger.unresolved_external_ref.has_value()) {
+            // External-ref signal identity is per-instance. Skip in the
+            // compile-time behavioral dirty bitmap. Per-instance trigger
+            // resolution is a separate architectural change.
             continue;
           }
           if (trigger.signal.scope != mir::SignalRef::Scope::kDesignGlobal) {
@@ -226,15 +203,13 @@ void PopulateBodyBitmaps(
 
 void PopulateBehavioralTriggerContracts(
     std::span<const LayoutModulePlan> module_plans, const mir::Design& design,
-    const mir::Arena& design_arena, const mir::ConstructionInput* construction,
-    Layout& layout) {
+    const mir::Arena& design_arena, Layout& layout) {
   auto body_bitmaps =
       BuildBodyBehavioralDirtyTriggerBitmaps(module_plans, design);
   PopulateBodyBitmaps(body_bitmaps, layout);
   layout.slot_has_design_behavioral_trigger =
       BuildDesignGlobalBehavioralTriggerBitmap(
-          module_plans, design, design_arena, layout.design, body_bitmaps,
-          construction);
+          module_plans, design, design_arena, layout.design, body_bitmaps);
 }
 
 }  // namespace lyra::lowering::mir_to_llvm

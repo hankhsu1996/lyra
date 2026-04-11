@@ -8,6 +8,7 @@
 
 #include "lyra/common/local_slot_id.hpp"
 #include "lyra/common/module_identity.hpp"
+#include "lyra/common/object_index.hpp"
 #include "lyra/common/symbol_types.hpp"
 #include "lyra/mir/external_ref.hpp"
 
@@ -111,11 +112,13 @@ void FinalizeExternalRefTargetSlots(
     const BoundHierarchyIndex& topo, const mir::ConstructionInput& construction,
     std::span<const hir::Module* const> hir_modules);
 
-// Validate that no body with active external refs has multiple instances.
-// Must be called before any pass that relies on representative-derived
-// durable-child mappings. Throws InternalError on violation.
-void EnforceExternalRefSingleInstanceGuard(
-    const mir::Design& design, const mir::ConstructionInput& construction);
+// Build per-instance external-ref resolved global slot tables.
+// For each realized object, walks each external ref recipe from that
+// object's actual position in the hierarchy and computes the final
+// design-global slot. Results stored in construction.instance_ext_ref_slots.
+void BuildPerInstanceExternalRefSlotTables(
+    const mir::Design& design, mir::ConstructionInput& construction,
+    const BoundHierarchyIndex& topo);
 
 // Populate external_refs[i].target.path with final DescendantPathStep entries
 // by resolving topology-walked child object indices to DurableChildIds.
@@ -139,15 +142,6 @@ auto WalkCanonicalPath(
     const mir::NonLocalTargetRecipe& recipe, uint32_t current_oi,
     const BoundHierarchyIndex& topo, const mir::ConstructionInput& construction)
     -> uint32_t;
-
-// Build per-body resolved external ref bindings and store on each body.
-// Consumes the finalized canonical recipe (target.path + target.target_slot),
-// NOT provisionals. Requires CanonicalizeExternalRefPaths to have run.
-// Single-instance specs only: throws if a body with external refs has
-// multiple objects (multi-instance resolution requires per-instance binding).
-void BuildResolvedExternalRefBindings(
-    mir::Design& design, const BoundHierarchyIndex& topo,
-    const mir::ConstructionInput& construction);
 
 // Check whether a ConnectionRecipe is in the fully-bindable subset:
 // source is kLocalSlot and trigger is slot-based (kLocalSlot or kChildSlot).

@@ -256,8 +256,7 @@ auto CompileDesignProcesses(const LoweringInput& input)
       input, topology, connections, *llvm_ctx, module->getDataLayout());
 
   PopulateBehavioralTriggerContracts(
-      topology.module_plans, *input.design, *input.mir_arena,
-      input.construction, *layout);
+      topology.module_plans, *input.design, *input.mir_arena, *layout);
 
   auto context = std::make_unique<Context>(
       *input.mir_arena, *input.type_arena, *layout, std::move(llvm_ctx),

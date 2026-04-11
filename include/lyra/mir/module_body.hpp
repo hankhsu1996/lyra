@@ -55,12 +55,11 @@ struct ModuleBody {
   Arena arena;
 
   // B2: External access recipes for this body.
+  // Specialization-scoped: contains only instance-invariant data (upward_count,
+  // canonical durable child path, target_local_slot, type, access_kind).
+  // No concrete target_object. Per-instance resolution happens at construction
+  // time via ConstructionInput::instance_ext_ref_slots.
   std::vector<ExternalAccessRecipe> external_refs;
-
-  // B2: Resolved external ref bindings (parallel to external_refs).
-  // Durable identity facts: {target_object_index, target_local_slot, type}.
-  // Backend computes addresses from ConstructionInput at codegen time.
-  std::vector<ResolvedExternalRefBinding> resolved_external_ref_bindings;
 
   // B2: Child instantiation sites for this body.
   std::vector<ChildInstantiationSite> child_sites;

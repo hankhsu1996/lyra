@@ -181,6 +181,11 @@ struct ConstructionProgramData {
   std::vector<uint8_t> path_pool;
   std::vector<uint8_t> param_pool;
   std::vector<runtime::ConstructionProgramEntry> entries;
+  // Per-instance external-ref resolved global slot tables, packed flat.
+  // ext_ref_offsets[i] is the offset into ext_ref_pool for instance i
+  // (UINT32_MAX if that instance has no external refs).
+  std::vector<uint32_t> ext_ref_pool;
+  std::vector<uint32_t> ext_ref_offsets;
 };
 
 // Design-derived inputs for the realization/assembly phase, extracted during
@@ -235,10 +240,11 @@ auto CompileDesignProcesses(const LoweringInput& input)
 // generates shared/template process functions, and returns an explicit product.
 // Does not inspect design-global state, package functions, or wrapper logic.
 // All body-specific data is carried on the input -- no design or provenance
-// parameter needed.
+// parameter needed. Per-instance data (external ref slots) is loaded at
+// runtime from instance_ptr, not passed through the compilation session.
 auto CompileModuleSpecSession(
-    Context& context, const CompiledModuleSpecInput& input,
-    const mir::ConstructionInput* construction) -> Result<CompiledModuleSpec>;
+    Context& context, const CompiledModuleSpecInput& input)
+    -> Result<CompiledModuleSpec>;
 
 // Backend phase: extract LLVM ownership from a completed session.
 auto FinalizeModule(CodegenSession session, LoweringReport report)

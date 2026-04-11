@@ -250,11 +250,13 @@ auto BuildParamPayloads(
 auto BuildConstructionProgram(
     std::span<const uint32_t> instance_body_group, const Layout& layout,
     const mir::InstanceTable& instance_table,
-    std::span<const std::vector<uint8_t>> param_payloads)
+    std::span<const std::vector<uint8_t>> param_payloads,
+    const std::vector<std::vector<uint32_t>>& instance_ext_ref_slots)
     -> ConstructionProgramData {
   auto instance_count = static_cast<uint32_t>(instance_body_group.size());
   ConstructionProgramData prog;
   prog.entries.reserve(instance_count);
+  prog.ext_ref_offsets.reserve(instance_count);
 
   for (uint32_t mi = 0; mi < instance_count; ++mi) {
     runtime::ConstructionProgramEntry entry{};
@@ -277,6 +279,18 @@ auto BuildConstructionProgram(
     const auto& sizes = layout.instance_storage_sizes[mi];
     entry.realized_inline_size = sizes.inline_bytes;
     entry.realized_appendix_size = sizes.appendix_bytes;
+
+    // Pack per-instance ext_ref slots into flat pool.
+    if (mi < instance_ext_ref_slots.size() &&
+        !instance_ext_ref_slots[mi].empty()) {
+      prog.ext_ref_offsets.push_back(
+          static_cast<uint32_t>(prog.ext_ref_pool.size()));
+      const auto& slots = instance_ext_ref_slots[mi];
+      prog.ext_ref_pool.insert(
+          prog.ext_ref_pool.end(), slots.begin(), slots.end());
+    } else {
+      prog.ext_ref_offsets.push_back(UINT32_MAX);
+    }
 
     prog.entries.push_back(entry);
   }
@@ -1063,7 +1077,7 @@ void ExtractBodyInitDescriptors(
 
   construction_program = BuildConstructionProgram(
       instance_body_group, layout, input.construction->instance_table,
-      param_payloads);
+      param_payloads, input.construction->instance_ext_ref_slots);
 
   // Validate construction program.
   for (size_t i = 0; i < construction_program.entries.size(); ++i) {

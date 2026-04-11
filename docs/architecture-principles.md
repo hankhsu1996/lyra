@@ -129,6 +129,7 @@ For any design change, ask in order:
 6. **Is it specialization-local?** -- Does it require cross-module or design-global knowledge?
 
 7. **Does it avoid materializing final object identity at compile time?** -- Does it require knowing final instance count, object ordering, or target object identity during specialization compilation?
+8. **Does the backend reach per-instance data only through instance_ptr?** -- Backend codegen must not receive design-wide query APIs (ConstructionInput, body-group-to-objects maps) or scan construction-level tables to derive compile-time facts from one representative instance. Per-instance data is loaded at runtime from instance_ptr-reachable state, never baked as a compile-time constant derived from a design-topology scan.
 
 If a proposed change fails any of these questions, reconsider the design before proceeding.
 
