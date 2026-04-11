@@ -21,6 +21,11 @@ namespace lyra::lowering::mir_to_llvm {
 // init processes and module body processes only.
 struct TriggerSlotSummary {
   std::unordered_set<uint32_t> non_connection_trigger_slots;
+  // Slots whose values are read by non-connection process bodies
+  // (e.g., $display reading a relay wire). A relay candidate with
+  // process-body readers cannot be eliminated because the relay slot's
+  // storage must remain updated for those reads to see correct values.
+  std::unordered_set<uint32_t> process_body_read_slots;
 };
 
 // Collect non-connection trigger slot sets from MIR processes before layout.
@@ -43,6 +48,7 @@ struct SlotUsageSummary {
   std::vector<uint32_t> trigger_conn_indices;
   bool has_non_downstream_trigger_role = false;
   bool is_non_connection_trigger = false;
+  bool is_process_body_read = false;
 };
 
 // Build per-slot usage summaries from connection kernels and trigger summary.
@@ -82,5 +88,18 @@ auto AnalyzeConnections(
     std::span<const LayoutModulePlan> module_plans, const mir::Design& design,
     const mir::Arena& design_arena, uint32_t expanded_num_slots = 0)
     -> ConnectionAnalysisResult;
+
+// Compile-time connection elimination for transform-safe relay candidates.
+// For each relay slot R with upstream edge U->R and downstream edges R->D...,
+// rewrites downstream edges to read directly from U (U->D...) and deletes the
+// upstream edge. Does not change storage layout or slot ownership.
+//
+// Safety boundary (first cut):
+//   - exactly 1 upstream edge (port-binding origin, full-slot copy)
+//   - all downstream edges are port-binding, self-triggered, full-slot
+//   - no process/comb triggers on the relay slot
+//
+// Returns the number of relay slots eliminated.
+auto EliminateRelayConnections(ConnectionAnalysisResult& analysis) -> uint32_t;
 
 }  // namespace lyra::lowering::mir_to_llvm

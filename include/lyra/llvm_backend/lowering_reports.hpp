@@ -89,6 +89,7 @@ class ForwardingAnalysisReport {
 
 struct LoweringReport {
   ForwardingAnalysisReport forwarding_analysis;
+  uint32_t relay_slots_eliminated = 0;
 };
 
 }  // namespace lyra::lowering::mir_to_llvm

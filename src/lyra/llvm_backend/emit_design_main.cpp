@@ -2774,6 +2774,7 @@ auto EmitDesignMain(
 
   return LoweringReport{
       .forwarding_analysis = std::move(forwarding_report),
+      .relay_slots_eliminated = layout.relay_slots_eliminated,
   };
 }
 
