@@ -62,6 +62,12 @@ struct TestCase {
   bool dump_dpi_header = false;          // Dump generated DPI-C header
   bool dump_llvm_ir = false;             // Dump LLVM IR module
   std::optional<std::vector<uint64_t>> expected_cover_hits;
+  // NBA routing boundary assertions: {generic_queue: N, deferred_local: N}
+  struct NbaStatsExpectation {
+    std::optional<uint64_t> generic_queue;
+    std::optional<uint64_t> deferred_local;
+  };
+  std::optional<NbaStatsExpectation> expected_nba_stats;
   bool disable_assertions = false;
   bool single_unit = false;
   std::vector<std::string> defines;

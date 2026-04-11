@@ -40,10 +40,17 @@ void ValidateSlotRootPointer(
 
 }  // namespace
 
+// ARCHITECTURAL INVARIANT:
+// Generic nba_queue_ is only for global/package and cross-instance targets.
+// Instance-owned local signals use per-instance deferred storage
+// (deferred_inline_base / deferred_appendix_base) committed by
+// CommitDeferredLocalNbas. If a same-instance owned signal reaches here,
+// it is a codegen bug in the ownership gate of LowerDeferredAssign.
 void Engine::ScheduleNba(
     void* write_ptr, const void* notify_base_ptr, const void* value_ptr,
     const void* mask_ptr, uint32_t byte_size, NbaNotifySignal notify_signal) {
   ++stats_.core.nba_entries;
+  ++stats_.core.nba_generic_queue;
 
   if (write_ptr == nullptr || notify_base_ptr == nullptr ||
       value_ptr == nullptr || byte_size == 0) {
@@ -91,6 +98,7 @@ void Engine::ScheduleNbaCanonicalPacked(
     const void* unk_ptr, uint32_t region_byte_size,
     uint32_t second_region_offset, NbaNotifySignal notify_signal) {
   ++stats_.core.nba_entries;
+  ++stats_.core.nba_generic_queue;
 
   if (write_ptr == nullptr || notify_base_ptr == nullptr ||
       value_ptr == nullptr || unk_ptr == nullptr || region_byte_size == 0) {
@@ -221,6 +229,7 @@ void Engine::CommitDeferredLocalNbas() {
       }
 
       ++stats_.core.nba_entries;
+      ++stats_.core.nba_deferred_local;
       if (std::memcmp(
               current_slot.data(), deferred_slot.data(), compare_bytes) != 0) {
         std::memcpy(current_slot.data(), deferred_slot.data(), compare_bytes);

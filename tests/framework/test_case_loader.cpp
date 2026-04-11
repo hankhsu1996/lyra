@@ -450,7 +450,7 @@ auto LoadTestCasesFromYaml(const std::string& path) -> std::vector<TestCase> {
       ValidateKeys(
           expect,
           {"variables", "time", "stdout", "compiler_output", "files", "error",
-           "mutations", "runtime_fatal", "cover_hits"},
+           "mutations", "runtime_fatal", "cover_hits", "nba_stats"},
           expect_context, path);
 
       // expect.variables: {var: value, ...}
@@ -547,6 +547,21 @@ auto LoadTestCasesFromYaml(const std::string& path) -> std::vector<TestCase> {
           hits.push_back(item.as<uint64_t>());
         }
         test_case.expected_cover_hits = std::move(hits);
+      }
+
+      if (expect["nba_stats"]) {
+        const auto& ns = expect["nba_stats"];
+        ValidateKeys(
+            ns, {"generic_queue", "deferred_local"},
+            std::format("expect.nba_stats in {}", case_context), path);
+        TestCase::NbaStatsExpectation nse;
+        if (ns["generic_queue"]) {
+          nse.generic_queue = ns["generic_queue"].as<uint64_t>();
+        }
+        if (ns["deferred_local"]) {
+          nse.deferred_local = ns["deferred_local"].as<uint64_t>();
+        }
+        test_case.expected_nba_stats = nse;
       }
     }
 

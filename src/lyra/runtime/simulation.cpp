@@ -26,6 +26,7 @@
 #include "lyra/runtime/engine_types.hpp"
 #include "lyra/runtime/feature_flags.hpp"
 #include "lyra/runtime/iteration_limit.hpp"
+#include "lyra/runtime/nba_stats_hook.hpp"
 #include "lyra/runtime/output_sink.hpp"
 #include "lyra/runtime/process_frame.hpp"
 #include "lyra/runtime/process_meta.hpp"
@@ -780,6 +781,19 @@ extern "C" void LyraRunSimulation(
     }
   }
 
+  // Invoke NBA stats callback if registered (test framework hook).
+  {
+    auto callback = lyra::runtime::GetNbaStatsCallback();
+    if (callback) {
+      const auto& stats = engine.GetStats().core;
+      callback(
+          lyra::runtime::NbaRoutingStats{
+              .generic_queue = stats.nba_generic_queue,
+              .deferred_local = stats.nba_deferred_local,
+          });
+    }
+  }
+
   // Release string-typed slot handles before engine destruction.
   // The engine owns the slot meta registry needed for address resolution.
   engine.ReleaseStringSlots();
@@ -1259,27 +1273,30 @@ extern "C" void LyraDeferredCanonicalPackedWriteLocal(
   AsEngine(eng)->MarkInstanceNbaPending(pending.instance_idx);
 }
 
+// Generic NBA queue entry points for cross-instance local and global targets.
+// Instance-owned local targets use LyraDeferredWriteLocal and friends above.
 extern "C" void LyraScheduleNbaLocal(
     void* eng, void* inst, void* wp, const void* nb, const void* vp,
     const void* mp, uint32_t bsz, uint32_t id) {
-  AsEngine(eng)->ScheduleNba(MakeLocalRef(inst, id), wp, nb, vp, mp, bsz);
+  AsEngine(eng)->ScheduleNbaCrossInstanceLocal(
+      MakeLocalRef(inst, id), wp, nb, vp, mp, bsz);
 }
 extern "C" void LyraScheduleNbaGlobal(
     void* eng, void* wp, const void* nb, const void* vp, const void* mp,
     uint32_t bsz, uint32_t id) {
-  AsEngine(eng)->ScheduleNba(GlobalSignalId{id}, wp, nb, vp, mp, bsz);
+  AsEngine(eng)->ScheduleNbaGlobal(GlobalSignalId{id}, wp, nb, vp, mp, bsz);
 }
 
 extern "C" void LyraScheduleNbaCanonicalPackedLocal(
     void* eng, void* inst, void* wp, const void* nb, const void* vp,
     const void* up, uint32_t rsz, uint32_t sro, uint32_t id) {
-  AsEngine(eng)->ScheduleNbaCanonicalPacked(
+  AsEngine(eng)->ScheduleNbaCanonicalPackedCrossInstanceLocal(
       MakeLocalRef(inst, id), wp, nb, vp, up, rsz, sro);
 }
 extern "C" void LyraScheduleNbaCanonicalPackedGlobal(
     void* eng, void* wp, const void* nb, const void* vp, const void* up,
     uint32_t rsz, uint32_t sro, uint32_t id) {
-  AsEngine(eng)->ScheduleNbaCanonicalPacked(
+  AsEngine(eng)->ScheduleNbaCanonicalPackedGlobal(
       GlobalSignalId{id}, wp, nb, vp, up, rsz, sro);
 }
 

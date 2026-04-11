@@ -162,8 +162,17 @@ auto CoerceValueToShape(
   return nullptr;
 }
 
-// Canonical deferred store core parameterized by TypeId.
-// Handles value/mask construction uniformly via StoreShape classification.
+// Generic NBA queue path for non-instance-owned targets.
+//
+// ARCHITECTURAL INVARIANT:
+// This function emits calls to LyraScheduleNba{Local,Global}, which enqueue
+// onto the generic nba_queue_. Only the following targets are permitted:
+//   - Global/package signals (SignalCoordExpr::kGlobal)
+//   - Cross-instance local signals (SignalCoordExpr::kLocalCrossInstance)
+//   - ExternalRefId targets (always global)
+// Instance-owned local signals (same-instance, owned inline or container)
+// MUST use EmitDeferredWriteLocal instead. The ownership gate in
+// LowerDeferredAssign enforces this at codegen time.
 auto EmitDeferredStoreCore(
     Context& context, const mir::DeferredAssign& deferred,
     const StoreShape& shape, llvm::Value* write_ptr,
@@ -385,6 +394,14 @@ auto LowerDeferredAssignWithOobGuard(
         context, deferred, shape, body_offset, signal_id, dest_type, true);
     if (!result) return result;
   } else {
+    if (signal_id.GetKind() == SignalCoordExpr::Kind::kLocal) {
+      if (context.IsOwnedInlineSlot(dest) ||
+          context.IsOwnedContainerSlot(dest)) {
+        throw common::InternalError(
+            "LowerDeferredAssignWithOobGuard",
+            "same-instance owned signal reached generic NBA queue fallback");
+      }
+    }
     auto write_ptr_or_err = context.GetPlacePointer(dest);
     if (!write_ptr_or_err) return std::unexpected(write_ptr_or_err.error());
     llvm::Value* write_ptr = *write_ptr_or_err;
@@ -418,10 +435,18 @@ auto LowerDeferredAssign(Context& context, const mir::DeferredAssign& deferred)
                                   : context.EmitExternalRefSignalCoord(
                                         std::get<mir::ExternalRefId>(dest));
 
-  // Ownership gate: local module slot with owned storage (inline or container).
-  // All NBA writes to such targets go through instance-owned deferred
-  // storage. Generic nba_queue_ is only for non-instance-owned targets
-  // (global, package, cross-instance).
+  // ROUTING INVARIANT: local owned state <= must use deferred storage.
+  //
+  // Same-instance owned signals (inline or container) go through
+  // EmitDeferredWriteLocal -> LyraDeferredWriteLocal, writing to
+  // per-instance deferred storage committed in CommitDeferredLocalNbas.
+  //
+  // Everything else (global, package, cross-instance, ExternalRefId)
+  // goes through EmitDeferredStoreCore -> LyraScheduleNba{Local,Global},
+  // enqueuing onto the generic nba_queue_.
+  //
+  // ExternalRefId always produces SignalCoordExpr::Global -- it never
+  // reaches the ownership gate (dest_place is nullptr for external refs).
   bool is_local_owned_inline = dest_place != nullptr && signal_id.IsLocal() &&
                                context.IsOwnedInlineSlot(*dest_place);
   bool is_local_owned_container = dest_place != nullptr &&
@@ -479,6 +504,19 @@ auto LowerDeferredAssign(Context& context, const mir::DeferredAssign& deferred)
   }
 
   // Non-local fallback: global, external ref, or cross-instance targets.
+  // Invariant: if we reach here with a same-instance local signal, the
+  // ownership gate above must have determined it is NOT instance-owned.
+  // A same-instance owned signal reaching the generic queue is a bug.
+  if (dest_place != nullptr &&
+      signal_id.GetKind() == SignalCoordExpr::Kind::kLocal) {
+    if (context.IsOwnedInlineSlot(*dest_place) ||
+        context.IsOwnedContainerSlot(*dest_place)) {
+      throw common::InternalError(
+          "LowerDeferredAssign",
+          "same-instance owned signal reached generic NBA queue fallback");
+    }
+  }
+
   llvm::Value* write_ptr = nullptr;
   llvm::Value* notify_base_ptr = nullptr;
   if (dest_place != nullptr) {

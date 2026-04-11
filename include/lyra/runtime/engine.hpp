@@ -78,6 +78,12 @@ struct CoreRuntimeStats {
   uint64_t nba_entries = 0;
   uint64_t nba_elided = 0;
   uint64_t nba_changed = 0;
+  // Split NBA routing counters for architectural boundary enforcement.
+  // nba_generic_queue: entries enqueued onto nba_queue_ (global, package,
+  //   cross-instance). nba_deferred_local: signals committed through
+  //   per-instance deferred storage (CommitDeferredLocalNbas).
+  uint64_t nba_generic_queue = 0;
+  uint64_t nba_deferred_local = 0;
 };
 
 // Opt-in per-element counters: collected only when kDetailedStats is enabled.
@@ -285,16 +291,12 @@ class Engine {
   // Used for kRepeat terminator.
   void ScheduleNextDelta(ProcessHandle handle, ResumePoint resume);
 
-  // Enqueue a non-blocking assignment for later commit in the NBA region.
-  // mask_ptr == nullptr: full overwrite (direct compare/copy).
-  // mask_ptr != nullptr: masked merge (per-byte mask).
+  // Enqueue onto generic nba_queue_ for later commit in the NBA region.
+  // Only for non-instance-owned targets (global, package, cross-instance).
+  // Instance-owned local targets use MarkInstanceNbaPending + deferred storage.
   void ScheduleNba(
       void* write_ptr, const void* notify_base_ptr, const void* value_ptr,
       const void* mask_ptr, uint32_t byte_size, NbaNotifySignal notify_signal);
-
-  // Schedule a canonical two-plane packed narrow NBA write as one semantic
-  // record. Writes region_byte_size bytes to write_ptr (value plane) and to
-  // write_ptr + second_region_offset (unknown plane).
   void ScheduleNbaCanonicalPacked(
       void* write_ptr, const void* notify_base_ptr, const void* value_ptr,
       const void* unk_ptr, uint32_t region_byte_size,
@@ -583,19 +585,22 @@ class Engine {
   void MarkDirty(GlobalSignalId signal);
   void MarkDirtyRange(
       GlobalSignalId signal, uint32_t byte_off, uint32_t byte_size);
-  void ScheduleNba(
+  // Generic NBA queue: cross-instance local and global/package targets only.
+  // Instance-owned local targets must use deferred storage
+  // (LyraDeferredWriteLocal and friends), never the generic queue.
+  void ScheduleNbaCrossInstanceLocal(
       ObjectSignalRef notify_signal, void* write_ptr,
       const void* notify_base_ptr, const void* value_ptr, const void* mask_ptr,
       uint32_t byte_size);
-  void ScheduleNba(
+  void ScheduleNbaGlobal(
       GlobalSignalId notify_signal, void* write_ptr,
       const void* notify_base_ptr, const void* value_ptr, const void* mask_ptr,
       uint32_t byte_size);
-  void ScheduleNbaCanonicalPacked(
+  void ScheduleNbaCanonicalPackedCrossInstanceLocal(
       ObjectSignalRef notify_signal, void* write_ptr,
       const void* notify_base_ptr, const void* value_ptr, const void* unk_ptr,
       uint32_t region_byte_size, uint32_t second_region_offset);
-  void ScheduleNbaCanonicalPacked(
+  void ScheduleNbaCanonicalPackedGlobal(
       GlobalSignalId notify_signal, void* write_ptr,
       const void* notify_base_ptr, const void* value_ptr, const void* unk_ptr,
       uint32_t region_byte_size, uint32_t second_region_offset);

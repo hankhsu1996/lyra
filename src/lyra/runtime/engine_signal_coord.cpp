@@ -67,7 +67,7 @@ void Engine::MarkDirtyRange(
       *signal.instance, signal.local, byte_off, byte_size);
 }
 
-void Engine::ScheduleNba(
+void Engine::ScheduleNbaCrossInstanceLocal(
     ObjectSignalRef notify_signal, void* write_ptr, const void* notify_base_ptr,
     const void* value_ptr, const void* mask_ptr, uint32_t byte_size) {
   NbaNotifySignal notify{NbaNotifyLocal{
@@ -77,7 +77,7 @@ void Engine::ScheduleNba(
       write_ptr, notify_base_ptr, value_ptr, mask_ptr, byte_size, notify);
 }
 
-void Engine::ScheduleNbaCanonicalPacked(
+void Engine::ScheduleNbaCanonicalPackedCrossInstanceLocal(
     ObjectSignalRef notify_signal, void* write_ptr, const void* notify_base_ptr,
     const void* value_ptr, const void* unk_ptr, uint32_t region_byte_size,
     uint32_t second_region_offset) {
@@ -107,7 +107,7 @@ void Engine::MarkDirtyRange(
   MarkDirtyRange(signal.value, byte_off, byte_size);
 }
 
-void Engine::ScheduleNba(
+void Engine::ScheduleNbaGlobal(
     GlobalSignalId notify_signal, void* write_ptr, const void* notify_base_ptr,
     const void* value_ptr, const void* mask_ptr, uint32_t byte_size) {
   NbaNotifySignal notify{NbaNotifyGlobal{notify_signal}};
@@ -115,7 +115,7 @@ void Engine::ScheduleNba(
       write_ptr, notify_base_ptr, value_ptr, mask_ptr, byte_size, notify);
 }
 
-void Engine::ScheduleNbaCanonicalPacked(
+void Engine::ScheduleNbaCanonicalPackedGlobal(
     GlobalSignalId notify_signal, void* write_ptr, const void* notify_base_ptr,
     const void* value_ptr, const void* unk_ptr, uint32_t region_byte_size,
     uint32_t second_region_offset) {

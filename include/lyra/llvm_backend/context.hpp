@@ -587,8 +587,9 @@ class Context {
       -> Result<llvm::Value*>;
 
   // Compute the typed signal coordinate for an external ref's storage.
-  // Returns a runtime-loaded GlobalRuntime signal coord from the per-instance
-  // ext_ref_bindings table.
+  // Returns a runtime-loaded signal coord from the per-instance
+  // ext_ref_bindings table. External refs are never instance-owned,
+  // so they always route through the generic NBA queue.
   [[nodiscard]] auto EmitExternalRefSignalCoord(mir::ExternalRefId ref_id)
       -> SignalCoordExpr;
 

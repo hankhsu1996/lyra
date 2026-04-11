@@ -71,6 +71,15 @@ void WriteCaseResult(int fd, const CaseExecutionResult& result) {
   for (auto hit : result.artifacts.cover_hits) out << hit;
   out << YAML::EndSeq;
 
+  out << YAML::Key << "nba_stats" << YAML::Value << YAML::BeginMap;
+  out << YAML::Key << "captured" << YAML::Value
+      << result.artifacts.nba_stats.captured;
+  out << YAML::Key << "generic_queue" << YAML::Value
+      << result.artifacts.nba_stats.generic_queue;
+  out << YAML::Key << "deferred_local" << YAML::Value
+      << result.artifacts.nba_stats.deferred_local;
+  out << YAML::EndMap;
+
   out << YAML::Key << "produced_files" << YAML::Value << YAML::BeginMap;
   for (const auto& [name, content] : result.artifacts.produced_files) {
     out << YAML::Key << name << YAML::Value << content;
@@ -138,6 +147,15 @@ auto ParseCaseResult(std::string_view yaml) -> CaseExecutionResult {
   if (node["cover_hits"]) {
     for (const auto& hit : node["cover_hits"])
       result.artifacts.cover_hits.push_back(hit.as<uint64_t>());
+  }
+
+  if (node["nba_stats"]) {
+    const auto& ns = node["nba_stats"];
+    result.artifacts.nba_stats.captured = ns["captured"].as<bool>(false);
+    result.artifacts.nba_stats.generic_queue =
+        ns["generic_queue"].as<uint64_t>(0);
+    result.artifacts.nba_stats.deferred_local =
+        ns["deferred_local"].as<uint64_t>(0);
   }
 
   if (node["produced_files"]) {

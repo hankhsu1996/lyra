@@ -43,6 +43,13 @@ struct ExecutionResult {
 };
 
 // Simulation payload (only meaningful when outcome == kSuccess).
+// NBA routing stats captured from engine after simulation.
+struct NbaRoutingStatsResult {
+  uint64_t generic_queue = 0;
+  uint64_t deferred_local = 0;
+  bool captured = false;
+};
+
 struct SimulationArtifacts {
   std::string captured_output;
   std::string compiler_output;
@@ -50,6 +57,7 @@ struct SimulationArtifacts {
   uint64_t final_time = 0;
   std::vector<common::MutationEvent> mutation_events;
   std::vector<uint64_t> cover_hits;
+  NbaRoutingStatsResult nba_stats;
   // File contents produced by the simulation (e.g., $fwrite output).
   // Captured before child exit so they survive the fork boundary.
   std::map<std::string, std::string> produced_files;
