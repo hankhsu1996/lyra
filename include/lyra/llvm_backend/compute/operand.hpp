@@ -4,6 +4,7 @@
 
 #include "lyra/common/diagnostic/diagnostic.hpp"
 #include "lyra/llvm_backend/context.hpp"
+#include "lyra/llvm_backend/cu_facts.hpp"
 #include "lyra/mir/operand.hpp"
 
 namespace lyra::lowering::mir_to_llvm {
@@ -43,10 +44,6 @@ auto LowerOperandAsStorage(
     Context& context, SlotAccessResolver& resolver, const mir::Operand& operand,
     llvm::Type* target_type) -> Result<llvm::Value*>;
 
-// Lower a MIR constant to an LLVM Value
-auto LowerConstant(Context& context, const Constant& constant)
-    -> Result<llvm::Value*>;
-
 // Canonical operand-to-place resolution.
 // PlaceId -> returns the PlaceId directly.
 // ExternalRefId -> returns nullopt (resolved via direct helpers, not Place).
@@ -56,7 +53,11 @@ auto ResolveOperandPlace(Context& context, const mir::Operand& operand)
 
 // Canonical operand type helpers. Handle PlaceId, TempId, ExternalRefId,
 // and Constant uniformly.
-auto GetOperandTypeId(Context& context, const mir::Operand& operand) -> TypeId;
-auto IsOperandFourState(Context& context, const mir::Operand& operand) -> bool;
+auto GetOperandTypeId(
+    const CuFacts& facts, Context& context, const mir::Operand& operand)
+    -> TypeId;
+auto IsOperandFourState(
+    const CuFacts& facts, Context& context, const mir::Operand& operand)
+    -> bool;
 
 }  // namespace lyra::lowering::mir_to_llvm

@@ -157,11 +157,11 @@ auto LowerPackedCoreRvalue(
 auto LowerPackedCoreRvalue(
     Context& context, const CuFacts& facts, SlotAccessResolver& resolver,
     const mir::Rvalue& rvalue, TypeId result_type) -> Result<RvalueValue> {
-  auto type_info_or_err = GetTypeInfoFromType(context, result_type);
+  auto type_info_or_err = GetTypeInfoFromType(facts, context, result_type);
   if (!type_info_or_err) return std::unexpected(type_info_or_err.error());
   PlaceTypeInfo type_info = *type_info_or_err;
 
-  auto storage_type_or_err = GetLlvmTypeForType(context, result_type);
+  auto storage_type_or_err = GetLlvmTypeForType(facts, context, result_type);
   if (!storage_type_or_err) return std::unexpected(storage_type_or_err.error());
   llvm::Type* storage_type = *storage_type_or_err;
 
@@ -183,12 +183,13 @@ auto LowerPackedCoreRvalue(
   if (type_info.is_four_state &&
       !std::holds_alternative<mir::GuardedUseRvalueInfo>(rvalue.info) &&
       !std::holds_alternative<mir::RuntimeQueryRvalueInfo>(rvalue.info) &&
-      AreAllOperandsTwoState(context, rvalue.operands)) {
+      AreAllOperandsTwoState(facts, context, rvalue.operands)) {
     type_info.is_four_state = false;
     storage_type = elem_type;
   }
 
   PackedComputeContext packed_context{
+      .facts = &facts,
       .storage_type = storage_type,
       .element_type = elem_type,
       .bit_width = type_info.bit_width,

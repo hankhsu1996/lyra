@@ -256,7 +256,7 @@ auto LowerSFormatRvalueValue(
       size_t idx = i - 1;
       auto* idx_val = llvm::ConstantInt::get(i64_ty, idx);
 
-      TypeId type_id = GetOperandTypeId(context, operands[i]);
+      TypeId type_id = GetOperandTypeId(facts, context, operands[i]);
       const Type& ty = types[type_id];
 
       RuntimeFormatValueKind kind = RuntimeFormatValueKind::kIntegral;

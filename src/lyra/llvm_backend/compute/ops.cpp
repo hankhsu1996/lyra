@@ -172,10 +172,11 @@ auto SignExtendToStorage(
   return builder.CreateSExt(truncated, storage_type, "sext.ext");
 }
 
-auto GetOperandPackedWidth(Context& context, const mir::Operand& operand)
+auto GetOperandPackedWidth(
+    const CuFacts& facts, Context& context, const mir::Operand& operand)
     -> uint32_t {
-  const auto& types = context.GetTypeArena();
-  TypeId type_id = GetOperandTypeId(context, operand);
+  const auto& types = *facts.types;
+  TypeId type_id = GetOperandTypeId(facts, context, operand);
   return PackedBitWidth(types[type_id], types);
 }
 

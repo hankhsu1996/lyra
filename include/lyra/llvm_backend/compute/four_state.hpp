@@ -8,6 +8,7 @@
 #include "lyra/llvm_backend/compute/result.hpp"
 #include "lyra/llvm_backend/compute/rvalue.hpp"
 #include "lyra/llvm_backend/context.hpp"
+#include "lyra/llvm_backend/cu_facts.hpp"
 #include "lyra/mir/operand.hpp"
 #include "lyra/mir/rvalue.hpp"
 
@@ -53,14 +54,14 @@ auto LowerRuntimeQuery4State(
 // Lower case match op (casez/casex) - returns 2-state result.
 // Used by both 2-state and 4-state paths.
 auto LowerCaseMatchOp(
-    Context& context, const mir::BinaryRvalueInfo& info,
+    const CuFacts& facts, Context& context, const mir::BinaryRvalueInfo& info,
     const std::vector<mir::Operand>& operands, llvm::Type* storage_type)
     -> Result<llvm::Value*>;
 
 // Lower case equality op (===, !==) - returns 2-state result.
 // Used by both 2-state and 4-state paths.
 auto LowerCaseEqualityOp(
-    Context& context, const mir::BinaryRvalueInfo& info,
+    const CuFacts& facts, Context& context, const mir::BinaryRvalueInfo& info,
     const std::vector<mir::Operand>& operands, llvm::Type* storage_type)
     -> Result<llvm::Value*>;
 
@@ -95,13 +96,13 @@ auto LowerGuardedUse4State(
     const PackedComputeContext& packed_context) -> Result<ComputeResult>;
 
 auto LowerCaseMatchOp(
-    Context& context, SlotAccessResolver& resolver,
+    const CuFacts& facts, Context& context, SlotAccessResolver& resolver,
     const mir::BinaryRvalueInfo& info,
     const std::vector<mir::Operand>& operands, llvm::Type* storage_type)
     -> Result<llvm::Value*>;
 
 auto LowerCaseEqualityOp(
-    Context& context, SlotAccessResolver& resolver,
+    const CuFacts& facts, Context& context, SlotAccessResolver& resolver,
     const mir::BinaryRvalueInfo& info,
     const std::vector<mir::Operand>& operands, llvm::Type* storage_type)
     -> Result<llvm::Value*>;
@@ -109,6 +110,7 @@ auto LowerCaseEqualityOp(
 // Check if all operands in the vector are provably 2-state.
 // Uses IsOperandFourState internally (reads TempValue.domain for temps).
 auto AreAllOperandsTwoState(
-    Context& context, const std::vector<mir::Operand>& operands) -> bool;
+    const CuFacts& facts, Context& context,
+    const std::vector<mir::Operand>& operands) -> bool;
 
 }  // namespace lyra::lowering::mir_to_llvm

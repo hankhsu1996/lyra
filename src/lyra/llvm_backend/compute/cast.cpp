@@ -93,7 +93,7 @@ auto LoadFourStateOperand(
     const mir::Operand& operand) -> Result<FourStateValue> {
   auto& builder = context.GetBuilder();
 
-  bool is_four_state = IsOperandFourState(context, operand);
+  bool is_four_state = IsOperandFourState(facts, context, operand);
 
   if (is_four_state) {
     auto loaded_or_err = LowerOperandRaw(context, resolver, operand);

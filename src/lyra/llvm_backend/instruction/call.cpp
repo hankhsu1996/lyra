@@ -522,7 +522,7 @@ auto LowerFreadCall(
     // Memory variant: get element type info
     const auto& arr = ty.AsUnpackedArray();
     TypeId elem_type = arr.element_type;
-    auto elem_llvm_type_result = GetLlvmTypeForType(context, elem_type);
+    auto elem_llvm_type_result = GetLlvmTypeForType(facts, context, elem_type);
     if (!elem_llvm_type_result)
       return std::unexpected(elem_llvm_type_result.error());
 
@@ -536,7 +536,8 @@ auto LowerFreadCall(
     element_count = llvm::ConstantInt::get(i64_ty, arr_size);
   } else {
     // Integral variant: single element
-    auto target_llvm_type_result = GetLlvmTypeForType(context, target_type);
+    auto target_llvm_type_result =
+        GetLlvmTypeForType(facts, context, target_type);
     if (!target_llvm_type_result)
       return std::unexpected(target_llvm_type_result.error());
 

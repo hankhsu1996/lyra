@@ -248,6 +248,13 @@ class Context {
     const lowering::DiagnosticContext* saved_;
   };
 
+  // Transitional accessor: returns the full CuFacts struct.
+  // Prefer using CuFacts passed via function parameter where available.
+  // Will be removed once all callers have explicit facts.
+  [[nodiscard]] auto GetFacts() const -> const CuFacts& {
+    return *facts_;
+  }
+
   // MIGRATION SHIMS: will be removed when callers use CuFacts directly.
   [[nodiscard]] auto GetTypeArena() const -> const TypeArena& {
     return *facts_->types;

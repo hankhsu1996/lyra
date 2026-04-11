@@ -37,7 +37,7 @@ auto IsRealKind(TypeKind kind) -> bool {
 auto GetOperandFloatType(
     Context& context, const CuFacts& facts, const mir::Operand& operand)
     -> llvm::Type* {
-  TypeId tid = GetOperandTypeId(context, operand);
+  TypeId tid = GetOperandTypeId(facts, context, operand);
   const auto& types = *facts.types;
   if (!IsRealKind(types[tid].Kind())) {
     throw common::InternalError(
@@ -66,7 +66,7 @@ auto LowerMathIntegralClog2(
   auto* all_ones = llvm::ConstantInt::get(
       result_llvm_type, llvm::APInt::getAllOnes(target_width));
 
-  bool operand_is_four_state = IsOperandFourState(context, operands[0]);
+  bool operand_is_four_state = IsOperandFourState(facts, context, operands[0]);
 
   llvm::Value* operand_val = nullptr;
   llvm::Value* operand_unk = nullptr;

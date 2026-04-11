@@ -7,6 +7,7 @@
 
 #include "lyra/common/diagnostic/diagnostic.hpp"
 #include "lyra/llvm_backend/context.hpp"
+#include "lyra/llvm_backend/cu_facts.hpp"
 #include "lyra/mir/operand.hpp"
 #include "lyra/mir/operator.hpp"
 
@@ -32,7 +33,8 @@ auto SignExtendToStorage(
     llvm::IRBuilderBase& builder, llvm::Value* val, uint32_t semantic_width)
     -> llvm::Value*;
 
-auto GetOperandPackedWidth(Context& context, const mir::Operand& operand)
+auto GetOperandPackedWidth(
+    const CuFacts& facts, Context& context, const mir::Operand& operand)
     -> uint32_t;
 
 auto LowerBinaryArith(

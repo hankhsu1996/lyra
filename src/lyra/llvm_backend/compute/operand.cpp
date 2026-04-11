@@ -20,6 +20,7 @@
 #include "lyra/llvm_backend/compute/compute.hpp"
 #include "lyra/llvm_backend/compute/four_state_ops.hpp"
 #include "lyra/llvm_backend/context.hpp"
+#include "lyra/llvm_backend/cu_facts.hpp"
 #include "lyra/llvm_backend/packed_storage_view.hpp"
 #include "lyra/llvm_backend/slot_access.hpp"
 #include "lyra/llvm_backend/value_repr.hpp"
@@ -118,16 +119,18 @@ auto LowerOperandAsStorage(
   return CoerceToStorageType(context, *val_or_err, target_type);
 }
 
-auto LowerConstant(Context& context, const Constant& constant)
+auto LowerConstant(
+    const CuFacts& facts, Context& context, const Constant& constant)
     -> Result<llvm::Value*> {
   auto& llvm_ctx = context.GetLlvmContext();
+  const auto& types = *facts.types;
 
   return std::visit(
       common::Overloaded{
           [&](const IntegralConstant& integral) -> Result<llvm::Value*> {
             // Get semantic bit width from type
-            const Type& type = context.GetTypeArena()[constant.type];
-            uint32_t bit_width = PackedBitWidth(type, context.GetTypeArena());
+            const Type& type = types[constant.type];
+            uint32_t bit_width = PackedBitWidth(type, types);
 
             // Create APInt from word arrays (little-endian in both MIR and
             // LLVM)
@@ -136,7 +139,7 @@ auto LowerConstant(Context& context, const Constant& constant)
             // 4-state type: always create {value, unknown} struct
             // Type determines LLVM shape, not whether value has unknown bits.
             // Uses the same canonical predicate as IsOperandFourState.
-            if (IsPacked(type) && context.IsPackedFourState(type)) {
+            if (IsPacked(type) && IsPackedFourState(facts, type)) {
               llvm::APInt unknown_ap =
                   integral.IsKnown() ? llvm::APInt::getZero(bit_width)
                                      : llvm::APInt(bit_width, integral.unknown);
@@ -177,7 +180,7 @@ auto LowerConstant(Context& context, const Constant& constant)
                 context.GetLyraStringFromLiteral(), {data, len}, "str.handle");
           },
           [&](const RealConstant& real) -> Result<llvm::Value*> {
-            const Type& type = context.GetTypeArena()[constant.type];
+            const Type& type = types[constant.type];
             if (type.Kind() == TypeKind::kShortReal) {
               return llvm::ConstantFP::get(
                   llvm::Type::getFloatTy(llvm_ctx),
@@ -201,7 +204,7 @@ auto LowerConstant(Context& context, const Constant& constant)
                     UnsupportedCategory::kType));
           },
           [&](const NullConstant& /*n*/) -> Result<llvm::Value*> {
-            const Type& ty = context.GetTypeArena()[constant.type];
+            const Type& ty = types[constant.type];
             if (ty.Kind() != TypeKind::kChandle) {
               return std::unexpected(
                   context.GetDiagnosticContext().MakeUnsupported(
@@ -224,7 +227,7 @@ auto LowerOperandRaw(
   return std::visit(
       common::Overloaded{
           [&context](const Constant& constant) -> Result<llvm::Value*> {
-            return LowerConstant(context, constant);
+            return LowerConstant(context.GetFacts(), context, constant);
           },
           [&context, &resolver](mir::PlaceId place_id) -> Result<llvm::Value*> {
             // Projected reads (bit-range) are canonical-only in v1.
@@ -292,9 +295,11 @@ auto ResolveOperandPlace(Context& /*context*/, const mir::Operand& operand)
       operand.payload);
 }
 
-auto GetOperandTypeId(Context& context, const mir::Operand& operand) -> TypeId {
-  const auto& types = context.GetTypeArena();
-  // Place-backed operands: derive from Place.
+auto GetOperandTypeId(
+    const CuFacts& facts, Context& context, const mir::Operand& operand)
+    -> TypeId {
+  const auto& types = *facts.types;
+  // Place-backed operands (PlaceId, ExternalRefId): derive from Place.
   auto place = ResolveOperandPlace(context, operand);
   if (place.has_value()) {
     return mir::TypeOfPlace(types, context.LookupPlace(*place));
@@ -315,21 +320,23 @@ auto GetOperandTypeId(Context& context, const mir::Operand& operand) -> TypeId {
       operand.payload);
 }
 
-auto IsOperandFourState(Context& context, const mir::Operand& operand) -> bool {
-  const auto& types = context.GetTypeArena();
+auto IsOperandFourState(
+    const CuFacts& facts, Context& context, const mir::Operand& operand)
+    -> bool {
+  const auto& types = *facts.types;
   // Place-backed operands: derive from type.
   auto place = ResolveOperandPlace(context, operand);
   if (place.has_value()) {
     TypeId type_id = mir::TypeOfPlace(types, context.LookupPlace(*place));
     const Type& type = types[type_id];
-    return IsPacked(type) && context.IsPackedFourState(type);
+    return IsPacked(type) && IsPackedFourState(facts, type);
   }
   // Non-place operands.
   return std::visit(
       common::Overloaded{
           [&](const Constant& c) -> bool {
             const Type& type = types[c.type];
-            return IsPacked(type) && context.IsPackedFourState(type);
+            return IsPacked(type) && IsPackedFourState(facts, type);
           },
           [&](mir::TempId temp_id) -> bool {
             return context.ReadTempValue(temp_id.value).domain ==
@@ -339,6 +346,11 @@ auto IsOperandFourState(Context& context, const mir::Operand& operand) -> bool {
             throw common::InternalError(
                 "IsOperandFourState",
                 "PlaceId not handled by ResolveOperandPlace");
+          },
+          [&context, &facts, &types](mir::ExternalRefId ref_id) -> bool {
+            TypeId type_id = context.GetExternalRefType(ref_id);
+            const Type& type = types[type_id];
+            return IsPacked(type) && IsPackedFourState(facts, type);
           },
       },
       operand.payload);

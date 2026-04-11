@@ -38,7 +38,7 @@ auto IsRealKind(TypeKind kind) -> bool {
 auto GetOperandFloatType(
     Context& context, const CuFacts& facts, const mir::Operand& operand)
     -> llvm::Type* {
-  TypeId tid = GetOperandTypeId(context, operand);
+  TypeId tid = GetOperandTypeId(facts, context, operand);
   const auto& types = *facts.types;
   if (!IsRealKind(types[tid].Kind())) {
     throw common::InternalError(
@@ -223,11 +223,11 @@ auto IsRealMathRvalue(
   return std::visit(
       common::Overloaded{
           [&](const mir::UnaryRvalueInfo&) {
-            TypeId tid = GetOperandTypeId(context, rvalue.operands[0]);
+            TypeId tid = GetOperandTypeId(facts, context, rvalue.operands[0]);
             return IsRealKind(types[tid].Kind());
           },
           [&](const mir::BinaryRvalueInfo&) {
-            TypeId tid = GetOperandTypeId(context, rvalue.operands[0]);
+            TypeId tid = GetOperandTypeId(facts, context, rvalue.operands[0]);
             return IsRealKind(types[tid].Kind());
           },
           // Casts are handled by LowerCastUnified, not here

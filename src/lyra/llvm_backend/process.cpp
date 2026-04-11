@@ -419,7 +419,7 @@ auto SetupBlockParamPhis(
 
         if (IsFourState(facts, param.type)) {
           // 4-state: create split PHI pair using canonical plane type.
-          auto* plane_type = GetFourStatePlaneType(context, param.type);
+          auto* plane_type = GetFourStatePlaneType(facts, context, param.type);
           auto* known_phi =
               builder.CreatePHI(plane_type, 2, std::format("phi{}.val", j));
           auto* unknown_phi =
@@ -435,7 +435,7 @@ auto SetupBlockParamPhis(
                                  .unknown = unknown_phi});
         } else {
           // 2-state: single scalar PHI.
-          auto llvm_ty_or_err = GetLlvmTypeForType(context, param.type);
+          auto llvm_ty_or_err = GetLlvmTypeForType(facts, context, param.type);
           if (!llvm_ty_or_err) return std::unexpected(llvm_ty_or_err.error());
           auto* phi =
               builder.CreatePHI(*llvm_ty_or_err, 2, std::format("phi{}", j));
@@ -3459,7 +3459,7 @@ auto DefineMirFunction(
             context.SetPlaceAlias(it->second, arg_val);
           } else {
             // Copy-in at entry, writeback at exit
-            auto local_type = GetLlvmTypeForType(context, param.type);
+            auto local_type = GetLlvmTypeForType(facts, context, param.type);
             if (!local_type) return std::unexpected(local_type.error());
             llvm::Value* initial_val =
                 builder.CreateLoad(*local_type, arg_val, "inout_init");

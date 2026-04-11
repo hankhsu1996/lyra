@@ -49,9 +49,10 @@ auto LowerOperandFourState(
 }  // namespace
 
 auto AreAllOperandsTwoState(
-    Context& context, const std::vector<mir::Operand>& operands) -> bool {
+    const CuFacts& facts, Context& context,
+    const std::vector<mir::Operand>& operands) -> bool {
   for (const auto& op : operands) {
-    if (IsOperandFourState(context, op)) {
+    if (IsOperandFourState(facts, context, op)) {
       return false;
     }
   }
@@ -245,19 +246,21 @@ auto LowerRuntimeQuery4State(
 }
 
 auto LowerCaseMatchOp(
-    Context& context, const mir::BinaryRvalueInfo& info,
+    const CuFacts& facts, Context& context, const mir::BinaryRvalueInfo& info,
     const std::vector<mir::Operand>& operands, llvm::Type* storage_type)
     -> Result<llvm::Value*> {
   CanonicalSlotAccess canonical(context);
-  return LowerCaseMatchOp(context, canonical, info, operands, storage_type);
+  return LowerCaseMatchOp(
+      facts, context, canonical, info, operands, storage_type);
 }
 
 auto LowerCaseEqualityOp(
-    Context& context, const mir::BinaryRvalueInfo& info,
+    const CuFacts& facts, Context& context, const mir::BinaryRvalueInfo& info,
     const std::vector<mir::Operand>& operands, llvm::Type* storage_type)
     -> Result<llvm::Value*> {
   CanonicalSlotAccess canonical(context);
-  return LowerCaseEqualityOp(context, canonical, info, operands, storage_type);
+  return LowerCaseEqualityOp(
+      facts, context, canonical, info, operands, storage_type);
 }
 
 auto LowerBinaryRvalue4State(
@@ -283,8 +286,10 @@ auto LowerBinaryRvalue4State(
   // semantic operand widths. Catches width truncation bugs at the point
   // of use rather than producing silent wrong results.
   {
-    uint32_t lhs_semantic = GetOperandPackedWidth(context, operands[0]);
-    uint32_t rhs_semantic = GetOperandPackedWidth(context, operands[1]);
+    uint32_t lhs_semantic =
+        GetOperandPackedWidth(*packed_context.facts, context, operands[0]);
+    uint32_t rhs_semantic =
+        GetOperandPackedWidth(*packed_context.facts, context, operands[1]);
     uint32_t lhs_loaded = lhs.value->getType()->getIntegerBitWidth();
     uint32_t rhs_loaded = rhs.value->getType()->getIntegerBitWidth();
     if (lhs_loaded < lhs_semantic || rhs_loaded < rhs_semantic) {
@@ -298,8 +303,10 @@ auto LowerBinaryRvalue4State(
   }
 
   if (IsCaseEqualityOp(info.op)) {
-    uint32_t lhs_width = GetOperandPackedWidth(context, operands[0]);
-    uint32_t rhs_width = GetOperandPackedWidth(context, operands[1]);
+    uint32_t lhs_width =
+        GetOperandPackedWidth(*packed_context.facts, context, operands[0]);
+    uint32_t rhs_width =
+        GetOperandPackedWidth(*packed_context.facts, context, operands[1]);
     uint32_t cmp_width = std::max(lhs_width, rhs_width);
     auto* cmp_type = llvm::Type::getIntNTy(context.GetLlvmContext(), cmp_width);
 
@@ -325,7 +332,8 @@ auto LowerBinaryRvalue4State(
   }
 
   if (IsCaseMatchOp(info.op)) {
-    uint32_t operand_width = GetOperandPackedWidth(context, operands[0]);
+    uint32_t operand_width =
+        GetOperandPackedWidth(*packed_context.facts, context, operands[0]);
     auto* match_type =
         llvm::Type::getIntNTy(context.GetLlvmContext(), operand_width);
 
@@ -376,8 +384,10 @@ auto LowerBinaryRvalue4State(
   }
 
   if (IsWildcardComparisonOp(info.op)) {
-    uint32_t lhs_width = GetOperandPackedWidth(context, operands[0]);
-    uint32_t rhs_width = GetOperandPackedWidth(context, operands[1]);
+    uint32_t lhs_width =
+        GetOperandPackedWidth(*packed_context.facts, context, operands[0]);
+    uint32_t rhs_width =
+        GetOperandPackedWidth(*packed_context.facts, context, operands[1]);
     uint32_t cmp_width = std::max(lhs_width, rhs_width);
     auto* cmp_type = llvm::Type::getIntNTy(context.GetLlvmContext(), cmp_width);
 
@@ -414,8 +424,10 @@ auto LowerBinaryRvalue4State(
   }
 
   if (IsComparisonOp(info.op)) {
-    uint32_t lhs_width = GetOperandPackedWidth(context, operands[0]);
-    uint32_t rhs_width = GetOperandPackedWidth(context, operands[1]);
+    uint32_t lhs_width =
+        GetOperandPackedWidth(*packed_context.facts, context, operands[0]);
+    uint32_t rhs_width =
+        GetOperandPackedWidth(*packed_context.facts, context, operands[1]);
 
     auto cmp_or_err = LowerCompareToI1(
         context, info.op, lhs.value, rhs.value, lhs_width, rhs_width);
@@ -499,7 +511,7 @@ auto LowerUnaryRvalue4State(
 
   if (IsReductionOp(info.op) || info.op == mir::UnaryOp::kLogicalNot) {
     uint32_t operand_semantic_width =
-        GetOperandPackedWidth(context, operands[0]);
+        GetOperandPackedWidth(*packed_context.facts, context, operands[0]);
     return LowerReduction4State(
         context, info.op, *src_or_err, operand_semantic_width, packed_context);
   }
@@ -520,7 +532,8 @@ auto LowerConcatRvalue4State(
         "LowerConcatRvalue4State", "concat must have at least one operand");
   }
 
-  uint32_t first_width = GetOperandPackedWidth(context, operands[0]);
+  uint32_t first_width =
+      GetOperandPackedWidth(*packed_context.facts, context, operands[0]);
   auto first_or_err = LowerOperandFourState(context, resolver, operands[0]);
   if (!first_or_err) return std::unexpected(first_or_err.error());
   auto first = *first_or_err;
@@ -534,7 +547,8 @@ auto LowerConcatRvalue4State(
   auto* acc_unk = builder.CreateZExt(unk_first, elem_type, "cat4.unk.ext");
 
   for (size_t i = 1; i < operands.size(); ++i) {
-    uint32_t op_width = GetOperandPackedWidth(context, operands[i]);
+    uint32_t op_width =
+        GetOperandPackedWidth(*packed_context.facts, context, operands[i]);
     auto op_or_err = LowerOperandFourState(context, resolver, operands[i]);
     if (!op_or_err) return std::unexpected(op_or_err.error());
     auto op = *op_or_err;
@@ -570,7 +584,8 @@ auto LowerReplicateRvalue4State(
         "LowerReplicateRvalue4State", "replicate requires exactly 1 operand");
   }
 
-  uint32_t op_width = GetOperandPackedWidth(context, operands[0]);
+  uint32_t op_width =
+      GetOperandPackedWidth(*packed_context.facts, context, operands[0]);
   auto elem_or_err = LowerOperandFourState(context, resolver, operands[0]);
   if (!elem_or_err) return std::unexpected(elem_or_err.error());
   auto elem = *elem_or_err;
@@ -664,13 +679,13 @@ auto LowerGuardedUse4State(
 }
 
 auto LowerCaseMatchOp(
-    Context& context, SlotAccessResolver& resolver,
+    const CuFacts& facts, Context& context, SlotAccessResolver& resolver,
     const mir::BinaryRvalueInfo& info,
     const std::vector<mir::Operand>& operands, llvm::Type* storage_type)
     -> Result<llvm::Value*> {
   auto& builder = context.GetBuilder();
 
-  uint32_t operand_width = GetOperandPackedWidth(context, operands[0]);
+  uint32_t operand_width = GetOperandPackedWidth(facts, context, operands[0]);
   auto* elem_type =
       llvm::Type::getIntNTy(context.GetLlvmContext(), operand_width);
 
@@ -716,14 +731,14 @@ auto LowerCaseMatchOp(
 }
 
 auto LowerCaseEqualityOp(
-    Context& context, SlotAccessResolver& resolver,
+    const CuFacts& facts, Context& context, SlotAccessResolver& resolver,
     const mir::BinaryRvalueInfo& info,
     const std::vector<mir::Operand>& operands, llvm::Type* storage_type)
     -> Result<llvm::Value*> {
   auto& builder = context.GetBuilder();
 
-  uint32_t lhs_width = GetOperandPackedWidth(context, operands[0]);
-  uint32_t rhs_width = GetOperandPackedWidth(context, operands[1]);
+  uint32_t lhs_width = GetOperandPackedWidth(facts, context, operands[0]);
+  uint32_t rhs_width = GetOperandPackedWidth(facts, context, operands[1]);
   uint32_t cmp_width = std::max(lhs_width, rhs_width);
   auto* elem_type = llvm::Type::getIntNTy(context.GetLlvmContext(), cmp_width);
 

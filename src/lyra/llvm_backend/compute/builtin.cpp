@@ -86,7 +86,7 @@ auto LowerDynArrayBuiltinValue(
       llvm::Value* size = builder.CreateCall(
           context.GetLyraDynArraySize(), {handle}, "da.size");
 
-      auto target_type_or_err = GetLlvmTypeForType(context, result_type);
+      auto target_type_or_err = GetLlvmTypeForType(facts, context, result_type);
       if (!target_type_or_err)
         return std::unexpected(target_type_or_err.error());
       llvm::Type* target_type = *target_type_or_err;
@@ -123,7 +123,7 @@ auto LowerQueueBuiltinValue(
       llvm::Value* size =
           builder.CreateCall(context.GetLyraDynArraySize(), {handle}, "q.size");
 
-      auto target_type_or_err = GetLlvmTypeForType(context, result_type);
+      auto target_type_or_err = GetLlvmTypeForType(facts, context, result_type);
       if (!target_type_or_err)
         return std::unexpected(target_type_or_err.error());
       llvm::Type* target_type = *target_type_or_err;
@@ -178,7 +178,7 @@ auto LowerEnumNextPrevValue(
 
   auto* i32_ty = llvm::Type::getInt32Ty(context.GetLlvmContext());
 
-  auto value_type_or_err = GetLlvmTypeForType(context, result_type);
+  auto value_type_or_err = GetLlvmTypeForType(facts, context, result_type);
   if (!value_type_or_err) return std::unexpected(value_type_or_err.error());
   llvm::Type* value_type = *value_type_or_err;
 

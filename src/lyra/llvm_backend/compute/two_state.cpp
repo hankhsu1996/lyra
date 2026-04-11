@@ -35,9 +35,11 @@ namespace lyra::lowering::mir_to_llvm {
 
 namespace {
 
-auto IsStringOperand(Context& context, const mir::Operand& operand) -> bool {
-  TypeId type_id = GetOperandTypeId(context, operand);
-  return context.GetTypeArena()[type_id].Kind() == TypeKind::kString;
+auto IsStringOperand(
+    const CuFacts& facts, Context& context, const mir::Operand& operand)
+    -> bool {
+  TypeId type_id = GetOperandTypeId(facts, context, operand);
+  return (*facts.types)[type_id].Kind() == TypeKind::kString;
 }
 
 // Lower regular (non-reduction) unary ops at storage width.
@@ -158,7 +160,9 @@ auto LowerBinaryRvalue2State(
   llvm::Type* storage_type = packed_context.storage_type;
   uint32_t semantic_width = packed_context.bit_width;
 
-  if (IsStringOperand(context, operands[0])) {
+  const auto& facts = *packed_context.facts;
+
+  if (IsStringOperand(facts, context, operands[0])) {
     auto result =
         LowerStringBinaryOp(context, resolver, info, operands, storage_type);
     if (!result) return std::unexpected(result.error());
@@ -166,15 +170,15 @@ auto LowerBinaryRvalue2State(
   }
 
   if (IsCaseMatchOp(info.op)) {
-    auto result =
-        LowerCaseMatchOp(context, resolver, info, operands, storage_type);
+    auto result = LowerCaseMatchOp(
+        facts, context, resolver, info, operands, storage_type);
     if (!result) return std::unexpected(result.error());
     return ComputeResult::TwoState(*result);
   }
 
   if (IsCaseEqualityOp(info.op)) {
-    auto result =
-        LowerCaseEqualityOp(context, resolver, info, operands, storage_type);
+    auto result = LowerCaseEqualityOp(
+        facts, context, resolver, info, operands, storage_type);
     if (!result) return std::unexpected(result.error());
     return ComputeResult::TwoState(*result);
   }
@@ -194,10 +198,10 @@ auto LowerBinaryRvalue2State(
   // Must be handled before the packed comparison path which assumes integer
   // operands and calls GetOperandPackedWidth / ZExtOrTrunc.
   {
-    auto lhs_type_id = GetOperandTypeId(context, operands[0]);
-    auto rhs_type_id = GetOperandTypeId(context, operands[1]);
-    auto lhs_info = GetTypeInfoFromType(context, lhs_type_id);
-    auto rhs_info = GetTypeInfoFromType(context, rhs_type_id);
+    auto lhs_type_id = GetOperandTypeId(facts, context, operands[0]);
+    auto rhs_type_id = GetOperandTypeId(facts, context, operands[1]);
+    auto lhs_info = GetTypeInfoFromType(facts, context, lhs_type_id);
+    auto rhs_info = GetTypeInfoFromType(facts, context, rhs_type_id);
     if (lhs_info && rhs_info && lhs_info->kind == PlaceKind::kPointerScalar &&
         rhs_info->kind == PlaceKind::kPointerScalar) {
       llvm::Value* cmp = nullptr;
@@ -217,8 +221,8 @@ auto LowerBinaryRvalue2State(
   }
 
   if (IsComparisonOp(info.op)) {
-    uint32_t lhs_width = GetOperandPackedWidth(context, operands[0]);
-    uint32_t rhs_width = GetOperandPackedWidth(context, operands[1]);
+    uint32_t lhs_width = GetOperandPackedWidth(facts, context, operands[0]);
+    uint32_t rhs_width = GetOperandPackedWidth(facts, context, operands[1]);
     auto cmp_or_err =
         LowerCompareToI1(context, info.op, lhs, rhs, lhs_width, rhs_width);
     if (!cmp_or_err) return std::unexpected(cmp_or_err.error());
@@ -250,6 +254,7 @@ auto LowerUnaryRvalue2State(
     Context& context, SlotAccessResolver& resolver,
     const mir::UnaryRvalueInfo& info, const std::vector<mir::Operand>& operands,
     const PackedComputeContext& packed_context) -> Result<ComputeResult> {
+  const auto& facts = *packed_context.facts;
   auto operand_or_err = LowerOperand(context, resolver, operands[0]);
   if (!operand_or_err) return std::unexpected(operand_or_err.error());
   llvm::Value* operand = *operand_or_err;
@@ -257,7 +262,7 @@ auto LowerUnaryRvalue2State(
   Result<llvm::Value*> result;
   if (IsReductionOp(info.op) || info.op == mir::UnaryOp::kLogicalNot) {
     uint32_t operand_semantic_width =
-        GetOperandPackedWidth(context, operands[0]);
+        GetOperandPackedWidth(facts, context, operands[0]);
     result = LowerReduction2State(
         context, info.op, operand, operand_semantic_width, packed_context);
   } else {
@@ -273,6 +278,7 @@ auto LowerConcatRvalue2State(
     const mir::ConcatRvalueInfo& /*info*/,
     const std::vector<mir::Operand>& operands,
     const PackedComputeContext& packed_context) -> Result<ComputeResult> {
+  const auto& facts = *packed_context.facts;
   llvm::Type* storage_type = packed_context.storage_type;
 
   auto& builder = context.GetBuilder();
@@ -282,7 +288,7 @@ auto LowerConcatRvalue2State(
         "LowerConcatRvalue2State", "concat must have at least one operand");
   }
 
-  uint32_t first_width = GetOperandPackedWidth(context, operands[0]);
+  uint32_t first_width = GetOperandPackedWidth(facts, context, operands[0]);
   auto first_or_err = LowerOperand(context, resolver, operands[0]);
   if (!first_or_err) return std::unexpected(first_or_err.error());
   llvm::Value* first = *first_or_err;
@@ -291,7 +297,7 @@ auto LowerConcatRvalue2State(
   llvm::Value* acc = builder.CreateZExt(first, storage_type, "concat.ext");
 
   for (size_t i = 1; i < operands.size(); ++i) {
-    uint32_t op_width = GetOperandPackedWidth(context, operands[i]);
+    uint32_t op_width = GetOperandPackedWidth(facts, context, operands[i]);
     auto op_or_err = LowerOperand(context, resolver, operands[i]);
     if (!op_or_err) return std::unexpected(op_or_err.error());
     llvm::Value* op = *op_or_err;
@@ -313,6 +319,7 @@ auto LowerReplicateRvalue2State(
     const mir::ReplicateRvalueInfo& info,
     const std::vector<mir::Operand>& operands,
     const PackedComputeContext& packed_context) -> Result<ComputeResult> {
+  const auto& facts = *packed_context.facts;
   llvm::Type* storage_type = packed_context.storage_type;
 
   auto& builder = context.GetBuilder();
@@ -322,7 +329,7 @@ auto LowerReplicateRvalue2State(
         "LowerReplicateRvalue2State", "replicate requires exactly 1 operand");
   }
 
-  uint32_t elem_width = GetOperandPackedWidth(context, operands[0]);
+  uint32_t elem_width = GetOperandPackedWidth(facts, context, operands[0]);
   auto elem_or_err = LowerOperand(context, resolver, operands[0]);
   if (!elem_or_err) return std::unexpected(elem_or_err.error());
   llvm::Value* elem = *elem_or_err;
