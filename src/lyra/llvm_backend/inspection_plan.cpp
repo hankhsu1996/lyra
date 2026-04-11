@@ -4,18 +4,15 @@
 #include <format>
 
 #include "lyra/common/internal_error.hpp"
-#include "lyra/llvm_backend/codegen_session.hpp"
 #include "lyra/llvm_backend/layout/layout.hpp"
 #include "lyra/llvm_backend/layout/storage_types.hpp"
 
 namespace lyra::lowering::mir_to_llvm {
 
 auto BuildInspectionPlan(
-    const CodegenSession& session, std::span<const InspectedVarRef> refs)
+    const Layout& layout, std::span<const InspectedVarRef> refs)
     -> InspectionPlan {
   InspectionPlan plan;
-
-  const auto& layout = *session.layout;
 
   for (const auto& ref : refs) {
     auto slot_value = static_cast<uint32_t>(ref.slot_id.value);

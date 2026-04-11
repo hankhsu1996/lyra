@@ -10,7 +10,7 @@
 
 namespace lyra::lowering::mir_to_llvm {
 
-struct CodegenSession;
+struct Layout;
 
 // Pre-layout identity record. Test framework produces these.
 // The backend inspection planner resolves them into typed placements.
@@ -63,7 +63,7 @@ struct InspectionPlan {
 // Storage coordinates come from layout via ToInstanceOffset() (canonical
 // typed conversion boundary between arena-absolute and instance-relative).
 auto BuildInspectionPlan(
-    const CodegenSession& session, std::span<const InspectedVarRef> refs)
+    const Layout& layout, std::span<const InspectedVarRef> refs)
     -> InspectionPlan;
 
 }  // namespace lyra::lowering::mir_to_llvm

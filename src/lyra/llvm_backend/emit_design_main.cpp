@@ -812,7 +812,7 @@ auto EmitDesignMain(
   if (input.hooks != nullptr) {
     auto refs = input.hooks->GetTrackedVariables();
     if (!refs.empty()) {
-      inspection_plan = BuildInspectionPlan(session, refs);
+      inspection_plan = BuildInspectionPlan(*session.layout, refs);
     }
   }
 

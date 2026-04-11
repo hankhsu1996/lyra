@@ -56,12 +56,13 @@ auto BuildSpecCompilationUnits(const mir::Design& design)
   return units;
 }
 
-auto BuildModuleSchedIndices(const Layout& layout)
+auto BuildModuleSchedIndices(
+    uint32_t num_init_processes,
+    std::span<const ScheduledProcess> scheduled_processes)
     -> std::unordered_map<uint32_t, std::vector<uint32_t>> {
   std::unordered_map<uint32_t, std::vector<uint32_t>> result;
-  for (size_t i = layout.num_init_processes;
-       i < layout.scheduled_processes.size(); ++i) {
-    const auto& sp = layout.scheduled_processes[i];
+  for (size_t i = num_init_processes; i < scheduled_processes.size(); ++i) {
+    const auto& sp = scheduled_processes[i];
     if (sp.module_index.value == ModuleIndex::kNone) continue;
     result[sp.module_index.value].push_back(static_cast<uint32_t>(i));
   }
@@ -193,11 +194,12 @@ auto BuildCompiledModuleSpecInputs(
 }
 
 auto BuildSpecSlotInfos(
-    const std::vector<SpecCompilationUnit>& units, const Layout& layout)
+    const std::vector<SpecCompilationUnit>& units,
+    std::span<const Layout::BodyRealizationInfo> body_realization_infos)
     -> std::vector<SpecSlotInfo> {
   std::unordered_map<const mir::ModuleBody*, uint32_t> body_info_index_by_ptr;
-  for (uint32_t i = 0; i < layout.body_realization_infos.size(); ++i) {
-    body_info_index_by_ptr[layout.body_realization_infos[i].body] = i;
+  for (uint32_t i = 0; i < body_realization_infos.size(); ++i) {
+    body_info_index_by_ptr[body_realization_infos[i].body] = i;
   }
 
   std::vector<SpecSlotInfo> result;
@@ -214,7 +216,7 @@ auto BuildSpecSlotInfos(
       body_info_idx = it->second;
     }
 
-    const auto& body_info = layout.body_realization_infos[body_info_idx];
+    const auto& body_info = body_realization_infos[body_info_idx];
     const auto& body_layout = body_info.body_layout;
     const auto& body = *unit.body;
     auto slot_count = body_info.slot_count;
@@ -240,7 +242,8 @@ auto BuildSpecSlotInfos(
 
 // Build per-instance local-slot connection trigger facts.
 auto BuildInstanceConnectionTriggers(
-    std::span<const LayoutModulePlan> module_plans, const Layout& layout)
+    std::span<const LayoutModulePlan> module_plans,
+    const std::vector<bool>& slot_has_connection_trigger)
     -> std::vector<std::vector<bool>> {
   std::vector<std::vector<bool>> instance_triggers(module_plans.size());
   for (size_t mi = 0; mi < module_plans.size(); ++mi) {
@@ -248,15 +251,15 @@ auto BuildInstanceConnectionTriggers(
     instance_triggers[mi].assign(plan.slot_count, false);
     for (uint32_t s = 0; s < plan.slot_count; ++s) {
       uint32_t global_slot = plan.design_state_base_slot + s;
-      if (global_slot >= layout.slot_has_connection_trigger.size()) {
+      if (global_slot >= slot_has_connection_trigger.size()) {
         throw common::InternalError(
             "BuildInstanceConnectionTriggers",
             std::format(
                 "design-global slot {} out of range for connection trigger "
                 "bitmap (size={}, instance={}, local_slot={})",
-                global_slot, layout.slot_has_connection_trigger.size(), mi, s));
+                global_slot, slot_has_connection_trigger.size(), mi, s));
       }
-      if (layout.slot_has_connection_trigger[global_slot]) {
+      if (slot_has_connection_trigger[global_slot]) {
         instance_triggers[mi][s] = true;
       }
     }
@@ -306,12 +309,13 @@ auto BuildSpecPlan(
     std::span<const mir::DpiExportWrapperDesc> dpi_export_wrappers)
     -> SpecPlan {
   auto units = BuildSpecCompilationUnits(design);
-  auto modidx_to_sched_indices = BuildModuleSchedIndices(layout);
+  auto modidx_to_sched_indices = BuildModuleSchedIndices(
+      layout.num_init_processes, layout.scheduled_processes);
   auto views = BuildSpecCodegenViews(units, design, modidx_to_sched_indices);
-  auto slot_infos = BuildSpecSlotInfos(units, layout);
+  auto slot_infos = BuildSpecSlotInfos(units, layout.body_realization_infos);
 
-  auto instance_triggers =
-      BuildInstanceConnectionTriggers(module_plans, layout);
+  auto instance_triggers = BuildInstanceConnectionTriggers(
+      module_plans, layout.slot_has_connection_trigger);
   auto masks =
       BuildConnectionNotificationMasks(units, slot_infos, instance_triggers);
 
