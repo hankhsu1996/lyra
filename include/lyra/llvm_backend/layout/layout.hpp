@@ -571,18 +571,18 @@ struct Layout {
   // notifications). Must NOT be used for spec compilation decisions.
   // Will be deleted when runtime signal identity moves fully to
   // object-local coordinates.
-  [[nodiscard]] auto ResolveLegacyRepresentativeDesignSlot(
+  [[nodiscard]] auto ResolveRepresentativeDesignSlot(
       uint32_t body_info_index, uint32_t local_slot) const -> uint32_t {
     if (body_info_index >= body_representative_base_slots.size()) {
       throw common::InternalError(
-          "ResolveLegacyRepresentativeDesignSlot",
+          "ResolveRepresentativeDesignSlot",
           std::format(
               "body_info_index {} out of range (size={})", body_info_index,
               body_representative_base_slots.size()));
     }
     if (local_slot >= body_realization_infos.at(body_info_index).slot_count) {
       throw common::InternalError(
-          "ResolveLegacyRepresentativeDesignSlot",
+          "ResolveRepresentativeDesignSlot",
           std::format(
               "local_slot {} out of range for body {} (slot_count={})",
               local_slot, body_realization_infos[body_info_index].body_id.value,

@@ -1348,15 +1348,16 @@ auto EmitLateBoundData(
     builder.CreateStore(
         llvm::ConstantInt::get(i32_ty, container_elem_stride), f8);
 
-    // Normalize pending external refs for this late-bound entry.
-    // Build a lookup from op_index -> resolved SignalRef.
+    // Late-bound external-ref index plan resolution is not yet implemented.
+    // External refs in late-bound triggers require per-instance resolution
+    // through the binding record, which is a separate feature.
+    if (!lb.pending_external_refs.empty()) {
+      throw common::InternalError(
+          "EmitLateBoundData",
+          "late-bound triggers with external refs not yet supported");
+    }
     std::unordered_map<uint32_t, mir::SignalRef> resolved_ext_ops;
     std::unordered_map<uint32_t, mir::SignalRef> resolved_ext_deps;
-    for (const auto& pending : lb.pending_external_refs) {
-      auto sig = context.NormalizeExternalRefSignalIdentity(pending.ref_id);
-      resolved_ext_ops[pending.op_index] = sig;
-      resolved_ext_deps[pending.dep_index] = sig;
-    }
 
     // Fill plan ops. Module-local reads emit body-local signal_id with
     // kIndexPlanLocalSignal flag; runtime resolves via the instance.

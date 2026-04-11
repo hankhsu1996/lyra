@@ -516,7 +516,7 @@ class Context {
   // External ref resolution environment. Installed as a unit by
   // SpecLocalScope; cleared on scope exit.
   // Contains only specialization-scoped data (recipes for type/access info).
-  // Per-instance data is loaded at runtime from instance_ptr->ext_ref_slots.
+  // Per-instance data is loaded at runtime from instance_ptr->ext_ref_bindings.
   struct ExternalRefResolutionEnv {
     const std::vector<mir::ExternalAccessRecipe>* recipes = nullptr;
   };
@@ -564,25 +564,9 @@ class Context {
 
   // Resolve external ref to runtime global_slot + type.
   // Emits LLVM IR that loads the design-global slot from the current
-  // instance's ext_ref_slots table.
+  // instance's ext_ref_bindings table.
   [[nodiscard]] auto ResolveExternalRefRoot(mir::ExternalRefId ref_id)
       -> ResolvedExternalRefRoot;
-
-  // Normalize an ExternalRefId to topology-resolved signal identity.
-  // Returns a compile-time constant SignalRef for trigger/sensitivity
-  // metadata. Per-instance external refs require per-instance trigger
-  // resolution (not yet implemented); this function uses the global_slot
-  // loaded from the current instance's ext_ref_slots table at construction
-  // time, which is correct for single-instance bodies and representative-
-  // correct for multi-instance bodies in the trigger/sensitivity path.
-  //
-  // TODO(hankhsu): Per-instance trigger/sensitivity resolution. The signal
-  // identity returned here is a compile-time constant derived from the
-  // per-instance table built at construction time. For multi-instance
-  // bodies, each instance would need its own trigger entries. This is a
-  // separate architectural change.
-  [[nodiscard]] auto NormalizeExternalRefSignalIdentity(
-      mir::ExternalRefId ref_id) const -> mir::SignalRef;
 
   // Get the type of an external ref from its recipe.
   [[nodiscard]] auto GetExternalRefType(mir::ExternalRefId ref_id) const
@@ -600,14 +584,9 @@ class Context {
 
   // Compute the typed signal coordinate for an external ref's storage.
   // Returns a runtime-loaded GlobalRuntime signal coord from the per-instance
-  // ext_ref_slots table.
+  // ext_ref_bindings table.
   [[nodiscard]] auto EmitExternalRefSignalCoord(mir::ExternalRefId ref_id)
       -> SignalCoordExpr;
-
-  // Get the target local slot for an external ref from the recipe.
-  // Compile-time constant, used for cross-instance local trigger identity.
-  [[nodiscard]] auto GetExternalRefTargetLocalSlot(
-      mir::ExternalRefId ref_id) const -> uint32_t;
 
   // Load ext_ref_bindings pointer from RuntimeInstance via instance_ptr_.
   [[nodiscard]] auto EmitLoadExtRefBindingsPtr() -> llvm::Value*;
@@ -726,7 +705,7 @@ class Context {
   // Legacy runtime-interop: resolve a signal reference to a design-global
   // slot index for runtime APIs that still use flat slot identity (trace
   // observation, packed store notifications). For module-local signals,
-  // maps through ResolveLegacyRepresentativeDesignSlot. For design-global
+  // maps through ResolveRepresentativeDesignSlot. For design-global
   // signals, returns the id directly.
   // Must NOT be used for spec compilation decisions -- only for runtime
   // signal identity at the codegen->runtime boundary.

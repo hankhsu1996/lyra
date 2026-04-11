@@ -60,17 +60,7 @@ class SignalCoordExpr {
     return e;
   }
 
-  // Runtime-loaded global signal. The slot ID is an LLVM Value loaded
-  // at runtime (e.g., from per-instance ext_ref_slots). Used by external-ref
-  // read address resolution.
-  static auto GlobalRuntime(llvm::Value* slot_value) -> SignalCoordExpr {
-    SignalCoordExpr e;
-    e.kind_ = Kind::kGlobal;
-    e.runtime_value_ = slot_value;
-    return e;
-  }
-
-  // External-ref write notification. Dirty mark resolves through
+  // External-ref write/NBA notification. Dirty mark resolves through
   // per-instance ext-ref target tables to the target instance's local signal.
   // value_ is the ext-ref recipe index.
   static auto ExtRef(uint32_t ref_index) -> SignalCoordExpr {

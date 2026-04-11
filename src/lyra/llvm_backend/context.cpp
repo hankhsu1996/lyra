@@ -490,23 +490,6 @@ auto Context::ResolveExternalRefRoot(mir::ExternalRefId ref_id)
   };
 }
 
-auto Context::NormalizeExternalRefSignalIdentity(
-    mir::ExternalRefId ref_id) const -> mir::SignalRef {
-  // Signal identity for external refs is per-instance (the design-global
-  // slot varies by instance position). The trigger/sensitivity system
-  // requires compile-time constant signal IDs, which cannot represent
-  // per-instance variation. This function is only reachable for processes
-  // with wait/sensitivity on external refs. Per-instance trigger descriptor
-  // resolution is a separate architectural cut.
-  (void)this;
-  throw common::InternalError(
-      "NormalizeExternalRefSignalIdentity",
-      std::format(
-          "external ref {} signal identity requires per-instance trigger "
-          "resolution (not yet implemented)",
-          ref_id.value));
-}
-
 auto Context::GetExternalRefType(mir::ExternalRefId ref_id) const -> TypeId {
   if (!ext_ref_env_.has_value() || ext_ref_env_->recipes == nullptr) {
     throw common::InternalError("GetExternalRefType", "env not installed");
@@ -548,22 +531,6 @@ auto Context::LoadExternalRef(mir::ExternalRefId ref_id)
 auto Context::EmitExternalRefSignalCoord(mir::ExternalRefId ref_id)
     -> SignalCoordExpr {
   return SignalCoordExpr::ExtRef(ref_id.value);
-}
-
-auto Context::GetExternalRefTargetLocalSlot(mir::ExternalRefId ref_id) const
-    -> uint32_t {
-  if (!ext_ref_env_.has_value() || ext_ref_env_->recipes == nullptr) {
-    throw common::InternalError(
-        "GetExternalRefTargetLocalSlot", "no external ref env");
-  }
-  const auto& recipes = *ext_ref_env_->recipes;
-  if (ref_id.value >= recipes.size()) {
-    throw common::InternalError(
-        "GetExternalRefTargetLocalSlot",
-        std::format(
-            "ref_id {} out of range ({})", ref_id.value, recipes.size()));
-  }
-  return recipes[ref_id.value].target.target_slot.value;
 }
 
 auto Context::EmitLoadExtRefBindingsPtr() -> llvm::Value* {
