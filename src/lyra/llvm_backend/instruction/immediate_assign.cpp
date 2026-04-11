@@ -321,7 +321,7 @@ auto LowerAssign(
     Context& context, const CuFacts& facts, SlotAccessResolver& resolver,
     const mir::Assign& assign) -> Result<void> {
   const auto& dest = assign.dest;
-  auto* dest_place = std::get_if<mir::PlaceId>(&dest);
+  const auto* dest_place = std::get_if<mir::PlaceId>(&dest);
 
   // PlaceId-only paths: managed slots and bit-range projections.
   // External refs are design-global with no projections, so these
@@ -428,7 +428,7 @@ auto LowerGuardedAssign(
     Context& context, const CuFacts& facts, SlotAccessResolver& resolver,
     const mir::GuardedAssign& guarded) -> Result<void> {
   const auto& dest = guarded.dest;
-  auto* dest_place = std::get_if<mir::PlaceId>(&dest);
+  const auto* dest_place = std::get_if<mir::PlaceId>(&dest);
   auto& builder = context.GetBuilder();
   const auto& types = *facts.types;
   TypeId dest_type_id = detail::ResolveDestType(context, facts, dest);
