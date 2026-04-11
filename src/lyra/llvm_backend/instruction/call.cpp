@@ -146,8 +146,8 @@ auto LowerUserCallImpl(
       }
 
       auto abi_info = ClassifyCallableValueAbi(
-          context.GetLlvmContext(), param.type, context.GetTypeArena(),
-          context.IsForceTwoState());
+          context.GetLlvmContext(), param.type, *facts.types,
+          facts.force_two_state);
       if (!abi_info) {
         throw common::InternalError(
             "LowerUserCall",
@@ -215,7 +215,7 @@ auto LowerUserCallImpl(
   auto tmp_ptr = context.GetPlacePointer(call.ret->tmp);
   if (!tmp_ptr) return std::unexpected(tmp_ptr.error());
 
-  const auto& types = context.GetTypeArena();
+  const auto& types = *facts.types;
   const Type& ret_type = types[return_type];
   bool is_managed = ret_type.Kind() == TypeKind::kString ||
                     ret_type.Kind() == TypeKind::kDynamicArray ||
@@ -291,7 +291,7 @@ auto LowerCall(
           },
           [&](const mir::DesignFunctionRef& ref) -> Result<void> {
             const auto& entry = context.GetDesignFunction(ref.symbol);
-            const auto& func = context.GetDesignArena()[entry.func_id];
+            const auto& func = (*facts.design_arena)[entry.func_id];
             ResolvedCallee resolved{
                 .llvm_func = entry.llvm_func,
                 .signature = &func.signature,
@@ -316,7 +316,7 @@ auto LowerValuePlusargsCall(
     Context& context, const CuFacts& facts, const mir::Call& call)
     -> Result<void> {
   auto& builder = context.GetBuilder();
-  const auto& types = context.GetTypeArena();
+  const auto& types = *facts.types;
 
   // Validate shape: 1 in_arg (query), optional ret (success), 1 writeback
   // (output)
@@ -392,7 +392,7 @@ auto LowerValuePlusargsCall(
 }
 
 auto LowerFgetsCall(
-    Context& context, const CuFacts& facts, const mir::Call& call)
+    Context& context, const CuFacts& /*facts*/, const mir::Call& call)
     -> Result<void> {
   auto& builder = context.GetBuilder();
 
@@ -452,7 +452,7 @@ auto LowerFreadCall(
     Context& context, const CuFacts& facts, const mir::Call& call)
     -> Result<void> {
   auto& builder = context.GetBuilder();
-  const auto& types = context.GetTypeArena();
+  const auto& types = *facts.types;
 
   // Validate shape: 5 in_args, optional ret (bytes_read), 1 writeback (target)
   // in_args: [descriptor, element_width, is_memory, start, count]
@@ -614,7 +614,7 @@ auto LowerFreadCall(
 }
 
 auto LowerFscanfCall(
-    Context& context, const CuFacts& facts, const mir::Call& call)
+    Context& context, const CuFacts& /*facts*/, const mir::Call& call)
     -> Result<void> {
   auto& builder = context.GetBuilder();
 

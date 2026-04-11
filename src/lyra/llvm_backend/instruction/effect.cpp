@@ -42,7 +42,7 @@ namespace lyra::lowering::mir_to_llvm {
 namespace {
 
 auto LowerTimeFormatEffect(
-    Context& context, const CuFacts& facts, const mir::TimeFormatEffect& tf)
+    Context& context, const CuFacts& /*facts*/, const mir::TimeFormatEffect& tf)
     -> Result<void> {
   auto& builder = context.GetBuilder();
   auto& llvm_ctx = context.GetLlvmContext();
@@ -67,7 +67,7 @@ auto LowerTimeFormatEffect(
 }
 
 auto LowerStrobeEffect(
-    Context& context, const CuFacts& facts, const mir::StrobeEffect& strobe)
+    Context& context, const CuFacts& /*facts*/, const mir::StrobeEffect& strobe)
     -> Result<void> {
   // Get the strobe program function (already declared via DeclareMirFunction)
   llvm::Function* program_fn = context.GetDeclaredFunction(strobe.program);
@@ -96,8 +96,8 @@ auto LowerStrobeEffect(
 }
 
 auto LowerMonitorEffect(
-    Context& context, const CuFacts& facts, const mir::MonitorEffect& monitor)
-    -> Result<void> {
+    Context& context, const CuFacts& /*facts*/,
+    const mir::MonitorEffect& monitor) -> Result<void> {
   // Get the setup program (already declared via DeclareMirFunction).
   // The setup program handles: initial print, serialization, and registration.
   llvm::Function* setup_fn = context.GetDeclaredFunction(monitor.setup_program);
@@ -124,7 +124,7 @@ auto LowerMonitorEffect(
 }
 
 auto LowerMonitorControlEffect(
-    Context& context, const CuFacts& facts,
+    Context& context, const CuFacts& /*facts*/,
     const mir::MonitorControlEffect& control) -> Result<void> {
   auto& builder = context.GetBuilder();
 
@@ -346,7 +346,7 @@ auto LowerFillPackedEffect(
     Context& context, const CuFacts& facts, const mir::FillPackedEffect& fill)
     -> Result<void> {
   auto& builder = context.GetBuilder();
-  const auto& types = context.GetTypeArena();
+  const auto& types = *facts.types;
   const auto& arena = context.GetMirArena();
 
   // Validate effect invariants
@@ -372,7 +372,7 @@ auto LowerFillPackedEffect(
       .total_bits = fill.total_bits,
       .element_bits = fill.unit_bits,
       .element_count = fill.count,
-      .is_four_state = context.IsPackedFourState(target_type),
+      .is_four_state = IsPackedFourState(facts, target_type),
       .storage_type = *storage_type_result,
   };
 
@@ -403,7 +403,7 @@ auto LowerMemIOEffect(
     -> Result<void> {
   auto& builder = context.GetBuilder();
   auto& llvm_ctx = context.GetLlvmContext();
-  const auto& types = context.GetTypeArena();
+  const auto& types = *facts.types;
 
   // Get array type info from target_type
   const Type& arr_type = types[mem_io.target_type];
@@ -424,7 +424,7 @@ auto LowerMemIOEffect(
   }
 
   // Determine if 4-state
-  bool is_four_state = context.IsPackedFourState(elem_type);
+  bool is_four_state = IsPackedFourState(facts, elem_type);
 
   // Extract type info
   auto element_width = static_cast<int32_t>(PackedBitWidth(elem_type, types));
@@ -645,7 +645,7 @@ auto LowerEffectOp(
             }
             auto& builder = context.GetBuilder();
             auto& llvm_ctx = context.GetLlvmContext();
-            const auto& types = context.GetTypeArena();
+            const auto& types = *facts.types;
             auto* engine_ptr = context.GetEnginePointer();
             auto* ptr_ty = llvm::PointerType::getUnqual(llvm_ctx);
             auto* i32_ty = llvm::Type::getInt32Ty(llvm_ctx);
@@ -738,7 +738,7 @@ auto LowerEffectOp(
               if (!enq.snapshot_values.empty()) {
                 auto* payload_struct_ty = BuildDeferredPayloadStructType(
                     llvm_ctx, plan.payload.field_types, types,
-                    context.IsForceTwoState());
+                    facts.force_two_state);
 
                 auto* alloca = builder.CreateAlloca(
                     payload_struct_ty, nullptr, "deferred.payload");

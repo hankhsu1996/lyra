@@ -235,11 +235,11 @@ auto LowerTimeOp(
 }
 
 auto LowerValueOp(
-    Context& context, SlotAccessResolver& resolver, const mir::FormatOp& op)
-    -> Result<void> {
+    Context& context, const CuFacts& facts, SlotAccessResolver& resolver,
+    const mir::FormatOp& op) -> Result<void> {
   auto& builder = context.GetBuilder();
   auto& llvm_ctx = context.GetLlvmContext();
-  const auto& types = context.GetTypeArena();
+  const auto& types = *facts.types;
 
   auto* i32_ty = llvm::Type::getInt32Ty(llvm_ctx);
   auto* i1_ty = llvm::Type::getInt1Ty(llvm_ctx);
@@ -257,7 +257,7 @@ auto LowerValueOp(
     if (ty.Kind() == TypeKind::kIntegral) {
       width = static_cast<int32_t>(ty.AsIntegral().bit_width);
       is_signed = ty.AsIntegral().is_signed;
-      is_four_state = context.IsPackedFourState(ty);
+      is_four_state = IsPackedFourState(facts, ty);
     } else if (ty.Kind() == TypeKind::kReal) {
       value_kind = runtime::RuntimeValueKind::kReal64;
       width = 64;
@@ -267,7 +267,7 @@ auto LowerValueOp(
     } else if (IsPacked(ty)) {
       width = static_cast<int32_t>(PackedBitWidth(ty, types));
       is_signed = IsPackedSigned(ty, types);
-      is_four_state = context.IsPackedFourState(ty);
+      is_four_state = IsPackedFourState(facts, ty);
     }
   }
 
@@ -344,7 +344,7 @@ auto LowerValueOp(
 }
 
 auto LowerFormatOps(
-    Context& context, SlotAccessResolver& resolver,
+    Context& context, const CuFacts& facts, SlotAccessResolver& resolver,
     std::span<const mir::FormatOp> ops) -> Result<void> {
   for (const auto& op : ops) {
     Result<void> result;
@@ -362,7 +362,7 @@ auto LowerFormatOps(
         LowerModulePathOp(context);
         break;
       default:
-        result = LowerValueOp(context, resolver, op);
+        result = LowerValueOp(context, facts, resolver, op);
         break;
     }
     if (!result) {
@@ -410,7 +410,7 @@ auto LowerDisplayEffect(
     return {};
   }
 
-  auto result = LowerFormatOps(context, resolver, display.ops);
+  auto result = LowerFormatOps(context, facts, resolver, display.ops);
   if (!result) return result;
 
   auto& builder = context.GetBuilder();

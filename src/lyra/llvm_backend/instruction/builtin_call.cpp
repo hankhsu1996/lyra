@@ -33,9 +33,10 @@ struct QueueTypeInfo {
   Context::ElemOpsInfo elem_ops{};
 };
 
-auto GetQueueTypeInfo(Context& context, mir::PlaceId receiver)
+auto GetQueueTypeInfo(
+    Context& context, const CuFacts& facts, mir::PlaceId receiver)
     -> Result<QueueTypeInfo> {
-  const auto& types = context.GetTypeArena();
+  const auto& types = *facts.types;
   const auto& arena = context.GetMirArena();
   const auto& recv_place = arena[receiver];
   TypeId recv_type_id = mir::TypeOfPlace(types, recv_place);
@@ -69,7 +70,8 @@ auto LowerArrayDelete(Context& context, const mir::BuiltinCall& call)
   return {};
 }
 
-auto LowerQueueDelete(Context& context, const mir::BuiltinCall& call)
+auto LowerQueueDelete(
+    Context& context, const CuFacts& facts, const mir::BuiltinCall& call)
     -> Result<void> {
   auto& builder = context.GetBuilder();
   auto* ptr_ty = llvm::PointerType::getUnqual(context.GetLlvmContext());
@@ -81,7 +83,7 @@ auto LowerQueueDelete(Context& context, const mir::BuiltinCall& call)
   // Get receiver TypeId for typed teardown
   const auto& arena = context.GetMirArena();
   const auto& recv_place = arena[call.receiver];
-  TypeId recv_type_id = mir::TypeOfPlace(context.GetTypeArena(), recv_place);
+  TypeId recv_type_id = mir::TypeOfPlace(*facts.types, recv_place);
 
   // Typed teardown via lifecycle (loads handle, calls release)
   Destroy(context, recv_ptr, recv_type_id);
@@ -114,7 +116,8 @@ auto LowerQueueDeleteAt(Context& context, const mir::BuiltinCall& call)
   return {};
 }
 
-auto LowerQueuePushBack(Context& context, const mir::BuiltinCall& call)
+auto LowerQueuePushBack(
+    Context& context, const CuFacts& facts, const mir::BuiltinCall& call)
     -> Result<void> {
   auto& builder = context.GetBuilder();
   auto* i32_ty = llvm::Type::getInt32Ty(context.GetLlvmContext());
@@ -123,7 +126,7 @@ auto LowerQueuePushBack(Context& context, const mir::BuiltinCall& call)
   if (!recv_ptr_or_err) return std::unexpected(recv_ptr_or_err.error());
   llvm::Value* recv_ptr = *recv_ptr_or_err;
 
-  auto qi_result = GetQueueTypeInfo(context, call.receiver);
+  auto qi_result = GetQueueTypeInfo(context, facts, call.receiver);
   if (!qi_result) return std::unexpected(qi_result.error());
   auto qi = *qi_result;
 
@@ -146,7 +149,8 @@ auto LowerQueuePushBack(Context& context, const mir::BuiltinCall& call)
   return {};
 }
 
-auto LowerQueuePushFront(Context& context, const mir::BuiltinCall& call)
+auto LowerQueuePushFront(
+    Context& context, const CuFacts& facts, const mir::BuiltinCall& call)
     -> Result<void> {
   auto& builder = context.GetBuilder();
   auto* i32_ty = llvm::Type::getInt32Ty(context.GetLlvmContext());
@@ -155,7 +159,7 @@ auto LowerQueuePushFront(Context& context, const mir::BuiltinCall& call)
   if (!recv_ptr_or_err) return std::unexpected(recv_ptr_or_err.error());
   llvm::Value* recv_ptr = *recv_ptr_or_err;
 
-  auto qi_result = GetQueueTypeInfo(context, call.receiver);
+  auto qi_result = GetQueueTypeInfo(context, facts, call.receiver);
   if (!qi_result) return std::unexpected(qi_result.error());
   auto qi = *qi_result;
 
@@ -231,7 +235,8 @@ auto LowerQueuePopFront(Context& context, const mir::BuiltinCall& call)
   return {};
 }
 
-auto LowerQueueInsert(Context& context, const mir::BuiltinCall& call)
+auto LowerQueueInsert(
+    Context& context, const CuFacts& facts, const mir::BuiltinCall& call)
     -> Result<void> {
   auto& builder = context.GetBuilder();
   auto* i32_ty = llvm::Type::getInt32Ty(context.GetLlvmContext());
@@ -241,7 +246,7 @@ auto LowerQueueInsert(Context& context, const mir::BuiltinCall& call)
   if (!recv_ptr_or_err) return std::unexpected(recv_ptr_or_err.error());
   llvm::Value* recv_ptr = *recv_ptr_or_err;
 
-  auto qi_result = GetQueueTypeInfo(context, call.receiver);
+  auto qi_result = GetQueueTypeInfo(context, facts, call.receiver);
   if (!qi_result) return std::unexpected(qi_result.error());
   auto qi = *qi_result;
 
@@ -280,19 +285,19 @@ auto LowerBuiltinCall(
     case mir::BuiltinMethod::kArrayDelete:
       return LowerArrayDelete(context, call);
     case mir::BuiltinMethod::kQueueDelete:
-      return LowerQueueDelete(context, call);
+      return LowerQueueDelete(context, facts, call);
     case mir::BuiltinMethod::kQueueDeleteAt:
       return LowerQueueDeleteAt(context, call);
     case mir::BuiltinMethod::kQueuePushBack:
-      return LowerQueuePushBack(context, call);
+      return LowerQueuePushBack(context, facts, call);
     case mir::BuiltinMethod::kQueuePushFront:
-      return LowerQueuePushFront(context, call);
+      return LowerQueuePushFront(context, facts, call);
     case mir::BuiltinMethod::kQueuePopBack:
       return LowerQueuePopBack(context, call);
     case mir::BuiltinMethod::kQueuePopFront:
       return LowerQueuePopFront(context, call);
     case mir::BuiltinMethod::kQueueInsert:
-      return LowerQueueInsert(context, call);
+      return LowerQueueInsert(context, facts, call);
 
     default:
       throw common::InternalError(
