@@ -62,7 +62,8 @@ auto GetSignalCoordForNba(Context& ctx, mir::PlaceId target) -> SignalCoordExpr;
 // Caller provides PlaceId; commit verifies temp-ness and calls
 // lifecycle::MoveCleanup.
 void CommitMoveCleanupIfTemp(
-    Context& ctx, mir::PlaceId source, OwnershipPolicy policy, TypeId type_id);
+    Context& ctx, const CuFacts& facts, mir::PlaceId source,
+    OwnershipPolicy policy, TypeId type_id);
 
 // Struct field-by-field assignment for structs containing string fields.
 // Handles design-slot detection internally, returning error if design slot

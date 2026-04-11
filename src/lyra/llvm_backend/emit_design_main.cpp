@@ -133,7 +133,7 @@ void InitializeProcessState(
       continue;
     }
     auto* field_ptr = builder.CreateStructGEP(frame_type, frame_ptr, i);
-    EmitSVDefaultInitAfterZero(context, field_ptr, type_id);
+    EmitSVDefaultInitAfterZero(context, context.GetFacts(), field_ptr, type_id);
   }
 }
 

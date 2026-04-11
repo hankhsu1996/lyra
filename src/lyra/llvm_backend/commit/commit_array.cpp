@@ -48,9 +48,11 @@ auto AssignElement(
   if (elem_type.Kind() == TypeKind::kString) {
     // Use symmetric lifecycle API for string element assignment.
     if (policy == OwnershipPolicy::kClone) {
-      CopyAssign(context, target_elem_ptr, source_elem_ptr, elem_type_id);
+      CopyAssign(
+          context, facts, target_elem_ptr, source_elem_ptr, elem_type_id);
     } else {
-      MoveAssign(context, target_elem_ptr, source_elem_ptr, elem_type_id);
+      MoveAssign(
+          context, facts, target_elem_ptr, source_elem_ptr, elem_type_id);
     }
     return {};
   }
@@ -96,9 +98,11 @@ auto AssignStructField(
   if (field_type.Kind() == TypeKind::kString) {
     // Use symmetric lifecycle API for string field assignment.
     if (policy == OwnershipPolicy::kClone) {
-      CopyAssign(context, target_field_ptr, source_field_ptr, field_type_id);
+      CopyAssign(
+          context, facts, target_field_ptr, source_field_ptr, field_type_id);
     } else {
-      MoveAssign(context, target_field_ptr, source_field_ptr, field_type_id);
+      MoveAssign(
+          context, facts, target_field_ptr, source_field_ptr, field_type_id);
     }
     return {};
   }

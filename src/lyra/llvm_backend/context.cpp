@@ -318,7 +318,7 @@ void Context::InitializePlaceStorage(llvm::AllocaInst* alloca, TypeId type_id) {
   // EmitSVDefaultInit may create new basic blocks (e.g., for large 4-state
   // unpacked array init loops), which is only valid at the current control
   // flow point, not in the entry block after allocas.
-  EmitSVDefaultInit(*this, alloca, type_id);
+  EmitSVDefaultInit(*this, GetFacts(), alloca, type_id);
 }
 
 // GetDesignFieldIndex removed -- DesignState is byte arena, not struct.

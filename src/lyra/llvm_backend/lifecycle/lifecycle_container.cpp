@@ -6,6 +6,7 @@
 #include "lyra/common/internal_error.hpp"
 #include "lyra/common/type.hpp"
 #include "lyra/llvm_backend/context.hpp"
+#include "lyra/llvm_backend/cu_facts.hpp"
 
 namespace lyra::lowering::mir_to_llvm::detail {
 
@@ -24,7 +25,7 @@ void DestroyContainer(Context& ctx, llvm::Value* ptr, TypeId type_id) {
   auto* handle_ty = GetContainerHandleType(ctx);
   auto* handle = builder.CreateLoad(handle_ty, ptr, "destroy.ctr");
 
-  const auto& types = ctx.GetTypeArena();
+  const auto& types = *ctx.GetFacts().types;
   if (types[type_id].Kind() == TypeKind::kAssociativeArray) {
     builder.CreateCall(ctx.GetLyraAssocRelease(), {handle});
   } else {
@@ -34,7 +35,7 @@ void DestroyContainer(Context& ctx, llvm::Value* ptr, TypeId type_id) {
 
 auto CloneContainer(Context& ctx, llvm::Value* handle, TypeId type_id)
     -> llvm::Value* {
-  const auto& types = ctx.GetTypeArena();
+  const auto& types = *ctx.GetFacts().types;
   if (types[type_id].Kind() == TypeKind::kAssociativeArray) {
     return ctx.GetBuilder().CreateCall(ctx.GetLyraAssocClone(), {handle});
   }
@@ -50,7 +51,7 @@ void MoveCleanupContainer(Context& ctx, llvm::Value* ptr) {
 
 void CopyInitContainer(
     Context& ctx, llvm::Value* dst_ptr, llvm::Value* src_ptr, TypeId type_id) {
-  const auto& types = ctx.GetTypeArena();
+  const auto& types = *ctx.GetFacts().types;
   const Type& type = types[type_id];
 
   auto& builder = ctx.GetBuilder();

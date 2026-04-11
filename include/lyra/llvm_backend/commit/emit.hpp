@@ -19,8 +19,9 @@ struct WriteTarget;
 // Not for direct use by instruction-level code.
 
 auto CommitStringValue(
-    Context& ctx, const WriteTarget& wt, llvm::Value* handle,
-    OwnershipPolicy policy, TypeId type_id) -> Result<void>;
+    Context& ctx, const CuFacts& facts, const WriteTarget& wt,
+    llvm::Value* handle, OwnershipPolicy policy, TypeId type_id)
+    -> Result<void>;
 
 auto CommitContainerValue(
     Context& ctx, const CuFacts& facts, const WriteTarget& wt,

@@ -27,7 +27,8 @@ auto CommitValue(
 }
 
 void CommitMoveCleanupIfTemp(
-    Context& ctx, mir::PlaceId source, OwnershipPolicy policy, TypeId type_id) {
+    Context& ctx, const CuFacts& facts, mir::PlaceId source,
+    OwnershipPolicy policy, TypeId type_id) {
   // Gate 1: Only kMove requires null-out
   if (policy != OwnershipPolicy::kMove) {
     return;
@@ -52,7 +53,7 @@ void CommitMoveCleanupIfTemp(
   }
 
   // Null out managed fields in source (delegate to lifecycle module)
-  MoveCleanup(ctx, *src_ptr_result, type_id);
+  MoveCleanup(ctx, facts, *src_ptr_result, type_id);
 }
 
 }  // namespace lyra::lowering::mir_to_llvm

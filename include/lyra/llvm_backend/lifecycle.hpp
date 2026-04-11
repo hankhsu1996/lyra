@@ -7,6 +7,7 @@
 namespace lyra::lowering::mir_to_llvm {
 
 class Context;
+struct CuFacts;
 
 // Lifecycle API Contracts
 //
@@ -54,7 +55,8 @@ class Context;
 // - UnpackedUnion: no-op (2-state only, no managed content)
 // - UnpackedArray: recurse for managed elements
 // - Void: InternalError
-void Destroy(Context& ctx, llvm::Value* ptr, TypeId type_id);
+void Destroy(
+    Context& ctx, const CuFacts& facts, llvm::Value* ptr, TypeId type_id);
 
 // Copy-initialize dst_ptr from src_ptr (dst is uninitialized).
 //
@@ -67,22 +69,26 @@ void Destroy(Context& ctx, llvm::Value* ptr, TypeId type_id);
 // - UnpackedArray: recurse element-by-element
 // - Void: InternalError
 void CopyInit(
-    Context& ctx, llvm::Value* dst_ptr, llvm::Value* src_ptr, TypeId type_id);
+    Context& ctx, const CuFacts& facts, llvm::Value* dst_ptr,
+    llvm::Value* src_ptr, TypeId type_id);
 
 // Copy-assign src_ptr to dst_ptr (dst may hold a live value).
 // Equivalent to: Destroy(dst) + CopyInit(dst, src)
 void CopyAssign(
-    Context& ctx, llvm::Value* dst_ptr, llvm::Value* src_ptr, TypeId type_id);
+    Context& ctx, const CuFacts& facts, llvm::Value* dst_ptr,
+    llvm::Value* src_ptr, TypeId type_id);
 
 // Move-initialize dst_ptr from src_ptr (dst is uninitialized).
 // Transfers ownership: loads from src, stores to dst, nulls out src.
 // More efficient than CopyInit (no retain/clone).
 void MoveInit(
-    Context& ctx, llvm::Value* dst_ptr, llvm::Value* src_ptr, TypeId type_id);
+    Context& ctx, const CuFacts& facts, llvm::Value* dst_ptr,
+    llvm::Value* src_ptr, TypeId type_id);
 
 // Move-assign src_ptr to dst_ptr (dst may hold a live value).
 // Equivalent to: Destroy(dst) + MoveInit(dst, src)
 void MoveAssign(
-    Context& ctx, llvm::Value* dst_ptr, llvm::Value* src_ptr, TypeId type_id);
+    Context& ctx, const CuFacts& facts, llvm::Value* dst_ptr,
+    llvm::Value* src_ptr, TypeId type_id);
 
 }  // namespace lyra::lowering::mir_to_llvm

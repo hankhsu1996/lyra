@@ -113,10 +113,11 @@ void StoreStringToWriteTarget(
 
 // String store: clone if kClone, then store via WriteTarget
 auto CommitStringValue(
-    Context& ctx, const WriteTarget& wt, llvm::Value* handle,
-    OwnershipPolicy policy, TypeId type_id) -> Result<void> {
+    Context& ctx, const CuFacts& facts, const WriteTarget& wt,
+    llvm::Value* handle, OwnershipPolicy policy, TypeId type_id)
+    -> Result<void> {
   if (policy == OwnershipPolicy::kClone) {
-    handle = CloneLeafValue(ctx, handle, type_id);
+    handle = CloneLeafValue(ctx, facts, handle, type_id);
   }
   // kMove: handle already has ownership, no retain needed
   StoreStringToWriteTarget(ctx, handle, wt);

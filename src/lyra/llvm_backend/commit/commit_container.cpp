@@ -64,7 +64,7 @@ void StoreContainerToWriteTarget(
   };
 
   auto emit_plain_store = [&]() {
-    Destroy(ctx, wt.ptr, type_id);
+    Destroy(ctx, facts, wt.ptr, type_id);
     builder.CreateStore(new_handle, wt.ptr);
   };
 
@@ -106,7 +106,7 @@ auto CommitContainerValue(
   }
 
   if (policy == OwnershipPolicy::kClone) {
-    handle = CloneLeafValue(ctx, handle, type_id);
+    handle = CloneLeafValue(ctx, facts, handle, type_id);
   }
   // kMove: handle already has ownership, no clone needed
   StoreContainerToWriteTarget(ctx, facts, handle, wt, type_id);

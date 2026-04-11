@@ -45,11 +45,13 @@ auto AssignField(
     // CopyAssign: Destroy(dst) + CopyInit(dst, src) - src unchanged
     // MoveAssign: Destroy(dst) + MoveInit(dst, src) - src nulled per-field
     if (policy == OwnershipPolicy::kClone) {
-      CopyAssign(context, target_field_ptr, source_field_ptr, field_type_id);
+      CopyAssign(
+          context, facts, target_field_ptr, source_field_ptr, field_type_id);
     } else {
       // kMove: MoveAssign handles destroy old dst, transfer value, null out
       // src. Source null-out is per-field (not deferred to struct level).
-      MoveAssign(context, target_field_ptr, source_field_ptr, field_type_id);
+      MoveAssign(
+          context, facts, target_field_ptr, source_field_ptr, field_type_id);
     }
     return {};
   }

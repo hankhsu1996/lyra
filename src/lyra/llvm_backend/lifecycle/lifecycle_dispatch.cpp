@@ -5,6 +5,7 @@
 #include "lyra/common/internal_error.hpp"
 #include "lyra/common/type.hpp"
 #include "lyra/llvm_backend/context.hpp"
+#include "lyra/llvm_backend/cu_facts.hpp"
 #include "lyra/llvm_backend/lifecycle.hpp"
 #include "lyra/llvm_backend/lifecycle/detail.hpp"
 #include "lyra/llvm_backend/lifecycle/lifecycle_array.hpp"
@@ -18,7 +19,8 @@ namespace detail {
 // Destroy helpers (defined in lifecycle_*.cpp files)
 void DestroyString(Context& ctx, llvm::Value* ptr);
 void DestroyContainer(Context& ctx, llvm::Value* ptr, TypeId type_id);
-void DestroyStruct(Context& ctx, llvm::Value* ptr, TypeId type_id);
+void DestroyStruct(
+    Context& ctx, const CuFacts& facts, llvm::Value* ptr, TypeId type_id);
 
 // Clone helpers (defined in lifecycle_*.cpp files)
 auto CloneString(Context& ctx, llvm::Value* handle) -> llvm::Value*;
@@ -28,26 +30,30 @@ auto CloneContainer(Context& ctx, llvm::Value* handle, TypeId type_id)
 // MoveCleanup leaf helpers (defined in lifecycle_*.cpp files)
 void MoveCleanupString(Context& ctx, llvm::Value* ptr);
 void MoveCleanupContainer(Context& ctx, llvm::Value* ptr);
-void MoveCleanupStruct(Context& ctx, llvm::Value* ptr, TypeId type_id);
+void MoveCleanupStruct(
+    Context& ctx, const CuFacts& facts, llvm::Value* ptr, TypeId type_id);
 
 // CopyInit helpers (defined in lifecycle_*.cpp files)
 void CopyInitString(Context& ctx, llvm::Value* dst_ptr, llvm::Value* src_ptr);
 void CopyInitContainer(
     Context& ctx, llvm::Value* dst_ptr, llvm::Value* src_ptr, TypeId type_id);
 void CopyInitStruct(
-    Context& ctx, llvm::Value* dst_ptr, llvm::Value* src_ptr, TypeId type_id);
+    Context& ctx, const CuFacts& facts, llvm::Value* dst_ptr,
+    llvm::Value* src_ptr, TypeId type_id);
 
 // MoveInit helpers (defined in lifecycle_*.cpp files)
 void MoveInitString(Context& ctx, llvm::Value* dst_ptr, llvm::Value* src_ptr);
 void MoveInitContainer(
     Context& ctx, llvm::Value* dst_ptr, llvm::Value* src_ptr);
 void MoveInitStruct(
-    Context& ctx, llvm::Value* dst_ptr, llvm::Value* src_ptr, TypeId type_id);
+    Context& ctx, const CuFacts& facts, llvm::Value* dst_ptr,
+    llvm::Value* src_ptr, TypeId type_id);
 
 }  // namespace detail
 
-void Destroy(Context& ctx, llvm::Value* ptr, TypeId type_id) {
-  const auto& types = ctx.GetTypeArena();
+void Destroy(
+    Context& ctx, const CuFacts& facts, llvm::Value* ptr, TypeId type_id) {
+  const auto& types = *facts.types;
 
   // Early exit for POD types
   if (!mir_to_llvm::TypeContainsManaged(type_id, types)) {
@@ -70,11 +76,11 @@ void Destroy(Context& ctx, llvm::Value* ptr, TypeId type_id) {
       return;
 
     case TypeKind::kUnpackedStruct:
-      detail::DestroyStruct(ctx, ptr, type_id);
+      detail::DestroyStruct(ctx, facts, ptr, type_id);
       return;
 
     case TypeKind::kUnpackedArray:
-      detail::DestroyArray(ctx, ptr, type_id);
+      detail::DestroyArray(ctx, facts, ptr, type_id);
       return;
 
     default:
@@ -88,9 +94,10 @@ void Destroy(Context& ctx, llvm::Value* ptr, TypeId type_id) {
   }
 }
 
-auto CloneLeafValue(Context& ctx, llvm::Value* value, TypeId type_id)
+auto CloneLeafValue(
+    Context& ctx, const CuFacts& facts, llvm::Value* value, TypeId type_id)
     -> llvm::Value* {
-  const auto& types = ctx.GetTypeArena();
+  const auto& types = *facts.types;
 
   // Early exit for non-managed types: return value unchanged
   if (!mir_to_llvm::TypeContainsManaged(type_id, types)) {
@@ -129,8 +136,9 @@ auto CloneLeafValue(Context& ctx, llvm::Value* value, TypeId type_id)
 }
 
 void CopyInit(
-    Context& ctx, llvm::Value* dst_ptr, llvm::Value* src_ptr, TypeId type_id) {
-  const auto& types = ctx.GetTypeArena();
+    Context& ctx, const CuFacts& facts, llvm::Value* dst_ptr,
+    llvm::Value* src_ptr, TypeId type_id) {
+  const auto& types = *facts.types;
 
   // POD types: simple load + store
   if (!mir_to_llvm::TypeContainsManaged(type_id, types)) {
@@ -153,11 +161,11 @@ void CopyInit(
       return;
 
     case TypeKind::kUnpackedStruct:
-      detail::CopyInitStruct(ctx, dst_ptr, src_ptr, type_id);
+      detail::CopyInitStruct(ctx, facts, dst_ptr, src_ptr, type_id);
       return;
 
     case TypeKind::kUnpackedArray:
-      detail::CopyInitArray(ctx, dst_ptr, src_ptr, type_id);
+      detail::CopyInitArray(ctx, facts, dst_ptr, src_ptr, type_id);
       return;
 
     default:
@@ -169,20 +177,22 @@ void CopyInit(
 }
 
 void CopyAssign(
-    Context& ctx, llvm::Value* dst_ptr, llvm::Value* src_ptr, TypeId type_id) {
+    Context& ctx, const CuFacts& facts, llvm::Value* dst_ptr,
+    llvm::Value* src_ptr, TypeId type_id) {
   // CopyAssign = Destroy(dst) + CopyInit(dst, src)
-  Destroy(ctx, dst_ptr, type_id);
-  CopyInit(ctx, dst_ptr, src_ptr, type_id);
+  Destroy(ctx, facts, dst_ptr, type_id);
+  CopyInit(ctx, facts, dst_ptr, src_ptr, type_id);
 }
 
 void MoveInit(
-    Context& ctx, llvm::Value* dst_ptr, llvm::Value* src_ptr, TypeId type_id) {
+    Context& ctx, const CuFacts& facts, llvm::Value* dst_ptr,
+    llvm::Value* src_ptr, TypeId type_id) {
   // Self-move is a no-op (avoids nulling out dst when dst == src)
   if (dst_ptr == src_ptr) {
     return;
   }
 
-  const auto& types = ctx.GetTypeArena();
+  const auto& types = *facts.types;
 
   // POD types: simple load + store (no cleanup needed)
   if (!mir_to_llvm::TypeContainsManaged(type_id, types)) {
@@ -205,11 +215,11 @@ void MoveInit(
       return;
 
     case TypeKind::kUnpackedStruct:
-      detail::MoveInitStruct(ctx, dst_ptr, src_ptr, type_id);
+      detail::MoveInitStruct(ctx, facts, dst_ptr, src_ptr, type_id);
       return;
 
     case TypeKind::kUnpackedArray:
-      detail::MoveInitArray(ctx, dst_ptr, src_ptr, type_id);
+      detail::MoveInitArray(ctx, facts, dst_ptr, src_ptr, type_id);
       return;
 
     default:
@@ -221,18 +231,20 @@ void MoveInit(
 }
 
 void MoveAssign(
-    Context& ctx, llvm::Value* dst_ptr, llvm::Value* src_ptr, TypeId type_id) {
+    Context& ctx, const CuFacts& facts, llvm::Value* dst_ptr,
+    llvm::Value* src_ptr, TypeId type_id) {
   // Self-assign is a no-op (avoids destroy + null-out when dst == src)
   if (dst_ptr == src_ptr) {
     return;
   }
   // MoveAssign = Destroy(dst) + MoveInit(dst, src)
-  Destroy(ctx, dst_ptr, type_id);
-  MoveInit(ctx, dst_ptr, src_ptr, type_id);
+  Destroy(ctx, facts, dst_ptr, type_id);
+  MoveInit(ctx, facts, dst_ptr, src_ptr, type_id);
 }
 
-void MoveCleanup(Context& ctx, llvm::Value* src_ptr, TypeId type_id) {
-  const auto& types = ctx.GetTypeArena();
+void MoveCleanup(
+    Context& ctx, const CuFacts& facts, llvm::Value* src_ptr, TypeId type_id) {
+  const auto& types = *facts.types;
 
   // Early exit for POD types
   if (!mir_to_llvm::TypeContainsManaged(type_id, types)) {
@@ -254,11 +266,11 @@ void MoveCleanup(Context& ctx, llvm::Value* src_ptr, TypeId type_id) {
       return;
 
     case TypeKind::kUnpackedStruct:
-      detail::MoveCleanupStruct(ctx, src_ptr, type_id);
+      detail::MoveCleanupStruct(ctx, facts, src_ptr, type_id);
       return;
 
     case TypeKind::kUnpackedArray:
-      detail::MoveCleanupArray(ctx, src_ptr, type_id);
+      detail::MoveCleanupArray(ctx, facts, src_ptr, type_id);
       return;
 
     default:

@@ -86,7 +86,7 @@ auto LowerQueueDelete(
   TypeId recv_type_id = mir::TypeOfPlace(*facts.types, recv_place);
 
   // Typed teardown via lifecycle (loads handle, calls release)
-  Destroy(context, recv_ptr, recv_type_id);
+  Destroy(context, facts, recv_ptr, recv_type_id);
 
   // Store null handle
   builder.CreateStore(llvm::Constant::getNullValue(ptr_ty), recv_ptr);

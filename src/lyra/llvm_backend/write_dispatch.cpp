@@ -65,7 +65,7 @@ auto EmitManagedScalarWrite(
   // Move cleanup: null-out source handle if moving from temp
   if (const auto* os = std::get_if<OperandSource>(&source)) {
     if (const auto* pid = std::get_if<mir::PlaceId>(&os->operand->payload)) {
-      CommitMoveCleanupIfTemp(ctx, *pid, policy, type_id);
+      CommitMoveCleanupIfTemp(ctx, facts, *pid, policy, type_id);
     }
   }
 
@@ -76,7 +76,7 @@ auto EmitManagedScalarWrite(
   const auto& type = (*facts.types)[type_id];
   switch (GetManagedKind(type.Kind())) {
     case ManagedKind::kString:
-      return CommitStringValue(ctx, *wt, *raw, policy, type_id);
+      return CommitStringValue(ctx, facts, *wt, *raw, policy, type_id);
     case ManagedKind::kContainer:
       return CommitContainerValue(ctx, facts, *wt, *raw, policy, type_id);
     case ManagedKind::kNone:

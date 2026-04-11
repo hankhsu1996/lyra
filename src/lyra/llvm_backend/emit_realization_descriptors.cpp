@@ -194,7 +194,8 @@ auto EmitPerSchemaFrameInitFunctions(Context& context, const Layout& layout)
       if (IsScalarPatchable(type_id, types, force_two_state)) continue;
       auto* field_ptr =
           context.GetBuilder().CreateStructGEP(frame_type, frame_ptr, fi);
-      EmitSVDefaultInitAfterZero(context, field_ptr, type_id);
+      EmitSVDefaultInitAfterZero(
+          context, context.GetFacts(), field_ptr, type_id);
     }
 
     context.GetBuilder().CreateRetVoid();

@@ -75,7 +75,7 @@ auto LowerUserCallImpl(
     //
     // Do NOT remove this Destroy - callee uses MoveInit which requires dst
     // to be uninitialized.
-    Destroy(context, *tmp_ptr, return_type);
+    Destroy(context, facts, *tmp_ptr, return_type);
     args.push_back(*tmp_ptr);
   }
 

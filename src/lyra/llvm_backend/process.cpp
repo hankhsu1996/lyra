@@ -3379,7 +3379,8 @@ auto DefineMirFunction(
         builder.CreateAlloca(llvm_func->getReturnType(), nullptr, "retval");
 
     // Default-initialize the return slot (part of the storage invariant).
-    EmitSVDefaultInit(context, return_value_ptr, func.signature.return_type);
+    EmitSVDefaultInit(
+        context, facts, return_value_ptr, func.signature.return_type);
   }
 
   // PROLOGUE: Allocate and default-initialize ALL locals/temps at function
@@ -3554,7 +3555,7 @@ auto DefineMirFunction(
                   }
                   // MoveInit directly from source Place to sret out-param
                   MoveInit(
-                      context, sret_ptr, *src_ptr_result,
+                      context, facts, sret_ptr, *src_ptr_result,
                       func.signature.return_type);
                 } else if (return_value_ptr != nullptr) {
                   // Direct return: load value and store to return slot
@@ -3605,7 +3606,7 @@ auto DefineMirFunction(
   for (const auto& [caller_ptr, local_alloca, type_id] : output_param_ptrs) {
     // Load from local and assign to caller's storage
     // MoveAssign handles destroying old value in caller's storage
-    MoveAssign(context, caller_ptr, local_alloca, type_id);
+    MoveAssign(context, facts, caller_ptr, local_alloca, type_id);
   }
 
   if (ret_type.Kind() == TypeKind::kVoid || uses_sret) {
