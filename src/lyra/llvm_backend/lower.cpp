@@ -58,29 +58,32 @@ struct StandaloneProcessProducts {
 };
 
 auto CompileStandaloneProcesses(
-    Context& context, const LoweringInput& input,
-    std::span<const LayoutModulePlan> module_plans, const Layout& layout,
+    Context& context, const mir::Arena* mir_arena,
+    std::span<const LayoutModulePlan> module_plans,
+    std::span<const ScheduledProcess> scheduled_processes,
+    size_t num_init_processes, size_t num_module_process_base,
+    std::span<const Layout::ConnectionRealizationInfo> connection_infos,
     uint32_t wait_site_base, uint32_t back_edge_site_base)
     -> Result<StandaloneProcessProducts> {
   StandaloneProcessProducts products;
-  products.process_funcs.reserve(layout.scheduled_processes.size());
+  products.process_funcs.reserve(scheduled_processes.size());
   uint32_t conn_ordinal = 0;
 
-  size_t num_init = layout.num_init_processes;
-  for (size_t i = 0; i < layout.scheduled_processes.size(); ++i) {
+  for (size_t i = 0; i < scheduled_processes.size(); ++i) {
     context.SetCurrentProcess(i);
 
-    const auto& bp = layout.scheduled_processes[i];
+    const auto& bp = scheduled_processes[i];
     const mir::Arena& proc_arena =
         (bp.module_index.value < module_plans.size())
             ? module_plans[bp.module_index.value].body->arena
-            : *input.mir_arena;
+            : *mir_arena;
     const auto& mir_process = proc_arena[bp.process_id];
 
-    if (i < num_init || bp.module_index.value == ModuleIndex::kNone) {
-      Context::ArenaScope arena_scope(context, input.mir_arena);
-      auto execution_kind = (i < num_init) ? ProcessExecutionKind::kInit
-                                           : ProcessExecutionKind::kSimulation;
+    if (i < num_init_processes || bp.module_index.value == ModuleIndex::kNone) {
+      Context::ArenaScope arena_scope(context, mir_arena);
+      auto execution_kind = (i < num_init_processes)
+                                ? ProcessExecutionKind::kInit
+                                : ProcessExecutionKind::kSimulation;
       BodySiteContext standalone_sites{
           .wait_site_base = wait_site_base +
                             static_cast<uint32_t>(products.wait_sites.size()),
@@ -104,17 +107,16 @@ auto CompileStandaloneProcesses(
           std::make_move_iterator(func_result->back_edge_origins.end()));
 
       // Collect connection trigger facts as writebacks.
-      if (i >= num_init && i < layout.num_module_process_base) {
-        if (conn_ordinal >= layout.connection_realization_infos.size()) {
+      if (i >= num_init_processes && i < num_module_process_base) {
+        if (conn_ordinal >= connection_infos.size()) {
           throw common::InternalError(
               "CompileStandaloneProcesses",
               std::format(
                   "connection ordinal {} >= "
                   "connection_realization_infos size {}",
-                  conn_ordinal, layout.connection_realization_infos.size()));
+                  conn_ordinal, connection_infos.size()));
         }
-        const auto& conn_info =
-            layout.connection_realization_infos[conn_ordinal];
+        const auto& conn_info = connection_infos[conn_ordinal];
         if (bp.process_id != conn_info.process_id) {
           throw common::InternalError(
               "CompileStandaloneProcesses",
@@ -287,7 +289,9 @@ auto CompileDesignProcesses(const LoweringInput& input)
   }
 
   auto standalone_result = CompileStandaloneProcesses(
-      *context, input, topology.module_plans, *layout,
+      *context, input.mir_arena, topology.module_plans,
+      layout->scheduled_processes, layout->num_init_processes,
+      layout->num_module_process_base, layout->connection_realization_infos,
       static_cast<uint32_t>(specs.wait_sites.size()),
       static_cast<uint32_t>(specs.back_edge_origins.size()));
   if (!standalone_result) return std::unexpected(standalone_result.error());
@@ -363,14 +367,11 @@ auto FinalizeModule(CodegenSession session, LoweringReport report)
 
 void EmitVariableInspection(
     Context& context, const InspectionPlan& plan, const mir::Design& design,
+    const Layout& layout, const TypeArena& types, bool force_two_state,
     llvm::Value* design_state, llvm::Value* abi_ptr) {
   if (plan.IsEmpty()) {
     return;
   }
-
-  const auto& layout = context.GetLayout();
-  const auto& types = context.GetTypeArena();
-  bool force_two_state = context.IsForceTwoState();
 
   auto& builder = context.GetBuilder();
   auto& llvm_ctx = context.GetLlvmContext();

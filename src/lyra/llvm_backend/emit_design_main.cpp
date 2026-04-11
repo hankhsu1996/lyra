@@ -19,6 +19,7 @@
 
 #include "lyra/common/internal_error.hpp"
 #include "lyra/common/origin_id.hpp"
+#include "lyra/common/type_arena.hpp"
 #include "lyra/llvm_backend/codegen_session.hpp"
 #include "lyra/llvm_backend/context.hpp"
 #include "lyra/llvm_backend/deferred_thunk_abi.hpp"
@@ -603,7 +604,8 @@ void EmitRunSimulation(
 
 void EmitMainExit(
     Context& context, llvm::Value* design_state,
-    const EmitDesignMainInput& input, llvm::BasicBlock* exit_block,
+    const EmitDesignMainInput& input, const Layout& layout,
+    const TypeArena& types, bool force_two_state, llvm::BasicBlock* exit_block,
     llvm::Value* abi_alloca, const RealizationEmissionResult& ctor_result,
     const InspectionPlan& inspection_plan) {
   auto& builder = context.GetBuilder();
@@ -618,7 +620,8 @@ void EmitMainExit(
   // Backend-owned variable inspection from typed placement descriptors.
   if (!inspection_plan.IsEmpty()) {
     EmitVariableInspection(
-        context, inspection_plan, *input.design, design_state, abi_alloca);
+        context, inspection_plan, *input.design, layout, types, force_two_state,
+        design_state, abi_alloca);
   }
 
   if (input.hooks != nullptr) {
@@ -827,7 +830,8 @@ auto EmitDesignMain(
   }
 
   EmitMainExit(
-      context, design_state, input, exit_block, abi_for_exit, ctor_result,
+      context, design_state, input, layout, context.GetTypeArena(),
+      context.IsForceTwoState(), exit_block, abi_for_exit, ctor_result,
       inspection_plan);
 
   return LoweringReport{

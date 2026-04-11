@@ -24,6 +24,7 @@
 namespace lyra::lowering::mir_to_llvm {
 
 class Context;
+struct Layout;
 
 // Abstract interface for simulation instrumentation hooks.
 // Provides milestone-based hooks that map to the simulation pipeline:
@@ -137,6 +138,7 @@ auto DumpLlvmIr(const llvm::Module& module) -> std::string;
 // and layout -- no prebuilt type metadata vector.
 void EmitVariableInspection(
     Context& context, const InspectionPlan& plan, const mir::Design& design,
+    const Layout& layout, const TypeArena& types, bool force_two_state,
     llvm::Value* design_state, llvm::Value* abi_ptr);
 
 // Emit time report call for test harness.
