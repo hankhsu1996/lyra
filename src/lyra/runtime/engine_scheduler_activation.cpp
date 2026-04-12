@@ -200,7 +200,7 @@ void Engine::ExecuteActiveRegion() {
       }
 
       ProcessHandle handle{entry.process_id, entry.instance_id};
-      if (!HasPostActivationReconciliation()) {
+      if (!UsesWaitSiteLifecycle()) {
         ClearProcessSubscriptions(handle);
       }
       // Activation handling (scheduling, subscription install/refresh)

@@ -35,7 +35,6 @@
 #include "lyra/runtime/signal_dump.hpp"
 #include "lyra/runtime/slot_meta.hpp"
 #include "lyra/runtime/string.hpp"
-#include "lyra/runtime/suspend_record.hpp"
 #include "lyra/runtime/trace_signal_meta.hpp"
 #include "lyra/trace/text_trace_sink.hpp"
 
@@ -338,18 +337,6 @@ extern "C" void LyraRunSimulation(
     // R5: Trace selection must cover all flat slot_ids (global +
     // instance-owned). Called unconditionally after all init paths.
     engine.InitTraceSelection();
-  }
-
-  // Register suspend record pointers for observability (scheduler snapshot
-  // wait-kind classification). Not used by activation or reconciliation flow.
-  if (abi != nullptr && abi->wait_site_words != nullptr &&
-      abi->wait_site_word_count > 0) {
-    std::vector<lyra::runtime::SuspendRecord*> suspend_ptrs;
-    suspend_ptrs.reserve(states.size());
-    for (auto* state : states) {
-      suspend_ptrs.push_back(static_cast<lyra::runtime::SuspendRecord*>(state));
-    }
-    engine.RegisterSuspendRecords(suspend_ptrs);
   }
 
   if (HasFlag(flags, FeatureFlag::kDumpSlotMeta)) {

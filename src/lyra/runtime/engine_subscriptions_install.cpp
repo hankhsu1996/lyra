@@ -17,7 +17,6 @@
 #include "lyra/runtime/engine_types.hpp"
 #include "lyra/runtime/index_plan.hpp"
 #include "lyra/runtime/slot_meta.hpp"
-#include "lyra/runtime/suspend_record.hpp"
 #include "lyra/runtime/update_set.hpp"
 #include "lyra/runtime/wait_site.hpp"
 
@@ -30,9 +29,8 @@
 //      SubscribeRebind
 //   2. Subscription removal: Remove{Edge,Change,RebindWatcher,Container}Sub,
 //      ClearInstalledSubscriptions (swap-and-pop with SubRef backpatch)
-//   3. Post-activation reconciliation: ReconcilePostActivation,
-//      RefreshInstalledSnapshots (routes by SuspendTag, refreshes cold
-//      snapshots for persistent waits)
+//   3. Wait-site lifecycle: InstallWaitSite, RefreshInstalledSnapshots,
+//      CanRefreshInstalledWait, HasPendingDirtyState (called by envelope)
 //
 // Cross-file dependency: RemoveEdgeSubFromBucket is also called from
 // engine_subscriptions_flush.cpp (RebindSubscription group migration).
@@ -525,12 +523,10 @@ auto Engine::RefreshInstalledSnapshots(ProcessHandle handle) -> bool {
   return needs_reinstall;
 }
 
-void Engine::InstallTriggers(
-    ProcessHandle handle, ResumePoint resume,
-    std::span<const WaitTriggerRecord> triggers,
-    std::span<const LateBoundHeader> late_bound,
-    std::span<const IndexPlanOp> plan_ops,
-    std::span<const DepSignalRecord> dep_records) {
+void Engine::InstallTriggers(ProcessHandle handle, const WaitRequest& req) {
+  auto resume = req.resume;
+  auto triggers = req.triggers;
+  const auto& late_bound = req.late_bound;
   // Track created subscription info for late-bound rebinding.
   // Invariant: created_subs[i] records the dense vector index assigned
   // to trigger i at creation time. These indices remain stable within
@@ -544,7 +540,7 @@ void Engine::InstallTriggers(
     EdgeBucket edge_bucket = EdgeBucket::kPosedge;
     bool is_local = false;
   };
-  bool has_late_bound = !late_bound.empty();
+  bool has_late_bound = !late_bound.headers.empty();
   std::vector<CreatedSub> created_subs;
   if (has_late_bound) {
     created_subs.resize(
@@ -691,8 +687,8 @@ void Engine::InstallTriggers(
   }
 
   // Install rebind watchers from late-bound headers.
-  for (uint32_t h = 0; h < late_bound.size(); ++h) {
-    const auto& hdr = late_bound[h];
+  for (uint32_t h = 0; h < late_bound.headers.size(); ++h) {
+    const auto& hdr = late_bound.headers[h];
 
     if (hdr.trigger_index >= triggers.size()) {
       throw common::InternalError(
@@ -702,20 +698,22 @@ void Engine::InstallTriggers(
               hdr.trigger_index, triggers.size()));
     }
     if (static_cast<uint64_t>(hdr.plan_ops_start) + hdr.plan_ops_count >
-        plan_ops.size()) {
+        late_bound.plan_ops.size()) {
       throw common::InternalError(
           "Engine::InstallTriggers",
           std::format(
               "late_bound[{}]: plan_ops span [{}, +{}) exceeds pool size {}", h,
-              hdr.plan_ops_start, hdr.plan_ops_count, plan_ops.size()));
+              hdr.plan_ops_start, hdr.plan_ops_count,
+              late_bound.plan_ops.size()));
     }
     if (static_cast<uint64_t>(hdr.dep_slots_start) + hdr.dep_slots_count >
-        dep_records.size()) {
+        late_bound.dep_slots.size()) {
       throw common::InternalError(
           "Engine::InstallTriggers",
           std::format(
               "late_bound[{}]: dep_slots span [{}, +{}) exceeds pool size {}",
-              h, hdr.dep_slots_start, hdr.dep_slots_count, dep_records.size()));
+              h, hdr.dep_slots_start, hdr.dep_slots_count,
+              late_bound.dep_slots.size()));
     }
 
     const auto& target = created_subs[hdr.trigger_index];
@@ -726,7 +724,8 @@ void Engine::InstallTriggers(
         .index_base = hdr.index_base,
         .index_step = hdr.index_step,
         .total_bits = hdr.total_bits};
-    auto hdr_plan = plan_ops.subspan(hdr.plan_ops_start, hdr.plan_ops_count);
+    auto hdr_plan =
+        late_bound.plan_ops.subspan(hdr.plan_ops_start, hdr.plan_ops_count);
 
     // Resolve instance_id for the process (used for local deps).
     InstanceId rebind_inst_id =
@@ -736,7 +735,7 @@ void Engine::InstallTriggers(
 
     // Decode each dep record into a typed SignalRef.
     auto hdr_dep_records =
-        dep_records.subspan(hdr.dep_slots_start, hdr.dep_slots_count);
+        late_bound.dep_slots.subspan(hdr.dep_slots_start, hdr.dep_slots_count);
     std::vector<SignalRef> dep_signals;
     dep_signals.reserve(hdr_dep_records.size());
     for (const auto& rec : hdr_dep_records) {
@@ -772,9 +771,8 @@ void Engine::InstallTriggers(
   }
 }
 
-void Engine::InstallWaitSite(
-    ProcessHandle handle, const WaitRequest& req,
-    const CompiledWaitSite& descriptor) {
+void Engine::InstallWaitSite(ProcessHandle handle, const WaitRequest& req) {
+  const auto& descriptor = wait_site_meta_.Get(req.wait_site_id);
   // Validate compiled-vs-runtime agreement before any installation work.
   if (descriptor.resume_block != req.resume.block_index) {
     throw common::InternalError(
@@ -795,7 +793,7 @@ void Engine::InstallWaitSite(
             req.triggers.size()));
   }
 
-  bool has_late_bound = !req.late_bound.empty();
+  bool has_late_bound = !req.late_bound.headers.empty();
 
   // Validate late-bound presence matches compiled descriptor.
   if (has_late_bound != descriptor.has_late_bound) {
@@ -808,9 +806,7 @@ void Engine::InstallWaitSite(
             has_late_bound));
   }
 
-  InstallTriggers(
-      handle, req.resume, req.triggers, req.late_bound, req.plan_ops,
-      req.dep_slots);
+  InstallTriggers(handle, req);
 
   // Install-time realized-state invariant: when the compiled shape is
   // kStatic, the installed subscription set must contain only
@@ -872,58 +868,17 @@ void Engine::InstallWaitSite(
   }
 }
 
-void Engine::RegisterSuspendRecords(std::span<SuspendRecord*> records) {
-  suspend_records_.assign(records.begin(), records.end());
-}
-
-// True when the process re-entered the same wait site whose installed
-// subscriptions support snapshot-only refresh.
-static auto CanRefreshInPlace(
-    const InstalledWaitState& installed, WaitSiteId suspend_wait_site_id)
-    -> bool {
-  return installed.valid && installed.wait_site_id == suspend_wait_site_id &&
+auto Engine::CanRefreshInstalledWait(
+    ProcessHandle handle, WaitSiteId wait_site_id) const -> bool {
+  if (handle.process_id >= process_states_.size()) return false;
+  const auto& installed = process_states_[handle.process_id].installed_wait;
+  return installed.valid && installed.wait_site_id == wait_site_id &&
          installed.can_refresh_snapshot;
 }
 
-void Engine::HandleWaitRequest(ProcessHandle handle, const WaitRequest& req) {
-  if (!HasPostActivationReconciliation()) {
-    InstallTriggers(
-        handle, req.resume, req.triggers, req.late_bound, req.plan_ops,
-        req.dep_slots);
-    return;
-  }
-
-  if (req.wait_site_id == kInvalidWaitSiteId) {
-    throw common::InternalError(
-        "Engine::HandleWaitRequest",
-        std::format(
-            "process {} suspended with kWait but wait_site_id is invalid",
-            handle.process_id));
-  }
-
-  auto& proc_state = process_states_[handle.process_id];
-
-  if (!CanRefreshInPlace(proc_state.installed_wait, req.wait_site_id)) {
-    const auto& descriptor = wait_site_meta_.Get(req.wait_site_id);
-    ResetInstalledWait(handle);
-    InstallWaitSite(handle, req, descriptor);
-    return;
-  }
-
-  // Flush owns baseline advancement for installed edge/change waits.
-  // Post-activation refresh is only needed when post-flush slot
-  // dirties are recorded in delta_dirty_.
-  bool has_any_dirty =
-      !update_set_.DeltaDirtySlots().empty() || !delta_dirty_instances_.empty();
-  if (!has_any_dirty) {
-    return;
-  }
-
-  if (RefreshInstalledSnapshots(handle)) {
-    const auto& descriptor = wait_site_meta_.Get(req.wait_site_id);
-    ResetInstalledWait(handle);
-    InstallWaitSite(handle, req, descriptor);
-  }
+auto Engine::HasPendingDirtyState() const -> bool {
+  return !update_set_.DeltaDirtySlots().empty() ||
+         !delta_dirty_instances_.empty();
 }
 
 // R5: Domain-split edge/change subscribe helpers.

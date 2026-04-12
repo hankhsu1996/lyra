@@ -380,6 +380,7 @@ auto WaitKindLabel(ProcessWaitKind kind) -> std::string_view {
       return "suspended(repeat)";
     case ProcessWaitKind::kSuspendedEvent:
       return "suspended(event)";
+    case ProcessWaitKind::kSuspendedWait:
     case ProcessWaitKind::kSuspendedUnknown:
       return "suspended(unknown)";
     case ProcessWaitKind::kFinished:
@@ -500,31 +501,16 @@ auto Engine::TakeSchedulerSnapshot() const -> SchedulerSnapshot {
       kind = ProcessWaitKind::kRunning;
     } else if (is_ready[pid] || proc.is_enqueued) {
       kind = ProcessWaitKind::kReady;
-    } else if (
-        pid < suspend_records_.size() && suspend_records_[pid] != nullptr) {
-      // Use SuspendRecord::tag as the canonical authority.
-      switch (suspend_records_[pid]->tag) {
-        case SuspendTag::kFinished:
-          kind = ProcessWaitKind::kFinished;
-          break;
-        case SuspendTag::kDelay:
-          kind = ProcessWaitKind::kSuspendedDelay;
-          if (in_delay[pid]) target_time = delay_target[pid];
-          break;
-        case SuspendTag::kWait:
-          kind = RefineWaitKind(proc.sub_refs);
-          break;
-        case SuspendTag::kRepeat:
-          kind = ProcessWaitKind::kSuspendedRepeat;
-          break;
-        case SuspendTag::kWaitEvent:
-          kind = ProcessWaitKind::kSuspendedEvent;
-          break;
+    } else {
+      kind = proc.wait_kind;
+      // Refine coarse kSuspendedWait into edge/change/multi from
+      // subscription state.
+      if (kind == ProcessWaitKind::kSuspendedWait) {
+        kind = RefineWaitKind(proc.sub_refs);
       }
-    } else if (in_delay[pid]) {
-      // Fallback for processes without suspend records.
-      kind = ProcessWaitKind::kSuspendedDelay;
-      target_time = delay_target[pid];
+      if (kind == ProcessWaitKind::kSuspendedDelay && in_delay[pid]) {
+        target_time = delay_target[pid];
+      }
     }
 
     // Only include suspended processes.

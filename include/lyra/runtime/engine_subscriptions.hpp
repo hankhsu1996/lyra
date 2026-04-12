@@ -8,6 +8,7 @@
 #include "lyra/common/bit_target_mapping.hpp"
 #include "lyra/common/edge_kind.hpp"
 #include "lyra/common/index_plan.hpp"
+#include "lyra/runtime/engine_types.hpp"
 #include "lyra/runtime/signal_coord.hpp"
 #include "lyra/runtime/wait_site.hpp"
 
@@ -279,7 +280,8 @@ struct InstalledWaitState {
 
 // Per-process state (keyed by ProcessHandle).
 struct ProcessState {
-  bool is_enqueued = false;  // De-dup flag for next-delta queue
+  bool is_enqueued = false;
+  ProcessWaitKind wait_kind = ProcessWaitKind::kFinished;
   size_t subscription_count = 0;
   std::vector<SubRef> sub_refs;
   IndexPlanPool plan_pool;

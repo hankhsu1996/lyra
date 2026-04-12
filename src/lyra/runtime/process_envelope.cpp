@@ -10,8 +10,7 @@
 #include "lyra/common/diagnostic/print.hpp"
 #include "lyra/common/internal_error.hpp"
 #include "lyra/runtime/dpi_export_context.hpp"
-#include "lyra/runtime/engine.hpp"
-#include "lyra/runtime/index_plan.hpp"
+#include "lyra/runtime/engine_process_envelope_access.hpp"
 #include "lyra/runtime/instance_event_state.hpp"
 #include "lyra/runtime/iteration_limit.hpp"
 #include "lyra/runtime/process_frame.hpp"
@@ -20,6 +19,7 @@
 
 namespace {
 
+using Access = lyra::runtime::ProcessEnvelopeAccess;
 using StateHeader = lyra::runtime::ProcessFrameHeader;
 
 void ReleaseTriggerOverflow(lyra::runtime::SuspendRecord* suspend) {
@@ -62,6 +62,39 @@ using ProcessRequest = std::variant<
     lyra::runtime::WaitRequest, lyra::runtime::RepeatRequest,
     lyra::runtime::EventWaitRequest>;
 
+// Translate the decoded process request into the engine-owned wait-kind
+// for observability. Called once per activation before engine dispatch.
+auto ClassifyWaitKind(const ProcessRequest& request)
+    -> lyra::runtime::ProcessWaitKind {
+  using lyra::runtime::ProcessWaitKind;
+  return std::visit(
+      [](const auto& v) -> ProcessWaitKind {
+        using T = std::decay_t<decltype(v)>;
+        if constexpr (std::is_same_v<T, CompletedRequest>) {
+          return ProcessWaitKind::kFinished;
+        } else if constexpr (std::is_same_v<T, TrapRequest>) {
+          return ProcessWaitKind::kFinished;
+        } else if constexpr (std::is_same_v<T, lyra::runtime::DelayRequest>) {
+          return ProcessWaitKind::kSuspendedDelay;
+        } else if constexpr (std::is_same_v<T, lyra::runtime::WaitRequest>) {
+          return ProcessWaitKind::kSuspendedWait;
+        } else if constexpr (std::is_same_v<T, lyra::runtime::RepeatRequest>) {
+          return ProcessWaitKind::kSuspendedRepeat;
+        } else if constexpr (std::is_same_v<
+                                 T, lyra::runtime::EventWaitRequest>) {
+          return ProcessWaitKind::kSuspendedEvent;
+        }
+      },
+      request);
+}
+
+// Whether the request requires resetting the installed wait state.
+// All non-wait requests must tear down prior subscriptions.
+auto NeedsWaitReset(const ProcessRequest& request) -> bool {
+  return !std::holds_alternative<lyra::runtime::WaitRequest>(request) &&
+         !std::holds_alternative<TrapRequest>(request);
+}
+
 // Decode a SuspendRecord into a semantic ProcessRequest.
 // Spans in WaitRequest point into still-alive SuspendRecord storage.
 auto DecodeSuspendRecord(lyra::runtime::SuspendRecord* suspend)
@@ -95,7 +128,7 @@ auto DecodeSuspendRecord(lyra::runtime::SuspendRecord* suspend)
       auto triggers = std::span(suspend->triggers_ptr, suspend->num_triggers);
       bool has_late_bound =
           suspend->num_late_bound > 0 && suspend->late_bound_ptr != nullptr;
-      auto late_bound =
+      auto headers =
           has_late_bound
               ? std::span(suspend->late_bound_ptr, suspend->num_late_bound)
               : std::span<const LateBoundHeader>{};
@@ -111,9 +144,10 @@ auto DecodeSuspendRecord(lyra::runtime::SuspendRecord* suspend)
           .resume = resume,
           .wait_site_id = suspend->wait_site_id,
           .triggers = triggers,
-          .late_bound = late_bound,
-          .plan_ops = plan_ops,
-          .dep_slots = dep_records};
+          .late_bound = {
+              .headers = headers,
+              .plan_ops = plan_ops,
+              .dep_slots = dep_records}};
     }
 
     case SuspendTag::kRepeat:
@@ -184,6 +218,40 @@ auto DispatchProcess(
   }
 }
 
+// Envelope-owned wait lifecycle orchestration. Decides whether to do a
+// direct trigger install, a full wait-site install, or an in-place refresh.
+void HandleWaitRequest(
+    lyra::runtime::Engine& engine, lyra::runtime::ProcessHandle handle,
+    const lyra::runtime::WaitRequest& req) {
+  if (!Access::UsesWaitSiteLifecycle(engine)) {
+    Access::InstallTriggers(engine, handle, req);
+    return;
+  }
+
+  if (req.wait_site_id == lyra::runtime::kInvalidWaitSiteId) {
+    throw lyra::common::InternalError(
+        "HandleWaitRequest",
+        std::format(
+            "process {} suspended with kWait but wait_site_id is invalid",
+            handle.process_id));
+  }
+
+  if (!Access::CanRefreshInstalledWait(engine, handle, req.wait_site_id)) {
+    Access::ResetInstalledWait(engine, handle);
+    Access::InstallWaitSite(engine, handle, req);
+    return;
+  }
+
+  if (!Access::HasPendingDirtyState(engine)) {
+    return;
+  }
+
+  if (Access::RefreshInstalledSnapshots(engine, handle)) {
+    Access::ResetInstalledWait(engine, handle);
+    Access::InstallWaitSite(engine, handle, req);
+  }
+}
+
 // Handle the decoded process request by calling narrow engine primitives.
 void HandleProcessRequest(
     lyra::runtime::Engine& engine, lyra::runtime::ProcessHandle handle,
@@ -194,31 +262,33 @@ void HandleProcessRequest(
   using lyra::runtime::EventWaitRequest;
   using lyra::runtime::RepeatRequest;
   using lyra::runtime::WaitRequest;
-  bool reconcile = engine.HasPostActivationReconciliation();
+
+  // Single structural reset point: all non-wait, non-trap requests must
+  // tear down prior subscriptions when wait-site lifecycle is active.
+  if (Access::UsesWaitSiteLifecycle(engine) && NeedsWaitReset(request)) {
+    Access::ResetInstalledWait(engine, handle);
+  }
 
   std::visit(
       [&](const auto& v) {
         using T = std::decay_t<decltype(v)>;
 
         if constexpr (std::is_same_v<T, CompletedRequest>) {
-          if (reconcile) engine.ResetInstalledWait(handle);
+          // No scheduling action needed.
 
         } else if constexpr (std::is_same_v<T, TrapRequest>) {
           engine.HandleTrap(handle.process_id, v.payload);
 
         } else if constexpr (std::is_same_v<T, DelayRequest>) {
-          if (reconcile) engine.ResetInstalledWait(handle);
           engine.Delay(handle, v.resume, v.ticks);
 
         } else if constexpr (std::is_same_v<T, WaitRequest>) {
-          engine.HandleWaitRequest(handle, v);
+          HandleWaitRequest(engine, handle, v);
 
         } else if constexpr (std::is_same_v<T, RepeatRequest>) {
-          if (reconcile) engine.ResetInstalledWait(handle);
           engine.ScheduleNextDelta(handle, v.resume);
 
         } else if constexpr (std::is_same_v<T, EventWaitRequest>) {
-          if (reconcile) engine.ResetInstalledWait(handle);
           auto& inst = engine.GetInstanceMut(handle.instance_id);
           Engine::AddInstanceEventWaiter(
               inst, v.event_id,
@@ -242,6 +312,8 @@ void DispatchAndHandleActivation(
     ResumePoint resume) {
   auto request =
       DispatchProcess(connection_procs, states, num_connection, handle, resume);
+  Access::SetProcessWaitKind(
+      engine, handle.process_id, ClassifyWaitKind(request));
   HandleProcessRequest(engine, handle, request);
 }
 
