@@ -607,8 +607,7 @@ void EmitRunSimulation(
 
 void EmitMainExit(
     Context& context, const CuFacts& facts, llvm::Value* design_state,
-    const EmitDesignMainInput& input, const Layout& layout,
-    const TypeArena& types, bool force_two_state, llvm::BasicBlock* exit_block,
+    const EmitDesignMainInput& input, llvm::BasicBlock* exit_block,
     llvm::Value* abi_alloca, const RealizationEmissionResult& ctor_result,
     const InspectionPlan& inspection_plan) {
   auto& builder = context.GetBuilder();
@@ -623,8 +622,7 @@ void EmitMainExit(
   // Backend-owned variable inspection from typed placement descriptors.
   if (!inspection_plan.IsEmpty()) {
     EmitVariableInspection(
-        context, facts, inspection_plan, *input.design, layout, types,
-        force_two_state, design_state, abi_alloca);
+        context, facts, inspection_plan, design_state, abi_alloca);
   }
 
   if (input.hooks != nullptr) {
@@ -836,9 +834,8 @@ auto EmitDesignMain(
   }
 
   EmitMainExit(
-      context, facts, design_state, input, layout, *facts.types,
-      facts.force_two_state, exit_block, abi_for_exit, ctor_result,
-      inspection_plan);
+      context, facts, design_state, input, exit_block, abi_for_exit,
+      ctor_result, inspection_plan);
 
   return LoweringReport{
       .forwarding_analysis = std::move(forwarding_report),

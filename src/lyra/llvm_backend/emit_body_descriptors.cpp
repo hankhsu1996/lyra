@@ -69,7 +69,7 @@ auto EmitBodyRealizationDescs(
     const auto& info = layout.body_realization_infos[bi];
     const auto& rt = layout.body_runtime_descriptors[bi];
     const auto& funcs = body_compiled_funcs[bi];
-    uint32_t body_id_val = info.body_id.value;
+    auto body_group = static_cast<uint32_t>(bi);
     auto num_procs = static_cast<uint32_t>(rt.process_schema_indices.size());
 
     if (funcs.functions.size() != num_procs) {
@@ -77,11 +77,11 @@ auto EmitBodyRealizationDescs(
           "EmitBodyRealizationDescs",
           std::format(
               "body {} compiled function count {} != process schema count {}",
-              body_id_val, funcs.functions.size(), num_procs));
+              body_group, funcs.functions.size(), num_procs));
     }
 
     // Emit header global.
-    auto header_name = std::format("__lyra_body_desc_{}", body_id_val);
+    auto header_name = std::format("__lyra_body_desc_{}", body_group);
     auto* header_val = llvm::ConstantStruct::get(
         header_type,
         {llvm::ConstantInt::get(i32_ty, num_procs),
@@ -106,7 +106,7 @@ auto EmitBodyRealizationDescs(
         throw common::InternalError(
             "EmitBodyRealizationDescs",
             std::format(
-                "body {} process {} has null compiled function", body_id_val,
+                "body {} process {} has null compiled function", body_group,
                 pi));
       }
       entry_constants.push_back(
@@ -121,7 +121,7 @@ auto EmitBodyRealizationDescs(
         llvm::ConstantPointerNull::get(llvm::cast<llvm::PointerType>(ptr_ty));
     if (num_procs > 0) {
       auto entries_name =
-          std::format("__lyra_body_desc_{}_entries", body_id_val);
+          std::format("__lyra_body_desc_{}_entries", body_group);
       auto* entries_array_type = llvm::ArrayType::get(entry_type, num_procs);
       auto* entries_global = new llvm::GlobalVariable(
           mod, entries_array_type, true, llvm::GlobalValue::InternalLinkage,
@@ -141,11 +141,11 @@ auto EmitBodyRealizationDescs(
       throw common::InternalError(
           "EmitBodyRealizationDescs",
           std::format(
-              "body {} meta entry count {} != process count {}", body_id_val,
+              "body {} meta entry count {} != process count {}", body_group,
               num_meta, num_procs));
     }
     auto meta_caller =
-        std::format("EmitBodyRealizationDescs body {}", body_id_val);
+        std::format("EmitBodyRealizationDescs body {}", body_group);
     ValidateOwnedMetaTemplate(rt.meta, meta_caller.c_str());
 
     auto* meta_entry_type =
@@ -165,7 +165,7 @@ auto EmitBodyRealizationDescs(
                  llvm::ConstantInt::get(i32_ty, me.col)}));
       }
       auto meta_name =
-          std::format("__lyra_body_desc_{}_meta_entries", body_id_val);
+          std::format("__lyra_body_desc_{}_meta_entries", body_group);
       auto* meta_array_type = llvm::ArrayType::get(meta_entry_type, num_meta);
       auto* meta_global = new llvm::GlobalVariable(
           mod, meta_array_type, true, llvm::GlobalValue::InternalLinkage,
@@ -182,8 +182,7 @@ auto EmitBodyRealizationDescs(
     llvm::Constant* meta_pool_ptr =
         llvm::ConstantPointerNull::get(llvm::cast<llvm::PointerType>(ptr_ty));
     if (meta_pool_size > 0) {
-      auto pool_name =
-          std::format("__lyra_body_desc_{}_meta_pool", body_id_val);
+      auto pool_name = std::format("__lyra_body_desc_{}_meta_pool", body_group);
       auto* i8_ty = llvm::Type::getInt8Ty(ctx);
       std::vector<llvm::Constant*> pool_bytes;
       pool_bytes.reserve(meta_pool_size);
@@ -204,10 +203,10 @@ auto EmitBodyRealizationDescs(
 
     // Validate and emit trigger/comb template globals.
     auto trig_caller =
-        std::format("EmitBodyRealizationDescs body {} triggers", body_id_val);
+        std::format("EmitBodyRealizationDescs body {} triggers", body_group);
     ValidateOwnedTriggerTemplate(rt.triggers, trig_caller.c_str());
     auto comb_caller =
-        std::format("EmitBodyRealizationDescs body {} comb", body_id_val);
+        std::format("EmitBodyRealizationDescs body {} comb", body_group);
     ValidateOwnedCombTemplate(rt.comb, comb_caller.c_str());
 
     auto* i8_ty = llvm::Type::getInt8Ty(ctx);
@@ -239,7 +238,7 @@ auto EmitBodyRealizationDescs(
       }
       if (num_trig_entries > 0) {
         auto trig_name =
-            std::format("__lyra_body_desc_{}_trigger_entries", body_id_val);
+            std::format("__lyra_body_desc_{}_trigger_entries", body_group);
         auto* trig_array_type =
             llvm::ArrayType::get(trig_entry_type, num_trig_entries);
         auto* trig_global = new llvm::GlobalVariable(
@@ -266,7 +265,7 @@ auto EmitBodyRealizationDescs(
                              llvm::ConstantInt::get(i32_ty, r.count)}));
       }
       auto ranges_name =
-          std::format("__lyra_body_desc_{}_trigger_ranges", body_id_val);
+          std::format("__lyra_body_desc_{}_trigger_ranges", body_group);
       auto* ranges_array_type =
           llvm::ArrayType::get(range_type, num_trig_ranges);
       auto* ranges_global = new llvm::GlobalVariable(
@@ -288,7 +287,7 @@ auto EmitBodyRealizationDescs(
             llvm::ConstantInt::get(i8_ty, static_cast<uint8_t>(s)));
       }
       auto shapes_name =
-          std::format("__lyra_body_desc_{}_trigger_shapes", body_id_val);
+          std::format("__lyra_body_desc_{}_trigger_shapes", body_group);
       auto* shapes_array_type = llvm::ArrayType::get(i8_ty, num_trig_ranges);
       auto* shapes_global = new llvm::GlobalVariable(
           mod, shapes_array_type, true, llvm::GlobalValue::InternalLinkage,
@@ -306,7 +305,7 @@ auto EmitBodyRealizationDescs(
         groupable_constants.push_back(llvm::ConstantInt::get(i8_ty, g));
       }
       auto groupable_name =
-          std::format("__lyra_body_desc_{}_trigger_groupable", body_id_val);
+          std::format("__lyra_body_desc_{}_trigger_groupable", body_group);
       auto* groupable_array_type = llvm::ArrayType::get(i8_ty, num_trig_ranges);
       auto* groupable_global = new llvm::GlobalVariable(
           mod, groupable_array_type, true, llvm::GlobalValue::InternalLinkage,
@@ -348,7 +347,7 @@ auto EmitBodyRealizationDescs(
       }
       if (num_comb_entries > 0) {
         auto comb_name =
-            std::format("__lyra_body_desc_{}_comb_entries", body_id_val);
+            std::format("__lyra_body_desc_{}_comb_entries", body_group);
         auto* comb_array_type =
             llvm::ArrayType::get(comb_entry_type, num_comb_entries);
         auto* comb_global = new llvm::GlobalVariable(
@@ -382,7 +381,7 @@ auto EmitBodyRealizationDescs(
                  llvm::ConstantInt::get(i8_ty, k.pad2)}));
       }
       auto kernels_name =
-          std::format("__lyra_body_desc_{}_comb_kernels", body_id_val);
+          std::format("__lyra_body_desc_{}_comb_kernels", body_group);
       auto* kernels_array_type =
           llvm::ArrayType::get(kernel_type, num_comb_kernels);
       auto* kernels_global = new llvm::GlobalVariable(
@@ -399,12 +398,12 @@ auto EmitBodyRealizationDescs(
 
     auto obs_emission = EmitObservableDescriptorTemplate(
         ctx, mod, rt.observable_descriptors,
-        std::format("__lyra_body_desc_{}", body_id_val));
+        std::format("__lyra_body_desc_{}", body_group));
 
     auto init_emission = EmitInitDescriptor(
         ctx, mod, rt.init.storage_recipe, rt.init.recipe_root_indices,
         rt.init.recipe_child_indices, rt.init.param_slots,
-        std::format("__lyra_body_desc_{}", body_id_val));
+        std::format("__lyra_body_desc_{}", body_group));
 
     // Decision metadata tables: per body-local process, emit a
     // DecisionMetaEntry array and a DecisionTableDescriptor.
@@ -439,7 +438,7 @@ auto EmitBodyRealizationDescs(
                   mod, str_val->getType(), true,
                   llvm::GlobalValue::InternalLinkage, str_val,
                   std::format(
-                      "__lyra_decision_file_{}_p{}_s{}", body_id_val, p, s));
+                      "__lyra_decision_file_{}_p{}_s{}", body_group, p, s));
               str_global->setUnnamedAddr(
                   llvm::GlobalValue::UnnamedAddr::Global);
               file_ptr = str_global;
@@ -459,7 +458,7 @@ auto EmitBodyRealizationDescs(
           auto* arr_global = new llvm::GlobalVariable(
               mod, arr_type, true, llvm::GlobalValue::InternalLinkage,
               llvm::ConstantArray::get(arr_type, entries_c),
-              std::format("__lyra_decision_meta_{}_p{}", body_id_val, p));
+              std::format("__lyra_decision_meta_{}_p{}", body_group, p));
           arr_global->setUnnamedAddr(llvm::GlobalValue::UnnamedAddr::Global);
           auto* zero = llvm::ConstantInt::get(i32_ty, 0);
           meta_array_ptr = llvm::ConstantExpr::getInBoundsGetElementPtr(
@@ -480,7 +479,7 @@ auto EmitBodyRealizationDescs(
         auto* tables_global = new llvm::GlobalVariable(
             mod, tables_arr_type, true, llvm::GlobalValue::InternalLinkage,
             llvm::ConstantArray::get(tables_arr_type, table_descs),
-            std::format("__lyra_decision_tables_{}", body_id_val));
+            std::format("__lyra_decision_tables_{}", body_group));
         tables_global->setUnnamedAddr(llvm::GlobalValue::UnnamedAddr::Global);
         auto* zero = llvm::ConstantInt::get(i32_ty, 0);
         decision_emission.tables_ptr =

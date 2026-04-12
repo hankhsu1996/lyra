@@ -382,6 +382,11 @@ auto LowerDesign(
           std::move(product.provisional_targets);
     }
     product.body.external_refs = std::move(product.external_refs);
+    if (input.body_timescales != nullptr && g < input.body_timescales->size()) {
+      const auto& ts = (*input.body_timescales)[g];
+      product.body.time_unit_power = ts.unit_power;
+      product.body.time_precision_power = ts.precision_power;
+    }
     result.module_bodies.push_back(std::move(product.body));
     body_origins.push_back(std::move(product.origins));
     body_function_maps[body_id.value] = std::move(product.symbol_to_function);

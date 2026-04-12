@@ -17,11 +17,6 @@ namespace lyra::lowering::mir_to_llvm {
 
 namespace {
 
-auto BodyIndex(const mir::ModuleBody* body, const mir::Design& design)
-    -> uint32_t {
-  return static_cast<uint32_t>(body - design.module_bodies.data());
-}
-
 auto BuildSpecCompilationUnits(const mir::Design& design)
     -> std::vector<SpecCompilationUnit> {
   std::vector<SpecCompilationUnit> units;
@@ -70,19 +65,16 @@ auto BuildModuleSchedIndices(
 }
 
 auto BuildSpecCodegenViews(
-    const std::vector<SpecCompilationUnit>& units, const mir::Design& design,
+    const std::vector<SpecCompilationUnit>& units,
     const std::unordered_map<uint32_t, std::vector<uint32_t>>&
         modidx_to_sched_indices) -> std::vector<SpecCodegenView> {
   std::vector<SpecCodegenView> views(units.size());
 
   for (size_t u = 0; u < units.size(); ++u) {
     const auto& unit = units[u];
-    auto body_idx = BodyIndex(unit.body, design);
     if (unit.instances.empty()) {
       throw common::InternalError(
-          "BuildSpecCodegenViews",
-          std::format(
-              "specialization unit for body {} has no instances", body_idx));
+          "BuildSpecCodegenViews", std::format("CU {} has no instances", u));
     }
 
     const auto& body = *unit.body;
@@ -99,9 +91,7 @@ auto BuildSpecCodegenViews(
       throw common::InternalError(
           "BuildSpecCodegenViews",
           std::format(
-              "body {} unit.processes non-final order does not match "
-              "canonical body ordinal map",
-              body_idx));
+              "CU {} non-final order does not match canonical ordinal map", u));
     }
 
     ModuleIndex rep_module_index = unit.instances[0].module_index;
@@ -110,9 +100,9 @@ auto BuildSpecCodegenViews(
       throw common::InternalError(
           "BuildSpecCodegenViews",
           std::format(
-              "body {} has {} non-final processes but representative "
+              "CU {} has {} non-final processes but representative "
               "module_index {} has no scheduled processes",
-              body_idx, ordinal_map.nonfinal_processes.size(),
+              u, ordinal_map.nonfinal_processes.size(),
               rep_module_index.value));
     }
     const auto& sched_indices = sched_it->second;
@@ -120,10 +110,8 @@ auto BuildSpecCodegenViews(
       throw common::InternalError(
           "BuildSpecCodegenViews",
           std::format(
-              "body {} sched index count {} != non-final process "
-              "count {}",
-              body_idx, sched_indices.size(),
-              ordinal_map.nonfinal_processes.size()));
+              "CU {} sched index count {} != non-final process count {}", u,
+              sched_indices.size(), ordinal_map.nonfinal_processes.size()));
     }
 
     views[u].processes.reserve(ordinal_map.nonfinal_processes.size());
@@ -136,8 +124,8 @@ auto BuildSpecCodegenViews(
                   .nonfinal_proc_ordinal = nonfinal_proc_ordinal,
                   .layout_process_index = sched_indices[nonfinal_proc_ordinal],
                   .process_id = proc_id,
-                  .func_name = std::format(
-                      "body_{}_proc_{}", body_idx, nonfinal_proc_ordinal),
+                  .func_name =
+                      std::format("cu_{}_proc_{}", u, nonfinal_proc_ordinal),
               });
         });
   }
@@ -169,7 +157,6 @@ auto BuildCompiledModuleSpecInputs(
   std::vector<CompiledModuleSpecInput> inputs;
   inputs.reserve(units.size());
   for (size_t i = 0; i < units.size(); ++i) {
-    auto body_idx = BodyIndex(units[i].body, design);
     const lowering::BodyOriginProvenance::Entry* origin_entry =
         (origin_provenance != nullptr) ? origin_provenance->Find(units[i].body)
                                        : nullptr;
@@ -182,7 +169,7 @@ auto BuildCompiledModuleSpecInputs(
             .body = units[i].body,
             .functions = units[i].functions,
             .view = std::move(views[i]),
-            .name_prefix = std::format("body_{}", body_idx),
+            .name_prefix = std::format("cu_{}", i),
             .origin_entry = origin_entry,
             .deferred_sites = units[i].body->deferred_assertion_sites,
             .deferred_site_base_index = bases.deferred,
@@ -311,7 +298,7 @@ auto BuildSpecPlan(
   auto units = BuildSpecCompilationUnits(design);
   auto modidx_to_sched_indices = BuildModuleSchedIndices(
       layout.num_init_processes, layout.scheduled_processes);
-  auto views = BuildSpecCodegenViews(units, design, modidx_to_sched_indices);
+  auto views = BuildSpecCodegenViews(units, modidx_to_sched_indices);
   auto slot_infos = BuildSpecSlotInfos(units, layout.body_realization_infos);
 
   auto instance_triggers = BuildInstanceConnectionTriggers(
@@ -365,8 +352,7 @@ auto BuildSpecPlan(
     }
     contract.slot_specs = bri.slot_specs;
     contract.slot_has_behavioral_trigger = bri.slot_has_behavioral_trigger;
-    contract.representative_slot_base =
-        layout.body_representative_base_slots[body_info_idx];
+    contract.representative_slot_base = bri.representative_base_slot;
 
     // Pre-compute cross-body behavioral trigger bitmap for this body.
     // A slot has a cross-body behavioral trigger if its design-global

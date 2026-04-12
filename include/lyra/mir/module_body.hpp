@@ -44,6 +44,11 @@ struct ModuleBody {
   // Body-local named event descriptors. Indexed by body-local EventId.
   std::vector<EventDesc> events;
 
+  // Per-body timescale from source-level scope metadata.
+  // Set during HIR-to-MIR lowering from body_timescales.
+  int8_t time_unit_power = 0;
+  int8_t time_precision_power = 0;
+
   // Total body-global decision site count. Set by module lowering after all
   // functions, processes, and tasks are lowered. Defines the authoritative
   // size of the body-wide decision metadata table. The LLVM backend validates

@@ -75,6 +75,21 @@ struct PlaceRootKeyHash {
   }
 };
 
+// Type kind for variable inspection (also used in layout).
+enum class VarTypeKind : uint8_t {
+  kIntegral,  // int, bit, logic (2-state)
+  kReal,      // real, shortreal
+  kString,    // string
+};
+
+// Type info for a design slot (for variable registration).
+struct SlotTypeInfo {
+  VarTypeKind kind = VarTypeKind::kIntegral;
+  uint32_t width = 0;
+  bool is_signed = false;
+  bool is_four_state = false;
+};
+
 // Design-wide state layout artifact.
 // DesignState is a Lyra-owned byte arena with two regions:
 //   [inline region] [appendix region]
@@ -120,6 +135,11 @@ struct DesignLayout {
   // Storage binding per slot. Parallel to slots.
   // Every slot has OwnedLocalStorage with arena-absolute offset.
   std::vector<OwnedLocalStorage> slot_storage_bindings;
+
+  // Pre-classified type info per slot (parallel to slots).
+  // Resolved during layout construction from TypeArena + force_two_state.
+  // Consumed by inspection planning so it does not need design/type lookups.
+  std::vector<SlotTypeInfo> slot_type_infos;
 
   // Check if a slot is in this layout.
   [[nodiscard]] auto ContainsSlot(common::SlotId slot_id) const -> bool;
@@ -455,16 +475,11 @@ struct Layout {
   // slot positions. This is NOT the count of owned-local slots only.
   std::vector<uint32_t> instance_slot_counts;
 
-  // Per-instance owning body id. Parallel to instance_slot_counts.
-  // Used to resolve an instance-owned slot to its body-local slot descriptor
-  // without a separate topology lookup.
-  std::vector<mir::ModuleBodyId> instance_body_ids;
-
   // Constructor metadata: shared process-state schemas and per-process
   // constructor records. Computed from the process layout loop.
 
   // Per-schema descriptor for codegen emission.
-  // Schema identity is (body_id, proc_within_body) for module processes,
+  // Schema identity is (body_group, proc_within_body) for module processes,
   // or a unique connection-local index for connection processes.
   struct ProcessStateSchemaDesc {
     uint64_t state_size = 0;
@@ -487,16 +502,15 @@ struct Layout {
   // Body-shaped descriptors consumed by the runtime constructor.
 
   // Per-body process/schema mapping and metadata template.
-  // One entry per unique body_id, ordered by first-seen body_id during
+  // One entry per unique body, ordered by first-seen body during
   // schema dedup (deterministic from BFS-sorted elaboration order).
-  // Do not reorder.
+  // Do not reorder. Body pointer is the canonical identity.
   struct BodyRealizationInfo {
-    mir::ModuleBodyId body_id;
-    // Direct pointer into mir::Design::module_bodies. Parallel to body_id,
-    // used for structural fetches that previously re-indexed through
-    // design.module_bodies.at(body_id.value). body_id stays for dedup
-    // keys, origin provenance, and debug naming.
     const mir::ModuleBody* body = nullptr;
+    // Design-global base slot for the representative instance of this body.
+    // Used for runtime signal identity (trace observation, packed store
+    // notifications, comb template extraction, observable descriptors).
+    uint32_t representative_base_slot = 0;
     uint32_t slot_count = 0;
     // Body-local byte layout. Per-slot offsets in BodyByteOffset domain.
     // Sole authority for body-local addressing in spec compilation.
@@ -551,14 +565,6 @@ struct Layout {
     std::vector<std::vector<std::string>> decision_meta_files;
   };
   std::vector<BodyRuntimeDescriptors> body_runtime_descriptors;
-
-  // Transitional design-global bridge: per-body representative base slot.
-  // Indexed parallel to body_realization_infos.
-  // Used ONLY by legacy codegen paths that still require design-global slot
-  // lookup (connection trigger classification, signal resolution).
-  // Will be deleted when codegen moves fully to body-local identity (B2b).
-  // Do NOT use in new code -- use body-local BodyLayout/slot_specs instead.
-  std::vector<uint32_t> body_representative_base_slots;
 
   // Per-connection codegen trigger fact. Intentionally reduced payload
   // from ProcessTriggerFact (process.hpp): only the fields needed for
@@ -640,21 +646,6 @@ struct Layout {
   // Keyed by canonical storage-owner slot identity.
   // Indexed by design-global slot_id [0, design.slots.size()).
   std::vector<bool> slot_has_design_behavioral_trigger;
-};
-
-// Type kind for variable inspection (also used in layout)
-enum class VarTypeKind : uint8_t {
-  kIntegral,  // int, bit, logic (2-state)
-  kReal,      // real, shortreal
-  kString,    // string
-};
-
-// Type info for a design slot (for variable registration).
-struct SlotTypeInfo {
-  VarTypeKind kind = VarTypeKind::kIntegral;
-  uint32_t width = 0;
-  bool is_signed = false;
-  bool is_four_state = false;
 };
 
 // Get the LLVM type for a TypeId. Handles all type kinds: integrals, reals,
@@ -771,8 +762,7 @@ struct LayoutModulePlan {
   uint32_t design_state_base_slot = 0;
   uint32_t slot_count = 0;
   // Per-body timescale as power-of-10 exponents.
-  // Absorbed from body_timescales during topology extraction so layout
-  // does not need body-id-indexed timescale lookups.
+  // Absorbed from body_timescales during topology extraction.
   int8_t time_unit_power = 0;
   int8_t time_precision_power = 0;
 };
@@ -792,7 +782,8 @@ auto BuildLayout(
     std::span<const std::span<const mir::ProcessId>> module_body_processes,
     const mir::Design& design, const mir::Arena& design_arena,
     const TypeArena& types, DesignLayout design_layout,
-    const std::unordered_map<uint32_t, BodyStorageLayout>& body_storage_layouts,
+    const std::unordered_map<const mir::ModuleBody*, BodyStorageLayout>&
+        body_storage_layouts,
     llvm::LLVMContext& ctx, const llvm::DataLayout& dl, bool force_two_state)
     -> Layout;
 

@@ -24,26 +24,14 @@ auto BuildTopologyPlan(const LoweringInput& input) -> TopologyPlan {
     const auto& body = *mod->body;
     const auto& obj = input.construction->objects.at(module_idx);
 
-    // Look up per-body timescale from the body-id-indexed table.
-    auto body_idx =
-        static_cast<uint32_t>(mod->body - input.design->module_bodies.data());
-    int8_t unit_power = 0;
-    int8_t precision_power = 0;
-    if (input.body_timescales != nullptr &&
-        body_idx < input.body_timescales->size()) {
-      const auto& ts = (*input.body_timescales)[body_idx];
-      unit_power = ts.unit_power;
-      precision_power = ts.precision_power;
-    }
-
     topo.module_plans.push_back(
         LayoutModulePlan{
             .body = mod->body,
             .body_slots = body.slots,
             .design_state_base_slot = obj.design_state_base_slot,
             .slot_count = obj.slot_count,
-            .time_unit_power = unit_power,
-            .time_precision_power = precision_power,
+            .time_unit_power = body.time_unit_power,
+            .time_precision_power = body.time_precision_power,
         });
     topo.module_body_processes.push_back(body.processes);
     ++module_idx;
@@ -83,12 +71,13 @@ auto BuildBackendLayout(
   }
 
   // Per-body storage layouts from body-local MIR inputs.
-  std::unordered_map<uint32_t, BodyStorageLayout> body_storage_layouts;
-  for (uint32_t bi = 0; bi < input.design->module_bodies.size(); ++bi) {
-    const auto& body = input.design->module_bodies[bi];
+  // Keyed by body pointer (canonical identity).
+  std::unordered_map<const mir::ModuleBody*, BodyStorageLayout>
+      body_storage_layouts;
+  for (const auto& body : input.design->module_bodies) {
     if (body.slots.empty()) continue;
     body_storage_layouts.emplace(
-        bi,
+        &body,
         BuildBodyStorageLayout(
             body.slots, *input.type_arena, data_layout, input.force_two_state));
   }

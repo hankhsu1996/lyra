@@ -366,9 +366,8 @@ void ExtractBodyMetadata(
       throw common::InternalError(
           "ExtractBodyMetadata",
           std::format(
-              "body {} non-final process count {} != schema count {}",
-              info.body_id.value, ordinal_map.nonfinal_processes.size(),
-              num_entries));
+              "body {} non-final process count {} != schema count {}", gi,
+              ordinal_map.nonfinal_processes.size(), num_entries));
     }
     bp.meta.entries.resize(num_entries);
 
@@ -405,14 +404,13 @@ void ExtractBodyMetadata(
               std::format(
                   "decision site id {} out of range in body {} "
                   "(allocator total {})",
-                  idx, info.body_id.value, table_size));
+                  idx, gi, table_size));
         }
         if (filled[idx] != 0) {
           throw common::InternalError(
               "ExtractBodyMetadata",
               std::format(
-                  "decision site id {} duplicated in body {}", idx,
-                  info.body_id.value));
+                  "decision site id {} duplicated in body {}", idx, gi));
         }
         filled[idx] = 1;
         const auto& site = rec.site;
@@ -450,7 +448,7 @@ void ExtractBodyMetadata(
               std::format(
                   "decision site id {} missing in body {} "
                   "(allocator total {})",
-                  i, info.body_id.value, table_size));
+                  i, gi, table_size));
         }
       }
 
@@ -558,8 +556,8 @@ void ExtractBodyTriggerTemplates(
       throw common::InternalError(
           "ExtractBodyTriggerTemplates",
           std::format(
-              "body {} schema count {} != non-final process count {}",
-              info.body_id.value, num_procs, nonfinal_count));
+              "body {} schema count {} != non-final process count {}", gi,
+              num_procs, nonfinal_count));
     }
 
     auto& bp = body_products[gi];
@@ -579,7 +577,7 @@ void ExtractBodyTriggerTemplates(
           std::format(
               "body {} trigger vector size {} != non-final process "
               "count {}",
-              info.body_id.value, body_triggers.size(), nonfinal_count));
+              gi, body_triggers.size(), nonfinal_count));
     }
 
     for (uint32_t nonfinal_proc_ordinal = 0;
@@ -618,9 +616,8 @@ void ExtractBodyTriggerTemplates(
             throw common::InternalError(
                 "ExtractBodyTriggerTemplates",
                 std::format(
-                    "body {} proc {} trigger slot_id {} >= slot_count {}",
-                    info.body_id.value, nonfinal_proc_ordinal, fact.signal.id,
-                    info.slot_count));
+                    "body {} proc {} trigger slot_id {} >= slot_count {}", gi,
+                    nonfinal_proc_ordinal, fact.signal.id, info.slot_count));
           }
           bp.triggers.entries.push_back(
               runtime::TriggerTemplateEntry{
@@ -694,7 +691,6 @@ void ExtractConnectionTriggerTemplates(
 
 void ExtractBodyCombTemplates(
     std::span<const Layout::BodyRealizationInfo> body_realization_infos,
-    std::span<const uint32_t> body_representative_base_slots,
     const DesignLayout& design, uint32_t num_package_slots,
     std::span<const uint32_t> instance_slot_counts,
     std::vector<BodyRuntimeProducts>& body_products) {
@@ -703,7 +699,7 @@ void ExtractBodyCombTemplates(
     const auto& body = *info.body;
     const auto ordinal_map = BuildBodyProcessOrdinalMap(body);
 
-    uint32_t base_slot = body_representative_base_slots[gi];
+    uint32_t base_slot = info.representative_base_slot;
 
     auto& bp = body_products[gi];
 
@@ -758,8 +754,8 @@ void ExtractBodyCombTemplates(
                     std::format(
                         "body {} proc {} comb slot ({},{}) scope "
                         "mismatch",
-                        info.body_id.value, nonfinal_proc_ordinal,
-                        static_cast<int>(key.scope), key.id));
+                        gi, nonfinal_proc_ordinal, static_cast<int>(key.scope),
+                        key.id));
               }
               if (accum.final_global_id != final_global_id) {
                 throw common::InternalError(
@@ -767,9 +763,8 @@ void ExtractBodyCombTemplates(
                     std::format(
                         "body {} proc {} comb slot ({},{}) "
                         "final_global_id mismatch ({} vs {})",
-                        info.body_id.value, nonfinal_proc_ordinal,
-                        static_cast<int>(key.scope), key.id,
-                        accum.final_global_id, final_global_id));
+                        gi, nonfinal_proc_ordinal, static_cast<int>(key.scope),
+                        key.id, accum.final_global_id, final_global_id));
               }
             }
             if (accum.is_full_slot) continue;
@@ -837,14 +832,13 @@ void ExtractBodyCombTemplates(
 void ExtractBodyObservableDescriptors(
     const TypeArena& type_arena,
     std::span<const Layout::BodyRealizationInfo> body_realization_infos,
-    std::span<const uint32_t> body_representative_base_slots,
     const DesignLayout& design,
     std::vector<BodyRuntimeProducts>& body_products) {
   for (size_t gi = 0; gi < body_realization_infos.size(); ++gi) {
     const auto& info = body_realization_infos[gi];
     auto& bp = body_products[gi];
 
-    uint32_t base_slot = body_representative_base_slots[gi];
+    uint32_t base_slot = info.representative_base_slot;
 
     auto& tmpl = bp.observable_descriptors;
     tmpl.pool.push_back('\0');
@@ -871,8 +865,8 @@ void ExtractBodyObservableDescriptors(
         throw common::InternalError(
             "ExtractBodyObservableDescriptors",
             std::format(
-                "body {} slot {} (gsi {}) out of range (design slots {})",
-                info.body_id.value, i, gsi, design.slots.size()));
+                "body {} slot {} (gsi {}) out of range (design slots {})", gi,
+                i, gsi, design.slots.size()));
       }
 
       const ObservableOwnerSlotId owner =
@@ -927,7 +921,7 @@ void ExtractBodyObservableDescriptors(
               std::format(
                   "body {}: invalid or duplicate local_signal_id {} "
                   "(slot_count {})",
-                  info.body_id.value, entry.local_signal_id, info.slot_count));
+                  gi, entry.local_signal_id, info.slot_count));
         }
       }
     }
@@ -937,7 +931,6 @@ void ExtractBodyObservableDescriptors(
 void ExtractBodyInitDescriptors(
     const mir::ConstructionInput& construction,
     std::span<const Layout::BodyRealizationInfo> body_realization_infos,
-    std::span<const uint32_t> body_representative_base_slots,
     const DesignLayout& design,
     std::span<const Layout::InstanceStorageSizes> instance_storage_sizes,
     std::span<const InstanceStorageBase> instance_storage_bases,
@@ -952,7 +945,7 @@ void ExtractBodyInitDescriptors(
     auto& bp = body_products[gi];
 
     if (info.slot_count == 0) continue;
-    uint32_t base_slot = body_representative_base_slots[gi];
+    uint32_t base_slot = info.representative_base_slot;
     auto init_owned_base =
         design.GetStorageBaseForRange(base_slot, info.slot_count);
     if (!init_owned_base.has_value()) continue;
@@ -1216,16 +1209,13 @@ auto ExtractRuntimeData(
   ExtractConnectionTriggerTemplates(
       layout.connection_realization_infos, products.connection_templates);
   ExtractBodyCombTemplates(
-      layout.body_realization_infos, layout.body_representative_base_slots,
-      layout.design, layout.num_package_slots, layout.instance_slot_counts,
-      products.body_products);
+      layout.body_realization_infos, layout.design, layout.num_package_slots,
+      layout.instance_slot_counts, products.body_products);
   ExtractBodyObservableDescriptors(
-      *input.type_arena, layout.body_realization_infos,
-      layout.body_representative_base_slots, layout.design,
+      *input.type_arena, layout.body_realization_infos, layout.design,
       products.body_products);
   ExtractBodyInitDescriptors(
-      *input.construction, layout.body_realization_infos,
-      layout.body_representative_base_slots, layout.design,
+      *input.construction, layout.body_realization_infos, layout.design,
       layout.instance_storage_sizes, layout.instance_storage_bases,
       instance_body_group, products.body_products,
       products.construction_program);

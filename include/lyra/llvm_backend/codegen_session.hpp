@@ -38,7 +38,7 @@ struct SpecInstanceBinding {
 
 // Specialization-owned MIR content: identity + behavioral IR references.
 // Does not contain backend layout or codegen routing data.
-// body is the canonical identity -- numeric body_id is derived when needed.
+// body pointer is the canonical identity.
 struct SpecCompilationUnit {
   const mir::ModuleBody* body = nullptr;
   std::vector<mir::ProcessId> processes;
@@ -82,9 +82,10 @@ struct SpecLayoutContract {
   // referencing this slot's design-global representative. Covers cross-body
   // dependents (e.g., parent always_ff @(posedge child.clk)).
   std::vector<bool> slot_has_cross_body_behavioral_trigger;
-  // Representative design-global base slot for this body. Used only for
+  // Representative design-global base slot for this body. Used for
   // runtime signal identity at the codegen->runtime boundary (trace
-  // observation, packed store notifications).
+  // observation, packed store notifications). Copied from
+  // BodyRealizationInfo::representative_base_slot.
   uint32_t representative_slot_base = 0;
 };
 
@@ -167,7 +168,7 @@ struct ResolvedModuleExportEntry {
 // specialization body. Owns specialization-local backend data (MIR
 // membership, layout, codegen routing). Does not reference orchestrator
 // storage -- the specialization compiler reads only from this object.
-// body is the canonical identity -- no numeric body_id.
+// body pointer is the canonical identity.
 struct CompiledModuleSpecInput {
   const mir::ModuleBody* body = nullptr;
   std::vector<mir::FunctionId> functions;

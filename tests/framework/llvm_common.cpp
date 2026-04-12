@@ -274,6 +274,7 @@ auto PrepareLlvmModule(
       .instance_table = &hir_result.instance_table,
       .specialization_map = &hir_result.specialization_map,
       .child_coord_map = &hir_result.child_coord_map,
+      .body_timescales = &hir_result.body_timescales,
   };
   auto mir_result = lowering::hir_to_mir::LowerHirToMir(mir_input);
   if (!mir_result) {
@@ -371,7 +372,6 @@ auto PrepareLlvmModule(
       .feature_flags = feature_flags,
       .signal_trace_path = {},
       .iteration_limit = 0,
-      .body_timescales = &hir_result.body_timescales,
       .force_two_state = force_two_state,
       .dpi_export_wrappers = &mir_result->dpi_export_wrappers,
       .bound_connections = &mir_result->bound_connections,

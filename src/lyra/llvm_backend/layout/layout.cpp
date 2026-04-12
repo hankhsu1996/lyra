@@ -1134,6 +1134,8 @@ auto BuildDesignLayout(
     layout.slot_to_index[common::SlotId{global_idx}] = global_idx;
     layout.slot_storage_specs.push_back(ResolveStorageSpec(
         desc.type, types, storage_mode, target_abi, layout.storage_spec_arena));
+    layout.slot_type_infos.push_back(
+        ClassifySlotTypeInfo(desc.type, types, force_two_state));
     slot_shapes.push_back(desc.storage_shape);
   };
 
@@ -1658,9 +1660,10 @@ auto BuildLayout(
     std::vector<mir::ProcessId> non_kernelized_connection_processes,
     std::span<const LayoutModulePlan> module_plans,
     std::span<const std::span<const mir::ProcessId>> module_body_processes,
-    const mir::Design& design, const mir::Arena& design_arena,
+    const mir::Design& /*design*/, const mir::Arena& design_arena,
     const TypeArena& types, DesignLayout design_layout,
-    const std::unordered_map<uint32_t, BodyStorageLayout>& body_storage_layouts,
+    const std::unordered_map<const mir::ModuleBody*, BodyStorageLayout>&
+        body_storage_layouts,
     llvm::LLVMContext& ctx, const llvm::DataLayout& dl, bool force_two_state)
     -> Layout {
   Layout layout;
@@ -1790,15 +1793,14 @@ auto BuildLayout(
     } else {
       uint32_t mi = sp.module_index.value;
       const auto* body_ptr = module_plans[mi].body;
-      auto body_idx =
-          static_cast<uint32_t>(body_ptr - design.module_bodies.data());
       const auto& ordinal_map = body_ordinal_maps.at(body_ptr);
       uint32_t nonfinal_proc_ordinal =
           GetNonFinalOrdinal(ordinal_map, sp.process_id);
-      frame_name =
-          std::format("Body{}Frame{}", body_idx, nonfinal_proc_ordinal);
-      state_name =
-          std::format("Body{}State{}", body_idx, nonfinal_proc_ordinal);
+      // Use module_index as local naming ordinal (deterministic, no
+      // transported body identity). Multiple instances of the same body
+      // share the same layout, so any representative works.
+      frame_name = std::format("M{}Frame{}", mi, nonfinal_proc_ordinal);
+      state_name = std::format("M{}State{}", mi, nonfinal_proc_ordinal);
     }
 
     ProcessLayout proc_layout;
@@ -1890,17 +1892,17 @@ auto BuildLayout(
       return {.state_size = sz, .state_align = al, .needs_4state_init = needs};
     };
 
-    // Map from (body_id, dense non-final ordinal) to schema index for
+    // Map from (body pointer, dense non-final ordinal) to schema index for
     // module process deduplication.
     struct SchemaKey {
-      uint32_t body_id;
+      const mir::ModuleBody* body;
       uint32_t proc_within_body;  // Dense non-final body-local ordinal.
       auto operator==(const SchemaKey&) const -> bool = default;
     };
     struct SchemaKeyHash {
       auto operator()(const SchemaKey& k) const -> size_t {
-        return std::hash<uint64_t>{}(
-            (static_cast<uint64_t>(k.body_id) << 32) | k.proc_within_body);
+        return std::hash<const void*>{}(k.body) ^
+               std::hash<uint32_t>{}(k.proc_within_body);
       }
     };
     std::unordered_map<SchemaKey, uint32_t, SchemaKeyHash> module_schema_map;
@@ -1925,17 +1927,15 @@ auto BuildLayout(
 
         ++conn_counter;
       } else {
-        // Module process: deduplicate by (body_id, nonfinal_proc_ordinal).
+        // Module process: deduplicate by (body, nonfinal_proc_ordinal).
         uint32_t mi = sp.module_index.value;
         const auto* body_ptr = module_plans[mi].body;
-        auto body_idx =
-            static_cast<uint32_t>(body_ptr - design.module_bodies.data());
         const auto& ordinal_map = body_ordinal_maps.at(body_ptr);
         uint32_t nonfinal_proc_ordinal =
             GetNonFinalOrdinal(ordinal_map, sp.process_id);
 
         SchemaKey key{
-            .body_id = body_idx, .proc_within_body = nonfinal_proc_ordinal};
+            .body = body_ptr, .proc_within_body = nonfinal_proc_ordinal};
         auto it = module_schema_map.find(key);
         if (it != module_schema_map.end()) {
           // Existing schema: assert all constructor-relevant properties
@@ -1989,30 +1989,26 @@ auto BuildLayout(
 
     // Build per-body realization descriptors from the schema dedup map.
     // This is body-shaped data: one entry per unique body, not per instance.
-    // Ordering: by first-seen body_id during schema dedup (deterministic
+    // Ordering: by first-seen body during schema dedup (deterministic
     // from BFS-sorted elaboration order). Cut 3 will consume this vector
     // in order when generating emitted constructor loops.
     {
       // Build body_realization_infos from module_plans (covers all bodies,
       // including those with zero non-final processes).
-      std::unordered_map<uint32_t, size_t> body_id_to_info_index;
+      // Keyed by body pointer (canonical identity).
+      std::unordered_map<const mir::ModuleBody*, size_t> body_to_info_index;
       for (const auto& plan : module_plans) {
-        auto body_id_val =
-            static_cast<uint32_t>(plan.body - design.module_bodies.data());
-        auto [it, inserted] = body_id_to_info_index.try_emplace(
-            body_id_val, layout.body_realization_infos.size());
+        auto [it, inserted] = body_to_info_index.try_emplace(
+            plan.body, layout.body_realization_infos.size());
         if (inserted) {
           BodyStateSizeInfo size;
           BodyLayout body_layout;
           std::vector<SlotStorageSpec> body_slot_specs;
           if (plan.slot_count > 0) {
-            auto bsl_it = body_storage_layouts.find(body_id_val);
+            auto bsl_it = body_storage_layouts.find(plan.body);
             if (bsl_it == body_storage_layouts.end()) {
               throw common::InternalError(
-                  "BuildLayout",
-                  std::format(
-                      "no precomputed body storage layout for body {}",
-                      body_id_val));
+                  "BuildLayout", "no precomputed body storage layout");
             }
             size = ComputeBodyStateSize(plan.body_slots, bsl_it->second);
             body_layout = BuildBodyLayout(plan.body_slots, bsl_it->second);
@@ -2020,8 +2016,8 @@ auto BuildLayout(
           }
           layout.body_realization_infos.push_back(
               Layout::BodyRealizationInfo{
-                  .body_id = mir::ModuleBodyId{body_id_val},
                   .body = plan.body,
+                  .representative_base_slot = plan.design_state_base_slot,
                   .slot_count = plan.slot_count,
                   .body_layout = std::move(body_layout),
                   .slot_specs = std::move(body_slot_specs),
@@ -2031,12 +2027,10 @@ auto BuildLayout(
                   .total_state_size_bytes = size.total_bytes,
                   .time_unit_power = plan.time_unit_power,
                   .time_precision_power = plan.time_precision_power,
-                  .event_count = static_cast<uint32_t>(
-                      design.module_bodies.at(body_id_val).events.size()),
+                  .event_count =
+                      static_cast<uint32_t>(plan.body->events.size()),
               });
           layout.body_runtime_descriptors.push_back({});
-          layout.body_representative_base_slots.push_back(
-              plan.design_state_base_slot);
         } else {
           // Validate all plans for the same body agree on slot_count.
           auto& existing = layout.body_realization_infos[it->second];
@@ -2044,8 +2038,8 @@ auto BuildLayout(
             throw common::InternalError(
                 "BuildLayout",
                 std::format(
-                    "body {} slot_count disagreement: {} vs {}", body_id_val,
-                    existing.slot_count, plan.slot_count));
+                    "body group {} slot_count disagreement: {} vs {}",
+                    it->second, existing.slot_count, plan.slot_count));
           }
         }
       }
@@ -2056,8 +2050,7 @@ auto BuildLayout(
       for (size_t bi = 0; bi < layout.body_realization_infos.size(); ++bi) {
         const auto& info = layout.body_realization_infos[bi];
         auto& rt = layout.body_runtime_descriptors[bi];
-        const auto* info_body_ptr = &design.module_bodies[info.body_id.value];
-        const auto& ordinal_map = body_ordinal_maps.at(info_body_ptr);
+        const auto& ordinal_map = body_ordinal_maps.at(info.body);
         auto nonfinal_count =
             static_cast<uint32_t>(ordinal_map.nonfinal_processes.size());
 
@@ -2069,15 +2062,16 @@ auto BuildLayout(
         for (uint32_t nonfinal_proc_ordinal = 0;
              nonfinal_proc_ordinal < nonfinal_count; ++nonfinal_proc_ordinal) {
           SchemaKey key{
-              .body_id = info.body_id.value,
+              .body = info.body,
               .proc_within_body = nonfinal_proc_ordinal,
           };
           auto it = module_schema_map.find(key);
           if (it == module_schema_map.end()) {
             throw common::InternalError(
-                "BuildLayout", std::format(
-                                   "body {} missing nonfinal_proc_ordinal {}",
-                                   info.body_id.value, nonfinal_proc_ordinal));
+                "BuildLayout",
+                std::format(
+                    "body group {} missing nonfinal_proc_ordinal {}", bi,
+                    nonfinal_proc_ordinal));
           }
           rt.process_schema_indices[nonfinal_proc_ordinal] = it->second;
         }
@@ -2124,14 +2118,11 @@ auto BuildLayout(
     size_t num_instances = module_plans.size();
     layout.instance_storage_bases.resize(num_instances);
     layout.instance_slot_counts.resize(num_instances);
-    layout.instance_body_ids.resize(num_instances);
     layout.instance_storage_sizes.resize(num_instances);
 
     for (size_t mi = 0; mi < num_instances; ++mi) {
       const auto& plan = module_plans[mi];
       layout.instance_slot_counts[mi] = plan.slot_count;
-      layout.instance_body_ids[mi] = mir::ModuleBodyId{
-          static_cast<uint32_t>(plan.body - design.module_bodies.data())};
 
       InstanceStorageBase base;
       if (plan.slot_count > 0) {

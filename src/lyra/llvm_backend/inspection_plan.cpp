@@ -18,13 +18,14 @@ auto BuildInspectionPlan(
     auto slot_value = static_cast<uint32_t>(ref.slot_id.value);
     auto abs_off =
         ArenaByteOffset{layout.design.GetStorageByteOffset(ref.slot_id)};
+    auto type_info = layout.design.slot_type_infos.at(slot_value);
 
     if (slot_value < layout.num_package_slots) {
       plan.globals.push_back(
           InspectedGlobalVar{
               .name = ref.name,
-              .slot_id = ref.slot_id,
               .placement = DesignGlobalPlacement{abs_off},
+              .type_info = type_info,
           });
     } else {
       auto owner = ResolveInstanceOwnedFlatSlot(
@@ -43,12 +44,12 @@ auto BuildInspectionPlan(
       plan.instance_owned.push_back(
           InspectedInstanceVar{
               .name = ref.name,
-              .slot_id = ref.slot_id,
               .placement =
                   InstanceOwnedPlacement{
                       .owner_instance_id = instance_id,
                       .rel_off = rel_off,
                   },
+              .type_info = type_info,
           });
     }
   }

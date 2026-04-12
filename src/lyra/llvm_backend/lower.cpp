@@ -196,16 +196,15 @@ auto BuildFinalPackaging(
     if (it == body_to_compiled_funcs.end()) {
       throw common::InternalError(
           "BuildFinalPackaging",
-          std::format("no compiled functions for body {}", info.body_id.value));
+          std::format("no compiled functions for body group {}", bi));
     }
     const auto& rt = body_runtime_descriptors[bi];
     if (it->second.size() != rt.process_schema_indices.size()) {
       throw common::InternalError(
           "BuildFinalPackaging",
           std::format(
-              "body {} compiled function count {} != schema count {}",
-              info.body_id.value, it->second.size(),
-              rt.process_schema_indices.size()));
+              "body group {} compiled function count {} != schema count {}", bi,
+              it->second.size(), rt.process_schema_indices.size()));
     }
     pkg.body_funcs.push_back(
         CodegenSession::BodyCompiledFuncs{
@@ -380,8 +379,7 @@ auto FinalizeModule(CodegenSession session, LoweringReport report)
 
 void EmitVariableInspection(
     Context& context, const CuFacts& facts, const InspectionPlan& plan,
-    const mir::Design& design, const Layout& layout, const TypeArena& types,
-    bool force_two_state, llvm::Value* design_state, llvm::Value* abi_ptr) {
+    llvm::Value* design_state, llvm::Value* abi_ptr) {
   if (plan.IsEmpty()) {
     return;
   }
@@ -392,23 +390,8 @@ void EmitVariableInspection(
   auto* i1_ty = llvm::Type::getInt1Ty(llvm_ctx);
   auto* i8_ty = llvm::Type::getInt8Ty(llvm_ctx);
 
-  auto classify_slot = [&](common::SlotId slot_id) -> SlotTypeInfo {
-    uint32_t gsi = slot_id.value;
-    if (gsi < layout.num_package_slots) {
-      return ClassifySlotTypeInfo(
-          design.slots[gsi].type, types, force_two_state);
-    }
-    auto owner = ResolveInstanceOwnedFlatSlot(
-        layout.num_package_slots, layout.instance_slot_counts, gsi);
-    auto body_id = layout.instance_body_ids[owner.instance_id.value];
-    const auto& body = design.module_bodies.at(body_id.value);
-    return ClassifySlotTypeInfo(
-        body.slots[owner.local_signal_id.value].type, types, force_two_state);
-  };
-
   auto emit_register = [&](llvm::Value* slot_ptr, std::string_view name,
-                           common::SlotId slot_id) {
-    const auto type_info = classify_slot(slot_id);
+                           const SlotTypeInfo& type_info) {
     auto* name_ptr = builder.CreateGlobalStringPtr(name);
     auto* kind_val =
         llvm::ConstantInt::get(i32_ty, static_cast<int32_t>(type_info.kind));
@@ -426,7 +409,7 @@ void EmitVariableInspection(
     auto* addr = builder.CreateGEP(
         i8_ty, design_state, builder.getInt64(var.placement.abs_off.value),
         "var_ptr");
-    emit_register(addr, var.name, var.slot_id);
+    emit_register(addr, var.name, var.type_info);
   }
 
   if (!plan.instance_owned.empty()) {
@@ -446,7 +429,7 @@ void EmitVariableInspection(
           context, abi_ptr, var.placement.owner_instance_id);
       auto* addr = EmitInstanceOwnedByteAddress(
           context, facts, inst, var.placement.rel_off);
-      emit_register(addr, var.name, var.slot_id);
+      emit_register(addr, var.name, var.type_info);
     }
     builder.CreateBr(skip_bb);
     builder.SetInsertPoint(skip_bb);
