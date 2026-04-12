@@ -39,6 +39,8 @@ auto ReturnsI1(mir::BinaryOp op) -> bool {
     case mir::BinaryOp::kGreaterThanEqualSigned:
     case mir::BinaryOp::kLogicalAnd:
     case mir::BinaryOp::kLogicalOr:
+    case mir::BinaryOp::kLogicalImplication:
+    case mir::BinaryOp::kLogicalEquivalence:
     case mir::BinaryOp::kCaseZMatch:
     case mir::BinaryOp::kCaseXMatch:
       return true;
@@ -104,7 +106,9 @@ auto IsShiftOp(mir::BinaryOp op) -> bool {
 }
 
 auto IsLogicalOp(mir::BinaryOp op) -> bool {
-  return op == mir::BinaryOp::kLogicalAnd || op == mir::BinaryOp::kLogicalOr;
+  return op == mir::BinaryOp::kLogicalAnd || op == mir::BinaryOp::kLogicalOr ||
+         op == mir::BinaryOp::kLogicalImplication ||
+         op == mir::BinaryOp::kLogicalEquivalence;
 }
 
 auto IsCaseMatchOp(mir::BinaryOp op) -> bool {
@@ -223,6 +227,24 @@ auto LowerBinaryArith(
       // NOLINTNEXTLINE(readability-suspicious-call-argument)
       auto* rhs_bool = builder.CreateICmpNE(rhs, const_zero, "rhs.bool");
       return builder.CreateOr(lhs_bool, rhs_bool, "lor");
+    }
+    case mir::BinaryOp::kLogicalImplication: {
+      // a -> b  ===  !a || b
+      auto* const_zero = llvm::ConstantInt::get(lhs->getType(), 0);
+      auto* lhs_bool = builder.CreateICmpNE(lhs, const_zero, "lhs.bool");
+      // NOLINTNEXTLINE(readability-suspicious-call-argument)
+      auto* rhs_bool = builder.CreateICmpNE(rhs, const_zero, "rhs.bool");
+      auto* not_lhs = builder.CreateNot(lhs_bool, "impl.not");
+      return builder.CreateOr(not_lhs, rhs_bool, "impl");
+    }
+    case mir::BinaryOp::kLogicalEquivalence: {
+      // a <-> b  ===  (a && b) || (!a && !b)  ===  !(a ^ b) at boolean level
+      auto* const_zero = llvm::ConstantInt::get(lhs->getType(), 0);
+      auto* lhs_bool = builder.CreateICmpNE(lhs, const_zero, "lhs.bool");
+      // NOLINTNEXTLINE(readability-suspicious-call-argument)
+      auto* rhs_bool = builder.CreateICmpNE(rhs, const_zero, "rhs.bool");
+      auto* xor_result = builder.CreateXor(lhs_bool, rhs_bool, "equiv.xor");
+      return builder.CreateNot(xor_result, "equiv");
     }
 
     default:
