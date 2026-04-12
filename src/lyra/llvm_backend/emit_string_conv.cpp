@@ -6,47 +6,37 @@
 
 #include "lyra/common/internal_error.hpp"
 #include "lyra/common/type_queries.hpp"
-#include "lyra/llvm_backend/context.hpp"
 #include "lyra/llvm_backend/cu_facts.hpp"
 
 namespace lyra::lowering::mir_to_llvm {
 
 auto EmitPackedToString(
-    Context& context, const CuFacts& facts, llvm::Value* packed_value,
+    llvm::IRBuilder<>& builder, const CuFacts& facts,
+    llvm::Function* from_packed_fn, llvm::Value* packed_value,
     const Type& packed_type) -> llvm::Value* {
-  // Guardrail: must be called with a packed type
   if (!IsPacked(packed_type)) {
     throw common::InternalError(
         "EmitPackedToString", "called with non-packed type");
   }
 
-  auto& builder = context.GetBuilder();
-  auto& llvm_ctx = context.GetLlvmContext();
   const auto& types = *facts.types;
-
-  // Compute bit width from type (single source of truth)
   uint32_t bit_width = PackedBitWidth(packed_type, types);
 
   // Handle 4-state: extract value plane (unknown bits ignored per cast.cpp)
   llvm::Value* value = packed_value;
   llvm::Type* storage_type = value->getType();
   if (storage_type->isStructTy()) {
-    // 4-state: {iN, iN} struct - extract value plane (index 0)
     value = builder.CreateExtractValue(value, 0, "tostr.val");
     storage_type = value->getType();
   }
 
-  // Allocate stack space and store the packed value
-  // LLVM stores iN as little-endian bytes, matching runtime expectation
   auto* alloca = builder.CreateAlloca(storage_type, nullptr, "tostr.tmp");
   builder.CreateStore(value, alloca);
 
-  // Call LyraStringFromPacked(ptr data, i32 bit_width)
-  // Returns a newly allocated handle (refcount=1) that caller must release
-  auto* i32_ty = llvm::Type::getInt32Ty(llvm_ctx);
+  auto* i32_ty = llvm::Type::getInt32Ty(builder.getContext());
   return builder.CreateCall(
-      context.GetLyraStringFromPacked(),
-      {alloca, llvm::ConstantInt::get(i32_ty, bit_width)}, "tostr.handle");
+      from_packed_fn, {alloca, llvm::ConstantInt::get(i32_ty, bit_width)},
+      "tostr.handle");
 }
 
 }  // namespace lyra::lowering::mir_to_llvm

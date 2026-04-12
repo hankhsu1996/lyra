@@ -110,8 +110,9 @@ auto LowerArgAsStringHandle(
           "packed operand should be iN or {iN,iN}, not pointer");
     }
 
-    llvm::Value* handle =
-        EmitPackedToString(context, facts, packed_val, operand_type);
+    llvm::Value* handle = EmitPackedToString(
+        context.GetBuilder(), facts, context.GetLyraStringFromPacked(),
+        packed_val, operand_type);
     return std::pair{handle, true};
   }
 

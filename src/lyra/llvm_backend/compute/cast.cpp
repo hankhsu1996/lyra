@@ -140,8 +140,9 @@ auto LowerCastRvalue(
     auto source_or_err =
         LowerOperandRaw(context, facts, resolver, source_operand);
     if (!source_or_err) return std::unexpected(source_or_err.error());
-    llvm::Value* result =
-        EmitPackedToString(context, facts, *source_or_err, src_type);
+    llvm::Value* result = EmitPackedToString(
+        builder, facts, context.GetLyraStringFromPacked(), *source_or_err,
+        src_type);
     return RvalueValue::TwoState(result);
   }
 

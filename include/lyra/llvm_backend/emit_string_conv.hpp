@@ -1,12 +1,16 @@
 #pragma once
 
+#include <llvm/IR/IRBuilder.h>
 #include <llvm/IR/Value.h>
 
 #include "lyra/common/type.hpp"
 
+namespace llvm {
+class Function;
+}
+
 namespace lyra::lowering::mir_to_llvm {
 
-class Context;
 struct CuFacts;
 
 // Convert a packed value to a string handle by calling LyraStringFromPacked.
@@ -18,17 +22,9 @@ struct CuFacts;
 //
 // Ownership: Caller MUST release the returned handle via LyraStringRelease
 // when the temporary string is no longer needed.
-//
-// Parameters:
-// - context: LLVM lowering context
-// - facts: compilation unit facts (type arena for bit-width computation)
-// - packed_value: The packed value (iN or {iN, iN} for 4-state)
-// - packed_type: The Type of the packed value (used for bit_width and 4-state
-//                check). Must be a packed type (asserted in debug builds).
-//
-// Returns: ptr to newly allocated string handle
 auto EmitPackedToString(
-    Context& context, const CuFacts& facts, llvm::Value* packed_value,
+    llvm::IRBuilder<>& builder, const CuFacts& facts,
+    llvm::Function* from_packed_fn, llvm::Value* packed_value,
     const Type& packed_type) -> llvm::Value*;
 
 }  // namespace lyra::lowering::mir_to_llvm

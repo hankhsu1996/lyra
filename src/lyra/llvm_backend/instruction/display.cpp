@@ -120,10 +120,11 @@ auto EmitStoreNarrowToTemp(
   return alloca;
 }
 
-void LowerLiteralOp(Context& context, const mir::FormatOp& op) {
-  auto& builder = context.GetBuilder();
+void LowerLiteralOp(
+    llvm::IRBuilder<>& builder, llvm::Function* print_literal_fn,
+    const mir::FormatOp& op) {
   auto* str_const = builder.CreateGlobalStringPtr(op.literal);
-  builder.CreateCall(context.GetLyraPrintLiteral(), {str_const});
+  builder.CreateCall(print_literal_fn, {str_const});
 }
 
 void LowerModulePathOp(Context& context) {
@@ -350,7 +351,7 @@ auto LowerFormatOps(
     Result<void> result;
     switch (op.kind) {
       case FormatKind::kLiteral:
-        LowerLiteralOp(context, op);
+        LowerLiteralOp(context.GetBuilder(), context.GetLyraPrintLiteral(), op);
         break;
       case FormatKind::kString:
         result = LowerStringOp(context, facts, resolver, op);

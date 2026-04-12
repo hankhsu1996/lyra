@@ -132,25 +132,25 @@ auto CoerceFromDpiAbiType(
 // String marshaling helpers
 // ---------------------------------------------------------------------------
 
-auto MarshalInputString(Context& context, llvm::Value* str_handle)
-    -> llvm::Value* {
-  auto& builder = context.GetBuilder();
-  auto* ptr_ty = llvm::PointerType::getUnqual(context.GetLlvmContext());
+auto MarshalInputString(
+    llvm::IRBuilder<>& builder, llvm::Function* get_cstr_fn,
+    llvm::Value* str_handle) -> llvm::Value* {
+  auto& llvm_ctx = builder.getContext();
+  auto* ptr_ty = llvm::PointerType::getUnqual(llvm_ctx);
   auto* is_null = builder.CreateICmpEQ(
       str_handle, llvm::ConstantPointerNull::get(ptr_ty), "dpi.str.null");
 
   auto* cur_bb = builder.GetInsertBlock();
   auto* parent_fn = cur_bb->getParent();
-  auto* nonnull_bb = llvm::BasicBlock::Create(
-      context.GetLlvmContext(), "dpi.str.nonnull", parent_fn);
-  auto* join_bb = llvm::BasicBlock::Create(
-      context.GetLlvmContext(), "dpi.str.join", parent_fn);
+  auto* nonnull_bb =
+      llvm::BasicBlock::Create(llvm_ctx, "dpi.str.nonnull", parent_fn);
+  auto* join_bb = llvm::BasicBlock::Create(llvm_ctx, "dpi.str.join", parent_fn);
 
   builder.CreateCondBr(is_null, join_bb, nonnull_bb);
 
   builder.SetInsertPoint(nonnull_bb);
-  auto* handle_cstr = builder.CreateCall(
-      context.GetLyraStringGetCStr(), {str_handle}, "dpi.str.cstr");
+  auto* handle_cstr =
+      builder.CreateCall(get_cstr_fn, {str_handle}, "dpi.str.cstr");
   builder.CreateBr(join_bb);
 
   builder.SetInsertPoint(join_bb);
@@ -162,33 +162,34 @@ auto MarshalInputString(Context& context, llvm::Value* str_handle)
   return phi;
 }
 
-auto MaterializeStringWriteback(Context& context, llvm::Value* c_str_ptr)
-    -> llvm::Value* {
-  auto& builder = context.GetBuilder();
-  auto* ptr_ty = llvm::PointerType::getUnqual(context.GetLlvmContext());
+auto MaterializeStringWriteback(
+    llvm::IRBuilder<>& builder, llvm::Function* from_cstr_fn,
+    llvm::Value* c_str_ptr) -> llvm::Value* {
+  auto& llvm_ctx = builder.getContext();
+  auto* ptr_ty = llvm::PointerType::getUnqual(llvm_ctx);
   auto* is_null = builder.CreateICmpEQ(
       c_str_ptr, llvm::ConstantPointerNull::get(ptr_ty), "dpi.str.wb.null");
 
   auto* cur_bb = builder.GetInsertBlock();
   auto* parent_fn = cur_bb->getParent();
-  auto* null_bb = llvm::BasicBlock::Create(
-      context.GetLlvmContext(), "dpi.str.wb.null_br", parent_fn);
-  auto* nonnull_bb = llvm::BasicBlock::Create(
-      context.GetLlvmContext(), "dpi.str.wb.nonnull", parent_fn);
-  auto* join_bb = llvm::BasicBlock::Create(
-      context.GetLlvmContext(), "dpi.str.wb.join", parent_fn);
+  auto* null_bb =
+      llvm::BasicBlock::Create(llvm_ctx, "dpi.str.wb.null_br", parent_fn);
+  auto* nonnull_bb =
+      llvm::BasicBlock::Create(llvm_ctx, "dpi.str.wb.nonnull", parent_fn);
+  auto* join_bb =
+      llvm::BasicBlock::Create(llvm_ctx, "dpi.str.wb.join", parent_fn);
 
   builder.CreateCondBr(is_null, null_bb, nonnull_bb);
 
   builder.SetInsertPoint(null_bb);
   auto* empty_cstr = builder.CreateGlobalStringPtr("", "dpi.str.wb.empty");
-  auto* empty_handle = builder.CreateCall(
-      context.GetLyraStringFromCStr(), {empty_cstr}, "dpi.str.wb.empty_h");
+  auto* empty_handle =
+      builder.CreateCall(from_cstr_fn, {empty_cstr}, "dpi.str.wb.empty_h");
   builder.CreateBr(join_bb);
 
   builder.SetInsertPoint(nonnull_bb);
-  auto* handle = builder.CreateCall(
-      context.GetLyraStringFromCStr(), {c_str_ptr}, "dpi.str.wb.handle");
+  auto* handle =
+      builder.CreateCall(from_cstr_fn, {c_str_ptr}, "dpi.str.wb.handle");
   builder.CreateBr(join_bb);
 
   builder.SetInsertPoint(join_bb);
@@ -574,7 +575,8 @@ auto MarshalDpiScalarInput(
   if (param.abi_type == DpiAbiTypeClass::kString) {
     auto val = LowerOperand(context, facts, operand);
     if (!val) return std::unexpected(val.error());
-    return MarshalInputString(context, *val);
+    return MarshalInputString(
+        context.GetBuilder(), context.GetLyraStringGetCStr(), *val);
   }
   if (param.abi_type == DpiAbiTypeClass::kLogicScalar) {
     auto fsv = LowerDpiFourStateOperand(context, facts, operand, param.sv_type);
@@ -748,7 +750,8 @@ auto CommitDpiOutputWritebacks(
       auto* backing_ty = GetBackingLlvmType(llvm_ctx, width);
       decoded = DecodeDpiBitVecStorage(builder, raw, width, backing_ty);
     } else if (param.abi_type == DpiAbiTypeClass::kString) {
-      decoded = MaterializeStringWriteback(context, raw);
+      decoded = MaterializeStringWriteback(
+          builder, context.GetLyraStringFromCStr(), raw);
     } else {
       auto dest_type = context.GetPlaceLlvmType(*binding.writeback_dest);
       if (!dest_type) return std::unexpected(dest_type.error());
@@ -882,7 +885,8 @@ auto CommitDpiReturnValue(
         BuildLyraLogicScalarValue(builder, llvm_ctx, call_inst, width);
     builder.CreateStore(packed, *tmp_ptr);
   } else if (sig.result.abi_type == DpiAbiTypeClass::kString) {
-    llvm::Value* handle = MaterializeStringWriteback(context, call_inst);
+    llvm::Value* handle = MaterializeStringWriteback(
+        builder, context.GetLyraStringFromCStr(), call_inst);
     builder.CreateStore(handle, *tmp_ptr);
   } else {
     llvm::Value* internal_result = CoerceFromDpiAbiType(
@@ -1488,7 +1492,8 @@ void PrepareExportUserArgs(
               uint32_t width = GetSemanticWidth(param.sv_type, *facts.types);
               canonical = BuildLyraLogicScalarValue(b, llvm_ctx, raw, width);
             } else if (param.abi_type == DpiAbiTypeClass::kString) {
-              canonical = MaterializeStringWriteback(context, raw);
+              canonical = MaterializeStringWriteback(
+                  b, context.GetLyraStringFromCStr(), raw);
             } else {
               canonical = CoerceFromDpiAbiType(
                   context, raw, param.abi_type, expected_value_ty);
@@ -1548,7 +1553,8 @@ void CommitExportByPointerWritebacks(
       llvm::Value* encoded = EncodeSvLogic(b, ToI1(b, val), ToI1(b, unk));
       StoreForeignDpiStorage(context, state.foreign_ptr, encoded);
     } else if (param.abi_type == DpiAbiTypeClass::kString) {
-      llvm::Value* encoded = MarshalInputString(context, canonical);
+      llvm::Value* encoded =
+          MarshalInputString(b, context.GetLyraStringGetCStr(), canonical);
       StoreForeignDpiStorage(context, state.foreign_ptr, encoded);
     } else {
       llvm::Value* encoded =
@@ -1605,16 +1611,15 @@ struct PackageBindingValues {
   llvm::Value* has_decision_owner;
 };
 
-auto EmitResolvePackageBinding(Context& context) -> PackageBindingValues {
-  auto& llvm_ctx = context.GetLlvmContext();
-  auto& b = context.GetBuilder();
+auto EmitResolvePackageBinding(llvm::IRBuilder<>& b, llvm::Function* resolve_fn)
+    -> PackageBindingValues {
+  auto& llvm_ctx = b.getContext();
   auto* ptr_ty = llvm::PointerType::getUnqual(llvm_ctx);
   auto* i32_ty = llvm::Type::getInt32Ty(llvm_ctx);
   auto* i8_ty = llvm::Type::getInt8Ty(llvm_ctx);
 
   auto* binding_ty = BuildDpiResolvedPackageBindingType(llvm_ctx);
   auto* alloca = b.CreateAlloca(binding_ty, nullptr, "pkg.binding");
-  auto* resolve_fn = context.GetLyraResolvePackageExportBinding();
   auto* call = b.CreateCall(resolve_fn, {alloca});
   call->setCallingConv(llvm::CallingConv::C);
 
@@ -1646,16 +1651,15 @@ struct ModuleBindingValues {
   llvm::Value* has_decision_owner;
 };
 
-auto EmitResolveModuleBinding(Context& context) -> ModuleBindingValues {
-  auto& llvm_ctx = context.GetLlvmContext();
-  auto& b = context.GetBuilder();
+auto EmitResolveModuleBinding(llvm::IRBuilder<>& b, llvm::Function* resolve_fn)
+    -> ModuleBindingValues {
+  auto& llvm_ctx = b.getContext();
   auto* ptr_ty = llvm::PointerType::getUnqual(llvm_ctx);
   auto* i32_ty = llvm::Type::getInt32Ty(llvm_ctx);
   auto* i8_ty = llvm::Type::getInt8Ty(llvm_ctx);
 
   auto* binding_ty = BuildDpiResolvedModuleBindingType(llvm_ctx);
   auto* alloca = b.CreateAlloca(binding_ty, nullptr, "mod.binding");
-  auto* resolve_fn = context.GetLyraResolveModuleInstanceBinding();
   auto* call = b.CreateCall(resolve_fn, {alloca});
   call->setCallingConv(llvm::CallingConv::C);
 
@@ -1749,7 +1753,8 @@ auto EmitDpiExportWrappers(
 
     if (desc.target.scope_kind == mir::DpiExportScopeKind::kPackage) {
       // Package path: resolve binding + direct call to design-global callee.
-      auto binding = EmitResolvePackageBinding(context);
+      auto binding = EmitResolvePackageBinding(
+          context.GetBuilder(), context.GetLyraResolvePackageExportBinding());
       const auto& entry = context.GetDesignFunction(desc.target.package_symbol);
 
       const auto& callee_func = (*facts.design_arena)[entry.func_id];
@@ -1794,7 +1799,8 @@ auto EmitDpiExportWrappers(
 
     } else {
       // Module path: resolve instance binding + direct call to module callee.
-      auto binding = EmitResolveModuleBinding(context);
+      auto binding = EmitResolveModuleBinding(
+          context.GetBuilder(), context.GetLyraResolveModuleInstanceBinding());
       if (ei >= module_export_callees.size() ||
           !module_export_callees[ei].has_value()) {
         throw common::InternalError(
