@@ -197,4 +197,3 @@ cases:
       stdout:
         contains:
           - "u0=20"
-

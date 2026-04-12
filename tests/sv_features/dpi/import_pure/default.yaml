@@ -174,7 +174,6 @@ cases:
         initial begin end
       endmodule
 
-
   # The frontend rejects packed vector DPI return types at parse time before
   # Lyra DPI lowering sees them. Lyra's own kLogicVecNarrow return rejection
   # Explicit packed-array return types are rejected by slang, not Lyra.

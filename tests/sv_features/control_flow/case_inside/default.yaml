@@ -56,4 +56,3 @@ cases:
     expect:
       variables:
         result: 30
-

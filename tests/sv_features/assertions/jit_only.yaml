@@ -1,0 +1,137 @@
+feature: assertions_cover_observability
+description: >
+  Cover hit count observability tests. These assert in-process
+  cover-site hit counters via thread-local callbacks, which require
+  JIT (in-process) execution. Excluded from out-of-process backends
+  (AOT, LLI) where the callback mechanism is unavailable.
+
+cases:
+  - name: deferred_cover_basic
+    description: Deferred cover #0 records a hit at settle boundary
+    sv: |
+      module Test;
+        int x;
+        initial begin
+          x = 5;
+          cover #0 (x > 0);
+          $finish;
+        end
+      endmodule
+    expect:
+      cover_hits: [1]
+
+  - name: deferred_cover_false_no_hit
+    description: Deferred cover #0 with false condition records no hit
+    sv: |
+      module Test;
+        int x;
+        initial begin
+          x = 0;
+          cover #0 (x > 0);
+          $finish;
+        end
+      endmodule
+    expect:
+      cover_hits: [0]
+
+  - name: cover_true_hit_count
+    description: Cover with true condition records one hit and runs pass action
+    sv: |
+      module Test;
+        int x;
+        initial begin
+          x = 0;
+          cover (1) x = 10;
+          $finish;
+        end
+      endmodule
+    expect:
+      variables:
+        x: 10
+      cover_hits: [1]
+
+  - name: cover_false_zero_hits
+    description: Cover with false condition records zero hits, no error
+    sv: |
+      module Test;
+        int x;
+        initial begin
+          x = 5;
+          cover (0) x = 10;
+          $finish;
+        end
+      endmodule
+    expect:
+      variables:
+        x: 5
+      cover_hits: [0]
+
+  - name: cover_no_action
+    description: Cover with no action block, true condition records hit
+    sv: |
+      module Test;
+        int x;
+        initial begin
+          x = 42;
+          cover (1);
+          $finish;
+        end
+      endmodule
+    expect:
+      variables:
+        x: 42
+      cover_hits: [1]
+
+  - name: cover_in_loop
+    description: Cover in loop accumulates multiple hits on same site
+    sv: |
+      module Test;
+        int count;
+        initial begin
+          count = 0;
+          for (int i = 0; i < 5; i++) begin
+            cover (i > 2) count = count + 1;
+          end
+          $finish;
+        end
+      endmodule
+    expect:
+      variables:
+        count: 2
+      cover_hits: [2]
+
+  - name: cover_two_sites_distinct
+    description: Two cover statements get distinct per-site counters
+    sv: |
+      module Test;
+        initial begin
+          cover (1);
+          cover (0);
+          $finish;
+        end
+      endmodule
+    expect:
+      cover_hits: [1, 0]
+
+  - name: cover_false_no_error
+    description: Cover false must not emit default assertion error
+    sv: |
+      module Test;
+        int x;
+        initial begin
+          x = 0;
+          cover (0);
+          cover (0);
+          cover (0);
+          x = 99;
+          $finish;
+        end
+      endmodule
+    expect:
+      variables:
+        x: 99
+      cover_hits: [0, 0, 0]
+      stdout:
+        not_contains:
+          - "error"
+          - "Error"

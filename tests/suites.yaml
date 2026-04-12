@@ -8,6 +8,8 @@
 #   feature/default.yaml         - Default tests (runs in all suites)
 #   feature/four_state.yaml      - 4-state only (excluded from jit_two_state)
 #   feature/two_state_only.yaml  - Semantic diff (excluded from jit_dev)
+#   feature/jit_only.yaml        - Requires in-process observability hooks
+#                                  (excluded from out-of-process backends)
 
 suites:
   jit_dev:
@@ -56,7 +58,8 @@ suites:
       - system_tf/
       - trace/
     exclude_regex:
-      - two_state_only\.yaml$ # Two-state semantic diff only
+      - two_state_only\.yaml$
+      - jit_only\.yaml$
 
   # AOT smoke suite - small, stable subset for fast PR gating.
   # Keep ~20-40 YAML files max. Tighten patterns if they expand.
@@ -67,6 +70,9 @@ suites:
   # Extend this list when a new family introduces a distinct write/commit path.
   aot_smoke:
     backend: aot
+    exclude_regex:
+      - two_state_only\.yaml$
+      - jit_only\.yaml$
     include_regex:
       - ^control_flow/conditional/
       - ^control_flow/for/
@@ -93,8 +99,6 @@ suites:
       - ^system_tf/effect/display/
       - ^system_tf/pure/conversions/
       - ^trace/basic/
-    exclude_regex:
-      - two_state_only\.yaml$
 
   lli_dev:
     backend: lli
@@ -118,7 +122,8 @@ suites:
       - system_tf/
       - trace/
     exclude_regex:
-      - two_state_only\.yaml$ # Two-state semantic diff only
+      - two_state_only\.yaml$
+      - jit_only\.yaml$
 
   # Two-state regression suite: runs JIT with --two-state (all types forced
   # to 2-state LLVM representation). Uses same test scope as jit_dev minus
