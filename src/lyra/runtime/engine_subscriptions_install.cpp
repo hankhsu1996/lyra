@@ -3,6 +3,8 @@
 #include <cstring>
 #include <format>
 #include <span>
+#include <type_traits>
+#include <variant>
 #include <vector>
 
 #include "lyra/common/bit_target_mapping.hpp"
@@ -771,34 +773,29 @@ void Engine::InstallTriggers(
 }
 
 void Engine::InstallWaitSite(
-    ProcessHandle handle, SuspendRecord* suspend,
+    ProcessHandle handle, const WaitRequest& req,
     const CompiledWaitSite& descriptor) {
   // Validate compiled-vs-runtime agreement before any installation work.
-  if (descriptor.resume_block != suspend->resume_block) {
+  if (descriptor.resume_block != req.resume.block_index) {
     throw common::InternalError(
         "Engine::InstallWaitSite",
         std::format(
             "process {} wait_site {} resume_block mismatch: "
-            "descriptor={} vs suspend={}",
+            "descriptor={} vs request={}",
             handle.process_id, descriptor.id, descriptor.resume_block,
-            suspend->resume_block));
+            req.resume.block_index));
   }
-  if (descriptor.num_triggers != suspend->num_triggers) {
+  if (descriptor.num_triggers != static_cast<uint32_t>(req.triggers.size())) {
     throw common::InternalError(
         "Engine::InstallWaitSite",
         std::format(
             "process {} wait_site {} num_triggers mismatch: "
-            "descriptor={} vs suspend={}",
+            "descriptor={} vs request={}",
             handle.process_id, descriptor.id, descriptor.num_triggers,
-            suspend->num_triggers));
+            req.triggers.size()));
   }
 
-  auto resume =
-      ResumePoint{.block_index = suspend->resume_block, .instruction_index = 0};
-  auto triggers = std::span(suspend->triggers_ptr, suspend->num_triggers);
-
-  bool has_late_bound =
-      suspend->num_late_bound > 0 && suspend->late_bound_ptr != nullptr;
+  bool has_late_bound = !req.late_bound.empty();
 
   // Validate late-bound presence matches compiled descriptor.
   if (has_late_bound != descriptor.has_late_bound) {
@@ -806,24 +803,14 @@ void Engine::InstallWaitSite(
         "Engine::InstallWaitSite",
         std::format(
             "process {} wait_site {}: has_late_bound mismatch: "
-            "descriptor={} vs suspend={}",
+            "descriptor={} vs request={}",
             handle.process_id, descriptor.id, descriptor.has_late_bound,
             has_late_bound));
   }
 
-  auto late_bound =
-      has_late_bound
-          ? std::span(suspend->late_bound_ptr, suspend->num_late_bound)
-          : std::span<const LateBoundHeader>{};
-  auto plan_ops = (suspend->plan_ops_ptr != nullptr)
-                      ? std::span(suspend->plan_ops_ptr, suspend->num_plan_ops)
-                      : std::span<const IndexPlanOp>{};
-  auto dep_records =
-      (suspend->dep_slots_ptr != nullptr)
-          ? std::span(suspend->dep_slots_ptr, suspend->num_dep_slots)
-          : std::span<const DepSignalRecord>{};
-
-  InstallTriggers(handle, resume, triggers, late_bound, plan_ops, dep_records);
+  InstallTriggers(
+      handle, req.resume, req.triggers, req.late_bound, req.plan_ops,
+      req.dep_slots);
 
   // Install-time realized-state invariant: when the compiled shape is
   // kStatic, the installed subscription set must contain only
@@ -898,103 +885,44 @@ static auto CanRefreshInPlace(
          installed.can_refresh_snapshot;
 }
 
-void Engine::ReconcilePostActivation(ProcessHandle handle) {
+void Engine::HandleWaitRequest(ProcessHandle handle, const WaitRequest& req) {
   if (!HasPostActivationReconciliation()) {
-    throw common::InternalError(
-        "Engine::ReconcilePostActivation",
-        "called without post-activation reconciliation capability");
+    InstallTriggers(
+        handle, req.resume, req.triggers, req.late_bound, req.plan_ops,
+        req.dep_slots);
+    return;
   }
-  if (handle.process_id >= suspend_records_.size()) {
+
+  if (req.wait_site_id == kInvalidWaitSiteId) {
     throw common::InternalError(
-        "Engine::ReconcilePostActivation",
+        "Engine::HandleWaitRequest",
         std::format(
-            "process_id {} >= suspend_records size {}", handle.process_id,
-            suspend_records_.size()));
+            "process {} suspended with kWait but wait_site_id is invalid",
+            handle.process_id));
   }
-  auto* suspend = suspend_records_[handle.process_id];
 
-  auto resume =
-      ResumePoint{.block_index = suspend->resume_block, .instruction_index = 0};
+  auto& proc_state = process_states_[handle.process_id];
 
-  switch (suspend->tag) {
-    case SuspendTag::kFinished:
-      ResetInstalledWait(handle);
-      break;
+  if (!CanRefreshInPlace(proc_state.installed_wait, req.wait_site_id)) {
+    const auto& descriptor = wait_site_meta_.Get(req.wait_site_id);
+    ResetInstalledWait(handle);
+    InstallWaitSite(handle, req, descriptor);
+    return;
+  }
 
-    case SuspendTag::kDelay:
-      ResetInstalledWait(handle);
-      Delay(handle, resume, suspend->delay_ticks);
-      break;
+  // Flush owns baseline advancement for installed edge/change waits.
+  // Post-activation refresh is only needed when post-flush slot
+  // dirties are recorded in delta_dirty_.
+  bool has_any_dirty =
+      !update_set_.DeltaDirtySlots().empty() || !delta_dirty_instances_.empty();
+  if (!has_any_dirty) {
+    return;
+  }
 
-    case SuspendTag::kWait: {
-      if (suspend->wait_site_id == kInvalidWaitSiteId) {
-        throw common::InternalError(
-            "Engine::ReconcilePostActivation",
-            std::format(
-                "process {} suspended with kWait but wait_site_id is invalid",
-                handle.process_id));
-      }
-
-      auto& proc_state = process_states_[handle.process_id];
-
-      if (!CanRefreshInPlace(
-              proc_state.installed_wait, suspend->wait_site_id)) {
-        // Reinstall required: different wait site or non-static shape.
-        const auto& descriptor = wait_site_meta_.Get(suspend->wait_site_id);
-        ResetInstalledWait(handle);
-        InstallWaitSite(handle, suspend, descriptor);
-        break;
-      }
-
-      // Flush owns baseline advancement for installed edge/change waits.
-      // FlushSlotEdgeGroups sets group.last_bit; FlushSlotChangeSubs
-      // memcpy's snapshots. ClearDelta() resets post-flush dirtiness
-      // tracking but does NOT invalidate those installed baselines.
-      // Post-activation refresh is only needed when post-flush slot
-      // dirties are recorded in delta_dirty_ (any active-region mutation
-      // path that calls MarkSlotDirty or MarkDirtyRange).
-      //
-      // Note: MarkExternalDirtyRange (container heap mutations) also
-      // pushes to delta_dirty_ via TouchSlot, which is intentional
-      // over-invalidation. Edge/change baselines observe design-state
-      // bytes, not heap data, so the per-sub IsDeltaDirty checks inside
-      // RefreshInstalledSnapshots filter these out harmlessly.
-      // R5: check both global and local dirty state. Instance-owned
-      // signals go to local_updates, not update_set_.
-      bool has_any_dirty = !update_set_.DeltaDirtySlots().empty() ||
-                           !delta_dirty_instances_.empty();
-      if (!has_any_dirty) {
-        break;
-      }
-
-      if (RefreshInstalledSnapshots(handle)) {
-        // A same-delta blocking write changed an observed edge bit.
-        // group.last_bit is shared state and cannot be updated here.
-        // Fall back to full reinstall to get a fresh group baseline.
-        const auto& descriptor = wait_site_meta_.Get(suspend->wait_site_id);
-        ResetInstalledWait(handle);
-        InstallWaitSite(handle, suspend, descriptor);
-      }
-      break;
-    }
-
-    case SuspendTag::kRepeat:
-      ResetInstalledWait(handle);
-      ScheduleNextDelta(handle, ResumePoint{.block_index = 0});
-      break;
-
-    case SuspendTag::kWaitEvent: {
-      ResetInstalledWait(handle);
-      auto& inst = GetInstanceMut(handle.instance_id);
-      AddInstanceEventWaiter(
-          inst, suspend->event_id,
-          EventWaiter{
-              .process_id = handle.process_id,
-              .instance_id = handle.instance_id.value,
-              .resume_block = suspend->resume_block,
-          });
-      break;
-    }
+  if (RefreshInstalledSnapshots(handle)) {
+    const auto& descriptor = wait_site_meta_.Get(req.wait_site_id);
+    ResetInstalledWait(handle);
+    InstallWaitSite(handle, req, descriptor);
   }
 }
 

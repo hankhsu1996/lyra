@@ -35,6 +35,7 @@
 #include "lyra/runtime/observer.hpp"
 #include "lyra/runtime/process_frame.hpp"
 #include "lyra/runtime/process_meta.hpp"
+#include "lyra/runtime/process_requests.hpp"
 #include "lyra/runtime/process_trigger_registry.hpp"
 #include "lyra/runtime/reporting.hpp"
 #include "lyra/runtime/runtime_instance.hpp"
@@ -290,6 +291,11 @@ class Engine {
   // Schedule process to resume in the next delta cycle (same time).
   // Used for kRepeat terminator.
   void ScheduleNextDelta(ProcessHandle handle, ResumePoint resume);
+
+  // Reset the installed wait state for a process (subscription lifecycle).
+  // Called by the envelope when a process finishes, changes wait site,
+  // or re-suspends at a non-wait terminator.
+  void ResetInstalledWait(ProcessHandle handle);
 
   // Enqueue onto generic nba_queue_ for later commit in the NBA region.
   // Only for non-instance-owned targets (global, package, cross-instance).
@@ -883,18 +889,22 @@ class Engine {
     return trace_selection_;
   }
 
-  // Register suspend record pointers for post-activation reconciliation.
+  // Register suspend record pointers for observability (scheduler snapshot
+  // wait-kind classification). Not used by activation or reconciliation flow.
   void RegisterSuspendRecords(std::span<SuspendRecord*> records);
 
-  // Single source of truth for whether the engine uses post-activation
-  // reconciliation (new path) vs legacy HandleSuspendRecord (old path).
-  // True when both wait-site metadata and suspend-record access are present.
+  // Whether the engine uses wait-site-aware subscription management.
+  // When true, the envelope's HandleWaitRequest uses refresh-in-place
+  // and compiled wait-site descriptors. When false, triggers are installed
+  // directly without subscription lifecycle tracking.
   [[nodiscard]] auto HasPostActivationReconciliation() const -> bool {
-    return wait_site_meta_.IsPopulated() && !suspend_records_.empty();
+    return wait_site_meta_.IsPopulated();
   }
 
-  // Post-activation reconciliation: engine-owned dispatch after process runs.
-  void ReconcilePostActivation(ProcessHandle handle);
+  // Handle a wait request from process activation. Manages subscription
+  // lifecycle: direct install when no reconciliation, or refresh-in-place /
+  // reinstall when reconciliation is enabled. Called by the process envelope.
+  void HandleWaitRequest(ProcessHandle handle, const WaitRequest& request);
 
   [[nodiscard]] auto GetProcessMetaRegistry() const
       -> const ProcessMetaRegistry& {
@@ -984,7 +994,6 @@ class Engine {
   // Subscription lifecycle
   void ClearInstalledSubscriptions(ProcessHandle handle);
   void InvalidateInstalledWait(ProcessHandle handle);
-  void ResetInstalledWait(ProcessHandle handle);
   void ClearProcessSubscriptions(ProcessHandle handle);
 
   // Typed cold pool management.
@@ -1067,9 +1076,10 @@ class Engine {
       std::span<const IndexPlanOp> plan, BitTargetMapping mapping,
       std::span<const SignalRef> dep_signals);
 
-  // Persistent wait-site installation
+  // Persistent wait-site installation. Validates compiled descriptor
+  // against the request, then installs triggers.
   void InstallWaitSite(
-      ProcessHandle handle, SuspendRecord* suspend,
+      ProcessHandle handle, const WaitRequest& request,
       const CompiledWaitSite& descriptor);
   auto RefreshInstalledSnapshots(ProcessHandle handle) -> bool;
 
@@ -1499,7 +1509,8 @@ class Engine {
   // The deque provides pointer stability across inserts.
   std::deque<BodyObservableLayout> body_observable_layouts_;
 
-  // Suspend record access for post-activation reconciliation.
+  // Suspend record pointers for observability only (scheduler snapshot
+  // wait-kind classification). Not used by activation or reconciliation flow.
   std::vector<SuspendRecord*> suspend_records_;
 
   // Scheduler observability atomics (signal-safe reads from SIGUSR1).

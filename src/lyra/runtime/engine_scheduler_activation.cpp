@@ -203,10 +203,11 @@ void Engine::ExecuteActiveRegion() {
       if (!HasPostActivationReconciliation()) {
         ClearProcessSubscriptions(handle);
       }
+      // Activation handling (scheduling, subscription install/refresh)
+      // is performed by the process envelope inside the dispatch callback.
+      // DispatchAndHandleActivation decodes the raw suspend protocol into
+      // semantic requests and calls engine primitives directly.
       RunOneActivation(entry);
-      if (!finished_ && HasPostActivationReconciliation()) {
-        ReconcilePostActivation(handle);
-      }
     }
     ++active_iterations;
     if (active_iterations % 2 == 0) {

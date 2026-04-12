@@ -5,7 +5,7 @@
 #include <variant>
 
 #include "lyra/common/edge_kind.hpp"
-#include "lyra/runtime/suspend_record.hpp"
+#include "lyra/runtime/trigger_record.hpp"
 
 namespace lyra::runtime {
 
