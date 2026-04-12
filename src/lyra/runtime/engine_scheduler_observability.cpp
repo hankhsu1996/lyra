@@ -500,7 +500,7 @@ auto Engine::TakeSchedulerSnapshot() const -> SchedulerSnapshot {
   };
 
   for (uint32_t pid = 0; pid < num_processes_; ++pid) {
-    const auto& proc = process_states_[pid];
+    const auto& proc = processes_[pid];
 
     // Primary classification from canonical suspend state.
     ProcessWaitKind kind = ProcessWaitKind::kFinished;

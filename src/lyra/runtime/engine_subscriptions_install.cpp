@@ -74,7 +74,7 @@ auto Engine::ResolveLocalSubSlot(RuntimeInstance& inst, LocalSignalId signal)
 }
 
 auto Engine::ResolveLocalSubSlot(
-    const RuntimeInstance& inst, LocalSignalId signal) const
+    const RuntimeInstance& inst, LocalSignalId signal)
     -> const SlotSubscriptions& {
   return inst.observability.local_signal_subs[signal.value];
 }
@@ -154,16 +154,16 @@ namespace {
 
 // Backpatch a moved subscription's LocalSubRef after swap-and-pop removal.
 void BackpatchMovedLocalSubRef(
-    std::vector<ProcessState>& process_states, uint32_t process_id,
+    std::vector<RuntimeProcess>& processes, uint32_t process_id,
     uint32_t process_sub_idx, uint32_t new_index) {
-  process_states[process_id].local_sub_refs[process_sub_idx].index = new_index;
+  processes[process_id].local_sub_refs[process_sub_idx].index = new_index;
 }
 
 // Backpatch a moved subscription's GlobalSubRef after swap-and-pop removal.
 void BackpatchMovedGlobalSubRef(
-    std::vector<ProcessState>& process_states, uint32_t process_id,
+    std::vector<RuntimeProcess>& processes, uint32_t process_id,
     uint32_t process_sub_idx, uint32_t new_index) {
-  process_states[process_id].global_sub_refs[process_sub_idx].index = new_index;
+  processes[process_id].global_sub_refs[process_sub_idx].index = new_index;
 }
 
 }  // namespace
@@ -278,7 +278,7 @@ void Engine::RemoveLocalEdgeSub(const LocalSubRef& ref) {
       [this](
           uint32_t pid, uint32_t psi, uint32_t new_idx, uint32_t grp,
           EdgeBucket bkt) {
-        auto& mr = process_states_[pid].local_sub_refs[psi];
+        auto& mr = processes_[pid].local_sub_refs[psi];
         mr.index = new_idx;
         mr.edge_group = grp;
         mr.edge_bucket = bkt;
@@ -297,7 +297,7 @@ void Engine::RemoveGlobalEdgeSub(const GlobalSubRef& ref) {
       [this](
           uint32_t pid, uint32_t psi, uint32_t new_idx, uint32_t grp,
           EdgeBucket bkt) {
-        auto& mr = process_states_[pid].global_sub_refs[psi];
+        auto& mr = processes_[pid].global_sub_refs[psi];
         mr.index = new_idx;
         mr.edge_group = grp;
         mr.edge_bucket = bkt;
@@ -315,8 +315,7 @@ void Engine::RemoveLocalChangeSub(const LocalSubRef& ref) {
   if (index != last) {
     vec[index] = vec[last];
     BackpatchMovedLocalSubRef(
-        process_states_, vec[index].process_id, vec[index].process_sub_idx,
-        index);
+        processes_, vec[index].process_id, vec[index].process_sub_idx, index);
   }
   vec.pop_back();
   UpdateLocalObserverFlag(*ref.instance, ref.signal);
@@ -332,8 +331,7 @@ void Engine::RemoveGlobalChangeSub(const GlobalSubRef& ref) {
   if (index != last) {
     vec[index] = vec[last];
     BackpatchMovedGlobalSubRef(
-        process_states_, vec[index].process_id, vec[index].process_sub_idx,
-        index);
+        processes_, vec[index].process_id, vec[index].process_sub_idx, index);
   }
   vec.pop_back();
   UpdateGlobalObserverFlag(ref.signal);
@@ -349,8 +347,7 @@ void Engine::RemoveLocalRebindWatcherSub(const LocalSubRef& ref) {
   if (index != last) {
     vec[index] = vec[last];
     BackpatchMovedLocalSubRef(
-        process_states_, vec[index].process_id, vec[index].process_sub_idx,
-        index);
+        processes_, vec[index].process_id, vec[index].process_sub_idx, index);
   }
   vec.pop_back();
   UpdateLocalObserverFlag(*ref.instance, ref.signal);
@@ -366,8 +363,7 @@ void Engine::RemoveGlobalRebindWatcherSub(const GlobalSubRef& ref) {
   if (index != last) {
     vec[index] = vec[last];
     BackpatchMovedGlobalSubRef(
-        process_states_, vec[index].process_id, vec[index].process_sub_idx,
-        index);
+        processes_, vec[index].process_id, vec[index].process_sub_idx, index);
   }
   vec.pop_back();
   UpdateGlobalObserverFlag(ref.signal);
@@ -387,8 +383,7 @@ void Engine::RemoveLocalContainerSub(const LocalSubRef& ref) {
   if (index != last) {
     vec[index] = vec[last];
     BackpatchMovedLocalSubRef(
-        process_states_, vec[index].process_id, vec[index].process_sub_idx,
-        index);
+        processes_, vec[index].process_id, vec[index].process_sub_idx, index);
     if (vec[index].cold_idx != UINT32_MAX) {
       auto& moved_cold = container_cold_pool_[vec[index].cold_idx];
       if (moved_cold.edge_target_id != UINT32_MAX) {
@@ -416,8 +411,7 @@ void Engine::RemoveGlobalContainerSub(const GlobalSubRef& ref) {
   if (index != last) {
     vec[index] = vec[last];
     BackpatchMovedGlobalSubRef(
-        process_states_, vec[index].process_id, vec[index].process_sub_idx,
-        index);
+        processes_, vec[index].process_id, vec[index].process_sub_idx, index);
     if (vec[index].cold_idx != UINT32_MAX) {
       auto& moved_cold = container_cold_pool_[vec[index].cold_idx];
       if (moved_cold.edge_target_id != UINT32_MAX) {
@@ -435,7 +429,7 @@ void Engine::ClearInstalledSubscriptions(ProcessHandle handle) {
   if (handle.process_id >= num_processes_) {
     return;
   }
-  auto& proc_state = process_states_[handle.process_id];
+  auto& proc_state = processes_[handle.process_id];
 
   // Iterate in reverse so swap-and-pop doesn't invalidate earlier indices
   // belonging to this same process (they'll be removed too).
@@ -492,7 +486,7 @@ void Engine::ClearInstalledSubscriptions(ProcessHandle handle) {
 
 void Engine::InvalidateInstalledWait(ProcessHandle handle) {
   if (handle.process_id >= num_processes_) return;
-  auto& proc_state = process_states_[handle.process_id];
+  auto& proc_state = processes_[handle.process_id];
   proc_state.installed_wait = InstalledWaitState{};
 }
 
@@ -520,7 +514,7 @@ void Engine::ClearProcessSubscriptions(ProcessHandle handle) {
 auto Engine::RefreshInstalledSnapshots(ProcessHandle handle) -> bool {
   if (handle.process_id >= num_processes_) return false;
 
-  auto& proc_state = process_states_[handle.process_id];
+  auto& proc_state = processes_[handle.process_id];
 
   // R5: Domain-split watermark skip. Check both global and local
   // freshness to determine if any new dirty marks appeared since the
@@ -841,7 +835,7 @@ void Engine::InstallTriggers(ProcessHandle handle, const WaitRequest& req) {
           .index = sub_idx,
           .is_local = is_local};
       if (sub_kind == SubKind::kEdge && sub_idx != UINT32_MAX) {
-        auto& ps = process_states_[handle.process_id];
+        auto& ps = processes_[handle.process_id];
         if (is_local) {
           auto& last_ref = ps.local_sub_refs.back();
           cs.edge_group = last_ref.edge_group;
@@ -983,7 +977,7 @@ void Engine::InstallWaitSite(ProcessHandle handle, const WaitRequest& req) {
   // snapshot-bearing triggers (kEdge/kChange). This is expected because
   // static waits have no late-bound indices, so InstallTriggers should not
   // produce rebind watcher or container subs for this shape.
-  auto& proc_state = process_states_[handle.process_id];
+  auto& proc_state = processes_[handle.process_id];
   if (descriptor.shape == WaitShapeKind::kStatic) {
     auto is_snapshot_bearing = [](const auto& ref) {
       return ref.kind == SubKind::kEdge || ref.kind == SubKind::kChange;
@@ -1101,7 +1095,7 @@ void Engine::ReconcilePostActivation(ProcessHandle handle) {
                 handle.process_id));
       }
 
-      auto& proc_state = process_states_[handle.process_id];
+      auto& proc_state = processes_[handle.process_id];
 
       if (!CanRefreshInPlace(
               proc_state.installed_wait, suspend->wait_site_id)) {
@@ -1223,7 +1217,7 @@ auto Engine::SubscribeGlobalChange(
             "process_id {} exceeds num_processes {}", handle.process_id,
             num_processes_));
   }
-  auto& proc_state = process_states_[handle.process_id];
+  auto& proc_state = processes_[handle.process_id];
   if (!CheckSubscriptionLimits(proc_state)) return UINT32_MAX;
 
   const auto& meta = slot_meta_registry_.Get(signal.value);
@@ -1281,7 +1275,7 @@ auto Engine::SubscribeLocalChange(
             "process_id {} exceeds num_processes {}", handle.process_id,
             num_processes_));
   }
-  auto& proc_state = process_states_[handle.process_id];
+  auto& proc_state = processes_[handle.process_id];
   if (!CheckSubscriptionLimits(proc_state)) return UINT32_MAX;
 
   auto& inst = GetInstanceMut(signal.instance_id);
@@ -1360,7 +1354,7 @@ auto Engine::SubscribeGlobalEdge(
             "process_id {} exceeds num_processes {}", handle.process_id,
             num_processes_));
   }
-  auto& proc_state = process_states_[handle.process_id];
+  auto& proc_state = processes_[handle.process_id];
   if (!CheckSubscriptionLimits(proc_state)) return UINT32_MAX;
 
   const auto& meta = slot_meta_registry_.Get(signal.value);
@@ -1429,7 +1423,7 @@ auto Engine::SubscribeLocalEdge(
             "process_id {} exceeds num_processes {}", handle.process_id,
             num_processes_));
   }
-  auto& proc_state = process_states_[handle.process_id];
+  auto& proc_state = processes_[handle.process_id];
   if (!CheckSubscriptionLimits(proc_state)) return UINT32_MAX;
 
   auto& inst = GetInstanceMut(signal.instance_id);
@@ -1632,7 +1626,7 @@ auto Engine::SubscribeGlobalContainerElement(
     throw common::InternalError(
         "Engine::SubscribeGlobalContainerElement", "elem_stride must be > 0");
   }
-  auto& proc_state = process_states_[handle.process_id];
+  auto& proc_state = processes_[handle.process_id];
   if (!CheckSubscriptionLimits(proc_state)) return UINT32_MAX;
 
   const auto& meta = slot_meta_registry_.Get(signal.value);
@@ -1684,7 +1678,7 @@ auto Engine::SubscribeLocalContainerElement(
     throw common::InternalError(
         "Engine::SubscribeLocalContainerElement", "elem_stride must be > 0");
   }
-  auto& proc_state = process_states_[handle.process_id];
+  auto& proc_state = processes_[handle.process_id];
   if (!CheckSubscriptionLimits(proc_state)) return UINT32_MAX;
 
   auto& inst = GetInstanceMut(signal.instance_id);
@@ -1806,7 +1800,7 @@ void Engine::SubscribeRebind(
 void Engine::InstallRebindDepWatchers(
     ProcessHandle handle, uint32_t edge_target_id,
     std::span<const SignalRef> dep_signals) {
-  auto& proc_state = process_states_[handle.process_id];
+  auto& proc_state = processes_[handle.process_id];
   for (const auto& dep : dep_signals) {
     std::visit(
         [&](const auto& sig) {
@@ -1935,7 +1929,7 @@ void Engine::SubscribeGlobalRebind(
 
   ValidateRebindDepSignals(dep_signals);
 
-  auto& proc_state = process_states_[handle.process_id];
+  auto& proc_state = processes_[handle.process_id];
   auto total_after = proc_state.subscription_count + dep_signals.size();
   auto global_after = live_subscription_count_ + dep_signals.size();
   if (max_total_subscriptions_ > 0 && global_after > max_total_subscriptions_) {
@@ -2060,7 +2054,7 @@ void Engine::SubscribeLocalRebind(
 
   ValidateRebindDepSignals(dep_signals);
 
-  auto& proc_state = process_states_[handle.process_id];
+  auto& proc_state = processes_[handle.process_id];
   auto total_after = proc_state.subscription_count + dep_signals.size();
   auto global_after = live_subscription_count_ + dep_signals.size();
   if (max_total_subscriptions_ > 0 && global_after > max_total_subscriptions_) {

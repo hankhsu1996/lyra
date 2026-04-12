@@ -239,7 +239,7 @@ void Engine::RebindLocalSubscription(uint32_t idx) {
             "process_id {} exceeds num_processes {}", target_process_id,
             num_processes_));
   }
-  auto& proc_state = process_states_[target_process_id];
+  auto& proc_state = processes_[target_process_id];
   auto all_ops = std::span<const IndexPlanOp>(proc_state.plan_pool.ops);
   auto plan_span = all_ops.subspan(plan_ref.start, plan_ref.count);
 
@@ -324,7 +324,7 @@ void Engine::RebindLocalSubscription(uint32_t idx) {
       [this](
           uint32_t pid, uint32_t psi, uint32_t new_idx, uint32_t grp,
           EdgeBucket bkt) {
-        auto& mr = process_states_[pid].local_sub_refs[psi];
+        auto& mr = processes_[pid].local_sub_refs[psi];
         mr.index = new_idx;
         mr.edge_group = grp;
         mr.edge_bucket = bkt;
@@ -379,7 +379,7 @@ void Engine::RebindGlobalSubscription(uint32_t idx) {
             "process_id {} exceeds num_processes {}", target_process_id,
             num_processes_));
   }
-  auto& proc_state = process_states_[target_process_id];
+  auto& proc_state = processes_[target_process_id];
   auto all_ops = std::span<const IndexPlanOp>(proc_state.plan_pool.ops);
   auto plan_span = all_ops.subspan(plan_ref.start, plan_ref.count);
 
@@ -465,7 +465,7 @@ void Engine::RebindGlobalSubscription(uint32_t idx) {
       [this](
           uint32_t pid, uint32_t psi, uint32_t new_idx, uint32_t grp,
           EdgeBucket bkt) {
-        auto& mr = process_states_[pid].global_sub_refs[psi];
+        auto& mr = processes_[pid].global_sub_refs[psi];
         mr.index = new_idx;
         mr.edge_group = grp;
         mr.edge_bucket = bkt;

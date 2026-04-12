@@ -40,6 +40,7 @@
 #include "lyra/runtime/process_trigger_registry.hpp"
 #include "lyra/runtime/reporting.hpp"
 #include "lyra/runtime/runtime_instance.hpp"
+#include "lyra/runtime/runtime_process.hpp"
 #include "lyra/runtime/scheduler_snapshot.hpp"
 #include "lyra/runtime/signal_coord.hpp"
 #include "lyra/runtime/slot_meta.hpp"
@@ -208,7 +209,6 @@ class Engine {
         output_(output),
         num_processes_(num_processes),
         processes_(num_processes),
-        process_states_(num_processes),
         plusargs_(plusargs.begin(), plusargs.end()),
         instance_paths_(std::move(instance_paths)),
         feature_flags_(feature_flags) {
@@ -911,7 +911,7 @@ class Engine {
   [[nodiscard]] auto TryFastReconcile(uint32_t process_id) -> bool {
     auto* suspend = processes_[process_id].suspend_record;
     if (suspend->tag != SuspendTag::kWait) return false;
-    const auto& installed = process_states_[process_id].installed_wait;
+    const auto& installed = processes_[process_id].installed_wait;
     if (!installed.valid || installed.wait_site_id != suspend->wait_site_id ||
         !installed.can_refresh_snapshot) {
       return false;
@@ -1146,10 +1146,11 @@ class Engine {
   void FlushLocalSignalUpdates(RuntimeInstance& inst);
 
   // R5: Domain-split slot resolution helpers.
-  auto ResolveLocalSubSlot(RuntimeInstance& inst, LocalSignalId signal)
+  static auto ResolveLocalSubSlot(RuntimeInstance& inst, LocalSignalId signal)
       -> SlotSubscriptions&;
-  auto ResolveLocalSubSlot(const RuntimeInstance& inst, LocalSignalId signal)
-      const -> const SlotSubscriptions&;
+  static auto ResolveLocalSubSlot(
+      const RuntimeInstance& inst, LocalSignalId signal)
+      -> const SlotSubscriptions&;
   auto ResolveGlobalSubSlot(GlobalSignalId signal) -> SlotSubscriptions&;
   auto ResolveGlobalSubSlot(GlobalSignalId signal) const
       -> const SlotSubscriptions&;
@@ -1160,7 +1161,8 @@ class Engine {
 
   // Recompute the per-signal observer flag after subscription mutations.
   // Called after every add/remove to keep the flag consistent.
-  void UpdateLocalObserverFlag(RuntimeInstance& inst, LocalSignalId signal);
+  static void UpdateLocalObserverFlag(
+      RuntimeInstance& inst, LocalSignalId signal);
   void UpdateGlobalObserverFlag(GlobalSignalId signal);
 
   // Per-kind flush helpers. Callers resolve slot storage before calling.
@@ -1239,7 +1241,7 @@ class Engine {
   }
 
   // Resource limit checking
-  auto CheckSubscriptionLimits(const ProcessState& proc_state) -> bool;
+  auto CheckSubscriptionLimits(const RuntimeProcess& proc) -> bool;
   void TerminateWithResourceError(
       std::string_view reason, size_t current, size_t limit);
   void PrintTopWaiters(size_t count);
@@ -1256,7 +1258,6 @@ class Engine {
   OutputDispatcher& output_;  // Borrowed from RunSession
   uint32_t num_processes_ = 0;
   std::vector<RuntimeProcess> processes_;
-  std::vector<ProcessState> process_states_;
   SimTime current_time_ = 0;
   bool finished_ = false;
   SimulationEndReason end_reason_ = SimulationEndReason::kEmptyQueues;

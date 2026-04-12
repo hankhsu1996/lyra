@@ -310,15 +310,4 @@ struct InstalledWaitState {
   std::vector<LocalRefreshStamp> local_refresh_epochs;
 };
 
-// Per-process subscription and wait state (keyed by ProcessHandle).
-// Mutable runtime state that does not belong to subscriptions (is_enqueued,
-// suspend_record, is_comb_kernel) lives on RuntimeProcess.
-struct ProcessState {
-  size_t subscription_count = 0;
-  std::vector<LocalSubRef> local_sub_refs;
-  std::vector<GlobalSubRef> global_sub_refs;
-  IndexPlanPool plan_pool;
-  InstalledWaitState installed_wait;
-};
-
 }  // namespace lyra::runtime

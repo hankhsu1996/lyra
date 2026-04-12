@@ -116,7 +116,7 @@ void Engine::FreeEdgeTarget(uint32_t id) {
   }
 }
 
-auto Engine::CheckSubscriptionLimits(const ProcessState& proc_state) -> bool {
+auto Engine::CheckSubscriptionLimits(const RuntimeProcess& proc) -> bool {
   if (max_total_subscriptions_ > 0 &&
       live_subscription_count_ >= max_total_subscriptions_) {
     TerminateWithResourceError(
@@ -126,10 +126,10 @@ auto Engine::CheckSubscriptionLimits(const ProcessState& proc_state) -> bool {
   }
 
   if (max_subscriptions_per_process_ > 0 &&
-      proc_state.subscription_count >= max_subscriptions_per_process_) {
+      proc.subscription_count >= max_subscriptions_per_process_) {
     TerminateWithResourceError(
-        "per-process subscription limit exceeded",
-        proc_state.subscription_count, max_subscriptions_per_process_);
+        "per-process subscription limit exceeded", proc.subscription_count,
+        max_subscriptions_per_process_);
     return false;
   }
 

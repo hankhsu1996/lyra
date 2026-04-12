@@ -104,13 +104,7 @@ struct LocalConnectionDst {
 using BatchedConnectionDst =
     std::variant<GlobalConnectionDst, LocalConnectionDst>;
 
-// First-class runtime process object.
-// Consolidates per-process state that was previously spread across
-// parallel engine-level arrays indexed by process_id.
-struct RuntimeProcess {
-  bool is_enqueued = false;
-  SuspendRecord* suspend_record = nullptr;
-  bool is_comb_kernel = false;
-};
+// Forward declaration -- full definition in runtime_process.hpp.
+struct RuntimeProcess;
 
 }  // namespace lyra::runtime
