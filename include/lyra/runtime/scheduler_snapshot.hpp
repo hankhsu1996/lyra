@@ -9,22 +9,6 @@
 
 namespace lyra::runtime {
 
-// Canonical per-process wait-state classification.
-// Derived from SuspendTag in the process's SuspendRecord (the runtime's
-// canonical suspend state), enriched by subscription and queue membership.
-enum class ProcessWaitKind : uint8_t {
-  kRunning,
-  kReady,
-  kSuspendedDelay,
-  kSuspendedEdge,
-  kSuspendedChange,
-  kSuspendedMulti,
-  kSuspendedRepeat,
-  kSuspendedEvent,
-  kSuspendedUnknown,
-  kFinished,
-};
-
 // Why the simulation stopped. Stored as canonical state in Engine, set
 // exactly once at the point where termination reason becomes known.
 enum class SimulationEndReason : uint8_t {

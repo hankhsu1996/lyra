@@ -71,4 +71,21 @@ struct LocalConnectionTarget {
 using ConnectionTarget =
     std::variant<GlobalConnectionTarget, LocalConnectionTarget>;
 
+// Coarse per-process wait-state classification.
+// Set by the process envelope after each activation. Observability may
+// refine kSuspendedWait into edge/change/multi via subscription analysis.
+enum class ProcessWaitKind : uint8_t {
+  kRunning,
+  kReady,
+  kSuspendedDelay,
+  kSuspendedWait,
+  kSuspendedEdge,
+  kSuspendedChange,
+  kSuspendedMulti,
+  kSuspendedRepeat,
+  kSuspendedEvent,
+  kSuspendedUnknown,
+  kFinished,
+};
+
 }  // namespace lyra::runtime

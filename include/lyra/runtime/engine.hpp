@@ -35,6 +35,7 @@
 #include "lyra/runtime/observer.hpp"
 #include "lyra/runtime/process_frame.hpp"
 #include "lyra/runtime/process_meta.hpp"
+#include "lyra/runtime/process_requests.hpp"
 #include "lyra/runtime/process_trigger_registry.hpp"
 #include "lyra/runtime/reporting.hpp"
 #include "lyra/runtime/runtime_instance.hpp"
@@ -42,7 +43,6 @@
 #include "lyra/runtime/signal_coord.hpp"
 #include "lyra/runtime/slot_meta.hpp"
 #include "lyra/runtime/small_byte_buffer.hpp"
-#include "lyra/runtime/suspend_record.hpp"
 #include "lyra/runtime/trace_selection.hpp"
 #include "lyra/runtime/trace_signal_meta.hpp"
 #include "lyra/runtime/trap.hpp"
@@ -190,6 +190,8 @@ class InstanceIdTraceResolver final : public trace::InstanceTraceResolver {
 // 2. Schedule initial processes with ScheduleInitial()
 // 3. Call Run() to execute until completion or time limit
 class Engine {
+  friend class ProcessEnvelopeAccess;
+
  public:
   explicit Engine(
       ProcessDispatch process_dispatch, uint32_t num_processes = 0,
@@ -260,17 +262,6 @@ class Engine {
       ProcessHandle handle, ResumePoint resume, SignalRef signal,
       common::EdgeKind edge, int64_t sv_index, uint32_t elem_stride,
       bool initially_active = true) -> uint32_t;
-
-  // Canonical trigger installation from typed descriptors.
-  // Installs subscriptions directly from per-trigger metadata (kind, flags,
-  // container_elem_stride), then hooks up rebind watchers from late-bound
-  // headers. Both InstallWaitSite and HandleSuspendRecord delegate here.
-  void InstallTriggers(
-      ProcessHandle handle, ResumePoint resume,
-      std::span<const WaitTriggerRecord> triggers,
-      std::span<const LateBoundHeader> late_bound,
-      std::span<const IndexPlanOp> plan_ops,
-      std::span<const DepSignalRecord> dep_records);
 
   // Create rebind subscriptions for a late-bound edge trigger. For each dep
   // slot, an AnyChange rebind node is created. When any dep changes, the plan
@@ -798,8 +789,8 @@ class Engine {
 
   // Register a waiter on a named event owned by the given instance.
   // Called by activation post-processing when a process suspends with
-  // kWaitEvent. Shared by both HandleSuspendRecord and
-  // ReconcilePostActivation to keep event-wait installation in one place.
+  // kWaitEvent. Called by the process envelope when a process suspends
+  // on a named event.
   static void AddInstanceEventWaiter(
       RuntimeInstance& inst, uint32_t local_event_id, EventWaiter waiter) {
     inst.event_state.AddWaiter(local_event_id, std::move(waiter));
@@ -882,19 +873,6 @@ class Engine {
   auto GetTraceSelection() -> TraceSelectionRegistry& {
     return trace_selection_;
   }
-
-  // Register suspend record pointers for post-activation reconciliation.
-  void RegisterSuspendRecords(std::span<SuspendRecord*> records);
-
-  // Single source of truth for whether the engine uses post-activation
-  // reconciliation (new path) vs legacy HandleSuspendRecord (old path).
-  // True when both wait-site metadata and suspend-record access are present.
-  [[nodiscard]] auto HasPostActivationReconciliation() const -> bool {
-    return wait_site_meta_.IsPopulated() && !suspend_records_.empty();
-  }
-
-  // Post-activation reconciliation: engine-owned dispatch after process runs.
-  void ReconcilePostActivation(ProcessHandle handle);
 
   [[nodiscard]] auto GetProcessMetaRegistry() const
       -> const ProcessMetaRegistry& {
@@ -981,10 +959,24 @@ class Engine {
       DecisionOwnerId owner_id, const DecisionMetaEntry& meta,
       DecisionViolation violation) const -> ReportRequest;
 
-  // Subscription lifecycle
+  // Subscription lifecycle (used by ProcessEnvelopeAccess and internally).
+  void SetProcessWaitKind(uint32_t process_id, ProcessWaitKind kind) {
+    if (process_id < process_states_.size()) {
+      process_states_[process_id].wait_kind = kind;
+    }
+  }
+  [[nodiscard]] auto UsesWaitSiteLifecycle() const -> bool {
+    return wait_site_meta_.IsPopulated();
+  }
+  [[nodiscard]] auto CanRefreshInstalledWait(
+      ProcessHandle handle, WaitSiteId wait_site_id) const -> bool;
+  [[nodiscard]] auto HasPendingDirtyState() const -> bool;
+  void ResetInstalledWait(ProcessHandle handle);
+  void InstallTriggers(ProcessHandle handle, const WaitRequest& req);
+  void InstallWaitSite(ProcessHandle handle, const WaitRequest& req);
+  auto RefreshInstalledSnapshots(ProcessHandle handle) -> bool;
   void ClearInstalledSubscriptions(ProcessHandle handle);
   void InvalidateInstalledWait(ProcessHandle handle);
-  void ResetInstalledWait(ProcessHandle handle);
   void ClearProcessSubscriptions(ProcessHandle handle);
 
   // Typed cold pool management.
@@ -1066,12 +1058,6 @@ class Engine {
       uint8_t target_edge_group, EdgeBucket target_edge_bucket,
       std::span<const IndexPlanOp> plan, BitTargetMapping mapping,
       std::span<const SignalRef> dep_signals);
-
-  // Persistent wait-site installation
-  void InstallWaitSite(
-      ProcessHandle handle, SuspendRecord* suspend,
-      const CompiledWaitSite& descriptor);
-  auto RefreshInstalledSnapshots(ProcessHandle handle) -> bool;
 
   // Late-bound rebinding: re-read index value, recompute edge target.
   void RebindSubscription(uint32_t edge_target_id);
@@ -1498,9 +1484,6 @@ class Engine {
   // Each RuntimeInstance's observability.layout points into this storage.
   // The deque provides pointer stability across inserts.
   std::deque<BodyObservableLayout> body_observable_layouts_;
-
-  // Suspend record access for post-activation reconciliation.
-  std::vector<SuspendRecord*> suspend_records_;
 
   // Scheduler observability atomics (signal-safe reads from SIGUSR1).
   // Written by scheduler, read by signal handler via relaxed loads.

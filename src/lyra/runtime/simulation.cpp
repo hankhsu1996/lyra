@@ -16,7 +16,6 @@
 
 #include <fmt/core.h>
 
-#include "lyra/common/diagnostic/print.hpp"
 #include "lyra/common/internal_error.hpp"
 #include "lyra/runtime/assertions.hpp"
 #include "lyra/runtime/back_edge_site_meta.hpp"
@@ -28,6 +27,7 @@
 #include "lyra/runtime/iteration_limit.hpp"
 #include "lyra/runtime/nba_stats_hook.hpp"
 #include "lyra/runtime/output_sink.hpp"
+#include "lyra/runtime/process_envelope.hpp"
 #include "lyra/runtime/process_frame.hpp"
 #include "lyra/runtime/process_meta.hpp"
 #include "lyra/runtime/reporting.hpp"
@@ -35,7 +35,6 @@
 #include "lyra/runtime/signal_dump.hpp"
 #include "lyra/runtime/slot_meta.hpp"
 #include "lyra/runtime/string.hpp"
-#include "lyra/runtime/suspend_record.hpp"
 #include "lyra/runtime/trace_signal_meta.hpp"
 #include "lyra/trace/text_trace_sink.hpp"
 
@@ -55,251 +54,7 @@ auto FinalTime() -> uint64_t& {
   return value;
 }
 
-// Legacy post-activation dispatch: reads SuspendRecord and installs
-// waiter/delay state. Called by DescriptorProcessDispatch when
-// HasPostActivationReconciliation() is false. The new-path equivalent
-// is Engine::ReconcilePostActivation. Exactly one of these two runs
-// per activation -- never both.
-void HandleSuspendRecord(
-    lyra::runtime::Engine& eng, lyra::runtime::ProcessHandle handle,
-    lyra::runtime::SuspendRecord* suspend) {
-  auto resume = lyra::runtime::ResumePoint{
-      .block_index = suspend->resume_block, .instruction_index = 0};
-
-  switch (suspend->tag) {
-    case lyra::runtime::SuspendTag::kFinished:
-      break;
-
-    case lyra::runtime::SuspendTag::kDelay:
-      eng.Delay(handle, resume, suspend->delay_ticks);
-      break;
-
-    case lyra::runtime::SuspendTag::kWait: {
-      if (suspend->num_triggers > 0 && suspend->triggers_ptr == nullptr) {
-        throw lyra::common::InternalError(
-            "HandleSuspendRecord",
-            "triggers_ptr null with non-zero num_triggers");
-      }
-      auto triggers = std::span(suspend->triggers_ptr, suspend->num_triggers);
-
-      bool has_late_bound =
-          suspend->num_late_bound > 0 && suspend->late_bound_ptr != nullptr;
-      auto late_bound =
-          has_late_bound
-              ? std::span(suspend->late_bound_ptr, suspend->num_late_bound)
-              : std::span<const lyra::runtime::LateBoundHeader>{};
-      auto plan_ops =
-          (suspend->plan_ops_ptr != nullptr)
-              ? std::span(suspend->plan_ops_ptr, suspend->num_plan_ops)
-              : std::span<const lyra::runtime::IndexPlanOp>{};
-      auto dep_records =
-          (suspend->dep_slots_ptr != nullptr)
-              ? std::span(suspend->dep_slots_ptr, suspend->num_dep_slots)
-              : std::span<const lyra::runtime::DepSignalRecord>{};
-
-      eng.InstallTriggers(
-          handle, resume, triggers, late_bound, plan_ops, dep_records);
-      break;
-    }
-
-    case lyra::runtime::SuspendTag::kRepeat:
-      eng.ScheduleNextDelta(
-          handle, lyra::runtime::ResumePoint{.block_index = 0});
-      break;
-
-    case lyra::runtime::SuspendTag::kWaitEvent: {
-      auto& inst = eng.GetInstanceMut(handle.instance_id);
-      lyra::runtime::Engine::AddInstanceEventWaiter(
-          inst, suspend->event_id,
-          lyra::runtime::EventWaiter{
-              .process_id = handle.process_id,
-              .instance_id = handle.instance_id.value,
-              .resume_block = suspend->resume_block,
-          });
-      break;
-    }
-  }
-}
-
-// Release heap-allocated triggers if any (call before overwriting
-// SuspendRecord) Resets num_triggers and triggers_ptr to make non-wait states
-// trivially safe.
-void ReleaseTriggerOverflow(lyra::runtime::SuspendRecord* suspend) {
-  if (suspend->triggers_ptr != nullptr &&
-      suspend->triggers_ptr != suspend->inline_triggers.data()) {
-    delete[] suspend->triggers_ptr;  // NOLINT(cppcoreguidelines-owning-memory)
-  }
-  suspend->num_triggers = 0;
-  suspend->triggers_ptr = nullptr;
-  // NOLINTBEGIN(cppcoreguidelines-owning-memory)
-  delete[] suspend->late_bound_ptr;
-  suspend->num_late_bound = 0;
-  suspend->late_bound_ptr = nullptr;
-  delete[] suspend->plan_ops_ptr;
-  suspend->num_plan_ops = 0;
-  suspend->plan_ops_ptr = nullptr;
-  delete[] suspend->dep_slots_ptr;
-  // NOLINTEND(cppcoreguidelines-owning-memory)
-  suspend->num_dep_slots = 0;
-  suspend->dep_slots_ptr = nullptr;
-}
-
-void SuspendReset(lyra::runtime::SuspendRecord* suspend) {
-  ReleaseTriggerOverflow(suspend);
-  *suspend = lyra::runtime::SuspendRecord{};
-}
-
-// Defense-in-depth guard: abort if a non-suspending DPI export task
-// attempts to suspend. The static gate in design.cpp prevents direct timing
-// controls; this catches unforeseen indirect paths.
-void FailIfSuspensionDisallowed(const char* api) {
-  if (LyraIsDpiExportSuspensionDisallowed()) {
-    throw lyra::common::InternalError(
-        api, "non-suspending DPI export task attempted to suspend");
-  }
-}
-
 }  // namespace
-
-// Runtime allocation for large trigger lists (called from LLVM-generated code)
-extern "C" auto LyraAllocTriggers(uint32_t count)
-    -> lyra::runtime::WaitTriggerRecord* {
-  // NOLINTNEXTLINE(cppcoreguidelines-owning-memory)
-  return new lyra::runtime::WaitTriggerRecord[count];
-}
-
-extern "C" void LyraFreeTriggers(lyra::runtime::WaitTriggerRecord* ptr) {
-  delete[] ptr;  // NOLINT(cppcoreguidelines-owning-memory)
-}
-
-extern "C" void LyraSuspendDelay(
-    void* state, uint64_t ticks, uint32_t resume_block) {
-  FailIfSuspensionDisallowed("LyraSuspendDelay");
-  auto* suspend = static_cast<lyra::runtime::SuspendRecord*>(state);
-  ReleaseTriggerOverflow(suspend);  // Clean up any previous wait
-  suspend->tag = lyra::runtime::SuspendTag::kDelay;
-  suspend->delay_ticks = ticks;
-  suspend->resume_block = resume_block;
-}
-
-extern "C" void LyraSuspendWait(
-    void* state, uint32_t resume_block, const void* triggers,
-    uint32_t num_triggers, uint32_t wait_site_id) {
-  FailIfSuspensionDisallowed("LyraSuspendWait");
-  auto* suspend = static_cast<lyra::runtime::SuspendRecord*>(state);
-  ReleaseTriggerOverflow(suspend);  // Clean up any previous wait
-
-  suspend->tag = lyra::runtime::SuspendTag::kWait;
-  suspend->resume_block = resume_block;
-  suspend->wait_site_id = wait_site_id;
-  suspend->num_triggers = num_triggers;
-
-  // Always set triggers_ptr for invariant consistency (even if num_triggers ==
-  // 0)
-  if (num_triggers <= lyra::runtime::kInlineTriggerCapacity) {
-    suspend->triggers_ptr = suspend->inline_triggers.data();
-  } else {
-    // NOLINTNEXTLINE(cppcoreguidelines-owning-memory)
-    suspend->triggers_ptr = new lyra::runtime::WaitTriggerRecord[num_triggers];
-  }
-
-  if (num_triggers > 0) {
-    std::memcpy(
-        suspend->triggers_ptr, triggers,
-        num_triggers * sizeof(lyra::runtime::WaitTriggerRecord));
-  }
-}
-
-// Fast path for static-wait processes (e.g., always_ff with fixed triggers).
-// Called on re-suspend when the trigger set is identical to a previously-
-// installed wait site. Skips trigger array rebuild, memcpy, overflow
-// release, and DPI suspension check -- all unnecessary when the trigger
-// data in the SuspendRecord is already correct from the first activation.
-extern "C" void LyraSuspendWaitStatic(
-    void* state, uint32_t resume_block, uint32_t wait_site_id) {
-  auto* suspend = static_cast<lyra::runtime::SuspendRecord*>(state);
-  suspend->tag = lyra::runtime::SuspendTag::kWait;
-  suspend->resume_block = resume_block;
-  suspend->wait_site_id = wait_site_id;
-}
-
-extern "C" void LyraSuspendWaitWithLateBound(
-    void* state, uint32_t resume_block, const void* triggers,
-    uint32_t num_triggers, const void* headers, uint32_t num_headers,
-    const void* plan_ops, uint32_t num_plan_ops, const void* dep_slots,
-    uint32_t num_dep_slots, uint32_t wait_site_id) {
-  FailIfSuspensionDisallowed("LyraSuspendWaitWithLateBound");
-  auto* suspend = static_cast<lyra::runtime::SuspendRecord*>(state);
-  ReleaseTriggerOverflow(suspend);
-
-  suspend->tag = lyra::runtime::SuspendTag::kWait;
-  suspend->resume_block = resume_block;
-  suspend->wait_site_id = wait_site_id;
-  suspend->num_triggers = num_triggers;
-
-  if (num_triggers <= lyra::runtime::kInlineTriggerCapacity) {
-    suspend->triggers_ptr = suspend->inline_triggers.data();
-  } else {
-    // NOLINTNEXTLINE(cppcoreguidelines-owning-memory)
-    suspend->triggers_ptr = new lyra::runtime::WaitTriggerRecord[num_triggers];
-  }
-
-  if (num_triggers > 0) {
-    std::memcpy(
-        suspend->triggers_ptr, triggers,
-        num_triggers * sizeof(lyra::runtime::WaitTriggerRecord));
-  }
-
-  // NOLINTBEGIN(cppcoreguidelines-owning-memory)
-  suspend->num_late_bound = num_headers;
-  if (num_headers > 0 && headers != nullptr) {
-    suspend->late_bound_ptr = new lyra::runtime::LateBoundHeader[num_headers];
-    std::memcpy(
-        suspend->late_bound_ptr, headers,
-        num_headers * sizeof(lyra::runtime::LateBoundHeader));
-  } else {
-    suspend->late_bound_ptr = nullptr;
-  }
-
-  suspend->num_plan_ops = num_plan_ops;
-  if (num_plan_ops > 0 && plan_ops != nullptr) {
-    suspend->plan_ops_ptr = new lyra::runtime::IndexPlanOp[num_plan_ops];
-    std::memcpy(
-        suspend->plan_ops_ptr, plan_ops,
-        num_plan_ops * sizeof(lyra::runtime::IndexPlanOp));
-  } else {
-    suspend->plan_ops_ptr = nullptr;
-  }
-
-  suspend->num_dep_slots = num_dep_slots;
-  if (num_dep_slots > 0 && dep_slots != nullptr) {
-    suspend->dep_slots_ptr = new lyra::runtime::DepSignalRecord[num_dep_slots];
-    std::memcpy(
-        suspend->dep_slots_ptr, dep_slots,
-        num_dep_slots * sizeof(lyra::runtime::DepSignalRecord));
-  } else {
-    suspend->dep_slots_ptr = nullptr;
-  }
-  // NOLINTEND(cppcoreguidelines-owning-memory)
-}
-
-extern "C" void LyraSuspendRepeat(void* state) {
-  FailIfSuspensionDisallowed("LyraSuspendRepeat");
-  auto* suspend = static_cast<lyra::runtime::SuspendRecord*>(state);
-  ReleaseTriggerOverflow(suspend);  // Clean up any previous wait
-  suspend->tag = lyra::runtime::SuspendTag::kRepeat;
-  suspend->resume_block = 0;
-}
-
-extern "C" void LyraSuspendWaitEvent(
-    void* state, uint32_t resume_block, uint32_t event_id) {
-  FailIfSuspensionDisallowed("LyraSuspendWaitEvent");
-  auto* suspend = static_cast<lyra::runtime::SuspendRecord*>(state);
-  ReleaseTriggerOverflow(suspend);
-  suspend->tag = lyra::runtime::SuspendTag::kWaitEvent;
-  suspend->resume_block = resume_block;
-  suspend->event_id = event_id;
-}
 
 extern "C" void LyraTriggerEvent(
     void* engine_ptr, uint32_t instance_id, uint32_t local_event_id) {
@@ -308,56 +63,7 @@ extern "C" void LyraTriggerEvent(
   engine->TriggerInstanceEvent(inst, local_event_id);
 }
 
-extern "C" void LyraRunProcessSync(LyraProcessFunc process, void* state) {
-  // Entry block is always block 0 (ABI contract with process generation)
-  constexpr uint32_t kEntryBlock = 0;
-
-  // Reset suspend record and iteration limit before execution.
-  // LyraGetIterationLimit() returns the process-global configured limit.
-  // 0 = unlimited: set counter to UINT32_MAX so the guard never fires.
-  auto* suspend = static_cast<lyra::runtime::SuspendRecord*>(state);
-  suspend->tag = lyra::runtime::SuspendTag::kFinished;
-  uint32_t limit = LyraGetIterationLimit();
-  LyraResetIterationLimit(limit > 0 ? limit : UINT32_MAX);
-
-  // Pointer-out ABI contract: caller owns the outcome buffer, callee must
-  // write exactly one valid ProcessOutcome before returning. Sentinel tag
-  // (UINT32_MAX) detects codegen bugs where a process path misses the write.
-  lyra::runtime::ProcessOutcome outcome{};
-  outcome.tag = UINT32_MAX;
-  process(state, kEntryBlock, &outcome);
-
-  switch (static_cast<lyra::runtime::ProcessExitCode>(outcome.tag)) {
-    case lyra::runtime::ProcessExitCode::kOk:
-      break;
-    case lyra::runtime::ProcessExitCode::kTrap:
-      lyra::PrintError(
-          std::format(
-              "init process trapped (reason={}, a={}, b={}), aborting",
-              outcome.reason, outcome.a, outcome.b));
-      std::abort();
-    default:
-      throw lyra::common::InternalError(
-          "LyraRunProcessSync",
-          std::format(
-              "process returned invalid exit tag {} (sentinel=codegen bug, "
-              "other=unknown tag)",
-              outcome.tag));
-  }
-
-  // Init processes must not suspend - they run to completion
-  if (suspend->tag != lyra::runtime::SuspendTag::kFinished) {
-    lyra::PrintError(
-        std::format(
-            "init process suspended (tag={}), aborting",
-            static_cast<int>(suspend->tag)));
-    std::abort();
-  }
-}
-
 namespace {
-
-using SharedBodyFn = lyra::runtime::SharedBodyFn;
 
 struct ProcessDispatchContext {
   std::span<LyraProcessFunc> connection_procs;
@@ -369,69 +75,9 @@ void DescriptorProcessDispatch(
     void* ctx, lyra::runtime::Engine& eng, lyra::runtime::ProcessHandle handle,
     lyra::runtime::ResumePoint resume) {
   auto* dctx = static_cast<ProcessDispatchContext*>(ctx);
-  uint32_t proc_idx = handle.process_id;
-  void* state = dctx->states[proc_idx];
-  auto* suspend = static_cast<lyra::runtime::SuspendRecord*>(state);
-
-  // Fast path: if the process is resuming from a static wait (no heap-
-  // allocated trigger data), skip the full 992-byte SuspendRecord zeroing.
-  // The body will call LyraSuspendWaitStatic which only writes 3 fields.
-  // For the first activation (resume_block=0) or non-wait states, fall
-  // through to full reset.
-  if (resume.block_index != 0 &&
-      suspend->tag == lyra::runtime::SuspendTag::kWait &&
-      suspend->triggers_ptr == suspend->inline_triggers.data()) {
-    // Lightweight reset: clear only the tag so that if the body exits
-    // without calling any suspend (e.g., $finish), ReconcilePostActivation
-    // sees kFinished and handles cleanup correctly.
-    suspend->tag = lyra::runtime::SuspendTag::kFinished;
-  } else {
-    SuspendReset(suspend);
-  }
-
-  lyra::runtime::ProcessOutcome outcome{};
-  outcome.tag = UINT32_MAX;
-
-  // Dispatch partition contract:
-  //   [0, num_connection) = connection processes (3-arg direct call)
-  //   [num_connection, num_processes) = module processes (frame-header
-  //   dispatch)
-  if (proc_idx < dctx->num_connection) {
-    dctx->connection_procs[proc_idx](state, resume.block_index, &outcome);
-  } else {
-    // Module process: 2-arg shared body call.
-    // Body pointer and all instance binding are in the frame header,
-    // populated at init time from descriptor data.
-    auto* header = static_cast<StateHeader*>(state);
-    header->outcome.tag = UINT32_MAX;
-    header->body(state, resume.block_index);
-    outcome = header->outcome;
-  }
-
-  switch (static_cast<lyra::runtime::ProcessExitCode>(outcome.tag)) {
-    case lyra::runtime::ProcessExitCode::kOk:
-      break;
-    case lyra::runtime::ProcessExitCode::kTrap: {
-      lyra::runtime::TrapPayload payload{
-          .reason = static_cast<lyra::runtime::TrapReason>(outcome.reason),
-          .a = outcome.a,
-          .b = outcome.b,
-      };
-      eng.HandleTrap(proc_idx, payload);
-      return;
-    }
-    default:
-      throw lyra::common::InternalError(
-          "DescriptorProcessDispatch",
-          std::format(
-              "process returned invalid exit tag {} (sentinel=codegen bug, "
-              "other=unknown tag)",
-              outcome.tag));
-  }
-
-  if (!eng.HasPostActivationReconciliation()) {
-    HandleSuspendRecord(eng, handle, suspend);
-  }
+  lyra::runtime::DispatchAndHandleActivation(
+      dctx->connection_procs, dctx->states, dctx->num_connection, eng, handle,
+      resume);
 }
 
 void SetupAndRunSimulation(
@@ -691,19 +337,6 @@ extern "C" void LyraRunSimulation(
     // R5: Trace selection must cover all flat slot_ids (global +
     // instance-owned). Called unconditionally after all init paths.
     engine.InitTraceSelection();
-  }
-
-  // Register suspend records for post-activation reconciliation.
-  // When both wait-site metadata and suspend records are present,
-  // HasPostActivationReconciliation() gates the new flow everywhere.
-  if (abi != nullptr && abi->wait_site_words != nullptr &&
-      abi->wait_site_word_count > 0) {
-    std::vector<lyra::runtime::SuspendRecord*> suspend_ptrs;
-    suspend_ptrs.reserve(states.size());
-    for (auto* state : states) {
-      suspend_ptrs.push_back(static_cast<lyra::runtime::SuspendRecord*>(state));
-    }
-    engine.RegisterSuspendRecords(suspend_ptrs);
   }
 
   if (HasFlag(flags, FeatureFlag::kDumpSlotMeta)) {
