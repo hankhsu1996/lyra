@@ -78,15 +78,12 @@ struct SpecLayoutContract {
   // Body-local behavioral dirty-propagation contract.
   // Copied from BodyRealizationInfo::slot_has_behavioral_trigger.
   std::vector<bool> slot_has_behavioral_trigger;
-  // Per body-local slot: true iff any other body has a behavioral trigger
-  // referencing this slot's design-global representative. Covers cross-body
-  // dependents (e.g., parent always_ff @(posedge child.clk)).
+  // Per body-local slot: true iff a process in a different body (or an
+  // init process) has a behavioral trigger that resolves to this slot,
+  // AND this body does not already have a body-local trigger on it.
+  // Disjoint with slot_has_behavioral_trigger by construction.
+  // Copied from BodyRealizationInfo::slot_has_cross_body_behavioral_trigger.
   std::vector<bool> slot_has_cross_body_behavioral_trigger;
-  // Representative design-global base slot for this body. Used for
-  // runtime signal identity at the codegen->runtime boundary (trace
-  // observation, packed store notifications). Copied from
-  // BodyRealizationInfo::representative_base_slot.
-  uint32_t representative_slot_base = 0;
 };
 
 // Per-specialization slot access classification.

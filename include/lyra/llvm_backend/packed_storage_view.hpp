@@ -10,14 +10,11 @@
 #include "lyra/common/type.hpp"
 #include "lyra/llvm_backend/commit/signal_id_expr.hpp"
 #include "lyra/mir/handle.hpp"
+#include "lyra/mir/signal_ref.hpp"
 
 namespace llvm {
 class Type;
 }  // namespace llvm
-
-namespace lyra::mir {
-struct SignalRef;
-}  // namespace lyra::mir
 
 namespace lyra::lowering::mir_to_llvm {
 
@@ -260,10 +257,11 @@ struct PackedStorePolicy {
   // observer state before suppressing. Conservative default: true.
   bool requires_static_dirty_propagation = true;
 
-  // Canonical storage-owner slot for trace observation query.
-  // Set when mutation_signal was provided to BuildStorePolicyFromContext.
-  // Used by packed-store emission sites for the LyraIsTraceObserved call.
-  std::optional<uint32_t> mutation_resolved_slot;
+  // Signal ref for trace observation query. Set when mutation_signal was
+  // provided to BuildStorePolicyFromContext. Used by packed-store emission
+  // sites to emit the appropriate LyraIsTraceObserved call (local for
+  // module-local signals, global for design-global signals).
+  std::optional<mir::SignalRef> trace_observation_signal;
 
   std::optional<SignalCoordExpr> signal_id;
   llvm::Value* engine_ptr = nullptr;

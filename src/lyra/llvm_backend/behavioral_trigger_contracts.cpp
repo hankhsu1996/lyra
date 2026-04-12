@@ -269,6 +269,102 @@ void PopulateBehavioralTriggerContracts(
   layout.slot_has_design_behavioral_trigger =
       BuildDesignGlobalBehavioralTriggerBitmap(
           layout, module_plans, design, design_arena, body_bitmaps);
+
+  // Compute per-body cross-body behavioral trigger bitmaps from trigger
+  // facts and canonical ownership. A slot is cross-body iff a process in
+  // a DIFFERENT body (or an init process) has a behavioral trigger that
+  // resolves to that body-local slot, AND the owning body does not
+  // already have a body-local trigger on the same slot.
+  std::unordered_map<const mir::ModuleBody*, size_t> body_to_group;
+  for (size_t gi = 0; gi < layout.body_realization_infos.size(); ++gi) {
+    body_to_group[layout.body_realization_infos[gi].body] = gi;
+  }
+  for (auto& info : layout.body_realization_infos) {
+    info.slot_has_cross_body_behavioral_trigger.assign(info.slot_count, false);
+  }
+
+  auto resolve_design_global_to_body_local = [&](uint32_t design_global_slot)
+      -> std::optional<std::pair<size_t, uint32_t>> {
+    for (const auto& plan : module_plans) {
+      if (design_global_slot >= plan.design_state_base_slot &&
+          design_global_slot < plan.design_state_base_slot + plan.slot_count) {
+        auto it = body_to_group.find(plan.body);
+        if (it == body_to_group.end()) return std::nullopt;
+        return std::pair{
+            it->second, design_global_slot - plan.design_state_base_slot};
+      }
+    }
+    return std::nullopt;
+  };
+
+  auto mark_cross_body = [&](size_t owner_group, uint32_t local_slot) {
+    auto& owner = layout.body_realization_infos[owner_group];
+    if (owner.slot_has_behavioral_trigger[local_slot]) return;
+    owner.slot_has_cross_body_behavioral_trigger[local_slot] = true;
+  };
+
+  for (const auto& proc_id : design.init_processes) {
+    const auto& process = design_arena[proc_id];
+    for (const auto& block : process.blocks) {
+      const auto* wait = std::get_if<mir::Wait>(&block.terminator.data);
+      if (wait == nullptr) continue;
+      for (const auto& trigger : wait->triggers) {
+        if (trigger.signal.scope == mir::SignalRef::Scope::kDesignGlobal) {
+          auto resolved = resolve_design_global_to_body_local(
+              static_cast<uint32_t>(trigger.signal.id));
+          if (resolved) {
+            mark_cross_body(resolved->first, resolved->second);
+          }
+        }
+      }
+    }
+  }
+
+  for (size_t source_gi = 0; source_gi < layout.body_realization_infos.size();
+       ++source_gi) {
+    const auto& source_info = layout.body_realization_infos[source_gi];
+    const auto& body = *source_info.body;
+    for (const auto& proc_id : body.processes) {
+      const auto& process = body.arena[proc_id];
+      if (process.kind == mir::ProcessKind::kFinal) continue;
+      for (const auto& block : process.blocks) {
+        const auto* wait = std::get_if<mir::Wait>(&block.terminator.data);
+        if (wait == nullptr) continue;
+        for (const auto& trigger : wait->triggers) {
+          if (trigger.unresolved_external_ref.has_value()) {
+            auto ref_id = *trigger.unresolved_external_ref;
+            if (ref_id.value >= body.resolved_external_ref_bindings.size()) {
+              continue;
+            }
+            const auto& binding =
+                body.resolved_external_ref_bindings[ref_id.value];
+            if (binding.IsPackageOrGlobal()) continue;
+            if (binding.target_object.value >=
+                construction.objects.size()) {
+              continue;
+            }
+            auto owner_group =
+                construction.objects[binding.target_object.value].body_group;
+            if (owner_group == source_gi) continue;
+            auto local_slot = binding.target_local_slot.value;
+            if (owner_group < layout.body_realization_infos.size() &&
+                local_slot <
+                    layout.body_realization_infos[owner_group].slot_count) {
+              mark_cross_body(owner_group, local_slot);
+            }
+            continue;
+          }
+          if (trigger.signal.scope == mir::SignalRef::Scope::kDesignGlobal) {
+            auto resolved = resolve_design_global_to_body_local(
+                static_cast<uint32_t>(trigger.signal.id));
+            if (!resolved) continue;
+            if (resolved->first == source_gi) continue;
+            mark_cross_body(resolved->first, resolved->second);
+          }
+        }
+      }
+    }
+  }
 }
 
 }  // namespace lyra::lowering::mir_to_llvm

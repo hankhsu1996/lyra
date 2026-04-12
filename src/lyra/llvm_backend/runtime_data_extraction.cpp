@@ -35,20 +35,6 @@ struct ObservableDescriptorOwnerRefFields {
   uint32_t flags = 0;
 };
 
-auto BuildBodyObservableDescriptorOwnerRefFields(
-    ObservableOwnerSlotId owner, uint32_t base_slot, uint32_t slot_count)
-    -> ObservableDescriptorOwnerRefFields {
-  const uint32_t raw_owner = owner.Raw();
-  const bool owner_is_in_body =
-      raw_owner >= base_slot && raw_owner < base_slot + slot_count;
-  if (owner_is_in_body) {
-    return {.storage_owner_ref = raw_owner - base_slot, .flags = 0};
-  }
-  return {
-      .storage_owner_ref = raw_owner,
-      .flags = runtime::kObservableFlagOwnerAbsolute};
-}
-
 auto BuildPackageObservableDescriptorOwnerRefFields(ObservableOwnerSlotId owner)
     -> ObservableDescriptorOwnerRefFields {
   return {
@@ -169,10 +155,8 @@ void CheckNoStrayInitBefore(
 
 auto BuildParamPayloads(
     std::span<const uint32_t> instance_body_group,
-    std::span<const uint32_t> design_base_slots,
     std::span<const mir::InstanceConstBlock> const_blocks,
-    size_t num_body_groups,
-    std::span<const SlotStorageSpec> design_slot_storage_specs,
+    std::span<const Layout::BodyRealizationInfo> body_realization_infos,
     std::span<const ParamSlotTemplate> body_param_templates)
     -> std::vector<std::vector<uint8_t>> {
   if (instance_body_group.size() != const_blocks.size()) {
@@ -181,13 +165,6 @@ auto BuildParamPayloads(
         std::format(
             "instance_body_group size {} != const_blocks size {}",
             instance_body_group.size(), const_blocks.size()));
-  }
-  if (design_base_slots.size() != const_blocks.size()) {
-    throw common::InternalError(
-        "BuildParamPayloads",
-        std::format(
-            "design_base_slots size {} != const_blocks size {}",
-            design_base_slots.size(), const_blocks.size()));
   }
 
   std::vector<std::vector<uint8_t>> payloads;
@@ -198,12 +175,12 @@ auto BuildParamPayloads(
 
     if (const_block.slot_inits.empty()) continue;
     uint32_t bg = instance_body_group[inst_idx];
-    if (bg >= num_body_groups) {
+    if (bg >= body_realization_infos.size()) {
       throw common::InternalError(
           "BuildParamPayloads",
           std::format(
               "instance {} body_group {} >= num_body_groups {}", inst_idx, bg,
-              num_body_groups));
+              body_realization_infos.size()));
     }
     const auto& tmpl = body_param_templates[bg].entries;
     if (tmpl.empty()) {
@@ -214,8 +191,8 @@ auto BuildParamPayloads(
               inst_idx));
     }
 
+    const auto& body_slot_specs = body_realization_infos[bg].slot_specs;
     auto sorted_inits = ValidateAndSortParamInits(const_block, inst_idx);
-    uint32_t design_base_slot = design_base_slots[inst_idx];
 
     size_t init_idx = 0;
     for (const auto& te : tmpl) {
@@ -224,8 +201,7 @@ auto BuildParamPayloads(
       if (init_idx < sorted_inits.size() &&
           sorted_inits[init_idx].body_local_slot == te.body_local_slot) {
         const auto& init = *sorted_inits[init_idx].init;
-        uint32_t abs_slot = design_base_slot + init.body_local_slot;
-        const auto& spec = design_slot_storage_specs[abs_slot];
+        const auto& spec = body_slot_specs[init.body_local_slot];
         LowerIntegralConstantToCanonicalBytes(init.value, spec, payload);
         ++init_idx;
       } else {
@@ -699,8 +675,6 @@ void ExtractBodyCombTemplates(
     const auto& body = *info.body;
     const auto ordinal_map = BuildBodyProcessOrdinalMap(body);
 
-    uint32_t base_slot = info.representative_base_slot;
-
     auto& bp = body_products[gi];
 
     ForEachNonFinalProcess(
@@ -720,13 +694,6 @@ void ExtractBodyCombTemplates(
             bool is_global =
                 fact.signal.scope == mir::SignalRef::Scope::kDesignGlobal;
 
-            uint32_t final_global_id = 0;
-            if (is_global) {
-              final_global_id = fact.signal.id;
-            } else {
-              final_global_id = base_slot + fact.signal.id;
-            }
-
             std::optional<ResolvedObservation> obs;
             if (fact.observed_place) {
               if (is_global) {
@@ -734,9 +701,9 @@ void ExtractBodyCombTemplates(
                     body.arena, design, common::SlotId{fact.signal.id},
                     *fact.observed_place);
               } else {
-                obs = ResolveObservation(
-                    body.arena, design, common::SlotId{final_global_id},
-                    *fact.observed_place);
+                obs = ResolveObservationFromSpec(
+                    body.arena, info.slot_specs[fact.signal.id],
+                    design.storage_spec_arena, *fact.observed_place);
               }
             }
 
@@ -746,7 +713,7 @@ void ExtractBodyCombTemplates(
             auto& accum = it->second;
             if (inserted) {
               accum.is_design_global = is_global;
-              accum.final_global_id = final_global_id;
+              accum.final_global_id = fact.signal.id;
             } else {
               if (accum.is_design_global != is_global) {
                 throw common::InternalError(
@@ -756,15 +723,6 @@ void ExtractBodyCombTemplates(
                         "mismatch",
                         gi, nonfinal_proc_ordinal, static_cast<int>(key.scope),
                         key.id));
-              }
-              if (accum.final_global_id != final_global_id) {
-                throw common::InternalError(
-                    "ExtractBodyCombTemplates",
-                    std::format(
-                        "body {} proc {} comb slot ({},{}) "
-                        "final_global_id mismatch ({} vs {})",
-                        gi, nonfinal_proc_ordinal, static_cast<int>(key.scope),
-                        key.id, accum.final_global_id, final_global_id));
               }
             }
             if (accum.is_full_slot) continue;
@@ -832,21 +790,16 @@ void ExtractBodyCombTemplates(
 void ExtractBodyObservableDescriptors(
     const TypeArena& type_arena,
     std::span<const Layout::BodyRealizationInfo> body_realization_infos,
-    const DesignLayout& design,
     std::vector<BodyRuntimeProducts>& body_products) {
   for (size_t gi = 0; gi < body_realization_infos.size(); ++gi) {
     const auto& info = body_realization_infos[gi];
     auto& bp = body_products[gi];
-
-    uint32_t base_slot = info.representative_base_slot;
 
     auto& tmpl = bp.observable_descriptors;
     tmpl.pool.push_back('\0');
     tmpl.entries.reserve(info.slot_count);
 
     if (info.slot_count == 0) continue;
-
-    auto owned_base = design.GetStorageBaseForRange(base_slot, info.slot_count);
 
     auto narrow_u64_to_u32 = [](uint64_t value,
                                 std::string_view what) -> uint32_t {
@@ -860,37 +813,21 @@ void ExtractBodyObservableDescriptors(
 
     const auto& obs_body = *info.body;
     for (uint32_t i = 0; i < info.slot_count; ++i) {
-      uint32_t gsi = base_slot + i;
-      if (gsi >= design.slots.size()) {
-        throw common::InternalError(
-            "ExtractBodyObservableDescriptors",
-            std::format(
-                "body {} slot {} (gsi {}) out of range (design slots {})", gi,
-                i, gsi, design.slots.size()));
-      }
-
-      const ObservableOwnerSlotId owner =
-          ObservableOwnerSlotId::Create(design.slots[gsi].value);
-      const auto& owner_spec = design.slot_storage_specs[owner.Raw()];
+      const auto& spec = info.slot_specs[i];
       const CanonicalObservableShape shape = ComputeCanonicalObservableShape(
-          owner_spec, obs_body.slots[i].type, obs_body.slots[i].kind,
-          type_arena);
+          spec, obs_body.slots[i].type, obs_body.slots[i].kind, type_arena);
       const ObservableDescriptorShapeFields sf =
           BuildObservableDescriptorShapeFields(shape);
 
-      std::string_view local_name;
       uint32_t name_off = 0;
-      if (!local_name.empty()) {
-        name_off = static_cast<uint32_t>(tmpl.pool.size());
-        tmpl.pool.insert(tmpl.pool.end(), local_name.begin(), local_name.end());
-        tmpl.pool.push_back('\0');
-      }
 
-      auto body_offset = design.GetBodyOffset(gsi, *owned_base);
+      uint32_t storage_offset = narrow_u64_to_u32(
+          info.body_layout.inline_offsets[i].value, "body-local byte offset");
 
-      ObservableDescriptorOwnerRefFields refs =
-          BuildBodyObservableDescriptorOwnerRefFields(
-              owner, base_slot, info.slot_count);
+      // Body-local observable owner: owner is always the body-local slot
+      // itself (design-global slot identity is an identity mapping).
+      ObservableDescriptorOwnerRefFields refs = {
+          .storage_owner_ref = i, .flags = 0};
 
       uint32_t domain = 1;
       uint32_t storage_offset =
@@ -945,20 +882,13 @@ void ExtractBodyInitDescriptors(
     auto& bp = body_products[gi];
 
     if (info.slot_count == 0) continue;
-    uint32_t base_slot = info.representative_base_slot;
-    auto init_owned_base =
-        design.GetStorageBaseForRange(base_slot, info.slot_count);
-    if (!init_owned_base.has_value()) continue;
 
     const auto& init_body = *info.body;
     std::vector<ParamSlotTemplateEntry> param_entries;
 
     for (uint32_t i = 0; i < info.slot_count; ++i) {
-      uint32_t gsi = base_slot + i;
-
-      uint64_t inst_rel_offset =
-          design.slot_byte_offsets[gsi] - init_owned_base->value;
-      const auto& spec = design.slot_storage_specs[gsi];
+      uint64_t inst_rel_offset = info.body_layout.inline_offsets[i].value;
+      const auto& spec = info.slot_specs[i];
 
       if (init_body.slots[i].kind == mir::SlotKind::kParamConst) {
         param_entries.push_back(
@@ -973,10 +903,9 @@ void ExtractBodyInitDescriptors(
             });
       }
 
-      bool is_owned = design.owned_data_offsets[gsi].has_value();
+      bool is_owned = info.body_layout.appendix_offsets[i].has_value();
       if (is_owned) {
-        uint64_t backing_rel =
-            *design.owned_data_offsets[gsi] - init_owned_base->value;
+        uint64_t backing_rel = info.body_layout.appendix_offsets[i]->value;
         if (auto root = BuildStorageConstructionRecipeForSlot(
                 spec, design.storage_spec_arena,
                 NarrowToU32(inst_rel_offset, "init rel offset"), true,
@@ -1006,15 +935,8 @@ void ExtractBodyInitDescriptors(
   }
 
   // Build param payloads and construction program.
-  std::vector<uint32_t> design_base_slots;
-  design_base_slots.reserve(construction.objects.size());
-  for (const auto& obj : construction.objects) {
-    design_base_slots.push_back(obj.design_state_base_slot);
-  }
-
   auto param_payloads = BuildParamPayloads(
-      instance_body_group, design_base_slots, construction.const_blocks,
-      body_realization_infos.size(), design.slot_storage_specs,
+      instance_body_group, construction.const_blocks, body_realization_infos,
       body_param_templates);
 
   // Validate parallel structure invariants.
@@ -1212,8 +1134,7 @@ auto ExtractRuntimeData(
       layout.body_realization_infos, layout.design, layout.num_package_slots,
       layout.instance_slot_counts, products.body_products);
   ExtractBodyObservableDescriptors(
-      *input.type_arena, layout.body_realization_infos, layout.design,
-      products.body_products);
+      *input.type_arena, layout.body_realization_infos, products.body_products);
   ExtractBodyInitDescriptors(
       *input.construction, layout.body_realization_infos, layout.design,
       layout.instance_storage_sizes, layout.instance_storage_bases,

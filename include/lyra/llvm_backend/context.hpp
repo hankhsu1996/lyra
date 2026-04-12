@@ -702,28 +702,12 @@ class Context {
   [[nodiscard]] auto RequiresStaticDirtyPropagation(
       const mir::SignalRef& sig) const -> bool;
 
-  // Resolve a signal reference to a design-global slot index for runtime
-  // APIs that still use flat slot identity (trace observation, packed
-  // store notifications). For module-local signals, maps through
-  // SpecLayoutContract::representative_slot_base. For design-global
-  // signals, returns the id directly.
-  // Must NOT be used for spec compilation decisions -- only for runtime
-  // signal identity at the codegen->runtime boundary.
-  [[nodiscard]] auto GetRuntimeSignalSlot(const mir::SignalRef& sig) const
-      -> uint32_t;
-
-  // Emit IR that queries whether the canonical storage-owner slot for
-  // the given signal has trace observation at runtime. Returns an i1
-  // LLVM value (true if trace-observed, false if safe to suppress).
-  // Emits a call to the LyraIsTraceObserved runtime ABI function.
-  // Null engine returns false (safe for guarded paths).
+  // Emit IR that queries whether the given signal has trace observation
+  // at runtime. Returns an i1 LLVM value (true if trace-observed, false
+  // if safe to suppress). For module-local signals, emits the local
+  // trace query (LyraIsTraceObservedLocal with self instance pointer).
+  // For design-global signals, emits the global trace query.
   [[nodiscard]] auto EmitIsTraceObserved(const mir::SignalRef& sig)
-      -> llvm::Value*;
-
-  // Emit IR trace query by pre-resolved canonical owner slot.
-  // Used by packed-store paths where the owner slot was already
-  // resolved at policy construction time.
-  [[nodiscard]] auto EmitIsTraceObservedOwnerSlot(uint32_t owner_slot)
       -> llvm::Value*;
 
   // Emit a trace-observation branch: if trace-observed, execute the

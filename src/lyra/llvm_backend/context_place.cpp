@@ -940,58 +940,25 @@ auto Context::RequiresStaticDirtyPropagation(const mir::SignalRef& sig) const
          RequiresConnectionNotification(sig);
 }
 
-auto Context::GetRuntimeSignalSlot(const mir::SignalRef& sig) const
-    -> uint32_t {
-  const auto& layout = *facts_->layout;
-  uint32_t owner_slot = 0;
-
-  if (sig.scope == mir::SignalRef::Scope::kModuleLocal) {
-    if (spec_layout_contract_ == nullptr) {
-      throw common::InternalError(
-          "Context::GetRuntimeSignalSlot",
-          "module-local signal queried without active "
-          "SpecLayoutContract");
-    }
-    auto local_slot = static_cast<uint32_t>(sig.id);
-    owner_slot = spec_layout_contract_->representative_slot_base + local_slot;
-  } else if (sig.scope == mir::SignalRef::Scope::kDesignGlobal) {
-    owner_slot = static_cast<uint32_t>(sig.id);
-  } else {
-    throw common::InternalError(
-        "Context::GetRuntimeSignalSlot", "unknown signal scope");
-  }
-
-  if (owner_slot >= layout.design.slots.size()) {
-    throw common::InternalError(
-        "Context::GetRuntimeSignalSlot",
-        std::format(
-            "owner slot {} out of range (design has {} slots)", owner_slot,
-            layout.design.slots.size()));
-  }
-  return owner_slot;
-}
-
-auto Context::EmitIsTraceObservedOwnerSlot(uint32_t owner_slot)
-    -> llvm::Value* {
-  if (owner_slot >= facts_->layout->design.slots.size()) {
-    throw common::InternalError(
-        "Context::EmitIsTraceObservedOwnerSlot",
-        std::format(
-            "owner slot {} out of range (design has {} slots)", owner_slot,
-            facts_->layout->design.slots.size()));
-  }
+auto Context::EmitIsTraceObserved(const mir::SignalRef& sig) -> llvm::Value* {
   auto& builder = GetBuilder();
   auto* i32_ty = llvm::Type::getInt32Ty(GetLlvmContext());
-  // Trace observation query uses the canonical storage-owner slot id,
-  // which is always in the design-global coordination space (resolved
-  // at compile time from the storage layout).
-  return builder.CreateCall(
-      GetLyraIsTraceObservedGlobal(),
-      {GetEnginePointer(), llvm::ConstantInt::get(i32_ty, owner_slot)});
-}
 
-auto Context::EmitIsTraceObserved(const mir::SignalRef& sig) -> llvm::Value* {
-  return EmitIsTraceObservedOwnerSlot(GetRuntimeSignalSlot(sig));
+  if (sig.scope == mir::SignalRef::Scope::kModuleLocal) {
+    auto local_slot = static_cast<uint32_t>(sig.id);
+    return builder.CreateCall(
+        GetLyraIsTraceObservedLocal(),
+        {GetEnginePointer(), GetInstancePointer(),
+         llvm::ConstantInt::get(i32_ty, local_slot)});
+  }
+  if (sig.scope == mir::SignalRef::Scope::kDesignGlobal) {
+    auto global_slot = static_cast<uint32_t>(sig.id);
+    return builder.CreateCall(
+        GetLyraIsTraceObservedGlobal(),
+        {GetEnginePointer(), llvm::ConstantInt::get(i32_ty, global_slot)});
+  }
+  throw common::InternalError(
+      "Context::EmitIsTraceObserved", "unknown signal scope");
 }
 
 }  // namespace lyra::lowering::mir_to_llvm

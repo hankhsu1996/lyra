@@ -352,22 +352,8 @@ auto BuildSpecPlan(
     }
     contract.slot_specs = bri.slot_specs;
     contract.slot_has_behavioral_trigger = bri.slot_has_behavioral_trigger;
-    contract.representative_slot_base = bri.representative_base_slot;
-
-    // Pre-compute cross-body behavioral trigger bitmap for this body.
-    // A slot has a cross-body behavioral trigger if its design-global
-    // representative is marked in the design-global bitmap but NOT in
-    // the body-local bitmap.
-    auto slot_count = bri.slot_count;
-    contract.slot_has_cross_body_behavioral_trigger.resize(slot_count, false);
-    for (uint32_t s = 0; s < slot_count; ++s) {
-      auto global_slot = contract.representative_slot_base + s;
-      if (global_slot < layout.slot_has_design_behavioral_trigger.size() &&
-          layout.slot_has_design_behavioral_trigger[global_slot] &&
-          !bri.slot_has_behavioral_trigger[s]) {
-        contract.slot_has_cross_body_behavioral_trigger[s] = true;
-      }
-    }
+    contract.slot_has_cross_body_behavioral_trigger =
+        bri.slot_has_cross_body_behavioral_trigger;
 
     layout_contracts.push_back(std::move(contract));
   }

@@ -507,10 +507,6 @@ struct Layout {
   // Do not reorder. Body pointer is the canonical identity.
   struct BodyRealizationInfo {
     const mir::ModuleBody* body = nullptr;
-    // Design-global base slot for the representative instance of this body.
-    // Used for runtime signal identity (trace observation, packed store
-    // notifications, comb template extraction, observable descriptors).
-    uint32_t representative_base_slot = 0;
     uint32_t slot_count = 0;
     // Body-local byte layout. Per-slot offsets in BodyByteOffset domain.
     // Sole authority for body-local addressing in spec compilation.
@@ -525,6 +521,13 @@ struct Layout {
     // Instance-independent: all instances of this body share the
     // same behavioral trigger set.
     std::vector<bool> slot_has_behavioral_trigger;
+    // Per body-local slot: true iff a process in a different body (or an
+    // init process) has a behavioral trigger that resolves to this slot,
+    // AND this body does not already have a body-local trigger on it.
+    // Disjoint with slot_has_behavioral_trigger by construction.
+    // Covers cross-body dependents (e.g., parent always_ff
+    // @(posedge child.clk)).
+    std::vector<bool> slot_has_cross_body_behavioral_trigger;
     // Body-local state region sizes in bytes. Produced from body-local
     // storage spec computation.
     uint64_t inline_state_size_bytes = 0;
@@ -844,6 +847,13 @@ auto AnalyzeCombKernel(const mir::Process& process, const mir::Arena& arena)
 auto ResolveObservation(
     const mir::Arena& arena, const DesignLayout& design_layout,
     common::SlotId design_global_slot, mir::PlaceId place_id)
+    -> std::optional<ResolvedObservation>;
+
+// Body-local observation resolution. Takes slot storage spec and spec
+// arena directly, without requiring a design-global slot lookup.
+auto ResolveObservationFromSpec(
+    const mir::Arena& arena, const SlotStorageSpec& spec,
+    const StorageSpecArena& spec_arena, mir::PlaceId place_id)
     -> std::optional<ResolvedObservation>;
 
 }  // namespace lyra::lowering::mir_to_llvm

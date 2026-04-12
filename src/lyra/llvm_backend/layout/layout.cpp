@@ -992,10 +992,17 @@ auto ResolveObservation(
                                   "design-global slot {} not found in layout",
                                   design_global_slot.value));
   }
-  const auto& spec = design_layout.slot_storage_specs[slot_it->second];
+  return ResolveObservationFromSpec(
+      arena, design_layout.slot_storage_specs[slot_it->second],
+      design_layout.storage_spec_arena, place_id);
+}
+
+auto ResolveObservationFromSpec(
+    const mir::Arena& arena, const SlotStorageSpec& spec,
+    const StorageSpecArena& spec_arena, mir::PlaceId place_id)
+    -> std::optional<ResolvedObservation> {
   const auto& place = arena[place_id];
-  auto range =
-      ResolveByteRange(spec, design_layout.storage_spec_arena, place, nullptr);
+  auto range = ResolveByteRange(spec, spec_arena, place, nullptr);
   if (range.kind != RangeKind::kPrecise) {
     return std::nullopt;
   }
@@ -2017,11 +2024,11 @@ auto BuildLayout(
           layout.body_realization_infos.push_back(
               Layout::BodyRealizationInfo{
                   .body = plan.body,
-                  .representative_base_slot = plan.design_state_base_slot,
                   .slot_count = plan.slot_count,
                   .body_layout = std::move(body_layout),
                   .slot_specs = std::move(body_slot_specs),
                   .slot_has_behavioral_trigger = {},
+                  .slot_has_cross_body_behavioral_trigger = {},
                   .inline_state_size_bytes = size.inline_bytes,
                   .appendix_state_size_bytes = size.appendix_bytes,
                   .total_state_size_bytes = size.total_bytes,
