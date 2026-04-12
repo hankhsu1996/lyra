@@ -80,8 +80,14 @@ void Engine::MarkDirtyRange(
 void Engine::ScheduleNbaCrossInstanceLocal(
     ObjectSignalRef notify_signal, void* write_ptr, const void* notify_base_ptr,
     const void* value_ptr, const void* mask_ptr, uint32_t byte_size) {
+  if (notify_signal.instance == nullptr ||
+      !notify_signal.instance->nba_pending.IsInitialized()) {
+    throw common::InternalError(
+        "Engine::ScheduleNbaCrossInstanceLocal",
+        "notify_signal.instance missing or has no dense index");
+  }
   NbaNotifySignal notify{NbaNotifyLocal{
-      .instance_id = notify_signal.instance->instance_id,
+      .inst_idx = notify_signal.instance->nba_pending.instance_idx,
       .signal = notify_signal.local}};
   ScheduleNba(
       write_ptr, notify_base_ptr, value_ptr, mask_ptr, byte_size, notify);
@@ -91,8 +97,14 @@ void Engine::ScheduleNbaCanonicalPackedCrossInstanceLocal(
     ObjectSignalRef notify_signal, void* write_ptr, const void* notify_base_ptr,
     const void* value_ptr, const void* unk_ptr, uint32_t region_byte_size,
     uint32_t second_region_offset) {
+  if (notify_signal.instance == nullptr ||
+      !notify_signal.instance->nba_pending.IsInitialized()) {
+    throw common::InternalError(
+        "Engine::ScheduleNbaCanonicalPackedCrossInstanceLocal",
+        "notify_signal.instance missing or has no dense index");
+  }
   NbaNotifySignal notify{NbaNotifyLocal{
-      .instance_id = notify_signal.instance->instance_id,
+      .inst_idx = notify_signal.instance->nba_pending.instance_idx,
       .signal = notify_signal.local}};
   ScheduleNbaCanonicalPacked(
       write_ptr, notify_base_ptr, value_ptr, unk_ptr, region_byte_size,

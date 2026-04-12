@@ -1086,8 +1086,17 @@ extern "C" void LyraScheduleNbaExtRef(
   auto bindings =
       std::span(owner->ext_ref_bindings, owner->ext_ref_binding_count);
   const auto& binding = bindings[ref_id];
+  auto* target = AsEngine(eng)->FindInstanceMut(
+      lyra::runtime::InstanceId{binding.target_instance_id});
+  if (target == nullptr || !target->nba_pending.IsInitialized()) {
+    throw lyra::common::InternalError(
+        "LyraScheduleNbaExtRef",
+        std::format(
+            "target instance_id {} not found or not initialized",
+            binding.target_instance_id));
+  }
   lyra::runtime::NbaNotifySignal notify{lyra::runtime::NbaNotifyLocal{
-      .instance_id = lyra::runtime::InstanceId{binding.target_instance_id},
+      .inst_idx = target->nba_pending.instance_idx,
       .signal = lyra::runtime::LocalSignalId{binding.target_local_signal.value},
   }};
   AsEngine(eng)->ScheduleNba(wp, nb, vp, mp, bsz, notify);
@@ -1100,8 +1109,17 @@ extern "C" void LyraScheduleNbaCanonicalPackedExtRef(
   auto bindings =
       std::span(owner->ext_ref_bindings, owner->ext_ref_binding_count);
   const auto& binding = bindings[ref_id];
+  auto* target = AsEngine(eng)->FindInstanceMut(
+      lyra::runtime::InstanceId{binding.target_instance_id});
+  if (target == nullptr || !target->nba_pending.IsInitialized()) {
+    throw lyra::common::InternalError(
+        "LyraScheduleNbaCanonicalPackedExtRef",
+        std::format(
+            "target instance_id {} not found or not initialized",
+            binding.target_instance_id));
+  }
   lyra::runtime::NbaNotifySignal notify{lyra::runtime::NbaNotifyLocal{
-      .instance_id = lyra::runtime::InstanceId{binding.target_instance_id},
+      .inst_idx = target->nba_pending.instance_idx,
       .signal = lyra::runtime::LocalSignalId{binding.target_local_signal.value},
   }};
   AsEngine(eng)->ScheduleNbaCanonicalPacked(wp, nb, vp, up, rsz, sro, notify);

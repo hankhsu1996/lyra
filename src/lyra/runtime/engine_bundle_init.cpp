@@ -235,7 +235,6 @@ void Engine::InitModuleInstancesFromBundles(
   process_instance_map_.assign(num_processes_, InstanceId{.value = 0});
   slot_meta_registry_ = SlotMetaRegistry{};
   comb_kernels_.clear();
-  comb_kernel_flags_.clear();
   comb_trigger_backing_.clear();
   global_comb_trigger_map_.clear();
   global_comb_trigger_slots_.clear();
@@ -490,7 +489,6 @@ void Engine::InitModuleInstancesFromBundles(
   // global_comb_trigger_map_. Local triggers go to per-instance
   // local_comb_trigger_map on observability.
   auto proc_states = std::span(states, num_processes_);
-  comb_kernel_flags_.resize(num_processes_, 0);
 
   // Validated decode of CombTemplateEntry into exactly one of three modes.
   enum class CombTriggerMode { kBodyLocal, kGlobal, kCrossInstance };
@@ -586,7 +584,7 @@ void Engine::InitModuleInstancesFromBundles(
       auto comb_idx = static_cast<uint32_t>(comb_kernels_.size());
       comb_kernels_.push_back(BuildCombKernel(proc_idx, state_ptr, flags));
 
-      comb_kernel_flags_[proc_idx] = 1;
+      processes_[proc_idx].is_comb_kernel = true;
       bool kernel_self_edge = (flags & CombKernel::kSelfEdge) != 0;
       for (uint32_t ti = 0; ti < kernel.trigger_count; ++ti) {
         const auto& trig = comb.entries[kernel.trigger_start + ti];

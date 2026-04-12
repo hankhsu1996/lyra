@@ -207,6 +207,7 @@ class Engine {
       : process_dispatch_(process_dispatch),
         output_(output),
         num_processes_(num_processes),
+        processes_(num_processes),
         process_states_(num_processes),
         plusargs_(plusargs.begin(), plusargs.end()),
         instance_paths_(std::move(instance_paths)),
@@ -889,9 +890,9 @@ class Engine {
 
   // Single source of truth for whether the engine uses post-activation
   // reconciliation (new path) vs legacy HandleSuspendRecord (old path).
-  // True when both wait-site metadata and suspend-record access are present.
+  // True when both wait-site metadata and suspend records are registered.
   [[nodiscard]] auto HasPostActivationReconciliation() const -> bool {
-    return wait_site_meta_.IsPopulated() && !suspend_records_.empty();
+    return wait_site_meta_.IsPopulated() && suspend_records_registered_;
   }
 
   // Post-activation reconciliation: engine-owned dispatch after process runs.
@@ -908,7 +909,7 @@ class Engine {
   // When these hold, subscription baselines are already correct from the
   // prior flush and no refresh or reinstall is needed.
   [[nodiscard]] auto TryFastReconcile(uint32_t process_id) -> bool {
-    auto* suspend = suspend_records_[process_id];
+    auto* suspend = processes_[process_id].suspend_record;
     if (suspend->tag != SuspendTag::kWait) return false;
     const auto& installed = process_states_[process_id].installed_wait;
     if (!installed.valid || installed.wait_site_id != suspend->wait_site_id ||
@@ -1222,7 +1223,7 @@ class Engine {
           break;
       }
     }
-    if (process_states_[process_id].is_enqueued) {
+    if (processes_[process_id].is_enqueued) {
       if (detailed_stats_enabled_) {
         ++stats_.detailed.wakeup_deduped;
         ++per_process_stats_[process_id].wake_deduped;
@@ -1231,7 +1232,7 @@ class Engine {
     }
     next_delta_queue_.push_back(
         {process_id, InstanceId{instance_id}, resume_block});
-    process_states_[process_id].is_enqueued = true;
+    processes_[process_id].is_enqueued = true;
     if (activation_trace_.has_value()) {
       wake_trace_[process_id] = {.cause = cause, .trigger_slot = trigger_slot};
     }
@@ -1254,6 +1255,7 @@ class Engine {
   ProcessDispatch process_dispatch_;
   OutputDispatcher& output_;  // Borrowed from RunSession
   uint32_t num_processes_ = 0;
+  std::vector<RuntimeProcess> processes_;
   std::vector<ProcessState> process_states_;
   SimTime current_time_ = 0;
   bool finished_ = false;
@@ -1353,6 +1355,11 @@ class Engine {
   // to TLS per activation instead of calling LyraGet/ResetIterationLimit.
   uint32_t cached_iteration_limit_ = 0;
   uint32_t* cached_iteration_limit_ptr_ = nullptr;
+
+  // Set by RegisterSuspendRecords when all process suspend records are
+  // registered. Used by HasPostActivationReconciliation() as a capability
+  // flag rather than probing individual process records.
+  bool suspend_records_registered_ = false;
 
   // Precomputed run-invariant: true when post-activation reconciliation
   // path is active (both wait-site metadata and suspend records present).
@@ -1500,9 +1507,6 @@ class Engine {
   std::vector<TriggerRange> global_comb_trigger_map_;
   // List of global trigger slots for seeding dirty marks.
   std::vector<GlobalSignalId> global_comb_trigger_slots_;
-  // Dense flag table by process index (sized from num_processes_ in
-  // InitCombKernels, true = comb kernel, skip in ScheduleInitial).
-  std::vector<uint8_t> comb_kernel_flags_;
 
   // Current delta cycle within the active time slot. Reset to 0 at the
   // start of each ExecuteTimeSlot. Part of the runtime execution model:

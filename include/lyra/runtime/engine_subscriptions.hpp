@@ -310,10 +310,10 @@ struct InstalledWaitState {
   std::vector<LocalRefreshStamp> local_refresh_epochs;
 };
 
-// Per-process state (keyed by ProcessHandle).
+// Per-process subscription and wait state (keyed by ProcessHandle).
+// Mutable runtime state that does not belong to subscriptions (is_enqueued,
+// suspend_record, is_comb_kernel) lives on RuntimeProcess.
 struct ProcessState {
-  bool is_enqueued = false;
-  ProcessWaitKind wait_kind = ProcessWaitKind::kFinished;
   size_t subscription_count = 0;
   std::vector<LocalSubRef> local_sub_refs;
   std::vector<GlobalSubRef> global_sub_refs;

@@ -274,7 +274,15 @@ void Engine::ExecuteNbaRegion() {
     RuntimeInstance* nba_local_inst = nullptr;
     uint32_t nba_local_idx = 0;
     if (const auto* local = std::get_if<NbaNotifyLocal>(&entry.notify_signal)) {
-      nba_local_idx = GetInstanceIndex(local->instance_id);
+      nba_local_idx = local->inst_idx;
+      if (nba_local_idx >= instances_.size() ||
+          instances_[nba_local_idx] == nullptr) {
+        throw common::InternalError(
+            "Engine::ExecuteNbaRegion",
+            std::format(
+                "NBA local inst_idx {} invalid (instances_.size()={})",
+                nba_local_idx, instances_.size()));
+      }
       nba_local_inst = instances_[nba_local_idx];
     }
     auto nba_dirty = [&](uint32_t byte_off, uint32_t byte_size) {

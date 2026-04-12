@@ -508,12 +508,12 @@ auto Engine::TakeSchedulerSnapshot() const -> SchedulerSnapshot {
 
     if (pid == current_running) {
       kind = ProcessWaitKind::kRunning;
-    } else if (is_ready[pid] || proc.is_enqueued) {
+    } else if (is_ready[pid] || processes_[pid].is_enqueued) {
       kind = ProcessWaitKind::kReady;
     } else if (
-        pid < suspend_records_.size() && suspend_records_[pid] != nullptr) {
+        pid < processes_.size() && processes_[pid].suspend_record != nullptr) {
       // Use SuspendRecord::tag as the canonical authority.
-      switch (suspend_records_[pid]->tag) {
+      switch (processes_[pid].suspend_record->tag) {
         case SuspendTag::kFinished:
           kind = ProcessWaitKind::kFinished;
           break;

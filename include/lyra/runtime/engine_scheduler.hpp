@@ -77,8 +77,8 @@ struct NbaNotifyGlobal {
   GlobalSignalId signal;
 };
 struct NbaNotifyLocal {
-  InstanceId instance_id;
-  LocalSignalId signal;
+  uint32_t inst_idx = UINT32_MAX;
+  LocalSignalId signal{};
 };
 using NbaNotifySignal = std::variant<NbaNotifyGlobal, NbaNotifyLocal>;
 

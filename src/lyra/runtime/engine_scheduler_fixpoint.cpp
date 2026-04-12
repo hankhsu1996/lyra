@@ -253,8 +253,6 @@ void Engine::InitCombKernels(
 
   auto proc_states = std::span(states, num_processes_);
 
-  comb_kernel_flags_.resize(num_processes_, 0);
-
   struct ParsedTrigger {
     bool is_local;
     InstanceId instance_id;  // valid when is_local
@@ -308,7 +306,7 @@ void Engine::InitCombKernels(
     comb_kernels_.push_back(
         BuildCombKernel(proc_idx, proc_states[proc_idx], flags));
 
-    comb_kernel_flags_[proc_idx] = 1;
+    processes_[proc_idx].is_comb_kernel = true;
 
     bool kernel_self_edge = (flags & CombKernel::kSelfEdge) != 0;
     for (uint32_t ti = 0; ti < num_triggers; ++ti) {

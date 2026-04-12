@@ -22,8 +22,8 @@ namespace lyra::runtime {
 void Engine::ScheduleInitial(ProcessHandle handle) {
   // Skip comb kernel processes - they are evaluated inline during flush,
   // not through the normal scheduler activation path.
-  if (handle.process_id < comb_kernel_flags_.size() &&
-      comb_kernel_flags_[handle.process_id] != 0) {
+  if (handle.process_id < processes_.size() &&
+      processes_[handle.process_id].is_comb_kernel) {
     return;
   }
 
@@ -198,7 +198,7 @@ void Engine::ExecuteActiveRegion() {
                   "process_id {} exceeds num_processes {}", entry.process_id,
                   num_processes_));
         }
-        process_states_[entry.process_id].is_enqueued = false;
+        processes_[entry.process_id].is_enqueued = false;
       }
 
       if (activation_trace_.has_value()) {

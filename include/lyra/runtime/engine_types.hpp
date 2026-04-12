@@ -9,6 +9,8 @@
 
 namespace lyra::runtime {
 
+struct SuspendRecord;
+
 // Simulation time in ticks (timescale-independent).
 using SimTime = uint64_t;
 
@@ -101,5 +103,14 @@ struct LocalConnectionDst {
 
 using BatchedConnectionDst =
     std::variant<GlobalConnectionDst, LocalConnectionDst>;
+
+// First-class runtime process object.
+// Consolidates per-process state that was previously spread across
+// parallel engine-level arrays indexed by process_id.
+struct RuntimeProcess {
+  bool is_enqueued = false;
+  SuspendRecord* suspend_record = nullptr;
+  bool is_comb_kernel = false;
+};
 
 }  // namespace lyra::runtime
