@@ -5,12 +5,14 @@
 
 namespace lyra::runtime {
 
+struct RuntimeInstance;
+
 // Waiter record for a named event. Stored per-event-slot on the owning
 // instance. Consumed (moved out) when the event is triggered.
 struct EventWaiter {
-  uint32_t process_id;
-  uint32_t instance_id;
-  uint32_t resume_block;
+  uint32_t process_id = 0;
+  RuntimeInstance* instance = nullptr;
+  uint32_t resume_block = 0;
 };
 
 // Per-event runtime state within an instance. One slot per body-local

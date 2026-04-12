@@ -14,6 +14,8 @@
 
 namespace lyra::runtime {
 
+struct RuntimeInstance;
+
 // Reference into a process's IndexPlanPool.
 struct IndexPlanRef {
   uint32_t start = 0;
@@ -272,7 +274,7 @@ struct InstalledWaitState {
   uint32_t last_global_refresh_epoch = 0;
   uint32_t last_global_refresh_dirty_count = 0;
   struct LocalRefreshStamp {
-    InstanceId instance_id = InstanceId{0};
+    RuntimeInstance* instance = nullptr;
     uint64_t epoch = 0;
   };
   std::vector<LocalRefreshStamp> local_refresh_epochs;

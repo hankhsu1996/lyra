@@ -73,6 +73,111 @@ class ScopeExit {
   F fn_;
 };
 
+
+// Legacy post-activation dispatch: reads SuspendRecord and installs
+// waiter/delay state. Called by DescriptorProcessDispatch when
+// HasPostActivationReconciliation() is false. The new-path equivalent
+// is Engine::ReconcilePostActivation. Exactly one of these two runs
+// per activation -- never both.
+void HandleSuspendRecord(
+    lyra::runtime::Engine& eng, lyra::runtime::ProcessHandle handle,
+    lyra::runtime::SuspendRecord* suspend) {
+  auto resume = lyra::runtime::ResumePoint{
+      .block_index = suspend->resume_block, .instruction_index = 0};
+
+  switch (suspend->tag) {
+    case lyra::runtime::SuspendTag::kFinished:
+      break;
+
+    case lyra::runtime::SuspendTag::kDelay:
+      eng.Delay(handle, resume, suspend->delay_ticks);
+      break;
+
+    case lyra::runtime::SuspendTag::kWait: {
+      if (suspend->num_triggers > 0 && suspend->triggers_ptr == nullptr) {
+        throw lyra::common::InternalError(
+            "HandleSuspendRecord",
+            "triggers_ptr null with non-zero num_triggers");
+      }
+      auto triggers = std::span(suspend->triggers_ptr, suspend->num_triggers);
+
+      bool has_late_bound =
+          suspend->num_late_bound > 0 && suspend->late_bound_ptr != nullptr;
+      auto late_bound =
+          has_late_bound
+              ? std::span(suspend->late_bound_ptr, suspend->num_late_bound)
+              : std::span<const lyra::runtime::LateBoundHeader>{};
+      auto plan_ops =
+          (suspend->plan_ops_ptr != nullptr)
+              ? std::span(suspend->plan_ops_ptr, suspend->num_plan_ops)
+              : std::span<const lyra::runtime::IndexPlanOp>{};
+      auto dep_records =
+          (suspend->dep_slots_ptr != nullptr)
+              ? std::span(suspend->dep_slots_ptr, suspend->num_dep_slots)
+              : std::span<const lyra::runtime::DepSignalRecord>{};
+
+      eng.InstallTriggers(
+          handle, resume, triggers, late_bound, plan_ops, dep_records);
+      break;
+    }
+
+    case lyra::runtime::SuspendTag::kRepeat:
+      eng.ScheduleNextDelta(
+          handle, lyra::runtime::ResumePoint{.block_index = 0});
+      break;
+
+    case lyra::runtime::SuspendTag::kWaitEvent: {
+      auto& inst = eng.GetInstanceMut(handle.instance_id);
+      lyra::runtime::Engine::AddInstanceEventWaiter(
+          inst, suspend->event_id,
+          lyra::runtime::EventWaiter{
+              .process_id = handle.process_id,
+              .instance = &inst,
+              .resume_block = suspend->resume_block,
+          });
+      break;
+    }
+  }
+}
+
+// Release heap-allocated triggers if any (call before overwriting
+// SuspendRecord) Resets num_triggers and triggers_ptr to make non-wait states
+// trivially safe.
+void ReleaseTriggerOverflow(lyra::runtime::SuspendRecord* suspend) {
+  if (suspend->triggers_ptr != nullptr &&
+      suspend->triggers_ptr != suspend->inline_triggers.data()) {
+    delete[] suspend->triggers_ptr;  // NOLINT(cppcoreguidelines-owning-memory)
+  }
+  suspend->num_triggers = 0;
+  suspend->triggers_ptr = nullptr;
+  // NOLINTBEGIN(cppcoreguidelines-owning-memory)
+  delete[] suspend->late_bound_ptr;
+  suspend->num_late_bound = 0;
+  suspend->late_bound_ptr = nullptr;
+  delete[] suspend->plan_ops_ptr;
+  suspend->num_plan_ops = 0;
+  suspend->plan_ops_ptr = nullptr;
+  delete[] suspend->dep_slots_ptr;
+  // NOLINTEND(cppcoreguidelines-owning-memory)
+  suspend->num_dep_slots = 0;
+  suspend->dep_slots_ptr = nullptr;
+}
+
+void SuspendReset(lyra::runtime::SuspendRecord* suspend) {
+  ReleaseTriggerOverflow(suspend);
+  *suspend = lyra::runtime::SuspendRecord{};
+}
+
+// Defense-in-depth guard: abort if a non-suspending DPI export task
+// attempts to suspend. The static gate in design.cpp prevents direct timing
+// controls; this catches unforeseen indirect paths.
+void FailIfSuspensionDisallowed(const char* api) {
+  if (LyraIsDpiExportSuspensionDisallowed()) {
+    throw lyra::common::InternalError(
+        api, "non-suspending DPI export task attempted to suspend");
+  }
+}
+
 }  // namespace
 
 extern "C" void LyraTriggerEvent(

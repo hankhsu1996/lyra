@@ -417,15 +417,12 @@ auto Engine::RefreshInstalledSnapshots(ProcessHandle handle) -> bool {
            proc_state.installed_wait.last_global_refresh_dirty_count);
   bool local_unchanged = true;
   for (const auto& stamp : proc_state.installed_wait.local_refresh_epochs) {
-    const auto* inst = FindInstance(stamp.instance_id);
-    if (inst == nullptr) {
+    if (stamp.instance == nullptr) {
       throw common::InternalError(
           "Engine::RefreshInstalledSnapshots",
-          std::format(
-              "installed wait references missing instance {}",
-              stamp.instance_id));
+          "installed wait has null instance in local_refresh_epochs");
     }
-    if (inst->observability.local_flush_epoch != stamp.epoch) {
+    if (stamp.instance->observability.local_flush_epoch != stamp.epoch) {
       local_unchanged = false;
       break;
     }
@@ -510,15 +507,12 @@ auto Engine::RefreshInstalledSnapshots(ProcessHandle handle) -> bool {
   proc_state.installed_wait.last_global_refresh_dirty_count =
       current_global_dirty;
   for (auto& stamp : proc_state.installed_wait.local_refresh_epochs) {
-    const auto* inst = FindInstance(stamp.instance_id);
-    if (inst == nullptr) {
+    if (stamp.instance == nullptr) {
       throw common::InternalError(
           "Engine::RefreshInstalledSnapshots",
-          std::format(
-              "installed wait references missing instance {}",
-              stamp.instance_id));
+          "installed wait has null instance in local_refresh_epochs");
     }
-    stamp.epoch = inst->observability.local_flush_epoch;
+    stamp.epoch = stamp.instance->observability.local_flush_epoch;
   }
   return needs_reinstall;
 }
@@ -843,16 +837,17 @@ void Engine::InstallWaitSite(ProcessHandle handle, const WaitRequest& req) {
   // Local watermark: track only instances this wait site depends on.
   proc_state.installed_wait.local_refresh_epochs.clear();
   for (const auto& ref : proc_state.sub_refs) {
+    if (!ref.is_local) continue;
     // Deduplicate by instance_id (small sets, linear scan fine).
     bool already_tracked = false;
     for (const auto& stamp : proc_state.installed_wait.local_refresh_epochs) {
-      if (stamp.instance_id == ref.instance_id) {
+      if (stamp.instance->instance_id == ref.instance_id) {
         already_tracked = true;
         break;
       }
     }
-    if (ref.is_local && !already_tracked) {
-      const auto* inst = FindInstance(ref.instance_id);
+    if (!already_tracked) {
+      auto* inst = FindInstanceMut(ref.instance_id);
       if (inst == nullptr) {
         throw common::InternalError(
             "Engine::InstallWaitSite",
@@ -862,7 +857,7 @@ void Engine::InstallWaitSite(ProcessHandle handle, const WaitRequest& req) {
       }
       proc_state.installed_wait.local_refresh_epochs.push_back(
           InstalledWaitState::LocalRefreshStamp{
-              .instance_id = ref.instance_id,
+              .instance = inst,
               .epoch = inst->observability.local_flush_epoch});
     }
   }
@@ -879,6 +874,106 @@ auto Engine::CanRefreshInstalledWait(
 auto Engine::HasPendingDirtyState() const -> bool {
   return !update_set_.DeltaDirtySlots().empty() ||
          !delta_dirty_instances_.empty();
+}
+
+void Engine::ReconcilePostActivation(ProcessHandle handle) {
+  if (!HasPostActivationReconciliation()) {
+    throw common::InternalError(
+        "Engine::ReconcilePostActivation",
+        "called without post-activation reconciliation capability");
+  }
+  if (handle.process_id >= suspend_records_.size()) {
+    throw common::InternalError(
+        "Engine::ReconcilePostActivation",
+        std::format(
+            "process_id {} >= suspend_records size {}", handle.process_id,
+            suspend_records_.size()));
+  }
+  auto* suspend = suspend_records_[handle.process_id];
+
+  auto resume =
+      ResumePoint{.block_index = suspend->resume_block, .instruction_index = 0};
+
+  switch (suspend->tag) {
+    case SuspendTag::kFinished:
+      ResetInstalledWait(handle);
+      break;
+
+    case SuspendTag::kDelay:
+      ResetInstalledWait(handle);
+      Delay(handle, resume, suspend->delay_ticks);
+      break;
+
+    case SuspendTag::kWait: {
+      if (suspend->wait_site_id == kInvalidWaitSiteId) {
+        throw common::InternalError(
+            "Engine::ReconcilePostActivation",
+            std::format(
+                "process {} suspended with kWait but wait_site_id is invalid",
+                handle.process_id));
+      }
+
+      auto& proc_state = process_states_[handle.process_id];
+
+      if (!CanRefreshInPlace(
+              proc_state.installed_wait, suspend->wait_site_id)) {
+        // Reinstall required: different wait site or non-static shape.
+        const auto& descriptor = wait_site_meta_.Get(suspend->wait_site_id);
+        ResetInstalledWait(handle);
+        InstallWaitSite(handle, suspend, descriptor);
+        break;
+      }
+
+      // Flush owns baseline advancement for installed edge/change waits.
+      // FlushSlotEdgeGroups sets group.last_bit; FlushSlotChangeSubs
+      // memcpy's snapshots. ClearDelta() resets post-flush dirtiness
+      // tracking but does NOT invalidate those installed baselines.
+      // Post-activation refresh is only needed when post-flush slot
+      // dirties are recorded in delta_dirty_ (any active-region mutation
+      // path that calls MarkSlotDirty or MarkDirtyRange).
+      //
+      // Note: MarkExternalDirtyRange (container heap mutations) also
+      // pushes to delta_dirty_ via TouchSlot, which is intentional
+      // over-invalidation. Edge/change baselines observe design-state
+      // bytes, not heap data, so the per-sub IsDeltaDirty checks inside
+      // RefreshInstalledSnapshots filter these out harmlessly.
+      // R5: check both global and local dirty state. Instance-owned
+      // signals go to local_updates, not update_set_.
+      bool has_any_dirty = !update_set_.DeltaDirtySlots().empty() ||
+                           !delta_dirty_instances_.empty();
+      if (!has_any_dirty) {
+        break;
+      }
+
+      if (RefreshInstalledSnapshots(handle)) {
+        // A same-delta blocking write changed an observed edge bit.
+        // group.last_bit is shared state and cannot be updated here.
+        // Fall back to full reinstall to get a fresh group baseline.
+        const auto& descriptor = wait_site_meta_.Get(suspend->wait_site_id);
+        ResetInstalledWait(handle);
+        InstallWaitSite(handle, suspend, descriptor);
+      }
+      break;
+    }
+
+    case SuspendTag::kRepeat:
+      ResetInstalledWait(handle);
+      ScheduleNextDelta(handle, ResumePoint{.block_index = 0});
+      break;
+
+    case SuspendTag::kWaitEvent: {
+      ResetInstalledWait(handle);
+      auto& inst = GetInstanceMut(handle.instance_id);
+      AddInstanceEventWaiter(
+          inst, suspend->event_id,
+          EventWaiter{
+              .process_id = handle.process_id,
+              .instance = &inst,
+              .resume_block = suspend->resume_block,
+          });
+      break;
+    }
+  }
 }
 
 // R5: Domain-split edge/change subscribe helpers.

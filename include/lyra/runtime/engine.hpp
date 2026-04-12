@@ -818,8 +818,8 @@ class Engine {
     auto waiters = inst.event_state.ConsumeWaiters(local_event_id);
     for (const auto& w : waiters) {
       EnqueueProcessWakeup(
-          w.process_id, w.instance_id, w.resume_block, local_event_id,
-          WakeCause::kEvent);
+          w.process_id, w.instance->instance_id.value, w.resume_block,
+          local_event_id, WakeCause::kEvent);
     }
   }
 
