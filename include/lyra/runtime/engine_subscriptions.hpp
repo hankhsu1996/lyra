@@ -161,7 +161,7 @@ struct WatcherCold {
 // by ContainerSub.cold_idx. Always allocated (holds container runtime state
 // and optional rebind target metadata).
 struct ContainerCold {
-  StoredSignalRef container_signal;
+  uint32_t container_signal_id = 0;
   uint32_t container_elem_stride = 0;
   int64_t container_sv_index = 0;
   uint64_t container_epoch = 0;

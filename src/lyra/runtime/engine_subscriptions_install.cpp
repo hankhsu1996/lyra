@@ -1558,10 +1558,10 @@ namespace {
 // Create and initialize a container sub from pre-resolved slot_base.
 // Returns the container sub index within the slot.
 void InitContainerSubState(
-    ContainerSub& sub, ContainerCold& cold, StoredSignalRef signal,
+    ContainerSub& sub, ContainerCold& cold, uint32_t signal_id,
     int64_t sv_index, uint32_t elem_stride, bool initially_active,
     const uint8_t* slot_base) {
-  cold.container_signal = signal;
+  cold.container_signal_id = signal_id;
   cold.container_elem_stride = elem_stride;
   cold.container_sv_index = sv_index;
 
@@ -1641,8 +1641,7 @@ auto Engine::SubscribeGlobalContainerElement(
   sub.flags = 0;
 
   InitContainerSubState(
-      sub, container_cold_pool_[cold_idx],
-      StoredSignalRef{.signal_id = signal.value}, sv_index, elem_stride,
+      sub, container_cold_pool_[cold_idx], signal.value, sv_index, elem_stride,
       initially_active, slot_base);
 
   slot.container_subs.push_back(sub);
@@ -1693,12 +1692,8 @@ auto Engine::SubscribeLocalContainerElement(
   sub.flags = 0;
 
   InitContainerSubState(
-      sub, container_cold_pool_[cold_idx],
-      StoredSignalRef{
-          .signal_id = signal.signal.value,
-          .is_local = true,
-          .instance_id = signal.instance_id},
-      sv_index, elem_stride, initially_active, slot_base);
+      sub, container_cold_pool_[cold_idx], signal.signal.value, sv_index,
+      elem_stride, initially_active, slot_base);
 
   slot.container_subs.push_back(sub);
   proc_state.local_sub_refs.push_back(

@@ -73,22 +73,6 @@ struct LocalSignalRef {
 // Dispatch once at entry, then use domain-specific helpers below.
 using SignalRef = std::variant<GlobalSignalId, LocalSignalRef>;
 
-// R5: POD-safe typed signal identity for cold storage (e.g. ContainerCold).
-// Avoids std::variant overhead in dense cold pools.
-struct StoredSignalRef {
-  uint32_t signal_id = UINT32_MAX;
-  bool is_local = false;
-  InstanceId instance_id = InstanceId{0};
-
-  [[nodiscard]] auto ToSignalRef() const -> SignalRef {
-    if (is_local) {
-      return LocalSignalRef{
-          .instance_id = instance_id, .signal = LocalSignalId{signal_id}};
-    }
-    return GlobalSignalId{signal_id};
-  }
-};
-
 // Semantic domain tag for trigger and mutation coordinates.
 enum class SignalCoordKind : uint8_t {
   kLocalInstance,

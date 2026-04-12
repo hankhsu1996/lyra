@@ -269,16 +269,8 @@ void Engine::RebindLocalSubscription(uint32_t idx) {
     auto& csub = target_subs.container_subs[target.index];
     auto& ccold = container_cold_pool_[csub.cold_idx];
 
-    const uint8_t* cbase = nullptr;
-    if (ccold.container_signal.is_local) {
-      cbase = ResolveInstanceSlotBase(
-          GetInstanceMut(ccold.container_signal.instance_id),
-          LocalSignalId{ccold.container_signal.signal_id});
-    } else {
-      const auto& cmeta =
-          slot_meta_registry_.Get(ccold.container_signal.signal_id);
-      cbase = ResolveSlotBase(cmeta, design_state_base_, instances_);
-    }
+    const uint8_t* cbase = ResolveInstanceSlotBase(
+        *target.instance, LocalSignalId{ccold.container_signal_id});
     void* handle_ptr = nullptr;
     std::memcpy(&handle_ptr, cbase, sizeof(void*));
 
@@ -417,16 +409,9 @@ void Engine::RebindGlobalSubscription(uint32_t idx) {
     auto& csub = target_subs.container_subs[target.index];
     auto& ccold = container_cold_pool_[csub.cold_idx];
 
-    const uint8_t* cbase = nullptr;
-    if (ccold.container_signal.is_local) {
-      cbase = ResolveInstanceSlotBase(
-          GetInstanceMut(ccold.container_signal.instance_id),
-          LocalSignalId{ccold.container_signal.signal_id});
-    } else {
-      const auto& cmeta =
-          slot_meta_registry_.Get(ccold.container_signal.signal_id);
-      cbase = ResolveSlotBase(cmeta, design_state_base_, instances_);
-    }
+    const auto& cmeta = slot_meta_registry_.Get(ccold.container_signal_id);
+    const uint8_t* cbase =
+        ResolveSlotBase(cmeta, design_state_base_, instances_);
     void* handle_ptr = nullptr;
     std::memcpy(&handle_ptr, cbase, sizeof(void*));
 
