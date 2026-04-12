@@ -41,8 +41,7 @@ namespace lyra::lowering::mir_to_llvm {
 
 namespace {
 
-auto LowerTimeFormatEffect(
-    Context& context, const CuFacts& /*facts*/, const mir::TimeFormatEffect& tf)
+auto LowerTimeFormatEffect(Context& context, const mir::TimeFormatEffect& tf)
     -> Result<void> {
   auto& builder = context.GetBuilder();
   auto& llvm_ctx = context.GetLlvmContext();
@@ -66,8 +65,7 @@ auto LowerTimeFormatEffect(
   return {};
 }
 
-auto LowerStrobeEffect(
-    Context& context, const CuFacts& /*facts*/, const mir::StrobeEffect& strobe)
+auto LowerStrobeEffect(Context& context, const mir::StrobeEffect& strobe)
     -> Result<void> {
   // Get the strobe program function (already declared via DeclareMirFunction)
   llvm::Function* program_fn = context.GetDeclaredFunction(strobe.program);
@@ -95,9 +93,8 @@ auto LowerStrobeEffect(
   return {};
 }
 
-auto LowerMonitorEffect(
-    Context& context, const CuFacts& /*facts*/,
-    const mir::MonitorEffect& monitor) -> Result<void> {
+auto LowerMonitorEffect(Context& context, const mir::MonitorEffect& monitor)
+    -> Result<void> {
   // Get the setup program (already declared via DeclareMirFunction).
   // The setup program handles: initial print, serialization, and registration.
   llvm::Function* setup_fn = context.GetDeclaredFunction(monitor.setup_program);
@@ -124,8 +121,8 @@ auto LowerMonitorEffect(
 }
 
 auto LowerMonitorControlEffect(
-    Context& context, const CuFacts& /*facts*/,
-    const mir::MonitorControlEffect& control) -> Result<void> {
+    Context& context, const mir::MonitorControlEffect& control)
+    -> Result<void> {
   auto& builder = context.GetBuilder();
 
   // Get engine pointer
@@ -584,19 +581,19 @@ auto LowerEffectOp(
             return LowerMemIOEffect(context, facts, mem_io);
           },
           [&](const mir::TimeFormatEffect& tf) -> Result<void> {
-            return LowerTimeFormatEffect(context, facts, tf);
+            return LowerTimeFormatEffect(context, tf);
           },
           [&](const mir::SystemTfEffect& effect) -> Result<void> {
             return LowerSystemTfEffect(context, facts, resolver, effect);
           },
           [&](const mir::StrobeEffect& strobe) -> Result<void> {
-            return LowerStrobeEffect(context, facts, strobe);
+            return LowerStrobeEffect(context, strobe);
           },
           [&](const mir::MonitorEffect& monitor) -> Result<void> {
-            return LowerMonitorEffect(context, facts, monitor);
+            return LowerMonitorEffect(context, monitor);
           },
           [&](const mir::MonitorControlEffect& control) -> Result<void> {
-            return LowerMonitorControlEffect(context, facts, control);
+            return LowerMonitorControlEffect(context, control);
           },
           [&](const mir::FillPackedEffect& fill) -> Result<void> {
             return LowerFillPackedEffect(context, facts, fill);

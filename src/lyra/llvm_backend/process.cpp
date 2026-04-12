@@ -2221,8 +2221,8 @@ auto GenerateSharedProcessFunction(
 }
 
 auto DeclareMirFunction(
-    Context& context, const CuFacts& facts, mir::FunctionId func_id,
-    const std::string& name) -> Result<llvm::Function*> {
+    Context& context, mir::FunctionId func_id, const std::string& name)
+    -> Result<llvm::Function*> {
   auto& module = context.GetModule();
   auto& llvm_ctx = context.GetLlvmContext();
   const auto& arena = context.GetMirArena();
@@ -2281,8 +2281,8 @@ namespace {
 // arg_base: LLVM arg index where (design, engine, observer_ctx) starts.
 //   0 for monitor-check (no sret), arg_offset for strobe/setup (may have sret).
 auto SetupObserverProgramEntry(
-    Context& context, const CuFacts& facts, mir::FunctionId func_id,
-    llvm::Function* llvm_func, unsigned arg_base) -> llvm::Value* {
+    Context& context, mir::FunctionId func_id, llvm::Function* llvm_func,
+    unsigned arg_base) -> llvm::Value* {
   auto* design_arg = llvm_func->getArg(arg_base);
   design_arg->setName("design");
   context.SetDesignPointer(design_arg);
@@ -2603,7 +2603,7 @@ auto DefineMonitorCheckProgram(
   // Observer program entry: design, engine, observer_ctx, prev_buf.
   // SetupObserverProgramEntry handles the common (design, engine, observer_ctx)
   // triple and conditionally enters specialization-local mode.
-  SetupObserverProgramEntry(context, facts, func_id, llvm_func, 0);
+  SetupObserverProgramEntry(context, func_id, llvm_func, 0);
 
   auto* prev_buf_arg = llvm_func->getArg(3);
   prev_buf_arg->setName("prev_buf");
@@ -3330,7 +3330,7 @@ auto DefineMirFunction(
   if (is_observer) {
     // SetupObserverProgramEntry handles design/engine/observer_ctx setup
     // and conditionally enters specialization-local mode.
-    SetupObserverProgramEntry(context, facts, func_id, llvm_func, arg_offset);
+    SetupObserverProgramEntry(context, func_id, llvm_func, arg_offset);
     context_arg_count = 0;
   } else {
     // Non-observer: set design/engine on context (observer path does this

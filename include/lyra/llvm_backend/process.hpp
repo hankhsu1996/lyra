@@ -110,8 +110,8 @@ auto GenerateSharedProcessFunction(
 // Declare a MIR function without generating its body.
 // Used for two-pass generation to enable mutual recursion.
 auto DeclareMirFunction(
-    Context& context, const CuFacts& facts, mir::FunctionId func_id,
-    const std::string& name) -> Result<llvm::Function*>;
+    Context& context, mir::FunctionId func_id, const std::string& name)
+    -> Result<llvm::Function*>;
 
 // Generate the body for a MIR function.
 // The function must have been declared first with DeclareMirFunction.

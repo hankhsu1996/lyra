@@ -51,7 +51,7 @@ auto LowerOperandAsStorage(
 // PlaceId -> returns the PlaceId directly.
 // ExternalRefId -> returns nullopt (resolved via direct helpers, not Place).
 // TempId / Constant -> returns nullopt (no place backing).
-auto ResolveOperandPlace(Context& context, const mir::Operand& operand)
+auto ResolveOperandPlace(const mir::Operand& operand)
     -> std::optional<mir::PlaceId>;
 
 // Canonical operand type helpers. Handle PlaceId, TempId, ExternalRefId,

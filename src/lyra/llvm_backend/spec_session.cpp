@@ -103,7 +103,7 @@ auto CompileModuleSpecSession(
   for (mir::FunctionId func_id : input.functions) {
     if (!seen_func_ids.insert(func_id.value).second) continue;
     auto llvm_func_or_err = DeclareMirFunction(
-        context, facts, func_id,
+        context, func_id,
         std::format("{}_func_{}", input.name_prefix, func_id.value));
     if (!llvm_func_or_err) return std::unexpected(llvm_func_or_err.error());
     declared_funcs.emplace_back(func_id, *llvm_func_or_err);
@@ -217,7 +217,7 @@ auto CompileGlobalFunctions(
   global_func_map.reserve(global_func_ids.size());
   for (mir::FunctionId func_id : global_func_ids) {
     auto llvm_func_or_err = DeclareMirFunction(
-        context, facts, func_id, std::format("global_func_{}", func_id.value));
+        context, func_id, std::format("global_func_{}", func_id.value));
     if (!llvm_func_or_err) return std::unexpected(llvm_func_or_err.error());
     global_func_map[func_id] = *llvm_func_or_err;
   }

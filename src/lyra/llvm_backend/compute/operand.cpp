@@ -282,7 +282,7 @@ auto BuildRawValueFromTempValue(llvm::IRBuilder<>& builder, const TempValue& tv)
   return tv.value;
 }
 
-auto ResolveOperandPlace(Context& /*context*/, const mir::Operand& operand)
+auto ResolveOperandPlace(const mir::Operand& operand)
     -> std::optional<mir::PlaceId> {
   return std::visit(
       common::Overloaded{
@@ -304,7 +304,7 @@ auto GetOperandTypeId(
     -> TypeId {
   const auto& types = *facts.types;
   // Place-backed operands (PlaceId, ExternalRefId): derive from Place.
-  auto place = ResolveOperandPlace(context, operand);
+  auto place = ResolveOperandPlace(operand);
   if (place.has_value()) {
     return mir::TypeOfPlace(types, context.LookupPlace(*place));
   }
@@ -329,7 +329,7 @@ auto IsOperandFourState(
     -> bool {
   const auto& types = *facts.types;
   // Place-backed operands: derive from type.
-  auto place = ResolveOperandPlace(context, operand);
+  auto place = ResolveOperandPlace(operand);
   if (place.has_value()) {
     TypeId type_id = mir::TypeOfPlace(types, context.LookupPlace(*place));
     const Type& type = types[type_id];
