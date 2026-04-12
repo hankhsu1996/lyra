@@ -1,7 +1,6 @@
 #pragma once
 
 #include <optional>
-#include <unordered_map>
 #include <vector>
 
 #include <llvm/IR/Function.h>
@@ -18,12 +17,14 @@ class Context;
 struct LoweringInput;
 
 // All products from specialization compilation.
+// body_compiled_funcs and body_process_triggers are parallel vectors
+// in canonical body-group order (same as body_realization_infos).
 struct SpecializationProducts {
-  std::unordered_map<const mir::ModuleBody*, std::vector<llvm::Function*>>
-      body_to_compiled_funcs;
-  std::unordered_map<
-      const mir::ModuleBody*, std::vector<std::optional<ProcessTriggerEntry>>>
-      body_to_process_triggers;
+  // Per body-group: compiled process functions (non-final ordinal order).
+  std::vector<std::vector<llvm::Function*>> body_compiled_funcs;
+  // Per body-group: trigger entries (non-final ordinal order).
+  std::vector<std::vector<std::optional<ProcessTriggerEntry>>>
+      body_process_triggers;
   std::vector<WaitSiteEntry> wait_sites;
   // Parallel to design-global dpi_export_wrappers. nullopt for
   // package-scoped entries; populated for module-scoped entries.

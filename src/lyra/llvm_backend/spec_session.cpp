@@ -248,11 +248,15 @@ auto CompileSpecializations(
     products.module_export_callees.resize(input.dpi_export_wrappers->size());
   }
 
+  auto num_units = spec_plan.inputs.size();
+  products.body_compiled_funcs.resize(num_units);
+  products.body_process_triggers.resize(num_units);
+
   uint32_t running_wait_base = 0;
   uint32_t running_back_edge_base = 0;
 
-  for (const auto& spec_input : spec_plan.inputs) {
-    auto input_with_bases = spec_input;
+  for (size_t ui = 0; ui < num_units; ++ui) {
+    auto input_with_bases = spec_plan.inputs[ui];
     input_with_bases.wait_site_base_index = running_wait_base;
     input_with_bases.back_edge_site_base_index = running_back_edge_base;
 
@@ -273,16 +277,9 @@ auto CompileSpecializations(
           std::move(product->deferred_artifacts[di]);
     }
 
-    products.body_to_process_triggers.try_emplace(
-        product->body, std::move(product->process_triggers));
+    products.body_compiled_funcs[ui] = std::move(product->process_functions);
+    products.body_process_triggers[ui] = std::move(product->process_triggers);
 
-    auto [it, inserted] = products.body_to_compiled_funcs.try_emplace(
-        product->body, std::move(product->process_functions));
-    if (!inserted) {
-      throw common::InternalError(
-          "CompileSpecializations",
-          "duplicate body in specialization products");
-    }
     products.wait_sites.insert(
         products.wait_sites.end(),
         std::make_move_iterator(product->wait_sites.begin()),

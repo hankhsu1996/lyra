@@ -186,29 +186,31 @@ auto BuildFinalPackaging(
     std::span<const Layout::BodyRealizationInfo> body_realization_infos,
     std::span<const Layout::BodyRuntimeDescriptors> body_runtime_descriptors,
     uint32_t num_instances,
-    std::unordered_map<const mir::ModuleBody*, std::vector<llvm::Function*>>
-        body_to_compiled_funcs) -> FinalPackaging {
+    std::vector<std::vector<llvm::Function*>> body_compiled_funcs)
+    -> FinalPackaging {
+  if (body_compiled_funcs.size() != body_realization_infos.size()) {
+    throw common::InternalError(
+        "BuildFinalPackaging",
+        std::format(
+            "body_compiled_funcs size {} != body_realization_infos size {}",
+            body_compiled_funcs.size(), body_realization_infos.size()));
+  }
+
   FinalPackaging pkg;
 
   for (size_t bi = 0; bi < body_realization_infos.size(); ++bi) {
-    const auto& info = body_realization_infos[bi];
-    auto it = body_to_compiled_funcs.find(info.body);
-    if (it == body_to_compiled_funcs.end()) {
-      throw common::InternalError(
-          "BuildFinalPackaging",
-          std::format("no compiled functions for body group {}", bi));
-    }
     const auto& rt = body_runtime_descriptors[bi];
-    if (it->second.size() != rt.process_schema_indices.size()) {
+    if (body_compiled_funcs[bi].size() != rt.process_schema_indices.size()) {
       throw common::InternalError(
           "BuildFinalPackaging",
           std::format(
               "body group {} compiled function count {} != schema count {}", bi,
-              it->second.size(), rt.process_schema_indices.size()));
+              body_compiled_funcs[bi].size(),
+              rt.process_schema_indices.size()));
     }
     pkg.body_funcs.push_back(
         CodegenSession::BodyCompiledFuncs{
-            .functions = std::move(it->second),
+            .functions = std::move(body_compiled_funcs[bi]),
         });
   }
 
@@ -324,10 +326,10 @@ auto CompileDesignProcesses(const LoweringInput& input)
       input.design->elements, layout->body_realization_infos,
       layout->body_runtime_descriptors,
       static_cast<uint32_t>(layout->instance_storage_bases.size()),
-      std::move(specs.body_to_compiled_funcs));
+      std::move(specs.body_compiled_funcs));
 
   auto runtime_products = ExtractRuntimeData(
-      input, *layout, specs.body_to_process_triggers,
+      input, *layout, specs.body_process_triggers,
       packaging.instance_body_group);
   RealizationData realization;
   ApplyRuntimeDataToLayout(std::move(runtime_products), *layout, realization);

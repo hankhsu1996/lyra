@@ -3,7 +3,6 @@
 #include <optional>
 #include <span>
 #include <string>
-#include <unordered_map>
 #include <vector>
 
 #include "lyra/llvm_backend/codegen_session.hpp"
@@ -52,12 +51,11 @@ struct RuntimeExtractionProducts {
 // Extract all post-layout runtime data from the design.
 // Reads layout structural facts but does not mutate layout.
 // Returns products that must be applied via ApplyRuntimeDataToLayout.
+// body_process_triggers: parallel to layout.body_realization_infos.
 auto ExtractRuntimeData(
     const LoweringInput& input, const Layout& layout,
-    const std::unordered_map<
-        const mir::ModuleBody*,
-        std::vector<std::optional<ProcessTriggerEntry>>>&
-        body_to_process_triggers,
+    std::span<const std::vector<std::optional<ProcessTriggerEntry>>>
+        body_process_triggers,
     std::span<const uint32_t> instance_body_group) -> RuntimeExtractionProducts;
 
 // Apply extracted runtime data products onto Layout and RealizationData.

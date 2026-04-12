@@ -522,11 +522,17 @@ void ExtractConnectionMetadata(
 void ExtractBodyTriggerTemplates(
     std::span<const Layout::BodyRealizationInfo> body_realization_infos,
     std::span<const Layout::BodyRuntimeDescriptors> body_runtime_descriptors,
-    const std::unordered_map<
-        const mir::ModuleBody*,
-        std::vector<std::optional<ProcessTriggerEntry>>>&
-        body_to_process_triggers,
+    std::span<const std::vector<std::optional<ProcessTriggerEntry>>>
+        body_process_triggers,
     std::vector<BodyRuntimeProducts>& body_products) {
+  if (body_process_triggers.size() != body_realization_infos.size()) {
+    throw common::InternalError(
+        "ExtractBodyTriggerTemplates",
+        std::format(
+            "body_process_triggers size {} != body_realization_infos size {}",
+            body_process_triggers.size(), body_realization_infos.size()));
+  }
+
   for (size_t gi = 0; gi < body_realization_infos.size(); ++gi) {
     const auto& info = body_realization_infos[gi];
     const auto& body = *info.body;
@@ -551,9 +557,8 @@ void ExtractBodyTriggerTemplates(
     bp.triggers.proc_groupable.resize(
         nonfinal_count, runtime::kProcNotGroupable);
 
-    auto triggers_it = body_to_process_triggers.find(info.body);
-    if (triggers_it == body_to_process_triggers.end()) continue;
-    const auto& body_triggers = triggers_it->second;
+    const auto& body_triggers = body_process_triggers[gi];
+    if (body_triggers.empty()) continue;
 
     if (body_triggers.size() != nonfinal_count) {
       throw common::InternalError(
@@ -1112,10 +1117,8 @@ void ExtractPackageObservableDescriptors(
 
 auto ExtractRuntimeData(
     const LoweringInput& input, const Layout& layout,
-    const std::unordered_map<
-        const mir::ModuleBody*,
-        std::vector<std::optional<ProcessTriggerEntry>>>&
-        body_to_process_triggers,
+    std::span<const std::vector<std::optional<ProcessTriggerEntry>>>
+        body_process_triggers,
     std::span<const uint32_t> instance_body_group)
     -> RuntimeExtractionProducts {
   RuntimeExtractionProducts products;
@@ -1133,7 +1136,7 @@ auto ExtractRuntimeData(
       products.connection_templates);
   ExtractBodyTriggerTemplates(
       layout.body_realization_infos, layout.body_runtime_descriptors,
-      body_to_process_triggers, products.body_products);
+      body_process_triggers, products.body_products);
   ExtractConnectionTriggerTemplates(
       layout.connection_realization_infos, products.connection_templates);
   ExtractBodyCombTemplates(
