@@ -16,38 +16,44 @@ namespace lyra::lowering::mir_to_llvm {
 
 namespace detail {
 
-// Destroy helpers (defined in lifecycle_*.cpp files)
-void DestroyString(Context& ctx, llvm::Value* ptr);
+// String lifecycle helpers (defined in lifecycle_string.cpp)
+void DestroyString(
+    llvm::IRBuilder<>& builder, llvm::Function* release_fn, llvm::Value* ptr);
+auto CloneString(
+    llvm::IRBuilder<>& builder, llvm::Function* retain_fn, llvm::Value* handle)
+    -> llvm::Value*;
+void MoveCleanupString(llvm::IRBuilder<>& builder, llvm::Value* ptr);
+void CopyInitString(
+    llvm::IRBuilder<>& builder, llvm::Function* retain_fn, llvm::Value* dst_ptr,
+    llvm::Value* src_ptr);
+void MoveInitString(
+    llvm::IRBuilder<>& builder, llvm::Value* dst_ptr, llvm::Value* src_ptr);
+
+// Container lifecycle helpers (defined in lifecycle_container.cpp)
 void DestroyContainer(
-    Context& ctx, const CuFacts& facts, llvm::Value* ptr, TypeId type_id);
+    llvm::IRBuilder<>& builder, const CuFacts& facts,
+    llvm::Function* assoc_release_fn, llvm::Function* dynarray_release_fn,
+    llvm::Value* ptr, TypeId type_id);
+auto CloneContainer(
+    llvm::IRBuilder<>& builder, const CuFacts& facts,
+    llvm::Function* assoc_clone_fn, llvm::Function* dynarray_clone_fn,
+    llvm::Value* handle, TypeId type_id) -> llvm::Value*;
+void MoveCleanupContainer(llvm::IRBuilder<>& builder, llvm::Value* ptr);
+void CopyInitContainer(
+    llvm::IRBuilder<>& builder, const CuFacts& facts,
+    llvm::Function* dynarray_clone_fn, llvm::Function* assoc_clone_fn,
+    llvm::Value* dst_ptr, llvm::Value* src_ptr, TypeId type_id);
+void MoveInitContainer(
+    llvm::IRBuilder<>& builder, llvm::Value* dst_ptr, llvm::Value* src_ptr);
+
+// Struct lifecycle helpers (defined in lifecycle_struct.cpp)
 void DestroyStruct(
     Context& ctx, const CuFacts& facts, llvm::Value* ptr, TypeId type_id);
-
-// Clone helpers (defined in lifecycle_*.cpp files)
-auto CloneString(Context& ctx, llvm::Value* handle) -> llvm::Value*;
-auto CloneContainer(
-    Context& ctx, const CuFacts& facts, llvm::Value* handle, TypeId type_id)
-    -> llvm::Value*;
-
-// MoveCleanup leaf helpers (defined in lifecycle_*.cpp files)
-void MoveCleanupString(Context& ctx, llvm::Value* ptr);
-void MoveCleanupContainer(Context& ctx, llvm::Value* ptr);
 void MoveCleanupStruct(
     Context& ctx, const CuFacts& facts, llvm::Value* ptr, TypeId type_id);
-
-// CopyInit helpers (defined in lifecycle_*.cpp files)
-void CopyInitString(Context& ctx, llvm::Value* dst_ptr, llvm::Value* src_ptr);
-void CopyInitContainer(
-    Context& ctx, const CuFacts& facts, llvm::Value* dst_ptr,
-    llvm::Value* src_ptr, TypeId type_id);
 void CopyInitStruct(
     Context& ctx, const CuFacts& facts, llvm::Value* dst_ptr,
     llvm::Value* src_ptr, TypeId type_id);
-
-// MoveInit helpers (defined in lifecycle_*.cpp files)
-void MoveInitString(Context& ctx, llvm::Value* dst_ptr, llvm::Value* src_ptr);
-void MoveInitContainer(
-    Context& ctx, llvm::Value* dst_ptr, llvm::Value* src_ptr);
 void MoveInitStruct(
     Context& ctx, const CuFacts& facts, llvm::Value* dst_ptr,
     llvm::Value* src_ptr, TypeId type_id);
@@ -69,13 +75,15 @@ void Destroy(
   const Type& type = types[type_id];
   switch (type.Kind()) {
     case TypeKind::kString:
-      detail::DestroyString(ctx, ptr);
+      detail::DestroyString(ctx.GetBuilder(), ctx.GetLyraStringRelease(), ptr);
       return;
 
     case TypeKind::kDynamicArray:
     case TypeKind::kQueue:
     case TypeKind::kAssociativeArray:
-      detail::DestroyContainer(ctx, facts, ptr, type_id);
+      detail::DestroyContainer(
+          ctx.GetBuilder(), facts, ctx.GetLyraAssocRelease(),
+          ctx.GetLyraDynArrayRelease(), ptr, type_id);
       return;
 
     case TypeKind::kUnpackedStruct:
@@ -111,12 +119,15 @@ auto CloneLeafValue(
   const Type& type = types[type_id];
   switch (type.Kind()) {
     case TypeKind::kString:
-      return detail::CloneString(ctx, value);
+      return detail::CloneString(
+          ctx.GetBuilder(), ctx.GetLyraStringRetain(), value);
 
     case TypeKind::kDynamicArray:
     case TypeKind::kQueue:
     case TypeKind::kAssociativeArray:
-      return detail::CloneContainer(ctx, facts, value, type_id);
+      return detail::CloneContainer(
+          ctx.GetBuilder(), facts, ctx.GetLyraAssocClone(),
+          ctx.GetLyraDynArrayClone(), value, type_id);
 
     case TypeKind::kUnpackedStruct:
       throw common::InternalError(
@@ -154,13 +165,16 @@ void CopyInit(
   const Type& type = types[type_id];
   switch (type.Kind()) {
     case TypeKind::kString:
-      detail::CopyInitString(ctx, dst_ptr, src_ptr);
+      detail::CopyInitString(
+          ctx.GetBuilder(), ctx.GetLyraStringRetain(), dst_ptr, src_ptr);
       return;
 
     case TypeKind::kDynamicArray:
     case TypeKind::kQueue:
     case TypeKind::kAssociativeArray:
-      detail::CopyInitContainer(ctx, facts, dst_ptr, src_ptr, type_id);
+      detail::CopyInitContainer(
+          ctx.GetBuilder(), facts, ctx.GetLyraDynArrayClone(),
+          ctx.GetLyraAssocClone(), dst_ptr, src_ptr, type_id);
       return;
 
     case TypeKind::kUnpackedStruct:
@@ -208,13 +222,13 @@ void MoveInit(
   const Type& type = types[type_id];
   switch (type.Kind()) {
     case TypeKind::kString:
-      detail::MoveInitString(ctx, dst_ptr, src_ptr);
+      detail::MoveInitString(ctx.GetBuilder(), dst_ptr, src_ptr);
       return;
 
     case TypeKind::kDynamicArray:
     case TypeKind::kQueue:
     case TypeKind::kAssociativeArray:
-      detail::MoveInitContainer(ctx, dst_ptr, src_ptr);
+      detail::MoveInitContainer(ctx.GetBuilder(), dst_ptr, src_ptr);
       return;
 
     case TypeKind::kUnpackedStruct:
@@ -259,13 +273,13 @@ void MoveCleanup(
   const Type& type = types[type_id];
   switch (type.Kind()) {
     case TypeKind::kString:
-      detail::MoveCleanupString(ctx, src_ptr);
+      detail::MoveCleanupString(ctx.GetBuilder(), src_ptr);
       return;
 
     case TypeKind::kDynamicArray:
     case TypeKind::kQueue:
     case TypeKind::kAssociativeArray:
-      detail::MoveCleanupContainer(ctx, src_ptr);
+      detail::MoveCleanupContainer(ctx.GetBuilder(), src_ptr);
       return;
 
     case TypeKind::kUnpackedStruct:

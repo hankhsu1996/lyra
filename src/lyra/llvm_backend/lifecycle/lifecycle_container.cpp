@@ -1,64 +1,64 @@
 #include <llvm/IR/Constants.h>
 #include <llvm/IR/DerivedTypes.h>
+#include <llvm/IR/IRBuilder.h>
 #include <llvm/IR/Type.h>
 #include <llvm/Support/Casting.h>
 
 #include "lyra/common/internal_error.hpp"
 #include "lyra/common/type.hpp"
-#include "lyra/llvm_backend/context.hpp"
 #include "lyra/llvm_backend/cu_facts.hpp"
 
 namespace lyra::lowering::mir_to_llvm::detail {
 
 namespace {
 
-// Get the handle type from the runtime function prototype.
-// All container runtime functions use the same opaque pointer type.
-auto GetContainerHandleType(Context& ctx) -> llvm::Type* {
-  return ctx.GetLyraDynArrayRelease()->getFunctionType()->getParamType(0);
+auto GetHandlePtrType(llvm::IRBuilder<>& builder) -> llvm::PointerType* {
+  return llvm::PointerType::getUnqual(builder.getContext());
 }
 
 }  // namespace
 
 void DestroyContainer(
-    Context& ctx, const CuFacts& facts, llvm::Value* ptr, TypeId type_id) {
-  auto& builder = ctx.GetBuilder();
-  auto* handle_ty = GetContainerHandleType(ctx);
+    llvm::IRBuilder<>& builder, const CuFacts& facts,
+    llvm::Function* assoc_release_fn, llvm::Function* dynarray_release_fn,
+    llvm::Value* ptr, TypeId type_id) {
+  auto* handle_ty = GetHandlePtrType(builder);
   auto* handle = builder.CreateLoad(handle_ty, ptr, "destroy.ctr");
 
   const auto& types = *facts.types;
   if (types[type_id].Kind() == TypeKind::kAssociativeArray) {
-    builder.CreateCall(ctx.GetLyraAssocRelease(), {handle});
+    builder.CreateCall(assoc_release_fn, {handle});
   } else {
-    builder.CreateCall(ctx.GetLyraDynArrayRelease(), {handle});
+    builder.CreateCall(dynarray_release_fn, {handle});
   }
 }
 
 auto CloneContainer(
-    Context& ctx, const CuFacts& facts, llvm::Value* handle, TypeId type_id)
-    -> llvm::Value* {
+    llvm::IRBuilder<>& builder, const CuFacts& facts,
+    llvm::Function* assoc_clone_fn, llvm::Function* dynarray_clone_fn,
+    llvm::Value* handle, TypeId type_id) -> llvm::Value* {
   const auto& types = *facts.types;
   if (types[type_id].Kind() == TypeKind::kAssociativeArray) {
-    return ctx.GetBuilder().CreateCall(ctx.GetLyraAssocClone(), {handle});
+    return builder.CreateCall(assoc_clone_fn, {handle});
   }
-  return ctx.GetBuilder().CreateCall(ctx.GetLyraDynArrayClone(), {handle});
+  return builder.CreateCall(dynarray_clone_fn, {handle});
 }
 
-void MoveCleanupContainer(Context& ctx, llvm::Value* ptr) {
-  auto* handle_ty = GetContainerHandleType(ctx);
+void MoveCleanupContainer(llvm::IRBuilder<>& builder, llvm::Value* ptr) {
+  auto* handle_ty = GetHandlePtrType(builder);
   auto* null_val =
       llvm::ConstantPointerNull::get(llvm::cast<llvm::PointerType>(handle_ty));
-  ctx.GetBuilder().CreateStore(null_val, ptr);
+  builder.CreateStore(null_val, ptr);
 }
 
 void CopyInitContainer(
-    Context& ctx, const CuFacts& facts, llvm::Value* dst_ptr,
-    llvm::Value* src_ptr, TypeId type_id) {
+    llvm::IRBuilder<>& builder, const CuFacts& facts,
+    llvm::Function* dynarray_clone_fn, llvm::Function* assoc_clone_fn,
+    llvm::Value* dst_ptr, llvm::Value* src_ptr, TypeId type_id) {
   const auto& types = *facts.types;
   const Type& type = types[type_id];
 
-  auto& builder = ctx.GetBuilder();
-  auto* handle_ty = GetContainerHandleType(ctx);
+  auto* handle_ty = GetHandlePtrType(builder);
   auto* src_handle = builder.CreateLoad(handle_ty, src_ptr, "copy.ctr.src");
 
   // Type-directed dispatch: each container type has its own clone function.
@@ -66,13 +66,13 @@ void CopyInitContainer(
   llvm::Value* cloned = nullptr;
   switch (type.Kind()) {
     case TypeKind::kDynamicArray:
-      cloned = builder.CreateCall(ctx.GetLyraDynArrayClone(), {src_handle});
+      cloned = builder.CreateCall(dynarray_clone_fn, {src_handle});
       break;
     case TypeKind::kQueue:
       throw common::InternalError(
           "CopyInitContainer", "queue clone is not implemented");
     case TypeKind::kAssociativeArray:
-      cloned = builder.CreateCall(ctx.GetLyraAssocClone(), {src_handle});
+      cloned = builder.CreateCall(assoc_clone_fn, {src_handle});
       break;
     default:
       throw common::InternalError(
@@ -83,9 +83,8 @@ void CopyInitContainer(
 }
 
 void MoveInitContainer(
-    Context& ctx, llvm::Value* dst_ptr, llvm::Value* src_ptr) {
-  auto& builder = ctx.GetBuilder();
-  auto* handle_ty = GetContainerHandleType(ctx);
+    llvm::IRBuilder<>& builder, llvm::Value* dst_ptr, llvm::Value* src_ptr) {
+  auto* handle_ty = GetHandlePtrType(builder);
 
   // Move: load handle from src, store to dst, null out src
   auto* handle = builder.CreateLoad(handle_ty, src_ptr, "move.ctr");
