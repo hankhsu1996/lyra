@@ -48,9 +48,9 @@ namespace {
 // Throws InternalError if the target instance doesn't exist or the local
 // signal id is out of range.
 auto ValidateCrossInstanceLocal(
-    const Engine& eng, InstanceId iid, LocalSignalId lid, const char* where)
+    Engine& eng, InstanceId iid, LocalSignalId lid, const char* where)
     -> LocalSignalRef {
-  const auto* inst = eng.FindInstance(iid);
+  auto* inst = eng.FindInstanceMut(iid);
   if (inst == nullptr) {
     throw common::InternalError(
         where, std::format(
@@ -63,7 +63,7 @@ auto ValidateCrossInstanceLocal(
                    "for instance {}",
                    lid.value, inst->observability.local_signal_count, iid));
   }
-  return LocalSignalRef{.instance_id = iid, .signal = lid};
+  return LocalSignalRef{.instance = inst, .signal = lid};
 }
 
 }  // namespace
@@ -731,11 +731,16 @@ void Engine::InstallTriggers(ProcessHandle handle, const WaitRequest& req) {
           LocalSignalId{trigger.target_local_signal_id},
           "Engine::InstallTriggers");
     } else if (is_local) {
-      InstanceId inst_id = (handle.process_id < process_instance_map_.size())
-                               ? process_instance_map_[handle.process_id]
-                               : handle.instance_id;
+      auto* inst = processes_[handle.process_id].instance;
+      if (inst == nullptr) {
+        throw common::InternalError(
+            "Engine::InstallTriggers",
+            std::format(
+                "local trigger for process {} has no owning instance",
+                handle.process_id));
+      }
       sig_ref = LocalSignalRef{
-          .instance_id = inst_id, .signal = LocalSignalId{trigger.signal_id}};
+          .instance = inst, .signal = LocalSignalId{trigger.signal_id}};
     } else {
       sig_ref = GlobalSignalId{trigger.signal_id};
     }
@@ -891,11 +896,14 @@ void Engine::InstallTriggers(ProcessHandle handle, const WaitRequest& req) {
     auto hdr_plan =
         late_bound.plan_ops.subspan(hdr.plan_ops_start, hdr.plan_ops_count);
 
-    // Resolve instance_id for the process (used for local deps).
-    InstanceId rebind_inst_id =
-        (handle.process_id < process_instance_map_.size())
-            ? process_instance_map_[handle.process_id]
-            : handle.instance_id;
+    auto* rebind_inst = processes_[handle.process_id].instance;
+    if (rebind_inst == nullptr) {
+      throw common::InternalError(
+          "Engine::InstallTriggers",
+          std::format(
+              "rebind for process {} has no owning instance",
+              handle.process_id));
+    }
 
     // Decode each dep record into a typed SignalRef.
     auto hdr_dep_records =
@@ -917,7 +925,7 @@ void Engine::InstallTriggers(ProcessHandle handle, const WaitRequest& req) {
       } else if ((rec.flags & kDepLocalSignal) != 0) {
         dep_signals.emplace_back(
             LocalSignalRef{
-                .instance_id = rebind_inst_id,
+                .instance = rebind_inst,
                 .signal = LocalSignalId{rec.signal_id}});
       } else {
         dep_signals.emplace_back(GlobalSignalId{rec.signal_id});
@@ -926,7 +934,7 @@ void Engine::InstallTriggers(ProcessHandle handle, const WaitRequest& req) {
 
     SignalRef rebind_target =
         target.is_local ? SignalRef{LocalSignalRef{
-                              .instance_id = rebind_inst_id,
+                              .instance = rebind_inst,
                               .signal = LocalSignalId{target.signal_id}}}
                         : SignalRef{GlobalSignalId{target.signal_id}};
     SubscribeRebind(
@@ -1278,7 +1286,11 @@ auto Engine::SubscribeLocalChange(
   auto& proc_state = processes_[handle.process_id];
   if (!CheckSubscriptionLimits(proc_state)) return UINT32_MAX;
 
-  auto& inst = GetInstanceMut(signal.instance_id);
+  if (signal.instance == nullptr) {
+    throw common::InternalError(
+        "Engine::SubscribeLocalChange", "null instance");
+  }
+  auto& inst = *signal.instance;
   const auto& inst_meta =
       inst.observability.layout->slot_meta[signal.signal.value];
   if (byte_size == 0 || byte_offset + byte_size > inst_meta.total_bytes) {
@@ -1292,7 +1304,7 @@ auto Engine::SubscribeLocalChange(
 
   ChangeSub sub{};
   sub.process_id = handle.process_id;
-  sub.instance_id = signal.instance_id;
+  sub.instance_id = inst.instance_id;
   sub.resume_block = resume.block_index;
   sub.byte_offset = byte_offset;
   sub.byte_size = byte_size;
@@ -1426,7 +1438,10 @@ auto Engine::SubscribeLocalEdge(
   auto& proc_state = processes_[handle.process_id];
   if (!CheckSubscriptionLimits(proc_state)) return UINT32_MAX;
 
-  auto& inst = GetInstanceMut(signal.instance_id);
+  if (signal.instance == nullptr) {
+    throw common::InternalError("Engine::SubscribeLocalEdge", "null instance");
+  }
+  auto& inst = *signal.instance;
   const auto& inst_meta =
       inst.observability.layout->slot_meta[signal.signal.value];
   if (byte_offset + byte_size > inst_meta.total_bytes) {
@@ -1453,7 +1468,7 @@ auto Engine::SubscribeLocalEdge(
 
   EdgeSub sub{};
   sub.process_id = handle.process_id;
-  sub.instance_id = signal.instance_id;
+  sub.instance_id = inst.instance_id;
   sub.resume_block = resume.block_index;
   sub.flags = initially_active ? kSubActive : 0;
   sub.process_sub_idx = proc_sub_idx;
@@ -1497,8 +1512,7 @@ auto Engine::Subscribe(
               handle, resume, sig, edge, 0, obs_size, 0, initially_active);
         } else {
           const auto& inst_meta =
-              GetInstance(sig.instance_id)
-                  .observability.layout->slot_meta[sig.signal.value];
+              sig.instance->observability.layout->slot_meta[sig.signal.value];
           uint32_t obs_size = (edge == common::EdgeKind::kAnyChange)
                                   ? inst_meta.total_bytes
                                   : 1;
@@ -1681,7 +1695,11 @@ auto Engine::SubscribeLocalContainerElement(
   auto& proc_state = processes_[handle.process_id];
   if (!CheckSubscriptionLimits(proc_state)) return UINT32_MAX;
 
-  auto& inst = GetInstanceMut(signal.instance_id);
+  if (signal.instance == nullptr) {
+    throw common::InternalError(
+        "Engine::SubscribeLocalContainerElement", "null instance");
+  }
+  auto& inst = *signal.instance;
   auto& slot = inst.observability.local_signal_subs[signal.signal.value];
   const auto* slot_base = ResolveInstanceSlotBase(inst, signal.signal);
 
@@ -1691,7 +1709,7 @@ auto Engine::SubscribeLocalContainerElement(
 
   ContainerSub sub{};
   sub.process_id = handle.process_id;
-  sub.instance_id = signal.instance_id;
+  sub.instance_id = inst.instance_id;
   sub.resume_block = resume.block_index;
   sub.process_sub_idx = proc_sub_idx;
   sub.cold_idx = cold_idx;
@@ -1739,14 +1757,12 @@ void Engine::ValidateRebindDepSignals(
                       signal_subs_.size()));
             }
           } else {
-            const auto* dep_inst = FindInstance(sig.instance_id);
-            if (dep_inst == nullptr) {
+            if (sig.instance == nullptr) {
               throw common::InternalError(
                   "Engine::ValidateRebindDepSignals",
-                  std::format(
-                      "local dep instance_id {} not found", sig.instance_id));
+                  "local dep has null instance");
             }
-            const auto& obs = dep_inst->observability;
+            const auto& obs = sig.instance->observability;
             if (obs.layout == nullptr ||
                 sig.signal.value >= obs.layout->slot_meta.size()) {
               throw common::InternalError(
@@ -1811,7 +1827,7 @@ void Engine::InstallRebindDepWatchers(
 
           RuntimeInstance* dep_inst = nullptr;
           if constexpr (std::is_same_v<T, LocalSignalRef>) {
-            dep_inst = &GetInstanceMut(sig.instance_id);
+            dep_inst = sig.instance;
             auto& obs = dep_inst->observability;
             const auto& imeta = obs.layout->slot_meta[sig.signal.value];
             dep_subs = &obs.local_signal_subs[sig.signal.value];
@@ -2023,7 +2039,11 @@ void Engine::SubscribeLocalRebind(
             static_cast<int>(target_kind)));
   }
 
-  auto& inst = GetInstanceMut(target_signal.instance_id);
+  if (target_signal.instance == nullptr) {
+    throw common::InternalError(
+        "Engine::SubscribeLocalRebind", "null instance");
+  }
+  auto& inst = *target_signal.instance;
   auto& target_subs =
       inst.observability.local_signal_subs[target_signal.signal.value];
   if (target_kind == SubKind::kEdge) {

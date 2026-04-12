@@ -13,6 +13,8 @@ struct SuspendRecord;
 // Single owner of all per-process runtime state. Indexed by process_id
 // in Engine::processes_.
 struct RuntimeProcess {
+  RuntimeInstance* instance = nullptr;
+
   bool is_enqueued = false;
   SuspendRecord* suspend_record = nullptr;
   bool is_comb_kernel = false;

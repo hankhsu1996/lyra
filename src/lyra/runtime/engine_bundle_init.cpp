@@ -232,7 +232,9 @@ void Engine::InitModuleInstancesFromBundles(
   // Reset all module-owned outputs for clean initialization.
   pending_module_trigger_descs_.clear();
   pending_module_process_meta_.clear();
-  process_instance_map_.assign(num_processes_, InstanceId{.value = 0});
+  for (auto& proc : processes_) {
+    proc.instance = nullptr;
+  }
   slot_meta_registry_ = SlotMetaRegistry{};
   comb_kernels_.clear();
   comb_trigger_backing_.clear();
@@ -454,11 +456,10 @@ void Engine::InitModuleInstancesFromBundles(
     bundle.instance->nba_pending.Init(
         local_count, GetInstanceIndex(bundle.instance_id));
 
-    // R5: populate process-to-instance mapping for subscription routing.
     for (uint32_t p = 0; p < bundle.num_module_processes; ++p) {
       uint32_t proc_idx = bundle.module_proc_base + p;
-      if (proc_idx < process_instance_map_.size()) {
-        process_instance_map_[proc_idx] = bundle.instance_id;
+      if (proc_idx < num_processes_) {
+        processes_[proc_idx].instance = bundle.instance;
       }
     }
   }

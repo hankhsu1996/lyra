@@ -1555,10 +1555,6 @@ class Engine {
   // Initialized alongside trace_signal_meta_ in InitTraceSignalMeta().
   TraceSelectionRegistry trace_selection_;
 
-  // R5: Process-to-instance mapping. Indexed by process_id, gives the
-  // owning instance_id for module processes. 0 for connection/init processes.
-  std::vector<InstanceId> process_instance_map_;
-
   // R5: Per-body observable layouts (one per distinct shared body /
   // specialization). Keyed by body_key from InstanceMetadataBundle.
   // Each RuntimeInstance's observability.layout points into this storage.

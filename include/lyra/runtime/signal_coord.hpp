@@ -60,13 +60,12 @@ struct ObjectSignalRef {
   LocalSignalId local;
 };
 
-// R5: Instance-scoped signal reference for subscription and NBA boundaries.
-// Carries instance_id (for container lookup) and LocalSignalId (for indexing).
-// Used at the top-level subscription API; below that, domain-specific helpers
-// take GlobalSignalId or LocalSignalRef directly.
+// Instance-scoped signal reference for subscription install.
+// Object-first: carries RuntimeInstance* directly, eliminating the
+// pointer -> InstanceId -> GetInstanceMut -> pointer round-trip.
 struct LocalSignalRef {
-  InstanceId instance_id;
-  LocalSignalId signal;
+  RuntimeInstance* instance = nullptr;
+  LocalSignalId signal{};
 };
 
 // R5: Tagged union for the subscription/NBA top boundary.
