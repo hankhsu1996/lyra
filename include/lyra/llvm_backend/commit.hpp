@@ -2,6 +2,7 @@
 
 #include <optional>
 
+#include <llvm/IR/IRBuilder.h>
 #include <llvm/IR/Value.h>
 
 #include "lyra/common/diagnostic/diagnostic.hpp"
@@ -99,10 +100,12 @@ auto TransferManagedStructFields(
 // Field-level store for struct field-by-field assignment.
 // No WriteTarget (fields don't have signal_id), no notify.
 void CommitStringField(
-    Context& ctx, llvm::Value* ptr, llvm::Value* handle,
+    llvm::IRBuilder<>& builder, llvm::Function* retain_fn,
+    llvm::Function* release_fn, llvm::Value* ptr, llvm::Value* handle,
     OwnershipPolicy policy);
 
-void CommitPlainField(Context& ctx, llvm::Value* ptr, llvm::Value* value);
+void CommitPlainField(
+    llvm::IRBuilder<>& builder, llvm::Value* ptr, llvm::Value* value);
 
 }  // namespace detail
 

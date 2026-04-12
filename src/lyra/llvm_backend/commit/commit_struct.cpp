@@ -67,7 +67,7 @@ auto AssignField(
       // No managed fields: aggregate load/store via commit layer
       llvm::Value* val =
           builder.CreateLoad(field_llvm_type, source_field_ptr, "sf.agg");
-      detail::CommitPlainField(context, target_field_ptr, val);
+      detail::CommitPlainField(builder, target_field_ptr, val);
     }
     return {};
   }
@@ -75,7 +75,7 @@ auto AssignField(
   // Other fields: simple load/store via commit layer (no ownership semantics)
   llvm::Value* val =
       builder.CreateLoad(field_llvm_type, source_field_ptr, "sf.val");
-  detail::CommitPlainField(context, target_field_ptr, val);
+  detail::CommitPlainField(builder, target_field_ptr, val);
   return {};
 }
 

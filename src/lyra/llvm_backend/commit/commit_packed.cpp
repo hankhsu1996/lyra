@@ -14,8 +14,9 @@ namespace lyra::lowering::mir_to_llvm {
 
 namespace detail {
 
-void CommitPlainField(Context& ctx, llvm::Value* ptr, llvm::Value* value) {
-  ctx.GetBuilder().CreateStore(value, ptr);
+void CommitPlainField(
+    llvm::IRBuilder<>& builder, llvm::Value* ptr, llvm::Value* value) {
+  builder.CreateStore(value, ptr);
 }
 
 }  // namespace detail

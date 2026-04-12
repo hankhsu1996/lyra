@@ -65,7 +65,7 @@ auto AssignElement(
     }
     llvm::Value* val =
         builder.CreateLoad(elem_llvm_type, source_elem_ptr, "ae.agg");
-    detail::CommitPlainField(context, target_elem_ptr, val);
+    detail::CommitPlainField(builder, target_elem_ptr, val);
     return {};
   }
 
@@ -77,13 +77,13 @@ auto AssignElement(
     }
     llvm::Value* val =
         builder.CreateLoad(elem_llvm_type, source_elem_ptr, "ae.arr");
-    detail::CommitPlainField(context, target_elem_ptr, val);
+    detail::CommitPlainField(builder, target_elem_ptr, val);
     return {};
   }
 
   llvm::Value* val =
       builder.CreateLoad(elem_llvm_type, source_elem_ptr, "ae.val");
-  detail::CommitPlainField(context, target_elem_ptr, val);
+  detail::CommitPlainField(builder, target_elem_ptr, val);
   return {};
 }
 
@@ -115,7 +115,7 @@ auto AssignStructField(
     }
     llvm::Value* val =
         builder.CreateLoad(field_llvm_type, source_field_ptr, "sf.agg");
-    detail::CommitPlainField(context, target_field_ptr, val);
+    detail::CommitPlainField(builder, target_field_ptr, val);
     return {};
   }
 
@@ -127,13 +127,13 @@ auto AssignStructField(
     }
     llvm::Value* val =
         builder.CreateLoad(field_llvm_type, source_field_ptr, "sf.arr");
-    detail::CommitPlainField(context, target_field_ptr, val);
+    detail::CommitPlainField(builder, target_field_ptr, val);
     return {};
   }
 
   llvm::Value* val =
       builder.CreateLoad(field_llvm_type, source_field_ptr, "sf.val");
-  detail::CommitPlainField(context, target_field_ptr, val);
+  detail::CommitPlainField(builder, target_field_ptr, val);
   return {};
 }
 

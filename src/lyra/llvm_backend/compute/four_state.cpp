@@ -85,12 +85,10 @@ auto LowerReplicateRvalue4State(
 // - Returns planes at carrier width
 // - Handles: Plus, Minus, BitwiseNot, LogicalNot
 auto LowerRegularUnary4State(
-    Context& context, mir::UnaryOp op, const FourStateValue& operand,
+    llvm::IRBuilder<>& builder, mir::UnaryOp op, const FourStateValue& operand,
     const PackedComputeContext& packed_context) -> ComputeResult {
   llvm::Type* carrier_type = packed_context.element_type;
   uint32_t semantic_width = packed_context.bit_width;
-
-  auto& builder = context.GetBuilder();
   auto* zero = llvm::ConstantInt::get(carrier_type, 0);
 
   // Coerce operand to carrier width
@@ -523,7 +521,8 @@ auto LowerUnaryRvalue4State(
     return LowerReduction4State(
         context, info.op, *src_or_err, operand_semantic_width, packed_context);
   }
-  return LowerRegularUnary4State(context, info.op, *src_or_err, packed_context);
+  return LowerRegularUnary4State(
+      context.GetBuilder(), info.op, *src_or_err, packed_context);
 }
 
 auto LowerConcatRvalue4State(

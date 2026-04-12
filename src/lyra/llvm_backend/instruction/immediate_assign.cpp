@@ -138,7 +138,9 @@ auto StoreFieldFromOperand(
     auto val_or_err = LowerOperand(context, facts, operand);
     if (!val_or_err) return std::unexpected(val_or_err.error());
     detail::CommitStringField(
-        context, field_ptr, *val_or_err, OwnershipForFieldOperand(operand));
+        context.GetBuilder(), context.GetLyraStringRetain(),
+        context.GetLyraStringRelease(), field_ptr, *val_or_err,
+        OwnershipForFieldOperand(operand));
     return {};
   }
 
@@ -157,7 +159,7 @@ auto StoreFieldFromOperand(
   // Plain field: compute operand -> store (no notify)
   auto val_or_err = LowerOperand(context, facts, operand);
   if (!val_or_err) return std::unexpected(val_or_err.error());
-  detail::CommitPlainField(context, field_ptr, *val_or_err);
+  detail::CommitPlainField(context.GetBuilder(), field_ptr, *val_or_err);
   return {};
 }
 

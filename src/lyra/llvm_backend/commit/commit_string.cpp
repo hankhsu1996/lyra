@@ -26,23 +26,23 @@ namespace detail {
 // NOTE: Does NOT handle design-slot notify (design slots with string-containing
 // structs are rejected at AssignStruct level).
 void CommitStringField(
-    Context& ctx, llvm::Value* ptr, llvm::Value* handle,
+    llvm::IRBuilder<>& builder, llvm::Function* retain_fn,
+    llvm::Function* release_fn, llvm::Value* ptr, llvm::Value* handle,
     OwnershipPolicy policy) {
-  auto& builder = ctx.GetBuilder();
-  auto* ptr_ty = llvm::PointerType::getUnqual(ctx.GetLlvmContext());
+  auto* ptr_ty = llvm::PointerType::getUnqual(builder.getContext());
 
   // Load old handle first (before any mutation)
   auto* old_handle = builder.CreateLoad(ptr_ty, ptr, "sf.old");
 
   // Apply ownership policy
   if (policy == OwnershipPolicy::kClone) {
-    handle = builder.CreateCall(ctx.GetLyraStringRetain(), {handle});
+    handle = builder.CreateCall(retain_fn, {handle});
   }
   // kMove: handle already has ownership, no retain needed
 
   // Store new handle, then release old
   builder.CreateStore(handle, ptr);
-  builder.CreateCall(ctx.GetLyraStringRelease(), {old_handle});
+  builder.CreateCall(release_fn, {old_handle});
 }
 
 }  // namespace detail
