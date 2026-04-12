@@ -1352,6 +1352,11 @@ class Engine {
   uint32_t cached_iteration_limit_ = 0;
   uint32_t* cached_iteration_limit_ptr_ = nullptr;
 
+  // Precomputed run-invariant: true when post-activation reconciliation
+  // path is active (both wait-site metadata and suspend records present).
+  // Set once at Run() entry from HasPostActivationReconciliation().
+  bool post_activation_reconcile_ = false;
+
   // R5: Number of design-global (non-instance-owned) slots. Set during
   // slot meta initialization, used to validate global trace meta count.
   uint32_t global_slot_count_ = 0;

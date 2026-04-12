@@ -110,11 +110,17 @@ void Engine::RunOneActivation(const WakeupEntry& entry) {
   uint32_t pid = entry.process_id;
 
   // Update progress counters (signal-safe reads by SIGUSR1 handler).
+  // last_process_id_ and phase_ are always written (cheap stores, useful
+  // for basic "is the simulator stuck?" diagnostics). activation_seq_ and
+  // current_running_process_ are gated on activation tracing to avoid
+  // expensive atomic RMW + two stores per activation on the normal path.
   last_process_id_.store(pid, std::memory_order_release);
-  activation_seq_.fetch_add(1, std::memory_order_release);
-  current_running_process_.store(pid, std::memory_order_release);
   phase_.store(
       static_cast<uint32_t>(Phase::kRunProcess), std::memory_order_release);
+  if (activation_trace_.has_value()) {
+    activation_seq_.fetch_add(1, std::memory_order_release);
+    current_running_process_.store(pid, std::memory_order_release);
+  }
 
   ++stats_.core.total_activations;
 
@@ -151,7 +157,9 @@ void Engine::RunOneActivation(const WakeupEntry& entry) {
     TraceRun(entry);
   }
 
-  current_running_process_.store(UINT32_MAX, std::memory_order_release);
+  if (activation_trace_.has_value()) {
+    current_running_process_.store(UINT32_MAX, std::memory_order_release);
+  }
   phase_.store(static_cast<uint32_t>(Phase::kIdle), std::memory_order_release);
 }
 
@@ -205,8 +213,9 @@ void Engine::ExecuteActiveRegion() {
             ProcessId::FromIndex(entry.process_id));
       }
 
-      ProcessHandle handle{entry.process_id, entry.instance_id};
-      if (!UsesWaitSiteLifecycle()) {
+      ProcessHandle handle{
+          .process_id = entry.process_id, .instance_id = entry.instance_id};
+      if (!post_activation_reconcile_) {
         ClearProcessSubscriptions(handle);
       }
       // Activation handling (scheduling, subscription install/refresh)
@@ -214,7 +223,7 @@ void Engine::ExecuteActiveRegion() {
       // DispatchAndHandleActivation decodes the raw suspend protocol into
       // semantic requests and calls engine primitives directly.
       RunOneActivation(entry);
-      if (!finished_ && HasPostActivationReconciliation()) {
+      if (!finished_ && post_activation_reconcile_) {
         if (!TryFastReconcile(entry.process_id)) {
           ReconcilePostActivation(handle);
         }
@@ -331,10 +340,11 @@ void Engine::ExecuteTimeSlot() {
 }
 
 auto Engine::Run(SimTime max_time) -> SimTime {
-  // Cache iteration limit for direct TLS write per activation.
+  // Cache run-invariant values resolved once before the simulation loop.
   uint32_t raw_limit = LyraGetIterationLimit();
   cached_iteration_limit_ = raw_limit > 0 ? raw_limit : UINT32_MAX;
   cached_iteration_limit_ptr_ = LyraIterationLimitPtr();
+  post_activation_reconcile_ = HasPostActivationReconciliation();
 
   // end_reason_ defaults to kEmptyQueues; set to kMaxTimeReached or kFinish
   // at the point where the reason becomes known.
