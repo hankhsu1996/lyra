@@ -224,7 +224,7 @@ auto LowerBinaryRvalue4State(
 }
 
 auto LowerRuntimeQuery4State(
-    Context& context, const CuFacts& facts,
+    Context& context, const CuFacts& /*facts*/,
     const mir::RuntimeQueryRvalueInfo& info,
     const PackedComputeContext& packed_context) -> Result<ComputeResult> {
   llvm::Type* elem_type = packed_context.element_type;
@@ -478,12 +478,11 @@ auto LowerBinaryRvalue4State(
   auto* combined_unk = builder.CreateOr(lhs.unknown, rhs.unknown, "bin4.unk");
 
   if (IsLogicalOp(info.op)) {
-    auto val_or_err = LowerBinaryArith(context, info.op, lhs.value, rhs.value);
-    if (!val_or_err) return std::unexpected(val_or_err.error());
+    auto* val = LowerBinaryArith(builder, info.op, lhs.value, rhs.value);
     auto* taint = builder.CreateICmpNE(combined_unk, zero, "bin4.taint");
-    auto* val = builder.CreateZExt(*val_or_err, elem_type, "bin4.log.val");
+    auto* val_ext = builder.CreateZExt(val, elem_type, "bin4.log.val");
     auto* unk = builder.CreateZExt(taint, elem_type, "bin4.log.unk");
-    return ComputeResult::FourState(val, unk);
+    return ComputeResult::FourState(val_ext, unk);
   }
 
   if (IsShiftOp(info.op)) {
@@ -499,9 +498,8 @@ auto LowerBinaryRvalue4State(
         "LowerBinaryRvalue4State",
         "i1-producing op must be handled as comparison or logical");
   }
-  auto val_or_err = LowerBinaryArith(context, info.op, lhs.value, rhs.value);
-  if (!val_or_err) return std::unexpected(val_or_err.error());
-  return ComputeResult::FourState(*val_or_err, combined_unk);
+  auto* val = LowerBinaryArith(builder, info.op, lhs.value, rhs.value);
+  return ComputeResult::FourState(val, combined_unk);
 }
 
 auto LowerUnaryRvalue4State(

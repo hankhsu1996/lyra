@@ -2,7 +2,6 @@
 
 #include <algorithm>
 #include <cstdint>
-#include <expected>
 #include <format>
 
 #include <llvm/ADT/APInt.h>
@@ -13,13 +12,10 @@
 #include <llvm/IR/Value.h>
 #include <llvm/Support/ErrorHandling.h>
 
-#include "lyra/common/diagnostic/diagnostic.hpp"
 #include "lyra/common/internal_error.hpp"
 #include "lyra/common/type.hpp"
 #include "lyra/common/type_queries.hpp"
 #include "lyra/llvm_backend/compute/operand.hpp"
-#include "lyra/llvm_backend/context.hpp"
-#include "lyra/lowering/diagnostic_context.hpp"
 #include "lyra/mir/operand.hpp"
 #include "lyra/mir/operator.hpp"
 
@@ -184,10 +180,8 @@ auto GetOperandPackedWidth(
 }
 
 auto LowerBinaryArith(
-    Context& context, mir::BinaryOp op, llvm::Value* lhs, llvm::Value* rhs)
-    -> Result<llvm::Value*> {
-  auto& builder = context.GetBuilder();
-
+    llvm::IRBuilder<>& builder, mir::BinaryOp op, llvm::Value* lhs,
+    llvm::Value* rhs) -> llvm::Value* {
   switch (op) {
     case mir::BinaryOp::kAdd:
       return builder.CreateAdd(lhs, rhs, "add");
@@ -247,11 +241,74 @@ auto LowerBinaryArith(
       return builder.CreateNot(xor_result, "equiv");
     }
 
+    case mir::BinaryOp::kPower:
+    case mir::BinaryOp::kPowerSigned: {
+      // Integer exponentiation by squaring.
+      // kPowerSigned: negative exponent returns 0 (LRM 11.4.3).
+      // kPower: exponent is unsigned, no negative guard needed.
+      bool is_signed = (op == mir::BinaryOp::kPowerSigned);
+
+      auto* ty = lhs->getType();
+      auto* zero = llvm::ConstantInt::get(ty, 0);
+      auto* one = llvm::ConstantInt::get(ty, 1);
+
+      auto* func = builder.GetInsertBlock()->getParent();
+      auto* entry_bb = builder.GetInsertBlock();
+      auto& llvm_ctx = builder.getContext();
+      auto* loop_bb = llvm::BasicBlock::Create(llvm_ctx, "pow.loop", func);
+      auto* body_bb = llvm::BasicBlock::Create(llvm_ctx, "pow.body", func);
+      auto* merge_bb = llvm::BasicBlock::Create(llvm_ctx, "pow.merge", func);
+
+      if (is_signed) {
+        auto* is_neg = builder.CreateICmpSLT(rhs, zero, "pow.neg");
+        builder.CreateCondBr(is_neg, merge_bb, loop_bb);
+      } else {
+        builder.CreateBr(loop_bb);
+      }
+
+      // Loop header: check if exponent is zero
+      builder.SetInsertPoint(loop_bb);
+      auto* acc = builder.CreatePHI(ty, 2, "pow.acc");
+      auto* base = builder.CreatePHI(ty, 2, "pow.base");
+      auto* exp = builder.CreatePHI(ty, 2, "pow.exp");
+      acc->addIncoming(one, entry_bb);
+      base->addIncoming(lhs, entry_bb);
+      exp->addIncoming(rhs, entry_bb);
+      auto* done = builder.CreateICmpEQ(exp, zero, "pow.done");
+      builder.CreateCondBr(done, merge_bb, body_bb);
+
+      // Loop body: square-and-multiply
+      builder.SetInsertPoint(body_bb);
+      auto* is_odd = builder.CreateTrunc(
+          builder.CreateAnd(exp, one, "pow.odd.bit"), builder.getInt1Ty(),
+          "pow.odd");
+      auto* acc_mul = builder.CreateMul(acc, base, "pow.mul");
+      auto* acc_next =
+          builder.CreateSelect(is_odd, acc_mul, acc, "pow.acc.next");
+      auto* base_next = builder.CreateMul(base, base, "pow.sq");
+      auto* exp_next = builder.CreateLShr(exp, one, "pow.exp.next");
+      acc->addIncoming(acc_next, body_bb);
+      base->addIncoming(base_next, body_bb);
+      exp->addIncoming(exp_next, body_bb);
+      builder.CreateBr(loop_bb);
+
+      // Merge: result
+      builder.SetInsertPoint(merge_bb);
+      if (is_signed) {
+        auto* result = builder.CreatePHI(ty, 2, "pow.result");
+        result->addIncoming(zero, entry_bb);
+        result->addIncoming(acc, loop_bb);
+        return result;
+      }
+      return static_cast<llvm::Value*>(acc);
+    }
+
     default:
-      return std::unexpected(context.GetDiagnosticContext().MakeUnsupported(
-          context.GetCurrentOrigin(),
-          std::format("unsupported binary op: {}", mir::ToString(op)),
-          UnsupportedCategory::kOperation));
+      throw common::InternalError(
+          "LowerBinaryArith",
+          std::format(
+              "unhandled binary op in arithmetic lowering: {}",
+              mir::ToString(op)));
   }
 }
 

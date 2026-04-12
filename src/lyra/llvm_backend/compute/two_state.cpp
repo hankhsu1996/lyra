@@ -136,7 +136,7 @@ auto LowerGuardedUse2State(
 }
 
 auto LowerRuntimeQuery2State(
-    Context& context, const CuFacts& facts,
+    Context& context, const CuFacts& /*facts*/,
     const mir::RuntimeQueryRvalueInfo& info,
     const PackedComputeContext& packed_context) -> Result<ComputeResult> {
   llvm::Type* storage_type = packed_context.storage_type;
@@ -243,15 +243,14 @@ auto LowerBinaryRvalue2State(
     return ComputeResult::TwoState(result);
   }
 
-  auto result_or_err = LowerBinaryArith(context, info.op, lhs, rhs);
-  if (!result_or_err) return std::unexpected(result_or_err.error());
+  auto* arith_result = LowerBinaryArith(builder, info.op, lhs, rhs);
 
   if (ReturnsI1(info.op)) {
-    auto* result = builder.CreateZExt(*result_or_err, storage_type, "bool.ext");
+    auto* result = builder.CreateZExt(arith_result, storage_type, "bool.ext");
     return ComputeResult::TwoState(result);
   }
 
-  return ComputeResult::TwoState(*result_or_err);
+  return ComputeResult::TwoState(arith_result);
 }
 
 auto LowerUnaryRvalue2State(

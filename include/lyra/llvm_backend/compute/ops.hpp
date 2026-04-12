@@ -5,7 +5,6 @@
 #include <llvm/IR/IRBuilder.h>
 #include <llvm/IR/Value.h>
 
-#include "lyra/common/diagnostic/diagnostic.hpp"
 #include "lyra/llvm_backend/context.hpp"
 #include "lyra/llvm_backend/cu_facts.hpp"
 #include "lyra/mir/operand.hpp"
@@ -38,8 +37,8 @@ auto GetOperandPackedWidth(
     -> uint32_t;
 
 auto LowerBinaryArith(
-    Context& context, mir::BinaryOp op, llvm::Value* lhs, llvm::Value* rhs)
-    -> Result<llvm::Value*>;
+    llvm::IRBuilder<>& builder, mir::BinaryOp op, llvm::Value* lhs,
+    llvm::Value* rhs) -> llvm::Value*;
 
 auto LowerBinaryComparison(
     llvm::IRBuilder<>& builder, mir::BinaryOp op, llvm::Value* lhs,

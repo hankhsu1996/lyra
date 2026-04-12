@@ -37,6 +37,7 @@ enum class BinaryOp {
   kDivide,
   kMod,
   kPower,
+  kPowerSigned,
 
   // Arithmetic (signed)
   kDivideSigned,
@@ -135,6 +136,8 @@ inline auto ToString(BinaryOp op) -> const char* {
       return "%";
     case BinaryOp::kPower:
       return "**";
+    case BinaryOp::kPowerSigned:
+      return "**s";
     case BinaryOp::kDivideSigned:
       return "/s";
     case BinaryOp::kModSigned:

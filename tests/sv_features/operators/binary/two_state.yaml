@@ -317,6 +317,69 @@ cases:
         r3: 1
         r4: 1
 
+  - name: integer_power_positive_exponent
+    sv: |
+      module Test;
+        int base_val, r1, r2, r3, r4;
+        initial begin
+          base_val = 3;
+          r1 = base_val ** 0;  // any ** 0 = 1
+          r2 = base_val ** 1;  // x ** 1 = x
+          r3 = base_val ** 4;  // 3^4 = 81
+          r4 = 2 ** 10;        // 2^10 = 1024
+        end
+      endmodule
+    expect:
+      variables:
+        r1: 1
+        r2: 3
+        r3: 81
+        r4: 1024
+
+  - name: integer_power_zero_base
+    sv: |
+      module Test;
+        int r1, r2;
+        initial begin
+          r1 = 0 ** 0;   // 0^0 = 1 (LRM)
+          r2 = 0 ** 5;   // 0^n = 0 for n > 0
+        end
+      endmodule
+    expect:
+      variables:
+        r1: 1
+        r2: 0
+
+  - name: integer_power_negative_exponent
+    sv: |
+      module Test;
+        int r1, r2;
+        initial begin
+          r1 = 3 ** (-1);   // negative exponent -> 0
+          r2 = 2 ** (-10);  // negative exponent -> 0
+        end
+      endmodule
+    expect:
+      variables:
+        r1: 0
+        r2: 0
+
+  - name: integer_power_negative_base
+    sv: |
+      module Test;
+        int r1, r2, r3;
+        initial begin
+          r1 = (-2) ** 3;   // odd exponent: -8
+          r2 = (-2) ** 4;   // even exponent: 16
+          r3 = (-1) ** 5;   // -1 to odd power: -1
+        end
+      endmodule
+    expect:
+      variables:
+        r1: -8
+        r2: 16
+        r3: -1
+
   - name: shift_left
     sv: |
       module Test;
