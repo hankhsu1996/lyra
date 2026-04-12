@@ -285,4 +285,3 @@ cases:
           - "w=8 d=8 v=ff"
           - "w=16 d=2 v=ffff"
           - "w=16 d=6 v=ffff"
-

@@ -30,15 +30,16 @@ auto ContainsParentReference(const std::filesystem::path& path) -> bool {
   });
 }
 
-// Filenames that represent mode variants rather than feature names.
-// When a YAML file has one of these stems, the category comes from
-// the parent directory path instead of the filename.
-constexpr std::array<std::string_view, 3> kModeFilenames = {
-    "default", "four_state", "two_state_only"};
+// Per-directory test filenames whose category comes from the parent
+// directory path rather than the filename itself.  Each entry is a
+// well-known stem: execution-mode variants (default, four_state,
+// two_state_only) and backend-eligibility classes (jit_only).
+constexpr std::array<std::string_view, 4> kModeFilenames = {
+    "default", "four_state", "two_state_only", "jit_only"};
 
 // Extract category from YAML path relative to yaml_directory.
-// For mode files (default.yaml, four_state.yaml, two_state_only.yaml),
-// uses the parent directory path as the category.
+// For well-known per-directory filenames listed above, uses the parent
+// directory path as the category.
 // For other files, uses the full path without extension.
 // e.g., "operators/binary/default.yaml" -> "operators_binary"
 // e.g., "operators/binary/four_state.yaml" -> "operators_binary"

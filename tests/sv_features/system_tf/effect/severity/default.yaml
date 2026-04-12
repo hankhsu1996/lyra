@@ -39,7 +39,7 @@ cases:
           - "info: "
           - "42"
         not_contains:
-          - "2a"  # hex for 42
+          - "2a" # hex for 42
 
   # Golden test: explicit format string overrides default
   - name: info_explicit_hex

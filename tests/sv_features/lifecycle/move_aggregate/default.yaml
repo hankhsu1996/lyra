@@ -306,4 +306,3 @@ cases:
       stdout: |
         after copy: x.s=original y.s=original
         after move: x.s=updated y.s=original
-
