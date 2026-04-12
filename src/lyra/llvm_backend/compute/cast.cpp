@@ -248,7 +248,7 @@ auto LowerCastRvalue(
     } else {
       result = builder.CreateFPToUI(source, elem_type, "fptoui");
     }
-    result = ApplyWidthMask(context, result, bit_width);
+    result = ApplyWidthMask(builder, result, bit_width);
     return RvalueValue::TwoState(result);
   }
 
@@ -265,8 +265,8 @@ auto LowerCastRvalue(
     if (!fs_or_err) return std::unexpected(fs_or_err.error());
     auto fs = *fs_or_err;
     fs = ResizeFourStatePlanes(builder, fs, elem_type, is_signed, source_bits);
-    fs.value = ApplyWidthMask(context, fs.value, bit_width);
-    fs.unknown = ApplyWidthMask(context, fs.unknown, bit_width);
+    fs.value = ApplyWidthMask(builder, fs.value, bit_width);
+    fs.unknown = ApplyWidthMask(builder, fs.unknown, bit_width);
     if (tgt_is_4s) {
       return RvalueValue::FourState(fs.value, fs.unknown);
     }
@@ -277,7 +277,7 @@ auto LowerCastRvalue(
   if (!source_or_err) return std::unexpected(source_or_err.error());
   llvm::Value* source = *source_or_err;
   llvm::Value* result = ExtOrTrunc(builder, source, elem_type, is_signed);
-  result = ApplyWidthMask(context, result, bit_width);
+  result = ApplyWidthMask(builder, result, bit_width);
   return RvalueValue::TwoState(result);
 }
 
@@ -330,10 +330,9 @@ auto LowerBitCastRvalue(
   return RvalueValue::TwoState(result);
 }
 
-auto LowerTimeToTicks64(Context& context, llvm::Value* time_value)
+auto LowerTimeToTicks64(llvm::IRBuilder<>& builder, llvm::Value* time_value)
     -> llvm::Value* {
-  auto& builder = context.GetBuilder();
-  auto& llvm_ctx = context.GetLlvmContext();
+  auto& llvm_ctx = builder.getContext();
   auto* i64_ty = llvm::Type::getInt64Ty(llvm_ctx);
   auto* double_ty = llvm::Type::getDoubleTy(llvm_ctx);
 

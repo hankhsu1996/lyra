@@ -136,9 +136,8 @@ auto GetSemanticMask(llvm::Type* ty, uint32_t semantic_width) -> llvm::Value* {
 }
 
 auto ApplyWidthMask(
-    Context& context, llvm::Value* value, uint32_t semantic_width)
+    llvm::IRBuilder<>& builder, llvm::Value* value, uint32_t semantic_width)
     -> llvm::Value* {
-  auto& builder = context.GetBuilder();
   uint32_t storage_width = value->getType()->getIntegerBitWidth();
 
   if (semantic_width == 0) {
@@ -304,9 +303,8 @@ auto LowerCompareToI1(
 }
 
 auto LowerShiftOp(
-    Context& context, mir::BinaryOp op, llvm::Value* value,
+    llvm::IRBuilder<>& builder, mir::BinaryOp op, llvm::Value* value,
     llvm::Value* shift_amount, uint32_t semantic_width) -> llvm::Value* {
-  auto& builder = context.GetBuilder();
   llvm::Type* ty = value->getType();
 
   auto* width_const = llvm::ConstantInt::get(ty, semantic_width);
@@ -346,7 +344,7 @@ auto LowerShiftOp(
 }
 
 auto LowerShiftOpUnknown(
-    Context& context, mir::BinaryOp op, llvm::Value* unk,
+    llvm::IRBuilder<>& builder, mir::BinaryOp op, llvm::Value* unk,
     llvm::Value* shift_amount, uint32_t semantic_width) -> llvm::Value* {
   mir::BinaryOp unk_op = mir::BinaryOp::kLogicalShiftRight;
   switch (op) {
@@ -357,7 +355,7 @@ auto LowerShiftOpUnknown(
     default:
       break;
   }
-  return LowerShiftOp(context, unk_op, unk, shift_amount, semantic_width);
+  return LowerShiftOp(builder, unk_op, unk, shift_amount, semantic_width);
 }
 
 auto LowerUnaryOp(

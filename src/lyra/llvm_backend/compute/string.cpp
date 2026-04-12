@@ -32,13 +32,14 @@ namespace {
 
 // Create an empty string handle via LyraStringFromLiteral("", 0).
 // Returns a newly-owned handle (refcount=1).
-auto CreateEmptyString(Context& context) -> llvm::Value* {
-  auto& builder = context.GetBuilder();
-  auto* i64_ty = llvm::Type::getInt64Ty(context.GetLlvmContext());
+auto CreateEmptyString(
+    llvm::IRBuilder<>& builder, llvm::Function* from_literal_fn)
+    -> llvm::Value* {
+  auto* i64_ty = llvm::Type::getInt64Ty(builder.getContext());
   auto* empty_data = builder.CreateGlobalStringPtr("");
   auto* empty_len = llvm::ConstantInt::get(i64_ty, 0);
   return builder.CreateCall(
-      context.GetLyraStringFromLiteral(), {empty_data, empty_len}, "str.empty");
+      from_literal_fn, {empty_data, empty_len}, "str.empty");
 }
 
 // Value kind enum matching RuntimeFormatValueKind in runtime
@@ -349,7 +350,8 @@ auto LowerSFormatRvalueValue(
 
   if (info.ops.empty()) {
     if (operands.empty()) {
-      return CreateEmptyString(context);
+      return CreateEmptyString(
+          context.GetBuilder(), context.GetLyraStringFromLiteral());
     }
     return std::unexpected(context.GetDiagnosticContext().MakeUnsupported(
         context.GetCurrentOrigin(),

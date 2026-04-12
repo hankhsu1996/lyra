@@ -123,12 +123,12 @@ auto LowerRuntimeQuery(
 }  // namespace
 
 auto ApplyWidthMaskToResult(
-    Context& context, const ComputeResult& result, uint32_t semantic_width)
-    -> ComputeResult {
-  auto* masked_value = ApplyWidthMask(context, result.value, semantic_width);
+    llvm::IRBuilder<>& builder, const ComputeResult& result,
+    uint32_t semantic_width) -> ComputeResult {
+  auto* masked_value = ApplyWidthMask(builder, result.value, semantic_width);
   if (result.IsFourState()) {
     auto* masked_unknown =
-        ApplyWidthMask(context, result.unknown, semantic_width);
+        ApplyWidthMask(builder, result.unknown, semantic_width);
     return ComputeResult::FourState(masked_value, masked_unknown);
   }
   return ComputeResult::TwoState(masked_value);
@@ -140,7 +140,7 @@ auto FinalizeCompute(
   auto& builder = context.GetBuilder();
 
   // Apply width mask
-  auto masked = ApplyWidthMaskToResult(context, result, semantic_width);
+  auto masked = ApplyWidthMaskToResult(builder, result, semantic_width);
 
   // Pack if 4-state target
   if (struct_type != nullptr) {
@@ -246,8 +246,8 @@ auto LowerPackedCoreRvalue(
 
   if (!result_or_err) return std::unexpected(result_or_err.error());
 
-  auto masked =
-      ApplyWidthMaskToResult(context, *result_or_err, type_info.bit_width);
+  auto masked = ApplyWidthMaskToResult(
+      context.GetBuilder(), *result_or_err, type_info.bit_width);
 
   if (masked.IsFourState()) {
     return RvalueValue::FourState(masked.value, masked.unknown);

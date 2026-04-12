@@ -3,6 +3,7 @@
 #include <cstdint>
 
 #include <llvm/IR/DerivedTypes.h>
+#include <llvm/IR/IRBuilder.h>
 #include <llvm/IR/Value.h>
 
 #include "lyra/common/diagnostic/diagnostic.hpp"
@@ -20,8 +21,8 @@ class SlotAccessResolver;
 // Apply width mask to a ComputeResult.
 // Masks both value AND unknown planes to semantic width.
 auto ApplyWidthMaskToResult(
-    Context& context, const ComputeResult& result, uint32_t semantic_width)
-    -> ComputeResult;
+    llvm::IRBuilder<>& builder, const ComputeResult& result,
+    uint32_t semantic_width) -> ComputeResult;
 
 // Finalize a compute result by masking and packing.
 // Handles width masking and 4-state packing (but does NOT store).

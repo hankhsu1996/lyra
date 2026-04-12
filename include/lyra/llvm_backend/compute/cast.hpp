@@ -23,7 +23,7 @@ auto LowerBitCastRvalue(
 
 // Convert time value (integer or real) to u64 ticks for %t formatting.
 // Real values: truncate toward zero (LRM 21.2.1.2), clamp to [0, UINT64_MAX].
-auto LowerTimeToTicks64(Context& context, llvm::Value* time_value)
+auto LowerTimeToTicks64(llvm::IRBuilder<>& builder, llvm::Value* time_value)
     -> llvm::Value*;
 
 // Resolver-aware overloads.

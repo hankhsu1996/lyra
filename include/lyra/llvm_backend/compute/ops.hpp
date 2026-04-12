@@ -26,7 +26,7 @@ auto IsReductionOp(mir::UnaryOp op) -> bool;
 auto GetSemanticMask(llvm::Type* ty, uint32_t semantic_width) -> llvm::Value*;
 
 auto ApplyWidthMask(
-    Context& context, llvm::Value* value, uint32_t semantic_width)
+    llvm::IRBuilder<>& builder, llvm::Value* value, uint32_t semantic_width)
     -> llvm::Value*;
 
 auto SignExtendToStorage(
@@ -59,11 +59,11 @@ auto LowerCompareToI1(
     -> Result<llvm::Value*>;
 
 auto LowerShiftOp(
-    Context& context, mir::BinaryOp op, llvm::Value* value,
+    llvm::IRBuilder<>& builder, mir::BinaryOp op, llvm::Value* value,
     llvm::Value* shift_amount, uint32_t semantic_width) -> llvm::Value*;
 
 auto LowerShiftOpUnknown(
-    Context& context, mir::BinaryOp op, llvm::Value* unk,
+    llvm::IRBuilder<>& builder, mir::BinaryOp op, llvm::Value* unk,
     llvm::Value* shift_amount, uint32_t semantic_width) -> llvm::Value*;
 
 auto LowerUnaryOp(

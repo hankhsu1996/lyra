@@ -240,7 +240,7 @@ auto LowerBinaryRvalue2State(
   rhs = builder.CreateZExtOrTrunc(rhs, storage_type, "rhs.coerce");
 
   if (IsShiftOp(info.op)) {
-    auto* result = LowerShiftOp(context, info.op, lhs, rhs, semantic_width);
+    auto* result = LowerShiftOp(builder, info.op, lhs, rhs, semantic_width);
     return ComputeResult::TwoState(result);
   }
 

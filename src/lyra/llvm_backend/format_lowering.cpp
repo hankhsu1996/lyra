@@ -163,7 +163,7 @@ auto LowerFormatOpToBuffer(
     auto value_or_err = LowerOperand(context, facts, resolver, *op.value);
     if (!value_or_err) return std::unexpected(value_or_err.error());
 
-    llvm::Value* ticks = LowerTimeToTicks64(context, *value_or_err);
+    llvm::Value* ticks = LowerTimeToTicks64(builder, *value_or_err);
     auto* alloca = builder.CreateAlloca(i64_ty);
     builder.CreateStore(ticks, alloca);
 

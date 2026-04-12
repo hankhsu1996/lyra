@@ -492,9 +492,9 @@ auto LowerBinaryRvalue4State(
 
   if (IsShiftOp(info.op)) {
     auto* val =
-        LowerShiftOp(context, info.op, lhs.value, rhs.value, semantic_width);
+        LowerShiftOp(builder, info.op, lhs.value, rhs.value, semantic_width);
     auto* unk = LowerShiftOpUnknown(
-        context, info.op, lhs.unknown, rhs.value, semantic_width);
+        builder, info.op, lhs.unknown, rhs.value, semantic_width);
     return ComputeResult::FourState(val, unk);
   }
 
