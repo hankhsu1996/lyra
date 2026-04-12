@@ -201,6 +201,14 @@ auto BuildParamPayloads(
       if (init_idx < sorted_inits.size() &&
           sorted_inits[init_idx].body_local_slot == te.body_local_slot) {
         const auto& init = *sorted_inits[init_idx].init;
+        if (init.body_local_slot >= body_slot_specs.size()) {
+          throw common::InternalError(
+              "BuildParamPayloads",
+              std::format(
+                  "instance {} param init body_local_slot {} out of "
+                  "range (slot_count {})",
+                  inst_idx, init.body_local_slot, body_slot_specs.size()));
+        }
         const auto& spec = body_slot_specs[init.body_local_slot];
         LowerIntegralConstantToCanonicalBytes(init.value, spec, payload);
         ++init_idx;
@@ -284,14 +292,14 @@ struct CombSlotAccum {
   uint32_t byte_size = 0;
   bool is_full_slot = false;
   bool is_design_global = false;
-  uint32_t final_global_id = 0;
+  uint32_t signal_id = 0;
 };
 
-auto CompareCombSlotsByFinalObservableOrder(
+auto CompareCombSlotsBySignalOrder(
     const std::pair<ScopedSignalKey, CombSlotAccum>& a,
     const std::pair<ScopedSignalKey, CombSlotAccum>& b) -> bool {
-  if (a.second.final_global_id != b.second.final_global_id) {
-    return a.second.final_global_id < b.second.final_global_id;
+  if (a.second.signal_id != b.second.signal_id) {
+    return a.second.signal_id < b.second.signal_id;
   }
   if (a.first.scope != b.first.scope) {
     return static_cast<uint8_t>(a.first.scope) <
@@ -713,7 +721,7 @@ void ExtractBodyCombTemplates(
             auto& accum = it->second;
             if (inserted) {
               accum.is_design_global = is_global;
-              accum.final_global_id = fact.signal.id;
+              accum.signal_id = fact.signal.id;
             } else {
               if (accum.is_design_global != is_global) {
                 throw common::InternalError(
@@ -744,21 +752,19 @@ void ExtractBodyCombTemplates(
 
           std::vector<std::pair<ScopedSignalKey, CombSlotAccum>> sorted_slots(
               per_slot.begin(), per_slot.end());
-          std::ranges::sort(
-              sorted_slots, CompareCombSlotsByFinalObservableOrder);
+          std::ranges::sort(sorted_slots, CompareCombSlotsBySignalOrder);
 
           for (const auto& [key, accum] : sorted_slots) {
             uint32_t flags = 0;
             uint32_t owner_instance_id = 0;
             uint32_t local_signal_id = 0;
             if (accum.is_design_global) {
-              if (accum.final_global_id < num_package_slots) {
+              if (accum.signal_id < num_package_slots) {
                 flags |= runtime::kCombTemplateFlagDesignGlobal;
               } else {
                 flags |= runtime::kCombTemplateFlagCrossInstance;
                 auto owner = ResolveInstanceOwnedFlatSlot(
-                    num_package_slots, instance_slot_counts,
-                    accum.final_global_id);
+                    num_package_slots, instance_slot_counts, accum.signal_id);
                 owner_instance_id = owner.instance_id.value;
                 local_signal_id = owner.local_signal_id.value;
               }
