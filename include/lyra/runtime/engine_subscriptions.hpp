@@ -33,7 +33,7 @@ struct IndexPlanPool {
   std::vector<IndexPlanOp> ops;
 };
 
-// Subscription kind discriminator for SubRef typed dispatch.
+// Subscription kind discriminator for sub ref typed dispatch.
 enum class SubKind : uint8_t {
   kEdge,
   kChange,
@@ -47,44 +47,43 @@ enum class EdgeBucket : uint8_t {
   kNegedge,
 };
 
-// Per-process ownership record. Indexes into the typed vector for a given slot.
+// Per-process ownership record for local subscriptions.
+// Indexes into the typed sub vector on the owning instance's slot.
 //
 // Invariants maintained by swap-and-pop removal:
-// - SubRef.index always points to a valid entry in the typed sub vector
-//   for signal_subs_[SubRef.slot_id].
-// - The pointed-to sub's process_sub_idx always points back to this SubRef's
-//   position in process_state.sub_refs.
+// - LocalSubRef.index always points to a valid entry in the typed sub vector
+//   for inst->observability.local_signal_subs[signal.value].
+// - The pointed-to sub's process_sub_idx always points back to this
+//   LocalSubRef's position in process_state.local_sub_refs.
 // - When a sub is swapped during removal, both the moved sub's
-//   process_sub_idx and its SubRef.index are updated atomically.
+//   process_sub_idx and its LocalSubRef.index are updated atomically.
 // - If the moved sub is a rebind target (has edge_target_id),
 //   edge_target_table_[edge_target_id].index is also updated.
-//
-// For kEdge subs, edge_group and edge_bucket locate the sub within the
-// grouped edge storage: signal_subs_[slot_id].edge_groups[edge_group]
-//   .posedge_subs or .negedge_subs (selected by edge_bucket) [index].
-struct SubRef {
-  uint32_t signal_id = 0;  // local_signal_id or global_signal_id
+struct LocalSubRef {
+  RuntimeInstance* instance = nullptr;
+  LocalSignalId signal{};
   uint32_t index = 0;
   SubKind kind = SubKind::kEdge;
-  EdgeBucket edge_bucket = EdgeBucket::kPosedge;  // polarity (kEdge only)
-  bool is_local = false;
-  uint8_t padding = 0;
-  uint32_t edge_group = 0;  // group index (kEdge only)
-  InstanceId instance_id = InstanceId{0};
-
-  // R5: Typed accessors. Use these instead of raw signal_id.
-  [[nodiscard]] auto LocalSignal() const -> LocalSignalId {
-    return LocalSignalId{signal_id};
-  }
-  [[nodiscard]] auto GlobalSignal() const -> GlobalSignalId {
-    return GlobalSignalId{signal_id};
-  }
-  [[nodiscard]] auto AsLocalRef() const -> LocalSignalRef {
-    return LocalSignalRef{
-        .instance_id = instance_id, .signal = LocalSignalId{signal_id}};
-  }
+  EdgeBucket edge_bucket = EdgeBucket::kPosedge;
+  uint16_t padding = 0;
+  uint32_t edge_group = 0;
 };
-static_assert(sizeof(SubRef) == 20);
+static_assert(sizeof(LocalSubRef) == 24);
+
+// Per-process ownership record for global subscriptions.
+// Indexes into the typed sub vector on the engine-owned global slot.
+//
+// Same swap-and-pop invariants as LocalSubRef, but targeting
+// signal_subs_[signal.value] and process_state.global_sub_refs.
+struct GlobalSubRef {
+  GlobalSignalId signal{};
+  uint32_t index = 0;
+  SubKind kind = SubKind::kEdge;
+  EdgeBucket edge_bucket = EdgeBucket::kPosedge;
+  uint16_t padding = 0;
+  uint32_t edge_group = 0;
+};
+static_assert(sizeof(GlobalSubRef) == 16);
 
 // Stable indirection handle for rebind targets.
 // Stored in edge_target_table_, updated on swap-and-pop.
@@ -156,8 +155,9 @@ struct EdgeSub {
   uint32_t resume_block = 0;
   uint8_t flags = 0;  // kActive=0x01, kHasCold=0x02
   std::array<uint8_t, 3> padding = {};
-  uint32_t process_sub_idx = 0;  // index in owning process_state.sub_refs
-  uint32_t cold_idx = 0;         // UINT32_MAX = no cold state (edge_cold_pool_)
+  uint32_t process_sub_idx =
+      0;                  // index in owning local_sub_refs/global_sub_refs
+  uint32_t cold_idx = 0;  // UINT32_MAX = no cold state (edge_cold_pool_)
 };
 static_assert(sizeof(EdgeSub) == 24);
 
@@ -285,7 +285,8 @@ struct ProcessState {
   bool is_enqueued = false;
   ProcessWaitKind wait_kind = ProcessWaitKind::kFinished;
   size_t subscription_count = 0;
-  std::vector<SubRef> sub_refs;
+  std::vector<LocalSubRef> local_sub_refs;
+  std::vector<GlobalSubRef> global_sub_refs;
   IndexPlanPool plan_pool;
   InstalledWaitState installed_wait;
 };

@@ -1059,7 +1059,6 @@ class Engine {
   auto GetEdgeGroup(uint32_t slot_id, uint32_t group) -> EdgeWatchGroup&;
   auto EdgeSubVec(uint32_t slot_id, uint32_t group, EdgeBucket bucket)
       -> std::vector<EdgeSub>&;
-  auto ResolveEdgeSub(const SubRef& ref) -> EdgeSub&;
 
   // Find or create an EdgeWatchGroup for the given observation point.
   // Returns the group index. Reuses empty groups before appending.
@@ -1067,16 +1066,15 @@ class Engine {
       uint32_t slot_id, uint32_t byte_offset, uint8_t bit_index,
       uint8_t initial_last_bit) -> uint32_t;
 
-  // Low-level edge sub removal from a specific group/bucket.
-  // Handles swap-and-pop with SubRef and EdgeTargetHandle fixup.
-  void RemoveEdgeSubFromBucket(
-      uint32_t slot_id, uint32_t group, EdgeBucket bucket, uint32_t index);
-
-  // Typed swap-and-pop removal from dense vectors.
-  void RemoveEdgeSub(const SubRef& ref);
-  void RemoveChangeSub(const SubRef& ref);
-  void RemoveRebindWatcherSub(const SubRef& ref);
-  void RemoveContainerSub(const SubRef& ref);
+  // Domain-split swap-and-pop removal from dense vectors.
+  void RemoveLocalEdgeSub(const LocalSubRef& ref);
+  void RemoveGlobalEdgeSub(const GlobalSubRef& ref);
+  void RemoveLocalChangeSub(const LocalSubRef& ref);
+  void RemoveGlobalChangeSub(const GlobalSubRef& ref);
+  void RemoveLocalRebindWatcherSub(const LocalSubRef& ref);
+  void RemoveGlobalRebindWatcherSub(const GlobalSubRef& ref);
+  void RemoveLocalContainerSub(const LocalSubRef& ref);
+  void RemoveGlobalContainerSub(const GlobalSubRef& ref);
 
   // R5: Domain-split subscribe helpers. Top boundary dispatches once
   // via std::visit on SignalRef, then routes to one of these.
@@ -1151,16 +1149,22 @@ class Engine {
   void FlushGlobalSignalUpdates();
   void FlushLocalSignalUpdates(RuntimeInstance& inst);
 
-  // R5: Resolve SlotSubscriptions for a sub reference (local or global).
-  auto ResolveSubSlot(const SubRef& ref) -> SlotSubscriptions&;
-  auto ResolveSubSlot(const SubRef& ref) const -> const SlotSubscriptions&;
-  auto ResolveSubSlot(uint32_t slot_id, bool is_local, InstanceId instance_id)
+  // R5: Domain-split slot resolution helpers.
+  auto ResolveLocalSubSlot(RuntimeInstance& inst, LocalSignalId signal)
       -> SlotSubscriptions&;
+  auto ResolveLocalSubSlot(const RuntimeInstance& inst, LocalSignalId signal)
+      const -> const SlotSubscriptions&;
+  auto ResolveGlobalSubSlot(GlobalSignalId signal) -> SlotSubscriptions&;
+  auto ResolveGlobalSubSlot(GlobalSignalId signal) const
+      -> const SlotSubscriptions&;
+
+  // Resolve slot from EdgeTargetHandle (used by rebind paths).
+  auto ResolveTargetSlot(const EdgeTargetHandle& handle) -> SlotSubscriptions&;
 
   // Recompute the per-signal observer flag after subscription mutations.
   // Called after every add/remove to keep the flag consistent.
-  void UpdateObserverFlag(
-      uint32_t signal_id, bool is_local, InstanceId instance_id);
+  void UpdateLocalObserverFlag(RuntimeInstance& inst, LocalSignalId signal);
+  void UpdateGlobalObserverFlag(GlobalSignalId signal);
 
   // Per-kind flush helpers. Callers resolve slot storage before calling.
   void FlushSlotRebindSubs(

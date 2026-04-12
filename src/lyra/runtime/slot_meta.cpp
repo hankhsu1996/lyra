@@ -172,7 +172,7 @@ SlotMetaRegistry::SlotMetaRegistry(const uint32_t* words, uint32_t count) {
         SlotMeta{
             .domain = domain,
             .design_base_off = design_base_off,
-            .owner_instance_id = owner_instance_id,
+            .owner_instance_id = {owner_instance_id},
             .instance_rel_off = instance_rel_off,
             .total_bytes = total_bytes,
             .kind = kind,

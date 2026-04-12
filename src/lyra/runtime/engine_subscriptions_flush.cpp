@@ -50,16 +50,14 @@ void Engine::RebindSubscription(uint32_t edge_target_id) {
   uint32_t* epoch_ptr = nullptr;
   uint32_t target_process_id = 0;
 
+  auto& target_subs = ResolveTargetSlot(target_handle);
+
   if (target_handle.kind == SubKind::kEdge) {
-    auto& esub = ResolveEdgeSub(
-        SubRef{
-            .signal_id = target_handle.slot_id,
-            .index = target_handle.index,
-            .kind = SubKind::kEdge,
-            .edge_bucket = target_handle.edge_bucket,
-            .is_local = target_handle.is_local,
-            .edge_group = target_handle.edge_group,
-            .instance_id = target_handle.instance_id});
+    auto& g = target_subs.edge_groups[target_handle.edge_group];
+    auto& vec = (target_handle.edge_bucket == EdgeBucket::kPosedge)
+                    ? g.posedge_subs
+                    : g.negedge_subs;
+    auto& esub = vec[target_handle.index];
     if (esub.cold_idx == UINT32_MAX) return;
     auto& ecold = edge_cold_pool_[esub.cold_idx];
     plan_ref = ecold.plan_ref;
@@ -67,10 +65,7 @@ void Engine::RebindSubscription(uint32_t edge_target_id) {
     epoch_ptr = &ecold.last_rebind_epoch;
     target_process_id = esub.process_id;
   } else {
-    auto& csub = ResolveSubSlot(
-                     target_handle.slot_id, target_handle.is_local,
-                     target_handle.instance_id)
-                     .container_subs[target_handle.index];
+    auto& csub = target_subs.container_subs[target_handle.index];
     auto& ccold = container_cold_pool_[csub.cold_idx];
     plan_ref = ccold.plan_ref;
     mapping = ccold.rebind_mapping;
@@ -106,22 +101,13 @@ void Engine::RebindSubscription(uint32_t edge_target_id) {
   // Helper lambdas for active/inactive flag setting.
   auto set_inactive = [&]() {
     if (target_handle.kind == SubKind::kEdge) {
-      ResolveEdgeSub(
-          SubRef{
-              .signal_id = target_handle.slot_id,
-              .index = target_handle.index,
-              .kind = SubKind::kEdge,
-              .edge_bucket = target_handle.edge_bucket,
-              .is_local = target_handle.is_local,
-              .edge_group = target_handle.edge_group,
-              .instance_id = target_handle.instance_id})
-          .flags &= ~kSubActive;
+      auto& g = target_subs.edge_groups[target_handle.edge_group];
+      auto& vec = (target_handle.edge_bucket == EdgeBucket::kPosedge)
+                      ? g.posedge_subs
+                      : g.negedge_subs;
+      vec[target_handle.index].flags &= ~kSubActive;
     } else {
-      ResolveSubSlot(
-          target_handle.slot_id, target_handle.is_local,
-          target_handle.instance_id)
-          .container_subs[target_handle.index]
-          .flags &= ~kSubActive;
+      target_subs.container_subs[target_handle.index].flags &= ~kSubActive;
     }
   };
 
@@ -132,10 +118,7 @@ void Engine::RebindSubscription(uint32_t edge_target_id) {
 
   // Container rebind path: recompute which element is observed.
   if (target_handle.kind == SubKind::kContainer) {
-    auto& csub = ResolveSubSlot(
-                     target_handle.slot_id, target_handle.is_local,
-                     target_handle.instance_id)
-                     .container_subs[target_handle.index];
+    auto& csub = target_subs.container_subs[target_handle.index];
     auto& ccold = container_cold_pool_[csub.cold_idx];
 
     const uint8_t* cbase = nullptr;
@@ -209,9 +192,6 @@ void Engine::RebindSubscription(uint32_t edge_target_id) {
   }
 
   // Resolve old group to get the sub and its cold state.
-  // R5: use ResolveSubSlot for domain-aware access.
-  auto& target_subs = ResolveSubSlot(
-      target_handle.slot_id, target_handle.is_local, target_handle.instance_id);
   auto& old_group = target_subs.edge_groups[target_handle.edge_group];
   auto& old_vec = (target_handle.edge_bucket == EdgeBucket::kPosedge)
                       ? old_group.posedge_subs
@@ -249,12 +229,19 @@ void Engine::RebindSubscription(uint32_t edge_target_id) {
     if (target_handle.index != rm_last) {
       rm_vec[target_handle.index] = rm_vec[rm_last];
       auto& moved = rm_vec[target_handle.index];
-      process_states_[moved.process_id].sub_refs[moved.process_sub_idx].index =
-          target_handle.index;
-      auto& moved_ref =
-          process_states_[moved.process_id].sub_refs[moved.process_sub_idx];
-      moved_ref.edge_group = target_handle.edge_group;
-      moved_ref.edge_bucket = target_handle.edge_bucket;
+      // Backpatch the moved sub's ref in the correct domain vector.
+      auto& ps = process_states_[moved.process_id];
+      if (target_handle.is_local) {
+        auto& mr = ps.local_sub_refs[moved.process_sub_idx];
+        mr.index = target_handle.index;
+        mr.edge_group = target_handle.edge_group;
+        mr.edge_bucket = target_handle.edge_bucket;
+      } else {
+        auto& mr = ps.global_sub_refs[moved.process_sub_idx];
+        mr.index = target_handle.index;
+        mr.edge_group = target_handle.edge_group;
+        mr.edge_bucket = target_handle.edge_bucket;
+      }
       if (moved.cold_idx != UINT32_MAX) {
         auto& moved_cold = edge_cold_pool_[moved.cold_idx];
         if (moved_cold.edge_target_id != UINT32_MAX) {
@@ -324,11 +311,17 @@ void Engine::RebindSubscription(uint32_t edge_target_id) {
   auto new_index = static_cast<uint32_t>(new_vec.size());
   new_vec.push_back(sub_copy);
 
-  // Update SubRef.
+  // Update domain-specific sub ref.
   auto& proc = process_states_[sub_copy.process_id];
-  auto& ref = proc.sub_refs[sub_copy.process_sub_idx];
-  ref.edge_group = new_group_idx;
-  ref.index = new_index;
+  if (target_handle.is_local) {
+    auto& ref = proc.local_sub_refs[sub_copy.process_sub_idx];
+    ref.edge_group = new_group_idx;
+    ref.index = new_index;
+  } else {
+    auto& ref = proc.global_sub_refs[sub_copy.process_sub_idx];
+    ref.edge_group = new_group_idx;
+    ref.index = new_index;
+  }
 
   // Update EdgeTargetHandle.
   target_handle.edge_group = new_group_idx;
