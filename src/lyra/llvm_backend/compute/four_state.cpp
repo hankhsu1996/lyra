@@ -175,9 +175,8 @@ auto LowerReduction4State(
       masked_val, builder.CreateNot(masked_unk), "red4.known");
 
   // Perform reduction at working width, producing 1-bit result
-  auto red_result_or_err =
-      LowerUnaryOp(context, op, known, carrier_type, operand_semantic_width);
-  if (!red_result_or_err) return std::unexpected(red_result_or_err.error());
+  auto* red_result =
+      LowerUnaryOp(builder, op, known, carrier_type, operand_semantic_width);
 
   // Check if any unknown bits exist (at working width)
   auto* working_zero = llvm::ConstantInt::get(working_type, 0);
@@ -185,7 +184,7 @@ auto LowerReduction4State(
 
   // Pack to carrier width: val is already at carrier (from LowerUnaryOp),
   // unk needs to be extended from i1
-  auto* val = *red_result_or_err;
+  auto* val = red_result;
   auto* unk = builder.CreateZExt(any_unk, carrier_type, "red4.unk.ext");
 
   return ComputeResult::FourState(val, unk);
@@ -433,12 +432,11 @@ auto LowerBinaryRvalue4State(
     uint32_t rhs_width =
         GetOperandPackedWidth(*packed_context.facts, context, operands[1]);
 
-    auto cmp_or_err = LowerCompareToI1(
-        context, info.op, lhs.value, rhs.value, lhs_width, rhs_width);
-    if (!cmp_or_err) return std::unexpected(cmp_or_err.error());
+    auto* cmp = LowerCompareToI1(
+        builder, info.op, lhs.value, rhs.value, lhs_width, rhs_width);
 
     uint32_t cmp_width = std::max(lhs_width, rhs_width);
-    auto* cmp_type = llvm::Type::getIntNTy(context.GetLlvmContext(), cmp_width);
+    auto* cmp_type = llvm::Type::getIntNTy(builder.getContext(), cmp_width);
     auto* cmp_lhs_unk =
         builder.CreateZExtOrTrunc(lhs.unknown, cmp_type, "bin4.lhs.unk");
     auto* cmp_rhs_unk =
@@ -447,7 +445,7 @@ auto LowerBinaryRvalue4State(
     auto* taint = builder.CreateICmpNE(
         combined_unk, llvm::ConstantInt::get(cmp_type, 0), "bin4.taint");
 
-    auto* cmp_ext = builder.CreateZExt(*cmp_or_err, elem_type, "bin4.cmp");
+    auto* cmp_ext = builder.CreateZExt(cmp, elem_type, "bin4.cmp");
     auto* val = builder.CreateSelect(taint, zero, cmp_ext, "bin4.cmp.val");
     auto* unk = builder.CreateZExt(taint, elem_type, "bin4.cmp.unk");
     return ComputeResult::FourState(val, unk);

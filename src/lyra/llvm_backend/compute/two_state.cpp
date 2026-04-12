@@ -54,7 +54,7 @@ auto LowerRegularUnary2State(
   auto* coerced =
       builder.CreateZExtOrTrunc(operand, storage_type, "reg2.coerce");
 
-  return LowerUnaryOp(context, op, coerced, storage_type, semantic_width);
+  return LowerUnaryOp(builder, op, coerced, storage_type, semantic_width);
 }
 
 // Lower reduction unary ops at operand semantic width.
@@ -65,7 +65,7 @@ auto LowerReduction2State(
   llvm::Type* storage_type = packed_context.storage_type;
 
   return LowerUnaryOp(
-      context, op, operand, storage_type, operand_semantic_width);
+      context.GetBuilder(), op, operand, storage_type, operand_semantic_width);
 }
 
 }  // namespace
@@ -228,10 +228,9 @@ auto LowerBinaryRvalue2State(
   if (IsComparisonOp(info.op)) {
     uint32_t lhs_width = GetOperandPackedWidth(facts, context, operands[0]);
     uint32_t rhs_width = GetOperandPackedWidth(facts, context, operands[1]);
-    auto cmp_or_err =
-        LowerCompareToI1(context, info.op, lhs, rhs, lhs_width, rhs_width);
-    if (!cmp_or_err) return std::unexpected(cmp_or_err.error());
-    auto* result = builder.CreateZExt(*cmp_or_err, storage_type, "cmp.ext");
+    auto* cmp =
+        LowerCompareToI1(builder, info.op, lhs, rhs, lhs_width, rhs_width);
+    auto* result = builder.CreateZExt(cmp, storage_type, "cmp.ext");
     return ComputeResult::TwoState(result);
   }
 

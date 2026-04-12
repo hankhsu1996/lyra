@@ -234,10 +234,8 @@ auto LowerBinaryArith(
 }
 
 auto LowerBinaryComparison(
-    Context& context, mir::BinaryOp op, llvm::Value* lhs, llvm::Value* rhs)
-    -> Result<llvm::Value*> {
-  auto& builder = context.GetBuilder();
-
+    llvm::IRBuilder<>& builder, mir::BinaryOp op, llvm::Value* lhs,
+    llvm::Value* rhs) -> llvm::Value* {
   switch (op) {
     case mir::BinaryOp::kEqual:
     case mir::BinaryOp::kCaseEqual:
@@ -266,22 +264,21 @@ auto LowerBinaryComparison(
     case mir::BinaryOp::kGreaterThanEqualSigned:
       return builder.CreateICmpSGE(lhs, rhs, "sge");
     default:
-      return std::unexpected(context.GetDiagnosticContext().MakeUnsupported(
-          context.GetCurrentOrigin(),
-          std::format("unsupported comparison op: {}", mir::ToString(op)),
-          UnsupportedCategory::kOperation));
+      throw common::InternalError(
+          "LowerBinaryComparison",
+          std::format(
+              "non-comparison op {} reached comparison lowering",
+              mir::ToString(op)));
   }
 }
 
 auto LowerCompareToI1(
-    Context& context, mir::BinaryOp op, llvm::Value* lhs, llvm::Value* rhs,
-    uint32_t lhs_semantic_width, uint32_t rhs_semantic_width)
-    -> Result<llvm::Value*> {
-  auto& builder = context.GetBuilder();
-
+    llvm::IRBuilder<>& builder, mir::BinaryOp op, llvm::Value* lhs,
+    llvm::Value* rhs, uint32_t lhs_semantic_width, uint32_t rhs_semantic_width)
+    -> llvm::Value* {
   // Compare at the max of operand widths (not result width, which is always 1)
   uint32_t cmp_width = std::max(lhs_semantic_width, rhs_semantic_width);
-  auto* cmp_type = llvm::Type::getIntNTy(context.GetLlvmContext(), cmp_width);
+  auto* cmp_type = llvm::Type::getIntNTy(builder.getContext(), cmp_width);
 
   // Coerce operands to comparison width
   llvm::Value* cmp_lhs = builder.CreateZExtOrTrunc(lhs, cmp_type, "cmp.lhs");
@@ -299,7 +296,7 @@ auto LowerCompareToI1(
     cmp_rhs = SignExtendToStorage(builder, cmp_rhs, rhs_semantic_width);
   }
 
-  return LowerBinaryComparison(context, op, cmp_lhs, cmp_rhs);
+  return LowerBinaryComparison(builder, op, cmp_lhs, cmp_rhs);
 }
 
 auto LowerShiftOp(
@@ -359,11 +356,8 @@ auto LowerShiftOpUnknown(
 }
 
 auto LowerUnaryOp(
-    Context& context, mir::UnaryOp op, llvm::Value* operand,
-    llvm::Type* storage_type, uint32_t operand_bit_width)
-    -> Result<llvm::Value*> {
-  auto& builder = context.GetBuilder();
-
+    llvm::IRBuilder<>& builder, mir::UnaryOp op, llvm::Value* operand,
+    llvm::Type* storage_type, uint32_t operand_bit_width) -> llvm::Value* {
   switch (op) {
     case mir::UnaryOp::kPlus:
       return operand;
@@ -400,8 +394,9 @@ auto LowerUnaryOp(
     }
     case mir::UnaryOp::kReductionXor:
     case mir::UnaryOp::kReductionXnor: {
+      auto* module = builder.GetInsertBlock()->getModule();
       auto* ctpop = llvm::Intrinsic::getDeclaration(
-          &context.GetModule(), llvm::Intrinsic::ctpop, {operand->getType()});
+          module, llvm::Intrinsic::ctpop, {operand->getType()});
       auto* count = builder.CreateCall(ctpop, {operand}, "popcount");
       auto* one = llvm::ConstantInt::get(count->getType(), 1);
       auto* parity_n = builder.CreateAnd(count, one, "parity");
@@ -418,10 +413,10 @@ auto LowerUnaryOp(
       return builder.CreateZExt(result, storage_type, name);
     }
     default:
-      return std::unexpected(context.GetDiagnosticContext().MakeUnsupported(
-          context.GetCurrentOrigin(),
-          std::format("unsupported unary op: {}", mir::ToString(op)),
-          UnsupportedCategory::kOperation));
+      throw common::InternalError(
+          "LowerUnaryOp", std::format(
+                              "non-rvalue unary op {} reached backend lowering",
+                              mir::ToString(op)));
   }
 }
 
