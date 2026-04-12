@@ -1051,8 +1051,9 @@ class Engine {
   auto AllocContainerCold() -> uint32_t;
   void FreeContainerCold(uint32_t idx);
 
-  // Edge target table management.
-  auto AllocEdgeTarget(EdgeTargetHandle handle) -> uint32_t;
+  // Edge target table management (domain-split).
+  auto AllocLocalEdgeTarget(LocalEdgeTargetHandle handle) -> uint32_t;
+  auto AllocGlobalEdgeTarget(GlobalEdgeTargetHandle handle) -> uint32_t;
   void FreeEdgeTarget(uint32_t id);
 
   // Grouped edge subscription accessors.
@@ -1158,8 +1159,9 @@ class Engine {
   auto ResolveGlobalSubSlot(GlobalSignalId signal) const
       -> const SlotSubscriptions&;
 
-  // Resolve slot from EdgeTargetHandle (used by rebind paths).
-  auto ResolveTargetSlot(const EdgeTargetHandle& handle) -> SlotSubscriptions&;
+  // Domain-split rebind dispatch.
+  void RebindLocalSubscription(uint32_t idx);
+  void RebindGlobalSubscription(uint32_t idx);
 
   // Recompute the per-signal observer flag after subscription mutations.
   // Called after every add/remove to keep the flag consistent.
@@ -1307,10 +1309,12 @@ class Engine {
   std::vector<ContainerCold> container_cold_pool_;
   std::vector<uint32_t> container_cold_free_list_;
 
-  // Edge target table: stable indirection for rebind targets.
-  // Indexed by edge_target_id, updated on swap-and-pop of the target.
-  std::vector<EdgeTargetHandle> edge_target_table_;
-  std::vector<uint32_t> edge_target_free_list_;
+  // Edge target tables: domain-split stable indirection for rebind targets.
+  // edge_target_id encodes domain via high bit (kEdgeTargetGlobalBit).
+  std::vector<LocalEdgeTargetHandle> local_edge_target_table_;
+  std::vector<uint32_t> local_edge_target_free_list_;
+  std::vector<GlobalEdgeTargetHandle> global_edge_target_table_;
+  std::vector<uint32_t> global_edge_target_free_list_;
 
   // Resource limits (0 = unlimited)
   size_t live_subscription_count_ = 0;

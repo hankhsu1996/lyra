@@ -85,17 +85,47 @@ struct GlobalSubRef {
 };
 static_assert(sizeof(GlobalSubRef) == 16);
 
-// Stable indirection handle for rebind targets.
-// Stored in edge_target_table_, updated on swap-and-pop.
-struct EdgeTargetHandle {
-  uint32_t slot_id = 0;
-  SubKind kind = SubKind::kEdge;  // kEdge or kContainer
+// Edge target ID encoding: high bit selects domain table.
+inline constexpr uint32_t kEdgeTargetGlobalBit = 0x80000000U;
+inline constexpr uint32_t kEdgeTargetIndexMask = 0x7FFFFFFFU;
+
+inline auto IsGlobalEdgeTargetId(uint32_t id) -> bool {
+  return (id & kEdgeTargetGlobalBit) != 0;
+}
+
+inline auto LocalEdgeTargetId(uint32_t idx) -> uint32_t {
+  return idx;
+}
+
+inline auto GlobalEdgeTargetId(uint32_t idx) -> uint32_t {
+  return kEdgeTargetGlobalBit | idx;
+}
+
+inline auto EdgeTargetIndex(uint32_t id) -> uint32_t {
+  return id & kEdgeTargetIndexMask;
+}
+
+// Stable indirection handle for local rebind targets.
+// Stored in local_edge_target_table_, updated on swap-and-pop.
+struct LocalEdgeTargetHandle {
+  RuntimeInstance* instance = nullptr;
+  LocalSignalId signal{};
+  SubKind kind = SubKind::kEdge;
   EdgeBucket edge_bucket = EdgeBucket::kPosedge;
-  bool is_local = false;
-  uint8_t padding = 0;
+  uint16_t padding = 0;
   uint32_t edge_group = 0;
   uint32_t index = 0;
-  InstanceId instance_id = InstanceId{0};  // R5: for local subs
+};
+
+// Stable indirection handle for global rebind targets.
+// Stored in global_edge_target_table_, updated on swap-and-pop.
+struct GlobalEdgeTargetHandle {
+  GlobalSignalId signal{};
+  SubKind kind = SubKind::kEdge;
+  EdgeBucket edge_bucket = EdgeBucket::kPosedge;
+  uint16_t padding = 0;
+  uint32_t edge_group = 0;
+  uint32_t index = 0;
 };
 
 // Cold state for EdgeSub rebind targets. Lives in edge_cold_pool_, indexed

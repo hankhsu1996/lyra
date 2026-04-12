@@ -88,16 +88,37 @@ auto Engine::ResolveGlobalSubSlot(GlobalSignalId signal) const
   return signal_subs_[signal.value];
 }
 
-auto Engine::ResolveTargetSlot(const EdgeTargetHandle& handle)
-    -> SlotSubscriptions& {
-  if (handle.is_local) {
-    return GetInstanceMut(handle.instance_id)
-        .observability.local_signal_subs[handle.slot_id];
+namespace {
+
+// Update positional fields of a moved edge target handle after swap-and-pop.
+inline void UpdateMovedEdgeTargetPosition(
+    std::vector<LocalEdgeTargetHandle>& local_table,
+    std::vector<GlobalEdgeTargetHandle>& global_table, uint32_t edge_target_id,
+    uint32_t index, uint32_t edge_group, EdgeBucket bucket) {
+  if (IsGlobalEdgeTargetId(edge_target_id)) {
+    auto& h = global_table[EdgeTargetIndex(edge_target_id)];
+    h.index = index;
+    h.edge_group = edge_group;
+    h.edge_bucket = bucket;
+  } else {
+    auto& h = local_table[EdgeTargetIndex(edge_target_id)];
+    h.index = index;
+    h.edge_group = edge_group;
+    h.edge_bucket = bucket;
   }
-  return signal_subs_[handle.slot_id];
 }
 
-namespace {
+// Update only the dense index of a moved edge target handle (container subs).
+inline void UpdateMovedEdgeTargetIndex(
+    std::vector<LocalEdgeTargetHandle>& local_table,
+    std::vector<GlobalEdgeTargetHandle>& global_table, uint32_t edge_target_id,
+    uint32_t index) {
+  if (IsGlobalEdgeTargetId(edge_target_id)) {
+    global_table[EdgeTargetIndex(edge_target_id)].index = index;
+  } else {
+    local_table[EdgeTargetIndex(edge_target_id)].index = index;
+  }
+}
 
 auto ComputeObserverFlag(const SlotSubscriptions& slot) -> uint8_t {
   uint8_t has = 0;
@@ -209,12 +230,12 @@ template <typename BackpatchFn>
 void RemoveEdgeSubCore(
     SlotSubscriptions& subs, uint32_t edge_group, EdgeBucket edge_bucket,
     uint32_t index, std::vector<EdgeTargetCold>& edge_cold_pool,
-    std::vector<EdgeTargetHandle>& edge_target_table, auto& free_edge_target,
-    auto& free_edge_cold, BackpatchFn backpatch) {
+    std::vector<LocalEdgeTargetHandle>& local_target_table,
+    std::vector<GlobalEdgeTargetHandle>& global_target_table,
+    auto& free_edge_target, auto& free_edge_cold, BackpatchFn backpatch) {
   auto& g = subs.edge_groups[edge_group];
   auto& vec =
       (edge_bucket == EdgeBucket::kPosedge) ? g.posedge_subs : g.negedge_subs;
-  // Copy cold_idx before removal invalidates the reference.
   uint32_t cold_idx = vec[index].cold_idx;
 
   if (cold_idx != UINT32_MAX) {
@@ -235,10 +256,9 @@ void RemoveEdgeSubCore(
     if (moved.cold_idx != UINT32_MAX) {
       auto& moved_cold = edge_cold_pool[moved.cold_idx];
       if (moved_cold.edge_target_id != UINT32_MAX) {
-        auto& moved_handle = edge_target_table[moved_cold.edge_target_id];
-        moved_handle.index = index;
-        moved_handle.edge_group = edge_group;
-        moved_handle.edge_bucket = edge_bucket;
+        UpdateMovedEdgeTargetPosition(
+            local_target_table, global_target_table, moved_cold.edge_target_id,
+            index, edge_group, edge_bucket);
       }
     }
   }
@@ -253,7 +273,8 @@ void Engine::RemoveLocalEdgeSub(const LocalSubRef& ref) {
   auto free_cold = [this](uint32_t id) { FreeEdgeCold(id); };
   RemoveEdgeSubCore(
       subs, ref.edge_group, ref.edge_bucket, ref.index, edge_cold_pool_,
-      edge_target_table_, free_target, free_cold,
+      local_edge_target_table_, global_edge_target_table_, free_target,
+      free_cold,
       [this](
           uint32_t pid, uint32_t psi, uint32_t new_idx, uint32_t grp,
           EdgeBucket bkt) {
@@ -271,7 +292,8 @@ void Engine::RemoveGlobalEdgeSub(const GlobalSubRef& ref) {
   auto free_cold = [this](uint32_t id) { FreeEdgeCold(id); };
   RemoveEdgeSubCore(
       subs, ref.edge_group, ref.edge_bucket, ref.index, edge_cold_pool_,
-      edge_target_table_, free_target, free_cold,
+      local_edge_target_table_, global_edge_target_table_, free_target,
+      free_cold,
       [this](
           uint32_t pid, uint32_t psi, uint32_t new_idx, uint32_t grp,
           EdgeBucket bkt) {
@@ -370,7 +392,9 @@ void Engine::RemoveLocalContainerSub(const LocalSubRef& ref) {
     if (vec[index].cold_idx != UINT32_MAX) {
       auto& moved_cold = container_cold_pool_[vec[index].cold_idx];
       if (moved_cold.edge_target_id != UINT32_MAX) {
-        edge_target_table_[moved_cold.edge_target_id].index = index;
+        UpdateMovedEdgeTargetIndex(
+            local_edge_target_table_, global_edge_target_table_,
+            moved_cold.edge_target_id, index);
       }
     }
   }
@@ -397,7 +421,9 @@ void Engine::RemoveGlobalContainerSub(const GlobalSubRef& ref) {
     if (vec[index].cold_idx != UINT32_MAX) {
       auto& moved_cold = container_cold_pool_[vec[index].cold_idx];
       if (moved_cold.edge_target_id != UINT32_MAX) {
-        edge_target_table_[moved_cold.edge_target_id].index = index;
+        UpdateMovedEdgeTargetIndex(
+            local_edge_target_table_, global_edge_target_table_,
+            moved_cold.edge_target_id, index);
       }
     }
   }
@@ -1945,9 +1971,9 @@ void Engine::SubscribeGlobalRebind(
     ecold.plan_ref = plan_ref;
     ecold.rebind_mapping = mapping;
     if (edge_target_id == UINT32_MAX) {
-      edge_target_id = AllocEdgeTarget(
-          EdgeTargetHandle{
-              .slot_id = target_signal.value,
+      edge_target_id = AllocGlobalEdgeTarget(
+          GlobalEdgeTargetHandle{
+              .signal = target_signal,
               .kind = SubKind::kEdge,
               .edge_bucket = target_edge_bucket,
               .edge_group = target_edge_group,
@@ -1960,9 +1986,9 @@ void Engine::SubscribeGlobalRebind(
     ccold.plan_ref = plan_ref;
     ccold.rebind_mapping = mapping;
     if (edge_target_id == UINT32_MAX) {
-      edge_target_id = AllocEdgeTarget(
-          EdgeTargetHandle{
-              .slot_id = target_signal.value,
+      edge_target_id = AllocGlobalEdgeTarget(
+          GlobalEdgeTargetHandle{
+              .signal = target_signal,
               .kind = SubKind::kContainer,
               .index = target_index});
       ccold.edge_target_id = edge_target_id;
@@ -2070,15 +2096,14 @@ void Engine::SubscribeLocalRebind(
     ecold.plan_ref = plan_ref;
     ecold.rebind_mapping = mapping;
     if (edge_target_id == UINT32_MAX) {
-      edge_target_id = AllocEdgeTarget(
-          EdgeTargetHandle{
-              .slot_id = target_signal.signal.value,
+      edge_target_id = AllocLocalEdgeTarget(
+          LocalEdgeTargetHandle{
+              .instance = &inst,
+              .signal = target_signal.signal,
               .kind = SubKind::kEdge,
               .edge_bucket = target_edge_bucket,
-              .is_local = true,
               .edge_group = target_edge_group,
-              .index = target_index,
-              .instance_id = target_signal.instance_id});
+              .index = target_index});
       ecold.edge_target_id = edge_target_id;
     }
   } else {
@@ -2087,13 +2112,12 @@ void Engine::SubscribeLocalRebind(
     ccold.plan_ref = plan_ref;
     ccold.rebind_mapping = mapping;
     if (edge_target_id == UINT32_MAX) {
-      edge_target_id = AllocEdgeTarget(
-          EdgeTargetHandle{
-              .slot_id = target_signal.signal.value,
+      edge_target_id = AllocLocalEdgeTarget(
+          LocalEdgeTargetHandle{
+              .instance = &inst,
+              .signal = target_signal.signal,
               .kind = SubKind::kContainer,
-              .is_local = true,
-              .index = target_index,
-              .instance_id = target_signal.instance_id});
+              .index = target_index});
       ccold.edge_target_id = edge_target_id;
     }
   }
