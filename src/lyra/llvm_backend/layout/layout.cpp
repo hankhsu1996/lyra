@@ -985,15 +985,15 @@ auto ResolveObservation(
     const mir::Arena& arena, const DesignLayout& design_layout,
     common::SlotId design_global_slot, mir::PlaceId place_id)
     -> std::optional<ResolvedObservation> {
-  auto slot_it = design_layout.slot_to_index.find(design_global_slot);
-  if (slot_it == design_layout.slot_to_index.end()) {
+  if (design_global_slot.value >= design_layout.slots.size()) {
     throw common::InternalError(
-        "ResolveObservation", std::format(
-                                  "design-global slot {} not found in layout",
-                                  design_global_slot.value));
+        "ResolveObservation",
+        std::format(
+            "design-global slot {} out of range ({} slots)",
+            design_global_slot.value, design_layout.slots.size()));
   }
   return ResolveObservationFromSpec(
-      arena, design_layout.slot_storage_specs[slot_it->second],
+      arena, design_layout.slot_storage_specs[design_global_slot.value],
       design_layout.storage_spec_arena, place_id);
 }
 
@@ -1137,8 +1137,15 @@ auto BuildDesignLayout(
   // Resolve storage spec for each slot in flat order (package then per
   // instance). Every slot owns its own storage.
   auto ingest_slot = [&](const mir::SlotDesc& desc, uint32_t global_idx) {
+    if (global_idx != static_cast<uint32_t>(layout.slots.size())) {
+      throw common::InternalError(
+          "BuildDesignLayout",
+          std::format(
+              "slot identity invariant violated: global_idx {} != "
+              "position {}",
+              global_idx, layout.slots.size()));
+    }
     layout.slots.push_back(common::SlotId{global_idx});
-    layout.slot_to_index[common::SlotId{global_idx}] = global_idx;
     layout.slot_storage_specs.push_back(ResolveStorageSpec(
         desc.type, types, storage_mode, target_abi, layout.storage_spec_arena));
     layout.slot_type_infos.push_back(
@@ -1395,29 +1402,29 @@ auto BuildBodyLayout(
 // DesignLayout method implementations.
 
 auto DesignLayout::ContainsSlot(common::SlotId slot_id) const -> bool {
-  return slot_to_index.contains(slot_id);
+  return slot_id.value < slots.size();
 }
 
 auto DesignLayout::GetStorageByteOffset(common::SlotId slot_id) const
     -> uint64_t {
-  auto it = slot_to_index.find(slot_id);
-  if (it == slot_to_index.end()) {
+  if (slot_id.value >= slots.size()) {
     throw common::InternalError(
         "DesignLayout::GetStorageByteOffset",
-        std::format("slot {} not in layout", slot_id.value));
+        std::format(
+            "slot {} not in layout ({} slots)", slot_id.value, slots.size()));
   }
-  return slot_byte_offsets[it->second];
+  return slot_byte_offsets[slot_id.value];
 }
 
 auto DesignLayout::GetStorageSpec(common::SlotId slot_id) const
     -> const SlotStorageSpec& {
-  auto it = slot_to_index.find(slot_id);
-  if (it == slot_to_index.end()) {
+  if (slot_id.value >= slots.size()) {
     throw common::InternalError(
         "DesignLayout::GetStorageSpec",
-        std::format("slot {} not in layout", slot_id.value));
+        std::format(
+            "slot {} not in layout ({} slots)", slot_id.value, slots.size()));
   }
-  return slot_storage_specs[it->second];
+  return slot_storage_specs[slot_id.value];
 }
 
 auto DesignLayout::GetSlotStorageBinding(uint32_t slot_row) const
@@ -1454,16 +1461,6 @@ auto DesignLayout::GetInstanceOffset(
   }
   return ToInstanceOffset(
       binding.abs_byte_offset, *instance_base.abs_byte_offset);
-}
-
-auto DesignLayout::GetSlotRow(common::SlotId slot_id) const -> uint32_t {
-  auto it = slot_to_index.find(slot_id);
-  if (it == slot_to_index.end()) {
-    throw common::InternalError(
-        "DesignLayout::GetSlotRow",
-        std::format("slot {} not in layout", slot_id.value));
-  }
-  return it->second;
 }
 
 auto DesignLayout::GetBodyOffset(

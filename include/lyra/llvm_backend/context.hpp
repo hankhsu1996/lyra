@@ -14,7 +14,6 @@
 #include "lyra/common/origin_id.hpp"
 #include "lyra/common/slot_id.hpp"
 #include "lyra/common/symbol_types.hpp"
-#include "lyra/common/type_arena.hpp"
 #include "lyra/llvm_backend/commit/signal_id_expr.hpp"
 #include "lyra/llvm_backend/compute/temp_value.hpp"
 #include "lyra/llvm_backend/context_scope.hpp"
@@ -985,10 +984,6 @@ class Context {
   void ClearTemps();
 
  private:
-  // Internal helper: resolve SlotId to position index in design layout.
-  [[nodiscard]] auto ResolveDesignSlotIndex(common::SlotId slot_id) const
-      -> uint32_t;
-
   // Commit-module-only methods (accessed via friend class commit::Access)
   // Get unified write target (pointer + signal_id) from a place or
   // external ref. All fields derived from the same resolved root.

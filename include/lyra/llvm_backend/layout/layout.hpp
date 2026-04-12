@@ -49,8 +49,6 @@ struct FourStatePatchTable {
   }
 };
 
-// SlotIdHash is defined in kernel_types.hpp (included above).
-
 struct PlaceIdHash {
   auto operator()(mir::PlaceId id) const noexcept -> size_t {
     return std::hash<uint32_t>{}(id.value);
@@ -100,10 +98,8 @@ struct InstanceSlotRange;
 // Appendix region: backing data for kOwnedContainer slots.
 struct DesignLayout {
   // Ordered slots, in declaration order.
+  // Identity invariant: slots[i].value == i for all i.
   std::vector<common::SlotId> slots;
-
-  // Map from SlotId to slot position index (into slots/offsets/specs vectors).
-  std::unordered_map<common::SlotId, uint32_t, SlotIdHash> slot_to_index;
 
   // Inline-region byte offset of each slot's inline representation.
   // For kInlineValue: offset of the slot's value bytes.
@@ -163,9 +159,6 @@ struct DesignLayout {
       uint32_t slot_row, const InstanceStorageBase& instance_base,
       const InstanceSlotRange& instance_range) const
       -> common::InstanceByteOffset;
-
-  // Get the layout row index for a slot. Throws InternalError if not found.
-  [[nodiscard]] auto GetSlotRow(common::SlotId slot_id) const -> uint32_t;
 
   // Get the body-relative offset for a slot.
   // Total for all body-local slots (every slot owns storage).
@@ -272,8 +265,8 @@ struct ModuleIndex {
 // Pre-resolved trigger observation for sub-slot narrowing in metadata lowering.
 // Computed during layout while the owning MIR arena is still known, so no
 // arena-local PlaceId survives into cross-boundary metadata.
-// ConnectionKernelEntry, ResolvedObservation, and SlotIdHash are defined
-// in kernel_types.hpp (included above).
+// ConnectionKernelEntry and ResolvedObservation are defined in
+// kernel_types.hpp (included above).
 
 // Scheduled process record: pairs a ProcessId with optional module instance.
 // Module-owned processes have a valid module_index; design-level processes

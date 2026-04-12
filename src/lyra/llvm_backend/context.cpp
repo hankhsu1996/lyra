@@ -166,15 +166,6 @@ auto Context::GetDesignArenaSize() const -> uint64_t {
   return facts_->layout->design.arena_size;
 }
 
-auto Context::ResolveDesignSlotIndex(common::SlotId slot_id) const -> uint32_t {
-  auto it = facts_->layout->design.slot_to_index.find(slot_id);
-  if (it == facts_->layout->design.slot_to_index.end()) {
-    throw common::InternalError(
-        "ResolveDesignSlotIndex", "design slot not found in layout");
-  }
-  return it->second;
-}
-
 auto Context::GetDesignSlotByteOffset(common::SlotId slot_id) const
     -> uint64_t {
   return facts_->layout->design.GetStorageByteOffset(slot_id);
