@@ -1,3 +1,4 @@
+#include <algorithm>
 #include <chrono>
 #include <cstdint>
 #include <cstdio>
@@ -125,11 +126,8 @@ void Engine::RunOneActivation(const WakeupEntry& entry) {
   }
   activation_ctx_.dirty_count = 0;
 
-  // Reset iteration limit before each process activation.
-  // LyraGetIterationLimit() returns the process-global configured limit.
-  // 0 = unlimited: set counter to UINT32_MAX so the guard never fires.
-  uint32_t limit = LyraGetIterationLimit();
-  LyraResetIterationLimit(limit > 0 ? limit : UINT32_MAX);
+  // Reset iteration limit: direct TLS write from cached values.
+  *cached_iteration_limit_ptr_ = cached_iteration_limit_;
 
   ProcessHandle handle{
       .process_id = entry.process_id, .instance_id = entry.instance_id};
@@ -176,6 +174,9 @@ void Engine::ExecuteActiveRegion() {
   while (!finished_ && !active_queue_.empty()) {
     auto entries = std::move(active_queue_);
     active_queue_.clear();
+    auto batch_size = static_cast<uint64_t>(entries.size());
+    stats_.core.max_active_queue =
+        std::max(stats_.core.max_active_queue, batch_size);
     for (const auto& entry : entries) {
       if (finished_) {
         break;
@@ -213,6 +214,11 @@ void Engine::ExecuteActiveRegion() {
       // DispatchAndHandleActivation decodes the raw suspend protocol into
       // semantic requests and calls engine primitives directly.
       RunOneActivation(entry);
+      if (!finished_ && HasPostActivationReconciliation()) {
+        if (!TryFastReconcile(entry.process_id)) {
+          ReconcilePostActivation(handle);
+        }
+      }
     }
     ++active_iterations;
     if (active_iterations % 2 == 0) {
@@ -255,6 +261,7 @@ void Engine::ExecutePostponedRegion() {
 void Engine::ExecuteTimeSlot() {
   current_timeslot_epoch_ = current_timeslot_epoch_.Next();
   current_delta_ = 0;
+  ++stats_.core.total_timeslots;
 
   while (true) {
     while (!finished_ && (!active_queue_.empty() || !inactive_queue_.empty())) {
@@ -280,7 +287,12 @@ void Engine::ExecuteTimeSlot() {
       break;
     }
 
+    auto ndq_size = static_cast<uint64_t>(next_delta_queue_.size());
+    stats_.core.max_next_delta_queue =
+        std::max(stats_.core.max_next_delta_queue, ndq_size);
     ++current_delta_;
+    stats_.core.max_delta_cycles = std::max(
+        stats_.core.max_delta_cycles, static_cast<uint64_t>(current_delta_));
     if (current_delta_ % 100 == 0) {
       lyra::PrintWarning(
           std::format(
@@ -319,6 +331,11 @@ void Engine::ExecuteTimeSlot() {
 }
 
 auto Engine::Run(SimTime max_time) -> SimTime {
+  // Cache iteration limit for direct TLS write per activation.
+  uint32_t raw_limit = LyraGetIterationLimit();
+  cached_iteration_limit_ = raw_limit > 0 ? raw_limit : UINT32_MAX;
+  cached_iteration_limit_ptr_ = LyraIterationLimitPtr();
+
   // end_reason_ defaults to kEmptyQueues; set to kMaxTimeReached or kFinish
   // at the point where the reason becomes known.
   while (!finished_ && current_time_ <= max_time) {

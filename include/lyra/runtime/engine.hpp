@@ -87,6 +87,10 @@ struct CoreRuntimeStats {
   //   per-instance deferred storage (CommitDeferredLocalNbas).
   uint64_t nba_generic_queue = 0;
   uint64_t nba_deferred_local = 0;
+  uint64_t total_timeslots = 0;
+  uint64_t max_active_queue = 0;
+  uint64_t max_next_delta_queue = 0;
+  uint64_t max_delta_cycles = 0;
 };
 
 // Opt-in per-element counters: collected only when kDetailedStats is enabled.
@@ -886,6 +890,44 @@ class Engine {
     return trace_selection_;
   }
 
+  // Register suspend record pointers for post-activation reconciliation.
+  void RegisterSuspendRecords(std::span<SuspendRecord*> records);
+
+  // Single source of truth for whether the engine uses post-activation
+  // reconciliation (new path) vs legacy HandleSuspendRecord (old path).
+  // True when both wait-site metadata and suspend-record access are present.
+  [[nodiscard]] auto HasPostActivationReconciliation() const -> bool {
+    return wait_site_meta_.IsPopulated() && !suspend_records_.empty();
+  }
+
+  // Post-activation reconciliation: engine-owned dispatch after process runs.
+  void ReconcilePostActivation(ProcessHandle handle);
+
+  // Inline fast path for static-wait reconciliation. Returns true if the
+  // common case was handled (no work needed), false if the caller must
+  // fall through to the full ReconcilePostActivation.
+  //
+  // The fast path fires when ALL of:
+  //   1. The process suspended with kWait (same static wait site)
+  //   2. The installed wait is valid and refreshable in place
+  //   3. No blocking writes dirtied any signal in the current delta
+  // When these hold, subscription baselines are already correct from the
+  // prior flush and no refresh or reinstall is needed.
+  [[nodiscard]] auto TryFastReconcile(uint32_t process_id) -> bool {
+    auto* suspend = suspend_records_[process_id];
+    if (suspend->tag != SuspendTag::kWait) return false;
+    const auto& installed = process_states_[process_id].installed_wait;
+    if (!installed.valid || installed.wait_site_id != suspend->wait_site_id ||
+        !installed.can_refresh_snapshot) {
+      return false;
+    }
+    if (!update_set_.DeltaDirtySlots().empty() ||
+        !delta_dirty_instances_.empty()) {
+      return false;
+    }
+    return true;
+  }
+
   [[nodiscard]] auto GetProcessMetaRegistry() const
       -> const ProcessMetaRegistry& {
     return process_meta_;
@@ -964,7 +1006,10 @@ class Engine {
       uint32_t process_id, uint32_t instance_id, uint32_t site_id,
       uint8_t disposition, const void* payload_ptr, uint32_t payload_size,
       const DeferredAssertionRefBindingAbi* ref_ptr, uint32_t ref_count);
-  void FlushDeferredAssertionsForProcess(ProcessId pid);
+  void FlushDeferredAssertionsForProcess(ProcessId pid) {
+    if (pid.Index() >= deferred_assertion_states_.size()) return;
+    deferred_assertion_states_[pid.Index()].flush_generation++;
+  }
   void MatureAndExecuteObservedDeferredAssertions();
 
  private:
@@ -1301,6 +1346,11 @@ class Engine {
 
   // Cached from kDetailedStats feature flag at construction.
   bool detailed_stats_enabled_ = false;
+
+  // Cached iteration limit: resolved once at Run() entry, written directly
+  // to TLS per activation instead of calling LyraGet/ResetIterationLimit.
+  uint32_t cached_iteration_limit_ = 0;
+  uint32_t* cached_iteration_limit_ptr_ = nullptr;
 
   // R5: Number of design-global (non-instance-owned) slots. Set during
   // slot meta initialization, used to validate global trace meta count.

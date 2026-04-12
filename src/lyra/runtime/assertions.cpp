@@ -88,11 +88,6 @@ void Engine::EnqueueDeferredAssertion(
   }
 }
 
-void Engine::FlushDeferredAssertionsForProcess(ProcessId pid) {
-  if (pid.Index() >= deferred_assertion_states_.size()) return;
-  deferred_assertion_states_[pid.Index()].flush_generation++;
-}
-
 void Engine::MatureAndExecuteObservedDeferredAssertions() {
   using Disp = DeferredAssertionDispositionAbi;
 

@@ -54,12 +54,15 @@ void Engine::DumpRuntimeStats(FILE* sink) const {
       " nba_entries={} nba_elided={} nba_changed={}"
       " nba_generic_queue={} nba_deferred_local={}"
       " conn_full_slot={} conn_narrow={}"
-      " comb_full_slot={} comb_narrow={}\n",
+      " comb_full_slot={} comb_narrow={}"
+      " timeslots={} max_active_q={} max_next_delta_q={}"
+      " max_delta_cycles={}\n",
       c.total_activations, c.activations_nba_only, c.propagation_calls,
       c.propagation_iterations, c.propagation_max_iterations, c.nba_entries,
       c.nba_elided, c.nba_changed, c.nba_generic_queue, c.nba_deferred_local,
       conn_full_slot_count_, conn_narrow_count_, comb_full_slot_count_,
-      comb_narrow_count_);
+      comb_narrow_count_, c.total_timeslots, c.max_active_queue,
+      c.max_next_delta_queue, c.max_delta_cycles);
 
   // Trigger group stats (G13 metadata).
   const auto& reg = process_trigger_registry_;
