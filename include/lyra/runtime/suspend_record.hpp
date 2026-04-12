@@ -33,7 +33,7 @@ struct ConnectionDescriptor {
   uint8_t trigger_bit_index = 0;  // WaitTriggerRecord.bit_index
   // R5: Typed destination identity. When dst_is_local != 0,
   // dst_instance_id and dst_local_id carry the owning instance and
-  // body-local signal identity. Runtime decodes into ConnectionTarget.
+  // body-local signal identity. Runtime decodes into BatchedConnectionDst.
   uint8_t dst_is_local = 0;
   uint8_t padding = 0;
   uint32_t trigger_byte_offset = 0;  // WaitTriggerRecord.byte_offset

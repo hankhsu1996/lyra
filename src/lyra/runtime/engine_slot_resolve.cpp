@@ -1,6 +1,5 @@
 #include "lyra/common/internal_error.hpp"
 #include "lyra/runtime/engine.hpp"
-#include "lyra/runtime/instance_observability.hpp"
 #include "lyra/runtime/slot_meta.hpp"
 
 namespace lyra::runtime {
@@ -48,22 +47,6 @@ auto Engine::ResolveGlobalSlotBaseMut(GlobalSignalId signal) -> uint8_t* {
       static_cast<uint8_t*>(design_state_base_),
       meta.design_base_off + meta.total_bytes);
   return &base[meta.design_base_off];
-}
-
-auto Engine::ResolveConnectionDstMut(const ConnectionTarget& dst) -> uint8_t* {
-  if (const auto* global = std::get_if<GlobalConnectionTarget>(&dst)) {
-    return ResolveGlobalSlotBaseMut(global->signal);
-  }
-  const auto& local = std::get<LocalConnectionTarget>(dst);
-  auto* inst = instance_trace_resolver_.FindInstanceMut(local.instance_id);
-  if (inst == nullptr) {
-    throw common::InternalError(
-        "Engine::ResolveConnectionDstMut",
-        std::format(
-            "no instance for connection dst instance_id {}",
-            local.instance_id));
-  }
-  return ResolveInstanceSlotBaseMut(*inst, local.signal);
 }
 
 void Engine::ValidateInstanceOwnedSlotMeta() const {

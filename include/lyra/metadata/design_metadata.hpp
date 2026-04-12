@@ -36,7 +36,7 @@ struct ConnectionDescriptorEntry {
   // R5: Typed destination identity. When dst_is_local is true,
   // dst_instance_id and dst_local_id carry the owning instance and
   // body-local signal identity. Populated at layout time from design
-  // slot ownership. Runtime decodes into ConnectionTarget variant.
+  // slot ownership. Runtime decodes into BatchedConnectionDst variant.
   uint8_t dst_is_local = 0;
   uint32_t dst_instance_id = 0;
   uint32_t dst_local_id = 0;

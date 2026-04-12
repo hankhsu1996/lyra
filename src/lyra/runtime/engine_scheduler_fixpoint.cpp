@@ -46,26 +46,36 @@ void Engine::InitConnectionBatch(std::span<const ConnectionDescriptor> descs) {
     }
 
     // Decode typed destination from descriptor fields.
-    ConnectionTarget dst;
+    // Resolve InstanceId -> dense inst_idx at init time so the hot path
+    // never calls GetInstanceIndex.
+    BatchedConnectionDst dst;
+    RuntimeInstance* dst_inst = nullptr;
     if (d.dst_is_local != 0) {
       auto iid = InstanceId{d.dst_instance_id};
       auto lid = LocalSignalId{d.dst_local_id};
-      auto* inst = FindInstanceMut(iid);
-      if (inst == nullptr) {
+      dst_inst = FindInstanceMut(iid);
+      if (dst_inst == nullptr) {
         throw common::InternalError(
             "Engine::InitConnectionBatch",
             std::format("dst instance_id {} not found", iid));
       }
-      if (lid.value >= inst->observability.local_signal_count) {
+      if (lid.value >= dst_inst->observability.local_signal_count) {
         throw common::InternalError(
             "Engine::InitConnectionBatch",
             std::format(
                 "dst local_id {} >= local_signal_count {} for instance {}",
-                lid.value, inst->observability.local_signal_count, iid));
+                lid.value, dst_inst->observability.local_signal_count, iid));
       }
-      dst = LocalConnectionTarget{.instance_id = iid, .signal = lid};
+      auto inst_idx = GetInstanceIndex(iid);
+      if (inst_idx >= instances_.size() || instances_[inst_idx] == nullptr) {
+        throw common::InternalError(
+            "Engine::InitConnectionBatch",
+            std::format(
+                "dst inst_idx {} invalid for instance_id {}", inst_idx, iid));
+      }
+      dst = LocalConnectionDst{.inst_idx = inst_idx, .signal = lid};
     } else {
-      dst = GlobalConnectionTarget{GlobalSignalId{d.dst_slot_id}};
+      dst = GlobalConnectionDst{GlobalSignalId{d.dst_slot_id}};
     }
 
     // Decode typed trigger from descriptor fields.
@@ -93,7 +103,11 @@ void Engine::InitConnectionBatch(std::span<const ConnectionDescriptor> descs) {
     }
 
     const auto* src_ptr = ResolveSlotBytes(d.src_slot_id);
-    auto* dst_ptr = ResolveConnectionDstMut(dst);
+    auto* dst_ptr =
+        (dst_inst != nullptr)
+            ? ResolveInstanceSlotBaseMut(
+                  *dst_inst, LocalSignalId{d.dst_local_id})
+            : ResolveGlobalSlotBaseMut(GlobalSignalId{d.dst_slot_id});
 
     sorted.push_back(
         IndexedConn{
@@ -211,12 +225,11 @@ void Engine::EvaluateAllConnections() {
       std::visit(
           [this](const auto& t) {
             using T = std::decay_t<decltype(t)>;
-            if constexpr (std::is_same_v<T, GlobalConnectionTarget>) {
+            if constexpr (std::is_same_v<T, GlobalConnectionDst>) {
               MarkSlotDirty(t.signal.value);
             } else {
-              auto* inst =
-                  instance_trace_resolver_.FindInstanceMut(t.instance_id);
-              MarkLocalSignalDirty(*inst, t.signal);
+              auto* inst = instances_[t.inst_idx];
+              MarkLocalSignalDirty(*inst, t.signal, t.inst_idx);
             }
           },
           conn.dst);
@@ -639,18 +652,19 @@ void Engine::FlushAndPropagateConnections() {
   };
 
   // Helper: connection destination enqueue (handles global/local dispatch).
-  auto enqueue_conn_dst = [&](const ConnectionTarget& dst) {
+  // Destinations are pre-resolved: local targets carry dense inst_idx,
+  // eliminating the per-dispatch GetInstanceIndex call.
+  auto enqueue_conn_dst = [&](const BatchedConnectionDst& dst) {
     std::visit(
         [&](const auto& t) {
           using T = std::decay_t<decltype(t)>;
-          if constexpr (std::is_same_v<T, GlobalConnectionTarget>) {
+          if constexpr (std::is_same_v<T, GlobalConnectionDst>) {
             MarkSlotDirty(t.signal.value);
             enqueue_global(t.signal);
           } else {
-            auto inst_idx = GetInstanceIndex(t.instance_id);
-            auto* local_inst = instances_[inst_idx];
-            MarkLocalSignalDirty(*local_inst, t.signal, inst_idx);
-            enqueue_local(inst_idx, t.signal);
+            auto* local_inst = instances_[t.inst_idx];
+            MarkLocalSignalDirty(*local_inst, t.signal, t.inst_idx);
+            enqueue_local(t.inst_idx, t.signal);
           }
         },
         dst);

@@ -494,12 +494,6 @@ class Engine {
       std::span<const InstanceMetadataBundle> bundles,
       std::span<const uint32_t> design_global_slot_meta_words, void** states);
 
-  // Resolve connection destination byte address via typed target.
-  // Global targets resolve via design_state_base_.
-  // Local targets resolve via instance resolver + local slot meta.
-  [[nodiscard]] auto ResolveConnectionDstMut(const ConnectionTarget& dst)
-      -> uint8_t*;
-
   // Resolve the storage byte address for a slot.
   // For kDesignGlobal slots: returns design_state_base_ + design_base_off.
   // For kInstanceOwned slots: returns instance->storage.inline_base +
@@ -1461,7 +1455,7 @@ class Engine {
     const uint8_t* src_ptr;  // precomputed source storage pointer
     uint8_t* dst_ptr;        // precomputed destination storage pointer
     uint32_t byte_size;
-    ConnectionTarget dst;  // typed target for dirty-mark dispatch
+    BatchedConnectionDst dst;  // pre-resolved target for dirty-mark dispatch
   };
   // All batched connections (for initial evaluation).
   std::vector<BatchedConnection> all_connections_;

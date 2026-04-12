@@ -55,10 +55,9 @@ struct TriggerRange {
   uint32_t count = 0;
 };
 
-// R5: Typed connection destination. Sum type eliminates cross-domain
-// flat bridging -- propagation dispatches by variant, not boolean/int.
-// Local targets store stable instance_id, resolved at propagation time
-// through the engine's validated instance resolver.
+// R5: Typed connection destination for init-time decoding.
+// Used as intermediates when decoding ConnectionDescriptors in
+// InitConnectionBatch. Not stored on the hot path.
 struct GlobalConnectionTarget {
   GlobalSignalId signal;
 };
@@ -87,5 +86,20 @@ enum class ProcessWaitKind : uint8_t {
   kSuspendedUnknown,
   kFinished,
 };
+
+// Pre-resolved connection destination for hot-path propagation.
+// InstanceId is resolved to dense inst_idx at init time by
+// InitConnectionBatch, eliminating per-dispatch GetInstanceIndex calls.
+struct GlobalConnectionDst {
+  GlobalSignalId signal{};
+};
+
+struct LocalConnectionDst {
+  uint32_t inst_idx = UINT32_MAX;
+  LocalSignalId signal{};
+};
+
+using BatchedConnectionDst =
+    std::variant<GlobalConnectionDst, LocalConnectionDst>;
 
 }  // namespace lyra::runtime
