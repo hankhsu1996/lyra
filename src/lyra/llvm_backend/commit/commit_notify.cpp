@@ -88,13 +88,6 @@ void CommitNotifyAggregateIfDesignSlot(Context& ctx, mir::PlaceId target) {
 
   auto signal_id = ctx.EmitMutationTargetSignalCoord(*mutation_sig);
 
-  auto target_ptr_or_err = ctx.GetPlacePointer(target);
-  if (!target_ptr_or_err) {
-    throw common::InternalError(
-        "CommitNotifyAggregateIfDesignSlot",
-        "failed to get target place pointer");
-  }
-
   auto& builder = ctx.GetBuilder();
 
   auto emit_notify = [&]() {
@@ -103,12 +96,11 @@ void CommitNotifyAggregateIfDesignSlot(Context& ctx, mir::PlaceId target) {
           ctx.GetLyraNotifySignalLocal(),
           {ctx.GetEnginePointer(),
            signal_id.GetInstancePointer(ctx.GetInstancePointer()),
-           *target_ptr_or_err, signal_id.Emit(builder)});
+           signal_id.Emit(builder)});
     } else {
       builder.CreateCall(
           ctx.GetLyraNotifySignalGlobal(),
-          {ctx.GetEnginePointer(), *target_ptr_or_err,
-           signal_id.Emit(builder)});
+          {ctx.GetEnginePointer(), signal_id.Emit(builder)});
     }
   };
 
@@ -144,12 +136,11 @@ void CommitNotifyAggregateIfDesignSlot(
           ctx.GetLyraNotifySignalLocal(),
           {ctx.GetEnginePointer(),
            wt.canonical_signal_id->GetInstancePointer(ctx.GetInstancePointer()),
-           wt.ptr, wt.canonical_signal_id->Emit(builder)});
+           wt.canonical_signal_id->Emit(builder)});
     } else {
       builder.CreateCall(
           ctx.GetLyraNotifySignalGlobal(),
-          {ctx.GetEnginePointer(), wt.ptr,
-           wt.canonical_signal_id->Emit(builder)});
+          {ctx.GetEnginePointer(), wt.canonical_signal_id->Emit(builder)});
     }
   };
 

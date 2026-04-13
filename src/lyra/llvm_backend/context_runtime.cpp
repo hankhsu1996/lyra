@@ -906,10 +906,9 @@ auto Context::GetLyraNotifySignalLocal() -> llvm::Function* {
   if (lyra_notify_signal_local_ == nullptr) {
     auto* ptr_ty = llvm::PointerType::getUnqual(*llvm_context_);
     auto* i32_ty = llvm::Type::getInt32Ty(*llvm_context_);
-    // (eng, inst, slot_ptr, id)
+    // (eng, inst, id)
     auto* fn_type = llvm::FunctionType::get(
-        llvm::Type::getVoidTy(*llvm_context_), {ptr_ty, ptr_ty, ptr_ty, i32_ty},
-        false);
+        llvm::Type::getVoidTy(*llvm_context_), {ptr_ty, ptr_ty, i32_ty}, false);
     lyra_notify_signal_local_ = llvm::Function::Create(
         fn_type, llvm::Function::ExternalLinkage, "LyraNotifySignalLocal",
         llvm_module_.get());
@@ -921,8 +920,9 @@ auto Context::GetLyraNotifySignalGlobal() -> llvm::Function* {
   if (lyra_notify_signal_global_ == nullptr) {
     auto* ptr_ty = llvm::PointerType::getUnqual(*llvm_context_);
     auto* i32_ty = llvm::Type::getInt32Ty(*llvm_context_);
+    // (eng, id)
     auto* fn_type = llvm::FunctionType::get(
-        llvm::Type::getVoidTy(*llvm_context_), {ptr_ty, ptr_ty, i32_ty}, false);
+        llvm::Type::getVoidTy(*llvm_context_), {ptr_ty, i32_ty}, false);
     lyra_notify_signal_global_ = llvm::Function::Create(
         fn_type, llvm::Function::ExternalLinkage, "LyraNotifySignalGlobal",
         llvm_module_.get());

@@ -1114,13 +1114,11 @@ extern "C" void LyraNotifyContainerMutationGlobal(
   MarkDirtyTyped(AsEngine(eng), GlobalSignalId{id}, off, size);
 }
 
-extern "C" void LyraNotifySignalLocal(
-    void* eng, void* inst, const void* slot, uint32_t id) {
-  if (eng == nullptr || slot == nullptr) return;
+extern "C" void LyraNotifySignalLocal(void* eng, void* inst, uint32_t id) {
+  if (eng == nullptr) return;
   AsEngine(eng)->MarkDirty(MakeLocalRef(inst, id));
 }
-extern "C" void LyraNotifySignalGlobal(
-    void* eng, const void* slot, uint32_t id) {
-  if (eng == nullptr || slot == nullptr) return;
+extern "C" void LyraNotifySignalGlobal(void* eng, uint32_t id) {
+  if (eng == nullptr) return;
   AsEngine(eng)->MarkDirty(GlobalSignalId{id});
 }
