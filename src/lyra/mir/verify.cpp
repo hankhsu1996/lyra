@@ -3,6 +3,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <format>
+#include <span>
 #include <string>
 #include <string_view>
 #include <unordered_map>
@@ -32,18 +33,24 @@
 namespace lyra::mir {
 
 auto RequireExternalRefRecipe(
-    const CompiledModuleBody& body, ExternalRefId id, const char* where)
-    -> const ExternalAccessRecipe& {
-  const auto* recipe = body.GetExternalAccessRecipe(id);
-  if (recipe == nullptr || !(recipe->ref_id == id)) {
+    std::span<const ExternalAccessRecipe> recipes, ExternalRefId id,
+    const char* where) -> const ExternalAccessRecipe& {
+  if (id.value >= recipes.size()) {
     throw common::InternalError(
-        where, std::format("invalid ExternalRefId {}", id.value));
+        where, std::format(
+                   "ExternalRefId {} out of range (table has {})", id.value,
+                   recipes.size()));
   }
-  if (recipe->type.value == 0) {
+  const auto& recipe = recipes[id.value];
+  if (!(recipe.ref_id == id)) {
+    throw common::InternalError(
+        where, std::format("ExternalRefId {} position mismatch", id.value));
+  }
+  if (recipe.type.value == 0) {
     throw common::InternalError(
         where, std::format("ExternalRefId {} has invalid type", id.value));
   }
-  return *recipe;
+  return recipe;
 }
 
 namespace {
@@ -340,8 +347,7 @@ auto IsSelectorType(const Type& type) -> bool {
 }
 
 // Get the TypeId for an operand (for type checking edge args).
-// Phase-aware: in kPreBackend, ExternalRefId resolves through the body's
-// external_refs table. In kBackendReady, ExternalRefId is illegal.
+// Operands are value-only: Constant, PlaceId, or TempId.
 auto GetOperandType(
     const Operand& op, [[maybe_unused]] const std::vector<BasicBlock>& blocks,
     const Arena& arena, const VerifyContext& cx,
@@ -361,15 +367,6 @@ auto GetOperandType(
             }
             // Temp not found - this will be caught by VerifyUseTempDefined
             return TypeId{0};
-          },
-          [&](ExternalRefId id) -> TypeId {
-            if (cx.phase == VerifyContext::Phase::kPreBackend) {
-              const auto& recipe =
-                  RequireExternalRefRecipe(*cx.body, id, "GetOperandType");
-              return recipe.type;
-            }
-            throw common::InternalError(
-                "MIR verify", "ExternalRefId in backend-ready MIR");
           },
       },
       op.payload);
@@ -647,9 +644,9 @@ void VerifyStatementOwnership(
     if (const auto* pid = std::get_if<PlaceId>(&target)) {
       verify_place(*pid, ctx);
     } else if (cx.phase == VerifyContext::Phase::kPreBackend) {
-      // Validate ExternalRefId resolves in pre-backend mode
       auto ext_id = std::get<ExternalRefId>(target);
-      RequireExternalRefRecipe(*cx.body, ext_id, "VerifyStatementOwnership");
+      RequireExternalRefRecipe(
+          cx.external_refs, ext_id, "VerifyStatementOwnership");
     }
   };
 
@@ -968,6 +965,29 @@ void VerifyBlockParamsAndEdgeArgs(
                       routine_kind, i, j));
             }
           }
+          // ExternalReadRvalueInfo: no operands, valid recipe ref,
+          // recipe type must match DefineTemp result type
+          if (const auto* ext =
+                  std::get_if<ExternalReadRvalueInfo>(&rv->info)) {
+            if (!rv->operands.empty()) {
+              throw common::InternalError(
+                  "MIR verify",
+                  std::format(
+                      "{}: block {} stmt {}: ExternalReadRvalueInfo must "
+                      "have 0 operands, got {}",
+                      routine_kind, i, j, rv->operands.size()));
+            }
+            const auto& recipe = RequireExternalRefRecipe(
+                cx.external_refs, ext->ref, "VerifyExternalReadRvalue");
+            if (!(recipe.type == dt->type)) {
+              throw common::InternalError(
+                  "MIR verify",
+                  std::format(
+                      "{}: block {} stmt {}: ExternalReadRvalueInfo recipe "
+                      "type ({}) != DefineTemp result type ({})",
+                      routine_kind, i, j, recipe.type.value, dt->type.value));
+            }
+          }
         }
       }
 
@@ -1142,15 +1162,17 @@ void VerifyProcess(
 void VerifyPreBackendBody(
     const CompiledModuleBody& body, const TypeArena& types,
     std::string_view label) {
+  std::span<const ExternalAccessRecipe> ext_refs{body.external_refs};
   VerifyContext cx{
-      .body = &body,
       .types = &types,
       .phase = VerifyContext::Phase::kPreBackend,
+      .external_refs = ext_refs,
   };
 
   // Verify external_refs table integrity.
   for (uint32_t i = 0; i < body.external_refs.size(); ++i) {
-    RequireExternalRefRecipe(body, ExternalRefId{i}, "VerifyPreBackendBody");
+    RequireExternalRefRecipe(
+        ext_refs, ExternalRefId{i}, "VerifyPreBackendBody");
   }
 
   // Walk all processes and functions through the common verifier.
@@ -1165,22 +1187,13 @@ void VerifyPreBackendBody(
         std::format("{}:func[{}]", label, i));
   }
 
-  // Verify all ExternalRefId operands and write targets reference valid
-  // entries. Uses the generic walkers for complete coverage.
-  auto check_blocks = [&](const std::vector<BasicBlock>& blocks,
-                          std::string_view routine_label) {
-    for (size_t bi = 0; bi < blocks.size(); ++bi) {
-      auto block_ctx = std::format("{}:block[{}]", routine_label, bi);
-      for (const auto& stmt : blocks[bi].statements) {
-        ForEachOperand(stmt.data, [&](const Operand& op) {
-          if (op.kind == Operand::Kind::kExternalRef) {
-            auto id = std::get<ExternalRefId>(op.payload);
-            RequireExternalRefRecipe(body, id, "VerifyPreBackendBody");
-          }
-        });
+  // Verify all ExternalRefId write targets reference valid entries.
+  auto check_blocks = [&](const std::vector<BasicBlock>& blocks) {
+    for (const auto& block : blocks) {
+      for (const auto& stmt : block.statements) {
         ForEachWriteTarget(stmt.data, [&](const WriteTarget& t) {
           if (const auto* ext = std::get_if<ExternalRefId>(&t)) {
-            RequireExternalRefRecipe(body, *ext, "VerifyPreBackendBody");
+            RequireExternalRefRecipe(ext_refs, *ext, "VerifyPreBackendBody");
           }
         });
       }
@@ -1189,32 +1202,23 @@ void VerifyPreBackendBody(
 
   for (size_t i = 0; i < body.processes.size(); ++i) {
     const auto& proc = body.arena[body.processes[i]];
-    check_blocks(proc.blocks, std::format("{}:proc[{}]", label, i));
+    check_blocks(proc.blocks);
   }
   for (size_t i = 0; i < body.functions.size(); ++i) {
     const auto& func = body.arena[body.functions[i]];
-    check_blocks(func.blocks, std::format("{}:func[{}]", label, i));
+    check_blocks(func.blocks);
   }
 }
 
 void VerifyBackendReadyBody(
     const CompiledModuleBody& body, std::string_view label) {
-  // Backend-ready MIR must contain no ExternalRefId in any operand or
-  // write target. Uses the generic walkers for complete coverage.
+  // Backend-ready MIR must contain no ExternalRefId write targets.
+  // Operands are value-only and never carry ExternalRefId.
+  // External reads are explicit ExternalReadRvalueInfo rvalues.
   auto check_blocks = [&](const std::vector<BasicBlock>& blocks,
                           std::string_view routine_label) {
     for (size_t bi = 0; bi < blocks.size(); ++bi) {
       for (const auto& stmt : blocks[bi].statements) {
-        ForEachOperand(stmt.data, [&](const Operand& op) {
-          if (op.kind == Operand::Kind::kExternalRef) {
-            throw common::InternalError(
-                "VerifyBackendReadyBody",
-                std::format(
-                    "{}: {}:block[{}]: ExternalRefId operand in "
-                    "backend-ready MIR",
-                    label, routine_label, bi));
-          }
-        });
         ForEachWriteTarget(stmt.data, [&](const WriteTarget& t) {
           if (IsExternalWrite(t)) {
             throw common::InternalError(

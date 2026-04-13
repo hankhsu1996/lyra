@@ -13,6 +13,7 @@
 #include "lyra/common/type.hpp"
 #include "lyra/mir/builtin.hpp"
 #include "lyra/mir/effect.hpp"
+#include "lyra/mir/external_ref.hpp"
 #include "lyra/mir/handle.hpp"
 #include "lyra/mir/operand.hpp"
 #include "lyra/mir/operator.hpp"
@@ -187,6 +188,15 @@ struct SystemCmdRvalueInfo {
   std::optional<TypedOperand> command;  // nullopt = system(NULL)
 };
 
+// ExternalRead: read the current value from a non-local external location.
+// Produces a normal value from the external reference described by ref.
+// This is the explicit read boundary for hierarchical references --
+// external locations must cross this boundary to enter value flow.
+// No operands: the location is fully described by the recipe.
+struct ExternalReadRvalueInfo {
+  ExternalRefId ref;
+};
+
 // Select: conditional value selection for direct two-state scalar values.
 // This rvalue is currently restricted to decision bookkeeping payloads
 // (i8 / i16 / bit) and is not a generic four-state or aggregate select.
@@ -205,7 +215,7 @@ using RvalueInfo = std::variant<
     ReplicateRvalueInfo, SFormatRvalueInfo, TestPlusargsRvalueInfo,
     FopenRvalueInfo, RuntimeQueryRvalueInfo, MathCallRvalueInfo,
     SystemTfRvalueInfo, ArrayQueryRvalueInfo, SystemCmdRvalueInfo,
-    SelectRvalueInfo>;
+    SelectRvalueInfo, ExternalReadRvalueInfo>;
 
 struct Rvalue {
   std::vector<Operand> operands;
@@ -257,6 +267,8 @@ inline auto GetRvalueKind(const RvalueInfo& info) -> const char* {
           return "system_cmd";
         } else if constexpr (std::is_same_v<T, SelectRvalueInfo>) {
           return "select";
+        } else if constexpr (std::is_same_v<T, ExternalReadRvalueInfo>) {
+          return "external_read";
         } else {
           static_assert(false, "unhandled RvalueInfo kind");
         }

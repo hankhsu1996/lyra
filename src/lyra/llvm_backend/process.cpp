@@ -2324,7 +2324,8 @@ struct PlaceCollector {
               std::is_same_v<T, mir::MathCallRvalueInfo> ||
               std::is_same_v<T, mir::SystemTfRvalueInfo> ||
               std::is_same_v<T, mir::ArrayQueryRvalueInfo> ||
-              std::is_same_v<T, mir::SelectRvalueInfo>) {
+              std::is_same_v<T, mir::SelectRvalueInfo> ||
+              std::is_same_v<T, mir::ExternalReadRvalueInfo>) {
             // These RvalueInfo types have no embedded PlaceIds or Operands
             // beyond what's in Rvalue::operands (already collected above)
           } else {

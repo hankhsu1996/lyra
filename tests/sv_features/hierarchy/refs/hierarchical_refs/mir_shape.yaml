@@ -1,0 +1,122 @@
+feature: hierarchical_refs_mir_shape
+description: MIR shape assertions for external_read boundary
+
+cases:
+  - name: simple_assign_mir
+    description: Continuous assign from hierarchical ref produces external_read rvalue
+    dump_mir: true
+    sv: |
+      module Child;
+        logic [7:0] value;
+        initial value = 8'hAB;
+      endmodule
+
+      module Top;
+        Child u_child();
+        logic [7:0] x;
+
+        assign x = u_child.value;
+
+        initial begin
+          #1;
+          $display("x = %h", x);
+        end
+      endmodule
+    expect:
+      stdout:
+        contains: ["x = ab"]
+      compiler_output:
+        contains: ["external_read("]
+        not_contains: ["ext_ref("]
+
+  - name: binary_op_mir
+    description: Hierarchical ref in binary op produces external_read before computation
+    dump_mir: true
+    sv: |
+      module Child;
+        logic [7:0] value;
+        initial value = 8'h10;
+      endmodule
+
+      module Top;
+        Child u_child();
+        logic [7:0] x;
+
+        assign x = u_child.value + 8'h01;
+
+        initial begin
+          #1;
+          $display("x = %h", x);
+        end
+      endmodule
+    expect:
+      stdout:
+        contains: ["x = 11"]
+      compiler_output:
+        contains: ["external_read("]
+        not_contains: ["ext_ref("]
+
+  - name: call_arg_mir
+    description: Hierarchical ref as call argument produces external_read before call
+    dump_mir: true
+    sv: |
+      module Child;
+        int value;
+        initial value = 10;
+      endmodule
+
+      module Top;
+        Child u_child();
+        int result;
+
+        function automatic int double_it(int v);
+          return v * 2;
+        endfunction
+
+        assign result = double_it(u_child.value);
+
+        initial begin
+          #1;
+          $display("result = %0d", result);
+        end
+      endmodule
+    expect:
+      stdout:
+        contains: ["result = 20"]
+      compiler_output:
+        contains: ["external_read("]
+        not_contains: ["ext_ref("]
+
+  - name: ternary_mir
+    description: Ternary with hierarchical refs produces external_read per arm, value edge args
+    dump_mir: true
+    sv: |
+      module Child;
+        logic [7:0] a, b;
+        initial begin
+          a = 8'hAA;
+          b = 8'hBB;
+        end
+      endmodule
+
+      module Top;
+        Child u_child();
+        logic sel;
+        logic [7:0] x;
+
+        assign x = sel ? u_child.a : u_child.b;
+
+        initial begin
+          sel = 1;
+          #1;
+          $display("x = %h", x);
+        end
+      endmodule
+    expect:
+      stdout:
+        contains: ["x = aa"]
+      compiler_output:
+        contains:
+          - "external_read("
+          - "jump bb3($t"
+        not_contains: ["ext_ref("]

@@ -161,11 +161,8 @@ void CollectReadsFromOperand(
     CollectReadsFromPlace(place_id, arena[place_id], arena, must_def, obs);
     return;
   }
-  if (op.kind == Operand::Kind::kExternalRef) {
-    auto ref_id = std::get<ExternalRefId>(op.payload);
-    obs.pending_external_refs.push_back(ref_id);
-    return;
-  }
+  // ExternalRefId reads are now explicit ExternalReadRvalueInfo rvalues,
+  // handled in CollectReadsFromRhs via the rvalue path.
 }
 
 void CollectReadsFromRhs(
@@ -216,6 +213,9 @@ void CollectReadsFromRvalue(
           [](const SystemTfRvalueInfo&) {},
           [](const ArrayQueryRvalueInfo&) {},
           [](const SelectRvalueInfo&) {},
+          [&](const ExternalReadRvalueInfo& info) {
+            obs.pending_external_refs.push_back(info.ref);
+          },
           [&](const SystemCmdRvalueInfo& info) {
             if (info.command) {
               CollectReadsFromOperand(

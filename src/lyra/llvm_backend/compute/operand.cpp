@@ -242,9 +242,6 @@ auto LowerOperandRaw(
             const auto& tv = context.ReadTempValue(temp_id.value);
             return BuildRawValueFromTempValue(context.GetBuilder(), tv);
           },
-          [&context](mir::ExternalRefId ref_id) -> Result<llvm::Value*> {
-            return context.LoadExternalRef(ref_id);
-          },
       },
       operand.payload);
 }
@@ -291,16 +288,13 @@ auto ResolveOperandPlace(Context& /*context*/, const mir::Operand& operand)
           [](mir::TempId) -> std::optional<mir::PlaceId> {
             return std::nullopt;
           },
-          [&](mir::ExternalRefId) -> std::optional<mir::PlaceId> {
-            return std::nullopt;
-          },
       },
       operand.payload);
 }
 
 auto GetOperandTypeId(Context& context, const mir::Operand& operand) -> TypeId {
   const auto& types = context.GetTypeArena();
-  // Place-backed operands (PlaceId, ExternalRefId): derive from Place.
+  // Place-backed operands: derive from Place.
   auto place = ResolveOperandPlace(context, operand);
   if (place.has_value()) {
     return mir::TypeOfPlace(types, context.LookupPlace(*place));
@@ -316,9 +310,6 @@ auto GetOperandTypeId(Context& context, const mir::Operand& operand) -> TypeId {
             throw common::InternalError(
                 "GetOperandTypeId",
                 "PlaceId not handled by ResolveOperandPlace");
-          },
-          [&context](mir::ExternalRefId ref_id) -> TypeId {
-            return context.GetExternalRefType(ref_id);
           },
       },
       operand.payload);
@@ -348,11 +339,6 @@ auto IsOperandFourState(Context& context, const mir::Operand& operand) -> bool {
             throw common::InternalError(
                 "IsOperandFourState",
                 "PlaceId not handled by ResolveOperandPlace");
-          },
-          [&context, &types](mir::ExternalRefId ref_id) -> bool {
-            TypeId type_id = context.GetExternalRefType(ref_id);
-            const Type& type = types[type_id];
-            return IsPacked(type) && context.IsPackedFourState(type);
           },
       },
       operand.payload);

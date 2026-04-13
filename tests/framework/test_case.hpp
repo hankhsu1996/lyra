@@ -60,6 +60,7 @@ struct TestCase {
   bool dump_repertoire = false;          // Dump generate repertoire observation
   bool dump_repertoire_desc = false;     // Dump repertoire descriptor
   bool dump_dpi_header = false;          // Dump generated DPI-C header
+  bool dump_mir = false;                 // Dump MIR to compiler_output
   bool dump_llvm_ir = false;             // Dump LLVM IR module
   std::optional<std::vector<uint64_t>> expected_cover_hits;
   // NBA routing boundary assertions: {generic_queue: N, deferred_local: N}

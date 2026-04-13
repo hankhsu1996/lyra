@@ -330,6 +330,7 @@ auto LoadTestCasesFromYaml(const std::string& path) -> std::vector<TestCase> {
          "dump_repertoire",
          "dump_repertoire_desc",
          "dump_dpi_header",
+         "dump_mir",
          "dump_llvm_ir",
          "disable_assertions",
          "single_unit",
@@ -419,6 +420,9 @@ auto LoadTestCasesFromYaml(const std::string& path) -> std::vector<TestCase> {
     }
     if (node["dump_dpi_header"]) {
       test_case.dump_dpi_header = node["dump_dpi_header"].as<bool>();
+    }
+    if (node["dump_mir"]) {
+      test_case.dump_mir = node["dump_mir"].as<bool>();
     }
     if (node["dump_llvm_ir"]) {
       test_case.dump_llvm_ir = node["dump_llvm_ir"].as<bool>();
