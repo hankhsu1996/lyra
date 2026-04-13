@@ -58,8 +58,6 @@ struct RealizationEmissionResult {
     llvm::Value* trace_meta_word_count = nullptr;
     llvm::Value* trace_meta_pool = nullptr;
     llvm::Value* trace_meta_pool_size = nullptr;
-    llvm::Value* instance_paths = nullptr;
-    llvm::Value* instance_path_count = nullptr;
     llvm::Value* instance_ptrs = nullptr;
     llvm::Value* instance_count = nullptr;
     llvm::Value* instance_bundles = nullptr;

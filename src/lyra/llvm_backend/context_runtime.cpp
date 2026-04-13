@@ -329,16 +329,13 @@ auto Context::GetLyraRunSimulation() -> llvm::Function* {
   if (lyra_run_simulation_ == nullptr) {
     // void LyraRunSimulation(ptr* processes, ptr* states, uint32_t num,
     //                        const char** plusargs, uint32_t num_plusargs,
-    //                        const char** instance_paths, uint32_t num_paths,
     //                        const LyraRuntimeAbi* abi,
     //                        void* run_session_ptr)
     auto* ptr_ty = llvm::PointerType::getUnqual(*llvm_context_);
     auto* i32_ty = llvm::Type::getInt32Ty(*llvm_context_);
     auto* fn_type = llvm::FunctionType::get(
         llvm::Type::getVoidTy(*llvm_context_),
-        {ptr_ty, ptr_ty, i32_ty, ptr_ty, i32_ty, ptr_ty, i32_ty, ptr_ty,
-         ptr_ty},
-        false);
+        {ptr_ty, ptr_ty, i32_ty, ptr_ty, i32_ty, ptr_ty, ptr_ty}, false);
     lyra_run_simulation_ = llvm::Function::Create(
         fn_type, llvm::Function::ExternalLinkage, "LyraRunSimulation",
         llvm_module_.get());

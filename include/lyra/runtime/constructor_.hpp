@@ -207,12 +207,6 @@ struct ConstructionResult {
   // Constructor-produced trace signal metadata.
   RealizedTraceSignalMeta trace_signal_meta;
 
-  // Constructor-owned instance paths for runtime naming (%m).
-  std::vector<std::string> instance_paths;
-  // Stable C-string pointer view into instance_paths.
-  // Populated during Finalize, valid for the lifetime of this result.
-  std::vector<const char*> instance_path_ptrs;
-
   // Stable raw pointer view into instances for the runtime ABI.
   // Populated during Finalize, valid for the lifetime of this result.
   std::vector<const RuntimeInstance*> instance_ptrs;

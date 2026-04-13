@@ -57,13 +57,10 @@ void LyraRunProcessSync(LyraProcessFunc process, void* state);
 // - num_processes: total simulation processes (connection + module)
 // - plusargs: optional array of C strings for $plusargs (nullptr if none)
 // - num_plusargs: number of plusargs (0 if none)
-// - instance_paths: optional array of C strings for %m (nullptr if none)
-// - num_instance_paths: number of instance paths (0 if none)
 // - abi: versioned runtime descriptor with metadata tables and feature flags
 void LyraRunSimulation(
     LyraProcessFunc* connection_funcs, void** states, uint32_t num_processes,
-    const char** plusargs, uint32_t num_plusargs, const char** instance_paths,
-    uint32_t num_instance_paths, const LyraRuntimeAbi* abi,
+    const char** plusargs, uint32_t num_plusargs, const LyraRuntimeAbi* abi,
     void* run_session_ptr);
 
 // $test$plusargs: prefix match against plusargs.

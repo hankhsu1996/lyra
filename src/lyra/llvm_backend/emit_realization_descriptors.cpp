@@ -446,8 +446,6 @@ struct ConstructorRuntimeFuncs {
   llvm::Function* result_get_trace_meta_word_count;
   llvm::Function* result_get_trace_meta_pool;
   llvm::Function* result_get_trace_meta_pool_size;
-  llvm::Function* result_get_instance_paths;
-  llvm::Function* result_get_instance_path_count;
   llvm::Function* result_get_instances;
   llvm::Function* result_get_instance_count;
   llvm::Function* result_get_instance_bundles;
@@ -520,10 +518,6 @@ auto DeclareConstructorRuntimeFuncs(Context& context)
           "LyraConstructionResultGetTraceSignalMetaPool", ptr_ty, {ptr_ty}),
       .result_get_trace_meta_pool_size = declare(
           "LyraConstructionResultGetTraceSignalMetaPoolSize", i32_ty, {ptr_ty}),
-      .result_get_instance_paths =
-          declare("LyraConstructionResultGetInstancePaths", ptr_ty, {ptr_ty}),
-      .result_get_instance_path_count = declare(
-          "LyraConstructionResultGetInstancePathCount", i32_ty, {ptr_ty}),
       .result_get_instances =
           declare("LyraConstructionResultGetInstances", ptr_ty, {ptr_ty}),
       .result_get_instance_count =
@@ -739,10 +733,6 @@ auto EmitConstructorFunction(
       rt.result_get_trace_meta_pool, {result}, "trace_meta_pool");
   auto* trace_meta_pool_size = builder.CreateCall(
       rt.result_get_trace_meta_pool_size, {result}, "trace_meta_pool_sz");
-  auto* inst_paths = builder.CreateCall(
-      rt.result_get_instance_paths, {result}, "instance_paths");
-  auto* inst_path_count = builder.CreateCall(
-      rt.result_get_instance_path_count, {result}, "instance_path_count");
   auto* inst_ptrs =
       builder.CreateCall(rt.result_get_instances, {result}, "instance_ptrs");
   auto* inst_count = builder.CreateCall(
@@ -779,8 +769,6 @@ auto EmitConstructorFunction(
               .trace_meta_word_count = trace_meta_word_count,
               .trace_meta_pool = trace_meta_pool,
               .trace_meta_pool_size = trace_meta_pool_size,
-              .instance_paths = inst_paths,
-              .instance_path_count = inst_path_count,
               .instance_ptrs = inst_ptrs,
               .instance_count = inst_count,
               .instance_bundles = inst_bundles,
@@ -865,8 +853,6 @@ auto EmitRealizationAndConstructor(
               .trace_meta_pool = ctor.observation_meta.trace_meta_pool,
               .trace_meta_pool_size =
                   ctor.observation_meta.trace_meta_pool_size,
-              .instance_paths = ctor.observation_meta.instance_paths,
-              .instance_path_count = ctor.observation_meta.instance_path_count,
               .instance_ptrs = ctor.observation_meta.instance_ptrs,
               .instance_count = ctor.observation_meta.instance_count,
               .instance_bundles = ctor.observation_meta.instance_bundles,

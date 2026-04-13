@@ -19,7 +19,6 @@
 
 #include "lyra/common/internal_error.hpp"
 #include "lyra/common/origin_id.hpp"
-#include "lyra/common/type_arena.hpp"
 #include "lyra/llvm_backend/codegen_session.hpp"
 #include "lyra/llvm_backend/context.hpp"
 #include "lyra/llvm_backend/cu_facts.hpp"
@@ -614,14 +613,12 @@ auto BuildRuntimeAbi(
 void EmitRunSimulation(
     Context& context, llvm::Constant* funcs_array, llvm::Value* states_array,
     llvm::Value* num_processes, const PlusargsSetup& plusargs,
-    const RealizationEmissionResult::ObservationMeta& observation_meta,
     llvm::Value* abi_alloca, llvm::Value* run_session_ptr) {
   auto& builder = context.GetBuilder();
 
   builder.CreateCall(
       context.GetLyraRunSimulation(),
       {funcs_array, states_array, num_processes, plusargs.array, plusargs.count,
-       observation_meta.instance_paths, observation_meta.instance_path_count,
        abi_alloca, run_session_ptr});
 }
 
@@ -780,8 +777,6 @@ auto EmitDesignMain(
         .trace_meta_word_count = llvm::ConstantInt::get(i32_ty, 0),
         .trace_meta_pool = null_ptr,
         .trace_meta_pool_size = llvm::ConstantInt::get(i32_ty, 0),
-        .instance_paths = null_ptr,
-        .instance_path_count = llvm::ConstantInt::get(i32_ty, 0),
         .instance_ptrs = null_ptr,
         .instance_count = llvm::ConstantInt::get(i32_ty, 0),
         .instance_bundles = null_ptr,
@@ -830,7 +825,7 @@ auto EmitDesignMain(
 
     EmitRunSimulation(
         context, connection_funcs, states_array, num_total_val, plusargs,
-        observation_meta_for_abi, abi_alloca, run_session_ptr);
+        abi_alloca, run_session_ptr);
 
   } else {
     // No simulation processes or kernelized connections. Still need

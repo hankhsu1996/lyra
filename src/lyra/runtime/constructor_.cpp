@@ -36,8 +36,6 @@ ConstructionResult::ConstructionResult(ConstructionResult&& other) noexcept
       trigger_meta(std::move(other.trigger_meta)),
       slot_meta(std::move(other.slot_meta)),
       trace_signal_meta(std::move(other.trace_signal_meta)),
-      instance_paths(std::move(other.instance_paths)),
-      instance_path_ptrs(std::move(other.instance_path_ptrs)),
       instance_ptrs(std::move(other.instance_ptrs)) {
 }
 
@@ -56,8 +54,6 @@ auto ConstructionResult::operator=(ConstructionResult&& other) noexcept
     trigger_meta = std::move(other.trigger_meta);
     slot_meta = std::move(other.slot_meta);
     trace_signal_meta = std::move(other.trace_signal_meta);
-    instance_paths = std::move(other.instance_paths);
-    instance_path_ptrs = std::move(other.instance_path_ptrs);
     instance_ptrs = std::move(other.instance_ptrs);
   }
   return *this;
@@ -811,17 +807,7 @@ auto Constructor::AppendString(std::string_view s) -> uint32_t {
   return off;
 }
 
-namespace {
-
-void PopulateInstancePathPtrs(ConstructionResult& result) {
-  result.instance_path_ptrs.clear();
-  result.instance_path_ptrs.reserve(result.instance_paths.size());
-  for (const auto& p : result.instance_paths) {
-    result.instance_path_ptrs.push_back(p.c_str());
-  }
-}
-
-}  // namespace
+namespace {}  // namespace
 
 auto Constructor::Finalize() -> ConstructionResult {
   CheckNotFinalized("Constructor::Finalize");
@@ -942,13 +928,6 @@ auto Constructor::Finalize() -> ConstructionResult {
     result.instances[i]->path_c_str = result.instances[i]->path_storage.c_str();
   }
 
-  // Build exported path views for the C API.
-  result.instance_paths.resize(result.instances.size());
-  for (uint32_t i = 0; i < result.instances.size(); ++i) {
-    result.instance_paths[i] = result.instances[i]->path_storage;
-  }
-  PopulateInstancePathPtrs(result);
-
   // Build stable raw pointer view for the runtime ABI.
   result.instance_ptrs.reserve(result.instances.size());
   for (const auto& inst : result.instances) {
@@ -970,7 +949,7 @@ auto Constructor::Finalize() -> ConstructionResult {
   // R4: validate and move per-instance metadata bundles.
   result.instance_bundles = std::move(staged_bundles_);
 
-  if (result.instance_bundles.size() != result.instance_paths.size() ||
+  if (result.instance_bundles.size() != result.instances.size() ||
       result.instance_bundles.size() != result.instances.size()) {
     throw common::InternalError(
         "Constructor::Finalize", "R4 bundle/path/instance count mismatch");
@@ -1014,7 +993,7 @@ auto Constructor::Finalize() -> ConstructionResult {
               i, bundle.instance_id, bundle.instance->instance_id));
     }
 
-    result.instance_bundles[i].instance_path = result.instance_paths[i].c_str();
+    result.instance_bundles[i].instance_path = result.instances[i]->path_c_str;
   }
 
   return result;
@@ -1594,20 +1573,6 @@ auto LyraConstructionResultGetTraceSignalMetaPoolSize(void* result_raw)
   return static_cast<uint32_t>(
       static_cast<lyra::runtime::ConstructionResult*>(result_raw)
           ->trace_signal_meta.pool.size());
-}
-
-auto LyraConstructionResultGetInstancePaths(void* result_raw) -> const char** {
-  ValidateHandle(result_raw, "LyraConstructionResultGetInstancePaths");
-  auto& result = *static_cast<lyra::runtime::ConstructionResult*>(result_raw);
-  if (result.instance_path_ptrs.empty()) return nullptr;
-  return result.instance_path_ptrs.data();
-}
-
-auto LyraConstructionResultGetInstancePathCount(void* result_raw) -> uint32_t {
-  ValidateHandle(result_raw, "LyraConstructionResultGetInstancePathCount");
-  return static_cast<uint32_t>(
-      static_cast<lyra::runtime::ConstructionResult*>(result_raw)
-          ->instance_paths.size());
 }
 
 auto LyraConstructionResultGetInstances(void* result_raw)
