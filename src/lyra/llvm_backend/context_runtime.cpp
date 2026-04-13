@@ -165,15 +165,27 @@ auto Context::GetLyraPrintEnd() -> llvm::Function* {
   return lyra_print_end_;
 }
 
+auto Context::GetLyraCreateVarSnapshotBuffer() -> llvm::Function* {
+  if (lyra_create_var_snapshot_buffer_ == nullptr) {
+    // ptr LyraCreateVarSnapshotBuffer()
+    auto* ptr_ty = llvm::PointerType::getUnqual(*llvm_context_);
+    auto* fn_type = llvm::FunctionType::get(ptr_ty, false);
+    lyra_create_var_snapshot_buffer_ = llvm::Function::Create(
+        fn_type, llvm::Function::ExternalLinkage, "LyraCreateVarSnapshotBuffer",
+        llvm_module_.get());
+  }
+  return lyra_create_var_snapshot_buffer_;
+}
+
 auto Context::GetLyraRegisterVar() -> llvm::Function* {
   if (lyra_register_var_ == nullptr) {
-    // void LyraRegisterVar(const char*, void*, int32_t, int32_t, bool, bool)
+    // void LyraRegisterVar(buf, name, addr, kind, width, is_signed, is_4s)
     auto* ptr_ty = llvm::PointerType::getUnqual(*llvm_context_);
     auto* i32_ty = llvm::Type::getInt32Ty(*llvm_context_);
     auto* i1_ty = llvm::Type::getInt1Ty(*llvm_context_);
     auto* fn_type = llvm::FunctionType::get(
         llvm::Type::getVoidTy(*llvm_context_),
-        {ptr_ty, ptr_ty, i32_ty, i32_ty, i1_ty, i1_ty}, false);
+        {ptr_ty, ptr_ty, ptr_ty, i32_ty, i32_ty, i1_ty, i1_ty}, false);
     lyra_register_var_ = llvm::Function::Create(
         fn_type, llvm::Function::ExternalLinkage, "LyraRegisterVar",
         llvm_module_.get());
@@ -183,10 +195,10 @@ auto Context::GetLyraRegisterVar() -> llvm::Function* {
 
 auto Context::GetLyraSnapshotVars() -> llvm::Function* {
   if (lyra_snapshot_vars_ == nullptr) {
-    // void LyraSnapshotVars(void* run_session_ptr)
+    // void LyraSnapshotVars(buf, run_session_ptr)
     auto* ptr_ty = llvm::PointerType::getUnqual(*llvm_context_);
     auto* fn_type = llvm::FunctionType::get(
-        llvm::Type::getVoidTy(*llvm_context_), {ptr_ty}, false);
+        llvm::Type::getVoidTy(*llvm_context_), {ptr_ty, ptr_ty}, false);
     lyra_snapshot_vars_ = llvm::Function::Create(
         fn_type, llvm::Function::ExternalLinkage, "LyraSnapshotVars",
         llvm_module_.get());

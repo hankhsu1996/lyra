@@ -8,6 +8,7 @@
 #include <fstream>
 #include <iterator>
 #include <limits>
+#include <memory>
 #include <optional>
 #include <span>
 #include <string>
@@ -32,8 +33,6 @@
 #include "lyra/semantic/format.hpp"
 #include "lyra/semantic/value.hpp"
 
-namespace {
-
 enum class VarKind : int32_t {
   kIntegral = 0,
   kReal = 1,
@@ -48,9 +47,11 @@ struct VarEntry {
   bool is_four_state;
 };
 
-// NOLINTBEGIN(cppcoreguidelines-avoid-non-const-global-variables)
-std::vector<VarEntry> g_registered_vars;
-// NOLINTEND(cppcoreguidelines-avoid-non-const-global-variables)
+struct VarSnapshotBuffer {
+  std::vector<VarEntry> entries;
+};
+
+namespace {
 
 // Delegates to the shared ABI contract.
 auto GetIntegralStorageBytes(uint32_t width) -> size_t {
@@ -160,22 +161,29 @@ extern "C" void LyraPrintEnd(void* engine_ptr, int32_t kind) {
   }
 }
 
+extern "C" auto LyraCreateVarSnapshotBuffer()
+    -> gsl::owner<VarSnapshotBuffer*> {
+  return new VarSnapshotBuffer();
+}
+
 extern "C" void LyraRegisterVar(
-    const char* name, void* addr, int32_t kind, int32_t width, bool is_signed,
-    bool is_four_state) {
-  g_registered_vars.push_back(
+    VarSnapshotBuffer* buf, const char* name, void* addr, int32_t kind,
+    int32_t width, bool is_signed, bool is_four_state) {
+  buf->entries.push_back(
       {name, addr, static_cast<VarKind>(kind), width, is_signed,
        is_four_state});
 }
 
-extern "C" void LyraSnapshotVars(void* run_session_ptr) {
+extern "C" void LyraSnapshotVars(
+    gsl::owner<VarSnapshotBuffer*> buf, void* run_session_ptr) {
   if (run_session_ptr == nullptr) {
     throw lyra::common::InternalError(
         "LyraSnapshotVars", "run_session_ptr must not be null");
   }
   auto* session = static_cast<lyra::runtime::RunSession*>(run_session_ptr);
   session->output.DrainSimOutputBuffer();
-  for (const auto& var : g_registered_vars) {
+  auto snapshot = std::unique_ptr<VarSnapshotBuffer>(buf);
+  for (const auto& var : snapshot->entries) {
     switch (var.kind) {
       case VarKind::kIntegral: {
         auto value = ReadPackedIntegralFromSlot(
@@ -196,7 +204,6 @@ extern "C" void LyraSnapshotVars(void* run_session_ptr) {
       }
     }
   }
-  g_registered_vars.clear();
 }
 
 extern "C" auto LyraFopenFd(

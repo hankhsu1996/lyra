@@ -2,6 +2,7 @@
 
 #include <cstdint>
 
+#include "lyra/common/gsl_owner.hpp"
 #include "lyra/runtime/string.hpp"
 
 // Element kind for $readmem/$writemem - determines storage layout
@@ -9,6 +10,9 @@ enum class MemElementKind : int32_t {
   kTwoState = 0,   // Packed 2-state integral (single value)
   kFourState = 1,  // Packed 4-state integral (value + x_mask struct)
 };
+
+// Opaque buffer for variable snapshot accumulation.
+struct VarSnapshotBuffer;
 
 extern "C" {
 
@@ -47,17 +51,24 @@ void LyraPrintValue(
 // Finalize output: newline for kDisplay (0), nothing for kWrite (1)
 void LyraPrintEnd(void* engine, int32_t kind);
 
-// Register a variable for snapshot. Called at program init.
+// Create an explicit variable snapshot buffer.
+// Returned handle is passed to LyraRegisterVar / LyraSnapshotVars.
+auto LyraCreateVarSnapshotBuffer() -> gsl::owner<VarSnapshotBuffer*>;
+
+// Register a variable into an explicit snapshot buffer.
+// buffer: handle from LyraCreateVarSnapshotBuffer
 // kind: 0 = integral, 1 = real
 // is_four_state: true for 4-state types (logic, reg), slot layout is
 //                {value_plane, unknown_plane}
 void LyraRegisterVar(
-    const char* name, void* addr, int32_t kind, int32_t width, bool is_signed,
-    bool is_four_state);
+    VarSnapshotBuffer* buffer, const char* name, void* addr, int32_t kind,
+    int32_t width, bool is_signed, bool is_four_state);
 
-// Output all registered variables. Called before exit.
+// Output all registered variables and destroy the buffer.
+// Consumes the buffer handle (must not be used after this call).
 // run_session_ptr: opaque pointer to lyra::runtime::RunSession.
-void LyraSnapshotVars(void* run_session_ptr);
+void LyraSnapshotVars(
+    gsl::owner<VarSnapshotBuffer*> buffer, void* run_session_ptr);
 
 // $fopen with mode (FD mode) - returns int32, 0 on failure
 // engine: opaque pointer to lyra::runtime::Engine
