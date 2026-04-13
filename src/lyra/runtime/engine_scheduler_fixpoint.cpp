@@ -751,7 +751,7 @@ void Engine::FlushAndPropagateConnections() {
           auto buf_off = static_cast<uint32_t>(fp_work_.snapshot_buf.size());
           fp_work_.snapshot_buf.resize(buf_off + meta.total_bytes);
           const auto* slot_base =
-              ResolveSlotBase(meta, design_state_base_, const_instances_);
+              runtime::ResolveGlobalSlotBase(meta, design_state_base_);
           std::memcpy(
               &fp_work_.snapshot_buf[buf_off], slot_base, meta.total_bytes);
           fp_work_.global_snapshot_index[gid.value] =
@@ -856,7 +856,7 @@ void Engine::FlushAndPropagateConnections() {
               fp_work_.snapshots[fp_work_.global_snapshot_index[gid.value]];
           const auto& snap_meta = slot_meta_registry_.Get(snap.slot_id);
           const auto* snap_base =
-              ResolveSlotBase(snap_meta, design_state_base_, const_instances_);
+              runtime::ResolveGlobalSlotBase(snap_meta, design_state_base_);
           if (std::memcmp(
                   snap_base, &fp_work_.snapshot_buf[snap.buf_off],
                   snap.total_bytes) == 0) {

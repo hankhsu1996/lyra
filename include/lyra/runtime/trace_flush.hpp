@@ -30,8 +30,7 @@ class UpdateSet;
 // UpdateSet::Clear() afterward.
 void FlushGlobalDirtySlotsToTrace(
     trace::TraceManager& trace, const SlotMetaRegistry& slot_registry,
-    const void* design_state_base,
-    std::span<const RuntimeInstance* const> instances, const UpdateSet& updates,
+    const void* design_state_base, const UpdateSet& updates,
     const TraceSelectionRegistry& selection, uint32_t global_slot_count);
 
 // R5: Flush dirty local slots for all instances to trace manager.

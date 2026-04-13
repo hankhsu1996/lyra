@@ -185,7 +185,7 @@ TEST(TraceSelectionTest, ProducerSkipsDeselectedSlots) {
 
   // All selected: both slots should emit.
   FlushGlobalDirtySlotsToTrace(
-      tm, slot_meta, design_state.data(), {}, updates, selection, 2);
+      tm, slot_meta, design_state.data(), updates, selection, 2);
 
   uint32_t value_changes = 0;
   for (const auto& event : sink_ptr->events) {
@@ -203,7 +203,7 @@ TEST(TraceSelectionTest, ProducerSkipsDeselectedSlots) {
   selection.SetSelected(0, false);
 
   FlushGlobalDirtySlotsToTrace(
-      tm, slot_meta, design_state.data(), {}, updates, selection, 2);
+      tm, slot_meta, design_state.data(), updates, selection, 2);
 
   value_changes = 0;
   std::vector<uint32_t> emitted_slots;
@@ -225,7 +225,7 @@ TEST(TraceSelectionTest, ProducerSkipsDeselectedSlots) {
   selection.SelectNone();
 
   FlushGlobalDirtySlotsToTrace(
-      tm, slot_meta, design_state.data(), {}, updates, selection, 2);
+      tm, slot_meta, design_state.data(), updates, selection, 2);
 
   value_changes = 0;
   for (const auto& event : sink_ptr->events) {

@@ -1,7 +1,6 @@
 #pragma once
 
 #include <cstdint>
-#include <span>
 #include <vector>
 
 #include "lyra/runtime/signal_coord.hpp"
@@ -49,13 +48,18 @@ enum class SlotStorageDomain : uint8_t {
   kInstanceOwned = 1,
 };
 
+struct RuntimeInstance;
+
 // Metadata for a single design slot's storage location and byte layout.
+// Pure descriptor -- no live runtime pointers. Cross-domain dispatch that
+// needs a RuntimeInstance* must resolve owner_instance_id externally.
 struct SlotMeta {
   SlotStorageDomain domain = SlotStorageDomain::kDesignGlobal;
 
   // For kDesignGlobal: arena-absolute byte offset within design_state.
   uint32_t design_base_off = 0;
-  // For kInstanceOwned: instance_id of the owning RuntimeInstance.
+  // For kInstanceOwned: stable numeric identity of the owning instance.
+  // Retained for trace metadata, diagnostics, and dump output.
   InstanceId owner_instance_id = InstanceId{0};
   // For kInstanceOwned: body-relative byte offset within the instance's
   // inline storage.
@@ -69,8 +73,6 @@ struct SlotMeta {
   uint32_t storage_owner_slot_id = 0;
 };
 
-struct RuntimeInstance;
-
 // Resolve a body-relative byte offset against instance's two-region storage.
 // Offsets in [0, inline_size) map to inline_base.
 // Offsets in [inline_size, inline_size + appendix_size) map to appendix_base.
@@ -79,16 +81,14 @@ struct RuntimeInstance;
     const RuntimeInstance& instance, uint32_t rel_off, uint32_t access_size,
     const char* caller) -> uint8_t*;
 
-// Resolve the byte address of a slot's storage given its metadata.
-// For kDesignGlobal: returns design_state_base + design_base_off.
-// For kInstanceOwned: dispatches through ResolveInstanceStorageOffset.
-[[nodiscard]] auto ResolveSlotBase(
-    const SlotMeta& meta, const void* design_state_base,
-    std::span<const RuntimeInstance* const> instances) -> const uint8_t*;
+// Resolve the byte address of a design-global slot.
+// Validates that meta.domain == kDesignGlobal.
+// For global-only callers that never touch instance-owned slots.
+[[nodiscard]] auto ResolveGlobalSlotBase(
+    const SlotMeta& meta, const void* design_state_base) -> const uint8_t*;
 
-[[nodiscard]] auto ResolveSlotBaseMut(
-    const SlotMeta& meta, void* design_state_base,
-    std::span<const RuntimeInstance* const> instances) -> uint8_t*;
+[[nodiscard]] auto ResolveGlobalSlotBaseMut(
+    const SlotMeta& meta, void* design_state_base) -> uint8_t*;
 
 // Dense registry of slot metadata, indexed by slot_id.
 // One-time initialized from the ABI word table passed to LyraRunSimulation.

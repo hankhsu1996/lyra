@@ -173,8 +173,7 @@ auto SnapshotLocalSlotValue(
 
 void FlushGlobalDirtySlotsToTrace(
     trace::TraceManager& trace, const SlotMetaRegistry& slot_registry,
-    const void* design_state_base,
-    std::span<const RuntimeInstance* const> instances, const UpdateSet& updates,
+    const void* design_state_base, const UpdateSet& updates,
     const TraceSelectionRegistry& selection, uint32_t global_slot_count) {
   for (uint32_t slot_id : updates.DirtySlots()) {
     if (slot_id >= global_slot_count) {
@@ -187,7 +186,7 @@ void FlushGlobalDirtySlotsToTrace(
     }
     if (!selection.IsSelected(slot_id)) continue;
     const auto& meta = slot_registry.Get(slot_id);
-    const auto* slot_base = ResolveSlotBase(meta, design_state_base, instances);
+    const auto* slot_base = ResolveGlobalSlotBase(meta, design_state_base);
     trace.EmitGlobalValueChange(
         GlobalSignalId{slot_id},
         SnapshotGlobalSlotValue(slot_id, meta, slot_base));

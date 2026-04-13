@@ -623,7 +623,7 @@ auto Engine::TakeSchedulerSnapshot() const -> SchedulerSnapshot {
                 ref.signal.value < slot_meta_registry_.Size()) {
               const auto& meta = slot_meta_registry_.Get(ref.signal.value);
               auto storage = std::span(
-                  ResolveSlotBase(meta, design_state_base_, const_instances_),
+                  runtime::ResolveGlobalSlotBase(meta, design_state_base_),
                   meta.total_bytes);
               if (!storage.empty()) {
                 uint8_t byte_val = storage[group.byte_offset];

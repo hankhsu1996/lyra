@@ -613,7 +613,7 @@ auto Engine::RefreshInstalledSnapshots(ProcessHandle handle) -> bool {
     if (!update_set_.IsDeltaDirty(ref.signal.value)) continue;
     const auto& meta = slot_meta_registry_.Get(ref.signal.value);
     auto storage = std::span(
-        ResolveSlotBase(meta, design_state_base_, const_instances_),
+        runtime::ResolveGlobalSlotBase(meta, design_state_base_),
         meta.total_bytes);
 
     switch (ref.kind) {
@@ -1286,7 +1286,7 @@ auto Engine::SubscribeGlobalChange(
   sub.flags = initially_active ? kSubActive : 0;
 
   auto storage = std::span(
-      ResolveSlotBase(meta, design_state_base_, const_instances_),
+      runtime::ResolveGlobalSlotBase(meta, design_state_base_),
       meta.total_bytes);
   const auto* src = &storage[byte_offset];
   if (byte_size <= ChangeSub::kInlineSnapshotCap) {
@@ -1415,7 +1415,7 @@ auto Engine::SubscribeGlobalEdge(
   auto proc_sub_idx = static_cast<uint32_t>(proc_state.global_sub_refs.size());
 
   auto storage = std::span(
-      ResolveSlotBase(meta, design_state_base_, const_instances_),
+      runtime::ResolveGlobalSlotBase(meta, design_state_base_),
       meta.total_bytes);
   uint8_t initial_last_bit = (storage[byte_offset] >> bit_index) & 1;
   uint8_t group_idx = FindOrCreateEdgeGroupInSlot(
@@ -1680,7 +1680,7 @@ auto Engine::SubscribeGlobalContainerElement(
   const auto& meta = slot_meta_registry_.Get(signal.value);
   auto& slot = signal_subs_[signal.value];
   const auto* slot_base =
-      ResolveSlotBase(meta, design_state_base_, const_instances_);
+      runtime::ResolveGlobalSlotBase(meta, design_state_base_);
 
   auto sub_idx = static_cast<uint32_t>(slot.container_subs.size());
   auto proc_sub_idx = static_cast<uint32_t>(proc_state.global_sub_refs.size());
@@ -1869,8 +1869,7 @@ void Engine::InstallRebindDepWatchers(
             const auto& meta = slot_meta_registry_.Get(sig.value);
             dep_subs = &signal_subs_[sig.value];
             dep_total_bytes = meta.total_bytes;
-            dep_base =
-                ResolveSlotBase(meta, design_state_base_, const_instances_);
+            dep_base = runtime::ResolveGlobalSlotBase(meta, design_state_base_);
           }
 
           auto watcher_idx =
@@ -2002,7 +2001,7 @@ void Engine::SubscribeGlobalRebind(
 
   const auto& tmeta = slot_meta_registry_.Get(target_signal.value);
   auto target_storage = std::span(
-      ResolveSlotBase(tmeta, design_state_base_, const_instances_),
+      runtime::ResolveGlobalSlotBase(tmeta, design_state_base_),
       tmeta.total_bytes);
 
   if (target_kind == SubKind::kEdge) {

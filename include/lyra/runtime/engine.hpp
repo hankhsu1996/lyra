@@ -647,7 +647,7 @@ class Engine {
           "Engine::GetInstancePath",
           std::format("invalid instance_id {}", instance_id));
     }
-    return std::string_view(inst->path_c_str);
+    return {inst->path_c_str};
   }
 
   // Build the DPI scope registry from instances_.

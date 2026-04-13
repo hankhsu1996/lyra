@@ -48,41 +48,44 @@ auto ResolveInstanceStorageOffset(
                     rel_off, end, total_size));
   }
 
+  auto as_bytes = [](std::byte* base, uint64_t size) {
+    return std::span(reinterpret_cast<uint8_t*>(base), size);
+  };
+
   if (rel_off < inline_size) {
-    return reinterpret_cast<uint8_t*>(instance.storage.inline_base) + rel_off;
+    return &as_bytes(instance.storage.inline_base, inline_size)[rel_off];
   }
 
-  return reinterpret_cast<uint8_t*>(instance.storage.appendix_base) +
-         (rel_off - inline_size);
+  return &as_bytes(
+      instance.storage.appendix_base, appendix_size)[rel_off - inline_size];
 }
 
-auto ResolveSlotBase(
-    const SlotMeta& meta, const void* design_state_base,
-    std::span<const RuntimeInstance* const> instances) -> const uint8_t* {
-  if (meta.domain == SlotStorageDomain::kDesignGlobal) {
-    return static_cast<const uint8_t*>(design_state_base) +
-           meta.design_base_off;
+auto ResolveGlobalSlotBase(const SlotMeta& meta, const void* design_state_base)
+    -> const uint8_t* {
+  if (meta.domain != SlotStorageDomain::kDesignGlobal) {
+    throw common::InternalError(
+        "ResolveGlobalSlotBase", std::format(
+                                     "expected kDesignGlobal, got domain {}",
+                                     static_cast<int>(meta.domain)));
   }
-  const auto* instance = instances[meta.owner_instance_id.value];
-  if (instance == nullptr) {
-    throw common::InternalError("ResolveSlotBase", "null RuntimeInstance");
-  }
-  return ResolveInstanceStorageOffset(
-      *instance, meta.instance_rel_off, meta.total_bytes, "ResolveSlotBase");
+  auto base = std::span(
+      static_cast<const uint8_t*>(design_state_base),
+      meta.design_base_off + meta.total_bytes);
+  return &base[meta.design_base_off];
 }
 
-auto ResolveSlotBaseMut(
-    const SlotMeta& meta, void* design_state_base,
-    std::span<const RuntimeInstance* const> instances) -> uint8_t* {
-  if (meta.domain == SlotStorageDomain::kDesignGlobal) {
-    return static_cast<uint8_t*>(design_state_base) + meta.design_base_off;
+auto ResolveGlobalSlotBaseMut(const SlotMeta& meta, void* design_state_base)
+    -> uint8_t* {
+  if (meta.domain != SlotStorageDomain::kDesignGlobal) {
+    throw common::InternalError(
+        "ResolveGlobalSlotBaseMut", std::format(
+                                        "expected kDesignGlobal, got domain {}",
+                                        static_cast<int>(meta.domain)));
   }
-  const auto* instance = instances[meta.owner_instance_id.value];
-  if (instance == nullptr) {
-    throw common::InternalError("ResolveSlotBaseMut", "null RuntimeInstance");
-  }
-  return ResolveInstanceStorageOffset(
-      *instance, meta.instance_rel_off, meta.total_bytes, "ResolveSlotBaseMut");
+  auto base = std::span(
+      static_cast<uint8_t*>(design_state_base),
+      meta.design_base_off + meta.total_bytes);
+  return &base[meta.design_base_off];
 }
 
 SlotMetaRegistry::SlotMetaRegistry(const uint32_t* words, uint32_t count) {

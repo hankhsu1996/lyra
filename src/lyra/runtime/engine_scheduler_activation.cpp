@@ -378,8 +378,8 @@ void Engine::FlushDirtySlots() {
     trace_manager_.EmitTimeAdvance(current_time_, current_delta_);
     if (!update_set_.IsEmpty() && design_state_base_ != nullptr) {
       FlushGlobalDirtySlotsToTrace(
-          trace_manager_, slot_meta_registry_, design_state_base_,
-          const_instances_, update_set_, trace_selection_, global_slot_count_);
+          trace_manager_, slot_meta_registry_, design_state_base_, update_set_,
+          trace_selection_, global_slot_count_);
     }
     FlushLocalDirtySlotsToTrace(trace_manager_, timeslot_dirty_instances_);
   }

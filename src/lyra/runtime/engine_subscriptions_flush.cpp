@@ -245,8 +245,8 @@ void Engine::RebindLocalSubscription(uint32_t idx) {
 
   bool should_deactivate = false;
   int64_t index_val = EvaluateIndexPlan(
-      design_state_base_, const_instances_, slot_meta_registry_,
-      target.instance, plan_span, &should_deactivate);
+      design_state_base_, slot_meta_registry_, target.instance, plan_span,
+      &should_deactivate);
 
   auto set_inactive = [&]() {
     if (target.kind == SubKind::kEdge) {
@@ -385,8 +385,8 @@ void Engine::RebindGlobalSubscription(uint32_t idx) {
 
   bool should_deactivate = false;
   int64_t index_val = EvaluateIndexPlan(
-      design_state_base_, const_instances_, slot_meta_registry_, nullptr,
-      plan_span, &should_deactivate);
+      design_state_base_, slot_meta_registry_, nullptr, plan_span,
+      &should_deactivate);
 
   auto set_inactive = [&]() {
     if (target.kind == SubKind::kEdge) {
@@ -411,7 +411,7 @@ void Engine::RebindGlobalSubscription(uint32_t idx) {
 
     const auto& cmeta = slot_meta_registry_.Get(ccold.container_signal_id);
     const uint8_t* cbase =
-        ResolveSlotBase(cmeta, design_state_base_, instances_);
+        runtime::ResolveGlobalSlotBase(cmeta, design_state_base_);
     void* handle_ptr = nullptr;
     std::memcpy(&handle_ptr, cbase, sizeof(void*));
 
@@ -456,7 +456,7 @@ void Engine::RebindGlobalSubscription(uint32_t idx) {
   // Resolve storage via global slot metadata.
   const auto& meta = slot_meta_registry_.Get(target.signal.value);
   auto slot_storage = std::span(
-      ResolveSlotBase(meta, design_state_base_, const_instances_),
+      runtime::ResolveGlobalSlotBase(meta, design_state_base_),
       meta.total_bytes);
 
   RebindEdgeGroupMigration(
@@ -702,28 +702,42 @@ void Engine::FlushGlobalSignalUpdates() {
 
   const bool detailed = detailed_stats_enabled_;
 
-  // Two-phase flush: rebinds globally first, then edge/change/container.
-  for (uint32_t slot_id : newly_dirty) {
-    auto& slot = signal_subs_[slot_id];
-    if (slot.rebind_subs.empty()) continue;
-    const auto& meta = slot_meta_registry_.Get(slot_id);
-    auto slot_storage = std::span(
-        ResolveSlotBase(meta, design_state_base_, const_instances_),
-        meta.total_bytes);
-    FlushSlotRebindSubs(slot.rebind_subs, slot_storage);
-  }
+  // Resolve metadata and storage once per dirty global slot.
+  struct ResolvedDirtySlot {
+    uint32_t slot_id;
+    SlotSubscriptions* subs;
+    std::span<const uint8_t> storage;
+  };
+
+  std::vector<ResolvedDirtySlot> resolved;
+  resolved.reserve(newly_dirty.size());
 
   for (uint32_t slot_id : newly_dirty) {
     auto& slot = signal_subs_[slot_id];
-    if (slot.edge_groups.empty() && slot.change_subs.empty() &&
-        slot.container_subs.empty())
+    bool has_rebinds = !slot.rebind_subs.empty();
+    bool has_subs = !slot.edge_groups.empty() || !slot.change_subs.empty() ||
+                    !slot.container_subs.empty();
+    if (!has_rebinds && !has_subs) continue;
+
+    const auto& meta = slot_meta_registry_.Get(slot_id);
+    auto storage = std::span(
+        runtime::ResolveGlobalSlotBase(meta, design_state_base_),
+        meta.total_bytes);
+    resolved.push_back({slot_id, &slot, storage});
+  }
+
+  // Two-phase flush: rebinds globally first, then edge/change/container.
+  for (const auto& r : resolved) {
+    if (r.subs->rebind_subs.empty()) continue;
+    FlushSlotRebindSubs(r.subs->rebind_subs, r.storage);
+  }
+
+  for (const auto& r : resolved) {
+    if (r.subs->edge_groups.empty() && r.subs->change_subs.empty() &&
+        r.subs->container_subs.empty())
       continue;
     if (detailed) ++stats_.detailed.flush_dirty_slots;
-    const auto& meta = slot_meta_registry_.Get(slot_id);
-    auto slot_storage = std::span(
-        ResolveSlotBase(meta, design_state_base_, const_instances_),
-        meta.total_bytes);
-    FlushDirtySlotPostRebind(slot_id, slot, slot_storage);
+    FlushDirtySlotPostRebind(r.slot_id, *r.subs, r.storage);
   }
 }
 
