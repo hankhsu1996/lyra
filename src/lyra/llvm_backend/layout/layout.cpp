@@ -2149,22 +2149,12 @@ auto BuildLayout(
   for (auto& info : layout.body_realization_infos) {
     info.slot_has_connection_notification.assign(info.slot_count, false);
   }
-  // Kernelized connections: resolve flat trigger_slot to (body_group,
-  // local_slot) via module_plans slot ranges.
+  // Kernelized connections: use structured trigger identity directly.
   for (const auto& entry : layout.connection_kernel_entries) {
-    auto trigger = entry.trigger_slot.value;
-    if (trigger < layout.num_package_slots) continue;
-    for (size_t mi = 0; mi < module_plans.size(); ++mi) {
-      const auto& plan = module_plans[mi];
-      if (trigger >= plan.design_state_base_slot &&
-          trigger < plan.design_state_base_slot + plan.slot_count) {
-        auto gi = layout.instance_body_groups[mi];
-        auto local_slot = trigger - plan.design_state_base_slot;
-        layout.body_realization_infos[gi]
-            .slot_has_connection_notification[local_slot] = true;
-        break;
-      }
-    }
+    auto gi = layout.instance_body_groups[entry.trigger_object_index.value];
+    layout.body_realization_infos[gi]
+        .slot_has_connection_notification[entry.trigger_local_slot.value] =
+        true;
   }
   // Non-kernelized connections: triggers are kObjectLocal or kDesignGlobal.
   for (mir::ProcessId proc_id : non_kernelized_connection_processes) {

@@ -4,6 +4,8 @@
 #include <optional>
 
 #include "lyra/common/edge_kind.hpp"
+#include "lyra/common/local_slot_id.hpp"
+#include "lyra/common/object_index.hpp"
 #include "lyra/common/slot_id.hpp"
 #include "lyra/metadata/design_metadata.hpp"
 #include "lyra/mir/handle.hpp"
@@ -30,6 +32,8 @@ struct ConnectionKernelEntry {
   common::SlotId src_slot;
   common::SlotId dst_slot;
   common::SlotId trigger_slot;
+  common::ObjectIndex trigger_object_index;
+  common::LocalSlotId trigger_local_slot;
   common::EdgeKind trigger_edge = common::EdgeKind::kAnyChange;
   std::optional<ResolvedObservation> trigger_observation;
   metadata::ConnectionKernelOrigin origin =

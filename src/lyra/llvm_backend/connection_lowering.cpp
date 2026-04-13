@@ -45,6 +45,8 @@ auto LowerConnectionArtifacts(const LoweringInput& input)
               .dst_slot =
                   to_flat_slot(is_p2c ? bc.child_target : bc.parent_source),
               .trigger_slot = to_flat_slot(bc.trigger),
+              .trigger_object_index = bc.trigger.object_index,
+              .trigger_local_slot = bc.trigger.local_slot,
               .trigger_edge = bc.trigger_edge,
               .trigger_observation = std::nullopt,
           });

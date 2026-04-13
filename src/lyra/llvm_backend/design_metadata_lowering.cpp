@@ -152,16 +152,14 @@ auto ExtractConnectionDescriptorEntries(
       dst_local_id = owner.local_signal_id.value;
     }
 
-    // R5: Classify trigger domain from layout slot ownership.
+    // R5: Classify trigger domain from structured trigger identity.
     uint8_t trigger_is_local = 0;
     uint32_t trigger_instance_id = 0;
     uint32_t trigger_local_id = 0;
     if (entry.trigger_slot.value >= num_package_slots) {
       trigger_is_local = 1;
-      auto owner = ResolveInstanceOwnedFlatSlot(
-          num_package_slots, instance_slot_counts, entry.trigger_slot.value);
-      trigger_instance_id = owner.instance_id.value;
-      trigger_local_id = owner.local_signal_id.value;
+      trigger_instance_id = entry.trigger_object_index.value;
+      trigger_local_id = entry.trigger_local_slot.value;
     }
 
     entries.push_back({
