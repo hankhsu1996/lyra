@@ -1,5 +1,6 @@
 #pragma once
 
+#include <algorithm>
 #include <cstdint>
 #include <limits>
 #include <optional>
@@ -10,9 +11,30 @@
 #include <slang/ast/symbols/InstanceSymbols.h>
 #include <slang/numeric/Time.h>
 
-#include "lyra/common/timescale_format.hpp"
-
 namespace lyra::lowering::ast_to_hir {
+
+/// Resolved timescale for a scope: unit and precision as powers of 10.
+/// Uses int for computation ergonomics. Downstream storage and ABI carriers
+/// narrow to int8_t (valid range [-15, 0]) at explicit storage boundaries.
+struct ResolvedTimeScale {
+  int unit_power;
+  int precision_power;
+};
+
+/// Canonical resolver for an optional slang TimeScale.
+/// Accepts the value returned by Scope::getTimeScale() or similar APIs.
+/// If the optional has a value, converts its base/precision to powers.
+/// If nullopt (no timescale in scope), maps to Lyra's canonical
+/// missing-timescale contract: 1ns/1ns, matching the IEEE 1800 default
+/// and slang's TimeLiteral fallback (TimeScale default constructor).
+/// All missing-timescale resolution in Lyra must go through this helper.
+inline auto ResolveScopeTimeScale(std::optional<slang::TimeScale> ts)
+    -> ResolvedTimeScale;
+
+/// Convenience projections -- delegate to ResolveScopeTimeScale.
+inline auto ResolveScopeUnitPower(std::optional<slang::TimeScale> ts) -> int;
+inline auto ResolveScopePrecisionPower(std::optional<slang::TimeScale> ts)
+    -> int;
 
 /// Compute 10^exponent with overflow checking.
 /// Returns std::nullopt on overflow or negative exponent.
@@ -70,6 +92,35 @@ inline auto TimeScaleValueToPower(const slang::TimeScaleValue& tsv) -> int {
   return base + magnitude_offset;
 }
 
+// IEEE 1800 default timescale when no `timescale directive is present.
+// Matches slang's TimeScaleValue default constructor (1ns) and the
+// TimeScale default constructor (1ns/1ns) used by TimeLiteral::fromSyntax.
+constexpr int kDefaultTimeUnitPower = -9;       // 1ns
+constexpr int kDefaultTimePrecisionPower = -9;  // 1ns
+
+inline auto ResolveScopeTimeScale(std::optional<slang::TimeScale> ts)
+    -> ResolvedTimeScale {
+  if (!ts) {
+    return {
+        .unit_power = kDefaultTimeUnitPower,
+        .precision_power = kDefaultTimePrecisionPower,
+    };
+  }
+  return {
+      .unit_power = TimeScaleValueToPower(ts->base),
+      .precision_power = TimeScaleValueToPower(ts->precision),
+  };
+}
+
+inline auto ResolveScopeUnitPower(std::optional<slang::TimeScale> ts) -> int {
+  return ResolveScopeTimeScale(ts).unit_power;
+}
+
+inline auto ResolveScopePrecisionPower(std::optional<slang::TimeScale> ts)
+    -> int {
+  return ResolveScopeTimeScale(ts).precision_power;
+}
+
 namespace detail {
 
 // Forward declaration for mutual recursion
@@ -81,10 +132,8 @@ inline void CollectMinPrecision(
   auto ts = inst.body.getTimeScale();
   if (ts) {
     int prec = TimeScaleValueToPower(ts->precision);
-    if (!found || prec < min_power) {
-      min_power = prec;
-      found = true;
-    }
+    min_power = found ? std::min(min_power, prec) : prec;
+    found = true;
   }
   CollectMinPrecisionFromScope(inst.body, min_power, found);
 }
@@ -117,13 +166,17 @@ inline void CollectMinPrecisionFromScope(
 }  // namespace detail
 
 /// Compute the global precision (finest timeprecision across all instances).
+/// Scans all instances for explicit timescales and returns the finest
+/// precision found. If no instance has an explicit timescale, returns
+/// the canonical default (1ns) via ResolveScopeTimeScale(nullopt).
 inline auto ComputeGlobalPrecision(slang::ast::Compilation& comp) -> int {
   int min_power = 0;
   bool found = false;
   for (const auto* inst : comp.getRoot().topInstances) {
     detail::CollectMinPrecision(*inst, min_power, found);
   }
-  return found ? min_power : kDefaultTimeScalePower;
+  return found ? min_power
+               : ResolveScopeTimeScale(std::nullopt).precision_power;
 }
 
 }  // namespace lyra::lowering::ast_to_hir

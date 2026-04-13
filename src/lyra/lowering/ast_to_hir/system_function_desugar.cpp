@@ -27,7 +27,6 @@
 #include "lyra/common/math_fn.hpp"
 #include "lyra/common/overloaded.hpp"
 #include "lyra/common/source_span.hpp"
-#include "lyra/common/timescale_format.hpp"
 #include "lyra/common/type.hpp"
 #include "lyra/hir/arena.hpp"
 #include "lyra/hir/expression.hpp"
@@ -827,19 +826,13 @@ auto LowerDesugarableSystemFunction(
                 std::get<slang::ast::CallExpression::SystemCallInfo>(
                     call.subroutine);
 
-            auto extract_power = [&](std::optional<slang::TimeScale> ts) {
-              if (!ts) {
-                return kDefaultTimeScalePower;
-              }
-              return TimeScaleValueToPower(
-                  kind == TimeScaleSysFnKind::kTimeunit ? ts->base
-                                                        : ts->precision);
-            };
+            // Resolve the scope argument into an optional<TimeScale>.
+            // Shared across both paths: argument validation and $root.
+            std::optional<slang::TimeScale> scope_ts;
+            bool is_root = false;
 
-            int power = kDefaultTimeScalePower;
             if (call.arguments().empty()) {
-              auto ts = sys_info.scope->getTimeScale();
-              power = extract_power(ts);
+              scope_ts = sys_info.scope->getTimeScale();
             } else {
               const auto* arg_expr = call.arguments()[0];
               if (arg_expr->kind !=
@@ -855,19 +848,30 @@ auto LowerDesugarableSystemFunction(
               const auto& sym = *arg.symbol;
 
               if (sym.kind == slang::ast::SymbolKind::Root) {
-                power =
-                    ComputeGlobalPrecision(sys_info.scope->getCompilation());
+                is_root = true;
               } else if (sym.kind == slang::ast::SymbolKind::CompilationUnit) {
-                auto ts = sym.as<CompilationUnitSymbol>().getTimeScale();
-                power = extract_power(ts);
+                scope_ts = sym.as<CompilationUnitSymbol>().getTimeScale();
               } else if (sym.kind == slang::ast::SymbolKind::Instance) {
-                auto ts = sym.as<InstanceSymbol>().body.getTimeScale();
-                power = extract_power(ts);
+                scope_ts = sym.as<InstanceSymbol>().body.getTimeScale();
               } else {
                 ctx->ErrorFmt(
                     span, "{}() unexpected symbol kind in argument",
                     call.getSubroutineName());
                 return hir::kInvalidExpressionId;
+              }
+            }
+
+            int power = 0;
+            if (is_root) {
+              power = ComputeGlobalPrecision(sys_info.scope->getCompilation());
+            } else {
+              switch (kind) {
+                case TimeScaleSysFnKind::kTimeunit:
+                  power = ResolveScopeUnitPower(scope_ts);
+                  break;
+                case TimeScaleSysFnKind::kTimeprecision:
+                  power = ResolveScopePrecisionPower(scope_ts);
+                  break;
               }
             }
 

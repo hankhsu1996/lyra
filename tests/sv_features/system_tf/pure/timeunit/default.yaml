@@ -137,10 +137,10 @@ cases:
         contains:
           - "timeunit=-9, timeprecision=-12"
 
-  # Default timescale tests (Lyra default is 1ps/1ps)
+  # Default timescale tests (IEEE 1800 default is 1ns/1ns, matching slang)
 
   - name: timeunit_default
-    description: Without timescale directive, returns default unit (1ps = -12)
+    description: Without timescale directive, returns default unit (1ns = -9)
     sv: |
       module Test;
         int u;
@@ -150,10 +150,10 @@ cases:
       endmodule
     expect:
       variables:
-        u: -12
+        u: -9
 
   - name: timeprecision_default
-    description: Without timescale directive, returns default precision (1ps = -12)
+    description: Without timescale directive, returns default precision (1ns = -9)
     sv: |
       module Test;
         int p;
@@ -163,7 +163,7 @@ cases:
       endmodule
     expect:
       variables:
-        p: -12
+        p: -9
 
   # $root argument tests - returns global simulation precision
 
@@ -394,7 +394,7 @@ cases:
           - "root_prec=-11"
 
   - name: root_no_timescale
-    description: $root returns default -12 when no module has explicit timescale
+    description: $root returns default -9 when no module has explicit timescale
     sv: |
       module Test;
         initial begin
@@ -404,7 +404,7 @@ cases:
     expect:
       stdout:
         contains:
-          - "unit=-12, prec=-12"
+          - "unit=-9, prec=-9"
 
   # Hierarchical path argument tests - query timescale of specific instance
 

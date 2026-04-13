@@ -1,5 +1,6 @@
 #include "lyra/runtime/output_sink.hpp"
 
+#include <cstdio>
 #include <functional>
 #include <string_view>
 
@@ -28,6 +29,7 @@ void WriteOutput(std::string_view text) {
     g_output_sink(text);
   } else {
     fmt::print("{}", text);
+    std::fflush(stdout);
   }
 }
 

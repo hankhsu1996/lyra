@@ -6,8 +6,6 @@
 
 namespace lyra {
 
-constexpr int kDefaultTimeScalePower = -12;  // 1ps (IEEE 1800 default)
-
 /// Convert power of 10 to human-readable time unit string.
 /// Examples: -9 -> "1ns", -8 -> "10ns", -10 -> "100ps"
 inline auto PowerToString(int power) -> std::string {

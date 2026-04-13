@@ -2,9 +2,9 @@ feature: printtimescale
 description: Tests for $printtimescale system task (IEEE 1800-2023 Section 20.4.2)
 
 cases:
-  # Basic tests with default timescale (1ps / 1ps when no `timescale directive)
+  # Basic tests with default timescale (1ns / 1ns, IEEE 1800 default)
   - name: printtimescale_default
-    description: $printtimescale() with default timescale (1ps / 1ps)
+    description: $printtimescale() with default timescale (1ns / 1ns)
     sv: |
       module Test;
         initial begin
@@ -15,7 +15,7 @@ cases:
       time: 0
       stdout:
         contains:
-          - "Time scale of 'Test' is 1ps / 1ps"
+          - "Time scale of 'Test' is 1ns / 1ns"
 
   # Explicit timescale 1ns / 1ps
   - name: printtimescale_1ns_1ps
@@ -82,7 +82,7 @@ cases:
           - "Time scale of 'Test' is 100ps / 1ps"
 
   # $printtimescale($root) - prints global precision
-  # Global precision is 1ps (finest precision, default)
+  # Global precision is 1ns (default, IEEE 1800)
   - name: printtimescale_root_default
     description: $printtimescale($root) with default timescale
     sv: |
@@ -95,7 +95,7 @@ cases:
       time: 0
       stdout:
         contains:
-          - "Time scale of '$root' is 1ps / 1ps"
+          - "Time scale of '$root' is 1ns / 1ns"
 
   # $printtimescale($root) with explicit timescale
   # Global precision should be 1ns (the timeprecision)

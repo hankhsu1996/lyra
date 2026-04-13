@@ -12,9 +12,15 @@ namespace lyra::lowering::ast_to_hir {
 
 /// Per-scope state for AST->HIR lowering.
 /// Immutable after construction; safe for parallel lowering.
+///
+/// Timescale fields are mixed-axis by design:
+///   unit_power           -- scope-local: what #1 means in this module
+///   global_precision_power -- compilation-wide: what one simulation tick means
+/// DelayScaler uses both to compute ratio = 10^(unit - global_precision).
 struct LoweringFrame {
-  int unit_power;  // Scope's timeunit as power of 10 (e.g., -9 for 1ns)
-  int global_precision_power;  // Compilation-wide finest precision
+  int unit_power = 0;  // Scope's timeunit as power of 10 (e.g., -9 for 1ns)
+  int global_precision_power =
+      0;  // Compilation-wide finest precision (not this scope's precision)
   // The slang instance being lowered. Used by hierarchical reference path
   // extraction to determine whether a path element is an ancestor
   // self-reference or a real child traversal step. Null for package lowering.
