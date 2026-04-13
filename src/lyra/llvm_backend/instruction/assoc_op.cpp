@@ -8,10 +8,10 @@
 #include "lyra/common/internal_error.hpp"
 #include "lyra/common/overloaded.hpp"
 #include "lyra/common/type.hpp"
-#include "lyra/llvm_backend/commit.hpp"
 #include "lyra/llvm_backend/compute/operand.hpp"
 #include "lyra/llvm_backend/context.hpp"
 #include "lyra/llvm_backend/cu_facts.hpp"
+#include "lyra/llvm_backend/instruction/commit_result.hpp"
 #include "lyra/llvm_backend/layout/union_storage.hpp"
 #include "lyra/llvm_backend/lifecycle.hpp"
 #include "lyra/llvm_backend/slot_access.hpp"
@@ -314,8 +314,9 @@ auto GetKeyAllocaSize(Context& ctx, const CuFacts& facts, TypeId key_type)
 
 }  // namespace
 
-auto LowerAssocOp(Context& ctx, const CuFacts& facts, const mir::AssocOp& op)
-    -> Result<void> {
+auto LowerAssocOp(
+    Context& ctx, const CuFacts& facts, SlotAccessResolver& resolver,
+    const mir::AssocOp& op) -> Result<void> {
   auto& builder = ctx.GetBuilder();
   auto* ptr_ty = llvm::PointerType::getUnqual(ctx.GetLlvmContext());
   auto* i32_ty = llvm::Type::getInt32Ty(ctx.GetLlvmContext());
@@ -353,9 +354,8 @@ auto LowerAssocOp(Context& ctx, const CuFacts& facts, const mir::AssocOp& op)
             auto* loaded =
                 builder.CreateLoad(*dest_llvm_type, out_alloca, "aa.get.val");
 
-            auto result = CommitValue(
-                ctx, facts, get.dest, loaded, elem_type,
-                OwnershipPolicy::kMove);
+            auto result =
+                CommitRuntimeResult(ctx, facts, resolver, get.dest, loaded);
             if (!result) return std::unexpected(result.error());
 
             // No Destroy here: kMove transfers ownership from the alloca
@@ -400,9 +400,8 @@ auto LowerAssocOp(Context& ctx, const CuFacts& facts, const mir::AssocOp& op)
                 ctx.GetLyraAssocExists(),
                 {*handle, key->key_a, key->key_b, key->key_c, null_ptr},
                 "aa.exists");
-            return CommitValue(
-                ctx, facts, exists.dest, result,
-                PlaceType(ctx, facts, exists.dest), OwnershipPolicy::kMove);
+            return CommitRuntimeResult(
+                ctx, facts, resolver, exists.dest, result);
           },
           [&](const mir::AssocDelete& /*del*/) -> Result<void> {
             auto handle = LoadHandle(ctx, op.receiver);
@@ -430,9 +429,7 @@ auto LowerAssocOp(Context& ctx, const CuFacts& facts, const mir::AssocOp& op)
             auto* size = builder.CreateCall(
                 ctx.GetLyraAssocSize(), {*handle}, "aa.size");
             auto* size32 = builder.CreateTrunc(size, i32_ty, "aa.size32");
-            return CommitValue(
-                ctx, facts, num.dest, size32, PlaceType(ctx, facts, num.dest),
-                OwnershipPolicy::kMove);
+            return CommitRuntimeResult(ctx, facts, resolver, num.dest, size32);
           },
           [&](const mir::AssocIterFirst& iter) -> Result<void> {
             auto handle = LoadHandle(ctx, op.receiver);
@@ -467,16 +464,14 @@ auto LowerAssocOp(Context& ctx, const CuFacts& facts, const mir::AssocOp& op)
             if (!key_llvm) return std::unexpected(key_llvm.error());
             auto* key_val =
                 builder.CreateLoad(*key_llvm, key_alloca, "aa.iter.kv");
-            auto result = CommitValue(
-                ctx, facts, iter.out_key, key_val, key_type,
-                OwnershipPolicy::kMove);
+            auto result = CommitRuntimeResult(
+                ctx, facts, resolver, iter.out_key, key_val);
             if (!result) return std::unexpected(result.error());
             builder.CreateBr(done_bb);
 
             builder.SetInsertPoint(done_bb);
-            return CommitValue(
-                ctx, facts, iter.dest_found, found,
-                PlaceType(ctx, facts, iter.dest_found), OwnershipPolicy::kMove);
+            return CommitRuntimeResult(
+                ctx, facts, resolver, iter.dest_found, found);
           },
           [&](const mir::AssocIterLast& iter) -> Result<void> {
             auto handle = LoadHandle(ctx, op.receiver);
@@ -511,16 +506,14 @@ auto LowerAssocOp(Context& ctx, const CuFacts& facts, const mir::AssocOp& op)
             if (!key_llvm) return std::unexpected(key_llvm.error());
             auto* key_val =
                 builder.CreateLoad(*key_llvm, key_alloca, "aa.iter.kv");
-            auto result = CommitValue(
-                ctx, facts, iter.out_key, key_val, key_type,
-                OwnershipPolicy::kMove);
+            auto result = CommitRuntimeResult(
+                ctx, facts, resolver, iter.out_key, key_val);
             if (!result) return std::unexpected(result.error());
             builder.CreateBr(done_bb);
 
             builder.SetInsertPoint(done_bb);
-            return CommitValue(
-                ctx, facts, iter.dest_found, found,
-                PlaceType(ctx, facts, iter.dest_found), OwnershipPolicy::kMove);
+            return CommitRuntimeResult(
+                ctx, facts, resolver, iter.dest_found, found);
           },
           [&](const mir::AssocIterNext& iter) -> Result<void> {
             auto handle = LoadHandle(ctx, op.receiver);
@@ -563,16 +556,14 @@ auto LowerAssocOp(Context& ctx, const CuFacts& facts, const mir::AssocOp& op)
             builder.SetInsertPoint(commit_bb);
             auto* new_key =
                 builder.CreateLoad(*key_llvm, key_alloca, "aa.next.kv");
-            auto result = CommitValue(
-                ctx, facts, iter.key_place, new_key, key_type,
-                OwnershipPolicy::kMove);
+            auto result = CommitRuntimeResult(
+                ctx, facts, resolver, iter.key_place, new_key);
             if (!result) return std::unexpected(result.error());
             builder.CreateBr(done_bb);
 
             builder.SetInsertPoint(done_bb);
-            return CommitValue(
-                ctx, facts, iter.dest_found, found,
-                PlaceType(ctx, facts, iter.dest_found), OwnershipPolicy::kMove);
+            return CommitRuntimeResult(
+                ctx, facts, resolver, iter.dest_found, found);
           },
           [&](const mir::AssocIterPrev& iter) -> Result<void> {
             auto handle = LoadHandle(ctx, op.receiver);
@@ -614,16 +605,14 @@ auto LowerAssocOp(Context& ctx, const CuFacts& facts, const mir::AssocOp& op)
             builder.SetInsertPoint(commit_bb);
             auto* new_key =
                 builder.CreateLoad(*key_llvm, key_alloca, "aa.prev.kv");
-            auto result = CommitValue(
-                ctx, facts, iter.key_place, new_key, key_type,
-                OwnershipPolicy::kMove);
+            auto result = CommitRuntimeResult(
+                ctx, facts, resolver, iter.key_place, new_key);
             if (!result) return std::unexpected(result.error());
             builder.CreateBr(done_bb);
 
             builder.SetInsertPoint(done_bb);
-            return CommitValue(
-                ctx, facts, iter.dest_found, found,
-                PlaceType(ctx, facts, iter.dest_found), OwnershipPolicy::kMove);
+            return CommitRuntimeResult(
+                ctx, facts, resolver, iter.dest_found, found);
           },
           [&](const mir::AssocSnapshot& snap) -> Result<void> {
             auto handle = LoadHandle(ctx, op.receiver);
@@ -639,7 +628,6 @@ auto LowerAssocOp(Context& ctx, const CuFacts& facts, const mir::AssocOp& op)
                 ctx.GetLyraAssocSnapshotSize(), {snapshot}, "aa.snap.sz");
 
             // Allocate dynamic array for keys
-            auto dest_type = PlaceType(ctx, facts, snap.dest_keys);
             auto elem_ops = ctx.GetElemOpsForType(key_type);
             if (!elem_ops) return std::unexpected(elem_ops.error());
 
@@ -690,20 +678,17 @@ auto LowerAssocOp(Context& ctx, const CuFacts& facts, const mir::AssocOp& op)
             builder.SetInsertPoint(done_bb);
             builder.CreateCall(ctx.GetLyraAssocSnapshotRelease(), {snapshot});
 
-            return CommitValue(
-                ctx, facts, snap.dest_keys, new_arr, dest_type,
-                OwnershipPolicy::kMove);
+            return CommitRuntimeResult(
+                ctx, facts, resolver, snap.dest_keys, new_arr);
           },
       },
       op.data);
 }
 
-auto LowerAssocOp(
-    Context& ctx, const CuFacts& facts, SlotAccessResolver& /*resolver*/,
-    const mir::AssocOp& op) -> Result<void> {
-  // AssocOp is a boundary statement -- sync happens before it.
-  // Delegate to canonical version.
-  return LowerAssocOp(ctx, facts, op);
+auto LowerAssocOp(Context& ctx, const CuFacts& facts, const mir::AssocOp& op)
+    -> Result<void> {
+  CanonicalSlotAccess canonical(ctx, facts);
+  return LowerAssocOp(ctx, facts, canonical, op);
 }
 
 }  // namespace lyra::lowering::mir_to_llvm

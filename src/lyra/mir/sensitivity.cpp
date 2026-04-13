@@ -248,11 +248,13 @@ void TransferStatement(
     ObservationSet& obs) {
   std::visit(
       common::Overloaded{
-          [&](const Assign& assign) {
+          [&](const auto& assign)
+            requires(kIsDirectAssign<std::decay_t<decltype(assign)>>)
+          {
             // 1. Collect reads from RHS
             CollectReadsFromRhs(assign.rhs, arena, must_def, obs);
             // 2. Transfer: unconditional whole-signal write extends must-def.
-            // Phase 1: only plain Assign to an unprojected signal root.
+            // Phase 1: only direct assign to an unprojected signal root.
             // Projected, guarded, and deferred writes are conservative.
             // ExternalRefId targets have no local place -- skip must-def.
             const auto* dest_pid = std::get_if<PlaceId>(&assign.dest);
@@ -310,8 +312,17 @@ void TransferStatement(
             // Conservative: assoc ops do not extend must-def
           },
           [](const TriggerEvent&) {},
-      },
-      stmt.data);
+          [&](const Initialize& init) {
+            // Initialize writes to a place with a value, same as Assign.
+            CollectReadsFromOperand(init.value, arena, must_def, obs);
+            const auto& dest = arena[init.dest];
+            auto path = TryExtractWholeSignalPath(dest);
+            if (path.has_value()) {
+              must_def.Insert(*path);
+            }
+          },
+          },
+          stmt.data);
 }
 
 // Collect reads from a terminator (conditions, selectors, edge args).

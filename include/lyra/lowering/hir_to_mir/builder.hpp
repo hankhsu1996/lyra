@@ -62,15 +62,20 @@ class MirBuilder {
       mir::Arena* arena, Context* ctx, OriginMap* origin_map,
       DecisionSiteAllocator* decision_allocator = nullptr);
 
-  // Instruction emission.
-  void EmitAssign(mir::PlaceId target, mir::Operand source);
-  void EmitAssign(mir::PlaceId target, mir::Rvalue value);
-  // B2: WriteTarget overloads for external ref support.
-  void EmitAssign(mir::WriteTarget target, mir::Operand source);
-  void EmitAssign(mir::WriteTarget target, mir::Rvalue value);
+  // Explicit write-mode assignment emission.
+  void EmitPlainAssign(mir::WriteTarget target, mir::RightHandSide rhs);
+  void EmitCopyAssign(mir::WriteTarget target, mir::RightHandSide rhs);
+  void EmitMoveAssign(mir::WriteTarget target, mir::RightHandSide rhs);
+
+  // Auto-classifying assignment: determines PlainAssign/CopyAssign/MoveAssign
+  // based on dest_type (managed or not) and RHS source shape (temp or not).
+  // This is NOT ambiguous -- it classifies at MIR construction time.
+  void EmitTypedAssign(
+      mir::WriteTarget target, mir::RightHandSide rhs, TypeId dest_type);
+
   void EmitEffect(mir::EffectOp op);
 
-  // Allocate PlaceTemp from Rvalue and emit Assign to initialize.
+  // Allocate PlaceTemp from Rvalue and emit assignment to initialize.
   auto EmitPlaceTemp(TypeId type, mir::Rvalue value) -> mir::PlaceId;
 
   // Emit DefineTemp statement and return UseTemp operand.

@@ -29,7 +29,6 @@
 #include "lyra/llvm_backend/commit/access.hpp"
 #include "lyra/llvm_backend/layout/layout.hpp"
 #include "lyra/llvm_backend/layout/union_storage.hpp"
-#include "lyra/llvm_backend/type_ops/default_init.hpp"
 #include "lyra/llvm_backend/value_repr.hpp"
 #include "lyra/lowering/diagnostic_context.hpp"
 #include "lyra/mir/arena.hpp"
@@ -304,14 +303,6 @@ auto Context::GetOrCreatePlaceStorage(const mir::PlaceRoot& root)
   return alloca;
 }
 
-void Context::InitializePlaceStorage(llvm::AllocaInst* alloca, TypeId type_id) {
-  // Emit default init at the current builder position (not the alloca builder).
-  // EmitSVDefaultInit may create new basic blocks (e.g., for large 4-state
-  // unpacked array init loops), which is only valid at the current control
-  // flow point, not in the entry block after allocas.
-  EmitSVDefaultInit(*this, *facts_, alloca, type_id);
-}
-
 // GetDesignFieldIndex removed -- DesignState is byte arena, not struct.
 
 auto Context::GetFrameFieldIndex(mir::PlaceId place_id) const -> uint32_t {
@@ -537,7 +528,7 @@ auto Context::EmitLoadExtRefBindingsPtr() -> llvm::Value* {
 auto Context::GetExtRefBindingType() -> llvm::StructType* {
   if (ext_ref_binding_type_ == nullptr) {
     auto* i32_ty = llvm::Type::getInt32Ty(*llvm_context_);
-    ext_ref_binding_type_ = llvm::StructType::get(
+    ext_ref_binding_type_ = llvm::StructType::create(
         *llvm_context_, {i32_ty, i32_ty, i32_ty}, "ExtRefBinding");
   }
   return ext_ref_binding_type_;

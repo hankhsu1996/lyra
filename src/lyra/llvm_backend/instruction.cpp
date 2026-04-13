@@ -45,8 +45,14 @@ auto LowerStatement(
 
   return std::visit(
       common::Overloaded{
-          [&](const mir::Assign& assign) -> Result<void> {
-            return LowerAssign(context, facts, resolver, assign);
+          [&](const mir::PlainAssign& a) -> Result<void> {
+            return LowerPlainAssign(context, facts, resolver, a.dest, a.rhs);
+          },
+          [&](const mir::CopyAssign& a) -> Result<void> {
+            return LowerCopyAssign(context, facts, resolver, a.dest, a.rhs);
+          },
+          [&](const mir::MoveAssign& a) -> Result<void> {
+            return LowerMoveAssign(context, facts, resolver, a.dest, a.rhs);
           },
           [&](const mir::GuardedAssign& guarded) -> Result<void> {
             return LowerGuardedAssign(context, facts, resolver, guarded);
@@ -62,7 +68,8 @@ auto LowerStatement(
             return LowerCall(context, facts, resolver, call, mode);
           },
           [&](const mir::DpiCall& dpi_call) -> Result<void> {
-            return dpi::LowerDpiImportCall(context, facts, dpi_call, mode);
+            return dpi::LowerDpiImportCall(
+                context, facts, resolver, dpi_call, mode);
           },
           [&](const mir::BuiltinCall& call) -> Result<void> {
             return LowerBuiltinCall(context, facts, resolver, call);
@@ -148,6 +155,17 @@ auto LowerStatement(
                 context.GetLyraTriggerEvent(),
                 {context.GetEnginePointer(), context.GetDynamicInstanceId(),
                  builder.getInt32(te.event.value)});
+            return {};
+          },
+          [&](const mir::Initialize& init) -> Result<void> {
+            // Pure store: no lifecycle dispatch, no write routing.
+            auto raw_or_err =
+                LowerOperandRaw(context, facts, resolver, init.value);
+            if (!raw_or_err) return std::unexpected(raw_or_err.error());
+            auto place_ptr_or_err = context.GetPlacePointer(init.dest);
+            if (!place_ptr_or_err)
+              return std::unexpected(place_ptr_or_err.error());
+            context.GetBuilder().CreateStore(*raw_or_err, *place_ptr_or_err);
             return {};
           },
       },

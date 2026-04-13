@@ -1,0 +1,167 @@
+feature: functions_four_state
+description: |
+  Function default-initialization tests requiring 4-state semantics.
+  Covers the MIR prologue synthesis path for function-local storage.
+
+cases:
+  - name: large_4state_array_local
+    description: |
+      Function with a large (>8 element) 4-state unpacked array local.
+      Previously triggered LLVM backend arr.init.exit terminator bug
+      when default init was reconstructed by the backend. Now covered
+      by explicit MIR prologue synthesis.
+    sv: |
+      module Test;
+        logic [7:0] result;
+
+        function automatic logic [7:0] get_val();
+          logic [7:0] arr [16];
+          arr[0] = 8'h42;
+          return arr[0];
+        endfunction
+
+        initial begin
+          result = get_val();
+        end
+      endmodule
+    expect:
+      variables:
+        result: 66
+
+  - name: small_4state_array_local
+    description: |
+      Function with a small (<=8 element) 4-state array local.
+      Tests the MIR prologue synthesis for small arrays.
+    sv: |
+      module Test;
+        logic [7:0] result;
+
+        function automatic logic [7:0] get_val();
+          logic [7:0] arr [4];
+          arr[0] = 8'hAB;
+          return arr[0];
+        endfunction
+
+        initial begin
+          result = get_val();
+        end
+      endmodule
+    expect:
+      variables:
+        result: 171
+
+  - name: return_by_name_read_before_write
+    description: |
+      Return-by-name with read of return variable before first write.
+      The return slot must be default-initialized (0 for int) so the
+      read sees a defined value.
+    sv: |
+      module Test;
+        int result;
+
+        function automatic int f();
+          f = f + 42;
+        endfunction
+
+        initial begin
+          result = f();
+        end
+      endmodule
+    expect:
+      variables:
+        result: 42
+
+  - name: uninitialized_4state_array_element_is_x
+    description: |
+      Uninitialized 4-state array elements should be X.
+      Verifies MIR prologue synthesis correctly initializes
+      individual array elements.
+    sv: |
+      module Test;
+        int result;
+
+        function automatic int check_x();
+          logic [7:0] arr [4];
+          if (arr[0] === 8'hxx)
+            return 1;
+          else
+            return 0;
+        endfunction
+
+        initial begin
+          result = check_x();
+        end
+      endmodule
+    expect:
+      variables:
+        result: 1
+
+  - name: managed_string_local_default
+    description: |
+      String local defaults to empty (null handle). MIR prologue emits
+      Initialize with NullConstant; backend lowers as pure store without
+      lifecycle dispatch. No backend zero-init fallback for kLocal.
+    sv: |
+      module Test;
+        initial begin
+          string s;
+          s = get_str();
+          $display("s = %s", s);
+        end
+
+        function automatic string get_str();
+          string local_s;
+          return local_s;
+        endfunction
+      endmodule
+    expect:
+      stdout:
+        contains: ["s = "]
+
+  - name: managed_dynarray_local_default
+    description: |
+      Dynamic array local defaults to empty (null handle). MIR prologue
+      uses Initialize with NullConstant for managed types.
+    sv: |
+      module Test;
+        int result;
+
+        function automatic int check_empty();
+          int arr[];
+          return arr.size();
+        endfunction
+
+        initial begin
+          result = check_empty();
+        end
+      endmodule
+    expect:
+      variables:
+        result: 0
+
+  - name: unpacked_union_local_default
+    description: |
+      Unpacked union local defaults to zero-fill via ZeroInitStorageEffect.
+      The MIR prologue emits an explicit zero-init effect instead of
+      memberwise initialization.
+    sv: |
+      module Test;
+        int result;
+
+        typedef union {
+          int a;
+          shortreal b;
+        } my_union_t;
+
+        function automatic int check_zero();
+          my_union_t u;
+          return u.a;
+        endfunction
+
+        initial begin
+          result = check_zero();
+        end
+      endmodule
+    expect:
+      variables:
+        result: 0

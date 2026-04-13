@@ -8,13 +8,36 @@ namespace lyra::lowering::mir_to_llvm {
 
 class SlotAccessResolver;
 
-auto LowerAssign(
-    Context& context, const CuFacts& facts, const mir::Assign& assign)
+// PlainAssign: pure trivial write, no lifecycle dispatch.
+// Destination must not be a managed type.
+auto LowerPlainAssign(
+    Context& context, const CuFacts& facts, SlotAccessResolver& resolver,
+    const mir::WriteTarget& dest, const mir::RightHandSide& rhs)
     -> Result<void>;
 
-auto LowerAssign(
+auto LowerPlainAssign(
+    Context& context, const CuFacts& facts, const mir::WriteTarget& dest,
+    const mir::RightHandSide& rhs) -> Result<void>;
+
+// CopyAssign: explicit clone/copy lifecycle (destroy old, clone new).
+auto LowerCopyAssign(
     Context& context, const CuFacts& facts, SlotAccessResolver& resolver,
-    const mir::Assign& assign) -> Result<void>;
+    const mir::WriteTarget& dest, const mir::RightHandSide& rhs)
+    -> Result<void>;
+
+auto LowerCopyAssign(
+    Context& context, const CuFacts& facts, const mir::WriteTarget& dest,
+    const mir::RightHandSide& rhs) -> Result<void>;
+
+// MoveAssign: explicit move lifecycle (destroy old, move new, cleanup source).
+auto LowerMoveAssign(
+    Context& context, const CuFacts& facts, SlotAccessResolver& resolver,
+    const mir::WriteTarget& dest, const mir::RightHandSide& rhs)
+    -> Result<void>;
+
+auto LowerMoveAssign(
+    Context& context, const CuFacts& facts, const mir::WriteTarget& dest,
+    const mir::RightHandSide& rhs) -> Result<void>;
 
 auto LowerGuardedAssign(
     Context& context, const CuFacts& facts, const mir::GuardedAssign& guarded)

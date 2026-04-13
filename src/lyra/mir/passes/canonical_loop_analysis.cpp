@@ -80,12 +80,12 @@ auto FindRvalueForTemp(const BasicBlock& block, int temp_id, const Arena& arena)
       }
       continue;
     }
-    if (const auto* assign = std::get_if<Assign>(&stmt.data)) {
-      const auto* dest_pid = std::get_if<PlaceId>(&assign->dest);
+    if (auto ref = TryGetDirectAssign(stmt.data); ref) {
+      const auto* dest_pid = std::get_if<PlaceId>(ref.dest);
       if (dest_pid == nullptr) continue;
       auto dest_temp = ResolvePlaceToTempId(*dest_pid, arena);
       if (dest_temp && *dest_temp == temp_id) {
-        return std::get_if<Rvalue>(&assign->rhs);
+        return std::get_if<Rvalue>(ref.rhs);
       }
     }
   }
@@ -110,12 +110,12 @@ auto ResolveOneUseCopy(
       }
       continue;
     }
-    if (const auto* assign = std::get_if<Assign>(&stmt.data)) {
-      const auto* dest_pid = std::get_if<PlaceId>(&assign->dest);
+    if (auto ref = TryGetDirectAssign(stmt.data); ref) {
+      const auto* dest_pid = std::get_if<PlaceId>(ref.dest);
       if (dest_pid == nullptr) continue;
       auto dest_tid = ResolvePlaceToTempId(*dest_pid, arena);
       if (dest_tid && *dest_tid == *temp_id) {
-        const auto* rhs_op = std::get_if<Operand>(&assign->rhs);
+        const auto* rhs_op = std::get_if<Operand>(ref.rhs);
         if (rhs_op != nullptr) return GetUsePlaceId(*rhs_op);
         return std::nullopt;
       }
@@ -138,8 +138,8 @@ auto IsIvModifiedInBody(
     PlaceId iv) -> bool {
   for (uint32_t bi = header + 1; bi < latch; ++bi) {
     for (const auto& stmt : blocks[bi].statements) {
-      if (const auto* assign = std::get_if<Assign>(&stmt.data)) {
-        if (const auto* pid = std::get_if<PlaceId>(&assign->dest);
+      if (auto ref = TryGetDirectAssign(stmt.data); ref) {
+        if (const auto* pid = std::get_if<PlaceId>(ref.dest);
             pid != nullptr && *pid == iv)
           return true;
       }
@@ -228,11 +228,11 @@ auto RecognizeLoop(
 
   std::optional<int64_t> init_value;
   for (const auto& stmt : preheader.statements) {
-    const auto* assign = std::get_if<Assign>(&stmt.data);
-    if (assign == nullptr) continue;
-    const auto* dest_pid = std::get_if<PlaceId>(&assign->dest);
+    auto ref = TryGetDirectAssign(stmt.data);
+    if (!ref) continue;
+    const auto* dest_pid = std::get_if<PlaceId>(ref.dest);
     if (dest_pid == nullptr || *dest_pid != *iv_place) continue;
-    const auto* rhs_op = std::get_if<Operand>(&assign->rhs);
+    const auto* rhs_op = std::get_if<Operand>(ref.rhs);
     init_value = rhs_op != nullptr ? GetConstantInt(*rhs_op) : std::nullopt;
   }
 
@@ -240,15 +240,15 @@ auto RecognizeLoop(
 
   bool has_unit_step = false;
   for (const auto& stmt : latch.statements) {
-    const auto* assign = std::get_if<Assign>(&stmt.data);
-    if (assign == nullptr) continue;
-    const auto* dest_pid = std::get_if<PlaceId>(&assign->dest);
+    auto ref = TryGetDirectAssign(stmt.data);
+    if (!ref) continue;
+    const auto* dest_pid = std::get_if<PlaceId>(ref.dest);
     if (dest_pid == nullptr || *dest_pid != *iv_place) continue;
 
-    const Rvalue* step_rv = std::get_if<Rvalue>(&assign->rhs);
+    const Rvalue* step_rv = std::get_if<Rvalue>(ref.rhs);
 
     if (step_rv == nullptr) {
-      const auto* rhs_op = std::get_if<Operand>(&assign->rhs);
+      const auto* rhs_op = std::get_if<Operand>(ref.rhs);
       if (rhs_op != nullptr) {
         auto tid = ResolveOperandToTempId(*rhs_op, arena);
         if (tid) {

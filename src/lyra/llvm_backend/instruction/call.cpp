@@ -22,8 +22,8 @@
 #include "lyra/llvm_backend/context.hpp"
 #include "lyra/llvm_backend/cu_facts.hpp"
 #include "lyra/llvm_backend/dpi_abi.hpp"
+#include "lyra/llvm_backend/instruction/commit_result.hpp"
 #include "lyra/llvm_backend/lifecycle.hpp"
-#include "lyra/llvm_backend/ownership.hpp"
 #include "lyra/llvm_backend/slot_access.hpp"
 #include "lyra/mir/arena.hpp"
 #include "lyra/mir/call.hpp"
@@ -45,9 +45,9 @@ struct ResolvedCallee {
 };
 
 auto LowerUserCallImpl(
-    Context& context, const CuFacts& facts, const mir::Call& call,
-    const ResolvedCallee& resolved, const ActiveExecutionMode& mode)
-    -> Result<void> {
+    Context& context, const CuFacts& facts, SlotAccessResolver& resolver,
+    const mir::Call& call, const ResolvedCallee& resolved,
+    const ActiveExecutionMode& mode) -> Result<void> {
   auto& builder = context.GetBuilder();
   llvm::Function* callee = resolved.llvm_func;
   TypeId return_type = resolved.return_type;
@@ -203,9 +203,8 @@ auto LowerUserCallImpl(
       auto tmp_type = context.GetPlaceLlvmType(call.ret->tmp);
       if (!tmp_type) return std::unexpected(tmp_type.error());
       llvm::Value* ret_val = builder.CreateLoad(*tmp_type, *tmp_ptr);
-      return CommitValue(
-          context, facts, *call.ret->dest, ret_val, return_type,
-          OwnershipPolicy::kMove);
+      return CommitRuntimeResult(
+          context, facts, resolver, *call.ret->dest, ret_val);
     }
     // Expression form: Use(ret.tmp) handled by outer Assign
     return {};
@@ -223,16 +222,15 @@ auto LowerUserCallImpl(
 
   if (call.ret->dest.has_value()) {
     // Statement form: commit result to dest.
-    // For managed types, CommitValue transfers ownership to dest; tmp is
-    // not used (no Use(tmp) in statement form), so we skip the tmp store
-    // to avoid leaving a stale handle in tmp.
+    // For managed types, ownership transfers to dest; tmp is not used
+    // (no Use(tmp) in statement form), so we skip the tmp store to avoid
+    // leaving a stale handle in tmp.
     // For non-managed types, tmp store is harmless but unnecessary.
     if (!is_managed) {
       builder.CreateStore(call_result, *tmp_ptr);
     }
-    return CommitValue(
-        context, facts, *call.ret->dest, call_result, return_type,
-        OwnershipPolicy::kMove);
+    return CommitRuntimeResult(
+        context, facts, resolver, *call.ret->dest, call_result);
   }
 
   // Expression form: store result to tmp for later Use(tmp).
@@ -242,17 +240,17 @@ auto LowerUserCallImpl(
 }
 
 auto LowerSystemTfCall(
-    Context& context, const CuFacts& facts, const mir::Call& call,
-    SystemTfOpcode opcode) -> Result<void> {
+    Context& context, const CuFacts& facts, SlotAccessResolver& resolver,
+    const mir::Call& call, SystemTfOpcode opcode) -> Result<void> {
   switch (opcode) {
     case SystemTfOpcode::kValuePlusargs:
-      return LowerValuePlusargsCall(context, facts, call);
+      return LowerValuePlusargsCall(context, facts, resolver, call);
     case SystemTfOpcode::kFgets:
-      return LowerFgetsCall(context, facts, call);
+      return LowerFgetsCall(context, facts, resolver, call);
     case SystemTfOpcode::kFread:
-      return LowerFreadCall(context, facts, call);
+      return LowerFreadCall(context, facts, resolver, call);
     case SystemTfOpcode::kFscanf:
-      return LowerFscanfCall(context, facts, call);
+      return LowerFscanfCall(context, facts, resolver, call);
     default:
       throw common::InternalError(
           "LowerSystemTfCall", std::format(
@@ -264,14 +262,8 @@ auto LowerSystemTfCall(
 }  // namespace
 
 auto LowerCall(
-    Context& context, const CuFacts& facts, SlotAccessResolver& /*resolver*/,
+    Context& context, const CuFacts& facts, SlotAccessResolver& resolver,
     const mir::Call& call, const ActiveExecutionMode& mode) -> Result<void> {
-  return LowerCall(context, facts, call, mode);
-}
-
-auto LowerCall(
-    Context& context, const CuFacts& facts, const mir::Call& call,
-    const ActiveExecutionMode& mode) -> Result<void> {
   return std::visit(
       common::Overloaded{
           [&](mir::FunctionId func_id) -> Result<void> {
@@ -287,7 +279,8 @@ auto LowerCall(
                     func.abi_contract.accepts_decision_owner,
                 .func_id = func_id,
             };
-            return LowerUserCallImpl(context, facts, call, resolved, mode);
+            return LowerUserCallImpl(
+                context, facts, resolver, call, resolved, mode);
           },
           [&](const mir::DesignFunctionRef& ref) -> Result<void> {
             const auto& entry = context.GetDesignFunction(ref.symbol);
@@ -303,18 +296,26 @@ auto LowerCall(
                     func.abi_contract.accepts_decision_owner,
                 .func_id = entry.func_id,
             };
-            return LowerUserCallImpl(context, facts, call, resolved, mode);
+            return LowerUserCallImpl(
+                context, facts, resolver, call, resolved, mode);
           },
           [&](SystemTfOpcode opcode) -> Result<void> {
-            return LowerSystemTfCall(context, facts, call, opcode);
+            return LowerSystemTfCall(context, facts, resolver, call, opcode);
           },
       },
       call.callee);
 }
 
+auto LowerCall(
+    Context& context, const CuFacts& facts, const mir::Call& call,
+    const ActiveExecutionMode& mode) -> Result<void> {
+  CanonicalSlotAccess canonical(context, facts);
+  return LowerCall(context, facts, canonical, call, mode);
+}
+
 auto LowerValuePlusargsCall(
-    Context& context, const CuFacts& facts, const mir::Call& call)
-    -> Result<void> {
+    Context& context, const CuFacts& facts, SlotAccessResolver& resolver,
+    const mir::Call& call) -> Result<void> {
   auto& builder = context.GetBuilder();
   const auto& types = *facts.types;
 
@@ -357,9 +358,8 @@ auto LowerValuePlusargsCall(
 
     // Commit only if statement form (dest has value)
     if (call.ret->dest.has_value()) {
-      auto result = CommitValue(
-          context, facts, *call.ret->dest, success, call.ret->type,
-          OwnershipPolicy::kMove);
+      auto result = CommitRuntimeResult(
+          context, facts, resolver, *call.ret->dest, success);
       if (!result) return result;
     }
     // Expression form: Use(ret.tmp) handled by outer Assign
@@ -382,8 +382,8 @@ auto LowerValuePlusargsCall(
   if (!output_llvm_type) return std::unexpected(output_llvm_type.error());
   llvm::Value* output_val =
       builder.CreateLoad(*output_llvm_type, *output_tmp_ptr);
-  auto commit_result = CommitValue(
-      context, facts, wb.dest, output_val, output_type, OwnershipPolicy::kMove);
+  auto commit_result =
+      CommitRuntimeResult(context, facts, resolver, wb.dest, output_val);
   if (!commit_result) return commit_result;
   builder.CreateBr(merge_bb);
 
@@ -392,8 +392,8 @@ auto LowerValuePlusargsCall(
 }
 
 auto LowerFgetsCall(
-    Context& context, const CuFacts& facts, const mir::Call& call)
-    -> Result<void> {
+    Context& context, const CuFacts& facts, SlotAccessResolver& resolver,
+    const mir::Call& call) -> Result<void> {
   auto& builder = context.GetBuilder();
 
   // Validate shape: 1 in_arg (descriptor), optional ret (count), 1 writeback
@@ -432,9 +432,8 @@ auto LowerFgetsCall(
 
     // Commit only if statement form (dest has value)
     if (call.ret->dest.has_value()) {
-      auto result = CommitValue(
-          context, facts, *call.ret->dest, count, call.ret->type,
-          OwnershipPolicy::kMove);
+      auto result =
+          CommitRuntimeResult(context, facts, resolver, *call.ret->dest, count);
       if (!result) return result;
     }
   }
@@ -444,13 +443,12 @@ auto LowerFgetsCall(
   if (!output_llvm_type) return std::unexpected(output_llvm_type.error());
   llvm::Value* output_val =
       builder.CreateLoad(*output_llvm_type, *output_tmp_ptr);
-  return CommitValue(
-      context, facts, wb.dest, output_val, wb.type, OwnershipPolicy::kMove);
+  return CommitRuntimeResult(context, facts, resolver, wb.dest, output_val);
 }
 
 auto LowerFreadCall(
-    Context& context, const CuFacts& facts, const mir::Call& call)
-    -> Result<void> {
+    Context& context, const CuFacts& facts, SlotAccessResolver& resolver,
+    const mir::Call& call) -> Result<void> {
   auto& builder = context.GetBuilder();
   const auto& types = *facts.types;
 
@@ -593,9 +591,8 @@ auto LowerFreadCall(
 
     // Commit only if statement form (dest has value)
     if (call.ret->dest.has_value()) {
-      auto result = CommitValue(
-          context, facts, *call.ret->dest, bytes_read, call.ret->type,
-          OwnershipPolicy::kMove);
+      auto result = CommitRuntimeResult(
+          context, facts, resolver, *call.ret->dest, bytes_read);
       if (!result) return result;
     }
   }
@@ -607,16 +604,15 @@ auto LowerFreadCall(
     if (!output_llvm_type) return std::unexpected(output_llvm_type.error());
     llvm::Value* output_val =
         builder.CreateLoad(*output_llvm_type, target_ptr_val);
-    return CommitValue(
-        context, facts, wb.dest, output_val, wb.type, OwnershipPolicy::kMove);
+    return CommitRuntimeResult(context, facts, resolver, wb.dest, output_val);
   }
   // kDirectToDest: runtime wrote directly, no commit needed
   return {};
 }
 
 auto LowerFscanfCall(
-    Context& context, const CuFacts& facts, const mir::Call& call)
-    -> Result<void> {
+    Context& context, const CuFacts& facts, SlotAccessResolver& resolver,
+    const mir::Call& call) -> Result<void> {
   auto& builder = context.GetBuilder();
 
   // Validate shape: 2 in_args (descriptor, format), optional ret (count),
@@ -687,9 +683,8 @@ auto LowerFscanfCall(
 
     // Commit only if statement form (dest has value)
     if (call.ret->dest.has_value()) {
-      auto result = CommitValue(
-          context, facts, *call.ret->dest, items_read, call.ret->type,
-          OwnershipPolicy::kMove);
+      auto result = CommitRuntimeResult(
+          context, facts, resolver, *call.ret->dest, items_read);
       if (!result) return result;
     }
   }
@@ -728,8 +723,8 @@ auto LowerFscanfCall(
       if (!output_tmp_ptr) return std::unexpected(output_tmp_ptr.error());
       llvm::Value* output_val =
           builder.CreateLoad(*output_llvm_type, *output_tmp_ptr);
-      auto commit_result = CommitValue(
-          context, facts, wb.dest, output_val, wb.type, OwnershipPolicy::kMove);
+      auto commit_result =
+          CommitRuntimeResult(context, facts, resolver, wb.dest, output_val);
       if (!commit_result) return commit_result;
 
       // After commit, continue to next check or merge

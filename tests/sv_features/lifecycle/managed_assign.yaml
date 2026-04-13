@@ -1,0 +1,101 @@
+feature: managed_assign_lifecycle
+description: |
+  Tests for explicit write-mode classification in MIR (PlainAssign,
+  CopyAssign, MoveAssign). Verifies lifecycle correctness for managed
+  types (string) and trivial types under MIR explicit write semantics.
+
+cases:
+  - name: string_local_overwrite
+    description: |
+      String local assigned twice. Verifies overwrite destroys old value
+      and stores new value correctly (CopyAssign path).
+    sv: |
+      module Test;
+        initial begin
+          string s;
+          s = "hello";
+          s = "world";
+          $display("%s", s);
+        end
+      endmodule
+    expect:
+      stdout: "world\n"
+
+  - name: string_copy_from_local
+    description: |
+      Copy managed source local into another managed local (CopyAssign).
+      Source must remain valid after copy.
+    sv: |
+      module Test;
+        initial begin
+          string a;
+          string b;
+          a = "original";
+          b = a;
+          $display("a=%s b=%s", a, b);
+        end
+      endmodule
+    expect:
+      stdout: "a=original b=original\n"
+
+  - name: string_move_from_function_return
+    description: |
+      Function returning string assigned to destination (MoveAssign path).
+      Verifies move from call staging temp works correctly.
+    sv: |
+      module Test;
+        function string make_greeting();
+          return "greetings";
+        endfunction
+
+        initial begin
+          string s;
+          s = make_greeting();
+          $display("%s", s);
+        end
+      endmodule
+    expect:
+      stdout: "greetings\n"
+
+  - name: struct_with_string_field_assign
+    description: |
+      Struct containing string field assigned to another struct.
+      Verifies field-by-field lifecycle still works with explicit
+      write mode classification.
+    sv: |
+      module Test;
+        typedef struct {
+          string name;
+          int id;
+        } record_t;
+
+        initial begin
+          record_t r1;
+          record_t r2;
+          r1.name = "alice";
+          r1.id = 42;
+          r2 = r1;
+          $display("r2.name=%s r2.id=%0d", r2.name, r2.id);
+        end
+      endmodule
+    expect:
+      stdout: "r2.name=alice r2.id=42\n"
+
+  - name: plain_assign_trivial_type
+    description: |
+      Non-managed trivial assignment (PlainAssign path). Ensures no
+      lifecycle machinery is invoked for plain integer types.
+    sv: |
+      module Test;
+        int result;
+
+        initial begin
+          int x;
+          x = 10;
+          x = 20;
+          result = x + 5;
+        end
+      endmodule
+    expect:
+      variables:
+        result: 25

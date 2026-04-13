@@ -17,21 +17,23 @@ namespace lyra::lowering::mir_to_llvm {
 
 namespace {
 
-// Store a container handle to a WriteTarget.
-// Handles destroy-old, store-new, and notify if design place.
-// The new_handle must already have the correct ownership (cloned if needed).
-void StoreContainerToWriteTarget(
-    Context& ctx, const CuFacts& facts, llvm::Value* new_handle,
-    const WriteTarget& wt, TypeId type_id) {
+// Routing-only: store a container handle to a WriteTarget with design-slot
+// notification. Uses container-specific runtime store functions for atomicity.
+// Does NOT handle lifecycle (no clone, no destroy).
+void RouteContainerStore(
+    Context& ctx, llvm::Value* new_handle, const WriteTarget& wt) {
   auto& builder = ctx.GetBuilder();
-  auto* ptr_ty = llvm::PointerType::getUnqual(ctx.GetLlvmContext());
 
   bool is_design_notify =
       wt.canonical_signal_id.has_value() &&
       ctx.GetDesignStoreMode() != DesignStoreMode::kDirectInit;
 
   auto emit_notifying_store = [&]() {
-    auto* old_handle = builder.CreateLoad(ptr_ty, wt.ptr, "ctr.old");
+    if (ctx.GetNotificationPolicy() == NotificationPolicy::kDeferred) {
+      throw common::InternalError(
+          "RouteContainerStore",
+          "deferred notification not supported for container store path");
+    }
     if (wt.canonical_signal_id->IsExtRef()) {
       builder.CreateCall(
           ctx.GetLyraStoreDynArrayGlobal(),
@@ -55,25 +57,11 @@ void StoreContainerToWriteTarget(
           {ctx.GetEnginePointer(), wt.ptr, new_handle,
            wt.canonical_signal_id->Emit(builder)});
     }
-    const auto& types = *facts.types;
-    if (types[type_id].Kind() == TypeKind::kAssociativeArray) {
-      builder.CreateCall(ctx.GetLyraAssocRelease(), {old_handle});
-    } else {
-      builder.CreateCall(ctx.GetLyraDynArrayRelease(), {old_handle});
-    }
   };
 
-  auto emit_plain_store = [&]() {
-    Destroy(ctx, facts, wt.ptr, type_id);
-    builder.CreateStore(new_handle, wt.ptr);
-  };
+  auto emit_plain_store = [&]() { builder.CreateStore(new_handle, wt.ptr); };
 
   if (is_design_notify) {
-    if (ctx.GetNotificationPolicy() == NotificationPolicy::kDeferred) {
-      throw common::InternalError(
-          "StoreContainerToWriteTarget",
-          "deferred notification not supported for container store path");
-    }
     if (wt.requires_static_dirty_propagation ||
         !wt.mutation_signal.has_value()) {
       emit_notifying_store();
@@ -87,10 +75,25 @@ void StoreContainerToWriteTarget(
   }
 }
 
+// Release a container handle based on its type kind.
+void ReleaseContainerHandle(
+    Context& ctx, const CuFacts& facts, llvm::Value* handle, TypeId type_id) {
+  auto& builder = ctx.GetBuilder();
+  const auto& types = *facts.types;
+  if (types[type_id].Kind() == TypeKind::kAssociativeArray) {
+    builder.CreateCall(ctx.GetLyraAssocRelease(), {handle});
+  } else {
+    builder.CreateCall(ctx.GetLyraDynArrayRelease(), {handle});
+  }
+}
+
 }  // namespace
 
-// Container (DynArray, Queue) store: clone if kClone, then store via
-// WriteTarget
+// Container store with lifecycle.
+// 1. Lifecycle: clone handle if kClone
+// 2. Lifecycle: load old handle (for release after store)
+// 3. Routing: store new handle via RouteContainerStore
+// 4. Lifecycle: release old handle
 auto CommitContainerValue(
     Context& ctx, const CuFacts& facts, const WriteTarget& wt,
     llvm::Value* handle, OwnershipPolicy policy, TypeId type_id)
@@ -105,11 +108,22 @@ auto CommitContainerValue(
         "CommitContainerValue", "called with non-container type");
   }
 
+  auto& builder = ctx.GetBuilder();
+  auto* ptr_ty = llvm::PointerType::getUnqual(ctx.GetLlvmContext());
+
+  // 1. Lifecycle: clone if copy semantics
   if (policy == OwnershipPolicy::kClone) {
     handle = CloneLeafValue(ctx, facts, handle, type_id);
   }
-  // kMove: handle already has ownership, no clone needed
-  StoreContainerToWriteTarget(ctx, facts, handle, wt, type_id);
+
+  // 2. Lifecycle: load old handle before mutation
+  auto* old_handle = builder.CreateLoad(ptr_ty, wt.ptr, "ctr.old");
+
+  // 3. Routing: store new handle with design-slot notification
+  RouteContainerStore(ctx, handle, wt);
+
+  // 4. Lifecycle: release old handle
+  ReleaseContainerHandle(ctx, facts, old_handle, type_id);
   return {};
 }
 

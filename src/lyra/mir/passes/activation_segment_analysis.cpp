@@ -152,7 +152,9 @@ void CollectStatementAccesses(
     uint32_t stmt_index, std::vector<SlotAccessRecord>& accesses) {
   std::visit(
       common::Overloaded{
-          [&](const Assign& a) {
+          [&](const auto& a)
+            requires(kIsDirectAssign<std::decay_t<decltype(a)>>)
+          {
             if (const auto* pid = std::get_if<PlaceId>(&a.dest)) {
               CollectWriteAccess(
                   *pid, arena, block_index, stmt_index, accesses);
@@ -256,6 +258,10 @@ void CollectStatementAccesses(
                             op, arena, block_index, stmt_index, accesses);
                       });
                     },
+                    [](const ZeroInitStorageEffect&) {
+                      // Zero-init is a prologue-only operation on local
+                      // storage. No canonical-state interaction.
+                    },
                 },
                 e.op);
           },
@@ -279,8 +285,8 @@ void CollectStatementAccesses(
               }
             }
             // Call return dest: the call writes the return value to this
-            // destination through CommitValue inside LowerCall. This is
-            // an external write through the canonical call path.
+            // destination through CommitRuntimeResult inside LowerCall.
+            // This is an external write through the canonical call path.
             if (c.ret && c.ret->dest) {
               const auto& place = arena[*c.ret->dest];
               auto info = ExtractModuleSlotInfo(place);
@@ -344,8 +350,14 @@ void CollectStatementAccesses(
           },
           [&](const AssocOp&) {},
           [](const TriggerEvent&) {},
-      },
-      stmt.data);
+          [&](const Initialize& init) {
+            CollectWriteAccess(
+                init.dest, arena, block_index, stmt_index, accesses);
+            CollectOperandReads(
+                init.value, arena, block_index, stmt_index, accesses);
+          },
+          },
+          stmt.data);
 }
 
 // Semantic analysis of a statement's interaction with canonical state.
@@ -404,10 +416,13 @@ void AnalyzeStatementSemantics(
           // only after the process body returns and the fixpoint runs,
           // at which point segment-exit sync has already published all
           // managed values to canonical.
-          [](const Assign&) {},
+          [](const PlainAssign&) {},
+          [](const CopyAssign&) {},
+          [](const MoveAssign&) {},
           [](const GuardedAssign&) {},
           [](const DeferredAssign&) {},
           [](const DefineTemp&) {},
+          [](const Initialize&) {},
           [&](const Effect& e) {
             std::visit(
                 common::Overloaded{
@@ -523,6 +538,7 @@ void AnalyzeStatementSemantics(
                     // read-only operands (tracked by CollectStatementAccesses).
                     // No canonical state write. No semantic fact needed.
                     [](const EnqueueDeferredAssertionEffect&) {},
+                    [](const ZeroInitStorageEffect&) {},
                 },
                 e.op);
           },

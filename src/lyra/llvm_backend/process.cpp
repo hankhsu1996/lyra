@@ -1732,12 +1732,14 @@ auto LowerTerminator(
 
 // Materialize local/temp storage as allocas for suspension-free processes.
 // Called after EmitProcessStateSetup so that frame_ptr_ is set (but unused).
-// Sets up function-scope alloca management and creates initialized storage
-// for each root in alloca_roots. Returns error if any storage creation fails.
+// Sets up function-scope alloca management and creates storage for each root
+// in alloca_roots. Returns error if any storage creation fails.
 //
-// Phase 1: conservative whole-process classification. A process is
-// suspension-free iff it has no Delay/Wait terminators. Future phases may
-// refine to per-root classification for mixed processes.
+// kLocal: allocate only, no backend init. Semantic default initialization
+// is explicit in MIR prologue via Initialize statements (pure store, no
+// lifecycle) and ZeroInitStorageEffect (for unpacked unions).
+// kTemp: zero-init for lifecycle safety (Destroy(nullptr) is no-op on first
+// write). This is not semantic init.
 static auto MaterializeAllocaStorage(
     Context& context, llvm::Function& func, const ProcessLayout& proc_layout)
     -> Result<void> {
@@ -1749,7 +1751,10 @@ static auto MaterializeAllocaStorage(
         .kind = root.key.kind, .id = root.key.id, .type = root.type};
     auto alloca_result = context.GetOrCreatePlaceStorage(mir_root);
     if (!alloca_result) return std::unexpected(alloca_result.error());
-    context.InitializePlaceStorage(*alloca_result, root.type);
+    if (root.key.kind == mir::PlaceRoot::Kind::kTemp) {
+      auto* llvm_type = (*alloca_result)->getAllocatedType();
+      EmitMemsetZero(context, *alloca_result, llvm_type);
+    }
   }
   return {};
 }
@@ -2066,7 +2071,7 @@ auto GenerateSharedProcessFunction(
   std::vector<ManagedSlotStorage> managed_storage;
   if (shared_proc_layout_for_plan.activation_plan.has_value()) {
     managed_storage = CreateManagedSlotStorage(
-        *shared_proc_layout_for_plan.activation_plan, context, facts);
+        *shared_proc_layout_for_plan.activation_plan, context);
   } else {
     auto local_plan = BuildProcessActivationPlan(
         process, context.GetMirArena(), *facts.types);
@@ -2434,7 +2439,7 @@ struct PlaceCollector {
         std::visit(
             [&](const auto& data) {
               using T = std::decay_t<decltype(data)>;
-              if constexpr (std::is_same_v<T, mir::Assign>) {
+              if constexpr (mir::kIsDirectAssign<T>) {
                 if (const auto* p = std::get_if<mir::PlaceId>(&data.dest)) {
                   CollectFromPlace(*p, arena);
                 }
@@ -2581,15 +2586,21 @@ auto DefineMonitorCheckProgram(
   PlaceCollector collector;
   collector.CollectFromFunction(func, arena);
 
-  // Allocate and initialize all collected places at function entry.
-  // INVARIANT: Observer programs must follow the same allocate-all + init-all
-  // policy as regular functions; no lazy storage creation is allowed.
-  // ComputePlacePointer
-  // will throw InternalError if storage is missing.
+  // Allocate all collected places and zero-initialize kTemp for lifecycle
+  // safety. Observer programs contain only compiler-generated kTemp places
+  // (no source-level locals).
   for (const auto& [key, root] : collector.roots) {
     auto alloca_or_err = context.GetOrCreatePlaceStorage(root);
     if (!alloca_or_err) return std::unexpected(alloca_or_err.error());
-    context.InitializePlaceStorage(*alloca_or_err, root.type);
+    if (root.kind != mir::PlaceRoot::Kind::kTemp) {
+      throw common::InternalError(
+          "GenerateObserverCheckFunction",
+          std::format(
+              "observer program has non-kTemp root (kind={})",
+              static_cast<int>(root.kind)));
+    }
+    llvm::Type* llvm_type = (*alloca_or_err)->getAllocatedType();
+    EmitMemsetZero(context, *alloca_or_err, llvm_type);
   }
 
   // Find the DisplayEffect from check program's MIR body (correct operand
@@ -3358,28 +3369,22 @@ auto DefineMirFunction(
         context, facts, return_value_ptr, func.signature.return_type);
   }
 
-  // PROLOGUE: Allocate and default-initialize ALL locals/temps at function
-  // entry. This matches SystemVerilog default initialization semantics and
-  // ensures deterministic behavior. Order: 1) allocate all, 2) initialize all,
-  // 3) store parameters
+  // PROLOGUE: Allocate all locals/temps.
   //
-  // CONTRACT: All function-local storage is default-initialized at function
-  // entry, including: kLocal, kTemp, and return slots.
-  // - Managed handles become nullptr (Destroy is a no-op on empty).
-  // - 4-state values become X per SV default init rules.
+  // kLocal: allocate only, no backend init. Semantic default initialization
+  // is explicit in MIR prologue via Initialize statements (pure store, no
+  // lifecycle) and ZeroInitStorageEffect (for unpacked unions).
+  // kTemp: zero-init for lifecycle safety (Destroy(nullptr) is no-op on first
+  // write). This is not semantic init.
   //
-  // Therefore: commit/assign paths may safely destroy old values even on first
-  // write, because Destroy(nullptr) is a no-op for managed types.
-  std::vector<std::pair<llvm::AllocaInst*, TypeId>> all_allocas;
+  // ABI return alloca (return_value_ptr) is initialized separately above.
   for (const auto& [key, root] : collector.roots) {
     auto alloca_or_err = context.GetOrCreatePlaceStorage(root);
     if (!alloca_or_err) return std::unexpected(alloca_or_err.error());
-    all_allocas.emplace_back(*alloca_or_err, root.type);
-  }
-
-  // Initialize all locals/temps with default values per SystemVerilog semantics
-  for (const auto& [alloca, type_id] : all_allocas) {
-    context.InitializePlaceStorage(alloca, type_id);
+    if (root.kind == mir::PlaceRoot::Kind::kTemp) {
+      auto* llvm_type = (*alloca_or_err)->getAllocatedType();
+      EmitMemsetZero(context, *alloca_or_err, llvm_type);
+    }
   }
 
   // Store argument values into parameter locals (overwriting default init).
@@ -3458,8 +3463,7 @@ auto DefineMirFunction(
           if (is_managed) {
             // Alias the local to caller's storage - writes go directly there.
             // Caller's slot may contain old handle; callee must Destroy before
-            // overwriting. Since we alias, CommitValue's Destroy will handle
-            // it.
+            // overwriting. Since we alias, lifecycle dispatch handles it.
             context.SetPlaceAlias(it->second, arg_val);
           } else {
             // Non-managed: local is default-initialized, writeback at exit

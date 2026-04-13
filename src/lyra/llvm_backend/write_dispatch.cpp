@@ -160,11 +160,9 @@ auto EmitPackedOrFloatWrite(
     return {};
   }
 
-  // Legacy raw path: convert raw value to PackedRValue at the dispatch
-  // boundary. This is the single conversion point for callers (system TF,
-  // assoc_op, call, etc.) that produce raw llvm::Value* and route through
-  // CommitValue -> DispatchWrite. The raw value's LLVM type is authoritative:
-  // scalar means 2-state, struct {iN,iN} means 4-state.
+  // Raw value path: convert raw llvm::Value* to PackedRValue at the dispatch
+  // boundary. The raw value's LLVM type is authoritative: scalar means 2-state,
+  // struct {iN,iN} means 4-state.
   auto raw = ResolveRawValue(ctx, facts, source);
   if (!raw) return std::unexpected(raw.error());
 
@@ -365,6 +363,40 @@ auto DispatchWrite(
     -> Result<void> {
   auto plan = BuildWritePlan(type_id, *facts.types);
   return ExecuteWritePlan(ctx, facts, target, source, plan, policy);
+}
+
+auto DispatchPlainWrite(
+    Context& ctx, const CuFacts& facts, const mir::WriteTarget& target,
+    const WriteSource& source, TypeId type_id) -> Result<void> {
+  auto plan = BuildWritePlan(type_id, *facts.types);
+
+  // PlainAssign invariant: only non-managed write ops are reachable.
+  switch (plan.op) {
+    case WriteOp::kCommitPointerScalar:
+      return EmitPointerScalarWrite(ctx, facts, target, source);
+    case WriteOp::kStorePlainAggregate:
+      return EmitPlainAggregateStore(ctx, facts, target, source);
+    case WriteOp::kCommitPackedOrFloatScalar:
+      return EmitPackedOrFloatWrite(ctx, facts, target, source, plan.type_id);
+    case WriteOp::kCommitUnionMemcpy: {
+      if (!std::holds_alternative<OperandSource>(source)) {
+        return std::unexpected(ctx.GetDiagnosticContext().MakeUnsupported(
+            ctx.GetCurrentOrigin(),
+            "union memcpy commit from raw value source not yet supported",
+            UnsupportedCategory::kFeature));
+      }
+      auto src = RequireOperandPlace(source, "DispatchPlainWrite/UnionMemcpy");
+      return EmitUnionMemcpyWrite(ctx, facts, target, src, plan.type_id);
+    }
+    case WriteOp::kCommitManagedScalar:
+    case WriteOp::kCommitFieldByFieldStruct:
+    case WriteOp::kCommitFieldByFieldArray:
+    case WriteOp::kRejectUnsupported:
+      throw common::InternalError(
+          "DispatchPlainWrite",
+          "lifecycle-carrying WriteOp reached plain write path");
+  }
+  throw common::InternalError("DispatchPlainWrite", "unhandled WriteOp");
 }
 
 }  // namespace lyra::lowering::mir_to_llvm

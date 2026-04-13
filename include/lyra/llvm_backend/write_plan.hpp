@@ -79,21 +79,23 @@ struct PackedRValueSource {
 using WriteSource =
     std::variant<RawValueSource, OperandSource, PackedRValueSource>;
 
-// Source-aware write dispatcher. Builds a plan and executes it.
-// This is the canonical dispatch boundary. All write paths route here.
-// Accepts mir::WriteTarget (PlaceId | ExternalRefId) -- root resolution
-// is handled internally via commit::Access::GetWriteTarget.
+// Lifecycle-carrying write dispatcher. Builds a plan and executes it.
+// Used by CopyAssign / MoveAssign paths only.
 auto DispatchWrite(
     Context& ctx, const CuFacts& facts, const mir::WriteTarget& target,
     const WriteSource& source, TypeId type_id, OwnershipPolicy policy)
     -> Result<void>;
 
-// Execute a pre-built write plan against a source.
-// Separated from DispatchWrite so callers (e.g. LowerRvalueAssign) can
-// inspect the plan before execution for special-case routing.
+// Lifecycle-carrying write plan executor.
 auto ExecuteWritePlan(
     Context& ctx, const CuFacts& facts, const mir::WriteTarget& target,
     const WriteSource& source, const WritePlan& plan, OwnershipPolicy policy)
     -> Result<void>;
+
+// Policy-free write dispatcher for PlainAssign only.
+// Rejects lifecycle-carrying write ops (managed scalar, field-by-field).
+auto DispatchPlainWrite(
+    Context& ctx, const CuFacts& facts, const mir::WriteTarget& target,
+    const WriteSource& source, TypeId type_id) -> Result<void>;
 
 }  // namespace lyra::lowering::mir_to_llvm

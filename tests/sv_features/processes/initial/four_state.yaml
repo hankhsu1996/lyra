@@ -1,0 +1,115 @@
+feature: process_local_default_init
+description: |
+  Process-local default-initialization tests requiring 4-state semantics.
+  Covers the MIR prologue synthesis path for process-local storage.
+
+cases:
+  - name: large_4state_array_process_local
+    description: |
+      Process with a large (>8 element) 4-state unpacked array local.
+      Tests MIR prologue synthesis for process locals, mirroring the
+      function-path fix that resolved the arr.init.exit terminator bug.
+    sv: |
+      module Test;
+        logic [7:0] result;
+
+        initial begin
+          logic [7:0] arr [16];
+          arr[0] = 8'h42;
+          result = arr[0];
+        end
+      endmodule
+    expect:
+      variables:
+        result: 66
+
+  - name: small_4state_array_process_local
+    description: |
+      Process with a small (<=8 element) 4-state array local.
+    sv: |
+      module Test;
+        logic [7:0] result;
+
+        initial begin
+          logic [7:0] arr [4];
+          arr[0] = 8'hAB;
+          result = arr[0];
+        end
+      endmodule
+    expect:
+      variables:
+        result: 171
+
+  - name: uninitialized_4state_local_is_x
+    description: |
+      Uninitialized 4-state process local array element should be X.
+      Verifies MIR prologue synthesis correctly initializes with X.
+    sv: |
+      module Test;
+        int result;
+
+        initial begin
+          logic [7:0] arr [4];
+          if (arr[0] === 8'hxx)
+            result = 1;
+          else
+            result = 0;
+        end
+      endmodule
+    expect:
+      variables:
+        result: 1
+
+  - name: managed_string_process_local_default
+    description: |
+      String process local defaults to empty (null handle). MIR prologue
+      emits Initialize with NullConstant.
+    sv: |
+      module Test;
+        initial begin
+          string s;
+          $display("s = [%s]", s);
+        end
+      endmodule
+    expect:
+      stdout:
+        contains: ["s = []"]
+
+  - name: unpacked_union_process_local_default
+    description: |
+      Unpacked union process local defaults to zero-fill via
+      ZeroInitStorageEffect in MIR prologue.
+    sv: |
+      module Test;
+        int result;
+
+        typedef union {
+          int a;
+          shortreal b;
+        } my_union_t;
+
+        initial begin
+          my_union_t u;
+          result = u.a;
+        end
+      endmodule
+    expect:
+      variables:
+        result: 0
+
+  - name: two_state_int_process_local_default
+    description: |
+      2-state int process local defaults to 0. Regression test
+      ensuring kTemp backend zero-init still works correctly.
+    sv: |
+      module Test;
+        int result;
+
+        initial begin
+          int x;
+          result = x + 42;
+        end
+      endmodule
+    expect:
+      variables:
+        result: 42

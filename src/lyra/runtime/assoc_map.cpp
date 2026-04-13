@@ -501,7 +501,7 @@ auto LyraAssocNext(void* aa, void* key_inout) -> int32_t {
 
   auto next = map->Next(current);
   if (!next) return 0;
-  // Caller handles releasing old string handle via CommitValue ownership.
+  // Caller handles releasing old string handle via lifecycle dispatch.
   WriteKeyToOutput(*next, spec, key_inout);
   return 1;
 }
@@ -527,7 +527,7 @@ auto LyraAssocPrev(void* aa, void* key_inout) -> int32_t {
 
   auto prev = map->Prev(current);
   if (!prev) return 0;
-  // Caller handles releasing old string handle via CommitValue ownership.
+  // Caller handles releasing old string handle via lifecycle dispatch.
   WriteKeyToOutput(*prev, spec, key_inout);
   return 1;
 }

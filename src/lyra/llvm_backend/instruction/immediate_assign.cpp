@@ -13,6 +13,7 @@
 #include "lyra/common/internal_error.hpp"
 #include "lyra/common/overloaded.hpp"
 #include "lyra/common/type.hpp"
+#include "lyra/common/type_queries.hpp"
 #include "lyra/llvm_backend/commit.hpp"
 #include "lyra/llvm_backend/compute/compute.hpp"
 #include "lyra/llvm_backend/compute/operand.hpp"
@@ -23,11 +24,10 @@
 #include "lyra/llvm_backend/ownership.hpp"
 #include "lyra/llvm_backend/packed_storage_view.hpp"
 #include "lyra/llvm_backend/slot_access.hpp"
-#include "lyra/llvm_backend/type_ops/dispatch.hpp"
 #include "lyra/llvm_backend/type_ops/managed.hpp"
 #include "lyra/llvm_backend/write_plan.hpp"
+#include "lyra/llvm_backend/write_route.hpp"
 #include "lyra/mir/handle.hpp"
-#include "lyra/mir/place_type.hpp"
 #include "lyra/mir/rvalue.hpp"
 #include "lyra/mir/statement.hpp"
 
@@ -279,172 +279,347 @@ auto LowerRvalueAssign(
 
 }  // namespace
 
-auto LowerAssign(
-    Context& context, const CuFacts& facts, const mir::Assign& assign)
-    -> Result<void> {
-  CanonicalSlotAccess canonical(context, facts);
-  return LowerAssign(context, facts, canonical, assign);
-}
-
 auto LowerGuardedAssign(
     Context& context, const CuFacts& facts, const mir::GuardedAssign& guarded)
     -> Result<void> {
   CanonicalSlotAccess canonical(context, facts);
   return LowerGuardedAssign(context, facts, canonical, guarded);
 }
-// Single resolver-aware write path for managed immediate assignments.
-//
-// Commits a raw value to a managed slot through the resolver. This is
-// the only write path for managed destinations. It handles:
-//
-//   1. Projected writes (bit-range) -> canonical StoreBitRange
-//      (projected writes are canonical-only in v1 and never managed)
-//   2. Managed whole-slot module slots -> resolver.CommitSlotValue
-//
-// Precondition: resolver.ManagesPlace(dest) is true, or dest has a
-// bit-range projection (which is canonical-only).
-//
-// Both LowerAssign and LowerGuardedAssign use this for managed
-// destinations. Non-managed destinations use the canonical assignment
-// path (AssignPlace / LowerRvalueAssign / CommitValue) which handles
-// full type-dispatch semantics (field-by-field structs, union memcpy,
-// string lifecycle, etc.).
-// Managed non-projected writes only. Bit-range projections are handled
-// directly by callers using non-lossy PackedRValue transport.
-auto CommitManagedImmediate(
-    Context& context, const CuFacts& facts, SlotAccessResolver& resolver,
-    mir::PlaceId dest, llvm::Value* value, OwnershipPolicy policy)
-    -> Result<void> {
-  const auto& types = *facts.types;
-  TypeId type_id = mir::TypeOfPlace(types, context.LookupPlace(dest));
-  return resolver.CommitSlotValue(dest, value, type_id, policy);
+
+// Commit a value through the resolver (shadow alloca protocol).
+// For resolver-routed destinations only (non-projected whole-slot writes).
+auto CommitResolverRoutedValue(
+    SlotAccessResolver& resolver, mir::PlaceId dest, llvm::Value* value,
+    TypeId dest_type, OwnershipPolicy policy) -> Result<void> {
+  return resolver.CommitSlotValue(dest, value, dest_type, policy);
 }
 
-auto LowerAssign(
-    Context& context, const CuFacts& facts, SlotAccessResolver& resolver,
-    const mir::Assign& assign) -> Result<void> {
-  const auto& dest = assign.dest;
+// Compute write route once. Does not inspect OwnershipPolicy.
+auto RouteWriteTarget(
+    Context& ctx, const CuFacts& facts, SlotAccessResolver& resolver,
+    const mir::WriteTarget& dest) -> RoutedWriteTarget {
+  TypeId dest_type = detail::ResolveDestType(ctx, facts, dest);
   const auto* dest_place = std::get_if<mir::PlaceId>(&dest);
 
-  // PlaceId-only paths: managed slots and bit-range projections.
-  // External refs are design-global with no projections, so these
-  // branches are only reachable for PlaceId destinations.
-  if (dest_place != nullptr && resolver.ManagesPlace(*dest_place)) {
-    if (context.HasBitRangeProjection(*dest_place)) {
-      auto path = ExtractPackedAccessPath(context, facts, *dest_place);
-      if (!path) return std::unexpected(path.error());
-      auto subview = ResolvePackedSubview(context, *path);
-      if (!subview) return std::unexpected(subview.error());
-      auto packed = LowerRhsToPackedRValue(
-          context, facts, resolver, assign.rhs, subview->semantic_bit_width,
-          subview->result_type);
-      if (!packed) return std::unexpected(packed.error());
-      return StoreBitRange(context, facts, *dest_place, *packed);
-    }
-    auto rhs_raw_or_err =
-        LowerRhsRaw(context, facts, resolver, assign.rhs, *dest_place);
-    if (!rhs_raw_or_err) return std::unexpected(rhs_raw_or_err.error());
-    return CommitManagedImmediate(
-        context, facts, resolver, *dest_place, *rhs_raw_or_err,
-        OwnershipPolicy::kMove);
+  // Bit-range takes priority: always goes to StoreBitRange regardless of
+  // resolver status.
+  if (dest_place != nullptr && ctx.HasBitRangeProjection(*dest_place)) {
+    return {
+        .kind = CommitRouteKind::kBitRange,
+        .dest_type = dest_type,
+        .dest = dest};
   }
-
-  if (dest_place != nullptr && context.HasBitRangeProjection(*dest_place)) {
-    auto path = ExtractPackedAccessPath(context, facts, *dest_place);
-    if (!path) return std::unexpected(path.error());
-    auto subview = ResolvePackedSubview(context, *path);
-    if (!subview) return std::unexpected(subview.error());
-    auto packed = LowerRhsToPackedRValue(
-        context, facts, resolver, assign.rhs, subview->semantic_bit_width,
-        subview->result_type);
-    if (!packed) return std::unexpected(packed.error());
-    return StoreBitRange(context, facts, *dest_place, *packed);
+  // Resolver-routed: shadow alloca protocol for activation-local slots.
+  if (dest_place != nullptr && resolver.RequiresResolverCommit(*dest_place)) {
+    return {
+        .kind = CommitRouteKind::kResolverRouted,
+        .dest_type = dest_type,
+        .dest = dest};
   }
+  // Direct: local alloca, temp, canonical design slot, external ref.
+  return {
+      .kind = CommitRouteKind::kDirect, .dest_type = dest_type, .dest = dest};
+}
 
-  // Shared path: resolve destination type and build write plan.
-  // Works for both PlaceId and ExternalRefId destinations.
+// Execute the bit-range (packed sub-field RMW) write path.
+// Shared by plain, lifecycle, and guarded writes.
+static auto ExecuteBitRangeWrite(
+    Context& context, const CuFacts& facts, SlotAccessResolver& resolver,
+    const RoutedWriteTarget& route, const mir::RightHandSide& rhs)
+    -> Result<void> {
+  auto dest_place = mir::RequireLocalDest(route.dest, "ExecuteBitRangeWrite");
+  auto path = ExtractPackedAccessPath(context, facts, dest_place);
+  if (!path) return std::unexpected(path.error());
+  auto subview = ResolvePackedSubview(context, *path);
+  if (!subview) return std::unexpected(subview.error());
+  auto packed = LowerRhsToPackedRValue(
+      context, facts, resolver, rhs, subview->semantic_bit_width,
+      subview->result_type);
+  if (!packed) return std::unexpected(packed.error());
+  return StoreBitRange(context, facts, dest_place, *packed);
+}
+
+// Execute the direct write path with lifecycle policy (CopyAssign /
+// MoveAssign).
+static auto ExecuteDirectLifecycleWrite(
+    Context& context, const CuFacts& facts, SlotAccessResolver& resolver,
+    const RoutedWriteTarget& route, const mir::RightHandSide& rhs,
+    OwnershipPolicy policy) -> Result<void> {
   const auto& types = *facts.types;
-  TypeId type_id = detail::ResolveDestType(context, facts, dest);
-  auto plan = BuildWritePlan(type_id, types);
+  auto plan = BuildWritePlan(route.dest_type, types);
 
-  // Field-by-field and union memcpy: route through DispatchWrite (operand
-  // source) or LowerRvalueAssign (rvalue source). Both accept mir::WriteTarget.
+  // Field-by-field and union memcpy.
   if (plan.op == WriteOp::kCommitFieldByFieldStruct ||
       plan.op == WriteOp::kCommitFieldByFieldArray ||
-      plan.op == WriteOp::kCommitUnionMemcpy) {
+      plan.op == WriteOp::kCommitUnionMemcpy ||
+      plan.op == WriteOp::kStorePlainAggregate) {
     return std::visit(
         common::Overloaded{
             [&](const mir::Operand& operand) -> Result<void> {
               return DispatchWrite(
-                  context, facts, dest, OperandSource{&operand}, type_id,
-                  DetermineOwnership(context, operand));
+                  context, facts, route.dest, OperandSource{&operand},
+                  route.dest_type, policy);
             },
             [&](const mir::Rvalue& rvalue) -> Result<void> {
-              return LowerRvalueAssign(context, facts, dest, rvalue);
+              return LowerRvalueAssign(context, facts, route.dest, rvalue);
             },
         },
-        assign.rhs);
+        rhs);
   }
 
-  // Packed scalar: non-lossy PackedRValue transport through DispatchWrite.
+  // Packed scalar: non-lossy PackedRValue transport.
   if (plan.op == WriteOp::kCommitPackedOrFloatScalar &&
-      IsPacked(types[type_id])) {
-    uint32_t semantic_bits = PackedBitWidth(types[type_id], types);
+      IsPacked(types[route.dest_type])) {
+    uint32_t semantic_bits = PackedBitWidth(types[route.dest_type], types);
     auto packed = LowerRhsToPackedRValue(
-        context, facts, resolver, assign.rhs, semantic_bits, type_id);
+        context, facts, resolver, rhs, semantic_bits, route.dest_type);
     if (!packed) return std::unexpected(packed.error());
-    auto policy = std::visit(
-        common::Overloaded{
-            [&](const mir::Operand& op) -> OwnershipPolicy {
-              return DetermineOwnership(context, op);
-            },
-            [](const mir::Rvalue&) -> OwnershipPolicy {
-              return OwnershipPolicy::kMove;
-            },
-        },
-        assign.rhs);
     return DispatchWrite(
-        context, facts, dest,
-        PackedRValueSource{.rvalue = *packed, .type_id = type_id}, type_id,
-        policy);
+        context, facts, route.dest,
+        PackedRValueSource{.rvalue = *packed, .type_id = route.dest_type},
+        route.dest_type, policy);
   }
 
-  // Default: evaluate RHS as raw value, commit through canonical path.
+  // Default: raw value.
   auto rhs_raw_or_err =
-      LowerRhsRaw(context, facts, resolver, assign.rhs, type_id);
+      LowerRhsRaw(context, facts, resolver, rhs, route.dest_type);
   if (!rhs_raw_or_err) return std::unexpected(rhs_raw_or_err.error());
-  auto policy = std::visit(
-      common::Overloaded{
-          [&](const mir::Operand& op) -> OwnershipPolicy {
-            return DetermineOwnership(context, op);
-          },
-          [](const mir::Rvalue&) -> OwnershipPolicy {
-            return OwnershipPolicy::kMove;
-          },
-      },
-      assign.rhs);
   return DispatchWrite(
-      context, facts, dest, RawValueSource{*rhs_raw_or_err}, type_id, policy);
+      context, facts, route.dest, RawValueSource{*rhs_raw_or_err},
+      route.dest_type, policy);
+}
+
+// Execute a direct plain write via DispatchPlainWrite (no OwnershipPolicy).
+static auto ExecuteDirectPlainWrite(
+    Context& context, const CuFacts& facts, SlotAccessResolver& resolver,
+    const RoutedWriteTarget& route, const mir::RightHandSide& rhs)
+    -> Result<void> {
+  const auto& types = *facts.types;
+  auto plan = BuildWritePlan(route.dest_type, types);
+
+  // Aggregates and union memcpy.
+  if (plan.op == WriteOp::kStorePlainAggregate ||
+      plan.op == WriteOp::kCommitUnionMemcpy) {
+    return std::visit(
+        common::Overloaded{
+            [&](const mir::Operand& operand) -> Result<void> {
+              return DispatchPlainWrite(
+                  context, facts, route.dest, OperandSource{&operand},
+                  route.dest_type);
+            },
+            [&](const mir::Rvalue& rvalue) -> Result<void> {
+              return LowerRvalueAssign(context, facts, route.dest, rvalue);
+            },
+        },
+        rhs);
+  }
+
+  // Packed scalar: non-lossy PackedRValue transport.
+  if (plan.op == WriteOp::kCommitPackedOrFloatScalar &&
+      IsPacked(types[route.dest_type])) {
+    uint32_t semantic_bits = PackedBitWidth(types[route.dest_type], types);
+    auto packed = LowerRhsToPackedRValue(
+        context, facts, resolver, rhs, semantic_bits, route.dest_type);
+    if (!packed) return std::unexpected(packed.error());
+    return DispatchPlainWrite(
+        context, facts, route.dest,
+        PackedRValueSource{.rvalue = *packed, .type_id = route.dest_type},
+        route.dest_type);
+  }
+
+  // Default: raw value.
+  auto rhs_raw_or_err =
+      LowerRhsRaw(context, facts, resolver, rhs, route.dest_type);
+  if (!rhs_raw_or_err) return std::unexpected(rhs_raw_or_err.error());
+  return DispatchPlainWrite(
+      context, facts, route.dest, RawValueSource{*rhs_raw_or_err},
+      route.dest_type);
+}
+
+// Execute a plain write (no lifecycle, no OwnershipPolicy).
+// Routes based on pre-computed route.
+static auto ExecutePlainWrite(
+    Context& context, const CuFacts& facts, SlotAccessResolver& resolver,
+    const RoutedWriteTarget& route, const mir::RightHandSide& rhs)
+    -> Result<void> {
+  switch (route.kind) {
+    case CommitRouteKind::kBitRange:
+      return ExecuteBitRangeWrite(context, facts, resolver, route, rhs);
+    case CommitRouteKind::kResolverRouted: {
+      auto place = mir::RequireLocalDest(route.dest, "ExecutePlainWrite");
+      auto rhs_raw = LowerRhsRaw(context, facts, resolver, rhs, place);
+      if (!rhs_raw) return std::unexpected(rhs_raw.error());
+      return resolver.CommitPlainSlotValue(place, *rhs_raw, route.dest_type);
+    }
+    case CommitRouteKind::kDirect:
+      return ExecuteDirectPlainWrite(context, facts, resolver, route, rhs);
+  }
+  throw common::InternalError("ExecutePlainWrite", "unhandled CommitRouteKind");
+}
+
+// Execute a lifecycle write (copy or move). Routes based on pre-computed route.
+static auto ExecuteLifecycleWrite(
+    Context& context, const CuFacts& facts, SlotAccessResolver& resolver,
+    const RoutedWriteTarget& route, const mir::RightHandSide& rhs,
+    OwnershipPolicy policy) -> Result<void> {
+  switch (route.kind) {
+    case CommitRouteKind::kBitRange:
+      return ExecuteBitRangeWrite(context, facts, resolver, route, rhs);
+    case CommitRouteKind::kResolverRouted: {
+      auto place = mir::RequireLocalDest(route.dest, "ExecuteLifecycleWrite");
+      auto rhs_raw = LowerRhsRaw(context, facts, resolver, rhs, place);
+      if (!rhs_raw) return std::unexpected(rhs_raw.error());
+      return CommitResolverRoutedValue(
+          resolver, place, *rhs_raw, route.dest_type, policy);
+    }
+    case CommitRouteKind::kDirect:
+      return ExecuteDirectLifecycleWrite(
+          context, facts, resolver, route, rhs, policy);
+  }
+  throw common::InternalError(
+      "ExecuteLifecycleWrite", "unhandled CommitRouteKind");
+}
+
+// PlainAssign: non-managed overwrite. Asserts destination is non-managed,
+// routes once, then executes plain write with no lifecycle.
+auto LowerPlainAssign(
+    Context& context, const CuFacts& facts, const mir::WriteTarget& dest,
+    const mir::RightHandSide& rhs) -> Result<void> {
+  CanonicalSlotAccess canonical(context, facts);
+  return LowerPlainAssign(context, facts, canonical, dest, rhs);
+}
+
+auto LowerPlainAssign(
+    Context& context, const CuFacts& facts, SlotAccessResolver& resolver,
+    const mir::WriteTarget& dest, const mir::RightHandSide& rhs)
+    -> Result<void> {
+  auto route = RouteWriteTarget(context, facts, resolver, dest);
+  if (common::TypeContainsManaged(route.dest_type, *facts.types)) {
+    throw common::InternalError(
+        "LowerPlainAssign", "PlainAssign used for managed destination type");
+  }
+  return ExecutePlainWrite(context, facts, resolver, route, rhs);
+}
+
+// CopyAssign: explicit clone/copy lifecycle.
+auto LowerCopyAssign(
+    Context& context, const CuFacts& facts, const mir::WriteTarget& dest,
+    const mir::RightHandSide& rhs) -> Result<void> {
+  CanonicalSlotAccess canonical(context, facts);
+  return LowerCopyAssign(context, facts, canonical, dest, rhs);
+}
+
+auto LowerCopyAssign(
+    Context& context, const CuFacts& facts, SlotAccessResolver& resolver,
+    const mir::WriteTarget& dest, const mir::RightHandSide& rhs)
+    -> Result<void> {
+  auto route = RouteWriteTarget(context, facts, resolver, dest);
+  return ExecuteLifecycleWrite(
+      context, facts, resolver, route, rhs, OwnershipPolicy::kClone);
+}
+
+// MoveAssign: explicit move lifecycle.
+auto LowerMoveAssign(
+    Context& context, const CuFacts& facts, const mir::WriteTarget& dest,
+    const mir::RightHandSide& rhs) -> Result<void> {
+  CanonicalSlotAccess canonical(context, facts);
+  return LowerMoveAssign(context, facts, canonical, dest, rhs);
+}
+
+auto LowerMoveAssign(
+    Context& context, const CuFacts& facts, SlotAccessResolver& resolver,
+    const mir::WriteTarget& dest, const mir::RightHandSide& rhs)
+    -> Result<void> {
+  auto route = RouteWriteTarget(context, facts, resolver, dest);
+  return ExecuteLifecycleWrite(
+      context, facts, resolver, route, rhs, OwnershipPolicy::kMove);
+}
+
+// Execute a plain guarded write (no lifecycle, no OwnershipPolicy).
+// For non-managed destination types only.
+static auto ExecutePlainGuardedWrite(
+    Context& context, const CuFacts& facts, SlotAccessResolver& resolver,
+    const RoutedWriteTarget& route, llvm::Value* rhs_raw,
+    const std::optional<PackedRValue>& packed_rhs) -> Result<void> {
+  switch (route.kind) {
+    case CommitRouteKind::kBitRange: {
+      auto place =
+          mir::RequireLocalDest(route.dest, "ExecutePlainGuardedWrite");
+      return StoreBitRange(context, facts, place, *packed_rhs);
+    }
+    case CommitRouteKind::kResolverRouted: {
+      auto place =
+          mir::RequireLocalDest(route.dest, "ExecutePlainGuardedWrite");
+      return resolver.CommitPlainSlotValue(place, rhs_raw, route.dest_type);
+    }
+    case CommitRouteKind::kDirect: {
+      if (packed_rhs) {
+        return DispatchPlainWrite(
+            context, facts, route.dest,
+            PackedRValueSource{
+                .rvalue = *packed_rhs, .type_id = route.dest_type},
+            route.dest_type);
+      }
+      return DispatchPlainWrite(
+          context, facts, route.dest, RawValueSource{rhs_raw}, route.dest_type);
+    }
+  }
+  throw common::InternalError(
+      "ExecutePlainGuardedWrite", "unhandled CommitRouteKind");
+}
+
+// Execute a lifecycle guarded write (CopyAssign semantics with kClone).
+// For managed destination types only.
+static auto ExecuteLifecycleGuardedWrite(
+    Context& context, const CuFacts& facts, SlotAccessResolver& resolver,
+    const RoutedWriteTarget& route, llvm::Value* rhs_raw,
+    const std::optional<PackedRValue>& packed_rhs) -> Result<void> {
+  switch (route.kind) {
+    case CommitRouteKind::kBitRange: {
+      auto place =
+          mir::RequireLocalDest(route.dest, "ExecuteLifecycleGuardedWrite");
+      return StoreBitRange(context, facts, place, *packed_rhs);
+    }
+    case CommitRouteKind::kResolverRouted: {
+      auto place =
+          mir::RequireLocalDest(route.dest, "ExecuteLifecycleGuardedWrite");
+      return CommitResolverRoutedValue(
+          resolver, place, rhs_raw, route.dest_type, OwnershipPolicy::kClone);
+    }
+    case CommitRouteKind::kDirect: {
+      if (packed_rhs) {
+        return DispatchWrite(
+            context, facts, route.dest,
+            PackedRValueSource{
+                .rvalue = *packed_rhs, .type_id = route.dest_type},
+            route.dest_type, OwnershipPolicy::kClone);
+      }
+      return DispatchWrite(
+          context, facts, route.dest, RawValueSource{rhs_raw}, route.dest_type,
+          OwnershipPolicy::kClone);
+    }
+  }
+  throw common::InternalError(
+      "ExecuteLifecycleGuardedWrite", "unhandled CommitRouteKind");
 }
 
 auto LowerGuardedAssign(
     Context& context, const CuFacts& facts, SlotAccessResolver& resolver,
     const mir::GuardedAssign& guarded) -> Result<void> {
-  const auto& dest = guarded.dest;
-  const auto* dest_place = std::get_if<mir::PlaceId>(&dest);
+  auto route = RouteWriteTarget(context, facts, resolver, guarded.dest);
   auto& builder = context.GetBuilder();
   const auto& types = *facts.types;
-  TypeId dest_type_id = detail::ResolveDestType(context, facts, dest);
 
-  // Bit-range is PlaceId-only (external refs have no projections).
-  bool is_bit_range =
-      dest_place != nullptr && context.HasBitRangeProjection(*dest_place);
-  bool is_packed_dest = is_bit_range || IsPacked(types[dest_type_id]);
+  // Evaluate RHS before guard check (must be unconditional).
+  bool is_bit_range = route.kind == CommitRouteKind::kBitRange;
+  bool is_packed_dest = is_bit_range || IsPacked(types[route.dest_type]);
   std::optional<PackedRValue> packed_rhs;
   llvm::Value* rhs_raw = nullptr;
 
   if (is_bit_range) {
-    auto path = ExtractPackedAccessPath(context, facts, *dest_place);
+    auto dest_place =
+        mir::RequireLocalDest(route.dest, "LowerGuardedAssign/BitRange");
+    auto path = ExtractPackedAccessPath(context, facts, dest_place);
     if (!path) return std::unexpected(path.error());
     auto subview = ResolvePackedSubview(context, *path);
     if (!subview) return std::unexpected(subview.error());
@@ -454,14 +629,14 @@ auto LowerGuardedAssign(
     if (!packed) return std::unexpected(packed.error());
     packed_rhs = *packed;
   } else if (is_packed_dest) {
-    uint32_t semantic_bits = PackedBitWidth(types[dest_type_id], types);
+    uint32_t semantic_bits = PackedBitWidth(types[route.dest_type], types);
     auto packed = LowerRhsToPackedRValue(
-        context, facts, resolver, guarded.rhs, semantic_bits, dest_type_id);
+        context, facts, resolver, guarded.rhs, semantic_bits, route.dest_type);
     if (!packed) return std::unexpected(packed.error());
     packed_rhs = *packed;
   } else {
     auto rhs_raw_or_err =
-        LowerRhsRaw(context, facts, resolver, guarded.rhs, dest_type_id);
+        LowerRhsRaw(context, facts, resolver, guarded.rhs, route.dest_type);
     if (!rhs_raw_or_err) return std::unexpected(rhs_raw_or_err.error());
     rhs_raw = *rhs_raw_or_err;
   }
@@ -483,29 +658,17 @@ auto LowerGuardedAssign(
       llvm::BasicBlock::Create(context.GetLlvmContext(), "ga.skip", func);
   builder.CreateCondBr(guard, do_write_bb, skip_bb);
 
-  // Write path.
+  // Write path: plain for non-managed, lifecycle for managed.
   builder.SetInsertPoint(do_write_bb);
 
-  if (is_bit_range) {
-    auto result = StoreBitRange(context, facts, *dest_place, *packed_rhs);
-    if (!result) return result;
-  } else if (is_packed_dest) {
-    auto result = DispatchWrite(
-        context, facts, dest,
-        PackedRValueSource{.rvalue = *packed_rhs, .type_id = dest_type_id},
-        dest_type_id, OwnershipPolicy::kClone);
-    if (!result) return result;
-  } else if (dest_place != nullptr && resolver.ManagesPlace(*dest_place)) {
-    auto result = CommitManagedImmediate(
-        context, facts, resolver, *dest_place, rhs_raw,
-        OwnershipPolicy::kClone);
-    if (!result) return result;
-  } else {
-    auto result = DispatchWrite(
-        context, facts, dest, RawValueSource{rhs_raw}, dest_type_id,
-        OwnershipPolicy::kClone);
-    if (!result) return result;
-  }
+  bool is_managed = common::TypeContainsManaged(route.dest_type, types);
+  Result<void> write_result =
+      is_managed ? ExecuteLifecycleGuardedWrite(
+                       context, facts, resolver, route, rhs_raw, packed_rhs)
+                 : ExecutePlainGuardedWrite(
+                       context, facts, resolver, route, rhs_raw, packed_rhs);
+  if (!write_result) return write_result;
+
   builder.CreateBr(skip_bb);
 
   builder.SetInsertPoint(skip_bb);

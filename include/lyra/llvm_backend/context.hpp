@@ -445,17 +445,11 @@ class Context {
   // Allocas are always inserted in the entry block via alloca_builder_.
   // Key insight: storage is per-root, NOT per-PlaceId. Multiple PlaceIds with
   // the same root (but different projections) share the same storage.
-  // NOTE: This is PURE allocation - no initialization. Call
-  // InitializePlaceStorage explicitly at function entry for default-value
-  // initialization.
+  // NOTE: This is PURE allocation - no initialization. Semantic default
+  // initialization is explicit in MIR prologue (Initialize / ZeroInitStorage).
+  // Backend zero-init is only for kTemp lifecycle safety.
   auto GetOrCreatePlaceStorage(const mir::PlaceRoot& root)
       -> Result<llvm::AllocaInst*>;
-
-  // Initialize an allocated place with its default value.
-  // Must be called at function entry, not at first-use.
-  // Uses EmitSVDefaultInit which handles all types including unpacked
-  // aggregates with 4-state fields.
-  void InitializePlaceStorage(llvm::AllocaInst* alloca, TypeId type_id);
 
   // Set a place alias. When aliased, accesses to this place root use the
   // aliased pointer directly instead of allocated storage. Used for inout
@@ -590,8 +584,8 @@ class Context {
   // Returns a runtime-loaded signal coord from the per-instance
   // ext_ref_bindings table. External refs are never instance-owned,
   // so they always route through the generic NBA queue.
-  [[nodiscard]] auto EmitExternalRefSignalCoord(mir::ExternalRefId ref_id)
-      -> SignalCoordExpr;
+  [[nodiscard]] static auto EmitExternalRefSignalCoord(
+      mir::ExternalRefId ref_id) -> SignalCoordExpr;
 
   // Load ext_ref_bindings pointer from RuntimeInstance via instance_ptr_.
   [[nodiscard]] auto EmitLoadExtRefBindingsPtr() -> llvm::Value*;

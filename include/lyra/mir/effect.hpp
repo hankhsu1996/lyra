@@ -266,6 +266,15 @@ void ForEachReadOperand(const EnqueueDeferredAssertionEffect& e, const F& f) {
   }
 }
 
+// Zero-initialize the entire storage of a place.
+// Used for types where memberwise MIR initialization is not possible
+// (e.g., unpacked unions whose members overlap in storage).
+// The backend emits a memset(0) for the place's allocated storage.
+struct ZeroInitStorageEffect {
+  PlaceId target;
+  TypeId target_type;
+};
+
 // EffectOp is the variant of all effect operations.
 // Effect operations produce side effects but no value.
 // Note: Builtin methods are now unified as Rvalue (kBuiltinCall), not Effect.
@@ -273,7 +282,7 @@ using EffectOp = std::variant<
     DisplayEffect, ReportEffect, MemIOEffect, TimeFormatEffect, SystemTfEffect,
     StrobeEffect, MonitorEffect, MonitorControlEffect, FillPackedEffect,
     RecordDecisionObservation, RecordDecisionObservationDynamic, CoverHitEffect,
-    EnqueueDeferredAssertionEffect>;
+    EnqueueDeferredAssertionEffect, ZeroInitStorageEffect>;
 
 // Body execution requirement: what a callable body needs to execute correctly.
 // Computed once from body contents at metadata formation time, stored on

@@ -145,13 +145,13 @@ void PropagateProvenTrueTemps(
           continue;
         }
 
-        if (const auto* assign = std::get_if<Assign>(&stmt.data)) {
-          const auto* dest_pid = std::get_if<PlaceId>(&assign->dest);
+        if (auto ref = TryGetDirectAssign(stmt.data); ref) {
+          const auto* dest_pid = std::get_if<PlaceId>(ref.dest);
           if (dest_pid == nullptr) continue;
           auto dest_temp = ResolvePlaceToTempId(*dest_pid, arena);
           if (!dest_temp) continue;
           if (IsTempProvenTrue(proven_true, *dest_temp)) continue;
-          if (IsRhsProvenTrue(proven_true, assign->rhs, arena)) {
+          if (IsRhsProvenTrue(proven_true, *ref.rhs, arena)) {
             changed = MarkTempProvenTrue(proven_true, *dest_temp) || changed;
           }
         }
@@ -212,17 +212,19 @@ void SimplifyBoundsCheckedOps(
         continue;
       }
 
-      if (auto* assign = std::get_if<Assign>(&stmt.data)) {
-        SimplifyRhs(assign->rhs, proven_true, arena);
+      if (auto ref = TryGetDirectAssign(stmt.data); ref) {
+        SimplifyRhs(*ref.rhs, proven_true, arena);
         continue;
       }
 
       if (auto* ga = std::get_if<GuardedAssign>(&stmt.data)) {
+        // Simplify the RHS of guarded assigns with proven-true guards.
+        // We do NOT convert to a direct assign because we lack TypeArena
+        // to classify PlainAssign vs CopyAssign/MoveAssign for managed
+        // destinations. The backend handles the proven-true guard
+        // efficiently (LLVM folds the constant branch).
         if (IsOperandProvenTrue(proven_true, ga->guard, arena)) {
-          stmt.data = Assign{
-              .dest = ga->dest,
-              .rhs = std::move(ga->rhs),
-          };
+          SimplifyRhs(ga->rhs, proven_true, arena);
         }
       }
     }

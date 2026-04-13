@@ -104,8 +104,9 @@ enum class PassMode : uint8_t {
 //
 // EXPRESSION FORM (dest == nullopt):
 //   Call emits to tmp, returns Use(tmp) as Operand.
-//   Caller emits Assign(actual_dest, Use(tmp)) which goes through CommitValue.
-//   Used when call result feeds into larger expression or explicit assignment.
+//   Caller emits Assign(actual_dest, Use(tmp)) which goes through write
+//   dispatch. Used when call result feeds into larger expression or explicit
+//   assignment.
 //
 // STATEMENT FORM (dest.has_value()):
 //   Call emits to tmp, then internally commits to dest.
@@ -118,7 +119,7 @@ enum class PassMode : uint8_t {
 //
 // Execution flow:
 // 1. Call writes return to tmp (register return or sret out-param)
-// 2. If dest: CommitValue(dest, Load(tmp), type, kMove)
+// 2. If dest: CommitRuntimeResult(dest, Load(tmp))
 //    Else: caller handles commit via Assign(dest, Use(tmp))
 struct CallReturn {
   PlaceId tmp;                  // Staging temp (MIR-visible, preallocated)
@@ -145,7 +146,7 @@ enum class WritebackKind : uint8_t {
 //
 // STAGED (default):
 //   Call writes to tmp (via out-param pointer).
-//   After call: CommitValue(dest, Load(tmp), type, kMove).
+//   After call: CommitRuntimeResult(dest, Load(tmp)).
 //   Backend allocates tmp as local storage.
 //   Invariant: tmp.has_value() == true.
 //

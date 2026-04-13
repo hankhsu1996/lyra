@@ -25,6 +25,7 @@ class Type;
 
 namespace lyra::lowering::mir_to_llvm {
 class Context;
+class SlotAccessResolver;
 }  // namespace lyra::lowering::mir_to_llvm
 
 namespace lyra::lowering::mir_to_llvm::dpi {
@@ -54,8 +55,8 @@ auto GetOrDeclareDpiImport(
 // types, emit call with C calling convention, coerce return value back to
 // internal representation, and handle return staging.
 auto LowerDpiImportCall(
-    Context& context, const CuFacts& facts, const mir::DpiCall& call,
-    const ActiveExecutionMode& mode) -> Result<void>;
+    Context& context, const CuFacts& facts, SlotAccessResolver& resolver,
+    const mir::DpiCall& call, const ActiveExecutionMode& mode) -> Result<void>;
 
 // Emit public C-ABI wrapper functions for DPI exports.
 // Package-scoped exports: direct call to design-global callable.

@@ -688,6 +688,9 @@ void CollectPlacesFromEffectOp(
               CollectPlaceFromOperand(op, places);
             });
           },
+          [&](const mir::ZeroInitStorageEffect& zi) {
+            places.insert(zi.target);
+          },
       },
       effect);
 }
@@ -702,7 +705,9 @@ auto CollectProcessPlaces(const mir::Process& process, const mir::Arena& arena)
     for (const auto& instr : block.statements) {
       std::visit(
           common::Overloaded{
-              [&](const mir::Assign& a) {
+              [&](const auto& a)
+                requires(mir::kIsDirectAssign<std::decay_t<decltype(a)>>)
+              {
                 if (const auto* p = std::get_if<mir::PlaceId>(&a.dest)) {
                   places.insert(*p);
                 }
@@ -796,8 +801,12 @@ auto CollectProcessPlaces(const mir::Process& process, const mir::Arena& arena)
                     aop.data);
               },
               [](const mir::TriggerEvent&) {},
-          },
-          instr.data);
+              [&](const mir::Initialize& init) {
+                places.insert(init.dest);
+                CollectPlaceFromOperand(init.value, places);
+              },
+              },
+              instr.data);
     }
 
     std::visit(
@@ -878,7 +887,9 @@ auto ProcessHasSuspension(const mir::Process& process) -> bool {
 auto IsStatementPure(const mir::Statement& stmt) -> bool {
   return std::visit(
       common::Overloaded{
-          [](const mir::Assign&) { return true; },
+          [](const mir::PlainAssign&) { return true; },
+          [](const mir::CopyAssign&) { return true; },
+          [](const mir::MoveAssign&) { return true; },
           [](const mir::GuardedAssign&) { return true; },
           [](const mir::DefineTemp& dt) {
             // DefineTemp is pure if RHS is pure
@@ -894,6 +905,7 @@ auto IsStatementPure(const mir::Statement& stmt) -> bool {
           [](const mir::BuiltinCall&) { return false; },
           [](const mir::AssocOp&) { return false; },
           [](const mir::TriggerEvent&) { return false; },
+          [](const mir::Initialize&) { return true; },
       },
       stmt.data);
 }
@@ -1028,11 +1040,11 @@ auto AnalyzeCombKernel(const mir::Process& process, const mir::Arena& arena)
     for (const auto& stmt : block.statements) {
       if (!IsStatementPure(stmt)) return std::nullopt;
 
-      if (const auto* assign = std::get_if<mir::Assign>(&stmt.data)) {
-        if (const auto* rv = std::get_if<mir::Rvalue>(&assign->rhs)) {
+      if (auto ref = mir::TryGetDirectAssign(stmt.data); ref) {
+        if (const auto* rv = std::get_if<mir::Rvalue>(ref.rhs)) {
           if (mir::RvalueHasSideEffects(rv->info)) return std::nullopt;
         }
-        const auto* dest_pid = std::get_if<mir::PlaceId>(&assign->dest);
+        const auto* dest_pid = std::get_if<mir::PlaceId>(ref.dest);
         if (dest_pid == nullptr) return std::nullopt;
         const auto& root = arena[*dest_pid].root;
         if (root.kind == mir::PlaceRoot::Kind::kModuleSlot) {

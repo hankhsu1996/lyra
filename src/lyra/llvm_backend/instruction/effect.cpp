@@ -30,6 +30,7 @@
 #include "lyra/llvm_backend/observer_abi.hpp"
 #include "lyra/llvm_backend/packed_storage_view.hpp"
 #include "lyra/llvm_backend/slot_access.hpp"
+#include "lyra/llvm_backend/type_ops/default_init.hpp"
 #include "lyra/lowering/diagnostic_context.hpp"
 #include "lyra/mir/deferred_assertion_site.hpp"
 #include "lyra/mir/effect.hpp"
@@ -795,6 +796,15 @@ auto LowerEffectOp(
                 {engine_ptr, mode.decision_owner_id, instance_id_val, site_val,
                  disp_val, payload_ptr, payload_size_val, ref_array_ptr,
                  ref_count_val});
+            return {};
+          },
+          [&](const mir::ZeroInitStorageEffect& zi) -> Result<void> {
+            auto place_ptr = context.GetPlacePointer(zi.target);
+            if (!place_ptr) return std::unexpected(place_ptr.error());
+            auto llvm_type =
+                BuildLlvmTypeForTypeId(context, facts, zi.target_type);
+            if (!llvm_type) return std::unexpected(llvm_type.error());
+            EmitMemsetZero(context, *place_ptr, *llvm_type);
             return {};
           },
       },

@@ -149,13 +149,15 @@ auto LowerConnectionArtifacts(const LoweringInput& input)
         for (const auto& stmt : block.statements)
           std::visit(
               common::Overloaded{
-                  [&](const mir::Assign& a) { collect_rhs_triggers(a.rhs); },
+                  [&](const auto& a)
+                    requires(mir::kIsDirectAssign<std::decay_t<decltype(a)>>)
+                  { collect_rhs_triggers(a.rhs); },
                   [&](const mir::DefineTemp& dt) {
                     collect_rhs_triggers(dt.rhs);
                   },
                   [](const auto&) {},
-              },
-              stmt.data);
+                  },
+                  stmt.data);
         std::visit(
             common::Overloaded{
                 [&](const mir::Branch& b) {
@@ -180,8 +182,22 @@ auto LowerConnectionArtifacts(const LoweringInput& input)
           new_stmt.origin = stmt.origin;
           new_stmt.data = std::visit(
               common::Overloaded{
-                  [&](const mir::Assign& a) -> mir::StatementData {
-                    return mir::Assign{
+                  [&](const mir::PlainAssign& a) -> mir::StatementData {
+                    return mir::PlainAssign{
+                        .dest = remap_place(
+                            mir::RequireLocalDest(a.dest, "ExprConnections"),
+                            *expr.parent_arena),
+                        .rhs = remap_rhs(a.rhs, *expr.parent_arena)};
+                  },
+                  [&](const mir::CopyAssign& a) -> mir::StatementData {
+                    return mir::CopyAssign{
+                        .dest = remap_place(
+                            mir::RequireLocalDest(a.dest, "ExprConnections"),
+                            *expr.parent_arena),
+                        .rhs = remap_rhs(a.rhs, *expr.parent_arena)};
+                  },
+                  [&](const mir::MoveAssign& a) -> mir::StatementData {
+                    return mir::MoveAssign{
                         .dest = remap_place(
                             mir::RequireLocalDest(a.dest, "ExprConnections"),
                             *expr.parent_arena),
@@ -205,7 +221,7 @@ auto LowerConnectionArtifacts(const LoweringInput& input)
           if (ret->value) {
             new_block.statements.push_back(
                 mir::Statement{
-                    .data = mir::Assign{
+                    .data = mir::PlainAssign{
                         .dest = child_place,
                         .rhs =
                             remap_operand(*ret->value, *expr.parent_arena)}});

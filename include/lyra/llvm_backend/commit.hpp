@@ -19,15 +19,6 @@ namespace lyra::lowering::mir_to_llvm {
 class Context;
 struct WriteTarget;
 
-// Raw-value commit adapter. Routes through DispatchWrite with RawValueSource.
-// Does not own semantic write routing -- see write_plan.hpp for the canonical
-// write dispatch boundary. Retained for callers (assoc_op, call, etc.) that
-// have an already-loaded llvm::Value*.
-auto CommitValue(
-    Context& ctx, const CuFacts& facts, mir::PlaceId target,
-    llvm::Value* raw_value, TypeId type_id, OwnershipPolicy policy)
-    -> Result<void>;
-
 // Non-lossy packed value commit. Accepts a PackedRValue with preserved
 // 2-state/4-state semantics (unk == nullptr means provably 2-state).
 // For design targets: routes through PSV with store plan.

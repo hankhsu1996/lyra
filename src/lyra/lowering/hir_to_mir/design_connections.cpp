@@ -128,6 +128,7 @@ auto LowerExprAsBodyFunction(
       .next_local_id = 0,
       .next_temp_id = 0,
       .local_types = {},
+      .local_place_ids = {},
       .temp_types = {},
       .temp_metadata = {},
       .builtin_types = input.builtin_types,

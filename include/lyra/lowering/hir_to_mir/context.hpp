@@ -232,6 +232,11 @@ struct Context {
   // Storage type tables - populated during allocation, not post-collection.
   // These grow as locals/temps are allocated.
   std::vector<TypeId> local_types;
+  // Stable PlaceId vector for kLocal slots, in slot order (indexed by
+  // local_slot). Populated by AllocLocal; includes parameters, return slot,
+  // and all source-level locals. Used for MIR prologue default-init synthesis
+  // after body lowering completes.
+  std::vector<mir::PlaceId> local_place_ids;
   std::vector<TypeId> temp_types;  // deprecated: use temp_metadata instead
 
   // Authoritative temp metadata (indexed by temp_id).

@@ -57,12 +57,12 @@ auto LowerPattern(
           .operands = {fill_operand},
           .info = mir::CastRvalueInfo{
               .source_type = fill_expr.type, .target_type = unit_type_id}};
-      builder.EmitAssign(cast_temp, std::move(cast_rvalue));
+      builder.EmitPlainAssign(cast_temp, std::move(cast_rvalue));
       fill_operand = mir::Operand::Use(cast_temp);
     } else {
       // Materialize to temp for operand
       mir::PlaceId fill_temp = ctx.AllocTemp(unit_type_id);
-      builder.EmitAssign(fill_temp, fill_operand);
+      builder.EmitPlainAssign(fill_temp, fill_operand);
       fill_operand = mir::Operand::Use(fill_temp);
     }
 
