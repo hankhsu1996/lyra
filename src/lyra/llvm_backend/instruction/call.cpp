@@ -14,7 +14,6 @@
 #include "lyra/common/overloaded.hpp"
 #include "lyra/common/system_tf.hpp"
 #include "lyra/common/type.hpp"
-#include "lyra/common/type_queries.hpp"
 #include "lyra/llvm_backend/abi_check.hpp"
 #include "lyra/llvm_backend/callable_abi.hpp"
 #include "lyra/llvm_backend/commit.hpp"
@@ -23,11 +22,9 @@
 #include "lyra/llvm_backend/context.hpp"
 #include "lyra/llvm_backend/cu_facts.hpp"
 #include "lyra/llvm_backend/dpi_abi.hpp"
+#include "lyra/llvm_backend/instruction/commit_result.hpp"
 #include "lyra/llvm_backend/lifecycle.hpp"
-#include "lyra/llvm_backend/ownership.hpp"
 #include "lyra/llvm_backend/slot_access.hpp"
-#include "lyra/llvm_backend/write_plan.hpp"
-#include "lyra/llvm_backend/write_route.hpp"
 #include "lyra/mir/arena.hpp"
 #include "lyra/mir/call.hpp"
 #include "lyra/mir/statement.hpp"
@@ -46,41 +43,6 @@ struct ResolvedCallee {
   bool accepts_decision_owner = false;
   mir::FunctionId func_id;  // For error messages
 };
-
-// Commit a call result or writeback value to a destination.
-// Routes through the write architecture: RouteWriteTarget -> plain/lifecycle.
-// All call results use kMove (ownership transfers from callee/runtime).
-auto CommitCallResult(
-    Context& context, const CuFacts& facts, SlotAccessResolver& resolver,
-    mir::PlaceId dest, llvm::Value* raw_value) -> Result<void> {
-  mir::WriteTarget target{dest};
-  auto route = RouteWriteTarget(context, facts, resolver, target);
-
-  bool is_managed = common::TypeContainsManaged(route.dest_type, *facts.types);
-  switch (route.kind) {
-    case CommitRouteKind::kBitRange:
-      throw common::InternalError(
-          "CommitCallResult",
-          "call result destination has bit-range projection");
-    case CommitRouteKind::kResolverRouted: {
-      if (is_managed) {
-        return resolver.CommitSlotValue(
-            dest, raw_value, route.dest_type, OwnershipPolicy::kMove);
-      }
-      return resolver.CommitPlainSlotValue(dest, raw_value, route.dest_type);
-    }
-    case CommitRouteKind::kDirect: {
-      if (is_managed) {
-        return DispatchWrite(
-            context, facts, target, RawValueSource{raw_value}, route.dest_type,
-            OwnershipPolicy::kMove);
-      }
-      return DispatchPlainWrite(
-          context, facts, target, RawValueSource{raw_value}, route.dest_type);
-    }
-  }
-  throw common::InternalError("CommitCallResult", "unhandled CommitRouteKind");
-}
 
 auto LowerUserCallImpl(
     Context& context, const CuFacts& facts, SlotAccessResolver& resolver,
@@ -241,7 +203,7 @@ auto LowerUserCallImpl(
       auto tmp_type = context.GetPlaceLlvmType(call.ret->tmp);
       if (!tmp_type) return std::unexpected(tmp_type.error());
       llvm::Value* ret_val = builder.CreateLoad(*tmp_type, *tmp_ptr);
-      return CommitCallResult(
+      return CommitRuntimeResult(
           context, facts, resolver, *call.ret->dest, ret_val);
     }
     // Expression form: Use(ret.tmp) handled by outer Assign
@@ -267,7 +229,7 @@ auto LowerUserCallImpl(
     if (!is_managed) {
       builder.CreateStore(call_result, *tmp_ptr);
     }
-    return CommitCallResult(
+    return CommitRuntimeResult(
         context, facts, resolver, *call.ret->dest, call_result);
   }
 
@@ -396,8 +358,8 @@ auto LowerValuePlusargsCall(
 
     // Commit only if statement form (dest has value)
     if (call.ret->dest.has_value()) {
-      auto result =
-          CommitCallResult(context, facts, resolver, *call.ret->dest, success);
+      auto result = CommitRuntimeResult(
+          context, facts, resolver, *call.ret->dest, success);
       if (!result) return result;
     }
     // Expression form: Use(ret.tmp) handled by outer Assign
@@ -421,7 +383,7 @@ auto LowerValuePlusargsCall(
   llvm::Value* output_val =
       builder.CreateLoad(*output_llvm_type, *output_tmp_ptr);
   auto commit_result =
-      CommitCallResult(context, facts, resolver, wb.dest, output_val);
+      CommitRuntimeResult(context, facts, resolver, wb.dest, output_val);
   if (!commit_result) return commit_result;
   builder.CreateBr(merge_bb);
 
@@ -471,7 +433,7 @@ auto LowerFgetsCall(
     // Commit only if statement form (dest has value)
     if (call.ret->dest.has_value()) {
       auto result =
-          CommitCallResult(context, facts, resolver, *call.ret->dest, count);
+          CommitRuntimeResult(context, facts, resolver, *call.ret->dest, count);
       if (!result) return result;
     }
   }
@@ -481,7 +443,7 @@ auto LowerFgetsCall(
   if (!output_llvm_type) return std::unexpected(output_llvm_type.error());
   llvm::Value* output_val =
       builder.CreateLoad(*output_llvm_type, *output_tmp_ptr);
-  return CommitCallResult(context, facts, resolver, wb.dest, output_val);
+  return CommitRuntimeResult(context, facts, resolver, wb.dest, output_val);
 }
 
 auto LowerFreadCall(
@@ -629,7 +591,7 @@ auto LowerFreadCall(
 
     // Commit only if statement form (dest has value)
     if (call.ret->dest.has_value()) {
-      auto result = CommitCallResult(
+      auto result = CommitRuntimeResult(
           context, facts, resolver, *call.ret->dest, bytes_read);
       if (!result) return result;
     }
@@ -642,7 +604,7 @@ auto LowerFreadCall(
     if (!output_llvm_type) return std::unexpected(output_llvm_type.error());
     llvm::Value* output_val =
         builder.CreateLoad(*output_llvm_type, target_ptr_val);
-    return CommitCallResult(context, facts, resolver, wb.dest, output_val);
+    return CommitRuntimeResult(context, facts, resolver, wb.dest, output_val);
   }
   // kDirectToDest: runtime wrote directly, no commit needed
   return {};
@@ -721,7 +683,7 @@ auto LowerFscanfCall(
 
     // Commit only if statement form (dest has value)
     if (call.ret->dest.has_value()) {
-      auto result = CommitCallResult(
+      auto result = CommitRuntimeResult(
           context, facts, resolver, *call.ret->dest, items_read);
       if (!result) return result;
     }
@@ -762,7 +724,7 @@ auto LowerFscanfCall(
       llvm::Value* output_val =
           builder.CreateLoad(*output_llvm_type, *output_tmp_ptr);
       auto commit_result =
-          CommitCallResult(context, facts, resolver, wb.dest, output_val);
+          CommitRuntimeResult(context, facts, resolver, wb.dest, output_val);
       if (!commit_result) return commit_result;
 
       // After commit, continue to next check or merge
