@@ -15,6 +15,7 @@
 #include "lyra/common/internal_error.hpp"
 #include "lyra/common/overloaded.hpp"
 #include "lyra/common/type.hpp"
+#include "lyra/common/type_queries.hpp"
 #include "lyra/mir/arena.hpp"
 #include "lyra/mir/assoc_op.hpp"
 #include "lyra/mir/basic_block.hpp"
@@ -652,9 +653,31 @@ void VerifyStatementOwnership(
 
   std::visit(
       common::Overloaded{
-          [&](const Assign& assign) {
-            verify_write_target(assign.dest, "Assign.dest");
-            verify_rhs_places(assign.rhs, "Assign.rhs");
+          [&](const PlainAssign& a) {
+            verify_write_target(a.dest, "PlainAssign.dest");
+            verify_rhs_places(a.rhs, "PlainAssign.rhs");
+            // Invariant: PlainAssign must not target managed types.
+            if (cx.types != nullptr) {
+              if (const auto* pid = std::get_if<PlaceId>(&a.dest)) {
+                TypeId dt = TypeOfPlace(*cx.types, arena[*pid]);
+                if (common::TypeContainsManaged(dt, *cx.types)) {
+                  throw common::InternalError(
+                      "MIR verify",
+                      std::format(
+                          "{}: block {} stmt {}: PlainAssign targets "
+                          "managed type",
+                          routine_kind, block_idx, stmt_idx));
+                }
+              }
+            }
+          },
+          [&](const CopyAssign& a) {
+            verify_write_target(a.dest, "CopyAssign.dest");
+            verify_rhs_places(a.rhs, "CopyAssign.rhs");
+          },
+          [&](const MoveAssign& a) {
+            verify_write_target(a.dest, "MoveAssign.dest");
+            verify_rhs_places(a.rhs, "MoveAssign.rhs");
           },
           [&](const GuardedAssign& ga) {
             verify_write_target(ga.dest, "GuardedAssign.dest");
@@ -820,10 +843,11 @@ void VerifyIntraBlockDefOrder(
     // Check all UseTemp operands in this statement are available
     std::visit(
         common::Overloaded{
-            [&](const Assign& assign) {
+            [&](const auto& a)
+              requires(kIsDirectAssign<std::decay_t<decltype(a)>>)
+            {
               VerifyRhsDefBeforeUse(
-                  assign.rhs, available_temps, block_idx, stmt_idx,
-                  routine_kind);
+                  a.rhs, available_temps, block_idx, stmt_idx, routine_kind);
             },
             [&](const GuardedAssign& ga) {
               VerifyRhsDefBeforeUse(
@@ -909,8 +933,8 @@ void VerifyIntraBlockDefOrder(
                   init.value, available_temps, block_idx, stmt_idx,
                   "Initialize.value", routine_kind);
             },
-        },
-        stmt.data);
+            },
+            stmt.data);
   }
 }
 

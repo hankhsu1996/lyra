@@ -108,7 +108,7 @@ auto LowerVariableDeclaration(
       Result<mir::Operand> value_result =
           LowerExpression(rvalue.AsExpression(), builder);
       if (!value_result) return std::unexpected(value_result.error());
-      builder.EmitAssign(alloc.place, std::move(*value_result));
+      builder.EmitTypedAssign(alloc.place, std::move(*value_result), sym.type);
     } else {
       // Pattern RValue: emit fill/override effects
       Result<void> pattern_result =
@@ -122,6 +122,10 @@ auto LowerVariableDeclaration(
 auto LowerAssignment(
     const hir::AssignmentStatementData& data, MirBuilder& builder)
     -> Result<void> {
+  Context& ctx = builder.GetContext();
+  const hir::Expression& target_expr = (*ctx.hir_arena)[data.target];
+  TypeId dest_type = target_expr.type;
+
   Result<LvalueResult> target_result = LowerLvalue(data.target, builder);
   if (!target_result) return std::unexpected(target_result.error());
   LvalueResult target = std::move(*target_result);
@@ -134,18 +138,17 @@ auto LowerAssignment(
   mir::WriteTarget dest = target.dest;
 
   if (target.IsAlwaysValid()) {
-    builder.EmitAssign(dest, std::move(value));
+    builder.EmitTypedAssign(dest, std::move(value), dest_type);
     return {};
   }
 
   // Guarded store: only write if validity is true (OOB/X/Z = no-op)
-  Context& ctx = builder.GetContext();
   mir::Operand cond = target.validity;
 
   // EmitBranch requires Use operand - materialize constant if needed
   if (cond.kind == mir::Operand::Kind::kConst) {
     mir::PlaceId temp = ctx.AllocTemp(ctx.GetBitType());
-    builder.EmitAssign(temp, std::move(cond));
+    builder.EmitPlainAssign(temp, std::move(cond));
     cond = mir::Operand::Use(temp);
   }
 
@@ -157,7 +160,7 @@ auto LowerAssignment(
   // Thread value through: it may be a UseTemp from before the guard blocks
   // (e.g., if LowerExpression created blocks for a ternary expression).
   value = builder.ThreadValueToCurrentBlock(std::move(value));
-  builder.EmitAssign(dest, std::move(value));
+  builder.EmitTypedAssign(dest, std::move(value), dest_type);
   builder.EmitJump(merge_bb);
 
   builder.SetCurrentBlock(merge_bb);
@@ -182,7 +185,7 @@ auto LowerFormatOps(
     // Materialize to a temp so it's evaluated once
     const hir::Expression& desc_expr = (*ctx.hir_arena)[*descriptor];
     mir::PlaceId temp = ctx.AllocTemp(desc_expr.type);
-    builder.EmitAssign(temp, std::move(desc_val));
+    builder.EmitPlainAssign(temp, std::move(desc_val));
     mir_descriptor = mir::Operand::Use(temp);
   }
 
@@ -475,7 +478,7 @@ auto LowerSFormatEffect(
   Result<LvalueResult> target_result = LowerLvalue(*data.output, builder);
   if (!target_result) return std::unexpected(target_result.error());
   LvalueResult target = std::move(*target_result);
-  builder.EmitAssign(target.dest, mir::Operand::Use(tmp));
+  builder.EmitTypedAssign(target.dest, mir::Operand::Use(tmp), out_expr.type);
   return {};
 }
 
@@ -985,7 +988,7 @@ auto MaterializeCondition(hir::ExpressionId cond_expr_id, MirBuilder& builder)
   // Other operands (constants) need to be materialized to a temp
   const hir::Expression& cond_expr = (*ctx.hir_arena)[cond_expr_id];
   mir::PlaceId temp = ctx.AllocTemp(cond_expr.type);
-  builder.EmitAssign(temp, std::move(cond));
+  builder.EmitPlainAssign(temp, std::move(cond));
   return mir::Operand::Use(temp);
 }
 
@@ -1717,7 +1720,7 @@ auto LowerForLoop(const hir::ForLoopStatementData& data, MirBuilder& builder)
     if (cond.kind == mir::Operand::Kind::kConst) {
       const hir::Expression& cond_expr = (*ctx.hir_arena)[*data.condition];
       mir::PlaceId temp = ctx.AllocTemp(cond_expr.type);
-      builder.EmitAssign(temp, std::move(cond));
+      builder.EmitPlainAssign(temp, std::move(cond));
       cond = mir::Operand::Use(temp);
     }
 
@@ -1769,7 +1772,7 @@ auto LowerWhileLoop(
   if (cond.kind == mir::Operand::Kind::kConst) {
     const hir::Expression& cond_expr = (*ctx.hir_arena)[data.condition];
     mir::PlaceId temp = ctx.AllocTemp(cond_expr.type);
-    builder.EmitAssign(temp, std::move(cond));
+    builder.EmitPlainAssign(temp, std::move(cond));
     cond = mir::Operand::Use(temp);
   }
   builder.EmitBranch(cond, body_bb, exit_bb);
@@ -1817,7 +1820,7 @@ auto LowerDoWhileLoop(
   if (cond.kind == mir::Operand::Kind::kConst) {
     const hir::Expression& cond_expr = (*ctx.hir_arena)[data.condition];
     mir::PlaceId temp = ctx.AllocTemp(cond_expr.type);
-    builder.EmitAssign(temp, std::move(cond));
+    builder.EmitPlainAssign(temp, std::move(cond));
     cond = mir::Operand::Use(temp);
   }
   builder.EmitBranch(cond, body_bb, exit_bb);
@@ -2773,7 +2776,7 @@ auto LowerRepeatLoop(
   mir::Operand count_val = std::move(*count_result);
   const hir::Expression& count_expr = (*ctx.hir_arena)[data.count];
   mir::PlaceId counter = ctx.AllocTemp(count_expr.type);
-  builder.EmitAssign(counter, std::move(count_val));
+  builder.EmitPlainAssign(counter, std::move(count_val));
 
   // 2. Create blocks
   BlockIndex cond_bb = builder.CreateBlock();
@@ -2822,7 +2825,7 @@ auto LowerRepeatLoop(
   };
   mir::PlaceId new_count =
       builder.EmitPlaceTemp(count_expr.type, std::move(dec_rvalue));
-  builder.EmitAssign(counter, mir::Operand::Use(new_count));
+  builder.EmitPlainAssign(counter, mir::Operand::Use(new_count));
   builder.EmitJump(cond_bb);
 
   // 6. Exit
@@ -2947,7 +2950,8 @@ auto LowerStatement(hir::StatementId stmt_id, MirBuilder& builder)
               return;
             }
             if (ctx.return_slot.has_value()) {
-              builder.EmitAssign(*ctx.return_slot, std::move(*value_result));
+              builder.EmitTypedAssign(
+                  *ctx.return_slot, std::move(*value_result), ctx.return_type);
             }
           }
           // Jump to exit block (processes don't use single-exit form)

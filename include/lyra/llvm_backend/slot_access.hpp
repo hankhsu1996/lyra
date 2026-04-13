@@ -14,7 +14,7 @@
 #include "lyra/llvm_backend/cu_facts.hpp"
 #include "lyra/llvm_backend/ownership.hpp"
 #include "lyra/mir/handle.hpp"
-#include "lyra/mir/terminator.hpp"
+#include "lyra/mir/signal_ref.hpp"
 
 namespace lyra::lowering::mir_to_llvm {
 
@@ -29,7 +29,12 @@ class Context;
 // and do NOT go through this interface.
 class SlotAccessResolver {
  public:
+  SlotAccessResolver() = default;
   virtual ~SlotAccessResolver() = default;
+  SlotAccessResolver(const SlotAccessResolver&) = delete;
+  auto operator=(const SlotAccessResolver&) -> SlotAccessResolver& = delete;
+  SlotAccessResolver(SlotAccessResolver&&) = default;
+  auto operator=(SlotAccessResolver&&) -> SlotAccessResolver& = default;
 
   // Load a whole-slot module-slot value.
   // Only called for PlaceRoot::kModuleSlot with no projections.
@@ -41,8 +46,16 @@ class SlotAccessResolver {
       mir::PlaceId target, llvm::Value* value, TypeId type_id,
       OwnershipPolicy policy) -> Result<void> = 0;
 
-  // Query: is this place a managed activation-local slot?
-  [[nodiscard]] virtual auto ManagesPlace(mir::PlaceId place_id) const
+  // Commit a non-managed value to a whole-slot module-slot (plain path).
+  // No OwnershipPolicy -- lifecycle is not applicable to non-managed types.
+  virtual auto CommitPlainSlotValue(
+      mir::PlaceId target, llvm::Value* value, TypeId type_id)
+      -> Result<void> = 0;
+
+  // Query: does this place require commit through this resolver?
+  // True for activation-local managed slots (shadow alloca protocol).
+  // This is routing, not lifecycle -- non-managed types can be resolver-routed.
+  [[nodiscard]] virtual auto RequiresResolverCommit(mir::PlaceId place_id) const
       -> bool = 0;
 };
 
@@ -51,7 +64,12 @@ class SlotAccessResolver {
 // Canonical lowering provides a no-op implementation.
 class SegmentLifecycle {
  public:
+  SegmentLifecycle() = default;
   virtual ~SegmentLifecycle() = default;
+  SegmentLifecycle(const SegmentLifecycle&) = delete;
+  auto operator=(const SegmentLifecycle&) -> SegmentLifecycle& = delete;
+  SegmentLifecycle(SegmentLifecycle&&) = default;
+  auto operator=(SegmentLifecycle&&) -> SegmentLifecycle& = default;
 
   virtual void SeedFromCanonical() = 0;
   virtual void SyncToCanonical() = 0;
@@ -68,7 +86,11 @@ class CanonicalSlotAccess final : public SlotAccessResolver,
   auto CommitSlotValue(
       mir::PlaceId target, llvm::Value* value, TypeId type_id,
       OwnershipPolicy policy) -> Result<void> override;
-  [[nodiscard]] auto ManagesPlace(mir::PlaceId place_id) const -> bool override;
+  auto CommitPlainSlotValue(
+      mir::PlaceId target, llvm::Value* value, TypeId type_id)
+      -> Result<void> override;
+  [[nodiscard]] auto RequiresResolverCommit(mir::PlaceId place_id) const
+      -> bool override;
 
   void SeedFromCanonical() override;
   void SyncToCanonical() override;
@@ -76,8 +98,8 @@ class CanonicalSlotAccess final : public SlotAccessResolver,
   void SyncAndReloadSpecific(std::span<const mir::SignalRef> slots) override;
 
  private:
-  Context& ctx_;
-  const CuFacts& facts_;
+  Context* ctx_;
+  const CuFacts* facts_;
 };
 
 // Shadow storage for an activation-local managed signal slot.
@@ -103,7 +125,11 @@ class ActivationLocalSlotAccess final : public SlotAccessResolver,
   auto CommitSlotValue(
       mir::PlaceId target, llvm::Value* value, TypeId type_id,
       OwnershipPolicy policy) -> Result<void> override;
-  [[nodiscard]] auto ManagesPlace(mir::PlaceId place_id) const -> bool override;
+  auto CommitPlainSlotValue(
+      mir::PlaceId target, llvm::Value* value, TypeId type_id)
+      -> Result<void> override;
+  [[nodiscard]] auto RequiresResolverCommit(mir::PlaceId place_id) const
+      -> bool override;
 
   void SeedFromCanonical() override;
   void SyncToCanonical() override;
@@ -116,15 +142,14 @@ class ActivationLocalSlotAccess final : public SlotAccessResolver,
   void SeedSlot(const ManagedSlotStorage& storage);
   void SyncSlot(const ManagedSlotStorage& storage);
 
-  Context& ctx_;
-  const CuFacts& facts_;
+  Context* ctx_;
+  const CuFacts* facts_;
   std::unordered_map<uint32_t, ManagedSlotStorage> managed_;
 };
 
 // Create managed slot storage backed by persistent frame fields.
 // For processes with suspension only (frame fields survive suspend/resume).
-auto CreateManagedSlotStorage(
-    const ProcessActivationPlan& plan, Context& ctx, const CuFacts& facts)
+auto CreateManagedSlotStorage(const ProcessActivationPlan& plan, Context& ctx)
     -> std::vector<ManagedSlotStorage>;
 
 // Create managed slot storage backed by stack allocas.

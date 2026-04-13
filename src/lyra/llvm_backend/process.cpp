@@ -2071,7 +2071,7 @@ auto GenerateSharedProcessFunction(
   std::vector<ManagedSlotStorage> managed_storage;
   if (shared_proc_layout_for_plan.activation_plan.has_value()) {
     managed_storage = CreateManagedSlotStorage(
-        *shared_proc_layout_for_plan.activation_plan, context, facts);
+        *shared_proc_layout_for_plan.activation_plan, context);
   } else {
     auto local_plan = BuildProcessActivationPlan(
         process, context.GetMirArena(), *facts.types);
@@ -2439,7 +2439,7 @@ struct PlaceCollector {
         std::visit(
             [&](const auto& data) {
               using T = std::decay_t<decltype(data)>;
-              if constexpr (std::is_same_v<T, mir::Assign>) {
+              if constexpr (mir::kIsDirectAssign<T>) {
                 if (const auto* p = std::get_if<mir::PlaceId>(&data.dest)) {
                   CollectFromPlace(*p, arena);
                 }

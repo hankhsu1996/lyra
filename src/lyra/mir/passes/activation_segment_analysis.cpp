@@ -152,7 +152,9 @@ void CollectStatementAccesses(
     uint32_t stmt_index, std::vector<SlotAccessRecord>& accesses) {
   std::visit(
       common::Overloaded{
-          [&](const Assign& a) {
+          [&](const auto& a)
+            requires(kIsDirectAssign<std::decay_t<decltype(a)>>)
+          {
             if (const auto* pid = std::get_if<PlaceId>(&a.dest)) {
               CollectWriteAccess(
                   *pid, arena, block_index, stmt_index, accesses);
@@ -354,8 +356,8 @@ void CollectStatementAccesses(
             CollectOperandReads(
                 init.value, arena, block_index, stmt_index, accesses);
           },
-      },
-      stmt.data);
+          },
+          stmt.data);
 }
 
 // Semantic analysis of a statement's interaction with canonical state.
@@ -414,7 +416,9 @@ void AnalyzeStatementSemantics(
           // only after the process body returns and the fixpoint runs,
           // at which point segment-exit sync has already published all
           // managed values to canonical.
-          [](const Assign&) {},
+          [](const PlainAssign&) {},
+          [](const CopyAssign&) {},
+          [](const MoveAssign&) {},
           [](const GuardedAssign&) {},
           [](const DeferredAssign&) {},
           [](const DefineTemp&) {},

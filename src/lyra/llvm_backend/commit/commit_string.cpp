@@ -3,6 +3,7 @@
 #include <llvm/IR/Type.h>
 
 #include "lyra/common/diagnostic/diagnostic.hpp"
+#include "lyra/common/internal_error.hpp"
 #include "lyra/common/type.hpp"
 #include "lyra/llvm_backend/commit.hpp"
 #include "lyra/llvm_backend/commit/access.hpp"
@@ -22,9 +23,6 @@ namespace detail {
 // Order: Load(old) -> Retain(new if clone) -> Store(new) -> Release(old)
 // This order is safe for aliasing: if new == old, we've retained before
 // release.
-//
-// NOTE: Does NOT handle design-slot notify (design slots with string-containing
-// structs are rejected at AssignStruct level).
 void CommitStringField(
     llvm::IRBuilder<>& builder, llvm::Function* retain_fn,
     llvm::Function* release_fn, llvm::Value* ptr, llvm::Value* handle,
@@ -49,17 +47,12 @@ void CommitStringField(
 
 namespace {
 
-// Store a string handle to a WriteTarget.
-// Order: Load(old) -> Store(new) -> Release(old)
-// The new_val must already have the correct ownership (retained if needed).
-void StoreStringToWriteTarget(
-    Context& ctx, llvm::Value* new_val, const WriteTarget& wt) {
+// Routing-only: store a string handle to a WriteTarget with design-slot
+// notification. Uses string-specific runtime store functions for atomicity.
+// Does NOT handle lifecycle (no retain, no release).
+void RouteStringStore(
+    Context& ctx, llvm::Value* new_handle, const WriteTarget& wt) {
   auto& builder = ctx.GetBuilder();
-  auto* ptr_ty = llvm::PointerType::getUnqual(ctx.GetLlvmContext());
-
-  // Order: Load(old) -> Store(new) -> Release(old)
-  // Safe for aliasing: if new == old, store completes before release.
-  auto* old_val = builder.CreateLoad(ptr_ty, wt.ptr, "str.old");
 
   bool is_design_notify =
       wt.canonical_signal_id.has_value() &&
@@ -68,11 +61,11 @@ void StoreStringToWriteTarget(
   auto emit_notifying_store = [&]() {
     if (ctx.GetNotificationPolicy() == NotificationPolicy::kDeferred) {
       throw common::InternalError(
-          "StoreStringToWriteTarget",
+          "RouteStringStore",
           "deferred notification not supported for string store path");
     }
     if (wt.canonical_signal_id->IsExtRef()) {
-      builder.CreateStore(new_val, wt.ptr);
+      builder.CreateStore(new_handle, wt.ptr);
       builder.CreateCall(
           ctx.GetLyraMarkDirtyExtRef(),
           {ctx.GetEnginePointer(), ctx.GetInstancePointer(),
@@ -83,16 +76,16 @@ void StoreStringToWriteTarget(
           ctx.GetLyraStoreStringLocal(),
           {ctx.GetEnginePointer(),
            wt.canonical_signal_id->GetInstancePointer(ctx.GetInstancePointer()),
-           wt.ptr, new_val, wt.canonical_signal_id->Emit(builder)});
+           wt.ptr, new_handle, wt.canonical_signal_id->Emit(builder)});
     } else {
       builder.CreateCall(
           ctx.GetLyraStoreStringGlobal(),
-          {ctx.GetEnginePointer(), wt.ptr, new_val,
+          {ctx.GetEnginePointer(), wt.ptr, new_handle,
            wt.canonical_signal_id->Emit(builder)});
     }
   };
 
-  auto emit_plain_store = [&]() { builder.CreateStore(new_val, wt.ptr); };
+  auto emit_plain_store = [&]() { builder.CreateStore(new_handle, wt.ptr); };
 
   if (is_design_notify && wt.requires_static_dirty_propagation) {
     emit_notifying_store();
@@ -105,22 +98,35 @@ void StoreStringToWriteTarget(
   } else {
     emit_plain_store();
   }
-
-  builder.CreateCall(ctx.GetLyraStringRelease(), {old_val});
 }
 
 }  // namespace
 
-// String store: clone if kClone, then store via WriteTarget
+// String store with lifecycle.
+// 1. Lifecycle: clone handle if kClone
+// 2. Lifecycle: load old handle (for release after store)
+// 3. Routing: store new handle via RouteStringStore
+// 4. Lifecycle: release old handle
 auto CommitStringValue(
     Context& ctx, const CuFacts& facts, const WriteTarget& wt,
     llvm::Value* handle, OwnershipPolicy policy, TypeId type_id)
     -> Result<void> {
+  auto& builder = ctx.GetBuilder();
+  auto* ptr_ty = llvm::PointerType::getUnqual(ctx.GetLlvmContext());
+
+  // 1. Lifecycle: clone if copy semantics
   if (policy == OwnershipPolicy::kClone) {
     handle = CloneLeafValue(ctx, facts, handle, type_id);
   }
-  // kMove: handle already has ownership, no retain needed
-  StoreStringToWriteTarget(ctx, handle, wt);
+
+  // 2. Lifecycle: load old handle before mutation
+  auto* old_handle = builder.CreateLoad(ptr_ty, wt.ptr, "str.old");
+
+  // 3. Routing: store new handle with design-slot notification
+  RouteStringStore(ctx, handle, wt);
+
+  // 4. Lifecycle: release old handle
+  builder.CreateCall(ctx.GetLyraStringRelease(), {old_handle});
   return {};
 }
 

@@ -23,12 +23,68 @@ namespace lyra::mir {
 // per destination carrier.
 using WriteTarget = std::variant<PlaceId, ExternalRefId>;
 
-// Assign: immediate write (dest := rhs).
-// RightHandSide can be Operand (simple value) or Rvalue (computation).
-struct Assign {
+// Write mode for direct assignment statements.
+// Encodes lifecycle policy decided at MIR construction time.
+enum class WriteMode : uint8_t {
+  kPlain,  // No lifecycle (non-managed types only)
+  kCopy,   // Destroy old + clone new (source preserved)
+  kMove,   // Destroy old + move new (+ cleanup source if applicable)
+};
+
+// PlainAssign: immediate write with no lifecycle (dest := rhs).
+// For non-managed trivial types only. Backend emits raw store.
+struct PlainAssign {
   WriteTarget dest;
   RightHandSide rhs;
 };
+
+// CopyAssign: immediate write with clone semantics (dest := clone(rhs)).
+// Destination is already-initialized managed storage.
+// Backend: destroy old contents, clone/retain new value from source.
+// Source remains valid after the operation.
+struct CopyAssign {
+  WriteTarget dest;
+  RightHandSide rhs;
+};
+
+// MoveAssign: immediate write with move semantics (dest := move(rhs)).
+// Destination is already-initialized managed storage.
+// Backend: destroy old contents, move new value from source.
+// Source is cleaned up (nulled) after the operation if applicable.
+struct MoveAssign {
+  WriteTarget dest;
+  RightHandSide rhs;
+};
+
+// Type trait for direct-assign statements (PlainAssign, CopyAssign,
+// MoveAssign).
+template <typename T>
+inline constexpr bool kIsDirectAssign =
+    std::is_same_v<T, PlainAssign> || std::is_same_v<T, CopyAssign> ||
+    std::is_same_v<T, MoveAssign>;
+
+// Read-only view into a direct-assign statement's common fields.
+// Returned by TryGetDirectAssign for uniform access without caring about mode.
+struct DirectAssignRef {
+  const WriteTarget* dest;
+  const RightHandSide* rhs;
+
+  explicit operator bool() const {
+    return dest != nullptr;
+  }
+};
+
+// Mutable view into a direct-assign statement's common fields.
+struct MutableDirectAssignRef {
+  WriteTarget* dest;
+  RightHandSide* rhs;
+
+  explicit operator bool() const {
+    return dest != nullptr;
+  }
+};
+
+// TryGetDirectAssign: declared after StatementData definition below.
 
 // GuardedAssign: conditional write (if guard then dest := rhs).
 // Semantics: rhs is always evaluated; only the write is gated by guard.
@@ -162,11 +218,11 @@ struct TriggerEvent {
   EventId event;
 };
 
-// Initialize: first-write initialization of a place (dest := rhs).
+// Initialize: first-write initialization of a place (dest := value).
 //
-// Unlike Assign, Initialize does NOT destroy/release previous contents.
-// It assumes the destination storage is uninitialized (no live value).
-// Used by MIR prologue synthesis for SV default initialization of
+// Unlike CopyAssign/MoveAssign, Initialize does NOT destroy/release previous
+// contents. It assumes the destination storage is uninitialized (no live
+// value). Used by MIR prologue synthesis for SV default initialization of
 // function-local storage.
 //
 // The backend lowers this as a pure store: no lifecycle dispatch,
@@ -178,11 +234,11 @@ struct Initialize {
 
 // Statement data variant.
 using StatementData = std::variant<
-    Assign, GuardedAssign, Effect, DeferredAssign, Call, DpiCall, BuiltinCall,
-    DefineTemp, AssocOp, TriggerEvent, Initialize>;
+    PlainAssign, CopyAssign, MoveAssign, GuardedAssign, Effect, DeferredAssign,
+    Call, DpiCall, BuiltinCall, DefineTemp, AssocOp, TriggerEvent, Initialize>;
 
 // A statement that does not affect control flow.
-// - Assign, GuardedAssign, DeferredAssign write to a Place
+// - PlainAssign, CopyAssign, MoveAssign, GuardedAssign, DeferredAssign write
 // - Effect produces side effects but no value
 struct Statement {
   StatementData data;
@@ -212,7 +268,9 @@ template <class F>
 void ForEachOperand(const StatementData& stmt, const F& f) {
   std::visit(
       common::Overloaded{
-          [&](const Assign& a) { ForEachOperand(a.rhs, f); },
+          [&](const auto& a)
+            requires(kIsDirectAssign<std::decay_t<decltype(a)>>)
+          { ForEachOperand(a.rhs, f); },
           [&](const GuardedAssign& a) {
             ForEachOperand(a.rhs, f);
             f(a.guard);
@@ -257,8 +315,8 @@ void ForEachOperand(const StatementData& stmt, const F& f) {
           [](const Effect&) {},
           [](const TriggerEvent&) {},
           [&](const Initialize& init) { f(init.value); },
-      },
-      stmt);
+          },
+          stmt);
 }
 
 // Generic write-target walker. Visits every WriteTarget in a statement.
@@ -266,13 +324,36 @@ template <class F>
 void ForEachWriteTarget(const StatementData& stmt, const F& f) {
   std::visit(
       common::Overloaded{
-          [&](const Assign& a) { f(a.dest); },
+          [&](const auto& a)
+            requires(kIsDirectAssign<std::decay_t<decltype(a)>>)
+          { f(a.dest); },
           [&](const GuardedAssign& a) { f(a.dest); },
           [&](const DeferredAssign& a) { f(a.dest); },
           [&](const Initialize& init) { f(WriteTarget{init.dest}); },
           [](const auto&) {},
-      },
-      stmt);
+          },
+          stmt);
+}
+
+// TryGetDirectAssign implementations (declared above, after forward decl).
+inline auto TryGetDirectAssign(const StatementData& data) -> DirectAssignRef {
+  if (const auto* a = std::get_if<PlainAssign>(&data))
+    return {.dest = &a->dest, .rhs = &a->rhs};
+  if (const auto* a = std::get_if<CopyAssign>(&data))
+    return {.dest = &a->dest, .rhs = &a->rhs};
+  if (const auto* a = std::get_if<MoveAssign>(&data))
+    return {.dest = &a->dest, .rhs = &a->rhs};
+  return {.dest = nullptr, .rhs = nullptr};
+}
+
+inline auto TryGetDirectAssign(StatementData& data) -> MutableDirectAssignRef {
+  if (auto* a = std::get_if<PlainAssign>(&data))
+    return {.dest = &a->dest, .rhs = &a->rhs};
+  if (auto* a = std::get_if<CopyAssign>(&data))
+    return {.dest = &a->dest, .rhs = &a->rhs};
+  if (auto* a = std::get_if<MoveAssign>(&data))
+    return {.dest = &a->dest, .rhs = &a->rhs};
+  return {.dest = nullptr, .rhs = nullptr};
 }
 
 }  // namespace lyra::mir

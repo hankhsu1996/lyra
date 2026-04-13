@@ -305,9 +305,13 @@ void Dumper::DumpBlock(const BasicBlock& bb, uint32_t index) {
     std::visit(
         [this](const auto& i) {
           using T = std::decay_t<decltype(i)>;
-          if constexpr (std::is_same_v<T, Assign>) {
+          if constexpr (kIsDirectAssign<T>) {
+            const char* prefix = "";
+            if constexpr (std::is_same_v<T, CopyAssign>) prefix = "copy ";
+            if constexpr (std::is_same_v<T, MoveAssign>) prefix = "move ";
             *out_ << std::format(
-                "{} = {}\n", FormatWriteTarget(i.dest), FormatRhs(i.rhs));
+                "{}{} = {}\n", prefix, FormatWriteTarget(i.dest),
+                FormatRhs(i.rhs));
           } else if constexpr (std::is_same_v<T, GuardedAssign>) {
             *out_ << std::format(
                 "guarded_assign {} = {} if {}\n", FormatWriteTarget(i.dest),

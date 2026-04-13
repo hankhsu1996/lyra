@@ -50,7 +50,7 @@ auto IsAllowedStatement(const Statement& stmt) -> bool {
       [](const auto& s) -> bool {
         using T = std::decay_t<decltype(s)>;
         if constexpr (
-            std::is_same_v<T, DefineTemp> || std::is_same_v<T, Assign> ||
+            std::is_same_v<T, DefineTemp> || kIsDirectAssign<T> ||
             std::is_same_v<T, GuardedAssign>) {
           return true;
         } else if constexpr (std::is_same_v<T, Effect>) {
@@ -123,8 +123,8 @@ auto CollectWrittenRoots(
     std::vector<SignalRef>& roots) -> bool {
   for (const auto& stmt : block.statements) {
     std::optional<PlaceId> dest;
-    if (const auto* assign = std::get_if<Assign>(&stmt.data)) {
-      if (const auto* pid = std::get_if<PlaceId>(&assign->dest)) {
+    if (auto ref = TryGetDirectAssign(stmt.data); ref) {
+      if (const auto* pid = std::get_if<PlaceId>(ref.dest)) {
         dest = *pid;
       }
     } else if (const auto* ga = std::get_if<GuardedAssign>(&stmt.data)) {

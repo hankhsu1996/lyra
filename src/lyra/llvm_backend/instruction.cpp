@@ -45,8 +45,14 @@ auto LowerStatement(
 
   return std::visit(
       common::Overloaded{
-          [&](const mir::Assign& assign) -> Result<void> {
-            return LowerAssign(context, facts, resolver, assign);
+          [&](const mir::PlainAssign& a) -> Result<void> {
+            return LowerPlainAssign(context, facts, resolver, a.dest, a.rhs);
+          },
+          [&](const mir::CopyAssign& a) -> Result<void> {
+            return LowerCopyAssign(context, facts, resolver, a.dest, a.rhs);
+          },
+          [&](const mir::MoveAssign& a) -> Result<void> {
+            return LowerMoveAssign(context, facts, resolver, a.dest, a.rhs);
           },
           [&](const mir::GuardedAssign& guarded) -> Result<void> {
             return LowerGuardedAssign(context, facts, resolver, guarded);

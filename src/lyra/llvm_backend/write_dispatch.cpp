@@ -367,4 +367,38 @@ auto DispatchWrite(
   return ExecuteWritePlan(ctx, facts, target, source, plan, policy);
 }
 
+auto DispatchPlainWrite(
+    Context& ctx, const CuFacts& facts, const mir::WriteTarget& target,
+    const WriteSource& source, TypeId type_id) -> Result<void> {
+  auto plan = BuildWritePlan(type_id, *facts.types);
+
+  // PlainAssign invariant: only non-managed write ops are reachable.
+  switch (plan.op) {
+    case WriteOp::kCommitPointerScalar:
+      return EmitPointerScalarWrite(ctx, facts, target, source);
+    case WriteOp::kStorePlainAggregate:
+      return EmitPlainAggregateStore(ctx, facts, target, source);
+    case WriteOp::kCommitPackedOrFloatScalar:
+      return EmitPackedOrFloatWrite(ctx, facts, target, source, plan.type_id);
+    case WriteOp::kCommitUnionMemcpy: {
+      if (!std::holds_alternative<OperandSource>(source)) {
+        return std::unexpected(ctx.GetDiagnosticContext().MakeUnsupported(
+            ctx.GetCurrentOrigin(),
+            "union memcpy commit from raw value source not yet supported",
+            UnsupportedCategory::kFeature));
+      }
+      auto src = RequireOperandPlace(source, "DispatchPlainWrite/UnionMemcpy");
+      return EmitUnionMemcpyWrite(ctx, facts, target, src, plan.type_id);
+    }
+    case WriteOp::kCommitManagedScalar:
+    case WriteOp::kCommitFieldByFieldStruct:
+    case WriteOp::kCommitFieldByFieldArray:
+    case WriteOp::kRejectUnsupported:
+      throw common::InternalError(
+          "DispatchPlainWrite",
+          "lifecycle-carrying WriteOp reached plain write path");
+  }
+  throw common::InternalError("DispatchPlainWrite", "unhandled WriteOp");
+}
+
 }  // namespace lyra::lowering::mir_to_llvm

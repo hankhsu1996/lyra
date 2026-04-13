@@ -223,18 +223,18 @@ auto CollectIdentityCopyCombs(std::span<const LayoutModulePlan> module_plans)
       const auto& block = process.blocks[0];
       if (block.statements.size() != 1) continue;
 
-      const auto* assign = std::get_if<mir::Assign>(&block.statements[0].data);
-      if (assign == nullptr) continue;
+      auto assign = mir::TryGetDirectAssign(block.statements[0].data);
+      if (!assign) continue;
 
       // Destination must be a module slot.
-      const auto* dst_place_id = std::get_if<mir::PlaceId>(&assign->dest);
+      const auto* dst_place_id = std::get_if<mir::PlaceId>(assign.dest);
       if (dst_place_id == nullptr) continue;
       const auto& dst_place = body.arena[*dst_place_id];
       if (dst_place.root.kind != mir::PlaceRoot::Kind::kModuleSlot) continue;
       if (!dst_place.projections.empty()) continue;
 
       // RHS must be a simple use of another module slot (no projections).
-      const auto* rhs_op = std::get_if<mir::Operand>(&assign->rhs);
+      const auto* rhs_op = std::get_if<mir::Operand>(assign.rhs);
       if (rhs_op == nullptr) continue;
       if (rhs_op->kind != mir::Operand::Kind::kUse) continue;
       auto src_place_id = std::get<mir::PlaceId>(rhs_op->payload);

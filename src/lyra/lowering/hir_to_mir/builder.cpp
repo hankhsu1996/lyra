@@ -84,7 +84,7 @@ void CheckWriteableSlot(
     if (slot_id < ctx.body_slots->size() &&
         (*ctx.body_slots)[slot_id].kind == mir::SlotKind::kParamConst) {
       throw common::InternalError(
-          "EmitAssign", "write to read-only param slot");
+          "EmitTypedAssign", "write to read-only param slot");
     }
   } else if (place.root.kind == mir::PlaceRoot::Kind::kDesignGlobal) {
     if (ctx.design_slots == nullptr) return;
@@ -92,7 +92,7 @@ void CheckWriteableSlot(
     if (slot_id < ctx.design_slots->size() &&
         (*ctx.design_slots)[slot_id].kind == mir::SlotKind::kParamConst) {
       throw common::InternalError(
-          "EmitAssign", "write to read-only param slot");
+          "EmitTypedAssign", "write to read-only param slot");
     }
   }
 }
@@ -285,32 +285,63 @@ auto MirBuilder::CurrentBlock() const -> BlockIndex {
   return current_block_;
 }
 
-void MirBuilder::EmitAssign(mir::PlaceId target, mir::Operand source) {
-  CheckWriteableSlot(target, *arena_, *ctx_);
-  EmitInst(mir::Assign{.dest = target, .rhs = std::move(source)});
-}
-
-void MirBuilder::EmitAssign(mir::PlaceId target, mir::Rvalue value) {
-  CheckWriteableSlot(target, *arena_, *ctx_);
-  VerifyRvalueInvariants(value);
-  EmitInst(mir::Assign{.dest = target, .rhs = std::move(value)});
-}
-
-void MirBuilder::EmitAssign(mir::WriteTarget target, mir::Operand source) {
+void MirBuilder::EmitPlainAssign(
+    mir::WriteTarget target, mir::RightHandSide rhs) {
   if (const auto* p = std::get_if<mir::PlaceId>(&target)) {
-    EmitAssign(*p, std::move(source));
-  } else {
-    EmitInst(mir::Assign{.dest = target, .rhs = std::move(source)});
+    CheckWriteableSlot(*p, *arena_, *ctx_);
   }
+  if (const auto* rv = std::get_if<mir::Rvalue>(&rhs)) {
+    VerifyRvalueInvariants(*rv);
+  }
+  EmitInst(mir::PlainAssign{.dest = target, .rhs = std::move(rhs)});
 }
 
-void MirBuilder::EmitAssign(mir::WriteTarget target, mir::Rvalue value) {
+void MirBuilder::EmitCopyAssign(
+    mir::WriteTarget target, mir::RightHandSide rhs) {
   if (const auto* p = std::get_if<mir::PlaceId>(&target)) {
-    EmitAssign(*p, std::move(value));
-  } else {
-    VerifyRvalueInvariants(value);
-    EmitInst(mir::Assign{.dest = target, .rhs = std::move(value)});
+    CheckWriteableSlot(*p, *arena_, *ctx_);
   }
+  if (const auto* rv = std::get_if<mir::Rvalue>(&rhs)) {
+    VerifyRvalueInvariants(*rv);
+  }
+  EmitInst(mir::CopyAssign{.dest = target, .rhs = std::move(rhs)});
+}
+
+void MirBuilder::EmitMoveAssign(
+    mir::WriteTarget target, mir::RightHandSide rhs) {
+  if (const auto* p = std::get_if<mir::PlaceId>(&target)) {
+    CheckWriteableSlot(*p, *arena_, *ctx_);
+  }
+  if (const auto* rv = std::get_if<mir::Rvalue>(&rhs)) {
+    VerifyRvalueInvariants(*rv);
+  }
+  EmitInst(mir::MoveAssign{.dest = target, .rhs = std::move(rhs)});
+}
+
+void MirBuilder::EmitTypedAssign(
+    mir::WriteTarget target, mir::RightHandSide rhs, TypeId dest_type) {
+  // Classify: non-managed -> PlainAssign, managed -> CopyAssign or MoveAssign.
+  if (!TypeContainsManaged(dest_type, *ctx_->type_arena)) {
+    EmitPlainAssign(std::move(target), std::move(rhs));
+    return;
+  }
+  // Managed type: check source to determine copy vs move.
+  // Rvalue -> MoveAssign (fresh computed value, take ownership).
+  const auto* operand = std::get_if<mir::Operand>(&rhs);
+  if (operand == nullptr) {
+    EmitMoveAssign(std::move(target), std::move(rhs));
+    return;
+  }
+  // Operand source: temp place -> move, everything else -> copy.
+  if (operand->kind == mir::Operand::Kind::kUse) {
+    auto src_place_id = std::get<mir::PlaceId>(operand->payload);
+    const auto& src_place = (*arena_)[src_place_id];
+    if (src_place.root.kind == mir::PlaceRoot::Kind::kTemp) {
+      EmitMoveAssign(std::move(target), std::move(rhs));
+      return;
+    }
+  }
+  EmitCopyAssign(std::move(target), std::move(rhs));
 }
 
 void MirBuilder::EmitEffect(mir::EffectOp op) {
@@ -323,7 +354,7 @@ void MirBuilder::EmitAssocOp(mir::AssocOp op) {
 
 auto MirBuilder::EmitPlaceTemp(TypeId type, mir::Rvalue value) -> mir::PlaceId {
   mir::PlaceId temp = ctx_->AllocTemp(type);
-  EmitAssign(temp, std::move(value));
+  EmitTypedAssign(temp, std::move(value), type);
   return temp;
 }
 
@@ -356,7 +387,7 @@ auto MirBuilder::MaterializeOperandToPlace(TypeId type, mir::Operand value)
     -> mir::PlaceId {
   ++ctx_->materialize_count;
   mir::PlaceId place = ctx_->AllocTemp(type);
-  EmitAssign(place, std::move(value));
+  EmitTypedAssign(place, std::move(value), type);
   return place;
 }
 
@@ -1265,7 +1296,7 @@ auto MirBuilder::MaterializeForBranch(mir::Operand cond) -> mir::Operand {
     return cond;
   }
   mir::PlaceId temp = ctx_->AllocTemp(ctx_->GetBitType());
-  EmitAssign(temp, std::move(cond));
+  EmitPlainAssign(temp, std::move(cond));
   return mir::Operand::Use(temp);
 }
 

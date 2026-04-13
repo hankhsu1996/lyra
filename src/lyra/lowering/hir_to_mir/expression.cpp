@@ -153,7 +153,7 @@ void EmitOOBDefault(mir::PlaceId place, TypeId type_id, MirBuilder& builder) {
         }
       }
       auto constant = Constant{.type = type_id, .value = std::move(ic)};
-      builder.EmitAssign(place, mir::Operand::Const(std::move(constant)));
+      builder.EmitPlainAssign(place, mir::Operand::Const(std::move(constant)));
     }
     return;
   }
@@ -450,7 +450,7 @@ auto LowerIncrementDecrement(
     read_val = builder.EmitGuardedUse(target.validity, target_place, expr.type);
   }
   mir::PlaceId old_value = ctx.AllocTemp(expr.type);
-  builder.EmitAssign(old_value, read_val);
+  builder.EmitPlainAssign(old_value, read_val);
 
   // 4. Compute new value using existing binary op machinery
   bool is_increment =
@@ -472,7 +472,7 @@ auto LowerIncrementDecrement(
   // 5. Write back to target with guarded assign for OOB safety
   mir::WriteTarget dest = target.dest;
   if (target.IsAlwaysValid()) {
-    builder.EmitAssign(dest, mir::Operand::Use(new_value));
+    builder.EmitPlainAssign(dest, mir::Operand::Use(new_value));
   } else {
     builder.EmitGuardedAssign(
         dest, mir::Operand::Use(new_value), target.validity);
@@ -525,7 +525,7 @@ auto LowerCompoundAssignment(
     read_val = builder.EmitGuardedUse(target.validity, target_place, expr.type);
   }
   mir::PlaceId old_value = ctx.AllocTemp(expr.type);
-  builder.EmitAssign(old_value, read_val);
+  builder.EmitPlainAssign(old_value, read_val);
 
   // 4. Select the appropriate MIR operator (handle div/mod signedness)
   // Use operand types for signedness check, mirroring SelectDivModOp logic
@@ -560,7 +560,7 @@ auto LowerCompoundAssignment(
   // 6. Write back to target with guarded assign for OOB safety
   mir::WriteTarget dest = target.dest;
   if (target.IsAlwaysValid()) {
-    builder.EmitAssign(dest, mir::Operand::Use(new_value));
+    builder.EmitPlainAssign(dest, mir::Operand::Use(new_value));
   } else {
     builder.EmitGuardedAssign(
         dest, mir::Operand::Use(new_value), target.validity);
@@ -1295,7 +1295,7 @@ auto LowerAssignment(
       builder.SetCurrentBlock(merge_bb);
     }
   } else if (target.IsAlwaysValid()) {
-    builder.EmitAssign(dest, value);
+    builder.EmitTypedAssign(dest, value, target_expr.type);
   } else {
     // Guarded assign: only write if guard is true (OOB/X/Z = no-op)
     builder.EmitGuardedAssign(dest, value, target.validity);
@@ -1347,7 +1347,7 @@ auto LowerConditional(
   if (cond.kind != mir::Operand::Kind::kUse) {
     const hir::Expression& cond_expr = (*ctx.hir_arena)[data.condition];
     mir::PlaceId temp = ctx.AllocTemp(cond_expr.type);
-    builder.EmitAssign(temp, std::move(cond));
+    builder.EmitPlainAssign(temp, std::move(cond));
     cond = mir::Operand::Use(temp);
   }
 
@@ -2546,7 +2546,8 @@ auto LowerElementAccessRvalue(
   builder.EmitBranch(cond, read_bb, oob_bb);
 
   builder.SetCurrentBlock(read_bb);
-  builder.EmitAssign(result_temp, mir::Operand::Use(result_place));
+  builder.EmitTypedAssign(
+      result_temp, mir::Operand::Use(result_place), expr.type);
   builder.EmitJump(merge_bb);
 
   // OOB path: fill 4-state sub-content with X (2-state stays zero).

@@ -15,28 +15,35 @@
 #include "lyra/llvm_backend/context.hpp"
 #include "lyra/llvm_backend/layout/layout.hpp"
 #include "lyra/llvm_backend/packed_storage_view.hpp"
+#include "lyra/llvm_backend/write_plan.hpp"
 #include "lyra/mir/arena.hpp"
 #include "lyra/mir/place.hpp"
 
 namespace lyra::lowering::mir_to_llvm {
 
 CanonicalSlotAccess::CanonicalSlotAccess(Context& ctx, const CuFacts& facts)
-    : ctx_(ctx), facts_(facts) {
+    : ctx_(&ctx), facts_(&facts) {
 }
 
 auto CanonicalSlotAccess::LoadSlotValue(mir::PlaceId place_id)
     -> Result<llvm::Value*> {
-  return ctx_.LoadPlaceValue(place_id);
+  return ctx_->LoadPlaceValue(place_id);
 }
 
 auto CanonicalSlotAccess::CommitSlotValue(
     mir::PlaceId target, llvm::Value* value, TypeId type_id,
     OwnershipPolicy policy) -> Result<void> {
-  return CommitValue(ctx_, facts_, target, value, type_id, policy);
+  return CommitValue(*ctx_, *facts_, target, value, type_id, policy);
 }
 
-auto CanonicalSlotAccess::ManagesPlace(mir::PlaceId /*place_id*/) const
-    -> bool {
+auto CanonicalSlotAccess::CommitPlainSlotValue(
+    mir::PlaceId target, llvm::Value* value, TypeId type_id) -> Result<void> {
+  return DispatchPlainWrite(
+      *ctx_, *facts_, mir::WriteTarget{target}, RawValueSource{value}, type_id);
+}
+
+auto CanonicalSlotAccess::RequiresResolverCommit(
+    mir::PlaceId /*place_id*/) const -> bool {
   return false;
 }
 
@@ -53,7 +60,7 @@ void CanonicalSlotAccess::SyncAndReloadSpecific(
 ActivationLocalSlotAccess::ActivationLocalSlotAccess(
     Context& ctx, const CuFacts& facts,
     std::span<const ManagedSlotStorage> storage)
-    : ctx_(ctx), facts_(facts) {
+    : ctx_(&ctx), facts_(&facts) {
   for (const auto& s : storage) {
     managed_[s.slot.id] = s;
   }
@@ -61,7 +68,7 @@ ActivationLocalSlotAccess::ActivationLocalSlotAccess(
 
 auto ActivationLocalSlotAccess::FindManagedStorage(mir::PlaceId place_id) const
     -> const ManagedSlotStorage* {
-  const auto& arena = ctx_.GetMirArena();
+  const auto& arena = ctx_->GetMirArena();
   const auto& place = arena[place_id];
   if (place.root.kind != mir::PlaceRoot::Kind::kModuleSlot) return nullptr;
   if (!place.projections.empty()) return nullptr;
@@ -76,9 +83,9 @@ auto ActivationLocalSlotAccess::LoadSlotValue(mir::PlaceId place_id)
     -> Result<llvm::Value*> {
   const auto* storage = FindManagedStorage(place_id);
   if (storage == nullptr) {
-    return ctx_.LoadPlaceValue(place_id);
+    return ctx_->LoadPlaceValue(place_id);
   }
-  auto& builder = ctx_.GetBuilder();
+  auto& builder = ctx_->GetBuilder();
   return builder.CreateLoad(
       storage->shadow_type, storage->shadow_ptr, "actlocal.load");
 }
@@ -88,14 +95,26 @@ auto ActivationLocalSlotAccess::CommitSlotValue(
     OwnershipPolicy policy) -> Result<void> {
   const auto* storage = FindManagedStorage(target);
   if (storage == nullptr) {
-    return CommitValue(ctx_, facts_, target, value, type_id, policy);
+    return CommitValue(*ctx_, *facts_, target, value, type_id, policy);
   }
-  ctx_.GetBuilder().CreateStore(value, storage->shadow_ptr);
+  ctx_->GetBuilder().CreateStore(value, storage->shadow_ptr);
   return {};
 }
 
-auto ActivationLocalSlotAccess::ManagesPlace(mir::PlaceId place_id) const
-    -> bool {
+auto ActivationLocalSlotAccess::CommitPlainSlotValue(
+    mir::PlaceId target, llvm::Value* value, TypeId type_id) -> Result<void> {
+  const auto* storage = FindManagedStorage(target);
+  if (storage == nullptr) {
+    return DispatchPlainWrite(
+        *ctx_, *facts_, mir::WriteTarget{target}, RawValueSource{value},
+        type_id);
+  }
+  ctx_->GetBuilder().CreateStore(value, storage->shadow_ptr);
+  return {};
+}
+
+auto ActivationLocalSlotAccess::RequiresResolverCommit(
+    mir::PlaceId place_id) const -> bool {
   return FindManagedStorage(place_id) != nullptr;
 }
 
@@ -106,8 +125,8 @@ void ActivationLocalSlotAccess::SeedSlot(const ManagedSlotStorage& storage) {
     throw common::InternalError(
         "SeedSlot", "managed slot must be module-local");
   }
-  auto& builder = ctx_.GetBuilder();
-  auto* canonical_ptr = ctx_.GetSignalSlotPointer(storage.slot);
+  auto& builder = ctx_->GetBuilder();
+  auto* canonical_ptr = ctx_->GetSignalSlotPointer(storage.slot);
   auto* val =
       builder.CreateLoad(storage.shadow_type, canonical_ptr, "actlocal.seed");
   builder.CreateStore(val, storage.shadow_ptr);
@@ -118,15 +137,15 @@ void ActivationLocalSlotAccess::SyncSlot(const ManagedSlotStorage& storage) {
     throw common::InternalError(
         "SyncSlot", "managed slot must be module-local");
   }
-  auto& builder = ctx_.GetBuilder();
+  auto& builder = ctx_->GetBuilder();
 
   auto* val = builder.CreateLoad(
       storage.shadow_type, storage.shadow_ptr, "actlocal.sync");
-  auto* canonical_ptr = ctx_.GetSignalSlotPointer(storage.slot);
+  auto* canonical_ptr = ctx_->GetSignalSlotPointer(storage.slot);
   // Mutation-target: resolve to storage owner for dirty-mark identity.
-  auto signal_id = ctx_.EmitMutationTargetSignalCoord(storage.slot);
+  auto signal_id = ctx_->EmitMutationTargetSignalCoord(storage.slot);
 
-  const auto& types = *facts_.types;
+  const auto& types = *facts_->types;
   const Type& type = types[storage.root_type];
   auto kind = type.Kind();
   if (kind == TypeKind::kEnum) {
@@ -139,11 +158,11 @@ void ActivationLocalSlotAccess::SyncSlot(const ManagedSlotStorage& storage) {
   if (kind == TypeKind::kReal) {
     semantic_bits = 64;
     store_val = builder.CreateBitCast(
-        val, llvm::Type::getInt64Ty(ctx_.GetLlvmContext()), "sync.as.i64");
+        val, llvm::Type::getInt64Ty(ctx_->GetLlvmContext()), "sync.as.i64");
   } else if (kind == TypeKind::kShortReal) {
     semantic_bits = 32;
     store_val = builder.CreateBitCast(
-        val, llvm::Type::getInt32Ty(ctx_.GetLlvmContext()), "sync.as.i32");
+        val, llvm::Type::getInt32Ty(ctx_->GetLlvmContext()), "sync.as.i32");
   } else {
     semantic_bits = PackedBitWidth(type, types);
   }
@@ -152,12 +171,12 @@ void ActivationLocalSlotAccess::SyncSlot(const ManagedSlotStorage& storage) {
   // The LLVM type is authoritative: struct {iN,iN} means 4-state,
   // scalar iN means 2-state. This is the activation-local sync path
   // where the local alloca type IS the variable's declared type.
-  auto rvalue = BuildPackedRValueFromRaw(ctx_, store_val, semantic_bits);
+  auto rvalue = BuildPackedRValueFromRaw(*ctx_, store_val, semantic_bits);
   auto view = BuildWholeValueStorageView(
-      ctx_, facts_, canonical_ptr, storage.root_type, true);
-  auto policy = BuildStorePolicyFromContext(ctx_, signal_id, &storage.slot);
+      *ctx_, *facts_, canonical_ptr, storage.root_type, true);
+  auto policy = BuildStorePolicyFromContext(*ctx_, signal_id, &storage.slot);
 
-  auto result = StorePackedValue(ctx_, view, rvalue, policy);
+  auto result = StorePackedValue(*ctx_, view, rvalue, policy);
   if (!result) {
     throw common::InternalError("SyncSlot", "StorePackedValue failed");
   }
@@ -198,8 +217,7 @@ void ActivationLocalSlotAccess::SyncAndReloadSpecific(
   }
 }
 
-auto CreateManagedSlotStorage(
-    const ProcessActivationPlan& plan, Context& ctx, const CuFacts& facts)
+auto CreateManagedSlotStorage(const ProcessActivationPlan& plan, Context& ctx)
     -> std::vector<ManagedSlotStorage> {
   const auto& proc_layout = ctx.GetCurrentProcessLayout();
   const auto& frame = proc_layout.frame;

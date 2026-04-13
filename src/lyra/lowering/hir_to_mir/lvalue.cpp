@@ -70,7 +70,7 @@ auto MaterializeValidity(mir::Operand validity, MirBuilder& builder)
   if (validity.kind != mir::Operand::Kind::kUseTemp) return validity;
   TypeId bool_type = builder.GetContext().GetBitType();
   mir::PlaceId temp = builder.GetContext().AllocTemp(bool_type);
-  builder.EmitAssign(temp, std::move(validity));
+  builder.EmitPlainAssign(temp, std::move(validity));
   return mir::Operand::Use(temp);
 }
 
