@@ -1732,12 +1732,14 @@ auto LowerTerminator(
 
 // Materialize local/temp storage as allocas for suspension-free processes.
 // Called after EmitProcessStateSetup so that frame_ptr_ is set (but unused).
-// Sets up function-scope alloca management and creates initialized storage
-// for each root in alloca_roots. Returns error if any storage creation fails.
+// Sets up function-scope alloca management and creates storage for each root
+// in alloca_roots. Returns error if any storage creation fails.
 //
-// Phase 1: conservative whole-process classification. A process is
-// suspension-free iff it has no Delay/Wait terminators. Future phases may
-// refine to per-root classification for mixed processes.
+// kLocal: allocate only, no backend init. Semantic default initialization
+// is explicit in MIR prologue via Initialize statements (pure store, no
+// lifecycle) and ZeroInitStorageEffect (for unpacked unions).
+// kTemp: zero-init for lifecycle safety (Destroy(nullptr) is no-op on first
+// write). This is not semantic init.
 static auto MaterializeAllocaStorage(
     Context& context, llvm::Function& func, const ProcessLayout& proc_layout)
     -> Result<void> {
@@ -1749,7 +1751,10 @@ static auto MaterializeAllocaStorage(
         .kind = root.key.kind, .id = root.key.id, .type = root.type};
     auto alloca_result = context.GetOrCreatePlaceStorage(mir_root);
     if (!alloca_result) return std::unexpected(alloca_result.error());
-    context.InitializePlaceStorage(*alloca_result, root.type);
+    if (root.key.kind == mir::PlaceRoot::Kind::kTemp) {
+      auto* llvm_type = (*alloca_result)->getAllocatedType();
+      EmitMemsetZero(context, *alloca_result, llvm_type);
+    }
   }
   return {};
 }

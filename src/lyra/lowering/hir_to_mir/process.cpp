@@ -14,6 +14,7 @@
 #include "lyra/lowering/hir_to_mir/builder.hpp"
 #include "lyra/lowering/hir_to_mir/context.hpp"
 #include "lyra/lowering/hir_to_mir/decision_site_allocator.hpp"
+#include "lyra/lowering/hir_to_mir/default_init.hpp"
 #include "lyra/lowering/hir_to_mir/lower.hpp"
 #include "lyra/lowering/hir_to_mir/statement.hpp"
 #include "lyra/lowering/origin_map.hpp"
@@ -153,6 +154,33 @@ auto LowerProcess(
 
   std::vector<mir::BasicBlock> blocks = builder.Finish();
   auto decision_sites = builder.TakeDecisionSites();
+
+  // Synthesize MIR default-init prologue for process-local kLocal variables.
+  // SV requires process-local storage to be initialized at process entry
+  // (LRM 6.7). Processes have no parameters, so all kLocal slots get init.
+  //
+  // This must happen before sensitivity collection and back-edge rewrites
+  // so that init reads are captured in the sensitivity list.
+  {
+    common::OriginId init_origin = common::OriginId::Invalid();
+    if (origin_map != nullptr) {
+      init_origin = origin_map->Record(
+          lowering::MirNode{std::monostate{}},
+          lowering::HirSource{process.body});
+    }
+    std::vector<mir::Statement> prologue;
+    for (uint32_t slot = 0; slot < ctx.local_place_ids.size(); ++slot) {
+      AppendDefaultInitStatements(
+          ctx.local_place_ids[slot], ctx.local_types[slot], mir_arena,
+          *input.type_arena, ctx.builtin_types.offset_type, init_origin,
+          prologue);
+    }
+    if (!prologue.empty()) {
+      auto& entry = blocks[entry_idx.value];
+      entry.statements.insert(
+          entry.statements.begin(), prologue.begin(), prologue.end());
+    }
+  }
 
   // For always_comb/always_latch: replace the Repeat terminator with
   // Wait(sensitivity_triggers, resume=entry). This makes the process
