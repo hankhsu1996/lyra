@@ -134,15 +134,7 @@ auto Engine::GetScopeTimeUnitPower(const RuntimeInstance* inst) const
   if (inst == nullptr) {
     return GetSimulationTimeSemantics().unit_power;
   }
-  const auto& meta = instance_time_metadata_.at(inst->instance_id.value);
-  if (!meta.initialized) {
-    throw common::InternalError(
-        "GetScopeTimeUnitPower",
-        std::format(
-            "uninitialized time metadata for instance {}",
-            inst->instance_id.value));
-  }
-  return meta.time_unit_power;
+  return inst->scope_time_metadata.time_unit_power;
 }
 
 auto Engine::GetScopeTimePrecisionPower(const RuntimeInstance* inst) const
@@ -150,15 +142,7 @@ auto Engine::GetScopeTimePrecisionPower(const RuntimeInstance* inst) const
   if (inst == nullptr) {
     return GetSimulationTimeSemantics().precision_power;
   }
-  const auto& meta = instance_time_metadata_.at(inst->instance_id.value);
-  if (!meta.initialized) {
-    throw common::InternalError(
-        "GetScopeTimePrecisionPower",
-        std::format(
-            "uninitialized time metadata for instance {}",
-            inst->instance_id.value));
-  }
-  return meta.time_precision_power;
+  return inst->scope_time_metadata.time_precision_power;
 }
 
 }  // namespace lyra::runtime

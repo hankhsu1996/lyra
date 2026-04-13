@@ -676,7 +676,7 @@ class Engine {
       const RuntimeInstance* inst, void* key) const -> void*;
 
   // D6d: Per-instance time metadata, populated from BodyRealizationDesc.
-  void InitInstanceTimeMetadata(
+  static void InitInstanceTimeMetadata(
       std::span<const InstanceMetadataBundle> bundles);
 
   // D6d: Simulation-level time semantics for null-scope queries.
@@ -1672,15 +1672,6 @@ class Engine {
   mutable std::unordered_map<
       const RuntimeInstance*, std::unordered_map<void*, void*>>
       scope_user_data_;
-
-  // D6d: Per-instance time metadata, indexed by InstanceId::value.
-  // Populated from BodyRealizationDesc during InitInstanceTimeMetadata.
-  struct ScopeTimeMetadata {
-    int8_t time_unit_power = 0;
-    int8_t time_precision_power = 0;
-    bool initialized = false;
-  };
-  std::vector<ScopeTimeMetadata> instance_time_metadata_;
 
   // Immutable per-owner decision metadata tables. Indexed by owner_id.
   // Populated during InitModuleInstancesFromBundles from body descriptor data.

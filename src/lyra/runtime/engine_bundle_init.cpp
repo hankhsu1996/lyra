@@ -872,21 +872,13 @@ void Engine::InitModuleInstancesFromBundles(
 
 void Engine::InitInstanceTimeMetadata(
     std::span<const InstanceMetadataBundle> bundles) {
-  if (bundles.empty()) {
-    instance_time_metadata_.clear();
-    return;
-  }
-  uint32_t max_id = 0;
   for (const auto& b : bundles) {
-    max_id = std::max(max_id, b.instance_id.value);
-  }
-  instance_time_metadata_.assign(
-      static_cast<size_t>(max_id) + 1, ScopeTimeMetadata{
-                                           .time_unit_power = 0,
-                                           .time_precision_power = 0,
-                                           .initialized = false,
-                                       });
-  for (const auto& b : bundles) {
+    if (b.instance == nullptr) {
+      throw common::InternalError(
+          "InitInstanceTimeMetadata",
+          std::format(
+              "instance {} has null instance pointer", b.instance_id.value));
+    }
     if (b.body_desc == nullptr) {
       throw common::InternalError(
           "InitInstanceTimeMetadata",
@@ -899,16 +891,9 @@ void Engine::InitInstanceTimeMetadata(
               "instance {} has null body realization desc",
               b.instance_id.value));
     }
-    auto& slot = instance_time_metadata_.at(b.instance_id.value);
-    if (slot.initialized) {
-      throw common::InternalError(
-          "InitInstanceTimeMetadata",
-          std::format("duplicate instance_id {}", b.instance_id.value));
-    }
-    slot = ScopeTimeMetadata{
+    b.instance->scope_time_metadata = RuntimeScopeTimeMetadata{
         .time_unit_power = b.body_desc->desc->time_unit_power,
         .time_precision_power = b.body_desc->desc->time_precision_power,
-        .initialized = true,
     };
   }
 }

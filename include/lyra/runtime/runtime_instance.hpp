@@ -114,6 +114,13 @@ struct NbaPendingSet {
   }
 };
 
+// Per-instance scope time metadata (immutable after init).
+// Populated from BodyRealizationDesc during InitInstanceTimeMetadata.
+struct RuntimeScopeTimeMetadata {
+  int8_t time_unit_power = 0;
+  int8_t time_precision_power = 0;
+};
+
 // Transient per-instance scratch state for the fixpoint solver.
 // Object-owned but engine-managed: zeroed at the start of each
 // FlushAndPropagateConnections call, read/written during fixpoint
@@ -214,6 +221,11 @@ struct RuntimeInstance {
   // Per-instance local-domain fixpoint workspace (not part of the
   // binary contract). Owns pending/next worklists and dedup flags.
   RuntimeLocalFixpointWorkspace local_fixpoint;
+
+  // Per-instance scope time metadata (immutable after init).
+  // Populated from BodyRealizationDesc during InitInstanceTimeMetadata.
+  // Not part of the binary contract with codegen.
+  RuntimeScopeTimeMetadata scope_time_metadata;
 };
 
 // Strongly typed field indices for RuntimeInstanceStorage.
