@@ -455,7 +455,7 @@ static auto ExecutePlainWrite(
     case CommitRouteKind::kDirect:
       return ExecuteDirectPlainWrite(context, facts, resolver, route, rhs);
   }
-  __builtin_unreachable();
+  throw common::InternalError("ExecutePlainWrite", "unhandled CommitRouteKind");
 }
 
 // Execute a lifecycle write (copy or move). Routes based on pre-computed route.
@@ -477,7 +477,8 @@ static auto ExecuteLifecycleWrite(
       return ExecuteDirectLifecycleWrite(
           context, facts, resolver, route, rhs, policy);
   }
-  __builtin_unreachable();
+  throw common::InternalError(
+      "ExecuteLifecycleWrite", "unhandled CommitRouteKind");
 }
 
 // PlainAssign: non-managed overwrite. Asserts destination is non-managed,
@@ -535,6 +536,74 @@ auto LowerMoveAssign(
       context, facts, resolver, route, rhs, OwnershipPolicy::kMove);
 }
 
+// Execute a plain guarded write (no lifecycle, no OwnershipPolicy).
+// For non-managed destination types only.
+static auto ExecutePlainGuardedWrite(
+    Context& context, const CuFacts& facts, SlotAccessResolver& resolver,
+    const RoutedWriteTarget& route, llvm::Value* rhs_raw,
+    const std::optional<PackedRValue>& packed_rhs) -> Result<void> {
+  switch (route.kind) {
+    case CommitRouteKind::kBitRange: {
+      auto place =
+          mir::RequireLocalDest(route.dest, "ExecutePlainGuardedWrite");
+      return StoreBitRange(context, facts, place, *packed_rhs);
+    }
+    case CommitRouteKind::kResolverRouted: {
+      auto place =
+          mir::RequireLocalDest(route.dest, "ExecutePlainGuardedWrite");
+      return resolver.CommitPlainSlotValue(place, rhs_raw, route.dest_type);
+    }
+    case CommitRouteKind::kDirect: {
+      if (packed_rhs) {
+        return DispatchPlainWrite(
+            context, facts, route.dest,
+            PackedRValueSource{
+                .rvalue = *packed_rhs, .type_id = route.dest_type},
+            route.dest_type);
+      }
+      return DispatchPlainWrite(
+          context, facts, route.dest, RawValueSource{rhs_raw}, route.dest_type);
+    }
+  }
+  throw common::InternalError(
+      "ExecutePlainGuardedWrite", "unhandled CommitRouteKind");
+}
+
+// Execute a lifecycle guarded write (CopyAssign semantics with kClone).
+// For managed destination types only.
+static auto ExecuteLifecycleGuardedWrite(
+    Context& context, const CuFacts& facts, SlotAccessResolver& resolver,
+    const RoutedWriteTarget& route, llvm::Value* rhs_raw,
+    const std::optional<PackedRValue>& packed_rhs) -> Result<void> {
+  switch (route.kind) {
+    case CommitRouteKind::kBitRange: {
+      auto place =
+          mir::RequireLocalDest(route.dest, "ExecuteLifecycleGuardedWrite");
+      return StoreBitRange(context, facts, place, *packed_rhs);
+    }
+    case CommitRouteKind::kResolverRouted: {
+      auto place =
+          mir::RequireLocalDest(route.dest, "ExecuteLifecycleGuardedWrite");
+      return CommitResolverRoutedValue(
+          resolver, place, rhs_raw, route.dest_type, OwnershipPolicy::kClone);
+    }
+    case CommitRouteKind::kDirect: {
+      if (packed_rhs) {
+        return DispatchWrite(
+            context, facts, route.dest,
+            PackedRValueSource{
+                .rvalue = *packed_rhs, .type_id = route.dest_type},
+            route.dest_type, OwnershipPolicy::kClone);
+      }
+      return DispatchWrite(
+          context, facts, route.dest, RawValueSource{rhs_raw}, route.dest_type,
+          OwnershipPolicy::kClone);
+    }
+  }
+  throw common::InternalError(
+      "ExecuteLifecycleGuardedWrite", "unhandled CommitRouteKind");
+}
+
 auto LowerGuardedAssign(
     Context& context, const CuFacts& facts, SlotAccessResolver& resolver,
     const mir::GuardedAssign& guarded) -> Result<void> {
@@ -590,43 +659,17 @@ auto LowerGuardedAssign(
       llvm::BasicBlock::Create(context.GetLlvmContext(), "ga.skip", func);
   builder.CreateCondBr(guard, do_write_bb, skip_bb);
 
-  // Write path: dispatch based on pre-computed route.
+  // Write path: plain for non-managed, lifecycle for managed.
   builder.SetInsertPoint(do_write_bb);
 
-  switch (route.kind) {
-    case CommitRouteKind::kBitRange: {
-      auto place =
-          mir::RequireLocalDest(route.dest, "LowerGuardedAssign/Write");
-      auto result = StoreBitRange(context, facts, place, *packed_rhs);
-      if (!result) return result;
-      break;
-    }
-    case CommitRouteKind::kResolverRouted: {
-      auto place =
-          mir::RequireLocalDest(route.dest, "LowerGuardedAssign/Write");
-      // kClone is inert; GuardedAssign legacy path uses DetermineOwnership
-      // for managed types but non-managed resolver-routed slots are common.
-      auto result = CommitResolverRoutedValue(
-          resolver, place, rhs_raw, route.dest_type, OwnershipPolicy::kClone);
-      if (!result) return result;
-      break;
-    }
-    case CommitRouteKind::kDirect:
-      if (is_packed_dest) {
-        auto result = DispatchWrite(
-            context, facts, route.dest,
-            PackedRValueSource{
-                .rvalue = *packed_rhs, .type_id = route.dest_type},
-            route.dest_type, OwnershipPolicy::kClone);
-        if (!result) return result;
-      } else {
-        auto result = DispatchWrite(
-            context, facts, route.dest, RawValueSource{rhs_raw},
-            route.dest_type, OwnershipPolicy::kClone);
-        if (!result) return result;
-      }
-      break;
-  }
+  bool is_managed = common::TypeContainsManaged(route.dest_type, types);
+  Result<void> write_result =
+      is_managed ? ExecuteLifecycleGuardedWrite(
+                       context, facts, resolver, route, rhs_raw, packed_rhs)
+                 : ExecutePlainGuardedWrite(
+                       context, facts, resolver, route, rhs_raw, packed_rhs);
+  if (!write_result) return write_result;
+
   builder.CreateBr(skip_bb);
 
   builder.SetInsertPoint(skip_bb);
