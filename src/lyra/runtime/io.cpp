@@ -470,8 +470,10 @@ extern "C" void LyraPrintModulePath(void* engine_ptr, uint32_t instance_id) {
         "LyraPrintModulePath", "engine_ptr must not be null");
   }
   auto* engine = static_cast<lyra::runtime::Engine*>(engine_ptr);
+  const auto& inst =
+      engine->GetInstance(lyra::runtime::InstanceId{instance_id});
   engine->Output().AppendSimOutputFragment(
-      engine->GetInstancePath(lyra::runtime::InstanceId{instance_id}));
+      inst.path_c_str != nullptr ? inst.path_c_str : "");
 }
 
 extern "C" void LyraWritemem(

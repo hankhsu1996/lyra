@@ -1041,8 +1041,8 @@ void Engine::InstallWaitSite(ProcessHandle handle, const WaitRequest& req) {
 
 auto Engine::CanRefreshInstalledWait(
     ProcessHandle handle, WaitSiteId wait_site_id) const -> bool {
-  if (handle.process_id >= process_states_.size()) return false;
-  const auto& installed = process_states_[handle.process_id].installed_wait;
+  if (handle.process_id >= processes_.size()) return false;
+  const auto& installed = processes_[handle.process_id].installed_wait;
   return installed.valid && installed.wait_site_id == wait_site_id &&
          installed.can_refresh_snapshot;
 }
@@ -1065,6 +1065,38 @@ auto Engine::HasPendingDirtyState() const -> bool {
   return !update_set_.DeltaDirtySlots().empty() ||
          !delta_dirty_instances_.empty();
 }
+
+namespace {
+auto BuildWaitRequest(const SuspendRecord* suspend) -> WaitRequest {
+  auto triggers = std::span(suspend->triggers_ptr, suspend->num_triggers);
+  bool has_late_bound =
+      suspend->num_late_bound > 0 && suspend->late_bound_ptr != nullptr;
+  auto late_bound_headers =
+      has_late_bound
+          ? std::span(suspend->late_bound_ptr, suspend->num_late_bound)
+          : std::span<const LateBoundHeader>{};
+  auto plan_ops = (suspend->plan_ops_ptr != nullptr)
+                      ? std::span(suspend->plan_ops_ptr, suspend->num_plan_ops)
+                      : std::span<const IndexPlanOp>{};
+  auto dep_slots =
+      (suspend->dep_slots_ptr != nullptr)
+          ? std::span(suspend->dep_slots_ptr, suspend->num_dep_slots)
+          : std::span<const DepSignalRecord>{};
+  return WaitRequest{
+      .resume =
+          ResumePoint{
+              .block_index = suspend->resume_block, .instruction_index = 0},
+      .wait_site_id = suspend->wait_site_id,
+      .triggers = triggers,
+      .late_bound =
+          LateBoundData{
+              .headers = late_bound_headers,
+              .plan_ops = plan_ops,
+              .dep_slots = dep_slots,
+          },
+  };
+}
+}  // namespace
 
 void Engine::ReconcilePostActivation(ProcessHandle handle) {
   if (!HasPostActivationReconciliation()) {
@@ -1105,12 +1137,12 @@ void Engine::ReconcilePostActivation(ProcessHandle handle) {
 
       auto& proc_state = processes_[handle.process_id];
 
-      if (!CanRefreshInPlace(
-              proc_state.installed_wait, suspend->wait_site_id)) {
+      if (!proc_state.installed_wait.valid ||
+          proc_state.installed_wait.wait_site_id != suspend->wait_site_id ||
+          !proc_state.installed_wait.can_refresh_snapshot) {
         // Reinstall required: different wait site or non-static shape.
-        const auto& descriptor = wait_site_meta_.Get(suspend->wait_site_id);
         ResetInstalledWait(handle);
-        InstallWaitSite(handle, suspend, descriptor);
+        InstallWaitSite(handle, BuildWaitRequest(suspend));
         break;
       }
 
@@ -1139,9 +1171,8 @@ void Engine::ReconcilePostActivation(ProcessHandle handle) {
         // A same-delta blocking write changed an observed edge bit.
         // group.last_bit is shared state and cannot be updated here.
         // Fall back to full reinstall to get a fresh group baseline.
-        const auto& descriptor = wait_site_meta_.Get(suspend->wait_site_id);
         ResetInstalledWait(handle);
-        InstallWaitSite(handle, suspend, descriptor);
+        InstallWaitSite(handle, BuildWaitRequest(suspend));
       }
       break;
     }

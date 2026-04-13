@@ -14,6 +14,10 @@ class ProcessEnvelopeAccess {
     return engine.wait_site_meta_.IsPopulated();
   }
 
+  static auto HasPostActivationReconciliation(const Engine& engine) -> bool {
+    return engine.HasPostActivationReconciliation();
+  }
+
   static auto CanRefreshInstalledWait(
       const Engine& engine, ProcessHandle handle, WaitSiteId wait_site_id)
       -> bool {
@@ -22,11 +26,6 @@ class ProcessEnvelopeAccess {
 
   static auto HasPendingDirtyState(const Engine& engine) -> bool {
     return engine.HasPendingDirtyState();
-  }
-
-  static void SetProcessWaitKind(
-      Engine& engine, uint32_t process_id, ProcessWaitKind kind) {
-    engine.SetProcessWaitKind(process_id, kind);
   }
 
   static void ResetInstalledWait(Engine& engine, ProcessHandle handle) {

@@ -632,7 +632,7 @@ void Constructor::AddInstance(
   auto instance = std::make_unique<RuntimeInstance>();
   instance->instance_id = instance_id;
   instance->owner_ordinal = instance_ord;
-  // path_c_str is patched in Finalize to point into stable instance_paths.
+  // path_c_str is patched in Finalize after path_storage is assigned.
   instance->path_c_str = nullptr;
 
   instance->storage.inline_base =
@@ -900,8 +900,6 @@ auto Constructor::Finalize() -> ConstructionResult {
     result.trigger_meta = std::move(realized_triggers_);
     result.slot_meta = std::move(realized_slot_meta_);
     result.trace_signal_meta = std::move(realized_trace_meta_);
-    result.instance_paths = std::move(instance_paths_);
-    PopulateInstancePathPtrs(result);
     return result;
   }
 
@@ -937,16 +935,18 @@ auto Constructor::Finalize() -> ConstructionResult {
   result.trigger_meta = std::move(realized_triggers_);
   result.slot_meta = std::move(realized_slot_meta_);
   result.trace_signal_meta = std::move(realized_trace_meta_);
-  result.instance_paths = std::move(instance_paths_);
-
-  // Patch path_c_str on each instance to point into the stable
-  // result.instance_paths storage. Instance i corresponds to
-  // instance_paths[i] by construction (AddInstance appends both
-  // in the same order).
+  // Move path strings into instance-owned storage. Each RuntimeInstance
+  // owns its path_storage; path_c_str points into it.
   for (uint32_t i = 0; i < result.instances.size(); ++i) {
-    result.instances[i]->path_c_str = result.instance_paths[i].c_str();
+    result.instances[i]->path_storage = std::move(instance_paths_[i]);
+    result.instances[i]->path_c_str = result.instances[i]->path_storage.c_str();
   }
 
+  // Build exported path views for the C API.
+  result.instance_paths.resize(result.instances.size());
+  for (uint32_t i = 0; i < result.instances.size(); ++i) {
+    result.instance_paths[i] = result.instances[i]->path_storage;
+  }
   PopulateInstancePathPtrs(result);
 
   // Build stable raw pointer view for the runtime ABI.

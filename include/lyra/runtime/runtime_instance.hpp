@@ -3,6 +3,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <span>
+#include <string>
 #include <vector>
 
 #include "lyra/common/ext_ref_binding.hpp"
@@ -196,6 +197,10 @@ struct RuntimeInstance {
   // Part of the binary contract with codegen (accessed via GEP).
   const common::ResolvedExtRefBinding* ext_ref_bindings = nullptr;
   uint32_t ext_ref_binding_count = 0;
+
+  // Instance-owned hierarchical path string. Owns the storage that
+  // path_c_str points into. Not part of the binary contract with codegen.
+  std::string path_storage;
 
   // R5: Per-instance observability state.
   // Populated by Engine::InitModuleInstancesFromBundles. Not part of the

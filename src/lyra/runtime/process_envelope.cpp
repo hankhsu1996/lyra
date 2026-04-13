@@ -62,32 +62,6 @@ using ProcessRequest = std::variant<
     lyra::runtime::WaitRequest, lyra::runtime::RepeatRequest,
     lyra::runtime::EventWaitRequest>;
 
-// Translate the decoded process request into the engine-owned wait-kind
-// for observability. Called once per activation before engine dispatch.
-auto ClassifyWaitKind(const ProcessRequest& request)
-    -> lyra::runtime::ProcessWaitKind {
-  using lyra::runtime::ProcessWaitKind;
-  return std::visit(
-      [](const auto& v) -> ProcessWaitKind {
-        using T = std::decay_t<decltype(v)>;
-        if constexpr (std::is_same_v<T, CompletedRequest>) {
-          return ProcessWaitKind::kFinished;
-        } else if constexpr (std::is_same_v<T, TrapRequest>) {
-          return ProcessWaitKind::kFinished;
-        } else if constexpr (std::is_same_v<T, lyra::runtime::DelayRequest>) {
-          return ProcessWaitKind::kSuspendedDelay;
-        } else if constexpr (std::is_same_v<T, lyra::runtime::WaitRequest>) {
-          return ProcessWaitKind::kSuspendedWait;
-        } else if constexpr (std::is_same_v<T, lyra::runtime::RepeatRequest>) {
-          return ProcessWaitKind::kSuspendedRepeat;
-        } else if constexpr (std::is_same_v<
-                                 T, lyra::runtime::EventWaitRequest>) {
-          return ProcessWaitKind::kSuspendedEvent;
-        }
-      },
-      request);
-}
-
 // Whether the request requires resetting the installed wait state.
 // All non-wait requests must tear down prior subscriptions.
 auto NeedsWaitReset(const ProcessRequest& request) -> bool {
@@ -223,6 +197,12 @@ auto DispatchProcess(
 void HandleWaitRequest(
     lyra::runtime::Engine& engine, lyra::runtime::ProcessHandle handle,
     const lyra::runtime::WaitRequest& req) {
+  // When post-activation reconciliation is active, the engine handles
+  // wait lifecycle after the activation returns. The envelope must not
+  // duplicate that work.
+  if (Access::HasPostActivationReconciliation(engine)) {
+    return;
+  }
   if (!Access::UsesWaitSiteLifecycle(engine)) {
     Access::InstallTriggers(engine, handle, req);
     return;
@@ -265,7 +245,10 @@ void HandleProcessRequest(
 
   // Single structural reset point: all non-wait, non-trap requests must
   // tear down prior subscriptions when wait-site lifecycle is active.
-  if (Access::UsesWaitSiteLifecycle(engine) && NeedsWaitReset(request)) {
+  // When post-activation reconciliation is active, it handles resets.
+  if (Access::UsesWaitSiteLifecycle(engine) &&
+      !Access::HasPostActivationReconciliation(engine) &&
+      NeedsWaitReset(request)) {
     Access::ResetInstalledWait(engine, handle);
   }
 
@@ -289,12 +272,12 @@ void HandleProcessRequest(
           engine.ScheduleNextDelta(handle, v.resume);
 
         } else if constexpr (std::is_same_v<T, EventWaitRequest>) {
-          auto& inst = engine.GetInstanceMut(handle.instance_id);
+          auto& inst = engine.GetProcessInstance(handle.process_id);
           Engine::AddInstanceEventWaiter(
               inst, v.event_id,
               EventWaiter{
                   .process_id = handle.process_id,
-                  .instance_id = handle.instance_id.value,
+                  .instance = &inst,
                   .resume_block = v.resume.block_index,
               });
         }
@@ -312,8 +295,6 @@ void DispatchAndHandleActivation(
     ResumePoint resume) {
   auto request =
       DispatchProcess(connection_procs, states, num_connection, handle, resume);
-  Access::SetProcessWaitKind(
-      engine, handle.process_id, ClassifyWaitKind(request));
   HandleProcessRequest(engine, handle, request);
 }
 

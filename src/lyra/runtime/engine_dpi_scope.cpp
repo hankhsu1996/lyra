@@ -7,13 +7,6 @@
 namespace lyra::runtime {
 
 void Engine::BuildDpiScopeRegistry() {
-  if (instance_paths_.size() != instances_.size()) {
-    throw common::InternalError(
-        "BuildDpiScopeRegistry",
-        std::format(
-            "instance_paths_ size {} != instances_ size {}",
-            instance_paths_.size(), instances_.size()));
-  }
   valid_scopes_.clear();
   scope_path_map_.clear();
   scope_inst_path_map_.clear();
@@ -28,17 +21,21 @@ void Engine::BuildDpiScopeRegistry() {
           "BuildDpiScopeRegistry",
           std::format("null RuntimeInstance at index {}", i));
     }
-    const char* path_cstr = instance_paths_[i].c_str();
+    if (inst->path_c_str == nullptr) {
+      throw common::InternalError(
+          "BuildDpiScopeRegistry",
+          std::format("null path_c_str on instance at index {}", i));
+    }
     valid_scopes_.insert(inst);
     auto [path_it, path_inserted] =
-        scope_path_map_.emplace(std::string_view(path_cstr), inst);
+        scope_path_map_.emplace(std::string_view(inst->path_c_str), inst);
     if (!path_inserted) {
       throw common::InternalError(
           "BuildDpiScopeRegistry",
-          std::format("duplicate instance path '{}'", instance_paths_[i]));
+          std::format("duplicate instance path '{}'", inst->path_c_str));
     }
     auto [inst_it, inst_inserted] =
-        scope_inst_path_map_.emplace(inst, path_cstr);
+        scope_inst_path_map_.emplace(inst, inst->path_c_str);
     if (!inst_inserted) {
       throw common::InternalError(
           "BuildDpiScopeRegistry",

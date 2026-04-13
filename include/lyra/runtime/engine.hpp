@@ -204,13 +204,12 @@ class Engine {
   explicit Engine(
       ProcessDispatch process_dispatch, OutputDispatcher& output,
       uint32_t num_processes = 0, std::span<const std::string> plusargs = {},
-      std::vector<std::string> instance_paths = {}, uint32_t feature_flags = 0)
+      uint32_t feature_flags = 0)
       : process_dispatch_(process_dispatch),
         output_(output),
         num_processes_(num_processes),
         processes_(num_processes),
         plusargs_(plusargs.begin(), plusargs.end()),
-        instance_paths_(std::move(instance_paths)),
         feature_flags_(feature_flags) {
     if (process_dispatch_.fn == nullptr) {
       throw common::InternalError(
@@ -631,17 +630,16 @@ class Engine {
   // Throws InternalError for invalid instance_id (compiler/runtime bug).
   [[nodiscard]] auto GetInstancePath(InstanceId instance_id) const
       -> std::string_view {
-    if (instance_id.value >= instance_paths_.size()) {
+    const auto* inst = FindInstance(instance_id);
+    if (inst == nullptr) {
       throw common::InternalError(
           "Engine::GetInstancePath",
-          std::format(
-              "invalid instance_id {} (have {} instances)", instance_id,
-              instance_paths_.size()));
+          std::format("invalid instance_id {}", instance_id));
     }
-    return instance_paths_[instance_id.value];
+    return std::string_view(inst->path_c_str);
   }
 
-  // Build the DPI scope registry from instances_ and instance_paths_.
+  // Build the DPI scope registry from instances_.
   // Must be called after SetInstances and before simulation start.
   void BuildDpiScopeRegistry();
 
@@ -1030,11 +1028,6 @@ class Engine {
       DecisionViolation violation) const -> ReportRequest;
 
   // Subscription lifecycle (used by ProcessEnvelopeAccess and internally).
-  void SetProcessWaitKind(uint32_t process_id, ProcessWaitKind kind) {
-    if (process_id < process_states_.size()) {
-      process_states_[process_id].wait_kind = kind;
-    }
-  }
   [[nodiscard]] auto UsesWaitSiteLifecycle() const -> bool {
     return wait_site_meta_.IsPopulated();
   }
@@ -1342,9 +1335,6 @@ class Engine {
 
   // Plusargs for $test$plusargs and $value$plusargs queries.
   std::vector<std::string> plusargs_;
-
-  // Instance paths for %m support (hierarchical path lookup by instance_id).
-  std::vector<std::string> instance_paths_;
 
   // Active monitor state ($monitor). Only one can be active at a time.
   // Checked after all strobe callbacks complete in ExecutePostponedRegion.

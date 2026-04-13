@@ -257,7 +257,6 @@ void SetupAndRunSimulation(
 extern "C" void LyraRunSimulation(
     LyraProcessFunc* connection_funcs, void** states_raw,
     uint32_t num_processes, const char** plusargs_raw, uint32_t num_plusargs,
-    const char** instance_paths_raw, uint32_t num_instance_paths,
     const LyraRuntimeAbi* abi, void* run_session_ptr) {
   if (num_processes > 0 && states_raw == nullptr) {
     throw lyra::common::InternalError(
@@ -272,16 +271,6 @@ extern "C" void LyraRunSimulation(
     plusargs_vec.reserve(num_plusargs);
     for (const char* arg : plusargs_span) {
       plusargs_vec.emplace_back(arg != nullptr ? arg : "");
-    }
-  }
-
-  // Convert instance paths to vector<string> for Engine (%m support)
-  std::vector<std::string> instance_paths_vec;
-  if (instance_paths_raw != nullptr && num_instance_paths > 0) {
-    auto paths_span = std::span(instance_paths_raw, num_instance_paths);
-    instance_paths_vec.reserve(num_instance_paths);
-    for (const char* path : paths_span) {
-      instance_paths_vec.emplace_back(path != nullptr ? path : "");
     }
   }
 
@@ -317,7 +306,7 @@ extern "C" void LyraRunSimulation(
       lyra::runtime::ProcessDispatch{
           .fn = DescriptorProcessDispatch, .ctx = &dispatch_ctx},
       session->output, num_processes, std::span(plusargs_vec),
-      std::move(instance_paths_vec), feature_flags);
+      feature_flags);
 
   if (abi != nullptr) {
     if (abi->version != kRuntimeAbiVersion) {
