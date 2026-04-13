@@ -24,7 +24,6 @@
 #include "lyra/llvm_backend/ownership.hpp"
 #include "lyra/llvm_backend/packed_storage_view.hpp"
 #include "lyra/llvm_backend/slot_access.hpp"
-#include "lyra/llvm_backend/type_ops/dispatch.hpp"
 #include "lyra/llvm_backend/type_ops/managed.hpp"
 #include "lyra/llvm_backend/write_plan.hpp"
 #include "lyra/llvm_backend/write_route.hpp"

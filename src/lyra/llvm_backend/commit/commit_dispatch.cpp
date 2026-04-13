@@ -37,9 +37,8 @@ void CommitMoveCleanupIfTemp(
   const auto& arena = ctx.GetMirArena();
   const auto& src_place = arena[source];
 
-  // Gate 2 + Enforcement: Source place root must be kTemp
-  // kMove from non-temp is a bug (DetermineOwnership only returns kMove for
-  // temps)
+  // Gate 2 + Enforcement: Source place root must be kTemp.
+  // kMove from non-temp is a bug (MIR only emits MoveAssign for temp sources).
   if (src_place.root.kind != mir::PlaceRoot::Kind::kTemp) {
     throw common::InternalError(
         "CommitMoveCleanupIfTemp", "kMove from non-temp source");
