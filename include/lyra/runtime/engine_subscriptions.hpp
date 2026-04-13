@@ -180,7 +180,6 @@ struct ContainerCold {
 // which bucket the sub lives in.
 struct EdgeSub {
   uint32_t process_id = 0;
-  InstanceId instance_id = InstanceId{0};
   uint32_t resume_block = 0;
   uint8_t flags = 0;  // kActive=0x01, kHasCold=0x02
   std::array<uint8_t, 3> padding = {};
@@ -188,7 +187,7 @@ struct EdgeSub {
       0;                  // index in owning local_sub_refs/global_sub_refs
   uint32_t cold_idx = 0;  // UINT32_MAX = no cold state (edge_cold_pool_)
 };
-static_assert(sizeof(EdgeSub) == 24);
+static_assert(sizeof(EdgeSub) == 20);
 
 // Observation-point group for edge subscriptions.
 // Groups all edge watchers on a slot that observe the same (byte_offset,
@@ -208,7 +207,6 @@ struct EdgeWatchGroup {
 // keeps the dominant clock-edge path smaller.
 struct ChangeSub {
   uint32_t process_id = 0;
-  InstanceId instance_id = InstanceId{0};
   uint32_t resume_block = 0;
   uint32_t byte_offset = 0;
   uint32_t byte_size = 0;
@@ -223,7 +221,7 @@ struct ChangeSub {
   uint8_t flags = 0;  // kActive=0x01
   std::array<uint8_t, 3> padding{};
 };
-static_assert(sizeof(ChangeSub) == 48);
+static_assert(sizeof(ChangeSub) == 44);
 
 // Dense record for rebind watchers (pass 1 only) (24B).
 // Logically a different pass -- lives in its own dense array so
@@ -248,7 +246,6 @@ static_assert(sizeof(RebindWatcherSub) == 24);
 // Multi-bit or multi-byte element observation is not supported.
 struct ContainerSub {
   uint32_t process_id = 0;
-  InstanceId instance_id = InstanceId{0};
   uint32_t resume_block = 0;
   uint32_t process_sub_idx = 0;
   uint32_t cold_idx = 0;  // always valid (container_cold_pool_)
@@ -257,7 +254,7 @@ struct ContainerSub {
   uint8_t flags = 0;     // kActive=0x01
   uint8_t padding = 0;
 };
-static_assert(sizeof(ContainerSub) == 24);
+static_assert(sizeof(ContainerSub) == 20);
 
 // Flag constants for sub flags fields.
 inline constexpr uint8_t kSubActive = 0x01;

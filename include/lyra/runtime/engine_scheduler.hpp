@@ -18,12 +18,11 @@ enum class Region : uint8_t {
   kNBA,       // Nonblocking assignment updates
 };
 
-// Hot queue entry for process wakeup (12 bytes). Contains only the fields
+// Hot queue entry for process wakeup (8 bytes). Contains only the fields
 // needed for dispatch. Trace-only fields (cause, trigger_slot) are stored
 // per-process in wake_trace_ when activation tracing is enabled.
 struct WakeupEntry {
   uint32_t process_id;
-  InstanceId instance_id;
   uint32_t resume_block;
 };
 

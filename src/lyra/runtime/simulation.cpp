@@ -127,7 +127,7 @@ void HandleSuspendRecord(
       break;
 
     case lyra::runtime::SuspendTag::kWaitEvent: {
-      auto& inst = eng.GetInstanceMut(handle.instance_id);
+      auto& inst = eng.GetProcessInstance(handle.process_id);
       lyra::runtime::Engine::AddInstanceEventWaiter(
           inst, suspend->event_id,
           lyra::runtime::EventWaiter{
@@ -206,7 +206,7 @@ void DescriptorProcessDispatch(
 
 void SetupAndRunSimulation(
     lyra::runtime::Engine& engine, std::span<void*> states,
-    uint32_t num_processes, uint32_t num_connection) {
+    uint32_t num_processes) {
   // Store engine pointer in each process state header
   for (auto* state : states) {
     auto* header = static_cast<StateHeader*>(state);
@@ -234,24 +234,7 @@ void SetupAndRunSimulation(
   }
 
   for (uint32_t i = 0; i < num_processes; ++i) {
-    auto* header = static_cast<StateHeader*>(states[i]);
-
-    lyra::runtime::InstanceId instance_id{0};
-    if (i >= num_connection) {
-      if (header->instance == nullptr) {
-        throw lyra::common::InternalError(
-            "SetupAndRunSimulation",
-            std::format(
-                "module process {} has null owning instance in "
-                "ProcessFrameHeader",
-                i));
-      }
-      instance_id = header->instance->instance_id;
-    }
-
-    engine.ScheduleInitial(
-        lyra::runtime::ProcessHandle{
-            .process_id = i, .instance_id = instance_id});
+    engine.ScheduleInitial(lyra::runtime::ProcessHandle{.process_id = i});
   }
 
   // Propagate initial values through connections and comb kernels before Run().
@@ -506,7 +489,7 @@ extern "C" void LyraRunSimulation(
   };
   lyra::runtime::ScopedDpiExportCallContext export_scope(export_ctx);
 
-  SetupAndRunSimulation(engine, states, num_processes, num_connection);
+  SetupAndRunSimulation(engine, states, num_processes);
 
   if (HasFlag(flags, FeatureFlag::kEnableTraceSummary)) {
     engine.GetTraceManager().PrintSummary(engine.Output());

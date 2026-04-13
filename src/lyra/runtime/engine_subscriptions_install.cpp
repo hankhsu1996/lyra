@@ -1153,12 +1153,19 @@ void Engine::ReconcilePostActivation(ProcessHandle handle) {
 
     case SuspendTag::kWaitEvent: {
       ResetInstalledWait(handle);
-      auto& inst = GetInstanceMut(handle.instance_id);
+      auto* inst = processes_[handle.process_id].instance;
+      if (inst == nullptr) {
+        throw common::InternalError(
+            "Engine::ReconcilePostActivation",
+            std::format(
+                "kWaitEvent for process {} has no owning instance",
+                handle.process_id));
+      }
       AddInstanceEventWaiter(
-          inst, suspend->event_id,
+          *inst, suspend->event_id,
           EventWaiter{
               .process_id = handle.process_id,
-              .instance = &inst,
+              .instance = inst,
               .resume_block = suspend->resume_block,
           });
       break;
@@ -1240,7 +1247,6 @@ auto Engine::SubscribeGlobalChange(
 
   ChangeSub sub{};
   sub.process_id = handle.process_id;
-  sub.instance_id = handle.instance_id;
   sub.resume_block = resume.block_index;
   sub.byte_offset = byte_offset;
   sub.byte_size = byte_size;
@@ -1304,7 +1310,6 @@ auto Engine::SubscribeLocalChange(
 
   ChangeSub sub{};
   sub.process_id = handle.process_id;
-  sub.instance_id = inst.instance_id;
   sub.resume_block = resume.block_index;
   sub.byte_offset = byte_offset;
   sub.byte_size = byte_size;
@@ -1395,7 +1400,6 @@ auto Engine::SubscribeGlobalEdge(
 
   EdgeSub sub{};
   sub.process_id = handle.process_id;
-  sub.instance_id = handle.instance_id;
   sub.resume_block = resume.block_index;
   sub.flags = initially_active ? kSubActive : 0;
   sub.process_sub_idx = proc_sub_idx;
@@ -1468,7 +1472,6 @@ auto Engine::SubscribeLocalEdge(
 
   EdgeSub sub{};
   sub.process_id = handle.process_id;
-  sub.instance_id = inst.instance_id;
   sub.resume_block = resume.block_index;
   sub.flags = initially_active ? kSubActive : 0;
   sub.process_sub_idx = proc_sub_idx;
@@ -1654,7 +1657,6 @@ auto Engine::SubscribeGlobalContainerElement(
 
   ContainerSub sub{};
   sub.process_id = handle.process_id;
-  sub.instance_id = handle.instance_id;
   sub.resume_block = resume.block_index;
   sub.process_sub_idx = proc_sub_idx;
   sub.cold_idx = cold_idx;
@@ -1709,7 +1711,6 @@ auto Engine::SubscribeLocalContainerElement(
 
   ContainerSub sub{};
   sub.process_id = handle.process_id;
-  sub.instance_id = inst.instance_id;
   sub.resume_block = resume.block_index;
   sub.process_sub_idx = proc_sub_idx;
   sub.cold_idx = cold_idx;

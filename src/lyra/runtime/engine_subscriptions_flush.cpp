@@ -526,8 +526,7 @@ void Engine::FlushContainerSub(
 
   if (should_wake) {
     EnqueueProcessWakeup(
-        sub.process_id, sub.instance_id.value, sub.resume_block, slot_id,
-        WakeCause::kContainer);
+        sub.process_id, sub.resume_block, slot_id, WakeCause::kContainer);
   }
 }
 
@@ -595,8 +594,7 @@ void Engine::FlushSlotEdgeGroups(
       if (detailed) ++stats_.detailed.edge_sub_checks;
       if (detailed) ++stats_.detailed.edge_sub_wakeups;
       EnqueueProcessWakeup(
-          sub.process_id, sub.instance_id.value, sub.resume_block, slot_id,
-          WakeCause::kEdge);
+          sub.process_id, sub.resume_block, slot_id, WakeCause::kEdge);
     }
 
     group.last_bit = current_bit;
@@ -629,8 +627,7 @@ void Engine::FlushSlotChangeSubs(
       if (detailed) ++stats_.detailed.change_sub_wakeups;
       std::memcpy(snapshot, current, sub.byte_size);
       EnqueueProcessWakeup(
-          sub.process_id, sub.instance_id.value, sub.resume_block, slot_id,
-          WakeCause::kChange);
+          sub.process_id, sub.resume_block, slot_id, WakeCause::kChange);
     }
   }
 }

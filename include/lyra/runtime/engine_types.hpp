@@ -18,11 +18,9 @@ using SimTime = uint64_t;
 // Use as max_time argument to Run() for "run until natural completion".
 inline constexpr SimTime kNoTimeLimit = std::numeric_limits<SimTime>::max();
 
-// Unique identifier for a process instance.
-// Combines process definition ID with instance path for hierarchical designs.
+// Unique identifier for a process activation.
 struct ProcessHandle {
   uint32_t process_id = 0;
-  InstanceId instance_id = InstanceId{0};  // For future hierarchy support
 
   auto operator==(const ProcessHandle&) const -> bool = default;
 };
@@ -30,8 +28,7 @@ struct ProcessHandle {
 // Hash function for ProcessHandle (for use in unordered containers).
 struct ProcessHandleHash {
   auto operator()(const ProcessHandle& h) const noexcept -> size_t {
-    return std::hash<uint64_t>{}(
-        (static_cast<uint64_t>(h.process_id) << 32) | h.instance_id.value);
+    return std::hash<uint32_t>{}(h.process_id);
   }
 };
 

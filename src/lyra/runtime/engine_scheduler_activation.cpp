@@ -27,8 +27,7 @@ void Engine::ScheduleInitial(ProcessHandle handle) {
     return;
   }
 
-  active_queue_.push_back(
-      {handle.process_id, handle.instance_id, /*resume_block=*/0});
+  active_queue_.push_back({handle.process_id, /*resume_block=*/0});
   if (activation_trace_.has_value()) {
     wake_trace_[handle.process_id] = {
         .cause = WakeCause::kInitial, .trigger_slot = kNoTriggerSlot};
@@ -44,8 +43,7 @@ void Engine::Delay(ProcessHandle handle, ResumePoint resume, SimTime ticks) {
                              current_time_, ticks));
   }
   SimTime wake_time = current_time_ + ticks;
-  delay_queue_[wake_time].push_back(
-      {handle.process_id, handle.instance_id, resume.block_index});
+  delay_queue_[wake_time].push_back({handle.process_id, resume.block_index});
   if (activation_trace_.has_value()) {
     wake_trace_[handle.process_id] = {
         .cause = WakeCause::kDelay, .trigger_slot = kNoTriggerSlot};
@@ -53,8 +51,7 @@ void Engine::Delay(ProcessHandle handle, ResumePoint resume, SimTime ticks) {
 }
 
 void Engine::DelayZero(ProcessHandle handle, ResumePoint resume) {
-  inactive_queue_.push(
-      {handle.process_id, handle.instance_id, resume.block_index});
+  inactive_queue_.push({handle.process_id, resume.block_index});
   if (activation_trace_.has_value()) {
     wake_trace_[handle.process_id] = {
         .cause = WakeCause::kDelayZero, .trigger_slot = kNoTriggerSlot};
@@ -62,8 +59,7 @@ void Engine::DelayZero(ProcessHandle handle, ResumePoint resume) {
 }
 
 void Engine::ScheduleNextDelta(ProcessHandle handle, ResumePoint resume) {
-  next_delta_queue_.push_back(
-      {handle.process_id, handle.instance_id, resume.block_index});
+  next_delta_queue_.push_back({handle.process_id, resume.block_index});
   if (activation_trace_.has_value()) {
     wake_trace_[handle.process_id] = {
         .cause = WakeCause::kRepeat, .trigger_slot = kNoTriggerSlot};
@@ -135,8 +131,7 @@ void Engine::RunOneActivation(const WakeupEntry& entry) {
   // Reset iteration limit: direct TLS write from cached values.
   *cached_iteration_limit_ptr_ = cached_iteration_limit_;
 
-  ProcessHandle handle{
-      .process_id = entry.process_id, .instance_id = entry.instance_id};
+  ProcessHandle handle{.process_id = entry.process_id};
   ResumePoint resume{.block_index = entry.resume_block, .instruction_index = 0};
   process_dispatch_.fn(process_dispatch_.ctx, *this, handle, resume);
 
@@ -213,8 +208,7 @@ void Engine::ExecuteActiveRegion() {
             ProcessId::FromIndex(entry.process_id));
       }
 
-      ProcessHandle handle{
-          .process_id = entry.process_id, .instance_id = entry.instance_id};
+      ProcessHandle handle{.process_id = entry.process_id};
       if (!post_activation_reconcile_) {
         ClearProcessSubscriptions(handle);
       }

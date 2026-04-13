@@ -470,6 +470,20 @@ class Engine {
     return *inst;
   }
 
+  // Resolve the owning RuntimeInstance for a process. Returns the instance
+  // pointer stored on RuntimeProcess during bundle init. Throws InternalError
+  // if the process has no owning instance (e.g. connection/init processes).
+  [[nodiscard]] auto GetProcessInstance(uint32_t process_id)
+      -> RuntimeInstance& {
+    auto* inst = processes_[process_id].instance;
+    if (inst == nullptr) {
+      throw common::InternalError(
+          "Engine::GetProcessInstance",
+          std::format("process {} has no owning instance", process_id));
+    }
+    return *inst;
+  }
+
   // Validate that all kInstanceOwned slot-meta entries reference valid
   // instances. Must be called after both slot meta and instance list are
   // installed. Throws InternalError on any mismatch.
@@ -813,8 +827,7 @@ class Engine {
     auto waiters = inst.event_state.ConsumeWaiters(local_event_id);
     for (const auto& w : waiters) {
       EnqueueProcessWakeup(
-          w.process_id, w.instance->instance_id.value, w.resume_block,
-          local_event_id, WakeCause::kEvent);
+          w.process_id, w.resume_block, local_event_id, WakeCause::kEvent);
     }
   }
 
@@ -1195,12 +1208,12 @@ class Engine {
   // enqueued. Shared by edge, change, and container flush paths.
   //
   // Fully inline: the hot path (already enqueued) is a single load + branch.
-  // The cold path (first enqueue) constructs a 12-byte WakeupEntry and
+  // The cold path (first enqueue) constructs an 8-byte WakeupEntry and
   // pushes to the pre-reserved queue. Trace-only fields (cause, trigger_slot)
   // are stored per-process only when activation tracing is enabled.
   void EnqueueProcessWakeup(
-      uint32_t process_id, uint32_t instance_id, uint32_t resume_block,
-      uint32_t trigger_slot, WakeCause cause) {
+      uint32_t process_id, uint32_t resume_block, uint32_t trigger_slot,
+      WakeCause cause) {
     if (detailed_stats_enabled_) {
       ++stats_.detailed.wakeup_attempts;
       auto& ps = per_process_stats_[process_id];
@@ -1232,8 +1245,7 @@ class Engine {
       }
       return;
     }
-    next_delta_queue_.push_back(
-        {process_id, InstanceId{instance_id}, resume_block});
+    next_delta_queue_.push_back({process_id, resume_block});
     processes_[process_id].is_enqueued = true;
     if (activation_trace_.has_value()) {
       wake_trace_[process_id] = {.cause = cause, .trigger_slot = trigger_slot};
