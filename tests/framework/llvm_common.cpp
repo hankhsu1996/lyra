@@ -39,6 +39,7 @@
 #include "lyra/lowering/diagnostic_context.hpp"
 #include "lyra/lowering/hir_to_mir/lower.hpp"
 #include "lyra/lowering/origin_map_lookup.hpp"
+#include "lyra/mir/dumper.hpp"
 #include "lyra/runtime/artifact_names.hpp"
 #include "lyra/runtime/feature_flags.hpp"
 #include "tests/framework/runner_common.hpp"
@@ -283,6 +284,14 @@ auto PrepareLlvmModule(
 
   if (test_case.dump_dpi_header && !mir_result->dpi_header.empty()) {
     compiler_output += mir_result->dpi_header;
+  }
+
+  if (test_case.dump_mir) {
+    std::ostringstream mir_out;
+    mir::Dumper dumper(
+        mir_result->design_arena.get(), hir_result.type_arena.get(), &mir_out);
+    dumper.Dump(mir_result->design);
+    compiler_output += mir_out.str();
   }
 
   double mir_lower_seconds =

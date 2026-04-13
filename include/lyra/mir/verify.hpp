@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstdint>
+#include <span>
 #include <string_view>
 
 #include "lyra/common/type_arena.hpp"
@@ -12,31 +13,34 @@ namespace lyra::mir {
 
 struct CompiledModuleBody;
 
-// Phase-aware verification context. Controls what operand/statement
-// forms are legal and how external refs are resolved.
+// Phase-aware verification context. Controls what statement forms are
+// legal and provides external-ref recipe lookup.
 struct VerifyContext {
   enum class Phase : uint8_t {
-    // Pre-backend: ExternalRefId is legal. Resolved through
-    // body->external_refs.
+    // Pre-backend: ExternalRefId write targets are legal.
     kPreBackend,
-    // Backend-ready: ExternalRefId is illegal. body may be null.
+    // Backend-ready: ExternalRefId write targets are illegal.
     kBackendReady,
   };
 
-  const CompiledModuleBody* body = nullptr;
   const TypeArena* types = nullptr;
   Phase phase = Phase::kBackendReady;
+
+  // External-ref recipe table for validating ExternalReadRvalueInfo
+  // and WriteTarget ExternalRefId references. Populated from either
+  // ModuleBody::external_refs or CompiledModuleBody::external_refs.
+  std::span<const ExternalAccessRecipe> external_refs;
 
   // Body-local named event count. Used to validate EventId operands
   // in WaitEvent/TriggerEvent. 0 when event info is unavailable.
   uint32_t num_events = 0;
 };
 
-// Canonical external-ref recipe resolver. Validates ref_id is in range,
-// table position matches, and type is valid. Throws InternalError on failure.
+// Validate an ExternalRefId against a recipe table. Throws InternalError
+// if ref_id is out of range, mismatched, or has invalid type.
 auto RequireExternalRefRecipe(
-    const CompiledModuleBody& body, ExternalRefId id, const char* where)
-    -> const ExternalAccessRecipe&;
+    std::span<const ExternalAccessRecipe> recipes, ExternalRefId id,
+    const char* where) -> const ExternalAccessRecipe&;
 
 // Verify MIR function invariants. Throws InternalError on failure.
 // label: descriptive name for error messages (e.g., "top.u_alu: func foo").
@@ -68,23 +72,20 @@ void VerifyProcess(
     const Process& proc, const Arena& arena, const VerifyContext& cx,
     std::string_view label = "process");
 
-// Phase-aware MIR verification.
+// Phase-aware MIR verification for CompiledModuleBody.
 //
-// Pre-backend MIR: ExternalRefId is legal. Operand::kExternalRef and
-// WriteTarget containing ExternalRefId are valid. The verifier resolves
-// ExternalRefId types through body.external_refs.
+// Pre-backend: ExternalRefId write targets are legal. ExternalReadRvalueInfo
+// is validated against external_refs recipes.
 //
-// Backend-ready MIR: ExternalRefId must not appear anywhere. All external
-// refs must have been lowered/bound before this point.
+// Backend-ready: ExternalRefId write targets are illegal.
 
-// Verify pre-backend MIR body. ExternalRefId is legal and must resolve
-// through body.external_refs. Throws InternalError on failure.
+// Verify pre-backend MIR body. Validates external_refs table integrity,
+// ExternalRefId write targets, and ExternalReadRvalueInfo recipes.
 void VerifyPreBackendBody(
     const CompiledModuleBody& body, const TypeArena& types,
     std::string_view label = "body");
 
-// Verify backend-ready MIR body. No ExternalRefId may appear in any
-// operand or write target. Throws InternalError if any are found.
+// Verify backend-ready MIR body. No ExternalRefId write targets allowed.
 void VerifyBackendReadyBody(
     const CompiledModuleBody& body, std::string_view label = "body");
 

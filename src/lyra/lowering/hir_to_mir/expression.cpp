@@ -2682,7 +2682,7 @@ auto LowerExpressionImpl(
           }
           auto ref = ctx.LowerHierarchicalRefToExternalRef(
               data, expr.type, mir::ExternalAccessKind::kRead);
-          return mir::Operand::ExternalRef(ref.ref_id);
+          return builder.EmitExternalRead(expr.type, ref.ref_id);
         } else if constexpr (std::is_same_v<T, hir::MathCallExpressionData>) {
           return LowerMathCall(data, expr, builder, cache);
         } else if constexpr (std::is_same_v<

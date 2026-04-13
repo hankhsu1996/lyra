@@ -4,7 +4,6 @@
 
 #include "lyra/common/constant.hpp"
 #include "lyra/common/type.hpp"
-#include "lyra/mir/external_ref.hpp"
 #include "lyra/mir/handle.hpp"
 
 namespace lyra::mir {
@@ -39,15 +38,14 @@ struct TempId {
   }
 };
 
-using OperandPayload = std::variant<Constant, PlaceId, TempId, ExternalRefId>;
+using OperandPayload = std::variant<Constant, PlaceId, TempId>;
 
 struct Operand {
   enum class Kind {
-    kConst,        // constant value
-    kUse,          // read from a Place (implicit read)
-    kUseTemp,      // read from an SSA temp (block param or statement result)
-    kPoison,       // invalid / unreachable value
-    kExternalRef,  // read from a non-local external reference (recipe handle)
+    kConst,    // constant value
+    kUse,      // read from a Place (implicit read)
+    kUseTemp,  // read from an SSA temp (block param or statement result)
+    kPoison,   // invalid / unreachable value
   };
 
   Kind kind;
@@ -69,10 +67,6 @@ struct Operand {
 
   static auto Poison() -> Operand {
     return {.kind = Kind::kPoison, .payload = {}};
-  }
-
-  static auto ExternalRef(ExternalRefId id) -> Operand {
-    return {.kind = Kind::kExternalRef, .payload = id};
   }
 };
 

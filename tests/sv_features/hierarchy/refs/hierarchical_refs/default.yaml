@@ -109,6 +109,162 @@ cases:
       stdout:
         contains: ["value = 99"]
 
+  - name: simple_assign_ref
+    description: Continuous assign from hierarchical ref (external_read boundary)
+    sv: |
+      module Child;
+        logic [7:0] value;
+        initial value = 8'hAB;
+      endmodule
+
+      module Top;
+        Child u_child();
+        logic [7:0] x;
+
+        assign x = u_child.value;
+
+        initial begin
+          #1;
+          $display("x = %h", x);
+        end
+      endmodule
+    expect:
+      stdout:
+        contains: ["x = ab"]
+
+  - name: binary_op_ref
+    description: Hierarchical ref as binary op operand (external_read + value temp)
+    sv: |
+      module Child;
+        logic [7:0] value;
+        initial value = 8'h10;
+      endmodule
+
+      module Top;
+        Child u_child();
+        logic [7:0] x;
+
+        assign x = u_child.value + 8'h01;
+
+        initial begin
+          #1;
+          $display("x = %h", x);
+        end
+      endmodule
+    expect:
+      stdout:
+        contains: ["x = 11"]
+
+  - name: call_arg_ref
+    description: Hierarchical ref as function argument (external_read materialized before call)
+    sv: |
+      module Child;
+        int value;
+        initial value = 10;
+      endmodule
+
+      module Top;
+        Child u_child();
+        int result;
+
+        function automatic int double_it(int v);
+          return v * 2;
+        endfunction
+
+        assign result = double_it(u_child.value);
+
+        initial begin
+          #1;
+          $display("result = %0d", result);
+        end
+      endmodule
+    expect:
+      stdout:
+        contains: ["result = 20"]
+
+  - name: ternary_ref
+    description: Hierarchical ref used in ternary expression (external_read per arm, value edge args)
+    sv: |
+      module Child;
+        logic [7:0] value;
+        initial value = 8'hAB;
+      endmodule
+
+      module Top;
+        Child u_child();
+        logic sel;
+        logic [7:0] result;
+
+        assign result = sel ? u_child.value : 8'h00;
+
+        initial begin
+          sel = 1;
+          #1;
+          $display("result = %h", result);
+        end
+      endmodule
+    expect:
+      stdout:
+        contains: ["result = ab"]
+
+  - name: ternary_both_refs
+    description: Ternary with both branches being hierarchical refs
+    sv: |
+      module Child;
+        logic [7:0] a, b;
+        initial begin
+          a = 8'hAA;
+          b = 8'hBB;
+        end
+      endmodule
+
+      module Top;
+        Child u_child();
+        logic sel;
+        logic [7:0] result;
+
+        assign result = sel ? u_child.a : u_child.b;
+
+        initial begin
+          sel = 0;
+          #1;
+          $display("result = %h", result);
+        end
+      endmodule
+    expect:
+      stdout:
+        contains: ["result = bb"]
+
+  - name: if_else_ref
+    description: Hierarchical ref in if-else with value merging across blocks
+    sv: |
+      module Child;
+        int x;
+        initial x = 42;
+      endmodule
+
+      module Top;
+        Child u_child();
+        int result;
+        logic cond;
+
+        always_comb begin
+          if (cond)
+            result = u_child.x + 1;
+          else
+            result = u_child.x - 1;
+        end
+
+        initial begin
+          cond = 1;
+          #1;
+          $display("result = %0d", result);
+        end
+      endmodule
+    expect:
+      stdout:
+        contains: ["result = 43"]
+
   - name: parameter_ref
     description: Read a child module parameter via hierarchical path
     sv: |

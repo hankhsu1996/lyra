@@ -336,6 +336,15 @@ auto MirBuilder::EmitValueTemp(TypeId type, mir::Rvalue value) -> mir::Operand {
   return mir::Operand::UseTemp(temp_id);
 }
 
+auto MirBuilder::EmitExternalRead(TypeId type, mir::ExternalRefId ref)
+    -> mir::Operand {
+  mir::Rvalue rv{
+      .operands = {},
+      .info = mir::ExternalReadRvalueInfo{.ref = ref},
+  };
+  return EmitValueTemp(type, std::move(rv));
+}
+
 auto MirBuilder::EmitValueTempAssign(TypeId type, mir::Operand source)
     -> mir::Operand {
   int temp_id = ctx_->AllocValueTemp(type);

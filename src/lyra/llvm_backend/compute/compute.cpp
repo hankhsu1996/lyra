@@ -16,6 +16,7 @@
 #include "lyra/llvm_backend/compute/builtin.hpp"
 #include "lyra/llvm_backend/compute/cast.hpp"
 #include "lyra/llvm_backend/compute/driver.hpp"
+#include "lyra/llvm_backend/compute/four_state_ops.hpp"
 #include "lyra/llvm_backend/compute/math.hpp"
 #include "lyra/llvm_backend/compute/operand.hpp"
 #include "lyra/llvm_backend/compute/real.hpp"
@@ -222,6 +223,18 @@ auto LowerRvalue(
             auto* result = builder.CreateSelect(
                 cond_i1, *true_or_err, *false_or_err, "select");
             return RvalueValue::TwoState(result);
+          },
+          [&](const mir::ExternalReadRvalueInfo& info) -> Result<RvalueValue> {
+            auto val_or_err = context.LoadExternalRef(info.ref);
+            if (!val_or_err) return std::unexpected(val_or_err.error());
+            llvm::Value* raw = *val_or_err;
+            TypeId ref_type = context.GetExternalRefType(info.ref);
+            const Type& type = types[ref_type];
+            if (IsPacked(type) && context.IsPackedFourState(type)) {
+              auto fs = ExtractFourState(context.GetBuilder(), raw);
+              return RvalueValue::FourState(fs.value, fs.unknown);
+            }
+            return RvalueValue::TwoState(raw);
           },
           [&](const mir::SystemCmdRvalueInfo& info) -> Result<RvalueValue> {
             auto& builder = context.GetBuilder();

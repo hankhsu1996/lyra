@@ -52,9 +52,6 @@ auto FormatTermOperand(const Operand& op) -> std::string {
       return std::format("$t{}", std::get<TempId>(op.payload).value);
     case Operand::Kind::kConst:
       return "const";
-    case Operand::Kind::kExternalRef:
-      return std::format(
-          "ext_ref({})", std::get<ExternalRefId>(op.payload).value);
     case Operand::Kind::kPoison:
       return "poison";
   }
@@ -475,9 +472,6 @@ auto Dumper::FormatIndexOperand(const Operand& op) const -> std::string {
       TempId temp_id = std::get<TempId>(op.payload);
       return std::format("#t{}", temp_id.value);
     }
-    case Operand::Kind::kExternalRef:
-      return std::format(
-          "ext_ref({})", std::get<ExternalRefId>(op.payload).value);
     case Operand::Kind::kPoison:
       return "poison";
   }
@@ -604,9 +598,6 @@ auto Dumper::FormatOperand(const Operand& op) const -> std::string {
       TempId temp_id = std::get<TempId>(op.payload);
       return std::format("use(#t{})", temp_id.value);
     }
-    case Operand::Kind::kExternalRef:
-      return std::format(
-          "ext_ref({})", std::get<ExternalRefId>(op.payload).value);
     case Operand::Kind::kPoison:
       return "poison";
   }
@@ -767,6 +758,9 @@ auto Dumper::FormatRvalue(const Rvalue& rv) const -> std::string {
             return std::string("$system()");
           },
           [](const SelectRvalueInfo&) { return std::string("select"); },
+          [](const ExternalReadRvalueInfo& info) {
+            return std::format("external_read({})", info.ref.value);
+          },
       },
       rv.info);
 

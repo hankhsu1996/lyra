@@ -127,6 +127,11 @@ class MirBuilder {
   // Emit an AssocOp instruction (associative array operation).
   void EmitAssocOp(mir::AssocOp op);
 
+  // Emit an external read: read from a non-local external location,
+  // producing a normal value temp. This is the canonical read boundary
+  // for hierarchical references.
+  auto EmitExternalRead(TypeId type, mir::ExternalRefId ref) -> mir::Operand;
+
   // Emit a unary operation and materialize to temp.
   auto EmitUnary(mir::UnaryOp op, mir::Operand operand, TypeId result_type)
       -> mir::Operand;

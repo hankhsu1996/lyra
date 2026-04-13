@@ -1100,10 +1100,6 @@ auto ResolveLoweredOperandType(const mir::Operand& op, const Context& ctx)
     case mir::Operand::Kind::kPoison:
       throw common::InternalError(
           "ResolveLoweredOperandType", "poison operand in deferred capture");
-    case mir::Operand::Kind::kExternalRef:
-      throw common::InternalError(
-          "ResolveLoweredOperandType",
-          "external ref operand in deferred capture");
   }
   throw common::InternalError(
       "ResolveLoweredOperandType", "unknown operand kind");
@@ -2004,6 +2000,34 @@ auto BuildIndexPlan(
   }
 }
 
+// Typed trigger-source result: either a local design place or an unresolved
+// external ref handle. HIR syntax discrimination is isolated here so that
+// LowerEventWait consumes a typed result rather than branching on expression
+// kind inline.
+using TriggerSource = std::variant<mir::PlaceId, mir::ExternalRefId>;
+
+auto LowerEventTriggerSource(hir::ExpressionId expr_id, MirBuilder& builder)
+    -> Result<TriggerSource> {
+  auto& ctx = builder.GetContext();
+  const auto& expr = (*ctx.hir_arena)[expr_id];
+  if (expr.kind == hir::ExpressionKind::kHierarchicalRef &&
+      ctx.external_refs != nullptr) {
+    const auto& href_data =
+        std::get<hir::HierarchicalRefExpressionData>(expr.data);
+    auto ref = ctx.LowerHierarchicalRefToExternalRef(
+        href_data, expr.type, mir::ExternalAccessKind::kRead);
+    return TriggerSource{ref.ref_id};
+  }
+  auto op_result = LowerExpression(expr_id, builder);
+  if (!op_result) return std::unexpected(op_result.error());
+  if (op_result->kind != mir::Operand::Kind::kUse) {
+    throw common::InternalError(
+        "LowerEventTriggerSource",
+        "event trigger signal must be a design variable");
+  }
+  return TriggerSource{std::get<mir::PlaceId>(op_result->payload)};
+}
+
 auto LowerEventWait(
     const hir::EventWaitStatementData& data, MirBuilder& builder)
     -> Result<void> {
@@ -2633,13 +2657,11 @@ auto LowerEventWait(
                                  .width = 1,
                                  .element_type = hir_expr.type}});
     } else {
-      auto signal_result = LowerExpression(hir_trigger.signal, builder);
-      if (!signal_result) return std::unexpected(signal_result.error());
-      mir::Operand signal_op = std::move(*signal_result);
-      if (signal_op.kind == mir::Operand::Kind::kExternalRef) {
-        // Carry unresolved external ref trigger. Resolved at backend
-        // normalization (FillTriggerArray) using ResolvedExternalRefBinding.
-        auto ref_id = std::get<mir::ExternalRefId>(signal_op.payload);
+      auto source = LowerEventTriggerSource(hir_trigger.signal, builder);
+      if (!source) return std::unexpected(source.error());
+      if (const auto* ref_id = std::get_if<mir::ExternalRefId>(&*source)) {
+        // External ref trigger: carry unresolved handle for backend
+        // normalization (FillTriggerArray).
         common::EdgeKind edge = common::EdgeKind::kAnyChange;
         switch (hir_trigger.edge) {
           case hir::EventEdgeKind::kNone:
@@ -2657,13 +2679,13 @@ auto LowerEventWait(
                  .edge = common::EdgeKind::kPosedge,
                  .observed_place = std::nullopt,
                  .late_bound = std::nullopt,
-                 .unresolved_external_ref = ref_id});
+                 .unresolved_external_ref = *ref_id});
             triggers.push_back(
                 {.signal = {},
                  .edge = common::EdgeKind::kNegedge,
                  .observed_place = std::nullopt,
                  .late_bound = std::nullopt,
-                 .unresolved_external_ref = ref_id});
+                 .unresolved_external_ref = *ref_id});
             continue;
         }
         triggers.push_back(
@@ -2671,16 +2693,10 @@ auto LowerEventWait(
              .edge = edge,
              .observed_place = std::nullopt,
              .late_bound = std::nullopt,
-             .unresolved_external_ref = ref_id});
+             .unresolved_external_ref = *ref_id});
         continue;
       }
-      if (signal_op.kind == mir::Operand::Kind::kUse) {
-        place_id = std::get<mir::PlaceId>(signal_op.payload);
-      } else {
-        throw common::InternalError(
-            "LowerEventWait",
-            "event trigger signal must be a design variable or external ref");
-      }
+      place_id = std::get<mir::PlaceId>(*source);
     }
 
     const auto& place = (*ctx.mir_arena)[place_id];

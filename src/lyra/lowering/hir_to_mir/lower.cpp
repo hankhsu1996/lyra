@@ -4,6 +4,7 @@
 #include <expected>
 #include <format>
 #include <memory>
+#include <span>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -56,13 +57,12 @@ void VerifyLoweredMir(
             [&](const mir::Module& mod) {
               const auto& body = *mod.body;
               const auto& arena = body.arena;
-              // Module bodies use kBackendReady because they are still
-              // mir::ModuleBody (old type, cannot contain ExternalRefId).
-              // When Phase 2 migrates to CompiledModuleBody, this call site
-              // switches to VerifyPreBackendBody(compiled_body, ...).
               mir::VerifyContext cx{
                   .types = &type_arena,
                   .phase = mir::VerifyContext::Phase::kBackendReady,
+                  .external_refs =
+                      std::span<const mir::ExternalAccessRecipe>{
+                          body.external_refs},
                   .num_events = static_cast<uint32_t>(body.events.size()),
               };
               std::string_view module_path =
@@ -91,6 +91,7 @@ void VerifyLoweredMir(
               mir::VerifyContext cx{
                   .types = &type_arena,
                   .phase = mir::VerifyContext::Phase::kBackendReady,
+                  .external_refs = {},
               };
               for (size_t fi = 0; fi < pkg.functions.size(); ++fi) {
                 std::string label =
