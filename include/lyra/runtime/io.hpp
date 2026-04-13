@@ -37,13 +37,12 @@ void LyraWarnRateLimited(void* engine, const char* msg, uint32_t* counter_ptr);
 // - left_align: left-align within field width (from %-Nd syntax)
 // - unknown_data: pointer to unknown plane (null for 2-state). When set, bit i
 //     is X if unknown[i]=1 && data[i]=0, Z if unknown[i]=1 && data[i]=1.
-// - z_mask: unused (reserved for future)
 // - module_timeunit_power: timeunit of the value (for kTime: e.g., -9 for ns)
 void LyraPrintValue(
     void* engine, int32_t format, int32_t value_kind, const void* data,
     int32_t width, bool is_signed, int32_t output_width, int32_t precision,
     bool zero_pad, bool left_align, const void* unknown_data,
-    const void* z_mask, int8_t module_timeunit_power);
+    int8_t module_timeunit_power);
 
 // Finalize output: newline for kDisplay (0), nothing for kWrite (1)
 void LyraPrintEnd(void* engine, int32_t kind);

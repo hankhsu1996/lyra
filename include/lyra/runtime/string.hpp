@@ -75,13 +75,12 @@ auto LyraStringFormatStart() -> LyraStringFormatBuffer*;
 void LyraStringFormatLiteral(
     LyraStringFormatBuffer* buf, const char* str, int64_t len);
 
-// Append formatted value (mirrors LyraPrintValue signature exactly)
-// Note: x_mask/z_mask for future 4-state support (currently expected null)
+// Append formatted value (mirrors LyraPrintValue parameter shape)
 void LyraStringFormatValue(
     LyraStringFormatBuffer* buf, void* engine_ptr, int32_t format,
     int32_t value_kind, const void* data, int32_t width, bool is_signed,
     int32_t output_width, int32_t precision, bool zero_pad, bool left_align,
-    const void* x_mask, const void* z_mask, int8_t module_timeunit_power);
+    int8_t module_timeunit_power);
 
 // Append string handle contents (FormatKind::kString path)
 // Does NOT retain - reads immediately; handle must be valid for call duration

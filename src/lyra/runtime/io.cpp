@@ -135,7 +135,7 @@ extern "C" void LyraPrintValue(
     void* engine_ptr, int32_t format, int32_t value_kind, const void* data,
     int32_t width, bool is_signed, int32_t output_width, int32_t precision,
     bool zero_pad, bool left_align, const void* unknown_data,
-    const void* /*z_mask*/, int8_t module_timeunit_power) {
+    int8_t module_timeunit_power) {
   if (engine_ptr == nullptr) {
     throw lyra::common::InternalError(
         "LyraPrintValue", "engine_ptr must not be null");

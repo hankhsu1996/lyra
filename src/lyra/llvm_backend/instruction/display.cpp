@@ -247,7 +247,7 @@ auto LowerTimeOp(
        llvm::ConstantInt::get(i32_ty, op.mods.precision.value_or(-1)),
        llvm::ConstantInt::get(i1_ty, op.mods.zero_pad ? 1 : 0),
        llvm::ConstantInt::get(i1_ty, op.mods.left_align ? 1 : 0), null_ptr,
-       null_ptr, llvm::ConstantInt::get(i8_ty, op.module_timeunit_power)});
+       llvm::ConstantInt::get(i8_ty, op.module_timeunit_power)});
 
   return {};
 }
@@ -363,7 +363,7 @@ auto LowerValueOp(
        llvm::ConstantInt::get(i32_ty, op.mods.precision.value_or(-1)),
        llvm::ConstantInt::get(i1_ty, op.mods.zero_pad ? 1 : 0),
        llvm::ConstantInt::get(i1_ty, op.mods.left_align ? 1 : 0), unknown_ptr,
-       null_ptr, llvm::ConstantInt::get(i8_ty, op.module_timeunit_power)});
+       llvm::ConstantInt::get(i8_ty, op.module_timeunit_power)});
 
   return {};
 }
