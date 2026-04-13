@@ -116,6 +116,16 @@ struct NbaPendingSet {
   }
 };
 
+// Transient per-instance scratch state for the fixpoint solver.
+// Object-owned but engine-managed: zeroed at the start of each
+// FlushAndPropagateConnections call, read/written during fixpoint
+// iteration, carries no semantic state across calls.
+struct RuntimeFixpointScratch {
+  bool in_next = false;
+  bool comb_touched_seen = false;
+  uint32_t delta_pre = 0;
+};
+
 // Runtime-owned representation of one module instance.
 //
 // This is the first-class object model introduced by R1. A RuntimeInstance
@@ -174,6 +184,9 @@ struct RuntimeInstance {
   // Tracks which local signals have pending deferred values in
   // storage.deferred_inline_base. Not part of the binary contract.
   NbaPendingSet nba_pending;
+
+  // Fixpoint solver scratch state (not part of the binary contract).
+  RuntimeFixpointScratch fixpoint_scratch;
 };
 
 // Strongly typed field indices for RuntimeInstanceStorage.

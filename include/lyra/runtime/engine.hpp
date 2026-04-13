@@ -1643,19 +1643,15 @@ class Engine {
     // Sparse instance frontiers. Only instances in current_instances are
     // consumed each iteration; only instances in next_instances receive
     // new work. Convergence is current_instances.empty().
+    // Per-instance dedup flags (in_next, comb_touched_seen) and scratch
+    // scalars (delta_pre) live on RuntimeInstance::fixpoint_scratch.
     std::vector<uint32_t> current_instances;
     std::vector<uint32_t> next_instances;
-    std::vector<uint8_t> in_next;  // bitvec: 1 iff in next_instances
 
     // Per-iteration comb-touched tracking. Records which instances had
     // a comb kernel executed, so local comb-write collection scans only
     // those instances. Reset each iteration.
     std::vector<uint32_t> comb_touched;
-    std::vector<uint8_t> comb_touched_seen;
-    // Pre-comb delta size, indexed by instance_idx. Valid only for
-    // entries in comb_touched. Recorded exactly once per instance per
-    // iteration, before the first comb execution for that instance.
-    std::vector<uint32_t> delta_pre;
 
     // Comb write capture (split by domain)
     std::vector<GlobalSignalId> comb_writes_global;

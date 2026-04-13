@@ -510,7 +510,7 @@ void Engine::PromoteLocalFrontier() {
     for (LocalSignalId lid : lps.pending) {
       lps.seen[lid.value] = 0;
     }
-    fp_work_.in_next[idx] = 0;
+    lps.instance->fixpoint_scratch.in_next = false;
   }
 
   std::swap(fp_work_.current_instances, fp_work_.next_instances);
@@ -557,7 +557,6 @@ void Engine::FlushAndPropagateConnections() {
   constexpr uint32_t kMaxIterations = 100;
   const bool detailed = detailed_stats_enabled_;
   uint32_t iterations_used = 0;
-  auto num_instances = static_cast<uint32_t>(instances_.size());
 
   // Ensure workspace is sized (lazy init, once per engine lifetime).
   if (fp_work_.global_pending_seen.size() < global_slot_count_) {
@@ -578,15 +577,9 @@ void Engine::FlushAndPropagateConnections() {
       }
     }
   }
-  if (fp_work_.in_next.size() < num_instances) {
-    fp_work_.in_next.assign(num_instances, 0);
-  }
-  if (fp_work_.comb_touched_seen.size() < num_instances) {
-    fp_work_.comb_touched_seen.assign(num_instances, 0);
-  }
-  if (fp_work_.delta_pre.size() < num_instances) {
-    fp_work_.delta_pre.resize(num_instances, 0);
-  }
+  // Per-instance fixpoint scratch (in_next, comb_touched_seen, delta_pre)
+  // lives on RuntimeInstance::fixpoint_scratch. No engine-side init needed;
+  // fields are reset during sparse-list-driven cleanup each iteration.
 
   // Seed global frontier from delta dirty slots.
   fp_work_.pending_globals.clear();
@@ -640,8 +633,8 @@ void Engine::FlushAndPropagateConnections() {
     if (lid.value < lps.seen.size() && lps.seen[lid.value] == 0) {
       lps.seen[lid.value] = 1;
       lps.next.push_back(lid);
-      if (fp_work_.in_next[inst_idx] == 0) {
-        fp_work_.in_next[inst_idx] = 1;
+      if (!lps.instance->fixpoint_scratch.in_next) {
+        lps.instance->fixpoint_scratch.in_next = true;
         fp_work_.next_instances.push_back(inst_idx);
       }
     } else {
@@ -671,15 +664,16 @@ void Engine::FlushAndPropagateConnections() {
   // Helper: mark a comb kernel's owning instance as touched this iteration.
   // Records delta_pre exactly once per instance, before first comb execution.
   auto mark_comb_touched = [&](uint32_t inst_idx) {
-    if (fp_work_.comb_touched_seen[inst_idx] != 0) return;
-    fp_work_.comb_touched_seen[inst_idx] = 1;
+    auto* inst = instances_[inst_idx];
+    auto& scratch = inst->fixpoint_scratch;
+    if (scratch.comb_touched_seen) return;
+    scratch.comb_touched_seen = true;
     fp_work_.comb_touched.push_back(inst_idx);
-    auto& obs = instances_[inst_idx]->observability;
-    fp_work_.delta_pre[inst_idx] =
-        (obs.local_signal_count > 0)
-            ? static_cast<uint32_t>(
-                  obs.local_updates.DeltaDirtySignals().size())
-            : 0;
+    auto& obs = inst->observability;
+    scratch.delta_pre = (obs.local_signal_count > 0)
+                            ? static_cast<uint32_t>(
+                                  obs.local_updates.DeltaDirtySignals().size())
+                            : 0;
   };
 
   for (uint32_t iter = 0; iter < kMaxIterations; ++iter) {
@@ -852,10 +846,11 @@ void Engine::FlushAndPropagateConnections() {
 
       // 2d. Collect local comb writes (scan comb_touched only).
       for (uint32_t tidx : fp_work_.comb_touched) {
-        auto& obs = instances_[tidx]->observability;
+        auto* tinst = instances_[tidx];
+        auto& obs = tinst->observability;
         if (obs.local_signal_count == 0) continue;
         auto delta = obs.local_updates.DeltaDirtySignals();
-        auto pre_size = fp_work_.delta_pre[tidx];
+        auto pre_size = tinst->fixpoint_scratch.delta_pre;
         if (delta.size() <= pre_size) continue;
         for (size_t j = pre_size; j < delta.size(); ++j) {
           fp_work_.comb_writes_local.push_back(
@@ -902,7 +897,7 @@ void Engine::FlushAndPropagateConnections() {
 
       // 2e. Reset comb_touched for next iteration.
       for (uint32_t tidx : fp_work_.comb_touched) {
-        fp_work_.comb_touched_seen[tidx] = 0;
+        instances_[tidx]->fixpoint_scratch.comb_touched_seen = false;
       }
       fp_work_.comb_touched.clear();
     }
