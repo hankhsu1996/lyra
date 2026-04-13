@@ -206,9 +206,9 @@ void EmitDesignStateZero(Context& context, llvm::Value* design_state) {
   EmitMemsetZero(context, design_state, arena_ty);
 }
 
-void EmitRuntimeInit(
+auto EmitRuntimeInit(
     Context& context, llvm::Function* main_func,
-    const EmitDesignMainInput& input) {
+    const EmitDesignMainInput& input) -> llvm::Value* {
   auto& builder = context.GetBuilder();
   auto& ctx = context.GetLlvmContext();
   bool argv_forwarding =
@@ -227,7 +227,8 @@ void EmitRuntimeInit(
   auto* i32_ty = llvm::Type::getInt32Ty(ctx);
   builder.CreateCall(
       context.GetLyraInitRuntime(),
-      {fs_base_dir_str, llvm::ConstantInt::get(i32_ty, input.iteration_limit)});
+      {llvm::ConstantInt::get(i32_ty, input.iteration_limit)});
+  return fs_base_dir_str;
 }
 
 void EmitInitProcesses(
@@ -510,8 +511,8 @@ auto BuildRuntimeAbi(
     const RealizationEmissionResult::ObservationMeta& observation_meta,
     uint32_t num_immediate_cover_sites, int8_t global_precision_power,
     llvm::Constant* deferred_site_meta_global,
-    uint32_t num_deferred_assertion_sites, uint32_t num_events)
-    -> llvm::Value* {
+    uint32_t num_deferred_assertion_sites, uint32_t num_events,
+    llvm::Value* fs_base_dir_str) -> llvm::Value* {
   auto& builder = context.GetBuilder();
   auto& ctx = context.GetLlvmContext();
   auto* i32_ty = llvm::Type::getInt32Ty(ctx);
@@ -606,6 +607,9 @@ auto BuildRuntimeAbi(
   // L8a: Named event count.
   store_field(38, llvm::ConstantInt::get(i32_ty, num_events));
   store_field(39, llvm::ConstantInt::get(i32_ty, 0));
+
+  // v25: Filesystem base directory.
+  store_field(40, fs_base_dir_str);
 
   return abi_alloca;
 }
@@ -732,7 +736,7 @@ auto EmitDesignMain(
 
     // Runtime init and init processes run AFTER constructor (which owns
     // design-state init) but BEFORE simulation.
-    EmitRuntimeInit(context, main_func, input);
+    auto* fs_base_dir_str = EmitRuntimeInit(context, main_func, input);
 
     if (input.hooks != nullptr) {
       input.hooks->OnAfterInitializeDesignState(context, design_state);
@@ -820,7 +824,8 @@ auto EmitDesignMain(
         static_cast<uint32_t>(input.design->immediate_cover_sites.size()),
         input.design->global_precision_power, deferred_site_meta_global,
         static_cast<uint32_t>(input.design->deferred_assertion_sites.size()),
-        static_cast<uint32_t>(input.design->max_body_local_events));
+        static_cast<uint32_t>(input.design->max_body_local_events),
+        fs_base_dir_str);
     abi_for_exit = abi_alloca;
 
     EmitRunSimulation(

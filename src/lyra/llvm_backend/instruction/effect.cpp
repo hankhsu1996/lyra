@@ -536,6 +536,7 @@ auto LowerMemIOEffect(
           }
         } else {
           std::vector<llvm::Value*> args = {
+              context.GetEnginePointer(),
               filename_handle,
               target_ptr,
               llvm::ConstantInt::get(i32_ty, element_width),

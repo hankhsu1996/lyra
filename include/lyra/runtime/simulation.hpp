@@ -1,16 +1,12 @@
 #pragma once
 
 #include <cstdint>
-#include <filesystem>
 
 #include "lyra/runtime/observer.hpp"
 #include "lyra/runtime/runtime_abi.hpp"
 #include "lyra/runtime/string.hpp"
 
 namespace lyra::runtime {
-
-// Get the base directory for relative path resolution in file I/O.
-auto GetFsBaseDir() -> const std::filesystem::path&;
 
 // Explicit process exit status returned by LLVM-generated process functions.
 enum class ProcessExitCode : uint32_t {
@@ -137,9 +133,8 @@ void LyraSetTimeFormat(
 auto LyraResolveBaseDir(const char* argv0) -> const char*;
 
 // Initialize runtime state (call before running processes).
-// fs_base_dir: absolute path for relative file I/O resolution.
 // iteration_limit: per-activation back-edge limit (0 = unlimited).
-void LyraInitRuntime(const char* fs_base_dir, uint32_t iteration_limit);
+void LyraInitRuntime(uint32_t iteration_limit);
 
 // Print final simulation time as __LYRA_TIME__=<N> for test harness.
 // run_session_ptr: opaque pointer to lyra::runtime::RunSession.

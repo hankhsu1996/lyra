@@ -961,11 +961,10 @@ auto Context::GetLyraGetTime() -> llvm::Function* {
 
 auto Context::GetLyraInitRuntime() -> llvm::Function* {
   if (lyra_init_runtime_ == nullptr) {
-    // void LyraInitRuntime(const char* fs_base_dir, uint32_t iteration_limit)
-    auto* ptr_ty = llvm::PointerType::getUnqual(*llvm_context_);
+    // void LyraInitRuntime(uint32_t iteration_limit)
     auto* i32_ty = llvm::Type::getInt32Ty(*llvm_context_);
     auto* fn_type = llvm::FunctionType::get(
-        llvm::Type::getVoidTy(*llvm_context_), {ptr_ty, i32_ty}, false);
+        llvm::Type::getVoidTy(*llvm_context_), {i32_ty}, false);
     lyra_init_runtime_ = llvm::Function::Create(
         fn_type, llvm::Function::ExternalLinkage, "LyraInitRuntime",
         llvm_module_.get());
@@ -1548,8 +1547,9 @@ auto Context::GetLyraReadmemNoNotify() -> llvm::Function* {
 
 auto Context::GetLyraWritemem() -> llvm::Function* {
   if (lyra_writemem_ == nullptr) {
-    // void LyraWritemem(ptr filename, ptr source, i32 elem_width,
-    //                   i32 stride_bytes, i32 value_size_bytes, i32 elem_count,
+    // void LyraWritemem(ptr engine, ptr filename, ptr source,
+    //                   i32 elem_width, i32 stride_bytes,
+    //                   i32 value_size_bytes, i32 elem_count,
     //                   i64 min_addr, i64 current_addr, i64 final_addr,
     //                   i64 step, i1 is_hex, i32 element_kind)
     auto* ptr_ty = llvm::PointerType::getUnqual(*llvm_context_);
@@ -1559,8 +1559,8 @@ auto Context::GetLyraWritemem() -> llvm::Function* {
     auto* void_ty = llvm::Type::getVoidTy(*llvm_context_);
     auto* fn_type = llvm::FunctionType::get(
         void_ty,
-        {ptr_ty, ptr_ty, i32_ty, i32_ty, i32_ty, i32_ty, i64_ty, i64_ty, i64_ty,
-         i64_ty, i1_ty, i32_ty},
+        {ptr_ty, ptr_ty, ptr_ty, i32_ty, i32_ty, i32_ty, i32_ty, i64_ty, i64_ty,
+         i64_ty, i64_ty, i1_ty, i32_ty},
         false);
     lyra_writemem_ = llvm::Function::Create(
         fn_type, llvm::Function::ExternalLinkage, "LyraWritemem",

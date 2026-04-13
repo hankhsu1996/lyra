@@ -77,7 +77,9 @@ struct RuntimeInstance;
 // v22: A2 deferred assertion site metadata table.
 // v23: A2e deferred assertion thunk pointers + payload sizes in site metadata.
 // v24: L8a named event count for runtime event registry sizing.
-inline constexpr uint32_t kRuntimeAbiVersion = 24;
+// v25: fs_base_dir moved from LyraInitRuntime hidden static to ABI struct.
+//      Engine owns the filesystem base directory explicitly.
+inline constexpr uint32_t kRuntimeAbiVersion = 25;
 
 struct LyraRuntimeAbi {
   uint32_t version;  // = kRuntimeAbiVersion
@@ -160,10 +162,14 @@ struct LyraRuntimeAbi {
   // BodyRealizationDesc; this global max is for diagnostics only.
   uint32_t num_events;
   uint32_t pad_events;
+
+  // v25: Filesystem base directory for relative path resolution.
+  // Owned by Engine after construction. Null = current working directory.
+  const char* fs_base_dir;
 };
 
 // Hard size/offset contract.
-static_assert(sizeof(LyraRuntimeAbi) == 272);
+static_assert(sizeof(LyraRuntimeAbi) == 280);
 static_assert(offsetof(LyraRuntimeAbi, version) == 0);
 static_assert(offsetof(LyraRuntimeAbi, num_connection_processes) == 188);
 static_assert(offsetof(LyraRuntimeAbi, design_state) == 192);
@@ -176,3 +182,4 @@ static_assert(offsetof(LyraRuntimeAbi, global_precision_power) == 240);
 static_assert(offsetof(LyraRuntimeAbi, deferred_assertion_site_meta) == 248);
 static_assert(offsetof(LyraRuntimeAbi, num_deferred_assertion_sites) == 256);
 static_assert(offsetof(LyraRuntimeAbi, num_events) == 264);
+static_assert(offsetof(LyraRuntimeAbi, fs_base_dir) == 272);

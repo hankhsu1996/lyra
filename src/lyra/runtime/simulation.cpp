@@ -41,11 +41,6 @@
 
 namespace {
 
-auto FsBaseDir() -> std::filesystem::path& {
-  static std::filesystem::path value;
-  return value;
-}
-
 // Process state header layout. Must match ProcessFrameHeader in
 // process_frame.hpp and the LLVM struct emitted by BuildHeaderType.
 using StateHeader = lyra::runtime::ProcessFrameHeader;
@@ -315,6 +310,16 @@ extern "C" void LyraRunSimulation(
           std::format(
               "unsupported RuntimeAbi version {} (expected {})", abi->version,
               kRuntimeAbiVersion));
+    }
+
+    // v25: Filesystem base directory for relative path resolution.
+    if (abi->fs_base_dir != nullptr) {
+      std::filesystem::path base(abi->fs_base_dir);
+      if (!base.is_absolute()) {
+        throw lyra::common::InternalError(
+            "LyraRunSimulation", "fs_base_dir must be absolute");
+      }
+      engine.SetFsBaseDir(base.lexically_normal());
     }
 
     // D6d: Set simulation-global precision from emitted ABI.
@@ -683,25 +688,10 @@ extern "C" auto LyraResolveBaseDir(const char* argv0) -> const char* {
   return resolved.c_str();
 }
 
-extern "C" void LyraInitRuntime(
-    const char* fs_base_dir, uint32_t iteration_limit) {
-  std::filesystem::path base(fs_base_dir);
-  if (!base.is_absolute()) {
-    throw lyra::common::InternalError(
-        "LyraInitRuntime", "fs_base_dir must be absolute");
-  }
-  FsBaseDir() = base.lexically_normal();
+extern "C" void LyraInitRuntime(uint32_t iteration_limit) {
   FinalTime() = 0;
   LyraSetIterationLimit(iteration_limit);
 }
-
-namespace lyra::runtime {
-
-auto GetFsBaseDir() -> const std::filesystem::path& {
-  return FsBaseDir();
-}
-
-}  // namespace lyra::runtime
 
 extern "C" void LyraReportTime(void* run_session_ptr) {
   if (run_session_ptr == nullptr) {
