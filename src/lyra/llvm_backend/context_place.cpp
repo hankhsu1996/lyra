@@ -666,30 +666,33 @@ auto Context::ComputeStaticProjectionOffset(mir::PlaceId place_id)
 
   for (const auto& proj : place.projections) {
     if (const auto* field = std::get_if<mir::FieldProjection>(&proj.info)) {
-      auto struct_type_result = BuildLlvmTypeForTypeId(*this, current_type);
-      if (!struct_type_result) return std::nullopt;
-      auto* struct_ty = llvm::dyn_cast<llvm::StructType>(*struct_type_result);
+      auto* struct_type_ptr = BuildLlvmTypeForTypeId(
+          GetLlvmContext(), current_type, *facts_->types);
+      if (struct_type_ptr == nullptr) return std::nullopt;
+      auto* struct_ty = llvm::dyn_cast<llvm::StructType>(struct_type_ptr);
       if (struct_ty == nullptr) return std::nullopt;
       const auto* layout = dl.getStructLayout(struct_ty);
       byte_offset +=
           static_cast<uint32_t>(layout->getElementOffset(field->field_index));
-      const auto& struct_info = types_[current_type].AsUnpackedStruct();
+      const auto& struct_info =
+          (*facts_->types)[current_type].AsUnpackedStruct();
       current_type =
           struct_info.fields[static_cast<size_t>(field->field_index)].type;
       continue;
     }
     if (const auto* umem =
             std::get_if<mir::UnionMemberProjection>(&proj.info)) {
-      const auto& union_info = types_[current_type].AsUnpackedUnion();
+      const auto& union_info = (*facts_->types)[current_type].AsUnpackedUnion();
       current_type = union_info.members[umem->member_index].type;
       continue;
     }
     return std::nullopt;
   }
 
-  auto final_ty_result = BuildLlvmTypeForTypeId(*this, current_type);
-  if (!final_ty_result) return std::nullopt;
-  auto sub_size = static_cast<uint32_t>(dl.getTypeStoreSize(*final_ty_result));
+  auto* final_ty =
+      BuildLlvmTypeForTypeId(GetLlvmContext(), current_type, *facts_->types);
+  if (final_ty == nullptr) return std::nullopt;
+  auto sub_size = static_cast<uint32_t>(dl.getTypeStoreSize(final_ty));
   return std::pair{byte_offset, sub_size};
 }
 

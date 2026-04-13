@@ -140,11 +140,11 @@ auto EmitObservableDescriptorTemplate(
 
   auto num_entries = static_cast<uint32_t>(tmpl.entries.size());
   if (num_entries > 0) {
-    auto* entry_type = llvm::ArrayType::get(i32_ty, 14);
+    auto* entry_type = llvm::ArrayType::get(i32_ty, 15);
     std::vector<llvm::Constant*> entry_constants;
     entry_constants.reserve(num_entries);
     for (const auto& e : tmpl.entries) {
-      std::array<llvm::Constant*, 14> fields = {
+      std::array<llvm::Constant*, 15> fields = {
           llvm::ConstantInt::get(i32_ty, e.storage_byte_offset),
           llvm::ConstantInt::get(i32_ty, e.total_bytes),
           llvm::ConstantInt::get(i32_ty, e.storage_kind),
@@ -159,6 +159,7 @@ auto EmitObservableDescriptorTemplate(
           llvm::ConstantInt::get(i32_ty, e.flags),
           llvm::ConstantInt::get(i32_ty, e.storage_domain),
           llvm::ConstantInt::get(i32_ty, e.local_signal_id),
+          llvm::ConstantInt::get(i32_ty, e.backing_rel_off),
       };
       entry_constants.push_back(llvm::ConstantArray::get(entry_type, fields));
     }

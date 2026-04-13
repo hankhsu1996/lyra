@@ -79,6 +79,8 @@ struct IdentityCopyComb {
   common::SlotId src_slot;
   common::SlotId dst_slot;
   common::SlotId trigger_slot;
+  common::ObjectIndex trigger_object_index;
+  common::LocalSlotId trigger_local_slot;
 };
 
 // Connection analysis result for a design.

@@ -453,6 +453,7 @@ struct ConstructorRuntimeFuncs {
   llvm::Function* result_get_instance_bundles;
   llvm::Function* result_get_instance_bundle_count;
   llvm::Function* result_destroy;
+  llvm::Function* result_set_ext_ref_bindings;
 };
 
 auto DeclareConstructorRuntimeFuncs(Context& context)
@@ -533,6 +534,9 @@ auto DeclareConstructorRuntimeFuncs(Context& context)
           "LyraConstructionResultGetInstanceBundleCount", i32_ty, {ptr_ty}),
       .result_destroy =
           declare("LyraConstructionResultDestroy", void_ty, {ptr_ty}),
+      .result_set_ext_ref_bindings = declare(
+          "LyraConstructionResultSetExtRefBindings", void_ty,
+          {ptr_ty, ptr_ty, i32_ty, ptr_ty, ptr_ty, i32_ty}),
   };
 }
 
@@ -655,6 +659,46 @@ auto EmitConstructorFunction(
 
   // Finalize: returns a single constructor-owned result handle.
   auto* result = builder.CreateCall(rt.finalize, {ctor}, "ctor_result");
+
+  // Set per-instance ext-ref binding records.
+  if (!prog.ext_ref_binding_pool.empty()) {
+    auto& mod = context.GetModule();
+    auto* binding_ty = llvm::StructType::get(ctx, {i32_ty, i32_ty, i32_ty});
+
+    std::vector<llvm::Constant*> binding_constants;
+    binding_constants.reserve(prog.ext_ref_binding_pool.size());
+    for (const auto& b : prog.ext_ref_binding_pool) {
+      binding_constants.push_back(
+          llvm::ConstantStruct::get(
+              binding_ty,
+              {llvm::ConstantInt::get(i32_ty, b.storage_slot.value),
+               llvm::ConstantInt::get(i32_ty, b.target_instance_id),
+               llvm::ConstantInt::get(i32_ty, b.target_local_signal.value)}));
+    }
+    auto pool_count = static_cast<uint32_t>(prog.ext_ref_binding_pool.size());
+    auto* pool_array_ty = llvm::ArrayType::get(binding_ty, pool_count);
+    auto* pool_global = new llvm::GlobalVariable(
+        mod, pool_array_ty, true, llvm::GlobalValue::PrivateLinkage,
+        llvm::ConstantArray::get(pool_array_ty, binding_constants),
+        "__lyra_ext_ref_bindings");
+
+    auto* offsets_global = new llvm::GlobalVariable(
+        mod, llvm::ArrayType::get(i32_ty, prog.ext_ref_binding_offsets.size()),
+        true, llvm::GlobalValue::PrivateLinkage,
+        llvm::ConstantDataArray::get(ctx, prog.ext_ref_binding_offsets),
+        "__lyra_ext_ref_binding_offsets");
+    auto* counts_global = new llvm::GlobalVariable(
+        mod, llvm::ArrayType::get(i32_ty, prog.ext_ref_binding_counts.size()),
+        true, llvm::GlobalValue::PrivateLinkage,
+        llvm::ConstantDataArray::get(ctx, prog.ext_ref_binding_counts),
+        "__lyra_ext_ref_binding_counts");
+
+    builder.CreateCall(
+        rt.result_set_ext_ref_bindings,
+        {result, pool_global, llvm::ConstantInt::get(i32_ty, pool_count),
+         offsets_global, counts_global,
+         llvm::ConstantInt::get(i32_ty, entry_count)});
+  }
 
   // Extract states, counts, and process metadata from the result.
   auto* states_array =

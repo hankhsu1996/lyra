@@ -841,20 +841,14 @@ void ExtractBodyObservableDescriptors(
           .storage_owner_ref = i, .flags = 0};
 
       uint32_t domain = 1;
-      uint32_t storage_offset =
-          narrow_u64_to_u32(body_offset.value, "body-local byte offset");
-
-      uint32_t body_local_signal_id = gsi - base_slot;
       uint32_t backing_off = 0;
-      if (design.owned_data_offsets[gsi].has_value()) {
-        auto backing_body_off =
-            *design.owned_data_offsets[gsi] - owned_base->value;
+      if (info.body_layout.appendix_offsets[i].has_value()) {
         backing_off = narrow_u64_to_u32(
-            backing_body_off, "container backing body offset");
+            info.body_layout.appendix_offsets[i]->value,
+            "container backing body offset");
       }
       tmpl.entries.push_back(MakeObservableDescriptorEntry(
-          storage_offset, name_off, refs, sf, domain, body_local_signal_id,
-          backing_off));
+          storage_offset, name_off, refs, sf, domain, i, backing_off));
     }
 
     // Validate dense population.

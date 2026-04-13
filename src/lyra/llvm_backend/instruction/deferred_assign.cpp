@@ -228,8 +228,7 @@ auto EmitDeferredStoreCore(
 // current-storage pointers. body_byte_offset is an LLVM Value to
 // support both static (field/union) and dynamic (index) offsets.
 auto EmitDeferredWriteLocal(
-    Context& context, const CuFacts& facts,
-    const mir::DeferredAssign& deferred,
+    Context& context, const CuFacts& facts, const mir::DeferredAssign& deferred,
     const StoreShape& shape, llvm::Value* body_byte_offset,
     const SignalCoordExpr& signal_id, TypeId target_type, bool is_partial)
     -> Result<void> {
@@ -266,8 +265,7 @@ auto EmitDeferredWriteLocal(
 // to PackedNbaPolicy so the packed dispatch can route local owned-inline
 // targets to deferred storage.
 auto LowerDeferredAssignBitRange(
-    Context& context, const CuFacts& facts,
-    const mir::DeferredAssign& deferred,
+    Context& context, const CuFacts& facts, const mir::DeferredAssign& deferred,
     const SignalCoordExpr& signal_id, mir::PlaceId dest, bool is_local_owned)
     -> Result<void> {
   auto path = ExtractPackedAccessPath(context, facts, dest);
@@ -350,8 +348,7 @@ auto ExtractIndexProjectionInfo(
 // For local owned targets, uses deferred byte-range write with
 // dynamic body_offset. For non-local, uses generic EmitDeferredStoreCore.
 auto LowerDeferredAssignWithOobGuard(
-    Context& context, const CuFacts& facts,
-    const mir::DeferredAssign& deferred,
+    Context& context, const CuFacts& facts, const mir::DeferredAssign& deferred,
     const StoreShape& shape, const SignalCoordExpr& signal_id,
     mir::PlaceId dest, bool is_local_owned) -> Result<void> {
   auto& builder = context.GetBuilder();
@@ -398,7 +395,8 @@ auto LowerDeferredAssignWithOobGuard(
 
     TypeId dest_type = mir::TypeOfPlace(types, context.LookupPlace(dest));
     auto result = EmitDeferredWriteLocal(
-        context, facts, deferred, shape, body_offset, signal_id, dest_type, true);
+        context, facts, deferred, shape, body_offset, signal_id, dest_type,
+        true);
     if (!result) return result;
   } else {
     if (signal_id.GetKind() == SignalCoordExpr::Kind::kLocal) {
@@ -510,7 +508,8 @@ auto LowerDeferredAssign(
     // Whole-slot write: no projections.
     auto* body_offset = llvm::ConstantInt::get(i32_ty, slot_body_off);
     return EmitDeferredWriteLocal(
-        context, facts, deferred, shape, body_offset, signal_id, dest_type, false);
+        context, facts, deferred, shape, body_offset, signal_id, dest_type,
+        false);
   }
 
   // Non-local fallback: global, external ref, or cross-instance targets.

@@ -2195,43 +2195,14 @@ auto BuildLayout(
       }
       layout.instance_storage_bases[mi] = base;
 
-      // Compute per-instance realized inline and appendix sizes from the
-      // design layout. These are the correct per-instance sizes accounting
-      // for concrete parameterized types.
-      if (base.abs_byte_offset.has_value()) {
-        uint64_t inst_base = base.abs_byte_offset->value;
-        uint64_t inline_end = inst_base;
-        uint64_t total_end = inst_base;
-
-        // Find the end of inline region: last owned inline slot + its size.
-        // Find the end of appendix region: last owned backing + its size.
-        for (uint32_t i = 0; i < plan.slot_count; ++i) {
-          uint32_t row = plan.design_state_base_slot + i;
-          uint64_t slot_off = layout.design.slot_byte_offsets[row];
-          bool has_backing = layout.design.owned_data_offsets[row].has_value();
-          uint64_t slot_size =
-              has_backing
-                  ? runtime::kOwnedStorageHandleByteSize
-                  : layout.design.slot_storage_specs[row].TotalByteSize();
-          uint64_t slot_end = slot_off + slot_size;
-          inline_end = std::max(inline_end, slot_end);
-
-          // Check for owned backing data (container appendix).
-          if (layout.design.owned_data_offsets[row].has_value()) {
-            uint64_t backing_off = *layout.design.owned_data_offsets[row];
-            uint64_t backing_size =
-                layout.design.slot_storage_specs[row].TotalByteSize();
-            uint64_t backing_end = backing_off + backing_size;
-            total_end = std::max(total_end, backing_end);
-          }
-        }
-
-        uint64_t inline_bytes = inline_end - inst_base;
-        uint64_t appendix_bytes =
-            (total_end > inline_end) ? (total_end - inline_end) : 0;
-        layout.instance_storage_sizes[mi] = {
-            .inline_bytes = inline_bytes, .appendix_bytes = appendix_bytes};
-      }
+      // Per-instance storage sizes from body-local layout (canonical source).
+      // All instances of the same body share the same layout, so we read
+      // from the body realization info computed by ComputeBodyStateSize.
+      auto gi = layout.instance_body_groups[mi];
+      const auto& body_info = layout.body_realization_infos[gi];
+      layout.instance_storage_sizes[mi] = {
+          .inline_bytes = body_info.inline_state_size_bytes,
+          .appendix_bytes = body_info.appendix_state_size_bytes};
     }
   }
 

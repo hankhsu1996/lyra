@@ -239,7 +239,7 @@ auto LowerRvalue(
             llvm::Value* raw = *val_or_err;
             TypeId ref_type = context.GetExternalRefType(info.ref);
             const Type& type = types[ref_type];
-            if (IsPacked(type) && context.IsPackedFourState(type)) {
+            if (IsPacked(type) && IsPackedFourState(facts, type)) {
               auto fs = ExtractFourState(context.GetBuilder(), raw);
               return RvalueValue::FourState(fs.value, fs.unknown);
             }

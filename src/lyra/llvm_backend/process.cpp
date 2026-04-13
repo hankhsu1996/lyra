@@ -1060,15 +1060,7 @@ void FillTriggerArray(
     Context& context, const CuFacts& facts, llvm::Value* base_ptr,
     llvm::Type* trigger_type, llvm::Type* array_type,
     const std::vector<mir::WaitTrigger>& triggers) {
-  // Normalize unresolved external ref triggers to topology-resolved identity.
-  auto resolved_triggers = triggers;
-  for (auto& trigger : resolved_triggers) {
-    if (trigger.unresolved_external_ref.has_value()) {
-      trigger.signal = context.NormalizeExternalRefSignalIdentity(
-          *trigger.unresolved_external_ref);
-      trigger.unresolved_external_ref = std::nullopt;
-    }
-  }
+  const auto& resolved_triggers = triggers;
 
   auto& builder = context.GetBuilder();
   auto& llvm_ctx = context.GetLlvmContext();
@@ -1085,8 +1077,7 @@ void FillTriggerArray(
     // External-ref triggers emit cross-instance local identity: the
     // target's local signal id (compile-time constant from recipe).
     auto* signal_ptr = builder.CreateStructGEP(trigger_type, elem_ptr, 0);
-    bool is_ext_ref =
-        resolved_triggers[i].unresolved_external_ref.has_value();
+    bool is_ext_ref = resolved_triggers[i].unresolved_external_ref.has_value();
     SignalCoordExpr signal_expr =
         is_ext_ref
             ? SignalCoordExpr::Local(0)  // placeholder, overwritten below
@@ -1537,7 +1528,7 @@ auto LowerWait(
   auto num_triggers = static_cast<uint32_t>(wait.triggers.size());
 
   // Emit late-bound data (headers + plan ops pool + dep slots pool).
-  auto lb_data = EmitLateBoundData(context, wait.triggers);
+  auto lb_data = EmitLateBoundData(context, facts, wait.triggers);
 
   bool has_late_bound = (lb_data.num_headers > 0);
   bool has_container = std::ranges::any_of(wait.triggers, [](const auto& t) {
@@ -1548,10 +1539,7 @@ auto LowerWait(
   // Static-wait fast path: if a previous wait site in this process has
   // identical static triggers AND the same resume block, reuse its
   // wait_site_id and emit LyraSuspendWaitStatic instead of rebuilding
-  // the trigger array. The resume_block must match because installed
-  // subscriptions carry a fixed resume_block from install time --
-  // EnqueueProcessWakeup reads it from the subscription, not the
-  // SuspendRecord.
+  // the trigger array.
   if (is_static) {
     for (const auto& prev : wait_sites) {
       if (prev.has_late_bound || prev.has_container) continue;
@@ -1570,8 +1558,8 @@ auto LowerWait(
     }
   }
 
-  // First occurrence: allocate a new wait_site_id and emit full trigger setup.
-  uint32_t wait_site_id = context.NextWaitSiteId();
+  uint32_t wait_site_id =
+      wait_site_base + static_cast<uint32_t>(wait_sites.size());
   wait_sites.push_back(
       WaitSiteEntry{
           .resume_block = wait.resume.value,
@@ -1589,25 +1577,6 @@ auto LowerWait(
   auto* trigger_type = llvm::StructType::get(
       llvm_ctx, {i32_ty, i8_ty, i8_ty, i8_ty, i8_ty, i32_ty, i32_ty, i32_ty,
                  i32_ty, i32_ty});
-
-  // Emit late-bound data (headers + plan ops pool + dep slots pool).
-  auto lb_data = EmitLateBoundData(context, facts, wait.triggers);
-
-  // Allocate wait-site ID and record entry for the caller.
-  bool has_late_bound = (lb_data.num_headers > 0);
-  bool has_container = std::ranges::any_of(wait.triggers, [](const auto& t) {
-    return t.late_bound && t.late_bound->is_container;
-  });
-  uint32_t wait_site_id =
-      wait_site_base + static_cast<uint32_t>(wait_sites.size());
-  wait_sites.push_back(
-      WaitSiteEntry{
-          .resume_block = wait.resume.value,
-          .num_triggers = num_triggers,
-          .has_late_bound = has_late_bound,
-          .has_container = has_container});
-  auto* wait_site_id_val = llvm::ConstantInt::get(i32_ty, wait_site_id);
-
 
   // Compile-time branching: different codegen for small vs large trigger counts
   if (num_triggers <= runtime::kInlineTriggerCapacity) {
@@ -2012,7 +1981,7 @@ auto GenerateProcessFunction(
       .function = func,
       .wait_sites = std::move(wait_sites),
       .back_edge_origins = std::move(back_edge_origins),
-      .process_trigger = ExtractProcessTriggerEntry(context, process)};
+      .process_trigger = ExtractProcessTriggerEntry(process)};
 }
 
 auto GenerateSharedProcessFunction(
@@ -2217,7 +2186,7 @@ auto GenerateSharedProcessFunction(
       .function = func,
       .wait_sites = std::move(wait_sites),
       .back_edge_origins = std::move(back_edge_origins),
-      .process_trigger = ExtractProcessTriggerEntry(context, process)};
+      .process_trigger = ExtractProcessTriggerEntry(process)};
 }
 
 auto DeclareMirFunction(

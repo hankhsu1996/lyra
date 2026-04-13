@@ -215,8 +215,8 @@ auto CollectIdentityCopyCombs(std::span<const LayoutModulePlan> module_plans)
     const auto& body = *plan.body;
     uint32_t slot_base = plan.design_state_base_slot;
 
-    for (uint32_t pi = 0; pi < plan.body_processes.size(); ++pi) {
-      const auto& process = body.arena[plan.body_processes[pi]];
+    for (uint32_t pi = 0; pi < body.processes.size(); ++pi) {
+      const auto& process = body.arena[body.processes[pi]];
       if (process.kind != mir::ProcessKind::kLooping) continue;
       if (process.blocks.size() != 1) continue;
 
@@ -263,6 +263,9 @@ auto CollectIdentityCopyCombs(std::span<const LayoutModulePlan> module_plans)
               .src_slot = common::SlotId{src_global},
               .dst_slot = common::SlotId{dst_global},
               .trigger_slot = common::SlotId{src_global},
+              .trigger_object_index = common::ObjectIndex{mi},
+              .trigger_local_slot =
+                  common::LocalSlotId{static_cast<uint32_t>(src_place.root.id)},
           });
     }
   }
@@ -374,12 +377,16 @@ auto EliminateRelayConnections(ConnectionAnalysisResult& analysis) -> uint32_t {
     common::SlotId upstream_src{};
     common::SlotId upstream_trigger{};
     common::EdgeKind upstream_edge = common::EdgeKind::kAnyChange;
+    common::ObjectIndex upstream_trigger_object_index{};
+    common::LocalSlotId upstream_trigger_local_slot{};
 
     if (upstream_is_comb) {
       auto it = comb_by_dst.find(slot);
       if (it == comb_by_dst.end()) continue;
       upstream_src = it->second->src_slot;
       upstream_trigger = it->second->trigger_slot;
+      upstream_trigger_object_index = it->second->trigger_object_index;
+      upstream_trigger_local_slot = it->second->trigger_local_slot;
     } else {
       if (edge_deleted[up_idx]) continue;
       const auto& up_edge = edges[up_idx];
@@ -393,6 +400,8 @@ auto EliminateRelayConnections(ConnectionAnalysisResult& analysis) -> uint32_t {
       upstream_src = up_edge.src_slot;
       upstream_trigger = up_edge.trigger_slot;
       upstream_edge = up_edge.trigger_edge;
+      upstream_trigger_object_index = up_edge.trigger_object_index;
+      upstream_trigger_local_slot = up_edge.trigger_local_slot;
     }
 
     // Check all downstream edges (must be real connections, not combs).
@@ -428,6 +437,8 @@ auto EliminateRelayConnections(ConnectionAnalysisResult& analysis) -> uint32_t {
       down_edge.trigger_slot = upstream_trigger;
       down_edge.trigger_edge = upstream_edge;
       down_edge.trigger_observation = std::nullopt;
+      down_edge.trigger_object_index = upstream_trigger_object_index;
+      down_edge.trigger_local_slot = upstream_trigger_local_slot;
     }
 
     // Delete the upstream edge if it is a real connection.
