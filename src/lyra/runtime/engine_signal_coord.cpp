@@ -67,8 +67,7 @@ void Engine::ScheduleNbaCrossInstanceLocal(
         "notify_signal.instance missing or has no dense index");
   }
   NbaNotifySignal notify{NbaNotifyLocal{
-      .inst_idx = notify_signal.instance->nba_pending.instance_idx,
-      .signal = notify_signal.local}};
+      .instance = notify_signal.instance, .signal = notify_signal.local}};
   ScheduleNba(
       write_ptr, notify_base_ptr, value_ptr, mask_ptr, byte_size, notify);
 }
@@ -84,8 +83,7 @@ void Engine::ScheduleNbaCanonicalPackedCrossInstanceLocal(
         "notify_signal.instance missing or has no dense index");
   }
   NbaNotifySignal notify{NbaNotifyLocal{
-      .inst_idx = notify_signal.instance->nba_pending.instance_idx,
-      .signal = notify_signal.local}};
+      .instance = notify_signal.instance, .signal = notify_signal.local}};
   ScheduleNbaCanonicalPacked(
       write_ptr, notify_base_ptr, value_ptr, unk_ptr, region_byte_size,
       second_region_offset, notify);
@@ -153,36 +151,6 @@ void Engine::SetInstances(std::span<const RuntimeInstance* const> instances) {
   // Wire trace resolver keyed by RuntimeInstance::instance_id.
   instance_trace_resolver_.Build(instances_);
 
-  // Build reverse-lookup table: instance_id.value -> index in instances_[].
-  // Dense table with sparsity bound to prevent pathological allocation.
-  instance_to_idx_.clear();
-  if (!instances_.empty()) {
-    uint32_t max_id = 0;
-    for (auto* inst : instances_) {
-      max_id = std::max(max_id, inst->instance_id.value);
-    }
-    auto count = static_cast<uint32_t>(instances_.size());
-    if (max_id > count * 4 + 1024) {
-      throw common::InternalError(
-          "Engine::SetInstances",
-          std::format(
-              "instance_id space too sparse for dense reverse lookup: "
-              "max_id={} count={}",
-              max_id, count));
-    }
-    instance_to_idx_.assign(static_cast<size_t>(max_id) + 1, UINT32_MAX);
-    for (uint32_t i = 0; i < count; ++i) {
-      auto raw = instances_[i]->instance_id.value;
-      if (instance_to_idx_[raw] != UINT32_MAX) {
-        throw common::InternalError(
-            "Engine::SetInstances",
-            std::format(
-                "duplicate instance_id {}", instances_[i]->instance_id));
-      }
-      instance_to_idx_[raw] = i;
-    }
-  }
-
   // Initialize dirty-instance sparse lists and per-instance dedup flags.
   auto n = instances_.size();
   for (auto* inst : instances_) {
@@ -228,20 +196,6 @@ void InstanceIdTraceResolver::Build(
     lookup_[id] = inst;
     lookup_mut_[id] = inst;
   }
-}
-
-auto Engine::GetInstanceIndex(InstanceId id) const -> uint32_t {
-  if (id.value >= instance_to_idx_.size() ||
-      instance_to_idx_[id.value] == UINT32_MAX) {
-    throw common::InternalError(
-        "Engine::GetInstanceIndex",
-        std::format("instance_id {} not in reverse lookup", id));
-  }
-  return instance_to_idx_[id.value];
-}
-
-auto Engine::GetInstanceIndex(const RuntimeInstance& inst) const -> uint32_t {
-  return GetInstanceIndex(inst.instance_id);
 }
 
 void Engine::ClearLocalUpdatesDelta() {

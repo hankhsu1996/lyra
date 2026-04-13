@@ -1079,7 +1079,7 @@ extern "C" void LyraScheduleNbaExtRef(
             binding.target_instance_id));
   }
   lyra::runtime::NbaNotifySignal notify{lyra::runtime::NbaNotifyLocal{
-      .inst_idx = target->nba_pending.instance_idx,
+      .instance = target,
       .signal = lyra::runtime::LocalSignalId{binding.target_local_signal.value},
   }};
   AsEngine(eng)->ScheduleNba(wp, nb, vp, mp, bsz, notify);
@@ -1102,7 +1102,7 @@ extern "C" void LyraScheduleNbaCanonicalPackedExtRef(
             binding.target_instance_id));
   }
   lyra::runtime::NbaNotifySignal notify{lyra::runtime::NbaNotifyLocal{
-      .inst_idx = target->nba_pending.instance_idx,
+      .instance = target,
       .signal = lyra::runtime::LocalSignalId{binding.target_local_signal.value},
   }};
   AsEngine(eng)->ScheduleNbaCanonicalPacked(wp, nb, vp, up, rsz, sro, notify);

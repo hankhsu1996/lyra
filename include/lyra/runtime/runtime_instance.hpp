@@ -85,15 +85,13 @@ struct NbaPendingSet {
   // (whole-slot sets implicitly; partial triggers copy-on-first-touch).
   // Reset in Clear().
   std::vector<uint8_t> slot_initialized;
-  // Cached engine-level instance index. Set once during init,
-  // avoids per-write GetInstanceIndex lookup.
-  uint32_t instance_idx = UINT32_MAX;
+  bool initialized = false;
 
-  void Init(uint32_t local_signal_count, uint32_t idx) {
+  void Init(uint32_t local_signal_count) {
     seen.assign(local_signal_count, 0);
     slot_initialized.assign(local_signal_count, 0);
     list.reserve(local_signal_count);
-    instance_idx = idx;
+    initialized = true;
   }
 
   void MarkPending(LocalSignalId lid) {
@@ -112,7 +110,7 @@ struct NbaPendingSet {
   }
 
   [[nodiscard]] auto IsInitialized() const -> bool {
-    return instance_idx != UINT32_MAX;
+    return initialized;
   }
 };
 

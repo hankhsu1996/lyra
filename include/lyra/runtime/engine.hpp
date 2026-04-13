@@ -1404,18 +1404,6 @@ class Engine {
   std::span<const RuntimeInstance* const> const_instances_;  // read-only view
   InstanceIdTraceResolver instance_trace_resolver_;
   // Reverse lookup: instance_id.value -> index in instances_[].
-  // Built by SetInstances(). Sentinel UINT32_MAX for unoccupied slots.
-  // Dense table indexed by instance_id.value. Uniqueness is enforced at
-  // SetInstances() time; sparsity is bounded to prevent pathological
-  // allocation (max_id <= 4 * count + 1024).
-  std::vector<uint32_t> instance_to_idx_;
-
-  // Canonical accessor for the reverse lookup. Validates bounds and sentinel.
-  // Internal to the engine -- not exposed as a public API.
-  [[nodiscard]] auto GetInstanceIndex(InstanceId id) const -> uint32_t;
-  [[nodiscard]] auto GetInstanceIndex(const RuntimeInstance& inst) const
-      -> uint32_t;
-
   // Derived sparse lists summarizing which instances have non-empty
   // LocalUpdateSet state. Authoritative truth is always the per-instance
   // LocalUpdateSet; these are acceleration lists for avoiding

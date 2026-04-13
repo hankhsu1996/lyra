@@ -272,16 +272,12 @@ void Engine::ExecuteNbaRegion() {
     // Resolve local instance once (may be called twice for two-plane).
     RuntimeInstance* nba_local_inst = nullptr;
     if (const auto* local = std::get_if<NbaNotifyLocal>(&entry.notify_signal)) {
-      auto nba_local_idx = local->inst_idx;
-      if (nba_local_idx >= instances_.size() ||
-          instances_[nba_local_idx] == nullptr) {
+      if (local->instance == nullptr) {
         throw common::InternalError(
             "Engine::ExecuteNbaRegion",
-            std::format(
-                "NBA local inst_idx {} invalid (instances_.size()={})",
-                nba_local_idx, instances_.size()));
+            "NBA local notify has null instance pointer");
       }
-      nba_local_inst = instances_[nba_local_idx];
+      nba_local_inst = local->instance;
     }
     auto nba_dirty = [&](uint32_t byte_off, uint32_t byte_size) {
       if (nba_local_inst != nullptr) {

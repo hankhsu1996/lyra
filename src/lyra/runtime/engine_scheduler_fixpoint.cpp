@@ -47,7 +47,7 @@ void Engine::InitConnectionBatch(std::span<const ConnectionDescriptor> descs) {
 
     // Decode typed destination from descriptor fields.
     // Resolve InstanceId -> RuntimeInstance* at init time so the hot path
-    // never calls FindInstanceMut/GetInstanceIndex.
+    // never calls FindInstanceMut.
     BatchedConnectionDst dst;
     RuntimeInstance* dst_inst = nullptr;
     if (d.dst_is_local != 0) {

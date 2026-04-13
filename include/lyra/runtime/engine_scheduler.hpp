@@ -10,6 +10,8 @@
 
 namespace lyra::runtime {
 
+struct RuntimeInstance;
+
 // IEEE 1800 simulation regions (simplified).
 // Active -> Inactive -> NBA is the core loop for RTL simulation.
 enum class Region : uint8_t {
@@ -76,7 +78,7 @@ struct NbaNotifyGlobal {
   GlobalSignalId signal;
 };
 struct NbaNotifyLocal {
-  uint32_t inst_idx = UINT32_MAX;
+  RuntimeInstance* instance = nullptr;
   LocalSignalId signal{};
 };
 using NbaNotifySignal = std::variant<NbaNotifyGlobal, NbaNotifyLocal>;
