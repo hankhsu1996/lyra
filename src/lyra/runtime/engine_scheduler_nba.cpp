@@ -205,8 +205,8 @@ void Engine::CommitDeferredLocalNbas() {
       if (pending.seen[lid.value] == 0) continue;
       const auto& meta = layout.slot_meta[lid.value];
 
-      std::span<std::byte> current_slot;
-      std::span<std::byte> deferred_slot;
+      std::span<uint8_t> current_slot;
+      std::span<uint8_t> deferred_slot;
       uint32_t compare_bytes = 0;
       if (meta.is_container) {
         uint32_t appendix_off =

@@ -48,15 +48,11 @@ auto ResolveInstanceStorageOffset(
                     rel_off, end, total_size));
   }
 
-  auto as_bytes = [](std::byte* base, uint64_t size) {
-    return std::span(reinterpret_cast<uint8_t*>(base), size);
-  };
-
   if (rel_off < inline_size) {
-    return &as_bytes(instance.storage.inline_base, inline_size)[rel_off];
+    return &std::span(instance.storage.inline_base, inline_size)[rel_off];
   }
 
-  return &as_bytes(
+  return &std::span(
       instance.storage.appendix_base, appendix_size)[rel_off - inline_size];
 }
 

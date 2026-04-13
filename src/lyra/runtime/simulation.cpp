@@ -904,7 +904,7 @@ extern "C" void LyraStoreStringGlobal(
 // Offsets >= inline_size resolve to deferred_appendix_base.
 inline auto ResolveDeferredSubspan(
     lyra::runtime::RuntimeInstanceStorage& storage, uint32_t body_offset,
-    uint32_t size) -> std::span<std::byte> {
+    uint32_t size) -> std::span<uint8_t> {
   auto inline_size = static_cast<uint32_t>(storage.inline_size);
   if (body_offset < inline_size) {
     return storage.DeferredInlineRegion().subspan(body_offset, size);
@@ -916,7 +916,7 @@ inline auto ResolveDeferredSubspan(
 // Resolve a body-relative byte offset to a subspan in the current region.
 inline auto ResolveCurrentSubspan(
     lyra::runtime::RuntimeInstanceStorage& storage, uint32_t body_offset,
-    uint32_t size) -> std::span<std::byte> {
+    uint32_t size) -> std::span<uint8_t> {
   auto inline_size = static_cast<uint32_t>(storage.inline_size);
   if (body_offset < inline_size) {
     return storage.InlineRegion().subspan(body_offset, size);
@@ -980,8 +980,8 @@ extern "C" void LyraDeferredMaskedWriteLocal(
 
   auto deferred_slot =
       ResolveDeferredSubspan(instance->storage, body_offset, bsz);
-  auto val_span = std::span(static_cast<const std::byte*>(vp), bsz);
-  auto mask_span = std::span(static_cast<const std::byte*>(mp), bsz);
+  auto val_span = std::span(static_cast<const uint8_t*>(vp), bsz);
+  auto mask_span = std::span(static_cast<const uint8_t*>(mp), bsz);
   for (uint32_t i = 0; i < bsz; ++i) {
     deferred_slot[i] =
         (deferred_slot[i] & ~mask_span[i]) | (val_span[i] & mask_span[i]);

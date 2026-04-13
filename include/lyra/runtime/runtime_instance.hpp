@@ -26,19 +26,19 @@ namespace lyra::runtime {
 // via GEP, so the layout is a hard ABI. Raw pointers are intentional --
 // unique_ptr would change the struct layout.
 struct RuntimeInstanceStorage {
-  std::byte* inline_base = nullptr;
+  uint8_t* inline_base = nullptr;
   uint64_t inline_size = 0;
 
-  std::byte* appendix_base = nullptr;
+  uint8_t* appendix_base = nullptr;
   uint64_t appendix_size = 0;
 
   // Deferred inline region: mirrors inline_base layout for NBA writes.
   // Local owned-inline <= writes go here; committed in the NBA phase.
-  std::byte* deferred_inline_base = nullptr;
+  uint8_t* deferred_inline_base = nullptr;
 
   // Deferred appendix region: mirrors appendix_base layout for NBA writes.
   // Local owned-container <= writes go here; committed in the NBA phase.
-  std::byte* deferred_appendix_base = nullptr;
+  uint8_t* deferred_appendix_base = nullptr;
 
   // Span accessors for owned storage regions. Non-const overloads return
   // mutable spans for write access; const overloads return read-only spans.
@@ -46,24 +46,23 @@ struct RuntimeInstanceStorage {
   // but provide mutable access to the pointed-to storage -- same pattern as
   // std::vector::data().
   // NOLINTBEGIN(readability-make-member-function-const)
-  [[nodiscard]] auto InlineRegion() -> std::span<std::byte> {
+  [[nodiscard]] auto InlineRegion() -> std::span<uint8_t> {
     return {inline_base, inline_size};
   }
-  [[nodiscard]] auto AppendixRegion() -> std::span<std::byte> {
+  [[nodiscard]] auto AppendixRegion() -> std::span<uint8_t> {
     return {appendix_base, appendix_size};
   }
-  [[nodiscard]] auto DeferredInlineRegion() -> std::span<std::byte> {
+  [[nodiscard]] auto DeferredInlineRegion() -> std::span<uint8_t> {
     return {deferred_inline_base, inline_size};
   }
-  [[nodiscard]] auto DeferredAppendixRegion() -> std::span<std::byte> {
+  [[nodiscard]] auto DeferredAppendixRegion() -> std::span<uint8_t> {
     return {deferred_appendix_base, appendix_size};
   }
   // NOLINTEND(readability-make-member-function-const)
-  [[nodiscard]] auto InlineRegion() const -> std::span<const std::byte> {
+  [[nodiscard]] auto InlineRegion() const -> std::span<const uint8_t> {
     return {inline_base, inline_size};
   }
-  [[nodiscard]] auto DeferredInlineRegion() const
-      -> std::span<const std::byte> {
+  [[nodiscard]] auto DeferredInlineRegion() const -> std::span<const uint8_t> {
     return {deferred_inline_base, inline_size};
   }
 };
@@ -265,20 +264,19 @@ enum class RuntimeInstanceField : unsigned {
 static_assert(offsetof(RuntimeInstanceStorage, inline_base) == 0);
 static_assert(
     offsetof(RuntimeInstanceStorage, inline_size) ==
-    offsetof(RuntimeInstanceStorage, inline_base) + sizeof(std::byte*));
+    offsetof(RuntimeInstanceStorage, inline_base) + sizeof(uint8_t*));
 static_assert(
     offsetof(RuntimeInstanceStorage, appendix_base) ==
     offsetof(RuntimeInstanceStorage, inline_size) + sizeof(uint64_t));
 static_assert(
     offsetof(RuntimeInstanceStorage, appendix_size) ==
-    offsetof(RuntimeInstanceStorage, appendix_base) + sizeof(std::byte*));
+    offsetof(RuntimeInstanceStorage, appendix_base) + sizeof(uint8_t*));
 static_assert(
     offsetof(RuntimeInstanceStorage, deferred_inline_base) ==
     offsetof(RuntimeInstanceStorage, appendix_size) + sizeof(uint64_t));
 static_assert(
     offsetof(RuntimeInstanceStorage, deferred_appendix_base) ==
-    offsetof(RuntimeInstanceStorage, deferred_inline_base) +
-        sizeof(std::byte*));
+    offsetof(RuntimeInstanceStorage, deferred_inline_base) + sizeof(uint8_t*));
 
 // Hard binary contract assertions for RuntimeInstance.
 // Field order must match RuntimeInstanceField enum and LLVM struct type.
@@ -305,9 +303,9 @@ static_assert(
     offsetof(RuntimeInstance, num_module_processes));
 
 // Allocate zero-initialized owned storage for an instance's inline region.
-auto AllocateOwnedInlineStorage(uint64_t size) -> std::byte*;
+auto AllocateOwnedInlineStorage(uint64_t size) -> uint8_t*;
 
 // Allocate zero-initialized owned storage for an instance's appendix region.
-auto AllocateOwnedAppendixStorage(uint64_t size) -> std::byte*;
+auto AllocateOwnedAppendixStorage(uint64_t size) -> uint8_t*;
 
 }  // namespace lyra::runtime
