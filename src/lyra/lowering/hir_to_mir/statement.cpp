@@ -257,7 +257,6 @@ auto LowerStrobeEffect(
       .temp_metadata = {},
       .builtin_types = original_ctx.builtin_types,
       .symbol_to_mir_function = original_ctx.symbol_to_mir_function,
-      .cross_instance_places = original_ctx.cross_instance_places,
       .return_slot = std::nullopt,
       .return_type = original_ctx.builtin_types.void_type,
       .external_ref_cache = {},

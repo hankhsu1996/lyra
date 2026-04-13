@@ -8,10 +8,11 @@ namespace lyra::mir {
 // Allows a single process to legally contain mixed-scope sensitivity while
 // keeping MIR clean and future-shareable.
 struct SignalRef {
-  enum class Scope : uint8_t { kModuleLocal, kDesignGlobal };
-  Scope scope;
-  uint32_t
-      id;  // body-local index (kModuleLocal) or global slot (kDesignGlobal)
+  enum class Scope : uint8_t { kModuleLocal, kDesignGlobal, kObjectLocal };
+  Scope scope = Scope::kModuleLocal;
+  uint32_t id =
+      0;  // body-local slot (kModuleLocal/kObjectLocal) or global slot
+  uint32_t object_index = 0;  // owning object index (kObjectLocal only)
 
   auto operator==(const SignalRef&) const -> bool = default;
 };

@@ -349,10 +349,9 @@ auto CollectDesignDeclarations(
 
   decls.num_package_slots = static_cast<uint32_t>(next_slot);
 
-  // Module variables/nets/params do NOT get any design-global slots or
-  // places in decls. decls.design_places is package-only.
-  // Cross-instance references and connection compilation use a separate
-  // cross_instance_places map built in LowerDesign.
+  // Module variables/nets/params do NOT get design-global slots in decls.
+  // decls.design_places is package-only. Module-owned signals are
+  // body-local (kModuleSlot) or cross-instance (kObjectLocal).
   decls.num_design_slots = static_cast<size_t>(next_slot);
 
   // Build reverse lookup: instance symbol -> instance table index (for %m)

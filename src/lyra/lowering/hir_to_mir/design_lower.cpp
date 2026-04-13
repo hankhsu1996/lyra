@@ -245,47 +245,6 @@ auto LowerDesign(
 
   const auto& spec_map = *input.specialization_map;
 
-  // Build cross-instance kDesignGlobal places for module variables/nets/params.
-  // Separate from decls.design_places (which is package-only).
-  // Used for cross-instance hierarchical references in body lowering and
-  // connection compilation. Slot IDs continue from package slots.
-  PlaceMap cross_instance_places;
-  {
-    int next_cross_slot = static_cast<int>(decls.num_design_slots);
-    for (const auto* mod : hir_modules) {
-      for (SymbolId var : mod->variables) {
-        const Symbol& sym = (*input.symbol_table)[var];
-        cross_instance_places[var] = mir_arena.AddPlace(
-            mir::Place{
-                .root =
-                    {.kind = mir::PlaceRoot::Kind::kDesignGlobal,
-                     .id = next_cross_slot++,
-                     .type = sym.type},
-                .projections = {}});
-      }
-      for (SymbolId net : mod->nets) {
-        const Symbol& sym = (*input.symbol_table)[net];
-        cross_instance_places[net] = mir_arena.AddPlace(
-            mir::Place{
-                .root =
-                    {.kind = mir::PlaceRoot::Kind::kDesignGlobal,
-                     .id = next_cross_slot++,
-                     .type = sym.type},
-                .projections = {}});
-      }
-      for (SymbolId param : mod->param_slots) {
-        const Symbol& sym = (*input.symbol_table)[param];
-        cross_instance_places[param] = mir_arena.AddPlace(
-            mir::Place{
-                .root =
-                    {.kind = mir::PlaceRoot::Kind::kDesignGlobal,
-                     .id = next_cross_slot++,
-                     .type = sym.type},
-                .projections = {}});
-      }
-    }
-  }
-
   // Phase 1: Lower one ModuleBody per specialization group.
   // Each call produces an isolated MirBodyLoweringResult with body-local
   // MIR arena and body-local origins. No body-lowering path writes to the
@@ -351,8 +310,7 @@ auto LowerDesign(
 
     body_results.push_back(LowerModule(
         hir_body, body_input, std::move(body_arena), mir_arena, decls,
-        body_decls, &cover_site_registries[g], &deferred_site_registries[g],
-        &cross_instance_places));
+        body_decls, &cover_site_registries[g], &deferred_site_registries[g]));
   }
 
   // Phase 2: Assemble body results in stable group order.

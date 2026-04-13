@@ -31,8 +31,8 @@ auto LowerModule(
     mir::Arena body_arena, const mir::Arena& design_arena,
     const DesignDeclarations& decls, const BodyLocalDecls& body_decls,
     mir::ImmediateCoverSiteRegistry* cover_site_registry,
-    mir::DeferredAssertionSiteRegistry* deferred_assertion_site_registry,
-    const PlaceMap* cross_instance_places) -> Result<MirBodyLoweringResult> {
+    mir::DeferredAssertionSiteRegistry* deferred_assertion_site_registry)
+    -> Result<MirBodyLoweringResult> {
   mir::ModuleBody result;
 
   // Body-local slot descriptors come from specialization-local collection,
@@ -85,8 +85,6 @@ auto LowerModule(
       .body_places = &body_decls.places,
       .design_places = &decls.design_places,
       .body_events = &body_decls.events,
-      .cross_instance_places =
-          cross_instance_places,  // V3d residual: design-level paths only
       .functions = &symbol_to_mir_function,
       .slots = &decls.slots,
       .body_slots = &result.slots,

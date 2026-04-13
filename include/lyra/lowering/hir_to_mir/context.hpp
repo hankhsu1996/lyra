@@ -154,9 +154,6 @@ struct DeclView {
   const PlaceMap* body_places = nullptr;    // body-local (kModuleSlot)
   const PlaceMap* design_places = nullptr;  // package-global (kDesignGlobal)
   const EventMap* body_events = nullptr;    // body-local named events
-  // Cross-instance places. NOT part of LookupPlace in body lowering.
-  // V3d residual: used by design-level LookupPlace fallback only.
-  const PlaceMap* cross_instance_places = nullptr;
   const SymbolToMirFunctionMap* functions = nullptr;
   const std::vector<mir::SlotDesc>* slots = nullptr;       // design-global
   const std::vector<mir::SlotDesc>* body_slots = nullptr;  // body-local
@@ -256,11 +253,6 @@ struct Context {
   // Design-level DPI import declarations visible to this lowering scope.
   // Null when no design-level declaration view is available.
   const DesignDpiImports* dpi_imports = nullptr;
-
-  // Cross-instance place map. V3d residual: used by design-level
-  // LookupPlace fallback and connection compilation only. Not accessed
-  // by body-lowering hierarchical read/write or sensitivity paths.
-  const PlaceMap* cross_instance_places = nullptr;
 
   // Optional sink for dynamically generated functions (e.g., observer
   // programs). If set, LowerStrobeEffect will push program FunctionIds here.
@@ -365,12 +357,6 @@ struct Context {
   // Resolve a named event symbol to its EventId.
   // Throws InternalError if the symbol is not a named event.
   auto LookupEvent(SymbolId sym) const -> mir::EventId;
-
-  // Resolve a cross-instance hierarchical reference. Only checks
-  // cross_instance_places, not body/local/design-global places.
-  // Used for kHierarchicalRef expressions and connection compilation.
-  // Throws InternalError if the symbol is not found.
-  auto ResolveHierarchicalRef(SymbolId sym) const -> mir::PlaceId;
 
   // B2: Result of lowering a hierarchical ref to an external ref.
   struct ExternalRefResult {

@@ -52,17 +52,11 @@ auto LowerConnectionArtifacts(const LoweringInput& input)
   }
 
   // Clone expr_connections as design-level processes.
-  // Remaps kModuleSlot -> kDesignGlobal using parent base slot.
+  // Remaps kModuleSlot -> kObjectLocal preserving body-local slot identity.
   if (input.expr_connections != nullptr) {
     for (const auto& expr : *input.expr_connections) {
-      const auto& parent_obj =
-          input.construction->objects.at(expr.parent_object_index.value);
-      uint32_t parent_base = parent_obj.design_state_base_slot;
-      uint32_t child_flat = to_flat_slot(
-                                mir::BoundEndpoint{
-                                    .object_index = expr.child_object_index,
-                                    .local_slot = expr.child_local_slot})
-                                .value;
+      uint32_t parent_oi = expr.parent_object_index.value;
+      uint32_t child_oi = expr.child_object_index.value;
       const auto& func = (*expr.parent_arena)[expr.expr_function];
 
       auto remap_place = [&](mir::PlaceId pid,
@@ -70,8 +64,8 @@ auto LowerConnectionArtifacts(const LoweringInput& input)
         const auto& place = src[pid];
         mir::Place new_place = place;
         if (place.root.kind == mir::PlaceRoot::Kind::kModuleSlot) {
-          new_place.root.kind = mir::PlaceRoot::Kind::kDesignGlobal;
-          new_place.root.id = static_cast<int>(parent_base) + place.root.id;
+          new_place.root.kind = mir::PlaceRoot::Kind::kObjectLocal;
+          new_place.root.object_index = parent_oi;
         }
         return (*input.mir_arena).AddPlace(std::move(new_place));
       };
@@ -114,18 +108,27 @@ auto LowerConnectionArtifacts(const LoweringInput& input)
                   mir::Place{
                       .root =
                           mir::PlaceRoot{
-                              .kind = mir::PlaceRoot::Kind::kDesignGlobal,
-                              .id = static_cast<int>(child_flat),
-                              .type = expr.result_type},
+                              .kind = mir::PlaceRoot::Kind::kObjectLocal,
+                              .id =
+                                  static_cast<int>(expr.child_local_slot.value),
+                              .type = expr.result_type,
+                              .object_index = child_oi},
                       .projections = {}});
 
-      std::vector<uint32_t> trigger_slots;
+      struct TriggerSlot {
+        uint32_t object_index;
+        uint32_t local_slot;
+        auto operator<=>(const TriggerSlot&) const = default;
+      };
+      std::vector<TriggerSlot> trigger_slots;
       auto collect_trigger = [&](const mir::Operand& op,
                                  const mir::Arena& src) {
         if (op.kind != mir::Operand::Kind::kUse) return;
         const auto& place = src[std::get<mir::PlaceId>(op.payload)];
         if (place.root.kind == mir::PlaceRoot::Kind::kModuleSlot)
-          trigger_slots.push_back(parent_base + place.root.id);
+          trigger_slots.push_back(
+              {.object_index = parent_oi,
+               .local_slot = static_cast<uint32_t>(place.root.id)});
       };
       auto collect_rhs_triggers = [&](const mir::RightHandSide& rhs) {
         std::visit(
@@ -209,13 +212,14 @@ auto LowerConnectionArtifacts(const LoweringInput& input)
           std::ranges::sort(trigger_slots);
           auto last = std::ranges::unique(trigger_slots);
           trigger_slots.erase(last.begin(), last.end());
-          for (uint32_t slot : trigger_slots)
+          for (const auto& ts : trigger_slots)
             triggers.push_back(
                 mir::WaitTrigger{
                     .signal =
                         mir::SignalRef{
-                            .scope = mir::SignalRef::Scope::kDesignGlobal,
-                            .id = slot},
+                            .scope = mir::SignalRef::Scope::kObjectLocal,
+                            .id = ts.local_slot,
+                            .object_index = ts.object_index},
                     .edge = common::EdgeKind::kAnyChange,
                     .observed_place = std::nullopt,
                     .late_bound = std::nullopt,

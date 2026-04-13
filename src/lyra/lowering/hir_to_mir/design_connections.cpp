@@ -134,7 +134,6 @@ auto LowerExprAsBodyFunction(
       .symbol_to_mir_function = nullptr,
       .design_functions = nullptr,
       .dpi_imports = nullptr,
-      .cross_instance_places = nullptr,
       .generated_functions = nullptr,
       .return_slot = std::nullopt,
       .return_type = result_type,

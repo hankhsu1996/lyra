@@ -379,6 +379,7 @@ struct PackageInitDescriptor {
 struct ScopedSignalKey {
   mir::SignalRef::Scope scope = mir::SignalRef::Scope::kModuleLocal;
   uint32_t id = 0;
+  uint32_t object_index = 0;
   auto operator==(const ScopedSignalKey&) const -> bool = default;
 };
 
@@ -386,8 +387,9 @@ struct ScopedSignalKeyHash {
   auto operator()(const ScopedSignalKey& k) const noexcept -> size_t {
     auto scope_val =
         static_cast<std::underlying_type_t<mir::SignalRef::Scope>>(k.scope);
-    return std::hash<uint64_t>{}(
-        (static_cast<uint64_t>(scope_val) << 32) | k.id);
+    auto h =
+        std::hash<uint64_t>{}((static_cast<uint64_t>(scope_val) << 32) | k.id);
+    return h ^ (std::hash<uint32_t>{}(k.object_index) * 2654435761U);
   }
 };
 
@@ -438,11 +440,11 @@ struct Layout {
 
   // Explicit per-instance storage base.
   // Computed from the first slot in each instance's slot range.
-  auto GetInstanceStorageBase(ModuleIndex idx) const
+  [[nodiscard]] auto GetInstanceStorageBase(ModuleIndex idx) const
       -> const InstanceStorageBase&;
 
   // Total number of body-local slots for a given instance.
-  auto GetInstanceSlotCount(ModuleIndex idx) const -> uint32_t;
+  [[nodiscard]] auto GetInstanceSlotCount(ModuleIndex idx) const -> uint32_t;
 
   // Number of package-owned slots (before any module instance slots).
   // This is the initial value of the running slot-base counter that the
@@ -467,6 +469,10 @@ struct Layout {
   // placement.instances. Includes both owned-local and forwarded alias
   // slot positions. This is NOT the count of owned-local slots only.
   std::vector<uint32_t> instance_slot_counts;
+
+  // Per-instance body-group index. Parallel to placement.instances.
+  // Maps object_index -> body_realization_infos index.
+  std::vector<uint32_t> instance_body_groups;
 
   // Constructor metadata: shared process-state schemas and per-process
   // constructor records. Computed from the process layout loop.
@@ -521,6 +527,10 @@ struct Layout {
     // Covers cross-body dependents (e.g., parent always_ff
     // @(posedge child.clk)).
     std::vector<bool> slot_has_cross_body_behavioral_trigger;
+    // Per body-local slot: true iff any connection process triggers on
+    // that slot. Conservative union across all instances of this body.
+    // Indexed by body-local slot id [0, slot_count).
+    std::vector<bool> slot_has_connection_notification;
     // Body-local state region sizes in bytes. Produced from body-local
     // storage spec computation.
     uint64_t inline_state_size_bytes = 0;
@@ -631,17 +641,6 @@ struct Layout {
   // that slot. Keyed by canonical storage-owner slot identity.
   // Indexed by design-global slot_id [0, design.slots.size()).
   std::vector<bool> slot_has_connection_trigger;
-
-  // Design-global behavioral dirty-propagation contract.
-  // True iff any behavioral wait trigger references that slot:
-  //   - init processes (design-global triggers)
-  //   - body processes with design-global waits
-  //   - body-local behavioral triggers projected onto design-global slots
-  // The projection ensures cross-body writers (e.g., connection processes)
-  // see body-local behavioral dependents (e.g., comb kernels).
-  // Keyed by canonical storage-owner slot identity.
-  // Indexed by design-global slot_id [0, design.slots.size()).
-  std::vector<bool> slot_has_design_behavioral_trigger;
 };
 
 // Get the LLVM type for a TypeId. Handles all type kinds: integrals, reals,

@@ -833,7 +833,8 @@ auto CollectProcessRoots(
   for (mir::PlaceId place_id : all_places) {
     const auto& place = arena[place_id];
     if (place.root.kind == mir::PlaceRoot::Kind::kModuleSlot ||
-        place.root.kind == mir::PlaceRoot::Kind::kDesignGlobal) {
+        place.root.kind == mir::PlaceRoot::Kind::kDesignGlobal ||
+        place.root.kind == mir::PlaceRoot::Kind::kObjectLocal) {
       continue;
     }
     // Void-typed places (e.g. targets of .delete()) never need storage
@@ -1042,6 +1043,11 @@ auto AnalyzeCombKernel(const mir::Process& process, const mir::Arena& arena)
           write_slots.insert(
               {.scope = mir::SignalRef::Scope::kDesignGlobal,
                .id = static_cast<uint32_t>(root.id)});
+        } else if (root.kind == mir::PlaceRoot::Kind::kObjectLocal) {
+          write_slots.insert(
+              {.scope = mir::SignalRef::Scope::kObjectLocal,
+               .id = static_cast<uint32_t>(root.id),
+               .object_index = root.object_index});
         }
       }
       if (const auto* ga = std::get_if<mir::GuardedAssign>(&stmt.data)) {
@@ -1060,6 +1066,11 @@ auto AnalyzeCombKernel(const mir::Process& process, const mir::Arena& arena)
           write_slots.insert(
               {.scope = mir::SignalRef::Scope::kDesignGlobal,
                .id = static_cast<uint32_t>(root.id)});
+        } else if (root.kind == mir::PlaceRoot::Kind::kObjectLocal) {
+          write_slots.insert(
+              {.scope = mir::SignalRef::Scope::kObjectLocal,
+               .id = static_cast<uint32_t>(root.id),
+               .object_index = root.object_index});
         }
       }
     }
@@ -1718,14 +1729,20 @@ auto BuildLayout(
       const auto* wait = std::get_if<mir::Wait>(&block.terminator.data);
       if (wait == nullptr) continue;
       for (const auto& trigger : wait->triggers) {
-        if (trigger.signal.scope != mir::SignalRef::Scope::kDesignGlobal) {
+        uint32_t slot = 0;
+        if (trigger.signal.scope == mir::SignalRef::Scope::kDesignGlobal) {
+          slot = trigger.signal.id;
+        } else if (
+            trigger.signal.scope == mir::SignalRef::Scope::kObjectLocal) {
+          auto oi = trigger.signal.object_index;
+          slot = module_plans[oi].design_state_base_slot + trigger.signal.id;
+        } else {
           throw common::InternalError(
               "BuildLayout", std::format(
                                  "non-kernelized connection process {} has "
-                                 "trigger with non-design-global scope (id={})",
+                                 "trigger with unexpected scope (id={})",
                                  proc_id.value, trigger.signal.id));
         }
-        auto slot = static_cast<uint32_t>(trigger.signal.id);
         if (slot >= layout.slot_has_connection_trigger.size()) {
           throw common::InternalError(
               "BuildLayout",
@@ -2026,6 +2043,7 @@ auto BuildLayout(
                   .slot_specs = std::move(body_slot_specs),
                   .slot_has_behavioral_trigger = {},
                   .slot_has_cross_body_behavioral_trigger = {},
+                  .slot_has_connection_notification = {},
                   .inline_state_size_bytes = size.inline_bytes,
                   .appendix_state_size_bytes = size.appendix_bytes,
                   .total_state_size_bytes = size.total_bytes,
@@ -2112,6 +2130,57 @@ auto BuildLayout(
   } else {
     layout.num_package_slots =
         static_cast<uint32_t>(layout.design.slot_byte_offsets.size());
+  }
+
+  // Build per-instance body-group index.
+  {
+    std::unordered_map<const mir::ModuleBody*, uint32_t> body_to_group;
+    for (uint32_t gi = 0; gi < layout.body_realization_infos.size(); ++gi) {
+      body_to_group[layout.body_realization_infos[gi].body] = gi;
+    }
+    layout.instance_body_groups.reserve(module_plans.size());
+    for (const auto& plan : module_plans) {
+      layout.instance_body_groups.push_back(body_to_group.at(plan.body));
+    }
+  }
+
+  // Build per-body connection notification bitmaps directly from
+  // connection trigger sources, without an intermediate flat ownership table.
+  for (auto& info : layout.body_realization_infos) {
+    info.slot_has_connection_notification.assign(info.slot_count, false);
+  }
+  // Kernelized connections: resolve flat trigger_slot to (body_group,
+  // local_slot) via module_plans slot ranges.
+  for (const auto& entry : layout.connection_kernel_entries) {
+    auto trigger = entry.trigger_slot.value;
+    if (trigger < layout.num_package_slots) continue;
+    for (size_t mi = 0; mi < module_plans.size(); ++mi) {
+      const auto& plan = module_plans[mi];
+      if (trigger >= plan.design_state_base_slot &&
+          trigger < plan.design_state_base_slot + plan.slot_count) {
+        auto gi = layout.instance_body_groups[mi];
+        auto local_slot = trigger - plan.design_state_base_slot;
+        layout.body_realization_infos[gi]
+            .slot_has_connection_notification[local_slot] = true;
+        break;
+      }
+    }
+  }
+  // Non-kernelized connections: triggers are kObjectLocal or kDesignGlobal.
+  for (mir::ProcessId proc_id : non_kernelized_connection_processes) {
+    const auto& process = design_arena[proc_id];
+    for (const auto& block : process.blocks) {
+      const auto* wait = std::get_if<mir::Wait>(&block.terminator.data);
+      if (wait == nullptr) continue;
+      for (const auto& trigger : wait->triggers) {
+        if (trigger.signal.scope == mir::SignalRef::Scope::kObjectLocal) {
+          auto gi = layout.instance_body_groups[trigger.signal.object_index];
+          layout.body_realization_infos[gi]
+              .slot_has_connection_notification[trigger.signal.id] = true;
+        }
+        // kDesignGlobal triggers are package-global; no body owns them.
+      }
+    }
   }
 
   // Compute per-instance storage bases and slot counts.

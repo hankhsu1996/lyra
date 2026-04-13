@@ -12,11 +12,10 @@ struct Design;
 
 namespace lyra::lowering::mir_to_llvm {
 
-// Populate all behavioral dirty-trigger contracts on Layout:
-//   1. Body-relative behavioral trigger bitmaps (per-body
-//   slot_has_behavioral_trigger)
-//   2. Design-global behavioral trigger bitmap
-//   (slot_has_design_behavioral_trigger)
+// Populate behavioral dirty-trigger contracts on Layout:
+//   - Body-relative behavioral trigger bitmaps (slot_has_behavioral_trigger)
+//   - Cross-body behavioral trigger bitmaps
+//     (slot_has_cross_body_behavioral_trigger)
 //
 // construction: used to resolve ext-ref trigger targets to body-local
 // slots on the target body for cross-body behavioral dirty marking.

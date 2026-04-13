@@ -134,12 +134,13 @@ auto CompileStandaloneProcesses(
           trigger_result.shape = pt.shape;
           trigger_result.triggers.reserve(pt.triggers.size());
           for (const auto& fact : pt.triggers) {
-            if (fact.signal.scope != mir::SignalRef::Scope::kDesignGlobal) {
+            if (fact.signal.scope != mir::SignalRef::Scope::kDesignGlobal &&
+                fact.signal.scope != mir::SignalRef::Scope::kObjectLocal) {
               throw common::InternalError(
                   "CompileStandaloneProcesses",
                   std::format(
-                      "connection ordinal {} trigger signal is not "
-                      "design-global (scope={}, id={})",
+                      "connection ordinal {} trigger signal has unexpected "
+                      "scope (scope={}, id={})",
                       conn_ordinal, static_cast<int>(fact.signal.scope),
                       fact.signal.id));
             }

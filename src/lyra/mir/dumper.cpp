@@ -465,6 +465,8 @@ auto Dumper::FormatIndexOperand(const Operand& op) const -> std::string {
         case PlaceRoot::Kind::kDesignGlobal:
           prefix = "@g";
           break;
+        case PlaceRoot::Kind::kObjectLocal:
+          return std::format("@o{}:{}", place.root.object_index, place.root.id);
       }
       return std::format("{}{}", prefix, place.root.id);
     }
@@ -521,8 +523,14 @@ auto Dumper::FormatPlace(PlaceId id) const -> std::string {
     case PlaceRoot::Kind::kDesignGlobal:
       prefix = "@g";
       break;
+    case PlaceRoot::Kind::kObjectLocal:
+      prefix = "@o";
+      break;
   }
-  std::string result = std::format("{}{}", prefix, place.root.id);
+  std::string result =
+      (place.root.kind == mir::PlaceRoot::Kind::kObjectLocal)
+          ? std::format("@o{}:{}", place.root.object_index, place.root.id)
+          : std::format("{}{}", prefix, place.root.id);
 
   for (const Projection& proj : place.projections) {
     result += FormatProjection(proj);
@@ -587,8 +595,14 @@ auto Dumper::FormatOperand(const Operand& op) const -> std::string {
         case PlaceRoot::Kind::kDesignGlobal:
           prefix = "@g";
           break;
+        case PlaceRoot::Kind::kObjectLocal:
+          prefix = "@o";
+          break;
       }
-      std::string result = std::format("{}{}", prefix, place.root.id);
+      std::string result =
+          (place.root.kind == PlaceRoot::Kind::kObjectLocal)
+              ? std::format("@o{}:{}", place.root.object_index, place.root.id)
+              : std::format("{}{}", prefix, place.root.id);
       for (const Projection& proj : place.projections) {
         result += FormatProjection(proj);
       }

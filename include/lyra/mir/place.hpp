@@ -16,11 +16,13 @@ struct PlaceRoot {
     kTemp,          // compiler-generated local storage
     kModuleSlot,    // body-local storage (0-based within ModuleBody)
     kDesignGlobal,  // design-global storage (packages, design-level processes)
+    kObjectLocal,   // cross-instance body-local storage (object_index, id)
   };
 
   Kind kind;
-  int id;       // opaque handle to storage table
-  TypeId type;  // type of the value stored at this root
+  int id;                     // opaque handle to storage table
+  TypeId type;                // type of the value stored at this root
+  uint32_t object_index = 0;  // owning object index (kObjectLocal only)
 };
 
 // True for place roots that represent process-local storage (need prologue
@@ -33,6 +35,7 @@ struct PlaceRoot {
       return true;
     case PlaceRoot::Kind::kModuleSlot:
     case PlaceRoot::Kind::kDesignGlobal:
+    case PlaceRoot::Kind::kObjectLocal:
       return false;
   }
   return false;
@@ -45,6 +48,7 @@ struct PlaceRoot {
     case PlaceRoot::Kind::kLocal:
     case PlaceRoot::Kind::kModuleSlot:
     case PlaceRoot::Kind::kDesignGlobal:
+    case PlaceRoot::Kind::kObjectLocal:
       return true;
     case PlaceRoot::Kind::kTemp:
       return false;
