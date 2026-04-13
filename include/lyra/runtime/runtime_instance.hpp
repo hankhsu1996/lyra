@@ -126,6 +126,28 @@ struct RuntimeFixpointScratch {
   uint32_t delta_pre = 0;
 };
 
+// Per-instance sparse-set dedup flags for engine dirty/pending indexes.
+// Object-owned on RuntimeInstance, engine-managed: set by
+// MarkInstanceDeltaDirty / MarkInstanceNbaPending, cleared during
+// ClearLocalUpdatesDelta / ClearLocalUpdates / CommitDeferredLocalNbas.
+struct RuntimeDedupState {
+  bool in_delta_dirty = false;
+  bool in_timeslot_dirty = false;
+  bool in_nba_pending = false;
+};
+
+// Per-instance local-domain fixpoint workspace.
+// Owns the pending/next worklists and dedup flags for the fixpoint
+// solver's local signal propagation. Object-owned on RuntimeInstance,
+// engine-managed: seeded at the start of FlushAndPropagateConnections,
+// promoted each iteration, cleared on convergence.
+struct RuntimeLocalFixpointWorkspace {
+  std::vector<LocalSignalId> pending;
+  std::vector<LocalSignalId> next;
+  // Dedup flags sized to local_signal_count. 1 iff signal is in next.
+  std::vector<uint8_t> seen;
+};
+
 // Runtime-owned representation of one module instance.
 //
 // This is the first-class object model introduced by R1. A RuntimeInstance
@@ -187,6 +209,13 @@ struct RuntimeInstance {
 
   // Fixpoint solver scratch state (not part of the binary contract).
   RuntimeFixpointScratch fixpoint_scratch;
+
+  // Per-instance sparse-set dedup flags (not part of the binary contract).
+  RuntimeDedupState dedup_state;
+
+  // Per-instance local-domain fixpoint workspace (not part of the
+  // binary contract). Owns pending/next worklists and dedup flags.
+  RuntimeLocalFixpointWorkspace local_fixpoint;
 };
 
 // Strongly typed field indices for RuntimeInstanceStorage.

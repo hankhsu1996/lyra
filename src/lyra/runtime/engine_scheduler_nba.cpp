@@ -194,12 +194,11 @@ auto ApplyNba(const NbaCanonicalPackedTwoPlane& p, void* write_ptr)
 }
 
 void Engine::CommitDeferredLocalNbas() {
-  for (uint32_t instance_idx : nba_pending_instances_) {
-    auto* inst = instances_[instance_idx];
+  for (auto* inst : nba_pending_instances_) {
     auto& pending = inst->nba_pending;
     if (inst->observability.layout == nullptr) {
       pending.Clear();
-      in_nba_pending_[instance_idx] = 0;
+      inst->dedup_state.in_nba_pending = false;
       continue;
     }
     const auto& layout = *inst->observability.layout;
@@ -234,12 +233,12 @@ void Engine::CommitDeferredLocalNbas() {
               current_slot.data(), deferred_slot.data(), compare_bytes) != 0) {
         std::memcpy(current_slot.data(), deferred_slot.data(), compare_bytes);
         ++stats_.core.nba_changed;
-        MarkLocalSignalDirtyFull(*inst, lid, instance_idx);
+        MarkLocalSignalDirtyFull(*inst, lid);
       }
     }
 
     pending.Clear();
-    in_nba_pending_[instance_idx] = 0;
+    inst->dedup_state.in_nba_pending = false;
   }
   nba_pending_instances_.clear();
 }
@@ -270,11 +269,10 @@ void Engine::ExecuteNbaRegion() {
     // Dirty-mark dispatch: single-range for full-overwrite and masked-merge,
     // precise two-range for canonical packed two-plane.
     // R5: Typed NBA dirty dispatch. No reverse-engineering from flat slot_id.
-    // Resolve local instance + index once (may be called twice for two-plane).
+    // Resolve local instance once (may be called twice for two-plane).
     RuntimeInstance* nba_local_inst = nullptr;
-    uint32_t nba_local_idx = 0;
     if (const auto* local = std::get_if<NbaNotifyLocal>(&entry.notify_signal)) {
-      nba_local_idx = local->inst_idx;
+      auto nba_local_idx = local->inst_idx;
       if (nba_local_idx >= instances_.size() ||
           instances_[nba_local_idx] == nullptr) {
         throw common::InternalError(
@@ -289,7 +287,7 @@ void Engine::ExecuteNbaRegion() {
       if (nba_local_inst != nullptr) {
         const auto& local = std::get<NbaNotifyLocal>(entry.notify_signal);
         MarkLocalSignalDirtyRange(
-            *nba_local_inst, local.signal, byte_off, byte_size, nba_local_idx);
+            *nba_local_inst, local.signal, byte_off, byte_size);
       } else {
         const auto& global = std::get<NbaNotifyGlobal>(entry.notify_signal);
         MarkDirtyRange(global.signal.value, byte_off, byte_size);

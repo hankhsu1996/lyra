@@ -246,7 +246,7 @@ void Engine::InitModuleInstancesFromBundles(
   has_any_self_edge_comb_ = false;
   fp_work_.global_pending_seen.clear();
   fp_work_.global_snapshot_index.clear();
-  fp_work_.locals.clear();
+  fp_work_.locals_initialized = false;
   signal_subs_.clear();
   activation_slot_gen_.clear();
   body_observable_layouts_.clear();
@@ -685,10 +685,10 @@ void Engine::InitModuleInstancesFromBundles(
     for (size_t ki = 0; ki < comb_kernels_.size() && ki < 8; ++ki) {
       const auto& ck = comb_kernels_[ki];
       msg += std::format(
-          "  kernel[{}]: body={} frame={} proc={} inst_idx={} "
+          "  kernel[{}]: body={} frame={} proc={} instance={} "
           "flags={:#x}\n",
           ki, reinterpret_cast<const void*>(ck.body), ck.frame,
-          ck.process_index, ck.instance_idx, ck.flags);
+          ck.process_index, static_cast<const void*>(ck.instance), ck.flags);
     }
     for (const auto& bundle : bundles) {
       const auto& comb = bundle.body_desc->comb;

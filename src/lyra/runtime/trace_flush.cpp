@@ -195,13 +195,12 @@ void FlushGlobalDirtySlotsToTrace(
 }
 
 void FlushLocalDirtySlotsToTrace(
-    trace::TraceManager& trace, std::span<RuntimeInstance* const> instances,
-    std::span<const uint32_t> dirty_indices) {
-  for (uint32_t idx : dirty_indices) {
-    auto* inst = instances[idx];
+    trace::TraceManager& trace,
+    std::span<RuntimeInstance* const> dirty_instances) {
+  for (auto* inst : dirty_instances) {
     if (inst == nullptr) {
       throw common::InternalError(
-          "FlushLocalDirtySlotsToTrace", "null instance in instance list");
+          "FlushLocalDirtySlotsToTrace", "null instance in dirty list");
     }
 
     auto& obs = inst->observability;

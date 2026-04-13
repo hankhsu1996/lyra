@@ -985,7 +985,7 @@ extern "C" void LyraDeferredWriteLocal(
       ResolveDeferredSubspan(instance->storage, body_offset, bsz);
   std::memcpy(deferred_slot.data(), vp, bsz);
   pending.MarkPending(LocalSignalId{id});
-  AsEngine(eng)->MarkInstanceNbaPending(pending.instance_idx);
+  AsEngine(eng)->MarkInstanceNbaPending(*instance);
 }
 
 // Instance-owned deferred masked-merge write for local NBA.
@@ -1009,7 +1009,7 @@ extern "C" void LyraDeferredMaskedWriteLocal(
         (deferred_slot[i] & ~mask_span[i]) | (val_span[i] & mask_span[i]);
   }
   pending.MarkPending(LocalSignalId{id});
-  AsEngine(eng)->MarkInstanceNbaPending(pending.instance_idx);
+  AsEngine(eng)->MarkInstanceNbaPending(*instance);
 }
 
 // Instance-owned deferred canonical packed two-plane write for local NBA.
@@ -1032,7 +1032,7 @@ extern "C" void LyraDeferredCanonicalPackedWriteLocal(
       instance->storage, body_offset + second_region_offset, region_bsz);
   std::memcpy(deferred_unk.data(), unk, region_bsz);
   pending.MarkPending(LocalSignalId{id});
-  AsEngine(eng)->MarkInstanceNbaPending(pending.instance_idx);
+  AsEngine(eng)->MarkInstanceNbaPending(*instance);
 }
 
 // Generic NBA queue entry points for cross-instance local and global targets.

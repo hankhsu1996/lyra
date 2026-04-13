@@ -304,10 +304,10 @@ class Engine {
 
   // Mark an instance as having pending deferred local NBA writes.
   // Called by LyraDeferredWriteLocal after writing to deferred storage.
-  void MarkInstanceNbaPending(uint32_t instance_idx) {
-    if (in_nba_pending_[instance_idx] == 0) {
-      in_nba_pending_[instance_idx] = 1;
-      nba_pending_instances_.push_back(instance_idx);
+  void MarkInstanceNbaPending(RuntimeInstance& inst) {
+    if (!inst.dedup_state.in_nba_pending) {
+      inst.dedup_state.in_nba_pending = true;
+      nba_pending_instances_.push_back(&inst);
     }
   }
 
@@ -1296,10 +1296,10 @@ class Engine {
   // cross-instance, and dynamic-index NBA writes.
   std::vector<NbaEntry> nba_queue_;
 
-  // Instance-owned deferred NBA: sparse index of instances with pending
-  // deferred local writes. Same pattern as delta_dirty_instances_.
-  std::vector<uint8_t> in_nba_pending_;
-  std::vector<uint32_t> nba_pending_instances_;
+  // Instance-owned deferred NBA: sparse list of instances with pending
+  // deferred local writes. Dedup via
+  // RuntimeInstance::dedup_state.in_nba_pending.
+  std::vector<RuntimeInstance*> nba_pending_instances_;
 
   // Dense per-slot subscription storage (indexed by slot_id, sized in
   // InitSlotMeta). Four typed vectors per slot for branch-free flush scans.
@@ -1416,55 +1416,45 @@ class Engine {
   [[nodiscard]] auto GetInstanceIndex(const RuntimeInstance& inst) const
       -> uint32_t;
 
-  // Derived sparse indexes summarizing which instances have non-empty
+  // Derived sparse lists summarizing which instances have non-empty
   // LocalUpdateSet state. Authoritative truth is always the per-instance
-  // LocalUpdateSet; these are acceleration indexes for avoiding
-  // full-instance sweeps.
+  // LocalUpdateSet; these are acceleration lists for avoiding
+  // full-instance sweeps. Dedup via RuntimeInstance::dedup_state flags.
   //
   // Delta-dirty: instances with non-empty DeltaDirtySignals() since the
   // last ClearLocalUpdatesDelta(). Consumed by FlushSignalUpdates,
   // ClearLocalUpdatesDelta, ReconcilePostActivation, fixpoint seed.
-  std::vector<uint32_t> delta_dirty_instances_;
-  std::vector<uint8_t> in_delta_dirty_;
+  std::vector<RuntimeInstance*> delta_dirty_instances_;
   // Timeslot-dirty: instances with non-empty DirtySignals() since the
   // last ClearLocalUpdates(). Superset of delta-dirty. Consumed by
   // FlushLocalDirtySlotsToTrace, ClearLocalUpdates.
-  std::vector<uint32_t> timeslot_dirty_instances_;
-  std::vector<uint8_t> in_timeslot_dirty_;
+  std::vector<RuntimeInstance*> timeslot_dirty_instances_;
 
   // Record that an instance has become locally dirty. Called from the
   // canonical local mark-dirty helpers below. Maintains both sparse
-  // indexes with O(1) dedup.
-  void MarkInstanceDeltaDirty(uint32_t instance_idx) {
-    if (in_delta_dirty_[instance_idx] == 0) {
-      in_delta_dirty_[instance_idx] = 1;
-      delta_dirty_instances_.push_back(instance_idx);
+  // lists with O(1) dedup via object-owned dedup_state flags.
+  void MarkInstanceDeltaDirty(RuntimeInstance& inst) {
+    if (!inst.dedup_state.in_delta_dirty) {
+      inst.dedup_state.in_delta_dirty = true;
+      delta_dirty_instances_.push_back(&inst);
     }
-    if (in_timeslot_dirty_[instance_idx] == 0) {
-      in_timeslot_dirty_[instance_idx] = 1;
-      timeslot_dirty_instances_.push_back(instance_idx);
+    if (!inst.dedup_state.in_timeslot_dirty) {
+      inst.dedup_state.in_timeslot_dirty = true;
+      timeslot_dirty_instances_.push_back(&inst);
     }
   }
 
   // Canonical local dirty-mark helpers. ALL local dirty marking must
   // go through these methods -- never call local_updates.MarkSlotDirty()
   // or MarkDirtyRange() directly from engine code.
-  // Overloads accepting instance_idx skip the GetInstanceIndex lookup
-  // when the caller already has the index.
   void MarkLocalSignalDirty(RuntimeInstance& inst, LocalSignalId lid);
-  void MarkLocalSignalDirty(
-      RuntimeInstance& inst, LocalSignalId lid, uint32_t instance_idx);
   void MarkLocalSignalDirtyRange(
       RuntimeInstance& inst, LocalSignalId lid, uint32_t byte_off,
       uint32_t byte_size);
-  void MarkLocalSignalDirtyRange(
-      RuntimeInstance& inst, LocalSignalId lid, uint32_t byte_off,
-      uint32_t byte_size, uint32_t instance_idx);
   // Fast path for full-extent local dirty marking. Skips range
   // validation and size comparison. Used by CommitDeferredLocalNbas
   // where all writes are whole-slot.
-  void MarkLocalSignalDirtyFull(
-      RuntimeInstance& inst, LocalSignalId lid, uint32_t instance_idx);
+  void MarkLocalSignalDirtyFull(RuntimeInstance& inst, LocalSignalId lid);
 
   UpdateSet update_set_;
 
@@ -1487,22 +1477,20 @@ class Engine {
   // Comb kernel batch: pure combinational processes evaluated inline.
   // Each kernel has a compiled function pointer and state pointer.
   struct CombKernel {
-    SharedBodyFn body;
-    void* frame;
-    uint32_t process_index;
-    uint32_t flags;
-    // Index into instances_[] for the owning module instance.
-    // Always valid -- comb kernels are always module processes with a bound
-    // RuntimeInstance (enforced at init time).
-    uint32_t instance_idx;
+    SharedBodyFn body = nullptr;
+    void* frame = nullptr;
+    uint32_t process_index = 0;
+    uint32_t flags = 0;
+    // Owning module instance. Always valid -- comb kernels are always
+    // module processes with a bound RuntimeInstance (enforced at init time).
+    RuntimeInstance* instance = nullptr;
     static constexpr uint32_t kSelfEdge = 1U;
   };
   std::vector<CombKernel> comb_kernels_;
 
-  // Canonical comb-kernel construction. Populates instance_idx from the
-  // process frame header via GetInstanceIndex(). Requires instance_to_idx_
-  // to be built (i.e., after SetInstances()).
-  auto BuildCombKernel(uint32_t proc_idx, void* frame, uint32_t flags)
+  // Canonical comb-kernel construction. Populates instance from the
+  // process frame header.
+  static auto BuildCombKernel(uint32_t proc_idx, void* frame, uint32_t flags)
       -> CombKernel;
 
   // Structured trigger entries with byte-range observation.
@@ -1623,41 +1611,38 @@ class Engine {
   //   capacity pattern.
   // R5: Domain-split fixpoint workspace for FlushAndPropagateConnections.
   // Global pending uses GlobalSignalId with dense bitvec dedup.
-  // Local pending is per-instance with LocalSignalId and per-instance dedup.
-  struct LocalPendingSet {
-    RuntimeInstance* instance = nullptr;
-    std::vector<LocalSignalId> pending;
-    std::vector<LocalSignalId> next;
-    std::vector<uint8_t> seen;  // sized to local_signal_count
-  };
-
+  // Local pending is per-instance (RuntimeInstance::local_fixpoint) with
+  // LocalSignalId and per-instance dedup.
   struct FixpointWorkspace {
+    // Whether per-instance local_fixpoint.seen vectors have been sized.
+    // Set once on first FlushAndPropagateConnections call.
+    bool locals_initialized = false;
+
     // Global frontier
     std::vector<GlobalSignalId> pending_globals;
     std::vector<GlobalSignalId> next_globals;
     std::vector<uint8_t> global_pending_seen;
 
-    // Local domain -- backing storage indexed by instance position
-    std::vector<LocalPendingSet> locals;
-
     // Sparse instance frontiers. Only instances in current_instances are
     // consumed each iteration; only instances in next_instances receive
     // new work. Convergence is current_instances.empty().
-    // Per-instance dedup flags (in_next, comb_touched_seen) and scratch
-    // scalars (delta_pre) live on RuntimeInstance::fixpoint_scratch.
-    std::vector<uint32_t> current_instances;
-    std::vector<uint32_t> next_instances;
+    // Per-instance worklists (pending, next, seen) live on
+    // RuntimeInstance::local_fixpoint. Per-instance dedup flags
+    // (in_next, comb_touched_seen) and scratch scalars (delta_pre)
+    // live on RuntimeInstance::fixpoint_scratch.
+    std::vector<RuntimeInstance*> current_instances;
+    std::vector<RuntimeInstance*> next_instances;
 
     // Per-iteration comb-touched tracking. Records which instances had
     // a comb kernel executed, so local comb-write collection scans only
     // those instances. Reset each iteration.
-    std::vector<uint32_t> comb_touched;
+    std::vector<RuntimeInstance*> comb_touched;
 
     // Comb write capture (split by domain)
     std::vector<GlobalSignalId> comb_writes_global;
     struct LocalCombWrite {
-      uint32_t instance_idx;
-      LocalSignalId signal;
+      RuntimeInstance* instance = nullptr;
+      LocalSignalId signal{};
     };
     std::vector<LocalCombWrite> comb_writes_local;
 

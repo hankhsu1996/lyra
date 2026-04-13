@@ -46,8 +46,8 @@ void Engine::InitConnectionBatch(std::span<const ConnectionDescriptor> descs) {
     }
 
     // Decode typed destination from descriptor fields.
-    // Resolve InstanceId -> dense inst_idx at init time so the hot path
-    // never calls GetInstanceIndex.
+    // Resolve InstanceId -> RuntimeInstance* at init time so the hot path
+    // never calls FindInstanceMut/GetInstanceIndex.
     BatchedConnectionDst dst;
     RuntimeInstance* dst_inst = nullptr;
     if (d.dst_is_local != 0) {
@@ -66,14 +66,7 @@ void Engine::InitConnectionBatch(std::span<const ConnectionDescriptor> descs) {
                 "dst local_id {} >= local_signal_count {} for instance {}",
                 lid.value, dst_inst->observability.local_signal_count, iid));
       }
-      auto inst_idx = GetInstanceIndex(iid);
-      if (inst_idx >= instances_.size() || instances_[inst_idx] == nullptr) {
-        throw common::InternalError(
-            "Engine::InitConnectionBatch",
-            std::format(
-                "dst inst_idx {} invalid for instance_id {}", inst_idx, iid));
-      }
-      dst = LocalConnectionDst{.inst_idx = inst_idx, .signal = lid};
+      dst = LocalConnectionDst{.instance = dst_inst, .signal = lid};
     } else {
       dst = GlobalConnectionDst{GlobalSignalId{d.dst_slot_id}};
     }
@@ -228,8 +221,7 @@ void Engine::EvaluateAllConnections() {
             if constexpr (std::is_same_v<T, GlobalConnectionDst>) {
               MarkSlotDirty(t.signal.value);
             } else {
-              auto* inst = instances_[t.inst_idx];
-              MarkLocalSignalDirty(*inst, t.signal, t.inst_idx);
+              MarkLocalSignalDirty(*t.instance, t.signal);
             }
           },
           conn.dst);
@@ -457,10 +449,9 @@ void Engine::SeedCombKernelDirtyMarks() {
     MarkSlotDirty(gid.value);
   }
   // Seed local comb trigger slots.
-  for (uint32_t i = 0; i < instances_.size(); ++i) {
-    auto* inst = instances_[i];
+  for (auto* inst : instances_) {
     for (LocalSignalId lid : inst->observability.local_comb_trigger_slots) {
-      MarkLocalSignalDirty(*inst, lid, i);
+      MarkLocalSignalDirty(*inst, lid);
     }
   }
 }
@@ -492,25 +483,25 @@ auto Engine::BuildCombKernel(uint32_t proc_idx, void* frame, uint32_t flags)
       .frame = frame,
       .process_index = proc_idx,
       .flags = flags,
-      .instance_idx = GetInstanceIndex(*header->instance),
+      .instance = header->instance,
   };
 }
 
 void Engine::PromoteLocalFrontier() {
   // Retire old current frontier: clear consumed pending.
-  for (uint32_t idx : fp_work_.current_instances) {
-    fp_work_.locals[idx].pending.clear();
+  for (auto* inst : fp_work_.current_instances) {
+    inst->local_fixpoint.pending.clear();
   }
 
   // Promote next frontier: swap next->pending, clear dedup, clear membership.
-  for (uint32_t idx : fp_work_.next_instances) {
-    auto& lps = fp_work_.locals[idx];
-    std::swap(lps.pending, lps.next);
-    lps.next.clear();
-    for (LocalSignalId lid : lps.pending) {
-      lps.seen[lid.value] = 0;
+  for (auto* inst : fp_work_.next_instances) {
+    auto& ws = inst->local_fixpoint;
+    std::swap(ws.pending, ws.next);
+    ws.next.clear();
+    for (LocalSignalId lid : ws.pending) {
+      ws.seen[lid.value] = 0;
     }
-    lps.instance->fixpoint_scratch.in_next = false;
+    inst->fixpoint_scratch.in_next = false;
   }
 
   std::swap(fp_work_.current_instances, fp_work_.next_instances);
@@ -566,20 +557,18 @@ void Engine::FlushAndPropagateConnections() {
       fp_work_.global_snapshot_index.size() < global_slot_count_) {
     fp_work_.global_snapshot_index.assign(global_slot_count_, UINT32_MAX);
   }
-  if (fp_work_.locals.size() != instances_.size()) {
-    fp_work_.locals.resize(instances_.size());
-    for (size_t i = 0; i < instances_.size(); ++i) {
-      auto& lps = fp_work_.locals[i];
-      lps.instance = instances_[i];
-      auto lsc = instances_[i]->observability.local_signal_count;
-      if (lsc > 0 && lps.seen.size() < lsc) {
-        lps.seen.resize(lsc, 0);
+  // Per-instance local fixpoint workspace (pending, next, seen) lives on
+  // RuntimeInstance::local_fixpoint. Lazy-init seen vectors once per engine
+  // lifetime; scratch scalars are reset during sparse-list-driven cleanup.
+  if (!fp_work_.locals_initialized) {
+    for (auto* inst : instances_) {
+      auto lsc = inst->observability.local_signal_count;
+      if (lsc > 0 && inst->local_fixpoint.seen.size() < lsc) {
+        inst->local_fixpoint.seen.resize(lsc, 0);
       }
     }
+    fp_work_.locals_initialized = true;
   }
-  // Per-instance fixpoint scratch (in_next, comb_touched_seen, delta_pre)
-  // lives on RuntimeInstance::fixpoint_scratch. No engine-side init needed;
-  // fields are reset during sparse-list-driven cleanup each iteration.
 
   // Seed global frontier from delta dirty slots.
   fp_work_.pending_globals.clear();
@@ -600,16 +589,16 @@ void Engine::FlushAndPropagateConnections() {
   // dirty-instance index). Only visits instances that actually have
   // delta-dirty local signals -- no full-instance sweep.
   fp_work_.current_instances.clear();
-  for (uint32_t i : delta_dirty_instances_) {
-    auto& obs = instances_[i]->observability;
+  for (auto* inst : delta_dirty_instances_) {
+    auto& obs = inst->observability;
     if (obs.local_signal_count == 0) continue;
-    auto& lps = fp_work_.locals[i];
-    lps.pending.clear();
+    auto& ws = inst->local_fixpoint;
+    ws.pending.clear();
     for (LocalSignalId lid : obs.local_updates.DeltaDirtySignals()) {
-      lps.pending.push_back(lid);
+      ws.pending.push_back(lid);
     }
-    if (!lps.pending.empty()) {
-      fp_work_.current_instances.push_back(i);
+    if (!ws.pending.empty()) {
+      fp_work_.current_instances.push_back(inst);
     }
   }
 
@@ -627,15 +616,15 @@ void Engine::FlushAndPropagateConnections() {
 
   // Helper: enqueue into local next with dedup.
   // When a signal is enqueued, ensures instance is in next_instances.
-  auto enqueue_local = [&](uint32_t inst_idx, LocalSignalId lid) {
+  auto enqueue_local = [&](RuntimeInstance& inst, LocalSignalId lid) {
     if (detailed) ++stats_.detailed.prop_enqueue_attempts;
-    auto& lps = fp_work_.locals[inst_idx];
-    if (lid.value < lps.seen.size() && lps.seen[lid.value] == 0) {
-      lps.seen[lid.value] = 1;
-      lps.next.push_back(lid);
-      if (!lps.instance->fixpoint_scratch.in_next) {
-        lps.instance->fixpoint_scratch.in_next = true;
-        fp_work_.next_instances.push_back(inst_idx);
+    auto& ws = inst.local_fixpoint;
+    if (lid.value < ws.seen.size() && ws.seen[lid.value] == 0) {
+      ws.seen[lid.value] = 1;
+      ws.next.push_back(lid);
+      if (!inst.fixpoint_scratch.in_next) {
+        inst.fixpoint_scratch.in_next = true;
+        fp_work_.next_instances.push_back(&inst);
       }
     } else {
       if (detailed) ++stats_.detailed.prop_enqueue_deduped;
@@ -643,8 +632,7 @@ void Engine::FlushAndPropagateConnections() {
   };
 
   // Helper: connection destination enqueue (handles global/local dispatch).
-  // Destinations are pre-resolved: local targets carry dense inst_idx,
-  // eliminating the per-dispatch GetInstanceIndex call.
+  // Destinations are pre-resolved: local targets carry RuntimeInstance*.
   auto enqueue_conn_dst = [&](const BatchedConnectionDst& dst) {
     std::visit(
         [&](const auto& t) {
@@ -653,9 +641,8 @@ void Engine::FlushAndPropagateConnections() {
             MarkSlotDirty(t.signal.value);
             enqueue_global(t.signal);
           } else {
-            auto* local_inst = instances_[t.inst_idx];
-            MarkLocalSignalDirty(*local_inst, t.signal, t.inst_idx);
-            enqueue_local(t.inst_idx, t.signal);
+            MarkLocalSignalDirty(*t.instance, t.signal);
+            enqueue_local(*t.instance, t.signal);
           }
         },
         dst);
@@ -663,13 +650,12 @@ void Engine::FlushAndPropagateConnections() {
 
   // Helper: mark a comb kernel's owning instance as touched this iteration.
   // Records delta_pre exactly once per instance, before first comb execution.
-  auto mark_comb_touched = [&](uint32_t inst_idx) {
-    auto* inst = instances_[inst_idx];
-    auto& scratch = inst->fixpoint_scratch;
+  auto mark_comb_touched = [&](RuntimeInstance& inst) {
+    auto& scratch = inst.fixpoint_scratch;
     if (scratch.comb_touched_seen) return;
     scratch.comb_touched_seen = true;
-    fp_work_.comb_touched.push_back(inst_idx);
-    auto& obs = inst->observability;
+    fp_work_.comb_touched.push_back(&inst);
+    auto& obs = inst.observability;
     scratch.delta_pre = (obs.local_signal_count > 0)
                             ? static_cast<uint32_t>(
                                   obs.local_updates.DeltaDirtySignals().size())
@@ -687,9 +673,9 @@ void Engine::FlushAndPropagateConnections() {
     if (detailed) {
       auto total_pending =
           static_cast<uint32_t>(fp_work_.pending_globals.size());
-      for (uint32_t idx : fp_work_.current_instances) {
+      for (auto* inst : fp_work_.current_instances) {
         total_pending +=
-            static_cast<uint32_t>(fp_work_.locals[idx].pending.size());
+            static_cast<uint32_t>(inst->local_fixpoint.pending.size());
       }
       stats_.detailed.prop_pending_slots += total_pending;
     }
@@ -718,10 +704,9 @@ void Engine::FlushAndPropagateConnections() {
       }
 
       // 1b. Local triggers (current frontier only).
-      for (uint32_t idx : fp_work_.current_instances) {
-        auto& lps = fp_work_.locals[idx];
-        auto& obs = lps.instance->observability;
-        for (LocalSignalId lid : lps.pending) {
+      for (auto* inst : fp_work_.current_instances) {
+        auto& obs = inst->observability;
+        for (LocalSignalId lid : inst->local_fixpoint.pending) {
           if (lid.value >= obs.local_conn_trigger_map.size()) continue;
           if (detailed) ++stats_.detailed.prop_conn_trigger_lookups;
           auto [start, count] = obs.local_conn_trigger_map[lid.value];
@@ -804,7 +789,7 @@ void Engine::FlushAndPropagateConnections() {
 
           if (detailed) ++stats_.detailed.comb_executed;
           const auto& ck = comb_kernels_[entry.kernel_idx];
-          mark_comb_touched(ck.instance_idx);
+          mark_comb_touched(*ck.instance);
           FlushDeferredAssertionsForProcess(
               ProcessId::FromIndex(ck.process_index));
           ck.body(ck.frame, 0);
@@ -812,10 +797,9 @@ void Engine::FlushAndPropagateConnections() {
       }
 
       // 2b. Evaluate comb kernels from local pending (current frontier only).
-      for (uint32_t idx : fp_work_.current_instances) {
-        auto& lps = fp_work_.locals[idx];
-        auto& obs = lps.instance->observability;
-        for (LocalSignalId lid : lps.pending) {
+      for (auto* inst : fp_work_.current_instances) {
+        auto& obs = inst->observability;
+        for (LocalSignalId lid : inst->local_fixpoint.pending) {
           if (lid.value >= obs.local_comb_trigger_map.size()) continue;
           if (detailed) ++stats_.detailed.prop_comb_trigger_lookups;
           auto [cstart, ccount] = obs.local_comb_trigger_map[lid.value];
@@ -827,7 +811,7 @@ void Engine::FlushAndPropagateConnections() {
             if (detailed) ++stats_.detailed.comb_executed;
             const auto& ck =
                 comb_kernels_[comb_trigger_backing_[ci].kernel_idx];
-            mark_comb_touched(ck.instance_idx);
+            mark_comb_touched(*ck.instance);
             FlushDeferredAssertionsForProcess(
                 ProcessId::FromIndex(ck.process_index));
             ck.body(ck.frame, 0);
@@ -845,8 +829,7 @@ void Engine::FlushAndPropagateConnections() {
       }
 
       // 2d. Collect local comb writes (scan comb_touched only).
-      for (uint32_t tidx : fp_work_.comb_touched) {
-        auto* tinst = instances_[tidx];
+      for (auto* tinst : fp_work_.comb_touched) {
         auto& obs = tinst->observability;
         if (obs.local_signal_count == 0) continue;
         auto delta = obs.local_updates.DeltaDirtySignals();
@@ -855,7 +838,7 @@ void Engine::FlushAndPropagateConnections() {
         for (size_t j = pre_size; j < delta.size(); ++j) {
           fp_work_.comb_writes_local.push_back(
               FixpointWorkspace::LocalCombWrite{
-                  .instance_idx = tidx,
+                  .instance = tinst,
                   .signal = delta[j],
               });
         }
@@ -886,7 +869,7 @@ void Engine::FlushAndPropagateConnections() {
 
       // Enqueue local comb writes.
       for (const auto& lw : fp_work_.comb_writes_local) {
-        enqueue_local(lw.instance_idx, lw.signal);
+        enqueue_local(*lw.instance, lw.signal);
       }
 
       if (has_any_self_edge_comb_) {
@@ -896,8 +879,8 @@ void Engine::FlushAndPropagateConnections() {
       }
 
       // 2e. Reset comb_touched for next iteration.
-      for (uint32_t tidx : fp_work_.comb_touched) {
-        instances_[tidx]->fixpoint_scratch.comb_touched_seen = false;
+      for (auto* inst : fp_work_.comb_touched) {
+        inst->fixpoint_scratch.comb_touched_seen = false;
       }
       fp_work_.comb_touched.clear();
     }

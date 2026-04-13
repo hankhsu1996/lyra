@@ -680,8 +680,7 @@ void Engine::FlushSignalUpdates() {
   // Dispatch global subscriptions from update_set_, then local
   // subscriptions from per-instance local_updates.
   FlushGlobalSignalUpdates();
-  for (uint32_t idx : delta_dirty_instances_) {
-    auto* inst = instances_[idx];
+  for (auto* inst : delta_dirty_instances_) {
     auto& obs = inst->observability;
     if (obs.local_signal_count > 0 &&
         !obs.local_updates.DeltaDirtySignals().empty()) {

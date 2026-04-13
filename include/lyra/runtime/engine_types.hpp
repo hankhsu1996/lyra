@@ -9,6 +9,7 @@
 
 namespace lyra::runtime {
 
+struct RuntimeInstance;
 struct SuspendRecord;
 
 // Simulation time in ticks (timescale-independent).
@@ -87,14 +88,14 @@ enum class ProcessWaitKind : uint8_t {
 };
 
 // Pre-resolved connection destination for hot-path propagation.
-// InstanceId is resolved to dense inst_idx at init time by
-// InitConnectionBatch, eliminating per-dispatch GetInstanceIndex calls.
+// InstanceId is resolved to RuntimeInstance* at init time by
+// InitConnectionBatch, eliminating per-dispatch lookups.
 struct GlobalConnectionDst {
   GlobalSignalId signal{};
 };
 
 struct LocalConnectionDst {
-  uint32_t inst_idx = UINT32_MAX;
+  RuntimeInstance* instance = nullptr;
   LocalSignalId signal{};
 };
 
