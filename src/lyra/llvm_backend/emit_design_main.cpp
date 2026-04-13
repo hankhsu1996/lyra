@@ -614,7 +614,7 @@ auto BuildRuntimeAbi(
   return abi_alloca;
 }
 
-void EmitRunSimulation(
+auto EmitRunSimulation(
     Context& context, llvm::Constant* funcs_array, llvm::Value* states_array,
     llvm::Value* num_processes, const PlusargsSetup& plusargs,
     llvm::Value* abi_alloca, llvm::Value* run_session_ptr) {
@@ -709,6 +709,8 @@ auto EmitDesignMain(
   auto* null_abi_ptr = llvm::ConstantPointerNull::get(
       llvm::PointerType::getUnqual(context.GetLlvmContext()));
   llvm::Value* abi_for_exit = null_abi_ptr;
+  llvm::Value* final_time = llvm::ConstantInt::get(
+      llvm::Type::getInt64Ty(context.GetLlvmContext()), 0);
   RealizationEmissionResult ctor_result{};
 
   if (num_simulation > 0 || num_kernelized > 0) {
@@ -828,7 +830,7 @@ auto EmitDesignMain(
         fs_base_dir_str);
     abi_for_exit = abi_alloca;
 
-    EmitRunSimulation(
+    final_time = EmitRunSimulation(
         context, connection_funcs, states_array, num_total_val, plusargs,
         abi_alloca, run_session_ptr);
 

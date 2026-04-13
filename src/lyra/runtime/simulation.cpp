@@ -1,6 +1,5 @@
 #include "lyra/runtime/simulation.hpp"
 
-#include <algorithm>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -199,9 +198,9 @@ void DescriptorProcessDispatch(
       resume);
 }
 
-void SetupAndRunSimulation(
+auto SetupAndRunSimulation(
     lyra::runtime::Engine& engine, std::span<void*> states,
-    uint32_t num_processes) {
+    uint32_t num_processes) -> uint64_t {
   // Store engine pointer in each process state header
   for (auto* state : states) {
     auto* header = static_cast<StateHeader*>(state);
@@ -243,8 +242,7 @@ void SetupAndRunSimulation(
   engine.SeedCombKernelDirtyMarks();
   engine.FlushAndPropagateConnections();
 
-  auto final_time = engine.Run();
-  FinalTime() = std::max(FinalTime(), final_time);
+  return engine.Run();
 }
 
 }  // namespace
@@ -483,7 +481,7 @@ extern "C" void LyraRunSimulation(
   };
   lyra::runtime::ScopedDpiExportCallContext export_scope(export_ctx);
 
-  SetupAndRunSimulation(engine, states, num_processes);
+  uint64_t final_time = SetupAndRunSimulation(engine, states, num_processes);
 
   if (HasFlag(flags, FeatureFlag::kEnableTraceSummary)) {
     engine.GetTraceManager().PrintSummary(engine.Output());
@@ -536,6 +534,8 @@ extern "C" void LyraRunSimulation(
   // Release string-typed slot handles before engine destruction.
   // The engine owns the slot meta registry needed for address resolution.
   engine.ReleaseStringSlots();
+
+  return final_time;
 }
 
 extern "C" auto LyraPlusargsTest(void* engine_ptr, LyraStringHandle query)
@@ -689,7 +689,6 @@ extern "C" auto LyraResolveBaseDir(const char* argv0) -> const char* {
 }
 
 extern "C" void LyraInitRuntime(uint32_t iteration_limit) {
-  FinalTime() = 0;
   LyraSetIterationLimit(iteration_limit);
 }
 
