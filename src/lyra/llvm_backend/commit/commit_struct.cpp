@@ -11,6 +11,7 @@
 #include "lyra/llvm_backend/commit.hpp"
 #include "lyra/llvm_backend/commit/access.hpp"
 #include "lyra/llvm_backend/context.hpp"
+#include "lyra/llvm_backend/cu_facts.hpp"
 #include "lyra/llvm_backend/layout/union_storage.hpp"
 #include "lyra/llvm_backend/lifecycle.hpp"
 #include "lyra/llvm_backend/ownership.hpp"
@@ -25,17 +26,18 @@ namespace {
 
 // Forward declaration for mutual recursion
 auto AssignStructFieldByField(
-    Context& context, llvm::Value* source_ptr, llvm::Value* target_ptr,
-    TypeId struct_type_id, OwnershipPolicy policy) -> Result<void>;
+    Context& context, const CuFacts& facts, llvm::Value* source_ptr,
+    llvm::Value* target_ptr, TypeId struct_type_id, OwnershipPolicy policy)
+    -> Result<void>;
 
 // Assign a single field, handling string ref counting and nested structs.
 // Uses Destroy(target) first, then stores new value.
 auto AssignField(
-    Context& context, llvm::Value* source_field_ptr,
+    Context& context, const CuFacts& facts, llvm::Value* source_field_ptr,
     llvm::Value* target_field_ptr, llvm::Type* field_llvm_type,
     TypeId field_type_id, OwnershipPolicy policy) -> Result<void> {
   auto& builder = context.GetBuilder();
-  const auto& types = context.GetTypeArena();
+  const auto& types = *facts.types;
   const Type& field_type = types[field_type_id];
 
   if (field_type.Kind() == TypeKind::kString) {
@@ -43,11 +45,13 @@ auto AssignField(
     // CopyAssign: Destroy(dst) + CopyInit(dst, src) - src unchanged
     // MoveAssign: Destroy(dst) + MoveInit(dst, src) - src nulled per-field
     if (policy == OwnershipPolicy::kClone) {
-      CopyAssign(context, target_field_ptr, source_field_ptr, field_type_id);
+      CopyAssign(
+          context, facts, target_field_ptr, source_field_ptr, field_type_id);
     } else {
       // kMove: MoveAssign handles destroy old dst, transfer value, null out
       // src. Source null-out is per-field (not deferred to struct level).
-      MoveAssign(context, target_field_ptr, source_field_ptr, field_type_id);
+      MoveAssign(
+          context, facts, target_field_ptr, source_field_ptr, field_type_id);
     }
     return {};
   }
@@ -56,13 +60,14 @@ auto AssignField(
     // Nested struct: check if it contains managed fields and recurse if so
     if (NeedsFieldByField(field_type_id, types)) {
       auto result = AssignStructFieldByField(
-          context, source_field_ptr, target_field_ptr, field_type_id, policy);
+          context, facts, source_field_ptr, target_field_ptr, field_type_id,
+          policy);
       if (!result) return result;
     } else {
       // No managed fields: aggregate load/store via commit layer
       llvm::Value* val =
           builder.CreateLoad(field_llvm_type, source_field_ptr, "sf.agg");
-      detail::CommitPlainField(context, target_field_ptr, val);
+      detail::CommitPlainField(builder, target_field_ptr, val);
     }
     return {};
   }
@@ -70,7 +75,7 @@ auto AssignField(
   // Other fields: simple load/store via commit layer (no ownership semantics)
   llvm::Value* val =
       builder.CreateLoad(field_llvm_type, source_field_ptr, "sf.val");
-  detail::CommitPlainField(context, target_field_ptr, val);
+  detail::CommitPlainField(builder, target_field_ptr, val);
   return {};
 }
 
@@ -82,16 +87,17 @@ auto AssignField(
 // partial assignment state is acceptable - the process would abort anyway.
 // This matches SV semantics where assignment is atomic at the language level.
 auto AssignStructFieldByField(
-    Context& context, llvm::Value* source_ptr, llvm::Value* target_ptr,
-    TypeId struct_type_id, OwnershipPolicy policy) -> Result<void> {
+    Context& context, const CuFacts& facts, llvm::Value* source_ptr,
+    llvm::Value* target_ptr, TypeId struct_type_id, OwnershipPolicy policy)
+    -> Result<void> {
   auto& builder = context.GetBuilder();
-  const auto& types = context.GetTypeArena();
+  const auto& types = *facts.types;
   const Type& struct_type = types[struct_type_id];
   const auto& struct_info = struct_type.AsUnpackedStruct();
 
   // Get LLVM struct type for GEP operations
   auto llvm_struct_type_result =
-      BuildLlvmTypeForTypeId(context, struct_type_id);
+      BuildLlvmTypeForTypeId(context, facts, struct_type_id);
   if (!llvm_struct_type_result)
     return std::unexpected(llvm_struct_type_result.error());
   llvm::Type* llvm_struct_type = *llvm_struct_type_result;
@@ -108,8 +114,8 @@ auto AssignStructFieldByField(
     llvm::Type* field_llvm_type = llvm_struct->getElementType(field_idx);
 
     auto result = AssignField(
-        context, src_field_ptr, tgt_field_ptr, field_llvm_type, field.type,
-        policy);
+        context, facts, src_field_ptr, tgt_field_ptr, field_llvm_type,
+        field.type, policy);
     if (!result) return result;
   }
   return {};
@@ -120,17 +126,19 @@ auto AssignStructFieldByField(
 namespace detail {
 
 auto TransferManagedStructFields(
-    Context& ctx, llvm::Value* source_ptr, llvm::Value* target_ptr,
-    TypeId struct_type_id, OwnershipPolicy policy) -> Result<void> {
+    Context& ctx, const CuFacts& facts, llvm::Value* source_ptr,
+    llvm::Value* target_ptr, TypeId struct_type_id, OwnershipPolicy policy)
+    -> Result<void> {
   return AssignStructFieldByField(
-      ctx, source_ptr, target_ptr, struct_type_id, policy);
+      ctx, facts, source_ptr, target_ptr, struct_type_id, policy);
 }
 
 }  // namespace detail
 
 auto CommitStructFieldByField(
-    Context& ctx, const mir::WriteTarget& target, mir::PlaceId source,
-    TypeId struct_type_id, OwnershipPolicy policy) -> Result<void> {
+    Context& ctx, const CuFacts& facts, const mir::WriteTarget& target,
+    mir::PlaceId source, TypeId struct_type_id, OwnershipPolicy policy)
+    -> Result<void> {
   if (policy == OwnershipPolicy::kMove) {
     const auto& arena = ctx.GetMirArena();
     const auto& src_place = arena[source];
@@ -148,7 +156,7 @@ auto CommitStructFieldByField(
   llvm::Value* source_ptr = *source_ptr_or_err;
 
   auto result = AssignStructFieldByField(
-      ctx, source_ptr, target_wt->ptr, struct_type_id, policy);
+      ctx, facts, source_ptr, target_wt->ptr, struct_type_id, policy);
   if (!result) return result;
 
   CommitNotifyAggregateIfDesignSlot(ctx, target);

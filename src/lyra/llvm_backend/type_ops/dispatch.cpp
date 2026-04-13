@@ -35,12 +35,12 @@ auto DetermineOwnership(Context& context, const mir::Operand& source)
 // delegates to DispatchWrite with OperandSource. Does not own semantic
 // write-shape decisions.
 auto AssignPlace(
-    Context& context, const mir::WriteTarget& target,
+    Context& context, const CuFacts& facts, const mir::WriteTarget& target,
     const mir::Operand& source) -> Result<void> {
-  TypeId type_id = detail::ResolveDestType(context, target);
+  TypeId type_id = detail::ResolveDestType(context, facts, target);
   OwnershipPolicy policy = DetermineOwnership(context, source);
   return DispatchWrite(
-      context, target, OperandSource{&source}, type_id, policy);
+      context, facts, target, OperandSource{&source}, type_id, policy);
 }
 
 }  // namespace lyra::lowering::mir_to_llvm

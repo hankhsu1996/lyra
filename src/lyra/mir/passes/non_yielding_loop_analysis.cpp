@@ -98,6 +98,13 @@ auto ExtractNotifiedRoot(const Place& place) -> std::optional<SignalRef> {
         .id = static_cast<uint32_t>(place.root.id),
     };
   }
+  if (place.root.kind == PlaceRoot::Kind::kObjectLocal) {
+    return SignalRef{
+        .scope = SignalRef::Scope::kObjectLocal,
+        .id = static_cast<uint32_t>(place.root.id),
+        .object_index = place.root.object_index,
+    };
+  }
   return std::nullopt;
 }
 

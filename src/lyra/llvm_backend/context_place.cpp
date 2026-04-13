@@ -48,7 +48,8 @@ auto Context::ComputePlacePointer(
   // Get base pointer from root.
   llvm::Value* ptr = nullptr;
   if (resolved.root.kind == mir::PlaceRoot::Kind::kModuleSlot ||
-      resolved.root.kind == mir::PlaceRoot::Kind::kDesignGlobal) {
+      resolved.root.kind == mir::PlaceRoot::Kind::kDesignGlobal ||
+      resolved.root.kind == mir::PlaceRoot::Kind::kObjectLocal) {
     ptr = GetSlotRootPointer(resolved.root);
   } else {
     // Local/Temp places: check place_alias_ first (inout managed params),
@@ -91,7 +92,7 @@ auto Context::ComputePlacePointer(
 
     // FieldProjection: struct field access
     if (const auto* field = std::get_if<mir::FieldProjection>(&proj.info)) {
-      const Type& cur_type = types_[current_type];
+      const Type& cur_type = (*facts_->types)[current_type];
       if (cur_type.Kind() != TypeKind::kUnpackedStruct) {
         throw common::InternalError(
             "GetPlacePointer", std::format(
@@ -109,7 +110,8 @@ auto Context::ComputePlacePointer(
                 field_idx, struct_info.fields.size()));
       }
 
-      auto struct_type_result = BuildLlvmTypeForTypeId(*this, current_type);
+      auto struct_type_result =
+          BuildLlvmTypeForTypeId(*this, *facts_, current_type);
       if (!struct_type_result)
         return std::unexpected(struct_type_result.error());
       llvm::Type* struct_type = *struct_type_result;
@@ -124,7 +126,7 @@ auto Context::ComputePlacePointer(
     // changes)
     if (const auto* umem =
             std::get_if<mir::UnionMemberProjection>(&proj.info)) {
-      const Type& cur_type = types_[current_type];
+      const Type& cur_type = (*facts_->types)[current_type];
       if (cur_type.Kind() != TypeKind::kUnpackedUnion) {
         throw common::InternalError(
             "GetPlacePointer",
@@ -155,13 +157,13 @@ auto Context::ComputePlacePointer(
           "GetPlacePointer", "unsupported projection kind in LLVM backend");
     }
 
-    const Type& cur_type = types_[current_type];
+    const Type& cur_type = (*facts_->types)[current_type];
     if (cur_type.Kind() == TypeKind::kDynamicArray ||
         cur_type.Kind() == TypeKind::kQueue) {
       // Load the handle, call ElementPtr
       auto* ptr_ty = llvm::PointerType::getUnqual(*llvm_context_);
       llvm::Value* handle = builder_.CreateLoad(ptr_ty, ptr, "da.handle");
-      auto index_result = LowerOperand(*this, idx->index);
+      auto index_result = LowerOperand(*this, *facts_, idx->index);
       if (!index_result) return std::unexpected(index_result.error());
       llvm::Value* index = builder_.CreateSExtOrTrunc(
           *index_result, llvm::Type::getInt64Ty(*llvm_context_), "da.idx");
@@ -172,10 +174,11 @@ auto Context::ComputePlacePointer(
                          : cur_type.AsDynamicArray().element_type;
     } else {
       // Unpacked array: GEP into fixed array
-      auto array_type_result = BuildLlvmTypeForTypeId(*this, current_type);
+      auto array_type_result =
+          BuildLlvmTypeForTypeId(*this, *facts_, current_type);
       if (!array_type_result) return std::unexpected(array_type_result.error());
       llvm::Type* array_type = *array_type_result;
-      auto index_result = LowerOperand(*this, idx->index);
+      auto index_result = LowerOperand(*this, *facts_, idx->index);
       if (!index_result) return std::unexpected(index_result.error());
       ptr = builder_.CreateGEP(
           array_type, ptr, {builder_.getInt32(0), *index_result},
@@ -199,15 +202,12 @@ auto Context::GetWriteTarget(mir::PlaceId place_id) -> Result<WriteTarget> {
   uint32_t dirty_off = 0;
   uint32_t dirty_size = 0;
   if (resolved.root.kind == mir::PlaceRoot::Kind::kModuleSlot ||
-      resolved.root.kind == mir::PlaceRoot::Kind::kDesignGlobal) {
-    mir::SignalRef sig{
-        .scope = (resolved.root.kind == mir::PlaceRoot::Kind::kModuleSlot)
-                     ? mir::SignalRef::Scope::kModuleLocal
-                     : mir::SignalRef::Scope::kDesignGlobal,
-        .id = static_cast<uint32_t>(resolved.root.id),
-    };
-    // Mutation-target: resolve to storage owner for dirty-mark identity.
-    signal_id = EmitMutationTargetSignalCoord(sig);
+      resolved.root.kind == mir::PlaceRoot::Kind::kDesignGlobal ||
+      resolved.root.kind == mir::PlaceRoot::Kind::kObjectLocal) {
+    auto sig = ResolveMutationSignalRef(place_id);
+    if (sig.has_value()) {
+      signal_id = EmitMutationTargetSignalCoord(*sig);
+    }
     auto resolver = [this](const mir::Operand& op) -> std::optional<uint64_t> {
       if (op.kind != mir::Operand::Kind::kUseTemp) return std::nullopt;
       auto temp_id = std::get<mir::TempId>(op.payload);
@@ -222,7 +222,14 @@ auto Context::GetWriteTarget(mir::PlaceId place_id) -> Result<WriteTarget> {
     if (resolved.root.kind == mir::PlaceRoot::Kind::kModuleSlot &&
         GetSpecSlotInfo() != nullptr) {
       auto local_slot = static_cast<uint32_t>(resolved.root.id);
-      slot_spec_ptr = &GetSpecSlotInfo()->GetSlotSpec(local_slot, GetLayout());
+      slot_spec_ptr =
+          &SpecSlotInfo::GetSlotSpec(local_slot, *GetSpecLayoutContract());
+    } else if (resolved.root.kind == mir::PlaceRoot::Kind::kObjectLocal) {
+      auto body_group =
+          facts_->layout->instance_body_groups[resolved.root.object_index];
+      const auto& bri = facts_->layout->body_realization_infos[body_group];
+      auto local_slot = static_cast<uint32_t>(resolved.root.id);
+      slot_spec_ptr = &bri.slot_specs[local_slot];
     } else {
       auto slot_id = common::SlotId{static_cast<uint32_t>(resolved.root.id)};
       slot_spec_ptr = &GetDesignSlotStorageSpec(slot_id);
@@ -283,6 +290,12 @@ auto Context::ResolveMutationSignalRef(mir::PlaceId place_id) const
     return mir::SignalRef{
         .scope = mir::SignalRef::Scope::kDesignGlobal,
         .id = static_cast<uint32_t>(resolved.root.id)};
+  }
+  if (resolved.root.kind == mir::PlaceRoot::Kind::kObjectLocal) {
+    return mir::SignalRef{
+        .scope = mir::SignalRef::Scope::kObjectLocal,
+        .id = static_cast<uint32_t>(resolved.root.id),
+        .object_index = resolved.root.object_index};
   }
   return std::nullopt;
 }
@@ -345,11 +358,22 @@ auto Context::EmitSignalCoord(const mir::SignalRef& sig) -> SignalCoordExpr {
             "module-scoped code must use specialization-local addressing",
             sig.id));
   }
+  if (sig.scope == mir::SignalRef::Scope::kObjectLocal) {
+    auto& builder = GetBuilder();
+    auto* i32_ty = llvm::Type::getInt32Ty(GetLlvmContext());
+    auto* target_inst = builder.CreateCall(
+        GetLyraResolveInstancePtr(),
+        {GetEnginePointer(), llvm::ConstantInt::get(i32_ty, sig.object_index)});
+    return SignalCoordExpr::LocalWithInstance(
+        sig.id, runtime::InstanceId{sig.object_index}, target_inst);
+  }
   // R5: Design-global signals that are actually instance-owned must emit
   // local identity with a resolved target instance pointer. This happens
   // for design-level connection processes writing to child port signals.
-  if (sig.id >= layout_.num_package_slots) {
-    auto owner = ResolveInstanceOwnedFlatSlot(layout_, sig.id);
+  if (sig.id >= facts_->layout->num_package_slots) {
+    auto owner = ResolveInstanceOwnedFlatSlot(
+        facts_->layout->num_package_slots, facts_->layout->instance_slot_counts,
+        sig.id);
     auto& builder = GetBuilder();
     auto* i32_ty = llvm::Type::getInt32Ty(GetLlvmContext());
     auto* target_inst = builder.CreateCall(
@@ -381,9 +405,13 @@ auto ValidateDesignGlobalSignal(
 auto Context::EmitMutationTargetSignalCoord(const mir::SignalRef& sig)
     -> SignalCoordExpr {
   if (sig.scope == mir::SignalRef::Scope::kDesignGlobal) {
-    return EmitSignalCoord(ValidateDesignGlobalSignal(sig, layout_.design));
+    return EmitSignalCoord(
+        ValidateDesignGlobalSignal(sig, facts_->layout->design));
   }
   if (sig.scope == mir::SignalRef::Scope::kModuleLocal) {
+    return EmitSignalCoord(sig);
+  }
+  if (sig.scope == mir::SignalRef::Scope::kObjectLocal) {
     return EmitSignalCoord(sig);
   }
   throw common::InternalError(
@@ -540,8 +568,24 @@ auto Context::GetSlotRootPointer(const mir::PlaceRoot& root) -> llvm::Value* {
   if (root.kind == mir::PlaceRoot::Kind::kDesignGlobal) {
     return GetDesignGlobalSlotPointer(static_cast<uint32_t>(root.id));
   }
+  if (root.kind == mir::PlaceRoot::Kind::kObjectLocal) {
+    auto body_group = facts_->layout->instance_body_groups[root.object_index];
+    const auto& bri = facts_->layout->body_realization_infos[body_group];
+    auto local_slot = static_cast<uint32_t>(root.id);
+    auto byte_off = bri.body_layout.inline_offsets[local_slot];
+    auto* i32_ty = llvm::Type::getInt32Ty(*llvm_context_);
+    auto* inst_ptr = builder_.CreateCall(
+        GetLyraResolveInstancePtr(),
+        {GetEnginePointer(),
+         llvm::ConstantInt::get(i32_ty, root.object_index)});
+    auto* inline_base = EmitLoadInstanceInlineBase(inst_ptr);
+    return builder_.CreateGEP(
+        llvm::Type::getInt8Ty(*llvm_context_), inline_base,
+        builder_.getInt64(byte_off.value), "obj_local_slot_ptr");
+  }
   throw common::InternalError(
-      "GetSlotRootPointer", "expected kModuleSlot or kDesignGlobal root");
+      "GetSlotRootPointer",
+      "expected kModuleSlot, kDesignGlobal, or kObjectLocal root");
 }
 
 auto Context::GetSignalSlotPointer(const mir::SignalRef& sig) -> llvm::Value* {
@@ -555,6 +599,14 @@ auto Context::GetSignalSlotPointer(const mir::SignalRef& sig) -> llvm::Value* {
             "module-local signal (id={}) in design-global addressing mode; "
             "module-scoped code must use specialization-local addressing",
             sig.id));
+  }
+  if (sig.scope == mir::SignalRef::Scope::kObjectLocal) {
+    mir::PlaceRoot root{
+        .kind = mir::PlaceRoot::Kind::kObjectLocal,
+        .id = static_cast<int>(sig.id),
+        .type = {},
+        .object_index = sig.object_index};
+    return GetSlotRootPointer(root);
   }
   return GetDesignGlobalSlotPointer(sig.id);
 }
@@ -614,42 +666,45 @@ auto Context::ComputeStaticProjectionOffset(mir::PlaceId place_id)
 
   for (const auto& proj : place.projections) {
     if (const auto* field = std::get_if<mir::FieldProjection>(&proj.info)) {
-      auto struct_type_result = BuildLlvmTypeForTypeId(*this, current_type);
-      if (!struct_type_result) return std::nullopt;
-      auto* struct_ty = llvm::dyn_cast<llvm::StructType>(*struct_type_result);
+      auto* struct_type_ptr = BuildLlvmTypeForTypeId(
+          GetLlvmContext(), current_type, *facts_->types);
+      if (struct_type_ptr == nullptr) return std::nullopt;
+      auto* struct_ty = llvm::dyn_cast<llvm::StructType>(struct_type_ptr);
       if (struct_ty == nullptr) return std::nullopt;
       const auto* layout = dl.getStructLayout(struct_ty);
       byte_offset +=
           static_cast<uint32_t>(layout->getElementOffset(field->field_index));
-      const auto& struct_info = types_[current_type].AsUnpackedStruct();
+      const auto& struct_info =
+          (*facts_->types)[current_type].AsUnpackedStruct();
       current_type =
           struct_info.fields[static_cast<size_t>(field->field_index)].type;
       continue;
     }
     if (const auto* umem =
             std::get_if<mir::UnionMemberProjection>(&proj.info)) {
-      const auto& union_info = types_[current_type].AsUnpackedUnion();
+      const auto& union_info = (*facts_->types)[current_type].AsUnpackedUnion();
       current_type = union_info.members[umem->member_index].type;
       continue;
     }
     return std::nullopt;
   }
 
-  auto final_ty_result = BuildLlvmTypeForTypeId(*this, current_type);
-  if (!final_ty_result) return std::nullopt;
-  auto sub_size = static_cast<uint32_t>(dl.getTypeStoreSize(*final_ty_result));
+  auto* final_ty =
+      BuildLlvmTypeForTypeId(GetLlvmContext(), current_type, *facts_->types);
+  if (final_ty == nullptr) return std::nullopt;
+  auto sub_size = static_cast<uint32_t>(dl.getTypeStoreSize(final_ty));
   return std::pair{byte_offset, sub_size};
 }
 
 auto Context::GetPlaceLlvmType(mir::PlaceId place_id) -> Result<llvm::Type*> {
   const auto& place = LookupPlace(place_id);
 
-  TypeId type_id = mir::TypeOfPlace(types_, place);
-  const Type& type = types_[type_id];
+  TypeId type_id = mir::TypeOfPlace(*facts_->types, place);
+  const Type& type = (*facts_->types)[type_id];
 
   if (type.Kind() == TypeKind::kIntegral) {
     uint32_t bit_width = type.AsIntegral().bit_width;
-    if (IsPackedFourState(type)) {
+    if (IsPackedFourState(*facts_, type)) {
       return GetBackingFourStateType(*llvm_context_, bit_width);
     }
     return GetBackingLlvmType(*llvm_context_, bit_width);
@@ -668,8 +723,8 @@ auto Context::GetPlaceLlvmType(mir::PlaceId place_id) -> Result<llvm::Type*> {
     return llvm::PointerType::getUnqual(*llvm_context_);
   }
   if (IsPacked(type)) {
-    auto width = PackedBitWidth(type, types_);
-    if (IsPackedFourState(type)) {
+    auto width = PackedBitWidth(type, *facts_->types);
+    if (IsPackedFourState(*facts_, type)) {
       return GetBackingFourStateType(*llvm_context_, width);
     }
     return GetBackingLlvmType(*llvm_context_, width);
@@ -678,7 +733,7 @@ auto Context::GetPlaceLlvmType(mir::PlaceId place_id) -> Result<llvm::Type*> {
   if (type.Kind() == TypeKind::kUnpackedArray ||
       type.Kind() == TypeKind::kUnpackedStruct ||
       type.Kind() == TypeKind::kUnpackedUnion) {
-    return BuildLlvmTypeForTypeId(*this, type_id);
+    return BuildLlvmTypeForTypeId(*this, *facts_, type_id);
   }
 
   return std::unexpected(
@@ -716,7 +771,7 @@ auto Context::GetPlaceBaseType(mir::PlaceId place_id) -> Result<llvm::Type*> {
     if (std::holds_alternative<mir::BitRangeProjection>(proj.info)) {
       break;
     }
-    const Type& t = types_[base_type_id];
+    const Type& t = (*facts_->types)[base_type_id];
     if (t.Kind() == TypeKind::kUnpackedArray) {
       base_type_id = t.AsUnpackedArray().element_type;
     } else if (t.Kind() == TypeKind::kDynamicArray) {
@@ -738,7 +793,7 @@ auto Context::GetPlaceBaseType(mir::PlaceId place_id) -> Result<llvm::Type*> {
     }
   }
 
-  return BuildLlvmTypeForTypeId(*this, base_type_id);
+  return BuildLlvmTypeForTypeId(*this, *facts_, base_type_id);
 }
 
 // Shared logic: if the type is 4-state packed, load via canonical storage
@@ -750,10 +805,10 @@ auto Context::TryLoadCanonicalFourStateValue(llvm::Value* ptr, const Type& type)
   // Must check before calling IsPackedFourState which requires a packed type.
   uint32_t bit_width = 0;
   if (IsPacked(type)) {
-    if (!IsPackedFourState(type)) return std::nullopt;
-    bit_width = PackedBitWidth(type, types_);
+    if (!IsPackedFourState(*facts_, type)) return std::nullopt;
+    bit_width = PackedBitWidth(type, *facts_->types);
   } else if (type.Kind() == TypeKind::kIntegral) {
-    if (!IsPackedFourState(type)) return std::nullopt;
+    if (!IsPackedFourState(*facts_, type)) return std::nullopt;
     bit_width = type.AsIntegral().bit_width;
   } else {
     return std::nullopt;
@@ -768,8 +823,8 @@ auto Context::LoadPlaceValue(mir::PlaceId place_id) -> Result<llvm::Value*> {
   if (!ptr_result) return std::unexpected(ptr_result.error());
 
   const auto& place = LookupPlace(place_id);
-  TypeId type_id = mir::TypeOfPlace(types_, place);
-  const Type& type = types_[type_id];
+  TypeId type_id = mir::TypeOfPlace(*facts_->types, place);
+  const Type& type = (*facts_->types)[type_id];
 
   // Canonical 4-state load only for design storage (module slots, design
   // globals). Process-local variables use LLVM struct layout which differs
@@ -778,7 +833,8 @@ auto Context::LoadPlaceValue(mir::PlaceId place_id) -> Result<llvm::Value*> {
   // layout places it at offset 10).
   auto root_kind = place.root.kind;
   if (root_kind == mir::PlaceRoot::Kind::kModuleSlot ||
-      root_kind == mir::PlaceRoot::Kind::kDesignGlobal) {
+      root_kind == mir::PlaceRoot::Kind::kDesignGlobal ||
+      root_kind == mir::PlaceRoot::Kind::kObjectLocal) {
     if (auto canonical = TryLoadCanonicalFourStateValue(*ptr_result, type)) {
       return *canonical;
     }
@@ -795,12 +851,13 @@ auto Context::LoadPlaceBaseValue(mir::PlaceId place_id)
   if (!ptr_result) return std::unexpected(ptr_result.error());
 
   const auto& place = LookupPlace(place_id);
-  TypeId base_type_id = mir::TypeOfPlaceBase(types_, place);
-  const Type& type = types_[base_type_id];
+  TypeId base_type_id = mir::TypeOfPlaceBase(*facts_->types, place);
+  const Type& type = (*facts_->types)[base_type_id];
 
   auto root_kind = place.root.kind;
   if (root_kind == mir::PlaceRoot::Kind::kModuleSlot ||
-      root_kind == mir::PlaceRoot::Kind::kDesignGlobal) {
+      root_kind == mir::PlaceRoot::Kind::kDesignGlobal ||
+      root_kind == mir::PlaceRoot::Kind::kObjectLocal) {
     if (auto canonical = TryLoadCanonicalFourStateValue(*ptr_result, type)) {
       return *canonical;
     }
@@ -838,7 +895,7 @@ auto Context::ComposeBitRange(mir::PlaceId place_id)
       continue;
     }
     const auto& br = std::get<mir::BitRangeProjection>(proj.info);
-    auto br_offset_result = LowerOperand(*this, br.bit_offset);
+    auto br_offset_result = LowerOperand(*this, *facts_, br.bit_offset);
     if (!br_offset_result) return std::unexpected(br_offset_result.error());
     llvm::Value* br_offset =
         builder_.CreateZExtOrTrunc(*br_offset_result, offset_ty);
@@ -856,69 +913,44 @@ auto Context::ComposeBitRange(mir::PlaceId place_id)
   return ComposedBitRange{.offset = total_offset, .width = width};
 }
 
-auto Context::GetCurrentBodyRealizationInfo() const
-    -> const Layout::BodyRealizationInfo& {
-  if (spec_slot_info_ == nullptr) {
-    throw common::InternalError(
-        "Context::GetCurrentBodyRealizationInfo",
-        "spec_slot_info_ not set (not in module-body codegen context)");
-  }
-  auto idx = spec_slot_info_->body_realization_info_index;
-  if (idx == SpecSlotInfo::kInvalidBodyInfoIndex) {
-    throw common::InternalError(
-        "Context::GetCurrentBodyRealizationInfo",
-        "body_realization_info_index not set");
-  }
-  if (idx >= layout_.body_realization_infos.size()) {
-    throw common::InternalError(
-        "Context::GetCurrentBodyRealizationInfo",
-        std::format(
-            "body_realization_info_index {} out of range (size={})", idx,
-            layout_.body_realization_infos.size()));
-  }
-  return layout_.body_realization_infos[idx];
-}
-
 auto Context::RequiresBehavioralDirtyPropagation(
     const mir::SignalRef& sig) const -> bool {
   if (sig.scope == mir::SignalRef::Scope::kModuleLocal) {
-    const auto& body_info = GetCurrentBodyRealizationInfo();
     auto local_slot = static_cast<uint32_t>(sig.id);
-    if (local_slot >= body_info.slot_has_behavioral_trigger.size()) {
+    // CU compilation requires a layout contract for body-local data.
+    if (spec_layout_contract_ == nullptr) {
+      throw common::InternalError(
+          "Context::RequiresBehavioralDirtyPropagation",
+          "SpecLayoutContract is required for module-local slot access");
+    }
+    if (local_slot >=
+        spec_layout_contract_->slot_has_behavioral_trigger.size()) {
       throw common::InternalError(
           "Context::RequiresBehavioralDirtyPropagation",
           std::format(
               "module-local slot {} out of range "
-              "(behavioral trigger bitmap size={})",
-              local_slot, body_info.slot_has_behavioral_trigger.size()));
+              "(contract behavioral trigger bitmap size={})",
+              local_slot,
+              spec_layout_contract_->slot_has_behavioral_trigger.size()));
     }
-    bool behavioral = body_info.slot_has_behavioral_trigger[local_slot];
-    if (behavioral) return true;
-
-    // Check design-global behavioral triggers for package/init signals.
-    // Body-local slots are projected to their representative design-global
-    // equivalent for this check.
-    const auto& spec = *GetSpecSlotInfo();
-    auto global_slot = layout_.ResolveRepresentativeDesignSlot(
-        spec.body_realization_info_index, local_slot);
-    if (global_slot < layout_.slot_has_design_behavioral_trigger.size()) {
-      if (layout_.slot_has_design_behavioral_trigger[global_slot]) return true;
+    if (spec_layout_contract_->slot_has_behavioral_trigger[local_slot]) {
+      return true;
     }
-
-    return false;
+    return spec_layout_contract_
+        ->slot_has_cross_body_behavioral_trigger[local_slot];
   }
   if (sig.scope == mir::SignalRef::Scope::kDesignGlobal) {
-    const auto& layout = GetLayout();
-    auto slot = static_cast<uint32_t>(sig.id);
-    if (slot >= layout.slot_has_design_behavioral_trigger.size()) {
-      throw common::InternalError(
-          "Context::RequiresBehavioralDirtyPropagation",
-          std::format(
-              "slot {} out of range for design behavioral trigger bitmap "
-              "(size={})",
-              slot, layout.slot_has_design_behavioral_trigger.size()));
-    }
-    return layout.slot_has_design_behavioral_trigger[slot];
+    // Only package-global signals remain as kDesignGlobal. No body owns
+    // package-global slots, so no behavioral trigger applies.
+    return false;
+  }
+  if (sig.scope == mir::SignalRef::Scope::kObjectLocal) {
+    const auto& layout = *facts_->layout;
+    auto body_group = layout.instance_body_groups[sig.object_index];
+    const auto& info = layout.body_realization_infos[body_group];
+    auto local_slot = sig.id;
+    return info.slot_has_behavioral_trigger[local_slot] ||
+           info.slot_has_cross_body_behavioral_trigger[local_slot];
   }
   throw common::InternalError(
       "Context::RequiresBehavioralDirtyPropagation",
@@ -937,7 +969,7 @@ auto Context::RequiresConnectionNotification(const mir::SignalRef& sig) const
     return connection_notification_mask_->IsRequired(local_slot);
   }
   if (sig.scope == mir::SignalRef::Scope::kDesignGlobal) {
-    const auto& layout = GetLayout();
+    const auto& layout = *facts_->layout;
     auto slot = static_cast<uint32_t>(sig.id);
     if (slot >= layout.slot_has_connection_trigger.size()) {
       throw common::InternalError(
@@ -947,6 +979,12 @@ auto Context::RequiresConnectionNotification(const mir::SignalRef& sig) const
               slot, layout.slot_has_connection_trigger.size()));
     }
     return layout.slot_has_connection_trigger[slot];
+  }
+  if (sig.scope == mir::SignalRef::Scope::kObjectLocal) {
+    const auto& layout = *facts_->layout;
+    auto body_group = layout.instance_body_groups[sig.object_index];
+    const auto& info = layout.body_realization_infos[body_group];
+    return info.slot_has_connection_notification[sig.id];
   }
   throw common::InternalError(
       "Context::RequiresConnectionNotification",
@@ -959,60 +997,33 @@ auto Context::RequiresStaticDirtyPropagation(const mir::SignalRef& sig) const
          RequiresConnectionNotification(sig);
 }
 
-auto Context::GetLegacyRuntimeSignalSlot(const mir::SignalRef& sig) const
-    -> uint32_t {
-  const auto& layout = GetLayout();
-  uint32_t owner_slot = 0;
-
-  if (sig.scope == mir::SignalRef::Scope::kModuleLocal) {
-    if (GetSpecSlotInfo() == nullptr) {
-      throw common::InternalError(
-          "Context::GetLegacyRuntimeSignalSlot",
-          "module-local signal queried without active "
-          "specialization context");
-    }
-    const auto& spec = *GetSpecSlotInfo();
-    auto local_slot = static_cast<uint32_t>(sig.id);
-    owner_slot = layout_.ResolveRepresentativeDesignSlot(
-        spec.body_realization_info_index, local_slot);
-  } else if (sig.scope == mir::SignalRef::Scope::kDesignGlobal) {
-    owner_slot = static_cast<uint32_t>(sig.id);
-  } else {
-    throw common::InternalError(
-        "Context::GetLegacyRuntimeSignalSlot", "unknown signal scope");
-  }
-
-  if (owner_slot >= layout.design.slots.size()) {
-    throw common::InternalError(
-        "Context::GetLegacyRuntimeSignalSlot",
-        std::format(
-            "owner slot {} out of range (design has {} slots)", owner_slot,
-            layout.design.slots.size()));
-  }
-  return owner_slot;
-}
-
-auto Context::EmitIsTraceObservedOwnerSlot(uint32_t owner_slot)
-    -> llvm::Value* {
-  if (owner_slot >= layout_.design.slots.size()) {
-    throw common::InternalError(
-        "Context::EmitIsTraceObservedOwnerSlot",
-        std::format(
-            "owner slot {} out of range (design has {} slots)", owner_slot,
-            layout_.design.slots.size()));
-  }
+auto Context::EmitIsTraceObserved(const mir::SignalRef& sig) -> llvm::Value* {
   auto& builder = GetBuilder();
   auto* i32_ty = llvm::Type::getInt32Ty(GetLlvmContext());
-  // Trace observation query uses the canonical storage-owner slot id,
-  // which is always in the design-global coordination space (resolved
-  // at compile time from the storage layout).
-  return builder.CreateCall(
-      GetLyraIsTraceObservedGlobal(),
-      {GetEnginePointer(), llvm::ConstantInt::get(i32_ty, owner_slot)});
-}
 
-auto Context::EmitIsTraceObserved(const mir::SignalRef& sig) -> llvm::Value* {
-  return EmitIsTraceObservedOwnerSlot(GetLegacyRuntimeSignalSlot(sig));
+  if (sig.scope == mir::SignalRef::Scope::kModuleLocal) {
+    auto local_slot = static_cast<uint32_t>(sig.id);
+    return builder.CreateCall(
+        GetLyraIsTraceObservedLocal(),
+        {GetEnginePointer(), GetInstancePointer(),
+         llvm::ConstantInt::get(i32_ty, local_slot)});
+  }
+  if (sig.scope == mir::SignalRef::Scope::kDesignGlobal) {
+    auto global_slot = static_cast<uint32_t>(sig.id);
+    return builder.CreateCall(
+        GetLyraIsTraceObservedGlobal(),
+        {GetEnginePointer(), llvm::ConstantInt::get(i32_ty, global_slot)});
+  }
+  if (sig.scope == mir::SignalRef::Scope::kObjectLocal) {
+    auto* inst_ptr = builder.CreateCall(
+        GetLyraResolveInstancePtr(),
+        {GetEnginePointer(), llvm::ConstantInt::get(i32_ty, sig.object_index)});
+    return builder.CreateCall(
+        GetLyraIsTraceObservedLocal(),
+        {GetEnginePointer(), inst_ptr, llvm::ConstantInt::get(i32_ty, sig.id)});
+  }
+  throw common::InternalError(
+      "Context::EmitIsTraceObserved", "unknown signal scope");
 }
 
 }  // namespace lyra::lowering::mir_to_llvm

@@ -7,6 +7,7 @@
 namespace lyra::lowering::mir_to_llvm {
 
 class Context;
+struct CuFacts;
 
 // INTERNAL: Null out managed fields after move from src_ptr.
 //
@@ -19,7 +20,8 @@ class Context;
 // - String, DynamicArray, Queue: store nullptr
 // - UnpackedStruct: recurse for managed fields
 // - UnpackedArray: recurse for managed elements
-void MoveCleanup(Context& ctx, llvm::Value* src_ptr, TypeId type_id);
+void MoveCleanup(
+    Context& ctx, const CuFacts& facts, llvm::Value* src_ptr, TypeId type_id);
 
 // INTERNAL: Clone/retain a leaf value (string or container handle).
 //
@@ -30,6 +32,7 @@ void MoveCleanup(Context& ctx, llvm::Value* src_ptr, TypeId type_id);
 // Use CopyInit/CopyAssign for new code - this is retained for commit layer
 // paths that work with loaded handle values rather than pointers.
 [[nodiscard]] auto CloneLeafValue(
-    Context& ctx, llvm::Value* value, TypeId type_id) -> llvm::Value*;
+    Context& ctx, const CuFacts& facts, llvm::Value* value, TypeId type_id)
+    -> llvm::Value*;
 
 }  // namespace lyra::lowering::mir_to_llvm

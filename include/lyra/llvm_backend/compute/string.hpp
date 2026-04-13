@@ -7,6 +7,7 @@
 
 #include "lyra/common/diagnostic/diagnostic.hpp"
 #include "lyra/llvm_backend/context.hpp"
+#include "lyra/llvm_backend/cu_facts.hpp"
 #include "lyra/mir/operand.hpp"
 #include "lyra/mir/rvalue.hpp"
 
@@ -17,47 +18,48 @@ class SlotAccessResolver;
 // Lower string binary comparison (==, !=, <, <=, >, >=).
 // Returns i1 zero-extended to result_type.
 auto LowerStringBinaryOp(
-    Context& context, const mir::BinaryRvalueInfo& info,
+    Context& context, const CuFacts& facts, const mir::BinaryRvalueInfo& info,
     const std::vector<mir::Operand>& operands, llvm::Type* result_type)
     -> Result<llvm::Value*>;
 
 // Evaluate string concatenation and return the new string handle.
 // Does NOT store to any place - caller must handle storage.
 auto LowerStringConcatValue(
-    Context& context, const mir::ConcatRvalueInfo& info,
+    Context& context, const CuFacts& facts, const mir::ConcatRvalueInfo& info,
     const std::vector<mir::Operand>& operands) -> Result<llvm::Value*>;
 
 // Evaluate string replication and return the new string handle.
 // Does NOT store to any place - caller must handle storage.
 auto LowerStringReplicateValue(
-    Context& context, const mir::ReplicateRvalueInfo& info,
+    Context& context, const CuFacts& facts,
+    const mir::ReplicateRvalueInfo& info,
     const std::vector<mir::Operand>& operands) -> Result<llvm::Value*>;
 
 // Evaluate $sformatf/$sformat/$swrite and return the new string handle.
 // Does NOT store to any place - caller must handle storage.
 auto LowerSFormatRvalueValue(
-    Context& context, const mir::SFormatRvalueInfo& info,
+    Context& context, const CuFacts& facts, const mir::SFormatRvalueInfo& info,
     const std::vector<mir::Operand>& operands) -> Result<llvm::Value*>;
 
 // Resolver-aware overloads.
 auto LowerStringBinaryOp(
-    Context& context, SlotAccessResolver& resolver,
+    Context& context, const CuFacts& facts, SlotAccessResolver& resolver,
     const mir::BinaryRvalueInfo& info,
     const std::vector<mir::Operand>& operands, llvm::Type* result_type)
     -> Result<llvm::Value*>;
 
 auto LowerStringConcatValue(
-    Context& context, SlotAccessResolver& resolver,
+    Context& context, const CuFacts& facts, SlotAccessResolver& resolver,
     const mir::ConcatRvalueInfo& info,
     const std::vector<mir::Operand>& operands) -> Result<llvm::Value*>;
 
 auto LowerStringReplicateValue(
-    Context& context, SlotAccessResolver& resolver,
+    Context& context, const CuFacts& facts, SlotAccessResolver& resolver,
     const mir::ReplicateRvalueInfo& info,
     const std::vector<mir::Operand>& operands) -> Result<llvm::Value*>;
 
 auto LowerSFormatRvalueValue(
-    Context& context, SlotAccessResolver& resolver,
+    Context& context, const CuFacts& facts, SlotAccessResolver& resolver,
     const mir::SFormatRvalueInfo& info,
     const std::vector<mir::Operand>& operands) -> Result<llvm::Value*>;
 

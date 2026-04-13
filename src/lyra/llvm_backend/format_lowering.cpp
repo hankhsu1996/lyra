@@ -20,6 +20,7 @@
 #include "lyra/llvm_backend/compute/cast.hpp"
 #include "lyra/llvm_backend/compute/operand.hpp"
 #include "lyra/llvm_backend/context.hpp"
+#include "lyra/llvm_backend/cu_facts.hpp"
 #include "lyra/llvm_backend/emit_string_conv.hpp"
 #include "lyra/llvm_backend/slot_access.hpp"
 #include "lyra/lowering/diagnostic_context.hpp"
@@ -29,9 +30,10 @@
 
 namespace lyra::lowering::mir_to_llvm {
 
-auto ValidateFormatOps(Context& context, std::span<const mir::FormatOp> ops)
+auto ValidateFormatOps(
+    Context& context, const CuFacts& facts, std::span<const mir::FormatOp> ops)
     -> Result<void> {
-  const auto& types = context.GetTypeArena();
+  const auto& types = *facts.types;
   for (const auto& op : ops) {
     if (op.kind == FormatKind::kLiteral || op.kind == FormatKind::kString) {
       continue;
@@ -71,32 +73,33 @@ auto ValidateFormatOps(Context& context, std::span<const mir::FormatOp> ops)
 }
 
 auto LowerArgAsStringHandle(
-    Context& context, const mir::Operand& operand, TypeId type_id)
-    -> Result<std::pair<llvm::Value*, bool>> {
-  CanonicalSlotAccess canonical(context);
-  return LowerArgAsStringHandle(context, canonical, operand, type_id);
+    Context& context, const CuFacts& facts, const mir::Operand& operand,
+    TypeId type_id) -> Result<std::pair<llvm::Value*, bool>> {
+  CanonicalSlotAccess canonical(context, facts);
+  return LowerArgAsStringHandle(context, facts, canonical, operand, type_id);
 }
 
 auto LowerFormatOpToBuffer(
-    Context& context, llvm::Value* buffer_ptr, const mir::FormatOp& op)
-    -> Result<void> {
-  CanonicalSlotAccess canonical(context);
-  return LowerFormatOpToBuffer(context, canonical, buffer_ptr, op);
+    Context& context, const CuFacts& facts, llvm::Value* buffer_ptr,
+    const mir::FormatOp& op) -> Result<void> {
+  CanonicalSlotAccess canonical(context, facts);
+  return LowerFormatOpToBuffer(context, facts, canonical, buffer_ptr, op);
 }
 auto LowerArgAsStringHandle(
-    Context& context, SlotAccessResolver& resolver, const mir::Operand& operand,
-    TypeId type_id) -> Result<std::pair<llvm::Value*, bool>> {
-  const auto& types = context.GetTypeArena();
+    Context& context, const CuFacts& facts, SlotAccessResolver& resolver,
+    const mir::Operand& operand, TypeId type_id)
+    -> Result<std::pair<llvm::Value*, bool>> {
+  const auto& types = *facts.types;
   const Type& operand_type = types[type_id];
 
   if (operand_type.Kind() == TypeKind::kString) {
-    auto handle_or_err = LowerOperand(context, resolver, operand);
+    auto handle_or_err = LowerOperand(context, facts, resolver, operand);
     if (!handle_or_err) return std::unexpected(handle_or_err.error());
     return std::pair{*handle_or_err, false};
   }
 
   if (IsPacked(operand_type)) {
-    auto value_or_err = LowerOperand(context, resolver, operand);
+    auto value_or_err = LowerOperand(context, facts, resolver, operand);
     if (!value_or_err) return std::unexpected(value_or_err.error());
     llvm::Value* packed_val = *value_or_err;
 
@@ -107,7 +110,9 @@ auto LowerArgAsStringHandle(
           "packed operand should be iN or {iN,iN}, not pointer");
     }
 
-    llvm::Value* handle = EmitPackedToString(context, packed_val, operand_type);
+    llvm::Value* handle = EmitPackedToString(
+        context.GetBuilder(), facts, context.GetLyraStringFromPacked(),
+        packed_val, operand_type);
     return std::pair{handle, true};
   }
 
@@ -120,11 +125,11 @@ auto LowerArgAsStringHandle(
 }
 
 auto LowerFormatOpToBuffer(
-    Context& context, SlotAccessResolver& resolver, llvm::Value* buf,
-    const mir::FormatOp& op) -> Result<void> {
+    Context& context, const CuFacts& facts, SlotAccessResolver& resolver,
+    llvm::Value* buf, const mir::FormatOp& op) -> Result<void> {
   auto& builder = context.GetBuilder();
   auto& llvm_ctx = context.GetLlvmContext();
-  const auto& types = context.GetTypeArena();
+  const auto& types = *facts.types;
 
   auto* i32_ty = llvm::Type::getInt32Ty(llvm_ctx);
   auto* i64_ty = llvm::Type::getInt64Ty(llvm_ctx);
@@ -146,7 +151,7 @@ auto LowerFormatOpToBuffer(
   if (op.kind == FormatKind::kString) {
     if (op.value.has_value()) {
       return WithStringHandle(
-          context, resolver, *op.value, op.type,
+          context, facts, resolver, *op.value, op.type,
           [&](llvm::Value* h) -> Result<void> {
             builder.CreateCall(context.GetLyraStringFormatString(), {buf, h});
             return {};
@@ -156,10 +161,10 @@ auto LowerFormatOpToBuffer(
   }
 
   if (op.kind == FormatKind::kTime && op.value.has_value()) {
-    auto value_or_err = LowerOperand(context, resolver, *op.value);
+    auto value_or_err = LowerOperand(context, facts, resolver, *op.value);
     if (!value_or_err) return std::unexpected(value_or_err.error());
 
-    llvm::Value* ticks = LowerTimeToTicks64(context, *value_or_err);
+    llvm::Value* ticks = LowerTimeToTicks64(builder, *value_or_err);
     auto* alloca = builder.CreateAlloca(i64_ty);
     builder.CreateStore(ticks, alloca);
 
@@ -203,7 +208,7 @@ auto LowerFormatOpToBuffer(
 
   llvm::Value* data_ptr = nullptr;
   if (op.value.has_value()) {
-    auto value_or_err = LowerOperand(context, resolver, *op.value);
+    auto value_or_err = LowerOperand(context, facts, resolver, *op.value);
     if (!value_or_err) return std::unexpected(value_or_err.error());
     llvm::Value* value = *value_or_err;
 

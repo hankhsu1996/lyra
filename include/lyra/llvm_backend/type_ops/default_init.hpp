@@ -11,6 +11,7 @@
 namespace lyra::lowering::mir_to_llvm {
 
 class Context;
+struct CuFacts;
 
 // Emit IR to initialize storage with SV default values.
 //
@@ -23,7 +24,8 @@ class Context;
 // - Unpacked unions: zero-fill (TODO: proper 4-state union init)
 //
 // This is the self-contained API that handles all zeroing internally.
-void EmitSVDefaultInit(Context& ctx, llvm::Value* ptr, TypeId type_id);
+void EmitSVDefaultInit(
+    Context& ctx, const CuFacts& facts, llvm::Value* ptr, TypeId type_id);
 
 // Like EmitSVDefaultInit, but assumes the target storage is already zeroed.
 // This avoids redundant memset calls when the caller has already zeroed
@@ -32,7 +34,8 @@ void EmitSVDefaultInit(Context& ctx, llvm::Value* ptr, TypeId type_id);
 //
 // For 2-state types: no-op (already zero)
 // For 4-state types: only writes unknown plane (value plane already zero)
-void EmitSVDefaultInitAfterZero(Context& ctx, llvm::Value* ptr, TypeId type_id);
+void EmitSVDefaultInitAfterZero(
+    Context& ctx, const CuFacts& facts, llvm::Value* ptr, TypeId type_id);
 
 // Emit memset(dst_ptr, 0, sizeof(pointee_ty)) to zero-initialize storage.
 // If align is not provided, infers alignment from the pointer (if alloca)

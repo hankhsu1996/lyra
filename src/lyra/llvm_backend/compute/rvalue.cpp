@@ -17,9 +17,9 @@
 
 namespace lyra::lowering::mir_to_llvm {
 
-auto GetTypeInfoFromType(Context& context, TypeId type_id)
+auto GetTypeInfoFromType(const CuFacts& facts, Context& context, TypeId type_id)
     -> Result<PlaceTypeInfo> {
-  const auto& types = context.GetTypeArena();
+  const auto& types = *facts.types;
   const Type& type = types[type_id];
 
   // Managed handle types: string, dynamic array, queue, associative array.
@@ -53,22 +53,23 @@ auto GetTypeInfoFromType(Context& context, TypeId type_id)
   return PlaceTypeInfo{
       .kind = PlaceKind::kIntegral,
       .bit_width = PackedBitWidth(type, types),
-      .is_four_state = context.IsPackedFourState(type),
+      .is_four_state = IsPackedFourState(facts, type),
   };
 }
 
-auto ValidateAndGetTypeInfo(Context& context, mir::PlaceId place_id)
+auto ValidateAndGetTypeInfo(
+    const CuFacts& facts, Context& context, mir::PlaceId place_id)
     -> Result<PlaceTypeInfo> {
   const auto& arena = context.GetMirArena();
-  const auto& types = context.GetTypeArena();
+  const auto& types = *facts.types;
   const auto& place = arena[place_id];
   TypeId type_id = mir::TypeOfPlace(types, place);
-  return GetTypeInfoFromType(context, type_id);
+  return GetTypeInfoFromType(facts, context, type_id);
 }
 
-auto GetLlvmTypeForType(Context& context, TypeId type_id)
+auto GetLlvmTypeForType(const CuFacts& facts, Context& context, TypeId type_id)
     -> Result<llvm::Type*> {
-  auto type_info_or_err = GetTypeInfoFromType(context, type_id);
+  auto type_info_or_err = GetTypeInfoFromType(facts, context, type_id);
   if (!type_info_or_err) return std::unexpected(type_info_or_err.error());
   const auto& info = *type_info_or_err;
 
@@ -84,12 +85,13 @@ auto GetLlvmTypeForType(Context& context, TypeId type_id)
   return GetBackingLlvmType(context.GetLlvmContext(), info.bit_width);
 }
 
-auto GetFourStatePlaneType(Context& context, TypeId type_id) -> llvm::Type* {
-  if (!context.IsFourState(type_id)) {
+auto GetFourStatePlaneType(
+    const CuFacts& facts, Context& context, TypeId type_id) -> llvm::Type* {
+  if (!IsFourState(facts, type_id)) {
     throw common::InternalError(
         "GetFourStatePlaneType", std::format("type is not 4-state"));
   }
-  auto type_info_or_err = GetTypeInfoFromType(context, type_id);
+  auto type_info_or_err = GetTypeInfoFromType(facts, context, type_id);
   if (!type_info_or_err) {
     throw common::InternalError(
         "GetFourStatePlaneType",

@@ -13,7 +13,6 @@
 #include <llvm/IR/DerivedTypes.h>
 #include <llvm/IR/LLVMContext.h>
 
-#include "lyra/common/body_timescale.hpp"
 #include "lyra/common/slot_id.hpp"
 #include "lyra/common/type.hpp"
 #include "lyra/common/type_arena.hpp"
@@ -50,8 +49,6 @@ struct FourStatePatchTable {
   }
 };
 
-// SlotIdHash is defined in kernel_types.hpp (included above).
-
 struct PlaceIdHash {
   auto operator()(mir::PlaceId id) const noexcept -> size_t {
     return std::hash<uint32_t>{}(id.value);
@@ -76,6 +73,21 @@ struct PlaceRootKeyHash {
   }
 };
 
+// Type kind for variable inspection (also used in layout).
+enum class VarTypeKind : uint8_t {
+  kIntegral,  // int, bit, logic (2-state)
+  kReal,      // real, shortreal
+  kString,    // string
+};
+
+// Type info for a design slot (for variable registration).
+struct SlotTypeInfo {
+  VarTypeKind kind = VarTypeKind::kIntegral;
+  uint32_t width = 0;
+  bool is_signed = false;
+  bool is_four_state = false;
+};
+
 // Design-wide state layout artifact.
 // DesignState is a Lyra-owned byte arena with two regions:
 //   [inline region] [appendix region]
@@ -86,10 +98,8 @@ struct InstanceSlotRange;
 // Appendix region: backing data for kOwnedContainer slots.
 struct DesignLayout {
   // Ordered slots, in declaration order.
+  // Identity invariant: slots[i].value == i for all i.
   std::vector<common::SlotId> slots;
-
-  // Map from SlotId to slot position index (into slots/offsets/specs vectors).
-  std::unordered_map<common::SlotId, uint32_t, SlotIdHash> slot_to_index;
 
   // Inline-region byte offset of each slot's inline representation.
   // For kInlineValue: offset of the slot's value bytes.
@@ -122,6 +132,11 @@ struct DesignLayout {
   // Every slot has OwnedLocalStorage with arena-absolute offset.
   std::vector<OwnedLocalStorage> slot_storage_bindings;
 
+  // Pre-classified type info per slot (parallel to slots).
+  // Resolved during layout construction from TypeArena + force_two_state.
+  // Consumed by inspection planning so it does not need design/type lookups.
+  std::vector<SlotTypeInfo> slot_type_infos;
+
   // Check if a slot is in this layout.
   [[nodiscard]] auto ContainsSlot(common::SlotId slot_id) const -> bool;
 
@@ -145,9 +160,6 @@ struct DesignLayout {
       const InstanceSlotRange& instance_range) const
       -> common::InstanceByteOffset;
 
-  // Get the layout row index for a slot. Throws InternalError if not found.
-  [[nodiscard]] auto GetSlotRow(common::SlotId slot_id) const -> uint32_t;
-
   // Get the body-relative offset for a slot.
   // Total for all body-local slots (every slot owns storage).
   [[nodiscard]] auto GetBodyOffset(
@@ -164,8 +176,8 @@ struct DesignLayout {
 // Maps a managed signal slot to its frame field index so codegen
 // can emit GEPs instead of stack allocas.
 struct ShadowFieldEntry {
-  uint32_t slot_id;
-  uint32_t field_index;
+  uint32_t slot_id = 0;
+  uint32_t field_index = 0;
   TypeId root_type;
 };
 
@@ -253,8 +265,8 @@ struct ModuleIndex {
 // Pre-resolved trigger observation for sub-slot narrowing in metadata lowering.
 // Computed during layout while the owning MIR arena is still known, so no
 // arena-local PlaceId survives into cross-boundary metadata.
-// ConnectionKernelEntry, ResolvedObservation, and SlotIdHash are defined
-// in kernel_types.hpp (included above).
+// ConnectionKernelEntry and ResolvedObservation are defined in
+// kernel_types.hpp (included above).
 
 // Scheduled process record: pairs a ProcessId with optional module instance.
 // Module-owned processes have a valid module_index; design-level processes
@@ -367,6 +379,7 @@ struct PackageInitDescriptor {
 struct ScopedSignalKey {
   mir::SignalRef::Scope scope = mir::SignalRef::Scope::kModuleLocal;
   uint32_t id = 0;
+  uint32_t object_index = 0;
   auto operator==(const ScopedSignalKey&) const -> bool = default;
 };
 
@@ -374,8 +387,9 @@ struct ScopedSignalKeyHash {
   auto operator()(const ScopedSignalKey& k) const noexcept -> size_t {
     auto scope_val =
         static_cast<std::underlying_type_t<mir::SignalRef::Scope>>(k.scope);
-    return std::hash<uint64_t>{}(
-        (static_cast<uint64_t>(scope_val) << 32) | k.id);
+    auto h =
+        std::hash<uint64_t>{}((static_cast<uint64_t>(scope_val) << 32) | k.id);
+    return h ^ (std::hash<uint32_t>{}(k.object_index) * 2654435761U);
   }
 };
 
@@ -426,11 +440,11 @@ struct Layout {
 
   // Explicit per-instance storage base.
   // Computed from the first slot in each instance's slot range.
-  auto GetInstanceStorageBase(ModuleIndex idx) const
+  [[nodiscard]] auto GetInstanceStorageBase(ModuleIndex idx) const
       -> const InstanceStorageBase&;
 
   // Total number of body-local slots for a given instance.
-  auto GetInstanceSlotCount(ModuleIndex idx) const -> uint32_t;
+  [[nodiscard]] auto GetInstanceSlotCount(ModuleIndex idx) const -> uint32_t;
 
   // Number of package-owned slots (before any module instance slots).
   // This is the initial value of the running slot-base counter that the
@@ -456,16 +470,15 @@ struct Layout {
   // slot positions. This is NOT the count of owned-local slots only.
   std::vector<uint32_t> instance_slot_counts;
 
-  // Per-instance owning body id. Parallel to instance_slot_counts.
-  // Used to resolve an instance-owned slot to its body-local slot descriptor
-  // without a separate topology lookup.
-  std::vector<mir::ModuleBodyId> instance_body_ids;
+  // Per-instance body-group index. Parallel to placement.instances.
+  // Maps object_index -> body_realization_infos index.
+  std::vector<uint32_t> instance_body_groups;
 
   // Constructor metadata: shared process-state schemas and per-process
   // constructor records. Computed from the process layout loop.
 
   // Per-schema descriptor for codegen emission.
-  // Schema identity is (body_id, proc_within_body) for module processes,
+  // Schema identity is (body_group, proc_within_body) for module processes,
   // or a unique connection-local index for connection processes.
   struct ProcessStateSchemaDesc {
     uint64_t state_size = 0;
@@ -488,15 +501,10 @@ struct Layout {
   // Body-shaped descriptors consumed by the runtime constructor.
 
   // Per-body process/schema mapping and metadata template.
-  // One entry per unique body_id, ordered by first-seen body_id during
+  // One entry per unique body, ordered by first-seen body during
   // schema dedup (deterministic from BFS-sorted elaboration order).
-  // Do not reorder.
+  // Do not reorder. Body pointer is the canonical identity.
   struct BodyRealizationInfo {
-    mir::ModuleBodyId body_id;
-    // Direct pointer into mir::Design::module_bodies. Parallel to body_id,
-    // used for structural fetches that previously re-indexed through
-    // design.module_bodies.at(body_id.value). body_id stays for dedup
-    // keys, timescale indexing, origin provenance, and debug naming.
     const mir::ModuleBody* body = nullptr;
     uint32_t slot_count = 0;
     // Body-local byte layout. Per-slot offsets in BodyByteOffset domain.
@@ -505,30 +513,6 @@ struct Layout {
     // Body-local slot storage specs (absorbed from BodyStorageLayout).
     // Parallel to body_layout.inline_offsets (indexed by body-local slot).
     std::vector<SlotStorageSpec> slot_specs;
-    // Per-process schema indices, indexed by dense non-final body-local
-    // process ordinal. Every ordinal in [0, size) is present and valid.
-    // This ordering matches the body's non-final process list and the
-    // compiled function vector for that body.
-    std::vector<uint32_t> process_schema_indices;
-    // Process metadata template in descriptor-ready canonical form.
-    // One entry per non-final process ordinal, parallel to
-    // process_schema_indices.
-    // The post-layout metadata template extraction pass is the sole
-    // producer.
-    OwnedProcessMetaTemplate meta;
-    // Trigger metadata template. Flat entries + per-process range table.
-    // The post-layout template extraction pass is the sole producer.
-    OwnedTriggerTemplate triggers;
-    // Comb kernel metadata template. Flat entries + per-kernel descriptors.
-    // The post-layout template extraction pass is the sole producer.
-    OwnedCombTemplate comb;
-    // Observable descriptor template. Flat entries + local-name pool.
-    // The post-layout descriptor extraction pass is the sole producer.
-    OwnedObservableDescriptorTemplate observable_descriptors;
-    // Design-state initialization descriptor.
-    // Body-shaped init metadata consumed by the constructor to initialize
-    // per-instance design state. All offsets are body-relative.
-    BodyInitDescriptor init;
     // Specialization-owned body-local behavioral dirty-propagation
     // contract. True iff any behavioral wait trigger in the body's
     // artifact repertoire (process waits, comb triggers) references
@@ -536,62 +520,57 @@ struct Layout {
     // Instance-independent: all instances of this body share the
     // same behavioral trigger set.
     std::vector<bool> slot_has_behavioral_trigger;
+    // Per body-local slot: true iff a process in a different body (or an
+    // init process) has a behavioral trigger that resolves to this slot,
+    // AND this body does not already have a body-local trigger on it.
+    // Disjoint with slot_has_behavioral_trigger by construction.
+    // Covers cross-body dependents (e.g., parent always_ff
+    // @(posedge child.clk)).
+    std::vector<bool> slot_has_cross_body_behavioral_trigger;
+    // Per body-local slot: true iff any connection process triggers on
+    // that slot. Conservative union across all instances of this body.
+    // Indexed by body-local slot id [0, slot_count).
+    std::vector<bool> slot_has_connection_notification;
     // Body-local state region sizes in bytes. Produced from body-local
     // storage spec computation.
     uint64_t inline_state_size_bytes = 0;
     uint64_t appendix_state_size_bytes = 0;
     uint64_t total_state_size_bytes = 0;
-    // Per-process decision site metadata. Outer vector indexed by
-    // body-local process ordinal. Inner vector: one DecisionMetaEntry
-    // per decision site in that process.
-    // The DecisionMetaEntry::file field is null at this stage; the actual
-    // file strings are in decision_meta_files (parallel structure).
-    std::vector<std::vector<runtime::DecisionMetaEntry>> decision_metas;
-    // Parallel file path strings for decision_metas. Same shape.
-    // Used at LLVM emission time to create global string constants.
-    std::vector<std::vector<std::string>> decision_meta_files;
     // Per-body timescale from compile-time scope metadata.
-    // Must be explicitly initialized from the body timescale table.
-    int8_t time_unit_power;
-    int8_t time_precision_power;
+    int8_t time_unit_power = 0;
+    int8_t time_precision_power = 0;
     // L8a: Body-local named event count. Set from MIR body events.
     uint32_t event_count = 0;
   };
   std::vector<BodyRealizationInfo> body_realization_infos;
 
-  // Transitional design-global bridge: per-body representative base slot.
-  // Indexed parallel to body_realization_infos.
-  // Used ONLY by legacy codegen paths that still require design-global slot
-  // lookup (connection trigger classification, signal resolution).
-  // Will be deleted when codegen moves fully to body-local identity (B2b).
-  // Do NOT use in new code -- use body-local BodyLayout/slot_specs instead.
-  std::vector<uint32_t> body_representative_base_slots;
-
-  // Transitional: resolve a body-local slot to a representative
-  // design-global slot index. ONLY for runtime signal identity at the
-  // codegen->runtime boundary (trace observation, packed store
-  // notifications). Must NOT be used for spec compilation decisions.
-  // Will be deleted when runtime signal identity moves fully to
-  // object-local coordinates.
-  [[nodiscard]] auto ResolveRepresentativeDesignSlot(
-      uint32_t body_info_index, uint32_t local_slot) const -> uint32_t {
-    if (body_info_index >= body_representative_base_slots.size()) {
-      throw common::InternalError(
-          "ResolveRepresentativeDesignSlot",
-          std::format(
-              "body_info_index {} out of range (size={})", body_info_index,
-              body_representative_base_slots.size()));
-    }
-    if (local_slot >= body_realization_infos.at(body_info_index).slot_count) {
-      throw common::InternalError(
-          "ResolveRepresentativeDesignSlot",
-          std::format(
-              "local_slot {} out of range for body {} (slot_count={})",
-              local_slot, body_realization_infos[body_info_index].body_id.value,
-              body_realization_infos[body_info_index].slot_count));
-    }
-    return body_representative_base_slots[body_info_index] + local_slot;
-  }
+  // Per-body runtime descriptors produced during assembly (runtime data
+  // extraction). Parallel to body_realization_infos. Populated in two
+  // phases: process_schema_indices during layout construction,
+  // remaining fields by ApplyRuntimeDataToLayout after extraction.
+  // Consumed only by assembly/emission (body descriptor codegen,
+  // metadata table emission).
+  struct BodyRuntimeDescriptors {
+    // Per-process schema indices, indexed by dense non-final body-local
+    // process ordinal. Populated during layout construction.
+    std::vector<uint32_t> process_schema_indices;
+    // Process metadata template in descriptor-ready canonical form.
+    OwnedProcessMetaTemplate meta;
+    // Trigger metadata template. Flat entries + per-process range table.
+    OwnedTriggerTemplate triggers;
+    // Comb kernel metadata template. Flat entries + per-kernel descriptors.
+    OwnedCombTemplate comb;
+    // Observable descriptor template. Flat entries + local-name pool.
+    OwnedObservableDescriptorTemplate observable_descriptors;
+    // Design-state initialization descriptor.
+    BodyInitDescriptor init;
+    // Per-process decision site metadata. Outer vector indexed by
+    // body-local process ordinal.
+    std::vector<std::vector<runtime::DecisionMetaEntry>> decision_metas;
+    // Parallel file path strings for decision_metas. Same shape.
+    std::vector<std::vector<std::string>> decision_meta_files;
+  };
+  std::vector<BodyRuntimeDescriptors> body_runtime_descriptors;
 
   // Per-connection codegen trigger fact. Intentionally reduced payload
   // from ProcessTriggerFact (process.hpp): only the fields needed for
@@ -662,32 +641,6 @@ struct Layout {
   // that slot. Keyed by canonical storage-owner slot identity.
   // Indexed by design-global slot_id [0, design.slots.size()).
   std::vector<bool> slot_has_connection_trigger;
-
-  // Design-global behavioral dirty-propagation contract.
-  // True iff any behavioral wait trigger references that slot:
-  //   - init processes (design-global triggers)
-  //   - body processes with design-global waits
-  //   - body-local behavioral triggers projected onto design-global slots
-  // The projection ensures cross-body writers (e.g., connection processes)
-  // see body-local behavioral dependents (e.g., comb kernels).
-  // Keyed by canonical storage-owner slot identity.
-  // Indexed by design-global slot_id [0, design.slots.size()).
-  std::vector<bool> slot_has_design_behavioral_trigger;
-};
-
-// Type kind for variable inspection (also used in layout)
-enum class VarTypeKind : uint8_t {
-  kIntegral,  // int, bit, logic (2-state)
-  kReal,      // real, shortreal
-  kString,    // string
-};
-
-// Type info for a design slot (for variable registration).
-struct SlotTypeInfo {
-  VarTypeKind kind = VarTypeKind::kIntegral;
-  uint32_t width = 0;
-  bool is_signed = false;
-  bool is_four_state = false;
 };
 
 // Get the LLVM type for a TypeId. Handles all type kinds: integrals, reals,
@@ -747,8 +700,9 @@ struct SlotOwnerInfo {
   runtime::LocalSignalId local_signal_id;
 };
 
-auto ResolveInstanceOwnedFlatSlot(const Layout& layout, uint32_t flat_slot_id)
-    -> SlotOwnerInfo;
+auto ResolveInstanceOwnedFlatSlot(
+    uint32_t num_package_slots, std::span<const uint32_t> instance_slot_counts,
+    uint32_t flat_slot_id) -> SlotOwnerInfo;
 
 // Build a design layout from package slot descriptors and per-instance
 // slot descriptor views. The flat slot table is never materialized: this
@@ -770,9 +724,9 @@ struct BodyStorageLayout {
   StorageSpecArena spec_arena;
 };
 
-// Build body-owned storage layout from body-local inputs.
+// Build body-owned storage layout from body-local slot descriptors.
 auto BuildBodyStorageLayout(
-    const mir::ModuleBody& body, const TypeArena& types,
+    std::span<const mir::SlotDesc> slots, const TypeArena& types,
     const llvm::DataLayout& dl, bool force_two_state) -> BodyStorageLayout;
 
 // Compute body-local state region sizes from body-owned storage layout.
@@ -791,11 +745,21 @@ auto BuildBodyLayout(
 // Borrowed view into MIR data; valid only for the synchronous BuildLayout call.
 // Do not store beyond the call scope. body is a direct pointer into
 // mir::Design::module_bodies; stable as long as the vector is not resized.
+// Per-module-instance layout planning entry.
+// Header-level facts only: slot descriptors, slot counts, base offsets.
+// Process/scheduling data is carried separately in TopologyPlan.
 struct LayoutModulePlan {
-  std::span<const mir::ProcessId> body_processes;
   const mir::ModuleBody* body = nullptr;
+  // Body-local slot descriptors (header-level interface).
+  // Consumers that only need slot shape should use this span
+  // rather than reaching through body->slots.
+  std::span<const mir::SlotDesc> body_slots;
   uint32_t design_state_base_slot = 0;
   uint32_t slot_count = 0;
+  // Per-body timescale as power-of-10 exponents.
+  // Absorbed from body_timescales during topology extraction.
+  int8_t time_unit_power = 0;
+  int8_t time_precision_power = 0;
 };
 
 // Build complete backend layout from narrow planning inputs.
@@ -809,11 +773,12 @@ auto BuildLayout(
     std::span<const mir::ProcessId> init_processes,
     std::vector<ConnectionKernelEntry> precollected_connection_kernels,
     std::vector<mir::ProcessId> non_kernelized_connection_processes,
-    std::span<const LayoutModulePlan> module_plans, const mir::Design& design,
-    const mir::Arena& design_arena, const TypeArena& types,
-    DesignLayout design_layout,
-    const std::unordered_map<uint32_t, BodyStorageLayout>& body_storage_layouts,
-    const std::vector<common::BodyTimeScale>* body_timescales,
+    std::span<const LayoutModulePlan> module_plans,
+    std::span<const std::span<const mir::ProcessId>> module_body_processes,
+    const mir::Design& design, const mir::Arena& design_arena,
+    const TypeArena& types, DesignLayout design_layout,
+    const std::unordered_map<const mir::ModuleBody*, BodyStorageLayout>&
+        body_storage_layouts,
     llvm::LLVMContext& ctx, const llvm::DataLayout& dl, bool force_two_state)
     -> Layout;
 
@@ -874,6 +839,13 @@ auto AnalyzeCombKernel(const mir::Process& process, const mir::Arena& arena)
 auto ResolveObservation(
     const mir::Arena& arena, const DesignLayout& design_layout,
     common::SlotId design_global_slot, mir::PlaceId place_id)
+    -> std::optional<ResolvedObservation>;
+
+// Body-local observation resolution. Takes slot storage spec and spec
+// arena directly, without requiring a design-global slot lookup.
+auto ResolveObservationFromSpec(
+    const mir::Arena& arena, const SlotStorageSpec& spec,
+    const StorageSpecArena& spec_arena, mir::PlaceId place_id)
     -> std::optional<ResolvedObservation>;
 
 }  // namespace lyra::lowering::mir_to_llvm

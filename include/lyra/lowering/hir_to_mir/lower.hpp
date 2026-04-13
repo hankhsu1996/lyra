@@ -4,6 +4,7 @@
 #include <memory>
 #include <unordered_map>
 
+#include "lyra/common/body_timescale.hpp"
 #include "lyra/common/child_coord_map.hpp"
 #include "lyra/common/constant_arena.hpp"
 #include "lyra/common/diagnostic/diagnostic.hpp"
@@ -42,6 +43,9 @@ struct LoweringInput {
   // Per-definition child instance name -> repertoire coord mapping.
   // Used by design_lower for durable child-site identity.
   const common::ChildCoordMap* child_coord_map = nullptr;
+  // Per-body timescale table from AST->HIR. Parallel to spec groups.
+  // Consumed during Phase 2 assembly to set timescale on mir::ModuleBody.
+  const std::vector<common::BodyTimeScale>* body_timescales = nullptr;
 };
 
 // Statistics collected during HIR->MIR lowering (for --stats output).

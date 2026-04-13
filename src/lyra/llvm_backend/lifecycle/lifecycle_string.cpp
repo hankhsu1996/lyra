@@ -1,52 +1,53 @@
 #include <llvm/IR/Constants.h>
 #include <llvm/IR/DerivedTypes.h>
+#include <llvm/IR/IRBuilder.h>
 #include <llvm/IR/Type.h>
 #include <llvm/Support/Casting.h>
-
-#include "lyra/llvm_backend/context.hpp"
 
 namespace lyra::lowering::mir_to_llvm::detail {
 
 namespace {
 
-// Get the handle type from the runtime function prototype.
-// All string runtime functions use the same opaque pointer type.
-auto GetStringHandleType(Context& ctx) -> llvm::Type* {
-  return ctx.GetLyraStringRelease()->getFunctionType()->getParamType(0);
+auto GetHandlePtrType(llvm::IRBuilder<>& builder) -> llvm::PointerType* {
+  return llvm::PointerType::getUnqual(builder.getContext());
 }
 
 }  // namespace
 
-void DestroyString(Context& ctx, llvm::Value* ptr) {
-  auto* handle_ty = GetStringHandleType(ctx);
-  auto* handle = ctx.GetBuilder().CreateLoad(handle_ty, ptr, "destroy.str");
-  ctx.GetBuilder().CreateCall(ctx.GetLyraStringRelease(), {handle});
+void DestroyString(
+    llvm::IRBuilder<>& builder, llvm::Function* release_fn, llvm::Value* ptr) {
+  auto* handle_ty = GetHandlePtrType(builder);
+  auto* handle = builder.CreateLoad(handle_ty, ptr, "destroy.str");
+  builder.CreateCall(release_fn, {handle});
 }
 
-auto CloneString(Context& ctx, llvm::Value* handle) -> llvm::Value* {
-  return ctx.GetBuilder().CreateCall(ctx.GetLyraStringRetain(), {handle});
+auto CloneString(
+    llvm::IRBuilder<>& builder, llvm::Function* retain_fn, llvm::Value* handle)
+    -> llvm::Value* {
+  return builder.CreateCall(retain_fn, {handle});
 }
 
-void MoveCleanupString(Context& ctx, llvm::Value* ptr) {
-  auto* handle_ty = GetStringHandleType(ctx);
+void MoveCleanupString(llvm::IRBuilder<>& builder, llvm::Value* ptr) {
+  auto* handle_ty = GetHandlePtrType(builder);
   auto* null_val =
       llvm::ConstantPointerNull::get(llvm::cast<llvm::PointerType>(handle_ty));
-  ctx.GetBuilder().CreateStore(null_val, ptr);
+  builder.CreateStore(null_val, ptr);
 }
 
-void CopyInitString(Context& ctx, llvm::Value* dst_ptr, llvm::Value* src_ptr) {
-  auto& builder = ctx.GetBuilder();
-  auto* handle_ty = GetStringHandleType(ctx);
+void CopyInitString(
+    llvm::IRBuilder<>& builder, llvm::Function* retain_fn, llvm::Value* dst_ptr,
+    llvm::Value* src_ptr) {
+  auto* handle_ty = GetHandlePtrType(builder);
 
   // Load source handle, clone/retain it, store to dst
   auto* src_handle = builder.CreateLoad(handle_ty, src_ptr, "copy.str.src");
-  auto* cloned = builder.CreateCall(ctx.GetLyraStringRetain(), {src_handle});
+  auto* cloned = builder.CreateCall(retain_fn, {src_handle});
   builder.CreateStore(cloned, dst_ptr);
 }
 
-void MoveInitString(Context& ctx, llvm::Value* dst_ptr, llvm::Value* src_ptr) {
-  auto& builder = ctx.GetBuilder();
-  auto* handle_ty = GetStringHandleType(ctx);
+void MoveInitString(
+    llvm::IRBuilder<>& builder, llvm::Value* dst_ptr, llvm::Value* src_ptr) {
+  auto* handle_ty = GetHandlePtrType(builder);
 
   // Move: load handle from src, store to dst, null out src
   auto* handle = builder.CreateLoad(handle_ty, src_ptr, "move.str");

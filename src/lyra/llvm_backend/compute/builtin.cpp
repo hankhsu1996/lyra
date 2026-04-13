@@ -20,6 +20,7 @@
 #include "lyra/llvm_backend/compute/operand.hpp"
 #include "lyra/llvm_backend/compute/rvalue.hpp"
 #include "lyra/llvm_backend/context.hpp"
+#include "lyra/llvm_backend/cu_facts.hpp"
 #include "lyra/llvm_backend/slot_access.hpp"
 #include "lyra/lowering/diagnostic_context.hpp"
 #include "lyra/mir/builtin.hpp"
@@ -30,11 +31,11 @@ namespace lyra::lowering::mir_to_llvm {
 namespace {
 
 auto LowerDynArrayBuiltinValue(
-    Context& context, SlotAccessResolver& resolver, const mir::Rvalue& rvalue,
-    TypeId result_type, const mir::BuiltinCallRvalueInfo& info)
-    -> Result<llvm::Value*> {
+    Context& context, const CuFacts& facts, SlotAccessResolver& resolver,
+    const mir::Rvalue& rvalue, TypeId result_type,
+    const mir::BuiltinCallRvalueInfo& info) -> Result<llvm::Value*> {
   auto& builder = context.GetBuilder();
-  const auto& types = context.GetTypeArena();
+  const auto& types = *facts.types;
 
   switch (info.method) {
     case mir::BuiltinMethod::kNewArray: {
@@ -49,7 +50,8 @@ auto LowerDynArrayBuiltinValue(
       if (!elem_ops_result) return std::unexpected(elem_ops_result.error());
       auto elem_ops = *elem_ops_result;
 
-      auto size_or_err = LowerOperand(context, resolver, rvalue.operands[0]);
+      auto size_or_err =
+          LowerOperand(context, facts, resolver, rvalue.operands[0]);
       if (!size_or_err) return std::unexpected(size_or_err.error());
       llvm::Value* size = *size_or_err;
       auto* i64_ty = llvm::Type::getInt64Ty(context.GetLlvmContext());
@@ -60,7 +62,8 @@ auto LowerDynArrayBuiltinValue(
 
       llvm::Value* handle = nullptr;
       if (rvalue.operands.size() >= 2) {
-        auto src_or_err = LowerOperand(context, resolver, rvalue.operands[1]);
+        auto src_or_err =
+            LowerOperand(context, facts, resolver, rvalue.operands[1]);
         if (!src_or_err) return std::unexpected(src_or_err.error());
         llvm::Value* src = *src_or_err;
         handle = builder.CreateCall(
@@ -78,14 +81,15 @@ auto LowerDynArrayBuiltinValue(
     }
 
     case mir::BuiltinMethod::kArraySize: {
-      auto handle_or_err = LowerOperand(context, resolver, rvalue.operands[0]);
+      auto handle_or_err =
+          LowerOperand(context, facts, resolver, rvalue.operands[0]);
       if (!handle_or_err) return std::unexpected(handle_or_err.error());
       llvm::Value* handle = *handle_or_err;
 
       llvm::Value* size = builder.CreateCall(
           context.GetLyraDynArraySize(), {handle}, "da.size");
 
-      auto target_type_or_err = GetLlvmTypeForType(context, result_type);
+      auto target_type_or_err = GetLlvmTypeForType(facts, context, result_type);
       if (!target_type_or_err)
         return std::unexpected(target_type_or_err.error());
       llvm::Type* target_type = *target_type_or_err;
@@ -108,21 +112,22 @@ auto LowerDynArrayBuiltinValue(
 }
 
 auto LowerQueueBuiltinValue(
-    Context& context, SlotAccessResolver& resolver, const mir::Rvalue& rvalue,
-    TypeId result_type, const mir::BuiltinCallRvalueInfo& info)
-    -> Result<llvm::Value*> {
+    Context& context, const CuFacts& facts, SlotAccessResolver& resolver,
+    const mir::Rvalue& rvalue, TypeId result_type,
+    const mir::BuiltinCallRvalueInfo& info) -> Result<llvm::Value*> {
   auto& builder = context.GetBuilder();
 
   switch (info.method) {
     case mir::BuiltinMethod::kQueueSize: {
-      auto handle_or_err = LowerOperand(context, resolver, rvalue.operands[0]);
+      auto handle_or_err =
+          LowerOperand(context, facts, resolver, rvalue.operands[0]);
       if (!handle_or_err) return std::unexpected(handle_or_err.error());
       llvm::Value* handle = *handle_or_err;
 
       llvm::Value* size =
           builder.CreateCall(context.GetLyraDynArraySize(), {handle}, "q.size");
 
-      auto target_type_or_err = GetLlvmTypeForType(context, result_type);
+      auto target_type_or_err = GetLlvmTypeForType(facts, context, result_type);
       if (!target_type_or_err)
         return std::unexpected(target_type_or_err.error());
       llvm::Type* target_type = *target_type_or_err;
@@ -150,15 +155,15 @@ auto LowerQueueBuiltinValue(
 }
 
 auto LowerEnumNextPrevValue(
-    Context& context, SlotAccessResolver& resolver, const mir::Rvalue& rvalue,
-    TypeId result_type, const mir::BuiltinCallRvalueInfo& info)
-    -> Result<llvm::Value*> {
+    Context& context, const CuFacts& facts, SlotAccessResolver& resolver,
+    const mir::Rvalue& rvalue, TypeId result_type,
+    const mir::BuiltinCallRvalueInfo& info) -> Result<llvm::Value*> {
   if (!info.enum_type.has_value()) {
     throw common::InternalError(
         "LowerEnumNextPrev", "enum_type must be set for enum builtin");
   }
   auto& builder = context.GetBuilder();
-  const auto& types = context.GetTypeArena();
+  const auto& types = *facts.types;
 
   TypeId enum_type_id = *info.enum_type;
   const Type& enum_type = types[enum_type_id];
@@ -170,18 +175,19 @@ auto LowerEnumNextPrevValue(
   }
 
   uint32_t bit_width = PackedBitWidth(enum_type, types);
-  if (context.IsPackedFourState(enum_type)) {
+  if (IsPackedFourState(facts, enum_type)) {
     throw common::InternalError(
         "LowerEnumNextPrev", "4-state enums not supported");
   }
 
   auto* i32_ty = llvm::Type::getInt32Ty(context.GetLlvmContext());
 
-  auto value_type_or_err = GetLlvmTypeForType(context, result_type);
+  auto value_type_or_err = GetLlvmTypeForType(facts, context, result_type);
   if (!value_type_or_err) return std::unexpected(value_type_or_err.error());
   llvm::Type* value_type = *value_type_or_err;
 
-  auto current_val_or_err = LowerOperand(context, resolver, rvalue.operands[0]);
+  auto current_val_or_err =
+      LowerOperand(context, facts, resolver, rvalue.operands[0]);
   if (!current_val_or_err) return std::unexpected(current_val_or_err.error());
   llvm::Value* current_val = *current_val_or_err;
   current_val = builder.CreateZExtOrTrunc(current_val, value_type, "enum.val");
@@ -212,7 +218,8 @@ auto LowerEnumNextPrevValue(
 
   llvm::Value* step = nullptr;
   if (rvalue.operands.size() > 1) {
-    auto step_or_err = LowerOperand(context, resolver, rvalue.operands[1]);
+    auto step_or_err =
+        LowerOperand(context, facts, resolver, rvalue.operands[1]);
     if (!step_or_err) return std::unexpected(step_or_err.error());
     step = *step_or_err;
     step = builder.CreateIntCast(step, i32_ty, false, "enum.step");
@@ -255,20 +262,21 @@ auto LowerEnumNextPrevValue(
 }
 
 auto LowerEnumNameValue(
-    Context& context, SlotAccessResolver& resolver, const mir::Rvalue& rvalue,
-    const mir::BuiltinCallRvalueInfo& info) -> Result<llvm::Value*> {
+    Context& context, const CuFacts& facts, SlotAccessResolver& resolver,
+    const mir::Rvalue& rvalue, const mir::BuiltinCallRvalueInfo& info)
+    -> Result<llvm::Value*> {
   if (!info.enum_type.has_value()) {
     throw common::InternalError(
         "LowerEnumName", "enum_type must be set for enum builtin");
   }
   auto& builder = context.GetBuilder();
-  const auto& types = context.GetTypeArena();
+  const auto& types = *facts.types;
 
   TypeId enum_type_id = *info.enum_type;
   const Type& enum_type = types[enum_type_id];
   const auto& enum_info = enum_type.AsEnum();
   auto member_count = static_cast<uint32_t>(enum_info.members.size());
-  if (context.IsPackedFourState(enum_type)) {
+  if (IsPackedFourState(facts, enum_type)) {
     throw common::InternalError("LowerEnumName", "4-state enums not supported");
   }
 
@@ -288,7 +296,8 @@ auto LowerEnumNameValue(
   auto* enum_val_type =
       llvm::Type::getIntNTy(context.GetLlvmContext(), storage_bits);
 
-  auto current_val_or_err = LowerOperand(context, resolver, rvalue.operands[0]);
+  auto current_val_or_err =
+      LowerOperand(context, facts, resolver, rvalue.operands[0]);
   if (!current_val_or_err) return std::unexpected(current_val_or_err.error());
   llvm::Value* current_val = *current_val_or_err;
   current_val =
@@ -372,29 +381,32 @@ auto LowerEnumNameValue(
 }
 
 auto LowerEnumBuiltinValue(
-    Context& context, SlotAccessResolver& resolver, const mir::Rvalue& rvalue,
-    TypeId result_type, const mir::BuiltinCallRvalueInfo& info)
-    -> Result<llvm::Value*> {
+    Context& context, const CuFacts& facts, SlotAccessResolver& resolver,
+    const mir::Rvalue& rvalue, TypeId result_type,
+    const mir::BuiltinCallRvalueInfo& info) -> Result<llvm::Value*> {
   if (info.method == mir::BuiltinMethod::kEnumNext ||
       info.method == mir::BuiltinMethod::kEnumPrev) {
-    return LowerEnumNextPrevValue(context, resolver, rvalue, result_type, info);
+    return LowerEnumNextPrevValue(
+        context, facts, resolver, rvalue, result_type, info);
   }
-  return LowerEnumNameValue(context, resolver, rvalue, info);
+  return LowerEnumNameValue(context, facts, resolver, rvalue, info);
 }
 
 }  // namespace
 
 auto LowerBuiltinRvalue(
-    Context& context, const mir::Rvalue& rvalue, TypeId result_type,
-    const mir::BuiltinCallRvalueInfo& info) -> Result<RvalueValue> {
-  CanonicalSlotAccess canonical(context);
-  return LowerBuiltinRvalue(context, canonical, rvalue, result_type, info);
+    Context& context, const CuFacts& facts, const mir::Rvalue& rvalue,
+    TypeId result_type, const mir::BuiltinCallRvalueInfo& info)
+    -> Result<RvalueValue> {
+  CanonicalSlotAccess canonical(context, facts);
+  return LowerBuiltinRvalue(
+      context, facts, canonical, rvalue, result_type, info);
 }
 
 auto LowerBuiltinRvalue(
-    Context& context, SlotAccessResolver& resolver, const mir::Rvalue& rvalue,
-    TypeId result_type, const mir::BuiltinCallRvalueInfo& info)
-    -> Result<RvalueValue> {
+    Context& context, const CuFacts& facts, SlotAccessResolver& resolver,
+    const mir::Rvalue& rvalue, TypeId result_type,
+    const mir::BuiltinCallRvalueInfo& info) -> Result<RvalueValue> {
   Result<llvm::Value*> result_or_err =
       std::unexpected(context.GetDiagnosticContext().MakeUnsupported(
           context.GetCurrentOrigin(),
@@ -407,7 +419,7 @@ auto LowerBuiltinRvalue(
     case mir::BuiltinMethod::kArraySize:
     case mir::BuiltinMethod::kArrayDelete:
       result_or_err = LowerDynArrayBuiltinValue(
-          context, resolver, rvalue, result_type, info);
+          context, facts, resolver, rvalue, result_type, info);
       break;
     case mir::BuiltinMethod::kQueueSize:
     case mir::BuiltinMethod::kQueueDelete:
@@ -417,14 +429,14 @@ auto LowerBuiltinRvalue(
     case mir::BuiltinMethod::kQueuePopBack:
     case mir::BuiltinMethod::kQueuePopFront:
     case mir::BuiltinMethod::kQueueInsert:
-      result_or_err =
-          LowerQueueBuiltinValue(context, resolver, rvalue, result_type, info);
+      result_or_err = LowerQueueBuiltinValue(
+          context, facts, resolver, rvalue, result_type, info);
       break;
     case mir::BuiltinMethod::kEnumNext:
     case mir::BuiltinMethod::kEnumPrev:
     case mir::BuiltinMethod::kEnumName:
-      result_or_err =
-          LowerEnumBuiltinValue(context, resolver, rvalue, result_type, info);
+      result_or_err = LowerEnumBuiltinValue(
+          context, facts, resolver, rvalue, result_type, info);
       break;
   }
 

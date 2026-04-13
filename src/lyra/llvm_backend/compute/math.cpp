@@ -20,6 +20,7 @@
 #include "lyra/common/type.hpp"
 #include "lyra/llvm_backend/compute/operand.hpp"
 #include "lyra/llvm_backend/context.hpp"
+#include "lyra/llvm_backend/cu_facts.hpp"
 #include "lyra/llvm_backend/slot_access.hpp"
 #include "lyra/lowering/diagnostic_context.hpp"
 #include "lyra/mir/operand.hpp"
@@ -33,10 +34,11 @@ auto IsRealKind(TypeKind kind) -> bool {
   return kind == TypeKind::kReal || kind == TypeKind::kShortReal;
 }
 
-auto GetOperandFloatType(Context& context, const mir::Operand& operand)
+auto GetOperandFloatType(
+    Context& context, const CuFacts& facts, const mir::Operand& operand)
     -> llvm::Type* {
-  TypeId tid = GetOperandTypeId(context, operand);
-  const auto& types = context.GetTypeArena();
+  TypeId tid = GetOperandTypeId(facts, context, operand);
+  const auto& types = *facts.types;
   if (!IsRealKind(types[tid].Kind())) {
     throw common::InternalError(
         "GetOperandFloatType", "operand must be real or shortreal");
@@ -48,12 +50,12 @@ auto GetOperandFloatType(Context& context, const mir::Operand& operand)
 }
 
 auto LowerMathIntegralClog2(
-    Context& context, SlotAccessResolver& resolver,
+    Context& context, const CuFacts& facts, SlotAccessResolver& resolver,
     const std::vector<mir::Operand>& operands, TypeId result_type_id)
     -> Result<RvalueValue> {
   auto& builder = context.GetBuilder();
   auto& module = context.GetModule();
-  const auto& types = context.GetTypeArena();
+  const auto& types = *facts.types;
 
   const Type& result_type_ref = types[result_type_id];
   uint32_t target_width = PackedBitWidth(result_type_ref, types);
@@ -64,13 +66,13 @@ auto LowerMathIntegralClog2(
   auto* all_ones = llvm::ConstantInt::get(
       result_llvm_type, llvm::APInt::getAllOnes(target_width));
 
-  bool operand_is_four_state = IsOperandFourState(context, operands[0]);
+  bool operand_is_four_state = IsOperandFourState(facts, context, operands[0]);
 
   llvm::Value* operand_val = nullptr;
   llvm::Value* operand_unk = nullptr;
 
   if (operand_is_four_state) {
-    auto raw_or_err = LowerOperandRaw(context, resolver, operands[0]);
+    auto raw_or_err = LowerOperandRaw(context, facts, resolver, operands[0]);
     if (!raw_or_err) return std::unexpected(raw_or_err.error());
     llvm::Value* raw = *raw_or_err;
     operand_val = builder.CreateExtractValue(raw, 0, "clog2.op.val");
@@ -80,7 +82,8 @@ auto LowerMathIntegralClog2(
     operand_unk = builder.CreateZExtOrTrunc(
         operand_unk, result_llvm_type, "clog2.unk.coerce");
   } else {
-    auto operand_val_or_err = LowerOperand(context, resolver, operands[0]);
+    auto operand_val_or_err =
+        LowerOperand(context, facts, resolver, operands[0]);
     if (!operand_val_or_err) return std::unexpected(operand_val_or_err.error());
     operand_val = *operand_val_or_err;
     operand_val = builder.CreateZExtOrTrunc(
@@ -241,7 +244,7 @@ auto LowerRealMathFnBinary(
 }
 
 auto LowerMathCallValue(
-    Context& context, SlotAccessResolver& resolver,
+    Context& context, const CuFacts& facts, SlotAccessResolver& resolver,
     const mir::MathCallRvalueInfo& info,
     const std::vector<mir::Operand>& operands, TypeId result_type)
     -> Result<RvalueValue> {
@@ -255,13 +258,14 @@ auto LowerMathCallValue(
   }
 
   if (info.fn == MathFn::kClog2) {
-    return LowerMathIntegralClog2(context, resolver, operands, result_type);
+    return LowerMathIntegralClog2(
+        context, facts, resolver, operands, result_type);
   }
 
-  llvm::Type* float_ty = GetOperandFloatType(context, operands[0]);
+  llvm::Type* float_ty = GetOperandFloatType(context, facts, operands[0]);
 
   if (expected_arity == 1) {
-    auto operand_or_err = LowerOperand(context, resolver, operands[0]);
+    auto operand_or_err = LowerOperand(context, facts, resolver, operands[0]);
     if (!operand_or_err) return std::unexpected(operand_or_err.error());
     auto result_or_err =
         LowerRealMathFnUnary(context, info.fn, *operand_or_err, float_ty);
@@ -269,9 +273,9 @@ auto LowerMathCallValue(
     return RvalueValue::TwoState(*result_or_err);
   }
 
-  auto lhs_or_err = LowerOperand(context, resolver, operands[0]);
+  auto lhs_or_err = LowerOperand(context, facts, resolver, operands[0]);
   if (!lhs_or_err) return std::unexpected(lhs_or_err.error());
-  auto rhs_or_err = LowerOperand(context, resolver, operands[1]);
+  auto rhs_or_err = LowerOperand(context, facts, resolver, operands[1]);
   if (!rhs_or_err) return std::unexpected(rhs_or_err.error());
   auto result_or_err = LowerRealMathFnBinary(
       context, info.fn, *lhs_or_err, *rhs_or_err, float_ty);
@@ -286,22 +290,22 @@ auto IsMathRvalue(const mir::Rvalue& rvalue) -> bool {
 }
 
 auto LowerMathRvalue(
-    Context& context, const mir::Rvalue& rvalue, TypeId result_type)
-    -> Result<RvalueValue> {
-  CanonicalSlotAccess canonical(context);
-  return LowerMathRvalue(context, canonical, rvalue, result_type);
+    Context& context, const CuFacts& facts, const mir::Rvalue& rvalue,
+    TypeId result_type) -> Result<RvalueValue> {
+  CanonicalSlotAccess canonical(context, facts);
+  return LowerMathRvalue(context, facts, canonical, rvalue, result_type);
 }
 
 auto LowerMathRvalue(
-    Context& context, SlotAccessResolver& resolver, const mir::Rvalue& rvalue,
-    TypeId result_type) -> Result<RvalueValue> {
+    Context& context, const CuFacts& facts, SlotAccessResolver& resolver,
+    const mir::Rvalue& rvalue, TypeId result_type) -> Result<RvalueValue> {
   const auto* info = std::get_if<mir::MathCallRvalueInfo>(&rvalue.info);
   if (info == nullptr) {
     throw common::InternalError(
         "LowerMathRvalue", "expected MathCallRvalueInfo");
   }
   return LowerMathCallValue(
-      context, resolver, *info, rvalue.operands, result_type);
+      context, facts, resolver, *info, rvalue.operands, result_type);
 }
 
 }  // namespace lyra::lowering::mir_to_llvm

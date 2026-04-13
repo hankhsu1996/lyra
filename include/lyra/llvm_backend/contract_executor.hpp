@@ -5,6 +5,7 @@
 #include <vector>
 
 #include "lyra/llvm_backend/activation_local.hpp"
+#include "lyra/llvm_backend/cu_facts.hpp"
 #include "lyra/llvm_backend/slot_access.hpp"
 
 namespace lyra::lowering::mir_to_llvm {
@@ -18,7 +19,7 @@ class Context;
 class ContractExecutor {
  public:
   ContractExecutor(
-      Context& ctx, const ProcessActivationPlan& plan,
+      Context& ctx, const CuFacts& facts, const ProcessActivationPlan& plan,
       std::vector<ManagedSlotStorage> storage);
 
   // Get the resolver and lifecycle for a given block.
@@ -50,6 +51,7 @@ class ContractExecutor {
   auto GetOrCreateResolver(size_t segment_index) -> ActivationLocalSlotAccess&;
 
   Context& ctx_;
+  const CuFacts& facts_;
   const ProcessActivationPlan& plan_;
   std::vector<ManagedSlotStorage> storage_;
   CanonicalSlotAccess canonical_;

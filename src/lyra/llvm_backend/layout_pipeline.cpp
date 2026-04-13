@@ -23,13 +23,17 @@ auto BuildTopologyPlan(const LoweringInput& input) -> TopologyPlan {
     if (mod == nullptr) continue;
     const auto& body = *mod->body;
     const auto& obj = input.construction->objects.at(module_idx);
+
     topo.module_plans.push_back(
         LayoutModulePlan{
-            .body_processes = body.processes,
             .body = mod->body,
+            .body_slots = body.slots,
             .design_state_base_slot = obj.design_state_base_slot,
             .slot_count = obj.slot_count,
+            .time_unit_power = body.time_unit_power,
+            .time_precision_power = body.time_precision_power,
         });
+    topo.module_body_processes.push_back(body.processes);
     ++module_idx;
   }
   if (module_idx != input.construction->objects.size()) {
@@ -62,23 +66,26 @@ auto BuildBackendLayout(
         InstanceSlotRange{
             .base_slot = plan.design_state_base_slot,
             .slot_count = plan.slot_count,
-            .body_slots = plan.body->slots,
+            .body_slots = plan.body_slots,
         });
   }
 
   // Per-body storage layouts from body-local MIR inputs.
-  std::unordered_map<uint32_t, BodyStorageLayout> body_storage_layouts;
-  for (uint32_t bi = 0; bi < input.design->module_bodies.size(); ++bi) {
-    const auto& body = input.design->module_bodies[bi];
+  // Keyed by body pointer (canonical identity).
+  std::unordered_map<const mir::ModuleBody*, BodyStorageLayout>
+      body_storage_layouts;
+  for (const auto& body : input.design->module_bodies) {
     if (body.slots.empty()) continue;
     body_storage_layouts.emplace(
-        bi, BuildBodyStorageLayout(
-                body, *input.type_arena, data_layout, input.force_two_state));
+        &body,
+        BuildBodyStorageLayout(
+            body.slots, *input.type_arena, data_layout, input.force_two_state));
   }
 
   auto connection_analysis = AnalyzeConnections(
       std::move(connections.kernel_entries), topology.module_plans,
-      *input.design, *input.mir_arena, topology.total_design_slot_count);
+      topology.module_body_processes, *input.design, *input.mir_arena,
+      topology.total_design_slot_count);
 
   uint32_t relays_eliminated = EliminateRelayConnections(connection_analysis);
 
@@ -90,8 +97,8 @@ auto BuildBackendLayout(
       input.design->init_processes,
       std::move(connection_analysis.connection_edges),
       std::move(connections.non_kernelized_processes), topology.module_plans,
-      *input.design, *input.mir_arena, *input.type_arena,
-      std::move(design_layout), body_storage_layouts, input.body_timescales,
+      topology.module_body_processes, *input.design, *input.mir_arena,
+      *input.type_arena, std::move(design_layout), body_storage_layouts,
       llvm_ctx, data_layout, input.force_two_state));
 
   layout->relay_slots_eliminated = relays_eliminated;

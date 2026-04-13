@@ -108,7 +108,7 @@ class Arena final {
       changed = false;
       for (auto& func : functions_) {
         if (func.abi_contract.accepts_decision_owner) continue;
-        if (IsObserverProgram(func.runtime_kind)) continue;
+        if (IsObserverProgram(func.runtime_meta)) continue;
         if (CallsCalleeAcceptingDecisionOwner(func, functions_, design_arena)) {
           func.abi_contract.accepts_decision_owner = true;
           changed = true;

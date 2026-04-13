@@ -10,11 +10,12 @@
 #include "lyra/common/internal_error.hpp"
 #include "lyra/llvm_backend/compute/operand.hpp"
 #include "lyra/llvm_backend/context.hpp"
+#include "lyra/llvm_backend/cu_facts.hpp"
 
 namespace lyra::lowering::mir_to_llvm {
 
 auto LowerRecordDecisionObservation(
-    Context& ctx, llvm::Value* decision_owner_id,
+    Context& ctx, const CuFacts& facts, llvm::Value* decision_owner_id,
     const mir::RecordDecisionObservation& obs) -> Result<void> {
   if (decision_owner_id == nullptr) {
     throw common::InternalError(
@@ -38,7 +39,8 @@ auto LowerRecordDecisionObservation(
 }
 
 auto LowerRecordDecisionObservationDynamic(
-    Context& ctx, llvm::Value* decision_owner_id, SlotAccessResolver& resolver,
+    Context& ctx, const CuFacts& facts, llvm::Value* decision_owner_id,
+    SlotAccessResolver& resolver,
     const mir::RecordDecisionObservationDynamic& obs) -> Result<void> {
   if (decision_owner_id == nullptr) {
     throw common::InternalError(
@@ -48,11 +50,11 @@ auto LowerRecordDecisionObservationDynamic(
   auto& builder = ctx.GetBuilder();
   auto& llvm_ctx = ctx.GetLlvmContext();
 
-  auto mc = LowerOperand(ctx, resolver, obs.match_class);
+  auto mc = LowerOperand(ctx, facts, resolver, obs.match_class);
   if (!mc) return std::unexpected(mc.error());
-  auto sk = LowerOperand(ctx, resolver, obs.selected_kind);
+  auto sk = LowerOperand(ctx, facts, resolver, obs.selected_kind);
   if (!sk) return std::unexpected(sk.error());
-  auto sa = LowerOperand(ctx, resolver, obs.selected_arm);
+  auto sa = LowerOperand(ctx, facts, resolver, obs.selected_arm);
   if (!sa) return std::unexpected(sa.error());
 
   auto* i8_ty = llvm::Type::getInt8Ty(llvm_ctx);

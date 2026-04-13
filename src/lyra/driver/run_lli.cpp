@@ -145,7 +145,6 @@ auto RunLli(const ValidatedCompilationInput& input) -> int {
       .feature_flags = 0,
       .signal_trace_path = input.input.trace_signals_output.value_or(""),
       .iteration_limit = input.input.iteration_limit,
-      .body_timescales = &compilation.hir.body_timescales,
       .force_two_state = input.input.two_state,
       .collect_forwarding_analysis =
           output.IsEnabled(OutputCategory::kAnalysis),
@@ -200,7 +199,7 @@ auto RunLli(const ValidatedCompilationInput& input) -> int {
       output.Flush();
       return 1;
     }
-    out << lowering::mir_to_llvm::DumpLlvmIr(*llvm_result);
+    out << lowering::mir_to_llvm::DumpLlvmIr(*llvm_result->module);
   }
 
   std::vector<std::string> tried_paths;

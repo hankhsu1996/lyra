@@ -1,21 +1,16 @@
 #pragma once
 
 #include <cstdint>
-#include <functional>
 #include <optional>
 
 #include "lyra/common/edge_kind.hpp"
+#include "lyra/common/local_slot_id.hpp"
+#include "lyra/common/object_index.hpp"
 #include "lyra/common/slot_id.hpp"
 #include "lyra/metadata/design_metadata.hpp"
 #include "lyra/mir/handle.hpp"
 
 namespace lyra::lowering::mir_to_llvm {
-
-struct SlotIdHash {
-  auto operator()(common::SlotId id) const noexcept -> size_t {
-    return std::hash<uint32_t>{}(id.value);
-  }
-};
 
 // Pre-resolved trigger observation for sub-slot narrowing in metadata lowering.
 // Computed during connection/comb kernel collection while the owning MIR arena
@@ -28,15 +23,17 @@ struct ResolvedObservation {
 };
 
 // Entry for a connection process that has been kernelized.
-// All kernelized connections come from port bindings. They are collected
-// by CollectConnectionKernels before layout and consumed by BuildLayout
-// as pre-collected input. Module-internal continuous assigns are lowered
-// as always_comb processes and kernelized as CombKernels, not connections.
+// All kernelized connections come from port bindings. Collected before
+// layout and consumed by BuildLayout as pre-collected input.
+// Module-internal continuous assigns are lowered as always_comb processes
+// and kernelized as CombKernels, not connections.
 struct ConnectionKernelEntry {
   mir::ProcessId process_id;
   common::SlotId src_slot;
   common::SlotId dst_slot;
   common::SlotId trigger_slot;
+  common::ObjectIndex trigger_object_index;
+  common::LocalSlotId trigger_local_slot;
   common::EdgeKind trigger_edge = common::EdgeKind::kAnyChange;
   std::optional<ResolvedObservation> trigger_observation;
   metadata::ConnectionKernelOrigin origin =

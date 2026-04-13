@@ -8,12 +8,13 @@ namespace lyra::lowering::mir_to_llvm {
 
 class SlotAccessResolver;
 
-auto LowerDisplayEffect(Context& context, const mir::DisplayEffect& display)
+auto LowerDisplayEffect(
+    Context& context, const CuFacts& facts, const mir::DisplayEffect& display)
     -> Result<void>;
 
 // Resolver-aware overload.
 auto LowerDisplayEffect(
-    Context& context, SlotAccessResolver& resolver,
+    Context& context, const CuFacts& facts, SlotAccessResolver& resolver,
     const mir::DisplayEffect& display) -> Result<void>;
 
 }  // namespace lyra::lowering::mir_to_llvm

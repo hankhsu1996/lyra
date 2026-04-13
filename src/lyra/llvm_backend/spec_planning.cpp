@@ -10,16 +10,12 @@
 #include "lyra/common/internal_error.hpp"
 #include "lyra/llvm_backend/process_meta_utils.hpp"
 #include "lyra/lowering/origin_map_lookup.hpp"
+#include "lyra/mir/call.hpp"
 #include "lyra/mir/module.hpp"
 
 namespace lyra::lowering::mir_to_llvm {
 
 namespace {
-
-auto BodyIndex(const mir::ModuleBody* body, const mir::Design& design)
-    -> uint32_t {
-  return static_cast<uint32_t>(body - design.module_bodies.data());
-}
 
 auto BuildSpecCompilationUnits(const mir::Design& design)
     -> std::vector<SpecCompilationUnit> {
@@ -55,12 +51,13 @@ auto BuildSpecCompilationUnits(const mir::Design& design)
   return units;
 }
 
-auto BuildModuleSchedIndices(const Layout& layout)
+auto BuildModuleSchedIndices(
+    uint32_t num_init_processes,
+    std::span<const ScheduledProcess> scheduled_processes)
     -> std::unordered_map<uint32_t, std::vector<uint32_t>> {
   std::unordered_map<uint32_t, std::vector<uint32_t>> result;
-  for (size_t i = layout.num_init_processes;
-       i < layout.scheduled_processes.size(); ++i) {
-    const auto& sp = layout.scheduled_processes[i];
+  for (size_t i = num_init_processes; i < scheduled_processes.size(); ++i) {
+    const auto& sp = scheduled_processes[i];
     if (sp.module_index.value == ModuleIndex::kNone) continue;
     result[sp.module_index.value].push_back(static_cast<uint32_t>(i));
   }
@@ -68,19 +65,16 @@ auto BuildModuleSchedIndices(const Layout& layout)
 }
 
 auto BuildSpecCodegenViews(
-    const std::vector<SpecCompilationUnit>& units, const mir::Design& design,
+    const std::vector<SpecCompilationUnit>& units,
     const std::unordered_map<uint32_t, std::vector<uint32_t>>&
         modidx_to_sched_indices) -> std::vector<SpecCodegenView> {
   std::vector<SpecCodegenView> views(units.size());
 
   for (size_t u = 0; u < units.size(); ++u) {
     const auto& unit = units[u];
-    auto body_idx = BodyIndex(unit.body, design);
     if (unit.instances.empty()) {
       throw common::InternalError(
-          "BuildSpecCodegenViews",
-          std::format(
-              "specialization unit for body {} has no instances", body_idx));
+          "BuildSpecCodegenViews", std::format("CU {} has no instances", u));
     }
 
     const auto& body = *unit.body;
@@ -97,9 +91,7 @@ auto BuildSpecCodegenViews(
       throw common::InternalError(
           "BuildSpecCodegenViews",
           std::format(
-              "body {} unit.processes non-final order does not match "
-              "canonical body ordinal map",
-              body_idx));
+              "CU {} non-final order does not match canonical ordinal map", u));
     }
 
     ModuleIndex rep_module_index = unit.instances[0].module_index;
@@ -108,9 +100,9 @@ auto BuildSpecCodegenViews(
       throw common::InternalError(
           "BuildSpecCodegenViews",
           std::format(
-              "body {} has {} non-final processes but representative "
+              "CU {} has {} non-final processes but representative "
               "module_index {} has no scheduled processes",
-              body_idx, ordinal_map.nonfinal_processes.size(),
+              u, ordinal_map.nonfinal_processes.size(),
               rep_module_index.value));
     }
     const auto& sched_indices = sched_it->second;
@@ -118,10 +110,8 @@ auto BuildSpecCodegenViews(
       throw common::InternalError(
           "BuildSpecCodegenViews",
           std::format(
-              "body {} sched index count {} != non-final process "
-              "count {}",
-              body_idx, sched_indices.size(),
-              ordinal_map.nonfinal_processes.size()));
+              "CU {} sched index count {} != non-final process count {}", u,
+              sched_indices.size(), ordinal_map.nonfinal_processes.size()));
     }
 
     views[u].processes.reserve(ordinal_map.nonfinal_processes.size());
@@ -134,8 +124,8 @@ auto BuildSpecCodegenViews(
                   .nonfinal_proc_ordinal = nonfinal_proc_ordinal,
                   .layout_process_index = sched_indices[nonfinal_proc_ordinal],
                   .process_id = proc_id,
-                  .func_name = std::format(
-                      "body_{}_proc_{}", body_idx, nonfinal_proc_ordinal),
+                  .func_name =
+                      std::format("cu_{}_proc_{}", u, nonfinal_proc_ordinal),
               });
         });
   }
@@ -167,7 +157,6 @@ auto BuildCompiledModuleSpecInputs(
   std::vector<CompiledModuleSpecInput> inputs;
   inputs.reserve(units.size());
   for (size_t i = 0; i < units.size(); ++i) {
-    auto body_idx = BodyIndex(units[i].body, design);
     const lowering::BodyOriginProvenance::Entry* origin_entry =
         (origin_provenance != nullptr) ? origin_provenance->Find(units[i].body)
                                        : nullptr;
@@ -178,25 +167,26 @@ auto BuildCompiledModuleSpecInputs(
     inputs.push_back(
         CompiledModuleSpecInput{
             .body = units[i].body,
-            .processes = units[i].processes,
             .functions = units[i].functions,
             .view = std::move(views[i]),
-            .name_prefix = std::format("body_{}", body_idx),
+            .name_prefix = std::format("cu_{}", i),
             .origin_entry = origin_entry,
             .deferred_sites = units[i].body->deferred_assertion_sites,
             .deferred_site_base_index = bases.deferred,
             .cover_site_base_index = bases.cover,
+            .module_export_targets = {},
         });
   }
   return inputs;
 }
 
 auto BuildSpecSlotInfos(
-    const std::vector<SpecCompilationUnit>& units, const Layout& layout)
+    const std::vector<SpecCompilationUnit>& units,
+    std::span<const Layout::BodyRealizationInfo> body_realization_infos)
     -> std::vector<SpecSlotInfo> {
   std::unordered_map<const mir::ModuleBody*, uint32_t> body_info_index_by_ptr;
-  for (uint32_t i = 0; i < layout.body_realization_infos.size(); ++i) {
-    body_info_index_by_ptr[layout.body_realization_infos[i].body] = i;
+  for (uint32_t i = 0; i < body_realization_infos.size(); ++i) {
+    body_info_index_by_ptr[body_realization_infos[i].body] = i;
   }
 
   std::vector<SpecSlotInfo> result;
@@ -211,10 +201,9 @@ auto BuildSpecSlotInfos(
             "BuildSpecSlotInfos", "no BodyRealizationInfo for body");
       }
       body_info_idx = it->second;
-      info.body_realization_info_index = body_info_idx;
     }
 
-    const auto& body_info = layout.body_realization_infos[body_info_idx];
+    const auto& body_info = body_realization_infos[body_info_idx];
     const auto& body_layout = body_info.body_layout;
     const auto& body = *unit.body;
     auto slot_count = body_info.slot_count;
@@ -240,7 +229,8 @@ auto BuildSpecSlotInfos(
 
 // Build per-instance local-slot connection trigger facts.
 auto BuildInstanceConnectionTriggers(
-    std::span<const LayoutModulePlan> module_plans, const Layout& layout)
+    std::span<const LayoutModulePlan> module_plans,
+    const std::vector<bool>& slot_has_connection_trigger)
     -> std::vector<std::vector<bool>> {
   std::vector<std::vector<bool>> instance_triggers(module_plans.size());
   for (size_t mi = 0; mi < module_plans.size(); ++mi) {
@@ -248,15 +238,15 @@ auto BuildInstanceConnectionTriggers(
     instance_triggers[mi].assign(plan.slot_count, false);
     for (uint32_t s = 0; s < plan.slot_count; ++s) {
       uint32_t global_slot = plan.design_state_base_slot + s;
-      if (global_slot >= layout.slot_has_connection_trigger.size()) {
+      if (global_slot >= slot_has_connection_trigger.size()) {
         throw common::InternalError(
             "BuildInstanceConnectionTriggers",
             std::format(
                 "design-global slot {} out of range for connection trigger "
                 "bitmap (size={}, instance={}, local_slot={})",
-                global_slot, layout.slot_has_connection_trigger.size(), mi, s));
+                global_slot, slot_has_connection_trigger.size(), mi, s));
       }
-      if (layout.slot_has_connection_trigger[global_slot]) {
+      if (slot_has_connection_trigger[global_slot]) {
         instance_triggers[mi][s] = true;
       }
     }
@@ -302,33 +292,89 @@ auto BuildConnectionNotificationMasks(
 auto BuildSpecPlan(
     const mir::Design& design, const Layout& layout,
     std::span<const LayoutModulePlan> module_plans,
-    const lowering::BodyOriginProvenance* origin_provenance) -> SpecPlan {
+    const lowering::BodyOriginProvenance* origin_provenance,
+    std::span<const mir::DpiExportWrapperDesc> dpi_export_wrappers)
+    -> SpecPlan {
   auto units = BuildSpecCompilationUnits(design);
-  auto modidx_to_sched_indices = BuildModuleSchedIndices(layout);
-  auto views = BuildSpecCodegenViews(units, design, modidx_to_sched_indices);
-  auto slot_infos = BuildSpecSlotInfos(units, layout);
+  auto modidx_to_sched_indices = BuildModuleSchedIndices(
+      layout.num_init_processes, layout.scheduled_processes);
+  auto views = BuildSpecCodegenViews(units, modidx_to_sched_indices);
+  auto slot_infos = BuildSpecSlotInfos(units, layout.body_realization_infos);
 
-  auto instance_triggers =
-      BuildInstanceConnectionTriggers(module_plans, layout);
+  auto instance_triggers = BuildInstanceConnectionTriggers(
+      module_plans, layout.slot_has_connection_trigger);
   auto masks =
       BuildConnectionNotificationMasks(units, slot_infos, instance_triggers);
 
   auto inputs = BuildCompiledModuleSpecInputs(
       units, std::move(views), design, origin_provenance);
 
+  // Precompute per-body module export targets from the design-global wrapper
+  // list. Each body gets only the module-scoped wrappers that target it.
+  std::vector<std::vector<ModuleExportTarget>> export_targets(inputs.size());
+  for (uint32_t wi = 0; wi < dpi_export_wrappers.size(); ++wi) {
+    const auto& desc = dpi_export_wrappers[wi];
+    if (desc.target.scope_kind != mir::DpiExportScopeKind::kModule) continue;
+    for (size_t u = 0; u < inputs.size(); ++u) {
+      if (inputs[u].body != desc.target.module_target.body) continue;
+      export_targets[u].push_back(
+          ModuleExportTarget{
+              .wrapper_index = wi,
+              .function_id = desc.target.module_target.function_id,
+          });
+      break;
+    }
+  }
+
+  // Build per-body CU-local layout contracts from the design-global Layout.
+  // Map body pointers to body_realization_infos indices for contract building.
+  std::unordered_map<const mir::ModuleBody*, uint32_t> body_info_index_by_ptr;
+  for (uint32_t i = 0; i < layout.body_realization_infos.size(); ++i) {
+    body_info_index_by_ptr[layout.body_realization_infos[i].body] = i;
+  }
+
+  std::vector<SpecLayoutContract> layout_contracts;
+  layout_contracts.reserve(inputs.size());
+  for (size_t i = 0; i < inputs.size(); ++i) {
+    auto it = body_info_index_by_ptr.find(units[i].body);
+    if (it == body_info_index_by_ptr.end()) {
+      throw common::InternalError(
+          "BuildSpecPlan", "no BodyRealizationInfo for body");
+    }
+    auto body_info_idx = it->second;
+    const auto& bri = layout.body_realization_infos[body_info_idx];
+
+    SpecLayoutContract contract;
+    contract.process_layouts.reserve(inputs[i].view.processes.size());
+    for (const auto& pv : inputs[i].view.processes) {
+      contract.process_layouts.push_back(
+          &layout.processes.at(pv.layout_process_index));
+    }
+    contract.slot_specs = bri.slot_specs;
+    contract.slot_has_behavioral_trigger = bri.slot_has_behavioral_trigger;
+    contract.slot_has_cross_body_behavioral_trigger =
+        bri.slot_has_cross_body_behavioral_trigger;
+
+    layout_contracts.push_back(std::move(contract));
+  }
+
   SpecPlan plan{
       .units = std::move(units),
       .slot_infos = std::move(slot_infos),
       .inputs = std::move(inputs),
       .connection_notification_masks = std::move(masks),
+      .module_export_targets = std::move(export_targets),
+      .layout_contracts = std::move(layout_contracts),
   };
 
-  // Wire up per-input pointers. Safe through moves because vector move
+  // Wire up per-input pointers/spans. Safe through moves because vector move
   // transfers the heap buffer without relocating elements.
   for (size_t i = 0; i < plan.inputs.size(); ++i) {
     plan.inputs[i].spec_slot_info = &plan.slot_infos[i];
     plan.inputs[i].connection_notification_mask =
         &plan.connection_notification_masks[i];
+    plan.inputs[i].module_export_targets = plan.module_export_targets[i];
+    plan.inputs[i].layout_contract = &plan.layout_contracts[i];
   }
 
   return plan;

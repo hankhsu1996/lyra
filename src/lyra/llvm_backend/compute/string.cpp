@@ -18,6 +18,7 @@
 #include "lyra/llvm_backend/compute/operand.hpp"
 #include "lyra/llvm_backend/compute/ops.hpp"
 #include "lyra/llvm_backend/context.hpp"
+#include "lyra/llvm_backend/cu_facts.hpp"
 #include "lyra/llvm_backend/format_lowering.hpp"
 #include "lyra/llvm_backend/slot_access.hpp"
 #include "lyra/lowering/diagnostic_context.hpp"
@@ -31,13 +32,14 @@ namespace {
 
 // Create an empty string handle via LyraStringFromLiteral("", 0).
 // Returns a newly-owned handle (refcount=1).
-auto CreateEmptyString(Context& context) -> llvm::Value* {
-  auto& builder = context.GetBuilder();
-  auto* i64_ty = llvm::Type::getInt64Ty(context.GetLlvmContext());
+auto CreateEmptyString(
+    llvm::IRBuilder<>& builder, llvm::Function* from_literal_fn)
+    -> llvm::Value* {
+  auto* i64_ty = llvm::Type::getInt64Ty(builder.getContext());
   auto* empty_data = builder.CreateGlobalStringPtr("");
   auto* empty_len = llvm::ConstantInt::get(i64_ty, 0);
   return builder.CreateCall(
-      context.GetLyraStringFromLiteral(), {empty_data, empty_len}, "str.empty");
+      from_literal_fn, {empty_data, empty_len}, "str.empty");
 }
 
 // Value kind enum matching RuntimeFormatValueKind in runtime
@@ -50,36 +52,38 @@ enum class RuntimeFormatValueKind : int32_t {
 }  // namespace
 
 auto LowerStringBinaryOp(
-    Context& context, const mir::BinaryRvalueInfo& info,
+    Context& context, const CuFacts& facts, const mir::BinaryRvalueInfo& info,
     const std::vector<mir::Operand>& operands, llvm::Type* result_type)
     -> Result<llvm::Value*> {
-  CanonicalSlotAccess canonical(context);
-  return LowerStringBinaryOp(context, canonical, info, operands, result_type);
+  CanonicalSlotAccess canonical(context, facts);
+  return LowerStringBinaryOp(
+      context, facts, canonical, info, operands, result_type);
 }
 
 auto LowerStringConcatValue(
-    Context& context, const mir::ConcatRvalueInfo& info,
+    Context& context, const CuFacts& facts, const mir::ConcatRvalueInfo& info,
     const std::vector<mir::Operand>& operands) -> Result<llvm::Value*> {
-  CanonicalSlotAccess canonical(context);
-  return LowerStringConcatValue(context, canonical, info, operands);
+  CanonicalSlotAccess canonical(context, facts);
+  return LowerStringConcatValue(context, facts, canonical, info, operands);
 }
 
 auto LowerStringReplicateValue(
-    Context& context, const mir::ReplicateRvalueInfo& info,
+    Context& context, const CuFacts& facts,
+    const mir::ReplicateRvalueInfo& info,
     const std::vector<mir::Operand>& operands) -> Result<llvm::Value*> {
-  CanonicalSlotAccess canonical(context);
-  return LowerStringReplicateValue(context, canonical, info, operands);
+  CanonicalSlotAccess canonical(context, facts);
+  return LowerStringReplicateValue(context, facts, canonical, info, operands);
 }
 
 auto LowerSFormatRvalueValue(
-    Context& context, const mir::SFormatRvalueInfo& info,
+    Context& context, const CuFacts& facts, const mir::SFormatRvalueInfo& info,
     const std::vector<mir::Operand>& operands) -> Result<llvm::Value*> {
-  CanonicalSlotAccess canonical(context);
-  return LowerSFormatRvalueValue(context, canonical, info, operands);
+  CanonicalSlotAccess canonical(context, facts);
+  return LowerSFormatRvalueValue(context, facts, canonical, info, operands);
 }
 
 auto LowerStringBinaryOp(
-    Context& context, SlotAccessResolver& resolver,
+    Context& context, const CuFacts& facts, SlotAccessResolver& resolver,
     const mir::BinaryRvalueInfo& info,
     const std::vector<mir::Operand>& operands, llvm::Type* result_type)
     -> Result<llvm::Value*> {
@@ -94,10 +98,10 @@ auto LowerStringBinaryOp(
         UnsupportedCategory::kOperation));
   }
 
-  auto lhs_or_err = LowerOperand(context, resolver, operands[0]);
+  auto lhs_or_err = LowerOperand(context, facts, resolver, operands[0]);
   if (!lhs_or_err) return std::unexpected(lhs_or_err.error());
   llvm::Value* lhs = *lhs_or_err;
-  auto rhs_or_err = LowerOperand(context, resolver, operands[1]);
+  auto rhs_or_err = LowerOperand(context, facts, resolver, operands[1]);
   if (!rhs_or_err) return std::unexpected(rhs_or_err.error());
   llvm::Value* rhs = *rhs_or_err;
 
@@ -149,7 +153,7 @@ auto LowerStringBinaryOp(
 }
 
 auto LowerStringConcatValue(
-    Context& context, SlotAccessResolver& resolver,
+    Context& context, const CuFacts& facts, SlotAccessResolver& resolver,
     const mir::ConcatRvalueInfo& /*info*/,
     const std::vector<mir::Operand>& operands) -> Result<llvm::Value*> {
   auto& builder = context.GetBuilder();
@@ -162,7 +166,7 @@ auto LowerStringConcatValue(
   std::vector<llvm::Value*> handles;
   handles.reserve(operands.size());
   for (const auto& operand : operands) {
-    auto handle_or_err = LowerOperand(context, resolver, operand);
+    auto handle_or_err = LowerOperand(context, facts, resolver, operand);
     if (!handle_or_err) return std::unexpected(handle_or_err.error());
     llvm::Value* handle = *handle_or_err;
     handles.push_back(handle);
@@ -188,7 +192,7 @@ auto LowerStringConcatValue(
 }
 
 auto LowerStringReplicateValue(
-    Context& context, SlotAccessResolver& resolver,
+    Context& context, const CuFacts& facts, SlotAccessResolver& resolver,
     const mir::ReplicateRvalueInfo& info,
     const std::vector<mir::Operand>& operands) -> Result<llvm::Value*> {
   auto& builder = context.GetBuilder();
@@ -198,7 +202,7 @@ auto LowerStringReplicateValue(
 
   auto count = static_cast<int64_t>(info.count);
 
-  auto handle_or_err = LowerOperand(context, resolver, operands[0]);
+  auto handle_or_err = LowerOperand(context, facts, resolver, operands[0]);
   if (!handle_or_err) return std::unexpected(handle_or_err.error());
   llvm::Value* handle = *handle_or_err;
 
@@ -222,20 +226,20 @@ auto LowerStringReplicateValue(
 }
 
 auto LowerSFormatRvalueValue(
-    Context& context, SlotAccessResolver& resolver,
+    Context& context, const CuFacts& facts, SlotAccessResolver& resolver,
     const mir::SFormatRvalueInfo& info,
     const std::vector<mir::Operand>& operands) -> Result<llvm::Value*> {
   if (info.has_runtime_format) {
     auto& builder = context.GetBuilder();
     auto& llvm_ctx = context.GetLlvmContext();
-    const auto& types = context.GetTypeArena();
+    const auto& types = *facts.types;
 
     auto* ptr_ty = llvm::PointerType::getUnqual(llvm_ctx);
     auto* i8_ty = llvm::Type::getInt8Ty(llvm_ctx);
     auto* i32_ty = llvm::Type::getInt32Ty(llvm_ctx);
     auto* i64_ty = llvm::Type::getInt64Ty(llvm_ctx);
 
-    auto fmt_or_err = LowerOperand(context, resolver, operands[0]);
+    auto fmt_or_err = LowerOperand(context, facts, resolver, operands[0]);
     if (!fmt_or_err) return std::unexpected(fmt_or_err.error());
     llvm::Value* fmt_handle = *fmt_or_err;
 
@@ -255,7 +259,7 @@ auto LowerSFormatRvalueValue(
       size_t idx = i - 1;
       auto* idx_val = llvm::ConstantInt::get(i64_ty, idx);
 
-      TypeId type_id = GetOperandTypeId(context, operands[i]);
+      TypeId type_id = GetOperandTypeId(facts, context, operands[i]);
       const Type& ty = types[type_id];
 
       RuntimeFormatValueKind kind = RuntimeFormatValueKind::kIntegral;
@@ -295,11 +299,11 @@ auto LowerSFormatRvalueValue(
 
       auto* data_slot = builder.CreateGEP(ptr_ty, data_array, {idx_val});
       if (kind == RuntimeFormatValueKind::kString) {
-        auto val_or_err = LowerOperand(context, resolver, operands[i]);
+        auto val_or_err = LowerOperand(context, facts, resolver, operands[i]);
         if (!val_or_err) return std::unexpected(val_or_err.error());
         builder.CreateStore(*val_or_err, data_slot);
       } else {
-        auto val_or_err = LowerOperand(context, resolver, operands[i]);
+        auto val_or_err = LowerOperand(context, facts, resolver, operands[i]);
         if (!val_or_err) return std::unexpected(val_or_err.error());
         llvm::Value* val = *val_or_err;
 
@@ -346,7 +350,8 @@ auto LowerSFormatRvalueValue(
 
   if (info.ops.empty()) {
     if (operands.empty()) {
-      return CreateEmptyString(context);
+      return CreateEmptyString(
+          context.GetBuilder(), context.GetLyraStringFromLiteral());
     }
     return std::unexpected(context.GetDiagnosticContext().MakeUnsupported(
         context.GetCurrentOrigin(),
@@ -357,14 +362,14 @@ auto LowerSFormatRvalueValue(
 
   auto& builder = context.GetBuilder();
 
-  auto validate_result = ValidateFormatOps(context, info.ops);
+  auto validate_result = ValidateFormatOps(context, facts, info.ops);
   if (!validate_result) return std::unexpected(validate_result.error());
 
   llvm::Value* buf =
       builder.CreateCall(context.GetLyraStringFormatStart(), {}, "sformat.buf");
 
   for (const auto& op : info.ops) {
-    auto result = LowerFormatOpToBuffer(context, buf, op);
+    auto result = LowerFormatOpToBuffer(context, facts, buf, op);
     if (!result) return std::unexpected(result.error());
   }
 

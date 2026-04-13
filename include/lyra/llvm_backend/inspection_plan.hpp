@@ -6,11 +6,10 @@
 
 #include "lyra/common/byte_offset.hpp"
 #include "lyra/common/slot_id.hpp"
+#include "lyra/llvm_backend/layout/layout.hpp"
 #include "lyra/llvm_backend/layout/storage_types.hpp"
 
 namespace lyra::lowering::mir_to_llvm {
-
-struct CodegenSession;
 
 // Pre-layout identity record. Test framework produces these.
 // The backend inspection planner resolves them into typed placements.
@@ -35,15 +34,15 @@ struct InstanceOwnedPlacement {
 // Concrete per-variable record for design-global inspection.
 struct InspectedGlobalVar {
   std::string name;
-  common::SlotId slot_id;
   DesignGlobalPlacement placement;
+  SlotTypeInfo type_info;
 };
 
 // Concrete per-variable record for instance-owned inspection.
 struct InspectedInstanceVar {
   std::string name;
-  common::SlotId slot_id;
   InstanceOwnedPlacement placement;
+  SlotTypeInfo type_info;
 };
 
 // Typed inspection plan artifact. Pre-partitioned by storage domain
@@ -58,12 +57,11 @@ struct InspectionPlan {
   }
 };
 
-// Build an inspection plan from session data.
-// Ownership comes from SlotTraceProvenance (canonical ownership record).
-// Storage coordinates come from layout via ToInstanceOffset() (canonical
-// typed conversion boundary between arena-absolute and instance-relative).
+// Build an inspection plan from layout-owned artifacts.
+// Type metadata is pre-resolved in the design layout (slot_type_infos).
+// No mir::Design or TypeArena dependency.
 auto BuildInspectionPlan(
-    const CodegenSession& session, std::span<const InspectedVarRef> refs)
+    const Layout& layout, std::span<const InspectedVarRef> refs)
     -> InspectionPlan;
 
 }  // namespace lyra::lowering::mir_to_llvm

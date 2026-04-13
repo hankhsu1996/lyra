@@ -26,23 +26,23 @@ namespace detail {
 // NOTE: Does NOT handle design-slot notify (design slots with string-containing
 // structs are rejected at AssignStruct level).
 void CommitStringField(
-    Context& ctx, llvm::Value* ptr, llvm::Value* handle,
+    llvm::IRBuilder<>& builder, llvm::Function* retain_fn,
+    llvm::Function* release_fn, llvm::Value* ptr, llvm::Value* handle,
     OwnershipPolicy policy) {
-  auto& builder = ctx.GetBuilder();
-  auto* ptr_ty = llvm::PointerType::getUnqual(ctx.GetLlvmContext());
+  auto* ptr_ty = llvm::PointerType::getUnqual(builder.getContext());
 
   // Load old handle first (before any mutation)
   auto* old_handle = builder.CreateLoad(ptr_ty, ptr, "sf.old");
 
   // Apply ownership policy
   if (policy == OwnershipPolicy::kClone) {
-    handle = builder.CreateCall(ctx.GetLyraStringRetain(), {handle});
+    handle = builder.CreateCall(retain_fn, {handle});
   }
   // kMove: handle already has ownership, no retain needed
 
   // Store new handle, then release old
   builder.CreateStore(handle, ptr);
-  builder.CreateCall(ctx.GetLyraStringRelease(), {old_handle});
+  builder.CreateCall(release_fn, {old_handle});
 }
 
 }  // namespace detail
@@ -113,10 +113,11 @@ void StoreStringToWriteTarget(
 
 // String store: clone if kClone, then store via WriteTarget
 auto CommitStringValue(
-    Context& ctx, const WriteTarget& wt, llvm::Value* handle,
-    OwnershipPolicy policy, TypeId type_id) -> Result<void> {
+    Context& ctx, const CuFacts& facts, const WriteTarget& wt,
+    llvm::Value* handle, OwnershipPolicy policy, TypeId type_id)
+    -> Result<void> {
   if (policy == OwnershipPolicy::kClone) {
-    handle = CloneLeafValue(ctx, handle, type_id);
+    handle = CloneLeafValue(ctx, facts, handle, type_id);
   }
   // kMove: handle already has ownership, no retain needed
   StoreStringToWriteTarget(ctx, handle, wt);

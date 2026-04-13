@@ -19,6 +19,7 @@
 #include "lyra/llvm_backend/compute/four_state_ops.hpp"
 #include "lyra/llvm_backend/compute/operand.hpp"
 #include "lyra/llvm_backend/context.hpp"
+#include "lyra/llvm_backend/cu_facts.hpp"
 #include "lyra/llvm_backend/deferred_thunk_abi.hpp"
 #include "lyra/llvm_backend/format_lowering.hpp"
 #include "lyra/llvm_backend/instruction/decision.hpp"
@@ -160,8 +161,8 @@ struct FillTargetInfo {
 
 // Build filled value and commit using CommitPackedValue.
 void CommitFilledValue(
-    Context& ctx, const FillTargetInfo& t, llvm::Value* filled_val,
-    llvm::Value* filled_unk) {
+    Context& ctx, const CuFacts& facts, const FillTargetInfo& t,
+    llvm::Value* filled_val, llvm::Value* filled_unk) {
   PackedRValue rvalue;
   rvalue.semantic_bits = t.total_bits;
 
@@ -176,11 +177,13 @@ void CommitFilledValue(
     // unk stays nullptr -- 2-state target.
   }
 
-  CommitPackedValue(ctx, t.place_id, rvalue, t.type_id);
+  CommitPackedValue(ctx, facts, t.place_id, rvalue, t.type_id);
 }
 
 // Bit fill: replicate single bit to all positions using SExt.
-void LowerBitFill(Context& ctx, const FillTargetInfo& t, FourStateValue fs) {
+void LowerBitFill(
+    Context& ctx, const CuFacts& facts, const FillTargetInfo& t,
+    FourStateValue fs) {
   auto& builder = ctx.GetBuilder();
   auto& llvm_ctx = ctx.GetLlvmContext();
 
@@ -194,12 +197,13 @@ void LowerBitFill(Context& ctx, const FillTargetInfo& t, FourStateValue fs) {
   llvm::Value* filled_unk =
       builder.CreateSExt(unk_bit, target_int_type, "filled.unk");
 
-  CommitFilledValue(ctx, t, filled_val, filled_unk);
+  CommitFilledValue(ctx, facts, t, filled_val, filled_unk);
 }
 
 // Element fill using shift+OR loop (compile-time unrolled).
 void LowerElementFillShiftOr(
-    Context& ctx, const FillTargetInfo& t, FourStateValue fs) {
+    Context& ctx, const CuFacts& facts, const FillTargetInfo& t,
+    FourStateValue fs) {
   auto& builder = ctx.GetBuilder();
   auto& llvm_ctx = ctx.GetLlvmContext();
 
@@ -229,7 +233,7 @@ void LowerElementFillShiftOr(
     filled_unk = builder.CreateOr(filled_unk, shifted_unk, "filled.unk");
   }
 
-  CommitFilledValue(ctx, t, filled_val, filled_unk);
+  CommitFilledValue(ctx, facts, t, filled_val, filled_unk);
 }
 
 // Element fill using runtime helper (for large arrays).
@@ -240,7 +244,8 @@ void LowerElementFillShiftOr(
 // via NotifyPackedStorageWritten. The runtime-side plane mutation is an
 // implementation detail; the semantic contract is whole-value replacement.
 auto LowerElementFillRuntime(
-    Context& ctx, const FillTargetInfo& t, FourStateValue fs) -> Result<void> {
+    Context& ctx, const CuFacts& facts, const FillTargetInfo& t,
+    FourStateValue fs) -> Result<void> {
   auto& builder = ctx.GetBuilder();
   auto& llvm_ctx = ctx.GetLlvmContext();
 
@@ -250,8 +255,8 @@ auto LowerElementFillRuntime(
   auto signal_id = GetDesignSignalCoord(ctx, t.place_id);
   bool is_canonical = signal_id.has_value();
 
-  auto view =
-      BuildWholeValueStorageView(ctx, *target_ptr, t.type_id, is_canonical);
+  auto view = BuildWholeValueStorageView(
+      ctx, facts, *target_ptr, t.type_id, is_canonical);
   auto plane_ptrs = GetPlanePointers(ctx, view);
 
   bool needs_notify =
@@ -338,10 +343,11 @@ auto LowerElementFillRuntime(
   return {};
 }
 
-auto LowerFillPackedEffect(Context& context, const mir::FillPackedEffect& fill)
+auto LowerFillPackedEffect(
+    Context& context, const CuFacts& facts, const mir::FillPackedEffect& fill)
     -> Result<void> {
   auto& builder = context.GetBuilder();
-  const auto& types = context.GetTypeArena();
+  const auto& types = *facts.types;
   const auto& arena = context.GetMirArena();
 
   // Validate effect invariants
@@ -356,7 +362,8 @@ auto LowerFillPackedEffect(Context& context, const mir::FillPackedEffect& fill)
   TypeId target_type_id = mir::TypeOfPlace(types, place);
   const Type& target_type = types[target_type_id];
 
-  auto storage_type_result = BuildLlvmTypeForTypeId(context, target_type_id);
+  auto storage_type_result =
+      BuildLlvmTypeForTypeId(context, facts, target_type_id);
   if (!storage_type_result) {
     return std::unexpected(storage_type_result.error());
   }
@@ -367,12 +374,12 @@ auto LowerFillPackedEffect(Context& context, const mir::FillPackedEffect& fill)
       .total_bits = fill.total_bits,
       .element_bits = fill.unit_bits,
       .element_count = fill.count,
-      .is_four_state = context.IsPackedFourState(target_type),
+      .is_four_state = IsPackedFourState(facts, target_type),
       .storage_type = *storage_type_result,
   };
 
   // Lower fill value operand
-  auto fill_value_result = LowerOperandRaw(context, fill.fill_value);
+  auto fill_value_result = LowerOperandRaw(context, facts, fill.fill_value);
   if (!fill_value_result) {
     return std::unexpected(fill_value_result.error());
   }
@@ -381,23 +388,24 @@ auto LowerFillPackedEffect(Context& context, const mir::FillPackedEffect& fill)
   // Select optimization based on unit_bits (destination-driven)
   if (fill.unit_bits == 1) {
     // Bit fill: replicate single bit to all positions using SExt
-    LowerBitFill(context, t, fs);
+    LowerBitFill(context, facts, t, fs);
     return {};
   }
 
   // Element fill: replicate unit_bits-wide value count times
   if (UseShiftOr(t.element_count, t.total_bits)) {
-    LowerElementFillShiftOr(context, t, fs);
+    LowerElementFillShiftOr(context, facts, t, fs);
     return {};
   }
-  return LowerElementFillRuntime(context, t, fs);
+  return LowerElementFillRuntime(context, facts, t, fs);
 }
 
-auto LowerMemIOEffect(Context& context, const mir::MemIOEffect& mem_io)
+auto LowerMemIOEffect(
+    Context& context, const CuFacts& facts, const mir::MemIOEffect& mem_io)
     -> Result<void> {
   auto& builder = context.GetBuilder();
   auto& llvm_ctx = context.GetLlvmContext();
-  const auto& types = context.GetTypeArena();
+  const auto& types = *facts.types;
 
   // Get array type info from target_type
   const Type& arr_type = types[mem_io.target_type];
@@ -418,7 +426,7 @@ auto LowerMemIOEffect(Context& context, const mir::MemIOEffect& mem_io)
   }
 
   // Determine if 4-state
-  bool is_four_state = context.IsPackedFourState(elem_type);
+  bool is_four_state = IsPackedFourState(facts, elem_type);
 
   // Extract type info
   auto element_width = static_cast<int32_t>(PackedBitWidth(elem_type, types));
@@ -460,14 +468,14 @@ auto LowerMemIOEffect(Context& context, const mir::MemIOEffect& mem_io)
   // issues with string handle release)
   llvm::Value* eff_start = llvm::ConstantInt::get(i64_ty, left);
   if (mem_io.start_addr) {
-    auto start_result = LowerOperand(context, *mem_io.start_addr);
+    auto start_result = LowerOperand(context, facts, *mem_io.start_addr);
     if (!start_result) return std::unexpected(start_result.error());
     eff_start = builder.CreateSExtOrTrunc(*start_result, i64_ty, "eff_start");
   }
 
   llvm::Value* eff_end = llvm::ConstantInt::get(i64_ty, right);
   if (mem_io.end_addr) {
-    auto end_result = LowerOperand(context, *mem_io.end_addr);
+    auto end_result = LowerOperand(context, facts, *mem_io.end_addr);
     if (!end_result) return std::unexpected(end_result.error());
     eff_end = builder.CreateSExtOrTrunc(*end_result, i64_ty, "eff_end");
   }
@@ -490,7 +498,7 @@ auto LowerMemIOEffect(Context& context, const mir::MemIOEffect& mem_io)
 
   // Lower filename and emit runtime call with automatic handle release
   return WithStringHandle(
-      context, mem_io.filename.operand, mem_io.filename.type,
+      context, facts, mem_io.filename.operand, mem_io.filename.type,
       [&](llvm::Value* filename_handle) -> Result<void> {
         if (mem_io.is_read) {
           std::vector<llvm::Value*> common_args = {
@@ -551,32 +559,32 @@ auto BodySiteContext::GetDeferredSiteInfo(uint32_t body_local_id) const
 }
 
 auto LowerEffectOp(
-    Context& context, const mir::EffectOp& effect_op,
+    Context& context, const CuFacts& facts, const mir::EffectOp& effect_op,
     const ActiveExecutionMode& mode, const BodySiteContext& site_ctx)
     -> Result<void> {
-  CanonicalSlotAccess canonical(context);
-  return LowerEffectOp(context, canonical, effect_op, mode, site_ctx);
+  CanonicalSlotAccess canonical(context, facts);
+  return LowerEffectOp(context, facts, canonical, effect_op, mode, site_ctx);
 }
 auto LowerEffectOp(
-    Context& context, SlotAccessResolver& resolver,
+    Context& context, const CuFacts& facts, SlotAccessResolver& resolver,
     const mir::EffectOp& effect_op, const ActiveExecutionMode& mode,
     const BodySiteContext& site_ctx) -> Result<void> {
   return std::visit(
       common::Overloaded{
           [&](const mir::DisplayEffect& display) -> Result<void> {
-            return LowerDisplayEffect(context, resolver, display);
+            return LowerDisplayEffect(context, facts, resolver, display);
           },
           [&](const mir::ReportEffect& report) -> Result<void> {
-            return LowerReportEffect(context, resolver, report);
+            return LowerReportEffect(context, facts, resolver, report);
           },
           [&](const mir::MemIOEffect& mem_io) -> Result<void> {
-            return LowerMemIOEffect(context, mem_io);
+            return LowerMemIOEffect(context, facts, mem_io);
           },
           [&](const mir::TimeFormatEffect& tf) -> Result<void> {
             return LowerTimeFormatEffect(context, tf);
           },
           [&](const mir::SystemTfEffect& effect) -> Result<void> {
-            return LowerSystemTfEffect(context, resolver, effect);
+            return LowerSystemTfEffect(context, facts, resolver, effect);
           },
           [&](const mir::StrobeEffect& strobe) -> Result<void> {
             return LowerStrobeEffect(context, strobe);
@@ -588,7 +596,7 @@ auto LowerEffectOp(
             return LowerMonitorControlEffect(context, control);
           },
           [&](const mir::FillPackedEffect& fill) -> Result<void> {
-            return LowerFillPackedEffect(context, fill);
+            return LowerFillPackedEffect(context, facts, fill);
           },
           [&](const mir::RecordDecisionObservation& obs) -> Result<void> {
             if (mode.decision_owner_id == nullptr) {
@@ -600,7 +608,7 @@ auto LowerEffectOp(
                       UnsupportedCategory::kFeature));
             }
             return LowerRecordDecisionObservation(
-                context, mode.decision_owner_id, obs);
+                context, facts, mode.decision_owner_id, obs);
           },
           [&](const mir::RecordDecisionObservationDynamic& obs)
               -> Result<void> {
@@ -613,7 +621,7 @@ auto LowerEffectOp(
                       UnsupportedCategory::kFeature));
             }
             return LowerRecordDecisionObservationDynamic(
-                context, mode.decision_owner_id, resolver, obs);
+                context, facts, mode.decision_owner_id, resolver, obs);
           },
           [&](const mir::CoverHitEffect& hit) -> Result<void> {
             auto& builder = context.GetBuilder();
@@ -639,7 +647,7 @@ auto LowerEffectOp(
             }
             auto& builder = context.GetBuilder();
             auto& llvm_ctx = context.GetLlvmContext();
-            const auto& types = context.GetTypeArena();
+            const auto& types = *facts.types;
             auto* engine_ptr = context.GetEnginePointer();
             auto* ptr_ty = llvm::PointerType::getUnqual(llvm_ctx);
             auto* i32_ty = llvm::Type::getInt32Ty(llvm_ctx);
@@ -732,7 +740,7 @@ auto LowerEffectOp(
               if (!enq.snapshot_values.empty()) {
                 auto* payload_struct_ty = BuildDeferredPayloadStructType(
                     llvm_ctx, plan.payload.field_types, types,
-                    context.IsForceTwoState());
+                    facts.force_two_state);
 
                 auto* alloca = builder.CreateAlloca(
                     payload_struct_ty, nullptr, "deferred.payload");
@@ -740,7 +748,8 @@ auto LowerEffectOp(
                   auto* field_ty = payload_struct_ty->getElementType(
                       static_cast<unsigned>(i));
                   auto val = LowerOperandAsStorage(
-                      context, resolver, enq.snapshot_values[i], field_ty);
+                      context, facts, resolver, enq.snapshot_values[i],
+                      field_ty);
                   if (!val) return std::unexpected(val.error());
                   auto* field_ptr = builder.CreateStructGEP(
                       payload_struct_ty, alloca, static_cast<unsigned>(i));

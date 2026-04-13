@@ -18,6 +18,7 @@
 #include "lyra/llvm_backend/compute/operand.hpp"
 #include "lyra/llvm_backend/compute/ops.hpp"
 #include "lyra/llvm_backend/context.hpp"
+#include "lyra/llvm_backend/cu_facts.hpp"
 #include "lyra/llvm_backend/emit_string_conv.hpp"
 #include "lyra/llvm_backend/slot_access.hpp"
 #include "lyra/llvm_backend/value_repr.hpp"
@@ -88,19 +89,19 @@ auto GetTargetBitWidth(const TypeArena& types, TypeId destination_type)
 }
 
 auto LoadFourStateOperand(
-    Context& context, SlotAccessResolver& resolver, const mir::Operand& operand)
-    -> Result<FourStateValue> {
+    Context& context, const CuFacts& facts, SlotAccessResolver& resolver,
+    const mir::Operand& operand) -> Result<FourStateValue> {
   auto& builder = context.GetBuilder();
 
-  bool is_four_state = IsOperandFourState(context, operand);
+  bool is_four_state = IsOperandFourState(facts, context, operand);
 
   if (is_four_state) {
-    auto loaded_or_err = LowerOperandRaw(context, resolver, operand);
+    auto loaded_or_err = LowerOperandRaw(context, facts, resolver, operand);
     if (!loaded_or_err) return std::unexpected(loaded_or_err.error());
     return ExtractFourState(builder, *loaded_or_err);
   }
 
-  auto loaded_val_or_err = LowerOperand(context, resolver, operand);
+  auto loaded_val_or_err = LowerOperand(context, facts, resolver, operand);
   if (!loaded_val_or_err) return std::unexpected(loaded_val_or_err.error());
   llvm::Value* val = *loaded_val_or_err;
   auto* unk = llvm::ConstantInt::get(val->getType(), 0);
@@ -110,24 +111,25 @@ auto LoadFourStateOperand(
 }  // namespace
 
 auto LowerCastRvalue(
-    Context& context, const mir::Rvalue& rvalue, TypeId destination_type)
-    -> Result<RvalueValue> {
-  CanonicalSlotAccess canonical(context);
-  return LowerCastRvalue(context, canonical, rvalue, destination_type);
+    Context& context, const CuFacts& facts, const mir::Rvalue& rvalue,
+    TypeId destination_type) -> Result<RvalueValue> {
+  CanonicalSlotAccess canonical(context, facts);
+  return LowerCastRvalue(context, facts, canonical, rvalue, destination_type);
 }
 
 auto LowerBitCastRvalue(
-    Context& context, const mir::Rvalue& rvalue, TypeId destination_type)
-    -> Result<RvalueValue> {
-  CanonicalSlotAccess canonical(context);
-  return LowerBitCastRvalue(context, canonical, rvalue, destination_type);
+    Context& context, const CuFacts& facts, const mir::Rvalue& rvalue,
+    TypeId destination_type) -> Result<RvalueValue> {
+  CanonicalSlotAccess canonical(context, facts);
+  return LowerBitCastRvalue(
+      context, facts, canonical, rvalue, destination_type);
 }
 
 auto LowerCastRvalue(
-    Context& context, SlotAccessResolver& resolver, const mir::Rvalue& rvalue,
-    TypeId destination_type) -> Result<RvalueValue> {
+    Context& context, const CuFacts& facts, SlotAccessResolver& resolver,
+    const mir::Rvalue& rvalue, TypeId destination_type) -> Result<RvalueValue> {
   auto& builder = context.GetBuilder();
-  const auto& types = context.GetTypeArena();
+  const auto& types = *facts.types;
   const auto& info = std::get<mir::CastRvalueInfo>(rvalue.info);
   const mir::Operand& source_operand = rvalue.operands[0];
 
@@ -135,9 +137,12 @@ auto LowerCastRvalue(
   const Type& tgt_type = types[destination_type];
 
   if (IsPacked(src_type) && tgt_type.Kind() == TypeKind::kString) {
-    auto source_or_err = LowerOperandRaw(context, resolver, source_operand);
+    auto source_or_err =
+        LowerOperandRaw(context, facts, resolver, source_operand);
     if (!source_or_err) return std::unexpected(source_or_err.error());
-    llvm::Value* result = EmitPackedToString(context, *source_or_err, src_type);
+    llvm::Value* result = EmitPackedToString(
+        builder, facts, context.GetLyraStringFromPacked(), *source_or_err,
+        src_type);
     return RvalueValue::TwoState(result);
   }
 
@@ -165,7 +170,7 @@ auto LowerCastRvalue(
       }
     }
 
-    auto source_or_err = LowerOperand(context, resolver, source_operand);
+    auto source_or_err = LowerOperand(context, facts, resolver, source_operand);
     if (!source_or_err) return std::unexpected(source_or_err.error());
     llvm::Value* source = *source_or_err;
 
@@ -190,12 +195,12 @@ auto LowerCastRvalue(
       return context.ReadTempValue(temp_id->value).domain ==
              ValueDomain::kFourState;
     }
-    return IsPacked(src_type) && context.IsPackedFourState(src_type);
+    return IsPacked(src_type) && IsPackedFourState(facts, src_type);
   }();
-  bool tgt_is_4s = IsPacked(tgt_type) && context.IsPackedFourState(tgt_type);
+  bool tgt_is_4s = IsPacked(tgt_type) && IsPackedFourState(facts, tgt_type);
 
   if (src_is_float && tgt_is_float) {
-    auto source_or_err = LowerOperand(context, resolver, source_operand);
+    auto source_or_err = LowerOperand(context, facts, resolver, source_operand);
     if (!source_or_err) return std::unexpected(source_or_err.error());
     llvm::Value* source = *source_or_err;
     llvm::Value* result = source;
@@ -213,7 +218,7 @@ auto LowerCastRvalue(
   }
 
   if (!src_is_float && tgt_is_float) {
-    auto source_or_err = LowerOperand(context, resolver, source_operand);
+    auto source_or_err = LowerOperand(context, facts, resolver, source_operand);
     if (!source_or_err) return std::unexpected(source_or_err.error());
     llvm::Value* source = *source_or_err;
     llvm::Type* float_ty =
@@ -231,7 +236,7 @@ auto LowerCastRvalue(
   }
 
   if (src_is_float && !tgt_is_float) {
-    auto source_or_err = LowerOperand(context, resolver, source_operand);
+    auto source_or_err = LowerOperand(context, facts, resolver, source_operand);
     if (!source_or_err) return std::unexpected(source_or_err.error());
     llvm::Value* source = *source_or_err;
     uint32_t bit_width = GetTargetBitWidth(types, destination_type);
@@ -244,7 +249,7 @@ auto LowerCastRvalue(
     } else {
       result = builder.CreateFPToUI(source, elem_type, "fptoui");
     }
-    result = ApplyWidthMask(context, result, bit_width);
+    result = ApplyWidthMask(builder, result, bit_width);
     return RvalueValue::TwoState(result);
   }
 
@@ -256,31 +261,32 @@ auto LowerCastRvalue(
   uint32_t source_bits = GetSemanticBitWidth(types, info.source_type);
 
   if (src_is_4s) {
-    auto fs_or_err = LoadFourStateOperand(context, resolver, source_operand);
+    auto fs_or_err =
+        LoadFourStateOperand(context, facts, resolver, source_operand);
     if (!fs_or_err) return std::unexpected(fs_or_err.error());
     auto fs = *fs_or_err;
     fs = ResizeFourStatePlanes(builder, fs, elem_type, is_signed, source_bits);
-    fs.value = ApplyWidthMask(context, fs.value, bit_width);
-    fs.unknown = ApplyWidthMask(context, fs.unknown, bit_width);
+    fs.value = ApplyWidthMask(builder, fs.value, bit_width);
+    fs.unknown = ApplyWidthMask(builder, fs.unknown, bit_width);
     if (tgt_is_4s) {
       return RvalueValue::FourState(fs.value, fs.unknown);
     }
     return RvalueValue::TwoState(fs.value);
   }
 
-  auto source_or_err = LowerOperand(context, resolver, source_operand);
+  auto source_or_err = LowerOperand(context, facts, resolver, source_operand);
   if (!source_or_err) return std::unexpected(source_or_err.error());
   llvm::Value* source = *source_or_err;
   llvm::Value* result = ExtOrTrunc(builder, source, elem_type, is_signed);
-  result = ApplyWidthMask(context, result, bit_width);
+  result = ApplyWidthMask(builder, result, bit_width);
   return RvalueValue::TwoState(result);
 }
 
 auto LowerBitCastRvalue(
-    Context& context, SlotAccessResolver& resolver, const mir::Rvalue& rvalue,
-    TypeId destination_type) -> Result<RvalueValue> {
+    Context& context, const CuFacts& facts, SlotAccessResolver& resolver,
+    const mir::Rvalue& rvalue, TypeId destination_type) -> Result<RvalueValue> {
   auto& llvm_ctx = context.GetLlvmContext();
-  const auto& types = context.GetTypeArena();
+  const auto& types = *facts.types;
   const auto& info = std::get<mir::BitCastRvalueInfo>(rvalue.info);
 
   const Type& src_type = types[info.source_type];
@@ -297,7 +303,7 @@ auto LowerBitCastRvalue(
   }
 
   auto& builder = context.GetBuilder();
-  auto src_or_err = LowerOperand(context, resolver, rvalue.operands[0]);
+  auto src_or_err = LowerOperand(context, facts, resolver, rvalue.operands[0]);
   if (!src_or_err) return std::unexpected(src_or_err.error());
   llvm::Value* src = *src_or_err;
 
@@ -325,10 +331,9 @@ auto LowerBitCastRvalue(
   return RvalueValue::TwoState(result);
 }
 
-auto LowerTimeToTicks64(Context& context, llvm::Value* time_value)
+auto LowerTimeToTicks64(llvm::IRBuilder<>& builder, llvm::Value* time_value)
     -> llvm::Value* {
-  auto& builder = context.GetBuilder();
-  auto& llvm_ctx = context.GetLlvmContext();
+  auto& llvm_ctx = builder.getContext();
   auto* i64_ty = llvm::Type::getInt64Ty(llvm_ctx);
   auto* double_ty = llvm::Type::getDoubleTy(llvm_ctx);
 

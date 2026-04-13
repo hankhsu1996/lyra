@@ -13,6 +13,7 @@
 #include "absl/container/flat_hash_map.h"
 #include "lyra/common/internal_error.hpp"
 #include "lyra/llvm_backend/context.hpp"
+#include "lyra/llvm_backend/cu_facts.hpp"
 #include "lyra/llvm_backend/deferred_thunk_abi.hpp"
 #include "lyra/llvm_backend/execution_mode.hpp"
 #include "lyra/llvm_backend/lower.hpp"
@@ -56,8 +57,9 @@ auto CaptureDeferredCalleeInfoForBody(
 }  // namespace
 
 auto CompileModuleSpecSession(
-    Context& context, const CompiledModuleSpecInput& input)
-    -> Result<CompiledModuleSpec> {
+    Context& context, const CuFacts& facts,
+    const CompiledModuleSpecInput& input,
+    const mir::ConstructionInput* construction) -> Result<CompiledModuleSpec> {
   const auto& body = *input.body;
   Context::ArenaScope arena_scope(context, &body.arena);
 
@@ -79,10 +81,18 @@ auto CompileModuleSpecSession(
   Context::SpecLocalScope spec_scope(
       context, input.spec_slot_info, input.connection_notification_mask,
       std::move(ext_ref_env));
+  if (input.layout_contract == nullptr) {
+    throw common::InternalError(
+        "CompileModuleSpecSession",
+        "SpecLayoutContract is required for CU compilation");
+  }
+  Context::SpecLayoutScope layout_scope(context, input.layout_contract);
 
   BodySiteContext site_ctx{
       .deferred_site_base = input.deferred_site_base_index,
       .cover_site_base = input.cover_site_base_index,
+      .wait_site_base = input.wait_site_base_index,
+      .back_edge_site_base = input.back_edge_site_base_index,
       .deferred_sites = input.deferred_sites,
   };
 
@@ -104,7 +114,8 @@ auto CompileModuleSpecSession(
 
   // Step 2: Define all body functions.
   for (const auto& [func_id, llvm_func] : declared_funcs) {
-    auto result = DefineMirFunction(context, func_id, llvm_func, site_ctx);
+    auto result =
+        DefineMirFunction(context, facts, func_id, llvm_func, site_ctx);
     if (!result) return std::unexpected(result.error());
   }
 
@@ -116,15 +127,25 @@ auto CompileModuleSpecSession(
       .process_triggers = {},
       .deferred_site_base_index = input.deferred_site_base_index,
       .deferred_artifacts = {},
-      .declared_functions = {},
+      .module_export_entries = {},
+      .back_edge_origins = {},
   };
 
-  for (const auto& proc_view : input.view.processes) {
-    context.SetCurrentProcess(proc_view.layout_process_index);
+  for (size_t pi = 0; pi < input.view.processes.size(); ++pi) {
+    const auto& proc_view = input.view.processes[pi];
+    context.SetCurrentProcess(input.layout_contract->process_layouts[pi]);
+
+    BodySiteContext proc_site_ctx = site_ctx;
+    proc_site_ctx.wait_site_base =
+        input.wait_site_base_index +
+        static_cast<uint32_t>(product.wait_sites.size());
+    proc_site_ctx.back_edge_site_base =
+        input.back_edge_site_base_index +
+        static_cast<uint32_t>(product.back_edge_origins.size());
 
     const auto& mir_process = body.arena[proc_view.process_id];
     auto func_result = GenerateSharedProcessFunction(
-        context, mir_process, proc_view.func_name, site_ctx);
+        context, facts, mir_process, proc_view.func_name, proc_site_ctx);
     if (!func_result) return std::unexpected(func_result.error());
 
     product.process_functions.push_back(func_result->function);
@@ -134,25 +155,45 @@ auto CompileModuleSpecSession(
         product.wait_sites.end(),
         std::make_move_iterator(func_result->wait_sites.begin()),
         std::make_move_iterator(func_result->wait_sites.end()));
+    product.back_edge_origins.insert(
+        product.back_edge_origins.end(),
+        std::make_move_iterator(func_result->back_edge_origins.begin()),
+        std::make_move_iterator(func_result->back_edge_origins.end()));
   }
 
   // Step 4: Compile deferred assertion thunks while session state is valid.
-  // Callee captures and thunk codegen happen here, inside the session,
-  // because declared functions are in scope.
   if (!input.deferred_sites.empty()) {
     auto callee_info =
         CaptureDeferredCalleeInfoForBody(context, input.deferred_sites);
     auto artifacts = CompileDeferredAssertionArtifacts(
-        context, input.deferred_sites, callee_info, input.name_prefix);
+        context, facts, input.deferred_sites, callee_info, input.name_prefix);
     if (!artifacts) return std::unexpected(artifacts.error());
     product.deferred_artifacts = std::move(*artifacts);
   }
-  product.declared_functions = std::move(declared_funcs);
+
+  // Step 5: Resolve module-scoped DPI export callees while declared functions
+  // and MIR ABI contracts are in scope.
+  for (const auto& target : input.module_export_targets) {
+    auto it = declared_func_map.find(target.function_id);
+    if (it == declared_func_map.end()) continue;
+    const auto& callee = body.arena[target.function_id];
+    product.module_export_entries.push_back(
+        ResolvedModuleExportEntry{
+            .wrapper_index = target.wrapper_index,
+            .info =
+                {
+                    .llvm_func = it->second,
+                    .accepts_decision_owner =
+                        callee.abi_contract.accepts_decision_owner,
+                },
+        });
+  }
 
   return product;
 }
 
-auto CompileGlobalFunctions(Context& context, const LoweringInput& input)
+auto CompileGlobalFunctions(
+    Context& context, const CuFacts& facts, const LoweringInput& input)
     -> Result<void> {
   std::vector<mir::FunctionId> global_func_ids;
   std::unordered_set<uint32_t> seen_func_ids;
@@ -184,7 +225,8 @@ auto CompileGlobalFunctions(Context& context, const LoweringInput& input)
   Context::DeclaredFunctionScope func_scope(context, global_func_map);
   for (const auto& [func_id, llvm_func] : global_func_map) {
     BodySiteContext no_sites;
-    auto result = DefineMirFunction(context, func_id, llvm_func, no_sites);
+    auto result =
+        DefineMirFunction(context, facts, func_id, llvm_func, no_sites);
     if (!result) return std::unexpected(result.error());
 
     const auto& func = (*input.mir_arena)[func_id];
@@ -197,59 +239,55 @@ auto CompileGlobalFunctions(Context& context, const LoweringInput& input)
 }
 
 auto CompileSpecializations(
-    Context& context, const LoweringInput& input, const SpecPlan& spec_plan)
-    -> Result<SpecializationProducts> {
+    Context& context, const CuFacts& facts, const LoweringInput& input,
+    const SpecPlan& spec_plan) -> Result<SpecializationProducts> {
   SpecializationProducts products;
   products.deferred_site_artifacts.resize(
       input.design->deferred_assertion_sites.size());
+  if (input.dpi_export_wrappers != nullptr) {
+    products.module_export_callees.resize(input.dpi_export_wrappers->size());
+  }
 
-  for (const auto& spec_input : spec_plan.inputs) {
-    auto product = CompileModuleSpecSession(context, spec_input);
+  auto num_units = spec_plan.inputs.size();
+  products.body_compiled_funcs.resize(num_units);
+  products.body_process_triggers.resize(num_units);
+
+  uint32_t running_wait_base = 0;
+  uint32_t running_back_edge_base = 0;
+
+  for (size_t ui = 0; ui < num_units; ++ui) {
+    auto input_with_bases = spec_plan.inputs[ui];
+    input_with_bases.wait_site_base_index = running_wait_base;
+    input_with_bases.back_edge_site_base_index = running_back_edge_base;
+
+    auto product = CompileModuleSpecSession(
+        context, facts, input_with_bases, input.construction);
     if (!product) return std::unexpected(product.error());
 
-    // Merge DPI export callees.
-    if (input.dpi_export_wrappers != nullptr) {
-      for (const auto& desc : *input.dpi_export_wrappers) {
-        if (desc.target.scope_kind != mir::DpiExportScopeKind::kModule) {
-          continue;
-        }
-        if (desc.target.module_target.body != product->body) {
-          continue;
-        }
-        auto func_id = desc.target.module_target.function_id;
-        for (const auto& [fid, llvm_func] : product->declared_functions) {
-          if (fid != func_id) continue;
-          const auto& callee = product->body->arena[func_id];
-          products.module_export_callees[desc.target.module_target] = {
-              .llvm_func = llvm_func,
-              .accepts_decision_owner =
-                  callee.abi_contract.accepts_decision_owner,
-          };
-          break;
-        }
-      }
+    running_wait_base += static_cast<uint32_t>(product->wait_sites.size());
+    running_back_edge_base +=
+        static_cast<uint32_t>(product->back_edge_origins.size());
+
+    for (const auto& entry : product->module_export_entries) {
+      products.module_export_callees[entry.wrapper_index] = entry.info;
     }
 
-    // Merge per-body deferred artifacts into design-global array.
     for (uint32_t di = 0; di < product->deferred_artifacts.size(); ++di) {
       products.deferred_site_artifacts[product->deferred_site_base_index + di] =
           std::move(product->deferred_artifacts[di]);
     }
 
-    products.body_to_process_triggers.try_emplace(
-        product->body, std::move(product->process_triggers));
+    products.body_compiled_funcs[ui] = std::move(product->process_functions);
+    products.body_process_triggers[ui] = std::move(product->process_triggers);
 
-    auto [it, inserted] = products.body_to_compiled_funcs.try_emplace(
-        product->body, std::move(product->process_functions));
-    if (!inserted) {
-      throw common::InternalError(
-          "CompileSpecializations",
-          "duplicate body in specialization products");
-    }
     products.wait_sites.insert(
         products.wait_sites.end(),
         std::make_move_iterator(product->wait_sites.begin()),
         std::make_move_iterator(product->wait_sites.end()));
+    products.back_edge_origins.insert(
+        products.back_edge_origins.end(),
+        std::make_move_iterator(product->back_edge_origins.begin()),
+        std::make_move_iterator(product->back_edge_origins.end()));
   }
 
   return products;

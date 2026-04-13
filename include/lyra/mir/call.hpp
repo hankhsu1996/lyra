@@ -194,14 +194,6 @@ struct ModuleExportCalleeKey {
   auto operator==(const ModuleExportCalleeKey&) const -> bool = default;
 };
 
-struct ModuleExportCalleeKeyHash {
-  auto operator()(const ModuleExportCalleeKey& k) const -> size_t {
-    auto h1 = std::hash<const void*>{}(k.body);
-    auto h2 = std::hash<uint32_t>{}(k.function_id.value);
-    return h1 ^ (h2 * 2654435761U);
-  }
-};
-
 // Resolved export target for wrapper emission.
 // Package path uses package_symbol (design-global callable, resolved by
 // SymbolId through the design function registry).

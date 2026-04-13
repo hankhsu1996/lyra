@@ -33,6 +33,8 @@ struct ActiveExecutionMode {
 struct BodySiteContext {
   uint32_t deferred_site_base = 0;
   uint32_t cover_site_base = 0;
+  uint32_t wait_site_base = 0;
+  uint32_t back_edge_site_base = 0;
   std::span<const mir::DeferredAssertionSiteInfo> deferred_sites;
 
   // Look up site info by body-local ID. Returns nullptr if out of range.

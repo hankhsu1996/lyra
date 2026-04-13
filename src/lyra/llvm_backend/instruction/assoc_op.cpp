@@ -11,6 +11,7 @@
 #include "lyra/llvm_backend/commit.hpp"
 #include "lyra/llvm_backend/compute/operand.hpp"
 #include "lyra/llvm_backend/context.hpp"
+#include "lyra/llvm_backend/cu_facts.hpp"
 #include "lyra/llvm_backend/layout/union_storage.hpp"
 #include "lyra/llvm_backend/lifecycle.hpp"
 #include "lyra/llvm_backend/slot_access.hpp"
@@ -27,31 +28,34 @@ struct KeyArgs {
   llvm::Value* key_c;
 };
 
-auto PlaceType(Context& ctx, mir::PlaceId place_id) -> TypeId {
-  return mir::TypeOfPlace(ctx.GetTypeArena(), ctx.GetMirArena()[place_id]);
+auto PlaceType(Context& ctx, const CuFacts& facts, mir::PlaceId place_id)
+    -> TypeId {
+  return mir::TypeOfPlace(*facts.types, ctx.GetMirArena()[place_id]);
 }
 
-auto GetAATypeInfo(Context& ctx, mir::PlaceId receiver)
+auto GetAATypeInfo(Context& ctx, const CuFacts& facts, mir::PlaceId receiver)
     -> std::pair<TypeId, const AssociativeArrayInfo&> {
-  const auto& types = ctx.GetTypeArena();
-  TypeId receiver_type = PlaceType(ctx, receiver);
+  const auto& types = *facts.types;
+  TypeId receiver_type = PlaceType(ctx, facts, receiver);
   const auto& aa_info = types[receiver_type].AsAssociativeArray();
   return {receiver_type, aa_info};
 }
 
-auto GetKeyType(Context& ctx, mir::PlaceId receiver) -> TypeId {
-  auto [_, aa_info] = GetAATypeInfo(ctx, receiver);
+auto GetKeyType(Context& ctx, const CuFacts& facts, mir::PlaceId receiver)
+    -> TypeId {
+  auto [_, aa_info] = GetAATypeInfo(ctx, facts, receiver);
   return aa_info.key_type;
 }
 
-auto GetElemType(Context& ctx, mir::PlaceId receiver) -> TypeId {
-  auto [_, aa_info] = GetAATypeInfo(ctx, receiver);
+auto GetElemType(Context& ctx, const CuFacts& facts, mir::PlaceId receiver)
+    -> TypeId {
+  auto [_, aa_info] = GetAATypeInfo(ctx, facts, receiver);
   return aa_info.element_type;
 }
 
 // Determine LyraAssocElemKind for a type
-auto ClassifyElemKind(TypeId elem_type, const Context& ctx) -> uint32_t {
-  const auto& type = ctx.GetTypeArena()[elem_type];
+auto ClassifyElemKind(TypeId elem_type, const CuFacts& facts) -> uint32_t {
+  const auto& type = (*facts.types)[elem_type];
   switch (type.Kind()) {
     case TypeKind::kString:
       return kLyraAssocElemString;
@@ -62,14 +66,15 @@ auto ClassifyElemKind(TypeId elem_type, const Context& ctx) -> uint32_t {
     case TypeKind::kAssociativeArray:
       return kLyraAssocElemAssocArray;
     default:
-      return ctx.IsFourState(elem_type) ? kLyraAssocElemPod4State
-                                        : kLyraAssocElemPod;
+      return IsFourState(facts, elem_type) ? kLyraAssocElemPod4State
+                                           : kLyraAssocElemPod;
   }
 }
 
 // Compute element byte size using DataLayout
-auto GetElemByteSize(Context& ctx, TypeId elem_type) -> uint32_t {
-  const auto& types = ctx.GetTypeArena();
+auto GetElemByteSize(Context& ctx, const CuFacts& facts, TypeId elem_type)
+    -> uint32_t {
+  const auto& types = *facts.types;
   const auto& type = types[elem_type];
   // Handle types are pointer-sized
   if (type.Kind() == TypeKind::kString ||
@@ -79,7 +84,7 @@ auto GetElemByteSize(Context& ctx, TypeId elem_type) -> uint32_t {
     return static_cast<uint32_t>(
         ctx.GetModule().getDataLayout().getPointerSize());
   }
-  auto llvm_type = BuildLlvmTypeForTypeId(ctx, elem_type);
+  auto llvm_type = BuildLlvmTypeForTypeId(ctx, facts, elem_type);
   if (!llvm_type) {
     throw common::InternalError("GetElemByteSize", "failed to build LLVM type");
   }
@@ -88,10 +93,11 @@ auto GetElemByteSize(Context& ctx, TypeId elem_type) -> uint32_t {
 }
 
 // Lower a key operand to the (key_a, key_b, key_c) ABI triple.
-auto LowerKey(Context& ctx, const mir::Operand& key_op, TypeId key_type)
-    -> Result<KeyArgs> {
+auto LowerKey(
+    Context& ctx, const CuFacts& facts, const mir::Operand& key_op,
+    TypeId key_type) -> Result<KeyArgs> {
   auto& builder = ctx.GetBuilder();
-  const auto& types = ctx.GetTypeArena();
+  const auto& types = *facts.types;
   auto* ptr_ty = llvm::PointerType::getUnqual(ctx.GetLlvmContext());
   auto* i32_ty = llvm::Type::getInt32Ty(ctx.GetLlvmContext());
 
@@ -104,7 +110,7 @@ auto LowerKey(Context& ctx, const mir::Operand& key_op, TypeId key_type)
 
   if (is_string_key) {
     // String key: load handle, get view
-    auto raw = LowerOperandRaw(ctx, key_op);
+    auto raw = LowerOperandRaw(ctx, facts, key_op);
     if (!raw) return std::unexpected(raw.error());
 
     // Alloca for ptr + len output from LyraStringGetView
@@ -128,7 +134,7 @@ auto LowerKey(Context& ctx, const mir::Operand& key_op, TypeId key_type)
   }
 
   // Integral key: store iN to alloca, pass pointer
-  auto raw = LowerOperandRaw(ctx, key_op);
+  auto raw = LowerOperandRaw(ctx, facts, key_op);
   if (!raw) return std::unexpected(raw.error());
 
   auto* raw_val = *raw;
@@ -220,7 +226,8 @@ auto GetKeySpecConstants(TypeId key_type, const TypeArena& types)
 }
 
 // Load AA handle from receiver, lazy-allocate if null.
-auto LoadOrAllocHandle(Context& ctx, mir::PlaceId receiver)
+auto LoadOrAllocHandle(
+    Context& ctx, const CuFacts& facts, mir::PlaceId receiver)
     -> Result<llvm::Value*> {
   auto& builder = ctx.GetBuilder();
   auto* ptr_ty = llvm::PointerType::getUnqual(ctx.GetLlvmContext());
@@ -248,10 +255,10 @@ auto LoadOrAllocHandle(Context& ctx, mir::PlaceId receiver)
 
   // Alloc block: call LyraAssocNew, store back to receiver
   builder.SetInsertPoint(alloc_bb);
-  auto [receiver_type, aa_info] = GetAATypeInfo(ctx, receiver);
-  auto key_consts = GetKeySpecConstants(aa_info.key_type, ctx.GetTypeArena());
-  uint32_t elem_kind = ClassifyElemKind(aa_info.element_type, ctx);
-  uint32_t elem_size = GetElemByteSize(ctx, aa_info.element_type);
+  auto [receiver_type, aa_info] = GetAATypeInfo(ctx, facts, receiver);
+  auto key_consts = GetKeySpecConstants(aa_info.key_type, *facts.types);
+  uint32_t elem_kind = ClassifyElemKind(aa_info.element_type, facts);
+  uint32_t elem_size = GetElemByteSize(ctx, facts, aa_info.element_type);
 
   auto* new_handle = builder.CreateCall(
       ctx.GetLyraAssocNew(),
@@ -283,8 +290,9 @@ auto LoadHandle(Context& ctx, mir::PlaceId receiver) -> Result<llvm::Value*> {
 }
 
 // Compute key alloca size for iteration output
-auto GetKeyAllocaSize(Context& ctx, TypeId key_type) -> uint32_t {
-  const auto& types = ctx.GetTypeArena();
+auto GetKeyAllocaSize(Context& ctx, const CuFacts& facts, TypeId key_type)
+    -> uint32_t {
+  const auto& types = *facts.types;
   if (!key_type) {
     return 8;  // wildcard = 32-bit int, but we need at least a word
   }
@@ -306,7 +314,8 @@ auto GetKeyAllocaSize(Context& ctx, TypeId key_type) -> uint32_t {
 
 }  // namespace
 
-auto LowerAssocOp(Context& ctx, const mir::AssocOp& op) -> Result<void> {
+auto LowerAssocOp(Context& ctx, const CuFacts& facts, const mir::AssocOp& op)
+    -> Result<void> {
   auto& builder = ctx.GetBuilder();
   auto* ptr_ty = llvm::PointerType::getUnqual(ctx.GetLlvmContext());
   auto* i32_ty = llvm::Type::getInt32Ty(ctx.GetLlvmContext());
@@ -317,15 +326,15 @@ auto LowerAssocOp(Context& ctx, const mir::AssocOp& op) -> Result<void> {
   return std::visit(
       common::Overloaded{
           [&](const mir::AssocGet& get) -> Result<void> {
-            auto handle = LoadOrAllocHandle(ctx, op.receiver);
+            auto handle = LoadOrAllocHandle(ctx, facts, op.receiver);
             if (!handle) return std::unexpected(handle.error());
 
-            auto key_type = GetKeyType(ctx, op.receiver);
-            auto key = LowerKey(ctx, get.key, key_type);
+            auto key_type = GetKeyType(ctx, facts, op.receiver);
+            auto key = LowerKey(ctx, facts, get.key, key_type);
             if (!key) return std::unexpected(key.error());
 
-            auto elem_type = GetElemType(ctx, op.receiver);
-            uint32_t elem_size = GetElemByteSize(ctx, elem_type);
+            auto elem_type = GetElemType(ctx, facts, op.receiver);
+            uint32_t elem_size = GetElemByteSize(ctx, facts, elem_type);
 
             // Alloca for output value
             auto* i8_ty = llvm::Type::getInt8Ty(ctx.GetLlvmContext());
@@ -337,7 +346,7 @@ auto LowerAssocOp(Context& ctx, const mir::AssocOp& op) -> Result<void> {
                                         key->key_c, out_alloca, null_ptr});
 
             // Load from alloca and commit to dest
-            auto dest_llvm_type = BuildLlvmTypeForTypeId(ctx, elem_type);
+            auto dest_llvm_type = BuildLlvmTypeForTypeId(ctx, facts, elem_type);
             if (!dest_llvm_type) {
               return std::unexpected(dest_llvm_type.error());
             }
@@ -345,7 +354,8 @@ auto LowerAssocOp(Context& ctx, const mir::AssocOp& op) -> Result<void> {
                 builder.CreateLoad(*dest_llvm_type, out_alloca, "aa.get.val");
 
             auto result = CommitValue(
-                ctx, get.dest, loaded, elem_type, OwnershipPolicy::kMove);
+                ctx, facts, get.dest, loaded, elem_type,
+                OwnershipPolicy::kMove);
             if (!result) return std::unexpected(result.error());
 
             // No Destroy here: kMove transfers ownership from the alloca
@@ -353,19 +363,19 @@ auto LowerAssocOp(Context& ctx, const mir::AssocOp& op) -> Result<void> {
             return {};
           },
           [&](const mir::AssocSet& set) -> Result<void> {
-            auto handle = LoadOrAllocHandle(ctx, op.receiver);
+            auto handle = LoadOrAllocHandle(ctx, facts, op.receiver);
             if (!handle) return std::unexpected(handle.error());
 
-            auto key_type = GetKeyType(ctx, op.receiver);
-            auto key = LowerKey(ctx, set.key, key_type);
+            auto key_type = GetKeyType(ctx, facts, op.receiver);
+            auto key = LowerKey(ctx, facts, set.key, key_type);
             if (!key) return std::unexpected(key.error());
 
             // Lower value operand
-            auto raw_val = LowerOperandRaw(ctx, set.value);
+            auto raw_val = LowerOperandRaw(ctx, facts, set.value);
             if (!raw_val) return std::unexpected(raw_val.error());
 
-            auto elem_type = GetElemType(ctx, op.receiver);
-            uint32_t elem_size = GetElemByteSize(ctx, elem_type);
+            auto elem_type = GetElemType(ctx, facts, op.receiver);
+            uint32_t elem_size = GetElemByteSize(ctx, facts, elem_type);
 
             // Store value to alloca for passing to runtime
             auto* i8_ty = llvm::Type::getInt8Ty(ctx.GetLlvmContext());
@@ -382,8 +392,8 @@ auto LowerAssocOp(Context& ctx, const mir::AssocOp& op) -> Result<void> {
             auto handle = LoadHandle(ctx, op.receiver);
             if (!handle) return std::unexpected(handle.error());
 
-            auto key_type = GetKeyType(ctx, op.receiver);
-            auto key = LowerKey(ctx, exists.key, key_type);
+            auto key_type = GetKeyType(ctx, facts, op.receiver);
+            auto key = LowerKey(ctx, facts, exists.key, key_type);
             if (!key) return std::unexpected(key.error());
 
             auto* result = builder.CreateCall(
@@ -391,8 +401,8 @@ auto LowerAssocOp(Context& ctx, const mir::AssocOp& op) -> Result<void> {
                 {*handle, key->key_a, key->key_b, key->key_c, null_ptr},
                 "aa.exists");
             return CommitValue(
-                ctx, exists.dest, result, PlaceType(ctx, exists.dest),
-                OwnershipPolicy::kMove);
+                ctx, facts, exists.dest, result,
+                PlaceType(ctx, facts, exists.dest), OwnershipPolicy::kMove);
           },
           [&](const mir::AssocDelete& /*del*/) -> Result<void> {
             auto handle = LoadHandle(ctx, op.receiver);
@@ -404,8 +414,8 @@ auto LowerAssocOp(Context& ctx, const mir::AssocOp& op) -> Result<void> {
             auto handle = LoadHandle(ctx, op.receiver);
             if (!handle) return std::unexpected(handle.error());
 
-            auto key_type = GetKeyType(ctx, op.receiver);
-            auto key = LowerKey(ctx, del.key, key_type);
+            auto key_type = GetKeyType(ctx, facts, op.receiver);
+            auto key = LowerKey(ctx, facts, del.key, key_type);
             if (!key) return std::unexpected(key.error());
 
             builder.CreateCall(
@@ -421,15 +431,15 @@ auto LowerAssocOp(Context& ctx, const mir::AssocOp& op) -> Result<void> {
                 ctx.GetLyraAssocSize(), {*handle}, "aa.size");
             auto* size32 = builder.CreateTrunc(size, i32_ty, "aa.size32");
             return CommitValue(
-                ctx, num.dest, size32, PlaceType(ctx, num.dest),
+                ctx, facts, num.dest, size32, PlaceType(ctx, facts, num.dest),
                 OwnershipPolicy::kMove);
           },
           [&](const mir::AssocIterFirst& iter) -> Result<void> {
             auto handle = LoadHandle(ctx, op.receiver);
             if (!handle) return std::unexpected(handle.error());
 
-            auto key_type = GetKeyType(ctx, op.receiver);
-            uint32_t key_size = GetKeyAllocaSize(ctx, key_type);
+            auto key_type = GetKeyType(ctx, facts, op.receiver);
+            uint32_t key_size = GetKeyAllocaSize(ctx, facts, key_type);
 
             auto* i8_ty = llvm::Type::getInt8Ty(ctx.GetLlvmContext());
             auto* key_alloca = builder.CreateAlloca(
@@ -453,26 +463,27 @@ auto LowerAssocOp(Context& ctx, const mir::AssocOp& op) -> Result<void> {
             builder.CreateCondBr(is_found, commit_bb, done_bb);
 
             builder.SetInsertPoint(commit_bb);
-            auto key_llvm = BuildLlvmTypeForTypeId(ctx, key_type);
+            auto key_llvm = BuildLlvmTypeForTypeId(ctx, facts, key_type);
             if (!key_llvm) return std::unexpected(key_llvm.error());
             auto* key_val =
                 builder.CreateLoad(*key_llvm, key_alloca, "aa.iter.kv");
             auto result = CommitValue(
-                ctx, iter.out_key, key_val, key_type, OwnershipPolicy::kMove);
+                ctx, facts, iter.out_key, key_val, key_type,
+                OwnershipPolicy::kMove);
             if (!result) return std::unexpected(result.error());
             builder.CreateBr(done_bb);
 
             builder.SetInsertPoint(done_bb);
             return CommitValue(
-                ctx, iter.dest_found, found, PlaceType(ctx, iter.dest_found),
-                OwnershipPolicy::kMove);
+                ctx, facts, iter.dest_found, found,
+                PlaceType(ctx, facts, iter.dest_found), OwnershipPolicy::kMove);
           },
           [&](const mir::AssocIterLast& iter) -> Result<void> {
             auto handle = LoadHandle(ctx, op.receiver);
             if (!handle) return std::unexpected(handle.error());
 
-            auto key_type = GetKeyType(ctx, op.receiver);
-            uint32_t key_size = GetKeyAllocaSize(ctx, key_type);
+            auto key_type = GetKeyType(ctx, facts, op.receiver);
+            uint32_t key_size = GetKeyAllocaSize(ctx, facts, key_type);
 
             auto* i8_ty = llvm::Type::getInt8Ty(ctx.GetLlvmContext());
             auto* key_alloca = builder.CreateAlloca(
@@ -496,32 +507,33 @@ auto LowerAssocOp(Context& ctx, const mir::AssocOp& op) -> Result<void> {
             builder.CreateCondBr(is_found, commit_bb, done_bb);
 
             builder.SetInsertPoint(commit_bb);
-            auto key_llvm = BuildLlvmTypeForTypeId(ctx, key_type);
+            auto key_llvm = BuildLlvmTypeForTypeId(ctx, facts, key_type);
             if (!key_llvm) return std::unexpected(key_llvm.error());
             auto* key_val =
                 builder.CreateLoad(*key_llvm, key_alloca, "aa.iter.kv");
             auto result = CommitValue(
-                ctx, iter.out_key, key_val, key_type, OwnershipPolicy::kMove);
+                ctx, facts, iter.out_key, key_val, key_type,
+                OwnershipPolicy::kMove);
             if (!result) return std::unexpected(result.error());
             builder.CreateBr(done_bb);
 
             builder.SetInsertPoint(done_bb);
             return CommitValue(
-                ctx, iter.dest_found, found, PlaceType(ctx, iter.dest_found),
-                OwnershipPolicy::kMove);
+                ctx, facts, iter.dest_found, found,
+                PlaceType(ctx, facts, iter.dest_found), OwnershipPolicy::kMove);
           },
           [&](const mir::AssocIterNext& iter) -> Result<void> {
             auto handle = LoadHandle(ctx, op.receiver);
             if (!handle) return std::unexpected(handle.error());
 
-            auto key_type = GetKeyType(ctx, op.receiver);
-            uint32_t key_size = GetKeyAllocaSize(ctx, key_type);
+            auto key_type = GetKeyType(ctx, facts, op.receiver);
+            uint32_t key_size = GetKeyAllocaSize(ctx, facts, key_type);
 
             // Load current key into alloca
             auto key_ptr = ctx.GetPlacePointer(iter.key_place);
             if (!key_ptr) return std::unexpected(key_ptr.error());
 
-            auto key_llvm = BuildLlvmTypeForTypeId(ctx, key_type);
+            auto key_llvm = BuildLlvmTypeForTypeId(ctx, facts, key_type);
             if (!key_llvm) return std::unexpected(key_llvm.error());
 
             auto* i8_ty = llvm::Type::getInt8Ty(ctx.GetLlvmContext());
@@ -552,26 +564,27 @@ auto LowerAssocOp(Context& ctx, const mir::AssocOp& op) -> Result<void> {
             auto* new_key =
                 builder.CreateLoad(*key_llvm, key_alloca, "aa.next.kv");
             auto result = CommitValue(
-                ctx, iter.key_place, new_key, key_type, OwnershipPolicy::kMove);
+                ctx, facts, iter.key_place, new_key, key_type,
+                OwnershipPolicy::kMove);
             if (!result) return std::unexpected(result.error());
             builder.CreateBr(done_bb);
 
             builder.SetInsertPoint(done_bb);
             return CommitValue(
-                ctx, iter.dest_found, found, PlaceType(ctx, iter.dest_found),
-                OwnershipPolicy::kMove);
+                ctx, facts, iter.dest_found, found,
+                PlaceType(ctx, facts, iter.dest_found), OwnershipPolicy::kMove);
           },
           [&](const mir::AssocIterPrev& iter) -> Result<void> {
             auto handle = LoadHandle(ctx, op.receiver);
             if (!handle) return std::unexpected(handle.error());
 
-            auto key_type = GetKeyType(ctx, op.receiver);
-            uint32_t key_size = GetKeyAllocaSize(ctx, key_type);
+            auto key_type = GetKeyType(ctx, facts, op.receiver);
+            uint32_t key_size = GetKeyAllocaSize(ctx, facts, key_type);
 
             auto key_ptr = ctx.GetPlacePointer(iter.key_place);
             if (!key_ptr) return std::unexpected(key_ptr.error());
 
-            auto key_llvm = BuildLlvmTypeForTypeId(ctx, key_type);
+            auto key_llvm = BuildLlvmTypeForTypeId(ctx, facts, key_type);
             if (!key_llvm) return std::unexpected(key_llvm.error());
 
             auto* i8_ty = llvm::Type::getInt8Ty(ctx.GetLlvmContext());
@@ -602,21 +615,22 @@ auto LowerAssocOp(Context& ctx, const mir::AssocOp& op) -> Result<void> {
             auto* new_key =
                 builder.CreateLoad(*key_llvm, key_alloca, "aa.prev.kv");
             auto result = CommitValue(
-                ctx, iter.key_place, new_key, key_type, OwnershipPolicy::kMove);
+                ctx, facts, iter.key_place, new_key, key_type,
+                OwnershipPolicy::kMove);
             if (!result) return std::unexpected(result.error());
             builder.CreateBr(done_bb);
 
             builder.SetInsertPoint(done_bb);
             return CommitValue(
-                ctx, iter.dest_found, found, PlaceType(ctx, iter.dest_found),
-                OwnershipPolicy::kMove);
+                ctx, facts, iter.dest_found, found,
+                PlaceType(ctx, facts, iter.dest_found), OwnershipPolicy::kMove);
           },
           [&](const mir::AssocSnapshot& snap) -> Result<void> {
             auto handle = LoadHandle(ctx, op.receiver);
             if (!handle) return std::unexpected(handle.error());
 
-            auto key_type = GetKeyType(ctx, op.receiver);
-            uint32_t key_size = GetKeyAllocaSize(ctx, key_type);
+            auto key_type = GetKeyType(ctx, facts, op.receiver);
+            uint32_t key_size = GetKeyAllocaSize(ctx, facts, key_type);
 
             // Create snapshot
             auto* snapshot = builder.CreateCall(
@@ -625,7 +639,7 @@ auto LowerAssocOp(Context& ctx, const mir::AssocOp& op) -> Result<void> {
                 ctx.GetLyraAssocSnapshotSize(), {snapshot}, "aa.snap.sz");
 
             // Allocate dynamic array for keys
-            auto dest_type = PlaceType(ctx, snap.dest_keys);
+            auto dest_type = PlaceType(ctx, facts, snap.dest_keys);
             auto elem_ops = ctx.GetElemOpsForType(key_type);
             if (!elem_ops) return std::unexpected(elem_ops.error());
 
@@ -663,7 +677,7 @@ auto LowerAssocOp(Context& ctx, const mir::AssocOp& op) -> Result<void> {
             auto* elem_ptr = builder.CreateCall(
                 ctx.GetLyraDynArrayElementPtr(), {new_arr, idx}, "aa.snap.ep");
 
-            auto key_llvm = BuildLlvmTypeForTypeId(ctx, key_type);
+            auto key_llvm = BuildLlvmTypeForTypeId(ctx, facts, key_type);
             if (!key_llvm) return std::unexpected(key_llvm.error());
             auto* kv = builder.CreateLoad(*key_llvm, key_alloca, "aa.snap.kv");
             builder.CreateStore(kv, elem_ptr);
@@ -677,7 +691,7 @@ auto LowerAssocOp(Context& ctx, const mir::AssocOp& op) -> Result<void> {
             builder.CreateCall(ctx.GetLyraAssocSnapshotRelease(), {snapshot});
 
             return CommitValue(
-                ctx, snap.dest_keys, new_arr, dest_type,
+                ctx, facts, snap.dest_keys, new_arr, dest_type,
                 OwnershipPolicy::kMove);
           },
       },
@@ -685,11 +699,11 @@ auto LowerAssocOp(Context& ctx, const mir::AssocOp& op) -> Result<void> {
 }
 
 auto LowerAssocOp(
-    Context& ctx, SlotAccessResolver& /*resolver*/, const mir::AssocOp& op)
-    -> Result<void> {
+    Context& ctx, const CuFacts& facts, SlotAccessResolver& /*resolver*/,
+    const mir::AssocOp& op) -> Result<void> {
   // AssocOp is a boundary statement -- sync happens before it.
   // Delegate to canonical version.
-  return LowerAssocOp(ctx, op);
+  return LowerAssocOp(ctx, facts, op);
 }
 
 }  // namespace lyra::lowering::mir_to_llvm

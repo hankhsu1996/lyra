@@ -2,6 +2,7 @@
 
 #include "lyra/common/diagnostic/diagnostic.hpp"
 #include "lyra/common/type.hpp"
+#include "lyra/llvm_backend/cu_facts.hpp"
 #include "lyra/llvm_backend/ownership.hpp"
 
 namespace llvm {
@@ -18,12 +19,14 @@ struct WriteTarget;
 // Not for direct use by instruction-level code.
 
 auto CommitStringValue(
-    Context& ctx, const WriteTarget& wt, llvm::Value* handle,
-    OwnershipPolicy policy, TypeId type_id) -> Result<void>;
+    Context& ctx, const CuFacts& facts, const WriteTarget& wt,
+    llvm::Value* handle, OwnershipPolicy policy, TypeId type_id)
+    -> Result<void>;
 
 auto CommitContainerValue(
-    Context& ctx, const WriteTarget& wt, llvm::Value* handle,
-    OwnershipPolicy policy, TypeId type_id) -> Result<void>;
+    Context& ctx, const CuFacts& facts, const WriteTarget& wt,
+    llvm::Value* handle, OwnershipPolicy policy, TypeId type_id)
+    -> Result<void>;
 
 auto CommitPackedValue(
     Context& ctx, const WriteTarget& wt, llvm::Value* raw, TypeId type_id)

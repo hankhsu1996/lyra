@@ -62,6 +62,7 @@ auto CompileToMir(const CompilationInput& input, CompilationOutput& output)
       .instance_table = &hir_result.instance_table,
       .specialization_map = &hir_result.specialization_map,
       .child_coord_map = &hir_result.child_coord_map,
+      .body_timescales = &hir_result.body_timescales,
   };
 
   std::expected<lowering::hir_to_mir::LoweringResult, Diagnostic> mir_result;

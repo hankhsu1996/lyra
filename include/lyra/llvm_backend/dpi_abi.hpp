@@ -6,11 +6,13 @@
 // wrapper emission.
 // Separate from internal Lyra function ABI; never reuses BuildUserFunctionType.
 
+#include <optional>
+#include <span>
 #include <string>
-#include <unordered_map>
 
 #include "lyra/common/diagnostic/diagnostic.hpp"
 #include "lyra/common/dpi_types.hpp"
+#include "lyra/llvm_backend/cu_facts.hpp"
 #include "lyra/llvm_backend/execution_mode.hpp"
 #include "lyra/mir/call.hpp"
 #include "lyra/mir/statement.hpp"
@@ -45,15 +47,15 @@ auto GetLlvmDpiStorageType(
 // Declare (or return cached) an external DPI import function with C calling
 // convention. Validates signature consistency on cache hit.
 auto GetOrDeclareDpiImport(
-    Context& context, const std::string& c_name, const mir::DpiSignature& sig)
-    -> llvm::Function*;
+    Context& context, const CuFacts& facts, const std::string& c_name,
+    const mir::DpiSignature& sig) -> llvm::Function*;
 
 // Lower a complete DPI import call: marshal and coerce arguments to C ABI
 // types, emit call with C calling convention, coerce return value back to
 // internal representation, and handle return staging.
 auto LowerDpiImportCall(
-    Context& context, const mir::DpiCall& call, const ActiveExecutionMode& mode)
-    -> Result<void>;
+    Context& context, const CuFacts& facts, const mir::DpiCall& call,
+    const ActiveExecutionMode& mode) -> Result<void>;
 
 // Emit public C-ABI wrapper functions for DPI exports.
 // Package-scoped exports: direct call to design-global callable.
@@ -71,9 +73,9 @@ struct ModuleExportCalleeInfo {
 };
 
 auto EmitDpiExportWrappers(
-    Context& context, const std::vector<mir::DpiExportWrapperDesc>& exports,
-    const std::unordered_map<
-        mir::ModuleExportCalleeKey, ModuleExportCalleeInfo,
-        mir::ModuleExportCalleeKeyHash>& module_export_callees) -> Result<void>;
+    Context& context, const CuFacts& facts,
+    const std::vector<mir::DpiExportWrapperDesc>& exports,
+    std::span<const std::optional<ModuleExportCalleeInfo>>
+        module_export_callees) -> Result<void>;
 
 }  // namespace lyra::lowering::mir_to_llvm::dpi

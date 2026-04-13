@@ -258,7 +258,7 @@ cases:
       Cross-product test: packed width creates separate specializations,
       and within each specialization, different unpacked depths are
       constructor-owned. Verifies that spec-local layout classification
-      works independently per specialization, not globally per body_id.
+      works independently per specialization, not globally per body.
     dump_specialization_map: true
     sv: |
       module Mem #(parameter int WIDTH = 8, parameter int DEPTH = 4);

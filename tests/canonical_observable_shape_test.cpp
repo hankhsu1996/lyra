@@ -1,9 +1,7 @@
 #include <gtest/gtest.h>
 
-#include "lyra/common/internal_error.hpp"
 #include "lyra/common/type.hpp"
 #include "lyra/common/type_arena.hpp"
-#include "lyra/llvm_backend/layout/layout.hpp"
 #include "lyra/llvm_backend/layout/storage_contract.hpp"
 #include "lyra/llvm_backend/observable_descriptor_utils.hpp"
 #include "lyra/mir/design.hpp"
@@ -43,12 +41,9 @@ TEST(CanonicalObservableShapeTest, NonForwardedSlot) {
   TypeArena arena;
   TypeId logic_id = MakeLogicType(arena);
 
-  DesignLayout layout;
-  layout.slot_storage_specs = {MakeLogicSpec()};
-
+  auto spec = MakeLogicSpec();
   CanonicalObservableShape shape = ComputeCanonicalObservableShape(
-      ObservableOwnerSlotId::Create(0), layout, logic_id,
-      mir::SlotKind::kVariable, arena);
+      spec, logic_id, mir::SlotKind::kVariable, arena);
 
   EXPECT_EQ(shape.trace.bit_width, 1U);
   EXPECT_EQ(shape.trace.trace_kind, runtime::TraceSignalKind::kVariable);
@@ -64,12 +59,9 @@ TEST(CanonicalObservableShapeTest, VariableOwnerWinsOverAliasLocalNetMetadata) {
   TypeArena arena;
   TypeId logic_id = MakeLogicType(arena);
 
-  DesignLayout layout;
-  layout.slot_storage_specs = {MakeLogicSpec(), MakeLogicSpec()};
-
+  auto spec = MakeLogicSpec();
   CanonicalObservableShape shape = ComputeCanonicalObservableShape(
-      ObservableOwnerSlotId::Create(0), layout, logic_id,
-      mir::SlotKind::kVariable, arena);
+      spec, logic_id, mir::SlotKind::kVariable, arena);
 
   EXPECT_EQ(shape.trace.trace_kind, runtime::TraceSignalKind::kVariable);
   EXPECT_EQ(shape.trace.bit_width, 1U);
@@ -79,12 +71,9 @@ TEST(CanonicalObservableShapeTest, SameTypeForwarding) {
   TypeArena arena;
   TypeId int_id = MakeIntType(arena);
 
-  DesignLayout layout;
-  layout.slot_storage_specs = {MakeIntSpec(), MakeIntSpec()};
-
+  auto spec = MakeIntSpec();
   CanonicalObservableShape shape = ComputeCanonicalObservableShape(
-      ObservableOwnerSlotId::Create(0), layout, int_id,
-      mir::SlotKind::kVariable, arena);
+      spec, int_id, mir::SlotKind::kVariable, arena);
 
   EXPECT_EQ(shape.trace.bit_width, 32U);
   EXPECT_EQ(shape.trace.trace_kind, runtime::TraceSignalKind::kVariable);
@@ -99,44 +88,27 @@ TEST(
   TypeArena arena;
   TypeId int_id = MakeIntType(arena);
 
-  // Owner row (0): 32-bit 2-state. Other row (1): 1-bit 4-state.
-  // Helper should read row 0.
-  DesignLayout layout;
-  layout.slot_storage_specs = {MakeIntSpec(), MakeLogicSpec()};
-
+  // Owner spec: 32-bit 2-state. Shape uses only the owner's spec.
+  auto owner_spec = MakeIntSpec();
   CanonicalObservableShape shape = ComputeCanonicalObservableShape(
-      ObservableOwnerSlotId::Create(0), layout, int_id,
-      mir::SlotKind::kVariable, arena);
+      owner_spec, int_id, mir::SlotKind::kVariable, arena);
 
   EXPECT_EQ(shape.storage.total_bytes, 4U);
   EXPECT_EQ(shape.storage.storage_kind, runtime::SlotStorageKind::kPacked2);
   EXPECT_FALSE(shape.storage.packed4_lanes.has_value());
 }
 
-TEST(CanonicalObservableShapeTest, OwnerOutOfRangeThrows) {
-  TypeArena arena;
-  TypeId logic_id = MakeLogicType(arena);
-
-  DesignLayout layout;
-  layout.slot_storage_specs = {MakeLogicSpec()};
-
-  EXPECT_THROW(
-      ComputeCanonicalObservableShape(
-          ObservableOwnerSlotId::Create(99), layout, logic_id,
-          mir::SlotKind::kVariable, arena),
-      common::InternalError);
-}
+// The out-of-range check is now the caller's responsibility since
+// ComputeCanonicalObservableShape takes a direct SlotStorageSpec ref.
+// This test is no longer applicable and has been removed.
 
 TEST(CanonicalObservableShapeTest, Packed4ShapeCarriesLaneFields) {
   TypeArena arena;
   TypeId logic_id = MakeLogicType(arena);
 
-  DesignLayout layout;
-  layout.slot_storage_specs = {MakeLogicSpec()};
-
+  auto spec = MakeLogicSpec();
   CanonicalObservableShape shape = ComputeCanonicalObservableShape(
-      ObservableOwnerSlotId::Create(0), layout, logic_id,
-      mir::SlotKind::kVariable, arena);
+      spec, logic_id, mir::SlotKind::kVariable, arena);
 
   EXPECT_EQ(shape.storage.storage_kind, runtime::SlotStorageKind::kPacked4);
   ASSERT_TRUE(shape.storage.packed4_lanes.has_value());
@@ -150,12 +122,9 @@ TEST(CanonicalObservableShapeTest, NonPacked4ShapeHasNoLanes) {
   TypeArena arena;
   TypeId int_id = MakeIntType(arena);
 
-  DesignLayout layout;
-  layout.slot_storage_specs = {MakeIntSpec()};
-
+  auto spec = MakeIntSpec();
   CanonicalObservableShape shape = ComputeCanonicalObservableShape(
-      ObservableOwnerSlotId::Create(0), layout, int_id,
-      mir::SlotKind::kVariable, arena);
+      spec, int_id, mir::SlotKind::kVariable, arena);
 
   EXPECT_EQ(shape.storage.storage_kind, runtime::SlotStorageKind::kPacked2);
   EXPECT_FALSE(shape.storage.packed4_lanes.has_value());
@@ -165,12 +134,9 @@ TEST(CanonicalObservableShapeTest, NetOwnerProducesNetTraceKind) {
   TypeArena arena;
   TypeId logic_id = MakeLogicType(arena);
 
-  DesignLayout layout;
-  layout.slot_storage_specs = {MakeLogicSpec()};
-
+  auto spec = MakeLogicSpec();
   CanonicalObservableShape shape = ComputeCanonicalObservableShape(
-      ObservableOwnerSlotId::Create(0), layout, logic_id, mir::SlotKind::kNet,
-      arena);
+      spec, logic_id, mir::SlotKind::kNet, arena);
 
   EXPECT_EQ(shape.trace.trace_kind, runtime::TraceSignalKind::kNet);
 }

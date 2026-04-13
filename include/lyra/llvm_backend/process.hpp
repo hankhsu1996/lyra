@@ -11,6 +11,7 @@
 
 #include "lyra/common/diagnostic/diagnostic.hpp"
 #include "lyra/common/edge_kind.hpp"
+#include "lyra/common/origin_id.hpp"
 #include "lyra/llvm_backend/context.hpp"
 #include "lyra/llvm_backend/deferred_thunk_abi.hpp"
 #include "lyra/llvm_backend/execution_mode.hpp"
@@ -34,7 +35,7 @@ enum class ProcessExecutionKind {
 };
 
 // Per-wait-site entry produced during process codegen.
-// Index = wait_site_id (assigned sequentially via Context::NextWaitSiteId).
+// Index = wait_site_base + local ordinal within the process.
 struct WaitSiteEntry {
   uint32_t resume_block = 0;
   uint32_t num_triggers = 0;
@@ -79,6 +80,10 @@ struct ProcessTriggerEntry {
 struct ProcessCodegenResult {
   llvm::Function* function;
   std::vector<WaitSiteEntry> wait_sites;
+  // Per-process back-edge site origins, accumulated during codegen.
+  // Positional: element [i] corresponds to the (base + i)-th design-global
+  // back-edge site.
+  std::vector<common::OriginId> back_edge_origins;
   // Canonical process-trigger metadata for G13.
   // Present when the process has at least one Wait terminator.
   std::optional<ProcessTriggerEntry> process_trigger;
@@ -89,17 +94,18 @@ struct ProcessCodegenResult {
 // stores and no engine access; simulation processes get full dirty tracking
 // and resume dispatch.
 auto GenerateProcessFunction(
-    Context& context, const mir::Process& process, const std::string& name,
-    ProcessExecutionKind execution_kind, const BodySiteContext& site_ctx)
-    -> Result<ProcessCodegenResult>;
+    Context& context, const CuFacts& facts, const mir::Process& process,
+    const std::string& name, ProcessExecutionKind execution_kind,
+    const BodySiteContext& site_ctx) -> Result<ProcessCodegenResult>;
 
 // Generate a shared process function with the 2-arg call contract.
 // Signature: void(ptr frame, i32 resume)
 // Instance binding is loaded from the frame header at entry.
 // The context must have template-mode fields configured before calling.
 auto GenerateSharedProcessFunction(
-    Context& context, const mir::Process& process, const std::string& name,
-    const BodySiteContext& site_ctx) -> Result<ProcessCodegenResult>;
+    Context& context, const CuFacts& facts, const mir::Process& process,
+    const std::string& name, const BodySiteContext& site_ctx)
+    -> Result<ProcessCodegenResult>;
 
 // Declare a MIR function without generating its body.
 // Used for two-pass generation to enable mutual recursion.
@@ -110,14 +116,15 @@ auto DeclareMirFunction(
 // Generate the body for a MIR function.
 // The function must have been declared first with DeclareMirFunction.
 auto DefineMirFunction(
-    Context& context, mir::FunctionId func_id, llvm::Function* func,
-    const BodySiteContext& site_ctx) -> Result<void>;
+    Context& context, const CuFacts& facts, mir::FunctionId func_id,
+    llvm::Function* func, const BodySiteContext& site_ctx) -> Result<void>;
 
 // Compile deferred assertion thunks for one body's sites. Returns positional
 // artifacts parallel to sites. Called per-body inside the spec session while
 // declared functions are in scope.
 auto CompileDeferredAssertionArtifacts(
-    Context& context, std::span<const mir::DeferredAssertionSiteInfo> sites,
+    Context& context, const CuFacts& facts,
+    std::span<const mir::DeferredAssertionSiteInfo> sites,
     std::span<const DeferredSiteCalleeInfo> callee_info,
     std::string_view name_prefix)
     -> Result<std::vector<DeferredSiteCompiledArtifact>>;

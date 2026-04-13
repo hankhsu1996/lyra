@@ -2,7 +2,6 @@
 
 #include <algorithm>
 #include <cstdint>
-#include <expected>
 #include <format>
 
 #include <llvm/ADT/APInt.h>
@@ -13,13 +12,10 @@
 #include <llvm/IR/Value.h>
 #include <llvm/Support/ErrorHandling.h>
 
-#include "lyra/common/diagnostic/diagnostic.hpp"
 #include "lyra/common/internal_error.hpp"
 #include "lyra/common/type.hpp"
 #include "lyra/common/type_queries.hpp"
 #include "lyra/llvm_backend/compute/operand.hpp"
-#include "lyra/llvm_backend/context.hpp"
-#include "lyra/lowering/diagnostic_context.hpp"
 #include "lyra/mir/operand.hpp"
 #include "lyra/mir/operator.hpp"
 
@@ -39,6 +35,8 @@ auto ReturnsI1(mir::BinaryOp op) -> bool {
     case mir::BinaryOp::kGreaterThanEqualSigned:
     case mir::BinaryOp::kLogicalAnd:
     case mir::BinaryOp::kLogicalOr:
+    case mir::BinaryOp::kLogicalImplication:
+    case mir::BinaryOp::kLogicalEquivalence:
     case mir::BinaryOp::kCaseZMatch:
     case mir::BinaryOp::kCaseXMatch:
       return true;
@@ -104,7 +102,9 @@ auto IsShiftOp(mir::BinaryOp op) -> bool {
 }
 
 auto IsLogicalOp(mir::BinaryOp op) -> bool {
-  return op == mir::BinaryOp::kLogicalAnd || op == mir::BinaryOp::kLogicalOr;
+  return op == mir::BinaryOp::kLogicalAnd || op == mir::BinaryOp::kLogicalOr ||
+         op == mir::BinaryOp::kLogicalImplication ||
+         op == mir::BinaryOp::kLogicalEquivalence;
 }
 
 auto IsCaseMatchOp(mir::BinaryOp op) -> bool {
@@ -136,9 +136,8 @@ auto GetSemanticMask(llvm::Type* ty, uint32_t semantic_width) -> llvm::Value* {
 }
 
 auto ApplyWidthMask(
-    Context& context, llvm::Value* value, uint32_t semantic_width)
+    llvm::IRBuilder<>& builder, llvm::Value* value, uint32_t semantic_width)
     -> llvm::Value* {
-  auto& builder = context.GetBuilder();
   uint32_t storage_width = value->getType()->getIntegerBitWidth();
 
   if (semantic_width == 0) {
@@ -172,18 +171,17 @@ auto SignExtendToStorage(
   return builder.CreateSExt(truncated, storage_type, "sext.ext");
 }
 
-auto GetOperandPackedWidth(Context& context, const mir::Operand& operand)
+auto GetOperandPackedWidth(
+    const CuFacts& facts, Context& context, const mir::Operand& operand)
     -> uint32_t {
-  const auto& types = context.GetTypeArena();
-  TypeId type_id = GetOperandTypeId(context, operand);
+  const auto& types = *facts.types;
+  TypeId type_id = GetOperandTypeId(facts, context, operand);
   return PackedBitWidth(types[type_id], types);
 }
 
 auto LowerBinaryArith(
-    Context& context, mir::BinaryOp op, llvm::Value* lhs, llvm::Value* rhs)
-    -> Result<llvm::Value*> {
-  auto& builder = context.GetBuilder();
-
+    llvm::IRBuilder<>& builder, mir::BinaryOp op, llvm::Value* lhs,
+    llvm::Value* rhs) -> llvm::Value* {
   switch (op) {
     case mir::BinaryOp::kAdd:
       return builder.CreateAdd(lhs, rhs, "add");
@@ -224,20 +222,99 @@ auto LowerBinaryArith(
       auto* rhs_bool = builder.CreateICmpNE(rhs, const_zero, "rhs.bool");
       return builder.CreateOr(lhs_bool, rhs_bool, "lor");
     }
+    case mir::BinaryOp::kLogicalImplication: {
+      // a -> b  ===  !a || b
+      auto* const_zero = llvm::ConstantInt::get(lhs->getType(), 0);
+      auto* lhs_bool = builder.CreateICmpNE(lhs, const_zero, "lhs.bool");
+      // NOLINTNEXTLINE(readability-suspicious-call-argument)
+      auto* rhs_bool = builder.CreateICmpNE(rhs, const_zero, "rhs.bool");
+      auto* not_lhs = builder.CreateNot(lhs_bool, "impl.not");
+      return builder.CreateOr(not_lhs, rhs_bool, "impl");
+    }
+    case mir::BinaryOp::kLogicalEquivalence: {
+      // a <-> b  ===  (a && b) || (!a && !b)  ===  !(a ^ b) at boolean level
+      auto* const_zero = llvm::ConstantInt::get(lhs->getType(), 0);
+      auto* lhs_bool = builder.CreateICmpNE(lhs, const_zero, "lhs.bool");
+      // NOLINTNEXTLINE(readability-suspicious-call-argument)
+      auto* rhs_bool = builder.CreateICmpNE(rhs, const_zero, "rhs.bool");
+      auto* xor_result = builder.CreateXor(lhs_bool, rhs_bool, "equiv.xor");
+      return builder.CreateNot(xor_result, "equiv");
+    }
+
+    case mir::BinaryOp::kPower:
+    case mir::BinaryOp::kPowerSigned: {
+      // Integer exponentiation by squaring.
+      // kPowerSigned: negative exponent returns 0 (LRM 11.4.3).
+      // kPower: exponent is unsigned, no negative guard needed.
+      bool is_signed = (op == mir::BinaryOp::kPowerSigned);
+
+      auto* ty = lhs->getType();
+      auto* zero = llvm::ConstantInt::get(ty, 0);
+      auto* one = llvm::ConstantInt::get(ty, 1);
+
+      auto* func = builder.GetInsertBlock()->getParent();
+      auto* entry_bb = builder.GetInsertBlock();
+      auto& llvm_ctx = builder.getContext();
+      auto* loop_bb = llvm::BasicBlock::Create(llvm_ctx, "pow.loop", func);
+      auto* body_bb = llvm::BasicBlock::Create(llvm_ctx, "pow.body", func);
+      auto* merge_bb = llvm::BasicBlock::Create(llvm_ctx, "pow.merge", func);
+
+      if (is_signed) {
+        auto* is_neg = builder.CreateICmpSLT(rhs, zero, "pow.neg");
+        builder.CreateCondBr(is_neg, merge_bb, loop_bb);
+      } else {
+        builder.CreateBr(loop_bb);
+      }
+
+      // Loop header: check if exponent is zero
+      builder.SetInsertPoint(loop_bb);
+      auto* acc = builder.CreatePHI(ty, 2, "pow.acc");
+      auto* base = builder.CreatePHI(ty, 2, "pow.base");
+      auto* exp = builder.CreatePHI(ty, 2, "pow.exp");
+      acc->addIncoming(one, entry_bb);
+      base->addIncoming(lhs, entry_bb);
+      exp->addIncoming(rhs, entry_bb);
+      auto* done = builder.CreateICmpEQ(exp, zero, "pow.done");
+      builder.CreateCondBr(done, merge_bb, body_bb);
+
+      // Loop body: square-and-multiply
+      builder.SetInsertPoint(body_bb);
+      auto* is_odd = builder.CreateTrunc(
+          builder.CreateAnd(exp, one, "pow.odd.bit"), builder.getInt1Ty(),
+          "pow.odd");
+      auto* acc_mul = builder.CreateMul(acc, base, "pow.mul");
+      auto* acc_next =
+          builder.CreateSelect(is_odd, acc_mul, acc, "pow.acc.next");
+      auto* base_next = builder.CreateMul(base, base, "pow.sq");
+      auto* exp_next = builder.CreateLShr(exp, one, "pow.exp.next");
+      acc->addIncoming(acc_next, body_bb);
+      base->addIncoming(base_next, body_bb);
+      exp->addIncoming(exp_next, body_bb);
+      builder.CreateBr(loop_bb);
+
+      // Merge: result
+      builder.SetInsertPoint(merge_bb);
+      if (is_signed) {
+        auto* result = builder.CreatePHI(ty, 2, "pow.result");
+        result->addIncoming(zero, entry_bb);
+        result->addIncoming(acc, loop_bb);
+        return result;
+      }
+      return static_cast<llvm::Value*>(acc);
+    }
 
     default:
-      return std::unexpected(context.GetDiagnosticContext().MakeUnsupported(
-          context.GetCurrentOrigin(),
-          std::format("unsupported binary op: {}", mir::ToString(op)),
-          UnsupportedCategory::kOperation));
+      throw common::InternalError(
+          "LowerBinaryArith",
+          std::format(
+              "unhandled binary op in arithmetic lowering: {}",
+              mir::ToString(op)));
   }
 }
 
 auto LowerBinaryComparison(
-    Context& context, mir::BinaryOp op, llvm::Value* lhs, llvm::Value* rhs)
-    -> Result<llvm::Value*> {
-  auto& builder = context.GetBuilder();
-
+    llvm::IRBuilder<>& builder, mir::BinaryOp op, llvm::Value* lhs,
+    llvm::Value* rhs) -> llvm::Value* {
   switch (op) {
     case mir::BinaryOp::kEqual:
     case mir::BinaryOp::kCaseEqual:
@@ -266,22 +343,21 @@ auto LowerBinaryComparison(
     case mir::BinaryOp::kGreaterThanEqualSigned:
       return builder.CreateICmpSGE(lhs, rhs, "sge");
     default:
-      return std::unexpected(context.GetDiagnosticContext().MakeUnsupported(
-          context.GetCurrentOrigin(),
-          std::format("unsupported comparison op: {}", mir::ToString(op)),
-          UnsupportedCategory::kOperation));
+      throw common::InternalError(
+          "LowerBinaryComparison",
+          std::format(
+              "non-comparison op {} reached comparison lowering",
+              mir::ToString(op)));
   }
 }
 
 auto LowerCompareToI1(
-    Context& context, mir::BinaryOp op, llvm::Value* lhs, llvm::Value* rhs,
-    uint32_t lhs_semantic_width, uint32_t rhs_semantic_width)
-    -> Result<llvm::Value*> {
-  auto& builder = context.GetBuilder();
-
+    llvm::IRBuilder<>& builder, mir::BinaryOp op, llvm::Value* lhs,
+    llvm::Value* rhs, uint32_t lhs_semantic_width, uint32_t rhs_semantic_width)
+    -> llvm::Value* {
   // Compare at the max of operand widths (not result width, which is always 1)
   uint32_t cmp_width = std::max(lhs_semantic_width, rhs_semantic_width);
-  auto* cmp_type = llvm::Type::getIntNTy(context.GetLlvmContext(), cmp_width);
+  auto* cmp_type = llvm::Type::getIntNTy(builder.getContext(), cmp_width);
 
   // Coerce operands to comparison width
   llvm::Value* cmp_lhs = builder.CreateZExtOrTrunc(lhs, cmp_type, "cmp.lhs");
@@ -299,13 +375,12 @@ auto LowerCompareToI1(
     cmp_rhs = SignExtendToStorage(builder, cmp_rhs, rhs_semantic_width);
   }
 
-  return LowerBinaryComparison(context, op, cmp_lhs, cmp_rhs);
+  return LowerBinaryComparison(builder, op, cmp_lhs, cmp_rhs);
 }
 
 auto LowerShiftOp(
-    Context& context, mir::BinaryOp op, llvm::Value* value,
+    llvm::IRBuilder<>& builder, mir::BinaryOp op, llvm::Value* value,
     llvm::Value* shift_amount, uint32_t semantic_width) -> llvm::Value* {
-  auto& builder = context.GetBuilder();
   llvm::Type* ty = value->getType();
 
   auto* width_const = llvm::ConstantInt::get(ty, semantic_width);
@@ -345,7 +420,7 @@ auto LowerShiftOp(
 }
 
 auto LowerShiftOpUnknown(
-    Context& context, mir::BinaryOp op, llvm::Value* unk,
+    llvm::IRBuilder<>& builder, mir::BinaryOp op, llvm::Value* unk,
     llvm::Value* shift_amount, uint32_t semantic_width) -> llvm::Value* {
   mir::BinaryOp unk_op = mir::BinaryOp::kLogicalShiftRight;
   switch (op) {
@@ -356,15 +431,12 @@ auto LowerShiftOpUnknown(
     default:
       break;
   }
-  return LowerShiftOp(context, unk_op, unk, shift_amount, semantic_width);
+  return LowerShiftOp(builder, unk_op, unk, shift_amount, semantic_width);
 }
 
 auto LowerUnaryOp(
-    Context& context, mir::UnaryOp op, llvm::Value* operand,
-    llvm::Type* storage_type, uint32_t operand_bit_width)
-    -> Result<llvm::Value*> {
-  auto& builder = context.GetBuilder();
-
+    llvm::IRBuilder<>& builder, mir::UnaryOp op, llvm::Value* operand,
+    llvm::Type* storage_type, uint32_t operand_bit_width) -> llvm::Value* {
   switch (op) {
     case mir::UnaryOp::kPlus:
       return operand;
@@ -401,8 +473,9 @@ auto LowerUnaryOp(
     }
     case mir::UnaryOp::kReductionXor:
     case mir::UnaryOp::kReductionXnor: {
+      auto* module = builder.GetInsertBlock()->getModule();
       auto* ctpop = llvm::Intrinsic::getDeclaration(
-          &context.GetModule(), llvm::Intrinsic::ctpop, {operand->getType()});
+          module, llvm::Intrinsic::ctpop, {operand->getType()});
       auto* count = builder.CreateCall(ctpop, {operand}, "popcount");
       auto* one = llvm::ConstantInt::get(count->getType(), 1);
       auto* parity_n = builder.CreateAnd(count, one, "parity");
@@ -419,10 +492,10 @@ auto LowerUnaryOp(
       return builder.CreateZExt(result, storage_type, name);
     }
     default:
-      return std::unexpected(context.GetDiagnosticContext().MakeUnsupported(
-          context.GetCurrentOrigin(),
-          std::format("unsupported unary op: {}", mir::ToString(op)),
-          UnsupportedCategory::kOperation));
+      throw common::InternalError(
+          "LowerUnaryOp", std::format(
+                              "non-rvalue unary op {} reached backend lowering",
+                              mir::ToString(op)));
   }
 }
 

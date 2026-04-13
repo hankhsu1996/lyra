@@ -11,6 +11,7 @@
 #include "lyra/llvm_backend/compute/operand.hpp"
 #include "lyra/llvm_backend/context.hpp"
 #include "lyra/llvm_backend/context_scope.hpp"
+#include "lyra/llvm_backend/cu_facts.hpp"
 #include "lyra/llvm_backend/dpi_abi.hpp"
 #include "lyra/llvm_backend/instruction/assoc_op.hpp"
 #include "lyra/llvm_backend/instruction/builtin_call.hpp"
@@ -28,15 +29,15 @@
 namespace lyra::lowering::mir_to_llvm {
 
 auto LowerStatement(
-    Context& context, const mir::Statement& statement,
+    Context& context, const CuFacts& facts, const mir::Statement& statement,
     const ActiveExecutionMode& mode, const BodySiteContext& site_ctx)
     -> Result<void> {
-  CanonicalSlotAccess canonical(context);
-  return LowerStatement(context, canonical, statement, mode, site_ctx);
+  CanonicalSlotAccess canonical(context, facts);
+  return LowerStatement(context, facts, canonical, statement, mode, site_ctx);
 }
 
 auto LowerStatement(
-    Context& context, SlotAccessResolver& resolver,
+    Context& context, const CuFacts& facts, SlotAccessResolver& resolver,
     const mir::Statement& statement, const ActiveExecutionMode& mode,
     const BodySiteContext& site_ctx) -> Result<void> {
   OriginScope origin_scope(context, statement.origin);
@@ -45,38 +46,36 @@ auto LowerStatement(
   return std::visit(
       common::Overloaded{
           [&](const mir::Assign& assign) -> Result<void> {
-            return LowerAssign(context, resolver, assign);
+            return LowerAssign(context, facts, resolver, assign);
           },
           [&](const mir::GuardedAssign& guarded) -> Result<void> {
-            return LowerGuardedAssign(context, resolver, guarded);
+            return LowerGuardedAssign(context, facts, resolver, guarded);
           },
           [&](const mir::Effect& effect) -> Result<void> {
-            return LowerEffectOp(context, resolver, effect.op, mode, site_ctx);
+            return LowerEffectOp(
+                context, facts, resolver, effect.op, mode, site_ctx);
           },
           [&](const mir::DeferredAssign& deferred) -> Result<void> {
-            return LowerDeferredAssign(context, resolver, deferred);
+            return LowerDeferredAssign(context, facts, resolver, deferred);
           },
           [&](const mir::Call& call) -> Result<void> {
-            return LowerCall(context, resolver, call, mode);
+            return LowerCall(context, facts, resolver, call, mode);
           },
           [&](const mir::DpiCall& dpi_call) -> Result<void> {
-            return dpi::LowerDpiImportCall(context, dpi_call, mode);
+            return dpi::LowerDpiImportCall(context, facts, dpi_call, mode);
           },
           [&](const mir::BuiltinCall& call) -> Result<void> {
-            return LowerBuiltinCall(context, resolver, call);
+            return LowerBuiltinCall(context, facts, resolver, call);
           },
           [&](const mir::DefineTemp& dt) -> Result<void> {
             TempValue tv;
             auto result = std::visit(
                 common::Overloaded{
                     [&](const mir::Operand& op) -> Result<void> {
-                      // For temp-to-temp copies, read TempValue directly
-                      // to preserve semantic domain without raw round-trip.
                       if (const auto* temp_id =
                               std::get_if<mir::TempId>(&op.payload)) {
                         const auto& src = context.ReadTempValue(temp_id->value);
-                        // Guard against illegal retagging.
-                        if (!context.IsFourState(dt.type) &&
+                        if (!IsFourState(facts, dt.type) &&
                             src.domain == ValueDomain::kFourState) {
                           throw common::InternalError(
                               "DefineTemp",
@@ -85,9 +84,7 @@ auto LowerStatement(
                                   "4-state source",
                                   dt.temp_id));
                         }
-                        // Width compatibility: source payload must match
-                        // destination expected width.
-                        const auto& types = context.GetTypeArena();
+                        const auto& types = *facts.types;
                         const Type& dst_type = types[dt.type];
                         if (IsPacked(dst_type)) {
                           uint32_t dst_width = PackedBitWidth(dst_type, types);
@@ -109,8 +106,8 @@ auto LowerStatement(
                             .unknown = src.unknown};
                         return {};
                       }
-                      // Non-temp operands (Place, Constant): use raw shape.
-                      auto op_result = LowerOperandRaw(context, resolver, op);
+                      auto op_result =
+                          LowerOperandRaw(context, facts, resolver, op);
                       if (!op_result) return std::unexpected(op_result.error());
                       llvm::Value* raw = *op_result;
                       if (raw->getType()->isStructTy()) {
@@ -131,7 +128,7 @@ auto LowerStatement(
                     },
                     [&](const mir::Rvalue& rv) -> Result<void> {
                       auto rv_result =
-                          LowerRvalue(context, resolver, rv, dt.type);
+                          LowerRvalue(context, facts, resolver, rv, dt.type);
                       if (!rv_result) return std::unexpected(rv_result.error());
                       tv = rv_result->ToTempValue(dt.type);
                       return {};
@@ -143,7 +140,7 @@ auto LowerStatement(
             return {};
           },
           [&](const mir::AssocOp& op) -> Result<void> {
-            return LowerAssocOp(context, resolver, op);
+            return LowerAssocOp(context, facts, resolver, op);
           },
           [&](const mir::TriggerEvent& te) -> Result<void> {
             auto& builder = context.GetBuilder();

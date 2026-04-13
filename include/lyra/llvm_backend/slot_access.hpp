@@ -11,6 +11,7 @@
 #include "lyra/common/diagnostic/diagnostic.hpp"
 #include "lyra/common/type.hpp"
 #include "lyra/llvm_backend/activation_local.hpp"
+#include "lyra/llvm_backend/cu_facts.hpp"
 #include "lyra/llvm_backend/ownership.hpp"
 #include "lyra/mir/handle.hpp"
 #include "lyra/mir/terminator.hpp"
@@ -61,7 +62,7 @@ class SegmentLifecycle {
 class CanonicalSlotAccess final : public SlotAccessResolver,
                                   public SegmentLifecycle {
  public:
-  explicit CanonicalSlotAccess(Context& ctx);
+  CanonicalSlotAccess(Context& ctx, const CuFacts& facts);
 
   auto LoadSlotValue(mir::PlaceId place_id) -> Result<llvm::Value*> override;
   auto CommitSlotValue(
@@ -76,6 +77,7 @@ class CanonicalSlotAccess final : public SlotAccessResolver,
 
  private:
   Context& ctx_;
+  const CuFacts& facts_;
 };
 
 // Shadow storage for an activation-local managed signal slot.
@@ -94,7 +96,8 @@ class ActivationLocalSlotAccess final : public SlotAccessResolver,
                                         public SegmentLifecycle {
  public:
   ActivationLocalSlotAccess(
-      Context& ctx, std::span<const ManagedSlotStorage> storage);
+      Context& ctx, const CuFacts& facts,
+      std::span<const ManagedSlotStorage> storage);
 
   auto LoadSlotValue(mir::PlaceId place_id) -> Result<llvm::Value*> override;
   auto CommitSlotValue(
@@ -114,18 +117,20 @@ class ActivationLocalSlotAccess final : public SlotAccessResolver,
   void SyncSlot(const ManagedSlotStorage& storage);
 
   Context& ctx_;
+  const CuFacts& facts_;
   std::unordered_map<uint32_t, ManagedSlotStorage> managed_;
 };
 
 // Create managed slot storage backed by persistent frame fields.
 // For processes with suspension only (frame fields survive suspend/resume).
-auto CreateManagedSlotStorage(const ProcessActivationPlan& plan, Context& ctx)
+auto CreateManagedSlotStorage(
+    const ProcessActivationPlan& plan, Context& ctx, const CuFacts& facts)
     -> std::vector<ManagedSlotStorage>;
 
 // Create managed slot storage backed by stack allocas.
 // For suspension-free processes only (single function call, no resume).
 auto CreateManagedSlotStorageAsAllocas(
-    const ProcessActivationPlan& plan, Context& ctx)
+    const ProcessActivationPlan& plan, Context& ctx, const CuFacts& facts)
     -> std::vector<ManagedSlotStorage>;
 
 }  // namespace lyra::lowering::mir_to_llvm

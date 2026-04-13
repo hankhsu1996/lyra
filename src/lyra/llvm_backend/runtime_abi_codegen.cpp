@@ -9,6 +9,7 @@
 #include <llvm/IR/Type.h>
 
 #include "lyra/llvm_backend/context.hpp"
+#include "lyra/llvm_backend/cu_facts.hpp"
 #include "lyra/llvm_backend/layout/layout.hpp"
 #include "lyra/runtime/runtime_instance.hpp"
 
@@ -97,11 +98,11 @@ auto EmitLoadAbiInstancePtr(
 }
 
 auto EmitInstanceOwnedByteAddress(
-    Context& context, llvm::Value* instance_ptr,
+    Context& context, const CuFacts& facts, llvm::Value* instance_ptr,
     common::InstanceByteOffset rel_off) -> llvm::Value* {
   auto& builder = context.GetBuilder();
   auto& ctx = context.GetLlvmContext();
-  const auto& layout = context.GetLayout();
+  const auto& layout = *facts.layout;
   auto* i8_ty = llvm::Type::getInt8Ty(ctx);
   auto* i64_ty = llvm::Type::getInt64Ty(ctx);
   auto* ptr_ty = llvm::PointerType::getUnqual(ctx);

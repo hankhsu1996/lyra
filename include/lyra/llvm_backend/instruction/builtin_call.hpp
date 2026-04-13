@@ -17,12 +17,13 @@ class SlotAccessResolver;
 // - kQueuePushBack, kQueuePushFront: add element
 // - kQueuePopBack, kQueuePopFront: remove and return element
 // - kQueueInsert: insert element at index
-auto LowerBuiltinCall(Context& context, const mir::BuiltinCall& call)
+auto LowerBuiltinCall(
+    Context& context, const CuFacts& facts, const mir::BuiltinCall& call)
     -> Result<void>;
 
 // Resolver-aware overload.
 auto LowerBuiltinCall(
-    Context& context, SlotAccessResolver& resolver,
+    Context& context, const CuFacts& facts, SlotAccessResolver& resolver,
     const mir::BuiltinCall& call) -> Result<void>;
 
 }  // namespace lyra::lowering::mir_to_llvm

@@ -5,13 +5,15 @@
 #include "lyra/common/internal_error.hpp"
 #include "lyra/common/type.hpp"
 #include "lyra/llvm_backend/context.hpp"
+#include "lyra/llvm_backend/cu_facts.hpp"
 #include "lyra/llvm_backend/layout/union_storage.hpp"
 
 namespace lyra::lowering::mir_to_llvm::detail {
 
 void CopyInitPod(
-    Context& ctx, llvm::Value* dst_ptr, llvm::Value* src_ptr, TypeId type_id) {
-  auto llvm_type_result = BuildLlvmTypeForTypeId(ctx, type_id);
+    Context& ctx, const CuFacts& facts, llvm::Value* dst_ptr,
+    llvm::Value* src_ptr, TypeId type_id) {
+  auto llvm_type_result = BuildLlvmTypeForTypeId(ctx, facts, type_id);
   if (!llvm_type_result) {
     throw common::InternalError(
         "CopyInitPod", "failed to build LLVM type for POD type");

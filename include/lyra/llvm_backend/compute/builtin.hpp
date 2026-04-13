@@ -4,6 +4,7 @@
 #include "lyra/common/type.hpp"
 #include "lyra/llvm_backend/compute/compute.hpp"
 #include "lyra/llvm_backend/context.hpp"
+#include "lyra/llvm_backend/cu_facts.hpp"
 #include "lyra/mir/rvalue.hpp"
 
 namespace lyra::lowering::mir_to_llvm {
@@ -16,13 +17,14 @@ class SlotAccessResolver;
 // Container-mutating builtins are handled via BuiltinCall instruction.
 // Builtins are always 2-state (unknown is nullptr).
 auto LowerBuiltinRvalue(
-    Context& context, const mir::Rvalue& rvalue, TypeId result_type,
-    const mir::BuiltinCallRvalueInfo& info) -> Result<RvalueValue>;
+    Context& context, const CuFacts& facts, const mir::Rvalue& rvalue,
+    TypeId result_type, const mir::BuiltinCallRvalueInfo& info)
+    -> Result<RvalueValue>;
 
 // Resolver-aware overload.
 auto LowerBuiltinRvalue(
-    Context& context, SlotAccessResolver& resolver, const mir::Rvalue& rvalue,
-    TypeId result_type, const mir::BuiltinCallRvalueInfo& info)
-    -> Result<RvalueValue>;
+    Context& context, const CuFacts& facts, SlotAccessResolver& resolver,
+    const mir::Rvalue& rvalue, TypeId result_type,
+    const mir::BuiltinCallRvalueInfo& info) -> Result<RvalueValue>;
 
 }  // namespace lyra::lowering::mir_to_llvm

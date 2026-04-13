@@ -10,28 +10,35 @@ namespace lyra::lowering::mir_to_llvm {
 class SlotAccessResolver;
 
 auto LowerCall(
-    Context& context, const mir::Call& call, const ActiveExecutionMode& mode)
-    -> Result<void>;
+    Context& context, const CuFacts& facts, const mir::Call& call,
+    const ActiveExecutionMode& mode) -> Result<void>;
 
 auto LowerCall(
-    Context& context, SlotAccessResolver& resolver, const mir::Call& call,
-    const ActiveExecutionMode& mode) -> Result<void>;
+    Context& context, const CuFacts& facts, SlotAccessResolver& resolver,
+    const mir::Call& call, const ActiveExecutionMode& mode) -> Result<void>;
 
 // Lower $value$plusargs via unified Call.
 // Exposed for testing and internal use.
-auto LowerValuePlusargsCall(Context& context, const mir::Call& call)
+auto LowerValuePlusargsCall(
+    Context& context, const CuFacts& facts, const mir::Call& call)
     -> Result<void>;
 
 // Lower $fgets via unified Call.
 // Exposed for testing and internal use.
-auto LowerFgetsCall(Context& context, const mir::Call& call) -> Result<void>;
+auto LowerFgetsCall(
+    Context& context, const CuFacts& facts, const mir::Call& call)
+    -> Result<void>;
 
 // Lower $fread via unified Call.
 // Exposed for testing and internal use.
-auto LowerFreadCall(Context& context, const mir::Call& call) -> Result<void>;
+auto LowerFreadCall(
+    Context& context, const CuFacts& facts, const mir::Call& call)
+    -> Result<void>;
 
 // Lower $fscanf via unified Call.
 // Exposed for testing and internal use.
-auto LowerFscanfCall(Context& context, const mir::Call& call) -> Result<void>;
+auto LowerFscanfCall(
+    Context& context, const CuFacts& facts, const mir::Call& call)
+    -> Result<void>;
 
 }  // namespace lyra::lowering::mir_to_llvm

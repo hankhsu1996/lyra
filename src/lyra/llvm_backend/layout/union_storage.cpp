@@ -14,7 +14,7 @@
 #include "lyra/common/internal_error.hpp"
 #include "lyra/common/type.hpp"
 #include "lyra/llvm_backend/context.hpp"
-#include "lyra/llvm_backend/layout/layout.hpp"
+#include "lyra/llvm_backend/cu_facts.hpp"
 #include "lyra/llvm_backend/value_repr.hpp"
 #include "lyra/lowering/diagnostic_context.hpp"
 
@@ -23,11 +23,12 @@ namespace lyra::lowering::mir_to_llvm {
 namespace {
 
 auto BuildUnpackedStructTypeWithContext(
-    Context& context, const UnpackedStructInfo& info) -> Result<llvm::Type*> {
+    Context& context, const CuFacts& facts, const UnpackedStructInfo& info)
+    -> Result<llvm::Type*> {
   std::vector<llvm::Type*> field_types;
   field_types.reserve(info.fields.size());
   for (const auto& field : info.fields) {
-    auto field_type = BuildLlvmTypeForTypeId(context, field.type);
+    auto field_type = BuildLlvmTypeForTypeId(context, facts, field.type);
     if (!field_type) return std::unexpected(field_type.error());
     field_types.push_back(*field_type);
   }
@@ -36,27 +37,29 @@ auto BuildUnpackedStructTypeWithContext(
 
 }  // namespace
 
-auto BuildLlvmTypeForTypeId(Context& context, TypeId type_id)
+auto BuildLlvmTypeForTypeId(
+    Context& context, const CuFacts& facts, TypeId type_id)
     -> Result<llvm::Type*> {
-  const auto& types = context.GetTypeArena();
+  const auto& types = *facts.types;
   const Type& type = types[type_id];
 
   if (type.Kind() == TypeKind::kString) {
     return llvm::PointerType::getUnqual(context.GetLlvmContext());
   }
   if (type.Kind() == TypeKind::kUnpackedStruct) {
-    return BuildUnpackedStructTypeWithContext(context, type.AsUnpackedStruct());
+    return BuildUnpackedStructTypeWithContext(
+        context, facts, type.AsUnpackedStruct());
   }
   if (type.Kind() == TypeKind::kUnpackedUnion) {
     // Use GetUnionStorageInfo which is the single source of truth for union
     // layout, backed by DataLayout
-    auto result = GetUnionStorageInfo(context, type_id);
+    auto result = GetUnionStorageInfo(context, facts, type_id);
     if (!result) return std::unexpected(result.error());
     return result->storage_type;
   }
   if (type.Kind() == TypeKind::kUnpackedArray) {
     const auto& info = type.AsUnpackedArray();
-    auto elem = BuildLlvmTypeForTypeId(context, info.element_type);
+    auto elem = BuildLlvmTypeForTypeId(context, facts, info.element_type);
     if (!elem) return std::unexpected(elem.error());
     return llvm::ArrayType::get(*elem, info.range.Size());
   }
@@ -73,7 +76,7 @@ auto BuildLlvmTypeForTypeId(Context& context, TypeId type_id)
   }
   if (IsPacked(type)) {
     auto bit_width = PackedBitWidth(type, types);
-    if (context.IsPackedFourState(type)) {
+    if (IsPackedFourState(facts, type)) {
       auto* plane_type =
           GetBackingLlvmType(context.GetLlvmContext(), bit_width);
       return llvm::StructType::get(
@@ -90,8 +93,8 @@ namespace {
 
 // Get the ABI alignment for a member type in bytes
 auto GetMemberAlignment(
-    Context& context, TypeId member_type, const TypeArena& types)
-    -> Result<uint32_t> {
+    Context& context, const CuFacts& facts, TypeId member_type,
+    const TypeArena& types) -> Result<uint32_t> {
   const auto& dl = context.GetModule().getDataLayout();
   const Type& type = types[member_type];
 
@@ -119,13 +122,13 @@ auto GetMemberAlignment(
       return dl.getABITypeAlign(llvm_type).value();
     }
     case TypeKind::kUnpackedStruct: {
-      auto llvm_type = BuildLlvmTypeForTypeId(context, member_type);
+      auto llvm_type = BuildLlvmTypeForTypeId(context, facts, member_type);
       if (!llvm_type) return std::unexpected(llvm_type.error());
       return dl.getABITypeAlign(*llvm_type).value();
     }
     case TypeKind::kUnpackedArray: {
       const auto& info = type.AsUnpackedArray();
-      return GetMemberAlignment(context, info.element_type, types);
+      return GetMemberAlignment(context, facts, info.element_type, types);
     }
     case TypeKind::kUnpackedUnion: {
       // Recursive: get the cached or compute alignment
@@ -137,7 +140,7 @@ auto GetMemberAlignment(
       const auto& union_info = type.AsUnpackedUnion();
       uint32_t max_align = 1;
       for (const auto& m : union_info.members) {
-        auto align = GetMemberAlignment(context, m.type, types);
+        auto align = GetMemberAlignment(context, facts, m.type, types);
         if (!align) return std::unexpected(align.error());
         max_align = std::max(max_align, *align);
       }
@@ -150,8 +153,8 @@ auto GetMemberAlignment(
 
 // Get the allocation size for a member type in bytes
 auto GetMemberAllocSize(
-    Context& context, TypeId member_type, const TypeArena& types)
-    -> Result<uint32_t> {
+    Context& context, const CuFacts& facts, TypeId member_type,
+    const TypeArena& types) -> Result<uint32_t> {
   const auto& dl = context.GetModule().getDataLayout();
   const Type& type = types[member_type];
 
@@ -177,12 +180,12 @@ auto GetMemberAllocSize(
       return static_cast<uint32_t>(dl.getTypeAllocSize(llvm_type));
     }
     case TypeKind::kUnpackedStruct: {
-      auto llvm_type = BuildLlvmTypeForTypeId(context, member_type);
+      auto llvm_type = BuildLlvmTypeForTypeId(context, facts, member_type);
       if (!llvm_type) return std::unexpected(llvm_type.error());
       return static_cast<uint32_t>(dl.getTypeAllocSize(*llvm_type));
     }
     case TypeKind::kUnpackedArray: {
-      auto llvm_type = BuildLlvmTypeForTypeId(context, member_type);
+      auto llvm_type = BuildLlvmTypeForTypeId(context, facts, member_type);
       if (!llvm_type) return std::unexpected(llvm_type.error());
       return static_cast<uint32_t>(dl.getTypeAllocSize(*llvm_type));
     }
@@ -195,13 +198,13 @@ auto GetMemberAllocSize(
       const auto& union_info = type.AsUnpackedUnion();
       uint32_t max_size = 0;
       for (const auto& m : union_info.members) {
-        auto size = GetMemberAllocSize(context, m.type, types);
+        auto size = GetMemberAllocSize(context, facts, m.type, types);
         if (!size) return std::unexpected(size.error());
         max_size = std::max(max_size, *size);
       }
       uint32_t max_align = 1;
       for (const auto& m : union_info.members) {
-        auto align = GetMemberAlignment(context, m.type, types);
+        auto align = GetMemberAlignment(context, facts, m.type, types);
         if (!align) return std::unexpected(align.error());
         max_align = std::max(max_align, *align);
       }
@@ -217,7 +220,8 @@ auto GetMemberAllocSize(
 
 }  // namespace
 
-auto GetUnionStorageInfo(Context& context, TypeId union_type_id)
+auto GetUnionStorageInfo(
+    Context& context, const CuFacts& facts, TypeId union_type_id)
     -> Result<UnionStorageInfo> {
   // Check cache first
   const auto* cached = context.GetCachedUnionStorageInfo(union_type_id);
@@ -229,7 +233,7 @@ auto GetUnionStorageInfo(Context& context, TypeId union_type_id)
     };
   }
 
-  const auto& types = context.GetTypeArena();
+  const auto& types = *facts.types;
   const Type& type = types[union_type_id];
   const auto& union_info = type.AsUnpackedUnion();
 
@@ -245,9 +249,9 @@ auto GetUnionStorageInfo(Context& context, TypeId union_type_id)
   uint32_t max_size = 0;
   uint32_t max_align = 1;
   for (const auto& member : union_info.members) {
-    auto member_size = GetMemberAllocSize(context, member.type, types);
+    auto member_size = GetMemberAllocSize(context, facts, member.type, types);
     if (!member_size) return std::unexpected(member_size.error());
-    auto member_align = GetMemberAlignment(context, member.type, types);
+    auto member_align = GetMemberAlignment(context, facts, member.type, types);
     if (!member_align) return std::unexpected(member_align.error());
     max_size = std::max(max_size, *member_size);
     max_align = std::max(max_align, *member_align);
@@ -276,9 +280,9 @@ auto GetUnionStorageInfo(Context& context, TypeId union_type_id)
 }
 
 auto BuildUnpackedUnionType(
-    Context& context, TypeId union_type_id, const TypeArena& /*types*/)
-    -> Result<llvm::Type*> {
-  auto result = GetUnionStorageInfo(context, union_type_id);
+    Context& context, const CuFacts& facts, TypeId union_type_id,
+    const TypeArena& /*types*/) -> Result<llvm::Type*> {
+  auto result = GetUnionStorageInfo(context, facts, union_type_id);
   if (!result) return std::unexpected(result.error());
   return result->storage_type;
 }

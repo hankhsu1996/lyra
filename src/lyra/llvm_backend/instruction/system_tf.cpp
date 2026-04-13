@@ -12,6 +12,7 @@
 #include "lyra/common/system_tf.hpp"
 #include "lyra/llvm_backend/compute/operand.hpp"
 #include "lyra/llvm_backend/context.hpp"
+#include "lyra/llvm_backend/cu_facts.hpp"
 #include "lyra/llvm_backend/slot_access.hpp"
 #include "lyra/mir/effect.hpp"
 #include "lyra/mir/rvalue.hpp"
@@ -19,20 +20,22 @@
 namespace lyra::lowering::mir_to_llvm {
 
 auto LowerSystemTfRvalue(
-    Context& context, const mir::Rvalue& rvalue,
+    Context& context, const CuFacts& facts, const mir::Rvalue& rvalue,
     const mir::SystemTfRvalueInfo& info) -> Result<RvalueValue> {
-  CanonicalSlotAccess canonical(context);
-  return LowerSystemTfRvalue(context, canonical, rvalue, info);
+  CanonicalSlotAccess canonical(context, facts);
+  return LowerSystemTfRvalue(context, facts, canonical, rvalue, info);
 }
 
-auto LowerSystemTfEffect(Context& context, const mir::SystemTfEffect& effect)
+auto LowerSystemTfEffect(
+    Context& context, const CuFacts& facts, const mir::SystemTfEffect& effect)
     -> Result<void> {
-  CanonicalSlotAccess canonical(context);
-  return LowerSystemTfEffect(context, canonical, effect);
+  CanonicalSlotAccess canonical(context, facts);
+  return LowerSystemTfEffect(context, facts, canonical, effect);
 }
 auto LowerSystemTfRvalue(
-    Context& context, SlotAccessResolver& resolver, const mir::Rvalue& rvalue,
-    const mir::SystemTfRvalueInfo& info) -> Result<RvalueValue> {
+    Context& context, const CuFacts& facts, SlotAccessResolver& resolver,
+    const mir::Rvalue& rvalue, const mir::SystemTfRvalueInfo& info)
+    -> Result<RvalueValue> {
   switch (info.opcode) {
     case SystemTfOpcode::kFopen:
       throw common::InternalError(
@@ -79,7 +82,8 @@ auto LowerSystemTfRvalue(
             std::format("expected 1 arg, got {}", rvalue.operands.size()));
       }
       auto& builder = context.GetBuilder();
-      auto desc_or_err = LowerOperand(context, resolver, rvalue.operands[0]);
+      auto desc_or_err =
+          LowerOperand(context, facts, resolver, rvalue.operands[0]);
       if (!desc_or_err) return std::unexpected(desc_or_err.error());
       llvm::Value* result = builder.CreateCall(
           context.GetLyraFgetc(), {context.GetEnginePointer(), *desc_or_err},
@@ -93,9 +97,11 @@ auto LowerSystemTfRvalue(
             std::format("expected 2 args, got {}", rvalue.operands.size()));
       }
       auto& builder = context.GetBuilder();
-      auto char_or_err = LowerOperand(context, resolver, rvalue.operands[0]);
+      auto char_or_err =
+          LowerOperand(context, facts, resolver, rvalue.operands[0]);
       if (!char_or_err) return std::unexpected(char_or_err.error());
-      auto desc_or_err = LowerOperand(context, resolver, rvalue.operands[1]);
+      auto desc_or_err =
+          LowerOperand(context, facts, resolver, rvalue.operands[1]);
       if (!desc_or_err) return std::unexpected(desc_or_err.error());
       llvm::Value* result = builder.CreateCall(
           context.GetLyraUngetc(),
@@ -108,7 +114,7 @@ auto LowerSystemTfRvalue(
 }
 
 auto LowerSystemTfEffect(
-    Context& context, SlotAccessResolver& resolver,
+    Context& context, const CuFacts& facts, SlotAccessResolver& resolver,
     const mir::SystemTfEffect& effect) -> Result<void> {
   switch (effect.opcode) {
     case SystemTfOpcode::kFclose: {
@@ -118,7 +124,7 @@ auto LowerSystemTfEffect(
             std::format("expected 1 arg, got {}", effect.args.size()));
       }
       auto& builder = context.GetBuilder();
-      auto desc_or_err = LowerOperand(context, resolver, effect.args[0]);
+      auto desc_or_err = LowerOperand(context, facts, resolver, effect.args[0]);
       if (!desc_or_err) return std::unexpected(desc_or_err.error());
       builder.CreateCall(
           context.GetLyraFclose(), {context.GetEnginePointer(), *desc_or_err});
@@ -135,7 +141,8 @@ auto LowerSystemTfEffect(
         desc_val = llvm::ConstantInt::get(i32_ty, 0);
       } else {
         has_desc = llvm::ConstantInt::get(i1_ty, 1);
-        auto desc_or_err = LowerOperand(context, resolver, effect.args[0]);
+        auto desc_or_err =
+            LowerOperand(context, facts, resolver, effect.args[0]);
         if (!desc_or_err) return std::unexpected(desc_or_err.error());
         desc_val = *desc_or_err;
       }

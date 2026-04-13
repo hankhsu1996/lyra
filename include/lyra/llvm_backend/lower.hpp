@@ -8,7 +8,6 @@
 #include <llvm/IR/Module.h>
 #include <llvm/IR/Value.h>
 
-#include "lyra/common/body_timescale.hpp"
 #include "lyra/common/diagnostic/diagnostic.hpp"
 #include "lyra/common/source_manager.hpp"
 #include "lyra/common/type_arena.hpp"
@@ -24,6 +23,8 @@
 namespace lyra::lowering::mir_to_llvm {
 
 class Context;
+struct CuFacts;
+struct Layout;
 
 // Abstract interface for simulation instrumentation hooks.
 // Provides milestone-based hooks that map to the simulation pipeline:
@@ -95,7 +96,7 @@ struct LoweringInput {
   const lowering::DiagnosticContext* diag_ctx = nullptr;
   const SourceManager* source_manager = nullptr;
   // Per-body origin provenance for body-local diagnostic resolution.
-  // Indexed by ModuleBodyId::value. Nullable (diagnostics degrade gracefully).
+  // Keyed by body pointer. Nullable (diagnostics degrade gracefully).
   const lowering::BodyOriginProvenance* origin_provenance = nullptr;
   SimulationHooks* hooks = nullptr;   // Optional instrumentation (nullable)
   std::string fs_base_dir;            // Base directory for file I/O (absolute)
@@ -105,9 +106,6 @@ struct LoweringInput {
   // Only meaningful when kEnableSignalTrace is set in feature_flags.
   std::string signal_trace_path;
   uint32_t iteration_limit = 0;  // 0 = default (1B)
-  // Per-body timescale table from AST->HIR lowering.
-  // Indexed by ModuleBodyId::value. Must be non-null.
-  const std::vector<common::BodyTimeScale>* body_timescales = nullptr;
   bool force_two_state = false;  // Force 2-state LLVM representation
   bool collect_forwarding_analysis = false;
   MainAbi main_abi = MainAbi::kEmbeddedPlusargs;
@@ -129,14 +127,13 @@ struct LoweringResult {
 
 auto LowerMirToLlvm(const LoweringInput& input) -> Result<LoweringResult>;
 
-auto DumpLlvmIr(const LoweringResult& result) -> std::string;
+auto DumpLlvmIr(const llvm::Module& module) -> std::string;
 
 // Emit variable registration calls for runtime inspection.
 // Consumes a typed InspectionPlan built by BuildInspectionPlan.
-// Classifies each tracked slot's type metadata on demand from the design
-// and layout -- no prebuilt type metadata vector.
+// Type metadata is pre-resolved at plan-building time.
 void EmitVariableInspection(
-    Context& context, const InspectionPlan& plan, const mir::Design& design,
+    Context& context, const CuFacts& facts, const InspectionPlan& plan,
     llvm::Value* design_state, llvm::Value* abi_ptr);
 
 // Emit time report call for test harness.

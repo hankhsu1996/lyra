@@ -12,7 +12,10 @@
 
 #include "lyra/common/diagnostic/diagnostic.hpp"
 #include "lyra/common/ext_ref_binding.hpp"
+#include "lyra/common/origin_id.hpp"
+#include "lyra/llvm_backend/cu_facts.hpp"
 #include "lyra/llvm_backend/deferred_thunk_abi.hpp"
+#include "lyra/llvm_backend/dpi_abi.hpp"
 #include "lyra/llvm_backend/layout/layout.hpp"
 #include "lyra/llvm_backend/lowering_reports.hpp"
 #include "lyra/llvm_backend/process.hpp"
@@ -35,7 +38,7 @@ struct SpecInstanceBinding {
 
 // Specialization-owned MIR content: identity + behavioral IR references.
 // Does not contain backend layout or codegen routing data.
-// body is the canonical identity -- numeric body_id is derived when needed.
+// body pointer is the canonical identity.
 struct SpecCompilationUnit {
   const mir::ModuleBody* body = nullptr;
   std::vector<mir::ProcessId> processes;
@@ -61,6 +64,28 @@ struct SpecCodegenView {
   std::vector<SpecProcessView> processes;
 };
 
+// CU-local layout contract: the subset of Layout data that one
+// specialization body needs for compilation. Extracted from the
+// design-global Layout during spec planning so CU compilation
+// does not index into design-global layout arrays.
+struct SpecLayoutContract {
+  // Per-process ProcessLayout pointers, parallel to SpecCodegenView.processes.
+  // Points into the design-global Layout::processes array (stable lifetime).
+  std::vector<const ProcessLayout*> process_layouts;
+  // Body-local slot storage specs, indexed by body-local slot id.
+  // Copied from BodyRealizationInfo::slot_specs.
+  std::vector<SlotStorageSpec> slot_specs;
+  // Body-local behavioral dirty-propagation contract.
+  // Copied from BodyRealizationInfo::slot_has_behavioral_trigger.
+  std::vector<bool> slot_has_behavioral_trigger;
+  // Per body-local slot: true iff a process in a different body (or an
+  // init process) has a behavioral trigger that resolves to this slot,
+  // AND this body does not already have a body-local trigger on it.
+  // Disjoint with slot_has_behavioral_trigger by construction.
+  // Copied from BodyRealizationInfo::slot_has_cross_body_behavioral_trigger.
+  std::vector<bool> slot_has_cross_body_behavioral_trigger;
+};
+
 // Per-specialization slot access classification.
 // After R2, every body-local slot owns storage. Access kind distinguishes
 // inline value slots from owned-container slots.
@@ -70,10 +95,6 @@ enum class SpecSlotAccessKind : uint8_t {
 };
 
 struct SpecSlotInfo {
-  // Stable index into Layout::body_realization_infos for this body.
-  static constexpr uint32_t kInvalidBodyInfoIndex = UINT32_MAX;
-  uint32_t body_realization_info_index = kInvalidBodyInfoIndex;
-
   // Per-slot body-relative byte offset for local storage.
   // Every body-local slot has a valid offset (no forwarded aliases).
   // For kInlineValue: offset of the slot's value bytes from body base.
@@ -87,12 +108,11 @@ struct SpecSlotInfo {
   // Per-slot access classification.
   std::vector<SpecSlotAccessKind> access_kinds;
 
-  // Access body-local slot storage spec through BodyRealizationInfo.
-  // Single source of truth -- no duplication.
-  [[nodiscard]] auto GetSlotSpec(uint32_t local_slot, const Layout& layout)
-      const -> const SlotStorageSpec& {
-    return layout.body_realization_infos.at(body_realization_info_index)
-        .slot_specs.at(local_slot);
+  // Access body-local slot storage spec through the CU layout contract.
+  [[nodiscard]] static auto GetSlotSpec(
+      uint32_t local_slot, const SpecLayoutContract& contract)
+      -> const SlotStorageSpec& {
+    return contract.slot_specs.at(local_slot);
   }
 
   [[nodiscard]] auto SlotCount() const -> uint32_t {
@@ -126,14 +146,28 @@ struct ConnectionNotificationMask {
   }
 };
 
+// Pre-resolved module-scoped DPI export target for one body.
+// Precomputed during planning so the session does not scan the
+// design-global wrapper list.
+struct ModuleExportTarget {
+  uint32_t wrapper_index = 0;
+  mir::FunctionId function_id;
+};
+
+// Per-wrapper resolved module export callee, produced by the body session.
+// wrapper_index identifies the position in the design-global wrapper list.
+struct ResolvedModuleExportEntry {
+  uint32_t wrapper_index = 0;
+  dpi::ModuleExportCalleeInfo info;
+};
+
 // Specialization compilation input: all data needed to compile one
 // specialization body. Owns specialization-local backend data (MIR
 // membership, layout, codegen routing). Does not reference orchestrator
 // storage -- the specialization compiler reads only from this object.
-// body is the canonical identity -- no numeric body_id.
+// body pointer is the canonical identity.
 struct CompiledModuleSpecInput {
   const mir::ModuleBody* body = nullptr;
-  std::vector<mir::ProcessId> processes;
   std::vector<mir::FunctionId> functions;
   SpecCodegenView view;
   // LLVM symbol naming prefix, precomputed from body index.
@@ -149,10 +183,22 @@ struct CompiledModuleSpecInput {
   // runtime indices.
   uint32_t deferred_site_base_index = 0;
   uint32_t cover_site_base_index = 0;
+  uint32_t wait_site_base_index = 0;
+  uint32_t back_edge_site_base_index = 0;
+  // Module-scoped DPI export targets for this body, precomputed by planning.
+  // Each entry carries the design-global wrapper index and the body-local
+  // function to resolve. Empty when no module-scoped DPI exports target
+  // this body.
+  std::span<const ModuleExportTarget> module_export_targets;
   // Specialization-local state. Owned by CompileDesignProcesses,
   // consumed by CompileModuleSpecSession via SpecLocalScope.
   const SpecSlotInfo* spec_slot_info = nullptr;
   const ConnectionNotificationMask* connection_notification_mask = nullptr;
+  // CU-local layout contract: per-process layouts, body-local slot specs,
+  // and behavioral trigger mask. Built from the design-global Layout during
+  // spec planning. CU compilation reads layout data from this contract
+  // instead of indexing into the design-global Layout.
+  const SpecLayoutContract* layout_contract = nullptr;
 };
 
 // Process codegen product of compiling one specialization body.
@@ -173,9 +219,14 @@ struct CompiledModuleSpec {
   // Parallel to body's deferred_assertion_sites. Compiled inside the
   // session while declared functions are in scope.
   std::vector<DeferredSiteCompiledArtifact> deferred_artifacts;
-  // Body-local declared functions: (FunctionId, llvm::Function*).
-  // Captured inside the session for DPI export wrapper resolution.
-  std::vector<std::pair<mir::FunctionId, llvm::Function*>> declared_functions;
+  // Resolved module-scoped DPI export callees for this body.
+  // Each entry carries the design-global wrapper index and resolved callee.
+  // Captured inside the session while declared functions and MIR ABI
+  // contracts are in scope. Spliced positionally by merge.
+  std::vector<ResolvedModuleExportEntry> module_export_entries;
+  // Per-body back-edge site origins, accumulated during CU codegen.
+  // Spliced positionally into the design-global back-edge origin array.
+  std::vector<common::OriginId> back_edge_origins;
 };
 
 // Pure-data construction program: pooled paths, pooled param payloads, and
@@ -206,7 +257,9 @@ struct RealizationData {
 // Backend-owned intermediate state between behavioral codegen and assembly.
 // This is a strict bridge object: assembly may append IR (main()) to the
 // module owned by context, but must not own layout/process compilation
-// decisions. Assembly-facing helpers live in emit_design_main.cpp.
+// decisions. Assembly owns two products: realization descriptors
+// (body/connection/schema globals consumed by the runtime constructor)
+// and the runtime entry (main function, ABI setup, simulation dispatch).
 //
 // Layout and Context are heap-allocated because Context stores
 // `const Layout&` internally. Returning CodegenSession from
@@ -214,6 +267,7 @@ struct RealizationData {
 // must have stable addresses to keep the reference valid.
 struct CodegenSession {
   std::unique_ptr<Layout> layout;
+  std::unique_ptr<CuFacts> facts;
   std::unique_ptr<Context> context;
   RealizationData realization;
   std::vector<llvm::Function*> process_funcs;
@@ -234,6 +288,9 @@ struct CodegenSession {
   // Produced by CompileDeferredAssertionArtifacts, consumed by metadata
   // emission. Single-pipeline compilation product.
   std::vector<DeferredSiteCompiledArtifact> deferred_site_artifacts;
+  // Design-global back-edge site origins for metadata emission.
+  // Concatenated from spec products + standalone products.
+  std::vector<common::OriginId> back_edge_origins;
 };
 
 // Backend phase: compile all design processes into LLVM IR.

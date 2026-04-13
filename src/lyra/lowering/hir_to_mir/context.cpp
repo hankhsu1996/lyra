@@ -145,16 +145,6 @@ auto Context::LookupPlace(SymbolId sym) const -> mir::PlaceId {
     }
   }
 
-  // Design-level lowering only (V3d residual): check cross-instance places.
-  // This path is for connection process compilation where parent-side
-  // variable references are regular lookups, not hierarchical refs.
-  if (body_places == nullptr && cross_instance_places != nullptr) {
-    auto cross_it = cross_instance_places->find(sym);
-    if (cross_it != cross_instance_places->end()) {
-      return cross_it->second;
-    }
-  }
-
   throw common::InternalError(
       "HIR to MIR lowering",
       std::format("symbol {} not found in place mapping", sym.value));
@@ -169,32 +159,6 @@ auto Context::LookupEvent(SymbolId sym) const -> mir::EventId {
   }
   throw common::InternalError(
       "LookupEvent", std::format("symbol {} is not a named event", sym.value));
-}
-
-auto Context::ResolveHierarchicalRef(SymbolId sym) const -> mir::PlaceId {
-  if (cross_instance_places == nullptr) {
-    throw common::InternalError(
-        "ResolveHierarchicalRef",
-        "cross-instance reference without cross_instance_places set");
-  }
-  auto it = cross_instance_places->find(sym);
-  if (it == cross_instance_places->end()) {
-    throw common::InternalError(
-        "ResolveHierarchicalRef",
-        std::format("symbol {} not found in cross-instance places", sym.value));
-  }
-  // During body lowering: create body-local Place with kDesignGlobal root.
-  if (design_arena != nullptr) {
-    auto cache_it = design_place_cache.find(sym);
-    if (cache_it != design_place_cache.end()) {
-      return cache_it->second;
-    }
-    const mir::Place& place = (*design_arena)[it->second];
-    mir::PlaceId body_place_id = mir_arena->AddPlace(mir::Place(place));
-    design_place_cache[sym] = body_place_id;
-    return body_place_id;
-  }
-  return it->second;
 }
 
 auto Context::LowerHierarchicalRefToExternalRef(

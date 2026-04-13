@@ -833,7 +833,8 @@ auto CollectProcessRoots(
   for (mir::PlaceId place_id : all_places) {
     const auto& place = arena[place_id];
     if (place.root.kind == mir::PlaceRoot::Kind::kModuleSlot ||
-        place.root.kind == mir::PlaceRoot::Kind::kDesignGlobal) {
+        place.root.kind == mir::PlaceRoot::Kind::kDesignGlobal ||
+        place.root.kind == mir::PlaceRoot::Kind::kObjectLocal) {
       continue;
     }
     // Void-typed places (e.g. targets of .delete()) never need storage
@@ -985,17 +986,24 @@ auto ResolveObservation(
     const mir::Arena& arena, const DesignLayout& design_layout,
     common::SlotId design_global_slot, mir::PlaceId place_id)
     -> std::optional<ResolvedObservation> {
-  auto slot_it = design_layout.slot_to_index.find(design_global_slot);
-  if (slot_it == design_layout.slot_to_index.end()) {
+  if (design_global_slot.value >= design_layout.slots.size()) {
     throw common::InternalError(
-        "ResolveObservation", std::format(
-                                  "design-global slot {} not found in layout",
-                                  design_global_slot.value));
+        "ResolveObservation",
+        std::format(
+            "design-global slot {} out of range ({} slots)",
+            design_global_slot.value, design_layout.slots.size()));
   }
-  const auto& spec = design_layout.slot_storage_specs[slot_it->second];
+  return ResolveObservationFromSpec(
+      arena, design_layout.slot_storage_specs[design_global_slot.value],
+      design_layout.storage_spec_arena, place_id);
+}
+
+auto ResolveObservationFromSpec(
+    const mir::Arena& arena, const SlotStorageSpec& spec,
+    const StorageSpecArena& spec_arena, mir::PlaceId place_id)
+    -> std::optional<ResolvedObservation> {
   const auto& place = arena[place_id];
-  auto range =
-      ResolveByteRange(spec, design_layout.storage_spec_arena, place, nullptr);
+  auto range = ResolveByteRange(spec, spec_arena, place, nullptr);
   if (range.kind != RangeKind::kPrecise) {
     return std::nullopt;
   }
@@ -1035,6 +1043,11 @@ auto AnalyzeCombKernel(const mir::Process& process, const mir::Arena& arena)
           write_slots.insert(
               {.scope = mir::SignalRef::Scope::kDesignGlobal,
                .id = static_cast<uint32_t>(root.id)});
+        } else if (root.kind == mir::PlaceRoot::Kind::kObjectLocal) {
+          write_slots.insert(
+              {.scope = mir::SignalRef::Scope::kObjectLocal,
+               .id = static_cast<uint32_t>(root.id),
+               .object_index = root.object_index});
         }
       }
       if (const auto* ga = std::get_if<mir::GuardedAssign>(&stmt.data)) {
@@ -1053,6 +1066,11 @@ auto AnalyzeCombKernel(const mir::Process& process, const mir::Arena& arena)
           write_slots.insert(
               {.scope = mir::SignalRef::Scope::kDesignGlobal,
                .id = static_cast<uint32_t>(root.id)});
+        } else if (root.kind == mir::PlaceRoot::Kind::kObjectLocal) {
+          write_slots.insert(
+              {.scope = mir::SignalRef::Scope::kObjectLocal,
+               .id = static_cast<uint32_t>(root.id),
+               .object_index = root.object_index});
         }
       }
     }
@@ -1130,10 +1148,19 @@ auto BuildDesignLayout(
   // Resolve storage spec for each slot in flat order (package then per
   // instance). Every slot owns its own storage.
   auto ingest_slot = [&](const mir::SlotDesc& desc, uint32_t global_idx) {
+    if (global_idx != static_cast<uint32_t>(layout.slots.size())) {
+      throw common::InternalError(
+          "BuildDesignLayout",
+          std::format(
+              "slot identity invariant violated: global_idx {} != "
+              "position {}",
+              global_idx, layout.slots.size()));
+    }
     layout.slots.push_back(common::SlotId{global_idx});
-    layout.slot_to_index[common::SlotId{global_idx}] = global_idx;
     layout.slot_storage_specs.push_back(ResolveStorageSpec(
         desc.type, types, storage_mode, target_abi, layout.storage_spec_arena));
+    layout.slot_type_infos.push_back(
+        ClassifySlotTypeInfo(desc.type, types, force_two_state));
     slot_shapes.push_back(desc.storage_shape);
   };
 
@@ -1269,7 +1296,7 @@ auto BuildDesignLayout(
 }
 
 auto BuildBodyStorageLayout(
-    const mir::ModuleBody& body, const TypeArena& types,
+    std::span<const mir::SlotDesc> slots, const TypeArena& types,
     const llvm::DataLayout& dl, bool force_two_state) -> BodyStorageLayout {
   auto storage_mode =
       force_two_state ? StorageMode::kTwoState : StorageMode::kNormal;
@@ -1282,8 +1309,8 @@ auto BuildBodyStorageLayout(
   };
 
   BodyStorageLayout result;
-  result.slot_specs.reserve(body.slots.size());
-  for (const auto& slot : body.slots) {
+  result.slot_specs.reserve(slots.size());
+  for (const auto& slot : slots) {
     result.slot_specs.push_back(ResolveStorageSpec(
         slot.type, types, storage_mode, target_abi, result.spec_arena));
   }
@@ -1386,29 +1413,29 @@ auto BuildBodyLayout(
 // DesignLayout method implementations.
 
 auto DesignLayout::ContainsSlot(common::SlotId slot_id) const -> bool {
-  return slot_to_index.contains(slot_id);
+  return slot_id.value < slots.size();
 }
 
 auto DesignLayout::GetStorageByteOffset(common::SlotId slot_id) const
     -> uint64_t {
-  auto it = slot_to_index.find(slot_id);
-  if (it == slot_to_index.end()) {
+  if (slot_id.value >= slots.size()) {
     throw common::InternalError(
         "DesignLayout::GetStorageByteOffset",
-        std::format("slot {} not in layout", slot_id.value));
+        std::format(
+            "slot {} not in layout ({} slots)", slot_id.value, slots.size()));
   }
-  return slot_byte_offsets[it->second];
+  return slot_byte_offsets[slot_id.value];
 }
 
 auto DesignLayout::GetStorageSpec(common::SlotId slot_id) const
     -> const SlotStorageSpec& {
-  auto it = slot_to_index.find(slot_id);
-  if (it == slot_to_index.end()) {
+  if (slot_id.value >= slots.size()) {
     throw common::InternalError(
         "DesignLayout::GetStorageSpec",
-        std::format("slot {} not in layout", slot_id.value));
+        std::format(
+            "slot {} not in layout ({} slots)", slot_id.value, slots.size()));
   }
-  return slot_storage_specs[it->second];
+  return slot_storage_specs[slot_id.value];
 }
 
 auto DesignLayout::GetSlotStorageBinding(uint32_t slot_row) const
@@ -1445,16 +1472,6 @@ auto DesignLayout::GetInstanceOffset(
   }
   return ToInstanceOffset(
       binding.abs_byte_offset, *instance_base.abs_byte_offset);
-}
-
-auto DesignLayout::GetSlotRow(common::SlotId slot_id) const -> uint32_t {
-  auto it = slot_to_index.find(slot_id);
-  if (it == slot_to_index.end()) {
-    throw common::InternalError(
-        "DesignLayout::GetSlotRow",
-        std::format("slot {} not in layout", slot_id.value));
-  }
-  return it->second;
 }
 
 auto DesignLayout::GetBodyOffset(
@@ -1629,11 +1646,12 @@ auto Layout::GetInstanceSlotCount(ModuleIndex idx) const -> uint32_t {
   return instance_slot_counts[idx.value];
 }
 
-auto ResolveInstanceOwnedFlatSlot(const Layout& layout, uint32_t flat_slot_id)
-    -> SlotOwnerInfo {
-  uint32_t running_base = layout.num_package_slots;
-  for (uint32_t mi = 0; mi < layout.instance_slot_counts.size(); ++mi) {
-    uint32_t count = layout.instance_slot_counts[mi];
+auto ResolveInstanceOwnedFlatSlot(
+    uint32_t num_package_slots, std::span<const uint32_t> instance_slot_counts,
+    uint32_t flat_slot_id) -> SlotOwnerInfo {
+  uint32_t running_base = num_package_slots;
+  for (uint32_t mi = 0; mi < instance_slot_counts.size(); ++mi) {
+    uint32_t count = instance_slot_counts[mi];
     if (flat_slot_id < running_base + count) {
       return {
           .instance_id = runtime::InstanceId{mi},
@@ -1648,19 +1666,19 @@ auto ResolveInstanceOwnedFlatSlot(const Layout& layout, uint32_t flat_slot_id)
       std::format(
           "flat slot {} not found in any instance slot range "
           "(num_package_slots={}, num_instances={})",
-          flat_slot_id, layout.num_package_slots,
-          layout.instance_slot_counts.size()));
+          flat_slot_id, num_package_slots, instance_slot_counts.size()));
 }
 
 auto BuildLayout(
     std::span<const mir::ProcessId> init_processes,
     std::vector<ConnectionKernelEntry> precollected_connection_kernels,
     std::vector<mir::ProcessId> non_kernelized_connection_processes,
-    std::span<const LayoutModulePlan> module_plans, const mir::Design& design,
-    const mir::Arena& design_arena, const TypeArena& types,
-    DesignLayout design_layout,
-    const std::unordered_map<uint32_t, BodyStorageLayout>& body_storage_layouts,
-    const std::vector<common::BodyTimeScale>* body_timescales,
+    std::span<const LayoutModulePlan> module_plans,
+    std::span<const std::span<const mir::ProcessId>> module_body_processes,
+    const mir::Design& /*design*/, const mir::Arena& design_arena,
+    const TypeArena& types, DesignLayout design_layout,
+    const std::unordered_map<const mir::ModuleBody*, BodyStorageLayout>&
+        body_storage_layouts,
     llvm::LLVMContext& ctx, const llvm::DataLayout& dl, bool force_two_state)
     -> Layout {
   Layout layout;
@@ -1711,14 +1729,20 @@ auto BuildLayout(
       const auto* wait = std::get_if<mir::Wait>(&block.terminator.data);
       if (wait == nullptr) continue;
       for (const auto& trigger : wait->triggers) {
-        if (trigger.signal.scope != mir::SignalRef::Scope::kDesignGlobal) {
+        uint32_t slot = 0;
+        if (trigger.signal.scope == mir::SignalRef::Scope::kDesignGlobal) {
+          slot = trigger.signal.id;
+        } else if (
+            trigger.signal.scope == mir::SignalRef::Scope::kObjectLocal) {
+          auto oi = trigger.signal.object_index;
+          slot = module_plans[oi].design_state_base_slot + trigger.signal.id;
+        } else {
           throw common::InternalError(
               "BuildLayout", std::format(
                                  "non-kernelized connection process {} has "
-                                 "trigger with non-design-global scope (id={})",
+                                 "trigger with unexpected scope (id={})",
                                  proc_id.value, trigger.signal.id));
         }
-        auto slot = static_cast<uint32_t>(trigger.signal.id);
         if (slot >= layout.slot_has_connection_trigger.size()) {
           throw common::InternalError(
               "BuildLayout",
@@ -1737,7 +1761,7 @@ auto BuildLayout(
   for (uint32_t mi = 0; mi < module_plans.size(); ++mi) {
     const auto& plan = module_plans[mi];
     const auto& body_arena = plan.body->arena;
-    for (mir::ProcessId proc_id : plan.body_processes) {
+    for (mir::ProcessId proc_id : module_body_processes[mi]) {
       const auto& process = body_arena[proc_id];
       if (process.kind == mir::ProcessKind::kFinal) continue;
       layout.scheduled_processes.push_back({proc_id, ModuleIndex{mi}});
@@ -1790,15 +1814,14 @@ auto BuildLayout(
     } else {
       uint32_t mi = sp.module_index.value;
       const auto* body_ptr = module_plans[mi].body;
-      auto body_idx =
-          static_cast<uint32_t>(body_ptr - design.module_bodies.data());
       const auto& ordinal_map = body_ordinal_maps.at(body_ptr);
       uint32_t nonfinal_proc_ordinal =
           GetNonFinalOrdinal(ordinal_map, sp.process_id);
-      frame_name =
-          std::format("Body{}Frame{}", body_idx, nonfinal_proc_ordinal);
-      state_name =
-          std::format("Body{}State{}", body_idx, nonfinal_proc_ordinal);
+      // Use module_index as local naming ordinal (deterministic, no
+      // transported body identity). Multiple instances of the same body
+      // share the same layout, so any representative works.
+      frame_name = std::format("M{}Frame{}", mi, nonfinal_proc_ordinal);
+      state_name = std::format("M{}State{}", mi, nonfinal_proc_ordinal);
     }
 
     ProcessLayout proc_layout;
@@ -1890,17 +1913,17 @@ auto BuildLayout(
       return {.state_size = sz, .state_align = al, .needs_4state_init = needs};
     };
 
-    // Map from (body_id, dense non-final ordinal) to schema index for
+    // Map from (body pointer, dense non-final ordinal) to schema index for
     // module process deduplication.
     struct SchemaKey {
-      uint32_t body_id;
+      const mir::ModuleBody* body;
       uint32_t proc_within_body;  // Dense non-final body-local ordinal.
       auto operator==(const SchemaKey&) const -> bool = default;
     };
     struct SchemaKeyHash {
       auto operator()(const SchemaKey& k) const -> size_t {
-        return std::hash<uint64_t>{}(
-            (static_cast<uint64_t>(k.body_id) << 32) | k.proc_within_body);
+        return std::hash<const void*>{}(k.body) ^
+               std::hash<uint32_t>{}(k.proc_within_body);
       }
     };
     std::unordered_map<SchemaKey, uint32_t, SchemaKeyHash> module_schema_map;
@@ -1925,17 +1948,15 @@ auto BuildLayout(
 
         ++conn_counter;
       } else {
-        // Module process: deduplicate by (body_id, nonfinal_proc_ordinal).
+        // Module process: deduplicate by (body, nonfinal_proc_ordinal).
         uint32_t mi = sp.module_index.value;
         const auto* body_ptr = module_plans[mi].body;
-        auto body_idx =
-            static_cast<uint32_t>(body_ptr - design.module_bodies.data());
         const auto& ordinal_map = body_ordinal_maps.at(body_ptr);
         uint32_t nonfinal_proc_ordinal =
             GetNonFinalOrdinal(ordinal_map, sp.process_id);
 
         SchemaKey key{
-            .body_id = body_idx, .proc_within_body = nonfinal_proc_ordinal};
+            .body = body_ptr, .proc_within_body = nonfinal_proc_ordinal};
         auto it = module_schema_map.find(key);
         if (it != module_schema_map.end()) {
           // Existing schema: assert all constructor-relevant properties
@@ -1989,76 +2010,49 @@ auto BuildLayout(
 
     // Build per-body realization descriptors from the schema dedup map.
     // This is body-shaped data: one entry per unique body, not per instance.
-    // Ordering: by first-seen body_id during schema dedup (deterministic
+    // Ordering: by first-seen body during schema dedup (deterministic
     // from BFS-sorted elaboration order). Cut 3 will consume this vector
     // in order when generating emitted constructor loops.
     {
       // Build body_realization_infos from module_plans (covers all bodies,
       // including those with zero non-final processes).
-      std::unordered_map<uint32_t, size_t> body_id_to_info_index;
+      // Keyed by body pointer (canonical identity).
+      std::unordered_map<const mir::ModuleBody*, size_t> body_to_info_index;
       for (const auto& plan : module_plans) {
-        auto body_id_val =
-            static_cast<uint32_t>(plan.body - design.module_bodies.data());
-        auto [it, inserted] = body_id_to_info_index.try_emplace(
-            body_id_val, layout.body_realization_infos.size());
+        auto [it, inserted] = body_to_info_index.try_emplace(
+            plan.body, layout.body_realization_infos.size());
         if (inserted) {
           BodyStateSizeInfo size;
           BodyLayout body_layout;
           std::vector<SlotStorageSpec> body_slot_specs;
           if (plan.slot_count > 0) {
-            const auto& body = *plan.body;
-            auto bsl_it = body_storage_layouts.find(body_id_val);
+            auto bsl_it = body_storage_layouts.find(plan.body);
             if (bsl_it == body_storage_layouts.end()) {
               throw common::InternalError(
-                  "BuildLayout",
-                  std::format(
-                      "no precomputed body storage layout for body {}",
-                      body_id_val));
+                  "BuildLayout", "no precomputed body storage layout");
             }
-            size = ComputeBodyStateSize(std::span(body.slots), bsl_it->second);
-            body_layout =
-                BuildBodyLayout(std::span(body.slots), bsl_it->second);
+            size = ComputeBodyStateSize(plan.body_slots, bsl_it->second);
+            body_layout = BuildBodyLayout(plan.body_slots, bsl_it->second);
             body_slot_specs = bsl_it->second.slot_specs;
-          }
-          if (body_id_val >= body_timescales->size()) {
-            throw common::InternalError(
-                "BuildLayout",
-                std::format("body {} missing timescale entry", body_id_val));
-          }
-          const auto& ts = body_timescales->at(body_id_val);
-          if (ts.body_id != body_id_val) {
-            throw common::InternalError(
-                "BuildLayout",
-                std::format(
-                    "body {} timescale entry has mismatched body_id {}",
-                    body_id_val, ts.body_id));
           }
           layout.body_realization_infos.push_back(
               Layout::BodyRealizationInfo{
-                  .body_id = mir::ModuleBodyId{body_id_val},
                   .body = plan.body,
                   .slot_count = plan.slot_count,
                   .body_layout = std::move(body_layout),
                   .slot_specs = std::move(body_slot_specs),
-                  .process_schema_indices = {},
-                  .meta = {},
-                  .triggers = {},
-                  .comb = {},
-                  .observable_descriptors = {},
-                  .init = {},
                   .slot_has_behavioral_trigger = {},
+                  .slot_has_cross_body_behavioral_trigger = {},
+                  .slot_has_connection_notification = {},
                   .inline_state_size_bytes = size.inline_bytes,
                   .appendix_state_size_bytes = size.appendix_bytes,
                   .total_state_size_bytes = size.total_bytes,
-                  .decision_metas = {},
-                  .decision_meta_files = {},
-                  .time_unit_power = ts.unit_power,
-                  .time_precision_power = ts.precision_power,
-                  .event_count = static_cast<uint32_t>(
-                      design.module_bodies.at(body_id_val).events.size()),
+                  .time_unit_power = plan.time_unit_power,
+                  .time_precision_power = plan.time_precision_power,
+                  .event_count =
+                      static_cast<uint32_t>(plan.body->events.size()),
               });
-          layout.body_representative_base_slots.push_back(
-              plan.design_state_base_slot);
+          layout.body_runtime_descriptors.push_back({});
         } else {
           // Validate all plans for the same body agree on slot_count.
           auto& existing = layout.body_realization_infos[it->second];
@@ -2066,8 +2060,8 @@ auto BuildLayout(
             throw common::InternalError(
                 "BuildLayout",
                 std::format(
-                    "body {} slot_count disagreement: {} vs {}", body_id_val,
-                    existing.slot_count, plan.slot_count));
+                    "body group {} slot_count disagreement: {} vs {}",
+                    it->second, existing.slot_count, plan.slot_count));
           }
         }
       }
@@ -2075,9 +2069,10 @@ auto BuildLayout(
       // Fill process schema indices ordered by dense non-final ordinal.
       // Invariant: every ordinal in [0, nonfinal_count) is present
       // exactly once and matches the canonical BodyProcessOrdinalMap.
-      for (auto& info : layout.body_realization_infos) {
-        const auto* info_body_ptr = &design.module_bodies[info.body_id.value];
-        const auto& ordinal_map = body_ordinal_maps.at(info_body_ptr);
+      for (size_t bi = 0; bi < layout.body_realization_infos.size(); ++bi) {
+        const auto& info = layout.body_realization_infos[bi];
+        auto& rt = layout.body_runtime_descriptors[bi];
+        const auto& ordinal_map = body_ordinal_maps.at(info.body);
         auto nonfinal_count =
             static_cast<uint32_t>(ordinal_map.nonfinal_processes.size());
 
@@ -2085,21 +2080,22 @@ auto BuildLayout(
         // ordinal. Drive population from the canonical ordinal domain
         // directly rather than reconstructing density from emitted schema
         // keys.
-        info.process_schema_indices.resize(nonfinal_count);
+        rt.process_schema_indices.resize(nonfinal_count);
         for (uint32_t nonfinal_proc_ordinal = 0;
              nonfinal_proc_ordinal < nonfinal_count; ++nonfinal_proc_ordinal) {
           SchemaKey key{
-              .body_id = info.body_id.value,
+              .body = info.body,
               .proc_within_body = nonfinal_proc_ordinal,
           };
           auto it = module_schema_map.find(key);
           if (it == module_schema_map.end()) {
             throw common::InternalError(
-                "BuildLayout", std::format(
-                                   "body {} missing nonfinal_proc_ordinal {}",
-                                   info.body_id.value, nonfinal_proc_ordinal));
+                "BuildLayout",
+                std::format(
+                    "body group {} missing nonfinal_proc_ordinal {}", bi,
+                    nonfinal_proc_ordinal));
           }
-          info.process_schema_indices[nonfinal_proc_ordinal] = it->second;
+          rt.process_schema_indices[nonfinal_proc_ordinal] = it->second;
         }
       }
     }
@@ -2136,6 +2132,47 @@ auto BuildLayout(
         static_cast<uint32_t>(layout.design.slot_byte_offsets.size());
   }
 
+  // Build per-instance body-group index.
+  {
+    std::unordered_map<const mir::ModuleBody*, uint32_t> body_to_group;
+    for (uint32_t gi = 0; gi < layout.body_realization_infos.size(); ++gi) {
+      body_to_group[layout.body_realization_infos[gi].body] = gi;
+    }
+    layout.instance_body_groups.reserve(module_plans.size());
+    for (const auto& plan : module_plans) {
+      layout.instance_body_groups.push_back(body_to_group.at(plan.body));
+    }
+  }
+
+  // Build per-body connection notification bitmaps directly from
+  // connection trigger sources, without an intermediate flat ownership table.
+  for (auto& info : layout.body_realization_infos) {
+    info.slot_has_connection_notification.assign(info.slot_count, false);
+  }
+  // Kernelized connections: use structured trigger identity directly.
+  for (const auto& entry : layout.connection_kernel_entries) {
+    auto gi = layout.instance_body_groups[entry.trigger_object_index.value];
+    layout.body_realization_infos[gi]
+        .slot_has_connection_notification[entry.trigger_local_slot.value] =
+        true;
+  }
+  // Non-kernelized connections: triggers are kObjectLocal or kDesignGlobal.
+  for (mir::ProcessId proc_id : non_kernelized_connection_processes) {
+    const auto& process = design_arena[proc_id];
+    for (const auto& block : process.blocks) {
+      const auto* wait = std::get_if<mir::Wait>(&block.terminator.data);
+      if (wait == nullptr) continue;
+      for (const auto& trigger : wait->triggers) {
+        if (trigger.signal.scope == mir::SignalRef::Scope::kObjectLocal) {
+          auto gi = layout.instance_body_groups[trigger.signal.object_index];
+          layout.body_realization_infos[gi]
+              .slot_has_connection_notification[trigger.signal.id] = true;
+        }
+        // kDesignGlobal triggers are package-global; no body owns them.
+      }
+    }
+  }
+
   // Compute per-instance storage bases and slot counts.
   // The storage base is the first owned-local slot's arena-absolute byte
   // offset. Forwarded aliases are skipped. Instances with no owned-local
@@ -2144,14 +2181,11 @@ auto BuildLayout(
     size_t num_instances = module_plans.size();
     layout.instance_storage_bases.resize(num_instances);
     layout.instance_slot_counts.resize(num_instances);
-    layout.instance_body_ids.resize(num_instances);
     layout.instance_storage_sizes.resize(num_instances);
 
     for (size_t mi = 0; mi < num_instances; ++mi) {
       const auto& plan = module_plans[mi];
       layout.instance_slot_counts[mi] = plan.slot_count;
-      layout.instance_body_ids[mi] = mir::ModuleBodyId{
-          static_cast<uint32_t>(plan.body - design.module_bodies.data())};
 
       InstanceStorageBase base;
       if (plan.slot_count > 0) {
@@ -2161,43 +2195,14 @@ auto BuildLayout(
       }
       layout.instance_storage_bases[mi] = base;
 
-      // Compute per-instance realized inline and appendix sizes from the
-      // design layout. These are the correct per-instance sizes accounting
-      // for concrete parameterized types.
-      if (base.abs_byte_offset.has_value()) {
-        uint64_t inst_base = base.abs_byte_offset->value;
-        uint64_t inline_end = inst_base;
-        uint64_t total_end = inst_base;
-
-        // Find the end of inline region: last owned inline slot + its size.
-        // Find the end of appendix region: last owned backing + its size.
-        for (uint32_t i = 0; i < plan.slot_count; ++i) {
-          uint32_t row = plan.design_state_base_slot + i;
-          uint64_t slot_off = layout.design.slot_byte_offsets[row];
-          bool has_backing = layout.design.owned_data_offsets[row].has_value();
-          uint64_t slot_size =
-              has_backing
-                  ? runtime::kOwnedStorageHandleByteSize
-                  : layout.design.slot_storage_specs[row].TotalByteSize();
-          uint64_t slot_end = slot_off + slot_size;
-          inline_end = std::max(inline_end, slot_end);
-
-          // Check for owned backing data (container appendix).
-          if (layout.design.owned_data_offsets[row].has_value()) {
-            uint64_t backing_off = *layout.design.owned_data_offsets[row];
-            uint64_t backing_size =
-                layout.design.slot_storage_specs[row].TotalByteSize();
-            uint64_t backing_end = backing_off + backing_size;
-            total_end = std::max(total_end, backing_end);
-          }
-        }
-
-        uint64_t inline_bytes = inline_end - inst_base;
-        uint64_t appendix_bytes =
-            (total_end > inline_end) ? (total_end - inline_end) : 0;
-        layout.instance_storage_sizes[mi] = {
-            .inline_bytes = inline_bytes, .appendix_bytes = appendix_bytes};
-      }
+      // Per-instance storage sizes from body-local layout (canonical source).
+      // All instances of the same body share the same layout, so we read
+      // from the body realization info computed by ComputeBodyStateSize.
+      auto gi = layout.instance_body_groups[mi];
+      const auto& body_info = layout.body_realization_infos[gi];
+      layout.instance_storage_sizes[mi] = {
+          .inline_bytes = body_info.inline_state_size_bytes,
+          .appendix_bytes = body_info.appendix_state_size_bytes};
     }
   }
 

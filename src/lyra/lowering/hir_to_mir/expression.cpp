@@ -325,9 +325,9 @@ auto IsRelationalOp(hir::BinaryOp op) -> bool {
          op == BO::kGreaterThan || op == BO::kGreaterThanEqual;
 }
 
-auto IsDivisionOrModuloOp(hir::BinaryOp op) -> bool {
+auto NeedsSignedVariantCheck(hir::BinaryOp op) -> bool {
   using BO = hir::BinaryOp;
-  return op == BO::kDivide || op == BO::kMod;
+  return op == BO::kDivide || op == BO::kMod || op == BO::kPower;
 }
 
 auto ToSignedVariant(mir::BinaryOp op) -> mir::BinaryOp {
@@ -345,6 +345,8 @@ auto ToSignedVariant(mir::BinaryOp op) -> mir::BinaryOp {
       return BO::kDivideSigned;
     case BO::kMod:
       return BO::kModSigned;
+    case BO::kPower:
+      return BO::kPowerSigned;
     default:
       return op;
   }
@@ -528,7 +530,7 @@ auto LowerCompoundAssignment(
   // 4. Select the appropriate MIR operator (handle div/mod signedness)
   // Use operand types for signedness check, mirroring SelectDivModOp logic
   mir::BinaryOp mir_op = MapBinaryOp(data.op);
-  if (IsDivisionOrModuloOp(data.op)) {
+  if (NeedsSignedVariantCheck(data.op)) {
     const hir::Expression& operand_expr = (*ctx.hir_arena)[data.operand];
     const Type& lhs_type = (*ctx.type_arena)[expr.type];  // target type
     const Type& rhs_type = (*ctx.type_arena)[operand_expr.type];
@@ -621,7 +623,7 @@ auto LowerBinary(
     if (IsRelationalOp(data.op)) {
       return SelectComparisonOp(data, builder.GetContext());
     }
-    if (IsDivisionOrModuloOp(data.op)) {
+    if (NeedsSignedVariantCheck(data.op)) {
       return SelectDivModOp(data, builder.GetContext());
     }
     return MapBinaryOp(data.op);

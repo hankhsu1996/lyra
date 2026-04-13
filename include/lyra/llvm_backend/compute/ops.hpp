@@ -5,8 +5,8 @@
 #include <llvm/IR/IRBuilder.h>
 #include <llvm/IR/Value.h>
 
-#include "lyra/common/diagnostic/diagnostic.hpp"
 #include "lyra/llvm_backend/context.hpp"
+#include "lyra/llvm_backend/cu_facts.hpp"
 #include "lyra/mir/operand.hpp"
 #include "lyra/mir/operator.hpp"
 
@@ -25,23 +25,24 @@ auto IsReductionOp(mir::UnaryOp op) -> bool;
 auto GetSemanticMask(llvm::Type* ty, uint32_t semantic_width) -> llvm::Value*;
 
 auto ApplyWidthMask(
-    Context& context, llvm::Value* value, uint32_t semantic_width)
+    llvm::IRBuilder<>& builder, llvm::Value* value, uint32_t semantic_width)
     -> llvm::Value*;
 
 auto SignExtendToStorage(
     llvm::IRBuilderBase& builder, llvm::Value* val, uint32_t semantic_width)
     -> llvm::Value*;
 
-auto GetOperandPackedWidth(Context& context, const mir::Operand& operand)
+auto GetOperandPackedWidth(
+    const CuFacts& facts, Context& context, const mir::Operand& operand)
     -> uint32_t;
 
 auto LowerBinaryArith(
-    Context& context, mir::BinaryOp op, llvm::Value* lhs, llvm::Value* rhs)
-    -> Result<llvm::Value*>;
+    llvm::IRBuilder<>& builder, mir::BinaryOp op, llvm::Value* lhs,
+    llvm::Value* rhs) -> llvm::Value*;
 
 auto LowerBinaryComparison(
-    Context& context, mir::BinaryOp op, llvm::Value* lhs, llvm::Value* rhs)
-    -> Result<llvm::Value*>;
+    llvm::IRBuilder<>& builder, mir::BinaryOp op, llvm::Value* lhs,
+    llvm::Value* rhs) -> llvm::Value*;
 
 // Lowers a comparison operation to i1, handling operand width coercion.
 //
@@ -52,21 +53,20 @@ auto LowerBinaryComparison(
 //   width to the comparison width (max of both semantic widths)
 // - Returns i1 (caller is responsible for extending to storage type)
 auto LowerCompareToI1(
-    Context& context, mir::BinaryOp op, llvm::Value* lhs, llvm::Value* rhs,
-    uint32_t lhs_semantic_width, uint32_t rhs_semantic_width)
-    -> Result<llvm::Value*>;
+    llvm::IRBuilder<>& builder, mir::BinaryOp op, llvm::Value* lhs,
+    llvm::Value* rhs, uint32_t lhs_semantic_width, uint32_t rhs_semantic_width)
+    -> llvm::Value*;
 
 auto LowerShiftOp(
-    Context& context, mir::BinaryOp op, llvm::Value* value,
+    llvm::IRBuilder<>& builder, mir::BinaryOp op, llvm::Value* value,
     llvm::Value* shift_amount, uint32_t semantic_width) -> llvm::Value*;
 
 auto LowerShiftOpUnknown(
-    Context& context, mir::BinaryOp op, llvm::Value* unk,
+    llvm::IRBuilder<>& builder, mir::BinaryOp op, llvm::Value* unk,
     llvm::Value* shift_amount, uint32_t semantic_width) -> llvm::Value*;
 
 auto LowerUnaryOp(
-    Context& context, mir::UnaryOp op, llvm::Value* operand,
-    llvm::Type* storage_type, uint32_t operand_bit_width)
-    -> Result<llvm::Value*>;
+    llvm::IRBuilder<>& builder, mir::UnaryOp op, llvm::Value* operand,
+    llvm::Type* storage_type, uint32_t operand_bit_width) -> llvm::Value*;
 
 }  // namespace lyra::lowering::mir_to_llvm

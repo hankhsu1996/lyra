@@ -53,12 +53,12 @@ auto BuildRawValueFromTempValue(llvm::IRBuilder<>& builder, const TempValue& tv)
 // Evaluate rvalue and return computed LLVM value.
 // Does NOT store to any place - caller must handle storage.
 auto LowerRvalue(
-    Context& context, const mir::Rvalue& rvalue, TypeId result_type)
-    -> Result<RvalueValue>;
+    Context& context, const CuFacts& facts, const mir::Rvalue& rvalue,
+    TypeId result_type) -> Result<RvalueValue>;
 
 // Resolver-aware overload.
 auto LowerRvalue(
-    Context& context, SlotAccessResolver& resolver, const mir::Rvalue& rvalue,
-    TypeId result_type) -> Result<RvalueValue>;
+    Context& context, const CuFacts& facts, SlotAccessResolver& resolver,
+    const mir::Rvalue& rvalue, TypeId result_type) -> Result<RvalueValue>;
 
 }  // namespace lyra::lowering::mir_to_llvm

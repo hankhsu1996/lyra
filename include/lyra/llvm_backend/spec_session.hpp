@@ -1,7 +1,6 @@
 #pragma once
 
 #include <optional>
-#include <unordered_map>
 #include <vector>
 
 #include <llvm/IR/Function.h>
@@ -18,30 +17,35 @@ class Context;
 struct LoweringInput;
 
 // All products from specialization compilation.
+// body_compiled_funcs and body_process_triggers are parallel vectors
+// in canonical body-group order (same as body_realization_infos).
 struct SpecializationProducts {
-  std::unordered_map<const mir::ModuleBody*, std::vector<llvm::Function*>>
-      body_to_compiled_funcs;
-  std::unordered_map<
-      const mir::ModuleBody*, std::vector<std::optional<ProcessTriggerEntry>>>
-      body_to_process_triggers;
+  // Per body-group: compiled process functions (non-final ordinal order).
+  std::vector<std::vector<llvm::Function*>> body_compiled_funcs;
+  // Per body-group: trigger entries (non-final ordinal order).
+  std::vector<std::vector<std::optional<ProcessTriggerEntry>>>
+      body_process_triggers;
   std::vector<WaitSiteEntry> wait_sites;
-  std::unordered_map<
-      mir::ModuleExportCalleeKey, dpi::ModuleExportCalleeInfo,
-      mir::ModuleExportCalleeKeyHash>
-      module_export_callees;
+  // Parallel to design-global dpi_export_wrappers. nullopt for
+  // package-scoped entries; populated for module-scoped entries.
+  // Spliced positionally from per-body session products.
+  std::vector<std::optional<dpi::ModuleExportCalleeInfo>> module_export_callees;
   // Design-global deferred assertion thunk artifacts, concatenated from
   // per-body products. Positional: element [i] corresponds to
   // design.deferred_assertion_sites[i].
   std::vector<DeferredSiteCompiledArtifact> deferred_site_artifacts;
+  // Design-global back-edge site origins, concatenated from per-body products.
+  std::vector<common::OriginId> back_edge_origins;
 };
 
 // Declare and define all design-global functions (packages + generated).
-auto CompileGlobalFunctions(Context& context, const LoweringInput& input)
+auto CompileGlobalFunctions(
+    Context& context, const CuFacts& facts, const LoweringInput& input)
     -> Result<void>;
 
 // Compile all specializations, merging per-session products.
 auto CompileSpecializations(
-    Context& context, const LoweringInput& input, const SpecPlan& spec_plan)
-    -> Result<SpecializationProducts>;
+    Context& context, const CuFacts& facts, const LoweringInput& input,
+    const SpecPlan& spec_plan) -> Result<SpecializationProducts>;
 
 }  // namespace lyra::lowering::mir_to_llvm

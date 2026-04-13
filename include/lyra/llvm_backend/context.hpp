@@ -14,12 +14,10 @@
 #include "lyra/common/origin_id.hpp"
 #include "lyra/common/slot_id.hpp"
 #include "lyra/common/symbol_types.hpp"
-#include "lyra/common/type_arena.hpp"
-#include "lyra/common/type_queries.hpp"
-#include "lyra/common/type_utils.hpp"
 #include "lyra/llvm_backend/commit/signal_id_expr.hpp"
 #include "lyra/llvm_backend/compute/temp_value.hpp"
 #include "lyra/llvm_backend/context_scope.hpp"
+#include "lyra/llvm_backend/cu_facts.hpp"
 #include "lyra/llvm_backend/layout/layout.hpp"
 #include "lyra/lowering/diagnostic_context.hpp"
 #include "lyra/mir/arena.hpp"
@@ -39,6 +37,7 @@ struct ScopedSlotRef;
 namespace lyra::lowering::mir_to_llvm {
 
 struct SpecSlotInfo;
+struct SpecLayoutContract;
 class Context;
 
 // Forward declaration for friend access
@@ -176,12 +175,10 @@ class Context {
 
  public:
   Context(
-      const mir::Arena& arena, const TypeArena& types, const Layout& layout,
+      const mir::Arena& arena, const CuFacts& facts,
       std::unique_ptr<llvm::LLVMContext> llvm_ctx,
       std::unique_ptr<llvm::Module> module,
-      const lowering::DiagnosticContext* diag_ctx,
-      const SourceManager* source_manager = nullptr,
-      bool force_two_state = false);
+      const lowering::DiagnosticContext* diag_ctx);
 
   [[nodiscard]] auto GetLlvmContext() -> llvm::LLVMContext& {
     return *llvm_context_;
@@ -195,12 +192,6 @@ class Context {
 
   [[nodiscard]] auto GetMirArena() const -> const mir::Arena& {
     return *arena_;
-  }
-
-  // Get the design arena for cross-domain resolution.
-  // Always valid -- set once at Context construction, never changed.
-  [[nodiscard]] auto GetDesignArena() const -> const mir::Arena& {
-    return *design_arena_;
   }
 
   // Canonical Place lookup from the body arena.
@@ -248,25 +239,6 @@ class Context {
     Context& ctx_;
     const lowering::DiagnosticContext* saved_;
   };
-
-  [[nodiscard]] auto GetTypeArena() const -> const TypeArena& {
-    return types_;
-  }
-  [[nodiscard]] auto GetLayout() const -> const Layout& {
-    return layout_;
-  }
-
-  [[nodiscard]] auto IsForceTwoState() const -> bool {
-    return force_two_state_;
-  }
-  [[nodiscard]] auto IsFourState(TypeId type_id) const -> bool {
-    if (force_two_state_) return false;
-    return lyra::IsIntrinsicallyFourState(type_id, types_);
-  }
-  [[nodiscard]] auto IsPackedFourState(const Type& type) const -> bool {
-    if (force_two_state_) return false;
-    return lyra::IsIntrinsicallyPackedFourState(type, types_);
-  }
 
   [[nodiscard]] auto GetLyraPrintLiteral() -> llvm::Function*;
   [[nodiscard]] auto GetLyraWarnRateLimited() -> llvm::Function*;
@@ -493,9 +465,10 @@ class Context {
   [[nodiscard]] auto GetFrameFieldIndex(mir::PlaceId place_id) const
       -> uint32_t;
 
-  // Per-process setup (set before generating each process function)
-  void SetCurrentProcess(size_t process_index);
-  [[nodiscard]] auto GetCurrentProcessIndex() const -> size_t;
+  // Bind a specific ProcessLayout for the current process being compiled.
+  void SetCurrentProcess(const ProcessLayout* layout);
+  // Returns the ProcessLayout bound by SetCurrentProcess.
+  [[nodiscard]] auto GetCurrentProcessLayout() const -> const ProcessLayout&;
 
   // Slot addressing mode -- controls how kModuleSlot roots are lowered.
   // Must be set explicitly per function scope.
@@ -556,6 +529,33 @@ class Context {
     Context& ctx_;
   };
 
+  // CU-local layout contract scope. Installs the SpecLayoutContract for
+  // one specialization session. CU codegen reads layout data through this
+  // contract instead of indexing design-global Layout arrays.
+  class SpecLayoutScope {
+   public:
+    SpecLayoutScope(Context& ctx, const SpecLayoutContract* contract)
+        : ctx_(ctx), saved_(ctx.spec_layout_contract_) {
+      ctx_.spec_layout_contract_ = contract;
+    }
+    ~SpecLayoutScope() {
+      ctx_.spec_layout_contract_ = saved_;
+    }
+    SpecLayoutScope(const SpecLayoutScope&) = delete;
+    auto operator=(const SpecLayoutScope&) -> SpecLayoutScope& = delete;
+    SpecLayoutScope(SpecLayoutScope&&) = delete;
+    auto operator=(SpecLayoutScope&&) -> SpecLayoutScope& = delete;
+
+   private:
+    Context& ctx_;
+    const SpecLayoutContract* saved_;
+  };
+
+  [[nodiscard]] auto GetSpecLayoutContract() const
+      -> const SpecLayoutContract* {
+    return spec_layout_contract_;
+  }
+
   // External-ref helpers. Recipes are specialization-scoped; actual slot
   // resolution uses per-instance data loaded from RuntimeInstance at runtime.
 
@@ -609,12 +609,6 @@ class Context {
       -> const ConnectionNotificationMask* {
     return connection_notification_mask_;
   }
-
-  // Resolve the current body's BodyRealizationInfo from Layout.
-  // Requires spec_slot_info_ to be set (module-body codegen context).
-  // Throws InternalError if spec_slot_info_ is null or body_info is null.
-  [[nodiscard]] auto GetCurrentBodyRealizationInfo() const
-      -> const Layout::BodyRealizationInfo&;
 
   // Explicit access APIs for module-local slot pointer formation.
   // Callers must choose the correct API based on the slot's storage shape.
@@ -707,28 +701,12 @@ class Context {
   [[nodiscard]] auto RequiresStaticDirtyPropagation(
       const mir::SignalRef& sig) const -> bool;
 
-  // Legacy runtime-interop: resolve a signal reference to a design-global
-  // slot index for runtime APIs that still use flat slot identity (trace
-  // observation, packed store notifications). For module-local signals,
-  // maps through ResolveRepresentativeDesignSlot. For design-global
-  // signals, returns the id directly.
-  // Must NOT be used for spec compilation decisions -- only for runtime
-  // signal identity at the codegen->runtime boundary.
-  [[nodiscard]] auto GetLegacyRuntimeSignalSlot(const mir::SignalRef& sig) const
-      -> uint32_t;
-
-  // Emit IR that queries whether the canonical storage-owner slot for
-  // the given signal has trace observation at runtime. Returns an i1
-  // LLVM value (true if trace-observed, false if safe to suppress).
-  // Emits a call to the LyraIsTraceObserved runtime ABI function.
-  // Null engine returns false (safe for guarded paths).
+  // Emit IR that queries whether the given signal has trace observation
+  // at runtime. Returns an i1 LLVM value (true if trace-observed, false
+  // if safe to suppress). For module-local signals, emits the local
+  // trace query (LyraIsTraceObservedLocal with self instance pointer).
+  // For design-global signals, emits the global trace query.
   [[nodiscard]] auto EmitIsTraceObserved(const mir::SignalRef& sig)
-      -> llvm::Value*;
-
-  // Emit IR trace query by pre-resolved canonical owner slot.
-  // Used by packed-store paths where the owner slot was already
-  // resolved at policy construction time.
-  [[nodiscard]] auto EmitIsTraceObservedOwnerSlot(uint32_t owner_slot)
       -> llvm::Value*;
 
   // Emit a trace-observation branch: if trace-observed, execute the
@@ -927,11 +905,6 @@ class Context {
     return *diag_ctx_;
   }
 
-  // Access source manager for origin resolution.
-  [[nodiscard]] auto GetSourceManager() const -> const SourceManager* {
-    return source_manager_;
-  }
-
   // Register an owned string temp that needs release at end of statement
   void RegisterOwnedTemp(llvm::Value* handle);
 
@@ -991,22 +964,6 @@ class Context {
   // Check if a function uses out-param calling convention (managed return).
   [[nodiscard]] auto FunctionUsesSret(mir::FunctionId func_id) const -> bool;
 
-  // Iteration limit site tracking for back-edge guard emission.
-  // Returns the assigned back-edge site id.
-  auto RegisterBackEdgeSite(common::OriginId origin) -> uint32_t;
-  [[nodiscard]] auto GetBackEdgeSiteOrigins() const
-      -> const std::vector<common::OriginId>& {
-    return back_edge_site_origins_;
-  }
-
-  // Wait-site ID allocation for persistent wait installation.
-  // Returns the next sequential wait-site ID. Process codegen uses this
-  // to assign IDs; the entries themselves are returned as process-level
-  // output (not stored on Context).
-  auto NextWaitSiteId() -> uint32_t {
-    return next_wait_site_id_++;
-  }
-
   // SSA temp management (TempValue-based explicit semantic contract).
   // TempValue is defined in compute/temp_value.hpp.
 
@@ -1027,10 +984,6 @@ class Context {
   void ClearTemps();
 
  private:
-  // Internal helper: resolve SlotId to position index in design layout.
-  [[nodiscard]] auto ResolveDesignSlotIndex(common::SlotId slot_id) const
-      -> uint32_t;
-
   // Commit-module-only methods (accessed via friend class commit::Access)
   // Get unified write target (pointer + signal_id) from a place or
   // external ref. All fields derived from the same resolved root.
@@ -1054,10 +1007,10 @@ class Context {
       -> Result<llvm::Value*>;
 
   const mir::Arena* arena_;
-  const mir::Arena* design_arena_ = nullptr;
-  const TypeArena& types_;
-  const Layout& layout_;
-  bool force_two_state_ = false;
+  // Bridge pointer during CuFacts migration. Context does not own these facts;
+  // it forwards through this pointer. Will be removed when all callers
+  // take const CuFacts& explicitly.
+  const CuFacts* facts_ = nullptr;
 
   std::unique_ptr<llvm::LLVMContext> llvm_context_;
   std::unique_ptr<llvm::Module> llvm_module_;
@@ -1229,8 +1182,11 @@ class Context {
   // Cached union storage info (per union TypeId)
   absl::flat_hash_map<TypeId, CachedUnionInfo> union_storage_cache_;
 
-  // Current process index (set before generating each process)
-  size_t current_process_index_ = 0;
+  // Current process layout binding. Set by SetCurrentProcess before
+  // generating each process function.
+  const ProcessLayout* current_process_layout_ = nullptr;
+  // CU-local layout contract. Installed by SpecLayoutScope.
+  const SpecLayoutContract* spec_layout_contract_ = nullptr;
 
   // Cached pointers for current process function
   llvm::Value* state_ptr_ = nullptr;
@@ -1258,9 +1214,6 @@ class Context {
   // Diagnostic context for error reporting (resolves OriginId -> SourceSpan)
   const lowering::DiagnosticContext* diag_ctx_ = nullptr;
 
-  // Source manager for resolving SourceSpan -> file/line/col
-  const SourceManager* source_manager_ = nullptr;
-
   // Owned string temps that need release at end of current statement
   std::vector<llvm::Value*> owned_temps_;
 
@@ -1282,13 +1235,6 @@ class Context {
   // SSA temp bindings: temp_id -> TempValue (explicit semantic contract).
   // Temps defined by block params (split PHI nodes) or statements.
   absl::flat_hash_map<int, TempValue> temp_entries_;
-
-  // Iteration limit site origins accumulated during process codegen.
-  // Index = back-edge site id, value = origin of the back-edge terminator.
-  std::vector<common::OriginId> back_edge_site_origins_;
-
-  // Wait-site ID counter. Incremented by NextWaitSiteId().
-  uint32_t next_wait_site_id_ = 0;
 
   // Lazy-initialized runtime function for cover hit recording.
   llvm::Function* lyra_record_immediate_cover_hit_ = nullptr;

@@ -15,9 +15,7 @@
 
 #include "lyra/common/internal_error.hpp"
 #include "lyra/common/source_manager.hpp"
-#include "lyra/llvm_backend/context.hpp"
 #include "lyra/llvm_backend/layout/layout.hpp"
-#include "lyra/llvm_backend/observable_descriptor_utils.hpp"
 #include "lyra/llvm_backend/process_meta_utils.hpp"
 #include "lyra/lowering/diagnostic_context.hpp"
 #include "lyra/runtime/back_edge_site_meta.hpp"
@@ -102,10 +100,10 @@ auto GetConnectionDescriptorLlvmType(llvm::LLVMContext& ctx)
 }  // namespace
 
 auto PrepareBackEdgeSiteInputs(
-    const Context& context, const lowering::DiagnosticContext* diag_ctx,
+    std::span<const common::OriginId> origins,
+    const lowering::DiagnosticContext* diag_ctx,
     const SourceManager* source_manager)
     -> std::vector<metadata::BackEdgeSiteInput> {
-  const auto& origins = context.GetBackEdgeSiteOrigins();
   std::vector<metadata::BackEdgeSiteInput> entries;
   entries.reserve(origins.size());
 
@@ -122,13 +120,13 @@ auto PrepareBackEdgeSiteInputs(
   return entries;
 }
 
-auto ExtractConnectionDescriptorEntries(const Layout& layout)
+auto ExtractConnectionDescriptorEntries(
+    std::span<const ConnectionKernelEntry> kernel_entries,
+    const DesignLayout& design, uint32_t num_package_slots,
+    std::span<const uint32_t> instance_slot_counts)
     -> std::vector<metadata::ConnectionDescriptorEntry> {
-  const auto& kernel_entries = layout.connection_kernel_entries;
   std::vector<metadata::ConnectionDescriptorEntry> entries;
   entries.reserve(kernel_entries.size());
-
-  const auto& design = layout.design;
 
   for (const auto& entry : kernel_entries) {
     auto byte_size = design.GetStorageSpec(entry.dst_slot).TotalByteSize();
@@ -146,23 +144,22 @@ auto ExtractConnectionDescriptorEntries(const Layout& layout)
     uint8_t dst_is_local = 0;
     uint32_t dst_instance_id = 0;
     uint32_t dst_local_id = 0;
-    if (entry.dst_slot.value >= layout.num_package_slots) {
+    if (entry.dst_slot.value >= num_package_slots) {
       dst_is_local = 1;
-      auto owner = ResolveInstanceOwnedFlatSlot(layout, entry.dst_slot.value);
+      auto owner = ResolveInstanceOwnedFlatSlot(
+          num_package_slots, instance_slot_counts, entry.dst_slot.value);
       dst_instance_id = owner.instance_id.value;
       dst_local_id = owner.local_signal_id.value;
     }
 
-    // R5: Classify trigger domain from layout slot ownership.
+    // R5: Classify trigger domain from structured trigger identity.
     uint8_t trigger_is_local = 0;
     uint32_t trigger_instance_id = 0;
     uint32_t trigger_local_id = 0;
-    if (entry.trigger_slot.value >= layout.num_package_slots) {
+    if (entry.trigger_slot.value >= num_package_slots) {
       trigger_is_local = 1;
-      auto owner =
-          ResolveInstanceOwnedFlatSlot(layout, entry.trigger_slot.value);
-      trigger_instance_id = owner.instance_id.value;
-      trigger_local_id = owner.local_signal_id.value;
+      trigger_instance_id = entry.trigger_object_index.value;
+      trigger_local_id = entry.trigger_local_slot.value;
     }
 
     entries.push_back({
@@ -188,10 +185,8 @@ auto ExtractConnectionDescriptorEntries(const Layout& layout)
 }
 
 auto EmitDesignMetadataGlobals(
-    Context& context, const metadata::DesignMetadata& metadata)
-    -> MetadataGlobals {
-  auto& ctx = context.GetLlvmContext();
-  auto& mod = context.GetModule();
+    llvm::Module& mod, llvm::LLVMContext& ctx,
+    const metadata::DesignMetadata& metadata) -> MetadataGlobals {
   auto* i32_ty = llvm::Type::getInt32Ty(ctx);
   auto* ptr_ty = llvm::PointerType::getUnqual(ctx);
   auto* null_ptr =
@@ -277,9 +272,10 @@ auto EmitDesignMetadataGlobals(
 
 auto FindPortBindingForwardingCandidates(
     std::span<const metadata::ConnectionDescriptorEntry> connections,
-    const Layout& layout) -> std::vector<PortBindingForwardingCandidate> {
-  auto num_slots = static_cast<uint32_t>(layout.design.slots.size());
-
+    uint32_t num_slots,
+    std::span<const Layout::BodyRuntimeDescriptors> body_runtime_descriptors,
+    const OwnedTriggerTemplate& connection_triggers)
+    -> std::vector<PortBindingForwardingCandidate> {
   // Dense per-slot connection usage counts and indices.
   std::vector<uint32_t> slot_write_count(num_slots, 0);
   std::vector<uint32_t> slot_trigger_count(num_slots, 0);
@@ -315,15 +311,15 @@ auto FindPortBindingForwardingCandidates(
   std::vector<bool> is_process_trigger(num_slots, false);
   std::vector<bool> is_comb_trigger(num_slots, false);
 
-  for (const auto& body_info : layout.body_realization_infos) {
-    for (const auto& entry : body_info.triggers.entries) {
+  for (const auto& rt : body_runtime_descriptors) {
+    for (const auto& entry : rt.triggers.entries) {
       if ((entry.flags & runtime::kTriggerTemplateFlagDesignGlobal) != 0) {
         if (entry.slot_id < num_slots) {
           is_process_trigger[entry.slot_id] = true;
         }
       }
     }
-    for (const auto& entry : body_info.comb.entries) {
+    for (const auto& entry : rt.comb.entries) {
       if ((entry.flags & runtime::kCombTemplateFlagDesignGlobal) != 0) {
         if (entry.slot_id < num_slots) {
           is_comb_trigger[entry.slot_id] = true;
@@ -333,7 +329,7 @@ auto FindPortBindingForwardingCandidates(
   }
 
   // Connection trigger templates are always design-global.
-  for (const auto& entry : layout.connection_templates.triggers.entries) {
+  for (const auto& entry : connection_triggers.entries) {
     if (entry.slot_id < num_slots) {
       is_process_trigger[entry.slot_id] = true;
     }

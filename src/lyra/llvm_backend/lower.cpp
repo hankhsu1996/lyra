@@ -21,10 +21,12 @@
 #include <llvm/Support/raw_ostream.h>
 
 #include "lyra/common/internal_error.hpp"
+#include "lyra/common/origin_id.hpp"
 #include "lyra/llvm_backend/behavioral_trigger_contracts.hpp"
 #include "lyra/llvm_backend/codegen_session.hpp"
 #include "lyra/llvm_backend/connection_lowering.hpp"
 #include "lyra/llvm_backend/context.hpp"
+#include "lyra/llvm_backend/cu_facts.hpp"
 #include "lyra/llvm_backend/dpi_abi.hpp"
 #include "lyra/llvm_backend/layout/layout.hpp"
 #include "lyra/llvm_backend/layout_pipeline.hpp"
@@ -52,55 +54,71 @@ struct ConnectionTriggerWriteback {
 struct StandaloneProcessProducts {
   std::vector<llvm::Function*> process_funcs;
   std::vector<WaitSiteEntry> wait_sites;
+  std::vector<common::OriginId> back_edge_origins;
   std::vector<ConnectionTriggerWriteback> connection_trigger_writebacks;
 };
 
 auto CompileStandaloneProcesses(
-    Context& context, const LoweringInput& input,
-    std::span<const LayoutModulePlan> module_plans, const Layout& layout)
+    Context& context, const CuFacts& facts, const mir::Arena* mir_arena,
+    std::span<const LayoutModulePlan> module_plans,
+    std::span<const ScheduledProcess> scheduled_processes,
+    std::span<const ProcessLayout> process_layouts, size_t num_init_processes,
+    size_t num_module_process_base,
+    std::span<const Layout::ConnectionRealizationInfo> connection_infos,
+    uint32_t wait_site_base, uint32_t back_edge_site_base)
     -> Result<StandaloneProcessProducts> {
   StandaloneProcessProducts products;
-  products.process_funcs.reserve(layout.scheduled_processes.size());
+  products.process_funcs.reserve(scheduled_processes.size());
   uint32_t conn_ordinal = 0;
 
-  size_t num_init = layout.num_init_processes;
-  for (size_t i = 0; i < layout.scheduled_processes.size(); ++i) {
-    context.SetCurrentProcess(i);
+  for (size_t i = 0; i < scheduled_processes.size(); ++i) {
+    context.SetCurrentProcess(&process_layouts[i]);
 
-    const auto& bp = layout.scheduled_processes[i];
+    const auto& bp = scheduled_processes[i];
     const mir::Arena& proc_arena =
         (bp.module_index.value < module_plans.size())
             ? module_plans[bp.module_index.value].body->arena
-            : *input.mir_arena;
+            : *mir_arena;
     const auto& mir_process = proc_arena[bp.process_id];
 
-    if (i < num_init || bp.module_index.value == ModuleIndex::kNone) {
-      Context::ArenaScope arena_scope(context, input.mir_arena);
-      auto execution_kind = (i < num_init) ? ProcessExecutionKind::kInit
-                                           : ProcessExecutionKind::kSimulation;
-      BodySiteContext no_sites;
+    if (i < num_init_processes || bp.module_index.value == ModuleIndex::kNone) {
+      Context::ArenaScope arena_scope(context, mir_arena);
+      auto execution_kind = (i < num_init_processes)
+                                ? ProcessExecutionKind::kInit
+                                : ProcessExecutionKind::kSimulation;
+      BodySiteContext standalone_sites{
+          .wait_site_base = wait_site_base +
+                            static_cast<uint32_t>(products.wait_sites.size()),
+          .back_edge_site_base =
+              back_edge_site_base +
+              static_cast<uint32_t>(products.back_edge_origins.size()),
+          .deferred_sites = {},
+      };
       auto func_result = GenerateProcessFunction(
-          context, mir_process, std::format("process_{}", i), execution_kind,
-          no_sites);
+          context, facts, mir_process, std::format("process_{}", i),
+          execution_kind, standalone_sites);
       if (!func_result) return std::unexpected(func_result.error());
       products.process_funcs.push_back(func_result->function);
       products.wait_sites.insert(
           products.wait_sites.end(),
           std::make_move_iterator(func_result->wait_sites.begin()),
           std::make_move_iterator(func_result->wait_sites.end()));
+      products.back_edge_origins.insert(
+          products.back_edge_origins.end(),
+          std::make_move_iterator(func_result->back_edge_origins.begin()),
+          std::make_move_iterator(func_result->back_edge_origins.end()));
 
       // Collect connection trigger facts as writebacks.
-      if (i >= num_init && i < layout.num_module_process_base) {
-        if (conn_ordinal >= layout.connection_realization_infos.size()) {
+      if (i >= num_init_processes && i < num_module_process_base) {
+        if (conn_ordinal >= connection_infos.size()) {
           throw common::InternalError(
               "CompileStandaloneProcesses",
               std::format(
                   "connection ordinal {} >= "
                   "connection_realization_infos size {}",
-                  conn_ordinal, layout.connection_realization_infos.size()));
+                  conn_ordinal, connection_infos.size()));
         }
-        const auto& conn_info =
-            layout.connection_realization_infos[conn_ordinal];
+        const auto& conn_info = connection_infos[conn_ordinal];
         if (bp.process_id != conn_info.process_id) {
           throw common::InternalError(
               "CompileStandaloneProcesses",
@@ -116,12 +134,13 @@ auto CompileStandaloneProcesses(
           trigger_result.shape = pt.shape;
           trigger_result.triggers.reserve(pt.triggers.size());
           for (const auto& fact : pt.triggers) {
-            if (fact.signal.scope != mir::SignalRef::Scope::kDesignGlobal) {
+            if (fact.signal.scope != mir::SignalRef::Scope::kDesignGlobal &&
+                fact.signal.scope != mir::SignalRef::Scope::kObjectLocal) {
               throw common::InternalError(
                   "CompileStandaloneProcesses",
                   std::format(
-                      "connection ordinal {} trigger signal is not "
-                      "design-global (scope={}, id={})",
+                      "connection ordinal {} trigger signal has unexpected "
+                      "scope (scope={}, id={})",
                       conn_ordinal, static_cast<int>(fact.signal.scope),
                       fact.signal.id));
             }
@@ -164,49 +183,45 @@ struct FinalPackaging {
 };
 
 auto BuildFinalPackaging(
-    const mir::Design& design, const mir::ConstructionInput& construction,
-    const Layout& layout,
-    std::unordered_map<const mir::ModuleBody*, std::vector<llvm::Function*>>
-        body_to_compiled_funcs) -> FinalPackaging {
-  if (construction.objects.size() != construction.const_blocks.size()) {
+    std::span<const mir::DesignElement> design_elements,
+    std::span<const Layout::BodyRealizationInfo> body_realization_infos,
+    std::span<const Layout::BodyRuntimeDescriptors> body_runtime_descriptors,
+    uint32_t num_instances,
+    std::vector<std::vector<llvm::Function*>> body_compiled_funcs)
+    -> FinalPackaging {
+  if (body_compiled_funcs.size() != body_realization_infos.size()) {
     throw common::InternalError(
         "BuildFinalPackaging",
         std::format(
-            "construction objects/const_blocks size mismatch: {} vs {}",
-            construction.objects.size(), construction.const_blocks.size()));
+            "body_compiled_funcs size {} != body_realization_infos size {}",
+            body_compiled_funcs.size(), body_realization_infos.size()));
   }
 
   FinalPackaging pkg;
 
-  for (const auto& info : layout.body_realization_infos) {
-    auto it = body_to_compiled_funcs.find(info.body);
-    if (it == body_to_compiled_funcs.end()) {
-      throw common::InternalError(
-          "BuildFinalPackaging",
-          std::format("no compiled functions for body {}", info.body_id.value));
-    }
-    if (it->second.size() != info.process_schema_indices.size()) {
+  for (size_t bi = 0; bi < body_realization_infos.size(); ++bi) {
+    const auto& rt = body_runtime_descriptors[bi];
+    if (body_compiled_funcs[bi].size() != rt.process_schema_indices.size()) {
       throw common::InternalError(
           "BuildFinalPackaging",
           std::format(
-              "body {} compiled function count {} != schema count {}",
-              info.body_id.value, it->second.size(),
-              info.process_schema_indices.size()));
+              "body group {} compiled function count {} != schema count {}", bi,
+              body_compiled_funcs[bi].size(),
+              rt.process_schema_indices.size()));
     }
     pkg.body_funcs.push_back(
         CodegenSession::BodyCompiledFuncs{
-            .functions = std::move(it->second),
+            .functions = std::move(body_compiled_funcs[bi]),
         });
   }
 
   std::unordered_map<const mir::ModuleBody*, uint32_t> body_to_group;
-  for (size_t gi = 0; gi < layout.body_realization_infos.size(); ++gi) {
-    body_to_group[layout.body_realization_infos[gi].body] =
-        static_cast<uint32_t>(gi);
+  for (size_t gi = 0; gi < body_realization_infos.size(); ++gi) {
+    body_to_group[body_realization_infos[gi].body] = static_cast<uint32_t>(gi);
   }
   {
     uint32_t mi = 0;
-    for (const auto& element : design.elements) {
+    for (const auto& element : design_elements) {
       const auto* mod = std::get_if<mir::Module>(&element);
       if (mod == nullptr) continue;
       auto it = body_to_group.find(mod->body);
@@ -219,31 +234,21 @@ auto BuildFinalPackaging(
       ++mi;
     }
   }
-  if (pkg.instance_body_group.size() != layout.instance_storage_bases.size()) {
+  if (pkg.instance_body_group.size() != num_instances) {
     throw common::InternalError(
         "BuildFinalPackaging",
         std::format(
             "instance_body_group size {} != instance count {}",
-            pkg.instance_body_group.size(),
-            layout.instance_storage_bases.size()));
+            pkg.instance_body_group.size(), num_instances));
   }
 
   return pkg;
-}
-
-void VerifyLoweringInput(const LoweringInput& input) {
-  if (input.body_timescales == nullptr) {
-    throw common::InternalError(
-        "CompileDesignProcesses", "body_timescales must be non-null");
-  }
 }
 
 }  // namespace
 
 auto CompileDesignProcesses(const LoweringInput& input)
     -> Result<CodegenSession> {
-  VerifyLoweringInput(input);
-
   // Backend setup.
   auto llvm_ctx = std::make_unique<llvm::LLVMContext>();
   auto module = std::make_unique<llvm::Module>("lyra_module", *llvm_ctx);
@@ -259,48 +264,78 @@ auto CompileDesignProcesses(const LoweringInput& input)
       topology.module_plans, *input.design, *input.mir_arena,
       *input.construction, *layout);
 
+  auto facts = std::make_unique<CuFacts>(CuFacts{
+      .design_arena = input.mir_arena,
+      .types = input.type_arena,
+      .layout = layout.get(),
+      .force_two_state = input.force_two_state,
+      .source_manager = input.source_manager,
+  });
+
   auto context = std::make_unique<Context>(
-      *input.mir_arena, *input.type_arena, *layout, std::move(llvm_ctx),
-      std::move(module), input.diag_ctx, input.source_manager,
-      input.force_two_state);
+      *input.mir_arena, *facts, std::move(llvm_ctx), std::move(module),
+      input.diag_ctx);
 
   // Specialization planning + compilation.
+  std::span<const mir::DpiExportWrapperDesc> dpi_exports;
+  if (input.dpi_export_wrappers != nullptr) {
+    dpi_exports = *input.dpi_export_wrappers;
+  }
   auto spec_plan = BuildSpecPlan(
-      *input.design, *layout, topology.module_plans, input.origin_provenance);
+      *input.design, *layout, topology.module_plans, input.origin_provenance,
+      dpi_exports);
 
-  auto globals_result = CompileGlobalFunctions(*context, input);
+  auto globals_result = CompileGlobalFunctions(*context, *facts, input);
   if (!globals_result) return std::unexpected(globals_result.error());
 
-  auto specs_result = CompileSpecializations(*context, input, spec_plan);
+  auto specs_result =
+      CompileSpecializations(*context, *facts, input, spec_plan);
   if (!specs_result) return std::unexpected(specs_result.error());
   auto specs = std::move(*specs_result);
 
   if (input.dpi_export_wrappers != nullptr &&
       !input.dpi_export_wrappers->empty()) {
     auto export_result = dpi::EmitDpiExportWrappers(
-        *context, *input.dpi_export_wrappers, specs.module_export_callees);
+        *context, *facts, *input.dpi_export_wrappers,
+        specs.module_export_callees);
     if (!export_result) return std::unexpected(export_result.error());
   }
 
   auto standalone_result = CompileStandaloneProcesses(
-      *context, input, topology.module_plans, *layout);
+      *context, *facts, input.mir_arena, topology.module_plans,
+      layout->scheduled_processes, layout->processes,
+      layout->num_init_processes, layout->num_module_process_base,
+      layout->connection_realization_infos,
+      static_cast<uint32_t>(specs.wait_sites.size()),
+      static_cast<uint32_t>(specs.back_edge_origins.size()));
   if (!standalone_result) return std::unexpected(standalone_result.error());
   auto standalone = std::move(*standalone_result);
   ApplyConnectionTriggerWritebacks(
       standalone.connection_trigger_writebacks, *layout);
 
   // Final packaging + runtime data extraction.
+  if (input.construction->objects.size() !=
+      input.construction->const_blocks.size()) {
+    throw common::InternalError(
+        "CompileDesignProcesses",
+        std::format(
+            "construction objects/const_blocks size mismatch: {} vs {}",
+            input.construction->objects.size(),
+            input.construction->const_blocks.size()));
+  }
   auto packaging = BuildFinalPackaging(
-      *input.design, *input.construction, *layout,
-      std::move(specs.body_to_compiled_funcs));
+      input.design->elements, layout->body_realization_infos,
+      layout->body_runtime_descriptors,
+      static_cast<uint32_t>(layout->instance_storage_bases.size()),
+      std::move(specs.body_compiled_funcs));
 
   auto runtime_products = ExtractRuntimeData(
-      input, *layout, topology.module_plans, specs.body_to_process_triggers,
+      input, *layout, specs.body_process_triggers,
       packaging.instance_body_group);
   RealizationData realization;
   ApplyRuntimeDataToLayout(std::move(runtime_products), *layout, realization);
 
-  // Assemble session.
+  // Assemble session: merge spec + standalone wait-sites and back-edge origins.
   auto num_init = layout->num_init_processes;
   std::vector<WaitSiteEntry> all_wait_sites;
   all_wait_sites.insert(
@@ -311,8 +346,19 @@ auto CompileDesignProcesses(const LoweringInput& input)
       std::make_move_iterator(standalone.wait_sites.begin()),
       std::make_move_iterator(standalone.wait_sites.end()));
 
+  std::vector<common::OriginId> all_back_edge_origins;
+  all_back_edge_origins.insert(
+      all_back_edge_origins.end(),
+      std::make_move_iterator(specs.back_edge_origins.begin()),
+      std::make_move_iterator(specs.back_edge_origins.end()));
+  all_back_edge_origins.insert(
+      all_back_edge_origins.end(),
+      std::make_move_iterator(standalone.back_edge_origins.begin()),
+      std::make_move_iterator(standalone.back_edge_origins.end()));
+
   return CodegenSession{
       .layout = std::move(layout),
+      .facts = std::move(facts),
       .context = std::move(context),
       .realization = std::move(realization),
       .process_funcs = std::move(standalone.process_funcs),
@@ -320,6 +366,7 @@ auto CompileDesignProcesses(const LoweringInput& input)
       .num_init_processes = num_init,
       .body_compiled_funcs = std::move(packaging.body_funcs),
       .deferred_site_artifacts = std::move(specs.deferred_site_artifacts),
+      .back_edge_origins = std::move(all_back_edge_origins),
   };
 }
 
@@ -334,15 +381,11 @@ auto FinalizeModule(CodegenSession session, LoweringReport report)
 }
 
 void EmitVariableInspection(
-    Context& context, const InspectionPlan& plan, const mir::Design& design,
+    Context& context, const CuFacts& facts, const InspectionPlan& plan,
     llvm::Value* design_state, llvm::Value* abi_ptr) {
   if (plan.IsEmpty()) {
     return;
   }
-
-  const auto& layout = context.GetLayout();
-  const auto& types = context.GetTypeArena();
-  bool force_two_state = context.IsForceTwoState();
 
   auto& builder = context.GetBuilder();
   auto& llvm_ctx = context.GetLlvmContext();
@@ -350,22 +393,8 @@ void EmitVariableInspection(
   auto* i1_ty = llvm::Type::getInt1Ty(llvm_ctx);
   auto* i8_ty = llvm::Type::getInt8Ty(llvm_ctx);
 
-  auto classify_slot = [&](common::SlotId slot_id) -> SlotTypeInfo {
-    uint32_t gsi = slot_id.value;
-    if (gsi < layout.num_package_slots) {
-      return ClassifySlotTypeInfo(
-          design.slots[gsi].type, types, force_two_state);
-    }
-    auto owner = ResolveInstanceOwnedFlatSlot(layout, gsi);
-    auto body_id = layout.instance_body_ids[owner.instance_id.value];
-    const auto& body = design.module_bodies.at(body_id.value);
-    return ClassifySlotTypeInfo(
-        body.slots[owner.local_signal_id.value].type, types, force_two_state);
-  };
-
   auto emit_register = [&](llvm::Value* slot_ptr, std::string_view name,
-                           common::SlotId slot_id) {
-    const auto type_info = classify_slot(slot_id);
+                           const SlotTypeInfo& type_info) {
     auto* name_ptr = builder.CreateGlobalStringPtr(name);
     auto* kind_val =
         llvm::ConstantInt::get(i32_ty, static_cast<int32_t>(type_info.kind));
@@ -383,7 +412,7 @@ void EmitVariableInspection(
     auto* addr = builder.CreateGEP(
         i8_ty, design_state, builder.getInt64(var.placement.abs_off.value),
         "var_ptr");
-    emit_register(addr, var.name, var.slot_id);
+    emit_register(addr, var.name, var.type_info);
   }
 
   if (!plan.instance_owned.empty()) {
@@ -401,9 +430,9 @@ void EmitVariableInspection(
     for (const auto& var : plan.instance_owned) {
       auto* inst = EmitLoadAbiInstancePtr(
           context, abi_ptr, var.placement.owner_instance_id);
-      auto* addr =
-          EmitInstanceOwnedByteAddress(context, inst, var.placement.rel_off);
-      emit_register(addr, var.name, var.slot_id);
+      auto* addr = EmitInstanceOwnedByteAddress(
+          context, facts, inst, var.placement.rel_off);
+      emit_register(addr, var.name, var.type_info);
     }
     builder.CreateBr(skip_bb);
     builder.SetInsertPoint(skip_bb);
@@ -416,10 +445,10 @@ void EmitTimeReport(Context& context) {
   context.GetBuilder().CreateCall(context.GetLyraReportTime());
 }
 
-auto DumpLlvmIr(const LoweringResult& result) -> std::string {
+auto DumpLlvmIr(const llvm::Module& module) -> std::string {
   std::string ir;
   llvm::raw_string_ostream stream(ir);
-  result.module->print(stream, nullptr);
+  module.print(stream, nullptr);
   return ir;
 }
 

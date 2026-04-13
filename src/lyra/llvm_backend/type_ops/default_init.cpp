@@ -18,6 +18,7 @@
 #include "lyra/common/type.hpp"
 #include "lyra/llvm_backend/canonical_plane_write.hpp"
 #include "lyra/llvm_backend/context.hpp"
+#include "lyra/llvm_backend/cu_facts.hpp"
 #include "lyra/llvm_backend/layout/storage_contract.hpp"
 #include "lyra/llvm_backend/layout/union_storage.hpp"
 #include "lyra/llvm_backend/storage_boundary.hpp"
@@ -27,59 +28,43 @@ namespace lyra::lowering::mir_to_llvm {
 
 namespace {
 
-// Threshold for unrolling small 4-state array init.
-// Arrays with count <= this emit direct stores; larger arrays use a loop.
-// Chosen to balance IR size vs loop overhead. At 8 elements, unrolling costs
-// ~24 IR lines (3 per element) vs ~37 for a loop, and avoids 4 basic blocks.
 constexpr uint32_t kSmallArrayUnrollThreshold = 8;
 
-// Delegates to shared storage helper.
 void EmitFourStateXInit(Context& ctx, llvm::Value* ptr, uint32_t bit_width) {
   EmitStoreFourStateX(ctx.GetBuilder(), ptr, bit_width);
 }
 
-// Local helper that forwards to the public EmitMemsetZero.
 void EmitMemsetZeroLocal(
     Context& ctx, llvm::Value* ptr, llvm::Type* llvm_type) {
   EmitMemsetZero(ctx, ptr, llvm_type);
 }
 
-// Internal implementation with already_zeroed and is_canonical flags.
-//
-// already_zeroed: skips redundant zeroing for 2-state types.
-// is_canonical: affects only 2-state packed/integral zero writes.
-//   Canonical destinations use the byte-oriented gateway for large widths;
-//   non-canonical local allocas keep typed stores (mem2reg benefits).
-//   4-state X/mask writes use the shared storage helpers in both cases.
 void EmitSVDefaultInitImpl(
-    Context& ctx, llvm::Value* ptr, TypeId type_id, bool already_zeroed,
-    bool is_canonical) {
+    Context& ctx, const CuFacts& facts, llvm::Value* ptr, TypeId type_id,
+    bool already_zeroed, bool is_canonical) {
   auto& builder = ctx.GetBuilder();
   auto& llvm_ctx = ctx.GetLlvmContext();
-  const auto& types = ctx.GetTypeArena();
+  const auto& types = *facts.types;
   const Type& type = types[type_id];
 
   switch (type.Kind()) {
     case TypeKind::kIntegral: {
       uint32_t bit_width = type.AsIntegral().bit_width;
-      if (ctx.IsPackedFourState(type)) {
+      if (IsPackedFourState(facts, type)) {
         if (already_zeroed) {
           EmitStoreUnknownMask(builder, ptr, bit_width);
         } else {
           EmitFourStateXInit(ctx, ptr, bit_width);
         }
       } else {
-        // 2-state: store zero (skip if already zeroed).
         if (!already_zeroed) {
           if (is_canonical) {
-            // Lane domain: canonical storage uses byte-rounded plane writes.
             EmitCanonicalPlaneWrite(
                 builder, ptr, 0,
                 {.kind = PlaneConstantKind::kZero,
                  .semantic_bit_width = bit_width,
                  .storage_byte_size = GetStorageByteSize(bit_width)});
           } else {
-            // Backing domain: local alloca uses exact LLVM type width.
             auto* llvm_type = GetBackingLlvmType(llvm_ctx, bit_width);
             builder.CreateStore(llvm::Constant::getNullValue(llvm_type), ptr);
           }
@@ -89,8 +74,6 @@ void EmitSVDefaultInitImpl(
     }
 
     case TypeKind::kReal: {
-      // Real defaults to 0.0. Skip store if already zeroed since IEEE754
-      // double 0.0 is all-zero bits (LLVM uses IEEE754 representation).
       if (!already_zeroed) {
         auto* llvm_type = llvm::Type::getDoubleTy(llvm_ctx);
         auto* zero = llvm::ConstantFP::get(llvm_type, 0.0);
@@ -100,8 +83,6 @@ void EmitSVDefaultInitImpl(
     }
 
     case TypeKind::kShortReal: {
-      // ShortReal defaults to 0.0f. Skip store if already zeroed since IEEE754
-      // float 0.0f is all-zero bits (LLVM uses IEEE754 representation).
       if (!already_zeroed) {
         auto* llvm_type = llvm::Type::getFloatTy(llvm_ctx);
         auto* zero = llvm::ConstantFP::get(llvm_type, 0.0);
@@ -115,8 +96,6 @@ void EmitSVDefaultInitImpl(
     case TypeKind::kDynamicArray:
     case TypeKind::kQueue:
     case TypeKind::kAssociativeArray: {
-      // Pointer defaults to null. Skip store if already zeroed since LLVM
-      // null pointer is all-zero bits on all supported targets.
       if (!already_zeroed) {
         auto* ptr_ty = llvm::PointerType::getUnqual(llvm_ctx);
         auto* null_ptr = llvm::ConstantPointerNull::get(ptr_ty);
@@ -129,25 +108,21 @@ void EmitSVDefaultInitImpl(
     case TypeKind::kPackedStruct:
     case TypeKind::kEnum: {
       uint32_t width = PackedBitWidth(type, types);
-      if (ctx.IsPackedFourState(type)) {
-        // 4-state packed: write X encoding using canonical storage layout.
+      if (IsPackedFourState(facts, type)) {
         if (already_zeroed) {
           EmitStoreUnknownMask(builder, ptr, width);
         } else {
           EmitFourStateXInit(ctx, ptr, width);
         }
       } else {
-        // 2-state packed: store zero (skip if already zeroed).
         if (!already_zeroed) {
           if (is_canonical) {
-            // Lane domain: canonical storage uses byte-rounded plane writes.
             EmitCanonicalPlaneWrite(
                 builder, ptr, 0,
                 {.kind = PlaneConstantKind::kZero,
                  .semantic_bit_width = width,
                  .storage_byte_size = GetStorageByteSize(width)});
           } else {
-            // Backing domain: local alloca uses exact LLVM type width.
             auto* llvm_type = GetBackingLlvmType(llvm_ctx, width);
             builder.CreateStore(llvm::Constant::getNullValue(llvm_type), ptr);
           }
@@ -157,7 +132,7 @@ void EmitSVDefaultInitImpl(
     }
 
     case TypeKind::kUnpackedStruct: {
-      auto llvm_type_result = BuildLlvmTypeForTypeId(ctx, type_id);
+      auto llvm_type_result = BuildLlvmTypeForTypeId(ctx, facts, type_id);
       if (!llvm_type_result) {
         throw common::InternalError(
             "EmitSVDefaultInitImpl", "failed to build LLVM type for struct");
@@ -168,13 +143,14 @@ void EmitSVDefaultInitImpl(
         auto* field_ptr = builder.CreateStructGEP(
             struct_llvm_type, ptr, static_cast<unsigned>(i));
         EmitSVDefaultInitImpl(
-            ctx, field_ptr, info.fields[i].type, already_zeroed, is_canonical);
+            ctx, facts, field_ptr, info.fields[i].type, already_zeroed,
+            is_canonical);
       }
       return;
     }
 
     case TypeKind::kUnpackedArray: {
-      auto llvm_type_result = BuildLlvmTypeForTypeId(ctx, type_id);
+      auto llvm_type_result = BuildLlvmTypeForTypeId(ctx, facts, type_id);
       if (!llvm_type_result) {
         throw common::InternalError(
             "EmitSVDefaultInitImpl", "failed to build LLVM type for array");
@@ -183,54 +159,38 @@ void EmitSVDefaultInitImpl(
       const auto& info = type.AsUnpackedArray();
       uint32_t count = info.range.Size();
 
-      if (count == 0) return;  // Empty array - nothing to do
+      if (count == 0) return;
 
-      // Check if this array contains 4-state elements that need X encoding.
-      // If not, memset(0) is sufficient and we avoid creating new basic blocks.
-      if (!ctx.IsFourState(info.element_type)) {
+      if (!IsFourState(facts, info.element_type)) {
         if (!already_zeroed) {
           EmitMemsetZeroLocal(ctx, ptr, array_llvm_type);
         }
         return;
       }
 
-      // INVARIANT: ptr points to storage with layout matching array_llvm_type.
-      // Callers (local_slot lowering, struct field init) compute ptr via GEP
-      // using the same type hierarchy, ensuring consistency with opaque
-      // pointers.
-
-      // For 4-state arrays, we need to set X encoding per element.
-      // First memset to zero (handles value plane) unless already zeroed.
       if (!already_zeroed) {
         EmitMemsetZeroLocal(ctx, ptr, array_llvm_type);
       }
 
-      // Get element type info for init
       const Type& elem_type = types[info.element_type];
 
-      // For small arrays, unroll directly (no loop, no extra basic blocks).
-      // This avoids 4 basic blocks + phi + branch overhead for tiny arrays.
       if (count <= kSmallArrayUnrollThreshold) {
         for (uint32_t i = 0; i < count; ++i) {
           auto* elem_ptr =
               builder.CreateConstGEP2_32(array_llvm_type, ptr, 0, i);
 
           if (elem_type.Kind() == TypeKind::kIntegral &&
-              ctx.IsPackedFourState(elem_type)) {
+              IsPackedFourState(facts, elem_type)) {
             uint32_t bit_width = elem_type.AsIntegral().bit_width;
             EmitStoreUnknownMask(builder, elem_ptr, bit_width);
           } else {
-            // Nested type containing 4-state
             EmitSVDefaultInitImpl(
-                ctx, elem_ptr, info.element_type, true, is_canonical);
+                ctx, facts, elem_ptr, info.element_type, true, is_canonical);
           }
         }
         return;
       }
 
-      // Large arrays: use a loop to avoid IR explosion.
-      // Build canonical loop: preheader -> header -> body -> latch ->
-      // header/exit
       auto* func = builder.GetInsertBlock()->getParent();
       auto* i32_ty = llvm::Type::getInt32Ty(llvm_ctx);
 
@@ -240,10 +200,8 @@ void EmitSVDefaultInitImpl(
       auto* latch = llvm::BasicBlock::Create(llvm_ctx, "arr.init.latch", func);
       auto* exit_bb = llvm::BasicBlock::Create(llvm_ctx, "arr.init.exit", func);
 
-      // Preheader -> header
       builder.CreateBr(header);
 
-      // Header: phi + condbr to body/exit
       builder.SetInsertPoint(header);
       auto* phi = builder.CreatePHI(i32_ty, 2, "arr.init.idx");
       phi->addIncoming(llvm::ConstantInt::get(i32_ty, 0), preheader);
@@ -251,35 +209,27 @@ void EmitSVDefaultInitImpl(
           phi, llvm::ConstantInt::get(i32_ty, count), "arr.init.cmp");
       builder.CreateCondBr(cond, body, exit_bb);
 
-      // Body: compute elem_ptr and set unknown plane
       builder.SetInsertPoint(body);
       auto* elem_ptr = builder.CreateGEP(
           array_llvm_type, ptr, {builder.getInt32(0), phi}, "arr.init.elem");
 
       if (elem_type.Kind() == TypeKind::kIntegral &&
-          ctx.IsPackedFourState(elem_type)) {
+          IsPackedFourState(facts, elem_type)) {
         uint32_t bit_width = elem_type.AsIntegral().bit_width;
         EmitStoreUnknownMask(builder, elem_ptr, bit_width);
       } else {
-        // Nested type containing 4-state (struct/array with 4-state fields).
-        // Recursive call with already_zeroed=true since we already memset'd
-        // (or the caller did).
         EmitSVDefaultInitImpl(
-            ctx, elem_ptr, info.element_type, true, is_canonical);
+            ctx, facts, elem_ptr, info.element_type, true, is_canonical);
       }
       builder.CreateBr(latch);
 
-      // Latch: increment index, add phi incoming, branch to header with
-      // metadata
       builder.SetInsertPoint(latch);
       auto* next_idx = builder.CreateAdd(
           phi, llvm::ConstantInt::get(i32_ty, 1), "arr.init.next");
       phi->addIncoming(next_idx, latch);
 
-      // Build loop metadata to disable unrolling
-      // Pattern: !{!self, !{!"llvm.loop.unroll.disable"}}
       auto* loop_id = llvm::MDNode::getDistinct(llvm_ctx, {nullptr});
-      loop_id->replaceOperandWith(0, loop_id);  // Self-reference
+      loop_id->replaceOperandWith(0, loop_id);
       auto* unroll_disable = llvm::MDNode::get(
           llvm_ctx,
           {llvm::MDString::get(llvm_ctx, "llvm.loop.unroll.disable")});
@@ -287,15 +237,13 @@ void EmitSVDefaultInitImpl(
       auto* backedge = builder.CreateBr(header);
       backedge->setMetadata(llvm::LLVMContext::MD_loop, loop_md);
 
-      // Exit: continue with subsequent code
       builder.SetInsertPoint(exit_bb);
       return;
     }
 
     case TypeKind::kUnpackedUnion: {
-      // TODO(hankhsu): 4-state unions not yet supported. Zero-fill for now.
       if (!already_zeroed) {
-        auto llvm_type_result = BuildLlvmTypeForTypeId(ctx, type_id);
+        auto llvm_type_result = BuildLlvmTypeForTypeId(ctx, facts, type_id);
         if (!llvm_type_result) {
           throw common::InternalError(
               "EmitSVDefaultInitImpl", "failed to build LLVM type for union");
@@ -314,16 +262,14 @@ void EmitSVDefaultInitImpl(
 
 }  // namespace
 
-void EmitSVDefaultInit(Context& ctx, llvm::Value* ptr, TypeId type_id) {
-  // Process frame locals -- non-canonical, keep typed stores.
-  EmitSVDefaultInitImpl(ctx, ptr, type_id, false, false);
+void EmitSVDefaultInit(
+    Context& ctx, const CuFacts& facts, llvm::Value* ptr, TypeId type_id) {
+  EmitSVDefaultInitImpl(ctx, facts, ptr, type_id, false, false);
 }
 
 void EmitSVDefaultInitAfterZero(
-    Context& ctx, llvm::Value* ptr, TypeId type_id) {
-  // Design-state slots after memset -- canonical, route large zero writes
-  // through the byte-oriented gateway.
-  EmitSVDefaultInitImpl(ctx, ptr, type_id, true, true);
+    Context& ctx, const CuFacts& facts, llvm::Value* ptr, TypeId type_id) {
+  EmitSVDefaultInitImpl(ctx, facts, ptr, type_id, true, true);
 }
 
 void EmitMemsetZero(
@@ -335,7 +281,6 @@ void EmitMemsetZero(
 
   uint64_t byte_size = dl.getTypeAllocSize(pointee_ty);
 
-  // Determine alignment: use provided, infer from alloca, or use preferred
   llvm::MaybeAlign effective_align;
   if (align.has_value()) {
     effective_align = *align;

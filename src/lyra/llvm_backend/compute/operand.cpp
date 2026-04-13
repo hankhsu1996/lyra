@@ -20,6 +20,7 @@
 #include "lyra/llvm_backend/compute/compute.hpp"
 #include "lyra/llvm_backend/compute/four_state_ops.hpp"
 #include "lyra/llvm_backend/context.hpp"
+#include "lyra/llvm_backend/cu_facts.hpp"
 #include "lyra/llvm_backend/packed_storage_view.hpp"
 #include "lyra/llvm_backend/slot_access.hpp"
 #include "lyra/llvm_backend/value_repr.hpp"
@@ -34,25 +35,27 @@ namespace lyra::lowering::mir_to_llvm {
 
 namespace {
 
-auto LoadBitRange(Context& context, mir::PlaceId place_id)
+auto LoadBitRange(Context& context, const CuFacts& facts, mir::PlaceId place_id)
     -> Result<llvm::Value*> {
   auto elem_type_result = context.GetPlaceLlvmType(place_id);
   if (!elem_type_result) return std::unexpected(elem_type_result.error());
-  return LoadPackedPlace(context, place_id, *elem_type_result);
+  return LoadPackedPlace(context, facts, place_id, *elem_type_result);
 }
 
 }  // namespace
 
-auto LowerOperandRaw(Context& context, const mir::Operand& operand)
+auto LowerOperandRaw(
+    Context& context, const CuFacts& facts, const mir::Operand& operand)
     -> Result<llvm::Value*> {
-  CanonicalSlotAccess canonical(context);
-  return LowerOperandRaw(context, canonical, operand);
+  CanonicalSlotAccess canonical(context, facts);
+  return LowerOperandRaw(context, facts, canonical, operand);
 }
 
-auto LowerOperand(Context& context, const mir::Operand& operand)
+auto LowerOperand(
+    Context& context, const CuFacts& facts, const mir::Operand& operand)
     -> Result<llvm::Value*> {
-  CanonicalSlotAccess canonical(context);
-  return LowerOperand(context, canonical, operand);
+  CanonicalSlotAccess canonical(context, facts);
+  return LowerOperand(context, facts, canonical, operand);
 }
 
 auto CoerceToStorageType(
@@ -103,31 +106,34 @@ auto CoerceToStorageType(
 }
 
 auto LowerOperandAsStorage(
-    Context& context, const mir::Operand& operand, llvm::Type* target_type)
-    -> Result<llvm::Value*> {
-  auto val_or_err = LowerOperandRaw(context, operand);
+    Context& context, const CuFacts& facts, const mir::Operand& operand,
+    llvm::Type* target_type) -> Result<llvm::Value*> {
+  auto val_or_err = LowerOperandRaw(context, facts, operand);
   if (!val_or_err) return std::unexpected(val_or_err.error());
   return CoerceToStorageType(context, *val_or_err, target_type);
 }
 
 auto LowerOperandAsStorage(
-    Context& context, SlotAccessResolver& resolver, const mir::Operand& operand,
-    llvm::Type* target_type) -> Result<llvm::Value*> {
-  auto val_or_err = LowerOperandRaw(context, resolver, operand);
+    Context& context, const CuFacts& facts, SlotAccessResolver& resolver,
+    const mir::Operand& operand, llvm::Type* target_type)
+    -> Result<llvm::Value*> {
+  auto val_or_err = LowerOperandRaw(context, facts, resolver, operand);
   if (!val_or_err) return std::unexpected(val_or_err.error());
   return CoerceToStorageType(context, *val_or_err, target_type);
 }
 
-auto LowerConstant(Context& context, const Constant& constant)
+auto LowerConstant(
+    const CuFacts& facts, Context& context, const Constant& constant)
     -> Result<llvm::Value*> {
   auto& llvm_ctx = context.GetLlvmContext();
+  const auto& types = *facts.types;
 
   return std::visit(
       common::Overloaded{
           [&](const IntegralConstant& integral) -> Result<llvm::Value*> {
             // Get semantic bit width from type
-            const Type& type = context.GetTypeArena()[constant.type];
-            uint32_t bit_width = PackedBitWidth(type, context.GetTypeArena());
+            const Type& type = types[constant.type];
+            uint32_t bit_width = PackedBitWidth(type, types);
 
             // Create APInt from word arrays (little-endian in both MIR and
             // LLVM)
@@ -136,7 +142,7 @@ auto LowerConstant(Context& context, const Constant& constant)
             // 4-state type: always create {value, unknown} struct
             // Type determines LLVM shape, not whether value has unknown bits.
             // Uses the same canonical predicate as IsOperandFourState.
-            if (IsPacked(type) && context.IsPackedFourState(type)) {
+            if (IsPacked(type) && IsPackedFourState(facts, type)) {
               llvm::APInt unknown_ap =
                   integral.IsKnown() ? llvm::APInt::getZero(bit_width)
                                      : llvm::APInt(bit_width, integral.unknown);
@@ -177,7 +183,7 @@ auto LowerConstant(Context& context, const Constant& constant)
                 context.GetLyraStringFromLiteral(), {data, len}, "str.handle");
           },
           [&](const RealConstant& real) -> Result<llvm::Value*> {
-            const Type& type = context.GetTypeArena()[constant.type];
+            const Type& type = types[constant.type];
             if (type.Kind() == TypeKind::kShortReal) {
               return llvm::ConstantFP::get(
                   llvm::Type::getFloatTy(llvm_ctx),
@@ -201,7 +207,7 @@ auto LowerConstant(Context& context, const Constant& constant)
                     UnsupportedCategory::kType));
           },
           [&](const NullConstant& /*n*/) -> Result<llvm::Value*> {
-            const Type& ty = context.GetTypeArena()[constant.type];
+            const Type& ty = types[constant.type];
             if (ty.Kind() != TypeKind::kChandle) {
               return std::unexpected(
                   context.GetDiagnosticContext().MakeUnsupported(
@@ -219,17 +225,18 @@ auto LowerConstant(Context& context, const Constant& constant)
 }
 
 auto LowerOperandRaw(
-    Context& context, SlotAccessResolver& resolver, const mir::Operand& operand)
-    -> Result<llvm::Value*> {
+    Context& context, const CuFacts& facts, SlotAccessResolver& resolver,
+    const mir::Operand& operand) -> Result<llvm::Value*> {
   return std::visit(
       common::Overloaded{
-          [&context](const Constant& constant) -> Result<llvm::Value*> {
-            return LowerConstant(context, constant);
+          [&facts, &context](const Constant& constant) -> Result<llvm::Value*> {
+            return LowerConstant(facts, context, constant);
           },
-          [&context, &resolver](mir::PlaceId place_id) -> Result<llvm::Value*> {
+          [&context, &facts,
+           &resolver](mir::PlaceId place_id) -> Result<llvm::Value*> {
             // Projected reads (bit-range) are canonical-only in v1.
             if (context.HasBitRangeProjection(place_id)) {
-              return LoadBitRange(context, place_id);
+              return LoadBitRange(context, facts, place_id);
             }
             const auto& place = context.GetMirArena()[place_id];
             if (place.root.kind == mir::PlaceRoot::Kind::kModuleSlot &&
@@ -247,9 +254,9 @@ auto LowerOperandRaw(
 }
 
 auto LowerOperand(
-    Context& context, SlotAccessResolver& resolver, const mir::Operand& operand)
-    -> Result<llvm::Value*> {
-  auto val_or_err = LowerOperandRaw(context, resolver, operand);
+    Context& context, const CuFacts& facts, SlotAccessResolver& resolver,
+    const mir::Operand& operand) -> Result<llvm::Value*> {
+  auto val_or_err = LowerOperandRaw(context, facts, resolver, operand);
   if (!val_or_err) return std::unexpected(val_or_err.error());
   llvm::Value* val = *val_or_err;
 
@@ -275,7 +282,7 @@ auto BuildRawValueFromTempValue(llvm::IRBuilder<>& builder, const TempValue& tv)
   return tv.value;
 }
 
-auto ResolveOperandPlace(Context& /*context*/, const mir::Operand& operand)
+auto ResolveOperandPlace(const mir::Operand& operand)
     -> std::optional<mir::PlaceId> {
   return std::visit(
       common::Overloaded{
@@ -292,10 +299,12 @@ auto ResolveOperandPlace(Context& /*context*/, const mir::Operand& operand)
       operand.payload);
 }
 
-auto GetOperandTypeId(Context& context, const mir::Operand& operand) -> TypeId {
-  const auto& types = context.GetTypeArena();
-  // Place-backed operands: derive from Place.
-  auto place = ResolveOperandPlace(context, operand);
+auto GetOperandTypeId(
+    const CuFacts& facts, Context& context, const mir::Operand& operand)
+    -> TypeId {
+  const auto& types = *facts.types;
+  // Place-backed operands (PlaceId, ExternalRefId): derive from Place.
+  auto place = ResolveOperandPlace(operand);
   if (place.has_value()) {
     return mir::TypeOfPlace(types, context.LookupPlace(*place));
   }
@@ -315,21 +324,23 @@ auto GetOperandTypeId(Context& context, const mir::Operand& operand) -> TypeId {
       operand.payload);
 }
 
-auto IsOperandFourState(Context& context, const mir::Operand& operand) -> bool {
-  const auto& types = context.GetTypeArena();
+auto IsOperandFourState(
+    const CuFacts& facts, Context& context, const mir::Operand& operand)
+    -> bool {
+  const auto& types = *facts.types;
   // Place-backed operands: derive from type.
-  auto place = ResolveOperandPlace(context, operand);
+  auto place = ResolveOperandPlace(operand);
   if (place.has_value()) {
     TypeId type_id = mir::TypeOfPlace(types, context.LookupPlace(*place));
     const Type& type = types[type_id];
-    return IsPacked(type) && context.IsPackedFourState(type);
+    return IsPacked(type) && IsPackedFourState(facts, type);
   }
   // Non-place operands.
   return std::visit(
       common::Overloaded{
           [&](const Constant& c) -> bool {
             const Type& type = types[c.type];
-            return IsPacked(type) && context.IsPackedFourState(type);
+            return IsPacked(type) && IsPackedFourState(facts, type);
           },
           [&](mir::TempId temp_id) -> bool {
             return context.ReadTempValue(temp_id.value).domain ==
@@ -339,6 +350,11 @@ auto IsOperandFourState(Context& context, const mir::Operand& operand) -> bool {
             throw common::InternalError(
                 "IsOperandFourState",
                 "PlaceId not handled by ResolveOperandPlace");
+          },
+          [&context, &facts, &types](mir::ExternalRefId ref_id) -> bool {
+            TypeId type_id = context.GetExternalRefType(ref_id);
+            const Type& type = types[type_id];
+            return IsPacked(type) && IsPackedFourState(facts, type);
           },
       },
       operand.payload);

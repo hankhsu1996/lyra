@@ -8,6 +8,7 @@
 
 #include "lyra/common/diagnostic/diagnostic.hpp"
 #include "lyra/llvm_backend/context.hpp"
+#include "lyra/llvm_backend/cu_facts.hpp"
 #include "lyra/llvm_backend/format_lowering.hpp"
 #include "lyra/llvm_backend/slot_access.hpp"
 #include "lyra/mir/effect.hpp"
@@ -40,7 +41,7 @@ auto MapReportContinuation(mir::ReportContinuation c) -> uint8_t {
 }  // namespace
 
 auto LowerReportEffect(
-    Context& context, SlotAccessResolver& resolver,
+    Context& context, const CuFacts& facts, SlotAccessResolver& resolver,
     const mir::ReportEffect& report) -> Result<void> {
   auto& builder = context.GetBuilder();
   auto* ptr_ty = llvm::PointerType::getUnqual(context.GetLlvmContext());
@@ -49,20 +50,20 @@ auto LowerReportEffect(
   if (report.ops.empty()) {
     msg_handle = llvm::ConstantPointerNull::get(ptr_ty);
   } else {
-    auto validate_result = ValidateFormatOps(context, report.ops);
+    auto validate_result = ValidateFormatOps(context, facts, report.ops);
     if (!validate_result) return validate_result;
 
     auto* buf = builder.CreateCall(
         context.GetLyraStringFormatStart(), {}, "report.buf");
     for (const auto& op : report.ops) {
-      auto result = LowerFormatOpToBuffer(context, resolver, buf, op);
+      auto result = LowerFormatOpToBuffer(context, facts, resolver, buf, op);
       if (!result) return result;
     }
     msg_handle = builder.CreateCall(
         context.GetLyraStringFormatFinish(), {buf}, "report.msg");
   }
 
-  auto origin = LowerOptionalReportOrigin(report.origin, context);
+  auto origin = LowerOptionalReportOrigin(report.origin, context, facts);
 
   EmitAbiReportCall(
       context, MapReportIntent(report.intent),
@@ -76,10 +77,11 @@ auto LowerReportEffect(
   return {};
 }
 
-auto LowerReportEffect(Context& context, const mir::ReportEffect& report)
+auto LowerReportEffect(
+    Context& context, const CuFacts& facts, const mir::ReportEffect& report)
     -> Result<void> {
-  CanonicalSlotAccess canonical(context);
-  return LowerReportEffect(context, canonical, report);
+  CanonicalSlotAccess canonical(context, facts);
+  return LowerReportEffect(context, facts, canonical, report);
 }
 
 }  // namespace lyra::lowering::mir_to_llvm

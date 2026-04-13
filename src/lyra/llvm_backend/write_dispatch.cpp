@@ -11,6 +11,7 @@
 #include "lyra/llvm_backend/commit/emit.hpp"
 #include "lyra/llvm_backend/compute/operand.hpp"
 #include "lyra/llvm_backend/context.hpp"
+#include "lyra/llvm_backend/cu_facts.hpp"
 #include "lyra/llvm_backend/layout/union_storage.hpp"
 #include "lyra/llvm_backend/ownership.hpp"
 #include "lyra/llvm_backend/packed_storage_view.hpp"
@@ -26,12 +27,13 @@ namespace lyra::lowering::mir_to_llvm {
 namespace {
 
 // Resolve source to a raw LLVM value, lowering operand if needed.
-auto ResolveRawValue(Context& ctx, const WriteSource& source)
+auto ResolveRawValue(
+    Context& ctx, const CuFacts& facts, const WriteSource& source)
     -> Result<llvm::Value*> {
   if (const auto* rv = std::get_if<RawValueSource>(&source)) {
     return rv->value;
   }
-  return LowerOperandRaw(ctx, *std::get<OperandSource>(source).operand);
+  return LowerOperandRaw(ctx, facts, *std::get<OperandSource>(source).operand);
 }
 
 // Extract PlaceId from operand source. InternalError if source is not an
@@ -55,15 +57,16 @@ auto RequireOperandPlace(const WriteSource& source, const char* caller)
 // Emit helpers -- one per WriteOp. No re-classification inside.
 
 auto EmitManagedScalarWrite(
-    Context& ctx, const mir::WriteTarget& target, const WriteSource& source,
-    TypeId type_id, OwnershipPolicy policy) -> Result<void> {
-  auto raw = ResolveRawValue(ctx, source);
+    Context& ctx, const CuFacts& facts, const mir::WriteTarget& target,
+    const WriteSource& source, TypeId type_id, OwnershipPolicy policy)
+    -> Result<void> {
+  auto raw = ResolveRawValue(ctx, facts, source);
   if (!raw) return std::unexpected(raw.error());
 
   // Move cleanup: null-out source handle if moving from temp
   if (const auto* os = std::get_if<OperandSource>(&source)) {
     if (const auto* pid = std::get_if<mir::PlaceId>(&os->operand->payload)) {
-      CommitMoveCleanupIfTemp(ctx, *pid, policy, type_id);
+      CommitMoveCleanupIfTemp(ctx, facts, *pid, policy, type_id);
     }
   }
 
@@ -71,12 +74,12 @@ auto EmitManagedScalarWrite(
   auto wt = commit::Access::GetWriteTarget(ctx, target);
   if (!wt) return std::unexpected(wt.error());
 
-  const auto& type = ctx.GetTypeArena()[type_id];
+  const auto& type = (*facts.types)[type_id];
   switch (GetManagedKind(type.Kind())) {
     case ManagedKind::kString:
-      return CommitStringValue(ctx, *wt, *raw, policy, type_id);
+      return CommitStringValue(ctx, facts, *wt, *raw, policy, type_id);
     case ManagedKind::kContainer:
-      return CommitContainerValue(ctx, *wt, *raw, policy, type_id);
+      return CommitContainerValue(ctx, facts, *wt, *raw, policy, type_id);
     case ManagedKind::kNone:
       throw common::InternalError(
           "EmitManagedScalarWrite",
@@ -87,9 +90,9 @@ auto EmitManagedScalarWrite(
 }
 
 auto EmitPointerScalarWrite(
-    Context& ctx, const mir::WriteTarget& target, const WriteSource& source)
-    -> Result<void> {
-  auto raw = ResolveRawValue(ctx, source);
+    Context& ctx, const CuFacts& facts, const mir::WriteTarget& target,
+    const WriteSource& source) -> Result<void> {
+  auto raw = ResolveRawValue(ctx, facts, source);
   if (!raw) return std::unexpected(raw.error());
 
   auto wt = commit::Access::GetWriteTarget(ctx, target);
@@ -100,9 +103,9 @@ auto EmitPointerScalarWrite(
 }
 
 auto EmitPlainAggregateStore(
-    Context& ctx, const mir::WriteTarget& target, const WriteSource& source)
-    -> Result<void> {
-  auto raw = ResolveRawValue(ctx, source);
+    Context& ctx, const CuFacts& facts, const mir::WriteTarget& target,
+    const WriteSource& source) -> Result<void> {
+  auto raw = ResolveRawValue(ctx, facts, source);
   if (!raw) return std::unexpected(raw.error());
 
   auto wt = commit::Access::GetWriteTarget(ctx, target);
@@ -148,12 +151,12 @@ auto EmitPlainAggregateStore(
 }
 
 auto EmitPackedOrFloatWrite(
-    Context& ctx, const mir::WriteTarget& target, const WriteSource& source,
-    TypeId type_id) -> Result<void> {
+    Context& ctx, const CuFacts& facts, const mir::WriteTarget& target,
+    const WriteSource& source, TypeId type_id) -> Result<void> {
   // Non-lossy packed path: PackedRValueSource carries preserved
   // 2-state/4-state semantics directly to CommitPackedValue.
   if (const auto* packed = std::get_if<PackedRValueSource>(&source)) {
-    CommitPackedValue(ctx, target, packed->rvalue, packed->type_id);
+    CommitPackedValue(ctx, facts, target, packed->rvalue, packed->type_id);
     return {};
   }
 
@@ -162,10 +165,10 @@ auto EmitPackedOrFloatWrite(
   // assoc_op, call, etc.) that produce raw llvm::Value* and route through
   // CommitValue -> DispatchWrite. The raw value's LLVM type is authoritative:
   // scalar means 2-state, struct {iN,iN} means 4-state.
-  auto raw = ResolveRawValue(ctx, source);
+  auto raw = ResolveRawValue(ctx, facts, source);
   if (!raw) return std::unexpected(raw.error());
 
-  const auto& types = ctx.GetTypeArena();
+  const auto& types = *facts.types;
   const Type& type = types[type_id];
   auto kind = type.Kind();
   if (kind == TypeKind::kEnum) {
@@ -188,27 +191,31 @@ auto EmitPackedOrFloatWrite(
   }
 
   auto rvalue = BuildPackedRValueFromRaw(ctx, store_value, semantic_bits);
-  CommitPackedValue(ctx, target, rvalue, type_id);
+  CommitPackedValue(ctx, facts, target, rvalue, type_id);
   return {};
 }
 
 auto EmitFieldByFieldStructWrite(
-    Context& ctx, const mir::WriteTarget& target, mir::PlaceId source_place,
-    TypeId type_id, OwnershipPolicy policy) -> Result<void> {
-  return CommitStructFieldByField(ctx, target, source_place, type_id, policy);
+    Context& ctx, const CuFacts& facts, const mir::WriteTarget& target,
+    mir::PlaceId source_place, TypeId type_id, OwnershipPolicy policy)
+    -> Result<void> {
+  return CommitStructFieldByField(
+      ctx, facts, target, source_place, type_id, policy);
 }
 
 auto EmitFieldByFieldArrayWrite(
-    Context& ctx, const mir::WriteTarget& target, mir::PlaceId source_place,
-    TypeId type_id, OwnershipPolicy policy) -> Result<void> {
-  return CommitArrayFieldByField(ctx, target, source_place, type_id, policy);
+    Context& ctx, const CuFacts& facts, const mir::WriteTarget& target,
+    mir::PlaceId source_place, TypeId type_id, OwnershipPolicy policy)
+    -> Result<void> {
+  return CommitArrayFieldByField(
+      ctx, facts, target, source_place, type_id, policy);
 }
 
 auto EmitUnionMemcpyWrite(
-    Context& ctx, const mir::WriteTarget& target, mir::PlaceId source_place,
-    TypeId type_id) -> Result<void> {
+    Context& ctx, const CuFacts& facts, const mir::WriteTarget& target,
+    mir::PlaceId source_place, TypeId type_id) -> Result<void> {
   auto& builder = ctx.GetBuilder();
-  const auto& types = ctx.GetTypeArena();
+  const auto& types = *facts.types;
 
   auto wt_or_err = commit::Access::GetWriteTarget(ctx, target);
   if (!wt_or_err) {
@@ -218,7 +225,7 @@ auto EmitUnionMemcpyWrite(
   const auto& wt = *wt_or_err;
   llvm::Value* target_ptr = wt.ptr;
 
-  auto info = GetUnionStorageInfo(ctx, type_id);
+  auto info = GetUnionStorageInfo(ctx, facts, type_id);
   if (!info) return std::unexpected(info.error());
 
   TypeId src_type = mir::TypeOfPlace(types, ctx.GetMirArena()[source_place]);
@@ -285,20 +292,22 @@ auto EmitUnionMemcpyWrite(
 }  // namespace
 
 auto ExecuteWritePlan(
-    Context& ctx, const mir::WriteTarget& target, const WriteSource& source,
-    const WritePlan& plan, OwnershipPolicy policy) -> Result<void> {
+    Context& ctx, const CuFacts& facts, const mir::WriteTarget& target,
+    const WriteSource& source, const WritePlan& plan, OwnershipPolicy policy)
+    -> Result<void> {
   switch (plan.op) {
     case WriteOp::kCommitManagedScalar:
-      return EmitManagedScalarWrite(ctx, target, source, plan.type_id, policy);
+      return EmitManagedScalarWrite(
+          ctx, facts, target, source, plan.type_id, policy);
 
     case WriteOp::kCommitPointerScalar:
-      return EmitPointerScalarWrite(ctx, target, source);
+      return EmitPointerScalarWrite(ctx, facts, target, source);
 
     case WriteOp::kStorePlainAggregate:
-      return EmitPlainAggregateStore(ctx, target, source);
+      return EmitPlainAggregateStore(ctx, facts, target, source);
 
     case WriteOp::kCommitPackedOrFloatScalar:
-      return EmitPackedOrFloatWrite(ctx, target, source, plan.type_id);
+      return EmitPackedOrFloatWrite(ctx, facts, target, source, plan.type_id);
 
     case WriteOp::kCommitFieldByFieldStruct: {
       if (!std::holds_alternative<OperandSource>(source)) {
@@ -311,7 +320,7 @@ auto ExecuteWritePlan(
       auto src =
           RequireOperandPlace(source, "ExecuteWritePlan/FieldByFieldStruct");
       return EmitFieldByFieldStructWrite(
-          ctx, target, src, plan.type_id, policy);
+          ctx, facts, target, src, plan.type_id, policy);
     }
 
     case WriteOp::kCommitFieldByFieldArray: {
@@ -324,7 +333,8 @@ auto ExecuteWritePlan(
       }
       auto src =
           RequireOperandPlace(source, "ExecuteWritePlan/FieldByFieldArray");
-      return EmitFieldByFieldArrayWrite(ctx, target, src, plan.type_id, policy);
+      return EmitFieldByFieldArrayWrite(
+          ctx, facts, target, src, plan.type_id, policy);
     }
 
     case WriteOp::kCommitUnionMemcpy: {
@@ -335,7 +345,7 @@ auto ExecuteWritePlan(
             UnsupportedCategory::kFeature));
       }
       auto src = RequireOperandPlace(source, "ExecuteWritePlan/UnionMemcpy");
-      return EmitUnionMemcpyWrite(ctx, target, src, plan.type_id);
+      return EmitUnionMemcpyWrite(ctx, facts, target, src, plan.type_id);
     }
 
     case WriteOp::kRejectUnsupported:
@@ -350,10 +360,11 @@ auto ExecuteWritePlan(
 }
 
 auto DispatchWrite(
-    Context& ctx, const mir::WriteTarget& target, const WriteSource& source,
-    TypeId type_id, OwnershipPolicy policy) -> Result<void> {
-  auto plan = BuildWritePlan(type_id, ctx.GetTypeArena());
-  return ExecuteWritePlan(ctx, target, source, plan, policy);
+    Context& ctx, const CuFacts& facts, const mir::WriteTarget& target,
+    const WriteSource& source, TypeId type_id, OwnershipPolicy policy)
+    -> Result<void> {
+  auto plan = BuildWritePlan(type_id, *facts.types);
+  return ExecuteWritePlan(ctx, facts, target, source, plan, policy);
 }
 
 }  // namespace lyra::lowering::mir_to_llvm

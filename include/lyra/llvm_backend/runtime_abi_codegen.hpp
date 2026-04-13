@@ -11,6 +11,7 @@
 namespace lyra::lowering::mir_to_llvm {
 
 class Context;
+struct CuFacts;
 
 // Build the canonical LLVM struct type matching LyraRuntimeAbi.
 // All codegen that creates or reads the ABI struct must use this function.
@@ -33,7 +34,7 @@ auto EmitLoadAbiInstancePtr(
 // between inline and appendix regions. The caller does NOT pass
 // inline_size -- the storage model owns the split.
 auto EmitInstanceOwnedByteAddress(
-    Context& context, llvm::Value* instance_ptr,
+    Context& context, const CuFacts& facts, llvm::Value* instance_ptr,
     common::InstanceByteOffset rel_off) -> llvm::Value*;
 
 }  // namespace lyra::lowering::mir_to_llvm

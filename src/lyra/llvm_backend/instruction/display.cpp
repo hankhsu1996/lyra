@@ -19,6 +19,7 @@
 #include "lyra/llvm_backend/compute/cast.hpp"
 #include "lyra/llvm_backend/compute/operand.hpp"
 #include "lyra/llvm_backend/context.hpp"
+#include "lyra/llvm_backend/cu_facts.hpp"
 #include "lyra/llvm_backend/format_lowering.hpp"
 #include "lyra/llvm_backend/slot_access.hpp"
 #include "lyra/mir/effect.hpp"
@@ -119,10 +120,11 @@ auto EmitStoreNarrowToTemp(
   return alloca;
 }
 
-void LowerLiteralOp(Context& context, const mir::FormatOp& op) {
-  auto& builder = context.GetBuilder();
+void LowerLiteralOp(
+    llvm::IRBuilder<>& builder, llvm::Function* print_literal_fn,
+    const mir::FormatOp& op) {
   auto* str_const = builder.CreateGlobalStringPtr(op.literal);
-  builder.CreateCall(context.GetLyraPrintLiteral(), {str_const});
+  builder.CreateCall(print_literal_fn, {str_const});
 }
 
 void LowerModulePathOp(Context& context) {
@@ -143,8 +145,8 @@ void LowerModulePathOp(Context& context) {
 }
 
 auto LowerStringOp(
-    Context& context, SlotAccessResolver& resolver, const mir::FormatOp& op)
-    -> Result<void> {
+    Context& context, const CuFacts& facts, SlotAccessResolver& resolver,
+    const mir::FormatOp& op) -> Result<void> {
   if (!op.value.has_value()) {
     return {};
   }
@@ -183,7 +185,7 @@ auto LowerStringOp(
   builder.CreateStore(llvm::ConstantInt::get(i8_ty, flags), flags_ptr);
 
   return WithStringHandle(
-      context, resolver, *op.value, op.type,
+      context, facts, resolver, *op.value, op.type,
       [&](llvm::Value* h) -> Result<void> {
         builder.CreateCall(context.GetLyraPrintString(), {h, spec_alloca});
         return {};
@@ -191,8 +193,8 @@ auto LowerStringOp(
 }
 
 auto LowerTimeOp(
-    Context& context, SlotAccessResolver& resolver, const mir::FormatOp& op)
-    -> Result<void> {
+    Context& context, const CuFacts& facts, SlotAccessResolver& resolver,
+    const mir::FormatOp& op) -> Result<void> {
   auto& builder = context.GetBuilder();
   auto& llvm_ctx = context.GetLlvmContext();
 
@@ -205,9 +207,9 @@ auto LowerTimeOp(
 
   llvm::Value* data_ptr = nullptr;
   if (op.value.has_value()) {
-    auto value_or_err = LowerOperand(context, resolver, *op.value);
+    auto value_or_err = LowerOperand(context, facts, resolver, *op.value);
     if (!value_or_err) return std::unexpected(value_or_err.error());
-    llvm::Value* ticks = LowerTimeToTicks64(context, *value_or_err);
+    llvm::Value* ticks = LowerTimeToTicks64(builder, *value_or_err);
     auto* alloca = builder.CreateAlloca(i64_ty);
     builder.CreateStore(ticks, alloca);
     data_ptr = alloca;
@@ -234,11 +236,11 @@ auto LowerTimeOp(
 }
 
 auto LowerValueOp(
-    Context& context, SlotAccessResolver& resolver, const mir::FormatOp& op)
-    -> Result<void> {
+    Context& context, const CuFacts& facts, SlotAccessResolver& resolver,
+    const mir::FormatOp& op) -> Result<void> {
   auto& builder = context.GetBuilder();
   auto& llvm_ctx = context.GetLlvmContext();
-  const auto& types = context.GetTypeArena();
+  const auto& types = *facts.types;
 
   auto* i32_ty = llvm::Type::getInt32Ty(llvm_ctx);
   auto* i1_ty = llvm::Type::getInt1Ty(llvm_ctx);
@@ -256,7 +258,7 @@ auto LowerValueOp(
     if (ty.Kind() == TypeKind::kIntegral) {
       width = static_cast<int32_t>(ty.AsIntegral().bit_width);
       is_signed = ty.AsIntegral().is_signed;
-      is_four_state = context.IsPackedFourState(ty);
+      is_four_state = IsPackedFourState(facts, ty);
     } else if (ty.Kind() == TypeKind::kReal) {
       value_kind = runtime::RuntimeValueKind::kReal64;
       width = 64;
@@ -266,7 +268,7 @@ auto LowerValueOp(
     } else if (IsPacked(ty)) {
       width = static_cast<int32_t>(PackedBitWidth(ty, types));
       is_signed = IsPackedSigned(ty, types);
-      is_four_state = context.IsPackedFourState(ty);
+      is_four_state = IsPackedFourState(facts, ty);
     }
   }
 
@@ -285,13 +287,13 @@ auto LowerValueOp(
 
   if (op.value.has_value()) {
     if (value_kind != runtime::RuntimeValueKind::kIntegral) {
-      auto value_or_err = LowerOperand(context, resolver, *op.value);
+      auto value_or_err = LowerOperand(context, facts, resolver, *op.value);
       if (!value_or_err) return std::unexpected(value_or_err.error());
       auto* alloca = builder.CreateAlloca((*value_or_err)->getType());
       builder.CreateStore(*value_or_err, alloca);
       data_ptr = alloca;
     } else if (is_four_state) {
-      auto raw_or_err = LowerOperandRaw(context, resolver, *op.value);
+      auto raw_or_err = LowerOperandRaw(context, facts, resolver, *op.value);
       if (!raw_or_err) return std::unexpected(raw_or_err.error());
       llvm::Value* raw = *raw_or_err;
 
@@ -312,7 +314,7 @@ auto LowerValueOp(
             builder, unknown_plane, width, false, llvm_ctx);
       }
     } else {
-      auto value_or_err = LowerOperand(context, resolver, *op.value);
+      auto value_or_err = LowerOperand(context, facts, resolver, *op.value);
       if (!value_or_err) return std::unexpected(value_or_err.error());
       llvm::Value* value = *value_or_err;
 
@@ -343,25 +345,25 @@ auto LowerValueOp(
 }
 
 auto LowerFormatOps(
-    Context& context, SlotAccessResolver& resolver,
+    Context& context, const CuFacts& facts, SlotAccessResolver& resolver,
     std::span<const mir::FormatOp> ops) -> Result<void> {
   for (const auto& op : ops) {
     Result<void> result;
     switch (op.kind) {
       case FormatKind::kLiteral:
-        LowerLiteralOp(context, op);
+        LowerLiteralOp(context.GetBuilder(), context.GetLyraPrintLiteral(), op);
         break;
       case FormatKind::kString:
-        result = LowerStringOp(context, resolver, op);
+        result = LowerStringOp(context, facts, resolver, op);
         break;
       case FormatKind::kTime:
-        result = LowerTimeOp(context, resolver, op);
+        result = LowerTimeOp(context, facts, resolver, op);
         break;
       case FormatKind::kModulePath:
         LowerModulePathOp(context);
         break;
       default:
-        result = LowerValueOp(context, resolver, op);
+        result = LowerValueOp(context, facts, resolver, op);
         break;
     }
     if (!result) {
@@ -376,25 +378,25 @@ auto LowerFormatOps(
 // Resolver-aware implementations (the real implementations).
 
 auto LowerDisplayEffect(
-    Context& context, SlotAccessResolver& resolver,
+    Context& context, const CuFacts& facts, SlotAccessResolver& resolver,
     const mir::DisplayEffect& display) -> Result<void> {
   if (display.descriptor) {
     auto& builder = context.GetBuilder();
 
-    auto validate_result = ValidateFormatOps(context, display.ops);
+    auto validate_result = ValidateFormatOps(context, facts, display.ops);
     if (!validate_result) return validate_result;
 
     auto* buf = builder.CreateCall(context.GetLyraStringFormatStart(), {});
 
     for (const auto& op : display.ops) {
-      auto result = LowerFormatOpToBuffer(context, resolver, buf, op);
+      auto result = LowerFormatOpToBuffer(context, facts, resolver, buf, op);
       if (!result) return result;
     }
 
     auto* message =
         builder.CreateCall(context.GetLyraStringFormatFinish(), {buf});
 
-    auto desc_or = LowerOperand(context, resolver, *display.descriptor);
+    auto desc_or = LowerOperand(context, facts, resolver, *display.descriptor);
     if (!desc_or) return std::unexpected(desc_or.error());
 
     auto* engine = context.GetEnginePointer();
@@ -409,7 +411,7 @@ auto LowerDisplayEffect(
     return {};
   }
 
-  auto result = LowerFormatOps(context, resolver, display.ops);
+  auto result = LowerFormatOps(context, facts, resolver, display.ops);
   if (!result) return result;
 
   auto& builder = context.GetBuilder();
@@ -422,10 +424,11 @@ auto LowerDisplayEffect(
 
 // Canonical wrapper (thin forwarding to resolver-aware implementation).
 
-auto LowerDisplayEffect(Context& context, const mir::DisplayEffect& display)
+auto LowerDisplayEffect(
+    Context& context, const CuFacts& facts, const mir::DisplayEffect& display)
     -> Result<void> {
-  CanonicalSlotAccess canonical(context);
-  return LowerDisplayEffect(context, canonical, display);
+  CanonicalSlotAccess canonical(context, facts);
+  return LowerDisplayEffect(context, facts, canonical, display);
 }
 
 }  // namespace lyra::lowering::mir_to_llvm

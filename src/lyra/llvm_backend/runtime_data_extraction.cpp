@@ -35,20 +35,6 @@ struct ObservableDescriptorOwnerRefFields {
   uint32_t flags = 0;
 };
 
-auto BuildBodyObservableDescriptorOwnerRefFields(
-    ObservableOwnerSlotId owner, uint32_t base_slot, uint32_t slot_count)
-    -> ObservableDescriptorOwnerRefFields {
-  const uint32_t raw_owner = owner.Raw();
-  const bool owner_is_in_body =
-      raw_owner >= base_slot && raw_owner < base_slot + slot_count;
-  if (owner_is_in_body) {
-    return {.storage_owner_ref = raw_owner - base_slot, .flags = 0};
-  }
-  return {
-      .storage_owner_ref = raw_owner,
-      .flags = runtime::kObservableFlagOwnerAbsolute};
-}
-
 auto BuildPackageObservableDescriptorOwnerRefFields(ObservableOwnerSlotId owner)
     -> ObservableDescriptorOwnerRefFields {
   return {
@@ -121,9 +107,6 @@ struct ParamSlotTemplate {
   std::vector<ParamSlotTemplateEntry> entries;
 };
 
-using BodyParamTemplateMap =
-    std::unordered_map<mir::ModuleBodyId, ParamSlotTemplate>;
-
 struct SortedParamInitRef {
   uint32_t body_local_slot;
   const mir::ConstSlotInit* init;
@@ -172,9 +155,9 @@ void CheckNoStrayInitBefore(
 
 auto BuildParamPayloads(
     std::span<const uint32_t> instance_body_group,
-    std::span<const uint32_t> design_base_slots,
-    std::span<const mir::InstanceConstBlock> const_blocks, const Layout& layout,
-    const BodyParamTemplateMap& body_param_templates)
+    std::span<const mir::InstanceConstBlock> const_blocks,
+    std::span<const Layout::BodyRealizationInfo> body_realization_infos,
+    std::span<const ParamSlotTemplate> body_param_templates)
     -> std::vector<std::vector<uint8_t>> {
   if (instance_body_group.size() != const_blocks.size()) {
     throw common::InternalError(
@@ -182,13 +165,6 @@ auto BuildParamPayloads(
         std::format(
             "instance_body_group size {} != const_blocks size {}",
             instance_body_group.size(), const_blocks.size()));
-  }
-  if (design_base_slots.size() != const_blocks.size()) {
-    throw common::InternalError(
-        "BuildParamPayloads",
-        std::format(
-            "design_base_slots size {} != const_blocks size {}",
-            design_base_slots.size(), const_blocks.size()));
   }
 
   std::vector<std::vector<uint8_t>> payloads;
@@ -199,26 +175,24 @@ auto BuildParamPayloads(
 
     if (const_block.slot_inits.empty()) continue;
     uint32_t bg = instance_body_group[inst_idx];
-    if (bg >= layout.body_realization_infos.size()) {
+    if (bg >= body_realization_infos.size()) {
       throw common::InternalError(
           "BuildParamPayloads",
           std::format(
-              "instance {} body_group {} >= body_realization_infos size {}",
-              inst_idx, bg, layout.body_realization_infos.size()));
+              "instance {} body_group {} >= num_body_groups {}", inst_idx, bg,
+              body_realization_infos.size()));
     }
-    auto body_id = layout.body_realization_infos[bg].body_id;
-    auto tmpl_it = body_param_templates.find(body_id);
-    if (tmpl_it == body_param_templates.end()) {
+    const auto& tmpl = body_param_templates[bg].entries;
+    if (tmpl.empty()) {
       throw common::InternalError(
           "BuildParamPayloads",
           std::format(
               "instance {} has param inits but no body param template",
               inst_idx));
     }
-    const auto& tmpl = tmpl_it->second.entries;
 
+    const auto& body_slot_specs = body_realization_infos[bg].slot_specs;
     auto sorted_inits = ValidateAndSortParamInits(const_block, inst_idx);
-    uint32_t design_base_slot = design_base_slots[inst_idx];
 
     size_t init_idx = 0;
     for (const auto& te : tmpl) {
@@ -227,8 +201,15 @@ auto BuildParamPayloads(
       if (init_idx < sorted_inits.size() &&
           sorted_inits[init_idx].body_local_slot == te.body_local_slot) {
         const auto& init = *sorted_inits[init_idx].init;
-        uint32_t abs_slot = design_base_slot + init.body_local_slot;
-        const auto& spec = layout.design.slot_storage_specs[abs_slot];
+        if (init.body_local_slot >= body_slot_specs.size()) {
+          throw common::InternalError(
+              "BuildParamPayloads",
+              std::format(
+                  "instance {} param init body_local_slot {} out of "
+                  "range (slot_count {})",
+                  inst_idx, init.body_local_slot, body_slot_specs.size()));
+        }
+        const auto& spec = body_slot_specs[init.body_local_slot];
         LowerIntegralConstantToCanonicalBytes(init.value, spec, payload);
         ++init_idx;
       } else {
@@ -249,7 +230,8 @@ auto BuildParamPayloads(
 }
 
 auto BuildConstructionProgram(
-    std::span<const uint32_t> instance_body_group, const Layout& layout,
+    std::span<const uint32_t> instance_body_group,
+    std::span<const Layout::InstanceStorageSizes> instance_storage_sizes,
     const mir::InstanceTable& instance_table,
     std::span<const std::vector<uint8_t>> param_payloads,
     const std::vector<std::vector<common::ResolvedExtRefBinding>>&
@@ -278,7 +260,7 @@ auto BuildConstructionProgram(
           prog.param_pool.end(), payload.begin(), payload.end());
     }
 
-    const auto& sizes = layout.instance_storage_sizes[mi];
+    const auto& sizes = instance_storage_sizes[mi];
     entry.realized_inline_size = sizes.inline_bytes;
     entry.realized_appendix_size = sizes.appendix_bytes;
 
@@ -310,14 +292,14 @@ struct CombSlotAccum {
   uint32_t byte_size = 0;
   bool is_full_slot = false;
   bool is_design_global = false;
-  uint32_t final_global_id = 0;
+  uint32_t signal_id = 0;
 };
 
-auto CompareCombSlotsByFinalObservableOrder(
+auto CompareCombSlotsBySignalOrder(
     const std::pair<ScopedSignalKey, CombSlotAccum>& a,
     const std::pair<ScopedSignalKey, CombSlotAccum>& b) -> bool {
-  if (a.second.final_global_id != b.second.final_global_id) {
-    return a.second.final_global_id < b.second.final_global_id;
+  if (a.second.signal_id != b.second.signal_id) {
+    return a.second.signal_id < b.second.signal_id;
   }
   if (a.first.scope != b.first.scope) {
     return static_cast<uint8_t>(a.first.scope) <
@@ -329,26 +311,30 @@ auto CompareCombSlotsByFinalObservableOrder(
 // Sub-extraction functions for each runtime data category.
 
 void ExtractBodyMetadata(
-    const LoweringInput& input, const Layout& layout,
+    const lowering::BodyOriginProvenance* origin_provenance,
+    const lowering::DiagnosticContext* diag_ctx,
+    const SourceManager* source_manager,
+    std::span<const Layout::BodyRealizationInfo> body_realization_infos,
+    std::span<const Layout::BodyRuntimeDescriptors> body_runtime_descriptors,
     std::vector<BodyRuntimeProducts>& body_products) {
-  for (size_t gi = 0; gi < layout.body_realization_infos.size(); ++gi) {
-    const auto& info = layout.body_realization_infos[gi];
+  for (size_t gi = 0; gi < body_realization_infos.size(); ++gi) {
+    const auto& info = body_realization_infos[gi];
     const auto& body = *info.body;
     const auto ordinal_map = BuildBodyProcessOrdinalMap(body);
     auto& bp = body_products[gi];
     bp.meta.pool.push_back('\0');
 
     std::optional<lowering::BodyLocalOriginResolver> body_resolver;
-    std::optional<lowering::DiagnosticContext> body_diag_ctx;
-    if (input.origin_provenance != nullptr) {
-      const auto* prov = input.origin_provenance->Find(info.body);
+    std::optional<lowering::DiagnosticContext> body_diag;
+    if (origin_provenance != nullptr) {
+      const auto* prov = origin_provenance->Find(info.body);
       if (prov != nullptr && prov->arena != nullptr) {
         body_resolver.emplace(prov->origins, *prov->arena);
-        body_diag_ctx.emplace(*body_resolver);
+        body_diag.emplace(*body_resolver);
       }
     }
     const lowering::DiagnosticContext* diag =
-        body_diag_ctx.has_value() ? &*body_diag_ctx : input.diag_ctx;
+        body_diag.has_value() ? &*body_diag : diag_ctx;
 
     auto add_pool_string = [&](const std::string& s) -> uint32_t {
       if (s.empty()) return 0;
@@ -358,15 +344,14 @@ void ExtractBodyMetadata(
       return off;
     };
 
-    auto num_entries =
-        static_cast<uint32_t>(info.process_schema_indices.size());
+    const auto& rt = body_runtime_descriptors[gi];
+    auto num_entries = static_cast<uint32_t>(rt.process_schema_indices.size());
     if (ordinal_map.nonfinal_processes.size() != num_entries) {
       throw common::InternalError(
           "ExtractBodyMetadata",
           std::format(
-              "body {} non-final process count {} != schema count {}",
-              info.body_id.value, ordinal_map.nonfinal_processes.size(),
-              num_entries));
+              "body {} non-final process count {} != schema count {}", gi,
+              ordinal_map.nonfinal_processes.size(), num_entries));
     }
     bp.meta.entries.resize(num_entries);
 
@@ -375,8 +360,7 @@ void ExtractBodyMetadata(
         [&](uint32_t nonfinal_proc_ordinal, mir::ProcessId /*pid*/,
             const mir::Process& proc) {
           auto kind = MapProcessKind(proc.kind);
-          auto loc =
-              ResolveProcessOrigin(proc.origin, diag, input.source_manager);
+          auto loc = ResolveProcessOrigin(proc.origin, diag, source_manager);
 
           uint32_t file_off = add_pool_string(loc.file);
           bp.meta.entries[nonfinal_proc_ordinal] =
@@ -404,19 +388,17 @@ void ExtractBodyMetadata(
               std::format(
                   "decision site id {} out of range in body {} "
                   "(allocator total {})",
-                  idx, info.body_id.value, table_size));
+                  idx, gi, table_size));
         }
         if (filled[idx] != 0) {
           throw common::InternalError(
               "ExtractBodyMetadata",
               std::format(
-                  "decision site id {} duplicated in body {}", idx,
-                  info.body_id.value));
+                  "decision site id {} duplicated in body {}", idx, gi));
         }
         filled[idx] = 1;
         const auto& site = rec.site;
-        auto site_loc =
-            ResolveProcessOrigin(site.origin, diag, input.source_manager);
+        auto site_loc = ResolveProcessOrigin(site.origin, diag, source_manager);
         uint32_t packed =
             static_cast<uint8_t>(site.qualifier) |
             (static_cast<uint8_t>(site.kind) << 8) |
@@ -450,7 +432,7 @@ void ExtractBodyMetadata(
               std::format(
                   "decision site id {} missing in body {} "
                   "(allocator total {})",
-                  i, info.body_id.value, table_size));
+                  i, gi, table_size));
         }
       }
 
@@ -465,11 +447,18 @@ void ExtractBodyMetadata(
 }
 
 void ExtractConnectionMetadata(
-    const LoweringInput& input, const Layout& layout,
+    std::span<const mir::DesignElement> design_elements,
+    const mir::Arena& design_arena,
+    const lowering::BodyOriginProvenance* origin_provenance,
+    const lowering::DiagnosticContext* diag_ctx,
+    const SourceManager* source_manager, uint32_t num_init_processes,
+    uint32_t num_module_process_base,
+    std::span<const ScheduledProcess> scheduled_processes,
+    size_t num_connection_realization_infos,
     Layout::ConnectionTemplates& conn_templates) {
   // Build module_index -> body pointer mapping.
   std::vector<const mir::ModuleBody*> module_body_ptrs;
-  for (const auto& elem : input.design->elements) {
+  for (const auto& elem : design_elements) {
     if (const auto* mod = std::get_if<mir::Module>(&elem)) {
       module_body_ptrs.push_back(mod->body);
     }
@@ -485,31 +474,29 @@ void ExtractConnectionMetadata(
     return off;
   };
 
-  for (size_t ci = layout.num_init_processes;
-       ci < layout.num_module_process_base; ++ci) {
-    const auto& sp = layout.scheduled_processes[ci];
+  for (size_t ci = num_init_processes; ci < num_module_process_base; ++ci) {
+    const auto& sp = scheduled_processes[ci];
     bool is_body_local =
         sp.module_index && sp.module_index.value < module_body_ptrs.size();
     const mir::Arena& proc_arena =
         is_body_local ? module_body_ptrs[sp.module_index.value]->arena
-                      : *input.mir_arena;
+                      : design_arena;
     const auto& proc = proc_arena[sp.process_id];
     auto kind = MapProcessKind(proc.kind);
 
     std::optional<lowering::BodyLocalOriginResolver> conn_resolver;
     std::optional<lowering::DiagnosticContext> conn_diag;
-    const lowering::DiagnosticContext* conn_diag_ptr = input.diag_ctx;
-    if (is_body_local && input.origin_provenance != nullptr) {
-      const auto* prov = input.origin_provenance->Find(
-          module_body_ptrs[sp.module_index.value]);
+    const lowering::DiagnosticContext* conn_diag_ptr = diag_ctx;
+    if (is_body_local && origin_provenance != nullptr) {
+      const auto* prov =
+          origin_provenance->Find(module_body_ptrs[sp.module_index.value]);
       if (prov != nullptr && prov->arena != nullptr) {
         conn_resolver.emplace(prov->origins, *prov->arena);
         conn_diag.emplace(*conn_resolver);
         conn_diag_ptr = &*conn_diag;
       }
     }
-    auto loc =
-        ResolveProcessOrigin(proc.origin, conn_diag_ptr, input.source_manager);
+    auto loc = ResolveProcessOrigin(proc.origin, conn_diag_ptr, source_manager);
 
     uint32_t file_off = add_conn_pool_string(loc.file);
     conn_templates.meta.entries.push_back(
@@ -521,39 +508,46 @@ void ExtractConnectionMetadata(
         });
   }
 
-  if (conn_templates.meta.entries.size() !=
-      layout.connection_realization_infos.size()) {
+  if (conn_templates.meta.entries.size() != num_connection_realization_infos) {
     throw common::InternalError(
         "ExtractConnectionMetadata",
         std::format(
             "connection_templates.meta entries {} != "
             "connection_realization_infos {}",
             conn_templates.meta.entries.size(),
-            layout.connection_realization_infos.size()));
+            num_connection_realization_infos));
   }
 }
 
 void ExtractBodyTriggerTemplates(
-    const Layout& layout,
-    const std::unordered_map<
-        const mir::ModuleBody*,
-        std::vector<std::optional<ProcessTriggerEntry>>>&
-        body_to_process_triggers,
+    std::span<const Layout::BodyRealizationInfo> body_realization_infos,
+    std::span<const Layout::BodyRuntimeDescriptors> body_runtime_descriptors,
+    std::span<const std::vector<std::optional<ProcessTriggerEntry>>>
+        body_process_triggers,
     std::vector<BodyRuntimeProducts>& body_products) {
-  for (size_t gi = 0; gi < layout.body_realization_infos.size(); ++gi) {
-    const auto& info = layout.body_realization_infos[gi];
+  if (body_process_triggers.size() != body_realization_infos.size()) {
+    throw common::InternalError(
+        "ExtractBodyTriggerTemplates",
+        std::format(
+            "body_process_triggers size {} != body_realization_infos size {}",
+            body_process_triggers.size(), body_realization_infos.size()));
+  }
+
+  for (size_t gi = 0; gi < body_realization_infos.size(); ++gi) {
+    const auto& info = body_realization_infos[gi];
     const auto& body = *info.body;
     const auto ordinal_map = BuildBodyProcessOrdinalMap(body);
     auto nonfinal_count =
         static_cast<uint32_t>(ordinal_map.nonfinal_processes.size());
 
-    auto num_procs = static_cast<uint32_t>(info.process_schema_indices.size());
+    const auto& rt = body_runtime_descriptors[gi];
+    auto num_procs = static_cast<uint32_t>(rt.process_schema_indices.size());
     if (num_procs != nonfinal_count) {
       throw common::InternalError(
           "ExtractBodyTriggerTemplates",
           std::format(
-              "body {} schema count {} != non-final process count {}",
-              info.body_id.value, num_procs, nonfinal_count));
+              "body {} schema count {} != non-final process count {}", gi,
+              num_procs, nonfinal_count));
     }
 
     auto& bp = body_products[gi];
@@ -563,9 +557,8 @@ void ExtractBodyTriggerTemplates(
     bp.triggers.proc_groupable.resize(
         nonfinal_count, runtime::kProcNotGroupable);
 
-    auto triggers_it = body_to_process_triggers.find(info.body);
-    if (triggers_it == body_to_process_triggers.end()) continue;
-    const auto& body_triggers = triggers_it->second;
+    const auto& body_triggers = body_process_triggers[gi];
+    if (body_triggers.empty()) continue;
 
     if (body_triggers.size() != nonfinal_count) {
       throw common::InternalError(
@@ -573,7 +566,7 @@ void ExtractBodyTriggerTemplates(
           std::format(
               "body {} trigger vector size {} != non-final process "
               "count {}",
-              info.body_id.value, body_triggers.size(), nonfinal_count));
+              gi, body_triggers.size(), nonfinal_count));
     }
 
     for (uint32_t nonfinal_proc_ordinal = 0;
@@ -612,9 +605,8 @@ void ExtractBodyTriggerTemplates(
             throw common::InternalError(
                 "ExtractBodyTriggerTemplates",
                 std::format(
-                    "body {} proc {} trigger slot_id {} >= slot_count {}",
-                    info.body_id.value, nonfinal_proc_ordinal, fact.signal.id,
-                    info.slot_count));
+                    "body {} proc {} trigger slot_id {} >= slot_count {}", gi,
+                    nonfinal_proc_ordinal, fact.signal.id, info.slot_count));
           }
           bp.triggers.entries.push_back(
               runtime::TriggerTemplateEntry{
@@ -642,9 +634,9 @@ void ExtractBodyTriggerTemplates(
 }
 
 void ExtractConnectionTriggerTemplates(
-    const Layout& layout, Layout::ConnectionTemplates& conn_templates) {
-  auto num_conn =
-      static_cast<uint32_t>(layout.connection_realization_infos.size());
+    std::span<const Layout::ConnectionRealizationInfo> connection_infos,
+    Layout::ConnectionTemplates& conn_templates) {
+  auto num_conn = static_cast<uint32_t>(connection_infos.size());
 
   auto& conn_trig = conn_templates.triggers;
   conn_trig.proc_ranges.resize(num_conn);
@@ -653,7 +645,7 @@ void ExtractConnectionTriggerTemplates(
   conn_trig.proc_groupable.resize(num_conn, runtime::kProcNotGroupable);
 
   for (uint32_t ci = 0; ci < num_conn; ++ci) {
-    const auto& conn_info = layout.connection_realization_infos[ci];
+    const auto& conn_info = connection_infos[ci];
     if (!conn_info.trigger) {
       conn_trig.proc_ranges[ci] = {.start = 0, .count = 0};
       continue;
@@ -687,26 +679,14 @@ void ExtractConnectionTriggerTemplates(
 }
 
 void ExtractBodyCombTemplates(
-    const LoweringInput& input, const Layout& layout,
-    std::span<const LayoutModulePlan> module_plans,
+    std::span<const Layout::BodyRealizationInfo> body_realization_infos,
+    const DesignLayout& design, uint32_t num_package_slots,
+    std::span<const uint32_t> instance_slot_counts,
     std::vector<BodyRuntimeProducts>& body_products) {
-  // Precompute body_id -> any representative base_slot mapping.
-  std::unordered_map<uint32_t, uint32_t> body_base_slots;
-  for (const auto& plan : module_plans) {
-    auto body_id_val =
-        static_cast<uint32_t>(plan.body - input.design->module_bodies.data());
-    body_base_slots.try_emplace(body_id_val, plan.design_state_base_slot);
-  }
-
-  for (size_t gi = 0; gi < layout.body_realization_infos.size(); ++gi) {
-    const auto& info = layout.body_realization_infos[gi];
+  for (size_t gi = 0; gi < body_realization_infos.size(); ++gi) {
+    const auto& info = body_realization_infos[gi];
     const auto& body = *info.body;
     const auto ordinal_map = BuildBodyProcessOrdinalMap(body);
-
-    auto base_it = body_base_slots.find(info.body_id.value);
-    uint32_t base_slot =
-        (base_it != body_base_slots.end()) ? base_it->second : 0;
-    bool found_base = (base_it != body_base_slots.end());
 
     auto& bp = body_products[gi];
 
@@ -727,31 +707,16 @@ void ExtractBodyCombTemplates(
             bool is_global =
                 fact.signal.scope == mir::SignalRef::Scope::kDesignGlobal;
 
-            uint32_t final_global_id = 0;
-            if (is_global) {
-              final_global_id = fact.signal.id;
-            } else {
-              if (!found_base) {
-                throw common::InternalError(
-                    "ExtractBodyCombTemplates",
-                    std::format(
-                        "body {} proc {} comb kernel has module-local "
-                        "trigger but no instance base_slot found",
-                        info.body_id.value, nonfinal_proc_ordinal));
-              }
-              final_global_id = base_slot + fact.signal.id;
-            }
-
             std::optional<ResolvedObservation> obs;
             if (fact.observed_place) {
               if (is_global) {
                 obs = ResolveObservation(
-                    body.arena, layout.design, common::SlotId{fact.signal.id},
+                    body.arena, design, common::SlotId{fact.signal.id},
                     *fact.observed_place);
               } else {
-                obs = ResolveObservation(
-                    body.arena, layout.design, common::SlotId{final_global_id},
-                    *fact.observed_place);
+                obs = ResolveObservationFromSpec(
+                    body.arena, info.slot_specs[fact.signal.id],
+                    design.storage_spec_arena, *fact.observed_place);
               }
             }
 
@@ -761,7 +726,7 @@ void ExtractBodyCombTemplates(
             auto& accum = it->second;
             if (inserted) {
               accum.is_design_global = is_global;
-              accum.final_global_id = final_global_id;
+              accum.signal_id = fact.signal.id;
             } else {
               if (accum.is_design_global != is_global) {
                 throw common::InternalError(
@@ -769,18 +734,8 @@ void ExtractBodyCombTemplates(
                     std::format(
                         "body {} proc {} comb slot ({},{}) scope "
                         "mismatch",
-                        info.body_id.value, nonfinal_proc_ordinal,
-                        static_cast<int>(key.scope), key.id));
-              }
-              if (accum.final_global_id != final_global_id) {
-                throw common::InternalError(
-                    "ExtractBodyCombTemplates",
-                    std::format(
-                        "body {} proc {} comb slot ({},{}) "
-                        "final_global_id mismatch ({} vs {})",
-                        info.body_id.value, nonfinal_proc_ordinal,
-                        static_cast<int>(key.scope), key.id,
-                        accum.final_global_id, final_global_id));
+                        gi, nonfinal_proc_ordinal, static_cast<int>(key.scope),
+                        key.id));
               }
             }
             if (accum.is_full_slot) continue;
@@ -802,20 +757,19 @@ void ExtractBodyCombTemplates(
 
           std::vector<std::pair<ScopedSignalKey, CombSlotAccum>> sorted_slots(
               per_slot.begin(), per_slot.end());
-          std::ranges::sort(
-              sorted_slots, CompareCombSlotsByFinalObservableOrder);
+          std::ranges::sort(sorted_slots, CompareCombSlotsBySignalOrder);
 
           for (const auto& [key, accum] : sorted_slots) {
             uint32_t flags = 0;
             uint32_t owner_instance_id = 0;
             uint32_t local_signal_id = 0;
             if (accum.is_design_global) {
-              if (accum.final_global_id < layout.num_package_slots) {
+              if (accum.signal_id < num_package_slots) {
                 flags |= runtime::kCombTemplateFlagDesignGlobal;
               } else {
                 flags |= runtime::kCombTemplateFlagCrossInstance;
-                auto owner =
-                    ResolveInstanceOwnedFlatSlot(layout, accum.final_global_id);
+                auto owner = ResolveInstanceOwnedFlatSlot(
+                    num_package_slots, instance_slot_counts, accum.signal_id);
                 owner_instance_id = owner.instance_id.value;
                 local_signal_id = owner.local_signal_id.value;
               }
@@ -845,42 +799,18 @@ void ExtractBodyCombTemplates(
 }
 
 void ExtractBodyObservableDescriptors(
-    const LoweringInput& input, const Layout& layout,
-    std::span<const LayoutModulePlan> module_plans,
+    const TypeArena& type_arena,
+    std::span<const Layout::BodyRealizationInfo> body_realization_infos,
     std::vector<BodyRuntimeProducts>& body_products) {
-  std::unordered_map<uint32_t, uint32_t> body_base_slots;
-  for (const auto& plan : module_plans) {
-    auto body_id_val =
-        static_cast<uint32_t>(plan.body - input.design->module_bodies.data());
-    body_base_slots.try_emplace(body_id_val, plan.design_state_base_slot);
-  }
-
-  for (size_t gi = 0; gi < layout.body_realization_infos.size(); ++gi) {
-    const auto& info = layout.body_realization_infos[gi];
+  for (size_t gi = 0; gi < body_realization_infos.size(); ++gi) {
+    const auto& info = body_realization_infos[gi];
     auto& bp = body_products[gi];
-
-    auto base_it = body_base_slots.find(info.body_id.value);
-    if (base_it == body_base_slots.end()) {
-      if (info.slot_count == 0) {
-        bp.observable_descriptors.pool.assign(1, '\0');
-        continue;
-      }
-      throw common::InternalError(
-          "ExtractBodyObservableDescriptors",
-          std::format(
-              "missing representative base slot for body {} with {} slots",
-              info.body_id.value, info.slot_count));
-    }
-    uint32_t base_slot = base_it->second;
 
     auto& tmpl = bp.observable_descriptors;
     tmpl.pool.push_back('\0');
     tmpl.entries.reserve(info.slot_count);
 
     if (info.slot_count == 0) continue;
-
-    auto owned_base =
-        layout.design.GetStorageBaseForRange(base_slot, info.slot_count);
 
     auto narrow_u64_to_u32 = [](uint64_t value,
                                 std::string_view what) -> uint32_t {
@@ -894,52 +824,31 @@ void ExtractBodyObservableDescriptors(
 
     const auto& obs_body = *info.body;
     for (uint32_t i = 0; i < info.slot_count; ++i) {
-      uint32_t gsi = base_slot + i;
-      if (gsi >= layout.design.slots.size()) {
-        throw common::InternalError(
-            "ExtractBodyObservableDescriptors",
-            std::format(
-                "body {} slot {} (gsi {}) out of range (design slots {})",
-                info.body_id.value, i, gsi, layout.design.slots.size()));
-      }
-
-      const ObservableOwnerSlotId owner =
-          ObservableOwnerSlotId::Create(layout.design.slots[gsi].value);
+      const auto& spec = info.slot_specs[i];
       const CanonicalObservableShape shape = ComputeCanonicalObservableShape(
-          owner, layout.design, obs_body.slots[i].type, obs_body.slots[i].kind,
-          *input.type_arena);
+          spec, obs_body.slots[i].type, obs_body.slots[i].kind, type_arena);
       const ObservableDescriptorShapeFields sf =
           BuildObservableDescriptorShapeFields(shape);
 
-      std::string_view local_name;
       uint32_t name_off = 0;
-      if (!local_name.empty()) {
-        name_off = static_cast<uint32_t>(tmpl.pool.size());
-        tmpl.pool.insert(tmpl.pool.end(), local_name.begin(), local_name.end());
-        tmpl.pool.push_back('\0');
-      }
 
-      auto body_offset = layout.design.GetBodyOffset(gsi, *owned_base);
+      uint32_t storage_offset = narrow_u64_to_u32(
+          info.body_layout.inline_offsets[i].value, "body-local byte offset");
 
-      ObservableDescriptorOwnerRefFields refs =
-          BuildBodyObservableDescriptorOwnerRefFields(
-              owner, base_slot, info.slot_count);
+      // Body-local observable owner: owner is always the body-local slot
+      // itself (design-global slot identity is an identity mapping).
+      ObservableDescriptorOwnerRefFields refs = {
+          .storage_owner_ref = i, .flags = 0};
 
       uint32_t domain = 1;
-      uint32_t storage_offset =
-          narrow_u64_to_u32(body_offset.value, "body-local byte offset");
-
-      uint32_t body_local_signal_id = gsi - base_slot;
       uint32_t backing_off = 0;
-      if (layout.design.owned_data_offsets[gsi].has_value()) {
-        auto backing_body_off =
-            *layout.design.owned_data_offsets[gsi] - owned_base->value;
+      if (info.body_layout.appendix_offsets[i].has_value()) {
         backing_off = narrow_u64_to_u32(
-            backing_body_off, "container backing body offset");
+            info.body_layout.appendix_offsets[i]->value,
+            "container backing body offset");
       }
       tmpl.entries.push_back(MakeObservableDescriptorEntry(
-          storage_offset, name_off, refs, sf, domain, body_local_signal_id,
-          backing_off));
+          storage_offset, name_off, refs, sf, domain, i, backing_off));
     }
 
     // Validate dense population.
@@ -954,7 +863,7 @@ void ExtractBodyObservableDescriptors(
               std::format(
                   "body {}: invalid or duplicate local_signal_id {} "
                   "(slot_count {})",
-                  info.body_id.value, entry.local_signal_id, info.slot_count));
+                  gi, entry.local_signal_id, info.slot_count));
         }
       }
     }
@@ -962,47 +871,29 @@ void ExtractBodyObservableDescriptors(
 }
 
 void ExtractBodyInitDescriptors(
-    const LoweringInput& input, const Layout& layout,
-    std::span<const LayoutModulePlan> module_plans,
+    const mir::ConstructionInput& construction,
+    std::span<const Layout::BodyRealizationInfo> body_realization_infos,
+    const DesignLayout& design,
+    std::span<const Layout::InstanceStorageSizes> instance_storage_sizes,
+    std::span<const InstanceStorageBase> instance_storage_bases,
     std::span<const uint32_t> instance_body_group,
     std::vector<BodyRuntimeProducts>& body_products,
     ConstructionProgramData& construction_program) {
-  std::unordered_map<uint32_t, uint32_t> body_base_slots;
-  for (const auto& plan : module_plans) {
-    auto body_id_val =
-        static_cast<uint32_t>(plan.body - input.design->module_bodies.data());
-    body_base_slots.try_emplace(body_id_val, plan.design_state_base_slot);
-  }
+  std::vector<ParamSlotTemplate> body_param_templates(
+      body_realization_infos.size());
 
-  BodyParamTemplateMap body_param_templates;
-
-  for (size_t gi = 0; gi < layout.body_realization_infos.size(); ++gi) {
-    const auto& info = layout.body_realization_infos[gi];
+  for (size_t gi = 0; gi < body_realization_infos.size(); ++gi) {
+    const auto& info = body_realization_infos[gi];
     auto& bp = body_products[gi];
 
     if (info.slot_count == 0) continue;
-    auto base_it = body_base_slots.find(info.body_id.value);
-    if (base_it == body_base_slots.end()) {
-      throw common::InternalError(
-          "ExtractBodyInitDescriptors",
-          std::format(
-              "missing base slot for body {} in init descriptor extraction",
-              info.body_id.value));
-    }
-    uint32_t base_slot = base_it->second;
-    auto init_owned_base =
-        layout.design.GetStorageBaseForRange(base_slot, info.slot_count);
-    if (!init_owned_base.has_value()) continue;
 
     const auto& init_body = *info.body;
     std::vector<ParamSlotTemplateEntry> param_entries;
 
     for (uint32_t i = 0; i < info.slot_count; ++i) {
-      uint32_t gsi = base_slot + i;
-
-      uint64_t inst_rel_offset =
-          layout.design.slot_byte_offsets[gsi] - init_owned_base->value;
-      const auto& spec = layout.design.slot_storage_specs[gsi];
+      uint64_t inst_rel_offset = info.body_layout.inline_offsets[i].value;
+      const auto& spec = info.slot_specs[i];
 
       if (init_body.slots[i].kind == mir::SlotKind::kParamConst) {
         param_entries.push_back(
@@ -1017,12 +908,11 @@ void ExtractBodyInitDescriptors(
             });
       }
 
-      bool is_owned = layout.design.owned_data_offsets[gsi].has_value();
+      bool is_owned = info.body_layout.appendix_offsets[i].has_value();
       if (is_owned) {
-        uint64_t backing_rel =
-            *layout.design.owned_data_offsets[gsi] - init_owned_base->value;
+        uint64_t backing_rel = info.body_layout.appendix_offsets[i]->value;
         if (auto root = BuildStorageConstructionRecipeForSlot(
-                spec, layout.design.storage_spec_arena,
+                spec, design.storage_spec_arena,
                 NarrowToU32(inst_rel_offset, "init rel offset"), true,
                 NarrowToU32(inst_rel_offset, "init handle rel offset"),
                 NarrowToU32(backing_rel, "init backing rel offset"),
@@ -1031,7 +921,7 @@ void ExtractBodyInitDescriptors(
         }
       } else {
         if (auto root = BuildStorageConstructionRecipeForSlot(
-                spec, layout.design.storage_spec_arena,
+                spec, design.storage_spec_arena,
                 NarrowToU32(inst_rel_offset, "init rel offset"), false, 0, 0,
                 bp.init.storage_recipe, bp.init.recipe_child_indices)) {
           bp.init.recipe_root_indices.push_back(*root);
@@ -1045,38 +935,31 @@ void ExtractBodyInitDescriptors(
     for (const auto& pe : param_entries) {
       bp.init.param_slots.push_back(pe.slot);
     }
-    body_param_templates[info.body_id] =
+    body_param_templates[gi] =
         ParamSlotTemplate{.entries = std::move(param_entries)};
   }
 
   // Build param payloads and construction program.
-  std::vector<uint32_t> design_base_slots;
-  design_base_slots.reserve(input.construction->objects.size());
-  for (const auto& obj : input.construction->objects) {
-    design_base_slots.push_back(obj.design_state_base_slot);
-  }
-
   auto param_payloads = BuildParamPayloads(
-      instance_body_group, design_base_slots, input.construction->const_blocks,
-      layout, body_param_templates);
+      instance_body_group, construction.const_blocks, body_realization_infos,
+      body_param_templates);
 
   // Validate parallel structure invariants.
   {
     auto instance_count = instance_body_group.size();
-    if (instance_count != input.construction->instance_table.entries.size()) {
+    if (instance_count != construction.instance_table.entries.size()) {
       throw common::InternalError(
           "ExtractBodyInitDescriptors",
           std::format(
               "instance_body_group size {} != instance_table size {}",
-              instance_count,
-              input.construction->instance_table.entries.size()));
+              instance_count, construction.instance_table.entries.size()));
     }
-    if (instance_count != layout.instance_storage_bases.size()) {
+    if (instance_count != instance_storage_bases.size()) {
       throw common::InternalError(
           "ExtractBodyInitDescriptors",
           std::format(
               "instance_body_group size {} != instance_storage_bases size {}",
-              instance_count, layout.instance_storage_bases.size()));
+              instance_count, instance_storage_bases.size()));
     }
     if (instance_count != param_payloads.size()) {
       throw common::InternalError(
@@ -1086,12 +969,12 @@ void ExtractBodyInitDescriptors(
               instance_count, param_payloads.size()));
     }
     auto num_body_groups = body_products.size();
-    if (num_body_groups != layout.body_realization_infos.size()) {
+    if (num_body_groups != body_realization_infos.size()) {
       throw common::InternalError(
           "ExtractBodyInitDescriptors",
           std::format(
               "body_products size {} != body_realization_infos size {}",
-              num_body_groups, layout.body_realization_infos.size()));
+              num_body_groups, body_realization_infos.size()));
     }
     for (size_t mi = 0; mi < instance_count; ++mi) {
       if (instance_body_group[mi] >= num_body_groups) {
@@ -1105,36 +988,36 @@ void ExtractBodyInitDescriptors(
   }
 
   construction_program = BuildConstructionProgram(
-      instance_body_group, layout, input.construction->instance_table,
-      param_payloads, input.construction->instance_ext_ref_bindings);
+      instance_body_group, instance_storage_sizes, construction.instance_table,
+      param_payloads, construction.instance_ext_ref_bindings);
 
   // Validate construction program.
   for (size_t i = 0; i < construction_program.entries.size(); ++i) {
     const auto& e = construction_program.entries[i];
-    if (e.body_group >= layout.body_realization_infos.size()) {
+    if (e.body_group >= body_realization_infos.size()) {
       throw common::InternalError(
           "ExtractBodyInitDescriptors",
           std::format(
               "construction entry {} body_group {} >= "
               "body_realization_infos size {}",
-              i, e.body_group, layout.body_realization_infos.size()));
+              i, e.body_group, body_realization_infos.size()));
     }
   }
 }
 
 void ExtractPackageInitDescriptor(
-    const Layout& layout, PackageInitDescriptor& pkg_init) {
-  uint32_t num_pkg = layout.num_package_slots;
-  const auto& spec_arena = layout.design.storage_spec_arena;
+    uint32_t num_package_slots, const DesignLayout& design,
+    PackageInitDescriptor& pkg_init) {
+  const auto& spec_arena = design.storage_spec_arena;
 
-  for (uint32_t gsi = 0; gsi < num_pkg; ++gsi) {
-    if (gsi >= layout.design.slots.size()) break;
-    const auto& spec = layout.design.slot_storage_specs[gsi];
-    uint64_t abs_offset = layout.design.slot_byte_offsets[gsi];
+  for (uint32_t gsi = 0; gsi < num_package_slots; ++gsi) {
+    if (gsi >= design.slots.size()) break;
+    const auto& spec = design.slot_storage_specs[gsi];
+    uint64_t abs_offset = design.slot_byte_offsets[gsi];
 
-    bool is_owned = layout.design.owned_data_offsets[gsi].has_value();
+    bool is_owned = design.owned_data_offsets[gsi].has_value();
     if (is_owned) {
-      uint64_t backing_abs = *layout.design.owned_data_offsets[gsi];
+      uint64_t backing_abs = *design.owned_data_offsets[gsi];
       if (auto root = BuildStorageConstructionRecipeForSlot(
               spec, spec_arena, NarrowToU32(abs_offset, "pkg init rel offset"),
               true, NarrowToU32(abs_offset, "pkg init handle offset"),
@@ -1154,14 +1037,15 @@ void ExtractPackageInitDescriptor(
 }
 
 void ExtractPackageObservableDescriptors(
-    const LoweringInput& input, const Layout& layout,
+    const mir::Design& mir_design, const TypeArena& type_arena,
+    uint32_t num_package_slots, const DesignLayout& design,
     OwnedObservableDescriptorTemplate& pkg) {
   pkg.pool.push_back('\0');
-  uint32_t num_pkg = layout.num_package_slots;
+  uint32_t num_pkg = num_package_slots;
   pkg.entries.reserve(num_pkg);
 
   auto read_pkg_trace_pool = [&](uint32_t offset) -> std::string_view {
-    const auto& pool = input.design->slot_trace_string_pool;
+    const auto& pool = mir_design.slot_trace_string_pool;
     if (offset >= pool.size()) {
       throw common::InternalError(
           "ExtractPackageObservableDescriptors",
@@ -1191,17 +1075,18 @@ void ExtractPackageObservableDescriptors(
   };
 
   for (uint32_t gsi = 0; gsi < num_pkg; ++gsi) {
-    if (gsi >= layout.design.slots.size()) break;
+    if (gsi >= design.slots.size()) break;
 
-    const auto& pkg_slot = input.design->slots[gsi];
+    const auto& pkg_slot = mir_design.slots[gsi];
     const ObservableOwnerSlotId owner =
-        ObservableOwnerSlotId::Create(layout.design.slots[gsi].value);
+        ObservableOwnerSlotId::Create(design.slots[gsi].value);
+    const auto& owner_spec = design.slot_storage_specs[owner.Raw()];
     const CanonicalObservableShape shape = ComputeCanonicalObservableShape(
-        owner, layout.design, pkg_slot.type, pkg_slot.kind, *input.type_arena);
+        owner_spec, pkg_slot.type, pkg_slot.kind, type_arena);
     const ObservableDescriptorShapeFields sf =
         BuildObservableDescriptorShapeFields(shape);
 
-    const auto& prov = input.design->slot_trace_provenance[gsi];
+    const auto& prov = mir_design.slot_trace_provenance[gsi];
     auto local_name = read_pkg_trace_pool(prov.local_name_str_off);
     std::string qualified_name;
     if (prov.scope_kind == mir::SlotScopeKind::kPackage) {
@@ -1213,7 +1098,7 @@ void ExtractPackageObservableDescriptors(
     uint32_t name_off = append_to_pool(qualified_name);
 
     uint32_t storage_offset = narrow_u64_to_u32(
-        layout.design.slot_byte_offsets[gsi], "package/global byte offset");
+        design.slot_byte_offsets[gsi], "package/global byte offset");
     const ObservableDescriptorOwnerRefFields refs =
         BuildPackageObservableDescriptorOwnerRefFields(owner);
 
@@ -1226,30 +1111,44 @@ void ExtractPackageObservableDescriptors(
 
 auto ExtractRuntimeData(
     const LoweringInput& input, const Layout& layout,
-    std::span<const LayoutModulePlan> module_plans,
-    const std::unordered_map<
-        const mir::ModuleBody*,
-        std::vector<std::optional<ProcessTriggerEntry>>>&
-        body_to_process_triggers,
+    std::span<const std::vector<std::optional<ProcessTriggerEntry>>>
+        body_process_triggers,
     std::span<const uint32_t> instance_body_group)
     -> RuntimeExtractionProducts {
   RuntimeExtractionProducts products;
   products.body_products.resize(layout.body_realization_infos.size());
 
-  ExtractBodyMetadata(input, layout, products.body_products);
-  ExtractConnectionMetadata(input, layout, products.connection_templates);
+  ExtractBodyMetadata(
+      input.origin_provenance, input.diag_ctx, input.source_manager,
+      layout.body_realization_infos, layout.body_runtime_descriptors,
+      products.body_products);
+  ExtractConnectionMetadata(
+      input.design->elements, *input.mir_arena, input.origin_provenance,
+      input.diag_ctx, input.source_manager, layout.num_init_processes,
+      layout.num_module_process_base, layout.scheduled_processes,
+      layout.connection_realization_infos.size(),
+      products.connection_templates);
   ExtractBodyTriggerTemplates(
-      layout, body_to_process_triggers, products.body_products);
-  ExtractConnectionTriggerTemplates(layout, products.connection_templates);
-  ExtractBodyCombTemplates(input, layout, module_plans, products.body_products);
+      layout.body_realization_infos, layout.body_runtime_descriptors,
+      body_process_triggers, products.body_products);
+  ExtractConnectionTriggerTemplates(
+      layout.connection_realization_infos, products.connection_templates);
+  ExtractBodyCombTemplates(
+      layout.body_realization_infos, layout.design, layout.num_package_slots,
+      layout.instance_slot_counts, products.body_products);
   ExtractBodyObservableDescriptors(
-      input, layout, module_plans, products.body_products);
+      *input.type_arena, layout.body_realization_infos, products.body_products);
   ExtractBodyInitDescriptors(
-      input, layout, module_plans, instance_body_group, products.body_products,
+      *input.construction, layout.body_realization_infos, layout.design,
+      layout.instance_storage_sizes, layout.instance_storage_bases,
+      instance_body_group, products.body_products,
       products.construction_program);
-  ExtractPackageInitDescriptor(layout, products.package_init_descriptor);
+  ExtractPackageInitDescriptor(
+      layout.num_package_slots, layout.design,
+      products.package_init_descriptor);
   ExtractPackageObservableDescriptors(
-      input, layout, products.package_observable_descriptors);
+      *input.design, *input.type_arena, layout.num_package_slots, layout.design,
+      products.package_observable_descriptors);
 
   return products;
 }
@@ -1260,14 +1159,14 @@ void ApplyRuntimeDataToLayout(
   // Body runtime data.
   for (size_t gi = 0; gi < products.body_products.size(); ++gi) {
     auto& bp = products.body_products[gi];
-    auto& info = layout.body_realization_infos[gi];
-    info.meta = std::move(bp.meta);
-    info.triggers = std::move(bp.triggers);
-    info.comb = std::move(bp.comb);
-    info.observable_descriptors = std::move(bp.observable_descriptors);
-    info.init = std::move(bp.init);
-    info.decision_metas = std::move(bp.decision_metas);
-    info.decision_meta_files = std::move(bp.decision_meta_files);
+    auto& rt = layout.body_runtime_descriptors[gi];
+    rt.meta = std::move(bp.meta);
+    rt.triggers = std::move(bp.triggers);
+    rt.comb = std::move(bp.comb);
+    rt.observable_descriptors = std::move(bp.observable_descriptors);
+    rt.init = std::move(bp.init);
+    rt.decision_metas = std::move(bp.decision_metas);
+    rt.decision_meta_files = std::move(bp.decision_meta_files);
   }
 
   // Connection templates.

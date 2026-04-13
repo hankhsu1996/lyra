@@ -16,6 +16,7 @@
 #include "lyra/llvm_backend/commit.hpp"
 #include "lyra/llvm_backend/compute/operand.hpp"
 #include "lyra/llvm_backend/context.hpp"
+#include "lyra/llvm_backend/cu_facts.hpp"
 #include "lyra/llvm_backend/lifecycle.hpp"
 #include "lyra/llvm_backend/slot_access.hpp"
 #include "lyra/mir/arena.hpp"
@@ -32,9 +33,10 @@ struct QueueTypeInfo {
   Context::ElemOpsInfo elem_ops{};
 };
 
-auto GetQueueTypeInfo(Context& context, mir::PlaceId receiver)
+auto GetQueueTypeInfo(
+    Context& context, const CuFacts& facts, mir::PlaceId receiver)
     -> Result<QueueTypeInfo> {
-  const auto& types = context.GetTypeArena();
+  const auto& types = *facts.types;
   const auto& arena = context.GetMirArena();
   const auto& recv_place = arena[receiver];
   TypeId recv_type_id = mir::TypeOfPlace(types, recv_place);
@@ -68,7 +70,8 @@ auto LowerArrayDelete(Context& context, const mir::BuiltinCall& call)
   return {};
 }
 
-auto LowerQueueDelete(Context& context, const mir::BuiltinCall& call)
+auto LowerQueueDelete(
+    Context& context, const CuFacts& facts, const mir::BuiltinCall& call)
     -> Result<void> {
   auto& builder = context.GetBuilder();
   auto* ptr_ty = llvm::PointerType::getUnqual(context.GetLlvmContext());
@@ -80,10 +83,10 @@ auto LowerQueueDelete(Context& context, const mir::BuiltinCall& call)
   // Get receiver TypeId for typed teardown
   const auto& arena = context.GetMirArena();
   const auto& recv_place = arena[call.receiver];
-  TypeId recv_type_id = mir::TypeOfPlace(context.GetTypeArena(), recv_place);
+  TypeId recv_type_id = mir::TypeOfPlace(*facts.types, recv_place);
 
   // Typed teardown via lifecycle (loads handle, calls release)
-  Destroy(context, recv_ptr, recv_type_id);
+  Destroy(context, facts, recv_ptr, recv_type_id);
 
   // Store null handle
   builder.CreateStore(llvm::Constant::getNullValue(ptr_ty), recv_ptr);
@@ -91,7 +94,8 @@ auto LowerQueueDelete(Context& context, const mir::BuiltinCall& call)
   return {};
 }
 
-auto LowerQueueDeleteAt(Context& context, const mir::BuiltinCall& call)
+auto LowerQueueDeleteAt(
+    Context& context, const CuFacts& facts, const mir::BuiltinCall& call)
     -> Result<void> {
   auto& builder = context.GetBuilder();
   auto* ptr_ty = llvm::PointerType::getUnqual(context.GetLlvmContext());
@@ -103,7 +107,7 @@ auto LowerQueueDeleteAt(Context& context, const mir::BuiltinCall& call)
 
   llvm::Value* handle = builder.CreateLoad(ptr_ty, recv_ptr, "q.delat.h");
 
-  auto index_or_err = LowerOperand(context, call.args[0]);
+  auto index_or_err = LowerOperand(context, facts, call.args[0]);
   if (!index_or_err) return std::unexpected(index_or_err.error());
   llvm::Value* index = *index_or_err;
 
@@ -113,7 +117,8 @@ auto LowerQueueDeleteAt(Context& context, const mir::BuiltinCall& call)
   return {};
 }
 
-auto LowerQueuePushBack(Context& context, const mir::BuiltinCall& call)
+auto LowerQueuePushBack(
+    Context& context, const CuFacts& facts, const mir::BuiltinCall& call)
     -> Result<void> {
   auto& builder = context.GetBuilder();
   auto* i32_ty = llvm::Type::getInt32Ty(context.GetLlvmContext());
@@ -122,12 +127,12 @@ auto LowerQueuePushBack(Context& context, const mir::BuiltinCall& call)
   if (!recv_ptr_or_err) return std::unexpected(recv_ptr_or_err.error());
   llvm::Value* recv_ptr = *recv_ptr_or_err;
 
-  auto qi_result = GetQueueTypeInfo(context, call.receiver);
+  auto qi_result = GetQueueTypeInfo(context, facts, call.receiver);
   if (!qi_result) return std::unexpected(qi_result.error());
   auto qi = *qi_result;
 
-  auto val_or_err =
-      LowerOperandAsStorage(context, call.args[0], qi.elem_ops.elem_llvm_type);
+  auto val_or_err = LowerOperandAsStorage(
+      context, facts, call.args[0], qi.elem_ops.elem_llvm_type);
   if (!val_or_err) return std::unexpected(val_or_err.error());
   llvm::Value* val = *val_or_err;
 
@@ -145,7 +150,8 @@ auto LowerQueuePushBack(Context& context, const mir::BuiltinCall& call)
   return {};
 }
 
-auto LowerQueuePushFront(Context& context, const mir::BuiltinCall& call)
+auto LowerQueuePushFront(
+    Context& context, const CuFacts& facts, const mir::BuiltinCall& call)
     -> Result<void> {
   auto& builder = context.GetBuilder();
   auto* i32_ty = llvm::Type::getInt32Ty(context.GetLlvmContext());
@@ -154,12 +160,12 @@ auto LowerQueuePushFront(Context& context, const mir::BuiltinCall& call)
   if (!recv_ptr_or_err) return std::unexpected(recv_ptr_or_err.error());
   llvm::Value* recv_ptr = *recv_ptr_or_err;
 
-  auto qi_result = GetQueueTypeInfo(context, call.receiver);
+  auto qi_result = GetQueueTypeInfo(context, facts, call.receiver);
   if (!qi_result) return std::unexpected(qi_result.error());
   auto qi = *qi_result;
 
-  auto val_or_err =
-      LowerOperandAsStorage(context, call.args[0], qi.elem_ops.elem_llvm_type);
+  auto val_or_err = LowerOperandAsStorage(
+      context, facts, call.args[0], qi.elem_ops.elem_llvm_type);
   if (!val_or_err) return std::unexpected(val_or_err.error());
   llvm::Value* val = *val_or_err;
 
@@ -230,7 +236,8 @@ auto LowerQueuePopFront(Context& context, const mir::BuiltinCall& call)
   return {};
 }
 
-auto LowerQueueInsert(Context& context, const mir::BuiltinCall& call)
+auto LowerQueueInsert(
+    Context& context, const CuFacts& facts, const mir::BuiltinCall& call)
     -> Result<void> {
   auto& builder = context.GetBuilder();
   auto* i32_ty = llvm::Type::getInt32Ty(context.GetLlvmContext());
@@ -240,18 +247,18 @@ auto LowerQueueInsert(Context& context, const mir::BuiltinCall& call)
   if (!recv_ptr_or_err) return std::unexpected(recv_ptr_or_err.error());
   llvm::Value* recv_ptr = *recv_ptr_or_err;
 
-  auto qi_result = GetQueueTypeInfo(context, call.receiver);
+  auto qi_result = GetQueueTypeInfo(context, facts, call.receiver);
   if (!qi_result) return std::unexpected(qi_result.error());
   auto qi = *qi_result;
 
   // args[0] = index, args[1] = value
-  auto index_or_err = LowerOperand(context, call.args[0]);
+  auto index_or_err = LowerOperand(context, facts, call.args[0]);
   if (!index_or_err) return std::unexpected(index_or_err.error());
   llvm::Value* index = *index_or_err;
   index = builder.CreateSExtOrTrunc(index, i64_ty, "q.ins.idx");
 
-  auto val_or_err =
-      LowerOperandAsStorage(context, call.args[1], qi.elem_ops.elem_llvm_type);
+  auto val_or_err = LowerOperandAsStorage(
+      context, facts, call.args[1], qi.elem_ops.elem_llvm_type);
   if (!val_or_err) return std::unexpected(val_or_err.error());
   llvm::Value* val = *val_or_err;
 
@@ -272,25 +279,26 @@ auto LowerQueueInsert(Context& context, const mir::BuiltinCall& call)
 
 }  // namespace
 
-auto LowerBuiltinCall(Context& context, const mir::BuiltinCall& call)
+auto LowerBuiltinCall(
+    Context& context, const CuFacts& facts, const mir::BuiltinCall& call)
     -> Result<void> {
   switch (call.method) {
     case mir::BuiltinMethod::kArrayDelete:
       return LowerArrayDelete(context, call);
     case mir::BuiltinMethod::kQueueDelete:
-      return LowerQueueDelete(context, call);
+      return LowerQueueDelete(context, facts, call);
     case mir::BuiltinMethod::kQueueDeleteAt:
-      return LowerQueueDeleteAt(context, call);
+      return LowerQueueDeleteAt(context, facts, call);
     case mir::BuiltinMethod::kQueuePushBack:
-      return LowerQueuePushBack(context, call);
+      return LowerQueuePushBack(context, facts, call);
     case mir::BuiltinMethod::kQueuePushFront:
-      return LowerQueuePushFront(context, call);
+      return LowerQueuePushFront(context, facts, call);
     case mir::BuiltinMethod::kQueuePopBack:
       return LowerQueuePopBack(context, call);
     case mir::BuiltinMethod::kQueuePopFront:
       return LowerQueuePopFront(context, call);
     case mir::BuiltinMethod::kQueueInsert:
-      return LowerQueueInsert(context, call);
+      return LowerQueueInsert(context, facts, call);
 
     default:
       throw common::InternalError(
@@ -302,11 +310,11 @@ auto LowerBuiltinCall(Context& context, const mir::BuiltinCall& call)
 }
 
 auto LowerBuiltinCall(
-    Context& context, SlotAccessResolver& /*resolver*/,
+    Context& context, const CuFacts& facts, SlotAccessResolver& /*resolver*/,
     const mir::BuiltinCall& call) -> Result<void> {
   // BuiltinCalls are boundary statements -- sync happens before them.
   // Delegate to canonical version.
-  return LowerBuiltinCall(context, call);
+  return LowerBuiltinCall(context, facts, call);
 }
 
 }  // namespace lyra::lowering::mir_to_llvm

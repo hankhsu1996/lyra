@@ -50,25 +50,27 @@ inline auto HasIndexProjection(const mir::Place& place) -> bool {
 // Handles both Operand and Rvalue sources. For 4-state packed types,
 // packs the result into the canonical {val, unk} struct.
 // Resolve destination type from a WriteTarget (PlaceId or ExternalRefId).
-auto ResolveDestType(Context& context, const mir::WriteTarget& dest) -> TypeId;
+auto ResolveDestType(
+    Context& context, const CuFacts& facts, const mir::WriteTarget& dest)
+    -> TypeId;
 
 // Canonical core is TypeId-based; PlaceId overloads derive TypeId and forward.
 auto LowerRhsRaw(
-    Context& context, SlotAccessResolver& resolver,
+    Context& context, const CuFacts& facts, SlotAccessResolver& resolver,
     const mir::RightHandSide& rhs, TypeId target_type) -> Result<llvm::Value*>;
 
 // PlaceId overloads: derive TypeId from Place and forward.
 auto LowerRhsRaw(
-    Context& context, const mir::RightHandSide& rhs, mir::PlaceId target)
-    -> Result<llvm::Value*>;
+    Context& context, const CuFacts& facts, const mir::RightHandSide& rhs,
+    mir::PlaceId target) -> Result<llvm::Value*>;
 auto LowerRhsRaw(
-    Context& context, SlotAccessResolver& resolver,
+    Context& context, const CuFacts& facts, SlotAccessResolver& resolver,
     const mir::RightHandSide& rhs, mir::PlaceId target) -> Result<llvm::Value*>;
 
 // No-resolver TypeId overload.
 auto LowerRhsRaw(
-    Context& context, const mir::RightHandSide& rhs, TypeId target_type)
-    -> Result<llvm::Value*>;
+    Context& context, const CuFacts& facts, const mir::RightHandSide& rhs,
+    TypeId target_type) -> Result<llvm::Value*>;
 
 // Evaluate RightHandSide to a non-lossy PackedRValue.
 // This is the sole transport boundary for packed-store entry points.
@@ -80,12 +82,13 @@ auto LowerRhsRaw(
 // because it was determined by the operand's own declared type.
 // Rvalue branch: calls LowerRvalue and copies value/unknown directly.
 auto LowerRhsToPackedRValue(
-    Context& context, const mir::RightHandSide& rhs, uint32_t semantic_bits,
-    TypeId result_type) -> Result<lyra::lowering::mir_to_llvm::PackedRValue>;
+    Context& context, const CuFacts& facts, const mir::RightHandSide& rhs,
+    uint32_t semantic_bits, TypeId result_type)
+    -> Result<lyra::lowering::mir_to_llvm::PackedRValue>;
 
 // Resolver-aware overload.
 auto LowerRhsToPackedRValue(
-    Context& context, SlotAccessResolver& resolver,
+    Context& context, const CuFacts& facts, SlotAccessResolver& resolver,
     const mir::RightHandSide& rhs, uint32_t semantic_bits, TypeId result_type)
     -> Result<lyra::lowering::mir_to_llvm::PackedRValue>;
 

@@ -9,19 +9,13 @@
 namespace lyra::lowering::mir_to_llvm {
 
 class Context;
+struct CuFacts;
 
-// Determine ownership from source operand (temp = move, persistent = clone)
 auto DetermineOwnership(Context& context, const mir::Operand& source)
     -> OwnershipPolicy;
 
-// Main entry point for type-semantic assignment - called from LowerAssign.
-// Handles all ownership semantics: string refcount, dynarray clone, struct
-// field recursion, etc. Delegates to type-specific handlers internally.
-//
-// Returns error Diagnostic for unsupported cases (e.g., design slot +
-// string struct).
 auto AssignPlace(
-    Context& context, const mir::WriteTarget& target,
+    Context& context, const CuFacts& facts, const mir::WriteTarget& target,
     const mir::Operand& source) -> Result<void>;
 
 }  // namespace lyra::lowering::mir_to_llvm

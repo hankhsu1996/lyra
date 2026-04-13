@@ -112,22 +112,23 @@ auto LowerGuardedUse(
 
 // RuntimeQuery does not read module-slot operands (queries runtime state).
 auto LowerRuntimeQuery(
-    Context& context, const mir::RuntimeQueryRvalueInfo& info,
+    Context& context, const CuFacts& facts,
+    const mir::RuntimeQueryRvalueInfo& info,
     const PackedComputeContext& packed_context) -> Result<ComputeResult> {
   if (packed_context.is_four_state) {
-    return LowerRuntimeQuery4State(context, info, packed_context);
+    return LowerRuntimeQuery4State(context, facts, info, packed_context);
   }
-  return LowerRuntimeQuery2State(context, info, packed_context);
+  return LowerRuntimeQuery2State(context, facts, info, packed_context);
 }
 }  // namespace
 
 auto ApplyWidthMaskToResult(
-    Context& context, const ComputeResult& result, uint32_t semantic_width)
-    -> ComputeResult {
-  auto* masked_value = ApplyWidthMask(context, result.value, semantic_width);
+    llvm::IRBuilder<>& builder, const ComputeResult& result,
+    uint32_t semantic_width) -> ComputeResult {
+  auto* masked_value = ApplyWidthMask(builder, result.value, semantic_width);
   if (result.IsFourState()) {
     auto* masked_unknown =
-        ApplyWidthMask(context, result.unknown, semantic_width);
+        ApplyWidthMask(builder, result.unknown, semantic_width);
     return ComputeResult::FourState(masked_value, masked_unknown);
   }
   return ComputeResult::TwoState(masked_value);
@@ -139,7 +140,7 @@ auto FinalizeCompute(
   auto& builder = context.GetBuilder();
 
   // Apply width mask
-  auto masked = ApplyWidthMaskToResult(context, result, semantic_width);
+  auto masked = ApplyWidthMaskToResult(builder, result, semantic_width);
 
   // Pack if 4-state target
   if (struct_type != nullptr) {
@@ -149,19 +150,19 @@ auto FinalizeCompute(
 }
 
 auto LowerPackedCoreRvalue(
-    Context& context, const mir::Rvalue& rvalue, TypeId result_type)
-    -> Result<RvalueValue> {
-  CanonicalSlotAccess canonical(context);
-  return LowerPackedCoreRvalue(context, canonical, rvalue, result_type);
+    Context& context, const CuFacts& facts, const mir::Rvalue& rvalue,
+    TypeId result_type) -> Result<RvalueValue> {
+  CanonicalSlotAccess canonical(context, facts);
+  return LowerPackedCoreRvalue(context, facts, canonical, rvalue, result_type);
 }
 auto LowerPackedCoreRvalue(
-    Context& context, SlotAccessResolver& resolver, const mir::Rvalue& rvalue,
-    TypeId result_type) -> Result<RvalueValue> {
-  auto type_info_or_err = GetTypeInfoFromType(context, result_type);
+    Context& context, const CuFacts& facts, SlotAccessResolver& resolver,
+    const mir::Rvalue& rvalue, TypeId result_type) -> Result<RvalueValue> {
+  auto type_info_or_err = GetTypeInfoFromType(facts, context, result_type);
   if (!type_info_or_err) return std::unexpected(type_info_or_err.error());
   PlaceTypeInfo type_info = *type_info_or_err;
 
-  auto storage_type_or_err = GetLlvmTypeForType(context, result_type);
+  auto storage_type_or_err = GetLlvmTypeForType(facts, context, result_type);
   if (!storage_type_or_err) return std::unexpected(storage_type_or_err.error());
   llvm::Type* storage_type = *storage_type_or_err;
 
@@ -183,12 +184,13 @@ auto LowerPackedCoreRvalue(
   if (type_info.is_four_state &&
       !std::holds_alternative<mir::GuardedUseRvalueInfo>(rvalue.info) &&
       !std::holds_alternative<mir::RuntimeQueryRvalueInfo>(rvalue.info) &&
-      AreAllOperandsTwoState(context, rvalue.operands)) {
+      AreAllOperandsTwoState(facts, context, rvalue.operands)) {
     type_info.is_four_state = false;
     storage_type = elem_type;
   }
 
   PackedComputeContext packed_context{
+      .facts = &facts,
       .storage_type = storage_type,
       .element_type = elem_type,
       .bit_width = type_info.bit_width,
@@ -228,7 +230,7 @@ auto LowerPackedCoreRvalue(
           },
           [&](const mir::RuntimeQueryRvalueInfo& info)
               -> Result<ComputeResult> {
-            return LowerRuntimeQuery(context, info, packed_context);
+            return LowerRuntimeQuery(context, facts, info, packed_context);
           },
           [&](const auto& /*info*/) -> Result<ComputeResult> {
             return std::unexpected(
@@ -244,8 +246,8 @@ auto LowerPackedCoreRvalue(
 
   if (!result_or_err) return std::unexpected(result_or_err.error());
 
-  auto masked =
-      ApplyWidthMaskToResult(context, *result_or_err, type_info.bit_width);
+  auto masked = ApplyWidthMaskToResult(
+      context.GetBuilder(), *result_or_err, type_info.bit_width);
 
   if (masked.IsFourState()) {
     return RvalueValue::FourState(masked.value, masked.unknown);

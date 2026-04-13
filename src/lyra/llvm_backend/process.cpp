@@ -48,6 +48,7 @@
 #include "lyra/llvm_backend/context.hpp"
 #include "lyra/llvm_backend/context_scope.hpp"
 #include "lyra/llvm_backend/contract_executor.hpp"
+#include "lyra/llvm_backend/cu_facts.hpp"
 #include "lyra/llvm_backend/deferred_thunk_abi.hpp"
 #include "lyra/llvm_backend/instruction/display.hpp"
 #include "lyra/llvm_backend/instruction/report.hpp"
@@ -402,7 +403,8 @@ struct PhiWiringState {
 // Must be called after ClearTemps() and before lowering any blocks.
 // Returns the PhiWiringState to be used for recording edges and wiring.
 auto SetupBlockParamPhis(
-    Context& context, const std::vector<mir::BasicBlock>& mir_blocks,
+    Context& context, const CuFacts& facts,
+    const std::vector<mir::BasicBlock>& mir_blocks,
     const std::vector<llvm::BasicBlock*>& llvm_blocks)
     -> Result<PhiWiringState> {
   auto& builder = context.GetBuilder();
@@ -415,9 +417,9 @@ auto SetupBlockParamPhis(
       for (size_t j = 0; j < block.params.size(); ++j) {
         const auto& param = block.params[j];
 
-        if (context.IsFourState(param.type)) {
+        if (IsFourState(facts, param.type)) {
           // 4-state: create split PHI pair using canonical plane type.
-          auto* plane_type = GetFourStatePlaneType(context, param.type);
+          auto* plane_type = GetFourStatePlaneType(facts, context, param.type);
           auto* known_phi =
               builder.CreatePHI(plane_type, 2, std::format("phi{}.val", j));
           auto* unknown_phi =
@@ -433,7 +435,7 @@ auto SetupBlockParamPhis(
                                  .unknown = unknown_phi});
         } else {
           // 2-state: single scalar PHI.
-          auto llvm_ty_or_err = GetLlvmTypeForType(context, param.type);
+          auto llvm_ty_or_err = GetLlvmTypeForType(facts, context, param.type);
           if (!llvm_ty_or_err) return std::unexpected(llvm_ty_or_err.error());
           auto* phi =
               builder.CreatePHI(*llvm_ty_or_err, 2, std::format("phi{}", j));
@@ -466,11 +468,11 @@ void VerifyLlvmFunction(llvm::Function* func, const char* caller) {
 }
 
 auto LoadConditionAsI1(
-    Context& context, SlotAccessResolver& resolver, const mir::Operand& operand)
-    -> Result<llvm::Value*> {
+    Context& context, const CuFacts& facts, SlotAccessResolver& resolver,
+    const mir::Operand& operand) -> Result<llvm::Value*> {
   auto& builder = context.GetBuilder();
 
-  auto cond_val_or_err = LowerOperandRaw(context, resolver, operand);
+  auto cond_val_or_err = LowerOperandRaw(context, facts, resolver, operand);
   if (!cond_val_or_err) return std::unexpected(cond_val_or_err.error());
   llvm::Value* cond_val = *cond_val_or_err;
 
@@ -496,13 +498,13 @@ auto LoadConditionAsI1(
 }
 
 auto LowerEdgeArgs(
-    Context& context, SlotAccessResolver& resolver,
+    Context& context, const CuFacts& facts, SlotAccessResolver& resolver,
     const std::vector<mir::Operand>& args)
     -> Result<std::vector<llvm::Value*>> {
   std::vector<llvm::Value*> llvm_args;
   llvm_args.reserve(args.size());
   for (const auto& arg : args) {
-    auto val_or_err = LowerOperandRaw(context, resolver, arg);
+    auto val_or_err = LowerOperandRaw(context, facts, resolver, arg);
     if (!val_or_err) return std::unexpected(val_or_err.error());
     llvm_args.push_back(*val_or_err);
   }
@@ -539,12 +541,15 @@ auto HasBackEdge(const mir::Terminator& term, size_t current_block_idx)
 // back-edge.
 void EmitBackEdgeGuard(
     Context& context, common::OriginId origin, llvm::Function* func,
-    llvm::Value* out_ptr, llvm::Value* limit_ptr) {
+    llvm::Value* out_ptr, llvm::Value* limit_ptr, uint32_t back_edge_site_base,
+    std::vector<common::OriginId>& back_edge_origins) {
   auto& builder = context.GetBuilder();
   auto& llvm_ctx = context.GetLlvmContext();
   auto* i32_ty = llvm::Type::getInt32Ty(llvm_ctx);
 
-  uint32_t site_id = context.RegisterBackEdgeSite(origin);
+  uint32_t site_id =
+      back_edge_site_base + static_cast<uint32_t>(back_edge_origins.size());
+  back_edge_origins.push_back(origin);
 
   auto* limit = builder.CreateLoad(i32_ty, limit_ptr, "limit");
   auto* new_limit =
@@ -574,14 +579,14 @@ void EmitBackEdgeGuard(
 }
 
 auto LowerJump(
-    Context& context, SlotAccessResolver& resolver, const mir::Jump& jump,
-    const std::vector<llvm::BasicBlock*>& blocks, PhiWiringState& phi_state)
-    -> Result<void> {
+    Context& context, const CuFacts& facts, SlotAccessResolver& resolver,
+    const mir::Jump& jump, const std::vector<llvm::BasicBlock*>& blocks,
+    PhiWiringState& phi_state) -> Result<void> {
   auto* current_bb = context.GetBuilder().GetInsertBlock();
 
   std::vector<llvm::Value*> arg_values;
   if (!jump.args.empty()) {
-    auto args_or_err = LowerEdgeArgs(context, resolver, jump.args);
+    auto args_or_err = LowerEdgeArgs(context, facts, resolver, jump.args);
     if (!args_or_err) return std::unexpected(args_or_err.error());
     arg_values = std::move(*args_or_err);
   }
@@ -600,30 +605,33 @@ auto LowerJump(
 }
 
 auto LowerJump(
-    Context& context, const mir::Jump& jump,
+    Context& context, const CuFacts& facts, const mir::Jump& jump,
     const std::vector<llvm::BasicBlock*>& blocks, PhiWiringState& phi_state)
     -> Result<void> {
-  CanonicalSlotAccess canonical(context);
-  return LowerJump(context, canonical, jump, blocks, phi_state);
+  CanonicalSlotAccess canonical(context, facts);
+  return LowerJump(context, facts, canonical, jump, blocks, phi_state);
 }
 
 auto LowerBranch(
-    Context& context, SlotAccessResolver& resolver, const mir::Branch& branch,
-    const std::vector<llvm::BasicBlock*>& blocks, PhiWiringState& phi_state)
-    -> Result<void> {
+    Context& context, const CuFacts& facts, SlotAccessResolver& resolver,
+    const mir::Branch& branch, const std::vector<llvm::BasicBlock*>& blocks,
+    PhiWiringState& phi_state) -> Result<void> {
   auto* current_bb = context.GetBuilder().GetInsertBlock();
-  auto cond_or_err = LoadConditionAsI1(context, resolver, branch.condition);
+  auto cond_or_err =
+      LoadConditionAsI1(context, facts, resolver, branch.condition);
   if (!cond_or_err) return std::unexpected(cond_or_err.error());
 
   std::vector<llvm::Value*> then_llvm_args;
   std::vector<llvm::Value*> else_llvm_args;
   if (!branch.then_args.empty()) {
-    auto args_or_err = LowerEdgeArgs(context, resolver, branch.then_args);
+    auto args_or_err =
+        LowerEdgeArgs(context, facts, resolver, branch.then_args);
     if (!args_or_err) return std::unexpected(args_or_err.error());
     then_llvm_args = std::move(*args_or_err);
   }
   if (!branch.else_args.empty()) {
-    auto args_or_err = LowerEdgeArgs(context, resolver, branch.else_args);
+    auto args_or_err =
+        LowerEdgeArgs(context, facts, resolver, branch.else_args);
     if (!args_or_err) return std::unexpected(args_or_err.error());
     else_llvm_args = std::move(*args_or_err);
   }
@@ -649,11 +657,11 @@ auto LowerBranch(
 }
 
 auto LowerBranch(
-    Context& context, const mir::Branch& branch,
+    Context& context, const CuFacts& facts, const mir::Branch& branch,
     const std::vector<llvm::BasicBlock*>& blocks, PhiWiringState& phi_state)
     -> Result<void> {
-  CanonicalSlotAccess canonical(context);
-  return LowerBranch(context, canonical, branch, blocks, phi_state);
+  CanonicalSlotAccess canonical(context, facts);
+  return LowerBranch(context, facts, canonical, branch, blocks, phi_state);
 }
 
 void LowerReturn(Context& context, llvm::BasicBlock* exit_block) {
@@ -661,8 +669,8 @@ void LowerReturn(Context& context, llvm::BasicBlock* exit_block) {
 }
 
 auto LowerFinish(
-    Context& context, const mir::Finish& finish, common::OriginId origin,
-    llvm::BasicBlock* exit_block) -> Result<void> {
+    Context& context, const CuFacts& facts, const mir::Finish& finish,
+    common::OriginId origin, llvm::BasicBlock* exit_block) -> Result<void> {
   auto& builder = context.GetBuilder();
   auto& llvm_ctx = context.GetLlvmContext();
   auto* i32_ty = llvm::Type::getInt32Ty(llvm_ctx);
@@ -673,14 +681,15 @@ auto LowerFinish(
     llvm::Value* msg_handle = llvm::ConstantPointerNull::get(ptr_ty);
     bool owns_msg = false;
     if (finish.message.has_value()) {
-      auto msg_or_err = LowerOperand(context, *finish.message);
+      auto msg_or_err = LowerOperand(context, facts, *finish.message);
       if (!msg_or_err) return std::unexpected(msg_or_err.error());
       msg_handle = *msg_or_err;
       owns_msg = true;
     }
 
     auto lowered_origin = LowerOptionalReportOrigin(
-        origin.IsValid() ? std::optional{origin} : std::nullopt, context);
+        origin.IsValid() ? std::optional{origin} : std::nullopt, context,
+        facts);
 
     EmitAbiReportCall(
         context, static_cast<uint8_t>(runtime::ReportKind::kFatalTermination),
@@ -699,7 +708,7 @@ auto LowerFinish(
   auto kind_val = static_cast<uint32_t>(finish.kind);
   llvm::Value* message = llvm::ConstantPointerNull::get(ptr_ty);
   if (finish.message.has_value()) {
-    auto msg_or_err = LowerOperand(context, *finish.message);
+    auto msg_or_err = LowerOperand(context, facts, *finish.message);
     if (!msg_or_err) return std::unexpected(msg_or_err.error());
     message = *msg_or_err;
   }
@@ -758,8 +767,8 @@ auto ResolveObservationRange(Context& context, const mir::WaitTrigger& trigger)
   if (place.root.kind == mir::PlaceRoot::Kind::kModuleSlot &&
       context.GetSpecSlotInfo() != nullptr) {
     auto local_slot = static_cast<uint32_t>(place.root.id);
-    slot_spec_ptr = &context.GetSpecSlotInfo()->GetSlotSpec(
-        local_slot, context.GetLayout());
+    slot_spec_ptr = &SpecSlotInfo::GetSlotSpec(
+        local_slot, *context.GetSpecLayoutContract());
   } else {
     auto slot_id = common::SlotId{static_cast<uint32_t>(place.root.id)};
     slot_spec_ptr = &context.GetDesignSlotStorageSpec(slot_id);
@@ -788,8 +797,8 @@ auto ResolveObservationRange(Context& context, const mir::WaitTrigger& trigger)
 // emits bounds checking. Stores results into the WaitTriggerRecord fields.
 // On OOB, byte_size=0 is stored as a sentinel for the runtime.
 void EmitDynamicBitTarget(
-    Context& context, llvm::Value* elem_ptr, llvm::Type* trigger_type,
-    const mir::WaitTrigger& trigger) {
+    Context& context, const CuFacts& facts, llvm::Value* elem_ptr,
+    llvm::Type* trigger_type, const mir::WaitTrigger& trigger) {
   auto& builder = context.GetBuilder();
   auto& llvm_ctx = context.GetLlvmContext();
   auto* i8_ty = llvm::Type::getInt8Ty(llvm_ctx);
@@ -803,7 +812,7 @@ void EmitDynamicBitTarget(
   const auto& bit_range = std::get<mir::BitRangeProjection>(last_proj.info);
 
   // Lower the bit_offset operand to get the LLVM Value.
-  auto offset_or_err = LowerOperand(context, bit_range.bit_offset);
+  auto offset_or_err = LowerOperand(context, facts, bit_range.bit_offset);
   if (!offset_or_err) {
     throw common::InternalError(
         "EmitDynamicBitTarget", "failed to lower storage offset operand");
@@ -857,8 +866,8 @@ void EmitDynamicBitTarget(
 // BitRangeProjection, applies the affine mapping with element_bit_stride
 // computed from DataLayout, and stores results into WaitTriggerRecord fields.
 void EmitDynamicUnpackedBitTarget(
-    Context& context, llvm::Value* elem_ptr, llvm::Type* trigger_type,
-    const mir::WaitTrigger& trigger) {
+    Context& context, const CuFacts& facts, llvm::Value* elem_ptr,
+    llvm::Type* trigger_type, const mir::WaitTrigger& trigger) {
   auto& builder = context.GetBuilder();
   auto& llvm_ctx = context.GetLlvmContext();
   auto* i8_ty = llvm::Type::getInt8Ty(llvm_ctx);
@@ -871,7 +880,7 @@ void EmitDynamicUnpackedBitTarget(
   const auto& last_proj = place.projections.back();
   const auto& bit_range = std::get<mir::BitRangeProjection>(last_proj.info);
 
-  auto offset_or_err = LowerOperand(context, bit_range.bit_offset);
+  auto offset_or_err = LowerOperand(context, facts, bit_range.bit_offset);
   if (!offset_or_err) {
     throw common::InternalError(
         "EmitDynamicUnpackedBitTarget", "failed to lower index operand");
@@ -881,8 +890,7 @@ void EmitDynamicUnpackedBitTarget(
   // Compute element_bit_stride from DataLayout.
   const auto& lb = *trigger.late_bound;
   auto* elem_llvm_type = GetLlvmTypeForTypeId(
-      llvm_ctx, *lb.element_type, context.GetTypeArena(),
-      context.IsForceTwoState());
+      llvm_ctx, *lb.element_type, *facts.types, facts.force_two_state);
   const auto& dl = context.GetModule().getDataLayout();
   auto elem_alloc = static_cast<uint32_t>(dl.getTypeAllocSize(elem_llvm_type));
   uint32_t element_bit_stride = elem_alloc * 8;
@@ -938,8 +946,8 @@ void EmitDynamicUnpackedBitTarget(
 // design-state indices: byte_offset=0, byte_size=1 (RebindSubscription
 // corrects).
 void EmitDynamicContainerTarget(
-    Context& context, llvm::Value* elem_ptr, llvm::Type* trigger_type,
-    const mir::WaitTrigger& trigger) {
+    Context& context, const CuFacts& facts, llvm::Value* elem_ptr,
+    llvm::Type* trigger_type, const mir::WaitTrigger& trigger) {
   auto& builder = context.GetBuilder();
   auto& llvm_ctx = context.GetLlvmContext();
   auto* i8_ty = llvm::Type::getInt8Ty(llvm_ctx);
@@ -955,7 +963,7 @@ void EmitDynamicContainerTarget(
   const auto& last_proj = place.projections.back();
   const auto& bit_range = std::get<mir::BitRangeProjection>(last_proj.info);
 
-  auto offset_or_err = LowerOperand(context, bit_range.bit_offset);
+  auto offset_or_err = LowerOperand(context, facts, bit_range.bit_offset);
   if (!offset_or_err) {
     throw common::InternalError(
         "EmitDynamicContainerTarget", "failed to lower index operand");
@@ -963,8 +971,7 @@ void EmitDynamicContainerTarget(
   auto* sv_index = builder.CreateSExtOrTrunc(*offset_or_err, i64_ty, "ct.idx");
 
   auto* elem_llvm_type = GetLlvmTypeForTypeId(
-      llvm_ctx, *lb.element_type, context.GetTypeArena(),
-      context.IsForceTwoState());
+      llvm_ctx, *lb.element_type, *facts.types, facts.force_two_state);
   const auto& dl = context.GetModule().getDataLayout();
   auto elem_stride = static_cast<uint32_t>(dl.getTypeAllocSize(elem_llvm_type));
 
@@ -1050,8 +1057,11 @@ auto TriggerKindFromEdge(common::EdgeKind edge) -> runtime::TriggerInstallKind {
 
 // Helper to fill trigger array at a given base pointer
 void FillTriggerArray(
-    Context& context, llvm::Value* base_ptr, llvm::Type* trigger_type,
-    llvm::Type* array_type, const std::vector<mir::WaitTrigger>& triggers) {
+    Context& context, const CuFacts& facts, llvm::Value* base_ptr,
+    llvm::Type* trigger_type, llvm::Type* array_type,
+    const std::vector<mir::WaitTrigger>& triggers) {
+  const auto& resolved_triggers = triggers;
+
   auto& builder = context.GetBuilder();
   auto& llvm_ctx = context.GetLlvmContext();
   auto* i8_ty = llvm::Type::getInt8Ty(llvm_ctx);
@@ -1067,15 +1077,15 @@ void FillTriggerArray(
     // External-ref triggers emit cross-instance local identity: the
     // target's local signal id (compile-time constant from recipe).
     auto* signal_ptr = builder.CreateStructGEP(trigger_type, elem_ptr, 0);
-    bool is_ext_ref = triggers[i].unresolved_external_ref.has_value();
+    bool is_ext_ref = resolved_triggers[i].unresolved_external_ref.has_value();
     SignalCoordExpr signal_expr =
         is_ext_ref
             ? SignalCoordExpr::Local(0)  // placeholder, overwritten below
-            : context.EmitSignalCoord(triggers[i].signal);
+            : context.EmitSignalCoord(resolved_triggers[i].signal);
     bool is_local_signal = is_ext_ref || signal_expr.IsLocal();
     if (is_ext_ref) {
       // External-ref trigger: load target local signal from binding record.
-      auto ref_id = *triggers[i].unresolved_external_ref;
+      auto ref_id = *resolved_triggers[i].unresolved_external_ref;
       auto* binding_ty = context.GetExtRefBindingType();
       auto* bindings_ptr = context.EmitLoadExtRefBindingsPtr();
       auto* binding_ptr = builder.CreateGEP(
@@ -1092,14 +1102,16 @@ void FillTriggerArray(
     // Write edge (field 1)
     auto* edge_ptr = builder.CreateStructGEP(trigger_type, elem_ptr, 1);
     builder.CreateStore(
-        llvm::ConstantInt::get(i8_ty, static_cast<uint8_t>(triggers[i].edge)),
+        llvm::ConstantInt::get(
+            i8_ty, static_cast<uint8_t>(resolved_triggers[i].edge)),
         edge_ptr);
 
     // Write kind (field 3) -- determined by trigger classification.
-    bool is_container =
-        triggers[i].late_bound && triggers[i].late_bound->is_container;
-    auto install_kind = is_container ? runtime::TriggerInstallKind::kContainer
-                                     : TriggerKindFromEdge(triggers[i].edge);
+    bool is_container = resolved_triggers[i].late_bound &&
+                        resolved_triggers[i].late_bound->is_container;
+    auto install_kind = is_container
+                            ? runtime::TriggerInstallKind::kContainer
+                            : TriggerKindFromEdge(resolved_triggers[i].edge);
     auto* kind_ptr = builder.CreateStructGEP(trigger_type, elem_ptr, 3);
     builder.CreateStore(
         llvm::ConstantInt::get(i8_ty, static_cast<uint8_t>(install_kind)),
@@ -1108,24 +1120,28 @@ void FillTriggerArray(
     if (is_container) {
       // Container element: emit dynamic container target.
       // container_elem_stride and flags are set by EmitDynamicContainerTarget.
-      EmitDynamicContainerTarget(context, elem_ptr, trigger_type, triggers[i]);
-    } else if (triggers[i].late_bound && triggers[i].late_bound->element_type) {
+      EmitDynamicContainerTarget(
+          context, facts, elem_ptr, trigger_type, resolved_triggers[i]);
+    } else if (
+        resolved_triggers[i].late_bound &&
+        resolved_triggers[i].late_bound->element_type) {
       // Dynamic unpacked array element.
       // container_elem_stride = 0 (non-container), flags set by Emit*.
       auto* stride_ptr = builder.CreateStructGEP(trigger_type, elem_ptr, 7);
       builder.CreateStore(llvm::ConstantInt::get(i32_ty, 0), stride_ptr);
       EmitDynamicUnpackedBitTarget(
-          context, elem_ptr, trigger_type, triggers[i]);
-    } else if (triggers[i].late_bound) {
+          context, facts, elem_ptr, trigger_type, resolved_triggers[i]);
+    } else if (resolved_triggers[i].late_bound) {
       // Dynamic bit-select.
       // container_elem_stride = 0 (non-container), flags set by Emit*.
       auto* stride_ptr = builder.CreateStructGEP(trigger_type, elem_ptr, 7);
       builder.CreateStore(llvm::ConstantInt::get(i32_ty, 0), stride_ptr);
-      EmitDynamicBitTarget(context, elem_ptr, trigger_type, triggers[i]);
+      EmitDynamicBitTarget(
+          context, facts, elem_ptr, trigger_type, resolved_triggers[i]);
     } else {
       // Static path: resolve observation range at compile time.
       // Always active, container_elem_stride = 0.
-      auto range = ResolveObservationRange(context, triggers[i]);
+      auto range = ResolveObservationRange(context, resolved_triggers[i]);
       auto* bit_idx_ptr = builder.CreateStructGEP(trigger_type, elem_ptr, 2);
       builder.CreateStore(
           llvm::ConstantInt::get(i8_ty, range.bit_index), bit_idx_ptr);
@@ -1151,7 +1167,7 @@ void FillTriggerArray(
     if (is_ext_ref) {
       // External-ref trigger: cross-instance local identity.
       // Load target identity from per-instance binding record.
-      auto ref_id = *triggers[i].unresolved_external_ref;
+      auto ref_id = *resolved_triggers[i].unresolved_external_ref;
       auto* binding_ty = context.GetExtRefBindingType();
       auto* bindings_ptr = context.EmitLoadExtRefBindingsPtr();
       auto* binding_ptr = builder.CreateGEP(
@@ -1222,8 +1238,8 @@ struct LateBoundEmitResult {
 
 // Emit late-bound data arrays for dynamic-index edge triggers.
 auto EmitLateBoundData(
-    Context& context, const std::vector<mir::WaitTrigger>& triggers)
-    -> LateBoundEmitResult {
+    Context& context, const CuFacts& facts,
+    const std::vector<mir::WaitTrigger>& triggers) -> LateBoundEmitResult {
   auto& builder = context.GetBuilder();
   auto& llvm_ctx = context.GetLlvmContext();
   auto* i16_ty = llvm::Type::getInt16Ty(llvm_ctx);
@@ -1317,15 +1333,13 @@ auto EmitLateBoundData(
     uint32_t container_elem_stride = 0;
     if (lb.is_container && lb.element_type) {
       auto* elem_type = GetLlvmTypeForTypeId(
-          llvm_ctx, *lb.element_type, context.GetTypeArena(),
-          context.IsForceTwoState());
+          llvm_ctx, *lb.element_type, *facts.types, facts.force_two_state);
       const auto& dl = context.GetModule().getDataLayout();
       container_elem_stride =
           static_cast<uint32_t>(dl.getTypeAllocSize(elem_type));
     } else if (lb.element_type && !lb.is_container) {
       auto* elem_type = GetLlvmTypeForTypeId(
-          llvm_ctx, *lb.element_type, context.GetTypeArena(),
-          context.IsForceTwoState());
+          llvm_ctx, *lb.element_type, *facts.types, facts.force_two_state);
       const auto& dl = context.GetModule().getDataLayout();
       auto elem_alloc = static_cast<uint32_t>(dl.getTypeAllocSize(elem_type));
       uint32_t element_bit_stride = elem_alloc * 8;
@@ -1500,7 +1514,8 @@ auto TriggersMatchForDedup(
 }
 
 auto LowerWait(
-    Context& context, const mir::Wait& wait, llvm::BasicBlock* exit_block,
+    Context& context, const CuFacts& facts, const mir::Wait& wait,
+    llvm::BasicBlock* exit_block, uint32_t wait_site_base,
     std::vector<WaitSiteEntry>& wait_sites) -> Result<void> {
   static_assert(sizeof(runtime::WaitTriggerRecord) == 28);
 
@@ -1513,7 +1528,7 @@ auto LowerWait(
   auto num_triggers = static_cast<uint32_t>(wait.triggers.size());
 
   // Emit late-bound data (headers + plan ops pool + dep slots pool).
-  auto lb_data = EmitLateBoundData(context, wait.triggers);
+  auto lb_data = EmitLateBoundData(context, facts, wait.triggers);
 
   bool has_late_bound = (lb_data.num_headers > 0);
   bool has_container = std::ranges::any_of(wait.triggers, [](const auto& t) {
@@ -1524,10 +1539,7 @@ auto LowerWait(
   // Static-wait fast path: if a previous wait site in this process has
   // identical static triggers AND the same resume block, reuse its
   // wait_site_id and emit LyraSuspendWaitStatic instead of rebuilding
-  // the trigger array. The resume_block must match because installed
-  // subscriptions carry a fixed resume_block from install time --
-  // EnqueueProcessWakeup reads it from the subscription, not the
-  // SuspendRecord.
+  // the trigger array.
   if (is_static) {
     for (const auto& prev : wait_sites) {
       if (prev.has_late_bound || prev.has_container) continue;
@@ -1546,8 +1558,8 @@ auto LowerWait(
     }
   }
 
-  // First occurrence: allocate a new wait_site_id and emit full trigger setup.
-  uint32_t wait_site_id = context.NextWaitSiteId();
+  uint32_t wait_site_id =
+      wait_site_base + static_cast<uint32_t>(wait_sites.size());
   wait_sites.push_back(
       WaitSiteEntry{
           .resume_block = wait.resume.value,
@@ -1575,7 +1587,7 @@ auto LowerWait(
         builder.CreateAlloca(fixed_array_type, nullptr, "triggers");
 
     FillTriggerArray(
-        context, triggers_alloca, trigger_type, fixed_array_type,
+        context, facts, triggers_alloca, trigger_type, fixed_array_type,
         wait.triggers);
 
     if (has_late_bound) {
@@ -1607,7 +1619,7 @@ auto LowerWait(
 
     auto* array_type = llvm::ArrayType::get(trigger_type, num_triggers);
     FillTriggerArray(
-        context, heap_ptr, trigger_type, array_type, wait.triggers);
+        context, facts, heap_ptr, trigger_type, array_type, wait.triggers);
 
     if (has_late_bound) {
       auto* null_ptr = llvm::ConstantPointerNull::get(
@@ -1649,9 +1661,10 @@ void LowerRepeat(Context& context, llvm::BasicBlock* exit_block) {
 }
 
 auto LowerTerminator(
-    Context& context, SlotAccessResolver& resolver, const mir::Terminator& term,
-    const std::vector<llvm::BasicBlock*>& blocks, llvm::BasicBlock* exit_block,
-    PhiWiringState& phi_state, std::vector<WaitSiteEntry>& wait_sites)
+    Context& context, const CuFacts& facts, SlotAccessResolver& resolver,
+    const mir::Terminator& term, const std::vector<llvm::BasicBlock*>& blocks,
+    llvm::BasicBlock* exit_block, PhiWiringState& phi_state,
+    uint32_t wait_site_base, std::vector<WaitSiteEntry>& wait_sites)
     -> Result<void> {
   // Set origin for error reporting.
   // OriginScope preserves outer (function/process) origin if term.origin is
@@ -1661,24 +1674,25 @@ auto LowerTerminator(
   return std::visit(
       common::Overloaded{
           [&](const mir::Jump& t) -> Result<void> {
-            return LowerJump(context, resolver, t, blocks, phi_state);
+            return LowerJump(context, facts, resolver, t, blocks, phi_state);
           },
           [&](const mir::Branch& t) -> Result<void> {
-            return LowerBranch(context, resolver, t, blocks, phi_state);
+            return LowerBranch(context, facts, resolver, t, blocks, phi_state);
           },
           [&](const mir::Return&) -> Result<void> {
             LowerReturn(context, exit_block);
             return {};
           },
           [&](const mir::Finish& f) -> Result<void> {
-            return LowerFinish(context, f, term.origin, exit_block);
+            return LowerFinish(context, facts, f, term.origin, exit_block);
           },
           [&](const mir::Delay& d) -> Result<void> {
             LowerDelay(context, d, exit_block);
             return {};
           },
           [&](const mir::Wait& w) -> Result<void> {
-            return LowerWait(context, w, exit_block, wait_sites);
+            return LowerWait(
+                context, facts, w, exit_block, wait_site_base, wait_sites);
           },
           [&](const mir::Repeat&) -> Result<void> {
             LowerRepeat(context, exit_block);
@@ -1704,13 +1718,14 @@ auto LowerTerminator(
 }
 
 auto LowerTerminator(
-    Context& context, const mir::Terminator& term,
+    Context& context, const CuFacts& facts, const mir::Terminator& term,
     const std::vector<llvm::BasicBlock*>& blocks, llvm::BasicBlock* exit_block,
-    PhiWiringState& phi_state, std::vector<WaitSiteEntry>& wait_sites)
-    -> Result<void> {
-  CanonicalSlotAccess canonical(context);
+    PhiWiringState& phi_state, uint32_t wait_site_base,
+    std::vector<WaitSiteEntry>& wait_sites) -> Result<void> {
+  CanonicalSlotAccess canonical(context, facts);
   return LowerTerminator(
-      context, canonical, term, blocks, exit_block, phi_state, wait_sites);
+      context, facts, canonical, term, blocks, exit_block, phi_state,
+      wait_site_base, wait_sites);
 }
 
 }  // namespace
@@ -1740,13 +1755,14 @@ static auto MaterializeAllocaStorage(
 }
 
 auto GenerateProcessFunction(
-    Context& context, const mir::Process& process, const std::string& name,
-    ProcessExecutionKind execution_kind, const BodySiteContext& site_ctx)
-    -> Result<ProcessCodegenResult> {
+    Context& context, const CuFacts& facts, const mir::Process& process,
+    const std::string& name, ProcessExecutionKind execution_kind,
+    const BodySiteContext& site_ctx) -> Result<ProcessCodegenResult> {
   // Process-level origin scope for errors during code generation.
   // If process.origin is Invalid, this is a no-op.
   OriginScope proc_scope(context, process.origin);
   std::vector<WaitSiteEntry> wait_sites;
+  std::vector<common::OriginId> back_edge_origins;
 
   const bool is_simulation =
       execution_kind == ProcessExecutionKind::kSimulation;
@@ -1760,16 +1776,15 @@ auto GenerateProcessFunction(
   // Identify provably bounded back-edges to skip iteration-limit guards.
   auto bounded_latches = BuildBoundedLatchSet(
       mir::passes::FindBoundedBackEdges(
-          process.blocks, context.GetMirArena(), context.GetTypeArena()));
+          process.blocks, context.GetMirArena(), *facts.types));
 
   // Identify qualifying canonical loops for deferred notification.
   // Only applies to simulation processes (init uses kDirectInit which
   // already skips notification entirely).
   auto deferred_loops =
-      is_simulation
-          ? mir::passes::FindDeferredNotificationLoops(
-                process.blocks, context.GetMirArena(), context.GetTypeArena())
-          : std::vector<mir::passes::DeferredNotificationLoop>{};
+      is_simulation ? mir::passes::FindDeferredNotificationLoops(
+                          process.blocks, context.GetMirArena(), *facts.types)
+                    : std::vector<mir::passes::DeferredNotificationLoop>{};
   auto deferred_blocks = BuildDeferredPolicyBlocks(deferred_loops);
 
   auto& llvm_ctx = context.GetLlvmContext();
@@ -1830,8 +1845,7 @@ auto GenerateProcessFunction(
   ActiveExecutionMode exec_mode{
       .decision_owner_id = context.GetCurrentDecisionOwnerId()};
 
-  const auto& proc_layout =
-      context.GetLayout().processes[context.GetCurrentProcessIndex()];
+  const auto& proc_layout = context.GetCurrentProcessLayout();
   auto alloca_result = MaterializeAllocaStorage(context, *func, proc_layout);
   if (!alloca_result) return std::unexpected(alloca_result.error());
 
@@ -1897,7 +1911,7 @@ auto GenerateProcessFunction(
   // Clear stale temp bindings and setup PHI nodes for block params
   context.ClearTemps();
   auto phi_state_or_err =
-      SetupBlockParamPhis(context, process.blocks, llvm_blocks);
+      SetupBlockParamPhis(context, facts, process.blocks, llvm_blocks);
   if (!phi_state_or_err) return std::unexpected(phi_state_or_err.error());
   auto& phi_state = *phi_state_or_err;
 
@@ -1926,7 +1940,8 @@ auto GenerateProcessFunction(
     }
 
     for (const auto& instruction : block.statements) {
-      auto result = LowerStatement(context, instruction, exec_mode, site_ctx);
+      auto result =
+          LowerStatement(context, facts, instruction, exec_mode, site_ctx);
       if (!result) return std::unexpected(result.error());
     }
 
@@ -1936,12 +1951,13 @@ auto GenerateProcessFunction(
         !std::ranges::binary_search(
             bounded_latches, static_cast<uint32_t>(i))) {
       EmitBackEdgeGuard(
-          context, block.terminator.origin, func, out_arg, limit_ptr);
+          context, block.terminator.origin, func, out_arg, limit_ptr,
+          site_ctx.back_edge_site_base, back_edge_origins);
     }
 
     auto term_result = LowerTerminator(
-        context, block.terminator, llvm_blocks, exit_block, phi_state,
-        wait_sites);
+        context, facts, block.terminator, llvm_blocks, exit_block, phi_state,
+        site_ctx.wait_site_base, wait_sites);
     if (!term_result) return std::unexpected(term_result.error());
   }
 
@@ -1964,14 +1980,17 @@ auto GenerateProcessFunction(
   return ProcessCodegenResult{
       .function = func,
       .wait_sites = std::move(wait_sites),
+      .back_edge_origins = std::move(back_edge_origins),
       .process_trigger = ExtractProcessTriggerEntry(process)};
 }
 
 auto GenerateSharedProcessFunction(
-    Context& context, const mir::Process& process, const std::string& name,
-    const BodySiteContext& site_ctx) -> Result<ProcessCodegenResult> {
+    Context& context, const CuFacts& facts, const mir::Process& process,
+    const std::string& name, const BodySiteContext& site_ctx)
+    -> Result<ProcessCodegenResult> {
   OriginScope proc_scope(context, process.origin);
   std::vector<WaitSiteEntry> wait_sites;
+  std::vector<common::OriginId> back_edge_origins;
 
   // Shared module processes are simulation-only by architecture.
   ExecutionContractScope contract_scope(
@@ -1979,19 +1998,18 @@ auto GenerateSharedProcessFunction(
 
   auto bounded_latches = BuildBoundedLatchSet(
       mir::passes::FindBoundedBackEdges(
-          process.blocks, context.GetMirArena(), context.GetTypeArena()));
+          process.blocks, context.GetMirArena(), *facts.types));
 
   // Shared module processes are always simulation-only.
   auto deferred_loops = mir::passes::FindDeferredNotificationLoops(
-      process.blocks, context.GetMirArena(), context.GetTypeArena());
+      process.blocks, context.GetMirArena(), *facts.types);
   auto deferred_blocks = BuildDeferredPolicyBlocks(deferred_loops);
 
   // Activation plan is computed at layout time so shadow fields live in the
   // persistent process frame (not stack allocas that die on suspend).
   // Present only for processes with suspension; suspension-free processes
   // skip activation-local lowering entirely.
-  const auto& shared_proc_layout_for_plan =
-      context.GetLayout().processes[context.GetCurrentProcessIndex()];
+  const auto& shared_proc_layout_for_plan = context.GetCurrentProcessLayout();
 
   auto& llvm_ctx = context.GetLlvmContext();
   auto& module = context.GetModule();
@@ -2026,8 +2044,7 @@ auto GenerateSharedProcessFunction(
   ActiveExecutionMode exec_mode{
       .decision_owner_id = context.GetCurrentDecisionOwnerId()};
 
-  const auto& shared_proc_layout =
-      context.GetLayout().processes[context.GetCurrentProcessIndex()];
+  const auto& shared_proc_layout = context.GetCurrentProcessLayout();
   auto shared_alloca_result =
       MaterializeAllocaStorage(context, *func, shared_proc_layout);
   if (!shared_alloca_result) {
@@ -2049,11 +2066,12 @@ auto GenerateSharedProcessFunction(
   std::vector<ManagedSlotStorage> managed_storage;
   if (shared_proc_layout_for_plan.activation_plan.has_value()) {
     managed_storage = CreateManagedSlotStorage(
-        *shared_proc_layout_for_plan.activation_plan, context);
+        *shared_proc_layout_for_plan.activation_plan, context, facts);
   } else {
     auto local_plan = BuildProcessActivationPlan(
-        process, context.GetMirArena(), context.GetTypeArena());
-    managed_storage = CreateManagedSlotStorageAsAllocas(local_plan, context);
+        process, context.GetMirArena(), *facts.types);
+    managed_storage =
+        CreateManagedSlotStorageAsAllocas(local_plan, context, facts);
   }
 
   // Resume dispatch (same logic as GenerateProcessFunction)
@@ -2092,7 +2110,7 @@ auto GenerateSharedProcessFunction(
 
   context.ClearTemps();
   auto phi_state_or_err =
-      SetupBlockParamPhis(context, process.blocks, llvm_blocks);
+      SetupBlockParamPhis(context, facts, process.blocks, llvm_blocks);
   if (!phi_state_or_err) return std::unexpected(phi_state_or_err.error());
   auto& phi_state = *phi_state_or_err;
 
@@ -2102,7 +2120,7 @@ auto GenerateSharedProcessFunction(
           ? *shared_proc_layout_for_plan.activation_plan
           : kEmptyPlan;
   ContractExecutor executor(
-      context, activation_plan, std::move(managed_storage));
+      context, facts, activation_plan, std::move(managed_storage));
 
   for (size_t i = 0; i < process.blocks.size(); ++i) {
     const auto& block = process.blocks[i];
@@ -2126,7 +2144,7 @@ auto GenerateSharedProcessFunction(
     for (uint32_t si = 0; si < block.statements.size(); ++si) {
       executor.ExecutePreStatement(bi, si);
       auto result = LowerStatement(
-          context, resolver, block.statements[si], exec_mode, site_ctx);
+          context, facts, resolver, block.statements[si], exec_mode, site_ctx);
       if (!result) return std::unexpected(result.error());
       executor.ExecutePostStatement(bi, si);
     }
@@ -2138,12 +2156,13 @@ auto GenerateSharedProcessFunction(
             bounded_latches, static_cast<uint32_t>(i))) {
       auto* outcome_ptr = context.EmitOutcomePtr(func->getArg(0));
       EmitBackEdgeGuard(
-          context, block.terminator.origin, func, outcome_ptr, limit_ptr);
+          context, block.terminator.origin, func, outcome_ptr, limit_ptr,
+          site_ctx.back_edge_site_base, back_edge_origins);
     }
 
     auto term_result = LowerTerminator(
-        context, resolver, block.terminator, llvm_blocks, exit_block, phi_state,
-        wait_sites);
+        context, facts, resolver, block.terminator, llvm_blocks, exit_block,
+        phi_state, site_ctx.wait_site_base, wait_sites);
     if (!term_result) return std::unexpected(term_result.error());
   }
 
@@ -2166,6 +2185,7 @@ auto GenerateSharedProcessFunction(
   return ProcessCodegenResult{
       .function = func,
       .wait_sites = std::move(wait_sites),
+      .back_edge_origins = std::move(back_edge_origins),
       .process_trigger = ExtractProcessTriggerEntry(process)};
 }
 
@@ -2184,12 +2204,13 @@ auto DeclareMirFunction(
   // ObserverContext*, regardless of module-scoped vs design-global.
   // Regular functions use signature-derived types.
   bool is_module_scoped = func.abi_contract.needs_module_binding;
-  bool is_observer = mir::IsObserverProgram(func.runtime_kind);
+  bool is_observer = mir::IsObserverProgram(func.runtime_meta);
 
   if (is_observer) {
     auto* ptr_ty = llvm::PointerType::getUnqual(llvm_ctx);
     auto* void_ty = llvm::Type::getVoidTy(llvm_ctx);
-    if (func.runtime_kind == mir::RuntimeProgramKind::kMonitorCheck) {
+    if (std::holds_alternative<mir::MonitorCheckProgramMeta>(
+            func.runtime_meta)) {
       // Monitor check: (design*, engine*, observer_ctx*, prev_buf*)
       fn_type = llvm::FunctionType::get(
           void_ty, {ptr_ty, ptr_ty, ptr_ty, ptr_ty}, false);
@@ -2517,9 +2538,9 @@ struct PlaceCollector {
 // Evaluates expressions, compares against prev_buffer, and only prints if
 // values changed.
 auto DefineMonitorCheckProgram(
-    Context& context, mir::FunctionId func_id, llvm::Function* llvm_func,
-    const mir::MonitorCheckMeta& layout, const BodySiteContext& site_ctx)
-    -> Result<void> {
+    Context& context, const CuFacts& facts, mir::FunctionId func_id,
+    llvm::Function* llvm_func, const mir::MonitorCheckMeta& layout,
+    const BodySiteContext& site_ctx) -> Result<void> {
   // Observer programs are simulation-only (engine passed as explicit param).
   // No decision owner for observer programs.
   ExecutionContractScope contract_scope(
@@ -2618,7 +2639,7 @@ auto DefineMonitorCheckProgram(
   // Clear stale temp bindings and setup PHI nodes for block params
   context.ClearTemps();
   auto phi_state_or_err =
-      SetupBlockParamPhis(context, func.blocks, llvm_blocks);
+      SetupBlockParamPhis(context, facts, func.blocks, llvm_blocks);
   if (!phi_state_or_err) return std::unexpected(phi_state_or_err.error());
   auto& phi_state = *phi_state_or_err;
 
@@ -2640,7 +2661,8 @@ auto DefineMonitorCheckProgram(
           continue;
         }
       }
-      auto result = LowerStatement(context, instruction, exec_mode, site_ctx);
+      auto result =
+          LowerStatement(context, facts, instruction, exec_mode, site_ctx);
       if (!result) return std::unexpected(result.error());
     }
 
@@ -2649,10 +2671,10 @@ auto DefineMonitorCheckProgram(
     auto term_result = std::visit(
         common::Overloaded{
             [&](const mir::Jump& t) -> Result<void> {
-              return LowerJump(context, t, llvm_blocks, phi_state);
+              return LowerJump(context, facts, t, llvm_blocks, phi_state);
             },
             [&](const mir::Branch& t) -> Result<void> {
-              return LowerBranch(context, t, llvm_blocks, phi_state);
+              return LowerBranch(context, facts, t, llvm_blocks, phi_state);
             },
             [&](const mir::Return&) -> Result<void> {
               // At Return: evaluate operands from check program's DisplayEffect
@@ -2671,7 +2693,7 @@ auto DefineMonitorCheckProgram(
                   uint32_t offset = layout.offsets[j];
 
                   // Evaluate the operand
-                  auto val_result = LowerOperand(context, *op.value);
+                  auto val_result = LowerOperand(context, facts, *op.value);
                   if (!val_result) {
                     return std::unexpected(val_result.error());
                   }
@@ -2785,7 +2807,7 @@ auto DefineMonitorCheckProgram(
       if (const auto* effect = std::get_if<mir::Effect>(&instruction.data)) {
         if (const auto* display =
                 std::get_if<mir::DisplayEffect>(&effect->op)) {
-          auto result = LowerDisplayEffect(context, *display);
+          auto result = LowerDisplayEffect(context, facts, *display);
           if (!result) return std::unexpected(result.error());
           break;
         }
@@ -2823,7 +2845,7 @@ auto DefineMonitorCheckProgram(
 // LyraMonitorRegister. Called at end of setup program's exit block, before
 // return.
 auto EmitMonitorSetupEpilogue(
-    Context& context, mir::FunctionId setup_program_id,
+    Context& context, const CuFacts& facts, mir::FunctionId setup_program_id,
     const mir::MonitorSetupMeta& setup_meta, llvm::Value* design_ptr,
     llvm::Value* engine_ptr) -> Result<void> {
   auto& builder = context.GetBuilder();
@@ -2866,15 +2888,17 @@ auto EmitMonitorSetupEpilogue(
         UnsupportedCategory::kFeature));
   }
 
-  // Read layout from the check program's MIR metadata (single source of truth)
+  // Read layout from the check program's MIR metadata (single source of truth).
   const auto& check_func = arena[setup_meta.check_program];
-  if (!check_func.monitor_check_meta.has_value()) {
+  const auto* check_program_meta =
+      std::get_if<mir::MonitorCheckProgramMeta>(&check_func.runtime_meta);
+  if (check_program_meta == nullptr) {
     return std::unexpected(context.GetDiagnosticContext().MakeUnsupported(
         context.GetCurrentOrigin(),
         "$monitor layout not found for setup epilogue",
         UnsupportedCategory::kFeature));
   }
-  const auto* layout = &*check_func.monitor_check_meta;
+  const auto* layout = &check_program_meta->meta;
 
   llvm::Value* init_buf = nullptr;
   if (layout->total_size > 0) {
@@ -2909,7 +2933,7 @@ auto EmitMonitorSetupEpilogue(
       uint32_t offset = layout->offsets[i];
 
       // Lower the operand to get current value
-      auto val_result = LowerOperandRaw(context, *op.value);
+      auto val_result = LowerOperandRaw(context, facts, *op.value);
       if (!val_result) return std::unexpected(val_result.error());
       llvm::Value* value = *val_result;
 
@@ -2971,17 +2995,17 @@ auto EmitMonitorSetupEpilogue(
 //
 // First cut: user subroutine calls with all by-value actuals only.
 auto DefineDeferredAssertionThunk(
-    Context& context, llvm::Function* llvm_func,
+    Context& context, const CuFacts& facts, llvm::Function* llvm_func,
     const mir::DeferredUserCallAction& action,
     const DeferredCalleeBackendInfo& callee_backend) -> Result<void> {
   auto plan = DeriveDeferredCallPlan(action);
 
   auto& llvm_ctx = context.GetLlvmContext();
   auto& builder = context.GetBuilder();
-  const auto& types = context.GetTypeArena();
+  const auto& types = *facts.types;
   auto* ptr_ty = llvm::PointerType::getUnqual(llvm_ctx);
   auto* i32_ty = llvm::Type::getInt32Ty(llvm_ctx);
-  bool force_two_state = context.IsForceTwoState();
+  bool force_two_state = facts.force_two_state;
 
   auto* entry_bb = llvm::BasicBlock::Create(llvm_ctx, "entry", llvm_func);
   builder.SetInsertPoint(entry_bb);
@@ -3115,7 +3139,8 @@ auto DefineDeferredAssertionThunk(
 }
 
 auto CompileDeferredAssertionArtifacts(
-    Context& context, std::span<const mir::DeferredAssertionSiteInfo> sites,
+    Context& context, const CuFacts& facts,
+    std::span<const mir::DeferredAssertionSiteInfo> sites,
     std::span<const DeferredSiteCalleeInfo> callee_info,
     std::string_view name_prefix)
     -> Result<std::vector<DeferredSiteCompiledArtifact>> {
@@ -3124,8 +3149,8 @@ auto CompileDeferredAssertionArtifacts(
   auto& llvm_ctx = context.GetLlvmContext();
   auto& module = context.GetModule();
   const auto& data_layout = module.getDataLayout();
-  const auto& types = context.GetTypeArena();
-  bool force_two_state = context.IsForceTwoState();
+  const auto& types = *facts.types;
+  bool force_two_state = facts.force_two_state;
   auto* ptr_ty = llvm::PointerType::getUnqual(llvm_ctx);
   auto* void_ty = llvm::Type::getVoidTy(llvm_ctx);
   auto* i32_ty = llvm::Type::getInt32Ty(llvm_ctx);
@@ -3144,8 +3169,8 @@ auto CompileDeferredAssertionArtifacts(
     auto* fn = llvm::Function::Create(
         fn_type, llvm::Function::InternalLinkage, name, &module);
 
-    auto result =
-        DefineDeferredAssertionThunk(context, fn, action, callee_backend);
+    auto result = DefineDeferredAssertionThunk(
+        context, facts, fn, action, callee_backend);
     if (!result) return std::unexpected(result.error());
 
     auto plan = DeriveDeferredCallPlan(action);
@@ -3197,32 +3222,28 @@ auto CompileDeferredAssertionArtifacts(
 }
 
 auto DefineMirFunction(
-    Context& context, mir::FunctionId func_id, llvm::Function* llvm_func,
-    const BodySiteContext& site_ctx) -> Result<void> {
+    Context& context, const CuFacts& facts, mir::FunctionId func_id,
+    llvm::Function* llvm_func, const BodySiteContext& site_ctx)
+    -> Result<void> {
   const auto& arena = context.GetMirArena();
   const auto& func = arena[func_id];
 
   // Monitor check observer programs have special lowering with comparison
-  // logic. Layout metadata is owned by the MIR function (set at MIR
-  // construction time).
-  if (func.runtime_kind == mir::RuntimeProgramKind::kMonitorCheck) {
-    if (!func.monitor_check_meta.has_value()) {
-      return std::unexpected(context.GetDiagnosticContext().MakeUnsupported(
-          func.origin, "monitor check observer program missing layout",
-          UnsupportedCategory::kFeature));
-    }
+  // logic. Layout metadata is owned by the MIR function.
+  if (const auto* check_meta =
+          std::get_if<mir::MonitorCheckProgramMeta>(&func.runtime_meta)) {
     return DefineMonitorCheckProgram(
-        context, func_id, llvm_func, *func.monitor_check_meta, site_ctx);
+        context, facts, func_id, llvm_func, check_meta->meta, site_ctx);
   }
 
   auto& llvm_ctx = context.GetLlvmContext();
   auto& builder = context.GetBuilder();
-  const auto& types = context.GetTypeArena();
+  const auto& types = *facts.types;
 
   // Select execution contract based on callable category:
   // - Observer programs (strobe/setup): simulation-only, engine always non-null
   // - User-defined functions/tasks: cross-context, engine may be null
-  bool is_observer_program = mir::IsObserverProgram(func.runtime_kind);
+  bool is_observer_program = mir::IsObserverProgram(func.runtime_meta);
   auto store_mode = is_observer_program ? DesignStoreMode::kNotifySimulation
                                         : DesignStoreMode::kNotifyCrossContext;
   ExecutionContractScope contract_scope(context, store_mode);
@@ -3267,14 +3288,13 @@ auto DefineMirFunction(
   auto* engine_arg = llvm_func->getArg(arg_offset + 1);
 
   // Two orthogonal axes determine function entry:
-  //   1. ABI: observer programs always receive ObserverContext* (from
-  //   runtime_kind)
+  //   1. ABI: observer programs always receive ObserverContext*
   //   2. Entry: module-scoped functions enter specialization-local mode
   // These are independent: a design-global observer receives ObserverContext*
   // but does not enter specialization-local mode (context fields are
   // zero/null).
   bool is_module_scoped = func.abi_contract.needs_module_binding;
-  bool is_observer = mir::IsObserverProgram(func.runtime_kind);
+  bool is_observer = mir::IsObserverProgram(func.runtime_meta);
   unsigned context_arg_count = 0;
   if (is_observer) {
     // SetupObserverProgramEntry handles design/engine/observer_ctx setup
@@ -3334,7 +3354,8 @@ auto DefineMirFunction(
         builder.CreateAlloca(llvm_func->getReturnType(), nullptr, "retval");
 
     // Default-initialize the return slot (part of the storage invariant).
-    EmitSVDefaultInit(context, return_value_ptr, func.signature.return_type);
+    EmitSVDefaultInit(
+        context, facts, return_value_ptr, func.signature.return_type);
   }
 
   // PROLOGUE: Allocate and default-initialize ALL locals/temps at function
@@ -3414,7 +3435,7 @@ auto DefineMirFunction(
             context.SetPlaceAlias(it->second, arg_val);
           } else {
             // Copy-in at entry, writeback at exit
-            auto local_type = GetLlvmTypeForType(context, param.type);
+            auto local_type = GetLlvmTypeForType(facts, context, param.type);
             if (!local_type) return std::unexpected(local_type.error());
             llvm::Value* initial_val =
                 builder.CreateLoad(*local_type, arg_val, "inout_init");
@@ -3459,7 +3480,7 @@ auto DefineMirFunction(
   // Clear stale temp bindings and setup PHI nodes for block params
   context.ClearTemps();
   auto phi_state_or_err =
-      SetupBlockParamPhis(context, func.blocks, llvm_blocks);
+      SetupBlockParamPhis(context, facts, func.blocks, llvm_blocks);
   if (!phi_state_or_err) return std::unexpected(phi_state_or_err.error());
   auto& phi_state = *phi_state_or_err;
 
@@ -3474,7 +3495,8 @@ auto DefineMirFunction(
 
     // Lower all instructions
     for (const auto& instruction : block.statements) {
-      auto result = LowerStatement(context, instruction, exec_mode, site_ctx);
+      auto result =
+          LowerStatement(context, facts, instruction, exec_mode, site_ctx);
       if (!result) return std::unexpected(result.error());
     }
 
@@ -3484,10 +3506,10 @@ auto DefineMirFunction(
     auto term_result = std::visit(
         common::Overloaded{
             [&](const mir::Jump& t) -> Result<void> {
-              return LowerJump(context, t, llvm_blocks, phi_state);
+              return LowerJump(context, facts, t, llvm_blocks, phi_state);
             },
             [&](const mir::Branch& t) -> Result<void> {
-              return LowerBranch(context, t, llvm_blocks, phi_state);
+              return LowerBranch(context, facts, t, llvm_blocks, phi_state);
             },
             [&](const mir::Return& t) -> Result<void> {
               // Handle return value based on return policy
@@ -3508,11 +3530,11 @@ auto DefineMirFunction(
                   }
                   // MoveInit directly from source Place to sret out-param
                   MoveInit(
-                      context, sret_ptr, *src_ptr_result,
+                      context, facts, sret_ptr, *src_ptr_result,
                       func.signature.return_type);
                 } else if (return_value_ptr != nullptr) {
                   // Direct return: load value and store to return slot
-                  auto val_result = LowerOperandRaw(context, *t.value);
+                  auto val_result = LowerOperandRaw(context, facts, *t.value);
                   if (!val_result) return std::unexpected(val_result.error());
                   builder.CreateStore(*val_result, return_value_ptr);
                 }
@@ -3545,16 +3567,11 @@ auto DefineMirFunction(
   builder.SetInsertPoint(exit_block);
 
   // Setup programs need serialization + registration before returning.
-  // Setup programs need serialization + registration before returning.
-  // Metadata is owned by the MIR function (set at MIR construction time).
-  if (func.runtime_kind == mir::RuntimeProgramKind::kMonitorSetup) {
-    if (!func.monitor_setup_meta.has_value()) {
-      return std::unexpected(context.GetDiagnosticContext().MakeUnsupported(
-          func.origin, "monitor setup program missing info",
-          UnsupportedCategory::kFeature));
-    }
+  // Metadata is owned by the MIR function.
+  if (const auto* setup_meta =
+          std::get_if<mir::MonitorSetupProgramMeta>(&func.runtime_meta)) {
     auto result = EmitMonitorSetupEpilogue(
-        context, func_id, *func.monitor_setup_meta, design_arg, engine_arg);
+        context, facts, func_id, setup_meta->meta, design_arg, engine_arg);
     if (!result) return std::unexpected(result.error());
   }
 
@@ -3564,7 +3581,7 @@ auto DefineMirFunction(
   for (const auto& [caller_ptr, local_alloca, type_id] : output_param_ptrs) {
     // Load from local and assign to caller's storage
     // MoveAssign handles destroying old value in caller's storage
-    MoveAssign(context, caller_ptr, local_alloca, type_id);
+    MoveAssign(context, facts, caller_ptr, local_alloca, type_id);
   }
 
   if (ret_type.Kind() == TypeKind::kVoid || uses_sret) {

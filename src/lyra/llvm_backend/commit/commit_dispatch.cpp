@@ -18,15 +18,17 @@ namespace lyra::lowering::mir_to_llvm {
 // write_plan/write_dispatch. Retained for backward compatibility with callers
 // (assoc_op, call, etc.) that have an already-loaded llvm::Value*.
 auto CommitValue(
-    Context& ctx, mir::PlaceId target, llvm::Value* raw_value, TypeId type_id,
-    OwnershipPolicy policy) -> Result<void> {
+    Context& ctx, const CuFacts& facts, mir::PlaceId target,
+    llvm::Value* raw_value, TypeId type_id, OwnershipPolicy policy)
+    -> Result<void> {
   return DispatchWrite(
-      ctx, mir::WriteTarget{target}, RawValueSource{raw_value}, type_id,
+      ctx, facts, mir::WriteTarget{target}, RawValueSource{raw_value}, type_id,
       policy);
 }
 
 void CommitMoveCleanupIfTemp(
-    Context& ctx, mir::PlaceId source, OwnershipPolicy policy, TypeId type_id) {
+    Context& ctx, const CuFacts& facts, mir::PlaceId source,
+    OwnershipPolicy policy, TypeId type_id) {
   // Gate 1: Only kMove requires null-out
   if (policy != OwnershipPolicy::kMove) {
     return;
@@ -51,7 +53,7 @@ void CommitMoveCleanupIfTemp(
   }
 
   // Null out managed fields in source (delegate to lifecycle module)
-  MoveCleanup(ctx, *src_ptr_result, type_id);
+  MoveCleanup(ctx, facts, *src_ptr_result, type_id);
 }
 
 }  // namespace lyra::lowering::mir_to_llvm

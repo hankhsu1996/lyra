@@ -116,6 +116,7 @@ auto DumpMir(const CompilationInput& input) -> int {
       .instance_table = &hir_result.instance_table,
       .specialization_map = &hir_result.specialization_map,
       .child_coord_map = &hir_result.child_coord_map,
+      .body_timescales = &hir_result.body_timescales,
   };
   std::expected<lowering::hir_to_mir::LoweringResult, Diagnostic> mir_result;
   {
@@ -186,6 +187,7 @@ auto DumpDpiHeader(const CompilationInput& input) -> int {
       .instance_table = &hir_result.instance_table,
       .specialization_map = &hir_result.specialization_map,
       .child_coord_map = &hir_result.child_coord_map,
+      .body_timescales = &hir_result.body_timescales,
   };
   std::expected<lowering::hir_to_mir::LoweringResult, Diagnostic> mir_result;
   {
@@ -254,6 +256,7 @@ auto DumpLlvm(const CompilationInput& input) -> int {
       .instance_table = &hir_result.instance_table,
       .specialization_map = &hir_result.specialization_map,
       .child_coord_map = &hir_result.child_coord_map,
+      .body_timescales = &hir_result.body_timescales,
   };
   std::expected<lowering::hir_to_mir::LoweringResult, Diagnostic> mir_result;
   {
@@ -287,7 +290,6 @@ auto DumpLlvm(const CompilationInput& input) -> int {
       .feature_flags = 0,
       .signal_trace_path = {},
       .iteration_limit = 0,
-      .body_timescales = &hir_result.body_timescales,
       .force_two_state = input.two_state,
       .collect_forwarding_analysis =
           output.IsEnabled(OutputCategory::kAnalysis),
@@ -306,7 +308,7 @@ auto DumpLlvm(const CompilationInput& input) -> int {
     return 1;
   }
 
-  std::cout << lowering::mir_to_llvm::DumpLlvmIr(*llvm_result);
+  std::cout << lowering::mir_to_llvm::DumpLlvmIr(*llvm_result->module);
 
   output.Flush();
   return 0;
