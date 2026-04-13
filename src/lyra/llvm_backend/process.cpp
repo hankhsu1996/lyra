@@ -3463,8 +3463,7 @@ auto DefineMirFunction(
           if (is_managed) {
             // Alias the local to caller's storage - writes go directly there.
             // Caller's slot may contain old handle; callee must Destroy before
-            // overwriting. Since we alias, CommitValue's Destroy will handle
-            // it.
+            // overwriting. Since we alias, lifecycle dispatch handles it.
             context.SetPlaceAlias(it->second, arg_val);
           } else {
             // Non-managed: local is default-initialized, writeback at exit

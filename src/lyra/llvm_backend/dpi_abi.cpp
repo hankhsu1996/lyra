@@ -18,11 +18,12 @@
 #include "lyra/common/internal_error.hpp"
 #include "lyra/common/type_queries.hpp"
 #include "lyra/llvm_backend/callable_abi.hpp"
-#include "lyra/llvm_backend/commit.hpp"
 #include "lyra/llvm_backend/compute/four_state_ops.hpp"
 #include "lyra/llvm_backend/compute/operand.hpp"
 #include "lyra/llvm_backend/context.hpp"
 #include "lyra/llvm_backend/cu_facts.hpp"
+#include "lyra/llvm_backend/instruction/commit_result.hpp"
+#include "lyra/llvm_backend/slot_access.hpp"
 #include "lyra/llvm_backend/value_repr.hpp"
 #include "lyra/mir/dpi_verify.hpp"
 #include "lyra/runtime/dpi_export_context.hpp"
@@ -705,7 +706,8 @@ auto PrepareDpiCallArgs(
 // ---------------------------------------------------------------------------
 
 auto CommitDpiOutputWritebacks(
-    Context& context, const CuFacts& facts, const mir::DpiCall& call,
+    Context& context, const CuFacts& facts, SlotAccessResolver& resolver,
+    const mir::DpiCall& call,
     const std::vector<DpiArgLoweringState>& arg_states) -> Result<void> {
   auto& builder = context.GetBuilder();
   auto& llvm_ctx = context.GetLlvmContext();
@@ -755,9 +757,8 @@ auto CommitDpiOutputWritebacks(
       decoded = CoerceFromDpiAbiType(
           context.GetBuilder(), raw, param.abi_type, *dest_type);
     }
-    auto result = CommitValue(
-        context, facts, *binding.writeback_dest, decoded, param.sv_type,
-        OwnershipPolicy::kMove);
+    auto result = CommitRuntimeResult(
+        context, facts, resolver, *binding.writeback_dest, decoded);
     if (!result) return std::unexpected(result.error());
   }
   return {};
@@ -844,8 +845,9 @@ auto EncodeIndirectDpiReturn(
 }
 
 auto CommitDpiReturnValue(
-    Context& context, const CuFacts& facts, const mir::DpiCall& call,
-    llvm::CallInst* call_inst, llvm::Value* indirect_ret_ptr) -> Result<void> {
+    Context& context, const CuFacts& facts, SlotAccessResolver& resolver,
+    const mir::DpiCall& call, llvm::CallInst* call_inst,
+    llvm::Value* indirect_ret_ptr) -> Result<void> {
   const auto& sig = call.callee.signature;
   auto& builder = context.GetBuilder();
   auto& llvm_ctx = context.GetLlvmContext();
@@ -894,9 +896,8 @@ auto CommitDpiReturnValue(
 
   if (call.ret->dest.has_value()) {
     llvm::Value* ret_val = builder.CreateLoad(*tmp_type, *tmp_ptr);
-    return CommitValue(
-        context, facts, *call.ret->dest, ret_val, call.ret->type,
-        OwnershipPolicy::kMove);
+    return CommitRuntimeResult(
+        context, facts, resolver, *call.ret->dest, ret_val);
   }
 
   return {};
@@ -1171,8 +1172,8 @@ void EndContextImportCall(Context& context, const DpiContextCallState& st) {
 }
 
 auto LowerDpiImportCall(
-    Context& context, const CuFacts& facts, const mir::DpiCall& call,
-    const ActiveExecutionMode& mode) -> Result<void> {
+    Context& context, const CuFacts& facts, SlotAccessResolver& resolver,
+    const mir::DpiCall& call, const ActiveExecutionMode& mode) -> Result<void> {
   const auto& ref = call.callee;
   const auto& sig = ref.signature;
   mir::ValidateDpiSignatureContract(sig, "LowerDpiImportCall");
@@ -1226,12 +1227,13 @@ auto LowerDpiImportCall(
   // --- End non-fallible region ---
 
   // Phase C.1: writeback output/inout params.
-  auto wb_result = CommitDpiOutputWritebacks(context, facts, call, arg_states);
+  auto wb_result =
+      CommitDpiOutputWritebacks(context, facts, resolver, call, arg_states);
   if (!wb_result) return std::unexpected(wb_result.error());
 
   // Phase C.2: handle return value.
   return CommitDpiReturnValue(
-      context, facts, call, call_inst, indirect_ret_ptr);
+      context, facts, resolver, call, call_inst, indirect_ret_ptr);
 }
 
 namespace {

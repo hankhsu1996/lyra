@@ -160,11 +160,9 @@ auto EmitPackedOrFloatWrite(
     return {};
   }
 
-  // Legacy raw path: convert raw value to PackedRValue at the dispatch
-  // boundary. This is the single conversion point for callers (system TF,
-  // assoc_op, call, etc.) that produce raw llvm::Value* and route through
-  // CommitValue -> DispatchWrite. The raw value's LLVM type is authoritative:
-  // scalar means 2-state, struct {iN,iN} means 4-state.
+  // Raw value path: convert raw llvm::Value* to PackedRValue at the dispatch
+  // boundary. The raw value's LLVM type is authoritative: scalar means 2-state,
+  // struct {iN,iN} means 4-state.
   auto raw = ResolveRawValue(ctx, facts, source);
   if (!raw) return std::unexpected(raw.error());
 

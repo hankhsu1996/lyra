@@ -222,9 +222,9 @@ auto LowerUserCallImpl(
 
   if (call.ret->dest.has_value()) {
     // Statement form: commit result to dest.
-    // For managed types, CommitValue transfers ownership to dest; tmp is
-    // not used (no Use(tmp) in statement form), so we skip the tmp store
-    // to avoid leaving a stale handle in tmp.
+    // For managed types, ownership transfers to dest; tmp is not used
+    // (no Use(tmp) in statement form), so we skip the tmp store to avoid
+    // leaving a stale handle in tmp.
     // For non-managed types, tmp store is harmless but unnecessary.
     if (!is_managed) {
       builder.CreateStore(call_result, *tmp_ptr);

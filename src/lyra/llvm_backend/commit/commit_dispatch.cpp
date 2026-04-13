@@ -1,30 +1,14 @@
-#include <expected>
-
 #include "lyra/common/internal_error.hpp"
 #include "lyra/llvm_backend/commit.hpp"
 #include "lyra/llvm_backend/context.hpp"
 #include "lyra/llvm_backend/lifecycle.hpp"
 #include "lyra/llvm_backend/lifecycle/detail.hpp"
 #include "lyra/llvm_backend/ownership.hpp"
-#include "lyra/llvm_backend/write_plan.hpp"
 #include "lyra/mir/arena.hpp"
 #include "lyra/mir/handle.hpp"
 #include "lyra/mir/place.hpp"
 
 namespace lyra::lowering::mir_to_llvm {
-
-// Raw-value commit adapter. Routes through DispatchWrite with RawValueSource.
-// Does not own semantic write routing -- that lives in
-// write_plan/write_dispatch. Retained for backward compatibility with callers
-// (assoc_op, call, etc.) that have an already-loaded llvm::Value*.
-auto CommitValue(
-    Context& ctx, const CuFacts& facts, mir::PlaceId target,
-    llvm::Value* raw_value, TypeId type_id, OwnershipPolicy policy)
-    -> Result<void> {
-  return DispatchWrite(
-      ctx, facts, mir::WriteTarget{target}, RawValueSource{raw_value}, type_id,
-      policy);
-}
 
 void CommitMoveCleanupIfTemp(
     Context& ctx, const CuFacts& facts, mir::PlaceId source,

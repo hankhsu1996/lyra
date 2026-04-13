@@ -115,7 +115,7 @@ struct DeferredAssign {
 // 1. tmp places are MIR-visible and preallocated by PlaceCollector
 // 2. Call execution writes results ONLY to tmp places
 // 3. After call returns, results are committed:
-//    - LLVM: CommitValue(dest, Load(tmp), type, kMove)
+//    - LLVM: CommitRuntimeResult(dest, Load(tmp))
 //    - Interpreter: StoreToPlace(dest, value_from_tmp)
 // 4. No direct "callee writes to dest" - even sret passes tmp pointer
 //

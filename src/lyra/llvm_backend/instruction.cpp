@@ -68,7 +68,8 @@ auto LowerStatement(
             return LowerCall(context, facts, resolver, call, mode);
           },
           [&](const mir::DpiCall& dpi_call) -> Result<void> {
-            return dpi::LowerDpiImportCall(context, facts, dpi_call, mode);
+            return dpi::LowerDpiImportCall(
+                context, facts, resolver, dpi_call, mode);
           },
           [&](const mir::BuiltinCall& call) -> Result<void> {
             return LowerBuiltinCall(context, facts, resolver, call);
@@ -157,7 +158,7 @@ auto LowerStatement(
             return {};
           },
           [&](const mir::Initialize& init) -> Result<void> {
-            // Pure store: no lifecycle dispatch (no Destroy, no CommitValue).
+            // Pure store: no lifecycle dispatch, no write routing.
             auto raw_or_err =
                 LowerOperandRaw(context, facts, resolver, init.value);
             if (!raw_or_err) return std::unexpected(raw_or_err.error());

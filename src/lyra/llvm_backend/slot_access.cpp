@@ -11,7 +11,6 @@
 #include "lyra/common/internal_error.hpp"
 #include "lyra/common/type.hpp"
 #include "lyra/common/type_queries.hpp"
-#include "lyra/llvm_backend/commit.hpp"
 #include "lyra/llvm_backend/context.hpp"
 #include "lyra/llvm_backend/layout/layout.hpp"
 #include "lyra/llvm_backend/packed_storage_view.hpp"
@@ -33,7 +32,9 @@ auto CanonicalSlotAccess::LoadSlotValue(mir::PlaceId place_id)
 auto CanonicalSlotAccess::CommitSlotValue(
     mir::PlaceId target, llvm::Value* value, TypeId type_id,
     OwnershipPolicy policy) -> Result<void> {
-  return CommitValue(*ctx_, *facts_, target, value, type_id, policy);
+  return DispatchWrite(
+      *ctx_, *facts_, mir::WriteTarget{target}, RawValueSource{value}, type_id,
+      policy);
 }
 
 auto CanonicalSlotAccess::CommitPlainSlotValue(
@@ -95,7 +96,9 @@ auto ActivationLocalSlotAccess::CommitSlotValue(
     OwnershipPolicy policy) -> Result<void> {
   const auto* storage = FindManagedStorage(target);
   if (storage == nullptr) {
-    return CommitValue(*ctx_, *facts_, target, value, type_id, policy);
+    return DispatchWrite(
+        *ctx_, *facts_, mir::WriteTarget{target}, RawValueSource{value},
+        type_id, policy);
   }
   ctx_->GetBuilder().CreateStore(value, storage->shadow_ptr);
   return {};

@@ -285,8 +285,8 @@ void CollectStatementAccesses(
               }
             }
             // Call return dest: the call writes the return value to this
-            // destination through CommitValue inside LowerCall. This is
-            // an external write through the canonical call path.
+            // destination through CommitRuntimeResult inside LowerCall.
+            // This is an external write through the canonical call path.
             if (c.ret && c.ret->dest) {
               const auto& place = arena[*c.ret->dest];
               auto info = ExtractModuleSlotInfo(place);
