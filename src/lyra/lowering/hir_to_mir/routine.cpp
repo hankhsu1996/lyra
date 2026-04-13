@@ -15,6 +15,7 @@
 #include "lyra/lowering/hir_to_mir/builder.hpp"
 #include "lyra/lowering/hir_to_mir/context.hpp"
 #include "lyra/lowering/hir_to_mir/decision_site_allocator.hpp"
+#include "lyra/lowering/hir_to_mir/default_init.hpp"
 #include "lyra/lowering/hir_to_mir/lower.hpp"
 #include "lyra/lowering/hir_to_mir/statement.hpp"
 #include "lyra/lowering/origin_map.hpp"
@@ -135,6 +136,7 @@ auto LowerFunctionBody(
       .next_local_id = 0,
       .next_temp_id = 0,
       .local_types = {},
+      .local_place_ids = {},
       .temp_types = {},
       .temp_metadata = {},
       .builtin_types = input.builtin_types,
@@ -197,6 +199,47 @@ auto LowerFunctionBody(
 
   std::vector<mir::BasicBlock> blocks = builder.Finish();
   auto decision_sites = builder.TakeDecisionSites();
+
+  // Synthesize MIR default-init prologue for non-parameter kLocal locals.
+  // SV requires function-local storage to be initialized at function entry
+  // (LRM 6.7). This includes the return slot (readable via return-by-name
+  // before first write) and all source-level locals.
+  //
+  // Parameters are excluded: the backend stores caller-provided argument
+  // values into parameter locals after prologue init. The MIR body must
+  // not overwrite them with default values.
+  {
+    // Use the function body as the origin for synthetic prologue statements.
+    // These don't correspond to a specific source line but are attributed to
+    // the function for diagnostics and dump readability.
+    common::OriginId init_origin = common::OriginId::Invalid();
+    if (origin_map != nullptr) {
+      init_origin = origin_map->Record(
+          lowering::MirNode{std::monostate{}},
+          lowering::HirSource{function.body});
+    }
+    std::vector<mir::Statement> prologue;
+    for (uint32_t slot = 0; slot < ctx.local_place_ids.size(); ++slot) {
+      // Skip parameter slots -- their values come from the caller.
+      bool is_param = false;
+      for (uint32_t ps : param_local_slots) {
+        if (ps == slot) {
+          is_param = true;
+          break;
+        }
+      }
+      if (is_param) continue;
+      AppendDefaultInitStatements(
+          ctx.local_place_ids[slot], ctx.local_types[slot], mir_arena,
+          *input.type_arena, ctx.builtin_types.offset_type, init_origin,
+          prologue);
+    }
+    if (!prologue.empty()) {
+      auto& entry = blocks[entry_idx.value];
+      entry.statements.insert(
+          entry.statements.begin(), prologue.begin(), prologue.end());
+    }
+  }
 
   // Signature and origins are set by caller (SetFunctionBody); placeholders
   // here
@@ -271,6 +314,7 @@ auto LowerTaskBody(
       .next_local_id = 0,
       .next_temp_id = 0,
       .local_types = {},
+      .local_place_ids = {},
       .temp_types = {},
       .temp_metadata = {},
       .builtin_types = input.builtin_types,
@@ -315,6 +359,35 @@ auto LowerTaskBody(
 
   std::vector<mir::BasicBlock> blocks = builder.Finish();
   auto decision_sites = builder.TakeDecisionSites();
+
+  // Synthesize MIR default-init prologue for non-parameter task locals.
+  {
+    common::OriginId init_origin = common::OriginId::Invalid();
+    if (origin_map != nullptr) {
+      init_origin = origin_map->Record(
+          lowering::MirNode{std::monostate{}}, lowering::HirSource{task.body});
+    }
+    std::vector<mir::Statement> prologue;
+    for (uint32_t slot = 0; slot < ctx.local_place_ids.size(); ++slot) {
+      bool is_param = false;
+      for (uint32_t ps : param_local_slots) {
+        if (ps == slot) {
+          is_param = true;
+          break;
+        }
+      }
+      if (is_param) continue;
+      AppendDefaultInitStatements(
+          ctx.local_place_ids[slot], ctx.local_types[slot], mir_arena,
+          *input.type_arena, ctx.builtin_types.offset_type, init_origin,
+          prologue);
+    }
+    if (!prologue.empty()) {
+      auto& entry = blocks[entry_idx.value];
+      entry.statements.insert(
+          entry.statements.begin(), prologue.begin(), prologue.end());
+    }
+  }
 
   return mir::Function{
       .signature = {},

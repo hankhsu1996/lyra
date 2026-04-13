@@ -792,6 +792,10 @@ void VerifyStatementOwnership(
                       cx.num_events));
             }
           },
+          [&](const Initialize& init) {
+            verify_place(init.dest, "Initialize.dest");
+            verify_operand_place(init.value, "Initialize.value");
+          },
       },
       stmt.data);
 }
@@ -900,6 +904,11 @@ void VerifyIntraBlockDefOrder(
                   aop.data);
             },
             [](const TriggerEvent&) {},
+            [&](const Initialize& init) {
+              VerifyOperandDefBeforeUse(
+                  init.value, available_temps, block_idx, stmt_idx,
+                  "Initialize.value", routine_kind);
+            },
         },
         stmt.data);
   }

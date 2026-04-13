@@ -72,6 +72,7 @@ auto Context::AllocLocal(SymbolId sym, TypeId type) -> LocalAllocation {
 
   // Populate type table during allocation, not post-collection
   local_types.push_back(type);
+  local_place_ids.push_back(place_id);
 
   return LocalAllocation{.place = place_id, .local_slot = local_slot};
 }

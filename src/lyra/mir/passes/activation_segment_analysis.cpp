@@ -256,6 +256,10 @@ void CollectStatementAccesses(
                             op, arena, block_index, stmt_index, accesses);
                       });
                     },
+                    [](const ZeroInitStorageEffect&) {
+                      // Zero-init is a prologue-only operation on local
+                      // storage. No canonical-state interaction.
+                    },
                 },
                 e.op);
           },
@@ -344,6 +348,12 @@ void CollectStatementAccesses(
           },
           [&](const AssocOp&) {},
           [](const TriggerEvent&) {},
+          [&](const Initialize& init) {
+            CollectWriteAccess(
+                init.dest, arena, block_index, stmt_index, accesses);
+            CollectOperandReads(
+                init.value, arena, block_index, stmt_index, accesses);
+          },
       },
       stmt.data);
 }
@@ -408,6 +418,7 @@ void AnalyzeStatementSemantics(
           [](const GuardedAssign&) {},
           [](const DeferredAssign&) {},
           [](const DefineTemp&) {},
+          [](const Initialize&) {},
           [&](const Effect& e) {
             std::visit(
                 common::Overloaded{
@@ -523,6 +534,7 @@ void AnalyzeStatementSemantics(
                     // read-only operands (tracked by CollectStatementAccesses).
                     // No canonical state write. No semantic fact needed.
                     [](const EnqueueDeferredAssertionEffect&) {},
+                    [](const ZeroInitStorageEffect&) {},
                 },
                 e.op);
           },

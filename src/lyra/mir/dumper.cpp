@@ -424,6 +424,10 @@ void Dumper::DumpBlock(const BasicBlock& bb, uint32_t index) {
             *out_ << std::format("assoc_op {}\n", FormatPlace(i.receiver));
           } else if constexpr (std::is_same_v<T, TriggerEvent>) {
             *out_ << std::format("trigger_event(event={})\n", i.event.value);
+          } else if constexpr (std::is_same_v<T, Initialize>) {
+            *out_ << std::format(
+                "initialize {} = {}\n", FormatPlace(i.dest),
+                FormatOperand(i.value));
           }
         },
         stmt.data);

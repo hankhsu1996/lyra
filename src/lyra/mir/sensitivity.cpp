@@ -310,6 +310,15 @@ void TransferStatement(
             // Conservative: assoc ops do not extend must-def
           },
           [](const TriggerEvent&) {},
+          [&](const Initialize& init) {
+            // Initialize writes to a place with a value, same as Assign.
+            CollectReadsFromOperand(init.value, arena, must_def, obs);
+            const auto& dest = arena[init.dest];
+            auto path = TryExtractWholeSignalPath(dest);
+            if (path.has_value()) {
+              must_def.Insert(*path);
+            }
+          },
       },
       stmt.data);
 }

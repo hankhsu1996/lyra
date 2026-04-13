@@ -2581,15 +2581,21 @@ auto DefineMonitorCheckProgram(
   PlaceCollector collector;
   collector.CollectFromFunction(func, arena);
 
-  // Allocate and initialize all collected places at function entry.
-  // INVARIANT: Observer programs must follow the same allocate-all + init-all
-  // policy as regular functions; no lazy storage creation is allowed.
-  // ComputePlacePointer
-  // will throw InternalError if storage is missing.
+  // Allocate all collected places and zero-initialize kTemp for lifecycle
+  // safety. Observer programs contain only compiler-generated kTemp places
+  // (no source-level locals).
   for (const auto& [key, root] : collector.roots) {
     auto alloca_or_err = context.GetOrCreatePlaceStorage(root);
     if (!alloca_or_err) return std::unexpected(alloca_or_err.error());
-    context.InitializePlaceStorage(*alloca_or_err, root.type);
+    if (root.kind != mir::PlaceRoot::Kind::kTemp) {
+      throw common::InternalError(
+          "GenerateObserverCheckFunction",
+          std::format(
+              "observer program has non-kTemp root (kind={})",
+              static_cast<int>(root.kind)));
+    }
+    llvm::Type* llvm_type = (*alloca_or_err)->getAllocatedType();
+    EmitMemsetZero(context, *alloca_or_err, llvm_type);
   }
 
   // Find the DisplayEffect from check program's MIR body (correct operand
@@ -3358,28 +3364,22 @@ auto DefineMirFunction(
         context, facts, return_value_ptr, func.signature.return_type);
   }
 
-  // PROLOGUE: Allocate and default-initialize ALL locals/temps at function
-  // entry. This matches SystemVerilog default initialization semantics and
-  // ensures deterministic behavior. Order: 1) allocate all, 2) initialize all,
-  // 3) store parameters
+  // PROLOGUE: Allocate all locals/temps.
   //
-  // CONTRACT: All function-local storage is default-initialized at function
-  // entry, including: kLocal, kTemp, and return slots.
-  // - Managed handles become nullptr (Destroy is a no-op on empty).
-  // - 4-state values become X per SV default init rules.
+  // kLocal: allocate only, no backend init. Semantic default initialization
+  // is explicit in MIR prologue via Initialize statements (pure store, no
+  // lifecycle) and ZeroInitStorageEffect (for unpacked unions).
+  // kTemp: zero-init for lifecycle safety (Destroy(nullptr) is no-op on first
+  // write). This is not semantic init.
   //
-  // Therefore: commit/assign paths may safely destroy old values even on first
-  // write, because Destroy(nullptr) is a no-op for managed types.
-  std::vector<std::pair<llvm::AllocaInst*, TypeId>> all_allocas;
+  // ABI return alloca (return_value_ptr) is initialized separately above.
   for (const auto& [key, root] : collector.roots) {
     auto alloca_or_err = context.GetOrCreatePlaceStorage(root);
     if (!alloca_or_err) return std::unexpected(alloca_or_err.error());
-    all_allocas.emplace_back(*alloca_or_err, root.type);
-  }
-
-  // Initialize all locals/temps with default values per SystemVerilog semantics
-  for (const auto& [alloca, type_id] : all_allocas) {
-    context.InitializePlaceStorage(alloca, type_id);
+    if (root.kind == mir::PlaceRoot::Kind::kTemp) {
+      auto* llvm_type = (*alloca_or_err)->getAllocatedType();
+      EmitMemsetZero(context, *alloca_or_err, llvm_type);
+    }
   }
 
   // Store argument values into parameter locals (overwriting default init).

@@ -150,6 +150,17 @@ auto LowerStatement(
                  builder.getInt32(te.event.value)});
             return {};
           },
+          [&](const mir::Initialize& init) -> Result<void> {
+            // Pure store: no lifecycle dispatch (no Destroy, no CommitValue).
+            auto raw_or_err =
+                LowerOperandRaw(context, facts, resolver, init.value);
+            if (!raw_or_err) return std::unexpected(raw_or_err.error());
+            auto place_ptr_or_err = context.GetPlacePointer(init.dest);
+            if (!place_ptr_or_err)
+              return std::unexpected(place_ptr_or_err.error());
+            context.GetBuilder().CreateStore(*raw_or_err, *place_ptr_or_err);
+            return {};
+          },
       },
       statement.data);
 }

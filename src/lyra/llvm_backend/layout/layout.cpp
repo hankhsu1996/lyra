@@ -688,6 +688,9 @@ void CollectPlacesFromEffectOp(
               CollectPlaceFromOperand(op, places);
             });
           },
+          [&](const mir::ZeroInitStorageEffect& zi) {
+            places.insert(zi.target);
+          },
       },
       effect);
 }
@@ -796,6 +799,10 @@ auto CollectProcessPlaces(const mir::Process& process, const mir::Arena& arena)
                     aop.data);
               },
               [](const mir::TriggerEvent&) {},
+              [&](const mir::Initialize& init) {
+                places.insert(init.dest);
+                CollectPlaceFromOperand(init.value, places);
+              },
           },
           instr.data);
     }
@@ -894,6 +901,7 @@ auto IsStatementPure(const mir::Statement& stmt) -> bool {
           [](const mir::BuiltinCall&) { return false; },
           [](const mir::AssocOp&) { return false; },
           [](const mir::TriggerEvent&) { return false; },
+          [](const mir::Initialize&) { return true; },
       },
       stmt.data);
 }

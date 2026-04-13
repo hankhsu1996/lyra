@@ -207,16 +207,9 @@ auto LowerConstant(
                     UnsupportedCategory::kType));
           },
           [&](const NullConstant& /*n*/) -> Result<llvm::Value*> {
-            const Type& ty = types[constant.type];
-            if (ty.Kind() != TypeKind::kChandle) {
-              return std::unexpected(
-                  context.GetDiagnosticContext().MakeUnsupported(
-                      context.GetCurrentOrigin(),
-                      std::format(
-                          "null constant for non-chandle type: {}",
-                          ToString(ty)),
-                      UnsupportedCategory::kType));
-            }
+            // Null handle: valid for chandle and all managed handle types
+            // (string, dynamic array, queue, associative array). All are
+            // represented as opaque pointers; null is the default/empty state.
             return llvm::ConstantPointerNull::get(
                 llvm::PointerType::getUnqual(llvm_ctx));
           },

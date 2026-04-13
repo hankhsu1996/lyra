@@ -162,10 +162,24 @@ struct TriggerEvent {
   EventId event;
 };
 
+// Initialize: first-write initialization of a place (dest := rhs).
+//
+// Unlike Assign, Initialize does NOT destroy/release previous contents.
+// It assumes the destination storage is uninitialized (no live value).
+// Used by MIR prologue synthesis for SV default initialization of
+// function-local storage.
+//
+// The backend lowers this as a pure store: no lifecycle dispatch,
+// no destroy-before-write, no copy-assign/move-assign semantics.
+struct Initialize {
+  PlaceId dest;
+  Operand value;
+};
+
 // Statement data variant.
 using StatementData = std::variant<
     Assign, GuardedAssign, Effect, DeferredAssign, Call, DpiCall, BuiltinCall,
-    DefineTemp, AssocOp, TriggerEvent>;
+    DefineTemp, AssocOp, TriggerEvent, Initialize>;
 
 // A statement that does not affect control flow.
 // - Assign, GuardedAssign, DeferredAssign write to a Place
@@ -181,7 +195,7 @@ struct Statement {
 // write targets (use ForEachWriteTarget for those). Use this for
 // centralized operand traversal rather than hand-maintained lists.
 template <class F>
-void ForEachOperand(const RightHandSide& rhs, F&& f) {
+void ForEachOperand(const RightHandSide& rhs, const F& f) {
   std::visit(
       common::Overloaded{
           [&](const Operand& op) { f(op); },
@@ -195,7 +209,7 @@ void ForEachOperand(const RightHandSide& rhs, F&& f) {
 }
 
 template <class F>
-void ForEachOperand(const StatementData& stmt, F&& f) {
+void ForEachOperand(const StatementData& stmt, const F& f) {
   std::visit(
       common::Overloaded{
           [&](const Assign& a) { ForEachOperand(a.rhs, f); },
@@ -242,18 +256,20 @@ void ForEachOperand(const StatementData& stmt, F&& f) {
           },
           [](const Effect&) {},
           [](const TriggerEvent&) {},
+          [&](const Initialize& init) { f(init.value); },
       },
       stmt);
 }
 
 // Generic write-target walker. Visits every WriteTarget in a statement.
 template <class F>
-void ForEachWriteTarget(const StatementData& stmt, F&& f) {
+void ForEachWriteTarget(const StatementData& stmt, const F& f) {
   std::visit(
       common::Overloaded{
           [&](const Assign& a) { f(a.dest); },
           [&](const GuardedAssign& a) { f(a.dest); },
           [&](const DeferredAssign& a) { f(a.dest); },
+          [&](const Initialize& init) { f(WriteTarget{init.dest}); },
           [](const auto&) {},
       },
       stmt);
