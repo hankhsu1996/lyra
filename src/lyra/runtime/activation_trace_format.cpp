@@ -22,6 +22,8 @@ auto WakeCauseLabel(WakeCause cause) -> const char* {
       return "initial";
     case WakeCause::kRepeat:
       return "repeat";
+    case WakeCause::kEvent:
+      return "event";
   }
   return "unknown";
 }

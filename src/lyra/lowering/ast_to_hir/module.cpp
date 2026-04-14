@@ -231,6 +231,7 @@ auto LowerModuleBody(
               .functions = std::move(functions),
               .tasks = std::move(tasks),
               .dpi_imports = std::move(dpi_imports),
+              .dpi_exports = {},
               .arena = std::move(body_arena),
               .constant_arena = std::move(body_constant_arena),
           },

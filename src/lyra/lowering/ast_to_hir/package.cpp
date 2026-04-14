@@ -170,6 +170,7 @@ auto LowerPackage(
       .variables = std::move(variables),
       .functions = std::move(functions),
       .dpi_imports = std::move(dpi_imports),
+      .dpi_exports = {},
       .init_process = init_process,
   };
 }

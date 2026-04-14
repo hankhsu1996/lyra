@@ -175,6 +175,7 @@ void Dumper::Dump(ProcessId id) {
       case ProcessKind::kFinal:
         return "final";
     }
+    return "unknown";
   }();
 
   *out_ << kind_str << " ";
@@ -540,6 +541,14 @@ void Dumper::Dump(StatementId id) {
       }
       break;
     }
+
+    case StatementKind::kNamedEventWait:
+      *out_ << "@(named_event);\n";
+      break;
+
+    case StatementKind::kEventTrigger:
+      *out_ << "-> event;\n";
+      break;
   }
 }
 
@@ -779,6 +788,7 @@ void Dumper::Dump(ExpressionId id) {
                   case Severity::kError:
                     return "$error";
                 }
+                return "$unknown";
               }();
               *out_ << name << "(";
               bool first = true;

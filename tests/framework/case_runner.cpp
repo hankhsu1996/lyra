@@ -6,8 +6,8 @@
 #include <cstring>
 #include <exception>
 #include <format>
+#include <iostream>
 #include <map>
-#include <print>
 #include <string>
 #include <string_view>
 #include <unistd.h>
@@ -249,12 +249,12 @@ auto InterpretForkOutcome(const ProcessOutcome& proc) -> CaseExecutionResult {
     try {
       std::rethrow_exception(eptr);
     } catch (const std::exception& e) {
-      std::print(stderr, "terminate: {}\n", e.what());
+      std::cerr << std::format("terminate: {}\n", e.what());
     } catch (...) {
-      std::print(stderr, "terminate: unknown exception\n");
+      std::cerr << "terminate: unknown exception\n";
     }
   } else {
-    std::print(stderr, "terminate called without active exception\n");
+    std::cerr << "terminate called without active exception\n";
   }
   std::abort();
 }

@@ -75,7 +75,8 @@ auto CanonicalizeKeyString(const char* str_data, uint32_t str_len)
     -> CanonResult {
   return CanonResult{
       .status = KeyStatus::kOk,
-      .payload = CanonKeyPayload{.str_value = std::string(str_data, str_len)}};
+      .payload = CanonKeyPayload{
+          .int_words = {}, .str_value = std::string(str_data, str_len)}};
 }
 
 auto CanonicalizeKeyRaw(
@@ -107,7 +108,8 @@ auto CanonicalizeKeyRaw(
 
   return CanonResult{
       .status = KeyStatus::kOk,
-      .payload = CanonKeyPayload{.int_words = std::move(words)}};
+      .payload =
+          CanonKeyPayload{.int_words = std::move(words), .str_value = {}}};
 }
 
 auto CanonicalizeKey(const RuntimeValue& value, const KeySpec& spec)
