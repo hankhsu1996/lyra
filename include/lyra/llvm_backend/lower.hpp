@@ -73,7 +73,7 @@ class SimulationHooks {
   // Variable inspection is backend-owned via GetTrackedVariables().
   virtual void EmitPostSimulationReports(
       Context& /*context*/, llvm::Value* /*design_state*/,
-      llvm::Value* /*abi_ptr*/) {
+      llvm::Value* /*abi_ptr*/, llvm::Value* /*run_session_ptr*/) {
   }
 };
 
@@ -134,9 +134,10 @@ auto DumpLlvmIr(const llvm::Module& module) -> std::string;
 // Type metadata is pre-resolved at plan-building time.
 void EmitVariableInspection(
     Context& context, const CuFacts& facts, const InspectionPlan& plan,
-    llvm::Value* design_state, llvm::Value* abi_ptr);
+    llvm::Value* design_state, llvm::Value* abi_ptr,
+    llvm::Value* run_session_ptr);
 
 // Emit time report call for test harness.
-void EmitTimeReport(Context& context);
+void EmitTimeReport(Context& context, llvm::Value* run_session_ptr);
 
 }  // namespace lyra::lowering::mir_to_llvm

@@ -9,6 +9,10 @@
 #include "lyra/trace/instance_trace_resolver.hpp"
 #include "lyra/trace/trace_sink.hpp"
 
+namespace lyra::runtime {
+class OutputDispatcher;
+}  // namespace lyra::runtime
+
 namespace lyra::trace {
 
 // Text signal trace sink: emits compact one-line value-change output.
@@ -36,8 +40,10 @@ namespace lyra::trace {
 // not a silently dropped event.
 class TextTraceSink : public TraceSink {
  public:
-  // Borrow stdout for output.
-  explicit TextTraceSink(const runtime::TraceSignalMetaRegistry* meta);
+  // Borrow stdout for output via explicit dispatcher.
+  TextTraceSink(
+      const runtime::TraceSignalMetaRegistry* meta,
+      runtime::OutputDispatcher* output_dispatcher);
 
   // Own a file at the given path for output.
   TextTraceSink(
@@ -75,6 +81,7 @@ class TextTraceSink : public TraceSink {
 
   const runtime::TraceSignalMetaRegistry* meta_;
   const InstanceTraceResolver* resolver_ = nullptr;
+  runtime::OutputDispatcher* output_dispatcher_ = nullptr;
   std::unique_ptr<FILE, FileCloser> output_;
   uint64_t current_time_ = 0;
   uint32_t current_delta_ = 0;

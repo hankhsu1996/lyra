@@ -68,9 +68,9 @@ class TestSimulationHooks : public lowering::mir_to_llvm::SimulationHooks {
 
   void EmitPostSimulationReports(
       lowering::mir_to_llvm::Context& context, llvm::Value* /*design_state*/,
-      llvm::Value* /*abi_ptr*/) override {
+      llvm::Value* /*abi_ptr*/, llvm::Value* run_session_ptr) override {
     if (emit_time_report_) {
-      lowering::mir_to_llvm::EmitTimeReport(context);
+      lowering::mir_to_llvm::EmitTimeReport(context, run_session_ptr);
     }
   }
 

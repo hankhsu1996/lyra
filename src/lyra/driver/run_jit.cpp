@@ -20,6 +20,7 @@
 #include "lyra/lowering/origin_map_lookup.hpp"
 #include "lyra/runtime/artifact_names.hpp"
 #include "lyra/runtime/feature_flags.hpp"
+#include "lyra/runtime/output_sink.hpp"
 #include "pipeline.hpp"
 #include "process_stats.hpp"
 #include "runtime_path.hpp"
@@ -233,7 +234,8 @@ auto RunJit(const ValidatedCompilationInput& input) -> int {
   int exit_code = 0;
   {
     PhaseTimer timer(output, Phase::kSim, HeartbeatPolicy::kEnabled);
-    exit_code = session->Run();
+    lyra::runtime::RunSession run_session;
+    exit_code = session->Run(run_session);
   }
   output.Flush();
   return exit_code;

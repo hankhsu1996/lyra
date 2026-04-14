@@ -23,8 +23,8 @@ void EmitReport(Engine* engine, const ReportRequest& req) {
   }
   text += ReportPrefix(req.kind, req.severity);
   text += req.message;
-  text += "\n";
-  WriteOutput(text);
+  engine->Output().AppendSimOutputFragment(text);
+  engine->Output().FinishSimOutputRecord();
   if (req.action == ReportAction::kFinish) {
     engine->Finish();
   }

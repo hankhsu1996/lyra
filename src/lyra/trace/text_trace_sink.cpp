@@ -16,8 +16,10 @@
 
 namespace lyra::trace {
 
-TextTraceSink::TextTraceSink(const runtime::TraceSignalMetaRegistry* meta)
-    : meta_(meta) {
+TextTraceSink::TextTraceSink(
+    const runtime::TraceSignalMetaRegistry* meta,
+    runtime::OutputDispatcher* output_dispatcher)
+    : meta_(meta), output_dispatcher_(output_dispatcher) {
 }
 
 TextTraceSink::TextTraceSink(
@@ -135,7 +137,8 @@ void TextTraceSink::HandleGlobalValueChange(const GlobalValueChange& vc) {
   if (output_) {
     std::fwrite(line.data(), 1, line.size(), output_.get());
   } else {
-    runtime::WriteOutput(line);
+    output_dispatcher_->DrainSimOutputBuffer();
+    output_dispatcher_->WriteProtocolRecord(line);
   }
 }
 
@@ -179,7 +182,8 @@ void TextTraceSink::HandleLocalValueChange(const LocalValueChange& vc) {
   if (output_) {
     std::fwrite(line.data(), 1, line.size(), output_.get());
   } else {
-    runtime::WriteOutput(line);
+    output_dispatcher_->DrainSimOutputBuffer();
+    output_dispatcher_->WriteProtocolRecord(line);
   }
 }
 

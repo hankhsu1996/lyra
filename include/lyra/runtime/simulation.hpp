@@ -63,7 +63,8 @@ void LyraRunProcessSync(LyraProcessFunc process, void* state);
 void LyraRunSimulation(
     LyraProcessFunc* connection_funcs, void** states, uint32_t num_processes,
     const char** plusargs, uint32_t num_plusargs, const char** instance_paths,
-    uint32_t num_instance_paths, const LyraRuntimeAbi* abi);
+    uint32_t num_instance_paths, const LyraRuntimeAbi* abi,
+    void* run_session_ptr);
 
 // $test$plusargs: prefix match against plusargs.
 // Query is LyraStringHandle (matches SV string operand lowering).
@@ -144,7 +145,8 @@ auto LyraResolveBaseDir(const char* argv0) -> const char*;
 void LyraInitRuntime(const char* fs_base_dir, uint32_t iteration_limit);
 
 // Print final simulation time as __LYRA_TIME__=<N> for test harness.
-void LyraReportTime();
+// run_session_ptr: opaque pointer to lyra::runtime::RunSession.
+void LyraReportTime(void* run_session_ptr);
 
 // Monitor check program type: uses canonical MonitorCheckProgramFn from
 // observer.hpp.

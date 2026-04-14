@@ -49,7 +49,8 @@ void LyraStringRelease(LyraStringHandle handle);
 // Does NOT retain - reads immediately; handle must be valid for call duration.
 // spec: pointer to format specification (width, alignment, etc.)
 void LyraPrintString(
-    LyraStringHandle handle, const lyra::runtime::LyraFormatSpec* spec);
+    void* engine, LyraStringHandle handle,
+    const lyra::runtime::LyraFormatSpec* spec);
 
 // Get a non-owning view of string data (ptr + len).
 // Does NOT transfer ownership. Returned pointer valid while handle is valid.

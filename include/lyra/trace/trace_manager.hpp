@@ -98,7 +98,7 @@ class TraceManager {
 
   // Print the most recent session's summary to stdout. Delegates to the
   // built-in summary sink. If tracing was never enabled, prints zeros.
-  void PrintSummary() const;
+  void PrintSummary(lyra::runtime::OutputDispatcher& out) const;
 
  private:
   void Dispatch(const TraceEvent& event);

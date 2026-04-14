@@ -64,6 +64,7 @@ auto ParseArgs(std::span<char*> argv)
         TryParseFlag(arg, next_arg, "backend", args.backend, consumed_next) ||
         TryParseFlag(
             arg, next_arg, "test_file", args.test_file, consumed_next) ||
+        TryParseFlag(arg, next_arg, "case", args.case_filter, consumed_next) ||
         TryParseFlag(
             arg, next_arg, "shard_count", args.shard_count, consumed_next) ||
         TryParseFlag(

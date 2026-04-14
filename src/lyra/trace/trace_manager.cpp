@@ -86,8 +86,8 @@ void TraceManager::SetSignalMeta(const runtime::TraceSignalMetaRegistry* meta) {
   signal_meta_ = meta;
 }
 
-void TraceManager::PrintSummary() const {
-  summary_sink_.PrintSummary();
+void TraceManager::PrintSummary(lyra::runtime::OutputDispatcher& out) const {
+  summary_sink_.PrintSummary(out);
 }
 
 void TraceManager::Dispatch(const TraceEvent& event) {

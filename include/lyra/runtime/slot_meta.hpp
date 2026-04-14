@@ -8,6 +8,8 @@
 
 namespace lyra::runtime {
 
+class OutputDispatcher;
+
 // Storage layout classification for a design slot.
 // These are STORAGE categories, not SV syntax categories:
 //   kPacked2:   snapshotable bytes, one plane, no unknown plane
@@ -133,9 +135,10 @@ class SlotMetaRegistry {
   // to build the registry from structured inputs instead of word tables.
   void AppendSlot(SlotMeta meta);
 
-  // Machine-stable dump to WriteOutput. Includes version and count header.
+  // Machine-stable dump via WriteProtocolRecord. Includes version and count
+  // header.
   // Called right after registry construction, before simulation runs.
-  void DumpSummary() const;
+  void DumpSummary(OutputDispatcher& out) const;
 
  private:
   [[noreturn]] void ThrowOutOfRange(uint32_t slot_id) const;

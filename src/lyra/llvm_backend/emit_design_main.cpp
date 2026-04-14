@@ -142,6 +142,7 @@ struct MainFunctionSetup {
   llvm::Function* main_func = nullptr;
   llvm::BasicBlock* exit_block = nullptr;
   llvm::Value* design_state = nullptr;
+  llvm::Value* run_session_ptr = nullptr;
 };
 
 auto CreateMainFunction(
@@ -155,14 +156,21 @@ auto CreateMainFunction(
 
   llvm::FunctionType* main_type = nullptr;
   if (argv_forwarding) {
+    // AOT: int main(int argc, char** argv)
     auto* i32_ty = llvm::Type::getInt32Ty(ctx);
     auto* ptr_ty = llvm::PointerType::getUnqual(ctx);
     main_type = llvm::FunctionType::get(i32_ty, {i32_ty, ptr_ty}, false);
   } else {
-    main_type = llvm::FunctionType::get(llvm::Type::getInt32Ty(ctx), false);
+    // JIT: int main(void* run_session_ptr)
+    auto* ptr_ty = llvm::PointerType::getUnqual(ctx);
+    main_type =
+        llvm::FunctionType::get(llvm::Type::getInt32Ty(ctx), {ptr_ty}, false);
   }
+  // JIT uses "lyra_entry" to avoid C runtime interference with "main".
+  // AOT uses "main" as the real program entry point.
+  const char* entry_name = argv_forwarding ? "main" : "lyra_entry";
   auto* main_func = llvm::Function::Create(
-      main_type, llvm::Function::ExternalLinkage, "main", &mod);
+      main_type, llvm::Function::ExternalLinkage, entry_name, &mod);
 
   auto* entry = llvm::BasicBlock::Create(ctx, "entry", main_func);
   auto* exit_block = llvm::BasicBlock::Create(ctx, "exit", main_func);
@@ -172,10 +180,23 @@ auto CreateMainFunction(
   auto* arena_ty = llvm::ArrayType::get(i8_ty, context.GetDesignArenaSize());
   auto* design_state = builder.CreateAlloca(arena_ty, nullptr, "design_state");
 
+  // RunSession lifetime:
+  //   JIT: caller provides run_session_ptr as main's argument
+  //   AOT: main creates RunSession via LyraCreateRunSession()
+  llvm::Value* run_session_ptr = nullptr;
+  if (argv_forwarding) {
+    run_session_ptr = builder.CreateCall(
+        context.GetLyraCreateRunSession(), {}, "run_session");
+  } else {
+    run_session_ptr = main_func->getArg(0);
+    run_session_ptr->setName("run_session_ptr");
+  }
+
   return {
       .main_func = main_func,
       .exit_block = exit_block,
       .design_state = design_state,
+      .run_session_ptr = run_session_ptr,
   };
 }
 
@@ -594,22 +615,21 @@ void EmitRunSimulation(
     Context& context, llvm::Constant* funcs_array, llvm::Value* states_array,
     llvm::Value* num_processes, const PlusargsSetup& plusargs,
     const RealizationEmissionResult::ObservationMeta& observation_meta,
-    llvm::Value* abi_alloca) {
+    llvm::Value* abi_alloca, llvm::Value* run_session_ptr) {
   auto& builder = context.GetBuilder();
 
-  // Instance paths now come from constructor result, not compile-time globals.
   builder.CreateCall(
       context.GetLyraRunSimulation(),
       {funcs_array, states_array, num_processes, plusargs.array, plusargs.count,
        observation_meta.instance_paths, observation_meta.instance_path_count,
-       abi_alloca});
+       abi_alloca, run_session_ptr});
 }
 
 void EmitMainExit(
     Context& context, const CuFacts& facts, llvm::Value* design_state,
     const EmitDesignMainInput& input, llvm::BasicBlock* exit_block,
     llvm::Value* abi_alloca, const RealizationEmissionResult& ctor_result,
-    const InspectionPlan& inspection_plan) {
+    const InspectionPlan& inspection_plan, llvm::Value* run_session_ptr) {
   auto& builder = context.GetBuilder();
   auto& ctx = context.GetLlvmContext();
 
@@ -622,15 +642,23 @@ void EmitMainExit(
   // Backend-owned variable inspection from typed placement descriptors.
   if (!inspection_plan.IsEmpty()) {
     EmitVariableInspection(
-        context, facts, inspection_plan, design_state, abi_alloca);
+        context, facts, inspection_plan, design_state, abi_alloca,
+        run_session_ptr);
   }
 
   if (input.hooks != nullptr) {
-    input.hooks->EmitPostSimulationReports(context, design_state, abi_alloca);
+    input.hooks->EmitPostSimulationReports(
+        context, design_state, abi_alloca, run_session_ptr);
   }
 
   if (ctor_result.result_handle != nullptr) {
     builder.CreateCall(ctor_result.destroy_fn, {ctor_result.result_handle});
+  }
+
+  // AOT: destroy the RunSession we created in CreateMainFunction.
+  // JIT: caller owns the RunSession, no cleanup needed here.
+  if (input.main_abi == lowering::mir_to_llvm::MainAbi::kArgvForwarding) {
+    builder.CreateCall(context.GetLyraDestroyRunSession(), {run_session_ptr});
   }
 
   builder.CreateRet(llvm::ConstantInt::get(ctx, llvm::APInt(32, 0)));
@@ -668,7 +696,7 @@ auto EmitDesignMain(
   size_t num_init = session.num_init_processes;
   const auto& realization = session.realization;
 
-  auto [main_func, exit_block, design_state] =
+  auto [main_func, exit_block, design_state, run_session_ptr] =
       CreateMainFunction(context, input.main_abi);
 
   EmitDesignStateZero(context, design_state);
@@ -802,7 +830,7 @@ auto EmitDesignMain(
 
     EmitRunSimulation(
         context, connection_funcs, states_array, num_total_val, plusargs,
-        observation_meta_for_abi, abi_alloca);
+        observation_meta_for_abi, abi_alloca, run_session_ptr);
 
   } else {
     // No simulation processes or kernelized connections. Still need
@@ -835,7 +863,7 @@ auto EmitDesignMain(
 
   EmitMainExit(
       context, facts, design_state, input, exit_block, abi_for_exit,
-      ctor_result, inspection_plan);
+      ctor_result, inspection_plan, run_session_ptr);
 
   return LoweringReport{
       .forwarding_analysis = std::move(forwarding_report),

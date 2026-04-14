@@ -10,10 +10,10 @@ namespace lyra::lowering::mir_to_llvm {
 
 auto Context::GetLyraPrintLiteral() -> llvm::Function* {
   if (lyra_print_literal_ == nullptr) {
-    // void LyraPrintLiteral(const char* str)
+    // void LyraPrintLiteral(void* engine, const char* str)
+    auto* ptr_ty = llvm::PointerType::getUnqual(*llvm_context_);
     auto* fn_type = llvm::FunctionType::get(
-        llvm::Type::getVoidTy(*llvm_context_),
-        {llvm::PointerType::getUnqual(*llvm_context_)}, false);
+        llvm::Type::getVoidTy(*llvm_context_), {ptr_ty, ptr_ty}, false);
     lyra_print_literal_ = llvm::Function::Create(
         fn_type, llvm::Function::ExternalLinkage, "LyraPrintLiteral",
         llvm_module_.get());
@@ -23,10 +23,10 @@ auto Context::GetLyraPrintLiteral() -> llvm::Function* {
 
 auto Context::GetLyraWarnRateLimited() -> llvm::Function* {
   if (lyra_warn_rate_limited_ == nullptr) {
-    // void LyraWarnRateLimited(const char* msg, uint32_t* counter_ptr)
+    // void LyraWarnRateLimited(void* engine, const char* msg, uint32_t* ctr)
     auto* ptr_ty = llvm::PointerType::getUnqual(*llvm_context_);
     auto* fn_type = llvm::FunctionType::get(
-        llvm::Type::getVoidTy(*llvm_context_), {ptr_ty, ptr_ty}, false);
+        llvm::Type::getVoidTy(*llvm_context_), {ptr_ty, ptr_ty, ptr_ty}, false);
     lyra_warn_rate_limited_ = llvm::Function::Create(
         fn_type, llvm::Function::ExternalLinkage, "LyraWarnRateLimited",
         llvm_module_.get());
@@ -141,10 +141,10 @@ auto Context::GetFormatSpecType() -> llvm::StructType* {
 
 auto Context::GetLyraPrintString() -> llvm::Function* {
   if (lyra_print_string_ == nullptr) {
-    // void LyraPrintString(void* handle, const LyraFormatSpec* spec)
+    // void LyraPrintString(void* engine, void* handle, const LyraFormatSpec*)
     auto* ptr_ty = llvm::PointerType::getUnqual(*llvm_context_);
     auto* fn_type = llvm::FunctionType::get(
-        llvm::Type::getVoidTy(*llvm_context_), {ptr_ty, ptr_ty}, false);
+        llvm::Type::getVoidTy(*llvm_context_), {ptr_ty, ptr_ty, ptr_ty}, false);
     lyra_print_string_ = llvm::Function::Create(
         fn_type, llvm::Function::ExternalLinkage, "LyraPrintString",
         llvm_module_.get());
@@ -154,10 +154,11 @@ auto Context::GetLyraPrintString() -> llvm::Function* {
 
 auto Context::GetLyraPrintEnd() -> llvm::Function* {
   if (lyra_print_end_ == nullptr) {
-    // void LyraPrintEnd(int32_t kind)
+    // void LyraPrintEnd(void* engine, int32_t kind)
+    auto* ptr_ty = llvm::PointerType::getUnqual(*llvm_context_);
+    auto* i32_ty = llvm::Type::getInt32Ty(*llvm_context_);
     auto* fn_type = llvm::FunctionType::get(
-        llvm::Type::getVoidTy(*llvm_context_),
-        {llvm::Type::getInt32Ty(*llvm_context_)}, false);
+        llvm::Type::getVoidTy(*llvm_context_), {ptr_ty, i32_ty}, false);
     lyra_print_end_ = llvm::Function::Create(
         fn_type, llvm::Function::ExternalLinkage, "LyraPrintEnd",
         llvm_module_.get());
@@ -183,8 +184,10 @@ auto Context::GetLyraRegisterVar() -> llvm::Function* {
 
 auto Context::GetLyraSnapshotVars() -> llvm::Function* {
   if (lyra_snapshot_vars_ == nullptr) {
-    auto* fn_type =
-        llvm::FunctionType::get(llvm::Type::getVoidTy(*llvm_context_), false);
+    // void LyraSnapshotVars(void* run_session_ptr)
+    auto* ptr_ty = llvm::PointerType::getUnqual(*llvm_context_);
+    auto* fn_type = llvm::FunctionType::get(
+        llvm::Type::getVoidTy(*llvm_context_), {ptr_ty}, false);
     lyra_snapshot_vars_ = llvm::Function::Create(
         fn_type, llvm::Function::ExternalLinkage, "LyraSnapshotVars",
         llvm_module_.get());
@@ -327,12 +330,14 @@ auto Context::GetLyraRunSimulation() -> llvm::Function* {
     // void LyraRunSimulation(ptr* processes, ptr* states, uint32_t num,
     //                        const char** plusargs, uint32_t num_plusargs,
     //                        const char** instance_paths, uint32_t num_paths,
-    //                        const LyraRuntimeAbi* abi)
+    //                        const LyraRuntimeAbi* abi,
+    //                        void* run_session_ptr)
     auto* ptr_ty = llvm::PointerType::getUnqual(*llvm_context_);
     auto* i32_ty = llvm::Type::getInt32Ty(*llvm_context_);
     auto* fn_type = llvm::FunctionType::get(
         llvm::Type::getVoidTy(*llvm_context_),
-        {ptr_ty, ptr_ty, i32_ty, ptr_ty, i32_ty, ptr_ty, i32_ty, ptr_ty},
+        {ptr_ty, ptr_ty, i32_ty, ptr_ty, i32_ty, ptr_ty, i32_ty, ptr_ty,
+         ptr_ty},
         false);
     lyra_run_simulation_ = llvm::Function::Create(
         fn_type, llvm::Function::ExternalLinkage, "LyraRunSimulation",
@@ -985,13 +990,40 @@ auto Context::GetLyraResolveBaseDir() -> llvm::Function* {
 
 auto Context::GetLyraReportTime() -> llvm::Function* {
   if (lyra_report_time_ == nullptr) {
-    auto* fn_type =
-        llvm::FunctionType::get(llvm::Type::getVoidTy(*llvm_context_), false);
+    // void LyraReportTime(void* run_session_ptr)
+    auto* ptr_ty = llvm::PointerType::getUnqual(*llvm_context_);
+    auto* fn_type = llvm::FunctionType::get(
+        llvm::Type::getVoidTy(*llvm_context_), {ptr_ty}, false);
     lyra_report_time_ = llvm::Function::Create(
         fn_type, llvm::Function::ExternalLinkage, "LyraReportTime",
         llvm_module_.get());
   }
   return lyra_report_time_;
+}
+
+auto Context::GetLyraCreateRunSession() -> llvm::Function* {
+  if (lyra_create_run_session_ == nullptr) {
+    // void* LyraCreateRunSession()
+    auto* ptr_ty = llvm::PointerType::getUnqual(*llvm_context_);
+    auto* fn_type = llvm::FunctionType::get(ptr_ty, false);
+    lyra_create_run_session_ = llvm::Function::Create(
+        fn_type, llvm::Function::ExternalLinkage, "LyraCreateRunSession",
+        llvm_module_.get());
+  }
+  return lyra_create_run_session_;
+}
+
+auto Context::GetLyraDestroyRunSession() -> llvm::Function* {
+  if (lyra_destroy_run_session_ == nullptr) {
+    // void LyraDestroyRunSession(void* session)
+    auto* ptr_ty = llvm::PointerType::getUnqual(*llvm_context_);
+    auto* fn_type = llvm::FunctionType::get(
+        llvm::Type::getVoidTy(*llvm_context_), {ptr_ty}, false);
+    lyra_destroy_run_session_ = llvm::Function::Create(
+        fn_type, llvm::Function::ExternalLinkage, "LyraDestroyRunSession",
+        llvm_module_.get());
+  }
+  return lyra_destroy_run_session_;
 }
 
 auto Context::GetLyraDynArrayNew() -> llvm::Function* {

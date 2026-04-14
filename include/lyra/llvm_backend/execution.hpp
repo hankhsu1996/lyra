@@ -11,6 +11,10 @@
 #include "lyra/common/opt_level.hpp"
 #include "lyra/llvm_backend/lower.hpp"
 
+namespace lyra::runtime {
+struct RunSession;
+}  // namespace lyra::runtime
+
 namespace lyra::lowering::mir_to_llvm {
 
 enum class LinkProgressPhase : uint8_t {
@@ -108,7 +112,8 @@ class JitSession {
   auto operator=(JitSession&&) noexcept -> JitSession&;
 
   // Run the compiled simulation. Returns exit code.
-  auto Run() -> int;
+  // Caller provides a RunSession with output sink already installed.
+  auto Run(runtime::RunSession& session) -> int;
 
   // Sub-phase timings from JIT compilation.
   [[nodiscard]] auto Timings() const -> const JitCompileTimings&;

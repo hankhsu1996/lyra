@@ -151,7 +151,7 @@ extern "C" void LyraRunSimulation(
     LyraProcessFunc* connection_funcs, void** states_raw,
     uint32_t num_processes, const char** plusargs_raw, uint32_t num_plusargs,
     const char** instance_paths_raw, uint32_t num_instance_paths,
-    const LyraRuntimeAbi* abi) {
+    const LyraRuntimeAbi* abi, void* run_session_ptr) {
   if (num_processes > 0 && states_raw == nullptr) {
     throw lyra::common::InternalError(
         "LyraRunSimulation", "states_raw is null");
@@ -205,11 +205,12 @@ extern "C" void LyraRunSimulation(
       .states = states,
       .num_connection = num_connection,
   };
+  auto* session = static_cast<lyra::runtime::RunSession*>(run_session_ptr);
   lyra::runtime::Engine engine(
       lyra::runtime::ProcessDispatch{
           .fn = DescriptorProcessDispatch, .ctx = &dispatch_ctx},
-      num_processes, std::span(plusargs_vec), std::move(instance_paths_vec),
-      feature_flags);
+      session->output, num_processes, std::span(plusargs_vec),
+      std::move(instance_paths_vec), feature_flags);
 
   if (abi != nullptr) {
     if (abi->version != kRuntimeAbiVersion) {
@@ -340,10 +341,10 @@ extern "C" void LyraRunSimulation(
   }
 
   if (HasFlag(flags, FeatureFlag::kDumpSlotMeta)) {
-    engine.GetSlotMetaRegistry().DumpSummary();
+    engine.GetSlotMetaRegistry().DumpSummary(engine.Output());
   }
   if (HasFlag(flags, FeatureFlag::kDumpProcessMeta)) {
-    engine.GetProcessMetaRegistry().DumpSummary();
+    engine.GetProcessMetaRegistry().DumpSummary(engine.Output());
   }
   // Register trace sinks before enabling TraceManager.
   if (HasFlag(flags, FeatureFlag::kEnableSignalTrace)) {
@@ -353,7 +354,8 @@ extern "C" void LyraRunSimulation(
       text_sink = std::make_unique<lyra::trace::TextTraceSink>(
           meta, std::string(abi->signal_trace_path));
     } else {
-      text_sink = std::make_unique<lyra::trace::TextTraceSink>(meta);
+      text_sink =
+          std::make_unique<lyra::trace::TextTraceSink>(meta, &engine.Output());
     }
     text_sink->SetInstanceResolver(&engine.GetInstanceTraceResolver());
     engine.GetTraceManager().AddSink(std::move(text_sink));
@@ -380,7 +382,7 @@ extern "C" void LyraRunSimulation(
   lyra::runtime::RemoveSignalDumpHandler();
 
   if (HasFlag(flags, FeatureFlag::kEnableTraceSummary)) {
-    engine.GetTraceManager().PrintSummary();
+    engine.GetTraceManager().PrintSummary(engine.Output());
   }
 
   if (HasFlag(flags, FeatureFlag::kDumpRuntimeStats)) {
@@ -492,14 +494,18 @@ extern "C" void LyraTerminate(
   auto* engine = static_cast<lyra::runtime::Engine*>(engine_ptr);
   uint64_t time = engine->CurrentTime();
 
+  auto& out = engine->Output();
+  out.DrainSimOutputBuffer();
+
   // Negative level treated as silent
   if (level >= 1) {
     // Out-of-range kind defaults to kFinish behavior
     switch (kind) {
       case 0:  // kFinish
       default:
-        lyra::runtime::WriteOutput(
-            std::format("$finish called at time {}\n", time));
+        out.AppendSimOutputFragment(
+            std::format("$finish called at time {}", time));
+        out.FinishSimOutputRecord();
         break;
       case 1:
         throw lyra::common::InternalError(
@@ -507,13 +513,15 @@ extern "C" void LyraTerminate(
             "kFatal must be lowered via LyraEmitReport, not LyraTerminate");
       case 2:  // kStop
         // MVP: same as finish. Future: may pause for interactive debugger.
-        lyra::runtime::WriteOutput(
-            std::format("$stop called at time {}\n", time));
+        out.AppendSimOutputFragment(
+            std::format("$stop called at time {}", time));
+        out.FinishSimOutputRecord();
         break;
       case 3:  // kExit
         // MVP: same as finish. Future: may have program-block semantics.
-        lyra::runtime::WriteOutput(
-            std::format("$exit called at time {}\n", time));
+        out.AppendSimOutputFragment(
+            std::format("$exit called at time {}", time));
+        out.FinishSimOutputRecord();
         break;
     }
     std::fflush(stdout);
@@ -592,8 +600,11 @@ auto GetFsBaseDir() -> const std::filesystem::path& {
 
 }  // namespace lyra::runtime
 
-extern "C" void LyraReportTime() {
-  lyra::runtime::WriteOutput(std::format("__LYRA_TIME__={}\n", FinalTime()));
+extern "C" void LyraReportTime(void* run_session_ptr) {
+  auto* session = static_cast<lyra::runtime::RunSession*>(run_session_ptr);
+  session->output.DrainSimOutputBuffer();
+  session->output.WriteProtocolRecord(
+      std::format("__LYRA_TIME__={}\n", FinalTime()));
   std::fflush(stdout);
 }
 

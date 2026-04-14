@@ -6,6 +6,7 @@
 //   AOT/LLI: direct execution (subprocess timeout only, no fork overhead)
 // Evaluates expectations and prints per-case progress.
 
+#include <algorithm>
 #include <chrono>
 #include <cstdlib>
 #include <exception>
@@ -14,6 +15,7 @@
 #include <iostream>
 #include <span>
 #include <string>
+#include <utility>
 
 #include "tests/framework/arg_parse.hpp"
 #include "tests/framework/case_runner.hpp"
@@ -58,6 +60,20 @@ auto main(int argc, char** argv) -> int {
   } catch (const std::exception& e) {
     std::cerr << std::format("supervisor: {}\n", e.what());
     return 1;
+  }
+
+  // Apply --case filter: run only the named case.
+  if (!args.case_filter.empty()) {
+    auto it = std::ranges::find(
+        manifest.cases, args.case_filter, &lyra::test::TestCase::name);
+    if (it == manifest.cases.end()) {
+      std::cerr << std::format(
+          "supervisor: case '{}' not found in manifest\n", args.case_filter);
+      return 1;
+    }
+    lyra::test::TestCase single = std::move(*it);
+    manifest.cases.clear();
+    manifest.cases.push_back(std::move(single));
   }
 
   auto timeout = std::chrono::seconds{timeout_seconds};

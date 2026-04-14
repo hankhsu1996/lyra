@@ -32,12 +32,13 @@
 #include "lyra/common/opt_level.hpp"
 #include "lyra/llvm_backend/ir_optimize.hpp"
 #include "lyra/llvm_backend/lower.hpp"
+#include "lyra/runtime/output_sink.hpp"
 
 namespace lyra::lowering::mir_to_llvm {
 
 struct JitSession::Impl {
   std::unique_ptr<llvm::orc::LLJIT> jit;
-  int (*entry_fn)() = nullptr;
+  int (*entry_fn)(void*) = nullptr;
   JitCompileTimings timings;
   JitOrcStats orc_stats;
 };
@@ -47,8 +48,8 @@ JitSession::~JitSession() = default;
 JitSession::JitSession(JitSession&&) noexcept = default;
 auto JitSession::operator=(JitSession&&) noexcept -> JitSession& = default;
 
-auto JitSession::Run() -> int {
-  return impl_->entry_fn();
+auto JitSession::Run(runtime::RunSession& session) -> int {
+  return impl_->entry_fn(&session);
 }
 
 auto JitSession::Timings() const -> const JitCompileTimings& {
@@ -301,7 +302,7 @@ void InitializeLlvm() {
 // Caller is responsible for wrapping into JitSession.
 struct CompileResult {
   std::unique_ptr<llvm::orc::LLJIT> jit;
-  int (*entry_fn)() = nullptr;
+  int (*entry_fn)(void*) = nullptr;
   JitCompileTimings timings;
   JitOrcStats orc_stats;
 };
@@ -470,7 +471,7 @@ auto CompileJitImpl(
     });
   }
 
-  auto main_sym = (*jit)->lookup("main");
+  auto main_sym = (*jit)->lookup("lyra_entry");
 
   if (progress) {
     progress->stop.store(true, std::memory_order_relaxed);
@@ -480,7 +481,7 @@ auto CompileJitImpl(
   if (!main_sym) {
     return std::unexpected(
         std::format(
-            "symbol 'main' not found: {}",
+            "symbol 'lyra_entry' not found: {}",
             llvm::toString(main_sym.takeError())));
   }
 
@@ -540,7 +541,7 @@ auto CompileJitImpl(
 
   return CompileResult{
       .jit = std::move(*jit),
-      .entry_fn = main_sym->toPtr<int()>(),
+      .entry_fn = main_sym->toPtr<int(void*)>(),
       .timings = timings,
       .orc_stats = std::move(orc_stats),
   };
@@ -582,7 +583,8 @@ auto ExecuteWithOrcJit(
     const JitCompileOptions& options) -> std::expected<int, std::string> {
   auto session = CompileJit(result, runtime_path, options);
   if (!session) return std::unexpected(session.error());
-  return session->Run();
+  runtime::RunSession run_session;
+  return session->Run(run_session);
 }
 
 auto ExecuteWithOrcJitInProcess(
@@ -590,7 +592,8 @@ auto ExecuteWithOrcJitInProcess(
     -> std::expected<int, std::string> {
   auto session = CompileJitInProcess(result, options);
   if (!session) return std::unexpected(session.error());
-  return session->Run();
+  runtime::RunSession run_session;
+  return session->Run(run_session);
 }
 
 }  // namespace lyra::lowering::mir_to_llvm

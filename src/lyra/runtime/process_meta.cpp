@@ -206,14 +206,15 @@ void ProcessMetaRegistry::WriteAsyncSignalSafe(
   }
 }
 
-void ProcessMetaRegistry::DumpSummary() const {
-  WriteOutput(
+void ProcessMetaRegistry::DumpSummary(OutputDispatcher& out) const {
+  out.DrainSimOutputBuffer();
+  out.WriteProtocolRecord(
       std::format(
           "__LYRA_PROCESS_META__: version={} count={}\n",
           process_meta_abi::kVersion, metas_.size()));
 
   for (uint32_t i = 0; i < metas_.size(); ++i) {
-    WriteOutput(
+    out.WriteProtocolRecord(
         std::format("__LYRA_PROCESS_META__: process={} {}\n", i, Format(i)));
   }
 }
