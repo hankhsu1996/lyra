@@ -52,7 +52,7 @@ auto GetConstructionProgramEntryType(llvm::LLVMContext& ctx)
   auto* i32_ty = llvm::Type::getInt32Ty(ctx);
   auto* i64_ty = llvm::Type::getInt64Ty(ctx);
   return llvm::StructType::get(
-      ctx, {i32_ty, i32_ty, i32_ty, i32_ty, i64_ty, i64_ty});
+      ctx, {i32_ty, i32_ty, i32_ty, i32_ty, i64_ty, i64_ty, i32_ty});
 }
 
 // Encode one ConstructionProgramEntry as an LLVM constant.
@@ -67,7 +67,8 @@ auto EncodeConstructionProgramEntry(
            llvm::ConstantInt::get(i32_ty, e.param_offset),
            llvm::ConstantInt::get(i32_ty, e.param_size),
            llvm::ConstantInt::get(i64_ty, e.realized_inline_size),
-           llvm::ConstantInt::get(i64_ty, e.realized_appendix_size)});
+           llvm::ConstantInt::get(i64_ty, e.realized_appendix_size),
+           llvm::ConstantInt::get(i32_ty, e.parent_instance_index)});
 }
 
 // Canonical LLVM struct type for runtime::BodyDescriptorRef.
@@ -665,7 +666,7 @@ auto EmitConstructorFunction(
       binding_constants.push_back(
           llvm::ConstantStruct::get(
               binding_ty,
-              {llvm::ConstantInt::get(i32_ty, b.storage_slot.value),
+              {llvm::ConstantInt::get(i32_ty, b.target_byte_offset),
                llvm::ConstantInt::get(i32_ty, b.target_instance_id),
                llvm::ConstantInt::get(i32_ty, b.target_local_signal.value)}));
     }

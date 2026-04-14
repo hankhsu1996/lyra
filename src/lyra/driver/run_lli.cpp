@@ -146,8 +146,6 @@ auto RunLli(const ValidatedCompilationInput& input) -> int {
       .signal_trace_path = input.input.trace_signals_output.value_or(""),
       .iteration_limit = input.input.iteration_limit,
       .force_two_state = input.input.two_state,
-      .collect_forwarding_analysis =
-          output.IsEnabled(OutputCategory::kAnalysis),
       .main_abi = lowering::mir_to_llvm::MainAbi::kArgvForwarding,
       .dpi_export_wrappers = &compilation.mir.dpi_export_wrappers,
       .bound_connections = &compilation.mir.bound_connections,
@@ -176,11 +174,6 @@ auto RunLli(const ValidatedCompilationInput& input) -> int {
         compilation.mir.design_origins, *compilation.hir.hir_arena,
         *compilation.hir.source_manager, llvm_stats_data);
     output.PrintProcessStats(ps);
-  }
-
-  if (output.IsEnabled(OutputCategory::kAnalysis)) {
-    output.PrintForwardingAnalysisReport(
-        llvm_result->report.forwarding_analysis);
   }
 
   std::string ir_path = CreateTempFile(".ll");

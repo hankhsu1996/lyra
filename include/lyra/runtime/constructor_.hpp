@@ -20,6 +20,7 @@
 #include "lyra/runtime/process_frame.hpp"
 #include "lyra/runtime/process_schema.hpp"
 #include "lyra/runtime/runtime_instance.hpp"
+#include "lyra/runtime/suspend_record.hpp"
 
 namespace lyra::runtime {
 
@@ -188,6 +189,11 @@ struct ConstructionResult {
   // the active runtime handoff in this cut. Bundles become the primary
   // handoff when the engine consumer path is migrated in a later cut.
   std::vector<InstanceMetadataBundle> instance_bundles;
+
+  // Materialized connection descriptors with direct RuntimeInstance*
+  // pointers. Produced by LyraConstructionResultSetConnectionDescriptors
+  // using direct array access into instances[object_index].
+  std::vector<RuntimeConnectionDescriptor> connection_descriptors;
 
   // Stable storage for body templates referenced by bundles.
   // Bundle body_desc pointers point into .package fields of these entries.
@@ -524,5 +530,19 @@ void LyraConstructionResultDestroy(void* result);
 void LyraConstructionResultSetExtRefBindings(
     void* result, const void* pool, uint32_t pool_count,
     const uint32_t* offsets, const uint32_t* counts, uint32_t num_instances);
+
+// Materialize connection descriptors from serialized transport into
+// runtime-facing RuntimeConnectionDescriptor with direct RuntimeInstance*
+// pointers. Uses result.instances[object_index] -- direct array access,
+// no central lookup. Called after Finalize, before simulation.
+void LyraConstructionResultSetConnectionDescriptors(
+    void* result_raw, const void* serialized_raw, uint32_t num_descs);
+
+// Get the materialized connection descriptor array from the result.
+auto LyraConstructionResultGetConnectionDescriptors(void* result) -> void*;
+
+// Get the number of materialized connection descriptors.
+auto LyraConstructionResultGetConnectionDescriptorCount(void* result)
+    -> uint32_t;
 
 }  // extern "C"

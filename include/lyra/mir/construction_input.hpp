@@ -50,6 +50,13 @@ struct ConstructionInput {
   std::vector<InstanceConstBlock> const_blocks;
   std::vector<ObjectRecord> objects;
 
+  // Per-instance parent index. Parallel to objects.
+  // parent_instance_indices[i] = parent's object index, or UINT32_MAX for
+  // top-level instances. Populated from BoundHierarchyIndex::parent_of
+  // during design lowering. Used by the constructor to build
+  // children_by_parent for connection recipe materialization.
+  std::vector<uint32_t> parent_instance_indices;
+
   // Per-instance resolved external-ref runtime bindings.
   // Parallel to objects. Each inner vector has one binding per ext-ref recipe
   // in the owning body. Empty for instances whose body has no external refs.

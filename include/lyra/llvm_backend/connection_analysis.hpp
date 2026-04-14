@@ -79,6 +79,10 @@ struct IdentityCopyComb {
   common::SlotId src_slot;
   common::SlotId dst_slot;
   common::SlotId trigger_slot;
+  common::ObjectIndex src_object_index;
+  common::LocalSlotId src_local_slot;
+  common::ObjectIndex dst_object_index;
+  common::LocalSlotId dst_local_slot;
   common::ObjectIndex trigger_object_index;
   common::LocalSlotId trigger_local_slot;
 };

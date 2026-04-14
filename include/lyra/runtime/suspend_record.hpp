@@ -4,12 +4,14 @@
 #include <cstddef>
 #include <cstdint>
 
+#include "lyra/runtime/signal_coord.hpp"
 #include "lyra/runtime/trigger_record.hpp"
 #include "lyra/runtime/wait_site.hpp"
 
 namespace lyra::runtime {
 
 struct IndexPlanOp;
+struct RuntimeInstance;
 
 // Suspend tag - matches SuspendReason variant index for consistency.
 // Used in C ABI struct for both interpreter and LLVM backend communication.
@@ -21,38 +23,52 @@ enum class SuspendTag : uint8_t {
   kWaitEvent = 4,
 };
 
-// Descriptor for kernelized connection processes.
-// Stored in the process frame; the single runtime kernel reads these fields
-// instead of emitting per-process LLVM IR.
-struct ConnectionDescriptor {
-  uint32_t src_slot_id = 0;       // Source slot ID for address resolution
-  uint32_t dst_slot_id = 0;       // Dest slot ID for address resolution
-  uint32_t byte_size = 0;         // Copy size
-  uint32_t trigger_slot_id = 0;   // WaitTriggerRecord.signal_id
-  uint8_t trigger_edge = 0;       // WaitTriggerRecord.edge
-  uint8_t trigger_bit_index = 0;  // WaitTriggerRecord.bit_index
-  // R5: Typed destination identity. When dst_is_local != 0,
-  // dst_instance_id and dst_local_id carry the owning instance and
-  // body-local signal identity. Runtime decodes into BatchedConnectionDst.
-  uint8_t dst_is_local = 0;
-  uint8_t padding = 0;
-  uint32_t trigger_byte_offset = 0;  // WaitTriggerRecord.byte_offset
-  uint32_t trigger_byte_size = 0;    // WaitTriggerRecord.byte_size
-  uint32_t dst_instance_id = 0;  // InstanceId.value (valid when dst_is_local)
-  uint32_t dst_local_id = 0;  // LocalSignalId.value (valid when dst_is_local)
-  // R5: Typed trigger identity. Same pattern as destination.
-  uint8_t trigger_is_local = 0;
-  uint8_t padding2 = 0;
-  uint16_t padding3 = 0;
-  uint32_t trigger_instance_id = 0;
+// Serialized connection descriptor emitted as LLVM constants.
+// Carries object_index (construction-time numeric identity) for each
+// endpoint. Consumed by InitConnectionBatch which resolves indices
+// to RuntimeInstance* pointers exactly once. Not stored in any
+// runtime-facing carrier after init.
+struct SerializedConnectionDescriptor {
+  uint32_t src_object_index = 0;
+  uint32_t src_byte_offset = 0;
+  uint32_t dst_object_index = 0;
+  uint32_t dst_byte_offset = 0;
+  uint32_t dst_local_signal = 0;
+  uint32_t byte_size = 0;
+  uint8_t trigger_edge = 0;
+  uint8_t trigger_bit_index = 0;
+  uint16_t padding = 0;
+  uint32_t trigger_byte_offset = 0;
+  uint32_t trigger_byte_size = 0;
+  uint32_t trigger_object_index = 0;
   uint32_t trigger_local_id = 0;
 };
 
 static_assert(
-    sizeof(ConnectionDescriptor) == 48, "ConnectionDescriptor size mismatch");
+    sizeof(SerializedConnectionDescriptor) == 44,
+    "SerializedConnectionDescriptor size mismatch");
 static_assert(
-    alignof(ConnectionDescriptor) == 4,
-    "ConnectionDescriptor alignment mismatch");
+    alignof(SerializedConnectionDescriptor) == 4,
+    "SerializedConnectionDescriptor alignment mismatch");
+
+// Runtime-only connection descriptor with direct object pointers.
+// Materialized once from SerializedConnectionDescriptor after all
+// instances exist. Consumed by InitConnectionBatch. No numeric
+// object identity -- all endpoints are RuntimeInstance*.
+struct RuntimeConnectionDescriptor {
+  RuntimeInstance* src_instance = nullptr;
+  uint32_t src_byte_offset = 0;
+  RuntimeInstance* dst_instance = nullptr;
+  uint32_t dst_byte_offset = 0;
+  LocalSignalId dst_local_signal = LocalSignalId{0};
+  uint32_t byte_size = 0;
+  uint8_t trigger_edge = 0;
+  uint8_t trigger_bit_index = 0;
+  uint32_t trigger_byte_offset = 0;
+  uint32_t trigger_byte_size = 0;
+  RuntimeInstance* trigger_instance = nullptr;
+  LocalSignalId trigger_local_id = LocalSignalId{0};
+};
 
 // Performance knob: triggers <= this use inline storage (no heap).
 // NOT a hard limit - larger lists use heap allocation.

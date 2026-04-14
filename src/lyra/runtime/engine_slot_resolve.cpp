@@ -4,28 +4,6 @@
 
 namespace lyra::runtime {
 
-auto Engine::ResolveSlotBytes(uint32_t slot_id) const -> const uint8_t* {
-  const auto& meta = slot_meta_registry_.Get(slot_id);
-  if (meta.domain == SlotStorageDomain::kDesignGlobal) {
-    return runtime::ResolveGlobalSlotBase(meta, design_state_base_);
-  }
-  const auto& inst = GetInstance(meta.owner_instance_id);
-  return ResolveInstanceStorageOffset(
-      inst, meta.instance_rel_off, meta.total_bytes,
-      "Engine::ResolveSlotBytes");
-}
-
-auto Engine::ResolveSlotBytesMut(uint32_t slot_id) -> uint8_t* {
-  const auto& meta = slot_meta_registry_.Get(slot_id);
-  if (meta.domain == SlotStorageDomain::kDesignGlobal) {
-    return runtime::ResolveGlobalSlotBaseMut(meta, design_state_base_);
-  }
-  auto& inst = GetInstanceMut(meta.owner_instance_id);
-  return ResolveInstanceStorageOffset(
-      inst, meta.instance_rel_off, meta.total_bytes,
-      "Engine::ResolveSlotBytesMut");
-}
-
 auto Engine::ResolveGlobalSlotBase(GlobalSignalId signal) const
     -> const uint8_t* {
   const auto& meta = slot_meta_registry_.Get(signal.value);

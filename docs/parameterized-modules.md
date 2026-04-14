@@ -50,4 +50,3 @@ This means hierarchical references do not prevent specialization sharing. Two in
 ## Related
 
 - [compilation-model.md](compilation-model.md) -- specialization identity and parameter classification
-- [module-hierarchy.md](module-hierarchy.md) -- hierarchy support and port connections

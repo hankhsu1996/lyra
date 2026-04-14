@@ -23,26 +23,26 @@ enum class ConnectionKernelOrigin : uint8_t {
   kContinuousAssign,
 };
 
-// Runtime-shaped connection descriptor with compile-time provenance.
+// Runtime-shaped connection descriptor with object/member-shaped endpoints.
+// Connections are inter-object relations: member A of object S drives
+// member B of object D. The descriptor preserves this identity directly.
 struct ConnectionDescriptorEntry {
-  uint32_t src_slot_id = 0;
-  uint32_t dst_slot_id = 0;
+  // Source endpoint: object_index + body-relative byte offset.
+  uint32_t src_object_index = 0;
+  uint32_t src_byte_offset = 0;
+  // Destination endpoint: object_index + body-relative byte offset +
+  // local signal identity for dirty notification.
+  uint32_t dst_object_index = 0;
+  uint32_t dst_byte_offset = 0;
+  uint32_t dst_local_signal = 0;
+  // Copy size in bytes.
   uint32_t byte_size = 0;
-  uint32_t trigger_slot_id = 0;
+  // Trigger: object/member identity for subscription routing.
   uint8_t trigger_edge = 0;
   uint8_t trigger_bit_index = 0;
   uint32_t trigger_byte_offset = 0;
   uint32_t trigger_byte_size = 0;
-  // R5: Typed destination identity. When dst_is_local is true,
-  // dst_instance_id and dst_local_id carry the owning instance and
-  // body-local signal identity. Populated at layout time from design
-  // slot ownership. Runtime decodes into BatchedConnectionDst variant.
-  uint8_t dst_is_local = 0;
-  uint32_t dst_instance_id = 0;
-  uint32_t dst_local_id = 0;
-  // R5: Typed trigger identity. Same pattern as destination.
-  uint8_t trigger_is_local = 0;
-  uint32_t trigger_instance_id = 0;
+  uint32_t trigger_object_index = 0;
   uint32_t trigger_local_id = 0;
   // Compile-time-only provenance. Not serialized to runtime ABI.
   ConnectionKernelOrigin origin = ConnectionKernelOrigin::kPortBinding;

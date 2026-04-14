@@ -1043,6 +1043,9 @@ auto LowerDesign(
       construction, parent_to_children, body_to_representative,
       oi_to_durable_child);
 
+  // Copy parent topology into construction input for constructor use.
+  construction.parent_instance_indices = topo.parent_of;
+
   FinalizeExternalRefTargetSlots(
       result, provisionals_by_body, body_local_slots_by_body, topo,
       construction,

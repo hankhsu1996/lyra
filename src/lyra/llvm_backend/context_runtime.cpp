@@ -584,16 +584,16 @@ auto Context::GetLyraTriggerEvent() -> llvm::Function* {
   return lyra_trigger_event_;
 }
 
-auto Context::GetLyraResolveSlotPtr() -> llvm::Function* {
-  if (lyra_resolve_slot_ptr_ == nullptr) {
+auto Context::GetLyraResolveGlobalSlotPtr() -> llvm::Function* {
+  if (lyra_resolve_global_slot_ptr_ == nullptr) {
     auto* ptr_ty = llvm::PointerType::getUnqual(*llvm_context_);
     auto* i32_ty = llvm::Type::getInt32Ty(*llvm_context_);
     auto* fn_type = llvm::FunctionType::get(ptr_ty, {ptr_ty, i32_ty}, false);
-    lyra_resolve_slot_ptr_ = llvm::Function::Create(
-        fn_type, llvm::Function::ExternalLinkage, "LyraResolveSlotPtr",
+    lyra_resolve_global_slot_ptr_ = llvm::Function::Create(
+        fn_type, llvm::Function::ExternalLinkage, "LyraResolveGlobalSlotPtr",
         llvm_module_.get());
   }
-  return lyra_resolve_slot_ptr_;
+  return lyra_resolve_global_slot_ptr_;
 }
 
 // R3 typed coordination helpers.

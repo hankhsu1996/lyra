@@ -37,14 +37,18 @@ auto LowerConnectionArtifacts(const LoweringInput& input)
   if (input.bound_connections != nullptr) {
     for (const auto& bc : *input.bound_connections) {
       bool is_p2c = bc.kind == mir::PortConnection::Kind::kDriveParentToChild;
+      const auto& src_ep = is_p2c ? bc.parent_source : bc.child_target;
+      const auto& dst_ep = is_p2c ? bc.child_target : bc.parent_source;
       result.kernel_entries.push_back(
           ConnectionKernelEntry{
               .process_id = {},
-              .src_slot =
-                  to_flat_slot(is_p2c ? bc.parent_source : bc.child_target),
-              .dst_slot =
-                  to_flat_slot(is_p2c ? bc.child_target : bc.parent_source),
+              .src_slot = to_flat_slot(src_ep),
+              .dst_slot = to_flat_slot(dst_ep),
               .trigger_slot = to_flat_slot(bc.trigger),
+              .src_object_index = src_ep.object_index,
+              .src_local_slot = src_ep.local_slot,
+              .dst_object_index = dst_ep.object_index,
+              .dst_local_slot = dst_ep.local_slot,
               .trigger_object_index = bc.trigger.object_index,
               .trigger_local_slot = bc.trigger.local_slot,
               .trigger_edge = bc.trigger_edge,

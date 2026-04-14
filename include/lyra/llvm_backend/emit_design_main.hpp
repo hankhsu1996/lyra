@@ -37,7 +37,6 @@ struct EmitDesignMainInput {
   uint32_t feature_flags = 0;
   std::string signal_trace_path;
   uint32_t iteration_limit = 0;
-  bool collect_forwarding_analysis = false;
 };
 
 // Emit the design-wide main() function into the LLVM module owned by session.

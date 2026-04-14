@@ -1636,3 +1636,53 @@ void LyraConstructionResultSetExtRefBindings(
     }
   }
 }
+
+void LyraConstructionResultSetConnectionDescriptors(
+    void* result_raw, const void* serialized_raw, uint32_t num_descs) {
+  if (result_raw == nullptr || serialized_raw == nullptr || num_descs == 0) {
+    return;
+  }
+  auto& result = *static_cast<lyra::runtime::ConstructionResult*>(result_raw);
+  auto serialized = std::span(
+      static_cast<const lyra::runtime::SerializedConnectionDescriptor*>(
+          serialized_raw),
+      num_descs);
+  result.connection_descriptors.reserve(num_descs);
+  for (const auto& s : serialized) {
+    auto* src = result.instances.at(s.src_object_index).get();
+    auto* dst = result.instances.at(s.dst_object_index).get();
+    auto* trig = result.instances.at(s.trigger_object_index).get();
+    result.connection_descriptors.push_back(
+        lyra::runtime::RuntimeConnectionDescriptor{
+            .src_instance = src,
+            .src_byte_offset = s.src_byte_offset,
+            .dst_instance = dst,
+            .dst_byte_offset = s.dst_byte_offset,
+            .dst_local_signal =
+                lyra::runtime::LocalSignalId{s.dst_local_signal},
+            .byte_size = s.byte_size,
+            .trigger_edge = s.trigger_edge,
+            .trigger_bit_index = s.trigger_bit_index,
+            .trigger_byte_offset = s.trigger_byte_offset,
+            .trigger_byte_size = s.trigger_byte_size,
+            .trigger_instance = trig,
+            .trigger_local_id =
+                lyra::runtime::LocalSignalId{s.trigger_local_id},
+        });
+  }
+}
+
+auto LyraConstructionResultGetConnectionDescriptors(void* result_raw) -> void* {
+  if (result_raw == nullptr) return nullptr;
+  auto& result = *static_cast<lyra::runtime::ConstructionResult*>(result_raw);
+  if (result.connection_descriptors.empty()) return nullptr;
+  return result.connection_descriptors.data();
+}
+
+auto LyraConstructionResultGetConnectionDescriptorCount(void* result_raw)
+    -> uint32_t {
+  if (result_raw == nullptr) return 0;
+  return static_cast<uint32_t>(
+      static_cast<lyra::runtime::ConstructionResult*>(result_raw)
+          ->connection_descriptors.size());
+}

@@ -87,14 +87,15 @@ auto EmitPoolGlobal(
 auto GetConnectionDescriptorLlvmType(llvm::LLVMContext& ctx)
     -> llvm::StructType* {
   auto* i8 = llvm::Type::getInt8Ty(ctx);
-  auto* i32 = llvm::Type::getInt32Ty(ctx);
   auto* i16 = llvm::Type::getInt16Ty(ctx);
-  // R5: Extended with typed destination and trigger fields.
+  auto* i32 = llvm::Type::getInt32Ty(ctx);
+  // Object/member-shaped: {src_object_index, src_byte_offset,
+  //   dst_object_index, dst_byte_offset, dst_local_signal, byte_size,
+  //   trigger_edge, trigger_bit_index, padding, trigger_byte_offset,
+  //   trigger_byte_size, trigger_object_index, trigger_local_id}
   return llvm::StructType::create(
-      ctx,
-      {i32, i32, i32, i32, i8, i8, i8, i8, i32, i32, i32, i32, i8, i8, i16, i32,
-       i32},
-      "ConnectionDescriptor");
+      ctx, {i32, i32, i32, i32, i32, i32, i8, i8, i16, i32, i32, i32, i32},
+      "SerializedConnectionDescriptor");
 }
 
 }  // namespace
@@ -122,14 +123,25 @@ auto PrepareBackEdgeSiteInputs(
 
 auto ExtractConnectionDescriptorEntries(
     std::span<const ConnectionKernelEntry> kernel_entries,
-    const DesignLayout& design, uint32_t num_package_slots,
-    std::span<const uint32_t> instance_slot_counts)
+    std::span<const Layout::BodyRealizationInfo> body_realization_infos,
+    std::span<const uint32_t> instance_body_groups)
     -> std::vector<metadata::ConnectionDescriptorEntry> {
   std::vector<metadata::ConnectionDescriptorEntry> entries;
   entries.reserve(kernel_entries.size());
 
   for (const auto& entry : kernel_entries) {
-    auto byte_size = design.GetStorageSpec(entry.dst_slot).TotalByteSize();
+    // Compute body-relative byte offsets from object/member identity.
+    auto src_bg = instance_body_groups[entry.src_object_index.value];
+    const auto& src_layout = body_realization_infos[src_bg];
+    auto src_byte_offset =
+        src_layout.body_layout.inline_offsets[entry.src_local_slot.value].value;
+
+    auto dst_bg = instance_body_groups[entry.dst_object_index.value];
+    const auto& dst_layout = body_realization_infos[dst_bg];
+    auto dst_byte_offset =
+        dst_layout.body_layout.inline_offsets[entry.dst_local_slot.value].value;
+    auto byte_size =
+        dst_layout.slot_specs[entry.dst_local_slot.value].TotalByteSize();
 
     uint32_t trigger_byte_offset = 0;
     uint32_t trigger_byte_size = 0;
@@ -140,43 +152,19 @@ auto ExtractConnectionDescriptorEntries(
       trigger_bit_index = entry.trigger_observation->bit_index;
     }
 
-    // R5: Classify destination domain from layout slot ownership.
-    uint8_t dst_is_local = 0;
-    uint32_t dst_instance_id = 0;
-    uint32_t dst_local_id = 0;
-    if (entry.dst_slot.value >= num_package_slots) {
-      dst_is_local = 1;
-      auto owner = ResolveInstanceOwnedFlatSlot(
-          num_package_slots, instance_slot_counts, entry.dst_slot.value);
-      dst_instance_id = owner.instance_id.value;
-      dst_local_id = owner.local_signal_id.value;
-    }
-
-    // R5: Classify trigger domain from structured trigger identity.
-    uint8_t trigger_is_local = 0;
-    uint32_t trigger_instance_id = 0;
-    uint32_t trigger_local_id = 0;
-    if (entry.trigger_slot.value >= num_package_slots) {
-      trigger_is_local = 1;
-      trigger_instance_id = entry.trigger_object_index.value;
-      trigger_local_id = entry.trigger_local_slot.value;
-    }
-
     entries.push_back({
-        .src_slot_id = entry.src_slot.value,
-        .dst_slot_id = entry.dst_slot.value,
+        .src_object_index = entry.src_object_index.value,
+        .src_byte_offset = static_cast<uint32_t>(src_byte_offset),
+        .dst_object_index = entry.dst_object_index.value,
+        .dst_byte_offset = static_cast<uint32_t>(dst_byte_offset),
+        .dst_local_signal = entry.dst_local_slot.value,
         .byte_size = byte_size,
-        .trigger_slot_id = entry.trigger_slot.value,
         .trigger_edge = static_cast<uint8_t>(entry.trigger_edge),
         .trigger_bit_index = trigger_bit_index,
         .trigger_byte_offset = trigger_byte_offset,
         .trigger_byte_size = trigger_byte_size,
-        .dst_is_local = dst_is_local,
-        .dst_instance_id = dst_instance_id,
-        .dst_local_id = dst_local_id,
-        .trigger_is_local = trigger_is_local,
-        .trigger_instance_id = trigger_instance_id,
-        .trigger_local_id = trigger_local_id,
+        .trigger_object_index = entry.trigger_object_index.value,
+        .trigger_local_id = entry.trigger_local_slot.value,
         .origin = entry.origin,
     });
   }
@@ -228,26 +216,23 @@ auto EmitDesignMetadataGlobals(
     std::vector<llvm::Constant*> desc_constants;
     desc_constants.reserve(num_conn);
 
+    auto* i16_llvm = llvm::Type::getInt16Ty(ctx);
     for (const auto& desc : metadata.connection_descriptors) {
       desc_constants.push_back(
           llvm::ConstantStruct::get(
               conn_desc_llvm_type,
-              {llvm::ConstantInt::get(i32_llvm, desc.src_slot_id),
-               llvm::ConstantInt::get(i32_llvm, desc.dst_slot_id),
+              {llvm::ConstantInt::get(i32_llvm, desc.src_object_index),
+               llvm::ConstantInt::get(i32_llvm, desc.src_byte_offset),
+               llvm::ConstantInt::get(i32_llvm, desc.dst_object_index),
+               llvm::ConstantInt::get(i32_llvm, desc.dst_byte_offset),
+               llvm::ConstantInt::get(i32_llvm, desc.dst_local_signal),
                llvm::ConstantInt::get(i32_llvm, desc.byte_size),
-               llvm::ConstantInt::get(i32_llvm, desc.trigger_slot_id),
                llvm::ConstantInt::get(i8_llvm, desc.trigger_edge),
                llvm::ConstantInt::get(i8_llvm, desc.trigger_bit_index),
-               llvm::ConstantInt::get(i8_llvm, desc.dst_is_local),
-               llvm::ConstantInt::get(i8_llvm, 0),
+               llvm::ConstantInt::get(i16_llvm, 0),
                llvm::ConstantInt::get(i32_llvm, desc.trigger_byte_offset),
                llvm::ConstantInt::get(i32_llvm, desc.trigger_byte_size),
-               llvm::ConstantInt::get(i32_llvm, desc.dst_instance_id),
-               llvm::ConstantInt::get(i32_llvm, desc.dst_local_id),
-               llvm::ConstantInt::get(i8_llvm, desc.trigger_is_local),
-               llvm::ConstantInt::get(i8_llvm, 0),
-               llvm::ConstantInt::get(llvm::Type::getInt16Ty(ctx), 0),
-               llvm::ConstantInt::get(i32_llvm, desc.trigger_instance_id),
+               llvm::ConstantInt::get(i32_llvm, desc.trigger_object_index),
                llvm::ConstantInt::get(i32_llvm, desc.trigger_local_id)}));
     }
 
@@ -268,130 +253,6 @@ auto EmitDesignMetadataGlobals(
   }
 
   return result;
-}
-
-auto FindPortBindingForwardingCandidates(
-    std::span<const metadata::ConnectionDescriptorEntry> connections,
-    uint32_t num_slots,
-    std::span<const Layout::BodyRuntimeDescriptors> body_runtime_descriptors,
-    const OwnedTriggerTemplate& connection_triggers)
-    -> std::vector<PortBindingForwardingCandidate> {
-  // Dense per-slot connection usage counts and indices.
-  std::vector<uint32_t> slot_write_count(num_slots, 0);
-  std::vector<uint32_t> slot_trigger_count(num_slots, 0);
-  std::vector<uint32_t> slot_writer_conn(num_slots, UINT32_MAX);
-  std::vector<uint32_t> slot_trigger_conn(num_slots, UINT32_MAX);
-
-  for (uint32_t ci = 0; ci < connections.size(); ++ci) {
-    const auto& conn = connections[ci];
-    if (conn.dst_slot_id >= num_slots) {
-      throw common::InternalError(
-          "FindPortBindingForwardingCandidates",
-          std::format(
-              "dst_slot_id {} >= num_slots {}", conn.dst_slot_id, num_slots));
-    }
-    if (conn.trigger_slot_id >= num_slots) {
-      throw common::InternalError(
-          "FindPortBindingForwardingCandidates",
-          std::format(
-              "trigger_slot_id {} >= num_slots {}", conn.trigger_slot_id,
-              num_slots));
-    }
-    ++slot_write_count[conn.dst_slot_id];
-    slot_writer_conn[conn.dst_slot_id] = ci;
-    ++slot_trigger_count[conn.trigger_slot_id];
-    slot_trigger_conn[conn.trigger_slot_id] = ci;
-  }
-
-  // Build exclusion sets from body-shaped trigger/comb templates and
-  // connection templates. For body-relative entries (design-global flag
-  // not set), we cannot resolve to absolute slot IDs without per-instance
-  // base slot data. This is sound: missing exclusions only produce extra
-  // candidates, and this analysis is logging-only (not transform-authorizing).
-  std::vector<bool> is_process_trigger(num_slots, false);
-  std::vector<bool> is_comb_trigger(num_slots, false);
-
-  for (const auto& rt : body_runtime_descriptors) {
-    for (const auto& entry : rt.triggers.entries) {
-      if ((entry.flags & runtime::kTriggerTemplateFlagDesignGlobal) != 0) {
-        if (entry.slot_id < num_slots) {
-          is_process_trigger[entry.slot_id] = true;
-        }
-      }
-    }
-    for (const auto& entry : rt.comb.entries) {
-      if ((entry.flags & runtime::kCombTemplateFlagDesignGlobal) != 0) {
-        if (entry.slot_id < num_slots) {
-          is_comb_trigger[entry.slot_id] = true;
-        }
-      }
-    }
-  }
-
-  // Connection trigger templates are always design-global.
-  for (const auto& entry : connection_triggers.entries) {
-    if (entry.slot_id < num_slots) {
-      is_process_trigger[entry.slot_id] = true;
-    }
-  }
-
-  // Analyze slots with exactly one writer and one downstream connection.
-  // This is a broad candidate scan -- candidates are NOT proven safe for
-  // transformation. Unresolved proof gaps (active trace/display references,
-  // process-body reads) are flagged but do not exclude.
-  std::vector<PortBindingForwardingCandidate> candidates;
-
-  for (uint32_t slot_id = 0; slot_id < num_slots; ++slot_id) {
-    if (slot_write_count[slot_id] != 1) continue;
-    if (slot_trigger_count[slot_id] != 1) continue;
-
-    uint32_t upstream_ci = slot_writer_conn[slot_id];
-    uint32_t downstream_ci = slot_trigger_conn[slot_id];
-    const auto& upstream = connections[upstream_ci];
-    const auto& downstream = connections[downstream_ci];
-
-    PortBindingForwardingCandidate candidate;
-    candidate.intermediate_slot_id = common::SlotId{slot_id};
-    candidate.upstream_connection_index = ConnectionIndex{upstream_ci};
-    candidate.downstream_connection_index = ConnectionIndex{downstream_ci};
-    candidate.single_writer = true;
-    candidate.single_downstream = true;
-
-    // Today all kernelized connections are port-binding origin.
-    // This check is currently always true but structurally correct.
-    candidate.both_port_binding =
-        upstream.origin == metadata::ConnectionKernelOrigin::kPortBinding &&
-        downstream.origin == metadata::ConnectionKernelOrigin::kPortBinding;
-
-    candidate.no_process_trigger = !is_process_trigger[slot_id];
-    candidate.no_comb_trigger = !is_comb_trigger[slot_id];
-
-    // Upstream full-copy shape: uses full-slot trigger observation
-    // (trigger_byte_size == 0) and copies a nonzero byte region.
-    // This does NOT prove the copy covers the entire intermediate slot
-    // extent -- that would require comparing against the slot's total
-    // byte size, which is not available in the connection descriptor.
-    candidate.upstream_full_copy_shape = upstream.byte_size > 0 &&
-                                         upstream.trigger_byte_size == 0 &&
-                                         upstream.trigger_byte_offset == 0;
-
-    // Downstream matching read shape: reads from the same byte offset
-    // that upstream writes to, with the same byte count, and uses
-    // full-slot trigger observation. This checks shape compatibility
-    // but does NOT prove semantic equivalence of the forwarded value.
-    candidate.downstream_matching_read_shape =
-        downstream.src_slot_id == upstream.dst_slot_id &&
-        downstream.byte_size == upstream.byte_size &&
-        downstream.trigger_byte_size == 0 &&
-        downstream.trigger_byte_offset == 0;
-
-    // trace_ref_unresolved stays true (default). Active trace/display
-    // references cannot be determined from compile-time metadata alone.
-
-    candidates.push_back(candidate);
-  }
-
-  return candidates;
 }
 
 }  // namespace lyra::lowering::mir_to_llvm

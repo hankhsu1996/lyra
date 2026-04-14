@@ -263,6 +263,12 @@ auto CollectIdentityCopyCombs(std::span<const LayoutModulePlan> module_plans)
               .src_slot = common::SlotId{src_global},
               .dst_slot = common::SlotId{dst_global},
               .trigger_slot = common::SlotId{src_global},
+              .src_object_index = common::ObjectIndex{mi},
+              .src_local_slot =
+                  common::LocalSlotId{static_cast<uint32_t>(src_place.root.id)},
+              .dst_object_index = common::ObjectIndex{mi},
+              .dst_local_slot =
+                  common::LocalSlotId{static_cast<uint32_t>(dst_place.root.id)},
               .trigger_object_index = common::ObjectIndex{mi},
               .trigger_local_slot =
                   common::LocalSlotId{static_cast<uint32_t>(src_place.root.id)},
@@ -377,6 +383,8 @@ auto EliminateRelayConnections(ConnectionAnalysisResult& analysis) -> uint32_t {
     common::SlotId upstream_src{};
     common::SlotId upstream_trigger{};
     common::EdgeKind upstream_edge = common::EdgeKind::kAnyChange;
+    common::ObjectIndex upstream_src_object_index{};
+    common::LocalSlotId upstream_src_local_slot{};
     common::ObjectIndex upstream_trigger_object_index{};
     common::LocalSlotId upstream_trigger_local_slot{};
 
@@ -385,6 +393,8 @@ auto EliminateRelayConnections(ConnectionAnalysisResult& analysis) -> uint32_t {
       if (it == comb_by_dst.end()) continue;
       upstream_src = it->second->src_slot;
       upstream_trigger = it->second->trigger_slot;
+      upstream_src_object_index = it->second->src_object_index;
+      upstream_src_local_slot = it->second->src_local_slot;
       upstream_trigger_object_index = it->second->trigger_object_index;
       upstream_trigger_local_slot = it->second->trigger_local_slot;
     } else {
@@ -400,6 +410,8 @@ auto EliminateRelayConnections(ConnectionAnalysisResult& analysis) -> uint32_t {
       upstream_src = up_edge.src_slot;
       upstream_trigger = up_edge.trigger_slot;
       upstream_edge = up_edge.trigger_edge;
+      upstream_src_object_index = up_edge.src_object_index;
+      upstream_src_local_slot = up_edge.src_local_slot;
       upstream_trigger_object_index = up_edge.trigger_object_index;
       upstream_trigger_local_slot = up_edge.trigger_local_slot;
     }
@@ -434,6 +446,8 @@ auto EliminateRelayConnections(ConnectionAnalysisResult& analysis) -> uint32_t {
       if (down_use.conn_index == UINT32_MAX) continue;
       auto& down_edge = edges[down_use.conn_index];
       down_edge.src_slot = upstream_src;
+      down_edge.src_object_index = upstream_src_object_index;
+      down_edge.src_local_slot = upstream_src_local_slot;
       down_edge.trigger_slot = upstream_trigger;
       down_edge.trigger_edge = upstream_edge;
       down_edge.trigger_observation = std::nullopt;

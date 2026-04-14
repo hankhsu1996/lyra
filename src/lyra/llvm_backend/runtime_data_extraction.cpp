@@ -235,7 +235,10 @@ auto BuildConstructionProgram(
     const mir::InstanceTable& instance_table,
     std::span<const std::vector<uint8_t>> param_payloads,
     const std::vector<std::vector<common::ResolvedExtRefBinding>>&
-        instance_ext_ref_bindings) -> ConstructionProgramData {
+        instance_ext_ref_bindings,
+    std::span<const Layout::BodyRealizationInfo> body_realization_infos,
+    std::span<const uint32_t> parent_instance_indices)
+    -> ConstructionProgramData {
   auto instance_count = static_cast<uint32_t>(instance_body_group.size());
   ConstructionProgramData prog;
   prog.entries.reserve(instance_count);
@@ -246,6 +249,9 @@ auto BuildConstructionProgram(
     runtime::ConstructionProgramEntry entry{};
 
     entry.body_group = instance_body_group[mi];
+    entry.parent_instance_index = (mi < parent_instance_indices.size())
+                                      ? parent_instance_indices[mi]
+                                      : UINT32_MAX;
 
     const auto& path = instance_table.entries[mi].full_path;
     entry.path_offset = static_cast<uint32_t>(prog.path_pool.size());
@@ -265,15 +271,21 @@ auto BuildConstructionProgram(
     entry.realized_appendix_size = sizes.appendix_bytes;
 
     // Pack per-instance ext-ref binding records into flat pool.
+    // Compute target_byte_offset from the target body's layout.
     if (mi < instance_ext_ref_bindings.size() &&
         !instance_ext_ref_bindings[mi].empty()) {
       auto offset = static_cast<uint32_t>(prog.ext_ref_binding_pool.size());
       prog.ext_ref_binding_offsets.push_back(offset);
       prog.ext_ref_binding_counts.push_back(
           static_cast<uint32_t>(instance_ext_ref_bindings[mi].size()));
-      const auto& bindings = instance_ext_ref_bindings[mi];
-      prog.ext_ref_binding_pool.insert(
-          prog.ext_ref_binding_pool.end(), bindings.begin(), bindings.end());
+      for (auto b : instance_ext_ref_bindings[mi]) {
+        auto target_bg = instance_body_group[b.target_instance_id];
+        const auto& target_layout =
+            body_realization_infos[target_bg].body_layout;
+        b.target_byte_offset =
+            target_layout.inline_offsets[b.target_local_signal.value].value;
+        prog.ext_ref_binding_pool.push_back(b);
+      }
     } else {
       prog.ext_ref_binding_offsets.push_back(UINT32_MAX);
       prog.ext_ref_binding_counts.push_back(0);
@@ -989,7 +1001,8 @@ void ExtractBodyInitDescriptors(
 
   construction_program = BuildConstructionProgram(
       instance_body_group, instance_storage_sizes, construction.instance_table,
-      param_payloads, construction.instance_ext_ref_bindings);
+      param_payloads, construction.instance_ext_ref_bindings,
+      body_realization_infos, construction.parent_instance_indices);
 
   // Validate construction program.
   for (size_t i = 0; i < construction_program.entries.size(); ++i) {

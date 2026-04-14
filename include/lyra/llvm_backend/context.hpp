@@ -281,7 +281,7 @@ class Context {
   [[nodiscard]] auto GetLyraFreeTriggers() -> llvm::Function*;
   [[nodiscard]] auto GetLyraSuspendWaitEvent() -> llvm::Function*;
   [[nodiscard]] auto GetLyraTriggerEvent() -> llvm::Function*;
-  [[nodiscard]] auto GetLyraResolveSlotPtr() -> llvm::Function*;
+  [[nodiscard]] auto GetLyraResolveGlobalSlotPtr() -> llvm::Function*;
   // R5: Resolve RuntimeInstance* from InstanceId at runtime.
   [[nodiscard]] auto GetLyraResolveInstancePtr() -> llvm::Function*;
   // R3 typed coordination helpers (take frame* instead of engine*).
@@ -553,19 +553,21 @@ class Context {
     return spec_layout_contract_;
   }
 
-  // External-ref helpers. Recipes are specialization-scoped; actual slot
-  // resolution uses per-instance data loaded from RuntimeInstance at runtime.
+  // External-ref helpers. Recipes are specialization-scoped; actual
+  // storage resolution uses per-instance binding data loaded from
+  // RuntimeInstance, resolved object-first through the target instance.
 
-  // Resolved external-ref root: carries the design-global slot as a
-  // runtime-loaded LLVM Value and the type as compile-time data.
+  // Resolved external-ref root: carries the resolved storage pointer
+  // (instance inline_base + target_byte_offset) and type.
   struct ResolvedExternalRefRoot {
-    llvm::Value* global_slot_value = nullptr;
+    llvm::Value* storage_ptr = nullptr;
     TypeId type = {};
   };
 
-  // Resolve external ref to runtime global_slot + type.
-  // Emits LLVM IR that loads the design-global slot from the current
-  // instance's ext_ref_bindings table.
+  // Resolve external ref to storage pointer + type.
+  // Emits LLVM IR that loads target_instance_id and target_byte_offset
+  // from the current instance's ext_ref_bindings table, resolves the
+  // target instance, and computes inline_base + byte_offset.
   [[nodiscard]] auto ResolveExternalRefRoot(mir::ExternalRefId ref_id)
       -> ResolvedExternalRefRoot;
 
@@ -633,13 +635,9 @@ class Context {
   // Centralized LLVM type for OwnedStorageHandle: { ptr, i64 }.
   [[nodiscard]] auto GetOwnedHandleLlvmType() -> llvm::StructType*;
 
-  // Design-global storage: design_ptr + struct GEP via field index.
-  [[nodiscard]] auto GetDesignGlobalSlotPointer(uint32_t global_slot_id)
-      -> llvm::Value*;
-
-  // Design-global storage with runtime-loaded slot ID.
-  // Used by external-ref resolution where the slot varies per instance.
-  [[nodiscard]] auto GetDesignGlobalSlotPointer(llvm::Value* global_slot_id)
+  // Global/package slot resolution. Resolves truly global slot storage
+  // via the runtime global-slot resolver or init-time design_ptr + offset.
+  [[nodiscard]] auto GetGlobalSlotPointer(uint32_t global_slot_id)
       -> llvm::Value*;
 
   // Central dispatch: resolve a design-storage root (kModuleSlot or
@@ -1054,7 +1052,7 @@ class Context {
   llvm::Function* lyra_free_triggers_ = nullptr;
   llvm::Function* lyra_suspend_wait_event_ = nullptr;
   llvm::Function* lyra_trigger_event_ = nullptr;
-  llvm::Function* lyra_resolve_slot_ptr_ = nullptr;
+  llvm::Function* lyra_resolve_global_slot_ptr_ = nullptr;
   llvm::Function* lyra_resolve_instance_ptr_ = nullptr;
   // R3 typed coordination helpers.
   llvm::StructType* ext_ref_binding_type_ = nullptr;

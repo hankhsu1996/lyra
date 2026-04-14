@@ -16,23 +16,18 @@
 
 namespace lyra::runtime {
 
-void Engine::InitConnectionBatch(std::span<const ConnectionDescriptor> descs) {
+void Engine::InitConnectionBatch(
+    std::span<const RuntimeConnectionDescriptor> descs) {
   if (descs.empty()) return;
 
-  if (!slot_meta_registry_.IsPopulated()) {
-    throw common::InternalError(
-        "Engine::InitConnectionBatch",
-        "InitConnectionBatch before InitSlotMeta");
-  }
-
-  // Build typed connections with domain-aware destinations and triggers.
-  // Each connection's trigger and destination domain is pre-classified
-  // at codegen time via typed descriptor fields.
+  // Build batched connections from already-materialized runtime
+  // descriptors. All endpoints carry direct RuntimeInstance* -- no
+  // numeric identity lookup needed.
   struct IndexedConn {
     bool trigger_is_local;
-    InstanceId trigger_instance_id;  // valid when trigger_is_local
-    uint32_t trigger_local_id;       // valid when trigger_is_local
-    uint32_t trigger_global_id;      // valid when !trigger_is_local
+    InstanceId trigger_instance_id;
+    uint32_t trigger_local_id;
+    uint32_t trigger_global_id;
     BatchedConnection conn;
   };
   std::vector<IndexedConn> sorted;
@@ -45,69 +40,23 @@ void Engine::InitConnectionBatch(std::span<const ConnectionDescriptor> descs) {
       ++conn_full_slot_count_;
     }
 
-    // Decode typed destination from descriptor fields.
-    // Resolve InstanceId -> RuntimeInstance* at init time so the hot path
-    // never calls FindInstanceMut.
-    BatchedConnectionDst dst;
-    RuntimeInstance* dst_inst = nullptr;
-    if (d.dst_is_local != 0) {
-      auto iid = InstanceId{d.dst_instance_id};
-      auto lid = LocalSignalId{d.dst_local_id};
-      dst_inst = FindInstanceMut(iid);
-      if (dst_inst == nullptr) {
-        throw common::InternalError(
-            "Engine::InitConnectionBatch",
-            std::format("dst instance_id {} not found", iid));
-      }
-      if (lid.value >= dst_inst->observability.local_signal_count) {
-        throw common::InternalError(
-            "Engine::InitConnectionBatch",
-            std::format(
-                "dst local_id {} >= local_signal_count {} for instance {}",
-                lid.value, dst_inst->observability.local_signal_count, iid));
-      }
-      dst = LocalConnectionDst{.instance = dst_inst, .signal = lid};
-    } else {
-      dst = GlobalConnectionDst{GlobalSignalId{d.dst_slot_id}};
-    }
+    const auto* src_ptr = ResolveInstanceStorageOffset(
+        *d.src_instance, d.src_byte_offset, d.byte_size,
+        "Engine::InitConnectionBatch[src]");
 
-    // Decode typed trigger from descriptor fields.
-    auto trigger_is_local = (d.trigger_is_local != 0);
-    auto trigger_instance_id = InstanceId{d.trigger_instance_id};
-    uint32_t trigger_local_id = d.trigger_local_id;
-    uint32_t trigger_global_id = d.trigger_slot_id;
-    if (trigger_is_local) {
-      auto* tinst = FindInstanceMut(trigger_instance_id);
-      if (tinst == nullptr) {
-        throw common::InternalError(
-            "Engine::InitConnectionBatch",
-            std::format(
-                "trigger instance_id {} not found", trigger_instance_id));
-      }
-      if (trigger_local_id >= tinst->observability.local_signal_count) {
-        throw common::InternalError(
-            "Engine::InitConnectionBatch",
-            std::format(
-                "trigger local_id {} >= local_signal_count {} for "
-                "instance {}",
-                trigger_local_id, tinst->observability.local_signal_count,
-                trigger_instance_id));
-      }
-    }
+    auto* dst_ptr = ResolveInstanceStorageOffset(
+        *d.dst_instance, d.dst_byte_offset, d.byte_size,
+        "Engine::InitConnectionBatch[dst]");
 
-    const auto* src_ptr = ResolveSlotBytes(d.src_slot_id);
-    auto* dst_ptr =
-        (dst_inst != nullptr)
-            ? ResolveInstanceSlotBaseMut(
-                  *dst_inst, LocalSignalId{d.dst_local_id})
-            : ResolveGlobalSlotBaseMut(GlobalSignalId{d.dst_slot_id});
+    BatchedConnectionDst dst = LocalConnectionDst{
+        .instance = d.dst_instance, .signal = d.dst_local_signal};
 
     sorted.push_back(
         IndexedConn{
-            .trigger_is_local = trigger_is_local,
-            .trigger_instance_id = trigger_instance_id,
-            .trigger_local_id = trigger_local_id,
-            .trigger_global_id = trigger_global_id,
+            .trigger_is_local = true,
+            .trigger_instance_id = d.trigger_instance->instance_id,
+            .trigger_local_id = d.trigger_local_id.value,
+            .trigger_global_id = 0,
             .conn =
                 BatchedConnection{
                     .src_ptr = src_ptr,
@@ -518,8 +467,6 @@ void Engine::PromoteGlobalFrontier() {
 
 void Engine::FlushAndPropagateConnections() {
   // Check whether there is any work to do across both domains.
-  // Use the sparse delta_dirty_instances_ index for local dirty check
-  // instead of scanning all instances -- O(1) vs O(N).
   bool has_global_dirty = !update_set_.DeltaDirtySlots().empty();
   bool has_local_dirty = !delta_dirty_instances_.empty();
 

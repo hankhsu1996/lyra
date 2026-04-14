@@ -291,8 +291,6 @@ auto DumpLlvm(const CompilationInput& input) -> int {
       .signal_trace_path = {},
       .iteration_limit = 0,
       .force_two_state = input.two_state,
-      .collect_forwarding_analysis =
-          output.IsEnabled(OutputCategory::kAnalysis),
       .dpi_export_wrappers = &mir_result->dpi_export_wrappers,
       .bound_connections = &mir_result->bound_connections,
       .expr_connections = &mir_result->expr_connections,

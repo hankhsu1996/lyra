@@ -371,13 +371,14 @@ extern "C" void LyraRunSimulation(
               abi->back_edge_site_meta_string_pool_size));
     }
 
-    // Connection descriptors
+    // Connection descriptors: already materialized by the constructor
+    // into RuntimeConnectionDescriptor with direct RuntimeInstance*.
     if (abi->conn_descs != nullptr && abi->num_conn_descs > 0) {
-      auto conn_descs = std::span(
-          static_cast<const lyra::runtime::ConnectionDescriptor*>(
-              abi->conn_descs),
-          abi->num_conn_descs);
-      engine.InitConnectionBatch(conn_descs);
+      engine.InitConnectionBatch(
+          std::span(
+              static_cast<const lyra::runtime::RuntimeConnectionDescriptor*>(
+                  abi->conn_descs),
+              abi->num_conn_descs));
     }
 
     // Comb kernel metadata (flat path). Only used when no bundles exist.
@@ -786,10 +787,11 @@ extern "C" void LyraApply4StatePatches64(
   }
 }
 
-extern "C" auto LyraResolveSlotPtr(void* engine_ptr, uint32_t slot_id)
+extern "C" auto LyraResolveGlobalSlotPtr(void* engine_ptr, uint32_t slot_id)
     -> void* {
   auto* engine = static_cast<lyra::runtime::Engine*>(engine_ptr);
-  return engine->ResolveSlotBytesMut(slot_id);
+  return engine->ResolveGlobalSlotBaseMut(
+      lyra::runtime::GlobalSignalId{slot_id});
 }
 
 // R3 typed coordination helpers.

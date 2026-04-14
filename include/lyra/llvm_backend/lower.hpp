@@ -107,7 +107,6 @@ struct LoweringInput {
   std::string signal_trace_path;
   uint32_t iteration_limit = 0;  // 0 = default (1B)
   bool force_two_state = false;  // Force 2-state LLVM representation
-  bool collect_forwarding_analysis = false;
   MainAbi main_abi = MainAbi::kEmbeddedPlusargs;
   // DPI export wrapper descriptors for wrapper emission.
   // Owned by the MIR lowering result; passed by pointer (nullable).

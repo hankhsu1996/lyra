@@ -4,7 +4,7 @@ How a write to a design variable wakes up a process that observes it.
 
 ## Signal/Slot Model
 
-Every design variable (reg, wire, int, struct, array) maps to a **slot** in the flat DesignState allocation. Each slot has a numeric `slot_id` and byte-level metadata (offset, size, storage kind) in SlotMetaRegistry. SignalId and slot_id are the same value.
+Every design variable (reg, wire, int, struct, array) maps to a **slot** with a numeric `slot_id` and byte-level metadata (offset, size, storage domain) in SlotMeta. Slots belong to one of two storage domains: **kDesignGlobal** (package/global state in the design arena) or **kInstanceOwned** (per-instance inline storage). Dirty tracking and subscription machinery operate uniformly across both domains -- the slot_id identifies the signal, and storage is resolved through domain dispatch at access time.
 
 ## Pipeline
 
@@ -61,10 +61,6 @@ For each delta-dirty slot:
 Range filtering is a performance optimization. Snapshot comparison is the correctness backstop. A wider-than-necessary dirty range causes extra comparisons but never misses a real change.
 
 Process enqueue order is an implementation detail. The runtime de-duplicates per process, but does not define fairness/stable ordering guarantees across different signals.
-
-## Forwarded Aliases and Dirty Tracking
-
-Forwarded alias slots (see [state-layout.md](state-layout.md#storage-ownership)) do not participate in dirty tracking. They have no independent storage -- mutations go through the canonical owner's storage, and the owner's slot ID appears in the dirty set. The runtime validates this invariant: if a forwarded alias slot ID ever appears in the dirty set, it is an `InternalError`. Subscriptions are registered against the canonical owner, not the alias. This is transparent to wakeup logic.
 
 ## Byte Range Contract
 

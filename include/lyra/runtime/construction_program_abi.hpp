@@ -18,6 +18,10 @@ struct ConstructionProgramEntry {
   uint32_t param_size;
   uint64_t realized_inline_size;
   uint64_t realized_appendix_size;
+  // Parent instance index in construction order. UINT32_MAX for top-level.
+  // Used by constructor to build children_by_parent for owner-relative
+  // connection recipe materialization.
+  uint32_t parent_instance_index;
 };
 
 // Flat POD reference to one body descriptor package. Mirrors the data

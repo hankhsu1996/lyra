@@ -519,13 +519,6 @@ class Engine {
       std::span<const InstanceMetadataBundle> bundles,
       std::span<const uint32_t> design_global_slot_meta_words, void** states);
 
-  // Resolve the storage byte address for a slot.
-  // For kDesignGlobal slots: returns design_state_base_ + design_base_off.
-  // For kInstanceOwned slots: returns instance->storage.inline_base +
-  // instance_rel_off.
-  [[nodiscard]] auto ResolveSlotBytes(uint32_t slot_id) const -> const uint8_t*;
-  [[nodiscard]] auto ResolveSlotBytesMut(uint32_t slot_id) -> uint8_t*;
-
   // R5: Global slot resolution by GlobalSignalId.
   [[nodiscard]] auto ResolveGlobalSlotBase(GlobalSignalId signal) const
       -> const uint8_t*;
@@ -737,9 +730,9 @@ class Engine {
     return HasFlag(static_cast<FeatureFlag>(feature_flags_), flag);
   }
 
-  // Initialize connection batch from descriptors.
-  // Builds trigger map for fast evaluation.
-  void InitConnectionBatch(std::span<const ConnectionDescriptor> descs);
+  // Initialize connection batch from already-materialized descriptors.
+  // All endpoints carry direct RuntimeInstance* -- no numeric lookup.
+  void InitConnectionBatch(std::span<const RuntimeConnectionDescriptor> descs);
 
   // Evaluate all connections once (used for initial value propagation).
   void EvaluateAllConnections();

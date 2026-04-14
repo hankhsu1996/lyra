@@ -263,13 +263,11 @@ auto Context::GetWriteTarget(mir::PlaceId place_id) -> Result<WriteTarget> {
 
 auto Context::GetWriteTarget(mir::ExternalRefId ref_id) -> Result<WriteTarget> {
   auto root = ResolveExternalRefRoot(ref_id);
-  auto* ptr = GetDesignGlobalSlotPointer(root.global_slot_value);
   // External-ref dirty notification resolves through per-instance
-  // target tables to the target instance's local signal. Storage
-  // addressing still uses the design-global slot pointer.
+  // target tables to the target instance's local signal.
   auto signal_coord = SignalCoordExpr::ExtRef(ref_id.value);
   return WriteTarget{
-      .ptr = ptr,
+      .ptr = root.storage_ptr,
       .canonical_signal_id = signal_coord,
       .dirty_off = 0,
       .dirty_size = 0,
@@ -518,39 +516,23 @@ auto Context::GetModuleSlotPointer(uint32_t local_slot_id) -> llvm::Value* {
       "GetModuleSlotPointer", "unreachable: unknown SpecSlotAccessKind");
 }
 
-auto Context::GetDesignGlobalSlotPointer(uint32_t global_slot_id)
-    -> llvm::Value* {
-  // When engine is available (simulation context), resolve through the
-  // runtime slot resolver. This handles both design-global and
-  // instance-owned slots correctly via SlotMeta domain dispatch.
+auto Context::GetGlobalSlotPointer(uint32_t global_slot_id) -> llvm::Value* {
+  // Simulation context: resolve through global-only runtime resolver.
   if (engine_ptr_ != nullptr) {
     return builder_.CreateCall(
-        GetLyraResolveSlotPtr(),
-        {engine_ptr_, builder_.getInt32(global_slot_id)}, "resolved_slot_ptr");
+        GetLyraResolveGlobalSlotPtr(),
+        {engine_ptr_, builder_.getInt32(global_slot_id)},
+        "resolved_global_slot_ptr");
   }
-  // Init context (no engine): fall back to design_ptr + arena offset.
-  // Only valid for package/global slots during initialization.
+  // Init context (no engine): design_ptr + arena offset.
   if (design_ptr_ == nullptr) {
     throw common::InternalError(
-        "GetDesignGlobalSlotPointer", "design pointer not set");
+        "GetGlobalSlotPointer", "design pointer not set");
   }
   uint64_t offset = GetDesignSlotByteOffset(common::SlotId{global_slot_id});
   return builder_.CreateGEP(
       llvm::Type::getInt8Ty(*llvm_context_), design_ptr_,
-      builder_.getInt64(offset), "design_global_slot_ptr");
-}
-
-auto Context::GetDesignGlobalSlotPointer(llvm::Value* global_slot_id)
-    -> llvm::Value* {
-  // Runtime-loaded slot ID: must use engine resolver (simulation context).
-  if (engine_ptr_ != nullptr) {
-    return builder_.CreateCall(
-        GetLyraResolveSlotPtr(), {engine_ptr_, global_slot_id},
-        "resolved_slot_ptr");
-  }
-  throw common::InternalError(
-      "GetDesignGlobalSlotPointer(Value*)",
-      "runtime-loaded slot ID requires engine context");
+      builder_.getInt64(offset), "design_slot_ptr");
 }
 
 auto Context::GetSlotRootPointer(const mir::PlaceRoot& root) -> llvm::Value* {
@@ -566,7 +548,7 @@ auto Context::GetSlotRootPointer(const mir::PlaceRoot& root) -> llvm::Value* {
             root.id));
   }
   if (root.kind == mir::PlaceRoot::Kind::kDesignGlobal) {
-    return GetDesignGlobalSlotPointer(static_cast<uint32_t>(root.id));
+    return GetGlobalSlotPointer(static_cast<uint32_t>(root.id));
   }
   if (root.kind == mir::PlaceRoot::Kind::kObjectLocal) {
     auto body_group = facts_->layout->instance_body_groups[root.object_index];
@@ -608,7 +590,7 @@ auto Context::GetSignalSlotPointer(const mir::SignalRef& sig) -> llvm::Value* {
         .object_index = sig.object_index};
     return GetSlotRootPointer(root);
   }
-  return GetDesignGlobalSlotPointer(sig.id);
+  return GetGlobalSlotPointer(sig.id);
 }
 
 auto Context::GetStorageRootPointer(mir::PlaceId place_id) -> llvm::Value* {

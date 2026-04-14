@@ -1010,26 +1010,39 @@ void Engine::InitProcessMeta(ProcessMetaRegistry connection_registry) {
 }
 
 void Engine::ReleaseStringSlots() {
-  if (!slot_meta_registry_.IsPopulated()) return;
-
-  for (uint32_t slot_id = 0; slot_id < slot_meta_registry_.Size(); ++slot_id) {
-    const auto& meta = slot_meta_registry_.Get(slot_id);
-    if (meta.kind != SlotStorageKind::kString) continue;
-    if (meta.storage_owner_slot_id != slot_id) continue;
-
-    if (meta.total_bytes != sizeof(LyraStringHandle)) {
-      throw common::InternalError(
-          "Engine::ReleaseStringSlots",
-          std::format(
-              "string slot {} has total_bytes {} != expected {}", slot_id,
-              meta.total_bytes, sizeof(LyraStringHandle)));
+  // Release global string slots from the design-global registry.
+  if (slot_meta_registry_.IsPopulated() && design_state_base_ != nullptr) {
+    for (uint32_t slot_id = 0; slot_id < slot_meta_registry_.Size();
+         ++slot_id) {
+      const auto& meta = slot_meta_registry_.Get(slot_id);
+      if (meta.domain != SlotStorageDomain::kDesignGlobal) continue;
+      if (meta.kind != SlotStorageKind::kString) continue;
+      if (meta.total_bytes != sizeof(LyraStringHandle)) continue;
+      auto* bytes = runtime::ResolveGlobalSlotBaseMut(meta, design_state_base_);
+      LyraStringHandle handle{};
+      std::memcpy(&handle, bytes, sizeof(handle));
+      LyraStringRelease(handle);
+      std::memset(bytes, 0, sizeof(handle));
     }
+  }
 
-    auto* bytes = ResolveSlotBytesMut(slot_id);
-    LyraStringHandle handle{};
-    std::memcpy(&handle, bytes, sizeof(handle));
-    LyraStringRelease(handle);
-    std::memset(bytes, 0, sizeof(handle));
+  // Release instance-owned string slots by walking instances directly.
+  for (auto* inst : instances_) {
+    if (inst == nullptr) continue;
+    const auto& obs = inst->observability;
+    if (obs.layout == nullptr) continue;
+    for (uint32_t lid = 0; lid < obs.layout->slot_meta.size(); ++lid) {
+      const auto& imeta = obs.layout->slot_meta[lid];
+      if (imeta.kind != SlotStorageKind::kString) continue;
+      if (imeta.total_bytes != sizeof(LyraStringHandle)) continue;
+      auto* bytes = ResolveInstanceStorageOffset(
+          *inst, imeta.instance_rel_off, imeta.total_bytes,
+          "Engine::ReleaseStringSlots");
+      LyraStringHandle handle{};
+      std::memcpy(&handle, bytes, sizeof(handle));
+      LyraStringRelease(handle);
+      std::memset(bytes, 0, sizeof(handle));
+    }
   }
 }
 

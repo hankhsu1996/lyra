@@ -22,7 +22,6 @@ namespace lyra::lowering::mir_to_llvm {
 struct JitCompileTimings;
 struct JitOrcStats;
 struct LinkProgressSnapshot;
-class ForwardingAnalysisReport;
 }  // namespace lyra::lowering::mir_to_llvm
 
 namespace lyra::driver {
@@ -84,10 +83,6 @@ class CompilationOutput {
   void PrintJitTimings(
       const lowering::mir_to_llvm::JitCompileTimings& timings) const;
   void PrintOrcStats(const lowering::mir_to_llvm::JitOrcStats& stats) const;
-
-  // Analysis rendering.
-  void PrintForwardingAnalysisReport(
-      const lowering::mir_to_llvm::ForwardingAnalysisReport& report) const;
 
   // JIT link progress rendering.
   void PrintLinkProgress(

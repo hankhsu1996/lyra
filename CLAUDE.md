@@ -22,7 +22,6 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 | `docs/change-propagation.md`       | Dirty tracking, subscriptions, wakeup filtering          |
 | `docs/type-system.md`              | Type interning, type kinds, 4-state representation       |
 | `docs/parameterized-modules.md`    | Module parameters, specialization, param classes         |
-| `docs/module-hierarchy.md`         | Module hierarchy, port connections, realization          |
 | `docs/cli-design.md`               | CLI tool design, lyra.toml config, commands              |
 | `docs/state-layout.md`             | Byte-level state layout, container semantics             |
 | `docs/string-types.md`             | String type handling, slang interaction                  |
