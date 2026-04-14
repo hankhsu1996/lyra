@@ -8,30 +8,32 @@ For how this model drives design decisions, see [architecture-principles.md](arc
 
 ## Core Definitions
 
-A module is a type. An instance is an object of that type. Signals are its members. Processes are its behavior.
+A module is a type. An instance is an object of that type. Signals are its members. Processes are its behavior. A specialization is the compiler's real compilation unit.
 
 | Term              | Definition                                                            |
 | ----------------- | --------------------------------------------------------------------- |
 | Module definition | Type definition. Describes shape, members, and behavior.              |
-| Specialization    | Compiled type. One per distinct compiled artifact shape.              |
+| Specialization    | Compiled type and compilation unit. One per distinct artifact shape.  |
 | Instance          | Object. Owns its state. Addressed via object pointer + local offset.  |
 | Signal / variable | Member of an instance. Object-local storage.                          |
 | Process           | Behavior attached to an instance. Runs against that instance's state. |
 | Constructor       | Builds instances from compiled specializations + design topology.     |
 | Runtime execution | Processes running on their instances' state.                          |
 
+The frontend may elaborate thousands of instances, but the compiler works per-specialization, not per-instance. Specialization is not merely a grouping concept -- it is the compiler's real unit of compilation, producing a concrete independently-compiled artifact.
+
 ## Ownership Phases
 
 Three distinct ownership phases. Each produces facts for the next.
 
-**Compile-time facts** (per-specialization, body-shaped):
+**Compile-time facts** (per-compilation-unit, body-shaped):
 
 - Packed layout, arithmetic representation, compiled code shape
 - Static member offsets (SpecLayout)
 - Process and kernel compiled code
 - Body-local slot descriptors, storage specs
 
-These facts describe the type. They are stable across all instances of the same specialization.
+These facts belong to the compilation unit. They are the concrete output of per-unit compilation. They are stable across all instances of the same specialization.
 
 **Construction-time facts** (per-instance, resolved from design topology):
 
@@ -70,11 +72,11 @@ The rule: design-global systems coordinate instances but do not define what an i
 
 Member access within the natural model falls into two categories with fundamentally different resolution timing.
 
-**Self-local access** is a process reading or writing a member of its own instance. This is `this->member` -- object pointer + local offset. The offset is a compile-time constant from SpecLayout. Self-local access is fully resolved during specialization compilation.
+**Self-local access** is a process reading or writing a member of its own instance. This is `this->member` -- object pointer + local offset. The offset is a compile-time constant from SpecLayout. Self-local access is fully resolved within the compilation unit because it stays within the unit's own state.
 
 **Non-local access** is a process reading or writing a member of a different instance (parent, child, ancestor, or any other instance in the hierarchy). This includes hierarchical references (`child.signal`, `ancestor.value`) and port connection sources/targets.
 
-Non-local access cannot be resolved during specialization compilation because the target instance does not yet exist. The target is created during construction, and its identity (which object, at what address) is a construction-time fact. Specialization compilation must represent non-local access as an **externally-bound handle** -- a typed reference that the body code can use, but that only acquires a concrete target when construction binds it.
+Non-local access cannot be resolved during per-unit compilation because it crosses the compilation-unit boundary: the target belongs to a different instance, which is created during construction. The target's identity (which object, at what address) is a construction-time fact. Per-unit compilation must represent non-local access as an **externally-bound handle** -- a typed reference that the body code can use, but that only acquires a concrete target when construction binds it.
 
 The mental model is closure capture: the body code captures a typed external reference slot. The constructor fills it with a concrete binding when the instance and its neighbors are materialized. The body code never names the target directly.
 

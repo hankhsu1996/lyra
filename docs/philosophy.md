@@ -41,9 +41,9 @@ Compilation unit is the module specialization (`ModuleSpecId`), not the elaborat
 
 Compile-time elaboration via slang: hierarchy resolution, legality checks, name resolution, type checking. Elaboration determines which specializations are needed and the instance graph.
 
-### HIR/MIR as Specialization-Scoped IR
+### HIR/XIR/MIR as Specialization-Scoped IR
 
-HIR/MIR are internal to specialization compilation. They contain no instance paths, no design-global slot IDs. See [architecture-principles.md](architecture-principles.md).
+HIR, XIR, and MIR are internal to specialization compilation. They contain no instance paths, no design-global slot IDs. See [architecture-principles.md](architecture-principles.md).
 
 ### Event-Driven Simulation (Default)
 

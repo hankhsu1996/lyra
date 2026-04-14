@@ -14,7 +14,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 | `docs/architecture.md`             | Component relationships, data flow                       |
 | `docs/pipeline-contract.md`        | Layer responsibilities, boundaries, correctness          |
 | `docs/hir-design.md`               | HIR layer design (language semantics)                    |
-| `docs/mir-design.md`               | MIR layer design (execution semantics)                   |
+| `docs/xir-design.md`               | XIR layer design (execution model)                       |
+| `docs/mir-design.md`               | MIR layer design (control-flow plumbing)                 |
 | `docs/llvm-backend.md`             | MIR -> LLVM lowering strategy                            |
 | `docs/runtime.md`                  | Simulation engine, scheduling, backend-agnostic API      |
 | `docs/change-propagation.md`       | Dirty tracking, subscriptions, wakeup filtering          |
@@ -76,15 +77,19 @@ Lyra targets **IEEE 1800-2023** (SystemVerilog 2023). The slang frontend is conf
 
 ## Architecture
 
-SystemVerilog compiler with specialization-based compilation:
+SystemVerilog compiler with specialization-based compilation. The compilation unit is a module specialization, not an elaborated design.
 
 ```
-SV -> slang -> Elaboration Discovery
+SV -> slang -> Elaboration Discovery (frontend output)
                     |
-            Specialization Compilation (parallel per spec)
-              AST -> HIR -> MIR -> LLVM IR
+            Specialization Grouping (frontend world -> per-unit compiler world)
                     |
-            Design Realization (design-wide)
+            Per-Unit Compilation (parallel per specialization)
+              HIR -> XIR -> MIR -> LLVM IR
+                    |
+            Artifact Composition (compile-time, design-wide packaging)
+                    |
+            Constructor / Realization (runtime, per-instance)
                     |
             Execution
 ```

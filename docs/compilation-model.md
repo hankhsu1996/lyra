@@ -8,21 +8,27 @@ For architectural motivation, see [architecture-principles.md](architecture-prin
 
 ## Pipeline Phases
 
-Four distinct phases with clear boundaries:
+Five distinct phases with clear boundaries:
 
-1. **Elaboration** -- discover the design: module definitions, instances, parameters, hierarchy, connectivity
-2. **Specialization Compilation** -- compile reusable behavior units, one per `ModuleSpecId`, parallelizable
-3. **Design Realization** -- materialize the executable runtime image from compiled specializations + elaborated design topology
-4. **Execution** -- run the simulation
+1. **Elaboration** -- the frontend discovers the design: module definitions, instances, parameters, hierarchy, connectivity. This is frontend output, not the compiler's own compilation world.
+2. **Per-Unit Compilation** -- compile one compilation unit per `ModuleSpecId`, parallelizable. Each unit passes through HIR (semantic), XIR (execution model), MIR (control flow), and LLVM IR (backend). Per-unit lowering does not consult design-global state.
+3. **Artifact Composition** -- a compile-time design-wide pass that packages per-unit artifacts with elaborated design topology metadata into the form the constructor needs. This is packaging, not semantic elaboration.
+4. **Constructor / Realization** -- at runtime (or load time for AOT), the constructor builds the object graph: instance construction, connectivity wiring, generate-driven structure selection. This is where instances become concrete objects.
+5. **Execution** -- run the simulation.
 
 Each phase answers a different question:
 
-- Elaboration: _What is the design?_
-- Specialization Compilation: _How does each reusable behavior class execute?_
-- Design Realization: _How does this particular design become a runnable image?_
+- Elaboration: _What is the design?_ (frontend output)
+- Per-Unit Compilation: _How does each reusable behavior class execute?_ (compiler's per-unit world)
+- Artifact Composition: _How do the per-unit artifacts combine with topology?_ (compile-time packaging)
+- Constructor / Realization: _How does this particular design become a running object graph?_ (runtime construction)
 - Execution: _Run it._
 
-**Compile time** covers elaboration and specialization compilation. These produce design-independent, cacheable artifacts. **Design realization** is a distinct phase that takes compiled specializations and the elaborated design topology and materializes the executable runtime image -- instance placement, connectivity binding, container sizing, metadata construction. It is not compile time (it requires the full design graph) and not execution (the simulation has not started). **Execution** is the simulation itself.
+**Compile time** covers elaboration, per-unit compilation, and artifact composition. Per-unit compilation produces design-independent, cacheable artifacts. Artifact composition packages those artifacts with topology metadata but does not recompile or re-derive semantics. **Constructor / realization** builds the runtime object graph at runtime (or load time). It is not compile time (it requires the full design graph and creates per-instance state) and not execution (the simulation has not started). **Execution** is the simulation itself.
+
+### Compilation Unit Boundary
+
+The transition from the frontend's whole-design world to the compiler's per-unit world happens at the AST-to-HIR boundary. The frontend may elaborate thousands of instances, but the compiler groups them into a much smaller number of specializations. Each specialization becomes one compilation unit that proceeds independently through the IR pipeline.
 
 ## Compilation Unit: Module Specialization
 
@@ -37,7 +43,7 @@ ModuleSpecId = (ModuleDefId, BehaviorFingerprint)
 | `ModuleDefId`         | Source-level module definition identity                      |
 | `BehaviorFingerprint` | Hash of all inputs that affect the compiled artifact's shape |
 
-A specialization produces a self-contained, cacheable artifact: `CompiledSpecialization`.
+A specialization is the compiler's real compilation unit. It produces a self-contained, cacheable artifact: `CompiledSpecialization`. `ModuleSpecId` names this unit. It is not a lookup handle for recovering design-global state -- it identifies an independently compiled artifact.
 
 ### The Natural Correspondence
 
@@ -294,7 +300,7 @@ Parent-side connection source classification is limited to exactly three compile
 
 | Component           | Description                                                               |
 | ------------------- | ------------------------------------------------------------------------- |
-| Specialization IR   | HIR and MIR for all artifacts, pointer-free, ID-based                     |
+| Specialization IR   | HIR, XIR, and MIR for all artifacts, pointer-free, ID-based               |
 | SpecLayout          | Slot list with sizes, alignments, offsets relative to `this_base`         |
 | Code artifacts      | LLVM IR (or machine code) for all process/kernel artifacts in the library |
 | InstanceConstSchema | Types and positions of value-only parameters in the const block           |
@@ -375,9 +381,26 @@ this_base + specialization_constant_offset
 
 Where `this_base` is an instance-specific runtime pointer and offsets are constants from `SpecLayout`.
 
-## Design Realization
+## Artifact Composition
 
-Realization takes compiled specializations + the elaborated design graph and materializes a runnable design image without recompiling specialization code.
+After per-unit compilation, a compile-time design-wide pass packages the per-unit artifacts with elaborated design topology metadata into the form the constructor needs.
+
+Artifact composition is packaging, not semantic elaboration. It must NOT:
+
+- Recompile specialization code or re-run LLVM optimization
+- Re-derive semantic facts from the elaborated design
+- Merge or flatten per-unit IRs
+- Return to design-global lowering
+
+Artifact composition may:
+
+- Combine per-unit artifacts into a deliverable
+- Attach topology metadata (instance graph, connectivity graph, parameter assignments)
+- Produce constructor input data structures
+
+## Constructor / Realization
+
+At runtime (or load time for AOT), the constructor builds the object graph from compiled specialization artifacts and the elaborated design topology.
 
 ### Inputs
 
@@ -397,19 +420,20 @@ Realization takes compiled specializations + the elaborated design graph and mat
 
 ### Realization constraints
 
-Realization must NOT:
+The constructor must NOT:
 
 - Re-run LLVM optimization or regenerate kernel bodies
 - Depend on full design flattening to create new IR
 - Modify specialization code
 - Generate per-instance LLVM functions, globals, or types
 
-Realization may:
+The constructor may:
 
 - Sort and build index tables
 - Compute instance memory placements
 - Create runtime lookup structures
 - Build per-instance descriptors that reference shared compiled code
+- Execute generate-driven structure selection (which artifacts to install per instance)
 
 ### Construction Instruction Model
 
