@@ -227,6 +227,10 @@ extern "C" void LyraPrintString(
   if (handle == nullptr) {
     return;
   }
+  if (engine_ptr == nullptr) {
+    throw lyra::common::InternalError(
+        "LyraPrintString", "engine_ptr must not be null");
+  }
   auto* engine = static_cast<lyra::runtime::Engine*>(engine_ptr);
   auto* str = static_cast<LyraStringData*>(handle);
   std::string str_value(str->data, str->len);

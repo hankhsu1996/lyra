@@ -491,6 +491,10 @@ extern "C" void LyraRegisterStrobe(
 extern "C" void LyraTerminate(
     void* engine_ptr, uint32_t kind, int32_t level,
     LyraStringHandle /*message*/) {
+  if (engine_ptr == nullptr) {
+    throw lyra::common::InternalError(
+        "LyraTerminate", "engine_ptr must not be null");
+  }
   auto* engine = static_cast<lyra::runtime::Engine*>(engine_ptr);
   uint64_t time = engine->CurrentTime();
 
@@ -601,6 +605,10 @@ auto GetFsBaseDir() -> const std::filesystem::path& {
 }  // namespace lyra::runtime
 
 extern "C" void LyraReportTime(void* run_session_ptr) {
+  if (run_session_ptr == nullptr) {
+    throw lyra::common::InternalError(
+        "LyraReportTime", "run_session_ptr must not be null");
+  }
   auto* session = static_cast<lyra::runtime::RunSession*>(run_session_ptr);
   session->output.DrainSimOutputBuffer();
   session->output.WriteProtocolRecord(

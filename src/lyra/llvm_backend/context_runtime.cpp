@@ -1536,10 +1536,11 @@ auto Context::GetLyraReadmemNoNotify() -> llvm::Function* {
     auto* i64_ty = llvm::Type::getInt64Ty(*llvm_context_);
     auto* i1_ty = llvm::Type::getInt1Ty(*llvm_context_);
     auto* void_ty = llvm::Type::getVoidTy(*llvm_context_);
+    // No engine_ptr parameter: this variant does not notify.
     auto* fn_type = llvm::FunctionType::get(
         void_ty,
-        {ptr_ty, ptr_ty, ptr_ty, i32_ty, i32_ty, i32_ty, i32_ty, i64_ty, i64_ty,
-         i64_ty, i64_ty, i1_ty, i32_ty},
+        {ptr_ty, ptr_ty, i32_ty, i32_ty, i32_ty, i32_ty, i64_ty, i64_ty, i64_ty,
+         i64_ty, i1_ty, i32_ty},
         false);
     lyra_readmem_no_notify_ = llvm::Function::Create(
         fn_type, llvm::Function::ExternalLinkage, "LyraReadmemNoNotify",
