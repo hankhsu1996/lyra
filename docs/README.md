@@ -14,7 +14,8 @@ Start here for an overview of Lyra's design and constraints.
 ## Language and Semantics
 
 - [hir-design.md](hir-design.md) - SystemVerilog semantic model
-- [mir-design.md](mir-design.md) - execution semantics and control flow
+- [xir-design.md](xir-design.md) - execution-model IR (closures, observers, wait models, object composition)
+- [mir-design.md](mir-design.md) - control-flow plumbing (basic blocks, terminators, Place/Operand)
 - [type-system.md](type-system.md) - type representation and interning
 - [string-types.md](string-types.md) - string handling
 - [assertions.md](assertions.md) - assertion architecture

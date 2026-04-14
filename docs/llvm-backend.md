@@ -7,12 +7,12 @@ Design decisions for MIR -> LLVM IR lowering.
 ## Pipeline Position
 
 ```
-HIR -> MIR -> LLVM IR -> executable
-              |
-              +-> Runtime library (Lyra*)
+HIR -> XIR -> MIR -> LLVM IR -> executable
+                      |
+                      +-> Runtime library (Lyra*)
 ```
 
-MIR fixes all execution semantics. The LLVM backend only translates--it does not interpret SystemVerilog rules.
+XIR fixes execution-model structure. MIR lowers it to control-flow plumbing. The LLVM backend only translates MIR -- it does not interpret SystemVerilog rules or execution-model semantics.
 
 ## Scope
 

@@ -36,7 +36,12 @@ For the stable architecture: see [compilation-model.md](../compilation-model.md)
 - [ ] F2 -- Specialization caching
 - [x] I1 -- Constructor-time container construction recipes
 - [ ] Compilation unit isolation enforcement (I-1 through I-5)
-- [ ] Documentation: natural model, ownership boundaries, and runtime model docs need alignment
+- [ ] X -- XIR layer introduction (execution-model IR between HIR and MIR)
+  - [ ] X1 -- XIR design: define core types, compilation-unit structure, C++ projection contract
+  - [ ] X2 -- XIR vertical slice: one representative feature (e.g., deferred assertions) through HIR -> XIR -> MIR
+  - [ ] X3 -- XIR validation: C++ projection proves execution-model shape for the slice
+  - [ ] X4 -- Layer rename: XIR -> MIR, current MIR -> LIR (after shape is proven)
+- [x] Documentation: XIR introduction, per-compilation-unit model, four-layer pipeline across architecture docs
 - [ ] CI policy gates: specialization invariants and natural model regression checks
 
 ## Dependency Shape
@@ -56,6 +61,16 @@ B1 is prerequisite-free (investigation + type boundary). B2 depends on B1 (compi
 - Flat/global runtime transport for instance-owned state remains a later migration surface.
 
 - **T1 (validation)** runs after C1, the R-series, V3a-V3d, and V4.
+
+## X: XIR layer introduction
+
+XIR is a new execution-model IR between HIR and the current MIR. It exists because the current pipeline has no formal home for execution-model concepts (closures, observers, wait models, object composition), so lowering code invents them ad-hoc and the results drift toward design-global tables and ID-based orchestration.
+
+**Temporary naming:** XIR is a working name. The long-term plan is to rename XIR -> MIR and current MIR -> LIR, establishing the four-layer pipeline (HIR / MIR / LIR / LLVM IR). The rename happens after the XIR shape is proven on at least one vertical slice (X2/X3). Architecture docs use whichever name is current at each rename.
+
+**Dependency:** X1 is prerequisite-free (design work). X2 depends on X1. X3 depends on X2. X4 depends on X3 proving the shape. X is independent of the V-series and F-series.
+
+**Methodology anchor:** XIR must be projectable into a C++ object model (module ~ class, process ~ bound behavior, signal ~ member, hierarchy ~ subobjects). The C++ projection is a methodology tool and design oracle, not a product backend. If an execution concept cannot project cleanly, the XIR shape is wrong.
 
 ## C1: Remove per-instance emitted constructor IR/globals
 

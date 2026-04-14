@@ -71,15 +71,23 @@ Strongly-typed IDs (`ModuleSpecId`, `SymbolId`, `TypeId`, etc.) serve two purpos
 - **Incrementality** -- stable identity across recompilation; downstream stages reference IDs, not pointers
 - **Correctness** -- type safety prevents mixing IDs from different domains; the type system catches misuse at compile time
 
+**Caution:** IDs that name a compilation unit (e.g., `ModuleSpecId`) must not become surrogate handles for recovering design-global architecture state. An ID names a unit or a construct within a unit. If code uses a unit ID to look up non-local information in design-global tables during per-unit lowering, the compilation-unit boundary is violated. IDs are for naming, not for escaping unit isolation.
+
 This follows from **incrementality** (stable keys) and **lifecycle** (strong invariants).
 
-### Specialization-Scoped IR, Instances at Realization/Runtime
+### Per-Compilation-Unit IR, Instances at Constructor/Runtime
 
-HIR, MIR, and LLVM IR are internal to specialization compilation and are specialization-scoped. No instance paths, no design-global slot IDs, no design-global allocation. Instance creation, storage allocation, and hierarchy wiring happen at realization/runtime. The IR never duplicates code for structurally identical instances.
+HIR, XIR, MIR, and LLVM IR are internal to per-unit compilation and are per-compilation-unit. No instance paths, no design-global slot IDs, no design-global allocation. After HIR establishes per-unit boundaries, all lowering proceeds per-unit without consulting design-global state. Instance creation, storage allocation, and hierarchy wiring happen at constructor/runtime time.
 
 Per-instance binding should not appear in LLVM function or global identity. Heavy LLVM codegen shape -- function count, global count, and optimization work -- should be determined by the number of unique specializations, not the number of instances. Instance-specific constants (base byte offset, instance ID, per-instance slot offsets) belong in runtime-owned data materialized at construction time.
 
 This follows from **the natural model** (instances are objects, not coordinates into a global arena), **parallelism** (IR scales with specializations), and **incrementality** (specialization changes do not cascade through instance graphs).
+
+### Compilation-Unit Isolation
+
+Per-unit lowering (HIR -> XIR -> MIR -> LLVM) must not consult design-global state beyond frozen shared read-only context (types, symbols). If a lowering step requires whole-design knowledge, either the compilation-unit boundary is violated or the information should be resolved at a different phase (elaboration, artifact composition, or constructor/realization).
+
+This follows from **parallelism** (units compile independently) and **incrementality** (changes within one unit do not force recompilation of others).
 
 ### Specialization-Local Optimizations Only
 
@@ -127,9 +135,11 @@ For any design change, ask in order:
 4. **Does it keep the scaling law right?** -- Does cost grow with specializations or with instances?
 5. **Are ownership and invariants enforced by structure?** -- Or does correctness depend on "be careful"?
 6. **Is it specialization-local?** -- Does it require cross-module or design-global knowledge?
+7. **Does it keep the compilation unit self-contained?** -- Does per-unit lowering need to consult design-global state beyond frozen read-only context?
+8. **Do IDs stay as names, not escape hatches?** -- Does any compilation-unit ID get used as a lookup key into design-global tables during lowering?
 
-7. **Does it avoid materializing final object identity at compile time?** -- Does it require knowing final instance count, object ordering, or target object identity during specialization compilation?
-8. **Does the backend reach per-instance data only through instance_ptr?** -- Backend codegen must not receive design-wide query APIs (ConstructionInput, body-group-to-objects maps) or scan construction-level tables to derive compile-time facts from one representative instance. Per-instance data is loaded at runtime from instance_ptr-reachable state, never baked as a compile-time constant derived from a design-topology scan.
+9. **Does it avoid materializing final object identity at compile time?** -- Does it require knowing final instance count, object ordering, or target object identity during per-unit compilation?
+10. **Does the backend reach per-instance data only through instance_ptr?** -- Backend codegen must not receive design-wide query APIs (ConstructionInput, body-group-to-objects maps) or scan construction-level tables to derive compile-time facts from one representative instance. Per-instance data is loaded at runtime from instance_ptr-reachable state, never baked as a compile-time constant derived from a design-topology scan.
 
 If a proposed change fails any of these questions, reconsider the design before proceeding.
 
@@ -137,12 +147,12 @@ If a proposed change fails any of these questions, reconsider the design before 
 
 How existing decisions follow from these principles:
 
-- **HIR/MIR as specialization-scoped IR** (not instance graphs) -> parallelism: compile per specialization
+- **HIR/XIR/MIR as specialization-scoped IR** (not instance graphs) -> parallelism: compile per specialization
 - **`this_base` + relative offset** for variable access -> performance: O(1) access without hierarchy traversal
 - **Strongly-typed IDs throughout the pipeline** -> incrementality + correctness: stable references, no cross-domain misuse
 - **Dirty-driven scheduling** -> performance: incremental work, not whole-design recomputation
 - **Single-owner mutable state** in runtime -> lifecycle: no aliasing bugs, clear write paths
-- **Strict pipeline layering** (HIR -> MIR -> LLVM) -> incrementality: each stage depends only on its input
+- **Strict pipeline layering** (HIR -> XIR -> MIR -> LLVM) -> incrementality: each stage depends only on its input
 - **Kernelization within specialization** -> performance: scheduler bypass without cross-module coupling
 - **Value-only parameters as instance constants** -> parallelism: 16 banks = 1 specialization, not 16
 - **Unpacked sizes as elaboration-time metadata** -> parallelism: `int a[4]` and `int a[8]` share compiled code

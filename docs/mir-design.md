@@ -1,61 +1,62 @@
 # MIR Design
 
-MIR (Mid-level IR) fixes all process-local SystemVerilog execution semantics.
+MIR (Mid-level IR) lowers execution structure to control-flow plumbing: basic blocks, terminators, Place/Operand separation, and effect sequencing.
 
 ## Pipeline Position
 
 ```
-SystemVerilog -> Slang AST -> HIR -> MIR -> LLVM IR
+                        per compilation unit
+                   +---------------------------------+
+frontend output -> | HIR -> XIR -> MIR -> LLVM IR    | -> per-unit artifact
+                   +---------------------------------+
 ```
 
-HIR freezes _what the language means_.
-MIR freezes _how the language must be executed_, while remaining platform-independent.
+XIR freezes _what the execution model is_.
+MIR freezes _how that model maps to control flow and data flow_, while remaining platform-independent.
 
 ## Scope
 
-MIR is **specialization-scoped**. All Places reference specialization-local storage. No instance paths, no design-global slot IDs, no design-global allocation. See [compilation-model.md](compilation-model.md).
+MIR is **per-compilation-unit**. Each MIR artifact represents one module specialization. All Places reference specialization-local storage. No instance paths, no design-global slot IDs, no design-global allocation. See [compilation-model.md](compilation-model.md).
+
+MIR lowering proceeds per-unit without consulting design-global state. Frozen shared context (types, symbols) is read-only input, not a mutable design-wide environment.
 
 Guiding question when designing MIR:
 
-> If a backend still needs to "understand SystemVerilog rules" to run correctly, then MIR has failed to fully fix the semantics.
+> Does the backend still need to understand execution-model concepts to run correctly?
 
-MIR is correct when execution behavior is no longer inferable, only executable.
+If yes, those concepts should already be formalized in XIR. MIR's job is to lower XIR's execution structure into explicit control flow, not to invent new execution concepts. MIR is correct when all control flow and data flow are explicit and no execution-model interpretation remains.
 
-"Executable" means semantics are fully determined, not that constructs are expanded into implementation patterns. Language-level constructs with specific control-flow or diagnostic semantics should remain first-class MIR concepts. Implementation strategies - boolean materialization, temporary allocation, branch structuring - belong in backend lowering, not HIR-to-MIR.
+"Explicit" means control flow is fully determined, not that constructs are expanded into implementation patterns. Language-level constructs with specific control-flow or diagnostic semantics should remain first-class MIR concepts. Implementation strategies -- boolean materialization, temporary allocation, branch structuring -- belong in backend lowering, not XIR-to-MIR.
 
 ## Core Principles
 
 These are hard rules, not guidelines:
 
-| Rule                                    | Rationale                                               |
-| --------------------------------------- | ------------------------------------------------------- |
-| Place and Operand are strictly separate | Computation uses Operand; writes occur through Place    |
-| Every basic block has one terminator    | Control flow is explicit and complete                   |
-| Suspension operations are terminators   | Delay/Wait yield control; they cannot be statements     |
-| System subroutines classified by role   | Three semantic categories, not per-API statements       |
-| TypeId shared with type arena           | MIR annotates Operands with types; does not create them |
-| No frontend object dependencies         | No AST pointers; no slang lifetime leakage              |
-| No LLVM/ABI details                     | Platform-independent; backends handle lowering          |
-| No scheduling or execution policy       | Runtime strategy is backend responsibility              |
-| Semantic constructs are first-class     | Language control-flow semantics become MIR primitives   |
+| Rule                                    | Rationale                                                               |
+| --------------------------------------- | ----------------------------------------------------------------------- |
+| Place and Operand are strictly separate | Computation uses Operand; writes occur through Place                    |
+| Every basic block has one terminator    | Control flow is explicit and complete                                   |
+| Suspension operations are terminators   | Delay/Wait yield control; they cannot be statements                     |
+| System subroutines classified by role   | Three semantic categories, not per-API statements                       |
+| TypeId shared with type arena           | MIR annotates Operands with types; does not create them                 |
+| No frontend object dependencies         | No AST pointers; no slang lifetime leakage                              |
+| No LLVM/ABI details                     | Platform-independent; backends handle lowering                          |
+| No scheduling or execution policy       | Runtime strategy is backend responsibility                              |
+| Semantic constructs are first-class     | Language control-flow semantics become MIR primitives                   |
+| No execution-model invention            | Execution concepts must be formalized in XIR before MIR lowers them     |
+| Per-unit artifact                       | Each MIR unit is independently producible; no design-wide MIR container |
 
 ## Structure
 
+A MIR compilation unit contains:
+
 ```
-Design
-  -> DesignElement* (Module | Package)
-       -> Process* / Function*
-            -> BasicBlock*
-                 -> Statement*
-                 -> Terminator (exactly one)
+CompilationUnit (one per specialization)
+  -> Process* / Function*
+       -> BasicBlock*
+            -> Statement*
+            -> Terminator (exactly one)
 ```
-
-### DesignElement
-
-A variant over Module and Package. Currently supports:
-
-- `Module` - contains processes and functions
-- `Package` - placeholder for package contents
 
 ### Process
 
@@ -63,8 +64,8 @@ A coroutine unit that may suspend and resume. Composed of basic blocks with an e
 
 Two kinds (HIR's 6 process kinds normalize to these 2 during lowering):
 
-- `kOnce` - `initial`, `final`
-- `kLooping` - `always`, `always_comb`, `always_ff`, `always_latch`
+- `kOnce` -- `initial`, `final`
+- `kLooping` -- `always`, `always_comb`, `always_ff`, `always_latch`
 
 Looping processes are **not** expanded to `while(true)` in MIR. Repetition is expressed via process semantics and the `Repeat` terminator.
 
@@ -117,7 +118,7 @@ A readable operand. Three kinds only:
 - **Use**: read from a Place (implicit load)
 - **Poison**: invalid / unreachable value (trap policy: any use is an internal error)
 
-Place-read is implicit - there is no explicit Load statement. Reading a Place produces an Operand directly. This is the **implicit read model**: `Operand::Use(place)` means "the current value stored at place."
+Place-read is implicit -- there is no explicit Load statement. Reading a Place produces an Operand directly. This is the **implicit read model**: `Operand::Use(place)` means "the current value stored at place."
 
 All computation results are assigned to Places (often temporaries). To use a result, you read from that Place. This avoids the need for value numbering or SSA.
 
@@ -192,16 +193,6 @@ System functions that produce values use Rvalue info structs. Classification:
 - Additional invariants must be enforced beyond operand count
 - Special resource/lifetime handling is involved
 
-**Example: `$fopen` uses `FopenRvalueInfo`**
-
-`$fopen` requires dedicated representation because:
-
-1. Arguments are `TypedOperand` (not plain `Operand`) for packed-to-string coercion
-2. Mode is optional with semantic meaning (MCD vs FD mode)
-3. Call sites use `info.mode.has_value()` instead of magic `operands.size() == 2`
-
-This makes MIR self-documenting and removes magic-number decoding from backends.
-
 ## Terminator Categories
 
 Terminators end a basic block and determine the next control state.
@@ -247,18 +238,21 @@ Not expanded into a loop at MIR level. Backend decides the implementation strate
 
 ## What MIR Does NOT Contain
 
-| Excluded                   | Belongs in     |
-| -------------------------- | -------------- |
-| LLVM instructions          | LLVM lowering  |
-| ABI details                | Backend        |
-| Scheduling/queues          | Runtime        |
-| Pointer arithmetic         | Backend        |
-| Frontend pointers          | Never          |
-| SSA/phi nodes              | LLVM if needed |
-| Elaborated instances       | Runtime        |
-| Synthesized implementation | Backend        |
+| Excluded                                      | Belongs in               |
+| --------------------------------------------- | ------------------------ |
+| LLVM instructions                             | LLVM lowering            |
+| ABI details                                   | Backend                  |
+| Scheduling/queues                             | Runtime                  |
+| Pointer arithmetic                            | Backend                  |
+| Frontend pointers                             | Never                    |
+| SSA/phi nodes                                 | LLVM if needed           |
+| Elaborated instances                          | Runtime                  |
+| Synthesized implementation                    | Backend                  |
+| Structured control flow                       | XIR                      |
+| Execution-model objects (closures, observers) | XIR                      |
+| Design-wide container                         | Never -- MIR is per-unit |
 
-"Synthesized implementation" means expanding a semantic construct into a pattern of primitives. If a language feature has specific evaluation or diagnostic rules, those rules should be expressed as MIR metadata or a dedicated construct - not as a procedural recipe of boolean operations, temporaries, and branches.
+"Synthesized implementation" means expanding a semantic construct into a pattern of primitives. If a language feature has specific evaluation or diagnostic rules, those rules should be expressed as MIR metadata or a dedicated construct -- not as a procedural recipe of boolean operations, temporaries, and branches.
 
 ## Invariants
 
@@ -269,6 +263,7 @@ These must hold for well-formed MIR:
 - Every basic block has exactly one terminator
 - All control flow is explicit; no implicit fallthrough
 - After lowering, no unsealed blocks remain
+- Each MIR unit is per-compilation-unit; no design-wide MIR container
 
 **Operand Discipline:**
 
@@ -280,7 +275,7 @@ These must hold for well-formed MIR:
 **Index Projections:**
 
 - IndexProjection stores 0-based storage offset, not declaration-space index
-- HIR->MIR lowering normalizes array indices (e.g., `arr[2]` for `int arr[2:5]` becomes offset 0)
+- Lowering normalizes array indices (e.g., `arr[2]` for `int arr[2:5]` becomes offset 0)
 - IndexValidity retains logical bounds for diagnostic purposes
 
 **System Subroutines:**
@@ -297,18 +292,18 @@ These must hold for well-formed MIR:
 **Abstraction Level:**
 
 - Language constructs with specific semantics remain first-class MIR concepts
-- Implementation strategy is backend responsibility, not HIR-to-MIR lowering
-- MIR expresses intent declaratively; backends choose how to implement
+- Implementation strategy is backend responsibility, not lowering
+- Execution-model concepts should already be formalized in XIR; MIR lowers them
 
 **Error Policy:**
 
-- Lowering assumes HIR invariants are satisfied
+- Lowering assumes input invariants are satisfied
 - Violations during lowering produce internal errors, not user diagnostics
 - MIR does not emit user-facing error messages
 
 ## Summary
 
-**MIR structure:** Design -> DesignElement (Module|Package) -> Process/Function -> BasicBlock -> Statement + Terminator
+**MIR structure:** CompilationUnit -> Process/Function -> BasicBlock -> Statement + Terminator
 
 **Operand model:** Place (writable location) and Operand (readable: Const/Use/Poison)
 
@@ -316,7 +311,9 @@ These must hold for well-formed MIR:
 
 **Core fixed semantics:**
 
-- Statement writes RightHandSide to Place (no explicit Load - Use is implicit)
+- Statement writes RightHandSide to Place (no explicit Load -- Use is implicit)
 - Delay and Wait as suspension terminators
 - System subroutines as Pure, Effect, or State
 - Looping behavior as process repetition
+- Execution-model structure formalized in XIR, lowered here to control flow
+- Each MIR unit is a concrete per-compilation-unit artifact
