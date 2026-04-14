@@ -26,6 +26,7 @@ Start here for an overview of Lyra's design and constraints.
 
 - [llvm-backend.md](llvm-backend.md) - MIR to LLVM lowering
 - [runtime.md](runtime.md) - simulation engine
+- [runtime-object-model.md](runtime-object-model.md) - runtime object model, constructor assembly, hierarchy
 - [scheduling.md](scheduling.md) - scheduling regions
 - [change-propagation.md](change-propagation.md) - dirty tracking and wakeup filtering
 
