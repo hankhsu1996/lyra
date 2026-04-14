@@ -64,7 +64,9 @@ struct LlvmPreparationResult {
 // inspection. work_directory is used for file I/O tests.
 auto PrepareLlvmModule(
     const TestCase& test_case, const std::filesystem::path& work_directory,
-    bool force_two_state = false)
+    bool force_two_state = false,
+    lowering::mir_to_llvm::MainAbi main_abi =
+        lowering::mir_to_llvm::MainAbi::kEmbeddedPlusargs)
     -> std::expected<LlvmPreparationResult, std::string>;
 
 }  // namespace lyra::test
