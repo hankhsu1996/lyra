@@ -1046,6 +1046,15 @@ auto LowerDesign(
   // Copy parent topology into construction input for constructor use.
   construction.parent_instance_indices = topo.parent_of;
 
+  // Build per-instance structural child identity from oi_to_durable_child.
+  auto instance_count = construction.objects.size();
+  construction.child_durable_ids.resize(instance_count);
+  for (const auto& [oi, durable_id] : oi_to_durable_child) {
+    if (oi < instance_count) {
+      construction.child_durable_ids[oi] = durable_id;
+    }
+  }
+
   FinalizeExternalRefTargetSlots(
       result, provisionals_by_body, body_local_slots_by_body, topo,
       construction,

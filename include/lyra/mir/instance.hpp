@@ -13,6 +13,7 @@ namespace lyra::mir {
 // Each entry represents a module instance in the design hierarchy.
 struct InstanceEntry {
   std::string full_path;  // Hierarchical path (e.g., "top.u_cpu.u_alu")
+  std::string inst_name;  // Local instance name (e.g., "u_alu")
   SymbolId instance_sym;  // Cross-reference for debugging
 };
 

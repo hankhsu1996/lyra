@@ -237,7 +237,8 @@ auto BuildConstructionProgram(
     const std::vector<std::vector<common::ResolvedExtRefBinding>>&
         instance_ext_ref_bindings,
     std::span<const Layout::BodyRealizationInfo> body_realization_infos,
-    std::span<const uint32_t> parent_instance_indices)
+    std::span<const uint32_t> parent_instance_indices,
+    std::span<const mir::DurableChildId> child_durable_ids)
     -> ConstructionProgramData {
   auto instance_count = static_cast<uint32_t>(instance_body_group.size());
   ConstructionProgramData prog;
@@ -257,6 +258,42 @@ auto BuildConstructionProgram(
     entry.path_offset = static_cast<uint32_t>(prog.path_pool.size());
     prog.path_pool.insert(prog.path_pool.end(), path.begin(), path.end());
     prog.path_pool.push_back(0);
+
+    // Structural child edge metadata from compile-time DurableChildId.
+    if (mi < child_durable_ids.size()) {
+      const auto& durable = child_durable_ids[mi];
+      entry.child_ordinal_in_coord = durable.child_ordinal;
+      if (durable.coord.empty()) {
+        entry.coord_offset = UINT32_MAX;
+        entry.coord_count = 0;
+      } else {
+        entry.coord_offset =
+            static_cast<uint32_t>(prog.coord_steps_pool.size());
+        entry.coord_count = static_cast<uint32_t>(durable.coord.size());
+        for (const auto& step : durable.coord) {
+          prog.coord_steps_pool.push_back(static_cast<uint32_t>(step.kind));
+          prog.coord_steps_pool.push_back(step.construct_index);
+          prog.coord_steps_pool.push_back(step.alt_index);
+        }
+      }
+    } else {
+      entry.child_ordinal_in_coord = 0;
+      entry.coord_offset = UINT32_MAX;
+      entry.coord_count = 0;
+    }
+
+    // Canonical local child display label from InstanceEntry::display_name
+    // (populated from slang Symbol::name at AST-to-HIR time).
+    // Emitted as a separate pool entry. Not derived from full path.
+    const auto& label = instance_table.entries[mi].inst_name;
+    if (!label.empty()) {
+      entry.inst_name_offset = static_cast<uint32_t>(prog.path_pool.size());
+      prog.path_pool.insert(prog.path_pool.end(), label.begin(), label.end());
+      prog.path_pool.push_back(0);
+    } else {
+      // Top-level instance: use full path as its own display label.
+      entry.inst_name_offset = entry.path_offset;
+    }
 
     const auto& payload = param_payloads[mi];
     if (!payload.empty()) {
@@ -1002,7 +1039,8 @@ void ExtractBodyInitDescriptors(
   construction_program = BuildConstructionProgram(
       instance_body_group, instance_storage_sizes, construction.instance_table,
       param_payloads, construction.instance_ext_ref_bindings,
-      body_realization_infos, construction.parent_instance_indices);
+      body_realization_infos, construction.parent_instance_indices,
+      construction.child_durable_ids);
 
   // Validate construction program.
   for (size_t i = 0; i < construction_program.entries.size(); ++i) {

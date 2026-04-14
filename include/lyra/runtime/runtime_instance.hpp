@@ -7,6 +7,7 @@
 #include <vector>
 
 #include "lyra/common/ext_ref_binding.hpp"
+#include "lyra/common/selection_step.hpp"
 #include "lyra/runtime/instance_event_state.hpp"
 #include "lyra/runtime/instance_observability.hpp"
 #include "lyra/runtime/process_frame.hpp"
@@ -197,8 +198,28 @@ struct RuntimeInstance {
   const common::ResolvedExtRefBinding* ext_ref_bindings = nullptr;
   uint32_t ext_ref_binding_count = 0;
 
-  // Instance-owned hierarchical path string. Owns the storage that
-  // path_c_str points into. Not part of the binary contract with codegen.
+  // Primary structural hierarchy (not part of binary contract with codegen).
+  // Established during constructor assembly: CreateChild sets parent and
+  // appends a typed RuntimeChildEdge to parent->children in a single
+  // creation path.
+  RuntimeInstance* parent = nullptr;
+
+  // Typed structural child edges. Each edge carries structural metadata
+  // (generate-scope context + ordinal within that context) for procedural
+  // walking by compile-time path recipes. These are edge metadata, not
+  // object identity -- they enable navigation without key lookup.
+  struct ChildEdge {
+    common::RepertoireCoord coord;
+    uint32_t child_ordinal_in_coord = 0;
+    RuntimeInstance* child = nullptr;
+  };
+  std::vector<ChildEdge> children;
+
+  // Instance-owned hierarchical path string. Derived from structural
+  // position during assembly (parent path + child display label).
+  // The display label is consumed during assembly and not stored.
+  // Owns the storage that path_c_str points into.
+  // Not part of the binary contract with codegen.
   std::string path_storage;
 
   // R5: Per-instance observability state.

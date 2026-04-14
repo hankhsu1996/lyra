@@ -850,6 +850,7 @@ auto LowerDesign(
     instance_table.entries.push_back(
         mir::InstanceEntry{
             .full_path = std::string(instance->getHierarchicalPath()),
+            .inst_name = std::string(instance->name),
             .instance_sym = registrar.Lookup(*instance),
         });
   }

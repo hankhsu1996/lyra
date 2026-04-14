@@ -243,6 +243,10 @@ struct ConstructionProgramData {
   std::vector<common::ResolvedExtRefBinding> ext_ref_binding_pool;
   std::vector<uint32_t> ext_ref_binding_offsets;
   std::vector<uint32_t> ext_ref_binding_counts;
+  // Flat pool of coord steps for structural child edge metadata.
+  // Each entry's coord_offset/coord_count indexes into this pool.
+  // Steps are packed as (kind_u32, construct_index, alt_index) triples.
+  std::vector<uint32_t> coord_steps_pool;
 };
 
 // Design-derived inputs for the realization/assembly phase, extracted during

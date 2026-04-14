@@ -276,16 +276,29 @@ class Constructor {
   // meta.entries.size().
   void BeginBody(const BodyDescriptorPackage& package);
 
-  // Add one instance of the current body. instance_path is the
-  // hierarchical path for this instance (constructor-owned architecture:
-  // the constructor is the canonical consumer of per-instance paths).
-  // param_data/param_data_size carry pre-lowered canonical storage bytes
-  // for this instance's parameter initialization. nullptr/0 if no params.
+  // Create one child instance of the current body in parent context.
+  // Structural relation and derived path are established inside this
+  // method: parent->children gains a typed ChildEdge, and child->parent
+  // points back. Path is derived from parent path + inst_name.
+  //
+  // parent: parent instance, or nullptr for top-level (root) instances.
+  // edge_coord: generate-scope context for the child edge (empty for
+  //   non-generate instances). Structural edge metadata for relation
+  //   materialization, not runtime object identity or query key.
+  //   Ownership transferred into the stored child edge (moved).
+  // edge_ordinal: child ordinal within the coord context. Same role
+  //   as edge_coord -- structural edge metadata, not identity.
+  // inst_name: local instance name for path derivation (e.g. "u0").
+  //   Consumed during assembly, not stored on the instance.
+  // param_data/param_data_size: pre-lowered canonical storage bytes for
+  //   parameter initialization. nullptr/0 if no params.
+  // Returns the created instance (owned by the constructor).
   // Fails immediately if no active body.
-  void AddInstance(
-      const char* instance_path, const void* param_data,
+  auto CreateChild(
+      RuntimeInstance* parent, common::RepertoireCoord edge_coord,
+      uint32_t edge_ordinal, const char* inst_name, const void* param_data,
       uint32_t param_data_size, uint64_t realized_inline_size,
-      uint64_t realized_appendix_size);
+      uint64_t realized_appendix_size) -> RuntimeInstance*;
 
   // Finalize construction and return the unified result.
   // After this call, further mutation is rejected.
@@ -373,9 +386,6 @@ class Constructor {
   // Realized slot/trace metadata output.
   RealizedSlotMeta realized_slot_meta_;
   RealizedTraceSignalMeta realized_trace_meta_;
-
-  // Constructor-owned instance paths.
-  std::vector<std::string> instance_paths_;
 
   // Package/global observable descriptor template (immutable after
   // construction).
@@ -481,7 +491,8 @@ void LyraConstructorRunProgram(
     uint32_t body_desc_count, const char* path_pool, uint32_t path_pool_size,
     const uint8_t* param_pool, uint32_t param_pool_size,
     const lyra::runtime::ConstructionProgramEntry* entries,
-    uint32_t entry_count);
+    uint32_t entry_count, const uint32_t* coord_steps_pool,
+    uint32_t coord_steps_word_count);
 
 auto LyraConstructorFinalize(void* ctor) -> void*;
 

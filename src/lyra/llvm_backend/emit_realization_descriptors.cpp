@@ -52,7 +52,8 @@ auto GetConstructionProgramEntryType(llvm::LLVMContext& ctx)
   auto* i32_ty = llvm::Type::getInt32Ty(ctx);
   auto* i64_ty = llvm::Type::getInt64Ty(ctx);
   return llvm::StructType::get(
-      ctx, {i32_ty, i32_ty, i32_ty, i32_ty, i64_ty, i64_ty, i32_ty});
+      ctx, {i32_ty, i32_ty, i32_ty, i32_ty, i64_ty, i64_ty, i32_ty, i32_ty,
+            i32_ty, i32_ty, i32_ty});
 }
 
 // Encode one ConstructionProgramEntry as an LLVM constant.
@@ -68,7 +69,11 @@ auto EncodeConstructionProgramEntry(
            llvm::ConstantInt::get(i32_ty, e.param_size),
            llvm::ConstantInt::get(i64_ty, e.realized_inline_size),
            llvm::ConstantInt::get(i64_ty, e.realized_appendix_size),
-           llvm::ConstantInt::get(i32_ty, e.parent_instance_index)});
+           llvm::ConstantInt::get(i32_ty, e.parent_instance_index),
+           llvm::ConstantInt::get(i32_ty, e.child_ordinal_in_coord),
+           llvm::ConstantInt::get(i32_ty, e.coord_offset),
+           llvm::ConstantInt::get(i32_ty, e.coord_count),
+           llvm::ConstantInt::get(i32_ty, e.inst_name_offset)});
 }
 
 // Canonical LLVM struct type for runtime::BodyDescriptorRef.
@@ -484,7 +489,7 @@ auto DeclareConstructorRuntimeFuncs(Context& context)
       .run_program = declare(
           "LyraConstructorRunProgram", void_ty,
           {ptr_ty, ptr_ty, i32_ty, ptr_ty, i32_ty, ptr_ty, i32_ty, ptr_ty,
-           i32_ty}),
+           i32_ty, ptr_ty, i32_ty}),
       .finalize = declare("LyraConstructorFinalize", ptr_ty, {ptr_ty}),
       .result_get_states =
           declare("LyraConstructionResultGetStates", ptr_ty, {ptr_ty}),
@@ -640,8 +645,32 @@ auto EmitConstructorFunction(
       EmitConstructionProgramGlobal(ctx, context.GetModule(), prog.entries);
   auto entry_count = static_cast<uint32_t>(prog.entries.size());
 
+  // Emit coord steps pool for structural child edge metadata.
+  auto coord_pool_word_count =
+      static_cast<uint32_t>(prog.coord_steps_pool.size());
+  llvm::Constant* coord_pool_ptr = nullptr;
+  if (prog.coord_steps_pool.empty()) {
+    coord_pool_ptr =
+        llvm::ConstantPointerNull::get(llvm::cast<llvm::PointerType>(ptr_ty));
+  } else {
+    std::vector<llvm::Constant*> coord_words;
+    coord_words.reserve(prog.coord_steps_pool.size());
+    for (auto w : prog.coord_steps_pool) {
+      coord_words.push_back(llvm::ConstantInt::get(i32_ty, w));
+    }
+    auto* arr_ty = llvm::ArrayType::get(i32_ty, coord_words.size());
+    auto* init = llvm::ConstantArray::get(arr_ty, coord_words);
+    auto* global = new llvm::GlobalVariable(
+        context.GetModule(), arr_ty, true, llvm::GlobalValue::InternalLinkage,
+        init, "__lyra_coord_steps_pool");
+    global->setUnnamedAddr(llvm::GlobalValue::UnnamedAddr::Global);
+    auto* zero = llvm::ConstantInt::get(i32_ty, 0);
+    coord_pool_ptr = llvm::ConstantExpr::getInBoundsGetElementPtr(
+        arr_ty, global, llvm::ArrayRef<llvm::Constant*>{zero, zero});
+  }
+
   // Replay the construction program: the runtime iterates entries in
-  // ModuleIndex order, calling BeginBody/AddInstance as needed.
+  // ModuleIndex order, calling CreateChild as needed.
   auto path_pool_size = static_cast<uint32_t>(prog.path_pool.size());
   auto param_pool_size = static_cast<uint32_t>(prog.param_pool.size());
   builder.CreateCall(
@@ -650,7 +679,8 @@ auto EmitConstructorFunction(
        llvm::ConstantInt::get(i32_ty, body_desc_count), path_pool_ptr,
        llvm::ConstantInt::get(i32_ty, path_pool_size), param_pool_ptr,
        llvm::ConstantInt::get(i32_ty, param_pool_size), program_ptr,
-       llvm::ConstantInt::get(i32_ty, entry_count)});
+       llvm::ConstantInt::get(i32_ty, entry_count), coord_pool_ptr,
+       llvm::ConstantInt::get(i32_ty, coord_pool_word_count)});
 
   // Finalize: returns a single constructor-owned result handle.
   auto* result = builder.CreateCall(rt.finalize, {ctor}, "ctor_result");

@@ -20,6 +20,46 @@
 
 namespace lyra::runtime {
 
+// Derive hierarchical path from parent structural context + local
+// instance name. All path construction policy lives here.
+auto BuildInstancePath(const RuntimeInstance* parent, const char* inst_name)
+    -> std::string {
+  if (parent == nullptr) return {inst_name};
+  return std::string(parent->path_storage) + "." + inst_name;
+}
+
+// Decode a RepertoireCoord from the flat coord_steps transport pool.
+// Each step is packed as 3 consecutive uint32_t words:
+// (kind, construct_index, alt_index).
+auto DecodeRepertoireCoord(
+    const runtime::ConstructionProgramEntry& entry,
+    std::span<const uint32_t> coord_pool) -> common::RepertoireCoord {
+  if (entry.coord_count == 0 || entry.coord_offset == UINT32_MAX) {
+    return {};
+  }
+  uint32_t word_start = entry.coord_offset;
+  uint32_t words_needed = entry.coord_count * 3;
+  if (word_start + words_needed > coord_pool.size()) {
+    throw common::InternalError(
+        "DecodeRepertoireCoord",
+        std::format(
+            "coord range [{}, {}) exceeds pool size {}", word_start,
+            word_start + words_needed, coord_pool.size()));
+  }
+  common::RepertoireCoord coord;
+  coord.reserve(entry.coord_count);
+  for (uint32_t ci = 0; ci < entry.coord_count; ++ci) {
+    auto base = word_start + (ci * 3);
+    coord.push_back(
+        common::SelectionStepDesc{
+            .kind = static_cast<common::SelectionStepKind>(coord_pool[base]),
+            .construct_index = coord_pool[base + 1],
+            .alt_index = coord_pool[base + 2],
+        });
+  }
+  return coord;
+}
+
 ConstructionResult::~ConstructionResult() {
   FreePackedBuffer(packed_buffer);
 }
@@ -602,22 +642,23 @@ void Constructor::BeginBody(const BodyDescriptorPackage& package) {
   current_body_package_ = &body_desc_storage_.back().package;
 }
 
-void Constructor::AddInstance(
-    const char* instance_path, const void* param_data, uint32_t param_data_size,
-    uint64_t realized_inline_size, uint64_t realized_appendix_size) {
-  CheckNotFinalized("Constructor::AddInstance");
-  if (instance_path == nullptr) {
-    throw common::InternalError(
-        "Constructor::AddInstance", "null instance_path");
+auto Constructor::CreateChild(
+    RuntimeInstance* parent, common::RepertoireCoord edge_coord,
+    uint32_t edge_ordinal, const char* inst_name, const void* param_data,
+    uint32_t param_data_size, uint64_t realized_inline_size,
+    uint64_t realized_appendix_size) -> RuntimeInstance* {
+  CheckNotFinalized("Constructor::CreateChild");
+  if (inst_name == nullptr) {
+    throw common::InternalError("Constructor::CreateChild", "null inst_name");
   }
   if (!body_.active || current_body_package_ == nullptr) {
     throw common::InternalError(
-        "Constructor::AddInstance",
+        "Constructor::CreateChild",
         "no active body package (call BeginBody first)");
   }
   if ((param_data == nullptr) != (param_data_size == 0)) {
     throw common::InternalError(
-        "Constructor::AddInstance",
+        "Constructor::CreateChild",
         "param_data and param_data_size must be both empty or both present");
   }
   connections_finalized_ = true;
@@ -628,8 +669,25 @@ void Constructor::AddInstance(
   auto instance = std::make_unique<RuntimeInstance>();
   instance->instance_id = instance_id;
   instance->owner_ordinal = instance_ord;
-  // path_c_str is patched in Finalize after path_storage is assigned.
-  instance->path_c_str = nullptr;
+
+  // Structural relation established inside child creation.
+  // The typed child edge carries structural metadata (generate-scope
+  // context + ordinal) for procedural walking by compile-time path
+  // recipes. These are edge metadata, not object identity. Ownership
+  // of edge_coord is transferred into the stored child edge.
+  instance->parent = parent;
+  if (parent != nullptr) {
+    parent->children.push_back(
+        RuntimeInstance::ChildEdge{
+            .coord = std::move(edge_coord),
+            .child_ordinal_in_coord = edge_ordinal,
+            .child = instance.get(),
+        });
+  }
+
+  // Derived presentation path from structural position.
+  instance->path_storage = BuildInstancePath(parent, inst_name);
+  instance->path_c_str = instance->path_storage.c_str();
 
   instance->storage.inline_base =
       AllocateOwnedInlineStorage(realized_inline_size);
@@ -649,7 +707,7 @@ void Constructor::AddInstance(
         body_.init_recipe.num_child_indices != 0 ||
         !body_.init_params.slots.empty() || param_data_size != 0) {
       throw common::InternalError(
-          "Constructor::AddInstance",
+          "Constructor::CreateChild",
           "zero-slot body must not carry instance-state init descriptors "
           "or param data");
     }
@@ -674,7 +732,7 @@ void Constructor::AddInstance(
 
     if (body_fn == nullptr) {
       throw common::InternalError(
-          "RuntimeConstructor::AddInstance",
+          "Constructor::CreateChild",
           std::format(
               "body entry {} has null shared_body_fn "
               "(emitted function pointer is zero)",
@@ -699,10 +757,9 @@ void Constructor::AddInstance(
   staged_instances_[instance_index]->num_module_processes =
       num_module_processes;
 
-  // R4: Module-instance process meta, trigger, and comb metadata are no
-  // longer flattened here. The engine derives them from per-instance bundles
-  // and body templates.
-  //
+  // Use the instance's stable path for the design-global observable walk.
+  const char* instance_path = staged_instances_[instance_index]->path_c_str;
+
   // R4: Module-instance process meta, trigger, comb, instance-owned slot,
   // and instance-owned trace metadata are all engine-derived from bundles.
   // Constructor builds only design-global/package observable metadata
@@ -715,7 +772,7 @@ void Constructor::AddInstance(
       for (const auto& entry : body_.observable_descriptors.entries) {
         if ((entry.flags & kObservableFlagStorageAbsolute) == 0) {
           throw common::InternalError(
-              "Constructor::AddInstance",
+              "Constructor::CreateChild",
               "body-relative observable entry in instance with no "
               "local storage");
         }
@@ -753,12 +810,8 @@ void Constructor::AddInstance(
     }
   }
 
-  // Collect instance path for runtime naming ownership.
-  instance_paths_.emplace_back(instance_path);
-
   // R4 prep: record per-instance metadata bundle alongside existing flat
-  // metadata. instance_path pointer is patched in Finalize after string
-  // storage is stable.
+  // metadata. instance_path is already stable (owned by the instance).
   staged_bundles_.push_back(
       InstanceMetadataBundle{
           .instance = staged_instances_[instance_index].get(),
@@ -767,23 +820,25 @@ void Constructor::AddInstance(
           .instance_id = instance_id,
           .module_proc_base = module_proc_base,
           .num_module_processes = num_module_processes,
-          .instance_path = nullptr,
+          .instance_path = instance_path,
       });
 
   uint32_t new_slot_base = next_slot_base_ + body_.slot_count;
   if (new_slot_base < next_slot_base_) {
     throw common::InternalError(
-        "Constructor::AddInstance", "slot base overflow");
+        "Constructor::CreateChild", "slot base overflow");
   }
   if (body_.slot_count > 0 && new_slot_base > slot_byte_offsets_.size()) {
     throw common::InternalError(
-        "Constructor::AddInstance",
+        "Constructor::CreateChild",
         std::format(
             "post-increment slot base {} exceeds layout oracle size {}",
             new_slot_base, slot_byte_offsets_.size()));
   }
   next_instance_id_ += 1;
   next_slot_base_ = new_slot_base;
+
+  return staged_instances_[instance_index].get();
 }
 
 auto Constructor::InternString(std::span<const char> pool, uint32_t pool_off)
@@ -921,12 +976,11 @@ auto Constructor::Finalize() -> ConstructionResult {
   result.trigger_meta = std::move(realized_triggers_);
   result.slot_meta = std::move(realized_slot_meta_);
   result.trace_signal_meta = std::move(realized_trace_meta_);
-  // Move path strings into instance-owned storage. Each RuntimeInstance
-  // owns its path_storage; path_c_str points into it.
-  for (uint32_t i = 0; i < result.instances.size(); ++i) {
-    result.instances[i]->path_storage = std::move(instance_paths_[i]);
-    result.instances[i]->path_c_str = result.instances[i]->path_storage.c_str();
-  }
+  // Paths are already owned by instances (set in CreateChild).
+  // path_c_str may have been invalidated by std::string moves
+  // during staged_instances_ -> result.instances transfer, but
+  // unique_ptr move doesn't move the RuntimeInstance itself, so
+  // path_storage and path_c_str remain valid.
 
   // Build stable raw pointer view for the runtime ABI.
   result.instance_ptrs.reserve(result.instances.size());
@@ -993,6 +1047,8 @@ auto Constructor::Finalize() -> ConstructionResult {
               i, bundle.instance_id, bundle.instance->instance_id));
     }
 
+    // Re-validate bundle instance_path against the instance's stable
+    // path pointer (set in CreateChild, still valid after unique_ptr move).
     result.instance_bundles[i].instance_path = result.instances[i]->path_c_str;
   }
 
@@ -1359,9 +1415,13 @@ void LyraConstructorAddInstance(
   ValidateHandle(ctor, "LyraConstructorAddInstance");
   ValidateAbiArray(
       param_data, param_data_size, "param_data", "LyraConstructorAddInstance");
-  static_cast<lyra::runtime::Constructor*>(ctor)->AddInstance(
-      instance_path, param_data, param_data_size, realized_inline_size,
-      realized_appendix_size);
+  // Legacy per-call API: creates a root instance (no parent, empty
+  // coord, ordinal 0). instance_path is treated as the root inst_name.
+  // The batched RunProgram path is the active entry point; this
+  // API exists only for the C ABI declaration.
+  static_cast<lyra::runtime::Constructor*>(ctor)->CreateChild(
+      nullptr, {}, 0, instance_path, param_data, param_data_size,
+      realized_inline_size, realized_appendix_size);
 }
 
 void LyraConstructorRunProgram(
@@ -1369,7 +1429,8 @@ void LyraConstructorRunProgram(
     uint32_t body_desc_count, const char* path_pool, uint32_t path_pool_size,
     const uint8_t* param_pool, uint32_t param_pool_size,
     const lyra::runtime::ConstructionProgramEntry* entries,
-    uint32_t entry_count) {
+    uint32_t entry_count, const uint32_t* coord_steps_pool,
+    uint32_t coord_steps_word_count) {
   ValidateHandle(ctor_raw, "LyraConstructorRunProgram");
   auto& ctor = *static_cast<lyra::runtime::Constructor*>(ctor_raw);
 
@@ -1384,6 +1445,12 @@ void LyraConstructorRunProgram(
   auto body_desc_span = std::span(body_descs, body_desc_count);
   auto path_span = std::span(path_pool, path_pool_size);
   auto param_span = std::span(param_pool, param_pool_size);
+
+  // Transient transport-resolution table: converts flat
+  // parent_instance_index from the emitted program into live pointers
+  // during ingestion. Consumed only within this loop.
+  std::vector<lyra::runtime::RuntimeInstance*> created_instances;
+  created_instances.reserve(entry_count);
 
   for (uint32_t i = 0; i < entry_count; ++i) {
     const auto& e = entry_span[i];
@@ -1402,14 +1469,37 @@ void LyraConstructorRunProgram(
       last_body_group = e.body_group;
     }
 
-    if (e.path_offset >= path_pool_size) {
+    // Canonical local child display label from compile-time Symbol::name.
+    // Transported via inst_name_offset in the path pool. Presentation
+    // input for path derivation during assembly -- not stored on the
+    // instance, not recovered from full path strings.
+    if (e.inst_name_offset >= path_pool_size) {
       throw lyra::common::InternalError(
           "LyraConstructorRunProgram",
           std::format(
-              "entry {} path_offset {} >= path_pool_size {}", i, e.path_offset,
-              path_pool_size));
+              "entry {} inst_name_offset {} >= path_pool_size {}", i,
+              e.inst_name_offset, path_pool_size));
     }
-    const char* instance_path = &path_span[e.path_offset];
+    const char* inst_name = &path_span[e.inst_name_offset];
+
+    // Decode structural child edge metadata from flat transport pool.
+    auto edge_coord = lyra::runtime::DecodeRepertoireCoord(
+        e, std::span(coord_steps_pool, coord_steps_word_count));
+
+    // Resolve parent from transport index to live pointer.
+    // parent_instance_index is transport-only: consumed here to resolve
+    // a live RuntimeInstance* parent. Does not survive past this loop.
+    lyra::runtime::RuntimeInstance* parent = nullptr;
+    if (e.parent_instance_index != UINT32_MAX) {
+      if (e.parent_instance_index >= created_instances.size()) {
+        throw lyra::common::InternalError(
+            "LyraConstructorRunProgram",
+            std::format(
+                "entry {} parent_instance_index {} >= created count {}", i,
+                e.parent_instance_index, created_instances.size()));
+      }
+      parent = created_instances[e.parent_instance_index];
+    }
 
     const void* param_data = nullptr;
     uint32_t param_size = e.param_size;
@@ -1434,9 +1524,11 @@ void LyraConstructorRunProgram(
       param_data = &param_span[e.param_offset];
     }
 
-    ctor.AddInstance(
-        instance_path, param_data, param_size, e.realized_inline_size,
+    auto* child = ctor.CreateChild(
+        parent, std::move(edge_coord), e.child_ordinal_in_coord, inst_name,
+        param_data, param_size, e.realized_inline_size,
         e.realized_appendix_size);
+    created_instances.push_back(child);
   }
 }
 
