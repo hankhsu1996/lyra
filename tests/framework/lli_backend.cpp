@@ -28,7 +28,9 @@ auto RunLliBackend(
   CaseExecutionResult result;
 
   // Prepare LLVM module (AST -> HIR -> MIR -> LLVM)
-  auto prep_result = PrepareLlvmModule(test_case, work_directory);
+  auto prep_result = PrepareLlvmModule(
+      test_case, work_directory, false,
+      lowering::mir_to_llvm::MainAbi::kArgvForwarding);
   if (!prep_result) {
     result.execution.outcome = ExecutionOutcome::kFrontendError;
     result.execution.error_message = prep_result.error();

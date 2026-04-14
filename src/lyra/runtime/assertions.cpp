@@ -72,6 +72,7 @@ void Engine::EnqueueDeferredAssertion(
       .instance_id = instance_id,
       .payload_size = payload_size,
       .payload = {},
+      .ref_bindings = {},
   };
   if (payload_ptr != nullptr && payload_size > 0) {
     rec.payload.AssignCopy(payload_ptr, payload_size);

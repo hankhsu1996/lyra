@@ -34,8 +34,8 @@ enum class RuntimeValueKind : int32_t {
 //   output_width: field width (-1 = auto, 0 = minimal, >0 = explicit)
 //   precision: decimal precision for reals (-1 = default)
 //   zero_pad, left_align: formatting flags
-//   engine_ptr: pointer to Engine (required for kTime, can be nullptr for
-//     others)
+//   engine_ptr: pointer to Engine (required for kTime; nullable for pure
+//     formatting paths like $sformat where caller explicitly passes null)
 //   module_timeunit_power: timeunit of the value (for kTime: e.g., -9 for ns)
 //   unknown_data: pointer to unknown plane (null for 2-state). When set, bit i
 //     is X if unknown[i]=1 && data[i]=0, Z if unknown[i]=1 && data[i]=1.
@@ -44,7 +44,7 @@ enum class RuntimeValueKind : int32_t {
 inline auto FormatRuntimeValue(
     FormatKind kind, RuntimeValueKind value_kind, const void* data,
     int32_t width, bool is_signed, int32_t output_width, int32_t precision,
-    bool zero_pad, bool left_align, void* engine_ptr = nullptr,
+    bool zero_pad, bool left_align, void* engine_ptr,
     int8_t module_timeunit_power = -9, const void* unknown_data = nullptr)
     -> std::string {
   // Handle string specially - data IS the string pointer

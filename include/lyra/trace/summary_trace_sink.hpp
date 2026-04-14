@@ -7,6 +7,10 @@
 #include "lyra/runtime/signal_coord.hpp"
 #include "lyra/trace/trace_sink.hpp"
 
+namespace lyra::runtime {
+class OutputDispatcher;
+}  // namespace lyra::runtime
+
 namespace lyra::trace {
 
 // Default summary sink for --trace compatibility output.
@@ -20,7 +24,7 @@ class SummaryTraceSink : public TraceSink {
  public:
   void OnEvent(const TraceEvent& event) override;
 
-  void PrintSummary() const;
+  void PrintSummary(lyra::runtime::OutputDispatcher& out) const;
 
   // Reset all counters to zero. Called by TraceManager when starting a
   // new trace session (false->true enable transition).

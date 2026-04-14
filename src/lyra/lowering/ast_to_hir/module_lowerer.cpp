@@ -3,10 +3,8 @@
 #include <cstdint>
 
 #include "lyra/common/internal_error.hpp"
-#include "lyra/common/timescale_format.hpp"
 #include "lyra/lowering/ast_to_hir/context.hpp"
 #include "lyra/lowering/ast_to_hir/delay_scaler.hpp"
-#include "lyra/lowering/ast_to_hir/symbol_registrar.hpp"
 #include "lyra/lowering/ast_to_hir/timescale.hpp"
 
 namespace lyra::lowering::ast_to_hir {
@@ -17,13 +15,7 @@ auto ComputeFrame(Context& ctx, const slang::ast::Scope& scope)
     -> LoweringFrame {
   LoweringFrame frame{};
 
-  // Compute scope's timeunit
-  auto ts = scope.getTimeScale();
-  if (ts) {
-    frame.unit_power = TimeScaleValueToPower(ts->base);
-  } else {
-    frame.unit_power = kDefaultTimeScalePower;
-  }
+  frame.unit_power = ResolveScopeUnitPower(scope.getTimeScale());
 
   // Get global precision (computed once per compilation, cached in Context)
   if (!ctx.cached_global_precision) {

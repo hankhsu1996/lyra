@@ -219,8 +219,9 @@ void SlotMetaRegistry::ThrowOutOfRange(uint32_t slot_id) const {
       std::format("slot_id {} out of range (size {})", slot_id, slots_.size()));
 }
 
-void SlotMetaRegistry::DumpSummary() const {
-  WriteOutput(
+void SlotMetaRegistry::DumpSummary(OutputDispatcher& out) const {
+  out.DrainSimOutputBuffer();
+  out.WriteProtocolRecord(
       std::format(
           "__LYRA_SLOT_META__: version={} count={}\n", slot_meta_abi::kVersion,
           slots_.size()));
@@ -249,7 +250,7 @@ void SlotMetaRegistry::DumpSummary() const {
     }
 
     line += "\n";
-    WriteOutput(line);
+    out.WriteProtocolRecord(line);
   }
 }
 

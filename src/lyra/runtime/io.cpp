@@ -15,6 +15,8 @@
 #include <utility>
 #include <vector>
 
+#include <fmt/core.h>
+
 #include "lyra/common/binary_pack.hpp"
 #include "lyra/common/diagnostic/print.hpp"
 #include "lyra/common/format.hpp"
@@ -97,45 +99,36 @@ auto ReadPackedIntegralFromSlot(
   return lyra::semantic::MakeIntegralWide(value_words.data(), num_words, width);
 }
 
-void SnapshotIntegralSemantic(const VarEntry& var) {
-  // ABI layer: build RuntimeValue from memory
-  auto value = ReadPackedIntegralFromSlot(
-      var.addr, static_cast<uint32_t>(var.width), var.is_four_state);
-
-  // Format layer: get SV literal (FormatAsSvLiteral owns all N'...
-  // construction)
-  std::string literal = lyra::semantic::FormatAsSvLiteral(value);
-
-  // New protocol: v:i:name=literal
-  lyra::runtime::WriteOutput(
-      std::format("__LYRA_VAR:v:i:{}={}\n", var.name, literal));
-}
-
-void SnapshotReal(const VarEntry& var) {
-  double value = 0.0;
-  std::memcpy(&value, var.addr, sizeof(double));
-  // New protocol: v:r:name=value (plain decimal, not SV literal)
-  // Use max_digits10 (17 for double) to ensure round-trip precision
-  lyra::runtime::WriteOutput(
-      std::format(
-          "__LYRA_VAR:v:r:{}={:.{}g}\n", var.name, value,
-          std::numeric_limits<double>::max_digits10));
-}
-
 }  // namespace
 
-extern "C" void LyraPrintLiteral(const char* str) {
-  lyra::runtime::WriteOutput(str);
+extern "C" void LyraPrintLiteral(void* engine_ptr, const char* str) {
+  if (engine_ptr == nullptr) {
+    throw lyra::common::InternalError(
+        "LyraPrintLiteral", "engine_ptr must not be null");
+  }
+  auto* engine = static_cast<lyra::runtime::Engine*>(engine_ptr);
+  engine->Output().AppendSimOutputFragment(str);
 }
 
-extern "C" void LyraWarnRateLimited(const char* msg, uint32_t* counter_ptr) {
+extern "C" void LyraWarnRateLimited(
+    void* engine_ptr, const char* msg, uint32_t* counter_ptr) {
   constexpr uint32_t kMaxWarnings = 10;
   uint32_t count = *counter_ptr;
   if (count >= kMaxWarnings) return;
   *counter_ptr = count + 1;
-  lyra::runtime::WriteOutput(msg);
+  if (engine_ptr == nullptr) {
+    throw lyra::common::InternalError(
+        "LyraWarnRateLimited", "engine_ptr must not be null");
+  }
+  auto* engine = static_cast<lyra::runtime::Engine*>(engine_ptr);
+  auto& out = engine->Output();
+  std::string_view sv{msg};
+  if (!sv.empty() && sv.back() == '\n') sv.remove_suffix(1);
+  out.AppendSimOutputFragment(sv);
+  out.FinishSimOutputRecord();
   if (count + 1 == kMaxWarnings) {
-    lyra::runtime::WriteOutput("  (further identical warnings suppressed)\n");
+    out.AppendSimOutputFragment("  (further identical warnings suppressed)");
+    out.FinishSimOutputRecord();
   }
 }
 
@@ -144,19 +137,28 @@ extern "C" void LyraPrintValue(
     int32_t width, bool is_signed, int32_t output_width, int32_t precision,
     bool zero_pad, bool left_align, const void* unknown_data,
     const void* /*z_mask*/, int8_t module_timeunit_power) {
+  if (engine_ptr == nullptr) {
+    throw lyra::common::InternalError(
+        "LyraPrintValue", "engine_ptr must not be null");
+  }
   std::string formatted = lyra::runtime::FormatRuntimeValue(
       static_cast<lyra::FormatKind>(format),
       static_cast<lyra::runtime::RuntimeValueKind>(value_kind), data, width,
       is_signed, output_width, precision, zero_pad, left_align, engine_ptr,
       module_timeunit_power, unknown_data);
-  lyra::runtime::WriteOutput(formatted);
+  auto* engine = static_cast<lyra::runtime::Engine*>(engine_ptr);
+  engine->Output().AppendSimOutputFragment(formatted);
 }
 
-extern "C" void LyraPrintEnd(int32_t kind) {
-  if (kind == static_cast<int32_t>(lyra::PrintKind::kDisplay)) {
-    lyra::runtime::WriteOutput("\n");
+extern "C" void LyraPrintEnd(void* engine_ptr, int32_t kind) {
+  if (engine_ptr == nullptr) {
+    throw lyra::common::InternalError(
+        "LyraPrintEnd", "engine_ptr must not be null");
   }
-  // No flush here - flush only at simulation end
+  if (kind == static_cast<int32_t>(lyra::PrintKind::kDisplay)) {
+    auto* engine = static_cast<lyra::runtime::Engine*>(engine_ptr);
+    engine->Output().FinishSimOutputRecord();
+  }
 }
 
 extern "C" void LyraRegisterVar(
@@ -167,15 +169,32 @@ extern "C" void LyraRegisterVar(
        is_four_state});
 }
 
-extern "C" void LyraSnapshotVars() {
+extern "C" void LyraSnapshotVars(void* run_session_ptr) {
+  if (run_session_ptr == nullptr) {
+    throw lyra::common::InternalError(
+        "LyraSnapshotVars", "run_session_ptr must not be null");
+  }
+  auto* session = static_cast<lyra::runtime::RunSession*>(run_session_ptr);
+  session->output.DrainSimOutputBuffer();
   for (const auto& var : g_registered_vars) {
     switch (var.kind) {
-      case VarKind::kIntegral:
-        SnapshotIntegralSemantic(var);
+      case VarKind::kIntegral: {
+        auto value = ReadPackedIntegralFromSlot(
+            var.addr, static_cast<uint32_t>(var.width), var.is_four_state);
+        std::string literal = lyra::semantic::FormatAsSvLiteral(value);
+        session->output.WriteProtocolRecord(
+            std::format("__LYRA_VAR:v:i:{}={}\n", var.name, literal));
         break;
-      case VarKind::kReal:
-        SnapshotReal(var);
+      }
+      case VarKind::kReal: {
+        double value = 0.0;
+        std::memcpy(&value, var.addr, sizeof(double));
+        session->output.WriteProtocolRecord(
+            std::format(
+                "__LYRA_VAR:v:r:{}={:.{}g}\n", var.name, value,
+                std::numeric_limits<double>::max_digits10));
         break;
+      }
     }
   }
   g_registered_vars.clear();
@@ -184,6 +203,10 @@ extern "C" void LyraSnapshotVars() {
 extern "C" auto LyraFopenFd(
     void* engine_ptr, LyraStringHandle filename_handle,
     LyraStringHandle mode_handle) -> int32_t {
+  if (engine_ptr == nullptr) {
+    throw lyra::common::InternalError(
+        "LyraFopenFd", "engine_ptr must not be null");
+  }
   auto* engine = static_cast<lyra::runtime::Engine*>(engine_ptr);
   std::string filename{LyraStringAsView(filename_handle)};
   std::string mode{LyraStringAsView(mode_handle)};
@@ -192,23 +215,39 @@ extern "C" auto LyraFopenFd(
 
 extern "C" auto LyraFopenMcd(void* engine_ptr, LyraStringHandle filename_handle)
     -> int32_t {
+  if (engine_ptr == nullptr) {
+    throw lyra::common::InternalError(
+        "LyraFopenMcd", "engine_ptr must not be null");
+  }
   auto* engine = static_cast<lyra::runtime::Engine*>(engine_ptr);
   std::string filename{LyraStringAsView(filename_handle)};
   return engine->GetFileManager().FopenMcd(filename);
 }
 
 extern "C" void LyraFclose(void* engine_ptr, int32_t descriptor) {
+  if (engine_ptr == nullptr) {
+    throw lyra::common::InternalError(
+        "LyraFclose", "engine_ptr must not be null");
+  }
   auto* engine = static_cast<lyra::runtime::Engine*>(engine_ptr);
   engine->GetFileManager().Fclose(descriptor);
 }
 
 extern "C" auto LyraFgetc(void* engine_ptr, int32_t descriptor) -> int32_t {
+  if (engine_ptr == nullptr) {
+    throw lyra::common::InternalError(
+        "LyraFgetc", "engine_ptr must not be null");
+  }
   auto* engine = static_cast<lyra::runtime::Engine*>(engine_ptr);
   return engine->GetFileManager().Fgetc(descriptor);
 }
 
 extern "C" auto LyraUngetc(
     void* engine_ptr, int32_t character, int32_t descriptor) -> int32_t {
+  if (engine_ptr == nullptr) {
+    throw lyra::common::InternalError(
+        "LyraUngetc", "engine_ptr must not be null");
+  }
   auto* engine = static_cast<lyra::runtime::Engine*>(engine_ptr);
   return engine->GetFileManager().Ungetc(character, descriptor);
 }
@@ -216,6 +255,10 @@ extern "C" auto LyraUngetc(
 extern "C" auto LyraFgets(
     void* engine_ptr, int32_t descriptor, LyraStringHandle* str_out)
     -> int32_t {
+  if (engine_ptr == nullptr) {
+    throw lyra::common::InternalError(
+        "LyraFgets", "engine_ptr must not be null");
+  }
   auto* engine = static_cast<lyra::runtime::Engine*>(engine_ptr);
   std::string result;
   int32_t count = engine->GetFileManager().Fgets(descriptor, result);
@@ -226,6 +269,10 @@ extern "C" auto LyraFgets(
 
 extern "C" void LyraFflush(
     void* engine_ptr, bool has_desc, int32_t descriptor) {
+  if (engine_ptr == nullptr) {
+    throw lyra::common::InternalError(
+        "LyraFflush", "engine_ptr must not be null");
+  }
   auto* engine = static_cast<lyra::runtime::Engine*>(engine_ptr);
   if (has_desc) {
     engine->GetFileManager().Fflush(descriptor);
@@ -239,6 +286,10 @@ extern "C" void LyraFWrite(
     bool add_newline) {
   if (descriptor == 0) return;
 
+  if (engine_ptr == nullptr) {
+    throw lyra::common::InternalError(
+        "LyraFWrite", "engine_ptr must not be null");
+  }
   auto* engine = static_cast<lyra::runtime::Engine*>(engine_ptr);
   lyra::runtime::StreamTargets targets =
       engine->GetFileManager().CollectStreams(descriptor);
@@ -251,8 +302,8 @@ extern "C" void LyraFWrite(
   std::string_view msg{ptr, len};
 
   if (targets.include_stdout) {
-    lyra::runtime::WriteOutput(msg);
-    if (add_newline) lyra::runtime::WriteOutput("\n");
+    engine->Output().AppendSimOutputFragment(msg);
+    if (add_newline) engine->Output().FinishSimOutputRecord();
   }
   for (int i = 0; i < targets.file_stream_count; ++i) {
     *targets.file_streams.at(i) << msg;
@@ -358,11 +409,15 @@ extern "C" void LyraReadmemLocal(
     int32_t element_count, int64_t min_addr, int64_t current_addr,
     int64_t final_addr, int64_t step, bool is_hex, int32_t element_kind,
     void* instance_ptr, uint32_t local_signal_id) {
+  if (engine_ptr == nullptr) {
+    throw lyra::common::InternalError(
+        "LyraReadmemLocal", "engine_ptr must not be null");
+  }
   bool wrote = ReadmemImpl(
       filename_handle, target, element_width, stride_bytes, value_size_bytes,
       element_count, min_addr, current_addr, final_addr, step, is_hex,
       element_kind);
-  if (wrote && engine_ptr != nullptr) {
+  if (wrote) {
     if (instance_ptr == nullptr) {
       throw lyra::common::InternalError(
           "LyraReadmemLocal",
@@ -384,21 +439,25 @@ extern "C" void LyraReadmemGlobal(
     int32_t element_count, int64_t min_addr, int64_t current_addr,
     int64_t final_addr, int64_t step, bool is_hex, int32_t element_kind,
     uint32_t global_slot_id) {
+  if (engine_ptr == nullptr) {
+    throw lyra::common::InternalError(
+        "LyraReadmemGlobal", "engine_ptr must not be null");
+  }
   bool wrote = ReadmemImpl(
       filename_handle, target, element_width, stride_bytes, value_size_bytes,
       element_count, min_addr, current_addr, final_addr, step, is_hex,
       element_kind);
-  if (wrote && engine_ptr != nullptr) {
+  if (wrote) {
     auto* engine = static_cast<lyra::runtime::Engine*>(engine_ptr);
     engine->MarkDirty(lyra::runtime::GlobalSignalId{global_slot_id});
   }
 }
 
 extern "C" void LyraReadmemNoNotify(
-    void* /*engine_ptr*/, LyraStringHandle filename_handle, void* target,
-    int32_t element_width, int32_t stride_bytes, int32_t value_size_bytes,
-    int32_t element_count, int64_t min_addr, int64_t current_addr,
-    int64_t final_addr, int64_t step, bool is_hex, int32_t element_kind) {
+    LyraStringHandle filename_handle, void* target, int32_t element_width,
+    int32_t stride_bytes, int32_t value_size_bytes, int32_t element_count,
+    int64_t min_addr, int64_t current_addr, int64_t final_addr, int64_t step,
+    bool is_hex, int32_t element_kind) {
   ReadmemImpl(
       filename_handle, target, element_width, stride_bytes, value_size_bytes,
       element_count, min_addr, current_addr, final_addr, step, is_hex,
@@ -406,8 +465,12 @@ extern "C" void LyraReadmemNoNotify(
 }
 
 extern "C" void LyraPrintModulePath(void* engine_ptr, uint32_t instance_id) {
+  if (engine_ptr == nullptr) {
+    throw lyra::common::InternalError(
+        "LyraPrintModulePath", "engine_ptr must not be null");
+  }
   auto* engine = static_cast<lyra::runtime::Engine*>(engine_ptr);
-  lyra::runtime::WriteOutput(
+  engine->Output().AppendSimOutputFragment(
       engine->GetInstancePath(lyra::runtime::InstanceId{instance_id}));
 }
 
@@ -558,6 +621,10 @@ extern "C" auto LyraFreadLocal(
     int32_t stride_bytes, int32_t is_memory, int64_t start_index,
     int64_t max_count, int64_t element_count, void* instance_ptr,
     uint32_t local_signal_id) -> int32_t {
+  if (engine_ptr == nullptr) {
+    throw lyra::common::InternalError(
+        "LyraFreadLocal", "engine_ptr must not be null");
+  }
   auto* engine = static_cast<lyra::runtime::Engine*>(engine_ptr);
   int32_t bytes = FreadImpl(
       engine, descriptor, target, element_width, stride_bytes, is_memory,
@@ -583,6 +650,10 @@ extern "C" auto LyraFreadGlobal(
     int32_t stride_bytes, int32_t is_memory, int64_t start_index,
     int64_t max_count, int64_t element_count, uint32_t global_slot_id)
     -> int32_t {
+  if (engine_ptr == nullptr) {
+    throw lyra::common::InternalError(
+        "LyraFreadGlobal", "engine_ptr must not be null");
+  }
   auto* engine = static_cast<lyra::runtime::Engine*>(engine_ptr);
   int32_t bytes = FreadImpl(
       engine, descriptor, target, element_width, stride_bytes, is_memory,
@@ -597,6 +668,10 @@ extern "C" auto LyraFreadNoNotify(
     void* engine_ptr, int32_t descriptor, void* target, int32_t element_width,
     int32_t stride_bytes, int32_t is_memory, int64_t start_index,
     int64_t max_count, int64_t element_count) -> int32_t {
+  if (engine_ptr == nullptr) {
+    throw lyra::common::InternalError(
+        "LyraFreadNoNotify", "engine_ptr must not be null");
+  }
   auto* engine = static_cast<lyra::runtime::Engine*>(engine_ptr);
   return FreadImpl(
       engine, descriptor, target, element_width, stride_bytes, is_memory,
@@ -606,6 +681,10 @@ extern "C" auto LyraFreadNoNotify(
 extern "C" auto LyraFscanf(
     void* engine_ptr, int32_t descriptor, LyraStringHandle format,
     int32_t output_count, void** output_ptrs) -> int32_t {
+  if (engine_ptr == nullptr) {
+    throw lyra::common::InternalError(
+        "LyraFscanf", "engine_ptr must not be null");
+  }
   auto* engine = static_cast<lyra::runtime::Engine*>(engine_ptr);
   auto& file_manager = engine->GetFileManager();
 

@@ -6,6 +6,8 @@
 
 namespace lyra::runtime {
 
+class OutputDispatcher;
+
 enum class ProcessKind : uint8_t {
   kInitial,
   kAlways,
@@ -52,8 +54,8 @@ class ProcessMetaRegistry {
   // Signal-safe: writes one line to fd via write(2). No allocation.
   void WriteAsyncSignalSafe(int fd, uint32_t process_id) const;
 
-  // Debug dump to stdout.
-  void DumpSummary() const;
+  // Debug dump via output dispatcher.
+  void DumpSummary(OutputDispatcher& out) const;
 
   // Access a NUL-terminated string from the pool by offset.
   // Returns "" for offset 0 or out-of-range.

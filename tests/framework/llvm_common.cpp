@@ -68,9 +68,9 @@ class TestSimulationHooks : public lowering::mir_to_llvm::SimulationHooks {
 
   void EmitPostSimulationReports(
       lowering::mir_to_llvm::Context& context, llvm::Value* /*design_state*/,
-      llvm::Value* /*abi_ptr*/) override {
+      llvm::Value* /*abi_ptr*/, llvm::Value* run_session_ptr) override {
     if (emit_time_report_) {
-      lowering::mir_to_llvm::EmitTimeReport(context);
+      lowering::mir_to_llvm::EmitTimeReport(context, run_session_ptr);
     }
   }
 
@@ -182,7 +182,8 @@ auto FindRuntimeLibrary(std::string_view lib_name)
 
 auto PrepareLlvmModule(
     const TestCase& test_case, const std::filesystem::path& work_directory,
-    bool force_two_state) -> std::expected<LlvmPreparationResult, std::string> {
+    bool force_two_state, lowering::mir_to_llvm::MainAbi main_abi)
+    -> std::expected<LlvmPreparationResult, std::string> {
   using Clock = std::chrono::steady_clock;
 
   // Parse test case using slang
@@ -373,6 +374,8 @@ auto PrepareLlvmModule(
       .signal_trace_path = {},
       .iteration_limit = 0,
       .force_two_state = force_two_state,
+      .collect_forwarding_analysis = false,
+      .main_abi = main_abi,
       .dpi_export_wrappers = &mir_result->dpi_export_wrappers,
       .bound_connections = &mir_result->bound_connections,
       .expr_connections = &mir_result->expr_connections,

@@ -315,6 +315,8 @@ class Context {
   [[nodiscard]] auto GetLyraInitRuntime() -> llvm::Function*;
   [[nodiscard]] auto GetLyraResolveBaseDir() -> llvm::Function*;
   [[nodiscard]] auto GetLyraReportTime() -> llvm::Function*;
+  [[nodiscard]] auto GetLyraCreateRunSession() -> llvm::Function*;
+  [[nodiscard]] auto GetLyraDestroyRunSession() -> llvm::Function*;
   [[nodiscard]] auto GetLyraDynArrayNew() -> llvm::Function*;
   [[nodiscard]] auto GetLyraDynArrayNewCopy() -> llvm::Function*;
   [[nodiscard]] auto GetLyraDynArraySize() -> llvm::Function*;
@@ -1081,6 +1083,8 @@ class Context {
   llvm::Function* lyra_init_runtime_ = nullptr;
   llvm::Function* lyra_resolve_base_dir_ = nullptr;
   llvm::Function* lyra_report_time_ = nullptr;
+  llvm::Function* lyra_create_run_session_ = nullptr;
+  llvm::Function* lyra_destroy_run_session_ = nullptr;
   llvm::Function* lyra_iteration_limit_ptr_ = nullptr;
   llvm::Function* lyra_dynarray_new_ = nullptr;
   llvm::Function* lyra_dynarray_new_copy_ = nullptr;

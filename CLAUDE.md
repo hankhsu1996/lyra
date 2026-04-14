@@ -120,6 +120,16 @@ bazel test //tests:jit_dev_tests \
 
 Path is relative to `tests/sv_features/`. `--backend` is required with `--test_file`.
 
+Run a single named test case (fastest reproducer path for failures):
+
+```bash
+bazel test //tests:jit_dev_tests \
+  --test_arg=--case=operators_binary_default_add \
+  --test_output=errors
+```
+
+Case name is the full qualified name from test output (e.g., `category_file_casename`).
+
 ## Benchmarks
 
 Benchmark runner: `tools/bench/run_benchmarks.py`. Fixtures in `tools/bench/fixtures/`.

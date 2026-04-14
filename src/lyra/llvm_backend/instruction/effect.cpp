@@ -528,7 +528,11 @@ auto LowerMemIOEffect(
             args.push_back(readmem_slot_expr->Emit(builder));
             builder.CreateCall(context.GetLyraReadmemGlobal(), args);
           } else {
-            builder.CreateCall(context.GetLyraReadmemNoNotify(), common_args);
+            // NoNotify has no engine_ptr parameter: skip common_args[0].
+            std::vector<llvm::Value*> no_notify_args(
+                common_args.begin() + 1, common_args.end());
+            builder.CreateCall(
+                context.GetLyraReadmemNoNotify(), no_notify_args);
           }
         } else {
           std::vector<llvm::Value*> args = {

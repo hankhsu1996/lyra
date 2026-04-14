@@ -4,6 +4,7 @@
 #include <string>
 #include <string_view>
 
+#include "lyra/common/internal_error.hpp"
 #include "lyra/common/severity.hpp"
 #include "lyra/runtime/engine.hpp"
 #include "lyra/runtime/output_sink.hpp"
@@ -23,8 +24,8 @@ void EmitReport(Engine* engine, const ReportRequest& req) {
   }
   text += ReportPrefix(req.kind, req.severity);
   text += req.message;
-  text += "\n";
-  WriteOutput(text);
+  engine->Output().AppendSimOutputFragment(text);
+  engine->Output().FinishSimOutputRecord();
   if (req.action == ReportAction::kFinish) {
     engine->Finish();
   }
@@ -55,6 +56,10 @@ auto DecodeAbiReportPayload(const AbiReportPayload& abi) -> ReportRequest {
 
 extern "C" void LyraEmitReport(
     void* engine_ptr, const lyra::runtime::AbiReportPayload* payload) {
+  if (engine_ptr == nullptr) {
+    throw lyra::common::InternalError(
+        "LyraEmitReport", "engine_ptr must not be null");
+  }
   auto* engine = static_cast<lyra::runtime::Engine*>(engine_ptr);
   auto req = lyra::runtime::DecodeAbiReportPayload(*payload);
   lyra::runtime::EmitReport(engine, req);

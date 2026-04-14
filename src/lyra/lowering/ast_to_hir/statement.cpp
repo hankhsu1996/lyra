@@ -198,7 +198,10 @@ auto LowerAndNormalizeActionBranch(
     -> LoweredActionBranch {
   // Step 1: absent branch.
   if (slang_action == nullptr) {
-    return {.kind = LoweredActionBranchKind::kAbsent};
+    return {
+        .kind = LoweredActionBranchKind::kAbsent,
+        .statement_id = std::nullopt,
+        .call_expr_id = hir::kInvalidExpressionId};
   }
 
   // Step 2: lower the child statement.
@@ -207,10 +210,16 @@ auto LowerAndNormalizeActionBranch(
     // LowerStatement returns nullopt for Empty statements (no-op).
     // slang emits Empty as ifTrue for bare `assert #0 (cond);` with
     // no user action. Treat as absent, not as a lowering error.
-    return {.kind = LoweredActionBranchKind::kAbsent};
+    return {
+        .kind = LoweredActionBranchKind::kAbsent,
+        .statement_id = std::nullopt,
+        .call_expr_id = hir::kInvalidExpressionId};
   }
   if (!*result) {
-    return {.kind = LoweredActionBranchKind::kInvalid};
+    return {
+        .kind = LoweredActionBranchKind::kInvalid,
+        .statement_id = std::nullopt,
+        .call_expr_id = hir::kInvalidExpressionId};
   }
   hir::StatementId stmt_id = *result;
 

@@ -20,6 +20,7 @@ struct CommandLineArgs {
   //   JIT: whole-case timeout (fork-isolated, covers frontend+execution)
   //   AOT/LLI: simulation subprocess timeout only (frontend/lowering/link
   //     are not covered; runs direct for performance)
+  std::string case_filter;  // Run only this exact case name (empty = all)
   int timeout_seconds = 0;
   bool two_state = false;  // Force two-state mode (--test_file only)
 };

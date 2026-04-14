@@ -13,14 +13,15 @@ enum class MemElementKind : int32_t {
 extern "C" {
 
 // Print a literal string (FormatKind::kLiteral only)
-void LyraPrintLiteral(const char* str);
+void LyraPrintLiteral(void* engine, const char* str);
 
 // Rate-limited warning: prints first N occurrences (per call site), then
 // suppresses. counter_ptr points to a per-site uint32_t global (init 0).
-void LyraWarnRateLimited(const char* msg, uint32_t* counter_ptr);
+void LyraWarnRateLimited(void* engine, const char* msg, uint32_t* counter_ptr);
 
 // Print a formatted value (all FormatKind except kLiteral)
-// - engine: pointer to Engine (required for kTime, can be nullptr for others)
+// - engine: pointer to Engine (required, must not be null; routes output
+//   through the run-session-owned OutputDispatcher borrowed by Engine)
 // - format: FormatKind cast to int32_t (how to render)
 // - value_kind: RuntimeValueKind cast to int32_t (how to interpret bytes)
 // - data: pointer to value bits
@@ -45,7 +46,7 @@ void LyraPrintValue(
     const void* z_mask, int8_t module_timeunit_power);
 
 // Finalize output: newline for kDisplay (0), nothing for kWrite (1)
-void LyraPrintEnd(int32_t kind);
+void LyraPrintEnd(void* engine, int32_t kind);
 
 // Register a variable for snapshot. Called at program init.
 // kind: 0 = integral, 1 = real
@@ -56,7 +57,8 @@ void LyraRegisterVar(
     bool is_four_state);
 
 // Output all registered variables. Called before exit.
-void LyraSnapshotVars();
+// run_session_ptr: opaque pointer to lyra::runtime::RunSession.
+void LyraSnapshotVars(void* run_session_ptr);
 
 // $fopen with mode (FD mode) - returns int32, 0 on failure
 // engine: opaque pointer to lyra::runtime::Engine
@@ -134,10 +136,10 @@ void LyraReadmemGlobal(
     uint32_t global_slot_id);
 
 void LyraReadmemNoNotify(
-    void* engine_ptr, LyraStringHandle filename, void* target,
-    int32_t element_width, int32_t stride_bytes, int32_t value_size_bytes,
-    int32_t element_count, int64_t min_addr, int64_t current_addr,
-    int64_t final_addr, int64_t step, bool is_hex, int32_t element_kind);
+    LyraStringHandle filename, void* target, int32_t element_width,
+    int32_t stride_bytes, int32_t value_size_bytes, int32_t element_count,
+    int64_t min_addr, int64_t current_addr, int64_t final_addr, int64_t step,
+    bool is_hex, int32_t element_kind);
 
 // $writememh/$writememb: write array to memory file
 // Parameters match LyraReadmem, but source is read-only.

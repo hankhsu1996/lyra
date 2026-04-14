@@ -222,14 +222,19 @@ extern "C" auto LyraStringGetCStr(LyraStringHandle handle) -> const char* {
 }
 
 extern "C" void LyraPrintString(
-    LyraStringHandle handle, const lyra::runtime::LyraFormatSpec* spec) {
+    void* engine_ptr, LyraStringHandle handle,
+    const lyra::runtime::LyraFormatSpec* spec) {
   if (handle == nullptr) {
     return;
   }
+  if (engine_ptr == nullptr) {
+    throw lyra::common::InternalError(
+        "LyraPrintString", "engine_ptr must not be null");
+  }
+  auto* engine = static_cast<lyra::runtime::Engine*>(engine_ptr);
   auto* str = static_cast<LyraStringData*>(handle);
   std::string str_value(str->data, str->len);
 
-  // Decode ABI format spec to semantic format spec
   lyra::semantic::FormatSpec decoded{
       .kind = static_cast<lyra::FormatKind>(spec->kind),
       .width = spec->width >= 0 ? std::optional(spec->width) : std::nullopt,
@@ -240,7 +245,7 @@ extern "C" void LyraPrintString(
   };
   std::string formatted = lyra::semantic::FormatValue(
       lyra::semantic::MakeString(std::move(str_value)), decoded, false);
-  lyra::runtime::WriteOutput(formatted);
+  engine->Output().AppendSimOutputFragment(formatted);
 }
 
 // Internal buffer for string formatting

@@ -29,7 +29,6 @@
 #include "lyra/common/module_identity.hpp"
 #include "lyra/common/source_span.hpp"
 #include "lyra/common/symbol.hpp"
-#include "lyra/common/timescale_format.hpp"
 #include "lyra/common/type.hpp"
 #include "lyra/hir/arena.hpp"
 #include "lyra/hir/design.hpp"
@@ -819,16 +818,13 @@ auto LowerDesign(
 
     // Extract timescale from the representative instance's scope.
     uint32_t rep_idx = spec_map.groups[g].instance_indices[0];
-    auto ts = all_instances[rep_idx]->body.getTimeScale();
+    auto resolved =
+        ResolveScopeTimeScale(all_instances[rep_idx]->body.getTimeScale());
     body_timescale_table.push_back(
         common::BodyTimeScale{
             .body_id = body_id.value,
-            .unit_power =
-                ts ? static_cast<int8_t>(TimeScaleValueToPower(ts->base))
-                   : static_cast<int8_t>(kDefaultTimeScalePower),
-            .precision_power =
-                ts ? static_cast<int8_t>(TimeScaleValueToPower(ts->precision))
-                   : static_cast<int8_t>(kDefaultTimeScalePower),
+            .unit_power = static_cast<int8_t>(resolved.unit_power),
+            .precision_power = static_cast<int8_t>(resolved.precision_power),
         });
 
     // Map all instance body scopes in this group to the same body index.

@@ -100,6 +100,7 @@ void ValidateDpiCallContract(
         }
         break;
       case ParameterDirection::kRef:
+      case ParameterDirection::kConstRef:
         throw common::InternalError(
             caller, std::format("param {}: ref not supported in DPI", i));
     }

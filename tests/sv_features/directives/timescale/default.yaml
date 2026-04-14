@@ -165,17 +165,43 @@ cases:
         st: 999999
         ft: 999999
 
-  # No timescale directive - uses default (1ps/1ps)
+  # No timescale directive - uses default (1ns/1ns)
   - name: no_timescale_uses_default
-    description: Without directive, default is 1ps/1ps (no scaling)
+    description: Without directive, default is 1ns/1ns (no scaling)
     sv: |
       module Test;
         initial begin
-          #25;  // 25ps with default 1ps/1ps
+          #25;  // 25 time units = 25ns with default 1ns/1ns
         end
       endmodule
     expect:
       time: 25
+
+  # No timescale - verify all query paths agree on the same default.
+  # This is a regression test: delay scaling, $timeunit, $timeprecision,
+  # and $printtimescale must all reflect 1ns/1ns when no directive exists.
+  - name: no_timescale_consistency
+    description: All no-timescale queries agree (1ns/1ns default)
+    sv: |
+      module Test;
+        int u;
+        int p;
+        initial begin
+          u = $timeunit;
+          p = $timeprecision;
+          $printtimescale();
+          #10ns;
+          $display("delay_time=%0t", $time);
+          $display("unit=%0d prec=%0d", u, p);
+          $finish;
+        end
+      endmodule
+    expect:
+      stdout:
+        contains:
+          - "Time scale of 'Test' is 1ns / 1ns"
+          - "delay_time=10"
+          - "unit=-9 prec=-9"
 
   # Multi-module with different timescales
   - name: multi_module_different_timescales

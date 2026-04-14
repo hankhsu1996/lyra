@@ -47,7 +47,7 @@ auto GetModuleTimeunitPower(const ExpressionLoweringView& view) -> int8_t {
   if (view.frame != nullptr) {
     return static_cast<int8_t>(view.frame->unit_power);
   }
-  return static_cast<int8_t>(kDefaultTimeScalePower);
+  return static_cast<int8_t>(ResolveScopeUnitPower(std::nullopt));
 }
 
 // Convert PrintRadix to default FormatKind
@@ -1129,8 +1129,8 @@ struct LowerVisitor {
         std::get<slang::ast::CallExpression::SystemCallInfo>(call->subroutine);
 
     std::string scope_name;
-    int unit_power = kDefaultTimeScalePower;
-    int prec_power = kDefaultTimeScalePower;
+    int unit_power = 0;
+    int prec_power = 0;
 
     if (call->arguments().empty()) {
       const auto* body = sys_info.scope->getContainingInstance();
@@ -1140,11 +1140,9 @@ struct LowerVisitor {
         return hir::kInvalidExpressionId;
       }
       scope_name = body->getDefinition().name;
-      auto ts = body->getTimeScale();
-      if (ts) {
-        unit_power = TimeScaleValueToPower(ts->base);
-        prec_power = TimeScaleValueToPower(ts->precision);
-      }
+      auto resolved = ResolveScopeTimeScale(body->getTimeScale());
+      unit_power = resolved.unit_power;
+      prec_power = resolved.precision_power;
     } else {
       const auto* arg_expr = call->arguments()[0];
       if (arg_expr->kind != slang::ast::ExpressionKind::ArbitrarySymbol) {
@@ -1169,21 +1167,18 @@ struct LowerVisitor {
           break;
         case slang::ast::SymbolKind::CompilationUnit: {
           scope_name = "$unit";
-          auto ts = sym.as<slang::ast::CompilationUnitSymbol>().getTimeScale();
-          if (ts) {
-            unit_power = TimeScaleValueToPower(ts->base);
-            prec_power = TimeScaleValueToPower(ts->precision);
-          }
+          auto resolved = ResolveScopeTimeScale(
+              sym.as<slang::ast::CompilationUnitSymbol>().getTimeScale());
+          unit_power = resolved.unit_power;
+          prec_power = resolved.precision_power;
           break;
         }
         case slang::ast::SymbolKind::Instance: {
           const auto& inst = sym.as<slang::ast::InstanceSymbol>();
           scope_name = inst.name;
-          auto ts = inst.body.getTimeScale();
-          if (ts) {
-            unit_power = TimeScaleValueToPower(ts->base);
-            prec_power = TimeScaleValueToPower(ts->precision);
-          }
+          auto resolved = ResolveScopeTimeScale(inst.body.getTimeScale());
+          unit_power = resolved.unit_power;
+          prec_power = resolved.precision_power;
           break;
         }
         default:

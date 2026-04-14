@@ -34,21 +34,23 @@ void SummaryTraceSink::OnEvent(const TraceEvent& event) {
       event);
 }
 
-void SummaryTraceSink::PrintSummary() const {
-  lyra::runtime::WriteOutput(
+void SummaryTraceSink::PrintSummary(
+    lyra::runtime::OutputDispatcher& out) const {
+  out.DrainSimOutputBuffer();
+  out.WriteProtocolRecord(
       std::format(
           "__LYRA_TRACE__: time_advances={} value_changes={} memory_dirty={}\n",
           time_advances_, value_changes_, memory_dirty_));
 
   for (const auto& [signal_id, counts] : global_counts_) {
-    lyra::runtime::WriteOutput(
+    out.WriteProtocolRecord(
         std::format(
             "__LYRA_TRACE_SLOT__: slot={} value_changes={} memory_dirty={}\n",
             signal_id, counts.value_changes, counts.memory_dirty));
   }
 
   for (const auto& [key, counts] : local_counts_) {
-    lyra::runtime::WriteOutput(
+    out.WriteProtocolRecord(
         std::format(
             "__LYRA_TRACE_SLOT__: instance={} local={} value_changes={} "
             "memory_dirty={}\n",

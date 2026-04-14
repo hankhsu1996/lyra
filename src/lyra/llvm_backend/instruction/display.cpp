@@ -121,10 +121,15 @@ auto EmitStoreNarrowToTemp(
 }
 
 void LowerLiteralOp(
-    llvm::IRBuilder<>& builder, llvm::Function* print_literal_fn,
-    const mir::FormatOp& op) {
+    llvm::IRBuilder<>& builder, llvm::Value* engine_ptr,
+    llvm::Function* print_literal_fn, const mir::FormatOp& op) {
+  if (engine_ptr == nullptr) {
+    throw common::InternalError(
+        "LowerLiteralOp",
+        "engine pointer must be available for LyraPrintLiteral");
+  }
   auto* str_const = builder.CreateGlobalStringPtr(op.literal);
-  builder.CreateCall(print_literal_fn, {str_const});
+  builder.CreateCall(print_literal_fn, {engine_ptr, str_const});
 }
 
 void LowerModulePathOp(Context& context) {
@@ -138,6 +143,11 @@ void LowerModulePathOp(Context& context) {
 
   auto& builder = context.GetBuilder();
   auto* engine_ptr = context.GetEnginePointer();
+  if (engine_ptr == nullptr) {
+    throw common::InternalError(
+        "LowerModulePathOp",
+        "engine pointer must be available for LyraPrintModulePath");
+  }
   auto* instance_id = context.GetDynamicInstanceId();
 
   builder.CreateCall(
@@ -187,7 +197,9 @@ auto LowerStringOp(
   return WithStringHandle(
       context, facts, resolver, *op.value, op.type,
       [&](llvm::Value* h) -> Result<void> {
-        builder.CreateCall(context.GetLyraPrintString(), {h, spec_alloca});
+        builder.CreateCall(
+            context.GetLyraPrintString(),
+            {context.GetEnginePointer(), h, spec_alloca});
         return {};
       });
 }
@@ -218,6 +230,11 @@ auto LowerTimeOp(
   }
 
   auto* engine_ptr = context.GetEnginePointer();
+  if (engine_ptr == nullptr) {
+    throw common::InternalError(
+        "LowerTimeOp",
+        "engine pointer must be available for LyraPrintValue (kTime)");
+  }
   builder.CreateCall(
       context.GetLyraPrintValue(),
       {engine_ptr,
@@ -329,9 +346,16 @@ auto LowerValueOp(
     }
   }
 
+  auto* engine_ptr = context.GetEnginePointer();
+  if (engine_ptr == nullptr) {
+    throw common::InternalError(
+        "LowerValueOp", "engine pointer must be available for LyraPrintValue");
+  }
+
   builder.CreateCall(
       context.GetLyraPrintValue(),
-      {null_ptr, llvm::ConstantInt::get(i32_ty, static_cast<int32_t>(op.kind)),
+      {engine_ptr,
+       llvm::ConstantInt::get(i32_ty, static_cast<int32_t>(op.kind)),
        llvm::ConstantInt::get(i32_ty, static_cast<int32_t>(value_kind)),
        data_ptr, llvm::ConstantInt::get(i32_ty, width),
        llvm::ConstantInt::get(i1_ty, is_signed ? 1 : 0),
@@ -351,7 +375,9 @@ auto LowerFormatOps(
     Result<void> result;
     switch (op.kind) {
       case FormatKind::kLiteral:
-        LowerLiteralOp(context.GetBuilder(), context.GetLyraPrintLiteral(), op);
+        LowerLiteralOp(
+            context.GetBuilder(), context.GetEnginePointer(),
+            context.GetLyraPrintLiteral(), op);
         break;
       case FormatKind::kString:
         result = LowerStringOp(context, facts, resolver, op);
@@ -400,6 +426,11 @@ auto LowerDisplayEffect(
     if (!desc_or) return std::unexpected(desc_or.error());
 
     auto* engine = context.GetEnginePointer();
+    if (engine == nullptr) {
+      throw common::InternalError(
+          "LowerDisplayEffect",
+          "engine pointer must be available for LyraFWrite");
+    }
     auto* add_newline = llvm::ConstantInt::get(
         llvm::Type::getInt1Ty(context.GetLlvmContext()),
         display.print_kind == PrintKind::kDisplay ? 1 : 0);
@@ -416,9 +447,15 @@ auto LowerDisplayEffect(
 
   auto& builder = context.GetBuilder();
   auto* i32_ty = llvm::Type::getInt32Ty(context.GetLlvmContext());
+  auto* engine_ptr = context.GetEnginePointer();
+  if (engine_ptr == nullptr) {
+    throw common::InternalError(
+        "LowerDisplayEffect",
+        "engine pointer must be available for LyraPrintEnd");
+  }
   auto* kind_val =
       llvm::ConstantInt::get(i32_ty, static_cast<int32_t>(display.print_kind));
-  builder.CreateCall(context.GetLyraPrintEnd(), {kind_val});
+  builder.CreateCall(context.GetLyraPrintEnd(), {engine_ptr, kind_val});
   return {};
 }
 

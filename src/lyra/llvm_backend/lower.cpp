@@ -382,7 +382,8 @@ auto FinalizeModule(CodegenSession session, LoweringReport report)
 
 void EmitVariableInspection(
     Context& context, const CuFacts& facts, const InspectionPlan& plan,
-    llvm::Value* design_state, llvm::Value* abi_ptr) {
+    llvm::Value* design_state, llvm::Value* abi_ptr,
+    llvm::Value* run_session_ptr) {
   if (plan.IsEmpty()) {
     return;
   }
@@ -438,11 +439,12 @@ void EmitVariableInspection(
     builder.SetInsertPoint(skip_bb);
   }
 
-  builder.CreateCall(context.GetLyraSnapshotVars());
+  builder.CreateCall(context.GetLyraSnapshotVars(), {run_session_ptr});
 }
 
-void EmitTimeReport(Context& context) {
-  context.GetBuilder().CreateCall(context.GetLyraReportTime());
+void EmitTimeReport(Context& context, llvm::Value* run_session_ptr) {
+  context.GetBuilder().CreateCall(
+      context.GetLyraReportTime(), {run_session_ptr});
 }
 
 auto DumpLlvmIr(const llvm::Module& module) -> std::string {

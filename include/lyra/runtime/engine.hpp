@@ -54,6 +54,8 @@
 
 namespace lyra::runtime {
 
+class OutputDispatcher;
+
 // Explicit process dispatch ABI for the hot path.
 // fn is required (must not be nullptr). ctx is non-owning and must outlive
 // Engine::Run().
@@ -194,10 +196,11 @@ class Engine {
 
  public:
   explicit Engine(
-      ProcessDispatch process_dispatch, uint32_t num_processes = 0,
-      std::span<const std::string> plusargs = {},
+      ProcessDispatch process_dispatch, OutputDispatcher& output,
+      uint32_t num_processes = 0, std::span<const std::string> plusargs = {},
       std::vector<std::string> instance_paths = {}, uint32_t feature_flags = 0)
       : process_dispatch_(process_dispatch),
+        output_(output),
         num_processes_(num_processes),
         process_states_(num_processes),
         plusargs_(plusargs.begin(), plusargs.end()),
@@ -346,6 +349,14 @@ class Engine {
   // Get current simulation time.
   [[nodiscard]] auto CurrentTime() const -> SimTime {
     return current_time_;
+  }
+
+  // Access the run-session-owned output dispatcher (borrowed, not owned).
+  [[nodiscard]] auto Output() -> OutputDispatcher& {
+    return output_;
+  }
+  [[nodiscard]] auto Output() const -> const OutputDispatcher& {
+    return output_;
   }
 
   // Set global precision power (called once at simulation init).
@@ -1190,6 +1201,7 @@ class Engine {
   void ClearLocalUpdates();
 
   ProcessDispatch process_dispatch_;
+  OutputDispatcher& output_;  // Borrowed from RunSession
   uint32_t num_processes_ = 0;
   std::vector<ProcessState> process_states_;
   SimTime current_time_ = 0;

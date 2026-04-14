@@ -83,15 +83,15 @@ auto RunJitBackend(
     return result;
   }
 
-  // Execute the compiled simulation.
-  // OutputSinkScope captures JIT output and restores previous sink on exit.
-  // CoverHitCallbackScope captures per-site cover hit counts.
+  // RunSession owns the OutputDispatcher for the entire run lifetime
+  // (simulation + epilogue). OutputSinkScope installs the capture callback.
   auto t_exec = Clock::now();
   int exit_code = 0;
   std::vector<uint64_t> cover_hits;
   {
+    runtime::RunSession run_session;
     runtime::OutputSinkScope sink_scope(
-        [&captured_output](std::string_view text) {
+        run_session.output, [&captured_output](std::string_view text) {
           captured_output.append(text);
         });
     runtime::CoverHitCallbackScope cover_scope(
@@ -104,7 +104,7 @@ auto RunJitBackend(
           nba_stats.deferred_local = stats.deferred_local;
           nba_stats.captured = true;
         });
-    exit_code = session->Run();
+    exit_code = session->Run(run_session);
   }
   result.artifacts.timings.execute =
       std::chrono::duration<double>(Clock::now() - t_exec).count();
