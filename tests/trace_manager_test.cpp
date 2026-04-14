@@ -7,6 +7,7 @@
 #include <utility>
 #include <vector>
 
+#include "lyra/runtime/output_sink.hpp"
 #include "lyra/runtime/signal_coord.hpp"
 #include "lyra/trace/trace_event.hpp"
 #include "lyra/trace/trace_sink.hpp"
@@ -135,13 +136,15 @@ TEST(TraceManagerTest, DisableAfterEnableFreezesSummary) {
       PackedSnapshot{.byte_size = 1, .bytes = {0x02}});
 
   // PrintSummary should still work (prints frozen session state).
-  tm.PrintSummary();
+  runtime::OutputDispatcher out;
+  tm.PrintSummary(out);
 }
 
 TEST(TraceManagerTest, PrintSummaryBeforeEnableProducesZeros) {
   TraceManager tm;
   // Should not crash. Prints zeros (never-enabled session).
-  tm.PrintSummary();
+  runtime::OutputDispatcher out;
+  tm.PrintSummary(out);
 }
 
 }  // namespace
