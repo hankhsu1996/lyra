@@ -2,10 +2,12 @@
 
 #include <chrono>
 #include <cstdint>
+#include <cstdlib>
 #include <cstring>
 #include <exception>
 #include <format>
 #include <map>
+#include <print>
 #include <string>
 #include <string_view>
 #include <unistd.h>
@@ -239,12 +241,31 @@ auto InterpretForkOutcome(const ProcessOutcome& proc) -> CaseExecutionResult {
 
 }  // namespace
 
+// Terminate handler for fork children. Prints the current exception's what()
+// to stderr so the parent can capture it via the stderr pipe.
+[[noreturn]] void ChildTerminateHandler() {
+  auto eptr = std::current_exception();
+  if (eptr != nullptr) {
+    try {
+      std::rethrow_exception(eptr);
+    } catch (const std::exception& e) {
+      std::print(stderr, "terminate: {}\n", e.what());
+    } catch (...) {
+      std::print(stderr, "terminate: unknown exception\n");
+    }
+  } else {
+    std::print(stderr, "terminate called without active exception\n");
+  }
+  std::abort();
+}
+
 // Fork-isolated execution for JIT backend.
 auto RunIsolatedCase(
     const TestCase& test_case, BackendKind backend, bool force_two_state,
     std::chrono::seconds timeout) -> CaseExecutionResult {
   auto proc = RunInFork(
       [&](int result_fd) {
+        std::set_terminate(ChildTerminateHandler);
         auto case_result = ExecuteTestCase(test_case, backend, force_two_state);
         WriteCaseResult(result_fd, case_result);
       },
