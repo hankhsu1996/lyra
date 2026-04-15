@@ -84,11 +84,11 @@ auto LowerStrobeEffect(Context& context, const mir::StrobeEffect& strobe)
   auto obs_fields = GetObserverContextFieldValues(context);
 
   // LyraRegisterStrobe(engine, program, design_state,
-  //                     this_ptr, instance_id)
+  //                     this_ptr, instance)
   context.GetBuilder().CreateCall(
       context.GetLyraRegisterStrobe(),
       {engine_ptr, program_fn, design_ptr, obs_fields.this_ptr,
-       obs_fields.instance_id});
+       obs_fields.instance});
 
   return {};
 }

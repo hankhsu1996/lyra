@@ -127,7 +127,7 @@ struct ExecutionContractState {
   llvm::Value* current_decision_owner_id = nullptr;
   llvm::Value* instance_ptr = nullptr;
   llvm::Value* this_ptr = nullptr;
-  llvm::Value* observer_instance_id = nullptr;
+  llvm::Value* observer_instance_ptr = nullptr;
 };
 
 // RAII guard that sets execution-contract state on Context and restores it
@@ -480,11 +480,11 @@ class Context {
   [[nodiscard]] auto GetInstancePointer() const -> llvm::Value*;
   void SetThisPointer(llvm::Value* ptr);
   [[nodiscard]] auto GetThisPointer() const -> llvm::Value*;
-  // Observer-only numeric instance token. Sourced exclusively from the
-  // observer context struct during observer program entry. Not available
-  // in normal module/process code paths. Use GetInstancePointer() instead.
-  void SetObserverInstanceId(llvm::Value* id);
-  [[nodiscard]] auto GetObserverInstanceId() const -> llvm::Value*;
+  // Observer-only instance pointer. Sourced exclusively from the observer
+  // context struct during observer program entry. Not available in normal
+  // module/process code paths. Use GetInstancePointer() instead.
+  void SetObserverInstancePtr(llvm::Value* ptr);
+  [[nodiscard]] auto GetObserverInstancePtr() const -> llvm::Value*;
   void SetSpecSlotInfo(const SpecSlotInfo* info);
   [[nodiscard]] auto GetSpecSlotInfo() const -> const SpecSlotInfo* {
     return spec_slot_info_;
@@ -1205,7 +1205,7 @@ class Context {
   SlotAddressingMode slot_addressing_ = SlotAddressingMode::kDesignGlobal;
   llvm::Value* instance_ptr_ = nullptr;
   llvm::Value* this_ptr_ = nullptr;
-  llvm::Value* observer_instance_id_ = nullptr;
+  llvm::Value* observer_instance_ptr_ = nullptr;
   const SpecSlotInfo* spec_slot_info_ = nullptr;
   const ConnectionNotificationMask* connection_notification_mask_ = nullptr;
   // External ref resolution state. Env carries bindings + construction

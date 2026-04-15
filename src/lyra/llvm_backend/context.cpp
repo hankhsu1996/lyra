@@ -409,12 +409,12 @@ auto Context::GetThisPointer() const -> llvm::Value* {
   return this_ptr_;
 }
 
-void Context::SetObserverInstanceId(llvm::Value* id) {
-  observer_instance_id_ = id;
+void Context::SetObserverInstancePtr(llvm::Value* ptr) {
+  observer_instance_ptr_ = ptr;
 }
 
-auto Context::GetObserverInstanceId() const -> llvm::Value* {
-  return observer_instance_id_;
+auto Context::GetObserverInstancePtr() const -> llvm::Value* {
+  return observer_instance_ptr_;
 }
 
 void Context::SetExternalRefResolutionEnv(
@@ -733,7 +733,7 @@ auto Context::SaveExecutionContractState() -> ExecutionContractState {
       .current_decision_owner_id = current_decision_owner_id_,
       .instance_ptr = instance_ptr_,
       .this_ptr = this_ptr_,
-      .observer_instance_id = observer_instance_id_,
+      .observer_instance_ptr = observer_instance_ptr_,
   };
 }
 
@@ -749,7 +749,7 @@ void Context::RestoreExecutionContractState(
   current_decision_owner_id_ = state.current_decision_owner_id;
   instance_ptr_ = state.instance_ptr;
   this_ptr_ = state.this_ptr;
-  observer_instance_id_ = state.observer_instance_id;
+  observer_instance_ptr_ = state.observer_instance_ptr;
 }
 
 ExecutionContractScope::ExecutionContractScope(
@@ -764,7 +764,7 @@ ExecutionContractScope::ExecutionContractScope(
   ctx.SetEnginePointer(nullptr);
   ctx.SetCurrentDecisionOwnerId(nullptr);
   ctx.SetThisPointer(nullptr);
-  ctx.SetObserverInstanceId(nullptr);
+  ctx.SetObserverInstancePtr(nullptr);
   // spec_slot_info is NOT reset: it is session-scoped (set by
   // CompileModuleSpecSession), not per-function.
 }

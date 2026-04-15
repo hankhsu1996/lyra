@@ -595,11 +595,11 @@ extern "C" auto LyraSystemCmd(void* engine_ptr, LyraStringHandle cmd_handle)
 
 extern "C" void LyraRegisterStrobe(
     void* engine_ptr, LyraStrobeProgramFn program, void* design_state,
-    void* this_ptr, uint32_t instance_id) {
+    void* this_ptr, void* instance) {
   auto* engine = static_cast<lyra::runtime::Engine*>(engine_ptr);
   lyra::runtime::ObserverContext ctx{
       .this_ptr = this_ptr,
-      .instance_id = lyra::runtime::InstanceId{instance_id},
+      .instance = static_cast<lyra::runtime::RuntimeInstance*>(instance),
   };
   engine->RegisterStrobe(program, design_state, ctx);
 }
@@ -718,12 +718,11 @@ extern "C" void LyraReportTime(void* run_session_ptr) {
 
 extern "C" void LyraMonitorRegister(
     void* engine_ptr, LyraMonitorCheckProgramFn program, void* design_state,
-    void* this_ptr, uint32_t instance_id, const void* initial_prev,
-    uint32_t size) {
+    void* this_ptr, void* instance, const void* initial_prev, uint32_t size) {
   auto* engine = static_cast<lyra::runtime::Engine*>(engine_ptr);
   lyra::runtime::ObserverContext ctx{
       .this_ptr = this_ptr,
-      .instance_id = lyra::runtime::InstanceId{instance_id},
+      .instance = static_cast<lyra::runtime::RuntimeInstance*>(instance),
   };
   engine->RegisterMonitor(program, design_state, ctx, initial_prev, size);
 }

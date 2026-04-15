@@ -117,3 +117,71 @@ cases:
       endmodule
     expect:
       stdout: "dec=255 hex=ff bin=11111111 oct=377\n"
+
+  - name: strobe_design_global
+    description: strobe at top-level alongside child instances
+    sv: |
+      module Child;
+        initial $strobe("child alive");
+      endmodule
+
+      module Top;
+        Child u_child();
+        int val;
+        initial begin
+          val = 99;
+          $strobe("top val=%0d", val);
+        end
+      endmodule
+    expect:
+      stdout:
+        contains:
+          - "top val=99"
+          - "child alive"
+
+  - name: strobe_module_scoped
+    description: strobe inside a child module reads instance-local state
+    sv: |
+      module Child;
+        int value;
+        initial begin
+          value = 42;
+          $strobe("child value=%0d", value);
+        end
+      endmodule
+
+      module Top;
+        Child u_child();
+        initial begin
+          $strobe("top done");
+        end
+      endmodule
+    expect:
+      stdout:
+        contains:
+          - "child value=42"
+          - "top done"
+
+  - name: strobe_multiple_instances
+    description: strobe in multiple instances of the same module
+    sv: |
+      module Counter;
+        parameter int ID = 0;
+        int count;
+        initial begin
+          count = ID * 10;
+          $strobe("counter %0d: count=%0d", ID, count);
+        end
+      endmodule
+
+      module Top;
+        Counter #(.ID(1)) u_a();
+        Counter #(.ID(2)) u_b();
+        Counter #(.ID(3)) u_c();
+      endmodule
+    expect:
+      stdout:
+        contains:
+          - "counter 1: count=10"
+          - "counter 2: count=20"
+          - "counter 3: count=30"

@@ -109,10 +109,10 @@ using LyraStrobeProgramFn = lyra::runtime::StrobeProgramFn;
 
 // Register a strobe observer for the Postponed region.
 // ObserverContext fields are passed flat for C ABI, reconstructed on the
-// runtime side.
+// runtime side. instance is RuntimeInstance* (nullptr for design-global).
 void LyraRegisterStrobe(
     void* engine_ptr, LyraStrobeProgramFn program, void* design_state,
-    void* this_ptr, uint32_t instance_id);
+    void* this_ptr, void* instance);
 
 // Unified termination with kind/level/message support.
 // kind: 0=finish, 1=fatal, 2=stop, 3=exit
@@ -153,11 +153,10 @@ using LyraMonitorCheckProgramFn = lyra::runtime::MonitorCheckProgramFn;
 // Register a new monitor, atomically replacing any existing one.
 // The initial_prev buffer is copied to runtime-owned storage.
 // ObserverContext fields are passed flat for C ABI, reconstructed on the
-// runtime side.
+// runtime side. instance is RuntimeInstance* (nullptr for design-global).
 void LyraMonitorRegister(
     void* engine_ptr, LyraMonitorCheckProgramFn program, void* design_state,
-    void* this_ptr, uint32_t instance_id, const void* initial_prev,
-    uint32_t size);
+    void* this_ptr, void* instance, const void* initial_prev, uint32_t size);
 
 // Enable/disable the active monitor. No-op if no active monitor.
 // - engine_ptr: pointer to Engine

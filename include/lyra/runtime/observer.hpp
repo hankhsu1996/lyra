@@ -1,21 +1,34 @@
 #pragma once
 
+#include <cstddef>
 #include <cstdint>
 #include <vector>
 
-#include "lyra/runtime/signal_coord.hpp"
-
 namespace lyra::runtime {
+
+struct RuntimeInstance;
 
 // Captured specialization-local addressing state for observer programs.
 // This is the dynamic instance-side context needed by specialization-local
 // lowering. DesignState* is not captured; it remains invocation/runtime state.
 //
-// For design-global observers, all fields are zero/null.
+// For design-global observers, all fields are nullptr.
+// Layout must match the LLVM struct type in GetObserverContextStructType():
+//   { ptr this_ptr, ptr instance }
 struct ObserverContext {
   void* this_ptr = nullptr;
-  InstanceId instance_id = InstanceId{0};
+  RuntimeInstance* instance = nullptr;
 };
+
+static_assert(sizeof(ObserverContext) == 16, "ObserverContext size mismatch");
+static_assert(
+    alignof(ObserverContext) == 8, "ObserverContext alignment mismatch");
+static_assert(
+    offsetof(ObserverContext, this_ptr) == 0,
+    "ObserverContext this_ptr offset mismatch");
+static_assert(
+    offsetof(ObserverContext, instance) == 8,
+    "ObserverContext instance offset mismatch");
 
 // Observer program entrypoints.
 // All observer programs receive (DesignState*, Engine*, ObserverContext*).

@@ -3008,11 +3008,11 @@ auto EmitMonitorSetupEpilogue(
   auto obs_fields = GetObserverContextFieldValues(context);
 
   // Call LyraMonitorRegister(engine, check_fn, design,
-  //                          this_ptr, instance_id, init_buf, size)
+  //                          this_ptr, instance, init_buf, size)
   builder.CreateCall(
       context.GetLyraMonitorRegister(),
       {engine_ptr, check_fn, design_ptr, obs_fields.this_ptr,
-       obs_fields.instance_id, init_buf,
+       obs_fields.instance, init_buf,
        llvm::ConstantInt::get(i32_ty, layout->total_size)});
 
   return {};
