@@ -17,6 +17,7 @@ enum class SimulationEndReason : uint8_t {
   kMaxTimeReached,
   kEmptyQueues,
   kTrap,
+  kInterrupted,
 };
 
 // Summary of one installed subscription for diagnostic rendering.
