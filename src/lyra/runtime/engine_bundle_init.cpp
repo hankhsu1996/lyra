@@ -178,8 +178,8 @@ auto BuildModuleProcessOrdinalMap(
 }
 
 auto BuildModuleTriggerDescriptors(
-    const Engine& engine, std::span<const InstanceMetadataBundle> bundles,
-    uint32_t total_slot_count, const ModuleProcessOrdinalMap& proc_map)
+    std::span<const InstanceMetadataBundle> bundles, uint32_t total_slot_count,
+    const ModuleProcessOrdinalMap& proc_map)
     -> std::vector<ProcessTriggerDescriptor> {
   std::vector<ProcessTriggerDescriptor> descriptors;
 
@@ -230,8 +230,7 @@ auto BuildModuleTriggerDescriptors(
                     .edge = static_cast<common::EdgeKind>(te.edge),
                     .is_groupable = groupable,
                     .is_local = true,
-                    .instance_id = InstanceId{engine.GetInstanceOrdinal(
-                        binding.target_instance)},
+                    .instance = binding.target_instance,
                 });
           } else if (is_global) {
             if (te.slot_id >= total_slot_count) {
@@ -249,7 +248,7 @@ auto BuildModuleTriggerDescriptors(
                     .edge = static_cast<common::EdgeKind>(te.edge),
                     .is_groupable = groupable,
                     .is_local = false,
-                    .instance_id = InstanceId{0},
+                    .instance = nullptr,
                 });
           } else {
             if (te.slot_id >=
@@ -270,8 +269,7 @@ auto BuildModuleTriggerDescriptors(
                     .edge = static_cast<common::EdgeKind>(te.edge),
                     .is_groupable = groupable,
                     .is_local = true,
-                    .instance_id =
-                        InstanceId{engine.GetInstanceOrdinal(bundle.instance)},
+                    .instance = bundle.instance,
                 });
           }
         }
@@ -537,7 +535,7 @@ void Engine::InitModuleInstancesFromBundles(
 
   // Step C: Build module trigger descriptors as pending intermediate data.
   pending_module_trigger_descs_ =
-      BuildModuleTriggerDescriptors(*this, bundles, total_slots, proc_map);
+      BuildModuleTriggerDescriptors(bundles, total_slots, proc_map);
 
   // Step D: Build comb kernels from body templates.
   // R5: Domain-split comb trigger maps. Global triggers go to

@@ -2,6 +2,7 @@
 #include <cstdint>
 #include <cstring>
 #include <format>
+#include <functional>
 #include <span>
 #include <variant>
 #include <vector>
@@ -25,7 +26,7 @@ void Engine::InitConnectionBatch(
   // numeric identity lookup needed.
   struct IndexedConn {
     bool trigger_is_local;
-    InstanceId trigger_instance_id;
+    RuntimeInstance* trigger_instance;
     uint32_t trigger_local_id;
     uint32_t trigger_global_id;
     BatchedConnection conn;
@@ -54,8 +55,7 @@ void Engine::InitConnectionBatch(
     sorted.push_back(
         IndexedConn{
             .trigger_is_local = true,
-            .trigger_instance_id =
-                InstanceId{GetInstanceOrdinal(d.trigger_instance)},
+            .trigger_instance = d.trigger_instance,
             .trigger_local_id = d.trigger_local_id.value,
             .trigger_global_id = 0,
             .conn =
@@ -106,10 +106,11 @@ void Engine::InitConnectionBatch(
   }
 
   // Build per-instance local connection trigger maps.
-  // Group local_entries by instance_id, then by trigger_local_id.
+  // Group local_entries by trigger_instance, then by trigger_local_id.
   std::ranges::sort(local_entries, [](const auto& a, const auto& b) {
-    if (a.trigger_instance_id != b.trigger_instance_id)
-      return a.trigger_instance_id < b.trigger_instance_id;
+    if (a.trigger_instance != b.trigger_instance)
+      return std::less<RuntimeInstance*>{}(
+          a.trigger_instance, b.trigger_instance);
     return a.trigger_local_id < b.trigger_local_id;
   });
 
@@ -120,23 +121,22 @@ void Engine::InitConnectionBatch(
   {
     uint32_t i = 0;
     while (i < local_entries.size()) {
-      auto iid = local_entries[i].trigger_instance_id;
-      auto* inst = instance_trace_resolver_.FindInstanceMut(iid);
+      auto* inst = local_entries[i].trigger_instance;
       if (inst == nullptr) {
         throw common::InternalError(
             "Engine::InitConnectionBatch",
-            std::format("trigger instance_id {} not found", iid));
+            "null trigger instance in local connection entry");
       }
       auto& obs = inst->observability;
       if (obs.local_conn_trigger_map.empty() && obs.local_signal_count > 0) {
         obs.local_conn_trigger_map.resize(obs.local_signal_count);
       }
       while (i < local_entries.size() &&
-             local_entries[i].trigger_instance_id == iid) {
+             local_entries[i].trigger_instance == inst) {
         uint32_t local_id = local_entries[i].trigger_local_id;
         uint32_t start = conn_base + i;
         while (i < local_entries.size() &&
-               local_entries[i].trigger_instance_id == iid &&
+               local_entries[i].trigger_instance == inst &&
                local_entries[i].trigger_local_id == local_id) {
           ++i;
         }
@@ -145,8 +145,9 @@ void Engine::InitConnectionBatch(
               "Engine::InitConnectionBatch",
               std::format(
                   "trigger local_id {} >= local_conn_trigger_map size {} "
-                  "for instance {}",
-                  local_id, obs.local_conn_trigger_map.size(), iid));
+                  "for instance '{}'",
+                  local_id, obs.local_conn_trigger_map.size(),
+                  inst->path_c_str));
         }
         obs.local_conn_trigger_map[local_id] = {
             .start = start, .count = conn_base + i - start};
@@ -197,9 +198,9 @@ void Engine::InitCombKernels(
 
   struct ParsedTrigger {
     bool is_local;
-    InstanceId instance_id;  // valid when is_local
-    uint32_t local_id;       // valid when is_local
-    uint32_t global_id;      // valid when !is_local
+    RuntimeInstance* instance;  // valid when is_local
+    uint32_t local_id;          // valid when is_local
+    uint32_t global_id;         // valid when !is_local
     uint32_t kernel_idx;
     uint32_t byte_offset;
     uint32_t byte_size;
@@ -259,7 +260,7 @@ void Engine::InitCombKernels(
 
       // Classify trigger domain.
       bool is_local = (trigger_flags & kCombTriggerFlagBodyLocal) != 0;
-      auto trigger_iid = InstanceId{0};
+      RuntimeInstance* trigger_inst = nullptr;
       uint32_t local_id = 0;
       uint32_t global_id = trigger_slot;
       if (is_local) {
@@ -271,14 +272,14 @@ void Engine::InitCombKernels(
                   "process {}",
                   proc_idx));
         }
-        trigger_iid = InstanceId{GetInstanceOrdinal(header->instance)};
+        trigger_inst = header->instance;
         local_id = trigger_slot;
       }
 
       entries.push_back(
           ParsedTrigger{
               .is_local = is_local,
-              .instance_id = trigger_iid,
+              .instance = trigger_inst,
               .local_id = local_id,
               .global_id = global_id,
               .kernel_idx = comb_idx,
@@ -341,29 +342,28 @@ void Engine::InitCombKernels(
   // Build per-instance local comb trigger maps.
   if (!local_triggers.empty()) {
     std::ranges::sort(local_triggers, [](const auto& a, const auto& b) {
-      if (a.instance_id != b.instance_id) return a.instance_id < b.instance_id;
+      if (a.instance != b.instance)
+        return std::less<RuntimeInstance*>{}(a.instance, b.instance);
       return a.local_id < b.local_id;
     });
 
     uint32_t i = 0;
     while (i < local_triggers.size()) {
-      auto iid = local_triggers[i].instance_id;
-      auto* inst = instance_trace_resolver_.FindInstanceMut(iid);
+      auto* inst = local_triggers[i].instance;
       if (inst == nullptr) {
         throw common::InternalError(
             "Engine::InitCombKernels",
-            std::format("comb trigger instance_id {} not found", iid));
+            "null trigger instance in local comb trigger entry");
       }
       auto& obs = inst->observability;
       if (obs.local_comb_trigger_map.empty() && obs.local_signal_count > 0) {
         obs.local_comb_trigger_map.resize(obs.local_signal_count);
       }
-      while (i < local_triggers.size() &&
-             local_triggers[i].instance_id == iid) {
+      while (i < local_triggers.size() && local_triggers[i].instance == inst) {
         uint32_t local_id = local_triggers[i].local_id;
         auto start = static_cast<uint32_t>(comb_trigger_backing_.size());
         while (i < local_triggers.size() &&
-               local_triggers[i].instance_id == iid &&
+               local_triggers[i].instance == inst &&
                local_triggers[i].local_id == local_id) {
           comb_trigger_backing_.push_back({
               .kernel_idx = local_triggers[i].kernel_idx,
@@ -380,8 +380,9 @@ void Engine::InitCombKernels(
               "Engine::InitCombKernels",
               std::format(
                   "local comb trigger id {} >= local_comb_trigger_map "
-                  "size {} for instance {}",
-                  local_id, obs.local_comb_trigger_map.size(), iid));
+                  "size {} for instance '{}'",
+                  local_id, obs.local_comb_trigger_map.size(),
+                  inst->path_c_str));
         }
         obs.local_comb_trigger_map[local_id] = {.start = start, .count = count};
         obs.local_comb_trigger_slots.push_back(LocalSignalId{local_id});
