@@ -358,6 +358,8 @@ auto EndReasonLabel(SimulationEndReason reason) -> std::string_view {
       return "empty event queues (no $finish)";
     case SimulationEndReason::kTrap:
       return "process trap";
+    case SimulationEndReason::kInterrupted:
+      return "interrupted by signal";
   }
   return "unknown";
 }

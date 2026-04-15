@@ -33,6 +33,7 @@
 #include "lyra/runtime/reporting.hpp"
 #include "lyra/runtime/runtime_instance.hpp"
 #include "lyra/runtime/signal_dump.hpp"
+#include "lyra/runtime/signal_interrupt.hpp"
 #include "lyra/runtime/slot_meta.hpp"
 #include "lyra/runtime/string.hpp"
 #include "lyra/runtime/trace_signal_meta.hpp"
@@ -53,6 +54,24 @@ auto FinalTime() -> uint64_t& {
   static uint64_t value = 0;
   return value;
 }
+
+// Minimal scope-exit guard for cleanup on all exit paths.
+template <typename F>
+class ScopeExit {
+ public:
+  explicit ScopeExit(F fn) : fn_(std::move(fn)) {
+  }
+  ~ScopeExit() noexcept {
+    fn_();
+  }
+  ScopeExit(const ScopeExit&) = delete;
+  ScopeExit(ScopeExit&&) = delete;
+  auto operator=(const ScopeExit&) -> ScopeExit& = delete;
+  auto operator=(ScopeExit&&) -> ScopeExit& = delete;
+
+ private:
+  F fn_;
+};
 
 }  // namespace
 
@@ -365,8 +384,13 @@ extern "C" void LyraRunSimulation(
     engine.GetTraceManager().SetEnabled(true);
   }
 
-  // Install SIGUSR1 dump handler for last-resort visibility
+  // Install signal handlers for simulation lifecycle.
   lyra::runtime::InstallSignalDumpHandler(&engine);
+  lyra::runtime::InstallSimulationInterruptHandlers();
+  ScopeExit signal_cleanup([] {
+    lyra::runtime::RemoveSimulationInterruptHandlers();
+    lyra::runtime::RemoveSignalDumpHandler();
+  });
 
   // Install DPI export-call context so export wrappers can borrow
   // DesignState* and Engine* during simulation.
@@ -378,8 +402,6 @@ extern "C" void LyraRunSimulation(
   lyra::runtime::ScopedDpiExportCallContext export_scope(export_ctx);
 
   SetupAndRunSimulation(engine, states, num_processes, num_connection);
-
-  lyra::runtime::RemoveSignalDumpHandler();
 
   if (HasFlag(flags, FeatureFlag::kEnableTraceSummary)) {
     engine.GetTraceManager().PrintSummary(engine.Output());

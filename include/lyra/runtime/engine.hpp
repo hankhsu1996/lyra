@@ -1,6 +1,7 @@
 #pragma once
 
 #include <atomic>
+#include <chrono>
 #include <cstddef>
 #include <cstdint>
 #include <deque>
@@ -947,6 +948,11 @@ class Engine {
   void ExecutePostponedRegion();
   void FlushDirtySlots();
 
+  // Long-run observability checkpoint: interrupt handling + periodic flush.
+  void HandleObservabilityCheckpoint();
+  void HandleInterruptRequestAtCheckpoint();
+  void HandlePeriodicStdoutFlushAtCheckpoint();
+
   // Decision settle-complete validation and diagnostics.
   void RunSettleCompleteChecks();
 
@@ -1679,6 +1685,19 @@ class Engine {
   std::vector<ProcessDeferredAssertionState> deferred_assertion_states_;
   std::vector<uint8_t> deferred_pending_flags_;
   std::vector<ProcessId> pending_deferred_processes_;
+
+  // Long-run observability: counter-gated periodic stdout flush.
+  struct ObservabilityConfig {
+    uint32_t clock_check_interval = 10000;
+    std::chrono::steady_clock::duration stdout_flush_period =
+        std::chrono::seconds(10);
+  };
+  ObservabilityConfig observability_config_{};
+  uint32_t observability_check_counter_ = 0;
+  std::chrono::steady_clock::time_point last_stdout_flush_time_{};
+  bool observability_initialized_ = false;
+
+  friend struct EngineTestAccess;
 };
 
 }  // namespace lyra::runtime

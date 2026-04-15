@@ -1,6 +1,10 @@
+#include <chrono>
 #include <cstdint>
+#include <cstdio>
 #include <format>
 #include <string>
+
+#include <fmt/core.h>
 
 #include "lyra/common/diagnostic/print.hpp"
 #include "lyra/common/internal_error.hpp"
@@ -9,6 +13,7 @@
 #include "lyra/runtime/engine_scheduler.hpp"
 #include "lyra/runtime/engine_types.hpp"
 #include "lyra/runtime/iteration_limit.hpp"
+#include "lyra/runtime/signal_interrupt.hpp"
 #include "lyra/runtime/trace_flush.hpp"
 
 namespace lyra::runtime {
@@ -307,6 +312,9 @@ void Engine::ExecuteTimeSlot() {
       static_cast<uint32_t>(Phase::kPostponed), std::memory_order_release);
   ExecutePostponedRegion();
   FlushDirtySlots();
+
+  HandleObservabilityCheckpoint();
+
   phase_.store(static_cast<uint32_t>(Phase::kIdle), std::memory_order_release);
 }
 
@@ -417,6 +425,44 @@ auto Engine::FormatProcess(uint32_t process_id) const -> std::string {
     return process_meta_.Format(process_id);
   }
   return std::format("<process {}>", process_id);
+}
+
+void Engine::HandleObservabilityCheckpoint() {
+  HandleInterruptRequestAtCheckpoint();
+  HandlePeriodicStdoutFlushAtCheckpoint();
+}
+
+void Engine::HandleInterruptRequestAtCheckpoint() {
+  if (!ConsumeSimulationInterruptRequested()) {
+    return;
+  }
+  fmt::print(stderr, "interrupted at sim time={}\n", current_time_);
+  std::fflush(stdout);
+  std::fflush(stderr);
+  finished_ = true;
+  end_reason_ = SimulationEndReason::kInterrupted;
+}
+
+void Engine::HandlePeriodicStdoutFlushAtCheckpoint() {
+  if (!observability_initialized_) {
+    last_stdout_flush_time_ = std::chrono::steady_clock::now();
+    observability_initialized_ = true;
+  }
+
+  if (++observability_check_counter_ <
+      observability_config_.clock_check_interval) {
+    return;
+  }
+  observability_check_counter_ = 0;
+
+  auto now = std::chrono::steady_clock::now();
+  if (now - last_stdout_flush_time_ <
+      observability_config_.stdout_flush_period) {
+    return;
+  }
+
+  std::fflush(stdout);
+  last_stdout_flush_time_ = now;
 }
 
 }  // namespace lyra::runtime
