@@ -61,8 +61,7 @@ struct ObjectSignalRef {
 };
 
 // Instance-scoped signal reference for subscription install.
-// Object-first: carries RuntimeInstance* directly, eliminating the
-// pointer -> InstanceId -> GetInstanceMut -> pointer round-trip.
+// Object-first: carries RuntimeInstance* directly.
 struct LocalSignalRef {
   RuntimeInstance* instance = nullptr;
   LocalSignalId signal{};

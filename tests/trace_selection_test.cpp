@@ -133,7 +133,7 @@ auto MakeSignalMeta() -> TraceSignalMetaRegistry {
 }
 
 // Build a minimal SlotMetaRegistry from (base_off, total_bytes) pairs.
-// Stride=11: [domain, design_base_off, owner_instance_id, instance_rel_off,
+// Stride=11: [domain, design_base_off, owner_instance_index, instance_rel_off,
 //             total_bytes, kind, val_off, val_bytes, unk_off, unk_bytes,
 //             storage_owner_slot_id]
 auto MakeSlotMeta(std::vector<std::pair<uint32_t, uint32_t>> slots)

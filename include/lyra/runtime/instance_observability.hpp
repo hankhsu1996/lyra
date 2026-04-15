@@ -18,7 +18,7 @@ struct RuntimeInstance;
 // Instance-owned slot metadata for one body -- shared across all instances
 // of the same specialization. Indexed by LocalSignalId.value.
 //
-// Does not contain owner_instance_id -- the owning instance is known at
+// Does not contain instance identity -- the owning instance is known at
 // the lookup root. Does not contain storage_owner_slot_id -- alias
 // forwarding is removed for instance-owned signals.
 struct InstanceSlotMeta {

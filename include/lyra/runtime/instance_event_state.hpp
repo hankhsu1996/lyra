@@ -28,7 +28,7 @@ struct InstanceEventSlotState {
 // initialization pattern as RuntimeInstanceObservability.
 //
 // Replaces the prior global EventRegistry model where event state was
-// keyed by (instance_id, local_event_id) in an engine-owned hash map.
+// keyed by instance + local_event_id in an engine-owned hash map.
 struct RuntimeInstanceEventState {
   uint32_t local_event_count = 0;
   std::vector<InstanceEventSlotState> slots;
