@@ -752,7 +752,9 @@ auto Constructor::CreateChild(
   auto num_module_processes =
       static_cast<uint32_t>(staged_.size()) - module_proc_base;
 
-  // Complete the instance's process binding fields now that staging is done.
+  // Written for binary-contract struct layout stability (static_asserts).
+  // Not read by codegen (never GEP'd). Retained while remaining
+  // outer-layer ordinal interfaces are still being migrated.
   staged_instances_[instance_index]->module_proc_base = module_proc_base;
   staged_instances_[instance_index]->num_module_processes =
       num_module_processes;

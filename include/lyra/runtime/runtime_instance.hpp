@@ -186,7 +186,10 @@ struct RuntimeInstance {
   const char* path_c_str = nullptr;
   uint32_t owner_ordinal = 0;
 
-  // Process binding: all module processes for this instance share one object.
+  // Binary contract layout placeholders -- never GEP'd by codegen.
+  // No longer used for correctness in migrated paths; process binding
+  // is carried by attached_processes after init. Retained in struct
+  // for LLVM struct layout stability until Cut 4.
   uint32_t module_proc_base = 0;
   uint32_t num_module_processes = 0;
 
@@ -197,6 +200,13 @@ struct RuntimeInstance {
   // Part of the binary contract with codegen (accessed via GEP).
   const common::ResolvedExtRefBinding* ext_ref_bindings = nullptr;
   uint32_t ext_ref_binding_count = 0;
+
+  // Canonical per-instance attached-process carrier.
+  // Populated during InitModuleInstancesFromBundles from constructor
+  // transport. Holds direct pointers into the engine's process table.
+  // Parallel to per-body process ordinals (body-local index i
+  // corresponds to attached_processes[i]).
+  std::vector<RuntimeProcess*> attached_processes;
 
   // Primary structural hierarchy (not part of binary contract with codegen).
   // Established during constructor assembly: CreateChild sets parent and

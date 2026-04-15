@@ -145,10 +145,26 @@ auto BuildModuleTriggerDescriptors(
     const auto& triggers = bundle.body_desc->triggers;
     if (triggers.proc_ranges.empty()) continue;
 
+    if (triggers.proc_ranges.size() >
+        bundle.instance->attached_processes.size()) {
+      throw common::InternalError(
+          "BuildModuleTriggerDescriptors",
+          std::format(
+              "instance {} has {} trigger proc ranges but only {} "
+              "attached processes",
+              bundle.instance_id, triggers.proc_ranges.size(),
+              bundle.instance->attached_processes.size()));
+    }
     for (uint32_t pwb = 0; pwb < triggers.proc_ranges.size(); ++pwb) {
-      uint32_t proc_idx = bundle.module_proc_base + pwb;
+      auto* proc = bundle.instance->attached_processes[pwb];
       const auto& range = triggers.proc_ranges[pwb];
       bool groupable = triggers.proc_groupable[pwb] != 0;
+
+      // Scheduler-facing ordinal derived from bundle transport.
+      // ProcessTriggerDescriptor::scheduled_process_index is a
+      // scheduler registry key, not object-model identity.
+      uint32_t scheduled_idx = bundle.module_proc_base + pwb;
+      (void)proc;  // Primary carrier; ordinal interfaces not yet migrated.
 
       for (uint32_t t = 0; t < range.count; ++t) {
         const auto& te = triggers.entries[range.start + t];
@@ -172,7 +188,7 @@ auto BuildModuleTriggerDescriptors(
           const auto& binding = bindings[te.slot_id];
           descriptors.push_back(
               ProcessTriggerDescriptor{
-                  .scheduled_process_index = proc_idx,
+                  .scheduled_process_index = scheduled_idx,
                   .slot_id = binding.target_local_signal.value,
                   .edge = static_cast<common::EdgeKind>(te.edge),
                   .is_groupable = groupable,
@@ -189,7 +205,7 @@ auto BuildModuleTriggerDescriptors(
           }
           descriptors.push_back(
               ProcessTriggerDescriptor{
-                  .scheduled_process_index = proc_idx,
+                  .scheduled_process_index = scheduled_idx,
                   .slot_id = te.slot_id,
                   .edge = static_cast<common::EdgeKind>(te.edge),
                   .is_groupable = groupable,
@@ -209,7 +225,7 @@ auto BuildModuleTriggerDescriptors(
           }
           descriptors.push_back(
               ProcessTriggerDescriptor{
-                  .scheduled_process_index = proc_idx,
+                  .scheduled_process_index = scheduled_idx,
                   .slot_id = te.slot_id,
                   .edge = static_cast<common::EdgeKind>(te.edge),
                   .is_groupable = groupable,
@@ -455,10 +471,12 @@ void Engine::InitModuleInstancesFromBundles(
     // Initialize deferred-NBA pending set sized to local signal count.
     bundle.instance->nba_pending.Init(local_count);
 
+    bundle.instance->attached_processes.reserve(bundle.num_module_processes);
     for (uint32_t p = 0; p < bundle.num_module_processes; ++p) {
       uint32_t proc_idx = bundle.module_proc_base + p;
       if (proc_idx < num_processes_) {
         processes_[proc_idx].instance = bundle.instance;
+        bundle.instance->attached_processes.push_back(&processes_[proc_idx]);
       }
     }
   }
@@ -566,14 +584,20 @@ void Engine::InitModuleInstancesFromBundles(
     }
 
     for (const auto& kernel : comb.kernels) {
-      uint32_t proc_idx = bundle.module_proc_base + kernel.proc_within_body;
-      if (proc_idx >= num_processes_) {
+      if (kernel.proc_within_body >=
+          bundle.instance->attached_processes.size()) {
         throw common::InternalError(
             "InitModuleInstancesFromBundles",
             std::format(
-                "comb proc_idx {} >= num_processes {}", proc_idx,
-                num_processes_));
+                "comb proc_within_body {} >= attached_processes size {}",
+                kernel.proc_within_body,
+                bundle.instance->attached_processes.size()));
       }
+      auto* proc = bundle.instance->attached_processes[kernel.proc_within_body];
+      // Scheduler-facing ordinal: proc_states and BuildCombKernel are
+      // outer-layer scheduler/registry interfaces still indexed by
+      // global process ordinal. Not object-model identity.
+      uint32_t proc_idx = bundle.module_proc_base + kernel.proc_within_body;
       uint32_t flags = (kernel.has_self_edge != 0) ? CombKernel::kSelfEdge : 0U;
 
       if ((flags & CombKernel::kSelfEdge) != 0) {
@@ -584,7 +608,7 @@ void Engine::InitModuleInstancesFromBundles(
       auto comb_idx = static_cast<uint32_t>(comb_kernels_.size());
       comb_kernels_.push_back(BuildCombKernel(proc_idx, state_ptr, flags));
 
-      processes_[proc_idx].is_comb_kernel = true;
+      proc->is_comb_kernel = true;
       bool kernel_self_edge = (flags & CombKernel::kSelfEdge) != 0;
       for (uint32_t ti = 0; ti < kernel.trigger_count; ++ti) {
         const auto& trig = comb.entries[kernel.trigger_start + ti];
@@ -820,7 +844,7 @@ void Engine::InitModuleInstancesFromBundles(
         PendingModuleProcessMeta{
             .body_desc = bundle.body_desc,
             .instance_path = bundle.instance_path,
-            .module_proc_base = bundle.module_proc_base,
+            .instance = bundle.instance,
         });
   }
 
@@ -828,26 +852,37 @@ void Engine::InitModuleInstancesFromBundles(
   // First cut: 1:1 mapping from process to decision owner.
   for (const InstanceMetadataBundle& bundle : bundles) {
     const auto& dtables = bundle.body_desc->decision_tables;
+    if (dtables.size() > bundle.instance->attached_processes.size()) {
+      throw common::InternalError(
+          "Engine::InitModuleInstancesFromBundles",
+          std::format(
+              "instance {} has {} decision tables but only {} "
+              "attached processes",
+              bundle.instance_id, dtables.size(),
+              bundle.instance->attached_processes.size()));
+    }
     for (uint32_t local = 0; local < dtables.size(); ++local) {
-      const auto oid =
-          DecisionOwnerId::FromIndex(bundle.module_proc_base + local);
+      // DecisionOwnerId is an outer-layer scheduler registry key,
+      // still indexed by global process ordinal. Not object-model
+      // identity -- will be migrated when decision tables move to
+      // instance-owned carriers.
+      uint32_t proc_idx = bundle.module_proc_base + local;
+      const auto oid = DecisionOwnerId::FromIndex(proc_idx);
       if (oid.Index() >= decision_owner_tables_.size()) {
         throw common::InternalError(
             "Engine::InitModuleInstancesFromBundles",
             std::format(
                 "decision owner {} out of range (tables size {}, "
-                "bundle base {} local {})",
-                oid.Index(), decision_owner_tables_.size(),
-                bundle.module_proc_base, local));
+                "proc_idx {} local {})",
+                oid.Index(), decision_owner_tables_.size(), proc_idx, local));
       }
       if (oid.Index() >= decision_owner_states_.size()) {
         throw common::InternalError(
             "Engine::InitModuleInstancesFromBundles",
             std::format(
                 "decision owner {} out of range (states size {}, "
-                "bundle base {} local {})",
-                oid.Index(), decision_owner_states_.size(),
-                bundle.module_proc_base, local));
+                "proc_idx {} local {})",
+                oid.Index(), decision_owner_states_.size(), proc_idx, local));
       }
       const auto& desc = dtables[local];
       if (desc.count > 0 && desc.metas == nullptr) {
@@ -944,8 +979,21 @@ void Engine::InitProcessMeta(ProcessMetaRegistry connection_registry) {
   // Fill module entries by proc_idx from pending data.
   for (const auto& pending : pending_module_process_meta_) {
     const auto& meta = pending.body_desc->meta;
+    if (meta.entries.size() > pending.instance->attached_processes.size()) {
+      throw common::InternalError(
+          "Engine::InitProcessMeta",
+          std::format(
+              "instance has {} meta entries but only {} attached "
+              "processes",
+              meta.entries.size(),
+              pending.instance->attached_processes.size()));
+    }
     for (uint32_t local = 0; local < meta.entries.size(); ++local) {
-      uint32_t proc_idx = pending.module_proc_base + local;
+      auto* proc = pending.instance->attached_processes[local];
+      // ProcessMeta entries are still indexed by global process
+      // ordinal (outer-layer registry). Derive ordinal from the
+      // canonical pointer; not object-model identity.
+      auto proc_idx = static_cast<uint32_t>(proc - processes_.data());
       if (proc_idx >= num_processes_) {
         throw common::InternalError(
             "Engine::InitProcessMeta",
@@ -1031,8 +1079,7 @@ void Engine::ReleaseStringSlots() {
     if (inst == nullptr) continue;
     const auto& obs = inst->observability;
     if (obs.layout == nullptr) continue;
-    for (uint32_t lid = 0; lid < obs.layout->slot_meta.size(); ++lid) {
-      const auto& imeta = obs.layout->slot_meta[lid];
+    for (const auto& imeta : obs.layout->slot_meta) {
       if (imeta.kind != SlotStorageKind::kString) continue;
       if (imeta.total_bytes != sizeof(LyraStringHandle)) continue;
       auto* bytes = ResolveInstanceStorageOffset(

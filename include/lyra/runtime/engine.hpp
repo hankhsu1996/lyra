@@ -1653,7 +1653,7 @@ class Engine {
   struct PendingModuleProcessMeta {
     const BodyDescriptorPackage* body_desc = nullptr;
     const char* instance_path = nullptr;
-    uint32_t module_proc_base = 0;
+    RuntimeInstance* instance = nullptr;
   };
   std::vector<PendingModuleProcessMeta> pending_module_process_meta_;
 
