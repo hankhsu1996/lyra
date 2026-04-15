@@ -9,6 +9,7 @@ class TraceManager;
 
 namespace lyra::runtime {
 
+class Engine;
 struct RuntimeInstance;
 class SlotMetaRegistry;
 class TraceSelectionRegistry;
@@ -48,7 +49,7 @@ void FlushGlobalDirtySlotsToTrace(
 //
 // Does NOT clear local update sets; caller is responsible.
 void FlushLocalDirtySlotsToTrace(
-    trace::TraceManager& trace,
+    const Engine& engine, trace::TraceManager& trace,
     std::span<RuntimeInstance* const> dirty_instances);
 
 }  // namespace lyra::runtime

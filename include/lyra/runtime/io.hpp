@@ -160,10 +160,9 @@ void LyraWritemem(
     int32_t element_count, int64_t min_addr, int64_t current_addr,
     int64_t final_addr, int64_t step, bool is_hex, int32_t element_kind);
 
-// Print hierarchical module path (%m format specifier)
-// - engine: pointer to Engine (for instance path lookup)
-// - instance_id: instance index (from scheduling/binding context)
-void LyraPrintModulePath(void* engine, uint32_t instance_id);
+// Print hierarchical module path (%m format specifier).
+// instance: pointer to RuntimeInstance (direct access to path_c_str).
+void LyraPrintModulePath(void* instance);
 
 // $fread - read binary data from file
 // - engine: pointer to Engine (for FileManager access)

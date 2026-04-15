@@ -96,8 +96,7 @@ auto LowerUserCallImpl(
               resolved.func_id.value));
     }
     if (context.GetThisPointer() == nullptr ||
-        context.GetInstancePointer() == nullptr ||
-        context.GetDynamicInstanceId() == nullptr) {
+        context.GetInstancePointer() == nullptr) {
       throw common::InternalError(
           "LowerUserCall", std::format(
                                "module-scoped function {} called without valid "
@@ -106,7 +105,6 @@ auto LowerUserCallImpl(
     }
     args.push_back(context.GetThisPointer());
     args.push_back(context.GetInstancePointer());
-    args.push_back(context.GetDynamicInstanceId());
   }
 
   // Decision owner threading: if callee accepts a decision owner,

@@ -473,16 +473,11 @@ extern "C" void LyraReadmemNoNotify(
       final_addr, step, is_hex, element_kind);
 }
 
-extern "C" void LyraPrintModulePath(void* engine_ptr, uint32_t instance_id) {
-  if (engine_ptr == nullptr) {
-    throw lyra::common::InternalError(
-        "LyraPrintModulePath", "engine_ptr must not be null");
-  }
-  auto* engine = static_cast<lyra::runtime::Engine*>(engine_ptr);
-  const auto& inst =
-      engine->GetInstance(lyra::runtime::InstanceId{instance_id});
-  engine->Output().AppendSimOutputFragment(
-      inst.path_c_str != nullptr ? inst.path_c_str : "");
+extern "C" void LyraPrintModulePath(void* instance_raw) {
+  const auto* inst =
+      static_cast<const lyra::runtime::RuntimeInstance*>(instance_raw);
+  lyra::runtime::WriteOutput(
+      inst->path_c_str != nullptr ? inst->path_c_str : "");
 }
 
 extern "C" void LyraWritemem(

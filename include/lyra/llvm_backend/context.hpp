@@ -127,7 +127,7 @@ struct ExecutionContractState {
   llvm::Value* current_decision_owner_id = nullptr;
   llvm::Value* instance_ptr = nullptr;
   llvm::Value* this_ptr = nullptr;
-  llvm::Value* dynamic_instance_id = nullptr;
+  llvm::Value* observer_instance_id = nullptr;
 };
 
 // RAII guard that sets execution-contract state on Context and restores it
@@ -284,6 +284,8 @@ class Context {
   [[nodiscard]] auto GetLyraResolveGlobalSlotPtr() -> llvm::Function*;
   // R5: Resolve RuntimeInstance* from InstanceId at runtime.
   [[nodiscard]] auto GetLyraResolveInstancePtr() -> llvm::Function*;
+  // Get construction-order index from instance pointer (trigger transport).
+  [[nodiscard]] auto GetLyraGetInstanceOrdinal() -> llvm::Function*;
   // R3 typed coordination helpers (take frame* instead of engine*).
   [[nodiscard]] auto GetLyraMarkDirtyLocal() -> llvm::Function*;
   [[nodiscard]] auto GetLyraMarkDirtyGlobal() -> llvm::Function*;
@@ -478,8 +480,11 @@ class Context {
   [[nodiscard]] auto GetInstancePointer() const -> llvm::Value*;
   void SetThisPointer(llvm::Value* ptr);
   [[nodiscard]] auto GetThisPointer() const -> llvm::Value*;
-  void SetDynamicInstanceId(llvm::Value* id);
-  [[nodiscard]] auto GetDynamicInstanceId() const -> llvm::Value*;
+  // Observer-only numeric instance token. Sourced exclusively from the
+  // observer context struct during observer program entry. Not available
+  // in normal module/process code paths. Use GetInstancePointer() instead.
+  void SetObserverInstanceId(llvm::Value* id);
+  [[nodiscard]] auto GetObserverInstanceId() const -> llvm::Value*;
   void SetSpecSlotInfo(const SpecSlotInfo* info);
   [[nodiscard]] auto GetSpecSlotInfo() const -> const SpecSlotInfo* {
     return spec_slot_info_;
@@ -778,7 +783,6 @@ class Context {
   auto EmitLoadDecisionOwnerId(llvm::Value* state_arg) -> llvm::Value*;
   auto EmitLoadInstancePtr(llvm::Value* state_arg) -> llvm::Value*;
   auto EmitLoadInstanceInlineBase(llvm::Value* instance_ptr) -> llvm::Value*;
-  auto EmitLoadInstanceId(llvm::Value* instance_ptr) -> llvm::Value*;
   void EmitStoreDesignPtr(llvm::Value* state_arg, llvm::Value* value);
   auto EmitOutcomePtr(llvm::Value* state_arg) -> llvm::Value*;
 
@@ -1055,6 +1059,7 @@ class Context {
   llvm::Function* lyra_trigger_event_ = nullptr;
   llvm::Function* lyra_resolve_global_slot_ptr_ = nullptr;
   llvm::Function* lyra_resolve_instance_ptr_ = nullptr;
+  llvm::Function* lyra_get_instance_ordinal_ = nullptr;
   // R3 typed coordination helpers.
   llvm::StructType* ext_ref_binding_type_ = nullptr;
   llvm::Function* lyra_mark_dirty_local_ = nullptr;
@@ -1200,7 +1205,7 @@ class Context {
   SlotAddressingMode slot_addressing_ = SlotAddressingMode::kDesignGlobal;
   llvm::Value* instance_ptr_ = nullptr;
   llvm::Value* this_ptr_ = nullptr;
-  llvm::Value* dynamic_instance_id_ = nullptr;
+  llvm::Value* observer_instance_id_ = nullptr;
   const SpecSlotInfo* spec_slot_info_ = nullptr;
   const ConnectionNotificationMask* connection_notification_mask_ = nullptr;
   // External ref resolution state. Env carries bindings + construction

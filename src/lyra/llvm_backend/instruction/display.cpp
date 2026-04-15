@@ -142,16 +142,9 @@ void LowerModulePathOp(Context& context) {
   }
 
   auto& builder = context.GetBuilder();
-  auto* engine_ptr = context.GetEnginePointer();
-  if (engine_ptr == nullptr) {
-    throw common::InternalError(
-        "LowerModulePathOp",
-        "engine pointer must be available for LyraPrintModulePath");
-  }
-  auto* instance_id = context.GetDynamicInstanceId();
 
   builder.CreateCall(
-      context.GetLyraPrintModulePath(), {engine_ptr, instance_id});
+      context.GetLyraPrintModulePath(), {context.GetInstancePointer()});
 }
 
 auto LowerStringOp(

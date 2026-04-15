@@ -199,28 +199,18 @@ struct RuntimeInstance {
   RuntimeInstance(RuntimeInstance&&) = delete;
   auto operator=(RuntimeInstance&&) -> RuntimeInstance& = delete;
 
-  InstanceId instance_id = InstanceId{0};
+  // --- Binary contract fields (prefix must match LLVM struct type) ---
+  // Codegen accesses these via GEP. Field order and types must match
+  // BuildRuntimeInstanceType in layout.cpp and RuntimeInstanceField enum.
   SharedBodyFn body = nullptr;
-
   RuntimeInstanceStorage storage;
+  const ResolvedExtRefBinding* ext_ref_bindings = nullptr;
+  uint32_t ext_ref_binding_count = 0;
+
+  // --- Non-contract fields (invisible to codegen) ---
 
   const char* path_c_str = nullptr;
   uint32_t owner_ordinal = 0;
-
-  // Binary contract layout placeholders -- never GEP'd by codegen.
-  // No longer used for correctness in migrated paths; process binding
-  // is carried by attached_processes after init. Retained in struct
-  // for LLVM struct layout stability until Cut 4.
-  uint32_t module_proc_base = 0;
-  uint32_t num_module_processes = 0;
-
-  // Per-instance resolved ext-ref binding records.
-  // One entry per external-ref recipe in the body. Each record carries
-  // target instance pointer, storage byte offset, and target local signal
-  // (behavioral identity). Null if the body has no external refs.
-  // Part of the binary contract with codegen (accessed via GEP).
-  const ResolvedExtRefBinding* ext_ref_bindings = nullptr;
-  uint32_t ext_ref_binding_count = 0;
 
   // Canonical per-instance attached-process carrier.
   // Populated during InitModuleInstancesFromBundles from constructor
@@ -304,19 +294,17 @@ enum class RuntimeInstanceStorageField : unsigned {
   kFieldCount = 6,
 };
 
-// Strongly typed field indices for RuntimeInstance.
+// Strongly typed field indices for RuntimeInstance binary contract.
 // Must match the LLVM struct type emitted by BuildRuntimeInstanceType.
+// Only the binary-contract prefix is visible to codegen:
+// { body (ptr), storage (struct), ext_ref_bindings (ptr),
+//   ext_ref_binding_count (i32) }
 enum class RuntimeInstanceField : unsigned {
-  kInstanceId = 0,
-  kBody = 1,
-  kStorage = 2,
-  kPathCStr = 3,
-  kOwnerOrdinal = 4,
-  kModuleProcBase = 5,
-  kNumModuleProcesses = 6,
-  kExtRefBindings = 7,
-  kExtRefBindingCount = 8,
-  kFieldCount = 9,
+  kBody = 0,
+  kStorage = 1,
+  kExtRefBindings = 2,
+  kExtRefBindingCount = 3,
+  kFieldCount = 4,
 };
 
 // Hard binary contract assertions for RuntimeInstanceStorage.
@@ -340,27 +328,19 @@ static_assert(
 
 // Hard binary contract assertions for RuntimeInstance.
 // Field order must match RuntimeInstanceField enum and LLVM struct type.
-static_assert(offsetof(RuntimeInstance, instance_id) == 0);
-static_assert(
-    offsetof(RuntimeInstance, body) > offsetof(RuntimeInstance, instance_id));
+// Only the binary-contract prefix is asserted; non-contract fields after
+// ext_ref_binding_count are free to reorder.
+static_assert(offsetof(RuntimeInstance, body) == 0);
 static_assert(
     offsetof(RuntimeInstance, storage) ==
     offsetof(RuntimeInstance, body) + sizeof(SharedBodyFn));
 static_assert(
-    offsetof(RuntimeInstance, path_c_str) ==
+    offsetof(RuntimeInstance, ext_ref_bindings) ==
     offsetof(RuntimeInstance, storage) + sizeof(RuntimeInstanceStorage));
 static_assert(
-    offsetof(RuntimeInstance, owner_ordinal) ==
-    offsetof(RuntimeInstance, path_c_str) + sizeof(const char*));
-static_assert(
-    offsetof(RuntimeInstance, module_proc_base) ==
-    offsetof(RuntimeInstance, owner_ordinal) + sizeof(uint32_t));
-static_assert(
-    offsetof(RuntimeInstance, num_module_processes) ==
-    offsetof(RuntimeInstance, module_proc_base) + sizeof(uint32_t));
-static_assert(
-    offsetof(RuntimeInstance, ext_ref_bindings) >
-    offsetof(RuntimeInstance, num_module_processes));
+    offsetof(RuntimeInstance, ext_ref_binding_count) ==
+    offsetof(RuntimeInstance, ext_ref_bindings) +
+        sizeof(const ResolvedExtRefBinding*));
 
 // Allocate zero-initialized owned storage for an instance's inline region.
 auto AllocateOwnedInlineStorage(uint64_t size) -> uint8_t*;

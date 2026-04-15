@@ -409,12 +409,12 @@ auto Context::GetThisPointer() const -> llvm::Value* {
   return this_ptr_;
 }
 
-void Context::SetDynamicInstanceId(llvm::Value* id) {
-  dynamic_instance_id_ = id;
+void Context::SetObserverInstanceId(llvm::Value* id) {
+  observer_instance_id_ = id;
 }
 
-auto Context::GetDynamicInstanceId() const -> llvm::Value* {
-  return dynamic_instance_id_;
+auto Context::GetObserverInstanceId() const -> llvm::Value* {
+  return observer_instance_id_;
 }
 
 void Context::SetExternalRefResolutionEnv(
@@ -616,15 +616,6 @@ auto Context::EmitLoadInstanceInlineBase(llvm::Value* instance_ptr)
       "inline_base");
 }
 
-auto Context::EmitLoadInstanceId(llvm::Value* instance_ptr) -> llvm::Value* {
-  using IF = lyra::runtime::RuntimeInstanceField;
-  auto* id_ptr = builder_.CreateStructGEP(
-      GetRuntimeInstanceType(), instance_ptr,
-      static_cast<unsigned>(IF::kInstanceId), "instance_id_ptr");
-  return builder_.CreateLoad(
-      llvm::Type::getInt32Ty(*llvm_context_), id_ptr, "instance_id");
-}
-
 void Context::EmitStoreDesignPtr(llvm::Value* state_arg, llvm::Value* value) {
   using F = lyra::runtime::ProcessFrameHeaderField;
   auto* ptr =
@@ -662,7 +653,6 @@ void Context::EmitSharedBodyBindingSetup(llvm::Value* state_arg) {
   auto* inst = EmitLoadInstancePtr(state_arg);
   SetInstancePointer(inst);
   SetThisPointer(EmitLoadInstanceInlineBase(inst));
-  SetDynamicInstanceId(EmitLoadInstanceId(inst));
 }
 
 void Context::SetStatePointer(llvm::Value* state_ptr) {
@@ -743,7 +733,7 @@ auto Context::SaveExecutionContractState() -> ExecutionContractState {
       .current_decision_owner_id = current_decision_owner_id_,
       .instance_ptr = instance_ptr_,
       .this_ptr = this_ptr_,
-      .dynamic_instance_id = dynamic_instance_id_,
+      .observer_instance_id = observer_instance_id_,
   };
 }
 
@@ -759,7 +749,7 @@ void Context::RestoreExecutionContractState(
   current_decision_owner_id_ = state.current_decision_owner_id;
   instance_ptr_ = state.instance_ptr;
   this_ptr_ = state.this_ptr;
-  dynamic_instance_id_ = state.dynamic_instance_id;
+  observer_instance_id_ = state.observer_instance_id;
 }
 
 ExecutionContractScope::ExecutionContractScope(
@@ -774,7 +764,7 @@ ExecutionContractScope::ExecutionContractScope(
   ctx.SetEnginePointer(nullptr);
   ctx.SetCurrentDecisionOwnerId(nullptr);
   ctx.SetThisPointer(nullptr);
-  ctx.SetDynamicInstanceId(nullptr);
+  ctx.SetObserverInstanceId(nullptr);
   // spec_slot_info is NOT reset: it is session-scoped (set by
   // CompileModuleSpecSession), not per-function.
 }
@@ -870,7 +860,6 @@ auto Context::BuildUserFunctionType(
   if (is_module_scoped) {
     param_types.push_back(ptr_ty);  // this_ptr (module instance storage)
     param_types.push_back(ptr_ty);  // instance_ptr (RuntimeInstance*)
-    param_types.push_back(i32_ty);  // instance_id
   }
 
   // Decision owner: caller's active decision_owner_id threaded explicitly

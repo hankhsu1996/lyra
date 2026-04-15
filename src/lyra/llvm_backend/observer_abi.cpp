@@ -48,7 +48,7 @@ void EnterObserverSpecializationLocalContext(
   auto fields = LoadObserverContextFields(builder, llvm_ctx, observer_ctx_ptr);
 
   context.SetThisPointer(fields.this_ptr);
-  context.SetDynamicInstanceId(fields.instance_id);
+  context.SetObserverInstanceId(fields.instance_id);
   context.SetSlotAddressingMode(SlotAddressingMode::kSpecializationLocal);
 }
 
@@ -58,13 +58,26 @@ auto GetObserverContextFieldValues(Context& context) -> LoadedObserverContext {
   auto* i32_ty = llvm::Type::getInt32Ty(llvm_ctx);
 
   llvm::Value* this_ptr = context.GetThisPointer();
-  llvm::Value* instance_id = context.GetDynamicInstanceId();
+  llvm::Value* instance_id = context.GetObserverInstanceId();
 
   if (this_ptr == nullptr) {
     this_ptr = llvm::ConstantPointerNull::get(ptr_ty);
   }
   if (instance_id == nullptr) {
-    instance_id = llvm::ConstantInt::get(i32_ty, 0);
+    // Observer ABI bridge (deferred migration): derive numeric instance
+    // token from instance pointer for strobe/monitor registration which
+    // still uses the i32 observer context ABI. This derivation is
+    // observer-specific -- normal module/process code must NOT use
+    // numeric instance tokens. Will be removed when observer ABI
+    // migrates to pointer-based identity.
+    auto* inst = context.GetInstancePointer();
+    if (inst != nullptr) {
+      instance_id = context.GetBuilder().CreateCall(
+          context.GetLyraGetInstanceOrdinal(),
+          {context.GetEnginePointer(), inst}, "observer_inst_id");
+    } else {
+      instance_id = llvm::ConstantInt::get(i32_ty, 0);
+    }
   }
 
   return {

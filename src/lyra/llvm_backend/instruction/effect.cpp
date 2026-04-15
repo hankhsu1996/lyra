@@ -36,7 +36,6 @@
 #include "lyra/mir/effect.hpp"
 #include "lyra/mir/handle.hpp"
 #include "lyra/mir/place_type.hpp"
-#include "lyra/runtime/deferred_assertion_thunk.hpp"
 
 namespace lyra::lowering::mir_to_llvm {
 
@@ -664,11 +663,11 @@ auto LowerEffectOp(
             auto* disp_val = llvm::ConstantInt::get(
                 i8_ty, static_cast<uint8_t>(enq.disposition));
 
-            // Resolve instance_id from execution binding contract.
-            llvm::Value* instance_id_val =
-                llvm::ConstantInt::get(i32_ty, runtime::kNoInstanceId);
-            if (context.GetDynamicInstanceId() != nullptr) {
-              instance_id_val = context.GetDynamicInstanceId();
+            // Resolve instance pointer from execution binding contract.
+            llvm::Value* instance_ptr_val =
+                llvm::ConstantPointerNull::get(ptr_ty);
+            if (context.GetInstancePointer() != nullptr) {
+              instance_ptr_val = context.GetInstancePointer();
             }
 
             // Look up semantic site info (must exist).
@@ -798,7 +797,7 @@ auto LowerEffectOp(
 
             builder.CreateCall(
                 context.GetLyraEnqueueObservedDeferredAssertion(),
-                {engine_ptr, mode.decision_owner_id, instance_id_val, site_val,
+                {engine_ptr, mode.decision_owner_id, instance_ptr_val, site_val,
                  disp_val, payload_ptr, payload_size_val, ref_array_ptr,
                  ref_count_val});
             return {};

@@ -18,6 +18,7 @@
 #include <utility>
 #include <vector>
 
+#include "absl/container/flat_hash_map.h"
 #include "lyra/common/deferred_assertion_abi.hpp"
 #include "lyra/common/edge_kind.hpp"
 #include "lyra/common/internal_error.hpp"
@@ -169,9 +170,9 @@ struct RuntimeStats {
 // - IEEE 1800 stratified event scheduler (Active -> Inactive -> NBA regions)
 // - Processes suspend via Delay/Subscribe, engine resumes them later
 //
-// Concrete InstanceTraceResolver keyed by RuntimeInstance::instance_id.
-// Built once from the instance list; validates uniqueness and null-free.
-// Lookup is O(1) via dense table indexed by instance_id.
+// Concrete InstanceTraceResolver keyed by construction-order position index.
+// Built once from the instance list; validates null-free.
+// Lookup is O(1) via dense table indexed by position.
 class InstanceIdTraceResolver final : public trace::InstanceTraceResolver {
  public:
   void Build(std::span<RuntimeInstance* const> instances);
@@ -442,17 +443,17 @@ class Engine {
   // All callers read through instances_.
   void SetInstances(std::span<const RuntimeInstance* const> instances);
 
-  // R5: Instance trace resolver for trace sinks. Resolves instance_id
-  // to RuntimeInstance through explicit validated lookup, not positional
-  // indexing. Must be called after SetInstances.
+  // R5: Instance trace resolver for trace sinks. Resolves InstanceId
+  // (construction-order index) to RuntimeInstance via dense positional
+  // table. Must be called after SetInstances.
   [[nodiscard]] auto GetInstanceTraceResolver() const
       -> const trace::InstanceTraceResolver& {
     return instance_trace_resolver_;
   }
 
-  // R5: Typed instance lookup by stable InstanceId.
+  // R5: Typed instance lookup by InstanceId (construction-order index).
   // These are the ONLY approved way to go from InstanceId to RuntimeInstance
-  // in semantic/runtime code. Never index instances_ by InstanceId.value.
+  // in semantic/runtime code.
   [[nodiscard]] auto FindInstance(InstanceId id) const
       -> const RuntimeInstance* {
     return instance_trace_resolver_.FindInstance(id);
@@ -479,6 +480,13 @@ class Engine {
     }
     return *inst;
   }
+
+  // Canonical construction-order index for a RuntimeInstance.
+  // Used only by temporary outer-layer numeric transport boundaries
+  // (trigger descriptors, observer context, trace emission).
+  // Not object-model identity.
+  [[nodiscard]] auto GetInstanceOrdinal(const RuntimeInstance* inst) const
+      -> uint32_t;
 
   // Resolve the owning RuntimeInstance for a process. Returns the instance
   // pointer stored on RuntimeProcess during bundle init. Throws InternalError
@@ -1013,7 +1021,7 @@ class Engine {
   void InitDeferredAssertionSites(
       const struct LyraDeferredAssertionSiteMeta* sites, uint32_t count);
   void EnqueueDeferredAssertion(
-      uint32_t process_id, uint32_t instance_id, uint32_t site_id,
+      uint32_t process_id, RuntimeInstance* instance, uint32_t site_id,
       uint8_t disposition, const void* payload_ptr, uint32_t payload_size,
       const DeferredAssertionRefBindingAbi* ref_ptr, uint32_t ref_count);
   void FlushDeferredAssertionsForProcess(ProcessId pid) {
@@ -1400,7 +1408,9 @@ class Engine {
   std::vector<const RuntimeInstance*> const_instance_ptrs_;
   std::span<const RuntimeInstance* const> const_instances_;  // read-only view
   InstanceIdTraceResolver instance_trace_resolver_;
-  // Reverse lookup: instance_id.value -> index in instances_[].
+  // Reverse map: RuntimeInstance* -> construction-order index.
+  // Built by SetInstances, used by GetInstanceOrdinal.
+  absl::flat_hash_map<const RuntimeInstance*, uint32_t> instance_index_by_ptr_;
   // Derived sparse lists summarizing which instances have non-empty
   // LocalUpdateSet state. Authoritative truth is always the per-instance
   // LocalUpdateSet; these are acceleration lists for avoiding
@@ -1697,7 +1707,7 @@ class Engine {
     uint32_t enqueue_generation = 0;
     uint32_t site_id = 0;
     uint8_t disposition = 0;
-    uint32_t instance_id = 0;
+    RuntimeInstance* instance = nullptr;
     uint32_t payload_size = 0;
     SmallByteBuffer payload;
     // ref_bindings[i] corresponds 1:1 to the ith kLiveRef entry in the

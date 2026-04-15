@@ -21,7 +21,7 @@ inline constexpr uint32_t kNoInstanceId = UINT32_MAX;
 struct DeferredAssertionExecContext {
   // Canonical instance pointer (RuntimeInstance*). Provides:
   // - this_ptr via instance->storage.inline_base
-  // - instance_id via instance->instance_id
+  // - ordinal via Engine::GetInstanceOrdinal(instance)
   // nullptr for design-global scope.
   RuntimeInstance* instance = nullptr;
 };

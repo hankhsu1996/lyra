@@ -1183,21 +1183,18 @@ void FillTriggerArray(
           "trigger.flags.local");
       builder.CreateStore(with_local, flags_ptr);
 
-      // target_instance_id (field 8): load instance pointer from
-      // binding field 0, then load instance_id from RuntimeInstance.
-      // This numeric value is a temporary trigger-record transport
-      // field consumed during subscription installation (Cut 4 scope).
-      // Not runtime object-model truth.
-      auto* ptr_ty = llvm::PointerType::getUnqual(context.GetLlvmContext());
+      // target_instance_id (field 8): derive construction-order index
+      // from instance pointer via runtime helper. This numeric value
+      // is trigger-record transport consumed during subscription
+      // installation. Not runtime object-model truth.
       auto* target_inst_field = builder.CreateStructGEP(
           binding_ty, binding_ptr, 0, "binding_target_inst_field");
-      auto* target_inst =
-          builder.CreateLoad(ptr_ty, target_inst_field, "ext_ref_target_inst");
-      auto* inst_type = context.GetRuntimeInstanceType();
-      auto* inst_id_field = builder.CreateStructGEP(
-          inst_type, target_inst, 0, "target_inst_id_field");
-      auto* target_inst_id =
-          builder.CreateLoad(i32_ty, inst_id_field, "ext_ref_target_inst_id");
+      auto* target_inst = builder.CreateLoad(
+          llvm::PointerType::getUnqual(context.GetLlvmContext()),
+          target_inst_field, "ext_ref_target_inst");
+      auto* target_inst_id = builder.CreateCall(
+          context.GetLyraGetInstanceOrdinal(),
+          {context.GetEnginePointer(), target_inst}, "ext_ref_target_ordinal");
       auto* inst_id_ptr = builder.CreateStructGEP(trigger_type, elem_ptr, 8);
       builder.CreateStore(target_inst_id, inst_id_ptr);
 
@@ -3096,11 +3093,9 @@ auto DefineDeferredAssertionThunk(
     builder.SetInsertPoint(ok_bb);
 
     auto* this_ptr = context.EmitLoadInstanceInlineBase(instance_ptr);
-    auto* instance_id = context.EmitLoadInstanceId(instance_ptr);
 
     call_args.push_back(this_ptr);
     call_args.push_back(instance_ptr);
-    call_args.push_back(instance_id);
   }
 
   if (action.accepts_decision_owner) {
@@ -3341,12 +3336,8 @@ auto DefineMirFunction(
     instance_arg->setName("instance_ptr");
     context.SetInstancePointer(instance_arg);
 
-    auto* instance_id_arg = llvm_func->getArg(arg_offset + 4);
-    instance_id_arg->setName("instance_id");
-    context.SetDynamicInstanceId(instance_id_arg);
-
     context.SetSlotAddressingMode(SlotAddressingMode::kSpecializationLocal);
-    context_arg_count = 3;
+    context_arg_count = 2;
   }
 
   // Decision owner: unpack hidden decision_owner_id param if contract accepts

@@ -54,7 +54,8 @@ void Engine::InitConnectionBatch(
     sorted.push_back(
         IndexedConn{
             .trigger_is_local = true,
-            .trigger_instance_id = d.trigger_instance->instance_id,
+            .trigger_instance_id =
+                InstanceId{GetInstanceOrdinal(d.trigger_instance)},
             .trigger_local_id = d.trigger_local_id.value,
             .trigger_global_id = 0,
             .conn =
@@ -270,7 +271,7 @@ void Engine::InitCombKernels(
                   "process {}",
                   proc_idx));
         }
-        trigger_iid = header->instance->instance_id;
+        trigger_iid = InstanceId{GetInstanceOrdinal(header->instance)};
         local_id = trigger_slot;
       }
 

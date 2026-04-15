@@ -1823,7 +1823,6 @@ auto EmitDpiExportWrappers(
       args.push_back(binding.engine_ptr);
       args.push_back(binding.this_ptr);
       args.push_back(binding.instance_ptr);
-      args.push_back(binding.instance_id);
       if (callee_info.accepts_decision_owner) {
         args.push_back(binding.decision_owner_id_raw);
       }

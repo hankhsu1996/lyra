@@ -97,7 +97,9 @@ extern "C" void LyraResolveModuleInstanceBinding(
   out->engine = ctx->engine;
   out->this_ptr = inst->storage.inline_base;
   out->instance_ptr = inst;
-  out->instance_id = inst->instance_id.value;
+  // DPI export ABI still transports numeric instance ordinals.
+  // Not runtime object-model identity.
+  out->instance_id = engine->GetInstanceOrdinal(inst);
   out->decision_owner_id_raw = ctx->decision_owner.has_value
                                    ? ctx->decision_owner.value.Index()
                                    : UINT32_MAX;

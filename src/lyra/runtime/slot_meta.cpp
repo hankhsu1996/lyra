@@ -244,15 +244,14 @@ void SlotMetaRegistry::DumpSummary(OutputDispatcher& out) const {
           "design_base_off={} total_bytes={}",
           i, KindName(slot.kind), slot.design_base_off, slot.total_bytes);
     } else {
-      // Presentation only: derive numeric id from pointer for human-readable
-      // dump output. Not for correctness paths -- use owner_instance directly.
-      uint32_t display_id = slot.owner_instance != nullptr
-                                ? slot.owner_instance->instance_id.value
-                                : 0U;
+      const char* display_path = (slot.owner_instance != nullptr &&
+                                  slot.owner_instance->path_c_str != nullptr)
+                                     ? slot.owner_instance->path_c_str
+                                     : "<null>";
       line = std::format(
           "__LYRA_SLOT_META__: slot={} domain=instance kind={} "
-          "owner_instance={} instance_rel_off={} total_bytes={}",
-          i, KindName(slot.kind), display_id, slot.instance_rel_off,
+          "owner_instance='{}' instance_rel_off={} total_bytes={}",
+          i, KindName(slot.kind), display_path, slot.instance_rel_off,
           slot.total_bytes);
     }
 

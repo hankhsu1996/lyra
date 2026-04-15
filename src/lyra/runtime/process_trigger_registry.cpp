@@ -200,7 +200,8 @@ void Engine::InitProcessTriggerRegistry(
         }
         // R5: Keep body-local slot_id as LocalSignalId, populate
         // instance_id for typed subscription install. No flat relocation.
-        descriptors[i].instance_id = header->instance->instance_id;
+        descriptors[i].instance_id =
+            InstanceId{GetInstanceOrdinal(header->instance)};
         if (descriptors[i].slot_id >=
             header->instance->observability.local_signal_count) {
           throw common::InternalError(

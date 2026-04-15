@@ -1,4 +1,3 @@
-#include <algorithm>
 #include <format>
 
 #include "lyra/common/internal_error.hpp"
@@ -148,8 +147,21 @@ void Engine::SetInstances(std::span<const RuntimeInstance* const> instances) {
   const_instance_ptrs_.assign(instances.begin(), instances.end());
   const_instances_ = const_instance_ptrs_;
 
-  // Wire trace resolver keyed by RuntimeInstance::instance_id.
+  // Wire trace resolver keyed by construction-order position index.
   instance_trace_resolver_.Build(instances_);
+
+  // Build reverse map for GetInstanceOrdinal.
+  instance_index_by_ptr_.clear();
+  for (uint32_t i = 0; i < instances_.size(); ++i) {
+    auto [it, inserted] = instance_index_by_ptr_.emplace(instances_[i], i);
+    if (!inserted) {
+      throw common::InternalError(
+          "Engine::SetInstances",
+          std::format(
+              "duplicate RuntimeInstance* at positions {} and {}", it->second,
+              i));
+    }
+  }
 
   // Initialize dirty-instance sparse lists and per-instance dedup flags.
   auto n = instances_.size();
@@ -173,28 +185,18 @@ void InstanceIdTraceResolver::Build(
 
   if (instances.empty()) return;
 
-  uint32_t max_id = 0;
-  for (auto* inst : instances) {
+  lookup_.resize(instances.size(), nullptr);
+  lookup_mut_.resize(instances.size(), nullptr);
+
+  for (size_t i = 0; i < instances.size(); ++i) {
+    auto* inst = instances[i];
     if (inst == nullptr) {
       throw common::InternalError(
-          "InstanceIdTraceResolver::Build", "null instance in instance list");
-    }
-    max_id = std::max(max_id, inst->instance_id.value);
-  }
-
-  auto table_size = static_cast<size_t>(max_id) + 1;
-  lookup_.assign(table_size, nullptr);
-  lookup_mut_.assign(table_size, nullptr);
-
-  for (auto* inst : instances) {
-    auto id = inst->instance_id.value;
-    if (lookup_[id] != nullptr) {
-      throw common::InternalError(
           "InstanceIdTraceResolver::Build",
-          std::format("duplicate instance_id {}", inst->instance_id));
+          std::format("null instance at position {}", i));
     }
-    lookup_[id] = inst;
-    lookup_mut_[id] = inst;
+    lookup_[i] = inst;
+    lookup_mut_[i] = inst;
   }
 }
 
@@ -217,6 +219,18 @@ void Engine::ClearLocalUpdates() {
   }
   timeslot_dirty_instances_.clear();
   delta_dirty_instances_.clear();
+}
+
+auto Engine::GetInstanceOrdinal(const RuntimeInstance* inst) const -> uint32_t {
+  auto it = instance_index_by_ptr_.find(inst);
+  if (it == instance_index_by_ptr_.end()) {
+    throw common::InternalError(
+        "Engine::GetInstanceOrdinal",
+        std::format(
+            "instance {} not registered (map size {})",
+            static_cast<const void*>(inst), instance_index_by_ptr_.size()));
+  }
+  return it->second;
 }
 
 }  // namespace lyra::runtime

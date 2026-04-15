@@ -175,10 +175,21 @@ void FailIfSuspensionDisallowed(const char* api) {
 }  // namespace
 
 extern "C" void LyraTriggerEvent(
-    void* engine_ptr, uint32_t instance_id, uint32_t local_event_id) {
+    void* engine_ptr, void* instance_raw, uint32_t local_event_id) {
   auto* engine = static_cast<lyra::runtime::Engine*>(engine_ptr);
-  auto& inst = engine->GetInstanceMut(lyra::runtime::InstanceId{instance_id});
-  engine->TriggerInstanceEvent(inst, local_event_id);
+  auto* inst = static_cast<lyra::runtime::RuntimeInstance*>(instance_raw);
+  engine->TriggerInstanceEvent(*inst, local_event_id);
+}
+
+extern "C" auto LyraGetInstanceOrdinal(void* engine_raw, void* instance_raw)
+    -> uint32_t {
+  if (instance_raw == nullptr) {
+    throw lyra::common::InternalError(
+        "LyraGetInstanceOrdinal", "null instance");
+  }
+  auto* engine = static_cast<lyra::runtime::Engine*>(engine_raw);
+  auto* inst = static_cast<lyra::runtime::RuntimeInstance*>(instance_raw);
+  return engine->GetInstanceOrdinal(inst);
 }
 
 namespace {

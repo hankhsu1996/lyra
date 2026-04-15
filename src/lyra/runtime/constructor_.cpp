@@ -664,11 +664,8 @@ auto Constructor::CreateChild(
   }
   connections_finalized_ = true;
 
-  auto instance_id = InstanceId{next_instance_id_};
-
   uint32_t instance_ord = next_module_instance_ordinal_;
   auto instance = std::make_unique<RuntimeInstance>();
-  instance->instance_id = instance_id;
   instance->owner_ordinal = instance_ord;
 
   // Structural relation established inside child creation.
@@ -720,9 +717,6 @@ auto Constructor::CreateChild(
   ApplyParamInitToInstance(
       *instance, body_.init_params.slots, param_data, param_data_size);
 
-  // Capture module_proc_base before staging non-final body processes.
-  auto module_proc_base = static_cast<uint32_t>(staged_.size());
-
   auto instance_index = static_cast<uint32_t>(staged_instances_.size());
   staged_instances_.push_back(std::move(instance));
 
@@ -750,15 +744,6 @@ auto Constructor::CreateChild(
   }
 
   ++next_module_instance_ordinal_;
-  auto num_module_processes =
-      static_cast<uint32_t>(staged_.size()) - module_proc_base;
-
-  // Written for binary-contract struct layout stability (static_asserts).
-  // Not read by codegen (never GEP'd). Retained while remaining
-  // outer-layer ordinal interfaces are still being migrated.
-  staged_instances_[instance_index]->module_proc_base = module_proc_base;
-  staged_instances_[instance_index]->num_module_processes =
-      num_module_processes;
 
   // Use the instance's stable path for the design-global observable walk.
   const char* instance_path = staged_instances_[instance_index]->path_c_str;
@@ -820,9 +805,6 @@ auto Constructor::CreateChild(
           .instance = staged_instances_[instance_index].get(),
           .body_desc = nullptr,
           .body_key = current_body_package_->desc,
-          .instance_id = instance_id,
-          .module_proc_base = module_proc_base,
-          .num_module_processes = num_module_processes,
           .instance_path = instance_path,
       });
 
@@ -1029,25 +1011,10 @@ auto Constructor::Finalize() -> ConstructionResult {
           "Constructor::Finalize",
           std::format("R4 bundle {} has unresolved body template", i));
     }
-    if (bundle.instance_id != InstanceId{i}) {
-      throw common::InternalError(
-          "Constructor::Finalize",
-          std::format(
-              "R4 bundle {} instance_id mismatch: got {}", i,
-              bundle.instance_id));
-    }
     if (bundle.instance != expected_instance) {
       throw common::InternalError(
           "Constructor::Finalize",
           std::format("R4 bundle {} instance pointer mismatch", i));
-    }
-    if (bundle.instance->instance_id != bundle.instance_id) {
-      throw common::InternalError(
-          "Constructor::Finalize",
-          std::format(
-              "R4 bundle {} pointed instance_id mismatch: "
-              "bundle={}, instance={}",
-              i, bundle.instance_id, bundle.instance->instance_id));
     }
 
     // Re-validate bundle instance_path against the instance's stable
