@@ -1082,19 +1082,17 @@ static_assert(
 
 // Canonical LLVM type for runtime::DpiResolvedModuleBinding.
 // Layout: { ptr design_state, ptr engine, ptr this_ptr, ptr instance_ptr,
-//           i32 instance_id, i32 decision_owner_id_raw,
-//           i8 has_decision_owner }
+//           i32 decision_owner_id_raw, i8 has_decision_owner }
 auto BuildDpiResolvedModuleBindingType(llvm::LLVMContext& ctx)
     -> llvm::StructType* {
   auto* ptr_ty = llvm::PointerType::getUnqual(ctx);
   auto* i32_ty = llvm::Type::getInt32Ty(ctx);
   auto* i8_ty = llvm::Type::getInt8Ty(ctx);
-  return llvm::StructType::get(
-      ptr_ty, ptr_ty, ptr_ty, ptr_ty, i32_ty, i32_ty, i8_ty);
+  return llvm::StructType::get(ptr_ty, ptr_ty, ptr_ty, ptr_ty, i32_ty, i8_ty);
 }
 
 static_assert(
-    sizeof(lyra::runtime::DpiResolvedModuleBinding) == 48,
+    sizeof(lyra::runtime::DpiResolvedModuleBinding) == 40,
     "DpiResolvedModuleBinding layout changed; update "
     "BuildDpiResolvedModuleBindingType");
 static_assert(
@@ -1641,7 +1639,6 @@ struct ModuleBindingValues {
   llvm::Value* engine_ptr;
   llvm::Value* this_ptr;
   llvm::Value* instance_ptr;
-  llvm::Value* instance_id;
   llvm::Value* decision_owner_id_raw;
   llvm::Value* has_decision_owner;
 };
@@ -1667,14 +1664,12 @@ auto EmitResolveModuleBinding(llvm::IRBuilder<>& b, llvm::Function* resolve_fn)
           ptr_ty, b.CreateStructGEP(binding_ty, alloca, 2), "mod.this"),
       .instance_ptr = b.CreateLoad(
           ptr_ty, b.CreateStructGEP(binding_ty, alloca, 3), "mod.instance"),
-      .instance_id = b.CreateLoad(
-          i32_ty, b.CreateStructGEP(binding_ty, alloca, 4), "mod.id"),
       .decision_owner_id_raw = b.CreateLoad(
-          i32_ty, b.CreateStructGEP(binding_ty, alloca, 5),
+          i32_ty, b.CreateStructGEP(binding_ty, alloca, 4),
           "mod.decision_owner"),
       .has_decision_owner = b.CreateTrunc(
           b.CreateLoad(
-              i8_ty, b.CreateStructGEP(binding_ty, alloca, 6),
+              i8_ty, b.CreateStructGEP(binding_ty, alloca, 5),
               "mod.has_owner.i8"),
           llvm::Type::getInt1Ty(llvm_ctx), "mod.has_owner"),
   };
