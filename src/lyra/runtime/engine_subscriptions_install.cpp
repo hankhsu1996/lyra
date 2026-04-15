@@ -45,23 +45,22 @@ namespace lyra::runtime {
 namespace {
 
 // Validate cross-instance local identity and return a typed LocalSignalRef.
-// Throws InternalError if the target instance doesn't exist or the local
-// signal id is out of range.
+// Throws InternalError if the target instance is null or the local signal
+// id is out of range.
 auto ValidateCrossInstanceLocal(
-    Engine& eng, InstanceId iid, LocalSignalId lid, const char* where)
+    RuntimeInstance* inst, LocalSignalId lid, const char* where)
     -> LocalSignalRef {
-  auto* inst = eng.FindInstanceMut(iid);
   if (inst == nullptr) {
     throw common::InternalError(
-        where, std::format(
-                   "cross-instance local references missing instance {}", iid));
+        where, "cross-instance local trigger has null target_instance");
   }
   if (lid.value >= inst->observability.local_signal_count) {
     throw common::InternalError(
         where, std::format(
                    "cross-instance local_id {} >= local_signal_count {} "
                    "for instance {}",
-                   lid.value, inst->observability.local_signal_count, iid));
+                   lid.value, inst->observability.local_signal_count,
+                   inst->path_c_str));
   }
   return LocalSignalRef{.instance = inst, .signal = lid};
 }
@@ -727,7 +726,7 @@ void Engine::InstallTriggers(ProcessHandle handle, const WaitRequest& req) {
     SignalRef sig_ref;
     if (is_cross_instance) {
       sig_ref = ValidateCrossInstanceLocal(
-          *this, InstanceId{trigger.target_instance_id},
+          trigger.target_instance,
           LocalSignalId{trigger.target_local_signal_id},
           "Engine::InstallTriggers");
     } else if (is_local) {
@@ -919,8 +918,7 @@ void Engine::InstallTriggers(ProcessHandle handle, const WaitRequest& req) {
               "dep record: kDepCrossInstanceLocal without kDepLocalSignal");
         }
         dep_signals.emplace_back(ValidateCrossInstanceLocal(
-            *this, InstanceId{rec.target_instance_id},
-            LocalSignalId{rec.target_local_signal_id},
+            rec.target_instance, LocalSignalId{rec.target_local_signal_id},
             "Engine::InstallTriggers(dep)"));
       } else if ((rec.flags & kDepLocalSignal) != 0) {
         dep_signals.emplace_back(
