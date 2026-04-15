@@ -21,3 +21,10 @@ Diagnostics:
 # Disable inlay hints for designators to avoid JSON key indexing.
 InlayHints:
   Designators: No
+
+---
+
+If:
+  PathMatch: playground/.*
+Diagnostics:
+  Suppress: '*'
