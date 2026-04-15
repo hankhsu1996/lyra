@@ -7,7 +7,6 @@
 #include <vector>
 
 #include "lyra/common/internal_error.hpp"
-#include "lyra/runtime/engine.hpp"
 #include "lyra/runtime/instance_observability.hpp"
 #include "lyra/runtime/runtime_instance.hpp"
 #include "lyra/runtime/slot_meta.hpp"
@@ -195,7 +194,7 @@ void FlushGlobalDirtySlotsToTrace(
 }
 
 void FlushLocalDirtySlotsToTrace(
-    const Engine& engine, trace::TraceManager& trace,
+    trace::TraceManager& trace,
     std::span<RuntimeInstance* const> dirty_instances) {
   for (auto* inst : dirty_instances) {
     if (inst == nullptr) {
@@ -246,11 +245,8 @@ void FlushLocalDirtySlotsToTrace(
 
       const auto& meta = obs.layout->slot_meta[lid.value];
       const auto* slot_base = ResolveInstanceSlotBase(*inst, lid);
-      // Temporary trace bridge: trace API still consumes numeric
-      // instance ordinals. Not object-model identity.
       trace.EmitLocalValueChange(
-          InstanceId{engine.GetInstanceOrdinal(inst)}, lid,
-          SnapshotLocalSlotValue(lid.value, meta, slot_base));
+          inst, lid, SnapshotLocalSlotValue(lid.value, meta, slot_base));
     }
   }
 }

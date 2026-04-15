@@ -1,5 +1,6 @@
 #pragma once
 
+#include <string>
 #include <vector>
 
 #include "lyra/mir/arena.hpp"
@@ -40,6 +41,11 @@ struct ModuleBody {
   // This is the body's required storage interface: what slots exist,
   // their kinds, and their types. This is NOT placement/layout metadata.
   std::vector<SlotDesc> slots;
+
+  // Body-local trace names, parallel to slots (indexed by kModuleSlot id).
+  // Source: sym.name from CollectBodyLocalDecls -> BodyLocalDecls -> here.
+  // Invariant: local_trace_names.size() == slots.size().
+  std::vector<std::string> local_trace_names;
 
   // Body-local named event descriptors. Indexed by body-local EventId.
   std::vector<EventDesc> events;

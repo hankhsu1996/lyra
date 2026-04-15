@@ -97,12 +97,6 @@ void LyraSuspendWaitEvent(
 void LyraTriggerEvent(
     void* engine_ptr, void* instance, uint32_t local_event_id);
 
-// Get the construction-order index of an instance.
-// Used by codegen trigger transport paths that still carry numeric tokens.
-// Not object-model identity -- temporary bridge for deferred outer-layer
-// migration.
-auto LyraGetInstanceOrdinal(void* engine, void* instance) -> uint32_t;
-
 // Strobe observer program type: uses canonical StrobeProgramFn from
 // observer.hpp.
 using LyraStrobeProgramFn = lyra::runtime::StrobeProgramFn;

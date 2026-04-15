@@ -2,13 +2,14 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <functional>
 #include <map>
 
-#include "lyra/runtime/signal_coord.hpp"
 #include "lyra/trace/trace_sink.hpp"
 
 namespace lyra::runtime {
 class OutputDispatcher;
+struct RuntimeInstance;
 }  // namespace lyra::runtime
 
 namespace lyra::trace {
@@ -18,8 +19,8 @@ namespace lyra::trace {
 // Incrementally accumulates aggregate counters (per-event-kind totals and
 // per-signal breakdowns) and emits the __LYRA_TRACE__ format on PrintSummary().
 //
-// R5: Tracks global and local signals separately. Global signals are keyed
-// by GlobalSignalId. Local signals are keyed by (instance_id, LocalSignalId).
+// Tracks global and local signals separately. Global signals are keyed
+// by GlobalSignalId. Local signals are keyed by (instance, LocalSignalId).
 class SummaryTraceSink : public TraceSink {
  public:
   void OnEvent(const TraceEvent& event) override;
@@ -36,11 +37,19 @@ class SummaryTraceSink : public TraceSink {
     size_t memory_dirty = 0;
   };
 
-  // Key for local signal counts: (instance_id, local_signal_id).
+  // Key for local signal counts: (instance, local_signal_id).
+  // Uses std::less for pointer ordering to guarantee a total order.
   struct LocalKey {
-    runtime::InstanceId instance_id;
+    runtime::RuntimeInstance* instance;
     uint32_t signal_id;
-    auto operator<=>(const LocalKey&) const = default;
+
+    auto operator==(const LocalKey&) const -> bool = default;
+
+    auto operator<(const LocalKey& o) const -> bool {
+      if (instance != o.instance)
+        return std::less<runtime::RuntimeInstance*>{}(instance, o.instance);
+      return signal_id < o.signal_id;
+    }
   };
 
   size_t time_advances_ = 0;

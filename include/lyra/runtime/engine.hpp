@@ -18,7 +18,6 @@
 #include <utility>
 #include <vector>
 
-#include "absl/container/flat_hash_map.h"
 #include "lyra/common/deferred_assertion_abi.hpp"
 #include "lyra/common/edge_kind.hpp"
 #include "lyra/common/internal_error.hpp"
@@ -52,7 +51,6 @@
 #include "lyra/runtime/trap.hpp"
 #include "lyra/runtime/update_set.hpp"
 #include "lyra/runtime/wait_site.hpp"
-#include "lyra/trace/instance_trace_resolver.hpp"
 #include "lyra/trace/trace_manager.hpp"
 #include "svdpi.h"
 
@@ -170,20 +168,21 @@ struct RuntimeStats {
 // - IEEE 1800 stratified event scheduler (Active -> Inactive -> NBA regions)
 // - Processes suspend via Delay/Subscribe, engine resumes them later
 //
-// Concrete InstanceTraceResolver keyed by construction-order position index.
+// Dense positional lookup from InstanceId (construction-order index) to
+// RuntimeInstance*. Used by FindInstance/FindInstanceMut for init-time
+// transport resolution and LyraResolveInstancePtr codegen boundary.
 // Built once from the instance list; validates null-free.
 // Lookup is O(1) via dense table indexed by position.
-class InstanceIdTraceResolver final : public trace::InstanceTraceResolver {
+class InstanceIdResolver {
  public:
   void Build(std::span<RuntimeInstance* const> instances);
 
   [[nodiscard]] auto FindInstance(InstanceId instance_id) const
-      -> const RuntimeInstance* override {
+      -> const RuntimeInstance* {
     if (instance_id.value >= lookup_.size()) return nullptr;
     return lookup_[instance_id.value];
   }
 
-  // Mutable lookup for engine-internal use.
   [[nodiscard]] auto FindInstanceMut(InstanceId instance_id) const
       -> RuntimeInstance* {
     if (instance_id.value >= lookup_mut_.size()) return nullptr;
@@ -443,27 +442,19 @@ class Engine {
   // All callers read through instances_.
   void SetInstances(std::span<const RuntimeInstance* const> instances);
 
-  // R5: Instance trace resolver for trace sinks. Resolves InstanceId
-  // (construction-order index) to RuntimeInstance via dense positional
-  // table. Must be called after SetInstances.
-  [[nodiscard]] auto GetInstanceTraceResolver() const
-      -> const trace::InstanceTraceResolver& {
-    return instance_trace_resolver_;
-  }
-
-  // R5: Typed instance lookup by InstanceId (construction-order index).
-  // These are the ONLY approved way to go from InstanceId to RuntimeInstance
-  // in semantic/runtime code.
+  // Typed instance lookup by InstanceId (construction-order index).
+  // Used by LyraResolveInstancePtr (codegen cross-instance signal access)
+  // and init-time transport resolution.
   [[nodiscard]] auto FindInstance(InstanceId id) const
       -> const RuntimeInstance* {
-    return instance_trace_resolver_.FindInstance(id);
+    return instance_resolver_.FindInstance(id);
   }
   [[nodiscard]] auto FindInstanceMut(InstanceId id) -> RuntimeInstance* {
-    return instance_trace_resolver_.FindInstanceMut(id);
+    return instance_resolver_.FindInstanceMut(id);
   }
   [[nodiscard]] auto GetInstance(InstanceId id) const
       -> const RuntimeInstance& {
-    const auto* inst = instance_trace_resolver_.FindInstance(id);
+    const auto* inst = instance_resolver_.FindInstance(id);
     if (inst == nullptr) {
       throw common::InternalError(
           "Engine::GetInstance",
@@ -472,7 +463,7 @@ class Engine {
     return *inst;
   }
   [[nodiscard]] auto GetInstanceMut(InstanceId id) -> RuntimeInstance& {
-    auto* inst = instance_trace_resolver_.FindInstanceMut(id);
+    auto* inst = instance_resolver_.FindInstanceMut(id);
     if (inst == nullptr) {
       throw common::InternalError(
           "Engine::GetInstanceMut",
@@ -480,13 +471,6 @@ class Engine {
     }
     return *inst;
   }
-
-  // Canonical construction-order index for a RuntimeInstance.
-  // Used only by temporary outer-layer numeric transport boundaries
-  // (trigger descriptors, observer context, trace emission).
-  // Not object-model identity.
-  [[nodiscard]] auto GetInstanceOrdinal(const RuntimeInstance* inst) const
-      -> uint32_t;
 
   // Resolve the owning RuntimeInstance for a process. Returns the instance
   // pointer stored on RuntimeProcess during bundle init. Throws InternalError
@@ -636,19 +620,6 @@ class Engine {
 
   [[nodiscard]] auto GetSlotMetaRegistry() const -> const SlotMetaRegistry& {
     return slot_meta_registry_;
-  }
-
-  // Get hierarchical path for an instance (%m support).
-  // Throws InternalError for invalid instance_id (compiler/runtime bug).
-  [[nodiscard]] auto GetInstancePath(InstanceId instance_id) const
-      -> std::string_view {
-    const auto* inst = FindInstance(instance_id);
-    if (inst == nullptr) {
-      throw common::InternalError(
-          "Engine::GetInstancePath",
-          std::format("invalid instance_id {}", instance_id));
-    }
-    return {inst->path_c_str};
   }
 
   // Build the DPI scope registry from instances_.
@@ -1407,10 +1378,7 @@ class Engine {
   std::span<RuntimeInstance* const> instances_;  // mutable view
   std::vector<const RuntimeInstance*> const_instance_ptrs_;
   std::span<const RuntimeInstance* const> const_instances_;  // read-only view
-  InstanceIdTraceResolver instance_trace_resolver_;
-  // Reverse map: RuntimeInstance* -> construction-order index.
-  // Built by SetInstances, used by GetInstanceOrdinal.
-  absl::flat_hash_map<const RuntimeInstance*, uint32_t> instance_index_by_ptr_;
+  InstanceIdResolver instance_resolver_;
   // Derived sparse lists summarizing which instances have non-empty
   // LocalUpdateSet state. Authoritative truth is always the per-instance
   // LocalUpdateSet; these are acceleration lists for avoiding

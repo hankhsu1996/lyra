@@ -147,21 +147,8 @@ void Engine::SetInstances(std::span<const RuntimeInstance* const> instances) {
   const_instance_ptrs_.assign(instances.begin(), instances.end());
   const_instances_ = const_instance_ptrs_;
 
-  // Wire trace resolver keyed by construction-order position index.
-  instance_trace_resolver_.Build(instances_);
-
-  // Build reverse map for GetInstanceOrdinal.
-  instance_index_by_ptr_.clear();
-  for (uint32_t i = 0; i < instances_.size(); ++i) {
-    auto [it, inserted] = instance_index_by_ptr_.emplace(instances_[i], i);
-    if (!inserted) {
-      throw common::InternalError(
-          "Engine::SetInstances",
-          std::format(
-              "duplicate RuntimeInstance* at positions {} and {}", it->second,
-              i));
-    }
-  }
+  // Wire instance resolver keyed by construction-order position index.
+  instance_resolver_.Build(instances_);
 
   // Initialize dirty-instance sparse lists and per-instance dedup flags.
   auto n = instances_.size();
@@ -178,8 +165,7 @@ void Engine::SetInstances(std::span<const RuntimeInstance* const> instances) {
   nba_pending_instances_.reserve(n);
 }
 
-void InstanceIdTraceResolver::Build(
-    std::span<RuntimeInstance* const> instances) {
+void InstanceIdResolver::Build(std::span<RuntimeInstance* const> instances) {
   lookup_.clear();
   lookup_mut_.clear();
 
@@ -192,7 +178,7 @@ void InstanceIdTraceResolver::Build(
     auto* inst = instances[i];
     if (inst == nullptr) {
       throw common::InternalError(
-          "InstanceIdTraceResolver::Build",
+          "InstanceIdResolver::Build",
           std::format("null instance at position {}", i));
     }
     lookup_[i] = inst;
@@ -219,18 +205,6 @@ void Engine::ClearLocalUpdates() {
   }
   timeslot_dirty_instances_.clear();
   delta_dirty_instances_.clear();
-}
-
-auto Engine::GetInstanceOrdinal(const RuntimeInstance* inst) const -> uint32_t {
-  auto it = instance_index_by_ptr_.find(inst);
-  if (it == instance_index_by_ptr_.end()) {
-    throw common::InternalError(
-        "Engine::GetInstanceOrdinal",
-        std::format(
-            "instance {} not registered (map size {})",
-            static_cast<const void*>(inst), instance_index_by_ptr_.size()));
-  }
-  return it->second;
 }
 
 }  // namespace lyra::runtime

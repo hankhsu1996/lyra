@@ -871,7 +871,23 @@ void ExtractBodyObservableDescriptors(
       return static_cast<uint32_t>(value);
     };
 
+    auto append_to_pool = [&](std::string_view name) -> uint32_t {
+      auto off = static_cast<uint32_t>(tmpl.pool.size());
+      tmpl.pool.insert(tmpl.pool.end(), name.begin(), name.end());
+      tmpl.pool.push_back('\0');
+      return off;
+    };
+
     const auto& obs_body = *info.body;
+
+    if (obs_body.local_trace_names.size() != info.slot_count) {
+      throw common::InternalError(
+          "ExtractBodyObservableDescriptors",
+          std::format(
+              "body {}: local_trace_names size {} != slot_count {}", gi,
+              obs_body.local_trace_names.size(), info.slot_count));
+    }
+
     for (uint32_t i = 0; i < info.slot_count; ++i) {
       const auto& spec = info.slot_specs[i];
       const CanonicalObservableShape shape = ComputeCanonicalObservableShape(
@@ -879,7 +895,13 @@ void ExtractBodyObservableDescriptors(
       const ObservableDescriptorShapeFields sf =
           BuildObservableDescriptorShapeFields(shape);
 
-      uint32_t name_off = 0;
+      const auto& trace_name = obs_body.local_trace_names[i];
+      if (trace_name.empty()) {
+        throw common::InternalError(
+            "ExtractBodyObservableDescriptors",
+            std::format("body {}: empty local trace name for slot {}", gi, i));
+      }
+      uint32_t name_off = append_to_pool(trace_name);
 
       uint32_t storage_offset = narrow_u64_to_u32(
           info.body_layout.inline_offsets[i].value, "body-local byte offset");

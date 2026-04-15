@@ -143,31 +143,26 @@ void TextTraceSink::HandleGlobalValueChange(const GlobalValueChange& vc) {
 }
 
 void TextTraceSink::HandleLocalValueChange(const LocalValueChange& vc) {
-  if (resolver_ == nullptr) {
+  if (vc.instance == nullptr) {
     throw common::InternalError(
         "TextTraceSink::HandleLocalValueChange",
-        "local trace event received without instance resolver");
+        "local trace event with null instance");
   }
 
-  const auto* inst = resolver_->FindInstance(vc.instance_id);
-  if (inst == nullptr) {
-    throw common::InternalError(
-        "TextTraceSink::HandleLocalValueChange",
-        std::format("no instance found for instance_id {}", vc.instance_id));
-  }
-
+  const auto* inst = vc.instance;
   const auto* layout = inst->observability.layout;
   if (layout == nullptr) {
     throw common::InternalError(
         "TextTraceSink::HandleLocalValueChange",
-        std::format("instance {} has no observability layout", vc.instance_id));
+        std::format(
+            "instance '{}' has no observability layout", inst->path_c_str));
   }
 
   if (vc.signal_id.value >= layout->trace_meta.size()) {
     throw common::InternalError(
         "TextTraceSink::HandleLocalValueChange",
         std::format(
-            "instance {} local signal {} out of range {}", vc.instance_id,
+            "instance '{}' local signal {} out of range {}", inst->path_c_str,
             vc.signal_id.value, layout->trace_meta.size()));
   }
 

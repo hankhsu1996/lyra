@@ -282,11 +282,7 @@ class Context {
   [[nodiscard]] auto GetLyraSuspendWaitEvent() -> llvm::Function*;
   [[nodiscard]] auto GetLyraTriggerEvent() -> llvm::Function*;
   [[nodiscard]] auto GetLyraResolveGlobalSlotPtr() -> llvm::Function*;
-  // R5: Resolve RuntimeInstance* from InstanceId at runtime.
   [[nodiscard]] auto GetLyraResolveInstancePtr() -> llvm::Function*;
-  // Get construction-order index from instance pointer (trigger transport).
-  [[nodiscard]] auto GetLyraGetInstanceOrdinal() -> llvm::Function*;
-  // R3 typed coordination helpers (take frame* instead of engine*).
   [[nodiscard]] auto GetLyraMarkDirtyLocal() -> llvm::Function*;
   [[nodiscard]] auto GetLyraMarkDirtyGlobal() -> llvm::Function*;
   [[nodiscard]] auto GetLyraStorePackedLocal() -> llvm::Function*;
@@ -1059,8 +1055,6 @@ class Context {
   llvm::Function* lyra_trigger_event_ = nullptr;
   llvm::Function* lyra_resolve_global_slot_ptr_ = nullptr;
   llvm::Function* lyra_resolve_instance_ptr_ = nullptr;
-  llvm::Function* lyra_get_instance_ordinal_ = nullptr;
-  // R3 typed coordination helpers.
   llvm::StructType* ext_ref_binding_type_ = nullptr;
   llvm::Function* lyra_mark_dirty_local_ = nullptr;
   llvm::Function* lyra_mark_dirty_global_ = nullptr;

@@ -181,17 +181,6 @@ extern "C" void LyraTriggerEvent(
   engine->TriggerInstanceEvent(*inst, local_event_id);
 }
 
-extern "C" auto LyraGetInstanceOrdinal(void* engine_raw, void* instance_raw)
-    -> uint32_t {
-  if (instance_raw == nullptr) {
-    throw lyra::common::InternalError(
-        "LyraGetInstanceOrdinal", "null instance");
-  }
-  auto* engine = static_cast<lyra::runtime::Engine*>(engine_raw);
-  auto* inst = static_cast<lyra::runtime::RuntimeInstance*>(instance_raw);
-  return engine->GetInstanceOrdinal(inst);
-}
-
 namespace {
 
 struct ProcessDispatchContext {
@@ -468,7 +457,6 @@ extern "C" void LyraRunSimulation(
       text_sink =
           std::make_unique<lyra::trace::TextTraceSink>(meta, &engine.Output());
     }
-    text_sink->SetInstanceResolver(&engine.GetInstanceTraceResolver());
     engine.GetTraceManager().AddSink(std::move(text_sink));
   }
 

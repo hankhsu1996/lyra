@@ -2,11 +2,13 @@
 
 #include <cstdint>
 #include <expected>
+#include <format>
 #include <unordered_set>
 #include <utility>
 #include <vector>
 
 #include "lyra/common/diagnostic/diagnostic.hpp"
+#include "lyra/common/internal_error.hpp"
 #include "lyra/common/symbol_types.hpp"
 #include "lyra/hir/dpi.hpp"
 #include "lyra/hir/fwd.hpp"
@@ -38,6 +40,14 @@ auto LowerModule(
   // Body-local slot descriptors come from specialization-local collection,
   // not from design-global declaration state.
   result.slots = body_decls.slots;
+  result.local_trace_names = body_decls.local_trace_names;
+  if (result.slots.size() != result.local_trace_names.size()) {
+    throw common::InternalError(
+        "LowerModuleBody",
+        std::format(
+            "slots/local_trace_names size mismatch: {} vs {}",
+            result.slots.size(), result.local_trace_names.size()));
+  }
   result.events = body_decls.event_descs;
 
   // Body-local origin storage. All origins produced during body lowering

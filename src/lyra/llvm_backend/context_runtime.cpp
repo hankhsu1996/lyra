@@ -614,19 +614,6 @@ auto Context::GetLyraResolveInstancePtr() -> llvm::Function* {
   return lyra_resolve_instance_ptr_;
 }
 
-auto Context::GetLyraGetInstanceOrdinal() -> llvm::Function* {
-  if (lyra_get_instance_ordinal_ == nullptr) {
-    auto* ptr_ty = llvm::PointerType::getUnqual(*llvm_context_);
-    auto* i32_ty = llvm::Type::getInt32Ty(*llvm_context_);
-    // (ptr engine, ptr instance) -> i32 ordinal
-    auto* fn_type = llvm::FunctionType::get(i32_ty, {ptr_ty, ptr_ty}, false);
-    lyra_get_instance_ordinal_ = llvm::Function::Create(
-        fn_type, llvm::Function::ExternalLinkage, "LyraGetInstanceOrdinal",
-        llvm_module_.get());
-  }
-  return lyra_get_instance_ordinal_;
-}
-
 auto Context::GetLyraMarkDirtyLocal() -> llvm::Function* {
   if (lyra_mark_dirty_local_ == nullptr) {
     auto* ptr_ty = llvm::PointerType::getUnqual(*llvm_context_);

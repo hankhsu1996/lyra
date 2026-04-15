@@ -9,13 +9,12 @@ class TraceManager;
 
 namespace lyra::runtime {
 
-class Engine;
 struct RuntimeInstance;
 class SlotMetaRegistry;
 class TraceSelectionRegistry;
 class UpdateSet;
 
-// R5: Flush dirty global slots to trace manager at end-of-time-slot.
+// Flush dirty global slots to trace manager at end-of-time-slot.
 // Iterates dirty global slots, snapshots each based on SlotMetaRegistry,
 // emits GlobalValueChange events. Skips slots not selected by selection.
 //
@@ -34,10 +33,10 @@ void FlushGlobalDirtySlotsToTrace(
     const void* design_state_base, const UpdateSet& updates,
     const TraceSelectionRegistry& selection, uint32_t global_slot_count);
 
-// R5: Flush dirty local slots for all instances to trace manager.
+// Flush dirty local slots for all instances to trace manager.
 // Iterates each instance's local_updates, snapshots via InstanceSlotMeta,
-// emits LocalValueChange events. Skips signals not selected by per-instance
-// trace_select.
+// emits LocalValueChange events with direct RuntimeInstance* identity.
+// Skips signals not selected by per-instance trace_select.
 //
 // Invariants enforced (throws InternalError on violation):
 //   - No null instance pointers in the instance list.
@@ -49,7 +48,7 @@ void FlushGlobalDirtySlotsToTrace(
 //
 // Does NOT clear local update sets; caller is responsible.
 void FlushLocalDirtySlotsToTrace(
-    const Engine& engine, trace::TraceManager& trace,
+    trace::TraceManager& trace,
     std::span<RuntimeInstance* const> dirty_instances);
 
 }  // namespace lyra::runtime

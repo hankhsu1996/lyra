@@ -70,15 +70,15 @@ class TraceManager {
 
   void EmitTimeAdvance(uint64_t time, uint32_t delta = 0);
 
-  // R5: Domain-split emit methods. Typed identity throughout.
+  // Domain-split emit methods. Object-first identity throughout.
   void EmitGlobalValueChange(
       runtime::GlobalSignalId signal_id, TraceValue value);
   void EmitLocalValueChange(
-      runtime::InstanceId instance_id, runtime::LocalSignalId signal_id,
+      runtime::RuntimeInstance* instance, runtime::LocalSignalId signal_id,
       TraceValue value);
   void EmitGlobalMemoryDirty(runtime::GlobalSignalId signal_id);
   void EmitLocalMemoryDirty(
-      runtime::InstanceId instance_id, runtime::LocalSignalId signal_id);
+      runtime::RuntimeInstance* instance, runtime::LocalSignalId signal_id);
 
   // Snapshot helpers.
   // SnapshotPacked: copies byte_size raw bytes from ptr.

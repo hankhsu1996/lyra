@@ -6,7 +6,6 @@
 #include <string>
 
 #include "lyra/runtime/trace_signal_meta.hpp"
-#include "lyra/trace/instance_trace_resolver.hpp"
 #include "lyra/trace/trace_sink.hpp"
 
 namespace lyra::runtime {
@@ -29,14 +28,14 @@ namespace lyra::trace {
 //   - TraceSignalMetaRegistry for global signal names/widths (non-owning)
 //   - Output destination: stdout (borrowed) or file (owned)
 //
-// R5: Handles both GlobalValueChange (via TraceSignalMetaRegistry, keyed
-// by GlobalSignalId) and LocalValueChange (via InstanceTraceResolver +
-// ComposeHierarchicalTraceName + BodyTraceMeta).
+// Handles both GlobalValueChange (via TraceSignalMetaRegistry, keyed
+// by GlobalSignalId) and LocalValueChange (via RuntimeInstance* from the
+// event + ComposeHierarchicalTraceName + BodyTraceMeta).
 // Ignores MemoryDirty events.
 //
 // Contract: once trace dispatch is enabled, global events require populated
-// global trace metadata, and local events require a non-null instance
-// resolver. Malformed event identity or missing metadata is an InternalError,
+// global trace metadata, and local events carry a non-null RuntimeInstance*.
+// Malformed event identity or missing metadata is an InternalError,
 // not a silently dropped event.
 class TextTraceSink : public TraceSink {
  public:
@@ -56,12 +55,6 @@ class TextTraceSink : public TraceSink {
   TextTraceSink(TextTraceSink&&) = delete;
   auto operator=(TextTraceSink&&) -> TextTraceSink& = delete;
 
-  // Set non-owning pointer to the instance resolver for local signal
-  // name resolution. Must be called before trace events are dispatched.
-  void SetInstanceResolver(const InstanceTraceResolver* resolver) {
-    resolver_ = resolver;
-  }
-
   void OnEvent(const TraceEvent& event) override;
 
  private:
@@ -80,7 +73,6 @@ class TextTraceSink : public TraceSink {
   // NOLINTEND(cppcoreguidelines-owning-memory)
 
   const runtime::TraceSignalMetaRegistry* meta_;
-  const InstanceTraceResolver* resolver_ = nullptr;
   runtime::OutputDispatcher* output_dispatcher_ = nullptr;
   std::unique_ptr<FILE, FileCloser> output_;
   uint64_t current_time_ = 0;
