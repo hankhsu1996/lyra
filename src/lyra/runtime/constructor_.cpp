@@ -9,6 +9,7 @@
 #include <string_view>
 #include <utility>
 
+#include "lyra/common/ext_ref_binding.hpp"
 #include "lyra/common/internal_error.hpp"
 #include "lyra/runtime/frame_allocator.hpp"
 #include "lyra/runtime/owned_storage_handle.hpp"
@@ -1713,7 +1714,7 @@ void LyraConstructionResultSetExtRefBindings(
   if (result_raw == nullptr) return;
   auto& result = *static_cast<lyra::runtime::ConstructionResult*>(result_raw);
   auto pool = std::span(
-      static_cast<const lyra::common::ResolvedExtRefBinding*>(pool_raw),
+      static_cast<const lyra::common::SerializedExtRefBinding*>(pool_raw),
       pool_count);
   auto offset_span = std::span(offsets, num_instances);
   auto count_span = std::span(counts, num_instances);
@@ -1723,11 +1724,30 @@ void LyraConstructionResultSetExtRefBindings(
     if (offset_span[i] == UINT32_MAX) {
       result.instances[i]->ext_ref_bindings = nullptr;
       result.instances[i]->ext_ref_binding_count = 0;
-    } else {
-      result.instances[i]->ext_ref_bindings =
-          pool.subspan(offset_span[i]).data();
-      result.instances[i]->ext_ref_binding_count = count_span[i];
+      continue;
     }
+    auto serialized_bindings = pool.subspan(offset_span[i], count_span[i]);
+    auto& inst = *result.instances[i];
+    inst.owned_ext_ref_bindings.resize(serialized_bindings.size());
+    for (size_t j = 0; j < serialized_bindings.size(); ++j) {
+      const auto& s = serialized_bindings[j];
+      if (s.target_instance_id >= result.instances.size()) {
+        throw lyra::common::InternalError(
+            "LyraConstructionResultSetExtRefBindings",
+            std::format(
+                "ext-ref binding [instance={}, ref={}] has "
+                "target_instance_id {} >= instance count {}",
+                i, j, s.target_instance_id, result.instances.size()));
+      }
+      inst.owned_ext_ref_bindings[j] = lyra::runtime::ResolvedExtRefBinding{
+          .target_instance = result.instances[s.target_instance_id].get(),
+          .target_byte_offset = s.target_byte_offset,
+          .target_local_signal = s.target_local_signal,
+      };
+    }
+    inst.ext_ref_bindings = inst.owned_ext_ref_bindings.data();
+    inst.ext_ref_binding_count =
+        static_cast<uint32_t>(inst.owned_ext_ref_bindings.size());
   }
 }
 

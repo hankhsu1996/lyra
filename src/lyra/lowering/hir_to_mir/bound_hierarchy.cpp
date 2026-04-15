@@ -259,7 +259,7 @@ void BuildPerInstanceExtRefBindings(
       // during construction program extraction (after layout) from
       // body_layout.inline_offsets[target_local_signal].
       out.push_back(
-          common::ResolvedExtRefBinding{
+          common::SerializedExtRefBinding{
               .target_byte_offset = 0,
               .target_instance_id = target_oi,
               .target_local_signal = recipe.target_slot,

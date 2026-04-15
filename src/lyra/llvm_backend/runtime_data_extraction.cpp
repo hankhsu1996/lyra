@@ -234,7 +234,7 @@ auto BuildConstructionProgram(
     std::span<const Layout::InstanceStorageSizes> instance_storage_sizes,
     const mir::InstanceTable& instance_table,
     std::span<const std::vector<uint8_t>> param_payloads,
-    const std::vector<std::vector<common::ResolvedExtRefBinding>>&
+    const std::vector<std::vector<common::SerializedExtRefBinding>>&
         instance_ext_ref_bindings,
     std::span<const Layout::BodyRealizationInfo> body_realization_infos,
     std::span<const uint32_t> parent_instance_indices,

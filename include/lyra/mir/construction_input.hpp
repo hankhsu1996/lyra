@@ -70,7 +70,7 @@ struct ConstructionInput {
   // Parallel to objects. Each inner vector has one binding per ext-ref recipe
   // in the owning body. Empty for instances whose body has no external refs.
   // Computed by BuildPerInstanceExtRefRuntimeBindings during design lowering.
-  std::vector<std::vector<common::ResolvedExtRefBinding>>
+  std::vector<std::vector<common::SerializedExtRefBinding>>
       instance_ext_ref_bindings;
 };
 

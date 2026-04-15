@@ -449,29 +449,25 @@ auto Context::ResolveExternalRefRoot(mir::ExternalRefId ref_id)
   }
   TypeId type = recipes[ref_id.value].type;
 
-  // Load from ResolvedExtRefBinding {i32, i32, i32} = 12 bytes.
-  // Field 0: target_byte_offset, field 1: target_instance_id.
+  // Load from ResolvedExtRefBinding {ptr, i32, i32} = 16 bytes.
+  // Field 0: target_instance (ptr), field 1: target_byte_offset (i32).
   auto* i32_ty = llvm::Type::getInt32Ty(*llvm_context_);
+  auto* ptr_ty = llvm::PointerType::getUnqual(*llvm_context_);
   auto* bindings_ptr = EmitLoadExtRefBindingsPtr();
   auto* binding_ty = GetExtRefBindingType();
   auto* binding_ptr = builder_.CreateGEP(
       binding_ty, bindings_ptr, builder_.getInt32(ref_id.value),
       "ext_ref_binding_ptr");
 
+  auto* inst_field = builder_.CreateStructGEP(
+      binding_ty, binding_ptr, 0, "ext_ref_inst_field");
+  auto* inst_ptr = builder_.CreateLoad(ptr_ty, inst_field, "ext_ref_inst_ptr");
+
   auto* byte_off_ptr = builder_.CreateStructGEP(
-      binding_ty, binding_ptr, 0, "ext_ref_byte_off_ptr");
+      binding_ty, binding_ptr, 1, "ext_ref_byte_off_ptr");
   auto* byte_offset =
       builder_.CreateLoad(i32_ty, byte_off_ptr, "ext_ref_byte_off");
 
-  auto* instance_id_ptr = builder_.CreateStructGEP(
-      binding_ty, binding_ptr, 1, "ext_ref_instance_id_ptr");
-  auto* instance_id =
-      builder_.CreateLoad(i32_ty, instance_id_ptr, "ext_ref_instance_id");
-
-  // Resolve target instance via runtime helper, load inline_base.
-  auto* inst_ptr = builder_.CreateCall(
-      GetLyraResolveInstancePtr(), {GetEnginePointer(), instance_id},
-      "ext_ref_inst_ptr");
   auto* inline_base = EmitLoadInstanceInlineBase(inst_ptr);
   auto* byte_off_64 = builder_.CreateZExt(
       byte_offset, llvm::Type::getInt64Ty(*llvm_context_),
@@ -546,10 +542,11 @@ auto Context::EmitLoadExtRefBindingsPtr() -> llvm::Value* {
 
 auto Context::GetExtRefBindingType() -> llvm::StructType* {
   if (ext_ref_binding_type_ == nullptr) {
+    auto* ptr_ty = llvm::PointerType::getUnqual(*llvm_context_);
     auto* i32_ty = llvm::Type::getInt32Ty(*llvm_context_);
-    // Must match ResolvedExtRefBinding layout: {i32, i32, i32} = 12 bytes.
+    // Must match runtime::ResolvedExtRefBinding layout: {ptr, i32, i32}.
     ext_ref_binding_type_ =
-        llvm::StructType::get(*llvm_context_, {i32_ty, i32_ty, i32_ty});
+        llvm::StructType::get(*llvm_context_, {ptr_ty, i32_ty, i32_ty});
   }
   return ext_ref_binding_type_;
 }

@@ -6,7 +6,7 @@
 #include <string>
 #include <vector>
 
-#include "lyra/common/ext_ref_binding.hpp"
+#include "lyra/common/local_slot_id.hpp"
 #include "lyra/common/selection_step.hpp"
 #include "lyra/runtime/instance_event_state.hpp"
 #include "lyra/runtime/instance_observability.hpp"
@@ -14,6 +14,9 @@
 #include "lyra/runtime/signal_coord.hpp"
 
 namespace lyra::runtime {
+
+// Forward declaration: needed by ResolvedExtRefBinding (stores pointer).
+struct RuntimeInstance;
 
 // Per-instance owned storage.
 // Each RuntimeInstance owns its module-local state. Storage is always
@@ -154,6 +157,24 @@ struct RuntimeLocalFixpointWorkspace {
   std::vector<uint8_t> seen;
 };
 
+// Runtime-facing resolved external-ref binding record.
+// One per external-ref recipe per owning instance. Populated during
+// construction from serialized codegen transport (SerializedExtRefBinding)
+// by resolving target_instance_id to a live RuntimeInstance*.
+//
+// Binary contract: layout must match the LLVM struct type used by
+// GetExtRefBindingType() -- {ptr, i32, i32} on 64-bit.
+struct ResolvedExtRefBinding {
+  RuntimeInstance* target_instance = nullptr;
+  uint32_t target_byte_offset = 0;
+  common::LocalSlotId target_local_signal;
+};
+
+static_assert(sizeof(ResolvedExtRefBinding) == 16);
+static_assert(offsetof(ResolvedExtRefBinding, target_instance) == 0);
+static_assert(offsetof(ResolvedExtRefBinding, target_byte_offset) == 8);
+static_assert(offsetof(ResolvedExtRefBinding, target_local_signal) == 12);
+
 // Runtime-owned representation of one module instance.
 //
 // This is the first-class object model introduced by R1. A RuntimeInstance
@@ -195,10 +216,10 @@ struct RuntimeInstance {
 
   // Per-instance resolved ext-ref binding records.
   // One entry per external-ref recipe in the body. Each record carries
-  // storage slot (address), target instance, and target local signal
+  // target instance pointer, storage byte offset, and target local signal
   // (behavioral identity). Null if the body has no external refs.
   // Part of the binary contract with codegen (accessed via GEP).
-  const common::ResolvedExtRefBinding* ext_ref_bindings = nullptr;
+  const ResolvedExtRefBinding* ext_ref_bindings = nullptr;
   uint32_t ext_ref_binding_count = 0;
 
   // Canonical per-instance attached-process carrier.
@@ -231,6 +252,14 @@ struct RuntimeInstance {
   // Owns the storage that path_c_str points into.
   // Not part of the binary contract with codegen.
   std::string path_storage;
+
+  // Backing storage for resolved ext-ref bindings.
+  // ext_ref_bindings (binary contract ptr) points into this vector.
+  // Populated once by LyraConstructionResultSetExtRefBindings during
+  // construction program ingestion, then never resized or mutated --
+  // pointer stability of ext_ref_bindings depends on this.
+  // Not part of the binary contract with codegen.
+  std::vector<ResolvedExtRefBinding> owned_ext_ref_bindings;
 
   // R5: Per-instance observability state.
   // Populated by Engine::InitModuleInstancesFromBundles. Not part of the

@@ -595,7 +595,8 @@ class Context {
   // Load ext_ref_bindings pointer from RuntimeInstance via instance_ptr_.
   [[nodiscard]] auto EmitLoadExtRefBindingsPtr() -> llvm::Value*;
 
-  // Get the LLVM struct type for ResolvedExtRefBinding: {i32, i32, i32}.
+  // Get the LLVM struct type for runtime::ResolvedExtRefBinding: {ptr, i32,
+  // i32}.
   [[nodiscard]] auto GetExtRefBindingType() -> llvm::StructType*;
 
   // Resolve a WriteTarget to a storage pointer.

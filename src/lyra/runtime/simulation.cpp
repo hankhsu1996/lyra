@@ -872,13 +872,10 @@ extern "C" void LyraMarkDirtyExtRef(
   auto bindings =
       std::span(instance->ext_ref_bindings, instance->ext_ref_binding_count);
   const auto& binding = bindings[ref_id];
-  auto target_instance_id =
-      lyra::runtime::InstanceId{binding.target_instance_id};
-  auto* engine = AsEngine(eng);
-  auto& target = engine->GetInstanceMut(target_instance_id);
   MarkDirtyTyped(
-      engine, MakeLocalRef(&target, binding.target_local_signal.value), off,
-      size);
+      AsEngine(eng),
+      MakeLocalRef(binding.target_instance, binding.target_local_signal.value),
+      off, size);
 }
 
 extern "C" void LyraStorePackedLocal(
@@ -1049,14 +1046,11 @@ extern "C" void LyraScheduleNbaExtRef(
   auto bindings =
       std::span(owner->ext_ref_bindings, owner->ext_ref_binding_count);
   const auto& binding = bindings[ref_id];
-  auto* target = AsEngine(eng)->FindInstanceMut(
-      lyra::runtime::InstanceId{binding.target_instance_id});
+  auto* target = binding.target_instance;
   if (target == nullptr || !target->nba_pending.IsInitialized()) {
     throw lyra::common::InternalError(
         "LyraScheduleNbaExtRef",
-        std::format(
-            "target instance_id {} not found or not initialized",
-            binding.target_instance_id));
+        "target instance not found or not initialized");
   }
   lyra::runtime::NbaNotifySignal notify{lyra::runtime::NbaNotifyLocal{
       .instance = target,
@@ -1072,14 +1066,11 @@ extern "C" void LyraScheduleNbaCanonicalPackedExtRef(
   auto bindings =
       std::span(owner->ext_ref_bindings, owner->ext_ref_binding_count);
   const auto& binding = bindings[ref_id];
-  auto* target = AsEngine(eng)->FindInstanceMut(
-      lyra::runtime::InstanceId{binding.target_instance_id});
+  auto* target = binding.target_instance;
   if (target == nullptr || !target->nba_pending.IsInitialized()) {
     throw lyra::common::InternalError(
         "LyraScheduleNbaCanonicalPackedExtRef",
-        std::format(
-            "target instance_id {} not found or not initialized",
-            binding.target_instance_id));
+        "target instance not found or not initialized");
   }
   lyra::runtime::NbaNotifySignal notify{lyra::runtime::NbaNotifyLocal{
       .instance = target,

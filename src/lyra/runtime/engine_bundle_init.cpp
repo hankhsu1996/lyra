@@ -58,7 +58,7 @@ struct ObservableStorageFact {
   common::SlotId slot_id = {};
   common::SlotId owner_slot_id = {};
   SlotStorageDomain domain = {};
-  InstanceId instance_id = {};
+  RuntimeInstance* instance = nullptr;
   common::InstanceByteOffset instance_rel_off = {};
   uint32_t total_bytes = 0;
   SlotStorageKind storage_kind = {};
@@ -102,7 +102,7 @@ void ForEachBundleObservable(
         .slot_id = RelocateBodyLocalSlot(flat_coord_base, local),
         .owner_slot_id = RelocateObservableOwnerSlot(flat_coord_base, entry),
         .domain = static_cast<SlotStorageDomain>(entry.storage_domain),
-        .instance_id = bundle.instance_id,
+        .instance = bundle.instance,
         .instance_rel_off =
             common::InstanceByteOffset{entry.storage_byte_offset},
         .total_bytes = entry.total_bytes,
@@ -193,7 +193,7 @@ auto BuildModuleTriggerDescriptors(
                   .edge = static_cast<common::EdgeKind>(te.edge),
                   .is_groupable = groupable,
                   .is_local = true,
-                  .instance_id = InstanceId{binding.target_instance_id},
+                  .instance_id = binding.target_instance->instance_id,
               });
         } else if (is_global) {
           if (te.slot_id >= total_slot_count) {
@@ -331,7 +331,7 @@ void Engine::InitModuleInstancesFromBundles(
           slot_meta_registry_.AppendSlot(
               SlotMeta{
                   .domain = SlotStorageDomain::kInstanceOwned,
-                  .owner_instance_id = fact.storage.instance_id,
+                  .owner_instance = fact.storage.instance,
                   .instance_rel_off = static_cast<uint32_t>(
                       fact.storage.instance_rel_off.value),
                   .total_bytes = fact.storage.total_bytes,

@@ -240,7 +240,7 @@ struct ConstructionProgramData {
   // ext_ref_binding_offsets[i] is the index into binding_pool for instance i
   // (UINT32_MAX if that instance has no external refs).
   // ext_ref_binding_counts[i] is the number of bindings for instance i.
-  std::vector<common::ResolvedExtRefBinding> ext_ref_binding_pool;
+  std::vector<common::SerializedExtRefBinding> ext_ref_binding_pool;
   std::vector<uint32_t> ext_ref_binding_offsets;
   std::vector<uint32_t> ext_ref_binding_counts;
   // Flat pool of coord steps for structural child edge metadata.

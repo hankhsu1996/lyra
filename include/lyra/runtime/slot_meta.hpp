@@ -51,16 +51,19 @@ enum class SlotStorageDomain : uint8_t {
 struct RuntimeInstance;
 
 // Metadata for a single design slot's storage location and byte layout.
-// Pure descriptor -- no live runtime pointers. Cross-domain dispatch that
-// needs a RuntimeInstance* must resolve owner_instance_id externally.
+// Per-slot metadata descriptor with direct instance ownership.
+// For kInstanceOwned slots, owner_instance points directly to the owning
+// RuntimeInstance (resolved during init). For kDesignGlobal slots,
+// owner_instance is nullptr.
 struct SlotMeta {
   SlotStorageDomain domain = SlotStorageDomain::kDesignGlobal;
 
   // For kDesignGlobal: arena-absolute byte offset within design_state.
   uint32_t design_base_off = 0;
-  // For kInstanceOwned: stable numeric identity of the owning instance.
-  // Retained for trace metadata, diagnostics, and dump output.
-  InstanceId owner_instance_id = InstanceId{0};
+  // For kInstanceOwned: direct pointer to the owning RuntimeInstance.
+  // Resolved during InitModuleInstancesFromBundles. nullptr for
+  // design-global slots.
+  RuntimeInstance* owner_instance = nullptr;
   // For kInstanceOwned: body-relative byte offset within the instance's
   // inline storage.
   uint32_t instance_rel_off = 0;

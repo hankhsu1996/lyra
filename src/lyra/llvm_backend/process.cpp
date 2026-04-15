@@ -1183,12 +1183,21 @@ void FillTriggerArray(
           "trigger.flags.local");
       builder.CreateStore(with_local, flags_ptr);
 
-      // target_instance_id (field 8): from binding.target_instance_id (field
-      // 1).
-      auto* target_inst_id_ptr = builder.CreateStructGEP(
-          binding_ty, binding_ptr, 1, "binding_target_inst_id_ptr");
-      auto* target_inst_id = builder.CreateLoad(
-          i32_ty, target_inst_id_ptr, "ext_ref_target_inst_id");
+      // target_instance_id (field 8): load instance pointer from
+      // binding field 0, then load instance_id from RuntimeInstance.
+      // This numeric value is a temporary trigger-record transport
+      // field consumed during subscription installation (Cut 4 scope).
+      // Not runtime object-model truth.
+      auto* ptr_ty = llvm::PointerType::getUnqual(context.GetLlvmContext());
+      auto* target_inst_field = builder.CreateStructGEP(
+          binding_ty, binding_ptr, 0, "binding_target_inst_field");
+      auto* target_inst =
+          builder.CreateLoad(ptr_ty, target_inst_field, "ext_ref_target_inst");
+      auto* inst_type = context.GetRuntimeInstanceType();
+      auto* inst_id_field = builder.CreateStructGEP(
+          inst_type, target_inst, 0, "target_inst_id_field");
+      auto* target_inst_id =
+          builder.CreateLoad(i32_ty, inst_id_field, "ext_ref_target_inst_id");
       auto* inst_id_ptr = builder.CreateStructGEP(trigger_type, elem_ptr, 8);
       builder.CreateStore(target_inst_id, inst_id_ptr);
 

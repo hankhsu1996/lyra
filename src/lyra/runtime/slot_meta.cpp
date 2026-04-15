@@ -103,8 +103,19 @@ SlotMetaRegistry::SlotMetaRegistry(const uint32_t* words, uint32_t count) {
     }
     auto domain = static_cast<SlotStorageDomain>(raw_domain);
 
+    // Word table path handles design-global slots only.
+    // Instance-owned slots must be built via AppendSlot with a resolved
+    // RuntimeInstance*; building one from the word table would leave
+    // owner_instance as nullptr, which violates the runtime invariant.
+    if (domain == SlotStorageDomain::kInstanceOwned) {
+      throw common::InternalError(
+          "SlotMetaRegistry", std::format(
+                                  "slot {} has domain=instance in word table; "
+                                  "instance-owned slots must use AppendSlot",
+                                  i));
+    }
+
     uint32_t design_base_off = row[slot_meta_abi::kFieldDesignBaseOff];
-    uint32_t owner_instance_id = row[slot_meta_abi::kFieldOwnerInstanceId];
     uint32_t instance_rel_off = row[slot_meta_abi::kFieldInstanceRelOff];
 
     uint32_t raw_kind = row[slot_meta_abi::kFieldKind];
@@ -171,7 +182,6 @@ SlotMetaRegistry::SlotMetaRegistry(const uint32_t* words, uint32_t count) {
         SlotMeta{
             .domain = domain,
             .design_base_off = design_base_off,
-            .owner_instance_id = {owner_instance_id},
             .instance_rel_off = instance_rel_off,
             .total_bytes = total_bytes,
             .kind = kind,
@@ -234,10 +244,15 @@ void SlotMetaRegistry::DumpSummary(OutputDispatcher& out) const {
           "design_base_off={} total_bytes={}",
           i, KindName(slot.kind), slot.design_base_off, slot.total_bytes);
     } else {
+      // Presentation only: derive numeric id from pointer for human-readable
+      // dump output. Not for correctness paths -- use owner_instance directly.
+      uint32_t display_id = slot.owner_instance != nullptr
+                                ? slot.owner_instance->instance_id.value
+                                : 0U;
       line = std::format(
           "__LYRA_SLOT_META__: slot={} domain=instance kind={} "
-          "owner_instance_id={} instance_rel_off={} total_bytes={}",
-          i, KindName(slot.kind), slot.owner_instance_id, slot.instance_rel_off,
+          "owner_instance={} instance_rel_off={} total_bytes={}",
+          i, KindName(slot.kind), display_id, slot.instance_rel_off,
           slot.total_bytes);
     }
 

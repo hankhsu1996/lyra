@@ -29,13 +29,10 @@ void Engine::ValidateInstanceOwnedSlotMeta() const {
               slot_id, meta.storage_owner_slot_id));
     }
 
-    const auto* inst = FindInstance(meta.owner_instance_id);
-    if (inst == nullptr) {
+    if (meta.owner_instance == nullptr) {
       throw common::InternalError(
           "Engine::ValidateInstanceOwnedSlotMeta",
-          std::format(
-              "slot {} has no instance for owner_instance_id {}", slot_id,
-              meta.owner_instance_id.value));
+          std::format("slot {} has null owner_instance", slot_id));
     }
   }
 }

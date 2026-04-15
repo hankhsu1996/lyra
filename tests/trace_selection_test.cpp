@@ -143,8 +143,8 @@ auto MakeSlotMeta(std::vector<std::pair<uint32_t, uint32_t>> slots)
     const auto& [base_off, total_bytes] = slots[i];
     words.push_back(0);         // domain = kDesignGlobal
     words.push_back(base_off);  // design_base_off
-    words.push_back(0);         // owner_instance_id
-    words.push_back(0);         // instance_rel_off
+    words.push_back(0);  // owner_instance (word table: unused for global)
+    words.push_back(0);  // instance_rel_off
     words.push_back(total_bytes);
     words.push_back(0);  // kind = kPacked2
     words.push_back(0);  // val_off
