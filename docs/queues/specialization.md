@@ -31,11 +31,13 @@ For the stable architecture: see [compilation-model.md](../compilation-model.md)
     - [x] V4b -- Ext-ref storage byte offset: replace flat storage_slot with body-relative target_byte_offset in ext-ref binding
     - [x] V4c -- Connection object/member shape: replace flat src/dst/trigger_slot_id with object_index + byte_offset in connection descriptors
     - [x] V4d -- Delete mixed-domain resolvers and forwarding analysis
-    - [ ] V4e -- Connection body-local recipes: replace design-global connection descriptor table with body-local owner-relative recipes (Self / ChildOrdinal(K)) attached to body descriptor package; constructor materializes runtime connection descriptors from live parent/child pointers during assembly
+    - [x] V4e -- Expression connection body-local compilation: expression connections compiled as body-local shared-body processes with kBoundChildDest writes; pre-bound child context installed by constructor; standalone connection infrastructure deleted (CompiledConnectionExpr, 3-arg dispatch, LyraResolveInstancePtr, \_\_lyra_connection_funcs)
+    - [x] V4e2 -- Child port identity canonicalization: split instance-local child_port_sym into topology locator (child_instance_sym) and definition-level interface coordinate (child_port_ordinal); delete late spec/body/slot repair lookup in design_lower.cpp; port entries preserved in declaration order
     - [ ] V4f -- Ext-ref direct-pointer binding: replace serialized target_instance_id with RuntimeExtRefBinding carrying direct RuntimeInstance\*; atomic across runtime field type, LLVM binding type, constructor materialization, and all codegen/FFI consumers
     - [ ] V4g -- Constructor object model: current constructor is a flat-loop replay machine with no parent-child assembly context; connections bypass the constructor entirely; target model is body-local recipes consumed by constructor with parent-local child pointer view
     - [ ] V4h -- SlotMeta owner_instance_id split: separate truly-global slot metadata from per-instance local metadata; eliminate owner_instance_id as a routing key
     - [ ] V4i -- Connection analysis graph refactor: replace flat SlotId indexing in relay elimination with object/member endpoint keys
+    - [ ] V4j -- Kernelized connection body-local recipes: migrate slot-to-slot kernelized connections from design-global connection descriptor table to body-local owner-relative recipes; constructor materializes runtime connection descriptors from live parent/child pointers
 - [ ] T1 -- Topology-independence validation (scaling gates)
 - [ ] F1 -- Parallel specialization compilation
   - [x] F1-design -- Parallel ownership model
