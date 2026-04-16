@@ -54,8 +54,7 @@ void LyraRunProcessSync(LyraProcessFunc process, void* state);
 // - abi: versioned runtime descriptor with metadata tables and feature flags
 void LyraRunSimulation(
     void** states, uint32_t num_processes, const char** plusargs,
-    uint32_t num_plusargs, const LyraRuntimeAbi* abi,
-    void* run_session_ptr);
+    uint32_t num_plusargs, const LyraRuntimeAbi* abi, void* run_session_ptr);
 
 // $test$plusargs: prefix match against plusargs.
 // Query is LyraStringHandle (matches SV string operand lowering).
