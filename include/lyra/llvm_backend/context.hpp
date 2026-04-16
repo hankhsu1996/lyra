@@ -782,6 +782,13 @@ class Context {
   void EmitStoreDesignPtr(llvm::Value* state_arg, llvm::Value* value);
   auto EmitOutcomePtr(llvm::Value* state_arg) -> llvm::Value*;
 
+  // Expression connection child binding helpers.
+  // EmitExprConnBindingPtr returns a pointer to the ExprConnectionChildBinding
+  // struct within the current process frame. Only valid when the current
+  // process is an expression connection.
+  auto EmitExprConnBindingPtr() -> llvm::Value*;
+  auto GetExprConnBindingType() -> llvm::StructType*;
+
   // Cached pointers (computed in entry block, reused for all place accesses)
   // state_ptr: the function argument pointing to ProcessStateN
   void SetStatePointer(llvm::Value* state_ptr);

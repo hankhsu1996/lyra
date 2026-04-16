@@ -7,6 +7,7 @@
 
 #include "lyra/common/internal_error.hpp"
 #include "lyra/mir/arena.hpp"
+#include "lyra/mir/compiled_module_header.hpp"
 #include "lyra/mir/connection_recipe.hpp"
 #include "lyra/mir/cover_site.hpp"
 #include "lyra/mir/deferred_assertion_site.hpp"
@@ -74,6 +75,12 @@ struct ModuleBody {
   // No concrete target_object. Per-instance resolution happens at construction
   // time via ConstructionInput::instance_ext_ref_bindings.
   std::vector<ExternalAccessRecipe> external_refs;
+
+  // Body-local public port entries. Populated from CompiledModuleHeader
+  // during design lowering. Emitted to runtime for constructor-side
+  // symbolic port -> local slot resolution.
+  // Uses the canonical mir::PortEntry from compiled_module_header.hpp.
+  std::vector<mir::PortEntry> port_entries;
 
   // B2: Child instantiation sites for this body.
   std::vector<ChildInstantiationSite> child_sites;

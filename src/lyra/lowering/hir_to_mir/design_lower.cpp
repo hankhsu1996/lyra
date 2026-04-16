@@ -545,6 +545,12 @@ auto LowerDesign(
       return a.slot.value < b.slot.value;
     });
 
+    // Store port entries on the body for runtime emission.
+    auto& body = result.module_bodies[mir_body_id.value];
+    if (body.port_entries.empty()) {
+      body.port_entries = port_entries;
+    }
+
     auto header = mir::CompiledModuleHeader::Create(
         group.spec_id, group.spec_id.def_id, std::move(port_entries));
     auto header_id = header_database.Add(std::move(header));
@@ -1016,6 +1022,7 @@ auto LowerDesign(
           mir::ConnectionRecipe{
               .kind = kind,
               .child_site = site_lookup.site,
+              .child_port_sym = binding.child_port_sym,
               .child_slot = child_slot,
               .source = source,
               .trigger = trigger,
@@ -1131,9 +1138,9 @@ auto LowerDesign(
 
   // Bind connection recipes against topology.
   // kLocalSlot-sourced recipes -> BoundConnection (kernel entries).
-  // kFunction-sourced recipes -> CompiledConnectionExpr (process cloning).
+  // kFunction-sourced recipes are now handled by
+  // MaterializeExprConnectionProcessSuffix (body-process suffix path).
   std::vector<mir::BoundConnection> bound_connections;
-  std::vector<mir::CompiledConnectionExpr> expr_connections;
   for (uint32_t oi = 0; oi < construction.objects.size(); ++oi) {
     uint32_t body_idx = construction.objects[oi].body_group;
     const auto& body = result.module_bodies[body_idx];
@@ -1143,41 +1150,8 @@ auto LowerDesign(
       if (IsFullyBindableRecipe(recipe)) {
         bound_connections.push_back(BindConnectionRecipe(
             recipe, r, body, common::ObjectIndex{oi}, topo, construction));
-      } else if (
-          recipe.source.kind == mir::ConnectionSourceRecipe::Kind::kFunction) {
-        // This adapter only supports kDriveParentToChild with
-        // kLocalSlot trigger. Other shapes are not yet lowerable.
-        if (recipe.kind != mir::PortConnection::Kind::kDriveParentToChild ||
-            recipe.trigger.kind != mir::TriggerRecipe::Kind::kLocalSlot) {
-          throw common::InternalError(
-              "LowerDesign", std::format(
-                                 "kFunction recipe has unsupported shape "
-                                 "(kind={}, trigger kind={})",
-                                 static_cast<uint8_t>(recipe.kind),
-                                 static_cast<uint8_t>(recipe.trigger.kind)));
-        }
-        if (recipe.child_site.value >= body.child_sites.size()) continue;
-        const auto& site = body.child_sites[recipe.child_site.value];
-        uint32_t parent_bg = construction.objects[oi].body_group;
-        uint32_t child_oi = topo.ResolveChildByDurableId(parent_bg, site.id);
-        // Resolve trigger endpoint (parent-local slot).
-        auto trigger_ep = mir::BoundEndpoint{
-            .object_index = common::ObjectIndex{oi},
-            .local_slot = recipe.trigger.local_slot};
-        expr_connections.push_back(
-            mir::CompiledConnectionExpr{
-                .kind = recipe.kind,
-                .parent_arena = &body.arena,
-                .expr_function = recipe.source.function,
-                .parent_object_index = common::ObjectIndex{oi},
-                .child_object_index = common::ObjectIndex{child_oi},
-                .child_local_slot = recipe.child_slot,
-                .result_type = recipe.result_type,
-                .trigger = trigger_ep,
-                .trigger_edge = recipe.trigger.edge,
-                .child_port_sym = {},
-                .parent_instance_sym = {}});
       }
+      // kFunction-sourced recipes: handled by body-process suffix.
     }
   }
 
@@ -1185,7 +1159,7 @@ auto LowerDesign(
       .design = std::move(result),
       .construction = std::move(construction),
       .bound_connections = std::move(bound_connections),
-      .expr_connections = std::move(expr_connections),
+      .expr_connections = {},
       .body_origins = std::move(body_origins),
       .dpi_export_wrappers = std::move(dpi_export_wrappers),
       .dpi_header = (!decls.dpi_exports.Empty() || !decls.dpi_imports.Empty())

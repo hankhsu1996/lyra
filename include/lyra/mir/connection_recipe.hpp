@@ -153,7 +153,14 @@ struct TriggerRecipe {
 // bound state. The separation from construction execution is hard.
 struct ConnectionRecipe {
   PortConnection::Kind kind = PortConnection::Kind::kDriveParentToChild;
+  // Structural child identity.
   ChildBindingSiteId child_site;
+  // Symbolic child public endpoint identity. Mandatory for expression
+  // connections (source.kind == kFunction). Resolved to concrete slot
+  // and byte offset by the constructor at finalize time.
+  SymbolId child_port_sym = kInvalidSymbolId;
+  // Derived low-level slot identity. Retained for non-expression paths
+  // (kernelized connections) that resolve at compile time.
   common::LocalSlotId child_slot;
   ConnectionSourceRecipe source;
   TriggerRecipe trigger;
@@ -171,9 +178,11 @@ struct ExprConnectionTemplate {
   // Ordinal within the expression connection suffix (0..N-1).
   // Actual body.processes index = num_ordinary + expr_process_suffix_ordinal.
   uint32_t expr_process_suffix_ordinal = 0;
-  // Child destination (body-local).
+  // Structural child identity.
   ChildBindingSiteId child_site;
-  common::LocalSlotId child_slot;
+  // Symbolic child public endpoint identity. Resolved to concrete slot
+  // and byte offset by the constructor at finalize time.
+  SymbolId child_port_sym = kInvalidSymbolId;
   // Value type.
   TypeId result_type;
 };

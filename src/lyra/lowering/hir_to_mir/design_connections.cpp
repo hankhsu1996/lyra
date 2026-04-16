@@ -273,8 +273,7 @@ auto CollectParentLocalReadSlotsFromExprFunction(
 // zero parent-local reads are rejected -- a looping wait with no
 // triggers has no defined meaning.
 auto SynthesizeExprConnectionProcess(
-    mir::Arena& body_arena, mir::FunctionId func_id,
-    common::LocalSlotId child_slot, TypeId result_type,
+    mir::Arena& body_arena, mir::FunctionId func_id, TypeId result_type,
     std::span<const common::LocalSlotId> read_slots) -> mir::Process {
   if (read_slots.empty()) {
     throw common::InternalError(
@@ -300,7 +299,7 @@ auto SynthesizeExprConnectionProcess(
                 .root =
                     mir::PlaceRoot{
                         .kind = mir::PlaceRoot::Kind::kBoundChildDest,
-                        .id = static_cast<int>(child_slot.value),
+                        .id = mir::kBoundChildDestSentinel,
                         .type = result_type},
                 .projections = {}});
         nb.statements.push_back(
@@ -459,15 +458,20 @@ void LowerExprConnectionForBodyImpl(mir::ModuleBody& body) {
         body.arena[func_id], body.arena);
 
     auto proc = SynthesizeExprConnectionProcess(
-        body.arena, func_id, recipe.child_slot, recipe.result_type, read_slots);
+        body.arena, func_id, recipe.result_type, read_slots);
 
     VerifyExprConnectionProcessShape(proc, body.arena);
+    if (!static_cast<bool>(recipe.child_port_sym)) {
+      throw common::InternalError(
+          "LowerExprConnectionForBody",
+          "expression connection recipe missing child_port_sym");
+    }
     pending_expr_processes.push_back(std::move(proc));
     pending_templates.push_back(
         mir::ExprConnectionTemplate{
             .expr_process_suffix_ordinal = 0,
             .child_site = recipe.child_site,
-            .child_slot = recipe.child_slot,
+            .child_port_sym = recipe.child_port_sym,
             .result_type = recipe.result_type,
         });
   }

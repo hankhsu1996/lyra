@@ -31,6 +31,14 @@ struct PlaceRoot {
   uint32_t object_index = 0;  // owning object index (kObjectLocal only)
 };
 
+// Sentinel value for kBoundChildDest PlaceRoot::id.
+// kBoundChildDest slot identity comes exclusively from the
+// ExprConnectionChildBinding in the process frame at runtime.
+// No code may interpret PlaceRoot::id as a child local slot for this
+// root kind. All producers must set id to this sentinel; all consumers
+// must assert it.
+inline constexpr int kBoundChildDestSentinel = -1;
+
 // True for place roots that represent process-local storage (need prologue
 // allocas). False for external storage (module slots, design globals).
 // Shared predicate used by both PlaceCollector and layout place collection.

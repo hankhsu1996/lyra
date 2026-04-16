@@ -316,6 +316,9 @@ class Constructor {
     // connection processes.
     uint32_t instance_index = UINT32_MAX;
     bool is_module = false;
+    // Expression connection child binding descriptor.
+    // Non-null for expression connection processes.
+    const ExprConnChildDesc* expr_conn_child_desc = nullptr;
   };
 
   // Currently active body descriptor view.

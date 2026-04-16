@@ -30,6 +30,7 @@
 #include "lyra/mir/design.hpp"
 #include "lyra/mir/effect.hpp"
 #include "lyra/mir/handle.hpp"
+#include "lyra/mir/module_body.hpp"
 #include "lyra/mir/operand.hpp"
 #include "lyra/mir/place.hpp"
 #include "lyra/mir/place_collect.hpp"
@@ -1044,6 +1045,10 @@ auto AnalyzeCombKernel(const mir::Process& process, const mir::Arena& arena)
         const auto* dest_pid = std::get_if<mir::PlaceId>(ref.dest);
         if (dest_pid == nullptr) return std::nullopt;
         const auto& root = arena[*dest_pid].root;
+        if (root.kind == mir::PlaceRoot::Kind::kBoundChildDest) {
+          // Cross-instance child-bound writes are not comb-kernel eligible.
+          return std::nullopt;
+        }
         if (root.kind == mir::PlaceRoot::Kind::kModuleSlot) {
           write_slots.insert(
               {.scope = mir::SignalRef::Scope::kModuleLocal,
@@ -1507,11 +1512,15 @@ struct ShadowFieldDesc {
 // Build FrameLayout from de-duplicated roots and optional shadow fields.
 // Shadow fields are appended after regular roots in the LLVM struct.
 // frame_name is the semantic type name (e.g., "Body0Frame0", "Conn3Frame").
+// If extra_llvm_type is non-null, it is appended as the last field and
+// *out_extra_field_index is set to its struct field index.
 auto BuildFrameLayout(
     const std::vector<RootInfo>& roots,
     std::span<const ShadowFieldDesc> shadows, const TypeArena& types,
     llvm::LLVMContext& ctx, std::string_view frame_name,
-    const llvm::DataLayout& dl, bool force_two_state) -> FrameLayout {
+    const llvm::DataLayout& dl, bool force_two_state,
+    llvm::Type* extra_llvm_type = nullptr,
+    uint32_t* out_extra_field_index = nullptr) -> FrameLayout {
   FrameLayout layout;
   layout.num_semantic_roots = static_cast<uint32_t>(roots.size());
   std::vector<llvm::Type*> llvm_field_types;
@@ -1539,6 +1548,14 @@ auto BuildFrameLayout(
         GetLlvmTypeForTypeId(ctx, shadow.root_type, types, force_two_state));
   }
 
+  // Region 3: optional trailing extra field (expression connection binding).
+  if (extra_llvm_type != nullptr) {
+    if (out_extra_field_index != nullptr) {
+      *out_extra_field_index = static_cast<uint32_t>(llvm_field_types.size());
+    }
+    llvm_field_types.push_back(extra_llvm_type);
+  }
+
   if (llvm_field_types.empty()) {
     layout.llvm_type = llvm::StructType::create(
         ctx, {llvm::Type::getInt8Ty(ctx)}, std::string(frame_name));
@@ -1547,7 +1564,7 @@ auto BuildFrameLayout(
         ctx, llvm_field_types, std::string(frame_name));
   }
 
-  // Collect 4-state patches over both regions.
+  // Collect 4-state patches over both regions (exclude extra field).
   size_t total_fields = layout.field_types.size();
   if (total_fields > 0) {
     CollectPatches(
@@ -1579,6 +1596,16 @@ auto FrameLayout::GetShadowField(uint32_t slot_id) const
   throw common::InternalError(
       "FrameLayout::GetShadowField",
       std::format("no shadow field for managed slot {}", slot_id));
+}
+
+auto GetExprConnBindingLlvmType(llvm::LLVMContext& ctx) -> llvm::StructType* {
+  if (auto* existing =
+          llvm::StructType::getTypeByName(ctx, "lyra.expr_conn_binding"))
+    return existing;
+  auto* ptr_ty = llvm::PointerType::getUnqual(ctx);
+  auto* i32_ty = llvm::Type::getInt32Ty(ctx);
+  return llvm::StructType::create(
+      ctx, {ptr_ty, i32_ty, i32_ty}, "lyra.expr_conn_binding");
 }
 
 auto IsScalarPatchable(
@@ -1837,6 +1864,28 @@ auto BuildLayout(
     proc_layout.process_index = i;
     proc_layout.has_suspension = ProcessHasSuspension(process);
 
+    // Detect expression connection processes using canonical suffix helper.
+    bool is_expr_conn = false;
+    if (i >= layout.num_module_process_base) {
+      uint32_t mi = sp.module_index.value;
+      const auto* body_ptr = module_plans[mi].body;
+      if (mir::GetExprConnectionCount(*body_ptr) > 0) {
+        const auto& ordinal_map = body_ordinal_maps.at(body_ptr);
+        uint32_t nonfinal_ordinal =
+            GetNonFinalOrdinal(ordinal_map, sp.process_id);
+        is_expr_conn =
+            mir::IsExprConnectionProcessOrdinal(*body_ptr, nonfinal_ordinal);
+      }
+    }
+
+    // Expression connections get an extra trailing field for the
+    // pre-bound child context (ExprConnectionChildBinding).
+    llvm::Type* extra_type = nullptr;
+    uint32_t extra_field_idx = UINT32_MAX;
+    if (is_expr_conn) {
+      extra_type = GetExprConnBindingLlvmType(ctx);
+    }
+
     auto roots = CollectProcessRoots(process, sched_arena, types);
 
     if (proc_layout.has_suspension) {
@@ -1862,7 +1911,8 @@ auto BuildLayout(
       }
 
       proc_layout.frame = BuildFrameLayout(
-          roots, shadows, types, ctx, frame_name, dl, force_two_state);
+          roots, shadows, types, ctx, frame_name, dl, force_two_state,
+          extra_type, &extra_field_idx);
 
       // Structural invariant: every managed slot in the activation plan
       // must resolve to a frame shadow field. This guards against drift
@@ -1875,14 +1925,17 @@ auto BuildLayout(
       }
     } else {
       // Suspension-free: empty frame, roots become allocas at codegen time.
-      proc_layout.frame =
-          BuildFrameLayout({}, {}, types, ctx, frame_name, dl, force_two_state);
+      proc_layout.frame = BuildFrameLayout(
+          {}, {}, types, ctx, frame_name, dl, force_two_state, extra_type,
+          &extra_field_idx);
       proc_layout.alloca_roots.reserve(roots.size());
       for (const auto& root : roots) {
         proc_layout.alloca_roots.push_back(
             AllocaRootInfo{.key = root.key, .type = root.type});
       }
     }
+
+    proc_layout.expr_conn_binding_field_index = extra_field_idx;
 
     proc_layout.state_type = BuildProcessStateType(
         ctx, layout.header_type, proc_layout.frame.llvm_type, state_name);
@@ -2004,6 +2057,16 @@ auto BuildLayout(
           }
         } else {
           auto schema_idx = static_cast<uint32_t>(layout.state_schemas.size());
+          // Compute expression connection binding byte offset if applicable.
+          uint32_t binding_off = UINT32_MAX;
+          const auto& playout = layout.processes[i];
+          if (playout.expr_conn_binding_field_index != UINT32_MAX) {
+            const auto* sl = dl.getStructLayout(playout.frame.llvm_type);
+            binding_off =
+                static_cast<uint32_t>(sizeof(runtime::ProcessFrameHeader)) +
+                static_cast<uint32_t>(sl->getElementOffset(
+                    playout.expr_conn_binding_field_index));
+          }
           layout.state_schemas.push_back({
               .state_size = props.state_size,
               .state_align = props.state_align,
@@ -2011,6 +2074,7 @@ auto BuildLayout(
               .representative_process_index = i,
               .proc_within_body = nonfinal_proc_ordinal,
               .conn_index = std::nullopt,
+              .expr_conn_binding_byte_offset = binding_off,
           });
           module_schema_map[key] = schema_idx;
         }
@@ -2058,6 +2122,21 @@ auto BuildLayout(
                   .total_state_size_bytes = size.total_bytes,
                   .time_unit_power = plan.time_unit_power,
                   .time_precision_power = plan.time_precision_power,
+                  .num_expr_connections =
+                      mir::GetExprConnectionCount(*plan.body),
+                  .port_entries =
+                      [&] {
+                        std::vector<runtime::RuntimePortEntry> rpe;
+                        rpe.reserve(plan.body->port_entries.size());
+                        for (const auto& pe : plan.body->port_entries) {
+                          rpe.push_back(
+                              runtime::RuntimePortEntry{
+                                  .sym_value = pe.sym.value,
+                                  .local_slot = pe.slot.value,
+                                  .dir = static_cast<uint8_t>(pe.dir)});
+                        }
+                        return rpe;
+                      }(),
                   .event_count =
                       static_cast<uint32_t>(plan.body->events.size()),
               });

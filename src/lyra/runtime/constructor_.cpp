@@ -11,6 +11,8 @@
 
 #include "lyra/common/ext_ref_binding.hpp"
 #include "lyra/common/internal_error.hpp"
+#include "lyra/common/selection_step.hpp"
+#include "lyra/runtime/expr_connection_frame.hpp"
 #include "lyra/runtime/frame_allocator.hpp"
 #include "lyra/runtime/owned_storage_handle.hpp"
 #include "lyra/runtime/process_frame.hpp"
@@ -50,6 +52,34 @@ auto DecodeRepertoireCoord(
   common::RepertoireCoord coord;
   coord.reserve(entry.coord_count);
   for (uint32_t ci = 0; ci < entry.coord_count; ++ci) {
+    auto base = word_start + (ci * 3);
+    coord.push_back(
+        common::SelectionStepDesc{
+            .kind = static_cast<common::SelectionStepKind>(coord_pool[base]),
+            .construct_index = coord_pool[base + 1],
+            .alt_index = coord_pool[base + 2],
+        });
+  }
+  return coord;
+}
+
+// Decode a RepertoireCoord from an ExprConnChildDesc's coord pool.
+auto DecodeExprConnCoord(
+    const ExprConnChildDesc& desc, std::span<const uint32_t> coord_pool)
+    -> common::RepertoireCoord {
+  if (desc.coord_step_count == 0) return {};
+  uint32_t word_start = desc.coord_word_offset;
+  uint32_t words_needed = desc.coord_step_count * 3;
+  if (word_start + words_needed > coord_pool.size()) {
+    throw common::InternalError(
+        "DecodeExprConnCoord",
+        std::format(
+            "coord range [{}, {}) exceeds pool size {}", word_start,
+            word_start + words_needed, coord_pool.size()));
+  }
+  common::RepertoireCoord coord;
+  coord.reserve(desc.coord_step_count);
+  for (uint32_t ci = 0; ci < desc.coord_step_count; ++ci) {
     auto base = word_start + (ci * 3);
     coord.push_back(
         common::SelectionStepDesc{
@@ -720,7 +750,29 @@ auto Constructor::CreateChild(
   auto instance_index = static_cast<uint32_t>(staged_instances_.size());
   staged_instances_.push_back(std::move(instance));
 
-  for (uint32_t ei = 0; ei < body_.entries.size(); ++ei) {
+  // Stage module processes. The last num_expr_connections entries are
+  // expression connections that need child binding at finalize time.
+  auto num_entries = static_cast<uint32_t>(body_.entries.size());
+  uint32_t num_expr = current_body_package_->desc->num_expr_connections;
+  if (num_expr > num_entries) {
+    throw common::InternalError(
+        "Constructor::CreateChild",
+        std::format(
+            "num_expr_connections {} > num_entries {}", num_expr, num_entries));
+  }
+  uint32_t num_ordinary = num_entries - num_expr;
+  std::span<const ExprConnChildDesc> expr_child_descs;
+  if (num_expr > 0) {
+    if (current_body_package_->desc->expr_conn_child_descs == nullptr) {
+      throw common::InternalError(
+          "Constructor::CreateChild",
+          "num_expr_connections > 0 but expr_conn_child_descs is null");
+    }
+    expr_child_descs = std::span<const ExprConnChildDesc>(
+        current_body_package_->desc->expr_conn_child_descs, num_expr);
+  }
+
+  for (uint32_t ei = 0; ei < num_entries; ++ei) {
     const auto& entry = body_.entries[ei];
     SharedBodyFn body_fn{};
     std::memcpy(&body_fn, &entry.shared_body_fn, sizeof(body_fn));
@@ -734,12 +786,19 @@ auto Constructor::CreateChild(
               ei));
     }
 
+    const ExprConnChildDesc* child_desc = nullptr;
+    if (ei >= num_ordinary) {
+      uint32_t expr_idx = ei - num_ordinary;
+      child_desc = &expr_child_descs[expr_idx];  // span bounds-checked
+    }
+
     staged_.push_back(
         StagedProcess{
             .schema_index = entry.schema_index,
             .body = body_fn,
             .instance_index = instance_index,
             .is_module = true,
+            .expr_conn_child_desc = child_desc,
         });
   }
 
@@ -1020,6 +1079,139 @@ auto Constructor::Finalize() -> ConstructionResult {
     // Re-validate bundle instance_path against the instance's stable
     // path pointer (set in CreateChild, still valid after unique_ptr move).
     result.instance_bundles[i].instance_path = result.instances[i]->path_c_str;
+  }
+
+  // Expression connection child binding resolution.
+  // Must run AFTER body_desc resolution (above) so child bundles have
+  // resolved body descriptors with inline_slot_offsets and port_entries.
+  for (uint32_t i = 0; i < num_total; ++i) {
+    const auto& proc = staged_[i];
+    if (proc.expr_conn_child_desc == nullptr) continue;
+
+    const auto* desc = proc.expr_conn_child_desc;
+    auto* parent = result.instances[proc.instance_index].get();
+
+    // Validate parent bundle before reading coord pool.
+    const auto& parent_bundle = result.instance_bundles[proc.instance_index];
+    if (parent_bundle.body_desc == nullptr) {
+      throw common::InternalError(
+          "Constructor::Finalize",
+          "expr conn parent bundle has null body_desc");
+    }
+    const auto* parent_body_desc = parent_bundle.body_desc->desc;
+    std::span<const uint32_t> coord_words(
+        parent_body_desc->expr_conn_coord_words,
+        parent_body_desc->num_expr_conn_coord_words);
+    auto coord = DecodeExprConnCoord(*desc, coord_words);
+
+    // Resolve child by structural identity walk on parent->children.
+    RuntimeInstance* child = nullptr;
+    for (const auto& edge : parent->children) {
+      if (edge.coord == coord &&
+          edge.child_ordinal_in_coord == desc->child_ordinal) {
+        child = edge.child;
+        break;
+      }
+    }
+    if (child == nullptr) {
+      throw common::InternalError(
+          "Constructor::Finalize",
+          "expr conn child not found by structural identity");
+    }
+
+    // Validate child ordinal and bundle before dereferencing.
+    if (child->owner_ordinal >= result.instance_bundles.size()) {
+      throw common::InternalError(
+          "Constructor::Finalize",
+          std::format(
+              "expr conn child owner_ordinal {} out of range (bundles={})",
+              child->owner_ordinal, result.instance_bundles.size()));
+    }
+    const auto& child_bundle = result.instance_bundles[child->owner_ordinal];
+    if (child_bundle.body_desc == nullptr) {
+      throw common::InternalError(
+          "Constructor::Finalize", "expr conn child bundle has null body_desc");
+    }
+    const auto* child_body_desc = child_bundle.body_desc->desc;
+
+    // Resolve symbolic child port -> child local slot.
+    // Enforce direction: expression connections write to child inputs.
+    std::span<const RuntimePortEntry> child_ports(
+        child_body_desc->port_entries, child_body_desc->num_port_entries);
+    uint32_t child_local_slot = UINT32_MAX;
+    for (const auto& pe : child_ports) {
+      if (pe.sym_value == desc->child_port_sym_value) {
+        if (pe.dir != 0 && pe.dir != 2) {
+          throw common::InternalError(
+              "Constructor::Finalize",
+              std::format(
+                  "expr conn target port sym {} has dir {} "
+                  "(expected input=0 or inout=2)",
+                  pe.sym_value, pe.dir));
+        }
+        child_local_slot = pe.local_slot;
+        break;
+      }
+    }
+    if (child_local_slot == UINT32_MAX) {
+      throw common::InternalError(
+          "Constructor::Finalize",
+          std::format(
+              "expr conn child port sym {} not found on child descriptor",
+              desc->child_port_sym_value));
+    }
+
+    // Validate slot index against emitted inline slot offset array.
+    if (child_body_desc->inline_slot_offsets == nullptr) {
+      throw common::InternalError(
+          "Constructor::Finalize",
+          "child body descriptor has null inline_slot_offsets");
+    }
+    if (child_body_desc->num_inline_slot_offsets !=
+        child_body_desc->slot_count) {
+      throw common::InternalError(
+          "Constructor::Finalize",
+          std::format(
+              "child num_inline_slot_offsets {} != slot_count {}",
+              child_body_desc->num_inline_slot_offsets,
+              child_body_desc->slot_count));
+    }
+    if (child_local_slot >= child_body_desc->num_inline_slot_offsets) {
+      throw common::InternalError(
+          "Constructor::Finalize",
+          std::format(
+              "child_local_slot {} >= num_inline_slot_offsets {}",
+              child_local_slot, child_body_desc->num_inline_slot_offsets));
+    }
+
+    std::span<const uint32_t> child_offsets(
+        child_body_desc->inline_slot_offsets,
+        child_body_desc->num_inline_slot_offsets);
+    uint32_t child_byte_offset = child_offsets[child_local_slot];
+
+    // Write ExprConnectionChildBinding into the process frame at the
+    // computed byte offset.
+    auto state_size = schemas_[staged_[i].schema_index].state_size;
+    if (desc->binding_byte_offset > state_size ||
+        state_size - desc->binding_byte_offset <
+            sizeof(ExprConnectionChildBinding)) {
+      throw common::InternalError(
+          "Constructor::Finalize",
+          std::format(
+              "expr conn binding write out of bounds: offset {} size {} "
+              "state {}",
+              desc->binding_byte_offset, sizeof(ExprConnectionChildBinding),
+              state_size));
+    }
+    ExprConnectionChildBinding binding_val{};
+    binding_val.child_instance = child;
+    binding_val.child_slot_byte_offset = child_byte_offset;
+    binding_val.child_local_signal = LocalSignalId{child_local_slot};
+    auto frame_span =
+        std::span(static_cast<char*>(result.states[i]), state_size);
+    std::memcpy(
+        frame_span.subspan(desc->binding_byte_offset).data(), &binding_val,
+        sizeof(binding_val));
   }
 
   return result;
