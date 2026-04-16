@@ -26,6 +26,7 @@
 #include <slang/syntax/AllSyntax.h>
 
 #include "lyra/common/child_coord_map.hpp"
+#include "lyra/common/internal_error.hpp"
 #include "lyra/common/module_identity.hpp"
 #include "lyra/common/source_span.hpp"
 #include "lyra/common/symbol.hpp"
@@ -403,10 +404,12 @@ using PortBackingSymbol = std::variant<
 // Holds slang pointers that are only valid during LowerDesign.
 struct PendingPortBinding {
   const slang::ast::InstanceSymbol* parent_instance;
+  const slang::ast::InstanceSymbol* child_instance;
   PortBackingSymbol child_port_backing;
   const slang::ast::Expression* value_expr;
   slang::SourceRange source_range;
   PortBinding::Kind kind;
+  uint32_t child_port_ordinal = UINT32_MAX;
 };
 
 // Collect port bindings for a parent->child instance edge.
@@ -415,7 +418,10 @@ void CollectPendingPortBindings(
     const slang::ast::InstanceSymbol& parent,
     const slang::ast::InstanceSymbol& child, Context* ctx,
     std::vector<PendingPortBinding>& pending) {
-  for (const auto* port_sym : child.body.getPortList()) {
+  const auto& port_list = child.body.getPortList();
+  for (uint32_t port_ordinal = 0;
+       port_ordinal < static_cast<uint32_t>(port_list.size()); ++port_ordinal) {
+    const auto* port_sym = port_list[port_ordinal];
     if (port_sym->kind != slang::ast::SymbolKind::Port) {
       continue;
     }
@@ -489,10 +495,12 @@ void CollectPendingPortBindings(
     pending.push_back(
         PendingPortBinding{
             .parent_instance = &parent,
+            .child_instance = &child,
             .child_port_backing = backing,
             .value_expr = expr,
             .source_range = expr->sourceRange,
             .kind = kind,
+            .child_port_ordinal = port_ordinal,
         });
   }
 }
@@ -507,16 +515,19 @@ auto LowerPortBindings(
   for (const auto& pb : pending) {
     SourceSpan binding_span = ctx->SpanOf(pb.source_range);
 
-    // Look up the child's port symbol (handles both Variable and Net)
-    SymbolId child_port_sym = std::visit(
-        [&registrar](auto* sym) { return registrar.Lookup(*sym); },
-        pb.child_port_backing);
-    if (!child_port_sym) {
-      std::string_view port_name = std::visit(
-          [](auto* sym) { return sym->name; }, pb.child_port_backing);
+    // Validate child port ordinal was captured during collection.
+    if (pb.child_port_ordinal == UINT32_MAX) {
+      throw common::InternalError(
+          "LowerPortBindings", "child_port_ordinal not set");
+    }
+
+    // Look up child instance symbol (topology locator).
+    SymbolId child_instance_sym = registrar.Lookup(*pb.child_instance);
+    if (!child_instance_sym) {
       ctx->sink->Error(
           binding_span,
-          std::format("port binding target '{}' not registered", port_name));
+          std::format(
+              "child instance '{}' not registered", pb.child_instance->name));
       continue;
     }
 
@@ -548,7 +559,8 @@ auto LowerPortBindings(
     // Create binding with explicit rvalue/lvalue fields based on kind
     PortBinding binding{
         .kind = pb.kind,
-        .child_port_sym = child_port_sym,
+        .child_instance_sym = child_instance_sym,
+        .child_port_ordinal = pb.child_port_ordinal,
         .parent_instance_sym = parent_instance_sym,
         .span = binding_span,
         .parent_rvalue = {},

@@ -514,12 +514,25 @@ auto LowerDesign(
     }
 
     // Build port entries from declared ports on the representative module.
+    // Every declared port must resolve to a body-local slot and type.
+    // Port entries are in declared port order -- this is the canonical
+    // interface order used by child_port_ordinal indexing.
     std::vector<mir::PortEntry> port_entries;
     for (const auto& port : rep_mod.ports) {
       auto slot_it = sym_to_slot.find(port.sym);
-      if (slot_it == sym_to_slot.end()) continue;
+      if (slot_it == sym_to_slot.end()) {
+        throw common::InternalError(
+            "LowerDesign", std::format(
+                               "declared port '{}' missing body-local slot",
+                               (*input.symbol_table)[port.sym].name));
+      }
       auto type_it = sym_to_type.find(port.sym);
-      if (type_it == sym_to_type.end()) continue;
+      if (type_it == sym_to_type.end()) {
+        throw common::InternalError(
+            "LowerDesign", std::format(
+                               "declared port '{}' missing body-local type",
+                               (*input.symbol_table)[port.sym].name));
+      }
       mir::PortDirection mir_dir{};
       switch (port.dir) {
         case hir::HirPortDirection::kInput:
@@ -539,11 +552,12 @@ auto LowerDesign(
               .type = type_it->second,
               .dir = mir_dir});
     }
-
-    // Sort by slot value for deterministic ordering.
-    std::ranges::sort(port_entries, [](const auto& a, const auto& b) {
-      return a.slot.value < b.slot.value;
-    });
+    if (port_entries.size() != rep_mod.ports.size()) {
+      throw common::InternalError(
+          "LowerDesign", std::format(
+                             "port_entries size {} != declared port count {}",
+                             port_entries.size(), rep_mod.ports.size()));
+    }
 
     // Store port entries on the body for runtime emission.
     auto& body = result.module_bodies[mir_body_id.value];
@@ -939,39 +953,57 @@ auto LowerDesign(
     }
 
     for (const auto& binding : input.binding_plan->bindings) {
-      // Step 1: Classify child port. Must be resolver-addressable
-      // (body-local). Non-body-local ports are unsupported.
-      if (!resolver.Contains(binding.child_port_sym)) continue;
-
-      // Step 2: Find child instance and site from port variable.
-      SymbolId child_instance_sym =
-          resolver.FindOwnerInstance(binding.child_port_sym);
-      auto site_it = child_sym_to_site.find(child_instance_sym);
+      // Step 1: Route to child site via child instance identity.
+      auto site_it = child_sym_to_site.find(binding.child_instance_sym);
       if (site_it == child_sym_to_site.end()) continue;
       const auto& site_lookup = site_it->second;
 
-      // Step 3: Get child port slot (guaranteed by Contains check).
-      auto child_endpoint = resolver.ResolveByVariable(binding.child_port_sym);
-      common::LocalSlotId child_slot = child_endpoint.local_slot;
-      TypeId result_type = (*input.symbol_table)[binding.child_port_sym].type;
+      // Step 2: Resolve canonical child port from ordinal.
+      // Read child_spec directly from the child site record,
+      // not through rep_child_module_index -> spec_map.
+      auto csb_it = child_sites_by_body.find(site_lookup.parent_body_group);
+      if (csb_it == child_sites_by_body.end() ||
+          site_lookup.site.value >= csb_it->second.size()) {
+        throw common::InternalError(
+            "LowerDesign",
+            std::format(
+                "child site {} out of range for parent body {}",
+                site_lookup.site.value, site_lookup.parent_body_group));
+      }
+      const auto& child_site = csb_it->second[site_lookup.site.value];
+      auto child_body_it = spec_to_body.find(child_site.child_spec);
+      if (child_body_it == spec_to_body.end()) {
+        throw common::InternalError(
+            "LowerDesign", "child spec has no lowered body");
+      }
+      const auto& child_body =
+          result.module_bodies[child_body_it->second.value];
+
+      if (binding.child_port_ordinal >= child_body.port_entries.size()) {
+        throw common::InternalError(
+            "LowerDesign",
+            std::format(
+                "child_port_ordinal {} out of range for child body ports {}",
+                binding.child_port_ordinal, child_body.port_entries.size()));
+      }
+
+      const auto& child_pe =
+          child_body.port_entries[binding.child_port_ordinal];
+      common::LocalSlotId child_slot = child_pe.slot;
+      TypeId result_type = child_pe.type;
 
       auto kind =
           (binding.kind == ast_to_hir::PortBinding::Kind::kDriveParentToChild)
               ? mir::PortConnection::Kind::kDriveParentToChild
               : mir::PortConnection::Kind::kDriveChildToParent;
 
-      // Step 4: Resolve parent-side expression.
-      // Only simple NameRef with resolver-addressable (body-local)
-      // symbols are in the supported subset. Non-NameRef (complex
-      // expressions) and non-body-local NameRef (design-global,
-      // hierarchical) are unsupported and left to the old path.
+      // Step 3: Resolve parent-side expression.
       mir::ConnectionSourceRecipe source;
       mir::TriggerRecipe trigger;
 
       if (kind == mir::PortConnection::Kind::kDriveParentToChild) {
         const hir::Expression& expr = (*input.hir_arena)[binding.parent_rvalue];
         if (expr.kind == hir::ExpressionKind::kNameRef) {
-          // Simple NameRef: kLocalSlot source.
           const auto& name_data =
               std::get<hir::NameRefExpressionData>(expr.data);
           if (!resolver.Contains(name_data.symbol)) continue;
@@ -981,7 +1013,6 @@ auto LowerDesign(
           trigger = mir::TriggerRecipe::FromLocalSlot(
               parent_endpoint.local_slot, common::EdgeKind::kAnyChange);
         } else {
-          // Complex expression: compile as body-local function.
           auto any_ref =
               FindAnyNameRef(binding.parent_rvalue, *input.hir_arena);
           if (!any_ref || !resolver.Contains(*any_ref)) continue;
@@ -1022,7 +1053,7 @@ auto LowerDesign(
           mir::ConnectionRecipe{
               .kind = kind,
               .child_site = site_lookup.site,
-              .child_port_sym = binding.child_port_sym,
+              .child_port_sym = child_pe.sym,
               .child_slot = child_slot,
               .source = source,
               .trigger = trigger,
