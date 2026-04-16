@@ -17,6 +17,12 @@ struct PlaceRoot {
     kModuleSlot,    // body-local storage (0-based within ModuleBody)
     kDesignGlobal,  // design-global storage (packages, design-level processes)
     kObjectLocal,   // cross-instance body-local storage (object_index, id)
+    // Narrow migration-only representation:
+    // valid only for mutation-target plumbing of synthesized
+    // expression-connection writes. Must not be produced by parsing,
+    // lowering of ordinary expressions, or trigger analysis.
+    kBoundChildDest,  // write-only child destination via pre-bound frame
+                      // context
   };
 
   Kind kind;
@@ -36,6 +42,7 @@ struct PlaceRoot {
     case PlaceRoot::Kind::kModuleSlot:
     case PlaceRoot::Kind::kDesignGlobal:
     case PlaceRoot::Kind::kObjectLocal:
+    case PlaceRoot::Kind::kBoundChildDest:
       return false;
   }
   return false;
@@ -43,6 +50,7 @@ struct PlaceRoot {
 
 // True for place roots that hold a readable value (variables, slots).
 // False for compiler-generated write-only staging temps.
+// kBoundChildDest is write-only (expression connection child destination).
 [[nodiscard]] inline auto IsReadableRoot(PlaceRoot::Kind kind) -> bool {
   switch (kind) {
     case PlaceRoot::Kind::kLocal:
@@ -51,6 +59,7 @@ struct PlaceRoot {
     case PlaceRoot::Kind::kObjectLocal:
       return true;
     case PlaceRoot::Kind::kTemp:
+    case PlaceRoot::Kind::kBoundChildDest:
       return false;
   }
   return false;

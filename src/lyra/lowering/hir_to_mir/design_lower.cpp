@@ -24,6 +24,7 @@
 #include "lyra/lowering/hir_to_mir/bound_hierarchy.hpp"
 #include "lyra/lowering/hir_to_mir/context.hpp"
 #include "lyra/lowering/hir_to_mir/design.hpp"
+#include "lyra/lowering/hir_to_mir/design_connections.hpp"
 #include "lyra/lowering/hir_to_mir/design_internal.hpp"
 #include "lyra/lowering/hir_to_mir/dpi_header.hpp"
 #include "lyra/lowering/hir_to_mir/lower.hpp"
@@ -1029,6 +1030,62 @@ auto LowerDesign(
   }
   for (auto& [body_id_val, recipes] : connection_recipes_by_body) {
     result.module_bodies[body_id_val].connection_recipes = std::move(recipes);
+  }
+
+  // Synthesize expression connection processes per body.
+  // Called after ALL ordinary processes exist and ALL recipes are on the body.
+  // This is the final mutation of body.processes and
+  // body.expr_connection_templates. No later phase may append or rewrite
+  // expression connection processes. design_lower.cpp does not construct
+  // execution artifacts itself -- it calls one body-local function per body.
+  for (auto& body : result.module_bodies) {
+    MaterializeExprConnectionProcessSuffix(body);
+  }
+  // Postcondition: verify the full expression connection suffix invariant.
+  for (const auto& body : result.module_bodies) {
+    // Recipe count matches template count.
+    uint32_t func_recipe_count = 0;
+    for (const auto& recipe : body.connection_recipes) {
+      if (recipe.source.kind == mir::ConnectionSourceRecipe::Kind::kFunction)
+        ++func_recipe_count;
+    }
+    if (func_recipe_count != body.expr_connection_templates.size()) {
+      throw common::InternalError(
+          "LowerDesign",
+          std::format(
+              "expr_connection_templates count {} != kFunction "
+              "recipe count {}",
+              body.expr_connection_templates.size(), func_recipe_count));
+    }
+    // Suffix arithmetic is consistent.
+    auto ordinary = mir::GetOrdinaryProcessCount(body);
+    auto expr = mir::GetExprConnectionCount(body);
+    auto total = static_cast<uint32_t>(body.processes.size());
+    if (ordinary + expr != total) {
+      throw common::InternalError(
+          "LowerDesign",
+          std::format(
+              "suffix invariant: ordinary {} + expr {} != total {}", ordinary,
+              expr, total));
+    }
+    // Suffix ordinals are dense and match append order.
+    for (uint32_t i = 0; i < expr; ++i) {
+      const auto& tmpl = body.expr_connection_templates[i];
+      if (tmpl.expr_process_suffix_ordinal != i) {
+        throw common::InternalError(
+            "LowerDesign",
+            std::format(
+                "suffix ordinal mismatch: template[{}] has ordinal {}", i,
+                tmpl.expr_process_suffix_ordinal));
+      }
+      auto ordinal = mir::GetExprConnectionProcessOrdinal(body, i);
+      if (ordinal >= total) {
+        throw common::InternalError(
+            "LowerDesign",
+            std::format(
+                "suffix ordinal {} out of range (total={})", ordinal, total));
+      }
+    }
   }
 
   // B2: Build topology index and resolve external ref recipes.

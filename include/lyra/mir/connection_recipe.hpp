@@ -1,7 +1,6 @@
 #pragma once
 
 #include <cstdint>
-#include <vector>
 
 #include "lyra/common/edge_kind.hpp"
 #include "lyra/common/local_slot_id.hpp"
@@ -10,7 +9,6 @@
 #include "lyra/common/symbol_types.hpp"
 #include "lyra/common/type.hpp"
 #include "lyra/mir/child_binding_site_id.hpp"
-#include "lyra/mir/compiled_module_header.hpp"
 #include "lyra/mir/external_ref.hpp"
 #include "lyra/mir/handle.hpp"
 #include "lyra/mir/port_connection.hpp"
@@ -66,15 +64,27 @@ struct ConnectionSourceRecipe {
 
   static auto FromLocalSlot(common::LocalSlotId slot)
       -> ConnectionSourceRecipe {
-    return {.kind = Kind::kLocalSlot, .local_slot = slot};
+    return {
+        .kind = Kind::kLocalSlot,
+        .local_slot = slot,
+        .function = {},
+        .external_ref = {}};
   }
 
   static auto FromFunction(FunctionId fn) -> ConnectionSourceRecipe {
-    return {.kind = Kind::kFunction, .function = fn};
+    return {
+        .kind = Kind::kFunction,
+        .local_slot = {},
+        .function = fn,
+        .external_ref = {}};
   }
 
   static auto FromExternalRef(ExternalRefId ref) -> ConnectionSourceRecipe {
-    return {.kind = Kind::kExternalRef, .external_ref = ref};
+    return {
+        .kind = Kind::kExternalRef,
+        .local_slot = {},
+        .function = {},
+        .external_ref = ref};
   }
 };
 
@@ -102,17 +112,32 @@ struct TriggerRecipe {
 
   static auto FromLocalSlot(common::LocalSlotId slot, common::EdgeKind e)
       -> TriggerRecipe {
-    return {.kind = Kind::kLocalSlot, .local_slot = slot, .edge = e};
+    return {
+        .kind = Kind::kLocalSlot,
+        .local_slot = slot,
+        .external_ref = {},
+        .function = {},
+        .edge = e};
   }
 
   static auto FromChildSlot(common::LocalSlotId slot, common::EdgeKind e)
       -> TriggerRecipe {
-    return {.kind = Kind::kChildSlot, .local_slot = slot, .edge = e};
+    return {
+        .kind = Kind::kChildSlot,
+        .local_slot = slot,
+        .external_ref = {},
+        .function = {},
+        .edge = e};
   }
 
   static auto FromExternalRef(ExternalRefId ref, common::EdgeKind e)
       -> TriggerRecipe {
-    return {.kind = Kind::kExternalRef, .external_ref = ref, .edge = e};
+    return {
+        .kind = Kind::kExternalRef,
+        .local_slot = {},
+        .external_ref = ref,
+        .function = {},
+        .edge = e};
   }
 };
 
@@ -134,6 +159,23 @@ struct ConnectionRecipe {
   TriggerRecipe trigger;
   TypeId result_type;
   common::OriginId origin = common::OriginId::Invalid();
+};
+
+// Body-local template for an expression connection process.
+// Created by LowerExprConnectionForBody during MIR construction.
+// Contains no whole-design object identity. Parallel to the expression
+// connection suffix of body.processes:
+//   body.processes[body.processes.size() - expr_connection_templates.size() +
+//   i] corresponds to expr_connection_templates[i].
+struct ExprConnectionTemplate {
+  // Ordinal within the expression connection suffix (0..N-1).
+  // Actual body.processes index = num_ordinary + expr_process_suffix_ordinal.
+  uint32_t expr_process_suffix_ordinal = 0;
+  // Child destination (body-local).
+  ChildBindingSiteId child_site;
+  common::LocalSlotId child_slot;
+  // Value type.
+  TypeId result_type;
 };
 
 }  // namespace lyra::mir

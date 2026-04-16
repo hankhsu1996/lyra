@@ -40,8 +40,12 @@ static_assert(std::is_standard_layout_v<BodyProcessEntry>);
 // Codegen emits the header and process entries as separate contiguous
 // LLVM globals. The runtime constructor receives them as two arguments:
 // one BodyRealizationDesc header and one span of BodyProcessEntry.
+struct ExprConnChildDesc;
+
 struct BodyRealizationDesc {
   // Body-local module-process repertoire count (non-final processes).
+  // Includes both ordinary and expression connection processes.
+  // The last num_expr_connections entries are expression connections.
   uint32_t num_processes = 0;
   // Body's slot count, used by the constructor to advance the
   // running slot-base counter per instance.
@@ -60,9 +64,17 @@ struct BodyRealizationDesc {
   // L8a: Body-local named event count. Used by InitModuleInstancesFromBundles
   // to size per-instance event state.
   uint32_t event_count = 0;
+  // Expression connection transport fields.
+  // entries[num_processes - num_expr_connections .. num_processes) is the
+  // expression suffix. Parallel ExprConnChildDesc provides child binding
+  // metadata for each.
+  const ExprConnChildDesc* expr_conn_child_descs = nullptr;
+  const uint32_t* expr_conn_coord_words = nullptr;
+  uint32_t num_expr_conn_coord_words = 0;
+  uint32_t num_expr_connections = 0;
 };
 
-static_assert(sizeof(BodyRealizationDesc) == 40);
+static_assert(sizeof(BodyRealizationDesc) == 64);
 static_assert(offsetof(BodyRealizationDesc, num_processes) == 0);
 static_assert(offsetof(BodyRealizationDesc, slot_count) == 4);
 static_assert(offsetof(BodyRealizationDesc, inline_state_size_bytes) == 8);
@@ -71,8 +83,42 @@ static_assert(offsetof(BodyRealizationDesc, total_state_size_bytes) == 24);
 static_assert(offsetof(BodyRealizationDesc, time_unit_power) == 32);
 static_assert(offsetof(BodyRealizationDesc, time_precision_power) == 33);
 static_assert(offsetof(BodyRealizationDesc, event_count) == 36);
+static_assert(offsetof(BodyRealizationDesc, expr_conn_child_descs) == 40);
+static_assert(offsetof(BodyRealizationDesc, expr_conn_coord_words) == 48);
+static_assert(offsetof(BodyRealizationDesc, num_expr_conn_coord_words) == 56);
+static_assert(offsetof(BodyRealizationDesc, num_expr_connections) == 60);
 static_assert(std::is_trivially_copyable_v<BodyRealizationDesc>);
 static_assert(std::is_standard_layout_v<BodyRealizationDesc>);
+
+// Per-expression-connection child binding metadata.
+// Emitted per body alongside BodyProcessEntry. Constructor reads this to
+// resolve the child instance and write the ExprConnectionChildBinding into
+// the process frame.
+struct ExprConnChildDesc {
+  // Structural child identity: RepertoireCoord encoded as 3 uint32_t words
+  // per SelectionStepDesc {kind, construct_index, alt_index} in a flat pool.
+  // Encoding matches ConstructionProgramEntry (constructor_.cpp:35-59).
+  uint32_t coord_word_offset = 0;
+  uint32_t coord_step_count = 0;
+  uint32_t child_ordinal = 0;
+  // Child-local destination metadata.
+  uint32_t child_slot_byte_offset = 0;
+  uint32_t child_local_signal_id = 0;
+  // Byte offset of ExprConnectionChildBinding within the process state.
+  // Computed at layout time from LLVM DataLayout. Constructor writes the
+  // binding at states[i] + binding_byte_offset.
+  uint32_t binding_byte_offset = 0;
+};
+
+static_assert(sizeof(ExprConnChildDesc) == 24);
+static_assert(offsetof(ExprConnChildDesc, coord_word_offset) == 0);
+static_assert(offsetof(ExprConnChildDesc, coord_step_count) == 4);
+static_assert(offsetof(ExprConnChildDesc, child_ordinal) == 8);
+static_assert(offsetof(ExprConnChildDesc, child_slot_byte_offset) == 12);
+static_assert(offsetof(ExprConnChildDesc, child_local_signal_id) == 16);
+static_assert(offsetof(ExprConnChildDesc, binding_byte_offset) == 20);
+static_assert(std::is_trivially_copyable_v<ExprConnChildDesc>);
+static_assert(std::is_standard_layout_v<ExprConnChildDesc>);
 
 // Design-level constructor-side definition artifact for connection processes.
 //
