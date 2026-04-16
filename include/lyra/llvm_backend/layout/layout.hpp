@@ -791,7 +791,6 @@ struct LayoutModulePlan {
 auto BuildLayout(
     std::span<const mir::ProcessId> init_processes,
     std::vector<ConnectionKernelEntry> precollected_connection_kernels,
-    std::vector<mir::ProcessId> non_kernelized_connection_processes,
     std::span<const LayoutModulePlan> module_plans,
     std::span<const std::span<const mir::ProcessId>> module_body_processes,
     const mir::Design& design, const mir::Arena& design_arena,

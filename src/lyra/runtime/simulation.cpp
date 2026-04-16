@@ -184,18 +184,14 @@ extern "C" void LyraTriggerEvent(
 namespace {
 
 struct ProcessDispatchContext {
-  std::span<LyraProcessFunc> connection_procs;
   std::span<void*> states;
-  uint32_t num_connection;
 };
 
 void DescriptorProcessDispatch(
     void* ctx, lyra::runtime::Engine& eng, lyra::runtime::ProcessHandle handle,
     lyra::runtime::ResumePoint resume) {
   auto* dctx = static_cast<ProcessDispatchContext*>(ctx);
-  lyra::runtime::DispatchAndHandleActivation(
-      dctx->connection_procs, dctx->states, dctx->num_connection, eng, handle,
-      resume);
+  lyra::runtime::DispatchAndHandleActivation(dctx->states, eng, handle, resume);
 }
 
 auto SetupAndRunSimulation(
@@ -248,9 +244,9 @@ auto SetupAndRunSimulation(
 }  // namespace
 
 extern "C" void LyraRunSimulation(
-    LyraProcessFunc* connection_funcs, void** states_raw,
-    uint32_t num_processes, const char** plusargs_raw, uint32_t num_plusargs,
-    const LyraRuntimeAbi* abi, void* run_session_ptr) {
+    void** states_raw, uint32_t num_processes, const char** plusargs_raw,
+    uint32_t num_plusargs, const LyraRuntimeAbi* abi,
+    void* run_session_ptr) {
   if (num_processes > 0 && states_raw == nullptr) {
     throw lyra::common::InternalError(
         "LyraRunSimulation", "states_raw is null");
@@ -271,28 +267,12 @@ extern "C" void LyraRunSimulation(
   using lyra::runtime::FeatureFlag;
   auto flags = static_cast<FeatureFlag>(feature_flags);
 
-  // Dispatch partition from ABI. Process binding is constructor-owned;
-  // this is the only process topology fact read from the ABI after H2.
-  //
-  // Dispatch partition contract:
-  //   [0, num_connection) = connection processes (3-arg direct call)
-  //   [num_connection, num_processes) = module processes (frame-header
-  //   dispatch)
   if (abi == nullptr) {
     throw lyra::common::InternalError("LyraRunSimulation", "abi is null");
   }
 
-  uint32_t num_connection = abi->num_connection_processes;
-
-  if (num_connection > 0 && connection_funcs == nullptr) {
-    throw lyra::common::InternalError(
-        "LyraRunSimulation", "connection_funcs is null");
-  }
-  auto connection_procs = std::span(connection_funcs, num_connection);
   ProcessDispatchContext dispatch_ctx{
-      .connection_procs = connection_procs,
       .states = states,
-      .num_connection = num_connection,
   };
   auto* session = static_cast<lyra::runtime::RunSession*>(run_session_ptr);
   lyra::runtime::Engine engine(
@@ -387,8 +367,8 @@ extern "C" void LyraRunSimulation(
     if (abi->comb_kernel_words != nullptr && abi->num_comb_kernel_words > 0 &&
         abi->instance_bundles == nullptr) {
       engine.InitCombKernels(
-          std::span(abi->comb_kernel_words, abi->num_comb_kernel_words),
-          num_connection, states_raw);
+          std::span(abi->comb_kernel_words, abi->num_comb_kernel_words), 0,
+          states_raw);
     }
 
     // Trigger registry finalization. Always called: merges pending
@@ -398,7 +378,7 @@ extern "C" void LyraRunSimulation(
             ? std::span(
                   abi->process_trigger_words, abi->num_process_trigger_words)
             : std::span<const uint32_t>{},
-        num_connection, states_raw);
+        0, states_raw);
 
     // Wait-site metadata
     if (abi->wait_site_words != nullptr && abi->wait_site_word_count > 0) {
@@ -1075,15 +1055,6 @@ extern "C" void LyraScheduleNbaCanonicalPackedExtRef(
       .signal = lyra::runtime::LocalSignalId{binding.target_local_signal.value},
   }};
   AsEngine(eng)->ScheduleNbaCanonicalPacked(wp, nb, vp, up, rsz, sro, notify);
-}
-
-// R5: Resolve RuntimeInstance* from InstanceId at runtime.
-// Used by codegen for cross-instance writes (design-level connection
-// processes writing to child instance signals).
-extern "C" auto LyraResolveInstancePtr(void* eng, uint32_t instance_id)
-    -> void* {
-  if (eng == nullptr) return nullptr;
-  return AsEngine(eng)->FindInstanceMut(lyra::runtime::InstanceId{instance_id});
 }
 
 extern "C" auto LyraIsTraceObservedLocal(void* eng, void* inst, uint32_t id)

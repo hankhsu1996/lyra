@@ -49,7 +49,6 @@ auto Context::ComputePlacePointer(
   llvm::Value* ptr = nullptr;
   if (resolved.root.kind == mir::PlaceRoot::Kind::kModuleSlot ||
       resolved.root.kind == mir::PlaceRoot::Kind::kDesignGlobal ||
-      resolved.root.kind == mir::PlaceRoot::Kind::kObjectLocal ||
       resolved.root.kind == mir::PlaceRoot::Kind::kBoundChildDest) {
     ptr = GetSlotRootPointer(resolved.root);
   } else {
@@ -398,31 +397,6 @@ auto Context::EmitSignalCoord(const mir::SignalRef& sig) -> SignalCoordExpr {
             "module-scoped code must use specialization-local addressing",
             sig.id));
   }
-  if (sig.scope == mir::SignalRef::Scope::kObjectLocal) {
-    auto& builder = GetBuilder();
-    auto* i32_ty = llvm::Type::getInt32Ty(GetLlvmContext());
-    auto* target_inst = builder.CreateCall(
-        GetLyraResolveInstancePtr(),
-        {GetEnginePointer(), llvm::ConstantInt::get(i32_ty, sig.object_index)});
-    return SignalCoordExpr::LocalWithInstance(
-        sig.id, runtime::InstanceId{sig.object_index}, target_inst);
-  }
-  // R5: Design-global signals that are actually instance-owned must emit
-  // local identity with a resolved target instance pointer. This happens
-  // for design-level connection processes writing to child port signals.
-  if (sig.id >= facts_->layout->num_package_slots) {
-    auto owner = ResolveInstanceOwnedFlatSlot(
-        facts_->layout->num_package_slots, facts_->layout->instance_slot_counts,
-        sig.id);
-    auto& builder = GetBuilder();
-    auto* i32_ty = llvm::Type::getInt32Ty(GetLlvmContext());
-    auto* target_inst = builder.CreateCall(
-        GetLyraResolveInstancePtr(),
-        {GetEnginePointer(),
-         llvm::ConstantInt::get(i32_ty, owner.instance_id.value)});
-    return SignalCoordExpr::LocalWithInstance(
-        owner.local_signal_id.value, owner.instance_id, target_inst);
-  }
   return SignalCoordExpr::Global(sig.id);
 }
 
@@ -452,9 +426,6 @@ auto Context::EmitMutationTargetSignalCoord(const mir::SignalRef& sig)
         ValidateDesignGlobalSignal(sig, facts_->layout->design));
   }
   if (sig.scope == mir::SignalRef::Scope::kModuleLocal) {
-    return EmitSignalCoord(sig);
-  }
-  if (sig.scope == mir::SignalRef::Scope::kObjectLocal) {
     return EmitSignalCoord(sig);
   }
   throw common::InternalError(
@@ -594,21 +565,6 @@ auto Context::GetSlotRootPointer(const mir::PlaceRoot& root) -> llvm::Value* {
   }
   if (root.kind == mir::PlaceRoot::Kind::kDesignGlobal) {
     return GetGlobalSlotPointer(static_cast<uint32_t>(root.id));
-  }
-  if (root.kind == mir::PlaceRoot::Kind::kObjectLocal) {
-    auto body_group = facts_->layout->instance_body_groups[root.object_index];
-    const auto& bri = facts_->layout->body_realization_infos[body_group];
-    auto local_slot = static_cast<uint32_t>(root.id);
-    auto byte_off = bri.body_layout.inline_offsets[local_slot];
-    auto* i32_ty = llvm::Type::getInt32Ty(*llvm_context_);
-    auto* inst_ptr = builder_.CreateCall(
-        GetLyraResolveInstancePtr(),
-        {GetEnginePointer(),
-         llvm::ConstantInt::get(i32_ty, root.object_index)});
-    auto* inline_base = EmitLoadInstanceInlineBase(inst_ptr);
-    return builder_.CreateGEP(
-        llvm::Type::getInt8Ty(*llvm_context_), inline_base,
-        builder_.getInt64(byte_off.value), "obj_local_slot_ptr");
   }
   if (root.kind == mir::PlaceRoot::Kind::kBoundChildDest) {
     if (root.id != mir::kBoundChildDestSentinel) {
@@ -1074,14 +1030,6 @@ auto Context::EmitIsTraceObserved(const mir::SignalRef& sig) -> llvm::Value* {
     return builder.CreateCall(
         GetLyraIsTraceObservedGlobal(),
         {GetEnginePointer(), llvm::ConstantInt::get(i32_ty, global_slot)});
-  }
-  if (sig.scope == mir::SignalRef::Scope::kObjectLocal) {
-    auto* inst_ptr = builder.CreateCall(
-        GetLyraResolveInstancePtr(),
-        {GetEnginePointer(), llvm::ConstantInt::get(i32_ty, sig.object_index)});
-    return builder.CreateCall(
-        GetLyraIsTraceObservedLocal(),
-        {GetEnginePointer(), inst_ptr, llvm::ConstantInt::get(i32_ty, sig.id)});
   }
   if (sig.scope == mir::SignalRef::Scope::kBoundChildDest) {
     auto* binding_ptr = EmitExprConnBindingPtr();

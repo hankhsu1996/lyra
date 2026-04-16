@@ -293,7 +293,6 @@ auto DumpLlvm(const CompilationInput& input) -> int {
       .force_two_state = input.two_state,
       .dpi_export_wrappers = &mir_result->dpi_export_wrappers,
       .bound_connections = &mir_result->bound_connections,
-      .expr_connections = &mir_result->expr_connections,
   };
   std::expected<lowering::mir_to_llvm::LoweringResult, Diagnostic> llvm_result;
   {

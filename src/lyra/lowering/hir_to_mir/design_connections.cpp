@@ -117,7 +117,7 @@ auto BuildPerInstancePlaces(
 // Lower a parent expression as a body-local function in the parent body.
 // The function reads parent values through kModuleSlot and returns the
 // computed value. The child endpoint is NOT part of the function body --
-// it's metadata on the CompiledConnectionExpr.
+// it's metadata on the ConnectionRecipe.
 auto LowerExprAsBodyFunction(
     hir::ExpressionId expr_id, TypeId result_type, const LoweringInput& input,
     const DesignDeclarations& decls, mir::Arena& body_arena,

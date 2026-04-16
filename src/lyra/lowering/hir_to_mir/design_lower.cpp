@@ -1159,7 +1159,6 @@ auto LowerDesign(
       .design = std::move(result),
       .construction = std::move(construction),
       .bound_connections = std::move(bound_connections),
-      .expr_connections = {},
       .body_origins = std::move(body_origins),
       .dpi_export_wrappers = std::move(dpi_export_wrappers),
       .dpi_header = (!decls.dpi_exports.Empty() || !decls.dpi_imports.Empty())

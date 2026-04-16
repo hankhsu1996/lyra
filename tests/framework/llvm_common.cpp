@@ -378,7 +378,6 @@ auto PrepareLlvmModule(
       .main_abi = main_abi,
       .dpi_export_wrappers = &mir_result->dpi_export_wrappers,
       .bound_connections = &mir_result->bound_connections,
-      .expr_connections = &mir_result->expr_connections,
   };
 
   auto llvm_result = lowering::mir_to_llvm::LowerMirToLlvm(llvm_input);

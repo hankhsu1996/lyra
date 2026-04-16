@@ -602,16 +602,16 @@ auto BuildRuntimeAbi(
   return abi_alloca;
 }
 
-auto EmitRunSimulation(
-    Context& context, llvm::Constant* funcs_array, llvm::Value* states_array,
-    llvm::Value* num_processes, const PlusargsSetup& plusargs,
-    llvm::Value* abi_alloca, llvm::Value* run_session_ptr) {
+void EmitRunSimulation(
+    Context& context, llvm::Value* states_array, llvm::Value* num_processes,
+    const PlusargsSetup& plusargs, llvm::Value* abi_alloca,
+    llvm::Value* run_session_ptr) {
   auto& builder = context.GetBuilder();
 
   builder.CreateCall(
       context.GetLyraRunSimulation(),
-      {funcs_array, states_array, num_processes, plusargs.array, plusargs.count,
-       abi_alloca, run_session_ptr});
+      {states_array, num_processes, plusargs.array, plusargs.count, abi_alloca,
+       run_session_ptr});
 }
 
 void EmitMainExit(
@@ -708,16 +708,12 @@ auto EmitDesignMain(
 
     // Default to null for zero-simulation case.
     llvm::Value* states_array = null_ptr;
-    llvm::Constant* connection_funcs = null_ptr;
     llvm::Value* num_total_val = llvm::ConstantInt::get(i32_ty, 0);
-    auto num_connection = static_cast<uint32_t>(
-        layout.num_module_process_base - layout.num_init_processes);
 
     if (num_simulation > 0) {
       ctor_result = EmitRealizationAndConstructor(
           context, facts, layout, design_state, session.body_compiled_funcs,
           process_funcs, num_init, realization.construction_program);
-      connection_funcs = ctor_result.connection_funcs;
       states_array = ctor_result.states_array;
       num_total_val = ctor_result.num_total;
     }
@@ -841,9 +837,9 @@ auto EmitDesignMain(
           "conn_descs_count");
     }
     auto* abi_alloca = BuildRuntimeAbi(
-        context, meta_globals, wait_site_meta, num_connection,
-        input.feature_flags, input.signal_trace_path, design_state,
-        process_meta_for_abi, dispatch_meta_for_abi, observation_meta_for_abi,
+        context, meta_globals, wait_site_meta, 0, input.feature_flags,
+        input.signal_trace_path, design_state, process_meta_for_abi,
+        dispatch_meta_for_abi, observation_meta_for_abi,
         static_cast<uint32_t>(input.design->immediate_cover_sites.size()),
         input.design->global_precision_power, deferred_site_meta_global,
         static_cast<uint32_t>(input.design->deferred_assertion_sites.size()),
@@ -851,9 +847,9 @@ auto EmitDesignMain(
         fs_base_dir_str, conn_ptr, conn_count);
     abi_for_exit = abi_alloca;
 
-    final_time = EmitRunSimulation(
-        context, connection_funcs, states_array, num_total_val, plusargs,
-        abi_alloca, run_session_ptr);
+    EmitRunSimulation(
+        context, states_array, num_total_val, plusargs, abi_alloca,
+        run_session_ptr);
 
   } else {
     // No simulation processes or kernelized connections. Still need

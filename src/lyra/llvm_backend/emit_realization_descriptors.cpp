@@ -30,7 +30,7 @@ namespace {
 
 // Internal constructor result. Uses the public result's nested types
 // directly; the orchestration function lifts this into the public
-// RealizationEmissionResult (adding connection_funcs).
+// RealizationEmissionResult.
 struct ConstructorEmissionResult {
   llvm::Value* states_array = nullptr;
   llvm::Value* num_total = nullptr;
@@ -254,47 +254,6 @@ auto EmitProcessStateSchemas(
   auto* global = new llvm::GlobalVariable(
       mod, array_type, true, llvm::GlobalValue::InternalLinkage,
       llvm::ConstantArray::get(array_type, entries), "__lyra_state_schemas");
-  global->setUnnamedAddr(llvm::GlobalValue::UnnamedAddr::Global);
-
-  return llvm::ConstantExpr::getInBoundsGetElementPtr(
-      array_type, global,
-      llvm::ArrayRef<llvm::Constant*>{
-          llvm::ConstantInt::get(i32_ty, 0),
-          llvm::ConstantInt::get(i32_ty, 0)});
-}
-
-// Emit __lyra_connection_funcs: dense connection-only function pointer array.
-// No null padding. Connection process i has its function at index i.
-auto EmitConnectionProcessFunctions(
-    Context& context, const std::vector<llvm::Function*>& process_funcs,
-    size_t num_init, uint32_t num_connection) -> llvm::Constant* {
-  auto& ctx = context.GetLlvmContext();
-  auto& mod = context.GetModule();
-  auto* ptr_ty = llvm::PointerType::getUnqual(ctx);
-  auto* i32_ty = llvm::Type::getInt32Ty(ctx);
-
-  if (num_connection == 0) {
-    return llvm::ConstantPointerNull::get(
-        llvm::cast<llvm::PointerType>(ptr_ty));
-  }
-
-  std::vector<llvm::Constant*> func_constants;
-  func_constants.reserve(num_connection);
-  for (uint32_t i = 0; i < num_connection; ++i) {
-    auto* fn = process_funcs[num_init + i];
-    if (fn == nullptr) {
-      throw common::InternalError(
-          "EmitConnectionProcessFunctions",
-          "connection process has null function pointer");
-    }
-    func_constants.push_back(static_cast<llvm::Constant*>(fn));
-  }
-
-  auto* array_type = llvm::ArrayType::get(ptr_ty, num_connection);
-  auto* global = new llvm::GlobalVariable(
-      mod, array_type, true, llvm::GlobalValue::InternalLinkage,
-      llvm::ConstantArray::get(array_type, func_constants),
-      "__lyra_connection_funcs");
   global->setUnnamedAddr(llvm::GlobalValue::UnnamedAddr::Global);
 
   return llvm::ConstantExpr::getInBoundsGetElementPtr(
@@ -818,17 +777,11 @@ auto EmitRealizationAndConstructor(
     const ConstructionProgramData& construction_program)
     -> RealizationEmissionResult {
   auto& ctx = context.GetLlvmContext();
-  auto num_connection = static_cast<uint32_t>(
-      layout.num_module_process_base - layout.num_init_processes);
 
   // Emit per-schema frame-init functions and state schemas.
   auto init_fns = EmitPerSchemaFrameInitFunctions(context, facts, layout);
   auto* schemas_ptr = EmitProcessStateSchemas(context, layout, init_fns);
   auto num_schemas = static_cast<uint32_t>(layout.state_schemas.size());
-
-  // Emit connection function table.
-  auto* connection_funcs = EmitConnectionProcessFunctions(
-      context, process_funcs, num_init, num_connection);
 
   // Emit constructor-side definition artifacts.
   auto* slot_offsets_ptr = EmitSlotByteOffsets(context, layout);
@@ -890,7 +843,6 @@ auto EmitRealizationAndConstructor(
               .instance_bundle_count =
                   ctor.observation_meta.instance_bundle_count,
           },
-      .connection_funcs = connection_funcs,
   };
 }
 

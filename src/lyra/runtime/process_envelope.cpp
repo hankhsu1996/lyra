@@ -139,8 +139,7 @@ auto DecodeSuspendRecord(lyra::runtime::SuspendRecord* suspend)
 
 // Dispatch a process body and decode the raw protocol into a ProcessRequest.
 auto DispatchProcess(
-    std::span<LyraProcessFunc> connection_procs, std::span<void*> states,
-    uint32_t num_connection, lyra::runtime::ProcessHandle handle,
+    std::span<void*> states, lyra::runtime::ProcessHandle handle,
     lyra::runtime::ResumePoint resume) -> ProcessRequest {
   using lyra::runtime::ProcessExitCode;
   using lyra::runtime::ProcessOutcome;
@@ -162,14 +161,11 @@ auto DispatchProcess(
   ProcessOutcome outcome{};
   outcome.tag = UINT32_MAX;
 
-  if (proc_idx < num_connection) {
-    connection_procs[proc_idx](state, resume.block_index, &outcome);
-  } else {
-    auto* header = static_cast<StateHeader*>(state);
-    header->outcome.tag = UINT32_MAX;
-    header->body(state, resume.block_index);
-    outcome = header->outcome;
-  }
+  // Uniform shared-body dispatch for all processes.
+  auto* header = static_cast<StateHeader*>(state);
+  header->outcome.tag = UINT32_MAX;
+  header->body(state, resume.block_index);
+  outcome = header->outcome;
 
   switch (static_cast<ProcessExitCode>(outcome.tag)) {
     case ProcessExitCode::kOk:
@@ -290,11 +286,9 @@ void HandleProcessRequest(
 namespace lyra::runtime {
 
 void DispatchAndHandleActivation(
-    std::span<LyraProcessFunc> connection_procs, std::span<void*> states,
-    uint32_t num_connection, Engine& engine, ProcessHandle handle,
+    std::span<void*> states, Engine& engine, ProcessHandle handle,
     ResumePoint resume) {
-  auto request =
-      DispatchProcess(connection_procs, states, num_connection, handle, resume);
+  auto request = DispatchProcess(states, handle, resume);
   HandleProcessRequest(engine, handle, request);
 }
 

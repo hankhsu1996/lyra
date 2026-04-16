@@ -1708,7 +1708,6 @@ auto ResolveInstanceOwnedFlatSlot(
 auto BuildLayout(
     std::span<const mir::ProcessId> init_processes,
     std::vector<ConnectionKernelEntry> precollected_connection_kernels,
-    std::vector<mir::ProcessId> non_kernelized_connection_processes,
     std::span<const LayoutModulePlan> module_plans,
     std::span<const std::span<const mir::ProcessId>> module_body_processes,
     const mir::Design& /*design*/, const mir::Arena& design_arena,
@@ -1754,44 +1753,6 @@ auto BuildLayout(
     layout.slot_has_connection_trigger[trigger] = true;
   }
 
-  // Non-kernelized connection processes: extract trigger slots from their
-  // Wait terminators and add to the connection trigger bitmap. These
-  // processes failed TryKernelizeConnection (e.g., port expression
-  // connections) and are not in connection_kernel_entries.
-  for (mir::ProcessId proc_id : non_kernelized_connection_processes) {
-    layout.scheduled_processes.push_back({proc_id, ModuleIndex{}});
-    const auto& process = design_arena[proc_id];
-    for (const auto& block : process.blocks) {
-      const auto* wait = std::get_if<mir::Wait>(&block.terminator.data);
-      if (wait == nullptr) continue;
-      for (const auto& trigger : wait->triggers) {
-        uint32_t slot = 0;
-        if (trigger.signal.scope == mir::SignalRef::Scope::kDesignGlobal) {
-          slot = trigger.signal.id;
-        } else if (
-            trigger.signal.scope == mir::SignalRef::Scope::kObjectLocal) {
-          auto oi = trigger.signal.object_index;
-          slot = module_plans[oi].design_state_base_slot + trigger.signal.id;
-        } else {
-          throw common::InternalError(
-              "BuildLayout", std::format(
-                                 "non-kernelized connection process {} has "
-                                 "trigger with unexpected scope (id={})",
-                                 proc_id.value, trigger.signal.id));
-        }
-        if (slot >= layout.slot_has_connection_trigger.size()) {
-          throw common::InternalError(
-              "BuildLayout",
-              std::format(
-                  "non-kernelized connection trigger slot {} out of "
-                  "range (design has {} slots)",
-                  slot, layout.slot_has_connection_trigger.size()));
-        }
-        layout.slot_has_connection_trigger[slot] = true;
-      }
-    }
-  }
-
   // Phase 3: Collect module processes (run through scheduler)
   layout.num_module_process_base = layout.scheduled_processes.size();
   for (uint32_t mi = 0; mi < module_plans.size(); ++mi) {
@@ -1827,9 +1788,8 @@ auto BuildLayout(
         plan.body, BuildBodyProcessOrdinalMap(*plan.body));
   }
 
-  // Counters for semantic naming per category.
+  // Counter for semantic naming.
   uint32_t init_counter = 0;
-  uint32_t conn_counter = 0;
 
   for (size_t i = 0; i < layout.scheduled_processes.size(); ++i) {
     const auto& sp = layout.scheduled_processes[i];
@@ -1843,10 +1803,6 @@ auto BuildLayout(
       frame_name = std::format("Init{}Frame", init_counter);
       state_name = std::format("Init{}State", init_counter);
       ++init_counter;
-    } else if (i < layout.num_module_process_base) {
-      frame_name = std::format("Conn{}Frame", conn_counter);
-      state_name = std::format("Conn{}State", conn_counter);
-      ++conn_counter;
     } else {
       uint32_t mi = sp.module_index.value;
       const auto* body_ptr = module_plans[mi].body;
@@ -1990,26 +1946,12 @@ auto BuildLayout(
     };
     std::unordered_map<SchemaKey, uint32_t, SchemaKeyHash> module_schema_map;
 
-    conn_counter = 0;
-
     for (size_t i = layout.num_init_processes;
          i < layout.scheduled_processes.size(); ++i) {
       const auto& sp = layout.scheduled_processes[i];
       auto props = compute_schema_props(layout.processes[i]);
 
-      if (i < layout.num_module_process_base) {
-        // Connection process: unique schema per process.
-        layout.state_schemas.push_back({
-            .state_size = props.state_size,
-            .state_align = props.state_align,
-            .needs_4state_init = props.needs_4state_init,
-            .representative_process_index = i,
-            .proc_within_body = std::nullopt,
-            .conn_index = conn_counter,
-        });
-
-        ++conn_counter;
-      } else {
+      {
         // Module process: deduplicate by (body, nonfinal_proc_ordinal).
         uint32_t mi = sp.module_index.value;
         const auto* body_ptr = module_plans[mi].body;
@@ -2187,28 +2129,6 @@ auto BuildLayout(
         }
       }
     }
-
-    // Build per-connection realization descriptors from connection schemas.
-    // Connection schemas are the first conn_counter entries in state_schemas
-    // (each connection gets a unique schema, added in order).
-    for (uint32_t c = 0; c < conn_counter; ++c) {
-      // Connection schemas are at the start of state_schemas, one per
-      // connection process in scheduling order. Verify identity.
-      const auto& schema = layout.state_schemas[c];
-      if (schema.conn_index != c) {
-        throw common::InternalError(
-            "BuildLayout",
-            "connection schema ordering does not match expected conn_index");
-      }
-      auto conn_sched_idx = layout.num_init_processes + c;
-      layout.connection_realization_infos.push_back(
-          Layout::ConnectionRealizationInfo{
-              .schema_index = c,
-              .process_id =
-                  layout.scheduled_processes[conn_sched_idx].process_id,
-              .trigger = std::nullopt,
-          });
-    }
   }
 
   // Compute num_package_slots: the first module instance's
@@ -2244,23 +2164,6 @@ auto BuildLayout(
         .slot_has_connection_notification[entry.trigger_local_slot.value] =
         true;
   }
-  // Non-kernelized connections: triggers are kObjectLocal or kDesignGlobal.
-  for (mir::ProcessId proc_id : non_kernelized_connection_processes) {
-    const auto& process = design_arena[proc_id];
-    for (const auto& block : process.blocks) {
-      const auto* wait = std::get_if<mir::Wait>(&block.terminator.data);
-      if (wait == nullptr) continue;
-      for (const auto& trigger : wait->triggers) {
-        if (trigger.signal.scope == mir::SignalRef::Scope::kObjectLocal) {
-          auto gi = layout.instance_body_groups[trigger.signal.object_index];
-          layout.body_realization_infos[gi]
-              .slot_has_connection_notification[trigger.signal.id] = true;
-        }
-        // kDesignGlobal triggers are package-global; no body owns them.
-      }
-    }
-  }
-
   // Compute per-instance storage bases and slot counts.
   // The storage base is the first owned-local slot's arena-absolute byte
   // offset. Forwarded aliases are skipped. Instances with no owned-local

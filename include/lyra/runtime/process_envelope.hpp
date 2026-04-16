@@ -1,10 +1,8 @@
 #pragma once
 
-#include <cstdint>
 #include <span>
 
 #include "lyra/runtime/engine_types.hpp"
-#include "lyra/runtime/simulation.hpp"
 
 namespace lyra::runtime {
 
@@ -17,8 +15,7 @@ class Engine;
 // etc.) to act on the result. All protocol details and borrowed spans are
 // confined to this function's scope.
 void DispatchAndHandleActivation(
-    std::span<LyraProcessFunc> connection_procs, std::span<void*> states,
-    uint32_t num_connection, Engine& engine, ProcessHandle handle,
+    std::span<void*> states, Engine& engine, ProcessHandle handle,
     ResumePoint resume);
 
 }  // namespace lyra::runtime

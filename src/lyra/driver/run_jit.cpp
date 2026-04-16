@@ -133,7 +133,6 @@ auto RunJit(const ValidatedCompilationInput& input) -> int {
       .force_two_state = input.input.two_state,
       .dpi_export_wrappers = &compilation.mir.dpi_export_wrappers,
       .bound_connections = &compilation.mir.bound_connections,
-      .expr_connections = &compilation.mir.expr_connections,
   };
 
   std::expected<lowering::mir_to_llvm::LoweringResult, Diagnostic> llvm_result;

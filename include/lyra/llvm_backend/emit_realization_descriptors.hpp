@@ -63,9 +63,6 @@ struct RealizationEmissionResult {
     llvm::Value* instance_bundles = nullptr;
     llvm::Value* instance_bundle_count = nullptr;
   } observation_meta;
-
-  // Connection function table global for EmitRunSimulation.
-  llvm::Constant* connection_funcs = nullptr;
 };
 
 // Emit all realization descriptors (body descriptors, connection
