@@ -1568,10 +1568,10 @@ auto Context::GetLyraWritemem() -> llvm::Function* {
 
 auto Context::GetLyraPrintModulePath() -> llvm::Function* {
   if (lyra_print_module_path_ == nullptr) {
-    // void LyraPrintModulePath(ptr instance)
+    // void LyraPrintModulePath(ptr engine, ptr instance)
     auto* ptr_ty = llvm::PointerType::getUnqual(*llvm_context_);
     auto* fn_type = llvm::FunctionType::get(
-        llvm::Type::getVoidTy(*llvm_context_), {ptr_ty}, false);
+        llvm::Type::getVoidTy(*llvm_context_), {ptr_ty, ptr_ty}, false);
     lyra_print_module_path_ = llvm::Function::Create(
         fn_type, llvm::Function::ExternalLinkage, "LyraPrintModulePath",
         llvm_module_.get());

@@ -462,21 +462,25 @@ extern "C" void LyraReadmemGlobal(
 }
 
 extern "C" void LyraReadmemNoNotify(
-    void* engine_ptr, LyraStringHandle filename_handle, void* target,
-    int32_t element_width, int32_t stride_bytes, int32_t value_size_bytes,
-    int32_t element_count, int64_t min_addr, int64_t current_addr,
-    int64_t final_addr, int64_t step, bool is_hex, int32_t element_kind) {
-  auto* engine = static_cast<lyra::runtime::Engine*>(engine_ptr);
+    LyraStringHandle filename_handle, void* target, int32_t element_width,
+    int32_t stride_bytes, int32_t value_size_bytes, int32_t element_count,
+    int64_t min_addr, int64_t current_addr, int64_t final_addr, int64_t step,
+    bool is_hex, int32_t element_kind) {
   ReadmemImpl(
-      engine->GetFsBaseDir(), filename_handle, target, element_width,
+      std::filesystem::path{}, filename_handle, target, element_width,
       stride_bytes, value_size_bytes, element_count, min_addr, current_addr,
       final_addr, step, is_hex, element_kind);
 }
 
-extern "C" void LyraPrintModulePath(void* instance_raw) {
+extern "C" void LyraPrintModulePath(void* engine_ptr, void* instance_raw) {
+  if (engine_ptr == nullptr) {
+    throw lyra::common::InternalError(
+        "LyraPrintModulePath", "engine_ptr must not be null");
+  }
+  auto* engine = static_cast<lyra::runtime::Engine*>(engine_ptr);
   const auto* inst =
       static_cast<const lyra::runtime::RuntimeInstance*>(instance_raw);
-  lyra::runtime::WriteOutput(
+  engine->Output().AppendSimOutputFragment(
       inst->path_c_str != nullptr ? inst->path_c_str : "");
 }
 

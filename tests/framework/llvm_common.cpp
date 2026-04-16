@@ -374,7 +374,6 @@ auto PrepareLlvmModule(
       .signal_trace_path = {},
       .iteration_limit = 0,
       .force_two_state = force_two_state,
-      .collect_forwarding_analysis = false,
       .main_abi = main_abi,
       .dpi_export_wrappers = &mir_result->dpi_export_wrappers,
       .bound_connections = &mir_result->bound_connections,

@@ -144,7 +144,8 @@ void LowerModulePathOp(Context& context) {
   auto& builder = context.GetBuilder();
 
   builder.CreateCall(
-      context.GetLyraPrintModulePath(), {context.GetInstancePointer()});
+      context.GetLyraPrintModulePath(),
+      {context.GetEnginePointer(), context.GetInstancePointer()});
 }
 
 auto LowerStringOp(

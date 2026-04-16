@@ -161,8 +161,9 @@ void LyraWritemem(
     int64_t final_addr, int64_t step, bool is_hex, int32_t element_kind);
 
 // Print hierarchical module path (%m format specifier).
+// engine: pointer to Engine (for output dispatch).
 // instance: pointer to RuntimeInstance (direct access to path_c_str).
-void LyraPrintModulePath(void* instance);
+void LyraPrintModulePath(void* engine, void* instance);
 
 // $fread - read binary data from file
 // - engine: pointer to Engine (for FileManager access)
