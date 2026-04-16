@@ -43,10 +43,12 @@ extern "C" auto LyraStringFromLiteral(const char* data, int64_t len)
 
   // Allocate and copy the data (memcpy preserves embedded NULs).
   // Allocate len+1 and null-terminate so the buffer is always a valid C string.
+  auto size = static_cast<size_t>(len);
   // NOLINTNEXTLINE(cppcoreguidelines-owning-memory)
-  str->data = new char[static_cast<size_t>(len) + 1];
-  std::memcpy(str->data, data, static_cast<size_t>(len));
-  str->data[len] = '\0';
+  str->data = new char[size + 1];
+  std::memcpy(str->data, data, size);
+  std::span<char> buf(str->data, size + 1);
+  buf[size] = '\0';
 
   str->len = static_cast<uint64_t>(len);
   str->refcount = 1;
@@ -141,7 +143,7 @@ extern "C" auto LyraStringFromPacked(const void* data, int32_t bit_width)
     -> LyraStringHandle {
   // Convert packed bits to string bytes (MSB to LSB, skip leading zeros)
   size_t num_bytes = (static_cast<size_t>(bit_width) + 7) / 8;
-  const auto* bytes = static_cast<const uint8_t*>(data);
+  std::span<const uint8_t> bytes(static_cast<const uint8_t*>(data), num_bytes);
 
   // Find first non-zero byte (skip leading zeros)
   size_t start = 0;
@@ -172,16 +174,17 @@ extern "C" auto LyraStringFromPacked(const void* data, int32_t bit_width)
 extern "C" void LyraPackedFromString(
     LyraStringHandle handle, void* out_data, int32_t bit_width) {
   size_t num_bytes = (static_cast<size_t>(bit_width) + 7) / 8;
-  auto* bytes = static_cast<uint8_t*>(out_data);
+  std::span<uint8_t> out(static_cast<uint8_t*>(out_data), num_bytes);
 
   // Zero-initialize output
-  std::memset(bytes, 0, num_bytes);
+  std::memset(out.data(), 0, num_bytes);
 
   if (handle == nullptr) {
     return;
   }
 
   auto* str = static_cast<LyraStringData*>(handle);
+  std::span<const char> str_chars(str->data, str->len);
 
   // Pack string bytes into output, MSB first.
   // String characters go into highest byte positions.
@@ -192,10 +195,9 @@ extern "C" void LyraPackedFromString(
   size_t start_in_str = (str_len > num_bytes) ? (str_len - num_bytes) : 0;
 
   for (size_t i = 0; i < chars_to_copy; ++i) {
-    // String index: start_in_str + i
     // Output is little-endian, MSB is at highest index
     size_t byte_idx = num_bytes - 1 - i;
-    bytes[byte_idx] = static_cast<uint8_t>(str->data[start_in_str + i]);
+    out[byte_idx] = static_cast<uint8_t>(str_chars[start_in_str + i]);
   }
 }
 
@@ -269,7 +271,6 @@ extern "C" void LyraStringFormatValue(
     LyraStringFormatBuffer* buf, void* engine_ptr, int32_t format,
     int32_t value_kind, const void* data, int32_t width, bool is_signed,
     int32_t output_width, int32_t precision, bool zero_pad, bool left_align,
-    const void* /*x_mask*/, const void* /*z_mask*/,
     int8_t module_timeunit_power) {
   buf->data += lyra::runtime::FormatRuntimeValue(
       static_cast<lyra::FormatKind>(format),

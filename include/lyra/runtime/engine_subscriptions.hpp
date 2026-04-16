@@ -1,7 +1,6 @@
 #pragma once
 
 #include <array>
-#include <cstddef>
 #include <cstdint>
 #include <vector>
 
@@ -13,6 +12,8 @@
 #include "lyra/runtime/wait_site.hpp"
 
 namespace lyra::runtime {
+
+struct RuntimeInstance;
 
 // Reference into a process's IndexPlanPool.
 struct IndexPlanRef {
@@ -31,7 +32,7 @@ struct IndexPlanPool {
   std::vector<IndexPlanOp> ops;
 };
 
-// Subscription kind discriminator for SubRef typed dispatch.
+// Subscription kind discriminator for sub ref typed dispatch.
 enum class SubKind : uint8_t {
   kEdge,
   kChange,
@@ -45,56 +46,85 @@ enum class EdgeBucket : uint8_t {
   kNegedge,
 };
 
-// Per-process ownership record. Indexes into the typed vector for a given slot.
+// Per-process ownership record for local subscriptions.
+// Indexes into the typed sub vector on the owning instance's slot.
 //
 // Invariants maintained by swap-and-pop removal:
-// - SubRef.index always points to a valid entry in the typed sub vector
-//   for signal_subs_[SubRef.slot_id].
-// - The pointed-to sub's process_sub_idx always points back to this SubRef's
-//   position in process_state.sub_refs.
+// - LocalSubRef.index always points to a valid entry in the typed sub vector
+//   for inst->observability.local_signal_subs[signal.value].
+// - The pointed-to sub's process_sub_idx always points back to this
+//   LocalSubRef's position in process_state.local_sub_refs.
 // - When a sub is swapped during removal, both the moved sub's
-//   process_sub_idx and its SubRef.index are updated atomically.
+//   process_sub_idx and its LocalSubRef.index are updated atomically.
 // - If the moved sub is a rebind target (has edge_target_id),
 //   edge_target_table_[edge_target_id].index is also updated.
-//
-// For kEdge subs, edge_group and edge_bucket locate the sub within the
-// grouped edge storage: signal_subs_[slot_id].edge_groups[edge_group]
-//   .posedge_subs or .negedge_subs (selected by edge_bucket) [index].
-struct SubRef {
-  uint32_t signal_id = 0;  // local_signal_id or global_signal_id
+struct LocalSubRef {
+  RuntimeInstance* instance = nullptr;
+  LocalSignalId signal{};
   uint32_t index = 0;
   SubKind kind = SubKind::kEdge;
-  EdgeBucket edge_bucket = EdgeBucket::kPosedge;  // polarity (kEdge only)
-  bool is_local = false;
-  uint8_t padding = 0;
-  uint32_t edge_group = 0;  // group index (kEdge only)
-  InstanceId instance_id = InstanceId{0};
-
-  // R5: Typed accessors. Use these instead of raw signal_id.
-  [[nodiscard]] auto LocalSignal() const -> LocalSignalId {
-    return LocalSignalId{signal_id};
-  }
-  [[nodiscard]] auto GlobalSignal() const -> GlobalSignalId {
-    return GlobalSignalId{signal_id};
-  }
-  [[nodiscard]] auto AsLocalRef() const -> LocalSignalRef {
-    return LocalSignalRef{
-        .instance_id = instance_id, .signal = LocalSignalId{signal_id}};
-  }
-};
-static_assert(sizeof(SubRef) == 20);
-
-// Stable indirection handle for rebind targets.
-// Stored in edge_target_table_, updated on swap-and-pop.
-struct EdgeTargetHandle {
-  uint32_t slot_id = 0;
-  SubKind kind = SubKind::kEdge;  // kEdge or kContainer
   EdgeBucket edge_bucket = EdgeBucket::kPosedge;
-  bool is_local = false;
-  uint8_t padding = 0;
+  uint16_t padding = 0;
+  uint32_t edge_group = 0;
+};
+static_assert(sizeof(LocalSubRef) == 24);
+
+// Per-process ownership record for global subscriptions.
+// Indexes into the typed sub vector on the engine-owned global slot.
+//
+// Same swap-and-pop invariants as LocalSubRef, but targeting
+// signal_subs_[signal.value] and process_state.global_sub_refs.
+struct GlobalSubRef {
+  GlobalSignalId signal{};
+  uint32_t index = 0;
+  SubKind kind = SubKind::kEdge;
+  EdgeBucket edge_bucket = EdgeBucket::kPosedge;
+  uint16_t padding = 0;
+  uint32_t edge_group = 0;
+};
+static_assert(sizeof(GlobalSubRef) == 16);
+
+// Edge target ID encoding: high bit selects domain table.
+inline constexpr uint32_t kEdgeTargetGlobalBit = 0x80000000U;
+inline constexpr uint32_t kEdgeTargetIndexMask = 0x7FFFFFFFU;
+
+inline auto IsGlobalEdgeTargetId(uint32_t id) -> bool {
+  return (id & kEdgeTargetGlobalBit) != 0;
+}
+
+inline auto LocalEdgeTargetId(uint32_t idx) -> uint32_t {
+  return idx;
+}
+
+inline auto GlobalEdgeTargetId(uint32_t idx) -> uint32_t {
+  return kEdgeTargetGlobalBit | idx;
+}
+
+inline auto EdgeTargetIndex(uint32_t id) -> uint32_t {
+  return id & kEdgeTargetIndexMask;
+}
+
+// Stable indirection handle for local rebind targets.
+// Stored in local_edge_target_table_, updated on swap-and-pop.
+struct LocalEdgeTargetHandle {
+  RuntimeInstance* instance = nullptr;
+  LocalSignalId signal{};
+  SubKind kind = SubKind::kEdge;
+  EdgeBucket edge_bucket = EdgeBucket::kPosedge;
+  uint16_t padding = 0;
   uint32_t edge_group = 0;
   uint32_t index = 0;
-  InstanceId instance_id = InstanceId{0};  // R5: for local subs
+};
+
+// Stable indirection handle for global rebind targets.
+// Stored in global_edge_target_table_, updated on swap-and-pop.
+struct GlobalEdgeTargetHandle {
+  GlobalSignalId signal{};
+  SubKind kind = SubKind::kEdge;
+  EdgeBucket edge_bucket = EdgeBucket::kPosedge;
+  uint16_t padding = 0;
+  uint32_t edge_group = 0;
+  uint32_t index = 0;
 };
 
 // Cold state for EdgeSub rebind targets. Lives in edge_cold_pool_, indexed
@@ -130,7 +160,7 @@ struct WatcherCold {
 // by ContainerSub.cold_idx. Always allocated (holds container runtime state
 // and optional rebind target metadata).
 struct ContainerCold {
-  StoredSignalRef container_signal;
+  uint32_t container_signal_id = 0;
   uint32_t container_elem_stride = 0;
   int64_t container_sv_index = 0;
   uint64_t container_epoch = 0;
@@ -150,14 +180,14 @@ struct ContainerCold {
 // which bucket the sub lives in.
 struct EdgeSub {
   uint32_t process_id = 0;
-  InstanceId instance_id = InstanceId{0};
   uint32_t resume_block = 0;
   uint8_t flags = 0;  // kActive=0x01, kHasCold=0x02
   std::array<uint8_t, 3> padding = {};
-  uint32_t process_sub_idx = 0;  // index in owning process_state.sub_refs
-  uint32_t cold_idx = 0;         // UINT32_MAX = no cold state (edge_cold_pool_)
+  uint32_t process_sub_idx =
+      0;                  // index in owning local_sub_refs/global_sub_refs
+  uint32_t cold_idx = 0;  // UINT32_MAX = no cold state (edge_cold_pool_)
 };
-static_assert(sizeof(EdgeSub) == 24);
+static_assert(sizeof(EdgeSub) == 20);
 
 // Observation-point group for edge subscriptions.
 // Groups all edge watchers on a slot that observe the same (byte_offset,
@@ -177,7 +207,6 @@ struct EdgeWatchGroup {
 // keeps the dominant clock-edge path smaller.
 struct ChangeSub {
   uint32_t process_id = 0;
-  InstanceId instance_id = InstanceId{0};
   uint32_t resume_block = 0;
   uint32_t byte_offset = 0;
   uint32_t byte_size = 0;
@@ -192,7 +221,7 @@ struct ChangeSub {
   uint8_t flags = 0;  // kActive=0x01
   std::array<uint8_t, 3> padding{};
 };
-static_assert(sizeof(ChangeSub) == 48);
+static_assert(sizeof(ChangeSub) == 44);
 
 // Dense record for rebind watchers (pass 1 only) (24B).
 // Logically a different pass -- lives in its own dense array so
@@ -217,7 +246,6 @@ static_assert(sizeof(RebindWatcherSub) == 24);
 // Multi-bit or multi-byte element observation is not supported.
 struct ContainerSub {
   uint32_t process_id = 0;
-  InstanceId instance_id = InstanceId{0};
   uint32_t resume_block = 0;
   uint32_t process_sub_idx = 0;
   uint32_t cold_idx = 0;  // always valid (container_cold_pool_)
@@ -226,7 +254,7 @@ struct ContainerSub {
   uint8_t flags = 0;     // kActive=0x01
   uint8_t padding = 0;
 };
-static_assert(sizeof(ContainerSub) == 24);
+static_assert(sizeof(ContainerSub) == 20);
 
 // Flag constants for sub flags fields.
 inline constexpr uint8_t kSubActive = 0x01;
@@ -272,20 +300,10 @@ struct InstalledWaitState {
   uint32_t last_global_refresh_epoch = 0;
   uint32_t last_global_refresh_dirty_count = 0;
   struct LocalRefreshStamp {
-    InstanceId instance_id = InstanceId{0};
+    RuntimeInstance* instance = nullptr;
     uint64_t epoch = 0;
   };
   std::vector<LocalRefreshStamp> local_refresh_epochs;
-};
-
-// Per-process state (keyed by ProcessHandle).
-struct ProcessState {
-  bool is_enqueued = false;
-  ProcessWaitKind wait_kind = ProcessWaitKind::kFinished;
-  size_t subscription_count = 0;
-  std::vector<SubRef> sub_refs;
-  IndexPlanPool plan_pool;
-  InstalledWaitState installed_wait;
 };
 
 }  // namespace lyra::runtime

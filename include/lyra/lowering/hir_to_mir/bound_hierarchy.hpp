@@ -112,10 +112,10 @@ void FinalizeExternalRefTargetSlots(
     const BoundHierarchyIndex& topo, const mir::ConstructionInput& construction,
     std::span<const hir::Module* const> hir_modules);
 
-// Build per-instance resolved ext-ref runtime bindings.
+// Build per-instance serialized ext-ref bindings for codegen transport.
 // For each realized object, walks each external ref recipe from that
-// object's actual position and produces a ResolvedExtRefBinding with
-// storage slot, target instance, and target local signal.
+// object's actual position and produces a SerializedExtRefBinding with
+// storage slot, target instance index, and target local signal.
 // Results stored in construction.instance_ext_ref_bindings.
 void BuildPerInstanceExtRefBindings(
     const mir::Design& design, mir::ConstructionInput& construction,

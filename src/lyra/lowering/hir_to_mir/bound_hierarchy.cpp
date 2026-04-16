@@ -254,14 +254,13 @@ void BuildPerInstanceExtRefBindings(
     for (const auto& ext_ref : body.external_refs) {
       const auto& recipe = ext_ref.target;
       uint32_t target_oi = WalkCanonicalPath(recipe, oi, topo, construction);
-      const auto& target_obj = construction.objects[target_oi];
       // target_oi == InstanceId.value by construction program order.
+      // target_byte_offset is zero here; the real value is computed
+      // during construction program extraction (after layout) from
+      // body_layout.inline_offsets[target_local_signal].
       out.push_back(
-          common::ResolvedExtRefBinding{
-              .storage_slot =
-                  common::SlotId{
-                      target_obj.design_state_base_slot +
-                      recipe.target_slot.value},
+          common::SerializedExtRefBinding{
+              .target_byte_offset = 0,
               .target_instance_id = target_oi,
               .target_local_signal = recipe.target_slot,
           });

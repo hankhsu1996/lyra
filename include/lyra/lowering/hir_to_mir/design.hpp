@@ -34,8 +34,6 @@ struct DesignLoweringResult {
   mir::Design design;
   mir::ConstructionInput construction;
   std::vector<mir::BoundConnection> bound_connections;
-  // Compiled expression connections (non-NameRef port expressions).
-  std::vector<mir::CompiledConnectionExpr> expr_connections;
   // Per-body origin entries, indexed by ModuleBodyId.
   // Body-local MIR origins stay body-local -- not merged into the
   // design-global origin map.

@@ -48,7 +48,15 @@ struct PortBinding {
 
   Kind kind = Kind::kDriveParentToChild;
 
-  SymbolId child_port_sym;       // Child's port backing variable
+  // Topology locator: which child instance this binding targets.
+  // Instance-level identity used only for child-site routing in
+  // design_lower.cpp topology stitching.
+  SymbolId child_instance_sym;
+
+  // Definition-level ordinal within the child module's declared port
+  // list. Stable across all instances of the same specialization.
+  uint32_t child_port_ordinal = UINT32_MAX;
+
   SymbolId parent_instance_sym;  // Parent module's instance symbol
   SourceSpan span;
 

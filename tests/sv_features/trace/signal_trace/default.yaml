@@ -136,3 +136,24 @@ cases:
           - "__LYRA_TRACE__:"
         not_contains:
           - "t=0 d=0"
+
+  - name: local-multi-instance
+    description: Text trace renders full hierarchical names for local signals from different instances
+    sv: |
+      module Child;
+        logic x;
+        initial x = 1'b1;
+      endmodule
+
+      module Test;
+        Child u0();
+        Child u1();
+        initial $display("done");
+      endmodule
+    signal_trace: true
+    expect:
+      stdout:
+        contains:
+          - "done"
+          - "Test.u0.x"
+          - "Test.u1.x"

@@ -58,7 +58,7 @@ struct ObservableStorageFact {
   common::SlotId slot_id = {};
   common::SlotId owner_slot_id = {};
   SlotStorageDomain domain = {};
-  InstanceId instance_id = {};
+  RuntimeInstance* instance = nullptr;
   common::InstanceByteOffset instance_rel_off = {};
   uint32_t total_bytes = 0;
   SlotStorageKind storage_kind = {};
@@ -102,7 +102,7 @@ void ForEachBundleObservable(
         .slot_id = RelocateBodyLocalSlot(flat_coord_base, local),
         .owner_slot_id = RelocateObservableOwnerSlot(flat_coord_base, entry),
         .domain = static_cast<SlotStorageDomain>(entry.storage_domain),
-        .instance_id = bundle.instance_id,
+        .instance = bundle.instance,
         .instance_rel_off =
             common::InstanceByteOffset{entry.storage_byte_offset},
         .total_bytes = entry.total_bytes,
@@ -136,86 +136,142 @@ void ForEachBundleObservable(
   }
 }
 
+// Pre-computed module-process ordinal map. Maps bundle index to global
+// process base index. Built once, used by trigger descriptors, comb
+// kernels, decision tables, and process attachment.
+struct ModuleProcessOrdinalMap {
+  std::vector<uint32_t> base_by_bundle;
+  uint32_t base_start = 0;
+
+  [[nodiscard]] auto GlobalIndex(uint32_t bundle_idx, uint32_t local_idx) const
+      -> uint32_t {
+    return base_by_bundle[bundle_idx] + local_idx;
+  }
+};
+
+auto BuildModuleProcessOrdinalMap(
+    std::span<const InstanceMetadataBundle> bundles, uint32_t num_processes)
+    -> ModuleProcessOrdinalMap {
+  uint32_t total_module = 0;
+  for (const auto& b : bundles) {
+    total_module += static_cast<uint32_t>(b.body_desc->entries.size());
+  }
+
+  if (num_processes < total_module) {
+    throw common::InternalError(
+        "BuildModuleProcessOrdinalMap",
+        std::format(
+            "num_processes {} < total module processes {}", num_processes,
+            total_module));
+  }
+
+  ModuleProcessOrdinalMap map;
+  map.base_start = num_processes - total_module;
+  map.base_by_bundle.resize(bundles.size());
+
+  uint32_t base = map.base_start;
+  for (size_t i = 0; i < bundles.size(); ++i) {
+    map.base_by_bundle[i] = base;
+    base += static_cast<uint32_t>(bundles[i].body_desc->entries.size());
+  }
+  return map;
+}
+
 auto BuildModuleTriggerDescriptors(
-    std::span<const InstanceMetadataBundle> bundles, uint32_t total_slot_count)
+    std::span<const InstanceMetadataBundle> bundles, uint32_t total_slot_count,
+    const ModuleProcessOrdinalMap& proc_map)
     -> std::vector<ProcessTriggerDescriptor> {
   std::vector<ProcessTriggerDescriptor> descriptors;
 
-  for (const InstanceMetadataBundle& bundle : bundles) {
+  for (uint32_t bi = 0; bi < bundles.size(); ++bi) {
+    const auto& bundle = bundles[bi];
     const auto& triggers = bundle.body_desc->triggers;
-    if (triggers.proc_ranges.empty()) continue;
 
-    for (uint32_t pwb = 0; pwb < triggers.proc_ranges.size(); ++pwb) {
-      uint32_t proc_idx = bundle.module_proc_base + pwb;
-      const auto& range = triggers.proc_ranges[pwb];
-      bool groupable = triggers.proc_groupable[pwb] != 0;
+    if (!triggers.proc_ranges.empty()) {
+      if (triggers.proc_ranges.size() >
+          bundle.instance->attached_processes.size()) {
+        throw common::InternalError(
+            "BuildModuleTriggerDescriptors",
+            std::format(
+                "instance '{}' has {} trigger proc ranges but only {} "
+                "attached processes",
+                bundle.instance_path, triggers.proc_ranges.size(),
+                bundle.instance->attached_processes.size()));
+      }
+      for (uint32_t pwb = 0; pwb < triggers.proc_ranges.size(); ++pwb) {
+        const auto& range = triggers.proc_ranges[pwb];
+        bool groupable = triggers.proc_groupable[pwb] != 0;
 
-      for (uint32_t t = 0; t < range.count; ++t) {
-        const auto& te = triggers.entries[range.start + t];
-        bool is_ext_ref = (te.flags & kTriggerTemplateFlagExternalRef) != 0;
-        bool is_global = (te.flags & kTriggerTemplateFlagDesignGlobal) != 0;
+        // Outer-layer scheduler registry key, not object-model identity.
+        uint32_t scheduled_idx = proc_map.GlobalIndex(bi, pwb);
 
-        if (is_ext_ref) {
-          // External-ref trigger: resolve to object-local identity on
-          // the target instance via the binding record.
-          auto bindings = std::span(
-              bundle.instance->ext_ref_bindings,
-              bundle.instance->ext_ref_binding_count);
-          if (te.slot_id >= bindings.size()) {
-            throw common::InternalError(
-                "BuildModuleTriggerDescriptors",
-                std::format(
-                    "instance {} ext-ref trigger index {} >= binding "
-                    "count {}",
-                    bundle.instance_id, te.slot_id, bindings.size()));
+        for (uint32_t t = 0; t < range.count; ++t) {
+          const auto& te = triggers.entries[range.start + t];
+          bool is_ext_ref = (te.flags & kTriggerTemplateFlagExternalRef) != 0;
+          bool is_global = (te.flags & kTriggerTemplateFlagDesignGlobal) != 0;
+
+          if (is_ext_ref) {
+            auto bindings = std::span(
+                bundle.instance->ext_ref_bindings,
+                bundle.instance->ext_ref_binding_count);
+            if (te.slot_id >= bindings.size()) {
+              throw common::InternalError(
+                  "BuildModuleTriggerDescriptors",
+                  std::format(
+                      "instance '{}' ext-ref trigger index {} >= "
+                      "binding count {}",
+                      bundle.instance_path, te.slot_id, bindings.size()));
+            }
+            const auto& binding = bindings[te.slot_id];
+            descriptors.push_back(
+                ProcessTriggerDescriptor{
+                    .scheduled_process_index = scheduled_idx,
+                    .slot_id = binding.target_local_signal.value,
+                    .edge = static_cast<common::EdgeKind>(te.edge),
+                    .is_groupable = groupable,
+                    .is_local = true,
+                    .instance = binding.target_instance,
+                });
+          } else if (is_global) {
+            if (te.slot_id >= total_slot_count) {
+              throw common::InternalError(
+                  "BuildModuleTriggerDescriptors",
+                  std::format(
+                      "global slot_id {} exceeds total {} for "
+                      "instance '{}'",
+                      te.slot_id, total_slot_count, bundle.instance_path));
+            }
+            descriptors.push_back(
+                ProcessTriggerDescriptor{
+                    .scheduled_process_index = scheduled_idx,
+                    .slot_id = te.slot_id,
+                    .edge = static_cast<common::EdgeKind>(te.edge),
+                    .is_groupable = groupable,
+                    .is_local = false,
+                    .instance = nullptr,
+                });
+          } else {
+            if (te.slot_id >=
+                bundle.instance->observability.local_signal_count) {
+              throw common::InternalError(
+                  "BuildModuleTriggerDescriptors",
+                  std::format(
+                      "local slot_id {} exceeds local_signal_count {} "
+                      "for instance '{}'",
+                      te.slot_id,
+                      bundle.instance->observability.local_signal_count,
+                      bundle.instance_path));
+            }
+            descriptors.push_back(
+                ProcessTriggerDescriptor{
+                    .scheduled_process_index = scheduled_idx,
+                    .slot_id = te.slot_id,
+                    .edge = static_cast<common::EdgeKind>(te.edge),
+                    .is_groupable = groupable,
+                    .is_local = true,
+                    .instance = bundle.instance,
+                });
           }
-          const auto& binding = bindings[te.slot_id];
-          descriptors.push_back(
-              ProcessTriggerDescriptor{
-                  .scheduled_process_index = proc_idx,
-                  .slot_id = binding.target_local_signal.value,
-                  .edge = static_cast<common::EdgeKind>(te.edge),
-                  .is_groupable = groupable,
-                  .is_local = true,
-                  .instance_id = InstanceId{binding.target_instance_id},
-              });
-        } else if (is_global) {
-          if (te.slot_id >= total_slot_count) {
-            throw common::InternalError(
-                "BuildModuleTriggerDescriptors",
-                std::format(
-                    "global slot_id {} exceeds total {} for instance {}",
-                    te.slot_id, total_slot_count, bundle.instance_id));
-          }
-          descriptors.push_back(
-              ProcessTriggerDescriptor{
-                  .scheduled_process_index = proc_idx,
-                  .slot_id = te.slot_id,
-                  .edge = static_cast<common::EdgeKind>(te.edge),
-                  .is_groupable = groupable,
-                  .is_local = false,
-                  .instance_id = InstanceId{0},
-              });
-        } else {
-          if (te.slot_id >= bundle.instance->observability.local_signal_count) {
-            throw common::InternalError(
-                "BuildModuleTriggerDescriptors",
-                std::format(
-                    "local slot_id {} exceeds local_signal_count {} "
-                    "for instance {}",
-                    te.slot_id,
-                    bundle.instance->observability.local_signal_count,
-                    bundle.instance_id));
-          }
-          descriptors.push_back(
-              ProcessTriggerDescriptor{
-                  .scheduled_process_index = proc_idx,
-                  .slot_id = te.slot_id,
-                  .edge = static_cast<common::EdgeKind>(te.edge),
-                  .is_groupable = groupable,
-                  .is_local = true,
-                  .instance_id = bundle.instance_id,
-              });
         }
       }
     }
@@ -232,10 +288,11 @@ void Engine::InitModuleInstancesFromBundles(
   // Reset all module-owned outputs for clean initialization.
   pending_module_trigger_descs_.clear();
   pending_module_process_meta_.clear();
-  process_instance_map_.assign(num_processes_, InstanceId{.value = 0});
+  for (auto& proc : processes_) {
+    proc.instance = nullptr;
+  }
   slot_meta_registry_ = SlotMetaRegistry{};
   comb_kernels_.clear();
-  comb_kernel_flags_.clear();
   comb_trigger_backing_.clear();
   global_comb_trigger_map_.clear();
   global_comb_trigger_slots_.clear();
@@ -245,7 +302,7 @@ void Engine::InitModuleInstancesFromBundles(
   has_any_self_edge_comb_ = false;
   fp_work_.global_pending_seen.clear();
   fp_work_.global_snapshot_index.clear();
-  fp_work_.locals.clear();
+  fp_work_.locals_initialized = false;
   signal_subs_.clear();
   activation_slot_gen_.clear();
   body_observable_layouts_.clear();
@@ -269,16 +326,13 @@ void Engine::InitModuleInstancesFromBundles(
     if (b.instance == nullptr) {
       throw common::InternalError(
           "Engine::InitModuleInstancesFromBundles",
-          std::format(
-              "bundle {} (instance_id {}) has null instance", bi,
-              b.instance_id));
+          std::format("bundle {} has null instance", bi));
     }
     if (b.body_desc == nullptr) {
       throw common::InternalError(
           "Engine::InitModuleInstancesFromBundles",
           std::format(
-              "bundle {} (instance_id {}) has null body_desc", bi,
-              b.instance_id));
+              "bundle {} ('{}') has null body_desc", bi, b.instance_path));
     }
   }
 
@@ -314,7 +368,7 @@ void Engine::InitModuleInstancesFromBundles(
           slot_meta_registry_.AppendSlot(
               SlotMeta{
                   .domain = SlotStorageDomain::kInstanceOwned,
-                  .owner_instance_id = fact.storage.instance_id,
+                  .owner_instance = fact.storage.instance,
                   .instance_rel_off = static_cast<uint32_t>(
                       fact.storage.instance_rel_off.value),
                   .total_bytes = fact.storage.total_bytes,
@@ -432,14 +486,12 @@ void Engine::InitModuleInstancesFromBundles(
   };
 
   absl::flat_hash_map<const void*, BodyObservableLayout*> body_layout_map;
-  for (const auto& bundle : bundles) {
-    if (bundle.instance == nullptr) {
-      throw common::InternalError(
-          "Engine::InitModuleInstancesFromBundles",
-          std::format(
-              "bundle instance_id {} has null instance pointer",
-              bundle.instance_id));
-    }
+  auto proc_map = BuildModuleProcessOrdinalMap(bundles, num_processes_);
+  for (uint32_t bi = 0; bi < bundles.size(); ++bi) {
+    const auto& bundle = bundles[bi];
+    auto num_body_processes =
+        static_cast<uint32_t>(bundle.body_desc->entries.size());
+
     // L8a: Initialize per-instance event state from body descriptor.
     bundle.instance->event_state.Init(bundle.body_desc->desc->event_count);
 
@@ -452,14 +504,14 @@ void Engine::InitModuleInstancesFromBundles(
     }
 
     // Initialize deferred-NBA pending set sized to local signal count.
-    bundle.instance->nba_pending.Init(
-        local_count, GetInstanceIndex(bundle.instance_id));
+    bundle.instance->nba_pending.Init(local_count);
 
-    // R5: populate process-to-instance mapping for subscription routing.
-    for (uint32_t p = 0; p < bundle.num_module_processes; ++p) {
-      uint32_t proc_idx = bundle.module_proc_base + p;
-      if (proc_idx < process_instance_map_.size()) {
-        process_instance_map_[proc_idx] = bundle.instance_id;
+    bundle.instance->attached_processes.reserve(num_body_processes);
+    for (uint32_t p = 0; p < num_body_processes; ++p) {
+      uint32_t proc_idx = proc_map.GlobalIndex(bi, p);
+      if (proc_idx < num_processes_) {
+        processes_[proc_idx].instance = bundle.instance;
+        bundle.instance->attached_processes.push_back(&processes_[proc_idx]);
       }
     }
   }
@@ -483,14 +535,13 @@ void Engine::InitModuleInstancesFromBundles(
 
   // Step C: Build module trigger descriptors as pending intermediate data.
   pending_module_trigger_descs_ =
-      BuildModuleTriggerDescriptors(bundles, total_slots);
+      BuildModuleTriggerDescriptors(bundles, total_slots, proc_map);
 
   // Step D: Build comb kernels from body templates.
   // R5: Domain-split comb trigger maps. Global triggers go to
   // global_comb_trigger_map_. Local triggers go to per-instance
   // local_comb_trigger_map on observability.
   auto proc_states = std::span(states, num_processes_);
-  comb_kernel_flags_.resize(num_processes_, 0);
 
   // Validated decode of CombTemplateEntry into exactly one of three modes.
   enum class CombTriggerMode { kBodyLocal, kGlobal, kCrossInstance };
@@ -549,127 +600,136 @@ void Engine::InitModuleInstancesFromBundles(
   };
   std::vector<ParsedCombTrigger> comb_entries;
 
-  for (const InstanceMetadataBundle& bundle : bundles) {
+  for (uint32_t bi = 0; bi < bundles.size(); ++bi) {
+    const auto& bundle = bundles[bi];
     const auto& comb = bundle.body_desc->comb;
-    if (comb.kernels.empty()) continue;
 
-    // Validate comb descriptor span consistency before dereferencing.
-    for (const auto& kernel : comb.kernels) {
-      uint32_t end = kernel.trigger_start + kernel.trigger_count;
-      if (end < kernel.trigger_start || end > comb.entries.size()) {
-        throw common::InternalError(
-            "InitModuleInstancesFromBundles",
-            std::format(
-                "comb kernel proc_within_body {} has trigger range "
-                "[{}, {}) out of bounds (entries.size={})",
-                kernel.proc_within_body, kernel.trigger_start, end,
-                comb.entries.size()));
-      }
-    }
-
-    for (const auto& kernel : comb.kernels) {
-      uint32_t proc_idx = bundle.module_proc_base + kernel.proc_within_body;
-      if (proc_idx >= num_processes_) {
-        throw common::InternalError(
-            "InitModuleInstancesFromBundles",
-            std::format(
-                "comb proc_idx {} >= num_processes {}", proc_idx,
-                num_processes_));
-      }
-      uint32_t flags = (kernel.has_self_edge != 0) ? CombKernel::kSelfEdge : 0U;
-
-      if ((flags & CombKernel::kSelfEdge) != 0) {
-        has_any_self_edge_comb_ = true;
+    if (!comb.kernels.empty()) {
+      // Validate comb descriptor span consistency before dereferencing.
+      for (const auto& kernel : comb.kernels) {
+        uint32_t end = kernel.trigger_start + kernel.trigger_count;
+        if (end < kernel.trigger_start || end > comb.entries.size()) {
+          throw common::InternalError(
+              "InitModuleInstancesFromBundles",
+              std::format(
+                  "comb kernel proc_within_body {} has trigger range "
+                  "[{}, {}) out of bounds (entries.size={})",
+                  kernel.proc_within_body, kernel.trigger_start, end,
+                  comb.entries.size()));
+        }
       }
 
-      auto* state_ptr = proc_states[proc_idx];
-      auto comb_idx = static_cast<uint32_t>(comb_kernels_.size());
-      comb_kernels_.push_back(BuildCombKernel(proc_idx, state_ptr, flags));
+      for (const auto& kernel : comb.kernels) {
+        if (kernel.proc_within_body >=
+            bundle.instance->attached_processes.size()) {
+          throw common::InternalError(
+              "InitModuleInstancesFromBundles",
+              std::format(
+                  "comb proc_within_body {} >= attached_processes size {}",
+                  kernel.proc_within_body,
+                  bundle.instance->attached_processes.size()));
+        }
+        auto* proc =
+            bundle.instance->attached_processes[kernel.proc_within_body];
+        uint32_t proc_idx = proc_map.GlobalIndex(bi, kernel.proc_within_body);
+        uint32_t flags =
+            (kernel.has_self_edge != 0) ? CombKernel::kSelfEdge : 0U;
 
-      comb_kernel_flags_[proc_idx] = 1;
-      bool kernel_self_edge = (flags & CombKernel::kSelfEdge) != 0;
-      for (uint32_t ti = 0; ti < kernel.trigger_count; ++ti) {
-        const auto& trig = comb.entries[kernel.trigger_start + ti];
-        auto decoded = decode_comb_trigger(trig);
-
-        RuntimeInstance* trigger_inst = nullptr;
-        uint32_t local_id = 0;
-        uint32_t global_id = 0;
-        bool is_local = true;
-
-        switch (decoded.mode) {
-          case CombTriggerMode::kGlobal:
-            is_local = false;
-            global_id = decoded.global.value;
-            if (global_id >= global_slot_count_) {
-              throw common::InternalError(
-                  "InitModuleInstancesFromBundles",
-                  std::format(
-                      "comb global trigger {} >= global_slot_count {}",
-                      global_id, global_slot_count_));
-            }
-            break;
-
-          case CombTriggerMode::kCrossInstance:
-            trigger_inst = FindInstanceMut(decoded.instance_id);
-            if (trigger_inst == nullptr) {
-              throw common::InternalError(
-                  "InitModuleInstancesFromBundles",
-                  std::format(
-                      "comb cross-instance trigger instance_id {} "
-                      "not found",
-                      decoded.instance_id));
-            }
-            local_id = decoded.local.value;
-            if (local_id >= trigger_inst->observability.local_signal_count) {
-              throw common::InternalError(
-                  "InitModuleInstancesFromBundles",
-                  std::format(
-                      "comb cross-instance trigger local_id {} >= "
-                      "local_signal_count {} for instance {}",
-                      local_id, trigger_inst->observability.local_signal_count,
-                      decoded.instance_id));
-            }
-            break;
-
-          case CombTriggerMode::kBodyLocal:
-            trigger_inst = const_cast<RuntimeInstance*>(bundle.instance);
-            if (trigger_inst == nullptr) {
-              throw common::InternalError(
-                  "InitModuleInstancesFromBundles",
-                  std::format(
-                      "comb body-local trigger has null bundle "
-                      "instance for instance_id {}",
-                      bundle.instance_id));
-            }
-            local_id = decoded.local.value;
-            if (local_id >= trigger_inst->observability.local_signal_count) {
-              throw common::InternalError(
-                  "InitModuleInstancesFromBundles",
-                  std::format(
-                      "comb body-local trigger local_id {} >= "
-                      "local_signal_count {} for instance {}",
-                      local_id, trigger_inst->observability.local_signal_count,
-                      bundle.instance_id));
-            }
-            break;
+        if ((flags & CombKernel::kSelfEdge) != 0) {
+          has_any_self_edge_comb_ = true;
         }
 
-        comb_entries.push_back(
-            ParsedCombTrigger{
-                .is_local = is_local,
-                .instance = trigger_inst,
-                .local_id = local_id,
-                .global_id = global_id,
-                .kernel_idx = comb_idx,
-                .byte_offset = trig.byte_offset,
-                .byte_size = trig.byte_size,
-                .has_self_edge = kernel_self_edge,
-            });
-        if (trig.byte_size > 0) {
-          ++comb_narrow_count_;
-        } else {
-          ++comb_full_slot_count_;
+        auto* state_ptr = proc_states[proc_idx];
+        auto comb_idx = static_cast<uint32_t>(comb_kernels_.size());
+        comb_kernels_.push_back(BuildCombKernel(proc_idx, state_ptr, flags));
+
+        proc->is_comb_kernel = true;
+        bool kernel_self_edge = (flags & CombKernel::kSelfEdge) != 0;
+        for (uint32_t ti = 0; ti < kernel.trigger_count; ++ti) {
+          const auto& trig = comb.entries[kernel.trigger_start + ti];
+          auto decoded = decode_comb_trigger(trig);
+
+          RuntimeInstance* trigger_inst = nullptr;
+          uint32_t local_id = 0;
+          uint32_t global_id = 0;
+          bool is_local = true;
+
+          switch (decoded.mode) {
+            case CombTriggerMode::kGlobal:
+              is_local = false;
+              global_id = decoded.global.value;
+              if (global_id >= global_slot_count_) {
+                throw common::InternalError(
+                    "InitModuleInstancesFromBundles",
+                    std::format(
+                        "comb global trigger {} >= global_slot_count {}",
+                        global_id, global_slot_count_));
+              }
+              break;
+
+            case CombTriggerMode::kCrossInstance:
+              trigger_inst = FindInstanceMut(decoded.instance_id);
+              if (trigger_inst == nullptr) {
+                throw common::InternalError(
+                    "InitModuleInstancesFromBundles",
+                    std::format(
+                        "comb cross-instance trigger instance_id {} "
+                        "not found",
+                        decoded.instance_id));
+              }
+              local_id = decoded.local.value;
+              if (local_id >= trigger_inst->observability.local_signal_count) {
+                throw common::InternalError(
+                    "InitModuleInstancesFromBundles",
+                    std::format(
+                        "comb cross-instance trigger local_id {} >= "
+                        "local_signal_count {} for instance {}",
+                        local_id,
+                        trigger_inst->observability.local_signal_count,
+                        decoded.instance_id));
+              }
+              break;
+
+            case CombTriggerMode::kBodyLocal:
+              trigger_inst = const_cast<RuntimeInstance*>(bundle.instance);
+              if (trigger_inst == nullptr) {
+                throw common::InternalError(
+                    "InitModuleInstancesFromBundles",
+                    std::format(
+                        "comb body-local trigger has null bundle "
+                        "instance for '{}'",
+                        bundle.instance_path));
+              }
+              local_id = decoded.local.value;
+              if (local_id >= trigger_inst->observability.local_signal_count) {
+                throw common::InternalError(
+                    "InitModuleInstancesFromBundles",
+                    std::format(
+                        "comb body-local trigger local_id {} >= "
+                        "local_signal_count {} for instance '{}'",
+                        local_id,
+                        trigger_inst->observability.local_signal_count,
+                        bundle.instance_path));
+              }
+              break;
+          }
+
+          comb_entries.push_back(
+              ParsedCombTrigger{
+                  .is_local = is_local,
+                  .instance = trigger_inst,
+                  .local_id = local_id,
+                  .global_id = global_id,
+                  .kernel_idx = comb_idx,
+                  .byte_offset = trig.byte_offset,
+                  .byte_size = trig.byte_size,
+                  .has_self_edge = kernel_self_edge,
+              });
+          if (trig.byte_size > 0) {
+            ++comb_narrow_count_;
+          } else {
+            ++comb_full_slot_count_;
+          }
         }
       }
     }
@@ -686,16 +746,16 @@ void Engine::InitModuleInstancesFromBundles(
     for (size_t ki = 0; ki < comb_kernels_.size() && ki < 8; ++ki) {
       const auto& ck = comb_kernels_[ki];
       msg += std::format(
-          "  kernel[{}]: body={} frame={} proc={} inst_idx={} "
+          "  kernel[{}]: body={} frame={} proc={} instance={} "
           "flags={:#x}\n",
           ki, reinterpret_cast<const void*>(ck.body), ck.frame,
-          ck.process_index, ck.instance_idx, ck.flags);
+          ck.process_index, static_cast<const void*>(ck.instance), ck.flags);
     }
     for (const auto& bundle : bundles) {
       const auto& comb = bundle.body_desc->comb;
       if (comb.kernels.empty()) continue;
       msg += std::format(
-          "  body instance_id={}: {} kernels, {} entries\n", bundle.instance_id,
+          "  body '{}': {} kernels, {} entries\n", bundle.instance_path,
           comb.kernels.size(), comb.entries.size());
       for (size_t ki = 0; ki < comb.kernels.size() && ki < 4; ++ki) {
         const auto& k = comb.kernels[ki];
@@ -799,9 +859,9 @@ void Engine::InitModuleInstancesFromBundles(
                 "InitModuleInstancesFromBundles",
                 std::format(
                     "local comb trigger id {} >= local_comb_trigger_map "
-                    "size {} for instance {}",
+                    "size {} for instance '{}'",
                     local_id, obs.local_comb_trigger_map.size(),
-                    inst->instance_id));
+                    inst->path_c_str));
           }
           obs.local_comb_trigger_map[local_id] = {
               .start = start, .count = count};
@@ -822,34 +882,44 @@ void Engine::InitModuleInstancesFromBundles(
         PendingModuleProcessMeta{
             .body_desc = bundle.body_desc,
             .instance_path = bundle.instance_path,
-            .module_proc_base = bundle.module_proc_base,
+            .instance = bundle.instance,
         });
   }
 
   // Step F: Register immutable decision metadata tables per owner.
   // First cut: 1:1 mapping from process to decision owner.
-  for (const InstanceMetadataBundle& bundle : bundles) {
+  for (uint32_t bi = 0; bi < bundles.size(); ++bi) {
+    const auto& bundle = bundles[bi];
     const auto& dtables = bundle.body_desc->decision_tables;
+    if (dtables.size() > bundle.instance->attached_processes.size()) {
+      throw common::InternalError(
+          "Engine::InitModuleInstancesFromBundles",
+          std::format(
+              "instance '{}' has {} decision tables but only {} "
+              "attached processes",
+              bundle.instance_path, dtables.size(),
+              bundle.instance->attached_processes.size()));
+    }
     for (uint32_t local = 0; local < dtables.size(); ++local) {
-      const auto oid =
-          DecisionOwnerId::FromIndex(bundle.module_proc_base + local);
+      uint32_t proc_idx = proc_map.GlobalIndex(bi, local);
+      // Decision owner ordinal: outer-layer scheduler registry key.
+      // Not object-model identity.
+      const auto oid = DecisionOwnerId::FromIndex(proc_idx);
       if (oid.Index() >= decision_owner_tables_.size()) {
         throw common::InternalError(
             "Engine::InitModuleInstancesFromBundles",
             std::format(
                 "decision owner {} out of range (tables size {}, "
-                "bundle base {} local {})",
-                oid.Index(), decision_owner_tables_.size(),
-                bundle.module_proc_base, local));
+                "proc_idx {} local {})",
+                oid.Index(), decision_owner_tables_.size(), proc_idx, local));
       }
       if (oid.Index() >= decision_owner_states_.size()) {
         throw common::InternalError(
             "Engine::InitModuleInstancesFromBundles",
             std::format(
                 "decision owner {} out of range (states size {}, "
-                "bundle base {} local {})",
-                oid.Index(), decision_owner_states_.size(),
-                bundle.module_proc_base, local));
+                "proc_idx {} local {})",
+                oid.Index(), decision_owner_states_.size(), proc_idx, local));
       }
       const auto& desc = dtables[local];
       if (desc.count > 0 && desc.metas == nullptr) {
@@ -874,43 +944,25 @@ void Engine::InitModuleInstancesFromBundles(
 
 void Engine::InitInstanceTimeMetadata(
     std::span<const InstanceMetadataBundle> bundles) {
-  if (bundles.empty()) {
-    instance_time_metadata_.clear();
-    return;
-  }
-  uint32_t max_id = 0;
   for (const auto& b : bundles) {
-    max_id = std::max(max_id, b.instance_id.value);
-  }
-  instance_time_metadata_.assign(
-      static_cast<size_t>(max_id) + 1, ScopeTimeMetadata{
-                                           .time_unit_power = 0,
-                                           .time_precision_power = 0,
-                                           .initialized = false,
-                                       });
-  for (const auto& b : bundles) {
+    if (b.instance == nullptr) {
+      throw common::InternalError(
+          "InitInstanceTimeMetadata", "bundle has null instance pointer");
+    }
     if (b.body_desc == nullptr) {
       throw common::InternalError(
           "InitInstanceTimeMetadata",
-          std::format("instance {} has null body_desc", b.instance_id.value));
+          std::format("instance '{}' has null body_desc", b.instance_path));
     }
     if (b.body_desc->desc == nullptr) {
       throw common::InternalError(
           "InitInstanceTimeMetadata",
           std::format(
-              "instance {} has null body realization desc",
-              b.instance_id.value));
+              "instance '{}' has null body realization desc", b.instance_path));
     }
-    auto& slot = instance_time_metadata_.at(b.instance_id.value);
-    if (slot.initialized) {
-      throw common::InternalError(
-          "InitInstanceTimeMetadata",
-          std::format("duplicate instance_id {}", b.instance_id.value));
-    }
-    slot = ScopeTimeMetadata{
+    b.instance->scope_time_metadata = RuntimeScopeTimeMetadata{
         .time_unit_power = b.body_desc->desc->time_unit_power,
         .time_precision_power = b.body_desc->desc->time_precision_power,
-        .initialized = true,
     };
   }
 }
@@ -961,8 +1013,21 @@ void Engine::InitProcessMeta(ProcessMetaRegistry connection_registry) {
   // Fill module entries by proc_idx from pending data.
   for (const auto& pending : pending_module_process_meta_) {
     const auto& meta = pending.body_desc->meta;
+    if (meta.entries.size() > pending.instance->attached_processes.size()) {
+      throw common::InternalError(
+          "Engine::InitProcessMeta",
+          std::format(
+              "instance has {} meta entries but only {} attached "
+              "processes",
+              meta.entries.size(),
+              pending.instance->attached_processes.size()));
+    }
     for (uint32_t local = 0; local < meta.entries.size(); ++local) {
-      uint32_t proc_idx = pending.module_proc_base + local;
+      auto* proc = pending.instance->attached_processes[local];
+      // ProcessMeta entries are still indexed by global process
+      // ordinal (outer-layer registry). Derive ordinal from the
+      // canonical pointer; not object-model identity.
+      auto proc_idx = static_cast<uint32_t>(proc - processes_.data());
       if (proc_idx >= num_processes_) {
         throw common::InternalError(
             "Engine::InitProcessMeta",
@@ -1027,26 +1092,38 @@ void Engine::InitProcessMeta(ProcessMetaRegistry connection_registry) {
 }
 
 void Engine::ReleaseStringSlots() {
-  if (!slot_meta_registry_.IsPopulated()) return;
-
-  for (uint32_t slot_id = 0; slot_id < slot_meta_registry_.Size(); ++slot_id) {
-    const auto& meta = slot_meta_registry_.Get(slot_id);
-    if (meta.kind != SlotStorageKind::kString) continue;
-    if (meta.storage_owner_slot_id != slot_id) continue;
-
-    if (meta.total_bytes != sizeof(LyraStringHandle)) {
-      throw common::InternalError(
-          "Engine::ReleaseStringSlots",
-          std::format(
-              "string slot {} has total_bytes {} != expected {}", slot_id,
-              meta.total_bytes, sizeof(LyraStringHandle)));
+  // Release global string slots from the design-global registry.
+  if (slot_meta_registry_.IsPopulated() && design_state_base_ != nullptr) {
+    for (uint32_t slot_id = 0; slot_id < slot_meta_registry_.Size();
+         ++slot_id) {
+      const auto& meta = slot_meta_registry_.Get(slot_id);
+      if (meta.domain != SlotStorageDomain::kDesignGlobal) continue;
+      if (meta.kind != SlotStorageKind::kString) continue;
+      if (meta.total_bytes != sizeof(LyraStringHandle)) continue;
+      auto* bytes = runtime::ResolveGlobalSlotBaseMut(meta, design_state_base_);
+      LyraStringHandle handle{};
+      std::memcpy(&handle, bytes, sizeof(handle));
+      LyraStringRelease(handle);
+      std::memset(bytes, 0, sizeof(handle));
     }
+  }
 
-    auto* bytes = ResolveSlotBytesMut(slot_id);
-    LyraStringHandle handle{};
-    std::memcpy(&handle, bytes, sizeof(handle));
-    LyraStringRelease(handle);
-    std::memset(bytes, 0, sizeof(handle));
+  // Release instance-owned string slots by walking instances directly.
+  for (auto* inst : instances_) {
+    if (inst == nullptr) continue;
+    const auto& obs = inst->observability;
+    if (obs.layout == nullptr) continue;
+    for (const auto& imeta : obs.layout->slot_meta) {
+      if (imeta.kind != SlotStorageKind::kString) continue;
+      if (imeta.total_bytes != sizeof(LyraStringHandle)) continue;
+      auto* bytes = ResolveInstanceStorageOffset(
+          *inst, imeta.instance_rel_off, imeta.total_bytes,
+          "Engine::ReleaseStringSlots");
+      LyraStringHandle handle{};
+      std::memcpy(&handle, bytes, sizeof(handle));
+      LyraStringRelease(handle);
+      std::memset(bytes, 0, sizeof(handle));
+    }
   }
 }
 

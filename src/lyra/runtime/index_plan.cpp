@@ -14,10 +14,9 @@
 namespace lyra::runtime {
 
 auto EvaluateIndexPlan(
-    const void* design_state_base,
-    std::span<const RuntimeInstance* const> instances,
-    const SlotMetaRegistry& registry, const RuntimeInstance* instance,
-    std::span<const IndexPlanOp> plan, bool* should_deactivate) -> int64_t {
+    const void* design_state_base, const SlotMetaRegistry& registry,
+    const RuntimeInstance* instance, std::span<const IndexPlanOp> plan,
+    bool* should_deactivate) -> int64_t {
   if (plan.empty()) {
     throw common::InternalError("EvaluateIndexPlan", "empty plan");
   }
@@ -87,7 +86,7 @@ auto EvaluateIndexPlan(
                     "slot {}",
                     op.byte_offset, op.byte_size, total_bytes, op.slot_id));
           }
-          slot_base = ResolveSlotBase(meta, design_state_base, instances);
+          slot_base = ResolveGlobalSlotBase(meta, design_state_base);
           is_four_state = (meta.kind == SlotStorageKind::kPacked4);
           planes = meta.planes;
         }

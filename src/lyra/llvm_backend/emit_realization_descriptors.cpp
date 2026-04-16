@@ -30,7 +30,7 @@ namespace {
 
 // Internal constructor result. Uses the public result's nested types
 // directly; the orchestration function lifts this into the public
-// RealizationEmissionResult (adding connection_funcs).
+// RealizationEmissionResult.
 struct ConstructorEmissionResult {
   llvm::Value* states_array = nullptr;
   llvm::Value* num_total = nullptr;
@@ -52,7 +52,8 @@ auto GetConstructionProgramEntryType(llvm::LLVMContext& ctx)
   auto* i32_ty = llvm::Type::getInt32Ty(ctx);
   auto* i64_ty = llvm::Type::getInt64Ty(ctx);
   return llvm::StructType::get(
-      ctx, {i32_ty, i32_ty, i32_ty, i32_ty, i64_ty, i64_ty});
+      ctx, {i32_ty, i32_ty, i32_ty, i32_ty, i64_ty, i64_ty, i32_ty, i32_ty,
+            i32_ty, i32_ty, i32_ty});
 }
 
 // Encode one ConstructionProgramEntry as an LLVM constant.
@@ -67,7 +68,12 @@ auto EncodeConstructionProgramEntry(
            llvm::ConstantInt::get(i32_ty, e.param_offset),
            llvm::ConstantInt::get(i32_ty, e.param_size),
            llvm::ConstantInt::get(i64_ty, e.realized_inline_size),
-           llvm::ConstantInt::get(i64_ty, e.realized_appendix_size)});
+           llvm::ConstantInt::get(i64_ty, e.realized_appendix_size),
+           llvm::ConstantInt::get(i32_ty, e.parent_instance_index),
+           llvm::ConstantInt::get(i32_ty, e.child_ordinal_in_coord),
+           llvm::ConstantInt::get(i32_ty, e.coord_offset),
+           llvm::ConstantInt::get(i32_ty, e.coord_count),
+           llvm::ConstantInt::get(i32_ty, e.inst_name_offset)});
 }
 
 // Canonical LLVM struct type for runtime::BodyDescriptorRef.
@@ -257,47 +263,6 @@ auto EmitProcessStateSchemas(
           llvm::ConstantInt::get(i32_ty, 0)});
 }
 
-// Emit __lyra_connection_funcs: dense connection-only function pointer array.
-// No null padding. Connection process i has its function at index i.
-auto EmitConnectionProcessFunctions(
-    Context& context, const std::vector<llvm::Function*>& process_funcs,
-    size_t num_init, uint32_t num_connection) -> llvm::Constant* {
-  auto& ctx = context.GetLlvmContext();
-  auto& mod = context.GetModule();
-  auto* ptr_ty = llvm::PointerType::getUnqual(ctx);
-  auto* i32_ty = llvm::Type::getInt32Ty(ctx);
-
-  if (num_connection == 0) {
-    return llvm::ConstantPointerNull::get(
-        llvm::cast<llvm::PointerType>(ptr_ty));
-  }
-
-  std::vector<llvm::Constant*> func_constants;
-  func_constants.reserve(num_connection);
-  for (uint32_t i = 0; i < num_connection; ++i) {
-    auto* fn = process_funcs[num_init + i];
-    if (fn == nullptr) {
-      throw common::InternalError(
-          "EmitConnectionProcessFunctions",
-          "connection process has null function pointer");
-    }
-    func_constants.push_back(static_cast<llvm::Constant*>(fn));
-  }
-
-  auto* array_type = llvm::ArrayType::get(ptr_ty, num_connection);
-  auto* global = new llvm::GlobalVariable(
-      mod, array_type, true, llvm::GlobalValue::InternalLinkage,
-      llvm::ConstantArray::get(array_type, func_constants),
-      "__lyra_connection_funcs");
-  global->setUnnamedAddr(llvm::GlobalValue::UnnamedAddr::Global);
-
-  return llvm::ConstantExpr::getInBoundsGetElementPtr(
-      array_type, global,
-      llvm::ArrayRef<llvm::Constant*>{
-          llvm::ConstantInt::get(i32_ty, 0),
-          llvm::ConstantInt::get(i32_ty, 0)});
-}
-
 // Emit __lyra_slot_byte_offsets: compile-owned layout oracle.
 // Slot-indexed, not instance-indexed. Used by the runtime constructor for
 // byte-offset lookup when binding process frame headers.
@@ -446,8 +411,6 @@ struct ConstructorRuntimeFuncs {
   llvm::Function* result_get_trace_meta_word_count;
   llvm::Function* result_get_trace_meta_pool;
   llvm::Function* result_get_trace_meta_pool_size;
-  llvm::Function* result_get_instance_paths;
-  llvm::Function* result_get_instance_path_count;
   llvm::Function* result_get_instances;
   llvm::Function* result_get_instance_count;
   llvm::Function* result_get_instance_bundles;
@@ -485,7 +448,7 @@ auto DeclareConstructorRuntimeFuncs(Context& context)
       .run_program = declare(
           "LyraConstructorRunProgram", void_ty,
           {ptr_ty, ptr_ty, i32_ty, ptr_ty, i32_ty, ptr_ty, i32_ty, ptr_ty,
-           i32_ty}),
+           i32_ty, ptr_ty, i32_ty}),
       .finalize = declare("LyraConstructorFinalize", ptr_ty, {ptr_ty}),
       .result_get_states =
           declare("LyraConstructionResultGetStates", ptr_ty, {ptr_ty}),
@@ -520,10 +483,6 @@ auto DeclareConstructorRuntimeFuncs(Context& context)
           "LyraConstructionResultGetTraceSignalMetaPool", ptr_ty, {ptr_ty}),
       .result_get_trace_meta_pool_size = declare(
           "LyraConstructionResultGetTraceSignalMetaPoolSize", i32_ty, {ptr_ty}),
-      .result_get_instance_paths =
-          declare("LyraConstructionResultGetInstancePaths", ptr_ty, {ptr_ty}),
-      .result_get_instance_path_count = declare(
-          "LyraConstructionResultGetInstancePathCount", i32_ty, {ptr_ty}),
       .result_get_instances =
           declare("LyraConstructionResultGetInstances", ptr_ty, {ptr_ty}),
       .result_get_instance_count =
@@ -645,8 +604,32 @@ auto EmitConstructorFunction(
       EmitConstructionProgramGlobal(ctx, context.GetModule(), prog.entries);
   auto entry_count = static_cast<uint32_t>(prog.entries.size());
 
+  // Emit coord steps pool for structural child edge metadata.
+  auto coord_pool_word_count =
+      static_cast<uint32_t>(prog.coord_steps_pool.size());
+  llvm::Constant* coord_pool_ptr = nullptr;
+  if (prog.coord_steps_pool.empty()) {
+    coord_pool_ptr =
+        llvm::ConstantPointerNull::get(llvm::cast<llvm::PointerType>(ptr_ty));
+  } else {
+    std::vector<llvm::Constant*> coord_words;
+    coord_words.reserve(prog.coord_steps_pool.size());
+    for (auto w : prog.coord_steps_pool) {
+      coord_words.push_back(llvm::ConstantInt::get(i32_ty, w));
+    }
+    auto* arr_ty = llvm::ArrayType::get(i32_ty, coord_words.size());
+    auto* init = llvm::ConstantArray::get(arr_ty, coord_words);
+    auto* global = new llvm::GlobalVariable(
+        context.GetModule(), arr_ty, true, llvm::GlobalValue::InternalLinkage,
+        init, "__lyra_coord_steps_pool");
+    global->setUnnamedAddr(llvm::GlobalValue::UnnamedAddr::Global);
+    auto* zero = llvm::ConstantInt::get(i32_ty, 0);
+    coord_pool_ptr = llvm::ConstantExpr::getInBoundsGetElementPtr(
+        arr_ty, global, llvm::ArrayRef<llvm::Constant*>{zero, zero});
+  }
+
   // Replay the construction program: the runtime iterates entries in
-  // ModuleIndex order, calling BeginBody/AddInstance as needed.
+  // ModuleIndex order, calling CreateChild as needed.
   auto path_pool_size = static_cast<uint32_t>(prog.path_pool.size());
   auto param_pool_size = static_cast<uint32_t>(prog.param_pool.size());
   builder.CreateCall(
@@ -655,7 +638,8 @@ auto EmitConstructorFunction(
        llvm::ConstantInt::get(i32_ty, body_desc_count), path_pool_ptr,
        llvm::ConstantInt::get(i32_ty, path_pool_size), param_pool_ptr,
        llvm::ConstantInt::get(i32_ty, param_pool_size), program_ptr,
-       llvm::ConstantInt::get(i32_ty, entry_count)});
+       llvm::ConstantInt::get(i32_ty, entry_count), coord_pool_ptr,
+       llvm::ConstantInt::get(i32_ty, coord_pool_word_count)});
 
   // Finalize: returns a single constructor-owned result handle.
   auto* result = builder.CreateCall(rt.finalize, {ctor}, "ctor_result");
@@ -671,7 +655,7 @@ auto EmitConstructorFunction(
       binding_constants.push_back(
           llvm::ConstantStruct::get(
               binding_ty,
-              {llvm::ConstantInt::get(i32_ty, b.storage_slot.value),
+              {llvm::ConstantInt::get(i32_ty, b.target_byte_offset),
                llvm::ConstantInt::get(i32_ty, b.target_instance_id),
                llvm::ConstantInt::get(i32_ty, b.target_local_signal.value)}));
     }
@@ -739,10 +723,6 @@ auto EmitConstructorFunction(
       rt.result_get_trace_meta_pool, {result}, "trace_meta_pool");
   auto* trace_meta_pool_size = builder.CreateCall(
       rt.result_get_trace_meta_pool_size, {result}, "trace_meta_pool_sz");
-  auto* inst_paths = builder.CreateCall(
-      rt.result_get_instance_paths, {result}, "instance_paths");
-  auto* inst_path_count = builder.CreateCall(
-      rt.result_get_instance_path_count, {result}, "instance_path_count");
   auto* inst_ptrs =
       builder.CreateCall(rt.result_get_instances, {result}, "instance_ptrs");
   auto* inst_count = builder.CreateCall(
@@ -779,8 +759,6 @@ auto EmitConstructorFunction(
               .trace_meta_word_count = trace_meta_word_count,
               .trace_meta_pool = trace_meta_pool,
               .trace_meta_pool_size = trace_meta_pool_size,
-              .instance_paths = inst_paths,
-              .instance_path_count = inst_path_count,
               .instance_ptrs = inst_ptrs,
               .instance_count = inst_count,
               .instance_bundles = inst_bundles,
@@ -799,17 +777,11 @@ auto EmitRealizationAndConstructor(
     const ConstructionProgramData& construction_program)
     -> RealizationEmissionResult {
   auto& ctx = context.GetLlvmContext();
-  auto num_connection = static_cast<uint32_t>(
-      layout.num_module_process_base - layout.num_init_processes);
 
   // Emit per-schema frame-init functions and state schemas.
   auto init_fns = EmitPerSchemaFrameInitFunctions(context, facts, layout);
   auto* schemas_ptr = EmitProcessStateSchemas(context, layout, init_fns);
   auto num_schemas = static_cast<uint32_t>(layout.state_schemas.size());
-
-  // Emit connection function table.
-  auto* connection_funcs = EmitConnectionProcessFunctions(
-      context, process_funcs, num_init, num_connection);
 
   // Emit constructor-side definition artifacts.
   auto* slot_offsets_ptr = EmitSlotByteOffsets(context, layout);
@@ -865,15 +837,12 @@ auto EmitRealizationAndConstructor(
               .trace_meta_pool = ctor.observation_meta.trace_meta_pool,
               .trace_meta_pool_size =
                   ctor.observation_meta.trace_meta_pool_size,
-              .instance_paths = ctor.observation_meta.instance_paths,
-              .instance_path_count = ctor.observation_meta.instance_path_count,
               .instance_ptrs = ctor.observation_meta.instance_ptrs,
               .instance_count = ctor.observation_meta.instance_count,
               .instance_bundles = ctor.observation_meta.instance_bundles,
               .instance_bundle_count =
                   ctor.observation_meta.instance_bundle_count,
           },
-      .connection_funcs = connection_funcs,
   };
 }
 

@@ -2,6 +2,7 @@
 
 #include <array>
 #include <cstdint>
+#include <filesystem>
 #include <fstream>
 #include <functional>
 #include <map>
@@ -71,11 +72,16 @@ class FileManager {
   auto operator=(FileManager&&) -> FileManager& = delete;
 
   // MCD mode: returns (1 << bit_index), bit_index in [1,30]. Returns 0 on
-  // failure.
-  auto FopenMcd(const std::string& filename) -> int32_t;
+  // failure. base_dir: filesystem base for relative path resolution.
+  auto FopenMcd(
+      const std::filesystem::path& base_dir, const std::string& filename)
+      -> int32_t;
 
   // FD mode: returns (kFdBit | index), index in [3,...]. Returns 0 on failure.
-  auto FopenFd(const std::string& filename, const std::string& mode) -> int32_t;
+  // base_dir: filesystem base for relative path resolution.
+  auto FopenFd(
+      const std::filesystem::path& base_dir, const std::string& filename,
+      const std::string& mode) -> int32_t;
 
   // Close descriptor. MCD: iterates set bits. FD: closes single file. Invalid:
   // no-op.
@@ -140,10 +146,12 @@ class FileManager {
   static auto ParseMode(const std::string& mode)
       -> std::optional<std::ios_base::openmode>;
 
-  // Resolve filename against the runtime's fs_base_dir.
+  // Resolve filename against an explicit base directory.
   // Absolute paths returned as-is (normalized); relative paths joined with
   // base.
-  static auto ResolvePath(const std::string& filename) -> std::string;
+  static auto ResolvePath(
+      const std::filesystem::path& base_dir, const std::string& filename)
+      -> std::string;
 };
 
 }  // namespace lyra::runtime

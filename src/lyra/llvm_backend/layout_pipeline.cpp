@@ -95,8 +95,7 @@ auto BuildBackendLayout(
 
   auto layout = std::make_unique<Layout>(BuildLayout(
       input.design->init_processes,
-      std::move(connection_analysis.connection_edges),
-      std::move(connections.non_kernelized_processes), topology.module_plans,
+      std::move(connection_analysis.connection_edges), topology.module_plans,
       topology.module_body_processes, *input.design, *input.mir_arena,
       *input.type_arena, std::move(design_layout), body_storage_layouts,
       llvm_ctx, data_layout, input.force_two_state));

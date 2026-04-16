@@ -40,8 +40,30 @@ static_assert(std::is_standard_layout_v<BodyProcessEntry>);
 // Codegen emits the header and process entries as separate contiguous
 // LLVM globals. The runtime constructor receives them as two arguments:
 // one BodyRealizationDesc header and one span of BodyProcessEntry.
+struct ExprConnChildDesc;
+
+// Runtime-visible port entry for child public interface resolution.
+// Emitted per body from CompiledModuleHeader::PortEntry.
+// Constructor uses this to resolve symbolic child port -> local slot.
+struct RuntimePortEntry {
+  uint32_t sym_value = UINT32_MAX;
+  uint32_t local_slot = 0;
+  uint8_t dir = 0;
+  uint8_t pad0 = 0;
+  uint16_t pad1 = 0;
+};
+
+static_assert(sizeof(RuntimePortEntry) == 12);
+static_assert(offsetof(RuntimePortEntry, sym_value) == 0);
+static_assert(offsetof(RuntimePortEntry, local_slot) == 4);
+static_assert(offsetof(RuntimePortEntry, dir) == 8);
+static_assert(std::is_trivially_copyable_v<RuntimePortEntry>);
+static_assert(std::is_standard_layout_v<RuntimePortEntry>);
+
 struct BodyRealizationDesc {
   // Body-local module-process repertoire count (non-final processes).
+  // Includes both ordinary and expression connection processes.
+  // The last num_expr_connections entries are expression connections.
   uint32_t num_processes = 0;
   // Body's slot count, used by the constructor to advance the
   // running slot-base counter per instance.
@@ -60,9 +82,28 @@ struct BodyRealizationDesc {
   // L8a: Body-local named event count. Used by InitModuleInstancesFromBundles
   // to size per-instance event state.
   uint32_t event_count = 0;
+  // Runtime-visible per-slot inline byte offsets. Indexed by body-local
+  // slot id [0, num_inline_slot_offsets). Emitted from
+  // body_layout.inline_offsets. Constructor uses this to resolve child
+  // local slot -> byte offset.
+  const uint32_t* inline_slot_offsets = nullptr;
+  uint32_t num_inline_slot_offsets = 0;
+  // Runtime-visible child public port mapping. Emitted from
+  // CompiledModuleHeader::PortEntry. Constructor uses this to resolve
+  // symbolic child port -> child local slot.
+  const RuntimePortEntry* port_entries = nullptr;
+  uint32_t num_port_entries = 0;
+  // Expression connection transport fields.
+  // entries[num_processes - num_expr_connections .. num_processes) is the
+  // expression suffix. Parallel ExprConnChildDesc provides child binding
+  // metadata for each.
+  const ExprConnChildDesc* expr_conn_child_descs = nullptr;
+  const uint32_t* expr_conn_coord_words = nullptr;
+  uint32_t num_expr_conn_coord_words = 0;
+  uint32_t num_expr_connections = 0;
 };
 
-static_assert(sizeof(BodyRealizationDesc) == 40);
+static_assert(sizeof(BodyRealizationDesc) == 96);
 static_assert(offsetof(BodyRealizationDesc, num_processes) == 0);
 static_assert(offsetof(BodyRealizationDesc, slot_count) == 4);
 static_assert(offsetof(BodyRealizationDesc, inline_state_size_bytes) == 8);
@@ -71,8 +112,50 @@ static_assert(offsetof(BodyRealizationDesc, total_state_size_bytes) == 24);
 static_assert(offsetof(BodyRealizationDesc, time_unit_power) == 32);
 static_assert(offsetof(BodyRealizationDesc, time_precision_power) == 33);
 static_assert(offsetof(BodyRealizationDesc, event_count) == 36);
+static_assert(offsetof(BodyRealizationDesc, inline_slot_offsets) == 40);
+static_assert(offsetof(BodyRealizationDesc, num_inline_slot_offsets) == 48);
+static_assert(offsetof(BodyRealizationDesc, port_entries) == 56);
+static_assert(offsetof(BodyRealizationDesc, num_port_entries) == 64);
+static_assert(offsetof(BodyRealizationDesc, expr_conn_child_descs) == 72);
+static_assert(offsetof(BodyRealizationDesc, expr_conn_coord_words) == 80);
+static_assert(offsetof(BodyRealizationDesc, num_expr_conn_coord_words) == 88);
+static_assert(offsetof(BodyRealizationDesc, num_expr_connections) == 92);
 static_assert(std::is_trivially_copyable_v<BodyRealizationDesc>);
 static_assert(std::is_standard_layout_v<BodyRealizationDesc>);
+
+// Per-expression-connection child binding metadata.
+// Emitted per body alongside BodyProcessEntry. Constructor reads this to
+// resolve the child instance and write the ExprConnectionChildBinding into
+// the process frame.
+//
+// Does NOT carry precomputed child byte offsets. Concrete child slot
+// resolution (port sym -> local slot -> byte offset) is constructor work,
+// using the child's own emitted body descriptor.
+struct ExprConnChildDesc {
+  // Structural child identity: RepertoireCoord encoded as 3 uint32_t words
+  // per SelectionStepDesc {kind, construct_index, alt_index} in a flat pool.
+  // Encoding matches ConstructionProgramEntry (constructor_.cpp:35-59).
+  uint32_t coord_word_offset = 0;
+  uint32_t coord_step_count = 0;
+  uint32_t child_ordinal = 0;
+  // Symbolic child public port identity. Constructor resolves this to
+  // concrete local slot and byte offset using the child's emitted port
+  // entries and inline slot offsets.
+  uint32_t child_port_sym_value = UINT32_MAX;
+  // Byte offset of ExprConnectionChildBinding within the process state.
+  // Computed at layout time from LLVM DataLayout. Constructor writes the
+  // binding at states[i] + binding_byte_offset.
+  uint32_t binding_byte_offset = 0;
+};
+
+static_assert(sizeof(ExprConnChildDesc) == 20);
+static_assert(offsetof(ExprConnChildDesc, coord_word_offset) == 0);
+static_assert(offsetof(ExprConnChildDesc, coord_step_count) == 4);
+static_assert(offsetof(ExprConnChildDesc, child_ordinal) == 8);
+static_assert(offsetof(ExprConnChildDesc, child_port_sym_value) == 12);
+static_assert(offsetof(ExprConnChildDesc, binding_byte_offset) == 16);
+static_assert(std::is_trivially_copyable_v<ExprConnChildDesc>);
+static_assert(std::is_standard_layout_v<ExprConnChildDesc>);
 
 // Design-level constructor-side definition artifact for connection processes.
 //

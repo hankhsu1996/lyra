@@ -83,7 +83,7 @@ auto Context::GetLyraRecordImmediateCoverHit() -> llvm::Function* {
 auto Context::GetLyraEnqueueObservedDeferredAssertion() -> llvm::Function* {
   if (lyra_enqueue_observed_deferred_assertion_ == nullptr) {
     // void LyraEnqueueObservedDeferredAssertion(
-    //     void* engine, uint32_t process_id, uint32_t instance_id,
+    //     void* engine, uint32_t process_id, void* instance,
     //     uint32_t site_id, uint8_t disposition,
     //     const void* payload_ptr, uint32_t payload_size,
     //     const DeferredAssertionRefBindingAbi* ref_ptr, uint32_t ref_count)
@@ -93,7 +93,7 @@ auto Context::GetLyraEnqueueObservedDeferredAssertion() -> llvm::Function* {
     auto* i8_ty = llvm::Type::getInt8Ty(*llvm_context_);
     auto* fn_type = llvm::FunctionType::get(
         void_ty,
-        {ptr_ty, i32_ty, i32_ty, i32_ty, i8_ty, ptr_ty, i32_ty, ptr_ty, i32_ty},
+        {ptr_ty, i32_ty, ptr_ty, i32_ty, i8_ty, ptr_ty, i32_ty, ptr_ty, i32_ty},
         false);
     lyra_enqueue_observed_deferred_assertion_ = llvm::Function::Create(
         fn_type, llvm::Function::ExternalLinkage,
@@ -104,12 +104,11 @@ auto Context::GetLyraEnqueueObservedDeferredAssertion() -> llvm::Function* {
 
 auto Context::GetLyraPrintValue() -> llvm::Function* {
   if (lyra_print_value_ == nullptr) {
-    // void LyraPrintValue(void* engine, int32_t format, int32_t value_kind,
-    //                     const void* data, int32_t width, bool is_signed,
-    //                     int32_t output_width, int32_t precision,
-    //                     bool zero_pad, bool left_align,
-    //                     const void* x_mask, const void* z_mask,
-    //                     int8_t module_timeunit_power)
+    // void LyraPrintValue(void* engine, i32 format, i32 value_kind,
+    //                     ptr data, i32 width, i1 is_signed,
+    //                     i32 output_width, i32 precision,
+    //                     i1 zero_pad, i1 left_align,
+    //                     ptr unknown_data, i8 module_timeunit_power)
     auto* i32_ty = llvm::Type::getInt32Ty(*llvm_context_);
     auto* ptr_ty = llvm::PointerType::getUnqual(*llvm_context_);
     auto* i1_ty = llvm::Type::getInt1Ty(*llvm_context_);
@@ -117,7 +116,7 @@ auto Context::GetLyraPrintValue() -> llvm::Function* {
     auto* fn_type = llvm::FunctionType::get(
         llvm::Type::getVoidTy(*llvm_context_),
         {ptr_ty, i32_ty, i32_ty, ptr_ty, i32_ty, i1_ty, i32_ty, i32_ty, i1_ty,
-         i1_ty, ptr_ty, ptr_ty, i8_ty},
+         i1_ty, ptr_ty, i8_ty},
         false);
     lyra_print_value_ = llvm::Function::Create(
         fn_type, llvm::Function::ExternalLinkage, "LyraPrintValue",
@@ -166,15 +165,27 @@ auto Context::GetLyraPrintEnd() -> llvm::Function* {
   return lyra_print_end_;
 }
 
+auto Context::GetLyraCreateVarSnapshotBuffer() -> llvm::Function* {
+  if (lyra_create_var_snapshot_buffer_ == nullptr) {
+    // ptr LyraCreateVarSnapshotBuffer()
+    auto* ptr_ty = llvm::PointerType::getUnqual(*llvm_context_);
+    auto* fn_type = llvm::FunctionType::get(ptr_ty, false);
+    lyra_create_var_snapshot_buffer_ = llvm::Function::Create(
+        fn_type, llvm::Function::ExternalLinkage, "LyraCreateVarSnapshotBuffer",
+        llvm_module_.get());
+  }
+  return lyra_create_var_snapshot_buffer_;
+}
+
 auto Context::GetLyraRegisterVar() -> llvm::Function* {
   if (lyra_register_var_ == nullptr) {
-    // void LyraRegisterVar(const char*, void*, int32_t, int32_t, bool, bool)
+    // void LyraRegisterVar(buf, name, addr, kind, width, is_signed, is_4s)
     auto* ptr_ty = llvm::PointerType::getUnqual(*llvm_context_);
     auto* i32_ty = llvm::Type::getInt32Ty(*llvm_context_);
     auto* i1_ty = llvm::Type::getInt1Ty(*llvm_context_);
     auto* fn_type = llvm::FunctionType::get(
         llvm::Type::getVoidTy(*llvm_context_),
-        {ptr_ty, ptr_ty, i32_ty, i32_ty, i1_ty, i1_ty}, false);
+        {ptr_ty, ptr_ty, ptr_ty, i32_ty, i32_ty, i1_ty, i1_ty}, false);
     lyra_register_var_ = llvm::Function::Create(
         fn_type, llvm::Function::ExternalLinkage, "LyraRegisterVar",
         llvm_module_.get());
@@ -184,10 +195,10 @@ auto Context::GetLyraRegisterVar() -> llvm::Function* {
 
 auto Context::GetLyraSnapshotVars() -> llvm::Function* {
   if (lyra_snapshot_vars_ == nullptr) {
-    // void LyraSnapshotVars(void* run_session_ptr)
+    // void LyraSnapshotVars(buf, run_session_ptr)
     auto* ptr_ty = llvm::PointerType::getUnqual(*llvm_context_);
     auto* fn_type = llvm::FunctionType::get(
-        llvm::Type::getVoidTy(*llvm_context_), {ptr_ty}, false);
+        llvm::Type::getVoidTy(*llvm_context_), {ptr_ty, ptr_ty}, false);
     lyra_snapshot_vars_ = llvm::Function::Create(
         fn_type, llvm::Function::ExternalLinkage, "LyraSnapshotVars",
         llvm_module_.get());
@@ -327,18 +338,15 @@ auto Context::GetLyraPackedFromString() -> llvm::Function* {
 
 auto Context::GetLyraRunSimulation() -> llvm::Function* {
   if (lyra_run_simulation_ == nullptr) {
-    // void LyraRunSimulation(ptr* processes, ptr* states, uint32_t num,
+    // void LyraRunSimulation(ptr* states, uint32_t num,
     //                        const char** plusargs, uint32_t num_plusargs,
-    //                        const char** instance_paths, uint32_t num_paths,
     //                        const LyraRuntimeAbi* abi,
     //                        void* run_session_ptr)
     auto* ptr_ty = llvm::PointerType::getUnqual(*llvm_context_);
     auto* i32_ty = llvm::Type::getInt32Ty(*llvm_context_);
     auto* fn_type = llvm::FunctionType::get(
         llvm::Type::getVoidTy(*llvm_context_),
-        {ptr_ty, ptr_ty, i32_ty, ptr_ty, i32_ty, ptr_ty, i32_ty, ptr_ty,
-         ptr_ty},
-        false);
+        {ptr_ty, i32_ty, ptr_ty, i32_ty, ptr_ty, ptr_ty}, false);
     lyra_run_simulation_ = llvm::Function::Create(
         fn_type, llvm::Function::ExternalLinkage, "LyraRunSimulation",
         llvm_module_.get());
@@ -565,10 +573,11 @@ auto Context::GetLyraSuspendWaitEvent() -> llvm::Function* {
 
 auto Context::GetLyraTriggerEvent() -> llvm::Function* {
   if (lyra_trigger_event_ == nullptr) {
+    // void LyraTriggerEvent(ptr engine, ptr instance, i32 event_id)
     auto* ptr_ty = llvm::PointerType::getUnqual(*llvm_context_);
     auto* i32_ty = llvm::Type::getInt32Ty(*llvm_context_);
     auto* fn_type = llvm::FunctionType::get(
-        llvm::Type::getVoidTy(*llvm_context_), {ptr_ty, i32_ty, i32_ty}, false);
+        llvm::Type::getVoidTy(*llvm_context_), {ptr_ty, ptr_ty, i32_ty}, false);
     lyra_trigger_event_ = llvm::Function::Create(
         fn_type, llvm::Function::ExternalLinkage, "LyraTriggerEvent",
         llvm_module_.get());
@@ -576,34 +585,21 @@ auto Context::GetLyraTriggerEvent() -> llvm::Function* {
   return lyra_trigger_event_;
 }
 
-auto Context::GetLyraResolveSlotPtr() -> llvm::Function* {
-  if (lyra_resolve_slot_ptr_ == nullptr) {
+auto Context::GetLyraResolveGlobalSlotPtr() -> llvm::Function* {
+  if (lyra_resolve_global_slot_ptr_ == nullptr) {
     auto* ptr_ty = llvm::PointerType::getUnqual(*llvm_context_);
     auto* i32_ty = llvm::Type::getInt32Ty(*llvm_context_);
     auto* fn_type = llvm::FunctionType::get(ptr_ty, {ptr_ty, i32_ty}, false);
-    lyra_resolve_slot_ptr_ = llvm::Function::Create(
-        fn_type, llvm::Function::ExternalLinkage, "LyraResolveSlotPtr",
+    lyra_resolve_global_slot_ptr_ = llvm::Function::Create(
+        fn_type, llvm::Function::ExternalLinkage, "LyraResolveGlobalSlotPtr",
         llvm_module_.get());
   }
-  return lyra_resolve_slot_ptr_;
+  return lyra_resolve_global_slot_ptr_;
 }
 
 // R3 typed coordination helpers.
 // Local: (ptr engine, ptr instance, ..., i32 local_id, ...)
 // Global: (ptr engine, ..., i32 global_id, ...)
-
-auto Context::GetLyraResolveInstancePtr() -> llvm::Function* {
-  if (lyra_resolve_instance_ptr_ == nullptr) {
-    auto* ptr_ty = llvm::PointerType::getUnqual(*llvm_context_);
-    auto* i32_ty = llvm::Type::getInt32Ty(*llvm_context_);
-    // (eng, instance_id) -> ptr
-    auto* fn_type = llvm::FunctionType::get(ptr_ty, {ptr_ty, i32_ty}, false);
-    lyra_resolve_instance_ptr_ = llvm::Function::Create(
-        fn_type, llvm::Function::ExternalLinkage, "LyraResolveInstancePtr",
-        llvm_module_.get());
-  }
-  return lyra_resolve_instance_ptr_;
-}
 
 auto Context::GetLyraMarkDirtyLocal() -> llvm::Function* {
   if (lyra_mark_dirty_local_ == nullptr) {
@@ -910,10 +906,9 @@ auto Context::GetLyraNotifySignalLocal() -> llvm::Function* {
   if (lyra_notify_signal_local_ == nullptr) {
     auto* ptr_ty = llvm::PointerType::getUnqual(*llvm_context_);
     auto* i32_ty = llvm::Type::getInt32Ty(*llvm_context_);
-    // (eng, inst, slot_ptr, id)
+    // (eng, inst, id)
     auto* fn_type = llvm::FunctionType::get(
-        llvm::Type::getVoidTy(*llvm_context_), {ptr_ty, ptr_ty, ptr_ty, i32_ty},
-        false);
+        llvm::Type::getVoidTy(*llvm_context_), {ptr_ty, ptr_ty, i32_ty}, false);
     lyra_notify_signal_local_ = llvm::Function::Create(
         fn_type, llvm::Function::ExternalLinkage, "LyraNotifySignalLocal",
         llvm_module_.get());
@@ -925,8 +920,9 @@ auto Context::GetLyraNotifySignalGlobal() -> llvm::Function* {
   if (lyra_notify_signal_global_ == nullptr) {
     auto* ptr_ty = llvm::PointerType::getUnqual(*llvm_context_);
     auto* i32_ty = llvm::Type::getInt32Ty(*llvm_context_);
+    // (eng, id)
     auto* fn_type = llvm::FunctionType::get(
-        llvm::Type::getVoidTy(*llvm_context_), {ptr_ty, ptr_ty, i32_ty}, false);
+        llvm::Type::getVoidTy(*llvm_context_), {ptr_ty, i32_ty}, false);
     lyra_notify_signal_global_ = llvm::Function::Create(
         fn_type, llvm::Function::ExternalLinkage, "LyraNotifySignalGlobal",
         llvm_module_.get());
@@ -964,11 +960,10 @@ auto Context::GetLyraGetTime() -> llvm::Function* {
 
 auto Context::GetLyraInitRuntime() -> llvm::Function* {
   if (lyra_init_runtime_ == nullptr) {
-    // void LyraInitRuntime(const char* fs_base_dir, uint32_t iteration_limit)
-    auto* ptr_ty = llvm::PointerType::getUnqual(*llvm_context_);
+    // void LyraInitRuntime(uint32_t iteration_limit)
     auto* i32_ty = llvm::Type::getInt32Ty(*llvm_context_);
     auto* fn_type = llvm::FunctionType::get(
-        llvm::Type::getVoidTy(*llvm_context_), {ptr_ty, i32_ty}, false);
+        llvm::Type::getVoidTy(*llvm_context_), {i32_ty}, false);
     lyra_init_runtime_ = llvm::Function::Create(
         fn_type, llvm::Function::ExternalLinkage, "LyraInitRuntime",
         llvm_module_.get());
@@ -1297,7 +1292,6 @@ auto Context::GetLyraStringFormatValue() -> llvm::Function* {
     //                            i32 value_kind, ptr data, i32 width,
     //                            i1 is_signed, i32 output_width, i32 precision,
     //                            i1 zero_pad, i1 left_align,
-    //                            ptr x_mask, ptr z_mask,
     //                            i8 module_timeunit_power)
     auto* ptr_ty = llvm::PointerType::getUnqual(*llvm_context_);
     auto* i32_ty = llvm::Type::getInt32Ty(*llvm_context_);
@@ -1306,7 +1300,7 @@ auto Context::GetLyraStringFormatValue() -> llvm::Function* {
     auto* fn_type = llvm::FunctionType::get(
         llvm::Type::getVoidTy(*llvm_context_),
         {ptr_ty, ptr_ty, i32_ty, i32_ty, ptr_ty, i32_ty, i1_ty, i32_ty, i32_ty,
-         i1_ty, i1_ty, ptr_ty, ptr_ty, i8_ty},
+         i1_ty, i1_ty, i8_ty},
         false);
     lyra_string_format_value_ = llvm::Function::Create(
         fn_type, llvm::Function::ExternalLinkage, "LyraStringFormatValue",
@@ -1447,12 +1441,11 @@ auto Context::GetLyraFWrite() -> llvm::Function* {
 auto Context::GetLyraRegisterStrobe() -> llvm::Function* {
   if (lyra_register_strobe_ == nullptr) {
     // void LyraRegisterStrobe(ptr engine, ptr program, ptr design_state,
-    //                         ptr this_ptr, i32 instance_id)
+    //                         ptr this_ptr, ptr instance)
     auto* ptr_ty = llvm::PointerType::getUnqual(*llvm_context_);
-    auto* i32_ty = llvm::Type::getInt32Ty(*llvm_context_);
     auto* fn_type = llvm::FunctionType::get(
         llvm::Type::getVoidTy(*llvm_context_),
-        {ptr_ty, ptr_ty, ptr_ty, ptr_ty, i32_ty}, false);
+        {ptr_ty, ptr_ty, ptr_ty, ptr_ty, ptr_ty}, false);
     lyra_register_strobe_ = llvm::Function::Create(
         fn_type, llvm::Function::ExternalLinkage, "LyraRegisterStrobe",
         llvm_module_.get());
@@ -1477,13 +1470,13 @@ auto Context::GetLyraMonitorSetEnabled() -> llvm::Function* {
 auto Context::GetLyraMonitorRegister() -> llvm::Function* {
   if (lyra_monitor_register_ == nullptr) {
     // void LyraMonitorRegister(ptr engine, ptr program, ptr design,
-    //                          ptr this_ptr, i32 instance_id,
+    //                          ptr this_ptr, ptr instance,
     //                          ptr initial_prev, i32 size)
     auto* ptr_ty = llvm::PointerType::getUnqual(*llvm_context_);
     auto* i32_ty = llvm::Type::getInt32Ty(*llvm_context_);
     auto* fn_type = llvm::FunctionType::get(
         llvm::Type::getVoidTy(*llvm_context_),
-        {ptr_ty, ptr_ty, ptr_ty, ptr_ty, i32_ty, ptr_ty, i32_ty}, false);
+        {ptr_ty, ptr_ty, ptr_ty, ptr_ty, ptr_ty, ptr_ty, i32_ty}, false);
     lyra_monitor_register_ = llvm::Function::Create(
         fn_type, llvm::Function::ExternalLinkage, "LyraMonitorRegister",
         llvm_module_.get());
@@ -1551,8 +1544,9 @@ auto Context::GetLyraReadmemNoNotify() -> llvm::Function* {
 
 auto Context::GetLyraWritemem() -> llvm::Function* {
   if (lyra_writemem_ == nullptr) {
-    // void LyraWritemem(ptr filename, ptr source, i32 elem_width,
-    //                   i32 stride_bytes, i32 value_size_bytes, i32 elem_count,
+    // void LyraWritemem(ptr engine, ptr filename, ptr source,
+    //                   i32 elem_width, i32 stride_bytes,
+    //                   i32 value_size_bytes, i32 elem_count,
     //                   i64 min_addr, i64 current_addr, i64 final_addr,
     //                   i64 step, i1 is_hex, i32 element_kind)
     auto* ptr_ty = llvm::PointerType::getUnqual(*llvm_context_);
@@ -1562,8 +1556,8 @@ auto Context::GetLyraWritemem() -> llvm::Function* {
     auto* void_ty = llvm::Type::getVoidTy(*llvm_context_);
     auto* fn_type = llvm::FunctionType::get(
         void_ty,
-        {ptr_ty, ptr_ty, i32_ty, i32_ty, i32_ty, i32_ty, i64_ty, i64_ty, i64_ty,
-         i64_ty, i1_ty, i32_ty},
+        {ptr_ty, ptr_ty, ptr_ty, i32_ty, i32_ty, i32_ty, i32_ty, i64_ty, i64_ty,
+         i64_ty, i64_ty, i1_ty, i32_ty},
         false);
     lyra_writemem_ = llvm::Function::Create(
         fn_type, llvm::Function::ExternalLinkage, "LyraWritemem",
@@ -1574,11 +1568,10 @@ auto Context::GetLyraWritemem() -> llvm::Function* {
 
 auto Context::GetLyraPrintModulePath() -> llvm::Function* {
   if (lyra_print_module_path_ == nullptr) {
-    // void LyraPrintModulePath(ptr engine, i32 instance_id)
+    // void LyraPrintModulePath(ptr engine, ptr instance)
     auto* ptr_ty = llvm::PointerType::getUnqual(*llvm_context_);
-    auto* i32_ty = llvm::Type::getInt32Ty(*llvm_context_);
     auto* fn_type = llvm::FunctionType::get(
-        llvm::Type::getVoidTy(*llvm_context_), {ptr_ty, i32_ty}, false);
+        llvm::Type::getVoidTy(*llvm_context_), {ptr_ty, ptr_ty}, false);
     lyra_print_module_path_ = llvm::Function::Create(
         fn_type, llvm::Function::ExternalLinkage, "LyraPrintModulePath",
         llvm_module_.get());

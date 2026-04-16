@@ -5,6 +5,7 @@
 #include <variant>
 
 #include "lyra/runtime/output_sink.hpp"
+#include "lyra/runtime/runtime_instance.hpp"
 #include "lyra/trace/trace_event.hpp"
 
 namespace lyra::trace {
@@ -20,15 +21,14 @@ void SummaryTraceSink::OnEvent(const TraceEvent& event) {
           ++global_counts_[e.signal_id.value].value_changes;
         } else if constexpr (std::is_same_v<T, LocalValueChange>) {
           ++value_changes_;
-          ++local_counts_[LocalKey{e.instance_id, e.signal_id.value}]
+          ++local_counts_[LocalKey{e.instance, e.signal_id.value}]
                 .value_changes;
         } else if constexpr (std::is_same_v<T, GlobalMemoryDirty>) {
           ++memory_dirty_;
           ++global_counts_[e.signal_id.value].memory_dirty;
         } else if constexpr (std::is_same_v<T, LocalMemoryDirty>) {
           ++memory_dirty_;
-          ++local_counts_[LocalKey{e.instance_id, e.signal_id.value}]
-                .memory_dirty;
+          ++local_counts_[LocalKey{e.instance, e.signal_id.value}].memory_dirty;
         }
       },
       event);
@@ -52,9 +52,9 @@ void SummaryTraceSink::PrintSummary(
   for (const auto& [key, counts] : local_counts_) {
     out.WriteProtocolRecord(
         std::format(
-            "__LYRA_TRACE_SLOT__: instance={} local={} value_changes={} "
+            "__LYRA_TRACE_SLOT__: instance='{}' local={} value_changes={} "
             "memory_dirty={}\n",
-            key.instance_id, key.signal_id, counts.value_changes,
+            key.instance->path_c_str, key.signal_id, counts.value_changes,
             counts.memory_dirty));
   }
 }

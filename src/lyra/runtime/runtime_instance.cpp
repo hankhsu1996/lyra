@@ -13,9 +13,9 @@ namespace lyra::runtime {
 // unique_ptr would change the struct layout.
 // NOLINTBEGIN(cppcoreguidelines-owning-memory)
 
-auto AllocateOwnedStorage(uint64_t size, const char* caller) -> std::byte* {
+auto AllocateOwnedStorage(uint64_t size, const char* caller) -> uint8_t* {
   if (size == 0) return nullptr;
-  auto* mem = new (std::nothrow) std::byte[size];
+  auto* mem = new (std::nothrow) uint8_t[size];
   if (mem == nullptr) {
     throw common::InternalError(
         caller, std::format("allocation of {} bytes failed", size));
@@ -24,11 +24,11 @@ auto AllocateOwnedStorage(uint64_t size, const char* caller) -> std::byte* {
   return mem;
 }
 
-auto AllocateOwnedInlineStorage(uint64_t size) -> std::byte* {
+auto AllocateOwnedInlineStorage(uint64_t size) -> uint8_t* {
   return AllocateOwnedStorage(size, "AllocateOwnedInlineStorage");
 }
 
-auto AllocateOwnedAppendixStorage(uint64_t size) -> std::byte* {
+auto AllocateOwnedAppendixStorage(uint64_t size) -> uint8_t* {
   return AllocateOwnedStorage(size, "AllocateOwnedAppendixStorage");
 }
 

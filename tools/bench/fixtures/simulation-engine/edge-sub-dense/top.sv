@@ -2,12 +2,16 @@
 `define NUM_CYCLES 500000
 `endif
 
+`ifndef NUM_PROCS
+`define NUM_PROCS 128
+`endif
+
 // Many small processes all sensitive to the same clock edge.
 // Exercises edge subscription traversal and per-process activation overhead.
 
 module Top;
   localparam int NUM_CYCLES = `NUM_CYCLES;
-  localparam int NUM_PROCS = 128;
+  localparam int NUM_PROCS = `NUM_PROCS;
 
   logic clk;
   logic rst_n;

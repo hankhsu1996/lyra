@@ -53,14 +53,13 @@ struct DpiResolvedPackageBinding {
 };
 
 // Resolved binding for module-scoped DPI export wrappers (D4a).
-// Contains simulation-lifetime base context, instance-binding triple,
+// Contains simulation-lifetime base context, instance pointer pair,
 // and decision owner from DPI context.
 struct DpiResolvedModuleBinding {
   void* design_state = nullptr;
   void* engine = nullptr;
   void* this_ptr = nullptr;
   void* instance_ptr = nullptr;
-  uint32_t instance_id = 0;
   uint32_t decision_owner_id_raw = UINT32_MAX;
   bool has_decision_owner = false;
 };
@@ -105,7 +104,7 @@ void LyraResolvePackageExportBinding(
     lyra::runtime::DpiResolvedPackageBinding* out);
 
 // Resolve module-scoped export instance binding: design_state + engine +
-// this_ptr + instance_ptr + instance_id.
+// this_ptr + instance_ptr.
 // Fails fatally if no active simulation context or no active scope.
 // Called by LLVM-generated module export wrappers (D4a).
 // Writes result to caller-provided output pointer.

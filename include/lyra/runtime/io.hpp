@@ -2,6 +2,7 @@
 
 #include <cstdint>
 
+#include "lyra/common/gsl_owner.hpp"
 #include "lyra/runtime/string.hpp"
 
 // Element kind for $readmem/$writemem - determines storage layout
@@ -9,6 +10,9 @@ enum class MemElementKind : int32_t {
   kTwoState = 0,   // Packed 2-state integral (single value)
   kFourState = 1,  // Packed 4-state integral (value + x_mask struct)
 };
+
+// Opaque buffer for variable snapshot accumulation.
+struct VarSnapshotBuffer;
 
 extern "C" {
 
@@ -37,28 +41,34 @@ void LyraWarnRateLimited(void* engine, const char* msg, uint32_t* counter_ptr);
 // - left_align: left-align within field width (from %-Nd syntax)
 // - unknown_data: pointer to unknown plane (null for 2-state). When set, bit i
 //     is X if unknown[i]=1 && data[i]=0, Z if unknown[i]=1 && data[i]=1.
-// - z_mask: unused (reserved for future)
 // - module_timeunit_power: timeunit of the value (for kTime: e.g., -9 for ns)
 void LyraPrintValue(
     void* engine, int32_t format, int32_t value_kind, const void* data,
     int32_t width, bool is_signed, int32_t output_width, int32_t precision,
     bool zero_pad, bool left_align, const void* unknown_data,
-    const void* z_mask, int8_t module_timeunit_power);
+    int8_t module_timeunit_power);
 
 // Finalize output: newline for kDisplay (0), nothing for kWrite (1)
 void LyraPrintEnd(void* engine, int32_t kind);
 
-// Register a variable for snapshot. Called at program init.
+// Create an explicit variable snapshot buffer.
+// Returned handle is passed to LyraRegisterVar / LyraSnapshotVars.
+auto LyraCreateVarSnapshotBuffer() -> gsl::owner<VarSnapshotBuffer*>;
+
+// Register a variable into an explicit snapshot buffer.
+// buffer: handle from LyraCreateVarSnapshotBuffer
 // kind: 0 = integral, 1 = real
 // is_four_state: true for 4-state types (logic, reg), slot layout is
 //                {value_plane, unknown_plane}
 void LyraRegisterVar(
-    const char* name, void* addr, int32_t kind, int32_t width, bool is_signed,
-    bool is_four_state);
+    VarSnapshotBuffer* buffer, const char* name, void* addr, int32_t kind,
+    int32_t width, bool is_signed, bool is_four_state);
 
-// Output all registered variables. Called before exit.
+// Output all registered variables and destroy the buffer.
+// Consumes the buffer handle (must not be used after this call).
 // run_session_ptr: opaque pointer to lyra::runtime::RunSession.
-void LyraSnapshotVars(void* run_session_ptr);
+void LyraSnapshotVars(
+    gsl::owner<VarSnapshotBuffer*> buffer, void* run_session_ptr);
 
 // $fopen with mode (FD mode) - returns int32, 0 on failure
 // engine: opaque pointer to lyra::runtime::Engine
@@ -142,17 +152,18 @@ void LyraReadmemNoNotify(
     bool is_hex, int32_t element_kind);
 
 // $writememh/$writememb: write array to memory file
-// Parameters match LyraReadmem, but source is read-only.
+// - engine_ptr: pointer to Engine (for base directory resolution)
+// Other parameters match LyraReadmem, but source is read-only.
 void LyraWritemem(
-    LyraStringHandle filename, const void* source, int32_t element_width,
-    int32_t stride_bytes, int32_t value_size_bytes, int32_t element_count,
-    int64_t min_addr, int64_t current_addr, int64_t final_addr, int64_t step,
-    bool is_hex, int32_t element_kind);
+    void* engine_ptr, LyraStringHandle filename, const void* source,
+    int32_t element_width, int32_t stride_bytes, int32_t value_size_bytes,
+    int32_t element_count, int64_t min_addr, int64_t current_addr,
+    int64_t final_addr, int64_t step, bool is_hex, int32_t element_kind);
 
-// Print hierarchical module path (%m format specifier)
-// - engine: pointer to Engine (for instance path lookup)
-// - instance_id: index into instance_paths (from scheduling/binding context)
-void LyraPrintModulePath(void* engine, uint32_t instance_id);
+// Print hierarchical module path (%m format specifier).
+// engine: pointer to Engine (for output dispatch).
+// instance: pointer to RuntimeInstance (direct access to path_c_str).
+void LyraPrintModulePath(void* engine, void* instance);
 
 // $fread - read binary data from file
 // - engine: pointer to Engine (for FileManager access)

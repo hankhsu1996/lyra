@@ -60,34 +60,16 @@ struct ObjectSignalRef {
   LocalSignalId local;
 };
 
-// R5: Instance-scoped signal reference for subscription and NBA boundaries.
-// Carries instance_id (for container lookup) and LocalSignalId (for indexing).
-// Used at the top-level subscription API; below that, domain-specific helpers
-// take GlobalSignalId or LocalSignalRef directly.
+// Instance-scoped signal reference for subscription install.
+// Object-first: carries RuntimeInstance* directly.
 struct LocalSignalRef {
-  InstanceId instance_id;
-  LocalSignalId signal;
+  RuntimeInstance* instance = nullptr;
+  LocalSignalId signal{};
 };
 
 // R5: Tagged union for the subscription/NBA top boundary.
 // Dispatch once at entry, then use domain-specific helpers below.
 using SignalRef = std::variant<GlobalSignalId, LocalSignalRef>;
-
-// R5: POD-safe typed signal identity for cold storage (e.g. ContainerCold).
-// Avoids std::variant overhead in dense cold pools.
-struct StoredSignalRef {
-  uint32_t signal_id = UINT32_MAX;
-  bool is_local = false;
-  InstanceId instance_id = InstanceId{0};
-
-  [[nodiscard]] auto ToSignalRef() const -> SignalRef {
-    if (is_local) {
-      return LocalSignalRef{
-          .instance_id = instance_id, .signal = LocalSignalId{signal_id}};
-    }
-    return GlobalSignalId{signal_id};
-  }
-};
 
 // Semantic domain tag for trigger and mutation coordinates.
 enum class SignalCoordKind : uint8_t {

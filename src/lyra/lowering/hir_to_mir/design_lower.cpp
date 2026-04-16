@@ -24,6 +24,7 @@
 #include "lyra/lowering/hir_to_mir/bound_hierarchy.hpp"
 #include "lyra/lowering/hir_to_mir/context.hpp"
 #include "lyra/lowering/hir_to_mir/design.hpp"
+#include "lyra/lowering/hir_to_mir/design_connections.hpp"
 #include "lyra/lowering/hir_to_mir/design_internal.hpp"
 #include "lyra/lowering/hir_to_mir/dpi_header.hpp"
 #include "lyra/lowering/hir_to_mir/lower.hpp"
@@ -513,12 +514,25 @@ auto LowerDesign(
     }
 
     // Build port entries from declared ports on the representative module.
+    // Every declared port must resolve to a body-local slot and type.
+    // Port entries are in declared port order -- this is the canonical
+    // interface order used by child_port_ordinal indexing.
     std::vector<mir::PortEntry> port_entries;
     for (const auto& port : rep_mod.ports) {
       auto slot_it = sym_to_slot.find(port.sym);
-      if (slot_it == sym_to_slot.end()) continue;
+      if (slot_it == sym_to_slot.end()) {
+        throw common::InternalError(
+            "LowerDesign", std::format(
+                               "declared port '{}' missing body-local slot",
+                               (*input.symbol_table)[port.sym].name));
+      }
       auto type_it = sym_to_type.find(port.sym);
-      if (type_it == sym_to_type.end()) continue;
+      if (type_it == sym_to_type.end()) {
+        throw common::InternalError(
+            "LowerDesign", std::format(
+                               "declared port '{}' missing body-local type",
+                               (*input.symbol_table)[port.sym].name));
+      }
       mir::PortDirection mir_dir{};
       switch (port.dir) {
         case hir::HirPortDirection::kInput:
@@ -538,11 +552,18 @@ auto LowerDesign(
               .type = type_it->second,
               .dir = mir_dir});
     }
+    if (port_entries.size() != rep_mod.ports.size()) {
+      throw common::InternalError(
+          "LowerDesign", std::format(
+                             "port_entries size {} != declared port count {}",
+                             port_entries.size(), rep_mod.ports.size()));
+    }
 
-    // Sort by slot value for deterministic ordering.
-    std::ranges::sort(port_entries, [](const auto& a, const auto& b) {
-      return a.slot.value < b.slot.value;
-    });
+    // Store port entries on the body for runtime emission.
+    auto& body = result.module_bodies[mir_body_id.value];
+    if (body.port_entries.empty()) {
+      body.port_entries = port_entries;
+    }
 
     auto header = mir::CompiledModuleHeader::Create(
         group.spec_id, group.spec_id.def_id, std::move(port_entries));
@@ -932,39 +953,57 @@ auto LowerDesign(
     }
 
     for (const auto& binding : input.binding_plan->bindings) {
-      // Step 1: Classify child port. Must be resolver-addressable
-      // (body-local). Non-body-local ports are unsupported.
-      if (!resolver.Contains(binding.child_port_sym)) continue;
-
-      // Step 2: Find child instance and site from port variable.
-      SymbolId child_instance_sym =
-          resolver.FindOwnerInstance(binding.child_port_sym);
-      auto site_it = child_sym_to_site.find(child_instance_sym);
+      // Step 1: Route to child site via child instance identity.
+      auto site_it = child_sym_to_site.find(binding.child_instance_sym);
       if (site_it == child_sym_to_site.end()) continue;
       const auto& site_lookup = site_it->second;
 
-      // Step 3: Get child port slot (guaranteed by Contains check).
-      auto child_endpoint = resolver.ResolveByVariable(binding.child_port_sym);
-      common::LocalSlotId child_slot = child_endpoint.local_slot;
-      TypeId result_type = (*input.symbol_table)[binding.child_port_sym].type;
+      // Step 2: Resolve canonical child port from ordinal.
+      // Read child_spec directly from the child site record,
+      // not through rep_child_module_index -> spec_map.
+      auto csb_it = child_sites_by_body.find(site_lookup.parent_body_group);
+      if (csb_it == child_sites_by_body.end() ||
+          site_lookup.site.value >= csb_it->second.size()) {
+        throw common::InternalError(
+            "LowerDesign",
+            std::format(
+                "child site {} out of range for parent body {}",
+                site_lookup.site.value, site_lookup.parent_body_group));
+      }
+      const auto& child_site = csb_it->second[site_lookup.site.value];
+      auto child_body_it = spec_to_body.find(child_site.child_spec);
+      if (child_body_it == spec_to_body.end()) {
+        throw common::InternalError(
+            "LowerDesign", "child spec has no lowered body");
+      }
+      const auto& child_body =
+          result.module_bodies[child_body_it->second.value];
+
+      if (binding.child_port_ordinal >= child_body.port_entries.size()) {
+        throw common::InternalError(
+            "LowerDesign",
+            std::format(
+                "child_port_ordinal {} out of range for child body ports {}",
+                binding.child_port_ordinal, child_body.port_entries.size()));
+      }
+
+      const auto& child_pe =
+          child_body.port_entries[binding.child_port_ordinal];
+      common::LocalSlotId child_slot = child_pe.slot;
+      TypeId result_type = child_pe.type;
 
       auto kind =
           (binding.kind == ast_to_hir::PortBinding::Kind::kDriveParentToChild)
               ? mir::PortConnection::Kind::kDriveParentToChild
               : mir::PortConnection::Kind::kDriveChildToParent;
 
-      // Step 4: Resolve parent-side expression.
-      // Only simple NameRef with resolver-addressable (body-local)
-      // symbols are in the supported subset. Non-NameRef (complex
-      // expressions) and non-body-local NameRef (design-global,
-      // hierarchical) are unsupported and left to the old path.
+      // Step 3: Resolve parent-side expression.
       mir::ConnectionSourceRecipe source;
       mir::TriggerRecipe trigger;
 
       if (kind == mir::PortConnection::Kind::kDriveParentToChild) {
         const hir::Expression& expr = (*input.hir_arena)[binding.parent_rvalue];
         if (expr.kind == hir::ExpressionKind::kNameRef) {
-          // Simple NameRef: kLocalSlot source.
           const auto& name_data =
               std::get<hir::NameRefExpressionData>(expr.data);
           if (!resolver.Contains(name_data.symbol)) continue;
@@ -974,7 +1013,6 @@ auto LowerDesign(
           trigger = mir::TriggerRecipe::FromLocalSlot(
               parent_endpoint.local_slot, common::EdgeKind::kAnyChange);
         } else {
-          // Complex expression: compile as body-local function.
           auto any_ref =
               FindAnyNameRef(binding.parent_rvalue, *input.hir_arena);
           if (!any_ref || !resolver.Contains(*any_ref)) continue;
@@ -1015,6 +1053,7 @@ auto LowerDesign(
           mir::ConnectionRecipe{
               .kind = kind,
               .child_site = site_lookup.site,
+              .child_port_sym = child_pe.sym,
               .child_slot = child_slot,
               .source = source,
               .trigger = trigger,
@@ -1031,6 +1070,62 @@ auto LowerDesign(
     result.module_bodies[body_id_val].connection_recipes = std::move(recipes);
   }
 
+  // Synthesize expression connection processes per body.
+  // Called after ALL ordinary processes exist and ALL recipes are on the body.
+  // This is the final mutation of body.processes and
+  // body.expr_connection_templates. No later phase may append or rewrite
+  // expression connection processes. design_lower.cpp does not construct
+  // execution artifacts itself -- it calls one body-local function per body.
+  for (auto& body : result.module_bodies) {
+    MaterializeExprConnectionProcessSuffix(body);
+  }
+  // Postcondition: verify the full expression connection suffix invariant.
+  for (const auto& body : result.module_bodies) {
+    // Recipe count matches template count.
+    uint32_t func_recipe_count = 0;
+    for (const auto& recipe : body.connection_recipes) {
+      if (recipe.source.kind == mir::ConnectionSourceRecipe::Kind::kFunction)
+        ++func_recipe_count;
+    }
+    if (func_recipe_count != body.expr_connection_templates.size()) {
+      throw common::InternalError(
+          "LowerDesign",
+          std::format(
+              "expr_connection_templates count {} != kFunction "
+              "recipe count {}",
+              body.expr_connection_templates.size(), func_recipe_count));
+    }
+    // Suffix arithmetic is consistent.
+    auto ordinary = mir::GetOrdinaryProcessCount(body);
+    auto expr = mir::GetExprConnectionCount(body);
+    auto total = static_cast<uint32_t>(body.processes.size());
+    if (ordinary + expr != total) {
+      throw common::InternalError(
+          "LowerDesign",
+          std::format(
+              "suffix invariant: ordinary {} + expr {} != total {}", ordinary,
+              expr, total));
+    }
+    // Suffix ordinals are dense and match append order.
+    for (uint32_t i = 0; i < expr; ++i) {
+      const auto& tmpl = body.expr_connection_templates[i];
+      if (tmpl.expr_process_suffix_ordinal != i) {
+        throw common::InternalError(
+            "LowerDesign",
+            std::format(
+                "suffix ordinal mismatch: template[{}] has ordinal {}", i,
+                tmpl.expr_process_suffix_ordinal));
+      }
+      auto ordinal = mir::GetExprConnectionProcessOrdinal(body, i);
+      if (ordinal >= total) {
+        throw common::InternalError(
+            "LowerDesign",
+            std::format(
+                "suffix ordinal {} out of range (total={})", ordinal, total));
+      }
+    }
+  }
+
   // B2: Build topology index and resolve external ref recipes.
   // Ordering: FinalizeExternalRefTargetSlots fills target_slot (needs
   // provisionals for target_sym). CanonicalizeExternalRefPaths fills
@@ -1042,6 +1137,18 @@ auto LowerDesign(
   auto topo = BuildBoundHierarchyIndex(
       construction, parent_to_children, body_to_representative,
       oi_to_durable_child);
+
+  // Copy parent topology into construction input for constructor use.
+  construction.parent_instance_indices = topo.parent_of;
+
+  // Build per-instance structural child identity from oi_to_durable_child.
+  auto instance_count = construction.objects.size();
+  construction.child_durable_ids.resize(instance_count);
+  for (const auto& [oi, durable_id] : oi_to_durable_child) {
+    if (oi < instance_count) {
+      construction.child_durable_ids[oi] = durable_id;
+    }
+  }
 
   FinalizeExternalRefTargetSlots(
       result, provisionals_by_body, body_local_slots_by_body, topo,
@@ -1062,9 +1169,9 @@ auto LowerDesign(
 
   // Bind connection recipes against topology.
   // kLocalSlot-sourced recipes -> BoundConnection (kernel entries).
-  // kFunction-sourced recipes -> CompiledConnectionExpr (process cloning).
+  // kFunction-sourced recipes are now handled by
+  // MaterializeExprConnectionProcessSuffix (body-process suffix path).
   std::vector<mir::BoundConnection> bound_connections;
-  std::vector<mir::CompiledConnectionExpr> expr_connections;
   for (uint32_t oi = 0; oi < construction.objects.size(); ++oi) {
     uint32_t body_idx = construction.objects[oi].body_group;
     const auto& body = result.module_bodies[body_idx];
@@ -1074,41 +1181,8 @@ auto LowerDesign(
       if (IsFullyBindableRecipe(recipe)) {
         bound_connections.push_back(BindConnectionRecipe(
             recipe, r, body, common::ObjectIndex{oi}, topo, construction));
-      } else if (
-          recipe.source.kind == mir::ConnectionSourceRecipe::Kind::kFunction) {
-        // This adapter only supports kDriveParentToChild with
-        // kLocalSlot trigger. Other shapes are not yet lowerable.
-        if (recipe.kind != mir::PortConnection::Kind::kDriveParentToChild ||
-            recipe.trigger.kind != mir::TriggerRecipe::Kind::kLocalSlot) {
-          throw common::InternalError(
-              "LowerDesign", std::format(
-                                 "kFunction recipe has unsupported shape "
-                                 "(kind={}, trigger kind={})",
-                                 static_cast<uint8_t>(recipe.kind),
-                                 static_cast<uint8_t>(recipe.trigger.kind)));
-        }
-        if (recipe.child_site.value >= body.child_sites.size()) continue;
-        const auto& site = body.child_sites[recipe.child_site.value];
-        uint32_t parent_bg = construction.objects[oi].body_group;
-        uint32_t child_oi = topo.ResolveChildByDurableId(parent_bg, site.id);
-        // Resolve trigger endpoint (parent-local slot).
-        auto trigger_ep = mir::BoundEndpoint{
-            .object_index = common::ObjectIndex{oi},
-            .local_slot = recipe.trigger.local_slot};
-        expr_connections.push_back(
-            mir::CompiledConnectionExpr{
-                .kind = recipe.kind,
-                .parent_arena = &body.arena,
-                .expr_function = recipe.source.function,
-                .parent_object_index = common::ObjectIndex{oi},
-                .child_object_index = common::ObjectIndex{child_oi},
-                .child_local_slot = recipe.child_slot,
-                .result_type = recipe.result_type,
-                .trigger = trigger_ep,
-                .trigger_edge = recipe.trigger.edge,
-                .child_port_sym = {},
-                .parent_instance_sym = {}});
       }
+      // kFunction-sourced recipes: handled by body-process suffix.
     }
   }
 
@@ -1116,7 +1190,6 @@ auto LowerDesign(
       .design = std::move(result),
       .construction = std::move(construction),
       .bound_connections = std::move(bound_connections),
-      .expr_connections = std::move(expr_connections),
       .body_origins = std::move(body_origins),
       .dpi_export_wrappers = std::move(dpi_export_wrappers),
       .dpi_header = (!decls.dpi_exports.Empty() || !decls.dpi_imports.Empty())

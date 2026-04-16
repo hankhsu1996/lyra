@@ -13,11 +13,11 @@ namespace lyra::lowering::mir_to_llvm {
 // Loaded fields from an ObserverContext struct pointer.
 struct LoadedObserverContext {
   llvm::Value* this_ptr;
-  llvm::Value* instance_id;
+  llvm::Value* instance;
 };
 
 // Get the LLVM struct type for ObserverContext.
-// Layout: { ptr this_ptr, i32 instance_id }
+// Layout: { ptr this_ptr, ptr instance }
 auto GetObserverContextStructType(llvm::LLVMContext& llvm_ctx)
     -> llvm::StructType*;
 
@@ -27,17 +27,17 @@ auto LoadObserverContextFields(
     llvm::Value* observer_ctx_ptr) -> LoadedObserverContext;
 
 // Enter specialization-local lowering mode from an ObserverContext*.
-// Loads fields, installs this_ptr/instance_id
+// Loads fields, installs this_ptr and observer instance pointer,
 // and sets kSpecializationLocal addressing mode.
 void EnterObserverSpecializationLocalContext(
     Context& context, mir::FunctionId func_id, llvm::Value* observer_ctx_ptr);
 
 // Get observer context field values from current lowering state.
-// Returns null/zero defaults for fields not present (design-global callers).
+// Returns nullptr defaults for fields not present (design-global callers).
 auto GetObserverContextFieldValues(Context& context) -> LoadedObserverContext;
 
 // Allocate an ObserverContext struct on the stack and fill it from
-// current lowering state. Uses null/zero defaults for design-global callers.
+// current lowering state. Uses nullptr defaults for design-global callers.
 auto MaterializeObserverContext(Context& context) -> llvm::Value*;
 
 }  // namespace lyra::lowering::mir_to_llvm

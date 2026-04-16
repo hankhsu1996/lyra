@@ -75,7 +75,6 @@ struct LoweringResult {
   std::vector<std::vector<OriginEntry>> body_origins;
   LoweringStats stats;
   std::vector<mir::BoundConnection> bound_connections;
-  std::vector<mir::CompiledConnectionExpr> expr_connections;
   // DPI export wrapper descriptors for LLVM backend emission.
   // Deterministically sorted by c_name.
   std::vector<mir::DpiExportWrapperDesc> dpi_export_wrappers;

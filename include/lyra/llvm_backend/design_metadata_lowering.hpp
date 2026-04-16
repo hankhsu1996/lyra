@@ -25,23 +25,12 @@ auto PrepareBackEdgeSiteInputs(
     -> std::vector<metadata::BackEdgeSiteInput>;
 
 // Extract connection descriptor entries from layout components.
-// Trigger observation data is pre-resolved; no arena access needed.
+// Computes body-relative byte offsets from object/member identity.
 auto ExtractConnectionDescriptorEntries(
     std::span<const ConnectionKernelEntry> kernel_entries,
-    const DesignLayout& design, uint32_t num_package_slots,
-    std::span<const uint32_t> instance_slot_counts)
+    std::span<const Layout::BodyRealizationInfo> body_realization_infos,
+    std::span<const uint32_t> instance_body_groups)
     -> std::vector<metadata::ConnectionDescriptorEntry>;
-
-// Find port-binding forwarding candidates. Analysis only -- does not
-// modify the connection graph or prove transform safety. Emits all
-// candidates that pass the current provable checks. Unresolved checks
-// (like active trace references) are flagged but do not exclude.
-auto FindPortBindingForwardingCandidates(
-    std::span<const metadata::ConnectionDescriptorEntry> connections,
-    uint32_t num_slots,
-    std::span<const Layout::BodyRuntimeDescriptors> body_runtime_descriptors,
-    const OwnedTriggerTemplate& connection_triggers)
-    -> std::vector<PortBindingForwardingCandidate>;
 
 // Result of emitting DesignMetadata as LLVM globals.
 struct MetadataGlobals {

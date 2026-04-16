@@ -23,11 +23,12 @@ extern "C" void LyraInitDeferredAssertionSites(
 }
 
 extern "C" void LyraEnqueueObservedDeferredAssertion(
-    void* engine, uint32_t process_id, uint32_t instance_id, uint32_t site_id,
+    void* engine, uint32_t process_id, void* instance_raw, uint32_t site_id,
     uint8_t disposition, const void* payload_ptr, uint32_t payload_size,
     const lyra::DeferredAssertionRefBindingAbi* ref_ptr, uint32_t ref_count) {
+  auto* instance = static_cast<lyra::runtime::RuntimeInstance*>(instance_raw);
   static_cast<lyra::runtime::Engine*>(engine)->EnqueueDeferredAssertion(
-      process_id, instance_id, site_id, disposition, payload_ptr, payload_size,
+      process_id, instance, site_id, disposition, payload_ptr, payload_size,
       ref_ptr, ref_count);
 }
 
@@ -40,7 +41,7 @@ void Engine::InitDeferredAssertionSites(
 }
 
 void Engine::EnqueueDeferredAssertion(
-    uint32_t process_id, uint32_t instance_id, uint32_t site_id,
+    uint32_t process_id, RuntimeInstance* instance, uint32_t site_id,
     uint8_t disposition, const void* payload_ptr, uint32_t payload_size,
     const DeferredAssertionRefBindingAbi* ref_ptr, uint32_t ref_count) {
   if (process_id >= deferred_assertion_states_.size()) {
@@ -69,7 +70,7 @@ void Engine::EnqueueDeferredAssertion(
       .enqueue_generation = state.flush_generation,
       .site_id = site_id,
       .disposition = disposition,
-      .instance_id = instance_id,
+      .instance = instance,
       .payload_size = payload_size,
       .payload = {},
       .ref_bindings = {},
@@ -86,11 +87,6 @@ void Engine::EnqueueDeferredAssertion(
     deferred_pending_flags_[process_id] = 1;
     pending_deferred_processes_.push_back(ProcessId::FromIndex(process_id));
   }
-}
-
-void Engine::FlushDeferredAssertionsForProcess(ProcessId pid) {
-  if (pid.Index() >= deferred_assertion_states_.size()) return;
-  deferred_assertion_states_[pid.Index()].flush_generation++;
 }
 
 void Engine::MatureAndExecuteObservedDeferredAssertions() {
@@ -165,16 +161,10 @@ void Engine::MatureAndExecuteObservedDeferredAssertions() {
                     rec.payload_size, expected));
           }
 
-          // Build execution context with instance_id dispatch invariant.
+          // Build execution context with instance pointer dispatch invariant.
           DeferredAssertionExecContext ctx{};
-          if (rec.instance_id != kNoInstanceId) {
-            auto* inst = FindInstanceMut(InstanceId{rec.instance_id});
-            if (inst == nullptr) {
-              throw common::InternalError(
-                  "Engine::MatureAndExecuteObservedDeferredAssertions",
-                  std::format("instance_id {} not found", rec.instance_id));
-            }
-            ctx.instance = inst;
+          if (rec.instance != nullptr) {
+            ctx.instance = rec.instance;
           }
 
           thunk(

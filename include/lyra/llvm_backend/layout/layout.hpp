@@ -235,6 +235,9 @@ struct ProcessLayout {
   // Computed at layout time so shadow fields can be added to the
   // persistent frame. Codegen must assert presence before use.
   std::optional<ProcessActivationPlan> activation_plan;
+  // LLVM struct field index of ExprConnectionChildBinding within the frame.
+  // UINT32_MAX for non-expression-connection processes.
+  uint32_t expr_conn_binding_field_index = UINT32_MAX;
 };
 
 // Index into module-instance parallel arrays (instance_storage_bases,
@@ -493,6 +496,9 @@ struct Layout {
     // Not the source of truth for grouping (grouping is structural).
     std::optional<uint32_t> proc_within_body;
     std::optional<uint32_t> conn_index;
+    // Byte offset of ExprConnectionChildBinding within the process state.
+    // UINT32_MAX for non-expression-connection schemas.
+    uint32_t expr_conn_binding_byte_offset = UINT32_MAX;
   };
 
   std::vector<ProcessStateSchemaDesc> state_schemas;
@@ -539,6 +545,12 @@ struct Layout {
     // Per-body timescale from compile-time scope metadata.
     int8_t time_unit_power = 0;
     int8_t time_precision_power = 0;
+    // Expression connection count for this body.
+    uint32_t num_expr_connections = 0;
+    // Child public port entries for this body. Emitted to runtime for
+    // constructor-side symbolic port -> local slot resolution.
+    // Populated from CompiledModuleHeader::PortEntry during design lowering.
+    std::vector<runtime::RuntimePortEntry> port_entries;
     // L8a: Body-local named event count. Set from MIR body events.
     uint32_t event_count = 0;
   };
@@ -650,6 +662,13 @@ struct Layout {
 auto GetLlvmTypeForTypeId(
     llvm::LLVMContext& ctx, TypeId type_id, const TypeArena& types,
     bool force_two_state) -> llvm::Type*;
+
+// Canonical LLVM struct type for ExprConnectionChildBinding.
+// Cached by LLVM named struct lookup -- returns existing type if already
+// created in this context, or creates a new named struct.
+// Layout: {ptr child_instance, i32 child_slot_byte_offset, i32
+// child_local_signal}
+auto GetExprConnBindingLlvmType(llvm::LLVMContext& ctx) -> llvm::StructType*;
 
 // Classify a slot's type into the variable-registration metadata
 // (kind/width/signedness/4-state). Pure function of a single type.
@@ -772,7 +791,6 @@ struct LayoutModulePlan {
 auto BuildLayout(
     std::span<const mir::ProcessId> init_processes,
     std::vector<ConnectionKernelEntry> precollected_connection_kernels,
-    std::vector<mir::ProcessId> non_kernelized_connection_processes,
     std::span<const LayoutModulePlan> module_plans,
     std::span<const std::span<const mir::ProcessId>> module_body_processes,
     const mir::Design& design, const mir::Arena& design_arena,

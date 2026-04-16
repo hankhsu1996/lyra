@@ -409,12 +409,12 @@ auto Context::GetThisPointer() const -> llvm::Value* {
   return this_ptr_;
 }
 
-void Context::SetDynamicInstanceId(llvm::Value* id) {
-  dynamic_instance_id_ = id;
+void Context::SetObserverInstancePtr(llvm::Value* ptr) {
+  observer_instance_ptr_ = ptr;
 }
 
-auto Context::GetDynamicInstanceId() const -> llvm::Value* {
-  return dynamic_instance_id_;
+auto Context::GetObserverInstancePtr() const -> llvm::Value* {
+  return observer_instance_ptr_;
 }
 
 void Context::SetExternalRefResolutionEnv(
@@ -449,20 +449,35 @@ auto Context::ResolveExternalRefRoot(mir::ExternalRefId ref_id)
   }
   TypeId type = recipes[ref_id.value].type;
 
-  // Load storage_slot from per-instance ext_ref_bindings[ref_id].storage_slot.
+  // Load from ResolvedExtRefBinding {ptr, i32, i32} = 16 bytes.
+  // Field 0: target_instance (ptr), field 1: target_byte_offset (i32).
+  auto* i32_ty = llvm::Type::getInt32Ty(*llvm_context_);
+  auto* ptr_ty = llvm::PointerType::getUnqual(*llvm_context_);
   auto* bindings_ptr = EmitLoadExtRefBindingsPtr();
   auto* binding_ty = GetExtRefBindingType();
   auto* binding_ptr = builder_.CreateGEP(
       binding_ty, bindings_ptr, builder_.getInt32(ref_id.value),
       "ext_ref_binding_ptr");
-  auto* storage_slot_ptr = builder_.CreateStructGEP(
-      binding_ty, binding_ptr, 0, "ext_ref_storage_slot_ptr");
-  auto* global_slot = builder_.CreateLoad(
-      llvm::Type::getInt32Ty(*llvm_context_), storage_slot_ptr,
-      "ext_ref_storage_slot");
+
+  auto* inst_field = builder_.CreateStructGEP(
+      binding_ty, binding_ptr, 0, "ext_ref_inst_field");
+  auto* inst_ptr = builder_.CreateLoad(ptr_ty, inst_field, "ext_ref_inst_ptr");
+
+  auto* byte_off_ptr = builder_.CreateStructGEP(
+      binding_ty, binding_ptr, 1, "ext_ref_byte_off_ptr");
+  auto* byte_offset =
+      builder_.CreateLoad(i32_ty, byte_off_ptr, "ext_ref_byte_off");
+
+  auto* inline_base = EmitLoadInstanceInlineBase(inst_ptr);
+  auto* byte_off_64 = builder_.CreateZExt(
+      byte_offset, llvm::Type::getInt64Ty(*llvm_context_),
+      "ext_ref_byte_off_64");
+  auto* storage = builder_.CreateGEP(
+      llvm::Type::getInt8Ty(*llvm_context_), inline_base, byte_off_64,
+      "ext_ref_storage_ptr");
 
   return ResolvedExternalRefRoot{
-      .global_slot_value = global_slot,
+      .storage_ptr = storage,
       .type = type,
   };
 }
@@ -485,13 +500,13 @@ auto Context::GetExternalRefType(mir::ExternalRefId ref_id) const -> TypeId {
 auto Context::EmitExternalRefAddress(mir::ExternalRefId ref_id)
     -> llvm::Value* {
   auto root = ResolveExternalRefRoot(ref_id);
-  return GetDesignGlobalSlotPointer(root.global_slot_value);
+  return root.storage_ptr;
 }
 
 auto Context::LoadExternalRef(mir::ExternalRefId ref_id)
     -> Result<llvm::Value*> {
   auto root = ResolveExternalRefRoot(ref_id);
-  auto* ptr = GetDesignGlobalSlotPointer(root.global_slot_value);
+  auto* ptr = root.storage_ptr;
   const Type& type = (*facts_->types)[root.type];
 
   // Canonical 4-state load for design-global slots (same logic as
@@ -527,9 +542,11 @@ auto Context::EmitLoadExtRefBindingsPtr() -> llvm::Value* {
 
 auto Context::GetExtRefBindingType() -> llvm::StructType* {
   if (ext_ref_binding_type_ == nullptr) {
+    auto* ptr_ty = llvm::PointerType::getUnqual(*llvm_context_);
     auto* i32_ty = llvm::Type::getInt32Ty(*llvm_context_);
-    ext_ref_binding_type_ = llvm::StructType::create(
-        *llvm_context_, {i32_ty, i32_ty, i32_ty}, "ExtRefBinding");
+    // Must match runtime::ResolvedExtRefBinding layout: {ptr, i32, i32}.
+    ext_ref_binding_type_ =
+        llvm::StructType::get(*llvm_context_, {ptr_ty, i32_ty, i32_ty});
   }
   return ext_ref_binding_type_;
 }
@@ -599,13 +616,20 @@ auto Context::EmitLoadInstanceInlineBase(llvm::Value* instance_ptr)
       "inline_base");
 }
 
-auto Context::EmitLoadInstanceId(llvm::Value* instance_ptr) -> llvm::Value* {
-  using IF = lyra::runtime::RuntimeInstanceField;
-  auto* id_ptr = builder_.CreateStructGEP(
-      GetRuntimeInstanceType(), instance_ptr,
-      static_cast<unsigned>(IF::kInstanceId), "instance_id_ptr");
-  return builder_.CreateLoad(
-      llvm::Type::getInt32Ty(*llvm_context_), id_ptr, "instance_id");
+auto Context::EmitExprConnBindingPtr() -> llvm::Value* {
+  auto* frame_ptr = GetFramePointer();
+  uint32_t idx = GetCurrentProcessLayout().expr_conn_binding_field_index;
+  if (idx == UINT32_MAX) {
+    throw common::InternalError(
+        "EmitExprConnBindingPtr",
+        "current process is not an expression connection");
+  }
+  return builder_.CreateStructGEP(
+      GetProcessFrameType(), frame_ptr, idx, "expr_conn_binding");
+}
+
+auto Context::GetExprConnBindingType() -> llvm::StructType* {
+  return GetExprConnBindingLlvmType(GetLlvmContext());
 }
 
 void Context::EmitStoreDesignPtr(llvm::Value* state_arg, llvm::Value* value) {
@@ -645,7 +669,6 @@ void Context::EmitSharedBodyBindingSetup(llvm::Value* state_arg) {
   auto* inst = EmitLoadInstancePtr(state_arg);
   SetInstancePointer(inst);
   SetThisPointer(EmitLoadInstanceInlineBase(inst));
-  SetDynamicInstanceId(EmitLoadInstanceId(inst));
 }
 
 void Context::SetStatePointer(llvm::Value* state_ptr) {
@@ -726,7 +749,7 @@ auto Context::SaveExecutionContractState() -> ExecutionContractState {
       .current_decision_owner_id = current_decision_owner_id_,
       .instance_ptr = instance_ptr_,
       .this_ptr = this_ptr_,
-      .dynamic_instance_id = dynamic_instance_id_,
+      .observer_instance_ptr = observer_instance_ptr_,
   };
 }
 
@@ -742,7 +765,7 @@ void Context::RestoreExecutionContractState(
   current_decision_owner_id_ = state.current_decision_owner_id;
   instance_ptr_ = state.instance_ptr;
   this_ptr_ = state.this_ptr;
-  dynamic_instance_id_ = state.dynamic_instance_id;
+  observer_instance_ptr_ = state.observer_instance_ptr;
 }
 
 ExecutionContractScope::ExecutionContractScope(
@@ -757,7 +780,7 @@ ExecutionContractScope::ExecutionContractScope(
   ctx.SetEnginePointer(nullptr);
   ctx.SetCurrentDecisionOwnerId(nullptr);
   ctx.SetThisPointer(nullptr);
-  ctx.SetDynamicInstanceId(nullptr);
+  ctx.SetObserverInstancePtr(nullptr);
   // spec_slot_info is NOT reset: it is session-scoped (set by
   // CompileModuleSpecSession), not per-function.
 }
@@ -853,7 +876,6 @@ auto Context::BuildUserFunctionType(
   if (is_module_scoped) {
     param_types.push_back(ptr_ty);  // this_ptr (module instance storage)
     param_types.push_back(ptr_ty);  // instance_ptr (RuntimeInstance*)
-    param_types.push_back(i32_ty);  // instance_id
   }
 
   // Decision owner: caller's active decision_owner_id threaded explicitly

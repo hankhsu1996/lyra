@@ -99,3 +99,52 @@ cases:
       endmodule
     expect:
       stdout: "sum=11\n"
+
+  - name: multi_trigger_independent
+    description: Expression re-evaluates on each independent trigger
+    sv: |
+      module Child(input int x);
+        int stored;
+        always_comb stored = x;
+      endmodule
+
+      module Top;
+        int a, b;
+        Child c(.x(a + b));
+        initial begin
+          a = 5; b = 3; #1;
+          $display("r=%0d", c.stored);
+          b = 7; #1;
+          $display("r=%0d", c.stored);
+          a = 10; #1;
+          $display("r=%0d", c.stored);
+          a = 0; #1;
+          $display("r=%0d", c.stored);
+        end
+      endmodule
+    expect:
+      stdout: |
+        r=8
+        r=12
+        r=17
+        r=7
+
+  - name: multi_instance_different_expressions
+    description: Two instances of same module with different expressions
+    sv: |
+      module Child(input int x);
+        int stored;
+        always_comb stored = x;
+      endmodule
+
+      module Top;
+        int a0, a1;
+        Child c0(.x(a0 + 1));
+        Child c1(.x(a1 + 2));
+        initial begin
+          a0 = 10; a1 = 20; #1;
+          $display("c0=%0d c1=%0d", c0.stored, c1.stored);
+        end
+      endmodule
+    expect:
+      stdout: "c0=11 c1=22\n"

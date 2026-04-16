@@ -443,4 +443,4 @@ cases:
       endmodule
     expect:
       variables:
-        count: 3
+        count: 4

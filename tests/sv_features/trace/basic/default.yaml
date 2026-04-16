@@ -128,3 +128,28 @@ cases:
           - "time_advances=2"
           - "value_changes="
           - "memory_dirty=0"
+
+  - name: trace-local-multi-instance-summary
+    description: Summary trace distinguishes local signals from different instances by path
+    sv: |
+      module Child;
+        logic [7:0] x;
+        initial x = 8'haa;
+      endmodule
+
+      module Test;
+        Child u0();
+        Child u1();
+        initial $display("done");
+      endmodule
+    trace_summary: true
+    expect:
+      stdout:
+        contains:
+          - "done"
+          - "instance='Test.u0'"
+          - "instance='Test.u1'"
+        not_contains:
+          - "instance=0"
+          - "instance=1"
+          - "instance=2"

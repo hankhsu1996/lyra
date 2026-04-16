@@ -7,6 +7,7 @@
 #include "lyra/common/integral_constant.hpp"
 #include "lyra/common/module_identity.hpp"
 #include "lyra/common/symbol_types.hpp"
+#include "lyra/mir/external_ref.hpp"
 #include "lyra/mir/instance.hpp"
 
 namespace lyra::mir {
@@ -50,11 +51,26 @@ struct ConstructionInput {
   std::vector<InstanceConstBlock> const_blocks;
   std::vector<ObjectRecord> objects;
 
+  // Per-instance parent index. Parallel to objects.
+  // parent_instance_indices[i] = parent's object index, or UINT32_MAX for
+  // top-level instances. Populated from BoundHierarchyIndex::parent_of
+  // during design lowering. Transport-only: consumed by the constructor
+  // to resolve live parent pointers during RunProgram ingestion.
+  std::vector<uint32_t> parent_instance_indices;
+
+  // Per-instance structural child identity. Parallel to objects.
+  // child_durable_ids[i] = DurableChildId of instance i within its parent.
+  // Default-constructed for top-level instances (empty coord, ordinal 0).
+  // Populated from oi_to_durable_child during design lowering.
+  // Transport-only: consumed by the constructor to populate structural
+  // child edges on RuntimeInstance during RunProgram ingestion.
+  std::vector<DurableChildId> child_durable_ids;
+
   // Per-instance resolved external-ref runtime bindings.
   // Parallel to objects. Each inner vector has one binding per ext-ref recipe
   // in the owning body. Empty for instances whose body has no external refs.
   // Computed by BuildPerInstanceExtRefRuntimeBindings during design lowering.
-  std::vector<std::vector<common::ResolvedExtRefBinding>>
+  std::vector<std::vector<common::SerializedExtRefBinding>>
       instance_ext_ref_bindings;
 };
 

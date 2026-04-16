@@ -1,6 +1,5 @@
 #include "lyra/runtime/simulation.hpp"
 
-#include <algorithm>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -41,11 +40,6 @@
 
 namespace {
 
-auto FsBaseDir() -> std::filesystem::path& {
-  static std::filesystem::path value;
-  return value;
-}
-
 // Process state header layout. Must match ProcessFrameHeader in
 // process_frame.hpp and the LLVM struct emitted by BuildHeaderType.
 using StateHeader = lyra::runtime::ProcessFrameHeader;
@@ -76,32 +70,28 @@ class ScopeExit {
 }  // namespace
 
 extern "C" void LyraTriggerEvent(
-    void* engine_ptr, uint32_t instance_id, uint32_t local_event_id) {
+    void* engine_ptr, void* instance_raw, uint32_t local_event_id) {
   auto* engine = static_cast<lyra::runtime::Engine*>(engine_ptr);
-  auto& inst = engine->GetInstanceMut(lyra::runtime::InstanceId{instance_id});
-  engine->TriggerInstanceEvent(inst, local_event_id);
+  auto* inst = static_cast<lyra::runtime::RuntimeInstance*>(instance_raw);
+  engine->TriggerInstanceEvent(*inst, local_event_id);
 }
 
 namespace {
 
 struct ProcessDispatchContext {
-  std::span<LyraProcessFunc> connection_procs;
   std::span<void*> states;
-  uint32_t num_connection;
 };
 
 void DescriptorProcessDispatch(
     void* ctx, lyra::runtime::Engine& eng, lyra::runtime::ProcessHandle handle,
     lyra::runtime::ResumePoint resume) {
   auto* dctx = static_cast<ProcessDispatchContext*>(ctx);
-  lyra::runtime::DispatchAndHandleActivation(
-      dctx->connection_procs, dctx->states, dctx->num_connection, eng, handle,
-      resume);
+  lyra::runtime::DispatchAndHandleActivation(dctx->states, eng, handle, resume);
 }
 
-void SetupAndRunSimulation(
+auto SetupAndRunSimulation(
     lyra::runtime::Engine& engine, std::span<void*> states,
-    uint32_t num_processes, uint32_t num_connection) {
+    uint32_t num_processes) -> uint64_t {
   // Store engine pointer in each process state header
   for (auto* state : states) {
     auto* header = static_cast<StateHeader*>(state);
@@ -129,24 +119,7 @@ void SetupAndRunSimulation(
   }
 
   for (uint32_t i = 0; i < num_processes; ++i) {
-    auto* header = static_cast<StateHeader*>(states[i]);
-
-    lyra::runtime::InstanceId instance_id{0};
-    if (i >= num_connection) {
-      if (header->instance == nullptr) {
-        throw lyra::common::InternalError(
-            "SetupAndRunSimulation",
-            std::format(
-                "module process {} has null owning instance in "
-                "ProcessFrameHeader",
-                i));
-      }
-      instance_id = header->instance->instance_id;
-    }
-
-    engine.ScheduleInitial(
-        lyra::runtime::ProcessHandle{
-            .process_id = i, .instance_id = instance_id});
+    engine.ScheduleInitial(lyra::runtime::ProcessHandle{.process_id = i});
   }
 
   // Propagate initial values through connections and comb kernels before Run().
@@ -160,17 +133,14 @@ void SetupAndRunSimulation(
   engine.SeedCombKernelDirtyMarks();
   engine.FlushAndPropagateConnections();
 
-  auto final_time = engine.Run();
-  FinalTime() = std::max(FinalTime(), final_time);
+  return engine.Run();
 }
 
 }  // namespace
 
 extern "C" void LyraRunSimulation(
-    LyraProcessFunc* connection_funcs, void** states_raw,
-    uint32_t num_processes, const char** plusargs_raw, uint32_t num_plusargs,
-    const char** instance_paths_raw, uint32_t num_instance_paths,
-    const LyraRuntimeAbi* abi, void* run_session_ptr) {
+    void** states_raw, uint32_t num_processes, const char** plusargs_raw,
+    uint32_t num_plusargs, const LyraRuntimeAbi* abi, void* run_session_ptr) {
   if (num_processes > 0 && states_raw == nullptr) {
     throw lyra::common::InternalError(
         "LyraRunSimulation", "states_raw is null");
@@ -187,49 +157,22 @@ extern "C" void LyraRunSimulation(
     }
   }
 
-  // Convert instance paths to vector<string> for Engine (%m support)
-  std::vector<std::string> instance_paths_vec;
-  if (instance_paths_raw != nullptr && num_instance_paths > 0) {
-    auto paths_span = std::span(instance_paths_raw, num_instance_paths);
-    instance_paths_vec.reserve(num_instance_paths);
-    for (const char* path : paths_span) {
-      instance_paths_vec.emplace_back(path != nullptr ? path : "");
-    }
-  }
-
   uint32_t feature_flags = (abi != nullptr) ? abi->feature_flags : 0;
   using lyra::runtime::FeatureFlag;
   auto flags = static_cast<FeatureFlag>(feature_flags);
 
-  // Dispatch partition from ABI. Process binding is constructor-owned;
-  // this is the only process topology fact read from the ABI after H2.
-  //
-  // Dispatch partition contract:
-  //   [0, num_connection) = connection processes (3-arg direct call)
-  //   [num_connection, num_processes) = module processes (frame-header
-  //   dispatch)
   if (abi == nullptr) {
     throw lyra::common::InternalError("LyraRunSimulation", "abi is null");
   }
 
-  uint32_t num_connection = abi->num_connection_processes;
-
-  if (num_connection > 0 && connection_funcs == nullptr) {
-    throw lyra::common::InternalError(
-        "LyraRunSimulation", "connection_funcs is null");
-  }
-  auto connection_procs = std::span(connection_funcs, num_connection);
   ProcessDispatchContext dispatch_ctx{
-      .connection_procs = connection_procs,
       .states = states,
-      .num_connection = num_connection,
   };
   auto* session = static_cast<lyra::runtime::RunSession*>(run_session_ptr);
   lyra::runtime::Engine engine(
       lyra::runtime::ProcessDispatch{
           .fn = DescriptorProcessDispatch, .ctx = &dispatch_ctx},
-      session->output, num_processes, std::span(plusargs_vec),
-      std::move(instance_paths_vec), feature_flags);
+      session->output, num_processes, std::span(plusargs_vec), feature_flags);
 
   if (abi != nullptr) {
     if (abi->version != kRuntimeAbiVersion) {
@@ -238,6 +181,16 @@ extern "C" void LyraRunSimulation(
           std::format(
               "unsupported RuntimeAbi version {} (expected {})", abi->version,
               kRuntimeAbiVersion));
+    }
+
+    // v25: Filesystem base directory for relative path resolution.
+    if (abi->fs_base_dir != nullptr) {
+      std::filesystem::path base(abi->fs_base_dir);
+      if (!base.is_absolute()) {
+        throw lyra::common::InternalError(
+            "LyraRunSimulation", "fs_base_dir must be absolute");
+      }
+      engine.SetFsBaseDir(base.lexically_normal());
     }
 
     // D6d: Set simulation-global precision from emitted ABI.
@@ -291,13 +244,14 @@ extern "C" void LyraRunSimulation(
               abi->back_edge_site_meta_string_pool_size));
     }
 
-    // Connection descriptors
+    // Connection descriptors: already materialized by the constructor
+    // into RuntimeConnectionDescriptor with direct RuntimeInstance*.
     if (abi->conn_descs != nullptr && abi->num_conn_descs > 0) {
-      auto conn_descs = std::span(
-          static_cast<const lyra::runtime::ConnectionDescriptor*>(
-              abi->conn_descs),
-          abi->num_conn_descs);
-      engine.InitConnectionBatch(conn_descs);
+      engine.InitConnectionBatch(
+          std::span(
+              static_cast<const lyra::runtime::RuntimeConnectionDescriptor*>(
+                  abi->conn_descs),
+              abi->num_conn_descs));
     }
 
     // Comb kernel metadata (flat path). Only used when no bundles exist.
@@ -306,8 +260,8 @@ extern "C" void LyraRunSimulation(
     if (abi->comb_kernel_words != nullptr && abi->num_comb_kernel_words > 0 &&
         abi->instance_bundles == nullptr) {
       engine.InitCombKernels(
-          std::span(abi->comb_kernel_words, abi->num_comb_kernel_words),
-          num_connection, states_raw);
+          std::span(abi->comb_kernel_words, abi->num_comb_kernel_words), 0,
+          states_raw);
     }
 
     // Trigger registry finalization. Always called: merges pending
@@ -317,7 +271,7 @@ extern "C" void LyraRunSimulation(
             ? std::span(
                   abi->process_trigger_words, abi->num_process_trigger_words)
             : std::span<const uint32_t>{},
-        num_connection, states_raw);
+        0, states_raw);
 
     // Wait-site metadata
     if (abi->wait_site_words != nullptr && abi->wait_site_word_count > 0) {
@@ -376,7 +330,6 @@ extern "C" void LyraRunSimulation(
       text_sink =
           std::make_unique<lyra::trace::TextTraceSink>(meta, &engine.Output());
     }
-    text_sink->SetInstanceResolver(&engine.GetInstanceTraceResolver());
     engine.GetTraceManager().AddSink(std::move(text_sink));
   }
 
@@ -401,7 +354,7 @@ extern "C" void LyraRunSimulation(
   };
   lyra::runtime::ScopedDpiExportCallContext export_scope(export_ctx);
 
-  SetupAndRunSimulation(engine, states, num_processes, num_connection);
+  FinalTime() = SetupAndRunSimulation(engine, states, num_processes);
 
   if (HasFlag(flags, FeatureFlag::kEnableTraceSummary)) {
     engine.GetTraceManager().PrintSummary(engine.Output());
@@ -501,11 +454,11 @@ extern "C" auto LyraSystemCmd(void* engine_ptr, LyraStringHandle cmd_handle)
 
 extern "C" void LyraRegisterStrobe(
     void* engine_ptr, LyraStrobeProgramFn program, void* design_state,
-    void* this_ptr, uint32_t instance_id) {
+    void* this_ptr, void* instance) {
   auto* engine = static_cast<lyra::runtime::Engine*>(engine_ptr);
   lyra::runtime::ObserverContext ctx{
       .this_ptr = this_ptr,
-      .instance_id = lyra::runtime::InstanceId{instance_id},
+      .instance = static_cast<lyra::runtime::RuntimeInstance*>(instance),
   };
   engine->RegisterStrobe(program, design_state, ctx);
 }
@@ -606,25 +559,9 @@ extern "C" auto LyraResolveBaseDir(const char* argv0) -> const char* {
   return resolved.c_str();
 }
 
-extern "C" void LyraInitRuntime(
-    const char* fs_base_dir, uint32_t iteration_limit) {
-  std::filesystem::path base(fs_base_dir);
-  if (!base.is_absolute()) {
-    throw lyra::common::InternalError(
-        "LyraInitRuntime", "fs_base_dir must be absolute");
-  }
-  FsBaseDir() = base.lexically_normal();
-  FinalTime() = 0;
+extern "C" void LyraInitRuntime(uint32_t iteration_limit) {
   LyraSetIterationLimit(iteration_limit);
 }
-
-namespace lyra::runtime {
-
-auto GetFsBaseDir() -> const std::filesystem::path& {
-  return FsBaseDir();
-}
-
-}  // namespace lyra::runtime
 
 extern "C" void LyraReportTime(void* run_session_ptr) {
   if (run_session_ptr == nullptr) {
@@ -640,12 +577,11 @@ extern "C" void LyraReportTime(void* run_session_ptr) {
 
 extern "C" void LyraMonitorRegister(
     void* engine_ptr, LyraMonitorCheckProgramFn program, void* design_state,
-    void* this_ptr, uint32_t instance_id, const void* initial_prev,
-    uint32_t size) {
+    void* this_ptr, void* instance, const void* initial_prev, uint32_t size) {
   auto* engine = static_cast<lyra::runtime::Engine*>(engine_ptr);
   lyra::runtime::ObserverContext ctx{
       .this_ptr = this_ptr,
-      .instance_id = lyra::runtime::InstanceId{instance_id},
+      .instance = static_cast<lyra::runtime::RuntimeInstance*>(instance),
   };
   engine->RegisterMonitor(program, design_state, ctx, initial_prev, size);
 }
@@ -720,10 +656,11 @@ extern "C" void LyraApply4StatePatches64(
   }
 }
 
-extern "C" auto LyraResolveSlotPtr(void* engine_ptr, uint32_t slot_id)
+extern "C" auto LyraResolveGlobalSlotPtr(void* engine_ptr, uint32_t slot_id)
     -> void* {
   auto* engine = static_cast<lyra::runtime::Engine*>(engine_ptr);
-  return engine->ResolveSlotBytesMut(slot_id);
+  return engine->ResolveGlobalSlotBaseMut(
+      lyra::runtime::GlobalSignalId{slot_id});
 }
 
 // R3 typed coordination helpers.
@@ -804,13 +741,10 @@ extern "C" void LyraMarkDirtyExtRef(
   auto bindings =
       std::span(instance->ext_ref_bindings, instance->ext_ref_binding_count);
   const auto& binding = bindings[ref_id];
-  auto target_instance_id =
-      lyra::runtime::InstanceId{binding.target_instance_id};
-  auto* engine = AsEngine(eng);
-  auto& target = engine->GetInstanceMut(target_instance_id);
   MarkDirtyTyped(
-      engine, MakeLocalRef(&target, binding.target_local_signal.value), off,
-      size);
+      AsEngine(eng),
+      MakeLocalRef(binding.target_instance, binding.target_local_signal.value),
+      off, size);
 }
 
 extern "C" void LyraStorePackedLocal(
@@ -838,7 +772,7 @@ extern "C" void LyraStoreStringGlobal(
 // Offsets >= inline_size resolve to deferred_appendix_base.
 inline auto ResolveDeferredSubspan(
     lyra::runtime::RuntimeInstanceStorage& storage, uint32_t body_offset,
-    uint32_t size) -> std::span<std::byte> {
+    uint32_t size) -> std::span<uint8_t> {
   auto inline_size = static_cast<uint32_t>(storage.inline_size);
   if (body_offset < inline_size) {
     return storage.DeferredInlineRegion().subspan(body_offset, size);
@@ -850,7 +784,7 @@ inline auto ResolveDeferredSubspan(
 // Resolve a body-relative byte offset to a subspan in the current region.
 inline auto ResolveCurrentSubspan(
     lyra::runtime::RuntimeInstanceStorage& storage, uint32_t body_offset,
-    uint32_t size) -> std::span<std::byte> {
+    uint32_t size) -> std::span<uint8_t> {
   auto inline_size = static_cast<uint32_t>(storage.inline_size);
   if (body_offset < inline_size) {
     return storage.InlineRegion().subspan(body_offset, size);
@@ -897,7 +831,7 @@ extern "C" void LyraDeferredWriteLocal(
       ResolveDeferredSubspan(instance->storage, body_offset, bsz);
   std::memcpy(deferred_slot.data(), vp, bsz);
   pending.MarkPending(LocalSignalId{id});
-  AsEngine(eng)->MarkInstanceNbaPending(pending.instance_idx);
+  AsEngine(eng)->MarkInstanceNbaPending(*instance);
 }
 
 // Instance-owned deferred masked-merge write for local NBA.
@@ -914,14 +848,14 @@ extern "C" void LyraDeferredMaskedWriteLocal(
 
   auto deferred_slot =
       ResolveDeferredSubspan(instance->storage, body_offset, bsz);
-  auto val_span = std::span(static_cast<const std::byte*>(vp), bsz);
-  auto mask_span = std::span(static_cast<const std::byte*>(mp), bsz);
+  auto val_span = std::span(static_cast<const uint8_t*>(vp), bsz);
+  auto mask_span = std::span(static_cast<const uint8_t*>(mp), bsz);
   for (uint32_t i = 0; i < bsz; ++i) {
     deferred_slot[i] =
         (deferred_slot[i] & ~mask_span[i]) | (val_span[i] & mask_span[i]);
   }
   pending.MarkPending(LocalSignalId{id});
-  AsEngine(eng)->MarkInstanceNbaPending(pending.instance_idx);
+  AsEngine(eng)->MarkInstanceNbaPending(*instance);
 }
 
 // Instance-owned deferred canonical packed two-plane write for local NBA.
@@ -944,7 +878,7 @@ extern "C" void LyraDeferredCanonicalPackedWriteLocal(
       instance->storage, body_offset + second_region_offset, region_bsz);
   std::memcpy(deferred_unk.data(), unk, region_bsz);
   pending.MarkPending(LocalSignalId{id});
-  AsEngine(eng)->MarkInstanceNbaPending(pending.instance_idx);
+  AsEngine(eng)->MarkInstanceNbaPending(*instance);
 }
 
 // Generic NBA queue entry points for cross-instance local and global targets.
@@ -981,8 +915,14 @@ extern "C" void LyraScheduleNbaExtRef(
   auto bindings =
       std::span(owner->ext_ref_bindings, owner->ext_ref_binding_count);
   const auto& binding = bindings[ref_id];
+  auto* target = binding.target_instance;
+  if (target == nullptr || !target->nba_pending.IsInitialized()) {
+    throw lyra::common::InternalError(
+        "LyraScheduleNbaExtRef",
+        "target instance not found or not initialized");
+  }
   lyra::runtime::NbaNotifySignal notify{lyra::runtime::NbaNotifyLocal{
-      .instance_id = lyra::runtime::InstanceId{binding.target_instance_id},
+      .instance = target,
       .signal = lyra::runtime::LocalSignalId{binding.target_local_signal.value},
   }};
   AsEngine(eng)->ScheduleNba(wp, nb, vp, mp, bsz, notify);
@@ -995,20 +935,17 @@ extern "C" void LyraScheduleNbaCanonicalPackedExtRef(
   auto bindings =
       std::span(owner->ext_ref_bindings, owner->ext_ref_binding_count);
   const auto& binding = bindings[ref_id];
+  auto* target = binding.target_instance;
+  if (target == nullptr || !target->nba_pending.IsInitialized()) {
+    throw lyra::common::InternalError(
+        "LyraScheduleNbaCanonicalPackedExtRef",
+        "target instance not found or not initialized");
+  }
   lyra::runtime::NbaNotifySignal notify{lyra::runtime::NbaNotifyLocal{
-      .instance_id = lyra::runtime::InstanceId{binding.target_instance_id},
+      .instance = target,
       .signal = lyra::runtime::LocalSignalId{binding.target_local_signal.value},
   }};
   AsEngine(eng)->ScheduleNbaCanonicalPacked(wp, nb, vp, up, rsz, sro, notify);
-}
-
-// R5: Resolve RuntimeInstance* from InstanceId at runtime.
-// Used by codegen for cross-instance writes (design-level connection
-// processes writing to child instance signals).
-extern "C" auto LyraResolveInstancePtr(void* eng, uint32_t instance_id)
-    -> void* {
-  if (eng == nullptr) return nullptr;
-  return AsEngine(eng)->FindInstanceMut(lyra::runtime::InstanceId{instance_id});
 }
 
 extern "C" auto LyraIsTraceObservedLocal(void* eng, void* inst, uint32_t id)
@@ -1030,13 +967,11 @@ extern "C" void LyraNotifyContainerMutationGlobal(
   MarkDirtyTyped(AsEngine(eng), GlobalSignalId{id}, off, size);
 }
 
-extern "C" void LyraNotifySignalLocal(
-    void* eng, void* inst, const void* slot, uint32_t id) {
-  if (eng == nullptr || slot == nullptr) return;
+extern "C" void LyraNotifySignalLocal(void* eng, void* inst, uint32_t id) {
+  if (eng == nullptr) return;
   AsEngine(eng)->MarkDirty(MakeLocalRef(inst, id));
 }
-extern "C" void LyraNotifySignalGlobal(
-    void* eng, const void* slot, uint32_t id) {
-  if (eng == nullptr || slot == nullptr) return;
+extern "C" void LyraNotifySignalGlobal(void* eng, uint32_t id) {
+  if (eng == nullptr) return;
   AsEngine(eng)->MarkDirty(GlobalSignalId{id});
 }

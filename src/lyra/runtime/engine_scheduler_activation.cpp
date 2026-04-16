@@ -1,3 +1,4 @@
+#include <algorithm>
 #include <chrono>
 #include <cstdint>
 #include <cstdio>
@@ -21,13 +22,12 @@ namespace lyra::runtime {
 void Engine::ScheduleInitial(ProcessHandle handle) {
   // Skip comb kernel processes - they are evaluated inline during flush,
   // not through the normal scheduler activation path.
-  if (handle.process_id < comb_kernel_flags_.size() &&
-      comb_kernel_flags_[handle.process_id] != 0) {
+  if (handle.process_id < processes_.size() &&
+      processes_[handle.process_id].is_comb_kernel) {
     return;
   }
 
-  active_queue_.push_back(
-      {handle.process_id, handle.instance_id, /*resume_block=*/0});
+  active_queue_.push_back({handle.process_id, /*resume_block=*/0});
   if (activation_trace_.has_value()) {
     wake_trace_[handle.process_id] = {
         .cause = WakeCause::kInitial, .trigger_slot = kNoTriggerSlot};
@@ -43,8 +43,7 @@ void Engine::Delay(ProcessHandle handle, ResumePoint resume, SimTime ticks) {
                              current_time_, ticks));
   }
   SimTime wake_time = current_time_ + ticks;
-  delay_queue_[wake_time].push_back(
-      {handle.process_id, handle.instance_id, resume.block_index});
+  delay_queue_[wake_time].push_back({handle.process_id, resume.block_index});
   if (activation_trace_.has_value()) {
     wake_trace_[handle.process_id] = {
         .cause = WakeCause::kDelay, .trigger_slot = kNoTriggerSlot};
@@ -52,8 +51,7 @@ void Engine::Delay(ProcessHandle handle, ResumePoint resume, SimTime ticks) {
 }
 
 void Engine::DelayZero(ProcessHandle handle, ResumePoint resume) {
-  inactive_queue_.push(
-      {handle.process_id, handle.instance_id, resume.block_index});
+  inactive_queue_.push({handle.process_id, resume.block_index});
   if (activation_trace_.has_value()) {
     wake_trace_[handle.process_id] = {
         .cause = WakeCause::kDelayZero, .trigger_slot = kNoTriggerSlot};
@@ -61,8 +59,7 @@ void Engine::DelayZero(ProcessHandle handle, ResumePoint resume) {
 }
 
 void Engine::ScheduleNextDelta(ProcessHandle handle, ResumePoint resume) {
-  next_delta_queue_.push_back(
-      {handle.process_id, handle.instance_id, resume.block_index});
+  next_delta_queue_.push_back({handle.process_id, resume.block_index});
   if (activation_trace_.has_value()) {
     wake_trace_[handle.process_id] = {
         .cause = WakeCause::kRepeat, .trigger_slot = kNoTriggerSlot};
@@ -109,11 +106,17 @@ void Engine::RunOneActivation(const WakeupEntry& entry) {
   uint32_t pid = entry.process_id;
 
   // Update progress counters (signal-safe reads by SIGUSR1 handler).
+  // last_process_id_ and phase_ are always written (cheap stores, useful
+  // for basic "is the simulator stuck?" diagnostics). activation_seq_ and
+  // current_running_process_ are gated on activation tracing to avoid
+  // expensive atomic RMW + two stores per activation on the normal path.
   last_process_id_.store(pid, std::memory_order_release);
-  activation_seq_.fetch_add(1, std::memory_order_release);
-  current_running_process_.store(pid, std::memory_order_release);
   phase_.store(
       static_cast<uint32_t>(Phase::kRunProcess), std::memory_order_release);
+  if (activation_trace_.has_value()) {
+    activation_seq_.fetch_add(1, std::memory_order_release);
+    current_running_process_.store(pid, std::memory_order_release);
+  }
 
   ++stats_.core.total_activations;
 
@@ -125,14 +128,10 @@ void Engine::RunOneActivation(const WakeupEntry& entry) {
   }
   activation_ctx_.dirty_count = 0;
 
-  // Reset iteration limit before each process activation.
-  // LyraGetIterationLimit() returns the process-global configured limit.
-  // 0 = unlimited: set counter to UINT32_MAX so the guard never fires.
-  uint32_t limit = LyraGetIterationLimit();
-  LyraResetIterationLimit(limit > 0 ? limit : UINT32_MAX);
+  // Reset iteration limit: direct TLS write from cached values.
+  *cached_iteration_limit_ptr_ = cached_iteration_limit_;
 
-  ProcessHandle handle{
-      .process_id = entry.process_id, .instance_id = entry.instance_id};
+  ProcessHandle handle{.process_id = entry.process_id};
   ResumePoint resume{.block_index = entry.resume_block, .instruction_index = 0};
   process_dispatch_.fn(process_dispatch_.ctx, *this, handle, resume);
 
@@ -153,7 +152,9 @@ void Engine::RunOneActivation(const WakeupEntry& entry) {
     TraceRun(entry);
   }
 
-  current_running_process_.store(UINT32_MAX, std::memory_order_release);
+  if (activation_trace_.has_value()) {
+    current_running_process_.store(UINT32_MAX, std::memory_order_release);
+  }
   phase_.store(static_cast<uint32_t>(Phase::kIdle), std::memory_order_release);
 }
 
@@ -176,6 +177,9 @@ void Engine::ExecuteActiveRegion() {
   while (!finished_ && !active_queue_.empty()) {
     auto entries = std::move(active_queue_);
     active_queue_.clear();
+    auto batch_size = static_cast<uint64_t>(entries.size());
+    stats_.core.max_active_queue =
+        std::max(stats_.core.max_active_queue, batch_size);
     for (const auto& entry : entries) {
       if (finished_) {
         break;
@@ -189,7 +193,7 @@ void Engine::ExecuteActiveRegion() {
                   "process_id {} exceeds num_processes {}", entry.process_id,
                   num_processes_));
         }
-        process_states_[entry.process_id].is_enqueued = false;
+        processes_[entry.process_id].is_enqueued = false;
       }
 
       if (activation_trace_.has_value()) {
@@ -204,8 +208,8 @@ void Engine::ExecuteActiveRegion() {
             ProcessId::FromIndex(entry.process_id));
       }
 
-      ProcessHandle handle{entry.process_id, entry.instance_id};
-      if (!UsesWaitSiteLifecycle()) {
+      ProcessHandle handle{.process_id = entry.process_id};
+      if (!post_activation_reconcile_) {
         ClearProcessSubscriptions(handle);
       }
       // Activation handling (scheduling, subscription install/refresh)
@@ -213,6 +217,11 @@ void Engine::ExecuteActiveRegion() {
       // DispatchAndHandleActivation decodes the raw suspend protocol into
       // semantic requests and calls engine primitives directly.
       RunOneActivation(entry);
+      if (!finished_ && post_activation_reconcile_) {
+        if (!TryFastReconcile(entry.process_id)) {
+          ReconcilePostActivation(handle);
+        }
+      }
     }
     ++active_iterations;
     if (active_iterations % 2 == 0) {
@@ -255,6 +264,7 @@ void Engine::ExecutePostponedRegion() {
 void Engine::ExecuteTimeSlot() {
   current_timeslot_epoch_ = current_timeslot_epoch_.Next();
   current_delta_ = 0;
+  ++stats_.core.total_timeslots;
 
   while (true) {
     while (!finished_ && (!active_queue_.empty() || !inactive_queue_.empty())) {
@@ -280,7 +290,12 @@ void Engine::ExecuteTimeSlot() {
       break;
     }
 
+    auto ndq_size = static_cast<uint64_t>(next_delta_queue_.size());
+    stats_.core.max_next_delta_queue =
+        std::max(stats_.core.max_next_delta_queue, ndq_size);
     ++current_delta_;
+    stats_.core.max_delta_cycles = std::max(
+        stats_.core.max_delta_cycles, static_cast<uint64_t>(current_delta_));
     if (current_delta_ % 100 == 0) {
       lyra::PrintWarning(
           std::format(
@@ -319,6 +334,12 @@ void Engine::ExecuteTimeSlot() {
 }
 
 auto Engine::Run(SimTime max_time) -> SimTime {
+  // Cache run-invariant values resolved once before the simulation loop.
+  uint32_t raw_limit = LyraGetIterationLimit();
+  cached_iteration_limit_ = raw_limit > 0 ? raw_limit : UINT32_MAX;
+  cached_iteration_limit_ptr_ = LyraIterationLimitPtr();
+  post_activation_reconcile_ = HasPostActivationReconciliation();
+
   // end_reason_ defaults to kEmptyQueues; set to kMaxTimeReached or kFinish
   // at the point where the reason becomes known.
   while (!finished_ && current_time_ <= max_time) {
@@ -357,11 +378,10 @@ void Engine::FlushDirtySlots() {
     trace_manager_.EmitTimeAdvance(current_time_, current_delta_);
     if (!update_set_.IsEmpty() && design_state_base_ != nullptr) {
       FlushGlobalDirtySlotsToTrace(
-          trace_manager_, slot_meta_registry_, design_state_base_,
-          const_instances_, update_set_, trace_selection_, global_slot_count_);
+          trace_manager_, slot_meta_registry_, design_state_base_, update_set_,
+          trace_selection_, global_slot_count_);
     }
-    FlushLocalDirtySlotsToTrace(
-        trace_manager_, instances_, timeslot_dirty_instances_);
+    FlushLocalDirtySlotsToTrace(trace_manager_, timeslot_dirty_instances_);
   }
   update_set_.Clear();
   ClearLocalUpdates();

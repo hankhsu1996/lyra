@@ -15,12 +15,15 @@ namespace lyra::lowering::mir_to_llvm {
 
 // Semantic signal coordinate for codegen emission.
 //
-// Three modes:
+// Modes:
 //   kLocal: body-local slot ordinal. Same-instance signal.
 //   kLocalCrossInstance: body-local slot ordinal in a DIFFERENT instance.
 //     Carries both the target InstanceId (for metadata) and a runtime
 //     instance pointer (for address materialization).
 //   kGlobal: design-global slot id. Package/global state.
+//   kExtRef: external-ref write. Dirty resolves through per-instance tables.
+//   kBoundChild: cross-instance child write via pre-bound frame context.
+//     No InstanceId. Instance pointer + signal id loaded from frame at runtime.
 class SignalCoordExpr {
  public:
   enum class Kind : uint8_t {
@@ -30,6 +33,11 @@ class SignalCoordExpr {
     // External-ref write: dirty notification resolves through per-instance
     // ext-ref target tables at runtime. value_ carries the ext-ref index.
     kExtRef,
+    // Narrow migration-only representation:
+    // valid only for mutation-target plumbing of synthesized
+    // expression-connection writes. Must not be produced by parsing,
+    // lowering of ordinary expressions, or trigger analysis.
+    kBoundChild,
   };
 
   static auto Local(uint32_t id) -> SignalCoordExpr {
@@ -70,11 +78,26 @@ class SignalCoordExpr {
     return e;
   }
 
+  // Bound child write: cross-instance child destination with pre-resolved
+  // instance pointer and runtime-loaded local signal id. No InstanceId.
+  // Signal id and instance pointer are both loaded from the process frame
+  // payload at runtime.
+  static auto BoundChild(
+      llvm::Value* local_signal_id, llvm::Value* instance_ptr)
+      -> SignalCoordExpr {
+    SignalCoordExpr e;
+    e.kind_ = Kind::kBoundChild;
+    e.instance_override_ = instance_ptr;
+    e.runtime_value_ = local_signal_id;
+    return e;
+  }
+
   [[nodiscard]] auto GetKind() const -> Kind {
     return kind_;
   }
   [[nodiscard]] auto IsLocal() const -> bool {
-    return kind_ == Kind::kLocal || kind_ == Kind::kLocalCrossInstance;
+    return kind_ == Kind::kLocal || kind_ == Kind::kLocalCrossInstance ||
+           kind_ == Kind::kBoundChild;
   }
   [[nodiscard]] auto IsGlobal() const -> bool {
     return kind_ == Kind::kGlobal;
@@ -99,7 +122,7 @@ class SignalCoordExpr {
   // True if this local signal targets a different instance than the
   // current process's own instance.
   [[nodiscard]] auto HasInstanceOverride() const -> bool {
-    return kind_ == Kind::kLocalCrossInstance;
+    return kind_ == Kind::kLocalCrossInstance || kind_ == Kind::kBoundChild;
   }
 
   // Returns the target InstanceId for cross-instance local signals.

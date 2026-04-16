@@ -49,7 +49,7 @@ auto Context::ComputePlacePointer(
   llvm::Value* ptr = nullptr;
   if (resolved.root.kind == mir::PlaceRoot::Kind::kModuleSlot ||
       resolved.root.kind == mir::PlaceRoot::Kind::kDesignGlobal ||
-      resolved.root.kind == mir::PlaceRoot::Kind::kObjectLocal) {
+      resolved.root.kind == mir::PlaceRoot::Kind::kBoundChildDest) {
     ptr = GetSlotRootPointer(resolved.root);
   } else {
     // Local/Temp places: check place_alias_ first (inout managed params),
@@ -201,7 +201,23 @@ auto Context::GetWriteTarget(mir::PlaceId place_id) -> Result<WriteTarget> {
   std::optional<SignalCoordExpr> signal_id;
   uint32_t dirty_off = 0;
   uint32_t dirty_size = 0;
-  if (resolved.root.kind == mir::PlaceRoot::Kind::kModuleSlot ||
+  if (resolved.root.kind == mir::PlaceRoot::Kind::kBoundChildDest) {
+    if (resolved.root.id != mir::kBoundChildDestSentinel) {
+      throw common::InternalError(
+          "GetWriteTarget",
+          std::format(
+              "kBoundChildDest root.id must be sentinel ({}), got {}",
+              mir::kBoundChildDestSentinel, resolved.root.id));
+    }
+    // Cross-instance child write: compute signal coord for dirty mark.
+    // Byte-range narrowing is not applicable (child slot is opaque to
+    // the parent body; dirty mark operates at signal granularity).
+    auto sig = ResolveMutationSignalRef(place_id);
+    if (sig.has_value()) {
+      signal_id = EmitMutationTargetSignalCoord(*sig);
+    }
+  } else if (
+      resolved.root.kind == mir::PlaceRoot::Kind::kModuleSlot ||
       resolved.root.kind == mir::PlaceRoot::Kind::kDesignGlobal ||
       resolved.root.kind == mir::PlaceRoot::Kind::kObjectLocal) {
     auto sig = ResolveMutationSignalRef(place_id);
@@ -263,13 +279,11 @@ auto Context::GetWriteTarget(mir::PlaceId place_id) -> Result<WriteTarget> {
 
 auto Context::GetWriteTarget(mir::ExternalRefId ref_id) -> Result<WriteTarget> {
   auto root = ResolveExternalRefRoot(ref_id);
-  auto* ptr = GetDesignGlobalSlotPointer(root.global_slot_value);
   // External-ref dirty notification resolves through per-instance
-  // target tables to the target instance's local signal. Storage
-  // addressing still uses the design-global slot pointer.
+  // target tables to the target instance's local signal.
   auto signal_coord = SignalCoordExpr::ExtRef(ref_id.value);
   return WriteTarget{
-      .ptr = ptr,
+      .ptr = root.storage_ptr,
       .canonical_signal_id = signal_coord,
       .dirty_off = 0,
       .dirty_size = 0,
@@ -296,6 +310,18 @@ auto Context::ResolveMutationSignalRef(mir::PlaceId place_id) const
         .scope = mir::SignalRef::Scope::kObjectLocal,
         .id = static_cast<uint32_t>(resolved.root.id),
         .object_index = resolved.root.object_index};
+  }
+  if (resolved.root.kind == mir::PlaceRoot::Kind::kBoundChildDest) {
+    if (resolved.root.id != mir::kBoundChildDestSentinel) {
+      throw common::InternalError(
+          "ResolveMutationSignalRef",
+          std::format(
+              "kBoundChildDest root.id must be sentinel ({}), got {}",
+              mir::kBoundChildDestSentinel, resolved.root.id));
+    }
+    return mir::SignalRef{
+        .scope = mir::SignalRef::Scope::kBoundChildDest,
+        .id = static_cast<uint32_t>(resolved.root.id)};
   }
   return std::nullopt;
 }
@@ -347,6 +373,19 @@ auto Context::ResolveDesignGlobalSlotId(const mir::ScopedSlotRef& ref)
 }
 
 auto Context::EmitSignalCoord(const mir::SignalRef& sig) -> SignalCoordExpr {
+  if (sig.scope == mir::SignalRef::Scope::kBoundChildDest) {
+    auto* binding_ptr = EmitExprConnBindingPtr();
+    auto* binding_ty = GetExprConnBindingType();
+    auto* ptr_ty = llvm::PointerType::getUnqual(GetLlvmContext());
+    auto* i32_ty = llvm::Type::getInt32Ty(GetLlvmContext());
+    auto* child_inst = builder_.CreateLoad(
+        ptr_ty, builder_.CreateStructGEP(binding_ty, binding_ptr, 0),
+        "bound_child_inst");
+    auto* child_local = builder_.CreateLoad(
+        i32_ty, builder_.CreateStructGEP(binding_ty, binding_ptr, 2),
+        "child_local_signal");
+    return SignalCoordExpr::BoundChild(child_local, child_inst);
+  }
   if (sig.scope == mir::SignalRef::Scope::kModuleLocal) {
     if (slot_addressing_ == SlotAddressingMode::kSpecializationLocal) {
       return SignalCoordExpr::Local(sig.id);
@@ -357,31 +396,6 @@ auto Context::EmitSignalCoord(const mir::SignalRef& sig) -> SignalCoordExpr {
             "module-local signal (id={}) in design-global addressing mode; "
             "module-scoped code must use specialization-local addressing",
             sig.id));
-  }
-  if (sig.scope == mir::SignalRef::Scope::kObjectLocal) {
-    auto& builder = GetBuilder();
-    auto* i32_ty = llvm::Type::getInt32Ty(GetLlvmContext());
-    auto* target_inst = builder.CreateCall(
-        GetLyraResolveInstancePtr(),
-        {GetEnginePointer(), llvm::ConstantInt::get(i32_ty, sig.object_index)});
-    return SignalCoordExpr::LocalWithInstance(
-        sig.id, runtime::InstanceId{sig.object_index}, target_inst);
-  }
-  // R5: Design-global signals that are actually instance-owned must emit
-  // local identity with a resolved target instance pointer. This happens
-  // for design-level connection processes writing to child port signals.
-  if (sig.id >= facts_->layout->num_package_slots) {
-    auto owner = ResolveInstanceOwnedFlatSlot(
-        facts_->layout->num_package_slots, facts_->layout->instance_slot_counts,
-        sig.id);
-    auto& builder = GetBuilder();
-    auto* i32_ty = llvm::Type::getInt32Ty(GetLlvmContext());
-    auto* target_inst = builder.CreateCall(
-        GetLyraResolveInstancePtr(),
-        {GetEnginePointer(),
-         llvm::ConstantInt::get(i32_ty, owner.instance_id.value)});
-    return SignalCoordExpr::LocalWithInstance(
-        owner.local_signal_id.value, owner.instance_id, target_inst);
   }
   return SignalCoordExpr::Global(sig.id);
 }
@@ -404,14 +418,14 @@ auto ValidateDesignGlobalSignal(
 
 auto Context::EmitMutationTargetSignalCoord(const mir::SignalRef& sig)
     -> SignalCoordExpr {
+  if (sig.scope == mir::SignalRef::Scope::kBoundChildDest) {
+    return EmitSignalCoord(sig);
+  }
   if (sig.scope == mir::SignalRef::Scope::kDesignGlobal) {
     return EmitSignalCoord(
         ValidateDesignGlobalSignal(sig, facts_->layout->design));
   }
   if (sig.scope == mir::SignalRef::Scope::kModuleLocal) {
-    return EmitSignalCoord(sig);
-  }
-  if (sig.scope == mir::SignalRef::Scope::kObjectLocal) {
     return EmitSignalCoord(sig);
   }
   throw common::InternalError(
@@ -518,39 +532,23 @@ auto Context::GetModuleSlotPointer(uint32_t local_slot_id) -> llvm::Value* {
       "GetModuleSlotPointer", "unreachable: unknown SpecSlotAccessKind");
 }
 
-auto Context::GetDesignGlobalSlotPointer(uint32_t global_slot_id)
-    -> llvm::Value* {
-  // When engine is available (simulation context), resolve through the
-  // runtime slot resolver. This handles both design-global and
-  // instance-owned slots correctly via SlotMeta domain dispatch.
+auto Context::GetGlobalSlotPointer(uint32_t global_slot_id) -> llvm::Value* {
+  // Simulation context: resolve through global-only runtime resolver.
   if (engine_ptr_ != nullptr) {
     return builder_.CreateCall(
-        GetLyraResolveSlotPtr(),
-        {engine_ptr_, builder_.getInt32(global_slot_id)}, "resolved_slot_ptr");
+        GetLyraResolveGlobalSlotPtr(),
+        {engine_ptr_, builder_.getInt32(global_slot_id)},
+        "resolved_global_slot_ptr");
   }
-  // Init context (no engine): fall back to design_ptr + arena offset.
-  // Only valid for package/global slots during initialization.
+  // Init context (no engine): design_ptr + arena offset.
   if (design_ptr_ == nullptr) {
     throw common::InternalError(
-        "GetDesignGlobalSlotPointer", "design pointer not set");
+        "GetGlobalSlotPointer", "design pointer not set");
   }
   uint64_t offset = GetDesignSlotByteOffset(common::SlotId{global_slot_id});
   return builder_.CreateGEP(
       llvm::Type::getInt8Ty(*llvm_context_), design_ptr_,
-      builder_.getInt64(offset), "design_global_slot_ptr");
-}
-
-auto Context::GetDesignGlobalSlotPointer(llvm::Value* global_slot_id)
-    -> llvm::Value* {
-  // Runtime-loaded slot ID: must use engine resolver (simulation context).
-  if (engine_ptr_ != nullptr) {
-    return builder_.CreateCall(
-        GetLyraResolveSlotPtr(), {engine_ptr_, global_slot_id},
-        "resolved_slot_ptr");
-  }
-  throw common::InternalError(
-      "GetDesignGlobalSlotPointer(Value*)",
-      "runtime-loaded slot ID requires engine context");
+      builder_.getInt64(offset), "design_slot_ptr");
 }
 
 auto Context::GetSlotRootPointer(const mir::PlaceRoot& root) -> llvm::Value* {
@@ -566,26 +564,37 @@ auto Context::GetSlotRootPointer(const mir::PlaceRoot& root) -> llvm::Value* {
             root.id));
   }
   if (root.kind == mir::PlaceRoot::Kind::kDesignGlobal) {
-    return GetDesignGlobalSlotPointer(static_cast<uint32_t>(root.id));
+    return GetGlobalSlotPointer(static_cast<uint32_t>(root.id));
   }
-  if (root.kind == mir::PlaceRoot::Kind::kObjectLocal) {
-    auto body_group = facts_->layout->instance_body_groups[root.object_index];
-    const auto& bri = facts_->layout->body_realization_infos[body_group];
-    auto local_slot = static_cast<uint32_t>(root.id);
-    auto byte_off = bri.body_layout.inline_offsets[local_slot];
+  if (root.kind == mir::PlaceRoot::Kind::kBoundChildDest) {
+    if (root.id != mir::kBoundChildDestSentinel) {
+      throw common::InternalError(
+          "GetSlotRootPointer",
+          std::format(
+              "kBoundChildDest root.id must be sentinel ({}), got {}",
+              mir::kBoundChildDestSentinel, root.id));
+    }
+    auto* binding_ptr = EmitExprConnBindingPtr();
+    auto* binding_ty = GetExprConnBindingType();
+    auto* ptr_ty = llvm::PointerType::getUnqual(*llvm_context_);
     auto* i32_ty = llvm::Type::getInt32Ty(*llvm_context_);
-    auto* inst_ptr = builder_.CreateCall(
-        GetLyraResolveInstancePtr(),
-        {GetEnginePointer(),
-         llvm::ConstantInt::get(i32_ty, root.object_index)});
-    auto* inline_base = EmitLoadInstanceInlineBase(inst_ptr);
+    auto* child_inst = builder_.CreateLoad(
+        ptr_ty, builder_.CreateStructGEP(binding_ty, binding_ptr, 0),
+        "bound_child_inst");
+    auto* byte_off = builder_.CreateLoad(
+        i32_ty, builder_.CreateStructGEP(binding_ty, binding_ptr, 1),
+        "child_byte_off");
+    auto* child_base = EmitLoadInstanceInlineBase(child_inst);
+    auto* byte_off_64 =
+        builder_.CreateZExt(byte_off, llvm::Type::getInt64Ty(*llvm_context_));
     return builder_.CreateGEP(
-        llvm::Type::getInt8Ty(*llvm_context_), inline_base,
-        builder_.getInt64(byte_off.value), "obj_local_slot_ptr");
+        llvm::Type::getInt8Ty(*llvm_context_), child_base, byte_off_64,
+        "bound_child_slot_ptr");
   }
   throw common::InternalError(
       "GetSlotRootPointer",
-      "expected kModuleSlot, kDesignGlobal, or kObjectLocal root");
+      "expected kModuleSlot, kDesignGlobal, kObjectLocal, "
+      "or kBoundChildDest root");
 }
 
 auto Context::GetSignalSlotPointer(const mir::SignalRef& sig) -> llvm::Value* {
@@ -608,7 +617,7 @@ auto Context::GetSignalSlotPointer(const mir::SignalRef& sig) -> llvm::Value* {
         .object_index = sig.object_index};
     return GetSlotRootPointer(root);
   }
-  return GetDesignGlobalSlotPointer(sig.id);
+  return GetGlobalSlotPointer(sig.id);
 }
 
 auto Context::GetStorageRootPointer(mir::PlaceId place_id) -> llvm::Value* {
@@ -952,6 +961,11 @@ auto Context::RequiresBehavioralDirtyPropagation(
     return info.slot_has_behavioral_trigger[local_slot] ||
            info.slot_has_cross_body_behavioral_trigger[local_slot];
   }
+  if (sig.scope == mir::SignalRef::Scope::kBoundChildDest) {
+    // Writes to child input ports always require dirty propagation.
+    // The child's body may have behavioral triggers on the target slot.
+    return true;
+  }
   throw common::InternalError(
       "Context::RequiresBehavioralDirtyPropagation",
       std::format("unknown signal scope {}", static_cast<int>(sig.scope)));
@@ -986,6 +1000,9 @@ auto Context::RequiresConnectionNotification(const mir::SignalRef& sig) const
     const auto& info = layout.body_realization_infos[body_group];
     return info.slot_has_connection_notification[sig.id];
   }
+  if (sig.scope == mir::SignalRef::Scope::kBoundChildDest) {
+    return false;
+  }
   throw common::InternalError(
       "Context::RequiresConnectionNotification",
       std::format("unknown signal scope {}", static_cast<int>(sig.scope)));
@@ -1014,13 +1031,19 @@ auto Context::EmitIsTraceObserved(const mir::SignalRef& sig) -> llvm::Value* {
         GetLyraIsTraceObservedGlobal(),
         {GetEnginePointer(), llvm::ConstantInt::get(i32_ty, global_slot)});
   }
-  if (sig.scope == mir::SignalRef::Scope::kObjectLocal) {
-    auto* inst_ptr = builder.CreateCall(
-        GetLyraResolveInstancePtr(),
-        {GetEnginePointer(), llvm::ConstantInt::get(i32_ty, sig.object_index)});
+  if (sig.scope == mir::SignalRef::Scope::kBoundChildDest) {
+    auto* binding_ptr = EmitExprConnBindingPtr();
+    auto* binding_ty = GetExprConnBindingType();
+    auto* ptr_ty = llvm::PointerType::getUnqual(GetLlvmContext());
+    auto* child_inst = builder.CreateLoad(
+        ptr_ty, builder.CreateStructGEP(binding_ty, binding_ptr, 0),
+        "bound_child_inst");
+    auto* child_local = builder.CreateLoad(
+        i32_ty, builder.CreateStructGEP(binding_ty, binding_ptr, 2),
+        "child_local_signal");
     return builder.CreateCall(
         GetLyraIsTraceObservedLocal(),
-        {GetEnginePointer(), inst_ptr, llvm::ConstantInt::get(i32_ty, sig.id)});
+        {GetEnginePointer(), child_inst, child_local});
   }
   throw common::InternalError(
       "Context::EmitIsTraceObserved", "unknown signal scope");

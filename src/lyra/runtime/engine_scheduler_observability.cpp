@@ -54,12 +54,15 @@ void Engine::DumpRuntimeStats(FILE* sink) const {
       " nba_entries={} nba_elided={} nba_changed={}"
       " nba_generic_queue={} nba_deferred_local={}"
       " conn_full_slot={} conn_narrow={}"
-      " comb_full_slot={} comb_narrow={}\n",
+      " comb_full_slot={} comb_narrow={}"
+      " timeslots={} max_active_q={} max_next_delta_q={}"
+      " max_delta_cycles={}\n",
       c.total_activations, c.activations_nba_only, c.propagation_calls,
       c.propagation_iterations, c.propagation_max_iterations, c.nba_entries,
       c.nba_elided, c.nba_changed, c.nba_generic_queue, c.nba_deferred_local,
       conn_full_slot_count_, conn_narrow_count_, comb_full_slot_count_,
-      comb_narrow_count_);
+      comb_narrow_count_, c.total_timeslots, c.max_active_queue,
+      c.max_next_delta_queue, c.max_delta_cycles);
 
   // Trigger group stats (G13 metadata).
   const auto& reg = process_trigger_registry_;
@@ -410,12 +413,14 @@ auto SubKindLabel(SubKind kind) -> std::string_view {
 }
 
 // Refine kWait suspend tag into specific subscription kinds.
-auto RefineWaitKind(const std::vector<SubRef>& sub_refs) -> ProcessWaitKind {
+auto RefineWaitKind(
+    const std::vector<LocalSubRef>& local_refs,
+    const std::vector<GlobalSubRef>& global_refs) -> ProcessWaitKind {
   bool has_edge = false;
   bool has_change = false;
   bool has_container = false;
-  for (const auto& ref : sub_refs) {
-    switch (ref.kind) {
+  auto classify = [&](SubKind kind) {
+    switch (kind) {
       case SubKind::kEdge:
         has_edge = true;
         break;
@@ -428,13 +433,15 @@ auto RefineWaitKind(const std::vector<SubRef>& sub_refs) -> ProcessWaitKind {
       case SubKind::kRebindWatcher:
         break;
     }
-  }
+  };
+  for (const auto& ref : local_refs) classify(ref.kind);
+  for (const auto& ref : global_refs) classify(ref.kind);
+
   int count =
       (has_edge ? 1 : 0) + (has_change ? 1 : 0) + (has_container ? 1 : 0);
   if (count > 1) return ProcessWaitKind::kSuspendedMulti;
   if (has_edge) return ProcessWaitKind::kSuspendedEdge;
   if (has_change || has_container) return ProcessWaitKind::kSuspendedChange;
-  // kWait with no subscription sub_refs: inconsistent state. Do not guess.
   return ProcessWaitKind::kSuspendedUnknown;
 }
 
@@ -493,7 +500,7 @@ auto Engine::TakeSchedulerSnapshot() const -> SchedulerSnapshot {
   };
 
   for (uint32_t pid = 0; pid < num_processes_; ++pid) {
-    const auto& proc = process_states_[pid];
+    const auto& proc = processes_[pid];
 
     // Primary classification from canonical suspend state.
     ProcessWaitKind kind = ProcessWaitKind::kFinished;
@@ -501,17 +508,28 @@ auto Engine::TakeSchedulerSnapshot() const -> SchedulerSnapshot {
 
     if (pid == current_running) {
       kind = ProcessWaitKind::kRunning;
-    } else if (is_ready[pid] || proc.is_enqueued) {
+    } else if (is_ready[pid] || processes_[pid].is_enqueued) {
       kind = ProcessWaitKind::kReady;
-    } else {
-      kind = proc.wait_kind;
-      // Refine coarse kSuspendedWait into edge/change/multi from
-      // subscription state.
-      if (kind == ProcessWaitKind::kSuspendedWait) {
-        kind = RefineWaitKind(proc.sub_refs);
-      }
-      if (kind == ProcessWaitKind::kSuspendedDelay && in_delay[pid]) {
-        target_time = delay_target[pid];
+    } else if (
+        pid < processes_.size() && processes_[pid].suspend_record != nullptr) {
+      // Use SuspendRecord::tag as the canonical authority.
+      switch (processes_[pid].suspend_record->tag) {
+        case SuspendTag::kFinished:
+          kind = ProcessWaitKind::kFinished;
+          break;
+        case SuspendTag::kDelay:
+          kind = ProcessWaitKind::kSuspendedDelay;
+          if (in_delay[pid]) target_time = delay_target[pid];
+          break;
+        case SuspendTag::kWait:
+          kind = RefineWaitKind(proc.local_sub_refs, proc.global_sub_refs);
+          break;
+        case SuspendTag::kRepeat:
+          kind = ProcessWaitKind::kSuspendedRepeat;
+          break;
+        case SuspendTag::kWaitEvent:
+          kind = ProcessWaitKind::kSuspendedEvent;
+          break;
       }
     }
 
@@ -535,24 +553,21 @@ auto Engine::TakeSchedulerSnapshot() const -> SchedulerSnapshot {
 
     // Collect subscription summaries for event-suspended processes.
     if (kind != ProcessWaitKind::kSuspendedDelay) {
-      for (const auto& ref : proc.sub_refs) {
+      // Local subscriptions.
+      for (const auto& ref : proc.local_sub_refs) {
         if (ref.kind == SubKind::kRebindWatcher) continue;
+        if (ref.instance == nullptr) continue;
 
         SubscriptionSummary summary;
-        summary.slot_id = ref.signal_id;
-        if (ref.is_local) {
-          auto local = ref.AsLocalRef();
-          const auto& inst = GetInstance(local.instance_id);
-          summary.signal_name = ComposeHierarchicalTraceName(
-              inst, local.signal, *inst.observability.layout);
-        } else {
-          summary.signal_name = signal_name(ref.signal_id);
-        }
+        summary.slot_id = ref.signal.value;
+        summary.signal_name = ComposeHierarchicalTraceName(
+            *ref.instance, ref.signal, *ref.instance->observability.layout);
         summary.kind = ref.kind;
         summary.edge_bucket = ref.edge_bucket;
 
         if (ref.kind == SubKind::kEdge) {
-          const auto& groups = ResolveSubSlot(ref).edge_groups;
+          const auto& groups =
+              ResolveLocalSubSlot(*ref.instance, ref.signal).edge_groups;
           if (ref.edge_group < groups.size()) {
             const auto& group = groups[ref.edge_group];
             const auto& vec = (ref.edge_bucket == EdgeBucket::kPosedge)
@@ -562,30 +577,62 @@ auto Engine::TakeSchedulerSnapshot() const -> SchedulerSnapshot {
             if (ref.index < vec.size()) {
               summary.is_active = (vec[ref.index].flags & kSubActive) != 0;
             }
-            // Resolve storage via domain-aware path.
-            std::span<const uint8_t> storage;
-            if (ref.is_local) {
-              const auto& ref_inst = GetInstance(ref.instance_id);
-              const auto& imeta =
-                  ref_inst.observability.layout->slot_meta[ref.signal_id];
-              storage = std::span(
-                  ResolveInstanceSlotBase(ref_inst, ref.LocalSignal()),
-                  imeta.total_bytes);
-            } else if (
-                !design_state.empty() &&
-                ref.signal_id < slot_meta_registry_.Size()) {
-              const auto& meta = slot_meta_registry_.Get(ref.signal_id);
-              storage = std::span(
-                  ResolveSlotBase(meta, design_state_base_, const_instances_),
-                  meta.total_bytes);
-            }
+            const auto& imeta =
+                ref.instance->observability.layout->slot_meta[ref.signal.value];
+            auto storage = std::span(
+                ResolveInstanceSlotBase(*ref.instance, ref.signal),
+                imeta.total_bytes);
             if (!storage.empty()) {
               uint8_t byte_val = storage[group.byte_offset];
               summary.current_bit = (byte_val >> group.bit_index) & 1;
             }
           }
         } else if (ref.kind == SubKind::kChange) {
-          const auto& subs = ResolveSubSlot(ref).change_subs;
+          const auto& subs =
+              ResolveLocalSubSlot(*ref.instance, ref.signal).change_subs;
+          if (ref.index < subs.size()) {
+            summary.is_active = (subs[ref.index].flags & kSubActive) != 0;
+          }
+        }
+
+        entry.subscriptions.push_back(std::move(summary));
+      }
+
+      // Global subscriptions.
+      for (const auto& ref : proc.global_sub_refs) {
+        if (ref.kind == SubKind::kRebindWatcher) continue;
+
+        SubscriptionSummary summary;
+        summary.slot_id = ref.signal.value;
+        summary.signal_name = signal_name(ref.signal.value);
+        summary.kind = ref.kind;
+        summary.edge_bucket = ref.edge_bucket;
+
+        if (ref.kind == SubKind::kEdge) {
+          const auto& groups = ResolveGlobalSubSlot(ref.signal).edge_groups;
+          if (ref.edge_group < groups.size()) {
+            const auto& group = groups[ref.edge_group];
+            const auto& vec = (ref.edge_bucket == EdgeBucket::kPosedge)
+                                  ? group.posedge_subs
+                                  : group.negedge_subs;
+            summary.group_last_bit = group.last_bit;
+            if (ref.index < vec.size()) {
+              summary.is_active = (vec[ref.index].flags & kSubActive) != 0;
+            }
+            if (!design_state.empty() &&
+                ref.signal.value < slot_meta_registry_.Size()) {
+              const auto& meta = slot_meta_registry_.Get(ref.signal.value);
+              auto storage = std::span(
+                  runtime::ResolveGlobalSlotBase(meta, design_state_base_),
+                  meta.total_bytes);
+              if (!storage.empty()) {
+                uint8_t byte_val = storage[group.byte_offset];
+                summary.current_bit = (byte_val >> group.bit_index) & 1;
+              }
+            }
+          }
+        } else if (ref.kind == SubKind::kChange) {
+          const auto& subs = ResolveGlobalSubSlot(ref.signal).change_subs;
           if (ref.index < subs.size()) {
             summary.is_active = (subs[ref.index].flags & kSubActive) != 0;
           }

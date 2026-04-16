@@ -7,6 +7,10 @@
 
 #include "lyra/runtime/signal_coord.hpp"
 
+namespace lyra::runtime {
+struct RuntimeInstance;
+}
+
 namespace lyra::trace {
 
 // Raw snapshot of packed storage (2-state or 4-state).
@@ -34,23 +38,22 @@ struct TimeAdvance {
   uint32_t delta = 0;
 };
 
-// R5: Domain-split value change events.
+// Domain-split value change events.
 // Global: for package/global signals, identified by GlobalSignalId.
-// Local: for instance-owned signals, identified by stable (instance_id,
-// LocalSignalId) pair. No live runtime object pointer -- trace events
-// are stable data. Sinks resolve names via metadata registries.
+// Local: for instance-owned signals, identified by (RuntimeInstance*,
+// LocalSignalId) pair. Instance pointer is the direct object-model anchor.
 struct GlobalValueChange {
   runtime::GlobalSignalId signal_id;
   TraceValue value;
 };
 
 struct LocalValueChange {
-  runtime::InstanceId instance_id;
+  runtime::RuntimeInstance* instance;
   runtime::LocalSignalId signal_id;
   TraceValue value;
 };
 
-// R5: Domain-split bulk memory write events.
+// Domain-split bulk memory write events.
 // Emitted once per call ($readmemh, $readmemb, $fread into unpacked array),
 // not per element.
 struct GlobalMemoryDirty {
@@ -58,7 +61,7 @@ struct GlobalMemoryDirty {
 };
 
 struct LocalMemoryDirty {
-  runtime::InstanceId instance_id;
+  runtime::RuntimeInstance* instance;
   runtime::LocalSignalId signal_id;
 };
 

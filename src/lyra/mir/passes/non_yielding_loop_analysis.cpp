@@ -105,6 +105,9 @@ auto ExtractNotifiedRoot(const Place& place) -> std::optional<SignalRef> {
         .object_index = place.root.object_index,
     };
   }
+  if (place.root.kind == PlaceRoot::Kind::kBoundChildDest) {
+    return std::nullopt;
+  }
   return std::nullopt;
 }
 

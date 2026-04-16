@@ -22,7 +22,7 @@ inline constexpr uint32_t kFieldDomain = 0;
 // For kDesignGlobal: arena-absolute byte offset. For kInstanceOwned: unused
 // (0).
 inline constexpr uint32_t kFieldDesignBaseOff = 1;
-// For kInstanceOwned: instance_id of the owning RuntimeInstance.
+// For kInstanceOwned: construction-order index of the owning instance.
 // For kDesignGlobal: unused (0).
 inline constexpr uint32_t kFieldOwnerInstanceId = 2;
 // For kInstanceOwned: body-relative byte offset within the instance's

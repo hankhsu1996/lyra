@@ -1066,6 +1066,7 @@ void FillTriggerArray(
   auto& llvm_ctx = context.GetLlvmContext();
   auto* i8_ty = llvm::Type::getInt8Ty(llvm_ctx);
   auto* i32_ty = llvm::Type::getInt32Ty(llvm_ctx);
+  auto* ptr_ty = llvm::PointerType::getUnqual(llvm_ctx);
 
   for (uint32_t i = 0; i < triggers.size(); ++i) {
     auto* elem_ptr = builder.CreateConstGEP2_32(array_type, base_ptr, 0, i);
@@ -1183,14 +1184,14 @@ void FillTriggerArray(
           "trigger.flags.local");
       builder.CreateStore(with_local, flags_ptr);
 
-      // target_instance_id (field 8): from binding.target_instance_id (field
-      // 1).
-      auto* target_inst_id_ptr = builder.CreateStructGEP(
-          binding_ty, binding_ptr, 1, "binding_target_inst_id_ptr");
-      auto* target_inst_id = builder.CreateLoad(
-          i32_ty, target_inst_id_ptr, "ext_ref_target_inst_id");
-      auto* inst_id_ptr = builder.CreateStructGEP(trigger_type, elem_ptr, 8);
-      builder.CreateStore(target_inst_id, inst_id_ptr);
+      // target_instance (field 8): store target instance pointer
+      // directly from per-instance ext-ref binding.
+      auto* target_inst_field = builder.CreateStructGEP(
+          binding_ty, binding_ptr, 0, "binding_target_inst_field");
+      auto* target_inst =
+          builder.CreateLoad(ptr_ty, target_inst_field, "ext_ref_target_inst");
+      auto* inst_ptr_field = builder.CreateStructGEP(trigger_type, elem_ptr, 8);
+      builder.CreateStore(target_inst, inst_ptr_field);
 
       // target_local_signal_id (field 9): from binding.target_local_signal
       // (field 2).
@@ -1213,15 +1214,27 @@ void FillTriggerArray(
           "trigger.flags.local");
       builder.CreateStore(with_local, flags_ptr);
 
-      // Cross-instance: write target_instance_id (field 8) and
+      // Cross-instance: write target_instance (field 8) and
       // target_local_signal_id (field 9).
+      auto* inst_ptr_field = builder.CreateStructGEP(trigger_type, elem_ptr, 8);
       if (cross_id.has_value()) {
-        auto* inst_id_ptr = builder.CreateStructGEP(trigger_type, elem_ptr, 8);
         builder.CreateStore(
-            llvm::ConstantInt::get(i32_ty, cross_id->value), inst_id_ptr);
+            signal_expr.GetInstancePointer(nullptr), inst_ptr_field);
         auto* local_id_ptr = builder.CreateStructGEP(trigger_type, elem_ptr, 9);
         builder.CreateStore(signal_expr.Emit(builder), local_id_ptr);
+      } else {
+        builder.CreateStore(
+            llvm::ConstantPointerNull::get(
+                llvm::PointerType::getUnqual(llvm_ctx)),
+            inst_ptr_field);
       }
+    } else {
+      // Global signal: explicitly null the target_instance field.
+      auto* inst_ptr_field = builder.CreateStructGEP(trigger_type, elem_ptr, 8);
+      builder.CreateStore(
+          llvm::ConstantPointerNull::get(
+              llvm::PointerType::getUnqual(llvm_ctx)),
+          inst_ptr_field);
     }
   }
 }
@@ -1246,6 +1259,7 @@ auto EmitLateBoundData(
   auto* i32_ty = llvm::Type::getInt32Ty(llvm_ctx);
   auto* i64_ty = llvm::Type::getInt64Ty(llvm_ctx);
   auto* i8_ty = llvm::Type::getInt8Ty(llvm_ctx);
+  auto* ptr_ty = llvm::PointerType::getUnqual(llvm_ctx);
 
   // Collect late-bound triggers with dep_slots (need runtime rebinding).
   struct LbEntry {
@@ -1292,10 +1306,10 @@ auto EmitLateBoundData(
   }
 
   // DepSignalRecord: {i32 signal_id, i8 flags, [3 x i8] padding,
-  //                   i32 target_instance_id, i32 target_local_signal_id}
+  //                   ptr target_instance, i32 target_local_signal_id}
   auto* dep_record_type = llvm::StructType::get(
       llvm_ctx,
-      {i32_ty, i8_ty, llvm::ArrayType::get(i8_ty, 3), i32_ty, i32_ty});
+      {i32_ty, i8_ty, llvm::ArrayType::get(i8_ty, 3), ptr_ty, i32_ty});
   llvm::Value* dep_slots_alloca = nullptr;
   if (total_dep_slots > 0) {
     auto* dep_array_type =
@@ -1465,17 +1479,21 @@ auto EmitLateBoundData(
         builder.CreateStore(
             llvm::ConstantInt::get(i8_ty, dep_flags), flags_ptr);
         // Cross-instance fields (fields 3, 4).
-        auto* dep_inst_ptr =
+        auto* dep_inst_field =
             builder.CreateStructGEP(dep_record_type, rec_ptr, 3);
-        auto* dep_local_ptr =
+        auto* dep_local_field =
             builder.CreateStructGEP(dep_record_type, rec_ptr, 4);
         if (cross_id.has_value()) {
           builder.CreateStore(
-              llvm::ConstantInt::get(i32_ty, cross_id->value), dep_inst_ptr);
-          builder.CreateStore(signal_id, dep_local_ptr);
+              signal_expr.GetInstancePointer(nullptr), dep_inst_field);
+          builder.CreateStore(signal_id, dep_local_field);
         } else {
-          builder.CreateStore(llvm::ConstantInt::get(i32_ty, 0), dep_inst_ptr);
-          builder.CreateStore(llvm::ConstantInt::get(i32_ty, 0), dep_local_ptr);
+          builder.CreateStore(
+              llvm::ConstantPointerNull::get(
+                  llvm::PointerType::getUnqual(llvm_ctx)),
+              dep_inst_field);
+          builder.CreateStore(
+              llvm::ConstantInt::get(i32_ty, 0), dep_local_field);
         }
       }
     }
@@ -1517,13 +1535,14 @@ auto LowerWait(
     Context& context, const CuFacts& facts, const mir::Wait& wait,
     llvm::BasicBlock* exit_block, uint32_t wait_site_base,
     std::vector<WaitSiteEntry>& wait_sites) -> Result<void> {
-  static_assert(sizeof(runtime::WaitTriggerRecord) == 28);
+  static_assert(sizeof(runtime::WaitTriggerRecord) == 40);
 
   auto& builder = context.GetBuilder();
   auto& llvm_ctx = context.GetLlvmContext();
 
   auto* i8_ty = llvm::Type::getInt8Ty(llvm_ctx);
   auto* i32_ty = llvm::Type::getInt32Ty(llvm_ctx);
+  auto* ptr_ty = llvm::PointerType::getUnqual(llvm_ctx);
 
   auto num_triggers = static_cast<uint32_t>(wait.triggers.size());
 
@@ -1573,10 +1592,10 @@ auto LowerWait(
   // WaitTriggerRecord layout:
   // {i32 signal_id, i8 edge, i8 bit_index, i8 kind, i8 flags,
   //  i32 byte_offset, i32 byte_size, i32 container_elem_stride,
-  //  i32 target_instance_id, i32 target_local_signal_id}
+  //  ptr target_instance, i32 target_local_signal_id}
   auto* trigger_type = llvm::StructType::get(
       llvm_ctx, {i32_ty, i8_ty, i8_ty, i8_ty, i8_ty, i32_ty, i32_ty, i32_ty,
-                 i32_ty, i32_ty});
+                 ptr_ty, i32_ty});
 
   // Compile-time branching: different codegen for small vs large trigger counts
   if (num_triggers <= runtime::kInlineTriggerCapacity) {
@@ -2989,11 +3008,11 @@ auto EmitMonitorSetupEpilogue(
   auto obs_fields = GetObserverContextFieldValues(context);
 
   // Call LyraMonitorRegister(engine, check_fn, design,
-  //                          this_ptr, instance_id, init_buf, size)
+  //                          this_ptr, instance, init_buf, size)
   builder.CreateCall(
       context.GetLyraMonitorRegister(),
       {engine_ptr, check_fn, design_ptr, obs_fields.this_ptr,
-       obs_fields.instance_id, init_buf,
+       obs_fields.instance, init_buf,
        llvm::ConstantInt::get(i32_ty, layout->total_size)});
 
   return {};
@@ -3087,11 +3106,9 @@ auto DefineDeferredAssertionThunk(
     builder.SetInsertPoint(ok_bb);
 
     auto* this_ptr = context.EmitLoadInstanceInlineBase(instance_ptr);
-    auto* instance_id = context.EmitLoadInstanceId(instance_ptr);
 
     call_args.push_back(this_ptr);
     call_args.push_back(instance_ptr);
-    call_args.push_back(instance_id);
   }
 
   if (action.accepts_decision_owner) {
@@ -3332,12 +3349,8 @@ auto DefineMirFunction(
     instance_arg->setName("instance_ptr");
     context.SetInstancePointer(instance_arg);
 
-    auto* instance_id_arg = llvm_func->getArg(arg_offset + 4);
-    instance_id_arg->setName("instance_id");
-    context.SetDynamicInstanceId(instance_id_arg);
-
     context.SetSlotAddressingMode(SlotAddressingMode::kSpecializationLocal);
-    context_arg_count = 3;
+    context_arg_count = 2;
   }
 
   // Decision owner: unpack hidden decision_owner_id param if contract accepts

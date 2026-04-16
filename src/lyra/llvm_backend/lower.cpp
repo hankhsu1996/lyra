@@ -394,6 +394,9 @@ void EmitVariableInspection(
   auto* i1_ty = llvm::Type::getInt1Ty(llvm_ctx);
   auto* i8_ty = llvm::Type::getInt8Ty(llvm_ctx);
 
+  auto* buf = builder.CreateCall(
+      context.GetLyraCreateVarSnapshotBuffer(), {}, "varbuf");
+
   auto emit_register = [&](llvm::Value* slot_ptr, std::string_view name,
                            const SlotTypeInfo& type_info) {
     auto* name_ptr = builder.CreateGlobalStringPtr(name);
@@ -405,8 +408,8 @@ void EmitVariableInspection(
     auto* four_state_val =
         llvm::ConstantInt::get(i1_ty, type_info.is_four_state ? 1 : 0);
     builder.CreateCall(
-        context.GetLyraRegisterVar(),
-        {name_ptr, slot_ptr, kind_val, width_val, signed_val, four_state_val});
+        context.GetLyraRegisterVar(), {buf, name_ptr, slot_ptr, kind_val,
+                                       width_val, signed_val, four_state_val});
   };
 
   for (const auto& var : plan.globals) {
@@ -439,7 +442,7 @@ void EmitVariableInspection(
     builder.SetInsertPoint(skip_bb);
   }
 
-  builder.CreateCall(context.GetLyraSnapshotVars(), {run_session_ptr});
+  builder.CreateCall(context.GetLyraSnapshotVars(), {buf, run_session_ptr});
 }
 
 void EmitTimeReport(Context& context, llvm::Value* run_session_ptr) {

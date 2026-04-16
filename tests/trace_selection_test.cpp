@@ -133,7 +133,7 @@ auto MakeSignalMeta() -> TraceSignalMetaRegistry {
 }
 
 // Build a minimal SlotMetaRegistry from (base_off, total_bytes) pairs.
-// Stride=11: [domain, design_base_off, owner_instance_id, instance_rel_off,
+// Stride=11: [domain, design_base_off, owner_instance_index, instance_rel_off,
 //             total_bytes, kind, val_off, val_bytes, unk_off, unk_bytes,
 //             storage_owner_slot_id]
 auto MakeSlotMeta(std::vector<std::pair<uint32_t, uint32_t>> slots)
@@ -143,8 +143,8 @@ auto MakeSlotMeta(std::vector<std::pair<uint32_t, uint32_t>> slots)
     const auto& [base_off, total_bytes] = slots[i];
     words.push_back(0);         // domain = kDesignGlobal
     words.push_back(base_off);  // design_base_off
-    words.push_back(0);         // owner_instance_id
-    words.push_back(0);         // instance_rel_off
+    words.push_back(0);  // owner_instance (word table: unused for global)
+    words.push_back(0);  // instance_rel_off
     words.push_back(total_bytes);
     words.push_back(0);  // kind = kPacked2
     words.push_back(0);  // val_off
@@ -185,7 +185,7 @@ TEST(TraceSelectionTest, ProducerSkipsDeselectedSlots) {
 
   // All selected: both slots should emit.
   FlushGlobalDirtySlotsToTrace(
-      tm, slot_meta, design_state.data(), {}, updates, selection, 2);
+      tm, slot_meta, design_state.data(), updates, selection, 2);
 
   uint32_t value_changes = 0;
   for (const auto& event : sink_ptr->events) {
@@ -203,7 +203,7 @@ TEST(TraceSelectionTest, ProducerSkipsDeselectedSlots) {
   selection.SetSelected(0, false);
 
   FlushGlobalDirtySlotsToTrace(
-      tm, slot_meta, design_state.data(), {}, updates, selection, 2);
+      tm, slot_meta, design_state.data(), updates, selection, 2);
 
   value_changes = 0;
   std::vector<uint32_t> emitted_slots;
@@ -225,7 +225,7 @@ TEST(TraceSelectionTest, ProducerSkipsDeselectedSlots) {
   selection.SelectNone();
 
   FlushGlobalDirtySlotsToTrace(
-      tm, slot_meta, design_state.data(), {}, updates, selection, 2);
+      tm, slot_meta, design_state.data(), updates, selection, 2);
 
   value_changes = 0;
   for (const auto& event : sink_ptr->events) {

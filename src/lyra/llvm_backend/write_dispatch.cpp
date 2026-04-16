@@ -130,12 +130,11 @@ auto EmitPlainAggregateStore(
             {ctx.GetEnginePointer(),
              wt->canonical_signal_id->GetInstancePointer(
                  ctx.GetInstancePointer()),
-             wt->ptr, wt->canonical_signal_id->Emit(builder)});
+             wt->canonical_signal_id->Emit(builder)});
       } else {
         builder.CreateCall(
             ctx.GetLyraNotifySignalGlobal(),
-            {ctx.GetEnginePointer(), wt->ptr,
-             wt->canonical_signal_id->Emit(builder)});
+            {ctx.GetEnginePointer(), wt->canonical_signal_id->Emit(builder)});
       }
     };
     bool static_hit = wt->requires_static_dirty_propagation;

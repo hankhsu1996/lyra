@@ -417,3 +417,65 @@ cases:
   # NOTE: Unsupported types (string, dynamic array, unpacked array/struct,
   # queue) are rejected at AST->HIR lowering with diagnostic:
   # "unsupported operand type '<type>' for $monitor at argument <N>"
+
+  - name: monitor_design_global
+    description: monitor at top-level alongside child instances
+    sv: |
+      module Child;
+        int x;
+        initial begin
+          x = 0;
+          #1 x = 10;
+        end
+      endmodule
+
+      module Top;
+        Child u_child();
+        int val;
+        initial begin
+          val = 0;
+          $monitor("val=%0d", val);
+          #1 val = 10;
+          #1 val = 20;
+        end
+      endmodule
+    expect:
+      stdout: "val=0\nval=10\nval=20\n"
+
+  - name: monitor_module_scoped
+    description: monitor inside a child module tracks instance-local state
+    sv: |
+      module Child;
+        int value;
+        initial begin
+          value = 0;
+          $monitor("child value=%0d", value);
+          #1 value = 10;
+          #1 value = 20;
+        end
+      endmodule
+
+      module Top;
+        Child u_child();
+      endmodule
+    expect:
+      stdout: "child value=0\nchild value=10\nchild value=20\n"
+
+  - name: monitor_child_instance
+    description: monitor inside a child instance tracks state across time
+    sv: |
+      module Ticker;
+        int count;
+        initial begin
+          count = 100;
+          $monitor("tick count=%0d", count);
+          #1 count = 200;
+          #1 count = 300;
+        end
+      endmodule
+
+      module Top;
+        Ticker u_tick();
+      endmodule
+    expect:
+      stdout: "tick count=100\ntick count=200\ntick count=300\n"

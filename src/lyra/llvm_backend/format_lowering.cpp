@@ -180,8 +180,8 @@ auto LowerFormatOpToBuffer(
          llvm::ConstantInt::get(i32_ty, op.mods.width.value_or(-1)),
          llvm::ConstantInt::get(i32_ty, op.mods.precision.value_or(-1)),
          llvm::ConstantInt::get(i1_ty, op.mods.zero_pad ? 1 : 0),
-         llvm::ConstantInt::get(i1_ty, op.mods.left_align ? 1 : 0), null_ptr,
-         null_ptr, timeunit_val});
+         llvm::ConstantInt::get(i1_ty, op.mods.left_align ? 1 : 0),
+         timeunit_val});
     return {};
   }
 
@@ -265,7 +265,7 @@ auto LowerFormatOpToBuffer(
       context.GetLyraStringFormatValue(),
       {buf, engine_ptr, format_val, value_kind_val, data_ptr, width_val,
        signed_val, output_width_val, precision_val, zero_pad_val,
-       left_align_val, null_ptr, null_ptr, timeunit_val});
+       left_align_val, timeunit_val});
 
   return {};
 }

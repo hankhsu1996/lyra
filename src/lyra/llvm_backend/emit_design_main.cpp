@@ -19,7 +19,6 @@
 
 #include "lyra/common/internal_error.hpp"
 #include "lyra/common/origin_id.hpp"
-#include "lyra/common/type_arena.hpp"
 #include "lyra/llvm_backend/codegen_session.hpp"
 #include "lyra/llvm_backend/context.hpp"
 #include "lyra/llvm_backend/cu_facts.hpp"
@@ -207,9 +206,9 @@ void EmitDesignStateZero(Context& context, llvm::Value* design_state) {
   EmitMemsetZero(context, design_state, arena_ty);
 }
 
-void EmitRuntimeInit(
+auto EmitRuntimeInit(
     Context& context, llvm::Function* main_func,
-    const EmitDesignMainInput& input) {
+    const EmitDesignMainInput& input) -> llvm::Value* {
   auto& builder = context.GetBuilder();
   auto& ctx = context.GetLlvmContext();
   bool argv_forwarding =
@@ -228,7 +227,8 @@ void EmitRuntimeInit(
   auto* i32_ty = llvm::Type::getInt32Ty(ctx);
   builder.CreateCall(
       context.GetLyraInitRuntime(),
-      {fs_base_dir_str, llvm::ConstantInt::get(i32_ty, input.iteration_limit)});
+      {llvm::ConstantInt::get(i32_ty, input.iteration_limit)});
+  return fs_base_dir_str;
 }
 
 void EmitInitProcesses(
@@ -304,7 +304,6 @@ auto BuildPlusargs(
 // lowering-time analysis reports surfaced to the driver boundary.
 struct DesignMetadataOutputs {
   MetadataGlobals globals;
-  ForwardingAnalysisReport forwarding_analysis;
 };
 
 auto BuildDesignMetadataOutputs(
@@ -312,21 +311,10 @@ auto BuildDesignMetadataOutputs(
     std::span<const common::OriginId> back_edge_origins)
     -> DesignMetadataOutputs {
   auto conn_desc_entries = ExtractConnectionDescriptorEntries(
-      layout.connection_kernel_entries, layout.design, layout.num_package_slots,
-      layout.instance_slot_counts);
+      layout.connection_kernel_entries, layout.body_realization_infos,
+      layout.instance_body_groups);
   auto back_edge_site_inputs = PrepareBackEdgeSiteInputs(
       back_edge_origins, input.diag_ctx, input.source_manager);
-
-  // Port-binding forwarding candidate analysis (analysis only, no transform).
-  ForwardingAnalysisReport forwarding_report;
-  if (input.collect_forwarding_analysis) {
-    forwarding_report =
-        ForwardingAnalysisReport(FindPortBindingForwardingCandidates(
-            conn_desc_entries,
-            static_cast<uint32_t>(layout.design.slots.size()),
-            layout.body_runtime_descriptors,
-            layout.connection_templates.triggers));
-  }
 
   metadata::DesignMetadataInputs metadata_inputs{
       .back_edge_sites = std::move(back_edge_site_inputs),
@@ -337,7 +325,6 @@ auto BuildDesignMetadataOutputs(
   return DesignMetadataOutputs{
       .globals = EmitDesignMetadataGlobals(
           context.GetModule(), context.GetLlvmContext(), metadata),
-      .forwarding_analysis = std::move(forwarding_report),
   };
 }
 
@@ -511,8 +498,9 @@ auto BuildRuntimeAbi(
     const RealizationEmissionResult::ObservationMeta& observation_meta,
     uint32_t num_immediate_cover_sites, int8_t global_precision_power,
     llvm::Constant* deferred_site_meta_global,
-    uint32_t num_deferred_assertion_sites, uint32_t num_events)
-    -> llvm::Value* {
+    uint32_t num_deferred_assertion_sites, uint32_t num_events,
+    llvm::Value* fs_base_dir_str, llvm::Value* conn_desc_ptr,
+    llvm::Value* conn_desc_count) -> llvm::Value* {
   auto& builder = context.GetBuilder();
   auto& ctx = context.GetLlvmContext();
   auto* i32_ty = llvm::Type::getInt32Ty(ctx);
@@ -545,8 +533,8 @@ auto BuildRuntimeAbi(
   store_field(
       10, llvm::ConstantInt::get(
               i32_ty, meta_globals.back_edge_site_meta_pool_size));
-  store_field(11, meta_globals.conn_desc_table);
-  store_field(12, llvm::ConstantInt::get(i32_ty, meta_globals.conn_desc_count));
+  store_field(11, conn_desc_ptr);
+  store_field(12, conn_desc_count);
   // Comb kernel metadata: constructor-produced.
   store_field(13, dispatch_meta.comb_words);
   store_field(14, dispatch_meta.comb_word_count);
@@ -608,21 +596,22 @@ auto BuildRuntimeAbi(
   store_field(38, llvm::ConstantInt::get(i32_ty, num_events));
   store_field(39, llvm::ConstantInt::get(i32_ty, 0));
 
+  // v25: Filesystem base directory.
+  store_field(40, fs_base_dir_str);
+
   return abi_alloca;
 }
 
 void EmitRunSimulation(
-    Context& context, llvm::Constant* funcs_array, llvm::Value* states_array,
-    llvm::Value* num_processes, const PlusargsSetup& plusargs,
-    const RealizationEmissionResult::ObservationMeta& observation_meta,
-    llvm::Value* abi_alloca, llvm::Value* run_session_ptr) {
+    Context& context, llvm::Value* states_array, llvm::Value* num_processes,
+    const PlusargsSetup& plusargs, llvm::Value* abi_alloca,
+    llvm::Value* run_session_ptr) {
   auto& builder = context.GetBuilder();
 
   builder.CreateCall(
       context.GetLyraRunSimulation(),
-      {funcs_array, states_array, num_processes, plusargs.array, plusargs.count,
-       observation_meta.instance_paths, observation_meta.instance_path_count,
-       abi_alloca, run_session_ptr});
+      {states_array, num_processes, plusargs.array, plusargs.count, abi_alloca,
+       run_session_ptr});
 }
 
 void EmitMainExit(
@@ -681,14 +670,12 @@ auto BuildEmitDesignMainInput(const lowering::mir_to_llvm::LoweringInput& input)
       .feature_flags = input.feature_flags,
       .signal_trace_path = input.signal_trace_path,
       .iteration_limit = input.iteration_limit,
-      .collect_forwarding_analysis = input.collect_forwarding_analysis,
   };
 }
 
 auto EmitDesignMain(
     lowering::mir_to_llvm::CodegenSession& session,
     const EmitDesignMainInput& input) -> Result<LoweringReport> {
-  ForwardingAnalysisReport forwarding_report;
   auto& context = *session.context;
   const auto& facts = *session.facts;
   const auto& layout = *session.layout;
@@ -719,23 +706,19 @@ auto EmitDesignMain(
 
     // Default to null for zero-simulation case.
     llvm::Value* states_array = null_ptr;
-    llvm::Constant* connection_funcs = null_ptr;
     llvm::Value* num_total_val = llvm::ConstantInt::get(i32_ty, 0);
-    auto num_connection = static_cast<uint32_t>(
-        layout.num_module_process_base - layout.num_init_processes);
 
     if (num_simulation > 0) {
       ctor_result = EmitRealizationAndConstructor(
           context, facts, layout, design_state, session.body_compiled_funcs,
           process_funcs, num_init, realization.construction_program);
-      connection_funcs = ctor_result.connection_funcs;
       states_array = ctor_result.states_array;
       num_total_val = ctor_result.num_total;
     }
 
     // Runtime init and init processes run AFTER constructor (which owns
     // design-state init) but BEFORE simulation.
-    EmitRuntimeInit(context, main_func, input);
+    auto* fs_base_dir_str = EmitRuntimeInit(context, main_func, input);
 
     if (input.hooks != nullptr) {
       input.hooks->OnAfterInitializeDesignState(context, design_state);
@@ -753,7 +736,6 @@ auto EmitDesignMain(
 
     auto metadata_outputs = BuildDesignMetadataOutputs(
         context, layout, input, session.back_edge_origins);
-    forwarding_report = std::move(metadata_outputs.forwarding_analysis);
     auto& meta_globals = metadata_outputs.globals;
 
     auto wait_site_meta = EmitWaitSiteMetaTable(context, session.wait_sites);
@@ -780,8 +762,6 @@ auto EmitDesignMain(
         .trace_meta_word_count = llvm::ConstantInt::get(i32_ty, 0),
         .trace_meta_pool = null_ptr,
         .trace_meta_pool_size = llvm::ConstantInt::get(i32_ty, 0),
-        .instance_paths = null_ptr,
-        .instance_path_count = llvm::ConstantInt::get(i32_ty, 0),
         .instance_ptrs = null_ptr,
         .instance_count = llvm::ConstantInt::get(i32_ty, 0),
         .instance_bundles = null_ptr,
@@ -818,19 +798,56 @@ auto EmitDesignMain(
     auto* deferred_site_meta_global = EmitDeferredAssertionSiteMetaGlobal(
         context, facts, input.design->deferred_assertion_sites,
         session.deferred_site_artifacts, site_origin_entries, site_cover_bases);
+    // Connection descriptors: materialize in the constructor result,
+    // then pass the RuntimeConnectionDescriptor* to the ABI.
+    llvm::Value* conn_ptr = null_ptr;
+    llvm::Value* conn_count = llvm::ConstantInt::get(i32_ty, 0);
+    if (meta_globals.conn_desc_count > 0 &&
+        ctor_result.result_handle != nullptr) {
+      auto* set_fn = context.GetModule()
+                         .getOrInsertFunction(
+                             "LyraConstructionResultSetConnectionDescriptors",
+                             llvm::FunctionType::get(
+                                 llvm::Type::getVoidTy(ctx),
+                                 {ptr_ty, ptr_ty, i32_ty}, false))
+                         .getCallee();
+      auto* get_fn = context.GetModule()
+                         .getOrInsertFunction(
+                             "LyraConstructionResultGetConnectionDescriptors",
+                             llvm::FunctionType::get(ptr_ty, {ptr_ty}, false))
+                         .getCallee();
+      auto* get_count_fn =
+          context.GetModule()
+              .getOrInsertFunction(
+                  "LyraConstructionResultGetConnectionDescriptorCount",
+                  llvm::FunctionType::get(i32_ty, {ptr_ty}, false))
+              .getCallee();
+      auto& bld = context.GetBuilder();
+      bld.CreateCall(
+          llvm::cast<llvm::Function>(set_fn),
+          {ctor_result.result_handle, meta_globals.conn_desc_table,
+           llvm::ConstantInt::get(i32_ty, meta_globals.conn_desc_count)});
+      conn_ptr = bld.CreateCall(
+          llvm::cast<llvm::Function>(get_fn), {ctor_result.result_handle},
+          "conn_descs_ptr");
+      conn_count = bld.CreateCall(
+          llvm::cast<llvm::Function>(get_count_fn), {ctor_result.result_handle},
+          "conn_descs_count");
+    }
     auto* abi_alloca = BuildRuntimeAbi(
-        context, meta_globals, wait_site_meta, num_connection,
-        input.feature_flags, input.signal_trace_path, design_state,
-        process_meta_for_abi, dispatch_meta_for_abi, observation_meta_for_abi,
+        context, meta_globals, wait_site_meta, 0, input.feature_flags,
+        input.signal_trace_path, design_state, process_meta_for_abi,
+        dispatch_meta_for_abi, observation_meta_for_abi,
         static_cast<uint32_t>(input.design->immediate_cover_sites.size()),
         input.design->global_precision_power, deferred_site_meta_global,
         static_cast<uint32_t>(input.design->deferred_assertion_sites.size()),
-        static_cast<uint32_t>(input.design->max_body_local_events));
+        static_cast<uint32_t>(input.design->max_body_local_events),
+        fs_base_dir_str, conn_ptr, conn_count);
     abi_for_exit = abi_alloca;
 
     EmitRunSimulation(
-        context, connection_funcs, states_array, num_total_val, plusargs,
-        observation_meta_for_abi, abi_alloca, run_session_ptr);
+        context, states_array, num_total_val, plusargs, abi_alloca,
+        run_session_ptr);
 
   } else {
     // No simulation processes or kernelized connections. Still need
@@ -865,9 +882,7 @@ auto EmitDesignMain(
       context, facts, design_state, input, exit_block, abi_for_exit,
       ctor_result, inspection_plan, run_session_ptr);
 
-  return LoweringReport{
-      .forwarding_analysis = std::move(forwarding_report),
-  };
+  return LoweringReport{};
 }
 
 auto LowerMirToLlvm(const LoweringInput& input) -> Result<LoweringResult> {

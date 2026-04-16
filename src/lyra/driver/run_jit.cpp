@@ -131,11 +131,8 @@ auto RunJit(const ValidatedCompilationInput& input) -> int {
       .signal_trace_path = input.input.trace_signals_output.value_or(""),
       .iteration_limit = input.input.iteration_limit,
       .force_two_state = input.input.two_state,
-      .collect_forwarding_analysis =
-          output.IsEnabled(OutputCategory::kAnalysis),
       .dpi_export_wrappers = &compilation.mir.dpi_export_wrappers,
       .bound_connections = &compilation.mir.bound_connections,
-      .expr_connections = &compilation.mir.expr_connections,
   };
 
   std::expected<lowering::mir_to_llvm::LoweringResult, Diagnostic> llvm_result;
@@ -178,11 +175,6 @@ auto RunJit(const ValidatedCompilationInput& input) -> int {
         compilation.mir.design_origins, *compilation.hir.hir_arena,
         *compilation.hir.source_manager, llvm_stats);
     output.PrintProcessStats(ps);
-  }
-
-  if (output.IsEnabled(OutputCategory::kAnalysis)) {
-    output.PrintForwardingAnalysisReport(
-        llvm_result->report.forwarding_analysis);
   }
 
   TimeTraceGuard time_trace_guard(input.input.time_trace, output);

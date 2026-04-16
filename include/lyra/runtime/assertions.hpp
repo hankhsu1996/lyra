@@ -48,7 +48,7 @@ void LyraInitDeferredAssertionSites(
 // Enqueue with by-value payload capture and instance context.
 // payload_ptr may be null if payload_size is 0 (no-action fast paths).
 void LyraEnqueueObservedDeferredAssertion(
-    void* engine, uint32_t process_id, uint32_t instance_id, uint32_t site_id,
+    void* engine, uint32_t process_id, void* instance, uint32_t site_id,
     uint8_t disposition, const void* payload_ptr, uint32_t payload_size,
     const lyra::DeferredAssertionRefBindingAbi* ref_ptr, uint32_t ref_count);
 

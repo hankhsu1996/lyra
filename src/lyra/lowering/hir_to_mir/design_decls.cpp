@@ -95,6 +95,7 @@ auto CollectBodyLocalDecls(
     body_decls.slots.push_back(
         {sym.type, mir::SlotKind::kVariable,
          ClassifySlotStorageShape(module, sym.type, type_arena)});
+    body_decls.local_trace_names.push_back(sym.name);
   }
 
   for (SymbolId net : module.nets) {
@@ -112,6 +113,7 @@ auto CollectBodyLocalDecls(
     body_decls.slots.push_back(
         {sym.type, mir::SlotKind::kNet,
          ClassifySlotStorageShape(module, sym.type, type_arena)});
+    body_decls.local_trace_names.push_back(sym.name);
   }
 
   for (SymbolId param : module.param_slots) {
@@ -127,6 +129,15 @@ auto CollectBodyLocalDecls(
     };
     body_decls.places[param] = mir_arena.AddPlace(std::move(body_place));
     body_decls.slots.push_back({sym.type, mir::SlotKind::kParamConst});
+    body_decls.local_trace_names.push_back(sym.name);
+  }
+
+  if (body_decls.slots.size() != body_decls.local_trace_names.size()) {
+    throw common::InternalError(
+        "CollectBodyLocalDecls",
+        std::format(
+            "slots/local_trace_names size mismatch: {} vs {}",
+            body_decls.slots.size(), body_decls.local_trace_names.size()));
   }
 
   return body_decls;

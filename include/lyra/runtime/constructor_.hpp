@@ -20,6 +20,7 @@
 #include "lyra/runtime/process_frame.hpp"
 #include "lyra/runtime/process_schema.hpp"
 #include "lyra/runtime/runtime_instance.hpp"
+#include "lyra/runtime/suspend_record.hpp"
 
 namespace lyra::runtime {
 
@@ -189,6 +190,11 @@ struct ConstructionResult {
   // handoff when the engine consumer path is migrated in a later cut.
   std::vector<InstanceMetadataBundle> instance_bundles;
 
+  // Materialized connection descriptors with direct RuntimeInstance*
+  // pointers. Produced by LyraConstructionResultSetConnectionDescriptors
+  // using direct array access into instances[object_index].
+  std::vector<RuntimeConnectionDescriptor> connection_descriptors;
+
   // Stable storage for body templates referenced by bundles.
   // Bundle body_desc pointers point into .package fields of these entries.
   // Moved from Constructor::body_desc_storage_ during Finalize.
@@ -206,12 +212,6 @@ struct ConstructionResult {
 
   // Constructor-produced trace signal metadata.
   RealizedTraceSignalMeta trace_signal_meta;
-
-  // Constructor-owned instance paths for runtime naming (%m).
-  std::vector<std::string> instance_paths;
-  // Stable C-string pointer view into instance_paths.
-  // Populated during Finalize, valid for the lifetime of this result.
-  std::vector<const char*> instance_path_ptrs;
 
   // Stable raw pointer view into instances for the runtime ABI.
   // Populated during Finalize, valid for the lifetime of this result.
@@ -276,16 +276,29 @@ class Constructor {
   // meta.entries.size().
   void BeginBody(const BodyDescriptorPackage& package);
 
-  // Add one instance of the current body. instance_path is the
-  // hierarchical path for this instance (constructor-owned architecture:
-  // the constructor is the canonical consumer of per-instance paths).
-  // param_data/param_data_size carry pre-lowered canonical storage bytes
-  // for this instance's parameter initialization. nullptr/0 if no params.
+  // Create one child instance of the current body in parent context.
+  // Structural relation and derived path are established inside this
+  // method: parent->children gains a typed ChildEdge, and child->parent
+  // points back. Path is derived from parent path + inst_name.
+  //
+  // parent: parent instance, or nullptr for top-level (root) instances.
+  // edge_coord: generate-scope context for the child edge (empty for
+  //   non-generate instances). Structural edge metadata for relation
+  //   materialization, not runtime object identity or query key.
+  //   Ownership transferred into the stored child edge (moved).
+  // edge_ordinal: child ordinal within the coord context. Same role
+  //   as edge_coord -- structural edge metadata, not identity.
+  // inst_name: local instance name for path derivation (e.g. "u0").
+  //   Consumed during assembly, not stored on the instance.
+  // param_data/param_data_size: pre-lowered canonical storage bytes for
+  //   parameter initialization. nullptr/0 if no params.
+  // Returns the created instance (owned by the constructor).
   // Fails immediately if no active body.
-  void AddInstance(
-      const char* instance_path, const void* param_data,
+  auto CreateChild(
+      RuntimeInstance* parent, common::RepertoireCoord edge_coord,
+      uint32_t edge_ordinal, const char* inst_name, const void* param_data,
       uint32_t param_data_size, uint64_t realized_inline_size,
-      uint64_t realized_appendix_size);
+      uint64_t realized_appendix_size) -> RuntimeInstance*;
 
   // Finalize construction and return the unified result.
   // After this call, further mutation is rejected.
@@ -303,6 +316,9 @@ class Constructor {
     // connection processes.
     uint32_t instance_index = UINT32_MAX;
     bool is_module = false;
+    // Expression connection child binding descriptor.
+    // Non-null for expression connection processes.
+    const ExprConnChildDesc* expr_conn_child_desc = nullptr;
   };
 
   // Currently active body descriptor view.
@@ -373,9 +389,6 @@ class Constructor {
   // Realized slot/trace metadata output.
   RealizedSlotMeta realized_slot_meta_;
   RealizedTraceSignalMeta realized_trace_meta_;
-
-  // Constructor-owned instance paths.
-  std::vector<std::string> instance_paths_;
 
   // Package/global observable descriptor template (immutable after
   // construction).
@@ -481,7 +494,8 @@ void LyraConstructorRunProgram(
     uint32_t body_desc_count, const char* path_pool, uint32_t path_pool_size,
     const uint8_t* param_pool, uint32_t param_pool_size,
     const lyra::runtime::ConstructionProgramEntry* entries,
-    uint32_t entry_count);
+    uint32_t entry_count, const uint32_t* coord_steps_pool,
+    uint32_t coord_steps_word_count);
 
 auto LyraConstructorFinalize(void* ctor) -> void*;
 
@@ -523,12 +537,28 @@ auto LyraConstructionResultGetInstanceBundleCount(void* result) -> uint32_t;
 void LyraConstructionResultDestroy(void* result);
 
 // Set per-instance ext-ref binding records.
-// pool: flat array of ResolvedExtRefBinding records for all instances.
+// pool: flat array of SerializedExtRefBinding records from codegen.
+// Resolves target_instance_id to live RuntimeInstance* and stores
+// resolved bindings in each instance's owned_ext_ref_bindings.
 // offsets[i]: index into pool for instance i (UINT32_MAX = no ext refs).
 // counts[i]: number of bindings for instance i.
 // Called after LyraConstructorFinalize, before simulation.
 void LyraConstructionResultSetExtRefBindings(
     void* result, const void* pool, uint32_t pool_count,
     const uint32_t* offsets, const uint32_t* counts, uint32_t num_instances);
+
+// Materialize connection descriptors from serialized transport into
+// runtime-facing RuntimeConnectionDescriptor with direct RuntimeInstance*
+// pointers. Uses result.instances[object_index] -- direct array access,
+// no central lookup. Called after Finalize, before simulation.
+void LyraConstructionResultSetConnectionDescriptors(
+    void* result_raw, const void* serialized_raw, uint32_t num_descs);
+
+// Get the materialized connection descriptor array from the result.
+auto LyraConstructionResultGetConnectionDescriptors(void* result) -> void*;
+
+// Get the number of materialized connection descriptors.
+auto LyraConstructionResultGetConnectionDescriptorCount(void* result)
+    -> uint32_t;
 
 }  // extern "C"

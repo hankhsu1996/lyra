@@ -5,7 +5,6 @@
 #include <fmt/core.h>
 
 #include "lyra/common/internal_error.hpp"
-#include "render_analysis.hpp"
 #include "render_diagnostics.hpp"
 #include "render_link_progress.hpp"
 #include "render_stats.hpp"
@@ -177,12 +176,6 @@ void CompilationOutput::PrintOrcStats(
     const lowering::mir_to_llvm::JitOrcStats& stats) const {
   RenderOrcStats(*sink_, stats);
   FlushIfNeeded(FlushPolicy::kImmediate);
-}
-
-void CompilationOutput::PrintForwardingAnalysisReport(
-    const lowering::mir_to_llvm::ForwardingAnalysisReport& report) const {
-  RenderForwardingAnalysisReport(*sink_, report);
-  FlushIfNeeded(FlushPolicy::kDeferred);
 }
 
 void CompilationOutput::PrintLinkProgress(

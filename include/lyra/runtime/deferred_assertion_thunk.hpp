@@ -8,20 +8,16 @@ namespace lyra::runtime {
 
 struct RuntimeInstance;
 
-// Sentinel value indicating no instance binding (design-global scope).
-inline constexpr uint32_t kNoInstanceId = UINT32_MAX;
-
 // Execution context passed to deferred assertion thunks at drain time.
 // Provides the canonical module binding needed for specialization-local
-// access inside the thunk. The thunk derives this_ptr and instance_id
-// from the RuntimeInstance pointer, matching the normal shared-body
-// binding model (EmitSharedBodyBindingSetup).
+// access inside the thunk. The thunk derives this_ptr from the
+// RuntimeInstance pointer, matching the normal shared-body binding
+// model (EmitSharedBodyBindingSetup).
 //
 // For design-global scope (no instance), instance is nullptr.
 struct DeferredAssertionExecContext {
-  // Canonical instance pointer (RuntimeInstance*). Provides:
-  // - this_ptr via instance->storage.inline_base
-  // - instance_id via instance->instance_id
+  // Canonical instance pointer (RuntimeInstance*). Provides
+  // this_ptr via instance->storage.inline_base.
   // nullptr for design-global scope.
   RuntimeInstance* instance = nullptr;
 };

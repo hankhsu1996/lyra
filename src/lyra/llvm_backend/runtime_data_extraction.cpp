@@ -23,6 +23,7 @@
 #include "lyra/lowering/origin_map_lookup.hpp"
 #include "lyra/mir/construction_input.hpp"
 #include "lyra/mir/module.hpp"
+#include "lyra/mir/module_body.hpp"
 
 namespace lyra::lowering::mir_to_llvm {
 
@@ -234,8 +235,12 @@ auto BuildConstructionProgram(
     std::span<const Layout::InstanceStorageSizes> instance_storage_sizes,
     const mir::InstanceTable& instance_table,
     std::span<const std::vector<uint8_t>> param_payloads,
-    const std::vector<std::vector<common::ResolvedExtRefBinding>>&
-        instance_ext_ref_bindings) -> ConstructionProgramData {
+    const std::vector<std::vector<common::SerializedExtRefBinding>>&
+        instance_ext_ref_bindings,
+    std::span<const Layout::BodyRealizationInfo> body_realization_infos,
+    std::span<const uint32_t> parent_instance_indices,
+    std::span<const mir::DurableChildId> child_durable_ids)
+    -> ConstructionProgramData {
   auto instance_count = static_cast<uint32_t>(instance_body_group.size());
   ConstructionProgramData prog;
   prog.entries.reserve(instance_count);
@@ -246,11 +251,50 @@ auto BuildConstructionProgram(
     runtime::ConstructionProgramEntry entry{};
 
     entry.body_group = instance_body_group[mi];
+    entry.parent_instance_index = (mi < parent_instance_indices.size())
+                                      ? parent_instance_indices[mi]
+                                      : UINT32_MAX;
 
     const auto& path = instance_table.entries[mi].full_path;
     entry.path_offset = static_cast<uint32_t>(prog.path_pool.size());
     prog.path_pool.insert(prog.path_pool.end(), path.begin(), path.end());
     prog.path_pool.push_back(0);
+
+    // Structural child edge metadata from compile-time DurableChildId.
+    if (mi < child_durable_ids.size()) {
+      const auto& durable = child_durable_ids[mi];
+      entry.child_ordinal_in_coord = durable.child_ordinal;
+      if (durable.coord.empty()) {
+        entry.coord_offset = UINT32_MAX;
+        entry.coord_count = 0;
+      } else {
+        entry.coord_offset =
+            static_cast<uint32_t>(prog.coord_steps_pool.size());
+        entry.coord_count = static_cast<uint32_t>(durable.coord.size());
+        for (const auto& step : durable.coord) {
+          prog.coord_steps_pool.push_back(static_cast<uint32_t>(step.kind));
+          prog.coord_steps_pool.push_back(step.construct_index);
+          prog.coord_steps_pool.push_back(step.alt_index);
+        }
+      }
+    } else {
+      entry.child_ordinal_in_coord = 0;
+      entry.coord_offset = UINT32_MAX;
+      entry.coord_count = 0;
+    }
+
+    // Canonical local child display label from InstanceEntry::display_name
+    // (populated from slang Symbol::name at AST-to-HIR time).
+    // Emitted as a separate pool entry. Not derived from full path.
+    const auto& label = instance_table.entries[mi].inst_name;
+    if (!label.empty()) {
+      entry.inst_name_offset = static_cast<uint32_t>(prog.path_pool.size());
+      prog.path_pool.insert(prog.path_pool.end(), label.begin(), label.end());
+      prog.path_pool.push_back(0);
+    } else {
+      // Top-level instance: use full path as its own display label.
+      entry.inst_name_offset = entry.path_offset;
+    }
 
     const auto& payload = param_payloads[mi];
     if (!payload.empty()) {
@@ -265,15 +309,21 @@ auto BuildConstructionProgram(
     entry.realized_appendix_size = sizes.appendix_bytes;
 
     // Pack per-instance ext-ref binding records into flat pool.
+    // Compute target_byte_offset from the target body's layout.
     if (mi < instance_ext_ref_bindings.size() &&
         !instance_ext_ref_bindings[mi].empty()) {
       auto offset = static_cast<uint32_t>(prog.ext_ref_binding_pool.size());
       prog.ext_ref_binding_offsets.push_back(offset);
       prog.ext_ref_binding_counts.push_back(
           static_cast<uint32_t>(instance_ext_ref_bindings[mi].size()));
-      const auto& bindings = instance_ext_ref_bindings[mi];
-      prog.ext_ref_binding_pool.insert(
-          prog.ext_ref_binding_pool.end(), bindings.begin(), bindings.end());
+      for (auto b : instance_ext_ref_bindings[mi]) {
+        auto target_bg = instance_body_group[b.target_instance_id];
+        const auto& target_layout =
+            body_realization_infos[target_bg].body_layout;
+        b.target_byte_offset =
+            target_layout.inline_offsets[b.target_local_signal.value].value;
+        prog.ext_ref_binding_pool.push_back(b);
+      }
     } else {
       prog.ext_ref_binding_offsets.push_back(UINT32_MAX);
       prog.ext_ref_binding_counts.push_back(0);
@@ -694,6 +744,18 @@ void ExtractBodyCombTemplates(
         body, ordinal_map,
         [&](uint32_t nonfinal_proc_ordinal, mir::ProcessId /*pid*/,
             const mir::Process& proc) {
+          // Expression-connection suffix processes are regular looping
+          // processes with wait/suspend semantics. They must never be
+          // classified as comb kernels.
+          if (info.body == nullptr) {
+            throw common::InternalError(
+                "ExtractBodyCombTemplates", "body is null");
+          }
+          if (mir::IsExprConnectionProcessOrdinal(
+                  *info.body, nonfinal_proc_ordinal)) {
+            return;
+          }
+
           auto result = AnalyzeCombKernel(proc, body.arena);
           if (!result) return;
 
@@ -795,6 +857,21 @@ void ExtractBodyCombTemplates(
                   .has_self_edge = static_cast<uint8_t>(result->has_self_edge),
               });
         });
+
+    // Post-extraction invariant: no extracted comb kernel may be an
+    // expression-connection suffix process. This catches regressions if
+    // the early-return guard above is accidentally removed or bypassed.
+    for (const auto& ck : bp.comb.kernels) {
+      if (mir::IsExprConnectionProcessOrdinal(
+              *info.body, ck.proc_within_body)) {
+        throw common::InternalError(
+            "ExtractBodyCombTemplates",
+            std::format(
+                "expr connection process {} was extracted as comb kernel "
+                "in body group {}",
+                ck.proc_within_body, gi));
+      }
+    }
   }
 }
 
@@ -822,7 +899,23 @@ void ExtractBodyObservableDescriptors(
       return static_cast<uint32_t>(value);
     };
 
+    auto append_to_pool = [&](std::string_view name) -> uint32_t {
+      auto off = static_cast<uint32_t>(tmpl.pool.size());
+      tmpl.pool.insert(tmpl.pool.end(), name.begin(), name.end());
+      tmpl.pool.push_back('\0');
+      return off;
+    };
+
     const auto& obs_body = *info.body;
+
+    if (obs_body.local_trace_names.size() != info.slot_count) {
+      throw common::InternalError(
+          "ExtractBodyObservableDescriptors",
+          std::format(
+              "body {}: local_trace_names size {} != slot_count {}", gi,
+              obs_body.local_trace_names.size(), info.slot_count));
+    }
+
     for (uint32_t i = 0; i < info.slot_count; ++i) {
       const auto& spec = info.slot_specs[i];
       const CanonicalObservableShape shape = ComputeCanonicalObservableShape(
@@ -830,7 +923,13 @@ void ExtractBodyObservableDescriptors(
       const ObservableDescriptorShapeFields sf =
           BuildObservableDescriptorShapeFields(shape);
 
-      uint32_t name_off = 0;
+      const auto& trace_name = obs_body.local_trace_names[i];
+      if (trace_name.empty()) {
+        throw common::InternalError(
+            "ExtractBodyObservableDescriptors",
+            std::format("body {}: empty local trace name for slot {}", gi, i));
+      }
+      uint32_t name_off = append_to_pool(trace_name);
 
       uint32_t storage_offset = narrow_u64_to_u32(
           info.body_layout.inline_offsets[i].value, "body-local byte offset");
@@ -989,7 +1088,9 @@ void ExtractBodyInitDescriptors(
 
   construction_program = BuildConstructionProgram(
       instance_body_group, instance_storage_sizes, construction.instance_table,
-      param_payloads, construction.instance_ext_ref_bindings);
+      param_payloads, construction.instance_ext_ref_bindings,
+      body_realization_infos, construction.parent_instance_indices,
+      construction.child_durable_ids);
 
   // Validate construction program.
   for (size_t i = 0; i < construction_program.entries.size(); ++i) {

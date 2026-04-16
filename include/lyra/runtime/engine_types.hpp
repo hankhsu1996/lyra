@@ -9,6 +9,9 @@
 
 namespace lyra::runtime {
 
+struct RuntimeInstance;
+struct SuspendRecord;
+
 // Simulation time in ticks (timescale-independent).
 using SimTime = uint64_t;
 
@@ -16,11 +19,9 @@ using SimTime = uint64_t;
 // Use as max_time argument to Run() for "run until natural completion".
 inline constexpr SimTime kNoTimeLimit = std::numeric_limits<SimTime>::max();
 
-// Unique identifier for a process instance.
-// Combines process definition ID with instance path for hierarchical designs.
+// Unique identifier for a process activation.
 struct ProcessHandle {
   uint32_t process_id = 0;
-  InstanceId instance_id = InstanceId{0};  // For future hierarchy support
 
   auto operator==(const ProcessHandle&) const -> bool = default;
 };
@@ -28,8 +29,7 @@ struct ProcessHandle {
 // Hash function for ProcessHandle (for use in unordered containers).
 struct ProcessHandleHash {
   auto operator()(const ProcessHandle& h) const noexcept -> size_t {
-    return std::hash<uint64_t>{}(
-        (static_cast<uint64_t>(h.process_id) << 32) | h.instance_id.value);
+    return std::hash<uint32_t>{}(h.process_id);
   }
 };
 
@@ -55,10 +55,9 @@ struct TriggerRange {
   uint32_t count = 0;
 };
 
-// R5: Typed connection destination. Sum type eliminates cross-domain
-// flat bridging -- propagation dispatches by variant, not boolean/int.
-// Local targets store stable instance_id, resolved at propagation time
-// through the engine's validated instance resolver.
+// R5: Typed connection destination for init-time decoding.
+// Used as intermediates when decoding ConnectionDescriptors in
+// InitConnectionBatch. Not stored on the hot path.
 struct GlobalConnectionTarget {
   GlobalSignalId signal;
 };
@@ -87,5 +86,23 @@ enum class ProcessWaitKind : uint8_t {
   kSuspendedUnknown,
   kFinished,
 };
+
+// Pre-resolved connection destination for hot-path propagation.
+// InstanceId is resolved to RuntimeInstance* at init time by
+// InitConnectionBatch, eliminating per-dispatch lookups.
+struct GlobalConnectionDst {
+  GlobalSignalId signal{};
+};
+
+struct LocalConnectionDst {
+  RuntimeInstance* instance = nullptr;
+  LocalSignalId signal{};
+};
+
+using BatchedConnectionDst =
+    std::variant<GlobalConnectionDst, LocalConnectionDst>;
+
+// Forward declaration -- full definition in runtime_process.hpp.
+struct RuntimeProcess;
 
 }  // namespace lyra::runtime

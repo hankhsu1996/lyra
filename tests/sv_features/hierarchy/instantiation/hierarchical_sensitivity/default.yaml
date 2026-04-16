@@ -239,3 +239,130 @@ cases:
       stdout:
         contains:
           - "observed_count = 2"
+
+  - name: cross_instance_negedge_trigger
+    description: always_ff with negedge trigger on child instance signal
+    sv: |
+      module ClkGen;
+        logic clk;
+        initial begin
+          clk = 1;
+          #5 clk = 0;
+          #5 clk = 1;
+          #5 clk = 0;
+        end
+      endmodule
+
+      module Top;
+        ClkGen u_clk();
+        int count;
+
+        always_ff @(negedge u_clk.clk) begin
+          count <= count + 1;
+        end
+
+        initial begin
+          count = 0;
+          #20;
+          $display("count = %0d", count);
+        end
+      endmodule
+    expect:
+      stdout:
+        contains:
+          - "count = 2"
+
+  - name: cross_instance_comb_and_edge_combined
+    description: always_comb dependency and always_ff edge trigger on same child
+    sv: |
+      module Source;
+        logic clk;
+        int data;
+        initial begin
+          clk = 0;
+          data = 0;
+          #5 data = 42;
+          #5 clk = 1;
+          #5 clk = 0;
+          #5 data = 99;
+          #5 clk = 1;
+        end
+      endmodule
+
+      module Top;
+        Source u_src();
+        int comb_out;
+        int sampled;
+
+        always_comb begin
+          comb_out = u_src.data + 1;
+        end
+
+        always_ff @(posedge u_src.clk) begin
+          sampled <= u_src.data;
+        end
+
+        initial begin
+          sampled = -1;
+          #12;
+          $display("comb_out = %0d", comb_out);
+          $display("sampled = %0d", sampled);
+          #20;
+          $display("sampled = %0d", sampled);
+        end
+      endmodule
+    expect:
+      stdout:
+        contains:
+          - "comb_out = 43"
+          - "sampled = 42"
+          - "sampled = 99"
+
+  - name: cross_instance_multiple_children_trigger
+    description: edge triggers from two different child instances
+    sv: |
+      module ClkA;
+        logic clk;
+        initial begin
+          clk = 0;
+          #10 clk = 1;
+          #10 clk = 0;
+        end
+      endmodule
+
+      module ClkB;
+        logic clk;
+        initial begin
+          clk = 0;
+          #15 clk = 1;
+          #15 clk = 0;
+        end
+      endmodule
+
+      module Top;
+        ClkA u_a();
+        ClkB u_b();
+        int count_a;
+        int count_b;
+
+        always_ff @(posedge u_a.clk) begin
+          count_a <= count_a + 1;
+        end
+
+        always_ff @(posedge u_b.clk) begin
+          count_b <= count_b + 1;
+        end
+
+        initial begin
+          count_a = 0;
+          count_b = 0;
+          #25;
+          $display("count_a = %0d", count_a);
+          $display("count_b = %0d", count_b);
+        end
+      endmodule
+    expect:
+      stdout:
+        contains:
+          - "count_a = 1"
+          - "count_b = 1"

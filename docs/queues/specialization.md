@@ -27,6 +27,17 @@ For the stable architecture: see [compilation-model.md](../compilation-model.md)
   - [x] V3b+V3c -- Unify hierarchical read/write, sensitivity, trigger, and index-plan transport on topology-resolved non-local identity: delete ResolveHierarchicalRef and cross-instance-place-based B2 gate; delete prebinding sensitivity resolution; carry unresolved external refs through MIR and normalize at backend using ResolvedExternalRefBinding; extend behavioral dirty-propagation bitmap to cover cross-instance subscribers
   - [ ] V3d -- Remove body-lowering cross-instance global-place lookup: delete body-lowering dependence on cross-instance symbol-to-global lookup once all remaining hierarchical lowering paths no longer require early global-slot resolution
   - [ ] V4 -- Remove flat/global runtime transport for instance-owned state: replace the remaining mixed local/global metadata and scheduling encodings with object-local runtime forms, remove design-level connection/init transport, and complete object-local connection execution
+    - [x] V4a -- Split mixed-domain slot resolver: rename to design-wide, delete from connection path, make FFI global-only
+    - [x] V4b -- Ext-ref storage byte offset: replace flat storage_slot with body-relative target_byte_offset in ext-ref binding
+    - [x] V4c -- Connection object/member shape: replace flat src/dst/trigger_slot_id with object_index + byte_offset in connection descriptors
+    - [x] V4d -- Delete mixed-domain resolvers and forwarding analysis
+    - [x] V4e -- Expression connection body-local compilation: expression connections compiled as body-local shared-body processes with kBoundChildDest writes; pre-bound child context installed by constructor; standalone connection infrastructure deleted (CompiledConnectionExpr, 3-arg dispatch, LyraResolveInstancePtr, \_\_lyra_connection_funcs)
+    - [x] V4e2 -- Child port identity canonicalization: split instance-local child_port_sym into topology locator (child_instance_sym) and definition-level interface coordinate (child_port_ordinal); delete late spec/body/slot repair lookup in design_lower.cpp; port entries preserved in declaration order
+    - [ ] V4f -- Ext-ref direct-pointer binding: replace serialized target_instance_id with RuntimeExtRefBinding carrying direct RuntimeInstance\*; atomic across runtime field type, LLVM binding type, constructor materialization, and all codegen/FFI consumers
+    - [ ] V4g -- Constructor object model: current constructor is a flat-loop replay machine with no parent-child assembly context; connections bypass the constructor entirely; target model is body-local recipes consumed by constructor with parent-local child pointer view
+    - [ ] V4h -- SlotMeta owner_instance_id split: separate truly-global slot metadata from per-instance local metadata; eliminate owner_instance_id as a routing key
+    - [ ] V4i -- Connection analysis graph refactor: replace flat SlotId indexing in relay elimination with object/member endpoint keys
+    - [ ] V4j -- Kernelized connection body-local recipes: migrate slot-to-slot kernelized connections from design-global connection descriptor table to body-local owner-relative recipes; constructor materializes runtime connection descriptors from live parent/child pointers
 - [ ] T1 -- Topology-independence validation (scaling gates)
 - [ ] F1 -- Parallel specialization compilation
   - [x] F1-design -- Parallel ownership model
@@ -86,7 +97,7 @@ Scope was larger than the original name suggested. R1 established:
 
 - **Two-domain storage model.** SlotMeta carries a domain enum (kDesignGlobal vs kInstanceOwned) with domain-specific addressing. Slot meta ABI bumped to v4.
 - **Per-instance heap-allocated storage.** Each RuntimeInstance owns inline + appendix regions, sized per-instance from realized sizes (supports parameterized variation).
-- **Domain-aware slot resolution.** All coordination surfaces (dirty tracking, subscriptions, trace, connections, comb fixpoint) resolve slot storage through domain-routing in ResolveSlotBytes, dispatching to either the design arena or the owning instance's heap storage.
+- **Domain-aware slot resolution.** All coordination surfaces (dirty tracking, subscriptions, trace, connections, comb fixpoint) resolve slot storage through domain-routing in ResolveGlobalSlotBase, dispatching to either the design arena or the owning instance's heap storage.
 - **Process-instance binding.** ProcessFrameHeader holds a RuntimeInstance pointer. RuntimeInstance carries module_proc_base and num_module_processes.
 - **Observable descriptor domain classification.** Codegen emits body-relative vs owner-absolute storage refs per slot; constructor consumes these to produce domain-tagged SlotMeta.
 - **RuntimeInstance as LLVM struct type.** Codegen emits RuntimeInstance and RuntimeInstanceStorage with hard static_assert binary-contract enforcement.
@@ -100,7 +111,7 @@ Forwarding no longer redefines object storage shape. Every body-local slot owns 
 
 - **Storage plane.** ForwardedStorageAlias, StorageOwnerSlotId, and the SlotStorageBinding variant deleted. Layout allocates every body-local slot unconditionally. storage_owner_slot_id removed from DesignLayout. Offset queries (GetBodyOffset, GetInstanceOffset) are total for all body-local slots. Design arena contains only package/global state (forwarding dead space removed).
 - **Access plane.** kForwardedInline and kForwardedContainer deleted from SpecSlotAccessKind. All module-local pointer paths go through this_ptr + local offset. No module-local access routes through design_ptr. Observable descriptors for body slots are always body-relative (ObservableOwnerAbsoluteStorageRef deleted).
-- **Runtime slot resolution.** ResolveSlotBytes uses direct domain switch only. No owner-chase for instance-owned slots. R2 self-ownership invariant enforced (storage_owner_slot_id == slot_id for all instance-owned slots).
+- **Runtime slot resolution.** ResolveGlobalSlotBase uses direct domain switch only. No owner-chase for instance-owned slots. R2 self-ownership invariant enforced (storage_owner_slot_id == slot_id for all instance-owned slots).
 - **Connection analysis.** ForwardingMap deleted. Replaced by AnalyzeConnections producing ConnectionAnalysisResult with original-slot-ID connection edges, per-slot usage summaries, and relay-candidate classification. Connection entries use original slot IDs; no canonical-owner aliasing or identity-edge elimination.
 - **Trace.** Forwarded-alias dirty-set validation and alias fanout loop removed from trace flush. Direct per-slot trace path only.
 
@@ -180,7 +191,7 @@ Several docs need alignment with the natural model and R-series runtime model mi
 
 - pipeline-contract.md still describes types as "language-level" without compile-owned vs constructor-owned ownership distinction
 - state-layout.md describes allocation lifecycle without framing as ownership boundaries
-- runtime.md, change-propagation.md, and module-hierarchy.md describe mechanisms without referencing the natural model or noting current-state mismatches
+- runtime.md and change-propagation.md describe mechanisms without referencing the natural model or noting current-state mismatches
 
 The code already implements the correct projection for types. The docs need to catch up with both the type ownership model and the broader natural model / runtime model direction.
 

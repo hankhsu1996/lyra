@@ -153,7 +153,7 @@ auto LowerStatement(
             auto& builder = context.GetBuilder();
             builder.CreateCall(
                 context.GetLyraTriggerEvent(),
-                {context.GetEnginePointer(), context.GetDynamicInstanceId(),
+                {context.GetEnginePointer(), context.GetInstancePointer(),
                  builder.getInt32(te.event.value)});
             return {};
           },

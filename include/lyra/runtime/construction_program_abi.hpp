@@ -10,7 +10,10 @@
 namespace lyra::runtime {
 
 // Construction program entry: one per module instance, in strict ModuleIndex
-// order. The runtime replays BeginBody/AddInstance calls from this table.
+// order. This entire type is emitted LLVM transport for constructor
+// ingestion only. It is never a runtime semantic carrier. All fields
+// are consumed exactly once in LyraConstructorRunProgram and do not
+// survive into any runtime-facing struct or API.
 struct ConstructionProgramEntry {
   uint32_t body_group;
   uint32_t path_offset;
@@ -18,6 +21,25 @@ struct ConstructionProgramEntry {
   uint32_t param_size;
   uint64_t realized_inline_size;
   uint64_t realized_appendix_size;
+  // Parent instance index in construction order. UINT32_MAX for top-level.
+  // Transport-only: consumed in LyraConstructorRunProgram to resolve a
+  // live RuntimeInstance* parent pointer. Does not survive into any
+  // runtime carrier after ingestion.
+  uint32_t parent_instance_index;
+  // Structural child edge metadata. Transport-only: consumed in
+  // LyraConstructorRunProgram to populate RuntimeInstance::ChildEdge.
+  // These are edge metadata for structural relation materialization,
+  // not runtime object identity or a general-purpose query key.
+  uint32_t child_ordinal_in_coord;
+  // Offset and count into the coord_steps pool for this child's
+  // RepertoireCoord. UINT32_MAX offset = empty coord (non-generate).
+  uint32_t coord_offset;
+  uint32_t coord_count;
+  // Local instance name offset into path_pool (e.g. "u0").
+  // Presentation input for path derivation during assembly.
+  // Originates from InstanceEntry::inst_name at compile time -- not
+  // recovered from full path strings. Not stored on RuntimeInstance.
+  uint32_t inst_name_offset;
 };
 
 // Flat POD reference to one body descriptor package. Mirrors the data

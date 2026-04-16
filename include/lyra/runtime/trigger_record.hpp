@@ -6,6 +6,8 @@
 
 namespace lyra::runtime {
 
+struct RuntimeInstance;
+
 // Trigger install kind: explicit per-trigger classification written by codegen.
 // Runtime installs subscriptions directly from this kind without inferring it
 // from EdgeKind or late-bound header presence.
@@ -20,7 +22,7 @@ inline constexpr uint8_t kTriggerInitiallyActive = 0x01;
 // R5: signal_id is a body-local LocalSignalId. Runtime resolves the
 // owning instance from the process owner (same-instance).
 inline constexpr uint8_t kTriggerLocalSignal = 0x02;
-// R5: cross-instance local trigger. target_instance_id and
+// R5: cross-instance local trigger. target_instance and
 // target_local_signal_id carry the typed identity. Always combined
 // with kTriggerLocalSignal.
 inline constexpr uint8_t kTriggerCrossInstanceLocal = 0x04;
@@ -32,14 +34,21 @@ struct DepSignalRecord {
   uint32_t signal_id = 0;
   uint8_t flags = 0;
   std::array<uint8_t, 3> padding = {};
-  // R5: valid when kDepCrossInstanceLocal is set.
-  uint32_t target_instance_id = 0;
+  // Valid when kDepCrossInstanceLocal is set. Direct pointer to the
+  // target instance, filled by codegen at process startup.
+  RuntimeInstance* target_instance = nullptr;
   uint32_t target_local_signal_id = 0;
 };
 inline constexpr uint8_t kDepLocalSignal = 0x01;
 inline constexpr uint8_t kDepCrossInstanceLocal = 0x02;
-static_assert(sizeof(DepSignalRecord) == 16);
-static_assert(alignof(DepSignalRecord) == 4);
+static_assert(sizeof(DepSignalRecord) == 24);
+static_assert(alignof(DepSignalRecord) == 8);
+static_assert(
+    offsetof(DepSignalRecord, target_instance) == 8,
+    "DepSignalRecord target_instance offset mismatch");
+static_assert(
+    offsetof(DepSignalRecord, target_local_signal_id) == 16,
+    "DepSignalRecord target_local_signal_id offset mismatch");
 
 struct WaitTriggerRecord {
   uint32_t signal_id = 0;
@@ -64,15 +73,16 @@ struct WaitTriggerRecord {
   // For kContainer only. Element stride in bytes. 0 for non-container triggers.
   uint32_t container_elem_stride = 0;
 
-  // R5: valid when kTriggerCrossInstanceLocal is set.
-  uint32_t target_instance_id = 0;
+  // Valid when kTriggerCrossInstanceLocal is set. Direct pointer to
+  // the target instance, filled by codegen at process startup.
+  RuntimeInstance* target_instance = nullptr;
   uint32_t target_local_signal_id = 0;
 };
 
 static_assert(
-    sizeof(WaitTriggerRecord) == 28, "WaitTriggerRecord size mismatch");
+    sizeof(WaitTriggerRecord) == 40, "WaitTriggerRecord size mismatch");
 static_assert(
-    alignof(WaitTriggerRecord) == 4, "WaitTriggerRecord alignment mismatch");
+    alignof(WaitTriggerRecord) == 8, "WaitTriggerRecord alignment mismatch");
 static_assert(
     offsetof(WaitTriggerRecord, bit_index) == 5,
     "WaitTriggerRecord bit_index offset mismatch");
@@ -92,10 +102,10 @@ static_assert(
     offsetof(WaitTriggerRecord, container_elem_stride) == 16,
     "WaitTriggerRecord container_elem_stride offset mismatch");
 static_assert(
-    offsetof(WaitTriggerRecord, target_instance_id) == 20,
-    "WaitTriggerRecord target_instance_id offset mismatch");
+    offsetof(WaitTriggerRecord, target_instance) == 24,
+    "WaitTriggerRecord target_instance offset mismatch");
 static_assert(
-    offsetof(WaitTriggerRecord, target_local_signal_id) == 24,
+    offsetof(WaitTriggerRecord, target_local_signal_id) == 32,
     "WaitTriggerRecord target_local_signal_id offset mismatch");
 
 // Late-bound header for dynamic-index edge triggers.

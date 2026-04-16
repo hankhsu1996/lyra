@@ -2,6 +2,7 @@
 #include <cstdint>
 #include <cstring>
 #include <format>
+#include <functional>
 #include <span>
 #include <variant>
 #include <vector>
@@ -16,23 +17,18 @@
 
 namespace lyra::runtime {
 
-void Engine::InitConnectionBatch(std::span<const ConnectionDescriptor> descs) {
+void Engine::InitConnectionBatch(
+    std::span<const RuntimeConnectionDescriptor> descs) {
   if (descs.empty()) return;
 
-  if (!slot_meta_registry_.IsPopulated()) {
-    throw common::InternalError(
-        "Engine::InitConnectionBatch",
-        "InitConnectionBatch before InitSlotMeta");
-  }
-
-  // Build typed connections with domain-aware destinations and triggers.
-  // Each connection's trigger and destination domain is pre-classified
-  // at codegen time via typed descriptor fields.
+  // Build batched connections from already-materialized runtime
+  // descriptors. All endpoints carry direct RuntimeInstance* -- no
+  // numeric identity lookup needed.
   struct IndexedConn {
     bool trigger_is_local;
-    InstanceId trigger_instance_id;  // valid when trigger_is_local
-    uint32_t trigger_local_id;       // valid when trigger_is_local
-    uint32_t trigger_global_id;      // valid when !trigger_is_local
+    RuntimeInstance* trigger_instance;
+    uint32_t trigger_local_id;
+    uint32_t trigger_global_id;
     BatchedConnection conn;
   };
   std::vector<IndexedConn> sorted;
@@ -45,62 +41,23 @@ void Engine::InitConnectionBatch(std::span<const ConnectionDescriptor> descs) {
       ++conn_full_slot_count_;
     }
 
-    // Decode typed destination from descriptor fields.
-    ConnectionTarget dst;
-    if (d.dst_is_local != 0) {
-      auto iid = InstanceId{d.dst_instance_id};
-      auto lid = LocalSignalId{d.dst_local_id};
-      auto* inst = FindInstanceMut(iid);
-      if (inst == nullptr) {
-        throw common::InternalError(
-            "Engine::InitConnectionBatch",
-            std::format("dst instance_id {} not found", iid));
-      }
-      if (lid.value >= inst->observability.local_signal_count) {
-        throw common::InternalError(
-            "Engine::InitConnectionBatch",
-            std::format(
-                "dst local_id {} >= local_signal_count {} for instance {}",
-                lid.value, inst->observability.local_signal_count, iid));
-      }
-      dst = LocalConnectionTarget{.instance_id = iid, .signal = lid};
-    } else {
-      dst = GlobalConnectionTarget{GlobalSignalId{d.dst_slot_id}};
-    }
+    const auto* src_ptr = ResolveInstanceStorageOffset(
+        *d.src_instance, d.src_byte_offset, d.byte_size,
+        "Engine::InitConnectionBatch[src]");
 
-    // Decode typed trigger from descriptor fields.
-    auto trigger_is_local = (d.trigger_is_local != 0);
-    auto trigger_instance_id = InstanceId{d.trigger_instance_id};
-    uint32_t trigger_local_id = d.trigger_local_id;
-    uint32_t trigger_global_id = d.trigger_slot_id;
-    if (trigger_is_local) {
-      auto* tinst = FindInstanceMut(trigger_instance_id);
-      if (tinst == nullptr) {
-        throw common::InternalError(
-            "Engine::InitConnectionBatch",
-            std::format(
-                "trigger instance_id {} not found", trigger_instance_id));
-      }
-      if (trigger_local_id >= tinst->observability.local_signal_count) {
-        throw common::InternalError(
-            "Engine::InitConnectionBatch",
-            std::format(
-                "trigger local_id {} >= local_signal_count {} for "
-                "instance {}",
-                trigger_local_id, tinst->observability.local_signal_count,
-                trigger_instance_id));
-      }
-    }
+    auto* dst_ptr = ResolveInstanceStorageOffset(
+        *d.dst_instance, d.dst_byte_offset, d.byte_size,
+        "Engine::InitConnectionBatch[dst]");
 
-    const auto* src_ptr = ResolveSlotBytes(d.src_slot_id);
-    auto* dst_ptr = ResolveConnectionDstMut(dst);
+    BatchedConnectionDst dst = LocalConnectionDst{
+        .instance = d.dst_instance, .signal = d.dst_local_signal};
 
     sorted.push_back(
         IndexedConn{
-            .trigger_is_local = trigger_is_local,
-            .trigger_instance_id = trigger_instance_id,
-            .trigger_local_id = trigger_local_id,
-            .trigger_global_id = trigger_global_id,
+            .trigger_is_local = true,
+            .trigger_instance = d.trigger_instance,
+            .trigger_local_id = d.trigger_local_id.value,
+            .trigger_global_id = 0,
             .conn =
                 BatchedConnection{
                     .src_ptr = src_ptr,
@@ -149,10 +106,11 @@ void Engine::InitConnectionBatch(std::span<const ConnectionDescriptor> descs) {
   }
 
   // Build per-instance local connection trigger maps.
-  // Group local_entries by instance_id, then by trigger_local_id.
+  // Group local_entries by trigger_instance, then by trigger_local_id.
   std::ranges::sort(local_entries, [](const auto& a, const auto& b) {
-    if (a.trigger_instance_id != b.trigger_instance_id)
-      return a.trigger_instance_id < b.trigger_instance_id;
+    if (a.trigger_instance != b.trigger_instance)
+      return std::less<RuntimeInstance*>{}(
+          a.trigger_instance, b.trigger_instance);
     return a.trigger_local_id < b.trigger_local_id;
   });
 
@@ -163,23 +121,22 @@ void Engine::InitConnectionBatch(std::span<const ConnectionDescriptor> descs) {
   {
     uint32_t i = 0;
     while (i < local_entries.size()) {
-      auto iid = local_entries[i].trigger_instance_id;
-      auto* inst = instance_trace_resolver_.FindInstanceMut(iid);
+      auto* inst = local_entries[i].trigger_instance;
       if (inst == nullptr) {
         throw common::InternalError(
             "Engine::InitConnectionBatch",
-            std::format("trigger instance_id {} not found", iid));
+            "null trigger instance in local connection entry");
       }
       auto& obs = inst->observability;
       if (obs.local_conn_trigger_map.empty() && obs.local_signal_count > 0) {
         obs.local_conn_trigger_map.resize(obs.local_signal_count);
       }
       while (i < local_entries.size() &&
-             local_entries[i].trigger_instance_id == iid) {
+             local_entries[i].trigger_instance == inst) {
         uint32_t local_id = local_entries[i].trigger_local_id;
         uint32_t start = conn_base + i;
         while (i < local_entries.size() &&
-               local_entries[i].trigger_instance_id == iid &&
+               local_entries[i].trigger_instance == inst &&
                local_entries[i].trigger_local_id == local_id) {
           ++i;
         }
@@ -188,8 +145,9 @@ void Engine::InitConnectionBatch(std::span<const ConnectionDescriptor> descs) {
               "Engine::InitConnectionBatch",
               std::format(
                   "trigger local_id {} >= local_conn_trigger_map size {} "
-                  "for instance {}",
-                  local_id, obs.local_conn_trigger_map.size(), iid));
+                  "for instance '{}'",
+                  local_id, obs.local_conn_trigger_map.size(),
+                  inst->path_c_str));
         }
         obs.local_conn_trigger_map[local_id] = {
             .start = start, .count = conn_base + i - start};
@@ -211,12 +169,10 @@ void Engine::EvaluateAllConnections() {
       std::visit(
           [this](const auto& t) {
             using T = std::decay_t<decltype(t)>;
-            if constexpr (std::is_same_v<T, GlobalConnectionTarget>) {
+            if constexpr (std::is_same_v<T, GlobalConnectionDst>) {
               MarkSlotDirty(t.signal.value);
             } else {
-              auto* inst =
-                  instance_trace_resolver_.FindInstanceMut(t.instance_id);
-              MarkLocalSignalDirty(*inst, t.signal);
+              MarkLocalSignalDirty(*t.instance, t.signal);
             }
           },
           conn.dst);
@@ -240,13 +196,11 @@ void Engine::InitCombKernels(
 
   auto proc_states = std::span(states, num_processes_);
 
-  comb_kernel_flags_.resize(num_processes_, 0);
-
   struct ParsedTrigger {
     bool is_local;
-    InstanceId instance_id;  // valid when is_local
-    uint32_t local_id;       // valid when is_local
-    uint32_t global_id;      // valid when !is_local
+    RuntimeInstance* instance;  // valid when is_local
+    uint32_t local_id;          // valid when is_local
+    uint32_t global_id;         // valid when !is_local
     uint32_t kernel_idx;
     uint32_t byte_offset;
     uint32_t byte_size;
@@ -295,7 +249,7 @@ void Engine::InitCombKernels(
     comb_kernels_.push_back(
         BuildCombKernel(proc_idx, proc_states[proc_idx], flags));
 
-    comb_kernel_flags_[proc_idx] = 1;
+    processes_[proc_idx].is_comb_kernel = true;
 
     bool kernel_self_edge = (flags & CombKernel::kSelfEdge) != 0;
     for (uint32_t ti = 0; ti < num_triggers; ++ti) {
@@ -306,7 +260,7 @@ void Engine::InitCombKernels(
 
       // Classify trigger domain.
       bool is_local = (trigger_flags & kCombTriggerFlagBodyLocal) != 0;
-      auto trigger_iid = InstanceId{0};
+      RuntimeInstance* trigger_inst = nullptr;
       uint32_t local_id = 0;
       uint32_t global_id = trigger_slot;
       if (is_local) {
@@ -318,14 +272,14 @@ void Engine::InitCombKernels(
                   "process {}",
                   proc_idx));
         }
-        trigger_iid = header->instance->instance_id;
+        trigger_inst = header->instance;
         local_id = trigger_slot;
       }
 
       entries.push_back(
           ParsedTrigger{
               .is_local = is_local,
-              .instance_id = trigger_iid,
+              .instance = trigger_inst,
               .local_id = local_id,
               .global_id = global_id,
               .kernel_idx = comb_idx,
@@ -388,29 +342,28 @@ void Engine::InitCombKernels(
   // Build per-instance local comb trigger maps.
   if (!local_triggers.empty()) {
     std::ranges::sort(local_triggers, [](const auto& a, const auto& b) {
-      if (a.instance_id != b.instance_id) return a.instance_id < b.instance_id;
+      if (a.instance != b.instance)
+        return std::less<RuntimeInstance*>{}(a.instance, b.instance);
       return a.local_id < b.local_id;
     });
 
     uint32_t i = 0;
     while (i < local_triggers.size()) {
-      auto iid = local_triggers[i].instance_id;
-      auto* inst = instance_trace_resolver_.FindInstanceMut(iid);
+      auto* inst = local_triggers[i].instance;
       if (inst == nullptr) {
         throw common::InternalError(
             "Engine::InitCombKernels",
-            std::format("comb trigger instance_id {} not found", iid));
+            "null trigger instance in local comb trigger entry");
       }
       auto& obs = inst->observability;
       if (obs.local_comb_trigger_map.empty() && obs.local_signal_count > 0) {
         obs.local_comb_trigger_map.resize(obs.local_signal_count);
       }
-      while (i < local_triggers.size() &&
-             local_triggers[i].instance_id == iid) {
+      while (i < local_triggers.size() && local_triggers[i].instance == inst) {
         uint32_t local_id = local_triggers[i].local_id;
         auto start = static_cast<uint32_t>(comb_trigger_backing_.size());
         while (i < local_triggers.size() &&
-               local_triggers[i].instance_id == iid &&
+               local_triggers[i].instance == inst &&
                local_triggers[i].local_id == local_id) {
           comb_trigger_backing_.push_back({
               .kernel_idx = local_triggers[i].kernel_idx,
@@ -427,8 +380,9 @@ void Engine::InitCombKernels(
               "Engine::InitCombKernels",
               std::format(
                   "local comb trigger id {} >= local_comb_trigger_map "
-                  "size {} for instance {}",
-                  local_id, obs.local_comb_trigger_map.size(), iid));
+                  "size {} for instance '{}'",
+                  local_id, obs.local_comb_trigger_map.size(),
+                  inst->path_c_str));
         }
         obs.local_comb_trigger_map[local_id] = {.start = start, .count = count};
         obs.local_comb_trigger_slots.push_back(LocalSignalId{local_id});
@@ -446,10 +400,9 @@ void Engine::SeedCombKernelDirtyMarks() {
     MarkSlotDirty(gid.value);
   }
   // Seed local comb trigger slots.
-  for (uint32_t i = 0; i < instances_.size(); ++i) {
-    auto* inst = instances_[i];
+  for (auto* inst : instances_) {
     for (LocalSignalId lid : inst->observability.local_comb_trigger_slots) {
-      MarkLocalSignalDirty(*inst, lid, i);
+      MarkLocalSignalDirty(*inst, lid);
     }
   }
 }
@@ -481,25 +434,25 @@ auto Engine::BuildCombKernel(uint32_t proc_idx, void* frame, uint32_t flags)
       .frame = frame,
       .process_index = proc_idx,
       .flags = flags,
-      .instance_idx = GetInstanceIndex(*header->instance),
+      .instance = header->instance,
   };
 }
 
 void Engine::PromoteLocalFrontier() {
   // Retire old current frontier: clear consumed pending.
-  for (uint32_t idx : fp_work_.current_instances) {
-    fp_work_.locals[idx].pending.clear();
+  for (auto* inst : fp_work_.current_instances) {
+    inst->local_fixpoint.pending.clear();
   }
 
   // Promote next frontier: swap next->pending, clear dedup, clear membership.
-  for (uint32_t idx : fp_work_.next_instances) {
-    auto& lps = fp_work_.locals[idx];
-    std::swap(lps.pending, lps.next);
-    lps.next.clear();
-    for (LocalSignalId lid : lps.pending) {
-      lps.seen[lid.value] = 0;
+  for (auto* inst : fp_work_.next_instances) {
+    auto& ws = inst->local_fixpoint;
+    std::swap(ws.pending, ws.next);
+    ws.next.clear();
+    for (LocalSignalId lid : ws.pending) {
+      ws.seen[lid.value] = 0;
     }
-    fp_work_.in_next[idx] = 0;
+    inst->fixpoint_scratch.in_next = false;
   }
 
   std::swap(fp_work_.current_instances, fp_work_.next_instances);
@@ -516,8 +469,6 @@ void Engine::PromoteGlobalFrontier() {
 
 void Engine::FlushAndPropagateConnections() {
   // Check whether there is any work to do across both domains.
-  // Use the sparse delta_dirty_instances_ index for local dirty check
-  // instead of scanning all instances -- O(1) vs O(N).
   bool has_global_dirty = !update_set_.DeltaDirtySlots().empty();
   bool has_local_dirty = !delta_dirty_instances_.empty();
 
@@ -546,7 +497,6 @@ void Engine::FlushAndPropagateConnections() {
   constexpr uint32_t kMaxIterations = 100;
   const bool detailed = detailed_stats_enabled_;
   uint32_t iterations_used = 0;
-  auto num_instances = static_cast<uint32_t>(instances_.size());
 
   // Ensure workspace is sized (lazy init, once per engine lifetime).
   if (fp_work_.global_pending_seen.size() < global_slot_count_) {
@@ -556,25 +506,17 @@ void Engine::FlushAndPropagateConnections() {
       fp_work_.global_snapshot_index.size() < global_slot_count_) {
     fp_work_.global_snapshot_index.assign(global_slot_count_, UINT32_MAX);
   }
-  if (fp_work_.locals.size() != instances_.size()) {
-    fp_work_.locals.resize(instances_.size());
-    for (size_t i = 0; i < instances_.size(); ++i) {
-      auto& lps = fp_work_.locals[i];
-      lps.instance = instances_[i];
-      auto lsc = instances_[i]->observability.local_signal_count;
-      if (lsc > 0 && lps.seen.size() < lsc) {
-        lps.seen.resize(lsc, 0);
+  // Per-instance local fixpoint workspace (pending, next, seen) lives on
+  // RuntimeInstance::local_fixpoint. Lazy-init seen vectors once per engine
+  // lifetime; scratch scalars are reset during sparse-list-driven cleanup.
+  if (!fp_work_.locals_initialized) {
+    for (auto* inst : instances_) {
+      auto lsc = inst->observability.local_signal_count;
+      if (lsc > 0 && inst->local_fixpoint.seen.size() < lsc) {
+        inst->local_fixpoint.seen.resize(lsc, 0);
       }
     }
-  }
-  if (fp_work_.in_next.size() < num_instances) {
-    fp_work_.in_next.assign(num_instances, 0);
-  }
-  if (fp_work_.comb_touched_seen.size() < num_instances) {
-    fp_work_.comb_touched_seen.assign(num_instances, 0);
-  }
-  if (fp_work_.delta_pre.size() < num_instances) {
-    fp_work_.delta_pre.resize(num_instances, 0);
+    fp_work_.locals_initialized = true;
   }
 
   // Seed global frontier from delta dirty slots.
@@ -596,16 +538,16 @@ void Engine::FlushAndPropagateConnections() {
   // dirty-instance index). Only visits instances that actually have
   // delta-dirty local signals -- no full-instance sweep.
   fp_work_.current_instances.clear();
-  for (uint32_t i : delta_dirty_instances_) {
-    auto& obs = instances_[i]->observability;
+  for (auto* inst : delta_dirty_instances_) {
+    auto& obs = inst->observability;
     if (obs.local_signal_count == 0) continue;
-    auto& lps = fp_work_.locals[i];
-    lps.pending.clear();
+    auto& ws = inst->local_fixpoint;
+    ws.pending.clear();
     for (LocalSignalId lid : obs.local_updates.DeltaDirtySignals()) {
-      lps.pending.push_back(lid);
+      ws.pending.push_back(lid);
     }
-    if (!lps.pending.empty()) {
-      fp_work_.current_instances.push_back(i);
+    if (!ws.pending.empty()) {
+      fp_work_.current_instances.push_back(inst);
     }
   }
 
@@ -623,15 +565,15 @@ void Engine::FlushAndPropagateConnections() {
 
   // Helper: enqueue into local next with dedup.
   // When a signal is enqueued, ensures instance is in next_instances.
-  auto enqueue_local = [&](uint32_t inst_idx, LocalSignalId lid) {
+  auto enqueue_local = [&](RuntimeInstance& inst, LocalSignalId lid) {
     if (detailed) ++stats_.detailed.prop_enqueue_attempts;
-    auto& lps = fp_work_.locals[inst_idx];
-    if (lid.value < lps.seen.size() && lps.seen[lid.value] == 0) {
-      lps.seen[lid.value] = 1;
-      lps.next.push_back(lid);
-      if (fp_work_.in_next[inst_idx] == 0) {
-        fp_work_.in_next[inst_idx] = 1;
-        fp_work_.next_instances.push_back(inst_idx);
+    auto& ws = inst.local_fixpoint;
+    if (lid.value < ws.seen.size() && ws.seen[lid.value] == 0) {
+      ws.seen[lid.value] = 1;
+      ws.next.push_back(lid);
+      if (!inst.fixpoint_scratch.in_next) {
+        inst.fixpoint_scratch.in_next = true;
+        fp_work_.next_instances.push_back(&inst);
       }
     } else {
       if (detailed) ++stats_.detailed.prop_enqueue_deduped;
@@ -639,18 +581,17 @@ void Engine::FlushAndPropagateConnections() {
   };
 
   // Helper: connection destination enqueue (handles global/local dispatch).
-  auto enqueue_conn_dst = [&](const ConnectionTarget& dst) {
+  // Destinations are pre-resolved: local targets carry RuntimeInstance*.
+  auto enqueue_conn_dst = [&](const BatchedConnectionDst& dst) {
     std::visit(
         [&](const auto& t) {
           using T = std::decay_t<decltype(t)>;
-          if constexpr (std::is_same_v<T, GlobalConnectionTarget>) {
+          if constexpr (std::is_same_v<T, GlobalConnectionDst>) {
             MarkSlotDirty(t.signal.value);
             enqueue_global(t.signal);
           } else {
-            auto inst_idx = GetInstanceIndex(t.instance_id);
-            auto* local_inst = instances_[inst_idx];
-            MarkLocalSignalDirty(*local_inst, t.signal, inst_idx);
-            enqueue_local(inst_idx, t.signal);
+            MarkLocalSignalDirty(*t.instance, t.signal);
+            enqueue_local(*t.instance, t.signal);
           }
         },
         dst);
@@ -658,16 +599,16 @@ void Engine::FlushAndPropagateConnections() {
 
   // Helper: mark a comb kernel's owning instance as touched this iteration.
   // Records delta_pre exactly once per instance, before first comb execution.
-  auto mark_comb_touched = [&](uint32_t inst_idx) {
-    if (fp_work_.comb_touched_seen[inst_idx] != 0) return;
-    fp_work_.comb_touched_seen[inst_idx] = 1;
-    fp_work_.comb_touched.push_back(inst_idx);
-    auto& obs = instances_[inst_idx]->observability;
-    fp_work_.delta_pre[inst_idx] =
-        (obs.local_signal_count > 0)
-            ? static_cast<uint32_t>(
-                  obs.local_updates.DeltaDirtySignals().size())
-            : 0;
+  auto mark_comb_touched = [&](RuntimeInstance& inst) {
+    auto& scratch = inst.fixpoint_scratch;
+    if (scratch.comb_touched_seen) return;
+    scratch.comb_touched_seen = true;
+    fp_work_.comb_touched.push_back(&inst);
+    auto& obs = inst.observability;
+    scratch.delta_pre = (obs.local_signal_count > 0)
+                            ? static_cast<uint32_t>(
+                                  obs.local_updates.DeltaDirtySignals().size())
+                            : 0;
   };
 
   for (uint32_t iter = 0; iter < kMaxIterations; ++iter) {
@@ -681,9 +622,9 @@ void Engine::FlushAndPropagateConnections() {
     if (detailed) {
       auto total_pending =
           static_cast<uint32_t>(fp_work_.pending_globals.size());
-      for (uint32_t idx : fp_work_.current_instances) {
+      for (auto* inst : fp_work_.current_instances) {
         total_pending +=
-            static_cast<uint32_t>(fp_work_.locals[idx].pending.size());
+            static_cast<uint32_t>(inst->local_fixpoint.pending.size());
       }
       stats_.detailed.prop_pending_slots += total_pending;
     }
@@ -712,10 +653,9 @@ void Engine::FlushAndPropagateConnections() {
       }
 
       // 1b. Local triggers (current frontier only).
-      for (uint32_t idx : fp_work_.current_instances) {
-        auto& lps = fp_work_.locals[idx];
-        auto& obs = lps.instance->observability;
-        for (LocalSignalId lid : lps.pending) {
+      for (auto* inst : fp_work_.current_instances) {
+        auto& obs = inst->observability;
+        for (LocalSignalId lid : inst->local_fixpoint.pending) {
           if (lid.value >= obs.local_conn_trigger_map.size()) continue;
           if (detailed) ++stats_.detailed.prop_conn_trigger_lookups;
           auto [start, count] = obs.local_conn_trigger_map[lid.value];
@@ -760,7 +700,7 @@ void Engine::FlushAndPropagateConnections() {
           auto buf_off = static_cast<uint32_t>(fp_work_.snapshot_buf.size());
           fp_work_.snapshot_buf.resize(buf_off + meta.total_bytes);
           const auto* slot_base =
-              ResolveSlotBase(meta, design_state_base_, const_instances_);
+              runtime::ResolveGlobalSlotBase(meta, design_state_base_);
           std::memcpy(
               &fp_work_.snapshot_buf[buf_off], slot_base, meta.total_bytes);
           fp_work_.global_snapshot_index[gid.value] =
@@ -798,7 +738,7 @@ void Engine::FlushAndPropagateConnections() {
 
           if (detailed) ++stats_.detailed.comb_executed;
           const auto& ck = comb_kernels_[entry.kernel_idx];
-          mark_comb_touched(ck.instance_idx);
+          mark_comb_touched(*ck.instance);
           FlushDeferredAssertionsForProcess(
               ProcessId::FromIndex(ck.process_index));
           ck.body(ck.frame, 0);
@@ -806,10 +746,9 @@ void Engine::FlushAndPropagateConnections() {
       }
 
       // 2b. Evaluate comb kernels from local pending (current frontier only).
-      for (uint32_t idx : fp_work_.current_instances) {
-        auto& lps = fp_work_.locals[idx];
-        auto& obs = lps.instance->observability;
-        for (LocalSignalId lid : lps.pending) {
+      for (auto* inst : fp_work_.current_instances) {
+        auto& obs = inst->observability;
+        for (LocalSignalId lid : inst->local_fixpoint.pending) {
           if (lid.value >= obs.local_comb_trigger_map.size()) continue;
           if (detailed) ++stats_.detailed.prop_comb_trigger_lookups;
           auto [cstart, ccount] = obs.local_comb_trigger_map[lid.value];
@@ -821,7 +760,7 @@ void Engine::FlushAndPropagateConnections() {
             if (detailed) ++stats_.detailed.comb_executed;
             const auto& ck =
                 comb_kernels_[comb_trigger_backing_[ci].kernel_idx];
-            mark_comb_touched(ck.instance_idx);
+            mark_comb_touched(*ck.instance);
             FlushDeferredAssertionsForProcess(
                 ProcessId::FromIndex(ck.process_index));
             ck.body(ck.frame, 0);
@@ -839,16 +778,16 @@ void Engine::FlushAndPropagateConnections() {
       }
 
       // 2d. Collect local comb writes (scan comb_touched only).
-      for (uint32_t tidx : fp_work_.comb_touched) {
-        auto& obs = instances_[tidx]->observability;
+      for (auto* tinst : fp_work_.comb_touched) {
+        auto& obs = tinst->observability;
         if (obs.local_signal_count == 0) continue;
         auto delta = obs.local_updates.DeltaDirtySignals();
-        auto pre_size = fp_work_.delta_pre[tidx];
+        auto pre_size = tinst->fixpoint_scratch.delta_pre;
         if (delta.size() <= pre_size) continue;
         for (size_t j = pre_size; j < delta.size(); ++j) {
           fp_work_.comb_writes_local.push_back(
               FixpointWorkspace::LocalCombWrite{
-                  .instance_idx = tidx,
+                  .instance = tinst,
                   .signal = delta[j],
               });
         }
@@ -866,7 +805,7 @@ void Engine::FlushAndPropagateConnections() {
               fp_work_.snapshots[fp_work_.global_snapshot_index[gid.value]];
           const auto& snap_meta = slot_meta_registry_.Get(snap.slot_id);
           const auto* snap_base =
-              ResolveSlotBase(snap_meta, design_state_base_, const_instances_);
+              runtime::ResolveGlobalSlotBase(snap_meta, design_state_base_);
           if (std::memcmp(
                   snap_base, &fp_work_.snapshot_buf[snap.buf_off],
                   snap.total_bytes) == 0) {
@@ -879,7 +818,7 @@ void Engine::FlushAndPropagateConnections() {
 
       // Enqueue local comb writes.
       for (const auto& lw : fp_work_.comb_writes_local) {
-        enqueue_local(lw.instance_idx, lw.signal);
+        enqueue_local(*lw.instance, lw.signal);
       }
 
       if (has_any_self_edge_comb_) {
@@ -889,8 +828,8 @@ void Engine::FlushAndPropagateConnections() {
       }
 
       // 2e. Reset comb_touched for next iteration.
-      for (uint32_t tidx : fp_work_.comb_touched) {
-        fp_work_.comb_touched_seen[tidx] = 0;
+      for (auto* inst : fp_work_.comb_touched) {
+        inst->fixpoint_scratch.comb_touched_seen = false;
       }
       fp_work_.comb_touched.clear();
     }

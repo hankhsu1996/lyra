@@ -29,9 +29,18 @@ struct ResolvedObservation {
 // and kernelized as CombKernels, not connections.
 struct ConnectionKernelEntry {
   mir::ProcessId process_id;
+  // Flat design-wide slot IDs. Used by connection analysis for graph
+  // indexing (relay elimination). Not consumed by runtime metadata.
   common::SlotId src_slot;
   common::SlotId dst_slot;
   common::SlotId trigger_slot;
+  // Object/member identity for all three endpoints. Consumed by
+  // metadata lowering and runtime init. Preserved through relay
+  // elimination alongside the flat fields.
+  common::ObjectIndex src_object_index;
+  common::LocalSlotId src_local_slot;
+  common::ObjectIndex dst_object_index;
+  common::LocalSlotId dst_local_slot;
   common::ObjectIndex trigger_object_index;
   common::LocalSlotId trigger_local_slot;
   common::EdgeKind trigger_edge = common::EdgeKind::kAnyChange;

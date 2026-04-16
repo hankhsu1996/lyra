@@ -9,7 +9,10 @@
 #include <string_view>
 #include <utility>
 
+#include "lyra/common/ext_ref_binding.hpp"
 #include "lyra/common/internal_error.hpp"
+#include "lyra/common/selection_step.hpp"
+#include "lyra/runtime/expr_connection_frame.hpp"
 #include "lyra/runtime/frame_allocator.hpp"
 #include "lyra/runtime/owned_storage_handle.hpp"
 #include "lyra/runtime/process_frame.hpp"
@@ -19,6 +22,74 @@
 #include "lyra/runtime/storage_construction.hpp"
 
 namespace lyra::runtime {
+
+// Derive hierarchical path from parent structural context + local
+// instance name. All path construction policy lives here.
+auto BuildInstancePath(const RuntimeInstance* parent, const char* inst_name)
+    -> std::string {
+  if (parent == nullptr) return {inst_name};
+  return std::string(parent->path_storage) + "." + inst_name;
+}
+
+// Decode a RepertoireCoord from the flat coord_steps transport pool.
+// Each step is packed as 3 consecutive uint32_t words:
+// (kind, construct_index, alt_index).
+auto DecodeRepertoireCoord(
+    const runtime::ConstructionProgramEntry& entry,
+    std::span<const uint32_t> coord_pool) -> common::RepertoireCoord {
+  if (entry.coord_count == 0 || entry.coord_offset == UINT32_MAX) {
+    return {};
+  }
+  uint32_t word_start = entry.coord_offset;
+  uint32_t words_needed = entry.coord_count * 3;
+  if (word_start + words_needed > coord_pool.size()) {
+    throw common::InternalError(
+        "DecodeRepertoireCoord",
+        std::format(
+            "coord range [{}, {}) exceeds pool size {}", word_start,
+            word_start + words_needed, coord_pool.size()));
+  }
+  common::RepertoireCoord coord;
+  coord.reserve(entry.coord_count);
+  for (uint32_t ci = 0; ci < entry.coord_count; ++ci) {
+    auto base = word_start + (ci * 3);
+    coord.push_back(
+        common::SelectionStepDesc{
+            .kind = static_cast<common::SelectionStepKind>(coord_pool[base]),
+            .construct_index = coord_pool[base + 1],
+            .alt_index = coord_pool[base + 2],
+        });
+  }
+  return coord;
+}
+
+// Decode a RepertoireCoord from an ExprConnChildDesc's coord pool.
+auto DecodeExprConnCoord(
+    const ExprConnChildDesc& desc, std::span<const uint32_t> coord_pool)
+    -> common::RepertoireCoord {
+  if (desc.coord_step_count == 0) return {};
+  uint32_t word_start = desc.coord_word_offset;
+  uint32_t words_needed = desc.coord_step_count * 3;
+  if (word_start + words_needed > coord_pool.size()) {
+    throw common::InternalError(
+        "DecodeExprConnCoord",
+        std::format(
+            "coord range [{}, {}) exceeds pool size {}", word_start,
+            word_start + words_needed, coord_pool.size()));
+  }
+  common::RepertoireCoord coord;
+  coord.reserve(desc.coord_step_count);
+  for (uint32_t ci = 0; ci < desc.coord_step_count; ++ci) {
+    auto base = word_start + (ci * 3);
+    coord.push_back(
+        common::SelectionStepDesc{
+            .kind = static_cast<common::SelectionStepKind>(coord_pool[base]),
+            .construct_index = coord_pool[base + 1],
+            .alt_index = coord_pool[base + 2],
+        });
+  }
+  return coord;
+}
 
 ConstructionResult::~ConstructionResult() {
   FreePackedBuffer(packed_buffer);
@@ -36,8 +107,6 @@ ConstructionResult::ConstructionResult(ConstructionResult&& other) noexcept
       trigger_meta(std::move(other.trigger_meta)),
       slot_meta(std::move(other.slot_meta)),
       trace_signal_meta(std::move(other.trace_signal_meta)),
-      instance_paths(std::move(other.instance_paths)),
-      instance_path_ptrs(std::move(other.instance_path_ptrs)),
       instance_ptrs(std::move(other.instance_ptrs)) {
 }
 
@@ -56,8 +125,6 @@ auto ConstructionResult::operator=(ConstructionResult&& other) noexcept
     trigger_meta = std::move(other.trigger_meta);
     slot_meta = std::move(other.slot_meta);
     trace_signal_meta = std::move(other.trace_signal_meta);
-    instance_paths = std::move(other.instance_paths);
-    instance_path_ptrs = std::move(other.instance_path_ptrs);
     instance_ptrs = std::move(other.instance_ptrs);
   }
   return *this;
@@ -606,34 +673,49 @@ void Constructor::BeginBody(const BodyDescriptorPackage& package) {
   current_body_package_ = &body_desc_storage_.back().package;
 }
 
-void Constructor::AddInstance(
-    const char* instance_path, const void* param_data, uint32_t param_data_size,
-    uint64_t realized_inline_size, uint64_t realized_appendix_size) {
-  CheckNotFinalized("Constructor::AddInstance");
-  if (instance_path == nullptr) {
-    throw common::InternalError(
-        "Constructor::AddInstance", "null instance_path");
+auto Constructor::CreateChild(
+    RuntimeInstance* parent, common::RepertoireCoord edge_coord,
+    uint32_t edge_ordinal, const char* inst_name, const void* param_data,
+    uint32_t param_data_size, uint64_t realized_inline_size,
+    uint64_t realized_appendix_size) -> RuntimeInstance* {
+  CheckNotFinalized("Constructor::CreateChild");
+  if (inst_name == nullptr) {
+    throw common::InternalError("Constructor::CreateChild", "null inst_name");
   }
   if (!body_.active || current_body_package_ == nullptr) {
     throw common::InternalError(
-        "Constructor::AddInstance",
+        "Constructor::CreateChild",
         "no active body package (call BeginBody first)");
   }
   if ((param_data == nullptr) != (param_data_size == 0)) {
     throw common::InternalError(
-        "Constructor::AddInstance",
+        "Constructor::CreateChild",
         "param_data and param_data_size must be both empty or both present");
   }
   connections_finalized_ = true;
 
-  auto instance_id = InstanceId{next_instance_id_};
-
   uint32_t instance_ord = next_module_instance_ordinal_;
   auto instance = std::make_unique<RuntimeInstance>();
-  instance->instance_id = instance_id;
   instance->owner_ordinal = instance_ord;
-  // path_c_str is patched in Finalize to point into stable instance_paths.
-  instance->path_c_str = nullptr;
+
+  // Structural relation established inside child creation.
+  // The typed child edge carries structural metadata (generate-scope
+  // context + ordinal) for procedural walking by compile-time path
+  // recipes. These are edge metadata, not object identity. Ownership
+  // of edge_coord is transferred into the stored child edge.
+  instance->parent = parent;
+  if (parent != nullptr) {
+    parent->children.push_back(
+        RuntimeInstance::ChildEdge{
+            .coord = std::move(edge_coord),
+            .child_ordinal_in_coord = edge_ordinal,
+            .child = instance.get(),
+        });
+  }
+
+  // Derived presentation path from structural position.
+  instance->path_storage = BuildInstancePath(parent, inst_name);
+  instance->path_c_str = instance->path_storage.c_str();
 
   instance->storage.inline_base =
       AllocateOwnedInlineStorage(realized_inline_size);
@@ -653,7 +735,7 @@ void Constructor::AddInstance(
         body_.init_recipe.num_child_indices != 0 ||
         !body_.init_params.slots.empty() || param_data_size != 0) {
       throw common::InternalError(
-          "Constructor::AddInstance",
+          "Constructor::CreateChild",
           "zero-slot body must not carry instance-state init descriptors "
           "or param data");
     }
@@ -665,24 +747,49 @@ void Constructor::AddInstance(
   ApplyParamInitToInstance(
       *instance, body_.init_params.slots, param_data, param_data_size);
 
-  // Capture module_proc_base before staging non-final body processes.
-  auto module_proc_base = static_cast<uint32_t>(staged_.size());
-
   auto instance_index = static_cast<uint32_t>(staged_instances_.size());
   staged_instances_.push_back(std::move(instance));
 
-  for (uint32_t ei = 0; ei < body_.entries.size(); ++ei) {
+  // Stage module processes. The last num_expr_connections entries are
+  // expression connections that need child binding at finalize time.
+  auto num_entries = static_cast<uint32_t>(body_.entries.size());
+  uint32_t num_expr = current_body_package_->desc->num_expr_connections;
+  if (num_expr > num_entries) {
+    throw common::InternalError(
+        "Constructor::CreateChild",
+        std::format(
+            "num_expr_connections {} > num_entries {}", num_expr, num_entries));
+  }
+  uint32_t num_ordinary = num_entries - num_expr;
+  std::span<const ExprConnChildDesc> expr_child_descs;
+  if (num_expr > 0) {
+    if (current_body_package_->desc->expr_conn_child_descs == nullptr) {
+      throw common::InternalError(
+          "Constructor::CreateChild",
+          "num_expr_connections > 0 but expr_conn_child_descs is null");
+    }
+    expr_child_descs = std::span<const ExprConnChildDesc>(
+        current_body_package_->desc->expr_conn_child_descs, num_expr);
+  }
+
+  for (uint32_t ei = 0; ei < num_entries; ++ei) {
     const auto& entry = body_.entries[ei];
     SharedBodyFn body_fn{};
     std::memcpy(&body_fn, &entry.shared_body_fn, sizeof(body_fn));
 
     if (body_fn == nullptr) {
       throw common::InternalError(
-          "RuntimeConstructor::AddInstance",
+          "Constructor::CreateChild",
           std::format(
               "body entry {} has null shared_body_fn "
               "(emitted function pointer is zero)",
               ei));
+    }
+
+    const ExprConnChildDesc* child_desc = nullptr;
+    if (ei >= num_ordinary) {
+      uint32_t expr_idx = ei - num_ordinary;
+      child_desc = &expr_child_descs[expr_idx];  // span bounds-checked
     }
 
     staged_.push_back(
@@ -691,22 +798,15 @@ void Constructor::AddInstance(
             .body = body_fn,
             .instance_index = instance_index,
             .is_module = true,
+            .expr_conn_child_desc = child_desc,
         });
   }
 
   ++next_module_instance_ordinal_;
-  auto num_module_processes =
-      static_cast<uint32_t>(staged_.size()) - module_proc_base;
 
-  // Complete the instance's process binding fields now that staging is done.
-  staged_instances_[instance_index]->module_proc_base = module_proc_base;
-  staged_instances_[instance_index]->num_module_processes =
-      num_module_processes;
+  // Use the instance's stable path for the design-global observable walk.
+  const char* instance_path = staged_instances_[instance_index]->path_c_str;
 
-  // R4: Module-instance process meta, trigger, and comb metadata are no
-  // longer flattened here. The engine derives them from per-instance bundles
-  // and body templates.
-  //
   // R4: Module-instance process meta, trigger, comb, instance-owned slot,
   // and instance-owned trace metadata are all engine-derived from bundles.
   // Constructor builds only design-global/package observable metadata
@@ -719,7 +819,7 @@ void Constructor::AddInstance(
       for (const auto& entry : body_.observable_descriptors.entries) {
         if ((entry.flags & kObservableFlagStorageAbsolute) == 0) {
           throw common::InternalError(
-              "Constructor::AddInstance",
+              "Constructor::CreateChild",
               "body-relative observable entry in instance with no "
               "local storage");
         }
@@ -757,37 +857,32 @@ void Constructor::AddInstance(
     }
   }
 
-  // Collect instance path for runtime naming ownership.
-  instance_paths_.emplace_back(instance_path);
-
   // R4 prep: record per-instance metadata bundle alongside existing flat
-  // metadata. instance_path pointer is patched in Finalize after string
-  // storage is stable.
+  // metadata. instance_path is already stable (owned by the instance).
   staged_bundles_.push_back(
       InstanceMetadataBundle{
           .instance = staged_instances_[instance_index].get(),
           .body_desc = nullptr,
           .body_key = current_body_package_->desc,
-          .instance_id = instance_id,
-          .module_proc_base = module_proc_base,
-          .num_module_processes = num_module_processes,
-          .instance_path = nullptr,
+          .instance_path = instance_path,
       });
 
   uint32_t new_slot_base = next_slot_base_ + body_.slot_count;
   if (new_slot_base < next_slot_base_) {
     throw common::InternalError(
-        "Constructor::AddInstance", "slot base overflow");
+        "Constructor::CreateChild", "slot base overflow");
   }
   if (body_.slot_count > 0 && new_slot_base > slot_byte_offsets_.size()) {
     throw common::InternalError(
-        "Constructor::AddInstance",
+        "Constructor::CreateChild",
         std::format(
             "post-increment slot base {} exceeds layout oracle size {}",
             new_slot_base, slot_byte_offsets_.size()));
   }
   next_instance_id_ += 1;
   next_slot_base_ = new_slot_base;
+
+  return staged_instances_[instance_index].get();
 }
 
 auto Constructor::InternString(std::span<const char> pool, uint32_t pool_off)
@@ -811,17 +906,7 @@ auto Constructor::AppendString(std::string_view s) -> uint32_t {
   return off;
 }
 
-namespace {
-
-void PopulateInstancePathPtrs(ConstructionResult& result) {
-  result.instance_path_ptrs.clear();
-  result.instance_path_ptrs.reserve(result.instance_paths.size());
-  for (const auto& p : result.instance_paths) {
-    result.instance_path_ptrs.push_back(p.c_str());
-  }
-}
-
-}  // namespace
+namespace {}  // namespace
 
 auto Constructor::Finalize() -> ConstructionResult {
   CheckNotFinalized("Constructor::Finalize");
@@ -900,8 +985,6 @@ auto Constructor::Finalize() -> ConstructionResult {
     result.trigger_meta = std::move(realized_triggers_);
     result.slot_meta = std::move(realized_slot_meta_);
     result.trace_signal_meta = std::move(realized_trace_meta_);
-    result.instance_paths = std::move(instance_paths_);
-    PopulateInstancePathPtrs(result);
     return result;
   }
 
@@ -937,17 +1020,11 @@ auto Constructor::Finalize() -> ConstructionResult {
   result.trigger_meta = std::move(realized_triggers_);
   result.slot_meta = std::move(realized_slot_meta_);
   result.trace_signal_meta = std::move(realized_trace_meta_);
-  result.instance_paths = std::move(instance_paths_);
-
-  // Patch path_c_str on each instance to point into the stable
-  // result.instance_paths storage. Instance i corresponds to
-  // instance_paths[i] by construction (AddInstance appends both
-  // in the same order).
-  for (uint32_t i = 0; i < result.instances.size(); ++i) {
-    result.instances[i]->path_c_str = result.instance_paths[i].c_str();
-  }
-
-  PopulateInstancePathPtrs(result);
+  // Paths are already owned by instances (set in CreateChild).
+  // path_c_str may have been invalidated by std::string moves
+  // during staged_instances_ -> result.instances transfer, but
+  // unique_ptr move doesn't move the RuntimeInstance itself, so
+  // path_storage and path_c_str remain valid.
 
   // Build stable raw pointer view for the runtime ABI.
   result.instance_ptrs.reserve(result.instances.size());
@@ -970,7 +1047,7 @@ auto Constructor::Finalize() -> ConstructionResult {
   // R4: validate and move per-instance metadata bundles.
   result.instance_bundles = std::move(staged_bundles_);
 
-  if (result.instance_bundles.size() != result.instance_paths.size() ||
+  if (result.instance_bundles.size() != result.instances.size() ||
       result.instance_bundles.size() != result.instances.size()) {
     throw common::InternalError(
         "Constructor::Finalize", "R4 bundle/path/instance count mismatch");
@@ -993,28 +1070,148 @@ auto Constructor::Finalize() -> ConstructionResult {
           "Constructor::Finalize",
           std::format("R4 bundle {} has unresolved body template", i));
     }
-    if (bundle.instance_id != InstanceId{i}) {
-      throw common::InternalError(
-          "Constructor::Finalize",
-          std::format(
-              "R4 bundle {} instance_id mismatch: got {}", i,
-              bundle.instance_id));
-    }
     if (bundle.instance != expected_instance) {
       throw common::InternalError(
           "Constructor::Finalize",
           std::format("R4 bundle {} instance pointer mismatch", i));
     }
-    if (bundle.instance->instance_id != bundle.instance_id) {
+
+    // Re-validate bundle instance_path against the instance's stable
+    // path pointer (set in CreateChild, still valid after unique_ptr move).
+    result.instance_bundles[i].instance_path = result.instances[i]->path_c_str;
+  }
+
+  // Expression connection child binding resolution.
+  // Must run AFTER body_desc resolution (above) so child bundles have
+  // resolved body descriptors with inline_slot_offsets and port_entries.
+  for (uint32_t i = 0; i < num_total; ++i) {
+    const auto& proc = staged_[i];
+    if (proc.expr_conn_child_desc == nullptr) continue;
+
+    const auto* desc = proc.expr_conn_child_desc;
+    auto* parent = result.instances[proc.instance_index].get();
+
+    // Validate parent bundle before reading coord pool.
+    const auto& parent_bundle = result.instance_bundles[proc.instance_index];
+    if (parent_bundle.body_desc == nullptr) {
+      throw common::InternalError(
+          "Constructor::Finalize",
+          "expr conn parent bundle has null body_desc");
+    }
+    const auto* parent_body_desc = parent_bundle.body_desc->desc;
+    std::span<const uint32_t> coord_words(
+        parent_body_desc->expr_conn_coord_words,
+        parent_body_desc->num_expr_conn_coord_words);
+    auto coord = DecodeExprConnCoord(*desc, coord_words);
+
+    // Resolve child by structural identity walk on parent->children.
+    RuntimeInstance* child = nullptr;
+    for (const auto& edge : parent->children) {
+      if (edge.coord == coord &&
+          edge.child_ordinal_in_coord == desc->child_ordinal) {
+        child = edge.child;
+        break;
+      }
+    }
+    if (child == nullptr) {
+      throw common::InternalError(
+          "Constructor::Finalize",
+          "expr conn child not found by structural identity");
+    }
+
+    // Validate child ordinal and bundle before dereferencing.
+    if (child->owner_ordinal >= result.instance_bundles.size()) {
       throw common::InternalError(
           "Constructor::Finalize",
           std::format(
-              "R4 bundle {} pointed instance_id mismatch: "
-              "bundle={}, instance={}",
-              i, bundle.instance_id, bundle.instance->instance_id));
+              "expr conn child owner_ordinal {} out of range (bundles={})",
+              child->owner_ordinal, result.instance_bundles.size()));
+    }
+    const auto& child_bundle = result.instance_bundles[child->owner_ordinal];
+    if (child_bundle.body_desc == nullptr) {
+      throw common::InternalError(
+          "Constructor::Finalize", "expr conn child bundle has null body_desc");
+    }
+    const auto* child_body_desc = child_bundle.body_desc->desc;
+
+    // Resolve symbolic child port -> child local slot.
+    // Enforce direction: expression connections write to child inputs.
+    std::span<const RuntimePortEntry> child_ports(
+        child_body_desc->port_entries, child_body_desc->num_port_entries);
+    uint32_t child_local_slot = UINT32_MAX;
+    for (const auto& pe : child_ports) {
+      if (pe.sym_value == desc->child_port_sym_value) {
+        if (pe.dir != 0 && pe.dir != 2) {
+          throw common::InternalError(
+              "Constructor::Finalize",
+              std::format(
+                  "expr conn target port sym {} has dir {} "
+                  "(expected input=0 or inout=2)",
+                  pe.sym_value, pe.dir));
+        }
+        child_local_slot = pe.local_slot;
+        break;
+      }
+    }
+    if (child_local_slot == UINT32_MAX) {
+      throw common::InternalError(
+          "Constructor::Finalize",
+          std::format(
+              "expr conn child port sym {} not found on child descriptor",
+              desc->child_port_sym_value));
     }
 
-    result.instance_bundles[i].instance_path = result.instance_paths[i].c_str();
+    // Validate slot index against emitted inline slot offset array.
+    if (child_body_desc->inline_slot_offsets == nullptr) {
+      throw common::InternalError(
+          "Constructor::Finalize",
+          "child body descriptor has null inline_slot_offsets");
+    }
+    if (child_body_desc->num_inline_slot_offsets !=
+        child_body_desc->slot_count) {
+      throw common::InternalError(
+          "Constructor::Finalize",
+          std::format(
+              "child num_inline_slot_offsets {} != slot_count {}",
+              child_body_desc->num_inline_slot_offsets,
+              child_body_desc->slot_count));
+    }
+    if (child_local_slot >= child_body_desc->num_inline_slot_offsets) {
+      throw common::InternalError(
+          "Constructor::Finalize",
+          std::format(
+              "child_local_slot {} >= num_inline_slot_offsets {}",
+              child_local_slot, child_body_desc->num_inline_slot_offsets));
+    }
+
+    std::span<const uint32_t> child_offsets(
+        child_body_desc->inline_slot_offsets,
+        child_body_desc->num_inline_slot_offsets);
+    uint32_t child_byte_offset = child_offsets[child_local_slot];
+
+    // Write ExprConnectionChildBinding into the process frame at the
+    // computed byte offset.
+    auto state_size = schemas_[staged_[i].schema_index].state_size;
+    if (desc->binding_byte_offset > state_size ||
+        state_size - desc->binding_byte_offset <
+            sizeof(ExprConnectionChildBinding)) {
+      throw common::InternalError(
+          "Constructor::Finalize",
+          std::format(
+              "expr conn binding write out of bounds: offset {} size {} "
+              "state {}",
+              desc->binding_byte_offset, sizeof(ExprConnectionChildBinding),
+              state_size));
+    }
+    ExprConnectionChildBinding binding_val{};
+    binding_val.child_instance = child;
+    binding_val.child_slot_byte_offset = child_byte_offset;
+    binding_val.child_local_signal = LocalSignalId{child_local_slot};
+    auto frame_span =
+        std::span(static_cast<char*>(result.states[i]), state_size);
+    std::memcpy(
+        frame_span.subspan(desc->binding_byte_offset).data(), &binding_val,
+        sizeof(binding_val));
   }
 
   return result;
@@ -1380,9 +1577,13 @@ void LyraConstructorAddInstance(
   ValidateHandle(ctor, "LyraConstructorAddInstance");
   ValidateAbiArray(
       param_data, param_data_size, "param_data", "LyraConstructorAddInstance");
-  static_cast<lyra::runtime::Constructor*>(ctor)->AddInstance(
-      instance_path, param_data, param_data_size, realized_inline_size,
-      realized_appendix_size);
+  // Legacy per-call API: creates a root instance (no parent, empty
+  // coord, ordinal 0). instance_path is treated as the root inst_name.
+  // The batched RunProgram path is the active entry point; this
+  // API exists only for the C ABI declaration.
+  static_cast<lyra::runtime::Constructor*>(ctor)->CreateChild(
+      nullptr, {}, 0, instance_path, param_data, param_data_size,
+      realized_inline_size, realized_appendix_size);
 }
 
 void LyraConstructorRunProgram(
@@ -1390,7 +1591,8 @@ void LyraConstructorRunProgram(
     uint32_t body_desc_count, const char* path_pool, uint32_t path_pool_size,
     const uint8_t* param_pool, uint32_t param_pool_size,
     const lyra::runtime::ConstructionProgramEntry* entries,
-    uint32_t entry_count) {
+    uint32_t entry_count, const uint32_t* coord_steps_pool,
+    uint32_t coord_steps_word_count) {
   ValidateHandle(ctor_raw, "LyraConstructorRunProgram");
   auto& ctor = *static_cast<lyra::runtime::Constructor*>(ctor_raw);
 
@@ -1405,6 +1607,12 @@ void LyraConstructorRunProgram(
   auto body_desc_span = std::span(body_descs, body_desc_count);
   auto path_span = std::span(path_pool, path_pool_size);
   auto param_span = std::span(param_pool, param_pool_size);
+
+  // Transient transport-resolution table: converts flat
+  // parent_instance_index from the emitted program into live pointers
+  // during ingestion. Consumed only within this loop.
+  std::vector<lyra::runtime::RuntimeInstance*> created_instances;
+  created_instances.reserve(entry_count);
 
   for (uint32_t i = 0; i < entry_count; ++i) {
     const auto& e = entry_span[i];
@@ -1423,14 +1631,37 @@ void LyraConstructorRunProgram(
       last_body_group = e.body_group;
     }
 
-    if (e.path_offset >= path_pool_size) {
+    // Canonical local child display label from compile-time Symbol::name.
+    // Transported via inst_name_offset in the path pool. Presentation
+    // input for path derivation during assembly -- not stored on the
+    // instance, not recovered from full path strings.
+    if (e.inst_name_offset >= path_pool_size) {
       throw lyra::common::InternalError(
           "LyraConstructorRunProgram",
           std::format(
-              "entry {} path_offset {} >= path_pool_size {}", i, e.path_offset,
-              path_pool_size));
+              "entry {} inst_name_offset {} >= path_pool_size {}", i,
+              e.inst_name_offset, path_pool_size));
     }
-    const char* instance_path = &path_span[e.path_offset];
+    const char* inst_name = &path_span[e.inst_name_offset];
+
+    // Decode structural child edge metadata from flat transport pool.
+    auto edge_coord = lyra::runtime::DecodeRepertoireCoord(
+        e, std::span(coord_steps_pool, coord_steps_word_count));
+
+    // Resolve parent from transport index to live pointer.
+    // parent_instance_index is transport-only: consumed here to resolve
+    // a live RuntimeInstance* parent. Does not survive past this loop.
+    lyra::runtime::RuntimeInstance* parent = nullptr;
+    if (e.parent_instance_index != UINT32_MAX) {
+      if (e.parent_instance_index >= created_instances.size()) {
+        throw lyra::common::InternalError(
+            "LyraConstructorRunProgram",
+            std::format(
+                "entry {} parent_instance_index {} >= created count {}", i,
+                e.parent_instance_index, created_instances.size()));
+      }
+      parent = created_instances[e.parent_instance_index];
+    }
 
     const void* param_data = nullptr;
     uint32_t param_size = e.param_size;
@@ -1455,9 +1686,11 @@ void LyraConstructorRunProgram(
       param_data = &param_span[e.param_offset];
     }
 
-    ctor.AddInstance(
-        instance_path, param_data, param_size, e.realized_inline_size,
+    auto* child = ctor.CreateChild(
+        parent, std::move(edge_coord), e.child_ordinal_in_coord, inst_name,
+        param_data, param_size, e.realized_inline_size,
         e.realized_appendix_size);
+    created_instances.push_back(child);
   }
 }
 
@@ -1596,20 +1829,6 @@ auto LyraConstructionResultGetTraceSignalMetaPoolSize(void* result_raw)
           ->trace_signal_meta.pool.size());
 }
 
-auto LyraConstructionResultGetInstancePaths(void* result_raw) -> const char** {
-  ValidateHandle(result_raw, "LyraConstructionResultGetInstancePaths");
-  auto& result = *static_cast<lyra::runtime::ConstructionResult*>(result_raw);
-  if (result.instance_path_ptrs.empty()) return nullptr;
-  return result.instance_path_ptrs.data();
-}
-
-auto LyraConstructionResultGetInstancePathCount(void* result_raw) -> uint32_t {
-  ValidateHandle(result_raw, "LyraConstructionResultGetInstancePathCount");
-  return static_cast<uint32_t>(
-      static_cast<lyra::runtime::ConstructionResult*>(result_raw)
-          ->instance_paths.size());
-}
-
 auto LyraConstructionResultGetInstances(void* result_raw)
     -> const lyra::runtime::RuntimeInstance* const* {
   ValidateHandle(result_raw, "LyraConstructionResultGetInstances");
@@ -1654,7 +1873,7 @@ void LyraConstructionResultSetExtRefBindings(
   if (result_raw == nullptr) return;
   auto& result = *static_cast<lyra::runtime::ConstructionResult*>(result_raw);
   auto pool = std::span(
-      static_cast<const lyra::common::ResolvedExtRefBinding*>(pool_raw),
+      static_cast<const lyra::common::SerializedExtRefBinding*>(pool_raw),
       pool_count);
   auto offset_span = std::span(offsets, num_instances);
   auto count_span = std::span(counts, num_instances);
@@ -1664,10 +1883,79 @@ void LyraConstructionResultSetExtRefBindings(
     if (offset_span[i] == UINT32_MAX) {
       result.instances[i]->ext_ref_bindings = nullptr;
       result.instances[i]->ext_ref_binding_count = 0;
-    } else {
-      result.instances[i]->ext_ref_bindings =
-          pool.subspan(offset_span[i]).data();
-      result.instances[i]->ext_ref_binding_count = count_span[i];
+      continue;
     }
+    auto serialized_bindings = pool.subspan(offset_span[i], count_span[i]);
+    auto& inst = *result.instances[i];
+    inst.owned_ext_ref_bindings.resize(serialized_bindings.size());
+    for (size_t j = 0; j < serialized_bindings.size(); ++j) {
+      const auto& s = serialized_bindings[j];
+      if (s.target_instance_id >= result.instances.size()) {
+        throw lyra::common::InternalError(
+            "LyraConstructionResultSetExtRefBindings",
+            std::format(
+                "ext-ref binding [instance={}, ref={}] has "
+                "target_instance_id {} >= instance count {}",
+                i, j, s.target_instance_id, result.instances.size()));
+      }
+      inst.owned_ext_ref_bindings[j] = lyra::runtime::ResolvedExtRefBinding{
+          .target_instance = result.instances[s.target_instance_id].get(),
+          .target_byte_offset = s.target_byte_offset,
+          .target_local_signal = s.target_local_signal,
+      };
+    }
+    inst.ext_ref_bindings = inst.owned_ext_ref_bindings.data();
+    inst.ext_ref_binding_count =
+        static_cast<uint32_t>(inst.owned_ext_ref_bindings.size());
   }
+}
+
+void LyraConstructionResultSetConnectionDescriptors(
+    void* result_raw, const void* serialized_raw, uint32_t num_descs) {
+  if (result_raw == nullptr || serialized_raw == nullptr || num_descs == 0) {
+    return;
+  }
+  auto& result = *static_cast<lyra::runtime::ConstructionResult*>(result_raw);
+  auto serialized = std::span(
+      static_cast<const lyra::runtime::SerializedConnectionDescriptor*>(
+          serialized_raw),
+      num_descs);
+  result.connection_descriptors.reserve(num_descs);
+  for (const auto& s : serialized) {
+    auto* src = result.instances.at(s.src_object_index).get();
+    auto* dst = result.instances.at(s.dst_object_index).get();
+    auto* trig = result.instances.at(s.trigger_object_index).get();
+    result.connection_descriptors.push_back(
+        lyra::runtime::RuntimeConnectionDescriptor{
+            .src_instance = src,
+            .src_byte_offset = s.src_byte_offset,
+            .dst_instance = dst,
+            .dst_byte_offset = s.dst_byte_offset,
+            .dst_local_signal =
+                lyra::runtime::LocalSignalId{s.dst_local_signal},
+            .byte_size = s.byte_size,
+            .trigger_edge = s.trigger_edge,
+            .trigger_bit_index = s.trigger_bit_index,
+            .trigger_byte_offset = s.trigger_byte_offset,
+            .trigger_byte_size = s.trigger_byte_size,
+            .trigger_instance = trig,
+            .trigger_local_id =
+                lyra::runtime::LocalSignalId{s.trigger_local_id},
+        });
+  }
+}
+
+auto LyraConstructionResultGetConnectionDescriptors(void* result_raw) -> void* {
+  if (result_raw == nullptr) return nullptr;
+  auto& result = *static_cast<lyra::runtime::ConstructionResult*>(result_raw);
+  if (result.connection_descriptors.empty()) return nullptr;
+  return result.connection_descriptors.data();
+}
+
+auto LyraConstructionResultGetConnectionDescriptorCount(void* result_raw)
+    -> uint32_t {
+  if (result_raw == nullptr) return 0;
+  return static_cast<uint32_t>(
+      static_cast<lyra::runtime::ConstructionResult*>(result_raw)
+          ->connection_descriptors.size());
 }

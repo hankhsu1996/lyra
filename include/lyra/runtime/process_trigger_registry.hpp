@@ -1,13 +1,15 @@
 #pragma once
 
 #include <cstdint>
+#include <functional>
 #include <span>
 #include <vector>
 
 #include "lyra/common/edge_kind.hpp"
-#include "lyra/runtime/signal_coord.hpp"
 
 namespace lyra::runtime {
+
+struct RuntimeInstance;
 
 // Typed runtime descriptor parsed from the process trigger word table.
 // One entry per trigger fact row (a process with N triggers produces N rows).
@@ -16,22 +18,32 @@ struct ProcessTriggerDescriptor {
   uint32_t slot_id = 0;
   common::EdgeKind edge = common::EdgeKind::kAnyChange;
   bool is_groupable = false;
-  // R5: True if slot_id is a body-local LocalSignalId, not a flat
-  // design-global slot. When true, instance_id identifies the owning
+  // True if slot_id is a body-local LocalSignalId, not a flat
+  // design-global slot. When true, instance identifies the owning
   // instance and slot_id is the local signal ordinal.
   bool is_local = false;
-  InstanceId instance_id = InstanceId{0};
+  RuntimeInstance* instance = nullptr;
 };
 
-// R5: Domain-aware trigger identity key. Two different instances can have
+// Domain-aware trigger identity key. Two different instances can have
 // the same local slot_id and edge but represent distinct trigger sources.
+// Ordering uses std::less for the instance pointer to guarantee a total
+// order across unrelated objects.
 struct ProcessTriggerKey {
   bool is_local = false;
-  InstanceId instance_id = InstanceId{0};
+  RuntimeInstance* instance = nullptr;
   uint32_t slot_id = 0;
   common::EdgeKind edge = common::EdgeKind::kAnyChange;
 
-  auto operator<=>(const ProcessTriggerKey&) const = default;
+  auto operator==(const ProcessTriggerKey&) const -> bool = default;
+
+  auto operator<(const ProcessTriggerKey& o) const -> bool {
+    if (is_local != o.is_local) return !is_local;
+    if (instance != o.instance)
+      return std::less<RuntimeInstance*>{}(instance, o.instance);
+    if (slot_id != o.slot_id) return slot_id < o.slot_id;
+    return edge < o.edge;
+  }
 };
 
 // Constructor-time trigger group: processes grouped by domain-aware key.

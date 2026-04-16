@@ -475,6 +475,8 @@ auto Dumper::FormatIndexOperand(const Operand& op) const -> std::string {
           break;
         case PlaceRoot::Kind::kObjectLocal:
           return std::format("@o{}:{}", place.root.object_index, place.root.id);
+        case PlaceRoot::Kind::kBoundChildDest:
+          return "@bc(binding)";
       }
       return std::format("{}{}", prefix, place.root.id);
     }
@@ -534,11 +536,17 @@ auto Dumper::FormatPlace(PlaceId id) const -> std::string {
     case PlaceRoot::Kind::kObjectLocal:
       prefix = "@o";
       break;
+    case PlaceRoot::Kind::kBoundChildDest:
+      break;
   }
-  std::string result =
-      (place.root.kind == mir::PlaceRoot::Kind::kObjectLocal)
-          ? std::format("@o{}:{}", place.root.object_index, place.root.id)
-          : std::format("{}{}", prefix, place.root.id);
+  std::string result;
+  if (place.root.kind == mir::PlaceRoot::Kind::kObjectLocal) {
+    result = std::format("@o{}:{}", place.root.object_index, place.root.id);
+  } else if (place.root.kind == mir::PlaceRoot::Kind::kBoundChildDest) {
+    result = "@bc(binding)";
+  } else {
+    result = std::format("{}{}", prefix, place.root.id);
+  }
 
   for (const Projection& proj : place.projections) {
     result += FormatProjection(proj);
@@ -606,11 +614,17 @@ auto Dumper::FormatOperand(const Operand& op) const -> std::string {
         case PlaceRoot::Kind::kObjectLocal:
           prefix = "@o";
           break;
+        case PlaceRoot::Kind::kBoundChildDest:
+          break;
       }
-      std::string result =
-          (place.root.kind == PlaceRoot::Kind::kObjectLocal)
-              ? std::format("@o{}:{}", place.root.object_index, place.root.id)
-              : std::format("{}{}", prefix, place.root.id);
+      std::string result;
+      if (place.root.kind == PlaceRoot::Kind::kObjectLocal) {
+        result = std::format("@o{}:{}", place.root.object_index, place.root.id);
+      } else if (place.root.kind == PlaceRoot::Kind::kBoundChildDest) {
+        result = "@bc(binding)";
+      } else {
+        result = std::format("{}{}", prefix, place.root.id);
+      }
       for (const Projection& proj : place.projections) {
         result += FormatProjection(proj);
       }

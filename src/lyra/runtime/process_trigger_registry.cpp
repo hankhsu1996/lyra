@@ -80,7 +80,7 @@ auto ParseProcessTriggerDescriptors(
         .edge = static_cast<common::EdgeKind>(edge_raw),
         .is_groupable = (flags & process_trigger_abi::kFlagGroupable) != 0,
         .is_local = is_body_local,
-        .instance_id = InstanceId{0},
+        .instance = nullptr,
     });
   }
 
@@ -108,7 +108,7 @@ auto BuildProcessTriggerRegistry(
         .key =
             ProcessTriggerKey{
                 .is_local = desc.is_local,
-                .instance_id = desc.is_local ? desc.instance_id : InstanceId{0},
+                .instance = desc.is_local ? desc.instance : nullptr,
                 .slot_id = desc.slot_id,
                 .edge = desc.edge,
             },
@@ -198,9 +198,9 @@ void Engine::InitProcessTriggerRegistry(
                   "for process {}",
                   i, proc_idx));
         }
-        // R5: Keep body-local slot_id as LocalSignalId, populate
-        // instance_id for typed subscription install. No flat relocation.
-        descriptors[i].instance_id = header->instance->instance_id;
+        // Keep body-local slot_id as LocalSignalId, populate owning
+        // instance pointer for typed subscription install.
+        descriptors[i].instance = header->instance;
         if (descriptors[i].slot_id >=
             header->instance->observability.local_signal_count) {
           throw common::InternalError(

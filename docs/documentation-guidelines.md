@@ -52,7 +52,7 @@ For documents describing system boundaries or layer responsibilities:
 
 ## Architecture vs Working Docs
 
-Architecture docs (`architecture-principles.md`, `compilation-model.md`, `natural-model.md`, `pipeline-contract.md`, `state-layout.md`, `runtime.md`, `module-hierarchy.md`, etc.) define the system we are building. They must not contain:
+Architecture docs (`architecture-principles.md`, `compilation-model.md`, `natural-model.md`, `pipeline-contract.md`, `state-layout.md`, `runtime.md`, etc.) define the system we are building. They must not contain:
 
 - "Current state" sections describing what exists today
 - References to working queues (`queues/*.md`)

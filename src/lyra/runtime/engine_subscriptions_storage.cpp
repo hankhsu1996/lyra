@@ -80,25 +80,43 @@ void Engine::FreeContainerCold(uint32_t idx) {
   container_cold_free_list_.push_back(idx);
 }
 
-auto Engine::AllocEdgeTarget(EdgeTargetHandle handle) -> uint32_t {
-  if (!edge_target_free_list_.empty()) {
-    uint32_t id = edge_target_free_list_.back();
-    edge_target_free_list_.pop_back();
-    edge_target_table_[id] = handle;
-    return id;
+auto Engine::AllocLocalEdgeTarget(LocalEdgeTargetHandle handle) -> uint32_t {
+  if (!local_edge_target_free_list_.empty()) {
+    uint32_t idx = local_edge_target_free_list_.back();
+    local_edge_target_free_list_.pop_back();
+    local_edge_target_table_[idx] = handle;
+    return LocalEdgeTargetId(idx);
   }
-  auto id = static_cast<uint32_t>(edge_target_table_.size());
-  edge_target_table_.push_back(handle);
-  return id;
+  auto idx = static_cast<uint32_t>(local_edge_target_table_.size());
+  local_edge_target_table_.push_back(handle);
+  return LocalEdgeTargetId(idx);
+}
+
+auto Engine::AllocGlobalEdgeTarget(GlobalEdgeTargetHandle handle) -> uint32_t {
+  if (!global_edge_target_free_list_.empty()) {
+    uint32_t idx = global_edge_target_free_list_.back();
+    global_edge_target_free_list_.pop_back();
+    global_edge_target_table_[idx] = handle;
+    return GlobalEdgeTargetId(idx);
+  }
+  auto idx = static_cast<uint32_t>(global_edge_target_table_.size());
+  global_edge_target_table_.push_back(handle);
+  return GlobalEdgeTargetId(idx);
 }
 
 void Engine::FreeEdgeTarget(uint32_t id) {
-  edge_target_table_[id] = EdgeTargetHandle{
-      .slot_id = UINT32_MAX, .kind = SubKind::kEdge, .index = UINT32_MAX};
-  edge_target_free_list_.push_back(id);
+  if (IsGlobalEdgeTargetId(id)) {
+    auto idx = EdgeTargetIndex(id);
+    global_edge_target_table_[idx] = GlobalEdgeTargetHandle{};
+    global_edge_target_free_list_.push_back(idx);
+  } else {
+    auto idx = EdgeTargetIndex(id);
+    local_edge_target_table_[idx] = LocalEdgeTargetHandle{};
+    local_edge_target_free_list_.push_back(idx);
+  }
 }
 
-auto Engine::CheckSubscriptionLimits(const ProcessState& proc_state) -> bool {
+auto Engine::CheckSubscriptionLimits(const RuntimeProcess& proc) -> bool {
   if (max_total_subscriptions_ > 0 &&
       live_subscription_count_ >= max_total_subscriptions_) {
     TerminateWithResourceError(
@@ -108,10 +126,10 @@ auto Engine::CheckSubscriptionLimits(const ProcessState& proc_state) -> bool {
   }
 
   if (max_subscriptions_per_process_ > 0 &&
-      proc_state.subscription_count >= max_subscriptions_per_process_) {
+      proc.subscription_count >= max_subscriptions_per_process_) {
     TerminateWithResourceError(
-        "per-process subscription limit exceeded",
-        proc_state.subscription_count, max_subscriptions_per_process_);
+        "per-process subscription limit exceeded", proc.subscription_count,
+        max_subscriptions_per_process_);
     return false;
   }
 

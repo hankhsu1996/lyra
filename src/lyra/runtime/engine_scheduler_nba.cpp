@@ -16,13 +16,12 @@ namespace {
 
 void ValidateSlotRootPointer(
     const void* ptr, uint32_t slot_id, const SlotMetaRegistry& registry,
-    const void* design_state_base,
-    std::span<const RuntimeInstance* const> instances, const char* caller) {
+    const void* design_state_base, const char* caller) {
   if (!registry.IsPopulated() || design_state_base == nullptr) {
     return;
   }
   const auto& meta = registry.Get(slot_id);
-  const auto* expected = ResolveSlotBase(meta, design_state_base, instances);
+  const auto* expected = ResolveGlobalSlotBase(meta, design_state_base);
   if (static_cast<const uint8_t*>(ptr) != expected) {
     // Stopgap for direct-array-root owned-container rollout: the runtime
     // registry does not yet expose owned-container root identity, so we
@@ -69,7 +68,7 @@ void Engine::ScheduleNba(
   if (auto* g = std::get_if<NbaNotifyGlobal>(&notify_signal)) {
     ValidateSlotRootPointer(
         notify_base_ptr, g->signal.value, slot_meta_registry_,
-        design_state_base_, const_instances_, "Engine::ScheduleNba");
+        design_state_base_, "Engine::ScheduleNba");
   }
 
   NbaEntry entry;
@@ -110,8 +109,7 @@ void Engine::ScheduleNbaCanonicalPacked(
   if (auto* g = std::get_if<NbaNotifyGlobal>(&notify_signal)) {
     ValidateSlotRootPointer(
         notify_base_ptr, g->signal.value, slot_meta_registry_,
-        design_state_base_, const_instances_,
-        "Engine::ScheduleNbaCanonicalPacked");
+        design_state_base_, "Engine::ScheduleNbaCanonicalPacked");
   }
 
   NbaEntry entry;
@@ -194,12 +192,11 @@ auto ApplyNba(const NbaCanonicalPackedTwoPlane& p, void* write_ptr)
 }
 
 void Engine::CommitDeferredLocalNbas() {
-  for (uint32_t instance_idx : nba_pending_instances_) {
-    auto* inst = instances_[instance_idx];
+  for (auto* inst : nba_pending_instances_) {
     auto& pending = inst->nba_pending;
     if (inst->observability.layout == nullptr) {
       pending.Clear();
-      in_nba_pending_[instance_idx] = 0;
+      inst->dedup_state.in_nba_pending = false;
       continue;
     }
     const auto& layout = *inst->observability.layout;
@@ -208,8 +205,8 @@ void Engine::CommitDeferredLocalNbas() {
       if (pending.seen[lid.value] == 0) continue;
       const auto& meta = layout.slot_meta[lid.value];
 
-      std::span<std::byte> current_slot;
-      std::span<std::byte> deferred_slot;
+      std::span<uint8_t> current_slot;
+      std::span<uint8_t> deferred_slot;
       uint32_t compare_bytes = 0;
       if (meta.is_container) {
         uint32_t appendix_off =
@@ -234,12 +231,12 @@ void Engine::CommitDeferredLocalNbas() {
               current_slot.data(), deferred_slot.data(), compare_bytes) != 0) {
         std::memcpy(current_slot.data(), deferred_slot.data(), compare_bytes);
         ++stats_.core.nba_changed;
-        MarkLocalSignalDirtyFull(*inst, lid, instance_idx);
+        MarkLocalSignalDirtyFull(*inst, lid);
       }
     }
 
     pending.Clear();
-    in_nba_pending_[instance_idx] = 0;
+    inst->dedup_state.in_nba_pending = false;
   }
   nba_pending_instances_.clear();
 }
@@ -270,18 +267,21 @@ void Engine::ExecuteNbaRegion() {
     // Dirty-mark dispatch: single-range for full-overwrite and masked-merge,
     // precise two-range for canonical packed two-plane.
     // R5: Typed NBA dirty dispatch. No reverse-engineering from flat slot_id.
-    // Resolve local instance + index once (may be called twice for two-plane).
+    // Resolve local instance once (may be called twice for two-plane).
     RuntimeInstance* nba_local_inst = nullptr;
-    uint32_t nba_local_idx = 0;
     if (const auto* local = std::get_if<NbaNotifyLocal>(&entry.notify_signal)) {
-      nba_local_idx = GetInstanceIndex(local->instance_id);
-      nba_local_inst = instances_[nba_local_idx];
+      if (local->instance == nullptr) {
+        throw common::InternalError(
+            "Engine::ExecuteNbaRegion",
+            "NBA local notify has null instance pointer");
+      }
+      nba_local_inst = local->instance;
     }
     auto nba_dirty = [&](uint32_t byte_off, uint32_t byte_size) {
       if (nba_local_inst != nullptr) {
         const auto& local = std::get<NbaNotifyLocal>(entry.notify_signal);
         MarkLocalSignalDirtyRange(
-            *nba_local_inst, local.signal, byte_off, byte_size, nba_local_idx);
+            *nba_local_inst, local.signal, byte_off, byte_size);
       } else {
         const auto& global = std::get<NbaNotifyGlobal>(entry.notify_signal);
         MarkDirtyRange(global.signal.value, byte_off, byte_size);

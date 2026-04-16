@@ -3,15 +3,20 @@
 #include <cstddef>
 #include <cstdint>
 #include <span>
+#include <string>
 #include <vector>
 
-#include "lyra/common/ext_ref_binding.hpp"
+#include "lyra/common/local_slot_id.hpp"
+#include "lyra/common/selection_step.hpp"
 #include "lyra/runtime/instance_event_state.hpp"
 #include "lyra/runtime/instance_observability.hpp"
 #include "lyra/runtime/process_frame.hpp"
 #include "lyra/runtime/signal_coord.hpp"
 
 namespace lyra::runtime {
+
+// Forward declaration: needed by ResolvedExtRefBinding (stores pointer).
+struct RuntimeInstance;
 
 // Per-instance owned storage.
 // Each RuntimeInstance owns its module-local state. Storage is always
@@ -25,19 +30,19 @@ namespace lyra::runtime {
 // via GEP, so the layout is a hard ABI. Raw pointers are intentional --
 // unique_ptr would change the struct layout.
 struct RuntimeInstanceStorage {
-  std::byte* inline_base = nullptr;
+  uint8_t* inline_base = nullptr;
   uint64_t inline_size = 0;
 
-  std::byte* appendix_base = nullptr;
+  uint8_t* appendix_base = nullptr;
   uint64_t appendix_size = 0;
 
   // Deferred inline region: mirrors inline_base layout for NBA writes.
   // Local owned-inline <= writes go here; committed in the NBA phase.
-  std::byte* deferred_inline_base = nullptr;
+  uint8_t* deferred_inline_base = nullptr;
 
   // Deferred appendix region: mirrors appendix_base layout for NBA writes.
   // Local owned-container <= writes go here; committed in the NBA phase.
-  std::byte* deferred_appendix_base = nullptr;
+  uint8_t* deferred_appendix_base = nullptr;
 
   // Span accessors for owned storage regions. Non-const overloads return
   // mutable spans for write access; const overloads return read-only spans.
@@ -45,24 +50,23 @@ struct RuntimeInstanceStorage {
   // but provide mutable access to the pointed-to storage -- same pattern as
   // std::vector::data().
   // NOLINTBEGIN(readability-make-member-function-const)
-  [[nodiscard]] auto InlineRegion() -> std::span<std::byte> {
+  [[nodiscard]] auto InlineRegion() -> std::span<uint8_t> {
     return {inline_base, inline_size};
   }
-  [[nodiscard]] auto AppendixRegion() -> std::span<std::byte> {
+  [[nodiscard]] auto AppendixRegion() -> std::span<uint8_t> {
     return {appendix_base, appendix_size};
   }
-  [[nodiscard]] auto DeferredInlineRegion() -> std::span<std::byte> {
+  [[nodiscard]] auto DeferredInlineRegion() -> std::span<uint8_t> {
     return {deferred_inline_base, inline_size};
   }
-  [[nodiscard]] auto DeferredAppendixRegion() -> std::span<std::byte> {
+  [[nodiscard]] auto DeferredAppendixRegion() -> std::span<uint8_t> {
     return {deferred_appendix_base, appendix_size};
   }
   // NOLINTEND(readability-make-member-function-const)
-  [[nodiscard]] auto InlineRegion() const -> std::span<const std::byte> {
+  [[nodiscard]] auto InlineRegion() const -> std::span<const uint8_t> {
     return {inline_base, inline_size};
   }
-  [[nodiscard]] auto DeferredInlineRegion() const
-      -> std::span<const std::byte> {
+  [[nodiscard]] auto DeferredInlineRegion() const -> std::span<const uint8_t> {
     return {deferred_inline_base, inline_size};
   }
 };
@@ -85,15 +89,13 @@ struct NbaPendingSet {
   // (whole-slot sets implicitly; partial triggers copy-on-first-touch).
   // Reset in Clear().
   std::vector<uint8_t> slot_initialized;
-  // Cached engine-level instance index. Set once during init,
-  // avoids per-write GetInstanceIndex lookup.
-  uint32_t instance_idx = UINT32_MAX;
+  bool initialized = false;
 
-  void Init(uint32_t local_signal_count, uint32_t idx) {
+  void Init(uint32_t local_signal_count) {
     seen.assign(local_signal_count, 0);
     slot_initialized.assign(local_signal_count, 0);
     list.reserve(local_signal_count);
-    instance_idx = idx;
+    initialized = true;
   }
 
   void MarkPending(LocalSignalId lid) {
@@ -112,9 +114,66 @@ struct NbaPendingSet {
   }
 
   [[nodiscard]] auto IsInitialized() const -> bool {
-    return instance_idx != UINT32_MAX;
+    return initialized;
   }
 };
+
+// Per-instance scope time metadata (immutable after init).
+// Populated from BodyRealizationDesc during InitInstanceTimeMetadata.
+struct RuntimeScopeTimeMetadata {
+  int8_t time_unit_power = 0;
+  int8_t time_precision_power = 0;
+};
+
+// Transient per-instance scratch state for the fixpoint solver.
+// Object-owned but engine-managed: zeroed at the start of each
+// FlushAndPropagateConnections call, read/written during fixpoint
+// iteration, carries no semantic state across calls.
+struct RuntimeFixpointScratch {
+  bool in_next = false;
+  bool comb_touched_seen = false;
+  uint32_t delta_pre = 0;
+};
+
+// Per-instance sparse-set dedup flags for engine dirty/pending indexes.
+// Object-owned on RuntimeInstance, engine-managed: set by
+// MarkInstanceDeltaDirty / MarkInstanceNbaPending, cleared during
+// ClearLocalUpdatesDelta / ClearLocalUpdates / CommitDeferredLocalNbas.
+struct RuntimeDedupState {
+  bool in_delta_dirty = false;
+  bool in_timeslot_dirty = false;
+  bool in_nba_pending = false;
+};
+
+// Per-instance local-domain fixpoint workspace.
+// Owns the pending/next worklists and dedup flags for the fixpoint
+// solver's local signal propagation. Object-owned on RuntimeInstance,
+// engine-managed: seeded at the start of FlushAndPropagateConnections,
+// promoted each iteration, cleared on convergence.
+struct RuntimeLocalFixpointWorkspace {
+  std::vector<LocalSignalId> pending;
+  std::vector<LocalSignalId> next;
+  // Dedup flags sized to local_signal_count. 1 iff signal is in next.
+  std::vector<uint8_t> seen;
+};
+
+// Runtime-facing resolved external-ref binding record.
+// One per external-ref recipe per owning instance. Populated during
+// construction from serialized codegen transport (SerializedExtRefBinding)
+// by resolving target_instance_id to a live RuntimeInstance*.
+//
+// Binary contract: layout must match the LLVM struct type used by
+// GetExtRefBindingType() -- {ptr, i32, i32} on 64-bit.
+struct ResolvedExtRefBinding {
+  RuntimeInstance* target_instance = nullptr;
+  uint32_t target_byte_offset = 0;
+  common::LocalSlotId target_local_signal;
+};
+
+static_assert(sizeof(ResolvedExtRefBinding) == 16);
+static_assert(offsetof(ResolvedExtRefBinding, target_instance) == 0);
+static_assert(offsetof(ResolvedExtRefBinding, target_byte_offset) == 8);
+static_assert(offsetof(ResolvedExtRefBinding, target_local_signal) == 12);
 
 // Runtime-owned representation of one module instance.
 //
@@ -140,25 +199,57 @@ struct RuntimeInstance {
   RuntimeInstance(RuntimeInstance&&) = delete;
   auto operator=(RuntimeInstance&&) -> RuntimeInstance& = delete;
 
-  InstanceId instance_id = InstanceId{0};
+  // --- Binary contract fields (prefix must match LLVM struct type) ---
+  // Codegen accesses these via GEP. Field order and types must match
+  // BuildRuntimeInstanceType in layout.cpp and RuntimeInstanceField enum.
   SharedBodyFn body = nullptr;
-
   RuntimeInstanceStorage storage;
+  const ResolvedExtRefBinding* ext_ref_bindings = nullptr;
+  uint32_t ext_ref_binding_count = 0;
+
+  // --- Non-contract fields (invisible to codegen) ---
 
   const char* path_c_str = nullptr;
   uint32_t owner_ordinal = 0;
 
-  // Process binding: all module processes for this instance share one object.
-  uint32_t module_proc_base = 0;
-  uint32_t num_module_processes = 0;
+  // Canonical per-instance attached-process carrier.
+  // Populated during InitModuleInstancesFromBundles from constructor
+  // transport. Holds direct pointers into the engine's process table.
+  // Parallel to per-body process ordinals (body-local index i
+  // corresponds to attached_processes[i]).
+  std::vector<RuntimeProcess*> attached_processes;
 
-  // Per-instance resolved ext-ref binding records.
-  // One entry per external-ref recipe in the body. Each record carries
-  // storage slot (address), target instance, and target local signal
-  // (behavioral identity). Null if the body has no external refs.
-  // Part of the binary contract with codegen (accessed via GEP).
-  const common::ResolvedExtRefBinding* ext_ref_bindings = nullptr;
-  uint32_t ext_ref_binding_count = 0;
+  // Primary structural hierarchy (not part of binary contract with codegen).
+  // Established during constructor assembly: CreateChild sets parent and
+  // appends a typed RuntimeChildEdge to parent->children in a single
+  // creation path.
+  RuntimeInstance* parent = nullptr;
+
+  // Typed structural child edges. Each edge carries structural metadata
+  // (generate-scope context + ordinal within that context) for procedural
+  // walking by compile-time path recipes. These are edge metadata, not
+  // object identity -- they enable navigation without key lookup.
+  struct ChildEdge {
+    common::RepertoireCoord coord;
+    uint32_t child_ordinal_in_coord = 0;
+    RuntimeInstance* child = nullptr;
+  };
+  std::vector<ChildEdge> children;
+
+  // Instance-owned hierarchical path string. Derived from structural
+  // position during assembly (parent path + child display label).
+  // The display label is consumed during assembly and not stored.
+  // Owns the storage that path_c_str points into.
+  // Not part of the binary contract with codegen.
+  std::string path_storage;
+
+  // Backing storage for resolved ext-ref bindings.
+  // ext_ref_bindings (binary contract ptr) points into this vector.
+  // Populated once by LyraConstructionResultSetExtRefBindings during
+  // construction program ingestion, then never resized or mutated --
+  // pointer stability of ext_ref_bindings depends on this.
+  // Not part of the binary contract with codegen.
+  std::vector<ResolvedExtRefBinding> owned_ext_ref_bindings;
 
   // R5: Per-instance observability state.
   // Populated by Engine::InitModuleInstancesFromBundles. Not part of the
@@ -174,6 +265,21 @@ struct RuntimeInstance {
   // Tracks which local signals have pending deferred values in
   // storage.deferred_inline_base. Not part of the binary contract.
   NbaPendingSet nba_pending;
+
+  // Fixpoint solver scratch state (not part of the binary contract).
+  RuntimeFixpointScratch fixpoint_scratch;
+
+  // Per-instance sparse-set dedup flags (not part of the binary contract).
+  RuntimeDedupState dedup_state;
+
+  // Per-instance local-domain fixpoint workspace (not part of the
+  // binary contract). Owns pending/next worklists and dedup flags.
+  RuntimeLocalFixpointWorkspace local_fixpoint;
+
+  // Per-instance scope time metadata (immutable after init).
+  // Populated from BodyRealizationDesc during InitInstanceTimeMetadata.
+  // Not part of the binary contract with codegen.
+  RuntimeScopeTimeMetadata scope_time_metadata;
 };
 
 // Strongly typed field indices for RuntimeInstanceStorage.
@@ -188,19 +294,17 @@ enum class RuntimeInstanceStorageField : unsigned {
   kFieldCount = 6,
 };
 
-// Strongly typed field indices for RuntimeInstance.
+// Strongly typed field indices for RuntimeInstance binary contract.
 // Must match the LLVM struct type emitted by BuildRuntimeInstanceType.
+// Only the binary-contract prefix is visible to codegen:
+// { body (ptr), storage (struct), ext_ref_bindings (ptr),
+//   ext_ref_binding_count (i32) }
 enum class RuntimeInstanceField : unsigned {
-  kInstanceId = 0,
-  kBody = 1,
-  kStorage = 2,
-  kPathCStr = 3,
-  kOwnerOrdinal = 4,
-  kModuleProcBase = 5,
-  kNumModuleProcesses = 6,
-  kExtRefBindings = 7,
-  kExtRefBindingCount = 8,
-  kFieldCount = 9,
+  kBody = 0,
+  kStorage = 1,
+  kExtRefBindings = 2,
+  kExtRefBindingCount = 3,
+  kFieldCount = 4,
 };
 
 // Hard binary contract assertions for RuntimeInstanceStorage.
@@ -208,49 +312,40 @@ enum class RuntimeInstanceField : unsigned {
 static_assert(offsetof(RuntimeInstanceStorage, inline_base) == 0);
 static_assert(
     offsetof(RuntimeInstanceStorage, inline_size) ==
-    offsetof(RuntimeInstanceStorage, inline_base) + sizeof(std::byte*));
+    offsetof(RuntimeInstanceStorage, inline_base) + sizeof(uint8_t*));
 static_assert(
     offsetof(RuntimeInstanceStorage, appendix_base) ==
     offsetof(RuntimeInstanceStorage, inline_size) + sizeof(uint64_t));
 static_assert(
     offsetof(RuntimeInstanceStorage, appendix_size) ==
-    offsetof(RuntimeInstanceStorage, appendix_base) + sizeof(std::byte*));
+    offsetof(RuntimeInstanceStorage, appendix_base) + sizeof(uint8_t*));
 static_assert(
     offsetof(RuntimeInstanceStorage, deferred_inline_base) ==
     offsetof(RuntimeInstanceStorage, appendix_size) + sizeof(uint64_t));
 static_assert(
     offsetof(RuntimeInstanceStorage, deferred_appendix_base) ==
-    offsetof(RuntimeInstanceStorage, deferred_inline_base) +
-        sizeof(std::byte*));
+    offsetof(RuntimeInstanceStorage, deferred_inline_base) + sizeof(uint8_t*));
 
 // Hard binary contract assertions for RuntimeInstance.
 // Field order must match RuntimeInstanceField enum and LLVM struct type.
-static_assert(offsetof(RuntimeInstance, instance_id) == 0);
-static_assert(
-    offsetof(RuntimeInstance, body) > offsetof(RuntimeInstance, instance_id));
+// Only the binary-contract prefix is asserted; non-contract fields after
+// ext_ref_binding_count are free to reorder.
+static_assert(offsetof(RuntimeInstance, body) == 0);
 static_assert(
     offsetof(RuntimeInstance, storage) ==
     offsetof(RuntimeInstance, body) + sizeof(SharedBodyFn));
 static_assert(
-    offsetof(RuntimeInstance, path_c_str) ==
+    offsetof(RuntimeInstance, ext_ref_bindings) ==
     offsetof(RuntimeInstance, storage) + sizeof(RuntimeInstanceStorage));
 static_assert(
-    offsetof(RuntimeInstance, owner_ordinal) ==
-    offsetof(RuntimeInstance, path_c_str) + sizeof(const char*));
-static_assert(
-    offsetof(RuntimeInstance, module_proc_base) ==
-    offsetof(RuntimeInstance, owner_ordinal) + sizeof(uint32_t));
-static_assert(
-    offsetof(RuntimeInstance, num_module_processes) ==
-    offsetof(RuntimeInstance, module_proc_base) + sizeof(uint32_t));
-static_assert(
-    offsetof(RuntimeInstance, ext_ref_bindings) >
-    offsetof(RuntimeInstance, num_module_processes));
+    offsetof(RuntimeInstance, ext_ref_binding_count) ==
+    offsetof(RuntimeInstance, ext_ref_bindings) +
+        sizeof(const ResolvedExtRefBinding*));
 
 // Allocate zero-initialized owned storage for an instance's inline region.
-auto AllocateOwnedInlineStorage(uint64_t size) -> std::byte*;
+auto AllocateOwnedInlineStorage(uint64_t size) -> uint8_t*;
 
 // Allocate zero-initialized owned storage for an instance's appendix region.
-auto AllocateOwnedAppendixStorage(uint64_t size) -> std::byte*;
+auto AllocateOwnedAppendixStorage(uint64_t size) -> uint8_t*;
 
 }  // namespace lyra::runtime

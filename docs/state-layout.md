@@ -71,34 +71,11 @@ The extra metadata load for containers is negligible: unpacked array access alre
 
 ## Storage Ownership
 
-Not every slot in an instance's logical range owns its own storage in the arena. Port connections can create **forwarded aliases** -- slots that share another slot's storage instead of occupying their own region.
+Every body-local slot owns its own storage unconditionally. An instance's storage region contains all of its members; no member shares storage with a member of another instance.
 
-### Two Storage Binding Kinds
+Connectivity (port bindings, continuous assigns) does not change storage ownership. Connections describe data-flow relationships between instances but do not eliminate, merge, or redirect storage. Each instance's storage shape is determined solely by its specialization's layout.
 
-| Kind                  | Meaning                                                                     | Instance-relative offset?               |
-| --------------------- | --------------------------------------------------------------------------- | --------------------------------------- |
-| OwnedLocalStorage     | Slot owns bytes in its instance's arena region                              | Yes -- computable from instance base    |
-| ForwardedStorageAlias | Slot aliases a canonical owner's storage (possibly in a different instance) | No -- must use design-global addressing |
-
-The `SlotStorageBinding` variant (in `layout/storage_types.hpp`) is the semantic source of truth. All downstream consumers pattern-match on it; there is no way to accidentally compute a relative offset for a forwarded alias.
-
-### When Forwarding Occurs
-
-The forwarding analysis (`forwarding_analysis.cpp`) identifies connection-relay candidates: slots written by exactly one connection process, read by one or more downstream connections (all self-triggered, full-slot), with no behavioral process triggers. Such slots are pure pass-through relays. Their storage is collapsed to the upstream source, eliminating redundant dirty-tracking, connection evaluation, and propagation work.
-
-A typical example: a module with a pass-through input port connected to a child. The intermediate port slot becomes a forwarded alias; the child reads directly from the grandparent's storage.
-
-### Pipeline Boundary
-
-Forwarding facts are computed once during `BuildDesignLayout` (from the `ForwardingMap`) and encoded into `slot_storage_bindings`. No later pipeline stage receives the `ForwardingMap` directly. All downstream layout and codegen stages see only the `SlotStorageBinding` variant, which makes the owned-vs-forwarded distinction structural.
-
-### Instance Storage Base
-
-An instance's storage base (`InstanceStorageBase`) is the arena-absolute offset of its first owned-local slot, not its first logical slot. Instances whose slots are all forwarded aliases have no local storage region (`abs_byte_offset = nullopt`).
-
-### Body Processes and Forwarded Slots
-
-Body processes can reference forwarded alias slots (e.g., a clocked process that reads a pass-through input port without triggering on it). Codegen dispatches on `SpecSlotAccessKind`: owned-local slots use instance-relative addressing (`this_ptr + offset`), forwarded slots use design-global addressing (`design_ptr + canonical_owner_offset`). The classification is precomputed per specialization and validated across all instances.
+Connection analysis may identify relay-candidate slots for routing optimization (bypassing intermediate copies), but this is a propagation optimization, not a storage ownership change.
 
 ## Relationship to Specialization
 

@@ -67,6 +67,10 @@ struct BodyLocalDecls {
   // Body-local slot descriptors (type + kind), indexed by kModuleSlot id.
   // Built directly as source of truth - not derived from design-global slots.
   std::vector<mir::SlotDesc> slots;
+  // Body-local trace names, parallel to slots (indexed by kModuleSlot id).
+  // Populated from symbol_table[sym].name during CollectBodyLocalDecls.
+  // Invariant: local_trace_names.size() == slots.size().
+  std::vector<std::string> local_trace_names;
   // Named event declarations: SymbolId -> body-local EventId.
   EventMap events;
   // Body-local event descriptors, indexed by EventId.

@@ -5,14 +5,10 @@
 #include "lyra/common/edge_kind.hpp"
 #include "lyra/common/local_slot_id.hpp"
 #include "lyra/common/object_index.hpp"
-#include "lyra/common/symbol_types.hpp"
 #include "lyra/common/type.hpp"
-#include "lyra/mir/handle.hpp"
 #include "lyra/mir/port_connection.hpp"
 
 namespace lyra::mir {
-
-class Arena;
 
 // Bound location: a specific slot on a specific object in the
 // construction topology. Shared identity type for external ref
@@ -27,24 +23,6 @@ struct ResolvedObservation {
   uint32_t byte_offset = 0;
   uint32_t byte_size = 0;
   uint8_t bit_index = 0;
-};
-
-// Compiled expression connection for non-NameRef port expressions.
-// Produced from kFunction-sourced connection recipes, cloned to
-// design-level process by the backend. Simple NameRef connections
-// use BoundConnection instead.
-struct CompiledConnectionExpr {
-  PortConnection::Kind kind = PortConnection::Kind::kDriveParentToChild;
-  const Arena* parent_arena = nullptr;
-  FunctionId expr_function;
-  common::ObjectIndex parent_object_index;
-  common::ObjectIndex child_object_index;
-  common::LocalSlotId child_local_slot;
-  TypeId result_type;
-  BoundEndpoint trigger;
-  common::EdgeKind trigger_edge = common::EdgeKind::kAnyChange;
-  SymbolId child_port_sym;
-  SymbolId parent_instance_sym;
 };
 
 // A fully-bindable ConnectionRecipe resolved against the construction

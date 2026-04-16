@@ -1,16 +1,12 @@
 #pragma once
 
 #include <cstdint>
-#include <filesystem>
 
 #include "lyra/runtime/observer.hpp"
 #include "lyra/runtime/runtime_abi.hpp"
 #include "lyra/runtime/string.hpp"
 
 namespace lyra::runtime {
-
-// Get the base directory for relative path resolution in file I/O.
-auto GetFsBaseDir() -> const std::filesystem::path&;
 
 // Explicit process exit status returned by LLVM-generated process functions.
 enum class ProcessExitCode : uint32_t {
@@ -51,20 +47,14 @@ void LyraRunProcessSync(LyraProcessFunc process, void* state);
 
 // Run simulation with multiple processes sharing a single engine.
 // All processes are scheduled at time=0, delta=0.
-// - connection_funcs: dense array of connection process function pointers
-//   (sized num_connection_processes from ABI, no null padding)
 // - states: array of state pointers (one per process)
-// - num_processes: total simulation processes (connection + module)
+// - num_processes: total simulation processes
 // - plusargs: optional array of C strings for $plusargs (nullptr if none)
 // - num_plusargs: number of plusargs (0 if none)
-// - instance_paths: optional array of C strings for %m (nullptr if none)
-// - num_instance_paths: number of instance paths (0 if none)
 // - abi: versioned runtime descriptor with metadata tables and feature flags
 void LyraRunSimulation(
-    LyraProcessFunc* connection_funcs, void** states, uint32_t num_processes,
-    const char** plusargs, uint32_t num_plusargs, const char** instance_paths,
-    uint32_t num_instance_paths, const LyraRuntimeAbi* abi,
-    void* run_session_ptr);
+    void** states, uint32_t num_processes, const char** plusargs,
+    uint32_t num_plusargs, const LyraRuntimeAbi* abi, void* run_session_ptr);
 
 // $test$plusargs: prefix match against plusargs.
 // Query is LyraStringHandle (matches SV string operand lowering).
@@ -102,7 +92,7 @@ void LyraSuspendRepeat(void* state);
 void LyraSuspendWaitEvent(
     void* state, uint32_t resume_block, uint32_t event_id);
 void LyraTriggerEvent(
-    void* engine_ptr, uint32_t instance_id, uint32_t local_event_id);
+    void* engine_ptr, void* instance, uint32_t local_event_id);
 
 // Strobe observer program type: uses canonical StrobeProgramFn from
 // observer.hpp.
@@ -110,10 +100,10 @@ using LyraStrobeProgramFn = lyra::runtime::StrobeProgramFn;
 
 // Register a strobe observer for the Postponed region.
 // ObserverContext fields are passed flat for C ABI, reconstructed on the
-// runtime side.
+// runtime side. instance is RuntimeInstance* (nullptr for design-global).
 void LyraRegisterStrobe(
     void* engine_ptr, LyraStrobeProgramFn program, void* design_state,
-    void* this_ptr, uint32_t instance_id);
+    void* this_ptr, void* instance);
 
 // Unified termination with kind/level/message support.
 // kind: 0=finish, 1=fatal, 2=stop, 3=exit
@@ -140,9 +130,8 @@ void LyraSetTimeFormat(
 auto LyraResolveBaseDir(const char* argv0) -> const char*;
 
 // Initialize runtime state (call before running processes).
-// fs_base_dir: absolute path for relative file I/O resolution.
 // iteration_limit: per-activation back-edge limit (0 = unlimited).
-void LyraInitRuntime(const char* fs_base_dir, uint32_t iteration_limit);
+void LyraInitRuntime(uint32_t iteration_limit);
 
 // Print final simulation time as __LYRA_TIME__=<N> for test harness.
 // run_session_ptr: opaque pointer to lyra::runtime::RunSession.
@@ -155,11 +144,10 @@ using LyraMonitorCheckProgramFn = lyra::runtime::MonitorCheckProgramFn;
 // Register a new monitor, atomically replacing any existing one.
 // The initial_prev buffer is copied to runtime-owned storage.
 // ObserverContext fields are passed flat for C ABI, reconstructed on the
-// runtime side.
+// runtime side. instance is RuntimeInstance* (nullptr for design-global).
 void LyraMonitorRegister(
     void* engine_ptr, LyraMonitorCheckProgramFn program, void* design_state,
-    void* this_ptr, uint32_t instance_id, const void* initial_prev,
-    uint32_t size);
+    void* this_ptr, void* instance, const void* initial_prev, uint32_t size);
 
 // Enable/disable the active monitor. No-op if no active monitor.
 // - engine_ptr: pointer to Engine

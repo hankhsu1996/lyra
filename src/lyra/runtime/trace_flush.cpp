@@ -173,8 +173,7 @@ auto SnapshotLocalSlotValue(
 
 void FlushGlobalDirtySlotsToTrace(
     trace::TraceManager& trace, const SlotMetaRegistry& slot_registry,
-    const void* design_state_base,
-    std::span<const RuntimeInstance* const> instances, const UpdateSet& updates,
+    const void* design_state_base, const UpdateSet& updates,
     const TraceSelectionRegistry& selection, uint32_t global_slot_count) {
   for (uint32_t slot_id : updates.DirtySlots()) {
     if (slot_id >= global_slot_count) {
@@ -187,7 +186,7 @@ void FlushGlobalDirtySlotsToTrace(
     }
     if (!selection.IsSelected(slot_id)) continue;
     const auto& meta = slot_registry.Get(slot_id);
-    const auto* slot_base = ResolveSlotBase(meta, design_state_base, instances);
+    const auto* slot_base = ResolveGlobalSlotBase(meta, design_state_base);
     trace.EmitGlobalValueChange(
         GlobalSignalId{slot_id},
         SnapshotGlobalSlotValue(slot_id, meta, slot_base));
@@ -195,13 +194,12 @@ void FlushGlobalDirtySlotsToTrace(
 }
 
 void FlushLocalDirtySlotsToTrace(
-    trace::TraceManager& trace, std::span<RuntimeInstance* const> instances,
-    std::span<const uint32_t> dirty_indices) {
-  for (uint32_t idx : dirty_indices) {
-    auto* inst = instances[idx];
+    trace::TraceManager& trace,
+    std::span<RuntimeInstance* const> dirty_instances) {
+  for (auto* inst : dirty_instances) {
     if (inst == nullptr) {
       throw common::InternalError(
-          "FlushLocalDirtySlotsToTrace", "null instance in instance list");
+          "FlushLocalDirtySlotsToTrace", "null instance in dirty list");
     }
 
     auto& obs = inst->observability;
@@ -210,9 +208,9 @@ void FlushLocalDirtySlotsToTrace(
         throw common::InternalError(
             "FlushLocalDirtySlotsToTrace",
             std::format(
-                "instance {} has dirty local signals but "
+                "instance '{}' has dirty local signals but "
                 "local_signal_count=0",
-                inst->instance_id));
+                inst->path_c_str));
       }
       continue;
     }
@@ -221,16 +219,16 @@ void FlushLocalDirtySlotsToTrace(
       throw common::InternalError(
           "FlushLocalDirtySlotsToTrace",
           std::format(
-              "instance {} has local signals but no observability layout",
-              inst->instance_id));
+              "instance '{}' has local signals but no observability layout",
+              inst->path_c_str));
     }
 
     if (obs.trace_select.size() != obs.local_signal_count) {
       throw common::InternalError(
           "FlushLocalDirtySlotsToTrace",
           std::format(
-              "instance {} trace_select size {} != local_signal_count {}",
-              inst->instance_id, obs.trace_select.size(),
+              "instance '{}' trace_select size {} != local_signal_count {}",
+              inst->path_c_str, obs.trace_select.size(),
               obs.local_signal_count));
     }
 
@@ -239,8 +237,8 @@ void FlushLocalDirtySlotsToTrace(
         throw common::InternalError(
             "FlushLocalDirtySlotsToTrace",
             std::format(
-                "instance {} dirty local signal {} out of range {}",
-                inst->instance_id, lid.value, obs.local_signal_count));
+                "instance '{}' dirty local signal {} out of range {}",
+                inst->path_c_str, lid.value, obs.local_signal_count));
       }
 
       if (obs.trace_select[lid.value] == 0) continue;
@@ -248,8 +246,7 @@ void FlushLocalDirtySlotsToTrace(
       const auto& meta = obs.layout->slot_meta[lid.value];
       const auto* slot_base = ResolveInstanceSlotBase(*inst, lid);
       trace.EmitLocalValueChange(
-          inst->instance_id, lid,
-          SnapshotLocalSlotValue(lid.value, meta, slot_base));
+          inst, lid, SnapshotLocalSlotValue(lid.value, meta, slot_base));
     }
   }
 }
