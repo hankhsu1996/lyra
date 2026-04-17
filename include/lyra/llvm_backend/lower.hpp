@@ -8,6 +8,7 @@
 #include <llvm/IR/Module.h>
 #include <llvm/IR/Value.h>
 
+#include "lyra/common/constant_arena.hpp"
 #include "lyra/common/diagnostic/diagnostic.hpp"
 #include "lyra/common/source_manager.hpp"
 #include "lyra/common/type_arena.hpp"
@@ -93,6 +94,7 @@ struct LoweringInput {
   const mir::ConstructionInput* construction = nullptr;
   mir::Arena* mir_arena = nullptr;
   const TypeArena* type_arena = nullptr;
+  const ConstantArena* constant_arena = nullptr;
   const lowering::DiagnosticContext* diag_ctx = nullptr;
   const SourceManager* source_manager = nullptr;
   // Per-body origin provenance for body-local diagnostic resolution.

@@ -365,6 +365,7 @@ auto PrepareLlvmModule(
       .construction = &mir_result->construction,
       .mir_arena = mir_result->design_arena.get(),
       .type_arena = hir_result.type_arena.get(),
+      .constant_arena = hir_result.constant_arena.get(),
       .diag_ctx = diag_ctx.get(),
       .source_manager = hir_result.source_manager.get(),
       .origin_provenance = &origin_provenance,

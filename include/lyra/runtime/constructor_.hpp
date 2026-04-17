@@ -500,7 +500,10 @@ void LyraConstructorRunProgram(
     uint32_t body_desc_count, const char* path_pool, uint32_t path_pool_size,
     const uint8_t* param_pool, uint32_t param_pool_size,
     const lyra::runtime::ConstructionProgramEntry* entries,
-    uint32_t entry_count);
+    uint32_t entry_count,
+    const lyra::runtime::PortConstInitEntry* port_const_inits,
+    uint32_t port_const_init_count, const uint8_t* port_const_pool,
+    uint32_t port_const_pool_size);
 
 auto LyraConstructorFinalize(void* ctor) -> void*;
 

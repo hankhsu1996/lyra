@@ -9,6 +9,7 @@
 #include <slang/ast/symbols/VariableSymbols.h>
 #include <slang/text/SourceLocation.h>
 
+#include "lyra/common/constant.hpp"
 #include "lyra/common/source_span.hpp"
 #include "lyra/common/symbol_types.hpp"
 #include "lyra/hir/fwd.hpp"
@@ -60,11 +61,16 @@ struct PortBinding {
   SymbolId parent_instance_sym;  // Parent module's instance symbol
   SourceSpan span;
 
-  // Structurally explicit: different fields for different semantics.
-  // INVARIANT: exactly one is valid based on kind:
-  // - kDriveParentToChild: parent_rvalue is valid
-  // - kDriveChildToParent: parent_lvalue is valid
-  hir::ExpressionId parent_rvalue;  // Valid for kDriveParentToChild only
+  // Parent-side source for kDriveParentToChild input ports.
+  // Either a compile-time constant (ConstId) or a runtime expression
+  // (ExpressionId). Determined at port-binding lowering by semantic
+  // constant evaluation.
+  //
+  // If parent_constant_id is valid: this is a constant source.
+  // Otherwise: parent_rvalue is the runtime expression.
+  ConstId parent_constant_id{
+      UINT32_MAX};                  // Valid for constant kDriveParentToChild
+  hir::ExpressionId parent_rvalue;  // Valid for expression kDriveParentToChild
   hir::ExpressionId parent_lvalue;  // Valid for kDriveChildToParent
 };
 

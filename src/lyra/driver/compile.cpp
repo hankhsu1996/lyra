@@ -79,6 +79,7 @@ auto Compile(
       .construction = &compilation.mir.construction,
       .mir_arena = compilation.mir.design_arena.get(),
       .type_arena = compilation.hir.type_arena.get(),
+      .constant_arena = compilation.hir.constant_arena.get(),
       .diag_ctx = &diag_ctx,
       .source_manager = compilation.hir.source_manager.get(),
       .origin_provenance = &origin_provenance,

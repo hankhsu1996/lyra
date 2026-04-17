@@ -2,6 +2,7 @@
 
 #include <cstdint>
 
+#include "lyra/common/constant.hpp"
 #include "lyra/common/edge_kind.hpp"
 #include "lyra/common/local_slot_id.hpp"
 #include "lyra/common/module_identity.hpp"
@@ -38,15 +39,16 @@ struct ChildInstantiationSite {
   common::OriginId origin = common::OriginId::Invalid();
 };
 
-// Connection source classification. Exactly three kinds:
+// Connection source classification:
 //   kLocalSlot   -- parent-body-local slot (direct copy)
-//   kFunction    -- body-local compiled function (expression)
+//   kFunction    -- body-local compiled function (dynamic expression)
+//   kConstant    -- compile-time constant value referenced via ConstId;
+//                   lowered to bytes at the serialization boundary
 //   kExternalRef -- non-local external reference handle
 //
-// These are the only legal parent-side source categories for connection
-// recipes. No ad hoc intermediate categories or topology-dependent
-// classifications may be added. Source classification is semantic and
-// body-local, never topology-dependent.
+// Source classification is semantic and body-local, never
+// topology-dependent. No ad hoc intermediate categories or
+// SV-expression-kind-specific classifications may be added.
 //
 // Compile-time artifact only. Must not accrete constructor/runtime
 // bound state. The separation from construction execution is hard.
@@ -54,12 +56,14 @@ struct ConnectionSourceRecipe {
   enum class Kind : uint8_t {
     kLocalSlot,
     kFunction,
+    kConstant,
     kExternalRef,
   };
 
   Kind kind = Kind::kLocalSlot;
   common::LocalSlotId local_slot;
   FunctionId function;
+  ConstId constant_id;
   ExternalRefId external_ref;
 
   static auto FromLocalSlot(common::LocalSlotId slot)
@@ -68,6 +72,7 @@ struct ConnectionSourceRecipe {
         .kind = Kind::kLocalSlot,
         .local_slot = slot,
         .function = {},
+        .constant_id = {},
         .external_ref = {}};
   }
 
@@ -76,6 +81,16 @@ struct ConnectionSourceRecipe {
         .kind = Kind::kFunction,
         .local_slot = {},
         .function = fn,
+        .constant_id = {},
+        .external_ref = {}};
+  }
+
+  static auto FromConstant(ConstId id) -> ConnectionSourceRecipe {
+    return {
+        .kind = Kind::kConstant,
+        .local_slot = {},
+        .function = {},
+        .constant_id = id,
         .external_ref = {}};
   }
 
@@ -84,6 +99,7 @@ struct ConnectionSourceRecipe {
         .kind = Kind::kExternalRef,
         .local_slot = {},
         .function = {},
+        .constant_id = {},
         .external_ref = ref};
   }
 };
@@ -94,6 +110,8 @@ struct ConnectionSourceRecipe {
 // bound state.
 struct TriggerRecipe {
   enum class Kind : uint8_t {
+    // No trigger. Used for constant connections that never re-evaluate.
+    kNone,
     // Parent body-local slot. Trigger fires on this parent slot's change.
     kLocalSlot,
     kExternalRef,
@@ -109,6 +127,15 @@ struct TriggerRecipe {
   ExternalRefId external_ref;
   FunctionId function;
   common::EdgeKind edge = common::EdgeKind::kAnyChange;
+
+  static auto None() -> TriggerRecipe {
+    return {
+        .kind = Kind::kNone,
+        .local_slot = {},
+        .external_ref = {},
+        .function = {},
+        .edge = common::EdgeKind::kAnyChange};
+  }
 
   static auto FromLocalSlot(common::LocalSlotId slot, common::EdgeKind e)
       -> TriggerRecipe {

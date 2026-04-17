@@ -541,34 +541,48 @@ auto LowerPortBindings(
       continue;
     }
 
-    // Lower the connection expression to HIR (design-level, no timescale)
-    hir::ExpressionId expr_id =
-        LowerDesignLevelExpression(*pb.value_expr, *ctx, registrar);
-    if (!expr_id) {
-      continue;
+    // Classify parent-side source: compile-time constant or runtime
+    // expression. Constant classification uses semantic evaluation,
+    // not HIR expression kind inspection.
+    ConstId parent_constant_id{UINT32_MAX};
+    hir::ExpressionId expr_id;
+    if (pb.kind == PortBinding::Kind::kDriveParentToChild) {
+      if (auto const_id = TryEvaluatePortBindingConstant(
+              *pb.value_expr, pb.parent_instance->body, binding_span, ctx)) {
+        parent_constant_id = *const_id;
+      } else {
+        expr_id = LowerDesignLevelExpression(*pb.value_expr, *ctx, registrar);
+        if (!expr_id) continue;
+        if (!ValidateDesignLevelExpression(
+                expr_id, *ctx->hir_arena, *ctx->symbol_table, binding_span,
+                ctx->sink)) {
+          continue;
+        }
+      }
+    } else {
+      expr_id = LowerDesignLevelExpression(*pb.value_expr, *ctx, registrar);
+      if (!expr_id) continue;
+      if (!ValidateDesignLevelExpression(
+              expr_id, *ctx->hir_arena, *ctx->symbol_table, binding_span,
+              ctx->sink)) {
+        continue;
+      }
     }
 
-    // Validate that the expression only references design-level symbols.
-    // Rejects local variables which don't have persistent storage.
-    if (!ValidateDesignLevelExpression(
-            expr_id, *ctx->hir_arena, *ctx->symbol_table, binding_span,
-            ctx->sink)) {
-      continue;
-    }
-
-    // Create binding with explicit rvalue/lvalue fields based on kind
+    // Create binding with source split based on classification.
     PortBinding binding{
         .kind = pb.kind,
         .child_instance_sym = child_instance_sym,
         .child_port_ordinal = pb.child_port_ordinal,
         .parent_instance_sym = parent_instance_sym,
         .span = binding_span,
+        .parent_constant_id = parent_constant_id,
         .parent_rvalue = {},
         .parent_lvalue = {},
     };
 
     if (pb.kind == PortBinding::Kind::kDriveParentToChild) {
-      // Input port: parent rvalue expression
+      // Input port: constant source or runtime expression.
       binding.parent_rvalue = expr_id;
     } else {
       // Output port: parent lvalue expression (alias target)

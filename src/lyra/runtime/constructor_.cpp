@@ -1588,7 +1588,10 @@ void LyraConstructorRunProgram(
     uint32_t body_desc_count, const char* path_pool, uint32_t path_pool_size,
     const uint8_t* param_pool, uint32_t param_pool_size,
     const lyra::runtime::ConstructionProgramEntry* entries,
-    uint32_t entry_count) {
+    uint32_t entry_count,
+    const lyra::runtime::PortConstInitEntry* port_const_inits,
+    uint32_t port_const_init_count, const uint8_t* port_const_pool,
+    uint32_t port_const_pool_size) {
   ValidateHandle(ctor_raw, "LyraConstructorRunProgram");
   auto& ctor = *static_cast<lyra::runtime::Constructor*>(ctor_raw);
 
@@ -1684,6 +1687,34 @@ void LyraConstructorRunProgram(
           param_data, param_size, e.realized_inline_size,
           e.realized_appendix_size);
       created_scopes.push_back(&inst->scope);
+
+      // Apply constant port connection inits for this child.
+      // port_const_init_offset/count index into the flat port_const_inits
+      // array. Each entry writes a constant value to a child slot.
+      for (uint32_t pc = e.port_const_init_offset;
+           pc < e.port_const_init_offset + e.port_const_init_count; ++pc) {
+        if (pc >= port_const_init_count) {
+          throw lyra::common::InternalError(
+              "LyraConstructorRunProgram",
+              std::format(
+                  "entry {} port_const_init index {} >= count {}", i, pc,
+                  port_const_init_count));
+        }
+        const auto& init = port_const_inits[pc];
+        if (init.value_offset + init.value_size > port_const_pool_size) {
+          throw lyra::common::InternalError(
+              "LyraConstructorRunProgram",
+              std::format(
+                  "port const init value range [{}, {}) exceeds pool {}",
+                  init.value_offset,
+                  static_cast<uint64_t>(init.value_offset) + init.value_size,
+                  port_const_pool_size));
+        }
+        auto* dst = ResolveInstanceStorageOffset(
+            *inst, init.rel_byte_offset, init.value_size,
+            "ApplyPortConstInit");
+        std::memcpy(dst, &port_const_pool[init.value_offset], init.value_size);
+      }
     }
   }
 }

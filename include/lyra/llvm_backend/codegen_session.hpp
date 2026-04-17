@@ -254,6 +254,10 @@ struct ConstructionProgramData {
   // at its source, not re-exposed through a second bridge.
   // Indexed by body_group; each inner vector is parallel to child_sites.
   std::vector<std::vector<uint32_t>> child_site_to_tree_ordinal;
+  // Constant port connection initialization records + value pool.
+  // Applied inline during child creation in LyraConstructorRunProgram.
+  std::vector<runtime::PortConstInitEntry> port_const_inits;
+  std::vector<uint8_t> port_const_pool;
 };
 
 // Design-derived inputs for the realization/assembly phase, extracted during
