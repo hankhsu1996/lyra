@@ -37,7 +37,9 @@ struct DecisionTableEmission {
 auto EmitBodyRealizationDescs(
     Context& context, const Layout& layout,
     std::span<const lowering::mir_to_llvm::CodegenSession::BodyCompiledFuncs>
-        body_compiled_funcs) -> std::vector<BodyDescriptorPackageEmission> {
+        body_compiled_funcs,
+    std::span<const std::vector<uint32_t>> child_site_to_tree_ordinal)
+    -> std::vector<BodyDescriptorPackageEmission> {
   auto& ctx = context.GetLlvmContext();
   auto& mod = context.GetModule();
   auto* i16_ty = llvm::Type::getInt16Ty(ctx);
@@ -53,19 +55,18 @@ auto EmitBodyRealizationDescs(
             body_compiled_funcs.size(), layout.body_realization_infos.size()));
   }
 
-  // BodyRealizationDesc ABI (96 bytes):
+  // BodyRealizationDesc ABI (88 bytes):
   //   {u32 num_processes, u32 slot_count,
   //    u64 inline_state_size_bytes, u64 appendix_state_size_bytes,
   //    u64 total_state_size_bytes, i8 time_unit_power, i8 time_precision_power,
   //    [2 x i8 pad], u32 event_count,
   //    ptr inline_slot_offsets, u32 num_inline_slot_offsets, [4 x pad],
   //    ptr port_entries, u32 num_port_entries, [4 x pad],
-  //    ptr expr_conn_child_descs, ptr expr_conn_coord_words,
-  //    u32 num_expr_conn_coord_words, u32 num_expr_connections}
+  //    ptr expr_conn_child_descs, u32 num_expr_connections, [4 x pad]}
   auto* i8_ty = llvm::Type::getInt8Ty(ctx);
   auto* header_type = llvm::StructType::get(
       ctx, {i32_ty, i32_ty, i64_ty, i64_ty, i64_ty, i8_ty, i8_ty, i32_ty,
-            ptr_ty, i32_ty, ptr_ty, i32_ty, ptr_ty, ptr_ty, i32_ty, i32_ty});
+            ptr_ty, i32_ty, ptr_ty, i32_ty, ptr_ty, i32_ty});
   // BodyProcessEntry ABI: {ptr shared_body_fn, u32 schema_index, u32 pad}
   auto* entry_type = llvm::StructType::get(ctx, {ptr_ty, i32_ty, i32_ty});
 
@@ -174,21 +175,16 @@ auto EmitBodyRealizationDescs(
               llvm::ConstantInt::get(i32_ty, 0)});
     }
 
-    // Expression connection child descriptor and coord pool emission.
+    // Expression connection child descriptor emission.
     llvm::Constant* expr_child_descs_ptr = null_ptr;
-    llvm::Constant* expr_coord_words_ptr = null_ptr;
-    uint32_t expr_coord_word_count = 0;
     uint32_t num_expr_connections = info.num_expr_connections;
 
     if (num_expr_connections > 0 && info.body != nullptr) {
       const auto& body = *info.body;
-      // ExprConnChildDesc ABI: {u32 coord_word_offset, u32 coord_step_count,
-      //   u32 child_ordinal, u32 child_port_sym_value, u32 binding_byte_offset}
-      auto* desc_type =
-          llvm::StructType::get(ctx, {i32_ty, i32_ty, i32_ty, i32_ty, i32_ty});
+      // ExprConnChildDesc ABI: {u32 child_ordinal,
+      //   u32 child_port_sym_value, u32 binding_byte_offset}
+      auto* desc_type = llvm::StructType::get(ctx, {i32_ty, i32_ty, i32_ty});
 
-      // Build coord word pool and descriptor constants.
-      std::vector<uint32_t> coord_pool;
       std::vector<llvm::Constant*> desc_consts;
       desc_consts.reserve(num_expr_connections);
 
@@ -205,17 +201,6 @@ auto EmitBodyRealizationDescs(
                   "body {} expr conn {} has invalid child_port_sym", body_group,
                   ci));
         }
-        const auto& site = body.child_sites[tmpl.child_site.value];
-        const auto& durable_id = site.id;
-
-        // Encode coord into flat pool.
-        auto word_offset = static_cast<uint32_t>(coord_pool.size());
-        auto step_count = static_cast<uint32_t>(durable_id.coord.size());
-        for (const auto& step : durable_id.coord) {
-          coord_pool.push_back(static_cast<uint32_t>(step.kind));
-          coord_pool.push_back(step.construct_index);
-          coord_pool.push_back(step.alt_index);
-        }
 
         // Schema / binding offset lookup.
         uint32_t proc_ordinal = num_ordinary_nonfinal + ci;
@@ -223,12 +208,20 @@ auto EmitBodyRealizationDescs(
         uint32_t binding_off =
             layout.state_schemas[schema_idx].expr_conn_binding_byte_offset;
 
+        // child_ordinal is the tree-relative ordinal_in_parent: the
+        // direct child position in parent->scope.children including
+        // generate scopes. Resolved by direct tree indexing at runtime.
+        uint32_t tree_ordinal = tmpl.child_site.value;
+        if (body_group < child_site_to_tree_ordinal.size() &&
+            tmpl.child_site.value <
+                child_site_to_tree_ordinal[body_group].size()) {
+          tree_ordinal =
+              child_site_to_tree_ordinal[body_group][tmpl.child_site.value];
+        }
         desc_consts.push_back(
             llvm::ConstantStruct::get(
                 desc_type,
-                {llvm::ConstantInt::get(i32_ty, word_offset),
-                 llvm::ConstantInt::get(i32_ty, step_count),
-                 llvm::ConstantInt::get(i32_ty, durable_id.child_ordinal),
+                {llvm::ConstantInt::get(i32_ty, tree_ordinal),
                  llvm::ConstantInt::get(i32_ty, tmpl.child_port_sym.value),
                  llvm::ConstantInt::get(i32_ty, binding_off)}));
       }
@@ -247,28 +240,6 @@ auto EmitBodyRealizationDescs(
           llvm::ArrayRef<llvm::Constant*>{
               llvm::ConstantInt::get(i32_ty, 0),
               llvm::ConstantInt::get(i32_ty, 0)});
-
-      // Emit coord word pool.
-      expr_coord_word_count = static_cast<uint32_t>(coord_pool.size());
-      if (!coord_pool.empty()) {
-        std::vector<llvm::Constant*> pool_consts;
-        pool_consts.reserve(coord_pool.size());
-        for (uint32_t w : coord_pool) {
-          pool_consts.push_back(llvm::ConstantInt::get(i32_ty, w));
-        }
-        auto pool_name =
-            std::format("__lyra_body_desc_{}_expr_conn_coord", body_group);
-        auto* pool_array_type = llvm::ArrayType::get(i32_ty, coord_pool.size());
-        auto* pool_global = new llvm::GlobalVariable(
-            mod, pool_array_type, true, llvm::GlobalValue::InternalLinkage,
-            llvm::ConstantArray::get(pool_array_type, pool_consts), pool_name);
-        pool_global->setUnnamedAddr(llvm::GlobalValue::UnnamedAddr::Global);
-        expr_coord_words_ptr = llvm::ConstantExpr::getInBoundsGetElementPtr(
-            pool_array_type, pool_global,
-            llvm::ArrayRef<llvm::Constant*>{
-                llvm::ConstantInt::get(i32_ty, 0),
-                llvm::ConstantInt::get(i32_ty, 0)});
-      }
     }
 
     auto* header_val = llvm::ConstantStruct::get(
@@ -284,8 +255,7 @@ auto EmitBodyRealizationDescs(
          inline_slot_offsets_ptr,
          llvm::ConstantInt::get(i32_ty, num_inline_slot_offsets),
          port_entries_ptr, llvm::ConstantInt::get(i32_ty, num_port_entries),
-         expr_child_descs_ptr, expr_coord_words_ptr,
-         llvm::ConstantInt::get(i32_ty, expr_coord_word_count),
+         expr_child_descs_ptr,
          llvm::ConstantInt::get(i32_ty, num_expr_connections)});
     auto* header_global = new llvm::GlobalVariable(
         mod, header_type, true, llvm::GlobalValue::InternalLinkage, header_val,

@@ -51,9 +51,14 @@ auto GetConstructionProgramEntryType(llvm::LLVMContext& ctx)
     -> llvm::StructType* {
   auto* i32_ty = llvm::Type::getInt32Ty(ctx);
   auto* i64_ty = llvm::Type::getInt64Ty(ctx);
+  // Must match ConstructionProgramEntry field order:
+  // node_kind(i32), body_group(i32), label_offset(i32),
+  // param_offset(i32), param_size(i32), parent_scope_index(i32),
+  // ordinal_in_parent(i32), instance_index(i32),
+  // realized_inline_size(i64), realized_appendix_size(i64)
   return llvm::StructType::get(
-      ctx, {i32_ty, i32_ty, i32_ty, i32_ty, i64_ty, i64_ty, i32_ty, i32_ty,
-            i32_ty, i32_ty, i32_ty});
+      ctx, {i32_ty, i32_ty, i32_ty, i32_ty, i32_ty, i32_ty, i32_ty, i32_ty,
+            i64_ty, i64_ty});
 }
 
 // Encode one ConstructionProgramEntry as an LLVM constant.
@@ -63,17 +68,16 @@ auto EncodeConstructionProgramEntry(
   auto* i32_ty = llvm::Type::getInt32Ty(ctx);
   auto* i64_ty = llvm::Type::getInt64Ty(ctx);
   return llvm::ConstantStruct::get(
-      ty, {llvm::ConstantInt::get(i32_ty, e.body_group),
-           llvm::ConstantInt::get(i32_ty, e.path_offset),
+      ty, {llvm::ConstantInt::get(i32_ty, static_cast<uint32_t>(e.node_kind)),
+           llvm::ConstantInt::get(i32_ty, e.body_group),
+           llvm::ConstantInt::get(i32_ty, e.label_offset),
            llvm::ConstantInt::get(i32_ty, e.param_offset),
            llvm::ConstantInt::get(i32_ty, e.param_size),
+           llvm::ConstantInt::get(i32_ty, e.parent_scope_index),
+           llvm::ConstantInt::get(i32_ty, e.ordinal_in_parent),
+           llvm::ConstantInt::get(i32_ty, e.instance_index),
            llvm::ConstantInt::get(i64_ty, e.realized_inline_size),
-           llvm::ConstantInt::get(i64_ty, e.realized_appendix_size),
-           llvm::ConstantInt::get(i32_ty, e.parent_instance_index),
-           llvm::ConstantInt::get(i32_ty, e.child_ordinal_in_coord),
-           llvm::ConstantInt::get(i32_ty, e.coord_offset),
-           llvm::ConstantInt::get(i32_ty, e.coord_count),
-           llvm::ConstantInt::get(i32_ty, e.inst_name_offset)});
+           llvm::ConstantInt::get(i64_ty, e.realized_appendix_size)});
 }
 
 // Canonical LLVM struct type for runtime::BodyDescriptorRef.
@@ -448,7 +452,7 @@ auto DeclareConstructorRuntimeFuncs(Context& context)
       .run_program = declare(
           "LyraConstructorRunProgram", void_ty,
           {ptr_ty, ptr_ty, i32_ty, ptr_ty, i32_ty, ptr_ty, i32_ty, ptr_ty,
-           i32_ty, ptr_ty, i32_ty}),
+           i32_ty}),
       .finalize = declare("LyraConstructorFinalize", ptr_ty, {ptr_ty}),
       .result_get_states =
           declare("LyraConstructionResultGetStates", ptr_ty, {ptr_ty}),
@@ -604,32 +608,8 @@ auto EmitConstructorFunction(
       EmitConstructionProgramGlobal(ctx, context.GetModule(), prog.entries);
   auto entry_count = static_cast<uint32_t>(prog.entries.size());
 
-  // Emit coord steps pool for structural child edge metadata.
-  auto coord_pool_word_count =
-      static_cast<uint32_t>(prog.coord_steps_pool.size());
-  llvm::Constant* coord_pool_ptr = nullptr;
-  if (prog.coord_steps_pool.empty()) {
-    coord_pool_ptr =
-        llvm::ConstantPointerNull::get(llvm::cast<llvm::PointerType>(ptr_ty));
-  } else {
-    std::vector<llvm::Constant*> coord_words;
-    coord_words.reserve(prog.coord_steps_pool.size());
-    for (auto w : prog.coord_steps_pool) {
-      coord_words.push_back(llvm::ConstantInt::get(i32_ty, w));
-    }
-    auto* arr_ty = llvm::ArrayType::get(i32_ty, coord_words.size());
-    auto* init = llvm::ConstantArray::get(arr_ty, coord_words);
-    auto* global = new llvm::GlobalVariable(
-        context.GetModule(), arr_ty, true, llvm::GlobalValue::InternalLinkage,
-        init, "__lyra_coord_steps_pool");
-    global->setUnnamedAddr(llvm::GlobalValue::UnnamedAddr::Global);
-    auto* zero = llvm::ConstantInt::get(i32_ty, 0);
-    coord_pool_ptr = llvm::ConstantExpr::getInBoundsGetElementPtr(
-        arr_ty, global, llvm::ArrayRef<llvm::Constant*>{zero, zero});
-  }
-
   // Replay the construction program: the runtime iterates entries in
-  // ModuleIndex order, calling CreateChild as needed.
+  // parent-before-child order, creating scope nodes and instances.
   auto path_pool_size = static_cast<uint32_t>(prog.path_pool.size());
   auto param_pool_size = static_cast<uint32_t>(prog.param_pool.size());
   builder.CreateCall(
@@ -638,8 +618,7 @@ auto EmitConstructorFunction(
        llvm::ConstantInt::get(i32_ty, body_desc_count), path_pool_ptr,
        llvm::ConstantInt::get(i32_ty, path_pool_size), param_pool_ptr,
        llvm::ConstantInt::get(i32_ty, param_pool_size), program_ptr,
-       llvm::ConstantInt::get(i32_ty, entry_count), coord_pool_ptr,
-       llvm::ConstantInt::get(i32_ty, coord_pool_word_count)});
+       llvm::ConstantInt::get(i32_ty, entry_count)});
 
   // Finalize: returns a single constructor-owned result handle.
   auto* result = builder.CreateCall(rt.finalize, {ctor}, "ctor_result");
@@ -677,11 +656,13 @@ auto EmitConstructorFunction(
         llvm::ConstantDataArray::get(ctx, prog.ext_ref_binding_counts),
         "__lyra_ext_ref_binding_counts");
 
+    auto instance_count =
+        static_cast<uint32_t>(prog.ext_ref_binding_offsets.size());
     builder.CreateCall(
         rt.result_set_ext_ref_bindings,
         {result, pool_global, llvm::ConstantInt::get(i32_ty, pool_count),
          offsets_global, counts_global,
-         llvm::ConstantInt::get(i32_ty, entry_count)});
+         llvm::ConstantInt::get(i32_ty, instance_count)});
   }
 
   // Extract states, counts, and process metadata from the result.
@@ -785,8 +766,9 @@ auto EmitRealizationAndConstructor(
 
   // Emit constructor-side definition artifacts.
   auto* slot_offsets_ptr = EmitSlotByteOffsets(context, layout);
-  auto body_descs =
-      EmitBodyRealizationDescs(context, layout, body_compiled_funcs);
+  auto body_descs = EmitBodyRealizationDescs(
+      context, layout, body_compiled_funcs,
+      construction_program.child_site_to_tree_ordinal);
   auto* conn_descs_ptr =
       EmitConnectionRealizationDescs(context, layout, process_funcs, num_init);
   auto conn_meta = EmitConnectionMetaTemplate(context, layout);

@@ -3,14 +3,14 @@
 #include <cstddef>
 #include <cstdint>
 #include <span>
-#include <string>
 #include <vector>
 
+#include "lyra/common/internal_error.hpp"
 #include "lyra/common/local_slot_id.hpp"
-#include "lyra/common/selection_step.hpp"
 #include "lyra/runtime/instance_event_state.hpp"
 #include "lyra/runtime/instance_observability.hpp"
 #include "lyra/runtime/process_frame.hpp"
+#include "lyra/runtime/runtime_scope.hpp"
 #include "lyra/runtime/signal_coord.hpp"
 
 namespace lyra::runtime {
@@ -209,7 +209,14 @@ struct RuntimeInstance {
 
   // --- Non-contract fields (invisible to codegen) ---
 
-  const char* path_c_str = nullptr;
+  // Hierarchy identity. Owns parent/child edges, hierarchical path, and
+  // scope kind. Shared structural shape with RuntimeGenerateScope.
+  RuntimeScope scope;
+
+  // Instance payload index. Matches the compile-time object_index
+  // (sorted all_instances position). Used for indexing into
+  // result.instances, instance_bundles, and instance_ptrs.
+  // Instance-specific, not generic scope identity.
   uint32_t owner_ordinal = 0;
 
   // Canonical per-instance attached-process carrier.
@@ -218,30 +225,6 @@ struct RuntimeInstance {
   // Parallel to per-body process ordinals (body-local index i
   // corresponds to attached_processes[i]).
   std::vector<RuntimeProcess*> attached_processes;
-
-  // Primary structural hierarchy (not part of binary contract with codegen).
-  // Established during constructor assembly: CreateChild sets parent and
-  // appends a typed RuntimeChildEdge to parent->children in a single
-  // creation path.
-  RuntimeInstance* parent = nullptr;
-
-  // Typed structural child edges. Each edge carries structural metadata
-  // (generate-scope context + ordinal within that context) for procedural
-  // walking by compile-time path recipes. These are edge metadata, not
-  // object identity -- they enable navigation without key lookup.
-  struct ChildEdge {
-    common::RepertoireCoord coord;
-    uint32_t child_ordinal_in_coord = 0;
-    RuntimeInstance* child = nullptr;
-  };
-  std::vector<ChildEdge> children;
-
-  // Instance-owned hierarchical path string. Derived from structural
-  // position during assembly (parent path + child display label).
-  // The display label is consumed during assembly and not stored.
-  // Owns the storage that path_c_str points into.
-  // Not part of the binary contract with codegen.
-  std::string path_storage;
 
   // Backing storage for resolved ext-ref bindings.
   // ext_ref_bindings (binary contract ptr) points into this vector.
@@ -347,5 +330,37 @@ auto AllocateOwnedInlineStorage(uint64_t size) -> uint8_t*;
 
 // Allocate zero-initialized owned storage for an instance's appendix region.
 auto AllocateOwnedAppendixStorage(uint64_t size) -> uint8_t*;
+
+// container_of: recover RuntimeInstance* from its embedded RuntimeScope*.
+// Checked precondition: scope != nullptr and scope->kind == kInstance.
+// Standard-layout is required for offsetof on the containing type.
+static_assert(std::is_standard_layout_v<RuntimeInstance>);
+
+inline auto ScopeAsInstanceChecked(RuntimeScope* scope) -> RuntimeInstance* {
+  if (scope == nullptr) {
+    throw common::InternalError("ScopeAsInstanceChecked", "null RuntimeScope*");
+  }
+  if (scope->kind != RuntimeScopeKind::kInstance) {
+    throw common::InternalError(
+        "ScopeAsInstanceChecked",
+        "scope is not kInstance; cannot recover RuntimeInstance*");
+  }
+  return reinterpret_cast<RuntimeInstance*>(
+      reinterpret_cast<char*>(scope) - offsetof(RuntimeInstance, scope));
+}
+
+inline auto ScopeAsInstanceChecked(const RuntimeScope* scope)
+    -> const RuntimeInstance* {
+  if (scope == nullptr) {
+    throw common::InternalError("ScopeAsInstanceChecked", "null RuntimeScope*");
+  }
+  if (scope->kind != RuntimeScopeKind::kInstance) {
+    throw common::InternalError(
+        "ScopeAsInstanceChecked",
+        "scope is not kInstance; cannot recover RuntimeInstance*");
+  }
+  return reinterpret_cast<const RuntimeInstance*>(
+      reinterpret_cast<const char*>(scope) - offsetof(RuntimeInstance, scope));
+}
 
 }  // namespace lyra::runtime

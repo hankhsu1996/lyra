@@ -276,6 +276,7 @@ auto PrepareLlvmModule(
       .specialization_map = &hir_result.specialization_map,
       .child_coord_map = &hir_result.child_coord_map,
       .body_timescales = &hir_result.body_timescales,
+      .hierarchy_nodes = &hir_result.hierarchy_nodes,
   };
   auto mir_result = lowering::hir_to_mir::LowerHirToMir(mir_input);
   if (!mir_result) {

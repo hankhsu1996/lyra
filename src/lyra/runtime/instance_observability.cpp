@@ -78,8 +78,9 @@ auto ComposeHierarchicalTraceName(
     const RuntimeInstance& inst, LocalSignalId local_signal,
     const BodyObservableLayout& layout) -> std::string {
   auto local_name = layout.TraceLocalName(local_signal);
-  std::string_view path =
-      inst.path_c_str != nullptr ? inst.path_c_str : std::string_view{};
+  std::string_view path = inst.scope.path_c_str != nullptr
+                              ? inst.scope.path_c_str
+                              : std::string_view{};
   if (path.empty()) {
     return std::string(local_name);
   }

@@ -98,12 +98,10 @@ struct BodyRealizationDesc {
   // expression suffix. Parallel ExprConnChildDesc provides child binding
   // metadata for each.
   const ExprConnChildDesc* expr_conn_child_descs = nullptr;
-  const uint32_t* expr_conn_coord_words = nullptr;
-  uint32_t num_expr_conn_coord_words = 0;
   uint32_t num_expr_connections = 0;
 };
 
-static_assert(sizeof(BodyRealizationDesc) == 96);
+static_assert(sizeof(BodyRealizationDesc) == 88);
 static_assert(offsetof(BodyRealizationDesc, num_processes) == 0);
 static_assert(offsetof(BodyRealizationDesc, slot_count) == 4);
 static_assert(offsetof(BodyRealizationDesc, inline_state_size_bytes) == 8);
@@ -117,9 +115,7 @@ static_assert(offsetof(BodyRealizationDesc, num_inline_slot_offsets) == 48);
 static_assert(offsetof(BodyRealizationDesc, port_entries) == 56);
 static_assert(offsetof(BodyRealizationDesc, num_port_entries) == 64);
 static_assert(offsetof(BodyRealizationDesc, expr_conn_child_descs) == 72);
-static_assert(offsetof(BodyRealizationDesc, expr_conn_coord_words) == 80);
-static_assert(offsetof(BodyRealizationDesc, num_expr_conn_coord_words) == 88);
-static_assert(offsetof(BodyRealizationDesc, num_expr_connections) == 92);
+static_assert(offsetof(BodyRealizationDesc, num_expr_connections) == 80);
 static_assert(std::is_trivially_copyable_v<BodyRealizationDesc>);
 static_assert(std::is_standard_layout_v<BodyRealizationDesc>);
 
@@ -132,11 +128,11 @@ static_assert(std::is_standard_layout_v<BodyRealizationDesc>);
 // resolution (port sym -> local slot -> byte offset) is constructor work,
 // using the child's own emitted body descriptor.
 struct ExprConnChildDesc {
-  // Structural child identity: RepertoireCoord encoded as 3 uint32_t words
-  // per SelectionStepDesc {kind, construct_index, alt_index} in a flat pool.
-  // Encoding matches ConstructionProgramEntry (constructor_.cpp:35-59).
-  uint32_t coord_word_offset = 0;
-  uint32_t coord_step_count = 0;
+  // Tree-relative direct child position in the parent runtime scope's
+  // children vector. Includes generate scopes and module instances in a
+  // single unified ordinal space. Resolved at runtime by direct indexing
+  // into parent->scope.children. Not instance-table order, not
+  // child-site order, not coord-based identity.
   uint32_t child_ordinal = 0;
   // Symbolic child public port identity. Constructor resolves this to
   // concrete local slot and byte offset using the child's emitted port
@@ -148,12 +144,10 @@ struct ExprConnChildDesc {
   uint32_t binding_byte_offset = 0;
 };
 
-static_assert(sizeof(ExprConnChildDesc) == 20);
-static_assert(offsetof(ExprConnChildDesc, coord_word_offset) == 0);
-static_assert(offsetof(ExprConnChildDesc, coord_step_count) == 4);
-static_assert(offsetof(ExprConnChildDesc, child_ordinal) == 8);
-static_assert(offsetof(ExprConnChildDesc, child_port_sym_value) == 12);
-static_assert(offsetof(ExprConnChildDesc, binding_byte_offset) == 16);
+static_assert(sizeof(ExprConnChildDesc) == 12);
+static_assert(offsetof(ExprConnChildDesc, child_ordinal) == 0);
+static_assert(offsetof(ExprConnChildDesc, child_port_sym_value) == 4);
+static_assert(offsetof(ExprConnChildDesc, binding_byte_offset) == 8);
 static_assert(std::is_trivially_copyable_v<ExprConnChildDesc>);
 static_assert(std::is_standard_layout_v<ExprConnChildDesc>);
 

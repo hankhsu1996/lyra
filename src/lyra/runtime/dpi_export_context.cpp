@@ -91,8 +91,11 @@ extern "C" void LyraResolveModuleInstanceBinding(
     LyraFailMissingModuleExportScope();
   }
   auto* engine = static_cast<lyra::runtime::Engine*>(ctx->engine);
-  auto* inst = const_cast<lyra::runtime::RuntimeInstance*>(
+  // Validate the scope handle, then narrow to an instance -- DPI module
+  // exports only bind to module instances, not generate scopes.
+  auto* scope = const_cast<lyra::runtime::RuntimeScope*>(
       engine->ValidateScopeHandle(ctx->active_scope));
+  auto* inst = lyra::runtime::ScopeAsInstanceChecked(scope);
   out->design_state = ctx->design_state;
   out->engine = ctx->engine;
   out->this_ptr = inst->storage.inline_base;

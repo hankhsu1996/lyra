@@ -155,15 +155,17 @@ void TextTraceSink::HandleLocalValueChange(const LocalValueChange& vc) {
     throw common::InternalError(
         "TextTraceSink::HandleLocalValueChange",
         std::format(
-            "instance '{}' has no observability layout", inst->path_c_str));
+            "instance '{}' has no observability layout",
+            inst->scope.path_c_str));
   }
 
   if (vc.signal_id.value >= layout->trace_meta.size()) {
     throw common::InternalError(
         "TextTraceSink::HandleLocalValueChange",
         std::format(
-            "instance '{}' local signal {} out of range {}", inst->path_c_str,
-            vc.signal_id.value, layout->trace_meta.size()));
+            "instance '{}' local signal {} out of range {}",
+            inst->scope.path_c_str, vc.signal_id.value,
+            layout->trace_meta.size()));
   }
 
   auto name =

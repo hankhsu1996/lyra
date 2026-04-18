@@ -1,5 +1,6 @@
 /* DPI companion C code exercising svdpi.h runtime utility functions. */
 
+#include <string.h>
 #include <svdpi.h>
 
 int test_svdpi_version(void) {
@@ -391,6 +392,37 @@ int test_size_helpers(void) {
   if (svSizeOfLogicPackedArr(33) != 16) return 0;
   if (svSizeOfLogicPackedArr(64) != 16) return 0;
   if (svSizeOfLogicPackedArr(65) != 24) return 0;
+
+  return 1;
+}
+
+/* Verify that generate-scope paths are registered and reachable via the
+ * DPI scope registry. This exercises the full scope tree, not just the
+ * instance-backed subset. Covers four properties:
+ *   1. svGetScopeFromName("Test.blk[0]") returns a non-null handle.
+ *   2. svGetNameFromScope round-trips the path.
+ *   3. svPutUserData/svGetUserData accept the generate-scope handle.
+ *   4. The inner instance "Test.blk[0].u" is also registered.
+ */
+int test_generate_scope_registration(void) {
+  svScope gen = svGetScopeFromName("Test.blk[0]");
+  if (gen == 0) return 0;
+
+  const char* name = svGetNameFromScope(gen);
+  if (name == 0) return 0;
+  if (strcmp(name, "Test.blk[0]") != 0) return 0;
+
+  static int key;
+  static int data = 42;
+  if (svPutUserData(gen, &key, &data) != 0) return 0;
+  int* got = (int*)svGetUserData(gen, &key);
+  if (got == 0 || *got != 42) return 0;
+
+  svScope inner = svGetScopeFromName("Test.blk[0].u");
+  if (inner == 0) return 0;
+  const char* inner_name = svGetNameFromScope(inner);
+  if (inner_name == 0) return 0;
+  if (strcmp(inner_name, "Test.blk[0].u") != 0) return 0;
 
   return 1;
 }

@@ -54,7 +54,7 @@ void SummaryTraceSink::PrintSummary(
         std::format(
             "__LYRA_TRACE_SLOT__: instance='{}' local={} value_changes={} "
             "memory_dirty={}\n",
-            key.instance->path_c_str, key.signal_id, counts.value_changes,
+            key.instance->scope.path_c_str, key.signal_id, counts.value_changes,
             counts.memory_dirty));
   }
 }

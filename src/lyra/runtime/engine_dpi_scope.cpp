@@ -1,4 +1,7 @@
 #include <format>
+#include <string_view>
+#include <unordered_map>
+#include <unordered_set>
 
 #include "lyra/common/internal_error.hpp"
 #include "lyra/runtime/engine.hpp"
@@ -6,14 +9,59 @@
 
 namespace lyra::runtime {
 
+namespace {
+
+// Walk the runtime scope subtree rooted at `scope` and register every node
+// (both instance and generate) into the DPI scope registry. The full
+// scope tree is the authoritative membership set for svScope handles;
+// any scope with a hierarchical path is a valid handle.
+void RegisterScopeSubtree(
+    const RuntimeScope* scope,
+    std::unordered_set<const RuntimeScope*>& valid_scopes,
+    std::unordered_map<std::string_view, const RuntimeScope*>& scope_path_map,
+    std::unordered_map<const RuntimeScope*, const char*>& scope_path_by_ptr) {
+  if (scope == nullptr) return;
+  if (scope->path_c_str == nullptr) {
+    throw common::InternalError(
+        "BuildDpiScopeRegistry",
+        "null path_c_str on runtime scope during subtree registration");
+  }
+  if (!valid_scopes.insert(scope).second) {
+    throw common::InternalError(
+        "BuildDpiScopeRegistry",
+        std::format(
+            "duplicate RuntimeScope pointer at path '{}'", scope->path_c_str));
+  }
+  if (!scope_path_map.emplace(std::string_view(scope->path_c_str), scope)
+           .second) {
+    throw common::InternalError(
+        "BuildDpiScopeRegistry",
+        std::format("duplicate scope path '{}'", scope->path_c_str));
+  }
+  if (!scope_path_by_ptr.emplace(scope, scope->path_c_str).second) {
+    throw common::InternalError(
+        "BuildDpiScopeRegistry",
+        "duplicate RuntimeScope in DPI reverse path map");
+  }
+  for (const auto& edge : scope->children) {
+    RegisterScopeSubtree(
+        edge.child, valid_scopes, scope_path_map, scope_path_by_ptr);
+  }
+}
+
+}  // namespace
+
 void Engine::BuildDpiScopeRegistry() {
   valid_scopes_.clear();
   scope_path_map_.clear();
-  scope_inst_path_map_.clear();
+  scope_path_by_ptr_.clear();
   scope_user_data_.clear();
   if (instances_.empty()) {
     return;
   }
+  // Walk the runtime scope tree from each root instance. Generate scopes
+  // and nested instances are reached via scope.children edges. This is
+  // the authoritative source of valid svScope handles.
   for (uint32_t i = 0; i < instances_.size(); ++i) {
     const RuntimeInstance* inst = instances_[i];
     if (inst == nullptr) {
@@ -21,48 +69,30 @@ void Engine::BuildDpiScopeRegistry() {
           "BuildDpiScopeRegistry",
           std::format("null RuntimeInstance at index {}", i));
     }
-    if (inst->path_c_str == nullptr) {
-      throw common::InternalError(
-          "BuildDpiScopeRegistry",
-          std::format("null path_c_str on instance at index {}", i));
-    }
-    valid_scopes_.insert(inst);
-    auto [path_it, path_inserted] =
-        scope_path_map_.emplace(std::string_view(inst->path_c_str), inst);
-    if (!path_inserted) {
-      throw common::InternalError(
-          "BuildDpiScopeRegistry",
-          std::format("duplicate instance path '{}'", inst->path_c_str));
-    }
-    auto [inst_it, inst_inserted] =
-        scope_inst_path_map_.emplace(inst, inst->path_c_str);
-    if (!inst_inserted) {
-      throw common::InternalError(
-          "BuildDpiScopeRegistry",
-          "duplicate RuntimeInstance in DPI scope registry");
-    }
+    if (inst->scope.parent != nullptr) continue;
+    RegisterScopeSubtree(
+        &inst->scope, valid_scopes_, scope_path_map_, scope_path_by_ptr_);
   }
 }
 
-auto Engine::ValidateScopeHandle(svScope scope) const
-    -> const RuntimeInstance* {
+auto Engine::ValidateScopeHandle(svScope scope) const -> const RuntimeScope* {
   if (scope == nullptr) {
     return nullptr;
   }
-  const auto* inst = static_cast<const RuntimeInstance*>(scope);
-  if (!valid_scopes_.contains(inst)) {
+  const auto* rs = static_cast<const RuntimeScope*>(scope);
+  if (!valid_scopes_.contains(rs)) {
     throw common::InternalError(
         "ValidateScopeHandle", "invalid svScope handle");
   }
-  return inst;
+  return rs;
 }
 
-auto Engine::IsScopeHandleValid(const RuntimeInstance* inst) const -> bool {
-  return valid_scopes_.contains(inst);
+auto Engine::IsScopeHandleValid(const RuntimeScope* scope) const -> bool {
+  return valid_scopes_.contains(scope);
 }
 
 auto Engine::ResolveScopeByPath(std::string_view path) const
-    -> const RuntimeInstance* {
+    -> const RuntimeScope* {
   auto it = scope_path_map_.find(path);
   if (it == scope_path_map_.end()) {
     return nullptr;
@@ -70,45 +100,45 @@ auto Engine::ResolveScopeByPath(std::string_view path) const
   return it->second;
 }
 
-auto Engine::GetScopePath(const RuntimeInstance* inst) const -> const char* {
-  if (inst == nullptr) {
+auto Engine::GetScopePath(const RuntimeScope* scope) const -> const char* {
+  if (scope == nullptr) {
     return nullptr;
   }
-  if (!valid_scopes_.contains(inst)) {
+  if (!valid_scopes_.contains(scope)) {
     throw common::InternalError(
         "GetScopePath", "scope is not registered in DPI scope registry");
   }
-  auto it = scope_inst_path_map_.find(inst);
-  if (it == scope_inst_path_map_.end()) {
+  auto it = scope_path_by_ptr_.find(scope);
+  if (it == scope_path_by_ptr_.end()) {
     throw common::InternalError(
         "GetScopePath", "registered scope missing reverse path entry");
   }
   return it->second;
 }
 
-auto Engine::PutScopeUserData(
-    const RuntimeInstance* inst, void* key, void* data) -> int {
-  if (inst == nullptr || key == nullptr) {
+auto Engine::PutScopeUserData(const RuntimeScope* scope, void* key, void* data)
+    -> int {
+  if (scope == nullptr || key == nullptr) {
     return -1;
   }
-  if (!valid_scopes_.contains(inst)) {
+  if (!valid_scopes_.contains(scope)) {
     throw common::InternalError(
         "PutScopeUserData", "scope is not registered in DPI scope registry");
   }
-  scope_user_data_[inst][key] = data;
+  scope_user_data_[scope][key] = data;
   return 0;
 }
 
-auto Engine::GetScopeUserData(const RuntimeInstance* inst, void* key) const
+auto Engine::GetScopeUserData(const RuntimeScope* scope, void* key) const
     -> void* {
-  if (inst == nullptr || key == nullptr) {
+  if (scope == nullptr || key == nullptr) {
     return nullptr;
   }
-  if (!valid_scopes_.contains(inst)) {
+  if (!valid_scopes_.contains(scope)) {
     throw common::InternalError(
         "GetScopeUserData", "scope is not registered in DPI scope registry");
   }
-  auto scope_it = scope_user_data_.find(inst);
+  auto scope_it = scope_user_data_.find(scope);
   if (scope_it == scope_user_data_.end()) {
     return nullptr;
   }
@@ -126,20 +156,36 @@ auto Engine::GetSimulationTimeSemantics() const -> SimulationTimeSemantics {
   };
 }
 
-auto Engine::GetScopeTimeUnitPower(const RuntimeInstance* inst) const
-    -> int32_t {
-  if (inst == nullptr) {
+auto Engine::GetScopeTimeUnitPower(const RuntimeScope* scope) const -> int32_t {
+  if (scope == nullptr) {
     return GetSimulationTimeSemantics().unit_power;
   }
-  return inst->scope_time_metadata.time_unit_power;
+  // Time metadata lives on the enclosing module instance. Walk up for
+  // generate scopes. Per IEEE 1800, generate blocks inherit timescale
+  // from their enclosing module.
+  const RuntimeScope* cur = scope;
+  while (cur != nullptr && cur->kind != RuntimeScopeKind::kInstance) {
+    cur = cur->parent;
+  }
+  if (cur == nullptr) {
+    return GetSimulationTimeSemantics().unit_power;
+  }
+  return ScopeAsInstanceChecked(cur)->scope_time_metadata.time_unit_power;
 }
 
-auto Engine::GetScopeTimePrecisionPower(const RuntimeInstance* inst) const
+auto Engine::GetScopeTimePrecisionPower(const RuntimeScope* scope) const
     -> int32_t {
-  if (inst == nullptr) {
+  if (scope == nullptr) {
     return GetSimulationTimeSemantics().precision_power;
   }
-  return inst->scope_time_metadata.time_precision_power;
+  const RuntimeScope* cur = scope;
+  while (cur != nullptr && cur->kind != RuntimeScopeKind::kInstance) {
+    cur = cur->parent;
+  }
+  if (cur == nullptr) {
+    return GetSimulationTimeSemantics().precision_power;
+  }
+  return ScopeAsInstanceChecked(cur)->scope_time_metadata.time_precision_power;
 }
 
 }  // namespace lyra::runtime

@@ -579,6 +579,9 @@ auto LowerDesign(
   if (input.instance_table != nullptr) {
     construction.instance_table = *input.instance_table;
   }
+  if (input.hierarchy_nodes != nullptr) {
+    construction.hierarchy_nodes = *input.hierarchy_nodes;
+  }
 
   uint32_t next_placement_base = decls.num_package_slots;
   uint32_t module_index = 0;
@@ -1137,18 +1140,6 @@ auto LowerDesign(
   auto topo = BuildBoundHierarchyIndex(
       construction, parent_to_children, body_to_representative,
       oi_to_durable_child);
-
-  // Copy parent topology into construction input for constructor use.
-  construction.parent_instance_indices = topo.parent_of;
-
-  // Build per-instance structural child identity from oi_to_durable_child.
-  auto instance_count = construction.objects.size();
-  construction.child_durable_ids.resize(instance_count);
-  for (const auto& [oi, durable_id] : oi_to_durable_child) {
-    if (oi < instance_count) {
-      construction.child_durable_ids[oi] = durable_id;
-    }
-  }
 
   FinalizeExternalRefTargetSlots(
       result, provisionals_by_body, body_local_slots_by_body, topo,

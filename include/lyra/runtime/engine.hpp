@@ -629,32 +629,36 @@ class Engine {
   // Validate an svScope handle against the authoritative registry.
   // Returns nullptr for null scope. Throws InternalError for non-null
   // handles that are not registered (prevents dangling pointer use).
+  // svScope is any scope node (module instance or generate scope);
+  // callers that need module-instance semantics narrow with
+  // ScopeAsInstanceChecked.
   [[nodiscard]] auto ValidateScopeHandle(svScope scope) const
-      -> const RuntimeInstance*;
+      -> const RuntimeScope*;
 
   // Non-throwing scope handle validity check.
-  // Returns true if inst is registered in the DPI scope registry.
-  [[nodiscard]] auto IsScopeHandleValid(const RuntimeInstance* inst) const
+  // Returns true if scope is registered in the DPI scope registry.
+  [[nodiscard]] auto IsScopeHandleValid(const RuntimeScope* scope) const
       -> bool;
 
-  // Resolve a hierarchical path to an instance scope handle.
+  // Resolve a hierarchical path to a scope handle.
   // Returns nullptr if path is not found.
   [[nodiscard]] auto ResolveScopeByPath(std::string_view path) const
-      -> const RuntimeInstance*;
+      -> const RuntimeScope*;
 
   // Get the canonical hierarchical path for a scope handle.
-  // Returns nullptr for null inst. Throws InternalError for unregistered inst.
-  [[nodiscard]] auto GetScopePath(const RuntimeInstance* inst) const -> const
+  // Returns nullptr for null scope. Throws InternalError for unregistered
+  // scope.
+  [[nodiscard]] auto GetScopePath(const RuntimeScope* scope) const -> const
       char*;
 
   // Per-scope user-data storage (svPutUserData/svGetUserData).
   // Returns 0 on success, -1 on error (null scope or null key).
-  auto PutScopeUserData(const RuntimeInstance* inst, void* key, void* data)
+  auto PutScopeUserData(const RuntimeScope* scope, void* key, void* data)
       -> int;
 
   // Returns nullptr on error (null scope, null key, or key not found).
   [[nodiscard]] auto GetScopeUserData(
-      const RuntimeInstance* inst, void* key) const -> void*;
+      const RuntimeScope* scope, void* key) const -> void*;
 
   // D6d: Per-instance time metadata, populated from BodyRealizationDesc.
   static void InitInstanceTimeMetadata(
@@ -669,12 +673,14 @@ class Engine {
       -> SimulationTimeSemantics;
 
   // D6d: Scope-aware time unit/precision queries.
-  // null inst -> simulation-level semantics.
-  // non-null inst -> per-instance metadata from body descriptor.
-  [[nodiscard]] auto GetScopeTimeUnitPower(const RuntimeInstance* inst) const
+  // null scope -> simulation-level semantics.
+  // non-null scope -> per-enclosing-instance metadata from body descriptor.
+  // For generate scopes, metadata is inherited from the nearest enclosing
+  // module instance (per IEEE 1800 generate block timescale rules).
+  [[nodiscard]] auto GetScopeTimeUnitPower(const RuntimeScope* scope) const
       -> int32_t;
-  [[nodiscard]] auto GetScopeTimePrecisionPower(
-      const RuntimeInstance* inst) const -> int32_t;
+  [[nodiscard]] auto GetScopeTimePrecisionPower(const RuntimeScope* scope) const
+      -> int32_t;
 
   // Plusargs query interface for $test$plusargs and $value$plusargs.
   // Returns 1 if prefix matches any plusarg, 0 otherwise.
@@ -1636,16 +1642,18 @@ class Engine {
   std::vector<PendingModuleProcessMeta> pending_module_process_meta_;
 
   // DPI scope registry (D6b). Built once by BuildDpiScopeRegistry().
-  // Authoritative membership set for scope handle validation.
-  std::unordered_set<const RuntimeInstance*> valid_scopes_;
-  // Reverse path -> instance lookup for svGetScopeFromName.
-  std::unordered_map<std::string_view, const RuntimeInstance*> scope_path_map_;
-  // Reverse instance -> canonical path for svGetNameFromScope.
-  std::unordered_map<const RuntimeInstance*, const char*> scope_inst_path_map_;
+  // Keyed by RuntimeScope* so the registry covers the full runtime scope
+  // tree (module instances and generate scopes alike). Callers that need
+  // module-instance semantics narrow each scope with ScopeAsInstanceChecked.
+  std::unordered_set<const RuntimeScope*> valid_scopes_;
+  // Reverse path -> scope lookup for svGetScopeFromName.
+  std::unordered_map<std::string_view, const RuntimeScope*> scope_path_map_;
+  // Reverse scope -> canonical path for svGetNameFromScope.
+  std::unordered_map<const RuntimeScope*, const char*> scope_path_by_ptr_;
   // Per-scope user-data storage for svPutUserData/svGetUserData.
-  // Outer key: instance pointer. Inner key: user-provided void* key.
+  // Outer key: scope pointer. Inner key: user-provided void* key.
   mutable std::unordered_map<
-      const RuntimeInstance*, std::unordered_map<void*, void*>>
+      const RuntimeScope*, std::unordered_map<void*, void*>>
       scope_user_data_;
 
   // Immutable per-owner decision metadata tables. Indexed by owner_id.

@@ -13,6 +13,7 @@
 #include <variant>
 #include <vector>
 
+#include "lyra/common/hierarchy_node.hpp"
 #include "lyra/common/internal_error.hpp"
 #include "lyra/llvm_backend/init_descriptor_utils.hpp"
 #include "lyra/llvm_backend/layout/storage_contract.hpp"
@@ -233,103 +234,130 @@ auto BuildParamPayloads(
 auto BuildConstructionProgram(
     std::span<const uint32_t> instance_body_group,
     std::span<const Layout::InstanceStorageSizes> instance_storage_sizes,
-    const mir::InstanceTable& instance_table,
     std::span<const std::vector<uint8_t>> param_payloads,
     const std::vector<std::vector<common::SerializedExtRefBinding>>&
         instance_ext_ref_bindings,
     std::span<const Layout::BodyRealizationInfo> body_realization_infos,
-    std::span<const uint32_t> parent_instance_indices,
-    std::span<const mir::DurableChildId> child_durable_ids)
+    std::span<const common::HierarchyNode> hierarchy_nodes)
     -> ConstructionProgramData {
   auto instance_count = static_cast<uint32_t>(instance_body_group.size());
+  auto node_count = static_cast<uint32_t>(hierarchy_nodes.size());
   ConstructionProgramData prog;
-  prog.entries.reserve(instance_count);
-  prog.ext_ref_binding_offsets.reserve(instance_count);
-  prog.ext_ref_binding_counts.reserve(instance_count);
+  prog.entries.reserve(node_count);
+  // Pre-size ext-ref arrays to instance_count so entries can be placed
+  // at their instance_index position (matching SetExtRefBindings indexing).
+  prog.ext_ref_binding_offsets.assign(instance_count, UINT32_MAX);
+  prog.ext_ref_binding_counts.assign(instance_count, 0);
 
-  for (uint32_t mi = 0; mi < instance_count; ++mi) {
+  for (uint32_t ni = 0; ni < node_count; ++ni) {
+    const auto& node = hierarchy_nodes[ni];
     runtime::ConstructionProgramEntry entry{};
 
-    entry.body_group = instance_body_group[mi];
-    entry.parent_instance_index = (mi < parent_instance_indices.size())
-                                      ? parent_instance_indices[mi]
-                                      : UINT32_MAX;
+    entry.node_kind = node.kind == common::HierarchyNode::kInstance
+                          ? runtime::ConstructionNodeKind::kInstance
+                          : runtime::ConstructionNodeKind::kGenerate;
+    entry.parent_scope_index = node.parent_node_index;
 
-    const auto& path = instance_table.entries[mi].full_path;
-    entry.path_offset = static_cast<uint32_t>(prog.path_pool.size());
-    prog.path_pool.insert(prog.path_pool.end(), path.begin(), path.end());
+    // Parent-relative scope label into path pool. Runtime derives full
+    // path from parent's scope path_storage + label via BuildScopePath.
+    entry.label_offset = static_cast<uint32_t>(prog.path_pool.size());
+    prog.path_pool.insert(
+        prog.path_pool.end(), node.label.begin(), node.label.end());
     prog.path_pool.push_back(0);
 
-    // Structural child edge metadata from compile-time DurableChildId.
-    if (mi < child_durable_ids.size()) {
-      const auto& durable = child_durable_ids[mi];
-      entry.child_ordinal_in_coord = durable.child_ordinal;
-      if (durable.coord.empty()) {
-        entry.coord_offset = UINT32_MAX;
-        entry.coord_count = 0;
-      } else {
-        entry.coord_offset =
-            static_cast<uint32_t>(prog.coord_steps_pool.size());
-        entry.coord_count = static_cast<uint32_t>(durable.coord.size());
-        for (const auto& step : durable.coord) {
-          prog.coord_steps_pool.push_back(static_cast<uint32_t>(step.kind));
-          prog.coord_steps_pool.push_back(step.construct_index);
-          prog.coord_steps_pool.push_back(step.alt_index);
+    // Compute ordinal among parent's children.
+    entry.ordinal_in_parent = 0;
+    if (node.parent_node_index != UINT32_MAX) {
+      uint32_t ordinal = 0;
+      for (uint32_t j = 0; j < ni; ++j) {
+        if (hierarchy_nodes[j].parent_node_index == node.parent_node_index) {
+          ++ordinal;
         }
       }
-    } else {
-      entry.child_ordinal_in_coord = 0;
-      entry.coord_offset = UINT32_MAX;
-      entry.coord_count = 0;
+      entry.ordinal_in_parent = ordinal;
     }
 
-    // Canonical local child display label from InstanceEntry::display_name
-    // (populated from slang Symbol::name at AST-to-HIR time).
-    // Emitted as a separate pool entry. Not derived from full path.
-    const auto& label = instance_table.entries[mi].inst_name;
-    if (!label.empty()) {
-      entry.inst_name_offset = static_cast<uint32_t>(prog.path_pool.size());
-      prog.path_pool.insert(prog.path_pool.end(), label.begin(), label.end());
-      prog.path_pool.push_back(0);
-    } else {
-      // Top-level instance: use full path as its own display label.
-      entry.inst_name_offset = entry.path_offset;
-    }
+    if (node.kind == common::HierarchyNode::kInstance) {
+      uint32_t mi = node.instance_index;
 
-    const auto& payload = param_payloads[mi];
-    if (!payload.empty()) {
-      entry.param_offset = static_cast<uint32_t>(prog.param_pool.size());
-      entry.param_size = static_cast<uint32_t>(payload.size());
-      prog.param_pool.insert(
-          prog.param_pool.end(), payload.begin(), payload.end());
-    }
+      entry.instance_index = mi;
+      entry.body_group = instance_body_group[mi];
 
-    const auto& sizes = instance_storage_sizes[mi];
-    entry.realized_inline_size = sizes.inline_bytes;
-    entry.realized_appendix_size = sizes.appendix_bytes;
-
-    // Pack per-instance ext-ref binding records into flat pool.
-    // Compute target_byte_offset from the target body's layout.
-    if (mi < instance_ext_ref_bindings.size() &&
-        !instance_ext_ref_bindings[mi].empty()) {
-      auto offset = static_cast<uint32_t>(prog.ext_ref_binding_pool.size());
-      prog.ext_ref_binding_offsets.push_back(offset);
-      prog.ext_ref_binding_counts.push_back(
-          static_cast<uint32_t>(instance_ext_ref_bindings[mi].size()));
-      for (auto b : instance_ext_ref_bindings[mi]) {
-        auto target_bg = instance_body_group[b.target_instance_id];
-        const auto& target_layout =
-            body_realization_infos[target_bg].body_layout;
-        b.target_byte_offset =
-            target_layout.inline_offsets[b.target_local_signal.value].value;
-        prog.ext_ref_binding_pool.push_back(b);
+      const auto& payload = param_payloads[mi];
+      if (!payload.empty()) {
+        entry.param_offset = static_cast<uint32_t>(prog.param_pool.size());
+        entry.param_size = static_cast<uint32_t>(payload.size());
+        prog.param_pool.insert(
+            prog.param_pool.end(), payload.begin(), payload.end());
       }
-    } else {
-      prog.ext_ref_binding_offsets.push_back(UINT32_MAX);
-      prog.ext_ref_binding_counts.push_back(0);
+
+      const auto& sizes = instance_storage_sizes[mi];
+      entry.realized_inline_size = sizes.inline_bytes;
+      entry.realized_appendix_size = sizes.appendix_bytes;
+
+      // Pack per-instance ext-ref binding records into flat pool.
+      // Place at instance_index (mi) position so SetExtRefBindings
+      // indexing matches result.instances ordering.
+      if (mi < instance_ext_ref_bindings.size() &&
+          !instance_ext_ref_bindings[mi].empty()) {
+        auto offset = static_cast<uint32_t>(prog.ext_ref_binding_pool.size());
+        prog.ext_ref_binding_offsets[mi] = offset;
+        prog.ext_ref_binding_counts[mi] =
+            static_cast<uint32_t>(instance_ext_ref_bindings[mi].size());
+        for (auto b : instance_ext_ref_bindings[mi]) {
+          auto target_bg = instance_body_group[b.target_instance_id];
+          const auto& target_layout =
+              body_realization_infos[target_bg].body_layout;
+          b.target_byte_offset =
+              target_layout.inline_offsets[b.target_local_signal.value].value;
+          prog.ext_ref_binding_pool.push_back(b);
+        }
+      }
     }
 
     prog.entries.push_back(entry);
+  }
+
+  // Build per-body child_site_to_tree_ordinal mapping.
+  // For each parent body, maps the body-local child_site_index (sorted
+  // path position among instance children) to tree-relative ordinal
+  // (position among ALL children including generate scopes).
+  auto num_bodies = static_cast<uint32_t>(body_realization_infos.size());
+  prog.child_site_to_tree_ordinal.resize(num_bodies);
+
+  for (uint32_t ni = 0; ni < node_count; ++ni) {
+    const auto& node = hierarchy_nodes[ni];
+    if (node.kind != common::HierarchyNode::kInstance) continue;
+    // For each instance node that has children, build the mapping.
+    // Collect child instance nodes sorted by instance_index (matching
+    // child_sites ordering).
+    struct ChildEntry {
+      uint32_t instance_index;
+      uint32_t tree_ordinal;
+    };
+    std::vector<ChildEntry> instance_children;
+    uint32_t tree_ordinal = 0;
+    for (uint32_t ci = 0; ci < node_count; ++ci) {
+      if (hierarchy_nodes[ci].parent_node_index != ni) continue;
+      if (hierarchy_nodes[ci].kind == common::HierarchyNode::kInstance) {
+        instance_children.push_back(
+            {hierarchy_nodes[ci].instance_index, tree_ordinal});
+      }
+      ++tree_ordinal;
+    }
+    if (instance_children.empty()) continue;
+    // Sort by instance_index to match child_sites ordering.
+    std::ranges::sort(instance_children, [](const auto& a, const auto& b) {
+      return a.instance_index < b.instance_index;
+    });
+    uint32_t body_group = instance_body_group[node.instance_index];
+    auto& mapping = prog.child_site_to_tree_ordinal[body_group];
+    if (mapping.empty()) {
+      mapping.resize(instance_children.size());
+      for (uint32_t k = 0; k < instance_children.size(); ++k) {
+        mapping[k] = instance_children[k].tree_ordinal;
+      }
+    }
   }
 
   return prog;
@@ -1084,18 +1112,46 @@ void ExtractBodyInitDescriptors(
                 instance_body_group[mi], num_body_groups));
       }
     }
+
+    // Pipeline-boundary invariant: the runtime scope tree must be
+    // materialized before construction emission. If any instance exists,
+    // the hierarchy node table must be non-empty and carry exactly one
+    // kInstance node per instance_table entry. A missing hierarchy_nodes
+    // input causes silent downstream failures (empty construction
+    // program, crashes during cleanup), so fail loudly here.
+    if (instance_count > 0 && construction.hierarchy_nodes.empty()) {
+      throw common::InternalError(
+          "ExtractBodyInitDescriptors",
+          std::format(
+              "{} instances present but hierarchy_nodes is empty -- "
+              "pipeline forgot to thread AST->HIR scope tree into "
+              "construction input",
+              instance_count));
+    }
+    uint32_t kinstance_count = 0;
+    for (const auto& node : construction.hierarchy_nodes) {
+      if (node.kind == common::HierarchyNode::kInstance) ++kinstance_count;
+    }
+    if (kinstance_count != instance_count) {
+      throw common::InternalError(
+          "ExtractBodyInitDescriptors",
+          std::format(
+              "hierarchy_nodes has {} kInstance nodes but instance_table "
+              "has {} entries -- scope tree / instance table disagree",
+              kinstance_count, instance_count));
+    }
   }
 
   construction_program = BuildConstructionProgram(
-      instance_body_group, instance_storage_sizes, construction.instance_table,
-      param_payloads, construction.instance_ext_ref_bindings,
-      body_realization_infos, construction.parent_instance_indices,
-      construction.child_durable_ids);
+      instance_body_group, instance_storage_sizes, param_payloads,
+      construction.instance_ext_ref_bindings, body_realization_infos,
+      construction.hierarchy_nodes);
 
-  // Validate construction program.
+  // Validate construction program: instance entries must have valid body_group.
   for (size_t i = 0; i < construction_program.entries.size(); ++i) {
     const auto& e = construction_program.entries[i];
-    if (e.body_group >= body_realization_infos.size()) {
+    if (e.node_kind == runtime::ConstructionNodeKind::kInstance &&
+        e.body_group >= body_realization_infos.size()) {
       throw common::InternalError(
           "ExtractBodyInitDescriptors",
           std::format(

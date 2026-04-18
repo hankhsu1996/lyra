@@ -182,6 +182,10 @@ struct ConstructionResult {
   // Lifetime: owned by this result, outlives simulation.
   std::vector<std::unique_ptr<RuntimeInstance>> instances;
 
+  // Constructor-produced generate scope objects.
+  // Lifetime: owned by this result, outlives simulation.
+  std::vector<std::unique_ptr<RuntimeGenerateScope>> generate_scopes;
+
   // R4 prep: per-instance metadata bundles alongside existing flat handoff.
   // Each bundle binds one module instance to its shared body template.
   // Validated: bundle[i].instance_id == i.
@@ -276,27 +280,26 @@ class Constructor {
   // meta.entries.size().
   void BeginBody(const BodyDescriptorPackage& package);
 
-  // Create one child instance of the current body in parent context.
-  // Structural relation and derived path are established inside this
-  // method: parent->children gains a typed ChildEdge, and child->parent
-  // points back. Path is derived from parent path + inst_name.
-  //
-  // parent: parent instance, or nullptr for top-level (root) instances.
-  // edge_coord: generate-scope context for the child edge (empty for
-  //   non-generate instances). Structural edge metadata for relation
-  //   materialization, not runtime object identity or query key.
-  //   Ownership transferred into the stored child edge (moved).
-  // edge_ordinal: child ordinal within the coord context. Same role
-  //   as edge_coord -- structural edge metadata, not identity.
-  // inst_name: local instance name for path derivation (e.g. "u0").
-  //   Consumed during assembly, not stored on the instance.
-  // param_data/param_data_size: pre-lowered canonical storage bytes for
-  //   parameter initialization. nullptr/0 if no params.
+  // Create a generate scope node in parent scope context.
+  // Hierarchy-only: no storage, no body, no processes.
+  // The full hierarchical path is derived inside the constructor from
+  // parent_scope->path_storage + label; callers must not transport it.
+  auto CreateScope(
+      RuntimeScope* parent_scope, const char* label, uint32_t ordinal_in_parent)
+      -> RuntimeScope*;
+
+  // Create one child instance of the current body in parent scope context.
+  // parent_scope: parent scope, or nullptr for top-level (root) instances.
+  // instance_index: compile-time object_index (sorted all_instances position).
+  //   Used as owner_ordinal for stable indexing.
+  // label: scope label for path derivation (e.g. "u0"). The full
+  //   hierarchical path is derived from parent_scope + label by the
+  //   constructor; callers must not transport full paths.
+  // param_data/param_data_size: pre-lowered canonical storage bytes.
   // Returns the created instance (owned by the constructor).
-  // Fails immediately if no active body.
-  auto CreateChild(
-      RuntimeInstance* parent, common::RepertoireCoord edge_coord,
-      uint32_t edge_ordinal, const char* inst_name, const void* param_data,
+  auto CreateChildInstance(
+      RuntimeScope* parent_scope, uint32_t ordinal_in_parent,
+      uint32_t instance_index, const char* label, const void* param_data,
       uint32_t param_data_size, uint64_t realized_inline_size,
       uint64_t realized_appendix_size) -> RuntimeInstance*;
 
@@ -370,9 +373,12 @@ class Constructor {
   std::deque<StableBodyTemplate> body_desc_storage_;
 
   std::vector<StagedProcess> staged_;
-  // Constructor-owned RuntimeInstance objects created during AddInstance.
-  // Moved into ConstructionResult at Finalize.
+  // Constructor-owned RuntimeInstance objects created during
+  // CreateChildInstance. Moved into ConstructionResult at Finalize.
   std::vector<std::unique_ptr<RuntimeInstance>> staged_instances_;
+  // Constructor-owned generate scope objects created during CreateScope.
+  // Moved into ConstructionResult at Finalize.
+  std::vector<std::unique_ptr<RuntimeGenerateScope>> staged_generate_scopes_;
   // R4 prep: per-instance metadata bundles. Moved into ConstructionResult
   // at Finalize.
   std::vector<InstanceMetadataBundle> staged_bundles_;
@@ -494,8 +500,7 @@ void LyraConstructorRunProgram(
     uint32_t body_desc_count, const char* path_pool, uint32_t path_pool_size,
     const uint8_t* param_pool, uint32_t param_pool_size,
     const lyra::runtime::ConstructionProgramEntry* entries,
-    uint32_t entry_count, const uint32_t* coord_steps_pool,
-    uint32_t coord_steps_word_count);
+    uint32_t entry_count);
 
 auto LyraConstructorFinalize(void* ctor) -> void*;
 
