@@ -5,7 +5,6 @@
 #include "lyra/common/edge_kind.hpp"
 #include "lyra/common/local_slot_id.hpp"
 #include "lyra/common/object_index.hpp"
-#include "lyra/common/type.hpp"
 #include "lyra/mir/port_connection.hpp"
 
 namespace lyra::mir {
@@ -39,7 +38,6 @@ struct BoundConnection {
   BoundEndpoint parent_source;
   BoundEndpoint trigger;
   common::EdgeKind trigger_edge = common::EdgeKind::kAnyChange;
-  TypeId result_type;
 };
 
 }  // namespace lyra::mir

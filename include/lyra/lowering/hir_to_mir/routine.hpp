@@ -14,6 +14,11 @@ namespace lyra::lowering::hir_to_mir {
 
 class DecisionSiteAllocator;
 
+// Compute the return policy for a given return type.
+// Value aggregates use sret out-param; scalars and handles use direct.
+auto ComputeReturnPolicy(TypeId return_type, const TypeArena& types)
+    -> mir::ReturnPolicy;
+
 // Build a frozen FunctionSignature from HIR function metadata.
 // Must be called at pre-allocation time (Phase 1).
 // Computes return_policy based on return type characteristics.

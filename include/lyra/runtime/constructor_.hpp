@@ -221,6 +221,21 @@ struct ConstructionResult {
   // Populated during Finalize, valid for the lifetime of this result.
   std::vector<const RuntimeInstance*> instance_ptrs;
 
+  // Resolved installable computations for the engine.
+  // Each entry carries a void-returning writeback callable plus its
+  // owner instance. The callable writes the child target itself
+  // through the body's ExternalRefId binding (populated separately
+  // via per-instance ext_ref_bindings). The engine only invokes the
+  // callable and registers triggers on dep slots. Populated during
+  // Finalize.
+  struct ResolvedInstalledComputation {
+    ICBodyFn eval_fn = nullptr;
+    RuntimeInstance* owner_instance = nullptr;
+    // Body-local dependency slot indices on the owner instance.
+    std::vector<uint32_t> dep_body_local_slots;
+  };
+  std::vector<ResolvedInstalledComputation> installed_computations;
+
   ConstructionResult() = default;
   ~ConstructionResult();
 
@@ -319,9 +334,7 @@ class Constructor {
     // connection processes.
     uint32_t instance_index = UINT32_MAX;
     bool is_module = false;
-    // Expression connection child binding descriptor.
-    // Non-null for expression connection processes.
-    const ExprConnChildDesc* expr_conn_child_desc = nullptr;
+    // Unused padding (expression connections are no longer processes).
   };
 
   // Currently active body descriptor view.
@@ -500,7 +513,10 @@ void LyraConstructorRunProgram(
     uint32_t body_desc_count, const char* path_pool, uint32_t path_pool_size,
     const uint8_t* param_pool, uint32_t param_pool_size,
     const lyra::runtime::ConstructionProgramEntry* entries,
-    uint32_t entry_count);
+    uint32_t entry_count,
+    const lyra::runtime::PortConstInitEntry* port_const_inits,
+    uint32_t port_const_init_count, const uint8_t* port_const_pool,
+    uint32_t port_const_pool_size);
 
 auto LyraConstructorFinalize(void* ctor) -> void*;
 

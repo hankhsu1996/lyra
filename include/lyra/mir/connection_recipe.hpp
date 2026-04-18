@@ -1,13 +1,14 @@
 #pragma once
 
 #include <cstdint>
+#include <vector>
 
+#include "lyra/common/constant.hpp"
 #include "lyra/common/edge_kind.hpp"
 #include "lyra/common/local_slot_id.hpp"
 #include "lyra/common/module_identity.hpp"
 #include "lyra/common/origin_id.hpp"
 #include "lyra/common/symbol_types.hpp"
-#include "lyra/common/type.hpp"
 #include "lyra/mir/child_binding_site_id.hpp"
 #include "lyra/mir/external_ref.hpp"
 #include "lyra/mir/handle.hpp"
@@ -38,15 +39,10 @@ struct ChildInstantiationSite {
   common::OriginId origin = common::OriginId::Invalid();
 };
 
-// Connection source classification. Exactly three kinds:
-//   kLocalSlot   -- parent-body-local slot (direct copy)
-//   kFunction    -- body-local compiled function (expression)
-//   kExternalRef -- non-local external reference handle
-//
-// These are the only legal parent-side source categories for connection
-// recipes. No ad hoc intermediate categories or topology-dependent
-// classifications may be added. Source classification is semantic and
-// body-local, never topology-dependent.
+// Connection source execution category:
+//   kLocalSlot -- parent-body-local slot (direct copy, memcpy c2p path)
+//   kFunction  -- body-local compiled writeback function (p2c path)
+//   kConstant  -- compile-time constant (p2c constant-init path)
 //
 // Compile-time artifact only. Must not accrete constructor/runtime
 // bound state. The separation from construction execution is hard.
@@ -54,13 +50,13 @@ struct ConnectionSourceRecipe {
   enum class Kind : uint8_t {
     kLocalSlot,
     kFunction,
-    kExternalRef,
+    kConstant,
   };
 
   Kind kind = Kind::kLocalSlot;
   common::LocalSlotId local_slot;
   FunctionId function;
-  ExternalRefId external_ref;
+  ConstId constant_id;
 
   static auto FromLocalSlot(common::LocalSlotId slot)
       -> ConnectionSourceRecipe {
@@ -68,7 +64,8 @@ struct ConnectionSourceRecipe {
         .kind = Kind::kLocalSlot,
         .local_slot = slot,
         .function = {},
-        .external_ref = {}};
+        .constant_id = {},
+    };
   }
 
   static auto FromFunction(FunctionId fn) -> ConnectionSourceRecipe {
@@ -76,19 +73,27 @@ struct ConnectionSourceRecipe {
         .kind = Kind::kFunction,
         .local_slot = {},
         .function = fn,
-        .external_ref = {}};
+        .constant_id = {},
+    };
   }
 
-  static auto FromExternalRef(ExternalRefId ref) -> ConnectionSourceRecipe {
+  static auto FromConstant(ConstId id) -> ConnectionSourceRecipe {
     return {
-        .kind = Kind::kExternalRef,
+        .kind = Kind::kConstant,
         .local_slot = {},
         .function = {},
-        .external_ref = ref};
+        .constant_id = id,
+    };
   }
 };
 
-// Trigger recipe for a connection or process subscription.
+// Trigger recipe for a memcpy-path c2p connection.
+//
+// Consumed only by the kDriveChildToParent memcpy pipeline
+// (IsFullyBindableRecipe, BindConnectionRecipe). kDriveParentToChild
+// recipes carry a default-initialized TriggerRecipe{} that is never
+// read; narrowing the struct to split p2c and c2p shapes is a candidate
+// future cleanup.
 //
 // Compile-time artifact only. Must not accrete constructor/runtime
 // bound state.
@@ -96,8 +101,6 @@ struct TriggerRecipe {
   enum class Kind : uint8_t {
     // Parent body-local slot. Trigger fires on this parent slot's change.
     kLocalSlot,
-    kExternalRef,
-    kFunction,
     // Child body-local slot. Trigger fires on this child slot's change.
     // Used by kDriveChildToParent connections where the trigger is the
     // child's output port, which is child-local, not parent-local.
@@ -106,85 +109,79 @@ struct TriggerRecipe {
 
   Kind kind = Kind::kLocalSlot;
   common::LocalSlotId local_slot;
-  ExternalRefId external_ref;
-  FunctionId function;
   common::EdgeKind edge = common::EdgeKind::kAnyChange;
 
   static auto FromLocalSlot(common::LocalSlotId slot, common::EdgeKind e)
       -> TriggerRecipe {
-    return {
-        .kind = Kind::kLocalSlot,
-        .local_slot = slot,
-        .external_ref = {},
-        .function = {},
-        .edge = e};
+    return {.kind = Kind::kLocalSlot, .local_slot = slot, .edge = e};
   }
 
   static auto FromChildSlot(common::LocalSlotId slot, common::EdgeKind e)
       -> TriggerRecipe {
-    return {
-        .kind = Kind::kChildSlot,
-        .local_slot = slot,
-        .external_ref = {},
-        .function = {},
-        .edge = e};
-  }
-
-  static auto FromExternalRef(ExternalRefId ref, common::EdgeKind e)
-      -> TriggerRecipe {
-    return {
-        .kind = Kind::kExternalRef,
-        .local_slot = {},
-        .external_ref = ref,
-        .function = {},
-        .edge = e};
+    return {.kind = Kind::kChildSlot, .local_slot = slot, .edge = e};
   }
 };
 
 // Body-local connection recipe.
 //
-// child_slot is the child specialization's lowered LocalSlotId obtained
-// exclusively through GetChildPortContract (which reads the child
-// specialization's CompiledModuleHeader). It is NOT a source-level
-// declaration ordinal and must NOT be computed from source port order
-// or child body declaration tables.
+// Shared struct for both directions. Some fields are direction-scoped:
+//   kDriveParentToChild consumes: source (kFunction), target_ref.
+//     child_slot and trigger are default-initialized and never read.
+//   kDriveChildToParent consumes: source (kLocalSlot), trigger,
+//     child_slot. target_ref is unused.
+//
+// child_slot (kDriveChildToParent only) is the child specialization's
+// lowered LocalSlotId obtained exclusively through GetChildPortContract
+// (which reads the child specialization's CompiledModuleHeader). It is
+// NOT a source-level declaration ordinal and must NOT be computed from
+// source port order or child body declaration tables.
 //
 // Compile-time artifact only. Must not accrete constructor/runtime
 // bound state. The separation from construction execution is hard.
 struct ConnectionRecipe {
   PortConnection::Kind kind = PortConnection::Kind::kDriveParentToChild;
-  // Structural child identity.
   ChildBindingSiteId child_site;
-  // Symbolic child public endpoint identity. Mandatory for expression
-  // connections (source.kind == kFunction). Resolved to concrete slot
-  // and byte offset by the constructor at finalize time.
-  SymbolId child_port_sym = kInvalidSymbolId;
-  // Derived low-level slot identity. Retained for non-expression paths
-  // (kernelized connections) that resolve at compile time.
+  // kDriveChildToParent only: child body-local slot for the memcpy
+  // pipeline. Default-initialized and unused on kDriveParentToChild.
   common::LocalSlotId child_slot;
+  // kDriveParentToChild only: external-ref id identifying the child
+  // target. Registered in the parent body's external_refs at recipe
+  // creation; consumed by the writeback body's assignment statement and
+  // by the installable-computation template.
+  ExternalRefId target_ref;
   ConnectionSourceRecipe source;
+  // kDriveChildToParent only. Default-initialized on kDriveParentToChild
+  // and never read.
   TriggerRecipe trigger;
-  TypeId result_type;
   common::OriginId origin = common::OriginId::Invalid();
 };
 
-// Body-local template for an expression connection process.
-// Created by LowerExprConnectionForBody during MIR construction.
-// Contains no whole-design object identity. Parallel to the expression
-// connection suffix of body.processes:
-//   body.processes[body.processes.size() - expr_connection_templates.size() +
-//   i] corresponds to expr_connection_templates[i].
-struct ExprConnectionTemplate {
-  // Ordinal within the expression connection suffix (0..N-1).
-  // Actual body.processes index = num_ordinary + expr_process_suffix_ordinal.
-  uint32_t expr_process_suffix_ordinal = 0;
-  // Structural child identity.
-  ChildBindingSiteId child_site;
-  // Symbolic child public endpoint identity. Resolved to concrete slot
-  // and byte offset by the constructor at finalize time.
-  SymbolId child_port_sym = kInvalidSymbolId;
-  // Value type.
-  TypeId result_type;
+// Body-local template for an installable computation.
+// Created by BuildInstallableComputations during MIR construction.
+//
+// An installable computation is an ordinary reactive writeback body:
+//   - eval: body-local MIR function compiled via DefineMirFunction
+//   - target: reached from inside the callable through the
+//     WriteTarget{ExternalRefId} statement emitted at recipe creation
+//     time, routed through the parent body's ordinary external_refs
+//     table and per-instance ext_ref_bindings at runtime
+//   - deps: parent-local slots the callable reads
+//
+// One template per reactive parent->child port binding. Runtime uses
+// this to schedule initial evaluation and register dependency
+// triggers; everything else (child target, value type, write ABI) is
+// encoded in the MIR body and the external-ref binding system.
+//
+// Not a process. Not scheduled. Initial-evaluated once during
+// construction, then re-evaluated by fixpoint dispatch when a
+// dependency slot changes.
+struct InstallableComputationTemplate {
+  // Body-local writeback function (module-scoped). Void-returning body
+  // that writes its child target through an ExternalRefId-backed
+  // assignment; no return-value transport.
+  FunctionId callable;
+  // Parent-local dependency slots. Empty for constant expressions.
+  std::vector<common::LocalSlotId> deps;
 };
 
 }  // namespace lyra::mir

@@ -2,7 +2,14 @@
 
 #include <cstdint>
 #include <span>
+#include <string>
 #include <utility>
+#include <vector>
+
+#include <slang/ast/symbols/ValueSymbol.h>
+#include <slang/ast/symbols/VariableSymbols.h>
+#include <slang/ast/types/AllTypes.h>
+#include <slang/numeric/ConstantValue.h>
 
 #include "lyra/common/constant.hpp"
 #include "lyra/common/constant_arena.hpp"
@@ -11,6 +18,7 @@
 #include "lyra/common/type.hpp"
 #include "lyra/common/type_queries.hpp"
 #include "lyra/lowering/ast_to_hir/context.hpp"
+#include "lyra/lowering/ast_to_hir/type.hpp"
 
 namespace lyra::lowering::ast_to_hir {
 
@@ -146,6 +154,94 @@ auto CreateFilledConstant(
   IntegralConstant constant =
       MakeFilledIntegralConstant(width, bits.value_bit, bits.unknown_bit);
   return ctx->active_constant_arena->Intern(target_type, std::move(constant));
+}
+
+auto LowerConstantValueToConstId(
+    const slang::ConstantValue& cv, const slang::ast::Type& type,
+    SourceSpan span, Context* ctx) -> ConstId {
+  if (cv.isInteger()) {
+    if (!type.isIntegral()) return {};
+    TypeId type_id = LowerType(type, span, ctx);
+    if (!type_id) return {};
+    return LowerIntegralConstant(cv.integer(), type_id, ctx);
+  }
+
+  if (cv.isString()) {
+    TypeId type_id = LowerType(type, span, ctx);
+    if (!type_id) return {};
+    return ctx->active_constant_arena->Intern(
+        type_id, StringConstant{.value = std::string(cv.str())});
+  }
+
+  if (cv.isReal() || cv.isShortReal()) {
+    TypeId type_id = LowerType(type, span, ctx);
+    if (!type_id) return {};
+    double value = cv.isReal() ? static_cast<double>(cv.real())
+                               : static_cast<double>(cv.shortReal());
+    return ctx->active_constant_arena->Intern(
+        type_id, RealConstant{.value = value});
+  }
+
+  if (cv.isUnpacked()) {
+    const auto& canonical = type.getCanonicalType();
+    auto elements = cv.elements();
+
+    if (canonical.kind == slang::ast::SymbolKind::FixedSizeUnpackedArrayType) {
+      const auto& arr = canonical.as<slang::ast::FixedSizeUnpackedArrayType>();
+      std::vector<ConstId> elem_ids;
+      elem_ids.reserve(elements.size());
+      for (const auto& elem : elements) {
+        auto eid =
+            LowerConstantValueToConstId(elem, arr.elementType, span, ctx);
+        if (!eid) return {};
+        elem_ids.push_back(eid);
+      }
+      TypeId type_id = LowerType(type, span, ctx);
+      if (!type_id) return {};
+      return ctx->active_constant_arena->Intern(
+          type_id, ArrayConstant{.elements = std::move(elem_ids)});
+    }
+
+    if (canonical.kind == slang::ast::SymbolKind::UnpackedStructType) {
+      const auto& struct_type = canonical.as<slang::ast::UnpackedStructType>();
+      auto fields = struct_type.fields;
+      std::vector<ConstId> field_ids;
+      field_ids.reserve(elements.size());
+      for (size_t i = 0; i < elements.size(); ++i) {
+        auto fid = LowerConstantValueToConstId(
+            elements[i], fields[i]->getType(), span, ctx);
+        if (!fid) return {};
+        field_ids.push_back(fid);
+      }
+      TypeId type_id = LowerType(type, span, ctx);
+      if (!type_id) return {};
+      return ctx->active_constant_arena->Intern(
+          type_id, StructConstant{.fields = std::move(field_ids)});
+    }
+
+    if (canonical.kind == slang::ast::SymbolKind::PackedStructType) {
+      const auto& struct_type = canonical.as<slang::ast::PackedStructType>();
+      std::vector<const slang::ast::FieldSymbol*> fs;
+      for (const auto& f :
+           struct_type.membersOfType<slang::ast::FieldSymbol>()) {
+        fs.push_back(&f);
+      }
+      std::vector<ConstId> field_ids;
+      field_ids.reserve(elements.size());
+      for (size_t i = 0; i < elements.size(); ++i) {
+        auto fid = LowerConstantValueToConstId(
+            elements[i], fs[i]->getType(), span, ctx);
+        if (!fid) return {};
+        field_ids.push_back(fid);
+      }
+      TypeId type_id = LowerType(type, span, ctx);
+      if (!type_id) return {};
+      return ctx->active_constant_arena->Intern(
+          type_id, StructConstant{.fields = std::move(field_ids)});
+    }
+  }
+
+  return {};
 }
 
 }  // namespace lyra::lowering::ast_to_hir

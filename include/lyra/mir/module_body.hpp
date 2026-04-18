@@ -1,11 +1,9 @@
 #pragma once
 
 #include <cstdint>
-#include <format>
 #include <string>
 #include <vector>
 
-#include "lyra/common/internal_error.hpp"
 #include "lyra/mir/arena.hpp"
 #include "lyra/mir/compiled_module_header.hpp"
 #include "lyra/mir/connection_recipe.hpp"
@@ -88,11 +86,13 @@ struct ModuleBody {
   // B2: Connection recipes for this body.
   std::vector<ConnectionRecipe> connection_recipes;
 
-  // Expression connection process templates. Parallel metadata for the
-  // suffix of body.processes that are expression connections.
-  // Use GetExprConnectionCount / GetOrdinaryProcessCount / etc. for indexing.
-  // Created only by LowerExprConnectionForBody. No other code may mutate.
-  std::vector<ExprConnectionTemplate> expr_connection_templates;
+  // Installable computation templates for all reactive parent->child
+  // port bindings. One template per binding; source shape (plain slot
+  // read vs arbitrary expression) is erased upstream, so every entry
+  // here is a uniform target + callable + deps. Created by
+  // BuildInstallableComputations. Not processes. kDriveChildToParent
+  // recipes remain on the memcpy connection path and do not appear here.
+  std::vector<InstallableComputationTemplate> installable_computations;
 
   // Body-owned cover sites. CoverSiteId in MIR effects is body-local
   // (0-based per body). The design-global table is built by concatenation
@@ -105,44 +105,10 @@ struct ModuleBody {
   std::vector<DeferredAssertionSiteInfo> deferred_assertion_sites;
 };
 
-// Canonical suffix/ordinal helpers for the expression connection process
-// suffix on ModuleBody. Every consumer of the suffix invariant must use
-// these helpers instead of open-coded arithmetic. Helpers fail fast on
-// invariant violation.
-
-[[nodiscard]] inline auto GetExprConnectionCount(const ModuleBody& body)
+// Helper to get the number of installable computations in a body.
+[[nodiscard]] inline auto GetInstallableComputationCount(const ModuleBody& body)
     -> uint32_t {
-  return static_cast<uint32_t>(body.expr_connection_templates.size());
-}
-
-[[nodiscard]] inline auto GetOrdinaryProcessCount(const ModuleBody& body)
-    -> uint32_t {
-  const auto total = static_cast<uint32_t>(body.processes.size());
-  const auto expr = GetExprConnectionCount(body);
-  if (expr > total) {
-    throw common::InternalError(
-        "GetOrdinaryProcessCount",
-        std::format("expr_count {} > total_processes {}", expr, total));
-  }
-  return total - expr;
-}
-
-[[nodiscard]] inline auto GetExprConnectionProcessOrdinal(
-    const ModuleBody& body, uint32_t suffix_ordinal) -> uint32_t {
-  const auto expr = GetExprConnectionCount(body);
-  if (suffix_ordinal >= expr) {
-    throw common::InternalError(
-        "GetExprConnectionProcessOrdinal",
-        std::format(
-            "suffix_ordinal {} >= expr_count {}", suffix_ordinal, expr));
-  }
-  return GetOrdinaryProcessCount(body) + suffix_ordinal;
-}
-
-[[nodiscard]] inline auto IsExprConnectionProcessOrdinal(
-    const ModuleBody& body, uint32_t ordinal) -> bool {
-  return ordinal >= GetOrdinaryProcessCount(body) &&
-         ordinal < static_cast<uint32_t>(body.processes.size());
+  return static_cast<uint32_t>(body.installable_computations.size());
 }
 
 }  // namespace lyra::mir

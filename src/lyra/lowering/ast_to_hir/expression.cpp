@@ -8,6 +8,8 @@
 #include <utility>
 #include <vector>
 
+#include <slang/ast/ASTContext.h>
+#include <slang/ast/EvalContext.h>
 #include <slang/ast/expressions/AssignmentExpressions.h>
 #include <slang/ast/expressions/ConversionExpression.h>
 #include <slang/ast/expressions/LiteralExpressions.h>
@@ -24,6 +26,7 @@
 #include "lyra/common/constant_arena.hpp"
 #include "lyra/common/diagnostic/diagnostic_sink.hpp"
 #include "lyra/common/internal_error.hpp"
+#include "lyra/common/overloaded.hpp"
 #include "lyra/common/source_span.hpp"
 #include "lyra/common/symbol.hpp"
 #include "lyra/common/type.hpp"
@@ -150,200 +153,101 @@ auto ConvertBinaryOp(slang::ast::BinaryOperator op)
   return std::nullopt;
 }
 
-auto LowerConstantValueExpression(
+// Build an HIR expression tree from a canonical ConstId.
+// For scalar constants (integral, string, real): produces kConstant.
+// For aggregate constants (array, struct): produces kArrayLiteral/
+// kStructLiteral by recursively converting arena children.
+// This reconstructs the HIR expression shape from canonical arena
+// data, keeping all constant-value dispatch in the canonical helper.
+auto BuildHirExpressionFromConstId(
+    ConstId const_id, SourceSpan span, Context* ctx) -> hir::ExpressionId {
+  const Constant& c = (*ctx->active_constant_arena)[const_id];
+
+  return std::visit(
+      common::Overloaded{
+          [&](const IntegralConstant&) -> hir::ExpressionId {
+            return ctx->hir_arena->AddExpression(
+                hir::Expression{
+                    .kind = hir::ExpressionKind::kConstant,
+                    .type = c.type,
+                    .span = span,
+                    .data = hir::ConstantExpressionData{.constant = const_id}});
+          },
+          [&](const StringConstant&) -> hir::ExpressionId {
+            return ctx->hir_arena->AddExpression(
+                hir::Expression{
+                    .kind = hir::ExpressionKind::kConstant,
+                    .type = c.type,
+                    .span = span,
+                    .data = hir::ConstantExpressionData{.constant = const_id}});
+          },
+          [&](const RealConstant&) -> hir::ExpressionId {
+            return ctx->hir_arena->AddExpression(
+                hir::Expression{
+                    .kind = hir::ExpressionKind::kConstant,
+                    .type = c.type,
+                    .span = span,
+                    .data = hir::ConstantExpressionData{.constant = const_id}});
+          },
+          [&](const ArrayConstant& ac) -> hir::ExpressionId {
+            std::vector<hir::ExpressionId> element_ids;
+            element_ids.reserve(ac.elements.size());
+            for (auto child_id : ac.elements) {
+              auto child_expr =
+                  BuildHirExpressionFromConstId(child_id, span, ctx);
+              if (!child_expr) return hir::kInvalidExpressionId;
+              element_ids.push_back(child_expr);
+            }
+            return ctx->hir_arena->AddExpression(
+                hir::Expression{
+                    .kind = hir::ExpressionKind::kArrayLiteral,
+                    .type = c.type,
+                    .span = span,
+                    .data = hir::ArrayLiteralExpressionData{
+                        .elements = std::move(element_ids)}});
+          },
+          [&](const StructConstant& sc) -> hir::ExpressionId {
+            std::vector<hir::ExpressionId> field_values;
+            field_values.reserve(sc.fields.size());
+            for (auto child_id : sc.fields) {
+              auto child_expr =
+                  BuildHirExpressionFromConstId(child_id, span, ctx);
+              if (!child_expr) return hir::kInvalidExpressionId;
+              field_values.push_back(child_expr);
+            }
+            return ctx->hir_arena->AddExpression(
+                hir::Expression{
+                    .kind = hir::ExpressionKind::kStructLiteral,
+                    .type = c.type,
+                    .span = span,
+                    .data = hir::StructLiteralExpressionData{
+                        .field_values = std::move(field_values)}});
+          },
+          [&](const NullConstant&) -> hir::ExpressionId {
+            return ctx->hir_arena->AddExpression(
+                hir::Expression{
+                    .kind = hir::ExpressionKind::kConstant,
+                    .type = c.type,
+                    .span = span,
+                    .data = hir::ConstantExpressionData{.constant = const_id}});
+          },
+      },
+      c.value);
+}
+
+auto LowerConstantValueExpressionImpl(
     const slang::ConstantValue& cv, const slang::ast::Type& type,
     SourceSpan span, Context* ctx) -> hir::ExpressionId {
-  if (cv.isInteger()) {
-    if (!type.isIntegral()) {
-      ctx->sink->Error(span, "unsupported non-integral constant value");
-      return hir::kInvalidExpressionId;
-    }
-    TypeId type_id = LowerType(type, span, ctx);
-    if (!type_id) {
-      return hir::kInvalidExpressionId;
-    }
-    ConstId constant = LowerIntegralConstant(cv.integer(), type_id, ctx);
-    return ctx->hir_arena->AddExpression(
-        hir::Expression{
-            .kind = hir::ExpressionKind::kConstant,
-            .type = type_id,
-            .span = span,
-            .data = hir::ConstantExpressionData{.constant = constant}});
+  // Use the canonical constant-arena interning helper for ALL constant
+  // types, then build the appropriate HIR expression from the arena.
+  // No slang::ConstantValue type dispatch here -- that belongs in the
+  // canonical helper only.
+  ConstId const_id = LowerConstantValueToConstId(cv, type, span, ctx);
+  if (!const_id) {
+    ctx->sink->Error(span, "unsupported constant value type");
+    return hir::kInvalidExpressionId;
   }
-
-  if (cv.isString()) {
-    TypeId type_id = LowerType(type, span, ctx);
-    if (!type_id) {
-      return hir::kInvalidExpressionId;
-    }
-    ConstId constant = ctx->active_constant_arena->Intern(
-        type_id, StringConstant{.value = std::string(cv.str())});
-    return ctx->hir_arena->AddExpression(
-        hir::Expression{
-            .kind = hir::ExpressionKind::kConstant,
-            .type = type_id,
-            .span = span,
-            .data = hir::ConstantExpressionData{.constant = constant}});
-  }
-
-  if (cv.isReal() || cv.isShortReal()) {
-    TypeId type_id = LowerType(type, span, ctx);
-    if (!type_id) {
-      return hir::kInvalidExpressionId;
-    }
-    double value = cv.isReal() ? static_cast<double>(cv.real())
-                               : static_cast<double>(cv.shortReal());
-    ConstId constant = ctx->active_constant_arena->Intern(
-        type_id, RealConstant{.value = value});
-    return ctx->hir_arena->AddExpression(
-        hir::Expression{
-            .kind = hir::ExpressionKind::kConstant,
-            .type = type_id,
-            .span = span,
-            .data = hir::ConstantExpressionData{.constant = constant}});
-  }
-
-  if (cv.isUnpacked()) {
-    const auto& canonical = type.getCanonicalType();
-    auto elements = cv.elements();
-
-    if (canonical.kind == slang::ast::SymbolKind::FixedSizeUnpackedArrayType) {
-      const auto& arr = canonical.as<slang::ast::FixedSizeUnpackedArrayType>();
-      auto expected_size = arr.range.width();
-      if (elements.size() != expected_size) {
-        ctx->sink->Error(span, "array constant size mismatch");
-        return hir::kInvalidExpressionId;
-      }
-
-      std::vector<hir::ExpressionId> element_ids;
-      element_ids.reserve(elements.size());
-      for (const auto& elem : elements) {
-        hir::ExpressionId elem_id =
-            LowerConstantValueExpression(elem, arr.elementType, span, ctx);
-        if (!elem_id) {
-          return hir::kInvalidExpressionId;
-        }
-        element_ids.push_back(elem_id);
-      }
-
-      TypeId type_id = LowerType(type, span, ctx);
-      if (!type_id) {
-        return hir::kInvalidExpressionId;
-      }
-      return ctx->hir_arena->AddExpression(
-          hir::Expression{
-              .kind = hir::ExpressionKind::kArrayLiteral,
-              .type = type_id,
-              .span = span,
-              .data = hir::ArrayLiteralExpressionData{
-                  .elements = std::move(element_ids)}});
-    }
-
-    if (canonical.kind == slang::ast::SymbolKind::DynamicArrayType ||
-        canonical.kind == slang::ast::SymbolKind::QueueType) {
-      const slang::ast::Type* element_type =
-          canonical.kind == slang::ast::SymbolKind::DynamicArrayType
-              ? &canonical.as<slang::ast::DynamicArrayType>().elementType
-              : &canonical.as<slang::ast::QueueType>().elementType;
-
-      std::vector<hir::ExpressionId> element_ids;
-      element_ids.reserve(elements.size());
-      for (const auto& elem : elements) {
-        hir::ExpressionId elem_id =
-            LowerConstantValueExpression(elem, *element_type, span, ctx);
-        if (!elem_id) {
-          return hir::kInvalidExpressionId;
-        }
-        element_ids.push_back(elem_id);
-      }
-
-      TypeId type_id = LowerType(type, span, ctx);
-      if (!type_id) {
-        return hir::kInvalidExpressionId;
-      }
-      return ctx->hir_arena->AddExpression(
-          hir::Expression{
-              .kind = hir::ExpressionKind::kArrayLiteral,
-              .type = type_id,
-              .span = span,
-              .data = hir::ArrayLiteralExpressionData{
-                  .elements = std::move(element_ids)}});
-    }
-
-    if (canonical.kind == slang::ast::SymbolKind::UnpackedStructType) {
-      const auto& struct_type = canonical.as<slang::ast::UnpackedStructType>();
-      auto fields = struct_type.fields;
-      if (elements.size() != fields.size()) {
-        ctx->sink->Error(span, "struct constant size mismatch");
-        return hir::kInvalidExpressionId;
-      }
-
-      std::vector<hir::ExpressionId> field_values;
-      field_values.reserve(elements.size());
-      for (size_t i = 0; i < elements.size(); ++i) {
-        hir::ExpressionId field_id = LowerConstantValueExpression(
-            elements[i], fields[i]->getType(), span, ctx);
-        if (!field_id) {
-          return hir::kInvalidExpressionId;
-        }
-        field_values.push_back(field_id);
-      }
-
-      TypeId type_id = LowerType(type, span, ctx);
-      if (!type_id) {
-        return hir::kInvalidExpressionId;
-      }
-      return ctx->hir_arena->AddExpression(
-          hir::Expression{
-              .kind = hir::ExpressionKind::kStructLiteral,
-              .type = type_id,
-              .span = span,
-              .data = hir::StructLiteralExpressionData{
-                  .field_values = std::move(field_values)}});
-    }
-
-    if (canonical.kind == slang::ast::SymbolKind::PackedStructType) {
-      const auto& struct_type = canonical.as<slang::ast::PackedStructType>();
-
-      // Collect fields via Scope interface (membersOfType)
-      std::vector<const slang::ast::FieldSymbol*> fields;
-      for (const auto& field :
-           struct_type.membersOfType<slang::ast::FieldSymbol>()) {
-        fields.push_back(&field);
-      }
-
-      if (elements.size() != fields.size()) {
-        ctx->sink->Error(span, "struct constant size mismatch");
-        return hir::kInvalidExpressionId;
-      }
-
-      std::vector<hir::ExpressionId> field_values;
-      field_values.reserve(elements.size());
-      for (size_t i = 0; i < elements.size(); ++i) {
-        hir::ExpressionId field_id = LowerConstantValueExpression(
-            elements[i], fields[i]->getType(), span, ctx);
-        if (!field_id) {
-          return hir::kInvalidExpressionId;
-        }
-        field_values.push_back(field_id);
-      }
-
-      TypeId type_id = LowerType(type, span, ctx);
-      if (!type_id) {
-        return hir::kInvalidExpressionId;
-      }
-      return ctx->hir_arena->AddExpression(
-          hir::Expression{
-              .kind = hir::ExpressionKind::kStructLiteral,
-              .type = type_id,
-              .span = span,
-              .data = hir::StructLiteralExpressionData{
-                  .field_values = std::move(field_values)}});
-    }
-  }
-
-  ctx->sink->Error(span, "unsupported constant value type");
-  return hir::kInvalidExpressionId;
+  return BuildHirExpressionFromConstId(const_id, span, ctx);
 }
 
 // Skip Conversion nodes to get to the underlying expression.
@@ -420,6 +324,65 @@ auto TryGetConstantValue(
 }
 
 }  // namespace
+
+auto LowerConstantValueExpression(
+    const slang::ConstantValue& cv, const slang::ast::Type& type,
+    SourceSpan span, Context* ctx) -> hir::ExpressionId {
+  return LowerConstantValueExpressionImpl(cv, type, span, ctx);
+}
+
+auto TryEvaluatePortBindingConstant(
+    const slang::ast::Expression& expr, const slang::ast::Scope& eval_scope,
+    SourceSpan span, Context* ctx) -> std::optional<ConstId> {
+  // First check if slang already cached a constant value.
+  if (const auto* cached = expr.getConstant(); cached != nullptr && *cached) {
+    auto id = LowerConstantValueToConstId(*cached, *expr.type, span, ctx);
+    if (!id) {
+      throw common::InternalError(
+          "TryEvaluatePortBindingConstant",
+          "slang cached a constant value but Lyra failed to intern it");
+    }
+    return id;
+  }
+
+  // Port connections are not constant-required contexts, so slang may
+  // not have pre-evaluated the expression. Before calling eval(), verify
+  // the expression does not reference runtime storage (variables, nets,
+  // ports, procedural locals). Everything else -- parameters, enum
+  // values, localparams, package constants, etc. -- is delegated to
+  // semantic constant evaluation.
+  bool has_runtime_ref = false;
+  expr.visitSymbolReferences(
+      [&](const slang::ast::Expression&, const slang::ast::Symbol& sym) {
+        switch (sym.kind) {
+          case slang::ast::SymbolKind::Variable:
+          case slang::ast::SymbolKind::Net:
+          case slang::ast::SymbolKind::Port:
+          case slang::ast::SymbolKind::FormalArgument:
+          case slang::ast::SymbolKind::Iterator:
+          case slang::ast::SymbolKind::ClockVar:
+            has_runtime_ref = true;
+            break;
+          default:
+            break;
+        }
+      });
+  if (has_runtime_ref) return std::nullopt;
+
+  slang::ast::ASTContext ast_ctx(eval_scope, slang::ast::LookupLocation::max);
+  slang::ast::EvalContext eval_ctx(ast_ctx);
+  auto cv = expr.eval(eval_ctx);
+  if (!cv) return std::nullopt;
+
+  auto id = LowerConstantValueToConstId(cv, *expr.type, span, ctx);
+  if (!id) {
+    throw common::InternalError(
+        "TryEvaluatePortBindingConstant",
+        "port-binding expression evaluated to a constant but "
+        "Lyra failed to intern it as ConstId");
+  }
+  return id;
+}
 
 // Determine if inside set item should use ==? (wildcard equality).
 // SEMANTIC DEVIATION: Slang converts ? to z at parse time, so we treat

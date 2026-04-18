@@ -2,13 +2,11 @@
 #include <expected>
 #include <format>
 #include <optional>
-#include <span>
 #include <utility>
 #include <variant>
 #include <vector>
 
 #include "lyra/common/diagnostic/diagnostic.hpp"
-#include "lyra/common/edge_kind.hpp"
 #include "lyra/common/internal_error.hpp"
 #include "lyra/common/local_slot_id.hpp"
 #include "lyra/common/overloaded.hpp"
@@ -23,14 +21,12 @@
 #include "lyra/lowering/hir_to_mir/lower.hpp"
 #include "lyra/mir/arena.hpp"
 #include "lyra/mir/basic_block.hpp"
-#include "lyra/mir/connection_endpoint.hpp"
 #include "lyra/mir/connection_recipe.hpp"
 #include "lyra/mir/handle.hpp"
 #include "lyra/mir/module_body.hpp"
 #include "lyra/mir/operand.hpp"
 #include "lyra/mir/place.hpp"
 #include "lyra/mir/routine.hpp"
-#include "lyra/mir/signal_ref.hpp"
 #include "lyra/mir/statement.hpp"
 
 namespace lyra::lowering::hir_to_mir {
@@ -114,12 +110,20 @@ auto BuildPerInstancePlaces(
   return places;
 }
 
-// Lower a parent expression as a body-local function in the parent body.
-// The function reads parent values through kModuleSlot and returns the
-// computed value. The child endpoint is NOT part of the function body --
-// it's metadata on the ConnectionRecipe.
+// Lower a parent->child binding as a body-local writeback function.
+//
+// The function reads parent values through kModuleSlot places and
+// assigns the computed value to an ExternalRefId representing the
+// child target slot. There is no return value -- the body performs
+// the write itself, just like an ordinary always_comb body. The same
+// typed-assign / write-dispatch / dirty-notify chain used by every
+// other assignment in the pipeline carries this write.
+//
+// child_target_ref must already be registered in the parent body's
+// external_refs vector (done by the caller before invoking this).
 auto LowerExprAsBodyFunction(
-    hir::ExpressionId expr_id, TypeId result_type, const LoweringInput& input,
+    hir::ExpressionId expr_id, TypeId result_type,
+    mir::ExternalRefId child_target_ref, const LoweringInput& input,
     const DesignDeclarations& decls, mir::Arena& body_arena,
     const PlaceMap& per_instance_places) -> Result<mir::FunctionId> {
   // Set up a hybrid context: design-level HIR arena (has the expression)
@@ -147,7 +151,7 @@ auto LowerExprAsBodyFunction(
       .dpi_imports = nullptr,
       .generated_functions = nullptr,
       .return_slot = std::nullopt,
-      .return_type = result_type,
+      .return_type = input.builtin_types.void_type,
       .design_slots = &decls.slots,
       .body_slots = nullptr,
       .cover_site_registry = nullptr,
@@ -168,16 +172,25 @@ auto LowerExprAsBodyFunction(
     return std::unexpected(expr_result.error());
   }
 
-  builder.EmitReturn(*expr_result);
+  // Emit the cross-object writeback: the child target is addressed
+  // through the pre-registered ExternalRefId. The standard typed-assign
+  // path (PlainAssign / CopyAssign / MoveAssign classification) carries
+  // this statement into the existing write-dispatch pipeline.
+  builder.EmitTypedAssign(
+      mir::WriteTarget{child_target_ref}, mir::RightHandSide(*expr_result),
+      result_type);
+
+  // Void-returning body: no return value, just an ordinary return.
+  builder.EmitTerminate(std::nullopt);
 
   std::vector<mir::BasicBlock> blocks = builder.Finish();
 
   mir::Function func{
       .signature =
           mir::FunctionSignature{
-              .return_type = result_type,
+              .return_type = input.builtin_types.void_type,
               .params = {},
-              .return_policy = mir::ReturnPolicy::kDirect,
+              .return_policy = mir::ReturnPolicy::kVoid,
           },
       .runtime_meta = {},
       .entry = mir::BasicBlockId{entry_idx.value},
@@ -196,15 +209,6 @@ auto LowerExprAsBodyFunction(
   return func_id;
 }
 
-namespace {
-
-// Extract the complete parent-local storage read set from a body-local
-// expression function. This defines the trigger set contract for
-// expression-connection synthesis: every parent-local slot read by the
-// expression becomes a wake source.
-//
-// Rejects disallowed read roots (kBoundChildDest, kObjectLocal) that
-// must not appear in expression connection source functions.
 auto CollectParentLocalReadSlotsFromExprFunction(
     const mir::Function& func, const mir::Arena& arena)
     -> std::vector<common::LocalSlotId> {
@@ -222,7 +226,6 @@ auto CollectParentLocalReadSlotsFromExprFunction(
         break;
       case mir::PlaceRoot::Kind::kDesignGlobal:
       case mir::PlaceRoot::Kind::kObjectLocal:
-      case mir::PlaceRoot::Kind::kBoundChildDest:
         throw common::InternalError(
             "CollectParentLocalReadSlotsFromExprFunction",
             std::format(
@@ -265,243 +268,58 @@ auto CollectParentLocalReadSlotsFromExprFunction(
   return slots;
 }
 
-// Synthesize a looping body-local process from an expression function.
-// Returns a mir::Process struct (NOT a ProcessId -- caller adds to arena
-// during the suffix append pass).
-//
-// Precondition: read_slots is non-empty. Expression connections with
-// zero parent-local reads are rejected -- a looping wait with no
-// triggers has no defined meaning.
-auto SynthesizeExprConnectionProcess(
-    mir::Arena& body_arena, mir::FunctionId func_id, TypeId result_type,
-    std::span<const common::LocalSlotId> read_slots) -> mir::Process {
-  if (read_slots.empty()) {
+void BuildInstallableComputations(mir::ModuleBody& body) {
+  if (!body.installable_computations.empty()) {
     throw common::InternalError(
-        "SynthesizeExprConnectionProcess",
-        "expression connection produced empty parent-local trigger set");
+        "BuildInstallableComputations",
+        "installable_computations already populated");
   }
 
-  const auto& func = body_arena[func_id];
-  std::vector<mir::BasicBlock> blocks;
-  mir::BasicBlockId entry_id = func.entry;
-
-  for (const auto& block : func.blocks) {
-    mir::BasicBlock nb;
-    nb.params = block.params;
-    nb.statements = block.statements;
-
-    if (const auto* ret = std::get_if<mir::Return>(&block.terminator.data)) {
-      // Append child write before Wait. Only PlainAssign.dest may
-      // receive kBoundChildDest -- enforced here by construction.
-      if (ret->value) {
-        auto dest = body_arena.AddPlace(
-            mir::Place{
-                .root =
-                    mir::PlaceRoot{
-                        .kind = mir::PlaceRoot::Kind::kBoundChildDest,
-                        .id = mir::kBoundChildDestSentinel,
-                        .type = result_type},
-                .projections = {}});
-        nb.statements.push_back(
-            mir::Statement{
-                .data = mir::PlainAssign{.dest = dest, .rhs = *ret->value}});
-      }
-      // Replace Return with Wait on full parent-local read set.
-      std::vector<mir::WaitTrigger> wt;
-      for (const auto& slot : read_slots) {
-        wt.push_back(
-            mir::WaitTrigger{
-                .signal =
-                    mir::SignalRef{
-                        .scope = mir::SignalRef::Scope::kModuleLocal,
-                        .id = slot.value,
-                        .object_index = 0},
-                .edge = common::EdgeKind::kAnyChange,
-                .observed_place = std::nullopt,
-                .late_bound = std::nullopt,
-                .unresolved_external_ref = std::nullopt});
-      }
-      nb.terminator.data =
-          mir::Wait{.triggers = std::move(wt), .resume = entry_id};
-    } else {
-      nb.terminator = block.terminator;
-    }
-    blocks.push_back(std::move(nb));
-  }
-
-  return mir::Process{
-      .kind = mir::ProcessKind::kLooping,
-      .entry = entry_id,
-      .blocks = std::move(blocks),
-      .temp_metadata = func.temp_metadata,
-      .decision_sites = {}};
-}
-
-// Check if a place has kBoundChildDest root.
-auto IsBoundChildDestPlace(mir::PlaceId pid, const mir::Arena& arena) -> bool {
-  return arena[pid].root.kind == mir::PlaceRoot::Kind::kBoundChildDest;
-}
-
-// Reject kBoundChildDest in any read-position operand.
-void RejectBoundChildInOperand(
-    const mir::Operand& op, const mir::Arena& arena) {
-  if (op.kind != mir::Operand::Kind::kUse) return;
-  if (IsBoundChildDestPlace(std::get<mir::PlaceId>(op.payload), arena)) {
-    throw common::InternalError(
-        "VerifyExprConnectionProcessShape",
-        "kBoundChildDest found in read position");
-  }
-}
-
-// Reject kBoundChildDest in a write destination (for non-PlainAssign
-// statement forms that should never target a bound child).
-void RejectBoundChildInDest(mir::WriteTarget dest, const mir::Arena& arena) {
-  if (const auto* pid = std::get_if<mir::PlaceId>(&dest)) {
-    if (IsBoundChildDestPlace(*pid, arena)) {
-      throw common::InternalError(
-          "VerifyExprConnectionProcessShape",
-          "kBoundChildDest found in non-PlainAssign dest");
-    }
-  }
-}
-
-// Verify that a synthesized expression connection process uses
-// kBoundChildDest only in exactly one place: PlainAssign.dest.
-// Rejects kBoundChildDest in:
-//   - any operand (read position)
-//   - CopyAssign.dest or MoveAssign.dest
-//   - branch conditions, jump args
-//   - wait trigger signals
-void VerifyExprConnectionProcessShape(
-    const mir::Process& proc, const mir::Arena& arena) {
-  auto check_rhs = [&](const mir::RightHandSide& rhs) {
-    std::visit(
-        common::Overloaded{
-            [&](const mir::Operand& op) {
-              RejectBoundChildInOperand(op, arena);
-            },
-            [&](const mir::Rvalue& rv) {
-              for (const auto& op : rv.operands)
-                RejectBoundChildInOperand(op, arena);
-            }},
-        rhs);
-  };
-
-  for (const auto& block : proc.blocks) {
-    for (const auto& stmt : block.statements) {
-      std::visit(
-          common::Overloaded{
-              [&](const mir::PlainAssign& a) {
-                // PlainAssign.dest is the ONLY allowed kBoundChildDest site.
-                check_rhs(a.rhs);
-              },
-              [&](const mir::CopyAssign& a) {
-                RejectBoundChildInDest(a.dest, arena);
-                check_rhs(a.rhs);
-              },
-              [&](const mir::MoveAssign& a) {
-                RejectBoundChildInDest(a.dest, arena);
-                check_rhs(a.rhs);
-              },
-              [&](const mir::DefineTemp& dt) { check_rhs(dt.rhs); },
-              [](const auto&) {}},
-          stmt.data);
-    }
-    std::visit(
-        common::Overloaded{
-            [&](const mir::Branch& b) {
-              RejectBoundChildInOperand(b.condition, arena);
-            },
-            [&](const mir::Jump& j) {
-              for (const auto& a : j.args) RejectBoundChildInOperand(a, arena);
-            },
-            [&](const mir::Wait& w) {
-              for (const auto& t : w.triggers) {
-                if (t.signal.scope == mir::SignalRef::Scope::kBoundChildDest) {
-                  throw common::InternalError(
-                      "VerifyExprConnectionProcessShape",
-                      "kBoundChildDest found in wait trigger");
-                }
-              }
-            },
-            [](const auto&) {}},
-        block.terminator.data);
-  }
-}
-
-// Synthesize expression connection processes for all kFunction-sourced
-// connection recipes on the body. Appends synthesized processes to the
-// body.processes suffix and populates body.expr_connection_templates.
-//
-// This is the single owning function for expression-connection execution
-// artifact creation. No later phase may append expression processes,
-// mutate their MIR, change their trigger set, or change their child
-// destination representation.
-void LowerExprConnectionForBodyImpl(mir::ModuleBody& body) {
-  if (!body.expr_connection_templates.empty()) {
-    throw common::InternalError(
-        "LowerExprConnectionForBody",
-        "expr_connection_templates already populated");
-  }
-  const auto ordinary_count_before =
-      static_cast<uint32_t>(body.processes.size());
-
-  std::vector<mir::Process> pending_expr_processes;
-  std::vector<mir::ExprConnectionTemplate> pending_templates;
-
+  // Every parent->child recipe is backed by one body-local writeback
+  // function that writes its child target internally through a
+  // pre-registered ExternalRefId. This step does exactly two things:
+  // extract the dependency set from the function's read set, and
+  // package the callable + deps into a runtime template.
+  //
+  // The seam checks below guard exactly what this function reads or
+  // relies on: (a) source.function is the active union arm, and
+  // (b) the ExternalRefId the callable body was built against exists
+  // in body.external_refs (where finalize-time binding resolution
+  // will look for it).
+  //
+  // kDriveChildToParent recipes belong to the memcpy pipeline and are
+  // skipped here. kConstant-sourced parent->child recipes are applied
+  // inline during child creation as ChildConstInit writes and carry no
+  // installable computation.
   for (const auto& recipe : body.connection_recipes) {
-    if (recipe.source.kind != mir::ConnectionSourceRecipe::Kind::kFunction)
+    if (recipe.kind != mir::PortConnection::Kind::kDriveParentToChild) {
       continue;
+    }
+    if (recipe.source.kind == mir::ConnectionSourceRecipe::Kind::kConstant) {
+      continue;
+    }
+    if (recipe.source.kind != mir::ConnectionSourceRecipe::Kind::kFunction) {
+      throw common::InternalError(
+          "BuildInstallableComputations",
+          "parent->child recipe must carry a kFunction or kConstant source");
+    }
+    if (recipe.target_ref.value >= body.external_refs.size()) {
+      throw common::InternalError(
+          "BuildInstallableComputations",
+          "parent->child recipe target_ref out of range; writeback body "
+          "requires a registered ExternalAccessRecipe");
+    }
 
     auto func_id = recipe.source.function;
-    auto read_slots = CollectParentLocalReadSlotsFromExprFunction(
-        body.arena[func_id], body.arena);
+    const auto& func = body.arena[func_id];
+    auto deps = CollectParentLocalReadSlotsFromExprFunction(func, body.arena);
 
-    auto proc = SynthesizeExprConnectionProcess(
-        body.arena, func_id, recipe.result_type, read_slots);
-
-    VerifyExprConnectionProcessShape(proc, body.arena);
-    if (!static_cast<bool>(recipe.child_port_sym)) {
-      throw common::InternalError(
-          "LowerExprConnectionForBody",
-          "expression connection recipe missing child_port_sym");
-    }
-    pending_expr_processes.push_back(std::move(proc));
-    pending_templates.push_back(
-        mir::ExprConnectionTemplate{
-            .expr_process_suffix_ordinal = 0,
-            .child_site = recipe.child_site,
-            .child_port_sym = recipe.child_port_sym,
-            .result_type = recipe.result_type,
+    body.installable_computations.push_back(
+        mir::InstallableComputationTemplate{
+            .callable = func_id,
+            .deps = std::move(deps),
         });
   }
-
-  // Append all synthesized processes as contiguous suffix.
-  for (uint32_t i = 0; i < pending_expr_processes.size(); ++i) {
-    auto pid = body.arena.AddProcess(std::move(pending_expr_processes[i]));
-    body.processes.push_back(pid);
-    pending_templates[i].expr_process_suffix_ordinal = i;
-  }
-
-  body.expr_connection_templates = std::move(pending_templates);
-
-  // Verify suffix invariant.
-  if (body.processes.size() !=
-      ordinary_count_before + body.expr_connection_templates.size()) {
-    throw common::InternalError(
-        "LowerExprConnectionForBody",
-        std::format(
-            "suffix invariant violated: processes={}, "
-            "ordinary={}, templates={}",
-            body.processes.size(), ordinary_count_before,
-            body.expr_connection_templates.size()));
-  }
-}
-
-}  // namespace
-
-void MaterializeExprConnectionProcessSuffix(mir::ModuleBody& body) {
-  LowerExprConnectionForBodyImpl(body);
 }
 
 }  // namespace lyra::lowering::hir_to_mir

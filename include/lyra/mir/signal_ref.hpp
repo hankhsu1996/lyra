@@ -12,11 +12,6 @@ struct SignalRef {
     kModuleLocal,
     kDesignGlobal,
     kObjectLocal,
-    // Narrow migration-only representation:
-    // valid only for mutation-target plumbing of synthesized
-    // expression-connection writes. Must not be produced by parsing,
-    // lowering of ordinary expressions, or trigger analysis.
-    kBoundChildDest,
   };
   Scope scope = Scope::kModuleLocal;
   uint32_t id =

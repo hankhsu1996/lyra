@@ -682,9 +682,10 @@ class Context {
   [[nodiscard]] auto RequiresBehavioralDirtyPropagation(
       const mir::SignalRef& sig) const -> bool;
 
-  // Topology-derived connection notification query. Returns true iff
-  // any instance of the current body has a connection process that
-  // triggers on this slot. Conservative union across all instances.
+  // Topology-derived connection-notification query. Returns true iff
+  // any instance of the current body has a reactive connection-kind
+  // consumer (memcpy-style connection kernel or installable-computation
+  // dep) reading this slot. Conservative union across all instances.
   // For kModuleLocal: reads ConnectionNotificationMask from context.
   // For kDesignGlobal: reads layout slot_has_connection_trigger bitmap.
   // This is a codegen compilation decision, not a body semantic fact.
@@ -780,13 +781,6 @@ class Context {
   auto EmitLoadInstanceInlineBase(llvm::Value* instance_ptr) -> llvm::Value*;
   void EmitStoreDesignPtr(llvm::Value* state_arg, llvm::Value* value);
   auto EmitOutcomePtr(llvm::Value* state_arg) -> llvm::Value*;
-
-  // Expression connection child binding helpers.
-  // EmitExprConnBindingPtr returns a pointer to the ExprConnectionChildBinding
-  // struct within the current process frame. Only valid when the current
-  // process is an expression connection.
-  auto EmitExprConnBindingPtr() -> llvm::Value*;
-  auto GetExprConnBindingType() -> llvm::StructType*;
 
   // Cached pointers (computed in entry block, reused for all place accesses)
   // state_ptr: the function argument pointing to ProcessStateN

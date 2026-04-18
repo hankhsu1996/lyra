@@ -144,9 +144,10 @@ auto WalkCanonicalPath(
     const BoundHierarchyIndex& topo, const mir::ConstructionInput& construction)
     -> uint32_t;
 
-// Check whether a ConnectionRecipe is in the fully-bindable subset:
-// source is kLocalSlot and trigger is slot-based (kLocalSlot or kChildSlot).
-// Recipes with kExternalRef or kFunction source/trigger are not yet supported.
+// Check whether a ConnectionRecipe is in the fully-bindable subset.
+// Only kDriveChildToParent memcpy recipes are bindable here: source
+// kLocalSlot and trigger kLocalSlot/kChildSlot. kDriveParentToChild
+// recipes are handled separately as installable computations.
 auto IsFullyBindableRecipe(const mir::ConnectionRecipe& recipe) -> bool;
 
 // Resolve a fully-bindable ConnectionRecipe against the construction topology.

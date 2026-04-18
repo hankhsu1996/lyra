@@ -47,6 +47,18 @@ struct ConstructionProgramEntry {
   // Realized storage sizes (kInstance only; 0/0 for kGenerate).
   uint64_t realized_inline_size;
   uint64_t realized_appendix_size;
+  // Constant port connection initialization: offset and count into the
+  // port_const_inits array. Applied immediately after CreateChild returns.
+  uint32_t port_const_init_offset;
+  uint32_t port_const_init_count;
+};
+
+// One constant-valued write to a child instance's port slot.
+// Applied inline during child creation in LyraConstructorRunProgram.
+struct PortConstInitEntry {
+  uint32_t rel_byte_offset;
+  uint32_t value_offset;
+  uint32_t value_size;
 };
 
 // Verify struct layout matches the LLVM emission in
@@ -61,7 +73,9 @@ static_assert(offsetof(ConstructionProgramEntry, ordinal_in_parent) == 24);
 static_assert(offsetof(ConstructionProgramEntry, instance_index) == 28);
 static_assert(offsetof(ConstructionProgramEntry, realized_inline_size) == 32);
 static_assert(offsetof(ConstructionProgramEntry, realized_appendix_size) == 40);
-static_assert(sizeof(ConstructionProgramEntry) == 48);
+static_assert(offsetof(ConstructionProgramEntry, port_const_init_offset) == 48);
+static_assert(offsetof(ConstructionProgramEntry, port_const_init_count) == 52);
+static_assert(sizeof(ConstructionProgramEntry) == 56);
 
 // Flat POD reference to one body descriptor package. Mirrors the data
 // passed to LyraConstructorBeginBody as individual pointer+count C ABI

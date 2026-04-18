@@ -119,6 +119,22 @@ auto CompileModuleSpecSession(
     if (!result) return std::unexpected(result.error());
   }
 
+  // Step 2.5: Capture installable computation function pointers.
+  // These functions were compiled in Step 2 via DefineMirFunction.
+  std::vector<llvm::Function*> ic_fns;
+  for (const auto& ic : body.installable_computations) {
+    auto it = declared_func_map.find(ic.callable);
+    if (it == declared_func_map.end()) {
+      throw common::InternalError(
+          "CompileModuleSpecSession",
+          std::format(
+              "installable computation callable {} not found in "
+              "declared_func_map",
+              ic.callable.value));
+    }
+    ic_fns.push_back(it->second);
+  }
+
   // Step 3: Codegen all body-owned processes.
   CompiledModuleSpec product{
       .body = input.body,
@@ -129,6 +145,7 @@ auto CompileModuleSpecSession(
       .deferred_artifacts = {},
       .module_export_entries = {},
       .back_edge_origins = {},
+      .installable_computation_fns = std::move(ic_fns),
   };
 
   for (size_t pi = 0; pi < input.view.processes.size(); ++pi) {
@@ -251,6 +268,7 @@ auto CompileSpecializations(
   auto num_units = spec_plan.inputs.size();
   products.body_compiled_funcs.resize(num_units);
   products.body_process_triggers.resize(num_units);
+  products.body_ic_fns.resize(num_units);
 
   uint32_t running_wait_base = 0;
   uint32_t running_back_edge_base = 0;
@@ -279,6 +297,7 @@ auto CompileSpecializations(
 
     products.body_compiled_funcs[ui] = std::move(product->process_functions);
     products.body_process_triggers[ui] = std::move(product->process_triggers);
+    products.body_ic_fns[ui] = std::move(product->installable_computation_fns);
 
     products.wait_sites.insert(
         products.wait_sites.end(),

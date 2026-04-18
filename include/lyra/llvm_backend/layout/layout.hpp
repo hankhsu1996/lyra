@@ -235,9 +235,6 @@ struct ProcessLayout {
   // Computed at layout time so shadow fields can be added to the
   // persistent frame. Codegen must assert presence before use.
   std::optional<ProcessActivationPlan> activation_plan;
-  // LLVM struct field index of ExprConnectionChildBinding within the frame.
-  // UINT32_MAX for non-expression-connection processes.
-  uint32_t expr_conn_binding_field_index = UINT32_MAX;
 };
 
 // Index into module-instance parallel arrays (instance_storage_bases,
@@ -496,9 +493,6 @@ struct Layout {
     // Not the source of truth for grouping (grouping is structural).
     std::optional<uint32_t> proc_within_body;
     std::optional<uint32_t> conn_index;
-    // Byte offset of ExprConnectionChildBinding within the process state.
-    // UINT32_MAX for non-expression-connection schemas.
-    uint32_t expr_conn_binding_byte_offset = UINT32_MAX;
   };
 
   std::vector<ProcessStateSchemaDesc> state_schemas;
@@ -533,8 +527,15 @@ struct Layout {
     // Covers cross-body dependents (e.g., parent always_ff
     // @(posedge child.clk)).
     std::vector<bool> slot_has_cross_body_behavioral_trigger;
-    // Per body-local slot: true iff any connection process triggers on
-    // that slot. Conservative union across all instances of this body.
+    // Per body-local slot: true iff this slot is read by a reactive
+    // consumer whose write path must unconditionally mark dirty.
+    // Populated from:
+    //   - memcpy-style connection kernels (kDriveChildToParent only)
+    //   - installable-computation deps (all parent->child bindings,
+    //     both kFunction and kLocalSlot sources)
+    // Note: parent->child bindings do not appear in the memcpy pipeline
+    // anymore; they are represented exclusively as installable
+    // computations. Conservative union across all instances of this body.
     // Indexed by body-local slot id [0, slot_count).
     std::vector<bool> slot_has_connection_notification;
     // Body-local state region sizes in bytes. Produced from body-local
@@ -545,8 +546,8 @@ struct Layout {
     // Per-body timescale from compile-time scope metadata.
     int8_t time_unit_power = 0;
     int8_t time_precision_power = 0;
-    // Expression connection count for this body.
-    uint32_t num_expr_connections = 0;
+    // Installable computation count for this body.
+    uint32_t num_installable_computations = 0;
     // Child public port entries for this body. Emitted to runtime for
     // constructor-side symbolic port -> local slot resolution.
     // Populated from CompiledModuleHeader::PortEntry during design lowering.
@@ -649,9 +650,15 @@ struct Layout {
   PackageInitDescriptor package_init_descriptor;
 
   // Realization-owned connection dirty-propagation contract.
-  // True iff any canonicalized connection kernel entry triggers on
-  // that slot. Keyed by canonical storage-owner slot identity.
-  // Indexed by design-global slot_id [0, design.slots.size()).
+  // True iff any reactive consumer reads this slot:
+  //   - canonicalized connection kernel entries (kDriveChildToParent
+  //     memcpy-style), or
+  //   - installable-computation deps (all parent->child bindings,
+  //     kFunction and kLocalSlot sources alike).
+  // Writes to marked slots must always mark dirty so the shared
+  // dirty-mark contract feeds both dispatch paths. Keyed by canonical
+  // storage-owner slot identity; indexed by design-global slot_id
+  // [0, design.slots.size()).
   std::vector<bool> slot_has_connection_trigger;
 };
 
@@ -662,13 +669,6 @@ struct Layout {
 auto GetLlvmTypeForTypeId(
     llvm::LLVMContext& ctx, TypeId type_id, const TypeArena& types,
     bool force_two_state) -> llvm::Type*;
-
-// Canonical LLVM struct type for ExprConnectionChildBinding.
-// Cached by LLVM named struct lookup -- returns existing type if already
-// created in this context, or creates a new named struct.
-// Layout: {ptr child_instance, i32 child_slot_byte_offset, i32
-// child_local_signal}
-auto GetExprConnBindingLlvmType(llvm::LLVMContext& ctx) -> llvm::StructType*;
 
 // Classify a slot's type into the variable-registration metadata
 // (kind/width/signedness/4-state). Pure function of a single type.

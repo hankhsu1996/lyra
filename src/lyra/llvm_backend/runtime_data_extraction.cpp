@@ -238,7 +238,9 @@ auto BuildConstructionProgram(
     const std::vector<std::vector<common::SerializedExtRefBinding>>&
         instance_ext_ref_bindings,
     std::span<const Layout::BodyRealizationInfo> body_realization_infos,
-    std::span<const common::HierarchyNode> hierarchy_nodes)
+    std::span<const common::HierarchyNode> hierarchy_nodes,
+    std::span<const mir::ObjectRecord> objects,
+    const ConstantArena& constant_arena, const DesignLayout& design)
     -> ConstructionProgramData {
   auto instance_count = static_cast<uint32_t>(instance_body_group.size());
   auto node_count = static_cast<uint32_t>(hierarchy_nodes.size());
@@ -313,11 +315,49 @@ auto BuildConstructionProgram(
           prog.ext_ref_binding_pool.push_back(b);
         }
       }
+
+      // Serialize port constant connection inits for this instance.
+      // Each ObjectRecord owns its child_port_const_inits directly.
+      if (mi < objects.size() && !objects[mi].child_port_const_inits.empty()) {
+        entry.port_const_init_offset =
+            static_cast<uint32_t>(prog.port_const_inits.size());
+        entry.port_const_init_count =
+            static_cast<uint32_t>(objects[mi].child_port_const_inits.size());
+
+        uint32_t child_bg = instance_body_group[mi];
+        const auto& child_info = body_realization_infos[child_bg];
+        for (const auto& ci : objects[mi].child_port_const_inits) {
+          uint32_t slot_idx = ci.child_slot.value;
+          if (slot_idx >= child_info.slot_count) {
+            throw common::InternalError(
+                "BuildConstructionProgram",
+                std::format(
+                    "child_const_init: child_slot {} >= slot_count {}",
+                    slot_idx, child_info.slot_count));
+          }
+          uint64_t rel_offset =
+              child_info.body_layout.inline_offsets[slot_idx].value;
+          const auto& spec = child_info.slot_specs[slot_idx];
+          auto value_offset =
+              static_cast<uint32_t>(prog.port_const_pool.size());
+          const auto& constant = constant_arena[ci.const_id];
+          LowerConstantToCanonicalBytes(
+              constant, spec, constant_arena, design.storage_spec_arena,
+              prog.port_const_pool);
+          auto value_size =
+              static_cast<uint32_t>(prog.port_const_pool.size() - value_offset);
+          prog.port_const_inits.push_back(
+              runtime::PortConstInitEntry{
+                  .rel_byte_offset =
+                      NarrowToU32(rel_offset, "port const rel off"),
+                  .value_offset = value_offset,
+                  .value_size = value_size});
+        }
+      }
     }
 
     prog.entries.push_back(entry);
   }
-
   // Build per-body child_site_to_tree_ordinal mapping.
   // For each parent body, maps the body-local child_site_index (sorted
   // path position among instance children) to tree-relative ordinal
@@ -772,18 +812,6 @@ void ExtractBodyCombTemplates(
         body, ordinal_map,
         [&](uint32_t nonfinal_proc_ordinal, mir::ProcessId /*pid*/,
             const mir::Process& proc) {
-          // Expression-connection suffix processes are regular looping
-          // processes with wait/suspend semantics. They must never be
-          // classified as comb kernels.
-          if (info.body == nullptr) {
-            throw common::InternalError(
-                "ExtractBodyCombTemplates", "body is null");
-          }
-          if (mir::IsExprConnectionProcessOrdinal(
-                  *info.body, nonfinal_proc_ordinal)) {
-            return;
-          }
-
           auto result = AnalyzeCombKernel(proc, body.arena);
           if (!result) return;
 
@@ -885,21 +913,6 @@ void ExtractBodyCombTemplates(
                   .has_self_edge = static_cast<uint8_t>(result->has_self_edge),
               });
         });
-
-    // Post-extraction invariant: no extracted comb kernel may be an
-    // expression-connection suffix process. This catches regressions if
-    // the early-return guard above is accidentally removed or bypassed.
-    for (const auto& ck : bp.comb.kernels) {
-      if (mir::IsExprConnectionProcessOrdinal(
-              *info.body, ck.proc_within_body)) {
-        throw common::InternalError(
-            "ExtractBodyCombTemplates",
-            std::format(
-                "expr connection process {} was extracted as comb kernel "
-                "in body group {}",
-                ck.proc_within_body, gi));
-      }
-    }
   }
 }
 
@@ -1005,7 +1018,8 @@ void ExtractBodyInitDescriptors(
     std::span<const InstanceStorageBase> instance_storage_bases,
     std::span<const uint32_t> instance_body_group,
     std::vector<BodyRuntimeProducts>& body_products,
-    ConstructionProgramData& construction_program) {
+    ConstructionProgramData& construction_program,
+    const ConstantArena& constant_arena) {
   std::vector<ParamSlotTemplate> body_param_templates(
       body_realization_infos.size());
 
@@ -1145,7 +1159,8 @@ void ExtractBodyInitDescriptors(
   construction_program = BuildConstructionProgram(
       instance_body_group, instance_storage_sizes, param_payloads,
       construction.instance_ext_ref_bindings, body_realization_infos,
-      construction.hierarchy_nodes);
+      construction.hierarchy_nodes, construction.objects, constant_arena,
+      design);
 
   // Validate construction program: instance entries must have valid body_group.
   for (size_t i = 0; i < construction_program.entries.size(); ++i) {
@@ -1299,7 +1314,7 @@ auto ExtractRuntimeData(
       *input.construction, layout.body_realization_infos, layout.design,
       layout.instance_storage_sizes, layout.instance_storage_bases,
       instance_body_group, products.body_products,
-      products.construction_program);
+      products.construction_program, *input.constant_arena);
   ExtractPackageInitDescriptor(
       layout.num_package_slots, layout.design,
       products.package_init_descriptor);

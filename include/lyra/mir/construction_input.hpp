@@ -3,9 +3,11 @@
 #include <cstdint>
 #include <vector>
 
+#include "lyra/common/constant.hpp"
 #include "lyra/common/ext_ref_binding.hpp"
 #include "lyra/common/hierarchy_node.hpp"
 #include "lyra/common/integral_constant.hpp"
+#include "lyra/common/local_slot_id.hpp"
 #include "lyra/common/module_identity.hpp"
 #include "lyra/common/symbol_types.hpp"
 #include "lyra/mir/instance.hpp"
@@ -25,6 +27,15 @@ struct InstanceConstBlock {
   std::vector<ConstSlotInit> slot_inits;
 };
 
+// One-time constant write to a child port slot during construction.
+// Attached directly to the owning child's ObjectRecord -- no global
+// list or object-index-based regroup. const_id references the constant
+// arena; actual byte lowering happens at the serialization boundary.
+struct ChildConstInit {
+  common::LocalSlotId child_slot;
+  ConstId const_id;
+};
+
 // Constructor-owned record for one module object in the design.
 // body_group is the sole compile-owned lookup key.
 struct ObjectRecord {
@@ -42,6 +53,10 @@ struct ObjectRecord {
   // MIR identity, layout, codegen, or runtime slot identity.
   // Removal target: T1-followup (replace with TopologyObjectId).
   SymbolId instance_sym;
+  // Constant parent-to-child port connection inits owned by this
+  // child instance. Populated during topology binding in design
+  // lowering. Consumed by the LLVM backend for serialization.
+  std::vector<ChildConstInit> child_port_const_inits;
 };
 
 // Constructor-owned aggregate for all per-object construction data.

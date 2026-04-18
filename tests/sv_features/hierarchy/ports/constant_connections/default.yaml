@@ -1,0 +1,200 @@
+feature: hierarchy_constant_connections
+description: Tests input port connections with compile-time constant values
+
+# Port connections with compile-time constant sources are handled by the
+# unified expression connection model. The expression is lowered to a
+# body-local function. Dependency analysis finds zero parent-local reads,
+# so a one-shot (kOnce) process is synthesized that evaluates once during
+# initial activation, writes the result to the child port, and terminates.
+
+cases:
+  - name: literal_constant
+    description: Input port connected to a literal constant
+    sv: |
+      module Child(input logic [31:0] addr);
+        logic [31:0] stored;
+        always_comb stored = addr;
+      endmodule
+
+      module Top;
+        Child c(.addr(32'h00100000));
+        initial begin
+          #1;
+          $display("stored=0x%0h", c.stored);
+        end
+      endmodule
+    expect:
+      stdout: "stored=0x100000\n"
+
+  - name: folded_arithmetic_constant
+    description: Input port with folded arithmetic expression
+    sv: |
+      module Child(input logic [31:0] addr);
+        logic [31:0] stored;
+        always_comb stored = addr;
+      endmodule
+
+      module Top;
+        Child c(.addr(32'h100 + 32'h20));
+        initial begin
+          #1;
+          $display("stored=0x%0h", c.stored);
+        end
+      endmodule
+    expect:
+      stdout: "stored=0x120\n"
+
+  - name: casted_constant
+    description: Input port with implicitly casted constant
+    sv: |
+      module Child(input logic [7:0] val);
+        logic [7:0] stored;
+        always_comb stored = val;
+      endmodule
+
+      module Top;
+        Child c(.val(8'd255));
+        initial begin
+          #1;
+          $display("stored=0x%0h", c.stored);
+        end
+      endmodule
+    expect:
+      stdout: "stored=0xff\n"
+
+  - name: concat_constant
+    description: Input port with concatenation of constants
+    sv: |
+      module Child(input logic [7:0] val);
+        logic [7:0] stored;
+        always_comb stored = val;
+      endmodule
+
+      module Top;
+        Child c(.val({4'b1010, 4'b0101}));
+        initial begin
+          #1;
+          $display("stored=0x%0h", c.stored);
+        end
+      endmodule
+    expect:
+      stdout: "stored=0xa5\n"
+
+  - name: multiple_constant_inputs
+    description: Module with multiple constant port connections
+    sv: |
+      module Adder(input int a, input int b);
+        int sum;
+        always_comb sum = a + b;
+      endmodule
+
+      module Top;
+        Adder add(.a(100), .b(200));
+        initial begin
+          #1;
+          $display("sum=%0d", add.sum);
+        end
+      endmodule
+    expect:
+      stdout: "sum=300\n"
+
+  - name: mixed_constant_and_dynamic
+    description: Constant port + runtime-varying expression port
+    sv: |
+      module Calc(input int x, input int y);
+        int result;
+        always_comb result = x * 2 + y;
+      endmodule
+
+      module Top;
+        int dyn;
+        Calc c(.x(50), .y(dyn));
+        initial begin
+          dyn = 5;
+          #1;
+          $display("result=%0d", c.result);
+          dyn = 15;
+          #1;
+          $display("result=%0d", c.result);
+        end
+      endmodule
+    expect:
+      stdout: |
+        result=105
+        result=115
+
+  - name: real_constant
+    description: Input port with real-valued constant
+    sv: |
+      module Child(input real r);
+        real stored;
+        always_comb stored = r;
+      endmodule
+
+      module Top;
+        Child c(.r(3.14));
+        initial begin
+          #1;
+          $display("stored=%f", c.stored);
+        end
+      endmodule
+    expect:
+      stdout: "stored=3.140000\n"
+
+  - name: struct_constant
+    description: Input port with unpacked struct constant
+    sv: |
+      typedef struct { int a; int b; } Pair;
+
+      module Child(input Pair p);
+        int sum;
+        always_comb sum = p.a + p.b;
+      endmodule
+
+      module Top;
+        Child c(.p('{10, 20}));
+        initial begin
+          #1;
+          $display("sum=%0d", c.sum);
+        end
+      endmodule
+    expect:
+      stdout: "sum=30\n"
+
+  - name: array_constant
+    description: Input port with unpacked array constant
+    sv: |
+      module Child(input int arr[2]);
+        int sum;
+        always_comb sum = arr[0] + arr[1];
+      endmodule
+
+      module Top;
+        Child c(.arr('{3, 4}));
+        initial begin
+          #1;
+          $display("sum=%0d", c.sum);
+        end
+      endmodule
+    expect:
+      stdout: "sum=7\n"
+
+  - name: dynamic_expression_baseline
+    description: Non-constant expression uses dynamic path (baseline)
+    sv: |
+      module Child(input int val);
+        int stored;
+        always_comb stored = val;
+      endmodule
+
+      module Top;
+        int a;
+        Child c(.val(a + 5));
+        initial begin
+          a = 10;
+          #1;
+          $display("stored=%0d", c.stored);
+        end
+      endmodule
+    expect:
+      stdout: "stored=15\n"

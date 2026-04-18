@@ -90,11 +90,15 @@ struct RuntimeInstanceObservability {
   std::vector<uint8_t> local_has_observers;
   std::vector<uint32_t> activation_gen;
 
-  // R5: Per-instance comb trigger map, indexed by LocalSignalId.value.
-  // Maps local signals to ranges in the engine's shared comb_trigger_backing_.
-  std::vector<TriggerRange> local_comb_trigger_map;
-  // List of local signal IDs that have comb triggers (for seeding dirty marks).
-  std::vector<LocalSignalId> local_comb_trigger_slots;
+  // Per-instance reactive trigger map, indexed by LocalSignalId.value.
+  // Maps local signals to ranges in the engine's shared
+  // reactive_trigger_backing_. Used by fixpoint dispatch to wake up all
+  // reactive consumers (comb kernels, installable computations) when a
+  // local signal changes.
+  std::vector<TriggerRange> local_reactive_trigger_map;
+  // List of local signal IDs that have reactive triggers (for seeding
+  // dirty marks at init time).
+  std::vector<LocalSignalId> local_reactive_trigger_slots;
 
   // R5: Per-instance connection trigger map, indexed by LocalSignalId.value.
   // Maps local signals to ranges in the engine's shared all_connections_.

@@ -1045,10 +1045,6 @@ auto AnalyzeCombKernel(const mir::Process& process, const mir::Arena& arena)
         const auto* dest_pid = std::get_if<mir::PlaceId>(ref.dest);
         if (dest_pid == nullptr) return std::nullopt;
         const auto& root = arena[*dest_pid].root;
-        if (root.kind == mir::PlaceRoot::Kind::kBoundChildDest) {
-          // Cross-instance child-bound writes are not comb-kernel eligible.
-          return std::nullopt;
-        }
         if (root.kind == mir::PlaceRoot::Kind::kModuleSlot) {
           write_slots.insert(
               {.scope = mir::SignalRef::Scope::kModuleLocal,
@@ -1598,16 +1594,6 @@ auto FrameLayout::GetShadowField(uint32_t slot_id) const
       std::format("no shadow field for managed slot {}", slot_id));
 }
 
-auto GetExprConnBindingLlvmType(llvm::LLVMContext& ctx) -> llvm::StructType* {
-  if (auto* existing =
-          llvm::StructType::getTypeByName(ctx, "lyra.expr_conn_binding"))
-    return existing;
-  auto* ptr_ty = llvm::PointerType::getUnqual(ctx);
-  auto* i32_ty = llvm::Type::getInt32Ty(ctx);
-  return llvm::StructType::create(
-      ctx, {ptr_ty, i32_ty, i32_ty}, "lyra.expr_conn_binding");
-}
-
 auto IsScalarPatchable(
     TypeId type_id, const TypeArena& types, bool force_two_state) -> bool {
   const Type& type = types[type_id];
@@ -1739,6 +1725,9 @@ auto BuildLayout(
   layout.connection_kernel_entries = std::move(precollected_connection_kernels);
 
   // Build connection dirty-propagation contract from trigger slots.
+  // Covers both memcpy-style connection kernels and installable-computation
+  // deps: both are reactive consumers whose source signals must always
+  // mark dirty on write so the shared reactive trigger model sees them.
   layout.slot_has_connection_trigger.assign(layout.design.slots.size(), false);
   for (const auto& entry : layout.connection_kernel_entries) {
     auto trigger = entry.trigger_slot.value;
@@ -1751,6 +1740,27 @@ auto BuildLayout(
               trigger, layout.slot_has_connection_trigger.size()));
     }
     layout.slot_has_connection_trigger[trigger] = true;
+  }
+  // Installable-computation deps: per-instance body-local dep slots
+  // become design-global trigger slots via the instance's slot base.
+  // Parent-side writes to these slots must always mark dirty so the IC
+  // fires in the shared reactive dispatch.
+  for (const auto& plan : module_plans) {
+    if (plan.body == nullptr) continue;
+    for (const auto& ic : plan.body->installable_computations) {
+      for (const auto& dep : ic.deps) {
+        uint32_t global_slot = plan.design_state_base_slot + dep.value;
+        if (global_slot >= layout.slot_has_connection_trigger.size()) {
+          throw common::InternalError(
+              "BuildLayout",
+              std::format(
+                  "installable computation dep global slot {} out of range "
+                  "(design has {} slots)",
+                  global_slot, layout.slot_has_connection_trigger.size()));
+        }
+        layout.slot_has_connection_trigger[global_slot] = true;
+      }
+    }
   }
 
   // Phase 3: Collect module processes (run through scheduler)
@@ -1820,29 +1830,9 @@ auto BuildLayout(
     proc_layout.process_index = i;
     proc_layout.has_suspension = ProcessHasSuspension(process);
 
-    // Detect expression connection processes using canonical suffix helper.
-    bool is_expr_conn = false;
-    if (i >= layout.num_module_process_base) {
-      uint32_t mi = sp.module_index.value;
-      const auto* body_ptr = module_plans[mi].body;
-      if (mir::GetExprConnectionCount(*body_ptr) > 0) {
-        const auto& ordinal_map = body_ordinal_maps.at(body_ptr);
-        uint32_t nonfinal_ordinal =
-            GetNonFinalOrdinal(ordinal_map, sp.process_id);
-        is_expr_conn =
-            mir::IsExprConnectionProcessOrdinal(*body_ptr, nonfinal_ordinal);
-      }
-    }
-
-    // Expression connections get an extra trailing field for the
-    // pre-bound child context (ExprConnectionChildBinding).
+    auto roots = CollectProcessRoots(process, sched_arena, types);
     llvm::Type* extra_type = nullptr;
     uint32_t extra_field_idx = UINT32_MAX;
-    if (is_expr_conn) {
-      extra_type = GetExprConnBindingLlvmType(ctx);
-    }
-
-    auto roots = CollectProcessRoots(process, sched_arena, types);
 
     if (proc_layout.has_suspension) {
       // Compute activation plan at layout time so shadow fields can be
@@ -1890,8 +1880,6 @@ auto BuildLayout(
             AllocaRootInfo{.key = root.key, .type = root.type});
       }
     }
-
-    proc_layout.expr_conn_binding_field_index = extra_field_idx;
 
     proc_layout.state_type = BuildProcessStateType(
         ctx, layout.header_type, proc_layout.frame.llvm_type, state_name);
@@ -1999,16 +1987,6 @@ auto BuildLayout(
           }
         } else {
           auto schema_idx = static_cast<uint32_t>(layout.state_schemas.size());
-          // Compute expression connection binding byte offset if applicable.
-          uint32_t binding_off = UINT32_MAX;
-          const auto& playout = layout.processes[i];
-          if (playout.expr_conn_binding_field_index != UINT32_MAX) {
-            const auto* sl = dl.getStructLayout(playout.frame.llvm_type);
-            binding_off =
-                static_cast<uint32_t>(sizeof(runtime::ProcessFrameHeader)) +
-                static_cast<uint32_t>(sl->getElementOffset(
-                    playout.expr_conn_binding_field_index));
-          }
           layout.state_schemas.push_back({
               .state_size = props.state_size,
               .state_align = props.state_align,
@@ -2016,7 +1994,6 @@ auto BuildLayout(
               .representative_process_index = i,
               .proc_within_body = nonfinal_proc_ordinal,
               .conn_index = std::nullopt,
-              .expr_conn_binding_byte_offset = binding_off,
           });
           module_schema_map[key] = schema_idx;
         }
@@ -2064,8 +2041,8 @@ auto BuildLayout(
                   .total_state_size_bytes = size.total_bytes,
                   .time_unit_power = plan.time_unit_power,
                   .time_precision_power = plan.time_precision_power,
-                  .num_expr_connections =
-                      mir::GetExprConnectionCount(*plan.body),
+                  .num_installable_computations =
+                      mir::GetInstallableComputationCount(*plan.body),
                   .port_entries =
                       [&] {
                         std::vector<runtime::RuntimePortEntry> rpe;
@@ -2152,8 +2129,11 @@ auto BuildLayout(
     }
   }
 
-  // Build per-body connection notification bitmaps directly from
-  // connection trigger sources, without an intermediate flat ownership table.
+  // Build per-body connection notification bitmaps directly from the
+  // static contract sources: memcpy-style connection kernels and
+  // installable-computation deps. Both are reactive consumers whose
+  // writes must unconditionally mark dirty; both feed the same shared
+  // reactive trigger model at runtime.
   for (auto& info : layout.body_realization_infos) {
     info.slot_has_connection_notification.assign(info.slot_count, false);
   }
@@ -2163,6 +2143,26 @@ auto BuildLayout(
     layout.body_realization_infos[gi]
         .slot_has_connection_notification[entry.trigger_local_slot.value] =
         true;
+  }
+  // Installable-computation deps: every parent-local slot that an IC
+  // reads must be marked so codegen emits unconditional MarkDirty on
+  // writes to it. Without this, writes from scheduled processes are
+  // suppressed and the shared reactive model never sees the change.
+  for (auto& info : layout.body_realization_infos) {
+    if (info.body == nullptr) continue;
+    for (const auto& ic : info.body->installable_computations) {
+      for (const auto& dep : ic.deps) {
+        if (dep.value >= info.slot_has_connection_notification.size()) {
+          throw common::InternalError(
+              "BuildLayout",
+              std::format(
+                  "installable computation dep slot {} out of range "
+                  "(slot_count={})",
+                  dep.value, info.slot_has_connection_notification.size()));
+        }
+        info.slot_has_connection_notification[dep.value] = true;
+      }
+    }
   }
   // Compute per-instance storage bases and slot counts.
   // The storage base is the first owned-local slot's arena-absolute byte

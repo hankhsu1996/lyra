@@ -317,25 +317,27 @@ void Engine::InitCombKernels(
   if (!global_triggers.empty()) {
     std::ranges::sort(global_triggers, {}, &ParsedTrigger::global_id);
 
-    global_comb_trigger_map_.resize(global_slot_count_);
+    global_reactive_trigger_map_.resize(global_slot_count_);
     uint32_t i = 0;
     while (i < global_triggers.size()) {
       uint32_t slot = global_triggers[i].global_id;
-      auto start = static_cast<uint32_t>(comb_trigger_backing_.size());
+      auto start = static_cast<uint32_t>(reactive_trigger_backing_.size());
       while (i < global_triggers.size() &&
              global_triggers[i].global_id == slot) {
-        comb_trigger_backing_.push_back({
-            .kernel_idx = global_triggers[i].kernel_idx,
-            .byte_offset = global_triggers[i].byte_offset,
-            .byte_size = global_triggers[i].byte_size,
-            .has_self_edge = global_triggers[i].has_self_edge,
-        });
+        reactive_trigger_backing_.push_back(
+            ReactiveTriggerEntry{
+                .kind = ReactiveTriggerEntry::Kind::kCombKernel,
+                .byte_offset = global_triggers[i].byte_offset,
+                .byte_size = global_triggers[i].byte_size,
+                .has_self_edge = global_triggers[i].has_self_edge,
+                .owner_idx = global_triggers[i].kernel_idx,
+            });
         ++i;
       }
       uint32_t count =
-          static_cast<uint32_t>(comb_trigger_backing_.size()) - start;
-      global_comb_trigger_map_[slot] = {.start = start, .count = count};
-      global_comb_trigger_slots_.push_back(GlobalSignalId{slot});
+          static_cast<uint32_t>(reactive_trigger_backing_.size()) - start;
+      global_reactive_trigger_map_[slot] = {.start = start, .count = count};
+      global_reactive_trigger_slots_.push_back(GlobalSignalId{slot});
     }
   }
 
@@ -356,36 +358,40 @@ void Engine::InitCombKernels(
             "null trigger instance in local comb trigger entry");
       }
       auto& obs = inst->observability;
-      if (obs.local_comb_trigger_map.empty() && obs.local_signal_count > 0) {
-        obs.local_comb_trigger_map.resize(obs.local_signal_count);
+      if (obs.local_reactive_trigger_map.empty() &&
+          obs.local_signal_count > 0) {
+        obs.local_reactive_trigger_map.resize(obs.local_signal_count);
       }
       while (i < local_triggers.size() && local_triggers[i].instance == inst) {
         uint32_t local_id = local_triggers[i].local_id;
-        auto start = static_cast<uint32_t>(comb_trigger_backing_.size());
+        auto start = static_cast<uint32_t>(reactive_trigger_backing_.size());
         while (i < local_triggers.size() &&
                local_triggers[i].instance == inst &&
                local_triggers[i].local_id == local_id) {
-          comb_trigger_backing_.push_back({
-              .kernel_idx = local_triggers[i].kernel_idx,
-              .byte_offset = local_triggers[i].byte_offset,
-              .byte_size = local_triggers[i].byte_size,
-              .has_self_edge = local_triggers[i].has_self_edge,
-          });
+          reactive_trigger_backing_.push_back(
+              ReactiveTriggerEntry{
+                  .kind = ReactiveTriggerEntry::Kind::kCombKernel,
+                  .byte_offset = local_triggers[i].byte_offset,
+                  .byte_size = local_triggers[i].byte_size,
+                  .has_self_edge = local_triggers[i].has_self_edge,
+                  .owner_idx = local_triggers[i].kernel_idx,
+              });
           ++i;
         }
         uint32_t count =
-            static_cast<uint32_t>(comb_trigger_backing_.size()) - start;
-        if (local_id >= obs.local_comb_trigger_map.size()) {
+            static_cast<uint32_t>(reactive_trigger_backing_.size()) - start;
+        if (local_id >= obs.local_reactive_trigger_map.size()) {
           throw common::InternalError(
               "Engine::InitCombKernels",
               std::format(
-                  "local comb trigger id {} >= local_comb_trigger_map "
+                  "local comb trigger id {} >= local_reactive_trigger_map "
                   "size {} for instance '{}'",
-                  local_id, obs.local_comb_trigger_map.size(),
+                  local_id, obs.local_reactive_trigger_map.size(),
                   inst->scope.path_c_str));
         }
-        obs.local_comb_trigger_map[local_id] = {.start = start, .count = count};
-        obs.local_comb_trigger_slots.push_back(LocalSignalId{local_id});
+        obs.local_reactive_trigger_map[local_id] = {
+            .start = start, .count = count};
+        obs.local_reactive_trigger_slots.push_back(LocalSignalId{local_id});
         if (local_id < obs.local_has_observers.size()) {
           obs.local_has_observers[local_id] = 1;
         }
@@ -396,14 +402,124 @@ void Engine::InitCombKernels(
 
 void Engine::SeedCombKernelDirtyMarks() {
   // Seed global comb trigger slots.
-  for (GlobalSignalId gid : global_comb_trigger_slots_) {
+  for (GlobalSignalId gid : global_reactive_trigger_slots_) {
     MarkSlotDirty(gid.value);
   }
   // Seed local comb trigger slots.
   for (auto* inst : instances_) {
-    for (LocalSignalId lid : inst->observability.local_comb_trigger_slots) {
+    for (LocalSignalId lid : inst->observability.local_reactive_trigger_slots) {
       MarkLocalSignalDirty(*inst, lid);
     }
+  }
+}
+
+void Engine::LoadInstalledComputations(
+    std::span<const InstalledComputationLoadEntry> entries) {
+  installed_computations_.clear();
+  installed_computations_.reserve(entries.size());
+  for (const auto& e : entries) {
+    installed_computations_.push_back(
+        InstalledComputation{
+            .callable = e.callable,
+            .owner_instance = e.owner_instance,
+            .dep_body_local_slots = e.dep_body_local_slots,
+        });
+  }
+
+  // Register each IC's dependency slots into the shared reactive trigger
+  // model. ICs with a non-empty dep set appear alongside comb kernels in
+  // the same reactive_trigger_backing_ and map; fixpoint dispatch fires
+  // them through the kind-tagged switch in Phase 2.
+  //
+  // For each dep slot that already has a comb range, the existing entries
+  // are moved to a new contiguous region at the end of the backing and
+  // the IC entries are appended. The map entry is updated to point at the
+  // new region. This preserves the one-range-per-slot invariant of the
+  // shared map.
+  struct PerOwnerGroup {
+    RuntimeInstance* owner = nullptr;
+    // Map from local dep slot to the list of IC indices that observe it.
+    std::unordered_map<uint32_t, std::vector<uint32_t>> per_slot_ics;
+  };
+  std::unordered_map<RuntimeInstance*, PerOwnerGroup> by_owner;
+  for (uint32_t ic_idx = 0;
+       ic_idx < static_cast<uint32_t>(installed_computations_.size());
+       ++ic_idx) {
+    const auto& ic = installed_computations_[ic_idx];
+    if (ic.owner_instance == nullptr) continue;
+    if (ic.dep_body_local_slots.empty()) continue;
+    auto& group = by_owner[ic.owner_instance];
+    group.owner = ic.owner_instance;
+    for (uint32_t slot : ic.dep_body_local_slots) {
+      group.per_slot_ics[slot].push_back(ic_idx);
+    }
+  }
+
+  for (auto& [owner_ptr, group] : by_owner) {
+    auto& obs = owner_ptr->observability;
+    if (obs.local_reactive_trigger_map.size() < obs.local_signal_count) {
+      obs.local_reactive_trigger_map.resize(obs.local_signal_count);
+    }
+    for (auto& [slot, ic_idxs] : group.per_slot_ics) {
+      if (slot >= obs.local_reactive_trigger_map.size()) {
+        throw common::InternalError(
+            "Engine::LoadInstalledComputations",
+            std::format(
+                "ic dep slot {} >= local_reactive_trigger_map size {} on "
+                "instance '{}'",
+                slot, obs.local_reactive_trigger_map.size(),
+                owner_ptr->scope.path_c_str));
+      }
+      auto& map_entry = obs.local_reactive_trigger_map[slot];
+      uint32_t old_start = map_entry.start;
+      uint32_t old_count = map_entry.count;
+      auto new_start = static_cast<uint32_t>(reactive_trigger_backing_.size());
+
+      if (old_count > 0) {
+        // Snapshot then re-append existing entries to keep the range
+        // contiguous with the new IC entries.
+        std::vector<ReactiveTriggerEntry> saved(
+            reactive_trigger_backing_.begin() + old_start,
+            reactive_trigger_backing_.begin() + old_start + old_count);
+        for (auto& e : saved) {
+          reactive_trigger_backing_.push_back(e);
+        }
+      } else {
+        obs.local_reactive_trigger_slots.push_back(LocalSignalId{slot});
+        if (slot < obs.local_has_observers.size()) {
+          obs.local_has_observers[slot] = 1;
+        }
+      }
+
+      for (uint32_t ic_idx : ic_idxs) {
+        reactive_trigger_backing_.push_back(
+            ReactiveTriggerEntry{
+                .kind = ReactiveTriggerEntry::Kind::kInstallableComputation,
+                .byte_offset = 0,
+                .byte_size = 0,
+                .has_self_edge = false,
+                .owner_idx = ic_idx,
+            });
+      }
+
+      map_entry.start = new_start;
+      map_entry.count = old_count + static_cast<uint32_t>(ic_idxs.size());
+    }
+  }
+}
+
+void Engine::EvaluateInstalledComputations() {
+  // Each installable computation is a void-returning writeback body.
+  // The body reads parent slots, evaluates its expression, and writes
+  // the child target through its owner's ext_ref_bindings; the emitted
+  // store already marks the child slot dirty via LyraMarkDirtyExtRef.
+  // Runtime just invokes it with the ordinary body-function ABI.
+  for (const auto& ic : installed_computations_) {
+    if (ic.callable == nullptr) continue;
+    if (ic.owner_instance == nullptr) continue;
+    ic.callable(
+        design_state_base_, this, ic.owner_instance->storage.inline_base,
+        ic.owner_instance);
   }
 }
 
@@ -486,8 +602,13 @@ void Engine::FlushAndPropagateConnections() {
     return;
   }
   bool has_conns = !all_connections_.empty();
-  bool has_combs = !comb_kernels_.empty();
-  if (!has_conns && !has_combs) {
+  // Unified reactive dispatch: Phase 2 iterates the shared
+  // reactive_trigger_backing_ and fires every registered consumer kind
+  // (comb kernels, installable computations, ...). "Has any reactive
+  // consumer" is the honest gate, not "has comb kernels".
+  bool has_reactive =
+      !comb_kernels_.empty() || !installed_computations_.empty();
+  if (!has_conns && !has_reactive) {
     FlushSignalUpdates();
     update_set_.ClearDelta();
     ClearLocalUpdatesDelta();
@@ -597,18 +718,23 @@ void Engine::FlushAndPropagateConnections() {
         dst);
   };
 
-  // Helper: mark a comb kernel's owning instance as touched this iteration.
-  // Records delta_pre exactly once per instance, before first comb execution.
-  auto mark_comb_touched = [&](RuntimeInstance& inst) {
-    auto& scratch = inst.fixpoint_scratch;
-    if (scratch.comb_touched_seen) return;
-    scratch.comb_touched_seen = true;
-    fp_work_.comb_touched.push_back(&inst);
+  // Helper: enqueue signals newly dirtied on `inst` during phase-2 firing.
+  // `pre_size` is the DeltaDirtySignals size captured at phase-2 entry
+  // (0 for instances first dirtied during phase-2). Used by the
+  // delta_dirty_instances_-driven phase-2d scan.
+  auto scan_phase2_new_dirty_for_instance = [&](RuntimeInstance& inst,
+                                                uint32_t pre_size) {
     auto& obs = inst.observability;
-    scratch.delta_pre = (obs.local_signal_count > 0)
-                            ? static_cast<uint32_t>(
-                                  obs.local_updates.DeltaDirtySignals().size())
-                            : 0;
+    if (obs.local_signal_count == 0) return;
+    auto delta = obs.local_updates.DeltaDirtySignals();
+    if (delta.size() <= pre_size) return;
+    for (size_t j = pre_size; j < delta.size(); ++j) {
+      fp_work_.comb_writes_local.push_back(
+          FixpointWorkspace::LocalCombWrite{
+              .instance = &inst,
+              .signal = delta[j],
+          });
+    }
   };
 
   for (uint32_t iter = 0; iter < kMaxIterations; ++iter) {
@@ -677,20 +803,52 @@ void Engine::FlushAndPropagateConnections() {
       }
     }
 
-    // Phase 2: comb kernel evaluation.
-    if (has_combs) {
+    // Phase 2: shared reactive trigger dispatch.
+    // Iterates the unified reactive_trigger_backing_ keyed through the
+    // global + per-instance local reactive trigger maps. Each entry is
+    // kind-tagged (comb kernel / installable computation) and dispatched
+    // through the kind switch below. Gated on any reactive consumer.
+    //
+    // Coverage: all comb kernels and all installable computations --
+    // which includes every reactive parent->child port binding, since
+    // BuildInstallableComputations produces one installable computation
+    // per binding regardless of source shape.
+    // Not covered here: kDriveChildToParent memcpy connections,
+    // handled by phase-1 above.
+    if (has_reactive) {
+      // Phase-2 entry snapshot for dirty-instance discovery.
+      //
+      // Source of truth for "instances dirtied during phase-2 firing" is
+      // `delta_dirty_instances_` -- populated by MarkInstanceDeltaDirty
+      // on every local dirty-mark regardless of origin (self writes,
+      // cross-object writes via ExternalRefId, user hierarchical-ref
+      // writes). For instances already dirty at phase-2 entry, record
+      // their current DeltaDirtySignals size so phase-2d can enqueue
+      // only the suffix newly appended during phase-2. Instances first
+      // dirtied during phase-2 have implicit baseline 0.
+      const size_t delta_dirty_pre_size = delta_dirty_instances_.size();
+      for (size_t i = 0; i < delta_dirty_pre_size; ++i) {
+        auto* inst = delta_dirty_instances_[i];
+        auto& obs = inst->observability;
+        inst->fixpoint_scratch.delta_pre =
+            (obs.local_signal_count > 0)
+                ? static_cast<uint32_t>(
+                      obs.local_updates.DeltaDirtySignals().size())
+                : 0;
+      }
+
       // Snapshot global pending slots with self-edge comb triggers.
       if (has_any_self_edge_comb_) {
         fp_work_.snapshot_buf.clear();
         fp_work_.snapshots.clear();
         fp_work_.snapshotted_slots.clear();
         for (GlobalSignalId gid : fp_work_.pending_globals) {
-          if (gid.value >= global_comb_trigger_map_.size()) continue;
-          auto [start, count] = global_comb_trigger_map_[gid.value];
+          if (gid.value >= global_reactive_trigger_map_.size()) continue;
+          auto [start, count] = global_reactive_trigger_map_[gid.value];
           if (count == 0) continue;
           bool needs_snapshot = false;
           for (uint32_t ci = start; ci < start + count; ++ci) {
-            if (comb_trigger_backing_[ci].has_self_edge) {
+            if (reactive_trigger_backing_[ci].has_self_edge) {
               needs_snapshot = true;
               break;
             }
@@ -716,11 +874,12 @@ void Engine::FlushAndPropagateConnections() {
       std::vector<uint32_t> flat_comb_writes;
       comb_write_capture_ = &flat_comb_writes;
 
-      // 2a. Evaluate comb kernels from global pending.
+      // 2a. Fire reactive triggers from global pending.
+      //     Each entry is kind-tagged: comb kernel or installable computation.
       for (GlobalSignalId gid : fp_work_.pending_globals) {
-        if (gid.value >= global_comb_trigger_map_.size()) continue;
+        if (gid.value >= global_reactive_trigger_map_.size()) continue;
         if (detailed) ++stats_.detailed.prop_comb_trigger_lookups;
-        auto [cstart, ccount] = global_comb_trigger_map_[gid.value];
+        auto [cstart, ccount] = global_reactive_trigger_map_[gid.value];
         if (ccount == 0) continue;
         if (detailed) ++stats_.detailed.prop_comb_trigger_hits;
 
@@ -728,7 +887,7 @@ void Engine::FlushAndPropagateConnections() {
 
         for (uint32_t ci = cstart; ci < cstart + ccount; ++ci) {
           if (detailed) ++stats_.detailed.comb_considered;
-          const auto& entry = comb_trigger_backing_[ci];
+          const auto& entry = reactive_trigger_backing_[ci];
 
           if (entry.byte_size > 0 &&
               !dirty_ranges.Overlaps(entry.byte_offset, entry.byte_size)) {
@@ -736,34 +895,60 @@ void Engine::FlushAndPropagateConnections() {
             continue;
           }
 
-          if (detailed) ++stats_.detailed.comb_executed;
-          const auto& ck = comb_kernels_[entry.kernel_idx];
-          mark_comb_touched(*ck.instance);
-          FlushDeferredAssertionsForProcess(
-              ProcessId::FromIndex(ck.process_index));
-          ck.body(ck.frame, 0);
+          switch (entry.kind) {
+            case ReactiveTriggerEntry::Kind::kCombKernel: {
+              if (detailed) ++stats_.detailed.comb_executed;
+              const auto& ck = comb_kernels_[entry.owner_idx];
+              FlushDeferredAssertionsForProcess(
+                  ProcessId::FromIndex(ck.process_index));
+              ck.body(ck.frame, 0);
+              break;
+            }
+            case ReactiveTriggerEntry::Kind::kInstallableComputation: {
+              auto& ic = installed_computations_[entry.owner_idx];
+              if (ic.callable == nullptr) break;
+              if (ic.owner_instance == nullptr) break;
+              ic.callable(
+                  design_state_base_, this,
+                  ic.owner_instance->storage.inline_base, ic.owner_instance);
+              break;
+            }
+          }
         }
       }
 
-      // 2b. Evaluate comb kernels from local pending (current frontier only).
+      // 2b. Fire reactive triggers from local pending (current frontier).
       for (auto* inst : fp_work_.current_instances) {
         auto& obs = inst->observability;
         for (LocalSignalId lid : inst->local_fixpoint.pending) {
-          if (lid.value >= obs.local_comb_trigger_map.size()) continue;
+          if (lid.value >= obs.local_reactive_trigger_map.size()) continue;
           if (detailed) ++stats_.detailed.prop_comb_trigger_lookups;
-          auto [cstart, ccount] = obs.local_comb_trigger_map[lid.value];
+          auto [cstart, ccount] = obs.local_reactive_trigger_map[lid.value];
           if (ccount == 0) continue;
           if (detailed) ++stats_.detailed.prop_comb_trigger_hits;
 
           for (uint32_t ci = cstart; ci < cstart + ccount; ++ci) {
             if (detailed) ++stats_.detailed.comb_considered;
-            if (detailed) ++stats_.detailed.comb_executed;
-            const auto& ck =
-                comb_kernels_[comb_trigger_backing_[ci].kernel_idx];
-            mark_comb_touched(*ck.instance);
-            FlushDeferredAssertionsForProcess(
-                ProcessId::FromIndex(ck.process_index));
-            ck.body(ck.frame, 0);
+            const auto& entry = reactive_trigger_backing_[ci];
+            switch (entry.kind) {
+              case ReactiveTriggerEntry::Kind::kCombKernel: {
+                if (detailed) ++stats_.detailed.comb_executed;
+                const auto& ck = comb_kernels_[entry.owner_idx];
+                FlushDeferredAssertionsForProcess(
+                    ProcessId::FromIndex(ck.process_index));
+                ck.body(ck.frame, 0);
+                break;
+              }
+              case ReactiveTriggerEntry::Kind::kInstallableComputation: {
+                auto& ic = installed_computations_[entry.owner_idx];
+                if (ic.callable == nullptr) break;
+                if (ic.owner_instance == nullptr) break;
+                ic.callable(
+                    design_state_base_, this,
+                    ic.owner_instance->storage.inline_base, ic.owner_instance);
+                break;
+              }
+            }
           }
         }
       }
@@ -777,20 +962,24 @@ void Engine::FlushAndPropagateConnections() {
         }
       }
 
-      // 2d. Collect local comb writes (scan comb_touched only).
-      for (auto* tinst : fp_work_.comb_touched) {
-        auto& obs = tinst->observability;
-        if (obs.local_signal_count == 0) continue;
-        auto delta = obs.local_updates.DeltaDirtySignals();
-        auto pre_size = tinst->fixpoint_scratch.delta_pre;
-        if (delta.size() <= pre_size) continue;
-        for (size_t j = pre_size; j < delta.size(); ++j) {
-          fp_work_.comb_writes_local.push_back(
-              FixpointWorkspace::LocalCombWrite{
-                  .instance = tinst,
-                  .signal = delta[j],
-              });
-        }
+      // 2d. Collect local writes newly produced during phase-2 firing.
+      //
+      // Source of truth is delta_dirty_instances_: every local dirty
+      // mark -- self writes from a comb body, cross-object writes via
+      // ExternalRefId from an installable-computation body, user
+      // hierarchical-ref writes -- routes through MarkLocalSignalDirty
+      // and appears here. For pre-existing entries (index <
+      // delta_dirty_pre_size) the per-instance delta_pre snapshot is
+      // the baseline; for entries appended during phase-2 (index >=
+      // delta_dirty_pre_size) the instance had no dirty signals before
+      // phase-2, so the baseline is 0. delta_dirty_instances_ is
+      // internally deduped via dedup_state.in_delta_dirty, so no extra
+      // dedup is needed here.
+      for (size_t i = 0; i < delta_dirty_instances_.size(); ++i) {
+        auto* inst = delta_dirty_instances_[i];
+        uint32_t pre_size =
+            (i < delta_dirty_pre_size) ? inst->fixpoint_scratch.delta_pre : 0;
+        scan_phase2_new_dirty_for_instance(*inst, pre_size);
       }
 
       // Enqueue global comb writes, suppressing net-zero self-triggers.
@@ -826,12 +1015,6 @@ void Engine::FlushAndPropagateConnections() {
           fp_work_.global_snapshot_index[gid.value] = UINT32_MAX;
         }
       }
-
-      // 2e. Reset comb_touched for next iteration.
-      for (auto* inst : fp_work_.comb_touched) {
-        inst->fixpoint_scratch.comb_touched_seen = false;
-      }
-      fp_work_.comb_touched.clear();
     }
 
     // Phase 3: Promote frontiers.

@@ -14,6 +14,8 @@
 #include "lyra/llvm_backend/emit_descriptor_utils.hpp"
 #include "lyra/llvm_backend/layout/layout.hpp"
 #include "lyra/mir/module_body.hpp"
+#include "lyra/mir/routine.hpp"
+#include "lyra/runtime/body_realization_desc.hpp"
 
 namespace lyra::lowering::mir_to_llvm {
 
@@ -38,7 +40,7 @@ auto EmitBodyRealizationDescs(
     Context& context, const Layout& layout,
     std::span<const lowering::mir_to_llvm::CodegenSession::BodyCompiledFuncs>
         body_compiled_funcs,
-    std::span<const std::vector<uint32_t>> child_site_to_tree_ordinal)
+    std::span<const std::vector<uint32_t>> /*child_site_to_tree_ordinal*/)
     -> std::vector<BodyDescriptorPackageEmission> {
   auto& ctx = context.GetLlvmContext();
   auto& mod = context.GetModule();
@@ -55,18 +57,19 @@ auto EmitBodyRealizationDescs(
             body_compiled_funcs.size(), layout.body_realization_infos.size()));
   }
 
-  // BodyRealizationDesc ABI (88 bytes):
+  // BodyRealizationDesc ABI (96 bytes):
   //   {u32 num_processes, u32 slot_count,
   //    u64 inline_state_size_bytes, u64 appendix_state_size_bytes,
   //    u64 total_state_size_bytes, i8 time_unit_power, i8 time_precision_power,
   //    [2 x i8 pad], u32 event_count,
   //    ptr inline_slot_offsets, u32 num_inline_slot_offsets, [4 x pad],
   //    ptr port_entries, u32 num_port_entries, [4 x pad],
-  //    ptr expr_conn_child_descs, u32 num_expr_connections, [4 x pad]}
+  //    ptr installable_computations, ptr ic_word_pool,
+  //    u32 num_ic_word_pool_entries, u32 num_installable_computations}
   auto* i8_ty = llvm::Type::getInt8Ty(ctx);
   auto* header_type = llvm::StructType::get(
       ctx, {i32_ty, i32_ty, i64_ty, i64_ty, i64_ty, i8_ty, i8_ty, i32_ty,
-            ptr_ty, i32_ty, ptr_ty, i32_ty, ptr_ty, i32_ty});
+            ptr_ty, i32_ty, ptr_ty, i32_ty, ptr_ty, ptr_ty, i32_ty, i32_ty});
   // BodyProcessEntry ABI: {ptr shared_body_fn, u32 schema_index, u32 pad}
   auto* entry_type = llvm::StructType::get(ctx, {ptr_ty, i32_ty, i32_ty});
 
@@ -175,71 +178,82 @@ auto EmitBodyRealizationDescs(
               llvm::ConstantInt::get(i32_ty, 0)});
     }
 
-    // Expression connection child descriptor emission.
-    llvm::Constant* expr_child_descs_ptr = null_ptr;
-    uint32_t num_expr_connections = info.num_expr_connections;
+    // Installable computation descriptor and word pool emission.
+    llvm::Constant* ic_descs_ptr = null_ptr;
+    llvm::Constant* ic_word_pool_ptr = null_ptr;
+    uint32_t ic_word_pool_count = 0;
+    uint32_t num_ic = info.num_installable_computations;
 
-    if (num_expr_connections > 0 && info.body != nullptr) {
+    if (num_ic > 0 && info.body != nullptr) {
       const auto& body = *info.body;
-      // ExprConnChildDesc ABI: {u32 child_ordinal,
-      //   u32 child_port_sym_value, u32 binding_byte_offset}
-      auto* desc_type = llvm::StructType::get(ctx, {i32_ty, i32_ty, i32_ty});
+      const auto& ic_fns = funcs.installable_computation_fns;
+      if (ic_fns.size() != num_ic) {
+        throw common::InternalError(
+            "EmitBodyRealizationDescs",
+            std::format(
+                "body {} ic fn count {} != num_installable_computations {}",
+                body_group, ic_fns.size(), num_ic));
+      }
+      // InstallableComputationDesc ABI (16 bytes):
+      //   { ptr eval_fn, u32 dep_pool_offset, u32 dep_count }
+      // The callable is a void-returning writeback body that addresses
+      // its child target through its owner's ext_ref_bindings; target
+      // correlation is not part of this descriptor.
+      auto* desc_type = llvm::StructType::get(ctx, {ptr_ty, i32_ty, i32_ty});
 
+      // Build shared word pool (dependency slot indices only) and
+      // descriptor constants.
+      std::vector<uint32_t> word_pool;
       std::vector<llvm::Constant*> desc_consts;
-      desc_consts.reserve(num_expr_connections);
+      desc_consts.reserve(num_ic);
 
-      uint32_t num_ordinary_nonfinal =
-          static_cast<uint32_t>(rt.process_schema_indices.size()) -
-          num_expr_connections;
-
-      for (uint32_t ci = 0; ci < num_expr_connections; ++ci) {
-        const auto& tmpl = body.expr_connection_templates[ci];
-        if (!static_cast<bool>(tmpl.child_port_sym)) {
-          throw common::InternalError(
-              "EmitBodyRealizationDescs",
-              std::format(
-                  "body {} expr conn {} has invalid child_port_sym", body_group,
-                  ci));
-        }
-
-        // Schema / binding offset lookup.
-        uint32_t proc_ordinal = num_ordinary_nonfinal + ci;
-        uint32_t schema_idx = rt.process_schema_indices[proc_ordinal];
-        uint32_t binding_off =
-            layout.state_schemas[schema_idx].expr_conn_binding_byte_offset;
-
-        // child_ordinal is the tree-relative ordinal_in_parent: the
-        // direct child position in parent->scope.children including
-        // generate scopes. Resolved by direct tree indexing at runtime.
-        uint32_t tree_ordinal = tmpl.child_site.value;
-        if (body_group < child_site_to_tree_ordinal.size() &&
-            tmpl.child_site.value <
-                child_site_to_tree_ordinal[body_group].size()) {
-          tree_ordinal =
-              child_site_to_tree_ordinal[body_group][tmpl.child_site.value];
+      for (uint32_t ci = 0; ci < num_ic; ++ci) {
+        const auto& ic = body.installable_computations[ci];
+        auto dep_offset = static_cast<uint32_t>(word_pool.size());
+        auto dep_count = static_cast<uint32_t>(ic.deps.size());
+        for (const auto& slot : ic.deps) {
+          word_pool.push_back(slot.value);
         }
         desc_consts.push_back(
             llvm::ConstantStruct::get(
                 desc_type,
-                {llvm::ConstantInt::get(i32_ty, tree_ordinal),
-                 llvm::ConstantInt::get(i32_ty, tmpl.child_port_sym.value),
-                 llvm::ConstantInt::get(i32_ty, binding_off)}));
+                {ic_fns[ci], llvm::ConstantInt::get(i32_ty, dep_offset),
+                 llvm::ConstantInt::get(i32_ty, dep_count)}));
       }
 
       // Emit descriptor array.
-      auto desc_name =
-          std::format("__lyra_body_desc_{}_expr_conn_child", body_group);
-      auto* desc_array_type =
-          llvm::ArrayType::get(desc_type, num_expr_connections);
+      auto desc_name = std::format("__lyra_body_desc_{}_ic", body_group);
+      auto* desc_array_type = llvm::ArrayType::get(desc_type, num_ic);
       auto* desc_global = new llvm::GlobalVariable(
           mod, desc_array_type, true, llvm::GlobalValue::InternalLinkage,
           llvm::ConstantArray::get(desc_array_type, desc_consts), desc_name);
       desc_global->setUnnamedAddr(llvm::GlobalValue::UnnamedAddr::Global);
-      expr_child_descs_ptr = llvm::ConstantExpr::getInBoundsGetElementPtr(
+      ic_descs_ptr = llvm::ConstantExpr::getInBoundsGetElementPtr(
           desc_array_type, desc_global,
           llvm::ArrayRef<llvm::Constant*>{
               llvm::ConstantInt::get(i32_ty, 0),
               llvm::ConstantInt::get(i32_ty, 0)});
+
+      // Emit word pool.
+      ic_word_pool_count = static_cast<uint32_t>(word_pool.size());
+      if (!word_pool.empty()) {
+        std::vector<llvm::Constant*> pool_consts;
+        pool_consts.reserve(word_pool.size());
+        for (uint32_t w : word_pool) {
+          pool_consts.push_back(llvm::ConstantInt::get(i32_ty, w));
+        }
+        auto pool_name = std::format("__lyra_body_desc_{}_ic_pool", body_group);
+        auto* pool_array_type = llvm::ArrayType::get(i32_ty, word_pool.size());
+        auto* pool_global = new llvm::GlobalVariable(
+            mod, pool_array_type, true, llvm::GlobalValue::InternalLinkage,
+            llvm::ConstantArray::get(pool_array_type, pool_consts), pool_name);
+        pool_global->setUnnamedAddr(llvm::GlobalValue::UnnamedAddr::Global);
+        ic_word_pool_ptr = llvm::ConstantExpr::getInBoundsGetElementPtr(
+            pool_array_type, pool_global,
+            llvm::ArrayRef<llvm::Constant*>{
+                llvm::ConstantInt::get(i32_ty, 0),
+                llvm::ConstantInt::get(i32_ty, 0)});
+      }
     }
 
     auto* header_val = llvm::ConstantStruct::get(
@@ -255,8 +269,9 @@ auto EmitBodyRealizationDescs(
          inline_slot_offsets_ptr,
          llvm::ConstantInt::get(i32_ty, num_inline_slot_offsets),
          port_entries_ptr, llvm::ConstantInt::get(i32_ty, num_port_entries),
-         expr_child_descs_ptr,
-         llvm::ConstantInt::get(i32_ty, num_expr_connections)});
+         ic_descs_ptr, ic_word_pool_ptr,
+         llvm::ConstantInt::get(i32_ty, ic_word_pool_count),
+         llvm::ConstantInt::get(i32_ty, num_ic)});
     auto* header_global = new llvm::GlobalVariable(
         mod, header_type, true, llvm::GlobalValue::InternalLinkage, header_val,
         header_name);

@@ -25,6 +25,7 @@
 #include "lyra/common/time_format.hpp"
 #include "lyra/runtime/activation_trace.hpp"
 #include "lyra/runtime/back_edge_site_meta.hpp"
+#include "lyra/runtime/body_realization_desc.hpp"
 #include "lyra/runtime/decision.hpp"
 #include "lyra/runtime/engine_scheduler.hpp"
 #include "lyra/runtime/engine_subscriptions.hpp"
@@ -731,6 +732,21 @@ class Engine {
 
   // Mark all comb kernel trigger slots dirty to ensure initial evaluation.
   void SeedCombKernelDirtyMarks();
+
+  // Load installed computations from the construction result.
+  // Populates installed_computations_ with runtime-ready entries.
+  // For each computation with non-empty dependencies, registers triggers
+  // in each dependency's local comb trigger map (shared with comb kernels).
+  struct InstalledComputationLoadEntry;
+  void LoadInstalledComputations(
+      std::span<const InstalledComputationLoadEntry> entries);
+
+  // Evaluate all installed computations once (initial value propagation).
+  // Each callable is a void-returning writeback body: it reads parent
+  // slots, evaluates its expression, and writes the child target itself
+  // through the owner's ext_ref_bindings. Runtime invokes it with the
+  // ordinary body-function ABI.
+  void EvaluateInstalledComputations();
 
   // Parse process trigger word table and build constructor-time trigger
   // groups in one call. Must be called after InitSlotMeta and SetInstances.
@@ -1462,21 +1478,74 @@ class Engine {
   static auto BuildCombKernel(uint32_t proc_idx, void* frame, uint32_t flags)
       -> CombKernel;
 
-  // Structured trigger entries with byte-range observation.
-  struct CombTriggerEntry {
-    uint32_t kernel_idx;
-    uint32_t byte_offset;
-    uint32_t byte_size;  // 0 = full-slot
-    // Runtime acceleration copy; source of truth is CombKernel::flags.
-    bool has_self_edge;
+  // Shared reactive trigger model: one backing array + one trigger map
+  // feeds fixpoint re-evaluation for every reactive consumer kind that
+  // lives in this backing. Each entry is kind-tagged; fixpoint dispatch
+  // iterates the shared TriggerRange -> backing pipeline and switches
+  // on kind. This replaces the older kind-specific parallel maps
+  // (comb-only / IC-only).
+  //
+  // Currently covered: comb kernels, installable computations. All
+  // reactive parent->child port bindings -- whether expression sources
+  // or direct-slot sources -- are installable computations and flow
+  // through this backing. kDriveChildToParent memcpy connections still
+  // dispatch through the separate all_connections_ / phase-1 path;
+  // they share the dirty-mark contract but not the dispatch model.
+  struct ReactiveTriggerEntry {
+    enum class Kind : uint8_t {
+      kCombKernel = 0,
+      kInstallableComputation = 1,
+    };
+    Kind kind = Kind::kCombKernel;
+    // Observation byte range. 0/0 = full-slot.
+    uint32_t byte_offset = 0;
+    uint32_t byte_size = 0;
+    // For kCombKernel: runtime acceleration copy of the kernel's self-edge
+    // flag.
+    bool has_self_edge = false;
+    // Index into the kind-specific owner vector:
+    //   kCombKernel            -> comb_kernels_
+    //   kInstallableComputation -> installed_computations_
+    uint32_t owner_idx = 0;
   };
-  std::vector<CombTriggerEntry> comb_trigger_backing_;
-  // R5: Global comb trigger map (indexed by GlobalSignalId.value,
+  std::vector<ReactiveTriggerEntry> reactive_trigger_backing_;
+  // Global reactive trigger map (indexed by GlobalSignalId.value,
   // sized to global_slot_count_). Per-instance local trigger maps live
   // on RuntimeInstanceObservability.
-  std::vector<TriggerRange> global_comb_trigger_map_;
+  std::vector<TriggerRange> global_reactive_trigger_map_;
   // List of global trigger slots for seeding dirty marks.
-  std::vector<GlobalSignalId> global_comb_trigger_slots_;
+  std::vector<GlobalSignalId> global_reactive_trigger_slots_;
+
+ public:
+  // Loader entry: runtime-ready data for one installable computation.
+  // Passed from the construction result to LoadInstalledComputations.
+  //
+  // The callable is a void-returning writeback body of shape
+  // `void(void* design, void* engine, void* this_ptr, void* instance)`.
+  // It addresses its child target through the owner instance's
+  // ext_ref_bindings (populated by the construction program); runtime
+  // does not resolve target pointers or dispatch on return shape.
+  struct InstalledComputationLoadEntry {
+    ICBodyFn callable = nullptr;
+    RuntimeInstance* owner_instance = nullptr;
+    // Body-local dependency slots on the owner instance.
+    std::vector<uint32_t> dep_body_local_slots;
+  };
+
+ private:
+  // Installed computations: reactive parent->child writeback bodies
+  // evaluated directly (not through process scheduling). Each one is
+  // an ordinary void-returning function that reads parent slots,
+  // evaluates its expression, and writes the child target through its
+  // owner's ext_ref_bindings.
+  struct InstalledComputation {
+    ICBodyFn callable = nullptr;
+    RuntimeInstance* owner_instance = nullptr;
+    // Body-local dependency slots on the owner instance.
+    // Empty for constant expressions.
+    std::vector<uint32_t> dep_body_local_slots;
+  };
+  std::vector<InstalledComputation> installed_computations_;
 
   // Current delta cycle within the active time slot. Reset to 0 at the
   // start of each ExecuteTimeSlot. Part of the runtime execution model:
@@ -1597,15 +1666,10 @@ class Engine {
     // new work. Convergence is current_instances.empty().
     // Per-instance worklists (pending, next, seen) live on
     // RuntimeInstance::local_fixpoint. Per-instance dedup flags
-    // (in_next, comb_touched_seen) and scratch scalars (delta_pre)
-    // live on RuntimeInstance::fixpoint_scratch.
+    // (in_next) and scratch scalars (delta_pre) live on
+    // RuntimeInstance::fixpoint_scratch.
     std::vector<RuntimeInstance*> current_instances;
     std::vector<RuntimeInstance*> next_instances;
-
-    // Per-iteration comb-touched tracking. Records which instances had
-    // a comb kernel executed, so local comb-write collection scans only
-    // those instances. Reset each iteration.
-    std::vector<RuntimeInstance*> comb_touched;
 
     // Comb write capture (split by domain)
     std::vector<GlobalSignalId> comb_writes_global;

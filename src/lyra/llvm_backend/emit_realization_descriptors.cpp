@@ -55,10 +55,11 @@ auto GetConstructionProgramEntryType(llvm::LLVMContext& ctx)
   // node_kind(i32), body_group(i32), label_offset(i32),
   // param_offset(i32), param_size(i32), parent_scope_index(i32),
   // ordinal_in_parent(i32), instance_index(i32),
-  // realized_inline_size(i64), realized_appendix_size(i64)
+  // realized_inline_size(i64), realized_appendix_size(i64),
+  // port_const_init_offset(i32), port_const_init_count(i32)
   return llvm::StructType::get(
       ctx, {i32_ty, i32_ty, i32_ty, i32_ty, i32_ty, i32_ty, i32_ty, i32_ty,
-            i64_ty, i64_ty});
+            i64_ty, i64_ty, i32_ty, i32_ty});
 }
 
 // Encode one ConstructionProgramEntry as an LLVM constant.
@@ -77,7 +78,9 @@ auto EncodeConstructionProgramEntry(
            llvm::ConstantInt::get(i32_ty, e.ordinal_in_parent),
            llvm::ConstantInt::get(i32_ty, e.instance_index),
            llvm::ConstantInt::get(i64_ty, e.realized_inline_size),
-           llvm::ConstantInt::get(i64_ty, e.realized_appendix_size)});
+           llvm::ConstantInt::get(i64_ty, e.realized_appendix_size),
+           llvm::ConstantInt::get(i32_ty, e.port_const_init_offset),
+           llvm::ConstantInt::get(i32_ty, e.port_const_init_count)});
 }
 
 // Canonical LLVM struct type for runtime::BodyDescriptorRef.
@@ -452,7 +455,7 @@ auto DeclareConstructorRuntimeFuncs(Context& context)
       .run_program = declare(
           "LyraConstructorRunProgram", void_ty,
           {ptr_ty, ptr_ty, i32_ty, ptr_ty, i32_ty, ptr_ty, i32_ty, ptr_ty,
-           i32_ty}),
+           i32_ty, ptr_ty, i32_ty, ptr_ty, i32_ty}),
       .finalize = declare("LyraConstructorFinalize", ptr_ty, {ptr_ty}),
       .result_get_states =
           declare("LyraConstructionResultGetStates", ptr_ty, {ptr_ty}),
@@ -608,6 +611,41 @@ auto EmitConstructorFunction(
       EmitConstructionProgramGlobal(ctx, context.GetModule(), prog.entries);
   auto entry_count = static_cast<uint32_t>(prog.entries.size());
 
+  // Emit port constant init pools if present.
+  llvm::Constant* pc_inits_ptr = llvm::ConstantPointerNull::get(ptr_ty);
+  uint32_t pc_inits_count = 0;
+  llvm::Constant* pc_pool_ptr = llvm::ConstantPointerNull::get(ptr_ty);
+  uint32_t pc_pool_size_val = 0;
+  if (!prog.port_const_inits.empty()) {
+    auto* pc_entry_ty = llvm::StructType::get(ctx, {i32_ty, i32_ty, i32_ty});
+    std::vector<llvm::Constant*> pc_entry_constants;
+    pc_entry_constants.reserve(prog.port_const_inits.size());
+    for (const auto& e : prog.port_const_inits) {
+      pc_entry_constants.push_back(
+          llvm::ConstantStruct::get(
+              pc_entry_ty, {llvm::ConstantInt::get(i32_ty, e.rel_byte_offset),
+                            llvm::ConstantInt::get(i32_ty, e.value_offset),
+                            llvm::ConstantInt::get(i32_ty, e.value_size)}));
+    }
+    pc_inits_count = static_cast<uint32_t>(prog.port_const_inits.size());
+    auto* pc_array_ty = llvm::ArrayType::get(pc_entry_ty, pc_inits_count);
+    auto* pc_global = new llvm::GlobalVariable(
+        context.GetModule(), pc_array_ty, true,
+        llvm::GlobalValue::PrivateLinkage,
+        llvm::ConstantArray::get(pc_array_ty, pc_entry_constants),
+        "__lyra_port_const_entries");
+    auto* zero = llvm::ConstantInt::get(i32_ty, 0);
+    pc_inits_ptr = llvm::ConstantExpr::getInBoundsGetElementPtr(
+        pc_array_ty, pc_global, llvm::ArrayRef<llvm::Constant*>{zero, zero});
+    if (!prog.port_const_pool.empty()) {
+      pc_pool_ptr = EmitBytePoolGlobal(
+          ctx, context.GetModule(),
+          llvm::ArrayRef<uint8_t>(prog.port_const_pool),
+          "__lyra_port_const_pool");
+    }
+    pc_pool_size_val = static_cast<uint32_t>(prog.port_const_pool.size());
+  }
+
   // Replay the construction program: the runtime iterates entries in
   // parent-before-child order, creating scope nodes and instances.
   auto path_pool_size = static_cast<uint32_t>(prog.path_pool.size());
@@ -618,7 +656,9 @@ auto EmitConstructorFunction(
        llvm::ConstantInt::get(i32_ty, body_desc_count), path_pool_ptr,
        llvm::ConstantInt::get(i32_ty, path_pool_size), param_pool_ptr,
        llvm::ConstantInt::get(i32_ty, param_pool_size), program_ptr,
-       llvm::ConstantInt::get(i32_ty, entry_count)});
+       llvm::ConstantInt::get(i32_ty, entry_count), pc_inits_ptr,
+       llvm::ConstantInt::get(i32_ty, pc_inits_count), pc_pool_ptr,
+       llvm::ConstantInt::get(i32_ty, pc_pool_size_val)});
 
   // Finalize: returns a single constructor-owned result handle.
   auto* result = builder.CreateCall(rt.finalize, {ctor}, "ctor_result");

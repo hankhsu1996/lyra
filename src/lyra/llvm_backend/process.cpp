@@ -3529,28 +3529,26 @@ auto DefineMirFunction(
               return LowerBranch(context, facts, t, llvm_blocks, phi_state);
             },
             [&](const mir::Return& t) -> Result<void> {
-              // Handle return value based on return policy
               if (t.value.has_value()) {
                 if (uses_sret) {
-                  // sret: use Place-based lowering (no aggregate SSA)
-                  // CONTRACT: return operand must be a Place for sret types
+                  // sret path: aggregate return via MoveInit to sret out-param.
+                  // ComputeReturnPolicy guarantees uses_sret implies an
+                  // aggregate value type, so the operand must be a Place.
                   const auto* place_id =
                       std::get_if<mir::PlaceId>(&t.value->payload);
                   if (place_id == nullptr) {
                     throw common::InternalError(
                         "DefineMirFunction",
-                        "sret return operand must be a Place, not a constant");
+                        "sret Return operand must be a Place (aggregate)");
                   }
                   auto src_ptr_result = context.GetPlacePointer(*place_id);
                   if (!src_ptr_result) {
                     return std::unexpected(src_ptr_result.error());
                   }
-                  // MoveInit directly from source Place to sret out-param
                   MoveInit(
                       context, facts, sret_ptr, *src_ptr_result,
                       func.signature.return_type);
                 } else if (return_value_ptr != nullptr) {
-                  // Direct return: load value and store to return slot
                   auto val_result = LowerOperandRaw(context, facts, *t.value);
                   if (!val_result) return std::unexpected(val_result.error());
                   builder.CreateStore(*val_result, return_value_ptr);

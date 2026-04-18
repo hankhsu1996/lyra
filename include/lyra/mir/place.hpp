@@ -17,12 +17,6 @@ struct PlaceRoot {
     kModuleSlot,    // body-local storage (0-based within ModuleBody)
     kDesignGlobal,  // design-global storage (packages, design-level processes)
     kObjectLocal,   // cross-instance body-local storage (object_index, id)
-    // Narrow migration-only representation:
-    // valid only for mutation-target plumbing of synthesized
-    // expression-connection writes. Must not be produced by parsing,
-    // lowering of ordinary expressions, or trigger analysis.
-    kBoundChildDest,  // write-only child destination via pre-bound frame
-                      // context
   };
 
   Kind kind;
@@ -30,14 +24,6 @@ struct PlaceRoot {
   TypeId type;                // type of the value stored at this root
   uint32_t object_index = 0;  // owning object index (kObjectLocal only)
 };
-
-// Sentinel value for kBoundChildDest PlaceRoot::id.
-// kBoundChildDest slot identity comes exclusively from the
-// ExprConnectionChildBinding in the process frame at runtime.
-// No code may interpret PlaceRoot::id as a child local slot for this
-// root kind. All producers must set id to this sentinel; all consumers
-// must assert it.
-inline constexpr int kBoundChildDestSentinel = -1;
 
 // True for place roots that represent process-local storage (need prologue
 // allocas). False for external storage (module slots, design globals).
@@ -50,7 +36,6 @@ inline constexpr int kBoundChildDestSentinel = -1;
     case PlaceRoot::Kind::kModuleSlot:
     case PlaceRoot::Kind::kDesignGlobal:
     case PlaceRoot::Kind::kObjectLocal:
-    case PlaceRoot::Kind::kBoundChildDest:
       return false;
   }
   return false;
@@ -58,7 +43,6 @@ inline constexpr int kBoundChildDestSentinel = -1;
 
 // True for place roots that hold a readable value (variables, slots).
 // False for compiler-generated write-only staging temps.
-// kBoundChildDest is write-only (expression connection child destination).
 [[nodiscard]] inline auto IsReadableRoot(PlaceRoot::Kind kind) -> bool {
   switch (kind) {
     case PlaceRoot::Kind::kLocal:
@@ -67,7 +51,6 @@ inline constexpr int kBoundChildDestSentinel = -1;
     case PlaceRoot::Kind::kObjectLocal:
       return true;
     case PlaceRoot::Kind::kTemp:
-    case PlaceRoot::Kind::kBoundChildDest:
       return false;
   }
   return false;

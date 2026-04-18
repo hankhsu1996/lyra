@@ -129,9 +129,13 @@ struct RuntimeScopeTimeMetadata {
 // Object-owned but engine-managed: zeroed at the start of each
 // FlushAndPropagateConnections call, read/written during fixpoint
 // iteration, carries no semantic state across calls.
+//
+// delta_pre stores the per-instance DeltaDirtySignals size captured at
+// phase-2 entry; phase-2d compares the current size against this
+// baseline to find signals newly dirtied during phase-2 firing (from
+// any source -- self writes, cross-object writes via ExternalRefId).
 struct RuntimeFixpointScratch {
   bool in_next = false;
-  bool comb_touched_seen = false;
   uint32_t delta_pre = 0;
 };
 

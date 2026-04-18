@@ -227,6 +227,10 @@ struct CompiledModuleSpec {
   // Per-body back-edge site origins, accumulated during CU codegen.
   // Spliced positionally into the design-global back-edge origin array.
   std::vector<common::OriginId> back_edge_origins;
+  // Compiled installable computation callable function pointers.
+  // Parallel to body->installable_computations. Module-scoped,
+  // void-returning body-function ABI.
+  std::vector<llvm::Function*> installable_computation_fns;
 };
 
 // Pure-data construction program: pooled paths, pooled param payloads, and
@@ -254,6 +258,10 @@ struct ConstructionProgramData {
   // at its source, not re-exposed through a second bridge.
   // Indexed by body_group; each inner vector is parallel to child_sites.
   std::vector<std::vector<uint32_t>> child_site_to_tree_ordinal;
+  // Constant port connection initialization records + value pool.
+  // Applied inline during child creation in LyraConstructorRunProgram.
+  std::vector<runtime::PortConstInitEntry> port_const_inits;
+  std::vector<uint8_t> port_const_pool;
 };
 
 // Design-derived inputs for the realization/assembly phase, extracted during
@@ -291,6 +299,8 @@ struct CodegenSession {
   // body's non-final process list.
   struct BodyCompiledFuncs {
     std::vector<llvm::Function*> functions;
+    // Parallel to body->installable_computations.
+    std::vector<llvm::Function*> installable_computation_fns;
   };
   std::vector<BodyCompiledFuncs> body_compiled_funcs;
 
