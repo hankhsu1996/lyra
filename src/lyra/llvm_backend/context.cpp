@@ -616,22 +616,6 @@ auto Context::EmitLoadInstanceInlineBase(llvm::Value* instance_ptr)
       "inline_base");
 }
 
-auto Context::EmitExprConnBindingPtr() -> llvm::Value* {
-  auto* frame_ptr = GetFramePointer();
-  uint32_t idx = GetCurrentProcessLayout().expr_conn_binding_field_index;
-  if (idx == UINT32_MAX) {
-    throw common::InternalError(
-        "EmitExprConnBindingPtr",
-        "current process is not an expression connection");
-  }
-  return builder_.CreateStructGEP(
-      GetProcessFrameType(), frame_ptr, idx, "expr_conn_binding");
-}
-
-auto Context::GetExprConnBindingType() -> llvm::StructType* {
-  return GetExprConnBindingLlvmType(GetLlvmContext());
-}
-
 void Context::EmitStoreDesignPtr(llvm::Value* state_arg, llvm::Value* value) {
   using F = lyra::runtime::ProcessFrameHeaderField;
   auto* ptr =

@@ -344,8 +344,8 @@ auto BuildConstructionProgram(
           LowerConstantToCanonicalBytes(
               constant, spec, constant_arena, design.storage_spec_arena,
               prog.port_const_pool);
-          auto value_size = static_cast<uint32_t>(
-              prog.port_const_pool.size() - value_offset);
+          auto value_size =
+              static_cast<uint32_t>(prog.port_const_pool.size() - value_offset);
           prog.port_const_inits.push_back(
               runtime::PortConstInitEntry{
                   .rel_byte_offset =
@@ -358,7 +358,6 @@ auto BuildConstructionProgram(
 
     prog.entries.push_back(entry);
   }
-
   // Build per-body child_site_to_tree_ordinal mapping.
   // For each parent body, maps the body-local child_site_index (sorted
   // path position among instance children) to tree-relative ordinal
@@ -813,18 +812,6 @@ void ExtractBodyCombTemplates(
         body, ordinal_map,
         [&](uint32_t nonfinal_proc_ordinal, mir::ProcessId /*pid*/,
             const mir::Process& proc) {
-          // Expression-connection suffix processes are regular looping
-          // processes with wait/suspend semantics. They must never be
-          // classified as comb kernels.
-          if (info.body == nullptr) {
-            throw common::InternalError(
-                "ExtractBodyCombTemplates", "body is null");
-          }
-          if (mir::IsExprConnectionProcessOrdinal(
-                  *info.body, nonfinal_proc_ordinal)) {
-            return;
-          }
-
           auto result = AnalyzeCombKernel(proc, body.arena);
           if (!result) return;
 
@@ -926,21 +913,6 @@ void ExtractBodyCombTemplates(
                   .has_self_edge = static_cast<uint8_t>(result->has_self_edge),
               });
         });
-
-    // Post-extraction invariant: no extracted comb kernel may be an
-    // expression-connection suffix process. This catches regressions if
-    // the early-return guard above is accidentally removed or bypassed.
-    for (const auto& ck : bp.comb.kernels) {
-      if (mir::IsExprConnectionProcessOrdinal(
-              *info.body, ck.proc_within_body)) {
-        throw common::InternalError(
-            "ExtractBodyCombTemplates",
-            std::format(
-                "expr connection process {} was extracted as comb kernel "
-                "in body group {}",
-                ck.proc_within_body, gi));
-      }
-    }
   }
 }
 

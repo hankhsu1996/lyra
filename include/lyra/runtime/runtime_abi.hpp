@@ -79,7 +79,10 @@ struct RuntimeInstance;
 // v24: L8a named event count for runtime event registry sizing.
 // v25: fs_base_dir moved from LyraInitRuntime hidden static to ABI struct.
 //      Engine owns the filesystem base directory explicitly.
-inline constexpr uint32_t kRuntimeAbiVersion = 25;
+// v26: construction_result pointer added. Runtime reads installable
+//      computations from the finalized ConstructionResult via this
+//      explicit ABI field; replaces the g_pending_result global handoff.
+inline constexpr uint32_t kRuntimeAbiVersion = 26;
 
 struct LyraRuntimeAbi {
   uint32_t version;  // = kRuntimeAbiVersion
@@ -166,10 +169,16 @@ struct LyraRuntimeAbi {
   // v25: Filesystem base directory for relative path resolution.
   // Owned by Engine after construction. Null = current working directory.
   const char* fs_base_dir;
+
+  // v26: Finalized ConstructionResult pointer.
+  // Borrowed for the duration of LyraRunSimulation. Used to extract
+  // installable computations and any other constructor-owned runtime
+  // data that does not fit the flat ABI shape.
+  const void* construction_result;
 };
 
 // Hard size/offset contract.
-static_assert(sizeof(LyraRuntimeAbi) == 280);
+static_assert(sizeof(LyraRuntimeAbi) == 288);
 static_assert(offsetof(LyraRuntimeAbi, version) == 0);
 static_assert(offsetof(LyraRuntimeAbi, num_connection_processes) == 188);
 static_assert(offsetof(LyraRuntimeAbi, design_state) == 192);
@@ -183,3 +192,4 @@ static_assert(offsetof(LyraRuntimeAbi, deferred_assertion_site_meta) == 248);
 static_assert(offsetof(LyraRuntimeAbi, num_deferred_assertion_sites) == 256);
 static_assert(offsetof(LyraRuntimeAbi, num_events) == 264);
 static_assert(offsetof(LyraRuntimeAbi, fs_base_dir) == 272);
+static_assert(offsetof(LyraRuntimeAbi, construction_result) == 280);

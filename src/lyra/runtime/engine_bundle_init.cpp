@@ -293,9 +293,9 @@ void Engine::InitModuleInstancesFromBundles(
   }
   slot_meta_registry_ = SlotMetaRegistry{};
   comb_kernels_.clear();
-  comb_trigger_backing_.clear();
-  global_comb_trigger_map_.clear();
-  global_comb_trigger_slots_.clear();
+  reactive_trigger_backing_.clear();
+  global_reactive_trigger_map_.clear();
+  global_reactive_trigger_slots_.clear();
   global_conn_trigger_map_.clear();
   comb_narrow_count_ = 0;
   comb_full_slot_count_ = 0;
@@ -539,8 +539,8 @@ void Engine::InitModuleInstancesFromBundles(
 
   // Step D: Build comb kernels from body templates.
   // R5: Domain-split comb trigger maps. Global triggers go to
-  // global_comb_trigger_map_. Local triggers go to per-instance
-  // local_comb_trigger_map on observability.
+  // global_reactive_trigger_map_. Local triggers go to per-instance
+  // local_reactive_trigger_map on observability.
   auto proc_states = std::span(states, num_processes_);
 
   // Validated decode of CombTemplateEntry into exactly one of three modes.
@@ -791,35 +791,38 @@ void Engine::InitModuleInstancesFromBundles(
     // Build global comb trigger map.
     if (!global_triggers.empty()) {
       std::ranges::sort(global_triggers, {}, &ParsedCombTrigger::global_id);
-      comb_trigger_backing_.reserve(global_triggers.size());
-      global_comb_trigger_map_.resize(global_slot_count_);
+      reactive_trigger_backing_.reserve(global_triggers.size());
+      global_reactive_trigger_map_.resize(global_slot_count_);
 
       uint32_t i = 0;
       while (i < global_triggers.size()) {
         uint32_t slot = global_triggers[i].global_id;
-        auto start = static_cast<uint32_t>(comb_trigger_backing_.size());
+        auto start = static_cast<uint32_t>(reactive_trigger_backing_.size());
         while (i < global_triggers.size() &&
                global_triggers[i].global_id == slot) {
-          comb_trigger_backing_.push_back({
-              .kernel_idx = global_triggers[i].kernel_idx,
-              .byte_offset = global_triggers[i].byte_offset,
-              .byte_size = global_triggers[i].byte_size,
-              .has_self_edge = global_triggers[i].has_self_edge,
-          });
+          reactive_trigger_backing_.push_back(
+              ReactiveTriggerEntry{
+                  .kind = ReactiveTriggerEntry::Kind::kCombKernel,
+                  .byte_offset = global_triggers[i].byte_offset,
+                  .byte_size = global_triggers[i].byte_size,
+                  .has_self_edge = global_triggers[i].has_self_edge,
+                  .owner_idx = global_triggers[i].kernel_idx,
+              });
           ++i;
         }
         auto count =
-            static_cast<uint32_t>(comb_trigger_backing_.size()) - start;
-        if (slot >= global_comb_trigger_map_.size()) {
+            static_cast<uint32_t>(reactive_trigger_backing_.size()) - start;
+        if (slot >= global_reactive_trigger_map_.size()) {
           throw common::InternalError(
               "InitModuleInstancesFromBundles",
               std::format(
                   "global comb trigger slot {} >= global_comb_trigger_map "
                   "size {} (global_slot_count={})",
-                  slot, global_comb_trigger_map_.size(), global_slot_count_));
+                  slot, global_reactive_trigger_map_.size(),
+                  global_slot_count_));
         }
-        global_comb_trigger_map_[slot] = {.start = start, .count = count};
-        global_comb_trigger_slots_.push_back(GlobalSignalId{slot});
+        global_reactive_trigger_map_[slot] = {.start = start, .count = count};
+        global_reactive_trigger_slots_.push_back(GlobalSignalId{slot});
       }
     }
 
@@ -834,38 +837,41 @@ void Engine::InitModuleInstancesFromBundles(
       while (i < local_triggers.size()) {
         auto* inst = local_triggers[i].instance;
         auto& obs = inst->observability;
-        if (obs.local_comb_trigger_map.empty() && obs.local_signal_count > 0) {
-          obs.local_comb_trigger_map.resize(obs.local_signal_count);
+        if (obs.local_reactive_trigger_map.empty() &&
+            obs.local_signal_count > 0) {
+          obs.local_reactive_trigger_map.resize(obs.local_signal_count);
         }
         while (i < local_triggers.size() &&
                local_triggers[i].instance == inst) {
           uint32_t local_id = local_triggers[i].local_id;
-          auto start = static_cast<uint32_t>(comb_trigger_backing_.size());
+          auto start = static_cast<uint32_t>(reactive_trigger_backing_.size());
           while (i < local_triggers.size() &&
                  local_triggers[i].instance == inst &&
                  local_triggers[i].local_id == local_id) {
-            comb_trigger_backing_.push_back({
-                .kernel_idx = local_triggers[i].kernel_idx,
-                .byte_offset = local_triggers[i].byte_offset,
-                .byte_size = local_triggers[i].byte_size,
-                .has_self_edge = local_triggers[i].has_self_edge,
-            });
+            reactive_trigger_backing_.push_back(
+                ReactiveTriggerEntry{
+                    .kind = ReactiveTriggerEntry::Kind::kCombKernel,
+                    .byte_offset = local_triggers[i].byte_offset,
+                    .byte_size = local_triggers[i].byte_size,
+                    .has_self_edge = local_triggers[i].has_self_edge,
+                    .owner_idx = local_triggers[i].kernel_idx,
+                });
             ++i;
           }
           auto count =
-              static_cast<uint32_t>(comb_trigger_backing_.size()) - start;
-          if (local_id >= obs.local_comb_trigger_map.size()) {
+              static_cast<uint32_t>(reactive_trigger_backing_.size()) - start;
+          if (local_id >= obs.local_reactive_trigger_map.size()) {
             throw common::InternalError(
                 "InitModuleInstancesFromBundles",
                 std::format(
-                    "local comb trigger id {} >= local_comb_trigger_map "
+                    "local comb trigger id {} >= local_reactive_trigger_map "
                     "size {} for instance '{}'",
-                    local_id, obs.local_comb_trigger_map.size(),
+                    local_id, obs.local_reactive_trigger_map.size(),
                     inst->scope.path_c_str));
           }
-          obs.local_comb_trigger_map[local_id] = {
+          obs.local_reactive_trigger_map[local_id] = {
               .start = start, .count = count};
-          obs.local_comb_trigger_slots.push_back(LocalSignalId{local_id});
+          obs.local_reactive_trigger_slots.push_back(LocalSignalId{local_id});
           if (local_id < obs.local_has_observers.size()) {
             obs.local_has_observers[local_id] = 1;
           }

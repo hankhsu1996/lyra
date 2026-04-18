@@ -13,7 +13,6 @@
 
 #include "lyra/common/ext_ref_binding.hpp"
 #include "lyra/common/internal_error.hpp"
-#include "lyra/runtime/expr_connection_frame.hpp"
 #include "lyra/runtime/frame_allocator.hpp"
 #include "lyra/runtime/owned_storage_handle.hpp"
 #include "lyra/runtime/process_frame.hpp"
@@ -44,12 +43,14 @@ ConstructionResult::ConstructionResult(ConstructionResult&& other) noexcept
       instances(std::move(other.instances)),
       generate_scopes(std::move(other.generate_scopes)),
       instance_bundles(std::move(other.instance_bundles)),
+      connection_descriptors(std::move(other.connection_descriptors)),
       body_desc_storage(std::move(other.body_desc_storage)),
       process_meta(std::move(other.process_meta)),
       trigger_meta(std::move(other.trigger_meta)),
       slot_meta(std::move(other.slot_meta)),
       trace_signal_meta(std::move(other.trace_signal_meta)),
-      instance_ptrs(std::move(other.instance_ptrs)) {
+      instance_ptrs(std::move(other.instance_ptrs)),
+      installed_computations(std::move(other.installed_computations)) {
 }
 
 auto ConstructionResult::operator=(ConstructionResult&& other) noexcept
@@ -63,12 +64,14 @@ auto ConstructionResult::operator=(ConstructionResult&& other) noexcept
     instances = std::move(other.instances);
     generate_scopes = std::move(other.generate_scopes);
     instance_bundles = std::move(other.instance_bundles);
+    connection_descriptors = std::move(other.connection_descriptors);
     body_desc_storage = std::move(other.body_desc_storage);
     process_meta = std::move(other.process_meta);
     trigger_meta = std::move(other.trigger_meta);
     slot_meta = std::move(other.slot_meta);
     trace_signal_meta = std::move(other.trace_signal_meta);
     instance_ptrs = std::move(other.instance_ptrs);
+    installed_computations = std::move(other.installed_computations);
   }
   return *this;
 }
@@ -715,28 +718,9 @@ auto Constructor::CreateChildInstance(
   }
   staged_instances_[instance_index] = std::move(instance);
 
-  // Stage module processes. The last num_expr_connections entries are
-  // expression connections that need child binding at finalize time.
+  // Stage module processes (no expression connection suffix - those are
+  // now installable computations, not processes).
   auto num_entries = static_cast<uint32_t>(body_.entries.size());
-  uint32_t num_expr = current_body_package_->desc->num_expr_connections;
-  if (num_expr > num_entries) {
-    throw common::InternalError(
-        "Constructor::CreateChildInstance",
-        std::format(
-            "num_expr_connections {} > num_entries {}", num_expr, num_entries));
-  }
-  uint32_t num_ordinary = num_entries - num_expr;
-  std::span<const ExprConnChildDesc> expr_child_descs;
-  if (num_expr > 0) {
-    if (current_body_package_->desc->expr_conn_child_descs == nullptr) {
-      throw common::InternalError(
-          "Constructor::CreateChildInstance",
-          "num_expr_connections > 0 but expr_conn_child_descs is null");
-    }
-    expr_child_descs = std::span<const ExprConnChildDesc>(
-        current_body_package_->desc->expr_conn_child_descs, num_expr);
-  }
-
   for (uint32_t ei = 0; ei < num_entries; ++ei) {
     const auto& entry = body_.entries[ei];
     SharedBodyFn body_fn{};
@@ -751,19 +735,12 @@ auto Constructor::CreateChildInstance(
               ei));
     }
 
-    const ExprConnChildDesc* child_desc = nullptr;
-    if (ei >= num_ordinary) {
-      uint32_t expr_idx = ei - num_ordinary;
-      child_desc = &expr_child_descs[expr_idx];  // span bounds-checked
-    }
-
     staged_.push_back(
         StagedProcess{
             .schema_index = entry.schema_index,
             .body = body_fn,
             .instance_index = instance_index,
             .is_module = true,
-            .expr_conn_child_desc = child_desc,
         });
   }
 
@@ -1087,132 +1064,62 @@ auto Constructor::Finalize() -> ConstructionResult {
         result.instances[i]->scope.path_c_str;
   }
 
-  // Expression connection child binding resolution.
-  // Must run AFTER body_desc resolution (above) so child bundles have
-  // resolved body descriptors with inline_slot_offsets and port_entries.
-  for (uint32_t i = 0; i < num_total; ++i) {
-    const auto& proc = staged_[i];
-    if (proc.expr_conn_child_desc == nullptr) continue;
-
-    const auto* desc = proc.expr_conn_child_desc;
-    auto* parent = result.instances[proc.instance_index].get();
-
-    // Resolve child by tree-relative ordinal_in_parent. child_ordinal
-    // is the direct child position in parent->scope.children (tree
-    // order, including generate scopes).
-    if (desc->child_ordinal >= parent->scope.children.size()) {
+  // Installable computation resolution.
+  //
+  // Each IC is an ordinary reactive writeback body. The body addresses
+  // its child target from inside the callable through the owner's
+  // ext_ref_bindings (populated by the construction program via
+  // LyraConstructionResultSetExtRefBindings). Finalize therefore only
+  // threads the callable, owner, and dependency set through to the
+  // engine -- no target address, byte size, or child correlation is
+  // carried on the IC descriptor.
+  for (size_t bi = 0; bi < result.instance_bundles.size(); ++bi) {
+    const auto& bundle = result.instance_bundles[bi];
+    if (bundle.body_desc == nullptr) continue;
+    const auto* body_desc = bundle.body_desc->desc;
+    uint32_t num_ic = body_desc->num_installable_computations;
+    if (num_ic == 0) continue;
+    if (body_desc->installable_computations == nullptr) {
       throw common::InternalError(
           "Constructor::Finalize",
-          std::format(
-              "expr conn child_ordinal {} out of range for parent '{}' "
-              "(children={})",
-              desc->child_ordinal, parent->scope.path_c_str,
-              parent->scope.children.size()));
+          "num_installable_computations > 0 but pointer is null");
     }
-    auto* child_scope = parent->scope.children[desc->child_ordinal].child;
-    if (child_scope->kind != RuntimeScopeKind::kInstance) {
-      throw common::InternalError(
-          "Constructor::Finalize",
-          std::format(
-              "expr conn child_ordinal {} in parent '{}' is a generate "
-              "scope, not an instance",
-              desc->child_ordinal, parent->scope.path_c_str));
-    }
-    RuntimeInstance* child = ScopeAsInstanceChecked(child_scope);
 
-    // Validate child ordinal and bundle before dereferencing.
-    if (child->owner_ordinal >= result.instance_bundles.size()) {
-      throw common::InternalError(
-          "Constructor::Finalize",
-          std::format(
-              "expr conn child owner_ordinal {} out of range (bundles={})",
-              child->owner_ordinal, result.instance_bundles.size()));
-    }
-    const auto& child_bundle = result.instance_bundles[child->owner_ordinal];
-    if (child_bundle.body_desc == nullptr) {
-      throw common::InternalError(
-          "Constructor::Finalize", "expr conn child bundle has null body_desc");
-    }
-    const auto* child_body_desc = child_bundle.body_desc->desc;
+    auto* owner = result.instances[bi].get();
+    std::span<const uint32_t> word_pool(
+        body_desc->ic_word_pool, body_desc->num_ic_word_pool_entries);
+    std::span<const InstallableComputationDesc> ic_descs(
+        body_desc->installable_computations, num_ic);
 
-    // Resolve symbolic child port -> child local slot.
-    // Enforce direction: expression connections write to child inputs.
-    std::span<const RuntimePortEntry> child_ports(
-        child_body_desc->port_entries, child_body_desc->num_port_entries);
-    uint32_t child_local_slot = UINT32_MAX;
-    for (const auto& pe : child_ports) {
-      if (pe.sym_value == desc->child_port_sym_value) {
-        if (pe.dir != 0 && pe.dir != 2) {
+    for (uint32_t ci = 0; ci < num_ic; ++ci) {
+      const auto& desc = ic_descs[ci];
+
+      // Collect body-local dependency slots. Consumed by the engine
+      // through each owner's local_reactive_trigger_map, which is
+      // indexed by body-local slot id.
+      std::vector<uint32_t> dep_body_local_slots;
+      if (desc.dep_count > 0) {
+        uint32_t dep_end = desc.dep_pool_offset + desc.dep_count;
+        if (dep_end > word_pool.size()) {
           throw common::InternalError(
               "Constructor::Finalize",
               std::format(
-                  "expr conn target port sym {} has dir {} "
-                  "(expected input=0 or inout=2)",
-                  pe.sym_value, pe.dir));
+                  "ic dep range [{}, {}) exceeds pool size {}",
+                  desc.dep_pool_offset, dep_end, word_pool.size()));
         }
-        child_local_slot = pe.local_slot;
-        break;
+        dep_body_local_slots.reserve(desc.dep_count);
+        for (uint32_t di = 0; di < desc.dep_count; ++di) {
+          dep_body_local_slots.push_back(word_pool[desc.dep_pool_offset + di]);
+        }
       }
-    }
-    if (child_local_slot == UINT32_MAX) {
-      throw common::InternalError(
-          "Constructor::Finalize",
-          std::format(
-              "expr conn child port sym {} not found on child descriptor",
-              desc->child_port_sym_value));
-    }
 
-    // Validate slot index against emitted inline slot offset array.
-    if (child_body_desc->inline_slot_offsets == nullptr) {
-      throw common::InternalError(
-          "Constructor::Finalize",
-          "child body descriptor has null inline_slot_offsets");
+      result.installed_computations.push_back(
+          ConstructionResult::ResolvedInstalledComputation{
+              .eval_fn = desc.eval_fn,
+              .owner_instance = owner,
+              .dep_body_local_slots = std::move(dep_body_local_slots),
+          });
     }
-    if (child_body_desc->num_inline_slot_offsets !=
-        child_body_desc->slot_count) {
-      throw common::InternalError(
-          "Constructor::Finalize",
-          std::format(
-              "child num_inline_slot_offsets {} != slot_count {}",
-              child_body_desc->num_inline_slot_offsets,
-              child_body_desc->slot_count));
-    }
-    if (child_local_slot >= child_body_desc->num_inline_slot_offsets) {
-      throw common::InternalError(
-          "Constructor::Finalize",
-          std::format(
-              "child_local_slot {} >= num_inline_slot_offsets {}",
-              child_local_slot, child_body_desc->num_inline_slot_offsets));
-    }
-
-    std::span<const uint32_t> child_offsets(
-        child_body_desc->inline_slot_offsets,
-        child_body_desc->num_inline_slot_offsets);
-    uint32_t child_byte_offset = child_offsets[child_local_slot];
-
-    // Write ExprConnectionChildBinding into the process frame at the
-    // computed byte offset.
-    auto state_size = schemas_[staged_[i].schema_index].state_size;
-    if (desc->binding_byte_offset > state_size ||
-        state_size - desc->binding_byte_offset <
-            sizeof(ExprConnectionChildBinding)) {
-      throw common::InternalError(
-          "Constructor::Finalize",
-          std::format(
-              "expr conn binding write out of bounds: offset {} size {} "
-              "state {}",
-              desc->binding_byte_offset, sizeof(ExprConnectionChildBinding),
-              state_size));
-    }
-    ExprConnectionChildBinding binding_val{};
-    binding_val.child_instance = child;
-    binding_val.child_slot_byte_offset = child_byte_offset;
-    binding_val.child_local_signal = LocalSignalId{child_local_slot};
-    auto frame_span =
-        std::span(static_cast<char*>(result.states[i]), state_size);
-    std::memcpy(
-        frame_span.subspan(desc->binding_byte_offset).data(), &binding_val,
-        sizeof(binding_val));
   }
 
   return result;
@@ -1711,8 +1618,7 @@ void LyraConstructorRunProgram(
                   port_const_pool_size));
         }
         auto* dst = ResolveInstanceStorageOffset(
-            *inst, init.rel_byte_offset, init.value_size,
-            "ApplyPortConstInit");
+            *inst, init.rel_byte_offset, init.value_size, "ApplyPortConstInit");
         std::memcpy(dst, &port_const_pool[init.value_offset], init.value_size);
       }
     }

@@ -127,9 +127,13 @@ auto BuildPerInstancePlaces(
     const std::vector<BodyLocalSlotEntry>& body_slots, mir::Arena& body_arena)
     -> PlaceMap;
 
-// Compile a parent expression as a body-local function.
+// Compile a parent->child binding as a void-returning writeback body.
+// The function assigns the computed expression to child_target_ref (a
+// body-local ExternalRefId representing the child port) through the
+// standard typed-assign / write-dispatch path.
 auto LowerExprAsBodyFunction(
-    hir::ExpressionId expr_id, TypeId result_type, const LoweringInput& input,
+    hir::ExpressionId expr_id, TypeId result_type,
+    mir::ExternalRefId child_target_ref, const LoweringInput& input,
     const DesignDeclarations& decls, mir::Arena& body_arena,
     const PlaceMap& per_instance_places) -> Result<mir::FunctionId>;
 

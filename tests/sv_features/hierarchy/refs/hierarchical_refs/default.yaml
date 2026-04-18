@@ -283,3 +283,35 @@ cases:
     expect:
       variables:
         w: 16
+
+  - name: reactive_cross_object_write
+    description: |
+      Cross-object hierarchical-ref write performed from inside an
+      always_comb body. Proves phase-2 fixpoint discovery picks up the
+      target instance dirtied by the write, so the child's own
+      always_comb re-fires on the child slot's change.
+    sv: |
+      module Child;
+        int a;
+        int mirror;
+        always_comb mirror = a;
+      endmodule
+
+      module Top;
+        int x;
+        int final_mirror;
+        Child c();
+
+        always_comb c.a = x;
+
+        initial begin
+          x = 42;
+          #1;
+          x = 99;
+          #1;
+          final_mirror = c.mirror;
+        end
+      endmodule
+    expect:
+      variables:
+        final_mirror: 99

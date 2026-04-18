@@ -500,7 +500,8 @@ auto BuildRuntimeAbi(
     llvm::Constant* deferred_site_meta_global,
     uint32_t num_deferred_assertion_sites, uint32_t num_events,
     llvm::Value* fs_base_dir_str, llvm::Value* conn_desc_ptr,
-    llvm::Value* conn_desc_count) -> llvm::Value* {
+    llvm::Value* conn_desc_count, llvm::Value* construction_result_ptr)
+    -> llvm::Value* {
   auto& builder = context.GetBuilder();
   auto& ctx = context.GetLlvmContext();
   auto* i32_ty = llvm::Type::getInt32Ty(ctx);
@@ -598,6 +599,11 @@ auto BuildRuntimeAbi(
 
   // v25: Filesystem base directory.
   store_field(40, fs_base_dir_str);
+
+  // v26: Finalized construction result pointer (null if no constructor).
+  store_field(
+      41,
+      construction_result_ptr != nullptr ? construction_result_ptr : null_ptr);
 
   return abi_alloca;
 }
@@ -842,7 +848,7 @@ auto EmitDesignMain(
         input.design->global_precision_power, deferred_site_meta_global,
         static_cast<uint32_t>(input.design->deferred_assertion_sites.size()),
         static_cast<uint32_t>(input.design->max_body_local_events),
-        fs_base_dir_str, conn_ptr, conn_count);
+        fs_base_dir_str, conn_ptr, conn_count, ctor_result.result_handle);
     abi_for_exit = abi_alloca;
 
     EmitRunSimulation(

@@ -255,7 +255,13 @@ auto BuildInstanceConnectionTriggers(
 }
 
 // Build connection-notification masks: conservative union across all
-// instances of each body.
+// instances of each body. A slot is marked whenever any reactive
+// consumer observes it -- memcpy-style connection kernels
+// (kDriveChildToParent) or installable-computation deps (all
+// parent->child bindings). Both feed the shared dirty-mark contract
+// at the write site; they dispatch through different runtime phases
+// (memcpy phase-1 vs. shared reactive phase-2) but share the static
+// contract that writes must always mark dirty.
 auto BuildConnectionNotificationMasks(
     const std::vector<SpecCompilationUnit>& units,
     const std::vector<SpecSlotInfo>& slot_infos,

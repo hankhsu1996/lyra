@@ -208,6 +208,11 @@ void FinalizeExternalRefTargetSlots(
     uint32_t rep_oi = topo.rep_object_for_body.at(body_idx);
 
     for (size_t i = 0; i < body.external_refs.size(); ++i) {
+      // Pre-canonical entries (parent->child installable-computation
+      // writeback targets) arrive with their path and target_slot
+      // already filled. Skip; the paired provisional is a placeholder.
+      if (!body.external_refs[i].target.path.empty()) continue;
+
       const auto& prov = provisionals[i];
       uint32_t target_oi = WalkProvisionalPath(prov, rep_oi, topo);
       uint32_t target_body_group = construction.objects[target_oi].body_group;
@@ -299,6 +304,10 @@ void CanonicalizeExternalRefPaths(
     uint32_t rep_oi = topo.rep_object_for_body.at(body_idx);
 
     for (size_t i = 0; i < body.external_refs.size(); ++i) {
+      // Pre-canonical entries arrive with their path already filled;
+      // skip canonicalization for them.
+      if (!body.external_refs[i].target.path.empty()) continue;
+
       const auto& prov = provisionals[i];
       auto& recipe = body.external_refs[i].target;
 
@@ -349,11 +358,24 @@ auto WalkCanonicalPath(
 }
 
 auto IsFullyBindableRecipe(const mir::ConnectionRecipe& recipe) -> bool {
-  // Fully bindable: kLocalSlot source AND slot-based trigger
-  // (kLocalSlot for parent-local, kChildSlot for child-local).
-  // The binder resolves both to concrete BoundEndpoints and preserves
-  // the recipe's trigger edge semantics. Recipes with kExternalRef or
-  // kFunction source/trigger are not yet supported.
+  // Fully bindable (memcpy-path connection kernel): kLocalSlot source
+  // AND slot-based trigger, for kDriveChildToParent direction only.
+  //
+  // kDriveParentToChild bindings are NEVER memcpy-bindable. They are
+  // unified under the installable-computation model (target + callable
+  // + deps): one MIR function per binding, produced at recipe creation,
+  // packaged into an InstallableComputationTemplate by
+  // BuildInstallableComputations. Source shape (plain slot or arbitrary
+  // expression) is erased before installable-computation construction,
+  // so this check does not inspect source.kind for kDriveParentToChild.
+  //
+  // kDriveChildToParent is a different semantic ("read child output,
+  // copy to parent slot"), where the source-of-truth is the child port
+  // and the copy is target-side aggregation. Those recipes remain in
+  // the memcpy pipeline.
+  if (recipe.kind == mir::PortConnection::Kind::kDriveParentToChild) {
+    return false;
+  }
   return recipe.source.kind == mir::ConnectionSourceRecipe::Kind::kLocalSlot &&
          (recipe.trigger.kind == mir::TriggerRecipe::Kind::kLocalSlot ||
           recipe.trigger.kind == mir::TriggerRecipe::Kind::kChildSlot);
@@ -414,7 +436,7 @@ auto BindConnectionRecipe(
       .parent_source = parent_ep,
       .trigger = trigger_ep,
       .trigger_edge = recipe.trigger.edge,
-      .result_type = recipe.result_type};
+  };
 }
 
 }  // namespace lyra::lowering::hir_to_mir

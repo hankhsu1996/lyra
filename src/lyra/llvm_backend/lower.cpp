@@ -187,8 +187,8 @@ auto BuildFinalPackaging(
     std::span<const Layout::BodyRealizationInfo> body_realization_infos,
     std::span<const Layout::BodyRuntimeDescriptors> body_runtime_descriptors,
     uint32_t num_instances,
-    std::vector<std::vector<llvm::Function*>> body_compiled_funcs)
-    -> FinalPackaging {
+    std::vector<std::vector<llvm::Function*>> body_compiled_funcs,
+    std::vector<std::vector<llvm::Function*>> body_ic_fns) -> FinalPackaging {
   if (body_compiled_funcs.size() != body_realization_infos.size()) {
     throw common::InternalError(
         "BuildFinalPackaging",
@@ -212,6 +212,9 @@ auto BuildFinalPackaging(
     pkg.body_funcs.push_back(
         CodegenSession::BodyCompiledFuncs{
             .functions = std::move(body_compiled_funcs[bi]),
+            .installable_computation_fns = bi < body_ic_fns.size()
+                                               ? std::move(body_ic_fns[bi])
+                                               : std::vector<llvm::Function*>{},
         });
   }
 
@@ -327,7 +330,7 @@ auto CompileDesignProcesses(const LoweringInput& input)
       input.design->elements, layout->body_realization_infos,
       layout->body_runtime_descriptors,
       static_cast<uint32_t>(layout->instance_storage_bases.size()),
-      std::move(specs.body_compiled_funcs));
+      std::move(specs.body_compiled_funcs), std::move(specs.body_ic_fns));
 
   auto runtime_products = ExtractRuntimeData(
       input, *layout, specs.body_process_triggers,

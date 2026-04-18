@@ -1,9 +1,11 @@
 feature: hierarchy_constant_connections
 description: Tests input port connections with compile-time constant values
 
-# Constant port connections are classified as kConstant source in the
-# connection recipe. The constant value is written once to the child
-# port slot during construction. No runtime process is synthesized.
+# Port connections with compile-time constant sources are handled by the
+# unified expression connection model. The expression is lowered to a
+# body-local function. Dependency analysis finds zero parent-local reads,
+# so a one-shot (kOnce) process is synthesized that evaluates once during
+# initial activation, writes the result to the child port, and terminates.
 
 cases:
   - name: literal_constant

@@ -18,6 +18,7 @@
 #include "lyra/common/internal_error.hpp"
 #include "lyra/runtime/assertions.hpp"
 #include "lyra/runtime/back_edge_site_meta.hpp"
+#include "lyra/runtime/constructor_.hpp"
 #include "lyra/runtime/cover_hook.hpp"
 #include "lyra/runtime/dpi_export_context.hpp"
 #include "lyra/runtime/engine.hpp"
@@ -91,7 +92,8 @@ void DescriptorProcessDispatch(
 
 auto SetupAndRunSimulation(
     lyra::runtime::Engine& engine, std::span<void*> states,
-    uint32_t num_processes) -> uint64_t {
+    uint32_t num_processes,
+    const lyra::runtime::ConstructionResult* construction_result) -> uint64_t {
   // Store engine pointer in each process state header
   for (auto* state : states) {
     auto* header = static_cast<StateHeader*>(state);
@@ -122,6 +124,26 @@ auto SetupAndRunSimulation(
     engine.ScheduleInitial(lyra::runtime::ProcessHandle{.process_id = i});
   }
 
+  // Load installable computations from the construction result handed in
+  // through the ABI. These are expression-driven port connections that
+  // evaluate once at init time and on dependency change.
+  if (construction_result != nullptr &&
+      !construction_result->installed_computations.empty()) {
+    std::vector<lyra::runtime::Engine::InstalledComputationLoadEntry>
+        ic_entries;
+    ic_entries.reserve(construction_result->installed_computations.size());
+    for (const auto& ric : construction_result->installed_computations) {
+      using LoadEntry = lyra::runtime::Engine::InstalledComputationLoadEntry;
+      ic_entries.push_back(
+          LoadEntry{
+              .callable = ric.eval_fn,
+              .owner_instance = ric.owner_instance,
+              .dep_body_local_slots = ric.dep_body_local_slots,
+          });
+    }
+    engine.LoadInstalledComputations(ic_entries);
+  }
+
   // Propagate initial values through connections and comb kernels before Run().
   // Init processes have already set initial values and marked slots dirty.
   // EvaluateAllConnections seeds dirty marks for all changed destinations.
@@ -130,6 +152,7 @@ auto SetupAndRunSimulation(
   // FlushAndPropagateConnections then converges connections + comb kernels
   // using the dirty-driven propagation loop (handles cascading).
   engine.EvaluateAllConnections();
+  engine.EvaluateInstalledComputations();
   engine.SeedCombKernelDirtyMarks();
   engine.FlushAndPropagateConnections();
 
@@ -354,7 +377,11 @@ extern "C" void LyraRunSimulation(
   };
   lyra::runtime::ScopedDpiExportCallContext export_scope(export_ctx);
 
-  FinalTime() = SetupAndRunSimulation(engine, states, num_processes);
+  const auto* construction_result =
+      static_cast<const lyra::runtime::ConstructionResult*>(
+          abi->construction_result);
+  FinalTime() =
+      SetupAndRunSimulation(engine, states, num_processes, construction_result);
 
   if (HasFlag(flags, FeatureFlag::kEnableTraceSummary)) {
     engine.GetTraceManager().PrintSummary(engine.Output());

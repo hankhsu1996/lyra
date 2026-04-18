@@ -878,10 +878,13 @@ auto LowerDesign(
     }
   }
 
-  // B2 Phase 4: Build ConnectionRecipes alongside the old path.
-  // For each binding, create a ConnectionRecipe using the header database
-  // and child_sites. The new path runs in parallel with the old
-  // recipe path (currently only handles kLocalSlot sources).
+  // B2 Phase 4: Build ConnectionRecipes per binding using the header
+  // database and child_sites. For kDriveParentToChild, every binding --
+  // plain slot read or arbitrary expression -- lowers through one
+  // body-local function (LowerExprAsBodyFunction) and produces a
+  // kFunction-source recipe; there is no direct-slot shortcut here.
+  // kDriveChildToParent recipes are memcpy-kernel-bindable and go
+  // through IsFullyBindableRecipe.
   std::unordered_map<uint32_t, std::vector<mir::ConnectionRecipe>>
       connection_recipes_by_body;
 
@@ -1000,14 +1003,23 @@ auto LowerDesign(
               ? mir::PortConnection::Kind::kDriveParentToChild
               : mir::PortConnection::Kind::kDriveChildToParent;
 
-      // Step 3: Resolve parent-side expression.
-      // Three semantic categories for parent-to-child:
-      //   1. direct slot source  (kNameRef -> parent-local variable)
-      //   2. constant source     (kConstant -> compile-time value)
-      //   3. dynamic expression  (anything else -> body-local function)
-      // Child-to-parent only supports direct slot (kNameRef lvalue).
+      // Step 3: Resolve parent-side source.
+      //
+      // Parent-to-child has two semantic categories:
+      //   1. constant source (kConstant) -- compile-time value, applied
+      //      inline during child creation; no writeback body.
+      //   2. dynamic source (kFunction) -- everything else, including
+      //      plain slot reads, lowers as a void-returning writeback body
+      //      whose final statement assigns to the child target through a
+      //      pre-registered ExternalRefId. The function's read set is the
+      //      single source of truth for dependencies.
+      //
+      // Child-to-parent: still kLocalSlot + kChildSlot trigger (memcpy
+      // path); direct slot (kNameRef lvalue) only.
       mir::ConnectionSourceRecipe source;
       mir::TriggerRecipe trigger;
+      mir::ExternalRefId target_ref;
+      common::LocalSlotId recipe_child_slot;
 
       if (kind == mir::PortConnection::Kind::kDriveParentToChild) {
         if (static_cast<bool>(binding.parent_constant_id)) {
@@ -1015,57 +1027,69 @@ auto LowerDesign(
           // evaluation at port-binding lowering, not by HIR expression kind.
           source = mir::ConnectionSourceRecipe::FromConstant(
               binding.parent_constant_id);
-          trigger = mir::TriggerRecipe::None();
-
+          // Constant-init uses child_slot to resolve the child-relative
+          // byte offset during serialization.
+          recipe_child_slot = child_slot;
         } else {
-          // Runtime expression source. Check for direct slot first.
-          const hir::Expression& expr =
-              (*input.hir_arena)[binding.parent_rvalue];
-
-          if (expr.kind == hir::ExpressionKind::kNameRef) {
-            const auto& name_data =
-                std::get<hir::NameRefExpressionData>(expr.data);
-            if (!resolver.Contains(name_data.symbol)) {
-              throw common::InternalError(
-                  "LowerDesign",
-                  std::format(
-                      "unresolvable direct parent connection source "
-                      "for symbol {}",
-                      name_data.symbol.value));
-            }
-            auto parent_endpoint = resolver.ResolveByVariable(name_data.symbol);
-            source = mir::ConnectionSourceRecipe::FromLocalSlot(
-                parent_endpoint.local_slot);
-            trigger = mir::TriggerRecipe::FromLocalSlot(
-                parent_endpoint.local_slot, common::EdgeKind::kAnyChange);
-          } else {
-            // Dynamic expression: lower as body-local function.
-            auto parent_sym_it =
-                sym_to_object_index.find(binding.parent_instance_sym);
-            if (parent_sym_it == sym_to_object_index.end()) {
-              throw common::InternalError(
-                  "LowerDesign",
-                  std::format(
-                      "missing parent object for connection binding "
-                      "(parent_instance_sym={})",
-                      binding.parent_instance_sym.value));
-            }
-            uint32_t parent_oi = parent_sym_it->second;
-            uint32_t body_group = construction.objects[parent_oi].body_group;
-            uint32_t rep_path = body_to_representative.at(body_group);
-            auto& parent_body = result.module_bodies[body_group];
-            auto per_instance_places = BuildPerInstancePlaces(
-                *hir_modules[construction.objects[parent_oi].path_index],
-                *hir_modules[rep_path], body_local_slots_by_body.at(body_group),
-                parent_body.arena);
-            auto func_result = LowerExprAsBodyFunction(
-                binding.parent_rvalue, result_type, input, decls,
-                parent_body.arena, per_instance_places);
-            if (!func_result) return std::unexpected(func_result.error());
-            parent_body.functions.push_back(*func_result);
-            source = mir::ConnectionSourceRecipe::FromFunction(*func_result);
-            trigger = mir::TriggerRecipe::None();
+          // Runtime source: lower as a void-returning writeback body whose
+          // final statement assigns to the child target through a
+          // pre-registered ExternalRefId. Plain slot reads and arbitrary
+          // expressions share the same code path; the callable's read set
+          // is the single source of truth for dependencies.
+          auto parent_sym_it =
+              sym_to_object_index.find(binding.parent_instance_sym);
+          if (parent_sym_it == sym_to_object_index.end()) {
+            throw common::InternalError(
+                "LowerDesign",
+                std::format(
+                    "missing parent object for connection binding "
+                    "(parent_instance_sym={})",
+                    binding.parent_instance_sym.value));
           }
+          uint32_t parent_oi = parent_sym_it->second;
+          uint32_t body_group = construction.objects[parent_oi].body_group;
+          uint32_t rep_path = body_to_representative.at(body_group);
+          auto& parent_body = result.module_bodies[body_group];
+
+          // Register a pre-canonical ExternalAccessRecipe for the child
+          // target. DurableChildId (from the child site) and the child's
+          // local slot (from the child body's port_entries) are known,
+          // so the canonical NonLocalTargetRecipe is fully populated here.
+          // Finalize/canonicalize stages skip entries whose path is
+          // already populated (see bound_hierarchy).
+          target_ref = mir::ExternalRefId{
+              static_cast<uint32_t>(parent_body.external_refs.size())};
+          parent_body.external_refs.push_back(
+              mir::ExternalAccessRecipe{
+                  .ref_id = target_ref,
+                  .type = result_type,
+                  .access_kind = mir::ExternalAccessKind::kWrite,
+                  .origin = common::OriginId::Invalid(),
+                  .target = mir::NonLocalTargetRecipe{
+                      .anchor = mir::NonLocalAnchor::kSelf,
+                      .upward_count = 0,
+                      .path = {mir::DescendantPathStep{.child = child_site.id}},
+                      .target_slot = child_slot,
+                  }});
+          // Pad provisional vector to preserve the 1:1 invariant consumed
+          // by FinalizeExternalRefTargetSlots / CanonicalizeExternalRefPaths.
+          // The dummy entry is never read: both stages skip entries whose
+          // target path is already populated.
+          provisionals_by_body[body_group].push_back(
+              ProvisionalNonLocalTarget{});
+
+          auto per_instance_places = BuildPerInstancePlaces(
+              *hir_modules[construction.objects[parent_oi].path_index],
+              *hir_modules[rep_path], body_local_slots_by_body.at(body_group),
+              parent_body.arena);
+          auto func_result = LowerExprAsBodyFunction(
+              binding.parent_rvalue, result_type, target_ref, input, decls,
+              parent_body.arena, per_instance_places);
+          if (!func_result) return std::unexpected(func_result.error());
+          parent_body.functions.push_back(*func_result);
+          source = mir::ConnectionSourceRecipe::FromFunction(*func_result);
+          // trigger and recipe_child_slot stay default-initialized:
+          // neither is read on the parent->child writeback-body path.
         }
       } else {
         // Child-to-parent: only direct slot (kNameRef lvalue) supported.
@@ -1080,17 +1104,17 @@ auto LowerDesign(
             parent_endpoint.local_slot);
         trigger = mir::TriggerRecipe::FromChildSlot(
             child_slot, common::EdgeKind::kAnyChange);
+        recipe_child_slot = child_slot;
       }
 
       connection_recipes_by_body[site_lookup.parent_body_group].push_back(
           mir::ConnectionRecipe{
               .kind = kind,
               .child_site = site_lookup.site,
-              .child_port_sym = child_pe.sym,
-              .child_slot = child_slot,
+              .child_slot = recipe_child_slot,
+              .target_ref = target_ref,
               .source = source,
               .trigger = trigger,
-              .result_type = result_type,
               .origin = common::OriginId::Invalid()});
     }
   }
@@ -1103,74 +1127,20 @@ auto LowerDesign(
     result.module_bodies[body_id_val].connection_recipes = std::move(recipes);
   }
 
-  // Synthesize expression connection processes per body.
-  // Called after ALL ordinary processes exist and ALL recipes are on the body.
-  // This is the final mutation of body.processes and
-  // body.expr_connection_templates. No later phase may append or rewrite
-  // expression connection processes. design_lower.cpp does not construct
-  // execution artifacts itself -- it calls one body-local function per body.
-  for (auto& body : result.module_bodies) {
-    MaterializeExprConnectionProcessSuffix(body);
-  }
-  // Postcondition: verify the full expression connection suffix invariant.
-  for (const auto& body : result.module_bodies) {
-    // Recipe count matches template count.
-    uint32_t func_recipe_count = 0;
-    for (const auto& recipe : body.connection_recipes) {
-      if (recipe.source.kind == mir::ConnectionSourceRecipe::Kind::kFunction)
-        ++func_recipe_count;
-    }
-    if (func_recipe_count != body.expr_connection_templates.size()) {
-      throw common::InternalError(
-          "LowerDesign",
-          std::format(
-              "expr_connection_templates count {} != kFunction "
-              "recipe count {}",
-              body.expr_connection_templates.size(), func_recipe_count));
-    }
-    // Suffix arithmetic is consistent.
-    auto ordinary = mir::GetOrdinaryProcessCount(body);
-    auto expr = mir::GetExprConnectionCount(body);
-    auto total = static_cast<uint32_t>(body.processes.size());
-    if (ordinary + expr != total) {
-      throw common::InternalError(
-          "LowerDesign",
-          std::format(
-              "suffix invariant: ordinary {} + expr {} != total {}", ordinary,
-              expr, total));
-    }
-    // Suffix ordinals are dense and match append order.
-    for (uint32_t i = 0; i < expr; ++i) {
-      const auto& tmpl = body.expr_connection_templates[i];
-      if (tmpl.expr_process_suffix_ordinal != i) {
-        throw common::InternalError(
-            "LowerDesign",
-            std::format(
-                "suffix ordinal mismatch: template[{}] has ordinal {}", i,
-                tmpl.expr_process_suffix_ordinal));
-      }
-      auto ordinal = mir::GetExprConnectionProcessOrdinal(body, i);
-      if (ordinal >= total) {
-        throw common::InternalError(
-            "LowerDesign",
-            std::format(
-                "suffix ordinal {} out of range (total={})", ordinal, total));
-      }
-    }
-  }
-
-  // B2: Build topology index and resolve external ref recipes.
-  // Ordering: FinalizeExternalRefTargetSlots fills target_slot (needs
-  // provisionals for target_sym). CanonicalizeExternalRefPaths fills
-  // target.path with DurableChildId entries (needs provisionals for
-  // topology walk, but resolves through oi_to_durable_child, not
-  // debug_instance_sym). BuildPerInstanceExtRefBindings walks
-  // each recipe from each instance's actual position to compute
-  // per-instance resolved ext-ref runtime bindings.
+  // B3: Build topology index (needed by materialization selection below).
   auto topo = BuildBoundHierarchyIndex(
       construction, parent_to_children, body_to_representative,
       oi_to_durable_child);
 
+  // Build installable computation templates per body. One template per
+  // reactive (non-constant) kDriveParentToChild recipe, produced from
+  // the writeback-body function emitted at recipe creation time. Not
+  // processes.
+  for (auto& body : result.module_bodies) {
+    BuildInstallableComputations(body);
+  }
+
+  // Resolve external ref recipes (needs topology index from above).
   FinalizeExternalRefTargetSlots(
       result, provisionals_by_body, body_local_slots_by_body, topo,
       construction,
@@ -1180,18 +1150,16 @@ auto LowerDesign(
   CanonicalizeExternalRefPaths(
       result, provisionals_by_body, topo, oi_to_durable_child);
 
-  // After canonicalization, provisionals_by_body is scratch-only.
-  // Build per-instance resolved ext-ref runtime bindings from canonical
-  // recipes.
   BuildPerInstanceExtRefBindings(result, construction, topo);
 
   // Propagate decision owner acceptance through design-global call graph.
   mir_arena.PropagateDeferredOwnerAbi();
 
   // Bind connection recipes against topology.
-  // kLocalSlot-sourced recipes -> BoundConnection (kernel entries).
-  // kConstant-sourced recipes -> ChildConstInit (one-time construction write).
-  // kFunction-sourced recipes -> handled by body-process suffix.
+  // kDriveChildToParent with kLocalSlot source -> BoundConnection (memcpy).
+  // kDriveParentToChild with kConstant source -> ChildConstInit.
+  // kDriveParentToChild with kFunction source -> installable computation
+  //   (already packaged by BuildInstallableComputations above).
   std::vector<mir::BoundConnection> bound_connections;
   for (uint32_t oi = 0; oi < construction.objects.size(); ++oi) {
     uint32_t body_idx = construction.objects[oi].body_group;
@@ -1224,7 +1192,6 @@ auto LowerDesign(
                 .const_id = recipe.source.constant_id});
         continue;
       }
-      // kFunction-sourced recipes: handled by body-process suffix.
     }
   }
 

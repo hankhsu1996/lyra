@@ -36,6 +36,8 @@ struct SpecializationProducts {
   std::vector<DeferredSiteCompiledArtifact> deferred_site_artifacts;
   // Design-global back-edge site origins, concatenated from per-body products.
   std::vector<common::OriginId> back_edge_origins;
+  // Per body-group: compiled installable computation functions.
+  std::vector<std::vector<llvm::Function*>> body_ic_fns;
 };
 
 // Declare and define all design-global functions (packages + generated).

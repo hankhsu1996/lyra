@@ -40,7 +40,7 @@ static_assert(std::is_standard_layout_v<BodyProcessEntry>);
 // Codegen emits the header and process entries as separate contiguous
 // LLVM globals. The runtime constructor receives them as two arguments:
 // one BodyRealizationDesc header and one span of BodyProcessEntry.
-struct ExprConnChildDesc;
+struct InstallableComputationDesc;
 
 // Runtime-visible port entry for child public interface resolution.
 // Emitted per body from CompiledModuleHeader::PortEntry.
@@ -62,8 +62,7 @@ static_assert(std::is_standard_layout_v<RuntimePortEntry>);
 
 struct BodyRealizationDesc {
   // Body-local module-process repertoire count (non-final processes).
-  // Includes both ordinary and expression connection processes.
-  // The last num_expr_connections entries are expression connections.
+  // Does NOT include installable computations (they are not processes).
   uint32_t num_processes = 0;
   // Body's slot count, used by the constructor to advance the
   // running slot-base counter per instance.
@@ -93,15 +92,22 @@ struct BodyRealizationDesc {
   // symbolic child port -> child local slot.
   const RuntimePortEntry* port_entries = nullptr;
   uint32_t num_port_entries = 0;
-  // Expression connection transport fields.
-  // entries[num_processes - num_expr_connections .. num_processes) is the
-  // expression suffix. Parallel ExprConnChildDesc provides child binding
-  // metadata for each.
-  const ExprConnChildDesc* expr_conn_child_descs = nullptr;
-  uint32_t num_expr_connections = 0;
+  // Installable computation descriptors for reactive parent->child
+  // writeback bodies. Not processes. Evaluated directly at init time
+  // and re-evaluated by fixpoint dispatch when a dependency slot
+  // changes. Each callable resolves its child target through the
+  // owner's ordinary ext_ref_bindings; this descriptor does not
+  // participate in target resolution.
+  const InstallableComputationDesc* installable_computations = nullptr;
+  // Shared word pool for installable-computation dependency slot
+  // indices. Each InstallableComputationDesc's dep_pool_offset +
+  // dep_count identifies its slot list within this pool.
+  const uint32_t* ic_word_pool = nullptr;
+  uint32_t num_ic_word_pool_entries = 0;
+  uint32_t num_installable_computations = 0;
 };
 
-static_assert(sizeof(BodyRealizationDesc) == 88);
+static_assert(sizeof(BodyRealizationDesc) == 96);
 static_assert(offsetof(BodyRealizationDesc, num_processes) == 0);
 static_assert(offsetof(BodyRealizationDesc, slot_count) == 4);
 static_assert(offsetof(BodyRealizationDesc, inline_state_size_bytes) == 8);
@@ -114,42 +120,52 @@ static_assert(offsetof(BodyRealizationDesc, inline_slot_offsets) == 40);
 static_assert(offsetof(BodyRealizationDesc, num_inline_slot_offsets) == 48);
 static_assert(offsetof(BodyRealizationDesc, port_entries) == 56);
 static_assert(offsetof(BodyRealizationDesc, num_port_entries) == 64);
-static_assert(offsetof(BodyRealizationDesc, expr_conn_child_descs) == 72);
-static_assert(offsetof(BodyRealizationDesc, num_expr_connections) == 80);
+static_assert(offsetof(BodyRealizationDesc, installable_computations) == 72);
+static_assert(offsetof(BodyRealizationDesc, ic_word_pool) == 80);
+static_assert(offsetof(BodyRealizationDesc, num_ic_word_pool_entries) == 88);
+static_assert(
+    offsetof(BodyRealizationDesc, num_installable_computations) == 92);
 static_assert(std::is_trivially_copyable_v<BodyRealizationDesc>);
 static_assert(std::is_standard_layout_v<BodyRealizationDesc>);
 
-// Per-expression-connection child binding metadata.
-// Emitted per body alongside BodyProcessEntry. Constructor reads this to
-// resolve the child instance and write the ExprConnectionChildBinding into
-// the process frame.
+// Installable-computation callable ABI (body-function shape).
+// Every IC callable is a void-returning writeback body: it reads parent
+// slots, evaluates its expression, and writes the child target itself
+// through an ExternalRefId-backed assignment. No return value, no
+// return-policy dispatch. Runtime invokes it as `(design, engine,
+// this_ptr, instance_ptr)`.
+using ICBodyFn =
+    void (*)(void* design, void* engine, void* this_ptr, void* instance_ptr);
+
+// Per-installable-computation runtime descriptor.
 //
-// Does NOT carry precomputed child byte offsets. Concrete child slot
-// resolution (port sym -> local slot -> byte offset) is constructor work,
-// using the child's own emitted body descriptor.
-struct ExprConnChildDesc {
-  // Tree-relative direct child position in the parent runtime scope's
-  // children vector. Includes generate scopes and module instances in a
-  // single unified ordinal space. Resolved at runtime by direct indexing
-  // into parent->scope.children. Not instance-table order, not
-  // child-site order, not coord-based identity.
-  uint32_t child_ordinal = 0;
-  // Symbolic child public port identity. Constructor resolves this to
-  // concrete local slot and byte offset using the child's emitted port
-  // entries and inline slot offsets.
-  uint32_t child_port_sym_value = UINT32_MAX;
-  // Byte offset of ExprConnectionChildBinding within the process state.
-  // Computed at layout time from LLVM DataLayout. Constructor writes the
-  // binding at states[i] + binding_byte_offset.
-  uint32_t binding_byte_offset = 0;
+// This is the full runtime ABI. The runtime uses it for exactly two
+// things: invoking the callable with the ordinary body-function ABI,
+// and registering the callable's dependency slots into the reactive
+// trigger model. The child-target write is performed by the callable
+// itself, which resolves the target through the owner's ordinary
+// ext_ref_bindings; no child correlation or target-resolution state
+// appears here.
+//
+// dep_pool_offset indexes into the shared ic_word_pool in
+// BodyRealizationDesc, which now carries dependency slot indices only.
+struct InstallableComputationDesc {
+  // Compiled writeback body. Signature is ICBodyFn.
+  ICBodyFn eval_fn = nullptr;
+  // Body-local dependency slot indices, packed in the shared
+  // ic_word_pool of the parent body descriptor. Consumed by the engine
+  // via the owner's local_reactive_trigger_map, which is indexed by
+  // body-local slot id.
+  uint32_t dep_pool_offset = 0;
+  uint32_t dep_count = 0;
 };
 
-static_assert(sizeof(ExprConnChildDesc) == 12);
-static_assert(offsetof(ExprConnChildDesc, child_ordinal) == 0);
-static_assert(offsetof(ExprConnChildDesc, child_port_sym_value) == 4);
-static_assert(offsetof(ExprConnChildDesc, binding_byte_offset) == 8);
-static_assert(std::is_trivially_copyable_v<ExprConnChildDesc>);
-static_assert(std::is_standard_layout_v<ExprConnChildDesc>);
+static_assert(sizeof(InstallableComputationDesc) == 16);
+static_assert(offsetof(InstallableComputationDesc, eval_fn) == 0);
+static_assert(offsetof(InstallableComputationDesc, dep_pool_offset) == 8);
+static_assert(offsetof(InstallableComputationDesc, dep_count) == 12);
+static_assert(std::is_trivially_copyable_v<InstallableComputationDesc>);
+static_assert(std::is_standard_layout_v<InstallableComputationDesc>);
 
 // Design-level constructor-side definition artifact for connection processes.
 //

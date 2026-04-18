@@ -27,19 +27,6 @@
 
 namespace lyra::lowering::hir_to_mir {
 
-namespace {
-
-// Determine return policy based on return type.
-// This is frozen here - backends consume it, don't recompute it.
-//
-// Policy rules:
-// - kVoid: void functions
-// - kSretOutParam: value aggregates only (unpacked struct/array/union)
-// - kDirect: scalars AND managed handles (both fit in registers)
-//
-// Managed handles (string, dynamic array, queue) are pointer-sized values
-// that fit in a register. They should NOT use sret. The handle value is
-// returned directly; ownership transfers from callee to caller.
 auto ComputeReturnPolicy(TypeId return_type, const TypeArena& types)
     -> mir::ReturnPolicy {
   const Type& type = types[return_type];
@@ -48,13 +35,11 @@ auto ComputeReturnPolicy(TypeId return_type, const TypeArena& types)
     case TypeKind::kVoid:
       return mir::ReturnPolicy::kVoid;
 
-    // Sret: value aggregates only (need caller-provided storage)
     case TypeKind::kUnpackedStruct:
     case TypeKind::kUnpackedArray:
     case TypeKind::kUnpackedUnion:
       return mir::ReturnPolicy::kSretOutParam;
 
-    // Direct return: scalars (fit in registers)
     case TypeKind::kIntegral:
     case TypeKind::kReal:
     case TypeKind::kShortReal:
@@ -63,14 +48,12 @@ auto ComputeReturnPolicy(TypeId return_type, const TypeArena& types)
     case TypeKind::kEnum:
       return mir::ReturnPolicy::kDirect;
 
-    // Direct return: managed handles are pointer values (fit in registers)
     case TypeKind::kString:
     case TypeKind::kDynamicArray:
     case TypeKind::kQueue:
     case TypeKind::kAssociativeArray:
       return mir::ReturnPolicy::kDirect;
 
-    // Direct return: chandle is an opaque pointer (fits in a register)
     case TypeKind::kChandle:
       return mir::ReturnPolicy::kDirect;
 
@@ -81,8 +64,6 @@ auto ComputeReturnPolicy(TypeId return_type, const TypeArena& types)
   }
   return mir::ReturnPolicy::kDirect;
 }
-
-}  // namespace
 
 auto BuildFunctionSignature(
     const hir::Function& function, const SymbolTable& symbol_table,

@@ -227,6 +227,10 @@ struct CompiledModuleSpec {
   // Per-body back-edge site origins, accumulated during CU codegen.
   // Spliced positionally into the design-global back-edge origin array.
   std::vector<common::OriginId> back_edge_origins;
+  // Compiled installable computation callable function pointers.
+  // Parallel to body->installable_computations. Module-scoped,
+  // void-returning body-function ABI.
+  std::vector<llvm::Function*> installable_computation_fns;
 };
 
 // Pure-data construction program: pooled paths, pooled param payloads, and
@@ -295,6 +299,8 @@ struct CodegenSession {
   // body's non-final process list.
   struct BodyCompiledFuncs {
     std::vector<llvm::Function*> functions;
+    // Parallel to body->installable_computations.
+    std::vector<llvm::Function*> installable_computation_fns;
   };
   std::vector<BodyCompiledFuncs> body_compiled_funcs;
 
