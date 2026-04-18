@@ -339,3 +339,22 @@ cases:
       endmodule
     expect:
       stdout: "outer.x=10\nouter.inner[0].y=100 outer.inner[1].y=200\n"
+
+  - name: for_generate_module_instantiation
+    description: Module instantiation inside for-generate loop
+    sv: |
+      module Leaf #(parameter int ID = 0);
+        initial $display("leaf %0d", ID);
+      endmodule
+
+      module Test;
+        genvar i;
+        for (i = 0; i < 3; i++) begin : blk
+          Leaf #(.ID(i)) u();
+        end
+      endmodule
+    expect:
+      stdout: |
+        leaf 0
+        leaf 1
+        leaf 2

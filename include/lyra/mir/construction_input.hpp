@@ -4,6 +4,7 @@
 #include <vector>
 
 #include "lyra/common/ext_ref_binding.hpp"
+#include "lyra/common/hierarchy_node.hpp"
 #include "lyra/common/integral_constant.hpp"
 #include "lyra/common/module_identity.hpp"
 #include "lyra/common/symbol_types.hpp"
@@ -72,6 +73,13 @@ struct ConstructionInput {
   // Computed by BuildPerInstanceExtRefRuntimeBindings during design lowering.
   std::vector<std::vector<common::SerializedExtRefBinding>>
       instance_ext_ref_bindings;
+
+  // Full scope hierarchy including generate scopes. Strict construction
+  // order: parents before children. Module instances and generate scopes
+  // interleaved. Built at AST->HIR time, threaded through MIR lowering.
+  // Consumed by construction program emitter to produce scope-aware
+  // runtime hierarchy.
+  std::vector<common::HierarchyNode> hierarchy_nodes;
 };
 
 }  // namespace lyra::mir

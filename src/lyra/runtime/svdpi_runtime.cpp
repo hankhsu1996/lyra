@@ -326,8 +326,8 @@ extern "C" svScope svSetScope(const svScope scope) {
 extern "C" const char* svGetNameFromScope(const svScope scope) {
   auto* ctx = GetActiveDpiContextOrAbort();
   auto* engine = static_cast<const lyra::runtime::Engine*>(ctx->engine);
-  const auto* inst = engine->ValidateScopeHandle(scope);
-  return engine->GetScopePath(inst);
+  const auto* rs = engine->ValidateScopeHandle(scope);
+  return engine->GetScopePath(rs);
 }
 
 extern "C" svScope svGetScopeFromName(const char* scopeName) {
@@ -336,29 +336,29 @@ extern "C" svScope svGetScopeFromName(const char* scopeName) {
     return nullptr;
   }
   auto* engine = static_cast<const lyra::runtime::Engine*>(ctx->engine);
-  const auto* inst = engine->ResolveScopeByPath(scopeName);
-  return const_cast<lyra::runtime::RuntimeInstance*>(inst);
+  const auto* rs = engine->ResolveScopeByPath(scopeName);
+  return const_cast<lyra::runtime::RuntimeScope*>(rs);
 }
 
 extern "C" int svPutUserData(
     const svScope scope, void* userKey, void* userData) {
   auto* ctx = GetActiveDpiContextOrAbort();
   auto* engine = static_cast<lyra::runtime::Engine*>(ctx->engine);
-  const auto* inst = engine->ValidateScopeHandle(scope);
-  if (inst == nullptr || userKey == nullptr) {
+  const auto* rs = engine->ValidateScopeHandle(scope);
+  if (rs == nullptr || userKey == nullptr) {
     return -1;
   }
-  return engine->PutScopeUserData(inst, userKey, userData);
+  return engine->PutScopeUserData(rs, userKey, userData);
 }
 
 extern "C" void* svGetUserData(const svScope scope, void* userKey) {
   auto* ctx = GetActiveDpiContextOrAbort();
   auto* engine = static_cast<const lyra::runtime::Engine*>(ctx->engine);
-  const auto* inst = engine->ValidateScopeHandle(scope);
-  if (inst == nullptr || userKey == nullptr) {
+  const auto* rs = engine->ValidateScopeHandle(scope);
+  if (rs == nullptr || userKey == nullptr) {
     return nullptr;
   }
-  return engine->GetScopeUserData(inst, userKey);
+  return engine->GetScopeUserData(rs, userKey);
 }
 
 // NOLINTEND(cppcoreguidelines-pro-type-const-cast)
@@ -383,18 +383,18 @@ static void EncodeVendoredSvTimeValFromTicks(svTimeVal& out, uint64_t ticks) {
 // - no package-context inference from active_scope when argument is null
 
 // Validate scope for D6d time APIs. Returns nullptr for null scope,
-// validated instance for non-null scope, aborts for invalid non-null scope.
+// validated scope for non-null scope, aborts for invalid non-null scope.
 // Uses abort (not throw) to stay safe across extern "C" boundary.
 auto ValidateOptionalScopeOrAbort(
     const lyra::runtime::Engine* engine, svScope scope)
-    -> const lyra::runtime::RuntimeInstance* {
+    -> const lyra::runtime::RuntimeScope* {
   if (scope == nullptr) return nullptr;
-  auto* inst = static_cast<const lyra::runtime::RuntimeInstance*>(scope);
-  if (!engine->IsScopeHandleValid(inst)) {
+  const auto* rs = static_cast<const lyra::runtime::RuntimeScope*>(scope);
+  if (!engine->IsScopeHandleValid(rs)) {
     std::fputs("fatal: invalid svScope handle\n", stderr);
     std::abort();
   }
-  return inst;
+  return rs;
 }
 
 extern "C" int svGetTime(const svScope scope, svTimeVal* time) {
@@ -410,8 +410,8 @@ extern "C" int svGetTimeUnit(const svScope scope, int32_t* time_unit) {
   if (time_unit == nullptr) return -1;
   auto* ctx = GetActiveDpiContextOrAbort();
   auto* engine = static_cast<const lyra::runtime::Engine*>(ctx->engine);
-  const auto* inst = ValidateOptionalScopeOrAbort(engine, scope);
-  *time_unit = engine->GetScopeTimeUnitPower(inst);
+  const auto* rs = ValidateOptionalScopeOrAbort(engine, scope);
+  *time_unit = engine->GetScopeTimeUnitPower(rs);
   return 0;
 }
 
@@ -420,8 +420,8 @@ extern "C" int svGetTimePrecision(
   if (time_precision == nullptr) return -1;
   auto* ctx = GetActiveDpiContextOrAbort();
   auto* engine = static_cast<const lyra::runtime::Engine*>(ctx->engine);
-  const auto* inst = ValidateOptionalScopeOrAbort(engine, scope);
-  *time_precision = engine->GetScopeTimePrecisionPower(inst);
+  const auto* rs = ValidateOptionalScopeOrAbort(engine, scope);
+  *time_precision = engine->GetScopeTimePrecisionPower(rs);
   return 0;
 }
 

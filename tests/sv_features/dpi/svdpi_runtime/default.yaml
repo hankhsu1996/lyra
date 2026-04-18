@@ -316,3 +316,31 @@ cases:
     expect:
       variables:
         result: 1
+
+  - name: generate_scope_registration
+    description: >
+      Generate-block scopes are first-class in the DPI scope registry.
+      svGetScopeFromName resolves "Test.blk[0]", the handle round-trips
+      through svGetNameFromScope, svPutUserData/svGetUserData accept the
+      generate-scope handle, and the nested instance path is also
+      registered. This exercises Cut 5's scope-tree-wide registry, not
+      just instance scopes.
+    dpi_sources:
+      - dpi_helpers/svdpi_utils.c
+    sv: |
+      module Leaf;
+      endmodule
+
+      module Test;
+        for (genvar i = 0; i < 2; i++) begin : blk
+          Leaf u();
+        end
+        import "DPI-C" function int test_generate_scope_registration();
+        int result;
+        initial begin
+          result = test_generate_scope_registration();
+        end
+      endmodule
+    expect:
+      variables:
+        result: 1

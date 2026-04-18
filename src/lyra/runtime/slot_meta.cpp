@@ -244,10 +244,11 @@ void SlotMetaRegistry::DumpSummary(OutputDispatcher& out) const {
           "design_base_off={} total_bytes={}",
           i, KindName(slot.kind), slot.design_base_off, slot.total_bytes);
     } else {
-      const char* display_path = (slot.owner_instance != nullptr &&
-                                  slot.owner_instance->path_c_str != nullptr)
-                                     ? slot.owner_instance->path_c_str
-                                     : "<null>";
+      const char* display_path =
+          (slot.owner_instance != nullptr &&
+           slot.owner_instance->scope.path_c_str != nullptr)
+              ? slot.owner_instance->scope.path_c_str
+              : "<null>";
       line = std::format(
           "__LYRA_SLOT_META__: slot={} domain=instance kind={} "
           "owner_instance='{}' instance_rel_off={} total_bytes={}",

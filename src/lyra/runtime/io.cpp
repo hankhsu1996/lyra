@@ -481,7 +481,7 @@ extern "C" void LyraPrintModulePath(void* engine_ptr, void* instance_raw) {
   const auto* inst =
       static_cast<const lyra::runtime::RuntimeInstance*>(instance_raw);
   engine->Output().AppendSimOutputFragment(
-      inst->path_c_str != nullptr ? inst->path_c_str : "");
+      inst->scope.path_c_str != nullptr ? inst->scope.path_c_str : "");
 }
 
 extern "C" void LyraWritemem(

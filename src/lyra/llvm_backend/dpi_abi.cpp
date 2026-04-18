@@ -27,6 +27,7 @@
 #include "lyra/llvm_backend/value_repr.hpp"
 #include "lyra/mir/dpi_verify.hpp"
 #include "lyra/runtime/dpi_export_context.hpp"
+#include "lyra/runtime/runtime_instance.hpp"
 
 namespace lyra::lowering::mir_to_llvm::dpi {
 
@@ -1101,9 +1102,22 @@ static_assert(
     "BuildDpiResolvedModuleBindingType");
 
 // All other contexts (package scope, compilation-unit scope) get null.
+// svScope is a RuntimeScope* at the ABI boundary: for module instances,
+// that is &inst->scope (the RuntimeScope embedded inside RuntimeInstance),
+// not the instance container pointer. We emit a byte-GEP to reach the
+// scope offset within the instance. Host and target layouts match for
+// this binary, so offsetof is authoritative at codegen time.
 auto ResolveDpiCallerScope(Context& context) -> llvm::Value* {
   if (llvm::Value* inst = context.GetInstancePointer()) {
-    return inst;
+    auto& llvm_ctx = context.GetLlvmContext();
+    auto& builder = context.GetBuilder();
+    auto* i8_ty = llvm::Type::getInt8Ty(llvm_ctx);
+    auto* i64_ty = llvm::Type::getInt64Ty(llvm_ctx);
+    auto offset =
+        static_cast<int64_t>(offsetof(lyra::runtime::RuntimeInstance, scope));
+    if (offset == 0) return inst;
+    return builder.CreateInBoundsGEP(
+        i8_ty, inst, llvm::ConstantInt::get(i64_ty, offset), "dpi.scope.ptr");
   }
   auto* ptr_ty = llvm::PointerType::getUnqual(context.GetLlvmContext());
   return llvm::ConstantPointerNull::get(ptr_ty);

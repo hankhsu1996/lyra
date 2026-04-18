@@ -147,7 +147,7 @@ void Engine::InitConnectionBatch(
                   "trigger local_id {} >= local_conn_trigger_map size {} "
                   "for instance '{}'",
                   local_id, obs.local_conn_trigger_map.size(),
-                  inst->path_c_str));
+                  inst->scope.path_c_str));
         }
         obs.local_conn_trigger_map[local_id] = {
             .start = start, .count = conn_base + i - start};
@@ -382,7 +382,7 @@ void Engine::InitCombKernels(
                   "local comb trigger id {} >= local_comb_trigger_map "
                   "size {} for instance '{}'",
                   local_id, obs.local_comb_trigger_map.size(),
-                  inst->path_c_str));
+                  inst->scope.path_c_str));
         }
         obs.local_comb_trigger_map[local_id] = {.start = start, .count = count};
         obs.local_comb_trigger_slots.push_back(LocalSignalId{local_id});

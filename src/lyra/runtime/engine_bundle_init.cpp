@@ -861,7 +861,7 @@ void Engine::InitModuleInstancesFromBundles(
                     "local comb trigger id {} >= local_comb_trigger_map "
                     "size {} for instance '{}'",
                     local_id, obs.local_comb_trigger_map.size(),
-                    inst->path_c_str));
+                    inst->scope.path_c_str));
           }
           obs.local_comb_trigger_map[local_id] = {
               .start = start, .count = count};

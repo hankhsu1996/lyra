@@ -9,38 +9,59 @@
 
 namespace lyra::runtime {
 
-// Construction program entry: one per module instance, in strict ModuleIndex
-// order. This entire type is emitted LLVM transport for constructor
-// ingestion only. It is never a runtime semantic carrier. All fields
-// are consumed exactly once in LyraConstructorRunProgram and do not
-// survive into any runtime-facing struct or API.
+// Runtime scope tree node kind carried in ConstructionProgramEntry.
+// Typed at the C++ source-of-truth; emitted and consumed through an i32
+// at the LLVM ABI boundary. Underlying type is fixed so struct layout
+// and LLVM struct type stay in lockstep.
+enum class ConstructionNodeKind : uint32_t {
+  kInstance = 0,
+  kGenerate = 1,
+};
+
+// Construction program entry: one per scope node (module instance or
+// generate scope), in strict parent-before-child order. Emitted LLVM
+// transport for constructor ingestion only. All fields are consumed
+// exactly once in LyraConstructorRunProgram and do not survive into
+// any runtime-facing struct or API.
+//
+// Hierarchical paths are NOT transported. The constructor derives each
+// scope's path from its parent's path_storage + label via BuildScopePath,
+// so only the parent-relative label is needed here.
 struct ConstructionProgramEntry {
+  ConstructionNodeKind node_kind;
+  // Body group index (kInstance only; 0 for kGenerate).
   uint32_t body_group;
-  uint32_t path_offset;
+  // Scope label (relative to parent) offset into path_pool.
+  uint32_t label_offset;
+  // Parameter data (kInstance only; 0/0 for kGenerate).
   uint32_t param_offset;
   uint32_t param_size;
+  // Parent scope index in entry order. UINT32_MAX for root.
+  uint32_t parent_scope_index;
+  // Ordinal of this node among parent's children.
+  uint32_t ordinal_in_parent;
+  // For kInstance: compile-time object_index (sorted all_instances position).
+  // Used as owner_ordinal so result.instances[object_index] matches the
+  // compile-time model. 0 for kGenerate.
+  uint32_t instance_index;
+  // Realized storage sizes (kInstance only; 0/0 for kGenerate).
   uint64_t realized_inline_size;
   uint64_t realized_appendix_size;
-  // Parent instance index in construction order. UINT32_MAX for top-level.
-  // Transport-only: consumed in LyraConstructorRunProgram to resolve a
-  // live RuntimeInstance* parent pointer. Does not survive into any
-  // runtime carrier after ingestion.
-  uint32_t parent_instance_index;
-  // Structural child edge metadata. Transport-only: consumed in
-  // LyraConstructorRunProgram to populate RuntimeInstance::ChildEdge.
-  // These are edge metadata for structural relation materialization,
-  // not runtime object identity or a general-purpose query key.
-  uint32_t child_ordinal_in_coord;
-  // Offset and count into the coord_steps pool for this child's
-  // RepertoireCoord. UINT32_MAX offset = empty coord (non-generate).
-  uint32_t coord_offset;
-  uint32_t coord_count;
-  // Local instance name offset into path_pool (e.g. "u0").
-  // Presentation input for path derivation during assembly.
-  // Originates from InstanceEntry::inst_name at compile time -- not
-  // recovered from full path strings. Not stored on RuntimeInstance.
-  uint32_t inst_name_offset;
 };
+
+// Verify struct layout matches the LLVM emission in
+// emit_realization_descriptors.cpp.
+static_assert(offsetof(ConstructionProgramEntry, node_kind) == 0);
+static_assert(offsetof(ConstructionProgramEntry, body_group) == 4);
+static_assert(offsetof(ConstructionProgramEntry, label_offset) == 8);
+static_assert(offsetof(ConstructionProgramEntry, param_offset) == 12);
+static_assert(offsetof(ConstructionProgramEntry, param_size) == 16);
+static_assert(offsetof(ConstructionProgramEntry, parent_scope_index) == 20);
+static_assert(offsetof(ConstructionProgramEntry, ordinal_in_parent) == 24);
+static_assert(offsetof(ConstructionProgramEntry, instance_index) == 28);
+static_assert(offsetof(ConstructionProgramEntry, realized_inline_size) == 32);
+static_assert(offsetof(ConstructionProgramEntry, realized_appendix_size) == 40);
+static_assert(sizeof(ConstructionProgramEntry) == 48);
 
 // Flat POD reference to one body descriptor package. Mirrors the data
 // passed to LyraConstructorBeginBody as individual pointer+count C ABI

@@ -210,7 +210,7 @@ void FlushLocalDirtySlotsToTrace(
             std::format(
                 "instance '{}' has dirty local signals but "
                 "local_signal_count=0",
-                inst->path_c_str));
+                inst->scope.path_c_str));
       }
       continue;
     }
@@ -220,7 +220,7 @@ void FlushLocalDirtySlotsToTrace(
           "FlushLocalDirtySlotsToTrace",
           std::format(
               "instance '{}' has local signals but no observability layout",
-              inst->path_c_str));
+              inst->scope.path_c_str));
     }
 
     if (obs.trace_select.size() != obs.local_signal_count) {
@@ -228,7 +228,7 @@ void FlushLocalDirtySlotsToTrace(
           "FlushLocalDirtySlotsToTrace",
           std::format(
               "instance '{}' trace_select size {} != local_signal_count {}",
-              inst->path_c_str, obs.trace_select.size(),
+              inst->scope.path_c_str, obs.trace_select.size(),
               obs.local_signal_count));
     }
 
@@ -238,7 +238,7 @@ void FlushLocalDirtySlotsToTrace(
             "FlushLocalDirtySlotsToTrace",
             std::format(
                 "instance '{}' dirty local signal {} out of range {}",
-                inst->path_c_str, lid.value, obs.local_signal_count));
+                inst->scope.path_c_str, lid.value, obs.local_signal_count));
       }
 
       if (obs.trace_select[lid.value] == 0) continue;

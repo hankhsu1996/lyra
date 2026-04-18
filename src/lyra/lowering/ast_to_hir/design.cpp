@@ -621,6 +621,100 @@ void CollectInstancesFromScope(
   }
 }
 
+// Build the hierarchy-node table from slang AST, emitting both generate
+// scope nodes and instance nodes. The instance list (all_instances) must
+// already be populated and sorted. This function produces a parallel
+// table of hierarchy nodes in strict parent-before-child order.
+// Emit hierarchy nodes in structural (declaration) order. This is the
+// authoritative child ordering for the runtime scope tree. Instance
+// children carry instance_index as a payload lookup key only -- it
+// does NOT determine child position. The tree order is structural.
+
+// Derive parent-relative label from authoritative full hierarchical
+// paths. One strict policy for all scope kinds (instances and generate
+// scopes): strip the parent's full_path + '.' prefix. Root nodes have
+// empty parent_full and their label equals their full_path. Non-root
+// nodes whose full_path does not start with parent_full + '.' violate
+// the hierarchy invariant and fail loudly -- no silent fallback.
+auto DeriveRelativeLabel(
+    std::string_view full_path, std::string_view parent_full) -> std::string {
+  if (parent_full.empty()) return std::string(full_path);
+  if (!full_path.starts_with(parent_full) ||
+      full_path.size() <= parent_full.size() + 1 ||
+      full_path[parent_full.size()] != '.') {
+    throw common::InternalError(
+        "DeriveRelativeLabel",
+        std::format(
+            "full_path '{}' is not under parent '{}'", full_path, parent_full));
+  }
+  return std::string(full_path.substr(parent_full.size() + 1));
+}
+
+void BuildHierarchyNodes(
+    const slang::ast::Scope& scope, uint32_t parent_node_index,
+    const std::vector<const slang::ast::InstanceSymbol*>& all_instances,
+    const std::unordered_map<const slang::ast::InstanceSymbol*, uint32_t>&
+        instance_to_index,
+    std::vector<common::HierarchyNode>& nodes) {
+  // Copy parent full_path by value: nodes may reallocate during push_back
+  // below, which would invalidate any string_view into nodes[parent].
+  std::string parent_full = parent_node_index != UINT32_MAX
+                                ? nodes[parent_node_index].full_path
+                                : std::string{};
+  for (const auto& member : scope.members()) {
+    if (member.kind == slang::ast::SymbolKind::Instance) {
+      const auto& child = member.as<slang::ast::InstanceSymbol>();
+      auto it = instance_to_index.find(&child);
+      if (it == instance_to_index.end()) continue;
+      auto child_idx = static_cast<uint32_t>(nodes.size());
+      std::string full_path = std::string(child.getHierarchicalPath());
+      std::string label = DeriveRelativeLabel(full_path, parent_full);
+      nodes.push_back(
+          common::HierarchyNode{
+              .kind = common::HierarchyNode::kInstance,
+              .parent_node_index = parent_node_index,
+              .label = std::move(label),
+              .full_path = full_path,
+              .instance_index = it->second,
+          });
+      BuildHierarchyNodes(
+          child.body, child_idx, all_instances, instance_to_index, nodes);
+    } else if (member.kind == slang::ast::SymbolKind::GenerateBlock) {
+      const auto& block = member.as<slang::ast::GenerateBlockSymbol>();
+      if (block.isUninstantiated) continue;
+      auto scope_idx = static_cast<uint32_t>(nodes.size());
+      std::string full_path = std::string(block.getHierarchicalPath());
+      std::string label = DeriveRelativeLabel(full_path, parent_full);
+      nodes.push_back(
+          common::HierarchyNode{
+              .kind = common::HierarchyNode::kGenerate,
+              .parent_node_index = parent_node_index,
+              .label = std::move(label),
+              .full_path = full_path,
+          });
+      BuildHierarchyNodes(
+          block, scope_idx, all_instances, instance_to_index, nodes);
+    } else if (member.kind == slang::ast::SymbolKind::GenerateBlockArray) {
+      const auto& array = member.as<slang::ast::GenerateBlockArraySymbol>();
+      for (const auto* entry : array.entries) {
+        if (entry->isUninstantiated) continue;
+        auto scope_idx = static_cast<uint32_t>(nodes.size());
+        std::string full_path = std::string(entry->getHierarchicalPath());
+        std::string label = DeriveRelativeLabel(full_path, parent_full);
+        nodes.push_back(
+            common::HierarchyNode{
+                .kind = common::HierarchyNode::kGenerate,
+                .parent_node_index = parent_node_index,
+                .label = std::move(label),
+                .full_path = full_path,
+            });
+        BuildHierarchyNodes(
+            *entry, scope_idx, all_instances, instance_to_index, nodes);
+      }
+    }
+  }
+}
+
 // Prepare ownership-shaped lowering inputs from structural discovery.
 // One CollectScopeMembers walk per instance, then immediate partitioning
 // into behavioral (body) and registration (instance) inputs.
@@ -717,6 +811,34 @@ auto LowerDesign(
   std::ranges::sort(all_instances, [](const auto* a, const auto* b) {
     return a->getHierarchicalPath() < b->getHierarchicalPath();
   });
+
+  // Build instance-to-sorted-index map for hierarchy node building.
+  std::unordered_map<const slang::ast::InstanceSymbol*, uint32_t>
+      instance_to_sorted_index;
+  for (uint32_t i = 0; i < all_instances.size(); ++i) {
+    instance_to_sorted_index[all_instances[i]] = i;
+  }
+
+  // Build hierarchy-node table from slang AST. This captures both
+  // generate scope nodes and instance nodes in parent-before-child order.
+  // Root instance labels equal their full_path (parent is empty).
+  std::vector<common::HierarchyNode> hierarchy_nodes;
+  for (const auto* inst : root.topInstances) {
+    auto top_idx = static_cast<uint32_t>(hierarchy_nodes.size());
+    std::string full_path = std::string(inst->getHierarchicalPath());
+    std::string label = DeriveRelativeLabel(full_path, {});
+    hierarchy_nodes.push_back(
+        common::HierarchyNode{
+            .kind = common::HierarchyNode::kInstance,
+            .parent_node_index = UINT32_MAX,
+            .label = std::move(label),
+            .full_path = full_path,
+            .instance_index = instance_to_sorted_index.at(inst),
+        });
+    BuildHierarchyNodes(
+        inst->body, top_idx, all_instances, instance_to_sorted_index,
+        hierarchy_nodes);
+  }
 
   // Build specialization groups from compile-owned body facts.
   // No parameter classification -- grouping is self-contained.
@@ -972,6 +1094,7 @@ auto LowerDesign(
       .instance_table = std::move(instance_table),
       .body_timescales = std::move(body_timescale_table),
       .child_coord_map = std::move(child_coord_map),
+      .hierarchy_nodes = std::move(hierarchy_nodes),
   };
 }
 

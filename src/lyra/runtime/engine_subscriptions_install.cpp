@@ -60,7 +60,7 @@ auto ValidateCrossInstanceLocal(
                    "cross-instance local_id {} >= local_signal_count {} "
                    "for instance {}",
                    lid.value, inst->observability.local_signal_count,
-                   inst->path_c_str));
+                   inst->scope.path_c_str));
   }
   return LocalSignalRef{.instance = inst, .signal = lid};
 }

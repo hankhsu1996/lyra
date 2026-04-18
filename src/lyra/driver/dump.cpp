@@ -117,6 +117,7 @@ auto DumpMir(const CompilationInput& input) -> int {
       .specialization_map = &hir_result.specialization_map,
       .child_coord_map = &hir_result.child_coord_map,
       .body_timescales = &hir_result.body_timescales,
+      .hierarchy_nodes = &hir_result.hierarchy_nodes,
   };
   std::expected<lowering::hir_to_mir::LoweringResult, Diagnostic> mir_result;
   {
@@ -188,6 +189,7 @@ auto DumpDpiHeader(const CompilationInput& input) -> int {
       .specialization_map = &hir_result.specialization_map,
       .child_coord_map = &hir_result.child_coord_map,
       .body_timescales = &hir_result.body_timescales,
+      .hierarchy_nodes = &hir_result.hierarchy_nodes,
   };
   std::expected<lowering::hir_to_mir::LoweringResult, Diagnostic> mir_result;
   {
@@ -257,6 +259,7 @@ auto DumpLlvm(const CompilationInput& input) -> int {
       .specialization_map = &hir_result.specialization_map,
       .child_coord_map = &hir_result.child_coord_map,
       .body_timescales = &hir_result.body_timescales,
+      .hierarchy_nodes = &hir_result.hierarchy_nodes,
   };
   std::expected<lowering::hir_to_mir::LoweringResult, Diagnostic> mir_result;
   {

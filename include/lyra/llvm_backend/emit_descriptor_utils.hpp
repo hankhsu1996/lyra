@@ -81,7 +81,8 @@ struct BodyDescriptorPackageEmission {
 // Body descriptor emission (emit_body_descriptors.cpp).
 auto EmitBodyRealizationDescs(
     Context& context, const Layout& layout,
-    std::span<const CodegenSession::BodyCompiledFuncs> body_compiled_funcs)
+    std::span<const CodegenSession::BodyCompiledFuncs> body_compiled_funcs,
+    std::span<const std::vector<uint32_t>> child_site_to_tree_ordinal)
     -> std::vector<BodyDescriptorPackageEmission>;
 
 // Connection descriptor emission (emit_connection_descriptors.cpp).

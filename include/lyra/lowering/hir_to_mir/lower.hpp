@@ -8,6 +8,7 @@
 #include "lyra/common/child_coord_map.hpp"
 #include "lyra/common/constant_arena.hpp"
 #include "lyra/common/diagnostic/diagnostic.hpp"
+#include "lyra/common/hierarchy_node.hpp"
 #include "lyra/common/module_identity.hpp"
 #include "lyra/common/symbol.hpp"
 #include "lyra/common/type_arena.hpp"
@@ -46,6 +47,8 @@ struct LoweringInput {
   // Per-body timescale table from AST->HIR. Parallel to spec groups.
   // Consumed during Phase 2 assembly to set timescale on mir::ModuleBody.
   const std::vector<common::BodyTimeScale>* body_timescales = nullptr;
+  // Full scope hierarchy including generate scopes. Built at AST->HIR time.
+  const std::vector<common::HierarchyNode>* hierarchy_nodes = nullptr;
 };
 
 // Statistics collected during HIR->MIR lowering (for --stats output).

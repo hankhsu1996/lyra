@@ -9,6 +9,7 @@
 #include "lyra/common/child_coord_map.hpp"
 #include "lyra/common/constant_arena.hpp"
 #include "lyra/common/diagnostic/diagnostic_sink.hpp"
+#include "lyra/common/hierarchy_node.hpp"
 #include "lyra/common/module_identity.hpp"
 #include "lyra/common/source_manager.hpp"
 #include "lyra/common/symbol.hpp"
@@ -18,6 +19,7 @@
 #include "lyra/lowering/ast_to_hir/options.hpp"
 #include "lyra/lowering/ast_to_hir/port_binding.hpp"
 #include "lyra/lowering/ast_to_hir/source_mapper.hpp"
+#include "lyra/mir/construction_input.hpp"
 #include "lyra/mir/instance.hpp"
 
 namespace lyra::lowering::ast_to_hir {
@@ -44,6 +46,7 @@ struct LoweringResult {
   int8_t global_precision_power = -9;
   std::vector<common::BodyTimeScale> body_timescales;
   common::ChildCoordMap child_coord_map;
+  std::vector<common::HierarchyNode> hierarchy_nodes;
 };
 
 auto LowerAstToHir(

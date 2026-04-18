@@ -579,6 +579,9 @@ auto LowerDesign(
   if (input.instance_table != nullptr) {
     construction.instance_table = *input.instance_table;
   }
+  if (input.hierarchy_nodes != nullptr) {
+    construction.hierarchy_nodes = *input.hierarchy_nodes;
+  }
 
   uint32_t next_placement_base = decls.num_package_slots;
   uint32_t module_index = 0;

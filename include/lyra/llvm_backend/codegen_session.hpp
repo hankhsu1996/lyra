@@ -243,10 +243,17 @@ struct ConstructionProgramData {
   std::vector<common::SerializedExtRefBinding> ext_ref_binding_pool;
   std::vector<uint32_t> ext_ref_binding_offsets;
   std::vector<uint32_t> ext_ref_binding_counts;
-  // Flat pool of coord steps for structural child edge metadata.
-  // Each entry's coord_offset/coord_count indexes into this pool.
-  // Steps are packed as (kind_u32, construct_index, alt_index) triples.
-  std::vector<uint32_t> coord_steps_pool;
+  // LLVM emission helper only. Per-body mapping from body-local
+  // child_site_index (ChildBindingSiteId) to tree-relative
+  // ordinal_in_parent in the runtime scope tree. Produced and consumed
+  // strictly during descriptor emission to bake the tree-relative
+  // ExprConnChildDesc::child_ordinal into emitted LLVM globals. It must
+  // not appear in any runtime ABI struct, C ABI boundary, or constructor
+  // replay consumer. If a runtime-side component needs this mapping,
+  // the design is wrong and the child-site concept should be replaced
+  // at its source, not re-exposed through a second bridge.
+  // Indexed by body_group; each inner vector is parallel to child_sites.
+  std::vector<std::vector<uint32_t>> child_site_to_tree_ordinal;
 };
 
 // Design-derived inputs for the realization/assembly phase, extracted during
