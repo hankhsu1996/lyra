@@ -12,6 +12,7 @@ class CompilationOutput;
 
 struct CompilationResult {
   lowering::ast_to_hir::LoweringResult hir;
+  lowering::ast_to_hir::CompositionMetadata composition;
   lowering::hir_to_mir::LoweringResult mir;
 };
 

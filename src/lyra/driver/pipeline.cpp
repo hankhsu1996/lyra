@@ -34,15 +34,18 @@ auto CompileToMir(const CompilationInput& input, CompilationOutput& output)
   }
 
   DiagnosticSink sink;
-  lowering::ast_to_hir::LoweringResult hir_result;
+  lowering::ast_to_hir::AstToHirOutput ast_to_hir;
   {
     PhaseTimer timer(output, Phase::kLowerHir);
     lowering::ast_to_hir::HirLoweringOptions hir_options{
         .disable_assertions = input.disable_assertions,
     };
-    hir_result = lowering::ast_to_hir::LowerAstToHir(
+    ast_to_hir = lowering::ast_to_hir::LowerAstToHir(
         *parse_result->compilation, sink, hir_options);
   }
+
+  auto& hir_result = ast_to_hir.hir;
+  auto& composition = ast_to_hir.composition;
 
   if (sink.HasErrors()) {
     return std::unexpected(
@@ -57,13 +60,13 @@ auto CompileToMir(const CompilationInput& input, CompilationOutput& output)
       .active_constant_arena = hir_result.constant_arena.get(),
       .symbol_table = hir_result.symbol_table.get(),
       .builtin_types = {},
-      .binding_plan = &hir_result.binding_plan,
-      .global_precision_power = hir_result.global_precision_power,
-      .instance_table = &hir_result.instance_table,
-      .specialization_map = &hir_result.specialization_map,
-      .child_coord_map = &hir_result.child_coord_map,
-      .body_timescales = &hir_result.body_timescales,
-      .hierarchy_nodes = &hir_result.hierarchy_nodes,
+      .binding_plan = &composition.binding_plan,
+      .global_precision_power = composition.global_precision_power,
+      .instance_table = &composition.instance_table,
+      .specialization_map = &composition.specialization_map,
+      .child_coord_map = &composition.child_coord_map,
+      .body_timescales = &composition.body_timescales,
+      .hierarchy_nodes = &composition.hierarchy_nodes,
   };
 
   std::expected<lowering::hir_to_mir::LoweringResult, Diagnostic> mir_result;
@@ -82,6 +85,7 @@ auto CompileToMir(const CompilationInput& input, CompilationOutput& output)
 
   return CompilationResult{
       .hir = std::move(hir_result),
+      .composition = std::move(composition),
       .mir = std::move(*mir_result),
   };
 }

@@ -17,6 +17,9 @@ class SymbolRegistrar;
 
 struct DesignLoweringResult {
   hir::Design design;
+};
+
+struct DesignCompositionMetadata {
   DesignBindingPlan binding_plan;
   common::SpecializationMap specialization_map;
   mir::InstanceTable instance_table;
@@ -30,8 +33,13 @@ struct DesignLoweringResult {
   std::vector<common::HierarchyNode> hierarchy_nodes;
 };
 
+struct DesignLoweringOutput {
+  DesignLoweringResult hir;
+  DesignCompositionMetadata composition;
+};
+
 auto LowerDesign(
     slang::ast::Compilation& compilation, SymbolRegistrar& registrar,
-    Context* ctx) -> DesignLoweringResult;
+    Context* ctx) -> DesignLoweringOutput;
 
 }  // namespace lyra::lowering::ast_to_hir

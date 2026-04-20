@@ -24,7 +24,7 @@ namespace lyra::lowering::ast_to_hir {
 
 auto LowerAstToHir(
     slang::ast::Compilation& compilation, DiagnosticSink& sink,
-    const HirLoweringOptions& options) -> LoweringResult {
+    const HirLoweringOptions& options) -> AstToHirOutput {
   if (compilation.getSourceManager() == nullptr) {
     throw common::InternalError(
         "AST to HIR lowering", "compilation has no source manager");
@@ -58,20 +58,20 @@ auto LowerAstToHir(
   hir::HirCallableSignatureTable callable_signatures;
   ctx.callable_signatures = &callable_signatures;
 
-  DesignLoweringResult design_result;
+  DesignLoweringOutput design_output;
   {
     ScopeGuard scope_guard(registrar, ScopeKind::kRoot);
-    design_result = LowerDesign(compilation, registrar, &ctx);
+    design_output = LowerDesign(compilation, registrar, &ctx);
   }
 
-  design_result.design.callable_signatures = std::move(callable_signatures);
+  design_output.hir.design.callable_signatures = std::move(callable_signatures);
   ctx.callable_signatures = nullptr;
 
   auto global_precision =
       static_cast<int8_t>(ComputeGlobalPrecision(compilation));
 
-  return LoweringResult{
-      .design = std::move(design_result.design),
+  LoweringResult hir_result{
+      .design = std::move(design_output.hir.design),
       .hir_arena = std::move(hir_arena),
       .type_arena = std::move(type_arena),
       .constant_arena = std::move(constant_arena),
@@ -79,13 +79,22 @@ auto LowerAstToHir(
       .scope_table = std::move(scope_table),
       .source_manager = std::move(source_manager),
       .source_mapper = std::move(source_mapper),
-      .binding_plan = std::move(design_result.binding_plan),
-      .specialization_map = std::move(design_result.specialization_map),
-      .instance_table = std::move(design_result.instance_table),
+  };
+
+  CompositionMetadata composition{
+      .binding_plan = std::move(design_output.composition.binding_plan),
+      .specialization_map =
+          std::move(design_output.composition.specialization_map),
+      .instance_table = std::move(design_output.composition.instance_table),
       .global_precision_power = global_precision,
-      .body_timescales = std::move(design_result.body_timescales),
-      .child_coord_map = std::move(design_result.child_coord_map),
-      .hierarchy_nodes = std::move(design_result.hierarchy_nodes),
+      .body_timescales = std::move(design_output.composition.body_timescales),
+      .child_coord_map = std::move(design_output.composition.child_coord_map),
+      .hierarchy_nodes = std::move(design_output.composition.hierarchy_nodes),
+  };
+
+  return AstToHirOutput{
+      .hir = std::move(hir_result),
+      .composition = std::move(composition),
   };
 }
 

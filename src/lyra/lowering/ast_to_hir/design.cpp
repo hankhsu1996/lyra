@@ -798,7 +798,7 @@ auto PrepareModuleLoweringInputs(
 
 auto LowerDesign(
     slang::ast::Compilation& compilation, SymbolRegistrar& registrar,
-    Context* ctx) -> DesignLoweringResult {
+    Context* ctx) -> DesignLoweringOutput {
   // Initialize the builtin semantic type catalog (Phase 0).
   ctx->builtin_types.Init(*ctx->type_arena);
 
@@ -1095,20 +1095,26 @@ auto LowerDesign(
         module_bodies);
   }
 
-  return DesignLoweringResult{
-      .design =
-          hir::Design{
-              .elements = std::move(elements),
-              .module_bodies = std::move(module_bodies),
-              .dpi_export_signatures = std::move(export_sig_cache),
-              .callable_signatures = {},
+  return DesignLoweringOutput{
+      .hir =
+          DesignLoweringResult{
+              .design =
+                  hir::Design{
+                      .elements = std::move(elements),
+                      .module_bodies = std::move(module_bodies),
+                      .dpi_export_signatures = std::move(export_sig_cache),
+                      .callable_signatures = {},
+                  },
           },
-      .binding_plan = std::move(binding_plan),
-      .specialization_map = std::move(spec_map),
-      .instance_table = std::move(instance_table),
-      .body_timescales = std::move(body_timescale_table),
-      .child_coord_map = std::move(child_coord_map),
-      .hierarchy_nodes = std::move(hierarchy_nodes),
+      .composition =
+          DesignCompositionMetadata{
+              .binding_plan = std::move(binding_plan),
+              .specialization_map = std::move(spec_map),
+              .instance_table = std::move(instance_table),
+              .body_timescales = std::move(body_timescale_table),
+              .child_coord_map = std::move(child_coord_map),
+              .hierarchy_nodes = std::move(hierarchy_nodes),
+          },
   };
 }
 

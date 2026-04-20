@@ -201,8 +201,11 @@ auto PrepareLlvmModule(
   lowering::ast_to_hir::HirLoweringOptions hir_options{
       .disable_assertions = test_case.disable_assertions,
   };
-  auto hir_result = lowering::ast_to_hir::LowerAstToHir(
+  auto ast_to_hir = lowering::ast_to_hir::LowerAstToHir(
       *parse_result.compilation, sink, hir_options);
+
+  auto& hir_result = ast_to_hir.hir;
+  auto& composition = ast_to_hir.composition;
 
   if (sink.HasErrors()) {
     std::ostringstream error_stream;
@@ -223,7 +226,7 @@ auto PrepareLlvmModule(
   // SimulationArtifacts::compiler_output)
   std::string compiler_output;
   if (test_case.dump_specialization_map) {
-    const auto& spec_map = hir_result.specialization_map;
+    const auto& spec_map = composition.specialization_map;
     compiler_output += std::format("spec_groups: {}\n", spec_map.groups.size());
     for (size_t i = 0; i < spec_map.groups.size(); ++i) {
       const auto& group = spec_map.groups[i];
@@ -270,13 +273,13 @@ auto PrepareLlvmModule(
       .active_constant_arena = hir_result.constant_arena.get(),
       .symbol_table = hir_result.symbol_table.get(),
       .builtin_types = {},
-      .binding_plan = &hir_result.binding_plan,
-      .global_precision_power = hir_result.global_precision_power,
-      .instance_table = &hir_result.instance_table,
-      .specialization_map = &hir_result.specialization_map,
-      .child_coord_map = &hir_result.child_coord_map,
-      .body_timescales = &hir_result.body_timescales,
-      .hierarchy_nodes = &hir_result.hierarchy_nodes,
+      .binding_plan = &composition.binding_plan,
+      .global_precision_power = composition.global_precision_power,
+      .instance_table = &composition.instance_table,
+      .specialization_map = &composition.specialization_map,
+      .child_coord_map = &composition.child_coord_map,
+      .body_timescales = &composition.body_timescales,
+      .hierarchy_nodes = &composition.hierarchy_nodes,
   };
   auto mir_result = lowering::hir_to_mir::LowerHirToMir(mir_input);
   if (!mir_result) {

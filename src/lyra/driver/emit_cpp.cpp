@@ -145,15 +145,18 @@ auto EmitCpp(const CompilationInput& input, const std::string& output_dir)
   }
 
   DiagnosticSink sink;
-  lowering::ast_to_hir::LoweringResult hir_result;
+  lowering::ast_to_hir::AstToHirOutput ast_to_hir;
   {
     PhaseTimer timer(output, Phase::kLowerHir);
     lowering::ast_to_hir::HirLoweringOptions hir_options{
         .disable_assertions = input.disable_assertions,
     };
-    hir_result = lowering::ast_to_hir::LowerAstToHir(
+    ast_to_hir = lowering::ast_to_hir::LowerAstToHir(
         *parse_result->compilation, sink, hir_options);
   }
+
+  auto& hir_result = ast_to_hir.hir;
+
   if (sink.HasErrors()) {
     output.PrintDiagnostics(sink, hir_result.source_manager.get());
     output.Flush();

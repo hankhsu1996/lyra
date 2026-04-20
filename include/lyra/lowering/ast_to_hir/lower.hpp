@@ -39,6 +39,9 @@ struct LoweringResult {
   std::unique_ptr<ScopeTable> scope_table;
   std::unique_ptr<SourceManager> source_manager;
   std::unique_ptr<SourceMapper> source_mapper;
+};
+
+struct CompositionMetadata {
   DesignBindingPlan binding_plan;
   common::SpecializationMap specialization_map;
   mir::InstanceTable instance_table;
@@ -49,8 +52,13 @@ struct LoweringResult {
   std::vector<common::HierarchyNode> hierarchy_nodes;
 };
 
+struct AstToHirOutput {
+  LoweringResult hir;
+  CompositionMetadata composition;
+};
+
 auto LowerAstToHir(
     slang::ast::Compilation& compilation, DiagnosticSink& sink,
-    const HirLoweringOptions& options) -> LoweringResult;
+    const HirLoweringOptions& options) -> AstToHirOutput;
 
 }  // namespace lyra::lowering::ast_to_hir
