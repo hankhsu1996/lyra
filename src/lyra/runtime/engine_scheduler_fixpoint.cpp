@@ -242,12 +242,11 @@ void Engine::InitCombKernels(
       has_any_self_edge_comb_ = true;
     }
 
-    const auto* header =
-        static_cast<const ProcessFrameHeader*>(proc_states[proc_idx]);
+    const auto& proc = processes_[proc_idx];
 
     auto comb_idx = static_cast<uint32_t>(comb_kernels_.size());
     comb_kernels_.push_back(
-        BuildCombKernel(proc_idx, proc_states[proc_idx], flags));
+        BuildCombKernel(proc, proc_idx, proc_states[proc_idx], flags));
 
     processes_[proc_idx].is_comb_kernel = true;
 
@@ -264,7 +263,7 @@ void Engine::InitCombKernels(
       uint32_t local_id = 0;
       uint32_t global_id = trigger_slot;
       if (is_local) {
-        if (header->instance == nullptr) {
+        if (proc.instance == nullptr) {
           throw common::InternalError(
               "Engine::InitCombKernels",
               std::format(
@@ -272,7 +271,7 @@ void Engine::InitCombKernels(
                   "process {}",
                   proc_idx));
         }
-        trigger_inst = header->instance;
+        trigger_inst = proc.instance;
         local_id = trigger_slot;
       }
 
@@ -523,34 +522,34 @@ void Engine::EvaluateInstalledComputations() {
   }
 }
 
-auto Engine::BuildCombKernel(uint32_t proc_idx, void* frame, uint32_t flags)
+auto Engine::BuildCombKernel(
+    const RuntimeProcess& proc, uint32_t proc_idx, void* frame, uint32_t flags)
     -> CombKernel {
   if (frame == nullptr) {
     throw common::InternalError(
         "Engine::BuildCombKernel",
         std::format("null proc state for comb proc_idx {}", proc_idx));
   }
-  const auto* header = static_cast<const ProcessFrameHeader*>(frame);
-  if (header->body == nullptr) {
+  if (proc.body == nullptr) {
     throw common::InternalError(
         "Engine::BuildCombKernel",
         std::format(
             "comb kernel proc_idx {} has null body function pointer "
-            "(shared_body_fn not set by constructor)",
+            "(RuntimeProcess::body not set)",
             proc_idx));
   }
-  if (header->instance == nullptr) {
+  if (proc.instance == nullptr) {
     throw common::InternalError(
         "Engine::BuildCombKernel",
         std::format(
             "comb kernel proc_idx {} has null instance pointer", proc_idx));
   }
   return CombKernel{
-      .body = header->body,
+      .body = proc.body,
       .frame = frame,
       .process_index = proc_idx,
       .flags = flags,
-      .instance = header->instance,
+      .instance = proc.instance,
   };
 }
 
@@ -901,7 +900,9 @@ void Engine::FlushAndPropagateConnections() {
               const auto& ck = comb_kernels_[entry.owner_idx];
               FlushDeferredAssertionsForProcess(
                   ProcessId::FromIndex(ck.process_index));
-              ck.body(ck.frame, 0);
+              ck.body(
+                  ck.frame, 0, this, design_state_base_, ck.instance,
+                  ck.process_index);
               break;
             }
             case ReactiveTriggerEntry::Kind::kInstallableComputation: {
@@ -936,7 +937,9 @@ void Engine::FlushAndPropagateConnections() {
                 const auto& ck = comb_kernels_[entry.owner_idx];
                 FlushDeferredAssertionsForProcess(
                     ProcessId::FromIndex(ck.process_index));
-                ck.body(ck.frame, 0);
+                ck.body(
+                    ck.frame, 0, this, design_state_base_, ck.instance,
+                    ck.process_index);
                 break;
               }
               case ReactiveTriggerEntry::Kind::kInstallableComputation: {

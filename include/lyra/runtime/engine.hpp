@@ -389,6 +389,9 @@ class Engine {
   void SetDesignStateBase(void* base) {
     design_state_base_ = base;
   }
+  [[nodiscard]] auto GetDesignStateBase() const -> void* {
+    return design_state_base_;
+  }
 
   // Set the instance list for slot storage resolution and observability.
   // Engine copies the pointers and owns the canonical mutable list.
@@ -1436,10 +1439,11 @@ class Engine {
   };
   std::vector<CombKernel> comb_kernels_;
 
-  // Canonical comb-kernel construction. Populates instance from the
-  // process frame header.
-  static auto BuildCombKernel(uint32_t proc_idx, void* frame, uint32_t flags)
-      -> CombKernel;
+  // Canonical comb-kernel construction. Sources body and instance from the
+  // owning RuntimeProcess; frame is the per-process state pointer.
+  static auto BuildCombKernel(
+      const RuntimeProcess& proc, uint32_t proc_idx, void* frame,
+      uint32_t flags) -> CombKernel;
 
   // Shared reactive trigger model: one backing array + one trigger map
   // feeds fixpoint re-evaluation for every reactive consumer kind that

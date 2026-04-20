@@ -7,6 +7,7 @@
 #include "lyra/common/deferred_assertion_abi.hpp"
 #include "lyra/runtime/activation_trace.hpp"
 #include "lyra/runtime/engine_subscriptions.hpp"
+#include "lyra/runtime/process_frame.hpp"
 #include "lyra/runtime/small_byte_buffer.hpp"
 
 namespace lyra::runtime {
@@ -73,6 +74,11 @@ struct ProcessDeferredAssertionState {
 // in Engine::processes_.
 struct RuntimeProcess {
   RuntimeInstance* instance = nullptr;
+
+  // Compiled body function for this process. Written once during constructor
+  // realization and never mutated afterward. Null for standalone connection
+  // and init processes (which dispatch through LyraRunProcessSync instead).
+  SharedBodyFn body = nullptr;
 
   bool is_enqueued = false;
   bool is_comb_kernel = false;

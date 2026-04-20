@@ -760,34 +760,36 @@ class Context {
   [[nodiscard]] auto SaveExecutionContractState() -> ExecutionContractState;
   void RestoreExecutionContractState(const ExecutionContractState& state);
 
-  // Emit GEPs and loads to extract design_ptr, engine_ptr, and frame_ptr from
-  // the process state argument, then cache them in the context via the setters
-  // below. Must be called once per process function entry block.
-  void EmitProcessStateSetup(llvm::Value* state_arg);
+  // Bind per-process state (frame GEP) and cache explicit body arguments
+  // for the current function: engine, design, decision-owner id. Must be
+  // called once per process function entry block.
+  void EmitProcessStateSetup(
+      llvm::Value* state_arg, llvm::Value* engine_arg, llvm::Value* design_arg,
+      llvm::Value* decision_owner_id_arg);
 
-  // Load realized instance binding from the frame header for shared bodies.
-  // Loads instance pointer, then derives storage base and instance_id
-  // from the RuntimeInstance object.
-  // Called after EmitProcessStateSetup by shared body generation only.
-  void EmitSharedBodyBindingSetup(llvm::Value* state_arg);
+  // Bind the instance pointer argument and derive its inline-base pointer
+  // (this_ptr). Called after EmitProcessStateSetup by shared body
+  // generation only.
+  void EmitSharedBodyBindingSetup(llvm::Value* instance_arg);
 
-  // Canonical typed header-field accessors. All typed process-header field
-  // access in llvm backend code must go through these methods. Callers never
-  // pass raw field indices or choose LLVM result types for header fields.
-  auto EmitLoadEnginePtr(llvm::Value* state_arg) -> llvm::Value*;
-  auto EmitLoadDesignPtr(llvm::Value* state_arg) -> llvm::Value*;
-  auto EmitLoadDecisionOwnerId(llvm::Value* state_arg) -> llvm::Value*;
-  auto EmitLoadInstancePtr(llvm::Value* state_arg) -> llvm::Value*;
-  auto EmitLoadInstanceInlineBase(llvm::Value* instance_ptr) -> llvm::Value*;
-  void EmitStoreDesignPtr(llvm::Value* state_arg, llvm::Value* value);
+  // Init-kind entry setup: caches state/frame pointers and the explicit
+  // design argument. No engine/instance/decision-owner binding.
+  void EmitInitProcessStateSetup(
+      llvm::Value* state_arg, llvm::Value* design_arg);
+
+  // Canonical typed header-field accessors. Only the outcome slot and the
+  // frame GEP derive from the process-state pointer; every other runtime
+  // binding (engine, design, instance, decision-owner id) is threaded as
+  // an explicit body argument.
   auto EmitOutcomePtr(llvm::Value* state_arg) -> llvm::Value*;
+  auto EmitLoadInstanceInlineBase(llvm::Value* instance_ptr) -> llvm::Value*;
 
   // Cached pointers (computed in entry block, reused for all place accesses)
   // state_ptr: the function argument pointing to ProcessStateN
   void SetStatePointer(llvm::Value* state_ptr);
   [[nodiscard]] auto GetStatePointer() -> llvm::Value*;
 
-  // design_ptr: loaded from state->header.design, points to shared DesignState
+  // design_ptr: body argument; points to the shared DesignState base.
   void SetDesignPointer(llvm::Value* design_ptr);
   [[nodiscard]] auto GetDesignPointer() -> llvm::Value*;
 
@@ -795,13 +797,12 @@ class Context {
   void SetFramePointer(llvm::Value* frame_ptr);
   [[nodiscard]] auto GetFramePointer() -> llvm::Value*;
 
-  // engine_ptr: loaded from state->header.engine, points to shared Engine
+  // engine_ptr: body argument; points to the shared Engine.
   void SetEnginePointer(llvm::Value* engine_ptr);
   [[nodiscard]] auto GetEnginePointer() -> llvm::Value*;
 
-  // decision_owner_id: loaded from state->header.process_id, i32 identity.
-  // The process frame field stays process-named; the codegen layer interprets
-  // it as the decision owner for the process-backed owner path.
+  // decision_owner_id: body argument; dense owner id used by decision
+  // observation helpers. Init-kind bodies leave this null.
   void SetCurrentDecisionOwnerId(llvm::Value* decision_owner_id);
   [[nodiscard]] auto GetCurrentDecisionOwnerId() -> llvm::Value*;
 

@@ -166,7 +166,7 @@ void Engine::InitProcessTriggerRegistry(
   // Relocate body-local trigger entries to dense coordination coordinates.
   // Body-local entries carry kFlagBodyLocal in the word table. Re-read
   // the flags from the word table to apply instance-based relocation.
-  auto proc_states = std::span(states, num_processes_);
+  (void)states;
   if (!words.empty()) {
     uint32_t num_entries = words[0];
     for (uint32_t i = 0; i < num_entries && i < descriptors.size(); ++i) {
@@ -188,9 +188,8 @@ void Engine::InitProcessTriggerRegistry(
                   "body-local trigger entry {} targets invalid process {}", i,
                   proc_idx));
         }
-        const auto* header =
-            static_cast<const ProcessFrameHeader*>(proc_states[proc_idx]);
-        if (header == nullptr || header->instance == nullptr) {
+        auto* owner = processes_[proc_idx].instance;
+        if (owner == nullptr) {
           throw common::InternalError(
               "InitProcessTriggerRegistry",
               std::format(
@@ -200,16 +199,15 @@ void Engine::InitProcessTriggerRegistry(
         }
         // Keep body-local slot_id as LocalSignalId, populate owning
         // instance pointer for typed subscription install.
-        descriptors[i].instance = header->instance;
-        if (descriptors[i].slot_id >=
-            header->instance->observability.local_signal_count) {
+        descriptors[i].instance = owner;
+        if (descriptors[i].slot_id >= owner->observability.local_signal_count) {
           throw common::InternalError(
               "InitProcessTriggerRegistry",
               std::format(
                   "body-local slot_id {} exceeds local_signal_count {} "
                   "in entry {}",
                   descriptors[i].slot_id,
-                  header->instance->observability.local_signal_count, i));
+                  owner->observability.local_signal_count, i));
         }
       }
     }

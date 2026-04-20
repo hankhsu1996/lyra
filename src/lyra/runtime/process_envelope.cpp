@@ -10,6 +10,7 @@
 #include "lyra/common/diagnostic/print.hpp"
 #include "lyra/common/internal_error.hpp"
 #include "lyra/runtime/dpi_export_context.hpp"
+#include "lyra/runtime/engine.hpp"
 #include "lyra/runtime/engine_process_envelope_access.hpp"
 #include "lyra/runtime/instance_event_state.hpp"
 #include "lyra/runtime/iteration_limit.hpp"
@@ -151,8 +152,8 @@ auto DecodeSuspendRecord(lyra::runtime::SuspendRecord* suspend)
 
 // Dispatch a process body and decode the raw protocol into a ProcessRequest.
 auto DispatchProcess(
-    lyra::runtime::RuntimeProcess& proc, lyra::runtime::ResumePoint resume)
-    -> ProcessRequest {
+    lyra::runtime::Engine& engine, lyra::runtime::RuntimeProcess& proc,
+    uint32_t process_id, lyra::runtime::ResumePoint resume) -> ProcessRequest {
   using lyra::runtime::ProcessExitCode;
   using lyra::runtime::ProcessOutcome;
   using lyra::runtime::SuspendTag;
@@ -168,14 +169,17 @@ auto DispatchProcess(
     SuspendReset(suspend);
   }
 
-  ProcessOutcome outcome{};
-  outcome.tag = UINT32_MAX;
+  if (proc.body == nullptr) {
+    throw lyra::common::InternalError(
+        "DispatchProcess", "RuntimeProcess has null body function");
+  }
 
-  // Uniform shared-body dispatch for all processes.
   auto* header = static_cast<StateHeader*>(state);
   header->outcome.tag = UINT32_MAX;
-  header->body(state, resume.block_index);
-  outcome = header->outcome;
+  proc.body(
+      state, resume.block_index, &engine, engine.GetDesignStateBase(),
+      proc.instance, process_id);
+  ProcessOutcome outcome = header->outcome;
 
   switch (static_cast<ProcessExitCode>(outcome.tag)) {
     case ProcessExitCode::kOk:
@@ -302,8 +306,9 @@ void HandleProcessRequest(
 namespace lyra::runtime {
 
 void DispatchAndHandleActivation(
-    Engine& engine, RuntimeProcess& proc, ResumePoint resume) {
-  auto request = DispatchProcess(proc, resume);
+    Engine& engine, RuntimeProcess& proc, uint32_t process_id,
+    ResumePoint resume) {
+  auto request = DispatchProcess(engine, proc, process_id, resume);
   HandleProcessRequest(engine, proc, request);
 }
 
@@ -439,7 +444,8 @@ extern "C" void LyraSuspendWaitEvent(
   suspend->event_id = event_id;
 }
 
-extern "C" void LyraRunProcessSync(LyraProcessFunc process, void* state) {
+extern "C" void LyraRunProcessSync(
+    LyraProcessFunc process, void* state, void* design_state) {
   constexpr uint32_t kEntryBlock = 0;
 
   auto* suspend = static_cast<lyra::runtime::SuspendRecord*>(state);
@@ -449,7 +455,7 @@ extern "C" void LyraRunProcessSync(LyraProcessFunc process, void* state) {
 
   lyra::runtime::ProcessOutcome outcome{};
   outcome.tag = UINT32_MAX;
-  process(state, kEntryBlock, &outcome);
+  process(state, kEntryBlock, design_state, &outcome);
 
   switch (static_cast<lyra::runtime::ProcessExitCode>(outcome.tag)) {
     case lyra::runtime::ProcessExitCode::kOk:

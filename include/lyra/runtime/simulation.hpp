@@ -29,21 +29,23 @@ struct ProcessOutcome {
 }  // namespace lyra::runtime
 
 // Process function signature for LLVM-generated code.
-// - state: pointer to ProcessState (contains SuspendRecord at offset 0, then
-// slots)
+// - state: pointer to ProcessState (SuspendRecord at offset 0, then frame)
 // - resume_block: which basic block to start execution from
+// - design_state: design state base pointer (for design-global slot access)
 // - out: caller-owned buffer for the process outcome
 // Pointer-out ABI: callee writes exactly one valid ProcessOutcome before
 // returning. No struct return across JIT boundary, no TLS, no longjmp.
 using LyraProcessFunc = void (*)(
-    void* state, uint32_t resume_block, lyra::runtime::ProcessOutcome* out);
+    void* state, uint32_t resume_block, void* design_state,
+    lyra::runtime::ProcessOutcome* out);
 
 extern "C" {
 
 // Run a process synchronously to completion (for init processes).
 // The process must not suspend; if it does, this aborts.
 // Encapsulates the entry block number (ABI detail).
-void LyraRunProcessSync(LyraProcessFunc process, void* state);
+void LyraRunProcessSync(
+    LyraProcessFunc process, void* state, void* design_state);
 
 // Run simulation with multiple processes sharing a single engine.
 // All processes are scheduled at time=0, delta=0.

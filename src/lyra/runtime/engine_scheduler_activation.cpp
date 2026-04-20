@@ -133,7 +133,7 @@ void Engine::RunOneActivation(const WakeupEntry& entry) {
   *cached_iteration_limit_ptr_ = cached_iteration_limit_;
 
   ResumePoint resume{.block_index = entry.resume_block, .instruction_index = 0};
-  DispatchAndHandleActivation(*this, proc, resume);
+  DispatchAndHandleActivation(*this, proc, pid, resume);
 
   // End activation context.
   activation_ctx_.active = false;
