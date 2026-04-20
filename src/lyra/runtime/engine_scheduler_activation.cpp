@@ -14,6 +14,7 @@
 #include "lyra/runtime/engine_scheduler.hpp"
 #include "lyra/runtime/engine_types.hpp"
 #include "lyra/runtime/iteration_limit.hpp"
+#include "lyra/runtime/process_envelope.hpp"
 #include "lyra/runtime/signal_interrupt.hpp"
 #include "lyra/runtime/trace_flush.hpp"
 
@@ -131,9 +132,8 @@ void Engine::RunOneActivation(const WakeupEntry& entry) {
   // Reset iteration limit: direct TLS write from cached values.
   *cached_iteration_limit_ptr_ = cached_iteration_limit_;
 
-  ProcessHandle handle{.process_id = pid};
   ResumePoint resume{.block_index = entry.resume_block, .instruction_index = 0};
-  process_dispatch_.fn(process_dispatch_.ctx, *this, handle, resume);
+  DispatchAndHandleActivation(*this, proc, resume);
 
   // End activation context.
   activation_ctx_.active = false;

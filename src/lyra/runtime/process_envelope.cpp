@@ -139,16 +139,15 @@ auto DecodeSuspendRecord(lyra::runtime::SuspendRecord* suspend)
 
 // Dispatch a process body and decode the raw protocol into a ProcessRequest.
 auto DispatchProcess(
-    std::span<void*> states, lyra::runtime::ProcessHandle handle,
-    lyra::runtime::ResumePoint resume) -> ProcessRequest {
+    lyra::runtime::RuntimeProcess& proc, lyra::runtime::ResumePoint resume)
+    -> ProcessRequest {
   using lyra::runtime::ProcessExitCode;
   using lyra::runtime::ProcessOutcome;
   using lyra::runtime::SuspendRecord;
   using lyra::runtime::SuspendTag;
   using lyra::runtime::TrapReason;
 
-  uint32_t proc_idx = handle.process_id;
-  void* state = states[proc_idx];
+  void* state = proc.frame_state;
   auto* suspend = static_cast<SuspendRecord*>(state);
 
   if (resume.block_index != 0 && suspend->tag == SuspendTag::kWait &&
@@ -191,7 +190,7 @@ auto DispatchProcess(
 // Envelope-owned wait lifecycle orchestration. Decides whether to do a
 // direct trigger install, a full wait-site install, or an in-place refresh.
 void HandleWaitRequest(
-    lyra::runtime::Engine& engine, lyra::runtime::ProcessHandle handle,
+    lyra::runtime::Engine& engine, lyra::runtime::RuntimeProcess& proc,
     const lyra::runtime::WaitRequest& req) {
   // When post-activation reconciliation is active, the engine handles
   // wait lifecycle after the activation returns. The envelope must not
@@ -199,7 +198,6 @@ void HandleWaitRequest(
   if (Access::HasPostActivationReconciliation(engine)) {
     return;
   }
-  auto& proc = Access::GetProcess(engine, handle);
   if (!Access::UsesWaitSiteLifecycle(engine)) {
     Access::InstallTriggers(engine, proc, req);
     return;
@@ -209,8 +207,8 @@ void HandleWaitRequest(
     throw lyra::common::InternalError(
         "HandleWaitRequest",
         std::format(
-            "process {} suspended with kWait but wait_site_id is invalid",
-            handle.process_id));
+            "{} suspended with kWait but wait_site_id is invalid",
+            engine.FormatProcess(proc)));
   }
 
   if (!Access::CanRefreshInstalledWait(proc, req.wait_site_id)) {
@@ -231,7 +229,7 @@ void HandleWaitRequest(
 
 // Handle the decoded process request by calling narrow engine primitives.
 void HandleProcessRequest(
-    lyra::runtime::Engine& engine, lyra::runtime::ProcessHandle handle,
+    lyra::runtime::Engine& engine, lyra::runtime::RuntimeProcess& proc,
     const ProcessRequest& request) {
   using lyra::runtime::DelayRequest;
   using lyra::runtime::Engine;
@@ -246,7 +244,7 @@ void HandleProcessRequest(
   if (Access::UsesWaitSiteLifecycle(engine) &&
       !Access::HasPostActivationReconciliation(engine) &&
       NeedsWaitReset(request)) {
-    Access::ResetInstalledWait(engine, Access::GetProcess(engine, handle));
+    Access::ResetInstalledWait(engine, proc);
   }
 
   std::visit(
@@ -257,26 +255,30 @@ void HandleProcessRequest(
           // No scheduling action needed.
 
         } else if constexpr (std::is_same_v<T, TrapRequest>) {
-          engine.HandleTrap(Access::GetProcess(engine, handle), v.payload);
+          engine.HandleTrap(proc, v.payload);
 
         } else if constexpr (std::is_same_v<T, DelayRequest>) {
-          engine.Delay(Access::GetProcess(engine, handle), v.resume, v.ticks);
+          engine.Delay(proc, v.resume, v.ticks);
 
         } else if constexpr (std::is_same_v<T, WaitRequest>) {
-          HandleWaitRequest(engine, handle, v);
+          HandleWaitRequest(engine, proc, v);
 
         } else if constexpr (std::is_same_v<T, RepeatRequest>) {
-          engine.ScheduleNextDelta(
-              Access::GetProcess(engine, handle), v.resume);
+          engine.ScheduleNextDelta(proc, v.resume);
 
         } else if constexpr (std::is_same_v<T, EventWaitRequest>) {
-          auto& proc = Access::GetProcess(engine, handle);
-          auto& inst = engine.GetProcessInstance(handle.process_id);
+          if (proc.instance == nullptr) {
+            throw lyra::common::InternalError(
+                "HandleProcessRequest",
+                std::format(
+                    "EventWaitRequest for {} has no owning instance",
+                    engine.FormatProcess(proc)));
+          }
           Engine::AddInstanceEventWaiter(
-              inst, v.event_id,
+              *proc.instance, v.event_id,
               EventWaiter{
                   .process = &proc,
-                  .instance = &inst,
+                  .instance = proc.instance,
                   .resume_block = v.resume.block_index,
               });
         }
@@ -289,10 +291,9 @@ void HandleProcessRequest(
 namespace lyra::runtime {
 
 void DispatchAndHandleActivation(
-    std::span<void*> states, Engine& engine, ProcessHandle handle,
-    ResumePoint resume) {
-  auto request = DispatchProcess(states, handle, resume);
-  HandleProcessRequest(engine, handle, request);
+    Engine& engine, RuntimeProcess& proc, ResumePoint resume) {
+  auto request = DispatchProcess(proc, resume);
+  HandleProcessRequest(engine, proc, request);
 }
 
 }  // namespace lyra::runtime

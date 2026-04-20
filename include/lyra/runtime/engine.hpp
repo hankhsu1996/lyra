@@ -58,17 +58,6 @@ namespace lyra::runtime {
 
 class OutputDispatcher;
 
-// Explicit process dispatch ABI for the hot path.
-// fn is required (must not be nullptr). ctx is non-owning and must outlive
-// Engine::Run().
-using ProcessDispatchFn = void (*)(
-    void* ctx, Engine& engine, ProcessHandle handle, ResumePoint resume);
-
-struct ProcessDispatch {
-  ProcessDispatchFn fn = nullptr;
-  void* ctx = nullptr;
-};
-
 // Always-on summary counters: one increment per major event.
 struct CoreRuntimeStats {
   uint64_t total_activations = 0;
@@ -171,7 +160,7 @@ class InstanceIdResolver {
 };
 
 // Usage:
-// 1. Create engine with a ProcessDispatch callback
+// 1. Create engine
 // 2. Schedule initial processes with ScheduleInitial()
 // 3. Call Run() to execute until completion or time limit
 class Engine {
@@ -179,19 +168,13 @@ class Engine {
 
  public:
   explicit Engine(
-      ProcessDispatch process_dispatch, OutputDispatcher& output,
-      uint32_t num_processes = 0, std::span<const std::string> plusargs = {},
-      uint32_t feature_flags = 0)
-      : process_dispatch_(process_dispatch),
-        output_(output),
+      OutputDispatcher& output, uint32_t num_processes = 0,
+      std::span<const std::string> plusargs = {}, uint32_t feature_flags = 0)
+      : output_(output),
         num_processes_(num_processes),
         processes_(num_processes),
         plusargs_(plusargs.begin(), plusargs.end()),
         feature_flags_(feature_flags) {
-    if (process_dispatch_.fn == nullptr) {
-      throw common::InternalError(
-          "Engine::Engine", "process_dispatch.fn must not be null");
-    }
     // Pre-reserve wakeup queue to avoid reallocation during flush.
     // Each process can be enqueued at most once per delta (dedup by
     // is_enqueued), so num_processes is a tight upper bound.
@@ -1200,13 +1183,6 @@ class Engine {
   // fields (cause, trigger_slot) are stored per-process only when activation
   // tracing is enabled.
   void EnqueueProcessWakeup(
-      uint32_t process_id, uint32_t resume_block, uint32_t trigger_slot,
-      WakeCause cause) {
-    EnqueueProcessWakeup(
-        processes_[process_id], resume_block, trigger_slot, cause);
-  }
-
-  void EnqueueProcessWakeup(
       RuntimeProcess& proc, uint32_t resume_block, uint32_t trigger_slot,
       WakeCause cause) {
     if (detailed_stats_enabled_) {
@@ -1260,7 +1236,6 @@ class Engine {
   void ClearLocalUpdatesDelta();
   void ClearLocalUpdates();
 
-  ProcessDispatch process_dispatch_;
   OutputDispatcher& output_;  // Borrowed from RunSession
   uint32_t num_processes_ = 0;
   std::vector<RuntimeProcess> processes_;

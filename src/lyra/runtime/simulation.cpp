@@ -27,7 +27,6 @@
 #include "lyra/runtime/iteration_limit.hpp"
 #include "lyra/runtime/nba_stats_hook.hpp"
 #include "lyra/runtime/output_sink.hpp"
-#include "lyra/runtime/process_envelope.hpp"
 #include "lyra/runtime/process_frame.hpp"
 #include "lyra/runtime/process_meta.hpp"
 #include "lyra/runtime/reporting.hpp"
@@ -78,17 +77,6 @@ extern "C" void LyraTriggerEvent(
 }
 
 namespace {
-
-struct ProcessDispatchContext {
-  std::span<void*> states;
-};
-
-void DescriptorProcessDispatch(
-    void* ctx, lyra::runtime::Engine& eng, lyra::runtime::ProcessHandle handle,
-    lyra::runtime::ResumePoint resume) {
-  auto* dctx = static_cast<ProcessDispatchContext*>(ctx);
-  lyra::runtime::DispatchAndHandleActivation(dctx->states, eng, handle, resume);
-}
 
 auto SetupAndRunSimulation(
     lyra::runtime::Engine& engine, std::span<void*> states,
@@ -192,13 +180,8 @@ extern "C" void LyraRunSimulation(
     throw lyra::common::InternalError("LyraRunSimulation", "abi is null");
   }
 
-  ProcessDispatchContext dispatch_ctx{
-      .states = states,
-  };
   auto* session = static_cast<lyra::runtime::RunSession*>(run_session_ptr);
   lyra::runtime::Engine engine(
-      lyra::runtime::ProcessDispatch{
-          .fn = DescriptorProcessDispatch, .ctx = &dispatch_ctx},
       session->output, num_processes, std::span(plusargs_vec), feature_flags);
 
   if (abi != nullptr) {
