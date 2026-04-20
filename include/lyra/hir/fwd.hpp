@@ -131,5 +131,6 @@ struct Function;
 struct Task;
 struct Pattern;
 struct ModuleBody;
+struct Constructor;
 
 }  // namespace lyra::hir

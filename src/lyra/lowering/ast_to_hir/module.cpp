@@ -224,12 +224,24 @@ auto LowerModuleBody(
     }
   }
 
+  // Synthesize the permanent constructor artifact. Every ModuleBody owns
+  // exactly one Constructor whose body is a root kBlock statement in the
+  // body-local arena. In this cut the block is empty; future cuts populate
+  // it with construction-time statements.
+  hir::StatementId ctor_body = body_arena.AddStatement(
+      hir::Statement{
+          .kind = hir::StatementKind::kBlock,
+          .span = span,
+          .data = hir::BlockStatementData{.statements = {}},
+      });
+
   return BodyLoweringResult{
       .body =
           hir::ModuleBody{
               .processes = std::move(processes),
               .functions = std::move(functions),
               .tasks = std::move(tasks),
+              .constructor = hir::Constructor{.span = span, .body = ctor_body},
               .dpi_imports = std::move(dpi_imports),
               .dpi_exports = {},
               .arena = std::move(body_arena),

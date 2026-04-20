@@ -74,6 +74,10 @@ enum class TypeKind {
   kEnum,
   kChandle,
   kEvent,
+  // Internal object-reference/handle-like type. Used as the result type
+  // of kNewObject expressions. Payload is std::monostate; concrete
+  // target-object identity lives on the producing expression.
+  kObjectHandle,
 };
 
 inline auto ToString(TypeKind kind) -> std::string {
@@ -110,6 +114,8 @@ inline auto ToString(TypeKind kind) -> std::string {
       return "chandle";
     case TypeKind::kEvent:
       return "event";
+    case TypeKind::kObjectHandle:
+      return "object_handle";
   }
   return "unknown";
 }
@@ -589,6 +595,8 @@ inline auto ToString(const Type& type) -> std::string {
       return "chandle";
     case TypeKind::kEvent:
       return "event";
+    case TypeKind::kObjectHandle:
+      return "object_handle";
   }
   return "unknown";
 }

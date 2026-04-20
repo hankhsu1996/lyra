@@ -4,6 +4,7 @@
 
 #include "lyra/common/constant_arena.hpp"
 #include "lyra/hir/arena.hpp"
+#include "lyra/hir/constructor.hpp"
 #include "lyra/hir/dpi.hpp"
 #include "lyra/hir/fwd.hpp"
 
@@ -30,6 +31,10 @@ struct ModuleBody {
   std::vector<ProcessId> processes;
   std::vector<FunctionId> functions;
   std::vector<TaskId> tasks;
+  // Permanent body-owned constructor artifact. Exactly one per body.
+  // constructor.body is a root StatementId in `arena` whose kind is
+  // always kBlock.
+  Constructor constructor;
   // DPI-C import declarations owned by this body.
   // Downstream design-level resolution is built from this owned collection.
   std::vector<DpiImportDecl> dpi_imports;

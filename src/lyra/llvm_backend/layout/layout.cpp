@@ -305,6 +305,7 @@ auto GetLlvmTypeForTypeId(
 
     case TypeKind::kVoid:
     case TypeKind::kEvent:
+    case TypeKind::kObjectHandle:
       throw common::InternalError(
           "GetLlvmTypeForTypeId",
           std::format(

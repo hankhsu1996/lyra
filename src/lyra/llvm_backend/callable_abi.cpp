@@ -73,6 +73,7 @@ auto ClassifyCallableValueAbi(
 
     case TypeKind::kVoid:
     case TypeKind::kEvent:
+    case TypeKind::kObjectHandle:
       throw common::InternalError(
           "ClassifyCallableValueAbi",
           std::format(

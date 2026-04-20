@@ -149,6 +149,9 @@ void Dumper::Dump(const ModuleBody& body) {
   for (TaskId id : body.tasks) {
     Dump(id);
   }
+  PrintIndent();
+  *out_ << "constructor ";
+  Dump(body.constructor.body);
 }
 
 void Dumper::Dump(const Package& package) {
@@ -1145,6 +1148,12 @@ void Dumper::Dump(ExpressionId id) {
 
     case ExpressionKind::kMaterializeInitializer: {
       *out_ << "<materialize>";
+      break;
+    }
+
+    case ExpressionKind::kNewObject: {
+      const auto& data = std::get<NewObjectExpressionData>(expr.data);
+      *out_ << std::format("new_object(type#{})", data.object_type.value);
       break;
     }
   }

@@ -45,6 +45,8 @@ enum class ExpressionKind {
   kHierarchicalRef,  // Hierarchical path reference (resolved to target symbol)
   kMathCall,         // IEEE 1800 20.8 math function call
   kMaterializeInitializer,  // Initializer pattern materialized as expression
+  kNewObject,               // Object-creation expression; yields an object
+                            // handle of expr.type (kind kObjectHandle).
 };
 
 // Returns true if the expression kind can appear as an assignment target.
@@ -315,6 +317,15 @@ struct MaterializeInitializerExpressionData {
       -> bool = default;
 };
 
+// Object-creation expression. Evaluates to an object handle whose type
+// (expr.type) is of kind kObjectHandle. `object_type` names the target
+// type being constructed.
+struct NewObjectExpressionData {
+  TypeId object_type;
+
+  auto operator==(const NewObjectExpressionData&) const -> bool = default;
+};
+
 using ExpressionData = std::variant<
     ConstantExpressionData, NameRefExpressionData, UnaryExpressionData,
     BinaryExpressionData, CastExpressionData, BitCastExpressionData,
@@ -328,7 +339,7 @@ using ExpressionData = std::variant<
     RangeSelectExpressionData, IndexedPartSelectExpressionData,
     ConcatExpressionData, ReplicateExpressionData,
     HierarchicalRefExpressionData, MathCallExpressionData,
-    MaterializeInitializerExpressionData>;
+    MaterializeInitializerExpressionData, NewObjectExpressionData>;
 
 struct Expression {
   ExpressionKind kind;

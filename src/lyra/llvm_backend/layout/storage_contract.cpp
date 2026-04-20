@@ -248,6 +248,11 @@ auto ResolveImpl(
     case TypeKind::kEvent:
       throw common::InternalError(
           "ResolveStorageSpec", "event type has no value-storage semantics");
+
+    case TypeKind::kObjectHandle:
+      throw common::InternalError(
+          "ResolveStorageSpec",
+          "object_handle type has no value-storage semantics");
   }
 
   throw common::InternalError("ResolveStorageSpec", "unreachable");

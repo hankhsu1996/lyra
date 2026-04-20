@@ -61,6 +61,11 @@ auto ComputeReturnPolicy(TypeId return_type, const TypeArena& types)
       throw common::InternalError(
           "ComputeReturnPolicy",
           "event type cannot be returned from functions");
+
+    case TypeKind::kObjectHandle:
+      throw common::InternalError(
+          "ComputeReturnPolicy",
+          "object_handle type has no MIR callable-ABI semantics");
   }
   return mir::ReturnPolicy::kDirect;
 }
