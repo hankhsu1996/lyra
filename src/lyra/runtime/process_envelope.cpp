@@ -256,7 +256,7 @@ void HandleProcessRequest(
           // No scheduling action needed.
 
         } else if constexpr (std::is_same_v<T, TrapRequest>) {
-          engine.HandleTrap(handle.process_id, v.payload);
+          engine.HandleTrap(Access::GetProcess(engine, handle), v.payload);
 
         } else if constexpr (std::is_same_v<T, DelayRequest>) {
           engine.Delay(handle, v.resume, v.ticks);

@@ -46,6 +46,11 @@ class ProcessEnvelopeAccess {
       -> bool {
     return engine.RefreshInstalledSnapshots(handle);
   }
+
+  static auto GetProcess(Engine& engine, ProcessHandle handle)
+      -> RuntimeProcess& {
+    return engine.processes_[handle.process_id];
+  }
 };
 
 }  // namespace lyra::runtime

@@ -58,7 +58,7 @@ void Engine::RecordDecisionObservation(
 
 auto Engine::FormatDecisionOwner(DecisionOwnerId owner_id) const
     -> std::string {
-  return FormatProcess(owner_id.Index());
+  return FormatProcess(processes_[owner_id.Index()]);
 }
 
 auto Engine::BuildDecisionViolationMessage(

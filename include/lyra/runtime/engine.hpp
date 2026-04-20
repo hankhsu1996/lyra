@@ -886,7 +886,7 @@ class Engine {
   }
 
   // Post-activation reconciliation: engine-owned dispatch after process runs.
-  void ReconcilePostActivation(ProcessHandle handle);
+  void ReconcilePostActivation(RuntimeProcess& proc);
 
   // Inline fast path for static-wait reconciliation. Returns true if the
   // common case was handled (no work needed), false if the caller must
@@ -898,10 +898,11 @@ class Engine {
   //   3. No blocking writes dirtied any signal in the current delta
   // When these hold, subscription baselines are already correct from the
   // prior flush and no refresh or reinstall is needed.
-  [[nodiscard]] auto TryFastReconcile(uint32_t process_id) -> bool {
-    auto* suspend = processes_[process_id].suspend_record;
+  [[nodiscard]] auto TryFastReconcile(const RuntimeProcess& proc) const
+      -> bool {
+    const auto* suspend = proc.suspend_record;
     if (suspend->tag != SuspendTag::kWait) return false;
-    const auto& installed = processes_[process_id].installed_wait;
+    const auto& installed = proc.installed_wait;
     if (!installed.valid || installed.wait_site_id != suspend->wait_site_id ||
         !installed.can_refresh_snapshot) {
       return false;
@@ -924,7 +925,8 @@ class Engine {
   }
 
   // Format process identity for diagnostics (normal code path).
-  [[nodiscard]] auto FormatProcess(uint32_t process_id) const -> std::string;
+  [[nodiscard]] auto FormatProcess(const RuntimeProcess& proc) const
+      -> std::string;
 
   // Format decision owner identity for diagnostics.
   // First cut: delegates to FormatProcess (1:1 owner-to-process mapping).
@@ -941,7 +943,7 @@ class Engine {
   }
 
   // Handle a trap raised by generated code (loop budget exceeded, etc.).
-  void HandleTrap(uint32_t process_id, const TrapPayload& payload);
+  void HandleTrap(const RuntimeProcess& proc, const TrapPayload& payload);
 
   // Record a decision observation for an explicit owner.
   // Called from LyraRecordDecisionObservation (extern "C" ABI boundary).

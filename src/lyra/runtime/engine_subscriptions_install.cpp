@@ -1096,20 +1096,15 @@ auto BuildWaitRequest(const SuspendRecord* suspend) -> WaitRequest {
 }
 }  // namespace
 
-void Engine::ReconcilePostActivation(ProcessHandle handle) {
+void Engine::ReconcilePostActivation(RuntimeProcess& proc) {
   if (!HasPostActivationReconciliation()) {
     throw common::InternalError(
         "Engine::ReconcilePostActivation",
         "called without post-activation reconciliation capability");
   }
-  if (handle.process_id >= processes_.size()) {
-    throw common::InternalError(
-        "Engine::ReconcilePostActivation",
-        std::format(
-            "process_id {} >= processes_ size {}", handle.process_id,
-            processes_.size()));
-  }
-  auto* suspend = processes_[handle.process_id].suspend_record;
+  const auto pid = static_cast<uint32_t>(&proc - processes_.data());
+  ProcessHandle handle{.process_id = pid};
+  auto* suspend = proc.suspend_record;
 
   auto resume =
       ResumePoint{.block_index = suspend->resume_block, .instruction_index = 0};
@@ -1130,14 +1125,12 @@ void Engine::ReconcilePostActivation(ProcessHandle handle) {
             "Engine::ReconcilePostActivation",
             std::format(
                 "process {} suspended with kWait but wait_site_id is invalid",
-                handle.process_id));
+                pid));
       }
 
-      auto& proc_state = processes_[handle.process_id];
-
-      if (!proc_state.installed_wait.valid ||
-          proc_state.installed_wait.wait_site_id != suspend->wait_site_id ||
-          !proc_state.installed_wait.can_refresh_snapshot) {
+      if (!proc.installed_wait.valid ||
+          proc.installed_wait.wait_site_id != suspend->wait_site_id ||
+          !proc.installed_wait.can_refresh_snapshot) {
         // Reinstall required: different wait site or non-static shape.
         ResetInstalledWait(handle);
         InstallWaitSite(handle, BuildWaitRequest(suspend));
@@ -1182,18 +1175,17 @@ void Engine::ReconcilePostActivation(ProcessHandle handle) {
 
     case SuspendTag::kWaitEvent: {
       ResetInstalledWait(handle);
-      auto* inst = processes_[handle.process_id].instance;
+      auto* inst = proc.instance;
       if (inst == nullptr) {
         throw common::InternalError(
             "Engine::ReconcilePostActivation",
             std::format(
-                "kWaitEvent for process {} has no owning instance",
-                handle.process_id));
+                "kWaitEvent for process {} has no owning instance", pid));
       }
       AddInstanceEventWaiter(
           *inst, suspend->event_id,
           EventWaiter{
-              .process_id = handle.process_id,
+              .process_id = pid,
               .instance = inst,
               .resume_block = suspend->resume_block,
           });

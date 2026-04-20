@@ -218,8 +218,9 @@ void Engine::ExecuteActiveRegion() {
       // semantic requests and calls engine primitives directly.
       RunOneActivation(entry);
       if (!finished_ && post_activation_reconcile_) {
-        if (!TryFastReconcile(entry.process_id)) {
-          ReconcilePostActivation(handle);
+        auto& proc = processes_[entry.process_id];
+        if (!TryFastReconcile(proc)) {
+          ReconcilePostActivation(proc);
         }
       }
     }
@@ -387,10 +388,11 @@ void Engine::FlushDirtySlots() {
   ClearLocalUpdates();
 }
 
-void Engine::HandleTrap(uint32_t process_id, const TrapPayload& payload) {
+void Engine::HandleTrap(
+    const RuntimeProcess& proc, const TrapPayload& payload) {
   switch (payload.reason) {
     case TrapReason::kIterationLimitExceeded: {
-      std::string proc_str = FormatProcess(process_id);
+      std::string proc_str = FormatProcess(proc);
       std::string loc_str;
       if (back_edge_site_meta_.IsPopulated() &&
           payload.a < back_edge_site_meta_.Size()) {
@@ -411,7 +413,7 @@ void Engine::HandleTrap(uint32_t process_id, const TrapPayload& payload) {
     }
     case TrapReason::kUserFatal:
     case TrapReason::kInternalError:
-      lyra::PrintError(std::format("trap in {}", FormatProcess(process_id)));
+      lyra::PrintError(std::format("trap in {}", FormatProcess(proc)));
       finished_ = true;
       break;
   }
@@ -440,11 +442,12 @@ void Engine::OnMutation(const common::MutationEvent& event) {
   // HeapObjId: NYI -- future heap-level UpdateSet tracking.
 }
 
-auto Engine::FormatProcess(uint32_t process_id) const -> std::string {
+auto Engine::FormatProcess(const RuntimeProcess& proc) const -> std::string {
+  const auto pid = static_cast<uint32_t>(&proc - processes_.data());
   if (process_meta_.IsPopulated()) {
-    return process_meta_.Format(process_id);
+    return process_meta_.Format(pid);
   }
-  return std::format("<process {}>", process_id);
+  return std::format("<process {}>", pid);
 }
 
 void Engine::HandleObservabilityCheckpoint() {
