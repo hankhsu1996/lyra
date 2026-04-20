@@ -25,6 +25,12 @@ auto LowerPackage(
     const DesignDeclarations& decls) -> Result<mir::Package> {
   mir::Package result;
 
+  // Enter the package-local artifact domain: HIR and constants resolve
+  // through the package's own arenas, not the design-global defaults.
+  LoweringInput pkg_input = input;
+  pkg_input.hir_arena = &package.arena;
+  pkg_input.active_constant_arena = &package.constant_arena;
+
   // Lower function bodies (IDs were pre-allocated in CollectDesignDeclarations)
   DeclView decl_view{
       .design_places = &decls.design_places,
@@ -32,11 +38,11 @@ auto LowerPackage(
       .slots = &decls.slots,
       .dpi_imports = &decls.dpi_imports};
   for (hir::FunctionId hir_func_id : package.functions) {
-    const hir::Function& hir_func = (*input.hir_arena)[hir_func_id];
+    const hir::Function& hir_func = package.arena[hir_func_id];
     mir::FunctionId mir_func_id = decls.functions.at(hir_func.symbol);
 
-    Result<mir::Function> mir_func_result =
-        LowerFunctionBody(hir_func, input, mir_arena, decl_view, origin_map);
+    Result<mir::Function> mir_func_result = LowerFunctionBody(
+        hir_func, pkg_input, mir_arena, decl_view, origin_map);
     if (!mir_func_result) {
       return std::unexpected(mir_func_result.error());
     }

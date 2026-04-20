@@ -112,10 +112,14 @@ class BuiltinTypeCatalog {
 // Lowering context for AST->HIR.
 // All fields are non-owning references to shared compilation state.
 //
-// This struct is intentionally shallow-copyable: ForkForBodyLowering()
-// copies all shared references and overrides hir_arena,
-// active_constant_arena, and sink to point to body-local storage.
-// All other fields (type_arena, symbol_table, etc.) remain shared.
+// This struct is intentionally shallow-copyable. Fork helpers copy all
+// shared references and override the storage fields that must point at
+// scope-local arenas: ForkForBodyLowering() switches hir_arena,
+// active_constant_arena, and sink to body-local storage;
+// ForkForPackageLowering() switches hir_arena and active_constant_arena to
+// package-local storage (the sink stays shared, since package diagnostics
+// flow through the main pipeline sink). All other fields (type_arena,
+// symbol_table, etc.) remain shared.
 struct Context {
   const HirLoweringOptions* options = nullptr;
 
@@ -163,6 +167,20 @@ struct Context {
     body_ctx.active_constant_arena = &body_constant_arena;
     body_ctx.sink = &body_sink;
     return body_ctx;
+  }
+
+  // Fork a package-lowering context that enters the package-local artifact
+  // domain. HIR nodes and constants are directed into package-owned storage;
+  // diagnostics stay on the shared pipeline sink (package diagnostics are
+  // not deferred). Shared design-global state (type_arena, symbol_table,
+  // etc.) is inherited by shallow copy.
+  [[nodiscard]] auto ForkForPackageLowering(
+      hir::Arena& package_arena, ConstantArena& package_constant_arena) const
+      -> Context {
+    Context pkg_ctx = *this;
+    pkg_ctx.hir_arena = &package_arena;
+    pkg_ctx.active_constant_arena = &package_constant_arena;
+    return pkg_ctx;
   }
 
   [[nodiscard]] auto TickType() const -> TypeId {

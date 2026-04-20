@@ -35,12 +35,14 @@ struct LoweringInput {
   const std::vector<hir::Package>* packages = nullptr;
   // Per-specialization-group HIR module bodies. Must be non-null.
   const std::vector<hir::ModuleBody>* module_bodies = nullptr;
-  // Design-global HIR arena by default; overridden to body-local arena
-  // per body in design_lower.cpp before body lowering begins.
+  // Design-global HIR arena by default; overridden to package-local arena
+  // before package lowering (design_lower.cpp, hir_to_mir/package.cpp) and
+  // to body-local arena before body lowering begins (design_lower.cpp).
   const hir::Arena* hir_arena = nullptr;
   TypeArena* type_arena = nullptr;
   // Active constant domain: design-global by default, overridden to
-  // body-local constant arena per body before body lowering begins.
+  // package-local before package lowering and to body-local before body
+  // lowering begins.
   const ConstantArena* active_constant_arena = nullptr;
   const SymbolTable* symbol_table = nullptr;
   BuiltinTypes builtin_types;

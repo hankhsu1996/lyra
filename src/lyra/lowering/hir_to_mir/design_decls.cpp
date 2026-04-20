@@ -348,9 +348,10 @@ auto CollectDesignDeclarations(
            .scope_ref = pkg_name_off});
     }
 
-    // Pre-allocate MIR function IDs with frozen signatures
+    // Pre-allocate MIR function IDs with frozen signatures.
+    // Package-local HIR is resolved through the package's own arena.
     for (hir::FunctionId hir_func_id : pkg.functions) {
-      const hir::Function& hir_func = (*input.hir_arena)[hir_func_id];
+      const hir::Function& hir_func = pkg.arena[hir_func_id];
       mir::FunctionSignature sig = BuildFunctionSignature(
           hir_func, *input.symbol_table, *input.type_arena);
       mir::FunctionId mir_func_id =

@@ -6,7 +6,6 @@
 #include <string_view>
 #include <unordered_map>
 #include <utility>
-#include <variant>
 #include <vector>
 
 #include "lyra/common/diagnostic/diagnostic.hpp"
@@ -227,7 +226,8 @@ auto LowerDesign(
   std::vector<mir::DpiExportWrapperDesc> dpi_export_wrappers;
 
   // Phase 0: Lower package init processes into design arena.
-  // Design-global origin storage for design-global MIR.
+  // Design-global origin storage for design-global MIR. Package-local HIR
+  // is resolved through each package's own arena (see pkg_input below).
   DeclView init_view{
       .design_places = &decls.design_places,
       .functions = &decls.functions,
@@ -238,9 +238,14 @@ auto LowerDesign(
       continue;
     }
     hir::ProcessId hir_proc_id = pkg.init_process;
-    const hir::Process& proc = (*input.hir_arena)[hir_proc_id];
+    const hir::Process& proc = pkg.arena[hir_proc_id];
+
+    LoweringInput pkg_input = input;
+    pkg_input.hir_arena = &pkg.arena;
+    pkg_input.active_constant_arena = &pkg.constant_arena;
+
     Result<mir::ProcessId> mir_proc_result = LowerProcess(
-        hir_proc_id, proc, input, mir_arena, init_view, origin_map,
+        hir_proc_id, proc, pkg_input, mir_arena, init_view, origin_map,
         &result.generated_functions);
     if (!mir_proc_result) {
       return std::unexpected(mir_proc_result.error());
@@ -647,6 +652,7 @@ auto LowerDesign(
             .slot_count = slot_count,
             .spec_id = spec_id,
             .instance_sym = mod.symbol,
+            .child_port_const_inits = {},
         });
 
     next_placement_base += slot_count;

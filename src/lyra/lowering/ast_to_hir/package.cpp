@@ -7,9 +7,11 @@
 #include <slang/ast/symbols/SubroutineSymbols.h>
 #include <slang/ast/symbols/VariableSymbols.h>
 
+#include "lyra/common/constant_arena.hpp"
 #include "lyra/common/source_span.hpp"
 #include "lyra/common/symbol_types.hpp"
 #include "lyra/common/type.hpp"
+#include "lyra/hir/arena.hpp"
 #include "lyra/hir/expression.hpp"
 #include "lyra/hir/fwd.hpp"
 #include "lyra/hir/package.hpp"
@@ -29,10 +31,18 @@ namespace lyra::lowering::ast_to_hir {
 auto LowerPackage(
     const slang::ast::PackageSymbol& package, SymbolRegistrar& registrar,
     Context* ctx) -> hir::Package {
-  // Create per-package lowerer (owns timescale state)
-  ScopeLowerer lowerer(*ctx, registrar, package);
+  // Package-local HIR and constant storage. All HIR nodes and constants
+  // produced during package lowering are isolated in package-owned arenas.
+  hir::Arena package_arena;
+  ConstantArena package_constant_arena;
+  Context pkg_ctx =
+      ctx->ForkForPackageLowering(package_arena, package_constant_arena);
 
-  SourceSpan span = ctx->SpanOf(GetSourceRange(package));
+  // Per-package lowerer (owns timescale state). Built against pkg_ctx so all
+  // downstream HIR allocations land in package_arena.
+  ScopeLowerer lowerer(pkg_ctx, registrar, package);
+
+  SourceSpan span = pkg_ctx.SpanOf(GetSourceRange(package));
 
   SymbolId symbol =
       registrar.Register(package, SymbolKind::kPackage, kInvalidTypeId);
@@ -48,7 +58,7 @@ auto LowerPackage(
     switch (member.kind) {
       case sk::SymbolKind::Variable: {
         const auto& var = member.as<slang::ast::VariableSymbol>();
-        TypeId type = LowerType(var.getType(), span, ctx);
+        TypeId type = LowerType(var.getType(), span, &pkg_ctx);
         if (type) {
           SymbolId sym = registrar.Register(var, SymbolKind::kVariable, type);
           variables.push_back(sym);
@@ -62,7 +72,7 @@ auto LowerPackage(
         const auto& sub = member.as<slang::ast::SubroutineSymbol>();
 
         // Try DPI import normalization first.
-        auto dpi_result = TryLowerDpiImport(sub, registrar, ctx);
+        auto dpi_result = TryLowerDpiImport(sub, registrar, &pkg_ctx);
         switch (dpi_result.kind) {
           case DpiLoweringKind::kAccepted:
             dpi_imports.push_back(std::move(dpi_result.decl).value());
@@ -71,13 +81,13 @@ auto LowerPackage(
             break;
           case DpiLoweringKind::kNotDpi: {
             if (sub.subroutineKind == slang::ast::SubroutineKind::Task) {
-              ctx->ErrorFmt(
+              pkg_ctx.ErrorFmt(
                   span, "package task '{}' not yet supported", member.name);
               break;
             }
-            SourceSpan func_span = ctx->SpanOf(GetSourceRange(sub));
+            SourceSpan func_span = pkg_ctx.SpanOf(GetSourceRange(sub));
             SymbolId func_sym = RegisterCallableSymbol(
-                sub, SymbolKind::kFunction, *ctx, registrar, func_span);
+                sub, SymbolKind::kFunction, pkg_ctx, registrar, func_span);
             if (!func_sym) {
               break;
             }
@@ -96,13 +106,15 @@ auto LowerPackage(
         break;
       default:
         if (!member.isType()) {
-          ctx->ErrorFmt(span, "unsupported package member '{}'", member.name);
+          pkg_ctx.ErrorFmt(
+              span, "unsupported package member '{}'", member.name);
         }
         break;
     }
   }
 
-  // Phase 2: Lower function bodies (symbols are registered, recursion works)
+  // Phase 2: Lower function bodies (symbols are registered, recursion works).
+  // LowerFunction writes into lowerer.Ctx().hir_arena, which is package_arena.
   std::vector<hir::FunctionId> functions;
   for (const slang::ast::SubroutineSymbol* sub : function_refs) {
     hir::FunctionId id = LowerFunction(*sub, lowerer);
@@ -119,13 +131,13 @@ auto LowerPackage(
 
     for (const auto& [sym, init_ast] : var_init_refs) {
       hir::ExpressionId init_expr =
-          LowerScopedExpression(*init_ast, *ctx, registrar, lowerer.Frame());
+          LowerScopedExpression(*init_ast, pkg_ctx, registrar, lowerer.Frame());
       if (!init_expr) {
         continue;
       }
 
-      TypeId var_type = (*ctx->symbol_table)[sym].type;
-      hir::ExpressionId target_expr = ctx->hir_arena->AddExpression(
+      TypeId var_type = (*pkg_ctx.symbol_table)[sym].type;
+      hir::ExpressionId target_expr = pkg_ctx.hir_arena->AddExpression(
           hir::Expression{
               .kind = hir::ExpressionKind::kNameRef,
               .type = var_type,
@@ -133,7 +145,7 @@ auto LowerPackage(
               .data = hir::NameRefExpressionData{.symbol = sym},
           });
 
-      hir::StatementId stmt = ctx->hir_arena->AddStatement(
+      hir::StatementId stmt = pkg_ctx.hir_arena->AddStatement(
           hir::Statement{
               .kind = hir::StatementKind::kAssignment,
               .span = span,
@@ -147,7 +159,7 @@ auto LowerPackage(
     }
 
     if (!init_stmts.empty()) {
-      hir::StatementId body = ctx->hir_arena->AddStatement(
+      hir::StatementId body = pkg_ctx.hir_arena->AddStatement(
           hir::Statement{
               .kind = hir::StatementKind::kBlock,
               .span = span,
@@ -155,7 +167,7 @@ auto LowerPackage(
                   hir::BlockStatementData{.statements = std::move(init_stmts)},
           });
 
-      init_process = ctx->hir_arena->AddProcess(
+      init_process = pkg_ctx.hir_arena->AddProcess(
           hir::Process{
               .kind = hir::ProcessKind::kInitial,
               .span = span,
@@ -172,6 +184,8 @@ auto LowerPackage(
       .dpi_imports = std::move(dpi_imports),
       .dpi_exports = {},
       .init_process = init_process,
+      .arena = std::move(package_arena),
+      .constant_arena = std::move(package_constant_arena),
   };
 }
 
