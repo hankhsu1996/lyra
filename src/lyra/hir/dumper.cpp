@@ -19,7 +19,6 @@
 #include "lyra/common/type.hpp"
 #include "lyra/common/type_arena.hpp"
 #include "lyra/hir/arena.hpp"
-#include "lyra/hir/design.hpp"
 #include "lyra/hir/expression.hpp"
 #include "lyra/hir/fwd.hpp"
 #include "lyra/hir/module.hpp"
@@ -94,7 +93,7 @@ auto Dumper::ConstantString(ConstId id) const -> std::string {
 }
 
 void Dumper::Dump(
-    const Design& design, std::span<const ModuleBody> module_bodies,
+    std::span<const Module> modules, std::span<const ModuleBody> module_bodies,
     std::span<const Package> packages) {
   current_module_bodies_ = module_bodies;
   *out_ << "Design {\n";
@@ -102,7 +101,7 @@ void Dumper::Dump(
   for (const auto& package : packages) {
     Dump(package);
   }
-  for (const auto& module : design.modules) {
+  for (const auto& module : modules) {
     Dump(module);
   }
   Dedent();

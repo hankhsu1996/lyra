@@ -54,7 +54,7 @@ auto CompileToMir(const CompilationInput& input, CompilationOutput& output)
   }
 
   lowering::hir_to_mir::LoweringInput mir_input{
-      .design = &hir_result.design,
+      .modules = &hir_result.modules,
       .packages = &hir_result.packages,
       .module_bodies = &hir_result.module_bodies,
       .hir_arena = hir_result.hir_arena.get(),

@@ -6,8 +6,8 @@
 #include "lyra/common/child_coord_map.hpp"
 #include "lyra/common/hierarchy_node.hpp"
 #include "lyra/common/module_identity.hpp"
-#include "lyra/hir/design.hpp"
 #include "lyra/hir/dpi.hpp"
+#include "lyra/hir/module.hpp"
 #include "lyra/hir/module_body.hpp"
 #include "lyra/hir/package.hpp"
 #include "lyra/lowering/ast_to_hir/port_binding.hpp"
@@ -19,13 +19,11 @@ struct Context;
 class SymbolRegistrar;
 
 struct DesignLoweringResult {
-  hir::Design design;
-  // Per-compilation-unit package records. Sibling to hir::Design because
-  // packages are per-CU semantic output, not whole-design shell state.
+  // Per-instance HIR module records in stable elaboration order.
+  std::vector<hir::Module> modules;
+  // Per-compilation-unit package records.
   std::vector<hir::Package> packages;
   // Per-specialization-group module bodies. Indexed by ModuleBodyId.
-  // Sibling to hir::Design because bodies are per-CU semantic output,
-  // not whole-design shell state.
   std::vector<hir::ModuleBody> module_bodies;
 };
 

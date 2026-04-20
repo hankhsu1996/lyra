@@ -7,7 +7,7 @@
 #include "lyra/common/symbol.hpp"
 #include "lyra/common/type_arena.hpp"
 #include "lyra/hir/arena.hpp"
-#include "lyra/hir/design.hpp"
+#include "lyra/hir/module.hpp"
 #include "lyra/hir/module_body.hpp"
 #include "lyra/hir/package.hpp"
 
@@ -21,7 +21,8 @@ class Dumper {
       std::ostream* out);
 
   void Dump(
-      const Design& design, std::span<const ModuleBody> module_bodies,
+      std::span<const Module> modules,
+      std::span<const ModuleBody> module_bodies,
       std::span<const Package> packages);
   void Dump(const Module& module);
   void Dump(const ModuleBody& body);
@@ -48,7 +49,7 @@ class Dumper {
   std::ostream* out_;
   int indent_ = 0;
   // Module bodies to resolve hir::Module::body_id against while dumping.
-  // Set by Dump(Design, ...) before visiting elements.
+  // Set by the top-level Dump(modules, ...) before visiting modules.
   std::span<const ModuleBody> current_module_bodies_;
 };
 

@@ -160,6 +160,9 @@ auto ComputeMirStats(const mir::Design& design, const mir::Arena& design_arena)
 }  // namespace
 
 auto LowerHirToMir(const LoweringInput& input) -> Result<LoweringResult> {
+  if (input.modules == nullptr) {
+    throw common::InternalError("LowerHirToMir", "modules must not be null");
+  }
   if (input.specialization_map == nullptr) {
     throw common::InternalError(
         "LowerHirToMir", "specialization_map must not be null");
@@ -171,8 +174,7 @@ auto LowerHirToMir(const LoweringInput& input) -> Result<LoweringResult> {
   LoweringInput full_input = input;
   full_input.builtin_types = InternBuiltinTypes(*input.type_arena);
 
-  auto design_result =
-      LowerDesign(*input.design, full_input, *design_arena, &design_origins);
+  auto design_result = LowerDesign(full_input, *design_arena, &design_origins);
   if (!design_result) return std::unexpected(design_result.error());
   mir::Design design = std::move(design_result->design);
   mir::ConstructionInput construction = std::move(design_result->construction);

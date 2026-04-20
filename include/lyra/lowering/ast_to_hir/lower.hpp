@@ -15,8 +15,8 @@
 #include "lyra/common/symbol.hpp"
 #include "lyra/common/type_arena.hpp"
 #include "lyra/hir/arena.hpp"
-#include "lyra/hir/design.hpp"
 #include "lyra/hir/dpi.hpp"
+#include "lyra/hir/module.hpp"
 #include "lyra/hir/module_body.hpp"
 #include "lyra/hir/package.hpp"
 #include "lyra/lowering/ast_to_hir/options.hpp"
@@ -27,13 +27,11 @@
 namespace lyra::lowering::ast_to_hir {
 
 struct LoweringResult {
-  hir::Design design;
-  // Per-compilation-unit package records. Sibling to hir::Design because
-  // packages are per-CU semantic output, not whole-design shell state.
+  // Per-instance HIR module records in stable elaboration order.
+  std::vector<hir::Module> modules;
+  // Per-compilation-unit package records.
   std::vector<hir::Package> packages;
   // Per-specialization-group module bodies. Indexed by ModuleBodyId.
-  // Sibling to hir::Design because bodies are per-CU semantic output,
-  // not whole-design shell state.
   std::vector<hir::ModuleBody> module_bodies;
   // Design-global HIR arena for design-level HIR nodes (package lowering,
   // port binding expressions). Body-local HIR is in each ModuleBody's arena.

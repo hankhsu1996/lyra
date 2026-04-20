@@ -69,7 +69,7 @@ auto LowerAstToHir(
       static_cast<int8_t>(ComputeGlobalPrecision(compilation));
 
   LoweringResult hir_result{
-      .design = std::move(design_output.hir.design),
+      .modules = std::move(design_output.hir.modules),
       .packages = std::move(design_output.hir.packages),
       .module_bodies = std::move(design_output.hir.module_bodies),
       .hir_arena = std::move(hir_arena),

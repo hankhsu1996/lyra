@@ -14,7 +14,6 @@
 #include "lyra/common/internal_error.hpp"
 #include "lyra/common/local_slot_id.hpp"
 #include "lyra/common/module_identity.hpp"
-#include "lyra/hir/design.hpp"
 #include "lyra/hir/expression.hpp"
 #include "lyra/hir/fwd.hpp"
 #include "lyra/hir/module.hpp"
@@ -162,9 +161,12 @@ auto BuildMirSpecGroups(
 }  // namespace
 
 auto LowerDesign(
-    const hir::Design& design, const LoweringInput& input,
-    mir::Arena& mir_arena, OriginMap* origin_map)
+    const LoweringInput& input, mir::Arena& mir_arena, OriginMap* origin_map)
     -> Result<DesignLoweringResult> {
+  if (input.modules == nullptr) {
+    throw common::InternalError(
+        "LowerDesign", "LoweringInput::modules is null");
+  }
   if (input.packages == nullptr) {
     throw common::InternalError(
         "LowerDesign", "LoweringInput::packages is null");
@@ -173,6 +175,7 @@ auto LowerDesign(
     throw common::InternalError(
         "LowerDesign", "LoweringInput::module_bodies is null");
   }
+  const auto& modules = *input.modules;
   const auto& packages = *input.packages;
   const auto& module_bodies = *input.module_bodies;
 
@@ -245,10 +248,10 @@ auto LowerDesign(
     result.init_processes.push_back(*mir_proc_result);
   }
 
-  // Collect HIR modules in design.modules order (parallel to module_index)
+  // Collect HIR modules in elaboration order (parallel to module_index)
   std::vector<const hir::Module*> hir_modules;
-  hir_modules.reserve(design.modules.size());
-  for (const auto& mod : design.modules) {
+  hir_modules.reserve(modules.size());
+  for (const auto& mod : modules) {
     hir_modules.push_back(&mod);
   }
 
@@ -601,7 +604,7 @@ auto LowerDesign(
 
   uint32_t next_placement_base = decls.num_package_slots;
   uint32_t module_index = 0;
-  for (const auto& mod : design.modules) {
+  for (const auto& mod : modules) {
     if (module_index >= spec_map.spec_id_by_instance.size()) {
       throw common::InternalError(
           "LowerDesign", "module index exceeds specialization map size");

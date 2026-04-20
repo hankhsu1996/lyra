@@ -1,7 +1,6 @@
 #pragma once
 
 #include "lyra/common/diagnostic/diagnostic.hpp"
-#include "lyra/hir/design.hpp"
 #include "lyra/hir/module.hpp"
 #include "lyra/lowering/hir_to_mir/context.hpp"
 #include "lyra/lowering/hir_to_mir/lower.hpp"
@@ -46,8 +45,7 @@ struct DesignLoweringResult {
 };
 
 auto LowerDesign(
-    const hir::Design& design, const LoweringInput& input,
-    mir::Arena& mir_arena, OriginMap* origin_map)
+    const LoweringInput& input, mir::Arena& mir_arena, OriginMap* origin_map)
     -> Result<DesignLoweringResult>;
 
 }  // namespace lyra::lowering::hir_to_mir

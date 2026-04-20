@@ -267,7 +267,7 @@ auto PrepareLlvmModule(
   // Lower HIR to MIR
   auto t_mir = Clock::now();
   lowering::hir_to_mir::LoweringInput mir_input{
-      .design = &hir_result.design,
+      .modules = &hir_result.modules,
       .packages = &hir_result.packages,
       .module_bodies = &hir_result.module_bodies,
       .hir_arena = hir_result.hir_arena.get(),
@@ -307,11 +307,10 @@ auto PrepareLlvmModule(
       std::chrono::duration<double>(Clock::now() - t_mir).count();
 
   // Find the top module (first module in elaboration order) and calculate base
-  // slot ID. Slot ordering: packages first, then all modules' variables in
-  // element order.
-  const hir::Module* top_module = hir_result.design.modules.empty()
-                                      ? nullptr
-                                      : hir_result.design.modules.data();
+  // slot ID. Slot ordering: packages first, then module-owned variables in
+  // stable `modules` elaboration order.
+  const hir::Module* top_module =
+      hir_result.modules.empty() ? nullptr : hir_result.modules.data();
 
   // Count package slots before module variables (packages come first)
   size_t base_slot_id = 0;

@@ -20,7 +20,7 @@ Three phases, applied within each lowering layer (AST->HIR, HIR->MIR):
 | ----- | ------------------------------------------------------------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------- |
 | 0     | `RegisterModuleDeclarations` (all instances), `InternBuiltinTypes`, `PrepareModuleLoweringInputs`, package lowering, port binding lowering | Mutable: SymbolTable, ScopeTable, TypeArena, ConstantArena, hir::Arena                               |
 | 1     | `LowerModuleBody` per specialization group                                                                                                 | Read: frozen Phase 0 symbol/type/constant tables, prepared inputs. Write: group-owned body unit only |
-| 2     | `CollectModuleInstance` per instance (pure lookup), assemble `hir::Design`                                                                 | Read: frozen Phase 0 tables, body units                                                              |
+| 2     | `CollectModuleInstance` per instance (pure lookup), assemble AST->HIR `modules` sibling vector                                             | Read: frozen Phase 0 tables, body units                                                              |
 
 ### HIR->MIR phases
 
@@ -187,7 +187,7 @@ Phase 2 collects body units and produces design-wide artifacts. No re-lowering. 
 
 | Body unit field        | Assembly action                                                                                                                                                                                              | Ordering                           |
 | ---------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ---------------------------------- |
-| `body` (ModuleBody)    | Stored in the AST->HIR `module_bodies` vector (sibling to `hir::Design`), indexed by `body_id`                                                                                                               | Group order from SpecializationMap |
+| `body` (ModuleBody)    | Stored in the AST->HIR `module_bodies` sibling vector, indexed by `body_id`                                                                                                                                  | Group order from SpecializationMap |
 | `arena`                | Stored alongside body (body unit stays owned)                                                                                                                                                                | Indexed by `body_id`               |
 | `symbols` (body-local) | Remain in body unit. No current downstream consumer requires global SymbolTable publication. If a future consumer needs global identity for body-local names, that requirement must be explicitly justified. | N/A (not merged)                   |
 | `origins`              | Collected into design-wide OriginMap                                                                                                                                                                         | Group order                        |
@@ -199,7 +199,7 @@ For each instance in each group:
 
 - `CollectModuleInstance` produces an `hir::Module` (pure lookup, no lowering)
 - `body_id` assigned from the group's `ModuleBodyId`
-- Instance added to `hir::Design.modules`
+- Instance added to the AST->HIR `modules` sibling vector
 
 For HIR->MIR Phase 2:
 

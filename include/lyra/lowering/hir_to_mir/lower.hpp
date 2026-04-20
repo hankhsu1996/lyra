@@ -12,8 +12,8 @@
 #include "lyra/common/symbol.hpp"
 #include "lyra/common/type_arena.hpp"
 #include "lyra/hir/arena.hpp"
-#include "lyra/hir/design.hpp"
 #include "lyra/hir/dpi.hpp"
+#include "lyra/hir/module.hpp"
 #include "lyra/hir/module_body.hpp"
 #include "lyra/hir/package.hpp"
 #include "lyra/lowering/ast_to_hir/port_binding.hpp"
@@ -28,12 +28,12 @@
 namespace lyra::lowering::hir_to_mir {
 
 struct LoweringInput {
-  const hir::Design* design = nullptr;
-  // Per-compilation-unit HIR packages. Sibling to design because packages
-  // are per-CU semantic output. Must be non-null.
+  // Per-instance HIR module records in stable elaboration order.
+  // Must be non-null.
+  const std::vector<hir::Module>* modules = nullptr;
+  // Per-compilation-unit HIR package records. Must be non-null.
   const std::vector<hir::Package>* packages = nullptr;
-  // Per-specialization-group HIR module bodies. Sibling to design because
-  // bodies are per-CU semantic output. Must be non-null.
+  // Per-specialization-group HIR module bodies. Must be non-null.
   const std::vector<hir::ModuleBody>* module_bodies = nullptr;
   // Design-global HIR arena by default; overridden to body-local arena
   // per body in design_lower.cpp before body lowering begins.

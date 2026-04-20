@@ -17,10 +17,10 @@ namespace lyra::lowering {
 
 // Pre-resolved per-body origin provenance for backend span resolution.
 // Built at the lowering/backend boundary from body-local origin entries
-// and their corresponding HIR arenas. The backend never needs raw
-// hir::Design -- this table provides everything needed to construct
-// body-local origin resolvers. Keyed by MIR body pointer (in-memory
-// identity valid for the lifetime of the owning mir::Design).
+// and their corresponding HIR arenas. The backend never needs the
+// AST->HIR output directly -- this table provides everything needed to
+// construct body-local origin resolvers. Keyed by MIR body pointer
+// (in-memory identity valid for the lifetime of the owning mir::Design).
 struct BodyOriginProvenance {
   struct Entry {
     std::span<const OriginEntry> origins;

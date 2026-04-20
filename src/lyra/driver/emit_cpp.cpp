@@ -29,20 +29,18 @@ constexpr std::string_view kProjectionRuntimeLib =
 auto BuildCompilationUnitInputForPrototype(
     const lowering::ast_to_hir::LoweringResult& hir_result)
     -> Result<lowering::hir_to_xir::CompilationUnitInput> {
-  const auto& design = hir_result.design;
-
   if (hir_result.module_bodies.size() != 1) {
     return std::unexpected(
         Diagnostic::HostError(
             "emit-cpp prototype: requires exactly one module body"));
   }
 
-  if (design.modules.size() != 1) {
+  if (hir_result.modules.size() != 1) {
     return std::unexpected(
         Diagnostic::HostError(
             "emit-cpp prototype: requires exactly one module in design"));
   }
-  const hir::Module* module = design.modules.data();
+  const hir::Module* module = hir_result.modules.data();
 
   if (module->body_id.value != 0) {
     return std::unexpected(

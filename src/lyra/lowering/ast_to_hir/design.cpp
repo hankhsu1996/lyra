@@ -32,7 +32,6 @@
 #include "lyra/common/symbol.hpp"
 #include "lyra/common/type.hpp"
 #include "lyra/hir/arena.hpp"
-#include "lyra/hir/design.hpp"
 #include "lyra/hir/dpi.hpp"
 #include "lyra/hir/expression.hpp"
 #include "lyra/hir/fwd.hpp"
@@ -1098,10 +1097,7 @@ auto LowerDesign(
   return DesignLoweringOutput{
       .hir =
           DesignLoweringResult{
-              .design =
-                  hir::Design{
-                      .modules = std::move(modules),
-                  },
+              .modules = std::move(modules),
               .packages = std::move(packages),
               .module_bodies = std::move(module_bodies),
           },
