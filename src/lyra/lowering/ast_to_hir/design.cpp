@@ -1102,7 +1102,6 @@ auto LowerDesign(
                   hir::Design{
                       .elements = std::move(elements),
                       .module_bodies = std::move(module_bodies),
-                      .callable_signatures = {},
                   },
           },
       .composition =

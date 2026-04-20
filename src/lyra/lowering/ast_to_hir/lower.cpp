@@ -53,8 +53,9 @@ auto LowerAstToHir(
 
   SymbolRegistrar registrar(&ctx);
 
-  // Callable signature table accumulates during lowering, then moves into
-  // the returned Design as persistent semantic state.
+  // AST->HIR-local support table for callable signatures. Populated during
+  // callable registration and queried by deferred assertion lowering. Dies
+  // with this function; not part of final HIR output.
   hir::HirCallableSignatureTable callable_signatures;
   ctx.callable_signatures = &callable_signatures;
 
@@ -63,9 +64,6 @@ auto LowerAstToHir(
     ScopeGuard scope_guard(registrar, ScopeKind::kRoot);
     design_output = LowerDesign(compilation, registrar, &ctx);
   }
-
-  design_output.hir.design.callable_signatures = std::move(callable_signatures);
-  ctx.callable_signatures = nullptr;
 
   auto global_precision =
       static_cast<int8_t>(ComputeGlobalPrecision(compilation));
