@@ -94,12 +94,16 @@ auto Dumper::ConstantString(ConstId id) const -> std::string {
 }
 
 void Dumper::Dump(
-    const Design& design, std::span<const ModuleBody> module_bodies) {
+    const Design& design, std::span<const ModuleBody> module_bodies,
+    std::span<const Package> packages) {
   current_module_bodies_ = module_bodies;
   *out_ << "Design {\n";
   Indent();
-  for (const auto& element : design.elements) {
-    std::visit([this](const auto& elem) { Dump(elem); }, element);
+  for (const auto& package : packages) {
+    Dump(package);
+  }
+  for (const auto& module : design.modules) {
+    Dump(module);
   }
   Dedent();
   *out_ << "}\n";

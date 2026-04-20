@@ -268,6 +268,7 @@ auto PrepareLlvmModule(
   auto t_mir = Clock::now();
   lowering::hir_to_mir::LoweringInput mir_input{
       .design = &hir_result.design,
+      .packages = &hir_result.packages,
       .module_bodies = &hir_result.module_bodies,
       .hir_arena = hir_result.hir_arena.get(),
       .type_arena = hir_result.type_arena.get(),
@@ -308,20 +309,14 @@ auto PrepareLlvmModule(
   // Find the top module (first module in elaboration order) and calculate base
   // slot ID. Slot ordering: packages first, then all modules' variables in
   // element order.
-  const hir::Module* top_module = nullptr;
-  for (const auto& element : mir_input.design->elements) {
-    if (const auto* mod = std::get_if<hir::Module>(&element)) {
-      top_module = mod;
-      break;  // First module is the top module
-    }
-  }
+  const hir::Module* top_module = hir_result.design.modules.empty()
+                                      ? nullptr
+                                      : hir_result.design.modules.data();
 
   // Count package slots before module variables (packages come first)
   size_t base_slot_id = 0;
-  for (const auto& element : mir_input.design->elements) {
-    if (const auto* pkg = std::get_if<hir::Package>(&element)) {
-      base_slot_id += pkg->variables.size();
-    }
+  for (const auto& pkg : hir_result.packages) {
+    base_slot_id += pkg.variables.size();
   }
 
   // Build tracked variables and create hooks

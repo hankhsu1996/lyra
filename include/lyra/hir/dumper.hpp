@@ -9,6 +9,7 @@
 #include "lyra/hir/arena.hpp"
 #include "lyra/hir/design.hpp"
 #include "lyra/hir/module_body.hpp"
+#include "lyra/hir/package.hpp"
 
 namespace lyra::hir {
 
@@ -19,7 +20,9 @@ class Dumper {
       const ConstantArena* constants, const SymbolTable* symbols,
       std::ostream* out);
 
-  void Dump(const Design& design, std::span<const ModuleBody> module_bodies);
+  void Dump(
+      const Design& design, std::span<const ModuleBody> module_bodies,
+      std::span<const Package> packages);
   void Dump(const Module& module);
   void Dump(const ModuleBody& body);
   void Dump(const Package& package);

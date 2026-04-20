@@ -1,4 +1,4 @@
-# Parallel Specialization Compilation (F1)
+#Parallel Specialization Compilation(F1)
 
 Target model for parallelizing specialization group compilation.
 
@@ -199,7 +199,7 @@ For each instance in each group:
 
 - `CollectModuleInstance` produces an `hir::Module` (pure lookup, no lowering)
 - `body_id` assigned from the group's `ModuleBodyId`
-- Instance added to `hir::Design.elements`
+- Instance added to `hir::Design.modules`
 
 For HIR->MIR Phase 2:
 

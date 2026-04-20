@@ -18,6 +18,7 @@
 #include "lyra/hir/design.hpp"
 #include "lyra/hir/dpi.hpp"
 #include "lyra/hir/module_body.hpp"
+#include "lyra/hir/package.hpp"
 #include "lyra/lowering/ast_to_hir/options.hpp"
 #include "lyra/lowering/ast_to_hir/port_binding.hpp"
 #include "lyra/lowering/ast_to_hir/source_mapper.hpp"
@@ -27,6 +28,9 @@ namespace lyra::lowering::ast_to_hir {
 
 struct LoweringResult {
   hir::Design design;
+  // Per-compilation-unit package records. Sibling to hir::Design because
+  // packages are per-CU semantic output, not whole-design shell state.
+  std::vector<hir::Package> packages;
   // Per-specialization-group module bodies. Indexed by ModuleBodyId.
   // Sibling to hir::Design because bodies are per-CU semantic output,
   // not whole-design shell state.

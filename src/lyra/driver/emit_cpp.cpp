@@ -3,7 +3,6 @@
 #include <filesystem>
 #include <fstream>
 #include <optional>
-#include <variant>
 
 #include <fmt/core.h>
 
@@ -12,7 +11,6 @@
 #include "frontend.hpp"
 #include "lyra/common/diagnostic/diagnostic.hpp"
 #include "lyra/common/diagnostic/diagnostic_sink.hpp"
-#include "lyra/hir/design.hpp"
 #include "lyra/hir/module.hpp"
 #include "lyra/lowering/ast_to_hir/lower.hpp"
 #include "lyra/lowering/hir_to_xir/lower.hpp"
@@ -39,19 +37,12 @@ auto BuildCompilationUnitInputForPrototype(
             "emit-cpp prototype: requires exactly one module body"));
   }
 
-  const hir::Module* module = nullptr;
-  uint32_t module_count = 0;
-  for (const auto& element : design.elements) {
-    if (const auto* m = std::get_if<hir::Module>(&element)) {
-      module = m;
-      ++module_count;
-    }
-  }
-  if (module_count != 1 || module == nullptr) {
+  if (design.modules.size() != 1) {
     return std::unexpected(
         Diagnostic::HostError(
             "emit-cpp prototype: requires exactly one module in design"));
   }
+  const hir::Module* module = design.modules.data();
 
   if (module->body_id.value != 0) {
     return std::unexpected(

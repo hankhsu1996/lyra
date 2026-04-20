@@ -5,13 +5,11 @@
 #include <string>
 #include <unordered_map>
 #include <utility>
-#include <variant>
 #include <vector>
 
 #include "lyra/common/internal_error.hpp"
 #include "lyra/common/symbol.hpp"
 #include "lyra/common/type.hpp"
-#include "lyra/hir/design.hpp"
 #include "lyra/hir/dpi.hpp"
 #include "lyra/hir/fwd.hpp"
 #include "lyra/hir/module.hpp"
@@ -300,12 +298,16 @@ void CheckDpiVisibleNameCollisions(DesignDeclarations& decls) {
 }
 
 auto CollectDesignDeclarations(
-    const hir::Design& design, const LoweringInput& input,
-    mir::Arena& mir_arena) -> DesignDeclarations {
+    const LoweringInput& input, mir::Arena& mir_arena) -> DesignDeclarations {
+  if (input.packages == nullptr) {
+    throw common::InternalError(
+        "CollectDesignDeclarations", "LoweringInput::packages is null");
+  }
   if (input.module_bodies == nullptr) {
     throw common::InternalError(
         "CollectDesignDeclarations", "LoweringInput::module_bodies is null");
   }
+  const auto& packages = *input.packages;
   const auto& module_bodies = *input.module_bodies;
 
   DesignDeclarations decls;
@@ -316,51 +318,49 @@ auto CollectDesignDeclarations(
 
   StringPoolIntern intern;
 
-  // Ordering contract: packages first (in element order), then all module
-  // instances (in BFS elaboration order from LowerDesign). This order is ABI -
-  // do not change without updating all consumers (LLVM layout, dump).
+  // Ordering contract: packages first (in input.packages order), then all
+  // module instances (in BFS elaboration order from LowerDesign). This order
+  // is ABI - do not change without updating all consumers (LLVM layout, dump).
 
   // Allocate package variable design places + pre-allocate function IDs
-  for (const auto& element : design.elements) {
-    if (const auto* pkg = std::get_if<hir::Package>(&element)) {
-      const Symbol& pkg_sym = (*input.symbol_table)[pkg->symbol];
-      auto pkg_name_off =
-          intern.Intern(decls.slot_trace_string_pool, pkg_sym.name);
+  for (const auto& pkg : packages) {
+    const Symbol& pkg_sym = (*input.symbol_table)[pkg.symbol];
+    auto pkg_name_off =
+        intern.Intern(decls.slot_trace_string_pool, pkg_sym.name);
 
-      for (SymbolId var : pkg->variables) {
-        const Symbol& sym = (*input.symbol_table)[var];
-        mir::Place place{
-            .root =
-                mir::PlaceRoot{
-                    .kind = mir::PlaceRoot::Kind::kDesignGlobal,
-                    .id = next_slot++,
-                    .type = sym.type,
-                },
-            .projections = {},
-        };
-        decls.design_places[var] = mir_arena.AddPlace(std::move(place));
-        decls.slots.push_back({sym.type, mir::SlotKind::kVariable});
-        decls.slot_trace_provenance.push_back(
-            {.local_name_str_off =
-                 intern.Intern(decls.slot_trace_string_pool, sym.name),
-             .scope_kind = mir::SlotScopeKind::kPackage,
-             .scope_ref = pkg_name_off});
-      }
+    for (SymbolId var : pkg.variables) {
+      const Symbol& sym = (*input.symbol_table)[var];
+      mir::Place place{
+          .root =
+              mir::PlaceRoot{
+                  .kind = mir::PlaceRoot::Kind::kDesignGlobal,
+                  .id = next_slot++,
+                  .type = sym.type,
+              },
+          .projections = {},
+      };
+      decls.design_places[var] = mir_arena.AddPlace(std::move(place));
+      decls.slots.push_back({sym.type, mir::SlotKind::kVariable});
+      decls.slot_trace_provenance.push_back(
+          {.local_name_str_off =
+               intern.Intern(decls.slot_trace_string_pool, sym.name),
+           .scope_kind = mir::SlotScopeKind::kPackage,
+           .scope_ref = pkg_name_off});
+    }
 
-      // Pre-allocate MIR function IDs with frozen signatures
-      for (hir::FunctionId hir_func_id : pkg->functions) {
-        const hir::Function& hir_func = (*input.hir_arena)[hir_func_id];
-        mir::FunctionSignature sig = BuildFunctionSignature(
-            hir_func, *input.symbol_table, *input.type_arena);
-        mir::FunctionId mir_func_id =
-            mir_arena.ReserveFunction(std::move(sig), hir_func.symbol);
-        decls.functions[hir_func.symbol] = mir_func_id;
-      }
+    // Pre-allocate MIR function IDs with frozen signatures
+    for (hir::FunctionId hir_func_id : pkg.functions) {
+      const hir::Function& hir_func = (*input.hir_arena)[hir_func_id];
+      mir::FunctionSignature sig = BuildFunctionSignature(
+          hir_func, *input.symbol_table, *input.type_arena);
+      mir::FunctionId mir_func_id =
+          mir_arena.ReserveFunction(std::move(sig), hir_func.symbol);
+      decls.functions[hir_func.symbol] = mir_func_id;
+    }
 
-      // Register package DPI imports in the design-level registry.
-      for (const auto& dpi : pkg->dpi_imports) {
-        RegisterDpiImport(dpi, decls.dpi_imports);
-      }
+    // Register package DPI imports in the design-level registry.
+    for (const auto& dpi : pkg.dpi_imports) {
+      RegisterDpiImport(dpi, decls.dpi_imports);
     }
   }
 
@@ -412,10 +412,8 @@ auto CollectDesignDeclarations(
     }
   };
 
-  for (const auto& element : design.elements) {
-    if (const auto* pkg = std::get_if<hir::Package>(&element)) {
-      collect_exports(pkg->dpi_exports);
-    }
+  for (const auto& pkg : packages) {
+    collect_exports(pkg.dpi_exports);
   }
   for (const auto& body : module_bodies) {
     collect_exports(body.dpi_exports);

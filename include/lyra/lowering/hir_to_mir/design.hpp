@@ -20,8 +20,7 @@ namespace lyra::lowering::hir_to_mir {
 // InstanceConstBlock in PlacementMap, not stored in mir::Design.
 // Does NOT produce specialization-local body declarations.
 auto CollectDesignDeclarations(
-    const hir::Design& design, const LoweringInput& input,
-    mir::Arena& mir_arena) -> DesignDeclarations;
+    const LoweringInput& input, mir::Arena& mir_arena) -> DesignDeclarations;
 
 // Collect specialization-local storage for one module.
 // Allocates kModuleSlot places (0-based) independently of design-global

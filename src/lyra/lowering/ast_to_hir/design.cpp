@@ -190,14 +190,13 @@ auto GetFirstNonTransparentAncestor(const slang::ast::Symbol& start)
 // Attach a DpiExportDecl to its owning package or module body container.
 void AttachDpiExportDecl(
     const slang::ast::Symbol& owner, hir::DpiExportDecl decl,
-    std::unordered_map<const slang::ast::Symbol*, size_t>& pkg_to_element_idx,
+    std::unordered_map<const slang::ast::Symbol*, size_t>& pkg_to_package_idx,
     std::unordered_map<const slang::ast::Symbol*, size_t>& scope_to_body_idx,
-    std::vector<hir::DesignElement>& elements,
+    std::vector<hir::Package>& packages,
     std::vector<hir::ModuleBody>& module_bodies) {
-  if (auto it = pkg_to_element_idx.find(&owner);
-      it != pkg_to_element_idx.end()) {
-    auto& pkg = std::get<hir::Package>(elements[it->second]);
-    pkg.dpi_exports.push_back(std::move(decl));
+  if (auto it = pkg_to_package_idx.find(&owner);
+      it != pkg_to_package_idx.end()) {
+    packages[it->second].dpi_exports.push_back(std::move(decl));
     return;
   }
   if (auto it = scope_to_body_idx.find(&owner); it != scope_to_body_idx.end()) {
@@ -804,7 +803,8 @@ auto LowerDesign(
 
   const slang::ast::RootSymbol& root = compilation.getRoot();
 
-  std::vector<hir::DesignElement> elements;
+  std::vector<hir::Package> packages;
+  std::vector<hir::Module> modules;
 
   // BFS traversal to collect all instances.
   // Also collect pending port bindings (slang pointers, valid during this
@@ -901,15 +901,15 @@ auto LowerDesign(
       LowerPortBindings(pending_bindings, registrar, ctx);
 
   // Lower packages (independent of instances).
-  // Track package pointer -> elements index for DPI export attachment.
-  std::unordered_map<const slang::ast::Symbol*, size_t> pkg_to_element_idx;
+  // Track package pointer -> packages index for DPI export attachment.
+  std::unordered_map<const slang::ast::Symbol*, size_t> pkg_to_package_idx;
   for (const slang::ast::PackageSymbol* pkg : compilation.getPackages()) {
     if (pkg->name == "std") {
       continue;
     }
-    size_t idx = elements.size();
-    elements.emplace_back(LowerPackage(*pkg, registrar, ctx));
-    pkg_to_element_idx[pkg] = idx;
+    size_t idx = packages.size();
+    packages.push_back(LowerPackage(*pkg, registrar, ctx));
+    pkg_to_package_idx[pkg] = idx;
   }
 
   auto [body_inputs, instance_inputs] =
@@ -987,7 +987,7 @@ auto LowerDesign(
     auto mod = CollectModuleInstance(
         *all_instances[i], instance_inputs[i], registrar, ctx,
         spec_map.spec_id_by_instance[i].def_id, body_id_by_instance[i]);
-    elements.emplace_back(std::move(mod));
+    modules.push_back(std::move(mod));
   }
 
   // Build instance table for %m support.
@@ -1091,7 +1091,7 @@ auto LowerDesign(
     }
 
     AttachDpiExportDecl(
-        owner, std::move(decl), pkg_to_element_idx, scope_to_body_idx, elements,
+        owner, std::move(decl), pkg_to_package_idx, scope_to_body_idx, packages,
         module_bodies);
   }
 
@@ -1100,8 +1100,9 @@ auto LowerDesign(
           DesignLoweringResult{
               .design =
                   hir::Design{
-                      .elements = std::move(elements),
+                      .modules = std::move(modules),
                   },
+              .packages = std::move(packages),
               .module_bodies = std::move(module_bodies),
           },
       .composition =

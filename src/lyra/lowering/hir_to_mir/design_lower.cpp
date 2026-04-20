@@ -165,17 +165,21 @@ auto LowerDesign(
     const hir::Design& design, const LoweringInput& input,
     mir::Arena& mir_arena, OriginMap* origin_map)
     -> Result<DesignLoweringResult> {
+  if (input.packages == nullptr) {
+    throw common::InternalError(
+        "LowerDesign", "LoweringInput::packages is null");
+  }
   if (input.module_bodies == nullptr) {
     throw common::InternalError(
         "LowerDesign", "LoweringInput::module_bodies is null");
   }
+  const auto& packages = *input.packages;
   const auto& module_bodies = *input.module_bodies;
 
   // Phase 0: Design-global declaration collection.
   // All design-global places and package function reservations go into
   // the design arena (mir_arena). This is immutable after Phase 0.
-  const DesignDeclarations decls =
-      CollectDesignDeclarations(design, input, mir_arena);
+  const DesignDeclarations decls = CollectDesignDeclarations(input, mir_arena);
 
   // Surface export signature diagnostics as user-facing errors.
   if (!decls.export_diagnostics.empty()) {
@@ -226,28 +230,26 @@ auto LowerDesign(
       .functions = &decls.functions,
       .slots = &decls.slots,
       .dpi_imports = &decls.dpi_imports};
-  for (const auto& element : design.elements) {
-    if (const auto* pkg = std::get_if<hir::Package>(&element)) {
-      if (pkg->init_process) {
-        hir::ProcessId hir_proc_id = pkg->init_process;
-        const hir::Process& proc = (*input.hir_arena)[hir_proc_id];
-        Result<mir::ProcessId> mir_proc_result = LowerProcess(
-            hir_proc_id, proc, input, mir_arena, init_view, origin_map,
-            &result.generated_functions);
-        if (!mir_proc_result) {
-          return std::unexpected(mir_proc_result.error());
-        }
-        result.init_processes.push_back(*mir_proc_result);
-      }
+  for (const auto& pkg : packages) {
+    if (!pkg.init_process) {
+      continue;
     }
+    hir::ProcessId hir_proc_id = pkg.init_process;
+    const hir::Process& proc = (*input.hir_arena)[hir_proc_id];
+    Result<mir::ProcessId> mir_proc_result = LowerProcess(
+        hir_proc_id, proc, input, mir_arena, init_view, origin_map,
+        &result.generated_functions);
+    if (!mir_proc_result) {
+      return std::unexpected(mir_proc_result.error());
+    }
+    result.init_processes.push_back(*mir_proc_result);
   }
 
-  // Collect HIR modules in element order (parallel to module_index)
+  // Collect HIR modules in design.modules order (parallel to module_index)
   std::vector<const hir::Module*> hir_modules;
-  for (const auto& element : design.elements) {
-    if (const auto* mod = std::get_if<hir::Module>(&element)) {
-      hir_modules.push_back(mod);
-    }
+  hir_modules.reserve(design.modules.size());
+  for (const auto& mod : design.modules) {
+    hir_modules.push_back(&mod);
   }
 
   const auto& spec_map = *input.specialization_map;
@@ -575,8 +577,9 @@ auto LowerDesign(
     header_ids_by_spec[group.spec_id] = header_id;
   }
 
-  // Phase 2b: Emit one mir::Module per HIR module instance and build placement.
-  // Walk design elements in original order to preserve instance ordering.
+  // Phase 2b: Emit MIR design elements and build placement.
+  // Packages first, then modules -- matches the ABI ordering contract
+  // enforced by CollectDesignDeclarations (packages occupy low slot IDs).
   // Build ConstructionInput directly -- the single source of truth for
   // per-object constructor-owned data.
   mir::ConstructionInput construction;
@@ -587,66 +590,64 @@ auto LowerDesign(
     construction.hierarchy_nodes = *input.hierarchy_nodes;
   }
 
+  for (const auto& pkg : packages) {
+    Result<mir::Package> pkg_result =
+        LowerPackage(pkg, input, mir_arena, origin_map, decls);
+    if (!pkg_result) {
+      return std::unexpected(pkg_result.error());
+    }
+    result.elements.emplace_back(std::move(*pkg_result));
+  }
+
   uint32_t next_placement_base = decls.num_package_slots;
   uint32_t module_index = 0;
-  for (const auto& element : design.elements) {
-    if (std::holds_alternative<hir::Module>(element)) {
-      const auto& mod = std::get<hir::Module>(element);
-      if (module_index >= spec_map.spec_id_by_instance.size()) {
-        throw common::InternalError(
-            "LowerDesign", "module index exceeds specialization map size");
-      }
-      auto spec_id = spec_map.spec_id_by_instance[module_index];
-      auto it = spec_to_body.find(spec_id);
-      if (it == spec_to_body.end()) {
-        throw common::InternalError(
-            "LowerDesign", "no body lowered for specialization");
-      }
-      // Safe pointer capture: Phase 2 finished pushing to module_bodies
-      // before Phase 2b began, so &module_bodies[i] is stable for the
-      // lifetime of the design.
-      const auto& body = result.module_bodies.at(it->second.value);
-      result.elements.emplace_back(
-          mir::Module{.instance_sym = mod.symbol, .body = &body});
-      auto slot_count = static_cast<uint32_t>(body.slots.size());
-
-      // Build InstanceConstBlock directly from HIR param values.
-      // Body-local slot indices: params start after variables + nets.
-      mir::InstanceConstBlock const_block;
-      {
-        auto param_slot_base =
-            static_cast<uint32_t>(mod.variables.size() + mod.nets.size());
-        for (size_t pi = 0; pi < mod.param_init_values.size(); ++pi) {
-          const_block.slot_inits.push_back(
-              mir::ConstSlotInit{
-                  .body_local_slot =
-                      param_slot_base + static_cast<uint32_t>(pi),
-                  .value = mod.param_init_values[pi],
-              });
-        }
-      }
-      construction.const_blocks.push_back(std::move(const_block));
-
-      construction.objects.push_back(
-          mir::ObjectRecord{
-              .body_group = it->second.value,
-              .path_index = module_index,
-              .design_state_base_slot = next_placement_base,
-              .slot_count = slot_count,
-              .spec_id = spec_id,
-              .instance_sym = mod.symbol,
-          });
-
-      next_placement_base += slot_count;
-      ++module_index;
-    } else if (const auto* pkg = std::get_if<hir::Package>(&element)) {
-      Result<mir::Package> pkg_result =
-          LowerPackage(*pkg, input, mir_arena, origin_map, decls);
-      if (!pkg_result) {
-        return std::unexpected(pkg_result.error());
-      }
-      result.elements.emplace_back(std::move(*pkg_result));
+  for (const auto& mod : design.modules) {
+    if (module_index >= spec_map.spec_id_by_instance.size()) {
+      throw common::InternalError(
+          "LowerDesign", "module index exceeds specialization map size");
     }
+    auto spec_id = spec_map.spec_id_by_instance[module_index];
+    auto it = spec_to_body.find(spec_id);
+    if (it == spec_to_body.end()) {
+      throw common::InternalError(
+          "LowerDesign", "no body lowered for specialization");
+    }
+    // Safe pointer capture: Phase 2 finished pushing to module_bodies
+    // before Phase 2b began, so &module_bodies[i] is stable for the
+    // lifetime of the design.
+    const auto& body = result.module_bodies.at(it->second.value);
+    result.elements.emplace_back(
+        mir::Module{.instance_sym = mod.symbol, .body = &body});
+    auto slot_count = static_cast<uint32_t>(body.slots.size());
+
+    // Build InstanceConstBlock directly from HIR param values.
+    // Body-local slot indices: params start after variables + nets.
+    mir::InstanceConstBlock const_block;
+    {
+      auto param_slot_base =
+          static_cast<uint32_t>(mod.variables.size() + mod.nets.size());
+      for (size_t pi = 0; pi < mod.param_init_values.size(); ++pi) {
+        const_block.slot_inits.push_back(
+            mir::ConstSlotInit{
+                .body_local_slot = param_slot_base + static_cast<uint32_t>(pi),
+                .value = mod.param_init_values[pi],
+            });
+      }
+    }
+    construction.const_blocks.push_back(std::move(const_block));
+
+    construction.objects.push_back(
+        mir::ObjectRecord{
+            .body_group = it->second.value,
+            .path_index = module_index,
+            .design_state_base_slot = next_placement_base,
+            .slot_count = slot_count,
+            .spec_id = spec_id,
+            .instance_sym = mod.symbol,
+        });
+
+    next_placement_base += slot_count;
+    ++module_index;
   }
 
   // Enforce objects/const-blocks parallelism invariant.

@@ -62,7 +62,7 @@ auto DumpHir(const CompilationInput& input) -> int {
   hir::Dumper dumper(
       result.hir_arena.get(), result.type_arena.get(),
       result.constant_arena.get(), result.symbol_table.get(), &std::cout);
-  dumper.Dump(result.design, result.module_bodies);
+  dumper.Dump(result.design, result.module_bodies, result.packages);
 
   output.Flush();
   return 0;
@@ -111,6 +111,7 @@ auto DumpMir(const CompilationInput& input) -> int {
 
   lowering::hir_to_mir::LoweringInput mir_input{
       .design = &hir_result.design,
+      .packages = &hir_result.packages,
       .module_bodies = &hir_result.module_bodies,
       .hir_arena = hir_result.hir_arena.get(),
       .type_arena = hir_result.type_arena.get(),
@@ -188,6 +189,7 @@ auto DumpDpiHeader(const CompilationInput& input) -> int {
 
   lowering::hir_to_mir::LoweringInput mir_input{
       .design = &hir_result.design,
+      .packages = &hir_result.packages,
       .module_bodies = &hir_result.module_bodies,
       .hir_arena = hir_result.hir_arena.get(),
       .type_arena = hir_result.type_arena.get(),
@@ -263,6 +265,7 @@ auto DumpLlvm(const CompilationInput& input) -> int {
 
   lowering::hir_to_mir::LoweringInput mir_input{
       .design = &hir_result.design,
+      .packages = &hir_result.packages,
       .module_bodies = &hir_result.module_bodies,
       .hir_arena = hir_result.hir_arena.get(),
       .type_arena = hir_result.type_arena.get(),

@@ -15,6 +15,7 @@
 #include "lyra/hir/design.hpp"
 #include "lyra/hir/dpi.hpp"
 #include "lyra/hir/module_body.hpp"
+#include "lyra/hir/package.hpp"
 #include "lyra/lowering/ast_to_hir/port_binding.hpp"
 #include "lyra/lowering/hir_to_mir/context.hpp"
 #include "lyra/lowering/origin_map.hpp"
@@ -28,6 +29,9 @@ namespace lyra::lowering::hir_to_mir {
 
 struct LoweringInput {
   const hir::Design* design = nullptr;
+  // Per-compilation-unit HIR packages. Sibling to design because packages
+  // are per-CU semantic output. Must be non-null.
+  const std::vector<hir::Package>* packages = nullptr;
   // Per-specialization-group HIR module bodies. Sibling to design because
   // bodies are per-CU semantic output. Must be non-null.
   const std::vector<hir::ModuleBody>* module_bodies = nullptr;
