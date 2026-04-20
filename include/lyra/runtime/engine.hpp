@@ -46,7 +46,6 @@
 #include "lyra/runtime/scheduler_snapshot.hpp"
 #include "lyra/runtime/signal_coord.hpp"
 #include "lyra/runtime/slot_meta.hpp"
-#include "lyra/runtime/small_byte_buffer.hpp"
 #include "lyra/runtime/trace_selection.hpp"
 #include "lyra/runtime/trace_signal_meta.hpp"
 #include "lyra/runtime/trap.hpp"
@@ -873,6 +872,11 @@ class Engine {
 
   // Register suspend record pointers for post-activation reconciliation.
   void RegisterSuspendRecords(std::span<SuspendRecord*> records);
+
+  // Bind each RuntimeProcess to its frame/state storage. Called once at
+  // simulation setup, after process states are allocated and before any
+  // process activation runs.
+  void RegisterFrameStates(std::span<void*> states);
 
   // Single source of truth for whether the engine uses post-activation
   // reconciliation (new path) vs legacy HandleSuspendRecord (old path).

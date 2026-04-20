@@ -98,6 +98,13 @@ struct RuntimeProcess {
 
   // Dedup flag indicating this process is in pending_deferred_processes_.
   bool deferred_pending = false;
+
+  // Back-pointer to this process's frame/state storage. Written once during
+  // engine setup (Engine::RegisterFrameStates) and never mutated afterward.
+  // Lets runtime code that already holds a RuntimeProcess reach frame-backed
+  // state without going through process-id indexing or frame-header
+  // round-trips.
+  void* frame_state = nullptr;
 };
 
 }  // namespace lyra::runtime

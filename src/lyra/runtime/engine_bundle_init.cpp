@@ -948,6 +948,19 @@ void Engine::InitModuleInstancesFromBundles(
   }
 }
 
+void Engine::RegisterFrameStates(std::span<void*> states) {
+  if (states.size() != processes_.size()) {
+    throw common::InternalError(
+        "Engine::RegisterFrameStates",
+        std::format(
+            "states size {} != processes_ size {}", states.size(),
+            processes_.size()));
+  }
+  for (size_t i = 0; i < states.size(); ++i) {
+    processes_[i].frame_state = states[i];
+  }
+}
+
 void Engine::InitInstanceTimeMetadata(
     std::span<const InstanceMetadataBundle> bundles) {
   for (const auto& b : bundles) {

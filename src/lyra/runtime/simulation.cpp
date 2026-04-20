@@ -100,6 +100,10 @@ auto SetupAndRunSimulation(
     header->engine_ptr = &engine;
   }
 
+  // Bind RuntimeProcess -> frame state back-pointer once per simulation,
+  // covering both connection and module processes uniformly.
+  engine.RegisterFrameStates(states);
+
   // Set design state base for flush-based trace snapshots.
   // Codegen invariant: all process states share the same DesignState pointer.
   if (!states.empty()) {
