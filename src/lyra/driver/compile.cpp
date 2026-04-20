@@ -71,7 +71,7 @@ auto Compile(
     feature_flags |= runtime::ToUint32(runtime::FeatureFlag::kDumpSuspended);
   }
   auto origin_provenance = lowering::BuildBodyOriginProvenance(
-      compilation.mir.body_origins, compilation.hir.design,
+      compilation.mir.body_origins, compilation.hir.module_bodies,
       compilation.mir.design.module_bodies);
 
   lowering::mir_to_llvm::LoweringInput llvm_input{

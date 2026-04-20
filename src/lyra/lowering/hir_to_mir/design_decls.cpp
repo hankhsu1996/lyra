@@ -302,6 +302,12 @@ void CheckDpiVisibleNameCollisions(DesignDeclarations& decls) {
 auto CollectDesignDeclarations(
     const hir::Design& design, const LoweringInput& input,
     mir::Arena& mir_arena) -> DesignDeclarations {
+  if (input.module_bodies == nullptr) {
+    throw common::InternalError(
+        "CollectDesignDeclarations", "LoweringInput::module_bodies is null");
+  }
+  const auto& module_bodies = *input.module_bodies;
+
   DesignDeclarations decls;
   int next_slot = 0;
 
@@ -373,7 +379,7 @@ auto CollectDesignDeclarations(
   }
 
   // Collect module-body DPI imports into the design-level registry.
-  for (const auto& body : design.module_bodies) {
+  for (const auto& body : module_bodies) {
     for (const auto& dpi : body.dpi_imports) {
       RegisterDpiImport(dpi, decls.dpi_imports);
     }
@@ -411,7 +417,7 @@ auto CollectDesignDeclarations(
       collect_exports(pkg->dpi_exports);
     }
   }
-  for (const auto& body : design.module_bodies) {
+  for (const auto& body : module_bodies) {
     collect_exports(body.dpi_exports);
   }
 

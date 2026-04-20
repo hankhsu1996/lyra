@@ -1101,8 +1101,8 @@ auto LowerDesign(
               .design =
                   hir::Design{
                       .elements = std::move(elements),
-                      .module_bodies = std::move(module_bodies),
                   },
+              .module_bodies = std::move(module_bodies),
           },
       .composition =
           DesignCompositionMetadata{

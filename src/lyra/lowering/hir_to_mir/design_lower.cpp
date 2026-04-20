@@ -165,6 +165,12 @@ auto LowerDesign(
     const hir::Design& design, const LoweringInput& input,
     mir::Arena& mir_arena, OriginMap* origin_map)
     -> Result<DesignLoweringResult> {
+  if (input.module_bodies == nullptr) {
+    throw common::InternalError(
+        "LowerDesign", "LoweringInput::module_bodies is null");
+  }
+  const auto& module_bodies = *input.module_bodies;
+
   // Phase 0: Design-global declaration collection.
   // All design-global places and package function reservations go into
   // the design arena (mir_arena). This is immutable after Phase 0.
@@ -280,8 +286,7 @@ auto LowerDesign(
           "LowerDesign", "representative module index out of range");
     }
     const hir::Module& rep_mod = *hir_modules[rep_idx];
-    const hir::ModuleBody& hir_body =
-        design.module_bodies[rep_mod.body_id.value];
+    const hir::ModuleBody& hir_body = module_bodies[rep_mod.body_id.value];
 
     // Enter body-local artifact domain: HIR, constants, and MIR all
     // switch to body-owned storage for this specialization group.
@@ -393,8 +398,7 @@ auto LowerDesign(
     for (size_t g = 0; g < spec_groups.size(); ++g) {
       uint32_t rep_idx = spec_groups[g].representative_module_index;
       const hir::Module& rep_mod = *hir_modules[rep_idx];
-      const hir::ModuleBody& hir_body =
-          design.module_bodies[rep_mod.body_id.value];
+      const hir::ModuleBody& hir_body = module_bodies[rep_mod.body_id.value];
       mir::ModuleBodyId body_id{static_cast<uint32_t>(g)};
       auto map_it = body_function_maps.find(body_id.value);
       if (map_it == body_function_maps.end()) continue;

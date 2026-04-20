@@ -268,6 +268,7 @@ auto PrepareLlvmModule(
   auto t_mir = Clock::now();
   lowering::hir_to_mir::LoweringInput mir_input{
       .design = &hir_result.design,
+      .module_bodies = &hir_result.module_bodies,
       .hir_arena = hir_result.hir_arena.get(),
       .type_arena = hir_result.type_arena.get(),
       .active_constant_arena = hir_result.constant_arena.get(),
@@ -362,7 +363,7 @@ auto PrepareLlvmModule(
   }
 
   auto origin_provenance = lowering::BuildBodyOriginProvenance(
-      mir_result->body_origins, hir_result.design,
+      mir_result->body_origins, hir_result.module_bodies,
       mir_result->design.module_bodies);
 
   lowering::mir_to_llvm::LoweringInput llvm_input{

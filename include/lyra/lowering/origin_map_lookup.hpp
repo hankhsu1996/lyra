@@ -9,7 +9,7 @@
 #include "lyra/common/overloaded.hpp"
 #include "lyra/common/source_span.hpp"
 #include "lyra/hir/arena.hpp"
-#include "lyra/hir/design.hpp"
+#include "lyra/hir/module_body.hpp"
 #include "lyra/lowering/origin_map.hpp"
 #include "lyra/mir/module_body.hpp"
 
@@ -35,19 +35,18 @@ struct BodyOriginProvenance {
   }
 };
 
-// Build provenance table from body-local origins, HIR design, and MIR
-// module bodies. body_origins[i] and mir_bodies[i] must correspond to
-// the same specialization group.
+// Build provenance table from body-local origins, HIR bodies, and MIR
+// module bodies. body_origins[i], hir_bodies[i], and mir_bodies[i] must
+// correspond to the same specialization group.
 inline auto BuildBodyOriginProvenance(
     const std::vector<std::vector<OriginEntry>>& body_origins,
-    const hir::Design& design, const std::vector<mir::ModuleBody>& mir_bodies)
-    -> BodyOriginProvenance {
+    std::span<const hir::ModuleBody> hir_bodies,
+    const std::vector<mir::ModuleBody>& mir_bodies) -> BodyOriginProvenance {
   BodyOriginProvenance result;
   result.by_body.reserve(body_origins.size());
   for (size_t i = 0; i < body_origins.size(); ++i) {
-    const hir::Arena* arena = (i < design.module_bodies.size())
-                                  ? &design.module_bodies[i].arena
-                                  : nullptr;
+    const hir::Arena* arena =
+        (i < hir_bodies.size()) ? &hir_bodies[i].arena : nullptr;
     if (i < mir_bodies.size()) {
       result.by_body[&mir_bodies[i]] = {
           .origins = body_origins[i], .arena = arena};

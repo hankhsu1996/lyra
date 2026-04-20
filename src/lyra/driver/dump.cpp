@@ -62,7 +62,7 @@ auto DumpHir(const CompilationInput& input) -> int {
   hir::Dumper dumper(
       result.hir_arena.get(), result.type_arena.get(),
       result.constant_arena.get(), result.symbol_table.get(), &std::cout);
-  dumper.Dump(result.design);
+  dumper.Dump(result.design, result.module_bodies);
 
   output.Flush();
   return 0;
@@ -111,6 +111,7 @@ auto DumpMir(const CompilationInput& input) -> int {
 
   lowering::hir_to_mir::LoweringInput mir_input{
       .design = &hir_result.design,
+      .module_bodies = &hir_result.module_bodies,
       .hir_arena = hir_result.hir_arena.get(),
       .type_arena = hir_result.type_arena.get(),
       .active_constant_arena = hir_result.constant_arena.get(),
@@ -187,6 +188,7 @@ auto DumpDpiHeader(const CompilationInput& input) -> int {
 
   lowering::hir_to_mir::LoweringInput mir_input{
       .design = &hir_result.design,
+      .module_bodies = &hir_result.module_bodies,
       .hir_arena = hir_result.hir_arena.get(),
       .type_arena = hir_result.type_arena.get(),
       .active_constant_arena = hir_result.constant_arena.get(),
@@ -261,6 +263,7 @@ auto DumpLlvm(const CompilationInput& input) -> int {
 
   lowering::hir_to_mir::LoweringInput mir_input{
       .design = &hir_result.design,
+      .module_bodies = &hir_result.module_bodies,
       .hir_arena = hir_result.hir_arena.get(),
       .type_arena = hir_result.type_arena.get(),
       .active_constant_arena = hir_result.constant_arena.get(),
@@ -291,7 +294,7 @@ auto DumpLlvm(const CompilationInput& input) -> int {
   lowering::DiagnosticContext diag_ctx(origin_lookup);
 
   auto origin_provenance = lowering::BuildBodyOriginProvenance(
-      mir_result->body_origins, hir_result.design,
+      mir_result->body_origins, hir_result.module_bodies,
       mir_result->design.module_bodies);
 
   lowering::mir_to_llvm::LoweringInput llvm_input{

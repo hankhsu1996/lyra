@@ -33,7 +33,7 @@ auto BuildCompilationUnitInputForPrototype(
     -> Result<lowering::hir_to_xir::CompilationUnitInput> {
   const auto& design = hir_result.design;
 
-  if (design.module_bodies.size() != 1) {
+  if (hir_result.module_bodies.size() != 1) {
     return std::unexpected(
         Diagnostic::HostError(
             "emit-cpp prototype: requires exactly one module body"));
@@ -59,7 +59,7 @@ auto BuildCompilationUnitInputForPrototype(
             "emit-cpp prototype: module body_id does not point to body 0"));
   }
 
-  const auto& body = design.module_bodies[0];
+  const auto& body = hir_result.module_bodies[0];
   const auto& sym = (*hir_result.symbol_table)[module->symbol];
 
   return lowering::hir_to_xir::CompilationUnitInput{
@@ -179,7 +179,7 @@ auto EmitCpp(const CompilationInput& input, const std::string& output_dir)
 
   auto per_cu = projection::cpp::ProjectPerCU(
       *xir_cu, *hir_result.type_arena,
-      hir_result.design.module_bodies[0].constant_arena);
+      hir_result.module_bodies[0].constant_arena);
   if (!per_cu) {
     output.PrintDiagnostic(per_cu.error());
     output.Flush();

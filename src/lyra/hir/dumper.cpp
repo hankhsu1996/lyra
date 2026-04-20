@@ -93,8 +93,9 @@ auto Dumper::ConstantString(ConstId id) const -> std::string {
   return "<constant>";
 }
 
-void Dumper::Dump(const Design& design) {
-  current_design_ = &design;
+void Dumper::Dump(
+    const Design& design, std::span<const ModuleBody> module_bodies) {
+  current_module_bodies_ = module_bodies;
   *out_ << "Design {\n";
   Indent();
   for (const auto& element : design.elements) {
@@ -102,7 +103,7 @@ void Dumper::Dump(const Design& design) {
   }
   Dedent();
   *out_ << "}\n";
-  current_design_ = nullptr;
+  current_module_bodies_ = {};
 }
 
 void Dumper::Dump(const Module& module) {
@@ -110,22 +111,18 @@ void Dumper::Dump(const Module& module) {
   *out_ << std::format("Module {} {{\n", SymbolName(module.symbol));
   Indent();
 
-  if (current_design_ == nullptr) {
-    throw common::InternalError(
-        "Dumper::Dump(Module)", "missing design context for body resolution");
-  }
   if (!module.body_id) {
     throw common::InternalError(
         "Dumper::Dump(Module)", "invalid body_id on module instance record");
   }
-  if (module.body_id.value >= current_design_->module_bodies.size()) {
+  if (module.body_id.value >= current_module_bodies_.size()) {
     throw common::InternalError(
         "Dumper::Dump(Module)",
         std::format(
             "body_id {} out of range (module_bodies size {})",
-            module.body_id.value, current_design_->module_bodies.size()));
+            module.body_id.value, current_module_bodies_.size()));
   }
-  const auto& body = current_design_->module_bodies[module.body_id.value];
+  const auto& body = current_module_bodies_[module.body_id.value];
   const hir::Arena* saved_arena = arena_;
   const ConstantArena* saved_constants = constants_;
   arena_ = &body.arena;

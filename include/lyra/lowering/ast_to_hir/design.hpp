@@ -8,6 +8,7 @@
 #include "lyra/common/module_identity.hpp"
 #include "lyra/hir/design.hpp"
 #include "lyra/hir/dpi.hpp"
+#include "lyra/hir/module_body.hpp"
 #include "lyra/lowering/ast_to_hir/port_binding.hpp"
 #include "lyra/mir/instance.hpp"
 
@@ -18,6 +19,10 @@ class SymbolRegistrar;
 
 struct DesignLoweringResult {
   hir::Design design;
+  // Per-specialization-group module bodies. Indexed by ModuleBodyId.
+  // Sibling to hir::Design because bodies are per-CU semantic output,
+  // not whole-design shell state.
+  std::vector<hir::ModuleBody> module_bodies;
 };
 
 struct DesignCompositionMetadata {

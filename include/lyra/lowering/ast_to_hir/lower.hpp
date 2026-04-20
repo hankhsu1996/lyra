@@ -17,6 +17,7 @@
 #include "lyra/hir/arena.hpp"
 #include "lyra/hir/design.hpp"
 #include "lyra/hir/dpi.hpp"
+#include "lyra/hir/module_body.hpp"
 #include "lyra/lowering/ast_to_hir/options.hpp"
 #include "lyra/lowering/ast_to_hir/port_binding.hpp"
 #include "lyra/lowering/ast_to_hir/source_mapper.hpp"
@@ -26,6 +27,10 @@ namespace lyra::lowering::ast_to_hir {
 
 struct LoweringResult {
   hir::Design design;
+  // Per-specialization-group module bodies. Indexed by ModuleBodyId.
+  // Sibling to hir::Design because bodies are per-CU semantic output,
+  // not whole-design shell state.
+  std::vector<hir::ModuleBody> module_bodies;
   // Design-global HIR arena for design-level HIR nodes (package lowering,
   // port binding expressions). Body-local HIR is in each ModuleBody's arena.
   std::unique_ptr<hir::Arena> hir_arena;

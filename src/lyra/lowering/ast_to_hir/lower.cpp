@@ -70,6 +70,7 @@ auto LowerAstToHir(
 
   LoweringResult hir_result{
       .design = std::move(design_output.hir.design),
+      .module_bodies = std::move(design_output.hir.module_bodies),
       .hir_arena = std::move(hir_arena),
       .type_arena = std::move(type_arena),
       .constant_arena = std::move(constant_arena),
