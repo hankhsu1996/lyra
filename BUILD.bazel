@@ -56,6 +56,27 @@ cc_library(
 )
 
 cc_library(
+    name = "xir",
+    hdrs = glob(["include/lyra/xir/*.hpp"]),
+    includes = ["include"],
+    visibility = ["//visibility:public"],
+    deps = [":common"],
+)
+
+cc_library(
+    name = "projection_cpp",
+    srcs = glob(["src/lyra/projection/cpp/*.cpp"]),
+    hdrs = glob(["include/lyra/projection/cpp/*.hpp"]),
+    includes = ["include"],
+    visibility = ["//visibility:public"],
+    deps = [
+        ":common",
+        ":runtime",
+        ":xir",
+    ],
+)
+
+cc_library(
     name = "mir",
     srcs = glob(["src/lyra/mir/*.cpp"]) + glob(["src/lyra/mir/passes/*.cpp"]),
     hdrs = glob(["include/lyra/mir/*.hpp"]) + glob(["include/lyra/mir/passes/*.hpp"]),
@@ -101,6 +122,12 @@ cc_static_library(
     deps = [":runtime"],
 )
 
+cc_static_library(
+    name = "lyra_projection_runtime",
+    visibility = ["//visibility:public"],
+    deps = [":projection_cpp"],
+)
+
 cc_library(
     name = "realization",
     srcs = glob(["src/lyra/realization/**/*.cpp"]),
@@ -126,6 +153,7 @@ cc_library(
         ":hir",
         ":mir",
         ":semantic",
+        ":xir",
         "@slang",
     ],
 )
@@ -177,7 +205,9 @@ cc_binary(
         "src/lyra/driver/*.hpp",
     ]),
     data = [
+        "include/lyra/projection/cpp/runtime_bridge.hpp",
         ":liblyra_runtime.so",
+        ":lyra_projection_runtime",
         ":lyra_runtime_static",
     ],
     linkopts = ["-Wl,--export-dynamic"],  # Export symbols for ORC JIT
@@ -187,6 +217,7 @@ cc_binary(
         ":llvm_backend",
         ":lowering",
         ":mir",
+        ":projection_cpp",
         ":realization",
         ":runtime",
         "@argparse",

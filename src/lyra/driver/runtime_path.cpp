@@ -60,4 +60,34 @@ auto FindRuntimeLibrary(
   return {};
 }
 
+auto FindRuntimeSupportFile(
+    std::string_view repo_relative_path, std::vector<std::string>& tried_paths)
+    -> std::filesystem::path {
+  namespace fs = std::filesystem;
+
+  fs::path exe_path;
+  try {
+    exe_path = fs::read_symlink("/proc/self/exe");
+  } catch (const fs::filesystem_error&) {
+    // Non-Linux or sandboxed -- fall through to CWD check.
+  }
+
+  if (!exe_path.empty()) {
+    auto runfiles_path = fs::path(exe_path.string() + ".runfiles") / "_main" /
+                         repo_relative_path;
+    tried_paths.push_back(runfiles_path.string());
+    if (fs::exists(runfiles_path)) {
+      return runfiles_path;
+    }
+  }
+
+  auto cwd_path = fs::current_path() / repo_relative_path;
+  tried_paths.push_back(cwd_path.string());
+  if (fs::exists(cwd_path)) {
+    return cwd_path;
+  }
+
+  return {};
+}
+
 }  // namespace lyra::driver

@@ -18,6 +18,7 @@
 #include "compilation_output.hpp"
 #include "compile.hpp"
 #include "dump.hpp"
+#include "emit_cpp.hpp"
 #include "input.hpp"
 #include "lyra/common/diagnostic/diagnostic.hpp"
 #include "lyra/common/internal_error.hpp"
@@ -87,6 +88,15 @@ auto main(int argc, char* argv[]) -> int {
   compile_cmd.add_argument("files").remaining().help(
       "Source files (uses lyra.toml if not specified)");
 
+  argparse::ArgumentParser emit_cmd("emit");
+  emit_cmd.add_description("Emit projected C++ for a compilation unit");
+  emit_cmd.add_argument("-o", "--output")
+      .default_value(std::string("out"))
+      .help("Output directory (default: out/)");
+  lyra::driver::AddCompilationFlags(emit_cmd);
+  emit_cmd.add_argument("files").remaining().help(
+      "Source files (uses lyra.toml if not specified)");
+
   argparse::ArgumentParser init_cmd("init");
   init_cmd.add_description("Create a new Lyra project");
   init_cmd.add_argument("name").nargs(0, 1).help("Project name");
@@ -99,6 +109,7 @@ auto main(int argc, char* argv[]) -> int {
   program.add_subparser(compile_cmd);
   program.add_subparser(check_cmd);
   program.add_subparser(dump_cmd);
+  program.add_subparser(emit_cmd);
   program.add_subparser(init_cmd);
 
   try {
@@ -224,6 +235,13 @@ auto main(int argc, char* argv[]) -> int {
         case lyra::driver::DumpFormat::kLlvm:
           return lyra::driver::DumpLlvm(*input);
       }
+    }
+
+    if (program.is_subcommand_used("emit")) {
+      auto input = prepare(emit_cmd);
+      if (!input) return 1;
+      std::string emit_output_dir = emit_cmd.get<std::string>("-o");
+      return lyra::driver::EmitCpp(*input, emit_output_dir);
     }
 
     if (program.is_subcommand_used("init")) {
