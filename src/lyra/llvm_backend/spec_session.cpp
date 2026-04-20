@@ -58,8 +58,7 @@ auto CaptureDeferredCalleeInfoForBody(
 
 auto CompileModuleSpecSession(
     Context& context, const CuFacts& facts,
-    const CompiledModuleSpecInput& input,
-    const mir::ConstructionInput* construction) -> Result<CompiledModuleSpec> {
+    const CompiledModuleSpecInput& input) -> Result<CompiledModuleSpec> {
   const auto& body = *input.body;
   Context::ArenaScope arena_scope(context, &body.arena);
 
@@ -278,8 +277,7 @@ auto CompileSpecializations(
     input_with_bases.wait_site_base_index = running_wait_base;
     input_with_bases.back_edge_site_base_index = running_back_edge_base;
 
-    auto product = CompileModuleSpecSession(
-        context, facts, input_with_bases, input.construction);
+    auto product = CompileModuleSpecSession(context, facts, input_with_bases);
     if (!product) return std::unexpected(product.error());
 
     running_wait_base += static_cast<uint32_t>(product->wait_sites.size());
