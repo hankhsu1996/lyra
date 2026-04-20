@@ -15,7 +15,7 @@
 namespace lyra::lowering::mir_to_llvm {
 
 auto LowerRecordDecisionObservation(
-    Context& ctx, const CuFacts& facts, llvm::Value* decision_owner_id,
+    Context& ctx, llvm::Value* decision_owner_id,
     const mir::RecordDecisionObservation& obs) -> Result<void> {
   if (decision_owner_id == nullptr) {
     throw common::InternalError(

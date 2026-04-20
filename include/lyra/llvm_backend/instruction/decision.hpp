@@ -17,7 +17,7 @@ class SlotAccessResolver;
 // accidentally read ambient nullable state.
 
 auto LowerRecordDecisionObservation(
-    Context& ctx, const CuFacts& facts, llvm::Value* decision_owner_id,
+    Context& ctx, llvm::Value* decision_owner_id,
     const mir::RecordDecisionObservation& obs) -> Result<void>;
 
 auto LowerRecordDecisionObservationDynamic(

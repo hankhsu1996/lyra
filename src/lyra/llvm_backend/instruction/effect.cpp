@@ -613,7 +613,7 @@ auto LowerEffectOp(
                       UnsupportedCategory::kFeature));
             }
             return LowerRecordDecisionObservation(
-                context, facts, mode.decision_owner_id, obs);
+                context, mode.decision_owner_id, obs);
           },
           [&](const mir::RecordDecisionObservationDynamic& obs)
               -> Result<void> {
