@@ -1166,7 +1166,7 @@ void Engine::ReconcilePostActivation(RuntimeProcess& proc) {
       AddInstanceEventWaiter(
           *inst, suspend->event_id,
           EventWaiter{
-              .process_id = static_cast<uint32_t>(&proc - processes_.data()),
+              .process = &proc,
               .instance = inst,
               .resume_block = suspend->resume_block,
           });

@@ -805,8 +805,13 @@ class Engine {
   void TriggerInstanceEvent(RuntimeInstance& inst, uint32_t local_event_id) {
     auto waiters = inst.event_state.ConsumeWaiters(local_event_id);
     for (const auto& w : waiters) {
+      if (w.process == nullptr) {
+        throw common::InternalError(
+            "Engine::TriggerInstanceEvent",
+            "EventWaiter has null process pointer");
+      }
       EnqueueProcessWakeup(
-          w.process_id, w.resume_block, local_event_id, WakeCause::kEvent);
+          *w.process, w.resume_block, local_event_id, WakeCause::kEvent);
     }
   }
 
@@ -1197,7 +1202,13 @@ class Engine {
   void EnqueueProcessWakeup(
       uint32_t process_id, uint32_t resume_block, uint32_t trigger_slot,
       WakeCause cause) {
-    auto& proc = processes_[process_id];
+    EnqueueProcessWakeup(
+        processes_[process_id], resume_block, trigger_slot, cause);
+  }
+
+  void EnqueueProcessWakeup(
+      RuntimeProcess& proc, uint32_t resume_block, uint32_t trigger_slot,
+      WakeCause cause) {
     if (detailed_stats_enabled_) {
       ++stats_.detailed.wakeup_attempts;
       switch (cause) {

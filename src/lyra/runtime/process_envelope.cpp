@@ -270,11 +270,12 @@ void HandleProcessRequest(
               Access::GetProcess(engine, handle), v.resume);
 
         } else if constexpr (std::is_same_v<T, EventWaitRequest>) {
+          auto& proc = Access::GetProcess(engine, handle);
           auto& inst = engine.GetProcessInstance(handle.process_id);
           Engine::AddInstanceEventWaiter(
               inst, v.event_id,
               EventWaiter{
-                  .process_id = handle.process_id,
+                  .process = &proc,
                   .instance = &inst,
                   .resume_block = v.resume.block_index,
               });
