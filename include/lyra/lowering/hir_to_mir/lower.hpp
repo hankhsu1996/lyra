@@ -2,7 +2,6 @@
 
 #include <cstdint>
 #include <memory>
-#include <unordered_map>
 
 #include "lyra/common/body_timescale.hpp"
 #include "lyra/common/child_coord_map.hpp"
@@ -14,6 +13,7 @@
 #include "lyra/common/type_arena.hpp"
 #include "lyra/hir/arena.hpp"
 #include "lyra/hir/design.hpp"
+#include "lyra/hir/dpi.hpp"
 #include "lyra/lowering/ast_to_hir/port_binding.hpp"
 #include "lyra/lowering/hir_to_mir/context.hpp"
 #include "lyra/lowering/origin_map.hpp"
@@ -40,7 +40,7 @@ struct LoweringInput {
   int8_t global_precision_power =
       -9;  // Finest timeprecision across all modules
   const mir::InstanceTable* instance_table = nullptr;
-  const common::SpecializationMap* specialization_map;
+  const common::SpecializationMap* specialization_map = nullptr;
   // Per-definition child instance name -> repertoire coord mapping.
   // Used by design_lower for durable child-site identity.
   const common::ChildCoordMap* child_coord_map = nullptr;
@@ -49,6 +49,10 @@ struct LoweringInput {
   const std::vector<common::BodyTimeScale>* body_timescales = nullptr;
   // Full scope hierarchy including generate scopes. Built at AST->HIR time.
   const std::vector<common::HierarchyNode>* hierarchy_nodes = nullptr;
+  // Preclassified DPI export signatures from AST->HIR composition metadata.
+  // Consumed by CollectDesignDeclarations to build canonical mir::DpiSignature
+  // entries without reclassifying types. Must be non-null.
+  const hir::DpiExportSignatureCache* dpi_export_signatures = nullptr;
 };
 
 // Statistics collected during HIR->MIR lowering (for --stats output).

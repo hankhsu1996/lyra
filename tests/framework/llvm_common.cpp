@@ -280,6 +280,7 @@ auto PrepareLlvmModule(
       .child_coord_map = &composition.child_coord_map,
       .body_timescales = &composition.body_timescales,
       .hierarchy_nodes = &composition.hierarchy_nodes,
+      .dpi_export_signatures = &composition.dpi_export_signatures,
   };
   auto mir_result = lowering::hir_to_mir::LowerHirToMir(mir_input);
   if (!mir_result) {

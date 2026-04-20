@@ -123,6 +123,7 @@ auto DumpMir(const CompilationInput& input) -> int {
       .child_coord_map = &composition.child_coord_map,
       .body_timescales = &composition.body_timescales,
       .hierarchy_nodes = &composition.hierarchy_nodes,
+      .dpi_export_signatures = &composition.dpi_export_signatures,
   };
   std::expected<lowering::hir_to_mir::LoweringResult, Diagnostic> mir_result;
   {
@@ -198,6 +199,7 @@ auto DumpDpiHeader(const CompilationInput& input) -> int {
       .child_coord_map = &composition.child_coord_map,
       .body_timescales = &composition.body_timescales,
       .hierarchy_nodes = &composition.hierarchy_nodes,
+      .dpi_export_signatures = &composition.dpi_export_signatures,
   };
   std::expected<lowering::hir_to_mir::LoweringResult, Diagnostic> mir_result;
   {
@@ -271,6 +273,7 @@ auto DumpLlvm(const CompilationInput& input) -> int {
       .child_coord_map = &composition.child_coord_map,
       .body_timescales = &composition.body_timescales,
       .hierarchy_nodes = &composition.hierarchy_nodes,
+      .dpi_export_signatures = &composition.dpi_export_signatures,
   };
   std::expected<lowering::hir_to_mir::LoweringResult, Diagnostic> mir_result;
   {

@@ -90,6 +90,8 @@ auto LowerAstToHir(
       .body_timescales = std::move(design_output.composition.body_timescales),
       .child_coord_map = std::move(design_output.composition.child_coord_map),
       .hierarchy_nodes = std::move(design_output.composition.hierarchy_nodes),
+      .dpi_export_signatures =
+          std::move(design_output.composition.dpi_export_signatures),
   };
 
   return AstToHirOutput{

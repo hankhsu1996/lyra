@@ -1102,7 +1102,6 @@ auto LowerDesign(
                   hir::Design{
                       .elements = std::move(elements),
                       .module_bodies = std::move(module_bodies),
-                      .dpi_export_signatures = std::move(export_sig_cache),
                       .callable_signatures = {},
                   },
           },
@@ -1114,6 +1113,7 @@ auto LowerDesign(
               .body_timescales = std::move(body_timescale_table),
               .child_coord_map = std::move(child_coord_map),
               .hierarchy_nodes = std::move(hierarchy_nodes),
+              .dpi_export_signatures = std::move(export_sig_cache),
           },
   };
 }

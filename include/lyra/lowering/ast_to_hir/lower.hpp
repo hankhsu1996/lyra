@@ -16,10 +16,10 @@
 #include "lyra/common/type_arena.hpp"
 #include "lyra/hir/arena.hpp"
 #include "lyra/hir/design.hpp"
+#include "lyra/hir/dpi.hpp"
 #include "lyra/lowering/ast_to_hir/options.hpp"
 #include "lyra/lowering/ast_to_hir/port_binding.hpp"
 #include "lyra/lowering/ast_to_hir/source_mapper.hpp"
-#include "lyra/mir/construction_input.hpp"
 #include "lyra/mir/instance.hpp"
 
 namespace lyra::lowering::ast_to_hir {
@@ -50,6 +50,10 @@ struct CompositionMetadata {
   std::vector<common::BodyTimeScale> body_timescales;
   common::ChildCoordMap child_coord_map;
   std::vector<common::HierarchyNode> hierarchy_nodes;
+  // Preclassified DPI export signatures, keyed by export symbol.
+  // Produced at AST-to-HIR time alongside lean DpiExportDecl records and
+  // consumed at HIR-to-MIR time to build canonical mir::DpiSignature entries.
+  hir::DpiExportSignatureCache dpi_export_signatures;
 };
 
 struct AstToHirOutput {

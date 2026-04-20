@@ -3,6 +3,7 @@
 // Normalized import declarations for DPI-C function imports.
 
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 #include "lyra/common/dpi_types.hpp"
@@ -79,5 +80,12 @@ struct DpiExportSignature {
   DpiAbiTypeClass return_dpi_type = DpiAbiTypeClass::kInvalid;
   std::vector<DpiParam> params;
 };
+
+// Preclassified DPI export signatures, keyed by export symbol.
+// Produced at AST-to-HIR time (when slang types are available) as a
+// separate artifact from the lean DpiExportDecl. Consumed at MIR time
+// to build the canonical mir::DpiSignature without a second classifier.
+using DpiExportSignatureCache =
+    std::unordered_map<SymbolId, DpiExportSignature, SymbolIdHash>;
 
 }  // namespace lyra::hir

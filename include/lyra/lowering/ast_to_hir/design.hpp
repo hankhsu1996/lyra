@@ -7,6 +7,7 @@
 #include "lyra/common/hierarchy_node.hpp"
 #include "lyra/common/module_identity.hpp"
 #include "lyra/hir/design.hpp"
+#include "lyra/hir/dpi.hpp"
 #include "lyra/lowering/ast_to_hir/port_binding.hpp"
 #include "lyra/mir/instance.hpp"
 
@@ -31,6 +32,10 @@ struct DesignCompositionMetadata {
   // Full scope hierarchy including generate scopes. Built from slang AST
   // during instance collection. Threaded through to construction program.
   std::vector<common::HierarchyNode> hierarchy_nodes;
+  // Preclassified DPI export signatures, keyed by export symbol.
+  // Produced at AST-to-HIR time alongside lean DpiExportDecl records and
+  // consumed at HIR-to-MIR time to build canonical mir::DpiSignature entries.
+  hir::DpiExportSignatureCache dpi_export_signatures;
 };
 
 struct DesignLoweringOutput {

@@ -382,7 +382,12 @@ auto CollectDesignDeclarations(
   // Collect DPI exports from packages and module bodies.
   // Exports with unsupported signatures produce user diagnostics, not
   // InternalError. They are skipped (not registered in the design registry).
-  const auto& sig_cache = design.dpi_export_signatures;
+  if (input.dpi_export_signatures == nullptr) {
+    throw common::InternalError(
+        "CollectDesignDeclarations",
+        "LoweringInput::dpi_export_signatures is null");
+  }
+  const auto& sig_cache = *input.dpi_export_signatures;
   auto collect_exports = [&](const std::vector<hir::DpiExportDecl>& exports) {
     for (const auto& decl : exports) {
       auto it = sig_cache.find(decl.symbol);
