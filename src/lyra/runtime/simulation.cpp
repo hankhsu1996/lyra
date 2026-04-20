@@ -125,7 +125,7 @@ auto SetupAndRunSimulation(
   }
 
   for (uint32_t i = 0; i < num_processes; ++i) {
-    engine.ScheduleInitial(lyra::runtime::ProcessHandle{.process_id = i});
+    engine.ScheduleInitial(engine.GetProcess(i));
   }
 
   // Load installable computations from the construction result handed in

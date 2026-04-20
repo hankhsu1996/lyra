@@ -218,14 +218,14 @@ class Engine {
   auto operator=(Engine&&) -> Engine& = delete;
 
   // Schedule a process to start at time 0 (for initial blocks).
-  void ScheduleInitial(ProcessHandle handle);
+  void ScheduleInitial(RuntimeProcess& proc);
 
   // Schedule a process to resume after a delay.
   // Called by interpreter/codegen when process hits a Delay terminator.
-  void Delay(ProcessHandle handle, ResumePoint resume, SimTime ticks);
+  void Delay(RuntimeProcess& proc, ResumePoint resume, SimTime ticks);
 
   // Schedule to inactive region (same time slot, #0 delay).
-  void DelayZero(ProcessHandle handle, ResumePoint resume);
+  void DelayZero(RuntimeProcess& proc, ResumePoint resume);
 
   // Subscribe to signal edge. Process resumes when signal changes.
   // R5: Subscribe with typed signal identity. Dispatches once at the top
@@ -259,7 +259,7 @@ class Engine {
 
   // Schedule process to resume in the next delta cycle (same time).
   // Used for kRepeat terminator.
-  void ScheduleNextDelta(ProcessHandle handle, ResumePoint resume);
+  void ScheduleNextDelta(RuntimeProcess& proc, ResumePoint resume);
 
   // Enqueue onto generic nba_queue_ for later commit in the NBA region.
   // Only for non-instance-owned targets (global, package, cross-instance).
@@ -454,6 +454,13 @@ class Engine {
           std::format("process {} has no owning instance", process_id));
     }
     return *inst;
+  }
+
+  // Resolve a RuntimeProcess by its dense process index. Mirrors
+  // GetProcessInstance for direct object access at boundaries that
+  // intrinsically iterate by integer (e.g. simulation init).
+  [[nodiscard]] auto GetProcess(uint32_t process_id) -> RuntimeProcess& {
+    return processes_[process_id];
   }
 
   // Validate that all kInstanceOwned slot-meta entries reference valid
@@ -1183,9 +1190,10 @@ class Engine {
   // enqueued. Shared by edge, change, and container flush paths.
   //
   // Fully inline: the hot path (already enqueued) is a single load + branch.
-  // The cold path (first enqueue) constructs an 8-byte WakeupEntry and
-  // pushes to the pre-reserved queue. Trace-only fields (cause, trigger_slot)
-  // are stored per-process only when activation tracing is enabled.
+  // The cold path (first enqueue) constructs a WakeupEntry carrying the
+  // process pointer directly and pushes to the pre-reserved queue. Trace-only
+  // fields (cause, trigger_slot) are stored per-process only when activation
+  // tracing is enabled.
   void EnqueueProcessWakeup(
       uint32_t process_id, uint32_t resume_block, uint32_t trigger_slot,
       WakeCause cause) {
@@ -1220,7 +1228,7 @@ class Engine {
       }
       return;
     }
-    next_delta_queue_.push_back({process_id, resume_block});
+    next_delta_queue_.push_back({&proc, resume_block});
     proc.is_enqueued = true;
     if (activation_trace_.has_value()) {
       proc.wake_trace = {.cause = cause, .trigger_slot = trigger_slot};

@@ -260,13 +260,14 @@ void HandleProcessRequest(
           engine.HandleTrap(Access::GetProcess(engine, handle), v.payload);
 
         } else if constexpr (std::is_same_v<T, DelayRequest>) {
-          engine.Delay(handle, v.resume, v.ticks);
+          engine.Delay(Access::GetProcess(engine, handle), v.resume, v.ticks);
 
         } else if constexpr (std::is_same_v<T, WaitRequest>) {
           HandleWaitRequest(engine, handle, v);
 
         } else if constexpr (std::is_same_v<T, RepeatRequest>) {
-          engine.ScheduleNextDelta(handle, v.resume);
+          engine.ScheduleNextDelta(
+              Access::GetProcess(engine, handle), v.resume);
 
         } else if constexpr (std::is_same_v<T, EventWaitRequest>) {
           auto& inst = engine.GetProcessInstance(handle.process_id);

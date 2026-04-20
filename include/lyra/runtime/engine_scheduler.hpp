@@ -11,6 +11,7 @@
 namespace lyra::runtime {
 
 struct RuntimeInstance;
+struct RuntimeProcess;
 
 // IEEE 1800 simulation regions (simplified).
 // Active -> Inactive -> NBA is the core loop for RTL simulation.
@@ -20,13 +21,13 @@ enum class Region : uint8_t {
   kNBA,       // Nonblocking assignment updates
 };
 
-// Hot queue entry for process wakeup (8 bytes). Contains only the fields
-// needed for dispatch. Trace-only fields (cause, trigger_slot) are stored
-// per-process on RuntimeProcess::wake_trace when activation tracing is
-// enabled.
+// Hot queue entry for process wakeup. Carries process identity directly as
+// a RuntimeProcess pointer; no integer indirection on the dispatch path.
+// Trace-only fields (cause, trigger_slot) are stored per-process on
+// RuntimeProcess::wake_trace when activation tracing is enabled.
 struct WakeupEntry {
-  uint32_t process_id;
-  uint32_t resume_block;
+  RuntimeProcess* process = nullptr;
+  uint32_t resume_block = 0;
 };
 
 // Typed NBA payloads. Each mode has its own struct with exactly the fields

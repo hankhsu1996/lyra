@@ -308,11 +308,13 @@ void Engine::DumpSchedulerStatusAsyncSignalSafe(int fd) const {
 
 void Engine::TraceWake(const WakeupEntry& entry) {
   if (!activation_trace_.has_value()) return;
-  const auto& trace = processes_[entry.process_id].wake_trace;
+  const auto& proc = *entry.process;
+  const auto pid = static_cast<uint32_t>(&proc - processes_.data());
+  const auto& trace = proc.wake_trace;
   ActivationEvent ae{
       .time = current_time_,
       .delta = current_delta_,
-      .process_id = entry.process_id,
+      .process_id = pid,
       .trigger_slot = trace.trigger_slot,
       .resume_block = entry.resume_block,
       .kind = ActivationEventKind::kWake,
@@ -325,11 +327,13 @@ void Engine::TraceWake(const WakeupEntry& entry) {
 
 void Engine::TraceRun(const WakeupEntry& entry) {
   if (!activation_trace_.has_value()) return;
-  const auto& trace = processes_[entry.process_id].wake_trace;
+  const auto& proc = *entry.process;
+  const auto pid = static_cast<uint32_t>(&proc - processes_.data());
+  const auto& trace = proc.wake_trace;
   ActivationEvent ae{
       .time = current_time_,
       .delta = current_delta_,
-      .process_id = entry.process_id,
+      .process_id = pid,
       .trigger_slot = trace.trigger_slot,
       .resume_block = entry.resume_block,
       .kind = ActivationEventKind::kRun,
@@ -456,9 +460,10 @@ auto Engine::TakeSchedulerSnapshot() const -> SchedulerSnapshot {
   std::vector<bool> in_delay(num_processes_, false);
   for (const auto& [time, entries] : delay_queue_) {
     for (const auto& entry : entries) {
-      if (entry.process_id < num_processes_) {
-        in_delay[entry.process_id] = true;
-        delay_target[entry.process_id] = time;
+      const auto pid = static_cast<uint32_t>(entry.process - processes_.data());
+      if (pid < num_processes_) {
+        in_delay[pid] = true;
+        delay_target[pid] = time;
       }
     }
   }
@@ -466,10 +471,12 @@ auto Engine::TakeSchedulerSnapshot() const -> SchedulerSnapshot {
   // Build ready-queue membership.
   std::vector<bool> is_ready(num_processes_, false);
   for (const auto& e : active_queue_) {
-    if (e.process_id < num_processes_) is_ready[e.process_id] = true;
+    const auto pid = static_cast<uint32_t>(e.process - processes_.data());
+    if (pid < num_processes_) is_ready[pid] = true;
   }
   for (const auto& e : next_delta_queue_) {
-    if (e.process_id < num_processes_) is_ready[e.process_id] = true;
+    const auto pid = static_cast<uint32_t>(e.process - processes_.data());
+    if (pid < num_processes_) is_ready[pid] = true;
   }
 
   uint32_t current_running =

@@ -1084,8 +1084,6 @@ void Engine::ReconcilePostActivation(RuntimeProcess& proc) {
         "Engine::ReconcilePostActivation",
         "called without post-activation reconciliation capability");
   }
-  const ProcessHandle handle{
-      .process_id = static_cast<uint32_t>(&proc - processes_.data())};
   auto* suspend = proc.suspend_record;
 
   auto resume =
@@ -1098,7 +1096,7 @@ void Engine::ReconcilePostActivation(RuntimeProcess& proc) {
 
     case SuspendTag::kDelay:
       ResetInstalledWait(proc);
-      Delay(handle, resume, suspend->delay_ticks);
+      Delay(proc, resume, suspend->delay_ticks);
       break;
 
     case SuspendTag::kWait: {
@@ -1152,7 +1150,7 @@ void Engine::ReconcilePostActivation(RuntimeProcess& proc) {
 
     case SuspendTag::kRepeat:
       ResetInstalledWait(proc);
-      ScheduleNextDelta(handle, ResumePoint{.block_index = 0});
+      ScheduleNextDelta(proc, ResumePoint{.block_index = 0});
       break;
 
     case SuspendTag::kWaitEvent: {
@@ -1168,7 +1166,7 @@ void Engine::ReconcilePostActivation(RuntimeProcess& proc) {
       AddInstanceEventWaiter(
           *inst, suspend->event_id,
           EventWaiter{
-              .process_id = handle.process_id,
+              .process_id = static_cast<uint32_t>(&proc - processes_.data()),
               .instance = inst,
               .resume_block = suspend->resume_block,
           });
