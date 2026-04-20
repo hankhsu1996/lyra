@@ -424,15 +424,10 @@ void Engine::RemoveGlobalContainerSub(const GlobalSubRef& ref) {
   UpdateGlobalObserverFlag(ref.signal);
 }
 
-void Engine::ClearInstalledSubscriptions(ProcessHandle handle) {
-  if (handle.process_id >= num_processes_) {
-    return;
-  }
-  auto& proc_state = processes_[handle.process_id];
-
+void Engine::ClearInstalledSubscriptions(RuntimeProcess& proc) {
   // Iterate in reverse so swap-and-pop doesn't invalidate earlier indices
   // belonging to this same process (they'll be removed too).
-  for (const auto& ref : std::views::reverse(proc_state.local_sub_refs)) {
+  for (const auto& ref : std::views::reverse(proc.local_sub_refs)) {
     switch (ref.kind) {
       case SubKind::kEdge:
         RemoveLocalEdgeSub(ref);
@@ -454,7 +449,7 @@ void Engine::ClearInstalledSubscriptions(ProcessHandle handle) {
     }
     --live_subscription_count_;
   }
-  for (const auto& ref : std::views::reverse(proc_state.global_sub_refs)) {
+  for (const auto& ref : std::views::reverse(proc.global_sub_refs)) {
     switch (ref.kind) {
       case SubKind::kEdge:
         RemoveGlobalEdgeSub(ref);
@@ -477,25 +472,23 @@ void Engine::ClearInstalledSubscriptions(ProcessHandle handle) {
     --live_subscription_count_;
   }
 
-  proc_state.local_sub_refs.clear();
-  proc_state.global_sub_refs.clear();
-  proc_state.subscription_count = 0;
-  proc_state.plan_pool.ops.clear();
+  proc.local_sub_refs.clear();
+  proc.global_sub_refs.clear();
+  proc.subscription_count = 0;
+  proc.plan_pool.ops.clear();
 }
 
-void Engine::InvalidateInstalledWait(ProcessHandle handle) {
-  if (handle.process_id >= num_processes_) return;
-  auto& proc_state = processes_[handle.process_id];
-  proc_state.installed_wait = InstalledWaitState{};
+void Engine::InvalidateInstalledWait(RuntimeProcess& proc) {
+  proc.installed_wait = InstalledWaitState{};
 }
 
-void Engine::ResetInstalledWait(ProcessHandle handle) {
-  ClearInstalledSubscriptions(handle);
-  InvalidateInstalledWait(handle);
+void Engine::ResetInstalledWait(RuntimeProcess& proc) {
+  ClearInstalledSubscriptions(proc);
+  InvalidateInstalledWait(proc);
 }
 
-void Engine::ClearProcessSubscriptions(ProcessHandle handle) {
-  ResetInstalledWait(handle);
+void Engine::ClearProcessSubscriptions(RuntimeProcess& proc) {
+  ResetInstalledWait(proc);
 }
 
 // Refresh installed edge/change baselines for subscriptions whose slots
@@ -510,11 +503,7 @@ void Engine::ClearProcessSubscriptions(ProcessHandle handle) {
 // Only called on the can_refresh path (WaitShapeKind::kStatic), so all
 // sub_refs are snapshot-bearing (kEdge or kChange). Rebind watchers and
 // container subs are structurally impossible here.
-auto Engine::RefreshInstalledSnapshots(ProcessHandle handle) -> bool {
-  if (handle.process_id >= num_processes_) return false;
-
-  auto& proc_state = processes_[handle.process_id];
-
+auto Engine::RefreshInstalledSnapshots(RuntimeProcess& proc) -> bool {
   // R5: Domain-split watermark skip. Check both global and local
   // freshness to determine if any new dirty marks appeared since the
   // last refresh. Skip if both domains are unchanged.
@@ -522,12 +511,11 @@ auto Engine::RefreshInstalledSnapshots(ProcessHandle handle) -> bool {
   auto current_global_dirty =
       static_cast<uint32_t>(update_set_.DeltaDirtySlots().size());
   bool global_unchanged =
-      (current_global_epoch ==
-           proc_state.installed_wait.last_global_refresh_epoch &&
+      (current_global_epoch == proc.installed_wait.last_global_refresh_epoch &&
        current_global_dirty ==
-           proc_state.installed_wait.last_global_refresh_dirty_count);
+           proc.installed_wait.last_global_refresh_dirty_count);
   bool local_unchanged = true;
-  for (const auto& stamp : proc_state.installed_wait.local_refresh_epochs) {
+  for (const auto& stamp : proc.installed_wait.local_refresh_epochs) {
     if (stamp.instance == nullptr) {
       throw common::InternalError(
           "Engine::RefreshInstalledSnapshots",
@@ -545,7 +533,7 @@ auto Engine::RefreshInstalledSnapshots(ProcessHandle handle) -> bool {
   bool needs_reinstall = false;
 
   // Local sub refresh -- direct instance pointer, no InstanceId lookup.
-  for (const auto& ref : proc_state.local_sub_refs) {
+  for (const auto& ref : proc.local_sub_refs) {
     if (ref.instance == nullptr) {
       throw common::InternalError(
           "Engine::RefreshInstalledSnapshots",
@@ -596,19 +584,19 @@ auto Engine::RefreshInstalledSnapshots(ProcessHandle handle) -> bool {
         throw common::InternalError(
             "Engine::RefreshInstalledSnapshots",
             std::format(
-                "process {} has rebind watcher on static refresh path",
-                handle.process_id));
+                "{} has rebind watcher on static refresh path",
+                FormatProcess(proc)));
       case SubKind::kContainer:
         throw common::InternalError(
             "Engine::RefreshInstalledSnapshots",
             std::format(
-                "process {} has container sub on static refresh path",
-                handle.process_id));
+                "{} has container sub on static refresh path",
+                FormatProcess(proc)));
     }
   }
 
   // Global sub refresh.
-  for (const auto& ref : proc_state.global_sub_refs) {
+  for (const auto& ref : proc.global_sub_refs) {
     if (!update_set_.IsDeltaDirty(ref.signal.value)) continue;
     const auto& meta = slot_meta_registry_.Get(ref.signal.value);
     auto storage = std::span(
@@ -653,22 +641,21 @@ auto Engine::RefreshInstalledSnapshots(ProcessHandle handle) -> bool {
         throw common::InternalError(
             "Engine::RefreshInstalledSnapshots",
             std::format(
-                "process {} has rebind watcher on static refresh path",
-                handle.process_id));
+                "{} has rebind watcher on static refresh path",
+                FormatProcess(proc)));
       case SubKind::kContainer:
         throw common::InternalError(
             "Engine::RefreshInstalledSnapshots",
             std::format(
-                "process {} has container sub on static refresh path",
-                handle.process_id));
+                "{} has container sub on static refresh path",
+                FormatProcess(proc)));
     }
   }
 
   // Update watermark after refresh.
-  proc_state.installed_wait.last_global_refresh_epoch = current_global_epoch;
-  proc_state.installed_wait.last_global_refresh_dirty_count =
-      current_global_dirty;
-  for (auto& stamp : proc_state.installed_wait.local_refresh_epochs) {
+  proc.installed_wait.last_global_refresh_epoch = current_global_epoch;
+  proc.installed_wait.last_global_refresh_dirty_count = current_global_dirty;
+  for (auto& stamp : proc.installed_wait.local_refresh_epochs) {
     if (stamp.instance == nullptr) {
       throw common::InternalError(
           "Engine::RefreshInstalledSnapshots",
@@ -941,25 +928,25 @@ void Engine::InstallTriggers(ProcessHandle handle, const WaitRequest& req) {
   }
 }
 
-void Engine::InstallWaitSite(ProcessHandle handle, const WaitRequest& req) {
+void Engine::InstallWaitSite(RuntimeProcess& proc, const WaitRequest& req) {
   const auto& descriptor = wait_site_meta_.Get(req.wait_site_id);
   // Validate compiled-vs-runtime agreement before any installation work.
   if (descriptor.resume_block != req.resume.block_index) {
     throw common::InternalError(
         "Engine::InstallWaitSite",
         std::format(
-            "process {} wait_site {} resume_block mismatch: "
+            "{} wait_site {} resume_block mismatch: "
             "descriptor={} vs request={}",
-            handle.process_id, descriptor.id, descriptor.resume_block,
+            FormatProcess(proc), descriptor.id, descriptor.resume_block,
             req.resume.block_index));
   }
   if (descriptor.num_triggers != static_cast<uint32_t>(req.triggers.size())) {
     throw common::InternalError(
         "Engine::InstallWaitSite",
         std::format(
-            "process {} wait_site {} num_triggers mismatch: "
+            "{} wait_site {} num_triggers mismatch: "
             "descriptor={} vs request={}",
-            handle.process_id, descriptor.id, descriptor.num_triggers,
+            FormatProcess(proc), descriptor.id, descriptor.num_triggers,
             req.triggers.size()));
   }
 
@@ -970,37 +957,39 @@ void Engine::InstallWaitSite(ProcessHandle handle, const WaitRequest& req) {
     throw common::InternalError(
         "Engine::InstallWaitSite",
         std::format(
-            "process {} wait_site {}: has_late_bound mismatch: "
+            "{} wait_site {}: has_late_bound mismatch: "
             "descriptor={} vs request={}",
-            handle.process_id, descriptor.id, descriptor.has_late_bound,
+            FormatProcess(proc), descriptor.id, descriptor.has_late_bound,
             has_late_bound));
   }
 
-  InstallTriggers(handle, req);
+  InstallTriggers(
+      ProcessHandle{
+          .process_id = static_cast<uint32_t>(&proc - processes_.data())},
+      req);
 
   // Install-time realized-state invariant: when the compiled shape is
   // kStatic, the installed subscription set must contain only
   // snapshot-bearing triggers (kEdge/kChange). This is expected because
   // static waits have no late-bound indices, so InstallTriggers should not
   // produce rebind watcher or container subs for this shape.
-  auto& proc_state = processes_[handle.process_id];
   if (descriptor.shape == WaitShapeKind::kStatic) {
     auto is_snapshot_bearing = [](const auto& ref) {
       return ref.kind == SubKind::kEdge || ref.kind == SubKind::kChange;
     };
-    if (!std::ranges::all_of(proc_state.local_sub_refs, is_snapshot_bearing) ||
-        !std::ranges::all_of(proc_state.global_sub_refs, is_snapshot_bearing)) {
+    if (!std::ranges::all_of(proc.local_sub_refs, is_snapshot_bearing) ||
+        !std::ranges::all_of(proc.global_sub_refs, is_snapshot_bearing)) {
       throw common::InternalError(
           "Engine::InstallWaitSite",
           std::format(
-              "process {} wait_site {}: kStatic shape but installed "
+              "{} wait_site {}: kStatic shape but installed "
               "non-snapshot-bearing sub_refs",
-              handle.process_id, descriptor.id));
+              FormatProcess(proc), descriptor.id));
     }
   }
 
   // Publish install-time state with derived policy.
-  proc_state.installed_wait = InstalledWaitState{
+  proc.installed_wait = InstalledWaitState{
       .wait_site_id = descriptor.id,
       .valid = true,
       .can_refresh_snapshot = (descriptor.shape == WaitShapeKind::kStatic),
@@ -1008,28 +997,27 @@ void Engine::InstallWaitSite(ProcessHandle handle, const WaitRequest& req) {
 
   // Snapshots are fresh from install -- set domain-split watermark.
   // Global watermark from update_set_.
-  proc_state.installed_wait.last_global_refresh_epoch =
-      update_set_.DeltaEpoch();
-  proc_state.installed_wait.last_global_refresh_dirty_count =
+  proc.installed_wait.last_global_refresh_epoch = update_set_.DeltaEpoch();
+  proc.installed_wait.last_global_refresh_dirty_count =
       static_cast<uint32_t>(update_set_.DeltaDirtySlots().size());
   // Local watermark: track only instances this wait site depends on.
   // Iterate local_sub_refs only -- global subs have no instance dependency.
-  proc_state.installed_wait.local_refresh_epochs.clear();
-  for (const auto& ref : proc_state.local_sub_refs) {
+  proc.installed_wait.local_refresh_epochs.clear();
+  for (const auto& ref : proc.local_sub_refs) {
     if (ref.instance == nullptr) {
       throw common::InternalError(
           "Engine::InstallWaitSite", "local sub ref has null instance");
     }
     // Deduplicate by instance pointer (small sets, linear scan fine).
     bool already_tracked = false;
-    for (const auto& stamp : proc_state.installed_wait.local_refresh_epochs) {
+    for (const auto& stamp : proc.installed_wait.local_refresh_epochs) {
       if (stamp.instance == ref.instance) {
         already_tracked = true;
         break;
       }
     }
     if (!already_tracked) {
-      proc_state.installed_wait.local_refresh_epochs.push_back(
+      proc.installed_wait.local_refresh_epochs.push_back(
           InstalledWaitState::LocalRefreshStamp{
               .instance = ref.instance,
               .epoch = ref.instance->observability.local_flush_epoch});
@@ -1038,9 +1026,8 @@ void Engine::InstallWaitSite(ProcessHandle handle, const WaitRequest& req) {
 }
 
 auto Engine::CanRefreshInstalledWait(
-    ProcessHandle handle, WaitSiteId wait_site_id) const -> bool {
-  if (handle.process_id >= processes_.size()) return false;
-  const auto& installed = processes_[handle.process_id].installed_wait;
+    const RuntimeProcess& proc, WaitSiteId wait_site_id) -> bool {
+  const auto& installed = proc.installed_wait;
   return installed.valid && installed.wait_site_id == wait_site_id &&
          installed.can_refresh_snapshot;
 }
@@ -1102,8 +1089,8 @@ void Engine::ReconcilePostActivation(RuntimeProcess& proc) {
         "Engine::ReconcilePostActivation",
         "called without post-activation reconciliation capability");
   }
-  const auto pid = static_cast<uint32_t>(&proc - processes_.data());
-  ProcessHandle handle{.process_id = pid};
+  const ProcessHandle handle{
+      .process_id = static_cast<uint32_t>(&proc - processes_.data())};
   auto* suspend = proc.suspend_record;
 
   auto resume =
@@ -1111,11 +1098,11 @@ void Engine::ReconcilePostActivation(RuntimeProcess& proc) {
 
   switch (suspend->tag) {
     case SuspendTag::kFinished:
-      ResetInstalledWait(handle);
+      ResetInstalledWait(proc);
       break;
 
     case SuspendTag::kDelay:
-      ResetInstalledWait(handle);
+      ResetInstalledWait(proc);
       Delay(handle, resume, suspend->delay_ticks);
       break;
 
@@ -1124,16 +1111,16 @@ void Engine::ReconcilePostActivation(RuntimeProcess& proc) {
         throw common::InternalError(
             "Engine::ReconcilePostActivation",
             std::format(
-                "process {} suspended with kWait but wait_site_id is invalid",
-                pid));
+                "{} suspended with kWait but wait_site_id is invalid",
+                FormatProcess(proc)));
       }
 
       if (!proc.installed_wait.valid ||
           proc.installed_wait.wait_site_id != suspend->wait_site_id ||
           !proc.installed_wait.can_refresh_snapshot) {
         // Reinstall required: different wait site or non-static shape.
-        ResetInstalledWait(handle);
-        InstallWaitSite(handle, BuildWaitRequest(suspend));
+        ResetInstalledWait(proc);
+        InstallWaitSite(proc, BuildWaitRequest(suspend));
         break;
       }
 
@@ -1158,34 +1145,35 @@ void Engine::ReconcilePostActivation(RuntimeProcess& proc) {
         break;
       }
 
-      if (RefreshInstalledSnapshots(handle)) {
+      if (RefreshInstalledSnapshots(proc)) {
         // A same-delta blocking write changed an observed edge bit.
         // group.last_bit is shared state and cannot be updated here.
         // Fall back to full reinstall to get a fresh group baseline.
-        ResetInstalledWait(handle);
-        InstallWaitSite(handle, BuildWaitRequest(suspend));
+        ResetInstalledWait(proc);
+        InstallWaitSite(proc, BuildWaitRequest(suspend));
       }
       break;
     }
 
     case SuspendTag::kRepeat:
-      ResetInstalledWait(handle);
+      ResetInstalledWait(proc);
       ScheduleNextDelta(handle, ResumePoint{.block_index = 0});
       break;
 
     case SuspendTag::kWaitEvent: {
-      ResetInstalledWait(handle);
+      ResetInstalledWait(proc);
       auto* inst = proc.instance;
       if (inst == nullptr) {
         throw common::InternalError(
             "Engine::ReconcilePostActivation",
             std::format(
-                "kWaitEvent for process {} has no owning instance", pid));
+                "kWaitEvent for {} has no owning instance",
+                FormatProcess(proc)));
       }
       AddInstanceEventWaiter(
           *inst, suspend->event_id,
           EventWaiter{
-              .process_id = pid,
+              .process_id = handle.process_id,
               .instance = inst,
               .resume_block = suspend->resume_block,
           });

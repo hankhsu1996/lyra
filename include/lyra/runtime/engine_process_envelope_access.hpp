@@ -19,17 +19,16 @@ class ProcessEnvelopeAccess {
   }
 
   static auto CanRefreshInstalledWait(
-      const Engine& engine, ProcessHandle handle, WaitSiteId wait_site_id)
-      -> bool {
-    return engine.CanRefreshInstalledWait(handle, wait_site_id);
+      const RuntimeProcess& proc, WaitSiteId wait_site_id) -> bool {
+    return Engine::CanRefreshInstalledWait(proc, wait_site_id);
   }
 
   static auto HasPendingDirtyState(const Engine& engine) -> bool {
     return engine.HasPendingDirtyState();
   }
 
-  static void ResetInstalledWait(Engine& engine, ProcessHandle handle) {
-    engine.ResetInstalledWait(handle);
+  static void ResetInstalledWait(Engine& engine, RuntimeProcess& proc) {
+    engine.ResetInstalledWait(proc);
   }
 
   static void InstallTriggers(
@@ -38,13 +37,13 @@ class ProcessEnvelopeAccess {
   }
 
   static void InstallWaitSite(
-      Engine& engine, ProcessHandle handle, const WaitRequest& req) {
-    engine.InstallWaitSite(handle, req);
+      Engine& engine, RuntimeProcess& proc, const WaitRequest& req) {
+    engine.InstallWaitSite(proc, req);
   }
 
-  static auto RefreshInstalledSnapshots(Engine& engine, ProcessHandle handle)
+  static auto RefreshInstalledSnapshots(Engine& engine, RuntimeProcess& proc)
       -> bool {
-    return engine.RefreshInstalledSnapshots(handle);
+    return engine.RefreshInstalledSnapshots(proc);
   }
 
   static auto GetProcess(Engine& engine, ProcessHandle handle)

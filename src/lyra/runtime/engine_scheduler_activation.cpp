@@ -208,9 +208,9 @@ void Engine::ExecuteActiveRegion() {
             ProcessId::FromIndex(entry.process_id));
       }
 
-      ProcessHandle handle{.process_id = entry.process_id};
+      auto& proc = processes_[entry.process_id];
       if (!post_activation_reconcile_) {
-        ClearProcessSubscriptions(handle);
+        ClearProcessSubscriptions(proc);
       }
       // Activation handling (scheduling, subscription install/refresh)
       // is performed by the process envelope inside the dispatch callback.
@@ -218,7 +218,6 @@ void Engine::ExecuteActiveRegion() {
       // semantic requests and calls engine primitives directly.
       RunOneActivation(entry);
       if (!finished_ && post_activation_reconcile_) {
-        auto& proc = processes_[entry.process_id];
         if (!TryFastReconcile(proc)) {
           ReconcilePostActivation(proc);
         }

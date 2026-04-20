@@ -212,9 +212,10 @@ void HandleWaitRequest(
             handle.process_id));
   }
 
-  if (!Access::CanRefreshInstalledWait(engine, handle, req.wait_site_id)) {
-    Access::ResetInstalledWait(engine, handle);
-    Access::InstallWaitSite(engine, handle, req);
+  auto& proc = Access::GetProcess(engine, handle);
+  if (!Access::CanRefreshInstalledWait(proc, req.wait_site_id)) {
+    Access::ResetInstalledWait(engine, proc);
+    Access::InstallWaitSite(engine, proc, req);
     return;
   }
 
@@ -222,9 +223,9 @@ void HandleWaitRequest(
     return;
   }
 
-  if (Access::RefreshInstalledSnapshots(engine, handle)) {
-    Access::ResetInstalledWait(engine, handle);
-    Access::InstallWaitSite(engine, handle, req);
+  if (Access::RefreshInstalledSnapshots(engine, proc)) {
+    Access::ResetInstalledWait(engine, proc);
+    Access::InstallWaitSite(engine, proc, req);
   }
 }
 
@@ -245,7 +246,7 @@ void HandleProcessRequest(
   if (Access::UsesWaitSiteLifecycle(engine) &&
       !Access::HasPostActivationReconciliation(engine) &&
       NeedsWaitReset(request)) {
-    Access::ResetInstalledWait(engine, handle);
+    Access::ResetInstalledWait(engine, Access::GetProcess(engine, handle));
   }
 
   std::visit(

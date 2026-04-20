@@ -1012,16 +1012,16 @@ class Engine {
   [[nodiscard]] auto UsesWaitSiteLifecycle() const -> bool {
     return wait_site_meta_.IsPopulated();
   }
-  [[nodiscard]] auto CanRefreshInstalledWait(
-      ProcessHandle handle, WaitSiteId wait_site_id) const -> bool;
+  [[nodiscard]] static auto CanRefreshInstalledWait(
+      const RuntimeProcess& proc, WaitSiteId wait_site_id) -> bool;
   [[nodiscard]] auto HasPendingDirtyState() const -> bool;
-  void ResetInstalledWait(ProcessHandle handle);
+  void ResetInstalledWait(RuntimeProcess& proc);
   void InstallTriggers(ProcessHandle handle, const WaitRequest& req);
-  void InstallWaitSite(ProcessHandle handle, const WaitRequest& req);
-  auto RefreshInstalledSnapshots(ProcessHandle handle) -> bool;
-  void ClearInstalledSubscriptions(ProcessHandle handle);
-  void InvalidateInstalledWait(ProcessHandle handle);
-  void ClearProcessSubscriptions(ProcessHandle handle);
+  void InstallWaitSite(RuntimeProcess& proc, const WaitRequest& req);
+  auto RefreshInstalledSnapshots(RuntimeProcess& proc) -> bool;
+  void ClearInstalledSubscriptions(RuntimeProcess& proc);
+  static void InvalidateInstalledWait(RuntimeProcess& proc);
+  void ClearProcessSubscriptions(RuntimeProcess& proc);
 
   // Typed cold pool management.
   auto AllocEdgeCold() -> uint32_t;
