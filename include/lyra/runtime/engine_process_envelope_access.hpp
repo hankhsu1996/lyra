@@ -32,8 +32,8 @@ class ProcessEnvelopeAccess {
   }
 
   static void InstallTriggers(
-      Engine& engine, ProcessHandle handle, const WaitRequest& req) {
-    engine.InstallTriggers(handle, req);
+      Engine& engine, RuntimeProcess& proc, const WaitRequest& req) {
+    engine.InstallTriggers(proc, req);
   }
 
   static void InstallWaitSite(

@@ -1016,7 +1016,7 @@ class Engine {
       const RuntimeProcess& proc, WaitSiteId wait_site_id) -> bool;
   [[nodiscard]] auto HasPendingDirtyState() const -> bool;
   void ResetInstalledWait(RuntimeProcess& proc);
-  void InstallTriggers(ProcessHandle handle, const WaitRequest& req);
+  void InstallTriggers(RuntimeProcess& proc, const WaitRequest& req);
   void InstallWaitSite(RuntimeProcess& proc, const WaitRequest& req);
   auto RefreshInstalledSnapshots(RuntimeProcess& proc) -> bool;
   void ClearInstalledSubscriptions(RuntimeProcess& proc);
@@ -1062,41 +1062,41 @@ class Engine {
   // R5: Domain-split subscribe helpers. Top boundary dispatches once
   // via std::visit on SignalRef, then routes to one of these.
   auto SubscribeGlobalEdge(
-      ProcessHandle handle, ResumePoint resume, GlobalSignalId signal,
+      RuntimeProcess& proc, ResumePoint resume, GlobalSignalId signal,
       common::EdgeKind edge, uint32_t byte_offset, uint32_t byte_size,
       uint8_t bit_index, bool initially_active) -> uint32_t;
   auto SubscribeLocalEdge(
-      ProcessHandle handle, ResumePoint resume, LocalSignalRef signal,
+      RuntimeProcess& proc, ResumePoint resume, LocalSignalRef signal,
       common::EdgeKind edge, uint32_t byte_offset, uint32_t byte_size,
       uint8_t bit_index, bool initially_active) -> uint32_t;
   auto SubscribeGlobalChange(
-      ProcessHandle handle, ResumePoint resume, GlobalSignalId signal,
+      RuntimeProcess& proc, ResumePoint resume, GlobalSignalId signal,
       uint32_t byte_offset, uint32_t byte_size, bool initially_active)
       -> uint32_t;
   auto SubscribeLocalChange(
-      ProcessHandle handle, ResumePoint resume, LocalSignalRef signal,
+      RuntimeProcess& proc, ResumePoint resume, LocalSignalRef signal,
       uint32_t byte_offset, uint32_t byte_size, bool initially_active)
       -> uint32_t;
   auto SubscribeGlobalContainerElement(
-      ProcessHandle handle, ResumePoint resume, GlobalSignalId signal,
+      RuntimeProcess& proc, ResumePoint resume, GlobalSignalId signal,
       common::EdgeKind edge, int64_t sv_index, uint32_t elem_stride,
       bool initially_active) -> uint32_t;
   auto SubscribeLocalContainerElement(
-      ProcessHandle handle, ResumePoint resume, LocalSignalRef signal,
+      RuntimeProcess& proc, ResumePoint resume, LocalSignalRef signal,
       common::EdgeKind edge, int64_t sv_index, uint32_t elem_stride,
       bool initially_active) -> uint32_t;
   void ValidateRebindDepSignals(std::span<const SignalRef> dep_signals) const;
   void InstallRebindDepWatchers(
-      ProcessHandle handle, uint32_t edge_target_id,
+      RuntimeProcess& proc, uint32_t edge_target_id,
       std::span<const SignalRef> dep_signals);
   void SubscribeGlobalRebind(
-      ProcessHandle handle, uint32_t edge_target_id,
+      RuntimeProcess& proc, uint32_t edge_target_id,
       GlobalSignalId target_signal, SubKind target_kind, uint32_t target_index,
       uint8_t target_edge_group, EdgeBucket target_edge_bucket,
       std::span<const IndexPlanOp> plan, BitTargetMapping mapping,
       std::span<const SignalRef> dep_signals);
   void SubscribeLocalRebind(
-      ProcessHandle handle, uint32_t edge_target_id,
+      RuntimeProcess& proc, uint32_t edge_target_id,
       LocalSignalRef target_signal, SubKind target_kind, uint32_t target_index,
       uint8_t target_edge_group, EdgeBucket target_edge_bucket,
       std::span<const IndexPlanOp> plan, BitTargetMapping mapping,

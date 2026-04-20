@@ -199,8 +199,9 @@ void HandleWaitRequest(
   if (Access::HasPostActivationReconciliation(engine)) {
     return;
   }
+  auto& proc = Access::GetProcess(engine, handle);
   if (!Access::UsesWaitSiteLifecycle(engine)) {
-    Access::InstallTriggers(engine, handle, req);
+    Access::InstallTriggers(engine, proc, req);
     return;
   }
 
@@ -212,7 +213,6 @@ void HandleWaitRequest(
             handle.process_id));
   }
 
-  auto& proc = Access::GetProcess(engine, handle);
   if (!Access::CanRefreshInstalledWait(proc, req.wait_site_id)) {
     Access::ResetInstalledWait(engine, proc);
     Access::InstallWaitSite(engine, proc, req);
