@@ -20,6 +20,7 @@
 #include "lyra/runtime/runtime_instance.hpp"
 #include "lyra/runtime/scheduler_snapshot.hpp"
 #include "lyra/runtime/slot_meta.hpp"
+#include "lyra/runtime/suspend_record.hpp"
 #include "lyra/runtime/trace_signal_meta.hpp"
 
 namespace lyra::runtime {
@@ -511,9 +512,12 @@ auto Engine::TakeSchedulerSnapshot() const -> SchedulerSnapshot {
     } else if (is_ready[pid] || processes_[pid].is_enqueued) {
       kind = ProcessWaitKind::kReady;
     } else if (
-        pid < processes_.size() && processes_[pid].suspend_record != nullptr) {
-      // Use SuspendRecord::tag as the canonical authority.
-      switch (processes_[pid].suspend_record->tag) {
+        pid < processes_.size() && processes_[pid].frame_state != nullptr) {
+      // Use SuspendRecord::tag from the process's frame-state backing as the
+      // canonical authority.
+      const auto* suspend =
+          static_cast<const SuspendRecord*>(processes_[pid].frame_state);
+      switch (suspend->tag) {
         case SuspendTag::kFinished:
           kind = ProcessWaitKind::kFinished;
           break;

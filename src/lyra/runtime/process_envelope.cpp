@@ -52,6 +52,18 @@ void FailIfSuspensionDisallowed(const char* api) {
   }
 }
 
+// Single runtime accessor for the SuspendRecord backing a process. The
+// process's frame_state points to the frame whose first object is a
+// SuspendRecord; this is the one live source of suspend state.
+auto GetSuspendRecord(lyra::runtime::RuntimeProcess& proc)
+    -> lyra::runtime::SuspendRecord* {
+  if (proc.frame_state == nullptr) {
+    throw lyra::common::InternalError(
+        "GetSuspendRecord", "RuntimeProcess has null frame_state");
+  }
+  return static_cast<lyra::runtime::SuspendRecord*>(proc.frame_state);
+}
+
 // Envelope-internal process request variant. Never exposed publicly.
 struct CompletedRequest {};
 struct TrapRequest {
@@ -143,12 +155,11 @@ auto DispatchProcess(
     -> ProcessRequest {
   using lyra::runtime::ProcessExitCode;
   using lyra::runtime::ProcessOutcome;
-  using lyra::runtime::SuspendRecord;
   using lyra::runtime::SuspendTag;
   using lyra::runtime::TrapReason;
 
+  auto* suspend = GetSuspendRecord(proc);
   void* state = proc.frame_state;
-  auto* suspend = static_cast<SuspendRecord*>(state);
 
   if (resume.block_index != 0 && suspend->tag == SuspendTag::kWait &&
       suspend->triggers_ptr == suspend->inline_triggers.data()) {

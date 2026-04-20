@@ -11,8 +11,6 @@
 
 namespace lyra::runtime {
 
-struct SuspendRecord;
-
 // Trace-only wakeup annotation. Populated at enqueue time only when
 // activation tracing is enabled.
 //
@@ -77,7 +75,6 @@ struct RuntimeProcess {
   RuntimeInstance* instance = nullptr;
 
   bool is_enqueued = false;
-  SuspendRecord* suspend_record = nullptr;
   bool is_comb_kernel = false;
 
   size_t subscription_count = 0;
@@ -101,9 +98,8 @@ struct RuntimeProcess {
 
   // Back-pointer to this process's frame/state storage. Written once during
   // engine setup (Engine::RegisterFrameStates) and never mutated afterward.
-  // Lets runtime code that already holds a RuntimeProcess reach frame-backed
-  // state without going through process-id indexing or frame-header
-  // round-trips.
+  // The backing object begins with a SuspendRecord and is the single
+  // runtime source of suspend state for this process.
   void* frame_state = nullptr;
 };
 

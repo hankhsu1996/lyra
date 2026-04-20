@@ -865,22 +865,21 @@ class Engine {
     return trace_selection_;
   }
 
-  // Register suspend record pointers for post-activation reconciliation.
-  void RegisterSuspendRecords(std::span<SuspendRecord*> records);
-
   // Bind each RuntimeProcess to its frame/state storage. Called once at
   // simulation setup, after process states are allocated and before any
   // process activation runs.
   void RegisterFrameStates(std::span<void*> states);
 
-  // Single source of truth for whether the engine uses post-activation
-  // reconciliation (new path) vs legacy HandleSuspendRecord (old path).
-  // True when both wait-site metadata and suspend records are registered.
-  [[nodiscard]] auto HasPostActivationReconciliation() const -> bool {
-    return wait_site_meta_.IsPopulated() && suspend_records_registered_;
+  // Whether the engine uses post-activation reconciliation for wait-lifecycle
+  // management. Currently always false: the reconcile path exists in the
+  // codebase but is not wired up for any caller. The envelope handles the
+  // wait lifecycle inline inside HandleProcessRequest.
+  [[nodiscard]] static auto HasPostActivationReconciliation() -> bool {
+    return false;
   }
 
   // Post-activation reconciliation: engine-owned dispatch after process runs.
+  // Currently dormant; retained for future activation.
   void ReconcilePostActivation(RuntimeProcess& proc);
 
   // Inline fast path for static-wait reconciliation. Returns true if the
@@ -893,9 +892,12 @@ class Engine {
   //   3. No blocking writes dirtied any signal in the current delta
   // When these hold, subscription baselines are already correct from the
   // prior flush and no refresh or reinstall is needed.
+  //
+  // Currently dormant with the reconcile path itself; retained for future
+  // activation.
   [[nodiscard]] auto TryFastReconcile(const RuntimeProcess& proc) const
       -> bool {
-    const auto* suspend = proc.suspend_record;
+    const auto* suspend = static_cast<const SuspendRecord*>(proc.frame_state);
     if (suspend->tag != SuspendTag::kWait) return false;
     const auto& installed = proc.installed_wait;
     if (!installed.valid || installed.wait_site_id != suspend->wait_site_id ||
@@ -1333,14 +1335,9 @@ class Engine {
   uint32_t cached_iteration_limit_ = 0;
   uint32_t* cached_iteration_limit_ptr_ = nullptr;
 
-  // Set by RegisterSuspendRecords when all process suspend records are
-  // registered. Used by HasPostActivationReconciliation() as a capability
-  // flag rather than probing individual process records.
-  bool suspend_records_registered_ = false;
-
   // Precomputed run-invariant: true when post-activation reconciliation
-  // path is active (both wait-site metadata and suspend records present).
-  // Set once at Run() entry from HasPostActivationReconciliation().
+  // path is active. Set once at Run() entry from
+  // HasPostActivationReconciliation(); currently always false.
   bool post_activation_reconcile_ = false;
 
   // R5: Number of design-global (non-instance-owned) slots. Set during

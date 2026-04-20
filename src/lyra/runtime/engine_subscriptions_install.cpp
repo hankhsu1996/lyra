@@ -1022,20 +1022,6 @@ auto Engine::CanRefreshInstalledWait(
          installed.can_refresh_snapshot;
 }
 
-void Engine::RegisterSuspendRecords(std::span<SuspendRecord*> records) {
-  if (records.size() != processes_.size()) {
-    throw common::InternalError(
-        "Engine::RegisterSuspendRecords",
-        std::format(
-            "records size {} != processes_ size {}", records.size(),
-            processes_.size()));
-  }
-  for (size_t i = 0; i < records.size(); ++i) {
-    processes_[i].suspend_record = records[i];
-  }
-  suspend_records_registered_ = true;
-}
-
 auto Engine::HasPendingDirtyState() const -> bool {
   return !update_set_.DeltaDirtySlots().empty() ||
          !delta_dirty_instances_.empty();
@@ -1079,7 +1065,7 @@ void Engine::ReconcilePostActivation(RuntimeProcess& proc) {
         "Engine::ReconcilePostActivation",
         "called without post-activation reconciliation capability");
   }
-  auto* suspend = proc.suspend_record;
+  auto* suspend = static_cast<SuspendRecord*>(proc.frame_state);
 
   auto resume =
       ResumePoint{.block_index = suspend->resume_block, .instruction_index = 0};
