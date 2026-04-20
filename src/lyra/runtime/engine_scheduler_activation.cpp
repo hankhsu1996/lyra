@@ -29,7 +29,7 @@ void Engine::ScheduleInitial(ProcessHandle handle) {
 
   active_queue_.push_back({handle.process_id, /*resume_block=*/0});
   if (activation_trace_.has_value()) {
-    wake_trace_[handle.process_id] = {
+    processes_[handle.process_id].wake_trace = {
         .cause = WakeCause::kInitial, .trigger_slot = kNoTriggerSlot};
   }
 }
@@ -45,7 +45,7 @@ void Engine::Delay(ProcessHandle handle, ResumePoint resume, SimTime ticks) {
   SimTime wake_time = current_time_ + ticks;
   delay_queue_[wake_time].push_back({handle.process_id, resume.block_index});
   if (activation_trace_.has_value()) {
-    wake_trace_[handle.process_id] = {
+    processes_[handle.process_id].wake_trace = {
         .cause = WakeCause::kDelay, .trigger_slot = kNoTriggerSlot};
   }
 }
@@ -53,7 +53,7 @@ void Engine::Delay(ProcessHandle handle, ResumePoint resume, SimTime ticks) {
 void Engine::DelayZero(ProcessHandle handle, ResumePoint resume) {
   inactive_queue_.push({handle.process_id, resume.block_index});
   if (activation_trace_.has_value()) {
-    wake_trace_[handle.process_id] = {
+    processes_[handle.process_id].wake_trace = {
         .cause = WakeCause::kDelayZero, .trigger_slot = kNoTriggerSlot};
   }
 }
@@ -61,7 +61,7 @@ void Engine::DelayZero(ProcessHandle handle, ResumePoint resume) {
 void Engine::ScheduleNextDelta(ProcessHandle handle, ResumePoint resume) {
   next_delta_queue_.push_back({handle.process_id, resume.block_index});
   if (activation_trace_.has_value()) {
-    wake_trace_[handle.process_id] = {
+    processes_[handle.process_id].wake_trace = {
         .cause = WakeCause::kRepeat, .trigger_slot = kNoTriggerSlot};
   }
 }
@@ -141,7 +141,7 @@ void Engine::RunOneActivation(const WakeupEntry& entry) {
     ++stats_.core.activations_nba_only;
   }
   if (detailed_stats_enabled_) {
-    auto& ps = per_process_stats_[pid];
+    auto& ps = processes_[pid].wake_stats;
     ++ps.runs;
     ps.total_slots_dirtied += activation_ctx_.dirty_count;
     if (activation_ctx_.dirty_count == 0) {

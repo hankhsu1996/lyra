@@ -164,32 +164,25 @@ void Engine::DumpRuntimeStats(FILE* sink) const {
     //                 always_ff and is NOT a wasted-wakeup indicator.
     //   no_effect:    runs - direct_dirty - nba_only (should be 0;
     //                 nonzero means accounting bug)
-    if (!per_process_stats_.empty()) {
+    if (detailed_stats_enabled_ && !processes_.empty()) {
       // Build sorted index by total wake attempts (descending).
-      std::vector<uint32_t> order(per_process_stats_.size());
+      std::vector<uint32_t> order(processes_.size());
       std::ranges::iota(order, 0U);
       std::ranges::sort(order, [&](uint32_t a, uint32_t b) {
-        auto total_a = per_process_stats_[a].wake_edge +
-                       per_process_stats_[a].wake_change +
-                       per_process_stats_[a].wake_container +
-                       per_process_stats_[a].wake_delay +
-                       per_process_stats_[a].wake_initial +
-                       per_process_stats_[a].wake_other;
-        auto total_b = per_process_stats_[b].wake_edge +
-                       per_process_stats_[b].wake_change +
-                       per_process_stats_[b].wake_container +
-                       per_process_stats_[b].wake_delay +
-                       per_process_stats_[b].wake_initial +
-                       per_process_stats_[b].wake_other;
+        const auto& sa = processes_[a].wake_stats;
+        const auto& sb = processes_[b].wake_stats;
+        auto total_a = sa.wake_edge + sa.wake_change + sa.wake_container +
+                       sa.wake_delay + sa.wake_initial + sa.wake_other;
+        auto total_b = sb.wake_edge + sb.wake_change + sb.wake_container +
+                       sb.wake_delay + sb.wake_initial + sb.wake_other;
         return total_a > total_b;
       });
 
       fmt::print(
-          sink, "[lyra][stats][per_process] {} processes\n",
-          per_process_stats_.size());
+          sink, "[lyra][stats][per_process] {} processes\n", processes_.size());
 
       for (uint32_t pid : order) {
-        const auto& ps = per_process_stats_[pid];
+        const auto& ps = processes_[pid].wake_stats;
         uint64_t total_wakes = ps.wake_edge + ps.wake_change +
                                ps.wake_container + ps.wake_delay +
                                ps.wake_initial + ps.wake_other;
@@ -315,7 +308,7 @@ void Engine::DumpSchedulerStatusAsyncSignalSafe(int fd) const {
 
 void Engine::TraceWake(const WakeupEntry& entry) {
   if (!activation_trace_.has_value()) return;
-  const auto& trace = wake_trace_[entry.process_id];
+  const auto& trace = processes_[entry.process_id].wake_trace;
   ActivationEvent ae{
       .time = current_time_,
       .delta = current_delta_,
@@ -332,7 +325,7 @@ void Engine::TraceWake(const WakeupEntry& entry) {
 
 void Engine::TraceRun(const WakeupEntry& entry) {
   if (!activation_trace_.has_value()) return;
-  const auto& trace = wake_trace_[entry.process_id];
+  const auto& trace = processes_[entry.process_id].wake_trace;
   ActivationEvent ae{
       .time = current_time_,
       .delta = current_delta_,

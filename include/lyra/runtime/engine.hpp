@@ -132,30 +132,6 @@ struct DetailedRuntimeStats {
   uint64_t prop_pending_slots_total = 0;
 };
 
-// Per-process wakeup/activation counters. Collected when kDetailedStats is
-// enabled. Allows post-simulation analysis of which processes are hot,
-// what wakes them, and what kind of work each activation does.
-struct ProcessWakeStats {
-  // Wake attempts by cause (includes deduped).
-  uint64_t wake_edge = 0;
-  uint64_t wake_change = 0;
-  uint64_t wake_container = 0;
-  uint64_t wake_delay = 0;
-  uint64_t wake_initial = 0;
-  uint64_t wake_other = 0;
-  // Deduped wake attempts (process already enqueued).
-  uint64_t wake_deduped = 0;
-  // Actual activations (process body executed).
-  uint64_t runs = 0;
-  // Total distinct slots dirtied (direct MarkSlotDirty) across all runs.
-  uint64_t total_slots_dirtied = 0;
-  // Activations with no direct dirty marks. These are typically always_ff
-  // processes that write only via NBA (nonblocking assignment). NOT a
-  // wasted-wakeup indicator: always_ff processes legitimately schedule
-  // NBAs without calling MarkSlotDirty during their body.
-  uint64_t nba_only_runs = 0;
-};
-
 // Composite runtime stats: core (always-on) + detailed (opt-in).
 struct RuntimeStats {
   CoreRuntimeStats core;
@@ -226,18 +202,12 @@ class Engine {
             static_cast<FeatureFlag>(feature_flags_),
             FeatureFlag::kEnableActivationTrace)) {
       activation_trace_.emplace();
-      wake_trace_.resize(num_processes);
     }
     detailed_stats_enabled_ = HasFlag(
         static_cast<FeatureFlag>(feature_flags_), FeatureFlag::kDetailedStats);
-    if (detailed_stats_enabled_) {
-      per_process_stats_.resize(num_processes);
-    }
     decision_owner_tables_.resize(num_processes);
     decision_owner_states_.resize(num_processes);
     decision_owner_pending_flags_.resize(num_processes, 0);
-    deferred_assertion_states_.resize(num_processes);
-    deferred_pending_flags_.resize(num_processes, 0);
   }
 
   ~Engine() = default;
@@ -1018,8 +988,8 @@ class Engine {
       uint8_t disposition, const void* payload_ptr, uint32_t payload_size,
       const DeferredAssertionRefBindingAbi* ref_ptr, uint32_t ref_count);
   void FlushDeferredAssertionsForProcess(ProcessId pid) {
-    if (pid.Index() >= deferred_assertion_states_.size()) return;
-    deferred_assertion_states_[pid.Index()].flush_generation++;
+    if (pid.Index() >= processes_.size()) return;
+    processes_[pid.Index()].deferred_assertion_state.flush_generation++;
   }
   void MatureAndExecuteObservedDeferredAssertions();
 
@@ -1143,7 +1113,8 @@ class Engine {
   // Trace helpers: append event + live stderr print.
   // TraceWake is called at the single point where an activation becomes
   // runnable (ExecuteRegion kActive), not at producer-side queue insertion.
-  // Reads trace-only fields (cause, trigger_slot) from wake_trace_.
+  // Reads trace-only fields (cause, trigger_slot) from
+  // RuntimeProcess::wake_trace.
   void TraceWake(const WakeupEntry& entry);
   void TraceRun(const WakeupEntry& entry);
 
@@ -1212,41 +1183,41 @@ class Engine {
   void EnqueueProcessWakeup(
       uint32_t process_id, uint32_t resume_block, uint32_t trigger_slot,
       WakeCause cause) {
+    auto& proc = processes_[process_id];
     if (detailed_stats_enabled_) {
       ++stats_.detailed.wakeup_attempts;
-      auto& ps = per_process_stats_[process_id];
       switch (cause) {
         case WakeCause::kEdge:
-          ++ps.wake_edge;
+          ++proc.wake_stats.wake_edge;
           break;
         case WakeCause::kChange:
-          ++ps.wake_change;
+          ++proc.wake_stats.wake_change;
           break;
         case WakeCause::kContainer:
-          ++ps.wake_container;
+          ++proc.wake_stats.wake_container;
           break;
         case WakeCause::kDelay:
-          ++ps.wake_delay;
+          ++proc.wake_stats.wake_delay;
           break;
         case WakeCause::kInitial:
-          ++ps.wake_initial;
+          ++proc.wake_stats.wake_initial;
           break;
         default:
-          ++ps.wake_other;
+          ++proc.wake_stats.wake_other;
           break;
       }
     }
-    if (processes_[process_id].is_enqueued) {
+    if (proc.is_enqueued) {
       if (detailed_stats_enabled_) {
         ++stats_.detailed.wakeup_deduped;
-        ++per_process_stats_[process_id].wake_deduped;
+        ++proc.wake_stats.wake_deduped;
       }
       return;
     }
     next_delta_queue_.push_back({process_id, resume_block});
-    processes_[process_id].is_enqueued = true;
+    proc.is_enqueued = true;
     if (activation_trace_.has_value()) {
-      wake_trace_[process_id] = {.cause = cause, .trigger_slot = trigger_slot};
+      proc.wake_trace = {.cause = cause, .trigger_slot = trigger_slot};
     }
   }
 
@@ -1283,11 +1254,6 @@ class Engine {
 
   // Next-delta queue: events scheduled for the next delta cycle
   std::vector<WakeupEntry> next_delta_queue_;
-
-  // Per-process trace annotations (only populated when tracing enabled).
-  // Indexed by process_id. Safe because each process is enqueued at most
-  // once per delta (dedup guard prevents overwrite).
-  std::vector<WakeTraceInfo> wake_trace_;
 
   // NBA queue: deferred writes committed in ExecuteRegion(kNBA).
   // Generic fallback for global, masked, canonical-packed, container,
@@ -1609,10 +1575,6 @@ class Engine {
   // Execution-discipline counters (accumulated during Run).
   RuntimeStats stats_;
 
-  // Per-process wakeup/activation counters (opt-in, kDetailedStats).
-  // Indexed by process_id. Empty when detailed stats are disabled.
-  std::vector<ProcessWakeStats> per_process_stats_;
-
   // Static connection batch shape (populated once in InitConnectionBatch).
   uint32_t conn_full_slot_count_ = 0;
   uint32_t conn_narrow_count_ = 0;
@@ -1743,25 +1705,9 @@ class Engine {
       nullptr;
   uint32_t num_deferred_assertion_sites_ = 0;
 
-  struct DeferredAssertionRecord {
-    uint32_t enqueue_generation = 0;
-    uint32_t site_id = 0;
-    uint8_t disposition = 0;
-    RuntimeInstance* instance = nullptr;
-    uint32_t payload_size = 0;
-    SmallByteBuffer payload;
-    // ref_bindings[i] corresponds 1:1 to the ith kLiveRef entry in the
-    // site's realization actual_plan. Runtime preserves order and never
-    // interprets entries.
-    std::vector<DeferredAssertionRefBindingAbi> ref_bindings;
-  };
-  struct ProcessDeferredAssertionState {
-    uint32_t flush_generation = 0;
-    std::vector<DeferredAssertionRecord> pending;
-  };
-  std::vector<ProcessDeferredAssertionState> deferred_assertion_states_;
-  std::vector<uint8_t> deferred_pending_flags_;
-  std::vector<ProcessId> pending_deferred_processes_;
+  // Sparse list of processes with pending deferred assertion records.
+  // Dedup via RuntimeProcess::deferred_pending.
+  std::vector<RuntimeProcess*> pending_deferred_processes_;
 
   // Long-run observability: counter-gated periodic stdout flush.
   struct ObservabilityConfig {
