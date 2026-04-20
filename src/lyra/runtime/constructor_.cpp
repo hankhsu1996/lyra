@@ -979,18 +979,6 @@ auto Constructor::Finalize() -> ConstructionResult {
   void* packed_buffer = AllocateProcessFrames(
       std::span(states), std::span(schema_indices), schemas_);
 
-  for (uint32_t i = 0; i < num_total; ++i) {
-    auto* header = static_cast<ProcessFrameHeader*>(states[i]);
-    header->design_ptr = design_state_.data();
-    header->process_id = i;
-
-    const auto& proc = staged_[i];
-    if (proc.is_module) {
-      header->body = proc.body;
-      header->instance = staged_instances_[proc.instance_index].get();
-    }
-  }
-
   ConstructionResult result;
   result.states = std::move(states);
   result.packed_buffer = packed_buffer;

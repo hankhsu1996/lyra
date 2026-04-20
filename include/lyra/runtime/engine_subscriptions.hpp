@@ -14,6 +14,7 @@
 namespace lyra::runtime {
 
 struct RuntimeInstance;
+struct RuntimeProcess;
 
 // Reference into a process's IndexPlanPool.
 struct IndexPlanRef {
@@ -173,13 +174,13 @@ struct ContainerCold {
   uint32_t last_rebind_epoch = 0;
 };
 
-// Dense hot-path record for edge wakeup (24B).
+// Dense hot-path record for edge wakeup.
 // Contains only process wakeup identity and cold-path linkage.
 // Observation-point state (byte_offset, bit_index, last_bit) is owned by
 // the enclosing EdgeWatchGroup. Polarity (posedge/negedge) is implicit in
 // which bucket the sub lives in.
 struct EdgeSub {
-  uint32_t process_id = 0;
+  RuntimeProcess* process = nullptr;
   uint32_t resume_block = 0;
   uint8_t flags = 0;  // kActive=0x01, kHasCold=0x02
   std::array<uint8_t, 3> padding = {};
@@ -187,7 +188,7 @@ struct EdgeSub {
       0;                  // index in owning local_sub_refs/global_sub_refs
   uint32_t cold_idx = 0;  // UINT32_MAX = no cold state (edge_cold_pool_)
 };
-static_assert(sizeof(EdgeSub) == 20);
+static_assert(sizeof(EdgeSub) == 24);
 
 // Observation-point group for edge subscriptions.
 // Groups all edge watchers on a slot that observe the same (byte_offset,
@@ -202,11 +203,11 @@ struct EdgeWatchGroup {
   std::vector<EdgeSub> negedge_subs;
 };
 
-// Dense record for kAnyChange subscribers (48B).
+// Dense record for kAnyChange subscribers.
 // Has a different hot path from edge detection -- splitting from EdgeSub
 // keeps the dominant clock-edge path smaller.
 struct ChangeSub {
-  uint32_t process_id = 0;
+  RuntimeProcess* process = nullptr;
   uint32_t resume_block = 0;
   uint32_t byte_offset = 0;
   uint32_t byte_size = 0;
@@ -221,22 +222,25 @@ struct ChangeSub {
   uint8_t flags = 0;  // kActive=0x01
   std::array<uint8_t, 3> padding{};
 };
-static_assert(sizeof(ChangeSub) == 44);
+static_assert(sizeof(ChangeSub) == 48);
 
-// Dense record for rebind watchers (pass 1 only) (24B).
+// Dense record for rebind watchers (pass 1 only).
 // Logically a different pass -- lives in its own dense array so
 // pass 2 never branches over them.
+//
+// process is read only on swap-and-pop backpatch during sub removal;
+// the flush hot path itself does not consume it.
 struct RebindWatcherSub {
-  uint32_t process_id = 0;
+  RuntimeProcess* process = nullptr;
   uint32_t byte_offset = 0;
   uint32_t byte_size = 0;
   uint32_t process_sub_idx = 0;
   uint32_t cold_idx = 0;  // always valid (watcher_cold_pool_)
   uint32_t flags = 0;     // kActive=0x01
 };
-static_assert(sizeof(RebindWatcherSub) == 24);
+static_assert(sizeof(RebindWatcherSub) == 32);
 
-// Dense record for container element subscriptions (24B).
+// Dense record for container element subscriptions.
 // Container subscriptions are rare and structurally different.
 //
 // Observation model: container subs observe bit 0 of byte 0 of the selected
@@ -245,7 +249,7 @@ static_assert(sizeof(RebindWatcherSub) == 24);
 // defined over the LSB of the element, matching the scalar edge semantics.
 // Multi-bit or multi-byte element observation is not supported.
 struct ContainerSub {
-  uint32_t process_id = 0;
+  RuntimeProcess* process = nullptr;
   uint32_t resume_block = 0;
   uint32_t process_sub_idx = 0;
   uint32_t cold_idx = 0;  // always valid (container_cold_pool_)
@@ -254,7 +258,7 @@ struct ContainerSub {
   uint8_t flags = 0;     // kActive=0x01
   uint8_t padding = 0;
 };
-static_assert(sizeof(ContainerSub) == 20);
+static_assert(sizeof(ContainerSub) == 24);
 
 // Flag constants for sub flags fields.
 inline constexpr uint8_t kSubActive = 0x01;

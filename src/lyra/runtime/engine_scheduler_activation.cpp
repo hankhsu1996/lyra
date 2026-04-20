@@ -14,27 +14,27 @@
 #include "lyra/runtime/engine_scheduler.hpp"
 #include "lyra/runtime/engine_types.hpp"
 #include "lyra/runtime/iteration_limit.hpp"
+#include "lyra/runtime/process_envelope.hpp"
 #include "lyra/runtime/signal_interrupt.hpp"
 #include "lyra/runtime/trace_flush.hpp"
 
 namespace lyra::runtime {
 
-void Engine::ScheduleInitial(ProcessHandle handle) {
+void Engine::ScheduleInitial(RuntimeProcess& proc) {
   // Skip comb kernel processes - they are evaluated inline during flush,
   // not through the normal scheduler activation path.
-  if (handle.process_id < processes_.size() &&
-      processes_[handle.process_id].is_comb_kernel) {
+  if (proc.is_comb_kernel) {
     return;
   }
 
-  active_queue_.push_back({handle.process_id, /*resume_block=*/0});
+  active_queue_.push_back({&proc, /*resume_block=*/0});
   if (activation_trace_.has_value()) {
-    wake_trace_[handle.process_id] = {
+    proc.wake_trace = {
         .cause = WakeCause::kInitial, .trigger_slot = kNoTriggerSlot};
   }
 }
 
-void Engine::Delay(ProcessHandle handle, ResumePoint resume, SimTime ticks) {
+void Engine::Delay(RuntimeProcess& proc, ResumePoint resume, SimTime ticks) {
   // Checked addition to prevent overflow
   if (ticks > kNoTimeLimit - current_time_) {
     throw common::InternalError(
@@ -43,25 +43,25 @@ void Engine::Delay(ProcessHandle handle, ResumePoint resume, SimTime ticks) {
                              current_time_, ticks));
   }
   SimTime wake_time = current_time_ + ticks;
-  delay_queue_[wake_time].push_back({handle.process_id, resume.block_index});
+  delay_queue_[wake_time].push_back({&proc, resume.block_index});
   if (activation_trace_.has_value()) {
-    wake_trace_[handle.process_id] = {
+    proc.wake_trace = {
         .cause = WakeCause::kDelay, .trigger_slot = kNoTriggerSlot};
   }
 }
 
-void Engine::DelayZero(ProcessHandle handle, ResumePoint resume) {
-  inactive_queue_.push({handle.process_id, resume.block_index});
+void Engine::DelayZero(RuntimeProcess& proc, ResumePoint resume) {
+  inactive_queue_.push({&proc, resume.block_index});
   if (activation_trace_.has_value()) {
-    wake_trace_[handle.process_id] = {
+    proc.wake_trace = {
         .cause = WakeCause::kDelayZero, .trigger_slot = kNoTriggerSlot};
   }
 }
 
-void Engine::ScheduleNextDelta(ProcessHandle handle, ResumePoint resume) {
-  next_delta_queue_.push_back({handle.process_id, resume.block_index});
+void Engine::ScheduleNextDelta(RuntimeProcess& proc, ResumePoint resume) {
+  next_delta_queue_.push_back({&proc, resume.block_index});
   if (activation_trace_.has_value()) {
-    wake_trace_[handle.process_id] = {
+    proc.wake_trace = {
         .cause = WakeCause::kRepeat, .trigger_slot = kNoTriggerSlot};
   }
 }
@@ -103,7 +103,8 @@ void Engine::SetMonitorEnabled(bool enabled) {
 }
 
 void Engine::RunOneActivation(const WakeupEntry& entry) {
-  uint32_t pid = entry.process_id;
+  auto& proc = *entry.process;
+  const auto pid = static_cast<uint32_t>(&proc - processes_.data());
 
   // Update progress counters (signal-safe reads by SIGUSR1 handler).
   // last_process_id_ and phase_ are always written (cheap stores, useful
@@ -131,9 +132,8 @@ void Engine::RunOneActivation(const WakeupEntry& entry) {
   // Reset iteration limit: direct TLS write from cached values.
   *cached_iteration_limit_ptr_ = cached_iteration_limit_;
 
-  ProcessHandle handle{.process_id = entry.process_id};
   ResumePoint resume{.block_index = entry.resume_block, .instruction_index = 0};
-  process_dispatch_.fn(process_dispatch_.ctx, *this, handle, resume);
+  DispatchAndHandleActivation(*this, proc, pid, resume);
 
   // End activation context.
   activation_ctx_.active = false;
@@ -141,7 +141,7 @@ void Engine::RunOneActivation(const WakeupEntry& entry) {
     ++stats_.core.activations_nba_only;
   }
   if (detailed_stats_enabled_) {
-    auto& ps = per_process_stats_[pid];
+    auto& ps = proc.wake_stats;
     ++ps.runs;
     ps.total_slots_dirtied += activation_ctx_.dirty_count;
     if (activation_ctx_.dirty_count == 0) {
@@ -185,16 +185,8 @@ void Engine::ExecuteActiveRegion() {
         break;
       }
 
-      if (num_processes_ > 0) {
-        if (entry.process_id >= num_processes_) {
-          throw common::InternalError(
-              "Engine::ExecuteRegion",
-              std::format(
-                  "process_id {} exceeds num_processes {}", entry.process_id,
-                  num_processes_));
-        }
-        processes_[entry.process_id].is_enqueued = false;
-      }
+      auto& proc = *entry.process;
+      proc.is_enqueued = false;
 
       if (activation_trace_.has_value()) {
         TraceWake(entry);
@@ -205,12 +197,12 @@ void Engine::ExecuteActiveRegion() {
       // wait/delay resume uses the non-zero block set by LyraSuspendWait/Delay.
       if (entry.resume_block != 0) {
         FlushDeferredAssertionsForProcess(
-            ProcessId::FromIndex(entry.process_id));
+            ProcessId::FromIndex(
+                static_cast<uint32_t>(&proc - processes_.data())));
       }
 
-      ProcessHandle handle{.process_id = entry.process_id};
       if (!post_activation_reconcile_) {
-        ClearProcessSubscriptions(handle);
+        ClearProcessSubscriptions(proc);
       }
       // Activation handling (scheduling, subscription install/refresh)
       // is performed by the process envelope inside the dispatch callback.
@@ -218,8 +210,8 @@ void Engine::ExecuteActiveRegion() {
       // semantic requests and calls engine primitives directly.
       RunOneActivation(entry);
       if (!finished_ && post_activation_reconcile_) {
-        if (!TryFastReconcile(entry.process_id)) {
-          ReconcilePostActivation(handle);
+        if (!TryFastReconcile(proc)) {
+          ReconcilePostActivation(proc);
         }
       }
     }
@@ -387,10 +379,11 @@ void Engine::FlushDirtySlots() {
   ClearLocalUpdates();
 }
 
-void Engine::HandleTrap(uint32_t process_id, const TrapPayload& payload) {
+void Engine::HandleTrap(
+    const RuntimeProcess& proc, const TrapPayload& payload) {
   switch (payload.reason) {
     case TrapReason::kIterationLimitExceeded: {
-      std::string proc_str = FormatProcess(process_id);
+      std::string proc_str = FormatProcess(proc);
       std::string loc_str;
       if (back_edge_site_meta_.IsPopulated() &&
           payload.a < back_edge_site_meta_.Size()) {
@@ -411,7 +404,7 @@ void Engine::HandleTrap(uint32_t process_id, const TrapPayload& payload) {
     }
     case TrapReason::kUserFatal:
     case TrapReason::kInternalError:
-      lyra::PrintError(std::format("trap in {}", FormatProcess(process_id)));
+      lyra::PrintError(std::format("trap in {}", FormatProcess(proc)));
       finished_ = true;
       break;
   }
@@ -440,11 +433,12 @@ void Engine::OnMutation(const common::MutationEvent& event) {
   // HeapObjId: NYI -- future heap-level UpdateSet tracking.
 }
 
-auto Engine::FormatProcess(uint32_t process_id) const -> std::string {
+auto Engine::FormatProcess(const RuntimeProcess& proc) const -> std::string {
+  const auto pid = static_cast<uint32_t>(&proc - processes_.data());
   if (process_meta_.IsPopulated()) {
-    return process_meta_.Format(process_id);
+    return process_meta_.Format(pid);
   }
-  return std::format("<process {}>", process_id);
+  return std::format("<process {}>", pid);
 }
 
 void Engine::HandleObservabilityCheckpoint() {

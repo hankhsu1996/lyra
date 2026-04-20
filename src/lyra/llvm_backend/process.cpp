@@ -1814,12 +1814,18 @@ auto GenerateProcessFunction(
   auto& llvm_ctx = context.GetLlvmContext();
   auto& module = context.GetModule();
 
-  // Create function type: void(ptr %state, i32 %resume_block, ptr %out)
+  // Function type:
+  //   init:       void(ptr state, i32 resume_block, ptr design, ptr out)
+  //   simulation: void(ptr state, i32 resume_block, ptr design, ptr out)
+  //               standalone simulation bodies also take the design arg;
+  //               engine/instance/decision-owner are not threaded here --
+  //               standalone simulation is limited to connection/init-style
+  //               code that does not need them.
   auto* ptr_ty = llvm::PointerType::getUnqual(llvm_ctx);
   auto* i32_ty = llvm::Type::getInt32Ty(llvm_ctx);
   auto* void_ty = llvm::Type::getVoidTy(llvm_ctx);
   auto* fn_type =
-      llvm::FunctionType::get(void_ty, {ptr_ty, i32_ty, ptr_ty}, false);
+      llvm::FunctionType::get(void_ty, {ptr_ty, i32_ty, ptr_ty, ptr_ty}, false);
 
   auto* func = llvm::Function::Create(
       fn_type, llvm::Function::InternalLinkage, name, &module);
@@ -1827,9 +1833,11 @@ auto GenerateProcessFunction(
   // Name the arguments
   auto* state_arg = func->getArg(0);
   auto* resume_block_arg = func->getArg(1);
-  auto* out_arg = func->getArg(2);
+  auto* design_arg = func->getArg(2);
+  auto* out_arg = func->getArg(3);
   state_arg->setName("state");
   resume_block_arg->setName("resume_block");
+  design_arg->setName("design");
   out_arg->setName("out");
 
   // Create blocks
@@ -1853,17 +1861,10 @@ auto GenerateProcessFunction(
   // Entry block: set up cached pointers and dispatch
   builder.SetInsertPoint(entry_block);
 
-  if (is_simulation) {
-    // Simulation contract: load all state pointers including engine.
-    context.EmitProcessStateSetup(state_arg);
-  } else {
-    // Init contract: load design_ptr and frame_ptr only. No engine.
-    context.SetStatePointer(state_arg);
-    context.SetDesignPointer(context.EmitLoadDesignPtr(state_arg));
-    auto* frame_ptr = builder.CreateStructGEP(
-        context.GetProcessStateType(), state_arg, 1, "frame_ptr");
-    context.SetFramePointer(frame_ptr);
-  }
+  // Init-kind and legacy standalone-simulation bodies alike: bind state and
+  // design only. Engine/instance/decision-owner remain null; code that
+  // would need them is not emitted on these paths.
+  context.EmitInitProcessStateSetup(state_arg, design_arg);
 
   // Process bodies always have an active decision owner.
   ActiveExecutionMode exec_mode{
@@ -2038,18 +2039,31 @@ auto GenerateSharedProcessFunction(
   auto& llvm_ctx = context.GetLlvmContext();
   auto& module = context.GetModule();
 
-  // Shared body call contract: void(ptr frame, i32 resume).
-  // Instance binding is loaded from the frame header at entry.
+  // Shared simulation body ABI: runtime bindings travel as explicit
+  // function arguments, never loaded from the backing object.
+  //   void(ptr state, i32 resume_block, ptr engine, ptr design,
+  //        ptr instance, i32 decision_owner_id)
   auto* ptr_ty = llvm::PointerType::getUnqual(llvm_ctx);
   auto* i32_ty = llvm::Type::getInt32Ty(llvm_ctx);
   auto* void_ty = llvm::Type::getVoidTy(llvm_ctx);
-  auto* fn_type = llvm::FunctionType::get(void_ty, {ptr_ty, i32_ty}, false);
+  auto* fn_type = llvm::FunctionType::get(
+      void_ty, {ptr_ty, i32_ty, ptr_ty, ptr_ty, ptr_ty, i32_ty}, false);
 
   auto* func = llvm::Function::Create(
       fn_type, llvm::Function::InternalLinkage, name, &module);
 
-  func->getArg(0)->setName("frame");
-  func->getArg(1)->setName("resume_block");
+  auto* state_arg = func->getArg(0);
+  auto* resume_block_arg = func->getArg(1);
+  auto* engine_arg = func->getArg(2);
+  auto* design_arg = func->getArg(3);
+  auto* instance_arg = func->getArg(4);
+  auto* decision_owner_id_arg = func->getArg(5);
+  state_arg->setName("state");
+  resume_block_arg->setName("resume_block");
+  engine_arg->setName("engine");
+  design_arg->setName("design");
+  instance_arg->setName("instance");
+  decision_owner_id_arg->setName("decision_owner_id");
 
   auto* entry_block = llvm::BasicBlock::Create(llvm_ctx, "entry", func);
   auto* exit_block = llvm::BasicBlock::Create(llvm_ctx, "exit", func);
@@ -2064,7 +2078,8 @@ auto GenerateSharedProcessFunction(
   auto& builder = context.GetBuilder();
   builder.SetInsertPoint(entry_block);
 
-  context.EmitProcessStateSetup(func->getArg(0));
+  context.EmitProcessStateSetup(
+      state_arg, engine_arg, design_arg, decision_owner_id_arg);
   ActiveExecutionMode exec_mode{
       .decision_owner_id = context.GetCurrentDecisionOwnerId()};
 
@@ -2075,12 +2090,10 @@ auto GenerateSharedProcessFunction(
     return std::unexpected(shared_alloca_result.error());
   }
 
-  // Load realized instance binding from the frame header.
-  // Module slots accessed via this_ptr + spec_slot_layout (stable offsets
-  // are compile-time constants; unstable offsets loaded from header).
-  // Signal coordination via typed identity (local signals are body-local).
+  // Instance binding comes directly from the function argument; module
+  // slots are accessed via this_ptr + spec_slot_layout.
   context.SetSlotAddressingMode(SlotAddressingMode::kSpecializationLocal);
-  context.EmitSharedBodyBindingSetup(func->getArg(0));
+  context.EmitSharedBodyBindingSetup(instance_arg);
 
   // Create activation-local managed slot storage.
   // Must be after slot addressing setup (this_ptr, instance binding).

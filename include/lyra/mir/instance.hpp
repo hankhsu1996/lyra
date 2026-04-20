@@ -18,7 +18,7 @@ struct InstanceEntry {
 };
 
 // Table of all module instances in the design, indexed by instance_id.
-// The instance_id is used in ProcessHandle to enable %m formatting.
+// The instance_id is used at runtime to enable %m formatting.
 struct InstanceTable {
   std::vector<InstanceEntry> entries;
 

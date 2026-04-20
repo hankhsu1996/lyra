@@ -290,6 +290,7 @@ void Engine::InitModuleInstancesFromBundles(
   pending_module_process_meta_.clear();
   for (auto& proc : processes_) {
     proc.instance = nullptr;
+    proc.body = nullptr;
   }
   slot_meta_registry_ = SlotMetaRegistry{};
   comb_kernels_.clear();
@@ -511,6 +512,11 @@ void Engine::InitModuleInstancesFromBundles(
       uint32_t proc_idx = proc_map.GlobalIndex(bi, p);
       if (proc_idx < num_processes_) {
         processes_[proc_idx].instance = bundle.instance;
+        SharedBodyFn body_fn{};
+        std::memcpy(
+            &body_fn, &bundle.body_desc->entries[p].shared_body_fn,
+            sizeof(body_fn));
+        processes_[proc_idx].body = body_fn;
         bundle.instance->attached_processes.push_back(&processes_[proc_idx]);
       }
     }
@@ -641,7 +647,8 @@ void Engine::InitModuleInstancesFromBundles(
 
         auto* state_ptr = proc_states[proc_idx];
         auto comb_idx = static_cast<uint32_t>(comb_kernels_.size());
-        comb_kernels_.push_back(BuildCombKernel(proc_idx, state_ptr, flags));
+        comb_kernels_.push_back(
+            BuildCombKernel(processes_[proc_idx], proc_idx, state_ptr, flags));
 
         proc->is_comb_kernel = true;
         bool kernel_self_edge = (flags & CombKernel::kSelfEdge) != 0;
@@ -945,6 +952,19 @@ void Engine::InitModuleInstancesFromBundles(
         state.dirty_seen.resize(desc.count, 0);
       }
     }
+  }
+}
+
+void Engine::RegisterFrameStates(std::span<void*> states) {
+  if (states.size() != processes_.size()) {
+    throw common::InternalError(
+        "Engine::RegisterFrameStates",
+        std::format(
+            "states size {} != processes_ size {}", states.size(),
+            processes_.size()));
+  }
+  for (size_t i = 0; i < states.size(); ++i) {
+    processes_[i].frame_state = states[i];
   }
 }
 

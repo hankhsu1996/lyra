@@ -563,44 +563,6 @@ void Context::SetSpecSlotInfo(const SpecSlotInfo* info) {
   spec_slot_info_ = info;
 }
 
-// Low-level header-field GEP. Returns a pointer to the specified field
-// within the process frame header. This is the only place in codegen that
-// knows how to navigate from process state to header field address.
-auto EmitHeaderFieldGep(
-    Context& ctx, llvm::Value* state_arg,
-    lyra::runtime::ProcessFrameHeaderField field, llvm::StringRef name)
-    -> llvm::Value* {
-  auto& builder = ctx.GetBuilder();
-  auto* header_ptr = builder.CreateStructGEP(
-      ctx.GetProcessStateType(), state_arg, 0, "header_ptr");
-  return builder.CreateStructGEP(
-      ctx.GetHeaderType(), header_ptr, static_cast<unsigned>(field), name);
-}
-
-auto Context::EmitLoadEnginePtr(llvm::Value* state_arg) -> llvm::Value* {
-  using F = lyra::runtime::ProcessFrameHeaderField;
-  auto* ptr =
-      EmitHeaderFieldGep(*this, state_arg, F::kEnginePtr, "engine_ptr_ptr");
-  return builder_.CreateLoad(
-      llvm::PointerType::getUnqual(*llvm_context_), ptr, "engine_ptr");
-}
-
-auto Context::EmitLoadDesignPtr(llvm::Value* state_arg) -> llvm::Value* {
-  using F = lyra::runtime::ProcessFrameHeaderField;
-  auto* ptr =
-      EmitHeaderFieldGep(*this, state_arg, F::kDesignPtr, "design_ptr_ptr");
-  return builder_.CreateLoad(
-      llvm::PointerType::getUnqual(*llvm_context_), ptr, "design_ptr");
-}
-
-auto Context::EmitLoadInstancePtr(llvm::Value* state_arg) -> llvm::Value* {
-  using F = lyra::runtime::ProcessFrameHeaderField;
-  auto* ptr =
-      EmitHeaderFieldGep(*this, state_arg, F::kInstance, "instance_ptr_ptr");
-  return builder_.CreateLoad(
-      llvm::PointerType::getUnqual(*llvm_context_), ptr, "instance_ptr");
-}
-
 auto Context::EmitLoadInstanceInlineBase(llvm::Value* instance_ptr)
     -> llvm::Value* {
   using IF = lyra::runtime::RuntimeInstanceField;
@@ -616,43 +578,41 @@ auto Context::EmitLoadInstanceInlineBase(llvm::Value* instance_ptr)
       "inline_base");
 }
 
-void Context::EmitStoreDesignPtr(llvm::Value* state_arg, llvm::Value* value) {
-  using F = lyra::runtime::ProcessFrameHeaderField;
-  auto* ptr =
-      EmitHeaderFieldGep(*this, state_arg, F::kDesignPtr, "design_ptr_ptr");
-  builder_.CreateStore(value, ptr);
-}
-
 auto Context::EmitOutcomePtr(llvm::Value* state_arg) -> llvm::Value* {
   using F = lyra::runtime::ProcessFrameHeaderField;
-  return EmitHeaderFieldGep(*this, state_arg, F::kOutcome, "outcome_ptr");
+  auto& builder = GetBuilder();
+  auto* header_ptr = builder.CreateStructGEP(
+      GetProcessStateType(), state_arg, 0, "header_ptr");
+  return builder.CreateStructGEP(
+      GetHeaderType(), header_ptr, static_cast<unsigned>(F::kOutcome),
+      "outcome_ptr");
 }
 
-auto Context::EmitLoadDecisionOwnerId(llvm::Value* state_arg) -> llvm::Value* {
-  using F = lyra::runtime::ProcessFrameHeaderField;
-  // The process frame header field stays process-named (kProcessId); the
-  // codegen layer interprets it as the decision owner for process-backed paths.
-  auto* ptr =
-      EmitHeaderFieldGep(*this, state_arg, F::kProcessId, "decision_owner_ptr");
-  return builder_.CreateLoad(
-      llvm::Type::getInt32Ty(*llvm_context_), ptr, "decision_owner_id");
-}
-
-void Context::EmitProcessStateSetup(llvm::Value* state_arg) {
+void Context::EmitProcessStateSetup(
+    llvm::Value* state_arg, llvm::Value* engine_arg, llvm::Value* design_arg,
+    llvm::Value* decision_owner_id_arg) {
   SetStatePointer(state_arg);
-  SetEnginePointer(EmitLoadEnginePtr(state_arg));
-  SetDesignPointer(EmitLoadDesignPtr(state_arg));
-  SetCurrentDecisionOwnerId(EmitLoadDecisionOwnerId(state_arg));
+  SetEnginePointer(engine_arg);
+  SetDesignPointer(design_arg);
+  SetCurrentDecisionOwnerId(decision_owner_id_arg);
 
   auto* frame_ptr = builder_.CreateStructGEP(
       GetProcessStateType(), state_arg, 1, "frame_ptr");
   SetFramePointer(frame_ptr);
 }
 
-void Context::EmitSharedBodyBindingSetup(llvm::Value* state_arg) {
-  auto* inst = EmitLoadInstancePtr(state_arg);
-  SetInstancePointer(inst);
-  SetThisPointer(EmitLoadInstanceInlineBase(inst));
+void Context::EmitSharedBodyBindingSetup(llvm::Value* instance_arg) {
+  SetInstancePointer(instance_arg);
+  SetThisPointer(EmitLoadInstanceInlineBase(instance_arg));
+}
+
+void Context::EmitInitProcessStateSetup(
+    llvm::Value* state_arg, llvm::Value* design_arg) {
+  SetStatePointer(state_arg);
+  SetDesignPointer(design_arg);
+  auto* frame_ptr = builder_.CreateStructGEP(
+      GetProcessStateType(), state_arg, 1, "frame_ptr");
+  SetFramePointer(frame_ptr);
 }
 
 void Context::SetStatePointer(llvm::Value* state_ptr) {

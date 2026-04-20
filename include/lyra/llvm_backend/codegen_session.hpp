@@ -327,8 +327,8 @@ auto CompileDesignProcesses(const LoweringInput& input)
 // parameter needed. Per-instance data (external ref slots) is loaded at
 // runtime from instance_ptr, not passed through the compilation session.
 auto CompileModuleSpecSession(
-    Context& context, const CompiledModuleSpecInput& input)
-    -> Result<CompiledModuleSpec>;
+    Context& context, const CuFacts& facts,
+    const CompiledModuleSpecInput& input) -> Result<CompiledModuleSpec>;
 
 // Backend phase: extract LLVM ownership from a completed session.
 auto FinalizeModule(CodegenSession session, LoweringReport report)

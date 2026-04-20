@@ -44,12 +44,12 @@ void Engine::EnqueueDeferredAssertion(
     uint32_t process_id, RuntimeInstance* instance, uint32_t site_id,
     uint8_t disposition, const void* payload_ptr, uint32_t payload_size,
     const DeferredAssertionRefBindingAbi* ref_ptr, uint32_t ref_count) {
-  if (process_id >= deferred_assertion_states_.size()) {
+  if (process_id >= processes_.size()) {
     throw common::InternalError(
         "Engine::EnqueueDeferredAssertion",
         std::format(
             "process_id {} out of range (num_processes={})", process_id,
-            deferred_assertion_states_.size()));
+            processes_.size()));
   }
   if (site_id >= num_deferred_assertion_sites_) {
     throw common::InternalError(
@@ -65,7 +65,8 @@ void Engine::EnqueueDeferredAssertion(
         std::format("unknown disposition {}", disposition));
   }
 
-  auto& state = deferred_assertion_states_[process_id];
+  auto& proc = processes_[process_id];
+  auto& state = proc.deferred_assertion_state;
   DeferredAssertionRecord rec{
       .enqueue_generation = state.flush_generation,
       .site_id = site_id,
@@ -83,17 +84,17 @@ void Engine::EnqueueDeferredAssertion(
   }
   state.pending.push_back(std::move(rec));
 
-  if (deferred_pending_flags_[process_id] == 0) {
-    deferred_pending_flags_[process_id] = 1;
-    pending_deferred_processes_.push_back(ProcessId::FromIndex(process_id));
+  if (!proc.deferred_pending) {
+    proc.deferred_pending = true;
+    pending_deferred_processes_.push_back(&proc);
   }
 }
 
 void Engine::MatureAndExecuteObservedDeferredAssertions() {
   using Disp = DeferredAssertionDispositionAbi;
 
-  for (ProcessId pid : pending_deferred_processes_) {
-    auto& state = deferred_assertion_states_[pid.Index()];
+  for (RuntimeProcess* proc : pending_deferred_processes_) {
+    auto& state = proc->deferred_assertion_state;
 
     for (const auto& rec : state.pending) {
       if (rec.enqueue_generation != state.flush_generation) continue;
@@ -181,7 +182,7 @@ void Engine::MatureAndExecuteObservedDeferredAssertions() {
     }
 
     state.pending.clear();
-    deferred_pending_flags_[pid.Index()] = 0;
+    proc->deferred_pending = false;
   }
   pending_deferred_processes_.clear();
 }

@@ -20,6 +20,7 @@
 #include "lyra/runtime/runtime_instance.hpp"
 #include "lyra/runtime/scheduler_snapshot.hpp"
 #include "lyra/runtime/slot_meta.hpp"
+#include "lyra/runtime/suspend_record.hpp"
 #include "lyra/runtime/trace_signal_meta.hpp"
 
 namespace lyra::runtime {
@@ -164,32 +165,25 @@ void Engine::DumpRuntimeStats(FILE* sink) const {
     //                 always_ff and is NOT a wasted-wakeup indicator.
     //   no_effect:    runs - direct_dirty - nba_only (should be 0;
     //                 nonzero means accounting bug)
-    if (!per_process_stats_.empty()) {
+    if (detailed_stats_enabled_ && !processes_.empty()) {
       // Build sorted index by total wake attempts (descending).
-      std::vector<uint32_t> order(per_process_stats_.size());
+      std::vector<uint32_t> order(processes_.size());
       std::ranges::iota(order, 0U);
       std::ranges::sort(order, [&](uint32_t a, uint32_t b) {
-        auto total_a = per_process_stats_[a].wake_edge +
-                       per_process_stats_[a].wake_change +
-                       per_process_stats_[a].wake_container +
-                       per_process_stats_[a].wake_delay +
-                       per_process_stats_[a].wake_initial +
-                       per_process_stats_[a].wake_other;
-        auto total_b = per_process_stats_[b].wake_edge +
-                       per_process_stats_[b].wake_change +
-                       per_process_stats_[b].wake_container +
-                       per_process_stats_[b].wake_delay +
-                       per_process_stats_[b].wake_initial +
-                       per_process_stats_[b].wake_other;
+        const auto& sa = processes_[a].wake_stats;
+        const auto& sb = processes_[b].wake_stats;
+        auto total_a = sa.wake_edge + sa.wake_change + sa.wake_container +
+                       sa.wake_delay + sa.wake_initial + sa.wake_other;
+        auto total_b = sb.wake_edge + sb.wake_change + sb.wake_container +
+                       sb.wake_delay + sb.wake_initial + sb.wake_other;
         return total_a > total_b;
       });
 
       fmt::print(
-          sink, "[lyra][stats][per_process] {} processes\n",
-          per_process_stats_.size());
+          sink, "[lyra][stats][per_process] {} processes\n", processes_.size());
 
       for (uint32_t pid : order) {
-        const auto& ps = per_process_stats_[pid];
+        const auto& ps = processes_[pid].wake_stats;
         uint64_t total_wakes = ps.wake_edge + ps.wake_change +
                                ps.wake_container + ps.wake_delay +
                                ps.wake_initial + ps.wake_other;
@@ -315,11 +309,13 @@ void Engine::DumpSchedulerStatusAsyncSignalSafe(int fd) const {
 
 void Engine::TraceWake(const WakeupEntry& entry) {
   if (!activation_trace_.has_value()) return;
-  const auto& trace = wake_trace_[entry.process_id];
+  const auto& proc = *entry.process;
+  const auto pid = static_cast<uint32_t>(&proc - processes_.data());
+  const auto& trace = proc.wake_trace;
   ActivationEvent ae{
       .time = current_time_,
       .delta = current_delta_,
-      .process_id = entry.process_id,
+      .process_id = pid,
       .trigger_slot = trace.trigger_slot,
       .resume_block = entry.resume_block,
       .kind = ActivationEventKind::kWake,
@@ -332,11 +328,13 @@ void Engine::TraceWake(const WakeupEntry& entry) {
 
 void Engine::TraceRun(const WakeupEntry& entry) {
   if (!activation_trace_.has_value()) return;
-  const auto& trace = wake_trace_[entry.process_id];
+  const auto& proc = *entry.process;
+  const auto pid = static_cast<uint32_t>(&proc - processes_.data());
+  const auto& trace = proc.wake_trace;
   ActivationEvent ae{
       .time = current_time_,
       .delta = current_delta_,
-      .process_id = entry.process_id,
+      .process_id = pid,
       .trigger_slot = trace.trigger_slot,
       .resume_block = entry.resume_block,
       .kind = ActivationEventKind::kRun,
@@ -463,9 +461,10 @@ auto Engine::TakeSchedulerSnapshot() const -> SchedulerSnapshot {
   std::vector<bool> in_delay(num_processes_, false);
   for (const auto& [time, entries] : delay_queue_) {
     for (const auto& entry : entries) {
-      if (entry.process_id < num_processes_) {
-        in_delay[entry.process_id] = true;
-        delay_target[entry.process_id] = time;
+      const auto pid = static_cast<uint32_t>(entry.process - processes_.data());
+      if (pid < num_processes_) {
+        in_delay[pid] = true;
+        delay_target[pid] = time;
       }
     }
   }
@@ -473,10 +472,12 @@ auto Engine::TakeSchedulerSnapshot() const -> SchedulerSnapshot {
   // Build ready-queue membership.
   std::vector<bool> is_ready(num_processes_, false);
   for (const auto& e : active_queue_) {
-    if (e.process_id < num_processes_) is_ready[e.process_id] = true;
+    const auto pid = static_cast<uint32_t>(e.process - processes_.data());
+    if (pid < num_processes_) is_ready[pid] = true;
   }
   for (const auto& e : next_delta_queue_) {
-    if (e.process_id < num_processes_) is_ready[e.process_id] = true;
+    const auto pid = static_cast<uint32_t>(e.process - processes_.data());
+    if (pid < num_processes_) is_ready[pid] = true;
   }
 
   uint32_t current_running =
@@ -511,9 +512,12 @@ auto Engine::TakeSchedulerSnapshot() const -> SchedulerSnapshot {
     } else if (is_ready[pid] || processes_[pid].is_enqueued) {
       kind = ProcessWaitKind::kReady;
     } else if (
-        pid < processes_.size() && processes_[pid].suspend_record != nullptr) {
-      // Use SuspendRecord::tag as the canonical authority.
-      switch (processes_[pid].suspend_record->tag) {
+        pid < processes_.size() && processes_[pid].frame_state != nullptr) {
+      // Use SuspendRecord::tag from the process's frame-state backing as the
+      // canonical authority.
+      const auto* suspend =
+          static_cast<const SuspendRecord*>(processes_[pid].frame_state);
+      switch (suspend->tag) {
         case SuspendTag::kFinished:
           kind = ProcessWaitKind::kFinished;
           break;

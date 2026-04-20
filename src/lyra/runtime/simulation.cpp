@@ -27,8 +27,6 @@
 #include "lyra/runtime/iteration_limit.hpp"
 #include "lyra/runtime/nba_stats_hook.hpp"
 #include "lyra/runtime/output_sink.hpp"
-#include "lyra/runtime/process_envelope.hpp"
-#include "lyra/runtime/process_frame.hpp"
 #include "lyra/runtime/process_meta.hpp"
 #include "lyra/runtime/reporting.hpp"
 #include "lyra/runtime/runtime_instance.hpp"
@@ -40,10 +38,6 @@
 #include "lyra/trace/text_trace_sink.hpp"
 
 namespace {
-
-// Process state header layout. Must match ProcessFrameHeader in
-// process_frame.hpp and the LLVM struct emitted by BuildHeaderType.
-using StateHeader = lyra::runtime::ProcessFrameHeader;
 
 auto FinalTime() -> uint64_t& {
   static uint64_t value = 0;
@@ -79,49 +73,21 @@ extern "C" void LyraTriggerEvent(
 
 namespace {
 
-struct ProcessDispatchContext {
-  std::span<void*> states;
-};
-
-void DescriptorProcessDispatch(
-    void* ctx, lyra::runtime::Engine& eng, lyra::runtime::ProcessHandle handle,
-    lyra::runtime::ResumePoint resume) {
-  auto* dctx = static_cast<ProcessDispatchContext*>(ctx);
-  lyra::runtime::DispatchAndHandleActivation(dctx->states, eng, handle, resume);
-}
-
 auto SetupAndRunSimulation(
     lyra::runtime::Engine& engine, std::span<void*> states,
-    uint32_t num_processes,
+    uint32_t num_processes, void* design_state_base,
     const lyra::runtime::ConstructionResult* construction_result) -> uint64_t {
-  // Store engine pointer in each process state header
-  for (auto* state : states) {
-    auto* header = static_cast<StateHeader*>(state);
-    header->engine_ptr = &engine;
-  }
+  // Bind RuntimeProcess -> frame state back-pointer once per simulation,
+  // covering both connection and module processes uniformly.
+  engine.RegisterFrameStates(states);
 
-  // Set design state base for flush-based trace snapshots.
-  // Codegen invariant: all process states share the same DesignState pointer.
-  if (!states.empty()) {
-    const auto* first_header = static_cast<const StateHeader*>(states[0]);
-    void* design_base = first_header->design_ptr;
-
-    for (size_t i = 1; i < states.size(); ++i) {
-      const auto* header = static_cast<const StateHeader*>(states[i]);
-      if (header->design_ptr != design_base) {
-        throw lyra::common::InternalError(
-            "SetupAndRunSimulation",
-            std::format(
-                "design_ptr mismatch: states[0]={} vs states[{}]={}",
-                design_base, i, header->design_ptr));
-      }
-    }
-
-    engine.SetDesignStateBase(design_base);
-  }
+  // Engine-owned design state base pointer. The design state is a single
+  // allocation external to the process backing objects; process bodies
+  // receive it as an explicit argument at dispatch time.
+  engine.SetDesignStateBase(design_state_base);
 
   for (uint32_t i = 0; i < num_processes; ++i) {
-    engine.ScheduleInitial(lyra::runtime::ProcessHandle{.process_id = i});
+    engine.ScheduleInitial(engine.GetProcess(i));
   }
 
   // Load installable computations from the construction result handed in
@@ -188,13 +154,8 @@ extern "C" void LyraRunSimulation(
     throw lyra::common::InternalError("LyraRunSimulation", "abi is null");
   }
 
-  ProcessDispatchContext dispatch_ctx{
-      .states = states,
-  };
   auto* session = static_cast<lyra::runtime::RunSession*>(run_session_ptr);
   lyra::runtime::Engine engine(
-      lyra::runtime::ProcessDispatch{
-          .fn = DescriptorProcessDispatch, .ctx = &dispatch_ctx},
       session->output, num_processes, std::span(plusargs_vec), feature_flags);
 
   if (abi != nullptr) {
@@ -380,8 +341,8 @@ extern "C" void LyraRunSimulation(
   const auto* construction_result =
       static_cast<const lyra::runtime::ConstructionResult*>(
           abi->construction_result);
-  FinalTime() =
-      SetupAndRunSimulation(engine, states, num_processes, construction_result);
+  FinalTime() = SetupAndRunSimulation(
+      engine, states, num_processes, abi->design_state, construction_result);
 
   if (HasFlag(flags, FeatureFlag::kEnableTraceSummary)) {
     engine.GetTraceManager().PrintSummary(engine.Output());

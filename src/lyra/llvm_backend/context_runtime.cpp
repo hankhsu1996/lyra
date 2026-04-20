@@ -386,10 +386,10 @@ auto Context::GetLyraDestroyProcessStates() -> llvm::Function* {
 
 auto Context::GetLyraRunProcessSync() -> llvm::Function* {
   if (lyra_run_process_sync_ == nullptr) {
-    // void LyraRunProcessSync(ptr process, ptr state)
+    // void LyraRunProcessSync(ptr process, ptr state, ptr design)
     auto* ptr_ty = llvm::PointerType::getUnqual(*llvm_context_);
     auto* fn_type = llvm::FunctionType::get(
-        llvm::Type::getVoidTy(*llvm_context_), {ptr_ty, ptr_ty}, false);
+        llvm::Type::getVoidTy(*llvm_context_), {ptr_ty, ptr_ty, ptr_ty}, false);
     lyra_run_process_sync_ = llvm::Function::Create(
         fn_type, llvm::Function::ExternalLinkage, "LyraRunProcessSync",
         llvm_module_.get());

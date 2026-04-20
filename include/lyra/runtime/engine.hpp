@@ -46,7 +46,6 @@
 #include "lyra/runtime/scheduler_snapshot.hpp"
 #include "lyra/runtime/signal_coord.hpp"
 #include "lyra/runtime/slot_meta.hpp"
-#include "lyra/runtime/small_byte_buffer.hpp"
 #include "lyra/runtime/trace_selection.hpp"
 #include "lyra/runtime/trace_signal_meta.hpp"
 #include "lyra/runtime/trap.hpp"
@@ -58,17 +57,6 @@
 namespace lyra::runtime {
 
 class OutputDispatcher;
-
-// Explicit process dispatch ABI for the hot path.
-// fn is required (must not be nullptr). ctx is non-owning and must outlive
-// Engine::Run().
-using ProcessDispatchFn = void (*)(
-    void* ctx, Engine& engine, ProcessHandle handle, ResumePoint resume);
-
-struct ProcessDispatch {
-  ProcessDispatchFn fn = nullptr;
-  void* ctx = nullptr;
-};
 
 // Always-on summary counters: one increment per major event.
 struct CoreRuntimeStats {
@@ -132,30 +120,6 @@ struct DetailedRuntimeStats {
   uint64_t prop_pending_slots_total = 0;
 };
 
-// Per-process wakeup/activation counters. Collected when kDetailedStats is
-// enabled. Allows post-simulation analysis of which processes are hot,
-// what wakes them, and what kind of work each activation does.
-struct ProcessWakeStats {
-  // Wake attempts by cause (includes deduped).
-  uint64_t wake_edge = 0;
-  uint64_t wake_change = 0;
-  uint64_t wake_container = 0;
-  uint64_t wake_delay = 0;
-  uint64_t wake_initial = 0;
-  uint64_t wake_other = 0;
-  // Deduped wake attempts (process already enqueued).
-  uint64_t wake_deduped = 0;
-  // Actual activations (process body executed).
-  uint64_t runs = 0;
-  // Total distinct slots dirtied (direct MarkSlotDirty) across all runs.
-  uint64_t total_slots_dirtied = 0;
-  // Activations with no direct dirty marks. These are typically always_ff
-  // processes that write only via NBA (nonblocking assignment). NOT a
-  // wasted-wakeup indicator: always_ff processes legitimately schedule
-  // NBAs without calling MarkSlotDirty during their body.
-  uint64_t nba_only_runs = 0;
-};
-
 // Composite runtime stats: core (always-on) + detailed (opt-in).
 struct RuntimeStats {
   CoreRuntimeStats core;
@@ -196,7 +160,7 @@ class InstanceIdResolver {
 };
 
 // Usage:
-// 1. Create engine with a ProcessDispatch callback
+// 1. Create engine
 // 2. Schedule initial processes with ScheduleInitial()
 // 3. Call Run() to execute until completion or time limit
 class Engine {
@@ -204,19 +168,13 @@ class Engine {
 
  public:
   explicit Engine(
-      ProcessDispatch process_dispatch, OutputDispatcher& output,
-      uint32_t num_processes = 0, std::span<const std::string> plusargs = {},
-      uint32_t feature_flags = 0)
-      : process_dispatch_(process_dispatch),
-        output_(output),
+      OutputDispatcher& output, uint32_t num_processes = 0,
+      std::span<const std::string> plusargs = {}, uint32_t feature_flags = 0)
+      : output_(output),
         num_processes_(num_processes),
         processes_(num_processes),
         plusargs_(plusargs.begin(), plusargs.end()),
         feature_flags_(feature_flags) {
-    if (process_dispatch_.fn == nullptr) {
-      throw common::InternalError(
-          "Engine::Engine", "process_dispatch.fn must not be null");
-    }
     // Pre-reserve wakeup queue to avoid reallocation during flush.
     // Each process can be enqueued at most once per delta (dedup by
     // is_enqueued), so num_processes is a tight upper bound.
@@ -226,18 +184,12 @@ class Engine {
             static_cast<FeatureFlag>(feature_flags_),
             FeatureFlag::kEnableActivationTrace)) {
       activation_trace_.emplace();
-      wake_trace_.resize(num_processes);
     }
     detailed_stats_enabled_ = HasFlag(
         static_cast<FeatureFlag>(feature_flags_), FeatureFlag::kDetailedStats);
-    if (detailed_stats_enabled_) {
-      per_process_stats_.resize(num_processes);
-    }
     decision_owner_tables_.resize(num_processes);
     decision_owner_states_.resize(num_processes);
     decision_owner_pending_flags_.resize(num_processes, 0);
-    deferred_assertion_states_.resize(num_processes);
-    deferred_pending_flags_.resize(num_processes, 0);
   }
 
   ~Engine() = default;
@@ -249,27 +201,27 @@ class Engine {
   auto operator=(Engine&&) -> Engine& = delete;
 
   // Schedule a process to start at time 0 (for initial blocks).
-  void ScheduleInitial(ProcessHandle handle);
+  void ScheduleInitial(RuntimeProcess& proc);
 
   // Schedule a process to resume after a delay.
   // Called by interpreter/codegen when process hits a Delay terminator.
-  void Delay(ProcessHandle handle, ResumePoint resume, SimTime ticks);
+  void Delay(RuntimeProcess& proc, ResumePoint resume, SimTime ticks);
 
   // Schedule to inactive region (same time slot, #0 delay).
-  void DelayZero(ProcessHandle handle, ResumePoint resume);
+  void DelayZero(RuntimeProcess& proc, ResumePoint resume);
 
   // Subscribe to signal edge. Process resumes when signal changes.
   // R5: Subscribe with typed signal identity. Dispatches once at the top
   // boundary, then routes to domain-specific helpers. No `is_local` below.
   auto Subscribe(
-      ProcessHandle handle, ResumePoint resume, SignalRef signal,
+      RuntimeProcess& proc, ResumePoint resume, SignalRef signal,
       common::EdgeKind edge, bool initially_active = true) -> uint32_t;
   auto Subscribe(
-      ProcessHandle handle, ResumePoint resume, SignalRef signal,
+      RuntimeProcess& proc, ResumePoint resume, SignalRef signal,
       common::EdgeKind edge, uint32_t byte_offset, uint32_t byte_size,
       uint8_t bit_index, bool initially_active = true) -> uint32_t;
   auto SubscribeContainerElement(
-      ProcessHandle handle, ResumePoint resume, SignalRef signal,
+      RuntimeProcess& proc, ResumePoint resume, SignalRef signal,
       common::EdgeKind edge, int64_t sv_index, uint32_t elem_stride,
       bool initially_active = true) -> uint32_t;
 
@@ -283,14 +235,14 @@ class Engine {
   // into instance observability. dep_slots values are global slot_ids or
   // local signal_ids matching the target's domain.
   void SubscribeRebind(
-      ProcessHandle handle, uint32_t edge_target_id, SignalRef target_signal,
+      RuntimeProcess& proc, uint32_t edge_target_id, SignalRef target_signal,
       SubKind target_kind, uint32_t target_index, uint8_t target_edge_group,
       EdgeBucket target_edge_bucket, std::span<const IndexPlanOp> plan,
       BitTargetMapping mapping, std::span<const SignalRef> dep_signals);
 
   // Schedule process to resume in the next delta cycle (same time).
   // Used for kRepeat terminator.
-  void ScheduleNextDelta(ProcessHandle handle, ResumePoint resume);
+  void ScheduleNextDelta(RuntimeProcess& proc, ResumePoint resume);
 
   // Enqueue onto generic nba_queue_ for later commit in the NBA region.
   // Only for non-instance-owned targets (global, package, cross-instance).
@@ -437,6 +389,9 @@ class Engine {
   void SetDesignStateBase(void* base) {
     design_state_base_ = base;
   }
+  [[nodiscard]] auto GetDesignStateBase() const -> void* {
+    return design_state_base_;
+  }
 
   // Set the instance list for slot storage resolution and observability.
   // Engine copies the pointers and owns the canonical mutable list.
@@ -485,6 +440,13 @@ class Engine {
           std::format("process {} has no owning instance", process_id));
     }
     return *inst;
+  }
+
+  // Resolve a RuntimeProcess by its dense process index. Mirrors
+  // GetProcessInstance for direct object access at boundaries that
+  // intrinsically iterate by integer (e.g. simulation init).
+  [[nodiscard]] auto GetProcess(uint32_t process_id) -> RuntimeProcess& {
+    return processes_[process_id];
   }
 
   // Validate that all kInstanceOwned slot-meta entries reference valid
@@ -829,8 +791,13 @@ class Engine {
   void TriggerInstanceEvent(RuntimeInstance& inst, uint32_t local_event_id) {
     auto waiters = inst.event_state.ConsumeWaiters(local_event_id);
     for (const auto& w : waiters) {
+      if (w.process == nullptr) {
+        throw common::InternalError(
+            "Engine::TriggerInstanceEvent",
+            "EventWaiter has null process pointer");
+      }
       EnqueueProcessWakeup(
-          w.process_id, w.resume_block, local_event_id, WakeCause::kEvent);
+          *w.process, w.resume_block, local_event_id, WakeCause::kEvent);
     }
   }
 
@@ -901,18 +868,22 @@ class Engine {
     return trace_selection_;
   }
 
-  // Register suspend record pointers for post-activation reconciliation.
-  void RegisterSuspendRecords(std::span<SuspendRecord*> records);
+  // Bind each RuntimeProcess to its frame/state storage. Called once at
+  // simulation setup, after process states are allocated and before any
+  // process activation runs.
+  void RegisterFrameStates(std::span<void*> states);
 
-  // Single source of truth for whether the engine uses post-activation
-  // reconciliation (new path) vs legacy HandleSuspendRecord (old path).
-  // True when both wait-site metadata and suspend records are registered.
-  [[nodiscard]] auto HasPostActivationReconciliation() const -> bool {
-    return wait_site_meta_.IsPopulated() && suspend_records_registered_;
+  // Whether the engine uses post-activation reconciliation for wait-lifecycle
+  // management. Currently always false: the reconcile path exists in the
+  // codebase but is not wired up for any caller. The envelope handles the
+  // wait lifecycle inline inside HandleProcessRequest.
+  [[nodiscard]] static auto HasPostActivationReconciliation() -> bool {
+    return false;
   }
 
   // Post-activation reconciliation: engine-owned dispatch after process runs.
-  void ReconcilePostActivation(ProcessHandle handle);
+  // Currently dormant; retained for future activation.
+  void ReconcilePostActivation(RuntimeProcess& proc);
 
   // Inline fast path for static-wait reconciliation. Returns true if the
   // common case was handled (no work needed), false if the caller must
@@ -924,10 +895,14 @@ class Engine {
   //   3. No blocking writes dirtied any signal in the current delta
   // When these hold, subscription baselines are already correct from the
   // prior flush and no refresh or reinstall is needed.
-  [[nodiscard]] auto TryFastReconcile(uint32_t process_id) -> bool {
-    auto* suspend = processes_[process_id].suspend_record;
+  //
+  // Currently dormant with the reconcile path itself; retained for future
+  // activation.
+  [[nodiscard]] auto TryFastReconcile(const RuntimeProcess& proc) const
+      -> bool {
+    const auto* suspend = static_cast<const SuspendRecord*>(proc.frame_state);
     if (suspend->tag != SuspendTag::kWait) return false;
-    const auto& installed = processes_[process_id].installed_wait;
+    const auto& installed = proc.installed_wait;
     if (!installed.valid || installed.wait_site_id != suspend->wait_site_id ||
         !installed.can_refresh_snapshot) {
       return false;
@@ -950,7 +925,8 @@ class Engine {
   }
 
   // Format process identity for diagnostics (normal code path).
-  [[nodiscard]] auto FormatProcess(uint32_t process_id) const -> std::string;
+  [[nodiscard]] auto FormatProcess(const RuntimeProcess& proc) const
+      -> std::string;
 
   // Format decision owner identity for diagnostics.
   // First cut: delegates to FormatProcess (1:1 owner-to-process mapping).
@@ -967,7 +943,7 @@ class Engine {
   }
 
   // Handle a trap raised by generated code (loop budget exceeded, etc.).
-  void HandleTrap(uint32_t process_id, const TrapPayload& payload);
+  void HandleTrap(const RuntimeProcess& proc, const TrapPayload& payload);
 
   // Record a decision observation for an explicit owner.
   // Called from LyraRecordDecisionObservation (extern "C" ABI boundary).
@@ -1018,8 +994,8 @@ class Engine {
       uint8_t disposition, const void* payload_ptr, uint32_t payload_size,
       const DeferredAssertionRefBindingAbi* ref_ptr, uint32_t ref_count);
   void FlushDeferredAssertionsForProcess(ProcessId pid) {
-    if (pid.Index() >= deferred_assertion_states_.size()) return;
-    deferred_assertion_states_[pid.Index()].flush_generation++;
+    if (pid.Index() >= processes_.size()) return;
+    processes_[pid.Index()].deferred_assertion_state.flush_generation++;
   }
   void MatureAndExecuteObservedDeferredAssertions();
 
@@ -1036,16 +1012,16 @@ class Engine {
   [[nodiscard]] auto UsesWaitSiteLifecycle() const -> bool {
     return wait_site_meta_.IsPopulated();
   }
-  [[nodiscard]] auto CanRefreshInstalledWait(
-      ProcessHandle handle, WaitSiteId wait_site_id) const -> bool;
+  [[nodiscard]] static auto CanRefreshInstalledWait(
+      const RuntimeProcess& proc, WaitSiteId wait_site_id) -> bool;
   [[nodiscard]] auto HasPendingDirtyState() const -> bool;
-  void ResetInstalledWait(ProcessHandle handle);
-  void InstallTriggers(ProcessHandle handle, const WaitRequest& req);
-  void InstallWaitSite(ProcessHandle handle, const WaitRequest& req);
-  auto RefreshInstalledSnapshots(ProcessHandle handle) -> bool;
-  void ClearInstalledSubscriptions(ProcessHandle handle);
-  void InvalidateInstalledWait(ProcessHandle handle);
-  void ClearProcessSubscriptions(ProcessHandle handle);
+  void ResetInstalledWait(RuntimeProcess& proc);
+  void InstallTriggers(RuntimeProcess& proc, const WaitRequest& req);
+  void InstallWaitSite(RuntimeProcess& proc, const WaitRequest& req);
+  auto RefreshInstalledSnapshots(RuntimeProcess& proc) -> bool;
+  void ClearInstalledSubscriptions(RuntimeProcess& proc);
+  static void InvalidateInstalledWait(RuntimeProcess& proc);
+  void ClearProcessSubscriptions(RuntimeProcess& proc);
 
   // Typed cold pool management.
   auto AllocEdgeCold() -> uint32_t;
@@ -1086,41 +1062,41 @@ class Engine {
   // R5: Domain-split subscribe helpers. Top boundary dispatches once
   // via std::visit on SignalRef, then routes to one of these.
   auto SubscribeGlobalEdge(
-      ProcessHandle handle, ResumePoint resume, GlobalSignalId signal,
+      RuntimeProcess& proc, ResumePoint resume, GlobalSignalId signal,
       common::EdgeKind edge, uint32_t byte_offset, uint32_t byte_size,
       uint8_t bit_index, bool initially_active) -> uint32_t;
   auto SubscribeLocalEdge(
-      ProcessHandle handle, ResumePoint resume, LocalSignalRef signal,
+      RuntimeProcess& proc, ResumePoint resume, LocalSignalRef signal,
       common::EdgeKind edge, uint32_t byte_offset, uint32_t byte_size,
       uint8_t bit_index, bool initially_active) -> uint32_t;
   auto SubscribeGlobalChange(
-      ProcessHandle handle, ResumePoint resume, GlobalSignalId signal,
+      RuntimeProcess& proc, ResumePoint resume, GlobalSignalId signal,
       uint32_t byte_offset, uint32_t byte_size, bool initially_active)
       -> uint32_t;
   auto SubscribeLocalChange(
-      ProcessHandle handle, ResumePoint resume, LocalSignalRef signal,
+      RuntimeProcess& proc, ResumePoint resume, LocalSignalRef signal,
       uint32_t byte_offset, uint32_t byte_size, bool initially_active)
       -> uint32_t;
   auto SubscribeGlobalContainerElement(
-      ProcessHandle handle, ResumePoint resume, GlobalSignalId signal,
+      RuntimeProcess& proc, ResumePoint resume, GlobalSignalId signal,
       common::EdgeKind edge, int64_t sv_index, uint32_t elem_stride,
       bool initially_active) -> uint32_t;
   auto SubscribeLocalContainerElement(
-      ProcessHandle handle, ResumePoint resume, LocalSignalRef signal,
+      RuntimeProcess& proc, ResumePoint resume, LocalSignalRef signal,
       common::EdgeKind edge, int64_t sv_index, uint32_t elem_stride,
       bool initially_active) -> uint32_t;
   void ValidateRebindDepSignals(std::span<const SignalRef> dep_signals) const;
   void InstallRebindDepWatchers(
-      ProcessHandle handle, uint32_t edge_target_id,
+      RuntimeProcess& proc, uint32_t edge_target_id,
       std::span<const SignalRef> dep_signals);
   void SubscribeGlobalRebind(
-      ProcessHandle handle, uint32_t edge_target_id,
+      RuntimeProcess& proc, uint32_t edge_target_id,
       GlobalSignalId target_signal, SubKind target_kind, uint32_t target_index,
       uint8_t target_edge_group, EdgeBucket target_edge_bucket,
       std::span<const IndexPlanOp> plan, BitTargetMapping mapping,
       std::span<const SignalRef> dep_signals);
   void SubscribeLocalRebind(
-      ProcessHandle handle, uint32_t edge_target_id,
+      RuntimeProcess& proc, uint32_t edge_target_id,
       LocalSignalRef target_signal, SubKind target_kind, uint32_t target_index,
       uint8_t target_edge_group, EdgeBucket target_edge_bucket,
       std::span<const IndexPlanOp> plan, BitTargetMapping mapping,
@@ -1143,7 +1119,8 @@ class Engine {
   // Trace helpers: append event + live stderr print.
   // TraceWake is called at the single point where an activation becomes
   // runnable (ExecuteRegion kActive), not at producer-side queue insertion.
-  // Reads trace-only fields (cause, trigger_slot) from wake_trace_.
+  // Reads trace-only fields (cause, trigger_slot) from
+  // RuntimeProcess::wake_trace.
   void TraceWake(const WakeupEntry& entry);
   void TraceRun(const WakeupEntry& entry);
 
@@ -1206,47 +1183,47 @@ class Engine {
   // enqueued. Shared by edge, change, and container flush paths.
   //
   // Fully inline: the hot path (already enqueued) is a single load + branch.
-  // The cold path (first enqueue) constructs an 8-byte WakeupEntry and
-  // pushes to the pre-reserved queue. Trace-only fields (cause, trigger_slot)
-  // are stored per-process only when activation tracing is enabled.
+  // The cold path (first enqueue) constructs a WakeupEntry carrying the
+  // process pointer directly and pushes to the pre-reserved queue. Trace-only
+  // fields (cause, trigger_slot) are stored per-process only when activation
+  // tracing is enabled.
   void EnqueueProcessWakeup(
-      uint32_t process_id, uint32_t resume_block, uint32_t trigger_slot,
+      RuntimeProcess& proc, uint32_t resume_block, uint32_t trigger_slot,
       WakeCause cause) {
     if (detailed_stats_enabled_) {
       ++stats_.detailed.wakeup_attempts;
-      auto& ps = per_process_stats_[process_id];
       switch (cause) {
         case WakeCause::kEdge:
-          ++ps.wake_edge;
+          ++proc.wake_stats.wake_edge;
           break;
         case WakeCause::kChange:
-          ++ps.wake_change;
+          ++proc.wake_stats.wake_change;
           break;
         case WakeCause::kContainer:
-          ++ps.wake_container;
+          ++proc.wake_stats.wake_container;
           break;
         case WakeCause::kDelay:
-          ++ps.wake_delay;
+          ++proc.wake_stats.wake_delay;
           break;
         case WakeCause::kInitial:
-          ++ps.wake_initial;
+          ++proc.wake_stats.wake_initial;
           break;
         default:
-          ++ps.wake_other;
+          ++proc.wake_stats.wake_other;
           break;
       }
     }
-    if (processes_[process_id].is_enqueued) {
+    if (proc.is_enqueued) {
       if (detailed_stats_enabled_) {
         ++stats_.detailed.wakeup_deduped;
-        ++per_process_stats_[process_id].wake_deduped;
+        ++proc.wake_stats.wake_deduped;
       }
       return;
     }
-    next_delta_queue_.push_back({process_id, resume_block});
-    processes_[process_id].is_enqueued = true;
+    next_delta_queue_.push_back({&proc, resume_block});
+    proc.is_enqueued = true;
     if (activation_trace_.has_value()) {
-      wake_trace_[process_id] = {.cause = cause, .trigger_slot = trigger_slot};
+      proc.wake_trace = {.cause = cause, .trigger_slot = trigger_slot};
     }
   }
 
@@ -1264,7 +1241,6 @@ class Engine {
   void ClearLocalUpdatesDelta();
   void ClearLocalUpdates();
 
-  ProcessDispatch process_dispatch_;
   OutputDispatcher& output_;  // Borrowed from RunSession
   uint32_t num_processes_ = 0;
   std::vector<RuntimeProcess> processes_;
@@ -1283,11 +1259,6 @@ class Engine {
 
   // Next-delta queue: events scheduled for the next delta cycle
   std::vector<WakeupEntry> next_delta_queue_;
-
-  // Per-process trace annotations (only populated when tracing enabled).
-  // Indexed by process_id. Safe because each process is enqueued at most
-  // once per delta (dedup guard prevents overwrite).
-  std::vector<WakeTraceInfo> wake_trace_;
 
   // NBA queue: deferred writes committed in ExecuteRegion(kNBA).
   // Generic fallback for global, masked, canonical-packed, container,
@@ -1367,14 +1338,9 @@ class Engine {
   uint32_t cached_iteration_limit_ = 0;
   uint32_t* cached_iteration_limit_ptr_ = nullptr;
 
-  // Set by RegisterSuspendRecords when all process suspend records are
-  // registered. Used by HasPostActivationReconciliation() as a capability
-  // flag rather than probing individual process records.
-  bool suspend_records_registered_ = false;
-
   // Precomputed run-invariant: true when post-activation reconciliation
-  // path is active (both wait-site metadata and suspend records present).
-  // Set once at Run() entry from HasPostActivationReconciliation().
+  // path is active. Set once at Run() entry from
+  // HasPostActivationReconciliation(); currently always false.
   bool post_activation_reconcile_ = false;
 
   // R5: Number of design-global (non-instance-owned) slots. Set during
@@ -1473,10 +1439,11 @@ class Engine {
   };
   std::vector<CombKernel> comb_kernels_;
 
-  // Canonical comb-kernel construction. Populates instance from the
-  // process frame header.
-  static auto BuildCombKernel(uint32_t proc_idx, void* frame, uint32_t flags)
-      -> CombKernel;
+  // Canonical comb-kernel construction. Sources body and instance from the
+  // owning RuntimeProcess; frame is the per-process state pointer.
+  static auto BuildCombKernel(
+      const RuntimeProcess& proc, uint32_t proc_idx, void* frame,
+      uint32_t flags) -> CombKernel;
 
   // Shared reactive trigger model: one backing array + one trigger map
   // feeds fixpoint re-evaluation for every reactive consumer kind that
@@ -1609,10 +1576,6 @@ class Engine {
   // Execution-discipline counters (accumulated during Run).
   RuntimeStats stats_;
 
-  // Per-process wakeup/activation counters (opt-in, kDetailedStats).
-  // Indexed by process_id. Empty when detailed stats are disabled.
-  std::vector<ProcessWakeStats> per_process_stats_;
-
   // Static connection batch shape (populated once in InitConnectionBatch).
   uint32_t conn_full_slot_count_ = 0;
   uint32_t conn_narrow_count_ = 0;
@@ -1743,25 +1706,9 @@ class Engine {
       nullptr;
   uint32_t num_deferred_assertion_sites_ = 0;
 
-  struct DeferredAssertionRecord {
-    uint32_t enqueue_generation = 0;
-    uint32_t site_id = 0;
-    uint8_t disposition = 0;
-    RuntimeInstance* instance = nullptr;
-    uint32_t payload_size = 0;
-    SmallByteBuffer payload;
-    // ref_bindings[i] corresponds 1:1 to the ith kLiveRef entry in the
-    // site's realization actual_plan. Runtime preserves order and never
-    // interprets entries.
-    std::vector<DeferredAssertionRefBindingAbi> ref_bindings;
-  };
-  struct ProcessDeferredAssertionState {
-    uint32_t flush_generation = 0;
-    std::vector<DeferredAssertionRecord> pending;
-  };
-  std::vector<ProcessDeferredAssertionState> deferred_assertion_states_;
-  std::vector<uint8_t> deferred_pending_flags_;
-  std::vector<ProcessId> pending_deferred_processes_;
+  // Sparse list of processes with pending deferred assertion records.
+  // Dedup via RuntimeProcess::deferred_pending.
+  std::vector<RuntimeProcess*> pending_deferred_processes_;
 
   // Long-run observability: counter-gated periodic stdout flush.
   struct ObservabilityConfig {

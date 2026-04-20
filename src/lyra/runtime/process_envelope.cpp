@@ -10,6 +10,7 @@
 #include "lyra/common/diagnostic/print.hpp"
 #include "lyra/common/internal_error.hpp"
 #include "lyra/runtime/dpi_export_context.hpp"
+#include "lyra/runtime/engine.hpp"
 #include "lyra/runtime/engine_process_envelope_access.hpp"
 #include "lyra/runtime/instance_event_state.hpp"
 #include "lyra/runtime/iteration_limit.hpp"
@@ -50,6 +51,18 @@ void FailIfSuspensionDisallowed(const char* api) {
     throw lyra::common::InternalError(
         api, "non-suspending DPI export task attempted to suspend");
   }
+}
+
+// Single runtime accessor for the SuspendRecord backing a process. The
+// process's frame_state points to the frame whose first object is a
+// SuspendRecord; this is the one live source of suspend state.
+auto GetSuspendRecord(lyra::runtime::RuntimeProcess& proc)
+    -> lyra::runtime::SuspendRecord* {
+  if (proc.frame_state == nullptr) {
+    throw lyra::common::InternalError(
+        "GetSuspendRecord", "RuntimeProcess has null frame_state");
+  }
+  return static_cast<lyra::runtime::SuspendRecord*>(proc.frame_state);
 }
 
 // Envelope-internal process request variant. Never exposed publicly.
@@ -139,17 +152,15 @@ auto DecodeSuspendRecord(lyra::runtime::SuspendRecord* suspend)
 
 // Dispatch a process body and decode the raw protocol into a ProcessRequest.
 auto DispatchProcess(
-    std::span<void*> states, lyra::runtime::ProcessHandle handle,
-    lyra::runtime::ResumePoint resume) -> ProcessRequest {
+    lyra::runtime::Engine& engine, lyra::runtime::RuntimeProcess& proc,
+    uint32_t process_id, lyra::runtime::ResumePoint resume) -> ProcessRequest {
   using lyra::runtime::ProcessExitCode;
   using lyra::runtime::ProcessOutcome;
-  using lyra::runtime::SuspendRecord;
   using lyra::runtime::SuspendTag;
   using lyra::runtime::TrapReason;
 
-  uint32_t proc_idx = handle.process_id;
-  void* state = states[proc_idx];
-  auto* suspend = static_cast<SuspendRecord*>(state);
+  auto* suspend = GetSuspendRecord(proc);
+  void* state = proc.frame_state;
 
   if (resume.block_index != 0 && suspend->tag == SuspendTag::kWait &&
       suspend->triggers_ptr == suspend->inline_triggers.data()) {
@@ -158,14 +169,17 @@ auto DispatchProcess(
     SuspendReset(suspend);
   }
 
-  ProcessOutcome outcome{};
-  outcome.tag = UINT32_MAX;
+  if (proc.body == nullptr) {
+    throw lyra::common::InternalError(
+        "DispatchProcess", "RuntimeProcess has null body function");
+  }
 
-  // Uniform shared-body dispatch for all processes.
   auto* header = static_cast<StateHeader*>(state);
   header->outcome.tag = UINT32_MAX;
-  header->body(state, resume.block_index);
-  outcome = header->outcome;
+  proc.body(
+      state, resume.block_index, &engine, engine.GetDesignStateBase(),
+      proc.instance, process_id);
+  ProcessOutcome outcome = header->outcome;
 
   switch (static_cast<ProcessExitCode>(outcome.tag)) {
     case ProcessExitCode::kOk:
@@ -191,7 +205,7 @@ auto DispatchProcess(
 // Envelope-owned wait lifecycle orchestration. Decides whether to do a
 // direct trigger install, a full wait-site install, or an in-place refresh.
 void HandleWaitRequest(
-    lyra::runtime::Engine& engine, lyra::runtime::ProcessHandle handle,
+    lyra::runtime::Engine& engine, lyra::runtime::RuntimeProcess& proc,
     const lyra::runtime::WaitRequest& req) {
   // When post-activation reconciliation is active, the engine handles
   // wait lifecycle after the activation returns. The envelope must not
@@ -200,7 +214,7 @@ void HandleWaitRequest(
     return;
   }
   if (!Access::UsesWaitSiteLifecycle(engine)) {
-    Access::InstallTriggers(engine, handle, req);
+    Access::InstallTriggers(engine, proc, req);
     return;
   }
 
@@ -208,13 +222,13 @@ void HandleWaitRequest(
     throw lyra::common::InternalError(
         "HandleWaitRequest",
         std::format(
-            "process {} suspended with kWait but wait_site_id is invalid",
-            handle.process_id));
+            "{} suspended with kWait but wait_site_id is invalid",
+            engine.FormatProcess(proc)));
   }
 
-  if (!Access::CanRefreshInstalledWait(engine, handle, req.wait_site_id)) {
-    Access::ResetInstalledWait(engine, handle);
-    Access::InstallWaitSite(engine, handle, req);
+  if (!Access::CanRefreshInstalledWait(proc, req.wait_site_id)) {
+    Access::ResetInstalledWait(engine, proc);
+    Access::InstallWaitSite(engine, proc, req);
     return;
   }
 
@@ -222,15 +236,15 @@ void HandleWaitRequest(
     return;
   }
 
-  if (Access::RefreshInstalledSnapshots(engine, handle)) {
-    Access::ResetInstalledWait(engine, handle);
-    Access::InstallWaitSite(engine, handle, req);
+  if (Access::RefreshInstalledSnapshots(engine, proc)) {
+    Access::ResetInstalledWait(engine, proc);
+    Access::InstallWaitSite(engine, proc, req);
   }
 }
 
 // Handle the decoded process request by calling narrow engine primitives.
 void HandleProcessRequest(
-    lyra::runtime::Engine& engine, lyra::runtime::ProcessHandle handle,
+    lyra::runtime::Engine& engine, lyra::runtime::RuntimeProcess& proc,
     const ProcessRequest& request) {
   using lyra::runtime::DelayRequest;
   using lyra::runtime::Engine;
@@ -245,7 +259,7 @@ void HandleProcessRequest(
   if (Access::UsesWaitSiteLifecycle(engine) &&
       !Access::HasPostActivationReconciliation(engine) &&
       NeedsWaitReset(request)) {
-    Access::ResetInstalledWait(engine, handle);
+    Access::ResetInstalledWait(engine, proc);
   }
 
   std::visit(
@@ -256,24 +270,30 @@ void HandleProcessRequest(
           // No scheduling action needed.
 
         } else if constexpr (std::is_same_v<T, TrapRequest>) {
-          engine.HandleTrap(handle.process_id, v.payload);
+          engine.HandleTrap(proc, v.payload);
 
         } else if constexpr (std::is_same_v<T, DelayRequest>) {
-          engine.Delay(handle, v.resume, v.ticks);
+          engine.Delay(proc, v.resume, v.ticks);
 
         } else if constexpr (std::is_same_v<T, WaitRequest>) {
-          HandleWaitRequest(engine, handle, v);
+          HandleWaitRequest(engine, proc, v);
 
         } else if constexpr (std::is_same_v<T, RepeatRequest>) {
-          engine.ScheduleNextDelta(handle, v.resume);
+          engine.ScheduleNextDelta(proc, v.resume);
 
         } else if constexpr (std::is_same_v<T, EventWaitRequest>) {
-          auto& inst = engine.GetProcessInstance(handle.process_id);
+          if (proc.instance == nullptr) {
+            throw lyra::common::InternalError(
+                "HandleProcessRequest",
+                std::format(
+                    "EventWaitRequest for {} has no owning instance",
+                    engine.FormatProcess(proc)));
+          }
           Engine::AddInstanceEventWaiter(
-              inst, v.event_id,
+              *proc.instance, v.event_id,
               EventWaiter{
-                  .process_id = handle.process_id,
-                  .instance = &inst,
+                  .process = &proc,
+                  .instance = proc.instance,
                   .resume_block = v.resume.block_index,
               });
         }
@@ -286,10 +306,10 @@ void HandleProcessRequest(
 namespace lyra::runtime {
 
 void DispatchAndHandleActivation(
-    std::span<void*> states, Engine& engine, ProcessHandle handle,
+    Engine& engine, RuntimeProcess& proc, uint32_t process_id,
     ResumePoint resume) {
-  auto request = DispatchProcess(states, handle, resume);
-  HandleProcessRequest(engine, handle, request);
+  auto request = DispatchProcess(engine, proc, process_id, resume);
+  HandleProcessRequest(engine, proc, request);
 }
 
 }  // namespace lyra::runtime
@@ -424,7 +444,8 @@ extern "C" void LyraSuspendWaitEvent(
   suspend->event_id = event_id;
 }
 
-extern "C" void LyraRunProcessSync(LyraProcessFunc process, void* state) {
+extern "C" void LyraRunProcessSync(
+    LyraProcessFunc process, void* state, void* design_state) {
   constexpr uint32_t kEntryBlock = 0;
 
   auto* suspend = static_cast<lyra::runtime::SuspendRecord*>(state);
@@ -434,7 +455,7 @@ extern "C" void LyraRunProcessSync(LyraProcessFunc process, void* state) {
 
   lyra::runtime::ProcessOutcome outcome{};
   outcome.tag = UINT32_MAX;
-  process(state, kEntryBlock, &outcome);
+  process(state, kEntryBlock, design_state, &outcome);
 
   switch (static_cast<lyra::runtime::ProcessExitCode>(outcome.tag)) {
     case lyra::runtime::ProcessExitCode::kOk:

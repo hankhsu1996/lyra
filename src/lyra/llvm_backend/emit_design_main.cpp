@@ -113,7 +113,7 @@ void InitializeProcessState(
   bool force_two_state = facts.force_two_state;
 
   EmitMemsetZero(context, process_state, state_type);
-  context.EmitStoreDesignPtr(process_state, design_state);
+  (void)design_state;
 
   if (force_two_state) return;
 
@@ -247,7 +247,8 @@ void EmitInitProcesses(
         context, facts, process_state, design_state, proc_layout);
 
     builder.CreateCall(
-        context.GetLyraRunProcessSync(), {process_funcs[i], process_state});
+        context.GetLyraRunProcessSync(),
+        {process_funcs[i], process_state, design_state});
   }
 }
 
