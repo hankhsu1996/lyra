@@ -62,7 +62,7 @@ inline void UpdateMovedEdgeTargetPosition(
 // Shared edge group migration logic. Extracts the sub from its old group,
 // finds or creates the new group, inserts the sub, and updates all
 // bookkeeping (process sub refs, cold snapshots, target handle position).
-// BackpatchFn: (uint32_t process_id, uint32_t process_sub_idx,
+// BackpatchFn: (RuntimeProcess& proc, uint32_t process_sub_idx,
 //               uint32_t new_idx, uint32_t new_group) -> void
 template <typename HandleT, typename BackpatchFn>
 void RebindEdgeGroupMigration(
@@ -105,7 +105,7 @@ void RebindEdgeGroupMigration(
       rm_vec[target.index] = rm_vec[rm_last];
       auto& moved = rm_vec[target.index];
       backpatch(
-          moved.process_id, moved.process_sub_idx, target.index,
+          *moved.process, moved.process_sub_idx, target.index,
           target.edge_group, target.edge_bucket);
       if (moved.cold_idx != UINT32_MAX) {
         auto& moved_cold = edge_cold_pool[moved.cold_idx];
@@ -178,7 +178,7 @@ void RebindEdgeGroupMigration(
 
   // Update sub ref.
   backpatch(
-      sub_copy.process_id, sub_copy.process_sub_idx, new_index, new_group_idx,
+      *sub_copy.process, sub_copy.process_sub_idx, new_index, new_group_idx,
       target.edge_bucket);
 
   // Update target handle position.
@@ -207,7 +207,7 @@ void Engine::RebindLocalSubscription(uint32_t idx) {
   IndexPlanRef plan_ref;
   BitTargetMapping mapping;
   uint32_t* epoch_ptr = nullptr;
-  uint32_t target_process_id = 0;
+  RuntimeProcess* target_process = nullptr;
 
   if (target.kind == SubKind::kEdge) {
     auto& g = target_subs.edge_groups[target.edge_group];
@@ -219,27 +219,25 @@ void Engine::RebindLocalSubscription(uint32_t idx) {
     plan_ref = ecold.plan_ref;
     mapping = ecold.rebind_mapping;
     epoch_ptr = &ecold.last_rebind_epoch;
-    target_process_id = esub.process_id;
+    target_process = esub.process;
   } else {
     auto& csub = target_subs.container_subs[target.index];
     auto& ccold = container_cold_pool_[csub.cold_idx];
     plan_ref = ccold.plan_ref;
     mapping = ccold.rebind_mapping;
     epoch_ptr = &ccold.last_rebind_epoch;
-    target_process_id = csub.process_id;
+    target_process = csub.process;
   }
 
   if (*epoch_ptr == flush_epoch_) return;
   *epoch_ptr = flush_epoch_;
 
-  if (target_process_id >= num_processes_) {
+  if (target_process == nullptr) {
     throw common::InternalError(
         "Engine::RebindLocalSubscription",
-        std::format(
-            "process_id {} exceeds num_processes {}", target_process_id,
-            num_processes_));
+        "rebind target subscription has null process pointer");
   }
-  auto& proc_state = processes_[target_process_id];
+  auto& proc_state = *target_process;
   auto all_ops = std::span<const IndexPlanOp>(proc_state.plan_pool.ops);
   auto plan_span = all_ops.subspan(plan_ref.start, plan_ref.count);
 
@@ -321,10 +319,9 @@ void Engine::RebindLocalSubscription(uint32_t idx) {
   RebindEdgeGroupMigration(
       target, target_subs, edge_cold_pool_, local_edge_target_table_,
       global_edge_target_table_, slot_storage, new_byte_offset, new_bit_index,
-      [this](
-          uint32_t pid, uint32_t psi, uint32_t new_idx, uint32_t grp,
-          EdgeBucket bkt) {
-        auto& mr = processes_[pid].local_sub_refs[psi];
+      [](RuntimeProcess& proc, uint32_t psi, uint32_t new_idx, uint32_t grp,
+         EdgeBucket bkt) {
+        auto& mr = proc.local_sub_refs[psi];
         mr.index = new_idx;
         mr.edge_group = grp;
         mr.edge_bucket = bkt;
@@ -347,7 +344,7 @@ void Engine::RebindGlobalSubscription(uint32_t idx) {
   IndexPlanRef plan_ref;
   BitTargetMapping mapping;
   uint32_t* epoch_ptr = nullptr;
-  uint32_t target_process_id = 0;
+  RuntimeProcess* target_process = nullptr;
 
   if (target.kind == SubKind::kEdge) {
     auto& g = target_subs.edge_groups[target.edge_group];
@@ -359,27 +356,25 @@ void Engine::RebindGlobalSubscription(uint32_t idx) {
     plan_ref = ecold.plan_ref;
     mapping = ecold.rebind_mapping;
     epoch_ptr = &ecold.last_rebind_epoch;
-    target_process_id = esub.process_id;
+    target_process = esub.process;
   } else {
     auto& csub = target_subs.container_subs[target.index];
     auto& ccold = container_cold_pool_[csub.cold_idx];
     plan_ref = ccold.plan_ref;
     mapping = ccold.rebind_mapping;
     epoch_ptr = &ccold.last_rebind_epoch;
-    target_process_id = csub.process_id;
+    target_process = csub.process;
   }
 
   if (*epoch_ptr == flush_epoch_) return;
   *epoch_ptr = flush_epoch_;
 
-  if (target_process_id >= num_processes_) {
+  if (target_process == nullptr) {
     throw common::InternalError(
         "Engine::RebindGlobalSubscription",
-        std::format(
-            "process_id {} exceeds num_processes {}", target_process_id,
-            num_processes_));
+        "rebind target subscription has null process pointer");
   }
-  auto& proc_state = processes_[target_process_id];
+  auto& proc_state = *target_process;
   auto all_ops = std::span<const IndexPlanOp>(proc_state.plan_pool.ops);
   auto plan_span = all_ops.subspan(plan_ref.start, plan_ref.count);
 
@@ -462,10 +457,9 @@ void Engine::RebindGlobalSubscription(uint32_t idx) {
   RebindEdgeGroupMigration(
       target, target_subs, edge_cold_pool_, local_edge_target_table_,
       global_edge_target_table_, slot_storage, new_byte_offset, new_bit_index,
-      [this](
-          uint32_t pid, uint32_t psi, uint32_t new_idx, uint32_t grp,
-          EdgeBucket bkt) {
-        auto& mr = processes_[pid].global_sub_refs[psi];
+      [](RuntimeProcess& proc, uint32_t psi, uint32_t new_idx, uint32_t grp,
+         EdgeBucket bkt) {
+        auto& mr = proc.global_sub_refs[psi];
         mr.index = new_idx;
         mr.edge_group = grp;
         mr.edge_bucket = bkt;
@@ -526,7 +520,7 @@ void Engine::FlushContainerSub(
 
   if (should_wake) {
     EnqueueProcessWakeup(
-        sub.process_id, sub.resume_block, slot_id, WakeCause::kContainer);
+        *sub.process, sub.resume_block, slot_id, WakeCause::kContainer);
   }
 }
 
@@ -594,7 +588,7 @@ void Engine::FlushSlotEdgeGroups(
       if (detailed) ++stats_.detailed.edge_sub_checks;
       if (detailed) ++stats_.detailed.edge_sub_wakeups;
       EnqueueProcessWakeup(
-          sub.process_id, sub.resume_block, slot_id, WakeCause::kEdge);
+          *sub.process, sub.resume_block, slot_id, WakeCause::kEdge);
     }
 
     group.last_bit = current_bit;
@@ -627,7 +621,7 @@ void Engine::FlushSlotChangeSubs(
       if (detailed) ++stats_.detailed.change_sub_wakeups;
       std::memcpy(snapshot, current, sub.byte_size);
       EnqueueProcessWakeup(
-          sub.process_id, sub.resume_block, slot_id, WakeCause::kChange);
+          *sub.process, sub.resume_block, slot_id, WakeCause::kChange);
     }
   }
 }

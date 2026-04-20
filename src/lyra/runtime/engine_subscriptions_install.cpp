@@ -153,16 +153,14 @@ namespace {
 
 // Backpatch a moved subscription's LocalSubRef after swap-and-pop removal.
 void BackpatchMovedLocalSubRef(
-    std::vector<RuntimeProcess>& processes, uint32_t process_id,
-    uint32_t process_sub_idx, uint32_t new_index) {
-  processes[process_id].local_sub_refs[process_sub_idx].index = new_index;
+    RuntimeProcess& proc, uint32_t process_sub_idx, uint32_t new_index) {
+  proc.local_sub_refs[process_sub_idx].index = new_index;
 }
 
 // Backpatch a moved subscription's GlobalSubRef after swap-and-pop removal.
 void BackpatchMovedGlobalSubRef(
-    std::vector<RuntimeProcess>& processes, uint32_t process_id,
-    uint32_t process_sub_idx, uint32_t new_index) {
-  processes[process_id].global_sub_refs[process_sub_idx].index = new_index;
+    RuntimeProcess& proc, uint32_t process_sub_idx, uint32_t new_index) {
+  proc.global_sub_refs[process_sub_idx].index = new_index;
 }
 
 }  // namespace
@@ -250,8 +248,7 @@ void RemoveEdgeSubCore(
     vec[index] = vec[last];
     auto& moved = vec[index];
     backpatch(
-        moved.process_id, moved.process_sub_idx, index, edge_group,
-        edge_bucket);
+        *moved.process, moved.process_sub_idx, index, edge_group, edge_bucket);
     if (moved.cold_idx != UINT32_MAX) {
       auto& moved_cold = edge_cold_pool[moved.cold_idx];
       if (moved_cold.edge_target_id != UINT32_MAX) {
@@ -274,10 +271,9 @@ void Engine::RemoveLocalEdgeSub(const LocalSubRef& ref) {
       subs, ref.edge_group, ref.edge_bucket, ref.index, edge_cold_pool_,
       local_edge_target_table_, global_edge_target_table_, free_target,
       free_cold,
-      [this](
-          uint32_t pid, uint32_t psi, uint32_t new_idx, uint32_t grp,
-          EdgeBucket bkt) {
-        auto& mr = processes_[pid].local_sub_refs[psi];
+      [](RuntimeProcess& proc, uint32_t psi, uint32_t new_idx, uint32_t grp,
+         EdgeBucket bkt) {
+        auto& mr = proc.local_sub_refs[psi];
         mr.index = new_idx;
         mr.edge_group = grp;
         mr.edge_bucket = bkt;
@@ -293,10 +289,9 @@ void Engine::RemoveGlobalEdgeSub(const GlobalSubRef& ref) {
       subs, ref.edge_group, ref.edge_bucket, ref.index, edge_cold_pool_,
       local_edge_target_table_, global_edge_target_table_, free_target,
       free_cold,
-      [this](
-          uint32_t pid, uint32_t psi, uint32_t new_idx, uint32_t grp,
-          EdgeBucket bkt) {
-        auto& mr = processes_[pid].global_sub_refs[psi];
+      [](RuntimeProcess& proc, uint32_t psi, uint32_t new_idx, uint32_t grp,
+         EdgeBucket bkt) {
+        auto& mr = proc.global_sub_refs[psi];
         mr.index = new_idx;
         mr.edge_group = grp;
         mr.edge_bucket = bkt;
@@ -314,7 +309,7 @@ void Engine::RemoveLocalChangeSub(const LocalSubRef& ref) {
   if (index != last) {
     vec[index] = vec[last];
     BackpatchMovedLocalSubRef(
-        processes_, vec[index].process_id, vec[index].process_sub_idx, index);
+        *vec[index].process, vec[index].process_sub_idx, index);
   }
   vec.pop_back();
   UpdateLocalObserverFlag(*ref.instance, ref.signal);
@@ -330,7 +325,7 @@ void Engine::RemoveGlobalChangeSub(const GlobalSubRef& ref) {
   if (index != last) {
     vec[index] = vec[last];
     BackpatchMovedGlobalSubRef(
-        processes_, vec[index].process_id, vec[index].process_sub_idx, index);
+        *vec[index].process, vec[index].process_sub_idx, index);
   }
   vec.pop_back();
   UpdateGlobalObserverFlag(ref.signal);
@@ -346,7 +341,7 @@ void Engine::RemoveLocalRebindWatcherSub(const LocalSubRef& ref) {
   if (index != last) {
     vec[index] = vec[last];
     BackpatchMovedLocalSubRef(
-        processes_, vec[index].process_id, vec[index].process_sub_idx, index);
+        *vec[index].process, vec[index].process_sub_idx, index);
   }
   vec.pop_back();
   UpdateLocalObserverFlag(*ref.instance, ref.signal);
@@ -362,7 +357,7 @@ void Engine::RemoveGlobalRebindWatcherSub(const GlobalSubRef& ref) {
   if (index != last) {
     vec[index] = vec[last];
     BackpatchMovedGlobalSubRef(
-        processes_, vec[index].process_id, vec[index].process_sub_idx, index);
+        *vec[index].process, vec[index].process_sub_idx, index);
   }
   vec.pop_back();
   UpdateGlobalObserverFlag(ref.signal);
@@ -382,7 +377,7 @@ void Engine::RemoveLocalContainerSub(const LocalSubRef& ref) {
   if (index != last) {
     vec[index] = vec[last];
     BackpatchMovedLocalSubRef(
-        processes_, vec[index].process_id, vec[index].process_sub_idx, index);
+        *vec[index].process, vec[index].process_sub_idx, index);
     if (vec[index].cold_idx != UINT32_MAX) {
       auto& moved_cold = container_cold_pool_[vec[index].cold_idx];
       if (moved_cold.edge_target_id != UINT32_MAX) {
@@ -410,7 +405,7 @@ void Engine::RemoveGlobalContainerSub(const GlobalSubRef& ref) {
   if (index != last) {
     vec[index] = vec[last];
     BackpatchMovedGlobalSubRef(
-        processes_, vec[index].process_id, vec[index].process_sub_idx, index);
+        *vec[index].process, vec[index].process_sub_idx, index);
     if (vec[index].cold_idx != UINT32_MAX) {
       auto& moved_cold = container_cold_pool_[vec[index].cold_idx];
       if (moved_cold.edge_target_id != UINT32_MAX) {
@@ -1240,7 +1235,7 @@ auto Engine::SubscribeGlobalChange(
   auto proc_sub_idx = static_cast<uint32_t>(proc.global_sub_refs.size());
 
   ChangeSub sub{};
-  sub.process_id = static_cast<uint32_t>(&proc - processes_.data());
+  sub.process = &proc;
   sub.resume_block = resume.block_index;
   sub.byte_offset = byte_offset;
   sub.byte_size = byte_size;
@@ -1295,7 +1290,7 @@ auto Engine::SubscribeLocalChange(
   auto proc_sub_idx = static_cast<uint32_t>(proc.local_sub_refs.size());
 
   ChangeSub sub{};
-  sub.process_id = static_cast<uint32_t>(&proc - processes_.data());
+  sub.process = &proc;
   sub.resume_block = resume.block_index;
   sub.byte_offset = byte_offset;
   sub.byte_size = byte_size;
@@ -1377,7 +1372,7 @@ auto Engine::SubscribeGlobalEdge(
   auto sub_idx = static_cast<uint32_t>(target_vec.size());
 
   EdgeSub sub{};
-  sub.process_id = static_cast<uint32_t>(&proc - processes_.data());
+  sub.process = &proc;
   sub.resume_block = resume.block_index;
   sub.flags = initially_active ? kSubActive : 0;
   sub.process_sub_idx = proc_sub_idx;
@@ -1441,7 +1436,7 @@ auto Engine::SubscribeLocalEdge(
   auto sub_idx = static_cast<uint32_t>(target_vec.size());
 
   EdgeSub sub{};
-  sub.process_id = static_cast<uint32_t>(&proc - processes_.data());
+  sub.process = &proc;
   sub.resume_block = resume.block_index;
   sub.flags = initially_active ? kSubActive : 0;
   sub.process_sub_idx = proc_sub_idx;
@@ -1616,7 +1611,7 @@ auto Engine::SubscribeGlobalContainerElement(
   uint32_t cold_idx = AllocContainerCold();
 
   ContainerSub sub{};
-  sub.process_id = static_cast<uint32_t>(&proc - processes_.data());
+  sub.process = &proc;
   sub.resume_block = resume.block_index;
   sub.process_sub_idx = proc_sub_idx;
   sub.cold_idx = cold_idx;
@@ -1662,7 +1657,7 @@ auto Engine::SubscribeLocalContainerElement(
   uint32_t cold_idx = AllocContainerCold();
 
   ContainerSub sub{};
-  sub.process_id = static_cast<uint32_t>(&proc - processes_.data());
+  sub.process = &proc;
   sub.resume_block = resume.block_index;
   sub.process_sub_idx = proc_sub_idx;
   sub.cold_idx = cold_idx;
@@ -1802,7 +1797,7 @@ void Engine::InstallRebindDepWatchers(
           std::memcpy(wcold.snapshot.data(), dep_base, dep_total_bytes);
 
           RebindWatcherSub watcher{};
-          watcher.process_id = static_cast<uint32_t>(&proc - processes_.data());
+          watcher.process = &proc;
           watcher.byte_offset = 0;
           watcher.byte_size = dep_total_bytes;
           watcher.cold_idx = watcher_cold;
