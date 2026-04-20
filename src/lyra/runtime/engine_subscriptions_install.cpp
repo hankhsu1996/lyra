@@ -670,8 +670,6 @@ void Engine::InstallTriggers(RuntimeProcess& proc, const WaitRequest& req) {
   auto resume = req.resume;
   auto triggers = req.triggers;
   const auto& late_bound = req.late_bound;
-  const ProcessHandle handle{
-      .process_id = static_cast<uint32_t>(&proc - processes_.data())};
   // Track created subscription info for late-bound rebinding.
   // Invariant: created_subs[i] records the dense vector index assigned
   // to trigger i at creation time. These indices remain stable within
@@ -778,7 +776,7 @@ void Engine::InstallTriggers(RuntimeProcess& proc, const WaitRequest& req) {
         int64_t sv_index =
             initially_active ? static_cast<int64_t>(trigger.byte_offset) : -1;
         sub_idx = SubscribeContainerElement(
-            handle, resume, sig_ref, edge, sv_index,
+            proc, resume, sig_ref, edge, sv_index,
             trigger.container_elem_stride, initially_active);
         sub_kind = SubKind::kContainer;
         break;
@@ -793,10 +791,10 @@ void Engine::InstallTriggers(RuntimeProcess& proc, const WaitRequest& req) {
         }
         if (trigger.byte_size > 0) {
           sub_idx = Subscribe(
-              handle, resume, sig_ref, edge, trigger.byte_offset,
+              proc, resume, sig_ref, edge, trigger.byte_offset,
               trigger.byte_size, trigger.bit_index, initially_active);
         } else {
-          sub_idx = Subscribe(handle, resume, sig_ref, edge, initially_active);
+          sub_idx = Subscribe(proc, resume, sig_ref, edge, initially_active);
         }
         sub_kind = SubKind::kChange;
         break;
@@ -811,10 +809,10 @@ void Engine::InstallTriggers(RuntimeProcess& proc, const WaitRequest& req) {
         }
         if (trigger.byte_size > 0) {
           sub_idx = Subscribe(
-              handle, resume, sig_ref, edge, trigger.byte_offset,
+              proc, resume, sig_ref, edge, trigger.byte_offset,
               trigger.byte_size, trigger.bit_index, initially_active);
         } else {
-          sub_idx = Subscribe(handle, resume, sig_ref, edge, initially_active);
+          sub_idx = Subscribe(proc, resume, sig_ref, edge, initially_active);
         }
         sub_kind = SubKind::kEdge;
         break;
@@ -923,7 +921,7 @@ void Engine::InstallTriggers(RuntimeProcess& proc, const WaitRequest& req) {
                               .signal = LocalSignalId{target.signal_id}}}
                         : SignalRef{GlobalSignalId{target.signal_id}};
     SubscribeRebind(
-        handle, UINT32_MAX, rebind_target, target.kind, target.index,
+        proc, UINT32_MAX, rebind_target, target.kind, target.index,
         target.edge_group, target.edge_bucket, hdr_plan, mapping, dep_signals);
   }
 }
@@ -1468,9 +1466,8 @@ auto Engine::SubscribeLocalEdge(
 
 // R5: SignalRef top boundary -- dispatch once, then domain-specific internals.
 auto Engine::Subscribe(
-    ProcessHandle handle, ResumePoint resume, SignalRef signal_ref,
+    RuntimeProcess& proc, ResumePoint resume, SignalRef signal_ref,
     common::EdgeKind edge, bool initially_active) -> uint32_t {
-  auto& proc = processes_[handle.process_id];
   return std::visit(
       [&](auto sig) -> uint32_t {
         using T = std::decay_t<decltype(sig)>;
@@ -1506,10 +1503,9 @@ auto Engine::Subscribe(
 }
 
 auto Engine::Subscribe(
-    ProcessHandle handle, ResumePoint resume, SignalRef signal_ref,
+    RuntimeProcess& proc, ResumePoint resume, SignalRef signal_ref,
     common::EdgeKind edge, uint32_t byte_offset, uint32_t byte_size,
     uint8_t bit_index, bool initially_active) -> uint32_t {
-  auto& proc = processes_[handle.process_id];
   return std::visit(
       [&](auto sig) -> uint32_t {
         using T = std::decay_t<decltype(sig)>;
@@ -1535,10 +1531,9 @@ auto Engine::Subscribe(
 }
 
 auto Engine::SubscribeContainerElement(
-    ProcessHandle handle, ResumePoint resume, SignalRef signal_ref,
+    RuntimeProcess& proc, ResumePoint resume, SignalRef signal_ref,
     common::EdgeKind edge, int64_t sv_index, uint32_t elem_stride,
     bool initially_active) -> uint32_t {
-  auto& proc = processes_[handle.process_id];
   return std::visit(
       [&](auto sig) -> uint32_t {
         using T = std::decay_t<decltype(sig)>;
@@ -1749,11 +1744,10 @@ void Engine::ValidateRebindDepSignals(
 
 // R5: Thin boundary wrapper -- dispatch to domain-specific rebind.
 void Engine::SubscribeRebind(
-    ProcessHandle handle, uint32_t edge_target_id, SignalRef target_signal,
+    RuntimeProcess& proc, uint32_t edge_target_id, SignalRef target_signal,
     SubKind target_kind, uint32_t target_index, uint8_t target_edge_group,
     EdgeBucket target_edge_bucket, std::span<const IndexPlanOp> plan,
     BitTargetMapping mapping, std::span<const SignalRef> dep_signals) {
-  auto& proc = processes_[handle.process_id];
   std::visit(
       [&](const auto& target) {
         using T = std::decay_t<decltype(target)>;

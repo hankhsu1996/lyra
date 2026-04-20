@@ -231,14 +231,14 @@ class Engine {
   // R5: Subscribe with typed signal identity. Dispatches once at the top
   // boundary, then routes to domain-specific helpers. No `is_local` below.
   auto Subscribe(
-      ProcessHandle handle, ResumePoint resume, SignalRef signal,
+      RuntimeProcess& proc, ResumePoint resume, SignalRef signal,
       common::EdgeKind edge, bool initially_active = true) -> uint32_t;
   auto Subscribe(
-      ProcessHandle handle, ResumePoint resume, SignalRef signal,
+      RuntimeProcess& proc, ResumePoint resume, SignalRef signal,
       common::EdgeKind edge, uint32_t byte_offset, uint32_t byte_size,
       uint8_t bit_index, bool initially_active = true) -> uint32_t;
   auto SubscribeContainerElement(
-      ProcessHandle handle, ResumePoint resume, SignalRef signal,
+      RuntimeProcess& proc, ResumePoint resume, SignalRef signal,
       common::EdgeKind edge, int64_t sv_index, uint32_t elem_stride,
       bool initially_active = true) -> uint32_t;
 
@@ -252,7 +252,7 @@ class Engine {
   // into instance observability. dep_slots values are global slot_ids or
   // local signal_ids matching the target's domain.
   void SubscribeRebind(
-      ProcessHandle handle, uint32_t edge_target_id, SignalRef target_signal,
+      RuntimeProcess& proc, uint32_t edge_target_id, SignalRef target_signal,
       SubKind target_kind, uint32_t target_index, uint8_t target_edge_group,
       EdgeBucket target_edge_bucket, std::span<const IndexPlanOp> plan,
       BitTargetMapping mapping, std::span<const SignalRef> dep_signals);
