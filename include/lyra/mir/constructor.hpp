@@ -8,6 +8,7 @@
 #include "lyra/mir/basic_block.hpp"
 #include "lyra/mir/handle.hpp"
 #include "lyra/mir/operand.hpp"
+#include "lyra/mir/routine.hpp"
 
 namespace lyra::mir {
 
@@ -15,15 +16,19 @@ namespace lyra::mir {
 //
 // Exactly one Constructor per mir::ModuleBody. Reuses the generic MIR
 // executable substrate (basic blocks, statements, operands, rvalues, temps)
-// but is not a user-callable Function and not a simulation Process. It has
-// no signature, no ABI contract, no parameters, and no decision-site
-// tracking. The constructor body is lowered and verified; it is not yet
-// consumed by LLVM or runtime in this cut.
+// and carries real typed formals for this body's transmitted parameters.
+// Each formal is a scope-local kLocal (mirror of mir::Function). Any
+// binding into body-owned storage is an ordinary assignment statement at
+// the top of the constructor body, not a side table.
 struct Constructor {
   BasicBlockId entry;
   std::vector<BasicBlock> blocks;
   std::vector<TypeId> local_types;
   std::vector<TempMetadata> temp_metadata;
+  FunctionSignature signature;
+  // Formal index -> local slot index (same role as
+  // Function::param_local_slots).
+  std::vector<uint32_t> param_local_slots;
   common::OriginId origin = common::OriginId::Invalid();
   uint64_t materialize_count = 0;
 };

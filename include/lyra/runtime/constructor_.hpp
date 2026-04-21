@@ -303,43 +303,59 @@ class Constructor {
       RuntimeScope* parent_scope, const char* label, uint32_t ordinal_in_parent)
       -> RuntimeScope*;
 
-  // Create one child instance of the current body in parent scope context.
+  // Flat-replay entry point: create one child instance of the currently-
+  // active body, applying transmitted-parameter values from a pre-lowered
+  // contiguous byte buffer. Used only by LyraConstructorRunProgram for
+  // bodies that stay on the flat path; the direct-constructor path goes
+  // through AllocateObject + a direct call to the emitted child
+  // body-constructor.
   // parent_scope: parent scope, or nullptr for top-level (root) instances.
   // instance_index: compile-time object_index (sorted all_instances position).
   //   Used as owner_ordinal for stable indexing.
   // label: scope label for path derivation (e.g. "u0"). The full
   //   hierarchical path is derived from parent_scope + label by the
   //   constructor; callers must not transport full paths.
-  // param_data/param_data_size: pre-lowered canonical storage bytes
-  //   (flat-replay path; mutually exclusive with arg_ptrs).
-  // arg_ptrs/arg_byte_sizes: typed direct-constructor argument source
-  //   (direct path; mutually exclusive with param_data). When
-  //   non-empty, each arg_ptrs[i] points to the value for
-  //   body.init_param_slots[i] and arg_byte_sizes[i] must equal that
-  //   slot's byte_size.
+  // param_data/param_data_size: pre-lowered canonical storage bytes.
   // Returns the created instance (owned by the constructor).
   auto CreateChildInstance(
       RuntimeScope* parent_scope, uint32_t ordinal_in_parent,
       uint32_t instance_index, const char* label, const void* param_data,
-      uint32_t param_data_size, std::span<const void* const> arg_ptrs,
-      std::span<const uint32_t> arg_byte_sizes, uint64_t realized_inline_size,
+      uint32_t param_data_size, uint64_t realized_inline_size,
       uint64_t realized_appendix_size) -> RuntimeInstance*;
 
-  // Create a child instance for the direct-constructor subset: no
-  // port-const inits, no generate semantics. Transmitted-parameter
-  // values arrive as typed independent pointers plus per-arg byte
-  // sizes, in the same order as the child body's init_param_slots
-  // template. The currently-active body (set by a prior BeginBody)
-  // determines the child's body package. `num_args` must match the
-  // child body's transmitted-parameter slot count; a zero count is
-  // valid for parameter-less children and makes the other two arrays
-  // unused. Entry for the backend-emitted body-constructor path; no
-  // compile-time byte pool is consulted by this path.
-  auto CreateChildInstanceDirect(
-      RuntimeScope* parent_scope, uint32_t ordinal_in_parent,
-      uint32_t instance_index, const char* label, uint64_t realized_inline_size,
-      uint64_t realized_appendix_size, uint32_t num_args,
-      const void* const* arg_ptrs, const uint32_t* arg_byte_sizes)
+  // Pure object allocation: create a RuntimeInstance, allocate its
+  // inline + appendix + deferred storage, and return ownership to the
+  // caller. Does NOT attach the instance to a scope, apply body init,
+  // or stage it. Body activation via BeginBody must precede this call
+  // (storage sizing comes from the active body).
+  auto AllocateObject(
+      uint64_t realized_inline_size, uint64_t realized_appendix_size)
+      -> std::unique_ptr<RuntimeInstance>;
+
+  // Attach a freshly-allocated instance to a parent scope. Writes only
+  // scope identity and hierarchy: scope kind, parent edge with ordinal,
+  // and hierarchical path. Does not touch storage content, process-side
+  // state, or the constructor's staged tables. The registration handle
+  // (owner_ordinal / staged_instances_ slot) is assigned later by
+  // FinalizeInstance.
+  void AttachInstanceToScope(
+      RuntimeInstance& instance, RuntimeScope* parent_scope,
+      uint32_t ordinal_in_parent, const char* label);
+
+  // Apply the active body's storage construction recipe to an attached
+  // instance (default-init of body-owned state only). Parameter slots
+  // are written by the emitted body-constructor's formal-to-member
+  // binding statements and MUST NOT flow through this helper.
+  void ApplyBodyInit(RuntimeInstance& instance);
+
+  // Commit an attached + initialized instance into the constructor's
+  // staged tables. Registration-only: assigns owner_ordinal to
+  // instance_index, places the instance at staged_instances_[instance_
+  // index], stages body processes, records design-global observables,
+  // writes the metadata bundle, and advances the slot base. Returns the
+  // stable instance pointer.
+  auto FinalizeInstance(
+      std::unique_ptr<RuntimeInstance> instance, uint32_t instance_index)
       -> RuntimeInstance*;
 
   // Read-only accessor for an already-staged instance by its compile-time
@@ -356,6 +372,44 @@ class Constructor {
  private:
   void CheckNotFinalized(const char* caller) const;
   void ClearActiveBody();
+
+  // Shared tail of instance construction for both the flat-replay and
+  // direct-constructor paths. Assumes the caller has already allocated
+  // the instance storage and applied body-level init (recipe + optional
+  // param init). Internally decomposes registration into
+  // RegisterStagedInstance, StageInstanceProcesses,
+  // RecordInstanceObservables, RecordInstanceBundle, and
+  // AdvanceInstanceSlotBase -- each covers exactly one concern; this
+  // wrapper exists only for shared sequencing.
+  void FinalizeInstanceSetup(
+      std::unique_ptr<RuntimeInstance> instance, uint32_t instance_index);
+
+  // Registration step: place `instance` at staged_instances_[index] and
+  // stamp owner_ordinal = index. No process, observable, or bundle work.
+  void RegisterStagedInstance(
+      std::unique_ptr<RuntimeInstance> instance, uint32_t instance_index);
+
+  // Registration step: push a StagedProcess record for every body entry
+  // of the active body, pointing at `instance_index`. Bumps
+  // next_module_instance_ordinal_. No scope, observable, or bundle work.
+  void StageInstanceProcesses(uint32_t instance_index);
+
+  // Registration step: walk the active body's design-global observable
+  // entries and append them to realized_slot_meta_ / realized_trace_
+  // meta_ using this instance's stable path. Instance-owned entries are
+  // skipped (engine-derived from bundles). No scope/process work.
+  void RecordInstanceObservables(uint32_t instance_index);
+
+  // Registration step: record the per-instance metadata bundle used
+  // by the engine to locate this instance's body descriptor and path.
+  // Must run after RegisterStagedInstance so staged_instances_[index]
+  // is non-null.
+  void RecordInstanceBundle(uint32_t instance_index);
+
+  // Registration step: advance next_slot_base_ by the active body's
+  // slot_count and bump next_instance_id_. Runs after all metadata for
+  // this instance has been emitted.
+  void AdvanceInstanceSlotBase();
 
   // Constructor-private runtime staging for a single process.
   struct StagedProcess {
@@ -552,26 +606,39 @@ void LyraConstructorRunProgram(
 // Activate the child body whose description is packed into `body_ref`.
 // Thin shim over Constructor::BeginBody used by backend-emitted
 // body-constructor code: each plain-child site starts with a
-// begin-body-by-ref call so AddChildObject operates against the correct
+// begin-body-by-ref call so AllocateObject operates against the correct
 // active body package.
 void LyraConstructorBeginBodyByRef(
     void* ctor, const lyra::runtime::BodyDescriptorRef* body_ref);
 
-// Create one direct-constructor child instance under the currently-
-// active body. Used by backend-emitted body-constructor code as the
-// typed replacement for the flat-replay CreateChildInstance call.
-// Preconditions: BeginBody (or BeginBodyByRef) has been called with
-// the child's body package, and port-const init is absent (that case
-// remains on the old path). Transmitted-parameter values are passed
-// directly as typed pointers: `num_args` parallel entries in
-// `arg_ptrs` / `arg_byte_sizes`, in the same order as the child body's
-// init_param_slots template. `num_args == 0` is valid for children
-// with no transmitted parameters. Returns the new RuntimeInstance*.
-auto LyraConstructorAddChildObject(
-    void* ctor, void* parent_scope, uint32_t ordinal_in_parent,
-    uint32_t instance_index, const char* label, uint64_t realized_inline_size,
-    uint64_t realized_appendix_size, uint32_t num_args,
-    const void* const* arg_ptrs, const uint32_t* arg_byte_sizes) -> void*;
+// Allocate a RuntimeInstance under the currently-active body. Returns
+// a raw pointer to a constructor-owned holding slot; the object is not
+// yet attached to any scope and not yet staged. The caller must follow
+// with LyraConstructorAttachAndInitializeObject to commit it.
+// Preconditions: BeginBody (or BeginBodyByRef) has been called.
+auto LyraConstructorAllocateObject(
+    void* ctor, uint64_t realized_inline_size, uint64_t realized_appendix_size)
+    -> void*;
+
+// Attach a freshly-allocated object to a parent scope: scope identity,
+// parent edge with ordinal, and hierarchical path. Registration-related
+// state (owner_ordinal, staged position, bundles) is written later by
+// LyraConstructorFinalizeInstance. Object ownership remains with the
+// caller (raw pointer handed off by LyraConstructorAllocateObject).
+void LyraConstructorAttachInstanceToScope(
+    void* ctor, void* object, void* parent_scope, uint32_t ordinal_in_parent,
+    const char* label);
+
+// Apply the active body's storage init recipe to the attached object.
+void LyraConstructorApplyBodyInit(void* ctor, void* object);
+
+// Commit the fully-initialized object into the constructor's staged
+// tables (process staging, observables, bundle, slot-base). Transfers
+// ownership into the constructor's staged_instances_ at instance_index.
+// Returns the stable instance pointer for use as the callee's
+// this_instance argument in the direct-call path.
+auto LyraConstructorFinalizeInstance(
+    void* ctor, void* object, uint32_t instance_index) -> void*;
 
 auto LyraConstructorFinalize(void* ctor) -> void*;
 

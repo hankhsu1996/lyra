@@ -62,8 +62,10 @@ auto ClassifySlotStorageShape(
 }  // namespace
 
 auto CollectBodyLocalDecls(
-    const hir::Module& module, const SymbolTable& symbol_table,
-    const TypeArena& type_arena, mir::Arena& mir_arena) -> BodyLocalDecls {
+    const hir::Module& module,
+    std::span<const SymbolId> plain_child_object_handle_members,
+    const SymbolTable& symbol_table, const TypeArena& type_arena,
+    mir::Arena& mir_arena) -> BodyLocalDecls {
   BodyLocalDecls body_decls;
   uint32_t next_body_slot = 0;
 
@@ -127,6 +129,29 @@ auto CollectBodyLocalDecls(
     };
     body_decls.places[param] = mir_arena.AddPlace(std::move(body_place));
     body_decls.slots.push_back({sym.type, mir::SlotKind::kParamConst});
+    body_decls.local_trace_names.push_back(sym.name);
+  }
+
+  // Plain-child object-handle members come in through an explicit span,
+  // never by scanning the constructor body. This function's signature
+  // deliberately excludes hir::ModuleBody for that reason: adding any
+  // statement-walking logic here would require a signature change that
+  // should be rejected at review. Non-plain-child handles (generate /
+  // dynamic scopes) are out of scope for this list and will be modeled
+  // separately when those scopes move onto the direct-constructor path.
+  for (SymbolId member_sym : plain_child_object_handle_members) {
+    const Symbol& sym = symbol_table[member_sym];
+    mir::Place body_place{
+        .root =
+            mir::PlaceRoot{
+                .kind = mir::PlaceRoot::Kind::kModuleSlot,
+                .id = static_cast<int>(next_body_slot++),
+                .type = sym.type,
+            },
+        .projections = {},
+    };
+    body_decls.places[member_sym] = mir_arena.AddPlace(std::move(body_place));
+    body_decls.slots.push_back({sym.type, mir::SlotKind::kVariable});
     body_decls.local_trace_names.push_back(sym.name);
   }
 

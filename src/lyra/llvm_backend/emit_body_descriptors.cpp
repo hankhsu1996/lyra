@@ -10,9 +10,12 @@
 #include <llvm/IR/Module.h>
 
 #include "lyra/common/internal_error.hpp"
+#include "lyra/common/type.hpp"
+#include "lyra/common/type_queries.hpp"
 #include "lyra/llvm_backend/context.hpp"
 #include "lyra/llvm_backend/emit_descriptor_utils.hpp"
 #include "lyra/llvm_backend/layout/layout.hpp"
+#include "lyra/llvm_backend/value_repr.hpp"
 #include "lyra/mir/module_body.hpp"
 #include "lyra/runtime/body_realization_desc.hpp"
 
@@ -36,7 +39,7 @@ struct DecisionTableEmission {
 }  // namespace
 
 auto EmitBodyRealizationDescs(
-    Context& context, const Layout& layout,
+    Context& context, const CuFacts& facts, const Layout& layout,
     std::span<const lowering::mir_to_llvm::CodegenSession::BodyCompiledFuncs>
         body_compiled_funcs,
     std::span<const std::vector<uint32_t>> /*child_site_to_tree_ordinal*/,
@@ -57,7 +60,7 @@ auto EmitBodyRealizationDescs(
             body_compiled_funcs.size(), layout.body_realization_infos.size()));
   }
 
-  // BodyRealizationDesc ABI (112 bytes):
+  // BodyRealizationDesc ABI (104 bytes):
   //   {u32 num_processes, u32 slot_count,
   //    u64 inline_state_size_bytes, u64 appendix_state_size_bytes,
   //    u64 total_state_size_bytes, i8 time_unit_power, i8 time_precision_power,
@@ -66,12 +69,12 @@ auto EmitBodyRealizationDescs(
   //    ptr port_entries, u32 num_port_entries, [4 x pad],
   //    ptr installable_computations, ptr ic_word_pool,
   //    u32 num_ic_word_pool_entries, u32 num_installable_computations,
-  //    u32 uses_mir_constructor, [4 x pad], ptr body_constructor_fn}
+  //    u32 uses_mir_constructor}
   auto* i8_ty = llvm::Type::getInt8Ty(ctx);
   auto* header_type = llvm::StructType::get(
       ctx,
       {i32_ty, i32_ty, i64_ty, i64_ty, i64_ty, i8_ty, i8_ty, i32_ty, ptr_ty,
-       i32_ty, ptr_ty, i32_ty, ptr_ty, ptr_ty, i32_ty, i32_ty, i32_ty, ptr_ty});
+       i32_ty, ptr_ty, i32_ty, ptr_ty, ptr_ty, i32_ty, i32_ty, i32_ty});
   // BodyProcessEntry ABI: {ptr shared_body_fn, u32 schema_index, u32 pad}
   auto* entry_type = llvm::StructType::get(ctx, {ptr_ty, i32_ty, i32_ty});
 
@@ -258,29 +261,30 @@ auto EmitBodyRealizationDescs(
       }
     }
 
-    // Body-constructor opt-in: when the effective flag is set (the
-    // HIR-level hint plus single-instance / plain-children checks from
-    // the construction program), forward-declare the emitted
-    // body-constructor function so the descriptor global can reference
-    // it by address. The function body is emitted later by
-    // EmitBodyConstructorFunctions. Unflagged bodies embed a null
-    // pointer.
+    // Body-constructor opt-in: forward-declare the emitted body
+    // constructor function by name so sibling emit sites can take its
+    // address by name. The function is not exposed through the
+    // descriptor; all invocations go through direct named calls.
     bool eff_flag =
         bi < effective_uses_mir_ctor.size() && effective_uses_mir_ctor[bi] != 0;
     uint32_t uses_mir_ctor = 0;
-    llvm::Constant* body_ctor_fn_ptr = null_ptr;
     if (eff_flag) {
       uses_mir_ctor = 1;
+      const auto& sig = info.body->constructor.signature;
+      std::vector<llvm::Type*> formal_types = {ptr_ty, ptr_ty};
+      formal_types.reserve(2 + sig.params.size());
+      for (const auto& param : sig.params) {
+        const Type& ty = (*facts.types)[param.type];
+        uint32_t bit_width = PackedBitWidth(ty, *facts.types);
+        formal_types.push_back(GetBackingLlvmType(ctx, bit_width));
+      }
       auto fn_name = std::format("__lyra_body_construct_{}", body_group);
       auto* fn_ty = llvm::FunctionType::get(
-          llvm::Type::getVoidTy(ctx), {ptr_ty, ptr_ty}, /*isVarArg=*/false);
-      auto* existing = mod.getFunction(fn_name);
-      auto* fn =
-          existing != nullptr
-              ? existing
-              : llvm::Function::Create(
-                    fn_ty, llvm::Function::ExternalLinkage, fn_name, &mod);
-      body_ctor_fn_ptr = fn;
+          llvm::Type::getVoidTy(ctx), formal_types, /*isVarArg=*/false);
+      if (mod.getFunction(fn_name) == nullptr) {
+        llvm::Function::Create(
+            fn_ty, llvm::Function::ExternalLinkage, fn_name, &mod);
+      }
     }
 
     auto* header_val = llvm::ConstantStruct::get(
@@ -299,7 +303,7 @@ auto EmitBodyRealizationDescs(
          ic_descs_ptr, ic_word_pool_ptr,
          llvm::ConstantInt::get(i32_ty, ic_word_pool_count),
          llvm::ConstantInt::get(i32_ty, num_ic),
-         llvm::ConstantInt::get(i32_ty, uses_mir_ctor), body_ctor_fn_ptr});
+         llvm::ConstantInt::get(i32_ty, uses_mir_ctor)});
     auto* header_global = new llvm::GlobalVariable(
         mod, header_type, true, llvm::GlobalValue::InternalLinkage, header_val,
         header_name);

@@ -48,14 +48,16 @@ struct ModuleBody {
   // backend-emitted body-constructor function derived from `constructor`.
   // The flat replay path in LyraConstructorRunProgram skips child creation
   // for entries whose parent body carries this flag; the parent's emitted
-  // body-constructor has already created those children through a typed
-  // runtime helper (LyraConstructorAddChildObject).
+  // body-constructor has already allocated those children via
+  // LyraConstructorAllocateObject and invoked their own
+  // __lyra_body_construct_ functions directly with typed transmitted
+  // parameters.
   //
   // This is a narrow opt-in: only bodies whose constructor body matches the
-  // minimal plain-child new_object pattern (no ports, no bindings, no
-  // external refs, no generate, no parameter payloads) may set this flag.
-  // Any uncertainty must leave it false so the old flat path remains
-  // authoritative. Detection lives in hir_to_mir/module.cpp.
+  // plain-child shape (no ports, no bindings, no external refs, no
+  // generate) may set this flag. Any uncertainty must leave it false so
+  // the old flat path remains authoritative. Detection lives in
+  // hir_to_mir/module.cpp.
   bool uses_mir_constructor = false;
 
   // Body-local slot descriptors, indexed by kModuleSlot id.

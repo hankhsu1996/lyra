@@ -958,6 +958,12 @@ void ExtractBodyObservableDescriptors(
     }
 
     for (uint32_t i = 0; i < info.slot_count; ++i) {
+      // Object-handle members are compiler-internal bookkeeping and
+      // must not appear in user-facing observable/trace metadata.
+      if (type_arena[obs_body.slots[i].type].Kind() ==
+          TypeKind::kObjectHandle) {
+        continue;
+      }
       const auto& spec = info.slot_specs[i];
       const CanonicalObservableShape shape = ComputeCanonicalObservableShape(
           spec, obs_body.slots[i].type, obs_body.slots[i].kind, type_arena);

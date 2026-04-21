@@ -71,30 +71,34 @@ void VerifyRvalueInvariants(const mir::Rvalue& rv) {
       rv.info);
 }
 
-// Enforce read-only invariant: writing to a kParamConst design slot is a
-// compiler bug (params are initialized during instance construction, never
-// assigned by user code). Inspects place.root to catch both direct and
-// projected writes (field/index/range of a param slot).
+// Verify that writing into `target` is legal in the current lowering phase.
+// kParamConst body slots are constructor-initializable members: they are
+// written exactly once by the body constructor's formal-to-member binding
+// statements and read from user code thereafter. Any other phase that tries
+// to write them is a compiler bug (either MIR lowering produced a wrong
+// target, or the frontend let a user write slip through).
+//
+// The check is keyed on the structural phase of the active Context
+// (Context::phase), not on an ad-hoc override flag: constructor-body
+// lowering is the only phase where such a write is well-formed.
 void CheckWriteableSlot(
-    mir::PlaceId place_id, const mir::Arena& arena, const Context& ctx) {
-  const mir::Place& place = arena[place_id];
-  if (place.root.kind == mir::PlaceRoot::Kind::kModuleSlot) {
-    if (ctx.body_slots == nullptr) return;
-    auto slot_id = static_cast<size_t>(place.root.id);
-    if (slot_id < ctx.body_slots->size() &&
-        (*ctx.body_slots)[slot_id].kind == mir::SlotKind::kParamConst) {
-      throw common::InternalError(
-          "EmitTypedAssign", "write to read-only param slot");
-    }
-  } else if (place.root.kind == mir::PlaceRoot::Kind::kDesignGlobal) {
-    if (ctx.design_slots == nullptr) return;
-    auto slot_id = static_cast<size_t>(place.root.id);
-    if (slot_id < ctx.design_slots->size() &&
-        (*ctx.design_slots)[slot_id].kind == mir::SlotKind::kParamConst) {
-      throw common::InternalError(
-          "EmitTypedAssign", "write to read-only param slot");
-    }
-  }
+    const mir::WriteTarget& target, const Context& ctx, const char* caller) {
+  // External-ref writes target another instance's storage; slot-kind
+  // invariants for the target instance are enforced where that ref is
+  // registered, not here.
+  const auto* place_id = std::get_if<mir::PlaceId>(&target);
+  if (place_id == nullptr) return;
+  const mir::Place& place = (*ctx.mir_arena)[*place_id];
+  if (place.root.kind != mir::PlaceRoot::Kind::kModuleSlot) return;
+  if (ctx.body_slots == nullptr) return;
+  auto slot_id = static_cast<uint32_t>(place.root.id);
+  if (slot_id >= ctx.body_slots->size()) return;
+  if ((*ctx.body_slots)[slot_id].kind != mir::SlotKind::kParamConst) return;
+  if (ctx.phase == LoweringPhase::kConstructorBody) return;
+  throw common::InternalError(
+      caller,
+      "write to kParamConst module slot is only legal during constructor "
+      "body lowering");
 }
 
 }  // namespace
@@ -287,9 +291,7 @@ auto MirBuilder::CurrentBlock() const -> BlockIndex {
 
 void MirBuilder::EmitPlainAssign(
     mir::WriteTarget target, mir::RightHandSide rhs) {
-  if (const auto* p = std::get_if<mir::PlaceId>(&target)) {
-    CheckWriteableSlot(*p, *arena_, *ctx_);
-  }
+  CheckWriteableSlot(target, *ctx_, "MirBuilder::EmitPlainAssign");
   if (const auto* rv = std::get_if<mir::Rvalue>(&rhs)) {
     VerifyRvalueInvariants(*rv);
   }
@@ -298,9 +300,7 @@ void MirBuilder::EmitPlainAssign(
 
 void MirBuilder::EmitCopyAssign(
     mir::WriteTarget target, mir::RightHandSide rhs) {
-  if (const auto* p = std::get_if<mir::PlaceId>(&target)) {
-    CheckWriteableSlot(*p, *arena_, *ctx_);
-  }
+  CheckWriteableSlot(target, *ctx_, "MirBuilder::EmitCopyAssign");
   if (const auto* rv = std::get_if<mir::Rvalue>(&rhs)) {
     VerifyRvalueInvariants(*rv);
   }
@@ -309,9 +309,7 @@ void MirBuilder::EmitCopyAssign(
 
 void MirBuilder::EmitMoveAssign(
     mir::WriteTarget target, mir::RightHandSide rhs) {
-  if (const auto* p = std::get_if<mir::PlaceId>(&target)) {
-    CheckWriteableSlot(*p, *arena_, *ctx_);
-  }
+  CheckWriteableSlot(target, *ctx_, "MirBuilder::EmitMoveAssign");
   if (const auto* rv = std::get_if<mir::Rvalue>(&rhs)) {
     VerifyRvalueInvariants(*rv);
   }
@@ -454,9 +452,8 @@ auto MirBuilder::EmitCallWithWritebacks(
     std::vector<mir::CallWriteback> writebacks, TypeId return_type)
     -> mir::Operand {
   for (const auto& wb : writebacks) {
-    CheckWriteableSlot(wb.dest, *arena_, *ctx_);
+    CheckWriteableSlot(wb.dest, *ctx_, "MirBuilder::EmitCallWithWritebacks");
   }
-
   const auto& types = *ctx_->type_arena;
   bool is_void = types[return_type].Kind() == TypeKind::kVoid;
 
@@ -487,11 +484,10 @@ auto MirBuilder::EmitDpiCall(
     mir::DpiImportRef callee, std::vector<mir::DpiArgBinding> args,
     TypeId return_type) -> mir::Operand {
   for (const auto& arg : args) {
-    if (arg.writeback_dest) {
-      CheckWriteableSlot(*arg.writeback_dest, *arena_, *ctx_);
+    if (arg.writeback_dest.has_value()) {
+      CheckWriteableSlot(*arg.writeback_dest, *ctx_, "MirBuilder::EmitDpiCall");
     }
   }
-
   const auto& types = *ctx_->type_arena;
   bool is_void = types[return_type].Kind() == TypeKind::kVoid;
 
@@ -567,11 +563,11 @@ auto MirBuilder::EmitSystemTfCallExpr(
         std::tuple<mir::PlaceId, TypeId, mir::PassMode, mir::WritebackKind>>
         writebacks) -> mir::Operand {
   for (const auto& [dest, type, mode, kind] : writebacks) {
-    CheckWriteableSlot(dest, *arena_, *ctx_);
     if (mode == mir::PassMode::kRef) {
       throw common::InternalError(
           "EmitSystemTfCallExpr", "Ref parameters not yet supported");
     }
+    CheckWriteableSlot(dest, *ctx_, "MirBuilder::EmitSystemTfCallExpr");
   }
 
   // Build return output (expression form: no dest, caller assigns)
@@ -696,21 +692,24 @@ auto MirBuilder::EmitGuardedUse(
 
 void MirBuilder::EmitGuardedAssign(
     mir::PlaceId dest, mir::RightHandSide rhs, mir::Operand guard) {
-  CheckWriteableSlot(dest, *arena_, *ctx_);
+  CheckWriteableSlot(dest, *ctx_, "MirBuilder::EmitGuardedAssign");
   EmitInst(
       mir::GuardedAssign{
           .dest = dest, .rhs = std::move(rhs), .guard = std::move(guard)});
 }
 
 void MirBuilder::EmitDeferredAssign(mir::PlaceId dest, mir::RightHandSide rhs) {
-  CheckWriteableSlot(dest, *arena_, *ctx_);
+  CheckWriteableSlot(dest, *ctx_, "MirBuilder::EmitDeferredAssign");
   EmitInst(mir::DeferredAssign{.dest = dest, .rhs = std::move(rhs)});
 }
 
 void MirBuilder::EmitGuardedAssign(
     mir::WriteTarget dest, mir::RightHandSide rhs, mir::Operand guard) {
+  CheckWriteableSlot(dest, *ctx_, "MirBuilder::EmitGuardedAssign");
   if (const auto* p = std::get_if<mir::PlaceId>(&dest)) {
-    EmitGuardedAssign(*p, std::move(rhs), std::move(guard));
+    EmitInst(
+        mir::GuardedAssign{
+            .dest = *p, .rhs = std::move(rhs), .guard = std::move(guard)});
   } else {
     EmitInst(
         mir::GuardedAssign{
@@ -720,8 +719,9 @@ void MirBuilder::EmitGuardedAssign(
 
 void MirBuilder::EmitDeferredAssign(
     mir::WriteTarget dest, mir::RightHandSide rhs) {
+  CheckWriteableSlot(dest, *ctx_, "MirBuilder::EmitDeferredAssign");
   if (const auto* p = std::get_if<mir::PlaceId>(&dest)) {
-    EmitDeferredAssign(*p, std::move(rhs));
+    EmitInst(mir::DeferredAssign{.dest = *p, .rhs = std::move(rhs)});
   } else {
     EmitInst(mir::DeferredAssign{.dest = dest, .rhs = std::move(rhs)});
   }

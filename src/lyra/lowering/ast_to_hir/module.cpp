@@ -225,18 +225,72 @@ auto LowerModuleBody(
     }
   }
 
-  // Synthesize the permanent constructor artifact. Every ModuleBody owns
-  // exactly one Constructor whose body is a root kBlock statement in the
-  // body-local arena. For each supported child-instantiation site (plain
-  // submodule, no ports, no generate, no bindings), emit one kNewObject
-  // expression-statement per child. Transmitted parameters (storage
-  // class kDesignStorage) become first-class constructor_arguments on
-  // the new_object expression, lowered from the child's slang-resolved
-  // ParameterSymbol values in declaration order. Absorbed parameters
-  // (kConstOnly) stay baked into the child body. Unsupported cases
-  // leave the block empty; the old construction metadata path remains
-  // the active execution path in this cut.
+  // Constructor formals are distinct, synthesized scope-local symbols.
+  // For each body-owned transmitted parameter, a fresh formal symbol is
+  // registered with kLocalStorage; the constructor body begins with
+  // ordinary PlainAssign statements that bind each formal into its
+  // corresponding body-owned member slot. No side table at MIR.
+  std::vector<hir::ConstructorFormal> ctor_params;
   std::vector<hir::StatementId> ctor_stmts;
+  {
+    ScopeGuard ctor_scope_guard(registrar, ScopeKind::kFunction);
+    for (const auto& rep_member : representative.body.members()) {
+      if (rep_member.kind != slang::ast::SymbolKind::Parameter) continue;
+      const auto& param = rep_member.as<slang::ast::ParameterSymbol>();
+      SymbolId member_sym = registrar.Lookup(param);
+      if (!member_sym) continue;
+      if ((*body_ctx.symbol_table)[member_sym].storage_class !=
+          StorageClass::kDesignStorage) {
+        continue;
+      }
+      TypeId param_type = (*body_ctx.symbol_table)[member_sym].type;
+      std::string formal_name = std::format("__ctor_formal_{}", param.name);
+      SymbolId formal_sym = registrar.RegisterSynthetic(
+          std::move(formal_name), SymbolKind::kParameter, param_type,
+          StorageClass::kLocalStorage);
+      ctor_params.push_back(
+          hir::ConstructorFormal{
+              .symbol = formal_sym,
+              .direction = ParameterDirection::kInput,
+          });
+
+      SourceSpan param_span = body_ctx.SpanOf(GetSourceRange(param));
+      hir::ExpressionId formal_ref = body_arena.AddExpression(
+          hir::Expression{
+              .kind = hir::ExpressionKind::kNameRef,
+              .type = param_type,
+              .span = param_span,
+              .data = hir::NameRefExpressionData{.symbol = formal_sym},
+          });
+      hir::ExpressionId member_ref = body_arena.AddExpression(
+          hir::Expression{
+              .kind = hir::ExpressionKind::kNameRef,
+              .type = param_type,
+              .span = param_span,
+              .data = hir::NameRefExpressionData{.symbol = member_sym},
+          });
+      hir::StatementId bind_stmt = body_arena.AddStatement(
+          hir::Statement{
+              .kind = hir::StatementKind::kAssignment,
+              .span = param_span,
+              .data =
+                  hir::AssignmentStatementData{
+                      .target = member_ref,
+                      .value = formal_ref,
+                  },
+          });
+      ctor_stmts.push_back(bind_stmt);
+    }
+  }
+
+  // Constructor body: formal-to-member binding statements above, followed
+  // by one PlainAssign per plain-child instantiation whose value is the
+  // kNewObject expression. Each assigned member is also recorded in
+  // plain_child_object_handle_members so HIR->MIR can enroll the slot
+  // from body declaration state (not by scanning statements). Populating
+  // this list is the only legitimate producer path; consumers must treat
+  // it as the plain-child declaration set, not a general handle index.
+  std::vector<SymbolId> plain_child_object_handle_members;
   {
     TypeId object_handle_type = body_ctx.ObjectHandleType();
     for (const auto& member : representative.body.members()) {
@@ -251,9 +305,18 @@ auto LowerModuleBody(
       // expression; expr.type carries the handle result type.
       SymbolId child_sym = registrar.Lookup(child);
       if (!child_sym) continue;
+      plain_child_object_handle_members.push_back(child_sym);
 
       // Collect transmitted-parameter arguments in child-declaration
       // order, matching the child body's param-slot template.
+      //
+      // Each child parameter's initializer is resolved by slang at the
+      // *parent's* instantiation context, so names like `BASE` in
+      // `Child #(.ID(BASE)) c0();` already reference the parent's own
+      // parameter symbol. Lowering that expression through the ordinary
+      // scoped-expression path yields a general HIR expression: constants,
+      // NameRefs to parent runtime slots, or whatever compound expression
+      // the source used. Nothing here is clamped to constants.
       std::vector<hir::ExpressionId> ctor_args;
       for (const auto& child_member : child.body.members()) {
         if (child_member.kind != slang::ast::SymbolKind::Parameter) continue;
@@ -264,20 +327,17 @@ auto LowerModuleBody(
             StorageClass::kDesignStorage) {
           continue;
         }
-        const auto& param_value = param.getValue();
-        if (!param_value.isInteger()) continue;
-        TypeId param_type = (*body_ctx.symbol_table)[param_sym].type;
-        ConstId arg_const =
-            LowerIntegralConstant(param_value.integer(), param_type, &body_ctx);
-        if (!arg_const) continue;
-        SourceSpan arg_span = body_ctx.SpanOf(GetSourceRange(param));
-        hir::ExpressionId arg_expr = body_arena.AddExpression(
-            hir::Expression{
-                .kind = hir::ExpressionKind::kConstant,
-                .type = param_type,
-                .span = arg_span,
-                .data = hir::ConstantExpressionData{.constant = arg_const},
-            });
+        const slang::ast::Expression* init_expr = param.getInitializer();
+        if (init_expr == nullptr) {
+          throw common::InternalError(
+              "LowerModuleBody",
+              std::format(
+                  "transmitted child parameter '{}' has no initializer",
+                  param.name));
+        }
+        hir::ExpressionId arg_expr = LowerScopedExpression(
+            *init_expr, body_ctx, registrar, lowerer.Frame());
+        if (!arg_expr) continue;
         ctor_args.push_back(arg_expr);
       }
 
@@ -292,11 +352,22 @@ auto LowerModuleBody(
                       .target_instance_sym = child_sym,
                       .constructor_arguments = std::move(ctor_args)},
           });
+      hir::ExpressionId target_expr = body_arena.AddExpression(
+          hir::Expression{
+              .kind = hir::ExpressionKind::kNameRef,
+              .type = object_handle_type,
+              .span = child_span,
+              .data = hir::NameRefExpressionData{.symbol = child_sym},
+          });
       hir::StatementId stmt = body_arena.AddStatement(
           hir::Statement{
-              .kind = hir::StatementKind::kExpression,
+              .kind = hir::StatementKind::kAssignment,
               .span = child_span,
-              .data = hir::ExpressionStatementData{.expression = new_obj_expr},
+              .data =
+                  hir::AssignmentStatementData{
+                      .target = target_expr,
+                      .value = new_obj_expr,
+                  },
           });
       ctor_stmts.push_back(stmt);
     }
@@ -315,9 +386,16 @@ auto LowerModuleBody(
               .processes = std::move(processes),
               .functions = std::move(functions),
               .tasks = std::move(tasks),
-              .constructor = hir::Constructor{.span = span, .body = ctor_body},
+              .constructor =
+                  hir::Constructor{
+                      .span = span,
+                      .body = ctor_body,
+                      .parameters = std::move(ctor_params),
+                  },
               .dpi_imports = std::move(dpi_imports),
               .dpi_exports = {},
+              .plain_child_object_handle_members =
+                  std::move(plain_child_object_handle_members),
               .arena = std::move(body_arena),
               .constant_arena = std::move(body_constant_arena),
           },

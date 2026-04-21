@@ -1,0 +1,72 @@
+feature: hierarchy_instantiation_constructor_body_typed_formals
+description: |
+  Shape proofs for the direct-constructor path after cut 5: constructor
+  parameters are real typed formals on every body-constructor function,
+  transmitted-parameter initialization is an ordinary constructor-entry
+  store, and each parent materializes its children through the generic
+  AllocateObject runtime primitive plus a direct typed call into the
+  child body-constructor. Behavioral regression for shared-specialization
+  transmitted-parameter cases lives in
+  tests/sv_features/hierarchy/instantiation/param_slots/default.yaml;
+  those cases continuing to pass is the behavioral proof that this
+  structural change preserves transmitted-parameter semantics.
+
+cases:
+  - name: mir_exposes_constructor_formals
+    description: |
+      Proves (a): mir::Constructor carries the transmitted parameters
+      as typed formals (mirror of mir::Function) and records the
+      kParamConst module slot each formal targets at entry. Two
+      instances with different ID values force ID into the transmitted
+      (kDesignStorage) class so it appears as a constructor formal
+      rather than being absorbed into the specialization.
+    dump_mir: true
+    sv: |
+      module Child #(parameter int ID = 0);
+        initial $display("id=%0d", ID);
+      endmodule
+      module Test;
+        Child #(.ID(10)) c0();
+        Child #(.ID(20)) c1();
+      endmodule
+    expect:
+      compiler_output:
+        contains:
+          - "%arg0:"
+          - "new_object("
+
+  - name: llvm_emits_formals_and_three_step_child_creation
+    description: |
+      Proves (b), (c), (d): the emitted body-constructor takes typed
+      formals and stores them into its own kParamConst slots at entry;
+      the parent allocates each child with LyraConstructorAllocateObject
+      and then calls the child body-constructor directly (no runtime
+      dispatch or typed-arg marshaling); the returned object handle is
+      stored into the parent's child-handle slot with an ordinary LLVM
+      store. Negative assertions confirm the old typed-arg transport
+      (argptrs/argsizes allocas, LyraConstructorAddChildObject,
+      ApplyParamInitFromArgs) is completely gone.
+    dump_llvm_ir: true
+    sv: |
+      module Child #(parameter int ID = 0);
+        initial $display("id=%0d", ID);
+      endmodule
+      module Test;
+        Child #(.ID(10)) c0();
+        Child #(.ID(20)) c1();
+      endmodule
+    expect:
+      compiler_output:
+        contains:
+          - "define void @__lyra_body_construct_"
+          - "@LyraConstructorAllocateObject"
+          # Parent emits direct typed calls with compile-time arg values.
+          - "i32 10)"
+          - "i32 20)"
+          # Child body-constructor stores its typed formal into the slot.
+          - "store i32 %"
+        not_contains:
+          - "argptrs = alloca"
+          - "argsizes = alloca"
+          - "@LyraConstructorAddChildObject"
+          - "@ApplyParamInitFromArgs"

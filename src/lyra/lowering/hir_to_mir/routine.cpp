@@ -7,10 +7,12 @@
 #include <vector>
 
 #include "lyra/common/diagnostic/diagnostic.hpp"
+#include "lyra/common/internal_error.hpp"
 #include "lyra/common/origin_id.hpp"
 #include "lyra/common/symbol.hpp"
 #include "lyra/common/type.hpp"
 #include "lyra/common/type_arena.hpp"
+#include "lyra/hir/constructor.hpp"
 #include "lyra/hir/routine.hpp"
 #include "lyra/lowering/hir_to_mir/builder.hpp"
 #include "lyra/lowering/hir_to_mir/context.hpp"
@@ -21,6 +23,7 @@
 #include "lyra/lowering/origin_map.hpp"
 #include "lyra/mir/arena.hpp"
 #include "lyra/mir/basic_block.hpp"
+#include "lyra/mir/constructor.hpp"
 #include "lyra/mir/handle.hpp"
 #include "lyra/mir/operand.hpp"
 #include "lyra/mir/routine.hpp"
@@ -426,6 +429,7 @@ auto LowerConstructorBody(
       .return_type = void_type,
       .design_slots = decl_view.slots,
       .body_slots = decl_view.body_slots,
+      .phase = LoweringPhase::kConstructorBody,
       .cover_site_registry = decl_view.cover_site_registry,
       .deferred_assertion_site_registry =
           decl_view.deferred_assertion_site_registry,
@@ -438,6 +442,24 @@ auto LowerConstructorBody(
   BlockIndex exit_idx = builder.CreateBlock();
   builder.SetExitBlock(exit_idx);
   builder.SetCurrentBlock(entry_idx);
+
+  // Allocate each formal as a scope-local kLocal (same pattern as
+  // hir::Function). Body statements reference formals via ordinary
+  // NameRef; the formal-to-member binding lives as ordinary assignment
+  // statements in the HIR constructor body.
+  mir::FunctionSignature signature;
+  signature.return_type = void_type;
+  signature.return_policy = mir::ReturnPolicy::kVoid;
+  signature.params.reserve(hir_body.constructor.parameters.size());
+  std::vector<uint32_t> param_local_slots;
+  param_local_slots.reserve(hir_body.constructor.parameters.size());
+  for (const hir::ConstructorFormal& formal : hir_body.constructor.parameters) {
+    const Symbol& sym = (*input.symbol_table)[formal.symbol];
+    signature.params.push_back(
+        {.type = sym.type, .kind = mir::PassingKind::kValue});
+    auto alloc = ctx.AllocLocal(formal.symbol, sym.type);
+    param_local_slots.push_back(alloc.local_slot);
+  }
 
   Result<void> stmt_result = LowerStatement(hir_body.constructor.body, builder);
   if (!stmt_result) {
@@ -458,6 +480,8 @@ auto LowerConstructorBody(
       .blocks = std::move(blocks),
       .local_types = std::move(ctx.local_types),
       .temp_metadata = std::move(ctx.temp_metadata),
+      .signature = std::move(signature),
+      .param_local_slots = std::move(param_local_slots),
       .origin = common::OriginId::Invalid(),
       .materialize_count = ctx.materialize_count,
   };

@@ -130,6 +130,41 @@ auto LowerAssignment(
   if (!target_result) return std::unexpected(target_result.error());
   LvalueResult target = std::move(*target_result);
 
+  // Fast path for object-creation assignments: `this.child = new_object(...)`.
+  // Evaluate the NewObject rvalue straight into the child-handle slot so
+  // MIR carries a single PlainAssign{dest: slot, rhs: Rvalue{NewObject}}
+  // instead of materializing a temp and copying it. This keeps the MIR
+  // constructor-body shape minimal and lets the backend drive its
+  // three-step allocate/call/store lowering directly off the slot store.
+  const hir::Expression& value_expr = (*ctx.hir_arena)[data.value];
+  if (value_expr.kind == hir::ExpressionKind::kNewObject &&
+      target.IsAlwaysValid() &&
+      std::holds_alternative<mir::PlaceId>(target.dest)) {
+    const auto& new_obj =
+        std::get<hir::NewObjectExpressionData>(value_expr.data);
+    std::vector<mir::Operand> operands;
+    operands.reserve(new_obj.constructor_arguments.size());
+    for (hir::ExpressionId arg_id : new_obj.constructor_arguments) {
+      BlockIndex before = builder.CurrentBlock();
+      Result<mir::Operand> arg_result = LowerExpression(arg_id, builder);
+      if (!arg_result) return std::unexpected(arg_result.error());
+      if (builder.CurrentBlock() != before) {
+        for (auto& op : operands) {
+          op = builder.ThreadValueToCurrentBlock(op);
+        }
+      }
+      operands.push_back(*arg_result);
+    }
+    mir::Rvalue rvalue{
+        .operands = std::move(operands),
+        .info =
+            mir::NewObjectRvalueInfo{
+                .target_instance_sym = new_obj.target_instance_sym},
+    };
+    builder.EmitTypedAssign(target.dest, std::move(rvalue), dest_type);
+    return {};
+  }
+
   Result<mir::Operand> value_result = LowerExpression(data.value, builder);
   if (!value_result) return std::unexpected(value_result.error());
   mir::Operand value = *value_result;

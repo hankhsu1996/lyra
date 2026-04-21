@@ -24,6 +24,8 @@
 #include "lyra/llvm_backend/layout/layout.hpp"
 #include "lyra/llvm_backend/type_ops/default_init.hpp"
 #include "lyra/llvm_backend/type_ops/four_state_init.hpp"
+#include "lyra/mir/rvalue.hpp"
+#include "lyra/mir/statement.hpp"
 
 namespace lyra::lowering::mir_to_llvm {
 
@@ -378,12 +380,12 @@ struct ConstructorRuntimeFuncs {
   llvm::Function* create;
   llvm::Function* add_connection;
   llvm::Function* run_program;
-  // Cut-3 direct-constructor helpers. Backend-emitted body-constructor
+  // Direct-constructor helpers. Backend-emitted body-constructor
   // functions call begin_body_by_ref to activate the child's body
-  // package, then add_child_object to materialize one plain-child
-  // RuntimeInstance under the current parent scope.
+  // package, then allocate_object to allocate one plain-child
+  // RuntimeInstance under the current parent scope; the parent then
+  // directly invokes the child's own __lyra_body_construct_ function.
   llvm::Function* begin_body_by_ref;
-  llvm::Function* add_child_object;
   llvm::Function* finalize;
   llvm::Function* result_get_states;
   llvm::Function* result_get_num_total;
@@ -439,14 +441,11 @@ auto DeclareConstructorRuntimeFuncs(Context& context)
           "LyraConstructorRunProgram", void_ty,
           {ptr_ty, ptr_ty, i32_ty, ptr_ty, i32_ty, ptr_ty, i32_ty, ptr_ty,
            i32_ty, ptr_ty, i32_ty, ptr_ty, i32_ty}),
-      // begin_body_by_ref / add_child_object are shared with the
-      // body-constructor emitter; reuse the centralized declarations so
-      // both callers see the same llvm::Function (no LLVM-auto-renamed
-      // duplicates).
+      // begin_body_by_ref is shared with the body-constructor emitter;
+      // reuse the centralized declaration so both callers see the same
+      // llvm::Function (no LLVM-auto-renamed duplicates).
       .begin_body_by_ref =
           DeclareBodyConstructorRuntimeFuncs(ctx, mod).begin_body_by_ref,
-      .add_child_object =
-          DeclareBodyConstructorRuntimeFuncs(ctx, mod).add_child_object,
       .finalize = declare("LyraConstructorFinalize", ptr_ty, {ptr_ty}),
       .result_get_states =
           declare("LyraConstructionResultGetStates", ptr_ty, {ptr_ty}),
@@ -512,7 +511,8 @@ auto EmitConstructorFunction(
     const TriggerTemplateEmission& conn_triggers,
     const ObservableDescriptorEmission& pkg_observable,
     const InitDescriptorEmission& pkg_init,
-    const lowering::mir_to_llvm::ConstructionProgramData& prog)
+    const lowering::mir_to_llvm::ConstructionProgramData& prog,
+    std::span<const uint8_t> effective_uses_mir_ctor)
     -> ConstructorEmissionResult {
   auto& builder = context.GetBuilder();
   auto& ctx = context.GetLlvmContext();
@@ -636,6 +636,102 @@ auto EmitConstructorFunction(
           "__lyra_port_const_pool");
     }
     pc_pool_size_val = static_cast<uint32_t>(prog.port_const_pool.size());
+  }
+
+  // Top instance materialization under the direct-constructor path.
+  // Uses the same 3-step conceptual model as the per-child path in
+  // EmitOneBodyConstructor: allocate -> direct constructor call -> (no
+  // store; top has no parent slot). The four runtime helpers between
+  // allocate and the direct call (attach / apply_body_init /
+  // finalize_instance, with begin_body_by_ref activating the body)
+  // are temporary integration with the existing run_program-based
+  // runtime; they are NOT semantic steps of the top path. Top MUST NOT
+  // accumulate top-only semantic steps here: any shape divergence from
+  // the per-child sequence is a bug.
+  //
+  // run_program below picks up the already-staged top instance via
+  // GetStagedInstance; see LyraConstructorRunProgram's
+  // parent_is_flagged handling.
+  if (!prog.entries.empty()) {
+    const auto& top_entry = prog.entries[0];
+    if (top_entry.body_group < layout.body_realization_infos.size() &&
+        top_entry.body_group < body_descs.size() &&
+        top_entry.node_kind == runtime::ConstructionNodeKind::kInstance) {
+      bool top_is_flagged =
+          top_entry.body_group < effective_uses_mir_ctor.size() &&
+          effective_uses_mir_ctor[top_entry.body_group] != 0;
+      if (top_is_flagged) {
+        auto* body_ref_ty = GetBodyDescriptorRefType(ctx);
+        auto* zero = llvm::ConstantInt::get(i32_ty, 0);
+        auto* top_body_ref_ptr = llvm::ConstantExpr::getInBoundsGetElementPtr(
+            body_ref_ty, body_ref_table_ptr,
+            llvm::ArrayRef<llvm::Constant*>{
+                llvm::ConstantInt::get(i32_ty, top_entry.body_group)});
+        auto bc_rt =
+            DeclareBodyConstructorRuntimeFuncs(ctx, context.GetModule());
+        builder.CreateCall(bc_rt.begin_body_by_ref, {ctor, top_body_ref_ptr});
+
+        // Read top label from the path pool.
+        std::string top_label;
+        for (size_t ci = top_entry.label_offset;
+             ci < prog.path_pool.size() && prog.path_pool[ci] != 0; ++ci) {
+          top_label.push_back(static_cast<char>(prog.path_pool[ci]));
+        }
+        auto* i8_ty = llvm::Type::getInt8Ty(ctx);
+        auto label_global_name =
+            std::format("__lyra_top_label_{}", top_entry.body_group);
+        auto* label_array_ty =
+            llvm::ArrayType::get(i8_ty, top_label.size() + 1);
+        std::vector<llvm::Constant*> label_bytes;
+        label_bytes.reserve(top_label.size() + 1);
+        for (char c : top_label) {
+          label_bytes.push_back(
+              llvm::ConstantInt::get(i8_ty, static_cast<uint8_t>(c)));
+        }
+        label_bytes.push_back(llvm::ConstantInt::get(i8_ty, 0));
+        auto* label_global = new llvm::GlobalVariable(
+            context.GetModule(), label_array_ty, /*isConstant=*/true,
+            llvm::GlobalValue::PrivateLinkage,
+            llvm::ConstantArray::get(label_array_ty, label_bytes),
+            label_global_name);
+        label_global->setUnnamedAddr(llvm::GlobalValue::UnnamedAddr::Global);
+        auto* label_ptr = llvm::ConstantExpr::getInBoundsGetElementPtr(
+            label_array_ty, label_global,
+            llvm::ArrayRef<llvm::Constant*>{zero, zero});
+
+        auto* top_object = builder.CreateCall(
+            bc_rt.allocate_object,
+            {ctor,
+             llvm::ConstantInt::get(i64_ty, top_entry.realized_inline_size),
+             llvm::ConstantInt::get(i64_ty, top_entry.realized_appendix_size)},
+            "top_object");
+        builder.CreateCall(
+            bc_rt.attach_instance_to_scope,
+            {ctor, top_object, llvm::ConstantPointerNull::get(ptr_ty),
+             llvm::ConstantInt::get(i32_ty, top_entry.ordinal_in_parent),
+             label_ptr});
+        builder.CreateCall(bc_rt.apply_body_init, {ctor, top_object});
+        auto* top_inst = builder.CreateCall(
+            bc_rt.finalize_instance,
+            {ctor, top_object,
+             llvm::ConstantInt::get(i32_ty, top_entry.instance_index)},
+            "top_inst");
+
+        auto top_fn_name =
+            std::format("__lyra_body_construct_{}", top_entry.body_group);
+        auto* top_fn = context.GetModule().getFunction(top_fn_name);
+        if (top_fn == nullptr) {
+          throw common::InternalError(
+              "EmitConstructorFunction",
+              std::format(
+                  "top body-constructor {} is not declared", top_fn_name));
+        }
+        // Top is not parameterized in SV (no transmitted params), so the
+        // typed formal list is empty and the call signature collapses to
+        // (ctor, this_instance).
+        builder.CreateCall(top_fn, {ctor, top_inst});
+      }
+    }
   }
 
   // Replay the construction program: the runtime iterates entries in
@@ -801,10 +897,15 @@ auto DeclareBodyConstructorRuntimeFuncs(
   return BodyConstructorRuntimeFuncs{
       .begin_body_by_ref = get_or_create(
           "LyraConstructorBeginBodyByRef", void_ty, {ptr_ty, ptr_ty}),
-      .add_child_object = get_or_create(
-          "LyraConstructorAddChildObject", ptr_ty,
-          {ptr_ty, ptr_ty, i32_ty, i32_ty, ptr_ty, i64_ty, i64_ty, i32_ty,
-           ptr_ty, ptr_ty}),
+      .allocate_object = get_or_create(
+          "LyraConstructorAllocateObject", ptr_ty, {ptr_ty, i64_ty, i64_ty}),
+      .attach_instance_to_scope = get_or_create(
+          "LyraConstructorAttachInstanceToScope", void_ty,
+          {ptr_ty, ptr_ty, ptr_ty, i32_ty, ptr_ty}),
+      .apply_body_init = get_or_create(
+          "LyraConstructorApplyBodyInit", void_ty, {ptr_ty, ptr_ty}),
+      .finalize_instance = get_or_create(
+          "LyraConstructorFinalizeInstance", ptr_ty, {ptr_ty, ptr_ty, i32_ty}),
   };
 }
 
@@ -849,13 +950,14 @@ auto EmitRealizationAndConstructor(
 
   // Compute the effective per-body direct-constructor flag. An HIR-level
   // "uses_mir_constructor" hint is only honored when the construction
-  // program confirms: exactly one compile-time instance of the body, and
-  // every direct child of that instance is a module instance with no
-  // port-constant initializers. Transmitted parameter payloads are now
-  // carried as typed MIR operands on NewObject and marshaled directly
-  // into the body-constructor call; their presence is no longer a
-  // disqualifier. Any remaining deviation keeps the body on the flat
-  // path.
+  // program confirms the body is reachable through the direct-constructor
+  // path and its children do not rely on legacy plumbing (port-const
+  // init, generate parents). The single-instance restriction applies
+  // only to bodies that contain NewObject sites: per-child-site
+  // constants (instance_index, realized sizes) emitted inside the body
+  // constructor would otherwise need per-instance resolution. Leaves
+  // (no NewObject sites) just emit position-independent entry stores,
+  // so they are safe to flag even when the body has multiple instances.
   std::vector<uint8_t> effective_uses_mir_ctor(
       layout.body_realization_infos.size(), 0);
   {
@@ -873,9 +975,24 @@ auto EmitRealizationAndConstructor(
     for (size_t bi = 0; bi < layout.body_realization_infos.size(); ++bi) {
       const auto* body = layout.body_realization_infos[bi].body;
       if (body == nullptr || !body->uses_mir_constructor) continue;
-      if (instance_count_per_body[bi] != 1) continue;
+
+      uint32_t site_count = 0;
+      for (const auto& block : body->constructor.blocks) {
+        for (const auto& stmt : block.statements) {
+          if (const auto* assign = std::get_if<mir::PlainAssign>(&stmt.data);
+              assign != nullptr) {
+            if (const auto* rv = std::get_if<mir::Rvalue>(&assign->rhs);
+                rv != nullptr &&
+                std::holds_alternative<mir::NewObjectRvalueInfo>(rv->info)) {
+              ++site_count;
+            }
+          }
+        }
+      }
+      if (site_count > 0 && instance_count_per_body[bi] != 1) continue;
 
       bool all_children_direct = true;
+      uint32_t child_count = 0;
       uint32_t parent_entry = parent_entry_of_body[bi];
       for (const auto& e : construction_program.entries) {
         if (e.parent_scope_index != parent_entry) continue;
@@ -887,14 +1004,99 @@ auto EmitRealizationAndConstructor(
           all_children_direct = false;
           break;
         }
+        ++child_count;
       }
       if (!all_children_direct) continue;
+      // The parent body-constructor only creates children that appear
+      // as NewObject sites in its constructor body. AST->HIR filters
+      // out children with ports, so the construction program may list
+      // child instances that the parent does not materialize directly.
+      // Fall back to the flat-replay path whenever site count and
+      // direct-child count disagree.
+      if (site_count != child_count) continue;
       effective_uses_mir_ctor[bi] = 1;
+    }
+
+    // Propagate downward-and-upward to reach a consistent set. These
+    // are semantic invariants of the direct-constructor path, not
+    // workarounds for ABI holes:
+    //
+    //   (a) A parent body-constructor direct-calls each of its child's
+    //       emitted __lyra_body_construct_ functions by name. If any
+    //       direct child is unflagged (no such function exists),
+    //       unflag the parent.
+    //
+    //   (b) A body with typed transmitted formals is invokable ONLY
+    //       via parent direct-call (its BodyRealizationDesc pointer is
+    //       null under the zero-formal invariant in
+    //       body_realization_desc.hpp). So when any construction-program
+    //       instance of a typed-formal flagged body is reached with an
+    //       unflagged parent, unflag the body. Zero-formal flagged
+    //       bodies are ABI-compatible with the fallback pointer and do
+    //       not need this guard.
+    //
+    // Iterate both conditions to a fixpoint; the dependency graph has
+    // at most depth == the design hierarchy depth.
+    //
+    // TODO(hankhsu): This gate shrinks as the direct-constructor path
+    // grows to cover more parent shapes (ports, generate, external refs).
+    // It is load-bearing for the current subset; do not delete without
+    // replacing its invariant check elsewhere.
+    bool changed = true;
+    while (changed) {
+      changed = false;
+      for (size_t bi = 0; bi < layout.body_realization_infos.size(); ++bi) {
+        if (effective_uses_mir_ctor[bi] == 0) continue;
+        bool unflag = false;
+        uint32_t parent_entry = parent_entry_of_body[bi];
+        // (a) All direct children this body materializes must be flagged
+        // so their __lyra_body_construct_<i> exists to be direct-called.
+        for (const auto& e : construction_program.entries) {
+          if (e.parent_scope_index != parent_entry) continue;
+          if (e.node_kind != runtime::ConstructionNodeKind::kInstance) continue;
+          if (e.body_group >= effective_uses_mir_ctor.size()) continue;
+          if (effective_uses_mir_ctor[e.body_group] == 0) {
+            unflag = true;
+            break;
+          }
+        }
+        // (b) Every construction-program instance of a flagged body is
+        // materialized by its parent's emitted body-constructor (for
+        // non-root) or by the design-construct emitter (for root). If
+        // any instance has a non-root parent that is unflagged, the
+        // flat-replay loop would encounter it without a prior emitted
+        // allocation. Unflag the body in that case.
+        if (!unflag) {
+          for (const auto& e : construction_program.entries) {
+            if (e.node_kind != runtime::ConstructionNodeKind::kInstance) {
+              continue;
+            }
+            if (e.body_group != bi) continue;
+            if (e.parent_scope_index == UINT32_MAX) continue;
+            const auto& parent_e =
+                construction_program.entries[e.parent_scope_index];
+            if (parent_e.node_kind !=
+                runtime::ConstructionNodeKind::kInstance) {
+              unflag = true;
+              break;
+            }
+            if (parent_e.body_group >= effective_uses_mir_ctor.size() ||
+                effective_uses_mir_ctor[parent_e.body_group] == 0) {
+              unflag = true;
+              break;
+            }
+          }
+        }
+        if (unflag) {
+          effective_uses_mir_ctor[bi] = 0;
+          changed = true;
+        }
+      }
     }
   }
 
   auto body_descs = EmitBodyRealizationDescs(
-      context, layout, body_compiled_funcs,
+      context, facts, layout, body_compiled_funcs,
       construction_program.child_site_to_tree_ordinal, effective_uses_mir_ctor);
 
   // Pack all per-body globals into a BodyDescriptorRef[] table once.
@@ -931,7 +1133,7 @@ auto EmitRealizationAndConstructor(
   auto ctor = EmitConstructorFunction(
       context, layout, design_state, schemas_ptr, num_schemas, slot_offsets_ptr,
       body_descs, body_ref_table_ptr, conn_descs_ptr, conn_meta, conn_triggers,
-      pkg_obs, pkg_init, construction_program);
+      pkg_obs, pkg_init, construction_program, effective_uses_mir_ctor);
 
   return RealizationEmissionResult{
       .states_array = ctor.states_array,

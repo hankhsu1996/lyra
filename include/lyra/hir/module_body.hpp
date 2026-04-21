@@ -3,6 +3,7 @@
 #include <vector>
 
 #include "lyra/common/constant_arena.hpp"
+#include "lyra/common/symbol_types.hpp"
 #include "lyra/hir/arena.hpp"
 #include "lyra/hir/constructor.hpp"
 #include "lyra/hir/dpi.hpp"
@@ -40,6 +41,27 @@ struct ModuleBody {
   std::vector<DpiImportDecl> dpi_imports;
   // DPI-C export declarations owned by this body.
   std::vector<DpiExportDecl> dpi_exports;
+
+  // Plain-child object-handle members declared directly on this body.
+  //
+  // Restricted subset carrier, NOT a general object-handle graph:
+  //   - Only child-instance members whose handle slot lives directly on
+  //     the owning body (no enclosing generate-scope, no dynamic-scope
+  //     nesting, no class/dynamic-array-hosted object handles).
+  //   - Only children that matched the "plain child" subset at AST->HIR
+  //     time (no ports, etc.). Children on the non-plain path are not
+  //     recorded here.
+  //
+  // Populated at AST->HIR alongside constructor body synthesis.
+  // HIR->MIR enrolls these as kVariable module slots; the constructor
+  // body writes the corresponding handle values through ordinary
+  // assignment statements. This is declaration state: MIR lowering
+  // must not reconstruct the set by scanning constructor statements.
+  //
+  // New code that needs a broader "all object handles in this body"
+  // view (generate scopes, class members, etc.) must introduce its
+  // own model rather than extending this list.
+  std::vector<SymbolId> plain_child_object_handle_members;
 
   // Body-local HIR node storage.
   Arena arena;

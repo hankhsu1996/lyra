@@ -20,7 +20,7 @@ enum class HirPortDirection : uint8_t {
 // Port declaration: symbol + direction, extracted from slang PortSymbol.
 struct PortDecl {
   SymbolId sym;
-  HirPortDirection dir;
+  HirPortDirection dir = HirPortDirection::kInput;
 };
 
 // Instance/realization record for one elaborated module instance.

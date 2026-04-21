@@ -16,6 +16,7 @@
 #include <llvm/IR/Module.h>
 
 #include "lyra/llvm_backend/codegen_session.hpp"
+#include "lyra/llvm_backend/cu_facts.hpp"
 #include "lyra/llvm_backend/layout/layout.hpp"
 #include "lyra/runtime/body_realization_desc.hpp"
 #include "lyra/runtime/storage_construction_recipe.hpp"
@@ -84,13 +85,16 @@ struct BodyDescriptorPackageEmission {
 // IR). Must match the C++ struct field order in construction_program_abi.hpp.
 auto GetBodyDescriptorRefType(llvm::LLVMContext& ctx) -> llvm::StructType*;
 
-// Cut-3 direct-constructor runtime helpers. Exposed here so the body
+// Direct-constructor runtime helpers. Exposed here so the body
 // constructor emitter can call them without redeclaring (and without
 // relying on name-lookup into the module, which can silently produce
 // duplicates when the declaration order varies).
 struct BodyConstructorRuntimeFuncs {
   llvm::Function* begin_body_by_ref = nullptr;
-  llvm::Function* add_child_object = nullptr;
+  llvm::Function* allocate_object = nullptr;
+  llvm::Function* attach_instance_to_scope = nullptr;
+  llvm::Function* apply_body_init = nullptr;
+  llvm::Function* finalize_instance = nullptr;
 };
 
 auto DeclareBodyConstructorRuntimeFuncs(
@@ -103,7 +107,7 @@ auto DeclareBodyConstructorRuntimeFuncs(
 // facts (single-instance, plain children). Must be parallel to
 // layout.body_realization_infos; empty span is treated as "all false".
 auto EmitBodyRealizationDescs(
-    Context& context, const Layout& layout,
+    Context& context, const CuFacts& facts, const Layout& layout,
     std::span<const CodegenSession::BodyCompiledFuncs> body_compiled_funcs,
     std::span<const std::vector<uint32_t>> child_site_to_tree_ordinal,
     std::span<const uint8_t> effective_uses_mir_ctor)

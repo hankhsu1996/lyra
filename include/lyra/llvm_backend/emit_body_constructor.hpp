@@ -22,13 +22,16 @@ namespace lyra::lowering::mir_to_llvm {
 // their addresses; this function fills in the definitions.
 //
 // Each emitted function has signature
-//     void __lyra_body_construct_<i>(void* ctor_handle, void* parent_scope);
-// and materializes one LyraConstructorAddChildObject call per
-// NewObjectRvalueInfo site in the body's mir::Constructor, following the
-// compile-time facts already present in the construction program.
-// Transmitted-parameter operands on each NewObject rvalue are marshaled
-// as typed stack-local values and passed directly to the runtime helper
-// without going through a compile-time byte pool.
+//     void __lyra_body_construct_<i>(
+//         void* ctor, RuntimeInstance* this_inst, <typed formals...>);
+// and performs three things in order:
+//   1. Entry stores copying each typed formal argument into this body's
+//      corresponding kParamConst module slot.
+//   2. For every NewObject rvalue in the body constructor, a three-step
+//      pattern: AllocateObject + direct call into the child's own
+//      __lyra_body_construct_<child_i> with typed transmitted values +
+//      store of the returned handle into the parent's kChildHandle slot.
+//   3. A void return.
 //
 // Invariant: each flagged body has a single compile-time instance (the
 // direct-constructor path computes per-instance constants; multi-

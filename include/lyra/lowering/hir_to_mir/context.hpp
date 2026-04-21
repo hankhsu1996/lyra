@@ -194,6 +194,21 @@ struct LocalAllocation {
   uint32_t local_slot = 0;
 };
 
+// Identifies what kind of routine a Context is lowering. Not an override
+// flag: it reflects the structural identity of the active pass and is
+// set once when the Context is constructed. The MIR builder uses it to
+// enforce phase-scoped invariants (e.g. writes to kParamConst slots are
+// legal only from the body constructor's formal-to-member binding).
+enum class LoweringPhase : uint8_t {
+  // Ordinary user-written routines: module processes, functions, tasks,
+  // and design-level expression-body functions.
+  kUserRoutine,
+  // Body constructor lowering. The constructor body binds its typed
+  // formals into body-owned kParamConst slots and initializes object-
+  // handle members; these writes are illegal from any other phase.
+  kConstructorBody,
+};
+
 // Context for lowering within a process or function activation.
 struct Context {
   mir::Arena* mir_arena;
@@ -274,11 +289,15 @@ struct Context {
   std::optional<mir::PlaceId> return_slot;
   TypeId return_type = kInvalidTypeId;
 
-  // Slot descriptors for write-protection checks.
-  // design_slots: indexed by kDesignGlobal id.
-  // body_slots: indexed by kModuleSlot id (body-local).
+  // Slot descriptors (indexed by kModuleSlot / kDesignGlobal ids).
+  // The MIR builder reads slot kind from these when emitting writes to
+  // enforce phase-scoped invariants (see LoweringPhase).
   const std::vector<mir::SlotDesc>* design_slots = nullptr;
   const std::vector<mir::SlotDesc>* body_slots = nullptr;
+
+  // Which lowering pass this Context represents. Used by the MIR builder
+  // to enforce phase-scoped slot-write invariants.
+  LoweringPhase phase = LoweringPhase::kUserRoutine;
 
   // Shared design-global registry for immediate cover site allocation.
   // Owned by the design lowering scope; all body/process contexts share

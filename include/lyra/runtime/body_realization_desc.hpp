@@ -60,15 +60,6 @@ static_assert(offsetof(RuntimePortEntry, dir) == 8);
 static_assert(std::is_trivially_copyable_v<RuntimePortEntry>);
 static_assert(std::is_standard_layout_v<RuntimePortEntry>);
 
-// Body-constructor callable shape. Invoked by the runtime right after
-// creating an instance of a body whose `body_constructor_fn` is non-null,
-// to create the instance's direct children through typed runtime helpers.
-// The `ctor_handle` is the opaque Constructor*; `parent_scope_handle` is
-// the RuntimeScope* of the just-created instance. Emitted from
-// mir::Constructor by the backend.
-using BodyConstructorFn =
-    void (*)(void* ctor_handle, void* parent_scope_handle);
-
 struct BodyRealizationDesc {
   // Body-local module-process repertoire count (non-final processes).
   // Does NOT include installable computations (they are not processes).
@@ -115,18 +106,14 @@ struct BodyRealizationDesc {
   uint32_t num_ic_word_pool_entries = 0;
   uint32_t num_installable_computations = 0;
   // Non-zero when this body opts into the backend-emitted construction
-  // path. When set, `body_constructor_fn` must be non-null and will be
-  // invoked right after an instance of this body is created; the flat
-  // replay loop also skips child creation for any entry whose parent
-  // scope belongs to a flagged body. u32 for ABI size stability.
+  // path. The flat replay loop skips child creation for any entry whose
+  // parent scope belongs to a flagged body, because the parent's emitted
+  // body-constructor has already allocated its direct-constructor
+  // children via AllocateObject + direct call. u32 for ABI size stability.
   uint32_t uses_mir_constructor = 0;
-  uint32_t pad_uses_mir_constructor = 0;
-  // Body-constructor callable derived from mir::Constructor. Null for
-  // bodies that stay on the flat replay path.
-  BodyConstructorFn body_constructor_fn = nullptr;
 };
 
-static_assert(sizeof(BodyRealizationDesc) == 112);
+static_assert(sizeof(BodyRealizationDesc) == 104);
 static_assert(offsetof(BodyRealizationDesc, num_processes) == 0);
 static_assert(offsetof(BodyRealizationDesc, slot_count) == 4);
 static_assert(offsetof(BodyRealizationDesc, inline_state_size_bytes) == 8);
@@ -145,7 +132,6 @@ static_assert(offsetof(BodyRealizationDesc, num_ic_word_pool_entries) == 88);
 static_assert(
     offsetof(BodyRealizationDesc, num_installable_computations) == 92);
 static_assert(offsetof(BodyRealizationDesc, uses_mir_constructor) == 96);
-static_assert(offsetof(BodyRealizationDesc, body_constructor_fn) == 104);
 static_assert(std::is_trivially_copyable_v<BodyRealizationDesc>);
 static_assert(std::is_standard_layout_v<BodyRealizationDesc>);
 

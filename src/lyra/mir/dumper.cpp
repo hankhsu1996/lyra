@@ -298,7 +298,16 @@ void Dumper::Dump(FunctionId id) {
 
 void Dumper::Dump(const Constructor& ctor) {
   PrintIndent();
-  *out_ << "constructor {\n";
+  *out_ << "constructor";
+  if (!ctor.signature.params.empty()) {
+    *out_ << "(";
+    for (uint32_t i = 0; i < ctor.signature.params.size(); ++i) {
+      if (i != 0) *out_ << ", ";
+      *out_ << std::format("%arg{}: local{}", i, ctor.param_local_slots[i]);
+    }
+    *out_ << ")";
+  }
+  *out_ << " {\n";
   Indent();
 
   for (uint32_t i = 0; i < ctor.blocks.size(); ++i) {

@@ -150,7 +150,16 @@ void Dumper::Dump(const ModuleBody& body) {
     Dump(id);
   }
   PrintIndent();
-  *out_ << "constructor ";
+  *out_ << "constructor";
+  if (!body.constructor.parameters.empty()) {
+    *out_ << "(";
+    for (size_t i = 0; i < body.constructor.parameters.size(); ++i) {
+      if (i != 0) *out_ << ", ";
+      *out_ << SymbolName(body.constructor.parameters[i].symbol);
+    }
+    *out_ << ")";
+  }
+  *out_ << " ";
   Dump(body.constructor.body);
 }
 

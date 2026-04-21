@@ -270,37 +270,6 @@ void ApplyParamInitFromContiguous(
   }
 }
 
-// Typed-argument companion to ApplyParamInitFromContiguous. Used by the
-// direct-constructor path, which passes one independent pointer per
-// transmitted parameter rather than a packed buffer. Each ptrs[i] must
-// point to a value whose size matches slots[i].byte_size.
-void ApplyParamInitFromArgs(
-    RuntimeInstance& instance, std::span<const ParamInitSlotEntry> slots,
-    std::span<const void* const> ptrs, std::span<const uint32_t> byte_sizes) {
-  if (slots.empty() && ptrs.empty()) return;
-  if (ptrs.size() != slots.size() || byte_sizes.size() != slots.size()) {
-    throw lyra::common::InternalError(
-        "ApplyParamInitFromArgs",
-        std::format(
-            "arg count ({}, {}) does not match body param slot count {}",
-            ptrs.size(), byte_sizes.size(), slots.size()));
-  }
-  for (size_t i = 0; i < slots.size(); ++i) {
-    const auto& slot = slots[i];
-    if (byte_sizes[i] != slot.byte_size) {
-      throw lyra::common::InternalError(
-          "ApplyParamInitFromArgs",
-          std::format(
-              "arg {} byte size {} does not match slot byte size {}", i,
-              byte_sizes[i], slot.byte_size));
-    }
-    auto* dst = ResolveInstanceStorageOffset(
-        instance, slot.rel_byte_offset, slot.byte_size,
-        "ApplyParamInitFromArgs");
-    std::memcpy(dst, ptrs[i], slot.byte_size);
-  }
-}
-
 }  // namespace
 
 Constructor::Constructor(
@@ -674,11 +643,98 @@ auto Constructor::CreateScope(
   return result;
 }
 
+auto Constructor::AllocateObject(
+    uint64_t realized_inline_size, uint64_t realized_appendix_size)
+    -> std::unique_ptr<RuntimeInstance> {
+  CheckNotFinalized("Constructor::AllocateObject");
+  if (!body_.active || current_body_package_ == nullptr) {
+    throw common::InternalError(
+        "Constructor::AllocateObject",
+        "no active body package (call BeginBody first)");
+  }
+  connections_finalized_ = true;
+
+  auto instance = std::make_unique<RuntimeInstance>();
+  instance->scope.kind = RuntimeScopeKind::kInstance;
+  instance->storage.inline_base =
+      AllocateOwnedInlineStorage(realized_inline_size);
+  instance->storage.inline_size = realized_inline_size;
+  instance->storage.appendix_base =
+      AllocateOwnedAppendixStorage(realized_appendix_size);
+  instance->storage.appendix_size = realized_appendix_size;
+  instance->storage.deferred_inline_base =
+      AllocateOwnedInlineStorage(realized_inline_size);
+  instance->storage.deferred_appendix_base =
+      AllocateOwnedAppendixStorage(realized_appendix_size);
+  return instance;
+}
+
+void Constructor::AttachInstanceToScope(
+    RuntimeInstance& instance, RuntimeScope* parent_scope,
+    uint32_t ordinal_in_parent, const char* label) {
+  CheckNotFinalized("Constructor::AttachInstanceToScope");
+  if (label == nullptr) {
+    throw common::InternalError(
+        "Constructor::AttachInstanceToScope", "null label");
+  }
+  // Scope identity + hierarchy only. owner_ordinal is a registration
+  // handle and is assigned by FinalizeInstance, not here.
+  instance.scope.ordinal_in_parent = ordinal_in_parent;
+  instance.scope.parent = parent_scope;
+  instance.scope.path_storage = BuildScopePath(parent_scope, label);
+  instance.scope.path_c_str = instance.scope.path_storage.c_str();
+  if (parent_scope != nullptr) {
+    parent_scope->children.push_back(
+        RuntimeChildEdge{
+            .ordinal_in_parent = ordinal_in_parent,
+            .child = &instance.scope,
+        });
+  }
+}
+
+void Constructor::ApplyBodyInit(RuntimeInstance& instance) {
+  CheckNotFinalized("Constructor::ApplyBodyInit");
+  if (!body_.active || current_body_package_ == nullptr) {
+    throw common::InternalError(
+        "Constructor::ApplyBodyInit",
+        "no active body package (call BeginBody first)");
+  }
+  if (body_.slot_count == 0) {
+    if (body_.init_recipe.num_ops != 0 ||
+        body_.init_recipe_roots.num_roots != 0 ||
+        body_.init_recipe.num_child_indices != 0 ||
+        !body_.init_params.slots.empty()) {
+      throw common::InternalError(
+          "Constructor::ApplyBodyInit",
+          "zero-slot body must not carry instance-state init descriptors "
+          "or param data");
+    }
+  }
+  ApplyStorageConstructionRecipeToInstance(
+      *&instance, body_.init_recipe, body_.init_recipe_roots);
+}
+
+auto Constructor::FinalizeInstance(
+    std::unique_ptr<RuntimeInstance> instance, uint32_t instance_index)
+    -> RuntimeInstance* {
+  CheckNotFinalized("Constructor::FinalizeInstance");
+  if (instance == nullptr) {
+    throw common::InternalError(
+        "Constructor::FinalizeInstance", "null instance");
+  }
+  if (!body_.active || current_body_package_ == nullptr) {
+    throw common::InternalError(
+        "Constructor::FinalizeInstance",
+        "no active body package (call BeginBody first)");
+  }
+  FinalizeInstanceSetup(std::move(instance), instance_index);
+  return staged_instances_[instance_index].get();
+}
+
 auto Constructor::CreateChildInstance(
     RuntimeScope* parent_scope, uint32_t ordinal_in_parent,
     uint32_t instance_index, const char* label, const void* param_data,
-    uint32_t param_data_size, std::span<const void* const> arg_ptrs,
-    std::span<const uint32_t> arg_byte_sizes, uint64_t realized_inline_size,
+    uint32_t param_data_size, uint64_t realized_inline_size,
     uint64_t realized_appendix_size) -> RuntimeInstance* {
   CheckNotFinalized("Constructor::CreateChildInstance");
   if (label == nullptr) {
@@ -696,17 +752,12 @@ auto Constructor::CreateChildInstance(
         "param_data and param_data_size must be both empty or both present");
   }
   bool has_blob = param_data_size != 0;
-  bool has_typed_args = !arg_ptrs.empty() || !arg_byte_sizes.empty();
-  if (has_blob && has_typed_args) {
-    throw common::InternalError(
-        "Constructor::CreateChildInstance",
-        "blob param_data and typed arg_ptrs are mutually exclusive");
-  }
   connections_finalized_ = true;
 
   auto instance = std::make_unique<RuntimeInstance>();
   instance->scope.kind = RuntimeScopeKind::kInstance;
-  instance->owner_ordinal = instance_index;
+  // owner_ordinal is a registration handle and is stamped by
+  // FinalizeInstanceSetup (via RegisterStagedInstance), not here.
   instance->scope.ordinal_in_parent = ordinal_in_parent;
   instance->scope.parent = parent_scope;
   instance->scope.path_storage = BuildScopePath(parent_scope, label);
@@ -736,7 +787,7 @@ auto Constructor::CreateChildInstance(
     if (body_.init_recipe.num_ops != 0 ||
         body_.init_recipe_roots.num_roots != 0 ||
         body_.init_recipe.num_child_indices != 0 ||
-        !body_.init_params.slots.empty() || has_blob || has_typed_args) {
+        !body_.init_params.slots.empty() || has_blob) {
       throw common::InternalError(
           "Constructor::CreateChildInstance",
           "zero-slot body must not carry instance-state init descriptors "
@@ -747,23 +798,37 @@ auto Constructor::CreateChildInstance(
   // Body-shaped storage construction.
   ApplyStorageConstructionRecipeToInstance(
       *instance, body_.init_recipe, body_.init_recipe_roots);
-  if (has_typed_args) {
-    ApplyParamInitFromArgs(
-        *instance, body_.init_params.slots, arg_ptrs, arg_byte_sizes);
-  } else {
-    ApplyParamInitFromContiguous(
-        *instance, body_.init_params.slots, param_data, param_data_size);
-  }
+  ApplyParamInitFromContiguous(
+      *instance, body_.init_params.slots, param_data, param_data_size);
 
-  // Place instance at its compile-time object_index position so
-  // result.instances[object_index] matches the compile-time model.
+  FinalizeInstanceSetup(std::move(instance), instance_index);
+  return staged_instances_[instance_index].get();
+}
+
+void Constructor::FinalizeInstanceSetup(
+    std::unique_ptr<RuntimeInstance> instance, uint32_t instance_index) {
+  // Each helper owns exactly one registration concern; this wrapper
+  // only fixes the ordering. Observables read next_slot_base_ BEFORE
+  // AdvanceInstanceSlotBase updates it for the next instance.
+  RegisterStagedInstance(std::move(instance), instance_index);
+  StageInstanceProcesses(instance_index);
+  RecordInstanceObservables(instance_index);
+  RecordInstanceBundle(instance_index);
+  AdvanceInstanceSlotBase();
+}
+
+void Constructor::RegisterStagedInstance(
+    std::unique_ptr<RuntimeInstance> instance, uint32_t instance_index) {
   if (instance_index >= staged_instances_.size()) {
     staged_instances_.resize(instance_index + 1);
   }
+  // Stamp the registration handle now that the instance has a committed
+  // staged position. Not the scope's job.
+  instance->owner_ordinal = instance_index;
   staged_instances_[instance_index] = std::move(instance);
+}
 
-  // Stage module processes (no expression connection suffix - those are
-  // now installable computations, not processes).
+void Constructor::StageInstanceProcesses(uint32_t instance_index) {
   auto num_entries = static_cast<uint32_t>(body_.entries.size());
   for (uint32_t ei = 0; ei < num_entries; ++ei) {
     const auto& entry = body_.entries[ei];
@@ -772,7 +837,7 @@ auto Constructor::CreateChildInstance(
 
     if (body_fn == nullptr) {
       throw common::InternalError(
-          "Constructor::CreateChildInstance",
+          "Constructor::StageInstanceProcesses",
           std::format(
               "body entry {} has null shared_body_fn "
               "(emitted function pointer is zero)",
@@ -787,109 +852,91 @@ auto Constructor::CreateChildInstance(
             .is_module = true,
         });
   }
-
   ++next_module_instance_ordinal_;
+}
 
-  // Use the instance's stable path for the design-global observable walk.
-  const char* instance_path =
-      staged_instances_[instance_index]->scope.path_c_str;
-
+void Constructor::RecordInstanceObservables(uint32_t instance_index) {
   // R4: Module-instance process meta, trigger, comb, instance-owned slot,
   // and instance-owned trace metadata are all engine-derived from bundles.
   // Constructor builds only design-global/package observable metadata
   // (slot meta + trace signals). Instance-owned entries are skipped here
   // and derived from the shared observable walk in
   // InitModuleInstancesFromBundles.
-  if (!body_.observable_descriptors.entries.empty()) {
-    bool has_storage = realized_inline_size > 0;
-    if (!has_storage) {
-      for (const auto& entry : body_.observable_descriptors.entries) {
-        if ((entry.flags & kObservableFlagStorageAbsolute) == 0) {
-          throw common::InternalError(
-              "Constructor::CreateChildInstance",
-              "body-relative observable entry in instance with no "
-              "local storage");
-        }
-      }
-    }
+  if (body_.observable_descriptors.entries.empty()) return;
 
-    // R4 closure: only design-global observable entries are constructor-built.
-    // Instance-owned entries (storage_domain == 1) are engine-derived from
-    // bundles in InitModuleInstancesFromBundles.
+  const char* instance_path =
+      staged_instances_[instance_index]->scope.path_c_str;
+  const uint64_t realized_inline_size =
+      staged_instances_[instance_index]->storage.inline_size;
+
+  bool has_storage = realized_inline_size > 0;
+  if (!has_storage) {
     for (const auto& entry : body_.observable_descriptors.entries) {
-      if (entry.storage_domain != 0) continue;
-
-      uint32_t realized_owner =
-          (entry.flags & kObservableFlagOwnerAbsolute) != 0
-              ? entry.storage_owner_ref
-              : entry.storage_owner_ref + next_slot_base_;
-
-      realized_slot_meta_.AppendDesignGlobalSlot(
-          entry.storage_byte_offset, entry.total_bytes, entry.storage_kind,
-          entry.value_lane_offset, entry.value_lane_bytes,
-          entry.unk_lane_offset, entry.unk_lane_bytes, realized_owner);
-
-      std::string_view local_name;
-      if (entry.local_name_pool_off > 0 &&
-          entry.local_name_pool_off < body_.observable_descriptors.pool_size) {
-        auto obs_pool = std::span(
-            body_.observable_descriptors.pool,
-            body_.observable_descriptors.pool_size);
-        local_name = &obs_pool[entry.local_name_pool_off];
+      if ((entry.flags & kObservableFlagStorageAbsolute) == 0) {
+        throw common::InternalError(
+            "Constructor::RecordInstanceObservables",
+            "body-relative observable entry in instance with no "
+            "local storage");
       }
-      uint32_t name_off = realized_trace_meta_.AppendHierarchicalName(
-          instance_path, local_name);
-      realized_trace_meta_.AppendSignal(
-          name_off, entry.bit_width, entry.trace_kind, realized_owner);
     }
   }
 
-  // R4 prep: record per-instance metadata bundle at the same position as
-  // the instance (instance_index). Must be parallel to staged_instances_.
+  for (const auto& entry : body_.observable_descriptors.entries) {
+    if (entry.storage_domain != 0) continue;
+
+    uint32_t realized_owner = (entry.flags & kObservableFlagOwnerAbsolute) != 0
+                                  ? entry.storage_owner_ref
+                                  : entry.storage_owner_ref + next_slot_base_;
+
+    realized_slot_meta_.AppendDesignGlobalSlot(
+        entry.storage_byte_offset, entry.total_bytes, entry.storage_kind,
+        entry.value_lane_offset, entry.value_lane_bytes, entry.unk_lane_offset,
+        entry.unk_lane_bytes, realized_owner);
+
+    std::string_view local_name;
+    if (entry.local_name_pool_off > 0 &&
+        entry.local_name_pool_off < body_.observable_descriptors.pool_size) {
+      auto obs_pool = std::span(
+          body_.observable_descriptors.pool,
+          body_.observable_descriptors.pool_size);
+      local_name = &obs_pool[entry.local_name_pool_off];
+    }
+    uint32_t name_off =
+        realized_trace_meta_.AppendHierarchicalName(instance_path, local_name);
+    realized_trace_meta_.AppendSignal(
+        name_off, entry.bit_width, entry.trace_kind, realized_owner);
+  }
+}
+
+void Constructor::RecordInstanceBundle(uint32_t instance_index) {
   if (instance_index >= staged_bundles_.size()) {
     staged_bundles_.resize(instance_index + 1);
   }
+  const char* instance_path =
+      staged_instances_[instance_index]->scope.path_c_str;
   staged_bundles_[instance_index] = InstanceMetadataBundle{
       .instance = staged_instances_[instance_index].get(),
       .body_desc = nullptr,
       .body_key = current_body_package_->desc,
       .instance_path = instance_path,
   };
+}
 
+void Constructor::AdvanceInstanceSlotBase() {
   uint32_t new_slot_base = next_slot_base_ + body_.slot_count;
   if (new_slot_base < next_slot_base_) {
     throw common::InternalError(
-        "Constructor::CreateChildInstance", "slot base overflow");
+        "Constructor::AdvanceInstanceSlotBase", "slot base overflow");
   }
   if (body_.slot_count > 0 && new_slot_base > slot_byte_offsets_.size()) {
     throw common::InternalError(
-        "Constructor::CreateChildInstance",
+        "Constructor::AdvanceInstanceSlotBase",
         std::format(
             "post-increment slot base {} exceeds layout oracle size {}",
             new_slot_base, slot_byte_offsets_.size()));
   }
   next_instance_id_ += 1;
   next_slot_base_ = new_slot_base;
-
-  return staged_instances_[instance_index].get();
-}
-
-auto Constructor::CreateChildInstanceDirect(
-    RuntimeScope* parent_scope, uint32_t ordinal_in_parent,
-    uint32_t instance_index, const char* label, uint64_t realized_inline_size,
-    uint64_t realized_appendix_size, uint32_t num_args,
-    const void* const* arg_ptrs, const uint32_t* arg_byte_sizes)
-    -> RuntimeInstance* {
-  // Direct-constructor entry point. Forwards typed transmitted-parameter
-  // arguments into CreateChildInstance, which dispatches to
-  // ApplyParamInitFromArgs when the typed spans are non-empty. No
-  // compile-time byte pool is consulted.
-  auto ptrs = std::span<const void* const>(arg_ptrs, num_args);
-  auto sizes = std::span<const uint32_t>(arg_byte_sizes, num_args);
-  return CreateChildInstance(
-      parent_scope, ordinal_in_parent, instance_index, label,
-      /*param_data=*/nullptr, /*param_data_size=*/0, ptrs, sizes,
-      realized_inline_size, realized_appendix_size);
 }
 
 auto Constructor::GetStagedInstance(uint32_t instance_index) const
@@ -1550,8 +1597,7 @@ void LyraConstructorAddInstance(
       param_data, param_data_size, "param_data", "LyraConstructorAddInstance");
   static_cast<lyra::runtime::Constructor*>(ctor)->CreateChildInstance(
       nullptr, 0, 0, instance_path, param_data, param_data_size,
-      /*arg_ptrs=*/{}, /*arg_byte_sizes=*/{}, realized_inline_size,
-      realized_appendix_size);
+      realized_inline_size, realized_appendix_size);
 }
 
 void LyraConstructorRunProgram(
@@ -1585,11 +1631,10 @@ void LyraConstructorRunProgram(
   std::vector<lyra::runtime::RuntimeScope*> created_scopes;
   created_scopes.reserve(entry_count);
 
-  // Cut-3 parallel tracker: true iff the scope at the same index belongs
-  // to a body that opted into the backend-emitted construction path. When
-  // true, the scope's direct children have already been created by the
-  // parent body's emitted body-constructor and must not be re-created by
-  // the flat replay loop.
+  // True iff the scope at the same index belongs to a body that opted
+  // into the backend-emitted construction path. When true, the scope's
+  // direct children have already been created by the parent body's
+  // emitted body-constructor and must not be re-created here.
   std::vector<uint8_t> created_scope_is_flagged_parent;
   created_scope_is_flagged_parent.reserve(entry_count);
 
@@ -1645,15 +1690,12 @@ void LyraConstructorRunProgram(
 
       lyra::runtime::RuntimeInstance* inst = nullptr;
 
-      if (parent_is_flagged) {
-        // Cut-3 skip path: the parent body's emitted body-constructor
-        // already materialized this child through
-        // LyraConstructorAddChildObject. The flat replay loop only
-        // reconstructs created_scopes and must not touch body activation,
-        // storage, or port-const inits for this entry. Uncovered seams
-        // (non-empty params, port-const inits, generate-scope parents)
-        // stay on the old path because IsPlainChildConstructor rejects
-        // them upstream.
+      // Flagged bodies are never materialized by the flat-replay loop.
+      // They are created by the direct-constructor path: either by
+      // their parent's emitted body-constructor (non-top case) or by
+      // the emitted design-construct function before this loop runs
+      // (top case). Either way, the instance is already staged.
+      if (parent_is_flagged || this_body_uses_mir_ctor) {
         inst = ctor.GetStagedInstance(e.instance_index);
       } else {
         if (e.body_group != last_body_group) {
@@ -1686,8 +1728,8 @@ void LyraConstructorRunProgram(
 
         inst = ctor.CreateChildInstance(
             parent_scope, e.ordinal_in_parent, e.instance_index, label,
-            param_data, param_size, /*arg_ptrs=*/{}, /*arg_byte_sizes=*/{},
-            e.realized_inline_size, e.realized_appendix_size);
+            param_data, param_size, e.realized_inline_size,
+            e.realized_appendix_size);
 
         // Apply constant port connection inits for this child.
         // port_const_init_offset/count index into the flat
@@ -1722,16 +1764,6 @@ void LyraConstructorRunProgram(
       created_scopes.push_back(&inst->scope);
       created_scope_is_flagged_parent.push_back(
           this_body_uses_mir_ctor ? 1 : 0);
-
-      // Invoke the body-constructor for flagged bodies once the instance
-      // exists (created here or picked up from the skip path). The
-      // emitted fn runs on this scope and materializes its direct
-      // children via LyraConstructorAddChildObject. Subsequent entries
-      // whose parent is this instance take the skip path above.
-      if (this_body_uses_mir_ctor &&
-          this_body_ref.desc->body_constructor_fn != nullptr) {
-        this_body_ref.desc->body_constructor_fn(&ctor, &inst->scope);
-      }
     }
   }
 }
@@ -1747,28 +1779,53 @@ void LyraConstructorBeginBodyByRef(
   ctor.BeginBody(MakeBodyDescriptorPackageView(*body_ref));
 }
 
-auto LyraConstructorAddChildObject(
-    void* ctor_raw, void* parent_scope_raw, uint32_t ordinal_in_parent,
-    uint32_t instance_index, const char* label, uint64_t realized_inline_size,
-    uint64_t realized_appendix_size, uint32_t num_args,
-    const void* const* arg_ptrs, const uint32_t* arg_byte_sizes) -> void* {
-  ValidateHandle(ctor_raw, "LyraConstructorAddChildObject");
-  if (parent_scope_raw == nullptr) {
+auto LyraConstructorAllocateObject(
+    void* ctor_raw, uint64_t realized_inline_size,
+    uint64_t realized_appendix_size) -> void* {
+  ValidateHandle(ctor_raw, "LyraConstructorAllocateObject");
+  auto& ctor = *static_cast<lyra::runtime::Constructor*>(ctor_raw);
+  auto owned =
+      ctor.AllocateObject(realized_inline_size, realized_appendix_size);
+  return owned.release();
+}
+
+void LyraConstructorAttachInstanceToScope(
+    void* ctor_raw, void* object_raw, void* parent_scope_raw,
+    uint32_t ordinal_in_parent, const char* label) {
+  ValidateHandle(ctor_raw, "LyraConstructorAttachInstanceToScope");
+  if (object_raw == nullptr) {
     throw lyra::common::InternalError(
-        "LyraConstructorAddChildObject", "null parent_scope");
-  }
-  if (num_args > 0 && (arg_ptrs == nullptr || arg_byte_sizes == nullptr)) {
-    throw lyra::common::InternalError(
-        "LyraConstructorAddChildObject",
-        "num_args > 0 requires non-null arg arrays");
+        "LyraConstructorAttachInstanceToScope", "null object");
   }
   auto& ctor = *static_cast<lyra::runtime::Constructor*>(ctor_raw);
+  auto& instance = *static_cast<lyra::runtime::RuntimeInstance*>(object_raw);
   auto* parent_scope =
       static_cast<lyra::runtime::RuntimeScope*>(parent_scope_raw);
-  return ctor.CreateChildInstanceDirect(
-      parent_scope, ordinal_in_parent, instance_index, label,
-      realized_inline_size, realized_appendix_size, num_args, arg_ptrs,
-      arg_byte_sizes);
+  ctor.AttachInstanceToScope(instance, parent_scope, ordinal_in_parent, label);
+}
+
+void LyraConstructorApplyBodyInit(void* ctor_raw, void* object_raw) {
+  ValidateHandle(ctor_raw, "LyraConstructorApplyBodyInit");
+  if (object_raw == nullptr) {
+    throw lyra::common::InternalError(
+        "LyraConstructorApplyBodyInit", "null object");
+  }
+  auto& ctor = *static_cast<lyra::runtime::Constructor*>(ctor_raw);
+  auto& instance = *static_cast<lyra::runtime::RuntimeInstance*>(object_raw);
+  ctor.ApplyBodyInit(instance);
+}
+
+auto LyraConstructorFinalizeInstance(
+    void* ctor_raw, void* object_raw, uint32_t instance_index) -> void* {
+  ValidateHandle(ctor_raw, "LyraConstructorFinalizeInstance");
+  if (object_raw == nullptr) {
+    throw lyra::common::InternalError(
+        "LyraConstructorFinalizeInstance", "null object");
+  }
+  auto& ctor = *static_cast<lyra::runtime::Constructor*>(ctor_raw);
+  std::unique_ptr<lyra::runtime::RuntimeInstance> owned(
+      static_cast<lyra::runtime::RuntimeInstance*>(object_raw));
+  return ctor.FinalizeInstance(std::move(owned), instance_index);
 }
 
 auto LyraConstructorFinalize(void* ctor_raw) -> void* {

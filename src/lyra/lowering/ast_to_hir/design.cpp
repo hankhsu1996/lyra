@@ -222,7 +222,7 @@ void RegisterModuleDeclarations(
   const slang::ast::InstanceBodySymbol& body = instance.body;
   SourceSpan span = ctx->SpanOf(GetSourceRange(instance));
 
-  registrar.Register(instance, SymbolKind::kInstance, kInvalidTypeId);
+  registrar.Register(instance, SymbolKind::kInstance, ctx->ObjectHandleType());
 
   ScopeGuard scope_guard(registrar, ScopeKind::kModule);
 

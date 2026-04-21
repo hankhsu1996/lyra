@@ -306,7 +306,8 @@ auto LowerDesign(
 
     mir::Arena body_arena;
     BodyLocalDecls body_decls = CollectBodyLocalDecls(
-        rep_mod, *input.symbol_table, *input.type_arena, body_arena);
+        rep_mod, hir_body.plain_child_object_handle_members,
+        *input.symbol_table, *input.type_arena, body_arena);
 
     // Capture body-local slot mappings for InstanceSlotResolver.
     // Keyed by MIR body group index (== future mir::ModuleBodyId.value).

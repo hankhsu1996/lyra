@@ -36,25 +36,28 @@ namespace lyra::lowering::hir_to_mir {
 namespace {
 
 // Conservative detection for the direct-constructor subset. A body is
-// eligible for the new backend-emitted construction path only if every
+// eligible for the backend-emitted construction path only if every
 // observable property below holds; any deviation leaves the body on the
 // flat replay path.
 //
 // Shape accepted today: a linear chain of blocks whose statements are
-// only NewObject-producing temp writes, linked by Jump terminators and
-// ending with a void Return, plus no external-ref recipes. NewObject
-// rvalues may carry transmitted-parameter operands on Rvalue::operands;
-// those are marshaled directly at the body-constructor call site.
-// Broader cases (ports, generate, bindings, non-linear control flow,
-// external refs) fail this check and stay on the old pipeline until
-// later cuts expand coverage.
+// only NewObject-producing PlainAssign writes into kModuleSlot child
+// handle slots, linked by Jump terminators and ending with a void
+// Return/Terminate, plus no external-ref recipes. NewObject rvalues
+// may carry transmitted-parameter operands on Rvalue::operands; those
+// become typed LLVM arguments to the child's own body-constructor
+// function. A body with no child sites but with transmitted formals
+// is still eligible: the emitted body-constructor has no children to
+// create but must still store its formals into its own kParamConst
+// module slots at entry. Broader cases (ports, generate, bindings,
+// non-linear control flow, external refs) fail this check and stay on
+// the old pipeline until later cuts expand coverage.
 auto IsDirectConstructor(
     const mir::Constructor& ctor,
     const std::vector<mir::ExternalAccessRecipe>& body_external_refs) -> bool {
   if (!body_external_refs.empty()) return false;
   if (ctor.blocks.empty()) return false;
 
-  uint32_t new_object_count = 0;
   for (const mir::BasicBlock& block : ctor.blocks) {
     if (!block.params.empty()) return false;
 
@@ -62,11 +65,13 @@ auto IsDirectConstructor(
       const auto* assign = std::get_if<mir::PlainAssign>(&stmt.data);
       if (assign == nullptr) return false;
       if (!std::holds_alternative<mir::PlaceId>(assign->dest)) return false;
+      if (std::holds_alternative<mir::Operand>(assign->rhs)) {
+        continue;
+      }
       const auto* rv = std::get_if<mir::Rvalue>(&assign->rhs);
       if (rv == nullptr) return false;
       if (!std::holds_alternative<mir::NewObjectRvalueInfo>(rv->info))
         return false;
-      ++new_object_count;
     }
 
     const auto& term = block.terminator.data;
@@ -80,11 +85,13 @@ auto IsDirectConstructor(
     }
     return false;
   }
-  // Only flag bodies that actually take over construction work. An
-  // empty constructor body (no new_object sites) would emit an empty
-  // body-constructor function and force the downstream emission guard
-  // to treat any multi-instance empty body as a spurious violation.
-  return new_object_count > 0;
+  // Flag any body whose constructor matches the plain-child shape,
+  // including leaves with no children and no transmitted formals. The
+  // parent's body-constructor needs a callable __lyra_body_construct_
+  // for every child it allocates, so leaves must always provide one
+  // (a no-op body). Bodies that would fail the shape checks above
+  // already returned false.
+  return true;
 }
 
 }  // namespace
