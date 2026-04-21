@@ -167,14 +167,17 @@ extern "C" void LyraRunSimulation(
               kRuntimeAbiVersion));
     }
 
-    // v25: Filesystem base directory for relative path resolution.
-    if (abi->fs_base_dir != nullptr) {
-      std::filesystem::path base(abi->fs_base_dir);
-      if (!base.is_absolute()) {
+    // v25: Filesystem root for relative runtime file operations. Either a
+    // driver-selected embedded string (kEmbeddedPlusargs) or the result of
+    // launch-time argv parsing (kArgvForwarding). Runtime neither derives
+    // it from environment nor from argv[0]; see LyraLaunchParseArgs.
+    if (abi->fs_root != nullptr) {
+      std::filesystem::path root(abi->fs_root);
+      if (!root.is_absolute()) {
         throw lyra::common::InternalError(
-            "LyraRunSimulation", "fs_base_dir must be absolute");
+            "LyraRunSimulation", "fs_root must be absolute");
       }
-      engine.SetFsBaseDir(base.lexically_normal());
+      engine.SetFsRoot(root.lexically_normal());
     }
 
     // D6d: Set simulation-global precision from emitted ABI.
@@ -308,8 +311,13 @@ extern "C" void LyraRunSimulation(
     const auto* meta = engine.GetTraceManager().GetSignalMeta();
     std::unique_ptr<lyra::trace::TextTraceSink> text_sink;
     if (abi != nullptr && abi->signal_trace_path != nullptr) {
-      text_sink = std::make_unique<lyra::trace::TextTraceSink>(
-          meta, std::string(abi->signal_trace_path));
+      // Resolve relative trace output path against the driver-selected
+      // fs_root so runtime-generated file output obeys the same anchor as
+      // runtime-consumed file input.
+      auto resolved = lyra::runtime::ResolveRuntimePath(
+          engine.GetFsRoot(), abi->signal_trace_path);
+      text_sink =
+          std::make_unique<lyra::trace::TextTraceSink>(meta, resolved.string());
     } else {
       text_sink =
           std::make_unique<lyra::trace::TextTraceSink>(meta, &engine.Output());
@@ -514,41 +522,67 @@ extern "C" void LyraSetTimeFormat(
       units, precision, suffix != nullptr ? suffix : "", min_width);
 }
 
-extern "C" auto LyraResolveBaseDir(const char* argv0) -> const char* {
-  static std::string resolved;
-
-  // Priority 1: explicit env var (set by `lyra run` for temp-dir bundles)
-  if (const char* env = std::getenv("LYRA_FS_BASE_DIR");
-      env != nullptr && std::string_view(env) != "") {
-    resolved = env;
-    return resolved.c_str();
-  }
-
-  // Priority 2: derive from executable directory
-  // Layout: <dir>/<name> (produced by `lyra compile`)
-  if (argv0 != nullptr && std::string_view(argv0) != "") {
-    std::error_code ec;
-    auto exe_path = std::filesystem::canonical(argv0, ec);
-    if (ec) {
-      // canonical requires the file to exist; try absolute as fallback
-      // (handles relative argv0 in PATH-resolved scenarios)
-      exe_path = std::filesystem::absolute(argv0, ec);
-    }
-    if (!ec) {
-      resolved = exe_path.parent_path().string();
-      return resolved.c_str();
-    }
-  }
-
-  // Fallback: current working directory
-  std::error_code ec;
-  auto cwd = std::filesystem::current_path(ec);
-  resolved = ec ? "." : cwd.string();
-  return resolved.c_str();
-}
-
 extern "C" void LyraInitRuntime(uint32_t iteration_limit) {
   LyraSetIterationLimit(iteration_limit);
+}
+
+extern "C" auto LyraLaunchParseArgs(
+    int argc, char** argv, const char** fs_root_out, const char** plusargs_out)
+    -> uint32_t {
+  static std::string fs_root_storage;
+  static constexpr std::string_view kFsRootPrefix = "--lyra-fs-root=";
+
+  auto argc_u = static_cast<uint32_t>(argc > 0 ? argc : 0);
+  std::span<char*> argv_span(argv, argc_u);
+  std::span<const char*> plusargs_span(
+      plusargs_out, argc_u > 0 ? argc_u - 1 : 0);
+
+  bool fs_root_found = false;
+  uint32_t plusargs_count = 0;
+
+  for (uint32_t i = 1; i < argc_u; ++i) {
+    std::string_view arg(argv_span[i]);
+    if (!fs_root_found && arg.starts_with(kFsRootPrefix)) {
+      auto value = arg.substr(kFsRootPrefix.size());
+      if (value.empty()) {
+        throw lyra::common::InternalError(
+            "LyraLaunchParseArgs", "--lyra-fs-root= value must not be empty");
+      }
+      std::filesystem::path path_val(value);
+      if (!path_val.is_absolute()) {
+        throw lyra::common::InternalError(
+            "LyraLaunchParseArgs",
+            std::format(
+                "--lyra-fs-root={} must be an absolute path",
+                std::string(value)));
+      }
+      fs_root_storage = path_val.lexically_normal().string();
+      fs_root_found = true;
+      continue;
+    }
+    plusargs_span[plusargs_count++] = argv_span[i];
+  }
+
+  if (fs_root_found) {
+    *fs_root_out = fs_root_storage.c_str();
+  } else {
+    // Direct-run default: anchor to launch-time CWD. current_path() returning
+    // an error is a process-level failure (e.g. deleted CWD) and must abort
+    // rather than silently produce a relative root.
+    std::error_code ec;
+    auto cwd = std::filesystem::current_path(ec);
+    if (ec) {
+      throw lyra::common::InternalError(
+          "LyraLaunchParseArgs",
+          std::format(
+              "unable to read current working directory for fs_root: {}",
+              ec.message()));
+    }
+    fs_root_storage = cwd.lexically_normal().string();
+    *fs_root_out = fs_root_storage.c_str();
+  }
+
+  return plusargs_count;
 }
 
 extern "C" void LyraReportTime(void* run_session_ptr) {

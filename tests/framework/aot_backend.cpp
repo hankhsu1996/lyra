@@ -113,9 +113,27 @@ auto RunAotBackend(
     ld_path += existing;
   }
 
-  std::vector<std::string> no_args;
+  // Driver-to-child launch contract: prepend the fs_root transport token,
+  // then any test-case user plusargs. Emitted main strips the token before
+  // the plusargs array is visible to $plusargs/$value$plusargs.
+  std::vector<std::string> child_args;
+  child_args.reserve(1 + test_case.plusargs.size());
+  auto fs_root_arg =
+      work_directory.empty()
+          ? std::format(
+                "--lyra-fs-root={}",
+                std::filesystem::absolute(std::filesystem::current_path())
+                    .string())
+          : std::format(
+                "--lyra-fs-root={}",
+                std::filesystem::absolute(work_directory).string());
+  child_args.push_back(std::move(fs_root_arg));
+  for (const auto& plusarg : test_case.plusargs) {
+    child_args.push_back(plusarg);
+  }
+
   EnvOverrides env = {{"LD_LIBRARY_PATH", ld_path}};
-  auto proc = RunChildProcess(link_result->exe_path, no_args, env, timeout);
+  auto proc = RunChildProcess(link_result->exe_path, child_args, env, timeout);
   result.artifacts.timings.execute =
       std::chrono::duration<double>(Clock::now() - t_exec).count();
 

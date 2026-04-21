@@ -78,14 +78,21 @@ class SimulationHooks {
   }
 };
 
-// How the synthesized main() receives plusargs.
+// How the synthesized main() receives its launch inputs (fs_root + plusargs).
+//
+// MainAbi selects the source for those inputs; it does not define separate
+// filesystem-resolution policies.
 enum class MainAbi {
-  // JIT/test mode: plusargs are baked into IR as global string constants.
-  // main() takes no arguments: int main().
+  // In-process driver execution (JIT, dump, test framework with JIT).
+  // fs_root and plusargs are both known at lowering time and embedded into
+  // IR as globals. main() takes no arguments: int main(void* run_session).
   kEmbeddedPlusargs,
 
-  // AOT mode: main(argc, argv) forwards argv[1:] as plusargs.
-  // fs_base_dir uses CWD at runtime instead of compile-time value.
+  // Standalone-launchable emitted binary (AOT, LLI).
+  // main(argc, argv) consumes an internal `--lyra-fs-root=<path>` transport
+  // token (when driver-launched) and forwards the remaining argv entries as
+  // plusargs. If the transport token is absent (direct-run standalone),
+  // fs_root falls back to launch-time CWD.
   kArgvForwarding,
 };
 
@@ -100,8 +107,13 @@ struct LoweringInput {
   // Per-body origin provenance for body-local diagnostic resolution.
   // Keyed by body pointer. Nullable (diagnostics degrade gracefully).
   const lowering::BodyOriginProvenance* origin_provenance = nullptr;
-  SimulationHooks* hooks = nullptr;   // Optional instrumentation (nullable)
-  std::string fs_base_dir;            // Base directory for file I/O (absolute)
+  SimulationHooks* hooks = nullptr;  // Optional instrumentation (nullable)
+  // Driver-selected filesystem root for relative runtime file operations
+  // under driver-controlled execution. Absolute, normalized. In
+  // kEmbeddedPlusargs, this value is embedded into IR. In kArgvForwarding,
+  // it is NOT embedded; the driver transports it to the emitted binary via
+  // the `--lyra-fs-root=...` argv token at launch time.
+  std::string fs_root;
   std::vector<std::string> plusargs;  // Command-line plusargs for $plusargs
   uint32_t feature_flags = 0;         // FeatureFlag bitmask for runtime
   // Text signal trace output path: empty = stdout, non-empty = file path.

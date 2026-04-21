@@ -311,7 +311,7 @@ class Context {
   [[nodiscard]] auto GetLyraTerminate() -> llvm::Function*;
   [[nodiscard]] auto GetLyraGetTime() -> llvm::Function*;
   [[nodiscard]] auto GetLyraInitRuntime() -> llvm::Function*;
-  [[nodiscard]] auto GetLyraResolveBaseDir() -> llvm::Function*;
+  [[nodiscard]] auto GetLyraLaunchParseArgs() -> llvm::Function*;
   [[nodiscard]] auto GetLyraReportTime() -> llvm::Function*;
   [[nodiscard]] auto GetLyraCreateRunSession() -> llvm::Function*;
   [[nodiscard]] auto GetLyraDestroyRunSession() -> llvm::Function*;
@@ -1081,7 +1081,7 @@ class Context {
   llvm::Function* lyra_terminate_ = nullptr;
   llvm::Function* lyra_get_time_ = nullptr;
   llvm::Function* lyra_init_runtime_ = nullptr;
-  llvm::Function* lyra_resolve_base_dir_ = nullptr;
+  llvm::Function* lyra_launch_parse_args_ = nullptr;
   llvm::Function* lyra_report_time_ = nullptr;
   llvm::Function* lyra_create_run_session_ = nullptr;
   llvm::Function* lyra_destroy_run_session_ = nullptr;

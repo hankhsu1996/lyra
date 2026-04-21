@@ -446,26 +446,27 @@ auto PrepareInput(const argparse::ArgumentParser& cmd, bool no_project)
   auto effective_cwd = fs::absolute(fs::current_path()).lexically_normal();
 
   std::optional<ProjectConfig> config;
-  fs::path fs_base_dir;
+  fs::path fs_root;
 
   if (no_project) {
-    // Ad-hoc mode: use effective CWD as base dir, no config required
-    fs_base_dir = effective_cwd;
+    // Ad-hoc mode: fs_root = effective CWD after -C, no config required.
+    fs_root = effective_cwd;
   } else {
-    // Project mode: require lyra.toml
+    // Project mode: require lyra.toml; fs_root = config root.
     auto config_result = LoadProjectConfig();
     if (!config_result) {
       return std::unexpected(config_result.error());
     }
     config = std::move(*config_result);
-    fs_base_dir = fs::absolute(config->root_dir).lexically_normal();
+    fs_root = fs::absolute(config->root_dir).lexically_normal();
   }
 
   auto input = BuildInput(cmd, config);
   if (!input) {
     return std::unexpected(input.error());
   }
-  input->fs_base_dir = fs_base_dir;
+  // Single semantic anchor for relative runtime file I/O, backend-agnostic.
+  input->fs_root = fs_root;
 
   return input;
 }

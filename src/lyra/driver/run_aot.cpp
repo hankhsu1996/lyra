@@ -1,7 +1,6 @@
 #include "run_aot.hpp"
 
 #include <cerrno>
-#include <cstdlib>
 #include <cstring>
 #include <filesystem>
 #include <format>
@@ -50,8 +49,13 @@ auto RunAot(const ValidatedCompilationInput& input) -> int {
 
   auto exe_path = *compile_result;
 
+  // Driver-to-child launch contract: transport the driver-selected fs_root
+  // as the first post-argv[0] token. Emitted `main` consumes it before
+  // building the user plusargs array, so it never reaches $plusargs.
   std::vector<std::string> args;
   args.push_back(exe_path.string());
+  args.push_back(
+      std::format("--lyra-fs-root={}", input.input.fs_root.string()));
   for (const auto& plusarg : input.input.plusargs) {
     args.push_back(plusarg);
   }
@@ -63,13 +67,9 @@ auto RunAot(const ValidatedCompilationInput& input) -> int {
   }
   argv.push_back(nullptr);
 
-  setenv("LYRA_FS_BASE_DIR", input.input.fs_base_dir.string().c_str(), 1);
-
   pid_t pid = 0;
   int spawn_result = posix_spawnp(
       &pid, exe_path.c_str(), nullptr, nullptr, argv.data(), environ);
-
-  unsetenv("LYRA_FS_BASE_DIR");
 
   if (spawn_result != 0) {
     output.PrintError(

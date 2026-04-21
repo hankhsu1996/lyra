@@ -68,7 +68,9 @@ auto CreateTempFile(const std::string& suffix) -> std::string {
 
 auto SpawnLli(
     const std::string& runtime_path, const std::string& ir_path,
-    std::span<const std::filesystem::path> dpi_link_inputs) -> int {
+    std::span<const std::filesystem::path> dpi_link_inputs,
+    const std::string& fs_root, std::span<const std::string> user_plusargs)
+    -> int {
   // Runtime is loaded via --dlopen so lli can resolve Lyra* symbols.
   std::vector<std::string> dlopen_args;
   dlopen_args.push_back(std::format("--dlopen={}", runtime_path));
@@ -79,6 +81,13 @@ auto SpawnLli(
     dlopen_args.push_back(std::format("--dlopen={}", input.string()));
   }
 
+  // Driver-to-child launch contract (same as AOT): prepend the fs_root
+  // transport token, then user plusargs. lli treats argv after the IR path
+  // as the loaded program's argv[1..].
+  std::string fs_root_arg = std::format("--lyra-fs-root={}", fs_root);
+  std::vector<std::string> plusarg_copies(
+      user_plusargs.begin(), user_plusargs.end());
+
   std::vector<char*> argv;
   std::string lli_cmd = "lli";
   argv.push_back(lli_cmd.data());
@@ -87,6 +96,10 @@ auto SpawnLli(
   }
   std::string ir_path_copy = ir_path;
   argv.push_back(ir_path_copy.data());
+  argv.push_back(fs_root_arg.data());
+  for (auto& arg : plusarg_copies) {
+    argv.push_back(arg.data());
+  }
   argv.push_back(nullptr);
 
   pid_t pid = 0;
@@ -141,7 +154,7 @@ auto RunLli(const ValidatedCompilationInput& input) -> int {
       .diag_ctx = &diag_ctx,
       .source_manager = compilation.hir.source_manager.get(),
       .origin_provenance = &origin_provenance,
-      .fs_base_dir = input.input.fs_base_dir.string(),
+      .fs_root = input.input.fs_root.string(),
       .plusargs = input.input.plusargs,
       .feature_flags = 0,
       .signal_trace_path = input.input.trace_signals_output.value_or(""),
@@ -211,8 +224,9 @@ auto RunLli(const ValidatedCompilationInput& input) -> int {
   int exit_code = 0;
   {
     PhaseTimer timer(output, Phase::kSim, HeartbeatPolicy::kEnabled);
-    exit_code =
-        SpawnLli(runtime_path.string(), ir_path, input.input.dpi_link_inputs);
+    exit_code = SpawnLli(
+        runtime_path.string(), ir_path, input.input.dpi_link_inputs,
+        input.input.fs_root.string(), input.input.plusargs);
   }
   if (exit_code == -1) {
     output.PrintError(

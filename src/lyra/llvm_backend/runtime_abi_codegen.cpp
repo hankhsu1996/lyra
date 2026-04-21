@@ -72,7 +72,7 @@ auto GetRuntimeAbiStructType(llvm::LLVMContext& ctx) -> llvm::StructType* {
       // L8a: named event count (i32 count, i32 pad)
       i32_ty,
       i32_ty,
-      // v25: fs_base_dir (ptr)
+      // v25: fs_root (ptr)
       ptr_ty,
       // v26: construction_result (ptr)
       ptr_ty,

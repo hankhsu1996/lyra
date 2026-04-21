@@ -125,15 +125,35 @@ void LyraSetTimeFormat(
     void* engine_ptr, int8_t units, int32_t precision, const char* suffix,
     int32_t min_width);
 
-// Resolve the base directory for relative file I/O.
-// Checks LYRA_FS_BASE_DIR env var first, then derives from argv[0]
-// (dirname(realpath(argv0))). Returns a pointer to static storage
-// (valid until next call).
-auto LyraResolveBaseDir(const char* argv0) -> const char*;
-
 // Initialize runtime state (call before running processes).
 // iteration_limit: per-activation back-edge limit (0 = unlimited).
 void LyraInitRuntime(uint32_t iteration_limit);
+
+// Parse the launch-time argv of an emitted `main(argc, argv)` entry point.
+//
+// `--lyra-fs-root=<absolute path>` is an internal driver-to-child transport
+// token, NOT a public CLI flag of the emitted binary. The Lyra driver
+// prepends it when spawning AOT/LLI children so the child inherits the
+// driver-selected fs_root. It is not documented as a user-facing override
+// of the direct-run contract (fs_root = launch-time CWD).
+//
+// Parsing rules:
+// - If the token is present, its value must be non-empty and absolute;
+//   otherwise an InternalError is thrown. The token is consumed and never
+//   appears in the plusargs array.
+// - If the token is absent, fs_root resolves to the launch-time CWD. A
+//   failure to read the CWD is fatal (InternalError), never a "." fallback.
+//
+// Output contract:
+// - `*fs_root_out`   : nul-terminated absolute path, valid for the process
+//                      lifetime (backed by internal static storage).
+// - `plusargs_out`   : caller-provided array, space for at least
+//                      max(argc - 1, 0) entries; populated with user plusargs
+//                      only.
+// - return value     : number of user plusargs written to plusargs_out.
+auto LyraLaunchParseArgs(
+    int argc, char** argv, const char** fs_root_out, const char** plusargs_out)
+    -> uint32_t;
 
 // Print final simulation time as __LYRA_TIME__=<N> for test harness.
 // run_session_ptr: opaque pointer to lyra::runtime::RunSession.

@@ -217,3 +217,37 @@ cases:
   # Note: Descending array ranges (e.g., [8:5]) are not supported in MVP.
   # The storage layout for descending arrays uses left-based indexing,
   # but MVP readmem uses min-based indexing for simplicity.
+
+  - name: readmemh_into_function_local_array
+    description: |
+      $readmemh into an array declared inside a function (automatic,
+      function-local). Reads four bytes and sums them; verifies the filename
+      is resolved against the runtime filesystem root even when the target
+      memory is not a module-level signal.
+    files:
+      - name: test.sv
+        content: |
+          module Test;
+            bit [7:0] sum;
+            function automatic bit [7:0] read_and_sum();
+              bit [7:0] local_mem [0:3];
+              bit [7:0] acc = 0;
+              $readmemh("mem.hex", local_mem);
+              for (int i = 0; i < 4; i++) acc = acc + local_mem[i];
+              return acc;
+            endfunction
+            initial begin
+              sum = read_and_sum();
+            end
+          endmodule
+      - name: mem.hex
+        content: |
+          00
+          01
+          0a
+          ff
+    expect:
+      variables:
+        # 0 + 1 + 10 + 255 = 266, truncated to 8 bits = 10
+        sum: 10
+

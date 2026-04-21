@@ -146,10 +146,10 @@ void LyraReadmemGlobal(
     uint32_t global_slot_id);
 
 void LyraReadmemNoNotify(
-    LyraStringHandle filename, void* target, int32_t element_width,
-    int32_t stride_bytes, int32_t value_size_bytes, int32_t element_count,
-    int64_t min_addr, int64_t current_addr, int64_t final_addr, int64_t step,
-    bool is_hex, int32_t element_kind);
+    void* engine_ptr, LyraStringHandle filename, void* target,
+    int32_t element_width, int32_t stride_bytes, int32_t value_size_bytes,
+    int32_t element_count, int64_t min_addr, int64_t current_addr,
+    int64_t final_addr, int64_t step, bool is_hex, int32_t element_kind);
 
 // $writememh/$writememb: write array to memory file
 // - engine_ptr: pointer to Engine (for base directory resolution)

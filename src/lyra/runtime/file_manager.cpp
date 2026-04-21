@@ -14,14 +14,13 @@
 
 namespace lyra::runtime {
 
-auto FileManager::ResolvePath(
-    const std::filesystem::path& base_dir, const std::string& filename)
-    -> std::string {
-  std::filesystem::path p(filename);
-  if (p.is_absolute()) {
-    return p.lexically_normal().string();
+auto ResolveRuntimePath(
+    const std::filesystem::path& fs_root, const std::filesystem::path& path)
+    -> std::filesystem::path {
+  if (path.is_absolute()) {
+    return path.lexically_normal();
   }
-  return (base_dir / p).lexically_normal().string();
+  return (fs_root / path).lexically_normal();
 }
 
 FileManager::~FileManager() {
@@ -30,9 +29,9 @@ FileManager::~FileManager() {
 }
 
 auto FileManager::FopenMcd(
-    const std::filesystem::path& base_dir, const std::string& filename)
+    const std::filesystem::path& fs_root, const std::string& filename)
     -> int32_t {
-  auto resolved = ResolvePath(base_dir, filename);
+  auto resolved = ResolveRuntimePath(fs_root, filename);
   // Find first unused MCD bit in [1, 30]
   for (int bit = 1; bit <= kMaxMcdBit; ++bit) {
     if (!mcd_channels_.contains(bit)) {
@@ -49,14 +48,14 @@ auto FileManager::FopenMcd(
 }
 
 auto FileManager::FopenFd(
-    const std::filesystem::path& base_dir, const std::string& filename,
+    const std::filesystem::path& fs_root, const std::string& filename,
     const std::string& mode) -> int32_t {
   auto flags = ParseMode(mode);
   if (!flags) {
     return 0;
   }
 
-  auto resolved = ResolvePath(base_dir, filename);
+  auto resolved = ResolveRuntimePath(fs_root, filename);
   auto stream = std::make_unique<std::fstream>(resolved, *flags);
   if (!stream->is_open()) {
     return 0;

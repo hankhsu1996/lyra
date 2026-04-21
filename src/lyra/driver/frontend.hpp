@@ -24,7 +24,14 @@ struct CompilationInput {
   std::vector<std::string> defines;
   std::vector<std::string> warnings;
   std::vector<std::string> param_overrides;
-  std::filesystem::path fs_base_dir;
+  // Driver-selected filesystem root for relative runtime file operations
+  // under driver-controlled execution (`lyra run --backend=jit|aot|lli`).
+  // Project mode: config root. --no-project mode: effective CWD after -C.
+  // For JIT, this value is embedded in the IR. For AOT/LLI children, the
+  // driver transports it to the child via the internal `--lyra-fs-root=...`
+  // argv token. Direct-run emitted binaries do not inherit this value;
+  // they anchor to launch-time CWD.
+  std::filesystem::path fs_root;
   std::vector<std::string> plusargs;
   OptLevel opt_level = OptLevel::kO2;
   bool pedantic = false;

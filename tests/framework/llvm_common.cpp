@@ -336,8 +336,9 @@ auto PrepareLlvmModule(
 
   // Lower MIR to LLVM IR
   auto t_llvm = Clock::now();
-  // Use work_directory for file I/O tests, otherwise fall back to CWD
-  auto fs_base_dir =
+  // Test-framework analog of driver-selected fs_root: use work_directory when
+  // the test has auxiliary files; otherwise anchor to the test process CWD.
+  auto fs_root =
       work_directory.empty()
           ? std::filesystem::absolute(std::filesystem::current_path()).string()
           : std::filesystem::absolute(work_directory).string();
@@ -370,7 +371,7 @@ auto PrepareLlvmModule(
       .source_manager = hir_result.source_manager.get(),
       .origin_provenance = &origin_provenance,
       .hooks = g_hooks_holder->hooks.get(),
-      .fs_base_dir = fs_base_dir,
+      .fs_root = fs_root,
       .plusargs = test_case.plusargs,
       .feature_flags = feature_flags,
       .signal_trace_path = {},
