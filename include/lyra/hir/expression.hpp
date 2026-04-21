@@ -318,10 +318,14 @@ struct MaterializeInitializerExpressionData {
 };
 
 // Object-creation expression. Evaluates to an object handle whose type
-// (expr.type) is of kind kObjectHandle. `object_type` names the target
-// type being constructed.
+// (expr.type) is of kind kObjectHandle. `target_instance_sym` identifies
+// the actual target being constructed at this call site (the registered
+// SymbolId of the child instance in the owning body's scope). Cut 2 uses
+// the per-site instance symbol as the construction-target identity;
+// future cuts may generalize to a module-type TypeId or a spec-group
+// stable handle.
 struct NewObjectExpressionData {
-  TypeId object_type;
+  SymbolId target_instance_sym;
 
   auto operator==(const NewObjectExpressionData&) const -> bool = default;
 };

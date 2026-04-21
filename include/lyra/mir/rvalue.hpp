@@ -9,6 +9,7 @@
 #include "lyra/common/array_query_kind.hpp"
 #include "lyra/common/math_fn.hpp"
 #include "lyra/common/runtime_query_kind.hpp"
+#include "lyra/common/symbol_types.hpp"
 #include "lyra/common/system_tf.hpp"
 #include "lyra/common/type.hpp"
 #include "lyra/mir/builtin.hpp"
@@ -207,6 +208,15 @@ struct SelectRvalueInfo {
   TypeId result_type;
 };
 
+// NewObject: value-producing construction of an object handle. Result is
+// an object handle whose type (carried on the surrounding temp) is of kind
+// kObjectHandle. `target_instance_sym` identifies the actual target being
+// constructed at this call site (mirrors the HIR-level identity). No
+// operands in this cut.
+struct NewObjectRvalueInfo {
+  SymbolId target_instance_sym;
+};
+
 // Variant of all info types - determines Rvalue kind implicitly
 using RvalueInfo = std::variant<
     UnaryRvalueInfo, BinaryRvalueInfo, CastRvalueInfo, BitCastRvalueInfo,
@@ -215,7 +225,7 @@ using RvalueInfo = std::variant<
     ReplicateRvalueInfo, SFormatRvalueInfo, TestPlusargsRvalueInfo,
     FopenRvalueInfo, RuntimeQueryRvalueInfo, MathCallRvalueInfo,
     SystemTfRvalueInfo, ArrayQueryRvalueInfo, SystemCmdRvalueInfo,
-    SelectRvalueInfo, ExternalReadRvalueInfo>;
+    SelectRvalueInfo, ExternalReadRvalueInfo, NewObjectRvalueInfo>;
 
 struct Rvalue {
   std::vector<Operand> operands;
@@ -269,6 +279,8 @@ inline auto GetRvalueKind(const RvalueInfo& info) -> const char* {
           return "select";
         } else if constexpr (std::is_same_v<T, ExternalReadRvalueInfo>) {
           return "external_read";
+        } else if constexpr (std::is_same_v<T, NewObjectRvalueInfo>) {
+          return "new_object";
         } else {
           static_assert(false, "unhandled RvalueInfo kind");
         }

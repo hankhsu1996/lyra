@@ -86,6 +86,13 @@ void VerifyLoweredMir(
                                               ProcessKindStr(proc.kind), pi);
                 mir::VerifyProcess(proc, arena, cx, label);
               }
+              {
+                std::string label =
+                    module_path.empty()
+                        ? std::format("element[{}]: constructor", ei)
+                        : std::format("{}: constructor", module_path);
+                mir::VerifyConstructor(body.constructor, arena, cx, label);
+              }
             },
             [&](const mir::Package& pkg) {
               mir::VerifyContext cx{

@@ -393,4 +393,74 @@ auto LowerTaskBody(
   };
 }
 
+auto LowerConstructorBody(
+    const hir::ModuleBody& hir_body, const LoweringInput& input,
+    mir::Arena& mir_arena, const DeclView& decl_view, OriginMap* origin_map)
+    -> Result<mir::Constructor> {
+  TypeId void_type = input.builtin_types.void_type;
+  // Anchor the lowering context to this body's own HIR and constant arenas.
+  // Constructor.body is a StatementId in hir_body.arena and any ConstIds it
+  // reaches resolve against hir_body.constant_arena.
+  Context ctx{
+      .mir_arena = &mir_arena,
+      .design_arena = decl_view.design_arena,
+      .hir_arena = &hir_body.arena,
+      .type_arena = input.type_arena,
+      .active_constant_arena = &hir_body.constant_arena,
+      .symbol_table = input.symbol_table,
+      .body_places = decl_view.body_places,
+      .design_places = decl_view.design_places,
+      .local_places = {},
+      .design_place_cache = {},
+      .next_local_id = 0,
+      .next_temp_id = 0,
+      .local_types = {},
+      .local_place_ids = {},
+      .temp_types = {},
+      .temp_metadata = {},
+      .builtin_types = input.builtin_types,
+      .symbol_to_mir_function = decl_view.functions,
+      .design_functions = decl_view.design_functions,
+      .dpi_imports = decl_view.dpi_imports,
+      .return_slot = std::nullopt,
+      .return_type = void_type,
+      .design_slots = decl_view.slots,
+      .body_slots = decl_view.body_slots,
+      .cover_site_registry = decl_view.cover_site_registry,
+      .deferred_assertion_site_registry =
+          decl_view.deferred_assertion_site_registry,
+      .external_ref_cache = {},
+  };
+
+  MirBuilder builder(
+      &mir_arena, &ctx, origin_map, /*decision_allocator=*/nullptr);
+  BlockIndex entry_idx = builder.CreateBlock();
+  BlockIndex exit_idx = builder.CreateBlock();
+  builder.SetExitBlock(exit_idx);
+  builder.SetCurrentBlock(entry_idx);
+
+  Result<void> stmt_result = LowerStatement(hir_body.constructor.body, builder);
+  if (!stmt_result) {
+    return std::unexpected(stmt_result.error());
+  }
+
+  if (builder.IsReachable()) {
+    builder.EmitJump(exit_idx);
+  }
+
+  builder.SetCurrentBlock(exit_idx);
+  builder.EmitTerminate(std::nullopt);
+
+  std::vector<mir::BasicBlock> blocks = builder.Finish();
+
+  return mir::Constructor{
+      .entry = mir::BasicBlockId{entry_idx.value},
+      .blocks = std::move(blocks),
+      .local_types = std::move(ctx.local_types),
+      .temp_metadata = std::move(ctx.temp_metadata),
+      .origin = common::OriginId::Invalid(),
+      .materialize_count = ctx.materialize_count,
+  };
+}
+
 }  // namespace lyra::lowering::hir_to_mir

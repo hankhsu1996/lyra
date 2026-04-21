@@ -1,0 +1,25 @@
+feature: hierarchy_instantiation_constructor_body
+description: MIR constructor body shape for plain child instantiation
+
+cases:
+  - name: plain_child_new_object
+    description: |
+      A plain submodule instantiation (no ports, no generate, no binding,
+      no external ref) produces a MIR constructor body containing one
+      new_object rvalue per child. This cut lowers the constructor into
+      MIR; the body is not yet consumed by the backend or runtime.
+    dump_mir: true
+    sv: |
+      module Child;
+        logic x;
+      endmodule
+
+      module Test;
+        Child u_child();
+      endmodule
+    expect:
+      compiler_output:
+        contains:
+          - "constructor {"
+          - "new_object("
+          - "object_handle"

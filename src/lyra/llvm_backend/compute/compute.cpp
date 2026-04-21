@@ -266,6 +266,11 @@ auto LowerRvalue(
             }
             return RvalueValue::TwoState(result);
           },
+          [](const mir::NewObjectRvalueInfo&) -> Result<RvalueValue> {
+            throw common::InternalError(
+                "LowerRvalue",
+                "NewObjectRvalueInfo has no LLVM lowering in this cut");
+          },
       },
       rvalue.info);
 }

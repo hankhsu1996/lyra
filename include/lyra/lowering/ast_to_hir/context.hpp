@@ -55,6 +55,8 @@ class BuiltinTypeCatalog {
             .bit_width = 32, .is_signed = false, .is_four_state = false});
     string_type_ = arena.Intern(TypeKind::kString, std::monostate{});
     void_type_ = arena.Intern(TypeKind::kVoid, std::monostate{});
+    object_handle_type_ =
+        arena.Intern(TypeKind::kObjectHandle, std::monostate{});
   }
 
   [[nodiscard]] auto TickType() const -> TypeId {
@@ -87,6 +89,9 @@ class BuiltinTypeCatalog {
   [[nodiscard]] auto VoidType() const -> TypeId {
     return Checked(void_type_);
   }
+  [[nodiscard]] auto ObjectHandleType() const -> TypeId {
+    return Checked(object_handle_type_);
+  }
 
  private:
   [[nodiscard]] static auto Checked(TypeId id) -> TypeId {
@@ -107,6 +112,7 @@ class BuiltinTypeCatalog {
   TypeId shortreal_type_ = kInvalidTypeId;
   TypeId string_type_ = kInvalidTypeId;
   TypeId void_type_ = kInvalidTypeId;
+  TypeId object_handle_type_ = kInvalidTypeId;
 };
 
 // Lowering context for AST->HIR.
@@ -212,6 +218,9 @@ struct Context {
   }
   [[nodiscard]] auto VoidType() const -> TypeId {
     return builtin_types.VoidType();
+  }
+  [[nodiscard]] auto ObjectHandleType() const -> TypeId {
+    return builtin_types.ObjectHandleType();
   }
 
   [[nodiscard]] auto SpanOf(slang::SourceRange range) const -> SourceSpan {

@@ -21,6 +21,7 @@
 #include "lyra/lowering/hir_to_mir/routine.hpp"
 #include "lyra/lowering/origin_map.hpp"
 #include "lyra/mir/arena.hpp"
+#include "lyra/mir/constructor.hpp"
 #include "lyra/mir/external_ref.hpp"
 #include "lyra/mir/handle.hpp"
 #include "lyra/mir/module_body.hpp"
@@ -187,6 +188,20 @@ auto LowerModule(
       mir_func.param_origins.push_back(body_origins.Record(mir_ref, hir_ref));
     }
     body_arena.SetFunctionBody(mir_func_id, std::move(mir_func));
+  }
+
+  // Phase 4: Lower the body-owned constructor body. Not consumed by LLVM or
+  // runtime in this cut; verified and dumped only. LowerConstructorBody
+  // anchors its lowering context to the hir::ModuleBody's own arena and
+  // constant arena, so it does not depend on `input.hir_arena` being
+  // pre-routed by the caller.
+  {
+    Result<mir::Constructor> ctor_result =
+        LowerConstructorBody(body, input, body_arena, decl_view, &body_origins);
+    if (!ctor_result) {
+      return std::unexpected(ctor_result.error());
+    }
+    result.constructor = std::move(*ctor_result);
   }
 
   // Record the body-global decision site count. The LLVM backend validates

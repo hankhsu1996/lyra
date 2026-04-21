@@ -5,6 +5,7 @@
 
 #include "lyra/common/type_arena.hpp"
 #include "lyra/mir/arena.hpp"
+#include "lyra/mir/constructor.hpp"
 #include "lyra/mir/design.hpp"
 #include "lyra/mir/effect.hpp"
 #include "lyra/mir/operand.hpp"
@@ -24,6 +25,7 @@ class Dumper {
   void Dump(const Package& package);
   void Dump(ProcessId id);
   void Dump(FunctionId id);
+  void Dump(const Constructor& ctor);
   void DumpBlock(const BasicBlock& bb, uint32_t index);
 
  private:

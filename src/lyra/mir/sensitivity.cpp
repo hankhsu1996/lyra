@@ -222,6 +222,7 @@ void CollectReadsFromRvalue(
                   info.command->operand, arena, must_def, obs);
             }
           },
+          [](const NewObjectRvalueInfo&) {},
       },
       rvalue.info);
 }

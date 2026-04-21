@@ -6,6 +6,7 @@
 
 #include "lyra/common/type_arena.hpp"
 #include "lyra/mir/arena.hpp"
+#include "lyra/mir/constructor.hpp"
 #include "lyra/mir/external_ref.hpp"
 #include "lyra/mir/routine.hpp"
 
@@ -71,6 +72,13 @@ void VerifyFunction(
 void VerifyProcess(
     const Process& proc, const Arena& arena, const VerifyContext& cx,
     std::string_view label = "process");
+
+// Verify MIR constructor body invariants. Reuses the same block/temp
+// validators as VerifyProcess (constructors are void-return and carry no
+// parameters).
+void VerifyConstructor(
+    const Constructor& ctor, const Arena& arena, const VerifyContext& cx,
+    std::string_view label = "constructor");
 
 // Phase-aware MIR verification for CompiledModuleBody.
 //

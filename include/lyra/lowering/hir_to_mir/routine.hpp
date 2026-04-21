@@ -3,11 +3,13 @@
 #include "lyra/common/diagnostic/diagnostic.hpp"
 #include "lyra/common/symbol.hpp"
 #include "lyra/common/type_arena.hpp"
+#include "lyra/hir/module_body.hpp"
 #include "lyra/hir/routine.hpp"
 #include "lyra/lowering/hir_to_mir/context.hpp"
 #include "lyra/lowering/hir_to_mir/lower.hpp"
 #include "lyra/lowering/origin_map.hpp"
 #include "lyra/mir/arena.hpp"
+#include "lyra/mir/constructor.hpp"
 #include "lyra/mir/routine.hpp"
 
 namespace lyra::lowering::hir_to_mir {
@@ -43,5 +45,20 @@ auto LowerTaskBody(
     const DeclView& decl_view, OriginMap* origin_map,
     DecisionSiteAllocator* decision_allocator = nullptr)
     -> Result<mir::Function>;
+
+// Lower a HIR constructor body into a body-owned MIR Constructor. Reuses the
+// generic MIR executable substrate (basic blocks, statements, operands) via
+// LowerStatement. Not a user-callable function: no signature, no parameters,
+// no return slot.
+//
+// The `hir_body` argument anchors the body-local HIR arena and constant
+// arena. The lowering context is wired to those body-local stores rather
+// than relying on `input.hir_arena` already pointing at the correct body;
+// this keeps constructor lowering self-anchored alongside functions and
+// processes.
+auto LowerConstructorBody(
+    const hir::ModuleBody& hir_body, const LoweringInput& input,
+    mir::Arena& mir_arena, const DeclView& decl_view, OriginMap* origin_map)
+    -> Result<mir::Constructor>;
 
 }  // namespace lyra::lowering::hir_to_mir

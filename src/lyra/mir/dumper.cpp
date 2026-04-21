@@ -239,6 +239,7 @@ void Dumper::DumpModuleBody(const ModuleBody& body, ModuleBodyId body_id) {
   for (FunctionId id : body.functions) {
     Dump(id);
   }
+  Dump(body.constructor);
 
   Dedent();
   PrintIndent();
@@ -288,6 +289,20 @@ void Dumper::Dump(FunctionId id) {
 
   for (uint32_t i = 0; i < func.blocks.size(); ++i) {
     DumpBlock(func.blocks[i], i);
+  }
+
+  Dedent();
+  PrintIndent();
+  *out_ << "}\n";
+}
+
+void Dumper::Dump(const Constructor& ctor) {
+  PrintIndent();
+  *out_ << "constructor {\n";
+  Indent();
+
+  for (uint32_t i = 0; i < ctor.blocks.size(); ++i) {
+    DumpBlock(ctor.blocks[i], i);
   }
 
   Dedent();
@@ -786,6 +801,10 @@ auto Dumper::FormatRvalue(const Rvalue& rv) const -> std::string {
           [](const SelectRvalueInfo&) { return std::string("select"); },
           [](const ExternalReadRvalueInfo& info) {
             return std::format("external_read({})", info.ref.value);
+          },
+          [](const NewObjectRvalueInfo& info) {
+            return std::format(
+                "new_object(target=sym#{})", info.target_instance_sym.value);
           },
       },
       rv.info);

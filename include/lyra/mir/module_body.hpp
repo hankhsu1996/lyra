@@ -7,6 +7,7 @@
 #include "lyra/mir/arena.hpp"
 #include "lyra/mir/compiled_module_header.hpp"
 #include "lyra/mir/connection_recipe.hpp"
+#include "lyra/mir/constructor.hpp"
 #include "lyra/mir/cover_site.hpp"
 #include "lyra/mir/deferred_assertion_site.hpp"
 #include "lyra/mir/external_ref.hpp"
@@ -38,6 +39,10 @@ struct EventDesc;
 struct ModuleBody {
   std::vector<ProcessId> processes;
   std::vector<FunctionId> functions;
+
+  // Body-owned construction entry routine. Exactly one per body. Populated
+  // by HIR->MIR constructor lowering. Not yet consumed by LLVM or runtime.
+  Constructor constructor;
 
   // Body-local slot descriptors, indexed by kModuleSlot id.
   // This is the body's required storage interface: what slots exist,

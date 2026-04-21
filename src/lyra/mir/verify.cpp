@@ -1192,6 +1192,17 @@ void VerifyProcess(
       proc.blocks, arena, cx, proc.temp_metadata, label);
 }
 
+void VerifyConstructor(
+    const Constructor& ctor, const Arena& arena, const VerifyContext& cx,
+    std::string_view label) {
+  // Constructor bodies are void-return and reuse the generic executable
+  // substrate, so the same block/temp validators used for processes apply.
+  VerifyReturnInvariants(ctor.blocks, true, label);
+
+  VerifyBlockParamsAndEdgeArgs(
+      ctor.blocks, arena, cx, ctor.temp_metadata, label);
+}
+
 void VerifyPreBackendBody(
     const CompiledModuleBody& body, const TypeArena& types,
     std::string_view label) {

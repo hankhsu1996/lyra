@@ -7,6 +7,7 @@
 
 #include <slang/ast/expressions/AssignmentExpressions.h>
 #include <slang/ast/symbols/BlockSymbols.h>
+#include <slang/ast/symbols/InstanceSymbols.h>
 #include <slang/ast/symbols/MemberSymbols.h>
 #include <slang/ast/symbols/ParameterSymbols.h>
 #include <slang/ast/symbols/PortSymbols.h>
@@ -226,13 +227,54 @@ auto LowerModuleBody(
 
   // Synthesize the permanent constructor artifact. Every ModuleBody owns
   // exactly one Constructor whose body is a root kBlock statement in the
-  // body-local arena. In this cut the block is empty; future cuts populate
-  // it with construction-time statements.
+  // body-local arena. For the smallest supported child-instantiation case
+  // (plain submodule, no ports, no generate, no bindings), emit one
+  // kNewObject expression-statement per child. Unsupported cases leave
+  // the block empty; the old construction metadata path remains the
+  // active execution path in this cut.
+  std::vector<hir::StatementId> ctor_stmts;
+  {
+    TypeId object_handle_type = body_ctx.ObjectHandleType();
+    for (const auto& member : representative.body.members()) {
+      if (member.kind != slang::ast::SymbolKind::Instance) continue;
+      const auto& child = member.as<slang::ast::InstanceSymbol>();
+      // Restrict cut 2 to the smallest real case: plain child with no
+      // ports. Children with ports, bindings, or parameter specialization
+      // are left for later cuts; the old construction pipeline still
+      // handles them.
+      if (!child.body.getPortList().empty()) continue;
+
+      // Child instance is pre-registered in Phase 0. Its SymbolId is the
+      // cut-2 construction-target identity carried on the kNewObject
+      // expression; expr.type carries the handle result type.
+      SymbolId child_sym = registrar.Lookup(child);
+      if (!child_sym) continue;
+
+      SourceSpan child_span = body_ctx.SpanOf(GetSourceRange(child));
+      hir::ExpressionId new_obj_expr = body_arena.AddExpression(
+          hir::Expression{
+              .kind = hir::ExpressionKind::kNewObject,
+              .type = object_handle_type,
+              .span = child_span,
+              .data =
+                  hir::NewObjectExpressionData{
+                      .target_instance_sym = child_sym},
+          });
+      hir::StatementId stmt = body_arena.AddStatement(
+          hir::Statement{
+              .kind = hir::StatementKind::kExpression,
+              .span = child_span,
+              .data = hir::ExpressionStatementData{.expression = new_obj_expr},
+          });
+      ctor_stmts.push_back(stmt);
+    }
+  }
+
   hir::StatementId ctor_body = body_arena.AddStatement(
       hir::Statement{
           .kind = hir::StatementKind::kBlock,
           .span = span,
-          .data = hir::BlockStatementData{.statements = {}},
+          .data = hir::BlockStatementData{.statements = std::move(ctor_stmts)},
       });
 
   return BodyLoweringResult{

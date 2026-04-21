@@ -607,9 +607,13 @@ void CollectPlacesFromRvalue(
             std::is_same_v<T, mir::SystemTfRvalueInfo> ||
             std::is_same_v<T, mir::ArrayQueryRvalueInfo> ||
             std::is_same_v<T, mir::SelectRvalueInfo> ||
-            std::is_same_v<T, mir::ExternalReadRvalueInfo>) {
+            std::is_same_v<T, mir::ExternalReadRvalueInfo> ||
+            std::is_same_v<T, mir::NewObjectRvalueInfo>) {
           // These RvalueInfo types have no embedded PlaceIds or Operands
-          // beyond what's in Rvalue::operands (already collected above)
+          // beyond what's in Rvalue::operands (already collected above).
+          // NewObjectRvalueInfo is not consumed by the LLVM backend in
+          // this cut; listing it here keeps the exhaustive switch warning-
+          // free while leaving backend semantics untouched.
         } else {
           static_assert(
               !sizeof(T),

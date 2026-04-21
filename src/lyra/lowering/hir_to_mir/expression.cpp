@@ -1590,6 +1590,19 @@ auto LowerNewArray(
   return mir::Operand::Use(temp);
 }
 
+auto LowerNewObject(
+    const hir::NewObjectExpressionData& data, const hir::Expression& expr,
+    MirBuilder& builder) -> Result<mir::Operand> {
+  mir::Rvalue rvalue{
+      .operands = {},
+      .info =
+          mir::NewObjectRvalueInfo{
+              .target_instance_sym = data.target_instance_sym},
+  };
+  mir::PlaceId temp = builder.EmitPlaceTemp(expr.type, std::move(rvalue));
+  return mir::Operand::Use(temp);
+}
+
 auto LowerArrayLiteral(
     const hir::ArrayLiteralExpressionData& data, const hir::Expression& expr,
     MirBuilder& builder, PlaceMaterializationCache& cache)
@@ -2692,6 +2705,8 @@ auto LowerExpressionImpl(
                                  T,
                                  hir::MaterializeInitializerExpressionData>) {
           return LowerMaterializeInitializer(data, expr, builder);
+        } else if constexpr (std::is_same_v<T, hir::NewObjectExpressionData>) {
+          return LowerNewObject(data, expr, builder);
         } else {
           throw common::InternalError(
               "LowerExpression", "unhandled expression kind");
