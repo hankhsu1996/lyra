@@ -206,29 +206,83 @@ void EmitDesignStateZero(Context& context, llvm::Value* design_state) {
   EmitMemsetZero(context, design_state, arena_ty);
 }
 
+// Emits runtime init and captures the two values whose source differs by
+// launch mode: the filesystem root and the user plusargs array. MainAbi
+// selects the source; the downstream runtime contract is identical.
+//
+//   kEmbeddedPlusargs (driver-controlled in-process execution):
+//     fs_root  = compile-time driver-selected string, embedded as a global
+//     plusargs = compile-time driver-supplied vector, embedded as globals
+//
+//   kArgvForwarding (driver-controlled AOT/LLI child OR standalone direct-run):
+//     fs_root  = extracted from `--lyra-fs-root=<abs path>` argv token if
+//                present (driver-controlled launch), else launch-time CWD
+//                (standalone direct-run). Decision is runtime-side.
+//     plusargs = argv entries that remain after the internal transport
+//                token is consumed.
+struct LaunchSetup {
+  llvm::Value* fs_root_str = nullptr;
+  llvm::Value* plusargs_array = nullptr;
+  llvm::Value* plusargs_count = nullptr;
+};
+
 auto EmitRuntimeInit(
     Context& context, llvm::Function* main_func,
-    const EmitDesignMainInput& input) -> llvm::Value* {
+    const EmitDesignMainInput& input) -> LaunchSetup {
   auto& builder = context.GetBuilder();
   auto& ctx = context.GetLlvmContext();
-  bool argv_forwarding =
-      input.main_abi == lowering::mir_to_llvm::MainAbi::kArgvForwarding;
-
-  llvm::Value* fs_base_dir_str = nullptr;
-  if (argv_forwarding) {
-    auto* argv0 = builder.CreateLoad(
-        llvm::PointerType::getUnqual(ctx), main_func->getArg(1), "argv0");
-    fs_base_dir_str =
-        builder.CreateCall(context.GetLyraResolveBaseDir(), {argv0});
-  } else {
-    fs_base_dir_str =
-        builder.CreateGlobalStringPtr(input.fs_base_dir, "fs_base_dir");
-  }
   auto* i32_ty = llvm::Type::getInt32Ty(ctx);
+  auto* ptr_ty = llvm::PointerType::getUnqual(ctx);
+
   builder.CreateCall(
       context.GetLyraInitRuntime(),
       {llvm::ConstantInt::get(i32_ty, input.iteration_limit)});
-  return fs_base_dir_str;
+
+  LaunchSetup setup;
+
+  if (input.main_abi == lowering::mir_to_llvm::MainAbi::kArgvForwarding) {
+    auto* argc_val = main_func->getArg(0);
+    auto* argv_val = main_func->getArg(1);
+
+    // Max user plusargs = argc (loose bound; runtime writes only what it
+    // needs, caller reads only plusargs_count entries).
+    auto* plusargs_array = builder.CreateAlloca(ptr_ty, argc_val, "plusargs");
+    auto* fs_root_slot = builder.CreateAlloca(ptr_ty, nullptr, "fs_root_slot");
+    builder.CreateStore(
+        llvm::ConstantPointerNull::get(llvm::cast<llvm::PointerType>(ptr_ty)),
+        fs_root_slot);
+
+    auto* plusargs_count = builder.CreateCall(
+        context.GetLyraLaunchParseArgs(),
+        {argc_val, argv_val, fs_root_slot, plusargs_array}, "num_plusargs");
+    auto* fs_root_str = builder.CreateLoad(ptr_ty, fs_root_slot, "fs_root");
+
+    setup.fs_root_str = fs_root_str;
+    setup.plusargs_array = plusargs_array;
+    setup.plusargs_count = plusargs_count;
+    return setup;
+  }
+
+  // kEmbeddedPlusargs: fs_root and plusargs are both compile-time.
+  setup.fs_root_str = builder.CreateGlobalStringPtr(input.fs_root, "fs_root");
+
+  auto num_plusargs = static_cast<uint32_t>(input.plusargs.size());
+  setup.plusargs_count = llvm::ConstantInt::get(i32_ty, num_plusargs);
+  if (num_plusargs > 0) {
+    auto* array = builder.CreateAlloca(
+        ptr_ty, llvm::ConstantInt::get(i32_ty, num_plusargs), "plusargs");
+    for (uint32_t i = 0; i < num_plusargs; ++i) {
+      auto* plusarg_str = builder.CreateGlobalStringPtr(
+          input.plusargs[i], std::format("plusarg_{}", i));
+      auto* slot = builder.CreateGEP(ptr_ty, array, {builder.getInt32(i)});
+      builder.CreateStore(plusarg_str, slot);
+    }
+    setup.plusargs_array = array;
+  } else {
+    setup.plusargs_array =
+        llvm::ConstantPointerNull::get(llvm::cast<llvm::PointerType>(ptr_ty));
+  }
+  return setup;
 }
 
 void EmitInitProcesses(
@@ -250,55 +304,6 @@ void EmitInitProcesses(
         context.GetLyraRunProcessSync(),
         {process_funcs[i], process_state, design_state});
   }
-}
-
-struct PlusargsSetup {
-  llvm::Value* array = nullptr;
-  llvm::Value* count = nullptr;
-};
-
-auto BuildPlusargs(
-    Context& context, llvm::Function* main_func,
-    const EmitDesignMainInput& input) -> PlusargsSetup {
-  auto& builder = context.GetBuilder();
-  auto& ctx = context.GetLlvmContext();
-  auto* ptr_ty = llvm::PointerType::getUnqual(ctx);
-  auto* i32_ty = llvm::Type::getInt32Ty(ctx);
-  bool argv_forwarding =
-      input.main_abi == lowering::mir_to_llvm::MainAbi::kArgvForwarding;
-
-  if (argv_forwarding) {
-    auto* argc_val = main_func->getArg(0);
-    auto* argv_val = main_func->getArg(1);
-    auto* argc_minus_1 =
-        builder.CreateSub(argc_val, llvm::ConstantInt::get(i32_ty, 1));
-    auto* is_positive =
-        builder.CreateICmpSGT(argc_minus_1, llvm::ConstantInt::get(i32_ty, 0));
-    auto* count = builder.CreateSelect(
-        is_positive, argc_minus_1, llvm::ConstantInt::get(i32_ty, 0),
-        "num_plusargs");
-    auto* array = builder.CreateGEP(
-        ptr_ty, argv_val, {llvm::ConstantInt::get(i32_ty, 1)}, "plusargs");
-    return {.array = array, .count = count};
-  }
-
-  auto num_plusargs = static_cast<uint32_t>(input.plusargs.size());
-  auto* count = llvm::ConstantInt::get(i32_ty, num_plusargs);
-  if (num_plusargs > 0) {
-    auto* array = builder.CreateAlloca(
-        ptr_ty, llvm::ConstantInt::get(i32_ty, num_plusargs), "plusargs");
-    for (uint32_t i = 0; i < num_plusargs; ++i) {
-      auto* plusarg_str = builder.CreateGlobalStringPtr(
-          input.plusargs[i], std::format("plusarg_{}", i));
-      auto* slot = builder.CreateGEP(ptr_ty, array, {builder.getInt32(i)});
-      builder.CreateStore(plusarg_str, slot);
-    }
-    return {.array = array, .count = count};
-  }
-
-  auto* null_array =
-      llvm::ConstantPointerNull::get(llvm::cast<llvm::PointerType>(ptr_ty));
-  return {.array = null_array, .count = count};
 }
 
 // Metadata-building outputs: emitted metadata globals plus structured
@@ -500,7 +505,7 @@ auto BuildRuntimeAbi(
     uint32_t num_immediate_cover_sites, int8_t global_precision_power,
     llvm::Constant* deferred_site_meta_global,
     uint32_t num_deferred_assertion_sites, uint32_t num_events,
-    llvm::Value* fs_base_dir_str, llvm::Value* conn_desc_ptr,
+    llvm::Value* fs_root_str, llvm::Value* conn_desc_ptr,
     llvm::Value* conn_desc_count, llvm::Value* construction_result_ptr)
     -> llvm::Value* {
   auto& builder = context.GetBuilder();
@@ -598,8 +603,8 @@ auto BuildRuntimeAbi(
   store_field(38, llvm::ConstantInt::get(i32_ty, num_events));
   store_field(39, llvm::ConstantInt::get(i32_ty, 0));
 
-  // v25: Filesystem base directory.
-  store_field(40, fs_base_dir_str);
+  // v25: Driver-selected filesystem root.
+  store_field(40, fs_root_str);
 
   // v26: Finalized construction result pointer (null if no constructor).
   store_field(
@@ -611,14 +616,14 @@ auto BuildRuntimeAbi(
 
 void EmitRunSimulation(
     Context& context, llvm::Value* states_array, llvm::Value* num_processes,
-    const PlusargsSetup& plusargs, llvm::Value* abi_alloca,
+    const LaunchSetup& setup, llvm::Value* abi_alloca,
     llvm::Value* run_session_ptr) {
   auto& builder = context.GetBuilder();
 
   builder.CreateCall(
       context.GetLyraRunSimulation(),
-      {states_array, num_processes, plusargs.array, plusargs.count, abi_alloca,
-       run_session_ptr});
+      {states_array, num_processes, setup.plusargs_array, setup.plusargs_count,
+       abi_alloca, run_session_ptr});
 }
 
 void EmitMainExit(
@@ -672,7 +677,7 @@ auto BuildEmitDesignMainInput(const lowering::mir_to_llvm::LoweringInput& input)
       .origin_provenance = input.origin_provenance,
       .hooks = input.hooks,
       .main_abi = input.main_abi,
-      .fs_base_dir = input.fs_base_dir,
+      .fs_root = input.fs_root,
       .plusargs = input.plusargs,
       .feature_flags = input.feature_flags,
       .signal_trace_path = input.signal_trace_path,
@@ -723,9 +728,10 @@ auto EmitDesignMain(
       num_total_val = ctor_result.num_total;
     }
 
-    // Runtime init and init processes run AFTER constructor (which owns
-    // design-state init) but BEFORE simulation.
-    auto* fs_base_dir_str = EmitRuntimeInit(context, main_func, input);
+    // Runtime init resolves the filesystem root and the user plusargs array
+    // in one shot (their sources depend on MainAbi; the downstream runtime
+    // contract is identical).
+    auto launch_setup = EmitRuntimeInit(context, main_func, input);
 
     if (input.hooks != nullptr) {
       input.hooks->OnAfterInitializeDesignState(context, design_state);
@@ -738,8 +744,6 @@ auto EmitDesignMain(
     if (input.hooks != nullptr) {
       input.hooks->OnBeforeRunSimulation(context, design_state);
     }
-
-    auto plusargs = BuildPlusargs(context, main_func, input);
 
     auto metadata_outputs = BuildDesignMetadataOutputs(
         context, layout, input, session.back_edge_origins);
@@ -849,17 +853,19 @@ auto EmitDesignMain(
         input.design->global_precision_power, deferred_site_meta_global,
         static_cast<uint32_t>(input.design->deferred_assertion_sites.size()),
         static_cast<uint32_t>(input.design->max_body_local_events),
-        fs_base_dir_str, conn_ptr, conn_count, ctor_result.result_handle);
+        launch_setup.fs_root_str, conn_ptr, conn_count,
+        ctor_result.result_handle);
     abi_for_exit = abi_alloca;
 
     EmitRunSimulation(
-        context, states_array, num_total_val, plusargs, abi_alloca,
+        context, states_array, num_total_val, launch_setup, abi_alloca,
         run_session_ptr);
 
   } else {
     // No simulation processes or kernelized connections. Still need
-    // runtime init and init process execution.
-    EmitRuntimeInit(context, main_func, input);
+    // runtime init and init process execution. The returned LaunchSetup is
+    // unused because the run_simulation / ABI build paths are skipped.
+    (void)EmitRuntimeInit(context, main_func, input);
 
     if (input.hooks != nullptr) {
       input.hooks->OnAfterInitializeDesignState(context, design_state);

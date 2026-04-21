@@ -289,7 +289,7 @@ auto DumpLlvm(const CompilationInput& input) -> int {
       .diag_ctx = &diag_ctx,
       .source_manager = hir_result.source_manager.get(),
       .origin_provenance = &origin_provenance,
-      .fs_base_dir = input.fs_base_dir.string(),
+      .fs_root = input.fs_root.string(),
       .plusargs = {},
       .feature_flags = 0,
       .signal_trace_path = {},

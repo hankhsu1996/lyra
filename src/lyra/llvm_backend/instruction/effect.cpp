@@ -527,11 +527,10 @@ auto LowerMemIOEffect(
             args.push_back(readmem_slot_expr->Emit(builder));
             builder.CreateCall(context.GetLyraReadmemGlobal(), args);
           } else {
-            // NoNotify has no engine_ptr parameter: skip common_args[0].
-            std::vector<llvm::Value*> no_notify_args(
-                common_args.begin() + 1, common_args.end());
-            builder.CreateCall(
-                context.GetLyraReadmemNoNotify(), no_notify_args);
+            // NoNotify takes the same engine_ptr + filename signature as the
+            // local/global variants; the "NoNotify" name refers only to the
+            // absence of signal invalidation after the write.
+            builder.CreateCall(context.GetLyraReadmemNoNotify(), common_args);
           }
         } else {
           std::vector<llvm::Value*> args = {

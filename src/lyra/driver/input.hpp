@@ -38,8 +38,12 @@ auto LoadProjectConfig() -> lyra::Result<ProjectConfig>;
 
 // Prepare a fully-populated CompilationInput for a command.
 // Handles both project mode (require lyra.toml) and ad-hoc mode (no_project).
-// - In project mode: fs_base_dir = project root (lyra.toml directory)
-// - In ad-hoc mode: fs_base_dir = effective CWD
+// Sets CompilationInput::fs_root -- the driver-selected anchor for relative
+// runtime filesystem operations under driver-controlled execution.
+// - In project mode: fs_root = project/config root (lyra.toml directory)
+// - In ad-hoc mode:  fs_root = effective CWD after -C
+// Direct-run of `lyra compile` artifacts uses launch-time CWD instead and
+// is not governed by this value.
 auto PrepareInput(const argparse::ArgumentParser& cmd, bool no_project)
     -> lyra::Result<CompilationInput>;
 

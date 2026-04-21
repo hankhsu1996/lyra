@@ -90,6 +90,24 @@ auto RunLliBackend(
     lli_args.push_back(std::format("--dlopen={}", dpi.string()));
   }
   lli_args.push_back(ir_path.string());
+
+  // Driver-to-child launch contract (same as AOT): prepend the fs_root
+  // transport token, then user plusargs. lli treats argv after the IR path
+  // as the loaded program's argv[1..].
+  auto fs_root_arg =
+      work_directory.empty()
+          ? std::format(
+                "--lyra-fs-root={}",
+                std::filesystem::absolute(std::filesystem::current_path())
+                    .string())
+          : std::format(
+                "--lyra-fs-root={}",
+                std::filesystem::absolute(work_directory).string());
+  lli_args.push_back(std::move(fs_root_arg));
+  for (const auto& plusarg : test_case.plusargs) {
+    lli_args.push_back(plusarg);
+  }
+
   auto proc = RunChildProcess("lli", lli_args, {}, timeout);
   result.artifacts.timings.execute =
       std::chrono::duration<double>(Clock::now() - t_exec).count();

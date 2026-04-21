@@ -126,7 +126,7 @@ auto RunJit(const ValidatedCompilationInput& input) -> int {
       .diag_ctx = &diag_ctx,
       .source_manager = compilation.hir.source_manager.get(),
       .origin_provenance = &origin_provenance,
-      .fs_base_dir = input.input.fs_base_dir.string(),
+      .fs_root = input.input.fs_root.string(),
       .plusargs = input.input.plusargs,
       .feature_flags = feature_flags,
       .signal_trace_path = input.input.trace_signals_output.value_or(""),

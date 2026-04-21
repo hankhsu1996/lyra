@@ -342,14 +342,14 @@ class Engine {
     return time_format_;
   }
 
-  // Set the filesystem base directory for relative path resolution.
-  void SetFsBaseDir(std::filesystem::path dir) {
-    fs_base_dir_ = std::move(dir);
+  // Set the filesystem root for relative runtime file operations.
+  void SetFsRoot(std::filesystem::path dir) {
+    fs_root_ = std::move(dir);
   }
 
-  // Get the filesystem base directory for relative path resolution.
-  [[nodiscard]] auto GetFsBaseDir() const -> const std::filesystem::path& {
-    return fs_base_dir_;
+  // Get the filesystem root for relative runtime file operations.
+  [[nodiscard]] auto GetFsRoot() const -> const std::filesystem::path& {
+    return fs_root_;
   }
 
   // Get file manager for $fopen/$fclose operations.
@@ -1302,8 +1302,8 @@ class Engine {
   // Termination state
   std::optional<std::string> termination_reason_;
 
-  // Filesystem base directory for relative path resolution in file I/O.
-  std::filesystem::path fs_base_dir_;
+  // Filesystem root for relative runtime file operations (driver-selected).
+  std::filesystem::path fs_root_;
 
   // File manager for $fopen/$fclose
   FileManager file_manager_;

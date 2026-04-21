@@ -971,16 +971,20 @@ auto Context::GetLyraInitRuntime() -> llvm::Function* {
   return lyra_init_runtime_;
 }
 
-auto Context::GetLyraResolveBaseDir() -> llvm::Function* {
-  if (lyra_resolve_base_dir_ == nullptr) {
-    // const char* LyraResolveBaseDir(const char* argv0)
+auto Context::GetLyraLaunchParseArgs() -> llvm::Function* {
+  if (lyra_launch_parse_args_ == nullptr) {
+    // uint32_t LyraLaunchParseArgs(int argc, char** argv,
+    //                              const char** fs_root_out,
+    //                              const char** plusargs_out)
+    auto* i32_ty = llvm::Type::getInt32Ty(*llvm_context_);
     auto* ptr_ty = llvm::PointerType::getUnqual(*llvm_context_);
-    auto* fn_type = llvm::FunctionType::get(ptr_ty, {ptr_ty}, false);
-    lyra_resolve_base_dir_ = llvm::Function::Create(
-        fn_type, llvm::Function::ExternalLinkage, "LyraResolveBaseDir",
+    auto* fn_type = llvm::FunctionType::get(
+        i32_ty, {i32_ty, ptr_ty, ptr_ty, ptr_ty}, false);
+    lyra_launch_parse_args_ = llvm::Function::Create(
+        fn_type, llvm::Function::ExternalLinkage, "LyraLaunchParseArgs",
         llvm_module_.get());
   }
-  return lyra_resolve_base_dir_;
+  return lyra_launch_parse_args_;
 }
 
 auto Context::GetLyraReportTime() -> llvm::Function* {
@@ -1529,11 +1533,13 @@ auto Context::GetLyraReadmemNoNotify() -> llvm::Function* {
     auto* i64_ty = llvm::Type::getInt64Ty(*llvm_context_);
     auto* i1_ty = llvm::Type::getInt1Ty(*llvm_context_);
     auto* void_ty = llvm::Type::getVoidTy(*llvm_context_);
-    // No engine_ptr parameter: this variant does not notify.
+    // engine_ptr required: needed to resolve the filename against fs_root
+    // before opening. "NoNotify" refers only to the absence of signal
+    // invalidation; it does not mean the op bypasses runtime fs_root.
     auto* fn_type = llvm::FunctionType::get(
         void_ty,
-        {ptr_ty, ptr_ty, i32_ty, i32_ty, i32_ty, i32_ty, i64_ty, i64_ty, i64_ty,
-         i64_ty, i1_ty, i32_ty},
+        {ptr_ty, ptr_ty, ptr_ty, i32_ty, i32_ty, i32_ty, i32_ty, i64_ty, i64_ty,
+         i64_ty, i64_ty, i1_ty, i32_ty},
         false);
     lyra_readmem_no_notify_ = llvm::Function::Create(
         fn_type, llvm::Function::ExternalLinkage, "LyraReadmemNoNotify",

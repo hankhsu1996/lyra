@@ -32,7 +32,7 @@ struct EmitDesignMainInput {
   const BodyOriginProvenance* origin_provenance = nullptr;
   SimulationHooks* hooks = nullptr;
   MainAbi main_abi = MainAbi::kEmbeddedPlusargs;
-  std::string fs_base_dir;
+  std::string fs_root;
   std::vector<std::string> plusargs;
   uint32_t feature_flags = 0;
   std::string signal_trace_path;

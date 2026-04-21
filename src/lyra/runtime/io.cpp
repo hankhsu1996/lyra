@@ -216,8 +216,7 @@ extern "C" auto LyraFopenFd(
   auto* engine = static_cast<lyra::runtime::Engine*>(engine_ptr);
   std::string filename{LyraStringAsView(filename_handle)};
   std::string mode{LyraStringAsView(mode_handle)};
-  return engine->GetFileManager().FopenFd(
-      engine->GetFsBaseDir(), filename, mode);
+  return engine->GetFileManager().FopenFd(engine->GetFsRoot(), filename, mode);
 }
 
 extern "C" auto LyraFopenMcd(void* engine_ptr, LyraStringHandle filename_handle)
@@ -228,7 +227,7 @@ extern "C" auto LyraFopenMcd(void* engine_ptr, LyraStringHandle filename_handle)
   }
   auto* engine = static_cast<lyra::runtime::Engine*>(engine_ptr);
   std::string filename{LyraStringAsView(filename_handle)};
-  return engine->GetFileManager().FopenMcd(engine->GetFsBaseDir(), filename);
+  return engine->GetFileManager().FopenMcd(engine->GetFsRoot(), filename);
 }
 
 extern "C" void LyraFclose(void* engine_ptr, int32_t descriptor) {
@@ -320,7 +319,7 @@ extern "C" void LyraFWrite(
 
 // Common readmem implementation. Returns true if any element was written.
 auto ReadmemImpl(
-    const std::filesystem::path& base_dir, LyraStringHandle filename_handle,
+    const std::filesystem::path& fs_root, LyraStringHandle filename_handle,
     void* target, int32_t element_width, int32_t stride_bytes,
     int32_t value_size_bytes, int32_t element_count, int64_t min_addr,
     int64_t current_addr, int64_t final_addr, int64_t step, bool is_hex,
@@ -348,11 +347,7 @@ auto ReadmemImpl(
   }
 
   std::string filename{LyraStringAsView(filename_handle)};
-
-  std::filesystem::path path{filename};
-  if (path.is_relative()) {
-    path = base_dir / path;
-  }
+  auto path = lyra::runtime::ResolveRuntimePath(fs_root, filename);
 
   std::ifstream file(path);
   if (!file) {
@@ -423,9 +418,9 @@ extern "C" void LyraReadmemLocal(
   }
   auto* engine = static_cast<lyra::runtime::Engine*>(engine_ptr);
   bool wrote = ReadmemImpl(
-      engine->GetFsBaseDir(), filename_handle, target, element_width,
-      stride_bytes, value_size_bytes, element_count, min_addr, current_addr,
-      final_addr, step, is_hex, element_kind);
+      engine->GetFsRoot(), filename_handle, target, element_width, stride_bytes,
+      value_size_bytes, element_count, min_addr, current_addr, final_addr, step,
+      is_hex, element_kind);
   if (wrote) {
     if (instance_ptr == nullptr) {
       throw lyra::common::InternalError(
@@ -453,23 +448,28 @@ extern "C" void LyraReadmemGlobal(
   }
   auto* engine = static_cast<lyra::runtime::Engine*>(engine_ptr);
   bool wrote = ReadmemImpl(
-      engine->GetFsBaseDir(), filename_handle, target, element_width,
-      stride_bytes, value_size_bytes, element_count, min_addr, current_addr,
-      final_addr, step, is_hex, element_kind);
+      engine->GetFsRoot(), filename_handle, target, element_width, stride_bytes,
+      value_size_bytes, element_count, min_addr, current_addr, final_addr, step,
+      is_hex, element_kind);
   if (wrote) {
     engine->MarkDirty(lyra::runtime::GlobalSignalId{global_slot_id});
   }
 }
 
 extern "C" void LyraReadmemNoNotify(
-    LyraStringHandle filename_handle, void* target, int32_t element_width,
-    int32_t stride_bytes, int32_t value_size_bytes, int32_t element_count,
-    int64_t min_addr, int64_t current_addr, int64_t final_addr, int64_t step,
-    bool is_hex, int32_t element_kind) {
+    void* engine_ptr, LyraStringHandle filename_handle, void* target,
+    int32_t element_width, int32_t stride_bytes, int32_t value_size_bytes,
+    int32_t element_count, int64_t min_addr, int64_t current_addr,
+    int64_t final_addr, int64_t step, bool is_hex, int32_t element_kind) {
+  if (engine_ptr == nullptr) {
+    throw lyra::common::InternalError(
+        "LyraReadmemNoNotify", "engine_ptr must not be null");
+  }
+  auto* engine = static_cast<lyra::runtime::Engine*>(engine_ptr);
   ReadmemImpl(
-      std::filesystem::path{}, filename_handle, target, element_width,
-      stride_bytes, value_size_bytes, element_count, min_addr, current_addr,
-      final_addr, step, is_hex, element_kind);
+      engine->GetFsRoot(), filename_handle, target, element_width, stride_bytes,
+      value_size_bytes, element_count, min_addr, current_addr, final_addr, step,
+      is_hex, element_kind);
 }
 
 extern "C" void LyraPrintModulePath(void* engine_ptr, void* instance_raw) {
@@ -515,12 +515,8 @@ extern "C" void LyraWritemem(
 
   std::string filename{LyraStringAsView(filename_handle)};
 
-  // Resolve path relative to engine-owned fs_base_dir
   auto* engine = static_cast<lyra::runtime::Engine*>(engine_ptr);
-  std::filesystem::path path{filename};
-  if (path.is_relative()) {
-    path = engine->GetFsBaseDir() / path;
-  }
+  auto path = lyra::runtime::ResolveRuntimePath(engine->GetFsRoot(), filename);
 
   std::ofstream file(path);
   if (!file) {

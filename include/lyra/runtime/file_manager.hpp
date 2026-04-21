@@ -15,6 +15,16 @@
 
 namespace lyra::runtime {
 
+// Canonical path resolver for runtime file operations. Every relative path
+// opened by simulation-side code ($fopen, $readmem*, $writemem*, trace
+// output, etc.) MUST go through this helper so filesystem semantics stay
+// uniform across backends and bypasses are impossible.
+//   - absolute paths are returned normalized
+//   - relative paths are joined against fs_root and normalized
+auto ResolveRuntimePath(
+    const std::filesystem::path& fs_root, const std::filesystem::path& path)
+    -> std::filesystem::path;
+
 // Result of CollectStreams: identifies which output streams a descriptor
 // targets.
 struct StreamTargets {
@@ -72,15 +82,15 @@ class FileManager {
   auto operator=(FileManager&&) -> FileManager& = delete;
 
   // MCD mode: returns (1 << bit_index), bit_index in [1,30]. Returns 0 on
-  // failure. base_dir: filesystem base for relative path resolution.
+  // failure. fs_root: driver-selected root for relative paths.
   auto FopenMcd(
-      const std::filesystem::path& base_dir, const std::string& filename)
+      const std::filesystem::path& fs_root, const std::string& filename)
       -> int32_t;
 
   // FD mode: returns (kFdBit | index), index in [3,...]. Returns 0 on failure.
-  // base_dir: filesystem base for relative path resolution.
+  // fs_root: driver-selected root for relative paths.
   auto FopenFd(
-      const std::filesystem::path& base_dir, const std::string& filename,
+      const std::filesystem::path& fs_root, const std::string& filename,
       const std::string& mode) -> int32_t;
 
   // Close descriptor. MCD: iterates set bits. FD: closes single file. Invalid:
@@ -145,13 +155,6 @@ class FileManager {
 
   static auto ParseMode(const std::string& mode)
       -> std::optional<std::ios_base::openmode>;
-
-  // Resolve filename against an explicit base directory.
-  // Absolute paths returned as-is (normalized); relative paths joined with
-  // base.
-  static auto ResolvePath(
-      const std::filesystem::path& base_dir, const std::string& filename)
-      -> std::string;
 };
 
 }  // namespace lyra::runtime

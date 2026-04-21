@@ -77,8 +77,11 @@ struct RuntimeInstance;
 // v22: A2 deferred assertion site metadata table.
 // v23: A2e deferred assertion thunk pointers + payload sizes in site metadata.
 // v24: L8a named event count for runtime event registry sizing.
-// v25: fs_base_dir moved from LyraInitRuntime hidden static to ABI struct.
-//      Engine owns the filesystem base directory explicitly.
+// v25: fs_root (filesystem root for relative runtime file operations)
+//      carried in the ABI struct. Engine owns it explicitly. For
+//      kEmbeddedPlusargs the string is set by codegen; for kArgvForwarding
+//      it is resolved at launch time by LyraLaunchParseArgs (either the
+//      driver-supplied `--lyra-fs-root=<path>` token, or launch-time CWD).
 // v26: construction_result pointer added. Runtime reads installable
 //      computations from the finalized ConstructionResult via this
 //      explicit ABI field; replaces the g_pending_result global handoff.
@@ -166,9 +169,11 @@ struct LyraRuntimeAbi {
   uint32_t num_events;
   uint32_t pad_events;
 
-  // v25: Filesystem base directory for relative path resolution.
-  // Owned by Engine after construction. Null = current working directory.
-  const char* fs_base_dir;
+  // v25: Filesystem root for relative runtime file operations.
+  // Absolute path. Owned by Engine after construction. Populated either from
+  // a compile-time embedded string (kEmbeddedPlusargs) or from LaunchArgs
+  // parsing at main() entry (kArgvForwarding). See LyraLaunchParseArgs.
+  const char* fs_root;
 
   // v26: Finalized ConstructionResult pointer.
   // Borrowed for the duration of LyraRunSimulation. Used to extract
@@ -191,5 +196,5 @@ static_assert(offsetof(LyraRuntimeAbi, global_precision_power) == 240);
 static_assert(offsetof(LyraRuntimeAbi, deferred_assertion_site_meta) == 248);
 static_assert(offsetof(LyraRuntimeAbi, num_deferred_assertion_sites) == 256);
 static_assert(offsetof(LyraRuntimeAbi, num_events) == 264);
-static_assert(offsetof(LyraRuntimeAbi, fs_base_dir) == 272);
+static_assert(offsetof(LyraRuntimeAbi, fs_root) == 272);
 static_assert(offsetof(LyraRuntimeAbi, construction_result) == 280);

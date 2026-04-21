@@ -84,7 +84,7 @@ auto Compile(
       .source_manager = compilation.hir.source_manager.get(),
       .origin_provenance = &origin_provenance,
       .hooks = nullptr,
-      .fs_base_dir = input.input.fs_base_dir.string(),
+      .fs_root = input.input.fs_root.string(),
       .plusargs = {},
       .feature_flags = feature_flags,
       .signal_trace_path = input.input.trace_signals_output.value_or(""),

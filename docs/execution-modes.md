@@ -27,10 +27,10 @@ MIR -> LLVM IR -> ORC JIT -> in-memory execution
 Both AOT and JIT consume compiled specialization artifacts. The codegen shape
 contract (init patterns, process functions, runtime calls) is identical across
 modes. LLVM compilation is per-specialization; realization produces the design-level
-tables. The only mode difference is `MainAbi`:
+tables. The only mode difference is `MainAbi`, which governs plusargs transport
+only. Filesystem-root semantics are identical across modes:
 
-- `kArgvForwarding` (AOT): `main(argc, argv)` forwards CLI args as plusargs,
-  resolves fs_base_dir from executable directory
+- `kArgvForwarding` (AOT): `main(argc, argv)` forwards `argv[1..]` as plusargs
 - `kEmbeddedPlusargs` (JIT): `main()` with plusargs baked into IR as global
   string constants
 
@@ -77,11 +77,30 @@ The Lyra runtime archive is linked into the binary by normal archive linking,
 so no shared library or rpath is needed. The binary still dynamically links
 libc, libstdc++, libm, and libpthread.
 
-fs_base_dir resolution for file I/O (`$readmemh`, etc.):
+## Filesystem root for runtime file I/O
 
-1. `LYRA_FS_BASE_DIR` env var (internal, set by `lyra run` for temp dirs)
-2. Directory of the executable (dirname of `argv[0]`)
-3. Current working directory (fallback)
+Relative runtime filesystem operations (`$fopen`, `$readmem*`, `$writemem*`,
+`--trace-signals=FILE`) resolve against an explicit filesystem root. There
+are two distinct launch modes:
+
+**Driver-controlled execution** -- `lyra run --backend=jit|aot|lli`:
+
+- **Project mode:** `fs_root = <directory containing lyra.toml>`.
+- **`--no-project` mode:** `fs_root = effective CWD after -C`.
+
+All backends consume the same driver-selected value. For JIT, the value is
+embedded in the IR. For AOT/LLI children, the driver passes the value to
+the child process through an explicit internal argv token, which the
+emitted `main` consumes before constructing the plusargs array.
+
+**Direct-run of a compiled binary** -- the user runs a `lyra compile`
+artifact directly, outside the Lyra driver:
+
+- `fs_root = launch-time CWD`.
+
+The emitted binary does not preserve any compile-time project root. There
+is no environment-variable, `argv[0]`, or executable-directory heuristic
+in either mode.
 
 ## JIT future directions
 
