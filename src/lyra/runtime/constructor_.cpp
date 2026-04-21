@@ -830,6 +830,34 @@ auto Constructor::CreateChildInstance(
   return staged_instances_[instance_index].get();
 }
 
+auto Constructor::CreatePlainChildInstance(
+    RuntimeScope* parent_scope, uint32_t ordinal_in_parent,
+    uint32_t instance_index, const char* label, uint64_t realized_inline_size,
+    uint64_t realized_appendix_size) -> RuntimeInstance* {
+  // Minimal plain-child entry point for the cut-3 direct-constructor
+  // path. CreateChildInstance already enforces "zero-slot bodies carry
+  // no param or port-const init" and "param_data / param_data_size are
+  // mutually constrained"; delegating with null/zero param data keeps
+  // both rules in one place rather than duplicating them here.
+  return CreateChildInstance(
+      parent_scope, ordinal_in_parent, instance_index, label,
+      /*param_data=*/nullptr, /*param_data_size=*/0, realized_inline_size,
+      realized_appendix_size);
+}
+
+auto Constructor::GetStagedInstance(uint32_t instance_index) const
+    -> RuntimeInstance* {
+  if (instance_index >= staged_instances_.size() ||
+      staged_instances_[instance_index] == nullptr) {
+    throw common::InternalError(
+        "Constructor::GetStagedInstance",
+        std::format(
+            "no staged instance at index {} (staged size {})", instance_index,
+            staged_instances_.size()));
+  }
+  return staged_instances_[instance_index].get();
+}
+
 auto Constructor::InternString(std::span<const char> pool, uint32_t pool_off)
     -> uint32_t {
   if (pool.empty() || pool_off == 0) return 0;
@@ -1501,17 +1529,28 @@ void LyraConstructorRunProgram(
   auto body_desc_span = std::span(body_descs, body_desc_count);
   auto path_span = std::span(path_pool, path_pool_size);
   auto param_span = std::span(param_pool, param_pool_size);
+  auto pc_init_span = std::span(port_const_inits, port_const_init_count);
+  auto pc_pool_span = std::span(port_const_pool, port_const_pool_size);
 
   // Transient scope-resolution table: converts flat parent_scope_index
   // from the emitted program into live scope pointers during ingestion.
   std::vector<lyra::runtime::RuntimeScope*> created_scopes;
   created_scopes.reserve(entry_count);
 
+  // Cut-3 parallel tracker: true iff the scope at the same index belongs
+  // to a body that opted into the backend-emitted construction path. When
+  // true, the scope's direct children have already been created by the
+  // parent body's emitted body-constructor and must not be re-created by
+  // the flat replay loop.
+  std::vector<uint8_t> created_scope_is_flagged_parent;
+  created_scope_is_flagged_parent.reserve(entry_count);
+
   for (uint32_t i = 0; i < entry_count; ++i) {
     const auto& e = entry_span[i];
 
     // Resolve parent scope from transport index.
     lyra::runtime::RuntimeScope* parent_scope = nullptr;
+    bool parent_is_flagged = false;
     if (e.parent_scope_index != UINT32_MAX) {
       if (e.parent_scope_index >= created_scopes.size()) {
         throw lyra::common::InternalError(
@@ -1521,6 +1560,8 @@ void LyraConstructorRunProgram(
                 e.parent_scope_index, created_scopes.size()));
       }
       parent_scope = created_scopes[e.parent_scope_index];
+      parent_is_flagged =
+          created_scope_is_flagged_parent[e.parent_scope_index] != 0;
     }
 
     // Read parent-relative scope label from path pool. The constructor
@@ -1538,6 +1579,7 @@ void LyraConstructorRunProgram(
       // Generate scope node: hierarchy-only, no body/storage/processes.
       auto* scope = ctor.CreateScope(parent_scope, label, e.ordinal_in_parent);
       created_scopes.push_back(scope);
+      created_scope_is_flagged_parent.push_back(0);
     } else {
       // Module instance node.
       if (e.body_group >= body_desc_count) {
@@ -1548,69 +1590,130 @@ void LyraConstructorRunProgram(
                 body_desc_count));
       }
 
-      if (e.body_group != last_body_group) {
-        ctor.BeginBody(
-            MakeBodyDescriptorPackageView(body_desc_span[e.body_group]));
-        last_body_group = e.body_group;
+      const auto& this_body_ref = body_desc_span[e.body_group];
+      bool this_body_uses_mir_ctor =
+          this_body_ref.desc != nullptr &&
+          this_body_ref.desc->uses_mir_constructor != 0;
+
+      lyra::runtime::RuntimeInstance* inst = nullptr;
+
+      if (parent_is_flagged) {
+        // Cut-3 skip path: the parent body's emitted body-constructor
+        // already materialized this child through
+        // LyraConstructorAddChildObject. The flat replay loop only
+        // reconstructs created_scopes and must not touch body activation,
+        // storage, or port-const inits for this entry. Uncovered seams
+        // (non-empty params, port-const inits, generate-scope parents)
+        // stay on the old path because IsPlainChildConstructor rejects
+        // them upstream.
+        inst = ctor.GetStagedInstance(e.instance_index);
+      } else {
+        if (e.body_group != last_body_group) {
+          ctor.BeginBody(MakeBodyDescriptorPackageView(this_body_ref));
+          last_body_group = e.body_group;
+        }
+
+        const void* param_data = nullptr;
+        uint32_t param_size = e.param_size;
+        if (param_size != 0) {
+          if (param_pool == nullptr) {
+            throw lyra::common::InternalError(
+                "LyraConstructorRunProgram",
+                std::format(
+                    "entry {} has param_size {} but param_pool is null", i,
+                    param_size));
+          }
+          if (e.param_offset > param_pool_size ||
+              param_size > param_pool_size - e.param_offset) {
+            throw lyra::common::InternalError(
+                "LyraConstructorRunProgram",
+                std::format(
+                    "entry {} param range [{}, {}) exceeds param_pool_size {}",
+                    i, e.param_offset,
+                    static_cast<uint64_t>(e.param_offset) + param_size,
+                    param_pool_size));
+          }
+          param_data = &param_span[e.param_offset];
+        }
+
+        inst = ctor.CreateChildInstance(
+            parent_scope, e.ordinal_in_parent, e.instance_index, label,
+            param_data, param_size, e.realized_inline_size,
+            e.realized_appendix_size);
+
+        // Apply constant port connection inits for this child.
+        // port_const_init_offset/count index into the flat
+        // port_const_inits array. Each entry writes a constant value to a
+        // child slot.
+        for (uint32_t pc = e.port_const_init_offset;
+             pc < e.port_const_init_offset + e.port_const_init_count; ++pc) {
+          if (pc >= port_const_init_count) {
+            throw lyra::common::InternalError(
+                "LyraConstructorRunProgram",
+                std::format(
+                    "entry {} port_const_init index {} >= count {}", i, pc,
+                    port_const_init_count));
+          }
+          const auto& init = pc_init_span[pc];
+          if (init.value_offset + init.value_size > port_const_pool_size) {
+            throw lyra::common::InternalError(
+                "LyraConstructorRunProgram",
+                std::format(
+                    "port const init value range [{}, {}) exceeds pool {}",
+                    init.value_offset,
+                    static_cast<uint64_t>(init.value_offset) + init.value_size,
+                    port_const_pool_size));
+          }
+          auto* dst = ResolveInstanceStorageOffset(
+              *inst, init.rel_byte_offset, init.value_size,
+              "ApplyPortConstInit");
+          std::memcpy(dst, &pc_pool_span[init.value_offset], init.value_size);
+        }
       }
 
-      const void* param_data = nullptr;
-      uint32_t param_size = e.param_size;
-      if (param_size != 0) {
-        if (param_pool == nullptr) {
-          throw lyra::common::InternalError(
-              "LyraConstructorRunProgram",
-              std::format(
-                  "entry {} has param_size {} but param_pool is null", i,
-                  param_size));
-        }
-        if (e.param_offset > param_pool_size ||
-            param_size > param_pool_size - e.param_offset) {
-          throw lyra::common::InternalError(
-              "LyraConstructorRunProgram",
-              std::format(
-                  "entry {} param range [{}, {}) exceeds param_pool_size {}", i,
-                  e.param_offset,
-                  static_cast<uint64_t>(e.param_offset) + param_size,
-                  param_pool_size));
-        }
-        param_data = &param_span[e.param_offset];
-      }
-
-      auto* inst = ctor.CreateChildInstance(
-          parent_scope, e.ordinal_in_parent, e.instance_index, label,
-          param_data, param_size, e.realized_inline_size,
-          e.realized_appendix_size);
       created_scopes.push_back(&inst->scope);
+      created_scope_is_flagged_parent.push_back(
+          this_body_uses_mir_ctor ? 1 : 0);
 
-      // Apply constant port connection inits for this child.
-      // port_const_init_offset/count index into the flat port_const_inits
-      // array. Each entry writes a constant value to a child slot.
-      for (uint32_t pc = e.port_const_init_offset;
-           pc < e.port_const_init_offset + e.port_const_init_count; ++pc) {
-        if (pc >= port_const_init_count) {
-          throw lyra::common::InternalError(
-              "LyraConstructorRunProgram",
-              std::format(
-                  "entry {} port_const_init index {} >= count {}", i, pc,
-                  port_const_init_count));
-        }
-        const auto& init = port_const_inits[pc];
-        if (init.value_offset + init.value_size > port_const_pool_size) {
-          throw lyra::common::InternalError(
-              "LyraConstructorRunProgram",
-              std::format(
-                  "port const init value range [{}, {}) exceeds pool {}",
-                  init.value_offset,
-                  static_cast<uint64_t>(init.value_offset) + init.value_size,
-                  port_const_pool_size));
-        }
-        auto* dst = ResolveInstanceStorageOffset(
-            *inst, init.rel_byte_offset, init.value_size, "ApplyPortConstInit");
-        std::memcpy(dst, &port_const_pool[init.value_offset], init.value_size);
+      // Invoke the body-constructor for flagged bodies once the instance
+      // exists (created here or picked up from the skip path). The
+      // emitted fn runs on this scope and materializes its direct
+      // children via LyraConstructorAddChildObject. Subsequent entries
+      // whose parent is this instance take the skip path above.
+      if (this_body_uses_mir_ctor &&
+          this_body_ref.desc->body_constructor_fn != nullptr) {
+        this_body_ref.desc->body_constructor_fn(&ctor, &inst->scope);
       }
     }
   }
+}
+
+void LyraConstructorBeginBodyByRef(
+    void* ctor_raw, const lyra::runtime::BodyDescriptorRef* body_ref) {
+  ValidateHandle(ctor_raw, "LyraConstructorBeginBodyByRef");
+  if (body_ref == nullptr) {
+    throw lyra::common::InternalError(
+        "LyraConstructorBeginBodyByRef", "null body_ref");
+  }
+  auto& ctor = *static_cast<lyra::runtime::Constructor*>(ctor_raw);
+  ctor.BeginBody(MakeBodyDescriptorPackageView(*body_ref));
+}
+
+auto LyraConstructorAddChildObject(
+    void* ctor_raw, void* parent_scope_raw, uint32_t ordinal_in_parent,
+    uint32_t instance_index, const char* label, uint64_t realized_inline_size,
+    uint64_t realized_appendix_size) -> void* {
+  ValidateHandle(ctor_raw, "LyraConstructorAddChildObject");
+  if (parent_scope_raw == nullptr) {
+    throw lyra::common::InternalError(
+        "LyraConstructorAddChildObject", "null parent_scope");
+  }
+  auto& ctor = *static_cast<lyra::runtime::Constructor*>(ctor_raw);
+  auto* parent_scope =
+      static_cast<lyra::runtime::RuntimeScope*>(parent_scope_raw);
+  return ctor.CreatePlainChildInstance(
+      parent_scope, ordinal_in_parent, instance_index, label,
+      realized_inline_size, realized_appendix_size);
 }
 
 auto LyraConstructorFinalize(void* ctor_raw) -> void* {

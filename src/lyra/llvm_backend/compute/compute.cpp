@@ -267,9 +267,17 @@ auto LowerRvalue(
             return RvalueValue::TwoState(result);
           },
           [](const mir::NewObjectRvalueInfo&) -> Result<RvalueValue> {
+            // NewObject rvalues are emitted only in mir::Constructor
+            // bodies and lowered by EmitBodyConstructorFunctions via the
+            // LyraConstructorAddChildObject runtime helper. Reaching the
+            // process/function rvalue dispatch with this variant means an
+            // upstream pass placed NewObject outside a constructor body,
+            // which violates the cut-3 invariant.
             throw common::InternalError(
                 "LowerRvalue",
-                "NewObjectRvalueInfo has no LLVM lowering in this cut");
+                "NewObjectRvalueInfo is not lowerable from process or "
+                "function bodies; constructor bodies use "
+                "EmitBodyConstructorFunctions");
           },
       },
       rvalue.info);

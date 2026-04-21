@@ -14,7 +14,6 @@
 #include "lyra/llvm_backend/emit_descriptor_utils.hpp"
 #include "lyra/llvm_backend/layout/layout.hpp"
 #include "lyra/mir/module_body.hpp"
-#include "lyra/mir/routine.hpp"
 #include "lyra/runtime/body_realization_desc.hpp"
 
 namespace lyra::lowering::mir_to_llvm {
@@ -40,7 +39,8 @@ auto EmitBodyRealizationDescs(
     Context& context, const Layout& layout,
     std::span<const lowering::mir_to_llvm::CodegenSession::BodyCompiledFuncs>
         body_compiled_funcs,
-    std::span<const std::vector<uint32_t>> /*child_site_to_tree_ordinal*/)
+    std::span<const std::vector<uint32_t>> /*child_site_to_tree_ordinal*/,
+    std::span<const uint8_t> effective_uses_mir_ctor)
     -> std::vector<BodyDescriptorPackageEmission> {
   auto& ctx = context.GetLlvmContext();
   auto& mod = context.GetModule();
@@ -57,7 +57,7 @@ auto EmitBodyRealizationDescs(
             body_compiled_funcs.size(), layout.body_realization_infos.size()));
   }
 
-  // BodyRealizationDesc ABI (96 bytes):
+  // BodyRealizationDesc ABI (112 bytes):
   //   {u32 num_processes, u32 slot_count,
   //    u64 inline_state_size_bytes, u64 appendix_state_size_bytes,
   //    u64 total_state_size_bytes, i8 time_unit_power, i8 time_precision_power,
@@ -65,11 +65,13 @@ auto EmitBodyRealizationDescs(
   //    ptr inline_slot_offsets, u32 num_inline_slot_offsets, [4 x pad],
   //    ptr port_entries, u32 num_port_entries, [4 x pad],
   //    ptr installable_computations, ptr ic_word_pool,
-  //    u32 num_ic_word_pool_entries, u32 num_installable_computations}
+  //    u32 num_ic_word_pool_entries, u32 num_installable_computations,
+  //    u32 uses_mir_constructor, [4 x pad], ptr body_constructor_fn}
   auto* i8_ty = llvm::Type::getInt8Ty(ctx);
   auto* header_type = llvm::StructType::get(
-      ctx, {i32_ty, i32_ty, i64_ty, i64_ty, i64_ty, i8_ty, i8_ty, i32_ty,
-            ptr_ty, i32_ty, ptr_ty, i32_ty, ptr_ty, ptr_ty, i32_ty, i32_ty});
+      ctx,
+      {i32_ty, i32_ty, i64_ty, i64_ty, i64_ty, i8_ty, i8_ty, i32_ty, ptr_ty,
+       i32_ty, ptr_ty, i32_ty, ptr_ty, ptr_ty, i32_ty, i32_ty, i32_ty, ptr_ty});
   // BodyProcessEntry ABI: {ptr shared_body_fn, u32 schema_index, u32 pad}
   auto* entry_type = llvm::StructType::get(ctx, {ptr_ty, i32_ty, i32_ty});
 
@@ -256,6 +258,31 @@ auto EmitBodyRealizationDescs(
       }
     }
 
+    // Body-constructor opt-in: when the effective flag is set (the
+    // HIR-level hint plus single-instance / plain-children checks from
+    // the construction program), forward-declare the emitted
+    // body-constructor function so the descriptor global can reference
+    // it by address. The function body is emitted later by
+    // EmitBodyConstructorFunctions. Unflagged bodies embed a null
+    // pointer.
+    bool eff_flag =
+        bi < effective_uses_mir_ctor.size() && effective_uses_mir_ctor[bi] != 0;
+    uint32_t uses_mir_ctor = 0;
+    llvm::Constant* body_ctor_fn_ptr = null_ptr;
+    if (eff_flag) {
+      uses_mir_ctor = 1;
+      auto fn_name = std::format("__lyra_body_construct_{}", body_group);
+      auto* fn_ty = llvm::FunctionType::get(
+          llvm::Type::getVoidTy(ctx), {ptr_ty, ptr_ty}, /*isVarArg=*/false);
+      auto* existing = mod.getFunction(fn_name);
+      auto* fn =
+          existing != nullptr
+              ? existing
+              : llvm::Function::Create(
+                    fn_ty, llvm::Function::ExternalLinkage, fn_name, &mod);
+      body_ctor_fn_ptr = fn;
+    }
+
     auto* header_val = llvm::ConstantStruct::get(
         header_type,
         {llvm::ConstantInt::get(i32_ty, num_procs),
@@ -271,7 +298,8 @@ auto EmitBodyRealizationDescs(
          port_entries_ptr, llvm::ConstantInt::get(i32_ty, num_port_entries),
          ic_descs_ptr, ic_word_pool_ptr,
          llvm::ConstantInt::get(i32_ty, ic_word_pool_count),
-         llvm::ConstantInt::get(i32_ty, num_ic)});
+         llvm::ConstantInt::get(i32_ty, num_ic),
+         llvm::ConstantInt::get(i32_ty, uses_mir_ctor), body_ctor_fn_ptr});
     auto* header_global = new llvm::GlobalVariable(
         mod, header_type, true, llvm::GlobalValue::InternalLinkage, header_val,
         header_name);

@@ -19,6 +19,7 @@
 #include "lyra/common/type.hpp"
 #include "lyra/llvm_backend/context.hpp"
 #include "lyra/llvm_backend/cu_facts.hpp"
+#include "lyra/llvm_backend/emit_body_constructor.hpp"
 #include "lyra/llvm_backend/emit_descriptor_utils.hpp"
 #include "lyra/llvm_backend/layout/layout.hpp"
 #include "lyra/llvm_backend/type_ops/default_init.hpp"
@@ -81,30 +82,6 @@ auto EncodeConstructionProgramEntry(
            llvm::ConstantInt::get(i64_ty, e.realized_appendix_size),
            llvm::ConstantInt::get(i32_ty, e.port_const_init_offset),
            llvm::ConstantInt::get(i32_ty, e.port_const_init_count)});
-}
-
-// Canonical LLVM struct type for runtime::BodyDescriptorRef.
-// Must match the C++ struct field order in construction_program_abi.hpp.
-auto GetBodyDescriptorRefType(llvm::LLVMContext& ctx) -> llvm::StructType* {
-  auto* ptr_ty = llvm::PointerType::getUnqual(ctx);
-  auto* i32_ty = llvm::Type::getInt32Ty(ctx);
-  return llvm::StructType::get(
-      ctx,
-      {// desc, entries, num_entries
-       ptr_ty, ptr_ty, i32_ty,
-       // meta: entries, num, pool, pool_size
-       ptr_ty, i32_ty, ptr_ty, i32_ty,
-       // triggers: entries, num, ranges, num_ranges, shapes, groupable
-       ptr_ty, i32_ty, ptr_ty, i32_ty, ptr_ty, ptr_ty,
-       // comb: entries, num, kernels, num_kernels
-       ptr_ty, i32_ty, ptr_ty, i32_ty,
-       // observable: entries, num, pool, pool_size
-       ptr_ty, i32_ty, ptr_ty, i32_ty,
-       // init: recipe, num_ops, roots, num_roots, child_indices, num,
-       //       param_slots, num
-       ptr_ty, i32_ty, ptr_ty, i32_ty, ptr_ty, i32_ty, ptr_ty, i32_ty,
-       // decision: tables, num_tables
-       ptr_ty, i32_ty});
 }
 
 // Encode one BodyDescriptorPackageEmission as a BodyDescriptorRef constant.
@@ -401,6 +378,12 @@ struct ConstructorRuntimeFuncs {
   llvm::Function* create;
   llvm::Function* add_connection;
   llvm::Function* run_program;
+  // Cut-3 direct-constructor helpers. Backend-emitted body-constructor
+  // functions call begin_body_by_ref to activate the child's body
+  // package, then add_child_object to materialize one plain-child
+  // RuntimeInstance under the current parent scope.
+  llvm::Function* begin_body_by_ref;
+  llvm::Function* add_child_object;
   llvm::Function* finalize;
   llvm::Function* result_get_states;
   llvm::Function* result_get_num_total;
@@ -456,6 +439,14 @@ auto DeclareConstructorRuntimeFuncs(Context& context)
           "LyraConstructorRunProgram", void_ty,
           {ptr_ty, ptr_ty, i32_ty, ptr_ty, i32_ty, ptr_ty, i32_ty, ptr_ty,
            i32_ty, ptr_ty, i32_ty, ptr_ty, i32_ty}),
+      // begin_body_by_ref / add_child_object are shared with the
+      // body-constructor emitter; reuse the centralized declarations so
+      // both callers see the same llvm::Function (no LLVM-auto-renamed
+      // duplicates).
+      .begin_body_by_ref =
+          DeclareBodyConstructorRuntimeFuncs(ctx, mod).begin_body_by_ref,
+      .add_child_object =
+          DeclareBodyConstructorRuntimeFuncs(ctx, mod).add_child_object,
       .finalize = declare("LyraConstructorFinalize", ptr_ty, {ptr_ty}),
       .result_get_states =
           declare("LyraConstructionResultGetStates", ptr_ty, {ptr_ty}),
@@ -516,7 +507,8 @@ auto EmitConstructorFunction(
     llvm::Constant* schemas_ptr, uint32_t num_schemas,
     llvm::Constant* slot_byte_offsets_ptr,
     const std::vector<BodyDescriptorPackageEmission>& body_descs,
-    llvm::Constant* conn_descs_ptr, const MetaTemplateEmission& conn_meta,
+    llvm::Constant* body_ref_table_ptr, llvm::Constant* conn_descs_ptr,
+    const MetaTemplateEmission& conn_meta,
     const TriggerTemplateEmission& conn_triggers,
     const ObservableDescriptorEmission& pkg_observable,
     const InitDescriptorEmission& pkg_init,
@@ -597,10 +589,10 @@ auto EmitConstructorFunction(
     }
   }
 
-  // Emit pooled construction program globals.
-  auto* body_ref_table_ptr =
-      EmitBodyDescriptorRefTable(ctx, context.GetModule(), body_descs);
-
+  // Emit pooled construction program globals. The body descriptor ref
+  // table is created once up in EmitRealizationAndConstructor and shared
+  // with any body-constructor functions that need to activate a child
+  // body via LyraConstructorBeginBodyByRef.
   auto* path_pool_ptr = EmitBytePoolGlobal(
       ctx, context.GetModule(), llvm::ArrayRef<uint8_t>(prog.path_pool),
       "__lyra_path_pool");
@@ -790,6 +782,53 @@ auto EmitConstructorFunction(
 
 }  // namespace
 
+auto DeclareBodyConstructorRuntimeFuncs(
+    llvm::LLVMContext& ctx, llvm::Module& mod) -> BodyConstructorRuntimeFuncs {
+  auto* ptr_ty = llvm::PointerType::getUnqual(ctx);
+  auto* void_ty = llvm::Type::getVoidTy(ctx);
+  auto* i32_ty = llvm::Type::getInt32Ty(ctx);
+  auto* i64_ty = llvm::Type::getInt64Ty(ctx);
+
+  auto get_or_create =
+      [&](const char* name, llvm::Type* ret,
+          std::initializer_list<llvm::Type*> args) -> llvm::Function* {
+    if (auto* existing = mod.getFunction(name)) return existing;
+    auto* ft = llvm::FunctionType::get(ret, args, /*isVarArg=*/false);
+    return llvm::Function::Create(
+        ft, llvm::Function::ExternalLinkage, name, &mod);
+  };
+
+  return BodyConstructorRuntimeFuncs{
+      .begin_body_by_ref = get_or_create(
+          "LyraConstructorBeginBodyByRef", void_ty, {ptr_ty, ptr_ty}),
+      .add_child_object = get_or_create(
+          "LyraConstructorAddChildObject", ptr_ty,
+          {ptr_ty, ptr_ty, i32_ty, i32_ty, ptr_ty, i64_ty, i64_ty}),
+  };
+}
+
+auto GetBodyDescriptorRefType(llvm::LLVMContext& ctx) -> llvm::StructType* {
+  auto* ptr_ty = llvm::PointerType::getUnqual(ctx);
+  auto* i32_ty = llvm::Type::getInt32Ty(ctx);
+  return llvm::StructType::get(
+      ctx,
+      {// desc, entries, num_entries
+       ptr_ty, ptr_ty, i32_ty,
+       // meta: entries, num, pool, pool_size
+       ptr_ty, i32_ty, ptr_ty, i32_ty,
+       // triggers: entries, num, ranges, num_ranges, shapes, groupable
+       ptr_ty, i32_ty, ptr_ty, i32_ty, ptr_ty, ptr_ty,
+       // comb: entries, num, kernels, num_kernels
+       ptr_ty, i32_ty, ptr_ty, i32_ty,
+       // observable: entries, num, pool, pool_size
+       ptr_ty, i32_ty, ptr_ty, i32_ty,
+       // init: recipe, num_ops, roots, num_roots, child_indices, num,
+       //       param_slots, num
+       ptr_ty, i32_ty, ptr_ty, i32_ty, ptr_ty, i32_ty, ptr_ty, i32_ty,
+       // decision: tables, num_tables
+       ptr_ty, i32_ty});
+}
+
 auto EmitRealizationAndConstructor(
     Context& context, const CuFacts& facts, const Layout& layout,
     llvm::Value* design_state,
@@ -806,9 +845,68 @@ auto EmitRealizationAndConstructor(
 
   // Emit constructor-side definition artifacts.
   auto* slot_offsets_ptr = EmitSlotByteOffsets(context, layout);
+
+  // Compute the effective per-body direct-constructor flag. An HIR-level
+  // "uses_mir_constructor" hint is only honored when the construction
+  // program confirms: exactly one compile-time instance of the body, and
+  // all that instance's children are plain (no parameter payload, no
+  // port-const init). Any deviation keeps the body on the flat path.
+  std::vector<uint8_t> effective_uses_mir_ctor(
+      layout.body_realization_infos.size(), 0);
+  {
+    std::vector<uint32_t> instance_count_per_body(
+        layout.body_realization_infos.size(), 0);
+    std::vector<uint32_t> parent_entry_of_body(
+        layout.body_realization_infos.size(), UINT32_MAX);
+    for (uint32_t i = 0; i < construction_program.entries.size(); ++i) {
+      const auto& e = construction_program.entries[i];
+      if (e.node_kind != runtime::ConstructionNodeKind::kInstance) continue;
+      if (e.body_group >= instance_count_per_body.size()) continue;
+      ++instance_count_per_body[e.body_group];
+      parent_entry_of_body[e.body_group] = i;
+    }
+    for (size_t bi = 0; bi < layout.body_realization_infos.size(); ++bi) {
+      const auto* body = layout.body_realization_infos[bi].body;
+      if (body == nullptr || !body->uses_mir_constructor) continue;
+      if (instance_count_per_body[bi] != 1) continue;
+
+      bool all_children_plain = true;
+      uint32_t parent_entry = parent_entry_of_body[bi];
+      for (const auto& e : construction_program.entries) {
+        if (e.parent_scope_index != parent_entry) continue;
+        if (e.node_kind != runtime::ConstructionNodeKind::kInstance) {
+          all_children_plain = false;
+          break;
+        }
+        if (e.param_size != 0 || e.port_const_init_count != 0) {
+          all_children_plain = false;
+          break;
+        }
+      }
+      if (!all_children_plain) continue;
+      effective_uses_mir_ctor[bi] = 1;
+    }
+  }
+
   auto body_descs = EmitBodyRealizationDescs(
       context, layout, body_compiled_funcs,
-      construction_program.child_site_to_tree_ordinal);
+      construction_program.child_site_to_tree_ordinal, effective_uses_mir_ctor);
+
+  // Pack all per-body globals into a BodyDescriptorRef[] table once.
+  // Backend-emitted body-constructor functions take pointers into this
+  // table to activate child bodies via LyraConstructorBeginBodyByRef;
+  // EmitConstructorFunction reuses it for the flat replay path.
+  auto* body_ref_table_ptr =
+      EmitBodyDescriptorRefTable(ctx, context.GetModule(), body_descs);
+
+  // Emit body-constructor function bodies for bodies that opted into the
+  // backend-emitted construction path. The forward declarations were
+  // created by EmitBodyRealizationDescs so the body descriptor globals
+  // already embed these fn pointers.
+  EmitBodyConstructorFunctions(
+      context, layout, body_descs, body_ref_table_ptr, construction_program,
+      effective_uses_mir_ctor);
+
   auto* conn_descs_ptr =
       EmitConnectionRealizationDescs(context, layout, process_funcs, num_init);
   auto conn_meta = EmitConnectionMetaTemplate(context, layout);
@@ -827,8 +925,8 @@ auto EmitRealizationAndConstructor(
   // Emit the constructor function and extract runtime values.
   auto ctor = EmitConstructorFunction(
       context, layout, design_state, schemas_ptr, num_schemas, slot_offsets_ptr,
-      body_descs, conn_descs_ptr, conn_meta, conn_triggers, pkg_obs, pkg_init,
-      construction_program);
+      body_descs, body_ref_table_ptr, conn_descs_ptr, conn_meta, conn_triggers,
+      pkg_obs, pkg_init, construction_program);
 
   return RealizationEmissionResult{
       .states_array = ctor.states_array,

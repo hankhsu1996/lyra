@@ -78,11 +78,35 @@ struct BodyDescriptorPackageEmission {
   uint32_t num_decision_tables = 0;
 };
 
+// Canonical LLVM struct type for runtime::BodyDescriptorRef (shared
+// across the descriptor-ref-table emitter, the body-constructor emitter,
+// and any other consumer that needs to index into the table as LLVM
+// IR). Must match the C++ struct field order in construction_program_abi.hpp.
+auto GetBodyDescriptorRefType(llvm::LLVMContext& ctx) -> llvm::StructType*;
+
+// Cut-3 direct-constructor runtime helpers. Exposed here so the body
+// constructor emitter can call them without redeclaring (and without
+// relying on name-lookup into the module, which can silently produce
+// duplicates when the declaration order varies).
+struct BodyConstructorRuntimeFuncs {
+  llvm::Function* begin_body_by_ref = nullptr;
+  llvm::Function* add_child_object = nullptr;
+};
+
+auto DeclareBodyConstructorRuntimeFuncs(
+    llvm::LLVMContext& ctx, llvm::Module& mod) -> BodyConstructorRuntimeFuncs;
+
 // Body descriptor emission (emit_body_descriptors.cpp).
+// `effective_uses_mir_ctor[bi]` is the per-body flag actually written into
+// the emitted descriptor: it combines the HIR-level
+// mir::ModuleBody::uses_mir_constructor hint with the construction-program
+// facts (single-instance, plain children). Must be parallel to
+// layout.body_realization_infos; empty span is treated as "all false".
 auto EmitBodyRealizationDescs(
     Context& context, const Layout& layout,
     std::span<const CodegenSession::BodyCompiledFuncs> body_compiled_funcs,
-    std::span<const std::vector<uint32_t>> child_site_to_tree_ordinal)
+    std::span<const std::vector<uint32_t>> child_site_to_tree_ordinal,
+    std::span<const uint8_t> effective_uses_mir_ctor)
     -> std::vector<BodyDescriptorPackageEmission>;
 
 // Connection descriptor emission (emit_connection_descriptors.cpp).

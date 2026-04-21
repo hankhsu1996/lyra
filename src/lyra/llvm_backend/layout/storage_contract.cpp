@@ -250,9 +250,13 @@ auto ResolveImpl(
           "ResolveStorageSpec", "event type has no value-storage semantics");
 
     case TypeKind::kObjectHandle:
-      throw common::InternalError(
-          "ResolveStorageSpec",
-          "object_handle type has no value-storage semantics");
+      return {
+          .data = PackedStorageSpec{
+              .layout =
+                  {.total_byte_size = target.pointer_byte_size,
+                   .alignment = target.pointer_alignment},
+              .bit_width = target.pointer_byte_size * 8,
+              .is_four_state = false}};
   }
 
   throw common::InternalError("ResolveStorageSpec", "unreachable");

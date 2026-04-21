@@ -23,3 +23,22 @@ cases:
           - "constructor {"
           - "new_object("
           - "object_handle"
+
+  - name: plain_child_runs
+    description: |
+      End-to-end behavioral proof for the cut-3 direct-constructor path.
+      The plain child has an initial $display; seeing its output proves
+      the child RuntimeInstance was created, its module process was
+      staged, and the scheduler dispatched it. If the direct-constructor
+      path fails to create the child or install its process, this test
+      will not print.
+    sv: |
+      module Child;
+        initial $display("child_ran=%0d", 42);
+      endmodule
+
+      module Test;
+        Child u_child();
+      endmodule
+    expect:
+      stdout: "child_ran=42\n"

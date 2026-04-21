@@ -21,13 +21,73 @@
 #include "lyra/lowering/hir_to_mir/routine.hpp"
 #include "lyra/lowering/origin_map.hpp"
 #include "lyra/mir/arena.hpp"
+#include "lyra/mir/basic_block.hpp"
 #include "lyra/mir/constructor.hpp"
 #include "lyra/mir/external_ref.hpp"
 #include "lyra/mir/handle.hpp"
 #include "lyra/mir/module_body.hpp"
 #include "lyra/mir/routine.hpp"
+#include "lyra/mir/rvalue.hpp"
+#include "lyra/mir/statement.hpp"
+#include "lyra/mir/terminator.hpp"
 
 namespace lyra::lowering::hir_to_mir {
+
+namespace {
+
+// Conservative detection for the minimal plain-child subset. A body is
+// eligible for the new backend-emitted construction path only if every
+// observable property below holds; any deviation leaves the body on the
+// flat replay path.
+//
+// Cut-3 intentionally matches a narrow shape: a linear chain of blocks
+// whose statements are only NewObject-producing temp writes, linked by
+// Jump terminators and ending with a void Return, plus no external-ref
+// recipes. Broader cases (ports, generate, bindings, parameter payloads,
+// non-linear control flow) fail this check and stay on the old pipeline
+// until later cuts expand coverage.
+auto IsPlainChildConstructor(
+    const mir::Constructor& ctor,
+    const std::vector<mir::ExternalAccessRecipe>& body_external_refs) -> bool {
+  if (!body_external_refs.empty()) return false;
+  if (ctor.blocks.empty()) return false;
+
+  uint32_t new_object_count = 0;
+  for (const mir::BasicBlock& block : ctor.blocks) {
+    if (!block.params.empty()) return false;
+
+    for (const mir::Statement& stmt : block.statements) {
+      const auto* assign = std::get_if<mir::PlainAssign>(&stmt.data);
+      if (assign == nullptr) return false;
+      if (!std::holds_alternative<mir::PlaceId>(assign->dest)) return false;
+      const auto* rv = std::get_if<mir::Rvalue>(&assign->rhs);
+      if (rv == nullptr) return false;
+      if (!rv->operands.empty()) return false;
+      if (!std::holds_alternative<mir::NewObjectRvalueInfo>(rv->info))
+        return false;
+      ++new_object_count;
+    }
+
+    const auto& term = block.terminator.data;
+    if (const auto* jmp = std::get_if<mir::Jump>(&term)) {
+      if (!jmp->args.empty()) return false;
+      continue;
+    }
+    if (const auto* ret = std::get_if<mir::Return>(&term)) {
+      if (ret->value.has_value()) return false;
+      continue;
+    }
+    return false;
+  }
+  // Cut-3 only flags bodies that actually take over construction work.
+  // An empty constructor body (no new_object sites) would emit an empty
+  // body-constructor function and force the downstream emission guard to
+  // treat any multi-instance empty body as a spurious violation. Leaving
+  // those bodies on the flat replay path keeps the opt-in tight.
+  return new_object_count > 0;
+}
+
+}  // namespace
 
 auto LowerModule(
     const hir::ModuleBody& body, const LoweringInput& input,
@@ -190,11 +250,14 @@ auto LowerModule(
     body_arena.SetFunctionBody(mir_func_id, std::move(mir_func));
   }
 
-  // Phase 4: Lower the body-owned constructor body. Not consumed by LLVM or
-  // runtime in this cut; verified and dumped only. LowerConstructorBody
+  // Phase 4: Lower the body-owned constructor body. LowerConstructorBody
   // anchors its lowering context to the hir::ModuleBody's own arena and
   // constant arena, so it does not depend on `input.hir_arena` being
   // pre-routed by the caller.
+  //
+  // After lowering, opt the body into the backend-emitted construction
+  // path only when the constructor body matches the strict plain-child
+  // subset. Any deviation leaves the body on the flat replay path.
   {
     Result<mir::Constructor> ctor_result =
         LowerConstructorBody(body, input, body_arena, decl_view, &body_origins);
@@ -202,6 +265,8 @@ auto LowerModule(
       return std::unexpected(ctor_result.error());
     }
     result.constructor = std::move(*ctor_result);
+    result.uses_mir_constructor =
+        IsPlainChildConstructor(result.constructor, external_refs);
   }
 
   // Record the body-global decision site count. The LLVM backend validates

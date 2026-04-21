@@ -41,8 +41,22 @@ struct ModuleBody {
   std::vector<FunctionId> functions;
 
   // Body-owned construction entry routine. Exactly one per body. Populated
-  // by HIR->MIR constructor lowering. Not yet consumed by LLVM or runtime.
+  // by HIR->MIR constructor lowering.
   Constructor constructor;
+
+  // Opt-in: when true, this body's child construction is executed by a
+  // backend-emitted body-constructor function derived from `constructor`.
+  // The flat replay path in LyraConstructorRunProgram skips child creation
+  // for entries whose parent body carries this flag; the parent's emitted
+  // body-constructor has already created those children through a typed
+  // runtime helper (LyraConstructorAddChildObject).
+  //
+  // This is a narrow opt-in: only bodies whose constructor body matches the
+  // minimal plain-child new_object pattern (no ports, no bindings, no
+  // external refs, no generate, no parameter payloads) may set this flag.
+  // Any uncertainty must leave it false so the old flat path remains
+  // authoritative. Detection lives in hir_to_mir/module.cpp.
+  bool uses_mir_constructor = false;
 
   // Body-local slot descriptors, indexed by kModuleSlot id.
   // This is the body's required storage interface: what slots exist,

@@ -303,9 +303,11 @@ auto GetLlvmTypeForTypeId(
     case TypeKind::kChandle:
       return llvm::PointerType::getUnqual(ctx);
 
+    case TypeKind::kObjectHandle:
+      return llvm::PointerType::getUnqual(ctx);
+
     case TypeKind::kVoid:
     case TypeKind::kEvent:
-    case TypeKind::kObjectHandle:
       throw common::InternalError(
           "GetLlvmTypeForTypeId",
           std::format(

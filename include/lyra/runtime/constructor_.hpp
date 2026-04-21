@@ -318,6 +318,23 @@ class Constructor {
       uint32_t param_data_size, uint64_t realized_inline_size,
       uint64_t realized_appendix_size) -> RuntimeInstance*;
 
+  // Create a child instance for the minimal plain-child subset: no
+  // parameter payload, no port-const inits, no generate semantics. The
+  // currently-active body (set by a prior BeginBody) determines the
+  // child's body package. Entry for the backend-emitted body-constructor
+  // path; cut-3 scope only.
+  auto CreatePlainChildInstance(
+      RuntimeScope* parent_scope, uint32_t ordinal_in_parent,
+      uint32_t instance_index, const char* label, uint64_t realized_inline_size,
+      uint64_t realized_appendix_size) -> RuntimeInstance*;
+
+  // Read-only accessor for an already-staged instance by its compile-time
+  // object_index. Used by LyraConstructorRunProgram to pick up instances
+  // pre-created by an emitted body-constructor when the flat replay loop
+  // reaches their entry. Throws if the slot is empty.
+  [[nodiscard]] auto GetStagedInstance(uint32_t instance_index) const
+      -> RuntimeInstance*;
+
   // Finalize construction and return the unified result.
   // After this call, further mutation is rejected.
   [[nodiscard]] auto Finalize() -> ConstructionResult;
@@ -517,6 +534,25 @@ void LyraConstructorRunProgram(
     const lyra::runtime::PortConstInitEntry* port_const_inits,
     uint32_t port_const_init_count, const uint8_t* port_const_pool,
     uint32_t port_const_pool_size);
+
+// Activate the child body whose description is packed into `body_ref`.
+// Thin shim over Constructor::BeginBody used by backend-emitted
+// body-constructor code: each plain-child site starts with a
+// begin-body-by-ref call so AddChildObject operates against the correct
+// active body package.
+void LyraConstructorBeginBodyByRef(
+    void* ctor, const lyra::runtime::BodyDescriptorRef* body_ref);
+
+// Create one plain-child instance under the currently-active body. Used
+// by backend-emitted body-constructor code as the typed replacement for
+// the flat-replay CreateChildInstance call. Preconditions: BeginBody (or
+// BeginBodyByRef) has been called with the child's body package, and
+// param / port-const init is absent (those cases remain on the old
+// path). Returns the new RuntimeInstance*.
+auto LyraConstructorAddChildObject(
+    void* ctor, void* parent_scope, uint32_t ordinal_in_parent,
+    uint32_t instance_index, const char* label, uint64_t realized_inline_size,
+    uint64_t realized_appendix_size) -> void*;
 
 auto LyraConstructorFinalize(void* ctor) -> void*;
 

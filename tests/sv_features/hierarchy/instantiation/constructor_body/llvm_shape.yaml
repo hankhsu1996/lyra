@@ -1,0 +1,29 @@
+feature: hierarchy_instantiation_constructor_body_llvm_shape
+description: |
+  LLVM shape proof for the cut-3 direct-constructor path. A plain child
+  instantiation opts the parent body into the backend-emitted
+  construction path; the backend emits a per-body
+  __lyra_body_construct_<i> function that calls
+  LyraConstructorAddChildObject through LyraConstructorBeginBodyByRef.
+
+cases:
+  - name: plain_child_emits_body_constructor
+    description: |
+      Proves (a) the new runtime helpers are declared, (b) a
+      body-constructor function is defined for the flagged parent body,
+      and (c) that function calls LyraConstructorAddChildObject.
+    dump_llvm_ir: true
+    sv: |
+      module Child;
+        initial $display("child");
+      endmodule
+
+      module Test;
+        Child u_child();
+      endmodule
+    expect:
+      compiler_output:
+        contains:
+          - "@LyraConstructorAddChildObject"
+          - "@LyraConstructorBeginBodyByRef"
+          - "__lyra_body_construct_"
