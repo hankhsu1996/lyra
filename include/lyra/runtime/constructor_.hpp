@@ -310,23 +310,37 @@ class Constructor {
   // label: scope label for path derivation (e.g. "u0"). The full
   //   hierarchical path is derived from parent_scope + label by the
   //   constructor; callers must not transport full paths.
-  // param_data/param_data_size: pre-lowered canonical storage bytes.
+  // param_data/param_data_size: pre-lowered canonical storage bytes
+  //   (flat-replay path; mutually exclusive with arg_ptrs).
+  // arg_ptrs/arg_byte_sizes: typed direct-constructor argument source
+  //   (direct path; mutually exclusive with param_data). When
+  //   non-empty, each arg_ptrs[i] points to the value for
+  //   body.init_param_slots[i] and arg_byte_sizes[i] must equal that
+  //   slot's byte_size.
   // Returns the created instance (owned by the constructor).
   auto CreateChildInstance(
       RuntimeScope* parent_scope, uint32_t ordinal_in_parent,
       uint32_t instance_index, const char* label, const void* param_data,
-      uint32_t param_data_size, uint64_t realized_inline_size,
+      uint32_t param_data_size, std::span<const void* const> arg_ptrs,
+      std::span<const uint32_t> arg_byte_sizes, uint64_t realized_inline_size,
       uint64_t realized_appendix_size) -> RuntimeInstance*;
 
-  // Create a child instance for the minimal plain-child subset: no
-  // parameter payload, no port-const inits, no generate semantics. The
-  // currently-active body (set by a prior BeginBody) determines the
-  // child's body package. Entry for the backend-emitted body-constructor
-  // path; cut-3 scope only.
-  auto CreatePlainChildInstance(
+  // Create a child instance for the direct-constructor subset: no
+  // port-const inits, no generate semantics. Transmitted-parameter
+  // values arrive as typed independent pointers plus per-arg byte
+  // sizes, in the same order as the child body's init_param_slots
+  // template. The currently-active body (set by a prior BeginBody)
+  // determines the child's body package. `num_args` must match the
+  // child body's transmitted-parameter slot count; a zero count is
+  // valid for parameter-less children and makes the other two arrays
+  // unused. Entry for the backend-emitted body-constructor path; no
+  // compile-time byte pool is consulted by this path.
+  auto CreateChildInstanceDirect(
       RuntimeScope* parent_scope, uint32_t ordinal_in_parent,
       uint32_t instance_index, const char* label, uint64_t realized_inline_size,
-      uint64_t realized_appendix_size) -> RuntimeInstance*;
+      uint64_t realized_appendix_size, uint32_t num_args,
+      const void* const* arg_ptrs, const uint32_t* arg_byte_sizes)
+      -> RuntimeInstance*;
 
   // Read-only accessor for an already-staged instance by its compile-time
   // object_index. Used by LyraConstructorRunProgram to pick up instances
@@ -543,16 +557,21 @@ void LyraConstructorRunProgram(
 void LyraConstructorBeginBodyByRef(
     void* ctor, const lyra::runtime::BodyDescriptorRef* body_ref);
 
-// Create one plain-child instance under the currently-active body. Used
-// by backend-emitted body-constructor code as the typed replacement for
-// the flat-replay CreateChildInstance call. Preconditions: BeginBody (or
-// BeginBodyByRef) has been called with the child's body package, and
-// param / port-const init is absent (those cases remain on the old
-// path). Returns the new RuntimeInstance*.
+// Create one direct-constructor child instance under the currently-
+// active body. Used by backend-emitted body-constructor code as the
+// typed replacement for the flat-replay CreateChildInstance call.
+// Preconditions: BeginBody (or BeginBodyByRef) has been called with
+// the child's body package, and port-const init is absent (that case
+// remains on the old path). Transmitted-parameter values are passed
+// directly as typed pointers: `num_args` parallel entries in
+// `arg_ptrs` / `arg_byte_sizes`, in the same order as the child body's
+// init_param_slots template. `num_args == 0` is valid for children
+// with no transmitted parameters. Returns the new RuntimeInstance*.
 auto LyraConstructorAddChildObject(
     void* ctor, void* parent_scope, uint32_t ordinal_in_parent,
     uint32_t instance_index, const char* label, uint64_t realized_inline_size,
-    uint64_t realized_appendix_size) -> void*;
+    uint64_t realized_appendix_size, uint32_t num_args,
+    const void* const* arg_ptrs, const uint32_t* arg_byte_sizes) -> void*;
 
 auto LyraConstructorFinalize(void* ctor) -> void*;
 

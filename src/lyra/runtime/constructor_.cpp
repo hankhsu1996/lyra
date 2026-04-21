@@ -240,7 +240,7 @@ static_assert(
     sizeof(lyra::runtime::OwnedStorageHandle) ==
     sizeof(void*) + sizeof(uint64_t));
 
-void ApplyParamInitToInstance(
+void ApplyParamInitFromContiguous(
     RuntimeInstance& instance, std::span<const ParamInitSlotEntry> slots,
     const void* value_data, uint32_t value_total_bytes) {
   if (slots.empty()) return;
@@ -250,23 +250,54 @@ void ApplyParamInitToInstance(
   for (const auto& slot : slots) {
     if (src_offset + slot.byte_size > value_total_bytes) {
       throw lyra::common::InternalError(
-          "ApplyParamInitToInstance",
+          "ApplyParamInitFromContiguous",
           std::format(
               "param payload overrun: offset {} + size {} > total {}",
               src_offset, slot.byte_size, value_total_bytes));
     }
     auto* dst = ResolveInstanceStorageOffset(
         instance, slot.rel_byte_offset, slot.byte_size,
-        "ApplyParamInitToInstance");
+        "ApplyParamInitFromContiguous");
     std::memcpy(dst, &src[src_offset], slot.byte_size);
     src_offset += slot.byte_size;
   }
   if (src_offset != value_total_bytes) {
     throw lyra::common::InternalError(
-        "ApplyParamInitToInstance",
+        "ApplyParamInitFromContiguous",
         std::format(
             "param payload size mismatch: consumed {} bytes but payload has {}",
             src_offset, value_total_bytes));
+  }
+}
+
+// Typed-argument companion to ApplyParamInitFromContiguous. Used by the
+// direct-constructor path, which passes one independent pointer per
+// transmitted parameter rather than a packed buffer. Each ptrs[i] must
+// point to a value whose size matches slots[i].byte_size.
+void ApplyParamInitFromArgs(
+    RuntimeInstance& instance, std::span<const ParamInitSlotEntry> slots,
+    std::span<const void* const> ptrs, std::span<const uint32_t> byte_sizes) {
+  if (slots.empty() && ptrs.empty()) return;
+  if (ptrs.size() != slots.size() || byte_sizes.size() != slots.size()) {
+    throw lyra::common::InternalError(
+        "ApplyParamInitFromArgs",
+        std::format(
+            "arg count ({}, {}) does not match body param slot count {}",
+            ptrs.size(), byte_sizes.size(), slots.size()));
+  }
+  for (size_t i = 0; i < slots.size(); ++i) {
+    const auto& slot = slots[i];
+    if (byte_sizes[i] != slot.byte_size) {
+      throw lyra::common::InternalError(
+          "ApplyParamInitFromArgs",
+          std::format(
+              "arg {} byte size {} does not match slot byte size {}", i,
+              byte_sizes[i], slot.byte_size));
+    }
+    auto* dst = ResolveInstanceStorageOffset(
+        instance, slot.rel_byte_offset, slot.byte_size,
+        "ApplyParamInitFromArgs");
+    std::memcpy(dst, ptrs[i], slot.byte_size);
   }
 }
 
@@ -646,7 +677,8 @@ auto Constructor::CreateScope(
 auto Constructor::CreateChildInstance(
     RuntimeScope* parent_scope, uint32_t ordinal_in_parent,
     uint32_t instance_index, const char* label, const void* param_data,
-    uint32_t param_data_size, uint64_t realized_inline_size,
+    uint32_t param_data_size, std::span<const void* const> arg_ptrs,
+    std::span<const uint32_t> arg_byte_sizes, uint64_t realized_inline_size,
     uint64_t realized_appendix_size) -> RuntimeInstance* {
   CheckNotFinalized("Constructor::CreateChildInstance");
   if (label == nullptr) {
@@ -662,6 +694,13 @@ auto Constructor::CreateChildInstance(
     throw common::InternalError(
         "Constructor::CreateChildInstance",
         "param_data and param_data_size must be both empty or both present");
+  }
+  bool has_blob = param_data_size != 0;
+  bool has_typed_args = !arg_ptrs.empty() || !arg_byte_sizes.empty();
+  if (has_blob && has_typed_args) {
+    throw common::InternalError(
+        "Constructor::CreateChildInstance",
+        "blob param_data and typed arg_ptrs are mutually exclusive");
   }
   connections_finalized_ = true;
 
@@ -697,7 +736,7 @@ auto Constructor::CreateChildInstance(
     if (body_.init_recipe.num_ops != 0 ||
         body_.init_recipe_roots.num_roots != 0 ||
         body_.init_recipe.num_child_indices != 0 ||
-        !body_.init_params.slots.empty() || param_data_size != 0) {
+        !body_.init_params.slots.empty() || has_blob || has_typed_args) {
       throw common::InternalError(
           "Constructor::CreateChildInstance",
           "zero-slot body must not carry instance-state init descriptors "
@@ -708,8 +747,13 @@ auto Constructor::CreateChildInstance(
   // Body-shaped storage construction.
   ApplyStorageConstructionRecipeToInstance(
       *instance, body_.init_recipe, body_.init_recipe_roots);
-  ApplyParamInitToInstance(
-      *instance, body_.init_params.slots, param_data, param_data_size);
+  if (has_typed_args) {
+    ApplyParamInitFromArgs(
+        *instance, body_.init_params.slots, arg_ptrs, arg_byte_sizes);
+  } else {
+    ApplyParamInitFromContiguous(
+        *instance, body_.init_params.slots, param_data, param_data_size);
+  }
 
   // Place instance at its compile-time object_index position so
   // result.instances[object_index] matches the compile-time model.
@@ -830,19 +874,22 @@ auto Constructor::CreateChildInstance(
   return staged_instances_[instance_index].get();
 }
 
-auto Constructor::CreatePlainChildInstance(
+auto Constructor::CreateChildInstanceDirect(
     RuntimeScope* parent_scope, uint32_t ordinal_in_parent,
     uint32_t instance_index, const char* label, uint64_t realized_inline_size,
-    uint64_t realized_appendix_size) -> RuntimeInstance* {
-  // Minimal plain-child entry point for the cut-3 direct-constructor
-  // path. CreateChildInstance already enforces "zero-slot bodies carry
-  // no param or port-const init" and "param_data / param_data_size are
-  // mutually constrained"; delegating with null/zero param data keeps
-  // both rules in one place rather than duplicating them here.
+    uint64_t realized_appendix_size, uint32_t num_args,
+    const void* const* arg_ptrs, const uint32_t* arg_byte_sizes)
+    -> RuntimeInstance* {
+  // Direct-constructor entry point. Forwards typed transmitted-parameter
+  // arguments into CreateChildInstance, which dispatches to
+  // ApplyParamInitFromArgs when the typed spans are non-empty. No
+  // compile-time byte pool is consulted.
+  auto ptrs = std::span<const void* const>(arg_ptrs, num_args);
+  auto sizes = std::span<const uint32_t>(arg_byte_sizes, num_args);
   return CreateChildInstance(
       parent_scope, ordinal_in_parent, instance_index, label,
-      /*param_data=*/nullptr, /*param_data_size=*/0, realized_inline_size,
-      realized_appendix_size);
+      /*param_data=*/nullptr, /*param_data_size=*/0, ptrs, sizes,
+      realized_inline_size, realized_appendix_size);
 }
 
 auto Constructor::GetStagedInstance(uint32_t instance_index) const
@@ -1503,7 +1550,8 @@ void LyraConstructorAddInstance(
       param_data, param_data_size, "param_data", "LyraConstructorAddInstance");
   static_cast<lyra::runtime::Constructor*>(ctor)->CreateChildInstance(
       nullptr, 0, 0, instance_path, param_data, param_data_size,
-      realized_inline_size, realized_appendix_size);
+      /*arg_ptrs=*/{}, /*arg_byte_sizes=*/{}, realized_inline_size,
+      realized_appendix_size);
 }
 
 void LyraConstructorRunProgram(
@@ -1638,8 +1686,8 @@ void LyraConstructorRunProgram(
 
         inst = ctor.CreateChildInstance(
             parent_scope, e.ordinal_in_parent, e.instance_index, label,
-            param_data, param_size, e.realized_inline_size,
-            e.realized_appendix_size);
+            param_data, param_size, /*arg_ptrs=*/{}, /*arg_byte_sizes=*/{},
+            e.realized_inline_size, e.realized_appendix_size);
 
         // Apply constant port connection inits for this child.
         // port_const_init_offset/count index into the flat
@@ -1702,18 +1750,25 @@ void LyraConstructorBeginBodyByRef(
 auto LyraConstructorAddChildObject(
     void* ctor_raw, void* parent_scope_raw, uint32_t ordinal_in_parent,
     uint32_t instance_index, const char* label, uint64_t realized_inline_size,
-    uint64_t realized_appendix_size) -> void* {
+    uint64_t realized_appendix_size, uint32_t num_args,
+    const void* const* arg_ptrs, const uint32_t* arg_byte_sizes) -> void* {
   ValidateHandle(ctor_raw, "LyraConstructorAddChildObject");
   if (parent_scope_raw == nullptr) {
     throw lyra::common::InternalError(
         "LyraConstructorAddChildObject", "null parent_scope");
   }
+  if (num_args > 0 && (arg_ptrs == nullptr || arg_byte_sizes == nullptr)) {
+    throw lyra::common::InternalError(
+        "LyraConstructorAddChildObject",
+        "num_args > 0 requires non-null arg arrays");
+  }
   auto& ctor = *static_cast<lyra::runtime::Constructor*>(ctor_raw);
   auto* parent_scope =
       static_cast<lyra::runtime::RuntimeScope*>(parent_scope_raw);
-  return ctor.CreatePlainChildInstance(
+  return ctor.CreateChildInstanceDirect(
       parent_scope, ordinal_in_parent, instance_index, label,
-      realized_inline_size, realized_appendix_size);
+      realized_inline_size, realized_appendix_size, num_args, arg_ptrs,
+      arg_byte_sizes);
 }
 
 auto LyraConstructorFinalize(void* ctor_raw) -> void* {

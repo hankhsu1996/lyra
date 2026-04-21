@@ -1154,7 +1154,12 @@ void Dumper::Dump(ExpressionId id) {
     case ExpressionKind::kNewObject: {
       const auto& data = std::get<NewObjectExpressionData>(expr.data);
       *out_ << std::format(
-          "new_object({})", SymbolName(data.target_instance_sym));
+          "new_object({}", SymbolName(data.target_instance_sym));
+      for (ExpressionId arg : data.constructor_arguments) {
+        *out_ << ", ";
+        Dump(arg);
+      }
+      *out_ << ")";
       break;
     }
   }

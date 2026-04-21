@@ -320,12 +320,16 @@ struct MaterializeInitializerExpressionData {
 // Object-creation expression. Evaluates to an object handle whose type
 // (expr.type) is of kind kObjectHandle. `target_instance_sym` identifies
 // the actual target being constructed at this call site (the registered
-// SymbolId of the child instance in the owning body's scope). Cut 2 uses
-// the per-site instance symbol as the construction-target identity;
-// future cuts may generalize to a module-type TypeId or a spec-group
-// stable handle.
+// SymbolId of the child instance in the owning body's scope).
+// `constructor_arguments` carries the transmitted-parameter values
+// supplied to the child, in child-parameter declaration order (matching
+// the child body's param-slot template). Absorbed and specialization-
+// driving parameters are not threaded here: absorbed values are baked
+// into the compiled body and structural values are folded into
+// specialization identity.
 struct NewObjectExpressionData {
   SymbolId target_instance_sym;
+  std::vector<ExpressionId> constructor_arguments;
 
   auto operator==(const NewObjectExpressionData&) const -> bool = default;
 };

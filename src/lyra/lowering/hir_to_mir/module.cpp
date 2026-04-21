@@ -35,18 +35,20 @@ namespace lyra::lowering::hir_to_mir {
 
 namespace {
 
-// Conservative detection for the minimal plain-child subset. A body is
+// Conservative detection for the direct-constructor subset. A body is
 // eligible for the new backend-emitted construction path only if every
 // observable property below holds; any deviation leaves the body on the
 // flat replay path.
 //
-// Cut-3 intentionally matches a narrow shape: a linear chain of blocks
-// whose statements are only NewObject-producing temp writes, linked by
-// Jump terminators and ending with a void Return, plus no external-ref
-// recipes. Broader cases (ports, generate, bindings, parameter payloads,
-// non-linear control flow) fail this check and stay on the old pipeline
-// until later cuts expand coverage.
-auto IsPlainChildConstructor(
+// Shape accepted today: a linear chain of blocks whose statements are
+// only NewObject-producing temp writes, linked by Jump terminators and
+// ending with a void Return, plus no external-ref recipes. NewObject
+// rvalues may carry transmitted-parameter operands on Rvalue::operands;
+// those are marshaled directly at the body-constructor call site.
+// Broader cases (ports, generate, bindings, non-linear control flow,
+// external refs) fail this check and stay on the old pipeline until
+// later cuts expand coverage.
+auto IsDirectConstructor(
     const mir::Constructor& ctor,
     const std::vector<mir::ExternalAccessRecipe>& body_external_refs) -> bool {
   if (!body_external_refs.empty()) return false;
@@ -62,7 +64,6 @@ auto IsPlainChildConstructor(
       if (!std::holds_alternative<mir::PlaceId>(assign->dest)) return false;
       const auto* rv = std::get_if<mir::Rvalue>(&assign->rhs);
       if (rv == nullptr) return false;
-      if (!rv->operands.empty()) return false;
       if (!std::holds_alternative<mir::NewObjectRvalueInfo>(rv->info))
         return false;
       ++new_object_count;
@@ -79,11 +80,10 @@ auto IsPlainChildConstructor(
     }
     return false;
   }
-  // Cut-3 only flags bodies that actually take over construction work.
-  // An empty constructor body (no new_object sites) would emit an empty
-  // body-constructor function and force the downstream emission guard to
-  // treat any multi-instance empty body as a spurious violation. Leaving
-  // those bodies on the flat replay path keeps the opt-in tight.
+  // Only flag bodies that actually take over construction work. An
+  // empty constructor body (no new_object sites) would emit an empty
+  // body-constructor function and force the downstream emission guard
+  // to treat any multi-instance empty body as a spurious violation.
   return new_object_count > 0;
 }
 
@@ -266,7 +266,7 @@ auto LowerModule(
     }
     result.constructor = std::move(*ctor_result);
     result.uses_mir_constructor =
-        IsPlainChildConstructor(result.constructor, external_refs);
+        IsDirectConstructor(result.constructor, external_refs);
   }
 
   // Record the body-global decision site count. The LLVM backend validates

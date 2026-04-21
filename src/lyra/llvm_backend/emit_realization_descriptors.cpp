@@ -803,7 +803,8 @@ auto DeclareBodyConstructorRuntimeFuncs(
           "LyraConstructorBeginBodyByRef", void_ty, {ptr_ty, ptr_ty}),
       .add_child_object = get_or_create(
           "LyraConstructorAddChildObject", ptr_ty,
-          {ptr_ty, ptr_ty, i32_ty, i32_ty, ptr_ty, i64_ty, i64_ty}),
+          {ptr_ty, ptr_ty, i32_ty, i32_ty, ptr_ty, i64_ty, i64_ty, i32_ty,
+           ptr_ty, ptr_ty}),
   };
 }
 
@@ -849,8 +850,12 @@ auto EmitRealizationAndConstructor(
   // Compute the effective per-body direct-constructor flag. An HIR-level
   // "uses_mir_constructor" hint is only honored when the construction
   // program confirms: exactly one compile-time instance of the body, and
-  // all that instance's children are plain (no parameter payload, no
-  // port-const init). Any deviation keeps the body on the flat path.
+  // every direct child of that instance is a module instance with no
+  // port-constant initializers. Transmitted parameter payloads are now
+  // carried as typed MIR operands on NewObject and marshaled directly
+  // into the body-constructor call; their presence is no longer a
+  // disqualifier. Any remaining deviation keeps the body on the flat
+  // path.
   std::vector<uint8_t> effective_uses_mir_ctor(
       layout.body_realization_infos.size(), 0);
   {
@@ -870,20 +875,20 @@ auto EmitRealizationAndConstructor(
       if (body == nullptr || !body->uses_mir_constructor) continue;
       if (instance_count_per_body[bi] != 1) continue;
 
-      bool all_children_plain = true;
+      bool all_children_direct = true;
       uint32_t parent_entry = parent_entry_of_body[bi];
       for (const auto& e : construction_program.entries) {
         if (e.parent_scope_index != parent_entry) continue;
         if (e.node_kind != runtime::ConstructionNodeKind::kInstance) {
-          all_children_plain = false;
+          all_children_direct = false;
           break;
         }
-        if (e.param_size != 0 || e.port_const_init_count != 0) {
-          all_children_plain = false;
+        if (e.port_const_init_count != 0) {
+          all_children_direct = false;
           break;
         }
       }
-      if (!all_children_plain) continue;
+      if (!all_children_direct) continue;
       effective_uses_mir_ctor[bi] = 1;
     }
   }
@@ -904,8 +909,8 @@ auto EmitRealizationAndConstructor(
   // created by EmitBodyRealizationDescs so the body descriptor globals
   // already embed these fn pointers.
   EmitBodyConstructorFunctions(
-      context, layout, body_descs, body_ref_table_ptr, construction_program,
-      effective_uses_mir_ctor);
+      context, facts, layout, body_descs, body_ref_table_ptr,
+      construction_program, effective_uses_mir_ctor);
 
   auto* conn_descs_ptr =
       EmitConnectionRealizationDescs(context, layout, process_funcs, num_init);

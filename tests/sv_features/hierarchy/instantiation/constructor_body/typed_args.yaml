@@ -1,0 +1,63 @@
+feature: hierarchy_instantiation_constructor_body_typed_args
+description: |
+  Shape proofs for the direct-constructor path carrying transmitted
+  parameters as first-class constructor arguments. Behavioral coverage
+  for shared-specialization + value-only transmission already lives in
+  tests/sv_features/hierarchy/instantiation/param_slots/default.yaml;
+  after cut 4 those cases route through the direct-constructor path,
+  so their continued passing is the behavioral regression guard.
+  The cases below prove the structural claim unique to cut 4: that
+  transmitted values appear as typed operands in MIR and as typed
+  stack-local marshaling in LLVM, not through a byte pool.
+
+cases:
+  - name: mir_shape_proves_typed_operands
+    description: |
+      MIR dump proves transmitted-parameter values appear as first-class
+      operands on new_object rvalues rather than being hidden inside a
+      blob pool. Each site lists its target symbol and the per-argument
+      constant values after the target identity.
+    dump_mir: true
+    sv: |
+      module Child #(parameter int ID = 0);
+        initial $display("id=%0d", ID);
+      endmodule
+
+      module Test;
+        Child #(.ID(10)) c0();
+        Child #(.ID(20)) c1();
+      endmodule
+    expect:
+      compiler_output:
+        contains:
+          - "new_object("
+          - "const(10:"
+          - "const(20:"
+
+  - name: llvm_shape_proves_typed_marshaling
+    description: |
+      LLVM IR dump proves the body-constructor function marshals
+      transmitted arguments as stack-local typed values. The emitted
+      __lyra_body_construct_ function contains per-site alloca + store
+      sequences followed by a single widened
+      LyraConstructorAddChildObject call. The runtime helper's widened
+      declaration (ten parameters ending in ptr, ptr) is present.
+    dump_llvm_ir: true
+    sv: |
+      module Child #(parameter int ID = 0);
+        initial $display("id=%0d", ID);
+      endmodule
+
+      module Test;
+        Child #(.ID(10)) c0();
+        Child #(.ID(20)) c1();
+      endmodule
+    expect:
+      compiler_output:
+        contains:
+          - "__lyra_body_construct_"
+          - "argptrs = alloca"
+          - "argsizes = alloca"
+          - "store i32 10"
+          - "store i32 20"
+          - "@LyraConstructorAddChildObject(ptr %0, ptr %1,"

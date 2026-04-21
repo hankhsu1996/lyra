@@ -1592,9 +1592,30 @@ auto LowerNewArray(
 
 auto LowerNewObject(
     const hir::NewObjectExpressionData& data, const hir::Expression& expr,
-    MirBuilder& builder) -> Result<mir::Operand> {
+    MirBuilder& builder, PlaceMaterializationCache& cache)
+    -> Result<mir::Operand> {
+  // Constructor arguments become first-class MIR operands on the
+  // NewObject rvalue, in the same declaration order the HIR stored
+  // them. NewObjectRvalueInfo stays a pure identity carrier; operand
+  // values live in Rvalue::operands, following the convention every
+  // other multi-operand rvalue uses.
+  std::vector<mir::Operand> operands;
+  operands.reserve(data.constructor_arguments.size());
+  for (hir::ExpressionId arg_id : data.constructor_arguments) {
+    BlockIndex before = builder.CurrentBlock();
+    Result<mir::Operand> arg_result =
+        LowerExpressionImpl(arg_id, builder, cache);
+    if (!arg_result) return std::unexpected(arg_result.error());
+    if (builder.CurrentBlock() != before) {
+      for (auto& op : operands) {
+        op = builder.ThreadValueToCurrentBlock(op);
+      }
+    }
+    operands.push_back(*arg_result);
+  }
+
   mir::Rvalue rvalue{
-      .operands = {},
+      .operands = std::move(operands),
       .info =
           mir::NewObjectRvalueInfo{
               .target_instance_sym = data.target_instance_sym},
@@ -2706,7 +2727,7 @@ auto LowerExpressionImpl(
                                  hir::MaterializeInitializerExpressionData>) {
           return LowerMaterializeInitializer(data, expr, builder);
         } else if constexpr (std::is_same_v<T, hir::NewObjectExpressionData>) {
-          return LowerNewObject(data, expr, builder);
+          return LowerNewObject(data, expr, builder, cache);
         } else {
           throw common::InternalError(
               "LowerExpression", "unhandled expression kind");
