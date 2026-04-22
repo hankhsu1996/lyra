@@ -63,6 +63,14 @@ struct ModuleBody {
   // own model rather than extending this list.
   std::vector<SymbolId> plain_child_object_handle_members;
 
+  // Body-level region tree built at AST->HIR from slang topology.
+  // Indexes body-owned declarations (Variable, Net, Parameter,
+  // InstanceMember) and nested generate constructs. Behavioral
+  // content (processes, functions, tasks) is NOT a region item in
+  // this cut. kInvalidGenerateRegionId means the body was not
+  // lowered through the AST->HIR path (e.g. test fixtures).
+  GenerateRegionId root_region = kInvalidGenerateRegionId;
+
   // Body-local HIR node storage.
   Arena arena;
 

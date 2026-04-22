@@ -5,6 +5,7 @@
 #include <optional>
 #include <string>
 #include <string_view>
+#include <unordered_map>
 
 #include <slang/text/SourceLocation.h>
 
@@ -13,9 +14,11 @@
 #include "lyra/common/internal_error.hpp"
 #include "lyra/common/source_span.hpp"
 #include "lyra/common/symbol.hpp"
+#include "lyra/common/symbol_types.hpp"
 #include "lyra/common/type_arena.hpp"
 #include "lyra/hir/arena.hpp"
 #include "lyra/hir/callable_signature.hpp"
+#include "lyra/hir/declaration.hpp"
 #include "lyra/lowering/ast_to_hir/options.hpp"
 #include "lyra/lowering/ast_to_hir/source_mapper.hpp"
 
@@ -153,6 +156,15 @@ struct Context {
 
   // Counter for generating unique synthetic variable names
   uint32_t temp_counter = 0;
+
+  // TEMPORARY Cut-1 -> Cut-2 bridge. Body-lowering-local SymbolId ->
+  // DeclRef lookup for the representative instance. Null outside
+  // LowerModuleBody. Deleted in Cut 2 when declaration-reference
+  // payloads flip to DeclRef; must not be exported, cached,
+  // persisted, or extended to non-representative SymbolIds in the
+  // meantime.
+  std::unordered_map<SymbolId, hir::DeclRef, SymbolIdHash>* sym_to_decl =
+      nullptr;
 
   // Cached global precision (avoids repeated hierarchy walks).
   // Computed once per compilation, used by all ModuleLowerer instances.

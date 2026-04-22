@@ -160,13 +160,25 @@ auto GetDpiExportSpan(
 }
 
 // Walk up through transparent scopes and return the first non-transparent
-// ancestor. Generate blocks are transparent -- declarations inside them
-// belong to the enclosing module body or package, not to the generate
-// block itself.
+// ancestor.
 //
-// This is a general AST-to-HIR ownership rule. The transparent set
-// (GenerateBlock, GenerateBlockArray) follows from Lyra's compilation
-// model where generate scopes do not create ownership boundaries.
+// Transparency here is scoped to DPI export owner routing only (the
+// sole caller). DPI export owner is always the enclosing module body
+// or package; it is never a generate region. Therefore walking past
+// GenerateBlock / GenerateBlockArray ancestors is correct for this
+// helper's specific concern.
+//
+// This is NOT a statement that generate scopes are transparent for the
+// body-level HIR ownership model. The region-tree walker in
+// BuildRegionTreeFromScope treats every instantiated generate block /
+// block-array as a real ownership boundary (its own GenerateRegion)
+// for declarations and generate topology. The two coexist because
+// they serve orthogonal concerns:
+//
+//   - Region tree: where body-level declarations (Variable, Net,
+//     Parameter, InstanceMember) structurally live, and how
+//     generate constructs nest.
+//   - This helper: which module body / package owns a DPI export.
 //
 // The helper does not validate whether the returned ancestor is a valid
 // terminal for a particular declaration kind. Callers must check the
@@ -616,6 +628,16 @@ void CollectInstancesFromScope(
       CollectPendingPortBindings(parent, child, ctx, pending_bindings);
       instances.push_back(&child);
     } else if (member.kind == slang::ast::SymbolKind::GenerateBlock) {
+      // Generate walks are transparent here ONLY for design-global
+      // instance discovery. Each nested child instance (regardless of
+      // its enclosing generate) becomes its own hir::Module record in
+      // the design-global all_instances list; that flattening is a
+      // pre-existing pipeline contract (specialization grouping,
+      // hierarchy-node table, BFS ordering). The body-level region
+      // tree continues to record which generate region each such
+      // instance structurally lives in (via kInstanceMember items
+      // under the appropriate GenerateRegion); that per-body view is
+      // orthogonal to this per-design flattening.
       const auto& block = member.as<slang::ast::GenerateBlockSymbol>();
       if (!block.isUninstantiated) {
         CollectInstancesFromScope(

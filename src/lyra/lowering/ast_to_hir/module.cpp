@@ -21,10 +21,13 @@
 #include "lyra/common/scope_types.hpp"
 #include "lyra/common/source_span.hpp"
 #include "lyra/common/symbol.hpp"
+#include "lyra/common/symbol_types.hpp"
 #include "lyra/common/type.hpp"
 #include "lyra/hir/arena.hpp"
+#include "lyra/hir/declaration.hpp"
 #include "lyra/hir/expression.hpp"
 #include "lyra/hir/fwd.hpp"
+#include "lyra/hir/generate.hpp"
 #include "lyra/hir/module.hpp"
 #include "lyra/hir/module_body.hpp"
 #include "lyra/hir/routine.hpp"
@@ -32,6 +35,7 @@
 #include "lyra/lowering/ast_to_hir/constant.hpp"
 #include "lyra/lowering/ast_to_hir/context.hpp"
 #include "lyra/lowering/ast_to_hir/expression.hpp"
+#include "lyra/lowering/ast_to_hir/generate.hpp"
 #include "lyra/lowering/ast_to_hir/module_lowerer.hpp"
 #include "lyra/lowering/ast_to_hir/routine.hpp"
 #include "lyra/lowering/ast_to_hir/source_utils.hpp"
@@ -51,9 +55,36 @@ auto LowerModuleBody(
   Context body_ctx =
       ctx->ForkForBodyLowering(body_arena, body_constant_arena, body_sink);
 
+  // TEMPORARY Cut-1 -> Cut-2 bridge. Body-lowering-local lifetime
+  // only; deleted in Cut 2 when payload fields flip to DeclRef.
+  // Must not be exported, cached, persisted, or extended beyond
+  // representative-instance SymbolIds.
+  std::unordered_map<SymbolId, hir::DeclRef, SymbolIdHash> sym_to_decl;
+  body_ctx.sym_to_decl = &sym_to_decl;
+
   ModuleLowerer lowerer(body_ctx, registrar, representative);
 
   SourceSpan span = body_ctx.SpanOf(GetSourceRange(representative));
+
+  // Build the body-level HIR region tree and allocate body-owned
+  // declaration objects. Processes, functions, tasks, and continuous
+  // assigns are lowered through the flat path below and are NOT
+  // region items in this cut.
+  hir::GenerateRegionId root_region_id;
+  {
+    ScopeGuard region_scope(registrar, ScopeKind::kModule);
+    root_region_id = body_arena.AddGenerateRegion(
+        hir::GenerateRegion{
+            .items = {},
+            .scope = registrar.CurrentScope(),
+            .label = std::string(representative.name),
+            .parent_region = std::nullopt,
+            .is_root = true,
+        });
+    BuildRegionTreeFromScope(
+        representative.body, root_region_id, registrar, &body_ctx, body_arena,
+        sym_to_decl);
+  }
 
   // All module-level symbols are pre-registered in Phase 0. Body lowering
   // consumes prepared ownership-shaped input only. Process/function-local
@@ -285,12 +316,14 @@ auto LowerModuleBody(
 
   // Constructor body: formal-to-member binding statements above, followed
   // by one PlainAssign per plain-child instantiation whose value is the
-  // kNewObject expression. Each assigned member is also recorded in
-  // plain_child_object_handle_members so HIR->MIR can enroll the slot
-  // from body declaration state (not by scanning statements). Populating
-  // this list is the only legitimate producer path; consumers must treat
-  // it as the plain-child declaration set, not a general handle index.
-  std::vector<SymbolId> plain_child_object_handle_members;
+  // kNewObject expression.
+  //
+  // The `plain_child_object_handle_members` flat list is NOT populated
+  // by this loop. It is derived below from the root region's
+  // kInstanceMember items so the region tree is the single source of
+  // truth for the plain-child handle set. An assertion verifies the
+  // derivation matches the slang walk's count, catching any future
+  // filter drift between the two.
   {
     TypeId object_handle_type = body_ctx.ObjectHandleType();
     for (const auto& member : representative.body.members()) {
@@ -305,7 +338,6 @@ auto LowerModuleBody(
       // expression; expr.type carries the handle result type.
       SymbolId child_sym = registrar.Lookup(child);
       if (!child_sym) continue;
-      plain_child_object_handle_members.push_back(child_sym);
 
       // Collect transmitted-parameter arguments in child-declaration
       // order, matching the child body's param-slot template.
@@ -380,6 +412,20 @@ auto LowerModuleBody(
           .data = hir::BlockStatementData{.statements = std::move(ctor_stmts)},
       });
 
+  // plain_child_object_handle_members is derived solely from the root
+  // region's kInstanceMember items -- the region tree is the single
+  // producer of this list.
+  std::vector<SymbolId> plain_child_object_handle_members;
+  {
+    const auto& root_region = body_arena[root_region_id];
+    for (const auto& item : root_region.items) {
+      if (item.kind != hir::RegionItemKind::kInstanceMember) continue;
+      auto member_id = std::get<hir::InstanceMemberId>(item.payload);
+      plain_child_object_handle_members.push_back(
+          body_arena[member_id].bridge_symbol);
+    }
+  }
+
   return BodyLoweringResult{
       .body =
           hir::ModuleBody{
@@ -396,6 +442,7 @@ auto LowerModuleBody(
               .dpi_exports = {},
               .plain_child_object_handle_members =
                   std::move(plain_child_object_handle_members),
+              .root_region = root_region_id,
               .arena = std::move(body_arena),
               .constant_arena = std::move(body_constant_arena),
           },
