@@ -5,8 +5,9 @@
 [![C++ Format](https://github.com/hankhsu1996/lyra/actions/workflows/cpp-format.yml/badge.svg?branch=main&event=push)](https://github.com/hankhsu1996/lyra/actions/workflows/cpp-format.yml)
 [![C++ Tidy](https://github.com/hankhsu1996/lyra/actions/workflows/cpp-tidy.yml/badge.svg?branch=main&event=push)](https://github.com/hankhsu1996/lyra/actions/workflows/cpp-tidy.yml)
 
-**Lyra** is a SystemVerilog compiler and simulator built around a multi-stage IR pipeline.
-It compiles to LLVM IR for execution, prioritizing fast iteration (compile + run + debug) over peak simulation speed.
+**Lyra** is a SystemVerilog compiler and simulator built around a multi-stage IR pipeline. It
+compiles to LLVM IR for execution, prioritizing fast iteration (compile + run + debug) over peak
+simulation speed.
 
 ## Prerequisites
 
@@ -29,10 +30,10 @@ cd my_project
 lyra run
 ```
 
-Ensure the built `lyra` binary is on your PATH.
-`lyra run` requires `lli` in PATH.
+Ensure the built `lyra` binary is on your PATH. `lyra run` requires `lli` in PATH.
 
-Lyra expects a project workflow with `lyra.toml`. CLI arguments work for quick runs. See [docs/cli-design.md](docs/cli-design.md).
+Lyra expects a project workflow with `lyra.toml`. CLI arguments work for quick runs. See
+[docs/cli-design.md](docs/cli-design.md).
 
 ## Tests
 
@@ -65,7 +66,8 @@ See [docs/philosophy.md](docs/philosophy.md) for design rationale.
 
 ## Limitations
 
-Lyra supports a focused subset of SystemVerilog. Feature gaps are tracked in [docs/queues/](docs/queues/) as operational working queues.
+Lyra supports a focused subset of SystemVerilog. Feature gaps are tracked in
+[docs/queues/](docs/queues/) as operational working queues.
 
 ## Documentation
 

@@ -33,11 +33,14 @@ Format before committing:
 
 ```bash
 clang-format -i <cpp-files>          # C++ files
-npx prettier --write <md-files>      # Markdown files
+npm run format                       # Markdown files (repo-local Prettier)
 buildifier <bazel-files>             # BUILD.bazel, .bzl, MODULE.bazel
 ```
 
 CI will fail if files aren't formatted.
+
+The root `package.json` and `package-lock.json` exist solely to pin Prettier for Markdown formatting
+across this repo. This is not a Node project; no unrelated JS tooling belongs here.
 
 ### Static Analysis
 
@@ -66,8 +69,8 @@ clang-tidy -p . <files>
 
 ## Tests
 
-YAML-based tests live in `tests/sv_features/`. Suite definitions are in `tests/suites.yaml`.
-For ad-hoc runs, use `--test_file` and `--backend`.
+YAML-based tests live in `tests/sv_features/`. Suite definitions are in `tests/suites.yaml`. For
+ad-hoc runs, use `--test_file` and `--backend`.
 
 ```bash
 bazel test //tests:jit_dev_tests \
@@ -78,5 +81,5 @@ bazel test //tests:jit_dev_tests \
 
 ## Documentation
 
-If you add or change behavior, update the relevant design or reference docs.
-When closing a language feature gap, update the relevant queue in [docs/queues/](docs/queues/).
+If you add or change behavior, update the relevant design or reference docs. When closing a language
+feature gap, update the relevant queue in [docs/queues/](docs/queues/).

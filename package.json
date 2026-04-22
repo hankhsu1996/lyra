@@ -1,0 +1,12 @@
+{
+  "name": "lyra-repo-tools",
+  "private": true,
+  "description": "Repo-local tooling only. Provides Prettier for Markdown formatting across this repository. This is not a Node project and must not host unrelated JS tooling.",
+  "scripts": {
+    "format": "prettier --write \"**/*.md\"",
+    "format:check": "prettier --check \"**/*.md\""
+  },
+  "devDependencies": {
+    "prettier": "^3.3.3"
+  }
+}
