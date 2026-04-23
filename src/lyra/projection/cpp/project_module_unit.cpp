@@ -1,3 +1,4 @@
+#include <cstddef>
 #include <string>
 #include <variant>
 
@@ -21,7 +22,15 @@ auto RenderField(const mir::ModuleUnit& unit, const mir::Member& member)
          member.name + ";\n";
 }
 
-auto RenderMethod(const mir::ModuleUnit& unit, const mir::Process& process)
+// Projection-local fallback naming. Renderer-only; not fed back into HIR/MIR.
+// Index is the process's position in the owning unit's Processes() vector,
+// which IS the owner-issued ProcessId's value.
+auto RenderProcessMethodName(std::size_t index) -> std::string {
+  return "process_" + std::to_string(index);
+}
+
+auto RenderMethod(
+    const mir::ModuleUnit& unit, const mir::Process& process, std::size_t index)
     -> std::string {
   const RenderContext ctx{unit, process};
 
@@ -29,7 +38,8 @@ auto RenderMethod(const mir::ModuleUnit& unit, const mir::Process& process)
       support::Overloaded{
           [&](const mir::Initial& p) -> std::string {
             std::string out;
-            out += Indent(1) + "void " + process.name + "() {\n";
+            out +=
+                Indent(1) + "void " + RenderProcessMethodName(index) + "() {\n";
             out += RenderProcessBody(ctx, p.body, 2);
             out += Indent(1) + "}\n";
             return out;
@@ -55,13 +65,11 @@ auto ProjectModuleUnitToCpp(const mir::ModuleUnit& unit) -> std::string {
     out += "\n";
   }
 
-  bool first_method = true;
-  for (const auto& process : processes) {
-    if (!first_method) {
+  for (std::size_t i = 0; i < processes.size(); ++i) {
+    if (i != 0) {
       out += "\n";
     }
-    first_method = false;
-    out += RenderMethod(unit, process);
+    out += RenderMethod(unit, processes[i], i);
   }
 
   out += "};\n";

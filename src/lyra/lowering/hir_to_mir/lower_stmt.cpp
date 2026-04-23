@@ -36,13 +36,13 @@ auto LowerStmtData(
           [&](const hir::BlockingAssignment& s) -> mir::StmtData {
             return mir::Assignment{
                 .target = TranslateLvalueTargetToMember(unit_state, s.target),
-                .value = process_state.expr_map[s.value.value]};
+                .value = process_state.TranslateExpr(s.value)};
           },
           [&](const hir::BlockStmt& s) -> mir::StmtData {
             std::vector<mir::StmtId> translated;
             translated.reserve(s.statements.size());
             for (const auto& sid : s.statements) {
-              translated.push_back(process_state.stmt_map[sid.value]);
+              translated.push_back(process_state.TranslateStmt(sid));
             }
             return mir::BlockStmt{std::move(translated)};
           },

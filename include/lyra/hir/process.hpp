@@ -2,7 +2,6 @@
 
 #include <compare>
 #include <cstdint>
-#include <string>
 #include <variant>
 #include <vector>
 
@@ -24,7 +23,6 @@ struct Initial {
 using ProcessData = std::variant<Initial>;
 
 struct Process {
-  std::string name;
   ProcessData data;
   std::vector<Expr> exprs;
   std::vector<Stmt> stmts;

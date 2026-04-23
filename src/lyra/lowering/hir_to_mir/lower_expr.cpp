@@ -22,7 +22,7 @@ auto TranslateValueDeclRefToMember(
   return std::visit(
       support::Overloaded{
           [&](const hir::VarDeclId& id) -> mir::MemberId {
-            return unit_state.var_map[id.value];
+            return unit_state.TranslateVar(id);
           },
           [](const hir::NetDeclId&) -> mir::MemberId {
             support::Unsupported(
