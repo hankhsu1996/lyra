@@ -1,228 +1,35 @@
-# Lyra SystemVerilog Simulator
-
-load("@hedron_compile_commands//:refresh_compile_commands.bzl", "refresh_compile_commands")
-load("@rules_cc//cc:cc_binary.bzl", "cc_binary")
 load("@rules_cc//cc:cc_library.bzl", "cc_library")
-load("@rules_cc//cc:cc_static_library.bzl", "cc_static_library")
-
-refresh_compile_commands(
-    name = "refresh_compile_commands",
-    exclude_external_sources = True,
-    targets = {
-        "//:lyra": "",
-        "//tests/...": "",
-    },
-)
 
 cc_library(
-    name = "common",
-    srcs = glob(["src/lyra/common/*.cpp"]),
-    hdrs = glob(["include/lyra/common/**/*.hpp"]),
+    name = "support",
+    hdrs = glob(["include/lyra/support/*.hpp"]),
     includes = ["include"],
     visibility = ["//visibility:public"],
-    deps = [
-        "@abseil-cpp//absl/container:flat_hash_map",
-        "@fmt",
-        "@slang",
-    ],
-)
-
-cc_library(
-    name = "metadata",
-    hdrs = glob(["include/lyra/metadata/**/*.hpp"]),
-    includes = ["include"],
-    visibility = ["//visibility:public"],
-    deps = [
-        ":common",
-    ],
-)
-
-cc_library(
-    name = "semantic",
-    srcs = glob(["src/lyra/semantic/*.cpp"]),
-    hdrs = glob(["include/lyra/semantic/*.hpp"]),
-    includes = ["include"],
-    visibility = ["//visibility:public"],
-    deps = [":common"],
 )
 
 cc_library(
     name = "hir",
-    srcs = glob(["src/lyra/hir/*.cpp"]),
     hdrs = glob(["include/lyra/hir/*.hpp"]),
     includes = ["include"],
     visibility = ["//visibility:public"],
-    deps = [":common"],
-)
-
-cc_library(
-    name = "xir",
-    hdrs = glob(["include/lyra/xir/*.hpp"]),
-    includes = ["include"],
-    visibility = ["//visibility:public"],
-    deps = [":common"],
-)
-
-cc_library(
-    name = "projection_cpp",
-    srcs = glob(["src/lyra/projection/cpp/*.cpp"]),
-    hdrs = glob(["include/lyra/projection/cpp/*.hpp"]),
-    includes = ["include"],
-    visibility = ["//visibility:public"],
-    deps = [
-        ":common",
-        ":runtime",
-        ":xir",
-    ],
 )
 
 cc_library(
     name = "mir",
-    srcs = glob(["src/lyra/mir/*.cpp"]) + glob(["src/lyra/mir/passes/*.cpp"]),
-    hdrs = glob(["include/lyra/mir/*.hpp"]) + glob(["include/lyra/mir/passes/*.hpp"]),
+    hdrs = glob(["include/lyra/mir/*.hpp"]),
     includes = ["include"],
     visibility = ["//visibility:public"],
-    deps = [
-        ":common",
-        ":semantic",
-    ],
 )
 
 cc_library(
-    name = "runtime",
-    srcs = glob([
-        "src/lyra/runtime/*.cpp",
-        "src/lyra/trace/*.cpp",
-    ]),
-    hdrs = glob([
-        "include/lyra/runtime/*.hpp",
-        "include/lyra/trace/*.hpp",
-    ]),
+    name = "hir_to_mir",
+    srcs = glob(["src/lyra/lowering/hir_to_mir/*.cpp"]),
+    hdrs = glob(["include/lyra/lowering/hir_to_mir/*.hpp"]),
     includes = ["include"],
     visibility = ["//visibility:public"],
     deps = [
-        ":common",
-        ":semantic",
-        "//third_party/systemverilog:svdpi",
-        "@abseil-cpp//absl/container:flat_hash_set",
-    ],
-    alwayslink = True,  # Ensure extern "C" symbols are kept for dynamic linking
-)
-
-cc_binary(
-    name = "liblyra_runtime.so",
-    linkshared = True,
-    visibility = ["//visibility:public"],
-    deps = [":runtime"],
-)
-
-cc_static_library(
-    name = "lyra_runtime_static",
-    visibility = ["//visibility:public"],
-    deps = [":runtime"],
-)
-
-cc_static_library(
-    name = "lyra_projection_runtime",
-    visibility = ["//visibility:public"],
-    deps = [":projection_cpp"],
-)
-
-cc_library(
-    name = "realization",
-    srcs = glob(["src/lyra/realization/**/*.cpp"]),
-    hdrs = glob(["include/lyra/realization/**/*.hpp"]),
-    includes = ["include"],
-    visibility = ["//visibility:public"],
-    deps = [
-        ":common",
-        ":metadata",
-        ":mir",
-        ":runtime",
-    ],
-)
-
-cc_library(
-    name = "lowering",
-    srcs = glob(["src/lyra/lowering/**/*.cpp"]),
-    hdrs = glob(["include/lyra/lowering/**/*.hpp"]),
-    includes = ["include"],
-    visibility = ["//visibility:public"],
-    deps = [
-        ":common",
         ":hir",
         ":mir",
-        ":semantic",
-        ":xir",
-        "@slang",
-    ],
-)
-
-cc_library(
-    name = "llvm_backend",
-    srcs = glob(["src/lyra/llvm_backend/**/*.cpp"]),
-    hdrs = glob(["include/lyra/llvm_backend/**/*.hpp"]),
-    includes = ["include"],
-    visibility = ["//visibility:public"],
-    deps = [
-        ":common",
-        ":lowering",
-        ":metadata",
-        ":mir",
-        ":realization",
-        ":runtime",
-        "@llvm-project//llvm:Analysis",
-        "@llvm-project//llvm:Core",
-        "@llvm-project//llvm:ExecutionEngine",
-        "@llvm-project//llvm:MC",
-        "@llvm-project//llvm:MCJIT",
-        "@llvm-project//llvm:OrcJIT",
-        "@llvm-project//llvm:OrcTargetProcess",
-        "@llvm-project//llvm:Passes",
-        "@llvm-project//llvm:Support",
-        "@llvm-project//llvm:Target",
-        "@llvm-project//llvm:X86AsmParser",
-        "@llvm-project//llvm:X86CodeGen",
-    ],
-)
-
-cc_library(
-    name = "frontend",
-    srcs = glob(["src/lyra/frontend/*.cpp"]),
-    hdrs = glob(["include/lyra/frontend/*.hpp"]),
-    visibility = ["//tests:__subpackages__"],
-    deps = [
-        ":common",
-        "@fmt",
-        "@slang",
-    ],
-)
-
-cc_binary(
-    name = "lyra",
-    srcs = glob([
-        "src/lyra/driver/*.cpp",
-        "src/lyra/driver/*.hpp",
-    ]),
-    data = [
-        "include/lyra/projection/cpp/runtime_bridge.hpp",
-        ":liblyra_runtime.so",
-        ":lyra_projection_runtime",
-        ":lyra_runtime_static",
-    ],
-    linkopts = ["-Wl,--export-dynamic"],  # Export symbols for ORC JIT
-    deps = [
-        ":frontend",
-        ":hir",
-        ":llvm_backend",
-        ":lowering",
-        ":mir",
-        ":projection_cpp",
-        ":realization",
-        ":runtime",
-        "@argparse",
-        "@fmt",
-        "@slang",
-        "@tomlplusplus",
+        ":support",
     ],
 )
