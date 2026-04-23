@@ -22,6 +22,22 @@ cc_library(
 )
 
 cc_library(
+    name = "ast_to_hir",
+    srcs = glob(
+        [
+            "src/lyra/lowering/ast_to_hir/*.cpp",
+            "src/lyra/lowering/ast_to_hir/*.hpp",
+        ],
+        allow_empty = True,
+    ),
+    visibility = ["//visibility:public"],
+    deps = [
+        ":hir",
+        ":support",
+    ],
+)
+
+cc_library(
     name = "hir_to_mir",
     srcs = glob(["src/lyra/lowering/hir_to_mir/*.cpp"]),
     hdrs = glob(["include/lyra/lowering/hir_to_mir/*.hpp"]),
@@ -29,6 +45,21 @@ cc_library(
     visibility = ["//visibility:public"],
     deps = [
         ":hir",
+        ":mir",
+        ":support",
+    ],
+)
+
+cc_library(
+    name = "projection_cpp",
+    srcs = glob([
+        "src/lyra/projection/cpp/*.cpp",
+        "src/lyra/projection/cpp/*.hpp",
+    ]),
+    hdrs = glob(["include/lyra/projection/cpp/*.hpp"]),
+    includes = ["include"],
+    visibility = ["//visibility:public"],
+    deps = [
         ":mir",
         ":support",
     ],

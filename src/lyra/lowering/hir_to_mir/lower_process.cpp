@@ -59,6 +59,7 @@ auto LowerProcess(const UnitLoweringState& unit_state, const hir::Process& src)
   }
 
   return mir::Process{
+      .name = src.name,
       .data = LowerProcessData(process_state, src.data),
       .exprs = std::move(exprs),
       .stmts = std::move(stmts),

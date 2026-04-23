@@ -2,6 +2,7 @@
 
 #include <compare>
 #include <cstdint>
+#include <string>
 #include <variant>
 #include <vector>
 
@@ -22,10 +23,8 @@ struct Initial {
 
 using ProcessData = std::variant<Initial>;
 
-// A process owns the statements and expressions that make up its body.
-// Process is a value: it carries its body content but not its own identity,
-// because ProcessId is produced by the owning ModuleUnit at installation time.
 struct Process {
+  std::string name;
   ProcessData data;
   std::vector<Expr> exprs;
   std::vector<Stmt> stmts;
