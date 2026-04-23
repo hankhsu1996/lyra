@@ -59,9 +59,7 @@ auto main(int argc, char** argv) -> int {
         lyra::lowering::ast_to_hir::LowerCompilation(*parse->compilation);
     if (hir_units.size() != 1) {
       fmt::print(
-          stderr,
-          "lyra: error: projection mode requires exactly one top module (got "
-          "{})\n",
+          stderr, "lyra: error: expected exactly one top module, got {}\n",
           hir_units.size());
       return 1;
     }

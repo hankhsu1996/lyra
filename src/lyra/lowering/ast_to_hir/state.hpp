@@ -19,10 +19,8 @@
 
 namespace lyra::lowering::ast_to_hir {
 
-// Narrow, module-local, lowering-time-only bridge from slang's resolved
-// variable declarations to our owner-local HIR variable ids. Discarded at end
-// of module lowering; never stored in HIR or MIR. Owned privately by
-// ModuleLoweringState; callers translate via ResolveVariableDecl.
+// Module-local frontend->HIR binding. Lowering-time only; never enters HIR
+// or MIR.
 using VariableDeclBindings =
     std::unordered_map<const slang::ast::VariableSymbol*, hir::VarDeclId>;
 
@@ -35,13 +33,10 @@ class ModuleLoweringState {
     return hir_unit_;
   }
 
-  // Owner-bound install. Creates a HIR type in the owning unit.
   auto AddType(hir::TypeData data) -> hir::TypeId {
     return hir_unit_.AddType(std::move(data));
   }
 
-  // Owner-bound install. Creates the HIR var decl and records the frontend
-  // variable declaration binding in a single operation.
   auto AddVariableDeclBinding(
       const slang::ast::VariableSymbol& var, hir::TypeId type)
       -> hir::VarDeclId {
@@ -50,14 +45,12 @@ class ModuleLoweringState {
     return id;
   }
 
-  // Owner-bound install. Installs a fully-built process into the owning unit.
   auto AddProcess(hir::Process process) -> hir::ProcessId {
     return hir_unit_.AddProcess(std::move(process));
   }
 
-  // Frontend->HIR identity translation. The only use-site path for resolving
-  // a slang value reference to an owner-local HIR id. Rejects any reference
-  // not resolved to a VariableSymbol -- that kind-check is the boundary.
+  // Kind-check is the boundary: only VariableSymbol references bind. Anything
+  // else fails here.
   [[nodiscard]] auto ResolveVariableDecl(
       const slang::ast::ValueSymbol& symbol) const -> hir::VarDeclId {
     if (symbol.kind != slang::ast::SymbolKind::Variable) {

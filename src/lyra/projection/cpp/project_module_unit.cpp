@@ -22,9 +22,8 @@ auto RenderField(const mir::ModuleUnit& unit, const mir::Member& member)
          member.name + ";\n";
 }
 
-// Projection-local fallback naming. Renderer-only; not fed back into HIR/MIR.
-// Index is the process's position in the owning unit's Processes() vector,
-// which IS the owner-issued ProcessId's value.
+// Renderer-local naming. Naming is a projection concern; the IR carries no
+// process names.
 auto RenderProcessMethodName(std::size_t index) -> std::string {
   return "process_" + std::to_string(index);
 }

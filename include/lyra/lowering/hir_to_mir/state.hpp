@@ -23,8 +23,6 @@ class UnitLoweringState {
   explicit UnitLoweringState(std::string name) : mir_unit_(std::move(name)) {
   }
 
-  // Owner-bound install. Creates the MIR type and records the
-  // hir_id -> mir_id translation in a single operation.
   auto AddType(hir::TypeId hir_id, mir::TypeData data) -> mir::TypeId {
     const auto id = mir_unit_.AddType(std::move(data));
     if (hir_id.value >= type_map_.size()) {
