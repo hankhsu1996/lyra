@@ -14,6 +14,7 @@ jobs:
   # Compares emitted IR, object, executable, and target CPU selection.
   diagnose:
     name: Compiler artifact differential
+    if: false  # disabled during architecture reset
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code

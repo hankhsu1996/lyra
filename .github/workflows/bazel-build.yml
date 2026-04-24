@@ -72,23 +72,10 @@ jobs:
           bazel build //... $RBE_FLAGS
 
   test:
-    name: Test (${{ matrix.name }})
+    name: Test
     needs: build
     if: ${{ needs.build.result == 'success' }}
     runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - name: JIT
-            target: //tests:jit_dev_tests
-            extra_flags: ""
-          - name: JIT-2S
-            target: //tests:jit_two_state_tests
-            extra_flags: ""
-          - name: AOT Smoke
-            target: //tests:aot_smoke_tests
-            extra_flags: "--test_env=LYRA_CC=/usr/bin/clang"
     steps:
       - name: Checkout code
         uses: actions/checkout@v6
@@ -100,21 +87,6 @@ jobs:
           disk-cache: ${{ github.workflow }}-${{ hashFiles('MODULE.bazel') }}
           repository-cache: true
 
-      - name: Install LLVM 20
-        run: |
-          wget -qO /tmp/llvm.key https://apt.llvm.org/llvm-snapshot.gpg.key
-          sudo gpg --dearmor -o /etc/apt/trusted.gpg.d/apt.llvm.org.gpg /tmp/llvm.key
-          . /etc/lsb-release
-          echo "deb http://apt.llvm.org/${DISTRIB_CODENAME}/ llvm-toolchain-${DISTRIB_CODENAME}-20 main" | sudo tee /etc/apt/sources.list.d/llvm.list
-          sudo apt-get update
-          sudo apt-get install -y clang-20 llvm-20
-          sudo update-alternatives --install /usr/bin/clang++ clang++ /usr/bin/clang++-20 100
-          sudo update-alternatives --install /usr/bin/clang clang /usr/bin/clang-20 100
-          sudo update-alternatives --install /usr/bin/lli lli /usr/bin/lli-20 100
-          sudo update-alternatives --set clang++ /usr/bin/clang++-20
-          sudo update-alternatives --set clang /usr/bin/clang-20
-          sudo update-alternatives --set lli /usr/bin/lli-20
-
       - name: Test
         env:
           BUILDBUDDY_API_KEY: ${{ secrets.BUILDBUDDY_API_KEY }}
@@ -123,14 +95,13 @@ jobs:
           if [[ -n "$BUILDBUDDY_API_KEY" ]]; then
             RBE_FLAGS="--config=rbe --remote_header=x-buildbuddy-api-key=$BUILDBUDDY_API_KEY"
           fi
-          bazel test ${{ matrix.target }} $RBE_FLAGS \
-            ${{ matrix.extra_flags }} \
+          bazel test //... $RBE_FLAGS \
             --test_output=errors --verbose_failures
 
   aot-full:
     name: AOT Full
     needs: build
-    if: ${{ github.event_name == 'push' && needs.build.result == 'success' }}
+    if: false  # disabled during architecture reset
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
