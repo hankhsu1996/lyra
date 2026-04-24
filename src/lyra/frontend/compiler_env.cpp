@@ -1,4 +1,4 @@
-#include "lyra/frontend/compiler_env.hpp"
+#include "compiler_env.hpp"
 
 namespace lyra::frontend {
 
@@ -15,10 +15,6 @@ auto BuildLyraPreprocessorOptions(std::span<const std::string> user_defines)
   pp_options.predefines.insert(
       pp_options.predefines.end(), user_defines.begin(), user_defines.end());
   return pp_options;
-}
-
-auto BuildLyraPreprocessorOptions() -> slang::parsing::PreprocessorOptions {
-  return BuildLyraPreprocessorOptions({});
 }
 
 }  // namespace lyra::frontend

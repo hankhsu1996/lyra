@@ -1,89 +1,162 @@
-#include "lyra/lowering/ast_to_hir/generate.hpp"
+#include "generate.hpp"
 
-#include <cstddef>
-#include <format>
-#include <string>
+#include <utility>
+#include <vector>
 
-#include <slang/ast/Symbol.h>
+#include <slang/ast/Expression.h>
 #include <slang/ast/symbols/BlockSymbols.h>
-#include <slang/ast/symbols/MemberSymbols.h>
-#include <slang/ast/symbols/ParameterSymbols.h>
-#include <slang/ast/symbols/SubroutineSymbols.h>
-#include <slang/ast/symbols/ValueSymbol.h>
-#include <slang/ast/symbols/VariableSymbols.h>
 
-#include "lyra/common/scope_types.hpp"
-#include "lyra/lowering/ast_to_hir/symbol_registrar.hpp"
+#include "expression/lower.hpp"
+#include "lyra/hir/structural_scope.hpp"
+#include "lyra/support/unsupported.hpp"
+#include "scope.hpp"
+#include "state.hpp"
 
 namespace lyra::lowering::ast_to_hir {
 
-void CollectScopeMembers(
-    const slang::ast::Scope& scope, SymbolRegistrar& registrar,
-    CollectedMembers& out) {
-  for (const auto& member : scope.members()) {
-    switch (member.kind) {
-      case slang::ast::SymbolKind::Variable: {
-        const auto& var = member.as<slang::ast::VariableSymbol>();
-        out.variables.push_back(&var);
+namespace {
+
+auto AddChildScope(
+    UnitLoweringState& unit, ScopeStack& stack,
+    std::vector<hir::StructuralScope>& child_scopes,
+    const slang::ast::GenerateBlockSymbol& block) -> hir::StructuralScopeId {
+  hir::StructuralScope scope;
+  LowerScope(unit, scope, block, stack);
+  const hir::StructuralScopeId id{
+      .value = static_cast<std::uint32_t>(child_scopes.size())};
+  child_scopes.push_back(std::move(scope));
+  return id;
+}
+
+}  // namespace
+
+auto BuildIfGenerate(
+    UnitLoweringState& unit, ScopeLoweringState& parent_state,
+    ScopeStack& stack,
+    std::span<const slang::ast::GenerateBlockSymbol* const> siblings)
+    -> hir::Generate {
+  const slang::ast::GenerateBlockSymbol* then_block = nullptr;
+  const slang::ast::GenerateBlockSymbol* else_block = nullptr;
+  for (const auto* block : siblings) {
+    switch (block->branchKind) {
+      case slang::ast::GenerateBranchKind::IfTrue:
+        then_block = block;
         break;
-      }
-      case slang::ast::SymbolKind::Net: {
-        const auto& net = member.as<slang::ast::NetSymbol>();
-        out.nets.push_back(&net);
+      case slang::ast::GenerateBranchKind::IfFalse:
+        else_block = block;
         break;
-      }
-      case slang::ast::SymbolKind::Parameter: {
-        const auto& param = member.as<slang::ast::ParameterSymbol>();
-        out.parameters.push_back(&param);
-        break;
-      }
-      case slang::ast::SymbolKind::Subroutine: {
-        const auto& sub = member.as<slang::ast::SubroutineSymbol>();
-        if (sub.subroutineKind == slang::ast::SubroutineKind::Function) {
-          out.functions.push_back(&sub);
-        } else {
-          out.tasks.push_back(&sub);
+      default:
+        support::Unsupported(
+            "BuildIfGenerate: unexpected branchKind in if-generate sibling");
+    }
+  }
+
+  if (then_block == nullptr) {
+    support::Unsupported(
+        "BuildIfGenerate: if-generate sibling group missing IfTrue branch");
+  }
+
+  const auto* cond = then_block->conditionExpression;
+  if (cond == nullptr) {
+    support::Unsupported(
+        "BuildIfGenerate: IfTrue without bound conditionExpression");
+  }
+  if (else_block != nullptr && else_block->conditionExpression != cond) {
+    support::Unsupported(
+        "BuildIfGenerate: sibling branches have mismatched "
+        "conditionExpression");
+  }
+
+  const hir::ExprId cond_id =
+      LowerStructuralExpression(parent_state, stack, *cond);
+
+  std::vector<hir::StructuralScope> child_scopes;
+  child_scopes.reserve(else_block != nullptr ? 2 : 1);
+
+  const hir::StructuralScopeId then_id =
+      AddChildScope(unit, stack, child_scopes, *then_block);
+
+  std::optional<hir::StructuralScopeId> else_id;
+  if (else_block != nullptr) {
+    else_id = AddChildScope(unit, stack, child_scopes, *else_block);
+  }
+
+  return hir::Generate{
+      .data =
+          hir::IfGenerate{
+              .condition = cond_id,
+              .then_scope = then_id,
+              .else_scope = else_id},
+      .child_scopes = std::move(child_scopes)};
+}
+
+auto BuildCaseGenerate(
+    UnitLoweringState& unit, ScopeLoweringState& parent_state,
+    ScopeStack& stack,
+    std::span<const slang::ast::GenerateBlockSymbol* const> siblings)
+    -> hir::Generate {
+  if (siblings.empty()) {
+    support::Unsupported("BuildCaseGenerate: empty sibling group");
+  }
+
+  const auto* discriminator = siblings.front()->conditionExpression;
+  if (discriminator == nullptr) {
+    support::Unsupported(
+        "BuildCaseGenerate: sibling missing conditionExpression");
+  }
+  for (const auto* block : siblings) {
+    if (block->conditionExpression != discriminator) {
+      support::Unsupported(
+          "BuildCaseGenerate: sibling branches have mismatched "
+          "conditionExpression");
+    }
+  }
+
+  const hir::ExprId cond_id =
+      LowerStructuralExpression(parent_state, stack, *discriminator);
+
+  std::vector<hir::StructuralScope> child_scopes;
+  child_scopes.reserve(siblings.size());
+
+  std::vector<hir::CaseGenerateItem> items;
+  std::optional<hir::StructuralScopeId> default_id;
+
+  for (const auto* block : siblings) {
+    switch (block->branchKind) {
+      case slang::ast::GenerateBranchKind::CaseItem: {
+        std::vector<hir::ExprId> labels;
+        labels.reserve(block->caseItemExpressions.size());
+        for (const auto* label_expr : block->caseItemExpressions) {
+          labels.push_back(
+              LowerStructuralExpression(parent_state, stack, *label_expr));
         }
+        const hir::StructuralScopeId item_id =
+            AddChildScope(unit, stack, child_scopes, *block);
+        items.push_back(
+            hir::CaseGenerateItem{
+                .labels = std::move(labels), .scope = item_id});
         break;
       }
-      case slang::ast::SymbolKind::ProceduralBlock: {
-        const auto& proc = member.as<slang::ast::ProceduralBlockSymbol>();
-        out.processes.push_back(&proc);
-        break;
-      }
-      case slang::ast::SymbolKind::ContinuousAssign: {
-        const auto& ca = member.as<slang::ast::ContinuousAssignSymbol>();
-        out.continuous_assigns.push_back(&ca);
-        break;
-      }
-      case slang::ast::SymbolKind::GenerateBlock: {
-        const auto& block = member.as<slang::ast::GenerateBlockSymbol>();
-        if (block.isUninstantiated) {
-          break;
+      case slang::ast::GenerateBranchKind::CaseDefault: {
+        if (default_id.has_value()) {
+          support::Unsupported("BuildCaseGenerate: multiple default branches");
         }
-        ScopeGuard guard(
-            registrar, ScopeKind::kGenerate, std::string(block.name));
-        CollectScopeMembers(block, registrar, out);
-        break;
-      }
-      case slang::ast::SymbolKind::GenerateBlockArray: {
-        const auto& array = member.as<slang::ast::GenerateBlockArraySymbol>();
-        for (size_t i = 0; i < array.entries.size(); ++i) {
-          const auto* entry = array.entries[i];
-          if (entry->isUninstantiated) {
-            continue;
-          }
-          ScopeGuard guard(
-              registrar, ScopeKind::kGenerate,
-              std::format("{}[{}]", array.name, i));
-          CollectScopeMembers(*entry, registrar, out);
-        }
+        default_id = AddChildScope(unit, stack, child_scopes, *block);
         break;
       }
       default:
-        break;
+        support::Unsupported(
+            "BuildCaseGenerate: unexpected branchKind in case construct");
     }
   }
+
+  return hir::Generate{
+      .data =
+          hir::CaseGenerate{
+              .condition = cond_id,
+              .items = std::move(items),
+              .default_scope = default_id},
+      .child_scopes = std::move(child_scopes)};
 }
 
 }  // namespace lyra::lowering::ast_to_hir

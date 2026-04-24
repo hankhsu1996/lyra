@@ -1,146 +1,34 @@
-# Test infrastructure for Lyra
-#
-# Suite-based test framework using YAML test specs in sv_features/
-#
-# Architecture:
-#   cc_test (warm parent) -> forks one child per case -> isolated execution
-#   Parent loads manifest once, child runs ExecuteTestCase in copy-on-write fork
-
-load("@rules_cc//cc:defs.bzl", "cc_library", "cc_test")
+load("@rules_cc//cc:cc_library.bzl", "cc_library")
+load("@rules_cc//cc:cc_test.bzl", "cc_test")
 
 cc_library(
-    name = "test_core",
+    name = "framework",
     srcs = glob(["framework/*.cpp"]),
     hdrs = glob(["framework/*.hpp"]),
+    visibility = ["//tests:__subpackages__"],
     deps = [
-        "//:frontend",
-        "//:llvm_backend",
-        "//:lowering",
-        "//:realization",
-        "@slang",
-        "@yaml-cpp",
-    ],
-)
-
-# Shared data dependencies for suite tests.
-_SUITE_DATA = [
-    "suites.yaml",
-    "//:liblyra_runtime.so",
-    "//third_party/systemverilog:svdpi.h",
-] + glob(["sv_features/**/*.yaml"]) + glob(["sv_features/**/*.c"])
-
-cc_test(
-    name = "jit_dev_tests",
-    srcs = ["main.cpp"],
-    args = ["--suite=jit_dev"],
-    data = _SUITE_DATA,
-    linkopts = ["-Wl,--export-dynamic"],  # Export symbols for ORC JIT
-    shard_count = 4,
-    deps = [":test_core"],
-)
-
-# JIT two-state suite - regression tests for --two-state mode
-cc_test(
-    name = "jit_two_state_tests",
-    srcs = ["main.cpp"],
-    args = ["--suite=jit_two_state"],
-    data = _SUITE_DATA,
-    linkopts = ["-Wl,--export-dynamic"],
-    shard_count = 4,
-    deps = [":test_core"],
-)
-
-# AOT development suite - full AOT pipeline (compile > link > execute)
-cc_test(
-    name = "aot_dev_tests",
-    srcs = ["main.cpp"],
-    args = ["--suite=aot_dev"],
-    data = _SUITE_DATA,
-    linkopts = ["-Wl,--export-dynamic"],
-    shard_count = 4,
-    deps = [":test_core"],
-)
-
-# AOT smoke suite - small, stable subset for fast PR gating
-cc_test(
-    name = "aot_smoke_tests",
-    srcs = ["main.cpp"],
-    args = ["--suite=aot_smoke"],
-    data = _SUITE_DATA,
-    linkopts = ["-Wl,--export-dynamic"],
-    deps = [":test_core"],
-)
-
-# Unit tests for trace infrastructure (no LLVM/slang dependency)
-cc_test(
-    name = "trace_manager_test",
-    srcs = ["trace_manager_test.cpp"],
-    deps = [
-        "//:runtime",
-        "@googletest//:gtest_main",
+        "@fmt",
+        "@yaml-cpp//:yaml-cpp",
     ],
 )
 
 cc_test(
-    name = "trace_signal_meta_test",
-    srcs = ["trace_signal_meta_test.cpp"],
+    name = "cli_golden_tests",
+    srcs = ["cli_golden_test.cpp"],
+    data = [
+        "suites.yaml",
+        "//:lyra",
+    ] + glob(
+        [
+            "cases/**/*.yaml",
+            "cases/**/*.sv",
+        ],
+        allow_empty = True,
+    ),
     deps = [
-        "//:runtime",
-        "@googletest//:gtest_main",
-    ],
-)
-
-cc_test(
-    name = "trace_selection_test",
-    srcs = ["trace_selection_test.cpp"],
-    deps = [
-        "//:runtime",
-        "@googletest//:gtest_main",
-    ],
-)
-
-cc_test(
-    name = "canonical_observable_shape_test",
-    srcs = ["canonical_observable_shape_test.cpp"],
-    deps = [
-        "//:llvm_backend",
-        "@googletest//:gtest_main",
-    ],
-)
-
-cc_test(
-    name = "resolve_byte_range_test",
-    srcs = ["resolve_byte_range_test.cpp"],
-    deps = [
-        "//:llvm_backend",
-        "@googletest//:gtest_main",
-    ],
-)
-
-cc_test(
-    name = "write_plan_test",
-    srcs = ["write_plan_test.cpp"],
-    deps = [
-        "//:llvm_backend",
-        "@googletest//:gtest_main",
-    ],
-)
-
-# LLI development suite - out-of-process LLI execution (for debugging/comparison)
-cc_test(
-    name = "lli_dev_tests",
-    srcs = ["main.cpp"],
-    args = ["--suite=lli_dev"],
-    data = _SUITE_DATA,
-    linkopts = ["-Wl,--export-dynamic"],
-    deps = [":test_core"],
-)
-
-cc_test(
-    name = "dpi_visible_name_collision_test",
-    srcs = ["dpi_visible_name_collision_test.cpp"],
-    deps = [
-        "//:lowering",
-        "@googletest//:gtest_main",
+        ":framework",
+        "@bazel_tools//tools/cpp/runfiles",
+        "@fmt",
+        "@googletest//:gtest",
     ],
 )

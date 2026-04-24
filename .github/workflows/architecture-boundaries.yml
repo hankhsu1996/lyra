@@ -1,0 +1,15 @@
+name: Architecture Boundaries
+
+on:
+  pull_request:
+
+jobs:
+  check:
+    name: Check architecture boundaries
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v6
+
+      - name: Check architecture boundaries
+        run: python3 tools/policy/check_architecture_boundaries.py

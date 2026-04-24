@@ -47,3 +47,6 @@ playground/
 scratch/
 *.local.md
 .bazelrc.user
+
+# Node.js (Prettier tooling). package-lock.json is committed for reproducibility.
+node_modules/

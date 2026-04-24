@@ -1,0 +1,11 @@
+id: emit.tiny_module
+tags: [emit, basic]
+input:
+  command: [emit, cpp]
+  project: false
+  top: Top
+  files: [main.sv]
+expect:
+  exit: 0
+  stdout:
+    contains: ["class Top", "public:", "int x;", "int y;", "Top() {}"]

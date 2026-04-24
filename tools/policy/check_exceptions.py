@@ -22,7 +22,7 @@ from pathlib import Path
 
 INCLUDE_PATHS = ("src/lyra", "include/lyra")
 CATCH_ALL_ALLOWLIST = ("src/lyra/driver",)
-FULL_ALLOWLIST = frozenset({"include/lyra/common/internal_error.hpp"})
+FULL_ALLOWLIST = frozenset({"include/lyra/support/internal_error.hpp"})
 EXTENSIONS = frozenset({".cpp", ".hpp", ".cc", ".cxx",
                        ".h", ".hh", ".hxx", ".inl", ".ipp"})
 
@@ -37,7 +37,7 @@ RE_BANNED_EXCEPTION = re.compile(r'\bstd::(runtime_error|logic_error)\b')
 RE_CATCH_ALL = re.compile(r'\bcatch\s*\(\s*\.\.\.\s*\)', re.DOTALL)
 RE_THROW_STMT = re.compile(r'\bthrow\s+([^;]+);', re.DOTALL)
 RE_RETHROW = re.compile(r'\bthrow\s*;')
-RE_INTERNAL_ERROR = re.compile(r'\b(common::)?InternalError\b')
+RE_INTERNAL_ERROR = re.compile(r'\b(support::)?InternalError\b')
 RE_ASSERT_CALL = re.compile(r'\bassert\s*\(')
 RE_CASSERT_INCLUDE = re.compile(r'^\s*#\s*include\s*<\s*cassert\s*>', re.MULTILINE)
 RE_ASSERT_H_INCLUDE = re.compile(r'^\s*#\s*include\s*<\s*assert\.h\s*>', re.MULTILINE)
@@ -45,7 +45,7 @@ RE_ASSERT_H_INCLUDE = re.compile(r'^\s*#\s*include\s*<\s*assert\.h\s*>', re.MULT
 RE_BUG_REPORT_STRING = re.compile(r'"[^"\n]*(?:Please report|This is a bug|github\.com/[^/]+/lyra/issues)[^"\n]*"')
 
 # Files allowed to contain bug report messages
-BUG_REPORT_ALLOWLIST = frozenset({"include/lyra/common/internal_error.hpp"})
+BUG_REPORT_ALLOWLIST = frozenset({"include/lyra/support/internal_error.hpp"})
 
 
 def get_repo_root() -> Path:

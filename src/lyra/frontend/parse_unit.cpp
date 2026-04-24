@@ -1,4 +1,4 @@
-#include "lyra/frontend/parse_unit.hpp"
+#include "parse_unit.hpp"
 
 #include <filesystem>
 #include <string>
@@ -9,7 +9,7 @@
 #include <fmt/core.h>
 #include <slang/syntax/SyntaxTree.h>
 
-#include "lyra/common/internal_error.hpp"
+#include "lyra/support/internal_error.hpp"
 
 namespace lyra::frontend {
 
@@ -62,12 +62,11 @@ auto ExecuteParseUnit(
           }
           compilation.addSyntaxTree(result.value());
           return true;
-
         } else {
           static_assert(std::is_same_v<T, SingleUnit>);
           if (u.files.empty()) {
-            throw common::InternalError(
-                "ExecuteParseUnit", "single-unit parse unit contains no files");
+            throw support::InternalError(
+                "ExecuteParseUnit: single-unit parse unit contains no files");
           }
 
           std::vector<slang::SourceBuffer> buffers;

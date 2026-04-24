@@ -1,6 +1,7 @@
 #CLAUDE.md
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+This file provides guidance to Claude Code (claude.ai/code) when working with code in this
+repository.
 
 ## Documentation
 
@@ -32,7 +33,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 | `docs/assertions.md`               | Assertion architecture (immediate, deferred, concurrent) |
 | `docs/documentation-guidelines.md` | Documentation guidelines                                 |
 
-**When writing or editing documentation, follow `docs/documentation-guidelines.md`.** Key rules: concise over complete, capture decisions not implementation, ASCII only, integrate don't append.
+**When writing or editing documentation, follow `docs/documentation-guidelines.md`.** Key rules:
+concise over complete, capture decisions not implementation, ASCII only, integrate don't append.
 
 ## Commands
 
@@ -73,11 +75,14 @@ lyra run --stats=N [files...]    # Show top N functions (0 = summary only)
 
 ## SystemVerilog Version
 
-Lyra targets **IEEE 1800-2023** (SystemVerilog 2023). The slang frontend is configured with `languageVersion = v1800_2023`. When testing SV 2023 features directly with slang, use `--std 1800-2023`.
+Lyra targets **IEEE 1800-2023** (SystemVerilog 2023). The slang frontend is configured with
+`languageVersion = v1800_2023`. When testing SV 2023 features directly with slang, use
+`--std 1800-2023`.
 
 ## Architecture
 
-SystemVerilog compiler with specialization-based compilation. The compilation unit is a module specialization, not an elaborated design.
+SystemVerilog compiler with specialization-based compilation. The compilation unit is a module
+specialization, not an elaborated design.
 
 ```
 SV -> slang -> Elaboration Discovery (frontend output)
@@ -138,7 +143,8 @@ python3 tools/bench/run_benchmarks.py --tier=nightly    # Full nightly run
 python3 tools/bench/run_benchmarks.py --tier=pr          # Quick PR check
 ```
 
-New benchmark designs go in `tools/bench/fixtures/<name>/` (with `lyra.toml` + `.sv` files) and must be registered in `DESIGNS` and `TIER_CONFIG` in the runner script.
+New benchmark designs go in `tools/bench/fixtures/<name>/` (with `lyra.toml` + `.sv` files) and must
+be registered in `DESIGNS` and `TIER_CONFIG` in the runner script.
 
 ## Code Style
 
@@ -151,6 +157,8 @@ New benchmark designs go in `tools/bench/fixtures/<name>/` (with `lyra.toml` + `
   - `std::array` over C arrays
   - `std::optional`, `std::expected` for error handling
   - Structured bindings, range-based for loops
+- No block-comment parameter labels at call sites (`/*param=*/value`) - modern IDE inlay hints make
+  them redundant, and they churn when the parameter name changes.
 
 ## Error Handling
 
@@ -162,7 +170,8 @@ See `docs/error-handling.md` for full details.
 | `InternalError`       | Compiler bugs (invariant violations)    |
 | `std::runtime_error`  | Runtime errors                          |
 
-For shared code, return `std::expected<T, std::string>` and let callers convert to `std::runtime_error`.
+For shared code, return `std::expected<T, std::string>` and let callers convert to
+`std::runtime_error`.
 
 ## Approach to Changes
 
@@ -175,7 +184,8 @@ Before implementing a new feature directly:
 1. **Explore existing structure** - Understand how similar things work
 2. **Look for generalization** - Can an existing abstraction be extended?
 3. **Find the right level** - The best change is often minimal when placed correctly
-4. **Prefer extending over adding** - Modify existing infrastructure rather than creating parallel structures
+4. **Prefer extending over adding** - Modify existing infrastructure rather than creating parallel
+   structures
 
 The goal: make the new requirement feel like a natural extension, not a bolt-on.
 

@@ -15,8 +15,8 @@ Schema for `bench.json` output produced by `run_benchmarks.py`.
 
 ## Result object
 
-All fields are always present. Fields that do not apply to a given backend
-use their zero value (`0`, `0.0`, `""`, `{}`) as a sentinel -- never omitted.
+All fields are always present. Fields that do not apply to a given backend use their zero value
+(`0`, `0.0`, `""`, `{}`) as a sentinel -- never omitted.
 
 ### Identity fields
 
@@ -38,14 +38,18 @@ use their zero value (`0`, `0.0`, `""`, `{}`) as a sentinel -- never omitted.
 
 Field semantics (pinned):
 
-- `focus` -- the measurement dimension. An open string, not an enum. Currently always `"runtime"` for simulation time benchmarks. Future fixtures may introduce other values (e.g., `"compile"` for compile-only benchmarks). Consumers should handle unknown values gracefully.
-- `primary` -- describes the dominant workload characteristic of this fixture. Answers "what is this fixture mainly stressing?"
-- `secondary` -- lists additional workload characteristics that are exercised but are not the primary focus. Useful for understanding what else might regress.
+- `focus` -- the measurement dimension. An open string, not an enum. Currently always `"runtime"`
+  for simulation time benchmarks. Future fixtures may introduce other values (e.g., `"compile"` for
+  compile-only benchmarks). Consumers should handle unknown values gracefully.
+- `primary` -- describes the dominant workload characteristic of this fixture. Answers "what is this
+  fixture mainly stressing?"
+- `secondary` -- lists additional workload characteristics that are exercised but are not the
+  primary focus. Useful for understanding what else might regress.
 
 ### Measurement fields
 
-All measurement fields are always present. When a metric does not apply to a
-backend, the zero value is emitted (not omitted).
+All measurement fields are always present. When a metric does not apply to a backend, the zero value
+is emitted (not omitted).
 
 | Field        | Type  | Description                                        | Backend notes                                       |
 | ------------ | ----- | -------------------------------------------------- | --------------------------------------------------- |
@@ -68,9 +72,9 @@ backend, the zero value is emitted (not omitted).
 
 ## Fixture identity
 
-Fixture names are globally unique across all categories and subcategories.
-Identity is the `fixture` field (the name), not the directory path. Two
-fixtures in different categories must not share a name.
+Fixture names are globally unique across all categories and subcategories. Identity is the `fixture`
+field (the name), not the directory path. Two fixtures in different categories must not share a
+name.
 
 ## Compatibility rules
 

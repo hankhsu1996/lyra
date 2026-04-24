@@ -1,0 +1,154 @@
+# Test suite definitions
+#
+# Suites define backend + test selection (closed contracts for CI).
+# Patterns are regex substrings matched against relative paths.
+# Empty include_regex = all YAML files. Exclude wins over include.
+#
+# Directory convention for test files:
+#   feature/default.yaml         - Default tests (runs in all suites)
+#   feature/four_state.yaml      - 4-state only (excluded from jit_two_state)
+#   feature/two_state_only.yaml  - Semantic diff (excluded from jit_dev)
+#   feature/jit_only.yaml        - Requires in-process observability hooks
+#                                  (excluded from out-of-process backends)
+
+suites:
+  jit_dev:
+    backend: jit
+    include_regex:
+      - assertions/
+      - control_flow/
+      - datatypes/
+      - directives/
+      - dpi/
+      - functions/
+      - generate/
+      - hierarchy/
+      - lifecycle/
+      - metadata/
+      - mutation/
+      - operators/
+      - optimization/
+      - packages/
+      - processes/
+      - scheduling/
+      - system_tf/
+      - trace/
+    exclude_regex:
+      - two_state_only\.yaml$ # Two-state semantic diff only
+
+  aot_dev:
+    backend: aot
+    include_regex:
+      - assertions/
+      - control_flow/
+      - datatypes/
+      - directives/
+      - dpi/
+      - functions/
+      - generate/
+      - hierarchy/
+      - lifecycle/
+      - metadata/
+      - mutation/
+      - operators/
+      - optimization/
+      - packages/
+      - processes/
+      - scheduling/
+      - system_tf/
+      - trace/
+    exclude_regex:
+      - two_state_only\.yaml$
+      - jit_only\.yaml$
+
+  # AOT smoke suite - small, stable subset for fast PR gating.
+  # Keep ~20-40 YAML files max. Tighten patterns if they expand.
+  #
+  # PR-gate smoke coverage families (distinct lowering/write paths):
+  #   assoc_arrays, dynamic_arrays, queues, unpacked_struct, unpacked_arrays,
+  #   dpi_export
+  # Extend this list when a new family introduces a distinct write/commit path.
+  aot_smoke:
+    backend: aot
+    exclude_regex:
+      - two_state_only\.yaml$
+      - jit_only\.yaml$
+    include_regex:
+      - ^control_flow/conditional/
+      - ^control_flow/for/
+      - ^datatypes/integral/variables/
+      - ^dpi/export_general/
+      - ^datatypes/packed/packed_struct/
+      - ^datatypes/unpacked/assoc_arrays/
+      - ^datatypes/unpacked/dynamic_arrays/
+      - ^datatypes/unpacked/queues/
+      - ^datatypes/unpacked/unpacked_arrays/
+      - ^datatypes/unpacked/unpacked_struct/
+      - ^directives/timescale/
+      - ^functions/basic/
+      - ^generate/generate/
+      - ^hierarchy/instantiation/
+      - ^hierarchy/ports/output_ports/
+      - ^lifecycle/copy_assign/
+      - ^operators/compound_assignment/
+      - ^operators/concat/
+      - ^packages/basic/
+      - ^processes/initial/
+      - ^processes/non_blocking/
+      - ^scheduling/nba_ordering/
+      - ^system_tf/effect/display/
+      - ^system_tf/pure/conversions/
+      - ^trace/basic/
+
+  lli_dev:
+    backend: lli
+    include_regex:
+      - assertions/
+      - control_flow/
+      - datatypes/
+      - directives/
+      - dpi/
+      - functions/
+      - generate/
+      - hierarchy/
+      - lifecycle/
+      - metadata/
+      - mutation/
+      - operators/
+      - optimization/
+      - packages/
+      - processes/
+      - scheduling/
+      - system_tf/
+      - trace/
+    exclude_regex:
+      - two_state_only\.yaml$
+      - jit_only\.yaml$
+
+  # Two-state regression suite: runs JIT with --two-state (all types forced
+  # to 2-state LLVM representation). Uses same test scope as jit_dev minus
+  # tests that depend on 4-state semantics (X/Z values, casez/casex patterns,
+  # identity comparisons with unknown bits).
+  jit_two_state:
+    backend: jit
+    two_state: true
+    include_regex:
+      - assertions/
+      - control_flow/
+      - datatypes/
+      - directives/
+      - dpi/
+      - functions/
+      - generate/
+      - hierarchy/
+      - lifecycle/
+      - metadata/
+      - operators/
+      - optimization/
+      - packages/
+      - processes/
+      - scheduling/
+      - system_tf/
+      - trace/
+    exclude_regex:
+      - four_state\.yaml$ # All 4-state-dependent tests
