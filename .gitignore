@@ -1,0 +1,52 @@
+# Bazel directories
+/bazel-*
+/bazel-bin
+/bazel-out
+/bazel-slangd
+/bazel-testlogs
+/external
+
+# Python
+__pycache__/
+*.pyc
+
+# Build artifacts
+/compile_commands.json
+/.cache/
+/.clangd/
+/obj_dir/
+
+# Editor files
+.vscode/settings.json
+.cursor/
+.idea/
+*.swp
+*.swo
+*~
+
+# Documents
+*.pdf
+
+# Operating System files
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+*.log.*
+
+# Profiling artifacts
+callgrind.*
+
+# Generated output
+out/
+*tmp*
+
+# Local files (personal, not committed)
+playground/
+scratch/
+*.local.md
+.bazelrc.user
+
+# Node.js (Prettier tooling). package-lock.json is committed for reproducibility.
+node_modules/

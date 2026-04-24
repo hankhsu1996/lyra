@@ -1,0 +1,6 @@
+[package]
+name = "scalar-arith"
+top = "Top"
+
+[sources]
+files = ["top.sv"]

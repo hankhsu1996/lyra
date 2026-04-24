@@ -1,0 +1,115 @@
+load("@hedron_compile_commands//:refresh_compile_commands.bzl", "refresh_compile_commands")
+load("@rules_cc//cc:cc_binary.bzl", "cc_binary")
+load("@rules_cc//cc:cc_library.bzl", "cc_library")
+
+refresh_compile_commands(
+    name = "refresh_compile_commands",
+    exclude_external_sources = True,
+    exclude_headers = "external",
+    targets = {
+        "//:lyra": "",
+        "//tests:cli_golden_tests": "",
+    },
+)
+
+cc_library(
+    name = "support",
+    hdrs = glob(["include/lyra/support/*.hpp"]),
+    includes = ["include"],
+    visibility = ["//visibility:public"],
+)
+
+cc_library(
+    name = "hir",
+    srcs = glob(["src/lyra/hir/*.cpp"]),
+    hdrs = glob(["include/lyra/hir/*.hpp"]),
+    includes = ["include"],
+    visibility = ["//visibility:public"],
+    deps = [":support"],
+)
+
+cc_library(
+    name = "mir",
+    srcs = glob(["src/lyra/mir/*.cpp"]),
+    hdrs = glob(["include/lyra/mir/*.hpp"]),
+    includes = ["include"],
+    visibility = ["//visibility:public"],
+    deps = [":support"],
+)
+
+cc_library(
+    name = "frontend",
+    srcs = glob([
+        "src/lyra/frontend/*.cpp",
+        "src/lyra/frontend/*.hpp",
+    ]),
+    hdrs = glob(["include/lyra/frontend/*.hpp"]),
+    includes = ["include"],
+    visibility = ["//visibility:public"],
+    deps = [
+        ":support",
+        "@fmt",
+        "@slang",
+    ],
+)
+
+cc_library(
+    name = "ast_to_hir",
+    srcs = glob([
+        "src/lyra/lowering/ast_to_hir/**/*.cpp",
+        "src/lyra/lowering/ast_to_hir/**/*.hpp",
+    ]),
+    hdrs = glob(["include/lyra/lowering/ast_to_hir/*.hpp"]),
+    includes = ["include"],
+    visibility = ["//visibility:public"],
+    deps = [
+        ":hir",
+        ":support",
+        "@slang",
+    ],
+)
+
+cc_library(
+    name = "hir_to_mir",
+    srcs = glob(["src/lyra/lowering/hir_to_mir/*.cpp"]),
+    hdrs = glob(["include/lyra/lowering/hir_to_mir/*.hpp"]),
+    includes = ["include"],
+    visibility = ["//visibility:public"],
+    deps = [
+        ":hir",
+        ":mir",
+        ":support",
+    ],
+)
+
+cc_library(
+    name = "backend_cpp",
+    srcs = glob([
+        "src/lyra/backend/cpp/*.cpp",
+        "src/lyra/backend/cpp/*.hpp",
+    ]),
+    hdrs = glob(["include/lyra/backend/cpp/*.hpp"]),
+    includes = ["include"],
+    visibility = ["//visibility:public"],
+    deps = [
+        ":mir",
+        ":support",
+    ],
+)
+
+cc_binary(
+    name = "lyra",
+    srcs = ["src/lyra/driver/cli.cpp"],
+    visibility = ["//visibility:public"],
+    deps = [
+        ":ast_to_hir",
+        ":backend_cpp",
+        ":frontend",
+        ":hir",
+        ":hir_to_mir",
+        ":mir",
+        ":support",
+        "@argparse",
+        "@fmt",
+    ],
+)

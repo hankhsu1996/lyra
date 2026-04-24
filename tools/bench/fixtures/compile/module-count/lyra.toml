@@ -1,0 +1,6 @@
+[package]
+name = "module-count"
+top = "Top"
+
+[sources]
+files = ["top.sv"]

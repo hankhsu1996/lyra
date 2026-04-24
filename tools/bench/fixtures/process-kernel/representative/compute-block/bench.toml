@@ -1,0 +1,14 @@
+[benchmark]
+name = "compute-block"
+category = "process-kernel"
+subcategory = "representative"
+intent = "Catch broad single-process codegen regressions across arithmetic, control flow, and data access."
+focus = "runtime"
+primary = "representative single-process compute workload"
+secondary = ["arithmetic mix", "control flow mix", "array access"]
+
+[scale.small]
+NUM_ITERS = 3_000
+
+[scale.large]
+NUM_ITERS = 30_000

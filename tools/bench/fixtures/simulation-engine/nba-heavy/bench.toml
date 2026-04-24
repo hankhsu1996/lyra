@@ -1,0 +1,13 @@
+[benchmark]
+name = "nba-heavy"
+category = "simulation-engine"
+intent = "Protect NBA queue commit and per-edge process activation from regression."
+focus = "runtime"
+primary = "NBA queue / commit overhead"
+secondary = ["per-edge process activation"]
+
+[scale.small]
+NUM_CYCLES = 50_000
+
+[scale.large]
+NUM_CYCLES = 500_000

@@ -1,0 +1,6 @@
+[package]
+name = "fanout-comb"
+top = "Top"
+
+[sources]
+files = ["top.sv"]

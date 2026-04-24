@@ -1,0 +1,13 @@
+[benchmark]
+name = "delta-converge"
+category = "simulation-engine"
+intent = "Protect comb fixpoint iteration depth and per-iteration dispatch overhead from regression."
+focus = "runtime"
+primary = "comb fixpoint convergence depth (32-stage chain)"
+secondary = ["comb kernel dispatch cost", "dirty-mark propagation"]
+
+[scale.small]
+NUM_CYCLES = 50_000
+
+[scale.large]
+NUM_CYCLES = 500_000

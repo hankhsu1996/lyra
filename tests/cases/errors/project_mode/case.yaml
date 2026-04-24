@@ -1,0 +1,9 @@
+id: errors.project_mode
+tags: [errors]
+input:
+  command: [emit, cpp]
+  project: true
+expect:
+  exit: 1
+  stderr:
+    contains: ["project mode", "not implemented"]

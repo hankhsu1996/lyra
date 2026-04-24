@@ -1,0 +1,13 @@
+[benchmark]
+name = "clock-pipeline"
+category = "simulation-engine"
+intent = "Protect clock-edge, NBA commit, and propagation scheduling paths from regression."
+focus = "runtime"
+primary = "mixed clock edge / NBA / propagation scheduling workload"
+secondary = ["comb kernel overhead", "edge subscription traversal"]
+
+[scale.small]
+NUM_CYCLES = 50_000
+
+[scale.large]
+NUM_CYCLES = 500_000

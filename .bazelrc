@@ -1,0 +1,54 @@
+build --action_env=CC=clang
+build --action_env=CXX=clang++
+build --cxxopt='-std=c++23'
+build --cxxopt='-Wall'
+build --cxxopt='-Wextra'
+build --cxxopt='-Wno-unused-parameter'
+
+# LLVM 17 doesn't build with C++23 (constexpr unique_ptr requires complete types)
+build --per_file_copt=external/llvm-project.*.cpp@-std=c++17
+build --incompatible_strict_action_env
+build --disk_cache=~/.cache/bazel-disk
+
+# Optional user-local overrides
+try-import %workspace%/.bazelrc.user
+
+# CI config: BuildBuddy remote cache + BES
+build:ci --bes_results_url=https://app.buildbuddy.io/invocation/
+build:ci --bes_backend=grpcs://remote.buildbuddy.io
+build:ci --remote_cache=grpcs://remote.buildbuddy.io
+build:ci --remote_timeout=10m
+build:ci --remote_upload_local_results=true
+
+# RBE config: Remote Build Execution (requires BuildBuddy API key in .bazelrc.user)
+build:rbe --remote_executor=grpcs://remote.buildbuddy.io
+build:rbe --remote_cache=grpcs://remote.buildbuddy.io
+build:rbe --remote_timeout=10m
+build:rbe --extra_execution_platforms=@buildbuddy_toolchain//:platform
+build:rbe --host_platform=@buildbuddy_toolchain//:platform
+build:rbe --platforms=@buildbuddy_toolchain//:platform
+build:rbe --jobs=50
+build:rbe --bes_results_url=https://app.buildbuddy.io/invocation/
+build:rbe --bes_backend=grpcs://remote.buildbuddy.io
+
+build --local_resources=cpu=HOST_CPUS*0.7
+build --verbose_failures
+
+# Debug build configuration
+build:debug --compilation_mode=dbg
+build:debug --cxxopt='-Wall'
+build:debug --cxxopt='-Wextra'
+build:debug --cxxopt='-Wno-unused-parameter'
+build:debug --cxxopt='-Wno-deprecated-declarations'
+
+# Release build configuration
+build:release --compilation_mode=opt
+build:release --cxxopt='-O3'
+build:release --cxxopt='-DNDEBUG'
+
+# Fastbuild configuration
+build:fastbuild --compilation_mode=fastbuild
+build:fastbuild --cxxopt='-O1'
+
+# Test configuration
+test --test_output=errors

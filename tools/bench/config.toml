@@ -1,0 +1,18 @@
+# Central benchmark configuration.
+#
+# Single source of truth for tier -> scale profile mapping and default
+# trial counts. Fixtures declare named scale profiles (e.g., [scale.small],
+# [scale.large]). Each tier selects one profile and a default trial count.
+#
+# Rules:
+# - No fixture-local tier overrides.
+# - No environment variable overrides for profile selection.
+# - CLI --trials may override trial count (local dev convenience only).
+
+[tiers.pr]
+profile = "small"
+trials = 1
+
+[tiers.nightly]
+profile = "large"
+trials = 3

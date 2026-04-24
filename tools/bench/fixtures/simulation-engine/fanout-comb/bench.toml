@@ -1,0 +1,13 @@
+[benchmark]
+name = "fanout-comb"
+category = "simulation-engine"
+intent = "Protect wakeup fanout, subscriber traversal, and propagation pressure from regression."
+focus = "runtime"
+primary = "wakeup fanout / subscriber traversal / propagation pressure"
+secondary = ["combinational evaluation overhead"]
+
+[scale.small]
+NUM_CYCLES = 50_000
+
+[scale.large]
+NUM_CYCLES = 500_000

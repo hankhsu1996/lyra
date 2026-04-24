@@ -1,0 +1,6 @@
+[package]
+name = "edge-sub-dense"
+top = "Top"
+
+[sources]
+files = ["top.sv"]

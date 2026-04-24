@@ -1,0 +1,10 @@
+archived/
+bazel-bin/
+bazel-out/
+bazel-testlogs/
+bazel-lyra-1/
+external/
+third_party/
+playground/
+node_modules/
+.claude/

@@ -1,0 +1,6 @@
+[package]
+name = "packed-slice-read"
+top = "Top"
+
+[sources]
+files = ["top.sv"]

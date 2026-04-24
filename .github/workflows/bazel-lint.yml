@@ -1,0 +1,58 @@
+name: Bazel File Lint
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  lint:
+    name: Buildifier Lint
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v6
+
+      - name: Setup buildifier
+        run: |
+          wget -q https://github.com/bazelbuild/buildtools/releases/download/v8.2.1/buildifier-linux-amd64
+          chmod +x buildifier-linux-amd64
+          sudo mv buildifier-linux-amd64 /usr/local/bin/buildifier
+          buildifier --version
+
+      - name: Check formatting
+        id: format
+        run: |
+          # Check formatting only
+          if ! buildifier -mode=check -r .; then
+            echo "### [FAIL] Formatting issues detected" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "Run the following command locally to fix formatting:" >> $GITHUB_STEP_SUMMARY
+            echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
+            echo "buildifier -r ." >> $GITHUB_STEP_SUMMARY
+            echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
+            exit 1
+          else
+            echo "### [OK] Formatting check passed" >> $GITHUB_STEP_SUMMARY
+          fi
+
+      - name: Check lint warnings
+        id: lint
+        run: |
+          # Run buildifier with lint warnings and store output in a file
+          buildifier -mode=check -lint=warn -r . > lint_output.txt 2>&1 || {
+            # Write to GitHub Summary if there are warnings
+            echo "### [FAIL] Lint warnings detected" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
+            cat lint_output.txt >> $GITHUB_STEP_SUMMARY
+            echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
+
+            # Also print to console
+            cat lint_output.txt
+            exit 1
+          }
+
+          # No warnings found
+          echo "### [OK] Lint check passed" >> $GITHUB_STEP_SUMMARY

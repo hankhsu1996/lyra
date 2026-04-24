@@ -1,0 +1,6 @@
+[package]
+name = "signal-width"
+top = "Top"
+
+[sources]
+files = ["top.sv"]

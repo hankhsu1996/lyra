@@ -1,0 +1,13 @@
+[benchmark]
+name = "edge-sub-dense"
+category = "simulation-engine"
+intent = "Protect edge subscription traversal and per-process activation overhead from regression."
+focus = "runtime"
+primary = "edge subscription traversal / activation overhead"
+secondary = ["per-process dispatch cost"]
+
+[scale.small]
+NUM_CYCLES = 50_000
+
+[scale.large]
+NUM_CYCLES = 500_000

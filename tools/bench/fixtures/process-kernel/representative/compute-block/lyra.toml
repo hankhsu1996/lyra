@@ -1,0 +1,6 @@
+[package]
+name = "compute-block"
+top = "Top"
+
+[sources]
+files = ["top.sv"]

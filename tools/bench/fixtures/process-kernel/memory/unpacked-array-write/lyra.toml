@@ -1,0 +1,6 @@
+[package]
+name = "unpacked-array-write"
+top = "Top"
+
+[sources]
+files = ["top.sv"]

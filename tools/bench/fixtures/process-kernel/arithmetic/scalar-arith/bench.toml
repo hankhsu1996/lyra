@@ -1,0 +1,14 @@
+[benchmark]
+name = "scalar-arith"
+category = "process-kernel"
+subcategory = "arithmetic"
+intent = "Protect scalar arithmetic codegen throughput from regression."
+focus = "runtime"
+primary = "scalar arithmetic throughput (32-bit add/mul/shift/XOR)"
+secondary = ["loop lowering", "register allocation"]
+
+[scale.small]
+NUM_ITERS = 30_000_000
+
+[scale.large]
+NUM_ITERS = 300_000_000

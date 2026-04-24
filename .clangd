@@ -1,0 +1,30 @@
+CompileFlags:
+  Add:
+    - "-Wall"
+    - "-Wextra"
+    - "-Ithird_party/systemverilog"
+
+---
+
+If:
+  PathMatch: [.*\.hpp, .*\.cpp]
+CompileFlags:
+  Add:
+    - "-std=c++23"
+
+---
+
+Diagnostics:
+  ClangTidy:
+    FastCheckFilter: Strict
+
+# Disable inlay hints for designators to avoid JSON key indexing.
+InlayHints:
+  Designators: No
+
+---
+
+If:
+  PathMatch: playground/.*
+Diagnostics:
+  Suppress: '*'

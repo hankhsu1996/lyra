@@ -1,0 +1,11 @@
+id: emit.unsupported_decl
+tags: [emit, errors]
+input:
+  command: [emit, cpp]
+  project: false
+  top: Top
+  files: [main.sv]
+expect:
+  exit: 2
+  stderr:
+    contains: ["internal error", "not supported"]

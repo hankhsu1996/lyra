@@ -1,0 +1,13 @@
+[benchmark]
+name = "signal-width"
+category = "compile"
+intent = "Protect compile-time scaling and LLVM IR size as signal width grows."
+focus = "compile"
+primary = "compile time scaling by signal width"
+secondary = ["LLVM IR size scaling", "binary size scaling"]
+
+[scale.small]
+SIGNAL_WIDTH = 512
+
+[scale.large]
+SIGNAL_WIDTH = 4096

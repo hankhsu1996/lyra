@@ -1,0 +1,63 @@
+"""
+Bazel module file for Lyra SystemVerilog simulator.
+"""
+
+module(
+    name = "lyra",
+    version = "0.1.0",
+)
+
+# Bazel rules for C/C++
+bazel_dep(name = "rules_cc", version = "0.1.1")
+
+# Slang SystemVerilog Compiler Library
+bazel_dep(name = "slang", version = "10.0")
+git_override(
+    module_name = "slang",
+    commit = "a9e580e7cae7c657688d56cf89671be0fb57fece",
+    remote = "https://github.com/hankhsu1996/slang.git",
+)
+
+# Formatting
+bazel_dep(name = "fmt", version = "11.1.3")
+
+# Logging Library
+bazel_dep(name = "spdlog", version = "1.15.1")
+
+# Testing framework
+bazel_dep(name = "googletest", version = "1.16.0.bcr.1")
+
+# YAML parsing for test data
+bazel_dep(name = "yaml-cpp", version = "0.8.0")
+
+# JSON parsing for test results
+bazel_dep(name = "nlohmann_json", version = "3.11.3")
+
+# TOML parsing for config files
+bazel_dep(name = "tomlplusplus", version = "3.4.0")
+
+# LLVM for code generation
+bazel_dep(name = "llvm-project", version = "17.0.3.bcr.4")
+
+# CLI argument parsing
+bazel_dep(name = "argparse", version = "3.2.0")
+
+# Abseil C++ library
+bazel_dep(name = "abseil-cpp", version = "20260107.0")
+
+# BuildBuddy RBE toolchain (Ubuntu 24.04 has GCC 13)
+bazel_dep(name = "toolchains_buildbuddy", version = "0.0.4")
+
+buildbuddy = use_extension("@toolchains_buildbuddy//:extensions.bzl", "buildbuddy")
+buildbuddy.platform(buildbuddy_container_image = "UBUNTU24_04_IMAGE")
+use_repo(buildbuddy, "buildbuddy_toolchain")
+
+register_toolchains("@buildbuddy_toolchain//:all")
+
+# Development tools
+bazel_dep(name = "hedron_compile_commands", dev_dependency = True)
+git_override(
+    module_name = "hedron_compile_commands",
+    commit = "1e08f8e0507b6b6b1f4416a9a22cf5c28beaba93",
+    remote = "https://github.com/hedronvision/bazel-compile-commands-extractor.git",
+)

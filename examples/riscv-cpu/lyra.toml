@@ -1,0 +1,19 @@
+[package]
+name = "riscv-cpu"
+top = "all_tests"
+
+[sources]
+files = [
+    "riscv_package.sv",
+    "register_file.sv",
+    "instr_memory.sv",
+    "data_memory.sv",
+    "instr_fetch.sv",
+    "instr_decode.sv",
+    "execution_unit.sv",
+    "writeback.sv",
+    "cpu.sv",
+    "tests/sum_test.sv",
+    "tests/fib_test.sv",
+    "tests/all_tests.sv",
+]
