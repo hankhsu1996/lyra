@@ -36,19 +36,25 @@ auto ParseFiles(const CompilationInput& input) -> std::optional<ParseResult> {
   }
 
   auto source_manager = std::make_shared<slang::SourceManager>();
+  for (const auto& dir : input.incdirs) {
+    (void)source_manager->addUserDirectories(dir);
+  }
 
   slang::Bag options;
-  options.set(BuildLyraPreprocessorOptions());
+  options.set(BuildLyraPreprocessorOptions(input.defines));
 
   slang::ast::CompilationOptions comp_options;
   comp_options.languageVersion = slang::LanguageVersion::v1800_2023;
   if (!input.top.empty()) {
     comp_options.topModules.emplace(input.top);
   }
+  comp_options.paramOverrides = input.param_overrides;
 
   auto compilation = std::make_unique<slang::ast::Compilation>(comp_options);
 
-  auto plan = BuildParsePlan(input.files, CompilationUnitMode::kPerFile);
+  const auto mode = input.single_unit ? CompilationUnitMode::kSingleUnit
+                                      : CompilationUnitMode::kPerFile;
+  auto plan = BuildParsePlan(input.files, mode);
   for (const auto& unit : plan.units) {
     if (!ExecuteParseUnit(unit, *source_manager, *compilation, options)) {
       return std::nullopt;

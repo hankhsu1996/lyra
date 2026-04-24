@@ -17,8 +17,4 @@ auto BuildLyraPreprocessorOptions(std::span<const std::string> user_defines)
   return pp_options;
 }
 
-auto BuildLyraPreprocessorOptions() -> slang::parsing::PreprocessorOptions {
-  return BuildLyraPreprocessorOptions({});
-}
-
 }  // namespace lyra::frontend

@@ -25,9 +25,9 @@ forbidden.
 2. `tests/cases` holds SystemVerilog project-style tests. Each case is a folder with its own sources
    and a `test.yml` declaring expected behavior. Cases run end-to-end through the compiler and
    simulate.
-3. `tests/ir` holds IR-level golden tests for HIR, MIR, LIR, and projections. Each test pins the
-   canonical form of a specific construct at a specific layer. IR tests pin shape; they do not
-   validate SystemVerilog semantic correctness.
+3. `tests/ir` holds IR-level golden tests for HIR, MIR, LIR dumps and for backend outputs (today
+   just `backend::cpp`). Each test pins the canonical form of a specific construct at a specific
+   layer. IR tests pin shape; they do not validate SystemVerilog semantic correctness.
 4. `tests/unit` holds C++ unit tests for internal utilities that have no SystemVerilog-semantic
    dimension. Unit tests must not assert on HIR, MIR, or LIR shape to prove language correctness.
 5. Every SystemVerilog semantic behavior is covered by exactly one owning case test path. Coverage

@@ -13,6 +13,10 @@ namespace lyra::frontend {
 struct CompilationInput {
   std::vector<std::string> files;
   std::string top;
+  std::vector<std::string> incdirs;
+  std::vector<std::string> defines;
+  std::vector<std::string> param_overrides;
+  bool single_unit = false;
 };
 
 struct ParseResult {

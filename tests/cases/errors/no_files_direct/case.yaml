@@ -1,0 +1,9 @@
+id: errors.no_files_direct
+tags: [errors]
+input:
+  command: [dump, hir]
+  project: false
+expect:
+  exit: 1
+  stderr:
+    contains: ["no input files"]

@@ -1,0 +1,11 @@
+id: errors.parse_error
+tags: [errors]
+input:
+  command: [emit, cpp]
+  project: false
+  top: Top
+  files: [main.sv]
+expect:
+  exit: 1
+  stderr:
+    contains: ["error:", "expected ';'"]

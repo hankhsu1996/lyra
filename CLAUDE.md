@@ -157,6 +157,8 @@ be registered in `DESIGNS` and `TIER_CONFIG` in the runner script.
   - `std::array` over C arrays
   - `std::optional`, `std::expected` for error handling
   - Structured bindings, range-based for loops
+- No block-comment parameter labels at call sites (`/*param=*/value`) - modern IDE inlay hints make
+  them redundant, and they churn when the parameter name changes.
 
 ## Error Handling
 

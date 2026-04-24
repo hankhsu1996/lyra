@@ -10,6 +10,4 @@ namespace lyra::frontend {
 auto BuildLyraPreprocessorOptions(std::span<const std::string> user_defines)
     -> slang::parsing::PreprocessorOptions;
 
-auto BuildLyraPreprocessorOptions() -> slang::parsing::PreprocessorOptions;
-
 }  // namespace lyra::frontend

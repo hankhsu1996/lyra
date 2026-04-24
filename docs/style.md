@@ -65,7 +65,9 @@ Architecture is upstream of everything else in `docs/`.
   one kind of compilation unit.
 - Prefer **object graph** when referring to hierarchy or navigation.
 - Use **compilation-unit-local** (consistently) when referring to local identity scope.
-- Use **projection** when referring to MIR's readable textual form, not "codegen" or "rendering".
+- Use **dump** for the readable textual serialization of HIR or MIR, not "projection" or
+  "rendering". Use **backend** for a MIR consumer that emits executable artifacts (e.g.,
+  `backend::cpp`). Dump and backend are distinct surfaces; do not conflate them.
 
 ## Anti-Patterns
 

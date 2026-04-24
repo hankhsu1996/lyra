@@ -10,15 +10,15 @@ compile-time and runtime.
 - The identity of the pipeline layers: HIR, MIR, LIR, LLVM IR.
 - The definition of a compilation unit as the primary semantic boundary of the compiler.
 - The chosen semantic model: object-oriented. Hierarchy is an object graph; construction is
-  constructor-like logic; navigation is object-graph traversal. The model is not C++; C++ is used
-  only as a projection and reference language.
+  constructor-like logic; navigation is object-graph traversal. The model is not C++; C++ is one of
+  the backend targets but does not define MIR's semantics.
 - The contract that separates semantic modeling (HIR, MIR) from execution modeling (LIR, LLVM IR).
 - The contract that separates compile-time artifacts (class-level) from runtime artifacts
   (object-level).
-- The positioning of MIR's projection: a readable view of MIR used for inspection, validation, and
-  golden testing. Projection is a view, not a compilation path; it is not part of the lowering
-  pipeline and does not produce executable artifacts. Projection must be semantically faithful to
-  MIR and must not introduce or reinterpret semantics.
+- The positioning of the C++ backend: a first-class MIR consumer that emits C++ code. Debug
+  inspection of HIR and MIR is separate: dumpers produce textual traversals for reading and golden
+  testing, while `backend::cpp` is the real emitter. Dumpers and backends are both pure over their
+  input IR and must not introduce or reinterpret semantics.
 
 ## Does Not Own
 
@@ -35,15 +35,16 @@ compile-time and runtime.
    package, and interface.
 4. Compile-time produces class-level artifacts: shape, code, and metadata. Runtime constructs
    objects and installs relations.
-5. MIR remains human-readable and structurally meaningful through its projection. LIR does not
-   reintroduce high-level semantics lost from MIR.
+5. MIR remains human-readable through its dumper; LIR does not reintroduce high-level semantics lost
+   from MIR.
 6. Lowering is one-way. A later stage does not write information back into an earlier stage.
 7. The semantic model is object-oriented. Hierarchy is represented and navigated as an object graph;
-   construction is constructor-like logic. The model is not C++ semantics; C++ is only a
-   projection/reference language.
-8. MIR's projection is a view, not a compilation path. It exists for inspection, debugging, and
-   golden testing only. It is not consumed by any lowering step, and it must remain semantically
-   faithful to MIR.
+   construction is constructor-like logic. The model is not C++ semantics; C++ is one backend target
+   among possibly several.
+8. HIR and MIR dumpers are debug-facing textual serialization. They are not compilation paths and
+   are not consumed by any lowering step. They must remain semantically faithful to their input IR.
+9. Backend emitters (today: `backend::cpp`) consume MIR and produce executable artifacts. A backend
+   is a first-class compilation stage, not a debug view.
 
 ## Boundary to Adjacent Layers
 
@@ -60,11 +61,10 @@ compile-time and runtime.
 - Reconstructing high-level semantics in LIR.
 - Treating the elaborated design as a compilation unit.
 - Compile-time stages that depend on per-instance identity.
-- Framing the semantic model as "C++ semantics" rather than "object-oriented semantics with a
-  C++-like projection".
-- Using MIR's projection as a lowering target, a backend input, or any step in the execution
-  pipeline.
-- A projection that diverges semantically from MIR or introduces meaning not present in MIR.
+- Framing the semantic model as "C++ semantics" rather than "object-oriented semantics emitted by
+  one or more backends".
+- A dumper that diverges semantically from its input IR or introduces meaning not present in the IR.
+- Treating a dumper's text as a backend artifact, or treating a backend's output as a debug view.
 
 ## Notes / Examples
 

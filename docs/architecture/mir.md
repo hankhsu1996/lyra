@@ -3,8 +3,8 @@
 ## Purpose
 
 Define the object-oriented semantic IR. MIR expresses the compiled program as objects, members,
-callables, and actions, with lightweight structured control flow. MIR is not C++; C++ is used only
-as a projection surface for reading MIR.
+callables, and actions, with lightweight structured control flow. MIR is not C++; C++ is one of
+several possible backend targets for MIR, and does not define MIR's semantics.
 
 ## Owns
 
@@ -15,8 +15,8 @@ as a projection surface for reading MIR.
   blocks at this layer.
 - Action shapes for constructs that bind behavior to schedule events (always blocks, continuous
   assignments, deferred assertions, concurrent assertions).
-- The projection form of MIR: a canonical, readable C++-like rendering used for inspection,
-  validation, and golden testing.
+- A textual dumper that serializes MIR for inspection, validation, and golden testing. The dumper is
+  not a backend; its output is not executable.
 
 ## Does Not Own
 
@@ -35,8 +35,8 @@ as a projection surface for reading MIR.
    children via `if`, loop, and sequence over construction actions.
 4. MIR ids are the single source of identity at this layer. Earlier-layer ids are not carried
    through.
-5. MIR admits a clean, readable C++-like projection that is lossless with respect to MIR identity
-   and structure. The projection is the golden-test surface at this layer.
+5. MIR admits a pure textual dumper that is lossless with respect to MIR identity and structure. The
+   dumper is the golden-test surface at this layer; it is not a compilation path.
 6. MIR does not reconstruct topology or identity from side tables. A member is owned by exactly one
    object; a callable by exactly one owner.
 
@@ -60,6 +60,7 @@ as a projection surface for reading MIR.
 
 ## Notes / Examples
 
-Reviewing MIR via projection should feel like reading the compiled program's shape, not a compiler
-pass output. The projection is C++-like because the object-oriented semantic model maps naturally to
-C++ surface syntax; it is not C++, and C++ is not the source of MIR's semantics.
+Reviewing MIR via the dumper should feel like reading the compiled program's structure. The C++
+backend emits MIR to C++ source: it is a backend output, not a debug view. The object-oriented
+semantic model maps naturally to C++ surface syntax, but C++ is not MIR's semantics and more than
+one backend may exist.

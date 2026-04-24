@@ -1,0 +1,11 @@
+id: dump.mir_smoke
+tags: [dump]
+input:
+  command: [dump, mir]
+  project: false
+  top: Top
+  files: [main.sv]
+expect:
+  exit: 0
+  stdout:
+    contains: ["Class", "Member", "Constructor"]

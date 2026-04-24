@@ -2,15 +2,15 @@
 #include <string>
 
 #include "formatting.hpp"
+#include "lyra/backend/cpp/api.hpp"
 #include "lyra/mir/class_decl.hpp"
 #include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/member.hpp"
 #include "lyra/mir/process.hpp"
-#include "lyra/projection/cpp/api.hpp"
 #include "render_stmt.hpp"
 #include "render_type.hpp"
 
-namespace lyra::projection::cpp {
+namespace lyra::backend::cpp {
 
 namespace {
 
@@ -71,8 +71,7 @@ auto RenderClass(const mir::ClassDecl& c) -> std::string {
 
 }  // namespace
 
-auto ProjectCompilationUnitToCpp(const mir::CompilationUnit& unit)
-    -> std::string {
+auto EmitCpp(const mir::CompilationUnit& unit) -> std::string {
   std::string out;
   bool first = true;
   for (const auto& cls : unit.Classes()) {
@@ -85,4 +84,4 @@ auto ProjectCompilationUnitToCpp(const mir::CompilationUnit& unit)
   return out;
 }
 
-}  // namespace lyra::projection::cpp
+}  // namespace lyra::backend::cpp

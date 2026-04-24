@@ -11,7 +11,7 @@
 #include "render_context.hpp"
 #include "render_expr.hpp"
 
-namespace lyra::projection::cpp {
+namespace lyra::backend::cpp {
 
 auto RenderStmt(
     const RenderContext& ctx, const mir::Stmt& stmt, std::size_t indent)
@@ -90,4 +90,4 @@ auto RenderBody(
   return out;
 }
 
-}  // namespace lyra::projection::cpp
+}  // namespace lyra::backend::cpp

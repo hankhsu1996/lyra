@@ -4,8 +4,8 @@
 
 #include "lyra/mir/type.hpp"
 
-namespace lyra::projection::cpp {
+namespace lyra::backend::cpp {
 
 [[nodiscard]] auto RenderTypeAsCpp(const mir::Type& type) -> std::string;
 
-}  // namespace lyra::projection::cpp
+}  // namespace lyra::backend::cpp

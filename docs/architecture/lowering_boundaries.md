@@ -10,8 +10,9 @@ set of allowed transformations.
 - The rule that lowering is one-way: a later stage does not write into an earlier stage.
 - The rule that each lowering has a fixed input layer, a fixed output layer, and a fixed set of
   transformations it is permitted to perform.
-- The projection and checkpoint contract: each lowering's output is inspectable in the output
-  layer's canonical form.
+- The dump and checkpoint contract: each lowering's output is inspectable in the output layer's
+  canonical textual form (HIR dump, MIR dump, etc.). Dumps are debug surfaces, not compilation
+  paths.
 
 ## Does Not Own
 

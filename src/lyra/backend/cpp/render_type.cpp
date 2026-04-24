@@ -6,7 +6,7 @@
 #include "lyra/mir/type.hpp"
 #include "lyra/support/overloaded.hpp"
 
-namespace lyra::projection::cpp {
+namespace lyra::backend::cpp {
 
 auto RenderTypeAsCpp(const mir::Type& type) -> std::string {
   return std::visit(
@@ -17,4 +17,4 @@ auto RenderTypeAsCpp(const mir::Type& type) -> std::string {
       type.data);
 }
 
-}  // namespace lyra::projection::cpp
+}  // namespace lyra::backend::cpp

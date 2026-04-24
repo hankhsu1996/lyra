@@ -1,0 +1,4 @@
+suites:
+  architecture_reset:
+    include_tags: [emit, dump, errors]
+    exclude: []

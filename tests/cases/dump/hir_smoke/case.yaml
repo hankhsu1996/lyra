@@ -1,0 +1,11 @@
+id: dump.hir_smoke
+tags: [dump]
+input:
+  command: [dump, hir]
+  project: false
+  top: Top
+  files: [main.sv]
+expect:
+  exit: 0
+  stdout:
+    contains: ["ModuleUnit", "VarDecl"]

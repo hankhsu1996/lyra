@@ -3,7 +3,7 @@
 #include "lyra/mir/class_decl.hpp"
 #include "lyra/mir/stmt.hpp"
 
-namespace lyra::projection::cpp {
+namespace lyra::backend::cpp {
 
 class RenderContext {
  public:
@@ -24,4 +24,4 @@ class RenderContext {
   const mir::Body* body_;
 };
 
-}  // namespace lyra::projection::cpp
+}  // namespace lyra::backend::cpp

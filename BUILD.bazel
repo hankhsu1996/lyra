@@ -1,5 +1,16 @@
+load("@hedron_compile_commands//:refresh_compile_commands.bzl", "refresh_compile_commands")
 load("@rules_cc//cc:cc_binary.bzl", "cc_binary")
 load("@rules_cc//cc:cc_library.bzl", "cc_library")
+
+refresh_compile_commands(
+    name = "refresh_compile_commands",
+    exclude_external_sources = True,
+    exclude_headers = "external",
+    targets = {
+        "//:lyra": "",
+        "//tests:cli_golden_tests": "",
+    },
+)
 
 cc_library(
     name = "support",
@@ -23,6 +34,7 @@ cc_library(
     hdrs = glob(["include/lyra/mir/*.hpp"]),
     includes = ["include"],
     visibility = ["//visibility:public"],
+    deps = [":support"],
 )
 
 cc_library(
@@ -71,12 +83,12 @@ cc_library(
 )
 
 cc_library(
-    name = "projection_cpp",
+    name = "backend_cpp",
     srcs = glob([
-        "src/lyra/projection/cpp/*.cpp",
-        "src/lyra/projection/cpp/*.hpp",
+        "src/lyra/backend/cpp/*.cpp",
+        "src/lyra/backend/cpp/*.hpp",
     ]),
-    hdrs = glob(["include/lyra/projection/cpp/*.hpp"]),
+    hdrs = glob(["include/lyra/backend/cpp/*.hpp"]),
     includes = ["include"],
     visibility = ["//visibility:public"],
     deps = [
@@ -86,14 +98,18 @@ cc_library(
 )
 
 cc_binary(
-    name = "lyra_cli",
+    name = "lyra",
     srcs = ["src/lyra/driver/cli.cpp"],
     visibility = ["//visibility:public"],
     deps = [
         ":ast_to_hir",
+        ":backend_cpp",
         ":frontend",
+        ":hir",
         ":hir_to_mir",
-        ":projection_cpp",
+        ":mir",
+        ":support",
+        "@argparse",
         "@fmt",
     ],
 )
