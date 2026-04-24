@@ -1,34 +1,34 @@
 #pragma once
 
+#include <slang/ast/Scope.h>
 #include <slang/ast/symbols/BlockSymbols.h>
-#include <slang/ast/symbols/InstanceSymbols.h>
 
 namespace lyra::lowering::ast_to_hir {
 
-class ModuleLoweringFacts {
+class ScopeLoweringFacts {
  public:
-  explicit ModuleLoweringFacts(const slang::ast::InstanceBodySymbol& body)
-      : body_(&body) {
+  explicit ScopeLoweringFacts(const slang::ast::Scope& slang_scope)
+      : slang_scope_(&slang_scope) {
   }
 
-  [[nodiscard]] auto Body() const -> const slang::ast::InstanceBodySymbol& {
-    return *body_;
+  [[nodiscard]] auto SlangScope() const -> const slang::ast::Scope& {
+    return *slang_scope_;
   }
 
  private:
-  const slang::ast::InstanceBodySymbol* body_;
+  const slang::ast::Scope* slang_scope_;
 };
 
 class ProcessLoweringFacts {
  public:
   ProcessLoweringFacts(
-      const ModuleLoweringFacts& module_facts,
+      const ScopeLoweringFacts& scope_facts,
       const slang::ast::ProceduralBlockSymbol& proc)
-      : module_facts_(&module_facts), proc_(&proc) {
+      : scope_facts_(&scope_facts), proc_(&proc) {
   }
 
-  [[nodiscard]] auto Module() const -> const ModuleLoweringFacts& {
-    return *module_facts_;
+  [[nodiscard]] auto Scope() const -> const ScopeLoweringFacts& {
+    return *scope_facts_;
   }
 
   [[nodiscard]] auto Proc() const -> const slang::ast::ProceduralBlockSymbol& {
@@ -36,7 +36,7 @@ class ProcessLoweringFacts {
   }
 
  private:
-  const ModuleLoweringFacts* module_facts_;
+  const ScopeLoweringFacts* scope_facts_;
   const slang::ast::ProceduralBlockSymbol* proc_;
 };
 

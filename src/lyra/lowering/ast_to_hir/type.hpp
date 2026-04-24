@@ -7,7 +7,7 @@
 
 namespace lyra::lowering::ast_to_hir {
 
-auto LowerType(ModuleLoweringState& state, const slang::ast::Type& type)
+auto LowerType(UnitLoweringState& unit, const slang::ast::Type& type)
     -> hir::TypeId;
 
 }  // namespace lyra::lowering::ast_to_hir

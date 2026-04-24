@@ -10,7 +10,11 @@ namespace lyra::lowering::ast_to_hir {
 
 auto LowerExpression(
     const ProcessLoweringFacts& facts, ProcessLoweringState& state,
-    const ModuleLoweringState& module_state, const slang::ast::Expression& expr)
-    -> hir::ExprId;
+    ScopeLoweringState& scope_state, ScopeStack& stack,
+    const slang::ast::Expression& expr) -> hir::ExprId;
+
+auto LowerStructuralExpression(
+    ScopeLoweringState& scope_state, ScopeStack& stack,
+    const slang::ast::Expression& expr) -> hir::ExprId;
 
 }  // namespace lyra::lowering::ast_to_hir

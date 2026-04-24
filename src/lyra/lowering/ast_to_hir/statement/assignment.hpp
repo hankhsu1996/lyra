@@ -10,7 +10,7 @@ namespace lyra::lowering::ast_to_hir {
 
 auto LowerAssignmentExpression(
     const ProcessLoweringFacts& facts, ProcessLoweringState& state,
-    const ModuleLoweringState& module_state,
+    ScopeLoweringState& scope_state, ScopeStack& stack,
     const slang::ast::AssignmentExpression& assign) -> hir::StmtId;
 
 }  // namespace lyra::lowering::ast_to_hir

@@ -6,17 +6,17 @@
 
 namespace lyra::lowering::ast_to_hir {
 
-auto LowerType(ModuleLoweringState& state, const slang::ast::Type& type)
+auto LowerType(UnitLoweringState& unit, const slang::ast::Type& type)
     -> hir::TypeId {
   const auto& canonical = type.getCanonicalType();
 
   if (!canonical.isFourState() && canonical.getBitWidth() == 32 &&
       canonical.isSigned()) {
-    return state.AddType(hir::BuiltinIntType{});
+    return unit.AddType(hir::BuiltinIntType{});
   }
 
   if (canonical.isFourState() && canonical.getBitWidth() == 1) {
-    return state.AddType(hir::BuiltinLogicType{});
+    return unit.AddType(hir::BuiltinLogicType{});
   }
 
   support::Unsupported("LowerType: only `int` and `logic` types supported");

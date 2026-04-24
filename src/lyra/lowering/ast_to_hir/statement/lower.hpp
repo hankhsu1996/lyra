@@ -10,7 +10,7 @@ namespace lyra::lowering::ast_to_hir {
 
 auto LowerStatement(
     const ProcessLoweringFacts& facts, ProcessLoweringState& state,
-    const ModuleLoweringState& module_state, const slang::ast::Statement& stmt)
-    -> hir::StmtId;
+    ScopeLoweringState& scope_state, ScopeStack& stack,
+    const slang::ast::Statement& stmt) -> hir::StmtId;
 
 }  // namespace lyra::lowering::ast_to_hir

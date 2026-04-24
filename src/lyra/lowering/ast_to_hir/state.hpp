@@ -1,35 +1,54 @@
 #pragma once
 
+#include <compare>
 #include <cstdint>
+#include <optional>
+#include <ranges>
 #include <string>
 #include <unordered_map>
 #include <utility>
+#include <vector>
 
-#include <slang/ast/Symbol.h>
-#include <slang/ast/symbols/ValueSymbol.h>
 #include <slang/ast/symbols/VariableSymbols.h>
 
 #include "lyra/hir/expr.hpp"
 #include "lyra/hir/module_unit.hpp"
 #include "lyra/hir/process.hpp"
 #include "lyra/hir/stmt.hpp"
+#include "lyra/hir/structural_scope.hpp"
 #include "lyra/hir/type.hpp"
+#include "lyra/hir/value_decl_ref.hpp"
 #include "lyra/hir/var_decl.hpp"
-#include "lyra/support/unsupported.hpp"
+#include "lyra/support/internal_error.hpp"
 
 namespace lyra::lowering::ast_to_hir {
 
-// Module-local frontend->HIR binding. Lowering-time only; never enters HIR
-// or MIR.
-using VariableDeclBindings =
-    std::unordered_map<const slang::ast::VariableSymbol*, hir::VarDeclId>;
+// Lowering-only identity for a scope on the stack. Monotonically assigned
+// by ScopeStack; never reused; never stored in HIR.
+struct ScopeFrameId {
+  std::uint32_t value;
 
-class ModuleLoweringState {
+  auto operator<=>(const ScopeFrameId&) const -> std::strong_ordering = default;
+};
+
+struct VarBinding {
+  ScopeFrameId home_frame;
+  hir::VarDeclId local_id;
+};
+
+using VariableDeclBindings =
+    std::unordered_map<const slang::ast::VariableSymbol*, VarBinding>;
+
+class UnitLoweringState {
  public:
-  explicit ModuleLoweringState(std::string name) : hir_unit_(std::move(name)) {
+  explicit UnitLoweringState(std::string name) : hir_unit_(std::move(name)) {
   }
 
   [[nodiscard]] auto HirUnit() const -> const hir::ModuleUnit& {
+    return hir_unit_;
+  }
+
+  auto HirUnit() -> hir::ModuleUnit& {
     return hir_unit_;
   }
 
@@ -37,31 +56,18 @@ class ModuleLoweringState {
     return hir_unit_.AddType(std::move(data));
   }
 
-  auto AddVariableDeclBinding(
-      const slang::ast::VariableSymbol& var, hir::TypeId type)
-      -> hir::VarDeclId {
-    const auto id = hir_unit_.AddVarDecl(std::string{var.name}, type);
-    var_bindings_.emplace(&var, id);
-    return id;
+  void RegisterVarBinding(
+      const slang::ast::VariableSymbol& var, ScopeFrameId home_frame,
+      hir::VarDeclId local) {
+    var_bindings_.emplace(
+        &var, VarBinding{.home_frame = home_frame, .local_id = local});
   }
 
-  auto AddProcess(hir::Process process) -> hir::ProcessId {
-    return hir_unit_.AddProcess(std::move(process));
-  }
-
-  // Kind-check is the boundary: only VariableSymbol references bind. Anything
-  // else fails here.
-  [[nodiscard]] auto ResolveVariableDecl(
-      const slang::ast::ValueSymbol& symbol) const -> hir::VarDeclId {
-    if (symbol.kind != slang::ast::SymbolKind::Variable) {
-      support::Unsupported(
-          "ResolveVariableDecl: reference to non-variable declaration");
-    }
-    const auto* var = &symbol.as<slang::ast::VariableSymbol>();
-    const auto it = var_bindings_.find(var);
+  [[nodiscard]] auto LookupVarBinding(const slang::ast::VariableSymbol& var)
+      const -> std::optional<VarBinding> {
+    const auto it = var_bindings_.find(&var);
     if (it == var_bindings_.end()) {
-      support::Unsupported(
-          "ResolveVariableDecl: reference to an unbound variable");
+      return std::nullopt;
     }
     return it->second;
   }
@@ -73,6 +79,110 @@ class ModuleLoweringState {
  private:
   hir::ModuleUnit hir_unit_;
   VariableDeclBindings var_bindings_;
+};
+
+class ScopeStack {
+ public:
+  auto Push(hir::StructuralScope& /*scope*/) -> ScopeFrameId {
+    const ScopeFrameId id{.value = next_id_++};
+    frames_.push_back(id);
+    return id;
+  }
+
+  void Pop(ScopeFrameId expected) {
+    if (frames_.empty() || frames_.back() != expected) {
+      support::InternalError("ScopeStack::Pop: unbalanced pop");
+    }
+    frames_.pop_back();
+  }
+
+  [[nodiscard]] auto HopsTo(ScopeFrameId target) const
+      -> std::optional<hir::ParentScopeHops> {
+    std::uint32_t hops = 0;
+    for (const auto frame : frames_ | std::views::reverse) {
+      if (frame == target) {
+        return hir::ParentScopeHops{.value = hops};
+      }
+      ++hops;
+    }
+    return std::nullopt;
+  }
+
+ private:
+  std::vector<ScopeFrameId> frames_;
+  std::uint32_t next_id_ = 0;
+};
+
+class ScopeStackGuard {
+ public:
+  ScopeStackGuard(ScopeStack& stack, hir::StructuralScope& scope)
+      : stack_(&stack), frame_(stack.Push(scope)) {
+  }
+
+  ~ScopeStackGuard() {
+    stack_->Pop(frame_);
+  }
+
+  ScopeStackGuard(const ScopeStackGuard&) = delete;
+  auto operator=(const ScopeStackGuard&) -> ScopeStackGuard& = delete;
+  ScopeStackGuard(ScopeStackGuard&&) = delete;
+  auto operator=(ScopeStackGuard&&) -> ScopeStackGuard& = delete;
+
+  [[nodiscard]] auto Frame() const -> ScopeFrameId {
+    return frame_;
+  }
+
+ private:
+  ScopeStack* stack_;
+  ScopeFrameId frame_;
+};
+
+class ScopeLoweringState {
+ public:
+  ScopeLoweringState(
+      UnitLoweringState& unit, hir::StructuralScope& scope, ScopeFrameId frame)
+      : unit_(&unit), scope_(&scope), frame_(frame) {
+  }
+
+  auto AddVarDecl(const slang::ast::VariableSymbol& var, hir::TypeId type)
+      -> hir::VarDeclId {
+    const auto local = scope_->AddVarDecl(std::string{var.name}, type);
+    unit_->RegisterVarBinding(var, frame_, local);
+    return local;
+  }
+
+  auto AppendExpr(hir::Expr expr) -> hir::ExprId {
+    return scope_->AppendExpr(std::move(expr));
+  }
+
+  auto AddProcess(hir::Process process) -> hir::ProcessId {
+    return scope_->AddProcess(std::move(process));
+  }
+
+  auto AddGenerate(hir::Generate generate) -> hir::GenerateId {
+    return scope_->AddGenerate(std::move(generate));
+  }
+
+  [[nodiscard]] auto Unit() -> UnitLoweringState& {
+    return *unit_;
+  }
+  [[nodiscard]] auto Unit() const -> const UnitLoweringState& {
+    return *unit_;
+  }
+  [[nodiscard]] auto Scope() -> hir::StructuralScope& {
+    return *scope_;
+  }
+  [[nodiscard]] auto Scope() const -> const hir::StructuralScope& {
+    return *scope_;
+  }
+  [[nodiscard]] auto Frame() const -> ScopeFrameId {
+    return frame_;
+  }
+
+ private:
+  UnitLoweringState* unit_;
+  hir::StructuralScope* scope_;
+  ScopeFrameId frame_;
 };
 
 class ProcessLoweringState {

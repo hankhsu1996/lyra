@@ -11,14 +11,14 @@
 namespace lyra::lowering::ast_to_hir {
 
 auto LowerProcess(
-    const ModuleLoweringFacts& module_facts,
-    const ModuleLoweringState& module_state,
-    const slang::ast::ProceduralBlockSymbol& proc) -> hir::Process {
-  const ProcessLoweringFacts facts(module_facts, proc);
+    const ScopeLoweringFacts& scope_facts, ScopeLoweringState& scope_state,
+    ScopeStack& stack, const slang::ast::ProceduralBlockSymbol& proc)
+    -> hir::Process {
+  const ProcessLoweringFacts facts(scope_facts, proc);
   ProcessLoweringState state;
 
   const hir::StmtId body_id =
-      LowerStatement(facts, state, module_state, proc.getBody());
+      LowerStatement(facts, state, scope_state, stack, proc.getBody());
 
   return state.Finalize(hir::Initial{.body = body_id});
 }
