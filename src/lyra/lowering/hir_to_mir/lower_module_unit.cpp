@@ -2,59 +2,51 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <utility>
 
 #include "lyra/hir/module_unit.hpp"
 #include "lyra/hir/type.hpp"
 #include "lyra/hir/var_decl.hpp"
 #include "lyra/lowering/hir_to_mir/facts.hpp"
+#include "lyra/lowering/hir_to_mir/lower_constructor.hpp"
 #include "lyra/lowering/hir_to_mir/lower_process.hpp"
 #include "lyra/lowering/hir_to_mir/lower_type.hpp"
 #include "lyra/lowering/hir_to_mir/state.hpp"
-#include "lyra/mir/module_unit.hpp"
+#include "lyra/mir/class_decl.hpp"
+#include "lyra/mir/compilation_unit.hpp"
 
 namespace lyra::lowering::hir_to_mir {
 
-namespace {
+auto LowerModuleUnit(const hir::ModuleUnit& unit) -> mir::CompilationUnit {
+  const UnitLoweringFacts unit_facts(unit, unit.RootScope());
+  UnitLoweringState unit_state;
 
-auto InstallTypes(const UnitLoweringFacts& facts, UnitLoweringState& state)
-    -> void {
-  const auto& hir_types = facts.HirUnit().Types();
-  for (std::size_t i = 0; i < hir_types.size(); ++i) {
-    state.AddType(
-        hir::TypeId{static_cast<std::uint32_t>(i)},
-        LowerTypeData(hir_types[i].data));
+  mir::ClassDecl cls(unit.Name());
+
+  for (std::size_t i = 0; i < unit.Types().size(); ++i) {
+    const hir::TypeId hir_id{static_cast<std::uint32_t>(i)};
+    const mir::TypeId mir_id = cls.AddType(LowerTypeData(unit.Types()[i].data));
+    unit_state.SetType(hir_id, mir_id);
   }
-}
 
-auto InstallVarDeclsAsMembers(
-    const UnitLoweringFacts& facts, UnitLoweringState& state) -> void {
-  const auto& hir_decls = facts.HirUnit().VarDecls();
-  for (std::size_t i = 0; i < hir_decls.size(); ++i) {
-    const auto& decl = hir_decls[i];
-    state.AddMember(
-        hir::VarDeclId{static_cast<std::uint32_t>(i)}, decl.name,
-        state.TranslateType(decl.type));
+  const auto& root = unit_facts.RootScope();
+  for (std::size_t i = 0; i < root.VarDecls().size(); ++i) {
+    const hir::VarDeclId hir_id{static_cast<std::uint32_t>(i)};
+    const auto& d = root.VarDecls()[i];
+    const mir::MemberId mir_id =
+        cls.AddMember(d.name, unit_state.TranslateType(d.type));
+    unit_state.SetRootVar(hir_id, mir_id);
   }
-}
 
-auto InstallProcesses(const UnitLoweringFacts& facts, UnitLoweringState& state)
-    -> void {
-  for (const auto& hir_process : facts.HirUnit().Processes()) {
-    state.AddProcess(LowerProcess(facts, state, hir_process));
+  for (const auto& p : root.Processes()) {
+    cls.AddProcess(LowerProcess(unit_facts, unit_state, root, p));
   }
-}
 
-}  // namespace
+  LowerConstructorFromScope(unit_facts, unit_state, root, cls.Constructor());
 
-auto LowerModuleUnit(const hir::ModuleUnit& unit) -> mir::ModuleUnit {
-  const UnitLoweringFacts facts(unit);
-  UnitLoweringState state(unit.Name());
-
-  InstallTypes(facts, state);
-  InstallVarDeclsAsMembers(facts, state);
-  InstallProcesses(facts, state);
-
-  return state.MoveMirUnit();
+  mir::CompilationUnit out;
+  out.AddClass(std::move(cls));
+  return out;
 }
 
 }  // namespace lyra::lowering::hir_to_mir

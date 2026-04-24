@@ -65,7 +65,8 @@ auto main(int argc, char** argv) -> int {
     }
     auto mir_unit =
         lyra::lowering::hir_to_mir::LowerModuleUnit(hir_units.front());
-    auto projected = lyra::projection::cpp::ProjectModuleUnitToCpp(mir_unit);
+    auto projected =
+        lyra::projection::cpp::ProjectCompilationUnitToCpp(mir_unit);
 
     fmt::print("{}", projected);
     return 0;

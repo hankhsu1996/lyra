@@ -3,9 +3,7 @@
 #include <compare>
 #include <cstdint>
 #include <variant>
-#include <vector>
 
-#include "lyra/mir/expr.hpp"
 #include "lyra/mir/stmt.hpp"
 
 namespace lyra::mir {
@@ -16,16 +14,13 @@ struct ProcessId {
   auto operator<=>(const ProcessId&) const -> std::strong_ordering = default;
 };
 
-struct Initial {
-  StmtId body;
-};
+struct Initial {};
 
 using ProcessData = std::variant<Initial>;
 
 struct Process {
   ProcessData data;
-  std::vector<Expr> exprs;
-  std::vector<Stmt> stmts;
+  Body body;
 };
 
 }  // namespace lyra::mir

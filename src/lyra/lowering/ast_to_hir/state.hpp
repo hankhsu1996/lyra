@@ -91,7 +91,7 @@ class ScopeStack {
 
   void Pop(ScopeFrameId expected) {
     if (frames_.empty() || frames_.back() != expected) {
-      support::InternalError("ScopeStack::Pop: unbalanced pop");
+      throw support::InternalError("ScopeStack::Pop: unbalanced pop");
     }
     frames_.pop_back();
   }

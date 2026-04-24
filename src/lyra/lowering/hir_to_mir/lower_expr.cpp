@@ -3,11 +3,10 @@
 #include <variant>
 
 #include "lyra/hir/expr.hpp"
-#include "lyra/hir/net_decl.hpp"
-#include "lyra/hir/param_decl.hpp"
+#include "lyra/hir/lvalue.hpp"
 #include "lyra/hir/primary.hpp"
 #include "lyra/hir/value_decl_ref.hpp"
-#include "lyra/hir/var_decl.hpp"
+#include "lyra/lowering/hir_to_mir/facts.hpp"
 #include "lyra/lowering/hir_to_mir/state.hpp"
 #include "lyra/mir/expr.hpp"
 #include "lyra/mir/member.hpp"
@@ -16,49 +15,66 @@
 
 namespace lyra::lowering::hir_to_mir {
 
-auto TranslateValueDeclRefToMember(
-    const UnitLoweringState& unit_state, const hir::ValueDeclRef& ref)
-    -> mir::MemberId {
+auto ResolveVarRef(
+    const UnitLoweringFacts& unit_facts, const UnitLoweringState& unit_state,
+    const ScopeStack& stack, const hir::VarDeclRef& ref) -> mir::MemberId {
+  const auto& home = stack.Resolve(ref.parent_scope_hops);
+  if (&home != &unit_facts.RootScope()) {
+    support::Unsupported(
+        "HIR->MIR: variable reference to declaration outside the root scope "
+        "is not supported in this cut");
+  }
+  return unit_state.TranslateRootVar(ref.local_id);
+}
+
+auto TranslateLvalueTarget(
+    const UnitLoweringFacts& unit_facts, const UnitLoweringState& unit_state,
+    const ScopeStack& stack, const hir::Lvalue& lvalue) -> mir::MemberId {
   return std::visit(
       support::Overloaded{
-          [&](const hir::VarDeclId& id) -> mir::MemberId {
-            return unit_state.TranslateVar(id);
-          },
-          [](const hir::NetDeclId&) -> mir::MemberId {
-            support::Unsupported(
-                "HIR->MIR lowering for NetDeclId is not implemented");
-          },
-          [](const hir::ParamDeclId&) -> mir::MemberId {
-            support::Unsupported(
-                "HIR->MIR lowering for ParamDeclId is not implemented");
+          [&](const hir::LocalValueRef& l) -> mir::MemberId {
+            return std::visit(
+                support::Overloaded{
+                    [&](const hir::VarDeclRef& r) -> mir::MemberId {
+                      return ResolveVarRef(unit_facts, unit_state, stack, r);
+                    },
+                },
+                l.target);
           },
       },
-      ref);
+      lvalue);
 }
 
 auto LowerPrimary(
-    const UnitLoweringState& unit_state, const hir::Primary& primary)
-    -> mir::ExprData {
+    const UnitLoweringFacts& unit_facts, const UnitLoweringState& unit_state,
+    const ScopeStack& stack, const hir::Primary& primary) -> mir::ExprData {
   return std::visit(
       support::Overloaded{
           [](const hir::IntegerLiteral& p) -> mir::ExprData {
-            return mir::IntegerLiteral{p.value};
+            return mir::IntegerLiteral{.value = p.value};
           },
           [&](const hir::LocalValueRef& p) -> mir::ExprData {
-            return mir::MemberRef{
-                TranslateValueDeclRefToMember(unit_state, p.target)};
+            return std::visit(
+                support::Overloaded{
+                    [&](const hir::VarDeclRef& r) -> mir::ExprData {
+                      return mir::MemberRef{
+                          .target =
+                              ResolveVarRef(unit_facts, unit_state, stack, r)};
+                    },
+                },
+                p.target);
           },
       },
       primary);
 }
 
 auto LowerExprData(
-    const UnitLoweringState& unit_state, const hir::ExprData& data)
-    -> mir::ExprData {
+    const UnitLoweringFacts& unit_facts, const UnitLoweringState& unit_state,
+    const ScopeStack& stack, const hir::ExprData& data) -> mir::ExprData {
   return std::visit(
       support::Overloaded{
           [&](const hir::Primary& p) -> mir::ExprData {
-            return LowerPrimary(unit_state, p);
+            return LowerPrimary(unit_facts, unit_state, stack, p);
           },
       },
       data);

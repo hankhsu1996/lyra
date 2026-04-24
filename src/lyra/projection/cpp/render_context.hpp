@@ -1,27 +1,27 @@
 #pragma once
 
-#include "lyra/mir/module_unit.hpp"
-#include "lyra/mir/process.hpp"
+#include "lyra/mir/class_decl.hpp"
+#include "lyra/mir/stmt.hpp"
 
 namespace lyra::projection::cpp {
 
 class RenderContext {
  public:
-  RenderContext(const mir::ModuleUnit& unit, const mir::Process& process)
-      : unit_(&unit), process_(&process) {
+  RenderContext(const mir::ClassDecl& class_decl, const mir::Body& body)
+      : class_decl_(&class_decl), body_(&body) {
   }
 
-  [[nodiscard]] auto Unit() const -> const mir::ModuleUnit& {
-    return *unit_;
+  [[nodiscard]] auto Class() const -> const mir::ClassDecl& {
+    return *class_decl_;
   }
 
-  [[nodiscard]] auto Process() const -> const mir::Process& {
-    return *process_;
+  [[nodiscard]] auto Body() const -> const mir::Body& {
+    return *body_;
   }
 
  private:
-  const mir::ModuleUnit* unit_;
-  const mir::Process* process_;
+  const mir::ClassDecl* class_decl_;
+  const mir::Body* body_;
 };
 
 }  // namespace lyra::projection::cpp

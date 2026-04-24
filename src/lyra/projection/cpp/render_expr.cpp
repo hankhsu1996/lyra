@@ -18,7 +18,7 @@ auto RenderExpr(const RenderContext& ctx, const mir::Expr& expr)
             return std::format("{}", e.value);
           },
           [&](const mir::MemberRef& e) -> std::string {
-            return ctx.Unit().GetMember(e.target).name;
+            return ctx.Class().GetMember(e.target).name;
           },
       },
       expr.data);

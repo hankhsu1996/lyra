@@ -12,10 +12,24 @@
 
 namespace lyra::mir {
 
+struct Stmt;
+
 struct StmtId {
   std::uint32_t value;
 
   auto operator<=>(const StmtId&) const -> std::strong_ordering = default;
+};
+
+struct BodyId {
+  std::uint32_t value;
+
+  auto operator<=>(const BodyId&) const -> std::strong_ordering = default;
+};
+
+struct Body {
+  std::vector<Expr> exprs;
+  std::vector<Stmt> stmts;
+  std::vector<StmtId> root_stmts;
 };
 
 struct Assignment {
@@ -23,15 +37,29 @@ struct Assignment {
   ExprId value;
 };
 
-struct BlockStmt {
-  std::vector<StmtId> statements;
+struct IfStmt {
+  ExprId condition;
+  BodyId then_body;
+  std::optional<BodyId> else_body;
 };
 
-using StmtData = std::variant<Assignment, BlockStmt>;
+struct SwitchCase {
+  std::vector<ExprId> labels;
+  BodyId body;
+};
+
+struct SwitchStmt {
+  ExprId condition;
+  std::vector<SwitchCase> cases;
+  std::optional<BodyId> default_body;
+};
+
+using StmtData = std::variant<Assignment, IfStmt, SwitchStmt>;
 
 struct Stmt {
   std::optional<std::string> label;
   StmtData data;
+  std::vector<Body> child_bodies;
 };
 
 }  // namespace lyra::mir
