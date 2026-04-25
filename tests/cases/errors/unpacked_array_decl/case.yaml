@@ -1,0 +1,13 @@
+id: errors.unpacked_array_decl
+tags: [errors, types]
+input:
+  command: [dump, hir]
+  project: false
+  top: Top
+  files: [main.sv]
+expect:
+  exit: 1
+  stderr:
+    contains:
+      - "unsupported:"
+      - "unpacked array"

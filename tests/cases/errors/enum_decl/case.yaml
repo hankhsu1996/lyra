@@ -1,0 +1,13 @@
+id: errors.enum_decl
+tags: [errors, types]
+input:
+  command: [dump, hir]
+  project: false
+  top: Top
+  files: [main.sv]
+expect:
+  exit: 1
+  stderr:
+    contains:
+      - "unsupported:"
+      - "enum"

@@ -80,6 +80,7 @@ auto RenderBind(const mir::ClassDecl& c) -> std::string {
 auto RenderClassHeader(const mir::ClassDecl& c) -> std::string {
   std::string out;
   out += "#pragma once\n";
+  out += "#include <cstdint>\n";
   out += "#include \"lyra/runtime/bind_context.hpp\"\n";
   out += "#include \"lyra/runtime/engine.hpp\"\n";
   out += "#include \"lyra/runtime/module.hpp\"\n";
