@@ -9,11 +9,13 @@
 
 namespace lyra::lowering::ast_to_hir {
 
-// Pure translator. Caller appends the returned hir::Expr into whichever
-// arena it owns (process- or scope-local).
-auto LowerExpressionData(
-    const UnitLoweringFacts& unit_facts, const UnitLoweringState& unit_state,
-    const ScopeStack& stack, const slang::ast::Expression& expr)
+auto LowerProcExpr(
+    const UnitLoweringFacts& unit_facts, UnitLoweringState& unit_state,
+    ProcessLoweringState& proc_state, const ScopeStack& stack,
+    const slang::ast::Expression& expr) -> diag::Result<hir::Expr>;
+
+auto LowerStructuralExpr(
+    const UnitLoweringFacts& unit_facts, const slang::ast::Expression& expr)
     -> diag::Result<hir::Expr>;
 
 }  // namespace lyra::lowering::ast_to_hir

@@ -4,7 +4,9 @@
 #include <cstdint>
 #include <variant>
 
+#include "lyra/hir/binary_op.hpp"
 #include "lyra/hir/primary.hpp"
+#include "lyra/hir/type.hpp"
 
 namespace lyra::hir {
 
@@ -14,7 +16,24 @@ struct ExprId {
   auto operator<=>(const ExprId&) const -> std::strong_ordering = default;
 };
 
-using ExprData = std::variant<Primary>;
+struct PrimaryExpr {
+  Primary data;
+};
+
+struct BinaryExpr {
+  BinaryOp op;
+  ExprId lhs;
+  ExprId rhs;
+  TypeId type;
+};
+
+struct AssignExpr {
+  ExprId lhs;
+  ExprId rhs;
+  TypeId type;
+};
+
+using ExprData = std::variant<PrimaryExpr, BinaryExpr, AssignExpr>;
 
 struct Expr {
   ExprData data;

@@ -1,0 +1,17 @@
+id: emit.nested_block
+tags: [emit]
+input:
+  command: [emit, cpp]
+  project: false
+  top: Top
+  files: [main.sv]
+expect:
+  exit: 0
+  stdout:
+    contains:
+      - "auto process_0() -> lyra::runtime::Process"
+      - "int x{};"
+      - "{"
+      - "(x = (1 + 2));"
+      - "}"
+      - "co_return;"

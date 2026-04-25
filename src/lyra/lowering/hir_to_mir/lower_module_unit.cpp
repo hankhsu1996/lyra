@@ -6,9 +6,9 @@
 #include <utility>
 
 #include "lyra/diag/diagnostic.hpp"
+#include "lyra/hir/member_var.hpp"
 #include "lyra/hir/module_unit.hpp"
 #include "lyra/hir/type.hpp"
-#include "lyra/hir/var_decl.hpp"
 #include "lyra/lowering/hir_to_mir/facts.hpp"
 #include "lyra/lowering/hir_to_mir/lower_constructor.hpp"
 #include "lyra/lowering/hir_to_mir/lower_process.hpp"
@@ -16,7 +16,7 @@
 #include "lyra/lowering/hir_to_mir/state.hpp"
 #include "lyra/mir/class_decl.hpp"
 #include "lyra/mir/compilation_unit.hpp"
-#include "lyra/mir/member.hpp"
+#include "lyra/mir/member_var.hpp"
 #include "lyra/mir/type.hpp"
 
 namespace lyra::lowering::hir_to_mir {
@@ -36,12 +36,12 @@ auto LowerModuleUnit(const hir::ModuleUnit& unit)
   }
 
   const auto& root = unit_facts.RootScope();
-  for (std::size_t i = 0; i < root.VarDecls().size(); ++i) {
-    const hir::VarDeclId hir_id{static_cast<std::uint32_t>(i)};
-    const auto& d = root.VarDecls()[i];
-    const mir::MemberId mir_id =
-        cls.AddMember(d.name, unit_state.TranslateType(d.type));
-    unit_state.SetRootVar(hir_id, mir_id);
+  for (std::size_t i = 0; i < root.MemberVars().size(); ++i) {
+    const hir::MemberVarId hir_id{static_cast<std::uint32_t>(i)};
+    const auto& d = root.MemberVars()[i];
+    const mir::MemberVarId mir_id =
+        cls.AddMemberVar(d.name, unit_state.TranslateType(d.type));
+    unit_state.SetRootMemberVar(hir_id, mir_id);
   }
 
   for (const auto& p : root.Processes()) {

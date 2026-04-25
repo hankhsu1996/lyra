@@ -1,0 +1,20 @@
+id: dump.hir_local_assign
+tags: [dump]
+input:
+  command: [dump, hir]
+  project: false
+  top: Top
+  files: [main.sv]
+expect:
+  exit: 0
+  stdout:
+    contains:
+      - "Process (Initial)"
+      - "LocalVar[0] \"x\""
+      - "VarDeclStmt local=LocalVar[0]"
+      - "ExprStmt"
+      - "AssignExpr"
+      - "BinaryExpr op=Add"
+      - "RefExpr LocalVar[0]"
+      - "IntegerLiteral(1)"
+      - "IntegerLiteral(2)"

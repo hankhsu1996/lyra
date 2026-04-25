@@ -10,6 +10,7 @@
 #include "lyra/support/overloaded.hpp"
 #include "render_context.hpp"
 #include "render_expr.hpp"
+#include "render_type.hpp"
 
 namespace lyra::backend::cpp {
 
@@ -22,11 +23,24 @@ auto RenderStmt(
   }
   out += std::visit(
       support::Overloaded{
-          [&](const mir::Assignment& a) -> std::string {
-            const auto& target = ctx.Class().GetMember(a.target);
-            const auto& value_expr = ctx.Body().exprs.at(a.value.value);
-            return Indent(indent) + target.name + " = " +
-                   RenderExpr(ctx, value_expr) + ";\n";
+          [&](const mir::LocalVarDeclStmt& s) -> std::string {
+            const auto& lv = ctx.Body().local_vars.at(s.local_var.value);
+            return Indent(indent) +
+                   RenderTypeAsCpp(ctx.Class().GetType(lv.type)) + " " +
+                   lv.name + "{};\n";
+          },
+          [&](const mir::ExprStmt& s) -> std::string {
+            const auto& expr = ctx.Body().exprs.at(s.expr.value);
+            return Indent(indent) + RenderExpr(ctx, expr) + ";\n";
+          },
+          [&](const mir::BlockStmt& s) -> std::string {
+            std::string result = Indent(indent) + "{\n";
+            for (const auto child_id : s.statements) {
+              result += RenderStmt(
+                  ctx, ctx.Body().stmts.at(child_id.value), indent + 1);
+            }
+            result += Indent(indent) + "}\n";
+            return result;
           },
           [&](const mir::IfStmt& s) -> std::string {
             const auto& cond_expr = ctx.Body().exprs.at(s.condition.value);

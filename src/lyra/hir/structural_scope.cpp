@@ -6,9 +6,9 @@
 #include <vector>
 
 #include "lyra/hir/expr.hpp"
+#include "lyra/hir/member_var.hpp"
 #include "lyra/hir/process.hpp"
 #include "lyra/hir/type.hpp"
-#include "lyra/hir/var_decl.hpp"
 
 namespace lyra::hir {
 
@@ -18,13 +18,14 @@ StructuralScope::StructuralScope(StructuralScope&&) noexcept = default;
 auto StructuralScope::operator=(StructuralScope&&) noexcept
     -> StructuralScope& = default;
 
-auto StructuralScope::AddVarDecl(std::string name, TypeId type) -> VarDeclId {
-  const VarDeclId id{static_cast<std::uint32_t>(var_decls_.size())};
-  var_decls_.push_back(VarDecl{.name = std::move(name), .type = type});
+auto StructuralScope::AddMemberVar(std::string name, TypeId type)
+    -> MemberVarId {
+  const MemberVarId id{static_cast<std::uint32_t>(member_vars_.size())};
+  member_vars_.push_back(MemberVar{.name = std::move(name), .type = type});
   return id;
 }
 
-auto StructuralScope::AppendExpr(Expr expr) -> ExprId {
+auto StructuralScope::AddExpr(Expr expr) -> ExprId {
   const ExprId id{static_cast<std::uint32_t>(exprs_.size())};
   exprs_.push_back(std::move(expr));
   return id;
@@ -42,8 +43,8 @@ auto StructuralScope::AddGenerate(Generate generate) -> GenerateId {
   return id;
 }
 
-auto StructuralScope::VarDecls() const -> const std::vector<VarDecl>& {
-  return var_decls_;
+auto StructuralScope::MemberVars() const -> const std::vector<MemberVar>& {
+  return member_vars_;
 }
 
 auto StructuralScope::Exprs() const -> const std::vector<Expr>& {
@@ -58,8 +59,8 @@ auto StructuralScope::Generates() const -> const std::vector<Generate>& {
   return generates_;
 }
 
-auto StructuralScope::GetVarDecl(VarDeclId id) const -> const VarDecl& {
-  return var_decls_.at(id.value);
+auto StructuralScope::GetMemberVar(MemberVarId id) const -> const MemberVar& {
+  return member_vars_.at(id.value);
 }
 
 auto StructuralScope::GetExpr(ExprId id) const -> const Expr& {

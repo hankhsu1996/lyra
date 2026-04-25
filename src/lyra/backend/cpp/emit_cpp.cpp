@@ -6,7 +6,7 @@
 #include "lyra/backend/cpp/artifact.hpp"
 #include "lyra/mir/class_decl.hpp"
 #include "lyra/mir/compilation_unit.hpp"
-#include "lyra/mir/member.hpp"
+#include "lyra/mir/member_var.hpp"
 #include "lyra/mir/process.hpp"
 #include "lyra/support/internal_error.hpp"
 #include "render_stmt.hpp"
@@ -16,7 +16,7 @@ namespace lyra::backend::cpp {
 
 namespace {
 
-auto RenderField(const mir::ClassDecl& c, const mir::Member& member)
+auto RenderField(const mir::ClassDecl& c, const mir::MemberVar& member)
     -> std::string {
   return Indent(1) + RenderTypeAsCpp(c.GetType(member.type)) + " " +
          member.name + ";\n";
@@ -90,10 +90,10 @@ auto RenderClassHeader(const mir::ClassDecl& c) -> std::string {
   out += "class " + c.Name() + " final : public lyra::runtime::Module {\n";
   out += " public:\n";
 
-  for (const auto& m : c.Members()) {
+  for (const auto& m : c.MemberVars()) {
     out += RenderField(c, m);
   }
-  if (!c.Members().empty()) {
+  if (!c.MemberVars().empty()) {
     out += "\n";
   }
 
