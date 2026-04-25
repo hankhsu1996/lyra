@@ -150,16 +150,14 @@ class HirDumper {
   }
 
   void DumpProcess(const Process& p) {
-    std::visit(
-        support::Overloaded{
-            [&](const Initial& init) {
-              Line("Process (Initial)");
-              Indent();
-              DumpStmt(p, init.body);
-              Dedent();
-            },
-        },
-        p.data);
+    switch (p.kind) {
+      case ProcessKind::kInitial:
+        Line("Process (Initial)");
+        break;
+    }
+    Indent();
+    DumpStmt(p, p.body);
+    Dedent();
   }
 
   void DumpStmt(const Process& p, StmtId id) {

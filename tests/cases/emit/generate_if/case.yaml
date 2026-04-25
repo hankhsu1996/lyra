@@ -9,11 +9,17 @@ expect:
   exit: 0
   stdout:
     contains:
-      - "class Top"
+      - "=== Top.hpp ==="
+      - "=== main.cpp ==="
+      - "class Top final : public lyra::runtime::Module"
       - "Top() {"
       - "if (1) {"
       - "switch (1) {"
       - "case 0:"
       - "default:"
-      - "void process_0()"
+      - "auto process_0() -> lyra::runtime::Process"
+      - "co_return;"
       - "x = 1;"
+      - "ctx.AddProcess("
+      - "lyra::runtime::ProcessKind::kInitial"
+      - "process_0()"

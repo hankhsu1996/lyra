@@ -2,8 +2,11 @@
 #include <cstdio>
 #include <exception>
 #include <expected>
+#include <filesystem>
 #include <format>
+#include <fstream>
 #include <string>
+#include <system_error>
 #include <unistd.h>
 #include <utility>
 #include <vector>
@@ -11,6 +14,7 @@
 #include <fmt/core.h>
 
 #include "lyra/backend/cpp/api.hpp"
+#include "lyra/backend/cpp/artifact.hpp"
 #include "lyra/diag/diagnostic.hpp"
 #include "lyra/diag/render.hpp"
 #include "lyra/diag/sink.hpp"
@@ -32,6 +36,7 @@ struct ParsedArgs {
   bool no_color = false;
   bool force_color = false;
   lyra::frontend::CompilationInput input;
+  std::string emit_out_dir;
 };
 
 void AddCompilationFlags(argparse::ArgumentParser& cmd) {
@@ -104,6 +109,9 @@ auto ParseArgs(int argc, char** argv)
   argparse::ArgumentParser emit_cmd("emit");
   argparse::ArgumentParser emit_cpp_cmd("cpp");
   AddCompilationFlags(emit_cpp_cmd);
+  emit_cpp_cmd.add_argument("-o", "--out-dir")
+      .help("write C++ artifacts to this directory")
+      .default_value(std::string{});
   emit_cmd.add_subparser(emit_cpp_cmd);
 
   program.add_subparser(dump_cmd);
@@ -133,6 +141,7 @@ auto ParseArgs(int argc, char** argv)
     if (emit_cmd.is_subcommand_used("cpp")) {
       out.cmd = CommandKind::kEmitCpp;
       BindCompilationFlags(emit_cpp_cmd, out);
+      out.emit_out_dir = emit_cpp_cmd.get<std::string>("--out-dir");
     } else {
       return std::unexpected(
           std::format("emit requires 'cpp'\n{}", emit_cmd.help().str()));
@@ -243,9 +252,51 @@ auto main(int argc, char** argv) -> int {
       case CommandKind::kDumpMir:
         fmt::print("{}", lyra::mir::DumpMir(*mir_unit));
         return 0;
-      case CommandKind::kEmitCpp:
-        fmt::print("{}", lyra::backend::cpp::EmitCpp(*mir_unit));
+      case CommandKind::kEmitCpp: {
+        auto set = lyra::backend::cpp::EmitCpp(*mir_unit);
+        if (args.emit_out_dir.empty()) {
+          for (const auto& file : set.files) {
+            fmt::print("=== {} ===\n{}", file.relpath, file.content);
+            if (!file.content.empty() && file.content.back() != '\n') {
+              fmt::print("\n");
+            }
+          }
+        } else {
+          std::error_code ec;
+          std::filesystem::create_directories(args.emit_out_dir, ec);
+          if (ec) {
+            throw lyra::support::InternalError(
+                std::format(
+                    "emit cpp: failed to create out-dir '{}': {}",
+                    args.emit_out_dir, ec.message()));
+          }
+          for (const auto& file : set.files) {
+            const auto path =
+                std::filesystem::path(args.emit_out_dir) / file.relpath;
+            std::filesystem::create_directories(path.parent_path(), ec);
+            if (ec) {
+              throw lyra::support::InternalError(
+                  std::format(
+                      "emit cpp: failed to create '{}': {}",
+                      path.parent_path().string(), ec.message()));
+            }
+            std::ofstream out_stream(path);
+            if (!out_stream) {
+              throw lyra::support::InternalError(
+                  std::format(
+                      "emit cpp: failed to open '{}' for write",
+                      path.string()));
+            }
+            out_stream << file.content;
+            out_stream.flush();
+            if (!out_stream) {
+              throw lyra::support::InternalError(
+                  std::format("emit cpp: failed to write '{}'", path.string()));
+            }
+          }
+        }
         return 0;
+      }
       case CommandKind::kDumpHir:
         break;
     }

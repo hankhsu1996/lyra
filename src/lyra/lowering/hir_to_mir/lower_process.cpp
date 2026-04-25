@@ -15,10 +15,19 @@
 #include "lyra/mir/expr.hpp"
 #include "lyra/mir/process.hpp"
 #include "lyra/mir/stmt.hpp"
+#include "lyra/support/internal_error.hpp"
 
 namespace lyra::lowering::hir_to_mir {
 
 namespace {
+
+auto LowerProcessKind(hir::ProcessKind kind) -> mir::ProcessKind {
+  switch (kind) {
+    case hir::ProcessKind::kInitial:
+      return mir::ProcessKind::kInitial;
+  }
+  throw support::InternalError("LowerProcessKind: unknown HIR ProcessKind");
+}
 
 void LowerStmtIntoBody(
     const UnitLoweringFacts& unit_facts, const UnitLoweringState& unit_state,
@@ -59,10 +68,10 @@ auto LowerProcess(
                         unit_facts, unit_state, stack, src.exprs[i].data)});
   }
 
-  const auto& init = std::get<hir::Initial>(src.data);
-  LowerStmtIntoBody(unit_facts, unit_state, src, init.body, body_state, stack);
+  LowerStmtIntoBody(unit_facts, unit_state, src, src.body, body_state, stack);
 
-  return mir::Process{.data = mir::Initial{}, .body = body_state.Finish()};
+  return mir::Process{
+      .kind = LowerProcessKind(src.kind), .body = body_state.Finish()};
 }
 
 }  // namespace lyra::lowering::hir_to_mir
