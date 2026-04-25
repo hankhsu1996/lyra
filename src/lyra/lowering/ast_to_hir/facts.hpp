@@ -3,7 +3,24 @@
 #include <slang/ast/Scope.h>
 #include <slang/ast/symbols/BlockSymbols.h>
 
+#include "lyra/frontend/slang_source_mapper.hpp"
+
 namespace lyra::lowering::ast_to_hir {
+
+class UnitLoweringFacts {
+ public:
+  explicit UnitLoweringFacts(const frontend::SlangSourceMapper& source_mapper)
+      : source_mapper_(&source_mapper) {
+  }
+
+  [[nodiscard]] auto SourceMapper() const
+      -> const frontend::SlangSourceMapper& {
+    return *source_mapper_;
+  }
+
+ private:
+  const frontend::SlangSourceMapper* source_mapper_;
+};
 
 class ScopeLoweringFacts {
  public:

@@ -83,7 +83,7 @@ class UnitLoweringState {
 
 class ScopeStack {
  public:
-  auto Push(hir::StructuralScope& /*scope*/) -> ScopeFrameId {
+  auto Push() -> ScopeFrameId {
     const ScopeFrameId id{.value = next_id_++};
     frames_.push_back(id);
     return id;
@@ -115,8 +115,8 @@ class ScopeStack {
 
 class ScopeStackGuard {
  public:
-  ScopeStackGuard(ScopeStack& stack, hir::StructuralScope& scope)
-      : stack_(&stack), frame_(stack.Push(scope)) {
+  explicit ScopeStackGuard(ScopeStack& stack)
+      : stack_(&stack), frame_(stack.Push()) {
   }
 
   ~ScopeStackGuard() {
@@ -140,14 +140,15 @@ class ScopeStackGuard {
 class ScopeLoweringState {
  public:
   ScopeLoweringState(
-      UnitLoweringState& unit, hir::StructuralScope& scope, ScopeFrameId frame)
-      : unit_(&unit), scope_(&scope), frame_(frame) {
+      UnitLoweringState& unit_state, hir::StructuralScope& scope,
+      ScopeFrameId frame)
+      : unit_state_(&unit_state), scope_(&scope), frame_(frame) {
   }
 
   auto AddVarDecl(const slang::ast::VariableSymbol& var, hir::TypeId type)
       -> hir::VarDeclId {
     const auto local = scope_->AddVarDecl(std::string{var.name}, type);
-    unit_->RegisterVarBinding(var, frame_, local);
+    unit_state_->RegisterVarBinding(var, frame_, local);
     return local;
   }
 
@@ -163,11 +164,11 @@ class ScopeLoweringState {
     return scope_->AddGenerate(std::move(generate));
   }
 
-  [[nodiscard]] auto Unit() -> UnitLoweringState& {
-    return *unit_;
+  [[nodiscard]] auto UnitState() -> UnitLoweringState& {
+    return *unit_state_;
   }
-  [[nodiscard]] auto Unit() const -> const UnitLoweringState& {
-    return *unit_;
+  [[nodiscard]] auto UnitState() const -> const UnitLoweringState& {
+    return *unit_state_;
   }
   [[nodiscard]] auto Scope() -> hir::StructuralScope& {
     return *scope_;
@@ -180,7 +181,7 @@ class ScopeLoweringState {
   }
 
  private:
-  UnitLoweringState* unit_;
+  UnitLoweringState* unit_state_;
   hir::StructuralScope* scope_;
   ScopeFrameId frame_;
 };

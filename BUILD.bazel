@@ -7,8 +7,7 @@ refresh_compile_commands(
     exclude_external_sources = True,
     exclude_headers = "external",
     targets = {
-        "//:lyra": "",
-        "//tests:cli_golden_tests": "",
+        "//...": "",
     },
 )
 
@@ -17,6 +16,29 @@ cc_library(
     hdrs = glob(["include/lyra/support/*.hpp"]),
     includes = ["include"],
     visibility = ["//visibility:public"],
+)
+
+cc_library(
+    name = "diag",
+    srcs = glob(["src/lyra/diag/*.cpp"]),
+    hdrs = glob(["include/lyra/diag/*.hpp"]),
+    includes = ["include"],
+    visibility = ["//visibility:public"],
+    deps = [
+        ":support",
+        "@fmt",
+    ],
+)
+
+cc_library(
+    name = "slang_source",
+    hdrs = ["include/lyra/frontend/slang_source_mapper.hpp"],
+    includes = ["include"],
+    visibility = ["//visibility:public"],
+    deps = [
+        ":diag",
+        "@slang",
+    ],
 )
 
 cc_library(
@@ -47,6 +69,8 @@ cc_library(
     includes = ["include"],
     visibility = ["//visibility:public"],
     deps = [
+        ":diag",
+        ":slang_source",
         ":support",
         "@fmt",
         "@slang",
@@ -63,7 +87,9 @@ cc_library(
     includes = ["include"],
     visibility = ["//visibility:public"],
     deps = [
+        ":diag",
         ":hir",
+        ":slang_source",
         ":support",
         "@slang",
     ],
@@ -76,6 +102,7 @@ cc_library(
     includes = ["include"],
     visibility = ["//visibility:public"],
     deps = [
+        ":diag",
         ":hir",
         ":mir",
         ":support",
@@ -104,6 +131,7 @@ cc_binary(
     deps = [
         ":ast_to_hir",
         ":backend_cpp",
+        ":diag",
         ":frontend",
         ":hir",
         ":hir_to_mir",

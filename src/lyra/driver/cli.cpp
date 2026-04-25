@@ -1,14 +1,20 @@
 #include <argparse/argparse.hpp>
+#include <cstdio>
 #include <exception>
 #include <expected>
 #include <format>
 #include <string>
+#include <unistd.h>
 #include <utility>
 #include <vector>
 
 #include <fmt/core.h>
 
 #include "lyra/backend/cpp/api.hpp"
+#include "lyra/diag/diagnostic.hpp"
+#include "lyra/diag/render.hpp"
+#include "lyra/diag/sink.hpp"
+#include "lyra/diag/source_manager.hpp"
 #include "lyra/frontend/load.hpp"
 #include "lyra/hir/dump.hpp"
 #include "lyra/lowering/ast_to_hir/lower.hpp"
@@ -23,12 +29,22 @@ enum class CommandKind { kDumpHir, kDumpMir, kEmitCpp };
 struct ParsedArgs {
   CommandKind cmd = CommandKind::kEmitCpp;
   bool no_project = false;
+  bool no_color = false;
+  bool force_color = false;
   lyra::frontend::CompilationInput input;
 };
 
 void AddCompilationFlags(argparse::ArgumentParser& cmd) {
   cmd.add_argument("--no-project")
       .help("operate in direct file mode (no lyra.toml lookup)")
+      .default_value(false)
+      .implicit_value(true);
+  cmd.add_argument("--no-color")
+      .help("disable ANSI color in diagnostics")
+      .default_value(false)
+      .implicit_value(true);
+  cmd.add_argument("--color")
+      .help("force ANSI color in diagnostics (override TTY detection)")
       .default_value(false)
       .implicit_value(true);
   cmd.add_argument("--top")
@@ -54,6 +70,8 @@ void AddCompilationFlags(argparse::ArgumentParser& cmd) {
 void BindCompilationFlags(
     const argparse::ArgumentParser& cmd, ParsedArgs& out) {
   out.no_project = cmd.get<bool>("--no-project");
+  out.no_color = cmd.get<bool>("--no-color");
+  out.force_color = cmd.get<bool>("--color");
   out.input.top = cmd.get<std::string>("--top");
   if (auto incs =
           cmd.present<std::vector<std::string>>("--include-directory")) {
@@ -125,64 +143,115 @@ auto ParseArgs(int argc, char** argv)
   return out;
 }
 
+auto ResolveColorPreference(bool no_color_flag, bool force_color_flag) -> bool {
+  if (no_color_flag) {
+    return false;
+  }
+  if (force_color_flag) {
+    return true;
+  }
+  return ::isatty(::fileno(stderr)) != 0;
+}
+
 }  // namespace
 
 auto main(int argc, char** argv) -> int {
   try {
     auto parsed = ParseArgs(argc, argv);
+    const bool use_color =
+        parsed.has_value()
+            ? ResolveColorPreference(parsed->no_color, parsed->force_color)
+            : ResolveColorPreference(false, false);
+    const lyra::diag::RenderOptions render_opts{
+        .use_color = use_color, .show_source_snippet = true};
+
+    auto report = [&](lyra::diag::Diagnostic diag,
+                      const lyra::diag::SourceManager* mgr = nullptr) {
+      fmt::print(
+          stderr, "{}", lyra::diag::RenderDiagnostic(diag, mgr, render_opts));
+    };
+
     if (!parsed) {
-      fmt::print(stderr, "lyra: error: {}\n", parsed.error());
+      report(lyra::diag::Diagnostic::HostError(parsed.error()));
       return 1;
     }
     auto& args = *parsed;
 
     if (!args.no_project) {
-      fmt::print(
-          stderr,
-          "lyra: error: project mode is not implemented yet; "
-          "pass --no-project to run in direct file mode\n");
+      report(
+          lyra::diag::Diagnostic::HostError(
+              "project mode is not implemented yet; pass --no-project to "
+              "run in direct file mode"));
       return 1;
     }
     if (args.input.files.empty()) {
-      fmt::print(stderr, "lyra: error: no input files\n");
+      report(lyra::diag::Diagnostic::HostError("no input files"));
       return 1;
     }
 
-    auto parse = lyra::frontend::LoadFiles(args.input);
+    lyra::diag::DiagnosticSink sink;
+    auto parse = lyra::frontend::LoadFiles(args.input, sink);
     if (!parse) {
+      if (!sink.Diagnostics().empty()) {
+        fmt::print(
+            stderr, "{}",
+            lyra::diag::RenderDiagnostics(sink, nullptr, render_opts));
+      }
       return 1;
     }
+    {
+      std::string slang_text;
+      const bool slang_ok =
+          lyra::frontend::RenderSlangDiagnostics(*parse, use_color, slang_text);
+      if (!slang_text.empty()) {
+        fmt::print(stderr, "{}", slang_text);
+      }
+      if (!slang_ok) {
+        return 1;
+      }
+    }
 
-    auto hir_units =
-        lyra::lowering::ast_to_hir::LowerCompilation(*parse->compilation);
+    auto hir_units = lyra::lowering::ast_to_hir::LowerCompilation(
+        lyra::lowering::ast_to_hir::LowerCompilationFacts(
+            *parse->compilation, parse->source_mapper));
+    if (!hir_units) {
+      report(hir_units.error(), &parse->diag_sources);
+      return 1;
+    }
 
     if (args.cmd == CommandKind::kDumpHir) {
-      fmt::print("{}", lyra::hir::DumpHir(hir_units));
+      fmt::print("{}", lyra::hir::DumpHir(*hir_units));
       return 0;
     }
 
-    if (hir_units.size() != 1) {
-      fmt::print(
-          stderr, "lyra: error: expected exactly one top module, got {}\n",
-          hir_units.size());
+    if (hir_units->size() != 1) {
+      report(
+          lyra::diag::Diagnostic::HostError(
+              std::format(
+                  "expected exactly one top module, got {}",
+                  hir_units->size())));
       return 1;
     }
     auto mir_unit =
-        lyra::lowering::hir_to_mir::LowerModuleUnit(hir_units.front());
+        lyra::lowering::hir_to_mir::LowerModuleUnit(hir_units->front());
+    if (!mir_unit) {
+      report(mir_unit.error(), &parse->diag_sources);
+      return 1;
+    }
 
     switch (args.cmd) {
       case CommandKind::kDumpMir:
-        fmt::print("{}", lyra::mir::DumpMir(mir_unit));
+        fmt::print("{}", lyra::mir::DumpMir(*mir_unit));
         return 0;
       case CommandKind::kEmitCpp:
-        fmt::print("{}", lyra::backend::cpp::EmitCpp(mir_unit));
+        fmt::print("{}", lyra::backend::cpp::EmitCpp(*mir_unit));
         return 0;
       case CommandKind::kDumpHir:
         break;
     }
     return 0;
   } catch (const lyra::support::InternalError& e) {
-    fmt::print(stderr, "lyra: internal error: {}\n", e.what());
+    fmt::print(stderr, "{}", lyra::diag::RenderInternalError(e.what()));
     return 2;
   } catch (const std::exception& e) {
     fmt::print(stderr, "lyra: error: {}\n", e.what());

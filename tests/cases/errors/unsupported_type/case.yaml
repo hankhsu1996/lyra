@@ -1,0 +1,19 @@
+id: errors.unsupported_type
+tags: [errors, diag]
+input:
+  command: [emit, cpp]
+  project: false
+  top: Top
+  files: [main.sv]
+  args: ["--no-color"]
+expect:
+  exit: 1
+  stderr:
+    contains:
+      - "main.sv:2:"
+      - "unsupported:"
+      - "only `int` and `logic` types are supported"
+      - "bit [7:0] x;"
+    not_contains:
+      - "internal error"
+      - "\x1b["

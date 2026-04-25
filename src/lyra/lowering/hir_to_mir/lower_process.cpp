@@ -1,5 +1,6 @@
 #include "lyra/lowering/hir_to_mir/lower_process.hpp"
 
+#include <cstddef>
 #include <cstdint>
 #include <variant>
 
@@ -50,7 +51,6 @@ auto LowerProcess(
   const ScopeStackGuard guard(stack, process_scope);
 
   BodyLoweringState body_state;
-
   for (std::size_t i = 0; i < src.exprs.size(); ++i) {
     const hir::ExprId hir_id{static_cast<std::uint32_t>(i)};
     body_state.AppendExpr(

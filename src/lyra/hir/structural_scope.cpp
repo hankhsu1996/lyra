@@ -1,6 +1,14 @@
 #include "lyra/hir/structural_scope.hpp"
 
+#include <cstdint>
+#include <string>
 #include <utility>
+#include <vector>
+
+#include "lyra/hir/expr.hpp"
+#include "lyra/hir/process.hpp"
+#include "lyra/hir/type.hpp"
+#include "lyra/hir/var_decl.hpp"
 
 namespace lyra::hir {
 
