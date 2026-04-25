@@ -27,6 +27,16 @@ cc_library(
     deps = [
         ":support",
         "@fmt",
+    ],
+)
+
+cc_library(
+    name = "slang_source",
+    hdrs = ["include/lyra/frontend/slang_source_mapper.hpp"],
+    includes = ["include"],
+    visibility = ["//visibility:public"],
+    deps = [
+        ":diag",
         "@slang",
     ],
 )
@@ -60,6 +70,7 @@ cc_library(
     visibility = ["//visibility:public"],
     deps = [
         ":diag",
+        ":slang_source",
         ":support",
         "@fmt",
         "@slang",
@@ -78,6 +89,7 @@ cc_library(
     deps = [
         ":diag",
         ":hir",
+        ":slang_source",
         ":support",
         "@slang",
     ],

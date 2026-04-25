@@ -9,8 +9,8 @@
 #include <slang/text/SourceManager.h>
 
 #include "lyra/diag/sink.hpp"
-#include "lyra/diag/slang_source_mapper.hpp"
 #include "lyra/diag/source_manager.hpp"
+#include "lyra/frontend/slang_source_mapper.hpp"
 
 namespace lyra::frontend {
 
@@ -27,7 +27,7 @@ struct ParseResult {
   std::shared_ptr<slang::SourceManager> source_manager;
   std::unique_ptr<slang::ast::Compilation> compilation;
   diag::SourceManager diag_sources;
-  diag::SlangSourceMapper source_mapper;
+  SlangSourceMapper source_mapper;
 };
 
 // Build the parse input. Reports file-read failures to `sink`; returns

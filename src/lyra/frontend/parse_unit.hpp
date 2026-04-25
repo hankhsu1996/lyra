@@ -9,8 +9,8 @@
 #include <slang/util/Bag.h>
 
 #include "lyra/diag/sink.hpp"
-#include "lyra/diag/slang_source_mapper.hpp"
 #include "lyra/diag/source_manager.hpp"
+#include "lyra/frontend/slang_source_mapper.hpp"
 
 namespace lyra::frontend {
 
@@ -40,7 +40,7 @@ auto BuildParsePlan(
 auto ExecuteParseUnit(
     const ParseUnit& unit, slang::SourceManager& source_manager,
     slang::ast::Compilation& compilation, const slang::Bag& options,
-    diag::SourceManager& diag_sources, diag::SlangSourceMapper& source_mapper,
+    diag::SourceManager& diag_sources, SlangSourceMapper& source_mapper,
     diag::DiagnosticSink& sink) -> bool;
 
 }  // namespace lyra::frontend

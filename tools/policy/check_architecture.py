@@ -45,6 +45,22 @@ Rules:
         and must not take a mutable `*State&` parameter. Pure translators
         do not own the arena.
 
+  A011  No `Lowered*` staging structs in the lowering layer. Semantic
+        lowering must return the real IR object (`mir::Stmt`,
+        `mir::Expr`, `hir::Stmt`, ...). Inventing a parallel `Lowered*`
+        struct just to ship pre-append data is a fake IR.
+
+  A012  Append* function bodies in the lowering layer must be thin
+        storage. They may not call `Lower*(`, inspect `.kind`, downcast
+        `.as<`, emit `diag::Unsupported`/`Error`/`HostError`, or throw
+        `support::InternalError`. Pure semantic lowering happens before
+        Append; Append only stores already-lowered objects.
+        Scope: src/lyra/lowering/**, include/lyra/lowering/**.
+        Matches inline (`auto AppendXxx(...) -> Type {` /
+        `void AppendXxx(...) {`) and out-of-line
+        (`auto Class::AppendXxx(...) -> Type {` /
+        `void Class::AppendXxx(...) {`) definition shapes.
+
 When a rule fires, the printed message includes a fixed reminder that the
 fix is to change the ownership boundary, NOT to rename the function.
 
@@ -93,6 +109,37 @@ RAW_UNEXPECTED_PATTERN = re.compile(
     r"std::unexpected\s*\(\s*(?:lyra::)?diag::Diagnostic\b"
 )
 
+# --- Rule A011 -----------------------------------------------------------
+LOWERED_STAGING_STRUCT_PATTERN = re.compile(
+    r"\b(?:struct|class)\s+(Lowered[A-Z]\w*)\b"
+)
+
+# --- Rule A012 -----------------------------------------------------------
+# Matches Append* function definition shapes used in this repo, both
+# inline and out-of-line:
+#   auto AppendXxx(...) -> Type {
+#   void AppendXxx(...) {
+#   auto Class::AppendXxx(...) -> Type {
+#   void Class::AppendXxx(...) {
+APPEND_FN_DEF_PATTERN = re.compile(
+    r"\b(?:auto|void)\s+(?:\w+::)?(Append\w+)\s*\(([^;{]*?)\)"
+    r"\s*(?:->[^;{]*?)?\{",
+    re.DOTALL,
+)
+FORBIDDEN_IN_APPEND = (
+    (re.compile(r"\bLower\w+\s*\("),
+     "calls Lower*; lower before Append"),
+    (re.compile(r"\.kind\b"),
+     "inspects .kind; AST/HIR inspection belongs in Lower*"),
+    (re.compile(r"\.as<"),
+     "downcasts via .as<>; Append must store already-lowered objects"),
+    (re.compile(r"\bdiag::(?:Unsupported|Error|HostError)\b"),
+     "emits diag::Unsupported|Error|HostError; Append must not error"),
+    (re.compile(r"\bthrow\s+support::InternalError\b"),
+     "throws support::InternalError; Append must not enforce semantic "
+     "invariants -- check those at the lowering boundary"),
+)
+
 # --- Rules A008 / A009 / A010 -------------------------------------------
 LOWER_FN_PATTERN = re.compile(
     r"\bauto\s+(Lower\w*)\s*\(([^;{]*?)\)\s*->\s*([^;{]+?)\s*[;{]",
@@ -127,17 +174,21 @@ EXTENSIONS = frozenset({".cpp", ".hpp", ".cc", ".cxx", ".h", ".hh"})
 
 
 # Architecture-violation hint printed under every rule. It tells the helper
-# the fix is at the boundary, not at the name.
+# the fix is at the ownership boundary, not at the function name or IR shape.
 VIOLATION_HINT = """
 ARCHITECTURE POLICY VIOLATION
 
-Do not fix this by renaming the function or adding a carve-out.
+Do not fix this by renaming, carve-outs, or IR shape changes.
+Fix the ownership boundary.
 
-This usually means the ownership boundary is wrong:
-- semantic lowering should return data / full objects;
-- append/add/insert functions should only store already-lowered objects
+This usually means:
+- semantic lowering must return data / full objects (no IDs, no
+  arena mutation);
+- append/add/insert functions must only store already-lowered objects
   and return IDs;
-- raw std::expected should be wrapped as diag::Result;
+- raw std::expected must be wrapped as diag::Result;
+- diagnostics must be built with diag::Unsupported / diag::Error /
+  diag::HostError, not std::unexpected of a raw Diagnostic;
 - arena allocation belongs at the owner boundary, not inside semantic
   lowering.
 
@@ -307,6 +358,55 @@ def check_a009(repo_root: Path) -> list[str]:
     return errors
 
 
+def check_a011(repo_root: Path) -> list[str]:
+    errors = []
+    for path, rel in iter_files(
+            repo_root, "src/lyra/lowering", "include/lyra/lowering"):
+        text = path.read_text()
+        for m in LOWERED_STAGING_STRUCT_PATTERN.finditer(text):
+            lineno = text.count("\n", 0, m.start()) + 1
+            errors.append(
+                f"  {rel}:{lineno}: A011 staging struct '{m.group(1)}'; "
+                "return the real IR object (mir::Stmt / mir::Expr / "
+                "hir::Stmt / ...) and do append at the owner boundary"
+            )
+    return errors
+
+
+def _balanced_close(text: str, open_idx: int) -> int:
+    depth = 1
+    i = open_idx + 1
+    while i < len(text) and depth > 0:
+        c = text[i]
+        if c == "{":
+            depth += 1
+        elif c == "}":
+            depth -= 1
+        i += 1
+    return i
+
+
+def check_a012(repo_root: Path) -> list[str]:
+    errors = []
+    for path, rel in iter_files(
+            repo_root, "src/lyra/lowering", "include/lyra/lowering"):
+        text = path.read_text()
+        for m in APPEND_FN_DEF_PATTERN.finditer(text):
+            name = m.group(1)
+            brace_idx = m.end() - 1
+            body_end = _balanced_close(text, brace_idx)
+            body = text[brace_idx + 1:body_end - 1]
+            for pat, msg in FORBIDDEN_IN_APPEND:
+                bm = pat.search(body)
+                if bm:
+                    abs_offset = brace_idx + 1 + bm.start()
+                    lineno = text.count("\n", 0, abs_offset) + 1
+                    errors.append(
+                        f"  {rel}:{lineno}: A012 '{name}' {msg}"
+                    )
+    return errors
+
+
 def check_a010(repo_root: Path) -> list[str]:
     errors = []
     for rel, lineno, name, args, ret in _iter_lower_fns(repo_root):
@@ -457,6 +557,99 @@ def run_self_tests() -> bool:
     ok &= expect(MUTABLE_STATE_PARAM_RE.search(args) is not None,
                  "A010 detects MutableState&")
 
+    # A011
+    ok &= expect(
+        LOWERED_STAGING_STRUCT_PATTERN.search("struct LoweredIfGenerate {"),
+        "A011 detects struct LoweredIfGenerate")
+    ok &= expect(
+        LOWERED_STAGING_STRUCT_PATTERN.search("class LoweredCaseItem {"),
+        "A011 detects class LoweredCaseItem")
+    ok &= expect(
+        not LOWERED_STAGING_STRUCT_PATTERN.search("struct LoweringContext {"),
+        "A011 false-pos: Lowering* != Lowered*")
+    ok &= expect(
+        not LOWERED_STAGING_STRUCT_PATTERN.search("// Lowered above"),
+        "A011 false-pos: bare word in comment")
+
+    # A012 -- parser shapes covered today
+    auto_form = (
+        "auto AppendStmt(State& s, const slang::ast::Stmt& src)\n"
+        "    -> mir::StmtId {\n"
+        "  auto data = LowerStmtData(s, src);\n"
+        "  return s.AppendStmt(std::move(data));\n"
+        "}\n"
+    )
+    fm = APPEND_FN_DEF_PATTERN.search(auto_form)
+    ok &= expect(fm is not None and fm.group(1) == "AppendStmt",
+                 "A012 parser sees `auto Append*` definition")
+
+    void_form = (
+        "void AppendRootStmt(mir::StmtId id) {\n"
+        "  body_.root_stmts.push_back(id);\n"
+        "}\n"
+    )
+    vm = APPEND_FN_DEF_PATTERN.search(void_form)
+    ok &= expect(vm is not None and vm.group(1) == "AppendRootStmt",
+                 "A012 parser sees `void Append*` definition")
+
+    # A012 -- forbidden patterns
+    ok &= expect(
+        FORBIDDEN_IN_APPEND[0][0].search("auto data = LowerStmtData(...)") is
+        not None,
+        "A012 detects Lower* call")
+    ok &= expect(
+        FORBIDDEN_IN_APPEND[1][0].search("if (sym.kind == X)") is not None,
+        "A012 detects .kind")
+    ok &= expect(
+        FORBIDDEN_IN_APPEND[2][0].search("e.as<slang::ast::Foo>()") is not None,
+        "A012 detects .as<>")
+    ok &= expect(
+        FORBIDDEN_IN_APPEND[3][0].search("return diag::Unsupported(\"x\")")
+        is not None,
+        "A012 detects diag::Unsupported")
+    ok &= expect(
+        FORBIDDEN_IN_APPEND[3][0].search("return diag::Error(span, \"x\")")
+        is not None,
+        "A012 detects diag::Error")
+    ok &= expect(
+        FORBIDDEN_IN_APPEND[4][0].search(
+            "throw support::InternalError(\"oops\");") is not None,
+        "A012 detects throw support::InternalError")
+
+    # A012 -- thin body must pass
+    thin_append = (
+        "auto AppendExpr(hir::Expr expr) -> hir::ExprId {\n"
+        "  return scope_->AppendExpr(std::move(expr));\n"
+        "}\n"
+    )
+    tm = APPEND_FN_DEF_PATTERN.search(thin_append)
+    ok &= expect(tm is not None,
+                 "A012 parser sees thin AppendExpr definition")
+    body = thin_append[tm.end() - 1:]
+    ok &= expect(
+        not any(p.search(body) for p, _ in FORBIDDEN_IN_APPEND),
+        "A012 thin Append body has no violations")
+
+    # A012 -- out-of-line shape (auto + trailing return)
+    out_of_line_auto = (
+        "auto Foo::AppendStmt(hir::Stmt s) -> hir::StmtId {\n"
+        "  return s_.AppendStmt(std::move(s));\n"
+        "}\n"
+    )
+    om = APPEND_FN_DEF_PATTERN.search(out_of_line_auto)
+    ok &= expect(om is not None and om.group(1) == "AppendStmt",
+                 "A012 parser sees `auto Class::Append*` definition")
+
+    # A012 -- out-of-line shape (void)
+    out_of_line_void = (
+        "void Foo::AppendRootStmt(mir::StmtId id) {\n"
+        "  body_.root_stmts.push_back(id);\n"
+        "}\n"
+    )
+    om2 = APPEND_FN_DEF_PATTERN.search(out_of_line_void)
+    ok &= expect(om2 is not None and om2.group(1) == "AppendRootStmt",
+                 "A012 parser sees `void Class::Append*` definition")
+
     return ok
 
 
@@ -474,6 +667,8 @@ CHECKS = [
     ("A009 Lower* returning Result<void> without Into/Append/Populate",
      check_a009),
     ("A010 Lower*Data shape violation", check_a010),
+    ("A011 Lowered* staging struct in lowering layer", check_a011),
+    ("A012 Append* body must be thin storage", check_a012),
 ]
 
 

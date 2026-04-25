@@ -11,8 +11,8 @@
 
 #include "lyra/diag/diagnostic.hpp"
 #include "lyra/diag/sink.hpp"
-#include "lyra/diag/slang_source_mapper.hpp"
 #include "lyra/diag/source_manager.hpp"
+#include "lyra/frontend/slang_source_mapper.hpp"
 #include "lyra/support/internal_error.hpp"
 
 namespace lyra::frontend {
@@ -21,7 +21,7 @@ namespace {
 
 void RegisterBuffer(
     const slang::SourceBuffer& buffer, const std::filesystem::path& path,
-    diag::SourceManager& diag_sources, diag::SlangSourceMapper& source_mapper) {
+    diag::SourceManager& diag_sources, SlangSourceMapper& source_mapper) {
   if (source_mapper.Contains(buffer.id)) {
     return;
   }
@@ -56,7 +56,7 @@ auto BuildParsePlan(
 auto ExecuteParseUnit(
     const ParseUnit& unit, slang::SourceManager& source_manager,
     slang::ast::Compilation& compilation, const slang::Bag& options,
-    diag::SourceManager& diag_sources, diag::SlangSourceMapper& source_mapper,
+    diag::SourceManager& diag_sources, SlangSourceMapper& source_mapper,
     diag::DiagnosticSink& sink) -> bool {
   return std::visit(
       [&](const auto& u) -> bool {

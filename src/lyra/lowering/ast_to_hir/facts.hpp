@@ -3,27 +3,23 @@
 #include <slang/ast/Scope.h>
 #include <slang/ast/symbols/BlockSymbols.h>
 
-#include "lyra/diag/slang_source_mapper.hpp"
-
-// Lower* shape: pure translators return data; arena appenders take the
-// mutable owner and return an id; output mutators take an explicit output
-// (named "...Into...") and return Result<void>. Facts are read-only;
-// state must not expose facts.
+#include "lyra/frontend/slang_source_mapper.hpp"
 
 namespace lyra::lowering::ast_to_hir {
 
 class UnitLoweringFacts {
  public:
-  explicit UnitLoweringFacts(const diag::SlangSourceMapper& source_mapper)
+  explicit UnitLoweringFacts(const frontend::SlangSourceMapper& source_mapper)
       : source_mapper_(&source_mapper) {
   }
 
-  [[nodiscard]] auto SourceMapper() const -> const diag::SlangSourceMapper& {
+  [[nodiscard]] auto SourceMapper() const
+      -> const frontend::SlangSourceMapper& {
     return *source_mapper_;
   }
 
  private:
-  const diag::SlangSourceMapper* source_mapper_;
+  const frontend::SlangSourceMapper* source_mapper_;
 };
 
 class ScopeLoweringFacts {
