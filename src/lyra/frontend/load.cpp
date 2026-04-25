@@ -2,42 +2,26 @@
 
 #include <memory>
 #include <optional>
+#include <string>
 
-#include <fmt/color.h>
-#include <fmt/core.h>
 #include <slang/ast/Compilation.h>
 #include <slang/diagnostics/DiagnosticEngine.h>
 #include <slang/diagnostics/TextDiagnosticClient.h>
 #include <slang/text/SourceManager.h>
 #include <slang/util/Bag.h>
-#include <slang/util/Util.h>
 
 #include "compiler_env.hpp"
+#include "lyra/diag/sink.hpp"
 #include "parse_unit.hpp"
 
 namespace lyra::frontend {
 
-namespace {
-constexpr auto kToolColor = fmt::terminal_color::white;
-constexpr auto kToolStyle = fmt::fg(kToolColor) | fmt::emphasis::bold;
-
-void ReportError(std::string_view message) {
-  fmt::print(
-      stderr, "{}: {}: {}\n", fmt::styled("lyra", kToolStyle),
-      fmt::styled("error", fmt::fg(fmt::terminal_color::bright_red)),
-      fmt::styled(message, fmt::emphasis::bold));
-}
-}  // namespace
-
-auto ParseFiles(const CompilationInput& input) -> std::optional<ParseResult> {
-  if (input.files.empty()) {
-    ReportError("no input files");
-    return std::nullopt;
-  }
-
-  auto source_manager = std::make_shared<slang::SourceManager>();
+auto LoadFiles(const CompilationInput& input, diag::DiagnosticSink& sink)
+    -> std::optional<ParseResult> {
+  ParseResult out;
+  out.source_manager = std::make_shared<slang::SourceManager>();
   for (const auto& dir : input.incdirs) {
-    (void)source_manager->addUserDirectories(dir);
+    (void)out.source_manager->addUserDirectories(dir);
   }
 
   slang::Bag options;
@@ -50,52 +34,37 @@ auto ParseFiles(const CompilationInput& input) -> std::optional<ParseResult> {
   }
   comp_options.paramOverrides = input.param_overrides;
 
-  auto compilation = std::make_unique<slang::ast::Compilation>(comp_options);
+  out.compilation = std::make_unique<slang::ast::Compilation>(comp_options);
 
   const auto mode = input.single_unit ? CompilationUnitMode::kSingleUnit
                                       : CompilationUnitMode::kPerFile;
   auto plan = BuildParsePlan(input.files, mode);
   for (const auto& unit : plan.units) {
-    if (!ExecuteParseUnit(unit, *source_manager, *compilation, options)) {
+    if (!ExecuteParseUnit(
+            unit, *out.source_manager, *out.compilation, options,
+            out.diag_sources, out.source_mapper, sink)) {
       return std::nullopt;
     }
   }
-
-  return ParseResult{
-      .source_manager = std::move(source_manager),
-      .compilation = std::move(compilation),
-  };
+  return out;
 }
 
-auto Elaborate(ParseResult& result) -> bool {
-  auto diagnostics = result.compilation->getAllDiagnostics();
+auto RenderSlangDiagnostics(
+    ParseResult& parse, bool use_color, std::string& out_text) -> bool {
+  auto diagnostics = parse.compilation->getAllDiagnostics();
   if (diagnostics.empty()) {
+    out_text.clear();
     return true;
   }
-
-  slang::DiagnosticEngine diag_engine(*result.source_manager);
-  auto diag_client = std::make_shared<slang::TextDiagnosticClient>();
-  diag_client->showColors(true);
-  diag_engine.addClient(diag_client);
-
-  for (const auto& diag : diagnostics) {
-    diag_engine.issue(diag);
+  slang::DiagnosticEngine diag_engine(*parse.source_manager);
+  auto client = std::make_shared<slang::TextDiagnosticClient>();
+  client->showColors(use_color);
+  diag_engine.addClient(client);
+  for (const auto& d : diagnostics) {
+    diag_engine.issue(d);
   }
-
-  fmt::print(stderr, "{}", diag_client->getString());
-
+  out_text = client->getString();
   return diag_engine.getNumErrors() == 0;
-}
-
-auto LoadFiles(const CompilationInput& input) -> std::optional<ParseResult> {
-  auto result = ParseFiles(input);
-  if (!result) {
-    return std::nullopt;
-  }
-  if (!Elaborate(*result)) {
-    return std::nullopt;
-  }
-  return result;
 }
 
 }  // namespace lyra::frontend

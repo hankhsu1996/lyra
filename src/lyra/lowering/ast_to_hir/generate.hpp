@@ -4,21 +4,23 @@
 
 #include <slang/ast/symbols/BlockSymbols.h>
 
+#include "facts.hpp"
+#include "lyra/diag/diagnostic.hpp"
 #include "lyra/hir/structural_scope.hpp"
 #include "state.hpp"
 
 namespace lyra::lowering::ast_to_hir {
 
 auto BuildIfGenerate(
-    UnitLoweringState& unit, ScopeLoweringState& parent_state,
-    ScopeStack& stack,
+    const UnitLoweringFacts& unit_facts, UnitLoweringState& unit_state,
+    ScopeLoweringState& parent_state, ScopeStack& stack,
     std::span<const slang::ast::GenerateBlockSymbol* const> siblings)
-    -> hir::Generate;
+    -> diag::Result<hir::Generate>;
 
 auto BuildCaseGenerate(
-    UnitLoweringState& unit, ScopeLoweringState& parent_state,
-    ScopeStack& stack,
+    const UnitLoweringFacts& unit_facts, UnitLoweringState& unit_state,
+    ScopeLoweringState& parent_state, ScopeStack& stack,
     std::span<const slang::ast::GenerateBlockSymbol* const> siblings)
-    -> hir::Generate;
+    -> diag::Result<hir::Generate>;
 
 }  // namespace lyra::lowering::ast_to_hir

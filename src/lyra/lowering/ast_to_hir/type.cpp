@@ -1,25 +1,25 @@
 #include "type.hpp"
 
+#include "lyra/diag/diagnostic.hpp"
+#include "lyra/diag/source_span.hpp"
 #include "lyra/hir/type.hpp"
-#include "lyra/support/unsupported.hpp"
-#include "state.hpp"
 
 namespace lyra::lowering::ast_to_hir {
 
-auto LowerType(UnitLoweringState& unit, const slang::ast::Type& type)
-    -> hir::TypeId {
+auto LowerTypeData(const slang::ast::Type& type, diag::SourceSpan decl_span)
+    -> diag::Result<hir::TypeData> {
   const auto& canonical = type.getCanonicalType();
 
   if (!canonical.isFourState() && canonical.getBitWidth() == 32 &&
       canonical.isSigned()) {
-    return unit.AddType(hir::BuiltinIntType{});
+    return hir::TypeData{hir::BuiltinIntType{}};
   }
-
   if (canonical.isFourState() && canonical.getBitWidth() == 1) {
-    return unit.AddType(hir::BuiltinLogicType{});
+    return hir::TypeData{hir::BuiltinLogicType{}};
   }
-
-  support::Unsupported("LowerType: only `int` and `logic` types supported");
+  return diag::Unsupported(
+      decl_span, "only `int` and `logic` types are supported",
+      diag::UnsupportedCategory::kType);
 }
 
 }  // namespace lyra::lowering::ast_to_hir

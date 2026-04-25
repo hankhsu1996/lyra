@@ -1,6 +1,12 @@
 #include "lyra/hir/module_unit.hpp"
 
+#include <cstdint>
+#include <string>
 #include <utility>
+#include <vector>
+
+#include "lyra/hir/structural_scope.hpp"
+#include "lyra/hir/type.hpp"
 
 namespace lyra::hir {
 

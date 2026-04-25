@@ -1,0 +1,15 @@
+name: Architecture
+
+on:
+  pull_request:
+
+jobs:
+  check:
+    name: Check architecture policy
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v6
+
+      - name: Check architecture policy
+        run: python3 tools/policy/check_architecture.py

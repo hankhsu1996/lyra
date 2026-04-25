@@ -2,6 +2,9 @@
 
 #include <cstdint>
 #include <utility>
+#include <vector>
+
+#include "lyra/mir/class_decl.hpp"
 
 namespace lyra::mir {
 

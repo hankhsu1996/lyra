@@ -1,5 +1,9 @@
 #include "generate.hpp"
 
+#include <cstdint>
+#include <expected>
+#include <optional>
+#include <span>
 #include <utility>
 #include <vector>
 
@@ -7,8 +11,11 @@
 #include <slang/ast/symbols/BlockSymbols.h>
 
 #include "expression/lower.hpp"
+#include "facts.hpp"
+#include "lyra/diag/diagnostic.hpp"
+#include "lyra/hir/expr.hpp"
 #include "lyra/hir/structural_scope.hpp"
-#include "lyra/support/unsupported.hpp"
+#include "lyra/support/internal_error.hpp"
 #include "scope.hpp"
 #include "state.hpp"
 
@@ -17,11 +24,13 @@ namespace lyra::lowering::ast_to_hir {
 namespace {
 
 auto AddChildScope(
-    UnitLoweringState& unit, ScopeStack& stack,
-    std::vector<hir::StructuralScope>& child_scopes,
-    const slang::ast::GenerateBlockSymbol& block) -> hir::StructuralScopeId {
+    const UnitLoweringFacts& unit_facts, UnitLoweringState& unit_state,
+    ScopeStack& stack, std::vector<hir::StructuralScope>& child_scopes,
+    const slang::ast::GenerateBlockSymbol& block)
+    -> diag::Result<hir::StructuralScopeId> {
   hir::StructuralScope scope;
-  LowerScope(unit, scope, block, stack);
+  auto r = LowerScopeInto(unit_facts, unit_state, scope, block, stack);
+  if (!r) return std::unexpected(std::move(r.error()));
   const hir::StructuralScopeId id{
       .value = static_cast<std::uint32_t>(child_scopes.size())};
   child_scopes.push_back(std::move(scope));
@@ -31,10 +40,10 @@ auto AddChildScope(
 }  // namespace
 
 auto BuildIfGenerate(
-    UnitLoweringState& unit, ScopeLoweringState& parent_state,
-    ScopeStack& stack,
+    const UnitLoweringFacts& unit_facts, UnitLoweringState& unit_state,
+    ScopeLoweringState& parent_state, ScopeStack& stack,
     std::span<const slang::ast::GenerateBlockSymbol* const> siblings)
-    -> hir::Generate {
+    -> diag::Result<hir::Generate> {
   const slang::ast::GenerateBlockSymbol* then_block = nullptr;
   const slang::ast::GenerateBlockSymbol* else_block = nullptr;
   for (const auto* block : siblings) {
@@ -46,74 +55,81 @@ auto BuildIfGenerate(
         else_block = block;
         break;
       default:
-        support::Unsupported(
-            "BuildIfGenerate: unexpected branchKind in if-generate sibling");
+        throw support::InternalError(
+            "BuildIfGenerate: unexpected branch kind in if-generate sibling "
+            "group");
     }
   }
-
   if (then_block == nullptr) {
-    support::Unsupported(
-        "BuildIfGenerate: if-generate sibling group missing IfTrue branch");
+    throw support::InternalError(
+        "BuildIfGenerate: if-generate group has no IfTrue branch");
   }
-
   const auto* cond = then_block->conditionExpression;
   if (cond == nullptr) {
-    support::Unsupported(
-        "BuildIfGenerate: IfTrue without bound conditionExpression");
+    throw support::InternalError(
+        "BuildIfGenerate: IfTrue branch has no bound condition expression");
   }
   if (else_block != nullptr && else_block->conditionExpression != cond) {
-    support::Unsupported(
-        "BuildIfGenerate: sibling branches have mismatched "
-        "conditionExpression");
+    throw support::InternalError(
+        "BuildIfGenerate: sibling branches have mismatched condition "
+        "expressions");
   }
 
-  const hir::ExprId cond_id =
-      LowerStructuralExpression(parent_state, stack, *cond);
+  auto cond_data =
+      LowerExpressionData(unit_facts, parent_state.UnitState(), stack, *cond);
+  if (!cond_data) return std::unexpected(std::move(cond_data.error()));
+  const hir::ExprId cond_id = parent_state.AppendExpr(*std::move(cond_data));
 
   std::vector<hir::StructuralScope> child_scopes;
   child_scopes.reserve(else_block != nullptr ? 2 : 1);
 
-  const hir::StructuralScopeId then_id =
-      AddChildScope(unit, stack, child_scopes, *then_block);
+  auto then_id =
+      AddChildScope(unit_facts, unit_state, stack, child_scopes, *then_block);
+  if (!then_id) return std::unexpected(std::move(then_id.error()));
 
   std::optional<hir::StructuralScopeId> else_id;
   if (else_block != nullptr) {
-    else_id = AddChildScope(unit, stack, child_scopes, *else_block);
+    auto built =
+        AddChildScope(unit_facts, unit_state, stack, child_scopes, *else_block);
+    if (!built) return std::unexpected(std::move(built.error()));
+    else_id = *built;
   }
 
   return hir::Generate{
       .data =
           hir::IfGenerate{
               .condition = cond_id,
-              .then_scope = then_id,
+              .then_scope = *then_id,
               .else_scope = else_id},
       .child_scopes = std::move(child_scopes)};
 }
 
 auto BuildCaseGenerate(
-    UnitLoweringState& unit, ScopeLoweringState& parent_state,
-    ScopeStack& stack,
+    const UnitLoweringFacts& unit_facts, UnitLoweringState& unit_state,
+    ScopeLoweringState& parent_state, ScopeStack& stack,
     std::span<const slang::ast::GenerateBlockSymbol* const> siblings)
-    -> hir::Generate {
+    -> diag::Result<hir::Generate> {
   if (siblings.empty()) {
-    support::Unsupported("BuildCaseGenerate: empty sibling group");
+    throw support::InternalError(
+        "BuildCaseGenerate: case-generate sibling group is empty");
   }
-
   const auto* discriminator = siblings.front()->conditionExpression;
   if (discriminator == nullptr) {
-    support::Unsupported(
-        "BuildCaseGenerate: sibling missing conditionExpression");
+    throw support::InternalError(
+        "BuildCaseGenerate: sibling has no condition expression");
   }
   for (const auto* block : siblings) {
     if (block->conditionExpression != discriminator) {
-      support::Unsupported(
-          "BuildCaseGenerate: sibling branches have mismatched "
-          "conditionExpression");
+      throw support::InternalError(
+          "BuildCaseGenerate: siblings have mismatched condition "
+          "expressions");
     }
   }
 
-  const hir::ExprId cond_id =
-      LowerStructuralExpression(parent_state, stack, *discriminator);
+  auto cond_data = LowerExpressionData(
+      unit_facts, parent_state.UnitState(), stack, *discriminator);
+  if (!cond_data) return std::unexpected(std::move(cond_data.error()));
+  const hir::ExprId cond_id = parent_state.AppendExpr(*std::move(cond_data));
 
   std::vector<hir::StructuralScope> child_scopes;
   child_scopes.reserve(siblings.size());
@@ -127,26 +143,35 @@ auto BuildCaseGenerate(
         std::vector<hir::ExprId> labels;
         labels.reserve(block->caseItemExpressions.size());
         for (const auto* label_expr : block->caseItemExpressions) {
-          labels.push_back(
-              LowerStructuralExpression(parent_state, stack, *label_expr));
+          auto label_data = LowerExpressionData(
+              unit_facts, parent_state.UnitState(), stack, *label_expr);
+          if (!label_data)
+            return std::unexpected(std::move(label_data.error()));
+          labels.push_back(parent_state.AppendExpr(*std::move(label_data)));
         }
-        const hir::StructuralScopeId item_id =
-            AddChildScope(unit, stack, child_scopes, *block);
+        auto item_id =
+            AddChildScope(unit_facts, unit_state, stack, child_scopes, *block);
+        if (!item_id) return std::unexpected(std::move(item_id.error()));
         items.push_back(
             hir::CaseGenerateItem{
-                .labels = std::move(labels), .scope = item_id});
+                .labels = std::move(labels), .scope = *item_id});
         break;
       }
       case slang::ast::GenerateBranchKind::CaseDefault: {
         if (default_id.has_value()) {
-          support::Unsupported("BuildCaseGenerate: multiple default branches");
+          throw support::InternalError(
+              "BuildCaseGenerate: case-generate has more than one default "
+              "branch");
         }
-        default_id = AddChildScope(unit, stack, child_scopes, *block);
+        auto built =
+            AddChildScope(unit_facts, unit_state, stack, child_scopes, *block);
+        if (!built) return std::unexpected(std::move(built.error()));
+        default_id = *built;
         break;
       }
       default:
-        support::Unsupported(
-            "BuildCaseGenerate: unexpected branchKind in case construct");
+        throw support::InternalError(
+            "BuildCaseGenerate: unexpected branch kind in case-generate");
     }
   }
 

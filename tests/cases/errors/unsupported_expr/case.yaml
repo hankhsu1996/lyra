@@ -1,0 +1,18 @@
+id: errors.unsupported_expr
+tags: [errors, diag]
+input:
+  command: [emit, cpp]
+  project: false
+  top: Top
+  files: [main.sv]
+  args: ["--no-color"]
+expect:
+  exit: 1
+  stderr:
+    contains:
+      - "main.sv:4:"
+      - "unsupported:"
+      - "this expression form is not supported yet"
+      - "a = a + 1;"
+    not_contains:
+      - "internal error"

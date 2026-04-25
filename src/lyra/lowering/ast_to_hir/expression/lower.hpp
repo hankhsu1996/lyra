@@ -4,17 +4,16 @@
 
 #include "../facts.hpp"
 #include "../state.hpp"
+#include "lyra/diag/diagnostic.hpp"
 #include "lyra/hir/expr.hpp"
 
 namespace lyra::lowering::ast_to_hir {
 
-auto LowerExpression(
-    const ProcessLoweringFacts& facts, ProcessLoweringState& state,
-    ScopeLoweringState& scope_state, ScopeStack& stack,
-    const slang::ast::Expression& expr) -> hir::ExprId;
-
-auto LowerStructuralExpression(
-    ScopeLoweringState& scope_state, ScopeStack& stack,
-    const slang::ast::Expression& expr) -> hir::ExprId;
+// Pure translator. Caller appends the returned hir::Expr into whichever
+// arena it owns (process- or scope-local).
+auto LowerExpressionData(
+    const UnitLoweringFacts& unit_facts, const UnitLoweringState& unit_state,
+    const ScopeStack& stack, const slang::ast::Expression& expr)
+    -> diag::Result<hir::Expr>;
 
 }  // namespace lyra::lowering::ast_to_hir

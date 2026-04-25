@@ -32,3 +32,12 @@ cc_test(
         "@googletest//:gtest",
     ],
 )
+
+cc_test(
+    name = "diag_render_tests",
+    srcs = ["diag/render_test.cpp"],
+    deps = [
+        "//:diag",
+        "@googletest//:gtest_main",
+    ],
+)

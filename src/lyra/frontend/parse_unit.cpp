@@ -2,27 +2,34 @@
 
 #include <filesystem>
 #include <string>
+#include <type_traits>
 #include <variant>
 #include <vector>
 
-#include <fmt/color.h>
 #include <fmt/core.h>
 #include <slang/syntax/SyntaxTree.h>
 
+#include "lyra/diag/diagnostic.hpp"
+#include "lyra/diag/sink.hpp"
+#include "lyra/diag/source_manager.hpp"
+#include "lyra/frontend/slang_source_mapper.hpp"
 #include "lyra/support/internal_error.hpp"
 
 namespace lyra::frontend {
 
 namespace {
-constexpr auto kToolColor = fmt::terminal_color::white;
-constexpr auto kToolStyle = fmt::fg(kToolColor) | fmt::emphasis::bold;
 
-void ReportError(std::string_view message) {
-  fmt::print(
-      stderr, "{}: {}: {}\n", fmt::styled("lyra", kToolStyle),
-      fmt::styled("error", fmt::fg(fmt::terminal_color::bright_red)),
-      fmt::styled(message, fmt::emphasis::bold));
+void RegisterBuffer(
+    const slang::SourceBuffer& buffer, const std::filesystem::path& path,
+    diag::SourceManager& diag_sources, SlangSourceMapper& source_mapper) {
+  if (source_mapper.Contains(buffer.id)) {
+    return;
+  }
+  diag::FileId fid =
+      diag_sources.AddFile(path.string(), std::string(buffer.data));
+  source_mapper.Register(buffer.id, fid);
 }
+
 }  // namespace
 
 auto BuildParsePlan(
@@ -48,19 +55,27 @@ auto BuildParsePlan(
 
 auto ExecuteParseUnit(
     const ParseUnit& unit, slang::SourceManager& source_manager,
-    slang::ast::Compilation& compilation, const slang::Bag& options) -> bool {
+    slang::ast::Compilation& compilation, const slang::Bag& options,
+    diag::SourceManager& diag_sources, SlangSourceMapper& source_mapper,
+    diag::DiagnosticSink& sink) -> bool {
   return std::visit(
       [&](const auto& u) -> bool {
         using T = std::decay_t<decltype(u)>;
 
         if constexpr (std::is_same_v<T, PerFileUnit>) {
-          auto result = slang::syntax::SyntaxTree::fromFile(
-              u.file, source_manager, options);
-          if (!result) {
-            ReportError(fmt::format("cannot read '{}'", u.file));
+          const std::filesystem::path path(u.file);
+          auto buffer_or = source_manager.readSource(path, nullptr);
+          if (!buffer_or) {
+            sink.Report(
+                diag::Diagnostic::HostError(
+                    fmt::format("cannot read '{}'", u.file)));
             return false;
           }
-          compilation.addSyntaxTree(result.value());
+          RegisterBuffer(*buffer_or, path, diag_sources, source_mapper);
+
+          auto tree = slang::syntax::SyntaxTree::fromBuffer(
+              *buffer_or, source_manager, options);
+          compilation.addSyntaxTree(tree);
           return true;
         } else {
           static_assert(std::is_same_v<T, SingleUnit>);
@@ -73,13 +88,16 @@ auto ExecuteParseUnit(
           buffers.reserve(u.files.size());
 
           for (const auto& file : u.files) {
-            auto buffer =
-                source_manager.readSource(std::filesystem::path(file), nullptr);
-            if (!buffer) {
-              ReportError(fmt::format("cannot read '{}'", file));
+            const std::filesystem::path path(file);
+            auto buffer_or = source_manager.readSource(path, nullptr);
+            if (!buffer_or) {
+              sink.Report(
+                  diag::Diagnostic::HostError(
+                      fmt::format("cannot read '{}'", file)));
               return false;
             }
-            buffers.push_back(*buffer);
+            RegisterBuffer(*buffer_or, path, diag_sources, source_mapper);
+            buffers.push_back(*buffer_or);
           }
 
           auto tree = slang::syntax::SyntaxTree::fromBuffers(

@@ -1,4 +1,4 @@
-name: C++ Format
+name: C++ Style
 
 on:
   push:
@@ -7,12 +7,14 @@ on:
     branches: [main]
 
 jobs:
-  format:
-    name: Check Format
+  style:
+    name: Check style
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
         uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
 
       - name: Install clang-format
         run: |
@@ -29,3 +31,6 @@ jobs:
       - name: Check formatting
         run: |
           find src include tests -name '*.cpp' -o -name '*.hpp' | xargs clang-format-20 --dry-run --Werror
+
+      - name: Check C++ style policy
+        run: python3 tools/policy/check_cpp_style.py

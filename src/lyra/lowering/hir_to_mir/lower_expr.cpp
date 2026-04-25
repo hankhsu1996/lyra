@@ -10,8 +10,8 @@
 #include "lyra/lowering/hir_to_mir/state.hpp"
 #include "lyra/mir/expr.hpp"
 #include "lyra/mir/member.hpp"
+#include "lyra/support/internal_error.hpp"
 #include "lyra/support/overloaded.hpp"
-#include "lyra/support/unsupported.hpp"
 
 namespace lyra::lowering::hir_to_mir {
 
@@ -20,9 +20,8 @@ auto ResolveVarRef(
     const ScopeStack& stack, const hir::VarDeclRef& ref) -> mir::MemberId {
   const auto& home = stack.Resolve(ref.parent_scope_hops);
   if (&home != &unit_facts.RootScope()) {
-    support::Unsupported(
-        "HIR->MIR: variable reference to declaration outside the root scope "
-        "is not supported in this cut");
+    throw support::InternalError(
+        "ResolveVarRef: HIR var ref resolves outside the root scope");
   }
   return unit_state.TranslateRootVar(ref.local_id);
 }

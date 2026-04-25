@@ -1,5 +1,6 @@
 #include "scope.hpp"
 
+#include <expected>
 #include <unordered_set>
 #include <utility>
 #include <vector>
@@ -12,8 +13,9 @@
 
 #include "facts.hpp"
 #include "generate.hpp"
+#include "lyra/diag/diagnostic.hpp"
 #include "lyra/hir/structural_scope.hpp"
-#include "lyra/support/unsupported.hpp"
+#include "lyra/support/internal_error.hpp"
 #include "process.hpp"
 #include "state.hpp"
 #include "type.hpp"
@@ -39,12 +41,13 @@ auto IsCaseConstruct(
 
 }  // namespace
 
-void LowerScope(
-    UnitLoweringState& unit, hir::StructuralScope& scope,
-    const slang::ast::Scope& slang_scope, ScopeStack& stack) {
-  const ScopeLoweringFacts facts(slang_scope);
-  const ScopeStackGuard guard(stack, scope);
-  ScopeLoweringState scope_state(unit, scope, guard.Frame());
+auto LowerScopeInto(
+    const UnitLoweringFacts& unit_facts, UnitLoweringState& unit_state,
+    hir::StructuralScope& scope, const slang::ast::Scope& slang_scope,
+    ScopeStack& stack) -> diag::Result<void> {
+  const auto& mapper = unit_facts.SourceMapper();
+  const ScopeStackGuard guard(stack);
+  ScopeLoweringState scope_state(unit_state, scope, guard.Frame());
 
   for (const auto& member : slang_scope.members()) {
     if (member.kind != slang::ast::SymbolKind::Variable) {
@@ -52,9 +55,15 @@ void LowerScope(
     }
     const auto& var = member.as<slang::ast::VariableSymbol>();
     if (var.lifetime != slang::ast::VariableLifetime::Static) {
-      support::Unsupported("LowerScope: only static vars supported");
+      return diag::Unsupported(
+          mapper.PointSpanOf(var.location),
+          "only static variables are supported",
+          diag::UnsupportedCategory::kFeature);
     }
-    const hir::TypeId type_id = LowerType(unit, var.getType());
+    auto type_data =
+        LowerTypeData(var.getType(), mapper.PointSpanOf(var.location));
+    if (!type_data) return std::unexpected(std::move(type_data.error()));
+    const auto type_id = unit_state.AddType(*std::move(type_data));
     scope_state.AddVarDecl(var, type_id);
   }
 
@@ -64,24 +73,31 @@ void LowerScope(
     }
     const auto& proc = member.as<slang::ast::ProceduralBlockSymbol>();
     if (proc.procedureKind != slang::ast::ProceduralBlockKind::Initial) {
-      support::Unsupported("LowerScope: only `initial` processes supported");
+      return diag::Unsupported(
+          mapper.PointSpanOf(proc.location),
+          "only `initial` procedural blocks are supported",
+          diag::UnsupportedCategory::kFeature);
     }
-    scope_state.AddProcess(LowerProcess(facts, scope_state, stack, proc));
+    auto p = LowerProcess(unit_facts, scope_state, stack, proc);
+    if (!p) return std::unexpected(std::move(p.error()));
+    scope_state.AddProcess(*std::move(p));
   }
 
   std::unordered_set<const slang::syntax::SyntaxNode*> consumed;
   for (const auto& member : slang_scope.members()) {
     switch (member.kind) {
       case slang::ast::SymbolKind::GenerateBlockArray:
-        support::Unsupported(
-            "LowerScope: for-generate not supported in this cut");
+        return diag::Unsupported(
+            mapper.PointSpanOf(member.location),
+            "for-generate is not supported yet",
+            diag::UnsupportedCategory::kFeature);
 
       case slang::ast::SymbolKind::GenerateBlock: {
         const auto& block = member.as<slang::ast::GenerateBlockSymbol>();
         const auto* syntax = block.generateConstructSyntax;
         if (syntax == nullptr) {
-          support::Unsupported(
-              "LowerScope: generate block missing construct syntax");
+          throw support::InternalError(
+              "LowerScopeInto: generate block has no construct syntax");
         }
         if (!consumed.insert(syntax).second) {
           continue;
@@ -99,11 +115,15 @@ void LowerScope(
         }
 
         if (IsCaseConstruct(siblings)) {
-          scope_state.AddGenerate(
-              BuildCaseGenerate(unit, scope_state, stack, siblings));
+          auto g = BuildCaseGenerate(
+              unit_facts, unit_state, scope_state, stack, siblings);
+          if (!g) return std::unexpected(std::move(g.error()));
+          scope_state.AddGenerate(*std::move(g));
         } else {
-          scope_state.AddGenerate(
-              BuildIfGenerate(unit, scope_state, stack, siblings));
+          auto g = BuildIfGenerate(
+              unit_facts, unit_state, scope_state, stack, siblings);
+          if (!g) return std::unexpected(std::move(g.error()));
+          scope_state.AddGenerate(*std::move(g));
         }
         break;
       }
@@ -112,6 +132,8 @@ void LowerScope(
         break;
     }
   }
+
+  return {};
 }
 
 }  // namespace lyra::lowering::ast_to_hir

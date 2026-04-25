@@ -1,7 +1,14 @@
 #include "lyra/mir/class_decl.hpp"
 
 #include <cstdint>
+#include <string>
 #include <utility>
+#include <vector>
+
+#include "lyra/mir/member.hpp"
+#include "lyra/mir/process.hpp"
+#include "lyra/mir/stmt.hpp"
+#include "lyra/mir/type.hpp"
 
 namespace lyra::mir {
 
