@@ -74,11 +74,11 @@ class MirDumper {
   }
 
   static auto FormatProcessKind(const Process& p) -> std::string {
-    return std::visit(
-        support::Overloaded{
-            [](const Initial&) -> std::string { return "Initial"; },
-        },
-        p.data);
+    switch (p.kind) {
+      case ProcessKind::kInitial:
+        return "Initial";
+    }
+    throw support::InternalError("MirDumper: unknown ProcessKind");
   }
 
   void DumpClass(const ClassDecl& c) {

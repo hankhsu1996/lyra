@@ -3,10 +3,12 @@
 
 #include "formatting.hpp"
 #include "lyra/backend/cpp/api.hpp"
+#include "lyra/backend/cpp/artifact.hpp"
 #include "lyra/mir/class_decl.hpp"
 #include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/member.hpp"
 #include "lyra/mir/process.hpp"
+#include "lyra/support/internal_error.hpp"
 #include "render_stmt.hpp"
 #include "render_type.hpp"
 
@@ -40,15 +42,51 @@ auto RenderProcessMethod(
     const mir::ClassDecl& c, const mir::Process& process, std::size_t index)
     -> std::string {
   std::string out;
-  out += Indent(1) + "void " + RenderProcessMethodName(index) + "() {\n";
+  out += Indent(1) + "auto " + RenderProcessMethodName(index) +
+         "() -> lyra::runtime::Process {\n";
   out += RenderBody(c, process.body, 2);
+  // This cut only handles zero-time `initial` bodies. Every body terminates
+  // by falling off the end, so we always emit a trailing `co_return;` to make
+  // the function a valid coroutine even when the MIR body is empty. When
+  // delay/wait/event awaiters land, this trailing emission stays put; bodies
+  // with `co_await` simply have suspension points before it.
+  out += Indent(2) + "co_return;\n";
   out += Indent(1) + "}\n";
   return out;
 }
 
-auto RenderClass(const mir::ClassDecl& c) -> std::string {
+auto RenderProcessKindLiteral(mir::ProcessKind kind) -> std::string {
+  switch (kind) {
+    case mir::ProcessKind::kInitial:
+      return "lyra::runtime::ProcessKind::kInitial";
+  }
+  throw support::InternalError("RenderProcessKindLiteral: unknown ProcessKind");
+}
+
+auto RenderBind(const mir::ClassDecl& c) -> std::string {
   std::string out;
-  out += "class " + c.Name() + " {\n";
+  out += Indent(1) +
+         "void Bind(lyra::runtime::RuntimeBindContext& ctx) override {\n";
+  for (std::size_t i = 0; i < c.Processes().size(); ++i) {
+    const auto& p = c.Processes()[i];
+    out += Indent(2) + "ctx.AddProcess(\n";
+    out += Indent(3) + RenderProcessKindLiteral(p.kind) + ",\n";
+    out += Indent(3) + RenderProcessMethodName(i) + "());\n";
+  }
+  out += Indent(1) + "}\n";
+  return out;
+}
+
+auto RenderClassHeader(const mir::ClassDecl& c) -> std::string {
+  std::string out;
+  out += "#pragma once\n";
+  out += "#include \"lyra/runtime/bind_context.hpp\"\n";
+  out += "#include \"lyra/runtime/engine.hpp\"\n";
+  out += "#include \"lyra/runtime/module.hpp\"\n";
+  out += "#include \"lyra/runtime/process.hpp\"\n";
+  out += "#include \"lyra/runtime/process_kind.hpp\"\n";
+  out += "\n";
+  out += "class " + c.Name() + " final : public lyra::runtime::Module {\n";
   out += " public:\n";
 
   for (const auto& m : c.Members()) {
@@ -59,6 +97,8 @@ auto RenderClass(const mir::ClassDecl& c) -> std::string {
   }
 
   out += RenderConstructor(c);
+  out += "\n";
+  out += RenderBind(c);
 
   for (std::size_t i = 0; i < c.Processes().size(); ++i) {
     out += "\n";
@@ -69,19 +109,31 @@ auto RenderClass(const mir::ClassDecl& c) -> std::string {
   return out;
 }
 
+auto RenderHostMain(const mir::ClassDecl& cls) -> std::string {
+  std::string out;
+  out += "#include \"" + cls.Name() + ".hpp\"\n";
+  out += "\n";
+  out += "auto main() -> int {\n";
+  out += "  " + cls.Name() + " top;\n";
+  out += "  lyra::runtime::Engine engine;\n";
+  out += "  engine.BindRoot(\"top\", top);\n";
+  out += "  return engine.Run();\n";
+  out += "}\n";
+  return out;
+}
+
 }  // namespace
 
-auto EmitCpp(const mir::CompilationUnit& unit) -> std::string {
-  std::string out;
-  bool first = true;
-  for (const auto& cls : unit.Classes()) {
-    if (!first) {
-      out += "\n";
-    }
-    out += RenderClass(cls);
-    first = false;
+auto EmitCpp(const mir::CompilationUnit& unit) -> CppArtifactSet {
+  if (unit.Classes().size() != 1) {
+    throw support::InternalError(
+        "EmitCpp: this cut requires exactly one class in the unit");
   }
-  return out;
+  CppArtifactSet set;
+  const auto& cls = unit.Classes().front();
+  set.files.push_back({cls.Name() + ".hpp", RenderClassHeader(cls)});
+  set.files.push_back({"main.cpp", RenderHostMain(cls)});
+  return set;
 }
 
 }  // namespace lyra::backend::cpp

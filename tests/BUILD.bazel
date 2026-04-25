@@ -41,3 +41,24 @@ cc_test(
         "@googletest//:gtest_main",
     ],
 )
+
+cc_test(
+    name = "cli_run_tests",
+    srcs = ["cli_run_test.cpp"],
+    data = [
+        "cases/run/blocking_assign.sv",
+        "//:lyra",
+        "//:runtime_headers",
+        "//:runtime_sources",
+    ],
+    # Compiles emitted artifacts with the host C++ compiler. Skipped from
+    # `bazel test //...` until a host C++ toolchain is wired into CI; mirrors
+    # the disabled aot-full job in .github/workflows/bazel-build.yml. Run
+    # locally with `bazel test //tests:cli_run_tests`.
+    tags = ["manual"],
+    deps = [
+        ":framework",
+        "@bazel_tools//tools/cpp/runfiles",
+        "@googletest//:gtest_main",
+    ],
+)

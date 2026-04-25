@@ -200,8 +200,9 @@ class ProcessLoweringState {
     return id;
   }
 
-  auto Finalize(hir::ProcessData data) -> hir::Process {
-    hir_process_.data = std::move(data);
+  auto Finalize(hir::ProcessKind kind, hir::StmtId body) -> hir::Process {
+    hir_process_.kind = kind;
+    hir_process_.body = body;
     return std::move(hir_process_);
   }
 

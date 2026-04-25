@@ -8,4 +8,15 @@ input:
 expect:
   exit: 0
   stdout:
-    contains: ["class Top", "public:", "int x;", "int y;", "Top() {}"]
+    contains:
+      - "=== Top.hpp ==="
+      - "=== main.cpp ==="
+      - "class Top final : public lyra::runtime::Module"
+      - "public:"
+      - "int x;"
+      - "int y;"
+      - "Top() {}"
+      - "void Bind(lyra::runtime::RuntimeBindContext& ctx) override"
+      - "auto main() -> int"
+      - 'engine.BindRoot("top", top)'
+      - "return engine.Run()"

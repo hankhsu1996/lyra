@@ -2,7 +2,6 @@
 
 #include <compare>
 #include <cstdint>
-#include <variant>
 #include <vector>
 
 #include "lyra/hir/expr.hpp"
@@ -16,14 +15,11 @@ struct ProcessId {
   auto operator<=>(const ProcessId&) const -> std::strong_ordering = default;
 };
 
-struct Initial {
-  StmtId body;
-};
-
-using ProcessData = std::variant<Initial>;
+enum class ProcessKind { kInitial };
 
 struct Process {
-  ProcessData data;
+  ProcessKind kind = ProcessKind::kInitial;
+  StmtId body{};
   std::vector<Expr> exprs;
   std::vector<Stmt> stmts;
 };
