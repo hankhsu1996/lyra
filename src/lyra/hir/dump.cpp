@@ -50,15 +50,110 @@ class HirDumper {
     --indent_;
   }
 
+  static auto FormatBitAtom(BitAtom a) -> std::string_view {
+    switch (a) {
+      case BitAtom::kBit:
+        return "bit";
+      case BitAtom::kLogic:
+        return "logic";
+      case BitAtom::kReg:
+        return "reg";
+    }
+    throw support::InternalError("HirDumper::FormatBitAtom: unknown BitAtom");
+  }
+
+  static auto FormatSignedness(Signedness s) -> std::string_view {
+    return s == Signedness::kSigned ? "signed" : "unsigned";
+  }
+
+  static auto FormatPackedForm(PackedArrayForm f) -> std::string_view {
+    switch (f) {
+      case PackedArrayForm::kExplicit:
+        return "explicit";
+      case PackedArrayForm::kByte:
+        return "byte";
+      case PackedArrayForm::kShortInt:
+        return "shortint";
+      case PackedArrayForm::kInt:
+        return "int";
+      case PackedArrayForm::kLongInt:
+        return "longint";
+      case PackedArrayForm::kInteger:
+        return "integer";
+      case PackedArrayForm::kTime:
+        return "time";
+    }
+    throw support::InternalError(
+        "HirDumper::FormatPackedForm: unknown PackedArrayForm");
+  }
+
+  static auto FormatPackedDims(const std::vector<PackedRange>& dims)
+      -> std::string {
+    if (dims.empty()) {
+      return "[]";
+    }
+    std::string out;
+    for (const auto& d : dims) {
+      out += std::format("[{}:{}]", d.left, d.right);
+    }
+    return out;
+  }
+
+  static auto FormatUnpackedDims(const std::vector<UnpackedRange>& dims)
+      -> std::string {
+    if (dims.empty()) {
+      return "[]";
+    }
+    std::string out;
+    for (const auto& d : dims) {
+      out += std::format("[{}:{}]", d.left, d.right);
+    }
+    return out;
+  }
+
   static auto FormatType(const Type& t) -> std::string {
     return std::visit(
         support::Overloaded{
-            [](const BuiltinIntType&) -> std::string {
-              return "BuiltinIntType";
+            [](const PackedArrayType& p) -> std::string {
+              return std::format(
+                  "PackedArray(atom={}, signed={}, dims={}, form={})",
+                  FormatBitAtom(p.atom), FormatSignedness(p.signedness),
+                  FormatPackedDims(p.dims), FormatPackedForm(p.form));
             },
-            [](const BuiltinLogicType&) -> std::string {
-              return "BuiltinLogicType";
+            [](const UnpackedArrayType& u) -> std::string {
+              return std::format(
+                  "UnpackedArray(elem=Type[{}], dims={})", u.element_type.value,
+                  FormatUnpackedDims(u.dims));
             },
+            [](const DynamicArrayType& d) -> std::string {
+              return std::format(
+                  "DynamicArray(elem=Type[{}])", d.element_type.value);
+            },
+            [](const QueueType& q) -> std::string {
+              if (q.max_bound.has_value()) {
+                return std::format(
+                    "Queue(elem=Type[{}], max={})", q.element_type.value,
+                    *q.max_bound);
+              }
+              return std::format("Queue(elem=Type[{}])", q.element_type.value);
+            },
+            [](const AssociativeArrayType& a) -> std::string {
+              if (a.key_type.has_value()) {
+                return std::format(
+                    "AssociativeArray(elem=Type[{}], key=Type[{}])",
+                    a.element_type.value, a.key_type->value);
+              }
+              return std::format(
+                  "AssociativeArray(elem=Type[{}], key=wildcard)",
+                  a.element_type.value);
+            },
+            [](const StringType&) -> std::string { return "StringType"; },
+            [](const EventType&) -> std::string { return "EventType"; },
+            [](const RealType&) -> std::string { return "RealType"; },
+            [](const ShortRealType&) -> std::string { return "ShortRealType"; },
+            [](const RealTimeType&) -> std::string { return "RealTimeType"; },
+            [](const ChandleType&) -> std::string { return "ChandleType"; },
+            [](const VoidType&) -> std::string { return "VoidType"; },
         },
         t.data);
   }

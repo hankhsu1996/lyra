@@ -1,0 +1,31 @@
+id: dump.hir_types
+tags: [dump, types]
+input:
+  command: [dump, hir]
+  project: false
+  top: Top
+  files: [main.sv]
+expect:
+  exit: 0
+  stdout:
+    contains:
+      - "PackedArray(atom=bit, signed=unsigned, dims=[], form=explicit)"
+      - "PackedArray(atom=logic, signed=unsigned, dims=[], form=explicit)"
+      - "PackedArray(atom=reg, signed=unsigned, dims=[], form=explicit)"
+      - "PackedArray(atom=bit, signed=signed, dims=[7:0], form=byte)"
+      - "PackedArray(atom=bit, signed=signed, dims=[15:0], form=shortint)"
+      - "PackedArray(atom=bit, signed=signed, dims=[31:0], form=int)"
+      - "PackedArray(atom=bit, signed=signed, dims=[63:0], form=longint)"
+      - "PackedArray(atom=logic, signed=signed, dims=[31:0], form=integer)"
+      - "PackedArray(atom=logic, signed=unsigned, dims=[63:0], form=time)"
+      - "PackedArray(atom=logic, signed=unsigned, dims=[31:0], form=explicit)"
+      - "PackedArray(atom=bit, signed=signed, dims=[15:0], form=explicit)"
+      - "PackedArray(atom=logic, signed=unsigned, dims=[3:0][7:0], form=explicit)"
+      - "PackedArray(atom=logic, signed=unsigned, dims=[0:7], form=explicit)"
+      - "PackedArray(atom=logic, signed=unsigned, dims=[-1:3], form=explicit)"
+      - "RealType"
+      - "ShortRealType"
+      - "RealTimeType"
+      - "StringType"
+      - "EventType"
+      - "ChandleType"

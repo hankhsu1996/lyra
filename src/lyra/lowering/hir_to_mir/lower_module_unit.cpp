@@ -30,7 +30,8 @@ auto LowerModuleUnit(const hir::ModuleUnit& unit)
 
   for (std::size_t i = 0; i < unit.Types().size(); ++i) {
     const hir::TypeId hir_id{static_cast<std::uint32_t>(i)};
-    const mir::TypeId mir_id = cls.AddType(LowerTypeData(unit.Types()[i].data));
+    const mir::TypeId mir_id =
+        cls.AddType(LowerTypeData(unit.Types()[i].data, unit_state));
     unit_state.SetType(hir_id, mir_id);
   }
 

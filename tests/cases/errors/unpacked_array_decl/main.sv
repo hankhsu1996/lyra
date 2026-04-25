@@ -1,3 +1,3 @@
 module Top;
-  logic q [$];
+  logic arr [4];
 endmodule

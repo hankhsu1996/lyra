@@ -12,8 +12,8 @@ expect:
     contains:
       - "main.sv:2:"
       - "unsupported:"
-      - "only `int` and `logic` types are supported"
-      - "bit [7:0] x;"
+      - "queue types are not supported"
+      - "logic q [$];"
     not_contains:
       - "internal error"
       - "\x1b["
