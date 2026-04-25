@@ -3,6 +3,7 @@
 #include <expected>
 #include <unordered_set>
 #include <utility>
+#include <variant>
 #include <vector>
 
 #include <slang/ast/Scope.h>
@@ -63,6 +64,13 @@ auto LowerScopeInto(
     auto type_data =
         LowerTypeData(var.getType(), mapper.PointSpanOf(var.location));
     if (!type_data) return std::unexpected(std::move(type_data.error()));
+    // Slang rejects `void` in any variable-declaration position before
+    // elaboration, so a void-typed VariableSymbol can only reach this path
+    // via a slang/Lyra integration bug.
+    if (std::holds_alternative<hir::VoidType>(*type_data)) {
+      throw support::InternalError(
+          "LowerScopeInto: variable declaration produced void type");
+    }
     const auto type_id = unit_state.AddType(*std::move(type_data));
     scope_state.AddVarDecl(var, type_id);
   }

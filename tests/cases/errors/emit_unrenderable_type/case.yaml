@@ -1,0 +1,13 @@
+id: errors.emit_unrenderable_type
+tags: [errors, emit]
+input:
+  command: [emit, cpp]
+  project: false
+  top: Top
+  files: [main.sv]
+expect:
+  exit: 2
+  stderr:
+    contains:
+      - "internal error"
+      - "RenderTypeAsCpp"

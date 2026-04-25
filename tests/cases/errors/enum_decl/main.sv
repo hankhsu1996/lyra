@@ -1,3 +1,3 @@
 module Top;
-  logic q [$];
+  enum { A, B, C } e;
 endmodule
