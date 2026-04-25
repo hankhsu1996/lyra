@@ -2,8 +2,10 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <expected>
 #include <utility>
 
+#include "lyra/diag/diagnostic.hpp"
 #include "lyra/hir/module_unit.hpp"
 #include "lyra/hir/type.hpp"
 #include "lyra/hir/var_decl.hpp"
@@ -14,10 +16,13 @@
 #include "lyra/lowering/hir_to_mir/state.hpp"
 #include "lyra/mir/class_decl.hpp"
 #include "lyra/mir/compilation_unit.hpp"
+#include "lyra/mir/member.hpp"
+#include "lyra/mir/type.hpp"
 
 namespace lyra::lowering::hir_to_mir {
 
-auto LowerModuleUnit(const hir::ModuleUnit& unit) -> mir::CompilationUnit {
+auto LowerModuleUnit(const hir::ModuleUnit& unit)
+    -> diag::Result<mir::CompilationUnit> {
   const UnitLoweringFacts unit_facts(unit, unit.RootScope());
   UnitLoweringState unit_state;
 
@@ -42,7 +47,9 @@ auto LowerModuleUnit(const hir::ModuleUnit& unit) -> mir::CompilationUnit {
     cls.AddProcess(LowerProcess(unit_facts, unit_state, root, p));
   }
 
-  LowerConstructorFromScope(unit_facts, unit_state, root, cls.Constructor());
+  auto r =
+      LowerConstructorIntoBody(unit_facts, unit_state, root, cls.Constructor());
+  if (!r) return std::unexpected(std::move(r.error()));
 
   mir::CompilationUnit out;
   out.AddClass(std::move(cls));

@@ -4,15 +4,33 @@
 
 #include <slang/ast/Compilation.h>
 
+#include "lyra/diag/diagnostic.hpp"
+#include "lyra/diag/slang_source_mapper.hpp"
 #include "lyra/hir/module_unit.hpp"
 
 namespace lyra::lowering::ast_to_hir {
 
-// Lower an elaborated slang compilation into independent HIR compilation
-// units, one per distinct top-level specialization body. The compilation's
-// instance/elaboration identity is consumed only as discovery input; no
-// instance identity survives into the returned units.
-auto LowerCompilation(slang::ast::Compilation& compilation)
-    -> std::vector<hir::ModuleUnit>;
+class LowerCompilationFacts {
+ public:
+  LowerCompilationFacts(
+      slang::ast::Compilation& compilation,
+      const diag::SlangSourceMapper& source_mapper)
+      : compilation_(&compilation), source_mapper_(&source_mapper) {
+  }
+
+  [[nodiscard]] auto Compilation() const -> slang::ast::Compilation& {
+    return *compilation_;
+  }
+  [[nodiscard]] auto SourceMapper() const -> const diag::SlangSourceMapper& {
+    return *source_mapper_;
+  }
+
+ private:
+  slang::ast::Compilation* compilation_;
+  const diag::SlangSourceMapper* source_mapper_;
+};
+
+auto LowerCompilation(const LowerCompilationFacts& facts)
+    -> diag::Result<std::vector<hir::ModuleUnit>>;
 
 }  // namespace lyra::lowering::ast_to_hir

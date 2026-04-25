@@ -1,5 +1,8 @@
 #include "compiler_env.hpp"
 
+#include <span>
+#include <string>
+
 namespace lyra::frontend {
 
 namespace {

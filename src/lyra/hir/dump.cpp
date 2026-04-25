@@ -10,6 +10,7 @@
 
 #include "lyra/hir/expr.hpp"
 #include "lyra/hir/lvalue.hpp"
+#include "lyra/hir/module_unit.hpp"
 #include "lyra/hir/primary.hpp"
 #include "lyra/hir/process.hpp"
 #include "lyra/hir/stmt.hpp"

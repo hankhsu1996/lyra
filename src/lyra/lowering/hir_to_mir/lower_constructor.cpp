@@ -1,11 +1,14 @@
 #include "lyra/lowering/hir_to_mir/lower_constructor.hpp"
 
 #include <cstdint>
+#include <expected>
 #include <optional>
+#include <type_traits>
 #include <utility>
 #include <variant>
 #include <vector>
 
+#include "lyra/diag/diagnostic.hpp"
 #include "lyra/hir/expr.hpp"
 #include "lyra/hir/structural_scope.hpp"
 #include "lyra/lowering/hir_to_mir/facts.hpp"
@@ -13,7 +16,6 @@
 #include "lyra/lowering/hir_to_mir/state.hpp"
 #include "lyra/mir/expr.hpp"
 #include "lyra/mir/stmt.hpp"
-#include "lyra/support/unsupported.hpp"
 
 namespace lyra::lowering::hir_to_mir {
 
@@ -22,21 +24,21 @@ namespace {
 auto LowerGenerate(
     const UnitLoweringFacts& unit_facts, const UnitLoweringState& unit_state,
     const hir::StructuralScope& owner_scope, const hir::Generate& gen,
-    BodyLoweringState& body_state, ScopeStack& stack) -> mir::StmtId;
+    BodyLoweringState& body_state, ScopeStack& stack)
+    -> diag::Result<mir::Stmt>;
 
-void LowerChildScopeIntoBody(
+auto LowerChildScopeIntoBody(
     const UnitLoweringFacts& unit_facts, const UnitLoweringState& unit_state,
-    const hir::StructuralScope& child, mir::Body& out_body, ScopeStack& stack);
+    const hir::StructuralScope& child, mir::Body& out_body, ScopeStack& stack)
+    -> diag::Result<void>;
 
-auto LowerStructuralExpr(
+auto LowerStructuralExprData(
     const UnitLoweringFacts& unit_facts, const UnitLoweringState& unit_state,
     const hir::StructuralScope& owner_scope, hir::ExprId hir_id,
-    BodyLoweringState& body_state, const ScopeStack& stack) -> mir::ExprId {
+    const ScopeStack& stack) -> mir::Expr {
   const hir::Expr& src = owner_scope.GetExpr(hir_id);
-  return body_state.AppendExpr(
-      hir_id,
-      mir::Expr{
-          .data = LowerExprData(unit_facts, unit_state, stack, src.data)});
+  return mir::Expr{
+      .data = LowerExprData(unit_facts, unit_state, stack, src.data)};
 }
 
 auto AllocateChildBody(std::vector<mir::Body>& child_bodies) -> mir::BodyId {
@@ -49,43 +51,45 @@ auto LowerIfGenerate(
     const UnitLoweringFacts& unit_facts, const UnitLoweringState& unit_state,
     const hir::StructuralScope& owner_scope, const hir::Generate& gen,
     const hir::IfGenerate& if_gen, BodyLoweringState& body_state,
-    ScopeStack& stack) -> mir::StmtId {
-  const mir::ExprId cond = LowerStructuralExpr(
-      unit_facts, unit_state, owner_scope, if_gen.condition, body_state, stack);
+    ScopeStack& stack) -> diag::Result<mir::Stmt> {
+  mir::Expr cond = LowerStructuralExprData(
+      unit_facts, unit_state, owner_scope, if_gen.condition, stack);
+  const mir::ExprId cond_id =
+      body_state.AppendExpr(if_gen.condition, std::move(cond));
 
   std::vector<mir::Body> child_bodies;
   const mir::BodyId then_id = AllocateChildBody(child_bodies);
-  LowerChildScopeIntoBody(
+  auto then_r = LowerChildScopeIntoBody(
       unit_facts, unit_state, gen.child_scopes[if_gen.then_scope.value],
       child_bodies[then_id.value], stack);
+  if (!then_r) return std::unexpected(std::move(then_r.error()));
 
   std::optional<mir::BodyId> else_id;
   if (if_gen.else_scope.has_value()) {
     else_id = AllocateChildBody(child_bodies);
-    LowerChildScopeIntoBody(
+    auto else_r = LowerChildScopeIntoBody(
         unit_facts, unit_state, gen.child_scopes[if_gen.else_scope->value],
         child_bodies[else_id->value], stack);
+    if (!else_r) return std::unexpected(std::move(else_r.error()));
   }
 
-  return body_state.AppendStmt(
-      mir::Stmt{
-          .label = std::nullopt,
-          .data =
-              mir::IfStmt{
-                  .condition = cond,
-                  .then_body = then_id,
-                  .else_body = else_id},
-          .child_bodies = std::move(child_bodies)});
+  return mir::Stmt{
+      .label = std::nullopt,
+      .data =
+          mir::IfStmt{
+              .condition = cond_id, .then_body = then_id, .else_body = else_id},
+      .child_bodies = std::move(child_bodies)};
 }
 
 auto LowerCaseGenerate(
     const UnitLoweringFacts& unit_facts, const UnitLoweringState& unit_state,
     const hir::StructuralScope& owner_scope, const hir::Generate& gen,
     const hir::CaseGenerate& case_gen, BodyLoweringState& body_state,
-    ScopeStack& stack) -> mir::StmtId {
-  const mir::ExprId cond = LowerStructuralExpr(
-      unit_facts, unit_state, owner_scope, case_gen.condition, body_state,
-      stack);
+    ScopeStack& stack) -> diag::Result<mir::Stmt> {
+  mir::Expr cond = LowerStructuralExprData(
+      unit_facts, unit_state, owner_scope, case_gen.condition, stack);
+  const mir::ExprId cond_id =
+      body_state.AppendExpr(case_gen.condition, std::move(cond));
 
   std::vector<mir::Body> child_bodies;
   std::vector<mir::SwitchCase> cases;
@@ -95,14 +99,16 @@ auto LowerCaseGenerate(
     std::vector<mir::ExprId> labels;
     labels.reserve(item.labels.size());
     for (const auto lbl : item.labels) {
-      labels.push_back(LowerStructuralExpr(
-          unit_facts, unit_state, owner_scope, lbl, body_state, stack));
+      mir::Expr label_expr = LowerStructuralExprData(
+          unit_facts, unit_state, owner_scope, lbl, stack);
+      labels.push_back(body_state.AppendExpr(lbl, std::move(label_expr)));
     }
 
     const mir::BodyId item_id = AllocateChildBody(child_bodies);
-    LowerChildScopeIntoBody(
+    auto item_r = LowerChildScopeIntoBody(
         unit_facts, unit_state, gen.child_scopes[item.scope.value],
         child_bodies[item_id.value], stack);
+    if (!item_r) return std::unexpected(std::move(item_r.error()));
 
     cases.push_back(
         mir::SwitchCase{.labels = std::move(labels), .body = item_id});
@@ -111,28 +117,29 @@ auto LowerCaseGenerate(
   std::optional<mir::BodyId> default_id;
   if (case_gen.default_scope.has_value()) {
     default_id = AllocateChildBody(child_bodies);
-    LowerChildScopeIntoBody(
+    auto default_r = LowerChildScopeIntoBody(
         unit_facts, unit_state, gen.child_scopes[case_gen.default_scope->value],
         child_bodies[default_id->value], stack);
+    if (!default_r) return std::unexpected(std::move(default_r.error()));
   }
 
-  return body_state.AppendStmt(
-      mir::Stmt{
-          .label = std::nullopt,
-          .data =
-              mir::SwitchStmt{
-                  .condition = cond,
-                  .cases = std::move(cases),
-                  .default_body = default_id},
-          .child_bodies = std::move(child_bodies)});
+  return mir::Stmt{
+      .label = std::nullopt,
+      .data =
+          mir::SwitchStmt{
+              .condition = cond_id,
+              .cases = std::move(cases),
+              .default_body = default_id},
+      .child_bodies = std::move(child_bodies)};
 }
 
 auto LowerGenerate(
     const UnitLoweringFacts& unit_facts, const UnitLoweringState& unit_state,
     const hir::StructuralScope& owner_scope, const hir::Generate& gen,
-    BodyLoweringState& body_state, ScopeStack& stack) -> mir::StmtId {
+    BodyLoweringState& body_state, ScopeStack& stack)
+    -> diag::Result<mir::Stmt> {
   return std::visit(
-      [&](const auto& data) -> mir::StmtId {
+      [&](const auto& data) -> diag::Result<mir::Stmt> {
         using T = std::decay_t<decltype(data)>;
         if constexpr (std::is_same_v<T, hir::IfGenerate>) {
           return LowerIfGenerate(
@@ -147,42 +154,54 @@ auto LowerGenerate(
       gen.data);
 }
 
-void LowerChildScopeIntoBody(
+auto LowerChildScopeIntoBody(
     const UnitLoweringFacts& unit_facts, const UnitLoweringState& unit_state,
-    const hir::StructuralScope& child, mir::Body& out_body, ScopeStack& stack) {
+    const hir::StructuralScope& child, mir::Body& out_body, ScopeStack& stack)
+    -> diag::Result<void> {
   if (!child.VarDecls().empty()) {
-    support::Unsupported(
-        "MIR: declarations inside generate not supported in this cut");
+    return diag::Unsupported(
+        "declarations inside generate scopes are not supported yet",
+        diag::UnsupportedCategory::kFeature);
   }
   if (!child.Processes().empty()) {
-    support::Unsupported(
-        "MIR: processes inside generate not supported in this cut");
+    return diag::Unsupported(
+        "processes inside generate scopes are not supported yet",
+        diag::UnsupportedCategory::kFeature);
   }
 
   const ScopeStackGuard guard(stack, child);
   BodyLoweringState body_state;
 
   for (const auto& nested : child.Generates()) {
-    body_state.AppendRootStmt(LowerGenerate(
-        unit_facts, unit_state, child, nested, body_state, stack));
+    auto stmt =
+        LowerGenerate(unit_facts, unit_state, child, nested, body_state, stack);
+    if (!stmt) return std::unexpected(std::move(stmt.error()));
+    const mir::StmtId sid = body_state.AppendStmt(*std::move(stmt));
+    body_state.AppendRootStmt(sid);
   }
   out_body = body_state.Finish();
+  return {};
 }
 
 }  // namespace
 
-void LowerConstructorFromScope(
+auto LowerConstructorIntoBody(
     const UnitLoweringFacts& unit_facts, const UnitLoweringState& unit_state,
-    const hir::StructuralScope& root_scope, mir::Body& out_body) {
+    const hir::StructuralScope& root_scope, mir::Body& out_body)
+    -> diag::Result<void> {
   ScopeStack stack;
   const ScopeStackGuard guard(stack, root_scope);
 
   BodyLoweringState body_state;
   for (const auto& gen : root_scope.Generates()) {
-    body_state.AppendRootStmt(LowerGenerate(
-        unit_facts, unit_state, root_scope, gen, body_state, stack));
+    auto stmt = LowerGenerate(
+        unit_facts, unit_state, root_scope, gen, body_state, stack);
+    if (!stmt) return std::unexpected(std::move(stmt.error()));
+    const mir::StmtId sid = body_state.AppendStmt(*std::move(stmt));
+    body_state.AppendRootStmt(sid);
   }
   out_body = body_state.Finish();
+  return {};
 }
 
 }  // namespace lyra::lowering::hir_to_mir

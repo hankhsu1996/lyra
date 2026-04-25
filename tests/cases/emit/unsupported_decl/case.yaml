@@ -6,6 +6,8 @@ input:
   top: Top
   files: [main.sv]
 expect:
-  exit: 2
+  exit: 1
   stderr:
-    contains: ["internal error", "not supported"]
+    contains:
+      - "unsupported:"
+      - "declarations inside generate scopes are not supported"
