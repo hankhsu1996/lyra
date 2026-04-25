@@ -7,15 +7,17 @@
 
 #include <slang/ast/Expression.h>
 #include <slang/ast/Statement.h>
-#include <slang/ast/expressions/AssignmentExpressions.h>
+#include <slang/ast/Symbol.h>
 #include <slang/ast/statements/MiscStatements.h>
+#include <slang/ast/symbols/VariableSymbols.h>
 
 #include "../expression/lower.hpp"
 #include "../facts.hpp"
 #include "../state.hpp"
-#include "assignment.hpp"
+#include "../type.hpp"
 #include "lyra/diag/diagnostic.hpp"
 #include "lyra/hir/expr.hpp"
+#include "lyra/hir/local_var.hpp"
 #include "lyra/hir/stmt.hpp"
 
 namespace lyra::lowering::ast_to_hir {
@@ -43,31 +45,50 @@ auto LowerStatement(
 
     case slang::ast::StatementKind::Block: {
       const auto& block = stmt.as<slang::ast::BlockStatement>();
-      return LowerStatement(
-          unit_facts, proc_state, scope_state, stack, block.body);
+      std::vector<hir::StmtId> kids;
+      if (block.body.kind == slang::ast::StatementKind::List) {
+        const auto& list = block.body.as<slang::ast::StatementList>();
+        kids.reserve(list.list.size());
+        for (const auto* child : list.list) {
+          auto child_stmt = LowerStatement(
+              unit_facts, proc_state, scope_state, stack, *child);
+          if (!child_stmt)
+            return std::unexpected(std::move(child_stmt.error()));
+          kids.push_back(proc_state.AppendStmt(*std::move(child_stmt)));
+        }
+      } else {
+        auto child_stmt = LowerStatement(
+            unit_facts, proc_state, scope_state, stack, block.body);
+        if (!child_stmt) return std::unexpected(std::move(child_stmt.error()));
+        kids.push_back(proc_state.AppendStmt(*std::move(child_stmt)));
+      }
+      return hir::Stmt{
+          .label = std::nullopt,
+          .data = hir::BlockStmt{.statements = std::move(kids)}};
+    }
+
+    case slang::ast::StatementKind::VariableDeclaration: {
+      const auto& vd = stmt.as<slang::ast::VariableDeclStatement>();
+      const auto& sym = vd.symbol;
+      auto type_data =
+          LowerTypeData(sym.getType(), mapper.PointSpanOf(sym.location));
+      if (!type_data) return std::unexpected(std::move(type_data.error()));
+      const auto type_id =
+          scope_state.UnitState().AddType(*std::move(type_data));
+      const auto local_id = proc_state.AddLocalVar(sym, type_id);
+      return hir::Stmt{
+          .label = std::nullopt,
+          .data = hir::VarDeclStmt{.local_var = local_id}};
     }
 
     case slang::ast::StatementKind::ExpressionStatement: {
-      const auto& expr_stmt = stmt.as<slang::ast::ExpressionStatement>();
-      if (expr_stmt.expr.kind != slang::ast::ExpressionKind::Assignment) {
-        return diag::Unsupported(
-            mapper.SpanOf(expr_stmt.sourceRange),
-            "only assignment expression-statements are supported",
-            diag::UnsupportedCategory::kFeature);
-      }
-      const auto& assign =
-          expr_stmt.expr.as<slang::ast::AssignmentExpression>();
-
-      auto rhs = LowerExpressionData(
-          unit_facts, scope_state.UnitState(), stack, assign.right());
-      if (!rhs) return std::unexpected(std::move(rhs.error()));
-      const hir::ExprId rhs_id = proc_state.AppendExpr(*std::move(rhs));
-
-      auto stmt_data = LowerAssignmentStatementData(
-          unit_facts, scope_state.UnitState(), stack, assign, rhs_id);
-      if (!stmt_data) return std::unexpected(std::move(stmt_data.error()));
-
-      return hir::Stmt{.label = std::nullopt, .data = *std::move(stmt_data)};
+      const auto& es = stmt.as<slang::ast::ExpressionStatement>();
+      auto expr = LowerProcExpr(
+          unit_facts, scope_state.UnitState(), proc_state, stack, es.expr);
+      if (!expr) return std::unexpected(std::move(expr.error()));
+      const hir::ExprId id = proc_state.AppendExpr(*std::move(expr));
+      return hir::Stmt{
+          .label = std::nullopt, .data = hir::ExprStmt{.expr = id}};
     }
 
     default:

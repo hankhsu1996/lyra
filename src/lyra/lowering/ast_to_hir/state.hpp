@@ -12,13 +12,14 @@
 #include <slang/ast/symbols/VariableSymbols.h>
 
 #include "lyra/hir/expr.hpp"
+#include "lyra/hir/local_var.hpp"
+#include "lyra/hir/member_var.hpp"
 #include "lyra/hir/module_unit.hpp"
 #include "lyra/hir/process.hpp"
 #include "lyra/hir/stmt.hpp"
 #include "lyra/hir/structural_scope.hpp"
 #include "lyra/hir/type.hpp"
-#include "lyra/hir/value_decl_ref.hpp"
-#include "lyra/hir/var_decl.hpp"
+#include "lyra/hir/value_ref.hpp"
 #include "lyra/support/internal_error.hpp"
 
 namespace lyra::lowering::ast_to_hir {
@@ -31,13 +32,13 @@ struct ScopeFrameId {
   auto operator<=>(const ScopeFrameId&) const -> std::strong_ordering = default;
 };
 
-struct VarBinding {
+struct MemberVarBinding {
   ScopeFrameId home_frame;
-  hir::VarDeclId local_id;
+  hir::MemberVarId local_id;
 };
 
-using VariableDeclBindings =
-    std::unordered_map<const slang::ast::VariableSymbol*, VarBinding>;
+using MemberVarBindings =
+    std::unordered_map<const slang::ast::VariableSymbol*, MemberVarBinding>;
 
 class UnitLoweringState {
  public:
@@ -56,17 +57,18 @@ class UnitLoweringState {
     return hir_unit_.AddType(std::move(data));
   }
 
-  void RegisterVarBinding(
+  void RegisterMemberVarBinding(
       const slang::ast::VariableSymbol& var, ScopeFrameId home_frame,
-      hir::VarDeclId local) {
-    var_bindings_.emplace(
-        &var, VarBinding{.home_frame = home_frame, .local_id = local});
+      hir::MemberVarId local) {
+    member_var_bindings_.emplace(
+        &var, MemberVarBinding{.home_frame = home_frame, .local_id = local});
   }
 
-  [[nodiscard]] auto LookupVarBinding(const slang::ast::VariableSymbol& var)
-      const -> std::optional<VarBinding> {
-    const auto it = var_bindings_.find(&var);
-    if (it == var_bindings_.end()) {
+  [[nodiscard]] auto LookupMemberVarBinding(
+      const slang::ast::VariableSymbol& var) const
+      -> std::optional<MemberVarBinding> {
+    const auto it = member_var_bindings_.find(&var);
+    if (it == member_var_bindings_.end()) {
       return std::nullopt;
     }
     return it->second;
@@ -78,7 +80,7 @@ class UnitLoweringState {
 
  private:
   hir::ModuleUnit hir_unit_;
-  VariableDeclBindings var_bindings_;
+  MemberVarBindings member_var_bindings_;
 };
 
 class ScopeStack {
@@ -145,15 +147,15 @@ class ScopeLoweringState {
       : unit_state_(&unit_state), scope_(&scope), frame_(frame) {
   }
 
-  auto AddVarDecl(const slang::ast::VariableSymbol& var, hir::TypeId type)
-      -> hir::VarDeclId {
-    const auto local = scope_->AddVarDecl(std::string{var.name}, type);
-    unit_state_->RegisterVarBinding(var, frame_, local);
+  auto AddMemberVar(const slang::ast::VariableSymbol& var, hir::TypeId type)
+      -> hir::MemberVarId {
+    const auto local = scope_->AddMemberVar(std::string{var.name}, type);
+    unit_state_->RegisterMemberVarBinding(var, frame_, local);
     return local;
   }
 
   auto AppendExpr(hir::Expr expr) -> hir::ExprId {
-    return scope_->AppendExpr(std::move(expr));
+    return scope_->AddExpr(std::move(expr));
   }
 
   auto AddProcess(hir::Process process) -> hir::ProcessId {
@@ -200,6 +202,25 @@ class ProcessLoweringState {
     return id;
   }
 
+  auto AddLocalVar(const slang::ast::VariableSymbol& var, hir::TypeId type)
+      -> hir::LocalVarId {
+    const hir::LocalVarId id{
+        static_cast<std::uint32_t>(hir_process_.local_vars.size())};
+    hir_process_.local_vars.push_back(
+        hir::LocalVar{.name = std::string{var.name}, .type = type});
+    local_var_bindings_.emplace(&var, id);
+    return id;
+  }
+
+  [[nodiscard]] auto LookupLocalVar(const slang::ast::VariableSymbol& var) const
+      -> std::optional<hir::LocalVarId> {
+    const auto it = local_var_bindings_.find(&var);
+    if (it == local_var_bindings_.end()) {
+      return std::nullopt;
+    }
+    return it->second;
+  }
+
   auto Finalize(hir::ProcessKind kind, hir::StmtId body) -> hir::Process {
     hir_process_.kind = kind;
     hir_process_.body = body;
@@ -208,6 +229,8 @@ class ProcessLoweringState {
 
  private:
   hir::Process hir_process_;
+  std::unordered_map<const slang::ast::VariableSymbol*, hir::LocalVarId>
+      local_var_bindings_;
 };
 
 }  // namespace lyra::lowering::ast_to_hir

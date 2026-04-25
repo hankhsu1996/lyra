@@ -8,16 +8,17 @@
 #include <variant>
 #include <vector>
 
+#include "lyra/hir/binary_op.hpp"
 #include "lyra/hir/expr.hpp"
-#include "lyra/hir/lvalue.hpp"
+#include "lyra/hir/local_var.hpp"
+#include "lyra/hir/member_var.hpp"
 #include "lyra/hir/module_unit.hpp"
 #include "lyra/hir/primary.hpp"
 #include "lyra/hir/process.hpp"
 #include "lyra/hir/stmt.hpp"
 #include "lyra/hir/structural_scope.hpp"
 #include "lyra/hir/type.hpp"
-#include "lyra/hir/value_decl_ref.hpp"
-#include "lyra/hir/var_decl.hpp"
+#include "lyra/hir/value_ref.hpp"
 #include "lyra/support/internal_error.hpp"
 #include "lyra/support/overloaded.hpp"
 
@@ -158,41 +159,57 @@ class HirDumper {
         t.data);
   }
 
-  static auto FormatVarRef(const VarDeclRef& r) -> std::string {
-    return std::format(
-        "VarDecl#{}(hops={})", r.local_id.value, r.parent_scope_hops.value);
+  static auto FormatBinaryOp(BinaryOp op) -> std::string {
+    switch (op) {
+      case BinaryOp::kAdd:
+        return "Add";
+    }
+    throw support::InternalError("HirDumper: unknown BinaryOp");
   }
 
-  static auto FormatValueRef(const ValueDeclRef& v) -> std::string {
+  static auto FormatValueRef(const ValueRef& v) -> std::string {
     return std::visit(
         support::Overloaded{
-            [](const VarDeclRef& r) { return FormatVarRef(r); },
+            [](const MemberVarRef& r) -> std::string {
+              return std::format(
+                  "MemberVar[{}](hops={})", r.target.value,
+                  r.parent_scope_hops.value);
+            },
+            [](const LocalVarRef& r) -> std::string {
+              return std::format("LocalVar[{}]", r.target.value);
+            },
         },
         v);
   }
 
-  static auto FormatLvalue(const Lvalue& l) -> std::string {
+  static auto FormatPrimary(const Primary& p) -> std::string {
     return std::visit(
         support::Overloaded{
-            [](const LocalValueRef& r) { return FormatValueRef(r.target); },
+            [](const IntegerLiteral& lit) -> std::string {
+              return std::format("IntegerLiteral({})", lit.value);
+            },
+            [](const RefExpr& r) -> std::string {
+              return std::format("RefExpr {}", FormatValueRef(r.target));
+            },
         },
-        l);
+        p);
   }
 
   static auto FormatExprData(const ExprData& data) -> std::string {
     return std::visit(
         support::Overloaded{
-            [](const Primary& pr) -> std::string {
-              return std::visit(
-                  support::Overloaded{
-                      [](const IntegerLiteral& lit) -> std::string {
-                        return std::format("IntegerLiteral({})", lit.value);
-                      },
-                      [](const LocalValueRef& r) -> std::string {
-                        return FormatValueRef(r.target);
-                      },
-                  },
-                  pr);
+            [](const PrimaryExpr& p) -> std::string {
+              return FormatPrimary(p.data);
+            },
+            [](const BinaryExpr& b) -> std::string {
+              return std::format(
+                  "BinaryExpr op={} lhs=Expr[{}] rhs=Expr[{}] type=Type[{}]",
+                  FormatBinaryOp(b.op), b.lhs.value, b.rhs.value, b.type.value);
+            },
+            [](const AssignExpr& a) -> std::string {
+              return std::format(
+                  "AssignExpr lhs=Expr[{}] rhs=Expr[{}] type=Type[{}]",
+                  a.lhs.value, a.rhs.value, a.type.value);
             },
         },
         data);
@@ -229,11 +246,11 @@ class HirDumper {
   void DumpScope(const StructuralScope& s) {
     Line("Scope:");
     Indent();
-    for (std::size_t i = 0; i < s.VarDecls().size(); ++i) {
-      const auto& v = s.VarDecls()[i];
+    for (std::size_t i = 0; i < s.MemberVars().size(); ++i) {
+      const auto& v = s.MemberVars()[i];
       Line(
           std::format(
-              "VarDecl[{}] \"{}\" : Type[{}]", i, v.name, v.type.value));
+              "MemberVar[{}] \"{}\" : Type[{}]", i, v.name, v.type.value));
     }
     for (const auto& p : s.Processes()) {
       DumpProcess(p);
@@ -251,6 +268,25 @@ class HirDumper {
         break;
     }
     Indent();
+    if (!p.local_vars.empty()) {
+      Line("Locals:");
+      Indent();
+      for (std::size_t i = 0; i < p.local_vars.size(); ++i) {
+        const auto& lv = p.local_vars[i];
+        Line(
+            std::format(
+                "LocalVar[{}] \"{}\" : Type[{}]", i, lv.name, lv.type.value));
+      }
+      Dedent();
+    }
+    if (!p.exprs.empty()) {
+      Line("Exprs:");
+      Indent();
+      for (std::size_t i = 0; i < p.exprs.size(); ++i) {
+        Line(std::format("Expr[{}] {}", i, FormatExprData(p.exprs[i].data)));
+      }
+      Dedent();
+    }
     DumpStmt(p, p.body);
     Dedent();
   }
@@ -259,16 +295,21 @@ class HirDumper {
     const auto& s = p.stmts.at(id.value);
     std::visit(
         support::Overloaded{
-            [&](const BlockingAssignment& a) {
+            [&](const VarDeclStmt& v) {
               Line(
                   std::format(
-                      "Stmt[{}] BlockingAssignment target={} value=Expr[{}]",
-                      id.value, FormatLvalue(a.target), a.value.value));
+                      "Stmt[{}] VarDeclStmt local=LocalVar[{}]", id.value,
+                      v.local_var.value));
+            },
+            [&](const ExprStmt& e) {
+              Line(
+                  std::format(
+                      "Stmt[{}] ExprStmt expr=Expr[{}]", id.value,
+                      e.expr.value));
               Indent();
               Line(
                   std::format(
-                      "Expr[{}] {}", a.value.value,
-                      FormatProcExpr(p, a.value)));
+                      "Expr[{}] {}", e.expr.value, FormatProcExpr(p, e.expr)));
               Dedent();
             },
             [&](const BlockStmt& b) {

@@ -1,6 +1,7 @@
 #include "lyra/mir/dump.hpp"
 
 #include <cstddef>
+#include <cstdint>
 #include <format>
 #include <string>
 #include <string_view>
@@ -8,10 +9,12 @@
 #include <variant>
 #include <vector>
 
+#include "lyra/mir/binary_op.hpp"
 #include "lyra/mir/class_decl.hpp"
 #include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/expr.hpp"
-#include "lyra/mir/member.hpp"
+#include "lyra/mir/local_var.hpp"
+#include "lyra/mir/member_var.hpp"
 #include "lyra/mir/process.hpp"
 #include "lyra/mir/stmt.hpp"
 #include "lyra/mir/type.hpp"
@@ -155,6 +158,27 @@ class MirDumper {
         t.data);
   }
 
+  static auto FormatBinaryOp(BinaryOp op) -> std::string {
+    switch (op) {
+      case BinaryOp::kAdd:
+        return "Add";
+    }
+    throw support::InternalError("MirDumper: unknown BinaryOp");
+  }
+
+  static auto FormatLvalue(const Lvalue& l) -> std::string {
+    return std::visit(
+        support::Overloaded{
+            [](const MemberVarRef& r) -> std::string {
+              return std::format("MemberVar[{}]", r.target.value);
+            },
+            [](const LocalVarRef& r) -> std::string {
+              return std::format("LocalVar[{}]", r.target.value);
+            },
+        },
+        l);
+  }
+
   static auto FormatExpr(const Body& body, ExprId id) -> std::string {
     const auto& e = body.exprs.at(id.value);
     return std::visit(
@@ -162,8 +186,21 @@ class MirDumper {
             [](const IntegerLiteral& lit) -> std::string {
               return std::format("IntegerLiteral({})", lit.value);
             },
-            [](const MemberRef& r) -> std::string {
-              return std::format("MemberRef(Member[{}])", r.target.value);
+            [](const MemberVarRef& r) -> std::string {
+              return std::format("MemberVarRef(MemberVar[{}])", r.target.value);
+            },
+            [](const LocalVarRef& r) -> std::string {
+              return std::format("LocalVarRef(LocalVar[{}])", r.target.value);
+            },
+            [](const BinaryExpr& b) -> std::string {
+              return std::format(
+                  "BinaryExpr op={} lhs=Expr[{}] rhs=Expr[{}] type=Type[{}]",
+                  FormatBinaryOp(b.op), b.lhs.value, b.rhs.value, b.type.value);
+            },
+            [](const AssignExpr& a) -> std::string {
+              return std::format(
+                  "AssignExpr target={} value=Expr[{}] type=Type[{}]",
+                  FormatLvalue(a.target), a.value.value, a.type.value);
             },
         },
         e.data);
@@ -188,10 +225,10 @@ class MirDumper {
     }
     Dedent();
 
-    Line("Members:");
+    Line("MemberVars:");
     Indent();
-    for (std::size_t i = 0; i < c.Members().size(); ++i) {
-      const auto& m = c.Members()[i];
+    for (std::size_t i = 0; i < c.MemberVars().size(); ++i) {
+      const auto& m = c.MemberVars()[i];
       Line(std::format("[{}] \"{}\" : Type[{}]", i, m.name, m.type.value));
     }
     Dedent();
@@ -219,6 +256,26 @@ class MirDumper {
   }
 
   void DumpBody(const Body& body) {
+    if (!body.local_vars.empty()) {
+      Line("Locals:");
+      Indent();
+      for (std::size_t i = 0; i < body.local_vars.size(); ++i) {
+        const auto& lv = body.local_vars[i];
+        Line(
+            std::format(
+                "LocalVar[{}] \"{}\" : Type[{}]", i, lv.name, lv.type.value));
+      }
+      Dedent();
+    }
+    if (!body.exprs.empty()) {
+      Line("Exprs:");
+      Indent();
+      for (std::size_t i = 0; i < body.exprs.size(); ++i) {
+        const ExprId id{static_cast<std::uint32_t>(i)};
+        Line(std::format("Expr[{}] {}", i, FormatExpr(body, id)));
+      }
+      Dedent();
+    }
     Line(std::format("Body (root_stmts={})", body.root_stmts.size()));
     Indent();
     if (body.root_stmts.empty()) {
@@ -238,7 +295,14 @@ class MirDumper {
     }
     std::visit(
         support::Overloaded{
-            [&](const Assignment& a) { DumpAssignment(a, enclosing, id); },
+            [&](const LocalVarDeclStmt& s) {
+              Line(
+                  std::format(
+                      "Stmt[{}] LocalVarDeclStmt local=LocalVar[{}]", id.value,
+                      s.local_var.value));
+            },
+            [&](const ExprStmt& s) { DumpExprStmt(s, enclosing, id); },
+            [&](const BlockStmt& s) { DumpBlockStmt(s, enclosing, id); },
             [&](const IfStmt& s) { DumpIfStmt(stmt, s, enclosing, id); },
             [&](const SwitchStmt& s) {
               DumpSwitchStmt(stmt, s, enclosing, id);
@@ -247,15 +311,24 @@ class MirDumper {
         stmt.data);
   }
 
-  void DumpAssignment(const Assignment& a, const Body& enclosing, StmtId id) {
+  void DumpBlockStmt(const BlockStmt& s, const Body& enclosing, StmtId id) {
     Line(
         std::format(
-            "Stmt[{}] Assignment target=Member[{}] value=Expr[{}]", id.value,
-            a.target.value, a.value.value));
+            "Stmt[{}] BlockStmt (count={})", id.value, s.statements.size()));
+    Indent();
+    for (const auto child : s.statements) {
+      DumpStmt(enclosing, child);
+    }
+    Dedent();
+  }
+
+  void DumpExprStmt(const ExprStmt& s, const Body& enclosing, StmtId id) {
+    Line(
+        std::format("Stmt[{}] ExprStmt expr=Expr[{}]", id.value, s.expr.value));
     Indent();
     Line(
         std::format(
-            "Expr[{}] {}", a.value.value, FormatExpr(enclosing, a.value)));
+            "Expr[{}] {}", s.expr.value, FormatExpr(enclosing, s.expr)));
     Dedent();
   }
 
