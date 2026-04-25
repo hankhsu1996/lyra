@@ -10,7 +10,7 @@ expect:
   stdout:
     contains:
       - "auto process_0() -> lyra::runtime::Process"
-      - "int x{};"
+      - "std::int32_t x{};"
       - "{"
       - "(x = (1 + 2));"
       - "}"
