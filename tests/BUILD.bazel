@@ -41,3 +41,19 @@ cc_test(
         "@googletest//:gtest_main",
     ],
 )
+
+cc_test(
+    name = "cli_run_tests",
+    srcs = ["cli_run_test.cpp"],
+    data = [
+        "cases/run/blocking_assign.sv",
+        "//:lyra",
+        "//:runtime_headers",
+        "//:runtime_sources",
+    ],
+    deps = [
+        ":framework",
+        "@bazel_tools//tools/cpp/runfiles",
+        "@googletest//:gtest_main",
+    ],
+)

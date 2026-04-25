@@ -24,7 +24,7 @@ auto LowerProcess(
   if (!body) return std::unexpected(std::move(body.error()));
   const hir::StmtId body_id = proc_state.AppendStmt(*std::move(body));
 
-  return proc_state.Finalize(hir::Initial{.body = body_id});
+  return proc_state.Finalize(hir::ProcessKind::kInitial, body_id);
 }
 
 }  // namespace lyra::lowering::ast_to_hir
