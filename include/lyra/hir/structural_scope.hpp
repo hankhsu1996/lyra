@@ -8,8 +8,8 @@
 #include <vector>
 
 #include "lyra/hir/expr.hpp"
+#include "lyra/hir/member_var.hpp"
 #include "lyra/hir/process.hpp"
-#include "lyra/hir/var_decl.hpp"
 
 namespace lyra::hir {
 
@@ -61,23 +61,23 @@ class StructuralScope {
   StructuralScope(const StructuralScope&) = delete;
   auto operator=(const StructuralScope&) -> StructuralScope& = delete;
 
-  auto AddVarDecl(std::string name, TypeId type) -> VarDeclId;
-  auto AppendExpr(Expr expr) -> ExprId;
+  auto AddMemberVar(std::string name, TypeId type) -> MemberVarId;
+  auto AddExpr(Expr expr) -> ExprId;
   auto AddProcess(Process process) -> ProcessId;
   auto AddGenerate(Generate generate) -> GenerateId;
 
-  [[nodiscard]] auto VarDecls() const -> const std::vector<VarDecl>&;
+  [[nodiscard]] auto MemberVars() const -> const std::vector<MemberVar>&;
   [[nodiscard]] auto Exprs() const -> const std::vector<Expr>&;
   [[nodiscard]] auto Processes() const -> const std::vector<Process>&;
   [[nodiscard]] auto Generates() const -> const std::vector<Generate>&;
 
-  [[nodiscard]] auto GetVarDecl(VarDeclId id) const -> const VarDecl&;
+  [[nodiscard]] auto GetMemberVar(MemberVarId id) const -> const MemberVar&;
   [[nodiscard]] auto GetExpr(ExprId id) const -> const Expr&;
   [[nodiscard]] auto GetProcess(ProcessId id) const -> const Process&;
   [[nodiscard]] auto GetGenerate(GenerateId id) const -> const Generate&;
 
  private:
-  std::vector<VarDecl> var_decls_;
+  std::vector<MemberVar> member_vars_;
   std::vector<Expr> exprs_;
   std::vector<Process> processes_;
   std::vector<Generate> generates_;

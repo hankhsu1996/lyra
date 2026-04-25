@@ -19,7 +19,7 @@ expect:
       - "default:"
       - "auto process_0() -> lyra::runtime::Process"
       - "co_return;"
-      - "x = 1;"
+      - "(x = 1);"
       - "ctx.AddProcess("
       - "lyra::runtime::ProcessKind::kInitial"
       - "process_0()"

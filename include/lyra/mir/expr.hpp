@@ -4,7 +4,10 @@
 #include <cstdint>
 #include <variant>
 
-#include "lyra/mir/member.hpp"
+#include "lyra/mir/binary_op.hpp"
+#include "lyra/mir/local_var.hpp"
+#include "lyra/mir/member_var.hpp"
+#include "lyra/mir/type.hpp"
 
 namespace lyra::mir {
 
@@ -18,11 +21,31 @@ struct IntegerLiteral {
   std::int64_t value;
 };
 
-struct MemberRef {
-  MemberId target;
+struct MemberVarRef {
+  MemberVarId target;
 };
 
-using ExprData = std::variant<IntegerLiteral, MemberRef>;
+struct LocalVarRef {
+  LocalVarId target;
+};
+
+using Lvalue = std::variant<MemberVarRef, LocalVarRef>;
+
+struct BinaryExpr {
+  BinaryOp op;
+  ExprId lhs;
+  ExprId rhs;
+  TypeId type;
+};
+
+struct AssignExpr {
+  Lvalue target;
+  ExprId value;
+  TypeId type;
+};
+
+using ExprData = std::variant<
+    IntegerLiteral, MemberVarRef, LocalVarRef, BinaryExpr, AssignExpr>;
 
 struct Expr {
   ExprData data;

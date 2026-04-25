@@ -46,11 +46,13 @@ cc_test(
     name = "cli_run_tests",
     srcs = ["cli_run_test.cpp"],
     data = [
-        "cases/run/blocking_assign.sv",
         "//:lyra",
         "//:runtime_headers",
         "//:runtime_sources",
-    ],
+    ] + glob(
+        ["cases/run/*.sv"],
+        allow_empty = True,
+    ),
     # Compiles emitted artifacts with the host C++ compiler. Skipped from
     # `bazel test //...` until a host C++ toolchain is wired into CI; mirrors
     # the disabled aot-full job in .github/workflows/bazel-build.yml. Run

@@ -17,7 +17,7 @@ using lyra::test::TerminationKind;
 
 namespace {
 
-TEST(CliRun, BlockingAssign) {
+void RunOneCase(const std::string& sv_runfiles_path) {
   std::string err;
   std::unique_ptr<Runfiles> rf{Runfiles::CreateForTest(&err)};
   ASSERT_TRUE(rf) << err;
@@ -26,8 +26,7 @@ TEST(CliRun, BlockingAssign) {
   ASSERT_FALSE(lyra_exe.empty());
   ASSERT_TRUE(std::filesystem::exists(lyra_exe)) << lyra_exe;
 
-  const std::filesystem::path sv_path =
-      rf->Rlocation("_main/tests/cases/run/blocking_assign.sv");
+  const std::filesystem::path sv_path = rf->Rlocation(sv_runfiles_path);
   ASSERT_FALSE(sv_path.empty());
   ASSERT_TRUE(std::filesystem::exists(sv_path)) << sv_path;
 
@@ -48,8 +47,6 @@ TEST(CliRun, BlockingAssign) {
   ASSERT_TRUE(work_or) << work_or.error();
   const auto& work = *work_or;
 
-  // Step 1: emit. argv is argv[1..]; lyra_exe becomes argv[0] inside
-  // RunChildProcess.
   const std::vector<std::string> emit_argv = {
       "emit", "cpp",       "--no-project", "--top",
       "Top",  "--out-dir", work.string(),  sv_path.string(),
@@ -60,12 +57,27 @@ TEST(CliRun, BlockingAssign) {
       << emit.stdout_text << "\nstderr:\n"
       << emit.stderr_text;
 
-  // Step 2: build + run.
   auto outcome =
       BuildAndRunEmittedArtifacts(work, include_root, runtime_src_dir);
   ASSERT_FALSE(outcome.error.has_value()) << *outcome.error;
   EXPECT_EQ(outcome.exit_code, 0)
       << "stdout=" << outcome.stdout_text << " stderr=" << outcome.stderr_text;
+}
+
+TEST(CliRun, BlockingAssign) {
+  RunOneCase("_main/tests/cases/run/blocking_assign.sv");
+}
+
+TEST(CliRun, LocalVarAssign) {
+  RunOneCase("_main/tests/cases/run/local_var_assign.sv");
+}
+
+TEST(CliRun, MemberAdd) {
+  RunOneCase("_main/tests/cases/run/member_add.sv");
+}
+
+TEST(CliRun, NestedBlock) {
+  RunOneCase("_main/tests/cases/run/nested_block.sv");
 }
 
 }  // namespace

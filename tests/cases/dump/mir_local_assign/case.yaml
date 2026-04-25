@@ -1,0 +1,19 @@
+id: dump.mir_local_assign
+tags: [dump]
+input:
+  command: [dump, mir]
+  project: false
+  top: Top
+  files: [main.sv]
+expect:
+  exit: 0
+  stdout:
+    contains:
+      - "Process[0] Initial"
+      - "LocalVar[0] \"x\""
+      - "LocalVarDeclStmt local=LocalVar[0]"
+      - "ExprStmt"
+      - "AssignExpr target=LocalVar[0]"
+      - "BinaryExpr op=Add"
+      - "IntegerLiteral(1)"
+      - "IntegerLiteral(2)"

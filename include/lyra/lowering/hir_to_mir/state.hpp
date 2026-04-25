@@ -6,11 +6,13 @@
 #include <vector>
 
 #include "lyra/hir/expr.hpp"
+#include "lyra/hir/local_var.hpp"
+#include "lyra/hir/member_var.hpp"
 #include "lyra/hir/structural_scope.hpp"
-#include "lyra/hir/value_decl_ref.hpp"
-#include "lyra/hir/var_decl.hpp"
+#include "lyra/hir/type.hpp"
 #include "lyra/mir/expr.hpp"
-#include "lyra/mir/member.hpp"
+#include "lyra/mir/local_var.hpp"
+#include "lyra/mir/member_var.hpp"
 #include "lyra/mir/stmt.hpp"
 #include "lyra/mir/type.hpp"
 #include "lyra/support/internal_error.hpp"
@@ -19,15 +21,15 @@ namespace lyra::lowering::hir_to_mir {
 
 struct UnitLoweringState {
   std::vector<mir::TypeId> type_map;
-  std::vector<mir::MemberId> root_var_map;
+  std::vector<mir::MemberVarId> root_member_var_map;
 
   [[nodiscard]] auto TranslateType(hir::TypeId hir_id) const -> mir::TypeId {
     return type_map.at(hir_id.value);
   }
 
-  [[nodiscard]] auto TranslateRootVar(hir::VarDeclId hir_id) const
-      -> mir::MemberId {
-    return root_var_map.at(hir_id.value);
+  [[nodiscard]] auto TranslateRootMemberVar(hir::MemberVarId hir_id) const
+      -> mir::MemberVarId {
+    return root_member_var_map.at(hir_id.value);
   }
 
   void SetType(hir::TypeId hir_id, mir::TypeId mir_id) {
@@ -37,12 +39,41 @@ struct UnitLoweringState {
     type_map[hir_id.value] = mir_id;
   }
 
-  void SetRootVar(hir::VarDeclId hir_id, mir::MemberId mir_id) {
-    if (hir_id.value >= root_var_map.size()) {
-      root_var_map.resize(hir_id.value + 1);
+  void SetRootMemberVar(hir::MemberVarId hir_id, mir::MemberVarId mir_id) {
+    if (hir_id.value >= root_member_var_map.size()) {
+      root_member_var_map.resize(hir_id.value + 1);
     }
-    root_var_map[hir_id.value] = mir_id;
+    root_member_var_map[hir_id.value] = mir_id;
   }
+};
+
+class ProcessLoweringState {
+ public:
+  auto AddLocalVar(mir::LocalVar lv) -> mir::LocalVarId {
+    const mir::LocalVarId id{static_cast<std::uint32_t>(locals_.size())};
+    locals_.push_back(std::move(lv));
+    return id;
+  }
+
+  void MapLocalVar(hir::LocalVarId hir_id, mir::LocalVarId mir_id) {
+    if (hir_id.value >= map_.size()) {
+      map_.resize(hir_id.value + 1);
+    }
+    map_[hir_id.value] = mir_id;
+  }
+
+  [[nodiscard]] auto TranslateLocalVar(hir::LocalVarId hir_id) const
+      -> mir::LocalVarId {
+    return map_.at(hir_id.value);
+  }
+
+  auto MoveLocals() -> std::vector<mir::LocalVar> {
+    return std::move(locals_);
+  }
+
+ private:
+  std::vector<mir::LocalVar> locals_;
+  std::vector<mir::LocalVarId> map_;
 };
 
 class BodyLoweringState {

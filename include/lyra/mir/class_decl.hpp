@@ -5,7 +5,7 @@
 #include <string>
 #include <vector>
 
-#include "lyra/mir/member.hpp"
+#include "lyra/mir/member_var.hpp"
 #include "lyra/mir/process.hpp"
 #include "lyra/mir/stmt.hpp"
 #include "lyra/mir/type.hpp"
@@ -33,9 +33,9 @@ class ClassDecl {
   [[nodiscard]] auto GetType(TypeId id) const -> const Type&;
   auto AddType(TypeData data) -> TypeId;
 
-  [[nodiscard]] auto Members() const -> const std::vector<Member>&;
-  [[nodiscard]] auto GetMember(MemberId id) const -> const Member&;
-  auto AddMember(std::string name, TypeId type) -> MemberId;
+  [[nodiscard]] auto MemberVars() const -> const std::vector<MemberVar>&;
+  [[nodiscard]] auto GetMemberVar(MemberVarId id) const -> const MemberVar&;
+  auto AddMemberVar(std::string name, TypeId type) -> MemberVarId;
 
   [[nodiscard]] auto Constructor() const -> const Body&;
   auto Constructor() -> Body&;
@@ -47,7 +47,7 @@ class ClassDecl {
  private:
   std::string name_;
   std::vector<Type> types_;
-  std::vector<Member> members_;
+  std::vector<MemberVar> member_vars_;
   Body constructor_;
   std::vector<Process> processes_;
 };

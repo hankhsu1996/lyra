@@ -8,7 +8,7 @@
 #include <vector>
 
 #include "lyra/mir/expr.hpp"
-#include "lyra/mir/member.hpp"
+#include "lyra/mir/local_var.hpp"
 
 namespace lyra::mir {
 
@@ -27,14 +27,22 @@ struct BodyId {
 };
 
 struct Body {
+  std::vector<LocalVar> local_vars;
   std::vector<Expr> exprs;
   std::vector<Stmt> stmts;
   std::vector<StmtId> root_stmts;
 };
 
-struct Assignment {
-  MemberId target;
-  ExprId value;
+struct LocalVarDeclStmt {
+  LocalVarId local_var;
+};
+
+struct ExprStmt {
+  ExprId expr;
+};
+
+struct BlockStmt {
+  std::vector<StmtId> statements;
 };
 
 struct IfStmt {
@@ -54,7 +62,8 @@ struct SwitchStmt {
   std::optional<BodyId> default_body;
 };
 
-using StmtData = std::variant<Assignment, IfStmt, SwitchStmt>;
+using StmtData =
+    std::variant<LocalVarDeclStmt, ExprStmt, BlockStmt, IfStmt, SwitchStmt>;
 
 struct Stmt {
   std::optional<std::string> label;

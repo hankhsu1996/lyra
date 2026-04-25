@@ -5,6 +5,7 @@
 #include <vector>
 
 #include "lyra/hir/expr.hpp"
+#include "lyra/hir/local_var.hpp"
 #include "lyra/hir/stmt.hpp"
 
 namespace lyra::hir {
@@ -22,6 +23,7 @@ struct Process {
   StmtId body{};
   std::vector<Expr> exprs;
   std::vector<Stmt> stmts;
+  std::vector<LocalVar> local_vars;
 };
 
 }  // namespace lyra::hir

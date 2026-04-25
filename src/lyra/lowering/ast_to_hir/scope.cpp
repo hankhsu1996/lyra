@@ -72,7 +72,7 @@ auto LowerScopeInto(
           "LowerScopeInto: variable declaration produced void type");
     }
     const auto type_id = unit_state.AddType(*std::move(type_data));
-    scope_state.AddVarDecl(var, type_id);
+    scope_state.AddMemberVar(var, type_id);
   }
 
   for (const auto& member : slang_scope.members()) {

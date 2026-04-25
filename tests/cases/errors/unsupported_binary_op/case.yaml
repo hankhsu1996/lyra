@@ -1,4 +1,4 @@
-id: errors.unsupported_expr
+id: errors.unsupported_binary_op
 tags: [errors, diag]
 input:
   command: [emit, cpp]
@@ -12,7 +12,7 @@ expect:
     contains:
       - "main.sv:4:"
       - "unsupported:"
-      - "this expression form is not supported yet"
-      - "a = !a;"
+      - "only `+` is supported in this cut"
+      - "a = a - 1;"
     not_contains:
       - "internal error"

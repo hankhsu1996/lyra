@@ -75,10 +75,9 @@ auto BuildIfGenerate(
         "expressions");
   }
 
-  auto cond_data =
-      LowerExpressionData(unit_facts, parent_state.UnitState(), stack, *cond);
-  if (!cond_data) return std::unexpected(std::move(cond_data.error()));
-  const hir::ExprId cond_id = parent_state.AppendExpr(*std::move(cond_data));
+  auto cond_expr = LowerStructuralExpr(unit_facts, *cond);
+  if (!cond_expr) return std::unexpected(std::move(cond_expr.error()));
+  const hir::ExprId cond_id = parent_state.AppendExpr(*std::move(cond_expr));
 
   std::vector<hir::StructuralScope> child_scopes;
   child_scopes.reserve(else_block != nullptr ? 2 : 1);
@@ -126,10 +125,9 @@ auto BuildCaseGenerate(
     }
   }
 
-  auto cond_data = LowerExpressionData(
-      unit_facts, parent_state.UnitState(), stack, *discriminator);
-  if (!cond_data) return std::unexpected(std::move(cond_data.error()));
-  const hir::ExprId cond_id = parent_state.AppendExpr(*std::move(cond_data));
+  auto cond_expr = LowerStructuralExpr(unit_facts, *discriminator);
+  if (!cond_expr) return std::unexpected(std::move(cond_expr.error()));
+  const hir::ExprId cond_id = parent_state.AppendExpr(*std::move(cond_expr));
 
   std::vector<hir::StructuralScope> child_scopes;
   child_scopes.reserve(siblings.size());
@@ -143,11 +141,12 @@ auto BuildCaseGenerate(
         std::vector<hir::ExprId> labels;
         labels.reserve(block->caseItemExpressions.size());
         for (const auto* label_expr : block->caseItemExpressions) {
-          auto label_data = LowerExpressionData(
-              unit_facts, parent_state.UnitState(), stack, *label_expr);
-          if (!label_data)
-            return std::unexpected(std::move(label_data.error()));
-          labels.push_back(parent_state.AppendExpr(*std::move(label_data)));
+          auto label_expr_lowered =
+              LowerStructuralExpr(unit_facts, *label_expr);
+          if (!label_expr_lowered)
+            return std::unexpected(std::move(label_expr_lowered.error()));
+          labels.push_back(
+              parent_state.AppendExpr(*std::move(label_expr_lowered)));
         }
         auto item_id =
             AddChildScope(unit_facts, unit_state, stack, child_scopes, *block);

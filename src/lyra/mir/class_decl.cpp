@@ -5,7 +5,7 @@
 #include <utility>
 #include <vector>
 
-#include "lyra/mir/member.hpp"
+#include "lyra/mir/member_var.hpp"
 #include "lyra/mir/process.hpp"
 #include "lyra/mir/stmt.hpp"
 #include "lyra/mir/type.hpp"
@@ -37,17 +37,17 @@ auto ClassDecl::AddType(TypeData data) -> TypeId {
   return id;
 }
 
-auto ClassDecl::Members() const -> const std::vector<Member>& {
-  return members_;
+auto ClassDecl::MemberVars() const -> const std::vector<MemberVar>& {
+  return member_vars_;
 }
 
-auto ClassDecl::GetMember(MemberId id) const -> const Member& {
-  return members_.at(id.value);
+auto ClassDecl::GetMemberVar(MemberVarId id) const -> const MemberVar& {
+  return member_vars_.at(id.value);
 }
 
-auto ClassDecl::AddMember(std::string name, TypeId type) -> MemberId {
-  const MemberId id{static_cast<std::uint32_t>(members_.size())};
-  members_.push_back(Member{.name = std::move(name), .type = type});
+auto ClassDecl::AddMemberVar(std::string name, TypeId type) -> MemberVarId {
+  const MemberVarId id{static_cast<std::uint32_t>(member_vars_.size())};
+  member_vars_.push_back(MemberVar{.name = std::move(name), .type = type});
   return id;
 }
 

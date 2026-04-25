@@ -8,13 +8,13 @@
 
 namespace lyra::mir {
 
-struct MemberId {
+struct MemberVarId {
   std::uint32_t value;
 
-  auto operator<=>(const MemberId&) const -> std::strong_ordering = default;
+  auto operator<=>(const MemberVarId&) const -> std::strong_ordering = default;
 };
 
-struct Member {
+struct MemberVar {
   std::string name;
   TypeId type;
 };
