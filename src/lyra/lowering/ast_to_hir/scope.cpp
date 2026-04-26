@@ -58,6 +58,7 @@ auto LowerScopeInto(
     if (var.lifetime != slang::ast::VariableLifetime::Static) {
       return diag::Unsupported(
           mapper.PointSpanOf(var.location),
+          diag::DiagCode::kUnsupportedNonStaticVariableLifetime,
           "only static variables are supported",
           diag::UnsupportedCategory::kFeature);
     }
@@ -83,6 +84,7 @@ auto LowerScopeInto(
     if (proc.procedureKind != slang::ast::ProceduralBlockKind::Initial) {
       return diag::Unsupported(
           mapper.PointSpanOf(proc.location),
+          diag::DiagCode::kUnsupportedNonInitialProcedure,
           "only `initial` procedural blocks are supported",
           diag::UnsupportedCategory::kFeature);
     }
@@ -97,6 +99,7 @@ auto LowerScopeInto(
       case slang::ast::SymbolKind::GenerateBlockArray:
         return diag::Unsupported(
             mapper.PointSpanOf(member.location),
+            diag::DiagCode::kUnsupportedForGenerate,
             "for-generate is not supported yet",
             diag::UnsupportedCategory::kFeature);
 

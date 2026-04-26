@@ -1,5 +1,5 @@
 id: errors.unsupported_type
-tags: [errors, diag]
+tags: [errors, diag, diag-struct]
 input:
   command: [emit, cpp]
   project: false
@@ -17,3 +17,9 @@ expect:
     not_contains:
       - "internal error"
       - "\x1b["
+  diagnostics:
+    - code: unsupported_queue_type
+      kind: unsupported
+      category: type
+      file: main.sv
+      line: 2

@@ -68,6 +68,7 @@ auto ExecuteParseUnit(
           if (!buffer_or) {
             sink.Report(
                 diag::Diagnostic::HostError(
+                    diag::DiagCode::kHostIoError,
                     fmt::format("cannot read '{}'", u.file)));
             return false;
           }
@@ -93,6 +94,7 @@ auto ExecuteParseUnit(
             if (!buffer_or) {
               sink.Report(
                   diag::Diagnostic::HostError(
+                      diag::DiagCode::kHostIoError,
                       fmt::format("cannot read '{}'", file)));
               return false;
             }
