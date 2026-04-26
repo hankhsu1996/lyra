@@ -12,6 +12,18 @@ cc_library(
     ],
 )
 
+cc_library(
+    name = "diag_framework",
+    srcs = glob(["diag_framework/*.cpp"]),
+    hdrs = glob(["diag_framework/*.hpp"]),
+    visibility = ["//tests:__subpackages__"],
+    deps = [
+        ":framework",
+        "//:diag",
+        "@yaml-cpp//:yaml-cpp",
+    ],
+)
+
 cc_test(
     name = "cli_golden_tests",
     srcs = ["cli_golden_test.cpp"],
@@ -39,6 +51,41 @@ cc_test(
     deps = [
         "//:diag",
         "@googletest//:gtest_main",
+    ],
+)
+
+cc_test(
+    name = "diag_framework_tests",
+    srcs = ["diag_framework_test.cpp"],
+    deps = [
+        ":diag_framework",
+        "//:diag",
+        "@googletest//:gtest_main",
+        "@yaml-cpp//:yaml-cpp",
+    ],
+)
+
+cc_test(
+    name = "diag_struct_tests",
+    srcs = ["diag_struct_test.cpp"],
+    data = [
+        "suites.yaml",
+    ] + glob(
+        [
+            "cases/**/*.yaml",
+            "cases/**/*.sv",
+        ],
+        allow_empty = True,
+    ),
+    deps = [
+        ":diag_framework",
+        ":framework",
+        "//:compiler",
+        "//:diag",
+        "//:frontend",
+        "@bazel_tools//tools/cpp/runfiles",
+        "@fmt",
+        "@googletest//:gtest",
     ],
 )
 

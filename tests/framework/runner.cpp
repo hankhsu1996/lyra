@@ -48,6 +48,7 @@ auto ParseCase(
 
   TestCase c;
   c.case_dir = case_dir;
+  c.case_yaml_path = yaml_path;
 
   if (!root["id"]) {
     throw std::runtime_error(

@@ -96,39 +96,40 @@ auto ResolveLine(const SourceManager& mgr, const SourceSpan& span)
   };
 }
 
-auto SpanOf(const DiagItem& item) -> std::optional<SourceSpan> {
+auto SpanOf(const DiagSpan& diag_span) -> std::optional<SourceSpan> {
   std::optional<SourceSpan> out;
   std::visit(
       support::Overloaded{
           [&](const SourceSpan& s) { out = s; },
           [&](UnknownSpan) {},
       },
-      item.span);
+      diag_span);
   return out;
 }
 
 void AppendHeader(
-    std::string& out, const DiagItem& item, const SourceManager* mgr,
+    std::string& out, DiagKind kind, const DiagSpan& diag_span,
+    const std::string& message, const SourceManager* mgr,
     const RenderOptions& opts, fmt::text_style msg_style) {
   std::string location;
-  if (auto span = SpanOf(item); span && mgr != nullptr) {
+  if (auto span = SpanOf(diag_span); span && mgr != nullptr) {
     location = FormatSourceLocation(*span, *mgr);
   }
 
-  const auto label = KindLabel(item.kind);
-  const auto label_style = Style(opts, KindStyle(item.kind));
+  const auto label = KindLabel(kind);
+  const auto label_style = Style(opts, KindStyle(kind));
   const auto applied_msg_style = Style(opts, msg_style);
 
   if (location.empty()) {
     out += fmt::format(
         "{}: {} {}\n", fmt::styled("lyra", Style(opts, kToolStyle)),
         fmt::styled(label, label_style),
-        fmt::styled(item.message, applied_msg_style));
+        fmt::styled(message, applied_msg_style));
   } else {
     out += fmt::format(
         "{}: {} {}\n", fmt::styled(location, Style(opts, fmt::emphasis::bold)),
         fmt::styled(label, label_style),
-        fmt::styled(item.message, applied_msg_style));
+        fmt::styled(message, applied_msg_style));
   }
 }
 
@@ -169,21 +170,24 @@ void AppendSnippet(
 }
 
 void AppendPrimary(
-    std::string& out, const DiagItem& item, const SourceManager* mgr,
+    std::string& out, const PrimaryDiagItem& item, const SourceManager* mgr,
     const RenderOptions& opts) {
-  AppendHeader(out, item, mgr, opts, fmt::emphasis::bold);
+  AppendHeader(
+      out, item.kind, item.span, item.message, mgr, opts, fmt::emphasis::bold);
   if (!opts.show_source_snippet || mgr == nullptr) {
     return;
   }
-  if (auto span = SpanOf(item)) {
+  if (auto span = SpanOf(item.span)) {
     AppendSnippet(out, *span, *mgr, opts);
   }
 }
 
 void AppendNote(
-    std::string& out, const DiagItem& item, const SourceManager* mgr,
+    std::string& out, const NoteDiagItem& note, const SourceManager* mgr,
     const RenderOptions& opts) {
-  AppendHeader(out, item, mgr, opts, fmt::text_style{});
+  AppendHeader(
+      out, DiagKind::kNote, note.span, note.message, mgr, opts,
+      fmt::text_style{});
 }
 
 }  // namespace

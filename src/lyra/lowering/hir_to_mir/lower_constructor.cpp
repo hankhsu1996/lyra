@@ -162,11 +162,13 @@ auto LowerChildScopeIntoBody(
     -> diag::Result<void> {
   if (!child.MemberVars().empty()) {
     return diag::Unsupported(
+        diag::DiagCode::kUnsupportedDeclInGenerate,
         "declarations inside generate scopes are not supported yet",
         diag::UnsupportedCategory::kFeature);
   }
   if (!child.Processes().empty()) {
     return diag::Unsupported(
+        diag::DiagCode::kUnsupportedProcessInGenerate,
         "processes inside generate scopes are not supported yet",
         diag::UnsupportedCategory::kFeature);
   }

@@ -4,6 +4,7 @@
 #include <gtest/gtest.h>
 #include <string>
 
+#include "lyra/diag/diag_code.hpp"
 #include "lyra/diag/diagnostic.hpp"
 #include "lyra/diag/sink.hpp"
 #include "lyra/diag/source_manager.hpp"
@@ -19,15 +20,17 @@ auto Has(const std::string& s, const std::string& needle) -> bool {
 
 TEST(DiagRender, HostErrorPlain) {
   const auto out = lyra::diag::RenderDiagnostic(
-      lyra::diag::Diagnostic::HostError("no input files"), nullptr,
-      lyra::diag::RenderOptions{.use_color = false});
+      lyra::diag::Diagnostic::HostError(
+          lyra::diag::DiagCode::kHostNoInputFiles, "no input files"),
+      nullptr, lyra::diag::RenderOptions{.use_color = false});
   EXPECT_EQ(out, "lyra: error: no input files\n");
 }
 
 TEST(DiagRender, HostErrorColored) {
   const auto out = lyra::diag::RenderDiagnostic(
-      lyra::diag::Diagnostic::HostError("boom"), nullptr,
-      lyra::diag::RenderOptions{.use_color = true});
+      lyra::diag::Diagnostic::HostError(
+          lyra::diag::DiagCode::kHostIoError, "boom"),
+      nullptr, lyra::diag::RenderOptions{.use_color = true});
   EXPECT_TRUE(Has(out, "lyra"));
   EXPECT_TRUE(Has(out, "error:"));
   EXPECT_TRUE(Has(out, "boom"));
@@ -41,6 +44,7 @@ TEST(DiagRender, InternalErrorIsAlwaysPlain) {
 
 TEST(DiagRender, UnsupportedWithUnknownSpan) {
   const auto diag = lyra::diag::Diagnostic::Unsupported(
+      lyra::diag::DiagCode::kUnsupportedForGenerate,
       "for-generate is not supported yet",
       lyra::diag::UnsupportedCategory::kFeature);
   const auto out = lyra::diag::RenderDiagnostic(
@@ -58,7 +62,8 @@ TEST(DiagRender, ErrorWithSpanIncludesSnippetAndLocation) {
   const lyra::diag::SourceSpan span{.file_id = fid, .begin = begin, .end = end};
 
   const auto diag = lyra::diag::Diagnostic::Unsupported(
-      span, "only `int` and `logic` types are supported",
+      span, lyra::diag::DiagCode::kUnsupportedTypeKind,
+      "only `int` and `logic` types are supported",
       lyra::diag::UnsupportedCategory::kType);
   const auto out = lyra::diag::RenderDiagnostic(
       diag, &mgr, lyra::diag::RenderOptions{.use_color = false});
@@ -77,8 +82,9 @@ TEST(DiagRender, ColoredOutputContainsAnsi) {
   const lyra::diag::SourceSpan span{.file_id = fid, .begin = 0, .end = 3};
 
   const auto out = lyra::diag::RenderDiagnostic(
-      lyra::diag::Diagnostic::Error(span, "boom"), &mgr,
-      lyra::diag::RenderOptions{.use_color = true});
+      lyra::diag::Diagnostic::HostError(
+          span, lyra::diag::DiagCode::kHostIoError, "boom"),
+      &mgr, lyra::diag::RenderOptions{.use_color = true});
 
   EXPECT_NE(out.find(kAnsiEsc), std::string::npos);
 }
@@ -88,7 +94,9 @@ TEST(DiagRender, NoSnippetWhenDisabled) {
   const auto fid = mgr.AddFile("main.sv", "int x;\n");
   const lyra::diag::SourceSpan span{.file_id = fid, .begin = 0, .end = 3};
   const auto out = lyra::diag::RenderDiagnostic(
-      lyra::diag::Diagnostic::Error(span, "boom"), &mgr,
+      lyra::diag::Diagnostic::HostError(
+          span, lyra::diag::DiagCode::kHostIoError, "boom"),
+      &mgr,
       lyra::diag::RenderOptions{
           .use_color = false, .show_source_snippet = false});
   EXPECT_TRUE(Has(out, "main.sv:1:1:"));
@@ -101,11 +109,16 @@ TEST(DiagRender, SinkSummaryAggregatesCounts) {
   lyra::diag::DiagnosticSink sink;
   sink.Report(
       lyra::diag::Diagnostic::Unsupported(
+          lyra::diag::DiagCode::kUnsupportedForGenerate,
           "feature A is not supported yet",
           lyra::diag::UnsupportedCategory::kFeature));
-  sink.Report(lyra::diag::Diagnostic::HostError("cannot read 'foo.sv'"));
   sink.Report(
-      lyra::diag::Diagnostic::Warning(lyra::diag::SourceSpan{}, "pedantic"));
+      lyra::diag::Diagnostic::HostError(
+          lyra::diag::DiagCode::kHostIoError, "cannot read 'foo.sv'"));
+  sink.Report(
+      lyra::diag::Diagnostic::Warning(
+          lyra::diag::SourceSpan{}, lyra::diag::DiagCode::kWarningPedantic,
+          "pedantic"));
 
   const auto out = lyra::diag::RenderDiagnostics(
       sink, nullptr, lyra::diag::RenderOptions{.use_color = false});
@@ -123,6 +136,7 @@ TEST(DiagRender, SinkEmptyHasNoSummary) {
 TEST(DiagRender, NoteAttachesAfterPrimary) {
   auto diag =
       lyra::diag::Diagnostic::Unsupported(
+          lyra::diag::DiagCode::kUnsupportedForGenerate,
           "feature is not supported", lyra::diag::UnsupportedCategory::kFeature)
           .WithNote("see related design discussion");
   const auto out = lyra::diag::RenderDiagnostic(
@@ -136,38 +150,43 @@ TEST(DiagRender, NoteAttachesAfterPrimary) {
 
 TEST(DiagRender, UnsupportedCategoryPreservedAcrossKinds) {
   const auto type_diag = lyra::diag::Diagnostic::Unsupported(
-      lyra::diag::SourceSpan{}, "wide types not supported",
-      lyra::diag::UnsupportedCategory::kType);
+      lyra::diag::SourceSpan{}, lyra::diag::DiagCode::kUnsupportedTypeKind,
+      "wide types not supported", lyra::diag::UnsupportedCategory::kType);
   ASSERT_TRUE(type_diag.primary.category.has_value());
   EXPECT_EQ(
       *type_diag.primary.category, lyra::diag::UnsupportedCategory::kType);
 
   const auto op_diag = lyra::diag::Diagnostic::Unsupported(
-      "weird expression form", lyra::diag::UnsupportedCategory::kOperation);
+      lyra::diag::DiagCode::kUnsupportedExpressionForm, "weird expression form",
+      lyra::diag::UnsupportedCategory::kOperation);
   ASSERT_TRUE(op_diag.primary.category.has_value());
   EXPECT_EQ(
       *op_diag.primary.category, lyra::diag::UnsupportedCategory::kOperation);
 
   const auto feature_diag = lyra::diag::Diagnostic::Unsupported(
-      "language feature gap", lyra::diag::UnsupportedCategory::kFeature);
+      lyra::diag::DiagCode::kUnsupportedForGenerate, "language feature gap",
+      lyra::diag::UnsupportedCategory::kFeature);
   ASSERT_TRUE(feature_diag.primary.category.has_value());
   EXPECT_EQ(
       *feature_diag.primary.category,
       lyra::diag::UnsupportedCategory::kFeature);
 
   EXPECT_FALSE(
-      lyra::diag::Diagnostic::Error(lyra::diag::SourceSpan{}, "bug")
+      lyra::diag::Diagnostic::HostError(
+          lyra::diag::DiagCode::kHostIoError, "io")
           .primary.category.has_value());
   EXPECT_FALSE(
-      lyra::diag::Diagnostic::HostError("io").primary.category.has_value());
-  EXPECT_FALSE(
-      lyra::diag::Diagnostic::Warning(lyra::diag::SourceSpan{}, "warn")
+      lyra::diag::Diagnostic::Warning(
+          lyra::diag::SourceSpan{}, lyra::diag::DiagCode::kWarningPedantic,
+          "warn")
           .primary.category.has_value());
 
+  // Notes carry only span+message; they have no category field by design.
   auto with_note = lyra::diag::Diagnostic::Unsupported(
-                       "x", lyra::diag::UnsupportedCategory::kFeature)
+                       lyra::diag::DiagCode::kUnsupportedForGenerate, "x",
+                       lyra::diag::UnsupportedCategory::kFeature)
                        .WithNote("y");
-  EXPECT_FALSE(with_note.notes.front().category.has_value());
+  EXPECT_EQ(with_note.notes.front().message, "y");
 }
 
 }  // namespace

@@ -130,6 +130,7 @@ auto LowerStructuralExprData(const hir::ExprData& data)
                     },
                     [](const hir::RefExpr&) -> diag::Result<mir::ExprData> {
                       return diag::Unsupported(
+                          diag::DiagCode::kUnsupportedStructuralExpressionForm,
                           "this structural expression form is not "
                           "supported yet",
                           diag::UnsupportedCategory::kFeature);
@@ -139,11 +140,13 @@ auto LowerStructuralExprData(const hir::ExprData& data)
           },
           [](const hir::BinaryExpr&) -> diag::Result<mir::ExprData> {
             return diag::Unsupported(
+                diag::DiagCode::kUnsupportedStructuralExpressionForm,
                 "this structural expression form is not supported yet",
                 diag::UnsupportedCategory::kFeature);
           },
           [](const hir::AssignExpr&) -> diag::Result<mir::ExprData> {
             return diag::Unsupported(
+                diag::DiagCode::kUnsupportedStructuralExpressionForm,
                 "this structural expression form is not supported yet",
                 diag::UnsupportedCategory::kFeature);
           },

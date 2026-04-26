@@ -94,6 +94,7 @@ auto LowerStatement(
     default:
       return diag::Unsupported(
           mapper.SpanOf(stmt.sourceRange),
+          diag::DiagCode::kUnsupportedStatementForm,
           "this statement form is not supported yet",
           diag::UnsupportedCategory::kFeature);
   }

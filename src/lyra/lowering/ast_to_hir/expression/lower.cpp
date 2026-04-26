@@ -35,6 +35,7 @@ auto LowerIntegerLiteralValue(
   if (!value.has_value()) {
     return diag::Unsupported(
         unit_facts.SourceMapper().SpanOf(literal.sourceRange),
+        diag::DiagCode::kUnsupportedIntegerLiteralWidth,
         "integer literal does not fit in a 64-bit signed integer",
         diag::UnsupportedCategory::kFeature);
   }
@@ -59,6 +60,7 @@ auto LowerNamedValueProc(
   if (named.symbol.kind != slang::ast::SymbolKind::Variable) {
     return diag::Unsupported(
         mapper.SpanOf(named.sourceRange),
+        diag::DiagCode::kUnsupportedNonVariableNamedReference,
         "reference to non-variable declaration is not supported",
         diag::UnsupportedCategory::kFeature);
   }
@@ -125,7 +127,8 @@ auto LowerProcExpr(
       const auto& bin = expr.as<slang::ast::BinaryExpression>();
       if (bin.op != slang::ast::BinaryOperator::Add) {
         return diag::Unsupported(
-            span, "only `+` is supported in this cut",
+            span, diag::DiagCode::kUnsupportedBinaryOperator,
+            "only `+` is supported in this cut",
             diag::UnsupportedCategory::kOperation);
       }
       auto lhs_id = append_child(bin.left());
@@ -146,12 +149,14 @@ auto LowerProcExpr(
       const auto& as = expr.as<slang::ast::AssignmentExpression>();
       if (as.isNonBlocking()) {
         return diag::Unsupported(
-            span, "non-blocking assignments are not supported yet",
+            span, diag::DiagCode::kUnsupportedNonBlockingAssignment,
+            "non-blocking assignments are not supported yet",
             diag::UnsupportedCategory::kFeature);
       }
       if (as.op.has_value()) {
         return diag::Unsupported(
-            span, "compound assignments are not supported yet",
+            span, diag::DiagCode::kUnsupportedCompoundAssignment,
+            "compound assignments are not supported yet",
             diag::UnsupportedCategory::kFeature);
       }
 
@@ -160,6 +165,7 @@ auto LowerProcExpr(
       if (!hir::AsAssignableRef(*lhs_expr).has_value()) {
         return diag::Unsupported(
             mapper.SpanOf(as.left().sourceRange),
+            diag::DiagCode::kUnsupportedAssignmentTarget,
             "assignment target is not supported yet",
             diag::UnsupportedCategory::kFeature);
       }
@@ -176,7 +182,8 @@ auto LowerProcExpr(
 
     default:
       return diag::Unsupported(
-          span, "this expression form is not supported yet",
+          span, diag::DiagCode::kUnsupportedExpressionForm,
+          "this expression form is not supported yet",
           diag::UnsupportedCategory::kOperation);
   }
 }
@@ -196,7 +203,8 @@ auto LowerStructuralExpr(
     }
     default:
       return diag::Unsupported(
-          span, "this structural expression form is not supported yet",
+          span, diag::DiagCode::kUnsupportedStructuralExpressionForm,
+          "this structural expression form is not supported yet",
           diag::UnsupportedCategory::kFeature);
   }
 }

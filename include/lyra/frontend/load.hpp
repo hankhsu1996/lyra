@@ -42,4 +42,9 @@ auto LoadFiles(const CompilationInput& input, diag::DiagnosticSink& sink)
 auto RenderSlangDiagnostics(
     ParseResult& parse, bool use_color, std::string& out_text) -> bool;
 
+// Returns true iff slang reported any error-severity parse/elaboration
+// diagnostic. `parse` is non-const because slang's getAllDiagnostics is
+// non-const. Use this to surface frontend status without rendering text.
+auto HasSlangErrors(ParseResult& parse) -> bool;
+
 }  // namespace lyra::frontend

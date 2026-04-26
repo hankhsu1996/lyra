@@ -20,16 +20,18 @@ class DiagnosticSink {
     diagnostics_.push_back(std::move(diag));
   }
 
-  void Error(SourceSpan span, std::string msg) {
-    Report(Diagnostic::Error(span, std::move(msg)));
+  void Error(SourceSpan span, DiagCode code, std::string msg) {
+    Report(Diagnostic::Error(span, code, std::move(msg)));
   }
 
-  void Unsupported(SourceSpan span, std::string msg, UnsupportedCategory cat) {
-    Report(Diagnostic::Unsupported(span, std::move(msg), cat));
+  void Unsupported(
+      SourceSpan span, DiagCode code, std::string msg,
+      UnsupportedCategory cat) {
+    Report(Diagnostic::Unsupported(span, code, std::move(msg), cat));
   }
 
-  void Warning(SourceSpan span, std::string msg) {
-    Report(Diagnostic::Warning(span, std::move(msg)));
+  void Warning(SourceSpan span, DiagCode code, std::string msg) {
+    Report(Diagnostic::Warning(span, code, std::move(msg)));
   }
 
   [[nodiscard]] auto HasErrors() const -> bool {

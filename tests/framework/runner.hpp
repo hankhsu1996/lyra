@@ -31,6 +31,7 @@ struct TestCase {
   std::string id;
   std::vector<std::string> tags;
   std::filesystem::path case_dir;
+  std::filesystem::path case_yaml_path;
   CaseInput input;
   CaseExpect expect;
 };

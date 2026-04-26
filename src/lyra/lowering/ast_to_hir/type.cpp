@@ -98,7 +98,8 @@ auto LowerExplicitPackedArray(
   }
   if (cur->kind != slang::ast::SymbolKind::ScalarType) {
     return diag::Unsupported(
-        decl_span, "packed array element must be a bit, logic, or reg scalar",
+        decl_span, diag::DiagCode::kUnsupportedPackedArrayElementType,
+        "packed array element must be a bit, logic, or reg scalar",
         diag::UnsupportedCategory::kType);
   }
   const auto& scalar = cur->as<slang::ast::ScalarType>();
@@ -162,43 +163,51 @@ auto LowerTypeData(const slang::ast::Type& type, diag::SourceSpan decl_span)
       return hir::TypeData{hir::VoidType{}};
     case slang::ast::SymbolKind::PackedStructType:
       return diag::Unsupported(
-          decl_span, "packed struct types are not supported",
+          decl_span, diag::DiagCode::kUnsupportedPackedStructType,
+          "packed struct types are not supported",
           diag::UnsupportedCategory::kType);
     case slang::ast::SymbolKind::PackedUnionType:
       return diag::Unsupported(
-          decl_span, "packed union types are not supported",
+          decl_span, diag::DiagCode::kUnsupportedPackedUnionType,
+          "packed union types are not supported",
           diag::UnsupportedCategory::kType);
     case slang::ast::SymbolKind::EnumType:
       return diag::Unsupported(
-          decl_span, "enum types are not supported",
-          diag::UnsupportedCategory::kType);
+          decl_span, diag::DiagCode::kUnsupportedEnumType,
+          "enum types are not supported", diag::UnsupportedCategory::kType);
     case slang::ast::SymbolKind::FixedSizeUnpackedArrayType:
       return diag::Unsupported(
-          decl_span, "unpacked array types are not supported",
+          decl_span, diag::DiagCode::kUnsupportedFixedSizeUnpackedArrayType,
+          "unpacked array types are not supported",
           diag::UnsupportedCategory::kType);
     case slang::ast::SymbolKind::DynamicArrayType:
       return diag::Unsupported(
-          decl_span, "dynamic array types are not supported",
+          decl_span, diag::DiagCode::kUnsupportedDynamicArrayType,
+          "dynamic array types are not supported",
           diag::UnsupportedCategory::kType);
     case slang::ast::SymbolKind::QueueType:
       return diag::Unsupported(
-          decl_span, "queue types are not supported",
-          diag::UnsupportedCategory::kType);
+          decl_span, diag::DiagCode::kUnsupportedQueueType,
+          "queue types are not supported", diag::UnsupportedCategory::kType);
     case slang::ast::SymbolKind::AssociativeArrayType:
       return diag::Unsupported(
-          decl_span, "associative array types are not supported",
+          decl_span, diag::DiagCode::kUnsupportedAssociativeArrayType,
+          "associative array types are not supported",
           diag::UnsupportedCategory::kType);
     case slang::ast::SymbolKind::UnpackedStructType:
       return diag::Unsupported(
-          decl_span, "unpacked struct types are not supported",
+          decl_span, diag::DiagCode::kUnsupportedUnpackedStructType,
+          "unpacked struct types are not supported",
           diag::UnsupportedCategory::kType);
     case slang::ast::SymbolKind::UnpackedUnionType:
       return diag::Unsupported(
-          decl_span, "unpacked union types are not supported",
+          decl_span, diag::DiagCode::kUnsupportedUnpackedUnionType,
+          "unpacked union types are not supported",
           diag::UnsupportedCategory::kType);
     default:
       return diag::Unsupported(
-          decl_span, "unsupported type kind", diag::UnsupportedCategory::kType);
+          decl_span, diag::DiagCode::kUnsupportedTypeKind,
+          "unsupported type kind", diag::UnsupportedCategory::kType);
   }
 }
 
