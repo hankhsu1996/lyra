@@ -15,14 +15,14 @@
 
 #include "lyra/backend/cpp/api.hpp"
 #include "lyra/backend/cpp/artifact.hpp"
+#include "lyra/compiler/compile.hpp"
+#include "lyra/diag/diag_code.hpp"
 #include "lyra/diag/diagnostic.hpp"
 #include "lyra/diag/render.hpp"
 #include "lyra/diag/sink.hpp"
 #include "lyra/diag/source_manager.hpp"
 #include "lyra/frontend/load.hpp"
 #include "lyra/hir/dump.hpp"
-#include "lyra/lowering/ast_to_hir/lower.hpp"
-#include "lyra/lowering/hir_to_mir/lower_module_unit.hpp"
 #include "lyra/mir/dump.hpp"
 #include "lyra/support/internal_error.hpp"
 
@@ -181,7 +181,9 @@ auto main(int argc, char** argv) -> int {
     };
 
     if (!parsed) {
-      report(lyra::diag::Diagnostic::HostError(parsed.error()));
+      report(
+          lyra::diag::Diagnostic::HostError(
+              lyra::diag::DiagCode::kHostInvalidCliArgs, parsed.error()));
       return 1;
     }
     auto& args = *parsed;
@@ -189,71 +191,56 @@ auto main(int argc, char** argv) -> int {
     if (!args.no_project) {
       report(
           lyra::diag::Diagnostic::HostError(
+              lyra::diag::DiagCode::kHostProjectModeUnimplemented,
               "project mode is not implemented yet; pass --no-project to "
               "run in direct file mode"));
       return 1;
     }
     if (args.input.files.empty()) {
-      report(lyra::diag::Diagnostic::HostError("no input files"));
+      report(
+          lyra::diag::Diagnostic::HostError(
+              lyra::diag::DiagCode::kHostNoInputFiles, "no input files"));
       return 1;
     }
 
     lyra::diag::DiagnosticSink sink;
-    auto parse = lyra::frontend::LoadFiles(args.input, sink);
-    if (!parse) {
-      if (!sink.Diagnostics().empty()) {
-        fmt::print(
-            stderr, "{}",
-            lyra::diag::RenderDiagnostics(sink, nullptr, render_opts));
-      }
-      return 1;
-    }
-    {
+    const auto stop_after = args.cmd == CommandKind::kDumpHir
+                                ? lyra::compiler::StopAfter::kHir
+                                : lyra::compiler::StopAfter::kMir;
+    auto result = lyra::compiler::Compile(args.input, sink, stop_after);
+
+    if (result.artifacts.parse) {
       std::string slang_text;
-      const bool slang_ok =
-          lyra::frontend::RenderSlangDiagnostics(*parse, use_color, slang_text);
+      lyra::frontend::RenderSlangDiagnostics(
+          *result.artifacts.parse, use_color, slang_text);
       if (!slang_text.empty()) {
         fmt::print(stderr, "{}", slang_text);
       }
-      if (!slang_ok) {
-        return 1;
-      }
     }
 
-    auto hir_units = lyra::lowering::ast_to_hir::LowerCompilation(
-        lyra::lowering::ast_to_hir::LowerCompilationFacts(
-            *parse->compilation, parse->source_mapper));
-    if (!hir_units) {
-      report(hir_units.error(), &parse->diag_sources);
+    if (sink.HasErrors()) {
+      const lyra::diag::SourceManager* mgr =
+          result.artifacts.parse ? &result.artifacts.parse->diag_sources
+                                 : nullptr;
+      fmt::print(
+          stderr, "{}", lyra::diag::RenderDiagnostics(sink, mgr, render_opts));
+      return 1;
+    }
+    if (!result.slang_ok) {
       return 1;
     }
 
     if (args.cmd == CommandKind::kDumpHir) {
-      fmt::print("{}", lyra::hir::DumpHir(*hir_units));
+      fmt::print("{}", lyra::hir::DumpHir(*result.artifacts.hir_units));
       return 0;
-    }
-
-    if (hir_units->size() != 1) {
-      report(
-          lyra::diag::Diagnostic::HostError(
-              std::format(
-                  "expected exactly one top module, got {}",
-                  hir_units->size())));
-      return 1;
-    }
-    auto mir_unit =
-        lyra::lowering::hir_to_mir::LowerModuleUnit(hir_units->front());
-    if (!mir_unit) {
-      report(mir_unit.error(), &parse->diag_sources);
-      return 1;
     }
 
     switch (args.cmd) {
       case CommandKind::kDumpMir:
-        fmt::print("{}", lyra::mir::DumpMir(*mir_unit));
+        fmt::print("{}", lyra::mir::DumpMir(*result.artifacts.mir_unit));
         return 0;
       case CommandKind::kEmitCpp: {
-        auto set = lyra::backend::cpp::EmitCpp(*mir_unit);
+        auto set = lyra::backend::cpp::EmitCpp(*result.artifacts.mir_unit);
         if (args.emit_out_dir.empty()) {
           for (const auto& file : set.files) {
             fmt::print("=== {} ===\n{}", file.relpath, file.content);

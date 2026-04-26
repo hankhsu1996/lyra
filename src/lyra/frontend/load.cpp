@@ -67,4 +67,16 @@ auto RenderSlangDiagnostics(
   return diag_engine.getNumErrors() == 0;
 }
 
+auto HasSlangErrors(ParseResult& parse) -> bool {
+  auto diagnostics = parse.compilation->getAllDiagnostics();
+  if (diagnostics.empty()) {
+    return false;
+  }
+  slang::DiagnosticEngine diag_engine(*parse.source_manager);
+  for (const auto& d : diagnostics) {
+    diag_engine.issue(d);
+  }
+  return diag_engine.getNumErrors() > 0;
+}
+
 }  // namespace lyra::frontend

@@ -148,17 +148,33 @@ cc_library(
     ],
 )
 
+cc_library(
+    name = "compiler",
+    srcs = ["src/lyra/compiler/compile.cpp"],
+    hdrs = ["include/lyra/compiler/compile.hpp"],
+    includes = ["include"],
+    visibility = ["//visibility:public"],
+    deps = [
+        ":ast_to_hir",
+        ":diag",
+        ":frontend",
+        ":hir",
+        ":hir_to_mir",
+        ":mir",
+        ":support",
+    ],
+)
+
 cc_binary(
     name = "lyra",
     srcs = ["src/lyra/driver/cli.cpp"],
     visibility = ["//visibility:public"],
     deps = [
-        ":ast_to_hir",
         ":backend_cpp",
+        ":compiler",
         ":diag",
         ":frontend",
         ":hir",
-        ":hir_to_mir",
         ":mir",
         ":support",
         "@argparse",
