@@ -323,6 +323,14 @@ auto LowerScopeAsClass(
     class_state.BindMemberVar(hir_id, mir_id);
   }
 
+  for (std::size_t i = 0; i < scope.Subroutines().size(); ++i) {
+    const hir::SubroutineId hir_id{static_cast<std::uint32_t>(i)};
+    const auto& decl = scope.Subroutines()[i];
+    const mir::UserSubroutineTargetId mir_id = cls.AddUserSubroutineTarget(
+        mir::UserSubroutineTarget{.name = decl.name});
+    class_state.BindUserSubroutine(hir_id, mir_id);
+  }
+
   for (const auto& p : scope.Processes()) {
     cls.AddProcess(LowerProcess(unit_state, class_state, p));
   }

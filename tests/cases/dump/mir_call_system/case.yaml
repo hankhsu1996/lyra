@@ -1,0 +1,16 @@
+id: dump.mir_call_system
+tags: [dump]
+input:
+  command: [dump, mir]
+  project: false
+  top: Top
+  files: [main.sv]
+expect:
+  exit: 0
+  stdout:
+    contains:
+      - "Builtin(Print(radix=decimal, newline=true, strobe=false, sink=stdout))"
+      - "Builtin(Print(radix=decimal, newline=false, strobe=false, sink=stdout))"
+      - "Builtin(Print(radix=decimal, newline=true, strobe=false, sink=file))"
+      - "Builtin(Print(radix=decimal, newline=false, strobe=false, sink=file))"
+      - "VoidType"

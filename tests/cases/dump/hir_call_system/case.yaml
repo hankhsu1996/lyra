@@ -1,0 +1,17 @@
+id: dump.hir_call_system
+tags: [dump]
+input:
+  command: [dump, hir]
+  project: false
+  top: Top
+  files: [main.sv]
+expect:
+  exit: 0
+  stdout:
+    contains:
+      - "Process (Initial)"
+      - "CallExpr callee=SystemSubroutine[0] \"$display\""
+      - "CallExpr callee=SystemSubroutine[1] \"$write\""
+      - "CallExpr callee=SystemSubroutine[2] \"$fdisplay\""
+      - "CallExpr callee=SystemSubroutine[3] \"$fwrite\""
+      - "VoidType"

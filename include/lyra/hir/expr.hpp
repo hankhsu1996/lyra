@@ -3,9 +3,11 @@
 #include <compare>
 #include <cstdint>
 #include <variant>
+#include <vector>
 
 #include "lyra/hir/binary_op.hpp"
 #include "lyra/hir/primary.hpp"
+#include "lyra/hir/subroutine_ref.hpp"
 #include "lyra/hir/type.hpp"
 
 namespace lyra::hir {
@@ -33,7 +35,13 @@ struct AssignExpr {
   TypeId type;
 };
 
-using ExprData = std::variant<PrimaryExpr, BinaryExpr, AssignExpr>;
+struct CallExpr {
+  SubroutineRef callee;
+  std::vector<ExprId> arguments;
+  TypeId result_type;
+};
+
+using ExprData = std::variant<PrimaryExpr, BinaryExpr, AssignExpr, CallExpr>;
 
 struct Expr {
   ExprData data;

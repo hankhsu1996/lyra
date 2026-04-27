@@ -1,0 +1,13 @@
+id: dump.mir_call_user
+tags: [dump]
+input:
+  command: [dump, mir]
+  project: false
+  top: Top
+  files: [main.sv]
+expect:
+  exit: 0
+  stdout:
+    contains:
+      - "CallExpr callee=UserSubroutine[0] \"add\" args=[Expr[1], Expr[2]]"
+      - "CallExpr callee=UserSubroutine[1] \"do_thing\" args=[Expr[5]]"

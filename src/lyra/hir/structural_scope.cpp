@@ -8,6 +8,7 @@
 #include "lyra/hir/expr.hpp"
 #include "lyra/hir/member_var.hpp"
 #include "lyra/hir/process.hpp"
+#include "lyra/hir/subroutine.hpp"
 #include "lyra/hir/type.hpp"
 
 namespace lyra::hir {
@@ -43,6 +44,12 @@ auto StructuralScope::AddGenerate(Generate generate) -> GenerateId {
   return id;
 }
 
+auto StructuralScope::AddSubroutine(UserSubroutineDecl decl) -> SubroutineId {
+  const SubroutineId id{static_cast<std::uint32_t>(subroutines_.size())};
+  subroutines_.push_back(std::move(decl));
+  return id;
+}
+
 auto StructuralScope::MemberVars() const -> const std::vector<MemberVar>& {
   return member_vars_;
 }
@@ -59,6 +66,11 @@ auto StructuralScope::Generates() const -> const std::vector<Generate>& {
   return generates_;
 }
 
+auto StructuralScope::Subroutines() const
+    -> const std::vector<UserSubroutineDecl>& {
+  return subroutines_;
+}
+
 auto StructuralScope::GetMemberVar(MemberVarId id) const -> const MemberVar& {
   return member_vars_.at(id.value);
 }
@@ -73,6 +85,11 @@ auto StructuralScope::GetProcess(ProcessId id) const -> const Process& {
 
 auto StructuralScope::GetGenerate(GenerateId id) const -> const Generate& {
   return generates_.at(id.value);
+}
+
+auto StructuralScope::GetSubroutine(SubroutineId id) const
+    -> const UserSubroutineDecl& {
+  return subroutines_.at(id.value);
 }
 
 }  // namespace lyra::hir
