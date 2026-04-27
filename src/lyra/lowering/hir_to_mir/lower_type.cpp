@@ -13,7 +13,7 @@ namespace lyra::lowering::hir_to_mir {
 
 namespace {
 
-auto LowerBitAtom(hir::BitAtom a) -> mir::BitAtom {
+auto TranslateBitAtom(hir::BitAtom a) -> mir::BitAtom {
   switch (a) {
     case hir::BitAtom::kBit:
       return mir::BitAtom::kBit;
@@ -22,15 +22,15 @@ auto LowerBitAtom(hir::BitAtom a) -> mir::BitAtom {
     case hir::BitAtom::kReg:
       return mir::BitAtom::kReg;
   }
-  throw support::InternalError("LowerBitAtom: unknown BitAtom");
+  throw support::InternalError("TranslateBitAtom: unknown BitAtom");
 }
 
-auto LowerSignedness(hir::Signedness s) -> mir::Signedness {
+auto TranslateSignedness(hir::Signedness s) -> mir::Signedness {
   return s == hir::Signedness::kSigned ? mir::Signedness::kSigned
                                        : mir::Signedness::kUnsigned;
 }
 
-auto LowerPackedArrayForm(hir::PackedArrayForm f) -> mir::PackedArrayForm {
+auto TranslatePackedArrayForm(hir::PackedArrayForm f) -> mir::PackedArrayForm {
   switch (f) {
     case hir::PackedArrayForm::kExplicit:
       return mir::PackedArrayForm::kExplicit;
@@ -47,10 +47,11 @@ auto LowerPackedArrayForm(hir::PackedArrayForm f) -> mir::PackedArrayForm {
     case hir::PackedArrayForm::kTime:
       return mir::PackedArrayForm::kTime;
   }
-  throw support::InternalError("LowerPackedArrayForm: unknown PackedArrayForm");
+  throw support::InternalError(
+      "TranslatePackedArrayForm: unknown PackedArrayForm");
 }
 
-auto LowerPackedRanges(const std::vector<hir::PackedRange>& src)
+auto TranslatePackedRanges(const std::vector<hir::PackedRange>& src)
     -> std::vector<mir::PackedRange> {
   std::vector<mir::PackedRange> out;
   out.reserve(src.size());
@@ -60,7 +61,7 @@ auto LowerPackedRanges(const std::vector<hir::PackedRange>& src)
   return out;
 }
 
-auto LowerUnpackedRanges(const std::vector<hir::UnpackedRange>& src)
+auto TranslateUnpackedRanges(const std::vector<hir::UnpackedRange>& src)
     -> std::vector<mir::UnpackedRange> {
   std::vector<mir::UnpackedRange> out;
   out.reserve(src.size());
@@ -72,22 +73,23 @@ auto LowerUnpackedRanges(const std::vector<hir::UnpackedRange>& src)
 
 }  // namespace
 
-auto LowerTypeData(const hir::TypeData& data, const UnitLoweringState& state)
+auto TranslateTypeData(
+    const hir::TypeData& data, const UnitLoweringState& state)
     -> mir::TypeData {
   return std::visit(
       support::Overloaded{
           [&](const hir::PackedArrayType& src) -> mir::TypeData {
             return mir::PackedArrayType{
-                .atom = LowerBitAtom(src.atom),
-                .signedness = LowerSignedness(src.signedness),
-                .dims = LowerPackedRanges(src.dims),
-                .form = LowerPackedArrayForm(src.form),
+                .atom = TranslateBitAtom(src.atom),
+                .signedness = TranslateSignedness(src.signedness),
+                .dims = TranslatePackedRanges(src.dims),
+                .form = TranslatePackedArrayForm(src.form),
             };
           },
           [&](const hir::UnpackedArrayType& src) -> mir::TypeData {
             return mir::UnpackedArrayType{
                 .element_type = state.TranslateType(src.element_type),
-                .dims = LowerUnpackedRanges(src.dims),
+                .dims = TranslateUnpackedRanges(src.dims),
             };
           },
           [&](const hir::DynamicArrayType& src) -> mir::TypeData {

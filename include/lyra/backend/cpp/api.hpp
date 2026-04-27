@@ -1,14 +1,20 @@
 #pragma once
 
+#include <vector>
+
 #include "lyra/backend/cpp/artifact.hpp"
+#include "lyra/mir/class_decl.hpp"
 #include "lyra/mir/compilation_unit.hpp"
 
 namespace lyra::backend::cpp {
 
-// Emit a MIR compilation unit as a set of C++ artifact files. The unit must
-// contain exactly one class for this cut; the result contains:
-//   <ClassName>.hpp -- the class declaration inheriting lyra::runtime::Module
-//   main.cpp        -- a host driver that constructs the class and runs it
-auto EmitCpp(const mir::CompilationUnit& unit) -> CppArtifactSet;
+auto EmitCppDeclarations(const mir::CompilationUnit& unit)
+    -> std::vector<CppArtifact>;
+
+auto EmitCppHostMain(const mir::ClassDecl& entry_class) -> CppArtifact;
+
+auto EmitCpp(
+    const mir::CompilationUnit& unit, const mir::ClassDecl& entry_class)
+    -> CppArtifactSet;
 
 }  // namespace lyra::backend::cpp

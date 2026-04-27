@@ -32,6 +32,16 @@ void Engine::AddProcess(
   processes_.emplace_back(owner, kind, std::move(process));
 }
 
+auto Engine::CreateChildScope(
+    RuntimeScope& parent, std::string name, RuntimeScopeKind kind)
+    -> RuntimeScope& {
+  scopes_.push_back(
+      std::make_unique<RuntimeScope>(&parent, std::move(name), kind));
+  RuntimeScope& child = *scopes_.back();
+  parent.AddChild(child);
+  return child;
+}
+
 auto Engine::Run() -> int {
   if (!bound_) {
     throw support::InternalError("Engine::Run called before BindRoot");

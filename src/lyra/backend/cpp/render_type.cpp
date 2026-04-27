@@ -3,13 +3,16 @@
 #include <string>
 #include <variant>
 
+#include "lyra/mir/class_decl.hpp"
+#include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/type.hpp"
 #include "lyra/support/internal_error.hpp"
 #include "lyra/support/overloaded.hpp"
 
 namespace lyra::backend::cpp {
 
-auto RenderTypeAsCpp(const mir::Type& type) -> std::string {
+auto RenderTypeAsCpp(const mir::CompilationUnit& unit, mir::TypeId type_id)
+    -> std::string {
   return std::visit(
       support::Overloaded{
           [](const mir::PackedArrayType& p) -> std::string {
@@ -26,7 +29,7 @@ auto RenderTypeAsCpp(const mir::Type& type) -> std::string {
                 "cut");
           },
       },
-      type.data);
+      unit.GetType(type_id).data);
 }
 
 }  // namespace lyra::backend::cpp

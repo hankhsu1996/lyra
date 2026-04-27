@@ -97,18 +97,6 @@ constexpr std::array kEntries{
             .category = UnsupportedCategory::kFeature,
             .name = "unsupported_for_generate"}},
     std::pair{
-        DiagCode::kUnsupportedDeclInGenerate,
-        DiagCodeInfo{
-            .kind = DiagKind::kUnsupported,
-            .category = UnsupportedCategory::kFeature,
-            .name = "unsupported_decl_in_generate"}},
-    std::pair{
-        DiagCode::kUnsupportedProcessInGenerate,
-        DiagCodeInfo{
-            .kind = DiagKind::kUnsupported,
-            .category = UnsupportedCategory::kFeature,
-            .name = "unsupported_process_in_generate"}},
-    std::pair{
         DiagCode::kUnsupportedStatementForm,
         DiagCodeInfo{
             .kind = DiagKind::kUnsupported,

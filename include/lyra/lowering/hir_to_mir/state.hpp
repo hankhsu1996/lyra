@@ -10,6 +10,8 @@
 #include "lyra/hir/member_var.hpp"
 #include "lyra/hir/structural_scope.hpp"
 #include "lyra/hir/type.hpp"
+#include "lyra/mir/class_decl_id.hpp"
+#include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/expr.hpp"
 #include "lyra/mir/local_var.hpp"
 #include "lyra/mir/member_var.hpp"
@@ -19,32 +21,86 @@
 
 namespace lyra::lowering::hir_to_mir {
 
-struct UnitLoweringState {
-  std::vector<mir::TypeId> type_map;
-  std::vector<mir::MemberVarId> root_member_var_map;
+class UnitLoweringState {
+ public:
+  explicit UnitLoweringState(mir::CompilationUnit& unit) : unit_(&unit) {
+  }
+
+  auto AddType(mir::TypeData data) -> mir::TypeId {
+    return unit_->AddType(std::move(data));
+  }
+
+  [[nodiscard]] auto GetType(mir::TypeId id) const -> const mir::Type& {
+    return unit_->GetType(id);
+  }
 
   [[nodiscard]] auto TranslateType(hir::TypeId hir_id) const -> mir::TypeId {
-    return type_map.at(hir_id.value);
+    return type_map_.at(hir_id.value);
   }
 
-  [[nodiscard]] auto TranslateRootMemberVar(hir::MemberVarId hir_id) const
+  void RegisterTypeMapping(hir::TypeId hir_id, mir::TypeId mir_id) {
+    if (hir_id.value >= type_map_.size()) {
+      type_map_.resize(hir_id.value + 1);
+    }
+    type_map_[hir_id.value] = mir_id;
+  }
+
+ private:
+  mir::CompilationUnit* unit_;
+  std::vector<mir::TypeId> type_map_;
+};
+
+struct ChildClassBinding {
+  mir::ClassDeclId class_id;
+  mir::MemberVarId member_id;
+};
+
+// Bindings produced by `InstallGenerateOwnedChildClasses` for a single
+// `hir::Generate`. Indexed by `hir::StructuralScopeId.value`. Phase-local to
+// constructor lowering: `LowerGenerateConstruction` consumes them and they
+// then go out of scope. They are not part of `ClassLoweringState`.
+struct GenerateBindings {
+  std::vector<ChildClassBinding> by_scope_id;
+};
+
+class ClassLoweringState {
+ public:
+  explicit ClassLoweringState(const ClassLoweringState* parent)
+      : parent_(parent) {
+  }
+
+  [[nodiscard]] auto Parent() const -> const ClassLoweringState* {
+    return parent_;
+  }
+
+  void BindMemberVar(hir::MemberVarId hir_id, mir::MemberVarId mir_id) {
+    if (hir_id.value >= member_var_map_.size()) {
+      member_var_map_.resize(hir_id.value + 1);
+    }
+    member_var_map_[hir_id.value] = mir_id;
+  }
+
+  // Walk the class chain `hops` levels outward and look up `hir_id` in that
+  // class's member-var map. The class chain mirrors the lexical scope chain
+  // exactly, so `parent_scope_hops` from a HIR ref maps directly to chain
+  // depth.
+  [[nodiscard]] auto LookupMemberVar(
+      hir::ParentScopeHops hops, hir::MemberVarId hir_id) const
       -> mir::MemberVarId {
-    return root_member_var_map.at(hir_id.value);
+    if (hops.value == 0) {
+      return member_var_map_.at(hir_id.value);
+    }
+    if (parent_ == nullptr) {
+      throw support::InternalError(
+          "ClassLoweringState::LookupMemberVar: hops out of class chain");
+    }
+    return parent_->LookupMemberVar(
+        hir::ParentScopeHops{hops.value - 1}, hir_id);
   }
 
-  void SetType(hir::TypeId hir_id, mir::TypeId mir_id) {
-    if (hir_id.value >= type_map.size()) {
-      type_map.resize(hir_id.value + 1);
-    }
-    type_map[hir_id.value] = mir_id;
-  }
-
-  void SetRootMemberVar(hir::MemberVarId hir_id, mir::MemberVarId mir_id) {
-    if (hir_id.value >= root_member_var_map.size()) {
-      root_member_var_map.resize(hir_id.value + 1);
-    }
-    root_member_var_map[hir_id.value] = mir_id;
-  }
+ private:
+  const ClassLoweringState* parent_;
+  std::vector<mir::MemberVarId> member_var_map_;
 };
 
 class ProcessLoweringState {
@@ -113,9 +169,6 @@ class BodyLoweringState {
   std::vector<mir::ExprId> expr_map_;
 };
 
-// Lowering-time lexical chain. Each entry is a pointer to an immutable
-// hir::StructuralScope. HIR is fully built before lowering starts, so
-// addresses are stable for the duration.
 class ScopeStack {
  public:
   auto Push(const hir::StructuralScope& scope) -> void {

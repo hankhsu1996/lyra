@@ -1,7 +1,10 @@
 #pragma once
 
+#include <string>
+
 #include "lyra/runtime/process.hpp"
 #include "lyra/runtime/process_kind.hpp"
+#include "lyra/runtime/runtime_scope_kind.hpp"
 
 namespace lyra::runtime {
 
@@ -14,6 +17,8 @@ class RuntimeBindContext {
 
   auto CurrentScope() -> RuntimeScope&;
   void AddProcess(ProcessKind kind, Process process);
+  auto CreateChildScope(std::string name, RuntimeScopeKind kind)
+      -> RuntimeBindContext;
 
  private:
   Engine* engine_ = nullptr;

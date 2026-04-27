@@ -6,6 +6,7 @@
 
 #include "formatting.hpp"
 #include "lyra/mir/class_decl.hpp"
+#include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/stmt.hpp"
 #include "lyra/support/overloaded.hpp"
 #include "render_context.hpp"
@@ -25,8 +26,7 @@ auto RenderStmt(
       support::Overloaded{
           [&](const mir::LocalVarDeclStmt& s) -> std::string {
             const auto& lv = ctx.Body().local_vars.at(s.local_var.value);
-            return Indent(indent) +
-                   RenderTypeAsCpp(ctx.Class().GetType(lv.type)) + " " +
+            return Indent(indent) + RenderTypeAsCpp(ctx.Unit(), lv.type) + " " +
                    lv.name + "{};\n";
           },
           [&](const mir::ExprStmt& s) -> std::string {
@@ -48,12 +48,14 @@ auto RenderStmt(
             std::string result;
             result +=
                 Indent(indent) + "if (" + RenderExpr(ctx, cond_expr) + ") {\n";
-            result += RenderBody(ctx.Class(), then_body, indent + 1);
+            result +=
+                RenderBody(ctx.Unit(), ctx.Class(), then_body, indent + 1);
             result += Indent(indent) + "}";
             if (s.else_body.has_value()) {
               const auto& else_body = stmt.child_bodies.at(s.else_body->value);
               result += " else {\n";
-              result += RenderBody(ctx.Class(), else_body, indent + 1);
+              result +=
+                  RenderBody(ctx.Unit(), ctx.Class(), else_body, indent + 1);
               result += Indent(indent) + "}";
             }
             result += "\n";
@@ -73,7 +75,8 @@ auto RenderStmt(
                           (is_last ? ": {\n" : ":\n");
               }
               const auto& case_body = stmt.child_bodies.at(c.body.value);
-              result += RenderBody(ctx.Class(), case_body, indent + 2);
+              result +=
+                  RenderBody(ctx.Unit(), ctx.Class(), case_body, indent + 2);
               result += Indent(indent + 2) + "break;\n";
               result += Indent(indent + 1) + "}\n";
             }
@@ -81,12 +84,19 @@ auto RenderStmt(
               const auto& default_body =
                   stmt.child_bodies.at(s.default_body->value);
               result += Indent(indent + 1) + "default: {\n";
-              result += RenderBody(ctx.Class(), default_body, indent + 2);
+              result +=
+                  RenderBody(ctx.Unit(), ctx.Class(), default_body, indent + 2);
               result += Indent(indent + 2) + "break;\n";
               result += Indent(indent + 1) + "}\n";
             }
             result += Indent(indent) + "}\n";
             return result;
+          },
+          [&](const mir::ConstructMemberStmt& s) -> std::string {
+            const auto& member = ctx.Class().GetMemberVar(s.target);
+            const auto& target_class = ctx.Class().GetClass(s.class_id);
+            return Indent(indent) + member.name + " = new " +
+                   target_class.Name() + "();\n";
           },
       },
       stmt.data);
@@ -94,9 +104,9 @@ auto RenderStmt(
 }
 
 auto RenderBody(
-    const mir::ClassDecl& class_decl, const mir::Body& body, std::size_t indent)
-    -> std::string {
-  const RenderContext ctx{class_decl, body};
+    const mir::CompilationUnit& unit, const mir::ClassDecl& class_decl,
+    const mir::Body& body, std::size_t indent) -> std::string {
+  const RenderContext ctx{unit, class_decl, body};
   std::string out;
   for (const auto& sid : body.root_stmts) {
     out += RenderStmt(ctx, body.stmts.at(sid.value), indent);

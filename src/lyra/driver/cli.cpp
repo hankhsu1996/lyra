@@ -23,6 +23,7 @@
 #include "lyra/diag/source_manager.hpp"
 #include "lyra/frontend/load.hpp"
 #include "lyra/hir/dump.hpp"
+#include "lyra/mir/class_decl.hpp"
 #include "lyra/mir/dump.hpp"
 #include "lyra/support/internal_error.hpp"
 
@@ -240,7 +241,21 @@ auto main(int argc, char** argv) -> int {
         fmt::print("{}", lyra::mir::DumpMir(*result.artifacts.mir_unit));
         return 0;
       case CommandKind::kEmitCpp: {
-        auto set = lyra::backend::cpp::EmitCpp(*result.artifacts.mir_unit);
+        const lyra::mir::ClassDecl* entry = nullptr;
+        for (const auto& cls : result.artifacts.mir_unit->Classes()) {
+          if (cls.Name() == args.input.top) {
+            entry = &cls;
+            break;
+          }
+        }
+        if (entry == nullptr) {
+          throw lyra::support::InternalError(
+              std::format(
+                  "emit cpp: top class '{}' not found in compilation unit",
+                  args.input.top));
+        }
+        auto set =
+            lyra::backend::cpp::EmitCpp(*result.artifacts.mir_unit, *entry);
         if (args.emit_out_dir.empty()) {
           for (const auto& file : set.files) {
             fmt::print("=== {} ===\n{}", file.relpath, file.content);
