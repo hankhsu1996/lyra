@@ -10,7 +10,6 @@
 #include "lyra/mir/local_var.hpp"
 #include "lyra/mir/member_var.hpp"
 #include "lyra/mir/type.hpp"
-#include "lyra/support/system_subroutine.hpp"
 
 namespace lyra::mir {
 
@@ -22,6 +21,10 @@ struct ExprId {
 
 struct IntegerLiteral {
   std::int64_t value;
+};
+
+struct StringLiteral {
+  std::string value;
 };
 
 struct MemberVarRef {
@@ -38,23 +41,12 @@ struct BinaryExpr {
   BinaryOp op;
   ExprId lhs;
   ExprId rhs;
-  TypeId type;
 };
 
 struct AssignExpr {
   Lvalue target;
   ExprId value;
-  TypeId type;
 };
-
-struct PrintBuiltinInfo {
-  support::PrintRadix radix;
-  bool append_newline;
-  bool is_strobe;
-  support::PrintSinkKind sink_kind;
-};
-
-using BuiltinOp = std::variant<PrintBuiltinInfo>;
 
 struct UserSubroutineTargetId {
   std::uint32_t value;
@@ -67,20 +59,20 @@ struct UserSubroutineTarget {
   std::string name;
 };
 
-using Callee = std::variant<UserSubroutineTargetId, BuiltinOp>;
+using Callee = UserSubroutineTargetId;
 
 struct CallExpr {
   Callee callee;
   std::vector<ExprId> arguments;
-  TypeId result_type;
 };
 
 using ExprData = std::variant<
-    IntegerLiteral, MemberVarRef, LocalVarRef, BinaryExpr, AssignExpr,
-    CallExpr>;
+    IntegerLiteral, StringLiteral, MemberVarRef, LocalVarRef, BinaryExpr,
+    AssignExpr, CallExpr>;
 
 struct Expr {
   ExprData data;
+  TypeId type;
 };
 
 }  // namespace lyra::mir

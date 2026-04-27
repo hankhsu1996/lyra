@@ -5,12 +5,14 @@
 #include <utility>
 #include <vector>
 
+#include "lyra/base/internal_error.hpp"
 #include "lyra/hir/expr.hpp"
 #include "lyra/hir/local_var.hpp"
 #include "lyra/hir/member_var.hpp"
 #include "lyra/hir/structural_scope.hpp"
 #include "lyra/hir/subroutine.hpp"
 #include "lyra/hir/type.hpp"
+#include "lyra/mir/class_decl.hpp"
 #include "lyra/mir/class_decl_id.hpp"
 #include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/expr.hpp"
@@ -18,13 +20,18 @@
 #include "lyra/mir/member_var.hpp"
 #include "lyra/mir/stmt.hpp"
 #include "lyra/mir/type.hpp"
-#include "lyra/support/internal_error.hpp"
 
 namespace lyra::lowering::hir_to_mir {
 
+struct BuiltinMirTypes {
+  mir::TypeId int32;
+  mir::TypeId string;
+};
+
 class UnitLoweringState {
  public:
-  explicit UnitLoweringState(mir::CompilationUnit& unit) : unit_(&unit) {
+  explicit UnitLoweringState(mir::CompilationUnit& unit)
+      : unit_(&unit), builtins_(MakeBuiltins(unit)) {
   }
 
   auto AddType(mir::TypeData data) -> mir::TypeId {
@@ -46,9 +53,25 @@ class UnitLoweringState {
     type_map_[hir_id.value] = mir_id;
   }
 
+  [[nodiscard]] auto Builtins() const -> const BuiltinMirTypes& {
+    return builtins_;
+  }
+
  private:
+  static auto MakeBuiltins(mir::CompilationUnit& unit) -> BuiltinMirTypes {
+    return BuiltinMirTypes{
+        .int32 = unit.AddType(
+            mir::TypeData{mir::PackedArrayType{
+                .atom = mir::BitAtom::kBit,
+                .signedness = mir::Signedness::kSigned,
+                .dims = {mir::PackedRange{.left = 31, .right = 0}},
+                .form = mir::PackedArrayForm::kInt}}),
+        .string = unit.AddType(mir::TypeData{mir::StringType{}})};
+  }
+
   mir::CompilationUnit* unit_;
   std::vector<mir::TypeId> type_map_;
+  BuiltinMirTypes builtins_;
 };
 
 struct ChildClassBinding {
@@ -66,8 +89,9 @@ struct GenerateBindings {
 
 class ClassLoweringState {
  public:
-  explicit ClassLoweringState(const ClassLoweringState* parent)
-      : parent_(parent) {
+  ClassLoweringState(
+      const ClassLoweringState* parent, const mir::ClassDecl& cls)
+      : parent_(parent), class_decl_(&cls) {
   }
 
   [[nodiscard]] auto Parent() const -> const ClassLoweringState* {
@@ -92,11 +116,26 @@ class ClassLoweringState {
       return member_var_map_.at(hir_id.value);
     }
     if (parent_ == nullptr) {
-      throw support::InternalError(
+      throw InternalError(
           "ClassLoweringState::LookupMemberVar: hops out of class chain");
     }
     return parent_->LookupMemberVar(
         hir::ParentScopeHops{hops.value - 1}, hir_id);
+  }
+
+  // Look up a member var by id, walking outward `hops` levels first to reach
+  // the owning class state.
+  [[nodiscard]] auto GetMemberVar(
+      hir::ParentScopeHops hops, mir::MemberVarId mir_id) const
+      -> const mir::MemberVar& {
+    if (hops.value == 0) {
+      return class_decl_->GetMemberVar(mir_id);
+    }
+    if (parent_ == nullptr) {
+      throw InternalError(
+          "ClassLoweringState::GetMemberVar: hops out of class chain");
+    }
+    return parent_->GetMemberVar(hir::ParentScopeHops{hops.value - 1}, mir_id);
   }
 
   void BindUserSubroutine(
@@ -114,7 +153,7 @@ class ClassLoweringState {
       return user_subroutine_map_.at(hir_id.value);
     }
     if (parent_ == nullptr) {
-      throw support::InternalError(
+      throw InternalError(
           "ClassLoweringState::LookupUserSubroutine: hops out of class chain");
     }
     return parent_->LookupUserSubroutine(
@@ -123,6 +162,7 @@ class ClassLoweringState {
 
  private:
   const ClassLoweringState* parent_;
+  const mir::ClassDecl* class_decl_;
   std::vector<mir::MemberVarId> member_var_map_;
   std::vector<mir::UserSubroutineTargetId> user_subroutine_map_;
 };
@@ -145,6 +185,11 @@ class ProcessLoweringState {
   [[nodiscard]] auto TranslateLocalVar(hir::LocalVarId hir_id) const
       -> mir::LocalVarId {
     return map_.at(hir_id.value);
+  }
+
+  [[nodiscard]] auto GetLocalVar(mir::LocalVarId mir_id) const
+      -> const mir::LocalVar& {
+    return locals_.at(mir_id.value);
   }
 
   auto MoveLocals() -> std::vector<mir::LocalVar> {
@@ -172,6 +217,10 @@ class BodyLoweringState {
 
   [[nodiscard]] auto TranslateExpr(hir::ExprId hir_id) const -> mir::ExprId {
     return expr_map_.at(hir_id.value);
+  }
+
+  [[nodiscard]] auto Body() const -> const mir::Body& {
+    return body_;
   }
 
   auto AppendStmt(mir::Stmt stmt) -> mir::StmtId {
@@ -209,7 +258,7 @@ class ScopeStack {
   [[nodiscard]] auto Resolve(hir::ParentScopeHops hops) const
       -> const hir::StructuralScope& {
     if (hops.value >= frames_.size()) {
-      throw support::InternalError("ScopeStack::Resolve: hops out of range");
+      throw InternalError("ScopeStack::Resolve: hops out of range");
     }
     return *frames_[frames_.size() - 1 - hops.value];
   }

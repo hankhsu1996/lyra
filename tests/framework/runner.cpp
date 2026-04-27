@@ -14,6 +14,7 @@
 #include <vector>
 #include <yaml-cpp/yaml.h>
 
+#include "build.hpp"
 #include "matcher.hpp"
 #include "process.hpp"
 
@@ -255,8 +256,88 @@ auto FilterCases(const std::vector<TestCase>& cases, const Suite& suite)
   return out;
 }
 
-auto RunCase(const std::filesystem::path& lyra_exe, const TestCase& c)
-    -> RunResult {
+namespace {
+
+auto RunCppCase(
+    const std::filesystem::path& lyra_exe, const TestCase& c,
+    const CppRunPaths& cpp_paths) -> RunResult {
+  RunResult result;
+  auto work_or = MakeTempCaseDir();
+  if (!work_or) {
+    result.mismatch = "MakeTempCaseDir failed: " + work_or.error();
+    return result;
+  }
+  const auto& work = *work_or;
+
+  std::vector<std::string>& argv = result.argv;
+  argv.emplace_back("emit");
+  argv.emplace_back("cpp");
+  argv.emplace_back("--no-project");
+  argv.emplace_back("--top");
+  argv.push_back(c.input.top.value_or("Top"));
+  argv.emplace_back("--out-dir");
+  argv.push_back(work.string());
+  for (const auto& f : c.input.files) {
+    argv.push_back((c.case_dir / f).string());
+  }
+
+  auto emit = RunChildProcess(lyra_exe, argv, std::chrono::seconds{30});
+  if (emit.termination != TerminationKind::kExitedNormally) {
+    result.proc = emit;
+    result.mismatch =
+        FormatCaseFailure(c.id, argv, emit) + "\nlyra emit cpp failed";
+    return result;
+  }
+
+  auto outcome = BuildAndRunEmittedArtifacts(
+      work, cpp_paths.include_root, cpp_paths.runtime_src_dirs);
+  if (outcome.error.has_value()) {
+    result.mismatch = "build+run failed: " + *outcome.error;
+    return result;
+  }
+
+  result.proc.exit_code = outcome.exit_code;
+  result.proc.stdout_text = std::move(outcome.stdout_text);
+  result.proc.stderr_text = std::move(outcome.stderr_text);
+  result.proc.termination = TerminationKind::kExitedNormally;
+
+  auto record = [&](std::string header, std::string body) {
+    std::string prefix =
+        FormatCaseFailure(c.id, argv, result.proc) + "\n" + header + ": ";
+    result.mismatch = prefix + body;
+  };
+
+  if (c.expect.exit_code.has_value() &&
+      result.proc.exit_code != *c.expect.exit_code) {
+    record(
+        "exit mismatch",
+        std::format(
+            "expected {}, got {}", *c.expect.exit_code, result.proc.exit_code));
+    return result;
+  }
+  if (auto mm = CheckOutput(
+          result.proc.stdout_text, c.expect.stdout_spec, "stdout")) {
+    record("stdout mismatch", *mm);
+    return result;
+  }
+  if (auto mm = CheckOutput(
+          result.proc.stderr_text, c.expect.stderr_spec, "stderr")) {
+    record("stderr mismatch", *mm);
+    return result;
+  }
+  return result;
+}
+
+}  // namespace
+
+auto RunCase(
+    const std::filesystem::path& lyra_exe, const TestCase& c,
+    const CppRunPaths& cpp_paths) -> RunResult {
+  if (c.input.command.size() == 2 && c.input.command[0] == "run" &&
+      c.input.command[1] == "cpp") {
+    return RunCppCase(lyra_exe, c, cpp_paths);
+  }
+
   RunResult result;
 
   std::vector<std::string>& argv = result.argv;

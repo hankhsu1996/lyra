@@ -11,6 +11,7 @@
 #include "lyra/mir/expr.hpp"
 #include "lyra/mir/local_var.hpp"
 #include "lyra/mir/member_var.hpp"
+#include "lyra/mir/runtime_print.hpp"
 
 namespace lyra::mir {
 
@@ -33,6 +34,14 @@ struct Body {
   std::vector<Expr> exprs;
   std::vector<Stmt> stmts;
   std::vector<StmtId> root_stmts;
+
+  [[nodiscard]] auto GetExpr(ExprId id) const -> const Expr& {
+    return exprs.at(id.value);
+  }
+
+  [[nodiscard]] auto GetExprType(ExprId id) const -> TypeId {
+    return GetExpr(id).type;
+  }
 };
 
 struct LocalVarDeclStmt {
@@ -71,7 +80,7 @@ struct ConstructMemberStmt {
 
 using StmtData = std::variant<
     LocalVarDeclStmt, ExprStmt, BlockStmt, IfStmt, SwitchStmt,
-    ConstructMemberStmt>;
+    ConstructMemberStmt, RuntimePrintSeqStmt>;
 
 struct Stmt {
   std::optional<std::string> label;

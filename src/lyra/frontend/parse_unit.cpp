@@ -9,11 +9,11 @@
 #include <fmt/core.h>
 #include <slang/syntax/SyntaxTree.h>
 
+#include "lyra/base/internal_error.hpp"
 #include "lyra/diag/diagnostic.hpp"
 #include "lyra/diag/sink.hpp"
 #include "lyra/diag/source_manager.hpp"
 #include "lyra/frontend/slang_source_mapper.hpp"
-#include "lyra/support/internal_error.hpp"
 
 namespace lyra::frontend {
 
@@ -81,7 +81,7 @@ auto ExecuteParseUnit(
         } else {
           static_assert(std::is_same_v<T, SingleUnit>);
           if (u.files.empty()) {
-            throw support::InternalError(
+            throw InternalError(
                 "ExecuteParseUnit: single-unit parse unit contains no files");
           }
 

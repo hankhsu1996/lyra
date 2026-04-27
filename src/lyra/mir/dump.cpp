@@ -9,6 +9,8 @@
 #include <variant>
 #include <vector>
 
+#include "lyra/base/internal_error.hpp"
+#include "lyra/base/overloaded.hpp"
 #include "lyra/mir/binary_op.hpp"
 #include "lyra/mir/class_decl.hpp"
 #include "lyra/mir/compilation_unit.hpp"
@@ -18,8 +20,6 @@
 #include "lyra/mir/process.hpp"
 #include "lyra/mir/stmt.hpp"
 #include "lyra/mir/type.hpp"
-#include "lyra/support/internal_error.hpp"
-#include "lyra/support/overloaded.hpp"
 #include "lyra/support/system_subroutine.hpp"
 
 namespace lyra::mir {
@@ -58,7 +58,7 @@ class MirDumper {
   }
   void Dedent() {
     if (indent_ <= 0) {
-      throw support::InternalError("MirDumper: indent underflow");
+      throw InternalError("MirDumper: indent underflow");
     }
     --indent_;
   }
@@ -72,7 +72,7 @@ class MirDumper {
       case BitAtom::kReg:
         return "reg";
     }
-    throw support::InternalError("MirDumper::FormatBitAtom: unknown BitAtom");
+    throw InternalError("MirDumper::FormatBitAtom: unknown BitAtom");
   }
 
   static auto FormatSignedness(Signedness s) -> std::string_view {
@@ -96,8 +96,7 @@ class MirDumper {
       case PackedArrayForm::kTime:
         return "time";
     }
-    throw support::InternalError(
-        "MirDumper::FormatPackedForm: unknown PackedArrayForm");
+    throw InternalError("MirDumper::FormatPackedForm: unknown PackedArrayForm");
   }
 
   static auto FormatPackedDims(const std::vector<PackedRange>& dims)
@@ -126,7 +125,7 @@ class MirDumper {
 
   static auto FormatType(const Type& t) -> std::string {
     return std::visit(
-        support::Overloaded{
+        Overloaded{
             [](const PackedArrayType& p) -> std::string {
               return std::format(
                   "PackedArray(atom={}, signed={}, dims={}, form={})",
@@ -176,12 +175,12 @@ class MirDumper {
       case BinaryOp::kAdd:
         return "Add";
     }
-    throw support::InternalError("MirDumper: unknown BinaryOp");
+    throw InternalError("MirDumper: unknown BinaryOp");
   }
 
   static auto FormatLvalue(const Lvalue& l) -> std::string {
     return std::visit(
-        support::Overloaded{
+        Overloaded{
             [](const MemberVarRef& r) -> std::string {
               return std::format("MemberVar[{}]", r.target.value);
             },
@@ -203,8 +202,7 @@ class MirDumper {
       case support::PrintRadix::kHex:
         return "hex";
     }
-    throw support::InternalError(
-        "MirDumper::FormatPrintRadix: unknown PrintRadix");
+    throw InternalError("MirDumper::FormatPrintRadix: unknown PrintRadix");
   }
 
   static auto FormatPrintSinkKind(support::PrintSinkKind s)
@@ -215,45 +213,25 @@ class MirDumper {
       case support::PrintSinkKind::kFile:
         return "file";
     }
-    throw support::InternalError(
+    throw InternalError(
         "MirDumper::FormatPrintSinkKind: unknown PrintSinkKind");
   }
 
-  static auto FormatBuiltinOp(const BuiltinOp& op) -> std::string {
-    return std::visit(
-        support::Overloaded{
-            [](const PrintBuiltinInfo& p) -> std::string {
-              return std::format(
-                  "Print(radix={}, newline={}, strobe={}, sink={})",
-                  FormatPrintRadix(p.radix), p.append_newline, p.is_strobe,
-                  FormatPrintSinkKind(p.sink_kind));
-            },
-        },
-        op);
-  }
-
   [[nodiscard]] auto FormatCallee(const Callee& callee) const -> std::string {
-    return std::visit(
-        support::Overloaded{
-            [this](const UserSubroutineTargetId& id) -> std::string {
-              const auto& target = current_class_->GetUserSubroutineTarget(id);
-              return std::format(
-                  "UserSubroutine[{}] \"{}\"", id.value, target.name);
-            },
-            [](const BuiltinOp& op) -> std::string {
-              return std::format("Builtin({})", FormatBuiltinOp(op));
-            },
-        },
-        callee);
+    const auto& target = current_class_->GetUserSubroutineTarget(callee);
+    return std::format("UserSubroutine[{}] \"{}\"", callee.value, target.name);
   }
 
   [[nodiscard]] auto FormatExpr(const Body& body, ExprId id) const
       -> std::string {
     const auto& e = body.exprs.at(id.value);
-    return std::visit(
-        support::Overloaded{
+    std::string body_str = std::visit(
+        Overloaded{
             [](const IntegerLiteral& lit) -> std::string {
               return std::format("IntegerLiteral({})", lit.value);
+            },
+            [](const StringLiteral& lit) -> std::string {
+              return std::format("StringLiteral(\"{}\")", lit.value);
             },
             [](const MemberVarRef& r) -> std::string {
               return std::format("MemberVarRef(MemberVar[{}])", r.target.value);
@@ -263,13 +241,13 @@ class MirDumper {
             },
             [](const BinaryExpr& b) -> std::string {
               return std::format(
-                  "BinaryExpr op={} lhs=Expr[{}] rhs=Expr[{}] type=Type[{}]",
-                  FormatBinaryOp(b.op), b.lhs.value, b.rhs.value, b.type.value);
+                  "BinaryExpr op={} lhs=Expr[{}] rhs=Expr[{}]",
+                  FormatBinaryOp(b.op), b.lhs.value, b.rhs.value);
             },
             [](const AssignExpr& a) -> std::string {
               return std::format(
-                  "AssignExpr target={} value=Expr[{}] type=Type[{}]",
-                  FormatLvalue(a.target), a.value.value, a.type.value);
+                  "AssignExpr target={} value=Expr[{}]", FormatLvalue(a.target),
+                  a.value.value);
             },
             [this](const CallExpr& c) -> std::string {
               std::string args;
@@ -280,16 +258,16 @@ class MirDumper {
                 args += std::format("Expr[{}]", c.arguments[i].value);
               }
               return std::format(
-                  "CallExpr callee={} args=[{}] type=Type[{}]",
-                  FormatCallee(c.callee), args, c.result_type.value);
+                  "CallExpr callee={} args=[{}]", FormatCallee(c.callee), args);
             },
         },
         e.data);
+    return std::format("{} type=Type[{}]", body_str, e.type.value);
   }
 
   static auto FormatMemberKind(const MemberKind& kind) -> std::string {
     return std::visit(
-        support::Overloaded{
+        Overloaded{
             [](const ValueMember& v) -> std::string {
               return std::format("Type[{}]", v.type.value);
             },
@@ -305,7 +283,7 @@ class MirDumper {
       case ProcessKind::kInitial:
         return "Initial";
     }
-    throw support::InternalError("MirDumper: unknown ProcessKind");
+    throw InternalError("MirDumper: unknown ProcessKind");
   }
 
   void DumpClass(const ClassDecl& c) {
@@ -403,7 +381,7 @@ class MirDumper {
       Line(std::format("label: \"{}\"", *stmt.label));
     }
     std::visit(
-        support::Overloaded{
+        Overloaded{
             [&](const LocalVarDeclStmt& s) {
               Line(
                   std::format(
@@ -423,8 +401,117 @@ class MirDumper {
                       "class=Class[{}]",
                       id.value, s.target.value, s.class_id.value));
             },
+            [&](const RuntimePrintSeqStmt& s) {
+              DumpRuntimePrintSeqStmt(s, enclosing, id);
+            },
         },
         stmt.data);
+  }
+
+  void DumpRuntimePrintSeqStmt(
+      const RuntimePrintSeqStmt& s, const Body& enclosing, StmtId id) {
+    Line(
+        std::format(
+            "Stmt[{}] RuntimePrintSeqStmt kind={} descriptor={} items={}",
+            id.value, FormatMirPrintKind(s.kind),
+            s.descriptor.has_value()
+                ? std::format("Expr[{}]", s.descriptor->value)
+                : std::string("stdout"),
+            s.items.size()));
+    Indent();
+    for (std::size_t i = 0; i < s.items.size(); ++i) {
+      DumpRuntimePrintItem(i, s.items[i], enclosing);
+    }
+    Dedent();
+  }
+
+  void DumpRuntimePrintItem(
+      std::size_t i, const RuntimePrintItem& item, const Body& enclosing) {
+    std::visit(
+        Overloaded{
+            [&](const RuntimePrintLiteral& lit) {
+              Line(
+                  std::format(
+                      "Item[{}] Literal {}", i, FormatStringLiteral(lit.text)));
+            },
+            [&](const RuntimePrintValue& v) {
+              Line(
+                  std::format(
+                      "Item[{}] Value value=Expr[{}] type=Type[{}] "
+                      "spec=Format(kind={}, width={}, precision={}, "
+                      "zero_pad={}, "
+                      "left_align={}, timeunit_power={})",
+                      i, v.value.value, v.type.value,
+                      FormatMirFormatKind(v.spec.kind), v.spec.modifiers.width,
+                      v.spec.modifiers.precision,
+                      v.spec.modifiers.zero_pad ? "true" : "false",
+                      v.spec.modifiers.left_align ? "true" : "false",
+                      v.spec.timeunit_power));
+              Indent();
+              Line(
+                  std::format(
+                      "Expr[{}] {}", v.value.value,
+                      FormatExpr(enclosing, v.value)));
+              Dedent();
+            },
+        },
+        item);
+  }
+
+  static auto FormatMirPrintKind(PrintKind k) -> std::string_view {
+    switch (k) {
+      case PrintKind::kDisplay:
+        return "kDisplay";
+      case PrintKind::kWrite:
+        return "kWrite";
+      case PrintKind::kFDisplay:
+        return "kFDisplay";
+      case PrintKind::kFWrite:
+        return "kFWrite";
+    }
+    throw InternalError("FormatMirPrintKind: unknown PrintKind");
+  }
+
+  static auto FormatMirFormatKind(FormatKind k) -> std::string_view {
+    switch (k) {
+      case FormatKind::kDecimal:
+        return "kDecimal";
+      case FormatKind::kHex:
+        return "kHex";
+      case FormatKind::kBinary:
+        return "kBinary";
+      case FormatKind::kOctal:
+        return "kOctal";
+      case FormatKind::kString:
+        return "kString";
+    }
+    throw InternalError("FormatMirFormatKind: unknown FormatKind");
+  }
+
+  static auto FormatStringLiteral(std::string_view s) -> std::string {
+    std::string out;
+    out.push_back('"');
+    for (char c : s) {
+      switch (c) {
+        case '\n':
+          out += "\\n";
+          break;
+        case '\t':
+          out += "\\t";
+          break;
+        case '\\':
+          out += "\\\\";
+          break;
+        case '"':
+          out += "\\\"";
+          break;
+        default:
+          out.push_back(c);
+          break;
+      }
+    }
+    out.push_back('"');
+    return out;
   }
 
   void DumpBlockStmt(const BlockStmt& s, const Body& enclosing, StmtId id) {

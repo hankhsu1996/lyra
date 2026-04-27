@@ -1,0 +1,13 @@
+id: errors.fwrite_unsupported
+tags: [errors]
+input:
+  command: [emit, cpp]
+  project: false
+  top: Top
+  files: [main.sv]
+  args: ["--no-color"]
+expect:
+  exit: 1
+  stderr:
+    contains:
+      - "$fwrite is not implemented in this build"

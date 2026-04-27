@@ -3,18 +3,20 @@
 #include <cstddef>
 #include <cstdint>
 #include <utility>
+#include <variant>
 
+#include "lyra/base/internal_error.hpp"
+#include "lyra/diag/diagnostic.hpp"
 #include "lyra/hir/expr.hpp"
 #include "lyra/hir/local_var.hpp"
 #include "lyra/hir/process.hpp"
+#include "lyra/hir/subroutine_ref.hpp"
 #include "lyra/lowering/hir_to_mir/lower_expr.hpp"
 #include "lyra/lowering/hir_to_mir/lower_stmt.hpp"
 #include "lyra/lowering/hir_to_mir/state.hpp"
-#include "lyra/mir/expr.hpp"
 #include "lyra/mir/local_var.hpp"
 #include "lyra/mir/process.hpp"
 #include "lyra/mir/stmt.hpp"
-#include "lyra/support/internal_error.hpp"
 
 namespace lyra::lowering::hir_to_mir {
 
@@ -25,14 +27,20 @@ auto LowerProcessKind(hir::ProcessKind kind) -> mir::ProcessKind {
     case hir::ProcessKind::kInitial:
       return mir::ProcessKind::kInitial;
   }
-  throw support::InternalError("LowerProcessKind: unknown HIR ProcessKind");
+  throw InternalError("LowerProcessKind: unknown HIR ProcessKind");
+}
+
+auto IsSystemSubroutineCall(const hir::Expr& expr) -> bool {
+  const auto* call = std::get_if<hir::CallExpr>(&expr.data);
+  if (call == nullptr) return false;
+  return std::holds_alternative<hir::SystemSubroutineRef>(call->callee);
 }
 
 }  // namespace
 
 auto LowerProcess(
     const UnitLoweringState& unit_state, const ClassLoweringState& class_state,
-    const hir::Process& src) -> mir::Process {
+    const hir::Process& src) -> diag::Result<mir::Process> {
   ProcessLoweringState proc_state;
   for (std::size_t i = 0; i < src.local_vars.size(); ++i) {
     const auto& hir_local = src.local_vars[i];
@@ -47,16 +55,23 @@ auto LowerProcess(
   BodyLoweringState body_state;
   for (std::size_t i = 0; i < src.exprs.size(); ++i) {
     const hir::ExprId hir_id{static_cast<std::uint32_t>(i)};
+    const auto& hir_expr = src.exprs[i];
+    if (IsSystemSubroutineCall(hir_expr)) {
+      continue;
+    }
     body_state.AppendExpr(
-        hir_id, mir::Expr{
-                    .data = LowerProcessExprData(
-                        unit_state, class_state, proc_state, body_state, src,
-                        src.exprs[i].data)});
+        hir_id,
+        LowerProcessExpr(
+            unit_state, class_state, proc_state, body_state, src, hir_expr));
   }
 
   const hir::Stmt& root = src.stmts.at(src.body.value);
-  mir::Stmt lowered_root = LowerStmt(proc_state, src, body_state, root);
-  body_state.AppendRootStmt(body_state.AppendStmt(std::move(lowered_root)));
+  auto lowered_root_or =
+      LowerStmt(unit_state, proc_state, src, body_state, root);
+  if (!lowered_root_or) {
+    return std::unexpected(std::move(lowered_root_or.error()));
+  }
+  body_state.AppendRootStmt(body_state.AppendStmt(*std::move(lowered_root_or)));
 
   auto body = body_state.Finish();
   body.local_vars = proc_state.MoveLocals();

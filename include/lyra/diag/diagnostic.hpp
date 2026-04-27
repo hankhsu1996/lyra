@@ -8,10 +8,10 @@
 #include <variant>
 #include <vector>
 
+#include "lyra/base/internal_error.hpp"
 #include "lyra/diag/diag_code.hpp"
 #include "lyra/diag/kind.hpp"
 #include "lyra/diag/source_span.hpp"
-#include "lyra/support/internal_error.hpp"
 
 namespace lyra::diag {
 
@@ -19,7 +19,7 @@ namespace detail {
 
 inline void RequireKind(DiagCode code, DiagKind expected) {
   if (DiagCodeKind(code) != expected) {
-    throw lyra::support::InternalError(
+    throw InternalError(
         std::format(
             "Diagnostic factory: code '{}' is not of the expected kind",
             DiagCodeName(code)));
@@ -29,7 +29,7 @@ inline void RequireKind(DiagCode code, DiagKind expected) {
 inline void RequireCategory(
     DiagCode code, std::optional<UnsupportedCategory> expected) {
   if (DiagCodeCategory(code) != expected) {
-    throw lyra::support::InternalError(
+    throw InternalError(
         std::format(
             "Diagnostic factory: code '{}' has a different category than the "
             "factory call site claims",

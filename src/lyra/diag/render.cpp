@@ -12,12 +12,12 @@
 #include <fmt/color.h>
 #include <fmt/core.h>
 
+#include "lyra/base/internal_error.hpp"
+#include "lyra/base/overloaded.hpp"
 #include "lyra/diag/diagnostic.hpp"
 #include "lyra/diag/sink.hpp"
 #include "lyra/diag/source_manager.hpp"
 #include "lyra/diag/source_span.hpp"
-#include "lyra/support/internal_error.hpp"
-#include "lyra/support/overloaded.hpp"
 
 namespace lyra::diag {
 
@@ -39,7 +39,7 @@ auto KindLabel(DiagKind kind) -> std::string_view {
     case DiagKind::kNote:
       return "note:";
   }
-  throw support::InternalError("diag::KindLabel: invalid DiagKind");
+  throw InternalError("diag::KindLabel: invalid DiagKind");
 }
 
 auto KindStyle(DiagKind kind) -> fmt::text_style {
@@ -53,7 +53,7 @@ auto KindStyle(DiagKind kind) -> fmt::text_style {
     case DiagKind::kNote:
       return fmt::fg(fmt::terminal_color::bright_cyan) | fmt::emphasis::bold;
   }
-  throw support::InternalError("diag::KindStyle: invalid DiagKind");
+  throw InternalError("diag::KindStyle: invalid DiagKind");
 }
 
 auto Style(const RenderOptions& opts, fmt::text_style s) -> fmt::text_style {
@@ -99,7 +99,7 @@ auto ResolveLine(const SourceManager& mgr, const SourceSpan& span)
 auto SpanOf(const DiagSpan& diag_span) -> std::optional<SourceSpan> {
   std::optional<SourceSpan> out;
   std::visit(
-      support::Overloaded{
+      Overloaded{
           [&](const SourceSpan& s) { out = s; },
           [&](UnknownSpan) {},
       },

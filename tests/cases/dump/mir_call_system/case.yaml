@@ -9,8 +9,6 @@ expect:
   exit: 0
   stdout:
     contains:
-      - "Builtin(Print(radix=decimal, newline=true, strobe=false, sink=stdout))"
-      - "Builtin(Print(radix=decimal, newline=false, strobe=false, sink=stdout))"
-      - "Builtin(Print(radix=decimal, newline=true, strobe=false, sink=file))"
-      - "Builtin(Print(radix=decimal, newline=false, strobe=false, sink=file))"
-      - "VoidType"
+      - "RuntimePrintSeqStmt kind=kDisplay descriptor=stdout items=1"
+      - "RuntimePrintSeqStmt kind=kWrite descriptor=stdout items=1"
+      - "Item[0] Value value=Expr["

@@ -13,10 +13,10 @@
 
 #include "expression/lower.hpp"
 #include "facts.hpp"
+#include "lyra/base/internal_error.hpp"
 #include "lyra/diag/diagnostic.hpp"
 #include "lyra/hir/expr.hpp"
 #include "lyra/hir/structural_scope.hpp"
-#include "lyra/support/internal_error.hpp"
 #include "scope.hpp"
 #include "state.hpp"
 
@@ -53,22 +53,22 @@ auto BuildIfGenerate(
         else_block = block;
         break;
       default:
-        throw support::InternalError(
+        throw InternalError(
             "BuildIfGenerate: unexpected branch kind in if-generate sibling "
             "group");
     }
   }
   if (then_block == nullptr) {
-    throw support::InternalError(
+    throw InternalError(
         "BuildIfGenerate: if-generate group has no IfTrue branch");
   }
   const auto* cond = then_block->conditionExpression;
   if (cond == nullptr) {
-    throw support::InternalError(
+    throw InternalError(
         "BuildIfGenerate: IfTrue branch has no bound condition expression");
   }
   if (else_block != nullptr && else_block->conditionExpression != cond) {
-    throw support::InternalError(
+    throw InternalError(
         "BuildIfGenerate: sibling branches have mismatched condition "
         "expressions");
   }
@@ -100,17 +100,17 @@ auto BuildCaseGenerate(
     std::span<const slang::ast::GenerateBlockSymbol* const> siblings)
     -> diag::Result<hir::Generate> {
   if (siblings.empty()) {
-    throw support::InternalError(
+    throw InternalError(
         "BuildCaseGenerate: case-generate sibling group is empty");
   }
   const auto* discriminator = siblings.front()->conditionExpression;
   if (discriminator == nullptr) {
-    throw support::InternalError(
+    throw InternalError(
         "BuildCaseGenerate: sibling has no condition expression");
   }
   for (const auto* block : siblings) {
     if (block->conditionExpression != discriminator) {
-      throw support::InternalError(
+      throw InternalError(
           "BuildCaseGenerate: siblings have mismatched condition "
           "expressions");
     }
@@ -148,7 +148,7 @@ auto BuildCaseGenerate(
       }
       case slang::ast::GenerateBranchKind::CaseDefault: {
         if (default_id.has_value()) {
-          throw support::InternalError(
+          throw InternalError(
               "BuildCaseGenerate: case-generate has more than one default "
               "branch");
         }
@@ -158,7 +158,7 @@ auto BuildCaseGenerate(
         break;
       }
       default:
-        throw support::InternalError(
+        throw InternalError(
             "BuildCaseGenerate: unexpected branch kind in case-generate");
     }
   }

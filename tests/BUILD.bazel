@@ -30,6 +30,8 @@ cc_test(
     data = [
         "suites.yaml",
         "//:lyra",
+        "//:runtime_headers",
+        "//:runtime_sources",
     ] + glob(
         [
             "cases/**/*.yaml",

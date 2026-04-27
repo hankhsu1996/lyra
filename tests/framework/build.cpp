@@ -107,7 +107,8 @@ auto MakeTempCaseDir() -> std::expected<std::filesystem::path, std::string> {
 auto BuildAndRunEmittedArtifacts(
     const std::filesystem::path& work_dir,
     const std::filesystem::path& include_root,
-    const std::filesystem::path& runtime_src_dir) -> BuildAndRunOutcome {
+    const std::vector<std::filesystem::path>& runtime_src_dirs)
+    -> BuildAndRunOutcome {
   BuildAndRunOutcome outcome;
 
   auto cxx_or = ResolveCxxCompiler();
@@ -118,16 +119,20 @@ auto BuildAndRunEmittedArtifacts(
   }
   const auto& cxx = *cxx_or;
 
-  auto runtime_cpps_or = CollectRuntimeSources(runtime_src_dir);
-  if (!runtime_cpps_or) {
-    outcome.error = std::format(
-        "runtime source enumeration failed: {}", runtime_cpps_or.error());
-    return outcome;
+  std::vector<std::filesystem::path> runtime_cpps;
+  for (const auto& dir : runtime_src_dirs) {
+    auto cpps_or = CollectRuntimeSources(dir);
+    if (!cpps_or) {
+      outcome.error =
+          std::format("runtime source enumeration failed: {}", cpps_or.error());
+      return outcome;
+    }
+    for (auto& path : *cpps_or) {
+      runtime_cpps.push_back(std::move(path));
+    }
   }
-  const auto& runtime_cpps = *runtime_cpps_or;
   if (runtime_cpps.empty()) {
-    outcome.error =
-        std::format("no runtime sources under '{}'", runtime_src_dir.string());
+    outcome.error = "no runtime sources collected";
     return outcome;
   }
 
