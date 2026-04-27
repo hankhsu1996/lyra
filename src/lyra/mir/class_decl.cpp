@@ -73,4 +73,22 @@ auto ClassDecl::AddClass(ClassDecl child) -> ClassDeclId {
   return id;
 }
 
+auto ClassDecl::UserSubroutineTargets() const
+    -> const std::vector<UserSubroutineTarget>& {
+  return user_subroutine_targets_;
+}
+
+auto ClassDecl::GetUserSubroutineTarget(UserSubroutineTargetId id) const
+    -> const UserSubroutineTarget& {
+  return user_subroutine_targets_.at(id.value);
+}
+
+auto ClassDecl::AddUserSubroutineTarget(UserSubroutineTarget target)
+    -> UserSubroutineTargetId {
+  const UserSubroutineTargetId id{
+      static_cast<std::uint32_t>(user_subroutine_targets_.size())};
+  user_subroutine_targets_.push_back(std::move(target));
+  return id;
+}
+
 }  // namespace lyra::mir
