@@ -26,7 +26,11 @@ Do NOT proceed with formatting or staging until you are on a feature branch.
 
 ## Pre-commit Checks
 
-Before committing, format ALL files and run policy checks:
+Before committing, format ALL files and run every check that CI runs.
+
+**Rule of thumb:** Local must mirror CI exactly. If CI runs it, the skill must run it. If a script in `tools/policy/` exists, it likely has a corresponding CI workflow under `.github/workflows/`.
+
+### Format
 
 1. **C++ files** - Format all source files:
 
@@ -46,17 +50,29 @@ Before committing, format ALL files and run policy checks:
    buildifier -r .
    ```
 
-4. **Policy checks** - First get merge base, then run checks with that SHA:
+### Format-check (mirrors CI)
 
-   ```bash
-   git merge-base origin/main HEAD
-   # Use the returned SHA in subsequent commands
-   python3 tools/policy/check_exceptions.py --diff-base <SHA>
-   python3 tools/policy/check_ascii.py --diff-base <SHA>
-   python3 tools/policy/check_llvm_backend_boundaries.py --diff-base <SHA>
-   ```
+After formatting, verify CI's format-check commands pass:
 
-   If any fail, fix violations before committing.
+```bash
+find src include tests -name '*.cpp' -o -name '*.hpp' | xargs clang-format --dry-run --Werror
+buildifier -mode=check -r .
+buildifier -mode=check -lint=warn -r .
+npm run format:check
+```
+
+### Policy checks (mirrors CI)
+
+```bash
+python3 tools/policy/check_architecture.py
+python3 tools/policy/check_ascii.py --diff-base origin/main
+python3 tools/policy/check_cpp_style.py
+python3 tools/policy/check_exceptions.py --diff-base origin/main
+```
+
+If any of the above fail, fix violations before committing. Do not stage / commit through known violations.
+
+**Sanity check before committing:** `ls tools/policy/check_*.py` and `ls .github/workflows/` and confirm the commands above still match. If a new `check_*.py` exists but the skill does not run it, run it anyway and tell the user the skill is out of date.
 
 ## Commit Format
 

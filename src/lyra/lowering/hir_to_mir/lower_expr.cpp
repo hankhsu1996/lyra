@@ -27,20 +27,20 @@ auto LowerBinaryOp(hir::BinaryOp op) -> mir::BinaryOp {
 namespace {
 
 auto ResolveMemberVarRef(
-    const ClassLoweringState& class_state, const ScopeStack& /*stack*/,
-    const hir::MemberVarRef& m) -> mir::MemberVarId {
+    const ClassLoweringState& class_state, const hir::MemberVarRef& m)
+    -> mir::MemberVarId {
   return class_state.LookupMemberVar(m.parent_scope_hops, m.target);
 }
 
 auto LowerRefAsLvalue(
     const ClassLoweringState& class_state,
-    const ProcessLoweringState& proc_state, const ScopeStack& stack,
-    const hir::ValueRef& ref) -> mir::Lvalue {
+    const ProcessLoweringState& proc_state, const hir::ValueRef& ref)
+    -> mir::Lvalue {
   return std::visit(
       support::Overloaded{
           [&](const hir::MemberVarRef& m) -> mir::Lvalue {
             return mir::MemberVarRef{
-                .target = ResolveMemberVarRef(class_state, stack, m)};
+                .target = ResolveMemberVarRef(class_state, m)};
           },
           [&](const hir::LocalVarRef& l) -> mir::Lvalue {
             return mir::LocalVarRef{
@@ -55,8 +55,8 @@ auto LowerRefAsLvalue(
 auto LowerProcessExprData(
     const UnitLoweringState& unit_state, const ClassLoweringState& class_state,
     const ProcessLoweringState& proc_state, const BodyLoweringState& body_state,
-    const ScopeStack& stack, const hir::Process& hir_process,
-    const hir::ExprData& data) -> mir::ExprData {
+    const hir::Process& hir_process, const hir::ExprData& data)
+    -> mir::ExprData {
   return std::visit(
       support::Overloaded{
           [&](const hir::PrimaryExpr& p) -> mir::ExprData {
@@ -70,8 +70,8 @@ auto LowerProcessExprData(
                           support::Overloaded{
                               [&](const hir::MemberVarRef& m) -> mir::ExprData {
                                 return mir::MemberVarRef{
-                                    .target = ResolveMemberVarRef(
-                                        class_state, stack, m)};
+                                    .target =
+                                        ResolveMemberVarRef(class_state, m)};
                               },
                               [&](const hir::LocalVarRef& l) -> mir::ExprData {
                                 return mir::LocalVarRef{
@@ -100,7 +100,7 @@ auto LowerProcessExprData(
             }
             return mir::AssignExpr{
                 .target = LowerRefAsLvalue(
-                    class_state, proc_state, stack, ref->get().target),
+                    class_state, proc_state, ref->get().target),
                 .value = body_state.TranslateExpr(a.rhs),
                 .type = unit_state.TranslateType(a.type)};
           },

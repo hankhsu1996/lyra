@@ -13,7 +13,6 @@
 #include "lyra/diag/diagnostic.hpp"
 #include "lyra/hir/expr.hpp"
 #include "lyra/hir/structural_scope.hpp"
-#include "lyra/hir/type.hpp"
 #include "lyra/lowering/hir_to_mir/lower_expr.hpp"
 #include "lyra/lowering/hir_to_mir/lower_process.hpp"
 #include "lyra/lowering/hir_to_mir/state.hpp"
@@ -21,7 +20,6 @@
 #include "lyra/mir/expr.hpp"
 #include "lyra/mir/member_var.hpp"
 #include "lyra/mir/stmt.hpp"
-#include "lyra/mir/type.hpp"
 #include "lyra/support/internal_error.hpp"
 #include "lyra/support/overloaded.hpp"
 
@@ -29,14 +27,8 @@ namespace lyra::lowering::hir_to_mir {
 
 namespace {
 
-// Source of truth for child-class names: HIR has no source-label
-// representation today, so lowering deterministically synthesizes one based on
-// the enclosing class's per-class generate ordinal and the arm tag. When HIR
-// later carries source labels, this helper prefers the source label and
-// falls back to synthesis.
-auto ChildClassNameFor(
-    const hir::StructuralScope& /*child_scope*/, std::size_t gen_index,
-    std::string_view arm_tag) -> std::string {
+auto ChildClassNameFor(std::size_t gen_index, std::string_view arm_tag)
+    -> std::string {
   return std::format("gen{}_{}", gen_index, arm_tag);
 }
 
@@ -80,15 +72,13 @@ auto EnumerateGenerateChildSpecs(
             specs.push_back(
                 {.scope_id = if_gen.then_scope,
                  .scope = &then_scope,
-                 .class_name =
-                     ChildClassNameFor(then_scope, gen_index, "then")});
+                 .class_name = ChildClassNameFor(gen_index, "then")});
             if (if_gen.else_scope.has_value()) {
               const auto& else_scope = gen.GetChildScope(*if_gen.else_scope);
               specs.push_back(
                   {.scope_id = *if_gen.else_scope,
                    .scope = &else_scope,
-                   .class_name =
-                       ChildClassNameFor(else_scope, gen_index, "else")});
+                   .class_name = ChildClassNameFor(gen_index, "else")});
             }
           },
           [&](const hir::CaseGenerate& case_gen) {
@@ -98,8 +88,8 @@ auto EnumerateGenerateChildSpecs(
               specs.push_back(
                   {.scope_id = case_gen.items[k].scope,
                    .scope = &item_scope,
-                   .class_name = ChildClassNameFor(
-                       item_scope, gen_index, std::format("case{}", k))});
+                   .class_name =
+                       ChildClassNameFor(gen_index, std::format("case{}", k))});
             }
             if (case_gen.default_scope.has_value()) {
               const auto& default_scope =
@@ -107,8 +97,7 @@ auto EnumerateGenerateChildSpecs(
               specs.push_back(
                   {.scope_id = *case_gen.default_scope,
                    .scope = &default_scope,
-                   .class_name =
-                       ChildClassNameFor(default_scope, gen_index, "default")});
+                   .class_name = ChildClassNameFor(gen_index, "default")});
             }
           },
       },
@@ -266,8 +255,8 @@ auto LowerGenerateAsStmt(
 
 auto LowerGenerateConstruction(
     const hir::StructuralScope& scope, const mir::ClassDecl& cls,
-    const std::vector<GenerateBindings>& bindings_by_generate,
-    mir::Body& out_body) -> diag::Result<void> {
+    const std::vector<GenerateBindings>& bindings_by_generate)
+    -> diag::Result<mir::Body> {
   BodyLoweringState body_state;
   for (std::size_t i = 0; i < scope.Generates().size(); ++i) {
     const auto& gen = scope.Generates()[i];
@@ -277,8 +266,7 @@ auto LowerGenerateConstruction(
     const mir::StmtId sid = body_state.AppendStmt(*std::move(stmt));
     body_state.AppendRootStmt(sid);
   }
-  out_body = body_state.Finish();
-  return {};
+  return body_state.Finish();
 }
 
 auto InstallGenerateOwnedChildClasses(
@@ -336,16 +324,16 @@ auto LowerScopeAsClass(
   }
 
   for (const auto& p : scope.Processes()) {
-    cls.AddProcess(LowerProcess(unit_state, class_state, scope, p));
+    cls.AddProcess(LowerProcess(unit_state, class_state, p));
   }
 
   auto bindings_r = InstallGenerateOwnedChildClasses(
       unit_state, class_state, stack, scope, cls);
   if (!bindings_r) return std::unexpected(std::move(bindings_r.error()));
 
-  auto ctor_r =
-      LowerGenerateConstruction(scope, cls, *bindings_r, cls.Constructor());
+  auto ctor_r = LowerGenerateConstruction(scope, cls, *bindings_r);
   if (!ctor_r) return std::unexpected(std::move(ctor_r.error()));
+  cls.Constructor() = *std::move(ctor_r);
 
   return cls;
 }

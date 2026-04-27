@@ -60,18 +60,27 @@ Do NOT proceed with formatting or staging until you are on a feature branch.
 
 ### Phase 1: Commit
 
+**Rule of thumb:** Local must mirror CI exactly. If CI runs it, the skill must run it. If `tools/policy/check_*.py` or `.github/workflows/` gain new entries, treat them as required even if this skill is out of date.
+
 1. **Check branch** - If on main, infer branch name from changes and create it
 2. **Format all files:**
    - C++: `find src include tests -name '*.cpp' -o -name '*.hpp' | xargs clang-format -i`
    - Markdown: `npx prettier --write "**/*.md"`
    - Bazel: `buildifier -r .`
-3. **Policy checks** - First run `git merge-base origin/main HEAD`, then use that SHA:
-   - `python3 tools/policy/check_exceptions.py --diff-base <SHA>`
-   - `python3 tools/policy/check_ascii.py --diff-base <SHA>`
-   - `python3 tools/policy/check_llvm_backend_boundaries.py --diff-base <SHA>`
-4. **Check git status** - Formatters may modify files beyond your original changeset. Run `git status --short` to see all modified files before staging.
-5. **Stage files** with `git add <files>` (not `git add -A`)
-6. **Commit** with `git commit` (this will prompt for permission - your checkpoint to review)
+3. **Format-check** (mirrors CI):
+   - `find src include tests -name '*.cpp' -o -name '*.hpp' | xargs clang-format --dry-run --Werror`
+   - `buildifier -mode=check -r .`
+   - `buildifier -mode=check -lint=warn -r .`
+   - `npm run format:check`
+4. **Policy checks** (mirrors CI):
+   - `python3 tools/policy/check_architecture.py`
+   - `python3 tools/policy/check_ascii.py --diff-base origin/main`
+   - `python3 tools/policy/check_cpp_style.py`
+   - `python3 tools/policy/check_exceptions.py --diff-base origin/main`
+5. **Sanity check** - `ls tools/policy/check_*.py` and `ls .github/workflows/`. If a new `check_*.py` exists that the skill does not run, run it anyway and tell the user the skill is out of date.
+6. **Check git status** - Formatters may modify files beyond your original changeset. Run `git status --short` to see all modified files before staging.
+7. **Stage files** with `git add <files>` (not `git add -A`)
+8. **Commit** with `git commit` (this will prompt for permission - your checkpoint to review)
 
 ### Phase 2: PR
 
