@@ -9,6 +9,7 @@
 
 #include <slang/ast/Expression.h>
 #include <slang/ast/symbols/BlockSymbols.h>
+#include <slang/ast/symbols/MemberSymbols.h>
 
 #include "expression/lower.hpp"
 #include "facts.hpp"
@@ -166,6 +167,60 @@ auto BuildCaseGenerate(
       .condition = cond_id,
       .items = std::move(items),
       .default_scope = default_id};
+  return gen;
+}
+
+auto BuildLoopGenerate(
+    const UnitLoweringFacts& unit_facts, UnitLoweringState& unit_state,
+    ScopeLoweringState& parent_state, ScopeStack& stack,
+    const slang::ast::GenerateBlockArraySymbol& array)
+    -> diag::Result<hir::Generate> {
+  if (array.genvar == nullptr || array.initialExpression == nullptr ||
+      array.stopExpression == nullptr || array.iterExpression == nullptr) {
+    throw support::InternalError(
+        "BuildLoopGenerate: GenerateBlockArraySymbol is missing bound "
+        "header expressions or canonical genvar");
+  }
+
+  LoopHeaderState loop_state{
+      .expected_name = array.genvar->name,
+      .synthetic_symbol = nullptr,
+      .loop_var_id = std::nullopt};
+
+  auto initial_expr = LowerLoopHeaderExpr(
+      unit_facts, unit_state, parent_state, stack, loop_state,
+      *array.initialExpression);
+  if (!initial_expr) return std::unexpected(std::move(initial_expr.error()));
+  const hir::ExprId initial_id =
+      parent_state.AppendExpr(*std::move(initial_expr));
+
+  auto stop_expr = LowerLoopHeaderExpr(
+      unit_facts, unit_state, parent_state, stack, loop_state,
+      *array.stopExpression);
+  if (!stop_expr) return std::unexpected(std::move(stop_expr.error()));
+  const hir::ExprId stop_id = parent_state.AppendExpr(*std::move(stop_expr));
+
+  auto iter_expr = LowerLoopHeaderExpr(
+      unit_facts, unit_state, parent_state, stack, loop_state,
+      *array.iterExpression);
+  if (!iter_expr) return std::unexpected(std::move(iter_expr.error()));
+  const hir::ExprId iter_id = parent_state.AppendExpr(*std::move(iter_expr));
+
+  if (!loop_state.loop_var_id.has_value()) {
+    throw support::InternalError(
+        "BuildLoopGenerate: loop-generate header did not expose a "
+        "synthetic loop variable");
+  }
+
+  hir::Generate gen{};
+  const hir::StructuralScopeId body_scope_id =
+      gen.AddChildScope(hir::StructuralScope{});
+  gen.data = hir::LoopGenerate{
+      .loop_var = *loop_state.loop_var_id,
+      .initial = initial_id,
+      .stop = stop_id,
+      .iter = iter_id,
+      .body_scope = body_scope_id};
   return gen;
 }
 

@@ -100,6 +100,10 @@ auto EnumerateGenerateChildSpecs(
                    .class_name = ChildClassNameFor(gen_index, "default")});
             }
           },
+          [](const hir::LoopGenerate&) {
+            // Loop-generate is rejected at LowerGenerateAsStmt with a clean
+            // diagnostic; no child classes need to be installed here.
+          },
       },
       gen.data);
   return specs;
@@ -248,6 +252,12 @@ auto LowerGenerateAsStmt(
                         .cases = std::move(cases),
                         .default_body = default_body},
                 .child_bodies = std::move(child_bodies)};
+          },
+          [](const hir::LoopGenerate&) -> diag::Result<mir::Stmt> {
+            return diag::Unsupported(
+                diag::DiagCode::kUnsupportedForGenerate,
+                "for-generate lowering is not supported yet",
+                diag::UnsupportedCategory::kFeature);
           },
       },
       gen.data);

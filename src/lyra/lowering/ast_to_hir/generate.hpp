@@ -23,4 +23,10 @@ auto BuildCaseGenerate(
     std::span<const slang::ast::GenerateBlockSymbol* const> siblings)
     -> diag::Result<hir::Generate>;
 
+auto BuildLoopGenerate(
+    const UnitLoweringFacts& unit_facts, UnitLoweringState& unit_state,
+    ScopeLoweringState& parent_state, ScopeStack& stack,
+    const slang::ast::GenerateBlockArraySymbol& array)
+    -> diag::Result<hir::Generate>;
+
 }  // namespace lyra::lowering::ast_to_hir

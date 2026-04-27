@@ -1,0 +1,16 @@
+id: errors.loop_generate_unsupported
+tags: [errors, diag]
+input:
+  command: [emit, cpp]
+  project: false
+  top: Top
+  files: [main.sv]
+  args: ["--no-color"]
+expect:
+  exit: 1
+  stderr:
+    contains:
+      - "unsupported:"
+      - "for-generate lowering is not supported yet"
+    not_contains:
+      - "internal error"

@@ -166,6 +166,8 @@ class HirDumper {
     switch (op) {
       case BinaryOp::kAdd:
         return "Add";
+      case BinaryOp::kLessThan:
+        return "LessThan";
     }
     throw support::InternalError("HirDumper: unknown BinaryOp");
   }
@@ -180,6 +182,11 @@ class HirDumper {
             },
             [](const LocalVarRef& r) -> std::string {
               return std::format("LocalVar[{}]", r.target.value);
+            },
+            [](const LoopVarRef& r) -> std::string {
+              return std::format(
+                  "LoopVar[{}](hops={})", r.target.value,
+                  r.parent_scope_hops.value);
             },
         },
         v);
@@ -298,6 +305,10 @@ class HirDumper {
           std::format(
               "MemberVar[{}] \"{}\" : Type[{}]", i, v.name, v.type.value));
     }
+    for (std::size_t i = 0; i < s.LoopVarDecls().size(); ++i) {
+      const auto& lv = s.LoopVarDecls()[i];
+      Line(std::format("LoopVarDecl[{}] \"{}\"", i, lv.name));
+    }
     for (std::size_t i = 0; i < s.Subroutines().size(); ++i) {
       const auto& d = s.Subroutines()[i];
       Line(
@@ -305,6 +316,14 @@ class HirDumper {
               "Subroutine[{}] {} \"{}\" : Type[{}]", i,
               d.kind == SubroutineKind::kTask ? "task" : "function", d.name,
               d.result_type.value));
+    }
+    if (!s.Exprs().empty()) {
+      Line("Exprs:");
+      Indent();
+      for (std::size_t i = 0; i < s.Exprs().size(); ++i) {
+        Line(std::format("Expr[{}] {}", i, FormatExprData(s.Exprs()[i].data)));
+      }
+      Dedent();
     }
     for (const auto& p : s.Processes()) {
       DumpProcess(p);
@@ -433,6 +452,20 @@ class HirDumper {
               } else {
                 Line("default_scope: <none>");
               }
+              Dedent();
+            },
+            [&](const LoopGenerate& lg) {
+              Line(
+                  std::format(
+                      "Generate LoopGenerate loop_var=LoopVar[{}] "
+                      "initial=Expr[{}] stop=Expr[{}] iter=Expr[{}]",
+                      lg.loop_var.value, lg.initial.value, lg.stop.value,
+                      lg.iter.value));
+              Indent();
+              Line("body_scope:");
+              Indent();
+              DumpScope(g.child_scopes.at(lg.body_scope.value));
+              Dedent();
               Dedent();
             },
         },

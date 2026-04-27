@@ -8,6 +8,7 @@
 #include <vector>
 
 #include "lyra/hir/expr.hpp"
+#include "lyra/hir/loop_var.hpp"
 #include "lyra/hir/member_var.hpp"
 #include "lyra/hir/process.hpp"
 #include "lyra/hir/subroutine.hpp"
@@ -46,7 +47,15 @@ struct CaseGenerate {
   std::optional<StructuralScopeId> default_scope;
 };
 
-using GenerateData = std::variant<IfGenerate, CaseGenerate>;
+struct LoopGenerate {
+  LoopVarDeclId loop_var;
+  ExprId initial;
+  ExprId stop;
+  ExprId iter;
+  StructuralScopeId body_scope;
+};
+
+using GenerateData = std::variant<IfGenerate, CaseGenerate, LoopGenerate>;
 
 struct Generate {
   GenerateData data;
@@ -71,12 +80,14 @@ class StructuralScope {
   }
 
   auto AddMemberVar(std::string name, TypeId type) -> MemberVarId;
+  auto AddLoopVarDecl(std::string name) -> LoopVarDeclId;
   auto AddExpr(Expr expr) -> ExprId;
   auto AddProcess(Process process) -> ProcessId;
   auto AddGenerate(Generate generate) -> GenerateId;
   auto AddSubroutine(UserSubroutineDecl decl) -> SubroutineId;
 
   [[nodiscard]] auto MemberVars() const -> const std::vector<MemberVar>&;
+  [[nodiscard]] auto LoopVarDecls() const -> const std::vector<LoopVarDecl>&;
   [[nodiscard]] auto Exprs() const -> const std::vector<Expr>&;
   [[nodiscard]] auto Processes() const -> const std::vector<Process>&;
   [[nodiscard]] auto Generates() const -> const std::vector<Generate>&;
@@ -84,6 +95,8 @@ class StructuralScope {
       -> const std::vector<UserSubroutineDecl>&;
 
   [[nodiscard]] auto GetMemberVar(MemberVarId id) const -> const MemberVar&;
+  [[nodiscard]] auto GetLoopVarDecl(LoopVarDeclId id) const
+      -> const LoopVarDecl&;
   [[nodiscard]] auto GetExpr(ExprId id) const -> const Expr&;
   [[nodiscard]] auto GetProcess(ProcessId id) const -> const Process&;
   [[nodiscard]] auto GetGenerate(GenerateId id) const -> const Generate&;
@@ -95,6 +108,7 @@ class StructuralScope {
 
   StructuralScopeId id_{};
   std::vector<MemberVar> member_vars_;
+  std::vector<LoopVarDecl> loop_var_decls_;
   std::vector<Expr> exprs_;
   std::vector<Process> processes_;
   std::vector<Generate> generates_;
