@@ -8,7 +8,6 @@
 #include "lyra/mir/member_var.hpp"
 #include "lyra/mir/process.hpp"
 #include "lyra/mir/stmt.hpp"
-#include "lyra/mir/type.hpp"
 
 namespace lyra::mir {
 
@@ -23,20 +22,6 @@ auto ClassDecl::Name() const -> const std::string& {
   return name_;
 }
 
-auto ClassDecl::Types() const -> const std::vector<Type>& {
-  return types_;
-}
-
-auto ClassDecl::GetType(TypeId id) const -> const Type& {
-  return types_.at(id.value);
-}
-
-auto ClassDecl::AddType(TypeData data) -> TypeId {
-  const TypeId id{static_cast<std::uint32_t>(types_.size())};
-  types_.push_back(Type{.data = std::move(data)});
-  return id;
-}
-
 auto ClassDecl::MemberVars() const -> const std::vector<MemberVar>& {
   return member_vars_;
 }
@@ -45,9 +30,10 @@ auto ClassDecl::GetMemberVar(MemberVarId id) const -> const MemberVar& {
   return member_vars_.at(id.value);
 }
 
-auto ClassDecl::AddMemberVar(std::string name, TypeId type) -> MemberVarId {
+auto ClassDecl::AddMemberVar(std::string name, MemberKind kind) -> MemberVarId {
   const MemberVarId id{static_cast<std::uint32_t>(member_vars_.size())};
-  member_vars_.push_back(MemberVar{.name = std::move(name), .type = type});
+  member_vars_.push_back(
+      MemberVar{.name = std::move(name), .kind = std::move(kind)});
   return id;
 }
 
@@ -70,6 +56,20 @@ auto ClassDecl::GetProcess(ProcessId id) const -> const Process& {
 auto ClassDecl::AddProcess(Process process) -> ProcessId {
   const ProcessId id{static_cast<std::uint32_t>(processes_.size())};
   processes_.push_back(std::move(process));
+  return id;
+}
+
+auto ClassDecl::Classes() const -> const std::vector<ClassDecl>& {
+  return classes_;
+}
+
+auto ClassDecl::GetClass(ClassDeclId id) const -> const ClassDecl& {
+  return classes_.at(id.value);
+}
+
+auto ClassDecl::AddClass(ClassDecl child) -> ClassDeclId {
+  const ClassDeclId id{static_cast<std::uint32_t>(classes_.size())};
+  classes_.push_back(std::move(child));
   return id;
 }
 

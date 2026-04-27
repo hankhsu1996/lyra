@@ -50,6 +50,10 @@ using GenerateData = std::variant<IfGenerate, CaseGenerate>;
 struct Generate {
   GenerateData data;
   std::vector<StructuralScope> child_scopes;
+
+  auto AddChildScope(StructuralScope scope) -> StructuralScopeId;
+  [[nodiscard]] auto GetChildScope(StructuralScopeId id) const
+      -> const StructuralScope&;
 };
 
 class StructuralScope {
@@ -60,6 +64,10 @@ class StructuralScope {
   auto operator=(StructuralScope&&) noexcept -> StructuralScope&;
   StructuralScope(const StructuralScope&) = delete;
   auto operator=(const StructuralScope&) -> StructuralScope& = delete;
+
+  [[nodiscard]] auto Id() const -> StructuralScopeId {
+    return id_;
+  }
 
   auto AddMemberVar(std::string name, TypeId type) -> MemberVarId;
   auto AddExpr(Expr expr) -> ExprId;
@@ -77,10 +85,26 @@ class StructuralScope {
   [[nodiscard]] auto GetGenerate(GenerateId id) const -> const Generate&;
 
  private:
+  friend struct Generate;
+
+  StructuralScopeId id_{};
   std::vector<MemberVar> member_vars_;
   std::vector<Expr> exprs_;
   std::vector<Process> processes_;
   std::vector<Generate> generates_;
 };
+
+inline auto Generate::AddChildScope(StructuralScope scope)
+    -> StructuralScopeId {
+  const StructuralScopeId id{static_cast<std::uint32_t>(child_scopes.size())};
+  scope.id_ = id;
+  child_scopes.push_back(std::move(scope));
+  return id;
+}
+
+inline auto Generate::GetChildScope(StructuralScopeId id) const
+    -> const StructuralScope& {
+  return child_scopes.at(id.value);
+}
 
 }  // namespace lyra::hir

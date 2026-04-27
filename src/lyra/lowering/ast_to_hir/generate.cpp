@@ -25,16 +25,13 @@ namespace {
 
 auto AddChildScope(
     const UnitLoweringFacts& unit_facts, UnitLoweringState& unit_state,
-    ScopeStack& stack, std::vector<hir::StructuralScope>& child_scopes,
+    ScopeStack& stack, hir::Generate& generate,
     const slang::ast::GenerateBlockSymbol& block)
     -> diag::Result<hir::StructuralScopeId> {
   hir::StructuralScope scope;
   auto r = LowerScopeInto(unit_facts, unit_state, scope, block, stack);
   if (!r) return std::unexpected(std::move(r.error()));
-  const hir::StructuralScopeId id{
-      .value = static_cast<std::uint32_t>(child_scopes.size())};
-  child_scopes.push_back(std::move(scope));
-  return id;
+  return generate.AddChildScope(std::move(scope));
 }
 
 }  // namespace
@@ -79,28 +76,21 @@ auto BuildIfGenerate(
   if (!cond_expr) return std::unexpected(std::move(cond_expr.error()));
   const hir::ExprId cond_id = parent_state.AppendExpr(*std::move(cond_expr));
 
-  std::vector<hir::StructuralScope> child_scopes;
-  child_scopes.reserve(else_block != nullptr ? 2 : 1);
+  hir::Generate gen{};
 
-  auto then_id =
-      AddChildScope(unit_facts, unit_state, stack, child_scopes, *then_block);
+  auto then_id = AddChildScope(unit_facts, unit_state, stack, gen, *then_block);
   if (!then_id) return std::unexpected(std::move(then_id.error()));
 
   std::optional<hir::StructuralScopeId> else_id;
   if (else_block != nullptr) {
-    auto built =
-        AddChildScope(unit_facts, unit_state, stack, child_scopes, *else_block);
+    auto built = AddChildScope(unit_facts, unit_state, stack, gen, *else_block);
     if (!built) return std::unexpected(std::move(built.error()));
     else_id = *built;
   }
 
-  return hir::Generate{
-      .data =
-          hir::IfGenerate{
-              .condition = cond_id,
-              .then_scope = *then_id,
-              .else_scope = else_id},
-      .child_scopes = std::move(child_scopes)};
+  gen.data = hir::IfGenerate{
+      .condition = cond_id, .then_scope = *then_id, .else_scope = else_id};
+  return gen;
 }
 
 auto BuildCaseGenerate(
@@ -129,8 +119,7 @@ auto BuildCaseGenerate(
   if (!cond_expr) return std::unexpected(std::move(cond_expr.error()));
   const hir::ExprId cond_id = parent_state.AppendExpr(*std::move(cond_expr));
 
-  std::vector<hir::StructuralScope> child_scopes;
-  child_scopes.reserve(siblings.size());
+  hir::Generate gen{};
 
   std::vector<hir::CaseGenerateItem> items;
   std::optional<hir::StructuralScopeId> default_id;
@@ -149,7 +138,7 @@ auto BuildCaseGenerate(
               parent_state.AppendExpr(*std::move(label_expr_lowered)));
         }
         auto item_id =
-            AddChildScope(unit_facts, unit_state, stack, child_scopes, *block);
+            AddChildScope(unit_facts, unit_state, stack, gen, *block);
         if (!item_id) return std::unexpected(std::move(item_id.error()));
         items.push_back(
             hir::CaseGenerateItem{
@@ -162,8 +151,7 @@ auto BuildCaseGenerate(
               "BuildCaseGenerate: case-generate has more than one default "
               "branch");
         }
-        auto built =
-            AddChildScope(unit_facts, unit_state, stack, child_scopes, *block);
+        auto built = AddChildScope(unit_facts, unit_state, stack, gen, *block);
         if (!built) return std::unexpected(std::move(built.error()));
         default_id = *built;
         break;
@@ -174,13 +162,11 @@ auto BuildCaseGenerate(
     }
   }
 
-  return hir::Generate{
-      .data =
-          hir::CaseGenerate{
-              .condition = cond_id,
-              .items = std::move(items),
-              .default_scope = default_id},
-      .child_scopes = std::move(child_scopes)};
+  gen.data = hir::CaseGenerate{
+      .condition = cond_id,
+      .items = std::move(items),
+      .default_scope = default_id};
+  return gen;
 }
 
 }  // namespace lyra::lowering::ast_to_hir

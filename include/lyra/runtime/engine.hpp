@@ -21,6 +21,9 @@ class Engine {
   auto Run() -> int;
 
   void AddProcess(RuntimeScope& owner, ProcessKind kind, Process process);
+  auto CreateChildScope(
+      RuntimeScope& parent, std::string name, RuntimeScopeKind kind)
+      -> RuntimeScope&;
 
  private:
   std::vector<std::unique_ptr<RuntimeScope>> scopes_;

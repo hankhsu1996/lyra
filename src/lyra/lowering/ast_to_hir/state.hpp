@@ -19,7 +19,6 @@
 #include "lyra/hir/stmt.hpp"
 #include "lyra/hir/structural_scope.hpp"
 #include "lyra/hir/type.hpp"
-#include "lyra/hir/value_ref.hpp"
 #include "lyra/support/internal_error.hpp"
 
 namespace lyra::lowering::ast_to_hir {

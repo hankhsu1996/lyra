@@ -28,9 +28,21 @@ namespace {
 class MirDumper {
  public:
   auto Dump(const CompilationUnit& unit) -> std::string {
+    Line("CompilationUnit");
+    Indent();
+    Line("Types:");
+    Indent();
+    for (std::size_t i = 0; i < unit.Types().size(); ++i) {
+      Line(std::format("[{}] {}", i, FormatType(unit.Types()[i])));
+    }
+    Dedent();
+    Line("Classes:");
+    Indent();
     for (const auto& c : unit.Classes()) {
       DumpClass(c);
     }
+    Dedent();
+    Dedent();
     return std::move(out_);
   }
 
@@ -206,6 +218,19 @@ class MirDumper {
         e.data);
   }
 
+  static auto FormatMemberKind(const MemberKind& kind) -> std::string {
+    return std::visit(
+        support::Overloaded{
+            [](const ValueMember& v) -> std::string {
+              return std::format("Type[{}]", v.type.value);
+            },
+            [](const ChildClassMember& c) -> std::string {
+              return std::format("Class[{}]", c.target.value);
+            },
+        },
+        kind);
+  }
+
   static auto FormatProcessKind(const Process& p) -> std::string {
     switch (p.kind) {
       case ProcessKind::kInitial:
@@ -218,10 +243,13 @@ class MirDumper {
     Line(std::format("Class \"{}\"", c.Name()));
     Indent();
 
-    Line("Types:");
+    Line("Classes:");
     Indent();
-    for (std::size_t i = 0; i < c.Types().size(); ++i) {
-      Line(std::format("[{}] {}", i, FormatType(c.Types()[i])));
+    for (std::size_t i = 0; i < c.Classes().size(); ++i) {
+      Line(std::format("[{}]", i));
+      Indent();
+      DumpClass(c.Classes()[i]);
+      Dedent();
     }
     Dedent();
 
@@ -229,7 +257,8 @@ class MirDumper {
     Indent();
     for (std::size_t i = 0; i < c.MemberVars().size(); ++i) {
       const auto& m = c.MemberVars()[i];
-      Line(std::format("[{}] \"{}\" : Type[{}]", i, m.name, m.type.value));
+      Line(
+          std::format("[{}] \"{}\" : {}", i, m.name, FormatMemberKind(m.kind)));
     }
     Dedent();
 
@@ -306,6 +335,13 @@ class MirDumper {
             [&](const IfStmt& s) { DumpIfStmt(stmt, s, enclosing, id); },
             [&](const SwitchStmt& s) {
               DumpSwitchStmt(stmt, s, enclosing, id);
+            },
+            [&](const ConstructMemberStmt& s) {
+              Line(
+                  std::format(
+                      "Stmt[{}] ConstructMemberStmt target=MemberVar[{}] "
+                      "class=Class[{}]",
+                      id.value, s.target.value, s.class_id.value));
             },
         },
         stmt.data);

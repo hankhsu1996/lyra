@@ -1,16 +1,17 @@
 #pragma once
 
+#include <string>
+
 #include "lyra/diag/diagnostic.hpp"
 #include "lyra/hir/structural_scope.hpp"
-#include "lyra/lowering/hir_to_mir/facts.hpp"
 #include "lyra/lowering/hir_to_mir/state.hpp"
-#include "lyra/mir/stmt.hpp"
+#include "lyra/mir/class_decl.hpp"
 
 namespace lyra::lowering::hir_to_mir {
 
-auto LowerConstructorIntoBody(
-    const UnitLoweringFacts& unit_facts, const UnitLoweringState& unit_state,
-    const hir::StructuralScope& root_scope, mir::Body& out_body)
-    -> diag::Result<void>;
+auto LowerScopeAsClass(
+    UnitLoweringState& unit_state, const ClassLoweringState* parent_class_state,
+    ScopeStack& stack, const hir::StructuralScope& scope, std::string name)
+    -> diag::Result<mir::ClassDecl>;
 
 }  // namespace lyra::lowering::hir_to_mir

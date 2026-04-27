@@ -8,7 +8,6 @@
 #include "lyra/hir/local_var.hpp"
 #include "lyra/hir/process.hpp"
 #include "lyra/hir/structural_scope.hpp"
-#include "lyra/lowering/hir_to_mir/facts.hpp"
 #include "lyra/lowering/hir_to_mir/lower_expr.hpp"
 #include "lyra/lowering/hir_to_mir/lower_stmt.hpp"
 #include "lyra/lowering/hir_to_mir/state.hpp"
@@ -33,7 +32,7 @@ auto LowerProcessKind(hir::ProcessKind kind) -> mir::ProcessKind {
 }  // namespace
 
 auto LowerProcess(
-    const UnitLoweringFacts& unit_facts, const UnitLoweringState& unit_state,
+    const UnitLoweringState& unit_state, const ClassLoweringState& class_state,
     const hir::StructuralScope& process_scope, const hir::Process& src)
     -> mir::Process {
   ScopeStack stack;
@@ -56,7 +55,7 @@ auto LowerProcess(
     body_state.AppendExpr(
         hir_id, mir::Expr{
                     .data = LowerProcessExprData(
-                        unit_facts, unit_state, proc_state, body_state, stack,
+                        unit_state, class_state, proc_state, body_state, stack,
                         src, src.exprs[i].data)});
   }
 

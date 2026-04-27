@@ -7,8 +7,10 @@
 #include <variant>
 #include <vector>
 
+#include "lyra/mir/class_decl_id.hpp"
 #include "lyra/mir/expr.hpp"
 #include "lyra/mir/local_var.hpp"
+#include "lyra/mir/member_var.hpp"
 
 namespace lyra::mir {
 
@@ -62,8 +64,14 @@ struct SwitchStmt {
   std::optional<BodyId> default_body;
 };
 
-using StmtData =
-    std::variant<LocalVarDeclStmt, ExprStmt, BlockStmt, IfStmt, SwitchStmt>;
+struct ConstructMemberStmt {
+  MemberVarId target;
+  ClassDeclId class_id;
+};
+
+using StmtData = std::variant<
+    LocalVarDeclStmt, ExprStmt, BlockStmt, IfStmt, SwitchStmt,
+    ConstructMemberStmt>;
 
 struct Stmt {
   std::optional<std::string> label;

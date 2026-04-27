@@ -1,14 +1,21 @@
 #pragma once
 
 #include "lyra/mir/class_decl.hpp"
+#include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/stmt.hpp"
 
 namespace lyra::backend::cpp {
 
 class RenderContext {
  public:
-  RenderContext(const mir::ClassDecl& class_decl, const mir::Body& body)
-      : class_decl_(&class_decl), body_(&body) {
+  RenderContext(
+      const mir::CompilationUnit& unit, const mir::ClassDecl& class_decl,
+      const mir::Body& body)
+      : unit_(&unit), class_decl_(&class_decl), body_(&body) {
+  }
+
+  [[nodiscard]] auto Unit() const -> const mir::CompilationUnit& {
+    return *unit_;
   }
 
   [[nodiscard]] auto Class() const -> const mir::ClassDecl& {
@@ -20,6 +27,7 @@ class RenderContext {
   }
 
  private:
+  const mir::CompilationUnit* unit_;
   const mir::ClassDecl* class_decl_;
   const mir::Body* body_;
 };
