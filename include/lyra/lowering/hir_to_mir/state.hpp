@@ -9,6 +9,7 @@
 #include "lyra/hir/local_var.hpp"
 #include "lyra/hir/member_var.hpp"
 #include "lyra/hir/structural_scope.hpp"
+#include "lyra/hir/subroutine.hpp"
 #include "lyra/hir/type.hpp"
 #include "lyra/mir/class_decl_id.hpp"
 #include "lyra/mir/compilation_unit.hpp"
@@ -98,9 +99,32 @@ class ClassLoweringState {
         hir::ParentScopeHops{hops.value - 1}, hir_id);
   }
 
+  void BindUserSubroutine(
+      hir::SubroutineId hir_id, mir::UserSubroutineTargetId mir_id) {
+    if (hir_id.value >= user_subroutine_map_.size()) {
+      user_subroutine_map_.resize(hir_id.value + 1);
+    }
+    user_subroutine_map_[hir_id.value] = mir_id;
+  }
+
+  [[nodiscard]] auto LookupUserSubroutine(
+      hir::ParentScopeHops hops, hir::SubroutineId hir_id) const
+      -> mir::UserSubroutineTargetId {
+    if (hops.value == 0) {
+      return user_subroutine_map_.at(hir_id.value);
+    }
+    if (parent_ == nullptr) {
+      throw support::InternalError(
+          "ClassLoweringState::LookupUserSubroutine: hops out of class chain");
+    }
+    return parent_->LookupUserSubroutine(
+        hir::ParentScopeHops{hops.value - 1}, hir_id);
+  }
+
  private:
   const ClassLoweringState* parent_;
   std::vector<mir::MemberVarId> member_var_map_;
+  std::vector<mir::UserSubroutineTargetId> user_subroutine_map_;
 };
 
 class ProcessLoweringState {

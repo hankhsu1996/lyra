@@ -7,8 +7,10 @@
 #include <vector>
 
 #include <slang/ast/Scope.h>
+#include <slang/ast/SemanticFacts.h>
 #include <slang/ast/Symbol.h>
 #include <slang/ast/symbols/BlockSymbols.h>
+#include <slang/ast/symbols/SubroutineSymbols.h>
 #include <slang/ast/symbols/VariableSymbols.h>
 #include <slang/syntax/SyntaxNode.h>
 
@@ -16,6 +18,8 @@
 #include "generate.hpp"
 #include "lyra/diag/diagnostic.hpp"
 #include "lyra/hir/structural_scope.hpp"
+#include "lyra/hir/subroutine.hpp"
+#include "lyra/hir/type.hpp"
 #include "lyra/support/internal_error.hpp"
 #include "process.hpp"
 #include "state.hpp"
@@ -24,6 +28,18 @@
 namespace lyra::lowering::ast_to_hir {
 
 namespace {
+
+auto FromSlangSubroutineKind(slang::ast::SubroutineKind k)
+    -> hir::SubroutineKind {
+  switch (k) {
+    case slang::ast::SubroutineKind::Function:
+      return hir::SubroutineKind::kFunction;
+    case slang::ast::SubroutineKind::Task:
+      return hir::SubroutineKind::kTask;
+  }
+  throw support::InternalError(
+      "FromSlangSubroutineKind: unknown SubroutineKind");
+}
 
 auto IsCaseConstruct(
     const std::vector<const slang::ast::GenerateBlockSymbol*>& siblings)
@@ -74,6 +90,25 @@ auto LowerScopeInto(
     }
     const auto type_id = unit_state.AddType(*std::move(type_data));
     scope_state.AddMemberVar(var, type_id);
+  }
+
+  for (const auto& member : slang_scope.members()) {
+    if (member.kind != slang::ast::SymbolKind::Subroutine) {
+      continue;
+    }
+    const auto& sym = member.as<slang::ast::SubroutineSymbol>();
+    auto return_type_data =
+        LowerTypeData(sym.getReturnType(), mapper.PointSpanOf(sym.location));
+    if (!return_type_data) {
+      return std::unexpected(std::move(return_type_data.error()));
+    }
+    const auto return_type_id =
+        unit_state.AddType(*std::move(return_type_data));
+    scope_state.AddSubroutine(
+        sym, hir::UserSubroutineDecl{
+                 .name = std::string{sym.name},
+                 .kind = FromSlangSubroutineKind(sym.subroutineKind),
+                 .result_type = return_type_id});
   }
 
   for (const auto& member : slang_scope.members()) {

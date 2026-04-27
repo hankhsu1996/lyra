@@ -9,6 +9,7 @@
 #include <utility>
 #include <vector>
 
+#include <slang/ast/symbols/SubroutineSymbols.h>
 #include <slang/ast/symbols/VariableSymbols.h>
 
 #include "lyra/hir/expr.hpp"
@@ -18,6 +19,7 @@
 #include "lyra/hir/process.hpp"
 #include "lyra/hir/stmt.hpp"
 #include "lyra/hir/structural_scope.hpp"
+#include "lyra/hir/subroutine.hpp"
 #include "lyra/hir/type.hpp"
 #include "lyra/support/internal_error.hpp"
 
@@ -38,6 +40,14 @@ struct MemberVarBinding {
 
 using MemberVarBindings =
     std::unordered_map<const slang::ast::VariableSymbol*, MemberVarBinding>;
+
+struct SubroutineBinding {
+  ScopeFrameId owner_frame;
+  hir::SubroutineId local_id;
+};
+
+using SubroutineBindings =
+    std::unordered_map<const slang::ast::SubroutineSymbol*, SubroutineBinding>;
 
 class UnitLoweringState {
  public:
@@ -73,6 +83,23 @@ class UnitLoweringState {
     return it->second;
   }
 
+  void RegisterSubroutineBinding(
+      const slang::ast::SubroutineSymbol& sym, ScopeFrameId owner_frame,
+      hir::SubroutineId local) {
+    subroutine_bindings_.emplace(
+        &sym, SubroutineBinding{.owner_frame = owner_frame, .local_id = local});
+  }
+
+  [[nodiscard]] auto LookupSubroutineBinding(
+      const slang::ast::SubroutineSymbol& sym) const
+      -> std::optional<SubroutineBinding> {
+    const auto it = subroutine_bindings_.find(&sym);
+    if (it == subroutine_bindings_.end()) {
+      return std::nullopt;
+    }
+    return it->second;
+  }
+
   auto MoveHirUnit() -> hir::ModuleUnit {
     return std::move(hir_unit_);
   }
@@ -80,6 +107,7 @@ class UnitLoweringState {
  private:
   hir::ModuleUnit hir_unit_;
   MemberVarBindings member_var_bindings_;
+  SubroutineBindings subroutine_bindings_;
 };
 
 class ScopeStack {
@@ -163,6 +191,14 @@ class ScopeLoweringState {
 
   auto AddGenerate(hir::Generate generate) -> hir::GenerateId {
     return scope_->AddGenerate(std::move(generate));
+  }
+
+  auto AddSubroutine(
+      const slang::ast::SubroutineSymbol& sym, hir::UserSubroutineDecl decl)
+      -> hir::SubroutineId {
+    const auto local = scope_->AddSubroutine(std::move(decl));
+    unit_state_->RegisterSubroutineBinding(sym, frame_, local);
+    return local;
   }
 
   [[nodiscard]] auto UnitState() -> UnitLoweringState& {

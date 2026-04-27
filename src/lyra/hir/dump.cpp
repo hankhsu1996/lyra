@@ -17,10 +17,13 @@
 #include "lyra/hir/process.hpp"
 #include "lyra/hir/stmt.hpp"
 #include "lyra/hir/structural_scope.hpp"
+#include "lyra/hir/subroutine.hpp"
+#include "lyra/hir/subroutine_ref.hpp"
 #include "lyra/hir/type.hpp"
 #include "lyra/hir/value_ref.hpp"
 #include "lyra/support/internal_error.hpp"
 #include "lyra/support/overloaded.hpp"
+#include "lyra/support/system_subroutine.hpp"
 
 namespace lyra::hir {
 
@@ -195,7 +198,36 @@ class HirDumper {
         p);
   }
 
-  static auto FormatExprData(const ExprData& data) -> std::string {
+  [[nodiscard]] auto FormatSubroutineRef(const SubroutineRef& callee) const
+      -> std::string {
+    return std::visit(
+        support::Overloaded{
+            [this](const UserSubroutineRef& u) -> std::string {
+              const auto& owner = ResolveScope(u.parent_scope_hops);
+              const auto& decl = owner.GetSubroutine(u.id);
+              return std::format(
+                  "UserSubroutine[{}](hops={}) \"{}\"", u.id.value,
+                  u.parent_scope_hops.value, decl.name);
+            },
+            [](const SystemSubroutineRef& s) -> std::string {
+              const auto& desc = support::LookupSystemSubroutine(s.id);
+              return std::format(
+                  "SystemSubroutine[{}] \"{}\"", s.id.value, desc.name);
+            },
+        },
+        callee);
+  }
+
+  [[nodiscard]] auto ResolveScope(ParentScopeHops hops) const
+      -> const StructuralScope& {
+    if (hops.value >= scope_stack_.size()) {
+      throw support::InternalError(
+          "HirDumper::ResolveScope: ParentScopeHops out of range");
+    }
+    return *scope_stack_[scope_stack_.size() - 1 - hops.value];
+  }
+
+  [[nodiscard]] auto FormatExprData(const ExprData& data) const -> std::string {
     return std::visit(
         support::Overloaded{
             [](const PrimaryExpr& p) -> std::string {
@@ -211,15 +243,28 @@ class HirDumper {
                   "AssignExpr lhs=Expr[{}] rhs=Expr[{}] type=Type[{}]",
                   a.lhs.value, a.rhs.value, a.type.value);
             },
+            [this](const CallExpr& c) -> std::string {
+              std::string args;
+              for (std::size_t i = 0; i < c.arguments.size(); ++i) {
+                if (i != 0) {
+                  args += ", ";
+                }
+                args += std::format("Expr[{}]", c.arguments[i].value);
+              }
+              return std::format(
+                  "CallExpr callee={} args=[{}] type=Type[{}]",
+                  FormatSubroutineRef(c.callee), args, c.result_type.value);
+            },
         },
         data);
   }
 
-  static auto FormatProcExpr(const Process& p, ExprId id) -> std::string {
+  [[nodiscard]] auto FormatProcExpr(const Process& p, ExprId id) const
+      -> std::string {
     return FormatExprData(p.exprs.at(id.value).data);
   }
 
-  static auto FormatScopeExpr(const StructuralScope& s, ExprId id)
+  [[nodiscard]] auto FormatScopeExpr(const StructuralScope& s, ExprId id) const
       -> std::string {
     return FormatExprData(s.GetExpr(id).data);
   }
@@ -244,6 +289,7 @@ class HirDumper {
   }
 
   void DumpScope(const StructuralScope& s) {
+    scope_stack_.push_back(&s);
     Line("Scope:");
     Indent();
     for (std::size_t i = 0; i < s.MemberVars().size(); ++i) {
@@ -252,6 +298,14 @@ class HirDumper {
           std::format(
               "MemberVar[{}] \"{}\" : Type[{}]", i, v.name, v.type.value));
     }
+    for (std::size_t i = 0; i < s.Subroutines().size(); ++i) {
+      const auto& d = s.Subroutines()[i];
+      Line(
+          std::format(
+              "Subroutine[{}] {} \"{}\" : Type[{}]", i,
+              d.kind == SubroutineKind::kTask ? "task" : "function", d.name,
+              d.result_type.value));
+    }
     for (const auto& p : s.Processes()) {
       DumpProcess(p);
     }
@@ -259,6 +313,7 @@ class HirDumper {
       DumpGenerate(s, g);
     }
     Dedent();
+    scope_stack_.pop_back();
   }
 
   void DumpProcess(const Process& p) {
@@ -386,6 +441,7 @@ class HirDumper {
 
   std::string out_;
   int indent_ = 0;
+  std::vector<const StructuralScope*> scope_stack_;
 };
 
 }  // namespace

@@ -2,14 +2,21 @@
 
 #include <cstdint>
 #include <expected>
+#include <string>
+#include <string_view>
 #include <utility>
+#include <vector>
 
 #include <slang/ast/Expression.h>
+#include <slang/ast/SemanticFacts.h>
 #include <slang/ast/Symbol.h>
+#include <slang/ast/SystemSubroutine.h>
 #include <slang/ast/expressions/AssignmentExpressions.h>
+#include <slang/ast/expressions/CallExpression.h>
 #include <slang/ast/expressions/LiteralExpressions.h>
 #include <slang/ast/expressions/MiscExpressions.h>
 #include <slang/ast/expressions/OperatorExpressions.h>
+#include <slang/ast/symbols/SubroutineSymbols.h>
 #include <slang/ast/symbols/VariableSymbols.h>
 #include <slang/numeric/SVInt.h>
 
@@ -21,8 +28,11 @@
 #include "lyra/hir/expr.hpp"
 #include "lyra/hir/inspect.hpp"
 #include "lyra/hir/primary.hpp"
+#include "lyra/hir/subroutine_ref.hpp"
+#include "lyra/hir/type.hpp"
 #include "lyra/hir/value_ref.hpp"
 #include "lyra/support/internal_error.hpp"
+#include "lyra/support/system_subroutine.hpp"
 
 namespace lyra::lowering::ast_to_hir {
 
@@ -50,6 +60,29 @@ auto MakeLiteralExpr(std::int64_t v) -> hir::Expr {
 auto MakeRefExpr(hir::ValueRef ref) -> hir::Expr {
   return hir::Expr{
       .data = hir::PrimaryExpr{.data = hir::RefExpr{.target = std::move(ref)}}};
+}
+
+auto FromSlangSubroutineKind(slang::ast::SubroutineKind k)
+    -> support::SystemSubroutineKind {
+  switch (k) {
+    case slang::ast::SubroutineKind::Function:
+      return support::SystemSubroutineKind::kFunction;
+    case slang::ast::SubroutineKind::Task:
+      return support::SystemSubroutineKind::kTask;
+  }
+  throw support::InternalError(
+      "FromSlangSubroutineKind: unknown SubroutineKind");
+}
+
+auto MakeReturnConventionType(
+    UnitLoweringState& unit_state, support::ReturnConvention conv)
+    -> hir::TypeId {
+  switch (conv) {
+    case support::ReturnConvention::kVoid:
+      return unit_state.AddType(hir::TypeData{hir::VoidType{}});
+  }
+  throw support::InternalError(
+      "MakeReturnConventionType: unknown ReturnConvention");
 }
 
 auto LowerNamedValueProc(
@@ -143,6 +176,83 @@ auto LowerProcExpr(
               .lhs = *lhs_id,
               .rhs = *rhs_id,
               .type = *type_id}};
+    }
+
+    case slang::ast::ExpressionKind::Call: {
+      const auto& call = expr.as<slang::ast::CallExpression>();
+
+      std::vector<hir::ExprId> arg_ids;
+      arg_ids.reserve(call.arguments().size());
+      for (const auto* arg : call.arguments()) {
+        auto id = append_child(*arg);
+        if (!id) return std::unexpected(std::move(id.error()));
+        arg_ids.push_back(*id);
+      }
+
+      if (call.isSystemCall()) {
+        const auto& info = std::get<slang::ast::CallExpression::SystemCallInfo>(
+            call.subroutine);
+        const std::string_view name = info.subroutine->name;
+
+        const auto* desc = support::FindSystemSubroutine(name);
+        if (desc == nullptr) {
+          throw support::InternalError(
+              std::string{"AST->HIR call: unresolved system subroutine '"} +
+              std::string{name} + "' after slang resolution");
+        }
+        const auto frontend_kind =
+            FromSlangSubroutineKind(info.subroutine->kind);
+        if (desc->kind != frontend_kind) {
+          throw support::InternalError(
+              std::string{
+                  "AST->HIR call: registry/frontend kind mismatch for '"} +
+              std::string{name} + "'");
+        }
+        if (!desc->arg_policy.Accepts(arg_ids.size())) {
+          throw support::InternalError(
+              std::string{
+                  "AST->HIR call: arg count outside descriptor policy for '"} +
+              std::string{name} + "'");
+        }
+
+        const auto result_type =
+            MakeReturnConventionType(unit_state, desc->result_conv);
+        return hir::Expr{
+            .data = hir::CallExpr{
+                .callee = hir::SystemSubroutineRef{.id = desc->id},
+                .arguments = std::move(arg_ids),
+                .result_type = result_type}};
+      }
+
+      const auto* sym =
+          std::get<const slang::ast::SubroutineSymbol*>(call.subroutine);
+      if (sym == nullptr) {
+        throw support::InternalError(
+            "AST->HIR call: user call missing resolved SubroutineSymbol");
+      }
+      const auto binding = unit_state.LookupSubroutineBinding(*sym);
+      if (!binding.has_value()) {
+        throw support::InternalError(
+            "AST->HIR call: resolved user subroutine has no registered HIR "
+            "binding");
+      }
+      const auto hops = stack.HopsTo(binding->owner_frame);
+      if (!hops.has_value()) {
+        throw support::InternalError(
+            "AST->HIR call: user subroutine owner frame is not on the current "
+            "scope stack");
+      }
+      auto result_type = type_id_of(expr);
+      if (!result_type) {
+        return std::unexpected(std::move(result_type.error()));
+      }
+      return hir::Expr{
+          .data = hir::CallExpr{
+              .callee =
+                  hir::UserSubroutineRef{
+                      .parent_scope_hops = *hops, .id = binding->local_id},
+              .arguments = std::move(arg_ids),
+              .result_type = *result_type}};
     }
 
     case slang::ast::ExpressionKind::Assignment: {

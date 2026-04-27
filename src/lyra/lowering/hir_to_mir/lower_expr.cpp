@@ -1,18 +1,23 @@
 #include "lyra/lowering/hir_to_mir/lower_expr.hpp"
 
+#include <utility>
 #include <variant>
+#include <vector>
 
 #include "lyra/diag/diagnostic.hpp"
 #include "lyra/hir/binary_op.hpp"
 #include "lyra/hir/expr.hpp"
 #include "lyra/hir/inspect.hpp"
 #include "lyra/hir/process.hpp"
+#include "lyra/hir/subroutine_ref.hpp"
+#include "lyra/hir/type.hpp"
 #include "lyra/hir/value_ref.hpp"
 #include "lyra/lowering/hir_to_mir/state.hpp"
 #include "lyra/mir/binary_op.hpp"
 #include "lyra/mir/expr.hpp"
 #include "lyra/support/internal_error.hpp"
 #include "lyra/support/overloaded.hpp"
+#include "lyra/support/system_subroutine.hpp"
 
 namespace lyra::lowering::hir_to_mir {
 
@@ -48,6 +53,37 @@ auto LowerRefAsLvalue(
           },
       },
       ref);
+}
+
+auto NormalizeSemanticToBuiltinOp(
+    const support::SystemSubroutineSemantic& semantic) -> mir::BuiltinOp {
+  return std::visit(
+      support::Overloaded{
+          [](const support::PrintSystemSubroutineInfo& info) -> mir::BuiltinOp {
+            return mir::PrintBuiltinInfo{
+                .radix = info.radix,
+                .append_newline = info.append_newline,
+                .is_strobe = info.is_strobe,
+                .sink_kind = info.sink_kind};
+          },
+      },
+      semantic);
+}
+
+auto LowerCallee(
+    const ClassLoweringState& class_state, const hir::SubroutineRef& callee)
+    -> mir::Callee {
+  return std::visit(
+      support::Overloaded{
+          [&](const hir::UserSubroutineRef& u) -> mir::Callee {
+            return class_state.LookupUserSubroutine(u.parent_scope_hops, u.id);
+          },
+          [](const hir::SystemSubroutineRef& s) -> mir::Callee {
+            const auto& desc = support::LookupSystemSubroutine(s.id);
+            return NormalizeSemanticToBuiltinOp(desc.semantic);
+          },
+      },
+      callee);
 }
 
 }  // namespace
@@ -104,6 +140,17 @@ auto LowerProcessExprData(
                 .value = body_state.TranslateExpr(a.rhs),
                 .type = unit_state.TranslateType(a.type)};
           },
+          [&](const hir::CallExpr& c) -> mir::ExprData {
+            std::vector<mir::ExprId> args;
+            args.reserve(c.arguments.size());
+            for (const auto arg : c.arguments) {
+              args.push_back(body_state.TranslateExpr(arg));
+            }
+            return mir::CallExpr{
+                .callee = LowerCallee(class_state, c.callee),
+                .arguments = std::move(args),
+                .result_type = unit_state.TranslateType(c.result_type)};
+          },
       },
       data);
 }
@@ -140,6 +187,12 @@ auto LowerStructuralExprData(const hir::ExprData& data)
             return diag::Unsupported(
                 diag::DiagCode::kUnsupportedStructuralExpressionForm,
                 "this structural expression form is not supported yet",
+                diag::UnsupportedCategory::kFeature);
+          },
+          [](const hir::CallExpr&) -> diag::Result<mir::ExprData> {
+            return diag::Unsupported(
+                diag::DiagCode::kUnsupportedStructuralExpressionForm,
+                "calls are not allowed in structural expressions",
                 diag::UnsupportedCategory::kFeature);
           },
       },

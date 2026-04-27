@@ -10,6 +10,7 @@
 #include "lyra/hir/expr.hpp"
 #include "lyra/hir/member_var.hpp"
 #include "lyra/hir/process.hpp"
+#include "lyra/hir/subroutine.hpp"
 
 namespace lyra::hir {
 
@@ -73,16 +74,21 @@ class StructuralScope {
   auto AddExpr(Expr expr) -> ExprId;
   auto AddProcess(Process process) -> ProcessId;
   auto AddGenerate(Generate generate) -> GenerateId;
+  auto AddSubroutine(UserSubroutineDecl decl) -> SubroutineId;
 
   [[nodiscard]] auto MemberVars() const -> const std::vector<MemberVar>&;
   [[nodiscard]] auto Exprs() const -> const std::vector<Expr>&;
   [[nodiscard]] auto Processes() const -> const std::vector<Process>&;
   [[nodiscard]] auto Generates() const -> const std::vector<Generate>&;
+  [[nodiscard]] auto Subroutines() const
+      -> const std::vector<UserSubroutineDecl>&;
 
   [[nodiscard]] auto GetMemberVar(MemberVarId id) const -> const MemberVar&;
   [[nodiscard]] auto GetExpr(ExprId id) const -> const Expr&;
   [[nodiscard]] auto GetProcess(ProcessId id) const -> const Process&;
   [[nodiscard]] auto GetGenerate(GenerateId id) const -> const Generate&;
+  [[nodiscard]] auto GetSubroutine(SubroutineId id) const
+      -> const UserSubroutineDecl&;
 
  private:
   friend struct Generate;
@@ -92,6 +98,7 @@ class StructuralScope {
   std::vector<Expr> exprs_;
   std::vector<Process> processes_;
   std::vector<Generate> generates_;
+  std::vector<UserSubroutineDecl> subroutines_;
 };
 
 inline auto Generate::AddChildScope(StructuralScope scope)

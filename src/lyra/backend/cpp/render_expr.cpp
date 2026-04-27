@@ -64,6 +64,10 @@ auto RenderExpr(const RenderContext& ctx, const mir::Expr& expr)
             return "(" + RenderLvalue(ctx, e.target) + " = " +
                    RenderExpr(ctx, rhs) + ")";
           },
+          [](const mir::CallExpr&) -> std::string {
+            throw support::InternalError(
+                "RenderExpr: call lowering to C++ backend is not implemented");
+          },
       },
       expr.data);
 }

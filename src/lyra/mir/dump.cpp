@@ -20,6 +20,7 @@
 #include "lyra/mir/type.hpp"
 #include "lyra/support/internal_error.hpp"
 #include "lyra/support/overloaded.hpp"
+#include "lyra/support/system_subroutine.hpp"
 
 namespace lyra::mir {
 
@@ -191,7 +192,63 @@ class MirDumper {
         l);
   }
 
-  static auto FormatExpr(const Body& body, ExprId id) -> std::string {
+  static auto FormatPrintRadix(support::PrintRadix r) -> std::string_view {
+    switch (r) {
+      case support::PrintRadix::kDecimal:
+        return "decimal";
+      case support::PrintRadix::kBinary:
+        return "binary";
+      case support::PrintRadix::kOctal:
+        return "octal";
+      case support::PrintRadix::kHex:
+        return "hex";
+    }
+    throw support::InternalError(
+        "MirDumper::FormatPrintRadix: unknown PrintRadix");
+  }
+
+  static auto FormatPrintSinkKind(support::PrintSinkKind s)
+      -> std::string_view {
+    switch (s) {
+      case support::PrintSinkKind::kStdout:
+        return "stdout";
+      case support::PrintSinkKind::kFile:
+        return "file";
+    }
+    throw support::InternalError(
+        "MirDumper::FormatPrintSinkKind: unknown PrintSinkKind");
+  }
+
+  static auto FormatBuiltinOp(const BuiltinOp& op) -> std::string {
+    return std::visit(
+        support::Overloaded{
+            [](const PrintBuiltinInfo& p) -> std::string {
+              return std::format(
+                  "Print(radix={}, newline={}, strobe={}, sink={})",
+                  FormatPrintRadix(p.radix), p.append_newline, p.is_strobe,
+                  FormatPrintSinkKind(p.sink_kind));
+            },
+        },
+        op);
+  }
+
+  [[nodiscard]] auto FormatCallee(const Callee& callee) const -> std::string {
+    return std::visit(
+        support::Overloaded{
+            [this](const UserSubroutineTargetId& id) -> std::string {
+              const auto& target = current_class_->GetUserSubroutineTarget(id);
+              return std::format(
+                  "UserSubroutine[{}] \"{}\"", id.value, target.name);
+            },
+            [](const BuiltinOp& op) -> std::string {
+              return std::format("Builtin({})", FormatBuiltinOp(op));
+            },
+        },
+        callee);
+  }
+
+  [[nodiscard]] auto FormatExpr(const Body& body, ExprId id) const
+      -> std::string {
     const auto& e = body.exprs.at(id.value);
     return std::visit(
         support::Overloaded{
@@ -213,6 +270,18 @@ class MirDumper {
               return std::format(
                   "AssignExpr target={} value=Expr[{}] type=Type[{}]",
                   FormatLvalue(a.target), a.value.value, a.type.value);
+            },
+            [this](const CallExpr& c) -> std::string {
+              std::string args;
+              for (std::size_t i = 0; i < c.arguments.size(); ++i) {
+                if (i != 0) {
+                  args += ", ";
+                }
+                args += std::format("Expr[{}]", c.arguments[i].value);
+              }
+              return std::format(
+                  "CallExpr callee={} args=[{}] type=Type[{}]",
+                  FormatCallee(c.callee), args, c.result_type.value);
             },
         },
         e.data);
@@ -240,6 +309,8 @@ class MirDumper {
   }
 
   void DumpClass(const ClassDecl& c) {
+    const ClassDecl* saved = current_class_;
+    current_class_ = &c;
     Line(std::format("Class \"{}\"", c.Name()));
     Indent();
 
@@ -262,6 +333,14 @@ class MirDumper {
     }
     Dedent();
 
+    Line("UserSubroutineTargets:");
+    Indent();
+    for (std::size_t i = 0; i < c.UserSubroutineTargets().size(); ++i) {
+      const auto& t = c.UserSubroutineTargets()[i];
+      Line(std::format("[{}] \"{}\"", i, t.name));
+    }
+    Dedent();
+
     Line("Constructor:");
     Indent();
     DumpBody(c.Constructor());
@@ -275,6 +354,7 @@ class MirDumper {
     Dedent();
 
     Dedent();
+    current_class_ = saved;
   }
 
   void DumpProcess(const Process& p, std::size_t index) {
@@ -430,6 +510,7 @@ class MirDumper {
 
   std::string out_;
   int indent_ = 0;
+  const ClassDecl* current_class_ = nullptr;
 };
 
 }  // namespace
