@@ -1,5 +1,6 @@
 #include <cstddef>
 #include <string>
+#include <variant>
 
 #include "formatting.hpp"
 #include "lyra/backend/cpp/api.hpp"
@@ -9,6 +10,7 @@
 #include "lyra/mir/member_var.hpp"
 #include "lyra/mir/process.hpp"
 #include "lyra/support/internal_error.hpp"
+#include "lyra/support/overloaded.hpp"
 #include "render_stmt.hpp"
 #include "render_type.hpp"
 
@@ -16,21 +18,34 @@ namespace lyra::backend::cpp {
 
 namespace {
 
-auto RenderField(const mir::ClassDecl& c, const mir::MemberVar& member)
-    -> std::string {
-  return Indent(1) + RenderTypeAsCpp(c.GetType(member.type)) + " " +
-         member.name + ";\n";
+auto RenderField(
+    const mir::CompilationUnit& unit, const mir::ClassDecl& enclosing,
+    const mir::MemberVar& member, std::size_t indent) -> std::string {
+  return std::visit(
+      support::Overloaded{
+          [&](const mir::ValueMember& v) -> std::string {
+            return Indent(indent) + RenderTypeAsCpp(unit, v.type) + " " +
+                   member.name + ";\n";
+          },
+          [&](const mir::ChildClassMember& c) -> std::string {
+            return Indent(indent) + enclosing.GetClass(c.target).Name() + "* " +
+                   member.name + "{};\n";
+          },
+      },
+      member.kind);
 }
 
-auto RenderConstructor(const mir::ClassDecl& c) -> std::string {
+auto RenderConstructor(
+    const mir::CompilationUnit& unit, const mir::ClassDecl& c,
+    std::size_t indent) -> std::string {
   const auto& body = c.Constructor();
   if (body.root_stmts.empty()) {
-    return Indent(1) + c.Name() + "() {}\n";
+    return Indent(indent) + c.Name() + "() {}\n";
   }
   std::string out;
-  out += Indent(1) + c.Name() + "() {\n";
-  out += RenderBody(c, body, 2);
-  out += Indent(1) + "}\n";
+  out += Indent(indent) + c.Name() + "() {\n";
+  out += RenderBody(unit, c, body, indent + 1);
+  out += Indent(indent) + "}\n";
   return out;
 }
 
@@ -39,19 +54,15 @@ auto RenderProcessMethodName(std::size_t index) -> std::string {
 }
 
 auto RenderProcessMethod(
-    const mir::ClassDecl& c, const mir::Process& process, std::size_t index)
+    const mir::CompilationUnit& unit, const mir::ClassDecl& c,
+    const mir::Process& process, std::size_t index, std::size_t indent)
     -> std::string {
   std::string out;
-  out += Indent(1) + "auto " + RenderProcessMethodName(index) +
+  out += Indent(indent) + "auto " + RenderProcessMethodName(index) +
          "() -> lyra::runtime::Process {\n";
-  out += RenderBody(c, process.body, 2);
-  // This cut only handles zero-time `initial` bodies. Every body terminates
-  // by falling off the end, so we always emit a trailing `co_return;` to make
-  // the function a valid coroutine even when the MIR body is empty. When
-  // delay/wait/event awaiters land, this trailing emission stays put; bodies
-  // with `co_await` simply have suspension points before it.
-  out += Indent(2) + "co_return;\n";
-  out += Indent(1) + "}\n";
+  out += RenderBody(unit, c, process.body, indent + 1);
+  out += Indent(indent + 1) + "co_return;\n";
+  out += Indent(indent) + "}\n";
   return out;
 }
 
@@ -63,21 +74,75 @@ auto RenderProcessKindLiteral(mir::ProcessKind kind) -> std::string {
   throw support::InternalError("RenderProcessKindLiteral: unknown ProcessKind");
 }
 
-auto RenderBind(const mir::ClassDecl& c) -> std::string {
+auto RenderBind(const mir::ClassDecl& c, std::size_t indent, bool is_top_level)
+    -> std::string {
   std::string out;
-  out += Indent(1) +
-         "void Bind(lyra::runtime::RuntimeBindContext& ctx) override {\n";
+  out += Indent(indent) + "void Bind(lyra::runtime::RuntimeBindContext& ctx)" +
+         (is_top_level ? " override {\n" : " {\n");
   for (std::size_t i = 0; i < c.Processes().size(); ++i) {
     const auto& p = c.Processes()[i];
-    out += Indent(2) + "ctx.AddProcess(\n";
-    out += Indent(3) + RenderProcessKindLiteral(p.kind) + ",\n";
-    out += Indent(3) + RenderProcessMethodName(i) + "());\n";
+    out += Indent(indent + 1) + "ctx.AddProcess(\n";
+    out += Indent(indent + 2) + RenderProcessKindLiteral(p.kind) + ",\n";
+    out += Indent(indent + 2) + RenderProcessMethodName(i) + "());\n";
   }
-  out += Indent(1) + "}\n";
+  for (const auto& m : c.MemberVars()) {
+    const auto* child = std::get_if<mir::ChildClassMember>(&m.kind);
+    if (child == nullptr) {
+      continue;
+    }
+    const auto& child_class = c.GetClass(child->target);
+    out += Indent(indent + 1) + "if (" + m.name + " != nullptr) {\n";
+    out += Indent(indent + 2) + "auto child = ctx.CreateChildScope(\n";
+    out += Indent(indent + 3) + "\"" + child_class.Name() + "\",\n";
+    out +=
+        Indent(indent + 3) + "lyra::runtime::RuntimeScopeKind::kGenerate);\n";
+    out += Indent(indent + 2) + m.name + "->Bind(child);\n";
+    out += Indent(indent + 1) + "}\n";
+  }
+  out += Indent(indent) + "}\n";
   return out;
 }
 
-auto RenderClassHeader(const mir::ClassDecl& c) -> std::string {
+auto RenderClassDecl(
+    const mir::CompilationUnit& unit, const mir::ClassDecl& c,
+    std::size_t indent, bool is_top_level) -> std::string {
+  std::string out;
+  out += Indent(indent) + "class " + c.Name();
+  if (is_top_level) {
+    out += " final : public lyra::runtime::Module";
+  }
+  out += " {\n";
+  out += Indent(indent) + " public:\n";
+
+  for (const auto& child : c.Classes()) {
+    out += RenderClassDecl(unit, child, indent + 1, false);
+  }
+  if (!c.Classes().empty()) {
+    out += "\n";
+  }
+
+  for (const auto& m : c.MemberVars()) {
+    out += RenderField(unit, c, m, indent + 1);
+  }
+  if (!c.MemberVars().empty()) {
+    out += "\n";
+  }
+
+  out += RenderConstructor(unit, c, indent + 1);
+  out += "\n";
+  out += RenderBind(c, indent + 1, is_top_level);
+
+  for (std::size_t i = 0; i < c.Processes().size(); ++i) {
+    out += "\n";
+    out += RenderProcessMethod(unit, c, c.Processes()[i], i, indent + 1);
+  }
+
+  out += Indent(indent) + "};\n";
+  return out;
+}
+
+auto RenderClassHeaderFile(
+    const mir::CompilationUnit& unit, const mir::ClassDecl& c) -> std::string {
   std::string out;
   out += "#pragma once\n";
   out += "#include <cstdint>\n";
@@ -86,36 +151,18 @@ auto RenderClassHeader(const mir::ClassDecl& c) -> std::string {
   out += "#include \"lyra/runtime/module.hpp\"\n";
   out += "#include \"lyra/runtime/process.hpp\"\n";
   out += "#include \"lyra/runtime/process_kind.hpp\"\n";
+  out += "#include \"lyra/runtime/runtime_scope_kind.hpp\"\n";
   out += "\n";
-  out += "class " + c.Name() + " final : public lyra::runtime::Module {\n";
-  out += " public:\n";
-
-  for (const auto& m : c.MemberVars()) {
-    out += RenderField(c, m);
-  }
-  if (!c.MemberVars().empty()) {
-    out += "\n";
-  }
-
-  out += RenderConstructor(c);
-  out += "\n";
-  out += RenderBind(c);
-
-  for (std::size_t i = 0; i < c.Processes().size(); ++i) {
-    out += "\n";
-    out += RenderProcessMethod(c, c.Processes()[i], i);
-  }
-
-  out += "};\n";
+  out += RenderClassDecl(unit, c, 0, true);
   return out;
 }
 
-auto RenderHostMain(const mir::ClassDecl& cls) -> std::string {
+auto RenderHostMain(const mir::ClassDecl& entry) -> std::string {
   std::string out;
-  out += "#include \"" + cls.Name() + ".hpp\"\n";
+  out += "#include \"" + entry.Name() + ".hpp\"\n";
   out += "\n";
   out += "auto main() -> int {\n";
-  out += "  " + cls.Name() + " top;\n";
+  out += "  " + entry.Name() + " top;\n";
   out += "  lyra::runtime::Engine engine;\n";
   out += "  engine.BindRoot(\"top\", top);\n";
   out += "  return engine.Run();\n";
@@ -125,15 +172,31 @@ auto RenderHostMain(const mir::ClassDecl& cls) -> std::string {
 
 }  // namespace
 
-auto EmitCpp(const mir::CompilationUnit& unit) -> CppArtifactSet {
-  if (unit.Classes().size() != 1) {
-    throw support::InternalError(
-        "EmitCpp: this cut requires exactly one class in the unit");
+auto EmitCppDeclarations(const mir::CompilationUnit& unit)
+    -> std::vector<CppArtifact> {
+  std::vector<CppArtifact> headers;
+  headers.reserve(unit.Classes().size());
+  for (const auto& cls : unit.Classes()) {
+    headers.push_back(
+        {.relpath = cls.Name() + ".hpp",
+         .content = RenderClassHeaderFile(unit, cls)});
   }
+  return headers;
+}
+
+auto EmitCppHostMain(const mir::ClassDecl& entry_class) -> CppArtifact {
+  return {.relpath = "main.cpp", .content = RenderHostMain(entry_class)};
+}
+
+auto EmitCpp(
+    const mir::CompilationUnit& unit, const mir::ClassDecl& entry_class)
+    -> CppArtifactSet {
   CppArtifactSet set;
-  const auto& cls = unit.Classes().front();
-  set.files.push_back({cls.Name() + ".hpp", RenderClassHeader(cls)});
-  set.files.push_back({"main.cpp", RenderHostMain(cls)});
+  auto headers = EmitCppDeclarations(unit);
+  for (auto& h : headers) {
+    set.files.push_back(std::move(h));
+  }
+  set.files.push_back(EmitCppHostMain(entry_class));
   return set;
 }
 

@@ -1,5 +1,6 @@
 module Top;
   if (1) begin
-    int x;
+    if (1) begin
+    end
   end
 endmodule

@@ -7,8 +7,6 @@
 #include "lyra/hir/expr.hpp"
 #include "lyra/hir/local_var.hpp"
 #include "lyra/hir/process.hpp"
-#include "lyra/hir/structural_scope.hpp"
-#include "lyra/lowering/hir_to_mir/facts.hpp"
 #include "lyra/lowering/hir_to_mir/lower_expr.hpp"
 #include "lyra/lowering/hir_to_mir/lower_stmt.hpp"
 #include "lyra/lowering/hir_to_mir/state.hpp"
@@ -33,12 +31,8 @@ auto LowerProcessKind(hir::ProcessKind kind) -> mir::ProcessKind {
 }  // namespace
 
 auto LowerProcess(
-    const UnitLoweringFacts& unit_facts, const UnitLoweringState& unit_state,
-    const hir::StructuralScope& process_scope, const hir::Process& src)
-    -> mir::Process {
-  ScopeStack stack;
-  const ScopeStackGuard guard(stack, process_scope);
-
+    const UnitLoweringState& unit_state, const ClassLoweringState& class_state,
+    const hir::Process& src) -> mir::Process {
   ProcessLoweringState proc_state;
   for (std::size_t i = 0; i < src.local_vars.size(); ++i) {
     const auto& hir_local = src.local_vars[i];
@@ -56,8 +50,8 @@ auto LowerProcess(
     body_state.AppendExpr(
         hir_id, mir::Expr{
                     .data = LowerProcessExprData(
-                        unit_facts, unit_state, proc_state, body_state, stack,
-                        src, src.exprs[i].data)});
+                        unit_state, class_state, proc_state, body_state, src,
+                        src.exprs[i].data)});
   }
 
   const hir::Stmt& root = src.stmts.at(src.body.value);

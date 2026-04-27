@@ -1,18 +1,12 @@
 #pragma once
 
-#include <cstdint>
 #include <variant>
 
 #include "lyra/hir/local_var.hpp"
 #include "lyra/hir/member_var.hpp"
+#include "lyra/hir/parent_scope_hops.hpp"
 
 namespace lyra::hir {
-
-struct ParentScopeHops {
-  std::uint32_t value;
-
-  auto operator<=>(const ParentScopeHops&) const = default;
-};
 
 struct MemberVarRef {
   ParentScopeHops parent_scope_hops;

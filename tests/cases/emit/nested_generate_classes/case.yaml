@@ -1,0 +1,18 @@
+id: emit.nested_generate_classes
+tags: [emit, generate]
+input:
+  command: [emit, cpp]
+  project: false
+  top: Top
+  files: [main.sv]
+expect:
+  exit: 0
+  stdout:
+    contains:
+      - "class Top final : public lyra::runtime::Module"
+      - "class gen0_then"
+      - "gen0_then* gen0_then_obj{};"
+      - "gen0_then_obj = new gen0_then();"
+      - "ctx.CreateChildScope("
+      - '"gen0_then"'
+      - "gen0_then_obj->Bind(child)"

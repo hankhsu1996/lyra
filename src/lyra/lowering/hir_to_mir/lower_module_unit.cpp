@@ -6,54 +6,34 @@
 #include <utility>
 
 #include "lyra/diag/diagnostic.hpp"
-#include "lyra/hir/member_var.hpp"
 #include "lyra/hir/module_unit.hpp"
 #include "lyra/hir/type.hpp"
-#include "lyra/lowering/hir_to_mir/facts.hpp"
 #include "lyra/lowering/hir_to_mir/lower_constructor.hpp"
-#include "lyra/lowering/hir_to_mir/lower_process.hpp"
 #include "lyra/lowering/hir_to_mir/lower_type.hpp"
 #include "lyra/lowering/hir_to_mir/state.hpp"
-#include "lyra/mir/class_decl.hpp"
 #include "lyra/mir/compilation_unit.hpp"
-#include "lyra/mir/member_var.hpp"
 #include "lyra/mir/type.hpp"
 
 namespace lyra::lowering::hir_to_mir {
 
 auto LowerModuleUnit(const hir::ModuleUnit& unit)
     -> diag::Result<mir::CompilationUnit> {
-  const UnitLoweringFacts unit_facts(unit, unit.RootScope());
-  UnitLoweringState unit_state;
-
-  mir::ClassDecl cls(unit.Name());
+  mir::CompilationUnit out;
+  UnitLoweringState unit_state(out);
 
   for (std::size_t i = 0; i < unit.Types().size(); ++i) {
     const hir::TypeId hir_id{static_cast<std::uint32_t>(i)};
-    const mir::TypeId mir_id =
-        cls.AddType(LowerTypeData(unit.Types()[i].data, unit_state));
-    unit_state.SetType(hir_id, mir_id);
+    auto mir_data = TranslateTypeData(unit.Types()[i].data, unit_state);
+    const mir::TypeId mir_id = unit_state.AddType(std::move(mir_data));
+    unit_state.RegisterTypeMapping(hir_id, mir_id);
   }
 
-  const auto& root = unit_facts.RootScope();
-  for (std::size_t i = 0; i < root.MemberVars().size(); ++i) {
-    const hir::MemberVarId hir_id{static_cast<std::uint32_t>(i)};
-    const auto& d = root.MemberVars()[i];
-    const mir::MemberVarId mir_id =
-        cls.AddMemberVar(d.name, unit_state.TranslateType(d.type));
-    unit_state.SetRootMemberVar(hir_id, mir_id);
-  }
+  ScopeStack stack;
+  auto top_r = LowerScopeAsClass(
+      unit_state, nullptr, stack, unit.RootScope(), unit.Name());
+  if (!top_r) return std::unexpected(std::move(top_r.error()));
 
-  for (const auto& p : root.Processes()) {
-    cls.AddProcess(LowerProcess(unit_facts, unit_state, root, p));
-  }
-
-  auto r =
-      LowerConstructorIntoBody(unit_facts, unit_state, root, cls.Constructor());
-  if (!r) return std::unexpected(std::move(r.error()));
-
-  mir::CompilationUnit out;
-  out.AddClass(std::move(cls));
+  out.AddClass(*std::move(top_r));
   return out;
 }
 
