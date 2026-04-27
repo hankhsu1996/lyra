@@ -131,12 +131,14 @@ auto LowerScopeInto(
   std::unordered_set<const slang::syntax::SyntaxNode*> consumed;
   for (const auto& member : slang_scope.members()) {
     switch (member.kind) {
-      case slang::ast::SymbolKind::GenerateBlockArray:
-        return diag::Unsupported(
-            mapper.PointSpanOf(member.location),
-            diag::DiagCode::kUnsupportedForGenerate,
-            "for-generate is not supported yet",
-            diag::UnsupportedCategory::kFeature);
+      case slang::ast::SymbolKind::GenerateBlockArray: {
+        const auto& array = member.as<slang::ast::GenerateBlockArraySymbol>();
+        auto g = BuildLoopGenerate(
+            unit_facts, unit_state, scope_state, stack, array);
+        if (!g) return std::unexpected(std::move(g.error()));
+        scope_state.AddGenerate(*std::move(g));
+        break;
+      }
 
       case slang::ast::SymbolKind::GenerateBlock: {
         const auto& block = member.as<slang::ast::GenerateBlockSymbol>();

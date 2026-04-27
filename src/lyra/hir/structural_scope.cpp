@@ -6,6 +6,7 @@
 #include <vector>
 
 #include "lyra/hir/expr.hpp"
+#include "lyra/hir/loop_var.hpp"
 #include "lyra/hir/member_var.hpp"
 #include "lyra/hir/process.hpp"
 #include "lyra/hir/subroutine.hpp"
@@ -23,6 +24,12 @@ auto StructuralScope::AddMemberVar(std::string name, TypeId type)
     -> MemberVarId {
   const MemberVarId id{static_cast<std::uint32_t>(member_vars_.size())};
   member_vars_.push_back(MemberVar{.name = std::move(name), .type = type});
+  return id;
+}
+
+auto StructuralScope::AddLoopVarDecl(std::string name) -> LoopVarDeclId {
+  const LoopVarDeclId id{static_cast<std::uint32_t>(loop_var_decls_.size())};
+  loop_var_decls_.push_back(LoopVarDecl{.name = std::move(name)});
   return id;
 }
 
@@ -54,6 +61,10 @@ auto StructuralScope::MemberVars() const -> const std::vector<MemberVar>& {
   return member_vars_;
 }
 
+auto StructuralScope::LoopVarDecls() const -> const std::vector<LoopVarDecl>& {
+  return loop_var_decls_;
+}
+
 auto StructuralScope::Exprs() const -> const std::vector<Expr>& {
   return exprs_;
 }
@@ -73,6 +84,11 @@ auto StructuralScope::Subroutines() const
 
 auto StructuralScope::GetMemberVar(MemberVarId id) const -> const MemberVar& {
   return member_vars_.at(id.value);
+}
+
+auto StructuralScope::GetLoopVarDecl(LoopVarDeclId id) const
+    -> const LoopVarDecl& {
+  return loop_var_decls_.at(id.value);
 }
 
 auto StructuralScope::GetExpr(ExprId id) const -> const Expr& {
