@@ -13,6 +13,7 @@
 #include <slang/ast/SystemSubroutine.h>
 #include <slang/ast/expressions/AssignmentExpressions.h>
 #include <slang/ast/expressions/CallExpression.h>
+#include <slang/ast/expressions/ConversionExpression.h>
 #include <slang/ast/expressions/LiteralExpressions.h>
 #include <slang/ast/expressions/MiscExpressions.h>
 #include <slang/ast/expressions/OperatorExpressions.h>
@@ -316,6 +317,186 @@ auto LowerStructuralExpr(
           span, diag::DiagCode::kUnsupportedStructuralExpressionForm,
           "this structural expression form is not supported yet",
           diag::UnsupportedCategory::kFeature);
+  }
+}
+
+namespace {
+
+auto TryResolveLoopHeaderVar(
+    ScopeLoweringState& scope_state, LoopHeaderState& loop_state,
+    const slang::ast::VariableSymbol& var)
+    -> std::optional<hir::LoopVarDeclId> {
+  if (!var.flags.has(slang::ast::VariableFlags::CompilerGenerated)) {
+    return std::nullopt;
+  }
+  if (var.name != loop_state.expected_name) {
+    return std::nullopt;
+  }
+  if (loop_state.synthetic_symbol != nullptr &&
+      loop_state.synthetic_symbol != &var) {
+    throw support::InternalError(
+        "loop-generate header resolved multiple synthetic loop variables");
+  }
+  loop_state.synthetic_symbol = &var;
+  if (!loop_state.loop_var_id.has_value()) {
+    loop_state.loop_var_id = scope_state.Scope().AddLoopVarDecl(
+        std::string{loop_state.expected_name});
+  }
+  return loop_state.loop_var_id;
+}
+
+auto MapLoopHeaderBinaryOp(slang::ast::BinaryOperator op)
+    -> std::optional<hir::BinaryOp> {
+  switch (op) {
+    case slang::ast::BinaryOperator::Add:
+      return hir::BinaryOp::kAdd;
+    case slang::ast::BinaryOperator::LessThan:
+      return hir::BinaryOp::kLessThan;
+    default:
+      return std::nullopt;
+  }
+}
+
+}  // namespace
+
+auto LowerLoopHeaderExpr(
+    const UnitLoweringFacts& unit_facts, UnitLoweringState& unit_state,
+    ScopeLoweringState& scope_state, const ScopeStack& stack,
+    LoopHeaderState& loop_state, const slang::ast::Expression& expr)
+    -> diag::Result<hir::Expr> {
+  const auto& mapper = unit_facts.SourceMapper();
+  const auto span = mapper.SpanOf(expr.sourceRange);
+
+  auto lower_child = [&](const slang::ast::Expression& e) {
+    return LowerLoopHeaderExpr(
+        unit_facts, unit_state, scope_state, stack, loop_state, e);
+  };
+  auto add_child =
+      [&](const slang::ast::Expression& e) -> diag::Result<hir::ExprId> {
+    auto child = lower_child(e);
+    if (!child) return std::unexpected(std::move(child.error()));
+    return scope_state.AppendExpr(*std::move(child));
+  };
+  auto type_id_of =
+      [&](const slang::ast::Expression& e) -> diag::Result<hir::TypeId> {
+    auto td = LowerTypeData(*e.type, mapper.SpanOf(e.sourceRange));
+    if (!td) return std::unexpected(std::move(td.error()));
+    return unit_state.AddType(*std::move(td));
+  };
+
+  switch (expr.kind) {
+    case slang::ast::ExpressionKind::IntegerLiteral: {
+      auto v = LowerIntegerLiteralValue(
+          unit_facts, expr.as<slang::ast::IntegerLiteral>());
+      if (!v) return std::unexpected(std::move(v.error()));
+      return MakeLiteralExpr(*v);
+    }
+
+    case slang::ast::ExpressionKind::NamedValue: {
+      const auto& named = expr.as<slang::ast::NamedValueExpression>();
+      if (named.symbol.kind != slang::ast::SymbolKind::Variable) {
+        return diag::Unsupported(
+            mapper.SpanOf(named.sourceRange),
+            diag::DiagCode::kUnsupportedNonVariableNamedReference,
+            "reference to non-variable declaration is not supported",
+            diag::UnsupportedCategory::kFeature);
+      }
+      const auto& var = named.symbol.as<slang::ast::VariableSymbol>();
+      if (auto loop_var =
+              TryResolveLoopHeaderVar(scope_state, loop_state, var)) {
+        return MakeRefExpr(
+            hir::LoopVarRef{
+                .parent_scope_hops = hir::ParentScopeHops{.value = 0},
+                .target = *loop_var});
+      }
+      const auto binding = unit_state.LookupMemberVarBinding(var);
+      if (!binding.has_value()) {
+        throw support::InternalError(
+            "LowerLoopHeaderExpr: variable was not bound during scope "
+            "lowering");
+      }
+      const auto hops = stack.HopsTo(binding->home_frame);
+      if (!hops.has_value()) {
+        throw support::InternalError(
+            "LowerLoopHeaderExpr: variable home frame is not on the current "
+            "scope stack");
+      }
+      return MakeRefExpr(
+          hir::MemberVarRef{
+              .parent_scope_hops = *hops, .target = binding->local_id});
+    }
+
+    case slang::ast::ExpressionKind::Conversion: {
+      // Slang inserts implicit Conversion nodes when binding loop-header
+      // expressions against the genvar's integer type; unwrap them.
+      const auto& conv = expr.as<slang::ast::ConversionExpression>();
+      if (!conv.isImplicit()) {
+        return diag::Unsupported(
+            span, diag::DiagCode::kUnsupportedExpressionForm,
+            "explicit casts are not supported yet",
+            diag::UnsupportedCategory::kOperation);
+      }
+      return lower_child(conv.operand());
+    }
+
+    case slang::ast::ExpressionKind::BinaryOp: {
+      const auto& bin = expr.as<slang::ast::BinaryExpression>();
+      auto op = MapLoopHeaderBinaryOp(bin.op);
+      if (!op.has_value()) {
+        return diag::Unsupported(
+            span, diag::DiagCode::kUnsupportedBinaryOperator,
+            "this binary operator is not supported yet",
+            diag::UnsupportedCategory::kOperation);
+      }
+      auto lhs_id = add_child(bin.left());
+      if (!lhs_id) return std::unexpected(std::move(lhs_id.error()));
+      auto rhs_id = add_child(bin.right());
+      if (!rhs_id) return std::unexpected(std::move(rhs_id.error()));
+      auto type_id = type_id_of(expr);
+      if (!type_id) return std::unexpected(std::move(type_id.error()));
+      return hir::Expr{
+          .data = hir::BinaryExpr{
+              .op = *op, .lhs = *lhs_id, .rhs = *rhs_id, .type = *type_id}};
+    }
+
+    case slang::ast::ExpressionKind::Assignment: {
+      const auto& as = expr.as<slang::ast::AssignmentExpression>();
+      if (as.isNonBlocking()) {
+        return diag::Unsupported(
+            span, diag::DiagCode::kUnsupportedNonBlockingAssignment,
+            "non-blocking assignments are not supported yet",
+            diag::UnsupportedCategory::kFeature);
+      }
+      if (as.op.has_value()) {
+        return diag::Unsupported(
+            span, diag::DiagCode::kUnsupportedCompoundAssignment,
+            "compound assignments are not supported yet",
+            diag::UnsupportedCategory::kFeature);
+      }
+      auto lhs_expr = lower_child(as.left());
+      if (!lhs_expr) return std::unexpected(std::move(lhs_expr.error()));
+      if (!hir::AsAssignableRef(*lhs_expr).has_value()) {
+        return diag::Unsupported(
+            mapper.SpanOf(as.left().sourceRange),
+            diag::DiagCode::kUnsupportedAssignmentTarget,
+            "assignment target is not supported yet",
+            diag::UnsupportedCategory::kFeature);
+      }
+      const hir::ExprId lhs_id = scope_state.AppendExpr(*std::move(lhs_expr));
+      auto rhs_id = add_child(as.right());
+      if (!rhs_id) return std::unexpected(std::move(rhs_id.error()));
+      auto type_id = type_id_of(expr);
+      if (!type_id) return std::unexpected(std::move(type_id.error()));
+      return hir::Expr{
+          .data =
+              hir::AssignExpr{.lhs = lhs_id, .rhs = *rhs_id, .type = *type_id}};
+    }
+
+    default:
+      return diag::Unsupported(
+          span, diag::DiagCode::kUnsupportedExpressionForm,
+          "this expression form is not supported yet",
+          diag::UnsupportedCategory::kOperation);
   }
 }
 

@@ -25,6 +25,10 @@ auto LowerBinaryOp(hir::BinaryOp op) -> mir::BinaryOp {
   switch (op) {
     case hir::BinaryOp::kAdd:
       return mir::BinaryOp::kAdd;
+    case hir::BinaryOp::kLessThan:
+      throw support::InternalError(
+          "LowerBinaryOp: kLessThan only appears in loop-generate header "
+          "expressions, which are rejected before HIR-to-MIR");
   }
   throw support::InternalError("LowerBinaryOp: unknown HIR BinaryOp");
 }
@@ -50,6 +54,12 @@ auto LowerRefAsLvalue(
           [&](const hir::LocalVarRef& l) -> mir::Lvalue {
             return mir::LocalVarRef{
                 .target = proc_state.TranslateLocalVar(l.target)};
+          },
+          [](const hir::LoopVarRef&) -> mir::Lvalue {
+            throw support::InternalError(
+                "LowerRefAsLvalue: loop-variable references only appear in "
+                "loop-generate header expressions, which are rejected before "
+                "HIR-to-MIR");
           },
       },
       ref);
@@ -113,6 +123,13 @@ auto LowerProcessExprData(
                                 return mir::LocalVarRef{
                                     .target =
                                         proc_state.TranslateLocalVar(l.target)};
+                              },
+                              [](const hir::LoopVarRef&) -> mir::ExprData {
+                                throw support::InternalError(
+                                    "LowerProcessExprData: loop-variable "
+                                    "references only appear in loop-generate "
+                                    "header expressions, which are rejected "
+                                    "before HIR-to-MIR");
                               },
                           },
                           r.target);
