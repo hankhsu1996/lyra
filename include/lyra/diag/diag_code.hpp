@@ -35,6 +35,16 @@ enum class DiagCode : std::uint32_t {
   kUnsupportedAssignmentTarget,
   kUnsupportedBinaryOperator,
 
+  kFormatStringTrailingPercent,
+  kFormatStringMissingSpecifier,
+  kFormatStringWidthOverflow,
+  kFormatStringUnknownSpecifier,
+  kDisplayMissingArg,
+  kFileDisplayNotImplemented,
+  kFormatModulePathNotImplemented,
+  kFormatSpecifierNotImplemented,
+  kSystemSubroutineExecutionNotImplemented,
+
   kHostInvalidCliArgs,
   kHostProjectModeUnimplemented,
   kHostNoInputFiles,

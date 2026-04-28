@@ -5,6 +5,7 @@
 #include <variant>
 #include <vector>
 
+#include "lyra/diag/source_span.hpp"
 #include "lyra/hir/binary_op.hpp"
 #include "lyra/hir/primary.hpp"
 #include "lyra/hir/subroutine_ref.hpp"
@@ -45,6 +46,7 @@ using ExprData = std::variant<PrimaryExpr, BinaryExpr, AssignExpr, CallExpr>;
 
 struct Expr {
   ExprData data;
+  diag::SourceSpan span;
 };
 
 }  // namespace lyra::hir

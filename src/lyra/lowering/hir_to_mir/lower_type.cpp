@@ -3,11 +3,11 @@
 #include <variant>
 #include <vector>
 
+#include "lyra/base/internal_error.hpp"
+#include "lyra/base/overloaded.hpp"
 #include "lyra/hir/type.hpp"
 #include "lyra/lowering/hir_to_mir/state.hpp"
 #include "lyra/mir/type.hpp"
-#include "lyra/support/internal_error.hpp"
-#include "lyra/support/overloaded.hpp"
 
 namespace lyra::lowering::hir_to_mir {
 
@@ -22,7 +22,7 @@ auto TranslateBitAtom(hir::BitAtom a) -> mir::BitAtom {
     case hir::BitAtom::kReg:
       return mir::BitAtom::kReg;
   }
-  throw support::InternalError("TranslateBitAtom: unknown BitAtom");
+  throw InternalError("TranslateBitAtom: unknown BitAtom");
 }
 
 auto TranslateSignedness(hir::Signedness s) -> mir::Signedness {
@@ -47,8 +47,7 @@ auto TranslatePackedArrayForm(hir::PackedArrayForm f) -> mir::PackedArrayForm {
     case hir::PackedArrayForm::kTime:
       return mir::PackedArrayForm::kTime;
   }
-  throw support::InternalError(
-      "TranslatePackedArrayForm: unknown PackedArrayForm");
+  throw InternalError("TranslatePackedArrayForm: unknown PackedArrayForm");
 }
 
 auto TranslatePackedRanges(const std::vector<hir::PackedRange>& src)
@@ -77,7 +76,7 @@ auto TranslateTypeData(
     const hir::TypeData& data, const UnitLoweringState& state)
     -> mir::TypeData {
   return std::visit(
-      support::Overloaded{
+      Overloaded{
           [&](const hir::PackedArrayType& src) -> mir::TypeData {
             return mir::PackedArrayType{
                 .atom = TranslateBitAtom(src.atom),

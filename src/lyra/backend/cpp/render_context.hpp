@@ -1,5 +1,10 @@
 #pragma once
 
+#include <cstddef>
+#include <format>
+#include <string>
+#include <string_view>
+
 #include "lyra/mir/class_decl.hpp"
 #include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/stmt.hpp"
@@ -26,10 +31,23 @@ class RenderContext {
     return *body_;
   }
 
+  [[nodiscard]] auto Expr(mir::ExprId id) const -> const mir::Expr& {
+    return body_->GetExpr(id);
+  }
+
+  // Allocate a unique temp-name suffix. Mutable because the counter is a
+  // logical-const supply, not part of the rendering context's observable
+  // shape. Single-threaded emission today.
+  [[nodiscard]] auto AllocateTemp(std::string_view prefix) const
+      -> std::string {
+    return std::format("{}_{}", prefix, next_temp_++);
+  }
+
  private:
   const mir::CompilationUnit* unit_;
   const mir::ClassDecl* class_decl_;
   const mir::Body* body_;
+  mutable std::size_t next_temp_ = 0;
 };
 
 }  // namespace lyra::backend::cpp

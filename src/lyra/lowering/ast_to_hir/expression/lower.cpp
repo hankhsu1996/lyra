@@ -24,6 +24,7 @@
 #include "../facts.hpp"
 #include "../state.hpp"
 #include "../type.hpp"
+#include "lyra/base/internal_error.hpp"
 #include "lyra/diag/diagnostic.hpp"
 #include "lyra/hir/binary_op.hpp"
 #include "lyra/hir/expr.hpp"
@@ -32,7 +33,6 @@
 #include "lyra/hir/subroutine_ref.hpp"
 #include "lyra/hir/type.hpp"
 #include "lyra/hir/value_ref.hpp"
-#include "lyra/support/internal_error.hpp"
 #include "lyra/support/system_subroutine.hpp"
 
 namespace lyra::lowering::ast_to_hir {
@@ -53,14 +53,25 @@ auto LowerIntegerLiteralValue(
   return *value;
 }
 
-auto MakeLiteralExpr(std::int64_t v) -> hir::Expr {
+auto MakeLiteralExpr(std::int64_t v, diag::SourceSpan span) -> hir::Expr {
   return hir::Expr{
-      .data = hir::PrimaryExpr{.data = hir::IntegerLiteral{.value = v}}};
+      .data = hir::PrimaryExpr{.data = hir::IntegerLiteral{.value = v}},
+      .span = span};
 }
 
-auto MakeRefExpr(hir::ValueRef ref) -> hir::Expr {
+auto MakeStringLiteralExpr(std::string text, diag::SourceSpan span)
+    -> hir::Expr {
   return hir::Expr{
-      .data = hir::PrimaryExpr{.data = hir::RefExpr{.target = std::move(ref)}}};
+      .data =
+          hir::PrimaryExpr{
+              .data = hir::StringLiteral{.value = std::move(text)}},
+      .span = span};
+}
+
+auto MakeRefExpr(hir::ValueRef ref, diag::SourceSpan span) -> hir::Expr {
+  return hir::Expr{
+      .data = hir::PrimaryExpr{.data = hir::RefExpr{.target = std::move(ref)}},
+      .span = span};
 }
 
 auto FromSlangSubroutineKind(slang::ast::SubroutineKind k)
@@ -71,8 +82,7 @@ auto FromSlangSubroutineKind(slang::ast::SubroutineKind k)
     case slang::ast::SubroutineKind::Task:
       return support::SystemSubroutineKind::kTask;
   }
-  throw support::InternalError(
-      "FromSlangSubroutineKind: unknown SubroutineKind");
+  throw InternalError("FromSlangSubroutineKind: unknown SubroutineKind");
 }
 
 auto MakeReturnConventionType(
@@ -82,8 +92,7 @@ auto MakeReturnConventionType(
     case support::ReturnConvention::kVoid:
       return unit_state.AddType(hir::TypeData{hir::VoidType{}});
   }
-  throw support::InternalError(
-      "MakeReturnConventionType: unknown ReturnConvention");
+  throw InternalError("MakeReturnConventionType: unknown ReturnConvention");
 }
 
 auto LowerNamedValueProc(
@@ -91,32 +100,33 @@ auto LowerNamedValueProc(
     ProcessLoweringState& proc_state, const ScopeStack& stack,
     const slang::ast::NamedValueExpression& named) -> diag::Result<hir::Expr> {
   const auto& mapper = unit_facts.SourceMapper();
+  const auto span = mapper.SpanOf(named.sourceRange);
   if (named.symbol.kind != slang::ast::SymbolKind::Variable) {
     return diag::Unsupported(
-        mapper.SpanOf(named.sourceRange),
-        diag::DiagCode::kUnsupportedNonVariableNamedReference,
+        span, diag::DiagCode::kUnsupportedNonVariableNamedReference,
         "reference to non-variable declaration is not supported",
         diag::UnsupportedCategory::kFeature);
   }
   const auto& var = named.symbol.as<slang::ast::VariableSymbol>();
 
   if (auto local = proc_state.LookupLocalVar(var)) {
-    return MakeRefExpr(hir::LocalVarRef{.target = *local});
+    return MakeRefExpr(hir::LocalVarRef{.target = *local}, span);
   }
 
   const auto binding = unit_state.LookupMemberVarBinding(var);
   if (!binding.has_value()) {
-    throw support::InternalError(
+    throw InternalError(
         "LowerProcExpr: variable was not bound during scope lowering");
   }
   const auto hops = stack.HopsTo(binding->home_frame);
   if (!hops.has_value()) {
-    throw support::InternalError(
+    throw InternalError(
         "LowerProcExpr: variable home frame is not on the current scope stack");
   }
   return MakeRefExpr(
       hir::MemberVarRef{
-          .parent_scope_hops = *hops, .target = binding->local_id});
+          .parent_scope_hops = *hops, .target = binding->local_id},
+      span);
 }
 
 }  // namespace
@@ -149,7 +159,12 @@ auto LowerProcExpr(
       auto v = LowerIntegerLiteralValue(
           unit_facts, expr.as<slang::ast::IntegerLiteral>());
       if (!v) return std::unexpected(std::move(v.error()));
-      return MakeLiteralExpr(*v);
+      return MakeLiteralExpr(*v, span);
+    }
+
+    case slang::ast::ExpressionKind::StringLiteral: {
+      const auto& sl = expr.as<slang::ast::StringLiteral>();
+      return MakeStringLiteralExpr(std::string{sl.getValue()}, span);
     }
 
     case slang::ast::ExpressionKind::NamedValue:
@@ -172,11 +187,13 @@ auto LowerProcExpr(
       auto type_id = type_id_of(expr);
       if (!type_id) return std::unexpected(std::move(type_id.error()));
       return hir::Expr{
-          .data = hir::BinaryExpr{
-              .op = hir::BinaryOp::kAdd,
-              .lhs = *lhs_id,
-              .rhs = *rhs_id,
-              .type = *type_id}};
+          .data =
+              hir::BinaryExpr{
+                  .op = hir::BinaryOp::kAdd,
+                  .lhs = *lhs_id,
+                  .rhs = *rhs_id,
+                  .type = *type_id},
+          .span = span};
     }
 
     case slang::ast::ExpressionKind::Call: {
@@ -197,20 +214,20 @@ auto LowerProcExpr(
 
         const auto* desc = support::FindSystemSubroutine(name);
         if (desc == nullptr) {
-          throw support::InternalError(
+          throw InternalError(
               std::string{"AST->HIR call: unresolved system subroutine '"} +
               std::string{name} + "' after slang resolution");
         }
         const auto frontend_kind =
             FromSlangSubroutineKind(info.subroutine->kind);
         if (desc->kind != frontend_kind) {
-          throw support::InternalError(
+          throw InternalError(
               std::string{
                   "AST->HIR call: registry/frontend kind mismatch for '"} +
               std::string{name} + "'");
         }
         if (!desc->arg_policy.Accepts(arg_ids.size())) {
-          throw support::InternalError(
+          throw InternalError(
               std::string{
                   "AST->HIR call: arg count outside descriptor policy for '"} +
               std::string{name} + "'");
@@ -219,27 +236,29 @@ auto LowerProcExpr(
         const auto result_type =
             MakeReturnConventionType(unit_state, desc->result_conv);
         return hir::Expr{
-            .data = hir::CallExpr{
-                .callee = hir::SystemSubroutineRef{.id = desc->id},
-                .arguments = std::move(arg_ids),
-                .result_type = result_type}};
+            .data =
+                hir::CallExpr{
+                    .callee = hir::SystemSubroutineRef{.id = desc->id},
+                    .arguments = std::move(arg_ids),
+                    .result_type = result_type},
+            .span = span};
       }
 
       const auto* sym =
           std::get<const slang::ast::SubroutineSymbol*>(call.subroutine);
       if (sym == nullptr) {
-        throw support::InternalError(
+        throw InternalError(
             "AST->HIR call: user call missing resolved SubroutineSymbol");
       }
       const auto binding = unit_state.LookupSubroutineBinding(*sym);
       if (!binding.has_value()) {
-        throw support::InternalError(
+        throw InternalError(
             "AST->HIR call: resolved user subroutine has no registered HIR "
             "binding");
       }
       const auto hops = stack.HopsTo(binding->owner_frame);
       if (!hops.has_value()) {
-        throw support::InternalError(
+        throw InternalError(
             "AST->HIR call: user subroutine owner frame is not on the current "
             "scope stack");
       }
@@ -248,12 +267,14 @@ auto LowerProcExpr(
         return std::unexpected(std::move(result_type.error()));
       }
       return hir::Expr{
-          .data = hir::CallExpr{
-              .callee =
-                  hir::UserSubroutineRef{
-                      .parent_scope_hops = *hops, .id = binding->local_id},
-              .arguments = std::move(arg_ids),
-              .result_type = *result_type}};
+          .data =
+              hir::CallExpr{
+                  .callee =
+                      hir::UserSubroutineRef{
+                          .parent_scope_hops = *hops, .id = binding->local_id},
+                  .arguments = std::move(arg_ids),
+                  .result_type = *result_type},
+          .span = span};
     }
 
     case slang::ast::ExpressionKind::Assignment: {
@@ -288,7 +309,8 @@ auto LowerProcExpr(
       if (!type_id) return std::unexpected(std::move(type_id.error()));
       return hir::Expr{
           .data =
-              hir::AssignExpr{.lhs = lhs_id, .rhs = *rhs_id, .type = *type_id}};
+              hir::AssignExpr{.lhs = lhs_id, .rhs = *rhs_id, .type = *type_id},
+          .span = span};
     }
 
     default:
@@ -310,7 +332,7 @@ auto LowerStructuralExpr(
       auto v = LowerIntegerLiteralValue(
           unit_facts, expr.as<slang::ast::IntegerLiteral>());
       if (!v) return std::unexpected(std::move(v.error()));
-      return MakeLiteralExpr(*v);
+      return MakeLiteralExpr(*v, span);
     }
     default:
       return diag::Unsupported(
@@ -334,7 +356,7 @@ auto TryResolveLoopHeaderVar(
   }
   if (loop_state.synthetic_symbol != nullptr &&
       loop_state.synthetic_symbol != &var) {
-    throw support::InternalError(
+    throw InternalError(
         "loop-generate header resolved multiple synthetic loop variables");
   }
   loop_state.synthetic_symbol = &var;
@@ -389,7 +411,7 @@ auto LowerLoopHeaderExpr(
       auto v = LowerIntegerLiteralValue(
           unit_facts, expr.as<slang::ast::IntegerLiteral>());
       if (!v) return std::unexpected(std::move(v.error()));
-      return MakeLiteralExpr(*v);
+      return MakeLiteralExpr(*v, span);
     }
 
     case slang::ast::ExpressionKind::NamedValue: {
@@ -407,23 +429,25 @@ auto LowerLoopHeaderExpr(
         return MakeRefExpr(
             hir::LoopVarRef{
                 .parent_scope_hops = hir::ParentScopeHops{.value = 0},
-                .target = *loop_var});
+                .target = *loop_var},
+            span);
       }
       const auto binding = unit_state.LookupMemberVarBinding(var);
       if (!binding.has_value()) {
-        throw support::InternalError(
+        throw InternalError(
             "LowerLoopHeaderExpr: variable was not bound during scope "
             "lowering");
       }
       const auto hops = stack.HopsTo(binding->home_frame);
       if (!hops.has_value()) {
-        throw support::InternalError(
+        throw InternalError(
             "LowerLoopHeaderExpr: variable home frame is not on the current "
             "scope stack");
       }
       return MakeRefExpr(
           hir::MemberVarRef{
-              .parent_scope_hops = *hops, .target = binding->local_id});
+              .parent_scope_hops = *hops, .target = binding->local_id},
+          span);
     }
 
     case slang::ast::ExpressionKind::Conversion: {
@@ -455,8 +479,10 @@ auto LowerLoopHeaderExpr(
       auto type_id = type_id_of(expr);
       if (!type_id) return std::unexpected(std::move(type_id.error()));
       return hir::Expr{
-          .data = hir::BinaryExpr{
-              .op = *op, .lhs = *lhs_id, .rhs = *rhs_id, .type = *type_id}};
+          .data =
+              hir::BinaryExpr{
+                  .op = *op, .lhs = *lhs_id, .rhs = *rhs_id, .type = *type_id},
+          .span = span};
     }
 
     case slang::ast::ExpressionKind::Assignment: {
@@ -489,7 +515,8 @@ auto LowerLoopHeaderExpr(
       if (!type_id) return std::unexpected(std::move(type_id.error()));
       return hir::Expr{
           .data =
-              hir::AssignExpr{.lhs = lhs_id, .rhs = *rhs_id, .type = *type_id}};
+              hir::AssignExpr{.lhs = lhs_id, .rhs = *rhs_id, .type = *type_id},
+          .span = span};
     }
 
     default:

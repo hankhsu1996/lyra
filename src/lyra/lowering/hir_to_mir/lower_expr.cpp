@@ -4,6 +4,8 @@
 #include <variant>
 #include <vector>
 
+#include "lyra/base/internal_error.hpp"
+#include "lyra/base/overloaded.hpp"
 #include "lyra/diag/diagnostic.hpp"
 #include "lyra/hir/binary_op.hpp"
 #include "lyra/hir/expr.hpp"
@@ -12,12 +14,10 @@
 #include "lyra/hir/subroutine_ref.hpp"
 #include "lyra/hir/type.hpp"
 #include "lyra/hir/value_ref.hpp"
+#include "lyra/lowering/hir_to_mir/lower_system_subroutine.hpp"
 #include "lyra/lowering/hir_to_mir/state.hpp"
 #include "lyra/mir/binary_op.hpp"
 #include "lyra/mir/expr.hpp"
-#include "lyra/support/internal_error.hpp"
-#include "lyra/support/overloaded.hpp"
-#include "lyra/support/system_subroutine.hpp"
 
 namespace lyra::lowering::hir_to_mir {
 
@@ -26,19 +26,36 @@ auto LowerBinaryOp(hir::BinaryOp op) -> mir::BinaryOp {
     case hir::BinaryOp::kAdd:
       return mir::BinaryOp::kAdd;
     case hir::BinaryOp::kLessThan:
-      throw support::InternalError(
+      throw InternalError(
           "LowerBinaryOp: kLessThan only appears in loop-generate header "
           "expressions, which are rejected before HIR-to-MIR");
   }
-  throw support::InternalError("LowerBinaryOp: unknown HIR BinaryOp");
+  throw InternalError("LowerBinaryOp: unknown HIR BinaryOp");
 }
 
 namespace {
 
-auto ResolveMemberVarRef(
+auto LowerMemberVarRefExpr(
     const ClassLoweringState& class_state, const hir::MemberVarRef& m)
-    -> mir::MemberVarId {
-  return class_state.LookupMemberVar(m.parent_scope_hops, m.target);
+    -> mir::Expr {
+  const mir::MemberVarId mir_id =
+      class_state.LookupMemberVar(m.parent_scope_hops, m.target);
+  const auto& member = class_state.GetMemberVar(m.parent_scope_hops, mir_id);
+  const auto* value = std::get_if<mir::ValueMember>(&member.kind);
+  if (value == nullptr) {
+    throw InternalError("LowerMemberVarRef: member is not a value member");
+  }
+  return mir::Expr{
+      .data = mir::MemberVarRef{.target = mir_id}, .type = value->type};
+}
+
+auto LowerLocalVarRefExpr(
+    const ProcessLoweringState& proc_state, const hir::LocalVarRef& l)
+    -> mir::Expr {
+  const mir::LocalVarId mir_id = proc_state.TranslateLocalVar(l.target);
+  return mir::Expr{
+      .data = mir::LocalVarRef{.target = mir_id},
+      .type = proc_state.GetLocalVar(mir_id).type};
 }
 
 auto LowerRefAsLvalue(
@@ -46,17 +63,18 @@ auto LowerRefAsLvalue(
     const ProcessLoweringState& proc_state, const hir::ValueRef& ref)
     -> mir::Lvalue {
   return std::visit(
-      support::Overloaded{
+      Overloaded{
           [&](const hir::MemberVarRef& m) -> mir::Lvalue {
             return mir::MemberVarRef{
-                .target = ResolveMemberVarRef(class_state, m)};
+                .target =
+                    class_state.LookupMemberVar(m.parent_scope_hops, m.target)};
           },
           [&](const hir::LocalVarRef& l) -> mir::Lvalue {
             return mir::LocalVarRef{
                 .target = proc_state.TranslateLocalVar(l.target)};
           },
           [](const hir::LoopVarRef&) -> mir::Lvalue {
-            throw support::InternalError(
+            throw InternalError(
                 "LowerRefAsLvalue: loop-variable references only appear in "
                 "loop-generate header expressions, which are rejected before "
                 "HIR-to-MIR");
@@ -65,126 +83,137 @@ auto LowerRefAsLvalue(
       ref);
 }
 
-auto NormalizeSemanticToBuiltinOp(
-    const support::SystemSubroutineSemantic& semantic) -> mir::BuiltinOp {
-  return std::visit(
-      support::Overloaded{
-          [](const support::PrintSystemSubroutineInfo& info) -> mir::BuiltinOp {
-            return mir::PrintBuiltinInfo{
-                .radix = info.radix,
-                .append_newline = info.append_newline,
-                .is_strobe = info.is_strobe,
-                .sink_kind = info.sink_kind};
-          },
-      },
-      semantic);
+auto LowerUserCallee(
+    const ClassLoweringState& class_state, const hir::UserSubroutineRef& u)
+    -> mir::Callee {
+  return class_state.LookupUserSubroutine(u.parent_scope_hops, u.id);
 }
 
-auto LowerCallee(
-    const ClassLoweringState& class_state, const hir::SubroutineRef& callee)
-    -> mir::Callee {
+auto LowerPrimaryExpr(
+    const UnitLoweringState& unit_state, const ClassLoweringState& class_state,
+    const ProcessLoweringState& proc_state, const hir::PrimaryExpr& p)
+    -> mir::Expr {
   return std::visit(
-      support::Overloaded{
-          [&](const hir::UserSubroutineRef& u) -> mir::Callee {
-            return class_state.LookupUserSubroutine(u.parent_scope_hops, u.id);
+      Overloaded{
+          [&](const hir::IntegerLiteral& i) -> mir::Expr {
+            return mir::Expr{
+                .data = mir::IntegerLiteral{.value = i.value},
+                .type = unit_state.Builtins().int32};
           },
-          [](const hir::SystemSubroutineRef& s) -> mir::Callee {
-            const auto& desc = support::LookupSystemSubroutine(s.id);
-            return NormalizeSemanticToBuiltinOp(desc.semantic);
+          [&](const hir::StringLiteral& s) -> mir::Expr {
+            return mir::Expr{
+                .data = mir::StringLiteral{.value = s.value},
+                .type = unit_state.Builtins().string};
+          },
+          [&](const hir::RefExpr& r) -> mir::Expr {
+            return std::visit(
+                Overloaded{
+                    [&](const hir::MemberVarRef& m) -> mir::Expr {
+                      return LowerMemberVarRefExpr(class_state, m);
+                    },
+                    [&](const hir::LocalVarRef& l) -> mir::Expr {
+                      return LowerLocalVarRefExpr(proc_state, l);
+                    },
+                    [](const hir::LoopVarRef&) -> mir::Expr {
+                      throw InternalError(
+                          "LowerPrimaryExpr: loop-variable references only "
+                          "appear in loop-generate header expressions, which "
+                          "are rejected before HIR-to-MIR");
+                    },
+                },
+                r.target);
           },
       },
-      callee);
+      p.data);
 }
 
 }  // namespace
 
-auto LowerProcessExprData(
+auto LowerProcessExpr(
     const UnitLoweringState& unit_state, const ClassLoweringState& class_state,
     const ProcessLoweringState& proc_state, const BodyLoweringState& body_state,
-    const hir::Process& hir_process, const hir::ExprData& data)
-    -> mir::ExprData {
+    const hir::Process& hir_process, const hir::Expr& expr)
+    -> diag::Result<mir::Expr> {
   return std::visit(
-      support::Overloaded{
-          [&](const hir::PrimaryExpr& p) -> mir::ExprData {
-            return std::visit(
-                support::Overloaded{
-                    [](const hir::IntegerLiteral& i) -> mir::ExprData {
-                      return mir::IntegerLiteral{.value = i.value};
-                    },
-                    [&](const hir::RefExpr& r) -> mir::ExprData {
-                      return std::visit(
-                          support::Overloaded{
-                              [&](const hir::MemberVarRef& m) -> mir::ExprData {
-                                return mir::MemberVarRef{
-                                    .target =
-                                        ResolveMemberVarRef(class_state, m)};
-                              },
-                              [&](const hir::LocalVarRef& l) -> mir::ExprData {
-                                return mir::LocalVarRef{
-                                    .target =
-                                        proc_state.TranslateLocalVar(l.target)};
-                              },
-                              [](const hir::LoopVarRef&) -> mir::ExprData {
-                                throw support::InternalError(
-                                    "LowerProcessExprData: loop-variable "
-                                    "references only appear in loop-generate "
-                                    "header expressions, which are rejected "
-                                    "before HIR-to-MIR");
-                              },
-                          },
-                          r.target);
-                    },
-                },
-                p.data);
+      Overloaded{
+          [&](const hir::PrimaryExpr& p) -> diag::Result<mir::Expr> {
+            return LowerPrimaryExpr(unit_state, class_state, proc_state, p);
           },
-          [&](const hir::BinaryExpr& b) -> mir::ExprData {
-            return mir::BinaryExpr{
-                .op = LowerBinaryOp(b.op),
-                .lhs = body_state.TranslateExpr(b.lhs),
-                .rhs = body_state.TranslateExpr(b.rhs),
+          [&](const hir::BinaryExpr& b) -> diag::Result<mir::Expr> {
+            return mir::Expr{
+                .data =
+                    mir::BinaryExpr{
+                        .op = LowerBinaryOp(b.op),
+                        .lhs = body_state.TranslateExpr(b.lhs),
+                        .rhs = body_state.TranslateExpr(b.rhs)},
                 .type = unit_state.TranslateType(b.type)};
           },
-          [&](const hir::AssignExpr& a) -> mir::ExprData {
+          [&](const hir::AssignExpr& a) -> diag::Result<mir::Expr> {
             const auto& lhs_expr = hir_process.exprs.at(a.lhs.value);
             const auto ref = hir::AsAssignableRef(lhs_expr);
             if (!ref.has_value()) {
-              throw support::InternalError(
+              throw InternalError(
                   "AssignExpr lhs is not assignable (AST->HIR invariant)");
             }
-            return mir::AssignExpr{
-                .target = LowerRefAsLvalue(
-                    class_state, proc_state, ref->get().target),
-                .value = body_state.TranslateExpr(a.rhs),
+            return mir::Expr{
+                .data =
+                    mir::AssignExpr{
+                        .target = LowerRefAsLvalue(
+                            class_state, proc_state, ref->get().target),
+                        .value = body_state.TranslateExpr(a.rhs)},
                 .type = unit_state.TranslateType(a.type)};
           },
-          [&](const hir::CallExpr& c) -> mir::ExprData {
-            std::vector<mir::ExprId> args;
-            args.reserve(c.arguments.size());
-            for (const auto arg : c.arguments) {
-              args.push_back(body_state.TranslateExpr(arg));
-            }
-            return mir::CallExpr{
-                .callee = LowerCallee(class_state, c.callee),
-                .arguments = std::move(args),
-                .result_type = unit_state.TranslateType(c.result_type)};
+          [&](const hir::CallExpr& c) -> diag::Result<mir::Expr> {
+            return std::visit(
+                Overloaded{
+                    [&](const hir::SystemSubroutineRef& sys)
+                        -> diag::Result<mir::Expr> {
+                      return LowerSystemSubroutineCall(
+                          unit_state, hir_process, body_state, c, sys,
+                          expr.span);
+                    },
+                    [&](const hir::UserSubroutineRef& usr)
+                        -> diag::Result<mir::Expr> {
+                      std::vector<mir::ExprId> args;
+                      args.reserve(c.arguments.size());
+                      for (const auto arg : c.arguments) {
+                        args.push_back(body_state.TranslateExpr(arg));
+                      }
+                      return mir::Expr{
+                          .data =
+                              mir::CallExpr{
+                                  .callee = LowerUserCallee(class_state, usr),
+                                  .arguments = std::move(args)},
+                          .type = unit_state.TranslateType(c.result_type)};
+                    },
+                },
+                c.callee);
           },
       },
-      data);
+      expr.data);
 }
 
-auto LowerStructuralExprData(const hir::ExprData& data)
-    -> diag::Result<mir::ExprData> {
+auto LowerStructuralExpr(
+    const UnitLoweringState& unit_state, const hir::Expr& expr)
+    -> diag::Result<mir::Expr> {
   return std::visit(
-      support::Overloaded{
-          [](const hir::PrimaryExpr& p) -> diag::Result<mir::ExprData> {
+      Overloaded{
+          [&](const hir::PrimaryExpr& p) -> diag::Result<mir::Expr> {
             return std::visit(
-                support::Overloaded{
-                    [](const hir::IntegerLiteral& i)
-                        -> diag::Result<mir::ExprData> {
-                      return mir::ExprData{
-                          mir::IntegerLiteral{.value = i.value}};
+                Overloaded{
+                    [&](const hir::IntegerLiteral& i)
+                        -> diag::Result<mir::Expr> {
+                      return mir::Expr{
+                          .data = mir::IntegerLiteral{.value = i.value},
+                          .type = unit_state.Builtins().int32};
                     },
-                    [](const hir::RefExpr&) -> diag::Result<mir::ExprData> {
+                    [&](const hir::StringLiteral& s)
+                        -> diag::Result<mir::Expr> {
+                      return mir::Expr{
+                          .data = mir::StringLiteral{.value = s.value},
+                          .type = unit_state.Builtins().string};
+                    },
+                    [](const hir::RefExpr&) -> diag::Result<mir::Expr> {
                       return diag::Unsupported(
                           diag::DiagCode::kUnsupportedStructuralExpressionForm,
                           "this structural expression form is not "
@@ -194,26 +223,26 @@ auto LowerStructuralExprData(const hir::ExprData& data)
                 },
                 p.data);
           },
-          [](const hir::BinaryExpr&) -> diag::Result<mir::ExprData> {
+          [](const hir::BinaryExpr&) -> diag::Result<mir::Expr> {
             return diag::Unsupported(
                 diag::DiagCode::kUnsupportedStructuralExpressionForm,
                 "this structural expression form is not supported yet",
                 diag::UnsupportedCategory::kFeature);
           },
-          [](const hir::AssignExpr&) -> diag::Result<mir::ExprData> {
+          [](const hir::AssignExpr&) -> diag::Result<mir::Expr> {
             return diag::Unsupported(
                 diag::DiagCode::kUnsupportedStructuralExpressionForm,
                 "this structural expression form is not supported yet",
                 diag::UnsupportedCategory::kFeature);
           },
-          [](const hir::CallExpr&) -> diag::Result<mir::ExprData> {
+          [](const hir::CallExpr&) -> diag::Result<mir::Expr> {
             return diag::Unsupported(
                 diag::DiagCode::kUnsupportedStructuralExpressionForm,
                 "calls are not allowed in structural expressions",
                 diag::UnsupportedCategory::kFeature);
           },
       },
-      data);
+      expr.data);
 }
 
 }  // namespace lyra::lowering::hir_to_mir

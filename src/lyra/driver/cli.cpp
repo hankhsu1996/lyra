@@ -15,6 +15,7 @@
 
 #include "lyra/backend/cpp/api.hpp"
 #include "lyra/backend/cpp/artifact.hpp"
+#include "lyra/base/internal_error.hpp"
 #include "lyra/compiler/compile.hpp"
 #include "lyra/diag/diag_code.hpp"
 #include "lyra/diag/diagnostic.hpp"
@@ -25,7 +26,6 @@
 #include "lyra/hir/dump.hpp"
 #include "lyra/mir/class_decl.hpp"
 #include "lyra/mir/dump.hpp"
-#include "lyra/support/internal_error.hpp"
 
 namespace {
 
@@ -249,7 +249,7 @@ auto main(int argc, char** argv) -> int {
           }
         }
         if (entry == nullptr) {
-          throw lyra::support::InternalError(
+          throw lyra::InternalError(
               std::format(
                   "emit cpp: top class '{}' not found in compilation unit",
                   args.input.top));
@@ -267,7 +267,7 @@ auto main(int argc, char** argv) -> int {
           std::error_code ec;
           std::filesystem::create_directories(args.emit_out_dir, ec);
           if (ec) {
-            throw lyra::support::InternalError(
+            throw lyra::InternalError(
                 std::format(
                     "emit cpp: failed to create out-dir '{}': {}",
                     args.emit_out_dir, ec.message()));
@@ -277,14 +277,14 @@ auto main(int argc, char** argv) -> int {
                 std::filesystem::path(args.emit_out_dir) / file.relpath;
             std::filesystem::create_directories(path.parent_path(), ec);
             if (ec) {
-              throw lyra::support::InternalError(
+              throw lyra::InternalError(
                   std::format(
                       "emit cpp: failed to create '{}': {}",
                       path.parent_path().string(), ec.message()));
             }
             std::ofstream out_stream(path);
             if (!out_stream) {
-              throw lyra::support::InternalError(
+              throw lyra::InternalError(
                   std::format(
                       "emit cpp: failed to open '{}' for write",
                       path.string()));
@@ -292,7 +292,7 @@ auto main(int argc, char** argv) -> int {
             out_stream << file.content;
             out_stream.flush();
             if (!out_stream) {
-              throw lyra::support::InternalError(
+              throw lyra::InternalError(
                   std::format("emit cpp: failed to write '{}'", path.string()));
             }
           }
@@ -303,7 +303,7 @@ auto main(int argc, char** argv) -> int {
         break;
     }
     return 0;
-  } catch (const lyra::support::InternalError& e) {
+  } catch (const lyra::InternalError& e) {
     fmt::print(stderr, "{}", lyra::diag::RenderInternalError(e.what()));
     return 2;
   } catch (const std::exception& e) {

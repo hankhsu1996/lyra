@@ -1,0 +1,13 @@
+id: errors.fdisplay_unsupported
+tags: [errors]
+input:
+  command: [emit, cpp]
+  project: false
+  top: Top
+  files: [main.sv]
+  args: ["--no-color"]
+expect:
+  exit: 1
+  stderr:
+    contains:
+      - "$fdisplay is not implemented in this build"

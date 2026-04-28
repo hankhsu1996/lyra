@@ -3,7 +3,7 @@
 #include <coroutine>
 #include <utility>
 
-#include "lyra/support/internal_error.hpp"
+#include "lyra/base/internal_error.hpp"
 
 namespace lyra::runtime {
 
@@ -57,17 +57,16 @@ class Process {
 
   void Resume() {
     if (!handle_) {
-      throw support::InternalError(
-          "lyra::runtime::Process::Resume on empty handle");
+      throw InternalError("lyra::runtime::Process::Resume on empty handle");
     }
     if (handle_.done()) {
-      throw support::InternalError(
+      throw InternalError(
           "lyra::runtime::Process::Resume on already-done coroutine");
     }
     handle_.resume();
     if (handle_.promise().failed) {
       handle_.promise().failed = false;
-      throw support::InternalError("lyra::runtime::Process body failed");
+      throw InternalError("lyra::runtime::Process body failed");
     }
   }
 

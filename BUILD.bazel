@@ -4,7 +4,10 @@ load("@rules_cc//cc:cc_library.bzl", "cc_library")
 
 filegroup(
     name = "runtime_sources",
-    srcs = glob(["src/lyra/runtime/*.cpp"]),
+    srcs = glob([
+        "src/lyra/runtime/*.cpp",
+        "src/lyra/base/*.cpp",
+    ]),
     visibility = ["//visibility:public"],
 )
 
@@ -13,6 +16,7 @@ filegroup(
     srcs = glob([
         "include/lyra/runtime/*.hpp",
         "include/lyra/support/*.hpp",
+        "include/lyra/base/*.hpp",
     ]),
     visibility = ["//visibility:public"],
 )
@@ -27,10 +31,23 @@ refresh_compile_commands(
 )
 
 cc_library(
+    name = "base",
+    srcs = glob(["src/lyra/base/*.cpp"]),
+    hdrs = glob(["include/lyra/base/*.hpp"]),
+    includes = ["include"],
+    visibility = ["//visibility:public"],
+)
+
+cc_library(
     name = "support",
+    srcs = glob(["src/lyra/support/*.cpp"]),
     hdrs = glob(["include/lyra/support/*.hpp"]),
     includes = ["include"],
     visibility = ["//visibility:public"],
+    deps = [
+        ":base",
+        ":diag",
+    ],
 )
 
 cc_library(
@@ -40,7 +57,7 @@ cc_library(
     includes = ["include"],
     visibility = ["//visibility:public"],
     deps = [
-        ":support",
+        ":base",
         "@fmt",
     ],
 )
@@ -62,7 +79,7 @@ cc_library(
     hdrs = glob(["include/lyra/runtime/*.hpp"]),
     includes = ["include"],
     visibility = ["//visibility:public"],
-    deps = [":support"],
+    deps = [":base"],
 )
 
 cc_library(
@@ -71,7 +88,10 @@ cc_library(
     hdrs = glob(["include/lyra/hir/*.hpp"]),
     includes = ["include"],
     visibility = ["//visibility:public"],
-    deps = [":support"],
+    deps = [
+        ":diag",
+        ":support",
+    ],
 )
 
 cc_library(

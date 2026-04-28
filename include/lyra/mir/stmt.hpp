@@ -33,6 +33,14 @@ struct Body {
   std::vector<Expr> exprs;
   std::vector<Stmt> stmts;
   std::vector<StmtId> root_stmts;
+
+  [[nodiscard]] auto GetExpr(ExprId id) const -> const Expr& {
+    return exprs.at(id.value);
+  }
+
+  [[nodiscard]] auto GetExprType(ExprId id) const -> TypeId {
+    return GetExpr(id).type;
+  }
 };
 
 struct LocalVarDeclStmt {

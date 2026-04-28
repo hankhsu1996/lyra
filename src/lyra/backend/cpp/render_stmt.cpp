@@ -5,10 +5,10 @@
 #include <variant>
 
 #include "formatting.hpp"
+#include "lyra/base/overloaded.hpp"
 #include "lyra/mir/class_decl.hpp"
 #include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/stmt.hpp"
-#include "lyra/support/overloaded.hpp"
 #include "render_context.hpp"
 #include "render_expr.hpp"
 #include "render_type.hpp"
@@ -23,7 +23,7 @@ auto RenderStmt(
     out += Indent(indent) + *stmt.label + ":\n";
   }
   out += std::visit(
-      support::Overloaded{
+      Overloaded{
           [&](const mir::LocalVarDeclStmt& s) -> std::string {
             const auto& lv = ctx.Body().local_vars.at(s.local_var.value);
             return Indent(indent) + RenderTypeAsCpp(ctx.Unit(), lv.type) + " " +

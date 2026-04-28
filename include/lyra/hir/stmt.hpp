@@ -7,6 +7,7 @@
 #include <variant>
 #include <vector>
 
+#include "lyra/diag/source_span.hpp"
 #include "lyra/hir/expr.hpp"
 #include "lyra/hir/local_var.hpp"
 
@@ -38,6 +39,7 @@ using StmtData = std::variant<VarDeclStmt, ExprStmt, BlockStmt>;
 struct Stmt {
   std::optional<std::string> label;
   StmtData data;
+  diag::SourceSpan span;
 };
 
 }  // namespace lyra::hir

@@ -8,6 +8,8 @@
 #include <variant>
 #include <vector>
 
+#include "lyra/base/internal_error.hpp"
+#include "lyra/base/overloaded.hpp"
 #include "lyra/hir/binary_op.hpp"
 #include "lyra/hir/expr.hpp"
 #include "lyra/hir/local_var.hpp"
@@ -21,8 +23,6 @@
 #include "lyra/hir/subroutine_ref.hpp"
 #include "lyra/hir/type.hpp"
 #include "lyra/hir/value_ref.hpp"
-#include "lyra/support/internal_error.hpp"
-#include "lyra/support/overloaded.hpp"
 #include "lyra/support/system_subroutine.hpp"
 
 namespace lyra::hir {
@@ -49,7 +49,7 @@ class HirDumper {
   }
   void Dedent() {
     if (indent_ <= 0) {
-      throw support::InternalError("HirDumper: indent underflow");
+      throw InternalError("HirDumper: indent underflow");
     }
     --indent_;
   }
@@ -63,7 +63,7 @@ class HirDumper {
       case BitAtom::kReg:
         return "reg";
     }
-    throw support::InternalError("HirDumper::FormatBitAtom: unknown BitAtom");
+    throw InternalError("HirDumper::FormatBitAtom: unknown BitAtom");
   }
 
   static auto FormatSignedness(Signedness s) -> std::string_view {
@@ -87,8 +87,7 @@ class HirDumper {
       case PackedArrayForm::kTime:
         return "time";
     }
-    throw support::InternalError(
-        "HirDumper::FormatPackedForm: unknown PackedArrayForm");
+    throw InternalError("HirDumper::FormatPackedForm: unknown PackedArrayForm");
   }
 
   static auto FormatPackedDims(const std::vector<PackedRange>& dims)
@@ -117,7 +116,7 @@ class HirDumper {
 
   static auto FormatType(const Type& t) -> std::string {
     return std::visit(
-        support::Overloaded{
+        Overloaded{
             [](const PackedArrayType& p) -> std::string {
               return std::format(
                   "PackedArray(atom={}, signed={}, dims={}, form={})",
@@ -169,12 +168,12 @@ class HirDumper {
       case BinaryOp::kLessThan:
         return "LessThan";
     }
-    throw support::InternalError("HirDumper: unknown BinaryOp");
+    throw InternalError("HirDumper: unknown BinaryOp");
   }
 
   static auto FormatValueRef(const ValueRef& v) -> std::string {
     return std::visit(
-        support::Overloaded{
+        Overloaded{
             [](const MemberVarRef& r) -> std::string {
               return std::format(
                   "MemberVar[{}](hops={})", r.target.value,
@@ -194,9 +193,12 @@ class HirDumper {
 
   static auto FormatPrimary(const Primary& p) -> std::string {
     return std::visit(
-        support::Overloaded{
+        Overloaded{
             [](const IntegerLiteral& lit) -> std::string {
               return std::format("IntegerLiteral({})", lit.value);
+            },
+            [](const StringLiteral& lit) -> std::string {
+              return std::format("StringLiteral(\"{}\")", lit.value);
             },
             [](const RefExpr& r) -> std::string {
               return std::format("RefExpr {}", FormatValueRef(r.target));
@@ -208,7 +210,7 @@ class HirDumper {
   [[nodiscard]] auto FormatSubroutineRef(const SubroutineRef& callee) const
       -> std::string {
     return std::visit(
-        support::Overloaded{
+        Overloaded{
             [this](const UserSubroutineRef& u) -> std::string {
               const auto& owner = ResolveScope(u.parent_scope_hops);
               const auto& decl = owner.GetSubroutine(u.id);
@@ -228,7 +230,7 @@ class HirDumper {
   [[nodiscard]] auto ResolveScope(ParentScopeHops hops) const
       -> const StructuralScope& {
     if (hops.value >= scope_stack_.size()) {
-      throw support::InternalError(
+      throw InternalError(
           "HirDumper::ResolveScope: ParentScopeHops out of range");
     }
     return *scope_stack_[scope_stack_.size() - 1 - hops.value];
@@ -236,7 +238,7 @@ class HirDumper {
 
   [[nodiscard]] auto FormatExprData(const ExprData& data) const -> std::string {
     return std::visit(
-        support::Overloaded{
+        Overloaded{
             [](const PrimaryExpr& p) -> std::string {
               return FormatPrimary(p.data);
             },
@@ -368,7 +370,7 @@ class HirDumper {
   void DumpStmt(const Process& p, StmtId id) {
     const auto& s = p.stmts.at(id.value);
     std::visit(
-        support::Overloaded{
+        Overloaded{
             [&](const VarDeclStmt& v) {
               Line(
                   std::format(
@@ -403,7 +405,7 @@ class HirDumper {
 
   void DumpGenerate(const StructuralScope& owner, const Generate& g) {
     std::visit(
-        support::Overloaded{
+        Overloaded{
             [&](const IfGenerate& ig) {
               Line(
                   std::format(

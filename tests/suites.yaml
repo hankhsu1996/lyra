@@ -1,6 +1,6 @@
 suites:
   architecture_reset:
-    include_tags: [emit, dump, errors]
+    include_tags: [emit, dump, errors, cpp_run]
     exclude: []
   architecture_diag_struct:
     include_tags: [diag-struct]

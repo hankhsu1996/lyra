@@ -3,9 +3,9 @@
 #include <array>
 #include <optional>
 #include <string_view>
+#include <utility>
 
-#include "lyra/diag/diagnostic.hpp"
-#include "lyra/support/internal_error.hpp"
+#include "lyra/base/internal_error.hpp"
 
 namespace lyra::diag {
 namespace {
@@ -152,6 +152,61 @@ constexpr std::array kEntries{
             .name = "unsupported_binary_operator"}},
 
     std::pair{
+        DiagCode::kFormatStringTrailingPercent,
+        DiagCodeInfo{
+            .kind = DiagKind::kError,
+            .category = std::nullopt,
+            .name = "format_string_trailing_percent"}},
+    std::pair{
+        DiagCode::kFormatStringMissingSpecifier,
+        DiagCodeInfo{
+            .kind = DiagKind::kError,
+            .category = std::nullopt,
+            .name = "format_string_missing_specifier"}},
+    std::pair{
+        DiagCode::kFormatStringWidthOverflow,
+        DiagCodeInfo{
+            .kind = DiagKind::kError,
+            .category = std::nullopt,
+            .name = "format_string_width_overflow"}},
+    std::pair{
+        DiagCode::kFormatStringUnknownSpecifier,
+        DiagCodeInfo{
+            .kind = DiagKind::kError,
+            .category = std::nullopt,
+            .name = "format_string_unknown_specifier"}},
+    std::pair{
+        DiagCode::kDisplayMissingArg,
+        DiagCodeInfo{
+            .kind = DiagKind::kError,
+            .category = std::nullopt,
+            .name = "display_missing_arg"}},
+    std::pair{
+        DiagCode::kFileDisplayNotImplemented,
+        DiagCodeInfo{
+            .kind = DiagKind::kUnsupported,
+            .category = UnsupportedCategory::kFeature,
+            .name = "file_display_not_implemented"}},
+    std::pair{
+        DiagCode::kFormatModulePathNotImplemented,
+        DiagCodeInfo{
+            .kind = DiagKind::kUnsupported,
+            .category = UnsupportedCategory::kFeature,
+            .name = "format_module_path_not_implemented"}},
+    std::pair{
+        DiagCode::kFormatSpecifierNotImplemented,
+        DiagCodeInfo{
+            .kind = DiagKind::kUnsupported,
+            .category = UnsupportedCategory::kFeature,
+            .name = "format_specifier_not_implemented"}},
+    std::pair{
+        DiagCode::kSystemSubroutineExecutionNotImplemented,
+        DiagCodeInfo{
+            .kind = DiagKind::kUnsupported,
+            .category = UnsupportedCategory::kFeature,
+            .name = "system_subroutine_execution_not_implemented"}},
+
+    std::pair{
         DiagCode::kHostInvalidCliArgs,
         DiagCodeInfo{
             .kind = DiagKind::kHostError,
@@ -196,7 +251,7 @@ auto Info(DiagCode code) -> const DiagCodeInfo& {
   for (const auto& [c, info] : kEntries) {
     if (c == code) return info;
   }
-  throw lyra::support::InternalError("diag::Info: unknown DiagCode value");
+  throw InternalError("diag::Info: unknown DiagCode value");
 }
 
 auto DiagCodeName(DiagCode code) -> std::string_view {

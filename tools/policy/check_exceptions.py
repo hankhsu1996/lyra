@@ -22,7 +22,10 @@ from pathlib import Path
 
 INCLUDE_PATHS = ("src/lyra", "include/lyra")
 CATCH_ALL_ALLOWLIST = ("src/lyra/driver",)
-FULL_ALLOWLIST = frozenset({"include/lyra/support/internal_error.hpp"})
+FULL_ALLOWLIST = frozenset({
+    "include/lyra/base/internal_error.hpp",
+    "src/lyra/base/internal_error.cpp",
+})
 EXTENSIONS = frozenset({".cpp", ".hpp", ".cc", ".cxx",
                        ".h", ".hh", ".hxx", ".inl", ".ipp"})
 
@@ -45,7 +48,7 @@ RE_ASSERT_H_INCLUDE = re.compile(r'^\s*#\s*include\s*<\s*assert\.h\s*>', re.MULT
 RE_BUG_REPORT_STRING = re.compile(r'"[^"\n]*(?:Please report|This is a bug|github\.com/[^/]+/lyra/issues)[^"\n]*"')
 
 # Files allowed to contain bug report messages
-BUG_REPORT_ALLOWLIST = frozenset({"include/lyra/support/internal_error.hpp"})
+BUG_REPORT_ALLOWLIST = frozenset({"include/lyra/base/internal_error.hpp"})
 
 
 def get_repo_root() -> Path:

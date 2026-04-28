@@ -17,7 +17,6 @@
 #include "../type.hpp"
 #include "lyra/diag/diagnostic.hpp"
 #include "lyra/hir/expr.hpp"
-#include "lyra/hir/local_var.hpp"
 #include "lyra/hir/stmt.hpp"
 
 namespace lyra::lowering::ast_to_hir {
@@ -27,6 +26,7 @@ auto LowerStatement(
     ScopeLoweringState& scope_state, ScopeStack& stack,
     const slang::ast::Statement& stmt) -> diag::Result<hir::Stmt> {
   const auto& mapper = unit_facts.SourceMapper();
+  const auto span = mapper.SpanOf(stmt.sourceRange);
   switch (stmt.kind) {
     case slang::ast::StatementKind::List: {
       const auto& list = stmt.as<slang::ast::StatementList>();
@@ -40,7 +40,8 @@ auto LowerStatement(
       }
       return hir::Stmt{
           .label = std::nullopt,
-          .data = hir::BlockStmt{.statements = std::move(kids)}};
+          .data = hir::BlockStmt{.statements = std::move(kids)},
+          .span = span};
     }
 
     case slang::ast::StatementKind::Block: {
@@ -64,7 +65,8 @@ auto LowerStatement(
       }
       return hir::Stmt{
           .label = std::nullopt,
-          .data = hir::BlockStmt{.statements = std::move(kids)}};
+          .data = hir::BlockStmt{.statements = std::move(kids)},
+          .span = span};
     }
 
     case slang::ast::StatementKind::VariableDeclaration: {
@@ -78,7 +80,8 @@ auto LowerStatement(
       const auto local_id = proc_state.AddLocalVar(sym, type_id);
       return hir::Stmt{
           .label = std::nullopt,
-          .data = hir::VarDeclStmt{.local_var = local_id}};
+          .data = hir::VarDeclStmt{.local_var = local_id},
+          .span = span};
     }
 
     case slang::ast::StatementKind::ExpressionStatement: {
@@ -88,13 +91,14 @@ auto LowerStatement(
       if (!expr) return std::unexpected(std::move(expr.error()));
       const hir::ExprId id = proc_state.AppendExpr(*std::move(expr));
       return hir::Stmt{
-          .label = std::nullopt, .data = hir::ExprStmt{.expr = id}};
+          .label = std::nullopt,
+          .data = hir::ExprStmt{.expr = id},
+          .span = span};
     }
 
     default:
       return diag::Unsupported(
-          mapper.SpanOf(stmt.sourceRange),
-          diag::DiagCode::kUnsupportedStatementForm,
+          span, diag::DiagCode::kUnsupportedStatementForm,
           "this statement form is not supported yet",
           diag::UnsupportedCategory::kFeature);
   }

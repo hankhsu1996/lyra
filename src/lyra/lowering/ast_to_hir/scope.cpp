@@ -16,11 +16,11 @@
 
 #include "facts.hpp"
 #include "generate.hpp"
+#include "lyra/base/internal_error.hpp"
 #include "lyra/diag/diagnostic.hpp"
 #include "lyra/hir/structural_scope.hpp"
 #include "lyra/hir/subroutine.hpp"
 #include "lyra/hir/type.hpp"
-#include "lyra/support/internal_error.hpp"
 #include "process.hpp"
 #include "state.hpp"
 #include "type.hpp"
@@ -37,8 +37,7 @@ auto FromSlangSubroutineKind(slang::ast::SubroutineKind k)
     case slang::ast::SubroutineKind::Task:
       return hir::SubroutineKind::kTask;
   }
-  throw support::InternalError(
-      "FromSlangSubroutineKind: unknown SubroutineKind");
+  throw InternalError("FromSlangSubroutineKind: unknown SubroutineKind");
 }
 
 auto IsCaseConstruct(
@@ -85,7 +84,7 @@ auto LowerScopeInto(
     // elaboration, so a void-typed VariableSymbol can only reach this path
     // via a slang/Lyra integration bug.
     if (std::holds_alternative<hir::VoidType>(*type_data)) {
-      throw support::InternalError(
+      throw InternalError(
           "LowerScopeInto: variable declaration produced void type");
     }
     const auto type_id = unit_state.AddType(*std::move(type_data));
@@ -144,7 +143,7 @@ auto LowerScopeInto(
         const auto& block = member.as<slang::ast::GenerateBlockSymbol>();
         const auto* syntax = block.generateConstructSyntax;
         if (syntax == nullptr) {
-          throw support::InternalError(
+          throw InternalError(
               "LowerScopeInto: generate block has no construct syntax");
         }
         if (!consumed.insert(syntax).second) {

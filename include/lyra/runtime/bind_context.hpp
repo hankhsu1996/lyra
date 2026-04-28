@@ -16,6 +16,9 @@ class RuntimeBindContext {
   RuntimeBindContext(Engine& engine, RuntimeScope& scope);
 
   auto CurrentScope() -> RuntimeScope&;
+  auto GetEngine() -> Engine& {
+    return *engine_;
+  }
   void AddProcess(ProcessKind kind, Process process);
   auto CreateChildScope(std::string name, RuntimeScopeKind kind)
       -> RuntimeBindContext;

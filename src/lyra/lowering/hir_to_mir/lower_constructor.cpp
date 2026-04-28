@@ -10,6 +10,8 @@
 #include <utility>
 #include <vector>
 
+#include "lyra/base/internal_error.hpp"
+#include "lyra/base/overloaded.hpp"
 #include "lyra/diag/diagnostic.hpp"
 #include "lyra/hir/expr.hpp"
 #include "lyra/hir/structural_scope.hpp"
@@ -20,8 +22,6 @@
 #include "lyra/mir/expr.hpp"
 #include "lyra/mir/member_var.hpp"
 #include "lyra/mir/stmt.hpp"
-#include "lyra/support/internal_error.hpp"
-#include "lyra/support/overloaded.hpp"
 
 namespace lyra::lowering::hir_to_mir {
 
@@ -41,14 +41,14 @@ void CheckNoNameCollision(
     std::string_view companion_member_name) {
   for (const auto& m : enclosing.MemberVars()) {
     if (m.name == companion_member_name || m.name == child_class_name) {
-      throw support::InternalError(
+      throw InternalError(
           "child class or companion member name collides with an existing "
           "member declaration in the enclosing class");
     }
   }
   for (const auto& c : enclosing.Classes()) {
     if (c.Name() == child_class_name) {
-      throw support::InternalError(
+      throw InternalError(
           "child class name collides with an existing nested class "
           "declaration in the enclosing class");
     }
@@ -66,7 +66,7 @@ auto EnumerateGenerateChildSpecs(
     -> std::vector<GenerateChildSpec> {
   std::vector<GenerateChildSpec> specs;
   std::visit(
-      support::Overloaded{
+      Overloaded{
           [&](const hir::IfGenerate& if_gen) {
             const auto& then_scope = gen.GetChildScope(if_gen.then_scope);
             specs.push_back(
@@ -109,34 +109,25 @@ auto EnumerateGenerateChildSpecs(
   return specs;
 }
 
-auto LowerStructuralExprFromScope(
-    const hir::StructuralScope& owner_scope, hir::ExprId hir_id)
-    -> diag::Result<mir::Expr> {
-  const hir::Expr& src = owner_scope.GetExpr(hir_id);
-  auto data = LowerStructuralExprData(src.data);
-  if (!data) return std::unexpected(std::move(data.error()));
-  return mir::Expr{.data = *std::move(data)};
-}
-
 void ValidateConstructMemberStmt(
     const mir::ClassDecl& enclosing_cls, const mir::ConstructMemberStmt& stmt) {
   if (stmt.class_id.value >= enclosing_cls.Classes().size()) {
-    throw support::InternalError(
+    throw InternalError(
         "ConstructMemberStmt: class_id is not a direct child of the enclosing "
         "class");
   }
   if (stmt.target.value >= enclosing_cls.MemberVars().size()) {
-    throw support::InternalError(
+    throw InternalError(
         "ConstructMemberStmt: target is out of range in the enclosing class");
   }
   const auto& member = enclosing_cls.GetMemberVar(stmt.target);
   const auto* child = std::get_if<mir::ChildClassMember>(&member.kind);
   if (child == nullptr) {
-    throw support::InternalError(
+    throw InternalError(
         "ConstructMemberStmt: target is not a child-class member");
   }
   if (child->target != stmt.class_id) {
-    throw support::InternalError(
+    throw InternalError(
         "ConstructMemberStmt: child-class member target does not match "
         "class_id");
   }
@@ -170,15 +161,16 @@ auto AppendGenerateArmBody(
 }
 
 auto LowerGenerateAsStmt(
+    const UnitLoweringState& unit_state,
     const hir::StructuralScope& enclosing_scope,
     const mir::ClassDecl& enclosing_cls, const hir::Generate& gen,
     const GenerateBindings& gen_bindings, BodyLoweringState& body_state)
     -> diag::Result<mir::Stmt> {
   return std::visit(
-      support::Overloaded{
+      Overloaded{
           [&](const hir::IfGenerate& if_gen) -> diag::Result<mir::Stmt> {
-            auto cond_expr =
-                LowerStructuralExprFromScope(enclosing_scope, if_gen.condition);
+            auto cond_expr = LowerStructuralExpr(
+                unit_state, enclosing_scope.GetExpr(if_gen.condition));
             if (!cond_expr) {
               return std::unexpected(std::move(cond_expr.error()));
             }
@@ -206,8 +198,8 @@ auto LowerGenerateAsStmt(
                 .child_bodies = std::move(child_bodies)};
           },
           [&](const hir::CaseGenerate& case_gen) -> diag::Result<mir::Stmt> {
-            auto cond_expr = LowerStructuralExprFromScope(
-                enclosing_scope, case_gen.condition);
+            auto cond_expr = LowerStructuralExpr(
+                unit_state, enclosing_scope.GetExpr(case_gen.condition));
             if (!cond_expr) {
               return std::unexpected(std::move(cond_expr.error()));
             }
@@ -222,8 +214,8 @@ auto LowerGenerateAsStmt(
               std::vector<mir::ExprId> labels;
               labels.reserve(item.labels.size());
               for (const hir::ExprId label_hir_id : item.labels) {
-                auto label_expr =
-                    LowerStructuralExprFromScope(enclosing_scope, label_hir_id);
+                auto label_expr = LowerStructuralExpr(
+                    unit_state, enclosing_scope.GetExpr(label_hir_id));
                 if (!label_expr) {
                   return std::unexpected(std::move(label_expr.error()));
                 }
@@ -264,14 +256,16 @@ auto LowerGenerateAsStmt(
 }
 
 auto LowerGenerateConstruction(
-    const hir::StructuralScope& scope, const mir::ClassDecl& cls,
+    const UnitLoweringState& unit_state, const hir::StructuralScope& scope,
+    const mir::ClassDecl& cls,
     const std::vector<GenerateBindings>& bindings_by_generate)
     -> diag::Result<mir::Body> {
   BodyLoweringState body_state;
   for (std::size_t i = 0; i < scope.Generates().size(); ++i) {
     const auto& gen = scope.Generates()[i];
     const auto& gen_bindings = bindings_by_generate.at(i);
-    auto stmt = LowerGenerateAsStmt(scope, cls, gen, gen_bindings, body_state);
+    auto stmt = LowerGenerateAsStmt(
+        unit_state, scope, cls, gen, gen_bindings, body_state);
     if (!stmt) return std::unexpected(std::move(stmt.error()));
     const mir::StmtId sid = body_state.AppendStmt(*std::move(stmt));
     body_state.AppendRootStmt(sid);
@@ -320,10 +314,9 @@ auto LowerScopeAsClass(
     UnitLoweringState& unit_state, const ClassLoweringState* parent_class_state,
     ScopeStack& stack, const hir::StructuralScope& scope, std::string name)
     -> diag::Result<mir::ClassDecl> {
-  ClassLoweringState class_state(parent_class_state);
-  const ScopeStackGuard guard(stack, scope);
-
   mir::ClassDecl cls(std::move(name));
+  ClassLoweringState class_state(parent_class_state, cls);
+  const ScopeStackGuard guard(stack, scope);
 
   for (std::size_t i = 0; i < scope.MemberVars().size(); ++i) {
     const hir::MemberVarId hir_id{static_cast<std::uint32_t>(i)};
@@ -342,14 +335,16 @@ auto LowerScopeAsClass(
   }
 
   for (const auto& p : scope.Processes()) {
-    cls.AddProcess(LowerProcess(unit_state, class_state, p));
+    auto proc_or = LowerProcess(unit_state, class_state, p);
+    if (!proc_or) return std::unexpected(std::move(proc_or.error()));
+    cls.AddProcess(*std::move(proc_or));
   }
 
   auto bindings_r = InstallGenerateOwnedChildClasses(
       unit_state, class_state, stack, scope, cls);
   if (!bindings_r) return std::unexpected(std::move(bindings_r.error()));
 
-  auto ctor_r = LowerGenerateConstruction(scope, cls, *bindings_r);
+  auto ctor_r = LowerGenerateConstruction(unit_state, scope, cls, *bindings_r);
   if (!ctor_r) return std::unexpected(std::move(ctor_r.error()));
   cls.Constructor() = *std::move(ctor_r);
 

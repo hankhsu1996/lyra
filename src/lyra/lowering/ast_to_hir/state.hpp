@@ -12,6 +12,7 @@
 #include <slang/ast/symbols/SubroutineSymbols.h>
 #include <slang/ast/symbols/VariableSymbols.h>
 
+#include "lyra/base/internal_error.hpp"
 #include "lyra/hir/expr.hpp"
 #include "lyra/hir/local_var.hpp"
 #include "lyra/hir/member_var.hpp"
@@ -21,7 +22,6 @@
 #include "lyra/hir/structural_scope.hpp"
 #include "lyra/hir/subroutine.hpp"
 #include "lyra/hir/type.hpp"
-#include "lyra/support/internal_error.hpp"
 
 namespace lyra::lowering::ast_to_hir {
 
@@ -64,6 +64,10 @@ class UnitLoweringState {
 
   auto AddType(hir::TypeData data) -> hir::TypeId {
     return hir_unit_.AddType(std::move(data));
+  }
+
+  [[nodiscard]] auto GetType(hir::TypeId id) const -> const hir::Type& {
+    return hir_unit_.GetType(id);
   }
 
   void RegisterMemberVarBinding(
@@ -120,7 +124,7 @@ class ScopeStack {
 
   void Pop(ScopeFrameId expected) {
     if (frames_.empty() || frames_.back() != expected) {
-      throw support::InternalError("ScopeStack::Pop: unbalanced pop");
+      throw InternalError("ScopeStack::Pop: unbalanced pop");
     }
     frames_.pop_back();
   }

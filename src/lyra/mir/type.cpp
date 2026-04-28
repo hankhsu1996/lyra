@@ -4,8 +4,8 @@
 #include <cstdint>
 #include <variant>
 
-#include "lyra/support/internal_error.hpp"
-#include "lyra/support/overloaded.hpp"
+#include "lyra/base/internal_error.hpp"
+#include "lyra/base/overloaded.hpp"
 
 namespace lyra::mir {
 
@@ -26,8 +26,7 @@ auto PackedRange::Contains(std::int64_t index) const -> bool {
 
 auto PackedRange::LinearOffset(std::int64_t index) const -> std::uint64_t {
   if (!Contains(index)) {
-    throw support::InternalError(
-        "PackedRange::LinearOffset: index out of range");
+    throw InternalError("PackedRange::LinearOffset: index out of range");
   }
   if (left >= right) {
     return static_cast<std::uint64_t>(left - index);
@@ -52,7 +51,7 @@ auto PackedArrayType::IsFourState() const -> bool {
 
 auto Type::Kind() const -> TypeKind {
   return std::visit(
-      support::Overloaded{
+      Overloaded{
           [](const PackedArrayType&) { return TypeKind::kPackedArray; },
           [](const UnpackedArrayType&) { return TypeKind::kUnpackedArray; },
           [](const DynamicArrayType&) { return TypeKind::kDynamicArray; },
@@ -79,8 +78,7 @@ auto Type::AsPackedArray() const -> const PackedArrayType& {
   if (const auto* p = std::get_if<PackedArrayType>(&data)) {
     return *p;
   }
-  throw support::InternalError(
-      "Type::AsPackedArray called on non-packed-array type");
+  throw InternalError("Type::AsPackedArray called on non-packed-array type");
 }
 
 }  // namespace lyra::mir
