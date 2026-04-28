@@ -51,7 +51,8 @@ using SubroutineBindings =
 
 class UnitLoweringState {
  public:
-  explicit UnitLoweringState(std::string name) : hir_unit_(std::move(name)) {
+  explicit UnitLoweringState(std::string name)
+      : hir_unit_{.name = std::move(name), .types = {}, .root_scope = {}} {
   }
 
   [[nodiscard]] auto HirUnit() const -> const hir::ModuleUnit& {
@@ -63,14 +64,16 @@ class UnitLoweringState {
   }
 
   auto AddType(hir::TypeData data) -> hir::TypeId {
-    return hir_unit_.AddType(std::move(data));
+    const hir::TypeId id{static_cast<std::uint32_t>(hir_unit_.types.size())};
+    hir_unit_.types.push_back(hir::Type{.data = std::move(data)});
+    return id;
   }
 
   [[nodiscard]] auto GetType(hir::TypeId id) const -> const hir::Type& {
     return hir_unit_.GetType(id);
   }
 
-  void RegisterMemberVarBinding(
+  void MapMemberVarBinding(
       const slang::ast::VariableSymbol& var, ScopeFrameId home_frame,
       hir::MemberVarId local) {
     member_var_bindings_.emplace(
@@ -87,7 +90,7 @@ class UnitLoweringState {
     return it->second;
   }
 
-  void RegisterSubroutineBinding(
+  void MapSubroutineBinding(
       const slang::ast::SubroutineSymbol& sym, ScopeFrameId owner_frame,
       hir::SubroutineId local) {
     subroutine_bindings_.emplace(
@@ -180,28 +183,48 @@ class ScopeLoweringState {
 
   auto AddMemberVar(const slang::ast::VariableSymbol& var, hir::TypeId type)
       -> hir::MemberVarId {
-    const auto local = scope_->AddMemberVar(std::string{var.name}, type);
-    unit_state_->RegisterMemberVarBinding(var, frame_, local);
+    const hir::MemberVarId local{
+        static_cast<std::uint32_t>(scope_->member_vars.size())};
+    scope_->member_vars.push_back(
+        hir::MemberVar{.name = std::string{var.name}, .type = type});
+    unit_state_->MapMemberVarBinding(var, frame_, local);
     return local;
   }
 
-  auto AppendExpr(hir::Expr expr) -> hir::ExprId {
-    return scope_->AddExpr(std::move(expr));
+  auto AddLoopVarDecl(hir::LoopVarDecl decl) -> hir::LoopVarDeclId {
+    const hir::LoopVarDeclId id{
+        static_cast<std::uint32_t>(scope_->loop_var_decls.size())};
+    scope_->loop_var_decls.push_back(std::move(decl));
+    return id;
+  }
+
+  auto AddExpr(hir::Expr expr) -> hir::ExprId {
+    const hir::ExprId id{static_cast<std::uint32_t>(scope_->exprs.size())};
+    scope_->exprs.push_back(std::move(expr));
+    return id;
   }
 
   auto AddProcess(hir::Process process) -> hir::ProcessId {
-    return scope_->AddProcess(std::move(process));
+    const hir::ProcessId id{
+        static_cast<std::uint32_t>(scope_->processes.size())};
+    scope_->processes.push_back(std::move(process));
+    return id;
   }
 
   auto AddGenerate(hir::Generate generate) -> hir::GenerateId {
-    return scope_->AddGenerate(std::move(generate));
+    const hir::GenerateId id{
+        static_cast<std::uint32_t>(scope_->generates.size())};
+    scope_->generates.push_back(std::move(generate));
+    return id;
   }
 
   auto AddSubroutine(
       const slang::ast::SubroutineSymbol& sym, hir::UserSubroutineDecl decl)
       -> hir::SubroutineId {
-    const auto local = scope_->AddSubroutine(std::move(decl));
-    unit_state_->RegisterSubroutineBinding(sym, frame_, local);
+    const hir::SubroutineId local{
+        static_cast<std::uint32_t>(scope_->subroutines.size())};
+    scope_->subroutines.push_back(std::move(decl));
+    unit_state_->MapSubroutineBinding(sym, frame_, local);
     return local;
   }
 
@@ -229,13 +252,13 @@ class ScopeLoweringState {
 
 class ProcessLoweringState {
  public:
-  auto AppendExpr(hir::Expr expr) -> hir::ExprId {
+  auto AddExpr(hir::Expr expr) -> hir::ExprId {
     const hir::ExprId id{static_cast<std::uint32_t>(hir_process_.exprs.size())};
     hir_process_.exprs.push_back(std::move(expr));
     return id;
   }
 
-  auto AppendStmt(hir::Stmt stmt) -> hir::StmtId {
+  auto AddStmt(hir::Stmt stmt) -> hir::StmtId {
     const hir::StmtId id{static_cast<std::uint32_t>(hir_process_.stmts.size())};
     hir_process_.stmts.push_back(std::move(stmt));
     return id;

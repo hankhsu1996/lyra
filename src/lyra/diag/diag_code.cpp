@@ -91,12 +91,6 @@ constexpr std::array kEntries{
             .category = UnsupportedCategory::kFeature,
             .name = "unsupported_non_initial_procedure"}},
     std::pair{
-        DiagCode::kUnsupportedForGenerate,
-        DiagCodeInfo{
-            .kind = DiagKind::kUnsupported,
-            .category = UnsupportedCategory::kFeature,
-            .name = "unsupported_for_generate"}},
-    std::pair{
         DiagCode::kUnsupportedStatementForm,
         DiagCodeInfo{
             .kind = DiagKind::kUnsupported,

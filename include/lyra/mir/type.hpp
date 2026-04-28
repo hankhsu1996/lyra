@@ -6,6 +6,8 @@
 #include <variant>
 #include <vector>
 
+#include "lyra/mir/class_decl_id.hpp"
+
 namespace lyra::mir {
 
 struct TypeId {
@@ -27,6 +29,9 @@ enum class TypeKind {
   kRealTime,
   kChandle,
   kVoid,
+  kObject,
+  kOwningPtr,
+  kVector,
 };
 
 enum class BitAtom {
@@ -102,10 +107,28 @@ struct RealTimeType {};
 struct ChandleType {};
 struct VoidType {};
 
+struct ObjectType {
+  ClassDeclId target;
+
+  auto operator==(const ObjectType&) const -> bool = default;
+};
+
+struct OwningPtrType {
+  TypeId pointee;
+
+  auto operator==(const OwningPtrType&) const -> bool = default;
+};
+
+struct VectorType {
+  TypeId element;
+
+  auto operator==(const VectorType&) const -> bool = default;
+};
+
 using TypeData = std::variant<
     PackedArrayType, UnpackedArrayType, DynamicArrayType, QueueType,
     AssociativeArrayType, StringType, EventType, RealType, ShortRealType,
-    RealTimeType, ChandleType, VoidType>;
+    RealTimeType, ChandleType, VoidType, ObjectType, OwningPtrType, VectorType>;
 
 struct Type {
   TypeData data;
@@ -114,5 +137,16 @@ struct Type {
   [[nodiscard]] auto IsPackedArray() const -> bool;
   [[nodiscard]] auto AsPackedArray() const -> const PackedArrayType&;
 };
+
+class CompilationUnit;
+
+[[nodiscard]] auto IsOwningObjectType(const CompilationUnit& unit, TypeId type)
+    -> bool;
+
+[[nodiscard]] auto IsVectorOfOwningObjectType(
+    const CompilationUnit& unit, TypeId type) -> bool;
+
+[[nodiscard]] auto GetOwnedObjectTarget(
+    const CompilationUnit& unit, TypeId type) -> std::optional<ClassDeclId>;
 
 }  // namespace lyra::mir

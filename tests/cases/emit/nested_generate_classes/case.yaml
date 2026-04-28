@@ -11,8 +11,9 @@ expect:
     contains:
       - "class Top final : public lyra::runtime::Module"
       - "class gen0_then"
-      - "gen0_then* gen0_then_obj{};"
-      - "gen0_then_obj = new gen0_then();"
+      - "std::unique_ptr<gen0_then> gen0_then_obj;"
+      - "gen0_then_obj = std::make_unique<gen0_then>();"
       - "ctx.CreateChildScope("
       - '"gen0_then"'
+      - "if (gen0_then_obj) {"
       - "gen0_then_obj->Bind(child)"

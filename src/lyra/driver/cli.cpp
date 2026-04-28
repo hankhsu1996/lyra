@@ -242,8 +242,8 @@ auto main(int argc, char** argv) -> int {
         return 0;
       case CommandKind::kEmitCpp: {
         const lyra::mir::ClassDecl* entry = nullptr;
-        for (const auto& cls : result.artifacts.mir_unit->Classes()) {
-          if (cls.Name() == args.input.top) {
+        for (const auto& cls : result.artifacts.mir_unit->classes) {
+          if (cls.name == args.input.top) {
             entry = &cls;
             break;
           }

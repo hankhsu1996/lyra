@@ -21,7 +21,7 @@ auto LowerModule(
   UnitLoweringState unit_state{std::string{body.name}};
   ScopeStack stack;
   auto r = LowerScopeInto(
-      unit_facts, unit_state, unit_state.HirUnit().RootScope(), body, stack);
+      unit_facts, unit_state, unit_state.HirUnit().root_scope, body, stack);
   if (!r) return std::unexpected(std::move(r.error()));
   return unit_state.MoveHirUnit();
 }

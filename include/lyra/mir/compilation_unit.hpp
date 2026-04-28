@@ -8,22 +8,16 @@
 
 namespace lyra::mir {
 
-class CompilationUnit {
- public:
-  CompilationUnit() = default;
+struct CompilationUnit {
+  std::vector<Type> types;
+  std::vector<ClassDecl> classes;
 
-  [[nodiscard]] auto Types() const -> const std::vector<Type>&;
-  [[nodiscard]] auto GetType(TypeId id) const -> const Type&;
-  auto AddType(TypeData data) -> TypeId;
-
-  [[nodiscard]] auto Classes() const -> const std::vector<ClassDecl>&;
-  [[nodiscard]] auto GetClass(ClassDeclId id) const -> const ClassDecl&;
-  auto GetClass(ClassDeclId id) -> ClassDecl&;
-  auto AddClass(ClassDecl cls) -> ClassDeclId;
-
- private:
-  std::vector<Type> types_;
-  std::vector<ClassDecl> classes_;
+  [[nodiscard]] auto GetType(TypeId id) const -> const Type& {
+    return types.at(id.value);
+  }
+  [[nodiscard]] auto GetClass(ClassDeclId id) const -> const ClassDecl& {
+    return classes.at(id.value);
+  }
 };
 
 }  // namespace lyra::mir

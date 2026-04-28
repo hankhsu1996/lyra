@@ -24,8 +24,10 @@ auto LowerStructuralExpr(
     -> diag::Result<hir::Expr>;
 
 // Short-lived state for lowering one loop-generate header's initial / stop
-// / iter expressions. The synthetic loop-variable identity is captured
-// lazily on first reference.
+// / iter expressions. The synthetic loop-variable identity (and its type)
+// is captured lazily on first reference, since slang exposes the
+// iteration-variable's type through the `VariableSymbol` it fabricates for
+// header expressions, not through the canonical genvar declaration symbol.
 struct LoopHeaderState {
   std::string_view expected_name;
   const slang::ast::VariableSymbol* synthetic_symbol = nullptr;

@@ -4,6 +4,8 @@
 #include <cstdint>
 #include <string>
 
+#include "lyra/hir/type.hpp"
+
 namespace lyra::hir {
 
 struct LoopVarDeclId {
@@ -15,6 +17,7 @@ struct LoopVarDeclId {
 
 struct LoopVarDecl {
   std::string name;
+  TypeId type;
 };
 
 }  // namespace lyra::hir

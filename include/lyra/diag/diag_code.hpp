@@ -24,7 +24,6 @@ enum class DiagCode : std::uint32_t {
 
   kUnsupportedNonStaticVariableLifetime,
   kUnsupportedNonInitialProcedure,
-  kUnsupportedForGenerate,
   kUnsupportedStatementForm,
   kUnsupportedExpressionForm,
   kUnsupportedStructuralExpressionForm,

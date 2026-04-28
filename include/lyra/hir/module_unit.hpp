@@ -8,28 +8,14 @@
 
 namespace lyra::hir {
 
-class ModuleUnit {
- public:
-  explicit ModuleUnit(std::string name);
-  ~ModuleUnit();
-  ModuleUnit(ModuleUnit&&) noexcept;
-  auto operator=(ModuleUnit&&) noexcept -> ModuleUnit&;
-  ModuleUnit(const ModuleUnit&) = delete;
-  auto operator=(const ModuleUnit&) -> ModuleUnit& = delete;
+struct ModuleUnit {
+  std::string name;
+  std::vector<Type> types;
+  StructuralScope root_scope;
 
-  [[nodiscard]] auto Name() const -> const std::string&;
-
-  [[nodiscard]] auto Types() const -> const std::vector<Type>&;
-  [[nodiscard]] auto GetType(TypeId id) const -> const Type&;
-  auto AddType(TypeData data) -> TypeId;
-
-  [[nodiscard]] auto RootScope() const -> const StructuralScope&;
-  auto RootScope() -> StructuralScope&;
-
- private:
-  std::string name_;
-  std::vector<Type> types_;
-  StructuralScope root_scope_;
+  [[nodiscard]] auto GetType(TypeId id) const -> const Type& {
+    return types.at(id.value);
+  }
 };
 
 }  // namespace lyra::hir
