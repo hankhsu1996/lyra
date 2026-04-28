@@ -24,7 +24,7 @@ class ClassDecl {
 
   [[nodiscard]] auto MemberVars() const -> const std::vector<MemberVar>&;
   [[nodiscard]] auto GetMemberVar(MemberVarId id) const -> const MemberVar&;
-  auto AddMemberVar(std::string name, MemberKind kind) -> MemberVarId;
+  auto AddMemberVar(MemberVar member) -> MemberVarId;
 
   [[nodiscard]] auto Constructor() const -> const Body&;
   auto Constructor() -> Body&;

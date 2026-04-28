@@ -15,8 +15,9 @@ namespace lyra::lowering::hir_to_mir {
 // exhaustive over `support::SystemSubroutineSemantic`; new arms force a
 // compile-time update here.
 auto LowerSystemSubroutineCall(
-    const UnitLoweringState& unit_state, const hir::Process& hir_proc,
-    const BodyLoweringState& body_state, const hir::CallExpr& call,
+    const UnitLoweringState& unit_state, const ClassLoweringState& class_state,
+    const ProcessLoweringState& proc_state, BodyLoweringState& body_state,
+    const hir::Process& hir_proc, const hir::CallExpr& call,
     const hir::SystemSubroutineRef& ref, diag::SourceSpan span)
     -> diag::Result<mir::Expr>;
 

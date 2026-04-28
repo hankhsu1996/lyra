@@ -28,7 +28,8 @@ struct MemberVarRef {
 };
 
 struct LocalVarRef {
-  LocalVarId target;
+  LocalScopeId scope;
+  LocalVarId local;
 };
 
 using Lvalue = std::variant<MemberVarRef, LocalVarRef>;

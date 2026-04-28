@@ -3,7 +3,6 @@
 #include <compare>
 #include <cstdint>
 #include <optional>
-#include <string>
 #include <variant>
 #include <vector>
 
@@ -79,8 +78,8 @@ class StructuralScope {
     return id_;
   }
 
-  auto AddMemberVar(std::string name, TypeId type) -> MemberVarId;
-  auto AddLoopVarDecl(std::string name) -> LoopVarDeclId;
+  auto AddMemberVar(MemberVar member) -> MemberVarId;
+  auto AddLoopVarDecl(LoopVarDecl decl) -> LoopVarDeclId;
   auto AddExpr(Expr expr) -> ExprId;
   auto AddProcess(Process process) -> ProcessId;
   auto AddGenerate(Generate generate) -> GenerateId;

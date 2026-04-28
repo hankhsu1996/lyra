@@ -29,7 +29,9 @@ struct BodyId {
 };
 
 struct Body {
-  std::vector<LocalVar> local_vars;
+  std::vector<LocalScope> local_scopes;
+  LocalScopeId root_scope;
+
   std::vector<Expr> exprs;
   std::vector<Stmt> stmts;
   std::vector<StmtId> root_stmts;
@@ -44,7 +46,7 @@ struct Body {
 };
 
 struct LocalVarDeclStmt {
-  LocalVarId local_var;
+  LocalVarRef target;
 };
 
 struct ExprStmt {
@@ -72,14 +74,33 @@ struct SwitchStmt {
   std::optional<BodyId> default_body;
 };
 
-struct ConstructMemberStmt {
+struct ConstructOwnedObjectStmt {
   MemberVarId target;
   ClassDeclId class_id;
 };
 
+struct ForInitDecl {
+  LocalVarRef local;
+  std::optional<ExprId> init;
+};
+
+struct ForInitExpr {
+  ExprId expr;
+};
+
+using ForInit = std::variant<ForInitDecl, ForInitExpr>;
+
+struct ForStmt {
+  LocalScopeId scope;
+  std::vector<ForInit> init;
+  std::optional<ExprId> condition;
+  std::vector<ExprId> step;
+  BodyId body;
+};
+
 using StmtData = std::variant<
     LocalVarDeclStmt, ExprStmt, BlockStmt, IfStmt, SwitchStmt,
-    ConstructMemberStmt>;
+    ConstructOwnedObjectStmt, ForStmt>;
 
 struct Stmt {
   std::optional<std::string> label;

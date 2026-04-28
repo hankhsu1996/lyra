@@ -1,16 +1,15 @@
 #include <cstddef>
 #include <string>
-#include <variant>
 
 #include "formatting.hpp"
 #include "lyra/backend/cpp/api.hpp"
 #include "lyra/backend/cpp/artifact.hpp"
 #include "lyra/base/internal_error.hpp"
-#include "lyra/base/overloaded.hpp"
 #include "lyra/mir/class_decl.hpp"
 #include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/member_var.hpp"
 #include "lyra/mir/process.hpp"
+#include "lyra/mir/type.hpp"
 #include "render_stmt.hpp"
 #include "render_type.hpp"
 
@@ -19,20 +18,10 @@ namespace lyra::backend::cpp {
 namespace {
 
 auto RenderField(
-    const mir::CompilationUnit& unit, const mir::ClassDecl& enclosing,
+    const mir::CompilationUnit& unit, const mir::ClassDecl& owner_class,
     const mir::MemberVar& member, std::size_t indent) -> std::string {
-  return std::visit(
-      Overloaded{
-          [&](const mir::ValueMember& v) -> std::string {
-            return Indent(indent) + RenderTypeAsCpp(unit, v.type) + " " +
-                   member.name + ";\n";
-          },
-          [&](const mir::ChildClassMember& c) -> std::string {
-            return Indent(indent) + enclosing.GetClass(c.target).Name() + "* " +
-                   member.name + "{};\n";
-          },
-      },
-      member.kind);
+  return Indent(indent) + RenderTypeAsCpp(unit, owner_class, member.type) +
+         " " + member.name + ";\n";
 }
 
 auto RenderConstructor(
@@ -74,8 +63,9 @@ auto RenderProcessKindLiteral(mir::ProcessKind kind) -> std::string {
   throw InternalError("RenderProcessKindLiteral: unknown ProcessKind");
 }
 
-auto RenderBind(const mir::ClassDecl& c, std::size_t indent, bool is_top_level)
-    -> std::string {
+auto RenderBind(
+    const mir::CompilationUnit& unit, const mir::ClassDecl& c,
+    std::size_t indent, bool is_top_level) -> std::string {
   std::string out;
   out += Indent(indent) + "void Bind(lyra::runtime::RuntimeBindContext& ctx)" +
          (is_top_level ? " override {\n" : " {\n");
@@ -86,19 +76,38 @@ auto RenderBind(const mir::ClassDecl& c, std::size_t indent, bool is_top_level)
     out += Indent(indent + 2) + RenderProcessKindLiteral(p.kind) + ",\n";
     out += Indent(indent + 2) + RenderProcessMethodName(i) + "());\n";
   }
+  // This cut treats every owning-object member (`OwningPtr<Object<T>>` or
+  // `Vector<OwningPtr<Object<T>>>`) as a runtime-bindable child scope. That
+  // assumption holds because the only producer of these types today is
+  // generate-arm child class installation. When other producers of `ObjectType`
+  // appear (e.g. owned process/module objects), bind eligibility must come
+  // from explicit class metadata, not from storage type structure alone.
   for (const auto& m : c.MemberVars()) {
-    const auto* child = std::get_if<mir::ChildClassMember>(&m.kind);
-    if (child == nullptr) {
+    const auto target = mir::GetOwnedObjectTarget(unit, m.type);
+    if (!target.has_value()) {
       continue;
     }
-    const auto& child_class = c.GetClass(child->target);
-    out += Indent(indent + 1) + "if (" + m.name + " != nullptr) {\n";
-    out += Indent(indent + 2) + "auto child = ctx.CreateChildScope(\n";
-    out += Indent(indent + 3) + "\"" + child_class.Name() + "\",\n";
-    out +=
-        Indent(indent + 3) + "lyra::runtime::RuntimeScopeKind::kGenerate);\n";
-    out += Indent(indent + 2) + m.name + "->Bind(child);\n";
-    out += Indent(indent + 1) + "}\n";
+    const auto& child_class = c.GetClass(*target);
+
+    if (mir::IsVectorOfOwningObjectType(unit, m.type)) {
+      out += Indent(indent + 1) + "for (std::size_t idx = 0; idx < " + m.name +
+             ".size(); ++idx) {\n";
+      out += Indent(indent + 2) + "auto child = ctx.CreateChildScope(\n";
+      out += Indent(indent + 3) + "\"" + child_class.Name() +
+             "[\" + std::to_string(idx) + \"]\",\n";
+      out +=
+          Indent(indent + 3) + "lyra::runtime::RuntimeScopeKind::kGenerate);\n";
+      out += Indent(indent + 2) + m.name + "[idx]->Bind(child);\n";
+      out += Indent(indent + 1) + "}\n";
+    } else {
+      out += Indent(indent + 1) + "if (" + m.name + ") {\n";
+      out += Indent(indent + 2) + "auto child = ctx.CreateChildScope(\n";
+      out += Indent(indent + 3) + "\"" + child_class.Name() + "\",\n";
+      out +=
+          Indent(indent + 3) + "lyra::runtime::RuntimeScopeKind::kGenerate);\n";
+      out += Indent(indent + 2) + m.name + "->Bind(child);\n";
+      out += Indent(indent + 1) + "}\n";
+    }
   }
   out += Indent(indent) + "}\n";
   return out;
@@ -134,7 +143,7 @@ auto RenderClassDecl(
 
   out += RenderConstructor(unit, c, indent + 1);
   out += "\n";
-  out += RenderBind(c, indent + 1, is_top_level);
+  out += RenderBind(unit, c, indent + 1, is_top_level);
 
   for (std::size_t i = 0; i < c.Processes().size(); ++i) {
     out += "\n";
@@ -151,8 +160,10 @@ auto RenderClassHeaderFile(
   out += "#pragma once\n";
   out += "#include <array>\n";
   out += "#include <cstdint>\n";
+  out += "#include <memory>\n";
   out += "#include <span>\n";
   out += "#include <string>\n";
+  out += "#include <vector>\n";
   out += "#include \"lyra/runtime/bind_context.hpp\"\n";
   out += "#include \"lyra/runtime/engine.hpp\"\n";
   out += "#include \"lyra/runtime/format.hpp\"\n";

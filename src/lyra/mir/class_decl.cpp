@@ -30,10 +30,9 @@ auto ClassDecl::GetMemberVar(MemberVarId id) const -> const MemberVar& {
   return member_vars_.at(id.value);
 }
 
-auto ClassDecl::AddMemberVar(std::string name, MemberKind kind) -> MemberVarId {
+auto ClassDecl::AddMemberVar(MemberVar member) -> MemberVarId {
   const MemberVarId id{static_cast<std::uint32_t>(member_vars_.size())};
-  member_vars_.push_back(
-      MemberVar{.name = std::move(name), .kind = std::move(kind)});
+  member_vars_.push_back(std::move(member));
   return id;
 }
 

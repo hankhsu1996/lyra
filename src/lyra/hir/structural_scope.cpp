@@ -1,7 +1,6 @@
 #include "lyra/hir/structural_scope.hpp"
 
 #include <cstdint>
-#include <string>
 #include <utility>
 #include <vector>
 
@@ -10,7 +9,6 @@
 #include "lyra/hir/member_var.hpp"
 #include "lyra/hir/process.hpp"
 #include "lyra/hir/subroutine.hpp"
-#include "lyra/hir/type.hpp"
 
 namespace lyra::hir {
 
@@ -20,16 +18,15 @@ StructuralScope::StructuralScope(StructuralScope&&) noexcept = default;
 auto StructuralScope::operator=(StructuralScope&&) noexcept
     -> StructuralScope& = default;
 
-auto StructuralScope::AddMemberVar(std::string name, TypeId type)
-    -> MemberVarId {
+auto StructuralScope::AddMemberVar(MemberVar member) -> MemberVarId {
   const MemberVarId id{static_cast<std::uint32_t>(member_vars_.size())};
-  member_vars_.push_back(MemberVar{.name = std::move(name), .type = type});
+  member_vars_.push_back(std::move(member));
   return id;
 }
 
-auto StructuralScope::AddLoopVarDecl(std::string name) -> LoopVarDeclId {
+auto StructuralScope::AddLoopVarDecl(LoopVarDecl decl) -> LoopVarDeclId {
   const LoopVarDeclId id{static_cast<std::uint32_t>(loop_var_decls_.size())};
-  loop_var_decls_.push_back(LoopVarDecl{.name = std::move(name)});
+  loop_var_decls_.push_back(std::move(decl));
   return id;
 }
 

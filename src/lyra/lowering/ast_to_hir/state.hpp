@@ -180,12 +180,13 @@ class ScopeLoweringState {
 
   auto AddMemberVar(const slang::ast::VariableSymbol& var, hir::TypeId type)
       -> hir::MemberVarId {
-    const auto local = scope_->AddMemberVar(std::string{var.name}, type);
+    const auto local = scope_->AddMemberVar(
+        hir::MemberVar{.name = std::string{var.name}, .type = type});
     unit_state_->RegisterMemberVarBinding(var, frame_, local);
     return local;
   }
 
-  auto AppendExpr(hir::Expr expr) -> hir::ExprId {
+  auto AddExpr(hir::Expr expr) -> hir::ExprId {
     return scope_->AddExpr(std::move(expr));
   }
 
@@ -229,13 +230,13 @@ class ScopeLoweringState {
 
 class ProcessLoweringState {
  public:
-  auto AppendExpr(hir::Expr expr) -> hir::ExprId {
+  auto AddExpr(hir::Expr expr) -> hir::ExprId {
     const hir::ExprId id{static_cast<std::uint32_t>(hir_process_.exprs.size())};
     hir_process_.exprs.push_back(std::move(expr));
     return id;
   }
 
-  auto AppendStmt(hir::Stmt stmt) -> hir::StmtId {
+  auto AddStmt(hir::Stmt stmt) -> hir::StmtId {
     const hir::StmtId id{static_cast<std::uint32_t>(hir_process_.stmts.size())};
     hir_process_.stmts.push_back(std::move(stmt));
     return id;

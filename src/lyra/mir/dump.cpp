@@ -166,6 +166,16 @@ class MirDumper {
             [](const RealTimeType&) -> std::string { return "RealTimeType"; },
             [](const ChandleType&) -> std::string { return "ChandleType"; },
             [](const VoidType&) -> std::string { return "VoidType"; },
+            [](const ObjectType& o) -> std::string {
+              return std::format("Object(class=Class[{}])", o.target.value);
+            },
+            [](const OwningPtrType& p) -> std::string {
+              return std::format(
+                  "OwningPtr(pointee=Type[{}])", p.pointee.value);
+            },
+            [](const VectorType& v) -> std::string {
+              return std::format("Vector(elem=Type[{}])", v.element.value);
+            },
         },
         t.data);
   }
@@ -174,6 +184,8 @@ class MirDumper {
     switch (op) {
       case BinaryOp::kAdd:
         return "Add";
+      case BinaryOp::kLessThan:
+        return "LessThan";
     }
     throw InternalError("MirDumper: unknown BinaryOp");
   }
@@ -185,7 +197,8 @@ class MirDumper {
               return std::format("MemberVar[{}]", r.target.value);
             },
             [](const LocalVarRef& r) -> std::string {
-              return std::format("LocalVar[{}]", r.target.value);
+              return std::format(
+                  "LocalVar[scope={}, local={}]", r.scope.value, r.local.value);
             },
         },
         l);
@@ -237,7 +250,9 @@ class MirDumper {
               return std::format("MemberVarRef(MemberVar[{}])", r.target.value);
             },
             [](const LocalVarRef& r) -> std::string {
-              return std::format("LocalVarRef(LocalVar[{}])", r.target.value);
+              return std::format(
+                  "LocalVarRef(scope={}, local={})", r.scope.value,
+                  r.local.value);
             },
             [](const BinaryExpr& b) -> std::string {
               return std::format(
@@ -268,17 +283,8 @@ class MirDumper {
     return std::format("{} type=Type[{}]", body_str, e.type.value);
   }
 
-  static auto FormatMemberKind(const MemberKind& kind) -> std::string {
-    return std::visit(
-        Overloaded{
-            [](const ValueMember& v) -> std::string {
-              return std::format("Type[{}]", v.type.value);
-            },
-            [](const ChildClassMember& c) -> std::string {
-              return std::format("Class[{}]", c.target.value);
-            },
-        },
-        kind);
+  static auto FormatMemberType(TypeId type) -> std::string {
+    return std::format("Type[{}]", type.value);
   }
 
   static auto FormatProcessKind(const Process& p) -> std::string {
@@ -310,7 +316,7 @@ class MirDumper {
     for (std::size_t i = 0; i < c.MemberVars().size(); ++i) {
       const auto& m = c.MemberVars()[i];
       Line(
-          std::format("[{}] \"{}\" : {}", i, m.name, FormatMemberKind(m.kind)));
+          std::format("[{}] \"{}\" : {}", i, m.name, FormatMemberType(m.type)));
     }
     Dedent();
 
@@ -346,17 +352,23 @@ class MirDumper {
   }
 
   void DumpBody(const Body& body) {
-    if (!body.local_vars.empty()) {
-      Line("Locals:");
+    Line(std::format("LocalScopes (root={}):", body.root_scope.value));
+    Indent();
+    for (std::size_t i = 0; i < body.local_scopes.size(); ++i) {
+      const auto& s = body.local_scopes[i];
+      const std::string parent_str =
+          s.parent.has_value() ? std::format("{}", s.parent->value) : "<none>";
+      Line(std::format("Scope[{}] parent={}", i, parent_str));
       Indent();
-      for (std::size_t i = 0; i < body.local_vars.size(); ++i) {
-        const auto& lv = body.local_vars[i];
+      for (std::size_t j = 0; j < s.locals.size(); ++j) {
+        const auto& lv = s.locals[j];
         Line(
             std::format(
-                "LocalVar[{}] \"{}\" : Type[{}]", i, lv.name, lv.type.value));
+                "LocalVar[{}] \"{}\" : Type[{}]", j, lv.name, lv.type.value));
       }
       Dedent();
     }
+    Dedent();
     if (!body.exprs.empty()) {
       Line("Exprs:");
       Indent();
@@ -394,8 +406,9 @@ class MirDumper {
             [&](const LocalVarDeclStmt& s) {
               Line(
                   std::format(
-                      "Stmt[{}] LocalVarDeclStmt local=LocalVar[{}]", id.value,
-                      s.local_var.value));
+                      "Stmt[{}] LocalVarDeclStmt target=LocalVar[scope={}, "
+                      "local={}]",
+                      id.value, s.target.scope.value, s.target.local.value));
             },
             [&](const ExprStmt& s) { DumpExprStmt(s, enclosing, id); },
             [&](const BlockStmt& s) { DumpBlockStmt(s, enclosing, id); },
@@ -403,13 +416,14 @@ class MirDumper {
             [&](const SwitchStmt& s) {
               DumpSwitchStmt(stmt, s, enclosing, id);
             },
-            [&](const ConstructMemberStmt& s) {
+            [&](const ConstructOwnedObjectStmt& s) {
               Line(
                   std::format(
-                      "Stmt[{}] ConstructMemberStmt target=MemberVar[{}] "
+                      "Stmt[{}] ConstructOwnedObjectStmt target=MemberVar[{}] "
                       "class=Class[{}]",
                       id.value, s.target.value, s.class_id.value));
             },
+            [&](const ForStmt& s) { DumpForStmt(stmt, s, enclosing, id); },
         },
         stmt.data);
   }
@@ -518,6 +532,63 @@ class MirDumper {
     }
     out.push_back('"');
     return out;
+  }
+
+  void DumpForStmt(
+      const Stmt& parent, const ForStmt& s, const Body& enclosing, StmtId id) {
+    Line(
+        std::format(
+            "Stmt[{}] ForStmt scope=Scope[{}]", id.value, s.scope.value));
+    Indent();
+    Line("init:");
+    Indent();
+    for (std::size_t i = 0; i < s.init.size(); ++i) {
+      std::visit(
+          Overloaded{
+              [&](const ForInitDecl& d) {
+                std::string init_str;
+                if (d.init.has_value()) {
+                  init_str = std::format(
+                      " = Expr[{}] {}", d.init->value,
+                      FormatExpr(enclosing, *d.init));
+                }
+                Line(
+                    std::format(
+                        "[{}] decl LocalVar[scope={}, local={}]{}", i,
+                        d.local.scope.value, d.local.local.value, init_str));
+              },
+              [&](const ForInitExpr& e) {
+                Line(
+                    std::format(
+                        "[{}] expr Expr[{}] {}", i, e.expr.value,
+                        FormatExpr(enclosing, e.expr)));
+              },
+          },
+          s.init[i]);
+    }
+    Dedent();
+    if (s.condition.has_value()) {
+      Line(
+          std::format(
+              "condition: Expr[{}] {}", s.condition->value,
+              FormatExpr(enclosing, *s.condition)));
+    } else {
+      Line("condition: <none>");
+    }
+    Line("step:");
+    Indent();
+    for (std::size_t i = 0; i < s.step.size(); ++i) {
+      Line(
+          std::format(
+              "[{}] Expr[{}] {}", i, s.step[i].value,
+              FormatExpr(enclosing, s.step[i])));
+    }
+    Dedent();
+    Line(std::format("body (BodyId={}):", s.body.value));
+    Indent();
+    DumpBody(parent.child_bodies.at(s.body.value));
+    Dedent();
+    Dedent();
   }
 
   void DumpBlockStmt(const BlockStmt& s, const Body& enclosing, StmtId id) {

@@ -145,7 +145,7 @@ auto LowerProcExpr(
       [&](const slang::ast::Expression& e) -> diag::Result<hir::ExprId> {
     auto child = lower_child(e);
     if (!child) return std::unexpected(std::move(child.error()));
-    return proc_state.AppendExpr(*std::move(child));
+    return proc_state.AddExpr(*std::move(child));
   };
   auto type_id_of =
       [&](const slang::ast::Expression& e) -> diag::Result<hir::TypeId> {
@@ -301,7 +301,7 @@ auto LowerProcExpr(
             "assignment target is not supported yet",
             diag::UnsupportedCategory::kFeature);
       }
-      const hir::ExprId lhs_id = proc_state.AppendExpr(*std::move(lhs_expr));
+      const hir::ExprId lhs_id = proc_state.AddExpr(*std::move(lhs_expr));
 
       auto rhs_id = append_child(as.right());
       if (!rhs_id) return std::unexpected(std::move(rhs_id.error()));
@@ -345,9 +345,10 @@ auto LowerStructuralExpr(
 namespace {
 
 auto TryResolveLoopHeaderVar(
+    const UnitLoweringFacts& unit_facts, UnitLoweringState& unit_state,
     ScopeLoweringState& scope_state, LoopHeaderState& loop_state,
     const slang::ast::VariableSymbol& var)
-    -> std::optional<hir::LoopVarDeclId> {
+    -> diag::Result<std::optional<hir::LoopVarDeclId>> {
   if (!var.flags.has(slang::ast::VariableFlags::CompilerGenerated)) {
     return std::nullopt;
   }
@@ -361,8 +362,13 @@ auto TryResolveLoopHeaderVar(
   }
   loop_state.synthetic_symbol = &var;
   if (!loop_state.loop_var_id.has_value()) {
+    const auto var_span = unit_facts.SourceMapper().PointSpanOf(var.location);
+    auto type_data = LowerTypeData(var.getType(), var_span);
+    if (!type_data) return std::unexpected(std::move(type_data.error()));
+    const hir::TypeId type_id = unit_state.AddType(*std::move(type_data));
     loop_state.loop_var_id = scope_state.Scope().AddLoopVarDecl(
-        std::string{loop_state.expected_name});
+        hir::LoopVarDecl{
+            .name = std::string{loop_state.expected_name}, .type = type_id});
   }
   return loop_state.loop_var_id;
 }
@@ -397,7 +403,7 @@ auto LowerLoopHeaderExpr(
       [&](const slang::ast::Expression& e) -> diag::Result<hir::ExprId> {
     auto child = lower_child(e);
     if (!child) return std::unexpected(std::move(child.error()));
-    return scope_state.AppendExpr(*std::move(child));
+    return scope_state.AddExpr(*std::move(child));
   };
   auto type_id_of =
       [&](const slang::ast::Expression& e) -> diag::Result<hir::TypeId> {
@@ -424,12 +430,16 @@ auto LowerLoopHeaderExpr(
             diag::UnsupportedCategory::kFeature);
       }
       const auto& var = named.symbol.as<slang::ast::VariableSymbol>();
-      if (auto loop_var =
-              TryResolveLoopHeaderVar(scope_state, loop_state, var)) {
+      auto loop_var_or = TryResolveLoopHeaderVar(
+          unit_facts, unit_state, scope_state, loop_state, var);
+      if (!loop_var_or) {
+        return std::unexpected(std::move(loop_var_or.error()));
+      }
+      if (loop_var_or->has_value()) {
         return MakeRefExpr(
             hir::LoopVarRef{
                 .parent_scope_hops = hir::ParentScopeHops{.value = 0},
-                .target = *loop_var},
+                .target = **loop_var_or},
             span);
       }
       const auto binding = unit_state.LookupMemberVarBinding(var);
@@ -508,7 +518,7 @@ auto LowerLoopHeaderExpr(
             "assignment target is not supported yet",
             diag::UnsupportedCategory::kFeature);
       }
-      const hir::ExprId lhs_id = scope_state.AppendExpr(*std::move(lhs_expr));
+      const hir::ExprId lhs_id = scope_state.AddExpr(*std::move(lhs_expr));
       auto rhs_id = add_child(as.right());
       if (!rhs_id) return std::unexpected(std::move(rhs_id.error()));
       auto type_id = type_id_of(expr);

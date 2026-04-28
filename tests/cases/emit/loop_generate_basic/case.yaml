@@ -1,0 +1,24 @@
+id: emit.loop_generate_basic
+tags: [emit, generate]
+input:
+  command: [emit, cpp]
+  project: false
+  top: Top
+  files: [main.sv]
+expect:
+  exit: 0
+  stdout:
+    contains:
+      - "=== Top.hpp ==="
+      - "=== main.cpp ==="
+      - "class Top final : public lyra::runtime::Module"
+      - "class gen0_body"
+      - "std::vector<std::unique_ptr<gen0_body>> gen0_body_obj;"
+      - "Top() {"
+      - "for (std::int32_t i = 0; (i < 4); (i = (i + 1))) {"
+      - "gen0_body_obj.push_back(std::make_unique<gen0_body>());"
+      - "void Bind(lyra::runtime::RuntimeBindContext& ctx) override"
+      - "for (std::size_t idx = 0; idx < gen0_body_obj.size(); ++idx) {"
+      - "ctx.CreateChildScope("
+      - "lyra::runtime::RuntimeScopeKind::kGenerate"
+      - "gen0_body_obj[idx]->Bind(child)"

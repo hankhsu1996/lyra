@@ -21,8 +21,15 @@ auto BinaryOpToken(mir::BinaryOp op) -> std::string_view {
   switch (op) {
     case mir::BinaryOp::kAdd:
       return " + ";
+    case mir::BinaryOp::kLessThan:
+      return " < ";
   }
   throw InternalError("RenderExpr: unsupported MIR BinaryOp");
+}
+
+auto LookupLocalName(const mir::Body& body, const mir::LocalVarRef& ref)
+    -> const std::string& {
+  return body.local_scopes.at(ref.scope.value).locals.at(ref.local.value).name;
 }
 
 }  // namespace
@@ -35,7 +42,7 @@ auto RenderLvalue(const RenderContext& ctx, const mir::Lvalue& target)
             return ctx.Class().GetMemberVar(m.target).name;
           },
           [&](const mir::LocalVarRef& l) -> std::string {
-            return ctx.Body().local_vars.at(l.target.value).name;
+            return LookupLocalName(ctx.Body(), l);
           },
       },
       target);
@@ -55,7 +62,7 @@ auto RenderExpr(const RenderContext& ctx, const mir::Expr& expr)
             return ctx.Class().GetMemberVar(e.target).name;
           },
           [&](const mir::LocalVarRef& e) -> std::string {
-            return ctx.Body().local_vars.at(e.target.value).name;
+            return LookupLocalName(ctx.Body(), e);
           },
           [&](const mir::BinaryExpr& e) -> std::string {
             return "(" + RenderExpr(ctx, ctx.Expr(e.lhs)) +

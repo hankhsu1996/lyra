@@ -2,10 +2,13 @@
 
 #include <algorithm>
 #include <cstdint>
+#include <optional>
 #include <variant>
 
 #include "lyra/base/internal_error.hpp"
 #include "lyra/base/overloaded.hpp"
+#include "lyra/mir/class_decl_id.hpp"
+#include "lyra/mir/compilation_unit.hpp"
 
 namespace lyra::mir {
 
@@ -66,6 +69,9 @@ auto Type::Kind() const -> TypeKind {
           [](const RealTimeType&) { return TypeKind::kRealTime; },
           [](const ChandleType&) { return TypeKind::kChandle; },
           [](const VoidType&) { return TypeKind::kVoid; },
+          [](const ObjectType&) { return TypeKind::kObject; },
+          [](const OwningPtrType&) { return TypeKind::kOwningPtr; },
+          [](const VectorType&) { return TypeKind::kVector; },
       },
       data);
 }
@@ -79,6 +85,51 @@ auto Type::AsPackedArray() const -> const PackedArrayType& {
     return *p;
   }
   throw InternalError("Type::AsPackedArray called on non-packed-array type");
+}
+
+namespace {
+
+auto AsObjectClass(const CompilationUnit& unit, TypeId type)
+    -> std::optional<ClassDeclId> {
+  const auto* obj = std::get_if<ObjectType>(&unit.GetType(type).data);
+  if (obj == nullptr) {
+    return std::nullopt;
+  }
+  return obj->target;
+}
+
+}  // namespace
+
+auto IsOwningObjectType(const CompilationUnit& unit, TypeId type) -> bool {
+  const auto* owning = std::get_if<OwningPtrType>(&unit.GetType(type).data);
+  if (owning == nullptr) {
+    return false;
+  }
+  return AsObjectClass(unit, owning->pointee).has_value();
+}
+
+auto IsVectorOfOwningObjectType(const CompilationUnit& unit, TypeId type)
+    -> bool {
+  const auto* vec = std::get_if<VectorType>(&unit.GetType(type).data);
+  if (vec == nullptr) {
+    return false;
+  }
+  return IsOwningObjectType(unit, vec->element);
+}
+
+auto GetOwnedObjectTarget(const CompilationUnit& unit, TypeId type)
+    -> std::optional<ClassDeclId> {
+  const auto& data = unit.GetType(type).data;
+  if (const auto* owning = std::get_if<OwningPtrType>(&data)) {
+    return AsObjectClass(unit, owning->pointee);
+  }
+  if (const auto* vec = std::get_if<VectorType>(&data)) {
+    if (const auto* owning =
+            std::get_if<OwningPtrType>(&unit.GetType(vec->element).data)) {
+      return AsObjectClass(unit, owning->pointee);
+    }
+  }
+  return std::nullopt;
 }
 
 }  // namespace lyra::mir

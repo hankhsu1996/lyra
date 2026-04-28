@@ -309,7 +309,9 @@ class HirDumper {
     }
     for (std::size_t i = 0; i < s.LoopVarDecls().size(); ++i) {
       const auto& lv = s.LoopVarDecls()[i];
-      Line(std::format("LoopVarDecl[{}] \"{}\"", i, lv.name));
+      Line(
+          std::format(
+              "LoopVarDecl[{}] \"{}\" : Type[{}]", i, lv.name, lv.type.value));
     }
     for (std::size_t i = 0; i < s.Subroutines().size(); ++i) {
       const auto& d = s.Subroutines()[i];
