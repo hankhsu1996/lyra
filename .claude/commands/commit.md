@@ -1,6 +1,6 @@
 ---
 description: Create a commit with a well-formatted message
-allowed-tools: Bash(git status:*), Bash(git diff:*), Bash(git add:*), Bash(git branch:*), Bash(git switch:*), Bash(git log:*), Bash(clang-format:*), Bash(npx prettier:*), Bash(buildifier:*), Bash(find:*), Bash(python3 tools/policy/*)
+allowed-tools: Bash(git status:*), Bash(git diff:*), Bash(git add:*), Bash(git branch:*), Bash(git switch:*), Bash(git log:*), Bash(clang-format:*), Bash(npx prettier:*), Bash(buildifier:*), Bash(find:*), Bash(python3 tools/policy/*), Bash(bazel build:*), Bash(bazel test:*)
 ---
 
 # Commit
@@ -29,6 +29,15 @@ Do NOT proceed with formatting or staging until you are on a feature branch.
 Before committing, format ALL files and run every check that CI runs.
 
 **Rule of thumb:** Local must mirror CI exactly. If CI runs it, the skill must run it. If a script in `tools/policy/` exists, it likely has a corresponding CI workflow under `.github/workflows/`.
+
+### Build and test (mirrors CI)
+
+```bash
+bazel build //...
+bazel test //... --test_output=errors
+```
+
+Same target set CI runs. Do not narrow `//...`. Fix failures before staging.
 
 ### Format
 
