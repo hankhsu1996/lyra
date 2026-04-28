@@ -11,7 +11,6 @@
 #include "lyra/mir/expr.hpp"
 #include "lyra/mir/local_var.hpp"
 #include "lyra/mir/member_var.hpp"
-#include "lyra/mir/runtime_print.hpp"
 
 namespace lyra::mir {
 
@@ -80,7 +79,7 @@ struct ConstructMemberStmt {
 
 using StmtData = std::variant<
     LocalVarDeclStmt, ExprStmt, BlockStmt, IfStmt, SwitchStmt,
-    ConstructMemberStmt, RuntimePrintSeqStmt>;
+    ConstructMemberStmt>;
 
 struct Stmt {
   std::optional<std::string> label;

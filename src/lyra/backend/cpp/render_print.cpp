@@ -1,12 +1,12 @@
 #include "render_print.hpp"
 
-#include <cstddef>
 #include <cstdint>
 #include <format>
 #include <string>
+#include <string_view>
 #include <variant>
+#include <vector>
 
-#include "formatting.hpp"
 #include "lyra/base/internal_error.hpp"
 #include "lyra/base/overloaded.hpp"
 #include "lyra/mir/expr.hpp"
@@ -54,7 +54,7 @@ auto RenderRuntimeFormatKind(mir::FormatKind k) -> std::string_view {
   throw InternalError("RenderRuntimeFormatKind: unknown FormatKind");
 }
 
-auto RenderRuntimeFormatSpecInit(const mir::FormatSpec& spec) -> std::string {
+auto RenderFormatSpecInit(const mir::FormatSpec& spec) -> std::string {
   return std::format(
       "lyra::runtime::FormatSpec{{.kind = {}, .width = {}, .precision = {}, "
       ".zero_pad = {}, .left_align = {}, .timeunit_power = {}}}",
@@ -63,71 +63,50 @@ auto RenderRuntimeFormatSpecInit(const mir::FormatSpec& spec) -> std::string {
       BoolLiteral(spec.modifiers.left_align), spec.timeunit_power);
 }
 
-auto RenderRuntimePrintLiteral(
-    const mir::RuntimePrintLiteral& lit, std::size_t indent) -> std::string {
-  return Indent(indent) + "lyra::runtime::LyraPrintLiteral(*engine_, " +
-         RenderCStringLiteral(lit.text) + ", " +
-         std::format("{}", lit.text.size()) + ");\n";
-}
-
-auto RenderRuntimePrintValue(
-    const RenderContext& ctx, const mir::RuntimePrintValue& v,
-    std::size_t indent) -> std::string {
-  const std::string word_name = ctx.AllocateTemp("lyra_print_word");
-  const std::string spec_name = ctx.AllocateTemp("lyra_print_spec");
-  const std::string view_name = ctx.AllocateTemp("lyra_print_value");
-
+// Render a value operand into an inline `RuntimeValueView` constructor call.
+// Narrow integrals embed the word inside the view (no pointer); strings pass
+// the operand expression as a string_view (full-expression lifetime covers
+// the LyraPrint call).
+auto RenderRuntimeValueViewInit(
+    const RenderContext& ctx, const mir::RuntimePrintValue& v) -> std::string {
   const auto& type = ctx.Unit().GetType(v.type);
-  std::string out;
-  out += Indent(indent) + "{\n";
+  const std::string operand = RenderExpr(ctx, ctx.Expr(v.value));
 
   if (type.IsPackedArray()) {
     const auto& pa = type.AsPackedArray();
     const std::uint64_t bit_width = pa.BitWidth();
     if (bit_width > 64) {
       throw InternalError(
-          "RenderRuntimePrintValue: wide integrals not implemented");
+          "RenderRuntimeValueViewInit: wide integrals not implemented");
     }
     const bool is_signed = pa.signedness == mir::Signedness::kSigned;
-
-    out += Indent(indent + 1) + "const std::uint64_t " + word_name +
-           " = static_cast<std::uint64_t>(" +
-           RenderExpr(ctx, ctx.Expr(v.value)) + ");\n";
-    out += Indent(indent + 1) + "const lyra::runtime::FormatSpec " + spec_name +
-           " = " + RenderRuntimeFormatSpecInit(v.spec) + ";\n";
-    out += Indent(indent + 1) + "const auto " + view_name +
-           " = lyra::runtime::RuntimeValueView::Integral(&" + word_name +
-           ", nullptr, 1, " + std::format("{}", bit_width) + ", " +
-           std::string{BoolLiteral(is_signed)} + ");\n";
-  } else if (type.Kind() == mir::TypeKind::kString) {
-    out += Indent(indent + 1) + "const std::string " + word_name + " = " +
-           RenderExpr(ctx, ctx.Expr(v.value)) + ";\n";
-    out += Indent(indent + 1) + "const lyra::runtime::FormatSpec " + spec_name +
-           " = " + RenderRuntimeFormatSpecInit(v.spec) + ";\n";
-    out += Indent(indent + 1) + "const auto " + view_name +
-           " = lyra::runtime::RuntimeValueView::String(" + word_name +
-           ".data(), " + word_name + ".size());\n";
-  } else {
-    throw InternalError(
-        "RenderRuntimePrintValue: unsupported display operand type");
+    return std::format(
+        "lyra::runtime::RuntimeValueView::NarrowIntegral("
+        "static_cast<std::uint64_t>({}), {}, {})",
+        operand, bit_width, BoolLiteral(is_signed));
   }
-
-  out += Indent(indent + 1) + "lyra::runtime::LyraPrintValue(*engine_, &" +
-         spec_name + ", &" + view_name + ");\n";
-  out += Indent(indent) + "}\n";
-  return out;
+  if (type.Kind() == mir::TypeKind::kString) {
+    return std::format("lyra::runtime::RuntimeValueView::String({})", operand);
+  }
+  throw InternalError(
+      "RenderRuntimeValueViewInit: unsupported display operand type");
 }
 
-auto RenderRuntimePrintItem(
-    const RenderContext& ctx, const mir::RuntimePrintItem& item,
-    std::size_t indent) -> std::string {
+auto RenderPrintItemInit(
+    const RenderContext& ctx, const mir::RuntimePrintItem& item)
+    -> std::string {
   return std::visit(
       Overloaded{
           [&](const mir::RuntimePrintLiteral& lit) -> std::string {
-            return RenderRuntimePrintLiteral(lit, indent);
+            return std::format(
+                "lyra::runtime::PrintLiteralItem{{{}, {}}}",
+                RenderCStringLiteral(lit.text), lit.text.size());
           },
           [&](const mir::RuntimePrintValue& v) -> std::string {
-            return RenderRuntimePrintValue(ctx, v, indent);
+            return std::format(
+                "lyra::runtime::PrintValueItem{{{}, {}}}",
+                RenderFormatSpecInit(v.spec),
+                RenderRuntimeValueViewInit(ctx, v));
           },
       },
       item);
@@ -135,24 +114,47 @@ auto RenderRuntimePrintItem(
 
 }  // namespace
 
-auto RenderRuntimePrintSeqStmt(
-    const RenderContext& ctx, const mir::RuntimePrintSeqStmt& stmt,
-    std::size_t indent) -> std::string {
-  if (stmt.descriptor.has_value()) {
+auto RenderRuntimeCallExpr(
+    const RenderContext& ctx, const mir::RuntimeCallExpr& expr) -> std::string {
+  const mir::RuntimePrintCall& call = expr.print;
+  if (call.descriptor.has_value()) {
     throw InternalError(
-        "RenderRuntimePrintSeqStmt: descriptor present but file output is "
-        "not implemented");
+        "RenderRuntimeCallExpr: descriptor present but file output is not "
+        "implemented");
   }
-  const std::string kind_literal{RenderRuntimePrintKind(stmt.kind)};
+  const std::string_view kind_literal = RenderRuntimePrintKind(call.kind);
 
-  std::string out;
-  out += Indent(indent) + "lyra::runtime::LyraPrintStart(*engine_, " +
-         kind_literal + ");\n";
-  for (const mir::RuntimePrintItem& item : stmt.items) {
-    out += RenderRuntimePrintItem(ctx, item, indent);
+  // Empty items: pass an explicit empty span. Avoids relying on the
+  // `std::array<T, 0>` to `std::span<const T>` conversion path, which is
+  // legal but a fragile spelling to depend on.
+  if (call.items.empty()) {
+    return std::format(
+        "lyra::runtime::LyraPrint(*engine_, {}, "
+        "std::span<const lyra::runtime::PrintItem>{{}})",
+        kind_literal);
   }
-  out += Indent(indent) + "lyra::runtime::LyraPrintEnd(*engine_, " +
-         kind_literal + ");\n";
+
+  // The PrintItem array is built inline via `std::array<PrintItem, N>{...}`;
+  // each element is one of the variant alternatives (PrintLiteralItem /
+  // PrintValueItem) and the variant's converting constructor wraps it. The
+  // array rvalue lives for the full expression, covering the LyraPrint call.
+  std::vector<std::string> item_inits;
+  item_inits.reserve(call.items.size());
+  for (const mir::RuntimePrintItem& item : call.items) {
+    item_inits.push_back(RenderPrintItemInit(ctx, item));
+  }
+
+  std::string out = std::format(
+      "lyra::runtime::LyraPrint(*engine_, {}, "
+      "std::array<lyra::runtime::PrintItem, {}>{{",
+      kind_literal, call.items.size());
+  for (std::size_t i = 0; i < item_inits.size(); ++i) {
+    if (i != 0) {
+      out += ", ";
+    }
+    out += item_inits[i];
+  }
+  out += "})";
   return out;
 }
 

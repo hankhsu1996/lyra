@@ -260,6 +260,9 @@ class MirDumper {
               return std::format(
                   "CallExpr callee={} args=[{}]", FormatCallee(c.callee), args);
             },
+            [](const RuntimeCallExpr&) -> std::string {
+              return "RuntimeCallExpr";
+            },
         },
         e.data);
     return std::format("{} type=Type[{}]", body_str, e.type.value);
@@ -360,6 +363,12 @@ class MirDumper {
       for (std::size_t i = 0; i < body.exprs.size(); ++i) {
         const ExprId id{static_cast<std::uint32_t>(i)};
         Line(std::format("Expr[{}] {}", i, FormatExpr(body, id)));
+        const auto& expr = body.exprs[i];
+        if (const auto* rc = std::get_if<RuntimeCallExpr>(&expr.data)) {
+          Indent();
+          DumpRuntimePrintCallItems(rc->print, body);
+          Dedent();
+        }
       }
       Dedent();
     }
@@ -401,26 +410,23 @@ class MirDumper {
                       "class=Class[{}]",
                       id.value, s.target.value, s.class_id.value));
             },
-            [&](const RuntimePrintSeqStmt& s) {
-              DumpRuntimePrintSeqStmt(s, enclosing, id);
-            },
         },
         stmt.data);
   }
 
-  void DumpRuntimePrintSeqStmt(
-      const RuntimePrintSeqStmt& s, const Body& enclosing, StmtId id) {
+  void DumpRuntimePrintCallItems(
+      const RuntimePrintCall& call, const Body& enclosing) {
     Line(
         std::format(
-            "Stmt[{}] RuntimePrintSeqStmt kind={} descriptor={} items={}",
-            id.value, FormatMirPrintKind(s.kind),
-            s.descriptor.has_value()
-                ? std::format("Expr[{}]", s.descriptor->value)
+            "RuntimePrintCall kind={} descriptor={} items={}",
+            FormatMirPrintKind(call.kind),
+            call.descriptor.has_value()
+                ? std::format("Expr[{}]", call.descriptor->value)
                 : std::string("stdout"),
-            s.items.size()));
+            call.items.size()));
     Indent();
-    for (std::size_t i = 0; i < s.items.size(); ++i) {
-      DumpRuntimePrintItem(i, s.items[i], enclosing);
+    for (std::size_t i = 0; i < call.items.size(); ++i) {
+      DumpRuntimePrintItem(i, call.items[i], enclosing);
     }
     Dedent();
   }

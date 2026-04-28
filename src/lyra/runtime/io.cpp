@@ -1,37 +1,34 @@
 #include "lyra/runtime/io.hpp"
 
-#include <cstdint>
+#include <span>
 #include <string_view>
+#include <variant>
 
-#include "lyra/base/internal_error.hpp"
+#include "lyra/base/overloaded.hpp"
 #include "lyra/runtime/engine.hpp"
+#include "lyra/runtime/format.hpp"
 #include "lyra/runtime/output_sink.hpp"
 
 namespace lyra::runtime {
 
-void LyraPrintStart(Engine& engine, PrintKind kind) {
-  (void)engine;
-  (void)kind;
-}
-
-void LyraPrintLiteral(Engine& engine, const char* data, std::uint32_t size) {
-  engine.Output().Append(std::string_view{data, size});
-}
-
-void LyraPrintValue(
-    Engine& engine, const FormatSpec* spec, const RuntimeValueView* value) {
-  if (spec == nullptr || value == nullptr) {
-    throw InternalError("LyraPrintValue: null payload");
+void LyraPrint(
+    Engine& engine, PrintKind kind, std::span<const PrintItem> items) {
+  for (const PrintItem& item : items) {
+    std::visit(
+        Overloaded{
+            [&](const PrintLiteralItem& lit) {
+              engine.Output().Append(std::string_view{lit.data, lit.size});
+            },
+            [&](const PrintValueItem& v) {
+              engine.Output().Append(FormatValue(v.spec, v.value));
+            },
+        },
+        item);
   }
-  engine.Output().Append(FormatValue(*spec, *value));
-}
 
-void LyraPrintEnd(Engine& engine, PrintKind print_kind) {
   const bool append_newline =
-      print_kind == PrintKind::kDisplay || print_kind == PrintKind::kFDisplay;
-  if (append_newline) {
-    engine.Output().FinishRecord(true);
-  }
+      kind == PrintKind::kDisplay || kind == PrintKind::kFDisplay;
+  engine.Output().FinishRecord(append_newline);
 }
 
 }  // namespace lyra::runtime

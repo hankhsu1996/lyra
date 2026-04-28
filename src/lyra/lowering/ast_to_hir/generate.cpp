@@ -177,7 +177,7 @@ auto BuildLoopGenerate(
     -> diag::Result<hir::Generate> {
   if (array.genvar == nullptr || array.initialExpression == nullptr ||
       array.stopExpression == nullptr || array.iterExpression == nullptr) {
-    throw support::InternalError(
+    throw InternalError(
         "BuildLoopGenerate: GenerateBlockArraySymbol is missing bound "
         "header expressions or canonical genvar");
   }
@@ -207,7 +207,7 @@ auto BuildLoopGenerate(
   const hir::ExprId iter_id = parent_state.AppendExpr(*std::move(iter_expr));
 
   if (!loop_state.loop_var_id.has_value()) {
-    throw support::InternalError(
+    throw InternalError(
         "BuildLoopGenerate: loop-generate header did not expose a "
         "synthetic loop variable");
   }

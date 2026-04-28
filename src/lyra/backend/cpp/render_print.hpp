@@ -1,15 +1,16 @@
 #pragma once
 
-#include <cstddef>
 #include <string>
 
-#include "lyra/mir/stmt.hpp"
+#include "lyra/mir/expr.hpp"
 #include "render_context.hpp"
 
 namespace lyra::backend::cpp {
 
-auto RenderRuntimePrintSeqStmt(
-    const RenderContext& ctx, const mir::RuntimePrintSeqStmt& stmt,
-    std::size_t indent) -> std::string;
+// Render a runtime call expression as a single C++ expression. Used from
+// RenderExpr's RuntimeCallExpr arm; the surrounding RenderStmt::ExprStmt path
+// adds the trailing `;` like for any other expression.
+auto RenderRuntimeCallExpr(
+    const RenderContext& ctx, const mir::RuntimeCallExpr& expr) -> std::string;
 
 }  // namespace lyra::backend::cpp

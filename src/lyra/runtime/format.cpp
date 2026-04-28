@@ -90,10 +90,7 @@ auto FormatIntegralNarrow(const FormatSpec& spec, const RuntimeValueView& v)
     throw InternalError(
         "FormatIntegralNarrow: 4-state X/Z formatting not implemented");
   }
-  if (v.value_words == nullptr) {
-    throw InternalError("FormatIntegralNarrow: null value_words");
-  }
-  const std::uint64_t raw = *v.value_words & MaskFor(v.bit_width);
+  const std::uint64_t raw = v.inline_word & MaskFor(v.bit_width);
   std::string body;
   switch (spec.kind) {
     case FormatKind::kDecimal:

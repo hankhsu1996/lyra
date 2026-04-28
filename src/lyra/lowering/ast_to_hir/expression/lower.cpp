@@ -356,7 +356,7 @@ auto TryResolveLoopHeaderVar(
   }
   if (loop_state.synthetic_symbol != nullptr &&
       loop_state.synthetic_symbol != &var) {
-    throw support::InternalError(
+    throw InternalError(
         "loop-generate header resolved multiple synthetic loop variables");
   }
   loop_state.synthetic_symbol = &var;
@@ -411,7 +411,7 @@ auto LowerLoopHeaderExpr(
       auto v = LowerIntegerLiteralValue(
           unit_facts, expr.as<slang::ast::IntegerLiteral>());
       if (!v) return std::unexpected(std::move(v.error()));
-      return MakeLiteralExpr(*v);
+      return MakeLiteralExpr(*v, span);
     }
 
     case slang::ast::ExpressionKind::NamedValue: {
@@ -429,23 +429,25 @@ auto LowerLoopHeaderExpr(
         return MakeRefExpr(
             hir::LoopVarRef{
                 .parent_scope_hops = hir::ParentScopeHops{.value = 0},
-                .target = *loop_var});
+                .target = *loop_var},
+            span);
       }
       const auto binding = unit_state.LookupMemberVarBinding(var);
       if (!binding.has_value()) {
-        throw support::InternalError(
+        throw InternalError(
             "LowerLoopHeaderExpr: variable was not bound during scope "
             "lowering");
       }
       const auto hops = stack.HopsTo(binding->home_frame);
       if (!hops.has_value()) {
-        throw support::InternalError(
+        throw InternalError(
             "LowerLoopHeaderExpr: variable home frame is not on the current "
             "scope stack");
       }
       return MakeRefExpr(
           hir::MemberVarRef{
-              .parent_scope_hops = *hops, .target = binding->local_id});
+              .parent_scope_hops = *hops, .target = binding->local_id},
+          span);
     }
 
     case slang::ast::ExpressionKind::Conversion: {
@@ -477,8 +479,10 @@ auto LowerLoopHeaderExpr(
       auto type_id = type_id_of(expr);
       if (!type_id) return std::unexpected(std::move(type_id.error()));
       return hir::Expr{
-          .data = hir::BinaryExpr{
-              .op = *op, .lhs = *lhs_id, .rhs = *rhs_id, .type = *type_id}};
+          .data =
+              hir::BinaryExpr{
+                  .op = *op, .lhs = *lhs_id, .rhs = *rhs_id, .type = *type_id},
+          .span = span};
     }
 
     case slang::ast::ExpressionKind::Assignment: {
@@ -511,7 +515,8 @@ auto LowerLoopHeaderExpr(
       if (!type_id) return std::unexpected(std::move(type_id.error()));
       return hir::Expr{
           .data =
-              hir::AssignExpr{.lhs = lhs_id, .rhs = *rhs_id, .type = *type_id}};
+              hir::AssignExpr{.lhs = lhs_id, .rhs = *rhs_id, .type = *type_id},
+          .span = span};
     }
 
     default:

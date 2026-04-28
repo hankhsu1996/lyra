@@ -14,6 +14,7 @@
 #include "lyra/hir/subroutine_ref.hpp"
 #include "lyra/hir/type.hpp"
 #include "lyra/hir/value_ref.hpp"
+#include "lyra/lowering/hir_to_mir/lower_system_subroutine.hpp"
 #include "lyra/lowering/hir_to_mir/state.hpp"
 #include "lyra/mir/binary_op.hpp"
 #include "lyra/mir/expr.hpp"
@@ -82,20 +83,10 @@ auto LowerRefAsLvalue(
       ref);
 }
 
-auto LowerCallee(
-    const ClassLoweringState& class_state, const hir::SubroutineRef& callee)
+auto LowerUserCallee(
+    const ClassLoweringState& class_state, const hir::UserSubroutineRef& u)
     -> mir::Callee {
-  return std::visit(
-      Overloaded{
-          [&](const hir::UserSubroutineRef& u) -> mir::Callee {
-            return class_state.LookupUserSubroutine(u.parent_scope_hops, u.id);
-          },
-          [](const hir::SystemSubroutineRef&) -> mir::Callee {
-            throw InternalError(
-                "system subroutine call reached expression lowering");
-          },
-      },
-      callee);
+  return class_state.LookupUserSubroutine(u.parent_scope_hops, u.id);
 }
 
 auto LowerPrimaryExpr(
@@ -141,13 +132,14 @@ auto LowerPrimaryExpr(
 auto LowerProcessExpr(
     const UnitLoweringState& unit_state, const ClassLoweringState& class_state,
     const ProcessLoweringState& proc_state, const BodyLoweringState& body_state,
-    const hir::Process& hir_process, const hir::Expr& expr) -> mir::Expr {
+    const hir::Process& hir_process, const hir::Expr& expr)
+    -> diag::Result<mir::Expr> {
   return std::visit(
       Overloaded{
-          [&](const hir::PrimaryExpr& p) -> mir::Expr {
+          [&](const hir::PrimaryExpr& p) -> diag::Result<mir::Expr> {
             return LowerPrimaryExpr(unit_state, class_state, proc_state, p);
           },
-          [&](const hir::BinaryExpr& b) -> mir::Expr {
+          [&](const hir::BinaryExpr& b) -> diag::Result<mir::Expr> {
             return mir::Expr{
                 .data =
                     mir::BinaryExpr{
@@ -156,7 +148,7 @@ auto LowerProcessExpr(
                         .rhs = body_state.TranslateExpr(b.rhs)},
                 .type = unit_state.TranslateType(b.type)};
           },
-          [&](const hir::AssignExpr& a) -> mir::Expr {
+          [&](const hir::AssignExpr& a) -> diag::Result<mir::Expr> {
             const auto& lhs_expr = hir_process.exprs.at(a.lhs.value);
             const auto ref = hir::AsAssignableRef(lhs_expr);
             if (!ref.has_value()) {
@@ -171,18 +163,31 @@ auto LowerProcessExpr(
                         .value = body_state.TranslateExpr(a.rhs)},
                 .type = unit_state.TranslateType(a.type)};
           },
-          [&](const hir::CallExpr& c) -> mir::Expr {
-            std::vector<mir::ExprId> args;
-            args.reserve(c.arguments.size());
-            for (const auto arg : c.arguments) {
-              args.push_back(body_state.TranslateExpr(arg));
-            }
-            return mir::Expr{
-                .data =
-                    mir::CallExpr{
-                        .callee = LowerCallee(class_state, c.callee),
-                        .arguments = std::move(args)},
-                .type = unit_state.TranslateType(c.result_type)};
+          [&](const hir::CallExpr& c) -> diag::Result<mir::Expr> {
+            return std::visit(
+                Overloaded{
+                    [&](const hir::SystemSubroutineRef& sys)
+                        -> diag::Result<mir::Expr> {
+                      return LowerSystemSubroutineCall(
+                          unit_state, hir_process, body_state, c, sys,
+                          expr.span);
+                    },
+                    [&](const hir::UserSubroutineRef& usr)
+                        -> diag::Result<mir::Expr> {
+                      std::vector<mir::ExprId> args;
+                      args.reserve(c.arguments.size());
+                      for (const auto arg : c.arguments) {
+                        args.push_back(body_state.TranslateExpr(arg));
+                      }
+                      return mir::Expr{
+                          .data =
+                              mir::CallExpr{
+                                  .callee = LowerUserCallee(class_state, usr),
+                                  .arguments = std::move(args)},
+                          .type = unit_state.TranslateType(c.result_type)};
+                    },
+                },
+                c.callee);
           },
       },
       expr.data);

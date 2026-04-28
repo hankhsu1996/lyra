@@ -69,7 +69,18 @@ auto ResolveCxxCompiler() -> std::expected<std::filesystem::path, std::string> {
       return FindOnPath(sv);
     }
   }
-  return FindOnPath("clang++");
+  // Fall back through the common C++ compiler names. CI runners may have
+  // either clang++ or g++ in PATH depending on the image; both compile the
+  // emitted C++ since it uses only standard C++23 features.
+  for (const std::string_view candidate : {"clang++", "g++", "c++"}) {
+    auto found = FindOnPath(candidate);
+    if (found) {
+      return *found;
+    }
+  }
+  return std::unexpected(
+      "no C++ compiler found on PATH (tried clang++, g++, c++; set $CXX to "
+      "override)");
 }
 
 auto CollectRuntimeSources(const std::filesystem::path& dir)

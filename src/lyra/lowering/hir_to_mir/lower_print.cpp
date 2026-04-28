@@ -19,7 +19,8 @@
 #include "lyra/hir/primary.hpp"
 #include "lyra/hir/process.hpp"
 #include "lyra/lowering/hir_to_mir/state.hpp"
-#include "lyra/mir/stmt.hpp"
+#include "lyra/mir/expr.hpp"
+#include "lyra/mir/runtime_print.hpp"
 #include "lyra/support/format.hpp"
 #include "lyra/support/system_subroutine.hpp"
 
@@ -186,14 +187,12 @@ auto BuildRuntimePrintItemsFromCallArgs(
 
 }  // namespace
 
-auto LowerPrintSystemSubroutineStmt(
-    const UnitLoweringState& unit_state, const ProcessLoweringState& proc_state,
-    const hir::Process& hir_proc, const BodyLoweringState& body_state,
-    const hir::CallExpr& call, const support::SystemSubroutineDesc& desc,
+auto LowerPrintSystemSubroutineCall(
+    const UnitLoweringState& unit_state, const hir::Process& hir_proc,
+    const BodyLoweringState& body_state, const hir::CallExpr& call,
+    const support::SystemSubroutineDesc& desc,
     const support::PrintSystemSubroutineInfo& print, diag::SourceSpan span)
-    -> diag::Result<mir::StmtData> {
-  (void)unit_state;
-  (void)proc_state;
+    -> diag::Result<mir::Expr> {
   if (print.sink_kind == support::PrintSinkKind::kFile) {
     return diag::Unsupported(
         span, diag::DiagCode::kFileDisplayNotImplemented,
@@ -204,8 +203,13 @@ auto LowerPrintSystemSubroutineStmt(
   auto items_or =
       BuildRuntimePrintItemsFromCallArgs(body_state, hir_proc, call, span);
   if (!items_or) return std::unexpected(std::move(items_or.error()));
-  return mir::RuntimePrintSeqStmt(
-      ToMirPrintKind(print), std::nullopt, std::move(*items_or));
+
+  return mir::Expr{
+      .data =
+          mir::RuntimeCallExpr{
+              .print = mir::RuntimePrintCall(
+                  ToMirPrintKind(print), std::nullopt, std::move(*items_or))},
+      .type = unit_state.Builtins().void_type};
 }
 
 }  // namespace lyra::lowering::hir_to_mir

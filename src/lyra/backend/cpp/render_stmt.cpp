@@ -11,7 +11,6 @@
 #include "lyra/mir/stmt.hpp"
 #include "render_context.hpp"
 #include "render_expr.hpp"
-#include "render_print.hpp"
 #include "render_type.hpp"
 
 namespace lyra::backend::cpp {
@@ -98,9 +97,6 @@ auto RenderStmt(
             const auto& target_class = ctx.Class().GetClass(s.class_id);
             return Indent(indent) + member.name + " = new " +
                    target_class.Name() + "();\n";
-          },
-          [&](const mir::RuntimePrintSeqStmt& s) -> std::string {
-            return RenderRuntimePrintSeqStmt(ctx, s, indent);
           },
       },
       stmt.data);

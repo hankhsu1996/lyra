@@ -330,11 +330,15 @@ auto RunCppCase(
 
 }  // namespace
 
+auto IsEmitCppCase(const TestCase& c) -> bool {
+  return c.input.command.size() == 2 && c.input.command[0] == "run" &&
+         c.input.command[1] == "cpp";
+}
+
 auto RunCase(
     const std::filesystem::path& lyra_exe, const TestCase& c,
     const CppRunPaths& cpp_paths) -> RunResult {
-  if (c.input.command.size() == 2 && c.input.command[0] == "run" &&
-      c.input.command[1] == "cpp") {
+  if (IsEmitCppCase(c)) {
     return RunCppCase(lyra_exe, c, cpp_paths);
   }
 

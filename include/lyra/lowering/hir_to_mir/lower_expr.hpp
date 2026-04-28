@@ -13,7 +13,8 @@ namespace lyra::lowering::hir_to_mir {
 auto LowerProcessExpr(
     const UnitLoweringState& unit_state, const ClassLoweringState& class_state,
     const ProcessLoweringState& proc_state, const BodyLoweringState& body_state,
-    const hir::Process& hir_process, const hir::Expr& expr) -> mir::Expr;
+    const hir::Process& hir_process, const hir::Expr& expr)
+    -> diag::Result<mir::Expr>;
 
 auto LowerStructuralExpr(
     const UnitLoweringState& unit_state, const hir::Expr& expr)

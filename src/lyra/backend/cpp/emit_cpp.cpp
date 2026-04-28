@@ -149,7 +149,9 @@ auto RenderClassHeaderFile(
     const mir::CompilationUnit& unit, const mir::ClassDecl& c) -> std::string {
   std::string out;
   out += "#pragma once\n";
+  out += "#include <array>\n";
   out += "#include <cstdint>\n";
+  out += "#include <span>\n";
   out += "#include <string>\n";
   out += "#include \"lyra/runtime/bind_context.hpp\"\n";
   out += "#include \"lyra/runtime/engine.hpp\"\n";

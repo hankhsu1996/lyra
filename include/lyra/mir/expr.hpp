@@ -7,17 +7,13 @@
 #include <vector>
 
 #include "lyra/mir/binary_op.hpp"
+#include "lyra/mir/expr_id.hpp"
 #include "lyra/mir/local_var.hpp"
 #include "lyra/mir/member_var.hpp"
+#include "lyra/mir/runtime_print.hpp"
 #include "lyra/mir/type.hpp"
 
 namespace lyra::mir {
-
-struct ExprId {
-  std::uint32_t value;
-
-  auto operator<=>(const ExprId&) const -> std::strong_ordering = default;
-};
 
 struct IntegerLiteral {
   std::int64_t value;
@@ -66,9 +62,13 @@ struct CallExpr {
   std::vector<ExprId> arguments;
 };
 
+struct RuntimeCallExpr {
+  RuntimePrintCall print;
+};
+
 using ExprData = std::variant<
     IntegerLiteral, StringLiteral, MemberVarRef, LocalVarRef, BinaryExpr,
-    AssignExpr, CallExpr>;
+    AssignExpr, CallExpr, RuntimeCallExpr>;
 
 struct Expr {
   ExprData data;

@@ -10,7 +10,6 @@
 #include "lyra/hir/expr.hpp"
 #include "lyra/hir/local_var.hpp"
 #include "lyra/hir/process.hpp"
-#include "lyra/hir/subroutine_ref.hpp"
 #include "lyra/lowering/hir_to_mir/lower_expr.hpp"
 #include "lyra/lowering/hir_to_mir/lower_stmt.hpp"
 #include "lyra/lowering/hir_to_mir/state.hpp"
@@ -28,12 +27,6 @@ auto LowerProcessKind(hir::ProcessKind kind) -> mir::ProcessKind {
       return mir::ProcessKind::kInitial;
   }
   throw InternalError("LowerProcessKind: unknown HIR ProcessKind");
-}
-
-auto IsSystemSubroutineCall(const hir::Expr& expr) -> bool {
-  const auto* call = std::get_if<hir::CallExpr>(&expr.data);
-  if (call == nullptr) return false;
-  return std::holds_alternative<hir::SystemSubroutineRef>(call->callee);
 }
 
 }  // namespace
@@ -56,13 +49,12 @@ auto LowerProcess(
   for (std::size_t i = 0; i < src.exprs.size(); ++i) {
     const hir::ExprId hir_id{static_cast<std::uint32_t>(i)};
     const auto& hir_expr = src.exprs[i];
-    if (IsSystemSubroutineCall(hir_expr)) {
-      continue;
+    auto expr_or = LowerProcessExpr(
+        unit_state, class_state, proc_state, body_state, src, hir_expr);
+    if (!expr_or) {
+      return std::unexpected(std::move(expr_or.error()));
     }
-    body_state.AppendExpr(
-        hir_id,
-        LowerProcessExpr(
-            unit_state, class_state, proc_state, body_state, src, hir_expr));
+    body_state.AppendExpr(hir_id, *std::move(expr_or));
   }
 
   const hir::Stmt& root = src.stmts.at(src.body.value);

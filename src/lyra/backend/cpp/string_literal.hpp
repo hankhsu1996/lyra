@@ -6,7 +6,7 @@
 namespace lyra::backend::cpp {
 
 // Render a string as a C string literal: `"..."` with control characters,
-// quotes, and backslashes escaped. Used for `LyraPrintLiteral(...)` arguments
+// quotes, and backslashes escaped. Used for `PrintItem::Literal(...)` arguments
 // and as the inner form of `RenderStdStringLiteral`.
 auto RenderCStringLiteral(std::string_view s) -> std::string;
 

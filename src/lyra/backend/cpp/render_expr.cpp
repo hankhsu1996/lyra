@@ -10,6 +10,7 @@
 #include "lyra/mir/binary_op.hpp"
 #include "lyra/mir/expr.hpp"
 #include "render_context.hpp"
+#include "render_print.hpp"
 #include "string_literal.hpp"
 
 namespace lyra::backend::cpp {
@@ -68,6 +69,9 @@ auto RenderExpr(const RenderContext& ctx, const mir::Expr& expr)
           [](const mir::CallExpr&) -> std::string {
             throw InternalError(
                 "RenderExpr: mir::CallExpr lowering to C++ is not implemented");
+          },
+          [&](const mir::RuntimeCallExpr& rc) -> std::string {
+            return RenderRuntimeCallExpr(ctx, rc);
           },
       },
       expr.data);

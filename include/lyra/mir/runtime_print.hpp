@@ -7,7 +7,8 @@
 #include <variant>
 #include <vector>
 
-#include "lyra/mir/expr.hpp"
+#include "lyra/mir/expr_id.hpp"
+#include "lyra/mir/type.hpp"
 
 namespace lyra::mir {
 
@@ -59,12 +60,12 @@ struct RuntimePrintValue {
 
 using RuntimePrintItem = std::variant<RuntimePrintLiteral, RuntimePrintValue>;
 
-struct RuntimePrintSeqStmt {
+struct RuntimePrintCall {
   PrintKind kind;
   std::optional<ExprId> descriptor;
   std::vector<RuntimePrintItem> items;
 
-  RuntimePrintSeqStmt(
+  RuntimePrintCall(
       PrintKind k, std::optional<ExprId> d, std::vector<RuntimePrintItem> i)
       : kind(k), descriptor(d), items(std::move(i)) {
   }

@@ -1,6 +1,6 @@
 #pragma once
 
-#include <cstdint>
+#include <span>
 
 #include "lyra/runtime/format.hpp"
 
@@ -8,14 +8,10 @@ namespace lyra::runtime {
 
 class Engine;
 
-void LyraPrintStart(Engine& engine, PrintKind print_kind);
-
-void LyraPrintLiteral(Engine& engine, const char* data, std::uint32_t size);
-
-// Compound payloads passed by pointer-to-const for LLVM-friendliness.
-void LyraPrintValue(
-    Engine& engine, const FormatSpec* spec, const RuntimeValueView* value);
-
-void LyraPrintEnd(Engine& engine, PrintKind print_kind);
+// Single high-level runtime print API. The compiler emits one call per
+// $display/$write/...; the runtime walks the items, formats values via
+// FormatValue, and finalizes the record (newline for kDisplay/kFDisplay).
+void LyraPrint(
+    Engine& engine, PrintKind kind, std::span<const PrintItem> items);
 
 }  // namespace lyra::runtime
