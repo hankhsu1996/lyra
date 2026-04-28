@@ -1,5 +1,6 @@
 #pragma once
 
+#include "lyra/diag/diagnostic.hpp"
 #include "lyra/hir/process.hpp"
 #include "lyra/lowering/hir_to_mir/state.hpp"
 #include "lyra/mir/process.hpp"
@@ -8,6 +9,6 @@ namespace lyra::lowering::hir_to_mir {
 
 auto LowerProcess(
     const UnitLoweringState& unit_state, const ClassLoweringState& class_state,
-    const hir::Process& src) -> mir::Process;
+    const hir::Process& src) -> diag::Result<mir::Process>;
 
 }  // namespace lyra::lowering::hir_to_mir

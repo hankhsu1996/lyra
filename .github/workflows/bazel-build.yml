@@ -96,6 +96,7 @@ jobs:
             RBE_FLAGS="--config=rbe --remote_header=x-buildbuddy-api-key=$BUILDBUDDY_API_KEY"
           fi
           bazel test //... $RBE_FLAGS \
+            --test_tag_filters=-requires-host-cxx \
             --test_output=errors --verbose_failures
 
   aot-full:

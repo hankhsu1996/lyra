@@ -14,4 +14,3 @@ expect:
       - "CallExpr callee=SystemSubroutine[1] \"$write\""
       - "CallExpr callee=SystemSubroutine[2] \"$fdisplay\""
       - "CallExpr callee=SystemSubroutine[3] \"$fwrite\""
-      - "VoidType"

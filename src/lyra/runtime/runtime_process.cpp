@@ -2,10 +2,10 @@
 
 #include <utility>
 
+#include "lyra/base/internal_error.hpp"
 #include "lyra/runtime/process.hpp"
 #include "lyra/runtime/process_kind.hpp"
 #include "lyra/runtime/runtime_scope.hpp"
-#include "lyra/support/internal_error.hpp"
 
 namespace lyra::runtime {
 
@@ -25,7 +25,7 @@ auto RuntimeProcess::Kind() const -> ProcessKind {
 void RuntimeProcess::Run() {
   process_.Resume();
   if (!process_.Done()) {
-    throw support::InternalError(
+    throw InternalError(
         "RuntimeProcess::Run: process suspended without completing; this "
         "cut has no awaitables, so Done() must hold after Resume");
   }

@@ -8,7 +8,7 @@
 #include <string_view>
 #include <variant>
 
-#include "lyra/support/internal_error.hpp"
+#include "lyra/base/internal_error.hpp"
 
 namespace lyra::support {
 
@@ -155,6 +155,11 @@ inline constexpr std::array kSystemSubroutines = {
         "LookupSystemSubroutine: SystemSubroutineId out of range");
   }
   return view[id.value];
+}
+
+[[nodiscard]] inline auto GetPrintInfo(const SystemSubroutineDesc& desc)
+    -> const PrintSystemSubroutineInfo* {
+  return std::get_if<PrintSystemSubroutineInfo>(&desc.semantic);
 }
 
 }  // namespace lyra::support

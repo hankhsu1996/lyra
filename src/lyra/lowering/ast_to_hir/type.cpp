@@ -7,10 +7,10 @@
 #include <slang/ast/types/Type.h>
 #include <slang/numeric/ConstantValue.h>
 
+#include "lyra/base/internal_error.hpp"
 #include "lyra/diag/diagnostic.hpp"
 #include "lyra/diag/source_span.hpp"
 #include "lyra/hir/type.hpp"
-#include "lyra/support/internal_error.hpp"
 
 namespace lyra::lowering::ast_to_hir {
 
@@ -25,7 +25,7 @@ auto LowerScalarAtom(slang::ast::ScalarType::Kind k) -> hir::BitAtom {
     case slang::ast::ScalarType::Reg:
       return hir::BitAtom::kReg;
   }
-  throw support::InternalError("LowerScalarAtom: unknown scalar kind");
+  throw InternalError("LowerScalarAtom: unknown scalar kind");
 }
 
 auto LowerRange(const slang::ConstantRange& r) -> hir::PackedRange {
@@ -82,7 +82,7 @@ auto LowerPredefinedInteger(slang::ast::PredefinedIntegerType::Kind k)
           .form = hir::PackedArrayForm::kTime,
       };
   }
-  throw support::InternalError(
+  throw InternalError(
       "LowerPredefinedInteger: unknown predefined integer kind");
 }
 
@@ -151,7 +151,7 @@ auto LowerTypeData(const slang::ast::Type& type, diag::SourceSpan decl_span)
         case slang::ast::FloatingType::RealTime:
           return hir::TypeData{hir::RealTimeType{}};
       }
-      throw support::InternalError("LowerTypeData: unknown FloatingType kind");
+      throw InternalError("LowerTypeData: unknown FloatingType kind");
     }
     case slang::ast::SymbolKind::StringType:
       return hir::TypeData{hir::StringType{}};

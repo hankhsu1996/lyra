@@ -1,23 +1,38 @@
 #include "lyra/runtime/engine.hpp"
 
+#include <iostream>
 #include <memory>
 #include <string>
+#include <string_view>
 #include <utility>
 
+#include "lyra/base/internal_error.hpp"
 #include "lyra/runtime/bind_context.hpp"
 #include "lyra/runtime/module.hpp"
+#include "lyra/runtime/output_sink.hpp"
 #include "lyra/runtime/process.hpp"
 #include "lyra/runtime/process_kind.hpp"
 #include "lyra/runtime/runtime_process.hpp"
 #include "lyra/runtime/runtime_scope.hpp"
 #include "lyra/runtime/runtime_scope_kind.hpp"
-#include "lyra/support/internal_error.hpp"
 
 namespace lyra::runtime {
 
+auto DefaultEngineOptions() -> EngineOptions {
+  return EngineOptions{
+      .output_sink = [](std::string_view text) { std::cout << text; }};
+}
+
+Engine::Engine() : Engine(DefaultEngineOptions()) {
+}
+
+Engine::Engine(EngineOptions options)
+    : output_(std::move(options.output_sink)) {
+}
+
 void Engine::BindRoot(std::string root_name, Module& top) {
   if (bound_) {
-    throw support::InternalError("Engine::BindRoot called more than once");
+    throw InternalError("Engine::BindRoot called more than once");
   }
   bound_ = true;
   scopes_.push_back(
@@ -44,10 +59,10 @@ auto Engine::CreateChildScope(
 
 auto Engine::Run() -> int {
   if (!bound_) {
-    throw support::InternalError("Engine::Run called before BindRoot");
+    throw InternalError("Engine::Run called before BindRoot");
   }
   if (ran_) {
-    throw support::InternalError("Engine::Run called more than once");
+    throw InternalError("Engine::Run called more than once");
   }
   ran_ = true;
   for (auto& proc : processes_) {
@@ -59,7 +74,7 @@ auto Engine::Run() -> int {
       case ProcessKind::kAlwaysComb:
       case ProcessKind::kAlwaysFf:
       case ProcessKind::kFinal:
-        throw support::InternalError(
+        throw InternalError(
             "Engine::Run: unsupported runtime ProcessKind in this cut");
     }
   }
@@ -68,6 +83,7 @@ auto Engine::Run() -> int {
     active_queue_.pop_front();
     proc->Run();
   }
+  output_.Drain();
   return 0;
 }
 

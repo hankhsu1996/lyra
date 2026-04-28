@@ -5,12 +5,12 @@
 #include "formatting.hpp"
 #include "lyra/backend/cpp/api.hpp"
 #include "lyra/backend/cpp/artifact.hpp"
+#include "lyra/base/internal_error.hpp"
+#include "lyra/base/overloaded.hpp"
 #include "lyra/mir/class_decl.hpp"
 #include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/member_var.hpp"
 #include "lyra/mir/process.hpp"
-#include "lyra/support/internal_error.hpp"
-#include "lyra/support/overloaded.hpp"
 #include "render_stmt.hpp"
 #include "render_type.hpp"
 
@@ -22,7 +22,7 @@ auto RenderField(
     const mir::CompilationUnit& unit, const mir::ClassDecl& enclosing,
     const mir::MemberVar& member, std::size_t indent) -> std::string {
   return std::visit(
-      support::Overloaded{
+      Overloaded{
           [&](const mir::ValueMember& v) -> std::string {
             return Indent(indent) + RenderTypeAsCpp(unit, v.type) + " " +
                    member.name + ";\n";
@@ -71,7 +71,7 @@ auto RenderProcessKindLiteral(mir::ProcessKind kind) -> std::string {
     case mir::ProcessKind::kInitial:
       return "lyra::runtime::ProcessKind::kInitial";
   }
-  throw support::InternalError("RenderProcessKindLiteral: unknown ProcessKind");
+  throw InternalError("RenderProcessKindLiteral: unknown ProcessKind");
 }
 
 auto RenderBind(const mir::ClassDecl& c, std::size_t indent, bool is_top_level)
@@ -79,6 +79,7 @@ auto RenderBind(const mir::ClassDecl& c, std::size_t indent, bool is_top_level)
   std::string out;
   out += Indent(indent) + "void Bind(lyra::runtime::RuntimeBindContext& ctx)" +
          (is_top_level ? " override {\n" : " {\n");
+  out += Indent(indent + 1) + "engine_ = &ctx.GetEngine();\n";
   for (std::size_t i = 0; i < c.Processes().size(); ++i) {
     const auto& p = c.Processes()[i];
     out += Indent(indent + 1) + "ctx.AddProcess(\n";
@@ -128,6 +129,9 @@ auto RenderClassDecl(
     out += "\n";
   }
 
+  out += Indent(indent + 1) + "lyra::runtime::Engine* engine_{};\n";
+  out += "\n";
+
   out += RenderConstructor(unit, c, indent + 1);
   out += "\n";
   out += RenderBind(c, indent + 1, is_top_level);
@@ -145,9 +149,14 @@ auto RenderClassHeaderFile(
     const mir::CompilationUnit& unit, const mir::ClassDecl& c) -> std::string {
   std::string out;
   out += "#pragma once\n";
+  out += "#include <array>\n";
   out += "#include <cstdint>\n";
+  out += "#include <span>\n";
+  out += "#include <string>\n";
   out += "#include \"lyra/runtime/bind_context.hpp\"\n";
   out += "#include \"lyra/runtime/engine.hpp\"\n";
+  out += "#include \"lyra/runtime/format.hpp\"\n";
+  out += "#include \"lyra/runtime/io.hpp\"\n";
   out += "#include \"lyra/runtime/module.hpp\"\n";
   out += "#include \"lyra/runtime/process.hpp\"\n";
   out += "#include \"lyra/runtime/process_kind.hpp\"\n";

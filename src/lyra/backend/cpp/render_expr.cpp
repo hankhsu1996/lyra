@@ -5,11 +5,13 @@
 #include <string_view>
 #include <variant>
 
+#include "lyra/base/internal_error.hpp"
+#include "lyra/base/overloaded.hpp"
 #include "lyra/mir/binary_op.hpp"
 #include "lyra/mir/expr.hpp"
-#include "lyra/support/internal_error.hpp"
-#include "lyra/support/overloaded.hpp"
 #include "render_context.hpp"
+#include "render_print.hpp"
+#include "string_literal.hpp"
 
 namespace lyra::backend::cpp {
 
@@ -20,7 +22,7 @@ auto BinaryOpToken(mir::BinaryOp op) -> std::string_view {
     case mir::BinaryOp::kAdd:
       return " + ";
   }
-  throw support::InternalError("RenderExpr: unsupported MIR BinaryOp");
+  throw InternalError("RenderExpr: unsupported MIR BinaryOp");
 }
 
 }  // namespace
@@ -28,7 +30,7 @@ auto BinaryOpToken(mir::BinaryOp op) -> std::string_view {
 auto RenderLvalue(const RenderContext& ctx, const mir::Lvalue& target)
     -> std::string {
   return std::visit(
-      support::Overloaded{
+      Overloaded{
           [&](const mir::MemberVarRef& m) -> std::string {
             return ctx.Class().GetMemberVar(m.target).name;
           },
@@ -42,9 +44,12 @@ auto RenderLvalue(const RenderContext& ctx, const mir::Lvalue& target)
 auto RenderExpr(const RenderContext& ctx, const mir::Expr& expr)
     -> std::string {
   return std::visit(
-      support::Overloaded{
+      Overloaded{
           [](const mir::IntegerLiteral& e) -> std::string {
             return std::format("{}", e.value);
+          },
+          [](const mir::StringLiteral& e) -> std::string {
+            return RenderStdStringLiteral(e.value);
           },
           [&](const mir::MemberVarRef& e) -> std::string {
             return ctx.Class().GetMemberVar(e.target).name;
@@ -53,20 +58,20 @@ auto RenderExpr(const RenderContext& ctx, const mir::Expr& expr)
             return ctx.Body().local_vars.at(e.target.value).name;
           },
           [&](const mir::BinaryExpr& e) -> std::string {
-            const auto& lhs = ctx.Body().exprs.at(e.lhs.value);
-            const auto& rhs = ctx.Body().exprs.at(e.rhs.value);
-            return "(" + RenderExpr(ctx, lhs) +
-                   std::string{BinaryOpToken(e.op)} + RenderExpr(ctx, rhs) +
-                   ")";
+            return "(" + RenderExpr(ctx, ctx.Expr(e.lhs)) +
+                   std::string{BinaryOpToken(e.op)} +
+                   RenderExpr(ctx, ctx.Expr(e.rhs)) + ")";
           },
           [&](const mir::AssignExpr& e) -> std::string {
-            const auto& rhs = ctx.Body().exprs.at(e.value.value);
             return "(" + RenderLvalue(ctx, e.target) + " = " +
-                   RenderExpr(ctx, rhs) + ")";
+                   RenderExpr(ctx, ctx.Expr(e.value)) + ")";
           },
           [](const mir::CallExpr&) -> std::string {
-            throw support::InternalError(
-                "RenderExpr: call lowering to C++ backend is not implemented");
+            throw InternalError(
+                "RenderExpr: mir::CallExpr lowering to C++ is not implemented");
+          },
+          [&](const mir::RuntimeCallExpr& rc) -> std::string {
+            return RenderRuntimeCallExpr(ctx, rc);
           },
       },
       expr.data);
