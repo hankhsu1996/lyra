@@ -366,7 +366,7 @@ auto TryResolveLoopHeaderVar(
     auto type_data = LowerTypeData(var.getType(), var_span);
     if (!type_data) return std::unexpected(std::move(type_data.error()));
     const hir::TypeId type_id = unit_state.AddType(*std::move(type_data));
-    loop_state.loop_var_id = scope_state.Scope().AddLoopVarDecl(
+    loop_state.loop_var_id = scope_state.AddLoopVarDecl(
         hir::LoopVarDecl{
             .name = std::string{loop_state.expected_name}, .type = type_id});
   }

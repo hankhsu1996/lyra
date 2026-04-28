@@ -23,6 +23,15 @@ namespace lyra::lowering::ast_to_hir {
 
 namespace {
 
+auto AddGenerateChildScope(hir::Generate& gen, hir::StructuralScope scope)
+    -> hir::StructuralScopeId {
+  const hir::StructuralScopeId id{
+      static_cast<std::uint32_t>(gen.child_scopes.size())};
+  scope.id = id;
+  gen.child_scopes.push_back(std::move(scope));
+  return id;
+}
+
 auto AddChildScope(
     const UnitLoweringFacts& unit_facts, UnitLoweringState& unit_state,
     ScopeStack& stack, hir::Generate& generate,
@@ -31,7 +40,7 @@ auto AddChildScope(
   hir::StructuralScope scope;
   auto r = LowerScopeInto(unit_facts, unit_state, scope, block, stack);
   if (!r) return std::unexpected(std::move(r.error()));
-  return generate.AddChildScope(std::move(scope));
+  return AddGenerateChildScope(generate, std::move(scope));
 }
 
 }  // namespace
@@ -212,7 +221,7 @@ auto BuildLoopGenerate(
 
   hir::Generate gen{};
   const hir::StructuralScopeId body_scope_id =
-      gen.AddChildScope(hir::StructuralScope{});
+      AddGenerateChildScope(gen, hir::StructuralScope{});
 
   gen.data = hir::LoopGenerate{
       .loop_var = *loop_state.loop_var_id,

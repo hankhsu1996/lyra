@@ -32,8 +32,16 @@ struct BuiltinMirTypes {
 
 class UnitLoweringState {
  public:
-  explicit UnitLoweringState(mir::CompilationUnit& unit)
-      : unit_(&unit), builtins_(MakeBuiltins(unit)) {
+  explicit UnitLoweringState(mir::CompilationUnit& unit) : unit_(&unit) {
+    builtins_ = BuiltinMirTypes{
+        .int32 = AddType(
+            mir::TypeData{mir::PackedArrayType{
+                .atom = mir::BitAtom::kBit,
+                .signedness = mir::Signedness::kSigned,
+                .dims = {mir::PackedRange{.left = 31, .right = 0}},
+                .form = mir::PackedArrayForm::kInt}}),
+        .string = AddType(mir::TypeData{mir::StringType{}}),
+        .void_type = AddType(mir::TypeData{mir::VoidType{}})};
   }
 
   [[nodiscard]] auto Unit() const -> const mir::CompilationUnit& {
@@ -41,18 +49,31 @@ class UnitLoweringState {
   }
 
   auto AddType(mir::TypeData data) -> mir::TypeId {
-    return unit_->AddType(std::move(data));
+    const mir::TypeId id{static_cast<std::uint32_t>(unit_->types.size())};
+    unit_->types.push_back(mir::Type{.data = std::move(data)});
+    return id;
   }
 
   [[nodiscard]] auto GetType(mir::TypeId id) const -> const mir::Type& {
     return unit_->GetType(id);
   }
 
-  [[nodiscard]] auto TranslateType(hir::TypeId hir_id) const -> mir::TypeId {
-    return type_map_.at(hir_id.value);
+  auto AddClass(mir::ClassDecl cls) -> mir::ClassDeclId {
+    const mir::ClassDeclId id{
+        static_cast<std::uint32_t>(unit_->classes.size())};
+    unit_->classes.push_back(std::move(cls));
+    return id;
   }
 
-  void RegisterTypeMapping(hir::TypeId hir_id, mir::TypeId mir_id) {
+  [[nodiscard]] auto TranslateType(hir::TypeId hir_id) const -> mir::TypeId {
+    if (hir_id.value >= type_map_.size()) {
+      throw InternalError(
+          "UnitLoweringState::TranslateType: unmapped HIR type");
+    }
+    return type_map_[hir_id.value];
+  }
+
+  void MapType(hir::TypeId hir_id, mir::TypeId mir_id) {
     if (hir_id.value >= type_map_.size()) {
       type_map_.resize(hir_id.value + 1);
     }
@@ -64,21 +85,9 @@ class UnitLoweringState {
   }
 
  private:
-  static auto MakeBuiltins(mir::CompilationUnit& unit) -> BuiltinMirTypes {
-    return BuiltinMirTypes{
-        .int32 = unit.AddType(
-            mir::TypeData{mir::PackedArrayType{
-                .atom = mir::BitAtom::kBit,
-                .signedness = mir::Signedness::kSigned,
-                .dims = {mir::PackedRange{.left = 31, .right = 0}},
-                .form = mir::PackedArrayForm::kInt}}),
-        .string = unit.AddType(mir::TypeData{mir::StringType{}}),
-        .void_type = unit.AddType(mir::TypeData{mir::VoidType{}})};
-  }
-
   mir::CompilationUnit* unit_;
   std::vector<mir::TypeId> type_map_;
-  BuiltinMirTypes builtins_;
+  BuiltinMirTypes builtins_{};
 };
 
 struct ChildClassBinding {
@@ -94,10 +103,12 @@ struct GenerateBindings {
   std::vector<ChildClassBinding> by_scope_id;
 };
 
+// Class-level lowering state for one mir::ClassDecl. Owns class-level
+// mutation during lowering AND owns class-scope HIR-to-MIR translation maps.
+// Class declaration and class-scope name translation form one lowering unit.
 class ClassLoweringState {
  public:
-  ClassLoweringState(
-      const ClassLoweringState* parent, const mir::ClassDecl& cls)
+  ClassLoweringState(const ClassLoweringState* parent, mir::ClassDecl& cls)
       : parent_(parent), class_decl_(&cls) {
   }
 
@@ -105,7 +116,44 @@ class ClassLoweringState {
     return parent_;
   }
 
-  void BindMemberVar(hir::MemberVarId hir_id, mir::MemberVarId mir_id) {
+  [[nodiscard]] auto Class() const -> const mir::ClassDecl& {
+    return *class_decl_;
+  }
+
+  auto AddMemberVar(mir::MemberVar member) -> mir::MemberVarId {
+    const mir::MemberVarId id{
+        static_cast<std::uint32_t>(class_decl_->member_vars.size())};
+    class_decl_->member_vars.push_back(std::move(member));
+    return id;
+  }
+
+  auto AddClass(mir::ClassDecl child) -> mir::ClassDeclId {
+    const mir::ClassDeclId id{
+        static_cast<std::uint32_t>(class_decl_->classes.size())};
+    class_decl_->classes.push_back(std::move(child));
+    return id;
+  }
+
+  auto AddProcess(mir::Process process) -> mir::ProcessId {
+    const mir::ProcessId id{
+        static_cast<std::uint32_t>(class_decl_->processes.size())};
+    class_decl_->processes.push_back(std::move(process));
+    return id;
+  }
+
+  auto AddUserSubroutineTarget(mir::UserSubroutineTarget target)
+      -> mir::UserSubroutineTargetId {
+    const mir::UserSubroutineTargetId id{static_cast<std::uint32_t>(
+        class_decl_->user_subroutine_targets.size())};
+    class_decl_->user_subroutine_targets.push_back(std::move(target));
+    return id;
+  }
+
+  void SetConstructor(mir::Body body) {
+    class_decl_->constructor = std::move(body);
+  }
+
+  void MapMemberVar(hir::MemberVarId hir_id, mir::MemberVarId mir_id) {
     if (hir_id.value >= member_var_map_.size()) {
       member_var_map_.resize(hir_id.value + 1);
     }
@@ -116,17 +164,21 @@ class ClassLoweringState {
   // class's member-var map. The class chain mirrors the lexical scope chain
   // exactly, so `parent_scope_hops` from a HIR ref maps directly to chain
   // depth.
-  [[nodiscard]] auto LookupMemberVar(
+  [[nodiscard]] auto TranslateMemberVar(
       hir::ParentScopeHops hops, hir::MemberVarId hir_id) const
       -> mir::MemberVarId {
     if (hops.value == 0) {
-      return member_var_map_.at(hir_id.value);
+      if (hir_id.value >= member_var_map_.size()) {
+        throw InternalError(
+            "ClassLoweringState::TranslateMemberVar: unmapped HIR member var");
+      }
+      return member_var_map_[hir_id.value];
     }
     if (parent_ == nullptr) {
       throw InternalError(
-          "ClassLoweringState::LookupMemberVar: hops out of class chain");
+          "ClassLoweringState::TranslateMemberVar: hops out of class chain");
     }
-    return parent_->LookupMemberVar(
+    return parent_->TranslateMemberVar(
         hir::ParentScopeHops{hops.value - 1}, hir_id);
   }
 
@@ -145,7 +197,7 @@ class ClassLoweringState {
     return parent_->GetMemberVar(hir::ParentScopeHops{hops.value - 1}, mir_id);
   }
 
-  void BindUserSubroutine(
+  void MapUserSubroutine(
       hir::SubroutineId hir_id, mir::UserSubroutineTargetId mir_id) {
     if (hir_id.value >= user_subroutine_map_.size()) {
       user_subroutine_map_.resize(hir_id.value + 1);
@@ -153,23 +205,29 @@ class ClassLoweringState {
     user_subroutine_map_[hir_id.value] = mir_id;
   }
 
-  [[nodiscard]] auto LookupUserSubroutine(
+  [[nodiscard]] auto TranslateUserSubroutine(
       hir::ParentScopeHops hops, hir::SubroutineId hir_id) const
       -> mir::UserSubroutineTargetId {
     if (hops.value == 0) {
-      return user_subroutine_map_.at(hir_id.value);
+      if (hir_id.value >= user_subroutine_map_.size()) {
+        throw InternalError(
+            "ClassLoweringState::TranslateUserSubroutine: unmapped HIR "
+            "subroutine");
+      }
+      return user_subroutine_map_[hir_id.value];
     }
     if (parent_ == nullptr) {
       throw InternalError(
-          "ClassLoweringState::LookupUserSubroutine: hops out of class chain");
+          "ClassLoweringState::TranslateUserSubroutine: hops out of class "
+          "chain");
     }
-    return parent_->LookupUserSubroutine(
+    return parent_->TranslateUserSubroutine(
         hir::ParentScopeHops{hops.value - 1}, hir_id);
   }
 
  private:
   const ClassLoweringState* parent_;
-  const mir::ClassDecl* class_decl_;
+  mir::ClassDecl* class_decl_;
   std::vector<mir::MemberVarId> member_var_map_;
   std::vector<mir::UserSubroutineTargetId> user_subroutine_map_;
 };

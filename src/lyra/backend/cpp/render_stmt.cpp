@@ -130,7 +130,7 @@ auto RenderStmt(
             const auto& member = ctx.Class().GetMemberVar(s.target);
             const auto& target_class = ctx.Class().GetClass(s.class_id);
             const std::string make =
-                "std::make_unique<" + target_class.Name() + ">()";
+                "std::make_unique<" + target_class.name + ">()";
             if (mir::IsVectorOfOwningObjectType(ctx.Unit(), member.type)) {
               return Indent(indent) + member.name + ".push_back(" + make +
                      ");\n";

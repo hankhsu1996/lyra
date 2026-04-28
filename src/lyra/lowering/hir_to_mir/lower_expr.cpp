@@ -39,7 +39,7 @@ auto LowerMemberVarRefExpr(
     const ClassLoweringState& class_state, const hir::MemberVarRef& m)
     -> mir::Expr {
   const mir::MemberVarId mir_id =
-      class_state.LookupMemberVar(m.parent_scope_hops, m.target);
+      class_state.TranslateMemberVar(m.parent_scope_hops, m.target);
   const auto& member = class_state.GetMemberVar(m.parent_scope_hops, mir_id);
   return mir::Expr{
       .data = mir::MemberVarRef{.target = mir_id}, .type = member.type};
@@ -68,8 +68,8 @@ auto LowerRefAsLvalue(
       Overloaded{
           [&](const hir::MemberVarRef& m) -> mir::Lvalue {
             return mir::MemberVarRef{
-                .target =
-                    class_state.LookupMemberVar(m.parent_scope_hops, m.target)};
+                .target = class_state.TranslateMemberVar(
+                    m.parent_scope_hops, m.target)};
           },
           [&](const hir::LocalVarRef& l) -> mir::Lvalue {
             return proc_state.TranslateLocalVar(l.target);
@@ -91,8 +91,8 @@ auto LowerRefAsLvalue(
       Overloaded{
           [&](const hir::MemberVarRef& m) -> mir::Lvalue {
             return mir::MemberVarRef{
-                .target =
-                    class_state.LookupMemberVar(m.parent_scope_hops, m.target)};
+                .target = class_state.TranslateMemberVar(
+                    m.parent_scope_hops, m.target)};
           },
           [](const hir::LocalVarRef&) -> mir::Lvalue {
             throw InternalError(
@@ -109,7 +109,7 @@ auto LowerRefAsLvalue(
 auto LowerUserCallee(
     const ClassLoweringState& class_state, const hir::UserSubroutineRef& u)
     -> mir::Callee {
-  return class_state.LookupUserSubroutine(u.parent_scope_hops, u.id);
+  return class_state.TranslateUserSubroutine(u.parent_scope_hops, u.id);
 }
 
 auto LowerPrimaryExpr(

@@ -279,19 +279,19 @@ class HirDumper {
   }
 
   void DumpUnit(const ModuleUnit& u) {
-    Line(std::format("ModuleUnit \"{}\"", u.Name()));
+    Line(std::format("ModuleUnit \"{}\"", u.name));
     Indent();
 
     Line("Types:");
     Indent();
-    for (std::size_t i = 0; i < u.Types().size(); ++i) {
-      Line(std::format("[{}] {}", i, FormatType(u.Types()[i])));
+    for (std::size_t i = 0; i < u.types.size(); ++i) {
+      Line(std::format("[{}] {}", i, FormatType(u.types[i])));
     }
     Dedent();
 
     Line("Root:");
     Indent();
-    DumpScope(u.RootScope());
+    DumpScope(u.root_scope);
     Dedent();
 
     Dedent();
@@ -301,38 +301,38 @@ class HirDumper {
     scope_stack_.push_back(&s);
     Line("Scope:");
     Indent();
-    for (std::size_t i = 0; i < s.MemberVars().size(); ++i) {
-      const auto& v = s.MemberVars()[i];
+    for (std::size_t i = 0; i < s.member_vars.size(); ++i) {
+      const auto& v = s.member_vars[i];
       Line(
           std::format(
               "MemberVar[{}] \"{}\" : Type[{}]", i, v.name, v.type.value));
     }
-    for (std::size_t i = 0; i < s.LoopVarDecls().size(); ++i) {
-      const auto& lv = s.LoopVarDecls()[i];
+    for (std::size_t i = 0; i < s.loop_var_decls.size(); ++i) {
+      const auto& lv = s.loop_var_decls[i];
       Line(
           std::format(
               "LoopVarDecl[{}] \"{}\" : Type[{}]", i, lv.name, lv.type.value));
     }
-    for (std::size_t i = 0; i < s.Subroutines().size(); ++i) {
-      const auto& d = s.Subroutines()[i];
+    for (std::size_t i = 0; i < s.subroutines.size(); ++i) {
+      const auto& d = s.subroutines[i];
       Line(
           std::format(
               "Subroutine[{}] {} \"{}\" : Type[{}]", i,
               d.kind == SubroutineKind::kTask ? "task" : "function", d.name,
               d.result_type.value));
     }
-    if (!s.Exprs().empty()) {
+    if (!s.exprs.empty()) {
       Line("Exprs:");
       Indent();
-      for (std::size_t i = 0; i < s.Exprs().size(); ++i) {
-        Line(std::format("Expr[{}] {}", i, FormatExprData(s.Exprs()[i].data)));
+      for (std::size_t i = 0; i < s.exprs.size(); ++i) {
+        Line(std::format("Expr[{}] {}", i, FormatExprData(s.exprs[i].data)));
       }
       Dedent();
     }
-    for (const auto& p : s.Processes()) {
+    for (const auto& p : s.processes) {
       DumpProcess(p);
     }
-    for (const auto& g : s.Generates()) {
+    for (const auto& g : s.generates) {
       DumpGenerate(s, g);
     }
     Dedent();

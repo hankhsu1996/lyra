@@ -42,15 +42,15 @@ auto CompanionMemberNameFor(std::string_view child_class_name) -> std::string {
 void CheckNoNameCollision(
     const mir::ClassDecl& owner_class, std::string_view child_class_name,
     std::string_view companion_member_name) {
-  for (const auto& m : owner_class.MemberVars()) {
+  for (const auto& m : owner_class.member_vars) {
     if (m.name == companion_member_name || m.name == child_class_name) {
       throw InternalError(
           "child class or companion member name collides with an existing "
           "member declaration in the enclosing class");
     }
   }
-  for (const auto& c : owner_class.Classes()) {
-    if (c.Name() == child_class_name) {
+  for (const auto& c : owner_class.classes) {
+    if (c.name == child_class_name) {
       throw InternalError(
           "child class name collides with an existing nested class "
           "declaration in the enclosing class");
@@ -137,12 +137,12 @@ auto MakeVectorOfOwnedObjectType(
 void ValidateConstructOwnedObjectStmt(
     const mir::CompilationUnit& unit, const mir::ClassDecl& owner_class,
     const mir::ConstructOwnedObjectStmt& stmt) {
-  if (stmt.class_id.value >= owner_class.Classes().size()) {
+  if (stmt.class_id.value >= owner_class.classes.size()) {
     throw InternalError(
         "ConstructOwnedObjectStmt: class_id is not a direct child of the "
         "enclosing class");
   }
-  if (stmt.target.value >= owner_class.MemberVars().size()) {
+  if (stmt.target.value >= owner_class.member_vars.size()) {
     throw InternalError(
         "ConstructOwnedObjectStmt: target is out of range in the enclosing "
         "class");
@@ -173,23 +173,20 @@ auto BuildGenerateArmBody(
   return body_state.Finish();
 }
 
-auto AppendGenerateArmBody(
-    const mir::CompilationUnit& unit, const GenerateBindings& gen_bindings,
-    const mir::ClassDecl& owner_class, hir::StructuralScopeId arm_scope_id,
-    std::vector<mir::Body>& child_bodies) -> mir::BodyId {
-  const mir::BodyId id{static_cast<std::uint32_t>(child_bodies.size())};
-  child_bodies.push_back(
-      BuildGenerateArmBody(unit, gen_bindings, owner_class, arm_scope_id));
+auto AddChildBody(std::vector<mir::Body>& bodies, mir::Body body)
+    -> mir::BodyId {
+  const mir::BodyId id{static_cast<std::uint32_t>(bodies.size())};
+  bodies.push_back(std::move(body));
   return id;
 }
 
 auto LowerGenerateAsStmt(
     UnitLoweringState& unit_state, const ClassLoweringState& class_state,
-    const hir::StructuralScope& enclosing_scope,
-    const mir::ClassDecl& owner_class, const hir::Generate& gen,
+    const hir::StructuralScope& enclosing_scope, const hir::Generate& gen,
     const GenerateBindings& gen_bindings, BodyLoweringState& body_state)
     -> diag::Result<mir::Stmt> {
   const mir::CompilationUnit& unit = unit_state.Unit();
+  const mir::ClassDecl& owner_class = class_state.Class();
   return std::visit(
       Overloaded{
           [&](const hir::IfGenerate& if_gen) -> diag::Result<mir::Stmt> {
@@ -201,15 +198,17 @@ auto LowerGenerateAsStmt(
             const mir::ExprId cond_id = body_state.AddExpr(*std::move(cond_or));
 
             std::vector<mir::Body> child_bodies;
-            const mir::BodyId then_id = AppendGenerateArmBody(
-                unit, gen_bindings, owner_class, if_gen.then_scope,
-                child_bodies);
+            const mir::BodyId then_id = AddChildBody(
+                child_bodies,
+                BuildGenerateArmBody(
+                    unit, gen_bindings, owner_class, if_gen.then_scope));
 
             std::optional<mir::BodyId> else_id;
             if (if_gen.else_scope.has_value()) {
-              else_id = AppendGenerateArmBody(
-                  unit, gen_bindings, owner_class, *if_gen.else_scope,
-                  child_bodies);
+              else_id = AddChildBody(
+                  child_bodies,
+                  BuildGenerateArmBody(
+                      unit, gen_bindings, owner_class, *if_gen.else_scope));
             }
 
             return mir::Stmt{
@@ -245,8 +244,10 @@ auto LowerGenerateAsStmt(
                 }
                 labels.push_back(body_state.AddExpr(*std::move(label_or)));
               }
-              const mir::BodyId item_body = AppendGenerateArmBody(
-                  unit, gen_bindings, owner_class, item.scope, child_bodies);
+              const mir::BodyId item_body = AddChildBody(
+                  child_bodies,
+                  BuildGenerateArmBody(
+                      unit, gen_bindings, owner_class, item.scope));
               cases.push_back(
                   mir::SwitchCase{
                       .labels = std::move(labels), .body = item_body});
@@ -254,9 +255,10 @@ auto LowerGenerateAsStmt(
 
             std::optional<mir::BodyId> default_body;
             if (case_gen.default_scope.has_value()) {
-              default_body = AppendGenerateArmBody(
-                  unit, gen_bindings, owner_class, *case_gen.default_scope,
-                  child_bodies);
+              default_body = AddChildBody(
+                  child_bodies, BuildGenerateArmBody(
+                                    unit, gen_bindings, owner_class,
+                                    *case_gen.default_scope));
             }
 
             return mir::Stmt{
@@ -304,8 +306,10 @@ auto LowerGenerateAsStmt(
             const mir::ExprId step_id = body_state.AddExpr(*std::move(step_or));
 
             std::vector<mir::Body> child_bodies;
-            const mir::BodyId body_id = AppendGenerateArmBody(
-                unit, gen_bindings, owner_class, loop.body_scope, child_bodies);
+            const mir::BodyId body_id = AddChildBody(
+                child_bodies,
+                BuildGenerateArmBody(
+                    unit, gen_bindings, owner_class, loop.body_scope));
 
             return mir::Stmt{
                 .label = std::nullopt,
@@ -325,15 +329,15 @@ auto LowerGenerateAsStmt(
 
 auto LowerGenerateConstruction(
     UnitLoweringState& unit_state, const ClassLoweringState& class_state,
-    const hir::StructuralScope& scope, const mir::ClassDecl& cls,
+    const hir::StructuralScope& scope,
     const std::vector<GenerateBindings>& bindings_by_generate)
     -> diag::Result<mir::Body> {
   BodyLoweringState body_state;
-  for (std::size_t i = 0; i < scope.Generates().size(); ++i) {
-    const auto& gen = scope.Generates()[i];
+  for (std::size_t i = 0; i < scope.generates.size(); ++i) {
+    const auto& gen = scope.generates[i];
     const auto& gen_bindings = bindings_by_generate.at(i);
     auto stmt = LowerGenerateAsStmt(
-        unit_state, class_state, scope, cls, gen, gen_bindings, body_state);
+        unit_state, class_state, scope, gen, gen_bindings, body_state);
     if (!stmt) return std::unexpected(std::move(stmt.error()));
     const mir::StmtId sid = body_state.AddStmt(*std::move(stmt));
     body_state.AddRootStmt(sid);
@@ -342,32 +346,34 @@ auto LowerGenerateConstruction(
 }
 
 auto InstallGenerateOwnedChildClasses(
-    UnitLoweringState& unit_state, const ClassLoweringState& class_state,
-    ScopeStack& stack, const hir::StructuralScope& scope, mir::ClassDecl& cls)
+    UnitLoweringState& unit_state, ClassLoweringState& class_state,
+    ScopeStack& stack, const hir::StructuralScope& scope)
     -> diag::Result<std::vector<GenerateBindings>> {
   std::vector<GenerateBindings> bindings_by_generate;
-  bindings_by_generate.reserve(scope.Generates().size());
+  bindings_by_generate.reserve(scope.generates.size());
 
-  for (std::size_t gen_idx = 0; gen_idx < scope.Generates().size(); ++gen_idx) {
-    const auto& gen = scope.Generates()[gen_idx];
+  for (std::size_t gen_idx = 0; gen_idx < scope.generates.size(); ++gen_idx) {
+    const auto& gen = scope.generates[gen_idx];
     GenerateBindings gen_bindings;
     gen_bindings.by_scope_id.resize(gen.child_scopes.size());
 
     auto specs = EnumerateGenerateChildSpecs(gen, gen_idx);
     for (auto& spec : specs) {
       const auto companion_name = CompanionMemberNameFor(spec.class_name);
-      CheckNoNameCollision(cls, spec.class_name, companion_name);
+      CheckNoNameCollision(
+          class_state.Class(), spec.class_name, companion_name);
 
       auto child_r = LowerScopeAsClass(
           unit_state, &class_state, stack, *spec.scope,
           std::move(spec.class_name));
       if (!child_r) return std::unexpected(std::move(child_r.error()));
 
-      const mir::ClassDeclId child_id = cls.AddClass(*std::move(child_r));
+      const mir::ClassDeclId child_id =
+          class_state.AddClass(*std::move(child_r));
       const mir::TypeId member_type =
           spec.is_repeated ? MakeVectorOfOwnedObjectType(unit_state, child_id)
                            : MakeOwnedObjectType(unit_state, child_id);
-      const mir::MemberVarId member_id = cls.AddMemberVar(
+      const mir::MemberVarId member_id = class_state.AddMemberVar(
           mir::MemberVar{.name = companion_name, .type = member_type});
 
       gen_bindings.by_scope_id.at(spec.scope_id.value) =
@@ -389,37 +395,38 @@ auto LowerScopeAsClass(
   ClassLoweringState class_state(parent_class_state, cls);
   const ScopeStackGuard guard(stack, scope);
 
-  for (std::size_t i = 0; i < scope.MemberVars().size(); ++i) {
+  for (std::size_t i = 0; i < scope.member_vars.size(); ++i) {
     const hir::MemberVarId hir_id{static_cast<std::uint32_t>(i)};
-    const auto& d = scope.MemberVars()[i];
-    const mir::MemberVarId mir_id = cls.AddMemberVar(
+    const auto& d = scope.member_vars[i];
+    const mir::MemberVarId mir_id = class_state.AddMemberVar(
         mir::MemberVar{
             .name = d.name, .type = unit_state.TranslateType(d.type)});
-    class_state.BindMemberVar(hir_id, mir_id);
+    class_state.MapMemberVar(hir_id, mir_id);
   }
 
-  for (std::size_t i = 0; i < scope.Subroutines().size(); ++i) {
+  for (std::size_t i = 0; i < scope.subroutines.size(); ++i) {
     const hir::SubroutineId hir_id{static_cast<std::uint32_t>(i)};
-    const auto& decl = scope.Subroutines()[i];
-    const mir::UserSubroutineTargetId mir_id = cls.AddUserSubroutineTarget(
-        mir::UserSubroutineTarget{.name = decl.name});
-    class_state.BindUserSubroutine(hir_id, mir_id);
+    const auto& decl = scope.subroutines[i];
+    const mir::UserSubroutineTargetId mir_id =
+        class_state.AddUserSubroutineTarget(
+            mir::UserSubroutineTarget{.name = decl.name});
+    class_state.MapUserSubroutine(hir_id, mir_id);
   }
 
-  for (const auto& p : scope.Processes()) {
+  for (const auto& p : scope.processes) {
     auto proc_or = LowerProcess(unit_state, class_state, p);
     if (!proc_or) return std::unexpected(std::move(proc_or.error()));
-    cls.AddProcess(*std::move(proc_or));
+    class_state.AddProcess(*std::move(proc_or));
   }
 
-  auto bindings_r = InstallGenerateOwnedChildClasses(
-      unit_state, class_state, stack, scope, cls);
+  auto bindings_r =
+      InstallGenerateOwnedChildClasses(unit_state, class_state, stack, scope);
   if (!bindings_r) return std::unexpected(std::move(bindings_r.error()));
 
-  auto ctor_r = LowerGenerateConstruction(
-      unit_state, class_state, scope, cls, *bindings_r);
+  auto ctor_r =
+      LowerGenerateConstruction(unit_state, class_state, scope, *bindings_r);
   if (!ctor_r) return std::unexpected(std::move(ctor_r.error()));
-  cls.Constructor() = *std::move(ctor_r);
+  class_state.SetConstructor(*std::move(ctor_r));
 
   return cls;
 }

@@ -33,13 +33,13 @@ class MirDumper {
     Indent();
     Line("Types:");
     Indent();
-    for (std::size_t i = 0; i < unit.Types().size(); ++i) {
-      Line(std::format("[{}] {}", i, FormatType(unit.Types()[i])));
+    for (std::size_t i = 0; i < unit.types.size(); ++i) {
+      Line(std::format("[{}] {}", i, FormatType(unit.types[i])));
     }
     Dedent();
     Line("Classes:");
     Indent();
-    for (const auto& c : unit.Classes()) {
+    for (const auto& c : unit.classes) {
       DumpClass(c);
     }
     Dedent();
@@ -298,23 +298,23 @@ class MirDumper {
   void DumpClass(const ClassDecl& c) {
     const ClassDecl* saved = current_class_;
     current_class_ = &c;
-    Line(std::format("Class \"{}\"", c.Name()));
+    Line(std::format("Class \"{}\"", c.name));
     Indent();
 
     Line("Classes:");
     Indent();
-    for (std::size_t i = 0; i < c.Classes().size(); ++i) {
+    for (std::size_t i = 0; i < c.classes.size(); ++i) {
       Line(std::format("[{}]", i));
       Indent();
-      DumpClass(c.Classes()[i]);
+      DumpClass(c.classes[i]);
       Dedent();
     }
     Dedent();
 
     Line("MemberVars:");
     Indent();
-    for (std::size_t i = 0; i < c.MemberVars().size(); ++i) {
-      const auto& m = c.MemberVars()[i];
+    for (std::size_t i = 0; i < c.member_vars.size(); ++i) {
+      const auto& m = c.member_vars[i];
       Line(
           std::format("[{}] \"{}\" : {}", i, m.name, FormatMemberType(m.type)));
     }
@@ -322,21 +322,21 @@ class MirDumper {
 
     Line("UserSubroutineTargets:");
     Indent();
-    for (std::size_t i = 0; i < c.UserSubroutineTargets().size(); ++i) {
-      const auto& t = c.UserSubroutineTargets()[i];
+    for (std::size_t i = 0; i < c.user_subroutine_targets.size(); ++i) {
+      const auto& t = c.user_subroutine_targets[i];
       Line(std::format("[{}] \"{}\"", i, t.name));
     }
     Dedent();
 
     Line("Constructor:");
     Indent();
-    DumpBody(c.Constructor());
+    DumpBody(c.constructor);
     Dedent();
 
     Line("Processes:");
     Indent();
-    for (std::size_t i = 0; i < c.Processes().size(); ++i) {
-      DumpProcess(c.Processes()[i], i);
+    for (std::size_t i = 0; i < c.processes.size(); ++i) {
+      DumpProcess(c.processes[i], i);
     }
     Dedent();
 

@@ -11,46 +11,27 @@
 
 namespace lyra::mir {
 
-class ClassDecl {
- public:
-  explicit ClassDecl(std::string name);
-  ~ClassDecl();
-  ClassDecl(ClassDecl&&) noexcept;
-  auto operator=(ClassDecl&&) noexcept -> ClassDecl&;
-  ClassDecl(const ClassDecl&) = delete;
-  auto operator=(const ClassDecl&) -> ClassDecl& = delete;
+struct ClassDecl {
+  std::string name;
+  std::vector<MemberVar> member_vars;
+  Body constructor;
+  std::vector<Process> processes;
+  std::vector<ClassDecl> classes;
+  std::vector<UserSubroutineTarget> user_subroutine_targets;
 
-  [[nodiscard]] auto Name() const -> const std::string&;
-
-  [[nodiscard]] auto MemberVars() const -> const std::vector<MemberVar>&;
-  [[nodiscard]] auto GetMemberVar(MemberVarId id) const -> const MemberVar&;
-  auto AddMemberVar(MemberVar member) -> MemberVarId;
-
-  [[nodiscard]] auto Constructor() const -> const Body&;
-  auto Constructor() -> Body&;
-
-  [[nodiscard]] auto Processes() const -> const std::vector<Process>&;
-  [[nodiscard]] auto GetProcess(ProcessId id) const -> const Process&;
-  auto AddProcess(Process process) -> ProcessId;
-
-  [[nodiscard]] auto Classes() const -> const std::vector<ClassDecl>&;
-  [[nodiscard]] auto GetClass(ClassDeclId id) const -> const ClassDecl&;
-  auto AddClass(ClassDecl child) -> ClassDeclId;
-
-  [[nodiscard]] auto UserSubroutineTargets() const
-      -> const std::vector<UserSubroutineTarget>&;
+  [[nodiscard]] auto GetMemberVar(MemberVarId id) const -> const MemberVar& {
+    return member_vars.at(id.value);
+  }
+  [[nodiscard]] auto GetProcess(ProcessId id) const -> const Process& {
+    return processes.at(id.value);
+  }
+  [[nodiscard]] auto GetClass(ClassDeclId id) const -> const ClassDecl& {
+    return classes.at(id.value);
+  }
   [[nodiscard]] auto GetUserSubroutineTarget(UserSubroutineTargetId id) const
-      -> const UserSubroutineTarget&;
-  auto AddUserSubroutineTarget(UserSubroutineTarget target)
-      -> UserSubroutineTargetId;
-
- private:
-  std::string name_;
-  std::vector<MemberVar> member_vars_;
-  Body constructor_;
-  std::vector<Process> processes_;
-  std::vector<ClassDecl> classes_;
-  std::vector<UserSubroutineTarget> user_subroutine_targets_;
+      -> const UserSubroutineTarget& {
+    return user_subroutine_targets.at(id.value);
+  }
 };
 
 }  // namespace lyra::mir

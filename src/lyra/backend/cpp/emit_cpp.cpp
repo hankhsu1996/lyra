@@ -27,12 +27,12 @@ auto RenderField(
 auto RenderConstructor(
     const mir::CompilationUnit& unit, const mir::ClassDecl& c,
     std::size_t indent) -> std::string {
-  const auto& body = c.Constructor();
+  const auto& body = c.constructor;
   if (body.root_stmts.empty()) {
-    return Indent(indent) + c.Name() + "() {}\n";
+    return Indent(indent) + c.name + "() {}\n";
   }
   std::string out;
-  out += Indent(indent) + c.Name() + "() {\n";
+  out += Indent(indent) + c.name + "() {\n";
   out += RenderBody(unit, c, body, indent + 1);
   out += Indent(indent) + "}\n";
   return out;
@@ -70,8 +70,8 @@ auto RenderBind(
   out += Indent(indent) + "void Bind(lyra::runtime::RuntimeBindContext& ctx)" +
          (is_top_level ? " override {\n" : " {\n");
   out += Indent(indent + 1) + "engine_ = &ctx.GetEngine();\n";
-  for (std::size_t i = 0; i < c.Processes().size(); ++i) {
-    const auto& p = c.Processes()[i];
+  for (std::size_t i = 0; i < c.processes.size(); ++i) {
+    const auto& p = c.processes[i];
     out += Indent(indent + 1) + "ctx.AddProcess(\n";
     out += Indent(indent + 2) + RenderProcessKindLiteral(p.kind) + ",\n";
     out += Indent(indent + 2) + RenderProcessMethodName(i) + "());\n";
@@ -82,7 +82,7 @@ auto RenderBind(
   // generate-arm child class installation. When other producers of `ObjectType`
   // appear (e.g. owned process/module objects), bind eligibility must come
   // from explicit class metadata, not from storage type structure alone.
-  for (const auto& m : c.MemberVars()) {
+  for (const auto& m : c.member_vars) {
     const auto target = mir::GetOwnedObjectTarget(unit, m.type);
     if (!target.has_value()) {
       continue;
@@ -93,7 +93,7 @@ auto RenderBind(
       out += Indent(indent + 1) + "for (std::size_t idx = 0; idx < " + m.name +
              ".size(); ++idx) {\n";
       out += Indent(indent + 2) + "auto child = ctx.CreateChildScope(\n";
-      out += Indent(indent + 3) + "\"" + child_class.Name() +
+      out += Indent(indent + 3) + "\"" + child_class.name +
              "[\" + std::to_string(idx) + \"]\",\n";
       out +=
           Indent(indent + 3) + "lyra::runtime::RuntimeScopeKind::kGenerate);\n";
@@ -102,7 +102,7 @@ auto RenderBind(
     } else {
       out += Indent(indent + 1) + "if (" + m.name + ") {\n";
       out += Indent(indent + 2) + "auto child = ctx.CreateChildScope(\n";
-      out += Indent(indent + 3) + "\"" + child_class.Name() + "\",\n";
+      out += Indent(indent + 3) + "\"" + child_class.name + "\",\n";
       out +=
           Indent(indent + 3) + "lyra::runtime::RuntimeScopeKind::kGenerate);\n";
       out += Indent(indent + 2) + m.name + "->Bind(child);\n";
@@ -117,24 +117,24 @@ auto RenderClassDecl(
     const mir::CompilationUnit& unit, const mir::ClassDecl& c,
     std::size_t indent, bool is_top_level) -> std::string {
   std::string out;
-  out += Indent(indent) + "class " + c.Name();
+  out += Indent(indent) + "class " + c.name;
   if (is_top_level) {
     out += " final : public lyra::runtime::Module";
   }
   out += " {\n";
   out += Indent(indent) + " public:\n";
 
-  for (const auto& child : c.Classes()) {
+  for (const auto& child : c.classes) {
     out += RenderClassDecl(unit, child, indent + 1, false);
   }
-  if (!c.Classes().empty()) {
+  if (!c.classes.empty()) {
     out += "\n";
   }
 
-  for (const auto& m : c.MemberVars()) {
+  for (const auto& m : c.member_vars) {
     out += RenderField(unit, c, m, indent + 1);
   }
-  if (!c.MemberVars().empty()) {
+  if (!c.member_vars.empty()) {
     out += "\n";
   }
 
@@ -145,9 +145,9 @@ auto RenderClassDecl(
   out += "\n";
   out += RenderBind(unit, c, indent + 1, is_top_level);
 
-  for (std::size_t i = 0; i < c.Processes().size(); ++i) {
+  for (std::size_t i = 0; i < c.processes.size(); ++i) {
     out += "\n";
-    out += RenderProcessMethod(unit, c, c.Processes()[i], i, indent + 1);
+    out += RenderProcessMethod(unit, c, c.processes[i], i, indent + 1);
   }
 
   out += Indent(indent) + "};\n";
@@ -179,10 +179,10 @@ auto RenderClassHeaderFile(
 
 auto RenderHostMain(const mir::ClassDecl& entry) -> std::string {
   std::string out;
-  out += "#include \"" + entry.Name() + ".hpp\"\n";
+  out += "#include \"" + entry.name + ".hpp\"\n";
   out += "\n";
   out += "auto main() -> int {\n";
-  out += "  " + entry.Name() + " top;\n";
+  out += "  " + entry.name + " top;\n";
   out += "  lyra::runtime::Engine engine;\n";
   out += "  engine.BindRoot(\"top\", top);\n";
   out += "  return engine.Run();\n";
@@ -195,10 +195,10 @@ auto RenderHostMain(const mir::ClassDecl& entry) -> std::string {
 auto EmitCppDeclarations(const mir::CompilationUnit& unit)
     -> std::vector<CppArtifact> {
   std::vector<CppArtifact> headers;
-  headers.reserve(unit.Classes().size());
-  for (const auto& cls : unit.Classes()) {
+  headers.reserve(unit.classes.size());
+  for (const auto& cls : unit.classes) {
     headers.push_back(
-        {.relpath = cls.Name() + ".hpp",
+        {.relpath = cls.name + ".hpp",
          .content = RenderClassHeaderFile(unit, cls)});
   }
   return headers;

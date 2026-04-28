@@ -27,7 +27,7 @@ auto RenderTypeAsCpp(
           },
           [](const mir::StringType&) -> std::string { return "std::string"; },
           [&](const mir::ObjectType& o) -> std::string {
-            return {owner_class.GetClass(o.target).Name()};
+            return {owner_class.GetClass(o.target).name};
           },
           [&](const mir::OwningPtrType& o) -> std::string {
             return "std::unique_ptr<" +
