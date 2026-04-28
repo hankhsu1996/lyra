@@ -69,14 +69,11 @@ clang-tidy -p . <files>
 
 ## Tests
 
-YAML-based tests live in `tests/sv_features/`. Suite definitions are in `tests/suites.yaml`. For
-ad-hoc runs, use `--test_file` and `--backend`.
+YAML-based tests live in `tests/sv_features/`. Suite definitions are in `tests/suites.yaml`. CI runs
+`bazel test //...`; do the same locally before submitting.
 
 ```bash
-bazel test //tests:jit_dev_tests \
-  --test_arg=--test_file=operators/binary.yaml \
-  --test_arg=--backend=jit \
-  --test_output=errors
+bazel test //... --test_output=errors
 ```
 
 ## Documentation

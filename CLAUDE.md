@@ -108,31 +108,8 @@ Headers in `include/lyra/`, implementations in `src/lyra/`.
 YAML-based tests in `tests/sv_features/`. See `tests/suites.yaml` for suite definitions.
 
 ```bash
-bazel test //tests:jit_dev_tests --test_output=errors    # In-process ORC JIT tests
+bazel test //... --test_output=errors    # Same target set CI runs
 ```
-
-### Ad-Hoc Testing
-
-Run a specific test file without modifying suite definitions:
-
-```bash
-bazel test //tests:jit_dev_tests \
-  --test_arg=--test_file=operators/binary/two_state.yaml \
-  --test_arg=--backend=jit \
-  --test_output=errors
-```
-
-Path is relative to `tests/sv_features/`. `--backend` is required with `--test_file`.
-
-Run a single named test case (fastest reproducer path for failures):
-
-```bash
-bazel test //tests:jit_dev_tests \
-  --test_arg=--case=operators_binary_default_add \
-  --test_output=errors
-```
-
-Case name is the full qualified name from test output (e.g., `category_file_casename`).
 
 ## Benchmarks
 
