@@ -22,7 +22,7 @@ auto LowerProcess(
   auto body = LowerStatement(
       unit_facts, proc_state, scope_state, stack, proc.getBody());
   if (!body) return std::unexpected(std::move(body.error()));
-  const hir::StmtId body_id = proc_state.AppendStmt(*std::move(body));
+  const hir::StmtId body_id = proc_state.AddStmt(*std::move(body));
 
   return proc_state.Finalize(hir::ProcessKind::kInitial, body_id);
 }

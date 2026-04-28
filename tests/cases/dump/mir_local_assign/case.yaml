@@ -11,9 +11,9 @@ expect:
     contains:
       - "Process[0] Initial"
       - "LocalVar[0] \"x\""
-      - "LocalVarDeclStmt local=LocalVar[0]"
+      - "LocalVarDeclStmt target=LocalVar[scope=0, local=0]"
       - "ExprStmt"
-      - "AssignExpr target=LocalVar[0]"
+      - "AssignExpr target=LocalVar[scope=0, local=0]"
       - "BinaryExpr op=Add"
       - "IntegerLiteral(1)"
       - "IntegerLiteral(2)"

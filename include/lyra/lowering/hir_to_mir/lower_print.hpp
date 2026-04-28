@@ -14,8 +14,9 @@ namespace lyra::lowering::hir_to_mir {
 // `mir::Expr` carrying a `mir::RuntimeCallExpr`. Returns a user diagnostic for
 // unsupported shapes (file output, %m, malformed format string, etc.).
 auto LowerPrintSystemSubroutineCall(
-    const UnitLoweringState& unit_state, const hir::Process& hir_proc,
-    const BodyLoweringState& body_state, const hir::CallExpr& call,
+    const UnitLoweringState& unit_state, const ClassLoweringState& class_state,
+    const ProcessLoweringState& proc_state, BodyLoweringState& body_state,
+    const hir::Process& hir_proc, const hir::CallExpr& call,
     const support::SystemSubroutineDesc& desc,
     const support::PrintSystemSubroutineInfo& print, diag::SourceSpan span)
     -> diag::Result<mir::Expr>;

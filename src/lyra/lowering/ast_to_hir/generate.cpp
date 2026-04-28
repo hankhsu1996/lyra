@@ -1,6 +1,5 @@
 #include "generate.hpp"
 
-#include <cstdint>
 #include <expected>
 #include <optional>
 #include <span>
@@ -24,6 +23,15 @@ namespace lyra::lowering::ast_to_hir {
 
 namespace {
 
+auto AddGenerateChildScope(hir::Generate& gen, hir::StructuralScope scope)
+    -> hir::StructuralScopeId {
+  const hir::StructuralScopeId id{
+      static_cast<std::uint32_t>(gen.child_scopes.size())};
+  scope.id = id;
+  gen.child_scopes.push_back(std::move(scope));
+  return id;
+}
+
 auto AddChildScope(
     const UnitLoweringFacts& unit_facts, UnitLoweringState& unit_state,
     ScopeStack& stack, hir::Generate& generate,
@@ -32,7 +40,7 @@ auto AddChildScope(
   hir::StructuralScope scope;
   auto r = LowerScopeInto(unit_facts, unit_state, scope, block, stack);
   if (!r) return std::unexpected(std::move(r.error()));
-  return generate.AddChildScope(std::move(scope));
+  return AddGenerateChildScope(generate, std::move(scope));
 }
 
 }  // namespace
@@ -75,7 +83,7 @@ auto BuildIfGenerate(
 
   auto cond_expr = LowerStructuralExpr(unit_facts, *cond);
   if (!cond_expr) return std::unexpected(std::move(cond_expr.error()));
-  const hir::ExprId cond_id = parent_state.AppendExpr(*std::move(cond_expr));
+  const hir::ExprId cond_id = parent_state.AddExpr(*std::move(cond_expr));
 
   hir::Generate gen{};
 
@@ -118,7 +126,7 @@ auto BuildCaseGenerate(
 
   auto cond_expr = LowerStructuralExpr(unit_facts, *discriminator);
   if (!cond_expr) return std::unexpected(std::move(cond_expr.error()));
-  const hir::ExprId cond_id = parent_state.AppendExpr(*std::move(cond_expr));
+  const hir::ExprId cond_id = parent_state.AddExpr(*std::move(cond_expr));
 
   hir::Generate gen{};
 
@@ -136,7 +144,7 @@ auto BuildCaseGenerate(
           if (!label_expr_lowered)
             return std::unexpected(std::move(label_expr_lowered.error()));
           labels.push_back(
-              parent_state.AppendExpr(*std::move(label_expr_lowered)));
+              parent_state.AddExpr(*std::move(label_expr_lowered)));
         }
         auto item_id =
             AddChildScope(unit_facts, unit_state, stack, gen, *block);
@@ -191,20 +199,19 @@ auto BuildLoopGenerate(
       unit_facts, unit_state, parent_state, stack, loop_state,
       *array.initialExpression);
   if (!initial_expr) return std::unexpected(std::move(initial_expr.error()));
-  const hir::ExprId initial_id =
-      parent_state.AppendExpr(*std::move(initial_expr));
+  const hir::ExprId initial_id = parent_state.AddExpr(*std::move(initial_expr));
 
   auto stop_expr = LowerLoopHeaderExpr(
       unit_facts, unit_state, parent_state, stack, loop_state,
       *array.stopExpression);
   if (!stop_expr) return std::unexpected(std::move(stop_expr.error()));
-  const hir::ExprId stop_id = parent_state.AppendExpr(*std::move(stop_expr));
+  const hir::ExprId stop_id = parent_state.AddExpr(*std::move(stop_expr));
 
   auto iter_expr = LowerLoopHeaderExpr(
       unit_facts, unit_state, parent_state, stack, loop_state,
       *array.iterExpression);
   if (!iter_expr) return std::unexpected(std::move(iter_expr.error()));
-  const hir::ExprId iter_id = parent_state.AppendExpr(*std::move(iter_expr));
+  const hir::ExprId iter_id = parent_state.AddExpr(*std::move(iter_expr));
 
   if (!loop_state.loop_var_id.has_value()) {
     throw InternalError(
@@ -214,7 +221,8 @@ auto BuildLoopGenerate(
 
   hir::Generate gen{};
   const hir::StructuralScopeId body_scope_id =
-      gen.AddChildScope(hir::StructuralScope{});
+      AddGenerateChildScope(gen, hir::StructuralScope{});
+
   gen.data = hir::LoopGenerate{
       .loop_var = *loop_state.loop_var_id,
       .initial = initial_id,

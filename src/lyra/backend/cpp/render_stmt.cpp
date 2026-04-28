@@ -5,15 +5,46 @@
 #include <variant>
 
 #include "formatting.hpp"
+#include "lyra/base/internal_error.hpp"
 #include "lyra/base/overloaded.hpp"
 #include "lyra/mir/class_decl.hpp"
 #include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/stmt.hpp"
+#include "lyra/mir/type.hpp"
 #include "render_context.hpp"
 #include "render_expr.hpp"
 #include "render_type.hpp"
 
 namespace lyra::backend::cpp {
+
+namespace {
+
+auto RenderForInit(const RenderContext& ctx, const mir::ForInit& init)
+    -> std::string {
+  return std::visit(
+      Overloaded{
+          [&](const mir::ForInitDecl& d) -> std::string {
+            const auto& lv = ctx.Body()
+                                 .local_scopes.at(d.local.scope.value)
+                                 .locals.at(d.local.local.value);
+            std::string out =
+                RenderTypeAsCpp(ctx.Unit(), ctx.Class(), lv.type) + " " +
+                lv.name;
+            if (d.init.has_value()) {
+              const auto& v = ctx.Body().exprs.at(d.init->value);
+              out += " = " + RenderExpr(ctx, v);
+            }
+            return out;
+          },
+          [&](const mir::ForInitExpr& e) -> std::string {
+            const auto& expr = ctx.Body().exprs.at(e.expr.value);
+            return RenderExpr(ctx, expr);
+          },
+      },
+      init);
+}
+
+}  // namespace
 
 auto RenderStmt(
     const RenderContext& ctx, const mir::Stmt& stmt, std::size_t indent)
@@ -25,8 +56,11 @@ auto RenderStmt(
   out += std::visit(
       Overloaded{
           [&](const mir::LocalVarDeclStmt& s) -> std::string {
-            const auto& lv = ctx.Body().local_vars.at(s.local_var.value);
-            return Indent(indent) + RenderTypeAsCpp(ctx.Unit(), lv.type) + " " +
+            const auto& lv = ctx.Body()
+                                 .local_scopes.at(s.target.scope.value)
+                                 .locals.at(s.target.local.value);
+            return Indent(indent) +
+                   RenderTypeAsCpp(ctx.Unit(), ctx.Class(), lv.type) + " " +
                    lv.name + "{};\n";
           },
           [&](const mir::ExprStmt& s) -> std::string {
@@ -92,11 +126,49 @@ auto RenderStmt(
             result += Indent(indent) + "}\n";
             return result;
           },
-          [&](const mir::ConstructMemberStmt& s) -> std::string {
+          [&](const mir::ConstructOwnedObjectStmt& s) -> std::string {
             const auto& member = ctx.Class().GetMemberVar(s.target);
             const auto& target_class = ctx.Class().GetClass(s.class_id);
-            return Indent(indent) + member.name + " = new " +
-                   target_class.Name() + "();\n";
+            const std::string make =
+                "std::make_unique<" + target_class.name + ">()";
+            if (mir::IsVectorOfOwningObjectType(ctx.Unit(), member.type)) {
+              return Indent(indent) + member.name + ".push_back(" + make +
+                     ");\n";
+            }
+            if (mir::IsOwningObjectType(ctx.Unit(), member.type)) {
+              return Indent(indent) + member.name + " = " + make + ";\n";
+            }
+            throw InternalError(
+                "ConstructOwnedObjectStmt target is not an owning object "
+                "member");
+          },
+          [&](const mir::ForStmt& s) -> std::string {
+            std::string init;
+            for (std::size_t i = 0; i < s.init.size(); ++i) {
+              if (i != 0) {
+                init += ", ";
+              }
+              init += RenderForInit(ctx, s.init[i]);
+            }
+            std::string cond;
+            if (s.condition.has_value()) {
+              const auto& cond_expr = ctx.Body().exprs.at(s.condition->value);
+              cond = RenderExpr(ctx, cond_expr);
+            }
+            std::string step;
+            for (std::size_t i = 0; i < s.step.size(); ++i) {
+              if (i != 0) {
+                step += ", ";
+              }
+              const auto& step_expr = ctx.Body().exprs.at(s.step[i].value);
+              step += RenderExpr(ctx, step_expr);
+            }
+            const auto& body = stmt.child_bodies.at(s.body.value);
+            std::string result = Indent(indent) + "for (" + init + "; " + cond +
+                                 "; " + step + ") {\n";
+            result += RenderBody(ctx.Unit(), ctx.Class(), body, indent + 1);
+            result += Indent(indent) + "}\n";
+            return result;
           },
       },
       stmt.data);

@@ -36,7 +36,7 @@ auto LowerStatement(
         auto child_stmt =
             LowerStatement(unit_facts, proc_state, scope_state, stack, *child);
         if (!child_stmt) return std::unexpected(std::move(child_stmt.error()));
-        kids.push_back(proc_state.AppendStmt(*std::move(child_stmt)));
+        kids.push_back(proc_state.AddStmt(*std::move(child_stmt)));
       }
       return hir::Stmt{
           .label = std::nullopt,
@@ -55,13 +55,13 @@ auto LowerStatement(
               unit_facts, proc_state, scope_state, stack, *child);
           if (!child_stmt)
             return std::unexpected(std::move(child_stmt.error()));
-          kids.push_back(proc_state.AppendStmt(*std::move(child_stmt)));
+          kids.push_back(proc_state.AddStmt(*std::move(child_stmt)));
         }
       } else {
         auto child_stmt = LowerStatement(
             unit_facts, proc_state, scope_state, stack, block.body);
         if (!child_stmt) return std::unexpected(std::move(child_stmt.error()));
-        kids.push_back(proc_state.AppendStmt(*std::move(child_stmt)));
+        kids.push_back(proc_state.AddStmt(*std::move(child_stmt)));
       }
       return hir::Stmt{
           .label = std::nullopt,
@@ -89,7 +89,7 @@ auto LowerStatement(
       auto expr = LowerProcExpr(
           unit_facts, scope_state.UnitState(), proc_state, stack, es.expr);
       if (!expr) return std::unexpected(std::move(expr.error()));
-      const hir::ExprId id = proc_state.AppendExpr(*std::move(expr));
+      const hir::ExprId id = proc_state.AddExpr(*std::move(expr));
       return hir::Stmt{
           .label = std::nullopt,
           .data = hir::ExprStmt{.expr = id},

@@ -2,12 +2,13 @@
 
 #include <cstdint>
 #include <cstdlib>
+#include <optional>
 #include <utility>
 #include <vector>
 
 #include "lyra/base/internal_error.hpp"
-#include "lyra/hir/expr.hpp"
 #include "lyra/hir/local_var.hpp"
+#include "lyra/hir/loop_var.hpp"
 #include "lyra/hir/member_var.hpp"
 #include "lyra/hir/structural_scope.hpp"
 #include "lyra/hir/subroutine.hpp"
@@ -31,23 +32,48 @@ struct BuiltinMirTypes {
 
 class UnitLoweringState {
  public:
-  explicit UnitLoweringState(mir::CompilationUnit& unit)
-      : unit_(&unit), builtins_(MakeBuiltins(unit)) {
+  explicit UnitLoweringState(mir::CompilationUnit& unit) : unit_(&unit) {
+    builtins_ = BuiltinMirTypes{
+        .int32 = AddType(
+            mir::TypeData{mir::PackedArrayType{
+                .atom = mir::BitAtom::kBit,
+                .signedness = mir::Signedness::kSigned,
+                .dims = {mir::PackedRange{.left = 31, .right = 0}},
+                .form = mir::PackedArrayForm::kInt}}),
+        .string = AddType(mir::TypeData{mir::StringType{}}),
+        .void_type = AddType(mir::TypeData{mir::VoidType{}})};
+  }
+
+  [[nodiscard]] auto Unit() const -> const mir::CompilationUnit& {
+    return *unit_;
   }
 
   auto AddType(mir::TypeData data) -> mir::TypeId {
-    return unit_->AddType(std::move(data));
+    const mir::TypeId id{static_cast<std::uint32_t>(unit_->types.size())};
+    unit_->types.push_back(mir::Type{.data = std::move(data)});
+    return id;
   }
 
   [[nodiscard]] auto GetType(mir::TypeId id) const -> const mir::Type& {
     return unit_->GetType(id);
   }
 
-  [[nodiscard]] auto TranslateType(hir::TypeId hir_id) const -> mir::TypeId {
-    return type_map_.at(hir_id.value);
+  auto AddClass(mir::ClassDecl cls) -> mir::ClassDeclId {
+    const mir::ClassDeclId id{
+        static_cast<std::uint32_t>(unit_->classes.size())};
+    unit_->classes.push_back(std::move(cls));
+    return id;
   }
 
-  void RegisterTypeMapping(hir::TypeId hir_id, mir::TypeId mir_id) {
+  [[nodiscard]] auto TranslateType(hir::TypeId hir_id) const -> mir::TypeId {
+    if (hir_id.value >= type_map_.size()) {
+      throw InternalError(
+          "UnitLoweringState::TranslateType: unmapped HIR type");
+    }
+    return type_map_[hir_id.value];
+  }
+
+  void MapType(hir::TypeId hir_id, mir::TypeId mir_id) {
     if (hir_id.value >= type_map_.size()) {
       type_map_.resize(hir_id.value + 1);
     }
@@ -59,21 +85,9 @@ class UnitLoweringState {
   }
 
  private:
-  static auto MakeBuiltins(mir::CompilationUnit& unit) -> BuiltinMirTypes {
-    return BuiltinMirTypes{
-        .int32 = unit.AddType(
-            mir::TypeData{mir::PackedArrayType{
-                .atom = mir::BitAtom::kBit,
-                .signedness = mir::Signedness::kSigned,
-                .dims = {mir::PackedRange{.left = 31, .right = 0}},
-                .form = mir::PackedArrayForm::kInt}}),
-        .string = unit.AddType(mir::TypeData{mir::StringType{}}),
-        .void_type = unit.AddType(mir::TypeData{mir::VoidType{}})};
-  }
-
   mir::CompilationUnit* unit_;
   std::vector<mir::TypeId> type_map_;
-  BuiltinMirTypes builtins_;
+  BuiltinMirTypes builtins_{};
 };
 
 struct ChildClassBinding {
@@ -83,16 +97,18 @@ struct ChildClassBinding {
 
 // Bindings produced by `InstallGenerateOwnedChildClasses` for a single
 // `hir::Generate`. Indexed by `hir::StructuralScopeId.value`. Phase-local to
-// constructor lowering: `LowerGenerateConstruction` consumes them and they
-// then go out of scope. They are not part of `ClassLoweringState`.
+// constructor lowering: `LowerConstructorBody` consumes them and they then
+// go out of scope. They are not part of `ClassLoweringState`.
 struct GenerateBindings {
   std::vector<ChildClassBinding> by_scope_id;
 };
 
+// Class-level lowering state for one mir::ClassDecl. Owns class-level
+// mutation during lowering AND owns class-scope HIR-to-MIR translation maps.
+// Class declaration and class-scope name translation form one lowering unit.
 class ClassLoweringState {
  public:
-  ClassLoweringState(
-      const ClassLoweringState* parent, const mir::ClassDecl& cls)
+  ClassLoweringState(const ClassLoweringState* parent, mir::ClassDecl& cls)
       : parent_(parent), class_decl_(&cls) {
   }
 
@@ -100,7 +116,44 @@ class ClassLoweringState {
     return parent_;
   }
 
-  void BindMemberVar(hir::MemberVarId hir_id, mir::MemberVarId mir_id) {
+  [[nodiscard]] auto Class() const -> const mir::ClassDecl& {
+    return *class_decl_;
+  }
+
+  auto AddMemberVar(mir::MemberVar member) -> mir::MemberVarId {
+    const mir::MemberVarId id{
+        static_cast<std::uint32_t>(class_decl_->member_vars.size())};
+    class_decl_->member_vars.push_back(std::move(member));
+    return id;
+  }
+
+  auto AddClass(mir::ClassDecl child) -> mir::ClassDeclId {
+    const mir::ClassDeclId id{
+        static_cast<std::uint32_t>(class_decl_->classes.size())};
+    class_decl_->classes.push_back(std::move(child));
+    return id;
+  }
+
+  auto AddProcess(mir::Process process) -> mir::ProcessId {
+    const mir::ProcessId id{
+        static_cast<std::uint32_t>(class_decl_->processes.size())};
+    class_decl_->processes.push_back(std::move(process));
+    return id;
+  }
+
+  auto AddUserSubroutineTarget(mir::UserSubroutineTarget target)
+      -> mir::UserSubroutineTargetId {
+    const mir::UserSubroutineTargetId id{static_cast<std::uint32_t>(
+        class_decl_->user_subroutine_targets.size())};
+    class_decl_->user_subroutine_targets.push_back(std::move(target));
+    return id;
+  }
+
+  void SetConstructor(mir::Body body) {
+    class_decl_->constructor = std::move(body);
+  }
+
+  void MapMemberVar(hir::MemberVarId hir_id, mir::MemberVarId mir_id) {
     if (hir_id.value >= member_var_map_.size()) {
       member_var_map_.resize(hir_id.value + 1);
     }
@@ -111,17 +164,21 @@ class ClassLoweringState {
   // class's member-var map. The class chain mirrors the lexical scope chain
   // exactly, so `parent_scope_hops` from a HIR ref maps directly to chain
   // depth.
-  [[nodiscard]] auto LookupMemberVar(
+  [[nodiscard]] auto TranslateMemberVar(
       hir::ParentScopeHops hops, hir::MemberVarId hir_id) const
       -> mir::MemberVarId {
     if (hops.value == 0) {
-      return member_var_map_.at(hir_id.value);
+      if (hir_id.value >= member_var_map_.size()) {
+        throw InternalError(
+            "ClassLoweringState::TranslateMemberVar: unmapped HIR member var");
+      }
+      return member_var_map_[hir_id.value];
     }
     if (parent_ == nullptr) {
       throw InternalError(
-          "ClassLoweringState::LookupMemberVar: hops out of class chain");
+          "ClassLoweringState::TranslateMemberVar: hops out of class chain");
     }
-    return parent_->LookupMemberVar(
+    return parent_->TranslateMemberVar(
         hir::ParentScopeHops{hops.value - 1}, hir_id);
   }
 
@@ -140,7 +197,7 @@ class ClassLoweringState {
     return parent_->GetMemberVar(hir::ParentScopeHops{hops.value - 1}, mir_id);
   }
 
-  void BindUserSubroutine(
+  void MapUserSubroutine(
       hir::SubroutineId hir_id, mir::UserSubroutineTargetId mir_id) {
     if (hir_id.value >= user_subroutine_map_.size()) {
       user_subroutine_map_.resize(hir_id.value + 1);
@@ -148,90 +205,130 @@ class ClassLoweringState {
     user_subroutine_map_[hir_id.value] = mir_id;
   }
 
-  [[nodiscard]] auto LookupUserSubroutine(
+  [[nodiscard]] auto TranslateUserSubroutine(
       hir::ParentScopeHops hops, hir::SubroutineId hir_id) const
       -> mir::UserSubroutineTargetId {
     if (hops.value == 0) {
-      return user_subroutine_map_.at(hir_id.value);
+      if (hir_id.value >= user_subroutine_map_.size()) {
+        throw InternalError(
+            "ClassLoweringState::TranslateUserSubroutine: unmapped HIR "
+            "subroutine");
+      }
+      return user_subroutine_map_[hir_id.value];
     }
     if (parent_ == nullptr) {
       throw InternalError(
-          "ClassLoweringState::LookupUserSubroutine: hops out of class chain");
+          "ClassLoweringState::TranslateUserSubroutine: hops out of class "
+          "chain");
     }
-    return parent_->LookupUserSubroutine(
+    return parent_->TranslateUserSubroutine(
         hir::ParentScopeHops{hops.value - 1}, hir_id);
   }
 
  private:
   const ClassLoweringState* parent_;
-  const mir::ClassDecl* class_decl_;
+  mir::ClassDecl* class_decl_;
   std::vector<mir::MemberVarId> member_var_map_;
   std::vector<mir::UserSubroutineTargetId> user_subroutine_map_;
 };
 
+// Process-body lowering state: maps HIR LocalVarId -> MIR LocalVarRef. The
+// MIR locals themselves live in the in-flight body's local scopes (see
+// BodyLoweringState).
 class ProcessLoweringState {
  public:
-  auto AddLocalVar(mir::LocalVar lv) -> mir::LocalVarId {
-    const mir::LocalVarId id{static_cast<std::uint32_t>(locals_.size())};
-    locals_.push_back(std::move(lv));
-    return id;
-  }
-
-  void MapLocalVar(hir::LocalVarId hir_id, mir::LocalVarId mir_id) {
+  void MapLocalVar(hir::LocalVarId hir_id, mir::LocalVarRef ref) {
     if (hir_id.value >= map_.size()) {
       map_.resize(hir_id.value + 1);
     }
-    map_[hir_id.value] = mir_id;
+    map_[hir_id.value] = ref;
   }
 
   [[nodiscard]] auto TranslateLocalVar(hir::LocalVarId hir_id) const
-      -> mir::LocalVarId {
-    return map_.at(hir_id.value);
-  }
-
-  [[nodiscard]] auto GetLocalVar(mir::LocalVarId mir_id) const
-      -> const mir::LocalVar& {
-    return locals_.at(mir_id.value);
-  }
-
-  auto MoveLocals() -> std::vector<mir::LocalVar> {
-    return std::move(locals_);
+      -> mir::LocalVarRef {
+    if (hir_id.value >= map_.size()) {
+      throw InternalError("TranslateLocalVar: unmapped HIR local var");
+    }
+    return map_[hir_id.value];
   }
 
  private:
-  std::vector<mir::LocalVar> locals_;
-  std::vector<mir::LocalVarId> map_;
+  std::vector<mir::LocalVarRef> map_;
+};
+
+// Constructor-body lowering state: maps HIR LoopVarDeclId -> MIR LocalVarRef
+// for the genvar of an enclosing for-generate. The MIR locals themselves live
+// in the in-flight body's local scopes.
+class ConstructorLoweringState {
+ public:
+  void MapLoopVar(hir::LoopVarDeclId hir_id, mir::LocalVarRef ref) {
+    if (hir_id.value >= map_.size()) {
+      map_.resize(hir_id.value + 1);
+    }
+    map_[hir_id.value] = ref;
+  }
+
+  [[nodiscard]] auto TranslateLoopVar(hir::LoopVarDeclId hir_id) const
+      -> mir::LocalVarRef {
+    if (hir_id.value >= map_.size()) {
+      throw InternalError("TranslateLoopVar: unmapped HIR loop var");
+    }
+    return map_[hir_id.value];
+  }
+
+ private:
+  std::vector<mir::LocalVarRef> map_;
 };
 
 class BodyLoweringState {
  public:
-  BodyLoweringState() = default;
+  BodyLoweringState() {
+    body_.root_scope = AddLocalScope(std::nullopt);
+  }
 
-  auto AppendExpr(hir::ExprId hir_id, mir::Expr expr) -> mir::ExprId {
-    const mir::ExprId id{static_cast<std::uint32_t>(body_.exprs.size())};
-    body_.exprs.push_back(std::move(expr));
-    if (hir_id.value >= expr_map_.size()) {
-      expr_map_.resize(hir_id.value + 1);
-    }
-    expr_map_[hir_id.value] = id;
+  [[nodiscard]] auto RootScope() const -> mir::LocalScopeId {
+    return body_.root_scope;
+  }
+
+  auto AddLocalScope(std::optional<mir::LocalScopeId> parent)
+      -> mir::LocalScopeId {
+    const mir::LocalScopeId id{
+        static_cast<std::uint32_t>(body_.local_scopes.size())};
+    body_.local_scopes.push_back(
+        mir::LocalScope{.parent = parent, .locals = {}});
     return id;
   }
 
-  [[nodiscard]] auto TranslateExpr(hir::ExprId hir_id) const -> mir::ExprId {
-    return expr_map_.at(hir_id.value);
+  auto AddLocal(mir::LocalScopeId scope, mir::LocalVar local)
+      -> mir::LocalVarId {
+    auto& s = body_.local_scopes.at(scope.value);
+    const mir::LocalVarId id{static_cast<std::uint32_t>(s.locals.size())};
+    s.locals.push_back(std::move(local));
+    return id;
+  }
+
+  [[nodiscard]] auto GetLocalVar(mir::LocalVarRef ref) const
+      -> const mir::LocalVar& {
+    return body_.local_scopes.at(ref.scope.value).locals.at(ref.local.value);
+  }
+
+  auto AddExpr(mir::Expr expr) -> mir::ExprId {
+    const mir::ExprId id{static_cast<std::uint32_t>(body_.exprs.size())};
+    body_.exprs.push_back(std::move(expr));
+    return id;
   }
 
   [[nodiscard]] auto Body() const -> const mir::Body& {
     return body_;
   }
 
-  auto AppendStmt(mir::Stmt stmt) -> mir::StmtId {
+  auto AddStmt(mir::Stmt stmt) -> mir::StmtId {
     const mir::StmtId id{static_cast<std::uint32_t>(body_.stmts.size())};
     body_.stmts.push_back(std::move(stmt));
     return id;
   }
 
-  void AppendRootStmt(mir::StmtId id) {
+  void AddRootStmt(mir::StmtId id) {
     body_.root_stmts.push_back(id);
   }
 
@@ -241,7 +338,6 @@ class BodyLoweringState {
 
  private:
   mir::Body body_;
-  std::vector<mir::ExprId> expr_map_;
 };
 
 class ScopeStack {
