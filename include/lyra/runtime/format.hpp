@@ -1,12 +1,11 @@
 #pragma once
 
 #include <cstdint>
-#include <limits>
 #include <string>
 #include <string_view>
 #include <variant>
 
-#include "lyra/base/internal_error.hpp"
+#include "lyra/runtime/packed.hpp"
 
 namespace lyra::runtime {
 
@@ -25,9 +24,12 @@ enum class FormatKind : std::uint8_t {
   kString,
 };
 
-enum class RuntimeValueKind : std::uint8_t {
-  kIntegral,
-  kString,
+// Two-state vs four-state lives on the integral axis, not as a top-level
+// value kind: it's a representation/semantics dimension of integral, in the
+// same way `string` is a value category. The two enums are orthogonal.
+enum class IntegralStateKind : std::uint8_t {
+  kTwoState,
+  kFourState,
 };
 
 struct FormatSpec {
@@ -39,50 +41,62 @@ struct FormatSpec {
   std::int32_t timeunit_power = 0;
 };
 
-// Non-owning view of a value passed into the runtime print API.
+// Non-owning view payloads passed into the runtime print API.
 //
 // Two integral storage planes coexist:
-//   - Narrow integral (bit_width <= 64): the word lives inline in
-//   `inline_word`.
-//     `value_words` is null. Construction needs no externally-owned storage,
-//     so the whole view can be built inline at a `LyraPrint` call site.
-//   - Wide integral (bit_width > 64): caller owns a `uint64_t[word_count]`
-//     array and passes a pointer via `value_words`. Not used by this cut.
-//
-// String values reference external character storage (e.g. a `std::string`
-// kept alive for the duration of the LyraPrint call) via `string_data` /
-// `string_size`. The `String(string_view)` factory captures the view directly.
-struct RuntimeValueView {
-  RuntimeValueKind kind = RuntimeValueKind::kIntegral;
+//   - Narrow integral (bit_width <= 64): the value lives inline in
+//   `inline_word`,
+//     and (for four-state) the state plane lives inline in
+//     `inline_state_word`. `value_words` / `state_words` are null. The whole
+//     view is built inline at a `LyraPrint` call site with no externally
+//     owned storage.
+//   - Wide integral (bit_width > 64): caller owns `uint64_t[word_count]`
+//     arrays for value and (for four-state) state, passed via `value_words`
+//     and `state_words`. Not used by this cut.
+struct IntegralValueView {
+  IntegralStateKind state = IntegralStateKind::kTwoState;
   std::uint64_t inline_word = 0;
+  std::uint64_t inline_state_word = 0;
   const std::uint64_t* value_words = nullptr;
-  const std::uint64_t* unknown_words = nullptr;
+  const std::uint64_t* state_words = nullptr;
   std::uint32_t word_count = 0;
   std::uint32_t bit_width = 0;
   bool is_signed = false;
+};
 
-  const char* string_data = nullptr;
-  std::uint32_t string_size = 0;
+// String values reference external character storage (e.g. a `std::string`
+// kept alive for the duration of the LyraPrint call) via `data` / `size`.
+// The `String(string_view)` factory captures the view directly.
+struct StringValueView {
+  const char* data = nullptr;
+  std::uint32_t size = 0;
+};
 
-  static auto NarrowIntegral(
+// Wrapper over the variant payload so factories live on the value type
+// itself rather than scattered in a sub-namespace. Adding a new category
+// requires a new alternative + a new visitor arm; std::visit on `data`
+// gives compile-time exhaustiveness via Overloaded.
+struct RuntimeValueView {
+  std::variant<IntegralValueView, StringValueView> data;
+
+  [[nodiscard]] static auto NarrowIntegral(
       std::uint64_t word, std::uint32_t bit_width, bool is_signed)
+      -> RuntimeValueView;
+
+  [[nodiscard]] static auto String(std::string_view sv) -> RuntimeValueView;
+
+  [[nodiscard]] static auto FromBitView(ConstBitView v, bool is_signed)
+      -> RuntimeValueView;
+  [[nodiscard]] static auto FromBitView(BitView v, bool is_signed)
       -> RuntimeValueView {
-    return RuntimeValueView{
-        .kind = RuntimeValueKind::kIntegral,
-        .inline_word = word,
-        .word_count = 1,
-        .bit_width = bit_width,
-        .is_signed = is_signed};
+    return FromBitView(v.AsConst(), is_signed);
   }
 
-  static auto String(std::string_view sv) -> RuntimeValueView {
-    if (sv.size() > std::numeric_limits<std::uint32_t>::max()) {
-      throw InternalError("RuntimeValueView::String: string too large");
-    }
-    return RuntimeValueView{
-        .kind = RuntimeValueKind::kString,
-        .string_data = sv.data(),
-        .string_size = static_cast<std::uint32_t>(sv.size())};
+  [[nodiscard]] static auto FromLogicView(ConstLogicView v, bool is_signed)
+      -> RuntimeValueView;
+  [[nodiscard]] static auto FromLogicView(LogicView v, bool is_signed)
+      -> RuntimeValueView {
+    return FromLogicView(v.AsConst(), is_signed);
   }
 };
 

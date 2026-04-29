@@ -1,3 +1,3 @@
 module Top;
-  logic l;
+  byte l;
 endmodule
