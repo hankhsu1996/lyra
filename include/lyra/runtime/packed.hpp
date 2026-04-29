@@ -113,7 +113,7 @@ template <PackedShape Shape, Signedness Signed = Signedness::kUnsigned>
 class Logic;
 
 namespace detail {
-struct PlaneAccess;  // defined in convert.hpp
+struct PlaneAccess;
 }  // namespace detail
 
 namespace detail {
@@ -252,10 +252,11 @@ class ConstBitView {
  private:
   friend struct detail::PlaneAccess;
 
-  [[nodiscard]] auto WordsForConvert() const -> std::span<const std::uint64_t> {
+  [[nodiscard]] auto WordsForPackedOps() const
+      -> std::span<const std::uint64_t> {
     return words_;
   }
-  [[nodiscard]] auto BitOffsetForConvert() const -> std::uint64_t {
+  [[nodiscard]] auto BitOffsetForPackedOps() const -> std::uint64_t {
     return bit_offset_;
   }
 
@@ -401,15 +402,15 @@ class ConstLogicView {
  private:
   friend struct detail::PlaneAccess;
 
-  [[nodiscard]] auto ValueWordsForConvert() const
+  [[nodiscard]] auto ValueWordsForPackedOps() const
       -> std::span<const std::uint64_t> {
     return value_words_;
   }
-  [[nodiscard]] auto StateWordsForConvert() const
+  [[nodiscard]] auto StateWordsForPackedOps() const
       -> std::span<const std::uint64_t> {
     return state_words_;
   }
-  [[nodiscard]] auto BitOffsetForConvert() const -> std::uint64_t {
+  [[nodiscard]] auto BitOffsetForPackedOps() const -> std::uint64_t {
     return bit_offset_;
   }
 
@@ -586,7 +587,8 @@ class Bit {
  private:
   friend struct detail::PlaneAccess;
 
-  [[nodiscard]] auto MutableValueWordsForConvert() -> std::span<std::uint64_t> {
+  [[nodiscard]] auto MutableValueWordsForPackedOps()
+      -> std::span<std::uint64_t> {
     return bits_.MutableWordsForView();
   }
 
@@ -689,10 +691,12 @@ class Logic {
  private:
   friend struct detail::PlaneAccess;
 
-  [[nodiscard]] auto MutableValueWordsForConvert() -> std::span<std::uint64_t> {
+  [[nodiscard]] auto MutableValueWordsForPackedOps()
+      -> std::span<std::uint64_t> {
     return value_.MutableWordsForView();
   }
-  [[nodiscard]] auto MutableStateWordsForConvert() -> std::span<std::uint64_t> {
+  [[nodiscard]] auto MutableStateWordsForPackedOps()
+      -> std::span<std::uint64_t> {
     return state_.MutableWordsForView();
   }
 
