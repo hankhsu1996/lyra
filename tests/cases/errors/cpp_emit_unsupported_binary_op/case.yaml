@@ -1,0 +1,16 @@
+id: errors.cpp_emit_unsupported_binary_op
+tags: [errors, diag]
+input:
+  command: [emit, cpp]
+  project: false
+  top: Top
+  files: [main.sv]
+  args: ["--no-color"]
+expect:
+  exit: 1
+  stderr:
+    contains:
+      - "unsupported:"
+      - "this binary operator is not yet implemented in cpp emit"
+    not_contains:
+      - "internal error"

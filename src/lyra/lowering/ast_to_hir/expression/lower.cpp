@@ -31,6 +31,7 @@
 #include "lyra/hir/primary.hpp"
 #include "lyra/hir/subroutine_ref.hpp"
 #include "lyra/hir/type.hpp"
+#include "lyra/hir/unary_op.hpp"
 #include "lyra/hir/value_ref.hpp"
 #include "lyra/lowering/ast_to_hir/facts.hpp"
 #include "lyra/lowering/ast_to_hir/integral_constant.hpp"
@@ -75,6 +76,103 @@ auto LowerConversionKind(slang::ast::ConversionKind k) -> hir::ConversionKind {
       return hir::ConversionKind::kBitstreamCast;
   }
   throw InternalError("LowerConversionKind: unknown slang ConversionKind");
+}
+
+auto LowerBinaryOp(slang::ast::BinaryOperator op) -> hir::BinaryOp {
+  switch (op) {
+    case slang::ast::BinaryOperator::Add:
+      return hir::BinaryOp::kAdd;
+    case slang::ast::BinaryOperator::Subtract:
+      return hir::BinaryOp::kSub;
+    case slang::ast::BinaryOperator::Multiply:
+      return hir::BinaryOp::kMul;
+    case slang::ast::BinaryOperator::Divide:
+      return hir::BinaryOp::kDiv;
+    case slang::ast::BinaryOperator::Mod:
+      return hir::BinaryOp::kMod;
+    case slang::ast::BinaryOperator::Power:
+      return hir::BinaryOp::kPower;
+    case slang::ast::BinaryOperator::BinaryAnd:
+      return hir::BinaryOp::kBitwiseAnd;
+    case slang::ast::BinaryOperator::BinaryOr:
+      return hir::BinaryOp::kBitwiseOr;
+    case slang::ast::BinaryOperator::BinaryXor:
+      return hir::BinaryOp::kBitwiseXor;
+    case slang::ast::BinaryOperator::BinaryXnor:
+      return hir::BinaryOp::kBitwiseXnor;
+    case slang::ast::BinaryOperator::Equality:
+      return hir::BinaryOp::kEquality;
+    case slang::ast::BinaryOperator::Inequality:
+      return hir::BinaryOp::kInequality;
+    case slang::ast::BinaryOperator::CaseEquality:
+      return hir::BinaryOp::kCaseEquality;
+    case slang::ast::BinaryOperator::CaseInequality:
+      return hir::BinaryOp::kCaseInequality;
+    case slang::ast::BinaryOperator::WildcardEquality:
+      return hir::BinaryOp::kWildcardEquality;
+    case slang::ast::BinaryOperator::WildcardInequality:
+      return hir::BinaryOp::kWildcardInequality;
+    case slang::ast::BinaryOperator::GreaterThanEqual:
+      return hir::BinaryOp::kGreaterEqual;
+    case slang::ast::BinaryOperator::GreaterThan:
+      return hir::BinaryOp::kGreaterThan;
+    case slang::ast::BinaryOperator::LessThanEqual:
+      return hir::BinaryOp::kLessEqual;
+    case slang::ast::BinaryOperator::LessThan:
+      return hir::BinaryOp::kLessThan;
+    case slang::ast::BinaryOperator::LogicalAnd:
+      return hir::BinaryOp::kLogicalAnd;
+    case slang::ast::BinaryOperator::LogicalOr:
+      return hir::BinaryOp::kLogicalOr;
+    case slang::ast::BinaryOperator::LogicalImplication:
+      return hir::BinaryOp::kLogicalImplication;
+    case slang::ast::BinaryOperator::LogicalEquivalence:
+      return hir::BinaryOp::kLogicalEquivalence;
+    case slang::ast::BinaryOperator::LogicalShiftLeft:
+      return hir::BinaryOp::kLogicalShiftLeft;
+    case slang::ast::BinaryOperator::LogicalShiftRight:
+      return hir::BinaryOp::kLogicalShiftRight;
+    case slang::ast::BinaryOperator::ArithmeticShiftLeft:
+      return hir::BinaryOp::kArithmeticShiftLeft;
+    case slang::ast::BinaryOperator::ArithmeticShiftRight:
+      return hir::BinaryOp::kArithmeticShiftRight;
+  }
+  throw InternalError("LowerBinaryOp: unknown slang BinaryOperator");
+}
+
+auto LowerUnaryOp(slang::ast::UnaryOperator op, diag::SourceSpan span)
+    -> diag::Result<hir::UnaryOp> {
+  switch (op) {
+    case slang::ast::UnaryOperator::Plus:
+      return hir::UnaryOp::kPlus;
+    case slang::ast::UnaryOperator::Minus:
+      return hir::UnaryOp::kMinus;
+    case slang::ast::UnaryOperator::BitwiseNot:
+      return hir::UnaryOp::kBitwiseNot;
+    case slang::ast::UnaryOperator::LogicalNot:
+      return hir::UnaryOp::kLogicalNot;
+    case slang::ast::UnaryOperator::BitwiseAnd:
+      return hir::UnaryOp::kReductionAnd;
+    case slang::ast::UnaryOperator::BitwiseOr:
+      return hir::UnaryOp::kReductionOr;
+    case slang::ast::UnaryOperator::BitwiseXor:
+      return hir::UnaryOp::kReductionXor;
+    case slang::ast::UnaryOperator::BitwiseNand:
+      return hir::UnaryOp::kReductionNand;
+    case slang::ast::UnaryOperator::BitwiseNor:
+      return hir::UnaryOp::kReductionNor;
+    case slang::ast::UnaryOperator::BitwiseXnor:
+      return hir::UnaryOp::kReductionXnor;
+    case slang::ast::UnaryOperator::Preincrement:
+    case slang::ast::UnaryOperator::Predecrement:
+    case slang::ast::UnaryOperator::Postincrement:
+    case slang::ast::UnaryOperator::Postdecrement:
+      return diag::Unsupported(
+          span, diag::DiagCode::kUnsupportedExpressionForm,
+          "increment and decrement expressions are not supported yet",
+          diag::UnsupportedCategory::kOperation);
+  }
+  throw InternalError("LowerUnaryOp: unknown slang UnaryOperator");
 }
 
 auto MakeIntegerLiteralExpr(
@@ -295,14 +393,23 @@ auto LowerProcExpr(
       };
     }
 
+    case slang::ast::ExpressionKind::UnaryOp: {
+      const auto& un = expr.as<slang::ast::UnaryExpression>();
+      auto op_or = LowerUnaryOp(un.op, span);
+      if (!op_or) return std::unexpected(std::move(op_or.error()));
+      auto operand_id = append_child(un.operand());
+      if (!operand_id) return std::unexpected(std::move(operand_id.error()));
+      auto type_id = type_id_of(expr);
+      if (!type_id) return std::unexpected(std::move(type_id.error()));
+      return hir::Expr{
+          .type = *type_id,
+          .data = hir::UnaryExpr{.op = *op_or, .operand = *operand_id},
+          .span = span,
+      };
+    }
+
     case slang::ast::ExpressionKind::BinaryOp: {
       const auto& bin = expr.as<slang::ast::BinaryExpression>();
-      if (bin.op != slang::ast::BinaryOperator::Add) {
-        return diag::Unsupported(
-            span, diag::DiagCode::kUnsupportedBinaryOperator,
-            "only `+` is currently supported",
-            diag::UnsupportedCategory::kOperation);
-      }
       auto lhs_id = append_child(bin.left());
       if (!lhs_id) return std::unexpected(std::move(lhs_id.error()));
       auto rhs_id = append_child(bin.right());
@@ -313,7 +420,7 @@ auto LowerProcExpr(
           .type = *type_id,
           .data =
               hir::BinaryExpr{
-                  .op = hir::BinaryOp::kAdd,
+                  .op = LowerBinaryOp(bin.op),
                   .lhs = *lhs_id,
                   .rhs = *rhs_id,
               },
@@ -515,18 +622,6 @@ auto TryResolveLoopHeaderVar(
   return loop_state.loop_var_id;
 }
 
-auto MapLoopHeaderBinaryOp(slang::ast::BinaryOperator op)
-    -> std::optional<hir::BinaryOp> {
-  switch (op) {
-    case slang::ast::BinaryOperator::Add:
-      return hir::BinaryOp::kAdd;
-    case slang::ast::BinaryOperator::LessThan:
-      return hir::BinaryOp::kLessThan;
-    default:
-      return std::nullopt;
-  }
-}
-
 }  // namespace
 
 auto LowerLoopHeaderExpr(
@@ -628,15 +723,23 @@ auto LowerLoopHeaderExpr(
       };
     }
 
+    case slang::ast::ExpressionKind::UnaryOp: {
+      const auto& un = expr.as<slang::ast::UnaryExpression>();
+      auto op_or = LowerUnaryOp(un.op, span);
+      if (!op_or) return std::unexpected(std::move(op_or.error()));
+      auto operand_id = add_child(un.operand());
+      if (!operand_id) return std::unexpected(std::move(operand_id.error()));
+      auto type_id = type_id_of(expr);
+      if (!type_id) return std::unexpected(std::move(type_id.error()));
+      return hir::Expr{
+          .type = *type_id,
+          .data = hir::UnaryExpr{.op = *op_or, .operand = *operand_id},
+          .span = span,
+      };
+    }
+
     case slang::ast::ExpressionKind::BinaryOp: {
       const auto& bin = expr.as<slang::ast::BinaryExpression>();
-      auto op = MapLoopHeaderBinaryOp(bin.op);
-      if (!op.has_value()) {
-        return diag::Unsupported(
-            span, diag::DiagCode::kUnsupportedBinaryOperator,
-            "this binary operator is not supported yet",
-            diag::UnsupportedCategory::kOperation);
-      }
       auto lhs_id = add_child(bin.left());
       if (!lhs_id) return std::unexpected(std::move(lhs_id.error()));
       auto rhs_id = add_child(bin.right());
@@ -645,7 +748,12 @@ auto LowerLoopHeaderExpr(
       if (!type_id) return std::unexpected(std::move(type_id.error()));
       return hir::Expr{
           .type = *type_id,
-          .data = hir::BinaryExpr{.op = *op, .lhs = *lhs_id, .rhs = *rhs_id},
+          .data =
+              hir::BinaryExpr{
+                  .op = LowerBinaryOp(bin.op),
+                  .lhs = *lhs_id,
+                  .rhs = *rhs_id,
+              },
           .span = span,
       };
     }

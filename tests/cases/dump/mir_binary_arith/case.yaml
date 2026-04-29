@@ -1,0 +1,17 @@
+id: dump.mir_binary_arith
+tags: [dump]
+input:
+  command: [dump, mir]
+  project: false
+  top: Top
+  files: [main.sv]
+expect:
+  exit: 0
+  stdout:
+    contains:
+      - "BinaryExpr op=Add"
+      - "BinaryExpr op=Sub"
+      - "BinaryExpr op=Mul"
+      - "BinaryExpr op=Div"
+      - "BinaryExpr op=Mod"
+      - "BinaryExpr op=Power"

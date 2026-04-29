@@ -254,8 +254,16 @@ auto main(int argc, char** argv) -> int {
                   "emit cpp: top class '{}' not found in compilation unit",
                   args.input.top));
         }
-        auto set =
+        auto set_or =
             lyra::backend::cpp::EmitCpp(*result.artifacts.mir_unit, *entry);
+        if (!set_or) {
+          const lyra::diag::SourceManager* mgr =
+              result.artifacts.parse ? &result.artifacts.parse->diag_sources
+                                     : nullptr;
+          report(std::move(set_or.error()), mgr);
+          return 1;
+        }
+        const auto& set = *set_or;
         if (args.emit_out_dir.empty()) {
           for (const auto& file : set.files) {
             fmt::print("=== {} ===\n{}", file.relpath, file.content);

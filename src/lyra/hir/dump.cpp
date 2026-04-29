@@ -22,6 +22,7 @@
 #include "lyra/hir/subroutine.hpp"
 #include "lyra/hir/subroutine_ref.hpp"
 #include "lyra/hir/type.hpp"
+#include "lyra/hir/unary_op.hpp"
 #include "lyra/hir/value_ref.hpp"
 #include "lyra/support/system_subroutine.hpp"
 
@@ -161,12 +162,90 @@ class HirDumper {
         t.data);
   }
 
+  static auto FormatUnaryOp(UnaryOp op) -> std::string {
+    switch (op) {
+      case UnaryOp::kPlus:
+        return "Plus";
+      case UnaryOp::kMinus:
+        return "Minus";
+      case UnaryOp::kBitwiseNot:
+        return "BitwiseNot";
+      case UnaryOp::kLogicalNot:
+        return "LogicalNot";
+      case UnaryOp::kReductionAnd:
+        return "ReductionAnd";
+      case UnaryOp::kReductionOr:
+        return "ReductionOr";
+      case UnaryOp::kReductionXor:
+        return "ReductionXor";
+      case UnaryOp::kReductionNand:
+        return "ReductionNand";
+      case UnaryOp::kReductionNor:
+        return "ReductionNor";
+      case UnaryOp::kReductionXnor:
+        return "ReductionXnor";
+    }
+    throw InternalError("HirDumper: unknown UnaryOp");
+  }
+
   static auto FormatBinaryOp(BinaryOp op) -> std::string {
     switch (op) {
       case BinaryOp::kAdd:
         return "Add";
+      case BinaryOp::kSub:
+        return "Sub";
+      case BinaryOp::kMul:
+        return "Mul";
+      case BinaryOp::kDiv:
+        return "Div";
+      case BinaryOp::kMod:
+        return "Mod";
+      case BinaryOp::kPower:
+        return "Power";
+      case BinaryOp::kBitwiseAnd:
+        return "BitwiseAnd";
+      case BinaryOp::kBitwiseOr:
+        return "BitwiseOr";
+      case BinaryOp::kBitwiseXor:
+        return "BitwiseXor";
+      case BinaryOp::kBitwiseXnor:
+        return "BitwiseXnor";
+      case BinaryOp::kEquality:
+        return "Equality";
+      case BinaryOp::kInequality:
+        return "Inequality";
+      case BinaryOp::kCaseEquality:
+        return "CaseEquality";
+      case BinaryOp::kCaseInequality:
+        return "CaseInequality";
+      case BinaryOp::kWildcardEquality:
+        return "WildcardEquality";
+      case BinaryOp::kWildcardInequality:
+        return "WildcardInequality";
+      case BinaryOp::kGreaterEqual:
+        return "GreaterEqual";
+      case BinaryOp::kGreaterThan:
+        return "GreaterThan";
+      case BinaryOp::kLessEqual:
+        return "LessEqual";
       case BinaryOp::kLessThan:
         return "LessThan";
+      case BinaryOp::kLogicalAnd:
+        return "LogicalAnd";
+      case BinaryOp::kLogicalOr:
+        return "LogicalOr";
+      case BinaryOp::kLogicalImplication:
+        return "LogicalImplication";
+      case BinaryOp::kLogicalEquivalence:
+        return "LogicalEquivalence";
+      case BinaryOp::kLogicalShiftLeft:
+        return "LogicalShiftLeft";
+      case BinaryOp::kLogicalShiftRight:
+        return "LogicalShiftRight";
+      case BinaryOp::kArithmeticShiftLeft:
+        return "ArithmeticShiftLeft";
+      case BinaryOp::kArithmeticShiftRight:
+        return "ArithmeticShiftRight";
     }
     throw InternalError("HirDumper: unknown BinaryOp");
   }
@@ -333,6 +412,11 @@ class HirDumper {
         Overloaded{
             [](const PrimaryExpr& p) -> std::string {
               return FormatPrimary(p.data);
+            },
+            [](const UnaryExpr& u) -> std::string {
+              return std::format(
+                  "UnaryExpr op={} operand=Expr[{}]", FormatUnaryOp(u.op),
+                  u.operand.value);
             },
             [](const BinaryExpr& b) -> std::string {
               return std::format(

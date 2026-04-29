@@ -46,6 +46,10 @@ enum class DiagCode : std::uint32_t {
   kFormatSpecifierNotImplemented,
   kSystemSubroutineExecutionNotImplemented,
 
+  kCppEmitBinaryOpNotImplemented,
+  kCppEmitUnaryOpNotImplemented,
+  kCppEmitExpressionFormNotImplemented,
+
   kHostInvalidCliArgs,
   kHostProjectModeUnimplemented,
   kHostNoInputFiles,

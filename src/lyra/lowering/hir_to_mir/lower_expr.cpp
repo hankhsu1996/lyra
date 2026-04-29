@@ -17,6 +17,7 @@
 #include "lyra/hir/structural_scope.hpp"
 #include "lyra/hir/subroutine_ref.hpp"
 #include "lyra/hir/type.hpp"
+#include "lyra/hir/unary_op.hpp"
 #include "lyra/hir/value_ref.hpp"
 #include "lyra/lowering/hir_to_mir/lower_system_subroutine.hpp"
 #include "lyra/lowering/hir_to_mir/state.hpp"
@@ -24,17 +25,97 @@
 #include "lyra/mir/conversion.hpp"
 #include "lyra/mir/expr.hpp"
 #include "lyra/mir/integral_constant.hpp"
+#include "lyra/mir/unary_op.hpp"
 
 namespace lyra::lowering::hir_to_mir {
+
+namespace {
 
 auto LowerBinaryOp(hir::BinaryOp op) -> mir::BinaryOp {
   switch (op) {
     case hir::BinaryOp::kAdd:
       return mir::BinaryOp::kAdd;
+    case hir::BinaryOp::kSub:
+      return mir::BinaryOp::kSub;
+    case hir::BinaryOp::kMul:
+      return mir::BinaryOp::kMul;
+    case hir::BinaryOp::kDiv:
+      return mir::BinaryOp::kDiv;
+    case hir::BinaryOp::kMod:
+      return mir::BinaryOp::kMod;
+    case hir::BinaryOp::kPower:
+      return mir::BinaryOp::kPower;
+    case hir::BinaryOp::kBitwiseAnd:
+      return mir::BinaryOp::kBitwiseAnd;
+    case hir::BinaryOp::kBitwiseOr:
+      return mir::BinaryOp::kBitwiseOr;
+    case hir::BinaryOp::kBitwiseXor:
+      return mir::BinaryOp::kBitwiseXor;
+    case hir::BinaryOp::kBitwiseXnor:
+      return mir::BinaryOp::kBitwiseXnor;
+    case hir::BinaryOp::kEquality:
+      return mir::BinaryOp::kEquality;
+    case hir::BinaryOp::kInequality:
+      return mir::BinaryOp::kInequality;
+    case hir::BinaryOp::kCaseEquality:
+      return mir::BinaryOp::kCaseEquality;
+    case hir::BinaryOp::kCaseInequality:
+      return mir::BinaryOp::kCaseInequality;
+    case hir::BinaryOp::kWildcardEquality:
+      return mir::BinaryOp::kWildcardEquality;
+    case hir::BinaryOp::kWildcardInequality:
+      return mir::BinaryOp::kWildcardInequality;
+    case hir::BinaryOp::kGreaterEqual:
+      return mir::BinaryOp::kGreaterEqual;
+    case hir::BinaryOp::kGreaterThan:
+      return mir::BinaryOp::kGreaterThan;
+    case hir::BinaryOp::kLessEqual:
+      return mir::BinaryOp::kLessEqual;
     case hir::BinaryOp::kLessThan:
       return mir::BinaryOp::kLessThan;
+    case hir::BinaryOp::kLogicalAnd:
+      return mir::BinaryOp::kLogicalAnd;
+    case hir::BinaryOp::kLogicalOr:
+      return mir::BinaryOp::kLogicalOr;
+    case hir::BinaryOp::kLogicalImplication:
+      return mir::BinaryOp::kLogicalImplication;
+    case hir::BinaryOp::kLogicalEquivalence:
+      return mir::BinaryOp::kLogicalEquivalence;
+    case hir::BinaryOp::kLogicalShiftLeft:
+    case hir::BinaryOp::kArithmeticShiftLeft:
+      return mir::BinaryOp::kShiftLeft;
+    case hir::BinaryOp::kLogicalShiftRight:
+      return mir::BinaryOp::kLogicalShiftRight;
+    case hir::BinaryOp::kArithmeticShiftRight:
+      return mir::BinaryOp::kArithmeticShiftRight;
   }
   throw InternalError("LowerBinaryOp: unknown HIR BinaryOp");
+}
+
+auto LowerUnaryOp(hir::UnaryOp op) -> mir::UnaryOp {
+  switch (op) {
+    case hir::UnaryOp::kPlus:
+      return mir::UnaryOp::kPlus;
+    case hir::UnaryOp::kMinus:
+      return mir::UnaryOp::kMinus;
+    case hir::UnaryOp::kBitwiseNot:
+      return mir::UnaryOp::kBitwiseNot;
+    case hir::UnaryOp::kLogicalNot:
+      return mir::UnaryOp::kLogicalNot;
+    case hir::UnaryOp::kReductionAnd:
+      return mir::UnaryOp::kReductionAnd;
+    case hir::UnaryOp::kReductionOr:
+      return mir::UnaryOp::kReductionOr;
+    case hir::UnaryOp::kReductionXor:
+      return mir::UnaryOp::kReductionXor;
+    case hir::UnaryOp::kReductionNand:
+      return mir::UnaryOp::kReductionNand;
+    case hir::UnaryOp::kReductionNor:
+      return mir::UnaryOp::kReductionNor;
+    case hir::UnaryOp::kReductionXnor:
+      return mir::UnaryOp::kReductionXnor;
+  }
+  throw InternalError("LowerUnaryOp: unknown HIR UnaryOp");
 }
 
 auto LowerTimeScale(hir::TimeScale s) -> mir::TimeScale {
@@ -54,8 +135,6 @@ auto LowerTimeScale(hir::TimeScale s) -> mir::TimeScale {
   }
   throw InternalError("LowerTimeScale: unknown HIR TimeScale");
 }
-
-namespace {
 
 auto LowerSignedness(hir::Signedness s) -> mir::Signedness {
   switch (s) {
@@ -286,6 +365,21 @@ auto LowerExpr(
             return LowerPrimaryExpr(
                 unit_state, class_state, proc_state, p, result_type);
           },
+          [&](const hir::UnaryExpr& u) -> diag::Result<mir::Expr> {
+            auto operand_or = LowerExpr(
+                unit_state, class_state, proc_state, body_state, hir_process,
+                hir_process.exprs.at(u.operand.value));
+            if (!operand_or) {
+              return std::unexpected(std::move(operand_or.error()));
+            }
+            const mir::ExprId operand_id =
+                body_state.AddExpr(*std::move(operand_or));
+            return mir::Expr{
+                .data =
+                    mir::UnaryExpr{
+                        .op = LowerUnaryOp(u.op), .operand = operand_id},
+                .type = result_type};
+          },
           [&](const hir::BinaryExpr& b) -> diag::Result<mir::Expr> {
             auto lhs_or = LowerExpr(
                 unit_state, class_state, proc_state, body_state, hir_process,
@@ -387,6 +481,21 @@ auto LowerExpr(
           [&](const hir::PrimaryExpr& p) -> diag::Result<mir::Expr> {
             return LowerPrimaryExpr(
                 unit_state, class_state, ctor_state, p, result_type);
+          },
+          [&](const hir::UnaryExpr& u) -> diag::Result<mir::Expr> {
+            auto operand_or = LowerExpr(
+                unit_state, class_state, ctor_state, body_state, scope,
+                scope.GetExpr(u.operand));
+            if (!operand_or) {
+              return std::unexpected(std::move(operand_or.error()));
+            }
+            const mir::ExprId operand_id =
+                body_state.AddExpr(*std::move(operand_or));
+            return mir::Expr{
+                .data =
+                    mir::UnaryExpr{
+                        .op = LowerUnaryOp(u.op), .operand = operand_id},
+                .type = result_type};
           },
           [&](const hir::BinaryExpr& b) -> diag::Result<mir::Expr> {
             auto lhs_or = LowerExpr(

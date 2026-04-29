@@ -13,6 +13,9 @@
 #include "lyra/backend/cpp/string_literal.hpp"
 #include "lyra/base/internal_error.hpp"
 #include "lyra/base/overloaded.hpp"
+#include "lyra/diag/diag_code.hpp"
+#include "lyra/diag/diagnostic.hpp"
+#include "lyra/diag/kind.hpp"
 #include "lyra/mir/binary_op.hpp"
 #include "lyra/mir/conversion.hpp"
 #include "lyra/mir/expr.hpp"
@@ -23,14 +26,43 @@ namespace lyra::backend::cpp {
 
 namespace {
 
-auto BinaryOpToken(mir::BinaryOp op) -> std::string_view {
+auto BinaryOpToken(mir::BinaryOp op) -> diag::Result<std::string_view> {
   switch (op) {
     case mir::BinaryOp::kAdd:
-      return " + ";
+      return std::string_view{" + "};
     case mir::BinaryOp::kLessThan:
-      return " < ";
+      return std::string_view{" < "};
+    case mir::BinaryOp::kSub:
+    case mir::BinaryOp::kMul:
+    case mir::BinaryOp::kDiv:
+    case mir::BinaryOp::kMod:
+    case mir::BinaryOp::kPower:
+    case mir::BinaryOp::kBitwiseAnd:
+    case mir::BinaryOp::kBitwiseOr:
+    case mir::BinaryOp::kBitwiseXor:
+    case mir::BinaryOp::kBitwiseXnor:
+    case mir::BinaryOp::kEquality:
+    case mir::BinaryOp::kInequality:
+    case mir::BinaryOp::kCaseEquality:
+    case mir::BinaryOp::kCaseInequality:
+    case mir::BinaryOp::kWildcardEquality:
+    case mir::BinaryOp::kWildcardInequality:
+    case mir::BinaryOp::kGreaterEqual:
+    case mir::BinaryOp::kGreaterThan:
+    case mir::BinaryOp::kLessEqual:
+    case mir::BinaryOp::kLogicalAnd:
+    case mir::BinaryOp::kLogicalOr:
+    case mir::BinaryOp::kLogicalImplication:
+    case mir::BinaryOp::kLogicalEquivalence:
+    case mir::BinaryOp::kShiftLeft:
+    case mir::BinaryOp::kLogicalShiftRight:
+    case mir::BinaryOp::kArithmeticShiftRight:
+      return diag::Unsupported(
+          diag::DiagCode::kCppEmitBinaryOpNotImplemented,
+          "this binary operator is not yet implemented in cpp emit",
+          diag::UnsupportedCategory::kFeature);
   }
-  throw InternalError("RenderExpr: unsupported MIR BinaryOp");
+  throw InternalError("BinaryOpToken: unknown MIR BinaryOp");
 }
 
 auto LookupLocalName(const mir::Body& body, const mir::LocalVarRef& ref)
@@ -167,7 +199,7 @@ auto RenderIntegerLiteralAsView(
 
 auto RenderConversionCall(
     const RenderContext& ctx, mir::TypeId target_type,
-    const mir::ConversionExpr& conv) -> std::string {
+    const mir::ConversionExpr& conv) -> diag::Result<std::string> {
   const auto& target = ctx.Unit().GetType(target_type).AsPackedArray();
   const auto& operand_expr = ctx.Expr(conv.operand);
   const auto& source_type = ctx.Unit().GetType(operand_expr.type);
@@ -179,14 +211,17 @@ auto RenderConversionCall(
   }
   const auto& source = source_type.AsPackedArray();
 
-  const std::string operand_view = RenderExprAsRuntimeView(ctx, operand_expr);
+  auto operand_view_or = RenderExprAsRuntimeView(ctx, operand_expr);
+  if (!operand_view_or) {
+    return std::unexpected(std::move(operand_view_or.error()));
+  }
   const std::string target_shape = RenderPackedShapeLiteral(target.dims);
 
   const char* fn = target.IsFourState() ? "lyra::runtime::ConvertToLogic"
                                         : "lyra::runtime::ConvertToBit";
   return std::format(
       "{}<{}, {}>({}, {})", fn, target_shape,
-      SignednessLiteral(target.signedness), operand_view,
+      SignednessLiteral(target.signedness), *operand_view_or,
       SignednessLiteral(source.signedness));
 }
 
@@ -207,50 +242,68 @@ auto RenderLvalue(const RenderContext& ctx, const mir::Lvalue& target)
 }
 
 auto RenderExprAsNative(const RenderContext& ctx, const mir::Expr& expr)
-    -> std::string {
+    -> diag::Result<std::string> {
   return std::visit(
       Overloaded{
-          [&](const mir::IntegerLiteral& lit) -> std::string {
+          [&](const mir::IntegerLiteral& lit) -> diag::Result<std::string> {
             return RenderNativeIntegerLiteral(lit.value);
           },
-          [&](const mir::StringLiteral& s) -> std::string {
+          [&](const mir::StringLiteral& s) -> diag::Result<std::string> {
             return RenderStdStringLiteral(s.value);
           },
-          [](const mir::TimeLiteral&) -> std::string {
-            throw InternalError(
-                "backend cpp: TimeLiteral is not yet supported by the C++ "
-                "emitter");
+          [](const mir::TimeLiteral&) -> diag::Result<std::string> {
+            return diag::Unsupported(
+                diag::DiagCode::kCppEmitExpressionFormNotImplemented,
+                "TimeLiteral is not yet implemented in cpp emit",
+                diag::UnsupportedCategory::kFeature);
           },
-          [&](const mir::MemberVarRef& m) -> std::string {
+          [&](const mir::MemberVarRef& m) -> diag::Result<std::string> {
             return ctx.Class().GetMemberVar(m.target).name;
           },
-          [&](const mir::LocalVarRef& l) -> std::string {
+          [&](const mir::LocalVarRef& l) -> diag::Result<std::string> {
             return LookupLocalName(ctx.Body(), l);
           },
-          [&](const mir::BinaryExpr& b) -> std::string {
-            return "(" + RenderExprAsNative(ctx, ctx.Expr(b.lhs)) +
-                   std::string{BinaryOpToken(b.op)} +
-                   RenderExprAsNative(ctx, ctx.Expr(b.rhs)) + ")";
+          [](const mir::UnaryExpr&) -> diag::Result<std::string> {
+            return diag::Unsupported(
+                diag::DiagCode::kCppEmitUnaryOpNotImplemented,
+                "this unary operator is not yet implemented in cpp emit",
+                diag::UnsupportedCategory::kFeature);
           },
-          [&](const mir::AssignExpr& a) -> std::string {
+          [&](const mir::BinaryExpr& b) -> diag::Result<std::string> {
+            auto token_or = BinaryOpToken(b.op);
+            if (!token_or) {
+              return std::unexpected(std::move(token_or.error()));
+            }
+            auto lhs_or = RenderExprAsNative(ctx, ctx.Expr(b.lhs));
+            if (!lhs_or) return std::unexpected(std::move(lhs_or.error()));
+            auto rhs_or = RenderExprAsNative(ctx, ctx.Expr(b.rhs));
+            if (!rhs_or) return std::unexpected(std::move(rhs_or.error()));
+            return "(" + *lhs_or + std::string{*token_or} + *rhs_or + ")";
+          },
+          [&](const mir::AssignExpr& a) -> diag::Result<std::string> {
             const auto target_type = MirTypeOfLvalue(ctx, a.target);
             if (IsPackedRuntime(ctx.Unit(), target_type)) {
+              auto value_or = RenderExprAsRuntimeView(ctx, ctx.Expr(a.value));
+              if (!value_or) {
+                return std::unexpected(std::move(value_or.error()));
+              }
               return std::format(
-                  "{}.Assign({})", RenderLvalue(ctx, a.target),
-                  RenderExprAsRuntimeView(ctx, ctx.Expr(a.value)));
+                  "{}.Assign({})", RenderLvalue(ctx, a.target), *value_or);
             }
-            return "(" + RenderLvalue(ctx, a.target) + " = " +
-                   RenderExprAsNative(ctx, ctx.Expr(a.value)) + ")";
+            auto value_or = RenderExprAsNative(ctx, ctx.Expr(a.value));
+            if (!value_or) return std::unexpected(std::move(value_or.error()));
+            return "(" + RenderLvalue(ctx, a.target) + " = " + *value_or + ")";
           },
-          [&](const mir::ConversionExpr& cv) -> std::string {
+          [&](const mir::ConversionExpr& cv) -> diag::Result<std::string> {
             return RenderExprAsNative(ctx, ctx.Expr(cv.operand));
           },
-          [](const mir::CallExpr&) -> std::string {
-            throw InternalError(
-                "RenderExprAsNative: mir::CallExpr lowering to C++ is not "
-                "implemented");
+          [](const mir::CallExpr&) -> diag::Result<std::string> {
+            return diag::Unsupported(
+                diag::DiagCode::kCppEmitExpressionFormNotImplemented,
+                "user subroutine call is not yet implemented in cpp emit",
+                diag::UnsupportedCategory::kFeature);
           },
-          [&](const mir::RuntimeCallExpr& rc) -> std::string {
+          [&](const mir::RuntimeCallExpr& rc) -> diag::Result<std::string> {
             return RenderRuntimeCallExpr(ctx, rc);
           },
       },
@@ -258,64 +311,69 @@ auto RenderExprAsNative(const RenderContext& ctx, const mir::Expr& expr)
 }
 
 auto RenderExprAsRuntimeView(const RenderContext& ctx, const mir::Expr& expr)
-    -> std::string {
+    -> diag::Result<std::string> {
   return std::visit(
       Overloaded{
-          [&](const mir::IntegerLiteral& lit) -> std::string {
+          [&](const mir::IntegerLiteral& lit) -> diag::Result<std::string> {
             return RenderIntegerLiteralAsView(ctx.Unit(), expr.type, lit.value);
           },
-          [&](const mir::MemberVarRef& m) -> std::string {
+          [&](const mir::MemberVarRef& m) -> diag::Result<std::string> {
             return std::format(
                 "{}.View()", ctx.Class().GetMemberVar(m.target).name);
           },
-          [&](const mir::LocalVarRef& l) -> std::string {
+          [&](const mir::LocalVarRef& l) -> diag::Result<std::string> {
             return std::format("{}.View()", LookupLocalName(ctx.Body(), l));
           },
-          [&](const mir::ConversionExpr& cv) -> std::string {
-            return std::format(
-                "{}.View()", RenderConversionCall(ctx, expr.type, cv));
+          [&](const mir::ConversionExpr& cv) -> diag::Result<std::string> {
+            auto inner_or = RenderConversionCall(ctx, expr.type, cv);
+            if (!inner_or) return std::unexpected(std::move(inner_or.error()));
+            return std::format("{}.View()", *inner_or);
           },
-          [](const mir::AssignExpr&) -> std::string {
-            throw InternalError(
-                "RenderExprAsRuntimeView: AssignExpr in a runtime-view "
-                "context is not yet supported");
+          [](const mir::AssignExpr&) -> diag::Result<std::string> {
+            return diag::Unsupported(
+                diag::DiagCode::kCppEmitExpressionFormNotImplemented,
+                "AssignExpr in a runtime-view context is not yet implemented "
+                "in cpp emit",
+                diag::UnsupportedCategory::kFeature);
           },
-          [](const auto&) -> std::string {
-            throw InternalError(
-                "RenderExprAsRuntimeView: expression form is not renderable "
-                "as a runtime view");
+          [](const auto&) -> diag::Result<std::string> {
+            return diag::Unsupported(
+                diag::DiagCode::kCppEmitExpressionFormNotImplemented,
+                "this expression form is not yet renderable as a runtime view "
+                "in cpp emit",
+                diag::UnsupportedCategory::kFeature);
           },
       },
       expr.data);
 }
 
 auto RenderExpr(const RenderContext& ctx, const mir::Expr& expr)
-    -> std::string {
+    -> diag::Result<std::string> {
   // Some expressions slang types as packed but read as native rvalues
   // (e.g. comparisons over native-int operands). Mode is picked per-variant.
   return std::visit(
       Overloaded{
-          [&](const mir::IntegerLiteral&) -> std::string {
+          [&](const mir::IntegerLiteral&) -> diag::Result<std::string> {
             return IsPackedRuntime(ctx.Unit(), expr.type)
                        ? RenderExprAsRuntimeView(ctx, expr)
                        : RenderExprAsNative(ctx, expr);
           },
-          [&](const mir::MemberVarRef&) -> std::string {
+          [&](const mir::MemberVarRef&) -> diag::Result<std::string> {
             return IsPackedRuntime(ctx.Unit(), expr.type)
                        ? RenderExprAsRuntimeView(ctx, expr)
                        : RenderExprAsNative(ctx, expr);
           },
-          [&](const mir::LocalVarRef&) -> std::string {
+          [&](const mir::LocalVarRef&) -> diag::Result<std::string> {
             return IsPackedRuntime(ctx.Unit(), expr.type)
                        ? RenderExprAsRuntimeView(ctx, expr)
                        : RenderExprAsNative(ctx, expr);
           },
-          [&](const mir::ConversionExpr&) -> std::string {
+          [&](const mir::ConversionExpr&) -> diag::Result<std::string> {
             return IsPackedRuntime(ctx.Unit(), expr.type)
                        ? RenderExprAsRuntimeView(ctx, expr)
                        : RenderExprAsNative(ctx, expr);
           },
-          [&](const auto&) -> std::string {
+          [&](const auto&) -> diag::Result<std::string> {
             return RenderExprAsNative(ctx, expr);
           },
       },

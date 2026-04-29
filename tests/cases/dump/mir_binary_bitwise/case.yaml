@@ -1,0 +1,15 @@
+id: dump.mir_binary_bitwise
+tags: [dump]
+input:
+  command: [dump, mir]
+  project: false
+  top: Top
+  files: [main.sv]
+expect:
+  exit: 0
+  stdout:
+    contains:
+      - "BinaryExpr op=BitwiseAnd"
+      - "BinaryExpr op=BitwiseOr"
+      - "BinaryExpr op=BitwiseXor"
+      - "BinaryExpr op=BitwiseXnor"

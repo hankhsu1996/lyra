@@ -12,6 +12,9 @@
 #include "lyra/backend/cpp/string_literal.hpp"
 #include "lyra/base/internal_error.hpp"
 #include "lyra/base/overloaded.hpp"
+#include "lyra/diag/diag_code.hpp"
+#include "lyra/diag/diagnostic.hpp"
+#include "lyra/diag/kind.hpp"
 #include "lyra/mir/expr.hpp"
 #include "lyra/mir/runtime_print.hpp"
 #include "lyra/mir/type.hpp"
@@ -64,14 +67,17 @@ auto RenderFormatSpecInit(const mir::FormatSpec& spec) -> std::string {
 }
 
 auto RenderRuntimeValueViewInit(
-    const RenderContext& ctx, const mir::RuntimePrintValue& v) -> std::string {
+    const RenderContext& ctx, const mir::RuntimePrintValue& v)
+    -> diag::Result<std::string> {
   const auto& type = ctx.Unit().GetType(v.type);
 
   // `%s` operands are typed as packed bit vectors by slang but reach the
   // runtime as a string_view. Dispatch on format kind, not just type.
   if (v.spec.kind == mir::FormatKind::kString) {
-    const std::string operand = RenderExprAsNative(ctx, ctx.Expr(v.value));
-    return std::format("lyra::runtime::RuntimeValueView::String({})", operand);
+    auto operand_or = RenderExprAsNative(ctx, ctx.Expr(v.value));
+    if (!operand_or) return std::unexpected(std::move(operand_or.error()));
+    return std::format(
+        "lyra::runtime::RuntimeValueView::String({})", *operand_or);
   }
 
   if (type.IsPackedArray()) {
@@ -81,33 +87,39 @@ auto RenderRuntimeValueViewInit(
 
     if (pa.form == mir::PackedArrayForm::kInt ||
         pa.form == mir::PackedArrayForm::kInteger) {
-      const std::string operand = RenderExprAsNative(ctx, ctx.Expr(v.value));
+      auto operand_or = RenderExprAsNative(ctx, ctx.Expr(v.value));
+      if (!operand_or) return std::unexpected(std::move(operand_or.error()));
       return std::format(
           "lyra::runtime::RuntimeValueView::NarrowIntegral("
           "static_cast<std::uint64_t>({}), {}, {})",
-          operand, bit_width, BoolLiteral(is_signed));
+          *operand_or, bit_width, BoolLiteral(is_signed));
     }
 
     if (pa.form == mir::PackedArrayForm::kExplicit) {
       if (bit_width > 64) {
-        throw InternalError(
-            "RenderRuntimeValueViewInit: wide integral display is not yet "
-            "supported");
+        return diag::Unsupported(
+            diag::DiagCode::kCppEmitExpressionFormNotImplemented,
+            "wide integral display is not yet implemented in cpp emit",
+            diag::UnsupportedCategory::kFeature);
       }
-      const std::string operand_view =
-          RenderExprAsRuntimeView(ctx, ctx.Expr(v.value));
+      auto operand_view_or = RenderExprAsRuntimeView(ctx, ctx.Expr(v.value));
+      if (!operand_view_or) {
+        return std::unexpected(std::move(operand_view_or.error()));
+      }
       const char* factory =
           pa.IsFourState() ? "lyra::runtime::RuntimeValueView::FromLogicView"
                            : "lyra::runtime::RuntimeValueView::FromBitView";
       return std::format(
-          "{}({}, {})", factory, operand_view, BoolLiteral(is_signed));
+          "{}({}, {})", factory, *operand_view_or, BoolLiteral(is_signed));
     }
     throw InternalError(
         "RenderRuntimeValueViewInit: unsupported PackedArrayForm");
   }
   if (type.Kind() == mir::TypeKind::kString) {
-    const std::string operand = RenderExprAsNative(ctx, ctx.Expr(v.value));
-    return std::format("lyra::runtime::RuntimeValueView::String({})", operand);
+    auto operand_or = RenderExprAsNative(ctx, ctx.Expr(v.value));
+    if (!operand_or) return std::unexpected(std::move(operand_or.error()));
+    return std::format(
+        "lyra::runtime::RuntimeValueView::String({})", *operand_or);
   }
   throw InternalError(
       "RenderRuntimeValueViewInit: unsupported display operand type");
@@ -115,19 +127,21 @@ auto RenderRuntimeValueViewInit(
 
 auto RenderPrintItemInit(
     const RenderContext& ctx, const mir::RuntimePrintItem& item)
-    -> std::string {
+    -> diag::Result<std::string> {
   return std::visit(
       Overloaded{
-          [&](const mir::RuntimePrintLiteral& lit) -> std::string {
+          [&](const mir::RuntimePrintLiteral& lit)
+              -> diag::Result<std::string> {
             return std::format(
                 "lyra::runtime::PrintLiteralItem{{{}, {}}}",
                 RenderCStringLiteral(lit.text), lit.text.size());
           },
-          [&](const mir::RuntimePrintValue& v) -> std::string {
+          [&](const mir::RuntimePrintValue& v) -> diag::Result<std::string> {
+            auto view_or = RenderRuntimeValueViewInit(ctx, v);
+            if (!view_or) return std::unexpected(std::move(view_or.error()));
             return std::format(
                 "lyra::runtime::PrintValueItem{{{}, {}}}",
-                RenderFormatSpecInit(v.spec),
-                RenderRuntimeValueViewInit(ctx, v));
+                RenderFormatSpecInit(v.spec), *view_or);
           },
       },
       item);
@@ -136,12 +150,14 @@ auto RenderPrintItemInit(
 }  // namespace
 
 auto RenderRuntimeCallExpr(
-    const RenderContext& ctx, const mir::RuntimeCallExpr& expr) -> std::string {
+    const RenderContext& ctx, const mir::RuntimeCallExpr& expr)
+    -> diag::Result<std::string> {
   const mir::RuntimePrintCall& call = expr.print;
   if (call.descriptor.has_value()) {
-    throw InternalError(
-        "RenderRuntimeCallExpr: descriptor present but file output is not "
-        "implemented");
+    return diag::Unsupported(
+        diag::DiagCode::kCppEmitExpressionFormNotImplemented,
+        "file-output runtime print is not yet implemented in cpp emit",
+        diag::UnsupportedCategory::kFeature);
   }
   const std::string_view kind_literal = RenderRuntimePrintKind(call.kind);
 
@@ -162,7 +178,9 @@ auto RenderRuntimeCallExpr(
   std::vector<std::string> item_inits;
   item_inits.reserve(call.items.size());
   for (const mir::RuntimePrintItem& item : call.items) {
-    item_inits.push_back(RenderPrintItemInit(ctx, item));
+    auto init_or = RenderPrintItemInit(ctx, item);
+    if (!init_or) return std::unexpected(std::move(init_or.error()));
+    item_inits.push_back(*std::move(init_or));
   }
 
   std::string out = std::format(

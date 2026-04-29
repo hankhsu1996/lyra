@@ -213,6 +213,25 @@ constexpr std::array kEntries{
             .name = "system_subroutine_execution_not_implemented"}},
 
     std::pair{
+        DiagCode::kCppEmitBinaryOpNotImplemented,
+        DiagCodeInfo{
+            .kind = DiagKind::kUnsupported,
+            .category = UnsupportedCategory::kFeature,
+            .name = "cpp_emit_binary_op_not_implemented"}},
+    std::pair{
+        DiagCode::kCppEmitUnaryOpNotImplemented,
+        DiagCodeInfo{
+            .kind = DiagKind::kUnsupported,
+            .category = UnsupportedCategory::kFeature,
+            .name = "cpp_emit_unary_op_not_implemented"}},
+    std::pair{
+        DiagCode::kCppEmitExpressionFormNotImplemented,
+        DiagCodeInfo{
+            .kind = DiagKind::kUnsupported,
+            .category = UnsupportedCategory::kFeature,
+            .name = "cpp_emit_expression_form_not_implemented"}},
+
+    std::pair{
         DiagCode::kHostInvalidCliArgs,
         DiagCodeInfo{
             .kind = DiagKind::kHostError,
