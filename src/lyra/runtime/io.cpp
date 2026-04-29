@@ -5,22 +5,24 @@
 #include <variant>
 
 #include "lyra/base/overloaded.hpp"
-#include "lyra/runtime/engine.hpp"
 #include "lyra/runtime/format.hpp"
 #include "lyra/runtime/output_sink.hpp"
+#include "lyra/runtime/runtime_services.hpp"
 
 namespace lyra::runtime {
 
 void LyraPrint(
-    Engine& engine, PrintKind kind, std::span<const PrintItem> items) {
+    RuntimeServices& services, PrintKind kind,
+    std::span<const PrintItem> items) {
+  auto& output = services.Output();
   for (const PrintItem& item : items) {
     std::visit(
         Overloaded{
             [&](const PrintLiteralItem& lit) {
-              engine.Output().Append(std::string_view{lit.data, lit.size});
+              output.Append(std::string_view{lit.data, lit.size});
             },
             [&](const PrintValueItem& v) {
-              engine.Output().Append(FormatValue(v.spec, v.value));
+              output.Append(FormatValue(v.spec, v.value));
             },
         },
         item);
@@ -28,7 +30,7 @@ void LyraPrint(
 
   const bool append_newline =
       kind == PrintKind::kDisplay || kind == PrintKind::kFDisplay;
-  engine.Output().FinishRecord(append_newline);
+  output.FinishRecord(append_newline);
 }
 
 }  // namespace lyra::runtime

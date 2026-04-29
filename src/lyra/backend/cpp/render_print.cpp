@@ -145,7 +145,7 @@ auto RenderRuntimeCallExpr(
   // legal but a fragile spelling to depend on.
   if (call.items.empty()) {
     return std::format(
-        "lyra::runtime::LyraPrint(*engine_, {}, "
+        "lyra::runtime::LyraPrint(*services_, {}, "
         "std::span<const lyra::runtime::PrintItem>{{}})",
         kind_literal);
   }
@@ -161,7 +161,7 @@ auto RenderRuntimeCallExpr(
   }
 
   std::string out = std::format(
-      "lyra::runtime::LyraPrint(*engine_, {}, "
+      "lyra::runtime::LyraPrint(*services_, {}, "
       "std::array<lyra::runtime::PrintItem, {}>{{",
       kind_literal, call.items.size());
   for (std::size_t i = 0; i < item_inits.size(); ++i) {

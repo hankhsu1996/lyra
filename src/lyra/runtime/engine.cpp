@@ -10,11 +10,11 @@
 #include "lyra/runtime/bind_context.hpp"
 #include "lyra/runtime/module.hpp"
 #include "lyra/runtime/output_sink.hpp"
-#include "lyra/runtime/process.hpp"
 #include "lyra/runtime/process_kind.hpp"
 #include "lyra/runtime/runtime_process.hpp"
 #include "lyra/runtime/runtime_scope.hpp"
 #include "lyra/runtime/runtime_scope_kind.hpp"
+#include "lyra/runtime/runtime_traversal.hpp"
 
 namespace lyra::runtime {
 
@@ -35,26 +35,10 @@ void Engine::BindRoot(std::string root_name, Module& top) {
     throw InternalError("Engine::BindRoot called more than once");
   }
   bound_ = true;
-  scopes_.push_back(
-      std::make_unique<RuntimeScope>(
-          nullptr, std::move(root_name), RuntimeScopeKind::kModule));
-  RuntimeBindContext ctx(*this, *scopes_.front());
+  root_ = std::make_unique<RuntimeScope>(
+      nullptr, std::move(root_name), RuntimeScopeKind::kModuleInstance);
+  RuntimeBindContext ctx(*root_, services_);
   top.Bind(ctx);
-}
-
-void Engine::AddProcess(
-    RuntimeScope& owner, ProcessKind kind, Process process) {
-  processes_.emplace_back(owner, kind, std::move(process));
-}
-
-auto Engine::CreateChildScope(
-    RuntimeScope& parent, std::string name, RuntimeScopeKind kind)
-    -> RuntimeScope& {
-  scopes_.push_back(
-      std::make_unique<RuntimeScope>(&parent, std::move(name), kind));
-  RuntimeScope& child = *scopes_.back();
-  parent.AddChild(child);
-  return child;
 }
 
 auto Engine::Run() -> int {
@@ -65,19 +49,7 @@ auto Engine::Run() -> int {
     throw InternalError("Engine::Run called more than once");
   }
   ran_ = true;
-  for (auto& proc : processes_) {
-    switch (proc.Kind()) {
-      case ProcessKind::kInitial:
-        active_queue_.push_back(&proc);
-        break;
-      case ProcessKind::kAlways:
-      case ProcessKind::kAlwaysComb:
-      case ProcessKind::kAlwaysFf:
-      case ProcessKind::kFinal:
-        throw InternalError(
-            "Engine::Run: unsupported runtime ProcessKind in this cut");
-    }
-  }
+  EnqueueInitialProcesses(*root_);
   while (!active_queue_.empty()) {
     auto* proc = active_queue_.front();
     active_queue_.pop_front();
@@ -85,6 +57,24 @@ auto Engine::Run() -> int {
   }
   output_.Drain();
   return 0;
+}
+
+void Engine::EnqueueInitialProcesses(RuntimeScope& root) {
+  WalkScopePreOrder(root, [this](RuntimeScope& scope) {
+    scope.ForEachProcess([this](RuntimeProcess& process) {
+      switch (process.Kind()) {
+        case ProcessKind::kInitial:
+          active_queue_.push_back(&process);
+          break;
+        case ProcessKind::kAlways:
+        case ProcessKind::kAlwaysComb:
+        case ProcessKind::kAlwaysFf:
+        case ProcessKind::kFinal:
+          throw InternalError(
+              "Engine::Run: unsupported runtime ProcessKind in this cut");
+      }
+    });
+  });
 }
 
 }  // namespace lyra::runtime
