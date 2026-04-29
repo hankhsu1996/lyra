@@ -1,0 +1,11 @@
+id: cpp.literal_logic_packed_2d
+tags: [cpp_run]
+input:
+  command: [run, cpp]
+  project: false
+  top: Top
+  files: [main.sv]
+expect:
+  exit: 0
+  stdout:
+    exact: "11011110101011011011111011101111\n"

@@ -1,6 +1,5 @@
 #include "lyra/lowering/ast_to_hir/expression/lower.hpp"
 
-#include <cstdint>
 #include <expected>
 #include <string>
 #include <string_view>
@@ -21,10 +20,12 @@
 #include <slang/ast/symbols/VariableSymbols.h>
 #include <slang/numeric/SVInt.h>
 #include <slang/numeric/Time.h>
+#include <slang/syntax/AllSyntax.h>
 
 #include "lyra/base/internal_error.hpp"
 #include "lyra/diag/diagnostic.hpp"
 #include "lyra/hir/binary_op.hpp"
+#include "lyra/hir/conversion.hpp"
 #include "lyra/hir/expr.hpp"
 #include "lyra/hir/inspect.hpp"
 #include "lyra/hir/primary.hpp"
@@ -32,6 +33,7 @@
 #include "lyra/hir/type.hpp"
 #include "lyra/hir/value_ref.hpp"
 #include "lyra/lowering/ast_to_hir/facts.hpp"
+#include "lyra/lowering/ast_to_hir/integral_constant.hpp"
 #include "lyra/lowering/ast_to_hir/state.hpp"
 #include "lyra/lowering/ast_to_hir/type.hpp"
 #include "lyra/support/system_subroutine.hpp"
@@ -40,33 +42,84 @@ namespace lyra::lowering::ast_to_hir {
 
 namespace {
 
-auto LowerIntegerLiteralValue(
-    const UnitLoweringFacts& unit_facts,
-    const slang::ast::IntegerLiteral& literal) -> diag::Result<std::int64_t> {
-  const auto value = literal.getValue().as<std::int64_t>();
-  if (!value.has_value()) {
-    return diag::Unsupported(
-        unit_facts.SourceMapper().SpanOf(literal.sourceRange),
-        diag::DiagCode::kUnsupportedIntegerLiteralWidth,
-        "integer literal does not fit in a 64-bit signed integer",
-        diag::UnsupportedCategory::kFeature);
+auto LowerSlangLiteralBase(const slang::syntax::SyntaxNode* syntax)
+    -> hir::IntegerLiteralBase {
+  if (syntax != nullptr &&
+      syntax->kind == slang::syntax::SyntaxKind::IntegerVectorExpression) {
+    const auto& iv = syntax->as<slang::syntax::IntegerVectorExpressionSyntax>();
+    switch (iv.base.numericFlags().base()) {
+      case slang::LiteralBase::Binary:
+        return hir::IntegerLiteralBase::kBinary;
+      case slang::LiteralBase::Octal:
+        return hir::IntegerLiteralBase::kOctal;
+      case slang::LiteralBase::Decimal:
+        return hir::IntegerLiteralBase::kDecimal;
+      case slang::LiteralBase::Hex:
+        return hir::IntegerLiteralBase::kHexadecimal;
+    }
   }
-  return *value;
+  return hir::IntegerLiteralBase::kDecimal;
 }
 
-auto MakeLiteralExpr(std::int64_t v, diag::SourceSpan span) -> hir::Expr {
-  return hir::Expr{
-      .data = hir::PrimaryExpr{.data = hir::IntegerLiteral{.value = v}},
-      .span = span};
+auto LowerConversionKind(slang::ast::ConversionKind k) -> hir::ConversionKind {
+  switch (k) {
+    case slang::ast::ConversionKind::Implicit:
+      return hir::ConversionKind::kImplicit;
+    case slang::ast::ConversionKind::Propagated:
+      return hir::ConversionKind::kPropagated;
+    case slang::ast::ConversionKind::StreamingConcat:
+      return hir::ConversionKind::kStreamingConcat;
+    case slang::ast::ConversionKind::Explicit:
+      return hir::ConversionKind::kExplicit;
+    case slang::ast::ConversionKind::BitstreamCast:
+      return hir::ConversionKind::kBitstreamCast;
+  }
+  throw InternalError("LowerConversionKind: unknown slang ConversionKind");
 }
 
-auto MakeStringLiteralExpr(std::string text, diag::SourceSpan span)
-    -> hir::Expr {
+auto MakeIntegerLiteralExpr(
+    const slang::ast::IntegerLiteral& lit, hir::TypeId type,
+    diag::SourceSpan span) -> hir::Expr {
   return hir::Expr{
+      .type = type,
+      .data =
+          hir::PrimaryExpr{
+              .data =
+                  hir::IntegerLiteral{
+                      .value = LowerSVIntToIntegralConstant(lit.getValue()),
+                      .base = LowerSlangLiteralBase(lit.syntax),
+                      .declared_unsized = lit.isDeclaredUnsized,
+                  }},
+      .span = span,
+  };
+}
+
+auto MakeUnbasedUnsizedLiteralExpr(
+    const slang::ast::UnbasedUnsizedIntegerLiteral& lit, hir::TypeId type,
+    diag::SourceSpan span) -> hir::Expr {
+  return hir::Expr{
+      .type = type,
+      .data =
+          hir::PrimaryExpr{
+              .data =
+                  hir::IntegerLiteral{
+                      .value = LowerSVIntToIntegralConstant(lit.getValue()),
+                      .base = hir::IntegerLiteralBase::kUnbased,
+                      .declared_unsized = true,
+                  }},
+      .span = span,
+  };
+}
+
+auto MakeStringLiteralExpr(
+    std::string text, hir::TypeId type, diag::SourceSpan span) -> hir::Expr {
+  return hir::Expr{
+      .type = type,
       .data =
           hir::PrimaryExpr{
               .data = hir::StringLiteral{.value = std::move(text)}},
-      .span = span};
+      .span = span,
+  };
 }
 
 auto LowerTimeUnit(slang::TimeUnit u) -> hir::TimeScale {
@@ -88,18 +141,24 @@ auto LowerTimeUnit(slang::TimeUnit u) -> hir::TimeScale {
 }
 
 auto MakeTimeLiteralExpr(
-    double value, hir::TimeScale scale, diag::SourceSpan span) -> hir::Expr {
+    double value, hir::TimeScale scale, hir::TypeId type, diag::SourceSpan span)
+    -> hir::Expr {
   return hir::Expr{
+      .type = type,
       .data =
           hir::PrimaryExpr{
               .data = hir::TimeLiteral{.value = value, .scale = scale}},
-      .span = span};
+      .span = span,
+  };
 }
 
-auto MakeRefExpr(hir::ValueRef ref, diag::SourceSpan span) -> hir::Expr {
+auto MakeRefExpr(hir::ValueRef ref, hir::TypeId type, diag::SourceSpan span)
+    -> hir::Expr {
   return hir::Expr{
+      .type = type,
       .data = hir::PrimaryExpr{.data = hir::RefExpr{.target = std::move(ref)}},
-      .span = span};
+      .span = span,
+  };
 }
 
 auto FromSlangSubroutineKind(slang::ast::SubroutineKind k)
@@ -125,7 +184,7 @@ auto MakeReturnConventionType(
 
 auto LowerNamedValueProc(
     const UnitLoweringFacts& unit_facts, const UnitLoweringState& unit_state,
-    ProcessLoweringState& proc_state, const ScopeStack& stack,
+    const ProcessLoweringState& proc_state, const ScopeStack& stack,
     const slang::ast::NamedValueExpression& named) -> diag::Result<hir::Expr> {
   const auto& mapper = unit_facts.SourceMapper();
   const auto span = mapper.SpanOf(named.sourceRange);
@@ -138,7 +197,8 @@ auto LowerNamedValueProc(
   const auto& var = named.symbol.as<slang::ast::VariableSymbol>();
 
   if (auto local = proc_state.LookupLocalVar(var)) {
-    return MakeRefExpr(hir::LocalVarRef{.target = *local}, span);
+    const hir::TypeId type_id = proc_state.GetLocalVarType(*local);
+    return MakeRefExpr(hir::LocalVarRef{.target = *local}, type_id, span);
   }
 
   const auto binding = unit_state.LookupMemberVarBinding(var);
@@ -154,7 +214,7 @@ auto LowerNamedValueProc(
   return MakeRefExpr(
       hir::MemberVarRef{
           .parent_scope_hops = *hops, .target = binding->local_id},
-      span);
+      binding->type, span);
 }
 
 }  // namespace
@@ -184,27 +244,56 @@ auto LowerProcExpr(
 
   switch (expr.kind) {
     case slang::ast::ExpressionKind::IntegerLiteral: {
-      auto v = LowerIntegerLiteralValue(
-          unit_facts, expr.as<slang::ast::IntegerLiteral>());
-      if (!v) return std::unexpected(std::move(v.error()));
-      return MakeLiteralExpr(*v, span);
+      auto type_id = type_id_of(expr);
+      if (!type_id) return std::unexpected(std::move(type_id.error()));
+      return MakeIntegerLiteralExpr(
+          expr.as<slang::ast::IntegerLiteral>(), *type_id, span);
+    }
+
+    case slang::ast::ExpressionKind::UnbasedUnsizedIntegerLiteral: {
+      auto type_id = type_id_of(expr);
+      if (!type_id) return std::unexpected(std::move(type_id.error()));
+      return MakeUnbasedUnsizedLiteralExpr(
+          expr.as<slang::ast::UnbasedUnsizedIntegerLiteral>(), *type_id, span);
     }
 
     case slang::ast::ExpressionKind::StringLiteral: {
       const auto& sl = expr.as<slang::ast::StringLiteral>();
-      return MakeStringLiteralExpr(std::string{sl.getValue()}, span);
+      auto type_id = type_id_of(expr);
+      if (!type_id) return std::unexpected(std::move(type_id.error()));
+      return MakeStringLiteralExpr(std::string{sl.getValue()}, *type_id, span);
     }
 
     case slang::ast::ExpressionKind::TimeLiteral: {
       const auto& tl = expr.as<slang::ast::TimeLiteral>();
+      auto type_id = type_id_of(expr);
+      if (!type_id) return std::unexpected(std::move(type_id.error()));
       return MakeTimeLiteralExpr(
-          tl.getValue(), LowerTimeUnit(tl.getScale().base.unit), span);
+          tl.getValue(), LowerTimeUnit(tl.getScale().base.unit), *type_id,
+          span);
     }
 
     case slang::ast::ExpressionKind::NamedValue:
       return LowerNamedValueProc(
           unit_facts, unit_state, proc_state, stack,
           expr.as<slang::ast::NamedValueExpression>());
+
+    case slang::ast::ExpressionKind::Conversion: {
+      const auto& conv = expr.as<slang::ast::ConversionExpression>();
+      auto operand_id = append_child(conv.operand());
+      if (!operand_id) return std::unexpected(std::move(operand_id.error()));
+      auto type_id = type_id_of(expr);
+      if (!type_id) return std::unexpected(std::move(type_id.error()));
+      return hir::Expr{
+          .type = *type_id,
+          .data =
+              hir::ConversionExpr{
+                  .operand = *operand_id,
+                  .kind = LowerConversionKind(conv.conversionKind),
+              },
+          .span = span,
+      };
+    }
 
     case slang::ast::ExpressionKind::BinaryOp: {
       const auto& bin = expr.as<slang::ast::BinaryExpression>();
@@ -221,13 +310,15 @@ auto LowerProcExpr(
       auto type_id = type_id_of(expr);
       if (!type_id) return std::unexpected(std::move(type_id.error()));
       return hir::Expr{
+          .type = *type_id,
           .data =
               hir::BinaryExpr{
                   .op = hir::BinaryOp::kAdd,
                   .lhs = *lhs_id,
                   .rhs = *rhs_id,
-                  .type = *type_id},
-          .span = span};
+              },
+          .span = span,
+      };
     }
 
     case slang::ast::ExpressionKind::Call: {
@@ -270,12 +361,14 @@ auto LowerProcExpr(
         const auto result_type =
             MakeReturnConventionType(unit_state, desc->result_conv);
         return hir::Expr{
+            .type = result_type,
             .data =
                 hir::CallExpr{
                     .callee = hir::SystemSubroutineRef{.id = desc->id},
                     .arguments = std::move(arg_ids),
-                    .result_type = result_type},
-            .span = span};
+                },
+            .span = span,
+        };
       }
 
       const auto* sym =
@@ -301,14 +394,16 @@ auto LowerProcExpr(
         return std::unexpected(std::move(result_type.error()));
       }
       return hir::Expr{
+          .type = *result_type,
           .data =
               hir::CallExpr{
                   .callee =
                       hir::UserSubroutineRef{
                           .parent_scope_hops = *hops, .id = binding->local_id},
                   .arguments = std::move(arg_ids),
-                  .result_type = *result_type},
-          .span = span};
+              },
+          .span = span,
+      };
     }
 
     case slang::ast::ExpressionKind::Assignment: {
@@ -342,9 +437,10 @@ auto LowerProcExpr(
       auto type_id = type_id_of(expr);
       if (!type_id) return std::unexpected(std::move(type_id.error()));
       return hir::Expr{
-          .data =
-              hir::AssignExpr{.lhs = lhs_id, .rhs = *rhs_id, .type = *type_id},
-          .span = span};
+          .type = *type_id,
+          .data = hir::AssignExpr{.lhs = lhs_id, .rhs = *rhs_id},
+          .span = span,
+      };
     }
 
     default:
@@ -356,17 +452,29 @@ auto LowerProcExpr(
 }
 
 auto LowerStructuralExpr(
-    const UnitLoweringFacts& unit_facts, const slang::ast::Expression& expr)
-    -> diag::Result<hir::Expr> {
+    const UnitLoweringFacts& unit_facts, UnitLoweringState& unit_state,
+    const slang::ast::Expression& expr) -> diag::Result<hir::Expr> {
   const auto& mapper = unit_facts.SourceMapper();
   const auto span = mapper.SpanOf(expr.sourceRange);
+  auto type_id_of =
+      [&](const slang::ast::Expression& e) -> diag::Result<hir::TypeId> {
+    auto td = LowerTypeData(*e.type, mapper.SpanOf(e.sourceRange));
+    if (!td) return std::unexpected(std::move(td.error()));
+    return unit_state.AddType(*std::move(td));
+  };
 
   switch (expr.kind) {
     case slang::ast::ExpressionKind::IntegerLiteral: {
-      auto v = LowerIntegerLiteralValue(
-          unit_facts, expr.as<slang::ast::IntegerLiteral>());
-      if (!v) return std::unexpected(std::move(v.error()));
-      return MakeLiteralExpr(*v, span);
+      auto type_id = type_id_of(expr);
+      if (!type_id) return std::unexpected(std::move(type_id.error()));
+      return MakeIntegerLiteralExpr(
+          expr.as<slang::ast::IntegerLiteral>(), *type_id, span);
+    }
+    case slang::ast::ExpressionKind::UnbasedUnsizedIntegerLiteral: {
+      auto type_id = type_id_of(expr);
+      if (!type_id) return std::unexpected(std::move(type_id.error()));
+      return MakeUnbasedUnsizedLiteralExpr(
+          expr.as<slang::ast::UnbasedUnsizedIntegerLiteral>(), *type_id, span);
     }
     default:
       return diag::Unsupported(
@@ -448,10 +556,17 @@ auto LowerLoopHeaderExpr(
 
   switch (expr.kind) {
     case slang::ast::ExpressionKind::IntegerLiteral: {
-      auto v = LowerIntegerLiteralValue(
-          unit_facts, expr.as<slang::ast::IntegerLiteral>());
-      if (!v) return std::unexpected(std::move(v.error()));
-      return MakeLiteralExpr(*v, span);
+      auto type_id = type_id_of(expr);
+      if (!type_id) return std::unexpected(std::move(type_id.error()));
+      return MakeIntegerLiteralExpr(
+          expr.as<slang::ast::IntegerLiteral>(), *type_id, span);
+    }
+
+    case slang::ast::ExpressionKind::UnbasedUnsizedIntegerLiteral: {
+      auto type_id = type_id_of(expr);
+      if (!type_id) return std::unexpected(std::move(type_id.error()));
+      return MakeUnbasedUnsizedLiteralExpr(
+          expr.as<slang::ast::UnbasedUnsizedIntegerLiteral>(), *type_id, span);
     }
 
     case slang::ast::ExpressionKind::NamedValue: {
@@ -470,11 +585,13 @@ auto LowerLoopHeaderExpr(
         return std::unexpected(std::move(loop_var_or.error()));
       }
       if (loop_var_or->has_value()) {
+        const hir::TypeId type_id =
+            scope_state.GetLoopVarDeclType(**loop_var_or);
         return MakeRefExpr(
             hir::LoopVarRef{
                 .parent_scope_hops = hir::ParentScopeHops{.value = 0},
                 .target = **loop_var_or},
-            span);
+            type_id, span);
       }
       const auto binding = unit_state.LookupMemberVarBinding(var);
       if (!binding.has_value()) {
@@ -491,20 +608,24 @@ auto LowerLoopHeaderExpr(
       return MakeRefExpr(
           hir::MemberVarRef{
               .parent_scope_hops = *hops, .target = binding->local_id},
-          span);
+          binding->type, span);
     }
 
     case slang::ast::ExpressionKind::Conversion: {
-      // Slang inserts implicit Conversion nodes when binding loop-header
-      // expressions against the genvar's integer type; unwrap them.
       const auto& conv = expr.as<slang::ast::ConversionExpression>();
-      if (!conv.isImplicit()) {
-        return diag::Unsupported(
-            span, diag::DiagCode::kUnsupportedExpressionForm,
-            "explicit casts are not supported yet",
-            diag::UnsupportedCategory::kOperation);
-      }
-      return lower_child(conv.operand());
+      auto operand_id = add_child(conv.operand());
+      if (!operand_id) return std::unexpected(std::move(operand_id.error()));
+      auto type_id = type_id_of(expr);
+      if (!type_id) return std::unexpected(std::move(type_id.error()));
+      return hir::Expr{
+          .type = *type_id,
+          .data =
+              hir::ConversionExpr{
+                  .operand = *operand_id,
+                  .kind = LowerConversionKind(conv.conversionKind),
+              },
+          .span = span,
+      };
     }
 
     case slang::ast::ExpressionKind::BinaryOp: {
@@ -523,10 +644,10 @@ auto LowerLoopHeaderExpr(
       auto type_id = type_id_of(expr);
       if (!type_id) return std::unexpected(std::move(type_id.error()));
       return hir::Expr{
-          .data =
-              hir::BinaryExpr{
-                  .op = *op, .lhs = *lhs_id, .rhs = *rhs_id, .type = *type_id},
-          .span = span};
+          .type = *type_id,
+          .data = hir::BinaryExpr{.op = *op, .lhs = *lhs_id, .rhs = *rhs_id},
+          .span = span,
+      };
     }
 
     case slang::ast::ExpressionKind::Assignment: {
@@ -558,9 +679,10 @@ auto LowerLoopHeaderExpr(
       auto type_id = type_id_of(expr);
       if (!type_id) return std::unexpected(std::move(type_id.error()));
       return hir::Expr{
-          .data =
-              hir::AssignExpr{.lhs = lhs_id, .rhs = *rhs_id, .type = *type_id},
-          .span = span};
+          .type = *type_id,
+          .data = hir::AssignExpr{.lhs = lhs_id, .rhs = *rhs_id},
+          .span = span,
+      };
     }
 
     default:

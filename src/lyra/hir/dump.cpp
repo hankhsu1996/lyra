@@ -209,11 +209,52 @@ class HirDumper {
     throw InternalError("HirDumper::FormatTimeScale: unknown TimeScale");
   }
 
+  static auto FormatLiteralBase(IntegerLiteralBase b) -> std::string_view {
+    switch (b) {
+      case IntegerLiteralBase::kBinary:
+        return "b";
+      case IntegerLiteralBase::kOctal:
+        return "o";
+      case IntegerLiteralBase::kDecimal:
+        return "d";
+      case IntegerLiteralBase::kHexadecimal:
+        return "h";
+      case IntegerLiteralBase::kUnbased:
+        return "unbased";
+    }
+    throw InternalError("HirDumper::FormatLiteralBase: unknown base");
+  }
+
+  static auto FormatIntegralConstant(const IntegralConstant& c) -> std::string {
+    std::string out = std::format(
+        "{}'{}", c.width, c.signedness == Signedness::kSigned ? 's' : 'u');
+    if (c.state_kind == IntegralStateKind::kFourState) {
+      out += "(four-state)";
+    }
+    out += "{value=";
+    for (std::size_t i = 0; i < c.value_words.size(); ++i) {
+      if (i != 0) out += ',';
+      out += std::format("0x{:x}", c.value_words[i]);
+    }
+    if (c.state_kind == IntegralStateKind::kFourState) {
+      out += ", state=";
+      for (std::size_t i = 0; i < c.state_words.size(); ++i) {
+        if (i != 0) out += ',';
+        out += std::format("0x{:x}", c.state_words[i]);
+      }
+    }
+    out += "}";
+    return out;
+  }
+
   static auto FormatPrimary(const Primary& p) -> std::string {
     return std::visit(
         Overloaded{
             [](const IntegerLiteral& lit) -> std::string {
-              return std::format("IntegerLiteral({})", lit.value);
+              return std::format(
+                  "IntegerLiteral(base={}, unsized={}, {})",
+                  FormatLiteralBase(lit.base), lit.declared_unsized,
+                  FormatIntegralConstant(lit.value));
             },
             [](const StringLiteral& lit) -> std::string {
               return std::format("StringLiteral(\"{}\")", lit.value);
@@ -240,6 +281,22 @@ class HirDumper {
             },
         },
         tc);
+  }
+
+  static auto FormatConversionKind(ConversionKind k) -> std::string_view {
+    switch (k) {
+      case ConversionKind::kImplicit:
+        return "implicit";
+      case ConversionKind::kPropagated:
+        return "propagated";
+      case ConversionKind::kStreamingConcat:
+        return "streaming-concat";
+      case ConversionKind::kExplicit:
+        return "explicit";
+      case ConversionKind::kBitstreamCast:
+        return "bitstream-cast";
+    }
+    throw InternalError("HirDumper::FormatConversionKind: unknown kind");
   }
 
   [[nodiscard]] auto FormatSubroutineRef(const SubroutineRef& callee) const
@@ -271,21 +328,21 @@ class HirDumper {
     return *scope_stack_[scope_stack_.size() - 1 - hops.value];
   }
 
-  [[nodiscard]] auto FormatExprData(const ExprData& data) const -> std::string {
-    return std::visit(
+  [[nodiscard]] auto FormatExpr(const Expr& e) const -> std::string {
+    std::string body = std::visit(
         Overloaded{
             [](const PrimaryExpr& p) -> std::string {
               return FormatPrimary(p.data);
             },
             [](const BinaryExpr& b) -> std::string {
               return std::format(
-                  "BinaryExpr op={} lhs=Expr[{}] rhs=Expr[{}] type=Type[{}]",
-                  FormatBinaryOp(b.op), b.lhs.value, b.rhs.value, b.type.value);
+                  "BinaryExpr op={} lhs=Expr[{}] rhs=Expr[{}]",
+                  FormatBinaryOp(b.op), b.lhs.value, b.rhs.value);
             },
             [](const AssignExpr& a) -> std::string {
               return std::format(
-                  "AssignExpr lhs=Expr[{}] rhs=Expr[{}] type=Type[{}]",
-                  a.lhs.value, a.rhs.value, a.type.value);
+                  "AssignExpr lhs=Expr[{}] rhs=Expr[{}]", a.lhs.value,
+                  a.rhs.value);
             },
             [this](const CallExpr& c) -> std::string {
               std::string args;
@@ -296,21 +353,27 @@ class HirDumper {
                 args += std::format("Expr[{}]", c.arguments[i].value);
               }
               return std::format(
-                  "CallExpr callee={} args=[{}] type=Type[{}]",
-                  FormatSubroutineRef(c.callee), args, c.result_type.value);
+                  "CallExpr callee={} args=[{}]", FormatSubroutineRef(c.callee),
+                  args);
+            },
+            [](const ConversionExpr& cv) -> std::string {
+              return std::format(
+                  "ConversionExpr kind={} operand=Expr[{}]",
+                  FormatConversionKind(cv.kind), cv.operand.value);
             },
         },
-        data);
+        e.data);
+    return std::format("type=Type[{}] {}", e.type.value, body);
   }
 
   [[nodiscard]] auto FormatProcExpr(const Process& p, ExprId id) const
       -> std::string {
-    return FormatExprData(p.exprs.at(id.value).data);
+    return FormatExpr(p.exprs.at(id.value));
   }
 
   [[nodiscard]] auto FormatScopeExpr(const StructuralScope& s, ExprId id) const
       -> std::string {
-    return FormatExprData(s.GetExpr(id).data);
+    return FormatExpr(s.GetExpr(id));
   }
 
   void DumpUnit(const ModuleUnit& u) {
@@ -360,7 +423,7 @@ class HirDumper {
       Line("Exprs:");
       Indent();
       for (std::size_t i = 0; i < s.exprs.size(); ++i) {
-        Line(std::format("Expr[{}] {}", i, FormatExprData(s.exprs[i].data)));
+        Line(std::format("Expr[{}] {}", i, FormatExpr(s.exprs[i])));
       }
       Dedent();
     }
@@ -396,7 +459,7 @@ class HirDumper {
       Line("Exprs:");
       Indent();
       for (std::size_t i = 0; i < p.exprs.size(); ++i) {
-        Line(std::format("Expr[{}] {}", i, FormatExprData(p.exprs[i].data)));
+        Line(std::format("Expr[{}] {}", i, FormatExpr(p.exprs[i])));
       }
       Dedent();
     }

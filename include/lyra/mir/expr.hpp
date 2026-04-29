@@ -7,7 +7,9 @@
 #include <vector>
 
 #include "lyra/mir/binary_op.hpp"
+#include "lyra/mir/conversion.hpp"
 #include "lyra/mir/expr_id.hpp"
+#include "lyra/mir/integral_constant.hpp"
 #include "lyra/mir/local_var.hpp"
 #include "lyra/mir/member_var.hpp"
 #include "lyra/mir/runtime_print.hpp"
@@ -18,7 +20,7 @@ namespace lyra::mir {
 enum class TimeScale : std::uint8_t { kFs, kPs, kNs, kUs, kMs, kS };
 
 struct IntegerLiteral {
-  std::int64_t value;
+  IntegralConstant value;
 };
 
 struct StringLiteral {
@@ -76,7 +78,7 @@ struct RuntimeCallExpr {
 
 using ExprData = std::variant<
     IntegerLiteral, StringLiteral, TimeLiteral, MemberVarRef, LocalVarRef,
-    BinaryExpr, AssignExpr, CallExpr, RuntimeCallExpr>;
+    BinaryExpr, AssignExpr, CallExpr, RuntimeCallExpr, ConversionExpr>;
 
 struct Expr {
   ExprData data;

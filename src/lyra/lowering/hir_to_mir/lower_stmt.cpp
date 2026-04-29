@@ -5,10 +5,12 @@
 #include <variant>
 #include <vector>
 
+#include "lyra/base/internal_error.hpp"
 #include "lyra/base/overloaded.hpp"
 #include "lyra/diag/diag_code.hpp"
 #include "lyra/diag/diagnostic.hpp"
 #include "lyra/hir/expr.hpp"
+#include "lyra/hir/integral_constant.hpp"
 #include "lyra/hir/primary.hpp"
 #include "lyra/hir/process.hpp"
 #include "lyra/hir/stmt.hpp"
@@ -21,13 +23,35 @@ namespace lyra::lowering::hir_to_mir {
 
 namespace {
 
+auto IntegralConstantToInt64(const hir::IntegralConstant& c) -> std::int64_t {
+  if (c.state_kind == hir::IntegralStateKind::kFourState) {
+    throw InternalError(
+        "IntegralConstantToInt64: 4-state literal in integer-delay context");
+  }
+  if (c.value_words.empty()) {
+    return 0;
+  }
+  const std::uint64_t raw = c.value_words[0];
+  if (c.signedness == hir::Signedness::kSigned && c.width > 0U &&
+      c.width < 64U) {
+    const std::uint64_t sign_bit = std::uint64_t{1} << (c.width - 1U);
+    if ((raw & sign_bit) != 0U) {
+      const std::uint64_t fill =
+          ~((std::uint64_t{1} << c.width) - std::uint64_t{1});
+      return static_cast<std::int64_t>(raw | fill);
+    }
+  }
+  return static_cast<std::int64_t>(raw);
+}
+
 auto ResolveDelayDuration(
     const DelayTimeResolver& resolver, const hir::Expr& duration)
     -> diag::Result<SimDuration> {
   if (const auto* primary = std::get_if<hir::PrimaryExpr>(&duration.data)) {
     if (const auto* int_lit =
             std::get_if<hir::IntegerLiteral>(&primary->data)) {
-      return resolver.ResolveIntegerDelay(int_lit->value, duration.span);
+      return resolver.ResolveIntegerDelay(
+          IntegralConstantToInt64(int_lit->value), duration.span);
     }
     if (const auto* time_lit = std::get_if<hir::TimeLiteral>(&primary->data)) {
       return resolver.ResolveTimeLiteral(

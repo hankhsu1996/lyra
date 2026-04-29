@@ -12,7 +12,7 @@ expect:
       - "TimedStmt"
       - "DelayControl duration=Expr["
       - "EmptyStmt"
-      - "IntegerLiteral(5)"
+      - "IntegerLiteral(base=d, unsized=true, 32's{value=0x5})"
       - "TimeLiteral(value=5, scale=ns)"
       - "StringLiteral(\"x\")"
       - "StringLiteral(\"ns\")"

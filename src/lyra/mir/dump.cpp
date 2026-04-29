@@ -263,13 +263,52 @@ class MirDumper {
     return std::format("UserSubroutine[{}] \"{}\"", callee.value, target.name);
   }
 
+  static auto FormatIntegralConstant(const IntegralConstant& c) -> std::string {
+    std::string out = std::format(
+        "{}'{}", c.width, c.signedness == Signedness::kSigned ? 's' : 'u');
+    if (c.state_kind == IntegralStateKind::kFourState) {
+      out += "(four-state)";
+    }
+    out += "{value=";
+    for (std::size_t i = 0; i < c.value_words.size(); ++i) {
+      if (i != 0) out += ',';
+      out += std::format("0x{:x}", c.value_words[i]);
+    }
+    if (c.state_kind == IntegralStateKind::kFourState) {
+      out += ", state=";
+      for (std::size_t i = 0; i < c.state_words.size(); ++i) {
+        if (i != 0) out += ',';
+        out += std::format("0x{:x}", c.state_words[i]);
+      }
+    }
+    out += "}";
+    return out;
+  }
+
+  static auto FormatConversionKind(ConversionKind k) -> std::string_view {
+    switch (k) {
+      case ConversionKind::kImplicit:
+        return "implicit";
+      case ConversionKind::kPropagated:
+        return "propagated";
+      case ConversionKind::kStreamingConcat:
+        return "streaming-concat";
+      case ConversionKind::kExplicit:
+        return "explicit";
+      case ConversionKind::kBitstreamCast:
+        return "bitstream-cast";
+    }
+    throw InternalError("MirDumper::FormatConversionKind: unknown kind");
+  }
+
   [[nodiscard]] auto FormatExpr(const Body& body, ExprId id) const
       -> std::string {
     const auto& e = body.exprs.at(id.value);
     std::string body_str = std::visit(
         Overloaded{
             [](const IntegerLiteral& lit) -> std::string {
-              return std::format("IntegerLiteral({})", lit.value);
+              return std::format(
+                  "IntegerLiteral({})", FormatIntegralConstant(lit.value));
             },
             [](const StringLiteral& lit) -> std::string {
               return std::format("StringLiteral(\"{}\")", lit.value);
@@ -310,6 +349,11 @@ class MirDumper {
             },
             [](const RuntimeCallExpr&) -> std::string {
               return "RuntimeCallExpr";
+            },
+            [](const ConversionExpr& cv) -> std::string {
+              return std::format(
+                  "ConversionExpr kind={} operand=Expr[{}]",
+                  FormatConversionKind(cv.kind), cv.operand.value);
             },
         },
         e.data);

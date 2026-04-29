@@ -9,8 +9,10 @@
 #include "lyra/diag/diag_code.hpp"
 #include "lyra/diag/diagnostic.hpp"
 #include "lyra/hir/binary_op.hpp"
+#include "lyra/hir/conversion.hpp"
 #include "lyra/hir/expr.hpp"
 #include "lyra/hir/inspect.hpp"
+#include "lyra/hir/integral_constant.hpp"
 #include "lyra/hir/process.hpp"
 #include "lyra/hir/structural_scope.hpp"
 #include "lyra/hir/subroutine_ref.hpp"
@@ -19,7 +21,9 @@
 #include "lyra/lowering/hir_to_mir/lower_system_subroutine.hpp"
 #include "lyra/lowering/hir_to_mir/state.hpp"
 #include "lyra/mir/binary_op.hpp"
+#include "lyra/mir/conversion.hpp"
 #include "lyra/mir/expr.hpp"
+#include "lyra/mir/integral_constant.hpp"
 
 namespace lyra::lowering::hir_to_mir {
 
@@ -53,29 +57,73 @@ auto LowerTimeScale(hir::TimeScale s) -> mir::TimeScale {
 
 namespace {
 
+auto LowerSignedness(hir::Signedness s) -> mir::Signedness {
+  switch (s) {
+    case hir::Signedness::kSigned:
+      return mir::Signedness::kSigned;
+    case hir::Signedness::kUnsigned:
+      return mir::Signedness::kUnsigned;
+  }
+  throw InternalError("LowerSignedness: unknown HIR Signedness");
+}
+
+auto LowerStateKind(hir::IntegralStateKind k) -> mir::IntegralStateKind {
+  switch (k) {
+    case hir::IntegralStateKind::kTwoState:
+      return mir::IntegralStateKind::kTwoState;
+    case hir::IntegralStateKind::kFourState:
+      return mir::IntegralStateKind::kFourState;
+  }
+  throw InternalError("LowerStateKind: unknown HIR IntegralStateKind");
+}
+
+auto LowerHirIntegralConstant(const hir::IntegralConstant& c)
+    -> mir::IntegralConstant {
+  return mir::IntegralConstant{
+      .value_words = c.value_words,
+      .state_words = c.state_words,
+      .width = c.width,
+      .signedness = LowerSignedness(c.signedness),
+      .state_kind = LowerStateKind(c.state_kind),
+  };
+}
+
+auto LowerHirConversionKind(hir::ConversionKind k) -> mir::ConversionKind {
+  switch (k) {
+    case hir::ConversionKind::kImplicit:
+      return mir::ConversionKind::kImplicit;
+    case hir::ConversionKind::kPropagated:
+      return mir::ConversionKind::kPropagated;
+    case hir::ConversionKind::kStreamingConcat:
+      return mir::ConversionKind::kStreamingConcat;
+    case hir::ConversionKind::kExplicit:
+      return mir::ConversionKind::kExplicit;
+    case hir::ConversionKind::kBitstreamCast:
+      return mir::ConversionKind::kBitstreamCast;
+  }
+  throw InternalError("LowerHirConversionKind: unknown HIR ConversionKind");
+}
+
 auto LowerMemberVarRefExpr(
-    const ClassLoweringState& class_state, const hir::MemberVarRef& m)
-    -> mir::Expr {
+    const ClassLoweringState& class_state, const hir::MemberVarRef& m,
+    mir::TypeId type) -> mir::Expr {
   const mir::MemberVarId mir_id =
       class_state.TranslateMemberVar(m.parent_scope_hops, m.target);
-  const auto& member = class_state.GetMemberVar(m.parent_scope_hops, mir_id);
-  return mir::Expr{
-      .data = mir::MemberVarRef{.target = mir_id}, .type = member.type};
+  return mir::Expr{.data = mir::MemberVarRef{.target = mir_id}, .type = type};
 }
 
 auto LowerLocalVarRefExpr(
-    const ProcessLoweringState& proc_state, const BodyLoweringState& body_state,
-    const hir::LocalVarRef& l) -> mir::Expr {
+    const ProcessLoweringState& proc_state, const hir::LocalVarRef& l,
+    mir::TypeId type) -> mir::Expr {
   const mir::LocalVarRef ref = proc_state.TranslateLocalVar(l.target);
-  return mir::Expr{.data = ref, .type = body_state.GetLocalVar(ref).type};
+  return mir::Expr{.data = ref, .type = type};
 }
 
 auto LowerLoopVarRefExpr(
-    const ConstructorLoweringState& ctor_state,
-    const BodyLoweringState& body_state, const hir::LoopVarRef& lv)
-    -> mir::Expr {
+    const ConstructorLoweringState& ctor_state, const hir::LoopVarRef& lv,
+    mir::TypeId type) -> mir::Expr {
   const mir::LocalVarRef ref = ctor_state.TranslateLoopVar(lv.target);
-  return mir::Expr{.data = ref, .type = body_state.GetLocalVar(ref).type};
+  return mir::Expr{.data = ref, .type = type};
 }
 
 auto LowerRefAsLvalue(
@@ -132,19 +180,20 @@ auto LowerUserCallee(
 
 auto LowerPrimaryExpr(
     const UnitLoweringState& unit_state, const ClassLoweringState& class_state,
-    const ProcessLoweringState& proc_state, const BodyLoweringState& body_state,
-    const hir::PrimaryExpr& p) -> mir::Expr {
+    const ProcessLoweringState& proc_state, const hir::PrimaryExpr& p,
+    mir::TypeId type) -> mir::Expr {
   return std::visit(
       Overloaded{
           [&](const hir::IntegerLiteral& i) -> mir::Expr {
             return mir::Expr{
-                .data = mir::IntegerLiteral{.value = i.value},
-                .type = unit_state.Builtins().int32};
+                .data =
+                    mir::IntegerLiteral{
+                        .value = LowerHirIntegralConstant(i.value)},
+                .type = type};
           },
           [&](const hir::StringLiteral& s) -> mir::Expr {
             return mir::Expr{
-                .data = mir::StringLiteral{.value = s.value},
-                .type = unit_state.Builtins().string};
+                .data = mir::StringLiteral{.value = s.value}, .type = type};
           },
           [&](const hir::TimeLiteral& t) -> mir::Expr {
             return mir::Expr{
@@ -157,10 +206,10 @@ auto LowerPrimaryExpr(
             return std::visit(
                 Overloaded{
                     [&](const hir::MemberVarRef& m) -> mir::Expr {
-                      return LowerMemberVarRefExpr(class_state, m);
+                      return LowerMemberVarRefExpr(class_state, m, type);
                     },
                     [&](const hir::LocalVarRef& l) -> mir::Expr {
-                      return LowerLocalVarRefExpr(proc_state, body_state, l);
+                      return LowerLocalVarRefExpr(proc_state, l, type);
                     },
                     [](const hir::LoopVarRef&) -> mir::Expr {
                       throw InternalError(
@@ -172,24 +221,25 @@ auto LowerPrimaryExpr(
           },
       },
       p.data);
+  (void)unit_state;
 }
 
 auto LowerPrimaryExpr(
     const UnitLoweringState& unit_state, const ClassLoweringState& class_state,
-    const ConstructorLoweringState& ctor_state,
-    const BodyLoweringState& body_state, const hir::PrimaryExpr& p)
-    -> diag::Result<mir::Expr> {
+    const ConstructorLoweringState& ctor_state, const hir::PrimaryExpr& p,
+    mir::TypeId type) -> diag::Result<mir::Expr> {
   return std::visit(
       Overloaded{
           [&](const hir::IntegerLiteral& i) -> diag::Result<mir::Expr> {
             return mir::Expr{
-                .data = mir::IntegerLiteral{.value = i.value},
-                .type = unit_state.Builtins().int32};
+                .data =
+                    mir::IntegerLiteral{
+                        .value = LowerHirIntegralConstant(i.value)},
+                .type = type};
           },
           [&](const hir::StringLiteral& s) -> diag::Result<mir::Expr> {
             return mir::Expr{
-                .data = mir::StringLiteral{.value = s.value},
-                .type = unit_state.Builtins().string};
+                .data = mir::StringLiteral{.value = s.value}, .type = type};
           },
           [&](const hir::TimeLiteral& t) -> diag::Result<mir::Expr> {
             return mir::Expr{
@@ -202,7 +252,7 @@ auto LowerPrimaryExpr(
             return std::visit(
                 Overloaded{
                     [&](const hir::MemberVarRef& m) -> diag::Result<mir::Expr> {
-                      return LowerMemberVarRefExpr(class_state, m);
+                      return LowerMemberVarRefExpr(class_state, m, type);
                     },
                     [](const hir::LocalVarRef&) -> diag::Result<mir::Expr> {
                       return diag::Unsupported(
@@ -212,13 +262,14 @@ auto LowerPrimaryExpr(
                           diag::UnsupportedCategory::kFeature);
                     },
                     [&](const hir::LoopVarRef& lv) -> diag::Result<mir::Expr> {
-                      return LowerLoopVarRefExpr(ctor_state, body_state, lv);
+                      return LowerLoopVarRefExpr(ctor_state, lv, type);
                     },
                 },
                 r.target);
           },
       },
       p.data);
+  (void)unit_state;
 }
 
 }  // namespace
@@ -228,11 +279,12 @@ auto LowerExpr(
     const ProcessLoweringState& proc_state, BodyLoweringState& body_state,
     const hir::Process& hir_process, const hir::Expr& expr)
     -> diag::Result<mir::Expr> {
+  const mir::TypeId result_type = unit_state.TranslateType(expr.type);
   return std::visit(
       Overloaded{
           [&](const hir::PrimaryExpr& p) -> diag::Result<mir::Expr> {
             return LowerPrimaryExpr(
-                unit_state, class_state, proc_state, body_state, p);
+                unit_state, class_state, proc_state, p, result_type);
           },
           [&](const hir::BinaryExpr& b) -> diag::Result<mir::Expr> {
             auto lhs_or = LowerExpr(
@@ -251,7 +303,7 @@ auto LowerExpr(
                         .op = LowerBinaryOp(b.op),
                         .lhs = lhs_id,
                         .rhs = rhs_id},
-                .type = unit_state.TranslateType(b.type)};
+                .type = result_type};
           },
           [&](const hir::AssignExpr& a) -> diag::Result<mir::Expr> {
             const auto& lhs_expr = hir_process.exprs.at(a.lhs.value);
@@ -271,7 +323,23 @@ auto LowerExpr(
                         .target = LowerRefAsLvalue(
                             class_state, proc_state, ref->get().target),
                         .value = rhs_id},
-                .type = unit_state.TranslateType(a.type)};
+                .type = result_type};
+          },
+          [&](const hir::ConversionExpr& cv) -> diag::Result<mir::Expr> {
+            auto operand_or = LowerExpr(
+                unit_state, class_state, proc_state, body_state, hir_process,
+                hir_process.exprs.at(cv.operand.value));
+            if (!operand_or) {
+              return std::unexpected(std::move(operand_or.error()));
+            }
+            const mir::ExprId operand_id =
+                body_state.AddExpr(*std::move(operand_or));
+            return mir::Expr{
+                .data =
+                    mir::ConversionExpr{
+                        .operand = operand_id,
+                        .kind = LowerHirConversionKind(cv.kind)},
+                .type = result_type};
           },
           [&](const hir::CallExpr& c) -> diag::Result<mir::Expr> {
             return std::visit(
@@ -299,7 +367,7 @@ auto LowerExpr(
                               mir::CallExpr{
                                   .callee = LowerUserCallee(class_state, usr),
                                   .arguments = std::move(args)},
-                          .type = unit_state.TranslateType(c.result_type)};
+                          .type = result_type};
                     },
                 },
                 c.callee);
@@ -313,11 +381,12 @@ auto LowerExpr(
     const ConstructorLoweringState& ctor_state, BodyLoweringState& body_state,
     const hir::StructuralScope& scope, const hir::Expr& expr)
     -> diag::Result<mir::Expr> {
+  const mir::TypeId result_type = unit_state.TranslateType(expr.type);
   return std::visit(
       Overloaded{
           [&](const hir::PrimaryExpr& p) -> diag::Result<mir::Expr> {
             return LowerPrimaryExpr(
-                unit_state, class_state, ctor_state, body_state, p);
+                unit_state, class_state, ctor_state, p, result_type);
           },
           [&](const hir::BinaryExpr& b) -> diag::Result<mir::Expr> {
             auto lhs_or = LowerExpr(
@@ -336,7 +405,7 @@ auto LowerExpr(
                         .op = LowerBinaryOp(b.op),
                         .lhs = lhs_id,
                         .rhs = rhs_id},
-                .type = unit_state.TranslateType(b.type)};
+                .type = result_type};
           },
           [&](const hir::AssignExpr& a) -> diag::Result<mir::Expr> {
             const auto& lhs_expr = scope.GetExpr(a.lhs);
@@ -356,7 +425,23 @@ auto LowerExpr(
                         .target = LowerRefAsLvalue(
                             class_state, ctor_state, ref->get().target),
                         .value = rhs_id},
-                .type = unit_state.TranslateType(a.type)};
+                .type = result_type};
+          },
+          [&](const hir::ConversionExpr& cv) -> diag::Result<mir::Expr> {
+            auto operand_or = LowerExpr(
+                unit_state, class_state, ctor_state, body_state, scope,
+                scope.GetExpr(cv.operand));
+            if (!operand_or) {
+              return std::unexpected(std::move(operand_or.error()));
+            }
+            const mir::ExprId operand_id =
+                body_state.AddExpr(*std::move(operand_or));
+            return mir::Expr{
+                .data =
+                    mir::ConversionExpr{
+                        .operand = operand_id,
+                        .kind = LowerHirConversionKind(cv.kind)},
+                .type = result_type};
           },
           [](const hir::CallExpr&) -> diag::Result<mir::Expr> {
             return diag::Unsupported(

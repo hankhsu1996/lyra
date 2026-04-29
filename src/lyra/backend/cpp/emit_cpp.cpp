@@ -76,12 +76,12 @@ auto RenderBind(
     out += Indent(indent + 2) + RenderProcessKindLiteral(p.kind) + ",\n";
     out += Indent(indent + 2) + RenderProcessMethodName(i) + "());\n";
   }
-  // This cut treats every owning-object member (`OwningPtr<Object<T>>` or
-  // `Vector<OwningPtr<Object<T>>>`) as a runtime-bindable child scope. That
-  // assumption holds because the only producer of these types today is
-  // generate-arm child class installation. When other producers of `ObjectType`
-  // appear (e.g. owned process/module objects), bind eligibility must come
-  // from explicit class metadata, not from storage type structure alone.
+  // Every owning-object member (`OwningPtr<Object<T>>` or
+  // `Vector<OwningPtr<Object<T>>>`) is treated as a runtime-bindable child
+  // scope. The only producer of these types today is generate-arm child
+  // class installation. When other producers of `ObjectType` appear
+  // (e.g. owned process/module objects), bind eligibility must come from
+  // explicit class metadata, not from storage type structure alone.
   for (const auto& m : c.member_vars) {
     const auto target = mir::GetOwnedObjectTarget(unit, m.type);
     if (!target.has_value()) {
@@ -165,6 +165,7 @@ auto RenderClassHeaderFile(
   out += "#include <string>\n";
   out += "#include <vector>\n";
   out += "#include \"lyra/runtime/bind_context.hpp\"\n";
+  out += "#include \"lyra/runtime/convert.hpp\"\n";
   out += "#include \"lyra/runtime/delay.hpp\"\n";
   out += "#include \"lyra/runtime/format.hpp\"\n";
   out += "#include \"lyra/runtime/io.hpp\"\n";

@@ -63,28 +63,25 @@ auto RenderFormatSpecInit(const mir::FormatSpec& spec) -> std::string {
       BoolLiteral(spec.modifiers.left_align), spec.timeunit_power);
 }
 
-// Render a value operand into an inline `RuntimeValueView` constructor call.
-// `int`/`integer` (which render as native std::int32_t) take the inline-word
-// `NarrowIntegral` factory. Explicit packed `bit`/`logic`/`reg` (which render
-// as runtime Bit<...>/Logic<...>) take the view-based factories so the print
-// path goes through the runtime type's own `View()` API rather than casting
-// the value to uint64_t.
 auto RenderRuntimeValueViewInit(
     const RenderContext& ctx, const mir::RuntimePrintValue& v) -> std::string {
   const auto& type = ctx.Unit().GetType(v.type);
-  const std::string operand = RenderExpr(ctx, ctx.Expr(v.value));
+
+  // `%s` operands are typed as packed bit vectors by slang but reach the
+  // runtime as a string_view. Dispatch on format kind, not just type.
+  if (v.spec.kind == mir::FormatKind::kString) {
+    const std::string operand = RenderExprAsNative(ctx, ctx.Expr(v.value));
+    return std::format("lyra::runtime::RuntimeValueView::String({})", operand);
+  }
 
   if (type.IsPackedArray()) {
     const auto& pa = type.AsPackedArray();
     const std::uint64_t bit_width = pa.BitWidth();
-    if (bit_width > 64) {
-      throw InternalError(
-          "RenderRuntimeValueViewInit: wide integrals not implemented");
-    }
     const bool is_signed = pa.signedness == mir::Signedness::kSigned;
 
     if (pa.form == mir::PackedArrayForm::kInt ||
         pa.form == mir::PackedArrayForm::kInteger) {
+      const std::string operand = RenderExprAsNative(ctx, ctx.Expr(v.value));
       return std::format(
           "lyra::runtime::RuntimeValueView::NarrowIntegral("
           "static_cast<std::uint64_t>({}), {}, {})",
@@ -92,16 +89,24 @@ auto RenderRuntimeValueViewInit(
     }
 
     if (pa.form == mir::PackedArrayForm::kExplicit) {
+      if (bit_width > 64) {
+        throw InternalError(
+            "RenderRuntimeValueViewInit: wide integral display is not yet "
+            "supported");
+      }
+      const std::string operand_view =
+          RenderExprAsRuntimeView(ctx, ctx.Expr(v.value));
       const char* factory =
           pa.IsFourState() ? "lyra::runtime::RuntimeValueView::FromLogicView"
                            : "lyra::runtime::RuntimeValueView::FromBitView";
       return std::format(
-          "{}({}.View(), {})", factory, operand, BoolLiteral(is_signed));
+          "{}({}, {})", factory, operand_view, BoolLiteral(is_signed));
     }
     throw InternalError(
         "RenderRuntimeValueViewInit: unsupported PackedArrayForm");
   }
   if (type.Kind() == mir::TypeKind::kString) {
+    const std::string operand = RenderExprAsNative(ctx, ctx.Expr(v.value));
     return std::format("lyra::runtime::RuntimeValueView::String({})", operand);
   }
   throw InternalError(

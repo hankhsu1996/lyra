@@ -109,12 +109,6 @@ constexpr std::array kEntries{
             .category = UnsupportedCategory::kFeature,
             .name = "unsupported_structural_expression_form"}},
     std::pair{
-        DiagCode::kUnsupportedIntegerLiteralWidth,
-        DiagCodeInfo{
-            .kind = DiagKind::kUnsupported,
-            .category = UnsupportedCategory::kFeature,
-            .name = "unsupported_integer_literal_width"}},
-    std::pair{
         DiagCode::kUnsupportedNonVariableNamedReference,
         DiagCodeInfo{
             .kind = DiagKind::kUnsupported,

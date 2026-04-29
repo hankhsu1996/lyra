@@ -15,5 +15,5 @@ expect:
       - "ExprStmt"
       - "AssignExpr target=LocalVar[scope=0, local=0]"
       - "BinaryExpr op=Add"
-      - "IntegerLiteral(1)"
-      - "IntegerLiteral(2)"
+      - "IntegerLiteral(32's{value=0x1})"
+      - "IntegerLiteral(32's{value=0x2})"

@@ -1,0 +1,11 @@
+id: cpp.literal_unbased_unsized
+tags: [cpp_run]
+input:
+  command: [run, cpp]
+  project: false
+  top: Top
+  files: [main.sv]
+expect:
+  exit: 0
+  stdout:
+    exact: "00000000\n11111111\nxxxxxxxx\nzzzzzzzz\n"

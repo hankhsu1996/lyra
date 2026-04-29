@@ -81,8 +81,7 @@ void Engine::EnqueueInitialProcesses(RuntimeScope& root) {
         case ProcessKind::kAlwaysComb:
         case ProcessKind::kAlwaysFf:
         case ProcessKind::kFinal:
-          throw InternalError(
-              "Engine::Run: unsupported runtime ProcessKind in this cut");
+          throw InternalError("Engine::Run: ProcessKind is not yet supported");
       }
     });
   });

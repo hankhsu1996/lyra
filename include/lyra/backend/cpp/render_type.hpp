@@ -1,6 +1,7 @@
 #pragma once
 
 #include <string>
+#include <vector>
 
 #include "lyra/mir/class_decl.hpp"
 #include "lyra/mir/compilation_unit.hpp"
@@ -14,5 +15,8 @@ namespace lyra::backend::cpp {
 [[nodiscard]] auto RenderTypeAsCpp(
     const mir::CompilationUnit& unit, const mir::ClassDecl& owner_class,
     mir::TypeId type_id) -> std::string;
+
+[[nodiscard]] auto RenderPackedShapeLiteral(
+    const std::vector<mir::PackedRange>& dims) -> std::string;
 
 }  // namespace lyra::backend::cpp

@@ -16,5 +16,5 @@ expect:
       - "AssignExpr"
       - "BinaryExpr op=Add"
       - "RefExpr LocalVar[0]"
-      - "IntegerLiteral(1)"
-      - "IntegerLiteral(2)"
+      - "IntegerLiteral(base=d, unsized=true, 32's{value=0x1})"
+      - "IntegerLiteral(base=d, unsized=true, 32's{value=0x2})"
