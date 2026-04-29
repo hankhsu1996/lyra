@@ -10,9 +10,9 @@
 #include <slang/text/SourceManager.h>
 #include <slang/util/Bag.h>
 
-#include "compiler_env.hpp"
 #include "lyra/diag/sink.hpp"
-#include "parse_unit.hpp"
+#include "lyra/frontend/compiler_env.hpp"
+#include "lyra/frontend/parse_unit.hpp"
 
 namespace lyra::frontend {
 

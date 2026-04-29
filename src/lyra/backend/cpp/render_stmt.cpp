@@ -1,19 +1,19 @@
-#include "render_stmt.hpp"
+#include "lyra/backend/cpp/render_stmt.hpp"
 
 #include <cstddef>
 #include <string>
 #include <variant>
 
-#include "formatting.hpp"
+#include "lyra/backend/cpp/formatting.hpp"
+#include "lyra/backend/cpp/render_context.hpp"
+#include "lyra/backend/cpp/render_expr.hpp"
+#include "lyra/backend/cpp/render_type.hpp"
 #include "lyra/base/internal_error.hpp"
 #include "lyra/base/overloaded.hpp"
 #include "lyra/mir/class_decl.hpp"
 #include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/stmt.hpp"
 #include "lyra/mir/type.hpp"
-#include "render_context.hpp"
-#include "render_expr.hpp"
-#include "render_type.hpp"
 
 namespace lyra::backend::cpp {
 
@@ -58,10 +58,18 @@ auto RenderStmt(
           [&](const mir::EmptyStmt&) -> std::string {
             return Indent(indent) + ";\n";
           },
-          [](const mir::TimedStmt&) -> std::string {
-            throw InternalError(
-                "backend cpp: TimedStmt is not yet supported by the C++ "
-                "emitter");
+          [&](const mir::TimedStmt& s) -> std::string {
+            std::string out;
+            std::visit(
+                Overloaded{
+                    [&](const mir::DelayControl& d) {
+                      out += Indent(indent) + "co_await lyra::runtime::Delay(" +
+                             std::to_string(d.duration) + ");\n";
+                    },
+                },
+                s.timing);
+            out += RenderStmt(ctx, ctx.Body().stmts.at(s.body.value), indent);
+            return out;
           },
           [&](const mir::LocalVarDeclStmt& s) -> std::string {
             const auto& lv = ctx.Body()

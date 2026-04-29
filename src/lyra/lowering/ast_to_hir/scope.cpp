@@ -1,4 +1,4 @@
-#include "scope.hpp"
+#include "lyra/lowering/ast_to_hir/scope.hpp"
 
 #include <expected>
 #include <unordered_set>
@@ -14,16 +14,17 @@
 #include <slang/ast/symbols/VariableSymbols.h>
 #include <slang/syntax/SyntaxNode.h>
 
-#include "facts.hpp"
-#include "generate.hpp"
 #include "lyra/base/internal_error.hpp"
 #include "lyra/diag/diagnostic.hpp"
 #include "lyra/hir/structural_scope.hpp"
 #include "lyra/hir/subroutine.hpp"
 #include "lyra/hir/type.hpp"
-#include "process.hpp"
-#include "state.hpp"
-#include "type.hpp"
+#include "lyra/lowering/ast_to_hir/facts.hpp"
+#include "lyra/lowering/ast_to_hir/generate.hpp"
+#include "lyra/lowering/ast_to_hir/process.hpp"
+#include "lyra/lowering/ast_to_hir/state.hpp"
+#include "lyra/lowering/ast_to_hir/time_resolution.hpp"
+#include "lyra/lowering/ast_to_hir/type.hpp"
 
 namespace lyra::lowering::ast_to_hir {
 
@@ -64,6 +65,8 @@ auto LowerScopeInto(
   const auto& mapper = unit_facts.SourceMapper();
   const ScopeStackGuard guard(stack);
   ScopeLoweringState scope_state(unit_state, scope, guard.Frame());
+
+  scope.time_resolution = ResolveTimeResolution(slang_scope.getTimeScale());
 
   for (const auto& member : slang_scope.members()) {
     if (member.kind != slang::ast::SymbolKind::Variable) {

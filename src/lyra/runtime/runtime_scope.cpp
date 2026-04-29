@@ -36,10 +36,10 @@ auto RuntimeScope::AddChildScope(std::string name, RuntimeScopeKind kind)
   return *children_.back();
 }
 
-auto RuntimeScope::AddProcess(ProcessKind kind, Process process)
+auto RuntimeScope::AddProcess(ProcessKind kind, ProcessCoroutine coroutine)
     -> RuntimeProcess& {
   processes_.push_back(
-      std::make_unique<RuntimeProcess>(*this, kind, std::move(process)));
+      std::make_unique<RuntimeProcess>(*this, kind, std::move(coroutine)));
   return *processes_.back();
 }
 

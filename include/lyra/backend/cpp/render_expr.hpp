@@ -2,8 +2,8 @@
 
 #include <string>
 
+#include "lyra/backend/cpp/render_context.hpp"
 #include "lyra/mir/expr.hpp"
-#include "render_context.hpp"
 
 namespace lyra::backend::cpp {
 

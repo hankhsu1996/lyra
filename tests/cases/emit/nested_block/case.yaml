@@ -9,7 +9,7 @@ expect:
   exit: 0
   stdout:
     contains:
-      - "auto process_0() -> lyra::runtime::Process"
+      - "auto process_0() -> lyra::runtime::ProcessCoroutine"
       - "std::int32_t x{};"
       - "{"
       - "(x = (1 + 2));"

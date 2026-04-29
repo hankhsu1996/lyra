@@ -17,7 +17,13 @@ using lyra::test::TerminationKind;
 
 namespace {
 
-void RunOneCase(const std::string& sv_runfiles_path) {
+struct RunOutcome {
+  int exit_code = 0;
+  std::string stdout_text;
+  std::string stderr_text;
+};
+
+void RunSvCase(const std::string& sv_runfiles_path, RunOutcome& out) {
   std::string err;
   std::unique_ptr<Runfiles> rf{Runfiles::CreateForTest(&err)};
   ASSERT_TRUE(rf) << err;
@@ -60,15 +66,34 @@ void RunOneCase(const std::string& sv_runfiles_path) {
   };
   auto emit = RunChildProcess(lyra_exe, emit_argv, std::chrono::seconds{30});
   ASSERT_EQ(emit.termination, TerminationKind::kExitedNormally)
-      << "emit failed:\nstdout:\n"
+      << "emit terminated abnormally:\nstdout:\n"
       << emit.stdout_text << "\nstderr:\n"
       << emit.stderr_text;
+  ASSERT_EQ(emit.exit_code, 0) << "emit failed:\nstdout:\n"
+                               << emit.stdout_text << "\nstderr:\n"
+                               << emit.stderr_text;
 
   auto outcome =
       BuildAndRunEmittedArtifacts(work, include_root, runtime_src_dirs);
   ASSERT_FALSE(outcome.error.has_value()) << *outcome.error;
+  out.exit_code = outcome.exit_code;
+  out.stdout_text = std::move(outcome.stdout_text);
+  out.stderr_text = std::move(outcome.stderr_text);
+}
+
+void RunOneCase(const std::string& sv_runfiles_path) {
+  RunOutcome outcome;
+  RunSvCase(sv_runfiles_path, outcome);
   EXPECT_EQ(outcome.exit_code, 0)
       << "stdout=" << outcome.stdout_text << " stderr=" << outcome.stderr_text;
+}
+
+void RunOneCaseExpectingStdout(
+    const std::string& sv_runfiles_path, const std::string& expected_stdout) {
+  RunOutcome outcome;
+  RunSvCase(sv_runfiles_path, outcome);
+  ASSERT_EQ(outcome.exit_code, 0) << outcome.stderr_text;
+  EXPECT_EQ(outcome.stdout_text, expected_stdout);
 }
 
 TEST(CliRun, BlockingAssign) {
@@ -85,6 +110,26 @@ TEST(CliRun, MemberAdd) {
 
 TEST(CliRun, NestedBlock) {
   RunOneCase("_main/tests/cases/run/nested_block.sv");
+}
+
+TEST(CliRun, DelayDefaultTimescale) {
+  RunOneCaseExpectingStdout(
+      "_main/tests/cases/run/delay_default_timescale.sv", "a\nb\n");
+}
+
+TEST(CliRun, DelayExplicitTimescale) {
+  RunOneCaseExpectingStdout(
+      "_main/tests/cases/run/delay_explicit_timescale.sv", "a\nb\nc\n");
+}
+
+TEST(CliRun, DelayOrdering) {
+  RunOneCaseExpectingStdout(
+      "_main/tests/cases/run/delay_ordering.sv", "a\nc\nb\n");
+}
+
+TEST(CliRun, DelayZeroInactive) {
+  RunOneCaseExpectingStdout(
+      "_main/tests/cases/run/delay_zero_inactive.sv", "a\nc\nb\n");
 }
 
 }  // namespace

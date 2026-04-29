@@ -202,8 +202,7 @@ class MirDumper {
     return std::visit(
         Overloaded{
             [](const DelayControl& d) -> std::string {
-              return std::format(
-                  "DelayControl duration=Expr[{}]", d.duration.value);
+              return std::format("DelayControl ticks={}", d.duration);
             },
         },
         tc);

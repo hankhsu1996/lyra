@@ -1,12 +1,15 @@
 #include "lyra/runtime/engine.hpp"
 
 #include <iostream>
+#include <limits>
 #include <memory>
 #include <string>
 #include <string_view>
 #include <utility>
+#include <variant>
 
 #include "lyra/base/internal_error.hpp"
+#include "lyra/base/time.hpp"
 #include "lyra/runtime/bind_context.hpp"
 #include "lyra/runtime/module.hpp"
 #include "lyra/runtime/output_sink.hpp"
@@ -15,6 +18,7 @@
 #include "lyra/runtime/runtime_scope.hpp"
 #include "lyra/runtime/runtime_scope_kind.hpp"
 #include "lyra/runtime/runtime_traversal.hpp"
+#include "lyra/runtime/wait_request.hpp"
 
 namespace lyra::runtime {
 
@@ -50,10 +54,17 @@ auto Engine::Run() -> int {
   }
   ran_ = true;
   EnqueueInitialProcesses(*root_);
-  while (!active_queue_.empty()) {
-    auto* proc = active_queue_.front();
-    active_queue_.pop_front();
-    proc->Run();
+  while (!active_queue_.empty() || !inactive_queue_.empty() ||
+         !delay_queue_.empty()) {
+    while (!active_queue_.empty() || !inactive_queue_.empty()) {
+      DrainActiveQueue();
+      if (active_queue_.empty() && !inactive_queue_.empty()) {
+        MoveInactiveToActive();
+      }
+    }
+    if (!delay_queue_.empty()) {
+      MoveNextDelayedTimeToActive();
+    }
   }
   output_.Drain();
   return 0;
@@ -75,6 +86,53 @@ void Engine::EnqueueInitialProcesses(RuntimeScope& root) {
       }
     });
   });
+}
+
+void Engine::DrainActiveQueue() {
+  while (!active_queue_.empty()) {
+    auto* proc = active_queue_.front();
+    active_queue_.pop_front();
+    auto result = proc->Resume();
+    if (result.IsCompleted()) {
+      continue;
+    }
+    auto wait = result.TakeWait();
+    if (auto* delay = std::get_if<DelayRequest>(&wait)) {
+      ScheduleDelay(*proc, delay->duration);
+      continue;
+    }
+    throw InternalError("Engine::DrainActiveQueue: unsupported wait request");
+  }
+}
+
+void Engine::MoveInactiveToActive() {
+  while (!inactive_queue_.empty()) {
+    active_queue_.push_back(inactive_queue_.front());
+    inactive_queue_.pop_front();
+  }
+}
+
+void Engine::MoveNextDelayedTimeToActive() {
+  auto it = delay_queue_.begin();
+  if (it == delay_queue_.end()) {
+    return;
+  }
+  now_ = it->first;
+  for (auto* proc : it->second) {
+    active_queue_.push_back(proc);
+  }
+  delay_queue_.erase(it);
+}
+
+void Engine::ScheduleDelay(RuntimeProcess& proc, SimDuration duration) {
+  if (duration == 0) {
+    inactive_queue_.push_back(&proc);
+    return;
+  }
+  if (duration > std::numeric_limits<SimTime>::max() - now_) {
+    throw InternalError("Engine::ScheduleDelay: wake time overflow");
+  }
+  delay_queue_[now_ + duration].push_back(&proc);
 }
 
 }  // namespace lyra::runtime

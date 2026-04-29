@@ -1,4 +1,7 @@
 module Top;
+  timeunit 1ns;
+  timeprecision 1ps;
+
   initial #5;
 
   initial #5 $display("x");

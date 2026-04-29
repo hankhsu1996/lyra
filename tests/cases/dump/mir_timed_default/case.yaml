@@ -1,0 +1,14 @@
+id: dump.mir_timed_default
+tags: [dump]
+input:
+  command: [dump, mir]
+  project: false
+  top: Top
+  files: [main.sv]
+expect:
+  exit: 0
+  stdout:
+    contains:
+      - "TimedStmt"
+      - "DelayControl ticks=5"
+      - "EmptyStmt"

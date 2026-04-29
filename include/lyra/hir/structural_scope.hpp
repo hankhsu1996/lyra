@@ -6,6 +6,7 @@
 #include <variant>
 #include <vector>
 
+#include "lyra/base/time.hpp"
 #include "lyra/hir/expr.hpp"
 #include "lyra/hir/loop_var.hpp"
 #include "lyra/hir/member_var.hpp"
@@ -66,6 +67,7 @@ struct Generate {
 
 struct StructuralScope {
   StructuralScopeId id{};
+  TimeResolution time_resolution;
   std::vector<MemberVar> member_vars;
   std::vector<LoopVarDecl> loop_var_decls;
   std::vector<Expr> exprs;

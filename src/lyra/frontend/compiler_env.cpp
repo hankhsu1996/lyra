@@ -1,4 +1,4 @@
-#include "compiler_env.hpp"
+#include "lyra/frontend/compiler_env.hpp"
 
 #include <span>
 #include <string>

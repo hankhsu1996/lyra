@@ -5,6 +5,7 @@
 #include <utility>
 
 #include "lyra/base/internal_error.hpp"
+#include "lyra/base/time.hpp"
 #include "lyra/diag/diagnostic.hpp"
 #include "lyra/hir/local_var.hpp"
 #include "lyra/hir/process.hpp"
@@ -31,8 +32,9 @@ auto LowerProcessKind(hir::ProcessKind kind) -> mir::ProcessKind {
 
 auto LowerProcess(
     const UnitLoweringState& unit_state, const ClassLoweringState& class_state,
-    const hir::Process& src) -> diag::Result<mir::Process> {
-  ProcessLoweringState proc_state;
+    const hir::Process& src, TimeResolution time_resolution)
+    -> diag::Result<mir::Process> {
+  ProcessLoweringState proc_state{time_resolution};
   BodyLoweringState body_state;
 
   const mir::LocalScopeId root_scope = body_state.RootScope();
