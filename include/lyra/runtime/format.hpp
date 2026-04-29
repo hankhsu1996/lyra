@@ -52,7 +52,7 @@ struct FormatSpec {
 //     owned storage.
 //   - Wide integral (bit_width > 64): caller owns `uint64_t[word_count]`
 //     arrays for value and (for four-state) state, passed via `value_words`
-//     and `state_words`. Not used by this cut.
+//     and `state_words`.
 struct IntegralValueView {
   IntegralStateKind state = IntegralStateKind::kTwoState;
   std::uint64_t inline_word = 0;

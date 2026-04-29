@@ -81,7 +81,7 @@ auto BuildIfGenerate(
         "expressions");
   }
 
-  auto cond_expr = LowerStructuralExpr(unit_facts, *cond);
+  auto cond_expr = LowerStructuralExpr(unit_facts, unit_state, *cond);
   if (!cond_expr) return std::unexpected(std::move(cond_expr.error()));
   const hir::ExprId cond_id = parent_state.AddExpr(*std::move(cond_expr));
 
@@ -124,7 +124,7 @@ auto BuildCaseGenerate(
     }
   }
 
-  auto cond_expr = LowerStructuralExpr(unit_facts, *discriminator);
+  auto cond_expr = LowerStructuralExpr(unit_facts, unit_state, *discriminator);
   if (!cond_expr) return std::unexpected(std::move(cond_expr.error()));
   const hir::ExprId cond_id = parent_state.AddExpr(*std::move(cond_expr));
 
@@ -140,7 +140,7 @@ auto BuildCaseGenerate(
         labels.reserve(block->caseItemExpressions.size());
         for (const auto* label_expr : block->caseItemExpressions) {
           auto label_expr_lowered =
-              LowerStructuralExpr(unit_facts, *label_expr);
+              LowerStructuralExpr(unit_facts, unit_state, *label_expr);
           if (!label_expr_lowered)
             return std::unexpected(std::move(label_expr_lowered.error()));
           labels.push_back(

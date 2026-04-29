@@ -113,6 +113,10 @@ template <PackedShape Shape, Signedness Signed = Signedness::kUnsigned>
 class Logic;
 
 namespace detail {
+struct PlaneAccess;  // defined in convert.hpp
+}  // namespace detail
+
+namespace detail {
 
 inline auto ValidateBitRange(
     std::size_t word_count, std::uint64_t bit_offset, std::uint64_t width,
@@ -246,6 +250,15 @@ class ConstBitView {
   }
 
  private:
+  friend struct detail::PlaneAccess;
+
+  [[nodiscard]] auto WordsForConvert() const -> std::span<const std::uint64_t> {
+    return words_;
+  }
+  [[nodiscard]] auto BitOffsetForConvert() const -> std::uint64_t {
+    return bit_offset_;
+  }
+
   std::span<const std::uint64_t> words_;
   std::uint64_t bit_offset_;
   std::uint64_t width_;
@@ -386,6 +399,20 @@ class ConstLogicView {
   }
 
  private:
+  friend struct detail::PlaneAccess;
+
+  [[nodiscard]] auto ValueWordsForConvert() const
+      -> std::span<const std::uint64_t> {
+    return value_words_;
+  }
+  [[nodiscard]] auto StateWordsForConvert() const
+      -> std::span<const std::uint64_t> {
+    return state_words_;
+  }
+  [[nodiscard]] auto BitOffsetForConvert() const -> std::uint64_t {
+    return bit_offset_;
+  }
+
   std::span<const std::uint64_t> value_words_;
   std::span<const std::uint64_t> state_words_;
   std::uint64_t bit_offset_;
@@ -548,7 +575,21 @@ class Bit {
     bits_.SetBit(offset, value == TwoStateBit::kOne);
   }
 
+  // Same-width copy; conversion goes through `ConvertToBit`/`ConvertToLogic`.
+  auto Assign(ConstBitView rhs) -> void {
+    View().CopyFromSameWidth(rhs);
+  }
+  auto Assign(BitView rhs) -> void {
+    Assign(rhs.AsConst());
+  }
+
  private:
+  friend struct detail::PlaneAccess;
+
+  [[nodiscard]] auto MutableValueWordsForConvert() -> std::span<std::uint64_t> {
+    return bits_.MutableWordsForView();
+  }
+
   detail::BitPlane<kWidth> bits_{};
 };
 
@@ -637,7 +678,24 @@ class Logic {
     }
   }
 
+  // Same-width copy; conversion goes through `ConvertToLogic`.
+  auto Assign(ConstLogicView rhs) -> void {
+    View().CopyFromSameWidth(rhs);
+  }
+  auto Assign(LogicView rhs) -> void {
+    Assign(rhs.AsConst());
+  }
+
  private:
+  friend struct detail::PlaneAccess;
+
+  [[nodiscard]] auto MutableValueWordsForConvert() -> std::span<std::uint64_t> {
+    return value_.MutableWordsForView();
+  }
+  [[nodiscard]] auto MutableStateWordsForConvert() -> std::span<std::uint64_t> {
+    return state_.MutableWordsForView();
+  }
+
   detail::BitPlane<kWidth> value_{};
   detail::BitPlane<kWidth> state_{};
 };

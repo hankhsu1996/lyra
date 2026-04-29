@@ -14,8 +14,6 @@
 
 namespace lyra::backend::cpp {
 
-namespace {
-
 auto RenderPackedShapeLiteral(const std::vector<mir::PackedRange>& dims)
     -> std::string {
   if (dims.empty()) {
@@ -40,8 +38,6 @@ auto RenderPackedShapeLiteral(const std::vector<mir::PackedRange>& dims)
   out += "} }";
   return out;
 }
-
-}  // namespace
 
 auto RenderTypeAsCpp(
     const mir::CompilationUnit& unit, const mir::ClassDecl& owner_class,

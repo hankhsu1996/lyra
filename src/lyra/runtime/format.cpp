@@ -117,13 +117,12 @@ auto FormatIntegralNarrow(const FormatSpec& spec, const IntegralValueView& v)
 
 // Binary-only 4-state narrow formatter: walks each bit MSB->LSB and emits
 // '0'/'1'/'x'/'z' from the (value, state) plane pair. Decimal/hex/octal of
-// 4-state runtime packed values are not implemented in this cut and throw
-// until a separate formatting investigation defines exact behavior.
+// 4-state runtime packed values are not yet implemented.
 auto FormatIntegralFourStateNarrow(
     const FormatSpec& spec, const IntegralValueView& v) -> std::string {
   if (spec.kind != FormatKind::kBinary) {
     throw InternalError(
-        "FormatIntegralFourStateNarrow: only binary supported in this cut");
+        "FormatIntegralFourStateNarrow: only binary is supported");
   }
   std::string body;
   body.reserve(v.bit_width);
@@ -172,8 +171,8 @@ auto RuntimeValueView::FromBitView(ConstBitView v, bool is_signed)
     -> RuntimeValueView {
   if (v.Width() > 64U) {
     throw InternalError(
-        "RuntimeValueView::FromBitView: wide widths (>64) not supported in "
-        "this cut");
+        "RuntimeValueView::FromBitView: wide widths (>64) are not yet "
+        "supported");
   }
   return RuntimeValueView{
       .data = IntegralValueView{
@@ -189,8 +188,8 @@ auto RuntimeValueView::FromLogicView(ConstLogicView v, bool is_signed)
     -> RuntimeValueView {
   if (v.Width() > 64U) {
     throw InternalError(
-        "RuntimeValueView::FromLogicView: wide widths (>64) not supported in "
-        "this cut");
+        "RuntimeValueView::FromLogicView: wide widths (>64) are not yet "
+        "supported");
   }
   return RuntimeValueView{
       .data = IntegralValueView{
@@ -210,7 +209,7 @@ auto FormatValue(const FormatSpec& spec, const RuntimeValueView& value)
           [&](const IntegralValueView& v) -> std::string {
             if (v.word_count > 1) {
               throw InternalError(
-                  "FormatValue: wide integrals not implemented in this cut");
+                  "FormatValue: wide integrals are not yet implemented");
             }
             switch (v.state) {
               case IntegralStateKind::kTwoState:

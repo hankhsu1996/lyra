@@ -36,6 +36,7 @@ struct ScopeFrameId {
 struct MemberVarBinding {
   ScopeFrameId home_frame;
   hir::MemberVarId local_id;
+  hir::TypeId type;
 };
 
 using MemberVarBindings =
@@ -75,9 +76,10 @@ class UnitLoweringState {
 
   void MapMemberVarBinding(
       const slang::ast::VariableSymbol& var, ScopeFrameId home_frame,
-      hir::MemberVarId local) {
+      hir::MemberVarId local, hir::TypeId type) {
     member_var_bindings_.emplace(
-        &var, MemberVarBinding{.home_frame = home_frame, .local_id = local});
+        &var, MemberVarBinding{
+                  .home_frame = home_frame, .local_id = local, .type = type});
   }
 
   [[nodiscard]] auto LookupMemberVarBinding(
@@ -187,7 +189,7 @@ class ScopeLoweringState {
         static_cast<std::uint32_t>(scope_->member_vars.size())};
     scope_->member_vars.push_back(
         hir::MemberVar{.name = std::string{var.name}, .type = type});
-    unit_state_->MapMemberVarBinding(var, frame_, local);
+    unit_state_->MapMemberVarBinding(var, frame_, local, type);
     return local;
   }
 
@@ -196,6 +198,11 @@ class ScopeLoweringState {
         static_cast<std::uint32_t>(scope_->loop_var_decls.size())};
     scope_->loop_var_decls.push_back(std::move(decl));
     return id;
+  }
+
+  [[nodiscard]] auto GetLoopVarDeclType(hir::LoopVarDeclId id) const
+      -> hir::TypeId {
+    return scope_->loop_var_decls.at(id.value).type;
   }
 
   auto AddExpr(hir::Expr expr) -> hir::ExprId {
@@ -281,6 +288,10 @@ class ProcessLoweringState {
       return std::nullopt;
     }
     return it->second;
+  }
+
+  [[nodiscard]] auto GetLocalVarType(hir::LocalVarId id) const -> hir::TypeId {
+    return hir_process_.local_vars.at(id.value).type;
   }
 
   auto Finalize(hir::ProcessKind kind, hir::StmtId body) -> hir::Process {

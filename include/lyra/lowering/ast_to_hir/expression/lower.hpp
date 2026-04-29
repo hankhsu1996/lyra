@@ -20,8 +20,8 @@ auto LowerProcExpr(
     const slang::ast::Expression& expr) -> diag::Result<hir::Expr>;
 
 auto LowerStructuralExpr(
-    const UnitLoweringFacts& unit_facts, const slang::ast::Expression& expr)
-    -> diag::Result<hir::Expr>;
+    const UnitLoweringFacts& unit_facts, UnitLoweringState& unit_state,
+    const slang::ast::Expression& expr) -> diag::Result<hir::Expr>;
 
 // Short-lived state for lowering one loop-generate header's initial / stop
 // / iter expressions. The synthetic loop-variable identity (and its type)
