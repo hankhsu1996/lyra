@@ -30,7 +30,7 @@ expect:
       - "void Bind(lyra::runtime::RuntimeBindContext& ctx) override"
       - "ctx.CreateChildScope("
       - '"gen0_then"'
-      - "lyra::runtime::RuntimeScopeKind::kGenerate"
+      - "lyra::runtime::RuntimeScopeKind::kGenerateScope"
       - "if (gen0_then_obj) {"
       - "gen0_then_obj->Bind(child)"
       - "auto process_0() -> lyra::runtime::Process"

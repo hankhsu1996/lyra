@@ -8,24 +8,24 @@
 
 namespace lyra::runtime {
 
-class Engine;
+class RuntimeProcess;
 class RuntimeScope;
+class RuntimeServices;
 
 class RuntimeBindContext {
  public:
-  RuntimeBindContext(Engine& engine, RuntimeScope& scope);
+  RuntimeBindContext(RuntimeScope& scope, RuntimeServices& services);
 
   auto CurrentScope() -> RuntimeScope&;
-  auto GetEngine() -> Engine& {
-    return *engine_;
-  }
-  void AddProcess(ProcessKind kind, Process process);
+  auto Services() -> RuntimeServices&;
+
+  auto AddProcess(ProcessKind kind, Process process) -> RuntimeProcess&;
   auto CreateChildScope(std::string name, RuntimeScopeKind kind)
       -> RuntimeBindContext;
 
  private:
-  Engine* engine_ = nullptr;
   RuntimeScope* scope_ = nullptr;
+  RuntimeServices* services_ = nullptr;
 };
 
 }  // namespace lyra::runtime

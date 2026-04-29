@@ -20,5 +20,5 @@ expect:
       - "void Bind(lyra::runtime::RuntimeBindContext& ctx) override"
       - "for (std::size_t idx = 0; idx < gen0_body_obj.size(); ++idx) {"
       - "ctx.CreateChildScope("
-      - "lyra::runtime::RuntimeScopeKind::kGenerate"
+      - "lyra::runtime::RuntimeScopeKind::kGenerateScope"
       - "gen0_body_obj[idx]->Bind(child)"
