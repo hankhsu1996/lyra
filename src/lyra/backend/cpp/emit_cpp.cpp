@@ -179,6 +179,7 @@ auto RenderClassHeaderFile(
   out += "#include <string>\n";
   out += "#include <vector>\n";
   out += "#include \"lyra/runtime/bind_context.hpp\"\n";
+  out += "#include \"lyra/runtime/bitwise.hpp\"\n";
   out += "#include \"lyra/runtime/convert.hpp\"\n";
   out += "#include \"lyra/runtime/delay.hpp\"\n";
   out += "#include \"lyra/runtime/format.hpp\"\n";
