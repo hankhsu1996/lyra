@@ -1,0 +1,20 @@
+id: dump.hir_timed
+tags: [dump]
+input:
+  command: [dump, hir]
+  project: false
+  top: Top
+  files: [main.sv]
+expect:
+  exit: 0
+  stdout:
+    contains:
+      - "TimedStmt"
+      - "DelayControl duration=Expr["
+      - "EmptyStmt"
+      - "IntegerLiteral(5)"
+      - "TimeLiteral(value=5, scale=ns)"
+      - "StringLiteral(\"x\")"
+      - "StringLiteral(\"ns\")"
+      - "StringLiteral(\"block\")"
+      - "BlockStmt (count="

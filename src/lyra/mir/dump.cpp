@@ -180,6 +180,35 @@ class MirDumper {
         t.data);
   }
 
+  static auto FormatTimeScale(TimeScale s) -> std::string_view {
+    switch (s) {
+      case TimeScale::kFs:
+        return "fs";
+      case TimeScale::kPs:
+        return "ps";
+      case TimeScale::kNs:
+        return "ns";
+      case TimeScale::kUs:
+        return "us";
+      case TimeScale::kMs:
+        return "ms";
+      case TimeScale::kS:
+        return "s";
+    }
+    throw InternalError("MirDumper::FormatTimeScale: unknown TimeScale");
+  }
+
+  static auto FormatTimingControl(const TimingControl& tc) -> std::string {
+    return std::visit(
+        Overloaded{
+            [](const DelayControl& d) -> std::string {
+              return std::format(
+                  "DelayControl duration=Expr[{}]", d.duration.value);
+            },
+        },
+        tc);
+  }
+
   static auto FormatBinaryOp(BinaryOp op) -> std::string {
     switch (op) {
       case BinaryOp::kAdd:
@@ -245,6 +274,11 @@ class MirDumper {
             },
             [](const StringLiteral& lit) -> std::string {
               return std::format("StringLiteral(\"{}\")", lit.value);
+            },
+            [](const TimeLiteral& lit) -> std::string {
+              return std::format(
+                  "TimeLiteral(value={}, scale={})", lit.value,
+                  FormatTimeScale(lit.scale));
             },
             [](const MemberVarRef& r) -> std::string {
               return std::format("MemberVarRef(MemberVar[{}])", r.target.value);
@@ -403,6 +437,9 @@ class MirDumper {
     }
     std::visit(
         Overloaded{
+            [&](const EmptyStmt&) {
+              Line(std::format("Stmt[{}] EmptyStmt", id.value));
+            },
             [&](const LocalVarDeclStmt& s) {
               Line(
                   std::format(
@@ -424,8 +461,20 @@ class MirDumper {
                       id.value, s.target.value, s.class_id.value));
             },
             [&](const ForStmt& s) { DumpForStmt(stmt, s, enclosing, id); },
+            [&](const TimedStmt& t) { DumpTimedStmt(t, enclosing, id); },
         },
         stmt.data);
+  }
+
+  void DumpTimedStmt(const TimedStmt& t, const Body& enclosing, StmtId id) {
+    Line(std::format("Stmt[{}] TimedStmt", id.value));
+    Indent();
+    Line(std::format("timing: {}", FormatTimingControl(t.timing)));
+    Line("body:");
+    Indent();
+    DumpStmt(enclosing, t.body);
+    Dedent();
+    Dedent();
   }
 
   void DumpRuntimePrintCallItems(

@@ -20,6 +20,7 @@
 #include <slang/ast/symbols/SubroutineSymbols.h>
 #include <slang/ast/symbols/VariableSymbols.h>
 #include <slang/numeric/SVInt.h>
+#include <slang/numeric/Time.h>
 
 #include "../facts.hpp"
 #include "../state.hpp"
@@ -65,6 +66,33 @@ auto MakeStringLiteralExpr(std::string text, diag::SourceSpan span)
       .data =
           hir::PrimaryExpr{
               .data = hir::StringLiteral{.value = std::move(text)}},
+      .span = span};
+}
+
+auto LowerTimeUnit(slang::TimeUnit u) -> hir::TimeScale {
+  switch (u) {
+    case slang::TimeUnit::Femtoseconds:
+      return hir::TimeScale::kFs;
+    case slang::TimeUnit::Picoseconds:
+      return hir::TimeScale::kPs;
+    case slang::TimeUnit::Nanoseconds:
+      return hir::TimeScale::kNs;
+    case slang::TimeUnit::Microseconds:
+      return hir::TimeScale::kUs;
+    case slang::TimeUnit::Milliseconds:
+      return hir::TimeScale::kMs;
+    case slang::TimeUnit::Seconds:
+      return hir::TimeScale::kS;
+  }
+  throw InternalError("LowerTimeUnit: unknown slang TimeUnit");
+}
+
+auto MakeTimeLiteralExpr(
+    double value, hir::TimeScale scale, diag::SourceSpan span) -> hir::Expr {
+  return hir::Expr{
+      .data =
+          hir::PrimaryExpr{
+              .data = hir::TimeLiteral{.value = value, .scale = scale}},
       .span = span};
 }
 
@@ -167,6 +195,12 @@ auto LowerProcExpr(
       return MakeStringLiteralExpr(std::string{sl.getValue()}, span);
     }
 
+    case slang::ast::ExpressionKind::TimeLiteral: {
+      const auto& tl = expr.as<slang::ast::TimeLiteral>();
+      return MakeTimeLiteralExpr(
+          tl.getValue(), LowerTimeUnit(tl.getScale().base.unit), span);
+    }
+
     case slang::ast::ExpressionKind::NamedValue:
       return LowerNamedValueProc(
           unit_facts, unit_state, proc_state, stack,
@@ -177,7 +211,7 @@ auto LowerProcExpr(
       if (bin.op != slang::ast::BinaryOperator::Add) {
         return diag::Unsupported(
             span, diag::DiagCode::kUnsupportedBinaryOperator,
-            "only `+` is supported in this cut",
+            "only `+` is currently supported",
             diag::UnsupportedCategory::kOperation);
       }
       auto lhs_id = append_child(bin.left());

@@ -28,6 +28,7 @@ struct BuiltinMirTypes {
   mir::TypeId int32;
   mir::TypeId string;
   mir::TypeId void_type;
+  mir::TypeId realtime;
 };
 
 class UnitLoweringState {
@@ -41,7 +42,8 @@ class UnitLoweringState {
                 .dims = {mir::PackedRange{.left = 31, .right = 0}},
                 .form = mir::PackedArrayForm::kInt}}),
         .string = AddType(mir::TypeData{mir::StringType{}}),
-        .void_type = AddType(mir::TypeData{mir::VoidType{}})};
+        .void_type = AddType(mir::TypeData{mir::VoidType{}}),
+        .realtime = AddType(mir::TypeData{mir::RealTimeType{}})};
   }
 
   [[nodiscard]] auto Unit() const -> const mir::CompilationUnit& {

@@ -19,6 +19,8 @@ struct StmtId {
   auto operator<=>(const StmtId&) const -> std::strong_ordering = default;
 };
 
+struct EmptyStmt {};
+
 // VarDeclStmt has ordering semantics in HIR -- its position in the statement
 // stream marks the SystemVerilog point of declaration. The actual storage is
 // allocated on Process.local_vars; LocalVarId.value indexes into that vector.
@@ -34,7 +36,19 @@ struct BlockStmt {
   std::vector<StmtId> statements;
 };
 
-using StmtData = std::variant<VarDeclStmt, ExprStmt, BlockStmt>;
+struct DelayControl {
+  ExprId duration;
+};
+
+using TimingControl = std::variant<DelayControl>;
+
+struct TimedStmt {
+  TimingControl timing;
+  StmtId body;
+};
+
+using StmtData =
+    std::variant<EmptyStmt, VarDeclStmt, ExprStmt, BlockStmt, TimedStmt>;
 
 struct Stmt {
   std::optional<std::string> label;
