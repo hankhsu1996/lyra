@@ -2,10 +2,14 @@
 
 #include <cstdint>
 #include <format>
+#include <limits>
 #include <string>
+#include <string_view>
 #include <utility>
+#include <variant>
 
 #include "lyra/base/internal_error.hpp"
+#include "lyra/base/overloaded.hpp"
 
 namespace lyra::runtime {
 
@@ -53,7 +57,7 @@ auto FormatDecimalUnsigned(std::uint64_t raw) -> std::string {
 }
 
 auto ResolveAutoWidth(
-    const FormatSpec& spec, const RuntimeValueView& v, FormatKind kind)
+    const FormatSpec& spec, const IntegralValueView& v, FormatKind kind)
     -> std::int32_t {
   if (spec.width >= 0) return spec.width;
   // Auto-width when no explicit width specified (-1 sentinel).
@@ -84,12 +88,10 @@ auto FormatOctal(std::uint64_t raw, std::int32_t width) -> std::string {
       "{:0{}o}", raw, width > 0 ? static_cast<std::size_t>(width) : 0);
 }
 
-auto FormatIntegralNarrow(const FormatSpec& spec, const RuntimeValueView& v)
+auto FormatIntegralNarrow(const FormatSpec& spec, const IntegralValueView& v)
     -> std::string {
-  if (v.unknown_words != nullptr && *v.unknown_words != 0) {
-    throw InternalError(
-        "FormatIntegralNarrow: 4-state X/Z formatting not implemented");
-  }
+  // 4-state values route through FormatIntegralFourStateNarrow before
+  // reaching this function, so this path always sees pure 2-state input.
   const std::uint64_t raw = v.inline_word & MaskFor(v.bit_width);
   std::string body;
   switch (spec.kind) {
@@ -110,32 +112,121 @@ auto FormatIntegralNarrow(const FormatSpec& spec, const RuntimeValueView& v)
       throw InternalError(
           "FormatIntegralNarrow: backend emitted unsupported FormatKind");
   }
-  // Auto-width already applied for radix kinds; for kDecimal apply spec.width.
-  if (spec.kind == FormatKind::kDecimal) {
-    return ApplyWidth(std::move(body), spec);
+  return ApplyWidth(std::move(body), spec);
+}
+
+// Binary-only 4-state narrow formatter: walks each bit MSB->LSB and emits
+// '0'/'1'/'x'/'z' from the (value, state) plane pair. Decimal/hex/octal of
+// 4-state runtime packed values are not implemented in this cut and throw
+// until a separate formatting investigation defines exact behavior.
+auto FormatIntegralFourStateNarrow(
+    const FormatSpec& spec, const IntegralValueView& v) -> std::string {
+  if (spec.kind != FormatKind::kBinary) {
+    throw InternalError(
+        "FormatIntegralFourStateNarrow: only binary supported in this cut");
   }
-  // Apply spec.width if explicitly larger than the rendered body.
+  std::string body;
+  body.reserve(v.bit_width);
+  for (std::int32_t i = static_cast<std::int32_t>(v.bit_width) - 1; i >= 0;
+       --i) {
+    const bool value = ((v.inline_word >> i) & 1U) != 0U;
+    const bool state = ((v.inline_state_word >> i) & 1U) != 0U;
+    char ch = '0';
+    if (state) {
+      ch = value ? 'x' : 'z';
+    } else {
+      ch = value ? '1' : '0';
+    }
+    body.push_back(ch);
+  }
   return ApplyWidth(std::move(body), spec);
 }
 
 }  // namespace
 
+auto RuntimeValueView::NarrowIntegral(
+    std::uint64_t word, std::uint32_t bit_width, bool is_signed)
+    -> RuntimeValueView {
+  return RuntimeValueView{
+      .data = IntegralValueView{
+          .state = IntegralStateKind::kTwoState,
+          .inline_word = word,
+          .word_count = 1,
+          .bit_width = bit_width,
+          .is_signed = is_signed,
+      }};
+}
+
+auto RuntimeValueView::String(std::string_view sv) -> RuntimeValueView {
+  if (sv.size() > std::numeric_limits<std::uint32_t>::max()) {
+    throw InternalError("RuntimeValueView::String: string too large");
+  }
+  return RuntimeValueView{
+      .data = StringValueView{
+          .data = sv.data(),
+          .size = static_cast<std::uint32_t>(sv.size()),
+      }};
+}
+
+auto RuntimeValueView::FromBitView(ConstBitView v, bool is_signed)
+    -> RuntimeValueView {
+  if (v.Width() > 64U) {
+    throw InternalError(
+        "RuntimeValueView::FromBitView: wide widths (>64) not supported in "
+        "this cut");
+  }
+  return RuntimeValueView{
+      .data = IntegralValueView{
+          .state = IntegralStateKind::kTwoState,
+          .inline_word = v.PackLowWord(),
+          .word_count = 1,
+          .bit_width = static_cast<std::uint32_t>(v.Width()),
+          .is_signed = is_signed,
+      }};
+}
+
+auto RuntimeValueView::FromLogicView(ConstLogicView v, bool is_signed)
+    -> RuntimeValueView {
+  if (v.Width() > 64U) {
+    throw InternalError(
+        "RuntimeValueView::FromLogicView: wide widths (>64) not supported in "
+        "this cut");
+  }
+  return RuntimeValueView{
+      .data = IntegralValueView{
+          .state = IntegralStateKind::kFourState,
+          .inline_word = v.PackValueLowWord(),
+          .inline_state_word = v.PackStateLowWord(),
+          .word_count = 1,
+          .bit_width = static_cast<std::uint32_t>(v.Width()),
+          .is_signed = is_signed,
+      }};
+}
+
 auto FormatValue(const FormatSpec& spec, const RuntimeValueView& value)
     -> std::string {
-  switch (value.kind) {
-    case RuntimeValueKind::kIntegral:
-      if (value.word_count > 1) {
-        throw InternalError(
-            "FormatValue: wide integrals not implemented in this cut");
-      }
-      return FormatIntegralNarrow(spec, value);
-    case RuntimeValueKind::kString: {
-      std::string body(value.string_data, value.string_size);
-      return ApplyWidth(std::move(body), spec);
-    }
-  }
-  throw InternalError(
-      "FormatValue: backend emitted unsupported RuntimeValueKind");
+  return std::visit(
+      Overloaded{
+          [&](const IntegralValueView& v) -> std::string {
+            if (v.word_count > 1) {
+              throw InternalError(
+                  "FormatValue: wide integrals not implemented in this cut");
+            }
+            switch (v.state) {
+              case IntegralStateKind::kTwoState:
+                return FormatIntegralNarrow(spec, v);
+              case IntegralStateKind::kFourState:
+                return FormatIntegralFourStateNarrow(spec, v);
+            }
+            throw InternalError(
+                "FormatValue: backend emitted unsupported IntegralStateKind");
+          },
+          [&](const StringValueView& v) -> std::string {
+            std::string body(v.data, v.size);
+            return ApplyWidth(std::move(body), spec);
+          },
+      },
+      value.data);
 }
 
 }  // namespace lyra::runtime

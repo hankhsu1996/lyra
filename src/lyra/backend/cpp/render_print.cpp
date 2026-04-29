@@ -64,9 +64,11 @@ auto RenderFormatSpecInit(const mir::FormatSpec& spec) -> std::string {
 }
 
 // Render a value operand into an inline `RuntimeValueView` constructor call.
-// Narrow integrals embed the word inside the view (no pointer); strings pass
-// the operand expression as a string_view (full-expression lifetime covers
-// the LyraPrint call).
+// `int`/`integer` (which render as native std::int32_t) take the inline-word
+// `NarrowIntegral` factory. Explicit packed `bit`/`logic`/`reg` (which render
+// as runtime Bit<...>/Logic<...>) take the view-based factories so the print
+// path goes through the runtime type's own `View()` API rather than casting
+// the value to uint64_t.
 auto RenderRuntimeValueViewInit(
     const RenderContext& ctx, const mir::RuntimePrintValue& v) -> std::string {
   const auto& type = ctx.Unit().GetType(v.type);
@@ -80,10 +82,24 @@ auto RenderRuntimeValueViewInit(
           "RenderRuntimeValueViewInit: wide integrals not implemented");
     }
     const bool is_signed = pa.signedness == mir::Signedness::kSigned;
-    return std::format(
-        "lyra::runtime::RuntimeValueView::NarrowIntegral("
-        "static_cast<std::uint64_t>({}), {}, {})",
-        operand, bit_width, BoolLiteral(is_signed));
+
+    if (pa.form == mir::PackedArrayForm::kInt ||
+        pa.form == mir::PackedArrayForm::kInteger) {
+      return std::format(
+          "lyra::runtime::RuntimeValueView::NarrowIntegral("
+          "static_cast<std::uint64_t>({}), {}, {})",
+          operand, bit_width, BoolLiteral(is_signed));
+    }
+
+    if (pa.form == mir::PackedArrayForm::kExplicit) {
+      const char* factory =
+          pa.IsFourState() ? "lyra::runtime::RuntimeValueView::FromLogicView"
+                           : "lyra::runtime::RuntimeValueView::FromBitView";
+      return std::format(
+          "{}({}.View(), {})", factory, operand, BoolLiteral(is_signed));
+    }
+    throw InternalError(
+        "RenderRuntimeValueViewInit: unsupported PackedArrayForm");
   }
   if (type.Kind() == mir::TypeKind::kString) {
     return std::format("lyra::runtime::RuntimeValueView::String({})", operand);
