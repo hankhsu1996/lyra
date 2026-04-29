@@ -101,7 +101,7 @@ struct ChildClassBinding {
 // Bindings produced by `InstallGenerateOwnedChildClasses` for a single
 // `hir::Generate`. Indexed by `hir::StructuralScopeId.value`. Phase-local to
 // constructor lowering: `LowerConstructorBody` consumes them and they then
-// go out of scope. They are not part of `ClassLoweringState`.
+// go away. They are not part of `ClassLoweringState`.
 struct GenerateBindings {
   std::vector<ChildClassBinding> by_scope_id;
 };

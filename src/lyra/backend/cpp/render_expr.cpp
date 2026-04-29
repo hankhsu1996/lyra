@@ -1,5 +1,7 @@
 #include "lyra/backend/cpp/render_expr.hpp"
 
+#include <cstddef>
+#include <cstdint>
 #include <format>
 #include <string>
 #include <string_view>
@@ -7,11 +9,15 @@
 
 #include "lyra/backend/cpp/render_context.hpp"
 #include "lyra/backend/cpp/render_print.hpp"
+#include "lyra/backend/cpp/render_type.hpp"
 #include "lyra/backend/cpp/string_literal.hpp"
 #include "lyra/base/internal_error.hpp"
 #include "lyra/base/overloaded.hpp"
 #include "lyra/mir/binary_op.hpp"
+#include "lyra/mir/conversion.hpp"
 #include "lyra/mir/expr.hpp"
+#include "lyra/mir/integral_constant.hpp"
+#include "lyra/mir/type.hpp"
 
 namespace lyra::backend::cpp {
 
@@ -32,6 +38,158 @@ auto LookupLocalName(const mir::Body& body, const mir::LocalVarRef& ref)
   return body.local_scopes.at(ref.scope.value).locals.at(ref.local.value).name;
 }
 
+auto SignednessLiteral(mir::Signedness s) -> std::string_view {
+  switch (s) {
+    case mir::Signedness::kSigned:
+      return "lyra::runtime::Signedness::kSigned";
+    case mir::Signedness::kUnsigned:
+      return "lyra::runtime::Signedness::kUnsigned";
+  }
+  throw InternalError("SignednessLiteral: unknown MIR Signedness");
+}
+
+auto IsPackedRuntime(const mir::CompilationUnit& unit, mir::TypeId type_id)
+    -> bool {
+  const auto& t = unit.GetType(type_id);
+  return t.IsPackedArray() &&
+         t.AsPackedArray().form == mir::PackedArrayForm::kExplicit;
+}
+
+auto MirTypeOfLvalue(const RenderContext& ctx, const mir::Lvalue& lv)
+    -> mir::TypeId {
+  return std::visit(
+      Overloaded{
+          [&](const mir::MemberVarRef& m) -> mir::TypeId {
+            return ctx.Class().GetMemberVar(m.target).type;
+          },
+          [&](const mir::LocalVarRef& l) -> mir::TypeId {
+            return ctx.Body()
+                .local_scopes.at(l.scope.value)
+                .locals.at(l.local.value)
+                .type;
+          },
+      },
+      lv);
+}
+
+auto IntegralConstantToInt32(const mir::IntegralConstant& c) -> std::int32_t {
+  if (c.state_kind == mir::IntegralStateKind::kFourState) {
+    throw InternalError(
+        "IntegralConstantToInt32: 4-state literal targeting native int");
+  }
+  if (c.width == 0U || c.width > 32U) {
+    throw InternalError(
+        "IntegralConstantToInt32: invalid native int literal width");
+  }
+  if (c.value_words.empty()) {
+    throw InternalError(
+        "IntegralConstantToInt32: integral constant has no value word");
+  }
+  const std::uint64_t raw = c.value_words[0];
+  if (c.signedness == mir::Signedness::kSigned && c.width < 32U) {
+    const std::uint32_t sign_bit = 1U << (c.width - 1U);
+    const std::uint32_t low =
+        static_cast<std::uint32_t>(raw) & ((std::uint32_t{1} << c.width) - 1U);
+    if ((low & sign_bit) != 0U) {
+      const std::uint32_t fill = ~((1U << c.width) - 1U);
+      return static_cast<std::int32_t>(low | fill);
+    }
+    return static_cast<std::int32_t>(low);
+  }
+  return static_cast<std::int32_t>(static_cast<std::uint32_t>(raw));
+}
+
+auto RenderNativeIntegerLiteral(const mir::IntegralConstant& c) -> std::string {
+  return std::format("{}", IntegralConstantToInt32(c));
+}
+
+auto RenderIntegerLiteralAsView(
+    const mir::CompilationUnit& unit, mir::TypeId type_id,
+    const mir::IntegralConstant& c) -> std::string {
+  const auto& pa = unit.GetType(type_id).AsPackedArray();
+  const bool target_4state = pa.IsFourState();
+  const std::uint64_t target_width = pa.BitWidth();
+
+  if (c.width != static_cast<std::uint32_t>(target_width)) {
+    throw InternalError(
+        "RenderIntegerLiteralAsView: literal width does not match target "
+        "type width");
+  }
+  if (!target_4state && c.state_kind == mir::IntegralStateKind::kFourState) {
+    throw InternalError(
+        "RenderIntegerLiteralAsView: 4-state literal targeting 2-state type");
+  }
+
+  const std::size_t target_words =
+      (static_cast<std::size_t>(target_width) + 63U) / 64U;
+
+  std::string value_init;
+  for (std::size_t i = 0; i < target_words; ++i) {
+    if (i != 0) value_init += ", ";
+    const std::uint64_t w = i < c.value_words.size() ? c.value_words[i] : 0U;
+    value_init += std::format("0x{:x}ULL", w);
+  }
+
+  std::string out = "([&]() -> lyra::runtime::";
+  out += target_4state ? "ConstLogicView" : "ConstBitView";
+  out += " {\n";
+  out += std::format(
+      "  static constexpr std::array<std::uint64_t, {}> kValueWords = "
+      "{{{}}};\n",
+      target_words, value_init);
+  if (target_4state) {
+    std::string state_init;
+    for (std::size_t i = 0; i < target_words; ++i) {
+      if (i != 0) state_init += ", ";
+      const std::uint64_t w =
+          (c.state_kind == mir::IntegralStateKind::kFourState &&
+           i < c.state_words.size())
+              ? c.state_words[i]
+              : 0U;
+      state_init += std::format("0x{:x}ULL", w);
+    }
+    out += std::format(
+        "  static constexpr std::array<std::uint64_t, {}> kStateWords = "
+        "{{{}}};\n",
+        target_words, state_init);
+    out += std::format(
+        "  return lyra::runtime::ConstLogicView{{kValueWords, kStateWords, 0, "
+        "{}}};\n",
+        target_width);
+  } else {
+    out += std::format(
+        "  return lyra::runtime::ConstBitView{{kValueWords, 0, {}}};\n",
+        target_width);
+  }
+  out += "}())";
+  return out;
+}
+
+auto RenderConversionCall(
+    const RenderContext& ctx, mir::TypeId target_type,
+    const mir::ConversionExpr& conv) -> std::string {
+  const auto& target = ctx.Unit().GetType(target_type).AsPackedArray();
+  const auto& operand_expr = ctx.Expr(conv.operand);
+  const auto& source_type = ctx.Unit().GetType(operand_expr.type);
+  if (!source_type.IsPackedArray() ||
+      source_type.AsPackedArray().form != mir::PackedArrayForm::kExplicit) {
+    throw InternalError(
+        "RenderConversionCall: ConversionExpr operand must be a packed "
+        "explicit type");
+  }
+  const auto& source = source_type.AsPackedArray();
+
+  const std::string operand_view = RenderExprAsRuntimeView(ctx, operand_expr);
+  const std::string target_shape = RenderPackedShapeLiteral(target.dims);
+
+  const char* fn = target.IsFourState() ? "lyra::runtime::ConvertToLogic"
+                                        : "lyra::runtime::ConvertToBit";
+  return std::format(
+      "{}<{}, {}>({}, {})", fn, target_shape,
+      SignednessLiteral(target.signedness), operand_view,
+      SignednessLiteral(source.signedness));
+}
+
 }  // namespace
 
 auto RenderLvalue(const RenderContext& ctx, const mir::Lvalue& target)
@@ -48,42 +206,117 @@ auto RenderLvalue(const RenderContext& ctx, const mir::Lvalue& target)
       target);
 }
 
-auto RenderExpr(const RenderContext& ctx, const mir::Expr& expr)
+auto RenderExprAsNative(const RenderContext& ctx, const mir::Expr& expr)
     -> std::string {
   return std::visit(
       Overloaded{
-          [](const mir::IntegerLiteral& e) -> std::string {
-            return std::format("{}", e.value);
+          [&](const mir::IntegerLiteral& lit) -> std::string {
+            return RenderNativeIntegerLiteral(lit.value);
           },
-          [](const mir::StringLiteral& e) -> std::string {
-            return RenderStdStringLiteral(e.value);
+          [&](const mir::StringLiteral& s) -> std::string {
+            return RenderStdStringLiteral(s.value);
           },
           [](const mir::TimeLiteral&) -> std::string {
             throw InternalError(
                 "backend cpp: TimeLiteral is not yet supported by the C++ "
                 "emitter");
           },
-          [&](const mir::MemberVarRef& e) -> std::string {
-            return ctx.Class().GetMemberVar(e.target).name;
+          [&](const mir::MemberVarRef& m) -> std::string {
+            return ctx.Class().GetMemberVar(m.target).name;
           },
-          [&](const mir::LocalVarRef& e) -> std::string {
-            return LookupLocalName(ctx.Body(), e);
+          [&](const mir::LocalVarRef& l) -> std::string {
+            return LookupLocalName(ctx.Body(), l);
           },
-          [&](const mir::BinaryExpr& e) -> std::string {
-            return "(" + RenderExpr(ctx, ctx.Expr(e.lhs)) +
-                   std::string{BinaryOpToken(e.op)} +
-                   RenderExpr(ctx, ctx.Expr(e.rhs)) + ")";
+          [&](const mir::BinaryExpr& b) -> std::string {
+            return "(" + RenderExprAsNative(ctx, ctx.Expr(b.lhs)) +
+                   std::string{BinaryOpToken(b.op)} +
+                   RenderExprAsNative(ctx, ctx.Expr(b.rhs)) + ")";
           },
-          [&](const mir::AssignExpr& e) -> std::string {
-            return "(" + RenderLvalue(ctx, e.target) + " = " +
-                   RenderExpr(ctx, ctx.Expr(e.value)) + ")";
+          [&](const mir::AssignExpr& a) -> std::string {
+            const auto target_type = MirTypeOfLvalue(ctx, a.target);
+            if (IsPackedRuntime(ctx.Unit(), target_type)) {
+              return std::format(
+                  "{}.Assign({})", RenderLvalue(ctx, a.target),
+                  RenderExprAsRuntimeView(ctx, ctx.Expr(a.value)));
+            }
+            return "(" + RenderLvalue(ctx, a.target) + " = " +
+                   RenderExprAsNative(ctx, ctx.Expr(a.value)) + ")";
+          },
+          [&](const mir::ConversionExpr& cv) -> std::string {
+            return RenderExprAsNative(ctx, ctx.Expr(cv.operand));
           },
           [](const mir::CallExpr&) -> std::string {
             throw InternalError(
-                "RenderExpr: mir::CallExpr lowering to C++ is not implemented");
+                "RenderExprAsNative: mir::CallExpr lowering to C++ is not "
+                "implemented");
           },
           [&](const mir::RuntimeCallExpr& rc) -> std::string {
             return RenderRuntimeCallExpr(ctx, rc);
+          },
+      },
+      expr.data);
+}
+
+auto RenderExprAsRuntimeView(const RenderContext& ctx, const mir::Expr& expr)
+    -> std::string {
+  return std::visit(
+      Overloaded{
+          [&](const mir::IntegerLiteral& lit) -> std::string {
+            return RenderIntegerLiteralAsView(ctx.Unit(), expr.type, lit.value);
+          },
+          [&](const mir::MemberVarRef& m) -> std::string {
+            return std::format(
+                "{}.View()", ctx.Class().GetMemberVar(m.target).name);
+          },
+          [&](const mir::LocalVarRef& l) -> std::string {
+            return std::format("{}.View()", LookupLocalName(ctx.Body(), l));
+          },
+          [&](const mir::ConversionExpr& cv) -> std::string {
+            return std::format(
+                "{}.View()", RenderConversionCall(ctx, expr.type, cv));
+          },
+          [](const mir::AssignExpr&) -> std::string {
+            throw InternalError(
+                "RenderExprAsRuntimeView: AssignExpr in a runtime-view "
+                "context is not yet supported");
+          },
+          [](const auto&) -> std::string {
+            throw InternalError(
+                "RenderExprAsRuntimeView: expression form is not renderable "
+                "as a runtime view");
+          },
+      },
+      expr.data);
+}
+
+auto RenderExpr(const RenderContext& ctx, const mir::Expr& expr)
+    -> std::string {
+  // Some expressions slang types as packed but read as native rvalues
+  // (e.g. comparisons over native-int operands). Mode is picked per-variant.
+  return std::visit(
+      Overloaded{
+          [&](const mir::IntegerLiteral&) -> std::string {
+            return IsPackedRuntime(ctx.Unit(), expr.type)
+                       ? RenderExprAsRuntimeView(ctx, expr)
+                       : RenderExprAsNative(ctx, expr);
+          },
+          [&](const mir::MemberVarRef&) -> std::string {
+            return IsPackedRuntime(ctx.Unit(), expr.type)
+                       ? RenderExprAsRuntimeView(ctx, expr)
+                       : RenderExprAsNative(ctx, expr);
+          },
+          [&](const mir::LocalVarRef&) -> std::string {
+            return IsPackedRuntime(ctx.Unit(), expr.type)
+                       ? RenderExprAsRuntimeView(ctx, expr)
+                       : RenderExprAsNative(ctx, expr);
+          },
+          [&](const mir::ConversionExpr&) -> std::string {
+            return IsPackedRuntime(ctx.Unit(), expr.type)
+                       ? RenderExprAsRuntimeView(ctx, expr)
+                       : RenderExprAsNative(ctx, expr);
+          },
+          [&](const auto&) -> std::string {
+            return RenderExprAsNative(ctx, expr);
           },
       },
       expr.data);

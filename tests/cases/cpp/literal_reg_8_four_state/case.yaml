@@ -1,0 +1,11 @@
+id: cpp.literal_reg_8_four_state
+tags: [cpp_run]
+input:
+  command: [run, cpp]
+  project: false
+  top: Top
+  files: [main.sv]
+expect:
+  exit: 0
+  stdout:
+    exact: "xxzz0011\n"

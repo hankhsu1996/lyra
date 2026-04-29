@@ -1,0 +1,11 @@
+id: cpp.literal_bit_8_flatten
+tags: [cpp_run]
+input:
+  command: [run, cpp]
+  project: false
+  top: Top
+  files: [main.sv]
+expect:
+  exit: 0
+  stdout:
+    exact: "10000101\n"
