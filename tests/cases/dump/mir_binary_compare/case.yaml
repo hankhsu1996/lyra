@@ -1,0 +1,21 @@
+id: dump.mir_binary_compare
+tags: [dump]
+input:
+  command: [dump, mir]
+  project: false
+  top: Top
+  files: [main.sv]
+expect:
+  exit: 0
+  stdout:
+    contains:
+      - "BinaryExpr op=Equality"
+      - "BinaryExpr op=Inequality"
+      - "BinaryExpr op=CaseEquality"
+      - "BinaryExpr op=CaseInequality"
+      - "BinaryExpr op=WildcardEquality"
+      - "BinaryExpr op=WildcardInequality"
+      - "BinaryExpr op=GreaterEqual"
+      - "BinaryExpr op=GreaterThan"
+      - "BinaryExpr op=LessEqual"
+      - "BinaryExpr op=LessThan"

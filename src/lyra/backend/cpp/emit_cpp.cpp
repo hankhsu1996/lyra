@@ -1,5 +1,6 @@
 #include <cstddef>
 #include <string>
+#include <utility>
 
 #include "lyra/backend/cpp/api.hpp"
 #include "lyra/backend/cpp/artifact.hpp"
@@ -7,6 +8,7 @@
 #include "lyra/backend/cpp/render_stmt.hpp"
 #include "lyra/backend/cpp/render_type.hpp"
 #include "lyra/base/internal_error.hpp"
+#include "lyra/diag/diagnostic.hpp"
 #include "lyra/mir/class_decl.hpp"
 #include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/member_var.hpp"
@@ -26,14 +28,16 @@ auto RenderField(
 
 auto RenderConstructor(
     const mir::CompilationUnit& unit, const mir::ClassDecl& c,
-    std::size_t indent) -> std::string {
+    std::size_t indent) -> diag::Result<std::string> {
   const auto& body = c.constructor;
   if (body.root_stmts.empty()) {
     return Indent(indent) + c.name + "() {}\n";
   }
   std::string out;
   out += Indent(indent) + c.name + "() {\n";
-  out += RenderBody(unit, c, body, indent + 1);
+  auto body_or = RenderBody(unit, c, body, indent + 1);
+  if (!body_or) return std::unexpected(std::move(body_or.error()));
+  out += *body_or;
   out += Indent(indent) + "}\n";
   return out;
 }
@@ -45,11 +49,13 @@ auto RenderProcessMethodName(std::size_t index) -> std::string {
 auto RenderProcessMethod(
     const mir::CompilationUnit& unit, const mir::ClassDecl& c,
     const mir::Process& process, std::size_t index, std::size_t indent)
-    -> std::string {
+    -> diag::Result<std::string> {
   std::string out;
   out += Indent(indent) + "auto " + RenderProcessMethodName(index) +
          "() -> lyra::runtime::ProcessCoroutine {\n";
-  out += RenderBody(unit, c, process.body, indent + 1);
+  auto body_or = RenderBody(unit, c, process.body, indent + 1);
+  if (!body_or) return std::unexpected(std::move(body_or.error()));
+  out += *body_or;
   out += Indent(indent + 1) + "co_return;\n";
   out += Indent(indent) + "}\n";
   return out;
@@ -115,7 +121,7 @@ auto RenderBind(
 
 auto RenderClassDecl(
     const mir::CompilationUnit& unit, const mir::ClassDecl& c,
-    std::size_t indent, bool is_top_level) -> std::string {
+    std::size_t indent, bool is_top_level) -> diag::Result<std::string> {
   std::string out;
   out += Indent(indent) + "class " + c.name;
   if (is_top_level) {
@@ -125,7 +131,9 @@ auto RenderClassDecl(
   out += Indent(indent) + " public:\n";
 
   for (const auto& child : c.classes) {
-    out += RenderClassDecl(unit, child, indent + 1, false);
+    auto child_or = RenderClassDecl(unit, child, indent + 1, false);
+    if (!child_or) return std::unexpected(std::move(child_or.error()));
+    out += *child_or;
   }
   if (!c.classes.empty()) {
     out += "\n";
@@ -141,13 +149,18 @@ auto RenderClassDecl(
   out += Indent(indent + 1) + "lyra::runtime::RuntimeServices* services_{};\n";
   out += "\n";
 
-  out += RenderConstructor(unit, c, indent + 1);
+  auto ctor_or = RenderConstructor(unit, c, indent + 1);
+  if (!ctor_or) return std::unexpected(std::move(ctor_or.error()));
+  out += *ctor_or;
   out += "\n";
   out += RenderBind(unit, c, indent + 1, is_top_level);
 
   for (std::size_t i = 0; i < c.processes.size(); ++i) {
     out += "\n";
-    out += RenderProcessMethod(unit, c, c.processes[i], i, indent + 1);
+    auto method_or =
+        RenderProcessMethod(unit, c, c.processes[i], i, indent + 1);
+    if (!method_or) return std::unexpected(std::move(method_or.error()));
+    out += *method_or;
   }
 
   out += Indent(indent) + "};\n";
@@ -155,7 +168,8 @@ auto RenderClassDecl(
 }
 
 auto RenderClassHeaderFile(
-    const mir::CompilationUnit& unit, const mir::ClassDecl& c) -> std::string {
+    const mir::CompilationUnit& unit, const mir::ClassDecl& c)
+    -> diag::Result<std::string> {
   std::string out;
   out += "#pragma once\n";
   out += "#include <array>\n";
@@ -176,7 +190,9 @@ auto RenderClassHeaderFile(
   out += "#include \"lyra/runtime/runtime_scope_kind.hpp\"\n";
   out += "#include \"lyra/runtime/runtime_services.hpp\"\n";
   out += "\n";
-  out += RenderClassDecl(unit, c, 0, true);
+  auto class_or = RenderClassDecl(unit, c, 0, true);
+  if (!class_or) return std::unexpected(std::move(class_or.error()));
+  out += *class_or;
   return out;
 }
 
@@ -197,13 +213,14 @@ auto RenderHostMain(const mir::ClassDecl& entry) -> std::string {
 }  // namespace
 
 auto EmitCppDeclarations(const mir::CompilationUnit& unit)
-    -> std::vector<CppArtifact> {
+    -> diag::Result<std::vector<CppArtifact>> {
   std::vector<CppArtifact> headers;
   headers.reserve(unit.classes.size());
   for (const auto& cls : unit.classes) {
+    auto content_or = RenderClassHeaderFile(unit, cls);
+    if (!content_or) return std::unexpected(std::move(content_or.error()));
     headers.push_back(
-        {.relpath = cls.name + ".hpp",
-         .content = RenderClassHeaderFile(unit, cls)});
+        {.relpath = cls.name + ".hpp", .content = *std::move(content_or)});
   }
   return headers;
 }
@@ -214,10 +231,11 @@ auto EmitCppHostMain(const mir::ClassDecl& entry_class) -> CppArtifact {
 
 auto EmitCpp(
     const mir::CompilationUnit& unit, const mir::ClassDecl& entry_class)
-    -> CppArtifactSet {
+    -> diag::Result<CppArtifactSet> {
   CppArtifactSet set;
-  auto headers = EmitCppDeclarations(unit);
-  for (auto& h : headers) {
+  auto headers_or = EmitCppDeclarations(unit);
+  if (!headers_or) return std::unexpected(std::move(headers_or.error()));
+  for (auto& h : *headers_or) {
     set.files.push_back(std::move(h));
   }
   set.files.push_back(EmitCppHostMain(entry_class));

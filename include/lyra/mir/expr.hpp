@@ -14,6 +14,7 @@
 #include "lyra/mir/member_var.hpp"
 #include "lyra/mir/runtime_print.hpp"
 #include "lyra/mir/type.hpp"
+#include "lyra/mir/unary_op.hpp"
 
 namespace lyra::mir {
 
@@ -42,6 +43,11 @@ struct LocalVarRef {
 };
 
 using Lvalue = std::variant<MemberVarRef, LocalVarRef>;
+
+struct UnaryExpr {
+  UnaryOp op;
+  ExprId operand;
+};
 
 struct BinaryExpr {
   BinaryOp op;
@@ -78,7 +84,8 @@ struct RuntimeCallExpr {
 
 using ExprData = std::variant<
     IntegerLiteral, StringLiteral, TimeLiteral, MemberVarRef, LocalVarRef,
-    BinaryExpr, AssignExpr, CallExpr, RuntimeCallExpr, ConversionExpr>;
+    UnaryExpr, BinaryExpr, AssignExpr, CallExpr, RuntimeCallExpr,
+    ConversionExpr>;
 
 struct Expr {
   ExprData data;

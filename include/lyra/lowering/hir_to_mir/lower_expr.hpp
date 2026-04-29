@@ -1,12 +1,10 @@
 #pragma once
 
 #include "lyra/diag/diagnostic.hpp"
-#include "lyra/hir/binary_op.hpp"
 #include "lyra/hir/expr.hpp"
 #include "lyra/hir/process.hpp"
 #include "lyra/hir/structural_scope.hpp"
 #include "lyra/lowering/hir_to_mir/state.hpp"
-#include "lyra/mir/binary_op.hpp"
 #include "lyra/mir/expr.hpp"
 
 namespace lyra::lowering::hir_to_mir {
@@ -32,7 +30,5 @@ auto LowerExpr(
     const ConstructorLoweringState& ctor_state, BodyLoweringState& body_state,
     const hir::StructuralScope& scope, const hir::Expr& expr)
     -> diag::Result<mir::Expr>;
-
-auto LowerBinaryOp(hir::BinaryOp op) -> mir::BinaryOp;
 
 }  // namespace lyra::lowering::hir_to_mir

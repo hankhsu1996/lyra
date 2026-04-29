@@ -13,6 +13,5 @@ expect:
       - "main.sv:4:"
       - "unsupported:"
       - "this expression form is not supported yet"
-      - "a = !a;"
     not_contains:
       - "internal error"

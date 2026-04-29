@@ -3,6 +3,7 @@
 #include <string>
 
 #include "lyra/backend/cpp/render_context.hpp"
+#include "lyra/diag/diagnostic.hpp"
 #include "lyra/mir/expr.hpp"
 
 namespace lyra::backend::cpp {
@@ -11,6 +12,7 @@ namespace lyra::backend::cpp {
 // RenderExpr's RuntimeCallExpr arm; the surrounding RenderStmt::ExprStmt path
 // adds the trailing `;` like for any other expression.
 auto RenderRuntimeCallExpr(
-    const RenderContext& ctx, const mir::RuntimeCallExpr& expr) -> std::string;
+    const RenderContext& ctx, const mir::RuntimeCallExpr& expr)
+    -> diag::Result<std::string>;
 
 }  // namespace lyra::backend::cpp
