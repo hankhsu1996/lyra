@@ -105,10 +105,7 @@ cc_library(
 
 cc_library(
     name = "frontend",
-    srcs = glob([
-        "src/lyra/frontend/*.cpp",
-        "src/lyra/frontend/*.hpp",
-    ]),
+    srcs = glob(["src/lyra/frontend/*.cpp"]),
     hdrs = glob(["include/lyra/frontend/*.hpp"]),
     includes = ["include"],
     visibility = ["//visibility:public"],
@@ -123,11 +120,8 @@ cc_library(
 
 cc_library(
     name = "ast_to_hir",
-    srcs = glob([
-        "src/lyra/lowering/ast_to_hir/**/*.cpp",
-        "src/lyra/lowering/ast_to_hir/**/*.hpp",
-    ]),
-    hdrs = glob(["include/lyra/lowering/ast_to_hir/*.hpp"]),
+    srcs = glob(["src/lyra/lowering/ast_to_hir/**/*.cpp"]),
+    hdrs = glob(["include/lyra/lowering/ast_to_hir/**/*.hpp"]),
     includes = ["include"],
     visibility = ["//visibility:public"],
     deps = [
@@ -155,10 +149,7 @@ cc_library(
 
 cc_library(
     name = "backend_cpp",
-    srcs = glob([
-        "src/lyra/backend/cpp/*.cpp",
-        "src/lyra/backend/cpp/*.hpp",
-    ]),
+    srcs = glob(["src/lyra/backend/cpp/*.cpp"]),
     hdrs = glob(["include/lyra/backend/cpp/*.hpp"]),
     includes = ["include"],
     visibility = ["//visibility:public"],

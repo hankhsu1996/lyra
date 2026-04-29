@@ -9,10 +9,10 @@
 #include <slang/ast/symbols/CompilationUnitSymbols.h>
 #include <slang/ast/symbols/InstanceSymbols.h>
 
-#include "facts.hpp"
 #include "lyra/diag/diagnostic.hpp"
 #include "lyra/hir/module_unit.hpp"
-#include "module.hpp"
+#include "lyra/lowering/ast_to_hir/facts.hpp"
+#include "lyra/lowering/ast_to_hir/module.hpp"
 
 namespace lyra::lowering::ast_to_hir {
 

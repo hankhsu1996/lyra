@@ -2,9 +2,9 @@
 
 #include <slang/ast/symbols/InstanceSymbols.h>
 
-#include "facts.hpp"
 #include "lyra/diag/diagnostic.hpp"
 #include "lyra/hir/module_unit.hpp"
+#include "lyra/lowering/ast_to_hir/facts.hpp"
 
 namespace lyra::lowering::ast_to_hir {
 

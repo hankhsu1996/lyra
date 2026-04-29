@@ -2,10 +2,10 @@
 
 #include <slang/ast/Statement.h>
 
-#include "../facts.hpp"
-#include "../state.hpp"
 #include "lyra/diag/diagnostic.hpp"
 #include "lyra/hir/stmt.hpp"
+#include "lyra/lowering/ast_to_hir/facts.hpp"
+#include "lyra/lowering/ast_to_hir/state.hpp"
 
 namespace lyra::lowering::ast_to_hir {
 

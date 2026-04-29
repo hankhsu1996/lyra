@@ -1,15 +1,15 @@
-#include "process.hpp"
+#include "lyra/lowering/ast_to_hir/process.hpp"
 
 #include <expected>
 #include <utility>
 
 #include <slang/ast/symbols/BlockSymbols.h>
 
-#include "facts.hpp"
 #include "lyra/diag/diagnostic.hpp"
 #include "lyra/hir/process.hpp"
-#include "state.hpp"
-#include "statement/lower.hpp"
+#include "lyra/lowering/ast_to_hir/facts.hpp"
+#include "lyra/lowering/ast_to_hir/state.hpp"
+#include "lyra/lowering/ast_to_hir/statement/lower.hpp"
 
 namespace lyra::lowering::ast_to_hir {
 

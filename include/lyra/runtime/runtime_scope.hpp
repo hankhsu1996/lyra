@@ -22,7 +22,8 @@ class RuntimeScope {
   [[nodiscard]] auto Kind() const -> RuntimeScopeKind;
 
   auto AddChildScope(std::string name, RuntimeScopeKind kind) -> RuntimeScope&;
-  auto AddProcess(ProcessKind kind, Process process) -> RuntimeProcess&;
+  auto AddProcess(ProcessKind kind, ProcessCoroutine coroutine)
+      -> RuntimeProcess&;
 
   template <typename Fn>
   void ForEachChild(Fn&& fn) {

@@ -1,0 +1,17 @@
+id: errors.delay_non_literal
+tags: [errors, diag]
+input:
+  command: [emit, cpp]
+  project: false
+  top: Top
+  files: [main.sv]
+  args: ["--no-color"]
+expect:
+  exit: 1
+  stderr:
+    contains:
+      - "main.sv:3:"
+      - "unsupported:"
+      - "delay durations beyond an integer or time literal are not yet supported"
+    not_contains:
+      - "internal error"

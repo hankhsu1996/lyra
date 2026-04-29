@@ -1,4 +1,4 @@
-#include "lower.hpp"
+#include "lyra/lowering/ast_to_hir/expression/lower.hpp"
 
 #include <cstdint>
 #include <expected>
@@ -22,9 +22,6 @@
 #include <slang/numeric/SVInt.h>
 #include <slang/numeric/Time.h>
 
-#include "../facts.hpp"
-#include "../state.hpp"
-#include "../type.hpp"
 #include "lyra/base/internal_error.hpp"
 #include "lyra/diag/diagnostic.hpp"
 #include "lyra/hir/binary_op.hpp"
@@ -34,6 +31,9 @@
 #include "lyra/hir/subroutine_ref.hpp"
 #include "lyra/hir/type.hpp"
 #include "lyra/hir/value_ref.hpp"
+#include "lyra/lowering/ast_to_hir/facts.hpp"
+#include "lyra/lowering/ast_to_hir/state.hpp"
+#include "lyra/lowering/ast_to_hir/type.hpp"
 #include "lyra/support/system_subroutine.hpp"
 
 namespace lyra::lowering::ast_to_hir {

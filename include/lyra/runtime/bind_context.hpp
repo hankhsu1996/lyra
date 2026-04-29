@@ -19,7 +19,8 @@ class RuntimeBindContext {
   auto CurrentScope() -> RuntimeScope&;
   auto Services() -> RuntimeServices&;
 
-  auto AddProcess(ProcessKind kind, Process process) -> RuntimeProcess&;
+  auto AddProcess(ProcessKind kind, ProcessCoroutine coroutine)
+      -> RuntimeProcess&;
   auto CreateChildScope(std::string name, RuntimeScopeKind kind)
       -> RuntimeBindContext;
 

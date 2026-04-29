@@ -7,6 +7,7 @@
 #include <variant>
 #include <vector>
 
+#include "lyra/base/time.hpp"
 #include "lyra/mir/class_decl_id.hpp"
 #include "lyra/mir/expr.hpp"
 #include "lyra/mir/local_var.hpp"
@@ -101,7 +102,7 @@ struct ForStmt {
 };
 
 struct DelayControl {
-  ExprId duration;
+  SimDuration duration;
 };
 
 using TimingControl = std::variant<DelayControl>;

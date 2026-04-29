@@ -6,11 +6,11 @@
 #include <slang/ast/Expression.h>
 #include <slang/ast/symbols/VariableSymbols.h>
 
-#include "../facts.hpp"
-#include "../state.hpp"
 #include "lyra/diag/diagnostic.hpp"
 #include "lyra/hir/expr.hpp"
 #include "lyra/hir/loop_var.hpp"
+#include "lyra/lowering/ast_to_hir/facts.hpp"
+#include "lyra/lowering/ast_to_hir/state.hpp"
 
 namespace lyra::lowering::ast_to_hir {
 

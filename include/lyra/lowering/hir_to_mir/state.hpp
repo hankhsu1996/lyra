@@ -7,6 +7,7 @@
 #include <vector>
 
 #include "lyra/base/internal_error.hpp"
+#include "lyra/base/time.hpp"
 #include "lyra/hir/local_var.hpp"
 #include "lyra/hir/loop_var.hpp"
 #include "lyra/hir/member_var.hpp"
@@ -234,11 +235,20 @@ class ClassLoweringState {
   std::vector<mir::UserSubroutineTargetId> user_subroutine_map_;
 };
 
-// Process-body lowering state: maps HIR LocalVarId -> MIR LocalVarRef. The
-// MIR locals themselves live in the in-flight body's local scopes (see
+// Process-body lowering state: maps HIR LocalVarId -> MIR LocalVarRef and
+// carries the active time resolution for delay scaling. The MIR locals
+// themselves live in the in-flight body's local scopes (see
 // BodyLoweringState).
 class ProcessLoweringState {
  public:
+  explicit ProcessLoweringState(TimeResolution time_resolution)
+      : time_resolution_(time_resolution) {
+  }
+
+  [[nodiscard]] auto Resolution() const -> TimeResolution {
+    return time_resolution_;
+  }
+
   void MapLocalVar(hir::LocalVarId hir_id, mir::LocalVarRef ref) {
     if (hir_id.value >= map_.size()) {
       map_.resize(hir_id.value + 1);
@@ -255,6 +265,7 @@ class ProcessLoweringState {
   }
 
  private:
+  TimeResolution time_resolution_;
   std::vector<mir::LocalVarRef> map_;
 };
 
