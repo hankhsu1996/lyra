@@ -102,6 +102,16 @@ auto main(int argc, char** argv) -> int {
     return filtered;
   }();
 
+  if (kCases.empty()) {
+    fmt::print(
+        stderr,
+        "cli_golden_tests: zero cases registered for suite '{}'. The case "
+        "loader, suite filter, or emit-cpp erasure left nothing behind. "
+        "Refusing to report PASS on empty coverage.\n",
+        suite_name);
+    return 1;
+  }
+
   // NOLINTBEGIN(cppcoreguidelines-owning-memory) -- gtest's RegisterTest
   // factory API mandates heap-allocated Test subclasses; the test framework
   // takes ownership and destroys them after the test completes.

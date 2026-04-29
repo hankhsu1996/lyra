@@ -101,6 +101,17 @@ auto main(int argc, char** argv) -> int {
     return filtered;
   }();
 
+  if (kCases.empty()) {
+    fmt::print(
+        stderr,
+        "cli_emit_cpp_tests: zero cases registered for suite '{}'. "
+        "Either no case.yaml has `command: [run, cpp]`, or the suite "
+        "filter excludes all of them. Refusing to report PASS on empty "
+        "coverage.\n",
+        suite_name);
+    return 1;
+  }
+
   // NOLINTBEGIN(cppcoreguidelines-owning-memory)
   for (const auto& c : kCases) {
     testing::RegisterTest(
