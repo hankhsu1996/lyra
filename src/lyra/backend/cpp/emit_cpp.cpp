@@ -69,7 +69,7 @@ auto RenderBind(
   std::string out;
   out += Indent(indent) + "void Bind(lyra::runtime::RuntimeBindContext& ctx)" +
          (is_top_level ? " override {\n" : " {\n");
-  out += Indent(indent + 1) + "engine_ = &ctx.GetEngine();\n";
+  out += Indent(indent + 1) + "services_ = &ctx.Services();\n";
   for (std::size_t i = 0; i < c.processes.size(); ++i) {
     const auto& p = c.processes[i];
     out += Indent(indent + 1) + "ctx.AddProcess(\n";
@@ -95,16 +95,16 @@ auto RenderBind(
       out += Indent(indent + 2) + "auto child = ctx.CreateChildScope(\n";
       out += Indent(indent + 3) + "\"" + child_class.name +
              "[\" + std::to_string(idx) + \"]\",\n";
-      out +=
-          Indent(indent + 3) + "lyra::runtime::RuntimeScopeKind::kGenerate);\n";
+      out += Indent(indent + 3) +
+             "lyra::runtime::RuntimeScopeKind::kGenerateScope);\n";
       out += Indent(indent + 2) + m.name + "[idx]->Bind(child);\n";
       out += Indent(indent + 1) + "}\n";
     } else {
       out += Indent(indent + 1) + "if (" + m.name + ") {\n";
       out += Indent(indent + 2) + "auto child = ctx.CreateChildScope(\n";
       out += Indent(indent + 3) + "\"" + child_class.name + "\",\n";
-      out +=
-          Indent(indent + 3) + "lyra::runtime::RuntimeScopeKind::kGenerate);\n";
+      out += Indent(indent + 3) +
+             "lyra::runtime::RuntimeScopeKind::kGenerateScope);\n";
       out += Indent(indent + 2) + m.name + "->Bind(child);\n";
       out += Indent(indent + 1) + "}\n";
     }
@@ -138,7 +138,7 @@ auto RenderClassDecl(
     out += "\n";
   }
 
-  out += Indent(indent + 1) + "lyra::runtime::Engine* engine_{};\n";
+  out += Indent(indent + 1) + "lyra::runtime::RuntimeServices* services_{};\n";
   out += "\n";
 
   out += RenderConstructor(unit, c, indent + 1);
@@ -165,7 +165,6 @@ auto RenderClassHeaderFile(
   out += "#include <string>\n";
   out += "#include <vector>\n";
   out += "#include \"lyra/runtime/bind_context.hpp\"\n";
-  out += "#include \"lyra/runtime/engine.hpp\"\n";
   out += "#include \"lyra/runtime/format.hpp\"\n";
   out += "#include \"lyra/runtime/io.hpp\"\n";
   out += "#include \"lyra/runtime/module.hpp\"\n";
@@ -173,6 +172,7 @@ auto RenderClassHeaderFile(
   out += "#include \"lyra/runtime/process.hpp\"\n";
   out += "#include \"lyra/runtime/process_kind.hpp\"\n";
   out += "#include \"lyra/runtime/runtime_scope_kind.hpp\"\n";
+  out += "#include \"lyra/runtime/runtime_services.hpp\"\n";
   out += "\n";
   out += RenderClassDecl(unit, c, 0, true);
   return out;
@@ -180,6 +180,7 @@ auto RenderClassHeaderFile(
 
 auto RenderHostMain(const mir::ClassDecl& entry) -> std::string {
   std::string out;
+  out += "#include \"lyra/runtime/engine.hpp\"\n";
   out += "#include \"" + entry.name + ".hpp\"\n";
   out += "\n";
   out += "auto main() -> int {\n";

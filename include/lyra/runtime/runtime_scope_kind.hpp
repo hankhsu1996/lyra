@@ -3,8 +3,8 @@
 namespace lyra::runtime {
 
 enum class RuntimeScopeKind {
-  kModule,
-  kGenerate,
+  kModuleInstance,
+  kGenerateScope,
 };
 
 }  // namespace lyra::runtime

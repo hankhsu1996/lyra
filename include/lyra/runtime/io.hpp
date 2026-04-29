@@ -6,12 +6,13 @@
 
 namespace lyra::runtime {
 
-class Engine;
+class RuntimeServices;
 
 // Single high-level runtime print API. The compiler emits one call per
 // $display/$write/...; the runtime walks the items, formats values via
 // FormatValue, and finalizes the record (newline for kDisplay/kFDisplay).
 void LyraPrint(
-    Engine& engine, PrintKind kind, std::span<const PrintItem> items);
+    RuntimeServices& services, PrintKind kind,
+    std::span<const PrintItem> items);
 
 }  // namespace lyra::runtime
