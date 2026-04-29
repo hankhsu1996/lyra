@@ -33,6 +33,7 @@ enum class DiagCode : std::uint32_t {
   kUnsupportedCompoundAssignment,
   kUnsupportedAssignmentTarget,
   kUnsupportedBinaryOperator,
+  kUnsupportedTimingControlKind,
 
   kFormatStringTrailingPercent,
   kFormatStringMissingSpecifier,

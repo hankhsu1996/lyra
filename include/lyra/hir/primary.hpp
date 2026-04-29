@@ -8,12 +8,19 @@
 
 namespace lyra::hir {
 
+enum class TimeScale : std::uint8_t { kFs, kPs, kNs, kUs, kMs, kS };
+
 struct IntegerLiteral {
   std::int64_t value;
 };
 
 struct StringLiteral {
   std::string value;
+};
+
+struct TimeLiteral {
+  double value;
+  TimeScale scale;
 };
 
 // Per IEEE 1800 SystemVerilog grammar, `primary` includes both
@@ -24,6 +31,7 @@ struct RefExpr {
   ValueRef target;
 };
 
-using Primary = std::variant<IntegerLiteral, StringLiteral, RefExpr>;
+using Primary =
+    std::variant<IntegerLiteral, StringLiteral, TimeLiteral, RefExpr>;
 
 }  // namespace lyra::hir

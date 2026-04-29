@@ -1,0 +1,21 @@
+id: dump.mir_timed
+tags: [dump]
+input:
+  command: [dump, mir]
+  project: false
+  top: Top
+  files: [main.sv]
+expect:
+  exit: 0
+  stdout:
+    contains:
+      - "TimedStmt"
+      - "DelayControl duration=Expr["
+      - "EmptyStmt"
+      - "IntegerLiteral(5)"
+      - "TimeLiteral(value=5, scale=ns)"
+      - "Item[0] Literal \"x\""
+      - "Item[0] Literal \"ns\""
+      - "Item[0] Literal \"block\""
+      - "BlockStmt (count="
+

@@ -15,12 +15,19 @@
 
 namespace lyra::mir {
 
+enum class TimeScale : std::uint8_t { kFs, kPs, kNs, kUs, kMs, kS };
+
 struct IntegerLiteral {
   std::int64_t value;
 };
 
 struct StringLiteral {
   std::string value;
+};
+
+struct TimeLiteral {
+  double value;
+  TimeScale scale;
 };
 
 struct MemberVarRef {
@@ -68,8 +75,8 @@ struct RuntimeCallExpr {
 };
 
 using ExprData = std::variant<
-    IntegerLiteral, StringLiteral, MemberVarRef, LocalVarRef, BinaryExpr,
-    AssignExpr, CallExpr, RuntimeCallExpr>;
+    IntegerLiteral, StringLiteral, TimeLiteral, MemberVarRef, LocalVarRef,
+    BinaryExpr, AssignExpr, CallExpr, RuntimeCallExpr>;
 
 struct Expr {
   ExprData data;

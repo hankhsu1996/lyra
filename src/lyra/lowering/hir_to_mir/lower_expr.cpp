@@ -33,6 +33,24 @@ auto LowerBinaryOp(hir::BinaryOp op) -> mir::BinaryOp {
   throw InternalError("LowerBinaryOp: unknown HIR BinaryOp");
 }
 
+auto LowerTimeScale(hir::TimeScale s) -> mir::TimeScale {
+  switch (s) {
+    case hir::TimeScale::kFs:
+      return mir::TimeScale::kFs;
+    case hir::TimeScale::kPs:
+      return mir::TimeScale::kPs;
+    case hir::TimeScale::kNs:
+      return mir::TimeScale::kNs;
+    case hir::TimeScale::kUs:
+      return mir::TimeScale::kUs;
+    case hir::TimeScale::kMs:
+      return mir::TimeScale::kMs;
+    case hir::TimeScale::kS:
+      return mir::TimeScale::kS;
+  }
+  throw InternalError("LowerTimeScale: unknown HIR TimeScale");
+}
+
 namespace {
 
 auto LowerMemberVarRefExpr(
@@ -128,6 +146,13 @@ auto LowerPrimaryExpr(
                 .data = mir::StringLiteral{.value = s.value},
                 .type = unit_state.Builtins().string};
           },
+          [&](const hir::TimeLiteral& t) -> mir::Expr {
+            return mir::Expr{
+                .data =
+                    mir::TimeLiteral{
+                        .value = t.value, .scale = LowerTimeScale(t.scale)},
+                .type = unit_state.Builtins().realtime};
+          },
           [&](const hir::RefExpr& r) -> mir::Expr {
             return std::visit(
                 Overloaded{
@@ -165,6 +190,13 @@ auto LowerPrimaryExpr(
             return mir::Expr{
                 .data = mir::StringLiteral{.value = s.value},
                 .type = unit_state.Builtins().string};
+          },
+          [&](const hir::TimeLiteral& t) -> diag::Result<mir::Expr> {
+            return mir::Expr{
+                .data =
+                    mir::TimeLiteral{
+                        .value = t.value, .scale = LowerTimeScale(t.scale)},
+                .type = unit_state.Builtins().realtime};
           },
           [&](const hir::RefExpr& r) -> diag::Result<mir::Expr> {
             return std::visit(

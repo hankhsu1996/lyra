@@ -8,6 +8,7 @@
 #include <slang/ast/Expression.h>
 #include <slang/ast/Statement.h>
 #include <slang/ast/Symbol.h>
+#include <slang/ast/TimingControl.h>
 #include <slang/ast/statements/MiscStatements.h>
 #include <slang/ast/symbols/VariableSymbols.h>
 
@@ -15,11 +16,36 @@
 #include "../facts.hpp"
 #include "../state.hpp"
 #include "../type.hpp"
+#include "lyra/diag/diag_code.hpp"
 #include "lyra/diag/diagnostic.hpp"
+#include "lyra/diag/kind.hpp"
 #include "lyra/hir/expr.hpp"
 #include "lyra/hir/stmt.hpp"
 
 namespace lyra::lowering::ast_to_hir {
+
+namespace {
+
+auto LowerTimingControl(
+    const UnitLoweringFacts& unit_facts, UnitLoweringState& unit_state,
+    ProcessLoweringState& proc_state, const ScopeStack& stack,
+    const slang::ast::TimingControl& tc, diag::SourceSpan span)
+    -> diag::Result<hir::TimingControl> {
+  if (tc.kind == slang::ast::TimingControlKind::Delay) {
+    const auto& delay = tc.as<slang::ast::DelayControl>();
+    auto duration =
+        LowerProcExpr(unit_facts, unit_state, proc_state, stack, delay.expr);
+    if (!duration) return std::unexpected(std::move(duration.error()));
+    return hir::TimingControl{hir::DelayControl{
+        .duration = proc_state.AddExpr(*std::move(duration))}};
+  }
+  return diag::Unsupported(
+      span, diag::DiagCode::kUnsupportedTimingControlKind,
+      "this timing control kind is not yet supported",
+      diag::UnsupportedCategory::kFeature);
+}
+
+}  // namespace
 
 auto LowerStatement(
     const UnitLoweringFacts& unit_facts, ProcessLoweringState& proc_state,
@@ -28,6 +54,27 @@ auto LowerStatement(
   const auto& mapper = unit_facts.SourceMapper();
   const auto span = mapper.SpanOf(stmt.sourceRange);
   switch (stmt.kind) {
+    case slang::ast::StatementKind::Empty: {
+      return hir::Stmt{
+          .label = std::nullopt, .data = hir::EmptyStmt{}, .span = span};
+    }
+
+    case slang::ast::StatementKind::Timed: {
+      const auto& ts = stmt.as<slang::ast::TimedStatement>();
+      auto timing = LowerTimingControl(
+          unit_facts, scope_state.UnitState(), proc_state, stack, ts.timing,
+          span);
+      if (!timing) return std::unexpected(std::move(timing.error()));
+      auto body_stmt =
+          LowerStatement(unit_facts, proc_state, scope_state, stack, ts.stmt);
+      if (!body_stmt) return std::unexpected(std::move(body_stmt.error()));
+      const hir::StmtId body_id = proc_state.AddStmt(*std::move(body_stmt));
+      return hir::Stmt{
+          .label = std::nullopt,
+          .data = hir::TimedStmt{.timing = *std::move(timing), .body = body_id},
+          .span = span};
+    }
+
     case slang::ast::StatementKind::List: {
       const auto& list = stmt.as<slang::ast::StatementList>();
       std::vector<hir::StmtId> kids;

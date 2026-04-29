@@ -55,6 +55,14 @@ auto RenderStmt(
   }
   out += std::visit(
       Overloaded{
+          [&](const mir::EmptyStmt&) -> std::string {
+            return Indent(indent) + ";\n";
+          },
+          [](const mir::TimedStmt&) -> std::string {
+            throw InternalError(
+                "backend cpp: TimedStmt is not yet supported by the C++ "
+                "emitter");
+          },
           [&](const mir::LocalVarDeclStmt& s) -> std::string {
             const auto& lv = ctx.Body()
                                  .local_scopes.at(s.target.scope.value)
