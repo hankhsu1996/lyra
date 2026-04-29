@@ -12,7 +12,7 @@ expect:
     contains:
       - "main.sv:4:"
       - "unsupported:"
-      - "only `+` is currently supported"
-      - "a = a - 1;"
+      - "compound assignments are not supported yet"
+      - "a += 1;"
     not_contains:
       - "internal error"

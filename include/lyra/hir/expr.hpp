@@ -10,11 +10,17 @@
 #include "lyra/hir/primary.hpp"
 #include "lyra/hir/subroutine_ref.hpp"
 #include "lyra/hir/type.hpp"
+#include "lyra/hir/unary_op.hpp"
 
 namespace lyra::hir {
 
 struct PrimaryExpr {
   Primary data;
+};
+
+struct UnaryExpr {
+  UnaryOp op;
+  ExprId operand;
 };
 
 struct BinaryExpr {
@@ -33,8 +39,8 @@ struct CallExpr {
   std::vector<ExprId> arguments;
 };
 
-using ExprData =
-    std::variant<PrimaryExpr, BinaryExpr, AssignExpr, CallExpr, ConversionExpr>;
+using ExprData = std::variant<
+    PrimaryExpr, UnaryExpr, BinaryExpr, AssignExpr, CallExpr, ConversionExpr>;
 
 struct Expr {
   TypeId type;

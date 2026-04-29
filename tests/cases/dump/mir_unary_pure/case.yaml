@@ -1,0 +1,21 @@
+id: dump.mir_unary_pure
+tags: [dump]
+input:
+  command: [dump, mir]
+  project: false
+  top: Top
+  files: [main.sv]
+expect:
+  exit: 0
+  stdout:
+    contains:
+      - "UnaryExpr op=Plus"
+      - "UnaryExpr op=Minus"
+      - "UnaryExpr op=BitwiseNot"
+      - "UnaryExpr op=LogicalNot"
+      - "UnaryExpr op=ReductionAnd"
+      - "UnaryExpr op=ReductionOr"
+      - "UnaryExpr op=ReductionXor"
+      - "UnaryExpr op=ReductionNand"
+      - "UnaryExpr op=ReductionNor"
+      - "UnaryExpr op=ReductionXnor"

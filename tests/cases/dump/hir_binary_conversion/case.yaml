@@ -1,0 +1,13 @@
+id: dump.hir_binary_conversion
+tags: [dump]
+input:
+  command: [dump, hir]
+  project: false
+  top: Top
+  files: [main.sv]
+expect:
+  exit: 0
+  stdout:
+    contains:
+      - "ConversionExpr kind=propagated"
+      - "BinaryExpr op=Add"
