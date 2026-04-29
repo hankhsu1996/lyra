@@ -4,8 +4,8 @@
 #include <cstdint>
 #include <span>
 
-#include "lyra/base/internal_error.hpp"
 #include "lyra/runtime/packed.hpp"
+#include "lyra/runtime/packed_words.hpp"
 
 namespace lyra::runtime {
 
@@ -15,19 +15,6 @@ inline auto ZeroBits(std::span<std::uint64_t> dst) -> void {
   for (auto& w : dst) {
     w = 0U;
   }
-}
-
-inline auto MaskUnusedTopBits(std::span<std::uint64_t> dst, std::uint64_t width)
-    -> void {
-  if (dst.empty()) {
-    return;
-  }
-  const std::uint64_t tail = width % 64U;
-  if (tail == 0U) {
-    return;
-  }
-  const std::uint64_t mask = (std::uint64_t{1} << tail) - 1U;
-  dst.back() &= mask;
 }
 
 inline auto CopyLowBits(
@@ -171,48 +158,6 @@ inline auto ConvertPackedBits(ConversionTarget dst, ConversionSource src)
     MaskUnusedTopBits(dst.state, dst.width);
   }
 }
-
-struct PlaneAccess {
-  template <PackedShape Shape, Signedness Signed>
-  static auto MutableValue(Bit<Shape, Signed>& b) -> std::span<std::uint64_t> {
-    return b.MutableValueWordsForConvert();
-  }
-  template <PackedShape Shape, Signedness Signed>
-  static auto MutableValue(Logic<Shape, Signed>& l)
-      -> std::span<std::uint64_t> {
-    return l.MutableValueWordsForConvert();
-  }
-  template <PackedShape Shape, Signedness Signed>
-  static auto MutableState(Logic<Shape, Signed>& l)
-      -> std::span<std::uint64_t> {
-    return l.MutableStateWordsForConvert();
-  }
-
-  static auto ValueWords(ConstBitView v) -> std::span<const std::uint64_t> {
-    if (v.BitOffsetForConvert() != 0U) {
-      throw InternalError(
-          "PlaneAccess::ValueWords: ConstBitView with non-zero bit_offset is "
-          "not supported");
-    }
-    return v.WordsForConvert();
-  }
-  static auto ValueWords(ConstLogicView v) -> std::span<const std::uint64_t> {
-    if (v.BitOffsetForConvert() != 0U) {
-      throw InternalError(
-          "PlaneAccess::ValueWords: ConstLogicView with non-zero bit_offset "
-          "is not supported");
-    }
-    return v.ValueWordsForConvert();
-  }
-  static auto StateWords(ConstLogicView v) -> std::span<const std::uint64_t> {
-    if (v.BitOffsetForConvert() != 0U) {
-      throw InternalError(
-          "PlaneAccess::StateWords: ConstLogicView with non-zero bit_offset "
-          "is not supported");
-    }
-    return v.StateWordsForConvert();
-  }
-};
 
 }  // namespace detail
 

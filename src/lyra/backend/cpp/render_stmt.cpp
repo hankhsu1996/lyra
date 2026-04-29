@@ -206,7 +206,7 @@ auto RenderStmt(
             std::string cond;
             if (s.condition.has_value()) {
               const auto& cond_expr = ctx.Body().exprs.at(s.condition->value);
-              auto cond_or = RenderExpr(ctx, cond_expr);
+              auto cond_or = RenderExprAsNative(ctx, cond_expr);
               if (!cond_or) {
                 return std::unexpected(std::move(cond_or.error()));
               }

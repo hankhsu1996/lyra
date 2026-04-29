@@ -197,6 +197,94 @@ auto RenderIntegerLiteralAsView(
   return out;
 }
 
+auto IsPackedExplicitMatching(
+    const mir::CompilationUnit& unit, mir::TypeId operand_type,
+    const mir::PackedArrayType& result_pa) -> bool {
+  const auto& ot = unit.GetType(operand_type);
+  if (!ot.IsPackedArray()) {
+    return false;
+  }
+  const auto& opa = ot.AsPackedArray();
+  return opa.form == mir::PackedArrayForm::kExplicit &&
+         opa.IsFourState() == result_pa.IsFourState() &&
+         opa.BitWidth() == result_pa.BitWidth();
+}
+
+auto RenderPackedBitwiseUnaryCall(
+    const RenderContext& ctx, mir::TypeId result_type, mir::UnaryOp op,
+    const mir::Expr& operand) -> diag::Result<std::string> {
+  if (op != mir::UnaryOp::kBitwiseNot) {
+    throw InternalError("RenderPackedBitwiseUnaryCall: non-bitwise unary op");
+  }
+  if (!IsPackedRuntime(ctx.Unit(), result_type)) {
+    throw InternalError(
+        "RenderPackedBitwiseUnaryCall: result not packed runtime");
+  }
+  const auto& result_pa = ctx.Unit().GetType(result_type).AsPackedArray();
+  if (!IsPackedExplicitMatching(ctx.Unit(), operand.type, result_pa)) {
+    throw InternalError(
+        "RenderPackedBitwiseUnaryCall: operand type not normalized to result");
+  }
+  const std::string shape = RenderPackedShapeLiteral(result_pa.dims);
+  const std::string_view signedness = SignednessLiteral(result_pa.signedness);
+  auto operand_view_or = RenderExprAsRuntimeView(ctx, operand);
+  if (!operand_view_or) {
+    return std::unexpected(std::move(operand_view_or.error()));
+  }
+  return std::format(
+      "lyra::runtime::BitwiseNot<{}, {}>({})", shape, signedness,
+      *operand_view_or);
+}
+
+auto RenderPackedBitwiseBinaryCall(
+    const RenderContext& ctx, mir::TypeId result_type, mir::BinaryOp op,
+    const mir::Expr& lhs, const mir::Expr& rhs) -> diag::Result<std::string> {
+  const char* fn = nullptr;
+  switch (op) {
+    case mir::BinaryOp::kBitwiseAnd:
+      fn = "BitwiseAnd";
+      break;
+    case mir::BinaryOp::kBitwiseOr:
+      fn = "BitwiseOr";
+      break;
+    case mir::BinaryOp::kBitwiseXor:
+      fn = "BitwiseXor";
+      break;
+    case mir::BinaryOp::kBitwiseXnor:
+      fn = "BitwiseXnor";
+      break;
+    default:
+      throw InternalError(
+          "RenderPackedBitwiseBinaryCall: non-bitwise binary op");
+  }
+  if (!IsPackedRuntime(ctx.Unit(), result_type)) {
+    throw InternalError(
+        "RenderPackedBitwiseBinaryCall: result not packed runtime");
+  }
+  const auto& result_pa = ctx.Unit().GetType(result_type).AsPackedArray();
+  if (!IsPackedExplicitMatching(ctx.Unit(), lhs.type, result_pa)) {
+    throw InternalError(
+        "RenderPackedBitwiseBinaryCall: lhs not normalized to result");
+  }
+  if (!IsPackedExplicitMatching(ctx.Unit(), rhs.type, result_pa)) {
+    throw InternalError(
+        "RenderPackedBitwiseBinaryCall: rhs not normalized to result");
+  }
+  const std::string shape = RenderPackedShapeLiteral(result_pa.dims);
+  const std::string_view signedness = SignednessLiteral(result_pa.signedness);
+  auto lhs_view_or = RenderExprAsRuntimeView(ctx, lhs);
+  if (!lhs_view_or) {
+    return std::unexpected(std::move(lhs_view_or.error()));
+  }
+  auto rhs_view_or = RenderExprAsRuntimeView(ctx, rhs);
+  if (!rhs_view_or) {
+    return std::unexpected(std::move(rhs_view_or.error()));
+  }
+  return std::format(
+      "lyra::runtime::{}<{}, {}>({}, {})", fn, shape, signedness, *lhs_view_or,
+      *rhs_view_or);
+}
+
 auto RenderConversionCall(
     const RenderContext& ctx, mir::TypeId target_type,
     const mir::ConversionExpr& conv) -> diag::Result<std::string> {
@@ -329,6 +417,48 @@ auto RenderExprAsRuntimeView(const RenderContext& ctx, const mir::Expr& expr)
             if (!inner_or) return std::unexpected(std::move(inner_or.error()));
             return std::format("{}.View()", *inner_or);
           },
+          [&](const mir::UnaryExpr& u) -> diag::Result<std::string> {
+            if (u.op != mir::UnaryOp::kBitwiseNot ||
+                !IsPackedRuntime(ctx.Unit(), expr.type)) {
+              return diag::Unsupported(
+                  diag::DiagCode::kCppEmitExpressionFormNotImplemented,
+                  "this unary expression is not yet renderable as a runtime "
+                  "view in cpp emit",
+                  diag::UnsupportedCategory::kFeature);
+            }
+            auto inner_or = RenderPackedBitwiseUnaryCall(
+                ctx, expr.type, u.op, ctx.Expr(u.operand));
+            if (!inner_or) return std::unexpected(std::move(inner_or.error()));
+            return std::format("{}.View()", *inner_or);
+          },
+          [&](const mir::BinaryExpr& b) -> diag::Result<std::string> {
+            switch (b.op) {
+              case mir::BinaryOp::kBitwiseAnd:
+              case mir::BinaryOp::kBitwiseOr:
+              case mir::BinaryOp::kBitwiseXor:
+              case mir::BinaryOp::kBitwiseXnor: {
+                if (!IsPackedRuntime(ctx.Unit(), expr.type)) {
+                  return diag::Unsupported(
+                      diag::DiagCode::kCppEmitExpressionFormNotImplemented,
+                      "this binary expression is not yet renderable as a "
+                      "runtime view in cpp emit",
+                      diag::UnsupportedCategory::kFeature);
+                }
+                auto inner_or = RenderPackedBitwiseBinaryCall(
+                    ctx, expr.type, b.op, ctx.Expr(b.lhs), ctx.Expr(b.rhs));
+                if (!inner_or) {
+                  return std::unexpected(std::move(inner_or.error()));
+                }
+                return std::format("{}.View()", *inner_or);
+              }
+              default:
+                return diag::Unsupported(
+                    diag::DiagCode::kCppEmitExpressionFormNotImplemented,
+                    "this binary expression is not yet renderable as a "
+                    "runtime view in cpp emit",
+                    diag::UnsupportedCategory::kFeature);
+            }
+          },
           [](const mir::AssignExpr&) -> diag::Result<std::string> {
             return diag::Unsupported(
                 diag::DiagCode::kCppEmitExpressionFormNotImplemented,
@@ -369,6 +499,16 @@ auto RenderExpr(const RenderContext& ctx, const mir::Expr& expr)
                        : RenderExprAsNative(ctx, expr);
           },
           [&](const mir::ConversionExpr&) -> diag::Result<std::string> {
+            return IsPackedRuntime(ctx.Unit(), expr.type)
+                       ? RenderExprAsRuntimeView(ctx, expr)
+                       : RenderExprAsNative(ctx, expr);
+          },
+          [&](const mir::UnaryExpr&) -> diag::Result<std::string> {
+            return IsPackedRuntime(ctx.Unit(), expr.type)
+                       ? RenderExprAsRuntimeView(ctx, expr)
+                       : RenderExprAsNative(ctx, expr);
+          },
+          [&](const mir::BinaryExpr&) -> diag::Result<std::string> {
             return IsPackedRuntime(ctx.Unit(), expr.type)
                        ? RenderExprAsRuntimeView(ctx, expr)
                        : RenderExprAsNative(ctx, expr);

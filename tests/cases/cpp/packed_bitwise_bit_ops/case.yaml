@@ -1,0 +1,17 @@
+id: cpp.packed_bitwise_bit_ops
+tags: [cpp_run]
+input:
+  command: [run, cpp]
+  project: false
+  top: Top
+  files: [main.sv]
+expect:
+  exit: 0
+  stdout:
+    exact: |
+      00110101
+      10001000
+      11101110
+      01100110
+      10011001
+      10011001
