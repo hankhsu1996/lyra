@@ -132,4 +132,19 @@ TEST(CliRun, DelayZeroInactive) {
       "_main/tests/cases/run/delay_zero_inactive.sv", "a\nc\nb\n");
 }
 
+TEST(CliRun, DelaySameTimeOrdering) {
+  RunOneCaseExpectingStdout(
+      "_main/tests/cases/run/delay_same_time_ordering.sv", "a\nb\nc\n");
+}
+
+TEST(CliRun, DelayMultiTimeOrdering) {
+  RunOneCaseExpectingStdout(
+      "_main/tests/cases/run/delay_multi_time_ordering.sv", "early\nlate\n");
+}
+
+TEST(CliRun, DelayChainedZero) {
+  RunOneCaseExpectingStdout(
+      "_main/tests/cases/run/delay_chained_zero.sv", "a\nd\nb\nc\n");
+}
+
 }  // namespace

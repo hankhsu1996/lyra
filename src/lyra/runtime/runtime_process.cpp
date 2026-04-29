@@ -2,6 +2,7 @@
 
 #include <utility>
 
+#include "lyra/base/internal_error.hpp"
 #include "lyra/runtime/process.hpp"
 #include "lyra/runtime/process_kind.hpp"
 #include "lyra/runtime/runtime_scope.hpp"
@@ -23,7 +24,21 @@ auto RuntimeProcess::Kind() const -> ProcessKind {
 }
 
 auto RuntimeProcess::Resume() -> ProcessRunResult {
-  return coroutine_.Resume();
+  if (state_ == ProcessState::kCompleted) {
+    throw InternalError(
+        "RuntimeProcess::Resume: cannot resume completed process");
+  }
+  if (state_ == ProcessState::kRunning) {
+    throw InternalError("RuntimeProcess::Resume: reentrant resume");
+  }
+  state_ = ProcessState::kRunning;
+  auto result = coroutine_.Resume();
+  if (result.IsCompleted()) {
+    state_ = ProcessState::kCompleted;
+    return result;
+  }
+  state_ = ProcessState::kWaiting;
+  return result;
 }
 
 }  // namespace lyra::runtime
