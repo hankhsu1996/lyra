@@ -45,6 +45,8 @@ struct Body {
   }
 };
 
+struct EmptyStmt {};
+
 struct LocalVarDeclStmt {
   LocalVarRef target;
 };
@@ -80,7 +82,7 @@ struct ConstructOwnedObjectStmt {
 };
 
 struct ForInitDecl {
-  LocalVarRef local;
+  LocalVarRef local = {};
   std::optional<ExprId> init;
 };
 
@@ -98,9 +100,20 @@ struct ForStmt {
   BodyId body;
 };
 
+struct DelayControl {
+  ExprId duration;
+};
+
+using TimingControl = std::variant<DelayControl>;
+
+struct TimedStmt {
+  TimingControl timing;
+  StmtId body;
+};
+
 using StmtData = std::variant<
-    LocalVarDeclStmt, ExprStmt, BlockStmt, IfStmt, SwitchStmt,
-    ConstructOwnedObjectStmt, ForStmt>;
+    EmptyStmt, LocalVarDeclStmt, ExprStmt, BlockStmt, IfStmt, SwitchStmt,
+    ConstructOwnedObjectStmt, ForStmt, TimedStmt>;
 
 struct Stmt {
   std::optional<std::string> label;

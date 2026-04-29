@@ -58,6 +58,11 @@ auto RenderExpr(const RenderContext& ctx, const mir::Expr& expr)
           [](const mir::StringLiteral& e) -> std::string {
             return RenderStdStringLiteral(e.value);
           },
+          [](const mir::TimeLiteral&) -> std::string {
+            throw InternalError(
+                "backend cpp: TimeLiteral is not yet supported by the C++ "
+                "emitter");
+          },
           [&](const mir::MemberVarRef& e) -> std::string {
             return ctx.Class().GetMemberVar(e.target).name;
           },

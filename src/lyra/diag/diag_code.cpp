@@ -144,6 +144,12 @@ constexpr std::array kEntries{
             .kind = DiagKind::kUnsupported,
             .category = UnsupportedCategory::kOperation,
             .name = "unsupported_binary_operator"}},
+    std::pair{
+        DiagCode::kUnsupportedTimingControlKind,
+        DiagCodeInfo{
+            .kind = DiagKind::kUnsupported,
+            .category = UnsupportedCategory::kFeature,
+            .name = "unsupported_timing_control_kind"}},
 
     std::pair{
         DiagCode::kFormatStringTrailingPercent,

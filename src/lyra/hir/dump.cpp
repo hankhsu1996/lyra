@@ -191,6 +191,24 @@ class HirDumper {
         v);
   }
 
+  static auto FormatTimeScale(TimeScale s) -> std::string_view {
+    switch (s) {
+      case TimeScale::kFs:
+        return "fs";
+      case TimeScale::kPs:
+        return "ps";
+      case TimeScale::kNs:
+        return "ns";
+      case TimeScale::kUs:
+        return "us";
+      case TimeScale::kMs:
+        return "ms";
+      case TimeScale::kS:
+        return "s";
+    }
+    throw InternalError("HirDumper::FormatTimeScale: unknown TimeScale");
+  }
+
   static auto FormatPrimary(const Primary& p) -> std::string {
     return std::visit(
         Overloaded{
@@ -200,11 +218,28 @@ class HirDumper {
             [](const StringLiteral& lit) -> std::string {
               return std::format("StringLiteral(\"{}\")", lit.value);
             },
+            [](const TimeLiteral& lit) -> std::string {
+              return std::format(
+                  "TimeLiteral(value={}, scale={})", lit.value,
+                  FormatTimeScale(lit.scale));
+            },
             [](const RefExpr& r) -> std::string {
               return std::format("RefExpr {}", FormatValueRef(r.target));
             },
         },
         p);
+  }
+
+  static auto FormatTimingControlHeader(const TimingControl& tc)
+      -> std::string {
+    return std::visit(
+        Overloaded{
+            [](const DelayControl& d) -> std::string {
+              return std::format(
+                  "DelayControl duration=Expr[{}]", d.duration.value);
+            },
+        },
+        tc);
   }
 
   [[nodiscard]] auto FormatSubroutineRef(const SubroutineRef& callee) const
@@ -373,6 +408,9 @@ class HirDumper {
     const auto& s = p.stmts.at(id.value);
     std::visit(
         Overloaded{
+            [&](const EmptyStmt&) {
+              Line(std::format("Stmt[{}] EmptyStmt", id.value));
+            },
             [&](const VarDeclStmt& v) {
               Line(
                   std::format(
@@ -399,6 +437,30 @@ class HirDumper {
               for (const auto child : b.statements) {
                 DumpStmt(p, child);
               }
+              Dedent();
+            },
+            [&](const TimedStmt& t) {
+              Line(std::format("Stmt[{}] TimedStmt", id.value));
+              Indent();
+              Line(
+                  std::format(
+                      "timing: {}", FormatTimingControlHeader(t.timing)));
+              Indent();
+              std::visit(
+                  Overloaded{
+                      [&](const DelayControl& d) {
+                        Line(
+                            std::format(
+                                "Expr[{}] {}", d.duration.value,
+                                FormatProcExpr(p, d.duration)));
+                      },
+                  },
+                  t.timing);
+              Dedent();
+              Line("body:");
+              Indent();
+              DumpStmt(p, t.body);
+              Dedent();
               Dedent();
             },
         },
