@@ -1,4 +1,4 @@
-#include "render_print.hpp"
+#include "lyra/backend/cpp/render_print.hpp"
 
 #include <cstdint>
 #include <format>
@@ -7,14 +7,14 @@
 #include <variant>
 #include <vector>
 
+#include "lyra/backend/cpp/render_context.hpp"
+#include "lyra/backend/cpp/render_expr.hpp"
+#include "lyra/backend/cpp/string_literal.hpp"
 #include "lyra/base/internal_error.hpp"
 #include "lyra/base/overloaded.hpp"
 #include "lyra/mir/expr.hpp"
 #include "lyra/mir/runtime_print.hpp"
 #include "lyra/mir/type.hpp"
-#include "render_context.hpp"
-#include "render_expr.hpp"
-#include "string_literal.hpp"
 
 namespace lyra::backend::cpp {
 

@@ -11,6 +11,11 @@ Rules:
         parameter names; both forms rot when the parameter is renamed.
         Scope: every .cpp/.hpp under src/, include/, tests/.
 
+  S002  No header files (.hpp/.h/.hh/.hxx) anywhere under src/. Headers
+        live in include/, sources live in src/. The two trees mirror
+        each other's structure.
+        Scope: every header file under src/.
+
 Usage:
   python3 tools/policy/check_cpp_style.py
 """
@@ -20,6 +25,7 @@ import sys
 from pathlib import Path
 
 EXTENSIONS = frozenset({".cpp", ".hpp", ".cc", ".cxx", ".h", ".hh"})
+HEADER_EXTENSIONS = frozenset({".hpp", ".h", ".hh", ".hxx"})
 SKIP_PREFIXES = ("archived/", "external/", "bazel-")
 
 # Match /*name=*/ (parameter label) and /*name*/ (unused-parameter comment).
@@ -50,6 +56,25 @@ def check_s001(repo_root: Path) -> list[str]:
     return errors
 
 
+def check_s002(repo_root: Path) -> list[str]:
+    errors = []
+    src_root = repo_root / "src"
+    if not src_root.exists():
+        return errors
+    for path in src_root.rglob("*"):
+        if not path.is_file():
+            continue
+        if path.suffix not in HEADER_EXTENSIONS:
+            continue
+        rel = path.relative_to(repo_root).as_posix()
+        if any(rel.startswith(p) for p in SKIP_PREFIXES):
+            continue
+        errors.append(
+            f"  {rel}: S002 header file under src/; move to include/"
+        )
+    return errors
+
+
 def run_self_tests() -> bool:
     def expect(cond, msg):
         if not cond:
@@ -71,6 +96,7 @@ def run_self_tests() -> bool:
 CHECKS = [
     ("S001 block-comment parameter labels / unused-parameter comments",
      check_s001),
+    ("S002 header files under src/", check_s002),
 ]
 
 

@@ -1,4 +1,4 @@
-#include "type.hpp"
+#include "lyra/lowering/ast_to_hir/type.hpp"
 
 #include <cstdint>
 

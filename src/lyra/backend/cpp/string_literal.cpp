@@ -1,4 +1,4 @@
-#include "string_literal.hpp"
+#include "lyra/backend/cpp/string_literal.hpp"
 
 #include <format>
 #include <string>

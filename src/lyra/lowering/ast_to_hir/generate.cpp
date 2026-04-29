@@ -1,4 +1,4 @@
-#include "generate.hpp"
+#include "lyra/lowering/ast_to_hir/generate.hpp"
 
 #include <expected>
 #include <optional>
@@ -10,14 +10,14 @@
 #include <slang/ast/symbols/BlockSymbols.h>
 #include <slang/ast/symbols/MemberSymbols.h>
 
-#include "expression/lower.hpp"
-#include "facts.hpp"
 #include "lyra/base/internal_error.hpp"
 #include "lyra/diag/diagnostic.hpp"
 #include "lyra/hir/expr.hpp"
 #include "lyra/hir/structural_scope.hpp"
-#include "scope.hpp"
-#include "state.hpp"
+#include "lyra/lowering/ast_to_hir/expression/lower.hpp"
+#include "lyra/lowering/ast_to_hir/facts.hpp"
+#include "lyra/lowering/ast_to_hir/scope.hpp"
+#include "lyra/lowering/ast_to_hir/state.hpp"
 
 namespace lyra::lowering::ast_to_hir {
 

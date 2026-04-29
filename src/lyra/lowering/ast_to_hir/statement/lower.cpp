@@ -1,4 +1,4 @@
-#include "lower.hpp"
+#include "lyra/lowering/ast_to_hir/statement/lower.hpp"
 
 #include <expected>
 #include <optional>
@@ -12,15 +12,15 @@
 #include <slang/ast/statements/MiscStatements.h>
 #include <slang/ast/symbols/VariableSymbols.h>
 
-#include "../expression/lower.hpp"
-#include "../facts.hpp"
-#include "../state.hpp"
-#include "../type.hpp"
 #include "lyra/diag/diag_code.hpp"
 #include "lyra/diag/diagnostic.hpp"
 #include "lyra/diag/kind.hpp"
 #include "lyra/hir/expr.hpp"
 #include "lyra/hir/stmt.hpp"
+#include "lyra/lowering/ast_to_hir/expression/lower.hpp"
+#include "lyra/lowering/ast_to_hir/facts.hpp"
+#include "lyra/lowering/ast_to_hir/state.hpp"
+#include "lyra/lowering/ast_to_hir/type.hpp"
 
 namespace lyra::lowering::ast_to_hir {
 

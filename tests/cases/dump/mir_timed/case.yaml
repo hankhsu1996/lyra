@@ -10,12 +10,9 @@ expect:
   stdout:
     contains:
       - "TimedStmt"
-      - "DelayControl duration=Expr["
+      - "DelayControl ticks=5000"
       - "EmptyStmt"
-      - "IntegerLiteral(5)"
-      - "TimeLiteral(value=5, scale=ns)"
       - "Item[0] Literal \"x\""
       - "Item[0] Literal \"ns\""
       - "Item[0] Literal \"block\""
       - "BlockStmt (count="
-

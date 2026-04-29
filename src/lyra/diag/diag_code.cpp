@@ -150,7 +150,19 @@ constexpr std::array kEntries{
             .kind = DiagKind::kUnsupported,
             .category = UnsupportedCategory::kFeature,
             .name = "unsupported_timing_control_kind"}},
+    std::pair{
+        DiagCode::kUnsupportedDelayExpressionForm,
+        DiagCodeInfo{
+            .kind = DiagKind::kUnsupported,
+            .category = UnsupportedCategory::kFeature,
+            .name = "unsupported_delay_expression_form"}},
 
+    std::pair{
+        DiagCode::kDelayValueOutOfRange,
+        DiagCodeInfo{
+            .kind = DiagKind::kError,
+            .category = std::nullopt,
+            .name = "delay_value_out_of_range"}},
     std::pair{
         DiagCode::kFormatStringTrailingPercent,
         DiagCodeInfo{

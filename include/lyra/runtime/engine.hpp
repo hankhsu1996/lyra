@@ -1,9 +1,12 @@
 #pragma once
 
 #include <deque>
+#include <map>
 #include <memory>
 #include <string>
+#include <vector>
 
+#include "lyra/base/time.hpp"
 #include "lyra/runtime/output_sink.hpp"
 #include "lyra/runtime/runtime_scope.hpp"
 #include "lyra/runtime/runtime_services.hpp"
@@ -45,11 +48,18 @@ class Engine {
 
  private:
   void EnqueueInitialProcesses(RuntimeScope& root);
+  void DrainActiveQueue();
+  void MoveInactiveToActive();
+  void MoveNextDelayedTimeToActive();
+  void ScheduleDelay(RuntimeProcess& proc, SimDuration duration);
 
   OutputDispatcher output_;
   RuntimeServices services_{output_};
   std::unique_ptr<RuntimeScope> root_;
+  SimTime now_ = 0;
   std::deque<RuntimeProcess*> active_queue_;
+  std::deque<RuntimeProcess*> inactive_queue_;
+  std::map<SimTime, std::vector<RuntimeProcess*>> delay_queue_;
   bool bound_ = false;
   bool ran_ = false;
 };

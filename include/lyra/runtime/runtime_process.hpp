@@ -2,6 +2,7 @@
 
 #include "lyra/runtime/process.hpp"
 #include "lyra/runtime/process_kind.hpp"
+#include "lyra/runtime/wait_request.hpp"
 
 namespace lyra::runtime {
 
@@ -9,7 +10,8 @@ class RuntimeScope;
 
 class RuntimeProcess {
  public:
-  RuntimeProcess(RuntimeScope& owner, ProcessKind kind, Process process);
+  RuntimeProcess(
+      RuntimeScope& owner, ProcessKind kind, ProcessCoroutine coroutine);
 
   RuntimeProcess(const RuntimeProcess&) = delete;
   auto operator=(const RuntimeProcess&) -> RuntimeProcess& = delete;
@@ -19,12 +21,12 @@ class RuntimeProcess {
 
   auto Owner() -> RuntimeScope&;
   [[nodiscard]] auto Kind() const -> ProcessKind;
-  void Run();
+  auto Resume() -> ProcessRunResult;
 
  private:
   RuntimeScope* owner_ = nullptr;
   ProcessKind kind_;
-  Process process_;
+  ProcessCoroutine coroutine_;
 };
 
 }  // namespace lyra::runtime

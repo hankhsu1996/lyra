@@ -2,16 +2,16 @@
 
 #include <utility>
 
-#include "lyra/base/internal_error.hpp"
 #include "lyra/runtime/process.hpp"
 #include "lyra/runtime/process_kind.hpp"
 #include "lyra/runtime/runtime_scope.hpp"
+#include "lyra/runtime/wait_request.hpp"
 
 namespace lyra::runtime {
 
 RuntimeProcess::RuntimeProcess(
-    RuntimeScope& owner, ProcessKind kind, Process process)
-    : owner_(&owner), kind_(kind), process_(std::move(process)) {
+    RuntimeScope& owner, ProcessKind kind, ProcessCoroutine coroutine)
+    : owner_(&owner), kind_(kind), coroutine_(std::move(coroutine)) {
 }
 
 auto RuntimeProcess::Owner() -> RuntimeScope& {
@@ -22,13 +22,8 @@ auto RuntimeProcess::Kind() const -> ProcessKind {
   return kind_;
 }
 
-void RuntimeProcess::Run() {
-  process_.Resume();
-  if (!process_.Done()) {
-    throw InternalError(
-        "RuntimeProcess::Run: process suspended without completing; this "
-        "cut has no awaitables, so Done() must hold after Resume");
-  }
+auto RuntimeProcess::Resume() -> ProcessRunResult {
+  return coroutine_.Resume();
 }
 
 }  // namespace lyra::runtime

@@ -33,7 +33,7 @@ expect:
       - "lyra::runtime::RuntimeScopeKind::kGenerateScope"
       - "if (gen0_then_obj) {"
       - "gen0_then_obj->Bind(child)"
-      - "auto process_0() -> lyra::runtime::Process"
+      - "auto process_0() -> lyra::runtime::ProcessCoroutine"
       - "co_return;"
       - "(x = 1);"
       - "ctx.AddProcess("

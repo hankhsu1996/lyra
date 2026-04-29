@@ -1,17 +1,17 @@
 #include <cstddef>
 #include <string>
 
-#include "formatting.hpp"
 #include "lyra/backend/cpp/api.hpp"
 #include "lyra/backend/cpp/artifact.hpp"
+#include "lyra/backend/cpp/formatting.hpp"
+#include "lyra/backend/cpp/render_stmt.hpp"
+#include "lyra/backend/cpp/render_type.hpp"
 #include "lyra/base/internal_error.hpp"
 #include "lyra/mir/class_decl.hpp"
 #include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/member_var.hpp"
 #include "lyra/mir/process.hpp"
 #include "lyra/mir/type.hpp"
-#include "render_stmt.hpp"
-#include "render_type.hpp"
 
 namespace lyra::backend::cpp {
 
@@ -48,7 +48,7 @@ auto RenderProcessMethod(
     -> std::string {
   std::string out;
   out += Indent(indent) + "auto " + RenderProcessMethodName(index) +
-         "() -> lyra::runtime::Process {\n";
+         "() -> lyra::runtime::ProcessCoroutine {\n";
   out += RenderBody(unit, c, process.body, indent + 1);
   out += Indent(indent + 1) + "co_return;\n";
   out += Indent(indent) + "}\n";
@@ -165,6 +165,7 @@ auto RenderClassHeaderFile(
   out += "#include <string>\n";
   out += "#include <vector>\n";
   out += "#include \"lyra/runtime/bind_context.hpp\"\n";
+  out += "#include \"lyra/runtime/delay.hpp\"\n";
   out += "#include \"lyra/runtime/format.hpp\"\n";
   out += "#include \"lyra/runtime/io.hpp\"\n";
   out += "#include \"lyra/runtime/module.hpp\"\n";

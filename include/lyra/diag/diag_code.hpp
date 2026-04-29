@@ -34,7 +34,9 @@ enum class DiagCode : std::uint32_t {
   kUnsupportedAssignmentTarget,
   kUnsupportedBinaryOperator,
   kUnsupportedTimingControlKind,
+  kUnsupportedDelayExpressionForm,
 
+  kDelayValueOutOfRange,
   kFormatStringTrailingPercent,
   kFormatStringMissingSpecifier,
   kFormatStringWidthOverflow,

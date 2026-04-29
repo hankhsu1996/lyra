@@ -32,9 +32,9 @@ auto RuntimeBindContext::Services() -> RuntimeServices& {
   return *services_;
 }
 
-auto RuntimeBindContext::AddProcess(ProcessKind kind, Process process)
-    -> RuntimeProcess& {
-  return CurrentScope().AddProcess(kind, std::move(process));
+auto RuntimeBindContext::AddProcess(
+    ProcessKind kind, ProcessCoroutine coroutine) -> RuntimeProcess& {
+  return CurrentScope().AddProcess(kind, std::move(coroutine));
 }
 
 auto RuntimeBindContext::CreateChildScope(

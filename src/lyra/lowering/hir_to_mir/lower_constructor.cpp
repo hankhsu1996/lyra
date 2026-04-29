@@ -414,7 +414,8 @@ auto LowerScopeAsClass(
   }
 
   for (const auto& p : scope.processes) {
-    auto proc_or = LowerProcess(unit_state, class_state, p);
+    auto proc_or =
+        LowerProcess(unit_state, class_state, p, scope.time_resolution);
     if (!proc_or) return std::unexpected(std::move(proc_or.error()));
     class_state.AddProcess(*std::move(proc_or));
   }
