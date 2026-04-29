@@ -105,7 +105,7 @@ Headers in `include/lyra/`, implementations in `src/lyra/`.
 
 ## Testing
 
-YAML-based tests in `tests/sv_features/`. See `tests/suites.yaml` for suite definitions.
+YAML-based tests in `tests/cases/`. See `tests/suites.yaml` for suite definitions.
 
 ```bash
 bazel test //... --test_output=errors    # Same target set CI runs
