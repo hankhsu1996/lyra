@@ -21,7 +21,7 @@ class DelayAwaitable {
   // NOLINTNEXTLINE(readability-identifier-naming)
   void await_suspend(
       std::coroutine_handle<ProcessCoroutine::promise_type> handle) noexcept {
-    handle.promise().SetWaitRequest(DelayRequest{.duration = duration_});
+    handle.promise().SetWaitRequest(DelayWait{.duration = duration_});
   }
 
   // NOLINTNEXTLINE(readability-identifier-naming)
