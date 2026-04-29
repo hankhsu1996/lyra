@@ -1,5 +1,6 @@
 #include "lyra/runtime/engine.hpp"
 
+#include <cstddef>
 #include <iostream>
 #include <limits>
 #include <memory>
@@ -9,8 +10,10 @@
 #include <variant>
 
 #include "lyra/base/internal_error.hpp"
+#include "lyra/base/overloaded.hpp"
 #include "lyra/base/time.hpp"
 #include "lyra/runtime/bind_context.hpp"
+#include "lyra/runtime/event.hpp"
 #include "lyra/runtime/module.hpp"
 #include "lyra/runtime/output_sink.hpp"
 #include "lyra/runtime/process_kind.hpp"
@@ -46,6 +49,23 @@ void Engine::BindRoot(std::string root_name, Module& top) {
 }
 
 auto Engine::Run() -> int {
+  EnsureReadyToRun();
+  EnqueueInitialProcesses();
+
+  while (HasScheduledWork()) {
+    ExecuteCurrentTimeSlot();
+    if (!HasFutureTimedWork()) {
+      break;
+    }
+    AdvanceToNextTime();
+  }
+
+  phase_ = SchedulerPhase::kIdle;
+  output_.Drain();
+  return 0;
+}
+
+void Engine::EnsureReadyToRun() {
   if (!bound_) {
     throw InternalError("Engine::Run called before BindRoot");
   }
@@ -53,29 +73,14 @@ auto Engine::Run() -> int {
     throw InternalError("Engine::Run called more than once");
   }
   ran_ = true;
-  EnqueueInitialProcesses(*root_);
-  while (!active_queue_.empty() || !inactive_queue_.empty() ||
-         !delay_queue_.empty()) {
-    while (!active_queue_.empty() || !inactive_queue_.empty()) {
-      DrainActiveQueue();
-      if (active_queue_.empty() && !inactive_queue_.empty()) {
-        MoveInactiveToActive();
-      }
-    }
-    if (!delay_queue_.empty()) {
-      MoveNextDelayedTimeToActive();
-    }
-  }
-  output_.Drain();
-  return 0;
 }
 
-void Engine::EnqueueInitialProcesses(RuntimeScope& root) {
-  WalkScopePreOrder(root, [this](RuntimeScope& scope) {
+void Engine::EnqueueInitialProcesses() {
+  WalkScopePreOrder(*root_, [this](RuntimeScope& scope) {
     scope.ForEachProcess([this](RuntimeProcess& process) {
       switch (process.Kind()) {
         case ProcessKind::kInitial:
-          active_queue_.push_back(&process);
+          ScheduleActive(process);
           break;
         case ProcessKind::kAlways:
         case ProcessKind::kAlwaysComb:
@@ -87,51 +92,180 @@ void Engine::EnqueueInitialProcesses(RuntimeScope& root) {
   });
 }
 
-void Engine::DrainActiveQueue() {
-  while (!active_queue_.empty()) {
-    auto* proc = active_queue_.front();
-    active_queue_.pop_front();
-    auto result = proc->Resume();
-    if (result.IsCompleted()) {
-      continue;
+void Engine::ExecuteCurrentTimeSlot() {
+  current_delta_ = 0;
+  std::size_t current_work_iterations = 0;
+  while (true) {
+    while (!queues_.active.empty() || !queues_.inactive.empty()) {
+      if (++current_work_iterations > kMaxCurrentTimeIterations) {
+        throw InternalError("Engine: current time slot did not settle");
+      }
+      ExecuteActiveRegion();
+      ExecuteInactiveRegion();
     }
-    auto wait = result.TakeWait();
-    if (auto* delay = std::get_if<DelayRequest>(&wait)) {
-      ScheduleDelay(*proc, delay->duration);
-      continue;
+    FlushRuntimeUpdates();
+    ExecuteNbaRegion();
+    FlushRuntimeUpdates();
+    ExecuteObservedRegion();
+    ExecuteReactiveRegion();
+    if (!HasNextDeltaWork()) {
+      break;
     }
-    throw InternalError("Engine::DrainActiveQueue: unsupported wait request");
+    AdvanceDeltaCycle();
+    PromoteNextDeltaToActive();
+  }
+  ExecutePostponedRegion();
+}
+
+void Engine::ExecuteActiveRegion() {
+  phase_ = SchedulerPhase::kActive;
+  DrainRunnableQueue(queues_.active);
+}
+
+void Engine::ExecuteInactiveRegion() {
+  phase_ = SchedulerPhase::kInactive;
+  DrainRunnableQueue(queues_.inactive);
+}
+
+void Engine::DrainRunnableQueue(std::deque<RuntimeProcess*>& queue) {
+  const std::size_t snapshot_size = queue.size();
+  for (std::size_t i = 0; i < snapshot_size; ++i) {
+    RuntimeProcess* process = queue.front();
+    queue.pop_front();
+    RunProcess(*process);
   }
 }
 
-void Engine::MoveInactiveToActive() {
-  while (!inactive_queue_.empty()) {
-    active_queue_.push_back(inactive_queue_.front());
-    inactive_queue_.pop_front();
+void Engine::FlushRuntimeUpdates() {
+  phase_ = SchedulerPhase::kFlushUpdates;
+}
+
+void Engine::ExecuteNbaRegion() {
+  phase_ = SchedulerPhase::kCommitNba;
+}
+
+void Engine::ExecuteObservedRegion() {
+  phase_ = SchedulerPhase::kObserved;
+}
+
+void Engine::ExecuteReactiveRegion() {
+  phase_ = SchedulerPhase::kReactive;
+}
+
+void Engine::ExecutePostponedRegion() {
+  phase_ = SchedulerPhase::kPostponed;
+}
+
+void Engine::AdvanceDeltaCycle() {
+  ++current_delta_;
+  if (current_delta_ > kMaxDeltaCyclesPerTimeSlot) {
+    throw InternalError("Engine: delta cycle limit exceeded");
   }
 }
 
-void Engine::MoveNextDelayedTimeToActive() {
-  auto it = delay_queue_.begin();
-  if (it == delay_queue_.end()) {
-    return;
+void Engine::PromoteNextDeltaToActive() {
+  for (RuntimeProcess* p : queues_.next_delta) {
+    ScheduleActive(*p);
   }
+  queues_.next_delta.clear();
+}
+
+void Engine::AdvanceToNextTime() {
+  phase_ = SchedulerPhase::kAdvanceTime;
+  auto it = queues_.delayed.begin();
   now_ = it->first;
-  for (auto* proc : it->second) {
-    active_queue_.push_back(proc);
+  for (RuntimeProcess* p : it->second) {
+    ScheduleActive(*p);
   }
-  delay_queue_.erase(it);
+  queues_.delayed.erase(it);
 }
 
-void Engine::ScheduleDelay(RuntimeProcess& proc, SimDuration duration) {
-  if (duration == 0) {
-    inactive_queue_.push_back(&proc);
+auto Engine::HasCurrentTimeWork() const -> bool {
+  return !queues_.active.empty() || !queues_.inactive.empty() ||
+         !queues_.next_delta.empty();
+}
+
+auto Engine::HasFutureTimedWork() const -> bool {
+  return !queues_.delayed.empty();
+}
+
+auto Engine::HasScheduledWork() const -> bool {
+  return HasCurrentTimeWork() || HasFutureTimedWork();
+}
+
+auto Engine::HasNextDeltaWork() const -> bool {
+  return !queues_.next_delta.empty();
+}
+
+auto Engine::IsRunnablePhase() const -> bool {
+  return phase_ == SchedulerPhase::kActive ||
+         phase_ == SchedulerPhase::kInactive ||
+         phase_ == SchedulerPhase::kReactive;
+}
+
+void Engine::RunProcess(RuntimeProcess& process) {
+  if (!IsRunnablePhase()) {
+    throw InternalError(
+        "Engine::RunProcess: process resumed outside runnable phase");
+  }
+  auto result = process.Resume();
+  if (result.IsCompleted()) {
     return;
   }
-  if (duration > std::numeric_limits<SimTime>::max() - now_) {
-    throw InternalError("Engine::ScheduleDelay: wake time overflow");
+  ScheduleWait(process, result.TakeWait());
+}
+
+void Engine::ScheduleWait(RuntimeProcess& process, WaitRequest wait) {
+  std::visit(
+      Overloaded{
+          [&](DelayWait d) { ScheduleDelayWait(process, d); },
+          [&](EventWait e) { ScheduleEventWait(process, e); },
+      },
+      wait);
+}
+
+void Engine::ScheduleDelayWait(RuntimeProcess& process, DelayWait wait) {
+  if (wait.duration == 0) {
+    ScheduleInactive(process);
+    return;
   }
-  delay_queue_[now_ + duration].push_back(&proc);
+  ScheduleDelayed(CheckedAdd(now_, wait.duration), process);
+}
+
+void Engine::ScheduleEventWait(RuntimeProcess& process, EventWait wait) {
+  if (wait.event == nullptr) {
+    throw InternalError("Engine::ScheduleEventWait: event pointer is null");
+  }
+  wait.event->AddWaiter(process);
+}
+
+void Engine::TriggerEvent(RuntimeEvent& event) {
+  for (RuntimeProcess* p : event.TakeWaiters()) {
+    ScheduleNextDelta(*p);
+  }
+}
+
+void Engine::ScheduleActive(RuntimeProcess& process) {
+  queues_.active.push_back(&process);
+}
+
+void Engine::ScheduleInactive(RuntimeProcess& process) {
+  queues_.inactive.push_back(&process);
+}
+
+void Engine::ScheduleNextDelta(RuntimeProcess& process) {
+  queues_.next_delta.push_back(&process);
+}
+
+void Engine::ScheduleDelayed(SimTime wake_time, RuntimeProcess& process) {
+  queues_.delayed[wake_time].push_back(&process);
+}
+
+auto Engine::CheckedAdd(SimTime base, SimDuration delta) -> SimTime {
+  if (delta > std::numeric_limits<SimTime>::max() - base) {
+    throw InternalError("Engine::CheckedAdd: wake time overflow");
+  }
+  return base + delta;
 }
 
 }  // namespace lyra::runtime
