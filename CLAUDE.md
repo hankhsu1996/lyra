@@ -39,24 +39,25 @@ concise over complete, capture decisions not implementation, ASCII only, integra
 ## Commands
 
 ```bash
-bazel build //...                              # Build
-bazel test //...                               # Test
-clang-format -i <files>                        # Format C++
-npx prettier --write <files>                   # Format docs
-buildifier -r .                                # Format Bazel files
+npm ci
+bazel build //...
+bazel test //...
+clang-format -i <files>
+npm run format
+buildifier -r .
 ```
 
 ## Lyra CLI
 
 ```bash
-lyra init [name]                 # Create a new project
-lyra compile [files...]          # Compile to native executable
-lyra run [files...]              # Run simulation (AOT, default)
-lyra run --backend=jit [files]   # Run via ORC JIT (in-process)
-lyra check [files...]            # Check source files for errors
-lyra dump hir [files...]         # Dump HIR representation
-lyra dump mir [files...]         # Dump MIR representation
-lyra dump llvm [files...]        # Dump LLVM IR
+lyra init [name]
+lyra compile [files...]
+lyra run [files...]              # AOT, default
+lyra run --backend=jit [files]   # ORC JIT, in-process
+lyra check [files...]
+lyra dump hir [files...]
+lyra dump mir [files...]
+lyra dump llvm [files...]
 ```
 
 ### Simulation Flags
