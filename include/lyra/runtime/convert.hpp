@@ -300,4 +300,30 @@ auto ConvertToLogic(ConstLogicView src, Signedness src_signedness)
   return out;
 }
 
+template <PackedShape TargetShape, Signedness TargetSigned>
+auto ConvertToBit(BitView src, Signedness src_signedness)
+    -> Bit<TargetShape, TargetSigned> {
+  return ConvertToBit<TargetShape, TargetSigned>(src.AsConst(), src_signedness);
+}
+
+template <PackedShape TargetShape, Signedness TargetSigned>
+auto ConvertToBit(LogicView src, Signedness src_signedness)
+    -> Bit<TargetShape, TargetSigned> {
+  return ConvertToBit<TargetShape, TargetSigned>(src.AsConst(), src_signedness);
+}
+
+template <PackedShape TargetShape, Signedness TargetSigned>
+auto ConvertToLogic(BitView src, Signedness src_signedness)
+    -> Logic<TargetShape, TargetSigned> {
+  return ConvertToLogic<TargetShape, TargetSigned>(
+      src.AsConst(), src_signedness);
+}
+
+template <PackedShape TargetShape, Signedness TargetSigned>
+auto ConvertToLogic(LogicView src, Signedness src_signedness)
+    -> Logic<TargetShape, TargetSigned> {
+  return ConvertToLogic<TargetShape, TargetSigned>(
+      src.AsConst(), src_signedness);
+}
+
 }  // namespace lyra::runtime
