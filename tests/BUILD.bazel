@@ -12,39 +12,6 @@ cc_library(
     ],
 )
 
-cc_library(
-    name = "diag_framework",
-    srcs = glob(["diag_framework/*.cpp"]),
-    hdrs = glob(["diag_framework/*.hpp"]),
-    visibility = ["//tests:__subpackages__"],
-    deps = [
-        ":framework",
-        "//:diag",
-        "@yaml-cpp//:yaml-cpp",
-    ],
-)
-
-cc_test(
-    name = "cli_golden_tests",
-    srcs = ["cli_golden_test.cpp"],
-    data = [
-        "suites.yaml",
-        "//:lyra",
-    ] + glob(
-        [
-            "cases/**/*.yaml",
-            "cases/**/*.sv",
-        ],
-        allow_empty = True,
-    ),
-    deps = [
-        ":framework",
-        "@bazel_tools//tools/cpp/runfiles",
-        "@fmt",
-        "@googletest//:gtest",
-    ],
-)
-
 cc_test(
     name = "diag_render_tests",
     srcs = ["diag/render_test.cpp"],
@@ -55,65 +22,8 @@ cc_test(
 )
 
 cc_test(
-    name = "diag_framework_tests",
-    srcs = ["diag_framework_test.cpp"],
-    deps = [
-        ":diag_framework",
-        "//:diag",
-        "@googletest//:gtest_main",
-        "@yaml-cpp//:yaml-cpp",
-    ],
-)
-
-cc_test(
-    name = "diag_struct_tests",
-    srcs = ["diag_struct_test.cpp"],
-    data = [
-        "suites.yaml",
-    ] + glob(
-        [
-            "cases/**/*.yaml",
-            "cases/**/*.sv",
-        ],
-        allow_empty = True,
-    ),
-    deps = [
-        ":diag_framework",
-        ":framework",
-        "//:compiler",
-        "//:diag",
-        "//:frontend",
-        "@bazel_tools//tools/cpp/runfiles",
-        "@fmt",
-        "@googletest//:gtest",
-    ],
-)
-
-cc_test(
-    name = "cli_run_tests",
-    srcs = ["cli_run_test.cpp"],
-    data = [
-        "//:cpp_runtime",
-        "//:lyra",
-        "//:runtime_headers",
-    ] + glob(
-        ["cases/run/*.sv"],
-        allow_empty = True,
-    ),
-    # Compiles emitted artifacts with the host C++ compiler. CI's `Test` job
-    # passes `--test_tag_filters=-requires-host-cxx` so this target is
-    # excluded; run locally with `bazel test //tests:cli_run_tests`.
-    tags = ["requires-host-cxx"],
-    deps = [
-        ":framework",
-        "@bazel_tools//tools/cpp/runfiles",
-        "@googletest//:gtest_main",
-    ],
-)
-
-cc_test(
-    name = "cli_emit_cpp_tests",
-    srcs = ["cli_emit_cpp_test.cpp"],
+    name = "cpp_tests",
+    srcs = ["cpp_test.cpp"],
     data = [
         "suites.yaml",
         "//:cpp_runtime",
@@ -126,9 +36,9 @@ cc_test(
         ],
         allow_empty = True,
     ),
-    # Yaml-driven mirror of cli_golden_tests, but only registers cases with
-    # `command: [run, cpp]`. Same host-compiler dependency as cli_run_tests;
-    # CI excludes via `--test_tag_filters=-requires-host-cxx`.
+    # cpp-backend cases compile emitted artifacts with the host C++ compiler.
+    # CI's `Test` job passes `--test_tag_filters=-requires-host-cxx` so this
+    # target is excluded; run locally with `bazel test //tests:cpp_tests`.
     tags = ["requires-host-cxx"],
     deps = [
         ":framework",

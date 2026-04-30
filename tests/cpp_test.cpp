@@ -14,7 +14,6 @@
 
 using bazel::tools::cpp::runfiles::Runfiles;
 using lyra::test::FilterCases;
-using lyra::test::IsEmitCppCase;
 using lyra::test::LoadCases;
 using lyra::test::LoadSuite;
 using lyra::test::RunCase;
@@ -22,27 +21,31 @@ using lyra::test::TestCase;
 
 namespace {
 
-struct GoldenEnv {
+struct CppEnv {
   std::filesystem::path lyra_exe;
   std::filesystem::path cases_root;
   std::filesystem::path suites_yaml;
   lyra::test::CppRunPaths cpp_paths;
 };
 
-auto ResolveEnv(Runfiles& rf) -> GoldenEnv {
-  GoldenEnv env;
+auto ResolveEnv(Runfiles& rf) -> CppEnv {
+  CppEnv env;
   env.lyra_exe = rf.Rlocation("_main/lyra");
   env.cases_root = rf.Rlocation("_main/tests/cases");
   env.suites_yaml = rf.Rlocation("_main/tests/suites.yaml");
-  // cli_golden_tests erases all IsEmitCppCase cases below, so RunCppCase is
-  // never invoked and cpp_paths is unused. Leave it default-constructed.
+
+  const std::filesystem::path engine_hpp =
+      rf.Rlocation("_main/include/lyra/runtime/engine.hpp");
+  env.cpp_paths.include_root =
+      engine_hpp.parent_path().parent_path().parent_path();
+
+  env.cpp_paths.cpp_runtime = rf.Rlocation("_main/libcpp_runtime.a");
   return env;
 }
 
-class CliGoldenTest : public testing::Test {
+class CppTest : public testing::Test {
  public:
-  CliGoldenTest(const TestCase& c, const GoldenEnv* env)
-      : case_(&c), env_(env) {
+  CppTest(const TestCase& c, const CppEnv* env) : case_(&c), env_(env) {
   }
 
  protected:
@@ -55,7 +58,7 @@ class CliGoldenTest : public testing::Test {
 
  private:
   const TestCase* case_;
-  const GoldenEnv* env_;
+  const CppEnv* env_;
 };
 
 }  // namespace
@@ -69,9 +72,7 @@ auto main(int argc, char** argv) -> int {
     fmt::print(stderr, "failed to create runfiles: {}\n", err);
     return 1;
   }
-  // Environment and cases live for the remainder of the process so
-  // RegisterTest factories can safely capture references into them.
-  static const GoldenEnv kEnv = ResolveEnv(*runfiles);
+  static const CppEnv kEnv = ResolveEnv(*runfiles);
 
   const std::span<char* const> args{argv, static_cast<std::size_t>(argc)};
   std::string suite_name = "architecture_reset";
@@ -81,34 +82,26 @@ auto main(int argc, char** argv) -> int {
     }
   }
 
-  // Emit-cpp cases need a host C++ compiler to compile the emitted output;
-  // they live under cli_emit_cpp_tests (tagged requires-host-cxx) and are
-  // skipped here so `bazel test //...` stays toolchain-free.
   static const std::vector<TestCase> kCases = [&] {
     auto loaded = LoadCases(kEnv.cases_root);
     auto suite = LoadSuite(kEnv.suites_yaml, suite_name);
-    auto filtered = FilterCases(loaded, suite);
-    std::erase_if(filtered, IsEmitCppCase);
-    return filtered;
+    return FilterCases(loaded, suite);
   }();
 
   if (kCases.empty()) {
     fmt::print(
         stderr,
-        "cli_golden_tests: zero cases registered for suite '{}'. The case "
-        "loader, suite filter, or emit-cpp erasure left nothing behind. "
+        "cpp_tests: zero cases registered for suite '{}'. "
         "Refusing to report PASS on empty coverage.\n",
         suite_name);
     return 1;
   }
 
-  // NOLINTBEGIN(cppcoreguidelines-owning-memory) -- gtest's RegisterTest
-  // factory API mandates heap-allocated Test subclasses; the test framework
-  // takes ownership and destroys them after the test completes.
+  // NOLINTBEGIN(cppcoreguidelines-owning-memory)
   for (const auto& c : kCases) {
     testing::RegisterTest(
-        "CliGolden", c.id.c_str(), nullptr, nullptr, __FILE__, __LINE__,
-        [&c]() -> testing::Test* { return new CliGoldenTest(c, &kEnv); });
+        "Cpp", c.id.c_str(), nullptr, nullptr, __FILE__, __LINE__,
+        [&c]() -> testing::Test* { return new CppTest(c, &kEnv); });
   }
   // NOLINTEND(cppcoreguidelines-owning-memory)
 
