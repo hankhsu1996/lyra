@@ -44,7 +44,7 @@ TEST(DiagRender, InternalErrorIsAlwaysPlain) {
 
 TEST(DiagRender, UnsupportedWithUnknownSpan) {
   const auto diag = lyra::diag::Diagnostic::Unsupported(
-      lyra::diag::DiagCode::kUnsupportedNonInitialProcedure,
+      lyra::diag::DiagCode::kUnsupportedProcessKindLowering,
       "for-generate is not supported yet",
       lyra::diag::UnsupportedCategory::kFeature);
   const auto out = lyra::diag::RenderDiagnostic(
@@ -109,7 +109,7 @@ TEST(DiagRender, SinkSummaryAggregatesCounts) {
   lyra::diag::DiagnosticSink sink;
   sink.Report(
       lyra::diag::Diagnostic::Unsupported(
-          lyra::diag::DiagCode::kUnsupportedNonInitialProcedure,
+          lyra::diag::DiagCode::kUnsupportedProcessKindLowering,
           "feature A is not supported yet",
           lyra::diag::UnsupportedCategory::kFeature));
   sink.Report(
@@ -136,7 +136,7 @@ TEST(DiagRender, SinkEmptyHasNoSummary) {
 TEST(DiagRender, NoteAttachesAfterPrimary) {
   auto diag =
       lyra::diag::Diagnostic::Unsupported(
-          lyra::diag::DiagCode::kUnsupportedNonInitialProcedure,
+          lyra::diag::DiagCode::kUnsupportedProcessKindLowering,
           "feature is not supported", lyra::diag::UnsupportedCategory::kFeature)
           .WithNote("see related design discussion");
   const auto out = lyra::diag::RenderDiagnostic(
@@ -164,7 +164,7 @@ TEST(DiagRender, UnsupportedCategoryPreservedAcrossKinds) {
       *op_diag.primary.category, lyra::diag::UnsupportedCategory::kOperation);
 
   const auto feature_diag = lyra::diag::Diagnostic::Unsupported(
-      lyra::diag::DiagCode::kUnsupportedNonInitialProcedure,
+      lyra::diag::DiagCode::kUnsupportedProcessKindLowering,
       "language feature gap", lyra::diag::UnsupportedCategory::kFeature);
   ASSERT_TRUE(feature_diag.primary.category.has_value());
   EXPECT_EQ(
@@ -183,7 +183,7 @@ TEST(DiagRender, UnsupportedCategoryPreservedAcrossKinds) {
 
   // Notes carry only span+message; they have no category field by design.
   auto with_note = lyra::diag::Diagnostic::Unsupported(
-                       lyra::diag::DiagCode::kUnsupportedNonInitialProcedure,
+                       lyra::diag::DiagCode::kUnsupportedProcessKindLowering,
                        "x", lyra::diag::UnsupportedCategory::kFeature)
                        .WithNote("y");
   EXPECT_EQ(with_note.notes.front().message, "y");

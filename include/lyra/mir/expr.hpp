@@ -7,6 +7,7 @@
 #include <vector>
 
 #include "lyra/mir/binary_op.hpp"
+#include "lyra/mir/body_hops.hpp"
 #include "lyra/mir/conversion.hpp"
 #include "lyra/mir/expr_id.hpp"
 #include "lyra/mir/integral_constant.hpp"
@@ -38,7 +39,7 @@ struct MemberVarRef {
 };
 
 struct LocalVarRef {
-  LocalScopeId scope;
+  BodyHops body_hops;
   LocalVarId local;
 };
 

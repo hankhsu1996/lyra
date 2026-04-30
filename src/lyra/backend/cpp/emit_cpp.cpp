@@ -50,6 +50,11 @@ auto RenderProcessMethod(
     const mir::CompilationUnit& unit, const mir::ClassDecl& c,
     const mir::Process& process, std::size_t index, std::size_t indent)
     -> diag::Result<std::string> {
+  if (process.kind != mir::ProcessKind::kInitial) {
+    throw InternalError(
+        "RenderProcessMethod: C++ emit is not yet supported for non-initial "
+        "processes");
+  }
   std::string out;
   out += Indent(indent) + "auto " + RenderProcessMethodName(index) +
          "() -> lyra::runtime::ProcessCoroutine {\n";
@@ -65,6 +70,14 @@ auto RenderProcessKindLiteral(mir::ProcessKind kind) -> std::string {
   switch (kind) {
     case mir::ProcessKind::kInitial:
       return "lyra::runtime::ProcessKind::kInitial";
+    case mir::ProcessKind::kFinal:
+    case mir::ProcessKind::kAlways:
+    case mir::ProcessKind::kAlwaysComb:
+    case mir::ProcessKind::kAlwaysLatch:
+    case mir::ProcessKind::kAlwaysFf:
+      throw InternalError(
+          "RenderProcessKindLiteral: C++ emit is not yet supported for "
+          "non-initial processes");
   }
   throw InternalError("RenderProcessKindLiteral: unknown ProcessKind");
 }

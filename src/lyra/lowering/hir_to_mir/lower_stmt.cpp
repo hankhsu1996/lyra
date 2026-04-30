@@ -14,9 +14,11 @@
 #include "lyra/hir/primary.hpp"
 #include "lyra/hir/process.hpp"
 #include "lyra/hir/stmt.hpp"
+#include "lyra/lowering/hir_to_mir/body_helpers.hpp"
 #include "lyra/lowering/hir_to_mir/delay_time_resolver.hpp"
 #include "lyra/lowering/hir_to_mir/lower_expr.hpp"
 #include "lyra/lowering/hir_to_mir/state.hpp"
+#include "lyra/mir/body_hops.hpp"
 #include "lyra/mir/stmt.hpp"
 
 namespace lyra::lowering::hir_to_mir {
@@ -66,7 +68,8 @@ auto ResolveDelayDuration(
 
 auto LowerTimingControl(
     const ProcessLoweringState& proc_state, const hir::Process& hir_proc,
-    const hir::TimingControl& tc) -> diag::Result<mir::TimingControl> {
+    const hir::TimingControl& tc, diag::SourceSpan span)
+    -> diag::Result<mir::TimingControl> {
   return std::visit(
       Overloaded{
           [&](const hir::DelayControl& d) -> diag::Result<mir::TimingControl> {
@@ -78,6 +81,12 @@ auto LowerTimingControl(
             }
             return mir::TimingControl{mir::DelayControl{.duration = *ticks_or}};
           },
+          [&](const hir::EventControl&) -> diag::Result<mir::TimingControl> {
+            return diag::Unsupported(
+                span, diag::DiagCode::kUnsupportedTimingControlKind,
+                "event-control timing is not yet supported",
+                diag::UnsupportedCategory::kFeature);
+          },
       },
       tc);
 }
@@ -86,45 +95,77 @@ auto LowerTimingControl(
 
 auto LowerStmt(
     const UnitLoweringState& unit_state, const ClassLoweringState& class_state,
-    const ProcessLoweringState& proc_state, BodyLoweringState& body_state,
+    ProcessLoweringState& proc_state, BodyLoweringState& body_state,
     const hir::Process& hir_proc, const hir::Stmt& stmt)
     -> diag::Result<mir::Stmt> {
-  auto data = std::visit(
+  return std::visit(
       Overloaded{
-          [](const hir::EmptyStmt&) -> diag::Result<mir::StmtData> {
-            return mir::EmptyStmt{};
+          [&](const hir::EmptyStmt&) -> diag::Result<mir::Stmt> {
+            return mir::Stmt{
+                .label = stmt.label,
+                .data = mir::EmptyStmt{},
+                .child_bodies = {}};
           },
-          [&](const hir::VarDeclStmt& v) -> diag::Result<mir::StmtData> {
-            return mir::LocalVarDeclStmt{
-                .target = proc_state.TranslateLocalVar(v.local_var)};
+          [&](const hir::VarDeclStmt& v) -> diag::Result<mir::Stmt> {
+            const auto& hir_local = hir_proc.local_vars.at(v.local_var.value);
+            const mir::TypeId type = unit_state.TranslateType(hir_local.type);
+            const mir::LocalVarId local_id = body_state.AddLocal(
+                mir::LocalVar{.name = hir_local.name, .type = type});
+            proc_state.MapLocalVar(
+                v.local_var,
+                LocalBinding{
+                    .declaration_body_depth = proc_state.CurrentBodyDepth(),
+                    .local = local_id});
+            return mir::Stmt{
+                .label = stmt.label,
+                .data =
+                    mir::LocalVarDeclStmt{
+                        .target =
+                            mir::LocalVarRef{
+                                .body_hops = mir::BodyHops{.value = 0},
+                                .local = local_id}},
+                .child_bodies = {}};
           },
-          [&](const hir::ExprStmt& e) -> diag::Result<mir::StmtData> {
+          [&](const hir::ExprStmt& e) -> diag::Result<mir::Stmt> {
             auto expr_or = LowerExpr(
                 unit_state, class_state, proc_state, body_state, hir_proc,
                 hir_proc.exprs.at(e.expr.value));
             if (!expr_or) {
               return std::unexpected(std::move(expr_or.error()));
             }
-            return mir::ExprStmt{
-                .expr = body_state.AddExpr(*std::move(expr_or))};
+            return mir::Stmt{
+                .label = stmt.label,
+                .data =
+                    mir::ExprStmt{
+                        .expr = body_state.AddExpr(*std::move(expr_or))},
+                .child_bodies = {}};
           },
-          [&](const hir::BlockStmt& b) -> diag::Result<mir::StmtData> {
-            std::vector<mir::StmtId> children;
-            children.reserve(b.statements.size());
-            for (const hir::StmtId child_id : b.statements) {
-              const hir::Stmt& child = hir_proc.stmts.at(child_id.value);
-              auto lowered_child = LowerStmt(
-                  unit_state, class_state, proc_state, body_state, hir_proc,
-                  child);
-              if (!lowered_child) {
-                return std::unexpected(std::move(lowered_child.error()));
+          [&](const hir::BlockStmt& b) -> diag::Result<mir::Stmt> {
+            BodyLoweringState child_body_state;
+            BodyDepthGuard depth_guard{proc_state};
+            for (const hir::StmtId child_hir_id : b.statements) {
+              const hir::Stmt& child = hir_proc.stmts.at(child_hir_id.value);
+              auto lowered = LowerStmt(
+                  unit_state, class_state, proc_state, child_body_state,
+                  hir_proc, child);
+              if (!lowered) {
+                return std::unexpected(std::move(lowered.error()));
               }
-              children.push_back(body_state.AddStmt(*std::move(lowered_child)));
+              const mir::StmtId child_id =
+                  child_body_state.AddStmt(*std::move(lowered));
+              child_body_state.AddRootStmt(child_id);
             }
-            return mir::BlockStmt{.statements = std::move(children)};
+            std::vector<mir::Body> child_bodies;
+            const mir::BodyId body_id =
+                AddChildBody(child_bodies, child_body_state.Finish());
+            return mir::Stmt{
+                .label = stmt.label,
+                .data = mir::BlockStmt{.body = body_id},
+                .child_bodies = std::move(child_bodies)};
           },
-          [&](const hir::TimedStmt& t) -> diag::Result<mir::StmtData> {
-            auto timing_or = LowerTimingControl(proc_state, hir_proc, t.timing);
+          [&](const hir::TimedStmt& t) -> diag::Result<mir::Stmt> {
+            auto timing_or =
+                LowerTimingControl(proc_state, hir_proc, t.timing, stmt.span);
             if (!timing_or) {
               return std::unexpected(std::move(timing_or.error()));
             }
@@ -136,14 +177,15 @@ auto LowerStmt(
               return std::unexpected(std::move(body_or.error()));
             }
             const mir::StmtId body_id = body_state.AddStmt(*std::move(body_or));
-            return mir::TimedStmt{
-                .timing = *std::move(timing_or), .body = body_id};
+            return mir::Stmt{
+                .label = stmt.label,
+                .data =
+                    mir::TimedStmt{
+                        .timing = *std::move(timing_or), .body = body_id},
+                .child_bodies = {}};
           },
       },
       stmt.data);
-  if (!data) return std::unexpected(std::move(data.error()));
-  return mir::Stmt{
-      .label = stmt.label, .data = *std::move(data), .child_bodies = {}};
 }
 
 }  // namespace lyra::lowering::hir_to_mir

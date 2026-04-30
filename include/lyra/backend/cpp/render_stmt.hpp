@@ -13,7 +13,8 @@ namespace lyra::backend::cpp {
 
 auto RenderBody(
     const mir::CompilationUnit& unit, const mir::ClassDecl& class_decl,
-    const mir::Body& body, std::size_t indent) -> diag::Result<std::string>;
+    const mir::Body& body, std::size_t indent,
+    const RenderContext* parent = nullptr) -> diag::Result<std::string>;
 
 auto RenderStmt(
     const RenderContext& ctx, const mir::Stmt& stmt, std::size_t indent)

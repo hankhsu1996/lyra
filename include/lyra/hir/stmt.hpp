@@ -8,7 +8,7 @@
 #include <vector>
 
 #include "lyra/diag/source_span.hpp"
-#include "lyra/hir/expr.hpp"
+#include "lyra/hir/expr_id.hpp"
 #include "lyra/hir/local_var.hpp"
 
 namespace lyra::hir {
@@ -40,7 +40,9 @@ struct DelayControl {
   ExprId duration;
 };
 
-using TimingControl = std::variant<DelayControl>;
+struct EventControl {};
+
+using TimingControl = std::variant<DelayControl, EventControl>;
 
 struct TimedStmt {
   TimingControl timing;
