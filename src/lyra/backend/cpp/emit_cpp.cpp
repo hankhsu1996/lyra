@@ -27,7 +27,13 @@ auto RenderField(
     -> diag::Result<std::string> {
   auto type_or = RenderTypeAsCpp(unit, owner_scope, var.type);
   if (!type_or) return std::unexpected(std::move(type_or.error()));
-  return Indent(indent) + *type_or + " " + var.name + ";\n";
+  std::string init;
+  const auto& ty = unit.GetType(var.type);
+  if (ty.IsPackedArray() &&
+      ty.AsPackedArray().form == mir::PackedArrayForm::kExplicit) {
+    init = "{" + std::to_string(ty.AsPackedArray().BitWidth()) + "}";
+  }
+  return Indent(indent) + *type_or + " " + var.name + init + ";\n";
 }
 
 auto RenderParamField(
@@ -254,6 +260,7 @@ auto RenderScopeHeaderFile(
   out += "#include \"lyra/runtime/format.hpp\"\n";
   out += "#include \"lyra/runtime/io.hpp\"\n";
   out += "#include \"lyra/runtime/module.hpp\"\n";
+  out += "#include \"lyra/runtime/packed.hpp\"\n";
   out += "#include \"lyra/runtime/process.hpp\"\n";
   out += "#include \"lyra/runtime/process_kind.hpp\"\n";
   out += "#include \"lyra/runtime/runtime_scope_kind.hpp\"\n";

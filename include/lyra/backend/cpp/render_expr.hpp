@@ -17,4 +17,7 @@ auto RenderLvalue(const RenderContext& ctx, const mir::Lvalue& target)
 auto RenderExprAsNative(const RenderContext& ctx, const mir::Expr& expr)
     -> diag::Result<std::string>;
 
+auto RenderPackedExprAsView(const RenderContext& ctx, const mir::Expr& expr)
+    -> diag::Result<std::string>;
+
 }  // namespace lyra::backend::cpp

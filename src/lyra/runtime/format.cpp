@@ -166,6 +166,38 @@ auto RuntimeValueView::String(std::string_view sv) -> RuntimeValueView {
       }};
 }
 
+auto RuntimeValueView::FromBitView(ConstBitView view, bool is_signed)
+    -> RuntimeValueView {
+  if (view.Width() > 64U) {
+    throw InternalError(
+        "RuntimeValueView::FromBitView: width >64 not yet supported");
+  }
+  return RuntimeValueView{
+      .data = IntegralValueView{
+          .state = IntegralStateKind::kTwoState,
+          .inline_word = view.PackLowWord(),
+          .inline_unknown_word = 0,
+          .bit_width = static_cast<std::uint32_t>(view.Width()),
+          .is_signed = is_signed,
+      }};
+}
+
+auto RuntimeValueView::FromLogicView(ConstLogicView view, bool is_signed)
+    -> RuntimeValueView {
+  if (view.Width() > 64U) {
+    throw InternalError(
+        "RuntimeValueView::FromLogicView: width >64 not yet supported");
+  }
+  return RuntimeValueView{
+      .data = IntegralValueView{
+          .state = IntegralStateKind::kFourState,
+          .inline_word = view.PackValueLowWord(),
+          .inline_unknown_word = view.PackUnknownLowWord(),
+          .bit_width = static_cast<std::uint32_t>(view.Width()),
+          .is_signed = is_signed,
+      }};
+}
+
 auto FormatValue(const FormatSpec& spec, const RuntimeValueView& value)
     -> std::string {
   return std::visit(

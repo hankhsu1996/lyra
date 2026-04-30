@@ -1,5 +1,6 @@
 load("@rules_cc//cc:cc_library.bzl", "cc_library")
 load("@rules_cc//cc:cc_test.bzl", "cc_test")
+load("//tools/bazel:cc_headers.bzl", "cc_header_files")
 
 cc_library(
     name = "framework",
@@ -10,6 +11,11 @@ cc_library(
         "@fmt",
         "@yaml-cpp//:yaml-cpp",
     ],
+)
+
+cc_header_files(
+    name = "abseil_inlined_vector_runtime_hdrs",
+    dep = "@abseil-cpp//absl/container:inlined_vector",
 )
 
 cc_test(
@@ -26,6 +32,7 @@ cc_test(
     srcs = ["cpp_test.cpp"],
     data = [
         "suites.yaml",
+        ":abseil_inlined_vector_runtime_hdrs",
         "//:cpp_runtime",
         "//:lyra",
         "//:runtime_headers",

@@ -24,7 +24,7 @@ auto RenderTypeAsCpp(
             // `int`/`integer` retain native std::int32_t because current
             // expression lowering uses raw C++ operators; switching them to
             // a runtime packed type requires operator overloads that belong
-            // to the new erased packed storage model. `integer`'s 4-state
+            // to the erased packed storage model. `integer`'s 4-state
             // semantics are not blessed correct here -- the mapping is
             // preserved only to keep current tests green; runtime typing of
             // `integer` is unresolved.
@@ -33,10 +33,15 @@ auto RenderTypeAsCpp(
               return std::string{"std::int32_t"};
             }
             if (p.form == mir::PackedArrayForm::kExplicit) {
-              return diag::Unsupported(
-                  diag::DiagCode::kCppEmitPackedRuntimeNotSupported,
-                  "packed runtime storage is not yet supported in cpp emit",
-                  diag::UnsupportedCategory::kFeature);
+              if (p.atom == mir::BitAtom::kBit) {
+                return std::string{"lyra::runtime::BitValue"};
+              }
+              if (p.atom == mir::BitAtom::kLogic ||
+                  p.atom == mir::BitAtom::kReg) {
+                return std::string{"lyra::runtime::LogicValue"};
+              }
+              throw InternalError(
+                  "RenderTypeAsCpp: unknown BitAtom for kExplicit packed type");
             }
             return diag::Unsupported(
                 diag::DiagCode::kCppEmitPackedRuntimeNotSupported,

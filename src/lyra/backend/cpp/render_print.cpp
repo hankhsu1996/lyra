@@ -97,10 +97,23 @@ auto RenderRuntimeValueViewInit(
     }
 
     if (pa.form == mir::PackedArrayForm::kExplicit) {
-      return diag::Unsupported(
-          diag::DiagCode::kCppEmitPackedRuntimeNotSupported,
-          "packed runtime formatting is not yet supported in cpp emit",
-          diag::UnsupportedCategory::kFeature);
+      if (bit_width > 64U) {
+        return diag::Unsupported(
+            diag::DiagCode::kCppEmitPackedRuntimeNotSupported,
+            "packed runtime formatting wider than 64 bits is not yet "
+            "supported in cpp emit",
+            diag::UnsupportedCategory::kFeature);
+      }
+      auto view_or = RenderPackedExprAsView(ctx, ctx.Expr(v.value));
+      if (!view_or) return std::unexpected(std::move(view_or.error()));
+      if (pa.atom == mir::BitAtom::kBit) {
+        return std::format(
+            "lyra::runtime::RuntimeValueView::FromBitView({}, {})", *view_or,
+            BoolLiteral(is_signed));
+      }
+      return std::format(
+          "lyra::runtime::RuntimeValueView::FromLogicView({}, {})", *view_or,
+          BoolLiteral(is_signed));
     }
     throw InternalError(
         "RenderRuntimeValueViewInit: unsupported PackedArrayForm");

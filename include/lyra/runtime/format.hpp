@@ -5,6 +5,8 @@
 #include <string_view>
 #include <variant>
 
+#include "lyra/runtime/packed.hpp"
+
 namespace lyra::runtime {
 
 enum class PrintKind : std::uint8_t {
@@ -74,6 +76,22 @@ struct RuntimeValueView {
       -> RuntimeValueView;
 
   [[nodiscard]] static auto String(std::string_view sv) -> RuntimeValueView;
+
+  [[nodiscard]] static auto FromBitView(ConstBitView view, bool is_signed)
+      -> RuntimeValueView;
+
+  [[nodiscard]] static auto FromBitView(BitView view, bool is_signed)
+      -> RuntimeValueView {
+    return FromBitView(view.AsConst(), is_signed);
+  }
+
+  [[nodiscard]] static auto FromLogicView(ConstLogicView view, bool is_signed)
+      -> RuntimeValueView;
+
+  [[nodiscard]] static auto FromLogicView(LogicView view, bool is_signed)
+      -> RuntimeValueView {
+    return FromLogicView(view.AsConst(), is_signed);
+  }
 };
 
 [[nodiscard]] auto FormatValue(
