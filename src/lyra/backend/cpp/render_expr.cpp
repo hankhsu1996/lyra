@@ -167,23 +167,23 @@ auto RenderIntegerLiteralAsView(
       "{{{}}};\n",
       target_words, value_init);
   if (target_4state) {
-    std::string state_init;
+    std::string unknown_init;
     for (std::size_t i = 0; i < target_words; ++i) {
-      if (i != 0) state_init += ", ";
+      if (i != 0) unknown_init += ", ";
       const std::uint64_t w =
           (c.state_kind == mir::IntegralStateKind::kFourState &&
            i < c.state_words.size())
               ? c.state_words[i]
               : 0U;
-      state_init += std::format("0x{:x}ULL", w);
+      unknown_init += std::format("0x{:x}ULL", w);
     }
     out += std::format(
-        "  static constexpr std::array<std::uint64_t, {}> kStateWords = "
+        "  static constexpr std::array<std::uint64_t, {}> kUnknownWords = "
         "{{{}}};\n",
-        target_words, state_init);
+        target_words, unknown_init);
     out += std::format(
-        "  return lyra::runtime::ConstLogicView{{kValueWords, kStateWords, 0, "
-        "{}}};\n",
+        "  return lyra::runtime::ConstLogicView{{kValueWords, kUnknownWords, "
+        "0, {}}};\n",
         target_width);
   } else {
     out += std::format(

@@ -100,7 +100,7 @@ inline auto TestBit(std::span<const std::uint64_t> words, std::uint64_t index)
 
 struct ConversionSource {
   std::span<const std::uint64_t> value;
-  std::span<const std::uint64_t> state;
+  std::span<const std::uint64_t> unknown;
   std::uint64_t width;
   Signedness signedness;
   bool four_state;
@@ -108,7 +108,7 @@ struct ConversionSource {
 
 struct ConversionTarget {
   std::span<std::uint64_t> value;
-  std::span<std::uint64_t> state;
+  std::span<std::uint64_t> unknown;
   std::uint64_t width;
   bool four_state;
 };
@@ -117,45 +117,45 @@ inline auto ConvertPackedBits(ConversionTarget dst, ConversionSource src)
     -> void {
   ZeroBits(dst.value);
   if (dst.four_state) {
-    ZeroBits(dst.state);
+    ZeroBits(dst.unknown);
   }
 
   const std::uint64_t copy_width = std::min(dst.width, src.width);
 
   if (src.four_state && !dst.four_state) {
-    // Logic -> Bit flattens X/Z by clearing where state is 1.
+    // Logic -> Bit flattens X/Z by clearing where unknown is 1.
     CopyLowBits(dst.value, src.value, copy_width);
-    AndNotLowBits(dst.value, src.state, copy_width);
+    AndNotLowBits(dst.value, src.unknown, copy_width);
   } else {
     CopyLowBits(dst.value, src.value, copy_width);
     if (dst.four_state && src.four_state) {
-      CopyLowBits(dst.state, src.state, copy_width);
+      CopyLowBits(dst.unknown, src.unknown, copy_width);
     }
   }
 
   if (dst.width > src.width && src.width > 0U &&
       src.signedness == Signedness::kSigned) {
     bool sign_value = false;
-    bool sign_state = false;
+    bool sign_unknown = false;
     if (src.four_state && !dst.four_state) {
-      sign_value = !TestBit(src.state, src.width - 1U) &&
+      sign_value = !TestBit(src.unknown, src.width - 1U) &&
                    TestBit(src.value, src.width - 1U);
     } else {
       sign_value = TestBit(src.value, src.width - 1U);
       if (src.four_state) {
         // Logic -> Logic preserves an X or Z sign bit on widening.
-        sign_state = TestBit(src.state, src.width - 1U);
+        sign_unknown = TestBit(src.unknown, src.width - 1U);
       }
     }
     FillBitRange(dst.value, src.width, dst.width, sign_value);
     if (dst.four_state) {
-      FillBitRange(dst.state, src.width, dst.width, sign_state);
+      FillBitRange(dst.unknown, src.width, dst.width, sign_unknown);
     }
   }
 
   MaskUnusedTopBits(dst.value, dst.width);
   if (dst.four_state) {
-    MaskUnusedTopBits(dst.state, dst.width);
+    MaskUnusedTopBits(dst.unknown, dst.width);
   }
 }
 
@@ -167,14 +167,14 @@ auto ConvertToBit(ConstBitView src, Signedness src_signedness)
   Bit<TargetShape, TargetSigned> out;
   detail::ConvertPackedBits(
       detail::ConversionTarget{
-          .value = detail::PlaneAccess::MutableValue(out),
-          .state = {},
+          .value = detail::PlaneAccess::AlignedMutableValueWords(out),
+          .unknown = {},
           .width = TargetShape.TotalWidth(),
           .four_state = false,
       },
       detail::ConversionSource{
-          .value = detail::PlaneAccess::ValueWords(src),
-          .state = {},
+          .value = detail::PlaneAccess::AlignedValueWords(src),
+          .unknown = {},
           .width = src.Width(),
           .signedness = src_signedness,
           .four_state = false,
@@ -188,14 +188,14 @@ auto ConvertToBit(ConstLogicView src, Signedness src_signedness)
   Bit<TargetShape, TargetSigned> out;
   detail::ConvertPackedBits(
       detail::ConversionTarget{
-          .value = detail::PlaneAccess::MutableValue(out),
-          .state = {},
+          .value = detail::PlaneAccess::AlignedMutableValueWords(out),
+          .unknown = {},
           .width = TargetShape.TotalWidth(),
           .four_state = false,
       },
       detail::ConversionSource{
-          .value = detail::PlaneAccess::ValueWords(src),
-          .state = detail::PlaneAccess::StateWords(src),
+          .value = detail::PlaneAccess::AlignedValueWords(src),
+          .unknown = detail::PlaneAccess::AlignedUnknownWords(src),
           .width = src.Width(),
           .signedness = src_signedness,
           .four_state = true,
@@ -209,14 +209,14 @@ auto ConvertToLogic(ConstBitView src, Signedness src_signedness)
   Logic<TargetShape, TargetSigned> out;
   detail::ConvertPackedBits(
       detail::ConversionTarget{
-          .value = detail::PlaneAccess::MutableValue(out),
-          .state = detail::PlaneAccess::MutableState(out),
+          .value = detail::PlaneAccess::AlignedMutableValueWords(out),
+          .unknown = detail::PlaneAccess::AlignedMutableUnknownWords(out),
           .width = TargetShape.TotalWidth(),
           .four_state = true,
       },
       detail::ConversionSource{
-          .value = detail::PlaneAccess::ValueWords(src),
-          .state = {},
+          .value = detail::PlaneAccess::AlignedValueWords(src),
+          .unknown = {},
           .width = src.Width(),
           .signedness = src_signedness,
           .four_state = false,
@@ -230,14 +230,14 @@ auto ConvertToLogic(ConstLogicView src, Signedness src_signedness)
   Logic<TargetShape, TargetSigned> out;
   detail::ConvertPackedBits(
       detail::ConversionTarget{
-          .value = detail::PlaneAccess::MutableValue(out),
-          .state = detail::PlaneAccess::MutableState(out),
+          .value = detail::PlaneAccess::AlignedMutableValueWords(out),
+          .unknown = detail::PlaneAccess::AlignedMutableUnknownWords(out),
           .width = TargetShape.TotalWidth(),
           .four_state = true,
       },
       detail::ConversionSource{
-          .value = detail::PlaneAccess::ValueWords(src),
-          .state = detail::PlaneAccess::StateWords(src),
+          .value = detail::PlaneAccess::AlignedValueWords(src),
+          .unknown = detail::PlaneAccess::AlignedUnknownWords(src),
           .width = src.Width(),
           .signedness = src_signedness,
           .four_state = true,
