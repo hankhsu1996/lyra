@@ -4,7 +4,6 @@
 #include <filesystem>
 #include <optional>
 #include <string>
-#include <vector>
 
 namespace lyra::test {
 
@@ -21,16 +20,15 @@ struct BuildAndRunOutcome {
   std::string stderr_text;
 };
 
-// Compile <work_dir>/main.cpp + <work_dir>/<top>.hpp against the runtime
-// sources collected from `runtime_src_dirs`, with includes rooted at
-// `include_root`, producing <work_dir>/program. Then run the program.
+// Compile <work_dir>/main.cpp against the prebuilt C++ runtime
+// `cpp_runtime`, with includes rooted at `include_root`, producing
+// <work_dir>/program. Then run the program.
 //
 // Uses RunChildProcess for both compile and run -- no new process helper.
 // Returns errors via BuildAndRunOutcome::error; never throws.
 auto BuildAndRunEmittedArtifacts(
     const std::filesystem::path& work_dir,
     const std::filesystem::path& include_root,
-    const std::vector<std::filesystem::path>& runtime_src_dirs)
-    -> BuildAndRunOutcome;
+    const std::filesystem::path& cpp_runtime) -> BuildAndRunOutcome;
 
 }  // namespace lyra::test

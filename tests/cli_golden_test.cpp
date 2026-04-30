@@ -34,18 +34,8 @@ auto ResolveEnv(Runfiles& rf) -> GoldenEnv {
   env.lyra_exe = rf.Rlocation("_main/lyra");
   env.cases_root = rf.Rlocation("_main/tests/cases");
   env.suites_yaml = rf.Rlocation("_main/tests/suites.yaml");
-
-  const std::filesystem::path engine_hpp =
-      rf.Rlocation("_main/include/lyra/runtime/engine.hpp");
-  env.cpp_paths.include_root =
-      engine_hpp.parent_path().parent_path().parent_path();
-
-  const std::filesystem::path engine_cpp =
-      rf.Rlocation("_main/src/lyra/runtime/engine.cpp");
-  const std::filesystem::path base_cpp =
-      rf.Rlocation("_main/src/lyra/base/internal_error.cpp");
-  env.cpp_paths.runtime_src_dirs = {
-      engine_cpp.parent_path(), base_cpp.parent_path()};
+  // cli_golden_tests erases all IsEmitCppCase cases below, so RunCppCase is
+  // never invoked and cpp_paths is unused. Leave it default-constructed.
   return env;
 }
 

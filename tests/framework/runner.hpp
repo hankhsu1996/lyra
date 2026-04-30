@@ -52,7 +52,7 @@ struct RunResult {
 // `[run, cpp]` command path in RunCase.
 struct CppRunPaths {
   std::filesystem::path include_root;
-  std::vector<std::filesystem::path> runtime_src_dirs;
+  std::filesystem::path cpp_runtime;
 };
 
 auto LoadCases(const std::filesystem::path& cases_root)

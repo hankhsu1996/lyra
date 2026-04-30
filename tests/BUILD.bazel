@@ -30,8 +30,6 @@ cc_test(
     data = [
         "suites.yaml",
         "//:lyra",
-        "//:runtime_headers",
-        "//:runtime_sources",
     ] + glob(
         [
             "cases/**/*.yaml",
@@ -95,9 +93,9 @@ cc_test(
     name = "cli_run_tests",
     srcs = ["cli_run_test.cpp"],
     data = [
+        "//:cpp_runtime",
         "//:lyra",
         "//:runtime_headers",
-        "//:runtime_sources",
     ] + glob(
         ["cases/run/*.sv"],
         allow_empty = True,
@@ -118,9 +116,9 @@ cc_test(
     srcs = ["cli_emit_cpp_test.cpp"],
     data = [
         "suites.yaml",
+        "//:cpp_runtime",
         "//:lyra",
         "//:runtime_headers",
-        "//:runtime_sources",
     ] + glob(
         [
             "cases/**/*.yaml",
