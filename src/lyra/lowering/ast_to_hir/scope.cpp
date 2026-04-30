@@ -118,13 +118,6 @@ auto LowerScopeInto(
       continue;
     }
     const auto& proc = member.as<slang::ast::ProceduralBlockSymbol>();
-    if (proc.procedureKind != slang::ast::ProceduralBlockKind::Initial) {
-      return diag::Unsupported(
-          mapper.PointSpanOf(proc.location),
-          diag::DiagCode::kUnsupportedNonInitialProcedure,
-          "only `initial` procedural blocks are supported",
-          diag::UnsupportedCategory::kFeature);
-    }
     auto p = LowerProcess(unit_facts, scope_state, stack, proc);
     if (!p) return std::unexpected(std::move(p.error()));
     scope_state.AddProcess(*std::move(p));

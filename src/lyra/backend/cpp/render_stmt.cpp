@@ -26,8 +26,7 @@ auto RenderForInit(const RenderContext& ctx, const mir::ForInit& init)
   return std::visit(
       Overloaded{
           [&](const mir::ForInitDecl& d) -> diag::Result<std::string> {
-            const auto& lv = ctx.Body()
-                                 .local_scopes.at(d.local.scope.value)
+            const auto& lv = ctx.BodyAtHops(d.local.body_hops)
                                  .locals.at(d.local.local.value);
             std::string out =
                 RenderTypeAsCpp(ctx.Unit(), ctx.Class(), lv.type) + " " +
@@ -81,8 +80,7 @@ auto RenderStmt(
             return out;
           },
           [&](const mir::LocalVarDeclStmt& s) -> diag::Result<std::string> {
-            const auto& lv = ctx.Body()
-                                 .local_scopes.at(s.target.scope.value)
+            const auto& lv = ctx.BodyAtHops(s.target.body_hops)
                                  .locals.at(s.target.local.value);
             return Indent(indent) +
                    RenderTypeAsCpp(ctx.Unit(), ctx.Class(), lv.type) + " " +
@@ -97,15 +95,12 @@ auto RenderStmt(
             return Indent(indent) + *rendered_or + ";\n";
           },
           [&](const mir::BlockStmt& s) -> diag::Result<std::string> {
+            const auto& child = stmt.child_bodies.at(s.body.value);
             std::string result = Indent(indent) + "{\n";
-            for (const auto child_id : s.statements) {
-              auto child_or = RenderStmt(
-                  ctx, ctx.Body().stmts.at(child_id.value), indent + 1);
-              if (!child_or) {
-                return std::unexpected(std::move(child_or.error()));
-              }
-              result += *child_or;
-            }
+            auto child_or =
+                RenderBody(ctx.Unit(), ctx.Class(), child, indent + 1, &ctx);
+            if (!child_or) return std::unexpected(std::move(child_or.error()));
+            result += *child_or;
             result += Indent(indent) + "}\n";
             return result;
           },
@@ -114,8 +109,8 @@ auto RenderStmt(
             const auto& then_body = stmt.child_bodies.at(s.then_body.value);
             auto cond_or = RenderExpr(ctx, cond_expr);
             if (!cond_or) return std::unexpected(std::move(cond_or.error()));
-            auto then_or =
-                RenderBody(ctx.Unit(), ctx.Class(), then_body, indent + 1);
+            auto then_or = RenderBody(
+                ctx.Unit(), ctx.Class(), then_body, indent + 1, &ctx);
             if (!then_or) return std::unexpected(std::move(then_or.error()));
             std::string result;
             result += Indent(indent) + "if (" + *cond_or + ") {\n";
@@ -123,8 +118,8 @@ auto RenderStmt(
             result += Indent(indent) + "}";
             if (s.else_body.has_value()) {
               const auto& else_body = stmt.child_bodies.at(s.else_body->value);
-              auto else_or =
-                  RenderBody(ctx.Unit(), ctx.Class(), else_body, indent + 1);
+              auto else_or = RenderBody(
+                  ctx.Unit(), ctx.Class(), else_body, indent + 1, &ctx);
               if (!else_or) return std::unexpected(std::move(else_or.error()));
               result += " else {\n";
               result += *else_or;
@@ -151,8 +146,8 @@ auto RenderStmt(
                           (is_last ? ": {\n" : ":\n");
               }
               const auto& case_body = stmt.child_bodies.at(c.body.value);
-              auto case_or =
-                  RenderBody(ctx.Unit(), ctx.Class(), case_body, indent + 2);
+              auto case_or = RenderBody(
+                  ctx.Unit(), ctx.Class(), case_body, indent + 2, &ctx);
               if (!case_or) return std::unexpected(std::move(case_or.error()));
               result += *case_or;
               result += Indent(indent + 2) + "break;\n";
@@ -161,8 +156,8 @@ auto RenderStmt(
             if (s.default_body.has_value()) {
               const auto& default_body =
                   stmt.child_bodies.at(s.default_body->value);
-              auto default_or =
-                  RenderBody(ctx.Unit(), ctx.Class(), default_body, indent + 2);
+              auto default_or = RenderBody(
+                  ctx.Unit(), ctx.Class(), default_body, indent + 2, &ctx);
               if (!default_or) {
                 return std::unexpected(std::move(default_or.error()));
               }
@@ -226,13 +221,21 @@ auto RenderStmt(
             }
             const auto& body = stmt.child_bodies.at(s.body.value);
             auto body_or =
-                RenderBody(ctx.Unit(), ctx.Class(), body, indent + 1);
+                RenderBody(ctx.Unit(), ctx.Class(), body, indent + 1, &ctx);
             if (!body_or) return std::unexpected(std::move(body_or.error()));
             std::string result = Indent(indent) + "for (" + init + "; " + cond +
                                  "; " + step + ") {\n";
             result += *body_or;
             result += Indent(indent) + "}\n";
             return result;
+          },
+          [&](const mir::WhileStmt&) -> diag::Result<std::string> {
+            throw InternalError(
+                "RenderStmt: WhileStmt is not yet supported by C++ emit");
+          },
+          [&](const mir::AwaitStmt&) -> diag::Result<std::string> {
+            throw InternalError(
+                "RenderStmt: AwaitStmt is not yet supported by C++ emit");
           },
       },
       stmt.data);
@@ -243,13 +246,23 @@ auto RenderStmt(
 
 auto RenderBody(
     const mir::CompilationUnit& unit, const mir::ClassDecl& class_decl,
-    const mir::Body& body, std::size_t indent) -> diag::Result<std::string> {
-  const RenderContext ctx{unit, class_decl, body};
+    const mir::Body& body, std::size_t indent, const RenderContext* parent)
+    -> diag::Result<std::string> {
   std::string out;
-  for (const auto& sid : body.root_stmts) {
-    auto rendered_or = RenderStmt(ctx, body.stmts.at(sid.value), indent);
-    if (!rendered_or) return std::unexpected(std::move(rendered_or.error()));
-    out += *rendered_or;
+  if (parent == nullptr) {
+    const RenderContext ctx{unit, class_decl, body};
+    for (const auto& sid : body.root_stmts) {
+      auto rendered_or = RenderStmt(ctx, body.stmts.at(sid.value), indent);
+      if (!rendered_or) return std::unexpected(std::move(rendered_or.error()));
+      out += *rendered_or;
+    }
+  } else {
+    const RenderContext ctx{unit, class_decl, body, *parent};
+    for (const auto& sid : body.root_stmts) {
+      auto rendered_or = RenderStmt(ctx, body.stmts.at(sid.value), indent);
+      if (!rendered_or) return std::unexpected(std::move(rendered_or.error()));
+      out += *rendered_or;
+    }
   }
   return out;
 }

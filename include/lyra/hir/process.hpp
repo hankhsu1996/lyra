@@ -4,6 +4,7 @@
 #include <cstdint>
 #include <vector>
 
+#include "lyra/diag/source_span.hpp"
 #include "lyra/hir/expr.hpp"
 #include "lyra/hir/local_var.hpp"
 #include "lyra/hir/stmt.hpp"
@@ -16,10 +17,18 @@ struct ProcessId {
   auto operator<=>(const ProcessId&) const -> std::strong_ordering = default;
 };
 
-enum class ProcessKind { kInitial };
+enum class ProcessKind : std::uint8_t {
+  kInitial,
+  kFinal,
+  kAlways,
+  kAlwaysComb,
+  kAlwaysLatch,
+  kAlwaysFf,
+};
 
 struct Process {
   ProcessKind kind = ProcessKind::kInitial;
+  diag::SourceSpan span;
   StmtId body{};
   std::vector<Expr> exprs;
   std::vector<Stmt> stmts;

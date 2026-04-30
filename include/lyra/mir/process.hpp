@@ -13,10 +13,17 @@ struct ProcessId {
   auto operator<=>(const ProcessId&) const -> std::strong_ordering = default;
 };
 
-enum class ProcessKind { kInitial };
+enum class ProcessKind : std::uint8_t {
+  kInitial,
+  kFinal,
+  kAlways,
+  kAlwaysComb,
+  kAlwaysLatch,
+  kAlwaysFf,
+};
 
 struct Process {
-  ProcessKind kind;
+  ProcessKind kind = ProcessKind::kInitial;
   Body body;
 };
 

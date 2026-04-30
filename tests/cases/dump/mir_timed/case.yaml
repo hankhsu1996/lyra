@@ -15,4 +15,4 @@ expect:
       - "Item[0] Literal \"x\""
       - "Item[0] Literal \"ns\""
       - "Item[0] Literal \"block\""
-      - "BlockStmt (count="
+      - "BlockStmt body=BodyId{"

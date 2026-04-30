@@ -31,18 +31,26 @@ auto LowerTimingControl(
     ProcessLoweringState& proc_state, const ScopeStack& stack,
     const slang::ast::TimingControl& tc, diag::SourceSpan span)
     -> diag::Result<hir::TimingControl> {
-  if (tc.kind == slang::ast::TimingControlKind::Delay) {
-    const auto& delay = tc.as<slang::ast::DelayControl>();
-    auto duration =
-        LowerProcExpr(unit_facts, unit_state, proc_state, stack, delay.expr);
-    if (!duration) return std::unexpected(std::move(duration.error()));
-    return hir::TimingControl{hir::DelayControl{
-        .duration = proc_state.AddExpr(*std::move(duration))}};
+  switch (tc.kind) {
+    case slang::ast::TimingControlKind::Delay: {
+      const auto& delay = tc.as<slang::ast::DelayControl>();
+      auto duration =
+          LowerProcExpr(unit_facts, unit_state, proc_state, stack, delay.expr);
+      if (!duration) return std::unexpected(std::move(duration.error()));
+      return hir::TimingControl{hir::DelayControl{
+          .duration = proc_state.AddExpr(*std::move(duration))}};
+    }
+    case slang::ast::TimingControlKind::SignalEvent:
+    case slang::ast::TimingControlKind::EventList:
+    case slang::ast::TimingControlKind::ImplicitEvent:
+    case slang::ast::TimingControlKind::RepeatedEvent:
+      return hir::TimingControl{hir::EventControl{}};
+    default:
+      return diag::Unsupported(
+          span, diag::DiagCode::kUnsupportedTimingControlKind,
+          "this timing control kind is not yet supported",
+          diag::UnsupportedCategory::kFeature);
   }
-  return diag::Unsupported(
-      span, diag::DiagCode::kUnsupportedTimingControlKind,
-      "this timing control kind is not yet supported",
-      diag::UnsupportedCategory::kFeature);
 }
 
 }  // namespace

@@ -85,11 +85,11 @@ constexpr std::array kEntries{
             .category = UnsupportedCategory::kFeature,
             .name = "unsupported_non_static_variable_lifetime"}},
     std::pair{
-        DiagCode::kUnsupportedNonInitialProcedure,
+        DiagCode::kUnsupportedProcessKindLowering,
         DiagCodeInfo{
             .kind = DiagKind::kUnsupported,
             .category = UnsupportedCategory::kFeature,
-            .name = "unsupported_non_initial_procedure"}},
+            .name = "unsupported_process_kind_lowering"}},
     std::pair{
         DiagCode::kUnsupportedStatementForm,
         DiagCodeInfo{

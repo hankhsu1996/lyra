@@ -1,0 +1,18 @@
+id: dump.hir_process_kinds
+tags: [dump]
+input:
+  command: [dump, hir]
+  project: false
+  top: Top
+  files: [main.sv]
+expect:
+  exit: 0
+  stdout:
+    contains:
+      - "Process (Initial)"
+      - "Process (Final)"
+      - "Process (Always)"
+      - "Process (AlwaysComb)"
+      - "Process (AlwaysLatch)"
+      - "Process (AlwaysFf)"
+      - "EventControl"

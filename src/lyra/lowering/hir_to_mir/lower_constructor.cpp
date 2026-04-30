@@ -16,6 +16,7 @@
 #include "lyra/diag/diagnostic.hpp"
 #include "lyra/hir/expr.hpp"
 #include "lyra/hir/structural_scope.hpp"
+#include "lyra/lowering/hir_to_mir/body_helpers.hpp"
 #include "lyra/lowering/hir_to_mir/lower_expr.hpp"
 #include "lyra/lowering/hir_to_mir/lower_process.hpp"
 #include "lyra/lowering/hir_to_mir/state.hpp"
@@ -173,13 +174,6 @@ auto BuildGenerateArmBody(
   return body_state.Finish();
 }
 
-auto AddChildBody(std::vector<mir::Body>& bodies, mir::Body body)
-    -> mir::BodyId {
-  const mir::BodyId id{static_cast<std::uint32_t>(bodies.size())};
-  bodies.push_back(std::move(body));
-  return id;
-}
-
 auto LowerGenerateAsStmt(
     UnitLoweringState& unit_state, const ClassLoweringState& class_state,
     const hir::StructuralScope& enclosing_scope, const hir::Generate& gen,
@@ -276,13 +270,10 @@ auto LowerGenerateAsStmt(
             const mir::TypeId genvar_type =
                 unit_state.TranslateType(var_decl.type);
 
-            const mir::LocalScopeId for_scope =
-                body_state.AddLocalScope(body_state.RootScope());
             const mir::LocalVarId loop_local_id = body_state.AddLocal(
-                for_scope,
                 mir::LocalVar{.name = var_decl.name, .type = genvar_type});
             const mir::LocalVarRef loop_local{
-                .scope = for_scope, .local = loop_local_id};
+                .body_hops = mir::BodyHops{.value = 0}, .local = loop_local_id};
 
             ConstructorLoweringState ctor_state;
             ctor_state.MapLoopVar(loop.loop_var, loop_local);
@@ -315,7 +306,6 @@ auto LowerGenerateAsStmt(
                 .label = std::nullopt,
                 .data =
                     mir::ForStmt{
-                        .scope = for_scope,
                         .init = {mir::ForInitDecl{
                             .local = loop_local, .init = init_id}},
                         .condition = cond_id,

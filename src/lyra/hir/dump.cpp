@@ -358,6 +358,7 @@ class HirDumper {
               return std::format(
                   "DelayControl duration=Expr[{}]", d.duration.value);
             },
+            [](const EventControl&) -> std::string { return "EventControl"; },
         },
         tc);
   }
@@ -526,6 +527,21 @@ class HirDumper {
       case ProcessKind::kInitial:
         Line("Process (Initial)");
         break;
+      case ProcessKind::kFinal:
+        Line("Process (Final)");
+        break;
+      case ProcessKind::kAlways:
+        Line("Process (Always)");
+        break;
+      case ProcessKind::kAlwaysComb:
+        Line("Process (AlwaysComb)");
+        break;
+      case ProcessKind::kAlwaysLatch:
+        Line("Process (AlwaysLatch)");
+        break;
+      case ProcessKind::kAlwaysFf:
+        Line("Process (AlwaysFf)");
+        break;
     }
     Indent();
     if (!p.local_vars.empty()) {
@@ -601,6 +617,7 @@ class HirDumper {
                                 "Expr[{}] {}", d.duration.value,
                                 FormatProcExpr(p, d.duration)));
                       },
+                      [](const EventControl&) {},
                   },
                   t.timing);
               Dedent();
