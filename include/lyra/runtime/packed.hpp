@@ -190,11 +190,33 @@ inline auto CopySameWidth(LogicView src, LogicView dst) -> void {
   CopySameWidth(src.AsConst(), dst);
 }
 
-auto LoadBitLiteral(BitView dst, std::span<const std::uint64_t> value_words)
+auto ConvertToBit(ConstBitView src, BitView dst, Signedness src_signedness)
     -> void;
+auto ConvertToBit(ConstLogicView src, BitView dst, Signedness src_signedness)
+    -> void;
+auto ConvertToLogic(ConstBitView src, LogicView dst, Signedness src_signedness)
+    -> void;
+auto ConvertToLogic(
+    ConstLogicView src, LogicView dst, Signedness src_signedness) -> void;
 
-auto LoadLogicLiteral(
-    LogicView dst, std::span<const std::uint64_t> value_words,
-    std::span<const std::uint64_t> unknown_words) -> void;
+inline auto ConvertToBit(BitView src, BitView dst, Signedness src_signedness)
+    -> void {
+  ConvertToBit(src.AsConst(), dst, src_signedness);
+}
+
+inline auto ConvertToBit(LogicView src, BitView dst, Signedness src_signedness)
+    -> void {
+  ConvertToBit(src.AsConst(), dst, src_signedness);
+}
+
+inline auto ConvertToLogic(
+    BitView src, LogicView dst, Signedness src_signedness) -> void {
+  ConvertToLogic(src.AsConst(), dst, src_signedness);
+}
+
+inline auto ConvertToLogic(
+    LogicView src, LogicView dst, Signedness src_signedness) -> void {
+  ConvertToLogic(src.AsConst(), dst, src_signedness);
+}
 
 }  // namespace lyra::runtime

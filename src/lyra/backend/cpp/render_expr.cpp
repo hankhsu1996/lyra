@@ -255,74 +255,49 @@ auto RenderPackedExprAsView(const RenderContext& ctx, const mir::Expr& expr)
 
 namespace {
 
+auto SignednessLiteral(mir::Signedness s) -> std::string {
+  return s == mir::Signedness::kSigned ? "lyra::runtime::Signedness::kSigned"
+                                       : "lyra::runtime::Signedness::kUnsigned";
+}
+
 auto RenderPackedAssign(const RenderContext& ctx, const mir::AssignExpr& a)
     -> diag::Result<std::string> {
   auto lhs_t_or = MirTypeOfLvalue(ctx, a.target);
   if (!lhs_t_or) return std::unexpected(std::move(lhs_t_or.error()));
-  const mir::TypeId lhs_t = *lhs_t_or;
-  const auto& lhs_ty = ctx.Unit().GetType(lhs_t);
-  const auto& lhs = lhs_ty.AsPackedArray();
-  const auto& rhs = ctx.Expr(a.value);
+  const auto& lhs = ctx.Unit().GetType(*lhs_t_or).AsPackedArray();
   auto lhs_name_or = RenderLvalue(ctx, a.target);
   if (!lhs_name_or) return std::unexpected(std::move(lhs_name_or.error()));
-  const std::string lhs_name = *lhs_name_or;
-  const std::string lhs_view = lhs_name + ".View()";
-  const std::size_t n = (lhs.BitWidth() + 63U) / 64U;
+  const std::string lhs_view = *lhs_name_or + ".View()";
 
-  if (const auto* lit = std::get_if<mir::IntegerLiteral>(&rhs.data)) {
-    if (lit->value.width != lhs.BitWidth()) {
+  const mir::Expr* src_expr = &ctx.Expr(a.value);
+  while (const auto* cv = std::get_if<mir::ConversionExpr>(&src_expr->data)) {
+    const mir::Expr& op_expr = ctx.Expr(cv->operand);
+    const auto& op_ty = ctx.Unit().GetType(op_expr.type);
+    if (!op_ty.IsPackedArray() ||
+        op_ty.AsPackedArray().form != mir::PackedArrayForm::kExplicit) {
       return PackedRuntimeUnsupported();
     }
-    if (lhs.atom == mir::BitAtom::kBit) {
-      if (!lit->value.state_words.empty()) {
-        return PackedRuntimeUnsupported();
-      }
-      const std::string vw =
-          RenderWordArrayInitializer(lit->value.value_words, n);
-      return std::format(
-          "([&]() {{ static constexpr std::array<std::uint64_t, {0}> kV = {1}; "
-          "lyra::runtime::LoadBitLiteral({2}, kV); }}())",
-          n, vw, lhs_view);
-    }
-    const std::string vw =
-        RenderWordArrayInitializer(lit->value.value_words, n);
-    if (lit->value.state_words.empty()) {
-      return std::format(
-          "([&]() {{ static constexpr std::array<std::uint64_t, {0}> kV = {1}; "
-          "lyra::runtime::LoadLogicLiteral({2}, kV, "
-          "std::span<const std::uint64_t>{{}}); }}())",
-          n, vw, lhs_view);
-    }
-    const std::string uw =
-        RenderWordArrayInitializer(lit->value.state_words, n);
-    return std::format(
-        "([&]() {{ static constexpr std::array<std::uint64_t, {0}> kV = {1}; "
-        "static constexpr std::array<std::uint64_t, {0}> kU = {2}; "
-        "lyra::runtime::LoadLogicLiteral({3}, kV, kU); }}())",
-        n, vw, uw, lhs_view);
+    src_expr = &op_expr;
   }
 
-  const auto& rhs_ty = ctx.Unit().GetType(rhs.type);
-  if (!rhs_ty.IsPackedArray() ||
-      rhs_ty.AsPackedArray().form != mir::PackedArrayForm::kExplicit) {
+  const auto& src_ty = ctx.Unit().GetType(src_expr->type);
+  if (!src_ty.IsPackedArray() ||
+      src_ty.AsPackedArray().form != mir::PackedArrayForm::kExplicit) {
     return PackedRuntimeUnsupported();
   }
-  const auto& rhs_pa = rhs_ty.AsPackedArray();
-  if (rhs_pa.BitWidth() != lhs.BitWidth()) {
-    return PackedRuntimeUnsupported();
+  const auto& src_pa = src_ty.AsPackedArray();
+
+  auto src_view_or = RenderPackedExprAsView(ctx, *src_expr);
+  if (!src_view_or) {
+    return std::unexpected(std::move(src_view_or.error()));
   }
-  const bool both_two_state =
-      (lhs.atom == mir::BitAtom::kBit) && (rhs_pa.atom == mir::BitAtom::kBit);
-  const bool both_four_state =
-      (lhs.atom != mir::BitAtom::kBit) && (rhs_pa.atom != mir::BitAtom::kBit);
-  if (!(both_two_state || both_four_state)) {
-    return PackedRuntimeUnsupported();
-  }
-  auto rhs_view_or = RenderPackedExprAsView(ctx, rhs);
-  if (!rhs_view_or) {
-    return std::unexpected(std::move(rhs_view_or.error()));
-  }
-  return "lyra::runtime::CopySameWidth(" + *rhs_view_or + ", " + lhs_view + ")";
+
+  const std::string convert_fn = (lhs.atom == mir::BitAtom::kBit)
+                                     ? "lyra::runtime::ConvertToBit"
+                                     : "lyra::runtime::ConvertToLogic";
+  return std::format(
+      "{}({}, {}, {})", convert_fn, *src_view_or, lhs_view,
+      SignednessLiteral(src_pa.signedness));
 }
 
 }  // namespace

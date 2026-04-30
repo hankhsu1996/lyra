@@ -1,5 +1,6 @@
 #include "lyra/runtime/packed.hpp"
 
+#include <algorithm>
 #include <cstddef>
 #include <cstdint>
 #include <format>
@@ -430,34 +431,75 @@ auto CopySameWidth(ConstLogicView src, LogicView dst) -> void {
   }
 }
 
-auto LoadBitLiteral(BitView dst, std::span<const std::uint64_t> value_words)
+auto ConvertToBit(ConstBitView src, BitView dst, Signedness src_signedness)
     -> void {
-  for (std::uint64_t i = 0; i < dst.Width(); ++i) {
-    const auto wi = static_cast<std::size_t>(i / 64U);
-    const std::uint64_t sh = i % 64U;
-    const bool one =
-        (wi < value_words.size()) && (((value_words[wi] >> sh) & 1U) != 0U);
-    dst.SetBit(i, one ? TwoStateBit::kOne : TwoStateBit::kZero);
+  dst.SetZero();
+  const std::uint64_t copy_w = std::min(src.Width(), dst.Width());
+  for (std::uint64_t i = 0; i < copy_w; ++i) {
+    dst.SetBit(i, src.GetBit(i));
+  }
+  if (dst.Width() > src.Width() && src_signedness == Signedness::kSigned) {
+    const TwoStateBit sign = src.GetBit(src.Width() - 1U);
+    if (sign == TwoStateBit::kOne) {
+      for (std::uint64_t i = src.Width(); i < dst.Width(); ++i) {
+        dst.SetBit(i, TwoStateBit::kOne);
+      }
+    }
   }
 }
 
-auto LoadLogicLiteral(
-    LogicView dst, std::span<const std::uint64_t> value_words,
-    std::span<const std::uint64_t> unknown_words) -> void {
-  for (std::uint64_t i = 0; i < dst.Width(); ++i) {
-    const auto wi = static_cast<std::size_t>(i / 64U);
-    const std::uint64_t sh = i % 64U;
-    const bool vbit =
-        (wi < value_words.size()) && (((value_words[wi] >> sh) & 1U) != 0U);
-    const bool ubit =
-        (wi < unknown_words.size()) && (((unknown_words[wi] >> sh) & 1U) != 0U);
-    FourStateBit b = FourStateBit::kZero;
-    if (!ubit) {
-      b = vbit ? FourStateBit::kOne : FourStateBit::kZero;
-    } else {
-      b = vbit ? FourStateBit::kUnknown : FourStateBit::kHighImpedance;
+auto ConvertToBit(ConstLogicView src, BitView dst, Signedness src_signedness)
+    -> void {
+  dst.SetZero();
+  const std::uint64_t copy_w = std::min(src.Width(), dst.Width());
+  for (std::uint64_t i = 0; i < copy_w; ++i) {
+    const FourStateBit b = src.GetBit(i);
+    dst.SetBit(
+        i, b == FourStateBit::kOne ? TwoStateBit::kOne : TwoStateBit::kZero);
+  }
+  if (dst.Width() > src.Width() && src_signedness == Signedness::kSigned) {
+    const FourStateBit sign = src.GetBit(src.Width() - 1U);
+    if (sign == FourStateBit::kOne) {
+      for (std::uint64_t i = src.Width(); i < dst.Width(); ++i) {
+        dst.SetBit(i, TwoStateBit::kOne);
+      }
     }
-    dst.SetBit(i, b);
+  }
+}
+
+auto ConvertToLogic(ConstBitView src, LogicView dst, Signedness src_signedness)
+    -> void {
+  dst.SetZero();
+  const std::uint64_t copy_w = std::min(src.Width(), dst.Width());
+  for (std::uint64_t i = 0; i < copy_w; ++i) {
+    const TwoStateBit b = src.GetBit(i);
+    dst.SetBit(
+        i, b == TwoStateBit::kOne ? FourStateBit::kOne : FourStateBit::kZero);
+  }
+  if (dst.Width() > src.Width() && src_signedness == Signedness::kSigned) {
+    const TwoStateBit sign = src.GetBit(src.Width() - 1U);
+    if (sign == TwoStateBit::kOne) {
+      for (std::uint64_t i = src.Width(); i < dst.Width(); ++i) {
+        dst.SetBit(i, FourStateBit::kOne);
+      }
+    }
+  }
+}
+
+auto ConvertToLogic(
+    ConstLogicView src, LogicView dst, Signedness src_signedness) -> void {
+  dst.SetZero();
+  const std::uint64_t copy_w = std::min(src.Width(), dst.Width());
+  for (std::uint64_t i = 0; i < copy_w; ++i) {
+    dst.SetBit(i, src.GetBit(i));
+  }
+  if (dst.Width() > src.Width() && src_signedness == Signedness::kSigned) {
+    const FourStateBit sign = src.GetBit(src.Width() - 1U);
+    if (sign != FourStateBit::kZero) {
+      for (std::uint64_t i = src.Width(); i < dst.Width(); ++i) {
+        dst.SetBit(i, sign);
+      }
+    }
   }
 }
 
