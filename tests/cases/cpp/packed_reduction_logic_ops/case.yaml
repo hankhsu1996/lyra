@@ -1,0 +1,32 @@
+id: cpp.packed_reduction_logic_ops
+tags: [cpp_run]
+input:
+  command: [run, cpp]
+  project: false
+  top: Top
+  files: [main.sv]
+expect:
+  exit: 0
+  stdout:
+    exact: |
+      1
+      x
+      0
+      0
+      x
+      1
+      0
+      1
+      x
+      0
+      x
+      1
+      1
+      x
+      0
+      1
+      0
+      x
+      x
+      x
+      1

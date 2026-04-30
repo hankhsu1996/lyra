@@ -188,6 +188,7 @@ auto RenderClassHeaderFile(
   out += "#include \"lyra/runtime/packed.hpp\"\n";
   out += "#include \"lyra/runtime/process.hpp\"\n";
   out += "#include \"lyra/runtime/process_kind.hpp\"\n";
+  out += "#include \"lyra/runtime/reduction.hpp\"\n";
   out += "#include \"lyra/runtime/runtime_scope_kind.hpp\"\n";
   out += "#include \"lyra/runtime/runtime_services.hpp\"\n";
   out += "\n";
