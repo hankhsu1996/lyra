@@ -1,0 +1,17 @@
+id: dump.loop_generate_inline_and_external_genvar
+tags: [dump]
+input:
+  command: [dump, hir]
+  project: false
+  top: Top
+  files: [main.sv]
+expect:
+  exit: 0
+  stdout:
+    contains:
+      - 'LoopVarDecl[0] "g"'
+      - 'LoopVarDecl[1] "i"'
+      - "Generate LoopGenerate loop_var=LoopVar[0]"
+      - "Generate LoopGenerate loop_var=LoopVar[1]"
+      - 'StructuralVar[0] "x"'
+      - 'StructuralVar[0] "y"'

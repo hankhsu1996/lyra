@@ -1,0 +1,17 @@
+id: dump.loop_body_process_using_loop_var
+tags: [dump]
+input:
+  command: [dump, hir]
+  project: false
+  top: Top
+  files: [main.sv]
+expect:
+  exit: 0
+  stdout:
+    contains:
+      - 'LoopVarDecl[0] "i"'
+      - "Generate LoopGenerate loop_var=LoopVar[0]"
+      - "Process (Initial)"
+      - 'ProceduralVar[0] "x"'
+      - "RefExpr LoopVar[0](hops=1)"
+      - "AssignExpr"

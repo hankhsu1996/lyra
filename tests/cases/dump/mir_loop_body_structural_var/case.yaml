@@ -1,0 +1,15 @@
+id: dump.mir_loop_body_structural_var
+tags: [dump]
+input:
+  command: [dump, mir]
+  project: false
+  top: Top
+  files: [main.sv]
+expect:
+  exit: 0
+  stdout:
+    contains:
+      - 'StructuralScope "gen0_loop"'
+      - '[0] "x"'
+      - "Stmt[0] ForStmt"
+      - "ConstructOwnedObjectStmt"

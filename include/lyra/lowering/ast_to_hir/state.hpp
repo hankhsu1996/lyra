@@ -9,7 +9,9 @@
 #include <utility>
 #include <vector>
 
+#include <slang/ast/symbols/ParameterSymbols.h>
 #include <slang/ast/symbols/SubroutineSymbols.h>
+#include <slang/ast/symbols/ValueSymbol.h>
 #include <slang/ast/symbols/VariableSymbols.h>
 
 #include "lyra/base/internal_error.hpp"
@@ -51,6 +53,15 @@ struct SubroutineBinding {
 
 using SubroutineBindings =
     std::unordered_map<const slang::ast::SubroutineSymbol*, SubroutineBinding>;
+
+struct LoopVarBinding {
+  ScopeFrameId home_frame;
+  hir::LoopVarDeclId loop_var_id;
+  hir::TypeId type;
+};
+
+using LoopVarBindings =
+    std::unordered_map<const slang::ast::ValueSymbol*, LoopVarBinding>;
 
 class UnitLoweringState {
  public:
@@ -112,6 +123,28 @@ class UnitLoweringState {
     return it->second;
   }
 
+  void MapLoopVarBinding(
+      const slang::ast::ValueSymbol& sym, ScopeFrameId home_frame,
+      hir::LoopVarDeclId id, hir::TypeId type) {
+    const auto [_, inserted] = loop_var_bindings_.emplace(
+        &sym, LoopVarBinding{
+                  .home_frame = home_frame, .loop_var_id = id, .type = type});
+    if (!inserted) {
+      throw InternalError(
+          "UnitLoweringState::MapLoopVarBinding: loop variable symbol already "
+          "mapped");
+    }
+  }
+
+  [[nodiscard]] auto LookupLoopVarBinding(const slang::ast::ValueSymbol& sym)
+      const -> std::optional<LoopVarBinding> {
+    const auto it = loop_var_bindings_.find(&sym);
+    if (it == loop_var_bindings_.end()) {
+      return std::nullopt;
+    }
+    return it->second;
+  }
+
   auto MoveHirUnit() -> hir::ModuleUnit {
     return std::move(hir_unit_);
   }
@@ -120,6 +153,7 @@ class UnitLoweringState {
   hir::ModuleUnit hir_unit_;
   StructuralVarBindings structural_var_bindings_;
   SubroutineBindings subroutine_bindings_;
+  LoopVarBindings loop_var_bindings_;
 };
 
 class ScopeStack {
@@ -196,10 +230,13 @@ class ScopeLoweringState {
     return local;
   }
 
-  auto AddLoopVarDecl(hir::LoopVarDecl decl) -> hir::LoopVarDeclId {
+  auto AddLoopVarDecl(const slang::ast::ValueSymbol& sym, hir::TypeId type)
+      -> hir::LoopVarDeclId {
     const hir::LoopVarDeclId id{
         static_cast<std::uint32_t>(scope_->loop_var_decls.size())};
-    scope_->loop_var_decls.push_back(std::move(decl));
+    scope_->loop_var_decls.push_back(
+        hir::LoopVarDecl{.name = std::string{sym.name}, .type = type});
+    unit_state_->MapLoopVarBinding(sym, frame_, id, type);
     return id;
   }
 
