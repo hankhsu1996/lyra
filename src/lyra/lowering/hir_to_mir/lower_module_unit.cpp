@@ -29,11 +29,11 @@ auto LowerModuleUnit(const hir::ModuleUnit& unit)
   }
 
   ScopeStack stack;
-  auto top_r =
-      LowerScopeAsClass(unit_state, nullptr, stack, unit.root_scope, unit.name);
+  auto top_r = LowerStructuralScope(
+      unit_state, nullptr, stack, unit.root_scope, unit.name);
   if (!top_r) return std::unexpected(std::move(top_r.error()));
 
-  unit_state.AddClass(*std::move(top_r));
+  unit_state.RootStructuralScope() = *std::move(top_r);
   return out;
 }
 

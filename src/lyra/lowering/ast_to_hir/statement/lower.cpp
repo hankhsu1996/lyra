@@ -73,13 +73,14 @@ auto LowerStatement(
           unit_facts, scope_state.UnitState(), proc_state, stack, ts.timing,
           span);
       if (!timing) return std::unexpected(std::move(timing.error()));
-      auto body_stmt =
+      auto inner_stmt =
           LowerStatement(unit_facts, proc_state, scope_state, stack, ts.stmt);
-      if (!body_stmt) return std::unexpected(std::move(body_stmt.error()));
-      const hir::StmtId body_id = proc_state.AddStmt(*std::move(body_stmt));
+      if (!inner_stmt) return std::unexpected(std::move(inner_stmt.error()));
+      const hir::StmtId inner_id = proc_state.AddStmt(*std::move(inner_stmt));
       return hir::Stmt{
           .label = std::nullopt,
-          .data = hir::TimedStmt{.timing = *std::move(timing), .body = body_id},
+          .data =
+              hir::TimedStmt{.timing = *std::move(timing), .stmt = inner_id},
           .span = span};
     }
 
@@ -132,10 +133,10 @@ auto LowerStatement(
       if (!type_data) return std::unexpected(std::move(type_data.error()));
       const auto type_id =
           scope_state.UnitState().AddType(*std::move(type_data));
-      const auto local_id = proc_state.AddLocalVar(sym, type_id);
+      const auto local_id = proc_state.AddProceduralVar(sym, type_id);
       return hir::Stmt{
           .label = std::nullopt,
-          .data = hir::VarDeclStmt{.local_var = local_id},
+          .data = hir::VarDeclStmt{.var = local_id},
           .span = span};
     }
 

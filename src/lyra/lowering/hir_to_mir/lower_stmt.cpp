@@ -14,11 +14,11 @@
 #include "lyra/hir/primary.hpp"
 #include "lyra/hir/process.hpp"
 #include "lyra/hir/stmt.hpp"
-#include "lyra/lowering/hir_to_mir/body_helpers.hpp"
 #include "lyra/lowering/hir_to_mir/delay_time_resolver.hpp"
 #include "lyra/lowering/hir_to_mir/lower_expr.hpp"
+#include "lyra/lowering/hir_to_mir/procedural_scope_helpers.hpp"
 #include "lyra/lowering/hir_to_mir/state.hpp"
-#include "lyra/mir/body_hops.hpp"
+#include "lyra/mir/procedural_hops.hpp"
 #include "lyra/mir/stmt.hpp"
 
 namespace lyra::lowering::hir_to_mir {
@@ -94,8 +94,10 @@ auto LowerTimingControl(
 }  // namespace
 
 auto LowerStmt(
-    const UnitLoweringState& unit_state, const ClassLoweringState& class_state,
-    ProcessLoweringState& proc_state, BodyLoweringState& body_state,
+    const UnitLoweringState& unit_state,
+    const StructuralScopeLoweringState& scope_state,
+    ProcessLoweringState& proc_state,
+    ProceduralScopeLoweringState& proc_scope_state,
     const hir::Process& hir_proc, const hir::Stmt& stmt)
     -> diag::Result<mir::Stmt> {
   return std::visit(
@@ -104,31 +106,33 @@ auto LowerStmt(
             return mir::Stmt{
                 .label = stmt.label,
                 .data = mir::EmptyStmt{},
-                .child_bodies = {}};
+                .child_procedural_scopes = {}};
           },
           [&](const hir::VarDeclStmt& v) -> diag::Result<mir::Stmt> {
-            const auto& hir_local = hir_proc.local_vars.at(v.local_var.value);
+            const auto& hir_local = hir_proc.procedural_vars.at(v.var.value);
             const mir::TypeId type = unit_state.TranslateType(hir_local.type);
-            const mir::LocalVarId local_id = body_state.AddLocal(
-                mir::LocalVar{.name = hir_local.name, .type = type});
-            proc_state.MapLocalVar(
-                v.local_var,
-                LocalBinding{
-                    .declaration_body_depth = proc_state.CurrentBodyDepth(),
-                    .local = local_id});
+            const mir::ProceduralVarId local_id =
+                proc_scope_state.AddProceduralVar(
+                    mir::ProceduralVarDecl{
+                        .name = hir_local.name, .type = type});
+            proc_state.MapProceduralVar(
+                v.var, ProceduralVarBinding{
+                           .declaration_procedural_depth =
+                               proc_state.CurrentProceduralDepth(),
+                           .var = local_id});
             return mir::Stmt{
                 .label = stmt.label,
                 .data =
-                    mir::LocalVarDeclStmt{
+                    mir::ProceduralVarDeclStmt{
                         .target =
-                            mir::LocalVarRef{
-                                .body_hops = mir::BodyHops{.value = 0},
-                                .local = local_id}},
-                .child_bodies = {}};
+                            mir::ProceduralVarRef{
+                                .hops = mir::ProceduralHops{.value = 0},
+                                .var = local_id}},
+                .child_procedural_scopes = {}};
           },
           [&](const hir::ExprStmt& e) -> diag::Result<mir::Stmt> {
             auto expr_or = LowerExpr(
-                unit_state, class_state, proc_state, body_state, hir_proc,
+                unit_state, scope_state, proc_state, proc_scope_state, hir_proc,
                 hir_proc.exprs.at(e.expr.value));
             if (!expr_or) {
               return std::unexpected(std::move(expr_or.error()));
@@ -137,31 +141,31 @@ auto LowerStmt(
                 .label = stmt.label,
                 .data =
                     mir::ExprStmt{
-                        .expr = body_state.AddExpr(*std::move(expr_or))},
-                .child_bodies = {}};
+                        .expr = proc_scope_state.AddExpr(*std::move(expr_or))},
+                .child_procedural_scopes = {}};
           },
           [&](const hir::BlockStmt& b) -> diag::Result<mir::Stmt> {
-            BodyLoweringState child_body_state;
-            BodyDepthGuard depth_guard{proc_state};
+            ProceduralScopeLoweringState child_proc_scope_state;
+            ProceduralDepthGuard depth_guard{proc_state};
             for (const hir::StmtId child_hir_id : b.statements) {
               const hir::Stmt& child = hir_proc.stmts.at(child_hir_id.value);
               auto lowered = LowerStmt(
-                  unit_state, class_state, proc_state, child_body_state,
+                  unit_state, scope_state, proc_state, child_proc_scope_state,
                   hir_proc, child);
               if (!lowered) {
                 return std::unexpected(std::move(lowered.error()));
               }
               const mir::StmtId child_id =
-                  child_body_state.AddStmt(*std::move(lowered));
-              child_body_state.AddRootStmt(child_id);
+                  child_proc_scope_state.AddStmt(*std::move(lowered));
+              child_proc_scope_state.AddRootStmt(child_id);
             }
-            std::vector<mir::Body> child_bodies;
-            const mir::BodyId body_id =
-                AddChildBody(child_bodies, child_body_state.Finish());
+            std::vector<mir::ProceduralScope> child_scopes;
+            const mir::ProceduralScopeId scope_id = AddChildProceduralScope(
+                child_scopes, child_proc_scope_state.Finish());
             return mir::Stmt{
                 .label = stmt.label,
-                .data = mir::BlockStmt{.body = body_id},
-                .child_bodies = std::move(child_bodies)};
+                .data = mir::BlockStmt{.scope = scope_id},
+                .child_procedural_scopes = std::move(child_scopes)};
           },
           [&](const hir::TimedStmt& t) -> diag::Result<mir::Stmt> {
             auto timing_or =
@@ -169,20 +173,21 @@ auto LowerStmt(
             if (!timing_or) {
               return std::unexpected(std::move(timing_or.error()));
             }
-            const hir::Stmt& body_hir = hir_proc.stmts.at(t.body.value);
-            auto body_or = LowerStmt(
-                unit_state, class_state, proc_state, body_state, hir_proc,
-                body_hir);
-            if (!body_or) {
-              return std::unexpected(std::move(body_or.error()));
+            const hir::Stmt& inner_hir = hir_proc.stmts.at(t.stmt.value);
+            auto inner_or = LowerStmt(
+                unit_state, scope_state, proc_state, proc_scope_state, hir_proc,
+                inner_hir);
+            if (!inner_or) {
+              return std::unexpected(std::move(inner_or.error()));
             }
-            const mir::StmtId body_id = body_state.AddStmt(*std::move(body_or));
+            const mir::StmtId inner_id =
+                proc_scope_state.AddStmt(*std::move(inner_or));
             return mir::Stmt{
                 .label = stmt.label,
                 .data =
                     mir::TimedStmt{
-                        .timing = *std::move(timing_or), .body = body_id},
-                .child_bodies = {}};
+                        .timing = *std::move(timing_or), .stmt = inner_id},
+                .child_procedural_scopes = {}};
           },
       },
       stmt.data);

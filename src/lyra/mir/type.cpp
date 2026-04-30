@@ -7,8 +7,8 @@
 
 #include "lyra/base/internal_error.hpp"
 #include "lyra/base/overloaded.hpp"
-#include "lyra/mir/class_decl_id.hpp"
 #include "lyra/mir/compilation_unit.hpp"
+#include "lyra/mir/structural_scope_id.hpp"
 
 namespace lyra::mir {
 
@@ -90,7 +90,7 @@ auto Type::AsPackedArray() const -> const PackedArrayType& {
 namespace {
 
 auto AsObjectClass(const CompilationUnit& unit, TypeId type)
-    -> std::optional<ClassDeclId> {
+    -> std::optional<StructuralScopeId> {
   const auto* obj = std::get_if<ObjectType>(&unit.GetType(type).data);
   if (obj == nullptr) {
     return std::nullopt;
@@ -118,7 +118,7 @@ auto IsVectorOfOwningObjectType(const CompilationUnit& unit, TypeId type)
 }
 
 auto GetOwnedObjectTarget(const CompilationUnit& unit, TypeId type)
-    -> std::optional<ClassDeclId> {
+    -> std::optional<StructuralScopeId> {
   const auto& data = unit.GetType(type).data;
   if (const auto* owning = std::get_if<OwningPtrType>(&data)) {
     return AsObjectClass(unit, owning->pointee);

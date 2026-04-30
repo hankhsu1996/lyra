@@ -1,0 +1,12 @@
+id: dump.mir_call_user_in_generate
+tags: [dump]
+input:
+  command: [dump, mir]
+  project: false
+  top: Top
+  files: [main.sv]
+expect:
+  exit: 0
+  stdout:
+    contains:
+      - "CallExpr callee=StructuralSubroutineRef[hops=1, subroutine=0] \"add\""

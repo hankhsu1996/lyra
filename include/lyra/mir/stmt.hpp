@@ -8,10 +8,10 @@
 #include <vector>
 
 #include "lyra/base/time.hpp"
-#include "lyra/mir/class_decl_id.hpp"
 #include "lyra/mir/expr.hpp"
-#include "lyra/mir/local_var.hpp"
-#include "lyra/mir/member_var.hpp"
+#include "lyra/mir/procedural_var.hpp"
+#include "lyra/mir/structural_scope_id.hpp"
+#include "lyra/mir/structural_var.hpp"
 
 namespace lyra::mir {
 
@@ -23,14 +23,15 @@ struct StmtId {
   auto operator<=>(const StmtId&) const -> std::strong_ordering = default;
 };
 
-struct BodyId {
+struct ProceduralScopeId {
   std::uint32_t value;
 
-  auto operator<=>(const BodyId&) const -> std::strong_ordering = default;
+  auto operator<=>(const ProceduralScopeId&) const
+      -> std::strong_ordering = default;
 };
 
-struct Body {
-  std::vector<LocalVar> locals;
+struct ProceduralScope {
+  std::vector<ProceduralVarDecl> vars;
   std::vector<Expr> exprs;
   std::vector<Stmt> stmts;
   std::vector<StmtId> root_stmts;
@@ -46,8 +47,8 @@ struct Body {
 
 struct EmptyStmt {};
 
-struct LocalVarDeclStmt {
-  LocalVarRef target;
+struct ProceduralVarDeclStmt {
+  ProceduralVarRef target;
 };
 
 struct ExprStmt {
@@ -55,33 +56,33 @@ struct ExprStmt {
 };
 
 struct BlockStmt {
-  BodyId body;
+  ProceduralScopeId scope;
 };
 
 struct IfStmt {
   ExprId condition;
-  BodyId then_body;
-  std::optional<BodyId> else_body;
+  ProceduralScopeId then_scope;
+  std::optional<ProceduralScopeId> else_scope;
 };
 
 struct SwitchCase {
   std::vector<ExprId> labels;
-  BodyId body;
+  ProceduralScopeId scope;
 };
 
 struct SwitchStmt {
   ExprId condition;
   std::vector<SwitchCase> cases;
-  std::optional<BodyId> default_body;
+  std::optional<ProceduralScopeId> default_scope;
 };
 
 struct ConstructOwnedObjectStmt {
-  MemberVarId target;
-  ClassDeclId class_id;
+  StructuralVarId target;
+  StructuralScopeId scope_id;
 };
 
 struct ForInitDecl {
-  LocalVarRef local = {};
+  ProceduralVarRef local = {};
   std::optional<ExprId> init;
 };
 
@@ -95,7 +96,7 @@ struct ForStmt {
   std::vector<ForInit> init;
   std::optional<ExprId> condition;
   std::vector<ExprId> step;
-  BodyId body;
+  ProceduralScopeId scope;
 };
 
 struct DelayControl {
@@ -106,12 +107,12 @@ using TimingControl = std::variant<DelayControl>;
 
 struct TimedStmt {
   TimingControl timing;
-  StmtId body;
+  StmtId stmt;
 };
 
 struct WhileStmt {
   ExprId condition;
-  BodyId body;
+  ProceduralScopeId scope;
 };
 
 enum class AwaitKind : std::uint8_t {
@@ -123,13 +124,13 @@ struct AwaitStmt {
 };
 
 using StmtData = std::variant<
-    EmptyStmt, LocalVarDeclStmt, ExprStmt, BlockStmt, IfStmt, SwitchStmt,
+    EmptyStmt, ProceduralVarDeclStmt, ExprStmt, BlockStmt, IfStmt, SwitchStmt,
     ConstructOwnedObjectStmt, ForStmt, TimedStmt, WhileStmt, AwaitStmt>;
 
 struct Stmt {
   std::optional<std::string> label;
   StmtData data;
-  std::vector<Body> child_bodies;
+  std::vector<ProceduralScope> child_procedural_scopes;
 };
 
 }  // namespace lyra::mir

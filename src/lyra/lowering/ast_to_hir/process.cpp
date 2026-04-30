@@ -44,15 +44,15 @@ auto LowerProcess(
     -> diag::Result<hir::Process> {
   ProcessLoweringState proc_state;
 
-  auto body = LowerStatement(
+  auto root_stmt = LowerStatement(
       unit_facts, proc_state, scope_state, stack, proc.getBody());
-  if (!body) return std::unexpected(std::move(body.error()));
-  const hir::StmtId body_id = proc_state.AddStmt(*std::move(body));
+  if (!root_stmt) return std::unexpected(std::move(root_stmt.error()));
+  const hir::StmtId root_stmt_id = proc_state.AddStmt(*std::move(root_stmt));
 
   const auto& mapper = unit_facts.SourceMapper();
   const auto span = mapper.PointSpanOf(proc.location);
   return proc_state.Finalize(
-      FromSlangProceduralBlockKind(proc.procedureKind), span, body_id);
+      FromSlangProceduralBlockKind(proc.procedureKind), span, root_stmt_id);
 }
 
 }  // namespace lyra::lowering::ast_to_hir

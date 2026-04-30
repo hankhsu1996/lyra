@@ -15,12 +15,13 @@
 #include "lyra/base/internal_error.hpp"
 #include "lyra/diag/source_span.hpp"
 #include "lyra/hir/expr.hpp"
-#include "lyra/hir/local_var.hpp"
-#include "lyra/hir/member_var.hpp"
 #include "lyra/hir/module_unit.hpp"
+#include "lyra/hir/procedural_var.hpp"
 #include "lyra/hir/process.hpp"
 #include "lyra/hir/stmt.hpp"
+#include "lyra/hir/structural_hops.hpp"
 #include "lyra/hir/structural_scope.hpp"
+#include "lyra/hir/structural_var.hpp"
 #include "lyra/hir/subroutine.hpp"
 #include "lyra/hir/type.hpp"
 
@@ -34,18 +35,18 @@ struct ScopeFrameId {
   auto operator<=>(const ScopeFrameId&) const -> std::strong_ordering = default;
 };
 
-struct MemberVarBinding {
+struct StructuralVarBinding {
   ScopeFrameId home_frame;
-  hir::MemberVarId local_id;
+  hir::StructuralVarId var_id;
   hir::TypeId type;
 };
 
-using MemberVarBindings =
-    std::unordered_map<const slang::ast::VariableSymbol*, MemberVarBinding>;
+using StructuralVarBindings =
+    std::unordered_map<const slang::ast::VariableSymbol*, StructuralVarBinding>;
 
 struct SubroutineBinding {
   ScopeFrameId owner_frame;
-  hir::SubroutineId local_id;
+  hir::StructuralSubroutineId subroutine_id;
 };
 
 using SubroutineBindings =
@@ -75,19 +76,19 @@ class UnitLoweringState {
     return hir_unit_.GetType(id);
   }
 
-  void MapMemberVarBinding(
+  void MapStructuralVarBinding(
       const slang::ast::VariableSymbol& var, ScopeFrameId home_frame,
-      hir::MemberVarId local, hir::TypeId type) {
-    member_var_bindings_.emplace(
-        &var, MemberVarBinding{
-                  .home_frame = home_frame, .local_id = local, .type = type});
+      hir::StructuralVarId local, hir::TypeId type) {
+    structural_var_bindings_.emplace(
+        &var, StructuralVarBinding{
+                  .home_frame = home_frame, .var_id = local, .type = type});
   }
 
-  [[nodiscard]] auto LookupMemberVarBinding(
+  [[nodiscard]] auto LookupStructuralVarBinding(
       const slang::ast::VariableSymbol& var) const
-      -> std::optional<MemberVarBinding> {
-    const auto it = member_var_bindings_.find(&var);
-    if (it == member_var_bindings_.end()) {
+      -> std::optional<StructuralVarBinding> {
+    const auto it = structural_var_bindings_.find(&var);
+    if (it == structural_var_bindings_.end()) {
       return std::nullopt;
     }
     return it->second;
@@ -95,9 +96,10 @@ class UnitLoweringState {
 
   void MapSubroutineBinding(
       const slang::ast::SubroutineSymbol& sym, ScopeFrameId owner_frame,
-      hir::SubroutineId local) {
+      hir::StructuralSubroutineId local) {
     subroutine_bindings_.emplace(
-        &sym, SubroutineBinding{.owner_frame = owner_frame, .local_id = local});
+        &sym,
+        SubroutineBinding{.owner_frame = owner_frame, .subroutine_id = local});
   }
 
   [[nodiscard]] auto LookupSubroutineBinding(
@@ -116,7 +118,7 @@ class UnitLoweringState {
 
  private:
   hir::ModuleUnit hir_unit_;
-  MemberVarBindings member_var_bindings_;
+  StructuralVarBindings structural_var_bindings_;
   SubroutineBindings subroutine_bindings_;
 };
 
@@ -136,11 +138,11 @@ class ScopeStack {
   }
 
   [[nodiscard]] auto HopsTo(ScopeFrameId target) const
-      -> std::optional<hir::ParentScopeHops> {
+      -> std::optional<hir::StructuralHops> {
     std::uint32_t hops = 0;
     for (const auto frame : frames_ | std::views::reverse) {
       if (frame == target) {
-        return hir::ParentScopeHops{.value = hops};
+        return hir::StructuralHops{.value = hops};
       }
       ++hops;
     }
@@ -184,13 +186,13 @@ class ScopeLoweringState {
       : unit_state_(&unit_state), scope_(&scope), frame_(frame) {
   }
 
-  auto AddMemberVar(const slang::ast::VariableSymbol& var, hir::TypeId type)
-      -> hir::MemberVarId {
-    const hir::MemberVarId local{
-        static_cast<std::uint32_t>(scope_->member_vars.size())};
-    scope_->member_vars.push_back(
-        hir::MemberVar{.name = std::string{var.name}, .type = type});
-    unit_state_->MapMemberVarBinding(var, frame_, local, type);
+  auto AddStructuralVar(const slang::ast::VariableSymbol& var, hir::TypeId type)
+      -> hir::StructuralVarId {
+    const hir::StructuralVarId local{
+        static_cast<std::uint32_t>(scope_->structural_vars.size())};
+    scope_->structural_vars.push_back(
+        hir::StructuralVarDecl{.name = std::string{var.name}, .type = type});
+    unit_state_->MapStructuralVarBinding(var, frame_, local, type);
     return local;
   }
 
@@ -226,12 +228,12 @@ class ScopeLoweringState {
     return id;
   }
 
-  auto AddSubroutine(
-      const slang::ast::SubroutineSymbol& sym, hir::UserSubroutineDecl decl)
-      -> hir::SubroutineId {
-    const hir::SubroutineId local{
-        static_cast<std::uint32_t>(scope_->subroutines.size())};
-    scope_->subroutines.push_back(std::move(decl));
+  auto AddStructuralSubroutine(
+      const slang::ast::SubroutineSymbol& sym,
+      hir::StructuralSubroutineDecl decl) -> hir::StructuralSubroutineId {
+    const hir::StructuralSubroutineId local{
+        static_cast<std::uint32_t>(scope_->structural_subroutines.size())};
+    scope_->structural_subroutines.push_back(std::move(decl));
     unit_state_->MapSubroutineBinding(sym, frame_, local);
     return local;
   }
@@ -272,41 +274,43 @@ class ProcessLoweringState {
     return id;
   }
 
-  auto AddLocalVar(const slang::ast::VariableSymbol& var, hir::TypeId type)
-      -> hir::LocalVarId {
-    const hir::LocalVarId id{
-        static_cast<std::uint32_t>(hir_process_.local_vars.size())};
-    hir_process_.local_vars.push_back(
-        hir::LocalVar{.name = std::string{var.name}, .type = type});
-    local_var_bindings_.emplace(&var, id);
+  auto AddProceduralVar(const slang::ast::VariableSymbol& var, hir::TypeId type)
+      -> hir::ProceduralVarId {
+    const hir::ProceduralVarId id{
+        static_cast<std::uint32_t>(hir_process_.procedural_vars.size())};
+    hir_process_.procedural_vars.push_back(
+        hir::ProceduralVarDecl{.name = std::string{var.name}, .type = type});
+    procedural_var_bindings_.emplace(&var, id);
     return id;
   }
 
-  [[nodiscard]] auto LookupLocalVar(const slang::ast::VariableSymbol& var) const
-      -> std::optional<hir::LocalVarId> {
-    const auto it = local_var_bindings_.find(&var);
-    if (it == local_var_bindings_.end()) {
+  [[nodiscard]] auto LookupProceduralVar(const slang::ast::VariableSymbol& var)
+      const -> std::optional<hir::ProceduralVarId> {
+    const auto it = procedural_var_bindings_.find(&var);
+    if (it == procedural_var_bindings_.end()) {
       return std::nullopt;
     }
     return it->second;
   }
 
-  [[nodiscard]] auto GetLocalVarType(hir::LocalVarId id) const -> hir::TypeId {
-    return hir_process_.local_vars.at(id.value).type;
+  [[nodiscard]] auto GetProceduralVarType(hir::ProceduralVarId id) const
+      -> hir::TypeId {
+    return hir_process_.procedural_vars.at(id.value).type;
   }
 
-  auto Finalize(hir::ProcessKind kind, diag::SourceSpan span, hir::StmtId body)
+  auto Finalize(
+      hir::ProcessKind kind, diag::SourceSpan span, hir::StmtId root_stmt)
       -> hir::Process {
     hir_process_.kind = kind;
     hir_process_.span = span;
-    hir_process_.body = body;
+    hir_process_.root_stmt = root_stmt;
     return std::move(hir_process_);
   }
 
  private:
   hir::Process hir_process_;
-  std::unordered_map<const slang::ast::VariableSymbol*, hir::LocalVarId>
-      local_var_bindings_;
+  std::unordered_map<const slang::ast::VariableSymbol*, hir::ProceduralVarId>
+      procedural_var_bindings_;
 };
 
 }  // namespace lyra::lowering::ast_to_hir

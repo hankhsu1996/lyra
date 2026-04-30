@@ -6,7 +6,7 @@
 
 #include "lyra/diag/source_span.hpp"
 #include "lyra/hir/expr.hpp"
-#include "lyra/hir/local_var.hpp"
+#include "lyra/hir/procedural_var.hpp"
 #include "lyra/hir/stmt.hpp"
 
 namespace lyra::hir {
@@ -29,10 +29,10 @@ enum class ProcessKind : std::uint8_t {
 struct Process {
   ProcessKind kind = ProcessKind::kInitial;
   diag::SourceSpan span;
-  StmtId body{};
+  StmtId root_stmt{};
   std::vector<Expr> exprs;
   std::vector<Stmt> stmts;
-  std::vector<LocalVar> local_vars;
+  std::vector<ProceduralVarDecl> procedural_vars;
 };
 
 }  // namespace lyra::hir

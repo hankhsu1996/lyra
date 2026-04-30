@@ -1,8 +1,6 @@
 #include "lyra/lowering/hir_to_mir/lower_process.hpp"
 
-#include <cstdint>
 #include <expected>
-#include <optional>
 #include <utility>
 #include <vector>
 
@@ -12,13 +10,11 @@
 #include "lyra/diag/diagnostic.hpp"
 #include "lyra/hir/process.hpp"
 #include "lyra/hir/stmt.hpp"
-#include "lyra/lowering/hir_to_mir/body_helpers.hpp"
 #include "lyra/lowering/hir_to_mir/lower_stmt.hpp"
+#include "lyra/lowering/hir_to_mir/procedural_scope_helpers.hpp"
 #include "lyra/lowering/hir_to_mir/state.hpp"
-#include "lyra/mir/body_hops.hpp"
 #include "lyra/mir/expr.hpp"
 #include "lyra/mir/integral_constant.hpp"
-#include "lyra/mir/local_var.hpp"
 #include "lyra/mir/process.hpp"
 #include "lyra/mir/stmt.hpp"
 #include "lyra/mir/type.hpp"
@@ -58,9 +54,10 @@ auto LowerProcessKind(hir::ProcessKind hir_kind, diag::SourceSpan span)
   throw InternalError("LowerProcessKind: unknown HIR ProcessKind");
 }
 
-auto MakeTrueConditionExpr(BodyLoweringState& body_state, mir::TypeId bit1)
+auto MakeTrueConditionExpr(
+    ProceduralScopeLoweringState& proc_scope_state, mir::TypeId bit1)
     -> mir::ExprId {
-  return body_state.AddExpr(
+  return proc_scope_state.AddExpr(
       mir::Expr{
           .data =
               mir::IntegerLiteral{
@@ -77,71 +74,74 @@ auto MakeTrueConditionExpr(BodyLoweringState& body_state, mir::TypeId bit1)
 }
 
 auto LowerInitialProcess(
-    const UnitLoweringState& unit_state, const ClassLoweringState& class_state,
-    const hir::Process& src, ProcessLoweringState& proc_state)
-    -> diag::Result<mir::Process> {
-  BodyLoweringState process_body_state;
+    const UnitLoweringState& unit_state,
+    const StructuralScopeLoweringState& scope_state, const hir::Process& src,
+    ProcessLoweringState& proc_state) -> diag::Result<mir::Process> {
+  ProceduralScopeLoweringState process_scope_state;
   auto lowered = LowerStmt(
-      unit_state, class_state, proc_state, process_body_state, src,
-      src.stmts.at(src.body.value));
+      unit_state, scope_state, proc_state, process_scope_state, src,
+      src.stmts.at(src.root_stmt.value));
   if (!lowered) return std::unexpected(std::move(lowered.error()));
-  const mir::StmtId root_id = process_body_state.AddStmt(*std::move(lowered));
-  process_body_state.AddRootStmt(root_id);
+  const mir::StmtId root_id = process_scope_state.AddStmt(*std::move(lowered));
+  process_scope_state.AddRootStmt(root_id);
   return mir::Process{
-      .kind = mir::ProcessKind::kInitial, .body = process_body_state.Finish()};
+      .kind = mir::ProcessKind::kInitial,
+      .root_procedural_scope = process_scope_state.Finish()};
 }
 
 auto LowerAlwaysProcess(
-    const UnitLoweringState& unit_state, const ClassLoweringState& class_state,
-    const hir::Process& src, ProcessLoweringState& proc_state)
-    -> diag::Result<mir::Process> {
-  BodyLoweringState while_body_state;
+    const UnitLoweringState& unit_state,
+    const StructuralScopeLoweringState& scope_state, const hir::Process& src,
+    ProcessLoweringState& proc_state) -> diag::Result<mir::Process> {
+  ProceduralScopeLoweringState while_scope_state;
   {
-    BodyDepthGuard guard{proc_state};
+    ProceduralDepthGuard guard{proc_state};
     auto lowered = LowerStmt(
-        unit_state, class_state, proc_state, while_body_state, src,
-        src.stmts.at(src.body.value));
+        unit_state, scope_state, proc_state, while_scope_state, src,
+        src.stmts.at(src.root_stmt.value));
     if (!lowered) return std::unexpected(std::move(lowered.error()));
-    const mir::StmtId source_id = while_body_state.AddStmt(*std::move(lowered));
-    while_body_state.AddRootStmt(source_id);
-    const mir::StmtId await_id = while_body_state.AddStmt(
+    const mir::StmtId source_id =
+        while_scope_state.AddStmt(*std::move(lowered));
+    while_scope_state.AddRootStmt(source_id);
+    const mir::StmtId await_id = while_scope_state.AddStmt(
         mir::Stmt{
             .label = std::nullopt,
             .data = mir::AwaitStmt{.kind = mir::AwaitKind::kAlwaysBackedge},
-            .child_bodies = {}});
-    while_body_state.AddRootStmt(await_id);
+            .child_procedural_scopes = {}});
+    while_scope_state.AddRootStmt(await_id);
   }
 
-  BodyLoweringState process_body_state;
+  ProceduralScopeLoweringState process_scope_state;
   const mir::ExprId cond_id =
-      MakeTrueConditionExpr(process_body_state, unit_state.Builtins().bit1);
-  std::vector<mir::Body> child_bodies;
-  const mir::BodyId while_body_id =
-      AddChildBody(child_bodies, while_body_state.Finish());
-  const mir::StmtId while_stmt_id = process_body_state.AddStmt(
+      MakeTrueConditionExpr(process_scope_state, unit_state.Builtins().bit1);
+  std::vector<mir::ProceduralScope> child_scopes;
+  const mir::ProceduralScopeId while_scope_id =
+      AddChildProceduralScope(child_scopes, while_scope_state.Finish());
+  const mir::StmtId while_stmt_id = process_scope_state.AddStmt(
       mir::Stmt{
           .label = std::nullopt,
-          .data = mir::WhileStmt{.condition = cond_id, .body = while_body_id},
-          .child_bodies = std::move(child_bodies)});
-  process_body_state.AddRootStmt(while_stmt_id);
+          .data = mir::WhileStmt{.condition = cond_id, .scope = while_scope_id},
+          .child_procedural_scopes = std::move(child_scopes)});
+  process_scope_state.AddRootStmt(while_stmt_id);
   return mir::Process{
-      .kind = mir::ProcessKind::kAlways, .body = process_body_state.Finish()};
+      .kind = mir::ProcessKind::kAlways,
+      .root_procedural_scope = process_scope_state.Finish()};
 }
 
 }  // namespace
 
 auto LowerProcess(
-    const UnitLoweringState& unit_state, const ClassLoweringState& class_state,
-    const hir::Process& src, TimeResolution time_resolution)
-    -> diag::Result<mir::Process> {
+    const UnitLoweringState& unit_state,
+    const StructuralScopeLoweringState& scope_state, const hir::Process& src,
+    TimeResolution time_resolution) -> diag::Result<mir::Process> {
   auto kind_or = LowerProcessKind(src.kind, src.span);
   if (!kind_or) return std::unexpected(std::move(kind_or.error()));
 
   ProcessLoweringState proc_state{time_resolution};
   if (*kind_or == mir::ProcessKind::kInitial) {
-    return LowerInitialProcess(unit_state, class_state, src, proc_state);
+    return LowerInitialProcess(unit_state, scope_state, src, proc_state);
   }
-  return LowerAlwaysProcess(unit_state, class_state, src, proc_state);
+  return LowerAlwaysProcess(unit_state, scope_state, src, proc_state);
 }
 
 }  // namespace lyra::lowering::hir_to_mir

@@ -9,7 +9,7 @@
 
 #include "lyra/diag/source_span.hpp"
 #include "lyra/hir/expr_id.hpp"
-#include "lyra/hir/local_var.hpp"
+#include "lyra/hir/procedural_var.hpp"
 
 namespace lyra::hir {
 
@@ -23,9 +23,10 @@ struct EmptyStmt {};
 
 // VarDeclStmt has ordering semantics in HIR -- its position in the statement
 // stream marks the SystemVerilog point of declaration. The actual storage is
-// allocated on Process.local_vars; LocalVarId.value indexes into that vector.
+// allocated on Process.procedural_vars; ProceduralVarId.value indexes into
+// that vector.
 struct VarDeclStmt {
-  LocalVarId local_var;
+  ProceduralVarId var;
 };
 
 struct ExprStmt {
@@ -46,7 +47,7 @@ using TimingControl = std::variant<DelayControl, EventControl>;
 
 struct TimedStmt {
   TimingControl timing;
-  StmtId body;
+  StmtId stmt;
 };
 
 using StmtData =

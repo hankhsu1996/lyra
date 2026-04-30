@@ -8,4 +8,4 @@ input:
 expect:
   exit: 0
   stdout:
-    contains: ["ModuleUnit", "MemberVar"]
+    contains: ["ModuleUnit", "StructuralVar"]

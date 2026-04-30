@@ -79,22 +79,26 @@ auto ToMirFormatModifiers(const support::FormatDirectiveModifiers& m)
 }
 
 auto BuildPrintValueItem(
-    const UnitLoweringState& unit_state, const ClassLoweringState& class_state,
-    const ProcessLoweringState& proc_state, BodyLoweringState& body_state,
+    const UnitLoweringState& unit_state,
+    const StructuralScopeLoweringState& scope_state,
+    const ProcessLoweringState& proc_state,
+    ProceduralScopeLoweringState& proc_scope_state,
     const hir::Process& hir_proc, hir::ExprId hir_arg, mir::FormatSpec spec)
     -> diag::Result<mir::RuntimePrintItem> {
   auto lowered_or = LowerExpr(
-      unit_state, class_state, proc_state, body_state, hir_proc,
+      unit_state, scope_state, proc_state, proc_scope_state, hir_proc,
       hir_proc.exprs.at(hir_arg.value));
   if (!lowered_or) return std::unexpected(std::move(lowered_or.error()));
   const mir::TypeId type = lowered_or->type;
-  const mir::ExprId value = body_state.AddExpr(*std::move(lowered_or));
+  const mir::ExprId value = proc_scope_state.AddExpr(*std::move(lowered_or));
   return mir::RuntimePrintValue(value, type, std::move(spec));
 }
 
 auto BuildPrintItemFromDirective(
-    const UnitLoweringState& unit_state, const ClassLoweringState& class_state,
-    const ProcessLoweringState& proc_state, BodyLoweringState& body_state,
+    const UnitLoweringState& unit_state,
+    const StructuralScopeLoweringState& scope_state,
+    const ProcessLoweringState& proc_state,
+    ProceduralScopeLoweringState& proc_scope_state,
     const hir::Process& hir_proc,
     const support::ParsedFormatDirective& directive,
     std::span<const hir::ExprId> args, std::size_t& value_index,
@@ -131,7 +135,8 @@ auto BuildPrintItemFromDirective(
       }
       const hir::ExprId hir_arg = args[value_index++];
       return BuildPrintValueItem(
-          unit_state, class_state, proc_state, body_state, hir_proc, hir_arg,
+          unit_state, scope_state, proc_state, proc_scope_state, hir_proc,
+          hir_arg,
           mir::FormatSpec(
               ToMirFormatKind(directive.kind),
               ToMirFormatModifiers(directive.modifiers)));
@@ -157,8 +162,10 @@ auto TryGetHirStringLiteral(const hir::Process& proc, hir::ExprId expr_id)
 }
 
 auto BuildRuntimePrintItemsFromCallArgs(
-    const UnitLoweringState& unit_state, const ClassLoweringState& class_state,
-    const ProcessLoweringState& proc_state, BodyLoweringState& body_state,
+    const UnitLoweringState& unit_state,
+    const StructuralScopeLoweringState& scope_state,
+    const ProcessLoweringState& proc_state,
+    ProceduralScopeLoweringState& proc_scope_state,
     const hir::Process& hir_proc, const hir::CallExpr& call,
     diag::SourceSpan call_span)
     -> diag::Result<std::vector<mir::RuntimePrintItem>> {
@@ -175,7 +182,7 @@ auto BuildRuntimePrintItemsFromCallArgs(
       auto value_index = cursor;
       for (const auto& directive : *parsed_or) {
         auto item_or = BuildPrintItemFromDirective(
-            unit_state, class_state, proc_state, body_state, hir_proc,
+            unit_state, scope_state, proc_state, proc_scope_state, hir_proc,
             directive, args, value_index, literal->span);
         if (!item_or) return std::unexpected(std::move(item_or.error()));
         items.push_back(std::move(*item_or));
@@ -189,7 +196,8 @@ auto BuildRuntimePrintItemsFromCallArgs(
       items.emplace_back(mir::RuntimePrintLiteral{.text = " "});
     }
     auto item_or = BuildPrintValueItem(
-        unit_state, class_state, proc_state, body_state, hir_proc, args[cursor],
+        unit_state, scope_state, proc_state, proc_scope_state, hir_proc,
+        args[cursor],
         mir::FormatSpec(mir::FormatKind::kDecimal, mir::FormatModifiers{}));
     if (!item_or) return std::unexpected(std::move(item_or.error()));
     items.push_back(*std::move(item_or));
@@ -202,8 +210,10 @@ auto BuildRuntimePrintItemsFromCallArgs(
 }  // namespace
 
 auto LowerPrintSystemSubroutineCall(
-    const UnitLoweringState& unit_state, const ClassLoweringState& class_state,
-    const ProcessLoweringState& proc_state, BodyLoweringState& body_state,
+    const UnitLoweringState& unit_state,
+    const StructuralScopeLoweringState& scope_state,
+    const ProcessLoweringState& proc_state,
+    ProceduralScopeLoweringState& proc_scope_state,
     const hir::Process& hir_proc, const hir::CallExpr& call,
     const support::SystemSubroutineDesc& desc,
     const support::PrintSystemSubroutineInfo& print, diag::SourceSpan span)
@@ -216,7 +226,8 @@ auto LowerPrintSystemSubroutineCall(
         diag::UnsupportedCategory::kFeature);
   }
   auto items_or = BuildRuntimePrintItemsFromCallArgs(
-      unit_state, class_state, proc_state, body_state, hir_proc, call, span);
+      unit_state, scope_state, proc_state, proc_scope_state, hir_proc, call,
+      span);
   if (!items_or) return std::unexpected(std::move(items_or.error()));
 
   return mir::Expr{

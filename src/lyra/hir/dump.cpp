@@ -12,13 +12,14 @@
 #include "lyra/base/overloaded.hpp"
 #include "lyra/hir/binary_op.hpp"
 #include "lyra/hir/expr.hpp"
-#include "lyra/hir/local_var.hpp"
-#include "lyra/hir/member_var.hpp"
 #include "lyra/hir/module_unit.hpp"
 #include "lyra/hir/primary.hpp"
+#include "lyra/hir/procedural_var.hpp"
 #include "lyra/hir/process.hpp"
 #include "lyra/hir/stmt.hpp"
+#include "lyra/hir/structural_hops.hpp"
 #include "lyra/hir/structural_scope.hpp"
+#include "lyra/hir/structural_var.hpp"
 #include "lyra/hir/subroutine.hpp"
 #include "lyra/hir/subroutine_ref.hpp"
 #include "lyra/hir/type.hpp"
@@ -253,18 +254,16 @@ class HirDumper {
   static auto FormatValueRef(const ValueRef& v) -> std::string {
     return std::visit(
         Overloaded{
-            [](const MemberVarRef& r) -> std::string {
+            [](const StructuralVarRef& r) -> std::string {
               return std::format(
-                  "MemberVar[{}](hops={})", r.target.value,
-                  r.parent_scope_hops.value);
+                  "StructuralVar[{}](hops={})", r.var.value, r.hops.value);
             },
-            [](const LocalVarRef& r) -> std::string {
-              return std::format("LocalVar[{}]", r.target.value);
+            [](const ProceduralVarRef& r) -> std::string {
+              return std::format("ProceduralVar[{}]", r.var.value);
             },
             [](const LoopVarRef& r) -> std::string {
               return std::format(
-                  "LoopVar[{}](hops={})", r.target.value,
-                  r.parent_scope_hops.value);
+                  "LoopVar[{}](hops={})", r.loop_var.value, r.hops.value);
             },
         },
         v);
@@ -383,12 +382,12 @@ class HirDumper {
       -> std::string {
     return std::visit(
         Overloaded{
-            [this](const UserSubroutineRef& u) -> std::string {
-              const auto& owner = ResolveScope(u.parent_scope_hops);
-              const auto& decl = owner.GetSubroutine(u.id);
+            [this](const StructuralSubroutineRef& u) -> std::string {
+              const auto& owner = ResolveScope(u.hops);
+              const auto& decl = owner.GetStructuralSubroutine(u.subroutine);
               return std::format(
-                  "UserSubroutine[{}](hops={}) \"{}\"", u.id.value,
-                  u.parent_scope_hops.value, decl.name);
+                  "StructuralSubroutine[{}](hops={}) \"{}\"",
+                  u.subroutine.value, u.hops.value, decl.name);
             },
             [](const SystemSubroutineRef& s) -> std::string {
               const auto& desc = support::LookupSystemSubroutine(s.id);
@@ -399,17 +398,17 @@ class HirDumper {
         callee);
   }
 
-  [[nodiscard]] auto ResolveScope(ParentScopeHops hops) const
+  [[nodiscard]] auto ResolveScope(StructuralHops hops) const
       -> const StructuralScope& {
     if (hops.value >= scope_stack_.size()) {
       throw InternalError(
-          "HirDumper::ResolveScope: ParentScopeHops out of range");
+          "HirDumper::ResolveScope: StructuralHops out of range");
     }
     return *scope_stack_[scope_stack_.size() - 1 - hops.value];
   }
 
   [[nodiscard]] auto FormatExpr(const Expr& e) const -> std::string {
-    std::string body = std::visit(
+    std::string formatted = std::visit(
         Overloaded{
             [](const PrimaryExpr& p) -> std::string {
               return FormatPrimary(p.data);
@@ -448,7 +447,7 @@ class HirDumper {
             },
         },
         e.data);
-    return std::format("type=Type[{}] {}", e.type.value, body);
+    return std::format("type=Type[{}] {}", e.type.value, formatted);
   }
 
   [[nodiscard]] auto FormatProcExpr(const Process& p, ExprId id) const
@@ -484,11 +483,11 @@ class HirDumper {
     scope_stack_.push_back(&s);
     Line("Scope:");
     Indent();
-    for (std::size_t i = 0; i < s.member_vars.size(); ++i) {
-      const auto& v = s.member_vars[i];
+    for (std::size_t i = 0; i < s.structural_vars.size(); ++i) {
+      const auto& v = s.structural_vars[i];
       Line(
           std::format(
-              "MemberVar[{}] \"{}\" : Type[{}]", i, v.name, v.type.value));
+              "StructuralVar[{}] \"{}\" : Type[{}]", i, v.name, v.type.value));
     }
     for (std::size_t i = 0; i < s.loop_var_decls.size(); ++i) {
       const auto& lv = s.loop_var_decls[i];
@@ -496,11 +495,11 @@ class HirDumper {
           std::format(
               "LoopVarDecl[{}] \"{}\" : Type[{}]", i, lv.name, lv.type.value));
     }
-    for (std::size_t i = 0; i < s.subroutines.size(); ++i) {
-      const auto& d = s.subroutines[i];
+    for (std::size_t i = 0; i < s.structural_subroutines.size(); ++i) {
+      const auto& d = s.structural_subroutines[i];
       Line(
           std::format(
-              "Subroutine[{}] {} \"{}\" : Type[{}]", i,
+              "StructuralSubroutine[{}] {} \"{}\" : Type[{}]", i,
               d.kind == SubroutineKind::kTask ? "task" : "function", d.name,
               d.result_type.value));
     }
@@ -544,14 +543,15 @@ class HirDumper {
         break;
     }
     Indent();
-    if (!p.local_vars.empty()) {
-      Line("Locals:");
+    if (!p.procedural_vars.empty()) {
+      Line("ProceduralVars:");
       Indent();
-      for (std::size_t i = 0; i < p.local_vars.size(); ++i) {
-        const auto& lv = p.local_vars[i];
+      for (std::size_t i = 0; i < p.procedural_vars.size(); ++i) {
+        const auto& lv = p.procedural_vars[i];
         Line(
             std::format(
-                "LocalVar[{}] \"{}\" : Type[{}]", i, lv.name, lv.type.value));
+                "ProceduralVar[{}] \"{}\" : Type[{}]", i, lv.name,
+                lv.type.value));
       }
       Dedent();
     }
@@ -563,7 +563,7 @@ class HirDumper {
       }
       Dedent();
     }
-    DumpStmt(p, p.body);
+    DumpStmt(p, p.root_stmt);
     Dedent();
   }
 
@@ -577,8 +577,8 @@ class HirDumper {
             [&](const VarDeclStmt& v) {
               Line(
                   std::format(
-                      "Stmt[{}] VarDeclStmt local=LocalVar[{}]", id.value,
-                      v.local_var.value));
+                      "Stmt[{}] VarDeclStmt var=ProceduralVar[{}]", id.value,
+                      v.var.value));
             },
             [&](const ExprStmt& e) {
               Line(
@@ -621,9 +621,9 @@ class HirDumper {
                   },
                   t.timing);
               Dedent();
-              Line("body:");
+              Line("stmt:");
               Indent();
-              DumpStmt(p, t.body);
+              DumpStmt(p, t.stmt);
               Dedent();
               Dedent();
             },
@@ -692,9 +692,9 @@ class HirDumper {
                       lg.loop_var.value, lg.initial.value, lg.stop.value,
                       lg.iter.value));
               Indent();
-              Line("body_scope:");
+              Line("scope:");
               Indent();
-              DumpScope(g.child_scopes.at(lg.body_scope.value));
+              DumpScope(g.child_scopes.at(lg.scope.value));
               Dedent();
               Dedent();
             },

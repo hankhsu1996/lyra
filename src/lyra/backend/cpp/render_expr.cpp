@@ -65,9 +65,23 @@ auto BinaryOpToken(mir::BinaryOp op) -> diag::Result<std::string_view> {
   throw InternalError("BinaryOpToken: unknown MIR BinaryOp");
 }
 
-auto LookupLocalName(const RenderContext& ctx, const mir::LocalVarRef& ref)
+auto LookupProceduralVarName(
+    const RenderContext& ctx, const mir::ProceduralVarRef& ref)
     -> const std::string& {
-  return ctx.BodyAtHops(ref.body_hops).locals.at(ref.local.value).name;
+  return ctx.ProceduralScopeAtHops(ref.hops).vars.at(ref.var.value).name;
+}
+
+auto RenderStructuralVarName(
+    const RenderContext& ctx, const mir::StructuralVarRef& ref)
+    -> diag::Result<std::string> {
+  if (ref.hops.value != 0) {
+    return diag::Unsupported(
+        diag::DiagCode::kCppEmitExpressionFormNotImplemented,
+        "cross-scope structural var access is not yet implemented in cpp "
+        "emit",
+        diag::UnsupportedCategory::kFeature);
+  }
+  return ctx.StructuralScope().GetStructuralVar(ref.var).name;
 }
 
 auto SignednessLiteral(mir::Signedness s) -> std::string_view {
@@ -88,14 +102,21 @@ auto IsPackedRuntime(const mir::CompilationUnit& unit, mir::TypeId type_id)
 }
 
 auto MirTypeOfLvalue(const RenderContext& ctx, const mir::Lvalue& lv)
-    -> mir::TypeId {
+    -> diag::Result<mir::TypeId> {
   return std::visit(
       Overloaded{
-          [&](const mir::MemberVarRef& m) -> mir::TypeId {
-            return ctx.Class().GetMemberVar(m.target).type;
+          [&](const mir::StructuralVarRef& m) -> diag::Result<mir::TypeId> {
+            if (m.hops.value != 0) {
+              return diag::Unsupported(
+                  diag::DiagCode::kCppEmitExpressionFormNotImplemented,
+                  "cross-scope structural var access is not yet implemented "
+                  "in cpp emit",
+                  diag::UnsupportedCategory::kFeature);
+            }
+            return ctx.StructuralScope().GetStructuralVar(m.var).type;
           },
-          [&](const mir::LocalVarRef& l) -> mir::TypeId {
-            return ctx.BodyAtHops(l.body_hops).locals.at(l.local.value).type;
+          [&](const mir::ProceduralVarRef& l) -> diag::Result<mir::TypeId> {
+            return ctx.ProceduralScopeAtHops(l.hops).vars.at(l.var.value).type;
           },
       },
       lv);
@@ -414,14 +435,14 @@ auto RenderConversionCall(
 }  // namespace
 
 auto RenderLvalue(const RenderContext& ctx, const mir::Lvalue& target)
-    -> std::string {
+    -> diag::Result<std::string> {
   return std::visit(
       Overloaded{
-          [&](const mir::MemberVarRef& m) -> std::string {
-            return ctx.Class().GetMemberVar(m.target).name;
+          [&](const mir::StructuralVarRef& m) -> diag::Result<std::string> {
+            return RenderStructuralVarName(ctx, m);
           },
-          [&](const mir::LocalVarRef& l) -> std::string {
-            return LookupLocalName(ctx, l);
+          [&](const mir::ProceduralVarRef& l) -> diag::Result<std::string> {
+            return LookupProceduralVarName(ctx, l);
           },
       },
       target);
@@ -443,11 +464,11 @@ auto RenderExprAsNative(const RenderContext& ctx, const mir::Expr& expr)
                 "TimeLiteral is not yet implemented in cpp emit",
                 diag::UnsupportedCategory::kFeature);
           },
-          [&](const mir::MemberVarRef& m) -> diag::Result<std::string> {
-            return ctx.Class().GetMemberVar(m.target).name;
+          [&](const mir::StructuralVarRef& m) -> diag::Result<std::string> {
+            return RenderStructuralVarName(ctx, m);
           },
-          [&](const mir::LocalVarRef& l) -> diag::Result<std::string> {
-            return LookupLocalName(ctx, l);
+          [&](const mir::ProceduralVarRef& l) -> diag::Result<std::string> {
+            return LookupProceduralVarName(ctx, l);
           },
           [](const mir::UnaryExpr&) -> diag::Result<std::string> {
             return diag::Unsupported(
@@ -467,18 +488,25 @@ auto RenderExprAsNative(const RenderContext& ctx, const mir::Expr& expr)
             return "(" + *lhs_or + std::string{*token_or} + *rhs_or + ")";
           },
           [&](const mir::AssignExpr& a) -> diag::Result<std::string> {
-            const auto target_type = MirTypeOfLvalue(ctx, a.target);
+            auto target_type_or = MirTypeOfLvalue(ctx, a.target);
+            if (!target_type_or) {
+              return std::unexpected(std::move(target_type_or.error()));
+            }
+            const auto target_type = *target_type_or;
+            auto target_or = RenderLvalue(ctx, a.target);
+            if (!target_or) {
+              return std::unexpected(std::move(target_or.error()));
+            }
             if (IsPackedRuntime(ctx.Unit(), target_type)) {
               auto value_or = RenderExprAsRuntimeView(ctx, ctx.Expr(a.value));
               if (!value_or) {
                 return std::unexpected(std::move(value_or.error()));
               }
-              return std::format(
-                  "{}.Assign({})", RenderLvalue(ctx, a.target), *value_or);
+              return std::format("{}.Assign({})", *target_or, *value_or);
             }
             auto value_or = RenderExprAsNative(ctx, ctx.Expr(a.value));
             if (!value_or) return std::unexpected(std::move(value_or.error()));
-            return "(" + RenderLvalue(ctx, a.target) + " = " + *value_or + ")";
+            return "(" + *target_or + " = " + *value_or + ")";
           },
           [&](const mir::ConversionExpr& cv) -> diag::Result<std::string> {
             return RenderExprAsNative(ctx, ctx.Expr(cv.operand));
@@ -503,12 +531,13 @@ auto RenderExprAsRuntimeView(const RenderContext& ctx, const mir::Expr& expr)
           [&](const mir::IntegerLiteral& lit) -> diag::Result<std::string> {
             return RenderIntegerLiteralAsView(ctx.Unit(), expr.type, lit.value);
           },
-          [&](const mir::MemberVarRef& m) -> diag::Result<std::string> {
-            return std::format(
-                "{}.View()", ctx.Class().GetMemberVar(m.target).name);
+          [&](const mir::StructuralVarRef& m) -> diag::Result<std::string> {
+            auto name_or = RenderStructuralVarName(ctx, m);
+            if (!name_or) return std::unexpected(std::move(name_or.error()));
+            return std::format("{}.View()", *name_or);
           },
-          [&](const mir::LocalVarRef& l) -> diag::Result<std::string> {
-            return std::format("{}.View()", LookupLocalName(ctx, l));
+          [&](const mir::ProceduralVarRef& l) -> diag::Result<std::string> {
+            return std::format("{}.View()", LookupProceduralVarName(ctx, l));
           },
           [&](const mir::ConversionExpr& cv) -> diag::Result<std::string> {
             auto inner_or = RenderConversionCall(ctx, expr.type, cv);
@@ -586,12 +615,12 @@ auto RenderExpr(const RenderContext& ctx, const mir::Expr& expr)
                        ? RenderExprAsRuntimeView(ctx, expr)
                        : RenderExprAsNative(ctx, expr);
           },
-          [&](const mir::MemberVarRef&) -> diag::Result<std::string> {
+          [&](const mir::StructuralVarRef&) -> diag::Result<std::string> {
             return IsPackedRuntime(ctx.Unit(), expr.type)
                        ? RenderExprAsRuntimeView(ctx, expr)
                        : RenderExprAsNative(ctx, expr);
           },
-          [&](const mir::LocalVarRef&) -> diag::Result<std::string> {
+          [&](const mir::ProceduralVarRef&) -> diag::Result<std::string> {
             return IsPackedRuntime(ctx.Unit(), expr.type)
                        ? RenderExprAsRuntimeView(ctx, expr)
                        : RenderExprAsNative(ctx, expr);

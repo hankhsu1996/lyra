@@ -12,5 +12,5 @@ expect:
       - "Process (Initial)"
       - "Subroutine[0] function \"add\""
       - "Subroutine[1] task \"do_thing\""
-      - "CallExpr callee=UserSubroutine[0](hops=0) \"add\" args=[Expr[1], Expr[2]]"
-      - "CallExpr callee=UserSubroutine[1](hops=0) \"do_thing\" args=[Expr[5]]"
+      - "CallExpr callee=StructuralSubroutine[0](hops=0) \"add\" args=[Expr[1], Expr[2]]"
+      - "CallExpr callee=StructuralSubroutine[1](hops=0) \"do_thing\" args=[Expr[5]]"

@@ -10,11 +10,11 @@ expect:
   stdout:
     contains:
       - "Process (Initial)"
-      - "LocalVar[0] \"x\""
-      - "VarDeclStmt local=LocalVar[0]"
+      - "ProceduralVar[0] \"x\""
+      - "VarDeclStmt var=ProceduralVar[0]"
       - "ExprStmt"
       - "AssignExpr"
       - "BinaryExpr op=Add"
-      - "RefExpr LocalVar[0]"
+      - "RefExpr ProceduralVar[0]"
       - "IntegerLiteral(base=d, unsized=true, 32's{value=0x1})"
       - "IntegerLiteral(base=d, unsized=true, 32's{value=0x2})"

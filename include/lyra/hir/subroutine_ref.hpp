@@ -2,21 +2,22 @@
 
 #include <variant>
 
-#include "lyra/hir/parent_scope_hops.hpp"
+#include "lyra/hir/structural_hops.hpp"
 #include "lyra/hir/subroutine.hpp"
 #include "lyra/support/system_subroutine.hpp"
 
 namespace lyra::hir {
 
-struct UserSubroutineRef {
-  ParentScopeHops parent_scope_hops;
-  SubroutineId id;
+struct StructuralSubroutineRef {
+  StructuralHops hops;
+  StructuralSubroutineId subroutine;
 };
 
 struct SystemSubroutineRef {
   support::SystemSubroutineId id;
 };
 
-using SubroutineRef = std::variant<UserSubroutineRef, SystemSubroutineRef>;
+using SubroutineRef =
+    std::variant<StructuralSubroutineRef, SystemSubroutineRef>;
 
 }  // namespace lyra::hir

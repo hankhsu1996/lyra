@@ -91,7 +91,7 @@ auto LowerScopeInto(
           "LowerScopeInto: variable declaration produced void type");
     }
     const auto type_id = unit_state.AddType(*std::move(type_data));
-    scope_state.AddMemberVar(var, type_id);
+    scope_state.AddStructuralVar(var, type_id);
   }
 
   for (const auto& member : slang_scope.members()) {
@@ -106,8 +106,8 @@ auto LowerScopeInto(
     }
     const auto return_type_id =
         unit_state.AddType(*std::move(return_type_data));
-    scope_state.AddSubroutine(
-        sym, hir::UserSubroutineDecl{
+    scope_state.AddStructuralSubroutine(
+        sym, hir::StructuralSubroutineDecl{
                  .name = std::string{sym.name},
                  .kind = FromSlangSubroutineKind(sym.subroutineKind),
                  .result_type = return_type_id});

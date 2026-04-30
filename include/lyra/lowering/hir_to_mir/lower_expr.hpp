@@ -9,25 +9,19 @@
 
 namespace lyra::lowering::hir_to_mir {
 
-// Process-body expression lowering (recursive, on-demand). Resolves HIR
-// LocalVarRef via `proc_state` and HIR MemberVarRef via `class_state`. HIR
-// LoopVarRef cannot appear in process bodies and is rejected as an internal
-// error. Children are lowered first; the parent expression's child id slots
-// receive ids minted by `body_state.AddExpr`.
 auto LowerExpr(
-    const UnitLoweringState& unit_state, const ClassLoweringState& class_state,
-    const ProcessLoweringState& proc_state, BodyLoweringState& body_state,
+    const UnitLoweringState& unit_state,
+    const StructuralScopeLoweringState& scope_state,
+    const ProcessLoweringState& proc_state,
+    ProceduralScopeLoweringState& proc_scope_state,
     const hir::Process& hir_process, const hir::Expr& expr)
     -> diag::Result<mir::Expr>;
 
-// Constructor-body expression lowering (recursive, on-demand). Resolves HIR
-// LoopVarRef via `ctor_state` and HIR MemberVarRef via `class_state`. HIR
-// LocalVarRef cannot appear in constructor bodies and is rejected as an
-// internal error. The structural scope is the containing scope whose
-// `Exprs()` are referenced by the HIR header expressions.
 auto LowerExpr(
-    const UnitLoweringState& unit_state, const ClassLoweringState& class_state,
-    const ConstructorLoweringState& ctor_state, BodyLoweringState& body_state,
+    const UnitLoweringState& unit_state,
+    const StructuralScopeLoweringState& scope_state,
+    const ConstructorLoweringState& ctor_state,
+    ProceduralScopeLoweringState& proc_scope_state,
     const hir::StructuralScope& scope, const hir::Expr& expr)
     -> diag::Result<mir::Expr>;
 

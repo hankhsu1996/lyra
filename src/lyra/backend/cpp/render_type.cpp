@@ -8,8 +8,8 @@
 
 #include "lyra/base/internal_error.hpp"
 #include "lyra/base/overloaded.hpp"
-#include "lyra/mir/class_decl.hpp"
 #include "lyra/mir/compilation_unit.hpp"
+#include "lyra/mir/structural_scope.hpp"
 #include "lyra/mir/type.hpp"
 
 namespace lyra::backend::cpp {
@@ -40,7 +40,7 @@ auto RenderPackedShapeLiteral(const std::vector<mir::PackedRange>& dims)
 }
 
 auto RenderTypeAsCpp(
-    const mir::CompilationUnit& unit, const mir::ClassDecl& owner_class,
+    const mir::CompilationUnit& unit, const mir::StructuralScope& owner_scope,
     mir::TypeId type_id) -> std::string {
   return std::visit(
       Overloaded{
@@ -82,15 +82,15 @@ auto RenderTypeAsCpp(
           },
           [](const mir::StringType&) -> std::string { return "std::string"; },
           [&](const mir::ObjectType& o) -> std::string {
-            return {owner_class.GetClass(o.target).name};
+            return {owner_scope.GetChildStructuralScope(o.target).name};
           },
           [&](const mir::OwningPtrType& o) -> std::string {
             return "std::unique_ptr<" +
-                   RenderTypeAsCpp(unit, owner_class, o.pointee) + ">";
+                   RenderTypeAsCpp(unit, owner_scope, o.pointee) + ">";
           },
           [&](const mir::VectorType& v) -> std::string {
             return "std::vector<" +
-                   RenderTypeAsCpp(unit, owner_class, v.element) + ">";
+                   RenderTypeAsCpp(unit, owner_scope, v.element) + ">";
           },
           [](const auto&) -> std::string {
             throw InternalError(

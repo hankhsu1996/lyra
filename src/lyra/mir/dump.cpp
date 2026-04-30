@@ -12,16 +12,15 @@
 #include "lyra/base/internal_error.hpp"
 #include "lyra/base/overloaded.hpp"
 #include "lyra/mir/binary_op.hpp"
-#include "lyra/mir/class_decl.hpp"
 #include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/expr.hpp"
-#include "lyra/mir/local_var.hpp"
-#include "lyra/mir/member_var.hpp"
+#include "lyra/mir/procedural_var.hpp"
 #include "lyra/mir/process.hpp"
 #include "lyra/mir/stmt.hpp"
+#include "lyra/mir/structural_scope.hpp"
+#include "lyra/mir/structural_var.hpp"
 #include "lyra/mir/type.hpp"
 #include "lyra/mir/unary_op.hpp"
-#include "lyra/support/system_subroutine.hpp"
 
 namespace lyra::mir {
 
@@ -38,11 +37,9 @@ class MirDumper {
       Line(std::format("[{}] {}", i, FormatType(unit.types[i])));
     }
     Dedent();
-    Line("Classes:");
+    Line("StructuralScope:");
     Indent();
-    for (const auto& c : unit.classes) {
-      DumpClass(c);
-    }
+    DumpStructuralScope(unit.structural_scope);
     Dedent();
     Dedent();
     return std::move(out_);
@@ -168,7 +165,8 @@ class MirDumper {
             [](const ChandleType&) -> std::string { return "ChandleType"; },
             [](const VoidType&) -> std::string { return "VoidType"; },
             [](const ObjectType& o) -> std::string {
-              return std::format("Object(class=Class[{}])", o.target.value);
+              return std::format(
+                  "Object(scope=ChildStructuralScope[{}])", o.target.value);
             },
             [](const OwningPtrType& p) -> std::string {
               return std::format(
@@ -298,47 +296,43 @@ class MirDumper {
   static auto FormatLvalue(const Lvalue& l) -> std::string {
     return std::visit(
         Overloaded{
-            [](const MemberVarRef& r) -> std::string {
-              return std::format("MemberVar[{}]", r.target.value);
-            },
-            [](const LocalVarRef& r) -> std::string {
+            [](const StructuralVarRef& r) -> std::string {
               return std::format(
-                  "LocalVar[body_hops={}, local={}]", r.body_hops.value,
-                  r.local.value);
+                  "StructuralVarRef[hops={}, var={}]", r.hops.value,
+                  r.var.value);
+            },
+            [](const ProceduralVarRef& r) -> std::string {
+              return std::format(
+                  "ProceduralVarRef[hops={}, var={}]", r.hops.value,
+                  r.var.value);
             },
         },
         l);
   }
 
-  static auto FormatPrintRadix(support::PrintRadix r) -> std::string_view {
-    switch (r) {
-      case support::PrintRadix::kDecimal:
-        return "decimal";
-      case support::PrintRadix::kBinary:
-        return "binary";
-      case support::PrintRadix::kOctal:
-        return "octal";
-      case support::PrintRadix::kHex:
-        return "hex";
-    }
-    throw InternalError("MirDumper::FormatPrintRadix: unknown PrintRadix");
-  }
-
-  static auto FormatPrintSinkKind(support::PrintSinkKind s)
-      -> std::string_view {
-    switch (s) {
-      case support::PrintSinkKind::kStdout:
-        return "stdout";
-      case support::PrintSinkKind::kFile:
-        return "file";
-    }
-    throw InternalError(
-        "MirDumper::FormatPrintSinkKind: unknown PrintSinkKind");
-  }
-
   [[nodiscard]] auto FormatCallee(const Callee& callee) const -> std::string {
-    const auto& target = current_class_->GetUserSubroutineTarget(callee);
-    return std::format("UserSubroutine[{}] \"{}\"", callee.value, target.name);
+    return std::visit(
+        Overloaded{
+            [](const SystemSubroutineCallee& s) -> std::string {
+              return std::format("SystemSubroutineCallee[id={}]", s.id.value);
+            },
+            [this](const StructuralSubroutineRef& r) -> std::string {
+              const auto& owner = ResolveScopeAtHops(r.hops.value);
+              const auto& target = owner.GetStructuralSubroutine(r.subroutine);
+              return std::format(
+                  "StructuralSubroutineRef[hops={}, subroutine={}] \"{}\"",
+                  r.hops.value, r.subroutine.value, target.name);
+            },
+        },
+        callee);
+  }
+
+  [[nodiscard]] auto ResolveScopeAtHops(std::uint32_t hops) const
+      -> const StructuralScope& {
+    if (hops >= scope_stack_.size()) {
+      throw InternalError("MirDumper::ResolveScopeAtHops: hops out of range");
+    }
+    return *scope_stack_[scope_stack_.size() - 1 - hops];
   }
 
   static auto FormatIntegralConstant(const IntegralConstant& c) -> std::string {
@@ -379,10 +373,10 @@ class MirDumper {
     throw InternalError("MirDumper::FormatConversionKind: unknown kind");
   }
 
-  [[nodiscard]] auto FormatExpr(const Body& body, ExprId id) const
+  [[nodiscard]] auto FormatExpr(const ProceduralScope& scope, ExprId id) const
       -> std::string {
-    const auto& e = body.exprs.at(id.value);
-    std::string body_str = std::visit(
+    const auto& e = scope.exprs.at(id.value);
+    std::string formatted = std::visit(
         Overloaded{
             [](const IntegerLiteral& lit) -> std::string {
               return std::format(
@@ -396,13 +390,15 @@ class MirDumper {
                   "TimeLiteral(value={}, scale={})", lit.value,
                   FormatTimeScale(lit.scale));
             },
-            [](const MemberVarRef& r) -> std::string {
-              return std::format("MemberVarRef(MemberVar[{}])", r.target.value);
-            },
-            [](const LocalVarRef& r) -> std::string {
+            [](const StructuralVarRef& r) -> std::string {
               return std::format(
-                  "LocalVarRef(body_hops={}, local={})", r.body_hops.value,
-                  r.local.value);
+                  "StructuralVarRef[hops={}, var={}]", r.hops.value,
+                  r.var.value);
+            },
+            [](const ProceduralVarRef& r) -> std::string {
+              return std::format(
+                  "ProceduralVarRef[hops={}, var={}]", r.hops.value,
+                  r.var.value);
             },
             [](const UnaryExpr& u) -> std::string {
               return std::format(
@@ -440,10 +436,10 @@ class MirDumper {
             },
         },
         e.data);
-    return std::format("{} type=Type[{}]", body_str, e.type.value);
+    return std::format("{} type=Type[{}]", formatted, e.type.value);
   }
 
-  static auto FormatMemberType(TypeId type) -> std::string {
+  static auto FormatVarType(TypeId type) -> std::string {
     return std::format("Type[{}]", type.value);
   }
 
@@ -473,102 +469,103 @@ class MirDumper {
     throw InternalError("MirDumper: unknown AwaitKind");
   }
 
-  void DumpClass(const ClassDecl& c) {
-    const ClassDecl* saved = current_class_;
-    current_class_ = &c;
-    Line(std::format("Class \"{}\"", c.name));
+  void DumpStructuralScope(const StructuralScope& s) {
+    scope_stack_.push_back(&s);
+    Line(std::format("StructuralScope \"{}\"", s.name));
     Indent();
 
-    Line("Classes:");
+    Line("ChildStructuralScopes:");
     Indent();
-    for (std::size_t i = 0; i < c.classes.size(); ++i) {
+    for (std::size_t i = 0; i < s.child_structural_scopes.size(); ++i) {
       Line(std::format("[{}]", i));
       Indent();
-      DumpClass(c.classes[i]);
+      DumpStructuralScope(s.child_structural_scopes[i]);
       Dedent();
     }
     Dedent();
 
-    Line("MemberVars:");
+    Line("Vars:");
     Indent();
-    for (std::size_t i = 0; i < c.member_vars.size(); ++i) {
-      const auto& m = c.member_vars[i];
-      Line(
-          std::format("[{}] \"{}\" : {}", i, m.name, FormatMemberType(m.type)));
+    for (std::size_t i = 0; i < s.structural_vars.size(); ++i) {
+      const auto& v = s.structural_vars[i];
+      Line(std::format("[{}] \"{}\" : {}", i, v.name, FormatVarType(v.type)));
     }
     Dedent();
 
-    Line("UserSubroutineTargets:");
+    Line("StructuralSubroutines:");
     Indent();
-    for (std::size_t i = 0; i < c.user_subroutine_targets.size(); ++i) {
-      const auto& t = c.user_subroutine_targets[i];
-      Line(std::format("[{}] \"{}\"", i, t.name));
+    for (std::size_t i = 0; i < s.structural_subroutines.size(); ++i) {
+      const auto& d = s.structural_subroutines[i];
+      Line(std::format("[{}] \"{}\"", i, d.name));
     }
     Dedent();
 
     Line("Constructor:");
     Indent();
-    DumpBody(c.constructor);
+    DumpProceduralScope(s.constructor_scope);
     Dedent();
 
     Line("Processes:");
     Indent();
-    for (std::size_t i = 0; i < c.processes.size(); ++i) {
-      DumpProcess(c.processes[i], i);
+    for (std::size_t i = 0; i < s.processes.size(); ++i) {
+      DumpProcess(s.processes[i], i);
     }
     Dedent();
 
     Dedent();
-    current_class_ = saved;
+    scope_stack_.pop_back();
   }
 
   void DumpProcess(const Process& p, std::size_t index) {
     Line(std::format("Process[{}] {}", index, FormatProcessKind(p)));
     Indent();
-    DumpBody(p.body);
+    DumpProceduralScope(p.root_procedural_scope);
     Dedent();
   }
 
-  void DumpBody(const Body& body) {
-    if (!body.locals.empty()) {
-      Line("Locals:");
+  void DumpProceduralScope(const ProceduralScope& scope) {
+    if (!scope.vars.empty()) {
+      Line("Vars:");
       Indent();
-      for (std::size_t i = 0; i < body.locals.size(); ++i) {
-        const auto& lv = body.locals[i];
+      for (std::size_t i = 0; i < scope.vars.size(); ++i) {
+        const auto& v = scope.vars[i];
         Line(
             std::format(
-                "LocalVar[{}] \"{}\" : Type[{}]", i, lv.name, lv.type.value));
+                "ProceduralVar[{}] \"{}\" : Type[{}]", i, v.name,
+                v.type.value));
       }
       Dedent();
     }
-    if (!body.exprs.empty()) {
+    if (!scope.exprs.empty()) {
       Line("Exprs:");
       Indent();
-      for (std::size_t i = 0; i < body.exprs.size(); ++i) {
+      for (std::size_t i = 0; i < scope.exprs.size(); ++i) {
         const ExprId id{static_cast<std::uint32_t>(i)};
-        Line(std::format("Expr[{}] {}", i, FormatExpr(body, id)));
-        const auto& expr = body.exprs[i];
+        Line(std::format("Expr[{}] {}", i, FormatExpr(scope, id)));
+        const auto& expr = scope.exprs[i];
         if (const auto* rc = std::get_if<RuntimeCallExpr>(&expr.data)) {
           Indent();
-          DumpRuntimePrintCallItems(rc->print, body);
+          DumpRuntimePrintCallItems(rc->print, scope);
           Dedent();
         }
       }
       Dedent();
     }
-    Line(std::format("Body (root_stmts={})", body.root_stmts.size()));
+    Line(
+        std::format(
+            "ProceduralScope (root_stmts={})", scope.root_stmts.size()));
     Indent();
-    if (body.root_stmts.empty()) {
+    if (scope.root_stmts.empty()) {
       Line("(empty)");
     } else {
-      for (const auto& sid : body.root_stmts) {
-        DumpStmt(body, sid);
+      for (const auto& sid : scope.root_stmts) {
+        DumpStmt(scope, sid);
       }
     }
     Dedent();
   }
 
-  void DumpStmt(const Body& enclosing, StmtId id) {
+  void DumpStmt(const ProceduralScope& enclosing, StmtId id) {
     const auto& stmt = enclosing.stmts.at(id.value);
     if (stmt.label.has_value()) {
       Line(std::format("label: \"{}\"", *stmt.label));
@@ -578,13 +575,12 @@ class MirDumper {
             [&](const EmptyStmt&) {
               Line(std::format("Stmt[{}] EmptyStmt", id.value));
             },
-            [&](const LocalVarDeclStmt& s) {
+            [&](const ProceduralVarDeclStmt& s) {
               Line(
                   std::format(
-                      "Stmt[{}] LocalVarDeclStmt target=LocalVar[body_hops={}, "
-                      "local={}]",
-                      id.value, s.target.body_hops.value,
-                      s.target.local.value));
+                      "Stmt[{}] ProceduralVarDeclStmt "
+                      "target=ProceduralVarRef[hops={}, var={}]",
+                      id.value, s.target.hops.value, s.target.var.value));
             },
             [&](const ExprStmt& s) { DumpExprStmt(s, enclosing, id); },
             [&](const BlockStmt& s) { DumpBlockStmt(stmt, s, id); },
@@ -595,9 +591,10 @@ class MirDumper {
             [&](const ConstructOwnedObjectStmt& s) {
               Line(
                   std::format(
-                      "Stmt[{}] ConstructOwnedObjectStmt target=MemberVar[{}] "
-                      "class=Class[{}]",
-                      id.value, s.target.value, s.class_id.value));
+                      "Stmt[{}] ConstructOwnedObjectStmt "
+                      "target=StructuralVar[{}] "
+                      "scope=StructuralScope[{}]",
+                      id.value, s.target.value, s.scope_id.value));
             },
             [&](const ForStmt& s) { DumpForStmt(stmt, s, enclosing, id); },
             [&](const TimedStmt& t) { DumpTimedStmt(t, enclosing, id); },
@@ -613,7 +610,7 @@ class MirDumper {
   }
 
   void DumpWhileStmt(
-      const Stmt& parent, const WhileStmt& s, const Body& enclosing,
+      const Stmt& parent, const WhileStmt& s, const ProceduralScope& enclosing,
       StmtId id) {
     Line(std::format("Stmt[{}] WhileStmt", id.value));
     Indent();
@@ -621,26 +618,27 @@ class MirDumper {
         std::format(
             "condition: Expr[{}] {}", s.condition.value,
             FormatExpr(enclosing, s.condition)));
-    Line(std::format("body (BodyId={}):", s.body.value));
+    Line(std::format("scope (ProceduralScopeId={}):", s.scope.value));
     Indent();
-    DumpBody(parent.child_bodies.at(s.body.value));
+    DumpProceduralScope(parent.child_procedural_scopes.at(s.scope.value));
     Dedent();
     Dedent();
   }
 
-  void DumpTimedStmt(const TimedStmt& t, const Body& enclosing, StmtId id) {
+  void DumpTimedStmt(
+      const TimedStmt& t, const ProceduralScope& enclosing, StmtId id) {
     Line(std::format("Stmt[{}] TimedStmt", id.value));
     Indent();
     Line(std::format("timing: {}", FormatTimingControl(t.timing)));
-    Line("body:");
+    Line("stmt:");
     Indent();
-    DumpStmt(enclosing, t.body);
+    DumpStmt(enclosing, t.stmt);
     Dedent();
     Dedent();
   }
 
   void DumpRuntimePrintCallItems(
-      const RuntimePrintCall& call, const Body& enclosing) {
+      const RuntimePrintCall& call, const ProceduralScope& enclosing) {
     Line(
         std::format(
             "RuntimePrintCall kind={} descriptor={} items={}",
@@ -657,7 +655,8 @@ class MirDumper {
   }
 
   void DumpRuntimePrintItem(
-      std::size_t i, const RuntimePrintItem& item, const Body& enclosing) {
+      std::size_t i, const RuntimePrintItem& item,
+      const ProceduralScope& enclosing) {
     std::visit(
         Overloaded{
             [&](const RuntimePrintLiteral& lit) {
@@ -746,7 +745,8 @@ class MirDumper {
   }
 
   void DumpForStmt(
-      const Stmt& parent, const ForStmt& s, const Body& enclosing, StmtId id) {
+      const Stmt& parent, const ForStmt& s, const ProceduralScope& enclosing,
+      StmtId id) {
     Line(std::format("Stmt[{}] ForStmt", id.value));
     Indent();
     Line("init:");
@@ -763,9 +763,8 @@ class MirDumper {
                 }
                 Line(
                     std::format(
-                        "[{}] decl LocalVar[body_hops={}, local={}]{}", i,
-                        d.local.body_hops.value, d.local.local.value,
-                        init_str));
+                        "[{}] decl ProceduralVarRef[hops={}, var={}]{}", i,
+                        d.local.hops.value, d.local.var.value, init_str));
               },
               [&](const ForInitExpr& e) {
                 Line(
@@ -794,9 +793,9 @@ class MirDumper {
               FormatExpr(enclosing, s.step[i])));
     }
     Dedent();
-    Line(std::format("body (BodyId={}):", s.body.value));
+    Line(std::format("scope (ProceduralScopeId={}):", s.scope.value));
     Indent();
-    DumpBody(parent.child_bodies.at(s.body.value));
+    DumpProceduralScope(parent.child_procedural_scopes.at(s.scope.value));
     Dedent();
     Dedent();
   }
@@ -804,13 +803,15 @@ class MirDumper {
   void DumpBlockStmt(const Stmt& parent, const BlockStmt& s, StmtId id) {
     Line(
         std::format(
-            "Stmt[{}] BlockStmt body=BodyId{{{}}}", id.value, s.body.value));
+            "Stmt[{}] BlockStmt scope=ProceduralScopeId{{{}}}", id.value,
+            s.scope.value));
     Indent();
-    DumpBody(parent.child_bodies.at(s.body.value));
+    DumpProceduralScope(parent.child_procedural_scopes.at(s.scope.value));
     Dedent();
   }
 
-  void DumpExprStmt(const ExprStmt& s, const Body& enclosing, StmtId id) {
+  void DumpExprStmt(
+      const ExprStmt& s, const ProceduralScope& enclosing, StmtId id) {
     Line(
         std::format("Stmt[{}] ExprStmt expr=Expr[{}]", id.value, s.expr.value));
     Indent();
@@ -821,29 +822,33 @@ class MirDumper {
   }
 
   void DumpIfStmt(
-      const Stmt& parent, const IfStmt& s, const Body& enclosing, StmtId id) {
+      const Stmt& parent, const IfStmt& s, const ProceduralScope& enclosing,
+      StmtId id) {
     Line(
         std::format(
             "Stmt[{}] IfStmt cond=Expr[{}] {}", id.value, s.condition.value,
             FormatExpr(enclosing, s.condition)));
     Indent();
-    Line(std::format("then_body (BodyId={}):", s.then_body.value));
+    Line(std::format("then_scope (ProceduralScopeId={}):", s.then_scope.value));
     Indent();
-    DumpBody(parent.child_bodies.at(s.then_body.value));
+    DumpProceduralScope(parent.child_procedural_scopes.at(s.then_scope.value));
     Dedent();
-    if (s.else_body.has_value()) {
-      Line(std::format("else_body (BodyId={}):", s.else_body->value));
+    if (s.else_scope.has_value()) {
+      Line(
+          std::format(
+              "else_scope (ProceduralScopeId={}):", s.else_scope->value));
       Indent();
-      DumpBody(parent.child_bodies.at(s.else_body->value));
+      DumpProceduralScope(
+          parent.child_procedural_scopes.at(s.else_scope->value));
       Dedent();
     } else {
-      Line("else_body: <none>");
+      Line("else_scope: <none>");
     }
     Dedent();
   }
 
   void DumpSwitchStmt(
-      const Stmt& parent, const SwitchStmt& s, const Body& enclosing,
+      const Stmt& parent, const SwitchStmt& s, const ProceduralScope& enclosing,
       StmtId id) {
     Line(
         std::format(
@@ -863,26 +868,29 @@ class MirDumper {
       }
       Line(
           std::format(
-              "case[{}] labels=[{}] body (BodyId={}):", ci, labels,
-              c.body.value));
+              "case[{}] labels=[{}] scope (ProceduralScopeId={}):", ci, labels,
+              c.scope.value));
       Indent();
-      DumpBody(parent.child_bodies.at(c.body.value));
+      DumpProceduralScope(parent.child_procedural_scopes.at(c.scope.value));
       Dedent();
     }
-    if (s.default_body.has_value()) {
-      Line(std::format("default_body (BodyId={}):", s.default_body->value));
+    if (s.default_scope.has_value()) {
+      Line(
+          std::format(
+              "default_scope (ProceduralScopeId={}):", s.default_scope->value));
       Indent();
-      DumpBody(parent.child_bodies.at(s.default_body->value));
+      DumpProceduralScope(
+          parent.child_procedural_scopes.at(s.default_scope->value));
       Dedent();
     } else {
-      Line("default_body: <none>");
+      Line("default_scope: <none>");
     }
     Dedent();
   }
 
   std::string out_;
   int indent_ = 0;
-  const ClassDecl* current_class_ = nullptr;
+  std::vector<const StructuralScope*> scope_stack_;
 };
 
 }  // namespace

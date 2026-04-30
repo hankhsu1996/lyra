@@ -1,0 +1,14 @@
+id: dump.mir_process_in_generate_mixed_refs
+tags: [dump]
+input:
+  command: [dump, mir]
+  project: false
+  top: Top
+  files: [main.sv]
+expect:
+  exit: 0
+  stdout:
+    contains:
+      - "ProceduralVar[0] \"y\""
+      - "AssignExpr target=ProceduralVarRef[hops=0, var=0]"
+      - "AssignExpr target=StructuralVarRef[hops=1, var=0]"
