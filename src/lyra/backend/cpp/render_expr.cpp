@@ -65,9 +65,9 @@ auto BinaryOpToken(mir::BinaryOp op) -> diag::Result<std::string_view> {
   throw InternalError("BinaryOpToken: unknown MIR BinaryOp");
 }
 
-auto LookupLocalName(const mir::Body& body, const mir::LocalVarRef& ref)
+auto LookupLocalName(const RenderContext& ctx, const mir::LocalVarRef& ref)
     -> const std::string& {
-  return body.local_scopes.at(ref.scope.value).locals.at(ref.local.value).name;
+  return ctx.BodyAtHops(ref.body_hops).locals.at(ref.local.value).name;
 }
 
 auto SignednessLiteral(mir::Signedness s) -> std::string_view {
@@ -95,10 +95,7 @@ auto MirTypeOfLvalue(const RenderContext& ctx, const mir::Lvalue& lv)
             return ctx.Class().GetMemberVar(m.target).type;
           },
           [&](const mir::LocalVarRef& l) -> mir::TypeId {
-            return ctx.Body()
-                .local_scopes.at(l.scope.value)
-                .locals.at(l.local.value)
-                .type;
+            return ctx.BodyAtHops(l.body_hops).locals.at(l.local.value).type;
           },
       },
       lv);
@@ -424,7 +421,7 @@ auto RenderLvalue(const RenderContext& ctx, const mir::Lvalue& target)
             return ctx.Class().GetMemberVar(m.target).name;
           },
           [&](const mir::LocalVarRef& l) -> std::string {
-            return LookupLocalName(ctx.Body(), l);
+            return LookupLocalName(ctx, l);
           },
       },
       target);
@@ -450,7 +447,7 @@ auto RenderExprAsNative(const RenderContext& ctx, const mir::Expr& expr)
             return ctx.Class().GetMemberVar(m.target).name;
           },
           [&](const mir::LocalVarRef& l) -> diag::Result<std::string> {
-            return LookupLocalName(ctx.Body(), l);
+            return LookupLocalName(ctx, l);
           },
           [](const mir::UnaryExpr&) -> diag::Result<std::string> {
             return diag::Unsupported(
@@ -511,7 +508,7 @@ auto RenderExprAsRuntimeView(const RenderContext& ctx, const mir::Expr& expr)
                 "{}.View()", ctx.Class().GetMemberVar(m.target).name);
           },
           [&](const mir::LocalVarRef& l) -> diag::Result<std::string> {
-            return std::format("{}.View()", LookupLocalName(ctx.Body(), l));
+            return std::format("{}.View()", LookupLocalName(ctx, l));
           },
           [&](const mir::ConversionExpr& cv) -> diag::Result<std::string> {
             auto inner_or = RenderConversionCall(ctx, expr.type, cv);

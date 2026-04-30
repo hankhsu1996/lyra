@@ -13,6 +13,7 @@
 #include <slang/ast/symbols/VariableSymbols.h>
 
 #include "lyra/base/internal_error.hpp"
+#include "lyra/diag/source_span.hpp"
 #include "lyra/hir/expr.hpp"
 #include "lyra/hir/local_var.hpp"
 #include "lyra/hir/member_var.hpp"
@@ -294,8 +295,10 @@ class ProcessLoweringState {
     return hir_process_.local_vars.at(id.value).type;
   }
 
-  auto Finalize(hir::ProcessKind kind, hir::StmtId body) -> hir::Process {
+  auto Finalize(hir::ProcessKind kind, diag::SourceSpan span, hir::StmtId body)
+      -> hir::Process {
     hir_process_.kind = kind;
+    hir_process_.span = span;
     hir_process_.body = body;
     return std::move(hir_process_);
   }

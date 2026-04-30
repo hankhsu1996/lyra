@@ -23,7 +23,7 @@ enum class DiagCode : std::uint32_t {
   kUnsupportedTypeKind,
 
   kUnsupportedNonStaticVariableLifetime,
-  kUnsupportedNonInitialProcedure,
+  kUnsupportedProcessKindLowering,
   kUnsupportedStatementForm,
   kUnsupportedExpressionForm,
   kUnsupportedStructuralExpressionForm,

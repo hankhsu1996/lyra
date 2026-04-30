@@ -30,9 +30,7 @@ struct BodyId {
 };
 
 struct Body {
-  std::vector<LocalScope> local_scopes;
-  LocalScopeId root_scope;
-
+  std::vector<LocalVar> locals;
   std::vector<Expr> exprs;
   std::vector<Stmt> stmts;
   std::vector<StmtId> root_stmts;
@@ -57,7 +55,7 @@ struct ExprStmt {
 };
 
 struct BlockStmt {
-  std::vector<StmtId> statements;
+  BodyId body;
 };
 
 struct IfStmt {
@@ -94,7 +92,6 @@ struct ForInitExpr {
 using ForInit = std::variant<ForInitDecl, ForInitExpr>;
 
 struct ForStmt {
-  LocalScopeId scope;
   std::vector<ForInit> init;
   std::optional<ExprId> condition;
   std::vector<ExprId> step;
@@ -112,9 +109,22 @@ struct TimedStmt {
   StmtId body;
 };
 
+struct WhileStmt {
+  ExprId condition;
+  BodyId body;
+};
+
+enum class AwaitKind : std::uint8_t {
+  kAlwaysBackedge,
+};
+
+struct AwaitStmt {
+  AwaitKind kind;
+};
+
 using StmtData = std::variant<
     EmptyStmt, LocalVarDeclStmt, ExprStmt, BlockStmt, IfStmt, SwitchStmt,
-    ConstructOwnedObjectStmt, ForStmt, TimedStmt>;
+    ConstructOwnedObjectStmt, ForStmt, TimedStmt, WhileStmt, AwaitStmt>;
 
 struct Stmt {
   std::optional<std::string> label;

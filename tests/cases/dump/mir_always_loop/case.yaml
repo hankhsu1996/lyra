@@ -1,0 +1,20 @@
+id: dump.mir_always_loop
+tags: [dump]
+input:
+  command: [dump, mir]
+  project: false
+  top: Top
+  files: [main.sv]
+expect:
+  exit: 0
+  stdout:
+    contains:
+      - "Process[0] Always"
+      - "WhileStmt"
+      - "condition: Expr["
+      - "IntegerLiteral"
+      - "body (BodyId=0):"
+      - "BlockStmt body=BodyId{0}"
+      - "LocalVar[0] \"x\""
+      - "LocalVarDeclStmt target=LocalVar[body_hops=0, local=0]"
+      - "AwaitStmt kind=AlwaysBackedge"

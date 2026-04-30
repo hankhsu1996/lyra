@@ -27,6 +27,7 @@ namespace lyra::lowering::hir_to_mir {
 
 struct BuiltinMirTypes {
   mir::TypeId int32;
+  mir::TypeId bit1;
   mir::TypeId string;
   mir::TypeId void_type;
   mir::TypeId realtime;
@@ -42,6 +43,12 @@ class UnitLoweringState {
                 .signedness = mir::Signedness::kSigned,
                 .dims = {mir::PackedRange{.left = 31, .right = 0}},
                 .form = mir::PackedArrayForm::kInt}}),
+        .bit1 = AddType(
+            mir::TypeData{mir::PackedArrayType{
+                .atom = mir::BitAtom::kBit,
+                .signedness = mir::Signedness::kUnsigned,
+                .dims = {mir::PackedRange{.left = 0, .right = 0}},
+                .form = mir::PackedArrayForm::kExplicit}}),
         .string = AddType(mir::TypeData{mir::StringType{}}),
         .void_type = AddType(mir::TypeData{mir::VoidType{}}),
         .realtime = AddType(mir::TypeData{mir::RealTimeType{}})};
@@ -235,10 +242,11 @@ class ClassLoweringState {
   std::vector<mir::UserSubroutineTargetId> user_subroutine_map_;
 };
 
-// Process-body lowering state: maps HIR LocalVarId -> MIR LocalVarRef and
-// carries the active time resolution for delay scaling. The MIR locals
-// themselves live in the in-flight body's local scopes (see
-// BodyLoweringState).
+struct LocalBinding {
+  std::uint32_t declaration_body_depth;
+  mir::LocalVarId local;
+};
+
 class ProcessLoweringState {
  public:
   explicit ProcessLoweringState(TimeResolution time_resolution)
@@ -249,29 +257,83 @@ class ProcessLoweringState {
     return time_resolution_;
   }
 
-  void MapLocalVar(hir::LocalVarId hir_id, mir::LocalVarRef ref) {
-    if (hir_id.value >= map_.size()) {
-      map_.resize(hir_id.value + 1);
+  void EnterBody() {
+    ++body_depth_;
+  }
+  void LeaveBody() {
+    if (body_depth_ == 0) {
+      throw InternalError(
+          "ProcessLoweringState::LeaveBody: body-depth underflow");
     }
-    map_[hir_id.value] = ref;
+    --body_depth_;
+  }
+  [[nodiscard]] auto CurrentBodyDepth() const -> std::uint32_t {
+    return body_depth_;
+  }
+
+  void MapLocalVar(hir::LocalVarId hir_id, LocalBinding binding) {
+    if (hir_id.value >= bindings_.size()) {
+      bindings_.resize(hir_id.value + 1);
+    }
+    if (bindings_[hir_id.value].has_value()) {
+      throw InternalError(
+          "ProcessLoweringState::MapLocalVar: HIR LocalVarId already mapped "
+          "(duplicate VarDeclStmt for the same declaration)");
+    }
+    bindings_[hir_id.value] = binding;
+  }
+
+  [[nodiscard]] auto LookupLocalVar(hir::LocalVarId hir_id) const
+      -> const LocalBinding& {
+    if (hir_id.value >= bindings_.size() ||
+        !bindings_[hir_id.value].has_value()) {
+      throw InternalError(
+          "ProcessLoweringState::LookupLocalVar: unmapped HIR local var");
+    }
+    return *bindings_[hir_id.value];
   }
 
   [[nodiscard]] auto TranslateLocalVar(hir::LocalVarId hir_id) const
       -> mir::LocalVarRef {
-    if (hir_id.value >= map_.size()) {
-      throw InternalError("TranslateLocalVar: unmapped HIR local var");
+    const auto& binding = LookupLocalVar(hir_id);
+    if (binding.declaration_body_depth > body_depth_) {
+      throw InternalError(
+          "ProcessLoweringState::TranslateLocalVar: declaration body depth "
+          "exceeds current depth (forward reference into a child body)");
     }
-    return map_[hir_id.value];
+    return mir::LocalVarRef{
+        .body_hops =
+            mir::BodyHops{
+                .value = body_depth_ - binding.declaration_body_depth},
+        .local = binding.local,
+    };
   }
 
  private:
   TimeResolution time_resolution_;
-  std::vector<mir::LocalVarRef> map_;
+  std::uint32_t body_depth_ = 0;
+  std::vector<std::optional<LocalBinding>> bindings_;
 };
 
-// Constructor-body lowering state: maps HIR LoopVarDeclId -> MIR LocalVarRef
-// for the genvar of an enclosing for-generate. The MIR locals themselves live
-// in the in-flight body's local scopes.
+class BodyDepthGuard {
+ public:
+  explicit BodyDepthGuard(ProcessLoweringState& state) : state_(&state) {
+    state_->EnterBody();
+  }
+
+  ~BodyDepthGuard() {
+    state_->LeaveBody();
+  }
+
+  BodyDepthGuard(const BodyDepthGuard&) = delete;
+  auto operator=(const BodyDepthGuard&) -> BodyDepthGuard& = delete;
+  BodyDepthGuard(BodyDepthGuard&&) = delete;
+  auto operator=(BodyDepthGuard&&) -> BodyDepthGuard& = delete;
+
+ private:
+  ProcessLoweringState* state_;
+};
+
 class ConstructorLoweringState {
  public:
   void MapLoopVar(hir::LoopVarDeclId hir_id, mir::LocalVarRef ref) {
@@ -295,34 +357,17 @@ class ConstructorLoweringState {
 
 class BodyLoweringState {
  public:
-  BodyLoweringState() {
-    body_.root_scope = AddLocalScope(std::nullopt);
-  }
+  BodyLoweringState() = default;
 
-  [[nodiscard]] auto RootScope() const -> mir::LocalScopeId {
-    return body_.root_scope;
-  }
-
-  auto AddLocalScope(std::optional<mir::LocalScopeId> parent)
-      -> mir::LocalScopeId {
-    const mir::LocalScopeId id{
-        static_cast<std::uint32_t>(body_.local_scopes.size())};
-    body_.local_scopes.push_back(
-        mir::LocalScope{.parent = parent, .locals = {}});
+  auto AddLocal(mir::LocalVar local) -> mir::LocalVarId {
+    const mir::LocalVarId id{static_cast<std::uint32_t>(body_.locals.size())};
+    body_.locals.push_back(std::move(local));
     return id;
   }
 
-  auto AddLocal(mir::LocalScopeId scope, mir::LocalVar local)
-      -> mir::LocalVarId {
-    auto& s = body_.local_scopes.at(scope.value);
-    const mir::LocalVarId id{static_cast<std::uint32_t>(s.locals.size())};
-    s.locals.push_back(std::move(local));
-    return id;
-  }
-
-  [[nodiscard]] auto GetLocalVar(mir::LocalVarRef ref) const
+  [[nodiscard]] auto GetLocal(mir::LocalVarId id) const
       -> const mir::LocalVar& {
-    return body_.local_scopes.at(ref.scope.value).locals.at(ref.local.value);
+    return body_.locals.at(id.value);
   }
 
   auto AddExpr(mir::Expr expr) -> mir::ExprId {
