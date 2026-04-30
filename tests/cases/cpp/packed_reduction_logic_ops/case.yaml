@@ -1,0 +1,11 @@
+id: cpp.packed_reduction_logic_ops
+tags: [cpp_run]
+input:
+  command: [run, cpp]
+  project: false
+  top: Top
+  files: [main.sv]
+expect:
+  exit: 0
+  stdout:
+    exact: "1\nx\n0\n0\nx\n1\n1\nx\n0\n1\n0\nx\n"

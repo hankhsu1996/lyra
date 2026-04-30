@@ -261,6 +261,9 @@ auto RenderScopeHeaderFile(
   out += "#include \"lyra/runtime/io.hpp\"\n";
   out += "#include \"lyra/runtime/module.hpp\"\n";
   out += "#include \"lyra/runtime/packed.hpp\"\n";
+  out += "#include \"lyra/runtime/packed_bitwise.hpp\"\n";
+  out += "#include \"lyra/runtime/packed_convert.hpp\"\n";
+  out += "#include \"lyra/runtime/packed_reduction.hpp\"\n";
   out += "#include \"lyra/runtime/process.hpp\"\n";
   out += "#include \"lyra/runtime/process_kind.hpp\"\n";
   out += "#include \"lyra/runtime/runtime_scope_kind.hpp\"\n";

@@ -286,6 +286,26 @@ auto BitwiseRuntimeFunctionName(mir::BinaryOp op)
   }
 }
 
+auto ReductionRuntimeFunctionName(mir::UnaryOp op)
+    -> std::optional<std::string_view> {
+  switch (op) {
+    case mir::UnaryOp::kReductionAnd:
+      return std::string_view{"lyra::runtime::ReductionAnd"};
+    case mir::UnaryOp::kReductionOr:
+      return std::string_view{"lyra::runtime::ReductionOr"};
+    case mir::UnaryOp::kReductionXor:
+      return std::string_view{"lyra::runtime::ReductionXor"};
+    case mir::UnaryOp::kReductionNand:
+      return std::string_view{"lyra::runtime::ReductionNand"};
+    case mir::UnaryOp::kReductionNor:
+      return std::string_view{"lyra::runtime::ReductionNor"};
+    case mir::UnaryOp::kReductionXnor:
+      return std::string_view{"lyra::runtime::ReductionXnor"};
+    default:
+      return std::nullopt;
+  }
+}
+
 auto IsTwoStatePacked(const mir::PackedArrayType& a) -> bool {
   return a.atom == mir::BitAtom::kBit;
 }
@@ -371,6 +391,66 @@ auto RenderPackedBitwiseAssign(
       "{}({}, {}, {})", *fn_name, *lhs_op_or, *rhs_op_or, lhs_view)};
 }
 
+auto RenderPackedReductionAssign(
+    const RenderContext& ctx, const mir::AssignExpr& a,
+    const mir::PackedArrayType& lhs_pa, std::string_view lhs_view)
+    -> diag::Result<std::optional<std::string>> {
+  const mir::Expr& value_expr = ctx.Expr(a.value);
+
+  if (std::holds_alternative<mir::ConversionExpr>(value_expr.data)) {
+    return std::optional<std::string>{};
+  }
+
+  const auto* u = std::get_if<mir::UnaryExpr>(&value_expr.data);
+  if (u == nullptr) {
+    return std::optional<std::string>{};
+  }
+  const auto fn_name = ReductionRuntimeFunctionName(u->op);
+  if (!fn_name) {
+    return std::optional<std::string>{};
+  }
+
+  if (lhs_pa.form != mir::PackedArrayForm::kExplicit ||
+      lhs_pa.BitWidth() != 1U) {
+    throw InternalError(
+        "RenderPackedReductionAssign: LHS must be 1-bit kExplicit");
+  }
+  const auto& result_ty = ctx.Unit().GetType(value_expr.type);
+  if (!result_ty.IsPackedArray()) {
+    throw InternalError(
+        "RenderPackedReductionAssign: result is not a packed array");
+  }
+  const auto& result_pa = result_ty.AsPackedArray();
+  if (result_pa.form != mir::PackedArrayForm::kExplicit ||
+      result_pa.BitWidth() != 1U ||
+      IsTwoStatePacked(result_pa) != IsTwoStatePacked(lhs_pa)) {
+    throw InternalError(
+        "RenderPackedReductionAssign: result type does not match LHS");
+  }
+
+  const mir::Expr& operand_expr = ctx.Expr(u->operand);
+  const auto& operand_ty = ctx.Unit().GetType(operand_expr.type);
+  if (!operand_ty.IsPackedArray()) {
+    return std::optional<std::string>{};
+  }
+  const auto& operand_pa = operand_ty.AsPackedArray();
+  if (operand_pa.form != mir::PackedArrayForm::kExplicit) {
+    return std::optional<std::string>{};
+  }
+  if (IsTwoStatePacked(operand_pa) != IsTwoStatePacked(result_pa)) {
+    throw InternalError(
+        "RenderPackedReductionAssign: operand state-kind does not match "
+        "result");
+  }
+
+  auto operand_or = RenderPackedExprAsView(ctx, operand_expr);
+  if (!operand_or) {
+    return std::unexpected(std::move(operand_or.error()));
+  }
+  return std::optional<std::string>{
+      std::format("{}({}, {})", *fn_name, *operand_or, lhs_view)};
+}
+
 auto RenderPackedAssign(const RenderContext& ctx, const mir::AssignExpr& a)
     -> diag::Result<std::string> {
   auto lhs_t_or = MirTypeOfLvalue(ctx, a.target);
@@ -386,6 +466,14 @@ auto RenderPackedAssign(const RenderContext& ctx, const mir::AssignExpr& a)
   }
   if (bitwise_or->has_value()) {
     return std::move(**bitwise_or);
+  }
+
+  auto reduction_or = RenderPackedReductionAssign(ctx, a, lhs, lhs_view);
+  if (!reduction_or) {
+    return std::unexpected(std::move(reduction_or.error()));
+  }
+  if (reduction_or->has_value()) {
+    return std::move(**reduction_or);
   }
 
   const mir::Expr* src_expr = &ctx.Expr(a.value);
