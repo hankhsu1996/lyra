@@ -1,9 +1,7 @@
 #pragma once
 
-#include <concepts>
 #include <cstdint>
 #include <span>
-#include <type_traits>
 
 #include "lyra/base/internal_error.hpp"
 #include "lyra/runtime/packed.hpp"
@@ -12,27 +10,6 @@
 namespace lyra::runtime {
 
 namespace detail {
-
-template <typename V>
-concept BitViewLike = std::same_as<std::remove_cvref_t<V>, ConstBitView> ||
-                      std::same_as<std::remove_cvref_t<V>, BitView>;
-
-template <typename V>
-concept LogicViewLike = std::same_as<std::remove_cvref_t<V>, ConstLogicView> ||
-                        std::same_as<std::remove_cvref_t<V>, LogicView>;
-
-inline auto ToConstView(ConstBitView v) -> ConstBitView {
-  return v;
-}
-inline auto ToConstView(BitView v) -> ConstBitView {
-  return v.AsConst();
-}
-inline auto ToConstView(ConstLogicView v) -> ConstLogicView {
-  return v;
-}
-inline auto ToConstView(LogicView v) -> ConstLogicView {
-  return v.AsConst();
-}
 
 inline auto NotPlaneWords(
     std::span<std::uint64_t> dst, std::span<const std::uint64_t> src,
@@ -79,94 +56,94 @@ inline auto XnorPlaneWords(
   MaskUnusedTopBits(dst, width);
 }
 
-// 4-state encoding: s=0,v=0 -> 0; s=0,v=1 -> 1; s=1,v=0 -> Z; s=1,v=1 -> X.
+// 4-state encoding: u=0,v=0 -> 0; u=0,v=1 -> 1; u=1,v=0 -> Z; u=1,v=1 -> X.
 // Per IEEE 1800: ~0 -> 1, ~1 -> 0, ~X -> X, ~Z -> X.
 inline auto LogicNotWords(
-    std::span<std::uint64_t> dst_v, std::span<std::uint64_t> dst_s,
-    std::span<const std::uint64_t> src_v, std::span<const std::uint64_t> src_s,
+    std::span<std::uint64_t> dst_v, std::span<std::uint64_t> dst_u,
+    std::span<const std::uint64_t> src_v, std::span<const std::uint64_t> src_u,
     std::uint64_t width) -> void {
   for (std::size_t i = 0; i < dst_v.size(); ++i) {
-    dst_v[i] = (~src_v[i]) | src_s[i];
-    dst_s[i] = src_s[i];
+    dst_v[i] = (~src_v[i]) | src_u[i];
+    dst_u[i] = src_u[i];
   }
   MaskUnusedTopBits(dst_v, width);
-  MaskUnusedTopBits(dst_s, width);
+  MaskUnusedTopBits(dst_u, width);
 }
 
 // SV table: 0&_=0; 1&1=1; otherwise X.
 inline auto LogicAndWords(
-    std::span<std::uint64_t> dst_v, std::span<std::uint64_t> dst_s,
-    std::span<const std::uint64_t> av, std::span<const std::uint64_t> as,
-    std::span<const std::uint64_t> bv, std::span<const std::uint64_t> bs,
+    std::span<std::uint64_t> dst_v, std::span<std::uint64_t> dst_u,
+    std::span<const std::uint64_t> av, std::span<const std::uint64_t> au,
+    std::span<const std::uint64_t> bv, std::span<const std::uint64_t> bu,
     std::uint64_t width) -> void {
   for (std::size_t i = 0; i < dst_v.size(); ++i) {
-    const std::uint64_t a_zero = ~as[i] & ~av[i];
-    const std::uint64_t b_zero = ~bs[i] & ~bv[i];
-    const std::uint64_t a_one = ~as[i] & av[i];
-    const std::uint64_t b_one = ~bs[i] & bv[i];
+    const std::uint64_t a_zero = ~au[i] & ~av[i];
+    const std::uint64_t b_zero = ~bu[i] & ~bv[i];
+    const std::uint64_t a_one = ~au[i] & av[i];
+    const std::uint64_t b_one = ~bu[i] & bv[i];
     const std::uint64_t is_zero = a_zero | b_zero;
     const std::uint64_t is_one = a_one & b_one;
-    const std::uint64_t new_s = ~is_zero & ~is_one;
-    const std::uint64_t new_v = is_one | new_s;
+    const std::uint64_t new_u = ~is_zero & ~is_one;
+    const std::uint64_t new_v = is_one | new_u;
     dst_v[i] = new_v;
-    dst_s[i] = new_s;
+    dst_u[i] = new_u;
   }
   MaskUnusedTopBits(dst_v, width);
-  MaskUnusedTopBits(dst_s, width);
+  MaskUnusedTopBits(dst_u, width);
 }
 
 // SV table: 1|_=1; 0|0=0; otherwise X.
 inline auto LogicOrWords(
-    std::span<std::uint64_t> dst_v, std::span<std::uint64_t> dst_s,
-    std::span<const std::uint64_t> av, std::span<const std::uint64_t> as,
-    std::span<const std::uint64_t> bv, std::span<const std::uint64_t> bs,
+    std::span<std::uint64_t> dst_v, std::span<std::uint64_t> dst_u,
+    std::span<const std::uint64_t> av, std::span<const std::uint64_t> au,
+    std::span<const std::uint64_t> bv, std::span<const std::uint64_t> bu,
     std::uint64_t width) -> void {
   for (std::size_t i = 0; i < dst_v.size(); ++i) {
-    const std::uint64_t a_zero = ~as[i] & ~av[i];
-    const std::uint64_t b_zero = ~bs[i] & ~bv[i];
-    const std::uint64_t a_one = ~as[i] & av[i];
-    const std::uint64_t b_one = ~bs[i] & bv[i];
+    const std::uint64_t a_zero = ~au[i] & ~av[i];
+    const std::uint64_t b_zero = ~bu[i] & ~bv[i];
+    const std::uint64_t a_one = ~au[i] & av[i];
+    const std::uint64_t b_one = ~bu[i] & bv[i];
     const std::uint64_t is_one = a_one | b_one;
     const std::uint64_t is_zero = a_zero & b_zero;
-    const std::uint64_t new_s = ~is_zero & ~is_one;
-    const std::uint64_t new_v = is_one | new_s;
+    const std::uint64_t new_u = ~is_zero & ~is_one;
+    const std::uint64_t new_v = is_one | new_u;
     dst_v[i] = new_v;
-    dst_s[i] = new_s;
+    dst_u[i] = new_u;
   }
   MaskUnusedTopBits(dst_v, width);
-  MaskUnusedTopBits(dst_s, width);
+  MaskUnusedTopBits(dst_u, width);
 }
 
 // Any X/Z -> X; else dst_v_bit = av ^ bv.
 inline auto LogicXorWords(
-    std::span<std::uint64_t> dst_v, std::span<std::uint64_t> dst_s,
-    std::span<const std::uint64_t> av, std::span<const std::uint64_t> as,
-    std::span<const std::uint64_t> bv, std::span<const std::uint64_t> bs,
+    std::span<std::uint64_t> dst_v, std::span<std::uint64_t> dst_u,
+    std::span<const std::uint64_t> av, std::span<const std::uint64_t> au,
+    std::span<const std::uint64_t> bv, std::span<const std::uint64_t> bu,
     std::uint64_t width) -> void {
   for (std::size_t i = 0; i < dst_v.size(); ++i) {
-    const std::uint64_t new_s = as[i] | bs[i];
-    const std::uint64_t new_v = new_s | (av[i] ^ bv[i]);
+    const std::uint64_t new_u = au[i] | bu[i];
+    const std::uint64_t new_v = new_u | (av[i] ^ bv[i]);
     dst_v[i] = new_v;
-    dst_s[i] = new_s;
+    dst_u[i] = new_u;
   }
   MaskUnusedTopBits(dst_v, width);
-  MaskUnusedTopBits(dst_s, width);
+  MaskUnusedTopBits(dst_u, width);
 }
 
 // Any X/Z -> X; else dst_v_bit = ~(av ^ bv).
 inline auto LogicXnorWords(
-    std::span<std::uint64_t> dst_v, std::span<std::uint64_t> dst_s,
-    std::span<const std::uint64_t> av, std::span<const std::uint64_t> as,
-    std::span<const std::uint64_t> bv, std::span<const std::uint64_t> bs,
+    std::span<std::uint64_t> dst_v, std::span<std::uint64_t> dst_u,
+    std::span<const std::uint64_t> av, std::span<const std::uint64_t> au,
+    std::span<const std::uint64_t> bv, std::span<const std::uint64_t> bu,
     std::uint64_t width) -> void {
   for (std::size_t i = 0; i < dst_v.size(); ++i) {
-    const std::uint64_t new_s = as[i] | bs[i];
-    const std::uint64_t new_v = new_s | ~(av[i] ^ bv[i]);
+    const std::uint64_t new_u = au[i] | bu[i];
+    const std::uint64_t new_v = new_u | ~(av[i] ^ bv[i]);
     dst_v[i] = new_v;
-    dst_s[i] = new_s;
+    dst_u[i] = new_u;
   }
   MaskUnusedTopBits(dst_v, width);
-  MaskUnusedTopBits(dst_s, width);
+  MaskUnusedTopBits(dst_u, width);
 }
 
 template <PackedShape Shape, Signedness Signed>
@@ -176,8 +153,8 @@ auto BitwiseNotImpl(ConstBitView src) -> Bit<Shape, Signed> {
   }
   Bit<Shape, Signed> out;
   NotPlaneWords(
-      PlaneAccess::MutableValue(out), PlaneAccess::ValueWords(src),
-      Shape.TotalWidth());
+      PlaneAccess::AlignedMutableValueWords(out),
+      PlaneAccess::AlignedValueWords(src), Shape.TotalWidth());
   return out;
 }
 
@@ -188,9 +165,10 @@ auto BitwiseNotImpl(ConstLogicView src) -> Logic<Shape, Signed> {
   }
   Logic<Shape, Signed> out;
   LogicNotWords(
-      PlaneAccess::MutableValue(out), PlaneAccess::MutableState(out),
-      PlaneAccess::ValueWords(src), PlaneAccess::StateWords(src),
-      Shape.TotalWidth());
+      PlaneAccess::AlignedMutableValueWords(out),
+      PlaneAccess::AlignedMutableUnknownWords(out),
+      PlaneAccess::AlignedValueWords(src),
+      PlaneAccess::AlignedUnknownWords(src), Shape.TotalWidth());
   return out;
 }
 
@@ -201,8 +179,9 @@ auto BitwiseAndImpl(ConstBitView lhs, ConstBitView rhs) -> Bit<Shape, Signed> {
   }
   Bit<Shape, Signed> out;
   AndPlaneWords(
-      PlaneAccess::MutableValue(out), PlaneAccess::ValueWords(lhs),
-      PlaneAccess::ValueWords(rhs), Shape.TotalWidth());
+      PlaneAccess::AlignedMutableValueWords(out),
+      PlaneAccess::AlignedValueWords(lhs), PlaneAccess::AlignedValueWords(rhs),
+      Shape.TotalWidth());
   return out;
 }
 
@@ -214,10 +193,12 @@ auto BitwiseAndImpl(ConstLogicView lhs, ConstLogicView rhs)
   }
   Logic<Shape, Signed> out;
   LogicAndWords(
-      PlaneAccess::MutableValue(out), PlaneAccess::MutableState(out),
-      PlaneAccess::ValueWords(lhs), PlaneAccess::StateWords(lhs),
-      PlaneAccess::ValueWords(rhs), PlaneAccess::StateWords(rhs),
-      Shape.TotalWidth());
+      PlaneAccess::AlignedMutableValueWords(out),
+      PlaneAccess::AlignedMutableUnknownWords(out),
+      PlaneAccess::AlignedValueWords(lhs),
+      PlaneAccess::AlignedUnknownWords(lhs),
+      PlaneAccess::AlignedValueWords(rhs),
+      PlaneAccess::AlignedUnknownWords(rhs), Shape.TotalWidth());
   return out;
 }
 
@@ -228,8 +209,9 @@ auto BitwiseOrImpl(ConstBitView lhs, ConstBitView rhs) -> Bit<Shape, Signed> {
   }
   Bit<Shape, Signed> out;
   OrPlaneWords(
-      PlaneAccess::MutableValue(out), PlaneAccess::ValueWords(lhs),
-      PlaneAccess::ValueWords(rhs), Shape.TotalWidth());
+      PlaneAccess::AlignedMutableValueWords(out),
+      PlaneAccess::AlignedValueWords(lhs), PlaneAccess::AlignedValueWords(rhs),
+      Shape.TotalWidth());
   return out;
 }
 
@@ -241,10 +223,12 @@ auto BitwiseOrImpl(ConstLogicView lhs, ConstLogicView rhs)
   }
   Logic<Shape, Signed> out;
   LogicOrWords(
-      PlaneAccess::MutableValue(out), PlaneAccess::MutableState(out),
-      PlaneAccess::ValueWords(lhs), PlaneAccess::StateWords(lhs),
-      PlaneAccess::ValueWords(rhs), PlaneAccess::StateWords(rhs),
-      Shape.TotalWidth());
+      PlaneAccess::AlignedMutableValueWords(out),
+      PlaneAccess::AlignedMutableUnknownWords(out),
+      PlaneAccess::AlignedValueWords(lhs),
+      PlaneAccess::AlignedUnknownWords(lhs),
+      PlaneAccess::AlignedValueWords(rhs),
+      PlaneAccess::AlignedUnknownWords(rhs), Shape.TotalWidth());
   return out;
 }
 
@@ -255,8 +239,9 @@ auto BitwiseXorImpl(ConstBitView lhs, ConstBitView rhs) -> Bit<Shape, Signed> {
   }
   Bit<Shape, Signed> out;
   XorPlaneWords(
-      PlaneAccess::MutableValue(out), PlaneAccess::ValueWords(lhs),
-      PlaneAccess::ValueWords(rhs), Shape.TotalWidth());
+      PlaneAccess::AlignedMutableValueWords(out),
+      PlaneAccess::AlignedValueWords(lhs), PlaneAccess::AlignedValueWords(rhs),
+      Shape.TotalWidth());
   return out;
 }
 
@@ -268,10 +253,12 @@ auto BitwiseXorImpl(ConstLogicView lhs, ConstLogicView rhs)
   }
   Logic<Shape, Signed> out;
   LogicXorWords(
-      PlaneAccess::MutableValue(out), PlaneAccess::MutableState(out),
-      PlaneAccess::ValueWords(lhs), PlaneAccess::StateWords(lhs),
-      PlaneAccess::ValueWords(rhs), PlaneAccess::StateWords(rhs),
-      Shape.TotalWidth());
+      PlaneAccess::AlignedMutableValueWords(out),
+      PlaneAccess::AlignedMutableUnknownWords(out),
+      PlaneAccess::AlignedValueWords(lhs),
+      PlaneAccess::AlignedUnknownWords(lhs),
+      PlaneAccess::AlignedValueWords(rhs),
+      PlaneAccess::AlignedUnknownWords(rhs), Shape.TotalWidth());
   return out;
 }
 
@@ -282,8 +269,9 @@ auto BitwiseXnorImpl(ConstBitView lhs, ConstBitView rhs) -> Bit<Shape, Signed> {
   }
   Bit<Shape, Signed> out;
   XnorPlaneWords(
-      PlaneAccess::MutableValue(out), PlaneAccess::ValueWords(lhs),
-      PlaneAccess::ValueWords(rhs), Shape.TotalWidth());
+      PlaneAccess::AlignedMutableValueWords(out),
+      PlaneAccess::AlignedValueWords(lhs), PlaneAccess::AlignedValueWords(rhs),
+      Shape.TotalWidth());
   return out;
 }
 
@@ -295,10 +283,12 @@ auto BitwiseXnorImpl(ConstLogicView lhs, ConstLogicView rhs)
   }
   Logic<Shape, Signed> out;
   LogicXnorWords(
-      PlaneAccess::MutableValue(out), PlaneAccess::MutableState(out),
-      PlaneAccess::ValueWords(lhs), PlaneAccess::StateWords(lhs),
-      PlaneAccess::ValueWords(rhs), PlaneAccess::StateWords(rhs),
-      Shape.TotalWidth());
+      PlaneAccess::AlignedMutableValueWords(out),
+      PlaneAccess::AlignedMutableUnknownWords(out),
+      PlaneAccess::AlignedValueWords(lhs),
+      PlaneAccess::AlignedUnknownWords(lhs),
+      PlaneAccess::AlignedValueWords(rhs),
+      PlaneAccess::AlignedUnknownWords(rhs), Shape.TotalWidth());
   return out;
 }
 

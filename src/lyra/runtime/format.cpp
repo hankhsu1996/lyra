@@ -129,9 +129,9 @@ auto FormatIntegralFourStateNarrow(
   for (std::int32_t i = static_cast<std::int32_t>(v.bit_width) - 1; i >= 0;
        --i) {
     const bool value = ((v.inline_word >> i) & 1U) != 0U;
-    const bool state = ((v.inline_state_word >> i) & 1U) != 0U;
+    const bool unknown = ((v.inline_unknown_word >> i) & 1U) != 0U;
     char ch = '0';
-    if (state) {
+    if (unknown) {
       ch = value ? 'x' : 'z';
     } else {
       ch = value ? '1' : '0';
@@ -195,7 +195,7 @@ auto RuntimeValueView::FromLogicView(ConstLogicView v, bool is_signed)
       .data = IntegralValueView{
           .state = IntegralStateKind::kFourState,
           .inline_word = v.PackValueLowWord(),
-          .inline_state_word = v.PackStateLowWord(),
+          .inline_unknown_word = v.PackUnknownLowWord(),
           .word_count = 1,
           .bit_width = static_cast<std::uint32_t>(v.Width()),
           .is_signed = is_signed,
