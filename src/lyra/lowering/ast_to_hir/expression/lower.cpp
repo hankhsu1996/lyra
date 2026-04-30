@@ -286,13 +286,31 @@ auto LowerNamedValueProc(
     const slang::ast::NamedValueExpression& named) -> diag::Result<hir::Expr> {
   const auto& mapper = unit_facts.SourceMapper();
   const auto span = mapper.SpanOf(named.sourceRange);
-  if (named.symbol.kind != slang::ast::SymbolKind::Variable) {
+  const auto& sym = named.symbol;
+
+  if (sym.kind == slang::ast::SymbolKind::Variable ||
+      sym.kind == slang::ast::SymbolKind::Parameter) {
+    const auto& value_sym = sym.as<slang::ast::ValueSymbol>();
+    if (auto loop_binding = unit_state.LookupLoopVarBinding(value_sym)) {
+      const auto hops = stack.HopsTo(loop_binding->home_frame);
+      if (!hops.has_value()) {
+        throw InternalError(
+            "LowerProcExpr: loop-var binding home frame is not on the current "
+            "scope stack");
+      }
+      return MakeRefExpr(
+          hir::LoopVarRef{.hops = *hops, .loop_var = loop_binding->loop_var_id},
+          loop_binding->type, span);
+    }
+  }
+
+  if (sym.kind != slang::ast::SymbolKind::Variable) {
     return diag::Unsupported(
         span, diag::DiagCode::kUnsupportedNonVariableNamedReference,
         "reference to non-variable declaration is not supported",
         diag::UnsupportedCategory::kFeature);
   }
-  const auto& var = named.symbol.as<slang::ast::VariableSymbol>();
+  const auto& var = sym.as<slang::ast::VariableSymbol>();
 
   if (auto local = proc_state.LookupProceduralVar(var)) {
     const hir::TypeId type_id = proc_state.GetProceduralVarType(*local);
@@ -559,81 +577,13 @@ auto LowerProcExpr(
 
 auto LowerStructuralExpr(
     const UnitLoweringFacts& unit_facts, UnitLoweringState& unit_state,
-    const slang::ast::Expression& expr) -> diag::Result<hir::Expr> {
-  const auto& mapper = unit_facts.SourceMapper();
-  const auto span = mapper.SpanOf(expr.sourceRange);
-  auto type_id_of =
-      [&](const slang::ast::Expression& e) -> diag::Result<hir::TypeId> {
-    auto td = LowerTypeData(*e.type, mapper.SpanOf(e.sourceRange));
-    if (!td) return std::unexpected(std::move(td.error()));
-    return unit_state.AddType(*std::move(td));
-  };
-
-  switch (expr.kind) {
-    case slang::ast::ExpressionKind::IntegerLiteral: {
-      auto type_id = type_id_of(expr);
-      if (!type_id) return std::unexpected(std::move(type_id.error()));
-      return MakeIntegerLiteralExpr(
-          expr.as<slang::ast::IntegerLiteral>(), *type_id, span);
-    }
-    case slang::ast::ExpressionKind::UnbasedUnsizedIntegerLiteral: {
-      auto type_id = type_id_of(expr);
-      if (!type_id) return std::unexpected(std::move(type_id.error()));
-      return MakeUnbasedUnsizedLiteralExpr(
-          expr.as<slang::ast::UnbasedUnsizedIntegerLiteral>(), *type_id, span);
-    }
-    default:
-      return diag::Unsupported(
-          span, diag::DiagCode::kUnsupportedStructuralExpressionForm,
-          "this structural expression form is not supported yet",
-          diag::UnsupportedCategory::kFeature);
-  }
-}
-
-namespace {
-
-auto TryResolveLoopHeaderVar(
-    const UnitLoweringFacts& unit_facts, UnitLoweringState& unit_state,
-    ScopeLoweringState& scope_state, LoopHeaderState& loop_state,
-    const slang::ast::VariableSymbol& var)
-    -> diag::Result<std::optional<hir::LoopVarDeclId>> {
-  if (!var.flags.has(slang::ast::VariableFlags::CompilerGenerated)) {
-    return std::nullopt;
-  }
-  if (var.name != loop_state.expected_name) {
-    return std::nullopt;
-  }
-  if (loop_state.synthetic_symbol != nullptr &&
-      loop_state.synthetic_symbol != &var) {
-    throw InternalError(
-        "loop-generate header resolved multiple synthetic loop variables");
-  }
-  loop_state.synthetic_symbol = &var;
-  if (!loop_state.loop_var_id.has_value()) {
-    const auto var_span = unit_facts.SourceMapper().PointSpanOf(var.location);
-    auto type_data = LowerTypeData(var.getType(), var_span);
-    if (!type_data) return std::unexpected(std::move(type_data.error()));
-    const hir::TypeId type_id = unit_state.AddType(*std::move(type_data));
-    loop_state.loop_var_id = scope_state.AddLoopVarDecl(
-        hir::LoopVarDecl{
-            .name = std::string{loop_state.expected_name}, .type = type_id});
-  }
-  return loop_state.loop_var_id;
-}
-
-}  // namespace
-
-auto LowerLoopHeaderExpr(
-    const UnitLoweringFacts& unit_facts, UnitLoweringState& unit_state,
     ScopeLoweringState& scope_state, const ScopeStack& stack,
-    LoopHeaderState& loop_state, const slang::ast::Expression& expr)
-    -> diag::Result<hir::Expr> {
+    const slang::ast::Expression& expr) -> diag::Result<hir::Expr> {
   const auto& mapper = unit_facts.SourceMapper();
   const auto span = mapper.SpanOf(expr.sourceRange);
 
   auto lower_child = [&](const slang::ast::Expression& e) {
-    return LowerLoopHeaderExpr(
-        unit_facts, unit_state, scope_state, stack, loop_state, e);
+    return LowerStructuralExpr(unit_facts, unit_state, scope_state, stack, e);
   };
   auto add_child =
       [&](const slang::ast::Expression& e) -> diag::Result<hir::ExprId> {
@@ -665,38 +615,41 @@ auto LowerLoopHeaderExpr(
 
     case slang::ast::ExpressionKind::NamedValue: {
       const auto& named = expr.as<slang::ast::NamedValueExpression>();
-      if (named.symbol.kind != slang::ast::SymbolKind::Variable) {
+      const auto& sym = named.symbol;
+      if (sym.kind == slang::ast::SymbolKind::Variable ||
+          sym.kind == slang::ast::SymbolKind::Parameter) {
+        const auto& value_sym = sym.as<slang::ast::ValueSymbol>();
+        if (auto loop_binding = unit_state.LookupLoopVarBinding(value_sym)) {
+          const auto hops = stack.HopsTo(loop_binding->home_frame);
+          if (!hops.has_value()) {
+            throw InternalError(
+                "LowerStructuralExpr: loop-var binding home frame is not on "
+                "the current scope stack");
+          }
+          return MakeRefExpr(
+              hir::LoopVarRef{
+                  .hops = *hops, .loop_var = loop_binding->loop_var_id},
+              loop_binding->type, span);
+        }
+      }
+      if (sym.kind != slang::ast::SymbolKind::Variable) {
         return diag::Unsupported(
             mapper.SpanOf(named.sourceRange),
             diag::DiagCode::kUnsupportedNonVariableNamedReference,
             "reference to non-variable declaration is not supported",
             diag::UnsupportedCategory::kFeature);
       }
-      const auto& var = named.symbol.as<slang::ast::VariableSymbol>();
-      auto loop_var_or = TryResolveLoopHeaderVar(
-          unit_facts, unit_state, scope_state, loop_state, var);
-      if (!loop_var_or) {
-        return std::unexpected(std::move(loop_var_or.error()));
-      }
-      if (loop_var_or->has_value()) {
-        const hir::TypeId type_id =
-            scope_state.GetLoopVarDeclType(**loop_var_or);
-        return MakeRefExpr(
-            hir::LoopVarRef{
-                .hops = hir::StructuralHops{.value = 0},
-                .loop_var = **loop_var_or},
-            type_id, span);
-      }
+      const auto& var = sym.as<slang::ast::VariableSymbol>();
       const auto binding = unit_state.LookupStructuralVarBinding(var);
       if (!binding.has_value()) {
         throw InternalError(
-            "LowerLoopHeaderExpr: variable was not bound during scope "
+            "LowerStructuralExpr: variable was not bound during scope "
             "lowering");
       }
       const auto hops = stack.HopsTo(binding->home_frame);
       if (!hops.has_value()) {
         throw InternalError(
-            "LowerLoopHeaderExpr: variable home frame is not on the current "
+            "LowerStructuralExpr: variable home frame is not on the current "
             "scope stack");
       }
       return MakeRefExpr(
@@ -793,9 +746,9 @@ auto LowerLoopHeaderExpr(
 
     default:
       return diag::Unsupported(
-          span, diag::DiagCode::kUnsupportedExpressionForm,
-          "this expression form is not supported yet",
-          diag::UnsupportedCategory::kOperation);
+          span, diag::DiagCode::kUnsupportedStructuralExpressionForm,
+          "this structural expression form is not supported yet",
+          diag::UnsupportedCategory::kFeature);
   }
 }
 

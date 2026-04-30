@@ -1,14 +1,9 @@
 #pragma once
 
-#include <optional>
-#include <string_view>
-
 #include <slang/ast/Expression.h>
-#include <slang/ast/symbols/VariableSymbols.h>
 
 #include "lyra/diag/diagnostic.hpp"
 #include "lyra/hir/expr.hpp"
-#include "lyra/hir/loop_var.hpp"
 #include "lyra/lowering/ast_to_hir/facts.hpp"
 #include "lyra/lowering/ast_to_hir/state.hpp"
 
@@ -21,23 +16,7 @@ auto LowerProcExpr(
 
 auto LowerStructuralExpr(
     const UnitLoweringFacts& unit_facts, UnitLoweringState& unit_state,
-    const slang::ast::Expression& expr) -> diag::Result<hir::Expr>;
-
-// Short-lived state for lowering one loop-generate header's initial / stop
-// / iter expressions. The synthetic loop-variable identity (and its type)
-// is captured lazily on first reference, since slang exposes the
-// iteration-variable's type through the `VariableSymbol` it fabricates for
-// header expressions, not through the canonical genvar declaration symbol.
-struct LoopHeaderState {
-  std::string_view expected_name;
-  const slang::ast::VariableSymbol* synthetic_symbol = nullptr;
-  std::optional<hir::LoopVarDeclId> loop_var_id;
-};
-
-auto LowerLoopHeaderExpr(
-    const UnitLoweringFacts& unit_facts, UnitLoweringState& unit_state,
     ScopeLoweringState& scope_state, const ScopeStack& stack,
-    LoopHeaderState& loop_state, const slang::ast::Expression& expr)
-    -> diag::Result<hir::Expr>;
+    const slang::ast::Expression& expr) -> diag::Result<hir::Expr>;
 
 }  // namespace lyra::lowering::ast_to_hir

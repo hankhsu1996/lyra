@@ -1,0 +1,20 @@
+id: dump.loop_generate_empty
+tags: [dump]
+input:
+  command: [dump, hir]
+  project: false
+  top: Top
+  files: [main.sv]
+expect:
+  exit: 0
+  stdout:
+    contains:
+      - 'LoopVarDecl[0] "i"'
+      - "Generate LoopGenerate loop_var=LoopVar[0]"
+      - "scope:"
+    not_contains:
+      - "StructuralVar"
+      - "Process"
+      - "ProceduralVar"
+      - "Generate IfGenerate"
+      - "Generate CaseGenerate"
