@@ -210,20 +210,121 @@ auto IsPackedExplicitMatching(
          opa.BitWidth() == result_pa.BitWidth();
 }
 
-auto RenderPackedBitwiseUnaryCall(
+auto IsPackedRuntimeUnaryOp(mir::UnaryOp op) -> bool {
+  switch (op) {
+    case mir::UnaryOp::kBitwiseNot:
+    case mir::UnaryOp::kReductionAnd:
+    case mir::UnaryOp::kReductionOr:
+    case mir::UnaryOp::kReductionXor:
+    case mir::UnaryOp::kReductionNand:
+    case mir::UnaryOp::kReductionNor:
+    case mir::UnaryOp::kReductionXnor:
+      return true;
+    case mir::UnaryOp::kPlus:
+    case mir::UnaryOp::kMinus:
+    case mir::UnaryOp::kLogicalNot:
+      return false;
+  }
+  throw InternalError("IsPackedRuntimeUnaryOp: unknown MIR UnaryOp");
+}
+
+auto IsReductionUnaryOp(mir::UnaryOp op) -> bool {
+  switch (op) {
+    case mir::UnaryOp::kReductionAnd:
+    case mir::UnaryOp::kReductionOr:
+    case mir::UnaryOp::kReductionXor:
+    case mir::UnaryOp::kReductionNand:
+    case mir::UnaryOp::kReductionNor:
+    case mir::UnaryOp::kReductionXnor:
+      return true;
+    case mir::UnaryOp::kBitwiseNot:
+    case mir::UnaryOp::kPlus:
+    case mir::UnaryOp::kMinus:
+    case mir::UnaryOp::kLogicalNot:
+      return false;
+  }
+  throw InternalError("IsReductionUnaryOp: unknown MIR UnaryOp");
+}
+
+auto ReductionRuntimeFunctionName(mir::UnaryOp op) -> std::string_view {
+  switch (op) {
+    case mir::UnaryOp::kReductionAnd:
+      return "lyra::runtime::ReductionAnd";
+    case mir::UnaryOp::kReductionOr:
+      return "lyra::runtime::ReductionOr";
+    case mir::UnaryOp::kReductionXor:
+      return "lyra::runtime::ReductionXor";
+    case mir::UnaryOp::kReductionNand:
+      return "lyra::runtime::ReductionNand";
+    case mir::UnaryOp::kReductionNor:
+      return "lyra::runtime::ReductionNor";
+    case mir::UnaryOp::kReductionXnor:
+      return "lyra::runtime::ReductionXnor";
+    case mir::UnaryOp::kBitwiseNot:
+    case mir::UnaryOp::kPlus:
+    case mir::UnaryOp::kMinus:
+    case mir::UnaryOp::kLogicalNot:
+      throw InternalError(
+          "ReductionRuntimeFunctionName: not a reduction unary op");
+  }
+  throw InternalError("ReductionRuntimeFunctionName: unknown MIR UnaryOp");
+}
+
+auto IsPackedRuntimeReductionShape(
+    const mir::CompilationUnit& unit, mir::TypeId operand_type,
+    const mir::PackedArrayType& result_pa) -> bool {
+  if (!result_pa.dims.empty()) {
+    return false;
+  }
+  if (result_pa.BitWidth() != 1U) {
+    return false;
+  }
+  const auto& ot = unit.GetType(operand_type);
+  if (!ot.IsPackedArray()) {
+    return false;
+  }
+  const auto& opa = ot.AsPackedArray();
+  if (opa.form != mir::PackedArrayForm::kExplicit) {
+    return false;
+  }
+  return opa.IsFourState() == result_pa.IsFourState();
+}
+
+auto RenderPackedRuntimeUnaryCall(
     const RenderContext& ctx, mir::TypeId result_type, mir::UnaryOp op,
     const mir::Expr& operand) -> diag::Result<std::string> {
-  if (op != mir::UnaryOp::kBitwiseNot) {
-    throw InternalError("RenderPackedBitwiseUnaryCall: non-bitwise unary op");
+  if (!IsPackedRuntimeUnaryOp(op)) {
+    throw InternalError(
+        "RenderPackedRuntimeUnaryCall: not a packed runtime unary op");
+  }
+  if (!IsPackedRuntime(ctx.Unit(), operand.type)) {
+    throw InternalError(
+        "RenderPackedRuntimeUnaryCall: operand not packed runtime");
   }
   if (!IsPackedRuntime(ctx.Unit(), result_type)) {
     throw InternalError(
-        "RenderPackedBitwiseUnaryCall: result not packed runtime");
+        "RenderPackedRuntimeUnaryCall: result not packed runtime");
   }
   const auto& result_pa = ctx.Unit().GetType(result_type).AsPackedArray();
+
+  if (IsReductionUnaryOp(op)) {
+    if (!IsPackedRuntimeReductionShape(ctx.Unit(), operand.type, result_pa)) {
+      throw InternalError(
+          "RenderPackedRuntimeUnaryCall: reduction result must be a scalar "
+          "1-bit packed type whose state-kind matches the operand");
+    }
+    auto operand_view_or = RenderExprAsRuntimeView(ctx, operand);
+    if (!operand_view_or) {
+      return std::unexpected(std::move(operand_view_or.error()));
+    }
+    return std::format(
+        "{}({})", ReductionRuntimeFunctionName(op), *operand_view_or);
+  }
+
+  // Bitwise-not: operand and result must share the same explicit packed shape.
   if (!IsPackedExplicitMatching(ctx.Unit(), operand.type, result_pa)) {
     throw InternalError(
-        "RenderPackedBitwiseUnaryCall: operand type not normalized to result");
+        "RenderPackedRuntimeUnaryCall: operand type not normalized to result");
   }
   const std::string shape = RenderPackedShapeLiteral(result_pa.dims);
   const std::string_view signedness = SignednessLiteral(result_pa.signedness);
@@ -418,7 +519,7 @@ auto RenderExprAsRuntimeView(const RenderContext& ctx, const mir::Expr& expr)
             return std::format("{}.View()", *inner_or);
           },
           [&](const mir::UnaryExpr& u) -> diag::Result<std::string> {
-            if (u.op != mir::UnaryOp::kBitwiseNot ||
+            if (!IsPackedRuntimeUnaryOp(u.op) ||
                 !IsPackedRuntime(ctx.Unit(), expr.type)) {
               return diag::Unsupported(
                   diag::DiagCode::kCppEmitExpressionFormNotImplemented,
@@ -426,7 +527,7 @@ auto RenderExprAsRuntimeView(const RenderContext& ctx, const mir::Expr& expr)
                   "view in cpp emit",
                   diag::UnsupportedCategory::kFeature);
             }
-            auto inner_or = RenderPackedBitwiseUnaryCall(
+            auto inner_or = RenderPackedRuntimeUnaryCall(
                 ctx, expr.type, u.op, ctx.Expr(u.operand));
             if (!inner_or) return std::unexpected(std::move(inner_or.error()));
             return std::format("{}.View()", *inner_or);
