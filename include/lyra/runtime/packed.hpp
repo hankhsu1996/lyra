@@ -135,12 +135,12 @@ inline auto ValidateBitRange(
 }
 
 inline auto ValidateLogicRange(
-    std::size_t value_word_count, std::size_t state_word_count,
+    std::size_t value_word_count, std::size_t unknown_word_count,
     std::uint64_t bit_offset, std::uint64_t width, std::string_view where)
     -> void {
-  if (value_word_count != state_word_count) {
+  if (value_word_count != unknown_word_count) {
     throw InternalError(
-        std::string(where) + ": value and state span sizes differ");
+        std::string(where) + ": value and unknown span sizes differ");
   }
   ValidateBitRange(value_word_count, bit_offset, width, where);
 }
@@ -341,14 +341,14 @@ class ConstLogicView {
  public:
   ConstLogicView(
       std::span<const std::uint64_t> value_words,
-      std::span<const std::uint64_t> state_words, std::uint64_t bit_offset,
+      std::span<const std::uint64_t> unknown_words, std::uint64_t bit_offset,
       std::uint64_t width)
       : value_words_(value_words),
-        state_words_(state_words),
+        unknown_words_(unknown_words),
         bit_offset_(bit_offset),
         width_(width) {
     detail::ValidateLogicRange(
-        value_words_.size(), state_words_.size(), bit_offset_, width_,
+        value_words_.size(), unknown_words_.size(), bit_offset_, width_,
         "ConstLogicView");
   }
 
@@ -362,8 +362,8 @@ class ConstLogicView {
     }
     const std::uint64_t bp = bit_offset_ + offset;
     const bool v = ((value_words_[bp / 64U] >> (bp % 64U)) & 1U) != 0U;
-    const bool s = ((state_words_[bp / 64U] >> (bp % 64U)) & 1U) != 0U;
-    if (!s) {
+    const bool u = ((unknown_words_[bp / 64U] >> (bp % 64U)) & 1U) != 0U;
+    if (!u) {
       return v ? FourStateBit::kOne : FourStateBit::kZero;
     }
     return v ? FourStateBit::kUnknown : FourStateBit::kHighImpedance;
@@ -385,14 +385,14 @@ class ConstLogicView {
     return out;
   }
 
-  [[nodiscard]] auto PackStateLowWord() const -> std::uint64_t {
+  [[nodiscard]] auto PackUnknownLowWord() const -> std::uint64_t {
     if (width_ > 64U) {
-      throw InternalError("ConstLogicView::PackStateLowWord: width > 64");
+      throw InternalError("ConstLogicView::PackUnknownLowWord: width > 64");
     }
     std::uint64_t out = 0;
     for (std::uint64_t i = 0; i < width_; ++i) {
       const std::uint64_t bp = bit_offset_ + i;
-      if (((state_words_[bp / 64U] >> (bp % 64U)) & 1U) != 0U) {
+      if (((unknown_words_[bp / 64U] >> (bp % 64U)) & 1U) != 0U) {
         out |= std::uint64_t{1} << i;
       }
     }
@@ -406,16 +406,16 @@ class ConstLogicView {
       -> std::span<const std::uint64_t> {
     return value_words_;
   }
-  [[nodiscard]] auto StateWordsForPackedOps() const
+  [[nodiscard]] auto UnknownWordsForPackedOps() const
       -> std::span<const std::uint64_t> {
-    return state_words_;
+    return unknown_words_;
   }
   [[nodiscard]] auto BitOffsetForPackedOps() const -> std::uint64_t {
     return bit_offset_;
   }
 
   std::span<const std::uint64_t> value_words_;
-  std::span<const std::uint64_t> state_words_;
+  std::span<const std::uint64_t> unknown_words_;
   std::uint64_t bit_offset_;
   std::uint64_t width_;
 };
@@ -424,14 +424,14 @@ class LogicView {
  public:
   LogicView(
       std::span<std::uint64_t> value_words,
-      std::span<std::uint64_t> state_words, std::uint64_t bit_offset,
+      std::span<std::uint64_t> unknown_words, std::uint64_t bit_offset,
       std::uint64_t width)
       : value_words_(value_words),
-        state_words_(state_words),
+        unknown_words_(unknown_words),
         bit_offset_(bit_offset),
         width_(width) {
     detail::ValidateLogicRange(
-        value_words_.size(), state_words_.size(), bit_offset_, width_,
+        value_words_.size(), unknown_words_.size(), bit_offset_, width_,
         "LogicView");
   }
 
@@ -460,19 +460,19 @@ class LogicView {
     switch (value) {
       case FourStateBit::kZero:
         write(value_words_, false);
-        write(state_words_, false);
+        write(unknown_words_, false);
         break;
       case FourStateBit::kOne:
         write(value_words_, true);
-        write(state_words_, false);
+        write(unknown_words_, false);
         break;
       case FourStateBit::kHighImpedance:
         write(value_words_, false);
-        write(state_words_, true);
+        write(unknown_words_, true);
         break;
       case FourStateBit::kUnknown:
         write(value_words_, true);
-        write(state_words_, true);
+        write(unknown_words_, true);
         break;
     }
   }
@@ -514,18 +514,18 @@ class LogicView {
   }
 
   [[nodiscard]] auto AsConst() const -> ConstLogicView {
-    return ConstLogicView{value_words_, state_words_, bit_offset_, width_};
+    return ConstLogicView{value_words_, unknown_words_, bit_offset_, width_};
   }
   [[nodiscard]] auto PackValueLowWord() const -> std::uint64_t {
     return AsConst().PackValueLowWord();
   }
-  [[nodiscard]] auto PackStateLowWord() const -> std::uint64_t {
-    return AsConst().PackStateLowWord();
+  [[nodiscard]] auto PackUnknownLowWord() const -> std::uint64_t {
+    return AsConst().PackUnknownLowWord();
   }
 
  private:
   std::span<std::uint64_t> value_words_;
-  std::span<std::uint64_t> state_words_;
+  std::span<std::uint64_t> unknown_words_;
   std::uint64_t bit_offset_;
   std::uint64_t width_;
 };
@@ -608,11 +608,12 @@ class Logic {
 
   [[nodiscard]] auto View() -> LogicView {
     return LogicView{
-        value_.MutableWordsForView(), state_.MutableWordsForView(), 0U, kWidth};
+        value_.MutableWordsForView(), unknown_.MutableWordsForView(), 0U,
+        kWidth};
   }
   [[nodiscard]] auto View() const -> ConstLogicView {
     return ConstLogicView{
-        value_.WordsForView(), state_.WordsForView(), 0U, kWidth};
+        value_.WordsForView(), unknown_.WordsForView(), 0U, kWidth};
   }
   [[nodiscard]] auto View(std::uint64_t offset, std::uint64_t width)
       -> LogicView {
@@ -621,7 +622,7 @@ class Logic {
       throw InternalError("Logic::View: invalid view range");
     }
     return LogicView{
-        value_.MutableWordsForView(), state_.MutableWordsForView(), offset,
+        value_.MutableWordsForView(), unknown_.MutableWordsForView(), offset,
         width};
   }
   [[nodiscard]] auto View(std::uint64_t offset, std::uint64_t width) const
@@ -631,30 +632,30 @@ class Logic {
       throw InternalError("Logic::View: invalid view range");
     }
     return ConstLogicView{
-        value_.WordsForView(), state_.WordsForView(), offset, width};
+        value_.WordsForView(), unknown_.WordsForView(), offset, width};
   }
 
   auto SetZero() -> void {
     value_.SetZero();
-    state_.SetZero();
+    unknown_.SetZero();
   }
   auto SetOne() -> void {
     value_.SetOne();
-    state_.SetZero();
+    unknown_.SetZero();
   }
   auto SetHighImpedance() -> void {
     value_.SetZero();
-    state_.SetOne();
+    unknown_.SetOne();
   }
   auto SetUnknown() -> void {
     value_.SetOne();
-    state_.SetOne();
+    unknown_.SetOne();
   }
 
   [[nodiscard]] auto GetBit(std::uint64_t offset) const -> FourStateBit {
     const bool v = value_.GetBit(offset);
-    const bool s = state_.GetBit(offset);
-    if (!s) {
+    const bool u = unknown_.GetBit(offset);
+    if (!u) {
       return v ? FourStateBit::kOne : FourStateBit::kZero;
     }
     return v ? FourStateBit::kUnknown : FourStateBit::kHighImpedance;
@@ -663,19 +664,19 @@ class Logic {
     switch (value) {
       case FourStateBit::kZero:
         value_.SetBit(offset, false);
-        state_.SetBit(offset, false);
+        unknown_.SetBit(offset, false);
         break;
       case FourStateBit::kOne:
         value_.SetBit(offset, true);
-        state_.SetBit(offset, false);
+        unknown_.SetBit(offset, false);
         break;
       case FourStateBit::kHighImpedance:
         value_.SetBit(offset, false);
-        state_.SetBit(offset, true);
+        unknown_.SetBit(offset, true);
         break;
       case FourStateBit::kUnknown:
         value_.SetBit(offset, true);
-        state_.SetBit(offset, true);
+        unknown_.SetBit(offset, true);
         break;
     }
   }
@@ -695,13 +696,13 @@ class Logic {
       -> std::span<std::uint64_t> {
     return value_.MutableWordsForView();
   }
-  [[nodiscard]] auto MutableStateWordsForPackedOps()
+  [[nodiscard]] auto MutableUnknownWordsForPackedOps()
       -> std::span<std::uint64_t> {
-    return state_.MutableWordsForView();
+    return unknown_.MutableWordsForView();
   }
 
   detail::BitPlane<kWidth> value_{};
-  detail::BitPlane<kWidth> state_{};
+  detail::BitPlane<kWidth> unknown_{};
 };
 
 template <PackedShape Shape, Signedness Signed = Signedness::kUnsigned>

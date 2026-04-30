@@ -46,19 +46,19 @@ struct FormatSpec {
 // Two integral storage planes coexist:
 //   - Narrow integral (bit_width <= 64): the value lives inline in
 //   `inline_word`,
-//     and (for four-state) the state plane lives inline in
-//     `inline_state_word`. `value_words` / `state_words` are null. The whole
-//     view is built inline at a `LyraPrint` call site with no externally
-//     owned storage.
+//     and (for four-state) the unknown plane lives inline in
+//     `inline_unknown_word`. `value_words` / `unknown_words` are null. The
+//     whole view is built inline at a `LyraPrint` call site with no
+//     externally owned storage.
 //   - Wide integral (bit_width > 64): caller owns `uint64_t[word_count]`
-//     arrays for value and (for four-state) state, passed via `value_words`
-//     and `state_words`.
+//     arrays for value and (for four-state) unknown, passed via
+//     `value_words` and `unknown_words`.
 struct IntegralValueView {
   IntegralStateKind state = IntegralStateKind::kTwoState;
   std::uint64_t inline_word = 0;
-  std::uint64_t inline_state_word = 0;
+  std::uint64_t inline_unknown_word = 0;
   const std::uint64_t* value_words = nullptr;
-  const std::uint64_t* state_words = nullptr;
+  const std::uint64_t* unknown_words = nullptr;
   std::uint32_t word_count = 0;
   std::uint32_t bit_width = 0;
   bool is_signed = false;
