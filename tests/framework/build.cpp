@@ -1,6 +1,5 @@
 #include "build.hpp"
 
-#include <algorithm>
 #include <cerrno>
 #include <chrono>
 #include <cstdlib>
@@ -83,25 +82,6 @@ auto ResolveCxxCompiler() -> std::expected<std::filesystem::path, std::string> {
       "override)");
 }
 
-auto CollectRuntimeSources(const std::filesystem::path& dir)
-    -> std::expected<std::vector<std::filesystem::path>, std::string> {
-  std::vector<std::filesystem::path> out;
-  std::error_code ec;
-  std::filesystem::directory_iterator it(dir, ec);
-  if (ec) {
-    return std::unexpected(
-        std::format(
-            "directory_iterator('{}') failed: {}", dir.string(), ec.message()));
-  }
-  for (const auto& entry : it) {
-    if (entry.is_regular_file() && entry.path().extension() == ".cpp") {
-      out.push_back(entry.path());
-    }
-  }
-  std::ranges::sort(out);
-  return out;
-}
-
 }  // namespace
 
 auto MakeTempCaseDir() -> std::expected<std::filesystem::path, std::string> {
@@ -118,8 +98,7 @@ auto MakeTempCaseDir() -> std::expected<std::filesystem::path, std::string> {
 auto BuildAndRunEmittedArtifacts(
     const std::filesystem::path& work_dir,
     const std::filesystem::path& include_root,
-    const std::vector<std::filesystem::path>& runtime_src_dirs)
-    -> BuildAndRunOutcome {
+    const std::filesystem::path& cpp_runtime) -> BuildAndRunOutcome {
   BuildAndRunOutcome outcome;
 
   auto cxx_or = ResolveCxxCompiler();
@@ -130,20 +109,9 @@ auto BuildAndRunEmittedArtifacts(
   }
   const auto& cxx = *cxx_or;
 
-  std::vector<std::filesystem::path> runtime_cpps;
-  for (const auto& dir : runtime_src_dirs) {
-    auto cpps_or = CollectRuntimeSources(dir);
-    if (!cpps_or) {
-      outcome.error =
-          std::format("runtime source enumeration failed: {}", cpps_or.error());
-      return outcome;
-    }
-    for (auto& path : *cpps_or) {
-      runtime_cpps.push_back(std::move(path));
-    }
-  }
-  if (runtime_cpps.empty()) {
-    outcome.error = "no runtime sources collected";
+  if (!std::filesystem::exists(cpp_runtime)) {
+    outcome.error = std::format(
+        "missing prebuilt C++ runtime at '{}'", cpp_runtime.string());
     return outcome;
   }
 
@@ -156,14 +124,18 @@ auto BuildAndRunEmittedArtifacts(
     return outcome;
   }
 
+  // The C++ runtime must follow main.cpp on the link line so the linker
+  // resolves main.cpp's references against runtime members.
   std::vector<std::string> compile_args = {
-      "-std=c++23", "-O0", "-I", include_root.string(), main_cpp.string(),
+      "-std=c++23",
+      "-O0",
+      "-I",
+      include_root.string(),
+      main_cpp.string(),
+      cpp_runtime.string(),
+      "-o",
+      program.string(),
   };
-  for (const auto& src : runtime_cpps) {
-    compile_args.push_back(src.string());
-  }
-  compile_args.emplace_back("-o");
-  compile_args.push_back(program.string());
 
   auto compile = RunChildProcess(cxx, compile_args, std::chrono::seconds{60});
   if (compile.termination != TerminationKind::kExitedNormally) {
