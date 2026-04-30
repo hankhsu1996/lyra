@@ -40,12 +40,7 @@ auto ResolveEnv(Runfiles& rf) -> EmitCppEnv {
   env.cpp_paths.include_root =
       engine_hpp.parent_path().parent_path().parent_path();
 
-  const std::filesystem::path engine_cpp =
-      rf.Rlocation("_main/src/lyra/runtime/engine.cpp");
-  const std::filesystem::path base_cpp =
-      rf.Rlocation("_main/src/lyra/base/internal_error.cpp");
-  env.cpp_paths.runtime_src_dirs = {
-      engine_cpp.parent_path(), base_cpp.parent_path()};
+  env.cpp_paths.cpp_runtime = rf.Rlocation("_main/libcpp_runtime.a");
   return env;
 }
 

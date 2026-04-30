@@ -1,15 +1,7 @@
 load("@hedron_compile_commands//:refresh_compile_commands.bzl", "refresh_compile_commands")
 load("@rules_cc//cc:cc_binary.bzl", "cc_binary")
 load("@rules_cc//cc:cc_library.bzl", "cc_library")
-
-filegroup(
-    name = "runtime_sources",
-    srcs = glob([
-        "src/lyra/runtime/*.cpp",
-        "src/lyra/base/*.cpp",
-    ]),
-    visibility = ["//visibility:public"],
-)
+load("@rules_cc//cc:cc_static_library.bzl", "cc_static_library")
 
 filegroup(
     name = "runtime_headers",
@@ -80,6 +72,12 @@ cc_library(
     includes = ["include"],
     visibility = ["//visibility:public"],
     deps = [":base"],
+)
+
+cc_static_library(
+    name = "cpp_runtime",
+    visibility = ["//visibility:public"],
+    deps = [":runtime"],
 )
 
 cc_library(

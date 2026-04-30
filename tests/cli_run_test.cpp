@@ -43,18 +43,10 @@ void RunSvCase(const std::string& sv_runfiles_path, RunOutcome& out) {
   const std::filesystem::path include_root =
       engine_hpp.parent_path().parent_path().parent_path();
 
-  const std::filesystem::path engine_cpp =
-      rf->Rlocation("_main/src/lyra/runtime/engine.cpp");
-  ASSERT_FALSE(engine_cpp.empty());
-  ASSERT_TRUE(std::filesystem::exists(engine_cpp)) << engine_cpp;
-
-  const std::filesystem::path base_cpp =
-      rf->Rlocation("_main/src/lyra/base/internal_error.cpp");
-  ASSERT_FALSE(base_cpp.empty());
-  ASSERT_TRUE(std::filesystem::exists(base_cpp)) << base_cpp;
-
-  const std::vector<std::filesystem::path> runtime_src_dirs = {
-      engine_cpp.parent_path(), base_cpp.parent_path()};
+  const std::filesystem::path cpp_runtime =
+      rf->Rlocation("_main/libcpp_runtime.a");
+  ASSERT_FALSE(cpp_runtime.empty());
+  ASSERT_TRUE(std::filesystem::exists(cpp_runtime)) << cpp_runtime;
 
   auto work_or = MakeTempCaseDir();
   ASSERT_TRUE(work_or) << work_or.error();
@@ -73,8 +65,7 @@ void RunSvCase(const std::string& sv_runfiles_path, RunOutcome& out) {
                                << emit.stdout_text << "\nstderr:\n"
                                << emit.stderr_text;
 
-  auto outcome =
-      BuildAndRunEmittedArtifacts(work, include_root, runtime_src_dirs);
+  auto outcome = BuildAndRunEmittedArtifacts(work, include_root, cpp_runtime);
   ASSERT_FALSE(outcome.error.has_value()) << *outcome.error;
   out.exit_code = outcome.exit_code;
   out.stdout_text = std::move(outcome.stdout_text);
