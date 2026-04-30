@@ -11,6 +11,97 @@
 
 namespace lyra::runtime {
 
+namespace detail {
+
+struct PackedAccess {
+  static auto BitOffset(const ConstBitView& v) -> std::uint64_t {
+    return v.bit_offset_;
+  }
+  static auto BitOffset(const BitView& v) -> std::uint64_t {
+    return v.bit_offset_;
+  }
+  static auto BitOffset(const ConstLogicView& v) -> std::uint64_t {
+    return v.bit_offset_;
+  }
+  static auto BitOffset(const LogicView& v) -> std::uint64_t {
+    return v.bit_offset_;
+  }
+
+  static auto ValueWords(const ConstBitView& v)
+      -> std::span<const std::uint64_t> {
+    return v.words_;
+  }
+  static auto ValueWords(const BitView& v) -> std::span<std::uint64_t> {
+    return v.words_;
+  }
+  static auto ValueWords(const ConstLogicView& v)
+      -> std::span<const std::uint64_t> {
+    return v.value_words_;
+  }
+  static auto ValueWords(const LogicView& v) -> std::span<std::uint64_t> {
+    return v.value_words_;
+  }
+
+  static auto UnknownWords(const ConstLogicView& v)
+      -> std::span<const std::uint64_t> {
+    return v.unknown_words_;
+  }
+  static auto UnknownWords(const LogicView& v) -> std::span<std::uint64_t> {
+    return v.unknown_words_;
+  }
+};
+
+}  // namespace detail
+
+namespace {
+
+auto RequireSameWidth(std::string_view where, std::uint64_t a, std::uint64_t b)
+    -> void {
+  if (a != b) {
+    throw InternalError(
+        std::format("{}: width mismatch ({} vs {})", where, a, b));
+  }
+}
+
+auto RequireSameWidth(
+    std::string_view where, std::uint64_t a, std::uint64_t b, std::uint64_t c)
+    -> void {
+  if (a != b || a != c) {
+    throw InternalError(
+        std::format("{}: width mismatch ({} vs {} vs {})", where, a, b, c));
+  }
+}
+
+auto RequireAligned(std::string_view where, std::uint64_t bit_offset) -> void {
+  if (bit_offset != 0U) {
+    throw InternalError(
+        std::format(
+            "{}: requires bit_offset == 0 (got {})", where, bit_offset));
+  }
+}
+
+auto RequireWordCount(
+    std::string_view where, std::span<const std::uint64_t> words,
+    std::uint64_t bit_width) -> void {
+  const std::size_t expected = WordCountForBits(bit_width);
+  if (words.size() != expected) {
+    throw InternalError(
+        std::format(
+            "{}: word count mismatch ({} vs expected {})", where, words.size(),
+            expected));
+  }
+}
+
+auto RequireWordCount(
+    std::string_view where, std::span<std::uint64_t> words,
+    std::uint64_t bit_width) -> void {
+  RequireWordCount(
+      where, std::span<const std::uint64_t>{words.data(), words.size()},
+      bit_width);
+}
+
+}  // namespace
+
 auto WordCountForBits(std::uint64_t bit_width) -> std::size_t {
   if (bit_width == 0U) {
     throw InternalError("WordCountForBits: zero bit_width");
@@ -501,6 +592,243 @@ auto ConvertToLogic(
       }
     }
   }
+}
+
+auto BitwiseNot(ConstBitView src, BitView dst) -> void {
+  constexpr std::string_view kWhere = "BitwiseNot(Bit)";
+  RequireSameWidth(kWhere, src.Width(), dst.Width());
+  RequireAligned(kWhere, detail::PackedAccess::BitOffset(src));
+  RequireAligned(kWhere, detail::PackedAccess::BitOffset(dst));
+  const auto src_words = detail::PackedAccess::ValueWords(src);
+  const auto dst_words = detail::PackedAccess::ValueWords(dst);
+  RequireWordCount(kWhere, src_words, src.Width());
+  RequireWordCount(kWhere, dst_words, dst.Width());
+  for (std::size_t i = 0; i < dst_words.size(); ++i) {
+    dst_words[i] = ~src_words[i];
+  }
+  MaskUnusedTopBits(dst_words, dst.Width());
+}
+
+auto BitwiseNot(ConstLogicView src, LogicView dst) -> void {
+  constexpr std::string_view kWhere = "BitwiseNot(Logic)";
+  RequireSameWidth(kWhere, src.Width(), dst.Width());
+  RequireAligned(kWhere, detail::PackedAccess::BitOffset(src));
+  RequireAligned(kWhere, detail::PackedAccess::BitOffset(dst));
+  const auto src_v = detail::PackedAccess::ValueWords(src);
+  const auto src_u = detail::PackedAccess::UnknownWords(src);
+  const auto dst_v = detail::PackedAccess::ValueWords(dst);
+  const auto dst_u = detail::PackedAccess::UnknownWords(dst);
+  RequireWordCount(kWhere, src_v, src.Width());
+  RequireWordCount(kWhere, src_u, src.Width());
+  RequireWordCount(kWhere, dst_v, dst.Width());
+  RequireWordCount(kWhere, dst_u, dst.Width());
+  for (std::size_t i = 0; i < dst_v.size(); ++i) {
+    dst_u[i] = src_u[i];
+    dst_v[i] = (~src_v[i]) | src_u[i];
+  }
+  MaskUnusedTopBits(dst_v, dst.Width());
+  MaskUnusedTopBits(dst_u, dst.Width());
+}
+
+auto BitwiseAnd(ConstBitView lhs, ConstBitView rhs, BitView dst) -> void {
+  constexpr std::string_view kWhere = "BitwiseAnd(Bit)";
+  RequireSameWidth(kWhere, lhs.Width(), rhs.Width(), dst.Width());
+  RequireAligned(kWhere, detail::PackedAccess::BitOffset(lhs));
+  RequireAligned(kWhere, detail::PackedAccess::BitOffset(rhs));
+  RequireAligned(kWhere, detail::PackedAccess::BitOffset(dst));
+  const auto lhs_words = detail::PackedAccess::ValueWords(lhs);
+  const auto rhs_words = detail::PackedAccess::ValueWords(rhs);
+  const auto dst_words = detail::PackedAccess::ValueWords(dst);
+  RequireWordCount(kWhere, lhs_words, lhs.Width());
+  RequireWordCount(kWhere, rhs_words, rhs.Width());
+  RequireWordCount(kWhere, dst_words, dst.Width());
+  for (std::size_t i = 0; i < dst_words.size(); ++i) {
+    dst_words[i] = lhs_words[i] & rhs_words[i];
+  }
+  MaskUnusedTopBits(dst_words, dst.Width());
+}
+
+auto BitwiseAnd(ConstLogicView lhs, ConstLogicView rhs, LogicView dst) -> void {
+  constexpr std::string_view kWhere = "BitwiseAnd(Logic)";
+  RequireSameWidth(kWhere, lhs.Width(), rhs.Width(), dst.Width());
+  RequireAligned(kWhere, detail::PackedAccess::BitOffset(lhs));
+  RequireAligned(kWhere, detail::PackedAccess::BitOffset(rhs));
+  RequireAligned(kWhere, detail::PackedAccess::BitOffset(dst));
+  const auto lhs_v = detail::PackedAccess::ValueWords(lhs);
+  const auto lhs_u = detail::PackedAccess::UnknownWords(lhs);
+  const auto rhs_v = detail::PackedAccess::ValueWords(rhs);
+  const auto rhs_u = detail::PackedAccess::UnknownWords(rhs);
+  const auto dst_v = detail::PackedAccess::ValueWords(dst);
+  const auto dst_u = detail::PackedAccess::UnknownWords(dst);
+  RequireWordCount(kWhere, lhs_v, lhs.Width());
+  RequireWordCount(kWhere, lhs_u, lhs.Width());
+  RequireWordCount(kWhere, rhs_v, rhs.Width());
+  RequireWordCount(kWhere, rhs_u, rhs.Width());
+  RequireWordCount(kWhere, dst_v, dst.Width());
+  RequireWordCount(kWhere, dst_u, dst.Width());
+  for (std::size_t i = 0; i < dst_v.size(); ++i) {
+    const std::uint64_t av = lhs_v[i];
+    const std::uint64_t au = lhs_u[i];
+    const std::uint64_t bv = rhs_v[i];
+    const std::uint64_t bu = rhs_u[i];
+    const std::uint64_t a_zero = ~au & ~av;
+    const std::uint64_t b_zero = ~bu & ~bv;
+    const std::uint64_t a_one = ~au & av;
+    const std::uint64_t b_one = ~bu & bv;
+    const std::uint64_t is_zero = a_zero | b_zero;
+    const std::uint64_t is_one = a_one & b_one;
+    const std::uint64_t unknown = ~(is_zero | is_one);
+    dst_v[i] = is_one | unknown;
+    dst_u[i] = unknown;
+  }
+  MaskUnusedTopBits(dst_v, dst.Width());
+  MaskUnusedTopBits(dst_u, dst.Width());
+}
+
+auto BitwiseOr(ConstBitView lhs, ConstBitView rhs, BitView dst) -> void {
+  constexpr std::string_view kWhere = "BitwiseOr(Bit)";
+  RequireSameWidth(kWhere, lhs.Width(), rhs.Width(), dst.Width());
+  RequireAligned(kWhere, detail::PackedAccess::BitOffset(lhs));
+  RequireAligned(kWhere, detail::PackedAccess::BitOffset(rhs));
+  RequireAligned(kWhere, detail::PackedAccess::BitOffset(dst));
+  const auto lhs_words = detail::PackedAccess::ValueWords(lhs);
+  const auto rhs_words = detail::PackedAccess::ValueWords(rhs);
+  const auto dst_words = detail::PackedAccess::ValueWords(dst);
+  RequireWordCount(kWhere, lhs_words, lhs.Width());
+  RequireWordCount(kWhere, rhs_words, rhs.Width());
+  RequireWordCount(kWhere, dst_words, dst.Width());
+  for (std::size_t i = 0; i < dst_words.size(); ++i) {
+    dst_words[i] = lhs_words[i] | rhs_words[i];
+  }
+  MaskUnusedTopBits(dst_words, dst.Width());
+}
+
+auto BitwiseOr(ConstLogicView lhs, ConstLogicView rhs, LogicView dst) -> void {
+  constexpr std::string_view kWhere = "BitwiseOr(Logic)";
+  RequireSameWidth(kWhere, lhs.Width(), rhs.Width(), dst.Width());
+  RequireAligned(kWhere, detail::PackedAccess::BitOffset(lhs));
+  RequireAligned(kWhere, detail::PackedAccess::BitOffset(rhs));
+  RequireAligned(kWhere, detail::PackedAccess::BitOffset(dst));
+  const auto lhs_v = detail::PackedAccess::ValueWords(lhs);
+  const auto lhs_u = detail::PackedAccess::UnknownWords(lhs);
+  const auto rhs_v = detail::PackedAccess::ValueWords(rhs);
+  const auto rhs_u = detail::PackedAccess::UnknownWords(rhs);
+  const auto dst_v = detail::PackedAccess::ValueWords(dst);
+  const auto dst_u = detail::PackedAccess::UnknownWords(dst);
+  RequireWordCount(kWhere, lhs_v, lhs.Width());
+  RequireWordCount(kWhere, lhs_u, lhs.Width());
+  RequireWordCount(kWhere, rhs_v, rhs.Width());
+  RequireWordCount(kWhere, rhs_u, rhs.Width());
+  RequireWordCount(kWhere, dst_v, dst.Width());
+  RequireWordCount(kWhere, dst_u, dst.Width());
+  for (std::size_t i = 0; i < dst_v.size(); ++i) {
+    const std::uint64_t av = lhs_v[i];
+    const std::uint64_t au = lhs_u[i];
+    const std::uint64_t bv = rhs_v[i];
+    const std::uint64_t bu = rhs_u[i];
+    const std::uint64_t a_zero = ~au & ~av;
+    const std::uint64_t b_zero = ~bu & ~bv;
+    const std::uint64_t a_one = ~au & av;
+    const std::uint64_t b_one = ~bu & bv;
+    const std::uint64_t is_one = a_one | b_one;
+    const std::uint64_t is_zero = a_zero & b_zero;
+    const std::uint64_t unknown = ~(is_zero | is_one);
+    dst_v[i] = is_one | unknown;
+    dst_u[i] = unknown;
+  }
+  MaskUnusedTopBits(dst_v, dst.Width());
+  MaskUnusedTopBits(dst_u, dst.Width());
+}
+
+auto BitwiseXor(ConstBitView lhs, ConstBitView rhs, BitView dst) -> void {
+  constexpr std::string_view kWhere = "BitwiseXor(Bit)";
+  RequireSameWidth(kWhere, lhs.Width(), rhs.Width(), dst.Width());
+  RequireAligned(kWhere, detail::PackedAccess::BitOffset(lhs));
+  RequireAligned(kWhere, detail::PackedAccess::BitOffset(rhs));
+  RequireAligned(kWhere, detail::PackedAccess::BitOffset(dst));
+  const auto lhs_words = detail::PackedAccess::ValueWords(lhs);
+  const auto rhs_words = detail::PackedAccess::ValueWords(rhs);
+  const auto dst_words = detail::PackedAccess::ValueWords(dst);
+  RequireWordCount(kWhere, lhs_words, lhs.Width());
+  RequireWordCount(kWhere, rhs_words, rhs.Width());
+  RequireWordCount(kWhere, dst_words, dst.Width());
+  for (std::size_t i = 0; i < dst_words.size(); ++i) {
+    dst_words[i] = lhs_words[i] ^ rhs_words[i];
+  }
+  MaskUnusedTopBits(dst_words, dst.Width());
+}
+
+auto BitwiseXor(ConstLogicView lhs, ConstLogicView rhs, LogicView dst) -> void {
+  constexpr std::string_view kWhere = "BitwiseXor(Logic)";
+  RequireSameWidth(kWhere, lhs.Width(), rhs.Width(), dst.Width());
+  RequireAligned(kWhere, detail::PackedAccess::BitOffset(lhs));
+  RequireAligned(kWhere, detail::PackedAccess::BitOffset(rhs));
+  RequireAligned(kWhere, detail::PackedAccess::BitOffset(dst));
+  const auto lhs_v = detail::PackedAccess::ValueWords(lhs);
+  const auto lhs_u = detail::PackedAccess::UnknownWords(lhs);
+  const auto rhs_v = detail::PackedAccess::ValueWords(rhs);
+  const auto rhs_u = detail::PackedAccess::UnknownWords(rhs);
+  const auto dst_v = detail::PackedAccess::ValueWords(dst);
+  const auto dst_u = detail::PackedAccess::UnknownWords(dst);
+  RequireWordCount(kWhere, lhs_v, lhs.Width());
+  RequireWordCount(kWhere, lhs_u, lhs.Width());
+  RequireWordCount(kWhere, rhs_v, rhs.Width());
+  RequireWordCount(kWhere, rhs_u, rhs.Width());
+  RequireWordCount(kWhere, dst_v, dst.Width());
+  RequireWordCount(kWhere, dst_u, dst.Width());
+  for (std::size_t i = 0; i < dst_v.size(); ++i) {
+    const std::uint64_t unknown = lhs_u[i] | rhs_u[i];
+    dst_v[i] = unknown | (lhs_v[i] ^ rhs_v[i]);
+    dst_u[i] = unknown;
+  }
+  MaskUnusedTopBits(dst_v, dst.Width());
+  MaskUnusedTopBits(dst_u, dst.Width());
+}
+
+auto BitwiseXnor(ConstBitView lhs, ConstBitView rhs, BitView dst) -> void {
+  constexpr std::string_view kWhere = "BitwiseXnor(Bit)";
+  RequireSameWidth(kWhere, lhs.Width(), rhs.Width(), dst.Width());
+  RequireAligned(kWhere, detail::PackedAccess::BitOffset(lhs));
+  RequireAligned(kWhere, detail::PackedAccess::BitOffset(rhs));
+  RequireAligned(kWhere, detail::PackedAccess::BitOffset(dst));
+  const auto lhs_words = detail::PackedAccess::ValueWords(lhs);
+  const auto rhs_words = detail::PackedAccess::ValueWords(rhs);
+  const auto dst_words = detail::PackedAccess::ValueWords(dst);
+  RequireWordCount(kWhere, lhs_words, lhs.Width());
+  RequireWordCount(kWhere, rhs_words, rhs.Width());
+  RequireWordCount(kWhere, dst_words, dst.Width());
+  for (std::size_t i = 0; i < dst_words.size(); ++i) {
+    dst_words[i] = ~(lhs_words[i] ^ rhs_words[i]);
+  }
+  MaskUnusedTopBits(dst_words, dst.Width());
+}
+
+auto BitwiseXnor(ConstLogicView lhs, ConstLogicView rhs, LogicView dst)
+    -> void {
+  constexpr std::string_view kWhere = "BitwiseXnor(Logic)";
+  RequireSameWidth(kWhere, lhs.Width(), rhs.Width(), dst.Width());
+  RequireAligned(kWhere, detail::PackedAccess::BitOffset(lhs));
+  RequireAligned(kWhere, detail::PackedAccess::BitOffset(rhs));
+  RequireAligned(kWhere, detail::PackedAccess::BitOffset(dst));
+  const auto lhs_v = detail::PackedAccess::ValueWords(lhs);
+  const auto lhs_u = detail::PackedAccess::UnknownWords(lhs);
+  const auto rhs_v = detail::PackedAccess::ValueWords(rhs);
+  const auto rhs_u = detail::PackedAccess::UnknownWords(rhs);
+  const auto dst_v = detail::PackedAccess::ValueWords(dst);
+  const auto dst_u = detail::PackedAccess::UnknownWords(dst);
+  RequireWordCount(kWhere, lhs_v, lhs.Width());
+  RequireWordCount(kWhere, lhs_u, lhs.Width());
+  RequireWordCount(kWhere, rhs_v, rhs.Width());
+  RequireWordCount(kWhere, rhs_u, rhs.Width());
+  RequireWordCount(kWhere, dst_v, dst.Width());
+  RequireWordCount(kWhere, dst_u, dst.Width());
+  for (std::size_t i = 0; i < dst_v.size(); ++i) {
+    const std::uint64_t unknown = lhs_u[i] | rhs_u[i];
+    dst_v[i] = unknown | ~(lhs_v[i] ^ rhs_v[i]);
+    dst_u[i] = unknown;
+  }
+  MaskUnusedTopBits(dst_v, dst.Width());
+  MaskUnusedTopBits(dst_u, dst.Width());
 }
 
 }  // namespace lyra::runtime

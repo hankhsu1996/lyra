@@ -1,0 +1,11 @@
+id: cpp.packed_bitwise_bit_ops
+tags: [cpp_run]
+input:
+  command: [run, cpp]
+  project: false
+  top: Top
+  files: [main.sv]
+expect:
+  exit: 0
+  stdout:
+    exact: "0101\n1000\n1110\n0110\n1001\n"

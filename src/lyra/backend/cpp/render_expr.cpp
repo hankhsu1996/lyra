@@ -3,6 +3,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <format>
+#include <optional>
 #include <span>
 #include <string>
 #include <string_view>
@@ -22,6 +23,7 @@
 #include "lyra/mir/expr.hpp"
 #include "lyra/mir/integral_constant.hpp"
 #include "lyra/mir/type.hpp"
+#include "lyra/mir/unary_op.hpp"
 
 namespace lyra::backend::cpp {
 
@@ -260,6 +262,115 @@ auto SignednessLiteral(mir::Signedness s) -> std::string {
                                        : "lyra::runtime::Signedness::kUnsigned";
 }
 
+auto BitwiseRuntimeFunctionName(mir::UnaryOp op)
+    -> std::optional<std::string_view> {
+  if (op == mir::UnaryOp::kBitwiseNot) {
+    return std::string_view{"lyra::runtime::BitwiseNot"};
+  }
+  return std::nullopt;
+}
+
+auto BitwiseRuntimeFunctionName(mir::BinaryOp op)
+    -> std::optional<std::string_view> {
+  switch (op) {
+    case mir::BinaryOp::kBitwiseAnd:
+      return std::string_view{"lyra::runtime::BitwiseAnd"};
+    case mir::BinaryOp::kBitwiseOr:
+      return std::string_view{"lyra::runtime::BitwiseOr"};
+    case mir::BinaryOp::kBitwiseXor:
+      return std::string_view{"lyra::runtime::BitwiseXor"};
+    case mir::BinaryOp::kBitwiseXnor:
+      return std::string_view{"lyra::runtime::BitwiseXnor"};
+    default:
+      return std::nullopt;
+  }
+}
+
+auto IsTwoStatePacked(const mir::PackedArrayType& a) -> bool {
+  return a.atom == mir::BitAtom::kBit;
+}
+
+auto IsSamePackedBitwiseShape(
+    const mir::PackedArrayType& a, const mir::PackedArrayType& b) -> bool {
+  if (a.form != mir::PackedArrayForm::kExplicit ||
+      b.form != mir::PackedArrayForm::kExplicit) {
+    return false;
+  }
+  if (a.BitWidth() != b.BitWidth()) {
+    return false;
+  }
+  return IsTwoStatePacked(a) == IsTwoStatePacked(b);
+}
+
+auto RenderPackedBitwiseOperand(
+    const RenderContext& ctx, const mir::Expr& operand_expr,
+    const mir::PackedArrayType& lhs_pa) -> diag::Result<std::string> {
+  const auto& op_ty = ctx.Unit().GetType(operand_expr.type);
+  if (!op_ty.IsPackedArray()) {
+    throw InternalError(
+        "RenderPackedBitwiseAssign: operand is not a packed array");
+  }
+  const auto& op_pa = op_ty.AsPackedArray();
+  if (!IsSamePackedBitwiseShape(op_pa, lhs_pa)) {
+    throw InternalError(
+        "RenderPackedBitwiseAssign: operand shape does not match LHS");
+  }
+  return RenderPackedExprAsView(ctx, operand_expr);
+}
+
+auto RenderPackedBitwiseAssign(
+    const RenderContext& ctx, const mir::AssignExpr& a,
+    const mir::PackedArrayType& lhs_pa, std::string_view lhs_view)
+    -> diag::Result<std::optional<std::string>> {
+  const mir::Expr& value_expr = ctx.Expr(a.value);
+
+  if (std::holds_alternative<mir::ConversionExpr>(value_expr.data)) {
+    return std::optional<std::string>{};
+  }
+
+  std::optional<std::string_view> fn_name;
+  bool is_unary = false;
+  if (const auto* u = std::get_if<mir::UnaryExpr>(&value_expr.data)) {
+    fn_name = BitwiseRuntimeFunctionName(u->op);
+    is_unary = true;
+  } else if (const auto* b = std::get_if<mir::BinaryExpr>(&value_expr.data)) {
+    fn_name = BitwiseRuntimeFunctionName(b->op);
+  }
+  if (!fn_name) {
+    return std::optional<std::string>{};
+  }
+
+  const auto& result_ty = ctx.Unit().GetType(value_expr.type);
+  if (!result_ty.IsPackedArray() ||
+      !IsSamePackedBitwiseShape(result_ty.AsPackedArray(), lhs_pa)) {
+    throw InternalError(
+        "RenderPackedBitwiseAssign: result type does not match LHS");
+  }
+
+  if (is_unary) {
+    const auto& u = std::get<mir::UnaryExpr>(value_expr.data);
+    auto operand_or =
+        RenderPackedBitwiseOperand(ctx, ctx.Expr(u.operand), lhs_pa);
+    if (!operand_or) {
+      return std::unexpected(std::move(operand_or.error()));
+    }
+    return std::optional<std::string>{
+        std::format("{}({}, {})", *fn_name, *operand_or, lhs_view)};
+  }
+
+  const auto& b = std::get<mir::BinaryExpr>(value_expr.data);
+  auto lhs_op_or = RenderPackedBitwiseOperand(ctx, ctx.Expr(b.lhs), lhs_pa);
+  if (!lhs_op_or) {
+    return std::unexpected(std::move(lhs_op_or.error()));
+  }
+  auto rhs_op_or = RenderPackedBitwiseOperand(ctx, ctx.Expr(b.rhs), lhs_pa);
+  if (!rhs_op_or) {
+    return std::unexpected(std::move(rhs_op_or.error()));
+  }
+  return std::optional<std::string>{std::format(
+      "{}({}, {}, {})", *fn_name, *lhs_op_or, *rhs_op_or, lhs_view)};
+}
+
 auto RenderPackedAssign(const RenderContext& ctx, const mir::AssignExpr& a)
     -> diag::Result<std::string> {
   auto lhs_t_or = MirTypeOfLvalue(ctx, a.target);
@@ -268,6 +379,14 @@ auto RenderPackedAssign(const RenderContext& ctx, const mir::AssignExpr& a)
   auto lhs_name_or = RenderLvalue(ctx, a.target);
   if (!lhs_name_or) return std::unexpected(std::move(lhs_name_or.error()));
   const std::string lhs_view = *lhs_name_or + ".View()";
+
+  auto bitwise_or = RenderPackedBitwiseAssign(ctx, a, lhs, lhs_view);
+  if (!bitwise_or) {
+    return std::unexpected(std::move(bitwise_or.error()));
+  }
+  if (bitwise_or->has_value()) {
+    return std::move(**bitwise_or);
+  }
 
   const mir::Expr* src_expr = &ctx.Expr(a.value);
   while (const auto* cv = std::get_if<mir::ConversionExpr>(&src_expr->data)) {

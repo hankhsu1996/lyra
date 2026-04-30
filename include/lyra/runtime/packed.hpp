@@ -55,6 +55,10 @@ class BitView;
 class ConstLogicView;
 class LogicView;
 
+namespace detail {
+struct PackedAccess;
+}  // namespace detail
+
 class ConstBitView {
  public:
   ConstBitView(
@@ -66,6 +70,8 @@ class ConstBitView {
   [[nodiscard]] auto PackLowWord() const -> std::uint64_t;
 
  private:
+  friend struct detail::PackedAccess;
+
   std::span<const std::uint64_t> words_;
   std::uint64_t bit_offset_;
   std::uint64_t bit_width_;
@@ -87,6 +93,8 @@ class BitView {
   [[nodiscard]] auto PackLowWord() const -> std::uint64_t;
 
  private:
+  friend struct detail::PackedAccess;
+
   std::span<std::uint64_t> words_;
   std::uint64_t bit_offset_;
   std::uint64_t bit_width_;
@@ -105,6 +113,8 @@ class ConstLogicView {
   [[nodiscard]] auto PackUnknownLowWord() const -> std::uint64_t;
 
  private:
+  friend struct detail::PackedAccess;
+
   std::span<const std::uint64_t> value_words_;
   std::span<const std::uint64_t> unknown_words_;
   std::uint64_t bit_offset_;
@@ -131,6 +141,8 @@ class LogicView {
   [[nodiscard]] auto PackUnknownLowWord() const -> std::uint64_t;
 
  private:
+  friend struct detail::PackedAccess;
+
   std::span<std::uint64_t> value_words_;
   std::span<std::uint64_t> unknown_words_;
   std::uint64_t bit_offset_;
@@ -217,6 +229,61 @@ inline auto ConvertToLogic(
 inline auto ConvertToLogic(
     LogicView src, LogicView dst, Signedness src_signedness) -> void {
   ConvertToLogic(src.AsConst(), dst, src_signedness);
+}
+
+auto BitwiseNot(ConstBitView src, BitView dst) -> void;
+auto BitwiseNot(ConstLogicView src, LogicView dst) -> void;
+
+auto BitwiseAnd(ConstBitView lhs, ConstBitView rhs, BitView dst) -> void;
+auto BitwiseAnd(ConstLogicView lhs, ConstLogicView rhs, LogicView dst) -> void;
+
+auto BitwiseOr(ConstBitView lhs, ConstBitView rhs, BitView dst) -> void;
+auto BitwiseOr(ConstLogicView lhs, ConstLogicView rhs, LogicView dst) -> void;
+
+auto BitwiseXor(ConstBitView lhs, ConstBitView rhs, BitView dst) -> void;
+auto BitwiseXor(ConstLogicView lhs, ConstLogicView rhs, LogicView dst) -> void;
+
+auto BitwiseXnor(ConstBitView lhs, ConstBitView rhs, BitView dst) -> void;
+auto BitwiseXnor(ConstLogicView lhs, ConstLogicView rhs, LogicView dst) -> void;
+
+inline auto BitwiseNot(BitView src, BitView dst) -> void {
+  BitwiseNot(src.AsConst(), dst);
+}
+
+inline auto BitwiseNot(LogicView src, LogicView dst) -> void {
+  BitwiseNot(src.AsConst(), dst);
+}
+
+inline auto BitwiseAnd(BitView lhs, BitView rhs, BitView dst) -> void {
+  BitwiseAnd(lhs.AsConst(), rhs.AsConst(), dst);
+}
+
+inline auto BitwiseAnd(LogicView lhs, LogicView rhs, LogicView dst) -> void {
+  BitwiseAnd(lhs.AsConst(), rhs.AsConst(), dst);
+}
+
+inline auto BitwiseOr(BitView lhs, BitView rhs, BitView dst) -> void {
+  BitwiseOr(lhs.AsConst(), rhs.AsConst(), dst);
+}
+
+inline auto BitwiseOr(LogicView lhs, LogicView rhs, LogicView dst) -> void {
+  BitwiseOr(lhs.AsConst(), rhs.AsConst(), dst);
+}
+
+inline auto BitwiseXor(BitView lhs, BitView rhs, BitView dst) -> void {
+  BitwiseXor(lhs.AsConst(), rhs.AsConst(), dst);
+}
+
+inline auto BitwiseXor(LogicView lhs, LogicView rhs, LogicView dst) -> void {
+  BitwiseXor(lhs.AsConst(), rhs.AsConst(), dst);
+}
+
+inline auto BitwiseXnor(BitView lhs, BitView rhs, BitView dst) -> void {
+  BitwiseXnor(lhs.AsConst(), rhs.AsConst(), dst);
+}
+
+inline auto BitwiseXnor(LogicView lhs, LogicView rhs, LogicView dst) -> void {
+  BitwiseXnor(lhs.AsConst(), rhs.AsConst(), dst);
 }
 
 }  // namespace lyra::runtime
