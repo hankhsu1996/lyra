@@ -8,13 +8,14 @@
 
 namespace lyra::mir {
 
-struct LocalVarId {
+struct StructuralVarId {
   std::uint32_t value;
 
-  auto operator<=>(const LocalVarId&) const -> std::strong_ordering = default;
+  auto operator<=>(const StructuralVarId&) const
+      -> std::strong_ordering = default;
 };
 
-struct LocalVar {
+struct StructuralVarDecl {
   std::string name;
   TypeId type;
 };

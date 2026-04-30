@@ -10,10 +10,10 @@ expect:
   stdout:
     contains:
       - "Process[0] Initial"
-      - "LocalVar[0] \"x\""
-      - "LocalVarDeclStmt target=LocalVar[body_hops=0, local=0]"
+      - "ProceduralVar[0] \"x\""
+      - "ProceduralVarDeclStmt target=ProceduralVarRef[hops=0, var=0]"
       - "ExprStmt"
-      - "AssignExpr target=LocalVar[body_hops=0, local=0]"
+      - "AssignExpr target=ProceduralVarRef[hops=0, var=0]"
       - "BinaryExpr op=Add"
       - "IntegerLiteral(32's{value=0x1})"
       - "IntegerLiteral(32's{value=0x2})"

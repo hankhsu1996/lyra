@@ -15,4 +15,4 @@ expect:
       - "RefExpr LoopVar[0](hops=0)"
       - "AssignExpr"
       - "BinaryExpr op=Add"
-      - "body_scope:"
+      - "scope:"

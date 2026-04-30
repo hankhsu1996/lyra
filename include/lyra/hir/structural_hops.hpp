@@ -5,10 +5,10 @@
 
 namespace lyra::hir {
 
-struct ParentScopeHops {
+struct StructuralHops {
   std::uint32_t value;
 
-  auto operator<=>(const ParentScopeHops&) const
+  auto operator<=>(const StructuralHops&) const
       -> std::strong_ordering = default;
 };
 

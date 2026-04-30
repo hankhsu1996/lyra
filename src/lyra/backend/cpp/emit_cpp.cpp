@@ -5,14 +5,15 @@
 #include "lyra/backend/cpp/api.hpp"
 #include "lyra/backend/cpp/artifact.hpp"
 #include "lyra/backend/cpp/formatting.hpp"
+#include "lyra/backend/cpp/render_context.hpp"
 #include "lyra/backend/cpp/render_stmt.hpp"
 #include "lyra/backend/cpp/render_type.hpp"
 #include "lyra/base/internal_error.hpp"
 #include "lyra/diag/diagnostic.hpp"
-#include "lyra/mir/class_decl.hpp"
 #include "lyra/mir/compilation_unit.hpp"
-#include "lyra/mir/member_var.hpp"
 #include "lyra/mir/process.hpp"
+#include "lyra/mir/structural_scope.hpp"
+#include "lyra/mir/structural_var.hpp"
 #include "lyra/mir/type.hpp"
 
 namespace lyra::backend::cpp {
@@ -20,24 +21,23 @@ namespace lyra::backend::cpp {
 namespace {
 
 auto RenderField(
-    const mir::CompilationUnit& unit, const mir::ClassDecl& owner_class,
-    const mir::MemberVar& member, std::size_t indent) -> std::string {
-  return Indent(indent) + RenderTypeAsCpp(unit, owner_class, member.type) +
-         " " + member.name + ";\n";
+    const mir::CompilationUnit& unit, const mir::StructuralScope& owner_scope,
+    const mir::StructuralVarDecl& var, std::size_t indent) -> std::string {
+  return Indent(indent) + RenderTypeAsCpp(unit, owner_scope, var.type) + " " +
+         var.name + ";\n";
 }
 
 auto RenderConstructor(
-    const mir::CompilationUnit& unit, const mir::ClassDecl& c,
+    const RenderContext& scope_ctx, const mir::StructuralScope& s,
     std::size_t indent) -> diag::Result<std::string> {
-  const auto& body = c.constructor;
-  if (body.root_stmts.empty()) {
-    return Indent(indent) + c.name + "() {}\n";
+  if (s.constructor_scope.root_stmts.empty()) {
+    return Indent(indent) + s.name + "() {}\n";
   }
   std::string out;
-  out += Indent(indent) + c.name + "() {\n";
-  auto body_or = RenderBody(unit, c, body, indent + 1);
-  if (!body_or) return std::unexpected(std::move(body_or.error()));
-  out += *body_or;
+  out += Indent(indent) + s.name + "() {\n";
+  auto rendered_or = RenderProceduralScopeStatements(scope_ctx, indent + 1);
+  if (!rendered_or) return std::unexpected(std::move(rendered_or.error()));
+  out += *rendered_or;
   out += Indent(indent) + "}\n";
   return out;
 }
@@ -47,9 +47,9 @@ auto RenderProcessMethodName(std::size_t index) -> std::string {
 }
 
 auto RenderProcessMethod(
-    const mir::CompilationUnit& unit, const mir::ClassDecl& c,
-    const mir::Process& process, std::size_t index, std::size_t indent)
-    -> diag::Result<std::string> {
+    const RenderContext* parent_struct_ctx, const mir::CompilationUnit& unit,
+    const mir::StructuralScope& s, const mir::Process& process,
+    std::size_t index, std::size_t indent) -> diag::Result<std::string> {
   if (process.kind != mir::ProcessKind::kInitial) {
     throw InternalError(
         "RenderProcessMethod: C++ emit is not yet supported for non-initial "
@@ -58,9 +58,14 @@ auto RenderProcessMethod(
   std::string out;
   out += Indent(indent) + "auto " + RenderProcessMethodName(index) +
          "() -> lyra::runtime::ProcessCoroutine {\n";
-  auto body_or = RenderBody(unit, c, process.body, indent + 1);
-  if (!body_or) return std::unexpected(std::move(body_or.error()));
-  out += *body_or;
+  const RenderContext proc_ctx =
+      (parent_struct_ctx == nullptr)
+          ? RenderContext::ForRoot(unit, s, process.root_procedural_scope)
+          : parent_struct_ctx->WithStructuralScope(
+                s, process.root_procedural_scope);
+  auto rendered_or = RenderProceduralScopeStatements(proc_ctx, indent + 1);
+  if (!rendered_or) return std::unexpected(std::move(rendered_or.error()));
+  out += *rendered_or;
   out += Indent(indent + 1) + "co_return;\n";
   out += Indent(indent) + "}\n";
   return out;
@@ -83,48 +88,45 @@ auto RenderProcessKindLiteral(mir::ProcessKind kind) -> std::string {
 }
 
 auto RenderBind(
-    const mir::CompilationUnit& unit, const mir::ClassDecl& c,
+    const mir::CompilationUnit& unit, const mir::StructuralScope& s,
     std::size_t indent, bool is_top_level) -> std::string {
   std::string out;
   out += Indent(indent) + "void Bind(lyra::runtime::RuntimeBindContext& ctx)" +
          (is_top_level ? " override {\n" : " {\n");
   out += Indent(indent + 1) + "services_ = &ctx.Services();\n";
-  for (std::size_t i = 0; i < c.processes.size(); ++i) {
-    const auto& p = c.processes[i];
+  for (std::size_t i = 0; i < s.processes.size(); ++i) {
+    const auto& p = s.processes[i];
     out += Indent(indent + 1) + "ctx.AddProcess(\n";
     out += Indent(indent + 2) + RenderProcessKindLiteral(p.kind) + ",\n";
     out += Indent(indent + 2) + RenderProcessMethodName(i) + "());\n";
   }
-  // Every owning-object member (`OwningPtr<Object<T>>` or
-  // `Vector<OwningPtr<Object<T>>>`) is treated as a runtime-bindable child
-  // scope. The only producer of these types today is generate-arm child
-  // class installation. When other producers of `ObjectType` appear
-  // (e.g. owned process/module objects), bind eligibility must come from
-  // explicit class metadata, not from storage type structure alone.
-  for (const auto& m : c.member_vars) {
-    const auto target = mir::GetOwnedObjectTarget(unit, m.type);
+  // Bind eligibility is inferred from storage type structure today; when
+  // non-generate producers of `ObjectType` appear, switch to explicit scope
+  // metadata.
+  for (const auto& v : s.structural_vars) {
+    const auto target = mir::GetOwnedObjectTarget(unit, v.type);
     if (!target.has_value()) {
       continue;
     }
-    const auto& child_class = c.GetClass(*target);
+    const auto& child_scope = s.GetChildStructuralScope(*target);
 
-    if (mir::IsVectorOfOwningObjectType(unit, m.type)) {
-      out += Indent(indent + 1) + "for (std::size_t idx = 0; idx < " + m.name +
+    if (mir::IsVectorOfOwningObjectType(unit, v.type)) {
+      out += Indent(indent + 1) + "for (std::size_t idx = 0; idx < " + v.name +
              ".size(); ++idx) {\n";
       out += Indent(indent + 2) + "auto child = ctx.CreateChildScope(\n";
-      out += Indent(indent + 3) + "\"" + child_class.name +
+      out += Indent(indent + 3) + "\"" + child_scope.name +
              "[\" + std::to_string(idx) + \"]\",\n";
       out += Indent(indent + 3) +
              "lyra::runtime::RuntimeScopeKind::kGenerateScope);\n";
-      out += Indent(indent + 2) + m.name + "[idx]->Bind(child);\n";
+      out += Indent(indent + 2) + v.name + "[idx]->Bind(child);\n";
       out += Indent(indent + 1) + "}\n";
     } else {
-      out += Indent(indent + 1) + "if (" + m.name + ") {\n";
+      out += Indent(indent + 1) + "if (" + v.name + ") {\n";
       out += Indent(indent + 2) + "auto child = ctx.CreateChildScope(\n";
-      out += Indent(indent + 3) + "\"" + child_class.name + "\",\n";
+      out += Indent(indent + 3) + "\"" + child_scope.name + "\",\n";
       out += Indent(indent + 3) +
              "lyra::runtime::RuntimeScopeKind::kGenerateScope);\n";
-      out += Indent(indent + 2) + m.name + "->Bind(child);\n";
+      out += Indent(indent + 2) + v.name + "->Bind(child);\n";
       out += Indent(indent + 1) + "}\n";
     }
   }
@@ -132,46 +134,56 @@ auto RenderBind(
   return out;
 }
 
-auto RenderClassDecl(
-    const mir::CompilationUnit& unit, const mir::ClassDecl& c,
-    std::size_t indent, bool is_top_level) -> diag::Result<std::string> {
+auto RenderScopeAsClass(
+    const mir::CompilationUnit& unit, const mir::StructuralScope& s,
+    std::size_t indent, bool is_top_level,
+    const RenderContext* parent_struct_ctx) -> diag::Result<std::string> {
+  // `this_anchor` is bound to `s.constructor_scope` so it doubles as the
+  // ctx for rendering the constructor body. Children's bodies use it as
+  // their structural parent (one hop above the child).
+  const RenderContext this_anchor =
+      (parent_struct_ctx == nullptr)
+          ? RenderContext::ForRoot(unit, s, s.constructor_scope)
+          : parent_struct_ctx->WithStructuralScope(s, s.constructor_scope);
+
   std::string out;
-  out += Indent(indent) + "class " + c.name;
+  out += Indent(indent) + "class " + s.name;
   if (is_top_level) {
     out += " final : public lyra::runtime::Module";
   }
   out += " {\n";
   out += Indent(indent) + " public:\n";
 
-  for (const auto& child : c.classes) {
-    auto child_or = RenderClassDecl(unit, child, indent + 1, false);
+  for (const auto& child : s.child_structural_scopes) {
+    auto child_or =
+        RenderScopeAsClass(unit, child, indent + 1, false, &this_anchor);
     if (!child_or) return std::unexpected(std::move(child_or.error()));
     out += *child_or;
   }
-  if (!c.classes.empty()) {
+  if (!s.child_structural_scopes.empty()) {
     out += "\n";
   }
 
-  for (const auto& m : c.member_vars) {
-    out += RenderField(unit, c, m, indent + 1);
+  for (const auto& v : s.structural_vars) {
+    out += RenderField(unit, s, v, indent + 1);
   }
-  if (!c.member_vars.empty()) {
+  if (!s.structural_vars.empty()) {
     out += "\n";
   }
 
   out += Indent(indent + 1) + "lyra::runtime::RuntimeServices* services_{};\n";
   out += "\n";
 
-  auto ctor_or = RenderConstructor(unit, c, indent + 1);
+  auto ctor_or = RenderConstructor(this_anchor, s, indent + 1);
   if (!ctor_or) return std::unexpected(std::move(ctor_or.error()));
   out += *ctor_or;
   out += "\n";
-  out += RenderBind(unit, c, indent + 1, is_top_level);
+  out += RenderBind(unit, s, indent + 1, is_top_level);
 
-  for (std::size_t i = 0; i < c.processes.size(); ++i) {
+  for (std::size_t i = 0; i < s.processes.size(); ++i) {
     out += "\n";
-    auto method_or =
-        RenderProcessMethod(unit, c, c.processes[i], i, indent + 1);
+    auto method_or = RenderProcessMethod(
+        parent_struct_ctx, unit, s, s.processes[i], i, indent + 1);
     if (!method_or) return std::unexpected(std::move(method_or.error()));
     out += *method_or;
   }
@@ -180,8 +192,8 @@ auto RenderClassDecl(
   return out;
 }
 
-auto RenderClassHeaderFile(
-    const mir::CompilationUnit& unit, const mir::ClassDecl& c)
+auto RenderScopeHeaderFile(
+    const mir::CompilationUnit& unit, const mir::StructuralScope& s)
     -> diag::Result<std::string> {
   std::string out;
   out += "#pragma once\n";
@@ -205,13 +217,13 @@ auto RenderClassHeaderFile(
   out += "#include \"lyra/runtime/runtime_scope_kind.hpp\"\n";
   out += "#include \"lyra/runtime/runtime_services.hpp\"\n";
   out += "\n";
-  auto class_or = RenderClassDecl(unit, c, 0, true);
+  auto class_or = RenderScopeAsClass(unit, s, 0, true, nullptr);
   if (!class_or) return std::unexpected(std::move(class_or.error()));
   out += *class_or;
   return out;
 }
 
-auto RenderHostMain(const mir::ClassDecl& entry) -> std::string {
+auto RenderHostMain(const mir::StructuralScope& entry) -> std::string {
   std::string out;
   out += "#include \"lyra/runtime/engine.hpp\"\n";
   out += "#include \"" + entry.name + ".hpp\"\n";
@@ -230,30 +242,26 @@ auto RenderHostMain(const mir::ClassDecl& entry) -> std::string {
 auto EmitCppDeclarations(const mir::CompilationUnit& unit)
     -> diag::Result<std::vector<CppArtifact>> {
   std::vector<CppArtifact> headers;
-  headers.reserve(unit.classes.size());
-  for (const auto& cls : unit.classes) {
-    auto content_or = RenderClassHeaderFile(unit, cls);
-    if (!content_or) return std::unexpected(std::move(content_or.error()));
-    headers.push_back(
-        {.relpath = cls.name + ".hpp", .content = *std::move(content_or)});
-  }
+  const auto& root = unit.structural_scope;
+  auto content_or = RenderScopeHeaderFile(unit, root);
+  if (!content_or) return std::unexpected(std::move(content_or.error()));
+  headers.push_back(
+      {.relpath = root.name + ".hpp", .content = *std::move(content_or)});
   return headers;
 }
 
-auto EmitCppHostMain(const mir::ClassDecl& entry_class) -> CppArtifact {
-  return {.relpath = "main.cpp", .content = RenderHostMain(entry_class)};
+auto EmitCppHostMain(const mir::StructuralScope& entry_scope) -> CppArtifact {
+  return {.relpath = "main.cpp", .content = RenderHostMain(entry_scope)};
 }
 
-auto EmitCpp(
-    const mir::CompilationUnit& unit, const mir::ClassDecl& entry_class)
-    -> diag::Result<CppArtifactSet> {
+auto EmitCpp(const mir::CompilationUnit& unit) -> diag::Result<CppArtifactSet> {
   CppArtifactSet set;
   auto headers_or = EmitCppDeclarations(unit);
   if (!headers_or) return std::unexpected(std::move(headers_or.error()));
   for (auto& h : *headers_or) {
     set.files.push_back(std::move(h));
   }
-  set.files.push_back(EmitCppHostMain(entry_class));
+  set.files.push_back(EmitCppHostMain(unit.structural_scope));
   return set;
 }
 

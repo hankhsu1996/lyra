@@ -4,9 +4,9 @@
 #include <cstdint>
 #include <string>
 
-#include "lyra/hir/type.hpp"
+#include "lyra/mir/structural_hops.hpp"
 
-namespace lyra::hir {
+namespace lyra::mir {
 
 struct StructuralSubroutineId {
   std::uint32_t value;
@@ -15,15 +15,13 @@ struct StructuralSubroutineId {
       -> std::strong_ordering = default;
 };
 
-enum class SubroutineKind : std::uint8_t {
-  kTask,
-  kFunction,
-};
-
 struct StructuralSubroutineDecl {
   std::string name;
-  SubroutineKind kind;
-  TypeId result_type;
 };
 
-}  // namespace lyra::hir
+struct StructuralSubroutineRef {
+  StructuralHops hops = {};
+  StructuralSubroutineId subroutine = {};
+};
+
+}  // namespace lyra::mir

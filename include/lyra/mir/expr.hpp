@@ -1,21 +1,23 @@
 #pragma once
 
-#include <compare>
 #include <cstdint>
 #include <string>
 #include <variant>
 #include <vector>
 
 #include "lyra/mir/binary_op.hpp"
-#include "lyra/mir/body_hops.hpp"
 #include "lyra/mir/conversion.hpp"
 #include "lyra/mir/expr_id.hpp"
 #include "lyra/mir/integral_constant.hpp"
-#include "lyra/mir/local_var.hpp"
-#include "lyra/mir/member_var.hpp"
+#include "lyra/mir/procedural_hops.hpp"
+#include "lyra/mir/procedural_var.hpp"
 #include "lyra/mir/runtime_print.hpp"
+#include "lyra/mir/structural_hops.hpp"
+#include "lyra/mir/structural_subroutine.hpp"
+#include "lyra/mir/structural_var.hpp"
 #include "lyra/mir/type.hpp"
 #include "lyra/mir/unary_op.hpp"
+#include "lyra/support/system_subroutine.hpp"
 
 namespace lyra::mir {
 
@@ -34,16 +36,17 @@ struct TimeLiteral {
   TimeScale scale;
 };
 
-struct MemberVarRef {
-  MemberVarId target;
+struct StructuralVarRef {
+  StructuralHops hops;
+  StructuralVarId var;
 };
 
-struct LocalVarRef {
-  BodyHops body_hops;
-  LocalVarId local;
+struct ProceduralVarRef {
+  ProceduralHops hops;
+  ProceduralVarId var;
 };
 
-using Lvalue = std::variant<MemberVarRef, LocalVarRef>;
+using Lvalue = std::variant<StructuralVarRef, ProceduralVarRef>;
 
 struct UnaryExpr {
   UnaryOp op;
@@ -61,18 +64,11 @@ struct AssignExpr {
   ExprId value;
 };
 
-struct UserSubroutineTargetId {
-  std::uint32_t value;
-
-  auto operator<=>(const UserSubroutineTargetId&) const
-      -> std::strong_ordering = default;
+struct SystemSubroutineCallee {
+  support::SystemSubroutineId id;
 };
 
-struct UserSubroutineTarget {
-  std::string name;
-};
-
-using Callee = UserSubroutineTargetId;
+using Callee = std::variant<SystemSubroutineCallee, StructuralSubroutineRef>;
 
 struct CallExpr {
   Callee callee;
@@ -84,9 +80,9 @@ struct RuntimeCallExpr {
 };
 
 using ExprData = std::variant<
-    IntegerLiteral, StringLiteral, TimeLiteral, MemberVarRef, LocalVarRef,
-    UnaryExpr, BinaryExpr, AssignExpr, CallExpr, RuntimeCallExpr,
-    ConversionExpr>;
+    IntegerLiteral, StringLiteral, TimeLiteral, StructuralVarRef,
+    ProceduralVarRef, UnaryExpr, BinaryExpr, AssignExpr, CallExpr,
+    RuntimeCallExpr, ConversionExpr>;
 
 struct Expr {
   ExprData data;

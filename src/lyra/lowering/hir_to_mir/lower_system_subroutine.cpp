@@ -15,8 +15,10 @@
 namespace lyra::lowering::hir_to_mir {
 
 auto LowerSystemSubroutineCall(
-    const UnitLoweringState& unit_state, const ClassLoweringState& class_state,
-    const ProcessLoweringState& proc_state, BodyLoweringState& body_state,
+    const UnitLoweringState& unit_state,
+    const StructuralScopeLoweringState& scope_state,
+    const ProcessLoweringState& proc_state,
+    ProceduralScopeLoweringState& proc_scope_state,
     const hir::Process& hir_proc, const hir::CallExpr& call,
     const hir::SystemSubroutineRef& ref, diag::SourceSpan span)
     -> diag::Result<mir::Expr> {
@@ -26,8 +28,8 @@ auto LowerSystemSubroutineCall(
           [&](const support::PrintSystemSubroutineInfo& print)
               -> diag::Result<mir::Expr> {
             return LowerPrintSystemSubroutineCall(
-                unit_state, class_state, proc_state, body_state, hir_proc, call,
-                desc, print, span);
+                unit_state, scope_state, proc_state, proc_scope_state, hir_proc,
+                call, desc, print, span);
           },
       },
       desc.semantic);

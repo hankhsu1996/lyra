@@ -183,41 +183,38 @@ auto LowerHirConversionKind(hir::ConversionKind k) -> mir::ConversionKind {
   throw InternalError("LowerHirConversionKind: unknown HIR ConversionKind");
 }
 
-auto LowerMemberVarRefExpr(
-    const ClassLoweringState& class_state, const hir::MemberVarRef& m,
-    mir::TypeId type) -> mir::Expr {
-  const mir::MemberVarId mir_id =
-      class_state.TranslateMemberVar(m.parent_scope_hops, m.target);
-  return mir::Expr{.data = mir::MemberVarRef{.target = mir_id}, .type = type};
+auto LowerStructuralVarRefExpr(
+    const StructuralScopeLoweringState& scope_state,
+    const hir::StructuralVarRef& m, mir::TypeId type) -> mir::Expr {
+  return mir::Expr{
+      .data = scope_state.TranslateStructuralVar(m.hops, m.var), .type = type};
 }
 
-auto LowerLocalVarRefExpr(
-    const ProcessLoweringState& proc_state, const hir::LocalVarRef& l,
+auto LowerProceduralVarRefExpr(
+    const ProcessLoweringState& proc_state, const hir::ProceduralVarRef& l,
     mir::TypeId type) -> mir::Expr {
-  const mir::LocalVarRef ref = proc_state.TranslateLocalVar(l.target);
-  return mir::Expr{.data = ref, .type = type};
+  return mir::Expr{
+      .data = proc_state.TranslateProceduralVar(l.var), .type = type};
 }
 
 auto LowerLoopVarRefExpr(
     const ConstructorLoweringState& ctor_state, const hir::LoopVarRef& lv,
     mir::TypeId type) -> mir::Expr {
-  const mir::LocalVarRef ref = ctor_state.TranslateLoopVar(lv.target);
-  return mir::Expr{.data = ref, .type = type};
+  return mir::Expr{
+      .data = ctor_state.TranslateLoopVar(lv.loop_var), .type = type};
 }
 
 auto LowerRefAsLvalue(
-    const ClassLoweringState& class_state,
+    const StructuralScopeLoweringState& scope_state,
     const ProcessLoweringState& proc_state, const hir::ValueRef& ref)
     -> mir::Lvalue {
   return std::visit(
       Overloaded{
-          [&](const hir::MemberVarRef& m) -> mir::Lvalue {
-            return mir::MemberVarRef{
-                .target = class_state.TranslateMemberVar(
-                    m.parent_scope_hops, m.target)};
+          [&](const hir::StructuralVarRef& m) -> mir::Lvalue {
+            return scope_state.TranslateStructuralVar(m.hops, m.var);
           },
-          [&](const hir::LocalVarRef& l) -> mir::Lvalue {
-            return proc_state.TranslateLocalVar(l.target);
+          [&](const hir::ProceduralVarRef& l) -> mir::Lvalue {
+            return proc_state.TranslateProceduralVar(l.var);
           },
           [](const hir::LoopVarRef&) -> mir::Lvalue {
             throw InternalError(
@@ -229,36 +226,35 @@ auto LowerRefAsLvalue(
 }
 
 auto LowerRefAsLvalue(
-    const ClassLoweringState& class_state,
+    const StructuralScopeLoweringState& scope_state,
     const ConstructorLoweringState& ctor_state, const hir::ValueRef& ref)
     -> mir::Lvalue {
   return std::visit(
       Overloaded{
-          [&](const hir::MemberVarRef& m) -> mir::Lvalue {
-            return mir::MemberVarRef{
-                .target = class_state.TranslateMemberVar(
-                    m.parent_scope_hops, m.target)};
+          [&](const hir::StructuralVarRef& m) -> mir::Lvalue {
+            return scope_state.TranslateStructuralVar(m.hops, m.var);
           },
-          [](const hir::LocalVarRef&) -> mir::Lvalue {
+          [](const hir::ProceduralVarRef&) -> mir::Lvalue {
             throw InternalError(
-                "LowerRefAsLvalue (constructor): HIR LocalVarRef does not "
-                "appear in constructor bodies");
+                "LowerRefAsLvalue (constructor): HIR ProceduralVarRef does "
+                "not appear in constructor bodies");
           },
           [&](const hir::LoopVarRef& lv) -> mir::Lvalue {
-            return ctor_state.TranslateLoopVar(lv.target);
+            return ctor_state.TranslateLoopVar(lv.loop_var);
           },
       },
       ref);
 }
 
 auto LowerUserCallee(
-    const ClassLoweringState& class_state, const hir::UserSubroutineRef& u)
-    -> mir::Callee {
-  return class_state.TranslateUserSubroutine(u.parent_scope_hops, u.id);
+    const StructuralScopeLoweringState& scope_state,
+    const hir::StructuralSubroutineRef& u) -> mir::Callee {
+  return scope_state.TranslateStructuralSubroutine(u.hops, u.subroutine);
 }
 
 auto LowerPrimaryExpr(
-    const UnitLoweringState& unit_state, const ClassLoweringState& class_state,
+    const UnitLoweringState& unit_state,
+    const StructuralScopeLoweringState& scope_state,
     const ProcessLoweringState& proc_state, const hir::PrimaryExpr& p,
     mir::TypeId type) -> mir::Expr {
   return std::visit(
@@ -284,11 +280,11 @@ auto LowerPrimaryExpr(
           [&](const hir::RefExpr& r) -> mir::Expr {
             return std::visit(
                 Overloaded{
-                    [&](const hir::MemberVarRef& m) -> mir::Expr {
-                      return LowerMemberVarRefExpr(class_state, m, type);
+                    [&](const hir::StructuralVarRef& m) -> mir::Expr {
+                      return LowerStructuralVarRefExpr(scope_state, m, type);
                     },
-                    [&](const hir::LocalVarRef& l) -> mir::Expr {
-                      return LowerLocalVarRefExpr(proc_state, l, type);
+                    [&](const hir::ProceduralVarRef& l) -> mir::Expr {
+                      return LowerProceduralVarRefExpr(proc_state, l, type);
                     },
                     [](const hir::LoopVarRef&) -> mir::Expr {
                       throw InternalError(
@@ -300,11 +296,11 @@ auto LowerPrimaryExpr(
           },
       },
       p.data);
-  (void)unit_state;
 }
 
 auto LowerPrimaryExpr(
-    const UnitLoweringState& unit_state, const ClassLoweringState& class_state,
+    const UnitLoweringState& unit_state,
+    const StructuralScopeLoweringState& scope_state,
     const ConstructorLoweringState& ctor_state, const hir::PrimaryExpr& p,
     mir::TypeId type) -> diag::Result<mir::Expr> {
   return std::visit(
@@ -330,13 +326,15 @@ auto LowerPrimaryExpr(
           [&](const hir::RefExpr& r) -> diag::Result<mir::Expr> {
             return std::visit(
                 Overloaded{
-                    [&](const hir::MemberVarRef& m) -> diag::Result<mir::Expr> {
-                      return LowerMemberVarRefExpr(class_state, m, type);
+                    [&](const hir::StructuralVarRef& m)
+                        -> diag::Result<mir::Expr> {
+                      return LowerStructuralVarRefExpr(scope_state, m, type);
                     },
-                    [](const hir::LocalVarRef&) -> diag::Result<mir::Expr> {
+                    [](const hir::ProceduralVarRef&)
+                        -> diag::Result<mir::Expr> {
                       return diag::Unsupported(
                           diag::DiagCode::kUnsupportedStructuralExpressionForm,
-                          "local variable references are not allowed in "
+                          "procedural variable references are not allowed in "
                           "constructor expressions",
                           diag::UnsupportedCategory::kFeature);
                     },
@@ -348,14 +346,15 @@ auto LowerPrimaryExpr(
           },
       },
       p.data);
-  (void)unit_state;
 }
 
 }  // namespace
 
 auto LowerExpr(
-    const UnitLoweringState& unit_state, const ClassLoweringState& class_state,
-    const ProcessLoweringState& proc_state, BodyLoweringState& body_state,
+    const UnitLoweringState& unit_state,
+    const StructuralScopeLoweringState& scope_state,
+    const ProcessLoweringState& proc_state,
+    ProceduralScopeLoweringState& proc_scope_state,
     const hir::Process& hir_process, const hir::Expr& expr)
     -> diag::Result<mir::Expr> {
   const mir::TypeId result_type = unit_state.TranslateType(expr.type);
@@ -363,17 +362,17 @@ auto LowerExpr(
       Overloaded{
           [&](const hir::PrimaryExpr& p) -> diag::Result<mir::Expr> {
             return LowerPrimaryExpr(
-                unit_state, class_state, proc_state, p, result_type);
+                unit_state, scope_state, proc_state, p, result_type);
           },
           [&](const hir::UnaryExpr& u) -> diag::Result<mir::Expr> {
             auto operand_or = LowerExpr(
-                unit_state, class_state, proc_state, body_state, hir_process,
-                hir_process.exprs.at(u.operand.value));
+                unit_state, scope_state, proc_state, proc_scope_state,
+                hir_process, hir_process.exprs.at(u.operand.value));
             if (!operand_or) {
               return std::unexpected(std::move(operand_or.error()));
             }
             const mir::ExprId operand_id =
-                body_state.AddExpr(*std::move(operand_or));
+                proc_scope_state.AddExpr(*std::move(operand_or));
             return mir::Expr{
                 .data =
                     mir::UnaryExpr{
@@ -382,15 +381,17 @@ auto LowerExpr(
           },
           [&](const hir::BinaryExpr& b) -> diag::Result<mir::Expr> {
             auto lhs_or = LowerExpr(
-                unit_state, class_state, proc_state, body_state, hir_process,
-                hir_process.exprs.at(b.lhs.value));
+                unit_state, scope_state, proc_state, proc_scope_state,
+                hir_process, hir_process.exprs.at(b.lhs.value));
             if (!lhs_or) return std::unexpected(std::move(lhs_or.error()));
-            const mir::ExprId lhs_id = body_state.AddExpr(*std::move(lhs_or));
+            const mir::ExprId lhs_id =
+                proc_scope_state.AddExpr(*std::move(lhs_or));
             auto rhs_or = LowerExpr(
-                unit_state, class_state, proc_state, body_state, hir_process,
-                hir_process.exprs.at(b.rhs.value));
+                unit_state, scope_state, proc_state, proc_scope_state,
+                hir_process, hir_process.exprs.at(b.rhs.value));
             if (!rhs_or) return std::unexpected(std::move(rhs_or.error()));
-            const mir::ExprId rhs_id = body_state.AddExpr(*std::move(rhs_or));
+            const mir::ExprId rhs_id =
+                proc_scope_state.AddExpr(*std::move(rhs_or));
             return mir::Expr{
                 .data =
                     mir::BinaryExpr{
@@ -407,27 +408,28 @@ auto LowerExpr(
                   "AssignExpr lhs is not assignable (AST->HIR invariant)");
             }
             auto rhs_or = LowerExpr(
-                unit_state, class_state, proc_state, body_state, hir_process,
-                hir_process.exprs.at(a.rhs.value));
+                unit_state, scope_state, proc_state, proc_scope_state,
+                hir_process, hir_process.exprs.at(a.rhs.value));
             if (!rhs_or) return std::unexpected(std::move(rhs_or.error()));
-            const mir::ExprId rhs_id = body_state.AddExpr(*std::move(rhs_or));
+            const mir::ExprId rhs_id =
+                proc_scope_state.AddExpr(*std::move(rhs_or));
             return mir::Expr{
                 .data =
                     mir::AssignExpr{
                         .target = LowerRefAsLvalue(
-                            class_state, proc_state, ref->get().target),
+                            scope_state, proc_state, ref->get().target),
                         .value = rhs_id},
                 .type = result_type};
           },
           [&](const hir::ConversionExpr& cv) -> diag::Result<mir::Expr> {
             auto operand_or = LowerExpr(
-                unit_state, class_state, proc_state, body_state, hir_process,
-                hir_process.exprs.at(cv.operand.value));
+                unit_state, scope_state, proc_state, proc_scope_state,
+                hir_process, hir_process.exprs.at(cv.operand.value));
             if (!operand_or) {
               return std::unexpected(std::move(operand_or.error()));
             }
             const mir::ExprId operand_id =
-                body_state.AddExpr(*std::move(operand_or));
+                proc_scope_state.AddExpr(*std::move(operand_or));
             return mir::Expr{
                 .data =
                     mir::ConversionExpr{
@@ -441,25 +443,27 @@ auto LowerExpr(
                     [&](const hir::SystemSubroutineRef& sys)
                         -> diag::Result<mir::Expr> {
                       return LowerSystemSubroutineCall(
-                          unit_state, class_state, proc_state, body_state,
+                          unit_state, scope_state, proc_state, proc_scope_state,
                           hir_process, c, sys, expr.span);
                     },
-                    [&](const hir::UserSubroutineRef& usr)
+                    [&](const hir::StructuralSubroutineRef& usr)
                         -> diag::Result<mir::Expr> {
                       std::vector<mir::ExprId> args;
                       args.reserve(c.arguments.size());
                       for (const auto arg : c.arguments) {
                         auto arg_or = LowerExpr(
-                            unit_state, class_state, proc_state, body_state,
-                            hir_process, hir_process.exprs.at(arg.value));
+                            unit_state, scope_state, proc_state,
+                            proc_scope_state, hir_process,
+                            hir_process.exprs.at(arg.value));
                         if (!arg_or)
                           return std::unexpected(std::move(arg_or.error()));
-                        args.push_back(body_state.AddExpr(*std::move(arg_or)));
+                        args.push_back(
+                            proc_scope_state.AddExpr(*std::move(arg_or)));
                       }
                       return mir::Expr{
                           .data =
                               mir::CallExpr{
-                                  .callee = LowerUserCallee(class_state, usr),
+                                  .callee = LowerUserCallee(scope_state, usr),
                                   .arguments = std::move(args)},
                           .type = result_type};
                     },
@@ -471,8 +475,10 @@ auto LowerExpr(
 }
 
 auto LowerExpr(
-    const UnitLoweringState& unit_state, const ClassLoweringState& class_state,
-    const ConstructorLoweringState& ctor_state, BodyLoweringState& body_state,
+    const UnitLoweringState& unit_state,
+    const StructuralScopeLoweringState& scope_state,
+    const ConstructorLoweringState& ctor_state,
+    ProceduralScopeLoweringState& proc_scope_state,
     const hir::StructuralScope& scope, const hir::Expr& expr)
     -> diag::Result<mir::Expr> {
   const mir::TypeId result_type = unit_state.TranslateType(expr.type);
@@ -480,17 +486,17 @@ auto LowerExpr(
       Overloaded{
           [&](const hir::PrimaryExpr& p) -> diag::Result<mir::Expr> {
             return LowerPrimaryExpr(
-                unit_state, class_state, ctor_state, p, result_type);
+                unit_state, scope_state, ctor_state, p, result_type);
           },
           [&](const hir::UnaryExpr& u) -> diag::Result<mir::Expr> {
             auto operand_or = LowerExpr(
-                unit_state, class_state, ctor_state, body_state, scope,
+                unit_state, scope_state, ctor_state, proc_scope_state, scope,
                 scope.GetExpr(u.operand));
             if (!operand_or) {
               return std::unexpected(std::move(operand_or.error()));
             }
             const mir::ExprId operand_id =
-                body_state.AddExpr(*std::move(operand_or));
+                proc_scope_state.AddExpr(*std::move(operand_or));
             return mir::Expr{
                 .data =
                     mir::UnaryExpr{
@@ -499,15 +505,17 @@ auto LowerExpr(
           },
           [&](const hir::BinaryExpr& b) -> diag::Result<mir::Expr> {
             auto lhs_or = LowerExpr(
-                unit_state, class_state, ctor_state, body_state, scope,
+                unit_state, scope_state, ctor_state, proc_scope_state, scope,
                 scope.GetExpr(b.lhs));
             if (!lhs_or) return std::unexpected(std::move(lhs_or.error()));
-            const mir::ExprId lhs_id = body_state.AddExpr(*std::move(lhs_or));
+            const mir::ExprId lhs_id =
+                proc_scope_state.AddExpr(*std::move(lhs_or));
             auto rhs_or = LowerExpr(
-                unit_state, class_state, ctor_state, body_state, scope,
+                unit_state, scope_state, ctor_state, proc_scope_state, scope,
                 scope.GetExpr(b.rhs));
             if (!rhs_or) return std::unexpected(std::move(rhs_or.error()));
-            const mir::ExprId rhs_id = body_state.AddExpr(*std::move(rhs_or));
+            const mir::ExprId rhs_id =
+                proc_scope_state.AddExpr(*std::move(rhs_or));
             return mir::Expr{
                 .data =
                     mir::BinaryExpr{
@@ -524,27 +532,28 @@ auto LowerExpr(
                   "AssignExpr lhs is not assignable (AST->HIR invariant)");
             }
             auto rhs_or = LowerExpr(
-                unit_state, class_state, ctor_state, body_state, scope,
+                unit_state, scope_state, ctor_state, proc_scope_state, scope,
                 scope.GetExpr(a.rhs));
             if (!rhs_or) return std::unexpected(std::move(rhs_or.error()));
-            const mir::ExprId rhs_id = body_state.AddExpr(*std::move(rhs_or));
+            const mir::ExprId rhs_id =
+                proc_scope_state.AddExpr(*std::move(rhs_or));
             return mir::Expr{
                 .data =
                     mir::AssignExpr{
                         .target = LowerRefAsLvalue(
-                            class_state, ctor_state, ref->get().target),
+                            scope_state, ctor_state, ref->get().target),
                         .value = rhs_id},
                 .type = result_type};
           },
           [&](const hir::ConversionExpr& cv) -> diag::Result<mir::Expr> {
             auto operand_or = LowerExpr(
-                unit_state, class_state, ctor_state, body_state, scope,
+                unit_state, scope_state, ctor_state, proc_scope_state, scope,
                 scope.GetExpr(cv.operand));
             if (!operand_or) {
               return std::unexpected(std::move(operand_or.error()));
             }
             const mir::ExprId operand_id =
-                body_state.AddExpr(*std::move(operand_or));
+                proc_scope_state.AddExpr(*std::move(operand_or));
             return mir::Expr{
                 .data =
                     mir::ConversionExpr{

@@ -6,7 +6,7 @@
 #include <variant>
 #include <vector>
 
-#include "lyra/mir/class_decl_id.hpp"
+#include "lyra/mir/structural_scope_id.hpp"
 
 namespace lyra::mir {
 
@@ -108,7 +108,7 @@ struct ChandleType {};
 struct VoidType {};
 
 struct ObjectType {
-  ClassDeclId target;
+  StructuralScopeId target;
 
   auto operator==(const ObjectType&) const -> bool = default;
 };
@@ -147,6 +147,7 @@ class CompilationUnit;
     const CompilationUnit& unit, TypeId type) -> bool;
 
 [[nodiscard]] auto GetOwnedObjectTarget(
-    const CompilationUnit& unit, TypeId type) -> std::optional<ClassDeclId>;
+    const CompilationUnit& unit, TypeId type)
+    -> std::optional<StructuralScopeId>;
 
 }  // namespace lyra::mir

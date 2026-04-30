@@ -9,8 +9,10 @@
 namespace lyra::lowering::hir_to_mir {
 
 auto LowerStmt(
-    const UnitLoweringState& unit_state, const ClassLoweringState& class_state,
-    ProcessLoweringState& proc_state, BodyLoweringState& body_state,
+    const UnitLoweringState& unit_state,
+    const StructuralScopeLoweringState& scope_state,
+    ProcessLoweringState& proc_state,
+    ProceduralScopeLoweringState& proc_scope_state,
     const hir::Process& hir_proc, const hir::Stmt& stmt)
     -> diag::Result<mir::Stmt>;
 

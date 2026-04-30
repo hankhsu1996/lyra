@@ -8,13 +8,14 @@
 
 namespace lyra::hir {
 
-struct LocalVarId {
+struct ProceduralVarId {
   std::uint32_t value;
 
-  auto operator<=>(const LocalVarId&) const -> std::strong_ordering = default;
+  auto operator<=>(const ProceduralVarId&) const
+      -> std::strong_ordering = default;
 };
 
-struct LocalVar {
+struct ProceduralVarDecl {
   std::string name;
   TypeId type;
 };

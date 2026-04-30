@@ -24,8 +24,8 @@
 #include "lyra/diag/source_manager.hpp"
 #include "lyra/frontend/load.hpp"
 #include "lyra/hir/dump.hpp"
-#include "lyra/mir/class_decl.hpp"
 #include "lyra/mir/dump.hpp"
+#include "lyra/mir/structural_scope.hpp"
 
 namespace {
 
@@ -241,21 +241,15 @@ auto main(int argc, char** argv) -> int {
         fmt::print("{}", lyra::mir::DumpMir(*result.artifacts.mir_unit));
         return 0;
       case CommandKind::kEmitCpp: {
-        const lyra::mir::ClassDecl* entry = nullptr;
-        for (const auto& cls : result.artifacts.mir_unit->classes) {
-          if (cls.name == args.input.top) {
-            entry = &cls;
-            break;
-          }
-        }
-        if (entry == nullptr) {
+        const auto& root = result.artifacts.mir_unit->structural_scope;
+        if (root.name != args.input.top) {
           throw lyra::InternalError(
               std::format(
-                  "emit cpp: top class '{}' not found in compilation unit",
-                  args.input.top));
+                  "emit cpp: top scope '{}' does not match compilation unit "
+                  "root '{}'",
+                  args.input.top, root.name));
         }
-        auto set_or =
-            lyra::backend::cpp::EmitCpp(*result.artifacts.mir_unit, *entry);
+        auto set_or = lyra::backend::cpp::EmitCpp(*result.artifacts.mir_unit);
         if (!set_or) {
           const lyra::diag::SourceManager* mgr =
               result.artifacts.parse ? &result.artifacts.parse->diag_sources

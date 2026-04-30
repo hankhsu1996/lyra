@@ -5,10 +5,11 @@
 
 namespace lyra::mir {
 
-struct BodyHops {
+struct ProceduralHops {
   std::uint32_t value = 0;
 
-  auto operator<=>(const BodyHops&) const -> std::strong_ordering = default;
+  auto operator<=>(const ProceduralHops&) const
+      -> std::strong_ordering = default;
 };
 
 }  // namespace lyra::mir
