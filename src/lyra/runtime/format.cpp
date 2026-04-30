@@ -150,7 +150,6 @@ auto RuntimeValueView::NarrowIntegral(
       .data = IntegralValueView{
           .state = IntegralStateKind::kTwoState,
           .inline_word = word,
-          .word_count = 1,
           .bit_width = bit_width,
           .is_signed = is_signed,
       }};
@@ -167,50 +166,11 @@ auto RuntimeValueView::String(std::string_view sv) -> RuntimeValueView {
       }};
 }
 
-auto RuntimeValueView::FromBitView(ConstBitView v, bool is_signed)
-    -> RuntimeValueView {
-  if (v.Width() > 64U) {
-    throw InternalError(
-        "RuntimeValueView::FromBitView: wide widths (>64) are not yet "
-        "supported");
-  }
-  return RuntimeValueView{
-      .data = IntegralValueView{
-          .state = IntegralStateKind::kTwoState,
-          .inline_word = v.PackLowWord(),
-          .word_count = 1,
-          .bit_width = static_cast<std::uint32_t>(v.Width()),
-          .is_signed = is_signed,
-      }};
-}
-
-auto RuntimeValueView::FromLogicView(ConstLogicView v, bool is_signed)
-    -> RuntimeValueView {
-  if (v.Width() > 64U) {
-    throw InternalError(
-        "RuntimeValueView::FromLogicView: wide widths (>64) are not yet "
-        "supported");
-  }
-  return RuntimeValueView{
-      .data = IntegralValueView{
-          .state = IntegralStateKind::kFourState,
-          .inline_word = v.PackValueLowWord(),
-          .inline_unknown_word = v.PackUnknownLowWord(),
-          .word_count = 1,
-          .bit_width = static_cast<std::uint32_t>(v.Width()),
-          .is_signed = is_signed,
-      }};
-}
-
 auto FormatValue(const FormatSpec& spec, const RuntimeValueView& value)
     -> std::string {
   return std::visit(
       Overloaded{
           [&](const IntegralValueView& v) -> std::string {
-            if (v.word_count > 1) {
-              throw InternalError(
-                  "FormatValue: wide integrals are not yet implemented");
-            }
             switch (v.state) {
               case IntegralStateKind::kTwoState:
                 return FormatIntegralNarrow(spec, v);

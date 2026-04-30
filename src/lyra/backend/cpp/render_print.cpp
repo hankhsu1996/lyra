@@ -4,6 +4,7 @@
 #include <format>
 #include <string>
 #include <string_view>
+#include <utility>
 #include <variant>
 #include <vector>
 
@@ -96,21 +97,10 @@ auto RenderRuntimeValueViewInit(
     }
 
     if (pa.form == mir::PackedArrayForm::kExplicit) {
-      if (bit_width > 64) {
-        return diag::Unsupported(
-            diag::DiagCode::kCppEmitExpressionFormNotImplemented,
-            "wide integral display is not yet implemented in cpp emit",
-            diag::UnsupportedCategory::kFeature);
-      }
-      auto operand_view_or = RenderExprAsRuntimeView(ctx, ctx.Expr(v.value));
-      if (!operand_view_or) {
-        return std::unexpected(std::move(operand_view_or.error()));
-      }
-      const char* factory =
-          pa.IsFourState() ? "lyra::runtime::RuntimeValueView::FromLogicView"
-                           : "lyra::runtime::RuntimeValueView::FromBitView";
-      return std::format(
-          "{}({}, {})", factory, *operand_view_or, BoolLiteral(is_signed));
+      return diag::Unsupported(
+          diag::DiagCode::kCppEmitPackedRuntimeNotSupported,
+          "packed runtime formatting is not yet supported in cpp emit",
+          diag::UnsupportedCategory::kFeature);
     }
     throw InternalError(
         "RenderRuntimeValueViewInit: unsupported PackedArrayForm");

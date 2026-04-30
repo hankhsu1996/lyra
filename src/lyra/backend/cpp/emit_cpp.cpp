@@ -23,17 +23,20 @@ namespace {
 
 auto RenderField(
     const mir::CompilationUnit& unit, const mir::StructuralScope& owner_scope,
-    const mir::StructuralVarDecl& var, std::size_t indent) -> std::string {
-  return Indent(indent) + RenderTypeAsCpp(unit, owner_scope, var.type) + " " +
-         var.name + ";\n";
+    const mir::StructuralVarDecl& var, std::size_t indent)
+    -> diag::Result<std::string> {
+  auto type_or = RenderTypeAsCpp(unit, owner_scope, var.type);
+  if (!type_or) return std::unexpected(std::move(type_or.error()));
+  return Indent(indent) + *type_or + " " + var.name + ";\n";
 }
 
 auto RenderParamField(
     const mir::CompilationUnit& unit, const mir::StructuralScope& owner_scope,
-    const mir::StructuralParamDecl& param, std::size_t indent) -> std::string {
-  return Indent(indent) + "const " +
-         RenderTypeAsCpp(unit, owner_scope, param.type) + " " + param.name +
-         ";\n";
+    const mir::StructuralParamDecl& param, std::size_t indent)
+    -> diag::Result<std::string> {
+  auto type_or = RenderTypeAsCpp(unit, owner_scope, param.type);
+  if (!type_or) return std::unexpected(std::move(type_or.error()));
+  return Indent(indent) + "const " + *type_or + " " + param.name + ";\n";
 }
 
 auto CtorParamName(std::size_t index) -> std::string {
@@ -52,7 +55,9 @@ auto RenderConstructor(
     }
     const auto& p = s.structural_params[i];
     const auto param_name = CtorParamName(i);
-    sig += RenderTypeAsCpp(scope_ctx.Unit(), s, p.type) + " " + param_name;
+    auto type_or = RenderTypeAsCpp(scope_ctx.Unit(), s, p.type);
+    if (!type_or) return std::unexpected(std::move(type_or.error()));
+    sig += *type_or + " " + param_name;
     init_list += p.name + "(" + param_name + ")";
   }
   sig += ")";
@@ -195,14 +200,18 @@ auto RenderScopeAsClass(
   }
 
   for (const auto& p : s.structural_params) {
-    out += RenderParamField(unit, s, p, indent + 1);
+    auto field_or = RenderParamField(unit, s, p, indent + 1);
+    if (!field_or) return std::unexpected(std::move(field_or.error()));
+    out += *field_or;
   }
   if (!s.structural_params.empty()) {
     out += "\n";
   }
 
   for (const auto& v : s.structural_vars) {
-    out += RenderField(unit, s, v, indent + 1);
+    auto field_or = RenderField(unit, s, v, indent + 1);
+    if (!field_or) return std::unexpected(std::move(field_or.error()));
+    out += *field_or;
   }
   if (!s.structural_vars.empty()) {
     out += "\n";
@@ -241,16 +250,12 @@ auto RenderScopeHeaderFile(
   out += "#include <string>\n";
   out += "#include <vector>\n";
   out += "#include \"lyra/runtime/bind_context.hpp\"\n";
-  out += "#include \"lyra/runtime/bitwise.hpp\"\n";
-  out += "#include \"lyra/runtime/convert.hpp\"\n";
   out += "#include \"lyra/runtime/delay.hpp\"\n";
   out += "#include \"lyra/runtime/format.hpp\"\n";
   out += "#include \"lyra/runtime/io.hpp\"\n";
   out += "#include \"lyra/runtime/module.hpp\"\n";
-  out += "#include \"lyra/runtime/packed.hpp\"\n";
   out += "#include \"lyra/runtime/process.hpp\"\n";
   out += "#include \"lyra/runtime/process_kind.hpp\"\n";
-  out += "#include \"lyra/runtime/reduction.hpp\"\n";
   out += "#include \"lyra/runtime/runtime_scope_kind.hpp\"\n";
   out += "#include \"lyra/runtime/runtime_services.hpp\"\n";
   out += "\n";

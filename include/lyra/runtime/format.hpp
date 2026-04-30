@@ -5,8 +5,6 @@
 #include <string_view>
 #include <variant>
 
-#include "lyra/runtime/packed.hpp"
-
 namespace lyra::runtime {
 
 enum class PrintKind : std::uint8_t {
@@ -43,23 +41,15 @@ struct FormatSpec {
 
 // Non-owning view payloads passed into the runtime print API.
 //
-// Two integral storage planes coexist:
-//   - Narrow integral (bit_width <= 64): the value lives inline in
-//   `inline_word`,
-//     and (for four-state) the unknown plane lives inline in
-//     `inline_unknown_word`. `value_words` / `unknown_words` are null. The
-//     whole view is built inline at a `LyraPrint` call site with no
-//     externally owned storage.
-//   - Wide integral (bit_width > 64): caller owns `uint64_t[word_count]`
-//     arrays for value and (for four-state) unknown, passed via
-//     `value_words` and `unknown_words`.
+// Narrow integral (bit_width <= 64): the value lives inline in `inline_word`,
+// and (for four-state) the unknown plane lives inline in
+// `inline_unknown_word`. The whole view is built inline at a `LyraPrint` call
+// site with no externally owned storage. Wide integrals (>64 bits) are not
+// yet supported.
 struct IntegralValueView {
   IntegralStateKind state = IntegralStateKind::kTwoState;
   std::uint64_t inline_word = 0;
   std::uint64_t inline_unknown_word = 0;
-  const std::uint64_t* value_words = nullptr;
-  const std::uint64_t* unknown_words = nullptr;
-  std::uint32_t word_count = 0;
   std::uint32_t bit_width = 0;
   bool is_signed = false;
 };
@@ -84,20 +74,6 @@ struct RuntimeValueView {
       -> RuntimeValueView;
 
   [[nodiscard]] static auto String(std::string_view sv) -> RuntimeValueView;
-
-  [[nodiscard]] static auto FromBitView(ConstBitView v, bool is_signed)
-      -> RuntimeValueView;
-  [[nodiscard]] static auto FromBitView(BitView v, bool is_signed)
-      -> RuntimeValueView {
-    return FromBitView(v.AsConst(), is_signed);
-  }
-
-  [[nodiscard]] static auto FromLogicView(ConstLogicView v, bool is_signed)
-      -> RuntimeValueView;
-  [[nodiscard]] static auto FromLogicView(LogicView v, bool is_signed)
-      -> RuntimeValueView {
-    return FromLogicView(v.AsConst(), is_signed);
-  }
 };
 
 [[nodiscard]] auto FormatValue(
