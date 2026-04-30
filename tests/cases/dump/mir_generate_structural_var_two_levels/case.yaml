@@ -1,0 +1,12 @@
+id: dump.mir_generate_structural_var_two_levels
+tags: [dump]
+input:
+  command: [dump, mir]
+  project: false
+  top: Top
+  files: [main.sv]
+expect:
+  exit: 0
+  stdout:
+    contains:
+      - "AssignExpr target=StructuralVarRef[hops=2, var=0]"

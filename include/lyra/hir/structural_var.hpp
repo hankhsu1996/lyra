@@ -8,13 +8,14 @@
 
 namespace lyra::hir {
 
-struct MemberVarId {
+struct StructuralVarId {
   std::uint32_t value;
 
-  auto operator<=>(const MemberVarId&) const -> std::strong_ordering = default;
+  auto operator<=>(const StructuralVarId&) const
+      -> std::strong_ordering = default;
 };
 
-struct MemberVar {
+struct StructuralVarDecl {
   std::string name;
   TypeId type;
 };

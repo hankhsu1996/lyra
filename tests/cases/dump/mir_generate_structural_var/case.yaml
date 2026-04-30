@@ -1,4 +1,4 @@
-id: dump.mir_smoke
+id: dump.mir_generate_structural_var
 tags: [dump]
 input:
   command: [dump, mir]
@@ -8,4 +8,5 @@ input:
 expect:
   exit: 0
   stdout:
-    contains: ["StructuralScope", "Vars", "Constructor"]
+    contains:
+      - "AssignExpr target=StructuralVarRef[hops=1, var=0]"

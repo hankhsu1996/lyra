@@ -9,8 +9,8 @@
 namespace lyra::lowering::hir_to_mir {
 
 auto LowerProcess(
-    const UnitLoweringState& unit_state, const ClassLoweringState& class_state,
-    const hir::Process& src, TimeResolution time_resolution)
-    -> diag::Result<mir::Process>;
+    const UnitLoweringState& unit_state,
+    const StructuralScopeLoweringState& scope_state, const hir::Process& src,
+    TimeResolution time_resolution) -> diag::Result<mir::Process>;
 
 }  // namespace lyra::lowering::hir_to_mir

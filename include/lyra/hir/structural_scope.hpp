@@ -9,8 +9,8 @@
 #include "lyra/base/time.hpp"
 #include "lyra/hir/expr.hpp"
 #include "lyra/hir/loop_var.hpp"
-#include "lyra/hir/member_var.hpp"
 #include "lyra/hir/process.hpp"
+#include "lyra/hir/structural_var.hpp"
 #include "lyra/hir/subroutine.hpp"
 
 namespace lyra::hir {
@@ -52,7 +52,7 @@ struct LoopGenerate {
   ExprId initial;
   ExprId stop;
   ExprId iter;
-  StructuralScopeId body_scope;
+  StructuralScopeId scope;
 };
 
 using GenerateData = std::variant<IfGenerate, CaseGenerate, LoopGenerate>;
@@ -68,15 +68,16 @@ struct Generate {
 struct StructuralScope {
   StructuralScopeId id{};
   TimeResolution time_resolution;
-  std::vector<MemberVar> member_vars;
+  std::vector<StructuralVarDecl> structural_vars;
   std::vector<LoopVarDecl> loop_var_decls;
   std::vector<Expr> exprs;
   std::vector<Process> processes;
   std::vector<Generate> generates;
-  std::vector<UserSubroutineDecl> subroutines;
+  std::vector<StructuralSubroutineDecl> structural_subroutines;
 
-  [[nodiscard]] auto GetMemberVar(MemberVarId id) const -> const MemberVar& {
-    return member_vars.at(id.value);
+  [[nodiscard]] auto GetStructuralVar(StructuralVarId id) const
+      -> const StructuralVarDecl& {
+    return structural_vars.at(id.value);
   }
   [[nodiscard]] auto GetLoopVarDecl(LoopVarDeclId id) const
       -> const LoopVarDecl& {
@@ -91,9 +92,9 @@ struct StructuralScope {
   [[nodiscard]] auto GetGenerate(GenerateId id) const -> const Generate& {
     return generates.at(id.value);
   }
-  [[nodiscard]] auto GetSubroutine(SubroutineId id) const
-      -> const UserSubroutineDecl& {
-    return subroutines.at(id.value);
+  [[nodiscard]] auto GetStructuralSubroutine(StructuralSubroutineId id) const
+      -> const StructuralSubroutineDecl& {
+    return structural_subroutines.at(id.value);
   }
 };
 

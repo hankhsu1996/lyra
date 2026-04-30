@@ -294,12 +294,12 @@ auto LowerNamedValueProc(
   }
   const auto& var = named.symbol.as<slang::ast::VariableSymbol>();
 
-  if (auto local = proc_state.LookupLocalVar(var)) {
-    const hir::TypeId type_id = proc_state.GetLocalVarType(*local);
-    return MakeRefExpr(hir::LocalVarRef{.target = *local}, type_id, span);
+  if (auto local = proc_state.LookupProceduralVar(var)) {
+    const hir::TypeId type_id = proc_state.GetProceduralVarType(*local);
+    return MakeRefExpr(hir::ProceduralVarRef{.var = *local}, type_id, span);
   }
 
-  const auto binding = unit_state.LookupMemberVarBinding(var);
+  const auto binding = unit_state.LookupStructuralVarBinding(var);
   if (!binding.has_value()) {
     throw InternalError(
         "LowerProcExpr: variable was not bound during scope lowering");
@@ -310,8 +310,7 @@ auto LowerNamedValueProc(
         "LowerProcExpr: variable home frame is not on the current scope stack");
   }
   return MakeRefExpr(
-      hir::MemberVarRef{
-          .parent_scope_hops = *hops, .target = binding->local_id},
+      hir::StructuralVarRef{.hops = *hops, .var = binding->var_id},
       binding->type, span);
 }
 
@@ -505,8 +504,8 @@ auto LowerProcExpr(
           .data =
               hir::CallExpr{
                   .callee =
-                      hir::UserSubroutineRef{
-                          .parent_scope_hops = *hops, .id = binding->local_id},
+                      hir::StructuralSubroutineRef{
+                          .hops = *hops, .subroutine = binding->subroutine_id},
                   .arguments = std::move(arg_ids),
               },
           .span = span,
@@ -684,11 +683,11 @@ auto LowerLoopHeaderExpr(
             scope_state.GetLoopVarDeclType(**loop_var_or);
         return MakeRefExpr(
             hir::LoopVarRef{
-                .parent_scope_hops = hir::ParentScopeHops{.value = 0},
-                .target = **loop_var_or},
+                .hops = hir::StructuralHops{.value = 0},
+                .loop_var = **loop_var_or},
             type_id, span);
       }
-      const auto binding = unit_state.LookupMemberVarBinding(var);
+      const auto binding = unit_state.LookupStructuralVarBinding(var);
       if (!binding.has_value()) {
         throw InternalError(
             "LowerLoopHeaderExpr: variable was not bound during scope "
@@ -701,8 +700,7 @@ auto LowerLoopHeaderExpr(
             "scope stack");
       }
       return MakeRefExpr(
-          hir::MemberVarRef{
-              .parent_scope_hops = *hops, .target = binding->local_id},
+          hir::StructuralVarRef{.hops = *hops, .var = binding->var_id},
           binding->type, span);
     }
 

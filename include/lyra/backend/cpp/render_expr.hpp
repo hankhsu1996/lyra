@@ -14,7 +14,7 @@ auto RenderExpr(const RenderContext& ctx, const mir::Expr& expr)
     -> diag::Result<std::string>;
 
 auto RenderLvalue(const RenderContext& ctx, const mir::Lvalue& target)
-    -> std::string;
+    -> diag::Result<std::string>;
 
 auto RenderExprAsNative(const RenderContext& ctx, const mir::Expr& expr)
     -> diag::Result<std::string>;

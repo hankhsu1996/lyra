@@ -9,5 +9,5 @@ expect:
   exit: 0
   stdout:
     contains:
-      - "CallExpr callee=UserSubroutine[0] \"add\" args=[Expr[0], Expr[1]]"
-      - "CallExpr callee=UserSubroutine[1] \"do_thing\" args=[Expr[4]]"
+      - "CallExpr callee=StructuralSubroutineRef[hops=0, subroutine=0] \"add\" args=[Expr[0], Expr[1]]"
+      - "CallExpr callee=StructuralSubroutineRef[hops=0, subroutine=1] \"do_thing\" args=[Expr[4]]"
