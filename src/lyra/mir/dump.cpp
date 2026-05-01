@@ -390,6 +390,13 @@ class MirDumper {
                   "TimeLiteral(value={}, scale={})", lit.value,
                   FormatTimeScale(lit.scale));
             },
+            [this](const StructuralParamRef& r) -> std::string {
+              const auto& owner = ResolveScopeAtHops(r.hops.value);
+              const auto& param = owner.GetStructuralParam(r.param);
+              return std::format(
+                  "StructuralParamRef[hops={}, param={}] \"{}\"", r.hops.value,
+                  r.param.value, param.name);
+            },
             [](const StructuralVarRef& r) -> std::string {
               return std::format(
                   "StructuralVarRef[hops={}, var={}]", r.hops.value,
@@ -483,6 +490,16 @@ class MirDumper {
       Dedent();
     }
     Dedent();
+
+    if (!s.structural_params.empty()) {
+      Line("StructuralParams:");
+      Indent();
+      for (std::size_t i = 0; i < s.structural_params.size(); ++i) {
+        const auto& p = s.structural_params[i];
+        Line(std::format("[{}] \"{}\" : {}", i, p.name, FormatVarType(p.type)));
+      }
+      Dedent();
+    }
 
     Line("Vars:");
     Indent();
@@ -589,12 +606,17 @@ class MirDumper {
               DumpSwitchStmt(stmt, s, enclosing, id);
             },
             [&](const ConstructOwnedObjectStmt& s) {
+              std::string args_str;
+              for (std::size_t i = 0; i < s.args.size(); ++i) {
+                if (i != 0) args_str += ", ";
+                args_str += std::format("Expr[{}]", s.args[i].value);
+              }
               Line(
                   std::format(
                       "Stmt[{}] ConstructOwnedObjectStmt "
                       "target=StructuralVar[{}] "
-                      "scope=StructuralScope[{}]",
-                      id.value, s.target.value, s.scope_id.value));
+                      "scope=StructuralScope[{}] args=[{}]",
+                      id.value, s.target.value, s.scope_id.value, args_str));
             },
             [&](const ForStmt& s) { DumpForStmt(stmt, s, enclosing, id); },
             [&](const TimedStmt& t) { DumpTimedStmt(t, enclosing, id); },

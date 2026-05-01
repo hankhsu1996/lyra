@@ -12,6 +12,7 @@
 #include "lyra/diag/diagnostic.hpp"
 #include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/process.hpp"
+#include "lyra/mir/structural_param.hpp"
 #include "lyra/mir/structural_scope.hpp"
 #include "lyra/mir/structural_var.hpp"
 #include "lyra/mir/type.hpp"
@@ -27,14 +28,43 @@ auto RenderField(
          var.name + ";\n";
 }
 
+auto RenderParamField(
+    const mir::CompilationUnit& unit, const mir::StructuralScope& owner_scope,
+    const mir::StructuralParamDecl& param, std::size_t indent) -> std::string {
+  return Indent(indent) + "const " +
+         RenderTypeAsCpp(unit, owner_scope, param.type) + " " + param.name +
+         ";\n";
+}
+
+auto CtorParamName(std::size_t index) -> std::string {
+  return "param" + std::to_string(index);
+}
+
 auto RenderConstructor(
     const RenderContext& scope_ctx, const mir::StructuralScope& s,
     std::size_t indent) -> diag::Result<std::string> {
+  std::string sig = s.name + "(";
+  std::string init_list;
+  for (std::size_t i = 0; i < s.structural_params.size(); ++i) {
+    if (i != 0) {
+      sig += ", ";
+      init_list += ", ";
+    }
+    const auto& p = s.structural_params[i];
+    const auto param_name = CtorParamName(i);
+    sig += RenderTypeAsCpp(scope_ctx.Unit(), s, p.type) + " " + param_name;
+    init_list += p.name + "(" + param_name + ")";
+  }
+  sig += ")";
+  if (!init_list.empty()) {
+    sig += " : " + init_list;
+  }
+
   if (s.constructor_scope.root_stmts.empty()) {
-    return Indent(indent) + s.name + "() {}\n";
+    return Indent(indent) + sig + " {}\n";
   }
   std::string out;
-  out += Indent(indent) + s.name + "() {\n";
+  out += Indent(indent) + sig + " {\n";
   auto rendered_or = RenderProceduralScopeStatements(scope_ctx, indent + 1);
   if (!rendered_or) return std::unexpected(std::move(rendered_or.error()));
   out += *rendered_or;
@@ -161,6 +191,13 @@ auto RenderScopeAsClass(
     out += *child_or;
   }
   if (!s.child_structural_scopes.empty()) {
+    out += "\n";
+  }
+
+  for (const auto& p : s.structural_params) {
+    out += RenderParamField(unit, s, p, indent + 1);
+  }
+  if (!s.structural_params.empty()) {
     out += "\n";
   }
 

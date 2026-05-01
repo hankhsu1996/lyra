@@ -20,6 +20,7 @@
 #include "lyra/mir/procedural_var.hpp"
 #include "lyra/mir/stmt.hpp"
 #include "lyra/mir/structural_hops.hpp"
+#include "lyra/mir/structural_param.hpp"
 #include "lyra/mir/structural_scope.hpp"
 #include "lyra/mir/structural_scope_id.hpp"
 #include "lyra/mir/structural_var.hpp"
@@ -137,6 +138,14 @@ class StructuralScopeLoweringState {
     return id;
   }
 
+  auto AddStructuralParam(mir::StructuralParamDecl param)
+      -> mir::StructuralParamId {
+    const mir::StructuralParamId id{
+        static_cast<std::uint32_t>(scope_->structural_params.size())};
+    scope_->structural_params.push_back(std::move(param));
+    return id;
+  }
+
   auto AddChildStructuralScope(mir::StructuralScope child)
       -> mir::StructuralScopeId {
     const mir::StructuralScopeId id{
@@ -188,6 +197,43 @@ class StructuralScopeLoweringState {
         .hops = mir::StructuralHops{.value = hops.value}, .var = mir_id};
   }
 
+  void MapLoopVarAsStructuralParam(
+      hir::LoopVarDeclId hir_id, mir::StructuralParamId mir_id) {
+    if (hir_id.value >= structural_param_map_.size()) {
+      structural_param_map_.resize(hir_id.value + 1);
+    }
+    if (structural_param_map_[hir_id.value].has_value()) {
+      throw InternalError(
+          "StructuralScopeLoweringState::MapLoopVarAsStructuralParam: HIR "
+          "loop var already mapped");
+    }
+    structural_param_map_[hir_id.value] = mir_id;
+  }
+
+  // HIR places `LoopVarDecl` in the for-generate's parent scope; MIR re-homes
+  // the same value into the constructed child scope (every constructed object
+  // owns its own copy as a `StructuralParamDecl`). MIR hops = HIR hops - 1.
+  // HIR hops = 0 would mean the decl lives in the current HIR scope, but in
+  // MIR that param is owned by a child scope and is not reachable by walking
+  // up. Header expressions (init/stop/iter) hit that case and must use the
+  // ConstructorLoweringState (ProceduralVarRef) path instead.
+  [[nodiscard]] auto TranslateLoopVarAsStructuralParam(
+      hir::StructuralHops hir_hops, hir::LoopVarDeclId hir_id) const
+      -> mir::StructuralParamRef {
+    if (hir_hops.value == 0) {
+      throw InternalError(
+          "StructuralScopeLoweringState::TranslateLoopVarAsStructuralParam: "
+          "HIR hops=0 cannot resolve to a structural param (the param is "
+          "child-owned in MIR; header expressions must use the procedural "
+          "induction var path)");
+    }
+    const std::uint32_t mir_hops = hir_hops.value - 1;
+    const mir::StructuralParamId mir_id = LookupStructuralParamAtMirHops(
+        mir::StructuralHops{.value = mir_hops}, hir_id);
+    return mir::StructuralParamRef{
+        .hops = mir::StructuralHops{.value = mir_hops}, .param = mir_id};
+  }
+
   void MapStructuralSubroutine(
       hir::StructuralSubroutineId hir_id, mir::StructuralSubroutineId mir_id) {
     if (hir_id.value >= structural_subroutine_map_.size()) {
@@ -232,6 +278,27 @@ class StructuralScopeLoweringState {
         hir::StructuralHops{hops.value - 1}, hir_id);
   }
 
+  [[nodiscard]] auto LookupStructuralParamAtMirHops(
+      mir::StructuralHops mir_hops, hir::LoopVarDeclId hir_id) const
+      -> mir::StructuralParamId {
+    if (mir_hops.value == 0) {
+      if (hir_id.value >= structural_param_map_.size() ||
+          !structural_param_map_[hir_id.value].has_value()) {
+        throw InternalError(
+            "StructuralScopeLoweringState::TranslateLoopVarAsStructuralParam: "
+            "unmapped HIR loop var");
+      }
+      return *structural_param_map_[hir_id.value];
+    }
+    if (parent_ == nullptr) {
+      throw InternalError(
+          "StructuralScopeLoweringState::TranslateLoopVarAsStructuralParam: "
+          "hops exceed scope chain depth");
+    }
+    return parent_->LookupStructuralParamAtMirHops(
+        mir::StructuralHops{.value = mir_hops.value - 1}, hir_id);
+  }
+
   [[nodiscard]] auto LookupStructuralSubroutineAtHops(
       hir::StructuralHops hops, hir::StructuralSubroutineId hir_id) const
       -> mir::StructuralSubroutineId {
@@ -256,6 +323,7 @@ class StructuralScopeLoweringState {
   const StructuralScopeLoweringState* parent_;
   mir::StructuralScope* scope_;
   std::vector<std::optional<mir::StructuralVarId>> structural_var_map_;
+  std::vector<std::optional<mir::StructuralParamId>> structural_param_map_;
   std::vector<std::optional<mir::StructuralSubroutineId>>
       structural_subroutine_map_;
 };
@@ -396,6 +464,10 @@ class ProceduralScopeLoweringState {
     const mir::ExprId id{static_cast<std::uint32_t>(scope_.exprs.size())};
     scope_.exprs.push_back(std::move(expr));
     return id;
+  }
+
+  [[nodiscard]] auto GetExpr(mir::ExprId id) const -> const mir::Expr& {
+    return scope_.exprs.at(id.value);
   }
 
   [[nodiscard]] auto Scope() const -> const mir::ProceduralScope& {

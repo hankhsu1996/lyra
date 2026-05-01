@@ -464,6 +464,16 @@ auto RenderExprAsNative(const RenderContext& ctx, const mir::Expr& expr)
                 "TimeLiteral is not yet implemented in cpp emit",
                 diag::UnsupportedCategory::kFeature);
           },
+          [&](const mir::StructuralParamRef& r) -> diag::Result<std::string> {
+            if (r.hops.value != 0) {
+              return diag::Unsupported(
+                  diag::DiagCode::kCppEmitExpressionFormNotImplemented,
+                  "cross-scope structural parameter access is not yet "
+                  "implemented in cpp emit",
+                  diag::UnsupportedCategory::kFeature);
+            }
+            return ctx.StructuralScope().GetStructuralParam(r.param).name;
+          },
           [&](const mir::StructuralVarRef& m) -> diag::Result<std::string> {
             return RenderStructuralVarName(ctx, m);
           },
@@ -530,6 +540,13 @@ auto RenderExprAsRuntimeView(const RenderContext& ctx, const mir::Expr& expr)
       Overloaded{
           [&](const mir::IntegerLiteral& lit) -> diag::Result<std::string> {
             return RenderIntegerLiteralAsView(ctx.Unit(), expr.type, lit.value);
+          },
+          [](const mir::StructuralParamRef&) -> diag::Result<std::string> {
+            return diag::Unsupported(
+                diag::DiagCode::kCppEmitExpressionFormNotImplemented,
+                "structural parameters are scalar immutable values; runtime "
+                "view rendering is not supported",
+                diag::UnsupportedCategory::kFeature);
           },
           [&](const mir::StructuralVarRef& m) -> diag::Result<std::string> {
             auto name_or = RenderStructuralVarName(ctx, m);
