@@ -16,5 +16,5 @@ expect:
       - "scope (ProceduralScopeId=0):"
       - "BlockStmt scope=ProceduralScopeId{0}"
       - "ProceduralVar[0] \"x\""
-      - "ProceduralVarDeclStmt target=ProceduralVarRef[hops=0, var=0]"
+      - "ProceduralVarDeclStmt target=ProceduralVarRef[hops=0, var=0] \"x\""
       - "AwaitStmt kind=AlwaysBackedge"

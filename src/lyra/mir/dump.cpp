@@ -293,18 +293,22 @@ class MirDumper {
     throw InternalError("MirDumper: unknown BinaryOp");
   }
 
-  static auto FormatLvalue(const Lvalue& l) -> std::string {
+  [[nodiscard]] auto FormatLvalue(const Lvalue& l) const -> std::string {
     return std::visit(
         Overloaded{
-            [](const StructuralVarRef& r) -> std::string {
+            [this](const StructuralVarRef& r) -> std::string {
+              const auto& owner = ResolveScopeAtHops(r.hops.value);
+              const auto& var = owner.GetStructuralVar(r.var);
               return std::format(
-                  "StructuralVarRef[hops={}, var={}]", r.hops.value,
-                  r.var.value);
+                  "StructuralVarRef[hops={}, var={}] \"{}\"", r.hops.value,
+                  r.var.value, var.name);
             },
-            [](const ProceduralVarRef& r) -> std::string {
+            [this](const ProceduralVarRef& r) -> std::string {
+              const auto& owner = ResolveProceduralScopeAtHops(r.hops.value);
+              const auto& var = owner.vars.at(r.var.value);
               return std::format(
-                  "ProceduralVarRef[hops={}, var={}]", r.hops.value,
-                  r.var.value);
+                  "ProceduralVarRef[hops={}, var={}] \"{}\"", r.hops.value,
+                  r.var.value, var.name);
             },
         },
         l);
@@ -333,6 +337,15 @@ class MirDumper {
       throw InternalError("MirDumper::ResolveScopeAtHops: hops out of range");
     }
     return *scope_stack_[scope_stack_.size() - 1 - hops];
+  }
+
+  [[nodiscard]] auto ResolveProceduralScopeAtHops(std::uint32_t hops) const
+      -> const ProceduralScope& {
+    if (hops >= procedural_scope_stack_.size()) {
+      throw InternalError(
+          "MirDumper::ResolveProceduralScopeAtHops: hops out of range");
+    }
+    return *procedural_scope_stack_[procedural_scope_stack_.size() - 1 - hops];
   }
 
   static auto FormatIntegralConstant(const IntegralConstant& c) -> std::string {
@@ -397,15 +410,19 @@ class MirDumper {
                   "StructuralParamRef[hops={}, param={}] \"{}\"", r.hops.value,
                   r.param.value, param.name);
             },
-            [](const StructuralVarRef& r) -> std::string {
+            [this](const StructuralVarRef& r) -> std::string {
+              const auto& owner = ResolveScopeAtHops(r.hops.value);
+              const auto& var = owner.GetStructuralVar(r.var);
               return std::format(
-                  "StructuralVarRef[hops={}, var={}]", r.hops.value,
-                  r.var.value);
+                  "StructuralVarRef[hops={}, var={}] \"{}\"", r.hops.value,
+                  r.var.value, var.name);
             },
-            [](const ProceduralVarRef& r) -> std::string {
+            [this](const ProceduralVarRef& r) -> std::string {
+              const auto& owner = ResolveProceduralScopeAtHops(r.hops.value);
+              const auto& var = owner.vars.at(r.var.value);
               return std::format(
-                  "ProceduralVarRef[hops={}, var={}]", r.hops.value,
-                  r.var.value);
+                  "ProceduralVarRef[hops={}, var={}] \"{}\"", r.hops.value,
+                  r.var.value, var.name);
             },
             [](const UnaryExpr& u) -> std::string {
               return std::format(
@@ -417,7 +434,7 @@ class MirDumper {
                   "BinaryExpr op={} lhs=Expr[{}] rhs=Expr[{}]",
                   FormatBinaryOp(b.op), b.lhs.value, b.rhs.value);
             },
-            [](const AssignExpr& a) -> std::string {
+            [this](const AssignExpr& a) -> std::string {
               return std::format(
                   "AssignExpr target={} value=Expr[{}]", FormatLvalue(a.target),
                   a.value.value);
@@ -541,6 +558,7 @@ class MirDumper {
   }
 
   void DumpProceduralScope(const ProceduralScope& scope) {
+    procedural_scope_stack_.push_back(&scope);
     if (!scope.vars.empty()) {
       Line("Vars:");
       Indent();
@@ -580,6 +598,7 @@ class MirDumper {
       }
     }
     Dedent();
+    procedural_scope_stack_.pop_back();
   }
 
   void DumpStmt(const ProceduralScope& enclosing, StmtId id) {
@@ -593,11 +612,15 @@ class MirDumper {
               Line(std::format("Stmt[{}] EmptyStmt", id.value));
             },
             [&](const ProceduralVarDeclStmt& s) {
+              const auto& owner =
+                  ResolveProceduralScopeAtHops(s.target.hops.value);
+              const auto& var = owner.vars.at(s.target.var.value);
               Line(
                   std::format(
                       "Stmt[{}] ProceduralVarDeclStmt "
-                      "target=ProceduralVarRef[hops={}, var={}]",
-                      id.value, s.target.hops.value, s.target.var.value));
+                      "target=ProceduralVarRef[hops={}, var={}] \"{}\"",
+                      id.value, s.target.hops.value, s.target.var.value,
+                      var.name));
             },
             [&](const ExprStmt& s) { DumpExprStmt(s, enclosing, id); },
             [&](const BlockStmt& s) { DumpBlockStmt(stmt, s, id); },
@@ -783,11 +806,14 @@ class MirDumper {
                       " = Expr[{}] {}", d.init->value,
                       FormatExpr(enclosing, *d.init));
                 }
+                const auto& owner =
+                    ResolveProceduralScopeAtHops(d.induction_var.hops.value);
+                const auto& var = owner.vars.at(d.induction_var.var.value);
                 Line(
                     std::format(
-                        "[{}] decl ProceduralVarRef[hops={}, var={}]{}", i,
-                        d.induction_var.hops.value, d.induction_var.var.value,
-                        init_str));
+                        "[{}] decl ProceduralVarRef[hops={}, var={}] \"{}\"{}",
+                        i, d.induction_var.hops.value,
+                        d.induction_var.var.value, var.name, init_str));
               },
               [&](const ForInitExpr& e) {
                 Line(
@@ -914,6 +940,7 @@ class MirDumper {
   std::string out_;
   int indent_ = 0;
   std::vector<const StructuralScope*> scope_stack_;
+  std::vector<const ProceduralScope*> procedural_scope_stack_;
 };
 
 }  // namespace
