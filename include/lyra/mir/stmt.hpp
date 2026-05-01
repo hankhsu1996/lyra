@@ -79,6 +79,7 @@ struct SwitchStmt {
 struct ConstructOwnedObjectStmt {
   StructuralVarId target;
   StructuralScopeId scope_id;
+  std::vector<ExprId> args;
 };
 
 struct ForInitDecl {

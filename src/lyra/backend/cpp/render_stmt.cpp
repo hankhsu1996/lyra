@@ -179,8 +179,15 @@ auto RenderStmt(
             const auto& var = ctx.StructuralScope().GetStructuralVar(s.target);
             const auto& target_scope =
                 ctx.StructuralScope().GetChildStructuralScope(s.scope_id);
+            std::string args_str;
+            for (std::size_t i = 0; i < s.args.size(); ++i) {
+              if (i != 0) args_str += ", ";
+              auto arg_or = RenderExprAsNative(ctx, ctx.Expr(s.args[i]));
+              if (!arg_or) return std::unexpected(std::move(arg_or.error()));
+              args_str += *arg_or;
+            }
             const std::string make =
-                "std::make_unique<" + target_scope.name + ">()";
+                "std::make_unique<" + target_scope.name + ">(" + args_str + ")";
             if (mir::IsVectorOfOwningObjectType(ctx.Unit(), var.type)) {
               return Indent(indent) + var.name + ".push_back(" + make + ");\n";
             }

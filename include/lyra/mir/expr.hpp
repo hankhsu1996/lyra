@@ -13,6 +13,7 @@
 #include "lyra/mir/procedural_var.hpp"
 #include "lyra/mir/runtime_print.hpp"
 #include "lyra/mir/structural_hops.hpp"
+#include "lyra/mir/structural_param.hpp"
 #include "lyra/mir/structural_subroutine.hpp"
 #include "lyra/mir/structural_var.hpp"
 #include "lyra/mir/type.hpp"
@@ -80,9 +81,9 @@ struct RuntimeCallExpr {
 };
 
 using ExprData = std::variant<
-    IntegerLiteral, StringLiteral, TimeLiteral, StructuralVarRef,
-    ProceduralVarRef, UnaryExpr, BinaryExpr, AssignExpr, CallExpr,
-    RuntimeCallExpr, ConversionExpr>;
+    IntegerLiteral, StringLiteral, TimeLiteral, StructuralParamRef,
+    StructuralVarRef, ProceduralVarRef, UnaryExpr, BinaryExpr, AssignExpr,
+    CallExpr, RuntimeCallExpr, ConversionExpr>;
 
 struct Expr {
   ExprData data;
