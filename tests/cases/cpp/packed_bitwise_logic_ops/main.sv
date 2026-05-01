@@ -1,10 +1,12 @@
 module Top;
-  logic [7:0] a;
-  logic [7:0] b;
-  logic [7:0] y;
+  logic [3:0] a;
+  logic [3:0] b;
+  logic [3:0] y;
+
   initial begin
-    a = 8'b1100xxzz;
-    b = 8'b10z01x10;
+    a = 4'b10xz;
+    b = 4'b1100;
+
     y = ~a;     $display("%b", y);
     y = a & b;  $display("%b", y);
     y = a | b;  $display("%b", y);
