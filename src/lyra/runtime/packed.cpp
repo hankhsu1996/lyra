@@ -109,19 +109,6 @@ auto ConstBitView::GetBit(std::uint64_t offset) const -> TwoStateBit {
                                             : TwoStateBit::kZero;
 }
 
-auto ConstBitView::PackLowWord() const -> std::uint64_t {
-  if (bit_width_ > 64U) {
-    throw InternalError("ConstBitView::PackLowWord: width >64");
-  }
-  std::uint64_t result = 0;
-  for (std::uint64_t i = 0; i < bit_width_; ++i) {
-    if (GetBit(i) == TwoStateBit::kOne) {
-      result |= std::uint64_t{1} << i;
-    }
-  }
-  return result;
-}
-
 BitView::BitView(
     std::span<std::uint64_t> words, std::uint64_t bit_offset,
     std::uint64_t bit_width)
@@ -168,10 +155,6 @@ auto BitView::AsConst() const -> ConstBitView {
       bit_width_};
 }
 
-auto BitView::PackLowWord() const -> std::uint64_t {
-  return AsConst().PackLowWord();
-}
-
 ConstLogicView::ConstLogicView(
     std::span<const std::uint64_t> value_words,
     std::span<const std::uint64_t> unknown_words, std::uint64_t bit_offset,
@@ -202,34 +185,6 @@ auto ConstLogicView::GetBit(std::uint64_t offset) const -> FourStateBit {
     return vbit ? FourStateBit::kOne : FourStateBit::kZero;
   }
   return vbit ? FourStateBit::kUnknown : FourStateBit::kHighImpedance;
-}
-
-auto ConstLogicView::PackValueLowWord() const -> std::uint64_t {
-  if (bit_width_ > 64U) {
-    throw InternalError("ConstLogicView::PackValueLowWord: width >64");
-  }
-  std::uint64_t result = 0;
-  for (std::uint64_t i = 0; i < bit_width_; ++i) {
-    const auto b = GetBit(i);
-    if (b == FourStateBit::kOne || b == FourStateBit::kUnknown) {
-      result |= std::uint64_t{1} << i;
-    }
-  }
-  return result;
-}
-
-auto ConstLogicView::PackUnknownLowWord() const -> std::uint64_t {
-  if (bit_width_ > 64U) {
-    throw InternalError("ConstLogicView::PackUnknownLowWord: width >64");
-  }
-  std::uint64_t result = 0;
-  for (std::uint64_t i = 0; i < bit_width_; ++i) {
-    const auto b = GetBit(i);
-    if (b == FourStateBit::kHighImpedance || b == FourStateBit::kUnknown) {
-      result |= std::uint64_t{1} << i;
-    }
-  }
-  return result;
 }
 
 LogicView::LogicView(
@@ -306,14 +261,6 @@ auto LogicView::AsConst() const -> ConstLogicView {
       std::span<const std::uint64_t>{
           unknown_words_.data(), unknown_words_.size()},
       bit_offset_, bit_width_};
-}
-
-auto LogicView::PackValueLowWord() const -> std::uint64_t {
-  return AsConst().PackValueLowWord();
-}
-
-auto LogicView::PackUnknownLowWord() const -> std::uint64_t {
-  return AsConst().PackUnknownLowWord();
 }
 
 BitValue::BitValue(std::uint64_t bit_width) : value_(bit_width) {

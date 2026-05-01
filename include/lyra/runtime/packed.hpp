@@ -67,7 +67,6 @@ class ConstBitView {
 
   [[nodiscard]] auto Width() const -> std::uint64_t;
   [[nodiscard]] auto GetBit(std::uint64_t offset) const -> TwoStateBit;
-  [[nodiscard]] auto PackLowWord() const -> std::uint64_t;
 
  private:
   friend struct detail::PackedAccess;
@@ -90,7 +89,6 @@ class BitView {
   auto SetOne() -> void;
 
   [[nodiscard]] auto AsConst() const -> ConstBitView;
-  [[nodiscard]] auto PackLowWord() const -> std::uint64_t;
 
  private:
   friend struct detail::PackedAccess;
@@ -109,8 +107,6 @@ class ConstLogicView {
 
   [[nodiscard]] auto Width() const -> std::uint64_t;
   [[nodiscard]] auto GetBit(std::uint64_t offset) const -> FourStateBit;
-  [[nodiscard]] auto PackValueLowWord() const -> std::uint64_t;
-  [[nodiscard]] auto PackUnknownLowWord() const -> std::uint64_t;
 
  private:
   friend struct detail::PackedAccess;
@@ -137,8 +133,6 @@ class LogicView {
   auto SetHighImpedance() -> void;
 
   [[nodiscard]] auto AsConst() const -> ConstLogicView;
-  [[nodiscard]] auto PackValueLowWord() const -> std::uint64_t;
-  [[nodiscard]] auto PackUnknownLowWord() const -> std::uint64_t;
 
  private:
   friend struct detail::PackedAccess;
