@@ -27,10 +27,24 @@ auto RenderForInit(const RenderContext& ctx, const mir::ForInit& init)
           [&](const mir::ForInitDecl& d) -> diag::Result<std::string> {
             const auto& lv = ctx.ProceduralScopeAtHops(d.induction_var.hops)
                                  .vars.at(d.induction_var.var.value);
-            std::string out =
-                RenderTypeAsCpp(ctx.Unit(), ctx.StructuralScope(), lv.type) +
-                " " + lv.name;
-            if (d.init.has_value()) {
+            auto type_or =
+                RenderTypeAsCpp(ctx.Unit(), ctx.StructuralScope(), lv.type);
+            if (!type_or) return std::unexpected(std::move(type_or.error()));
+            const auto& ty = ctx.Unit().GetType(lv.type);
+            const bool is_packed_explicit =
+                ty.IsPackedArray() &&
+                ty.AsPackedArray().form == mir::PackedArrayForm::kExplicit;
+            if (is_packed_explicit && d.init.has_value()) {
+              return diag::Unsupported(
+                  diag::DiagCode::kCppEmitPackedRuntimeNotSupported,
+                  "packed for-init with initializer is not yet supported in "
+                  "cpp emit",
+                  diag::UnsupportedCategory::kFeature);
+            }
+            std::string out = *type_or + " " + lv.name;
+            if (is_packed_explicit) {
+              out += "{" + std::to_string(ty.AsPackedArray().BitWidth()) + "}";
+            } else if (d.init.has_value()) {
               const auto& v = ctx.ProceduralScope().exprs.at(d.init->value);
               auto rendered_or = RenderExpr(ctx, v);
               if (!rendered_or) {
@@ -82,9 +96,16 @@ auto RenderStmt(
               -> diag::Result<std::string> {
             const auto& lv = ctx.ProceduralScopeAtHops(s.target.hops)
                                  .vars.at(s.target.var.value);
-            return Indent(indent) +
-                   RenderTypeAsCpp(ctx.Unit(), ctx.StructuralScope(), lv.type) +
-                   " " + lv.name + "{};\n";
+            auto type_or =
+                RenderTypeAsCpp(ctx.Unit(), ctx.StructuralScope(), lv.type);
+            if (!type_or) return std::unexpected(std::move(type_or.error()));
+            const auto& ty = ctx.Unit().GetType(lv.type);
+            std::string init = "{}";
+            if (ty.IsPackedArray() &&
+                ty.AsPackedArray().form == mir::PackedArrayForm::kExplicit) {
+              init = "{" + std::to_string(ty.AsPackedArray().BitWidth()) + "}";
+            }
+            return Indent(indent) + *type_or + " " + lv.name + init + ";\n";
           },
           [&](const mir::ExprStmt& s) -> diag::Result<std::string> {
             const auto& expr = ctx.ProceduralScope().exprs.at(s.expr.value);

@@ -1,8 +1,8 @@
 #pragma once
 
 #include <string>
-#include <vector>
 
+#include "lyra/diag/diagnostic.hpp"
 #include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/structural_scope.hpp"
 #include "lyra/mir/type.hpp"
@@ -15,9 +15,6 @@ namespace lyra::backend::cpp {
 // structural scopes.
 [[nodiscard]] auto RenderTypeAsCpp(
     const mir::CompilationUnit& unit, const mir::StructuralScope& owner_scope,
-    mir::TypeId type_id) -> std::string;
-
-[[nodiscard]] auto RenderPackedShapeLiteral(
-    const std::vector<mir::PackedRange>& dims) -> std::string;
+    mir::TypeId type_id) -> diag::Result<std::string>;
 
 }  // namespace lyra::backend::cpp

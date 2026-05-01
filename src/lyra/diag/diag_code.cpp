@@ -230,6 +230,12 @@ constexpr std::array kEntries{
             .kind = DiagKind::kUnsupported,
             .category = UnsupportedCategory::kFeature,
             .name = "cpp_emit_expression_form_not_implemented"}},
+    std::pair{
+        DiagCode::kCppEmitPackedRuntimeNotSupported,
+        DiagCodeInfo{
+            .kind = DiagKind::kUnsupported,
+            .category = UnsupportedCategory::kFeature,
+            .name = "cpp_emit_packed_runtime_not_supported"}},
 
     std::pair{
         DiagCode::kHostInvalidCliArgs,

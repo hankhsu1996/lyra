@@ -6,8 +6,10 @@ input:
   top: Top
   files: [main.sv]
 expect:
-  exit: 2
+  exit: 1
   stderr:
     contains:
+      - "unsupported:"
+      - "packed array form is not yet supported in cpp emit"
+    not_contains:
       - "internal error"
-      - "RenderTypeAsCpp"

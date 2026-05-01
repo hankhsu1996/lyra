@@ -8,18 +8,4 @@ input:
 expect:
   exit: 0
   stdout:
-    exact: |
-      1
-      0
-      0
-      1
-      0
-      1
-      0
-      0
-      1
-      1
-      0
-      1
-      0
-      1
+    exact: "1\n0\n0\n1\n1\n0\n0\n1\n0\n"

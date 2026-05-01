@@ -1,0 +1,11 @@
+id: cpp.packed_format_h_all_x_auto_pad
+tags: [cpp_run]
+input:
+  command: [run, cpp]
+  project: false
+  top: Top
+  files: [main.sv]
+expect:
+  exit: 0
+  stdout:
+    exact: "xx\n"

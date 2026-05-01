@@ -40,6 +40,13 @@ auto ResolveEnv(Runfiles& rf) -> CppEnv {
       engine_hpp.parent_path().parent_path().parent_path();
 
   env.cpp_paths.cpp_runtime = rf.Rlocation("_main/libcpp_runtime.a");
+
+  // Walk up to the package root that contains `absl/`.
+  const std::filesystem::path abseil_hdr =
+      rf.Rlocation("abseil-cpp+/absl/container/inlined_vector.h");
+  env.cpp_paths.extra_include_roots.push_back(
+      abseil_hdr.parent_path().parent_path().parent_path());
+
   return env;
 }
 

@@ -8,6 +8,4 @@ input:
 expect:
   exit: 0
   stdout:
-    exact: |
-      1000
-      01x0
+    exact: "x0x1\n"

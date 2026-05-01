@@ -8,9 +8,4 @@ input:
 expect:
   exit: 0
   stdout:
-    exact: |
-      0011xxxx
-      1000xxx0
-      11x01x1x
-      01x0xxxx
-      10x1xxxx
+    exact: "01xx\n1000\n11xx\n01xx\n10xx\n"

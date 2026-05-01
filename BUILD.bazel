@@ -71,7 +71,10 @@ cc_library(
     hdrs = glob(["include/lyra/runtime/*.hpp"]),
     includes = ["include"],
     visibility = ["//visibility:public"],
-    deps = [":base"],
+    deps = [
+        ":base",
+        "@abseil-cpp//absl/container:inlined_vector",
+    ],
 )
 
 cc_static_library(

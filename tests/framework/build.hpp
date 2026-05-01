@@ -3,6 +3,7 @@
 #include <expected>
 #include <filesystem>
 #include <optional>
+#include <span>
 #include <string>
 
 namespace lyra::test {
@@ -21,14 +22,16 @@ struct BuildAndRunOutcome {
 };
 
 // Compile <work_dir>/main.cpp against the prebuilt C++ runtime
-// `cpp_runtime`, with includes rooted at `include_root`, producing
-// <work_dir>/program. Then run the program.
+// `cpp_runtime`, with includes rooted at `include_root` plus each path in
+// `extra_include_roots`, producing <work_dir>/program. Then run the program.
 //
 // Uses RunChildProcess for both compile and run -- no new process helper.
 // Returns errors via BuildAndRunOutcome::error; never throws.
 auto BuildAndRunEmittedArtifacts(
     const std::filesystem::path& work_dir,
     const std::filesystem::path& include_root,
-    const std::filesystem::path& cpp_runtime) -> BuildAndRunOutcome;
+    const std::filesystem::path& cpp_runtime,
+    std::span<const std::filesystem::path> extra_include_roots)
+    -> BuildAndRunOutcome;
 
 }  // namespace lyra::test
