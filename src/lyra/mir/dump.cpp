@@ -786,7 +786,8 @@ class MirDumper {
                 Line(
                     std::format(
                         "[{}] decl ProceduralVarRef[hops={}, var={}]{}", i,
-                        d.local.hops.value, d.local.var.value, init_str));
+                        d.induction_var.hops.value, d.induction_var.var.value,
+                        init_str));
               },
               [&](const ForInitExpr& e) {
                 Line(

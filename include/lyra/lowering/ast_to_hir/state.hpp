@@ -90,9 +90,14 @@ class UnitLoweringState {
   void MapStructuralVarBinding(
       const slang::ast::VariableSymbol& var, ScopeFrameId home_frame,
       hir::StructuralVarId local, hir::TypeId type) {
-    structural_var_bindings_.emplace(
+    const auto [_, inserted] = structural_var_bindings_.emplace(
         &var, StructuralVarBinding{
                   .home_frame = home_frame, .var_id = local, .type = type});
+    if (!inserted) {
+      throw InternalError(
+          "UnitLoweringState::MapStructuralVarBinding: structural variable "
+          "symbol already mapped");
+    }
   }
 
   [[nodiscard]] auto LookupStructuralVarBinding(
@@ -108,9 +113,14 @@ class UnitLoweringState {
   void MapSubroutineBinding(
       const slang::ast::SubroutineSymbol& sym, ScopeFrameId owner_frame,
       hir::StructuralSubroutineId local) {
-    subroutine_bindings_.emplace(
+    const auto [_, inserted] = subroutine_bindings_.emplace(
         &sym,
         SubroutineBinding{.owner_frame = owner_frame, .subroutine_id = local});
+    if (!inserted) {
+      throw InternalError(
+          "UnitLoweringState::MapSubroutineBinding: subroutine symbol already "
+          "mapped");
+    }
   }
 
   [[nodiscard]] auto LookupSubroutineBinding(
@@ -317,7 +327,12 @@ class ProcessLoweringState {
         static_cast<std::uint32_t>(hir_process_.procedural_vars.size())};
     hir_process_.procedural_vars.push_back(
         hir::ProceduralVarDecl{.name = std::string{var.name}, .type = type});
-    procedural_var_bindings_.emplace(&var, id);
+    const auto [_, inserted] = procedural_var_bindings_.emplace(&var, id);
+    if (!inserted) {
+      throw InternalError(
+          "ProcessLoweringState::AddProceduralVar: procedural variable symbol "
+          "already mapped");
+    }
     return id;
   }
 

@@ -89,7 +89,7 @@ auto Type::AsPackedArray() const -> const PackedArrayType& {
 
 namespace {
 
-auto AsObjectClass(const CompilationUnit& unit, TypeId type)
+auto AsObjectScope(const CompilationUnit& unit, TypeId type)
     -> std::optional<StructuralScopeId> {
   const auto* obj = std::get_if<ObjectType>(&unit.GetType(type).data);
   if (obj == nullptr) {
@@ -105,7 +105,7 @@ auto IsOwningObjectType(const CompilationUnit& unit, TypeId type) -> bool {
   if (owning == nullptr) {
     return false;
   }
-  return AsObjectClass(unit, owning->pointee).has_value();
+  return AsObjectScope(unit, owning->pointee).has_value();
 }
 
 auto IsVectorOfOwningObjectType(const CompilationUnit& unit, TypeId type)
@@ -121,12 +121,12 @@ auto GetOwnedObjectTarget(const CompilationUnit& unit, TypeId type)
     -> std::optional<StructuralScopeId> {
   const auto& data = unit.GetType(type).data;
   if (const auto* owning = std::get_if<OwningPtrType>(&data)) {
-    return AsObjectClass(unit, owning->pointee);
+    return AsObjectScope(unit, owning->pointee);
   }
   if (const auto* vec = std::get_if<VectorType>(&data)) {
     if (const auto* owning =
             std::get_if<OwningPtrType>(&unit.GetType(vec->element).data)) {
-      return AsObjectClass(unit, owning->pointee);
+      return AsObjectScope(unit, owning->pointee);
     }
   }
   return std::nullopt;
