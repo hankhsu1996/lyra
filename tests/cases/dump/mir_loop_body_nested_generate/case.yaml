@@ -1,4 +1,4 @@
-id: dump.mir_loop_body_structural_var
+id: dump.mir_loop_body_nested_generate
 tags: [dump]
 input:
   command: [dump, mir]
@@ -12,7 +12,9 @@ expect:
       - 'StructuralScope "gen0_loop"'
       - "StructuralParams:"
       - '[0] "i"'
-      - '[0] "x"'
-      - "Stmt[0] ForStmt"
-      - "ConstructOwnedObjectStmt"
-      - "args=[Expr["
+      - "IfStmt"
+      - 'StructuralParamRef[hops=0, param=0] "i"'
+      - "BinaryExpr op=Equality"
+    not_contains:
+      - "LoopVarRef"
+      - "InternalError"

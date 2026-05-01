@@ -1,4 +1,4 @@
-id: dump.mir_loop_body_structural_var
+id: dump.mir_loop_body_process_using_loop_var
 tags: [dump]
 input:
   command: [dump, mir]
@@ -12,7 +12,10 @@ expect:
       - 'StructuralScope "gen0_loop"'
       - "StructuralParams:"
       - '[0] "i"'
-      - '[0] "x"'
-      - "Stmt[0] ForStmt"
+      - 'StructuralParamRef[hops=0, param=0] "i"'
       - "ConstructOwnedObjectStmt"
       - "args=[Expr["
+    not_contains:
+      - "LoopVarRef"
+      - "StructuralParamRef[hops=1"
+      - "InternalError"
