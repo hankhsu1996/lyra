@@ -11,9 +11,9 @@ expect:
     contains:
       - "Process[0] Initial"
       - "ProceduralVar[0] \"x\""
-      - "ProceduralVarDeclStmt target=ProceduralVarRef[hops=0, var=0]"
+      - "ProceduralVarDeclStmt target=ProceduralVarRef[hops=0, var=0] \"x\""
       - "ExprStmt"
-      - "AssignExpr target=ProceduralVarRef[hops=0, var=0]"
+      - "AssignExpr target=ProceduralVarRef[hops=0, var=0] \"x\""
       - "BinaryExpr op=Add"
       - "IntegerLiteral(32's{value=0x1})"
       - "IntegerLiteral(32's{value=0x2})"

@@ -83,7 +83,7 @@ struct ConstructOwnedObjectStmt {
 };
 
 struct ForInitDecl {
-  ProceduralVarRef local = {};
+  ProceduralVarRef induction_var = {};
   std::optional<ExprId> init;
 };
 

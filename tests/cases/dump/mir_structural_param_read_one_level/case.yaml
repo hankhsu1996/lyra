@@ -1,4 +1,4 @@
-id: dump.mir_generate_structural_var_two_levels
+id: dump.mir_structural_param_read_one_level
 tags: [dump]
 input:
   command: [dump, mir]
@@ -9,4 +9,4 @@ expect:
   exit: 0
   stdout:
     contains:
-      - "AssignExpr target=StructuralVarRef[hops=2, var=0] \"x\""
+      - "StructuralParamRef[hops=1, param=0] \"i\""

@@ -84,10 +84,12 @@ class UnitLoweringState {
   }
 
   void MapType(hir::TypeId hir_id, mir::TypeId mir_id) {
-    if (hir_id.value >= type_map_.size()) {
-      type_map_.resize(hir_id.value + 1);
+    if (hir_id.value != type_map_.size()) {
+      throw InternalError(
+          "UnitLoweringState::MapType: HIR types must be mapped in HIR id "
+          "order");
     }
-    type_map_[hir_id.value] = mir_id;
+    type_map_.emplace_back(mir_id);
   }
 
   [[nodiscard]] auto Builtins() const -> const BuiltinMirTypes& {
@@ -175,15 +177,12 @@ class StructuralScopeLoweringState {
 
   void MapStructuralVar(
       hir::StructuralVarId hir_id, mir::StructuralVarId mir_id) {
-    if (hir_id.value >= structural_var_map_.size()) {
-      structural_var_map_.resize(hir_id.value + 1);
-    }
-    if (structural_var_map_[hir_id.value].has_value()) {
+    if (hir_id.value != structural_var_map_.size()) {
       throw InternalError(
-          "StructuralScopeLoweringState::MapStructuralVar: HIR structural var "
-          "already mapped");
+          "StructuralScopeLoweringState::MapStructuralVar: HIR structural "
+          "vars must be mapped in HIR id order");
     }
-    structural_var_map_[hir_id.value] = mir_id;
+    structural_var_map_.push_back(mir_id);
   }
 
   // Walk the scope chain `hops` levels outward and look up `hir_id` in the
@@ -236,15 +235,12 @@ class StructuralScopeLoweringState {
 
   void MapStructuralSubroutine(
       hir::StructuralSubroutineId hir_id, mir::StructuralSubroutineId mir_id) {
-    if (hir_id.value >= structural_subroutine_map_.size()) {
-      structural_subroutine_map_.resize(hir_id.value + 1);
-    }
-    if (structural_subroutine_map_[hir_id.value].has_value()) {
+    if (hir_id.value != structural_subroutine_map_.size()) {
       throw InternalError(
           "StructuralScopeLoweringState::MapStructuralSubroutine: HIR "
-          "structural subroutine already mapped");
+          "structural subroutines must be mapped in HIR id order");
     }
-    structural_subroutine_map_[hir_id.value] = mir_id;
+    structural_subroutine_map_.push_back(mir_id);
   }
 
   [[nodiscard]] auto TranslateStructuralSubroutine(
@@ -261,13 +257,12 @@ class StructuralScopeLoweringState {
       hir::StructuralHops hops, hir::StructuralVarId hir_id) const
       -> mir::StructuralVarId {
     if (hops.value == 0) {
-      if (hir_id.value >= structural_var_map_.size() ||
-          !structural_var_map_[hir_id.value].has_value()) {
+      if (hir_id.value >= structural_var_map_.size()) {
         throw InternalError(
             "StructuralScopeLoweringState::TranslateStructuralVar: unmapped "
             "HIR structural var");
       }
-      return *structural_var_map_[hir_id.value];
+      return structural_var_map_[hir_id.value];
     }
     if (parent_ == nullptr) {
       throw InternalError(
@@ -303,13 +298,12 @@ class StructuralScopeLoweringState {
       hir::StructuralHops hops, hir::StructuralSubroutineId hir_id) const
       -> mir::StructuralSubroutineId {
     if (hops.value == 0) {
-      if (hir_id.value >= structural_subroutine_map_.size() ||
-          !structural_subroutine_map_[hir_id.value].has_value()) {
+      if (hir_id.value >= structural_subroutine_map_.size()) {
         throw InternalError(
             "StructuralScopeLoweringState::TranslateStructuralSubroutine: "
             "unmapped HIR subroutine");
       }
-      return *structural_subroutine_map_[hir_id.value];
+      return structural_subroutine_map_[hir_id.value];
     }
     if (parent_ == nullptr) {
       throw InternalError(
@@ -322,10 +316,9 @@ class StructuralScopeLoweringState {
 
   const StructuralScopeLoweringState* parent_;
   mir::StructuralScope* scope_;
-  std::vector<std::optional<mir::StructuralVarId>> structural_var_map_;
+  std::vector<mir::StructuralVarId> structural_var_map_;
   std::vector<std::optional<mir::StructuralParamId>> structural_param_map_;
-  std::vector<std::optional<mir::StructuralSubroutineId>>
-      structural_subroutine_map_;
+  std::vector<mir::StructuralSubroutineId> structural_subroutine_map_;
 };
 
 struct ProceduralVarBinding {
@@ -359,26 +352,22 @@ class ProcessLoweringState {
 
   void MapProceduralVar(
       hir::ProceduralVarId hir_id, ProceduralVarBinding binding) {
-    if (hir_id.value >= bindings_.size()) {
-      bindings_.resize(hir_id.value + 1);
-    }
-    if (bindings_[hir_id.value].has_value()) {
+    if (hir_id.value != bindings_.size()) {
       throw InternalError(
-          "ProcessLoweringState::MapProceduralVar: HIR ProceduralVarId "
-          "already mapped (duplicate VarDeclStmt for the same declaration)");
+          "ProcessLoweringState::MapProceduralVar: HIR procedural vars must "
+          "be mapped in HIR id order");
     }
-    bindings_[hir_id.value] = binding;
+    bindings_.push_back(binding);
   }
 
   [[nodiscard]] auto LookupProceduralVar(hir::ProceduralVarId hir_id) const
       -> const ProceduralVarBinding& {
-    if (hir_id.value >= bindings_.size() ||
-        !bindings_[hir_id.value].has_value()) {
+    if (hir_id.value >= bindings_.size()) {
       throw InternalError(
           "ProcessLoweringState::LookupProceduralVar: unmapped HIR "
           "procedural var");
     }
-    return *bindings_[hir_id.value];
+    return bindings_[hir_id.value];
   }
 
   [[nodiscard]] auto TranslateProceduralVar(hir::ProceduralVarId hir_id) const
@@ -401,7 +390,7 @@ class ProcessLoweringState {
  private:
   TimeResolution time_resolution_;
   std::uint32_t procedural_depth_ = 0;
-  std::vector<std::optional<ProceduralVarBinding>> bindings_;
+  std::vector<ProceduralVarBinding> bindings_;
 };
 
 class ProceduralDepthGuard {
@@ -426,16 +415,19 @@ class ProceduralDepthGuard {
 class ConstructorLoweringState {
  public:
   void MapLoopVar(hir::LoopVarDeclId hir_id, mir::ProceduralVarRef ref) {
-    if (hir_id.value >= map_.size()) {
-      map_.resize(hir_id.value + 1);
+    if (hir_id.value != map_.size()) {
+      throw InternalError(
+          "ConstructorLoweringState::MapLoopVar: HIR loop vars must be mapped "
+          "in HIR id order");
     }
-    map_[hir_id.value] = ref;
+    map_.push_back(ref);
   }
 
   [[nodiscard]] auto TranslateLoopVar(hir::LoopVarDeclId hir_id) const
       -> mir::ProceduralVarRef {
     if (hir_id.value >= map_.size()) {
-      throw InternalError("TranslateLoopVar: unmapped HIR loop var");
+      throw InternalError(
+          "ConstructorLoweringState::TranslateLoopVar: unmapped HIR loop var");
     }
     return map_[hir_id.value];
   }

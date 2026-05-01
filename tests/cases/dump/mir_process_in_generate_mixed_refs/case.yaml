@@ -10,5 +10,5 @@ expect:
   stdout:
     contains:
       - "ProceduralVar[0] \"y\""
-      - "AssignExpr target=ProceduralVarRef[hops=0, var=0]"
-      - "AssignExpr target=StructuralVarRef[hops=1, var=0]"
+      - "AssignExpr target=ProceduralVarRef[hops=0, var=0] \"y\""
+      - "AssignExpr target=StructuralVarRef[hops=1, var=0] \"x\""

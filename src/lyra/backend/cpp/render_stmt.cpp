@@ -25,8 +25,8 @@ auto RenderForInit(const RenderContext& ctx, const mir::ForInit& init)
   return std::visit(
       Overloaded{
           [&](const mir::ForInitDecl& d) -> diag::Result<std::string> {
-            const auto& lv = ctx.ProceduralScopeAtHops(d.local.hops)
-                                 .vars.at(d.local.var.value);
+            const auto& lv = ctx.ProceduralScopeAtHops(d.induction_var.hops)
+                                 .vars.at(d.induction_var.var.value);
             std::string out =
                 RenderTypeAsCpp(ctx.Unit(), ctx.StructuralScope(), lv.type) +
                 " " + lv.name;
