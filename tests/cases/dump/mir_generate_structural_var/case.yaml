@@ -9,4 +9,4 @@ expect:
   exit: 0
   stdout:
     contains:
-      - "AssignExpr target=StructuralVarRef[hops=1, var=0]"
+      - "AssignExpr target=StructuralVarRef[hops=1, var=0] \"x\""

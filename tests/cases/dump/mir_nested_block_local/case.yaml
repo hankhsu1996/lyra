@@ -11,5 +11,5 @@ expect:
     contains:
       - "ProceduralVar[0] \"x\""
       - "BlockStmt scope=ProceduralScopeId{0}"
-      - "AssignExpr target=ProceduralVarRef[hops=1, var=0]"
+      - "AssignExpr target=ProceduralVarRef[hops=1, var=0] \"x\""
       - "IntegerLiteral(32's{value=0x1})"

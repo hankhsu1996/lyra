@@ -380,7 +380,7 @@ auto LowerGenerateAsStmt(
                 .data =
                     mir::ForStmt{
                         .init = {mir::ForInitDecl{
-                            .local = loop_local, .init = init_id}},
+                            .induction_var = loop_local, .init = init_id}},
                         .condition = cond_id,
                         .step = {step_id},
                         .scope = loop_scope_id},
