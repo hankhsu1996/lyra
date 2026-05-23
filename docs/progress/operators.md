@@ -9,10 +9,9 @@ native render path (`RenderExprAsNative` in `src/lyra/backend/cpp/render_expr.cp
 
 ### Unary
 
-- [ ] U1 -- **High priority.** Scalar unary token wiring on `int`: `+`, `-`, `!`, `~`. Currently a
-      literal `-5` lowers to `UnaryMinus(IntegerLiteral 5)` and emits `Unsupported`, which means
-      writing a negative-literal anywhere in an SV test is blocked. Unblocks clean signed-arithmetic
-      tests and many other shapes. Mirrors B1's structure in `BinaryOpToken`.
+- [x] U1 -- Scalar unary token wiring on `int`: `+`, `-`, `!`, `~`. Mirrors B1's structure via
+      `UnaryOpToken` in `src/lyra/backend/cpp/render_expr.cpp`. Negative-literal shapes such as
+      `int a = -7;` now flow through cpp emit; reductions remain Unsupported (see U3).
 - [ ] U2 -- Pre/post increment `++`/`--`. Current `hir::UnaryOp`/`mir::UnaryOp` enums have no
       inc/dec variant; needs HIR/MIR shape decision (statement-level vs expression-level given SV
       side-effect ordering).
