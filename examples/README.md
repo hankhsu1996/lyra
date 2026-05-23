@@ -1,24 +1,27 @@
 # Examples
 
-Sample Lyra projects demonstrating SystemVerilog simulation.
+Sample Lyra projects.
 
 | Project      | Description                                |
 | ------------ | ------------------------------------------ |
-| `hello/`     | Minimal example with $display              |
+| `hello/`     | Minimal example with `$display`            |
 | `riscv-cpu/` | Single-cycle RISC-V CPU with test programs |
 
-## Running
+## Emit C++
 
 ```bash
 cd examples/hello
-lyra run
+../../bazel-bin/lyra emit cpp
 ```
+
+The CLI does not provide a `run` subcommand; the available pipeline is emit-only.
+
+## hello
+
+A minimal one-module project that prints via `$display`.
 
 ## riscv-cpu
 
-A simple RISC-V RV32I CPU demonstrating:
-
-- Packages with typedefs, enums, and structs
-- Multi-module hierarchy (cpu, register_file, ALU, memories)
-- Parameterized modules with $readmemh
-- Multiple test programs (sum, fibonacci)
+A simple RISC-V RV32I CPU using packages, multi-module hierarchy, parameterized modules, and
+`$readmemh`. These constructs are outside the current backend's support set; the sources are
+retained as a reference design.

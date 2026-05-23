@@ -1,40 +1,16 @@
-#CLAUDE.md
+# CLAUDE.md
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this
 repository.
 
+Layer contracts live under `docs/architecture/`. Tracked gaps relative to those contracts live under
+`docs/progress/`. The `/archived` directory holds reference material from earlier iterations of the
+project; treat it as read-only and do not import from it.
+
 ## Documentation
 
-| Document                           | Purpose                                                  |
-| ---------------------------------- | -------------------------------------------------------- |
-| `docs/philosophy.md`               | North star, priorities, tradeoffs                        |
-| `docs/natural-model.md`            | Canonical definition of the natural model                |
-| `docs/architecture-principles.md`  | Natural model, architectural north stars, rules          |
-| `docs/compilation-model.md`        | Specialization-based compilation data model              |
-| `docs/design-principles.md`        | Implementation guidelines, coding patterns               |
-| `docs/architecture.md`             | Component relationships, data flow                       |
-| `docs/pipeline-contract.md`        | Layer responsibilities, boundaries, correctness          |
-| `docs/hir-design.md`               | HIR layer design (language semantics)                    |
-| `docs/xir-design.md`               | XIR layer design (execution model)                       |
-| `docs/mir-design.md`               | MIR layer design (control-flow plumbing)                 |
-| `docs/llvm-backend.md`             | MIR -> LLVM lowering strategy                            |
-| `docs/runtime.md`                  | Simulation engine, scheduling, backend-agnostic API      |
-| `docs/runtime-object-model.md`     | Runtime object model, constructor, hierarchy, bindings   |
-| `docs/change-propagation.md`       | Dirty tracking, subscriptions, wakeup filtering          |
-| `docs/type-system.md`              | Type interning, type kinds, 4-state representation       |
-| `docs/parameterized-modules.md`    | Module parameters, specialization, param classes         |
-| `docs/cli-design.md`               | CLI tool design, lyra.toml config, commands              |
-| `docs/state-layout.md`             | Byte-level state layout, container semantics             |
-| `docs/string-types.md`             | String type handling, slang interaction                  |
-| `docs/error-handling.md`           | Error types, when to use each                            |
-| `docs/execution-modes.md`          | AOT vs JIT, shared pipeline, CLI semantics               |
-| `docs/profiling.md`                | Callgrind profiling workflow, methodology                |
-| `docs/parallel-compilation.md`     | Parallel specialization compilation (F1) design          |
-| `docs/assertions.md`               | Assertion architecture (immediate, deferred, concurrent) |
-| `docs/documentation-guidelines.md` | Documentation guidelines                                 |
-
-**When writing or editing documentation, follow `docs/documentation-guidelines.md`.** Key rules:
-concise over complete, capture decisions not implementation, ASCII only, integrate don't append.
+See `docs/README.md` for the documentation index. When writing or editing documentation, follow
+`docs/style.md`.
 
 ## Commands
 
@@ -50,28 +26,21 @@ buildifier -r .
 ## Lyra CLI
 
 ```bash
-lyra init [name]
-lyra compile [files...]
-lyra run [files...]              # AOT, default
-lyra run --backend=jit [files]   # ORC JIT, in-process
-lyra check [files...]
-lyra dump hir [files...]
-lyra dump mir [files...]
-lyra dump llvm [files...]
+lyra dump hir [files...]         # Dump HIR (looks up lyra.toml by default)
+lyra dump mir [files...]         # Dump MIR
+lyra emit cpp [files...]         # Emit C++ source linked against the runtime
 ```
 
-### Simulation Flags
+Common flags (apply to all subcommands):
 
 ```bash
-lyra run --two-state [files...]  # Enable 2-state mode (disables X/Z tracking)
-```
-
-### Debugging Flags
-
-```bash
-lyra run -v [files...]           # Show phase timing (-v, -vv, -vvv)
-lyra run --stats [files...]      # Show LLVM IR statistics (top 10 functions)
-lyra run --stats=N [files...]    # Show top N functions (0 = summary only)
+--no-project                     # Bypass lyra.toml lookup; operate on bare files
+--top <name>                     # Top module name
+-I <dir>                         # Include search directory
+-D NAME[=VALUE]                  # Preprocessor macro
+-G NAME=VALUE                    # Override a module parameter
+--single-unit                    # Compile all files as one compilation unit
+-o <dir>                         # (emit cpp only) C++ output directory
 ```
 
 ## SystemVerilog Version
@@ -82,25 +51,18 @@ Lyra targets **IEEE 1800-2023** (SystemVerilog 2023). The slang frontend is conf
 
 ## Architecture
 
-SystemVerilog compiler with specialization-based compilation. The compilation unit is a module
-specialization, not an elaborated design.
+The pipeline is HIR -> MIR -> LIR -> LLVM IR. HIR, MIR, and `backend::cpp` exist in source; LIR is
+defined as a contract in `docs/architecture/lir.md`. See `docs/architecture/compiler_overview.md`
+for the binding contract.
 
 ```
-SV -> slang -> Elaboration Discovery (frontend output)
-                    |
-            Specialization Grouping (frontend world -> per-unit compiler world)
-                    |
-            Per-Unit Compilation (parallel per specialization)
-              HIR -> XIR -> MIR -> LLVM IR
-                    |
-            Artifact Composition (compile-time, design-wide packaging)
-                    |
-            Constructor / Realization (runtime, per-instance)
-                    |
-            Execution
+SV ---> slang AST ---> HIR ---> MIR ---> backend::cpp ---> C++ source + runtime
 ```
 
-See `docs/compilation-model.md` for the data model.
+- Semantic modeling lives in HIR and MIR.
+- Execution modeling lives in LIR and below.
+- A compilation unit is the top-level semantic boundary (module, package, interface).
+- Compile-time produces class-level artifacts; runtime constructs objects and installs relations.
 
 Headers in `include/lyra/`, implementations in `src/lyra/`.
 
@@ -114,15 +76,8 @@ bazel test //... --test_output=errors    # Same target set CI runs
 
 ## Benchmarks
 
-Benchmark runner: `tools/bench/run_benchmarks.py`. Fixtures in `tools/bench/fixtures/`.
-
-```bash
-python3 tools/bench/run_benchmarks.py --tier=nightly    # Full nightly run
-python3 tools/bench/run_benchmarks.py --tier=pr          # Quick PR check
-```
-
-New benchmark designs go in `tools/bench/fixtures/<name>/` (with `lyra.toml` + `.sv` files) and must
-be registered in `DESIGNS` and `TIER_CONFIG` in the runner script.
+The benchmark runner under `tools/bench/` and the corresponding CI jobs depend on the `lyra run`
+subcommand and the runtime static library, neither of which is part of the current build.
 
 ## Code Style
 
@@ -140,20 +95,19 @@ be registered in `DESIGNS` and `TIER_CONFIG` in the runner script.
 
 ## Error Handling
 
-See `docs/error-handling.md` for full details.
+The active error policy:
 
-| Error Type            | When to Use                             |
-| --------------------- | --------------------------------------- |
-| `DiagnosticException` | AST->HIR lowering only (has source loc) |
-| `InternalError`       | Compiler bugs (invariant violations)    |
-| `std::runtime_error`  | Runtime errors                          |
+| Error Type           | When to Use                                                   |
+| -------------------- | ------------------------------------------------------------- |
+| `diag::Result<T>`    | Recoverable lowering / backend failures with structured codes |
+| `InternalError`      | Compiler bugs (invariant violations)                          |
+| `std::runtime_error` | Runtime errors                                                |
 
-For shared code, return `std::expected<T, std::string>` and let callers convert to
-`std::runtime_error`.
+Avoid `assert()` and `<cassert>` (use `InternalError` instead). `catch(...)` is allowed only in
+`src/lyra/driver/`. Throw `InternalError` only for compiler-bug invariants, not for user-facing
+diagnostics.
 
 ## Approach to Changes
-
-For full design rationale, see `docs/design-principles.md`.
 
 ### Adding Features
 
