@@ -1,4 +1,4 @@
-id: cpp.var_decl_inline_init
+id: cpp.var_decl_init
 tags: [cpp_run]
 input:
   command: [run, cpp]
@@ -11,3 +11,6 @@ expect:
     exact: |
       x=7
       y=3
+      z=10
+      neg=-3
+      compound=-7

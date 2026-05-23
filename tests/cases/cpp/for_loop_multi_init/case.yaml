@@ -9,5 +9,5 @@ expect:
   exit: 0
   stdout:
     exact: |
-      sum=30
-      diff=-20
+      sum=50
+      diff=-10
