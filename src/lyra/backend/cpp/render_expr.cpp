@@ -33,28 +33,42 @@ auto BinaryOpToken(mir::BinaryOp op) -> diag::Result<std::string_view> {
   switch (op) {
     case mir::BinaryOp::kAdd:
       return std::string_view{" + "};
+    case mir::BinaryOp::kSub:
+      return std::string_view{" - "};
+    case mir::BinaryOp::kMul:
+      return std::string_view{" * "};
+    case mir::BinaryOp::kDiv:
+      return std::string_view{" / "};
+    case mir::BinaryOp::kMod:
+      return std::string_view{" % "};
+    case mir::BinaryOp::kBitwiseAnd:
+      return std::string_view{" & "};
+    case mir::BinaryOp::kBitwiseOr:
+      return std::string_view{" | "};
+    case mir::BinaryOp::kBitwiseXor:
+      return std::string_view{" ^ "};
+    case mir::BinaryOp::kEquality:
+      return std::string_view{" == "};
+    case mir::BinaryOp::kInequality:
+      return std::string_view{" != "};
     case mir::BinaryOp::kLessThan:
       return std::string_view{" < "};
-    case mir::BinaryOp::kSub:
-    case mir::BinaryOp::kMul:
-    case mir::BinaryOp::kDiv:
-    case mir::BinaryOp::kMod:
+    case mir::BinaryOp::kLessEqual:
+      return std::string_view{" <= "};
+    case mir::BinaryOp::kGreaterThan:
+      return std::string_view{" > "};
+    case mir::BinaryOp::kGreaterEqual:
+      return std::string_view{" >= "};
+    case mir::BinaryOp::kLogicalAnd:
+      return std::string_view{" && "};
+    case mir::BinaryOp::kLogicalOr:
+      return std::string_view{" || "};
     case mir::BinaryOp::kPower:
-    case mir::BinaryOp::kBitwiseAnd:
-    case mir::BinaryOp::kBitwiseOr:
-    case mir::BinaryOp::kBitwiseXor:
     case mir::BinaryOp::kBitwiseXnor:
-    case mir::BinaryOp::kEquality:
-    case mir::BinaryOp::kInequality:
     case mir::BinaryOp::kCaseEquality:
     case mir::BinaryOp::kCaseInequality:
     case mir::BinaryOp::kWildcardEquality:
     case mir::BinaryOp::kWildcardInequality:
-    case mir::BinaryOp::kGreaterEqual:
-    case mir::BinaryOp::kGreaterThan:
-    case mir::BinaryOp::kLessEqual:
-    case mir::BinaryOp::kLogicalAnd:
-    case mir::BinaryOp::kLogicalOr:
     case mir::BinaryOp::kLogicalImplication:
     case mir::BinaryOp::kLogicalEquivalence:
     case mir::BinaryOp::kShiftLeft:
