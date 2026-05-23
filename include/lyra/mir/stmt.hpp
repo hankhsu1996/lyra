@@ -49,6 +49,7 @@ struct EmptyStmt {};
 
 struct ProceduralVarDeclStmt {
   ProceduralVarRef target;
+  std::optional<ExprId> init;
 };
 
 struct ExprStmt {

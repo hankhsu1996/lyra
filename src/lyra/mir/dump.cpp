@@ -621,6 +621,14 @@ class MirDumper {
                       "target=ProceduralVarRef[hops={}, var={}] \"{}\"",
                       id.value, s.target.hops.value, s.target.var.value,
                       var.name));
+              if (s.init.has_value()) {
+                Indent();
+                Line(
+                    std::format(
+                        "init: Expr[{}] {}", s.init->value,
+                        FormatExpr(enclosing, *s.init)));
+                Dedent();
+              }
             },
             [&](const ExprStmt& s) { DumpExprStmt(s, enclosing, id); },
             [&](const BlockStmt& s) { DumpBlockStmt(stmt, s, id); },
