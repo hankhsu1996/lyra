@@ -9,6 +9,7 @@
 #include <slang/ast/Statement.h>
 #include <slang/ast/Symbol.h>
 #include <slang/ast/TimingControl.h>
+#include <slang/ast/statements/ConditionalStatements.h>
 #include <slang/ast/statements/MiscStatements.h>
 #include <slang/ast/symbols/VariableSymbols.h>
 
@@ -149,6 +150,52 @@ auto LowerStatement(
       return hir::Stmt{
           .label = std::nullopt,
           .data = hir::ExprStmt{.expr = id},
+          .span = span};
+    }
+
+    case slang::ast::StatementKind::Conditional: {
+      const auto& cs = stmt.as<slang::ast::ConditionalStatement>();
+      if (cs.check != slang::ast::UniquePriorityCheck::None) {
+        return diag::Unsupported(
+            span, diag::DiagCode::kUnsupportedStatementForm,
+            "unique/priority qualifiers on if are not yet supported",
+            diag::UnsupportedCategory::kFeature);
+      }
+      if (cs.conditions.size() != 1) {
+        return diag::Unsupported(
+            span, diag::DiagCode::kUnsupportedStatementForm,
+            "multi-condition if expressions are not yet supported",
+            diag::UnsupportedCategory::kFeature);
+      }
+      const auto& cond = cs.conditions.front();
+      if (cond.pattern != nullptr) {
+        return diag::Unsupported(
+            span, diag::DiagCode::kUnsupportedStatementForm,
+            "pattern matching in if conditions is not yet supported",
+            diag::UnsupportedCategory::kFeature);
+      }
+      auto cond_expr = LowerProcExpr(
+          unit_facts, scope_state.UnitState(), proc_state, stack, *cond.expr);
+      if (!cond_expr) return std::unexpected(std::move(cond_expr.error()));
+      const hir::ExprId cond_id = proc_state.AddExpr(*std::move(cond_expr));
+      auto then_stmt =
+          LowerStatement(unit_facts, proc_state, scope_state, stack, cs.ifTrue);
+      if (!then_stmt) return std::unexpected(std::move(then_stmt.error()));
+      const hir::StmtId then_id = proc_state.AddStmt(*std::move(then_stmt));
+      std::optional<hir::StmtId> else_id;
+      if (cs.ifFalse != nullptr) {
+        auto else_stmt = LowerStatement(
+            unit_facts, proc_state, scope_state, stack, *cs.ifFalse);
+        if (!else_stmt) return std::unexpected(std::move(else_stmt.error()));
+        else_id = proc_state.AddStmt(*std::move(else_stmt));
+      }
+      return hir::Stmt{
+          .label = std::nullopt,
+          .data =
+              hir::IfStmt{
+                  .condition = cond_id,
+                  .then_stmt = then_id,
+                  .else_stmt = else_id},
           .span = span};
     }
 
