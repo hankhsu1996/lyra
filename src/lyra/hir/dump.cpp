@@ -579,6 +579,14 @@ class HirDumper {
                   std::format(
                       "Stmt[{}] VarDeclStmt var=ProceduralVar[{}]", id.value,
                       v.var.value));
+              if (v.init.has_value()) {
+                Indent();
+                Line(
+                    std::format(
+                        "init: Expr[{}] {}", v.init->value,
+                        FormatProcExpr(p, *v.init)));
+                Dedent();
+              }
             },
             [&](const ExprStmt& e) {
               Line(
@@ -622,6 +630,56 @@ class HirDumper {
                 DumpStmt(p, *i.else_stmt);
                 Dedent();
               }
+              Dedent();
+            },
+            [&](const ForStmt& f) {
+              Line(
+                  std::format(
+                      "Stmt[{}] ForStmt (init={}, step={})", id.value,
+                      f.init.size(), f.step.size()));
+              Indent();
+              for (std::size_t k = 0; k < f.init.size(); ++k) {
+                std::visit(
+                    Overloaded{
+                        [&](const ForInitDecl& d) {
+                          Line(
+                              std::format(
+                                  "init[{}]: Decl var=ProceduralVar[{}]", k,
+                                  d.var.value));
+                          if (d.init.has_value()) {
+                            Indent();
+                            Line(
+                                std::format(
+                                    "Expr[{}] {}", d.init->value,
+                                    FormatProcExpr(p, *d.init)));
+                            Dedent();
+                          }
+                        },
+                        [&](const ForInitExpr& e) {
+                          Line(
+                              std::format(
+                                  "init[{}]: Expr[{}] {}", k, e.expr.value,
+                                  FormatProcExpr(p, e.expr)));
+                        },
+                    },
+                    f.init[k]);
+              }
+              if (f.condition.has_value()) {
+                Line(
+                    std::format(
+                        "cond: Expr[{}] {}", f.condition->value,
+                        FormatProcExpr(p, *f.condition)));
+              }
+              for (std::size_t k = 0; k < f.step.size(); ++k) {
+                Line(
+                    std::format(
+                        "step[{}]: Expr[{}] {}", k, f.step[k].value,
+                        FormatProcExpr(p, f.step[k])));
+              }
+              Line("body:");
+              Indent();
+              DumpStmt(p, f.body);
+              Dedent();
               Dedent();
             },
             [&](const TimedStmt& t) {
