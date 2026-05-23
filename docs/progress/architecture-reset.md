@@ -20,6 +20,10 @@ absent that, the item stays open.
 - [ ] R4 -- AOT execution path; runtime delivered as a static library.
 - [ ] R5 -- CLI subcommands for executing simulations: `run`, `compile`, `dump llvm`.
 - [ ] R6 -- Smoke, benchmark, and AOT CI jobs (currently `if: false`; see `../ci/README.md`).
+- [ ] R7 -- Test framework variable assertions (`expect.variables`). Archived tests assert
+      end-of-simulation values directly (`c: 30`, `r: "4'bx01x"`); the current framework supports
+      only `exit`/`stdout`/`stderr`, forcing every behavioral test to route through `$display`.
+      Blocks faithful reproduction of most feature tests under `archived/tests/sv_features/`.
 
 ## SystemVerilog Features
 
