@@ -50,7 +50,7 @@ void Engine::BindRoot(std::string root_name, Module& top) {
 
 auto Engine::Run() -> int {
   EnsureReadyToRun();
-  EnqueueInitialProcesses();
+  RegisterProcesses();
 
   while (HasScheduledWork()) {
     ExecuteCurrentTimeSlot();
@@ -59,6 +59,8 @@ auto Engine::Run() -> int {
     }
     AdvanceToNextTime();
   }
+
+  ExecuteFinalProcesses();
 
   phase_ = SchedulerPhase::kIdle;
   output_.Drain();
@@ -75,17 +77,19 @@ void Engine::EnsureReadyToRun() {
   ran_ = true;
 }
 
-void Engine::EnqueueInitialProcesses() {
+void Engine::RegisterProcesses() {
   WalkScopePreOrder(*root_, [this](RuntimeScope& scope) {
     scope.ForEachProcess([this](RuntimeProcess& process) {
       switch (process.Kind()) {
         case ProcessKind::kInitial:
           ScheduleActive(process);
           break;
+        case ProcessKind::kFinal:
+          queues_.finals.push_back(&process);
+          break;
         case ProcessKind::kAlways:
         case ProcessKind::kAlwaysComb:
         case ProcessKind::kAlwaysFf:
-        case ProcessKind::kFinal:
           throw InternalError("Engine::Run: ProcessKind is not yet supported");
       }
     });
@@ -154,6 +158,19 @@ void Engine::ExecuteReactiveRegion() {
 
 void Engine::ExecutePostponedRegion() {
   phase_ = SchedulerPhase::kPostponed;
+}
+
+void Engine::ExecuteFinalProcesses() {
+  phase_ = SchedulerPhase::kPostponed;
+  for (RuntimeProcess* p : queues_.finals) {
+    auto result = p->Resume();
+    if (!result.IsCompleted()) {
+      throw InternalError(
+          "Engine::ExecuteFinalProcesses: final block suspended; "
+          "time-controlling statements are not allowed inside `final`");
+    }
+  }
+  queues_.finals.clear();
 }
 
 void Engine::AdvanceDeltaCycle() {

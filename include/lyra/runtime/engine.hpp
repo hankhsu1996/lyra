@@ -73,13 +73,14 @@ class Engine {
     std::vector<NbaWorkItem> nba;
     std::vector<PostponedWorkItem> postponed;
     std::map<SimTime, std::vector<RuntimeProcess*>> delayed;
+    std::vector<RuntimeProcess*> finals;
   };
 
   static constexpr std::size_t kMaxCurrentTimeIterations = 10000;
   static constexpr std::size_t kMaxDeltaCyclesPerTimeSlot = 10000;
 
   void EnsureReadyToRun();
-  void EnqueueInitialProcesses();
+  void RegisterProcesses();
   void RunProcess(RuntimeProcess& process);
   void DrainRunnableQueue(std::deque<RuntimeProcess*>& queue);
 
@@ -91,6 +92,7 @@ class Engine {
   void ExecuteObservedRegion();
   void ExecuteReactiveRegion();
   void ExecutePostponedRegion();
+  void ExecuteFinalProcesses();
 
   void AdvanceToNextTime();
   void AdvanceDeltaCycle();

@@ -31,10 +31,7 @@ auto LowerProcessKind(hir::ProcessKind hir_kind, diag::SourceSpan span)
     case hir::ProcessKind::kAlways:
       return mir::ProcessKind::kAlways;
     case hir::ProcessKind::kFinal:
-      return diag::Unsupported(
-          span, diag::DiagCode::kUnsupportedProcessKindLowering,
-          "`final` processes are not yet supported",
-          diag::UnsupportedCategory::kFeature);
+      return mir::ProcessKind::kFinal;
     case hir::ProcessKind::kAlwaysComb:
       return diag::Unsupported(
           span, diag::DiagCode::kUnsupportedProcessKindLowering,
@@ -73,10 +70,11 @@ auto MakeTrueConditionExpr(
       });
 }
 
-auto LowerInitialProcess(
+auto LowerStraightLineProcess(
     const UnitLoweringState& unit_state,
     const StructuralScopeLoweringState& scope_state, const hir::Process& src,
-    ProcessLoweringState& proc_state) -> diag::Result<mir::Process> {
+    ProcessLoweringState& proc_state, mir::ProcessKind kind)
+    -> diag::Result<mir::Process> {
   ProceduralScopeLoweringState process_scope_state;
   auto lowered = LowerStmt(
       unit_state, scope_state, proc_state, process_scope_state, src,
@@ -85,8 +83,7 @@ auto LowerInitialProcess(
   const mir::StmtId root_id = process_scope_state.AddStmt(*std::move(lowered));
   process_scope_state.AddRootStmt(root_id);
   return mir::Process{
-      .kind = mir::ProcessKind::kInitial,
-      .root_procedural_scope = process_scope_state.Finish()};
+      .kind = kind, .root_procedural_scope = process_scope_state.Finish()};
 }
 
 auto LowerAlwaysProcess(
@@ -138,8 +135,10 @@ auto LowerProcess(
   if (!kind_or) return std::unexpected(std::move(kind_or.error()));
 
   ProcessLoweringState proc_state{time_resolution};
-  if (*kind_or == mir::ProcessKind::kInitial) {
-    return LowerInitialProcess(unit_state, scope_state, src, proc_state);
+  if (*kind_or == mir::ProcessKind::kInitial ||
+      *kind_or == mir::ProcessKind::kFinal) {
+    return LowerStraightLineProcess(
+        unit_state, scope_state, src, proc_state, *kind_or);
   }
   return LowerAlwaysProcess(unit_state, scope_state, src, proc_state);
 }
