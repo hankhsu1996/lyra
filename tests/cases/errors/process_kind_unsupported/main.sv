@@ -1,3 +1,3 @@
 module Top;
-  final begin end
+  always_comb begin end
 endmodule
