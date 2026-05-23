@@ -20,12 +20,7 @@ bazel test //...     # Run tests
 
 ### Repo Tour
 
-- [docs/architecture.md](docs/architecture.md) - component boundaries and data flow
-- [docs/pipeline-contract.md](docs/pipeline-contract.md) - layer responsibilities
-- [docs/hir-design.md](docs/hir-design.md) - language semantics
-- [docs/mir-design.md](docs/mir-design.md) - execution semantics
-- [docs/runtime.md](docs/runtime.md) - simulation engine
-- [docs/llvm-backend.md](docs/llvm-backend.md) - lowering strategy
+See [docs/](docs/) for the documentation index.
 
 ### Formatting
 
@@ -69,7 +64,7 @@ clang-tidy -p . <files>
 
 ## Tests
 
-YAML-based tests live in `tests/sv_features/`. Suite definitions are in `tests/suites.yaml`. CI runs
+YAML-based tests live in `tests/cases/`. Suite definitions are in `tests/suites.yaml`. CI runs
 `bazel test //...`; do the same locally before submitting.
 
 ```bash
@@ -78,5 +73,6 @@ bazel test //... --test_output=errors
 
 ## Documentation
 
-If you add or change behavior, update the relevant design or reference docs. When closing a language
-feature gap, update the relevant queue in [docs/queues/](docs/queues/).
+If you add or change behavior, update the relevant architecture contract or progress entry. When
+closing a feature gap, remove the corresponding item from the relevant file under
+[docs/progress/](docs/progress/).
