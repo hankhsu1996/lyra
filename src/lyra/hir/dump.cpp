@@ -602,6 +602,28 @@ class HirDumper {
               }
               Dedent();
             },
+            [&](const IfStmt& i) {
+              Line(
+                  std::format(
+                      "Stmt[{}] IfStmt cond=Expr[{}]", id.value,
+                      i.condition.value));
+              Indent();
+              Line(
+                  std::format(
+                      "Expr[{}] {}", i.condition.value,
+                      FormatProcExpr(p, i.condition)));
+              Line("then:");
+              Indent();
+              DumpStmt(p, i.then_stmt);
+              Dedent();
+              if (i.else_stmt.has_value()) {
+                Line("else:");
+                Indent();
+                DumpStmt(p, *i.else_stmt);
+                Dedent();
+              }
+              Dedent();
+            },
             [&](const TimedStmt& t) {
               Line(std::format("Stmt[{}] TimedStmt", id.value));
               Indent();

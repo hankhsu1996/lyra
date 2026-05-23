@@ -37,6 +37,12 @@ struct BlockStmt {
   std::vector<StmtId> statements;
 };
 
+struct IfStmt {
+  ExprId condition;
+  StmtId then_stmt;
+  std::optional<StmtId> else_stmt;
+};
+
 struct DelayControl {
   ExprId duration;
 };
@@ -50,8 +56,8 @@ struct TimedStmt {
   StmtId stmt;
 };
 
-using StmtData =
-    std::variant<EmptyStmt, VarDeclStmt, ExprStmt, BlockStmt, TimedStmt>;
+using StmtData = std::variant<
+    EmptyStmt, VarDeclStmt, ExprStmt, BlockStmt, IfStmt, TimedStmt>;
 
 struct Stmt {
   std::optional<std::string> label;

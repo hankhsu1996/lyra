@@ -167,6 +167,58 @@ auto LowerStmt(
                 .data = mir::BlockStmt{.scope = scope_id},
                 .child_procedural_scopes = std::move(child_scopes)};
           },
+          [&](const hir::IfStmt& i) -> diag::Result<mir::Stmt> {
+            auto cond_expr_or = LowerExpr(
+                unit_state, scope_state, proc_state, proc_scope_state, hir_proc,
+                hir_proc.exprs.at(i.condition.value));
+            if (!cond_expr_or) {
+              return std::unexpected(std::move(cond_expr_or.error()));
+            }
+            const mir::ExprId cond_id =
+                proc_scope_state.AddExpr(*std::move(cond_expr_or));
+
+            auto lower_branch = [&](hir::StmtId branch_hir_id)
+                -> diag::Result<std::pair<mir::ProceduralScope, mir::StmtId>> {
+              ProceduralScopeLoweringState branch_state;
+              ProceduralDepthGuard depth_guard{proc_state};
+              const hir::Stmt& branch_hir =
+                  hir_proc.stmts.at(branch_hir_id.value);
+              auto branch_or = LowerStmt(
+                  unit_state, scope_state, proc_state, branch_state, hir_proc,
+                  branch_hir);
+              if (!branch_or) {
+                return std::unexpected(std::move(branch_or.error()));
+              }
+              const mir::StmtId stmt_id =
+                  branch_state.AddStmt(*std::move(branch_or));
+              branch_state.AddRootStmt(stmt_id);
+              return std::pair{branch_state.Finish(), stmt_id};
+            };
+
+            std::vector<mir::ProceduralScope> child_scopes;
+            auto then_or = lower_branch(i.then_stmt);
+            if (!then_or) return std::unexpected(std::move(then_or.error()));
+            const mir::ProceduralScopeId then_scope_id =
+                AddChildProceduralScope(
+                    child_scopes, std::move(then_or->first));
+
+            std::optional<mir::ProceduralScopeId> else_scope_id;
+            if (i.else_stmt.has_value()) {
+              auto else_or = lower_branch(*i.else_stmt);
+              if (!else_or) return std::unexpected(std::move(else_or.error()));
+              else_scope_id = AddChildProceduralScope(
+                  child_scopes, std::move(else_or->first));
+            }
+
+            return mir::Stmt{
+                .label = stmt.label,
+                .data =
+                    mir::IfStmt{
+                        .condition = cond_id,
+                        .then_scope = then_scope_id,
+                        .else_scope = else_scope_id},
+                .child_procedural_scopes = std::move(child_scopes)};
+          },
           [&](const hir::TimedStmt& t) -> diag::Result<mir::Stmt> {
             auto timing_or =
                 LowerTimingControl(proc_state, hir_proc, t.timing, stmt.span);
