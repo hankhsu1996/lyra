@@ -82,6 +82,30 @@ auto BinaryOpToken(mir::BinaryOp op) -> diag::Result<std::string_view> {
   throw InternalError("BinaryOpToken: unknown MIR BinaryOp");
 }
 
+auto UnaryOpToken(mir::UnaryOp op) -> diag::Result<std::string_view> {
+  switch (op) {
+    case mir::UnaryOp::kPlus:
+      return std::string_view{"+"};
+    case mir::UnaryOp::kMinus:
+      return std::string_view{"-"};
+    case mir::UnaryOp::kBitwiseNot:
+      return std::string_view{"~"};
+    case mir::UnaryOp::kLogicalNot:
+      return std::string_view{"!"};
+    case mir::UnaryOp::kReductionAnd:
+    case mir::UnaryOp::kReductionOr:
+    case mir::UnaryOp::kReductionXor:
+    case mir::UnaryOp::kReductionNand:
+    case mir::UnaryOp::kReductionNor:
+    case mir::UnaryOp::kReductionXnor:
+      return diag::Unsupported(
+          diag::DiagCode::kCppEmitUnaryOpNotImplemented,
+          "this unary operator is not yet implemented in cpp emit",
+          diag::UnsupportedCategory::kFeature);
+  }
+  throw InternalError("UnaryOpToken: unknown MIR UnaryOp");
+}
+
 auto LookupProceduralVarName(
     const RenderContext& ctx, const mir::ProceduralVarRef& ref)
     -> const std::string& {
@@ -555,11 +579,16 @@ auto RenderExprAsNative(const RenderContext& ctx, const mir::Expr& expr)
           [&](const mir::ProceduralVarRef& l) -> diag::Result<std::string> {
             return LookupProceduralVarName(ctx, l);
           },
-          [](const mir::UnaryExpr&) -> diag::Result<std::string> {
-            return diag::Unsupported(
-                diag::DiagCode::kCppEmitUnaryOpNotImplemented,
-                "this unary operator is not yet implemented in cpp emit",
-                diag::UnsupportedCategory::kFeature);
+          [&](const mir::UnaryExpr& u) -> diag::Result<std::string> {
+            auto token_or = UnaryOpToken(u.op);
+            if (!token_or) {
+              return std::unexpected(std::move(token_or.error()));
+            }
+            auto operand_or = RenderExprAsNative(ctx, ctx.Expr(u.operand));
+            if (!operand_or) {
+              return std::unexpected(std::move(operand_or.error()));
+            }
+            return "(" + std::string{*token_or} + *operand_or + ")";
           },
           [&](const mir::BinaryExpr& b) -> diag::Result<std::string> {
             auto token_or = BinaryOpToken(b.op);
