@@ -10,6 +10,7 @@
 #include <slang/ast/Symbol.h>
 #include <slang/ast/TimingControl.h>
 #include <slang/ast/statements/ConditionalStatements.h>
+#include <slang/ast/statements/LoopStatements.h>
 #include <slang/ast/statements/MiscStatements.h>
 #include <slang/ast/symbols/VariableSymbols.h>
 
@@ -135,9 +136,16 @@ auto LowerStatement(
       const auto type_id =
           scope_state.UnitState().AddType(*std::move(type_data));
       const auto local_id = proc_state.AddProceduralVar(sym, type_id);
+      std::optional<hir::ExprId> init_id;
+      if (const auto* init_expr = sym.getInitializer()) {
+        auto init_or = LowerProcExpr(
+            unit_facts, scope_state.UnitState(), proc_state, stack, *init_expr);
+        if (!init_or) return std::unexpected(std::move(init_or.error()));
+        init_id = proc_state.AddExpr(*std::move(init_or));
+      }
       return hir::Stmt{
           .label = std::nullopt,
-          .data = hir::VarDeclStmt{.var = local_id},
+          .data = hir::VarDeclStmt{.var = local_id, .init = init_id},
           .span = span};
     }
 
@@ -150,6 +158,53 @@ auto LowerStatement(
       return hir::Stmt{
           .label = std::nullopt,
           .data = hir::ExprStmt{.expr = id},
+          .span = span};
+    }
+
+    case slang::ast::StatementKind::ForLoop: {
+      const auto& fs = stmt.as<slang::ast::ForLoopStatement>();
+      // slang elaborates `for (int i = 0; ...)` as an independent preceding
+      // VariableDeclStatement plus a ForLoopStatement whose `initializers` is
+      // empty and `loopVars` only points at the already-declared symbol. The
+      // preceding VarDeclStatement carries the initializer, so loopVars is
+      // informational only and is ignored here.
+      std::vector<hir::ForInit> hir_init;
+      hir_init.reserve(fs.initializers.size());
+      for (const auto* init_expr : fs.initializers) {
+        auto init_or = LowerProcExpr(
+            unit_facts, scope_state.UnitState(), proc_state, stack, *init_expr);
+        if (!init_or) return std::unexpected(std::move(init_or.error()));
+        hir_init.emplace_back(
+            hir::ForInitExpr{.expr = proc_state.AddExpr(*std::move(init_or))});
+      }
+      std::optional<hir::ExprId> cond_id;
+      if (fs.stopExpr != nullptr) {
+        auto cond_or = LowerProcExpr(
+            unit_facts, scope_state.UnitState(), proc_state, stack,
+            *fs.stopExpr);
+        if (!cond_or) return std::unexpected(std::move(cond_or.error()));
+        cond_id = proc_state.AddExpr(*std::move(cond_or));
+      }
+      std::vector<hir::ExprId> step_ids;
+      step_ids.reserve(fs.steps.size());
+      for (const auto* step_expr : fs.steps) {
+        auto step_or = LowerProcExpr(
+            unit_facts, scope_state.UnitState(), proc_state, stack, *step_expr);
+        if (!step_or) return std::unexpected(std::move(step_or.error()));
+        step_ids.push_back(proc_state.AddExpr(*std::move(step_or)));
+      }
+      auto body_stmt =
+          LowerStatement(unit_facts, proc_state, scope_state, stack, fs.body);
+      if (!body_stmt) return std::unexpected(std::move(body_stmt.error()));
+      const hir::StmtId body_id = proc_state.AddStmt(*std::move(body_stmt));
+      return hir::Stmt{
+          .label = std::nullopt,
+          .data =
+              hir::ForStmt{
+                  .init = std::move(hir_init),
+                  .condition = cond_id,
+                  .step = std::move(step_ids),
+                  .body = body_id},
           .span = span};
     }
 

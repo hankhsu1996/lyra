@@ -1,0 +1,13 @@
+id: cpp.for_loop_multi_init
+tags: [cpp_run]
+input:
+  command: [run, cpp]
+  project: false
+  top: Top
+  files: [main.sv]
+expect:
+  exit: 0
+  stdout:
+    exact: |
+      sum=30
+      diff=-20

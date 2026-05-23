@@ -100,12 +100,31 @@ auto RenderStmt(
                 RenderTypeAsCpp(ctx.Unit(), ctx.StructuralScope(), lv.type);
             if (!type_or) return std::unexpected(std::move(type_or.error()));
             const auto& ty = ctx.Unit().GetType(lv.type);
-            std::string init = "{}";
-            if (ty.IsPackedArray() &&
-                ty.AsPackedArray().form == mir::PackedArrayForm::kExplicit) {
-              init = "{" + std::to_string(ty.AsPackedArray().BitWidth()) + "}";
+            const bool is_packed_explicit =
+                ty.IsPackedArray() &&
+                ty.AsPackedArray().form == mir::PackedArrayForm::kExplicit;
+            if (is_packed_explicit && s.init.has_value()) {
+              return diag::Unsupported(
+                  diag::DiagCode::kCppEmitPackedRuntimeNotSupported,
+                  "packed variable declaration with initializer is not yet "
+                  "supported in cpp emit",
+                  diag::UnsupportedCategory::kFeature);
             }
-            return Indent(indent) + *type_or + " " + lv.name + init + ";\n";
+            if (is_packed_explicit) {
+              return Indent(indent) + *type_or + " " + lv.name + "{" +
+                     std::to_string(ty.AsPackedArray().BitWidth()) + "};\n";
+            }
+            if (s.init.has_value()) {
+              const auto& init_expr =
+                  ctx.ProceduralScope().exprs.at(s.init->value);
+              auto init_or = RenderExpr(ctx, init_expr);
+              if (!init_or) {
+                return std::unexpected(std::move(init_or.error()));
+              }
+              return Indent(indent) + *type_or + " " + lv.name + " = " +
+                     *init_or + ";\n";
+            }
+            return Indent(indent) + *type_or + " " + lv.name + "{};\n";
           },
           [&](const mir::ExprStmt& s) -> diag::Result<std::string> {
             const auto& expr = ctx.ProceduralScope().exprs.at(s.expr.value);

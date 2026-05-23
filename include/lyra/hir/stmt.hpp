@@ -24,9 +24,12 @@ struct EmptyStmt {};
 // VarDeclStmt has ordering semantics in HIR -- its position in the statement
 // stream marks the SystemVerilog point of declaration. The actual storage is
 // allocated on Process.procedural_vars; ProceduralVarId.value indexes into
-// that vector.
+// that vector. The optional init expression holds the initial value written in
+// the declaration (e.g. `int x = 7`); it is evaluated at the point of the
+// statement.
 struct VarDeclStmt {
-  ProceduralVarId var;
+  ProceduralVarId var = {};
+  std::optional<ExprId> init;
 };
 
 struct ExprStmt {
@@ -43,6 +46,24 @@ struct IfStmt {
   std::optional<StmtId> else_stmt;
 };
 
+struct ForInitDecl {
+  ProceduralVarId var = {};
+  std::optional<ExprId> init;
+};
+
+struct ForInitExpr {
+  ExprId expr;
+};
+
+using ForInit = std::variant<ForInitDecl, ForInitExpr>;
+
+struct ForStmt {
+  std::vector<ForInit> init;
+  std::optional<ExprId> condition;
+  std::vector<ExprId> step;
+  StmtId body;
+};
+
 struct DelayControl {
   ExprId duration;
 };
@@ -57,7 +78,7 @@ struct TimedStmt {
 };
 
 using StmtData = std::variant<
-    EmptyStmt, VarDeclStmt, ExprStmt, BlockStmt, IfStmt, TimedStmt>;
+    EmptyStmt, VarDeclStmt, ExprStmt, BlockStmt, IfStmt, ForStmt, TimedStmt>;
 
 struct Stmt {
   std::optional<std::string> label;
