@@ -8,6 +8,7 @@ cc_library(
     hdrs = glob(["framework/*.hpp"]),
     visibility = ["//tests:__subpackages__"],
     deps = [
+        "//:value",
         "@fmt",
         "@yaml-cpp//:yaml-cpp",
     ],

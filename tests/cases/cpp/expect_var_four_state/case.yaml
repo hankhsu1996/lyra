@@ -1,0 +1,11 @@
+id: cpp.expect_var_four_state
+tags: [cpp_run]
+input:
+  command: [run, cpp]
+  project: false
+  top: Top
+  files: [main.sv]
+expect:
+  exit: 0
+  variables:
+    a: "4'bx01x"

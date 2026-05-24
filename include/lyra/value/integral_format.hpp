@@ -2,11 +2,11 @@
 
 #include <string>
 
-#include "lyra/runtime/format.hpp"
+#include "lyra/value/format.hpp"
 
-namespace lyra::runtime {
+namespace lyra::value {
 
 [[nodiscard]] auto FormatIntegral(
     const FormatSpec& spec, const IntegralValueView& value) -> std::string;
 
-}  // namespace lyra::runtime
+}  // namespace lyra::value

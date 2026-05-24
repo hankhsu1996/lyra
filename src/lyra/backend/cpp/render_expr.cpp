@@ -213,9 +213,9 @@ auto RenderPackedLiteralView(
   const std::string vw = RenderWordArrayInitializer(c.value_words, n);
   if (pa.atom == mir::BitAtom::kBit) {
     return std::format(
-        "([&]() -> lyra::runtime::ConstBitView {{ "
+        "([&]() -> lyra::value::ConstBitView {{ "
         "static constexpr std::array<std::uint64_t, {0}> kV = {1}; "
-        "return lyra::runtime::ConstBitView{{kV, 0, {2}}}; }}())",
+        "return lyra::value::ConstBitView{{kV, 0, {2}}}; }}())",
         n, vw, width);
   }
   std::string uw;
@@ -225,10 +225,10 @@ auto RenderPackedLiteralView(
     uw = RenderWordArrayInitializer(c.state_words, n);
   }
   return std::format(
-      "([&]() -> lyra::runtime::ConstLogicView {{ "
+      "([&]() -> lyra::value::ConstLogicView {{ "
       "static constexpr std::array<std::uint64_t, {0}> kV = {1}; "
       "static constexpr std::array<std::uint64_t, {0}> kU = {2}; "
-      "return lyra::runtime::ConstLogicView{{kV, kU, 0, {3}}}; }}())",
+      "return lyra::value::ConstLogicView{{kV, kU, 0, {3}}}; }}())",
       n, vw, uw, width);
 }
 
@@ -296,14 +296,14 @@ auto RenderPackedExprAsView(const RenderContext& ctx, const mir::Expr& expr)
 namespace {
 
 auto SignednessLiteral(mir::Signedness s) -> std::string {
-  return s == mir::Signedness::kSigned ? "lyra::runtime::Signedness::kSigned"
-                                       : "lyra::runtime::Signedness::kUnsigned";
+  return s == mir::Signedness::kSigned ? "lyra::value::Signedness::kSigned"
+                                       : "lyra::value::Signedness::kUnsigned";
 }
 
 auto BitwiseRuntimeFunctionName(mir::UnaryOp op)
     -> std::optional<std::string_view> {
   if (op == mir::UnaryOp::kBitwiseNot) {
-    return std::string_view{"lyra::runtime::BitwiseNot"};
+    return std::string_view{"lyra::value::BitwiseNot"};
   }
   return std::nullopt;
 }
@@ -312,13 +312,13 @@ auto BitwiseRuntimeFunctionName(mir::BinaryOp op)
     -> std::optional<std::string_view> {
   switch (op) {
     case mir::BinaryOp::kBitwiseAnd:
-      return std::string_view{"lyra::runtime::BitwiseAnd"};
+      return std::string_view{"lyra::value::BitwiseAnd"};
     case mir::BinaryOp::kBitwiseOr:
-      return std::string_view{"lyra::runtime::BitwiseOr"};
+      return std::string_view{"lyra::value::BitwiseOr"};
     case mir::BinaryOp::kBitwiseXor:
-      return std::string_view{"lyra::runtime::BitwiseXor"};
+      return std::string_view{"lyra::value::BitwiseXor"};
     case mir::BinaryOp::kBitwiseXnor:
-      return std::string_view{"lyra::runtime::BitwiseXnor"};
+      return std::string_view{"lyra::value::BitwiseXnor"};
     default:
       return std::nullopt;
   }
@@ -328,17 +328,17 @@ auto ReductionRuntimeFunctionName(mir::UnaryOp op)
     -> std::optional<std::string_view> {
   switch (op) {
     case mir::UnaryOp::kReductionAnd:
-      return std::string_view{"lyra::runtime::ReductionAnd"};
+      return std::string_view{"lyra::value::ReductionAnd"};
     case mir::UnaryOp::kReductionOr:
-      return std::string_view{"lyra::runtime::ReductionOr"};
+      return std::string_view{"lyra::value::ReductionOr"};
     case mir::UnaryOp::kReductionXor:
-      return std::string_view{"lyra::runtime::ReductionXor"};
+      return std::string_view{"lyra::value::ReductionXor"};
     case mir::UnaryOp::kReductionNand:
-      return std::string_view{"lyra::runtime::ReductionNand"};
+      return std::string_view{"lyra::value::ReductionNand"};
     case mir::UnaryOp::kReductionNor:
-      return std::string_view{"lyra::runtime::ReductionNor"};
+      return std::string_view{"lyra::value::ReductionNor"};
     case mir::UnaryOp::kReductionXnor:
-      return std::string_view{"lyra::runtime::ReductionXnor"};
+      return std::string_view{"lyra::value::ReductionXnor"};
     default:
       return std::nullopt;
   }
@@ -538,8 +538,8 @@ auto RenderPackedAssign(const RenderContext& ctx, const mir::AssignExpr& a)
   }
 
   const std::string convert_fn = (lhs.atom == mir::BitAtom::kBit)
-                                     ? "lyra::runtime::ConvertToBit"
-                                     : "lyra::runtime::ConvertToLogic";
+                                     ? "lyra::value::ConvertToBit"
+                                     : "lyra::value::ConvertToLogic";
   return std::format(
       "{}({}, {}, {})", convert_fn, *src_view_or, lhs_view,
       SignednessLiteral(src_pa.signedness));

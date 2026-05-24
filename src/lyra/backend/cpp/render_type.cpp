@@ -34,11 +34,11 @@ auto RenderTypeAsCpp(
             }
             if (p.form == mir::PackedArrayForm::kExplicit) {
               if (p.atom == mir::BitAtom::kBit) {
-                return std::string{"lyra::runtime::BitValue"};
+                return std::string{"lyra::value::BitValue"};
               }
               if (p.atom == mir::BitAtom::kLogic ||
                   p.atom == mir::BitAtom::kReg) {
-                return std::string{"lyra::runtime::LogicValue"};
+                return std::string{"lyra::value::LogicValue"};
               }
               throw InternalError(
                   "RenderTypeAsCpp: unknown BitAtom for kExplicit packed type");

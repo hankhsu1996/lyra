@@ -11,10 +11,10 @@
 
 #include "lyra/base/internal_error.hpp"
 #include "lyra/base/overloaded.hpp"
-#include "lyra/runtime/format.hpp"
-#include "lyra/runtime/packed.hpp"
+#include "lyra/value/format.hpp"
+#include "lyra/value/packed.hpp"
 
-namespace lyra::runtime {
+namespace lyra::value {
 
 namespace {
 
@@ -397,4 +397,4 @@ auto FormatIntegral(const FormatSpec& spec, const IntegralValueView& v)
   return ApplyWidthWithChar(std::move(body), effective, pad_char);
 }
 
-}  // namespace lyra::runtime
+}  // namespace lyra::value

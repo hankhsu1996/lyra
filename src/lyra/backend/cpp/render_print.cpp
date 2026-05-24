@@ -31,13 +31,13 @@ auto BoolLiteral(bool b) -> std::string_view {
 auto RenderRuntimePrintKind(mir::PrintKind k) -> std::string_view {
   switch (k) {
     case mir::PrintKind::kDisplay:
-      return "lyra::runtime::PrintKind::kDisplay";
+      return "lyra::value::PrintKind::kDisplay";
     case mir::PrintKind::kWrite:
-      return "lyra::runtime::PrintKind::kWrite";
+      return "lyra::value::PrintKind::kWrite";
     case mir::PrintKind::kFDisplay:
-      return "lyra::runtime::PrintKind::kFDisplay";
+      return "lyra::value::PrintKind::kFDisplay";
     case mir::PrintKind::kFWrite:
-      return "lyra::runtime::PrintKind::kFWrite";
+      return "lyra::value::PrintKind::kFWrite";
   }
   throw InternalError("RenderRuntimePrintKind: unknown PrintKind");
 }
@@ -45,22 +45,22 @@ auto RenderRuntimePrintKind(mir::PrintKind k) -> std::string_view {
 auto RenderRuntimeFormatKind(mir::FormatKind k) -> std::string_view {
   switch (k) {
     case mir::FormatKind::kDecimal:
-      return "lyra::runtime::FormatKind::kDecimal";
+      return "lyra::value::FormatKind::kDecimal";
     case mir::FormatKind::kHex:
-      return "lyra::runtime::FormatKind::kHex";
+      return "lyra::value::FormatKind::kHex";
     case mir::FormatKind::kBinary:
-      return "lyra::runtime::FormatKind::kBinary";
+      return "lyra::value::FormatKind::kBinary";
     case mir::FormatKind::kOctal:
-      return "lyra::runtime::FormatKind::kOctal";
+      return "lyra::value::FormatKind::kOctal";
     case mir::FormatKind::kString:
-      return "lyra::runtime::FormatKind::kString";
+      return "lyra::value::FormatKind::kString";
   }
   throw InternalError("RenderRuntimeFormatKind: unknown FormatKind");
 }
 
 auto RenderFormatSpecInit(const mir::FormatSpec& spec) -> std::string {
   return std::format(
-      "lyra::runtime::FormatSpec{{.kind = {}, .width = {}, .precision = {}, "
+      "lyra::value::FormatSpec{{.kind = {}, .width = {}, .precision = {}, "
       ".zero_pad = {}, .left_align = {}, .timeunit_power = {}}}",
       RenderRuntimeFormatKind(spec.kind), spec.modifiers.width,
       spec.modifiers.precision, BoolLiteral(spec.modifiers.zero_pad),
@@ -78,7 +78,7 @@ auto RenderRuntimeValueViewInit(
     auto operand_or = RenderExprAsNative(ctx, ctx.Expr(v.value));
     if (!operand_or) return std::unexpected(std::move(operand_or.error()));
     return std::format(
-        "lyra::runtime::RuntimeValueView::String({})", *operand_or);
+        "lyra::value::RuntimeValueView::String({})", *operand_or);
   }
 
   if (type.IsPackedArray()) {
@@ -91,7 +91,7 @@ auto RenderRuntimeValueViewInit(
       auto operand_or = RenderExprAsNative(ctx, ctx.Expr(v.value));
       if (!operand_or) return std::unexpected(std::move(operand_or.error()));
       return std::format(
-          "lyra::runtime::RuntimeValueView::NarrowIntegral("
+          "lyra::value::RuntimeValueView::NarrowIntegral("
           "static_cast<std::uint64_t>({}), {}, {})",
           *operand_or, bit_width, BoolLiteral(is_signed));
     }
@@ -101,11 +101,11 @@ auto RenderRuntimeValueViewInit(
       if (!view_or) return std::unexpected(std::move(view_or.error()));
       if (pa.atom == mir::BitAtom::kBit) {
         return std::format(
-            "lyra::runtime::RuntimeValueView::FromBitView({}, {})", *view_or,
+            "lyra::value::RuntimeValueView::FromBitView({}, {})", *view_or,
             BoolLiteral(is_signed));
       }
       return std::format(
-          "lyra::runtime::RuntimeValueView::FromLogicView({}, {})", *view_or,
+          "lyra::value::RuntimeValueView::FromLogicView({}, {})", *view_or,
           BoolLiteral(is_signed));
     }
     throw InternalError(
@@ -115,7 +115,7 @@ auto RenderRuntimeValueViewInit(
     auto operand_or = RenderExprAsNative(ctx, ctx.Expr(v.value));
     if (!operand_or) return std::unexpected(std::move(operand_or.error()));
     return std::format(
-        "lyra::runtime::RuntimeValueView::String({})", *operand_or);
+        "lyra::value::RuntimeValueView::String({})", *operand_or);
   }
   throw InternalError(
       "RenderRuntimeValueViewInit: unsupported display operand type");
@@ -129,14 +129,14 @@ auto RenderPrintItemInit(
           [&](const mir::RuntimePrintLiteral& lit)
               -> diag::Result<std::string> {
             return std::format(
-                "lyra::runtime::PrintLiteralItem{{{}, {}}}",
+                "lyra::value::PrintLiteralItem{{{}, {}}}",
                 RenderCStringLiteral(lit.text), lit.text.size());
           },
           [&](const mir::RuntimePrintValue& v) -> diag::Result<std::string> {
             auto view_or = RenderRuntimeValueViewInit(ctx, v);
             if (!view_or) return std::unexpected(std::move(view_or.error()));
             return std::format(
-                "lyra::runtime::PrintValueItem{{{}, {}}}",
+                "lyra::value::PrintValueItem{{{}, {}}}",
                 RenderFormatSpecInit(v.spec), *view_or);
           },
       },
@@ -163,7 +163,7 @@ auto RenderRuntimeCallExpr(
   if (call.items.empty()) {
     return std::format(
         "lyra::runtime::LyraPrint(*services_, {}, "
-        "std::span<const lyra::runtime::PrintItem>{{}})",
+        "std::span<const lyra::value::PrintItem>{{}})",
         kind_literal);
   }
 
@@ -181,7 +181,7 @@ auto RenderRuntimeCallExpr(
 
   std::string out = std::format(
       "lyra::runtime::LyraPrint(*services_, {}, "
-      "std::array<lyra::runtime::PrintItem, {}>{{",
+      "std::array<lyra::value::PrintItem, {}>{{",
       kind_literal, call.items.size());
   for (std::size_t i = 0; i < item_inits.size(); ++i) {
     if (i != 0) {

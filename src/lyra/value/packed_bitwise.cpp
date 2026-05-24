@@ -1,13 +1,13 @@
-#include "lyra/runtime/packed_bitwise.hpp"
+#include "lyra/value/packed_bitwise.hpp"
 
 #include <cstddef>
 #include <cstdint>
 #include <string_view>
 
-#include "lyra/runtime/packed.hpp"
-#include "lyra/runtime/packed_internal.hpp"
+#include "lyra/value/packed.hpp"
+#include "lyra/value/packed_internal.hpp"
 
-namespace lyra::runtime {
+namespace lyra::value {
 
 auto BitwiseNot(ConstBitView src, BitView dst) -> void {
   constexpr std::string_view kWhere = "BitwiseNot(Bit)";
@@ -246,4 +246,4 @@ auto BitwiseXnor(ConstLogicView lhs, ConstLogicView rhs, LogicView dst)
   MaskUnusedTopBits(dst_u, dst.Width());
 }
 
-}  // namespace lyra::runtime
+}  // namespace lyra::value

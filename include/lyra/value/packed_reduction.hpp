@@ -1,8 +1,8 @@
 #pragma once
 
-#include "lyra/runtime/packed.hpp"
+#include "lyra/value/packed.hpp"
 
-namespace lyra::runtime {
+namespace lyra::value {
 
 auto ReductionAnd(ConstBitView src, BitView dst) -> void;
 auto ReductionAnd(ConstLogicView src, LogicView dst) -> void;
@@ -70,4 +70,4 @@ inline auto ReductionXnor(LogicView src, LogicView dst) -> void {
   ReductionXnor(src.AsConst(), dst);
 }
 
-}  // namespace lyra::runtime
+}  // namespace lyra::value

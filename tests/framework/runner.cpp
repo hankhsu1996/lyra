@@ -3,20 +3,27 @@
 #include <algorithm>
 #include <chrono>
 #include <cstddef>
+#include <expected>
 #include <filesystem>
 #include <format>
+#include <fstream>
 #include <optional>
 #include <span>
+#include <sstream>
 #include <stdexcept>
 #include <string>
 #include <string_view>
+#include <unordered_map>
 #include <unordered_set>
+#include <utility>
 #include <vector>
 #include <yaml-cpp/yaml.h>
 
 #include "build.hpp"
 #include "matcher.hpp"
 #include "process.hpp"
+#include "sv_injection.hpp"
+#include "sv_literal.hpp"
 
 namespace lyra::test {
 namespace {
@@ -117,6 +124,67 @@ auto ParseCase(
     }
     c.expect.stdout_spec = ParseExpected(ex["stdout"]);
     c.expect.stderr_spec = ParseExpected(ex["stderr"]);
+    const auto& vars = ex["variables"];
+    if (vars) {
+      if (!vars.IsMap()) {
+        throw std::runtime_error(
+            std::format(
+                "{}: 'expect.variables' must be a map of name -> value",
+                yaml_path.string()));
+      }
+      for (const auto& kv : vars) {
+        const auto name = kv.first.as<std::string>();
+        const auto& value_node = kv.second;
+        if (!value_node.IsScalar()) {
+          throw std::runtime_error(
+              std::format(
+                  "{}: expect.variables['{}'] must be a scalar (int or string)",
+                  yaml_path.string(), name));
+        }
+        // yaml-cpp tags: "!" for explicit-string (quoted), "?" for plain
+        // scalar (could be int or unquoted string). Plain scalars that parse
+        // as integer are treated as YAML int; everything else is a string,
+        // which may further match the SV literal pattern.
+        const std::string tag = value_node.Tag();
+        const auto raw_text = value_node.as<std::string>();
+        bool node_is_integer = false;
+        if (tag != "!") {
+          try {
+            (void)value_node.as<std::int64_t>();
+            node_is_integer = true;
+          } catch (const YAML::Exception&) {
+            node_is_integer = false;
+          }
+        }
+        auto parsed_or = ParseExpectedValue(raw_text, node_is_integer);
+        if (!parsed_or) {
+          throw std::runtime_error(
+              std::format(
+                  "{}: expect.variables['{}']: {}", yaml_path.string(), name,
+                  parsed_or.error()));
+        }
+        c.expect.variables.push_back(
+            {.name = name, .value = std::move(*parsed_or)});
+      }
+      if (!c.expect.variables.empty()) {
+        const bool is_cpp_run = c.input.command.size() == 2 &&
+                                c.input.command[0] == "run" &&
+                                c.input.command[1] == "cpp";
+        if (!is_cpp_run) {
+          throw std::runtime_error(
+              std::format(
+                  "{}: expect.variables only valid for `[run, cpp]` cases",
+                  yaml_path.string()));
+        }
+        if (c.input.files.size() != 1) {
+          throw std::runtime_error(
+              std::format(
+                  "{}: expect.variables requires exactly one source file "
+                  "(got {})",
+                  yaml_path.string(), c.input.files.size()));
+        }
+      }
+    }
   }
 
   return c;
@@ -258,6 +326,31 @@ auto FilterCases(const std::vector<TestCase>& cases, const Suite& suite)
 
 namespace {
 
+auto ReadFileToString(const std::filesystem::path& p)
+    -> std::expected<std::string, std::string> {
+  std::ifstream in(p, std::ios::binary);
+  if (!in) {
+    return std::unexpected(
+        std::format("cannot open '{}' for read", p.string()));
+  }
+  std::ostringstream oss;
+  oss << in.rdbuf();
+  return oss.str();
+}
+
+auto WriteStringToFile(const std::filesystem::path& p, std::string_view content)
+    -> std::optional<std::string> {
+  std::ofstream out(p, std::ios::binary);
+  if (!out) {
+    return std::format("cannot open '{}' for write", p.string());
+  }
+  out.write(content.data(), static_cast<std::streamsize>(content.size()));
+  if (!out) {
+    return std::format("write to '{}' failed", p.string());
+  }
+  return std::nullopt;
+}
+
 auto RunCppCase(
     const std::filesystem::path& lyra_exe, const TestCase& c,
     const CppRunPaths& cpp_paths) -> RunResult {
@@ -268,17 +361,55 @@ auto RunCppCase(
     return result;
   }
   const auto& work = *work_or;
+  const std::string top = c.input.top.value_or("Top");
+
+  // When `expect.variables` is set, rewrite the source to append a synthetic
+  // `final` block that prints sentinel-bracketed marker lines. The rewritten
+  // source goes into the same temp work dir under the original basename, and
+  // becomes the new input to `lyra emit cpp`.
+  std::vector<std::filesystem::path> resolved_input_files;
+  resolved_input_files.reserve(c.input.files.size());
+  if (!c.expect.variables.empty()) {
+    const auto src_path = c.case_dir / c.input.files[0];
+    auto source_or = ReadFileToString(src_path);
+    if (!source_or) {
+      result.mismatch = source_or.error();
+      return result;
+    }
+    std::vector<InjectionEntry> entries;
+    entries.reserve(c.expect.variables.size());
+    for (const auto& v : c.expect.variables) {
+      entries.push_back(
+          {.name = v.name, .sv_format_specifier = v.value.sv_format_specifier});
+    }
+    auto rewritten_or = RewriteSourceWithProbes(*source_or, top, entries);
+    if (!rewritten_or) {
+      result.mismatch =
+          "expect.variables source rewrite: " + rewritten_or.error();
+      return result;
+    }
+    const auto rewritten_path = work / src_path.filename();
+    if (auto err = WriteStringToFile(rewritten_path, *rewritten_or)) {
+      result.mismatch = *err;
+      return result;
+    }
+    resolved_input_files.push_back(rewritten_path);
+  } else {
+    for (const auto& f : c.input.files) {
+      resolved_input_files.push_back(c.case_dir / f);
+    }
+  }
 
   std::vector<std::string>& argv = result.argv;
   argv.emplace_back("emit");
   argv.emplace_back("cpp");
   argv.emplace_back("--no-project");
   argv.emplace_back("--top");
-  argv.push_back(c.input.top.value_or("Top"));
+  argv.push_back(top);
   argv.emplace_back("--out-dir");
   argv.push_back(work.string());
-  for (const auto& f : c.input.files) {
-    argv.push_back((c.case_dir / f).string());
+  for (const auto& f : resolved_input_files) {
+    argv.push_back(f.string());
   }
 
   auto emit = RunChildProcess(lyra_exe, argv, std::chrono::seconds{30});
@@ -316,8 +447,54 @@ auto RunCppCase(
             "expected {}, got {}", *c.expect.exit_code, result.proc.exit_code));
     return result;
   }
-  if (auto mm = CheckOutput(
-          result.proc.stdout_text, c.expect.stdout_spec, "stdout")) {
+
+  std::string stdout_for_user_check = result.proc.stdout_text;
+  if (!c.expect.variables.empty()) {
+    const auto extracted = ExtractProbeMarkers(result.proc.stdout_text);
+    if (!extracted.begin_found) {
+      record(
+          "expect.variables",
+          "no `__LYRA_VARS_BEGIN__` marker found in stdout; the injected "
+          "`final` block likely did not execute (compile error or "
+          "early termination)");
+      return result;
+    }
+    if (!extracted.complete) {
+      record(
+          "expect.variables",
+          "`__LYRA_VARS_BEGIN__` found but `__LYRA_VARS_END__` missing; the "
+          "injected `final` block did not run to completion");
+      return result;
+    }
+    std::unordered_map<std::string, std::string> observed;
+    for (const auto& r : extracted.records) {
+      observed.emplace(r.name, r.value);
+    }
+    for (const auto& expected_var : c.expect.variables) {
+      const auto it = observed.find(expected_var.name);
+      if (it == observed.end()) {
+        record(
+            "expect.variables",
+            std::format(
+                "no marker for variable '{}' inside the sentinel block",
+                expected_var.name));
+        return result;
+      }
+      const auto expected_text = RenderExpectedFormatted(expected_var.value);
+      if (it->second != expected_text) {
+        record(
+            "expect.variables",
+            std::format(
+                "variable '{}': expected '{}', got '{}'", expected_var.name,
+                expected_text, it->second));
+        return result;
+      }
+    }
+    stdout_for_user_check = extracted.residual_stdout;
+  }
+
+  if (auto mm =
+          CheckOutput(stdout_for_user_check, c.expect.stdout_spec, "stdout")) {
     record("stdout mismatch", *mm);
     return result;
   }

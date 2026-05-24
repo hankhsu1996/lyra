@@ -1,8 +1,8 @@
 #pragma once
 
-#include "lyra/runtime/packed.hpp"
+#include "lyra/value/packed.hpp"
 
-namespace lyra::runtime {
+namespace lyra::value {
 
 auto ConvertToBit(ConstBitView src, BitView dst, Signedness src_signedness)
     -> void;
@@ -33,4 +33,4 @@ inline auto ConvertToLogic(
   ConvertToLogic(src.AsConst(), dst, src_signedness);
 }
 
-}  // namespace lyra::runtime
+}  // namespace lyra::value

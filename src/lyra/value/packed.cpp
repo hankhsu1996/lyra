@@ -1,4 +1,4 @@
-#include "lyra/runtime/packed.hpp"
+#include "lyra/value/packed.hpp"
 
 #include <cstddef>
 #include <cstdint>
@@ -8,7 +8,7 @@
 
 #include "lyra/base/internal_error.hpp"
 
-namespace lyra::runtime {
+namespace lyra::value {
 
 auto WordCountForBits(std::uint64_t bit_width) -> std::size_t {
   if (bit_width == 0U) {
@@ -377,4 +377,4 @@ auto CopySameWidth(ConstLogicView src, LogicView dst) -> void {
   }
 }
 
-}  // namespace lyra::runtime
+}  // namespace lyra::value
