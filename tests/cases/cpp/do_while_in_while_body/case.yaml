@@ -1,0 +1,11 @@
+id: cpp.do_while_in_while_body
+tags: [cpp_run]
+input:
+  command: [run, cpp]
+  project: false
+  top: Top
+  files: [main.sv]
+expect:
+  exit: 0
+  stdout:
+    exact: "outer=3 total=9\n"

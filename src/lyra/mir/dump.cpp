@@ -652,6 +652,9 @@ class MirDumper {
             [&](const ForStmt& s) { DumpForStmt(stmt, s, enclosing, id); },
             [&](const TimedStmt& t) { DumpTimedStmt(t, enclosing, id); },
             [&](const WhileStmt& s) { DumpWhileStmt(stmt, s, enclosing, id); },
+            [&](const DoWhileStmt& s) {
+              DumpDoWhileStmt(stmt, s, enclosing, id);
+            },
             [&](const AwaitStmt& s) {
               Line(
                   std::format(
@@ -666,6 +669,22 @@ class MirDumper {
       const Stmt& parent, const WhileStmt& s, const ProceduralScope& enclosing,
       StmtId id) {
     Line(std::format("Stmt[{}] WhileStmt", id.value));
+    Indent();
+    Line(
+        std::format(
+            "condition: Expr[{}] {}", s.condition.value,
+            FormatExpr(enclosing, s.condition)));
+    Line(std::format("scope (ProceduralScopeId={}):", s.scope.value));
+    Indent();
+    DumpProceduralScope(parent.child_procedural_scopes.at(s.scope.value));
+    Dedent();
+    Dedent();
+  }
+
+  void DumpDoWhileStmt(
+      const Stmt& parent, const DoWhileStmt& s,
+      const ProceduralScope& enclosing, StmtId id) {
+    Line(std::format("Stmt[{}] DoWhileStmt", id.value));
     Indent();
     Line(
         std::format(

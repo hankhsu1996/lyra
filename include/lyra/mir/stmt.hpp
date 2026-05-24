@@ -117,6 +117,11 @@ struct WhileStmt {
   ProceduralScopeId scope;
 };
 
+struct DoWhileStmt {
+  ExprId condition;
+  ProceduralScopeId scope;
+};
+
 enum class AwaitKind : std::uint8_t {
   kAlwaysBackedge,
 };
@@ -127,7 +132,8 @@ struct AwaitStmt {
 
 using StmtData = std::variant<
     EmptyStmt, ProceduralVarDeclStmt, ExprStmt, BlockStmt, IfStmt, SwitchStmt,
-    ConstructOwnedObjectStmt, ForStmt, TimedStmt, WhileStmt, AwaitStmt>;
+    ConstructOwnedObjectStmt, ForStmt, TimedStmt, WhileStmt, DoWhileStmt,
+    AwaitStmt>;
 
 struct Stmt {
   std::optional<std::string> label;

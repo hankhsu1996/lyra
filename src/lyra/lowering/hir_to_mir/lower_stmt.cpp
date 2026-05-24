@@ -605,6 +605,42 @@ auto LowerStmt(
                 .data = mir::BlockStmt{.scope = wrapper_scope_id},
                 .child_procedural_scopes = std::move(child_scopes)};
           },
+          [&](const hir::DoWhileStmt& d) -> diag::Result<mir::Stmt> {
+            ProceduralScopeLoweringState body_state;
+            {
+              ProceduralDepthGuard body_depth_guard{proc_state};
+              const hir::Stmt& body_hir = hir_proc.stmts.at(d.body.value);
+              auto body_or = LowerStmt(
+                  unit_state, scope_state, proc_state, body_state, hir_proc,
+                  body_hir);
+              if (!body_or) {
+                return std::unexpected(std::move(body_or.error()));
+              }
+              const mir::StmtId body_id =
+                  body_state.AddStmt(*std::move(body_or));
+              body_state.AddRootStmt(body_id);
+            }
+
+            auto cond_or = LowerExpr(
+                unit_state, scope_state, proc_state, proc_scope_state, hir_proc,
+                hir_proc.exprs.at(d.condition.value));
+            if (!cond_or) {
+              return std::unexpected(std::move(cond_or.error()));
+            }
+            const mir::ExprId cond_id =
+                proc_scope_state.AddExpr(*std::move(cond_or));
+
+            std::vector<mir::ProceduralScope> child_scopes;
+            const mir::ProceduralScopeId body_scope_id =
+                AddChildProceduralScope(child_scopes, body_state.Finish());
+
+            return mir::Stmt{
+                .label = stmt.label,
+                .data =
+                    mir::DoWhileStmt{
+                        .condition = cond_id, .scope = body_scope_id},
+                .child_procedural_scopes = std::move(child_scopes)};
+          },
           [&](const hir::TimedStmt& t) -> diag::Result<mir::Stmt> {
             auto timing_or =
                 LowerTimingControl(proc_state, hir_proc, t.timing, stmt.span);

@@ -302,6 +302,24 @@ auto RenderStmt(
             result += Indent(indent) + "}\n";
             return result;
           },
+          [&](const mir::DoWhileStmt& s) -> diag::Result<std::string> {
+            const auto& cond_expr =
+                ctx.ProceduralScope().exprs.at(s.condition.value);
+            auto cond_or = RenderExprAsNative(ctx, cond_expr);
+            if (!cond_or) {
+              return std::unexpected(std::move(cond_or.error()));
+            }
+            const auto& scope = stmt.child_procedural_scopes.at(s.scope.value);
+            auto body_or = RenderNestedProceduralScope(ctx, scope, indent + 1);
+            if (!body_or) {
+              return std::unexpected(std::move(body_or.error()));
+            }
+            std::string result = Indent(indent) + "do {\n";
+            result += *body_or;
+            result +=
+                Indent(indent) + "} while (" + *std::move(cond_or) + ");\n";
+            return result;
+          },
           [&](const mir::AwaitStmt&) -> diag::Result<std::string> {
             throw InternalError(
                 "RenderStmt: AwaitStmt is not yet supported by C++ emit");

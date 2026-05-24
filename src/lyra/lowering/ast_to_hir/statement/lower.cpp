@@ -240,6 +240,22 @@ auto LowerStatement(
           .span = span};
     }
 
+    case slang::ast::StatementKind::DoWhileLoop: {
+      const auto& ds = stmt.as<slang::ast::DoWhileLoopStatement>();
+      auto body_or =
+          LowerStatement(unit_facts, proc_state, scope_state, stack, ds.body);
+      if (!body_or) return std::unexpected(std::move(body_or.error()));
+      const hir::StmtId body_id = proc_state.AddStmt(*std::move(body_or));
+      auto cond_or = LowerProcExpr(
+          unit_facts, scope_state.UnitState(), proc_state, stack, ds.cond);
+      if (!cond_or) return std::unexpected(std::move(cond_or.error()));
+      const hir::ExprId cond_id = proc_state.AddExpr(*std::move(cond_or));
+      return hir::Stmt{
+          .label = std::nullopt,
+          .data = hir::DoWhileStmt{.condition = cond_id, .body = body_id},
+          .span = span};
+    }
+
     case slang::ast::StatementKind::Case: {
       const auto& cs = stmt.as<slang::ast::CaseStatement>();
       if (cs.condition != slang::ast::CaseStatementCondition::Normal) {
