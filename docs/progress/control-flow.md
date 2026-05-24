@@ -25,8 +25,12 @@ checked when its `*.yaml` cases reproduce on the current pipeline.
       that does not depend on `break` (deferred to C7). Includes runtime-condition loops, countdown,
       `while (0)` zero iterations, two-level nesting, and mixed nesting with `for` in both
       directions.
-- [ ] C5 -- `repeat (N)`. Pure desugaring to `for (int __k = 0; __k < N; __k = __k + 1)` over the C2
-      machinery. Counts as one PR after C2 land.
+- [x] C5 -- `repeat (N)`. Reproduces every `control_flow/repeat/default.yaml` case that does not
+      depend on `break` (deferred to C7). HIR carries a faithful `RepeatStmt`; HIR -> MIR desugars
+      to a wrapper `BlockStmt` containing a count snapshot (preserves SV's "evaluate count once"
+      semantic for side-effecting count expressions) plus an `mir::ForStmt` over the C2 machinery.
+      Coverage includes literal counts, runtime counts, zero iterations, count-evaluated-once,
+      nesting, single-statement body, and mixed nesting with `if`/`for`/`while`.
 - [ ] C6 -- `do_while`. Lowers to `while(true) { body; if (!cond) break; }` over C4 + C7.
 - [ ] C7 -- Loop control: `break`, `continue`. New HIR/MIR statements + C++ render. Shared by C2
       (for) / C4 (while) / C5 (repeat) / C6 (do-while) / C9 (foreach). Coroutine renderer must scope
