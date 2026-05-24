@@ -7,9 +7,9 @@
 #include <string_view>
 
 #include "lyra/base/internal_error.hpp"
-#include "lyra/runtime/packed.hpp"
+#include "lyra/value/packed.hpp"
 
-namespace lyra::runtime::detail {
+namespace lyra::value::detail {
 
 struct PackedAccess {
   static auto BitOffset(const ConstBitView& v) -> std::uint64_t {
@@ -95,4 +95,4 @@ inline auto RequireWordCount(
       bit_width);
 }
 
-}  // namespace lyra::runtime::detail
+}  // namespace lyra::value::detail

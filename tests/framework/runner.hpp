@@ -10,6 +10,7 @@
 
 #include "matcher.hpp"
 #include "process.hpp"
+#include "sv_literal.hpp"
 
 namespace lyra::test {
 
@@ -21,10 +22,16 @@ struct CaseInput {
   std::vector<std::string> extra_args;
 };
 
+struct ExpectedVariable {
+  std::string name;
+  ExpectedValue value;
+};
+
 struct CaseExpect {
   std::optional<int> exit_code;
   ExpectedOutput stdout_spec;
   ExpectedOutput stderr_spec;
+  std::vector<ExpectedVariable> variables;
 };
 
 struct TestCase {

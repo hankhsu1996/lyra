@@ -7,7 +7,7 @@
 
 #include "absl/container/inlined_vector.h"
 
-namespace lyra::runtime {
+namespace lyra::value {
 
 inline constexpr std::size_t kPackedWordsInlineCapacity = 1;
 
@@ -196,4 +196,4 @@ inline auto CopySameWidth(LogicView src, LogicView dst) -> void {
   CopySameWidth(src.AsConst(), dst);
 }
 
-}  // namespace lyra::runtime
+}  // namespace lyra::value

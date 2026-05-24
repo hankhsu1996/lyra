@@ -1,4 +1,4 @@
-#include "lyra/runtime/format.hpp"
+#include "lyra/value/format.hpp"
 
 #include <cstdint>
 #include <format>
@@ -11,10 +11,10 @@
 
 #include "lyra/base/internal_error.hpp"
 #include "lyra/base/overloaded.hpp"
-#include "lyra/runtime/integral_format.hpp"
-#include "lyra/runtime/packed_internal.hpp"
+#include "lyra/value/integral_format.hpp"
+#include "lyra/value/packed_internal.hpp"
 
-namespace lyra::runtime {
+namespace lyra::value {
 
 auto IntegralValueView::Narrow(
     std::uint64_t value_word, std::uint64_t unknown_word,
@@ -175,4 +175,4 @@ auto FormatValue(const FormatSpec& spec, const RuntimeValueView& value)
       value.data);
 }
 
-}  // namespace lyra::runtime
+}  // namespace lyra::value

@@ -6,9 +6,9 @@
 #include <string_view>
 #include <variant>
 
-#include "lyra/runtime/packed.hpp"
+#include "lyra/value/packed.hpp"
 
-namespace lyra::runtime {
+namespace lyra::value {
 
 enum class PrintKind : std::uint8_t {
   kDisplay,
@@ -123,4 +123,4 @@ struct PrintValueItem {
 
 using PrintItem = std::variant<PrintLiteralItem, PrintValueItem>;
 
-}  // namespace lyra::runtime
+}  // namespace lyra::value

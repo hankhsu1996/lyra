@@ -7,6 +7,7 @@ filegroup(
     name = "runtime_headers",
     srcs = glob([
         "include/lyra/runtime/*.hpp",
+        "include/lyra/value/*.hpp",
         "include/lyra/support/*.hpp",
         "include/lyra/base/*.hpp",
     ]),
@@ -66,6 +67,18 @@ cc_library(
 )
 
 cc_library(
+    name = "value",
+    srcs = glob(["src/lyra/value/*.cpp"]),
+    hdrs = glob(["include/lyra/value/*.hpp"]),
+    includes = ["include"],
+    visibility = ["//visibility:public"],
+    deps = [
+        ":base",
+        "@abseil-cpp//absl/container:inlined_vector",
+    ],
+)
+
+cc_library(
     name = "runtime",
     srcs = glob(["src/lyra/runtime/*.cpp"]),
     hdrs = glob(["include/lyra/runtime/*.hpp"]),
@@ -73,7 +86,7 @@ cc_library(
     visibility = ["//visibility:public"],
     deps = [
         ":base",
-        "@abseil-cpp//absl/container:inlined_vector",
+        ":value",
     ],
 )
 

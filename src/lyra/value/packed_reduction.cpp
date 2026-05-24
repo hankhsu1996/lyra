@@ -1,4 +1,4 @@
-#include "lyra/runtime/packed_reduction.hpp"
+#include "lyra/value/packed_reduction.hpp"
 
 #include <bit>
 #include <cstddef>
@@ -8,10 +8,10 @@
 #include <string_view>
 
 #include "lyra/base/internal_error.hpp"
-#include "lyra/runtime/packed.hpp"
-#include "lyra/runtime/packed_internal.hpp"
+#include "lyra/value/packed.hpp"
+#include "lyra/value/packed_internal.hpp"
 
-namespace lyra::runtime {
+namespace lyra::value {
 
 namespace {
 
@@ -266,4 +266,4 @@ auto ReductionXnor(ConstLogicView src, LogicView dst) -> void {
   WriteScalar(dst, NotScalar(ReductionXorLogicValue(src)));
 }
 
-}  // namespace lyra::runtime
+}  // namespace lyra::value
