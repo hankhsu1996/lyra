@@ -148,7 +148,7 @@ auto RenderStmt(
                 ctx.ProceduralScope().exprs.at(s.condition.value);
             const auto& then_scope =
                 stmt.child_procedural_scopes.at(s.then_scope.value);
-            auto cond_or = RenderExpr(ctx, cond_expr);
+            auto cond_or = RenderExprAsNative(ctx, cond_expr);
             if (!cond_or) return std::unexpected(std::move(cond_or.error()));
             auto then_or =
                 RenderNestedProceduralScope(ctx, then_scope, indent + 1);
@@ -173,7 +173,7 @@ auto RenderStmt(
           [&](const mir::SwitchStmt& s) -> diag::Result<std::string> {
             const auto& cond_expr =
                 ctx.ProceduralScope().exprs.at(s.condition.value);
-            auto cond_or = RenderExpr(ctx, cond_expr);
+            auto cond_or = RenderExprAsNative(ctx, cond_expr);
             if (!cond_or) return std::unexpected(std::move(cond_or.error()));
             std::string result;
             result += Indent(indent) + "switch (" + *cond_or + ") {\n";
@@ -181,7 +181,7 @@ auto RenderStmt(
               for (std::size_t i = 0; i < c.labels.size(); ++i) {
                 const auto& label_expr =
                     ctx.ProceduralScope().exprs.at(c.labels[i].value);
-                auto label_or = RenderExpr(ctx, label_expr);
+                auto label_or = RenderExprAsNative(ctx, label_expr);
                 if (!label_or) {
                   return std::unexpected(std::move(label_or.error()));
                 }
@@ -284,9 +284,23 @@ auto RenderStmt(
             result += Indent(indent) + "}\n";
             return result;
           },
-          [&](const mir::WhileStmt&) -> diag::Result<std::string> {
-            throw InternalError(
-                "RenderStmt: WhileStmt is not yet supported by C++ emit");
+          [&](const mir::WhileStmt& s) -> diag::Result<std::string> {
+            const auto& cond_expr =
+                ctx.ProceduralScope().exprs.at(s.condition.value);
+            auto cond_or = RenderExprAsNative(ctx, cond_expr);
+            if (!cond_or) {
+              return std::unexpected(std::move(cond_or.error()));
+            }
+            const auto& scope = stmt.child_procedural_scopes.at(s.scope.value);
+            auto body_or = RenderNestedProceduralScope(ctx, scope, indent + 1);
+            if (!body_or) {
+              return std::unexpected(std::move(body_or.error()));
+            }
+            std::string result =
+                Indent(indent) + "while (" + *std::move(cond_or) + ") {\n";
+            result += *body_or;
+            result += Indent(indent) + "}\n";
+            return result;
           },
           [&](const mir::AwaitStmt&) -> diag::Result<std::string> {
             throw InternalError(

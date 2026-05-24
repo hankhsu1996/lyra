@@ -21,10 +21,10 @@ checked when its `*.yaml` cases reproduce on the current pipeline.
       no-default-no-match, empty body, nested) using integer-literal labels and integer selectors.
       Variants requiring an if/else-cascade lowering (non-constant labels, duplicate labels) are
       tracked in C15; enum/string selectors and labels are tracked in C16 and C17 respectively.
-- [ ] C4 -- `while` (procedural while-loop). `mir::WhileStmt` exists but
-      `src/lyra/backend/cpp/render_stmt.cpp:268-271` throws `InternalError`; needs HIR node, AST ->
-      HIR arm, HIR -> MIR arm, and render. Reproduces `control_flow/while/default.yaml` once C7
-      lands.
+- [x] C4 -- `while` (procedural while-loop). Reproduces every `control_flow/while/default.yaml` case
+      that does not depend on `break` (deferred to C7). Includes runtime-condition loops, countdown,
+      `while (0)` zero iterations, two-level nesting, and mixed nesting with `for` in both
+      directions.
 - [ ] C5 -- `repeat (N)`. Pure desugaring to `for (int __k = 0; __k < N; __k = __k + 1)` over the C2
       machinery. Counts as one PR after C2 land.
 - [ ] C6 -- `do_while`. Lowers to `while(true) { body; if (!cond) break; }` over C4 + C7.
