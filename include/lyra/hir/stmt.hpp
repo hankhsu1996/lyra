@@ -90,6 +90,10 @@ struct DoWhileStmt {
   StmtId body;
 };
 
+struct ForeverStmt {
+  StmtId body;
+};
+
 struct BreakStmt {};
 
 struct ContinueStmt {};
@@ -109,7 +113,8 @@ struct TimedStmt {
 
 using StmtData = std::variant<
     EmptyStmt, VarDeclStmt, ExprStmt, BlockStmt, IfStmt, CaseStmt, ForStmt,
-    WhileStmt, RepeatStmt, DoWhileStmt, BreakStmt, ContinueStmt, TimedStmt>;
+    WhileStmt, RepeatStmt, DoWhileStmt, ForeverStmt, BreakStmt, ContinueStmt,
+    TimedStmt>;
 
 struct Stmt {
   std::optional<std::string> label;

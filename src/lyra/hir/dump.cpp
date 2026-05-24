@@ -769,6 +769,15 @@ class HirDumper {
               Dedent();
               Dedent();
             },
+            [&](const ForeverStmt& f) {
+              Line(std::format("Stmt[{}] ForeverStmt", id.value));
+              Indent();
+              Line("body:");
+              Indent();
+              DumpStmt(p, f.body);
+              Dedent();
+              Dedent();
+            },
             [&](const BreakStmt&) {
               Line(std::format("Stmt[{}] BreakStmt", id.value));
             },

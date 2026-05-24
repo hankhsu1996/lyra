@@ -47,10 +47,11 @@ checked when its `*.yaml` cases reproduce on the current pipeline.
       `do_while_continue`, `repeat_break`, `repeat_continue`, and a mixed `break + continue` case.
       Coroutine interaction (early-exit across `co_await` inside loop bodies) is not exercised
       because timed bodies in loops are not yet supported; revisit when event-control loops land.
-- [ ] C8 -- `forever`. Lower to `for (;;) { body }` (already representable via `mir::ForStmt` with
-      empty condition). `$finish` runtime support has landed (handled as a termination system
-      subroutine that lowers to `co_await lyra::runtime::Finish(<level>)`), so the archive tests can
-      now terminate.
+- [x] C8 -- `forever`. HIR carries a faithful `ForeverStmt` (mirrors the other loop nodes); HIR ->
+      MIR desugars to `mir::ForStmt` with no init, no condition, and no step. The C++ backend
+      renders this as `for (; ; ) { body }`, which loops until `break` or `$finish` exits. Coverage
+      includes `$finish` termination, `break` termination, `continue`, single-statement body (no
+      `begin`/`end`), nested forever with inner `break`, and `if`-guarded forever.
 - [ ] C9 -- `foreach` over fixed unpacked 1D arrays. Desugar to nested `for` over slang `loopDims`;
       depends on C2.
 - [ ] C10 -- `foreach` multi-dim, skipped dimensions, dynamic-array, queue. Depends on C9 plus
