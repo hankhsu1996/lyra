@@ -769,6 +769,12 @@ class HirDumper {
               Dedent();
               Dedent();
             },
+            [&](const BreakStmt&) {
+              Line(std::format("Stmt[{}] BreakStmt", id.value));
+            },
+            [&](const ContinueStmt&) {
+              Line(std::format("Stmt[{}] ContinueStmt", id.value));
+            },
             [&](const TimedStmt& t) {
               Line(std::format("Stmt[{}] TimedStmt", id.value));
               Indent();

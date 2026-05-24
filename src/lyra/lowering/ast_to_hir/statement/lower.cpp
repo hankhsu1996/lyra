@@ -256,6 +256,16 @@ auto LowerStatement(
           .span = span};
     }
 
+    case slang::ast::StatementKind::Break: {
+      return hir::Stmt{
+          .label = std::nullopt, .data = hir::BreakStmt{}, .span = span};
+    }
+
+    case slang::ast::StatementKind::Continue: {
+      return hir::Stmt{
+          .label = std::nullopt, .data = hir::ContinueStmt{}, .span = span};
+    }
+
     case slang::ast::StatementKind::Case: {
       const auto& cs = stmt.as<slang::ast::CaseStatement>();
       if (cs.condition != slang::ast::CaseStatementCondition::Normal) {

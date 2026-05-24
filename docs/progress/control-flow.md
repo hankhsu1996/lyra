@@ -38,9 +38,15 @@ checked when its `*.yaml` cases reproduce on the current pipeline.
       `do { body } while (cond);`. Coverage includes basic loops, `do {...} while (0)` (body still
       executes once), runtime conditions, nesting, single-statement body, and mixed nesting with
       `if`/`for`/`while`.
-- [ ] C7 -- Loop control: `break`, `continue`. New HIR/MIR statements + C++ render. Shared by C2
-      (for) / C4 (while) / C5 (repeat) / C6 (do-while) / C9 (foreach). Coroutine renderer must scope
-      the early-exit correctly inside nested control flow.
+- [x] C7 -- Loop control: `break`, `continue`. New HIR/MIR statements (no payload) lowered as
+      passthrough to the C++ backend, which renders `break;` and `continue;` directly. C++ scoping
+      already exits only the innermost surrounding loop, which matches SV semantics for every loop
+      shape we model -- including `repeat (N)`, where break/continue land inside the desugared inner
+      `for` (the surrounding count-snapshot block is not a loop). Coverage includes `for_break`,
+      `for_continue`, `for_break_inner_only`, `while_break`, `while_continue`, `do_while_break`,
+      `do_while_continue`, `repeat_break`, `repeat_continue`, and a mixed `break + continue` case.
+      Coroutine interaction (early-exit across `co_await` inside loop bodies) is not exercised
+      because timed bodies in loops are not yet supported; revisit when event-control loops land.
 - [ ] C8 -- `forever`. Lower to `for (;;) { body }` (already representable via `mir::ForStmt` with
       empty condition); needs `$finish` runtime support for the archive tests to terminate.
 - [ ] C9 -- `foreach` over fixed unpacked 1D arrays. Desugar to nested `for` over slang `loopDims`;
