@@ -1,0 +1,11 @@
+id: cpp.do_while_false_condition
+tags: [cpp_run]
+input:
+  command: [run, cpp]
+  project: false
+  top: Top
+  files: [main.sv]
+expect:
+  exit: 0
+  stdout:
+    exact: "x=20\n"

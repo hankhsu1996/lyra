@@ -31,7 +31,13 @@ checked when its `*.yaml` cases reproduce on the current pipeline.
       semantic for side-effecting count expressions) plus an `mir::ForStmt` over the C2 machinery.
       Coverage includes literal counts, runtime counts, zero iterations, count-evaluated-once,
       nesting, single-statement body, and mixed nesting with `if`/`for`/`while`.
-- [ ] C6 -- `do_while`. Lowers to `while(true) { body; if (!cond) break; }` over C4 + C7.
+- [x] C6 -- `do_while`. Reproduces every `control_flow/do_while/default.yaml` case that does not
+      depend on `break`/`continue` (deferred to C7). HIR carries a faithful `DoWhileStmt`; MIR
+      mirrors it with the condition stored in the enclosing procedural scope and the body in a child
+      scope (same shape as `WhileStmt`). The C++ backend renders directly to
+      `do { body } while (cond);`. Coverage includes basic loops, `do {...} while (0)` (body still
+      executes once), runtime conditions, nesting, single-statement body, and mixed nesting with
+      `if`/`for`/`while`.
 - [ ] C7 -- Loop control: `break`, `continue`. New HIR/MIR statements + C++ render. Shared by C2
       (for) / C4 (while) / C5 (repeat) / C6 (do-while) / C9 (foreach). Coroutine renderer must scope
       the early-exit correctly inside nested control flow.

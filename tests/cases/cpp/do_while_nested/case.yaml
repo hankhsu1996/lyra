@@ -1,0 +1,11 @@
+id: cpp.do_while_nested
+tags: [cpp_run]
+input:
+  command: [run, cpp]
+  project: false
+  top: Top
+  files: [main.sv]
+expect:
+  exit: 0
+  stdout:
+    exact: "i=3 j=2 sum=6\n"
