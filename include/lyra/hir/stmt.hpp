@@ -75,6 +75,11 @@ struct ForStmt {
   StmtId body;
 };
 
+struct WhileStmt {
+  ExprId condition;
+  StmtId body;
+};
+
 struct DelayControl {
   ExprId duration;
 };
@@ -90,7 +95,7 @@ struct TimedStmt {
 
 using StmtData = std::variant<
     EmptyStmt, VarDeclStmt, ExprStmt, BlockStmt, IfStmt, CaseStmt, ForStmt,
-    TimedStmt>;
+    WhileStmt, TimedStmt>;
 
 struct Stmt {
   std::optional<std::string> label;
