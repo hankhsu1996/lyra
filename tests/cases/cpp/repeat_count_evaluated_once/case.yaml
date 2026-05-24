@@ -1,0 +1,11 @@
+id: cpp.repeat_count_evaluated_once
+tags: [cpp_run]
+input:
+  command: [run, cpp]
+  project: false
+  top: Top
+  files: [main.sv]
+expect:
+  exit: 0
+  stdout:
+    exact: "iters=3 final=0\n"

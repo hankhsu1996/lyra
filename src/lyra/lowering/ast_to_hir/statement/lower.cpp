@@ -224,6 +224,22 @@ auto LowerStatement(
           .span = span};
     }
 
+    case slang::ast::StatementKind::RepeatLoop: {
+      const auto& rs = stmt.as<slang::ast::RepeatLoopStatement>();
+      auto count_or = LowerProcExpr(
+          unit_facts, scope_state.UnitState(), proc_state, stack, rs.count);
+      if (!count_or) return std::unexpected(std::move(count_or.error()));
+      const hir::ExprId count_id = proc_state.AddExpr(*std::move(count_or));
+      auto body_or =
+          LowerStatement(unit_facts, proc_state, scope_state, stack, rs.body);
+      if (!body_or) return std::unexpected(std::move(body_or.error()));
+      const hir::StmtId body_id = proc_state.AddStmt(*std::move(body_or));
+      return hir::Stmt{
+          .label = std::nullopt,
+          .data = hir::RepeatStmt{.count = count_id, .body = body_id},
+          .span = span};
+    }
+
     case slang::ast::StatementKind::Case: {
       const auto& cs = stmt.as<slang::ast::CaseStatement>();
       if (cs.condition != slang::ast::CaseStatementCondition::Normal) {
