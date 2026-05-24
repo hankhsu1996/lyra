@@ -1,8 +1,8 @@
 #pragma once
 
-#include "lyra/runtime/packed.hpp"
+#include "lyra/value/packed.hpp"
 
-namespace lyra::runtime {
+namespace lyra::value {
 
 auto BitwiseNot(ConstBitView src, BitView dst) -> void;
 auto BitwiseNot(ConstLogicView src, LogicView dst) -> void;
@@ -59,4 +59,4 @@ inline auto BitwiseXnor(LogicView lhs, LogicView rhs, LogicView dst) -> void {
   BitwiseXnor(lhs.AsConst(), rhs.AsConst(), dst);
 }
 
-}  // namespace lyra::runtime
+}  // namespace lyra::value

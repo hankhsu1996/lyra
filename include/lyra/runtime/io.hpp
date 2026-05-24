@@ -2,7 +2,7 @@
 
 #include <span>
 
-#include "lyra/runtime/format.hpp"
+#include "lyra/value/format.hpp"
 
 namespace lyra::runtime {
 
@@ -12,7 +12,7 @@ class RuntimeServices;
 // $display/$write/...; the runtime walks the items, formats values via
 // FormatValue, and finalizes the record (newline for kDisplay/kFDisplay).
 void LyraPrint(
-    RuntimeServices& services, PrintKind kind,
-    std::span<const PrintItem> items);
+    RuntimeServices& services, value::PrintKind kind,
+    std::span<const value::PrintItem> items);
 
 }  // namespace lyra::runtime

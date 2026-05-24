@@ -1,11 +1,11 @@
-#include "lyra/runtime/packed_convert.hpp"
+#include "lyra/value/packed_convert.hpp"
 
 #include <algorithm>
 #include <cstdint>
 
-#include "lyra/runtime/packed.hpp"
+#include "lyra/value/packed.hpp"
 
-namespace lyra::runtime {
+namespace lyra::value {
 
 auto ConvertToBit(ConstBitView src, BitView dst, Signedness src_signedness)
     -> void {
@@ -79,4 +79,4 @@ auto ConvertToLogic(
   }
 }
 
-}  // namespace lyra::runtime
+}  // namespace lyra::value
