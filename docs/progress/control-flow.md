@@ -48,7 +48,9 @@ checked when its `*.yaml` cases reproduce on the current pipeline.
       Coroutine interaction (early-exit across `co_await` inside loop bodies) is not exercised
       because timed bodies in loops are not yet supported; revisit when event-control loops land.
 - [ ] C8 -- `forever`. Lower to `for (;;) { body }` (already representable via `mir::ForStmt` with
-      empty condition); needs `$finish` runtime support for the archive tests to terminate.
+      empty condition). `$finish` runtime support has landed (handled as a termination system
+      subroutine that lowers to `co_await lyra::runtime::Finish(<level>)`), so the archive tests can
+      now terminate.
 - [ ] C9 -- `foreach` over fixed unpacked 1D arrays. Desugar to nested `for` over slang `loopDims`;
       depends on C2.
 - [ ] C10 -- `foreach` multi-dim, skipped dimensions, dynamic-array, queue. Depends on C9 plus

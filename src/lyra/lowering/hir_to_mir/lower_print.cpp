@@ -233,7 +233,7 @@ auto LowerPrintSystemSubroutineCall(
   return mir::Expr{
       .data =
           mir::RuntimeCallExpr{
-              .print = mir::RuntimePrintCall(
+              .call = mir::RuntimePrintCall(
                   ToMirPrintKind(print), std::nullopt, std::move(*items_or))},
       .type = unit_state.Builtins().void_type};
 }
