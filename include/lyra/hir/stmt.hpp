@@ -46,6 +46,17 @@ struct IfStmt {
   std::optional<StmtId> else_stmt;
 };
 
+struct CaseItem {
+  std::vector<ExprId> labels;
+  StmtId stmt;
+};
+
+struct CaseStmt {
+  ExprId condition;
+  std::vector<CaseItem> items;
+  std::optional<StmtId> default_stmt;
+};
+
 struct ForInitDecl {
   ProceduralVarId var = {};
   std::optional<ExprId> init;
@@ -78,7 +89,8 @@ struct TimedStmt {
 };
 
 using StmtData = std::variant<
-    EmptyStmt, VarDeclStmt, ExprStmt, BlockStmt, IfStmt, ForStmt, TimedStmt>;
+    EmptyStmt, VarDeclStmt, ExprStmt, BlockStmt, IfStmt, CaseStmt, ForStmt,
+    TimedStmt>;
 
 struct Stmt {
   std::optional<std::string> label;
