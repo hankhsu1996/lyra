@@ -632,6 +632,45 @@ class HirDumper {
               }
               Dedent();
             },
+            [&](const CaseStmt& c) {
+              Line(
+                  std::format(
+                      "Stmt[{}] CaseStmt cond=Expr[{}] (items={})", id.value,
+                      c.condition.value, c.items.size()));
+              Indent();
+              Line(
+                  std::format(
+                      "Expr[{}] {}", c.condition.value,
+                      FormatProcExpr(p, c.condition)));
+              for (std::size_t k = 0; k < c.items.size(); ++k) {
+                const auto& item = c.items[k];
+                std::string labels_str;
+                for (std::size_t m = 0; m < item.labels.size(); ++m) {
+                  if (m != 0) labels_str += ", ";
+                  labels_str += std::format("Expr[{}]", item.labels[m].value);
+                }
+                Line(std::format("item[{}] labels=[{}]", k, labels_str));
+                Indent();
+                for (const hir::ExprId label_id : item.labels) {
+                  Line(
+                      std::format(
+                          "Expr[{}] {}", label_id.value,
+                          FormatProcExpr(p, label_id)));
+                }
+                Line("stmt:");
+                Indent();
+                DumpStmt(p, item.stmt);
+                Dedent();
+                Dedent();
+              }
+              if (c.default_stmt.has_value()) {
+                Line("default:");
+                Indent();
+                DumpStmt(p, *c.default_stmt);
+                Dedent();
+              }
+              Dedent();
+            },
             [&](const ForStmt& f) {
               Line(
                   std::format(
