@@ -7,13 +7,12 @@ input:
   files: [main.sv]
 expect:
   exit: 0
-  stdout:
-    exact: |
-      42
-      18
-      -18
-      35
-      -35
-      25
-      -25
-      2
+  variables:
+    add: 42
+    sub: 18
+    sub_neg: -18
+    mul: 35
+    mul_neg: -35
+    div_pos: 25
+    div_neg: -25
+    mod_: 2

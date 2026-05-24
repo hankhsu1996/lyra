@@ -1,9 +1,13 @@
 module Top;
-  int a, b, c;
+  int and_;
+  int or_;
+  int xor_;
   initial begin
+    int a;
+    int b;
     a = 5; b = 3;
-    c = a & b; $display("%0d", c);
-    c = a | b; $display("%0d", c);
-    c = a ^ b; $display("%0d", c);
+    and_ = a & b;
+    or_ = a | b;
+    xor_ = a ^ b;
   end
 endmodule

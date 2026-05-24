@@ -1,8 +1,8 @@
 module Top;
+  int out;
   initial begin
     int flag_a;
     int flag_b;
-    int out;
     flag_a = 0;
     flag_b = 1;
     if (flag_a)
@@ -11,6 +11,5 @@ module Top;
       out = 22;
     else
       out = 30;
-    $display("out=%0d", out);
   end
 endmodule

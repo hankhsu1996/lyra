@@ -7,5 +7,6 @@ input:
   files: [main.sv]
 expect:
   exit: 0
-  stdout:
-    exact: "i=0 product=24\n"
+  variables:
+    i: 0
+    product: 24
