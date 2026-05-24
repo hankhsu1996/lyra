@@ -85,6 +85,11 @@ struct RepeatStmt {
   StmtId body;
 };
 
+struct DoWhileStmt {
+  ExprId condition;
+  StmtId body;
+};
+
 struct DelayControl {
   ExprId duration;
 };
@@ -100,7 +105,7 @@ struct TimedStmt {
 
 using StmtData = std::variant<
     EmptyStmt, VarDeclStmt, ExprStmt, BlockStmt, IfStmt, CaseStmt, ForStmt,
-    WhileStmt, RepeatStmt, TimedStmt>;
+    WhileStmt, RepeatStmt, DoWhileStmt, TimedStmt>;
 
 struct Stmt {
   std::optional<std::string> label;
