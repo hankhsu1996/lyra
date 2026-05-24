@@ -1,0 +1,12 @@
+id: cpp.forever_nested_break
+tags: [cpp_run]
+input:
+  command: [run, cpp]
+  project: false
+  top: Top
+  files: [main.sv]
+expect:
+  exit: 0
+  variables:
+    outer: 3
+    inner_total: 6
