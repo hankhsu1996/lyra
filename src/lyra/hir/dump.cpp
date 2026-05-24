@@ -721,6 +721,22 @@ class HirDumper {
               Dedent();
               Dedent();
             },
+            [&](const WhileStmt& w) {
+              Line(
+                  std::format(
+                      "Stmt[{}] WhileStmt cond=Expr[{}]", id.value,
+                      w.condition.value));
+              Indent();
+              Line(
+                  std::format(
+                      "Expr[{}] {}", w.condition.value,
+                      FormatProcExpr(p, w.condition)));
+              Line("body:");
+              Indent();
+              DumpStmt(p, w.body);
+              Dedent();
+              Dedent();
+            },
             [&](const TimedStmt& t) {
               Line(std::format("Stmt[{}] TimedStmt", id.value));
               Indent();
