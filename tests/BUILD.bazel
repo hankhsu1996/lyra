@@ -44,6 +44,7 @@ cc_test(
         ],
         allow_empty = True,
     ),
+    shard_count = 16,
     # cpp-backend cases compile emitted artifacts with the host C++ compiler.
     # CI's `Test` job passes `--test_tag_filters=-requires-host-cxx` so this
     # target is excluded; run locally with `bazel test //tests:cpp_tests`.
