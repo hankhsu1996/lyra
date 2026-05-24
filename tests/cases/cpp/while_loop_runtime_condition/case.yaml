@@ -7,5 +7,6 @@ input:
   files: [main.sv]
 expect:
   exit: 0
-  stdout:
-    exact: "n=256 iters=8\n"
+  variables:
+    n: 256
+    iters: 8

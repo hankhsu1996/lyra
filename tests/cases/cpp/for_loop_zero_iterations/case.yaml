@@ -7,5 +7,5 @@ input:
   files: [main.sv]
 expect:
   exit: 0
-  stdout:
-    exact: "sum=99\n"
+  variables:
+    sum: 99

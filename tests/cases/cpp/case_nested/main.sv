@@ -1,8 +1,11 @@
 module Top;
+  int result;
   initial begin
-    int x = 1;
-    int y = 2;
-    int result = 0;
+    int x;
+    int y;
+    x = 1;
+    y = 2;
+    result = 0;
     case (x)
       1: begin
         case (y)
@@ -19,6 +22,5 @@ module Top;
       end
       default: result = 99;
     endcase
-    $display("result=%0d", result);
   end
 endmodule

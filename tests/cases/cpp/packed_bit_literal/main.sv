@@ -3,6 +3,5 @@ module Top;
 
   initial begin
     a = 4'b1010;
-    $display("%b", a);
   end
 endmodule

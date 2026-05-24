@@ -1,7 +1,7 @@
 module Top;
+  int i;
   initial begin
-    int i = 0;
+    i = 0;
     while (i < 7) i = i + 1;
-    $display("i=%0d", i);
   end
 endmodule

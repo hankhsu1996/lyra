@@ -1,4 +1,4 @@
-id: cpp.packed_bit_literal_display
+id: cpp.packed_logic_literal_xz
 tags: [cpp_run]
 input:
   command: [run, cpp]
@@ -7,5 +7,6 @@ input:
   files: [main.sv]
 expect:
   exit: 0
-  stdout:
-    exact: "1010\n"
+  variables:
+    a1: "4'b10x1"
+    a2: "4'bzz01"

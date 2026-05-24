@@ -7,9 +7,8 @@ input:
   files: [main.sv]
 expect:
   exit: 0
-  stdout:
-    exact: |
-      0
-      1
-      1
-      0
+  variables:
+    and5_0: 0
+    or5_0: 1
+    and5_7: 1
+    or0_0: 0

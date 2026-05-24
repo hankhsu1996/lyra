@@ -1,4 +1,4 @@
-id: cpp.packed_reg_literal_display
+id: cpp.packed_reg_literal
 tags: [cpp_run]
 input:
   command: [run, cpp]
@@ -7,5 +7,5 @@ input:
   files: [main.sv]
 expect:
   exit: 0
-  stdout:
-    exact: "z0x1\n"
+  variables:
+    a: "4'bz0x1"

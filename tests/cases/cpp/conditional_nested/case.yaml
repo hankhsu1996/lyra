@@ -7,5 +7,5 @@ input:
   files: [main.sv]
 expect:
   exit: 0
-  stdout:
-    exact: "out=22\n"
+  variables:
+    out: 22

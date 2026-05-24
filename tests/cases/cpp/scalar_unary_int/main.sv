@@ -1,14 +1,22 @@
 module Top;
-  int a, b, c;
+  int pos_;
+  int neg_;
+  int bitnot;
+  int lognot_5;
+  int lognot_0;
+  int neg42;
+  int neg7;
   initial begin
+    int a;
     a = 5;
-    b = +a; $display("%0d", b);
-    b = -a; $display("%0d", b);
-    b = ~a; $display("%0d", b);
-    b = !a; $display("%0d", b);
+    pos_ = +a;
+    neg_ = -a;
+    bitnot = ~a;
+    lognot_5 = !a;
     a = 0;
-    b = !a; $display("%0d", b);
-    c = -42; $display("%0d", c);
-    a = -7; $display("%0d", a);
+    lognot_0 = !a;
+    neg42 = -42;
+    a = -7;
+    neg7 = a;
   end
 endmodule

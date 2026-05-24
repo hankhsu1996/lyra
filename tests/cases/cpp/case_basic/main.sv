@@ -1,9 +1,13 @@
 module Top;
+  int single;
+  int multi;
+  int defaulted;
+  int unchanged;
   initial begin
-    int single = 0;
-    int multi = 0;
-    int defaulted = 0;
-    int unchanged = 99;
+    single = 0;
+    multi = 0;
+    defaulted = 0;
+    unchanged = 99;
 
     case (3)
       3: single = 100;
@@ -27,10 +31,5 @@ module Top;
       0: unchanged = 1;
       1: unchanged = 2;
     endcase
-
-    $display("single=%0d", single);
-    $display("multi=%0d", multi);
-    $display("defaulted=%0d", defaulted);
-    $display("unchanged=%0d", unchanged);
   end
 endmodule
