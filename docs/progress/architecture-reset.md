@@ -11,6 +11,10 @@ item only when the corresponding archive tests can be reproduced -- or have been
 deprecated -- on the current architecture. "Intentionally deprecated" requires a `decisions/` entry;
 absent that, the item stays open.
 
+When a workstream has its own progress file (e.g. `operators.md`, `control-flow.md`), the granular
+sub-step tracking lives there. The corresponding archive items below remain a high-level inventory;
+the dedicated file is the source of truth for "what is done, in what order, what is blocked".
+
 ## Pipeline Surfaces
 
 - [ ] R1 -- LIR layer implementation. Contract in `../architecture/lir.md`; no source under
@@ -39,19 +43,9 @@ absent that, the item stays open.
 
 ### control_flow
 
-- [ ] control_flow/case
-- [ ] control_flow/case_inside
-- [ ] control_flow/conditional
-- [ ] control_flow/do_while
-- [ ] control_flow/for
-- [ ] control_flow/foreach
-- [ ] control_flow/foreach_2d
-- [ ] control_flow/forever
-- [ ] control_flow/repeat
-- [ ] control_flow/ternary
-- [ ] control_flow/unique_priority_case
-- [ ] control_flow/unique_priority_if
-- [ ] control_flow/while
+Tracked in `control-flow.md`. Covers all `control_flow/*` archive items (case, case_inside,
+conditional, do_while, for, foreach, foreach_2d, forever, repeat, ternary, unique_priority_case,
+unique_priority_if, while).
 
 ### datatypes
 
@@ -118,19 +112,11 @@ absent that, the item stays open.
 
 ### operators
 
-- [ ] operators/binary
-- [ ] operators/binary_string
-- [ ] operators/case_equality
-- [ ] operators/comparison_value_temp
-- [ ] operators/compound_assignment
-- [ ] operators/concat
-- [ ] operators/inside
-- [ ] operators/replicate
-- [ ] operators/replication_patterns
-- [ ] operators/shift_overflow
-- [ ] operators/unary
-- [ ] operators/value_temp_expansion
-- [ ] operators/wildcard_equality
+Tracked in `operators.md`. Covers `operators/binary`, `operators/binary_string`,
+`operators/case_equality`, `operators/comparison_value_temp`, `operators/compound_assignment`,
+`operators/concat`, `operators/inside`, `operators/replicate`, `operators/replication_patterns`,
+`operators/shift_overflow`, `operators/unary`, `operators/value_temp_expansion`,
+`operators/wildcard_equality`.
 
 ### optimization
 

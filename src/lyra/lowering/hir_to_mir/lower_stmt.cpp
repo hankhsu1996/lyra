@@ -286,6 +286,80 @@ auto LowerStmt(
                         .scope = body_scope_id},
                 .child_procedural_scopes = std::move(child_scopes)};
           },
+          [&](const hir::CaseStmt& c) -> diag::Result<mir::Stmt> {
+            auto cond_or = LowerExpr(
+                unit_state, scope_state, proc_state, proc_scope_state, hir_proc,
+                hir_proc.exprs.at(c.condition.value));
+            if (!cond_or) {
+              return std::unexpected(std::move(cond_or.error()));
+            }
+            const mir::ExprId cond_id =
+                proc_scope_state.AddExpr(*std::move(cond_or));
+
+            auto lower_branch = [&](hir::StmtId branch_hir_id)
+                -> diag::Result<mir::ProceduralScope> {
+              ProceduralScopeLoweringState branch_state;
+              ProceduralDepthGuard depth_guard{proc_state};
+              const hir::Stmt& branch_hir =
+                  hir_proc.stmts.at(branch_hir_id.value);
+              auto branch_or = LowerStmt(
+                  unit_state, scope_state, proc_state, branch_state, hir_proc,
+                  branch_hir);
+              if (!branch_or) {
+                return std::unexpected(std::move(branch_or.error()));
+              }
+              const mir::StmtId stmt_id =
+                  branch_state.AddStmt(*std::move(branch_or));
+              branch_state.AddRootStmt(stmt_id);
+              return branch_state.Finish();
+            };
+
+            std::vector<mir::ProceduralScope> child_scopes;
+            std::vector<mir::SwitchCase> cases;
+            cases.reserve(c.items.size());
+            for (const auto& item : c.items) {
+              std::vector<mir::ExprId> labels;
+              labels.reserve(item.labels.size());
+              for (const hir::ExprId label_hid : item.labels) {
+                auto label_or = LowerExpr(
+                    unit_state, scope_state, proc_state, proc_scope_state,
+                    hir_proc, hir_proc.exprs.at(label_hid.value));
+                if (!label_or) {
+                  return std::unexpected(std::move(label_or.error()));
+                }
+                labels.push_back(
+                    proc_scope_state.AddExpr(*std::move(label_or)));
+              }
+              auto branch_or = lower_branch(item.stmt);
+              if (!branch_or) {
+                return std::unexpected(std::move(branch_or.error()));
+              }
+              const mir::ProceduralScopeId item_scope_id =
+                  AddChildProceduralScope(child_scopes, std::move(*branch_or));
+              cases.push_back(
+                  mir::SwitchCase{
+                      .labels = std::move(labels), .scope = item_scope_id});
+            }
+
+            std::optional<mir::ProceduralScopeId> default_scope_id;
+            if (c.default_stmt.has_value()) {
+              auto default_or = lower_branch(*c.default_stmt);
+              if (!default_or) {
+                return std::unexpected(std::move(default_or.error()));
+              }
+              default_scope_id =
+                  AddChildProceduralScope(child_scopes, std::move(*default_or));
+            }
+
+            return mir::Stmt{
+                .label = stmt.label,
+                .data =
+                    mir::SwitchStmt{
+                        .condition = cond_id,
+                        .cases = std::move(cases),
+                        .default_scope = default_scope_id},
+                .child_procedural_scopes = std::move(child_scopes)};
+          },
           [&](const hir::IfStmt& i) -> diag::Result<mir::Stmt> {
             auto cond_expr_or = LowerExpr(
                 unit_state, scope_state, proc_state, proc_scope_state, hir_proc,

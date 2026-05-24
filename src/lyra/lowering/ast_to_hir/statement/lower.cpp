@@ -208,6 +208,62 @@ auto LowerStatement(
           .span = span};
     }
 
+    case slang::ast::StatementKind::Case: {
+      const auto& cs = stmt.as<slang::ast::CaseStatement>();
+      if (cs.condition != slang::ast::CaseStatementCondition::Normal) {
+        return diag::Unsupported(
+            span, diag::DiagCode::kUnsupportedStatementForm,
+            "casez/casex/case-inside are not yet supported",
+            diag::UnsupportedCategory::kFeature);
+      }
+      if (cs.check != slang::ast::UniquePriorityCheck::None) {
+        return diag::Unsupported(
+            span, diag::DiagCode::kUnsupportedStatementForm,
+            "unique/priority qualifiers on case are not yet supported",
+            diag::UnsupportedCategory::kFeature);
+      }
+      auto cond_expr = LowerProcExpr(
+          unit_facts, scope_state.UnitState(), proc_state, stack, cs.expr);
+      if (!cond_expr) return std::unexpected(std::move(cond_expr.error()));
+      const hir::ExprId cond_id = proc_state.AddExpr(*std::move(cond_expr));
+      std::vector<hir::CaseItem> items;
+      items.reserve(cs.items.size());
+      for (const auto& item : cs.items) {
+        std::vector<hir::ExprId> label_ids;
+        label_ids.reserve(item.expressions.size());
+        for (const auto* label_expr : item.expressions) {
+          auto label_or = LowerProcExpr(
+              unit_facts, scope_state.UnitState(), proc_state, stack,
+              *label_expr);
+          if (!label_or) return std::unexpected(std::move(label_or.error()));
+          label_ids.push_back(proc_state.AddExpr(*std::move(label_or)));
+        }
+        auto item_stmt = LowerStatement(
+            unit_facts, proc_state, scope_state, stack, *item.stmt);
+        if (!item_stmt) return std::unexpected(std::move(item_stmt.error()));
+        const hir::StmtId item_id = proc_state.AddStmt(*std::move(item_stmt));
+        items.push_back(
+            hir::CaseItem{.labels = std::move(label_ids), .stmt = item_id});
+      }
+      std::optional<hir::StmtId> default_id;
+      if (cs.defaultCase != nullptr) {
+        auto default_stmt = LowerStatement(
+            unit_facts, proc_state, scope_state, stack, *cs.defaultCase);
+        if (!default_stmt) {
+          return std::unexpected(std::move(default_stmt.error()));
+        }
+        default_id = proc_state.AddStmt(*std::move(default_stmt));
+      }
+      return hir::Stmt{
+          .label = std::nullopt,
+          .data =
+              hir::CaseStmt{
+                  .condition = cond_id,
+                  .items = std::move(items),
+                  .default_stmt = default_id},
+          .span = span};
+    }
+
     case slang::ast::StatementKind::Conditional: {
       const auto& cs = stmt.as<slang::ast::ConditionalStatement>();
       if (cs.check != slang::ast::UniquePriorityCheck::None) {

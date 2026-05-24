@@ -1,0 +1,24 @@
+module Top;
+  initial begin
+    int x = 1;
+    int y = 2;
+    int result = 0;
+    case (x)
+      1: begin
+        case (y)
+          1: result = 11;
+          2: result = 12;
+          default: result = 19;
+        endcase
+      end
+      2: begin
+        case (y)
+          1: result = 21;
+          2: result = 22;
+        endcase
+      end
+      default: result = 99;
+    endcase
+    $display("result=%0d", result);
+  end
+endmodule
