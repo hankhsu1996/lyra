@@ -7,6 +7,7 @@
 #include "lyra/hir/expr.hpp"
 #include "lyra/hir/process.hpp"
 #include "lyra/hir/subroutine_ref.hpp"
+#include "lyra/lowering/hir_to_mir/lower_finish.hpp"
 #include "lyra/lowering/hir_to_mir/lower_print.hpp"
 #include "lyra/lowering/hir_to_mir/state.hpp"
 #include "lyra/mir/expr.hpp"
@@ -30,6 +31,11 @@ auto LowerSystemSubroutineCall(
             return LowerPrintSystemSubroutineCall(
                 unit_state, scope_state, proc_state, proc_scope_state, hir_proc,
                 call, desc, print, span);
+          },
+          [&](const support::TerminationSystemSubroutineInfo& term)
+              -> diag::Result<mir::Expr> {
+            return LowerFinishSystemSubroutineCall(
+                unit_state, hir_proc, call, desc, term, span);
           },
       },
       desc.semantic);

@@ -17,6 +17,7 @@
 #include "lyra/diag/diagnostic.hpp"
 #include "lyra/diag/kind.hpp"
 #include "lyra/mir/expr.hpp"
+#include "lyra/mir/runtime_finish.hpp"
 #include "lyra/mir/runtime_print.hpp"
 #include "lyra/mir/type.hpp"
 
@@ -145,10 +146,11 @@ auto RenderPrintItemInit(
 
 }  // namespace
 
-auto RenderRuntimeCallExpr(
-    const RenderContext& ctx, const mir::RuntimeCallExpr& expr)
+namespace {
+
+auto RenderRuntimePrintCall(
+    const RenderContext& ctx, const mir::RuntimePrintCall& call)
     -> diag::Result<std::string> {
-  const mir::RuntimePrintCall& call = expr.print;
   if (call.descriptor.has_value()) {
     return diag::Unsupported(
         diag::DiagCode::kCppEmitExpressionFormNotImplemented,
@@ -191,6 +193,28 @@ auto RenderRuntimeCallExpr(
   }
   out += "})";
   return out;
+}
+
+auto RenderRuntimeFinishCall(const mir::RuntimeFinishCall& call)
+    -> std::string {
+  return std::format("co_await lyra::runtime::Finish({})", call.level);
+}
+
+}  // namespace
+
+auto RenderRuntimeCallExpr(
+    const RenderContext& ctx, const mir::RuntimeCallExpr& expr)
+    -> diag::Result<std::string> {
+  return std::visit(
+      Overloaded{
+          [&](const mir::RuntimePrintCall& pc) -> diag::Result<std::string> {
+            return RenderRuntimePrintCall(ctx, pc);
+          },
+          [&](const mir::RuntimeFinishCall& fc) -> diag::Result<std::string> {
+            return RenderRuntimeFinishCall(fc);
+          },
+      },
+      expr.call);
 }
 
 }  // namespace lyra::backend::cpp

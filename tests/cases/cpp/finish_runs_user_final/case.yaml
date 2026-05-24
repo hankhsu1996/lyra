@@ -1,0 +1,12 @@
+id: cpp.finish_runs_user_final
+tags: [cpp_run]
+input:
+  command: [run, cpp]
+  project: false
+  top: Top
+  files: [main.sv]
+expect:
+  exit: 0
+  variables:
+    x: 1
+    y: 99

@@ -19,7 +19,11 @@ struct EventWait {
   RuntimeEvent* event = nullptr;
 };
 
-using WaitRequest = std::variant<DelayWait, EventWait>;
+struct FinishWait {
+  int level;
+};
+
+using WaitRequest = std::variant<DelayWait, EventWait, FinishWait>;
 
 class ProcessRunResult {
  public:

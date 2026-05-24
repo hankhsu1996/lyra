@@ -580,7 +580,16 @@ class MirDumper {
         const auto& expr = scope.exprs[i];
         if (const auto* rc = std::get_if<RuntimeCallExpr>(&expr.data)) {
           Indent();
-          DumpRuntimePrintCallItems(rc->print, scope);
+          std::visit(
+              Overloaded{
+                  [&](const RuntimePrintCall& pc) {
+                    DumpRuntimePrintCallItems(pc, scope);
+                  },
+                  [&](const RuntimeFinishCall& fc) {
+                    Line(std::format("RuntimeFinishCall level={}", fc.level));
+                  },
+              },
+              rc->call);
           Dedent();
         }
       }
