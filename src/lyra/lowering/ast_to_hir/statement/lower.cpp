@@ -256,6 +256,18 @@ auto LowerStatement(
           .span = span};
     }
 
+    case slang::ast::StatementKind::ForeverLoop: {
+      const auto& fs = stmt.as<slang::ast::ForeverLoopStatement>();
+      auto body_or =
+          LowerStatement(unit_facts, proc_state, scope_state, stack, fs.body);
+      if (!body_or) return std::unexpected(std::move(body_or.error()));
+      const hir::StmtId body_id = proc_state.AddStmt(*std::move(body_or));
+      return hir::Stmt{
+          .label = std::nullopt,
+          .data = hir::ForeverStmt{.body = body_id},
+          .span = span};
+    }
+
     case slang::ast::StatementKind::Break: {
       return hir::Stmt{
           .label = std::nullopt, .data = hir::BreakStmt{}, .span = span};
