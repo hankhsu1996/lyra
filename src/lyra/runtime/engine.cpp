@@ -52,8 +52,11 @@ auto Engine::Run() -> int {
   EnsureReadyToRun();
   RegisterProcesses();
 
-  while (HasScheduledWork()) {
+  while (HasScheduledWork() && !finished_) {
     ExecuteCurrentTimeSlot();
+    if (finished_) {
+      break;
+    }
     if (!HasFutureTimedWork()) {
       break;
     }
@@ -164,11 +167,19 @@ void Engine::ExecuteFinalProcesses() {
   phase_ = SchedulerPhase::kPostponed;
   for (RuntimeProcess* p : queues_.finals) {
     auto result = p->Resume();
-    if (!result.IsCompleted()) {
-      throw InternalError(
-          "Engine::ExecuteFinalProcesses: final block suspended; "
-          "time-controlling statements are not allowed inside `final`");
+    if (result.IsCompleted()) {
+      continue;
     }
+    auto wait = result.TakeWait();
+    // LRM 9.2.3: $finish inside a final procedure ends simulation
+    // immediately -- subsequent queued finals shall not run.
+    if (std::holds_alternative<FinishWait>(wait)) {
+      finished_ = true;
+      break;
+    }
+    throw InternalError(
+        "Engine::ExecuteFinalProcesses: final block suspended; "
+        "time-controlling statements are not allowed inside `final`");
   }
   queues_.finals.clear();
 }
@@ -221,6 +232,10 @@ auto Engine::IsRunnablePhase() const -> bool {
 }
 
 void Engine::RunProcess(RuntimeProcess& process) {
+  // Sole gate for post-$finish user code; finals bypass via their own path.
+  if (finished_) {
+    return;
+  }
   if (!IsRunnablePhase()) {
     throw InternalError(
         "Engine::RunProcess: process resumed outside runnable phase");
@@ -237,6 +252,7 @@ void Engine::ScheduleWait(RuntimeProcess& process, WaitRequest wait) {
       Overloaded{
           [&](DelayWait d) { ScheduleDelayWait(process, d); },
           [&](EventWait e) { ScheduleEventWait(process, e); },
+          [&](FinishWait) { finished_ = true; },
       },
       wait);
 }

@@ -127,6 +127,7 @@ class Engine {
   std::size_t current_delta_ = 0;
   bool bound_ = false;
   bool ran_ = false;
+  bool finished_ = false;
 };
 
 }  // namespace lyra::runtime

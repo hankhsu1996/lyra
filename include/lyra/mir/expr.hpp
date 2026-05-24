@@ -11,6 +11,7 @@
 #include "lyra/mir/integral_constant.hpp"
 #include "lyra/mir/procedural_hops.hpp"
 #include "lyra/mir/procedural_var.hpp"
+#include "lyra/mir/runtime_finish.hpp"
 #include "lyra/mir/runtime_print.hpp"
 #include "lyra/mir/structural_hops.hpp"
 #include "lyra/mir/structural_param.hpp"
@@ -76,8 +77,10 @@ struct CallExpr {
   std::vector<ExprId> arguments;
 };
 
+using RuntimeCall = std::variant<RuntimePrintCall, RuntimeFinishCall>;
+
 struct RuntimeCallExpr {
-  RuntimePrintCall print;
+  RuntimeCall call;
 };
 
 using ExprData = std::variant<

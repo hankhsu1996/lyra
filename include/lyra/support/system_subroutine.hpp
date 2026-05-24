@@ -62,7 +62,17 @@ struct PrintSystemSubroutineInfo {
   PrintSinkKind sink_kind;
 };
 
-using SystemSubroutineSemantic = std::variant<PrintSystemSubroutineInfo>;
+enum class TerminationKind : std::uint8_t {
+  kFinish,
+};
+
+struct TerminationSystemSubroutineInfo {
+  TerminationKind kind;
+  int default_level;
+};
+
+using SystemSubroutineSemantic =
+    std::variant<PrintSystemSubroutineInfo, TerminationSystemSubroutineInfo>;
 
 struct SystemSubroutineDesc {
   SystemSubroutineId id;
@@ -132,6 +142,17 @@ inline constexpr std::array kSystemSubroutines = {
                 .append_newline = false,
                 .is_strobe = false,
                 .sink_kind = PrintSinkKind::kFile},
+    },
+    SystemSubroutineDesc{
+        .id = SystemSubroutineId{4},
+        .name = "$finish",
+        .origin = SystemSubroutineOrigin::kLanguageBuiltin,
+        .kind = SystemSubroutineKind::kTask,
+        .result_conv = ReturnConvention::kVoid,
+        .arg_policy = ArgCountPolicy{.min_args = 0, .max_args = 1},
+        .semantic =
+            TerminationSystemSubroutineInfo{
+                .kind = TerminationKind::kFinish, .default_level = 1},
     },
 };
 
