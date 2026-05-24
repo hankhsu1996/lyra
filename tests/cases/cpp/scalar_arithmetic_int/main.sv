@@ -1,19 +1,28 @@
 module Top;
-  int a, b, c;
+  int add;
+  int sub;
+  int sub_neg;
+  int mul;
+  int mul_neg;
+  int div_pos;
+  int div_neg;
+  int mod_;
   initial begin
+    int a;
+    int b;
     a = 30; b = 12;
-    c = a + b; $display("%0d", c);
-    c = a - b; $display("%0d", c);
-    c = b - a; $display("%0d", c);
+    add = a + b;
+    sub = a - b;
+    sub_neg = b - a;
     a = 5; b = 7;
-    c = a * b; $display("%0d", c);
+    mul = a * b;
     a = b - 12;
-    c = a * b; $display("%0d", c);
+    mul_neg = a * b;
     a = 100; b = 4;
-    c = a / b; $display("%0d", c);
+    div_pos = a / b;
     a = b - 104;
-    c = a / b; $display("%0d", c);
+    div_neg = a / b;
     a = 17; b = 5;
-    c = a % b; $display("%0d", c);
+    mod_ = a % b;
   end
 endmodule

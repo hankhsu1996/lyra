@@ -1,6 +1,6 @@
 module Top;
+  int x;
   initial begin
-    int x;
     x = 1 + 2;
   end
 endmodule

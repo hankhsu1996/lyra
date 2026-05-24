@@ -7,14 +7,13 @@ input:
   files: [main.sv]
 expect:
   exit: 0
-  stdout:
-    exact: |
-      0
-      1
-      1
-      1
-      0
-      0
-      1
-      1
-      1
+  variables:
+    eq_ne: 0
+    ne_ne: 1
+    lt_ne: 1
+    le_ne: 1
+    gt_ne: 0
+    ge_ne: 0
+    eq_eq: 1
+    le_eq: 1
+    ge_eq: 1

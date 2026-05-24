@@ -7,5 +7,6 @@ input:
   files: [main.sv]
 expect:
   exit: 0
-  stdout:
-    exact: "evens=3 i=6\n"
+  variables:
+    evens: 3
+    i: 6

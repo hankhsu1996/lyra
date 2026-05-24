@@ -7,5 +7,6 @@ input:
   files: [main.sv]
 expect:
   exit: 0
-  stdout:
-    exact: "iters=3 final=0\n"
+  variables:
+    iters: 3
+    n: 0

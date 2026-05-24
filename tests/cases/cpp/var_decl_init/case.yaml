@@ -7,10 +7,9 @@ input:
   files: [main.sv]
 expect:
   exit: 0
-  stdout:
-    exact: |
-      x=7
-      y=3
-      z=10
-      neg=-3
-      compound=-7
+  variables:
+    x: 7
+    y: 3
+    z: 10
+    neg: -3
+    compound: -7

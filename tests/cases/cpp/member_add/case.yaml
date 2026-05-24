@@ -7,3 +7,5 @@ input:
   files: [main.sv]
 expect:
   exit: 0
+  variables:
+    a: 1

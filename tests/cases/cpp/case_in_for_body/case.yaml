@@ -7,9 +7,8 @@ input:
   files: [main.sv]
 expect:
   exit: 0
-  stdout:
-    exact: |
-      zero=1
-      pair=2
-      three=1
-      other=1
+  variables:
+    zero: 1
+    pair: 2
+    three: 1
+    other: 1

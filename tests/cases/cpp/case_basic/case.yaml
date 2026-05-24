@@ -7,9 +7,8 @@ input:
   files: [main.sv]
 expect:
   exit: 0
-  stdout:
-    exact: |
-      single=100
-      multi=22
-      defaulted=100
-      unchanged=99
+  variables:
+    single: 100
+    multi: 22
+    defaulted: 100
+    unchanged: 99
