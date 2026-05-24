@@ -655,6 +655,12 @@ class MirDumper {
             [&](const DoWhileStmt& s) {
               DumpDoWhileStmt(stmt, s, enclosing, id);
             },
+            [&](const BreakStmt&) {
+              Line(std::format("Stmt[{}] BreakStmt", id.value));
+            },
+            [&](const ContinueStmt&) {
+              Line(std::format("Stmt[{}] ContinueStmt", id.value));
+            },
             [&](const AwaitStmt& s) {
               Line(
                   std::format(

@@ -320,6 +320,12 @@ auto RenderStmt(
                 Indent(indent) + "} while (" + *std::move(cond_or) + ");\n";
             return result;
           },
+          [&](const mir::BreakStmt&) -> diag::Result<std::string> {
+            return Indent(indent) + "break;\n";
+          },
+          [&](const mir::ContinueStmt&) -> diag::Result<std::string> {
+            return Indent(indent) + "continue;\n";
+          },
           [&](const mir::AwaitStmt&) -> diag::Result<std::string> {
             throw InternalError(
                 "RenderStmt: AwaitStmt is not yet supported by C++ emit");

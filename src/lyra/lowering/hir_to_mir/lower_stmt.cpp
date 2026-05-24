@@ -641,6 +641,18 @@ auto LowerStmt(
                         .condition = cond_id, .scope = body_scope_id},
                 .child_procedural_scopes = std::move(child_scopes)};
           },
+          [&](const hir::BreakStmt&) -> diag::Result<mir::Stmt> {
+            return mir::Stmt{
+                .label = stmt.label,
+                .data = mir::BreakStmt{},
+                .child_procedural_scopes = {}};
+          },
+          [&](const hir::ContinueStmt&) -> diag::Result<mir::Stmt> {
+            return mir::Stmt{
+                .label = stmt.label,
+                .data = mir::ContinueStmt{},
+                .child_procedural_scopes = {}};
+          },
           [&](const hir::TimedStmt& t) -> diag::Result<mir::Stmt> {
             auto timing_or =
                 LowerTimingControl(proc_state, hir_proc, t.timing, stmt.span);
