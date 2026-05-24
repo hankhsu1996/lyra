@@ -445,6 +445,166 @@ auto LowerStmt(
                         .condition = cond_id, .scope = body_scope_id},
                 .child_procedural_scopes = std::move(child_scopes)};
           },
+          [&](const hir::RepeatStmt& r) -> diag::Result<mir::Stmt> {
+            const mir::TypeId int_type = unit_state.Builtins().int32;
+            const mir::TypeId bit_type = unit_state.Builtins().bit1;
+
+            ProceduralScopeLoweringState wrapper_state;
+            ProceduralDepthGuard wrapper_depth_guard{proc_state};
+
+            auto count_or = LowerExpr(
+                unit_state, scope_state, proc_state, wrapper_state, hir_proc,
+                hir_proc.exprs.at(r.count.value));
+            if (!count_or) {
+              return std::unexpected(std::move(count_or.error()));
+            }
+            mir::ExprId count_expr_id =
+                wrapper_state.AddExpr(*std::move(count_or));
+            if (wrapper_state.GetExpr(count_expr_id).type != int_type) {
+              count_expr_id = wrapper_state.AddExpr(
+                  mir::Expr{
+                      .data =
+                          mir::ConversionExpr{
+                              .operand = count_expr_id,
+                              .kind = mir::ConversionKind::kImplicit},
+                      .type = int_type});
+            }
+
+            const mir::ProceduralVarId count_var =
+                wrapper_state.AddProceduralVar(
+                    mir::ProceduralVarDecl{
+                        .name = "_lyra_repeat_count", .type = int_type});
+
+            const mir::StmtId count_decl_id = wrapper_state.AddStmt(
+                mir::Stmt{
+                    .label = std::nullopt,
+                    .data =
+                        mir::ProceduralVarDeclStmt{
+                            .target =
+                                mir::ProceduralVarRef{
+                                    .hops = mir::ProceduralHops{.value = 0},
+                                    .var = count_var},
+                            .init = count_expr_id},
+                    .child_procedural_scopes = {}});
+            wrapper_state.AddRootStmt(count_decl_id);
+
+            const mir::ProceduralVarId idx_var = wrapper_state.AddProceduralVar(
+                mir::ProceduralVarDecl{
+                    .name = "_lyra_repeat_index", .type = int_type});
+
+            auto make_int32_literal = [&](std::uint64_t v) -> mir::ExprId {
+              return wrapper_state.AddExpr(
+                  mir::Expr{
+                      .data =
+                          mir::IntegerLiteral{
+                              .value =
+                                  mir::IntegralConstant{
+                                      .value_words = {v},
+                                      .state_words = {},
+                                      .width = 32,
+                                      .signedness = mir::Signedness::kSigned,
+                                      .state_kind =
+                                          mir::IntegralStateKind::kTwoState}},
+                      .type = int_type});
+            };
+
+            const mir::ExprId zero_id = make_int32_literal(0);
+            const mir::ExprId one_id = make_int32_literal(1);
+
+            const mir::ExprId idx_ref_cond = wrapper_state.AddExpr(
+                mir::Expr{
+                    .data =
+                        mir::ProceduralVarRef{
+                            .hops = mir::ProceduralHops{.value = 0},
+                            .var = idx_var},
+                    .type = int_type});
+            const mir::ExprId count_ref_cond = wrapper_state.AddExpr(
+                mir::Expr{
+                    .data =
+                        mir::ProceduralVarRef{
+                            .hops = mir::ProceduralHops{.value = 0},
+                            .var = count_var},
+                    .type = int_type});
+            const mir::ExprId cond_id = wrapper_state.AddExpr(
+                mir::Expr{
+                    .data =
+                        mir::BinaryExpr{
+                            .op = mir::BinaryOp::kLessThan,
+                            .lhs = idx_ref_cond,
+                            .rhs = count_ref_cond},
+                    .type = bit_type});
+
+            const mir::ExprId idx_ref_step = wrapper_state.AddExpr(
+                mir::Expr{
+                    .data =
+                        mir::ProceduralVarRef{
+                            .hops = mir::ProceduralHops{.value = 0},
+                            .var = idx_var},
+                    .type = int_type});
+            const mir::ExprId add_id = wrapper_state.AddExpr(
+                mir::Expr{
+                    .data =
+                        mir::BinaryExpr{
+                            .op = mir::BinaryOp::kAdd,
+                            .lhs = idx_ref_step,
+                            .rhs = one_id},
+                    .type = int_type});
+            const mir::ExprId step_id = wrapper_state.AddExpr(
+                mir::Expr{
+                    .data =
+                        mir::AssignExpr{
+                            .target = mir::Lvalue{mir::ProceduralVarRef{
+                                .hops = mir::ProceduralHops{.value = 0},
+                                .var = idx_var}},
+                            .value = add_id},
+                    .type = int_type});
+
+            ProceduralScopeLoweringState body_state;
+            ProceduralDepthGuard body_depth_guard{proc_state};
+            const hir::Stmt& body_hir = hir_proc.stmts.at(r.body.value);
+            auto body_or = LowerStmt(
+                unit_state, scope_state, proc_state, body_state, hir_proc,
+                body_hir);
+            if (!body_or) {
+              return std::unexpected(std::move(body_or.error()));
+            }
+            const mir::StmtId body_id = body_state.AddStmt(*std::move(body_or));
+            body_state.AddRootStmt(body_id);
+
+            std::vector<mir::ProceduralScope> for_child_scopes;
+            const mir::ProceduralScopeId body_scope_id =
+                AddChildProceduralScope(for_child_scopes, body_state.Finish());
+
+            std::vector<mir::ForInit> for_init;
+            for_init.emplace_back(
+                mir::ForInitDecl{
+                    .induction_var =
+                        mir::ProceduralVarRef{
+                            .hops = mir::ProceduralHops{.value = 0},
+                            .var = idx_var},
+                    .init = zero_id});
+
+            const mir::StmtId for_stmt_id = wrapper_state.AddStmt(
+                mir::Stmt{
+                    .label = std::nullopt,
+                    .data =
+                        mir::ForStmt{
+                            .init = std::move(for_init),
+                            .condition = cond_id,
+                            .step = {step_id},
+                            .scope = body_scope_id},
+                    .child_procedural_scopes = std::move(for_child_scopes)});
+            wrapper_state.AddRootStmt(for_stmt_id);
+
+            std::vector<mir::ProceduralScope> child_scopes;
+            const mir::ProceduralScopeId wrapper_scope_id =
+                AddChildProceduralScope(child_scopes, wrapper_state.Finish());
+
+            return mir::Stmt{
+                .label = stmt.label,
+                .data = mir::BlockStmt{.scope = wrapper_scope_id},
+                .child_procedural_scopes = std::move(child_scopes)};
+          },
           [&](const hir::TimedStmt& t) -> diag::Result<mir::Stmt> {
             auto timing_or =
                 LowerTimingControl(proc_state, hir_proc, t.timing, stmt.span);

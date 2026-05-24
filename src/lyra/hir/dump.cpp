@@ -737,6 +737,22 @@ class HirDumper {
               Dedent();
               Dedent();
             },
+            [&](const RepeatStmt& r) {
+              Line(
+                  std::format(
+                      "Stmt[{}] RepeatStmt count=Expr[{}]", id.value,
+                      r.count.value));
+              Indent();
+              Line(
+                  std::format(
+                      "Expr[{}] {}", r.count.value,
+                      FormatProcExpr(p, r.count)));
+              Line("body:");
+              Indent();
+              DumpStmt(p, r.body);
+              Dedent();
+              Dedent();
+            },
             [&](const TimedStmt& t) {
               Line(std::format("Stmt[{}] TimedStmt", id.value));
               Indent();
