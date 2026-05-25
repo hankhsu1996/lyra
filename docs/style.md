@@ -16,13 +16,30 @@ rules only. Formatting is enforced by Prettier; see the Formatting section at th
    architecture docs.
 6. **Explicit invariants and forbidden shapes.** Every architecture doc states what must hold and
    what is not allowed. Implicit behavior is a defect.
-7. **The template is the design check.** If a concept cannot be placed in the template's sections,
-   the design is incomplete. Do not widen or bypass the template; widen the design until the concept
-   fits.
+7. **Templates are tools, not laws.** The type-contract template (Purpose / Owns / Does Not Own /
+   Core Invariants / Boundary / Forbidden Shapes / Notes) fits subjects whose architecture is well
+   described by what types live in a layer and what shapes are forbidden. Behavioral, protocol, or
+   decision-cluster subjects find their own structure. Consistency comes from copying close existing
+   examples, not from forcing every subject through one section list.
 
 ## Architecture Docs Are Contracts
 
-Every architecture doc must contain, in order:
+Every architecture doc is a binding contract for its subject: what holds, what is forbidden, what
+the boundaries are. Contracts are not narrative.
+
+A doc whose subject is a type-contract layer (HIR, MIR, LIR, hierarchy, identity, ownership) uses
+the template in the next section. The template forces the right discipline for those subjects.
+
+A doc whose subject is runtime behavior, a protocol between subsystems, or a cluster of related
+decisions finds its own structure. Open with the model, then state the decisions. Each decision
+earns its space with its reason; abstract principles without consequences do not.
+
+In both cases the rules under Core Principles still apply: no narrative framing, no "currently /
+historically / not yet / migration", no platitudes that are trivially true of any reasonable system.
+
+### Type-Contract Template
+
+A type-contract doc contains, in order:
 
 1. Title
 2. Purpose
@@ -35,6 +52,13 @@ Every architecture doc must contain, in order:
 
 Sections may be short, but none may be omitted. An empty section signals that the contract is not
 yet defined and must be filled before merge.
+
+### Behavioral and Decision-Cluster Docs
+
+These docs do not follow a fixed section list. Copy the shape of `architecture/scheduling.md` if the
+subject is similar (a runtime mechanism with a handful of load-bearing decisions). Otherwise let the
+subject drive the structure: state the mental model up front, then walk the decisions, each with the
+reason and any rejected alternative that is non-obvious.
 
 ## Architecture vs Other Docs
 
