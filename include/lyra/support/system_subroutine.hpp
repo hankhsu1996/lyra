@@ -71,8 +71,19 @@ struct TerminationSystemSubroutineInfo {
   int default_level;
 };
 
-using SystemSubroutineSemantic =
-    std::variant<PrintSystemSubroutineInfo, TerminationSystemSubroutineInfo>;
+enum class DiagnosticSeverityKind : std::uint8_t {
+  kInfo,
+  kWarning,
+  kError,
+};
+
+struct DiagnosticSystemSubroutineInfo {
+  DiagnosticSeverityKind severity;
+};
+
+using SystemSubroutineSemantic = std::variant<
+    PrintSystemSubroutineInfo, TerminationSystemSubroutineInfo,
+    DiagnosticSystemSubroutineInfo>;
 
 struct SystemSubroutineDesc {
   SystemSubroutineId id;
@@ -154,6 +165,39 @@ inline constexpr std::array kSystemSubroutines = {
             TerminationSystemSubroutineInfo{
                 .kind = TerminationKind::kFinish, .default_level = 1},
     },
+    SystemSubroutineDesc{
+        .id = SystemSubroutineId{5},
+        .name = "$info",
+        .origin = SystemSubroutineOrigin::kLanguageBuiltin,
+        .kind = SystemSubroutineKind::kFunction,
+        .result_conv = ReturnConvention::kVoid,
+        .arg_policy = ArgCountPolicy{.min_args = 0, .max_args = 255},
+        .semantic =
+            DiagnosticSystemSubroutineInfo{
+                .severity = DiagnosticSeverityKind::kInfo},
+    },
+    SystemSubroutineDesc{
+        .id = SystemSubroutineId{6},
+        .name = "$warning",
+        .origin = SystemSubroutineOrigin::kLanguageBuiltin,
+        .kind = SystemSubroutineKind::kFunction,
+        .result_conv = ReturnConvention::kVoid,
+        .arg_policy = ArgCountPolicy{.min_args = 0, .max_args = 255},
+        .semantic =
+            DiagnosticSystemSubroutineInfo{
+                .severity = DiagnosticSeverityKind::kWarning},
+    },
+    SystemSubroutineDesc{
+        .id = SystemSubroutineId{7},
+        .name = "$error",
+        .origin = SystemSubroutineOrigin::kLanguageBuiltin,
+        .kind = SystemSubroutineKind::kFunction,
+        .result_conv = ReturnConvention::kVoid,
+        .arg_policy = ArgCountPolicy{.min_args = 0, .max_args = 255},
+        .semantic =
+            DiagnosticSystemSubroutineInfo{
+                .severity = DiagnosticSeverityKind::kError},
+    },
 };
 
 }  // namespace detail
@@ -181,6 +225,11 @@ inline constexpr std::array kSystemSubroutines = {
 [[nodiscard]] inline auto GetPrintInfo(const SystemSubroutineDesc& desc)
     -> const PrintSystemSubroutineInfo* {
   return std::get_if<PrintSystemSubroutineInfo>(&desc.semantic);
+}
+
+[[nodiscard]] inline auto GetDiagnosticInfo(const SystemSubroutineDesc& desc)
+    -> const DiagnosticSystemSubroutineInfo* {
+  return std::get_if<DiagnosticSystemSubroutineInfo>(&desc.semantic);
 }
 
 }  // namespace lyra::support

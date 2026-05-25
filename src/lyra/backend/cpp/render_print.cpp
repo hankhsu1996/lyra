@@ -1,6 +1,7 @@
 #include "lyra/backend/cpp/render_print.hpp"
 
 #include <format>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -16,6 +17,7 @@
 #include "lyra/diag/diagnostic.hpp"
 #include "lyra/diag/kind.hpp"
 #include "lyra/mir/expr.hpp"
+#include "lyra/mir/runtime_diagnostic.hpp"
 #include "lyra/mir/runtime_finish.hpp"
 #include "lyra/mir/runtime_print.hpp"
 #include "lyra/mir/type.hpp"
@@ -183,6 +185,66 @@ auto RenderRuntimeFinishCall(const mir::RuntimeFinishCall& call)
   return std::format("co_await lyra::runtime::Finish({})", call.level);
 }
 
+auto RenderRuntimeDiagnosticSeverity(mir::DiagnosticSeverity s)
+    -> std::string_view {
+  switch (s) {
+    case mir::DiagnosticSeverity::kInfo:
+      return "lyra::runtime::Severity::kInfo";
+    case mir::DiagnosticSeverity::kWarning:
+      return "lyra::runtime::Severity::kWarning";
+    case mir::DiagnosticSeverity::kError:
+      return "lyra::runtime::Severity::kError";
+  }
+  throw InternalError("RenderRuntimeDiagnosticSeverity: unknown severity");
+}
+
+auto RenderDiagnosticOriginInit(
+    const std::optional<mir::DiagnosticOrigin>& origin) -> std::string {
+  if (!origin.has_value()) {
+    return "std::optional<lyra::runtime::SourceLocation>{}";
+  }
+  return std::format(
+      "std::optional<lyra::runtime::SourceLocation>{{lyra::runtime::"
+      "SourceLocation{{.file = {}, .line = {}, .col = {}}}}}",
+      RenderCStringLiteral(origin->file), origin->line, origin->col);
+}
+
+auto RenderRuntimeDiagnosticCall(
+    const RenderContext& ctx, const mir::RuntimeDiagnosticCall& call)
+    -> diag::Result<std::string> {
+  const std::string_view sev_literal =
+      RenderRuntimeDiagnosticSeverity(call.severity);
+  const std::string origin_init = RenderDiagnosticOriginInit(call.origin);
+
+  if (call.items.empty()) {
+    return std::format(
+        "lyra::runtime::LyraDiagnostic(*services_, {}, {}, "
+        "std::span<const lyra::value::PrintItem>{{}})",
+        sev_literal, origin_init);
+  }
+
+  std::vector<std::string> item_inits;
+  item_inits.reserve(call.items.size());
+  for (const mir::RuntimePrintItem& item : call.items) {
+    auto init_or = RenderPrintItemInit(ctx, item);
+    if (!init_or) return std::unexpected(std::move(init_or.error()));
+    item_inits.push_back(*std::move(init_or));
+  }
+
+  std::string out = std::format(
+      "lyra::runtime::LyraDiagnostic(*services_, {}, {}, "
+      "std::array<lyra::value::PrintItem, {}>{{",
+      sev_literal, origin_init, call.items.size());
+  for (std::size_t i = 0; i < item_inits.size(); ++i) {
+    if (i != 0) {
+      out += ", ";
+    }
+    out += item_inits[i];
+  }
+  out += "})";
+  return out;
+}
+
 }  // namespace
 
 auto RenderRuntimeCallExpr(
@@ -192,6 +254,10 @@ auto RenderRuntimeCallExpr(
       Overloaded{
           [&](const mir::RuntimePrintCall& pc) -> diag::Result<std::string> {
             return RenderRuntimePrintCall(ctx, pc);
+          },
+          [&](const mir::RuntimeDiagnosticCall& dc)
+              -> diag::Result<std::string> {
+            return RenderRuntimeDiagnosticCall(ctx, dc);
           },
           [&](const mir::RuntimeFinishCall& fc) -> diag::Result<std::string> {
             return RenderRuntimeFinishCall(fc);

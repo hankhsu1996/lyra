@@ -1,0 +1,11 @@
+id: cpp.warning_with_format
+tags: [cpp_run]
+input:
+  command: [run, cpp]
+  project: false
+  top: Top
+  files: [main.sv]
+expect:
+  exit: 0
+  stderr:
+    exact: "warning: value is 42\n"

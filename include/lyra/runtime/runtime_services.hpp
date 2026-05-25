@@ -4,22 +4,32 @@
 
 namespace lyra::runtime {
 
-class OutputDispatcher;
+class StreamDispatcher;
+class DiagnosticDispatcher;
 
 class RuntimeServices {
  public:
-  explicit RuntimeServices(OutputDispatcher& output) : output_(&output) {
+  RuntimeServices(StreamDispatcher& stream, DiagnosticDispatcher& diagnostic)
+      : stream_(&stream), diagnostic_(&diagnostic) {
   }
 
-  auto Output() -> OutputDispatcher& {
-    if (output_ == nullptr) {
-      throw InternalError("RuntimeServices has no OutputDispatcher");
+  auto Stream() -> StreamDispatcher& {
+    if (stream_ == nullptr) {
+      throw InternalError("RuntimeServices has no StreamDispatcher");
     }
-    return *output_;
+    return *stream_;
+  }
+
+  auto Diagnostic() -> DiagnosticDispatcher& {
+    if (diagnostic_ == nullptr) {
+      throw InternalError("RuntimeServices has no DiagnosticDispatcher");
+    }
+    return *diagnostic_;
   }
 
  private:
-  OutputDispatcher* output_ = nullptr;
+  StreamDispatcher* stream_ = nullptr;
+  DiagnosticDispatcher* diagnostic_ = nullptr;
 };
 
 }  // namespace lyra::runtime

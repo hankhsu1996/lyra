@@ -6,11 +6,11 @@
 
 namespace lyra::runtime {
 
-class OutputDispatcher {
+class StreamDispatcher {
  public:
-  using OutputSink = std::function<void(std::string_view)>;
+  using StreamSink = std::function<void(std::string_view)>;
 
-  explicit OutputDispatcher(OutputSink sink);
+  explicit StreamDispatcher(StreamSink sink);
 
   void Append(std::string_view text);
   void FinishRecord(bool append_newline);
@@ -18,7 +18,7 @@ class OutputDispatcher {
 
  private:
   std::string pending_;
-  OutputSink sink_;
+  StreamSink sink_;
 };
 
 }  // namespace lyra::runtime

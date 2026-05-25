@@ -5,8 +5,8 @@
 #include <variant>
 
 #include "lyra/base/overloaded.hpp"
-#include "lyra/runtime/output_sink.hpp"
 #include "lyra/runtime/runtime_services.hpp"
+#include "lyra/runtime/stream_dispatcher.hpp"
 #include "lyra/value/format.hpp"
 
 namespace lyra::runtime {
@@ -14,15 +14,15 @@ namespace lyra::runtime {
 void LyraPrint(
     RuntimeServices& services, value::PrintKind kind,
     std::span<const value::PrintItem> items) {
-  auto& output = services.Output();
+  auto& stream = services.Stream();
   for (const value::PrintItem& item : items) {
     std::visit(
         Overloaded{
             [&](const value::PrintLiteralItem& lit) {
-              output.Append(std::string_view{lit.data, lit.size});
+              stream.Append(std::string_view{lit.data, lit.size});
             },
             [&](const value::PrintValueItem& v) {
-              output.Append(value::FormatValue(v.spec, v.value));
+              stream.Append(value::FormatValue(v.spec, v.value));
             },
         },
         item);
@@ -30,7 +30,7 @@ void LyraPrint(
 
   const bool append_newline =
       kind == value::PrintKind::kDisplay || kind == value::PrintKind::kFDisplay;
-  output.FinishRecord(append_newline);
+  stream.FinishRecord(append_newline);
 }
 
 }  // namespace lyra::runtime

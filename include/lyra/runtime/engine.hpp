@@ -9,9 +9,10 @@
 #include <vector>
 
 #include "lyra/base/time.hpp"
-#include "lyra/runtime/output_sink.hpp"
+#include "lyra/runtime/diagnostic.hpp"
 #include "lyra/runtime/runtime_scope.hpp"
 #include "lyra/runtime/runtime_services.hpp"
+#include "lyra/runtime/stream_dispatcher.hpp"
 #include "lyra/runtime/wait_request.hpp"
 
 namespace lyra::runtime {
@@ -33,7 +34,8 @@ enum class SchedulerPhase : std::uint8_t {
 };
 
 struct EngineOptions {
-  OutputDispatcher::OutputSink output_sink;
+  StreamDispatcher::StreamSink stream_sink;
+  DiagnosticDispatcher::DiagnosticSink diagnostic_sink;
 };
 
 [[nodiscard]] auto DefaultEngineOptions() -> EngineOptions;
@@ -43,7 +45,7 @@ class Engine {
   Engine();
   explicit Engine(EngineOptions options);
 
-  // services_ holds a pointer into output_; copying or moving Engine would
+  // services_ holds a pointer into stream_; copying or moving Engine would
   // dangle that pointer.
   Engine(const Engine&) = delete;
   auto operator=(const Engine&) -> Engine& = delete;
@@ -54,8 +56,8 @@ class Engine {
   void BindRoot(std::string root_name, Module& top);
   auto Run() -> int;
 
-  auto Output() -> OutputDispatcher& {
-    return output_;
+  auto Stream() -> StreamDispatcher& {
+    return stream_;
   }
 
   auto Services() -> RuntimeServices& {
@@ -118,8 +120,9 @@ class Engine {
   [[nodiscard]] static auto CheckedAdd(SimTime base, SimDuration delta)
       -> SimTime;
 
-  OutputDispatcher output_;
-  RuntimeServices services_{output_};
+  StreamDispatcher stream_;
+  DiagnosticDispatcher diagnostic_;
+  RuntimeServices services_{stream_, diagnostic_};
   std::unique_ptr<RuntimeScope> root_;
   SchedulerQueues queues_;
   SimTime now_ = 0;
