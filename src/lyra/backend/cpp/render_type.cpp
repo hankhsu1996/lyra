@@ -29,16 +29,9 @@ auto RenderTypeAsCpp(
   return std::visit(
       Overloaded{
           [](const mir::PackedArrayType& p) -> diag::Result<std::string> {
-            // TODO(hankhsu): `int`/`integer` still emit as `std::int32_t` so
-            // the surrounding native expression path keeps compiling.
-            // Migrating them to `PackedArray` requires routing every native
-            // expression form through PackedArray ops; tracked under the
-            // integral redirect cut plan.
             if (p.form == mir::PackedArrayForm::kInt ||
-                p.form == mir::PackedArrayForm::kInteger) {
-              return std::string{"std::int32_t"};
-            }
-            if (p.form == mir::PackedArrayForm::kExplicit) {
+                p.form == mir::PackedArrayForm::kInteger ||
+                p.form == mir::PackedArrayForm::kExplicit) {
               return std::string{"lyra::value::PackedArray"};
             }
             return diag::Unsupported(

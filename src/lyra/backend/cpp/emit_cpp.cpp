@@ -29,8 +29,7 @@ auto RenderField(
   if (!type_or) return std::unexpected(std::move(type_or.error()));
   std::string init;
   const auto& ty = unit.GetType(var.type);
-  if (ty.IsPackedArray() &&
-      ty.AsPackedArray().form == mir::PackedArrayForm::kExplicit) {
+  if (ty.IsPackedArray()) {
     init = "{" + RenderPackedArrayCtorArgs(ty.AsPackedArray()) + "}";
   }
   return Indent(indent) + *type_or + " " + var.name + init + ";\n";

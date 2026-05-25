@@ -19,10 +19,16 @@ class PackedArray {
  public:
   PackedArray(std::uint64_t bit_width, bool is_signed, bool is_four_state);
 
-  // Construct a 2-state PackedArray initialised from a 64-bit value. Bits
-  // above bit_width are masked out. The unknown plane is zero (no X/Z).
-  // For 4-state targets, X/Z would be lost.
-  [[nodiscard]] static auto FromInt64(
+  // Convenience factory for the default int shape (32-bit, signed, 2-state).
+  // Matches SystemVerilog's default int literal type, so `int x = 5;` lowers
+  // to `PackedArray x = PackedArray::Int(5);`.
+  [[nodiscard]] static auto Int(std::int32_t value) -> PackedArray;
+
+  // Construct a narrow PackedArray (bit_width <= 64) from an integer value.
+  // The `std::int64_t` parameter is the carrier type wide enough to cover
+  // every narrow width; the resulting shape is set by `bit_width`, with bits
+  // above masked out and the unknown plane left at zero.
+  [[nodiscard]] static auto FromInt(
       std::int64_t value, std::uint64_t bit_width, bool is_signed,
       bool is_four_state) -> PackedArray;
 

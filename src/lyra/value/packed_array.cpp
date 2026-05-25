@@ -69,7 +69,11 @@ PackedArray::PackedArray(
       storage_(MakeStorage(bit_width, is_four_state)) {
 }
 
-auto PackedArray::FromInt64(
+auto PackedArray::Int(std::int32_t value) -> PackedArray {
+  return FromInt(value, 32U, true, false);
+}
+
+auto PackedArray::FromInt(
     std::int64_t value, std::uint64_t bit_width, bool is_signed,
     bool is_four_state) -> PackedArray {
   PackedArray p{bit_width, is_signed, is_four_state};
@@ -190,14 +194,13 @@ auto PackedArray::ConvertFrom(
         "PackedArray::ConvertFrom: wide (>64-bit) conversion not yet "
         "implemented");
   }
-  if (src.IsFourState() || dst_is_four_state) {
-    throw InternalError(
-        "PackedArray::ConvertFrom: 4-state conversion not yet implemented");
-  }
-  // Extract source value with source's signedness; the int64 result is
-  // sign-extended past the source bit_width, which `FromInt64` then
-  // truncates to the destination width.
-  return FromInt64(src.ToInt64(), dst_bit_width, dst_is_signed, false);
+  // Narrow conversion across (state, signedness, width) combinations. Value
+  // bits flow through `ToInt64` (sign-extended per source signedness) then
+  // `FromInt` (truncated to destination width). 4-state X/Z bits collapse
+  // to 0 when crossing into 2-state; 2-state -> 4-state leaves the unknown
+  // plane zero. TODO(hankhsu): full X/Z propagation.
+  return FromInt(
+      src.ToInt64(), dst_bit_width, dst_is_signed, dst_is_four_state);
 }
 
 namespace {
@@ -208,11 +211,9 @@ auto WidthOnlyNarrow(const PackedArray& v, std::string_view op) -> void {
         std::string{op} +
         ": wide (>64-bit) packed integral operator not yet implemented");
   }
-  if (v.IsFourState()) {
-    throw InternalError(
-        std::string{op} +
-        ": 4-state packed integral operator not yet implemented");
-  }
+  // 4-state narrow arithmetic runs on the value plane only; if the unknown
+  // plane is non-zero, the result loses X/Z semantics. TODO(hankhsu): add
+  // full X/Z propagation for narrow 4-state arithmetic.
 }
 
 auto NarrowWordOf(const PackedArray& v) -> std::uint64_t {
@@ -220,7 +221,7 @@ auto NarrowWordOf(const PackedArray& v) -> std::uint64_t {
 }
 
 auto OneBitResult(bool flag) -> PackedArray {
-  return PackedArray::FromInt64(flag ? 1 : 0, 1U, false, false);
+  return PackedArray::FromInt(flag ? 1 : 0, 1U, false, false);
 }
 
 }  // namespace
@@ -230,8 +231,8 @@ auto PackedArray::operator+(const PackedArray& other) const -> PackedArray {
   WidthOnlyNarrow(*this, "operator+");
   const auto mask = MaskForWidth(bit_width_);
   const auto sum = (NarrowWordOf(*this) + NarrowWordOf(other)) & mask;
-  return FromInt64(
-      static_cast<std::int64_t>(sum), bit_width_, is_signed_, false);
+  return FromInt(
+      static_cast<std::int64_t>(sum), bit_width_, is_signed_, is_four_state_);
 }
 
 auto PackedArray::operator-(const PackedArray& other) const -> PackedArray {
@@ -239,8 +240,8 @@ auto PackedArray::operator-(const PackedArray& other) const -> PackedArray {
   WidthOnlyNarrow(*this, "operator-");
   const auto mask = MaskForWidth(bit_width_);
   const auto diff = (NarrowWordOf(*this) - NarrowWordOf(other)) & mask;
-  return FromInt64(
-      static_cast<std::int64_t>(diff), bit_width_, is_signed_, false);
+  return FromInt(
+      static_cast<std::int64_t>(diff), bit_width_, is_signed_, is_four_state_);
 }
 
 auto PackedArray::operator*(const PackedArray& other) const -> PackedArray {
@@ -248,8 +249,9 @@ auto PackedArray::operator*(const PackedArray& other) const -> PackedArray {
   WidthOnlyNarrow(*this, "operator*");
   const auto mask = MaskForWidth(bit_width_);
   const auto product = (NarrowWordOf(*this) * NarrowWordOf(other)) & mask;
-  return FromInt64(
-      static_cast<std::int64_t>(product), bit_width_, is_signed_, false);
+  return FromInt(
+      static_cast<std::int64_t>(product), bit_width_, is_signed_,
+      is_four_state_);
 }
 
 auto PackedArray::operator/(const PackedArray& other) const -> PackedArray {
@@ -257,15 +259,15 @@ auto PackedArray::operator/(const PackedArray& other) const -> PackedArray {
   WidthOnlyNarrow(*this, "operator/");
   const auto rhs = other.ToInt64();
   if (rhs == 0) {
-    return PackedArray{bit_width_, is_signed_, false};
+    return PackedArray{bit_width_, is_signed_, is_four_state_};
   }
   if (is_signed_) {
-    return FromInt64(ToInt64() / rhs, bit_width_, true, false);
+    return FromInt(ToInt64() / rhs, bit_width_, true, is_four_state_);
   }
   const auto au = NarrowWordOf(*this);
   const auto bu = static_cast<std::uint64_t>(rhs);
-  return FromInt64(
-      static_cast<std::int64_t>(au / bu), bit_width_, false, false);
+  return FromInt(
+      static_cast<std::int64_t>(au / bu), bit_width_, false, is_four_state_);
 }
 
 auto PackedArray::operator%(const PackedArray& other) const -> PackedArray {
@@ -273,25 +275,25 @@ auto PackedArray::operator%(const PackedArray& other) const -> PackedArray {
   WidthOnlyNarrow(*this, "operator%");
   const auto rhs = other.ToInt64();
   if (rhs == 0) {
-    return PackedArray{bit_width_, is_signed_, false};
+    return PackedArray{bit_width_, is_signed_, is_four_state_};
   }
   if (is_signed_) {
-    return FromInt64(ToInt64() % rhs, bit_width_, true, false);
+    return FromInt(ToInt64() % rhs, bit_width_, true, is_four_state_);
   }
   const auto au = NarrowWordOf(*this);
   const auto bu = static_cast<std::uint64_t>(rhs);
-  return FromInt64(
-      static_cast<std::int64_t>(au % bu), bit_width_, false, false);
+  return FromInt(
+      static_cast<std::int64_t>(au % bu), bit_width_, false, is_four_state_);
 }
 
 auto PackedArray::operator&(const PackedArray& other) const -> PackedArray {
   ExpectSameShape(*this, other, "operator&");
   if (bit_width_ <= 64U && !is_four_state_) {
     const auto mask = MaskForWidth(bit_width_);
-    return FromInt64(
+    return FromInt(
         static_cast<std::int64_t>(
             (NarrowWordOf(*this) & NarrowWordOf(other)) & mask),
-        bit_width_, is_signed_, false);
+        bit_width_, is_signed_, is_four_state_);
   }
   PackedArray result{bit_width_, is_signed_, is_four_state_};
   if (is_four_state_) {
@@ -312,10 +314,10 @@ auto PackedArray::operator|(const PackedArray& other) const -> PackedArray {
   ExpectSameShape(*this, other, "operator|");
   if (bit_width_ <= 64U && !is_four_state_) {
     const auto mask = MaskForWidth(bit_width_);
-    return FromInt64(
+    return FromInt(
         static_cast<std::int64_t>(
             (NarrowWordOf(*this) | NarrowWordOf(other)) & mask),
-        bit_width_, is_signed_, false);
+        bit_width_, is_signed_, is_four_state_);
   }
   PackedArray result{bit_width_, is_signed_, is_four_state_};
   if (is_four_state_) {
@@ -336,10 +338,10 @@ auto PackedArray::operator^(const PackedArray& other) const -> PackedArray {
   ExpectSameShape(*this, other, "operator^");
   if (bit_width_ <= 64U && !is_four_state_) {
     const auto mask = MaskForWidth(bit_width_);
-    return FromInt64(
+    return FromInt(
         static_cast<std::int64_t>(
             (NarrowWordOf(*this) ^ NarrowWordOf(other)) & mask),
-        bit_width_, is_signed_, false);
+        bit_width_, is_signed_, is_four_state_);
   }
   PackedArray result{bit_width_, is_signed_, is_four_state_};
   if (is_four_state_) {
@@ -360,10 +362,10 @@ auto PackedArray::BitwiseXnor(const PackedArray& other) const -> PackedArray {
   ExpectSameShape(*this, other, "BitwiseXnor");
   if (bit_width_ <= 64U && !is_four_state_) {
     const auto mask = MaskForWidth(bit_width_);
-    return FromInt64(
+    return FromInt(
         static_cast<std::int64_t>(
             (~(NarrowWordOf(*this) ^ NarrowWordOf(other))) & mask),
-        bit_width_, is_signed_, false);
+        bit_width_, is_signed_, is_four_state_);
   }
   PackedArray result{bit_width_, is_signed_, is_four_state_};
   if (is_four_state_) {
@@ -431,7 +433,7 @@ auto PackedArray::operator>=(const PackedArray& other) const -> PackedArray {
 auto PackedArray::operator-() const -> PackedArray {
   WidthOnlyNarrow(*this, "operator- (unary)");
   const auto mask = MaskForWidth(bit_width_);
-  return FromInt64(
+  return FromInt(
       static_cast<std::int64_t>((-NarrowWordOf(*this)) & mask), bit_width_,
       is_signed_, false);
 }
@@ -439,7 +441,7 @@ auto PackedArray::operator-() const -> PackedArray {
 auto PackedArray::operator~() const -> PackedArray {
   if (bit_width_ <= 64U && !is_four_state_) {
     const auto mask = MaskForWidth(bit_width_);
-    return FromInt64(
+    return FromInt(
         static_cast<std::int64_t>((~NarrowWordOf(*this)) & mask), bit_width_,
         is_signed_, false);
   }
@@ -492,12 +494,12 @@ auto PackedArray::ShiftLeft(const PackedArray& amount) const -> PackedArray {
   WidthOnlyNarrow(*this, "ShiftLeft");
   const auto amt = ShiftAmountAsUint(amount);
   if (amt >= bit_width_) {
-    return PackedArray{bit_width_, is_signed_, false};
+    return PackedArray{bit_width_, is_signed_, is_four_state_};
   }
   const auto mask = MaskForWidth(bit_width_);
-  return FromInt64(
+  return FromInt(
       static_cast<std::int64_t>((NarrowWordOf(*this) << amt) & mask),
-      bit_width_, is_signed_, false);
+      bit_width_, is_signed_, is_four_state_);
 }
 
 auto PackedArray::LogicalShiftRight(const PackedArray& amount) const
@@ -505,9 +507,9 @@ auto PackedArray::LogicalShiftRight(const PackedArray& amount) const
   WidthOnlyNarrow(*this, "LogicalShiftRight");
   const auto amt = ShiftAmountAsUint(amount);
   if (amt >= bit_width_) {
-    return PackedArray{bit_width_, is_signed_, false};
+    return PackedArray{bit_width_, is_signed_, is_four_state_};
   }
-  return FromInt64(
+  return FromInt(
       static_cast<std::int64_t>(NarrowWordOf(*this) >> amt), bit_width_,
       is_signed_, false);
 }
@@ -521,9 +523,9 @@ auto PackedArray::ArithmeticShiftRight(const PackedArray& amount) const
   const auto amt = ShiftAmountAsUint(amount);
   const auto signed_value = ToInt64();
   if (amt >= bit_width_) {
-    return FromInt64(signed_value < 0 ? -1 : 0, bit_width_, true, false);
+    return FromInt(signed_value < 0 ? -1 : 0, bit_width_, true, is_four_state_);
   }
-  return FromInt64(signed_value >> amt, bit_width_, true, false);
+  return FromInt(signed_value >> amt, bit_width_, true, is_four_state_);
 }
 
 auto PackedArray::Power(const PackedArray& exponent) const -> PackedArray {
@@ -532,14 +534,15 @@ auto PackedArray::Power(const PackedArray& exponent) const -> PackedArray {
   const auto base = ToInt64();
   const auto exp = exponent.ToInt64();
   if (exp == 0) {
-    return FromInt64(1, bit_width_, is_signed_, false);
+    return FromInt(1, bit_width_, is_signed_, is_four_state_);
   }
   if (exp < 0) {
-    if (base == 1) return FromInt64(1, bit_width_, is_signed_, false);
+    if (base == 1) return FromInt(1, bit_width_, is_signed_, is_four_state_);
     if (base == -1) {
-      return FromInt64((exp & 1) != 0 ? -1 : 1, bit_width_, is_signed_, false);
+      return FromInt(
+          (exp & 1) != 0 ? -1 : 1, bit_width_, is_signed_, is_four_state_);
     }
-    return PackedArray{bit_width_, is_signed_, false};
+    return PackedArray{bit_width_, is_signed_, is_four_state_};
   }
   std::int64_t result = 1;
   std::int64_t b = base;
@@ -551,7 +554,7 @@ auto PackedArray::Power(const PackedArray& exponent) const -> PackedArray {
     b *= b;
     e >>= 1;
   }
-  return FromInt64(result, bit_width_, is_signed_, false);
+  return FromInt(result, bit_width_, is_signed_, is_four_state_);
 }
 
 auto PackedArray::ReductionAnd() const -> PackedArray {
