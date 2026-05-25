@@ -43,7 +43,7 @@ auto RenderForInit(const RenderContext& ctx, const mir::ForInit& init)
             }
             std::string out = *type_or + " " + lv.name;
             if (is_packed_explicit) {
-              out += "{" + std::to_string(ty.AsPackedArray().BitWidth()) + "}";
+              out += "{" + RenderPackedArrayCtorArgs(ty.AsPackedArray()) + "}";
             } else if (d.init.has_value()) {
               const auto& v = ctx.ProceduralScope().exprs.at(d.init->value);
               auto rendered_or = RenderExpr(ctx, v);
@@ -112,7 +112,7 @@ auto RenderStmt(
             }
             if (is_packed_explicit) {
               return Indent(indent) + *type_or + " " + lv.name + "{" +
-                     std::to_string(ty.AsPackedArray().BitWidth()) + "};\n";
+                     RenderPackedArrayCtorArgs(ty.AsPackedArray()) + "};\n";
             }
             if (s.init.has_value()) {
               const auto& init_expr =

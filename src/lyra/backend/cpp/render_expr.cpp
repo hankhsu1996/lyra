@@ -273,15 +273,17 @@ auto RenderPackedExprAsView(const RenderContext& ctx, const mir::Expr& expr)
     throw InternalError("RenderPackedExprAsView: not packed-explicit");
   }
   const auto& pa = ty.AsPackedArray();
+  const std::string view_call =
+      pa.atom == mir::BitAtom::kBit ? ".AsBitView()" : ".AsLogicView()";
   return std::visit(
       Overloaded{
           [&](const mir::StructuralVarRef& m) -> diag::Result<std::string> {
             auto name_or = RenderStructuralVarName(ctx, m);
             if (!name_or) return std::unexpected(std::move(name_or.error()));
-            return *name_or + ".View()";
+            return *name_or + view_call;
           },
           [&](const mir::ProceduralVarRef& l) -> diag::Result<std::string> {
-            return LookupProceduralVarName(ctx, l) + ".View()";
+            return LookupProceduralVarName(ctx, l) + view_call;
           },
           [&](const mir::IntegerLiteral& lit) -> diag::Result<std::string> {
             return RenderPackedLiteralView(pa, lit.value);
@@ -496,7 +498,9 @@ auto RenderPackedAssign(const RenderContext& ctx, const mir::AssignExpr& a)
   const auto& lhs = ctx.Unit().GetType(*lhs_t_or).AsPackedArray();
   auto lhs_name_or = RenderLvalue(ctx, a.target);
   if (!lhs_name_or) return std::unexpected(std::move(lhs_name_or.error()));
-  const std::string lhs_view = *lhs_name_or + ".View()";
+  const std::string lhs_view =
+      *lhs_name_or +
+      (lhs.atom == mir::BitAtom::kBit ? ".AsBitView()" : ".AsLogicView()");
 
   auto bitwise_or = RenderPackedBitwiseAssign(ctx, a, lhs, lhs_view);
   if (!bitwise_or) {

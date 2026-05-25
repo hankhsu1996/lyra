@@ -116,6 +116,38 @@ auto PackedArray::UnknownWords() const -> std::span<const std::uint64_t> {
   return {};
 }
 
+auto PackedArray::AsBitView() -> BitView {
+  auto* bv = std::get_if<BitValue>(&storage_);
+  if (bv == nullptr) {
+    throw InternalError("PackedArray::AsBitView: storage is 4-state");
+  }
+  return bv->View();
+}
+
+auto PackedArray::AsBitView() const -> ConstBitView {
+  const auto* bv = std::get_if<BitValue>(&storage_);
+  if (bv == nullptr) {
+    throw InternalError("PackedArray::AsBitView: storage is 4-state");
+  }
+  return bv->View();
+}
+
+auto PackedArray::AsLogicView() -> LogicView {
+  auto* lv = std::get_if<LogicValue>(&storage_);
+  if (lv == nullptr) {
+    throw InternalError("PackedArray::AsLogicView: storage is 2-state");
+  }
+  return lv->View();
+}
+
+auto PackedArray::AsLogicView() const -> ConstLogicView {
+  const auto* lv = std::get_if<LogicValue>(&storage_);
+  if (lv == nullptr) {
+    throw InternalError("PackedArray::AsLogicView: storage is 2-state");
+  }
+  return lv->View();
+}
+
 auto PackedArray::AssignFrom(const PackedArray& other) -> void {
   ExpectSameShape(*this, other, "PackedArray::AssignFrom");
   auto dst = std::visit(
@@ -170,24 +202,16 @@ auto PackedArray::ConvertFrom(
 
 namespace {
 
-auto WidePackedNotYetImplemented(std::string_view op) -> InternalError {
-  return InternalError(
-      std::string{op} +
-      ": wide (>64-bit) packed integral operator not yet implemented");
-}
-
-auto FourStatePackedNotYetImplemented(std::string_view op) -> InternalError {
-  return InternalError(
-      std::string{op} +
-      ": 4-state packed integral operator not yet implemented");
-}
-
 auto WidthOnlyNarrow(const PackedArray& v, std::string_view op) -> void {
   if (v.BitWidth() > 64U) {
-    throw WidePackedNotYetImplemented(op);
+    throw InternalError(
+        std::string{op} +
+        ": wide (>64-bit) packed integral operator not yet implemented");
   }
   if (v.IsFourState()) {
-    throw FourStatePackedNotYetImplemented(op);
+    throw InternalError(
+        std::string{op} +
+        ": 4-state packed integral operator not yet implemented");
   }
 }
 

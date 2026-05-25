@@ -15,33 +15,31 @@
 
 namespace lyra::backend::cpp {
 
+auto RenderPackedArrayCtorArgs(const mir::PackedArrayType& pa) -> std::string {
+  const char* signed_lit =
+      pa.signedness == mir::Signedness::kSigned ? "true" : "false";
+  const char* four_state_lit = pa.atom != mir::BitAtom::kBit ? "true" : "false";
+  return std::to_string(pa.BitWidth()) + ", " + signed_lit + ", " +
+         four_state_lit;
+}
+
 auto RenderTypeAsCpp(
     const mir::CompilationUnit& unit, const mir::StructuralScope& owner_scope,
     mir::TypeId type_id) -> diag::Result<std::string> {
   return std::visit(
       Overloaded{
           [](const mir::PackedArrayType& p) -> diag::Result<std::string> {
-            // `int`/`integer` retain native std::int32_t because current
-            // expression lowering uses raw C++ operators; switching them to
-            // a runtime packed type requires operator overloads that belong
-            // to the erased packed storage model. `integer`'s 4-state
-            // semantics are not blessed correct here -- the mapping is
-            // preserved only to keep current tests green; runtime typing of
-            // `integer` is unresolved.
+            // TODO(hankhsu): `int`/`integer` still emit as `std::int32_t` so
+            // the surrounding native expression path keeps compiling.
+            // Migrating them to `PackedArray` requires routing every native
+            // expression form through PackedArray ops; tracked under the
+            // integral redirect cut plan.
             if (p.form == mir::PackedArrayForm::kInt ||
                 p.form == mir::PackedArrayForm::kInteger) {
               return std::string{"std::int32_t"};
             }
             if (p.form == mir::PackedArrayForm::kExplicit) {
-              if (p.atom == mir::BitAtom::kBit) {
-                return std::string{"lyra::value::BitValue"};
-              }
-              if (p.atom == mir::BitAtom::kLogic ||
-                  p.atom == mir::BitAtom::kReg) {
-                return std::string{"lyra::value::LogicValue"};
-              }
-              throw InternalError(
-                  "RenderTypeAsCpp: unknown BitAtom for kExplicit packed type");
+              return std::string{"lyra::value::PackedArray"};
             }
             return diag::Unsupported(
                 diag::DiagCode::kCppEmitPackedRuntimeNotSupported,

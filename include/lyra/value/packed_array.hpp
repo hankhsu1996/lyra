@@ -46,6 +46,14 @@ class PackedArray {
   [[nodiscard]] auto ValueWords() const -> std::span<const std::uint64_t>;
   [[nodiscard]] auto UnknownWords() const -> std::span<const std::uint64_t>;
 
+  // Typed view accessors. The atom encoded in `is_four_state_` selects which
+  // overload is callable: 2-state stores expose Bit views, 4-state stores
+  // expose Logic views. Calling the wrong one throws InternalError.
+  [[nodiscard]] auto AsBitView() -> BitView;
+  [[nodiscard]] auto AsBitView() const -> ConstBitView;
+  [[nodiscard]] auto AsLogicView() -> LogicView;
+  [[nodiscard]] auto AsLogicView() const -> ConstLogicView;
+
   // Width-aware copy. The destination's attributes drive sign-extension,
   // zero-extension, or truncation as appropriate.
   auto AssignFrom(const PackedArray& other) -> void;
