@@ -49,7 +49,7 @@ NBA region of this same time slot regardless of where the process is by then.
 
 ## Region structure
 
-A time slot runs regions in LRM §4.4 order: Preponed, Active, Inactive, NBA, Observed, Reactive,
+A time slot runs regions in LRM 4.4 order: Preponed, Active, Inactive, NBA, Observed, Reactive,
 ReInactive, ReNBA, Postponed.
 
 The **active group** (Active, Inactive, NBA) iterates as a unit. Active drains, then Inactive
@@ -74,7 +74,7 @@ for that slot do not commit; queued active processes do not resume.
 
 Registered `final` actions then run in registration order. A `$finish` raised from inside a `final`
 aborts the remaining finals. This three-cornered behavior (active shutdown, NBA discard, final
-abort) follows LRM §9.2.3.
+abort) follows LRM 9.2.3.
 
 ## Closure capture lifetime
 
