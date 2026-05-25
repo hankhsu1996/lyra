@@ -4,6 +4,31 @@ Tracks procedural control-flow constructs against `backend::cpp`. Covers archive
 `archived/tests/sv_features/control_flow/`. Each archive item checkbox in `architecture-reset.md` is
 checked when its `*.yaml` cases reproduce on the current pipeline.
 
+The numeric IDs (C1..C17) are stable references to archive items and do **not** imply execution
+order. Most of the remaining open items depend on workstreams outside control-flow (data types,
+operator runtime, string runtime); see the per-item **Depends on** lines and the
+[Actionable](#actionable) summary below for what can actually be picked up next.
+
+## Actionable
+
+Open items whose external dependencies are already in place and can be implemented today:
+
+- **C13** -- `unique` / `unique0` / `priority` qualifiers. Self-contained: needs only the runtime
+  warn helper and (for cascaded `if`) settle-epoch tracking, both of which live inside this
+  workstream.
+- **C15** -- `case` with non-constant / duplicate labels. Pure HIR -> MIR restructure on top of the
+  C3 machinery.
+
+Open items currently blocked on other workstreams:
+
+| Item    | Blocked on                                                                                 |
+| ------- | ------------------------------------------------------------------------------------------ |
+| C9, C10 | `datatypes/unpacked` (procedural unpacked array vars + `arr[i]` element-select expr).      |
+| C11     | `operators/wildcard_equality` (masked-compare runtime helper for `==?` / `!=?`).           |
+| C12     | `operators/inside` (range patterns + set-membership runtime).                              |
+| C16     | `datatypes/enum`.                                                                          |
+| C17     | `datatypes/string` plus the string-equality runtime helper from `operators/binary_string`. |
+
 ## Sub-Steps
 
 ### Statements
@@ -52,30 +77,42 @@ checked when its `*.yaml` cases reproduce on the current pipeline.
       renders this as `for (; ; ) { body }`, which loops until `break` or `$finish` exits. Coverage
       includes `$finish` termination, `break` termination, `continue`, single-statement body (no
       `begin`/`end`), nested forever with inner `break`, and `if`-guarded forever.
-- [ ] C9 -- `foreach` over fixed unpacked 1D arrays. Desugar to nested `for` over slang `loopDims`;
-      depends on C2.
-- [ ] C10 -- `foreach` multi-dim, skipped dimensions, dynamic-array, queue. Depends on C9 plus
-      runtime types for the dynamic variants.
-- [ ] C11 -- `casez` / `casex`. Cannot share `mir::SwitchStmt` (C++ `switch` does not support
-      wildcard match); lower to an if/else cascade with masked comparisons in HIR -> MIR.
+- [ ] C9 -- `foreach` over fixed unpacked 1D arrays. Desugar in HIR -> MIR to nested `for` over the
+      slang `loopDims`. **Depends on** `datatypes/unpacked`: needs a procedural unpacked-array
+      variable shape and an `arr[i]` element-select expression in both HIR and MIR (neither exists
+      today). Cannot start before that work.
+- [ ] C10 -- `foreach` multi-dim, skipped dimensions, dynamic-array, queue. **Depends on** C9 plus
+      `datatypes/general` (dynamic array, queue) and the `.size()` runtime query.
+- [ ] C11 -- `casez` / `casex`. Lower to an if/else cascade with masked comparisons in HIR -> MIR
+      (C++ `switch` does not support wildcard match). **Depends on** `operators/wildcard_equality`
+      for the `==?` / `!=?` runtime helper.
 - [ ] C12 -- `case (... inside ...)`. Range patterns (`[lo:hi]`) and `inside` membership; lower to
-      if/else cascade with `inside` semantics.
-- [ ] C13 -- `unique` / `unique0` / `priority` qualifiers on `if` and `case`. Needs runtime warn
-      helpers and (for cascaded `if`) settle-epoch tracking. Covers archive items
-      `unique_priority_if` and `unique_priority_case`.
+      if/else cascade with `inside` semantics. **Depends on** `operators/inside` for the
+      set-membership runtime.
+- [ ] C13 -- `unique` / `unique0` / `priority` qualifiers on `if` and `case`. Needs the runtime warn
+      helper and (for cascaded `if`) settle-epoch tracking, both local to this workstream. Covers
+      archive items `unique_priority_if` and `unique_priority_case`. **Depends on** nothing
+      external; actionable now.
 - [ ] C15 -- `case` with labels that are not compile-time constants (`case (sel) some_expr: ...`)
       and `case` with duplicate labels ("first match wins"). Neither can be expressed via C++
       `switch`; lower in HIR -> MIR to an if/else-if cascade. Covers archive cases
-      `case_constant_expression`, `case_first_match_wins`.
-- [ ] C16 -- `case` with enum-typed selectors and enum-value labels. Depends on the `datatypes/enum`
-      archive item landing.
-- [ ] C17 -- `case` with string selector / string labels. Needs the string-equality runtime helper
-      from `operators/binary_string`.
+      `case_constant_expression`, `case_first_match_wins`. **Depends on** nothing external;
+      actionable now (only the C3 machinery already in place).
+- [ ] C16 -- `case` with enum-typed selectors and enum-value labels. **Depends on**
+      `datatypes/enum`.
+- [ ] C17 -- `case` with string selector / string labels. **Depends on** `datatypes/string` plus the
+      string-equality runtime helper tracked under `operators/binary_string`.
 
 ### Expressions
 
-- [ ] C14 -- Ternary `cond ? a : b`. Pure expression node; independent of statement work. Adds
-      `hir::ConditionalExpr` + `mir::ConditionalExpr` and a one-line C++ render.
+- [x] C14 -- Ternary `cond ? a : b`. New `hir::ConditionalExpr` + `mir::ConditionalExpr` carry the
+      three sub-expressions; HIR -> MIR is a straight pass-through (no desugaring); the C++ backend
+      renders as `(cond ? then : else)` on the native (2-state integral) path. Multi-condition
+      (`&&&`) and `matches` pattern forms are rejected with `diag::Unsupported`. 4-state X/Z
+      propagation on the condition follows the broader 4-state work tracked under `operators` (B7 /
+      U4) and is out of scope. Coverage includes basic max-pick, nested chained, ternary embedded in
+      an arithmetic expression, literal-only arms, ternary feeding an `if` condition, and ternary
+      inside a `for`-loop body.
 
 ## Out of Scope
 

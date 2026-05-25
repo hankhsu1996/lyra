@@ -1,0 +1,13 @@
+id: cpp.ternary_with_literal
+tags: [cpp_run]
+input:
+  command: [run, cpp]
+  project: false
+  top: Top
+  files: [main.sv]
+expect:
+  exit: 0
+  variables:
+    flag: 1
+    picked_true: 42
+    picked_false: -1
