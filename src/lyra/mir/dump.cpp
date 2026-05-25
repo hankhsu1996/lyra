@@ -12,6 +12,7 @@
 #include "lyra/base/internal_error.hpp"
 #include "lyra/base/overloaded.hpp"
 #include "lyra/mir/binary_op.hpp"
+#include "lyra/mir/closure.hpp"
 #include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/expr.hpp"
 #include "lyra/mir/procedural_var.hpp"
@@ -463,6 +464,9 @@ class MirDumper {
                   "ConversionExpr kind={} operand=Expr[{}]",
                   FormatConversionKind(cv.kind), cv.operand.value);
             },
+            [](const ClosureExpr& cl) -> std::string {
+              return std::format("ClosureExpr captures={}", cl.captures.size());
+            },
         },
         e.data);
     return std::format("{} type=Type[{}]", formatted, e.type.value);
@@ -597,6 +601,11 @@ class MirDumper {
               rc->call);
           Dedent();
         }
+        if (const auto* cl = std::get_if<ClosureExpr>(&expr.data)) {
+          Indent();
+          DumpClosureExpr(*cl, scope);
+          Dedent();
+        }
       }
       Dedent();
     }
@@ -724,6 +733,57 @@ class MirDumper {
     DumpStmt(enclosing, t.stmt);
     Dedent();
     Dedent();
+  }
+
+  void DumpClosureExpr(
+      const ClosureExpr& closure, const ProceduralScope& enclosing) {
+    if (closure.captures.empty()) {
+      Line("captures: (none)");
+    } else {
+      Line("captures:");
+      Indent();
+      for (std::size_t i = 0; i < closure.captures.size(); ++i) {
+        DumpCapture(i, closure.captures[i], enclosing);
+      }
+      Dedent();
+    }
+    if (closure.body == nullptr) {
+      Line("body: <null>");
+    } else {
+      Line("body:");
+      Indent();
+      DumpProceduralScope(*closure.body);
+      Dedent();
+    }
+  }
+
+  void DumpCapture(
+      std::size_t index, const Capture& capture,
+      const ProceduralScope& enclosing) {
+    std::visit(
+        Overloaded{
+            [&](const ByValueCapture& bv) {
+              Line(
+                  std::format(
+                      "[{}] ByValueCapture value=Expr[{}] binding="
+                      "ProceduralVarId{{{}}}",
+                      index, bv.value.value, bv.binding.value));
+              Indent();
+              Line(
+                  std::format(
+                      "Expr[{}] {}", bv.value.value,
+                      FormatExpr(enclosing, bv.value)));
+              Dedent();
+            },
+            [&](const ByReferenceCapture& br) {
+              Line(
+                  std::format(
+                      "[{}] ByReferenceCapture source={} binding="
+                      "ProceduralVarId{{{}}}",
+                      index, FormatLvalue(br.source), br.binding.value));
+            },
+        },
+        capture);
   }
 
   void DumpRuntimePrintCallItems(

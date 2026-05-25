@@ -19,14 +19,16 @@ Read top to bottom on first pass:
 5. `hir.md` -- source-near semantic IR
 6. `mir.md` -- object-oriented semantic IR (objects, members, callables)
 7. `lir.md` -- execution-oriented IR (CFG, basic blocks, storage)
-8. `hierarchy_and_generate.md` -- hierarchy and generate ownership
-9. `identity_and_ownership.md` -- identity rules and forbidden shapes
-10. `lowering_boundaries.md` -- what each lowering may and may not do
-11. `incremental_build.md` -- query-based incremental compilation and caching
-12. `testing_strategy.md` -- test categories and structure
+8. `scheduling.md` -- stratified event scheduler, regions, suspension protocol
+9. `hierarchy_and_generate.md` -- hierarchy and generate ownership
+10. `identity_and_ownership.md` -- identity rules and forbidden shapes
+11. `lowering_boundaries.md` -- what each lowering may and may not do
+12. `incremental_build.md` -- query-based incremental compilation and caching
+13. `testing_strategy.md` -- test categories and structure
 
-## Template
+## Document Shape
 
-Each architecture doc follows the fixed template defined in `../style.md`: Purpose, Owns, Does Not
-Own, Core Invariants, Boundary to Adjacent Layers, Forbidden Shapes, Notes / Examples. No section
-may be omitted.
+Type-contract docs (the IR layers, hierarchy, identity, ownership, lowering boundaries) follow the
+template defined in `../style.md`. Behavioral and decision-cluster docs (`scheduling.md`) find their
+own structure; the contract discipline still applies. See `../style.md` for which subjects use which
+shape.

@@ -6,19 +6,17 @@
 #include <vector>
 
 #include "lyra/mir/binary_op.hpp"
+#include "lyra/mir/closure.hpp"
 #include "lyra/mir/conversion.hpp"
 #include "lyra/mir/expr_id.hpp"
 #include "lyra/mir/integral_constant.hpp"
-#include "lyra/mir/procedural_hops.hpp"
-#include "lyra/mir/procedural_var.hpp"
 #include "lyra/mir/runtime_finish.hpp"
 #include "lyra/mir/runtime_print.hpp"
-#include "lyra/mir/structural_hops.hpp"
 #include "lyra/mir/structural_param.hpp"
 #include "lyra/mir/structural_subroutine.hpp"
-#include "lyra/mir/structural_var.hpp"
 #include "lyra/mir/type.hpp"
 #include "lyra/mir/unary_op.hpp"
+#include "lyra/mir/value_ref.hpp"
 #include "lyra/support/system_subroutine.hpp"
 
 namespace lyra::mir {
@@ -37,18 +35,6 @@ struct TimeLiteral {
   double value;
   TimeScale scale;
 };
-
-struct StructuralVarRef {
-  StructuralHops hops;
-  StructuralVarId var;
-};
-
-struct ProceduralVarRef {
-  ProceduralHops hops;
-  ProceduralVarId var;
-};
-
-using Lvalue = std::variant<StructuralVarRef, ProceduralVarRef>;
 
 struct UnaryExpr {
   UnaryOp op;
@@ -92,7 +78,7 @@ struct RuntimeCallExpr {
 using ExprData = std::variant<
     IntegerLiteral, StringLiteral, TimeLiteral, StructuralParamRef,
     StructuralVarRef, ProceduralVarRef, UnaryExpr, BinaryExpr, ConditionalExpr,
-    AssignExpr, CallExpr, RuntimeCallExpr, ConversionExpr>;
+    AssignExpr, CallExpr, RuntimeCallExpr, ConversionExpr, ClosureExpr>;
 
 struct Expr {
   ExprData data;
