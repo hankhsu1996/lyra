@@ -10,6 +10,7 @@
 #include "lyra/mir/conversion.hpp"
 #include "lyra/mir/expr_id.hpp"
 #include "lyra/mir/integral_constant.hpp"
+#include "lyra/mir/runtime_diagnostic.hpp"
 #include "lyra/mir/runtime_finish.hpp"
 #include "lyra/mir/runtime_print.hpp"
 #include "lyra/mir/structural_param.hpp"
@@ -69,7 +70,8 @@ struct CallExpr {
   std::vector<ExprId> arguments;
 };
 
-using RuntimeCall = std::variant<RuntimePrintCall, RuntimeFinishCall>;
+using RuntimeCall =
+    std::variant<RuntimePrintCall, RuntimeDiagnosticCall, RuntimeFinishCall>;
 
 struct RuntimeCallExpr {
   RuntimeCall call;
