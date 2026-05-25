@@ -1,0 +1,14 @@
+id: cpp.ternary_in_if_condition
+tags: [cpp_run]
+input:
+  command: [run, cpp]
+  project: false
+  top: Top
+  files: [main.sv]
+expect:
+  exit: 0
+  variables:
+    sel: 0
+    a: 4
+    b: 11
+    taken: 1

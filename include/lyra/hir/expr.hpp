@@ -29,6 +29,12 @@ struct BinaryExpr {
   ExprId rhs;
 };
 
+struct ConditionalExpr {
+  ExprId condition;
+  ExprId then_value;
+  ExprId else_value;
+};
+
 struct AssignExpr {
   ExprId lhs;
   ExprId rhs;
@@ -40,7 +46,8 @@ struct CallExpr {
 };
 
 using ExprData = std::variant<
-    PrimaryExpr, UnaryExpr, BinaryExpr, AssignExpr, CallExpr, ConversionExpr>;
+    PrimaryExpr, UnaryExpr, BinaryExpr, ConditionalExpr, AssignExpr, CallExpr,
+    ConversionExpr>;
 
 struct Expr {
   TypeId type;

@@ -445,6 +445,41 @@ auto LowerProcExpr(
       };
     }
 
+    case slang::ast::ExpressionKind::ConditionalOp: {
+      const auto& cond = expr.as<slang::ast::ConditionalExpression>();
+      if (cond.conditions.size() != 1) {
+        return diag::Unsupported(
+            span, diag::DiagCode::kUnsupportedExpressionForm,
+            "conditional operator with `&&&` multi-condition is not yet "
+            "supported",
+            diag::UnsupportedCategory::kFeature);
+      }
+      if (cond.conditions[0].pattern != nullptr) {
+        return diag::Unsupported(
+            span, diag::DiagCode::kUnsupportedExpressionForm,
+            "conditional operator with `matches` pattern is not yet supported",
+            diag::UnsupportedCategory::kFeature);
+      }
+      auto cond_id = append_child(*cond.conditions[0].expr);
+      if (!cond_id) return std::unexpected(std::move(cond_id.error()));
+      auto then_id = append_child(cond.left());
+      if (!then_id) return std::unexpected(std::move(then_id.error()));
+      auto else_id = append_child(cond.right());
+      if (!else_id) return std::unexpected(std::move(else_id.error()));
+      auto type_id = type_id_of(expr);
+      if (!type_id) return std::unexpected(std::move(type_id.error()));
+      return hir::Expr{
+          .type = *type_id,
+          .data =
+              hir::ConditionalExpr{
+                  .condition = *cond_id,
+                  .then_value = *then_id,
+                  .else_value = *else_id,
+              },
+          .span = span,
+      };
+    }
+
     case slang::ast::ExpressionKind::Call: {
       const auto& call = expr.as<slang::ast::CallExpression>();
 
@@ -704,6 +739,41 @@ auto LowerStructuralExpr(
                   .op = LowerBinaryOp(bin.op),
                   .lhs = *lhs_id,
                   .rhs = *rhs_id,
+              },
+          .span = span,
+      };
+    }
+
+    case slang::ast::ExpressionKind::ConditionalOp: {
+      const auto& cond = expr.as<slang::ast::ConditionalExpression>();
+      if (cond.conditions.size() != 1) {
+        return diag::Unsupported(
+            span, diag::DiagCode::kUnsupportedStructuralExpressionForm,
+            "conditional operator with `&&&` multi-condition is not yet "
+            "supported",
+            diag::UnsupportedCategory::kFeature);
+      }
+      if (cond.conditions[0].pattern != nullptr) {
+        return diag::Unsupported(
+            span, diag::DiagCode::kUnsupportedStructuralExpressionForm,
+            "conditional operator with `matches` pattern is not yet supported",
+            diag::UnsupportedCategory::kFeature);
+      }
+      auto cond_id = add_child(*cond.conditions[0].expr);
+      if (!cond_id) return std::unexpected(std::move(cond_id.error()));
+      auto then_id = add_child(cond.left());
+      if (!then_id) return std::unexpected(std::move(then_id.error()));
+      auto else_id = add_child(cond.right());
+      if (!else_id) return std::unexpected(std::move(else_id.error()));
+      auto type_id = type_id_of(expr);
+      if (!type_id) return std::unexpected(std::move(type_id.error()));
+      return hir::Expr{
+          .type = *type_id,
+          .data =
+              hir::ConditionalExpr{
+                  .condition = *cond_id,
+                  .then_value = *then_id,
+                  .else_value = *else_id,
               },
           .span = span,
       };

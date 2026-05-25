@@ -439,6 +439,33 @@ auto LowerExpr(
                         .rhs = rhs_id},
                 .type = result_type};
           },
+          [&](const hir::ConditionalExpr& c) -> diag::Result<mir::Expr> {
+            auto cond_or = LowerExpr(
+                unit_state, scope_state, proc_state, proc_scope_state,
+                hir_process, hir_process.exprs.at(c.condition.value));
+            if (!cond_or) return std::unexpected(std::move(cond_or.error()));
+            const mir::ExprId cond_id =
+                proc_scope_state.AddExpr(*std::move(cond_or));
+            auto then_or = LowerExpr(
+                unit_state, scope_state, proc_state, proc_scope_state,
+                hir_process, hir_process.exprs.at(c.then_value.value));
+            if (!then_or) return std::unexpected(std::move(then_or.error()));
+            const mir::ExprId then_id =
+                proc_scope_state.AddExpr(*std::move(then_or));
+            auto else_or = LowerExpr(
+                unit_state, scope_state, proc_state, proc_scope_state,
+                hir_process, hir_process.exprs.at(c.else_value.value));
+            if (!else_or) return std::unexpected(std::move(else_or.error()));
+            const mir::ExprId else_id =
+                proc_scope_state.AddExpr(*std::move(else_or));
+            return mir::Expr{
+                .data =
+                    mir::ConditionalExpr{
+                        .condition = cond_id,
+                        .then_value = then_id,
+                        .else_value = else_id},
+                .type = result_type};
+          },
           [&](const hir::AssignExpr& a) -> diag::Result<mir::Expr> {
             const auto& lhs_expr = hir_process.exprs.at(a.lhs.value);
             const auto ref = hir::AsAssignableRef(lhs_expr);
@@ -564,6 +591,33 @@ auto LowerExprImpl(
                         .op = LowerBinaryOp(b.op),
                         .lhs = lhs_id,
                         .rhs = rhs_id},
+                .type = result_type};
+          },
+          [&](const hir::ConditionalExpr& c) -> diag::Result<mir::Expr> {
+            auto cond_or = LowerExprImpl(
+                unit_state, scope_state, ctor_state, proc_scope_state, scope,
+                scope.GetExpr(c.condition), loop_var_mode);
+            if (!cond_or) return std::unexpected(std::move(cond_or.error()));
+            const mir::ExprId cond_id =
+                proc_scope_state.AddExpr(*std::move(cond_or));
+            auto then_or = LowerExprImpl(
+                unit_state, scope_state, ctor_state, proc_scope_state, scope,
+                scope.GetExpr(c.then_value), loop_var_mode);
+            if (!then_or) return std::unexpected(std::move(then_or.error()));
+            const mir::ExprId then_id =
+                proc_scope_state.AddExpr(*std::move(then_or));
+            auto else_or = LowerExprImpl(
+                unit_state, scope_state, ctor_state, proc_scope_state, scope,
+                scope.GetExpr(c.else_value), loop_var_mode);
+            if (!else_or) return std::unexpected(std::move(else_or.error()));
+            const mir::ExprId else_id =
+                proc_scope_state.AddExpr(*std::move(else_or));
+            return mir::Expr{
+                .data =
+                    mir::ConditionalExpr{
+                        .condition = cond_id,
+                        .then_value = then_id,
+                        .else_value = else_id},
                 .type = result_type};
           },
           [&](const hir::AssignExpr& a) -> diag::Result<mir::Expr> {

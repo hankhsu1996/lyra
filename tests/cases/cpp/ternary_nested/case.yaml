@@ -1,0 +1,14 @@
+id: cpp.ternary_nested
+tags: [cpp_run]
+input:
+  command: [run, cpp]
+  project: false
+  top: Top
+  files: [main.sv]
+expect:
+  exit: 0
+  variables:
+    a: 4
+    b: 9
+    c: 6
+    max_abc: 9

@@ -1,0 +1,14 @@
+id: cpp.ternary_in_arith
+tags: [cpp_run]
+input:
+  command: [run, cpp]
+  project: false
+  top: Top
+  files: [main.sv]
+expect:
+  exit: 0
+  variables:
+    sel: 1
+    hi: 100
+    lo: 1
+    result: 210
