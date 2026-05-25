@@ -15,26 +15,28 @@
 #include "lyra/runtime/bind_context.hpp"
 #include "lyra/runtime/event.hpp"
 #include "lyra/runtime/module.hpp"
-#include "lyra/runtime/output_sink.hpp"
 #include "lyra/runtime/process_kind.hpp"
 #include "lyra/runtime/runtime_process.hpp"
 #include "lyra/runtime/runtime_scope.hpp"
 #include "lyra/runtime/runtime_scope_kind.hpp"
 #include "lyra/runtime/runtime_traversal.hpp"
+#include "lyra/runtime/stream_dispatcher.hpp"
 #include "lyra/runtime/wait_request.hpp"
 
 namespace lyra::runtime {
 
 auto DefaultEngineOptions() -> EngineOptions {
   return EngineOptions{
-      .output_sink = [](std::string_view text) { std::cout << text; }};
+      .stream_sink = [](std::string_view text) { std::cout << text; },
+      .diagnostic_sink = [](std::string_view text) { std::cerr << text; }};
 }
 
 Engine::Engine() : Engine(DefaultEngineOptions()) {
 }
 
 Engine::Engine(EngineOptions options)
-    : output_(std::move(options.output_sink)) {
+    : stream_(std::move(options.stream_sink)),
+      diagnostic_(std::move(options.diagnostic_sink)) {
 }
 
 void Engine::BindRoot(std::string root_name, Module& top) {
@@ -66,7 +68,7 @@ auto Engine::Run() -> int {
   ExecuteFinalProcesses();
 
   phase_ = SchedulerPhase::kIdle;
-  output_.Drain();
+  stream_.Drain();
   return 0;
 }
 
