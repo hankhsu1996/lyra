@@ -17,4 +17,10 @@ namespace lyra::backend::cpp {
     const mir::CompilationUnit& unit, const mir::StructuralScope& owner_scope,
     mir::TypeId type_id) -> diag::Result<std::string>;
 
+// Renders the constructor argument list for a `lyra::value::PackedArray`
+// variable declared from a kExplicit packed array type, in the form
+// `<bit_width>, <is_signed>, <is_four_state>`.
+[[nodiscard]] auto RenderPackedArrayCtorArgs(const mir::PackedArrayType& pa)
+    -> std::string;
+
 }  // namespace lyra::backend::cpp

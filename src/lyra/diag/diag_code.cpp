@@ -219,12 +219,6 @@ constexpr std::array kEntries{
             .category = UnsupportedCategory::kFeature,
             .name = "cpp_emit_binary_op_not_implemented"}},
     std::pair{
-        DiagCode::kCppEmitUnaryOpNotImplemented,
-        DiagCodeInfo{
-            .kind = DiagKind::kUnsupported,
-            .category = UnsupportedCategory::kFeature,
-            .name = "cpp_emit_unary_op_not_implemented"}},
-    std::pair{
         DiagCode::kCppEmitExpressionFormNotImplemented,
         DiagCodeInfo{
             .kind = DiagKind::kUnsupported,

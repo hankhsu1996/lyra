@@ -31,26 +31,16 @@ auto RenderForInit(const RenderContext& ctx, const mir::ForInit& init)
                 RenderTypeAsCpp(ctx.Unit(), ctx.StructuralScope(), lv.type);
             if (!type_or) return std::unexpected(std::move(type_or.error()));
             const auto& ty = ctx.Unit().GetType(lv.type);
-            const bool is_packed_explicit =
-                ty.IsPackedArray() &&
-                ty.AsPackedArray().form == mir::PackedArrayForm::kExplicit;
-            if (is_packed_explicit && d.init.has_value()) {
-              return diag::Unsupported(
-                  diag::DiagCode::kCppEmitPackedRuntimeNotSupported,
-                  "packed for-init with initializer is not yet supported in "
-                  "cpp emit",
-                  diag::UnsupportedCategory::kFeature);
-            }
             std::string out = *type_or + " " + lv.name;
-            if (is_packed_explicit) {
-              out += "{" + std::to_string(ty.AsPackedArray().BitWidth()) + "}";
-            } else if (d.init.has_value()) {
+            if (d.init.has_value()) {
               const auto& v = ctx.ProceduralScope().exprs.at(d.init->value);
               auto rendered_or = RenderExpr(ctx, v);
               if (!rendered_or) {
                 return std::unexpected(std::move(rendered_or.error()));
               }
               out += " = " + *rendered_or;
+            } else if (ty.IsPackedArray()) {
+              out += "{" + RenderPackedArrayCtorArgs(ty.AsPackedArray()) + "}";
             }
             return out;
           },
@@ -100,20 +90,6 @@ auto RenderStmt(
                 RenderTypeAsCpp(ctx.Unit(), ctx.StructuralScope(), lv.type);
             if (!type_or) return std::unexpected(std::move(type_or.error()));
             const auto& ty = ctx.Unit().GetType(lv.type);
-            const bool is_packed_explicit =
-                ty.IsPackedArray() &&
-                ty.AsPackedArray().form == mir::PackedArrayForm::kExplicit;
-            if (is_packed_explicit && s.init.has_value()) {
-              return diag::Unsupported(
-                  diag::DiagCode::kCppEmitPackedRuntimeNotSupported,
-                  "packed variable declaration with initializer is not yet "
-                  "supported in cpp emit",
-                  diag::UnsupportedCategory::kFeature);
-            }
-            if (is_packed_explicit) {
-              return Indent(indent) + *type_or + " " + lv.name + "{" +
-                     std::to_string(ty.AsPackedArray().BitWidth()) + "};\n";
-            }
             if (s.init.has_value()) {
               const auto& init_expr =
                   ctx.ProceduralScope().exprs.at(s.init->value);
@@ -123,6 +99,10 @@ auto RenderStmt(
               }
               return Indent(indent) + *type_or + " " + lv.name + " = " +
                      *init_or + ";\n";
+            }
+            if (ty.IsPackedArray()) {
+              return Indent(indent) + *type_or + " " + lv.name + "{" +
+                     RenderPackedArrayCtorArgs(ty.AsPackedArray()) + "};\n";
             }
             return Indent(indent) + *type_or + " " + lv.name + "{};\n";
           },
@@ -148,7 +128,7 @@ auto RenderStmt(
                 ctx.ProceduralScope().exprs.at(s.condition.value);
             const auto& then_scope =
                 stmt.child_procedural_scopes.at(s.then_scope.value);
-            auto cond_or = RenderExprAsNative(ctx, cond_expr);
+            auto cond_or = RenderConditionAsBool(ctx, cond_expr);
             if (!cond_or) return std::unexpected(std::move(cond_or.error()));
             auto then_or =
                 RenderNestedProceduralScope(ctx, then_scope, indent + 1);
@@ -209,7 +189,7 @@ auto RenderStmt(
             if (s.condition.has_value()) {
               const auto& cond_expr =
                   ctx.ProceduralScope().exprs.at(s.condition->value);
-              auto cond_or = RenderExprAsNative(ctx, cond_expr);
+              auto cond_or = RenderConditionAsBool(ctx, cond_expr);
               if (!cond_or) {
                 return std::unexpected(std::move(cond_or.error()));
               }
@@ -243,7 +223,7 @@ auto RenderStmt(
           [&](const mir::WhileStmt& s) -> diag::Result<std::string> {
             const auto& cond_expr =
                 ctx.ProceduralScope().exprs.at(s.condition.value);
-            auto cond_or = RenderExprAsNative(ctx, cond_expr);
+            auto cond_or = RenderConditionAsBool(ctx, cond_expr);
             if (!cond_or) {
               return std::unexpected(std::move(cond_or.error()));
             }
@@ -261,7 +241,7 @@ auto RenderStmt(
           [&](const mir::DoWhileStmt& s) -> diag::Result<std::string> {
             const auto& cond_expr =
                 ctx.ProceduralScope().exprs.at(s.condition.value);
-            auto cond_or = RenderExprAsNative(ctx, cond_expr);
+            auto cond_or = RenderConditionAsBool(ctx, cond_expr);
             if (!cond_or) {
               return std::unexpected(std::move(cond_or.error()));
             }

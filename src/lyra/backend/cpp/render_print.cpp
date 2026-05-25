@@ -1,6 +1,5 @@
 #include "lyra/backend/cpp/render_print.hpp"
 
-#include <cstdint>
 #include <format>
 #include <string>
 #include <string_view>
@@ -84,33 +83,17 @@ auto RenderRuntimeValueViewInit(
 
   if (type.IsPackedArray()) {
     const auto& pa = type.AsPackedArray();
-    const std::uint64_t bit_width = pa.BitWidth();
     const bool is_signed = pa.signedness == mir::Signedness::kSigned;
-
-    if (pa.form == mir::PackedArrayForm::kInt ||
-        pa.form == mir::PackedArrayForm::kInteger) {
-      auto operand_or = RenderExprAsNative(ctx, ctx.Expr(v.value));
-      if (!operand_or) return std::unexpected(std::move(operand_or.error()));
+    auto view_or = RenderPackedExprAsView(ctx, ctx.Expr(v.value));
+    if (!view_or) return std::unexpected(std::move(view_or.error()));
+    if (pa.atom == mir::BitAtom::kBit) {
       return std::format(
-          "lyra::value::RuntimeValueView::NarrowIntegral("
-          "static_cast<std::uint64_t>({}), {}, {})",
-          *operand_or, bit_width, BoolLiteral(is_signed));
-    }
-
-    if (pa.form == mir::PackedArrayForm::kExplicit) {
-      auto view_or = RenderPackedExprAsView(ctx, ctx.Expr(v.value));
-      if (!view_or) return std::unexpected(std::move(view_or.error()));
-      if (pa.atom == mir::BitAtom::kBit) {
-        return std::format(
-            "lyra::value::RuntimeValueView::FromBitView({}, {})", *view_or,
-            BoolLiteral(is_signed));
-      }
-      return std::format(
-          "lyra::value::RuntimeValueView::FromLogicView({}, {})", *view_or,
+          "lyra::value::RuntimeValueView::FromBitView({}, {})", *view_or,
           BoolLiteral(is_signed));
     }
-    throw InternalError(
-        "RenderRuntimeValueViewInit: unsupported PackedArrayForm");
+    return std::format(
+        "lyra::value::RuntimeValueView::FromLogicView({}, {})", *view_or,
+        BoolLiteral(is_signed));
   }
   if (type.Kind() == mir::TypeKind::kString) {
     auto operand_or = RenderExprAsNative(ctx, ctx.Expr(v.value));

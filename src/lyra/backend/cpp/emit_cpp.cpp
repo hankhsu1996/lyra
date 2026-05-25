@@ -29,9 +29,8 @@ auto RenderField(
   if (!type_or) return std::unexpected(std::move(type_or.error()));
   std::string init;
   const auto& ty = unit.GetType(var.type);
-  if (ty.IsPackedArray() &&
-      ty.AsPackedArray().form == mir::PackedArrayForm::kExplicit) {
-    init = "{" + std::to_string(ty.AsPackedArray().BitWidth()) + "}";
+  if (ty.IsPackedArray()) {
+    init = "{" + RenderPackedArrayCtorArgs(ty.AsPackedArray()) + "}";
   }
   return Indent(indent) + *type_or + " " + var.name + init + ";\n";
 }
@@ -268,6 +267,7 @@ auto RenderScopeHeaderFile(
   out += "#include \"lyra/runtime/runtime_services.hpp\"\n";
   out += "#include \"lyra/value/format.hpp\"\n";
   out += "#include \"lyra/value/packed.hpp\"\n";
+  out += "#include \"lyra/value/packed_array.hpp\"\n";
   out += "#include \"lyra/value/packed_bitwise.hpp\"\n";
   out += "#include \"lyra/value/packed_convert.hpp\"\n";
   out += "#include \"lyra/value/packed_reduction.hpp\"\n";
