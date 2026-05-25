@@ -66,17 +66,6 @@ struct IfStmt {
   std::optional<ProceduralScopeId> else_scope;
 };
 
-struct SwitchCase {
-  std::vector<ExprId> labels;
-  ProceduralScopeId scope;
-};
-
-struct SwitchStmt {
-  ExprId condition;
-  std::vector<SwitchCase> cases;
-  std::optional<ProceduralScopeId> default_scope;
-};
-
 struct ConstructOwnedObjectStmt {
   StructuralVarId target;
   StructuralScopeId scope_id;
@@ -135,7 +124,7 @@ struct AwaitStmt {
 };
 
 using StmtData = std::variant<
-    EmptyStmt, ProceduralVarDeclStmt, ExprStmt, BlockStmt, IfStmt, SwitchStmt,
+    EmptyStmt, ProceduralVarDeclStmt, ExprStmt, BlockStmt, IfStmt,
     ConstructOwnedObjectStmt, ForStmt, TimedStmt, WhileStmt, DoWhileStmt,
     BreakStmt, ContinueStmt, AwaitStmt>;
 
