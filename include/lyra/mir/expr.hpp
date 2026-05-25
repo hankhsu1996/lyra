@@ -61,6 +61,12 @@ struct BinaryExpr {
   ExprId rhs;
 };
 
+struct ConditionalExpr {
+  ExprId condition;
+  ExprId then_value;
+  ExprId else_value;
+};
+
 struct AssignExpr {
   Lvalue target;
   ExprId value;
@@ -85,8 +91,8 @@ struct RuntimeCallExpr {
 
 using ExprData = std::variant<
     IntegerLiteral, StringLiteral, TimeLiteral, StructuralParamRef,
-    StructuralVarRef, ProceduralVarRef, UnaryExpr, BinaryExpr, AssignExpr,
-    CallExpr, RuntimeCallExpr, ConversionExpr>;
+    StructuralVarRef, ProceduralVarRef, UnaryExpr, BinaryExpr, ConditionalExpr,
+    AssignExpr, CallExpr, RuntimeCallExpr, ConversionExpr>;
 
 struct Expr {
   ExprData data;

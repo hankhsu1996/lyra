@@ -1,0 +1,13 @@
+id: cpp.ternary_in_loop_body
+tags: [cpp_run]
+input:
+  command: [run, cpp]
+  project: false
+  top: Top
+  files: [main.sv]
+expect:
+  exit: 0
+  variables:
+    i: 7
+    sum_evens: 12
+    sum_odds: 9

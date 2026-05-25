@@ -601,6 +601,15 @@ auto RenderExprAsNative(const RenderContext& ctx, const mir::Expr& expr)
             if (!rhs_or) return std::unexpected(std::move(rhs_or.error()));
             return "(" + *lhs_or + std::string{*token_or} + *rhs_or + ")";
           },
+          [&](const mir::ConditionalExpr& c) -> diag::Result<std::string> {
+            auto cond_or = RenderExprAsNative(ctx, ctx.Expr(c.condition));
+            if (!cond_or) return std::unexpected(std::move(cond_or.error()));
+            auto then_or = RenderExprAsNative(ctx, ctx.Expr(c.then_value));
+            if (!then_or) return std::unexpected(std::move(then_or.error()));
+            auto else_or = RenderExprAsNative(ctx, ctx.Expr(c.else_value));
+            if (!else_or) return std::unexpected(std::move(else_or.error()));
+            return "(" + *cond_or + " ? " + *then_or + " : " + *else_or + ")";
+          },
           [&](const mir::AssignExpr& a) -> diag::Result<std::string> {
             auto target_type_or = MirTypeOfLvalue(ctx, a.target);
             if (!target_type_or) {
