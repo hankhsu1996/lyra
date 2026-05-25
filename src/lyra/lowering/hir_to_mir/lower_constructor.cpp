@@ -15,6 +15,7 @@
 #include "lyra/base/overloaded.hpp"
 #include "lyra/diag/diagnostic.hpp"
 #include "lyra/hir/structural_scope.hpp"
+#include "lyra/lowering/hir_to_mir/case_cascade.hpp"
 #include "lyra/lowering/hir_to_mir/lower_expr.hpp"
 #include "lyra/lowering/hir_to_mir/lower_process.hpp"
 #include "lyra/lowering/hir_to_mir/procedural_scope_helpers.hpp"
@@ -235,156 +236,184 @@ auto BuildGenerateArmBody(
   return proc_scope_state.Finish();
 }
 
+auto LowerIfGenerate(
+    UnitLoweringState& unit_state,
+    const StructuralScopeLoweringState& scope_state,
+    const hir::StructuralScope& enclosing_scope,
+    const GenerateBindings& gen_bindings,
+    ProceduralScopeLoweringState& proc_scope_state,
+    const hir::IfGenerate& if_gen) -> diag::Result<mir::Stmt> {
+  const mir::CompilationUnit& unit = unit_state.Unit();
+  const mir::StructuralScope& owner_scope = scope_state.Scope();
+
+  auto cond_or = LowerStructuralExpr(
+      unit_state, scope_state, proc_scope_state, enclosing_scope,
+      enclosing_scope.GetExpr(if_gen.condition));
+  if (!cond_or) return std::unexpected(std::move(cond_or.error()));
+  const mir::ExprId cond_id = proc_scope_state.AddExpr(*std::move(cond_or));
+
+  std::vector<mir::ProceduralScope> child_scopes;
+  const mir::ProceduralScopeId then_id = AddChildProceduralScope(
+      child_scopes,
+      BuildGenerateArmBody(
+          unit, gen_bindings, owner_scope, if_gen.then_scope, {}));
+
+  std::optional<mir::ProceduralScopeId> else_id;
+  if (if_gen.else_scope.has_value()) {
+    else_id = AddChildProceduralScope(
+        child_scopes,
+        BuildGenerateArmBody(
+            unit, gen_bindings, owner_scope, *if_gen.else_scope, {}));
+  }
+
+  return mir::Stmt{
+      .label = std::nullopt,
+      .data =
+          mir::IfStmt{
+              .condition = cond_id,
+              .then_scope = then_id,
+              .else_scope = else_id},
+      .child_procedural_scopes = std::move(child_scopes)};
+}
+
+auto LowerCaseGenerate(
+    UnitLoweringState& unit_state,
+    const StructuralScopeLoweringState& scope_state,
+    const hir::StructuralScope& enclosing_scope,
+    const GenerateBindings& gen_bindings, const hir::CaseGenerate& case_gen)
+    -> diag::Result<mir::Stmt> {
+  const mir::CompilationUnit& unit = unit_state.Unit();
+  const mir::StructuralScope& owner_scope = scope_state.Scope();
+  const mir::TypeId bit_type = unit_state.Builtins().bit1;
+
+  ProceduralScopeLoweringState wrapper_state;
+
+  auto cond_or = LowerStructuralExpr(
+      unit_state, scope_state, wrapper_state, enclosing_scope,
+      enclosing_scope.GetExpr(case_gen.condition));
+  if (!cond_or) return std::unexpected(std::move(cond_or.error()));
+  const mir::ExprId cond_expr_id = wrapper_state.AddExpr(*std::move(cond_or));
+
+  const CaseSnapshotRefs snapshot =
+      AppendCaseSnapshot(wrapper_state, cond_expr_id);
+
+  std::vector<mir::ProceduralScope> body_scopes;
+  body_scopes.reserve(case_gen.items.size());
+  for (const auto& item : case_gen.items) {
+    body_scopes.push_back(
+        BuildGenerateArmBody(unit, gen_bindings, owner_scope, item.scope, {}));
+  }
+
+  std::optional<mir::ProceduralScope> default_scope;
+  if (case_gen.default_scope.has_value()) {
+    default_scope = BuildGenerateArmBody(
+        unit, gen_bindings, owner_scope, *case_gen.default_scope, {});
+  }
+
+  auto build_predicate = [&](ProceduralScopeLoweringState& enc,
+                             std::size_t item_idx, std::uint32_t sel_hops) {
+    return BuildEqualityChain(
+        enc, snapshot, bit_type, sel_hops,
+        case_gen.items[item_idx].labels.size(),
+        [&](ProceduralScopeLoweringState& es,
+            std::size_t li) -> diag::Result<mir::ExprId> {
+          auto lab_or = LowerStructuralExpr(
+              unit_state, scope_state, es, enclosing_scope,
+              enclosing_scope.GetExpr(case_gen.items[item_idx].labels[li]));
+          if (!lab_or) {
+            return std::unexpected(std::move(lab_or.error()));
+          }
+          return es.AddExpr(*std::move(lab_or));
+        });
+  };
+
+  return BuildCaseCascade(
+      std::move(wrapper_state), std::nullopt, case_gen.items.size(),
+      std::move(body_scopes), std::move(default_scope), build_predicate);
+}
+
+auto LowerLoopGenerate(
+    UnitLoweringState& unit_state,
+    const StructuralScopeLoweringState& scope_state,
+    const hir::StructuralScope& enclosing_scope,
+    const GenerateBindings& gen_bindings,
+    ProceduralScopeLoweringState& proc_scope_state,
+    const hir::LoopGenerate& loop) -> diag::Result<mir::Stmt> {
+  const mir::CompilationUnit& unit = unit_state.Unit();
+  const mir::StructuralScope& owner_scope = scope_state.Scope();
+
+  const auto& var_decl = enclosing_scope.GetLoopVarDecl(loop.loop_var);
+  const mir::TypeId genvar_type = unit_state.TranslateType(var_decl.type);
+
+  const mir::ProceduralVarId loop_local_id = proc_scope_state.AddProceduralVar(
+      mir::ProceduralVarDecl{.name = var_decl.name, .type = genvar_type});
+  const mir::ProceduralVarRef loop_local{
+      .hops = mir::ProceduralHops{.value = 0}, .var = loop_local_id};
+
+  ConstructorLoweringState ctor_state;
+  ctor_state.MapLoopVar(loop.loop_var, loop_local);
+
+  auto init_or = LowerProceduralExpr(
+      unit_state, scope_state, ctor_state, proc_scope_state, enclosing_scope,
+      enclosing_scope.GetExpr(loop.initial));
+  if (!init_or) return std::unexpected(std::move(init_or.error()));
+  const mir::ExprId init_id = proc_scope_state.AddExpr(*std::move(init_or));
+
+  auto cond_or = LowerProceduralExpr(
+      unit_state, scope_state, ctor_state, proc_scope_state, enclosing_scope,
+      enclosing_scope.GetExpr(loop.stop));
+  if (!cond_or) return std::unexpected(std::move(cond_or.error()));
+  const mir::ExprId cond_id = proc_scope_state.AddExpr(*std::move(cond_or));
+
+  auto step_or = LowerProceduralExpr(
+      unit_state, scope_state, ctor_state, proc_scope_state, enclosing_scope,
+      enclosing_scope.GetExpr(loop.iter));
+  if (!step_or) return std::unexpected(std::move(step_or.error()));
+  const mir::ExprId step_id = proc_scope_state.AddExpr(*std::move(step_or));
+
+  std::vector<mir::Expr> body_args;
+  body_args.push_back(MakeForBodyInductionVarArg(loop_local_id, genvar_type));
+
+  std::vector<mir::ProceduralScope> child_scopes;
+  const mir::ProceduralScopeId loop_scope_id = AddChildProceduralScope(
+      child_scopes,
+      BuildGenerateArmBody(
+          unit, gen_bindings, owner_scope, loop.scope, std::move(body_args)));
+
+  return mir::Stmt{
+      .label = std::nullopt,
+      .data =
+          mir::ForStmt{
+              .init = {mir::ForInitDecl{
+                  .induction_var = loop_local, .init = init_id}},
+              .condition = cond_id,
+              .step = {step_id},
+              .scope = loop_scope_id},
+      .child_procedural_scopes = std::move(child_scopes)};
+}
+
 auto LowerGenerateAsStmt(
     UnitLoweringState& unit_state,
     const StructuralScopeLoweringState& scope_state,
     const hir::StructuralScope& enclosing_scope, const hir::Generate& gen,
     const GenerateBindings& gen_bindings,
     ProceduralScopeLoweringState& proc_scope_state) -> diag::Result<mir::Stmt> {
-  const mir::CompilationUnit& unit = unit_state.Unit();
-  const mir::StructuralScope& owner_scope = scope_state.Scope();
   return std::visit(
       Overloaded{
-          [&](const hir::IfGenerate& if_gen) -> diag::Result<mir::Stmt> {
-            auto cond_or = LowerStructuralExpr(
-                unit_state, scope_state, proc_scope_state, enclosing_scope,
-                enclosing_scope.GetExpr(if_gen.condition));
-            if (!cond_or) return std::unexpected(std::move(cond_or.error()));
-            const mir::ExprId cond_id =
-                proc_scope_state.AddExpr(*std::move(cond_or));
-
-            std::vector<mir::ProceduralScope> child_scopes;
-            const mir::ProceduralScopeId then_id = AddChildProceduralScope(
-                child_scopes,
-                BuildGenerateArmBody(
-                    unit, gen_bindings, owner_scope, if_gen.then_scope, {}));
-
-            std::optional<mir::ProceduralScopeId> else_id;
-            if (if_gen.else_scope.has_value()) {
-              else_id = AddChildProceduralScope(
-                  child_scopes,
-                  BuildGenerateArmBody(
-                      unit, gen_bindings, owner_scope, *if_gen.else_scope, {}));
-            }
-
-            return mir::Stmt{
-                .label = std::nullopt,
-                .data =
-                    mir::IfStmt{
-                        .condition = cond_id,
-                        .then_scope = then_id,
-                        .else_scope = else_id},
-                .child_procedural_scopes = std::move(child_scopes)};
+          [&](const hir::IfGenerate& if_gen) {
+            return LowerIfGenerate(
+                unit_state, scope_state, enclosing_scope, gen_bindings,
+                proc_scope_state, if_gen);
           },
-          [&](const hir::CaseGenerate& case_gen) -> diag::Result<mir::Stmt> {
-            auto cond_or = LowerStructuralExpr(
-                unit_state, scope_state, proc_scope_state, enclosing_scope,
-                enclosing_scope.GetExpr(case_gen.condition));
-            if (!cond_or) return std::unexpected(std::move(cond_or.error()));
-            const mir::ExprId cond_id =
-                proc_scope_state.AddExpr(*std::move(cond_or));
-
-            std::vector<mir::ProceduralScope> child_scopes;
-            std::vector<mir::SwitchCase> cases;
-            cases.reserve(case_gen.items.size());
-
-            for (const auto& item : case_gen.items) {
-              std::vector<mir::ExprId> labels;
-              labels.reserve(item.labels.size());
-              for (const hir::ExprId label_hir_id : item.labels) {
-                auto label_or = LowerStructuralExpr(
-                    unit_state, scope_state, proc_scope_state, enclosing_scope,
-                    enclosing_scope.GetExpr(label_hir_id));
-                if (!label_or) {
-                  return std::unexpected(std::move(label_or.error()));
-                }
-                labels.push_back(
-                    proc_scope_state.AddExpr(*std::move(label_or)));
-              }
-              const mir::ProceduralScopeId item_scope = AddChildProceduralScope(
-                  child_scopes,
-                  BuildGenerateArmBody(
-                      unit, gen_bindings, owner_scope, item.scope, {}));
-              cases.push_back(
-                  mir::SwitchCase{
-                      .labels = std::move(labels), .scope = item_scope});
-            }
-
-            std::optional<mir::ProceduralScopeId> default_scope;
-            if (case_gen.default_scope.has_value()) {
-              default_scope = AddChildProceduralScope(
-                  child_scopes, BuildGenerateArmBody(
-                                    unit, gen_bindings, owner_scope,
-                                    *case_gen.default_scope, {}));
-            }
-
-            return mir::Stmt{
-                .label = std::nullopt,
-                .data =
-                    mir::SwitchStmt{
-                        .condition = cond_id,
-                        .cases = std::move(cases),
-                        .default_scope = default_scope},
-                .child_procedural_scopes = std::move(child_scopes)};
+          [&](const hir::CaseGenerate& case_gen) {
+            return LowerCaseGenerate(
+                unit_state, scope_state, enclosing_scope, gen_bindings,
+                case_gen);
           },
-          [&](const hir::LoopGenerate& loop) -> diag::Result<mir::Stmt> {
-            const auto& var_decl =
-                enclosing_scope.GetLoopVarDecl(loop.loop_var);
-            const mir::TypeId genvar_type =
-                unit_state.TranslateType(var_decl.type);
-
-            const mir::ProceduralVarId loop_local_id =
-                proc_scope_state.AddProceduralVar(
-                    mir::ProceduralVarDecl{
-                        .name = var_decl.name, .type = genvar_type});
-            const mir::ProceduralVarRef loop_local{
-                .hops = mir::ProceduralHops{.value = 0}, .var = loop_local_id};
-
-            ConstructorLoweringState ctor_state;
-            ctor_state.MapLoopVar(loop.loop_var, loop_local);
-
-            auto init_or = LowerProceduralExpr(
-                unit_state, scope_state, ctor_state, proc_scope_state,
-                enclosing_scope, enclosing_scope.GetExpr(loop.initial));
-            if (!init_or) return std::unexpected(std::move(init_or.error()));
-            const mir::ExprId init_id =
-                proc_scope_state.AddExpr(*std::move(init_or));
-
-            auto cond_or = LowerProceduralExpr(
-                unit_state, scope_state, ctor_state, proc_scope_state,
-                enclosing_scope, enclosing_scope.GetExpr(loop.stop));
-            if (!cond_or) return std::unexpected(std::move(cond_or.error()));
-            const mir::ExprId cond_id =
-                proc_scope_state.AddExpr(*std::move(cond_or));
-
-            auto step_or = LowerProceduralExpr(
-                unit_state, scope_state, ctor_state, proc_scope_state,
-                enclosing_scope, enclosing_scope.GetExpr(loop.iter));
-            if (!step_or) return std::unexpected(std::move(step_or.error()));
-            const mir::ExprId step_id =
-                proc_scope_state.AddExpr(*std::move(step_or));
-
-            std::vector<mir::Expr> body_args;
-            body_args.push_back(
-                MakeForBodyInductionVarArg(loop_local_id, genvar_type));
-
-            std::vector<mir::ProceduralScope> child_scopes;
-            const mir::ProceduralScopeId loop_scope_id =
-                AddChildProceduralScope(
-                    child_scopes, BuildGenerateArmBody(
-                                      unit, gen_bindings, owner_scope,
-                                      loop.scope, std::move(body_args)));
-
-            return mir::Stmt{
-                .label = std::nullopt,
-                .data =
-                    mir::ForStmt{
-                        .init = {mir::ForInitDecl{
-                            .induction_var = loop_local, .init = init_id}},
-                        .condition = cond_id,
-                        .step = {step_id},
-                        .scope = loop_scope_id},
-                .child_procedural_scopes = std::move(child_scopes)};
+          [&](const hir::LoopGenerate& loop) {
+            return LowerLoopGenerate(
+                unit_state, scope_state, enclosing_scope, gen_bindings,
+                proc_scope_state, loop);
           },
       },
       gen.data);
