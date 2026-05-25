@@ -16,8 +16,6 @@ Open items whose external dependencies are already in place and can be implement
 - **C13** -- `unique` / `unique0` / `priority` qualifiers. Self-contained: needs only the runtime
   warn helper and (for cascaded `if`) settle-epoch tracking, both of which live inside this
   workstream.
-- **C15** -- `case` with non-constant / duplicate labels. Pure HIR -> MIR restructure on top of the
-  C3 machinery.
 
 Open items currently blocked on other workstreams:
 
@@ -41,11 +39,15 @@ Open items currently blocked on other workstreams:
       `control_flow/for/default.yaml` case except the two `break`-bearing ones (deferred to C7).
       Includes inline `for (int i = 0; ...)`, external `for (i = 0; ...)`, multi-init / multi-step,
       countdown, zero-iteration, and `if`-in-body composition.
-- [x] C3 -- `case` (plain, normal condition only) with literal labels. Reproduces the core
-      plain-case subset of `control_flow/case/default.yaml` (basic match, default, multi-label,
-      no-default-no-match, empty body, nested) using integer-literal labels and integer selectors.
-      Variants requiring an if/else-cascade lowering (non-constant labels, duplicate labels) are
-      tracked in C15; enum/string selectors and labels are tracked in C16 and C17 respectively.
+- [x] C3 -- `case` (plain, normal condition). HIR keeps a faithful `CaseStmt`; HIR -> MIR always
+      desugars to an if/else-if cascade built from existing primitives (a `BlockStmt` wrapper that
+      snapshots the selector into `_lyra_case_sel` for LRM 12.5 "evaluated once" semantics, then a
+      nested chain of `IfStmt`s whose conditions compare the snapshot against each item's label list
+      joined by `||`). `mir::SwitchStmt` no longer exists -- the cascade form subsumes both
+      literal-label cases and the non-constant/duplicate-label variants tracked under C15.
+      Reproduces the core plain-case subset of `control_flow/case/default.yaml` (basic match,
+      default, multi-label, no-default-no-match, empty body, nested) using integer-literal labels
+      and integer selectors. Enum/string selectors and labels are tracked in C16 and C17.
 - [x] C4 -- `while` (procedural while-loop). Reproduces every `control_flow/while/default.yaml` case
       that does not depend on `break` (deferred to C7). Includes runtime-condition loops, countdown,
       `while (0)` zero iterations, two-level nesting, and mixed nesting with `for` in both
@@ -93,11 +95,16 @@ Open items currently blocked on other workstreams:
       helper and (for cascaded `if`) settle-epoch tracking, both local to this workstream. Covers
       archive items `unique_priority_if` and `unique_priority_case`. **Depends on** nothing
       external; actionable now.
-- [ ] C15 -- `case` with labels that are not compile-time constants (`case (sel) some_expr: ...`)
-      and `case` with duplicate labels ("first match wins"). Neither can be expressed via C++
-      `switch`; lower in HIR -> MIR to an if/else-if cascade. Covers archive cases
-      `case_constant_expression`, `case_first_match_wins`. **Depends on** nothing external;
-      actionable now (only the C3 machinery already in place).
+- [x] C15 -- `case` with labels that are not compile-time constants (`case (sel) some_expr: ...`)
+      and `case` with duplicate labels ("first match wins"). The uniform HIR -> MIR cascade
+      described in C3 handles both: non-constant labels render as runtime `==` comparisons, and
+      duplicate labels honour SV's top-down "first match wins" semantics because the cascade tests
+      items in order. The same cascade also handles a corner where slang's case-context type
+      unification widens the selector from a built-in form to a packed-explicit form; the snapshot
+      peeks through the resulting `ConversionExpr` so the assignment matches the unwrapped source
+      type. Covers archive cases `case_constant_expression`, `case_first_match_wins`. Coverage adds
+      `case_constant_expression`, `case_first_match_wins`, `case_runtime_multi_label`,
+      `case_runtime_no_default`.
 - [ ] C16 -- `case` with enum-typed selectors and enum-value labels. **Depends on**
       `datatypes/enum`.
 - [ ] C17 -- `case` with string selector / string labels. **Depends on** `datatypes/string` plus the

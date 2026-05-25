@@ -1,0 +1,13 @@
+id: cpp.case_runtime_multi_label
+tags: [cpp_run]
+input:
+  command: [run, cpp]
+  project: false
+  top: Top
+  files: [main.sv]
+expect:
+  exit: 0
+  variables:
+    a: 22
+    b: 22
+    c: 99

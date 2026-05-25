@@ -170,50 +170,6 @@ auto RenderStmt(
             result += "\n";
             return result;
           },
-          [&](const mir::SwitchStmt& s) -> diag::Result<std::string> {
-            const auto& cond_expr =
-                ctx.ProceduralScope().exprs.at(s.condition.value);
-            auto cond_or = RenderExprAsNative(ctx, cond_expr);
-            if (!cond_or) return std::unexpected(std::move(cond_or.error()));
-            std::string result;
-            result += Indent(indent) + "switch (" + *cond_or + ") {\n";
-            for (const auto& c : s.cases) {
-              for (std::size_t i = 0; i < c.labels.size(); ++i) {
-                const auto& label_expr =
-                    ctx.ProceduralScope().exprs.at(c.labels[i].value);
-                auto label_or = RenderExprAsNative(ctx, label_expr);
-                if (!label_or) {
-                  return std::unexpected(std::move(label_or.error()));
-                }
-                const bool is_last = (i + 1 == c.labels.size());
-                result += Indent(indent + 1) + "case " + *label_or +
-                          (is_last ? ": {\n" : ":\n");
-              }
-              const auto& case_scope =
-                  stmt.child_procedural_scopes.at(c.scope.value);
-              auto case_or =
-                  RenderNestedProceduralScope(ctx, case_scope, indent + 2);
-              if (!case_or) return std::unexpected(std::move(case_or.error()));
-              result += *case_or;
-              result += Indent(indent + 2) + "break;\n";
-              result += Indent(indent + 1) + "}\n";
-            }
-            if (s.default_scope.has_value()) {
-              const auto& default_scope =
-                  stmt.child_procedural_scopes.at(s.default_scope->value);
-              auto default_or =
-                  RenderNestedProceduralScope(ctx, default_scope, indent + 2);
-              if (!default_or) {
-                return std::unexpected(std::move(default_or.error()));
-              }
-              result += Indent(indent + 1) + "default: {\n";
-              result += *default_or;
-              result += Indent(indent + 2) + "break;\n";
-              result += Indent(indent + 1) + "}\n";
-            }
-            result += Indent(indent) + "}\n";
-            return result;
-          },
           [&](const mir::ConstructOwnedObjectStmt& s)
               -> diag::Result<std::string> {
             const auto& var = ctx.StructuralScope().GetStructuralVar(s.target);

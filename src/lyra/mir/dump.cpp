@@ -647,9 +647,6 @@ class MirDumper {
             [&](const ExprStmt& s) { DumpExprStmt(s, enclosing, id); },
             [&](const BlockStmt& s) { DumpBlockStmt(stmt, s, id); },
             [&](const IfStmt& s) { DumpIfStmt(stmt, s, enclosing, id); },
-            [&](const SwitchStmt& s) {
-              DumpSwitchStmt(stmt, s, enclosing, id);
-            },
             [&](const ConstructOwnedObjectStmt& s) {
               std::string args_str;
               for (std::size_t i = 0; i < s.args.size(); ++i) {
@@ -939,47 +936,6 @@ class MirDumper {
       Dedent();
     } else {
       Line("else_scope: <none>");
-    }
-    Dedent();
-  }
-
-  void DumpSwitchStmt(
-      const Stmt& parent, const SwitchStmt& s, const ProceduralScope& enclosing,
-      StmtId id) {
-    Line(
-        std::format(
-            "Stmt[{}] SwitchStmt cond=Expr[{}] {}", id.value, s.condition.value,
-            FormatExpr(enclosing, s.condition)));
-    Indent();
-    for (std::size_t ci = 0; ci < s.cases.size(); ++ci) {
-      const auto& c = s.cases[ci];
-      std::string labels;
-      for (std::size_t li = 0; li < c.labels.size(); ++li) {
-        if (li != 0) {
-          labels += ", ";
-        }
-        labels += std::format(
-            "Expr[{}] {}", c.labels[li].value,
-            FormatExpr(enclosing, c.labels[li]));
-      }
-      Line(
-          std::format(
-              "case[{}] labels=[{}] scope (ProceduralScopeId={}):", ci, labels,
-              c.scope.value));
-      Indent();
-      DumpProceduralScope(parent.child_procedural_scopes.at(c.scope.value));
-      Dedent();
-    }
-    if (s.default_scope.has_value()) {
-      Line(
-          std::format(
-              "default_scope (ProceduralScopeId={}):", s.default_scope->value));
-      Indent();
-      DumpProceduralScope(
-          parent.child_procedural_scopes.at(s.default_scope->value));
-      Dedent();
-    } else {
-      Line("default_scope: <none>");
     }
     Dedent();
   }
