@@ -639,6 +639,12 @@ auto RenderExprAsNative(const RenderContext& ctx, const mir::Expr& expr)
           [&](const mir::RuntimeCallExpr& rc) -> diag::Result<std::string> {
             return RenderRuntimeCallExpr(ctx, rc);
           },
+          [](const mir::ClosureExpr&) -> diag::Result<std::string> {
+            return diag::Unsupported(
+                diag::DiagCode::kCppEmitExpressionFormNotImplemented,
+                "ClosureExpr is not yet implemented in cpp emit",
+                diag::UnsupportedCategory::kFeature);
+          },
       },
       expr.data);
 }
