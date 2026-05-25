@@ -1,7 +1,8 @@
 module Top;
   int a;
   int b;
+  int r;
   initial begin
-    a = a ** b;
+    r = (a === b);
   end
 endmodule
