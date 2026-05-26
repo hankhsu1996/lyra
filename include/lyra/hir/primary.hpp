@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstdint>
 #include <string>
 #include <variant>
 
@@ -26,15 +27,13 @@ struct TimeLiteral {
   TimeScale scale;
 };
 
-// Per IEEE 1800 SystemVerilog grammar, `primary` includes both
-// `primary_literal` (e.g. integer literals) and `hierarchical_identifier
-// select` (i.e. value references). Grouping them under Primary keeps the
-// HIR's expression tree aligned with the LRM grammar.
-struct RefExpr {
-  ValueRef target;
-};
-
-using Primary =
-    std::variant<IntegerLiteral, StringLiteral, TimeLiteral, RefExpr>;
+// Primary mirrors LRM 11.2.1 - the atomic leaf level of the expression
+// grammar. Refs are listed directly here (not behind a wrapper) so they share
+// type identity with the Lvalue variant: the same StructuralVarRef value can
+// appear here when read and inside an Lvalue when written. Read vs write is
+// determined by where in the tree the ref appears, not by an extra type tag.
+using Primary = std::variant<
+    IntegerLiteral, StringLiteral, TimeLiteral, StructuralVarRef,
+    ProceduralVarRef, LoopVarRef>;
 
 }  // namespace lyra::hir

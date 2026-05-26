@@ -26,11 +26,18 @@ document conflicts with a North Star principle, the lower-level document is wron
 1. **End-to-end iteration time is the primary optimization target.** The compiler optimizes the full
    edit-compile-run-inspect loop, not simulation throughput alone. A design that cuts one stage of
    the loop at the cost of inflating another beyond budget is rejected.
-2. **Incremental and parallel compilation are first-class architectural constraints.** The
+2. **Compile per unit; elaborate at runtime.** The compile-time scope is the compilation unit
+   (module, package, interface), not the elaborated instance graph. Generate constructs (`if`,
+   `for`, `case`) are constructor-time logic executed by the runtime to build the object graph at
+   time zero; they are not compile-time expansion. Compile-time artifacts are class-level and shared
+   across every instance; per-instance data (parameter values, wiring, hierarchical position) flows
+   in at runtime construction. Compile-time work scales with the count of distinct unit
+   specializations, not with instance count.
+3. **Incremental and parallel compilation are first-class architectural constraints.** The
    architecture is shaped from the start to support partial recompilation and concurrent compilation
    of independent work. These are not optimizations added later; they constrain every lower-level
    decision.
-3. **The compiler is organized around independently compilable units with explicit dependencies.**
+4. **The compiler is organized around independently compilable units with explicit dependencies.**
    Work decomposes into units that compile in isolation. Every cross-unit interaction is an
    explicitly declared dependency. Implicit shared state between units is rejected.
 
@@ -45,6 +52,10 @@ document conflicts with a North Star principle, the lower-level document is wron
 
 - A design that improves one stage of the iteration loop at the cost of inflating another beyond the
   overall turnaround budget.
+- Compile-time work that scales with instance count rather than with unit specialization count.
+- A pipeline shape where a frontend-elaborated instance graph drives compile-time work.
+- Treating generate constructs as a compile-time expansion mechanism rather than constructor-time
+  logic.
 - Hidden or implicit cross-unit dependencies that break incremental or parallel compilation.
 - Architectural choices that force global serialization of otherwise independent compilation work.
 - Implicit shared semantic state between compilation units.

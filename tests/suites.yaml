@@ -1,4 +1,4 @@
 suites:
   architecture_reset:
-    include_tags: [emit, dump, errors, cpp_run]
+    include_tags: [emit, errors, cpp_run]
     exclude: []

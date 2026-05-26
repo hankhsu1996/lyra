@@ -68,6 +68,18 @@ compile-time and runtime.
 
 ## Notes / Examples
 
+A compilation unit is a class. Compile-time produces the class definition -- its members, its
+parameter signature, its constructor logic, and its callable bodies. Runtime executes the
+constructor to instantiate objects and runs the callables under scheduler control to drive behavior.
+The constructor expands generate `if` / `for` / `case` to build the object graph; processes
+(`initial`, `always*`) are the class's runtime callables.
+
+Concretely, `module Foo #(parameter N = 4) (...);` defines a class with an `N` constructor
+parameter. `for (genvar i = 0; i < N; ...) ...` is a `for` loop in that class's constructor.
+`if (N > 0) ...` is an `if` in that constructor. `initial begin ... end` is a class method
+dispatched by the scheduler at simulation time zero. See `runtime_model.md` for the contract that
+keeps the constructor context and the simulation context distinct.
+
 Parameters on a compilation unit are constructor or config inputs. Per-instance data (wiring,
 hierarchical position, parameter values) flows in at runtime construction. The compile-time model
 remains class-level.
