@@ -252,8 +252,23 @@ auto PackedArray::ToInt64() const -> std::int64_t {
 }
 
 auto PackedArray::IsTruthy() const -> bool {
+  // LRM 12.4: X/Z bits do not count as truthy; only a definitively-one
+  // bit (value=1 with unknown=0) makes an `if`/`while`/ternary take its
+  // true branch.
+  const auto vw = ValueWords();
+  const auto uw = UnknownWords();
+  for (std::size_t i = 0; i < vw.size(); ++i) {
+    const std::uint64_t unk = i < uw.size() ? uw[i] : 0U;
+    if ((vw[i] & ~unk) != 0U) {
+      return true;
+    }
+  }
+  return false;
+}
+
+auto PackedArray::HasUnknown() const -> bool {
   return std::ranges::any_of(
-      ValueWords(), [](std::uint64_t w) { return w != 0U; });
+      UnknownWords(), [](std::uint64_t w) { return w != 0U; });
 }
 
 auto PackedArray::ConvertFrom(
@@ -294,22 +309,43 @@ auto WidthOnlyNarrow(const PackedArray& v, std::string_view op) -> void {
         std::string{op} +
         ": wide (>64-bit) packed integral operator not yet implemented");
   }
-  // 4-state narrow arithmetic runs on the value plane only; if the unknown
-  // plane is non-zero, the result loses X/Z semantics. TODO(hankhsu): add
-  // full X/Z propagation for narrow 4-state arithmetic.
 }
 
 auto NarrowWordOf(const PackedArray& v) -> std::uint64_t {
   return v.ValueWords()[0] & MaskForWidth(v.BitWidth());
 }
 
-// Build a 1-bit result for comparison / logical ops. The result's
-// state-kind must match the operand's so the value can be assigned back to
-// a same-shape target without a shape-mismatch crash. (X/Z propagation in
-// the value is a separate concern under WidthOnlyNarrow's TODO; this helper
-// only fixes the shape.)
+// Encodes a known 0/1 only; for results that must be X under LRM 11.4
+// propagation, use AllX(1U, false) instead.
 auto OneBitResult(bool flag, bool is_four_state) -> PackedArray {
   return PackedArray::FromInt(flag ? 1 : 0, 1U, false, is_four_state);
+}
+
+// LRM 11.4 X/Z propagation result: a 4-state default ctor leaves the
+// unknown plane all-1, which is the all-X value.
+auto AllX(std::uint64_t bit_width, bool is_signed) -> PackedArray {
+  return PackedArray{bit_width, is_signed, true};
+}
+
+enum class Truthiness : std::uint8_t { kKnownZero, kKnownNonzero, kUnknown };
+
+// LRM 11.4.7 truth value. kKnownNonzero requires a definitively-one bit
+// (no other 1 dominates), so `(1, X, X, X)` is kKnownNonzero but
+// `(X, X, X, X)` is kUnknown.
+auto TruthinessOf(const PackedArray& v) -> Truthiness {
+  const auto vw = v.ValueWords();
+  const auto uw = v.UnknownWords();
+  bool has_unknown_bit = false;
+  for (std::size_t i = 0; i < vw.size(); ++i) {
+    const std::uint64_t unk = i < uw.size() ? uw[i] : 0U;
+    if ((vw[i] & ~unk) != 0U) {
+      return Truthiness::kKnownNonzero;
+    }
+    if (unk != 0U) {
+      has_unknown_bit = true;
+    }
+  }
+  return has_unknown_bit ? Truthiness::kUnknown : Truthiness::kKnownZero;
 }
 
 }  // namespace
@@ -317,6 +353,9 @@ auto OneBitResult(bool flag, bool is_four_state) -> PackedArray {
 auto PackedArray::operator+(const PackedArray& other) const -> PackedArray {
   ExpectSameShape(*this, other, "operator+");
   WidthOnlyNarrow(*this, "operator+");
+  if (HasUnknown() || other.HasUnknown()) {
+    return AllX(bit_width_, is_signed_);
+  }
   const auto mask = MaskForWidth(bit_width_);
   const auto sum = (NarrowWordOf(*this) + NarrowWordOf(other)) & mask;
   return FromInt(
@@ -326,6 +365,9 @@ auto PackedArray::operator+(const PackedArray& other) const -> PackedArray {
 auto PackedArray::operator-(const PackedArray& other) const -> PackedArray {
   ExpectSameShape(*this, other, "operator-");
   WidthOnlyNarrow(*this, "operator-");
+  if (HasUnknown() || other.HasUnknown()) {
+    return AllX(bit_width_, is_signed_);
+  }
   const auto mask = MaskForWidth(bit_width_);
   const auto diff = (NarrowWordOf(*this) - NarrowWordOf(other)) & mask;
   return FromInt(
@@ -335,6 +377,9 @@ auto PackedArray::operator-(const PackedArray& other) const -> PackedArray {
 auto PackedArray::operator*(const PackedArray& other) const -> PackedArray {
   ExpectSameShape(*this, other, "operator*");
   WidthOnlyNarrow(*this, "operator*");
+  if (HasUnknown() || other.HasUnknown()) {
+    return AllX(bit_width_, is_signed_);
+  }
   const auto mask = MaskForWidth(bit_width_);
   const auto product = (NarrowWordOf(*this) * NarrowWordOf(other)) & mask;
   return FromInt(
@@ -345,6 +390,9 @@ auto PackedArray::operator*(const PackedArray& other) const -> PackedArray {
 auto PackedArray::operator/(const PackedArray& other) const -> PackedArray {
   ExpectSameShape(*this, other, "operator/");
   WidthOnlyNarrow(*this, "operator/");
+  if (HasUnknown() || other.HasUnknown()) {
+    return AllX(bit_width_, is_signed_);
+  }
   const auto rhs = other.ToInt64();
   if (rhs == 0) {
     // SV LRM 11.4.4: integer division by zero on 4-state yields X for every
@@ -365,6 +413,9 @@ auto PackedArray::operator/(const PackedArray& other) const -> PackedArray {
 auto PackedArray::operator%(const PackedArray& other) const -> PackedArray {
   ExpectSameShape(*this, other, "operator%");
   WidthOnlyNarrow(*this, "operator%");
+  if (HasUnknown() || other.HasUnknown()) {
+    return AllX(bit_width_, is_signed_);
+  }
   const auto rhs = other.ToInt64();
   if (rhs == 0) {
     // See operator/'s div-by-zero note: deliberate use of the default ctor's
@@ -479,6 +530,9 @@ auto PackedArray::BitwiseXnor(const PackedArray& other) const -> PackedArray {
 auto PackedArray::operator==(const PackedArray& other) const -> PackedArray {
   ExpectSameShape(*this, other, "operator==");
   WidthOnlyNarrow(*this, "operator==");
+  if (HasUnknown() || other.HasUnknown()) {
+    return AllX(1U, false);
+  }
   return OneBitResult(
       NarrowWordOf(*this) == NarrowWordOf(other), is_four_state_);
 }
@@ -486,6 +540,9 @@ auto PackedArray::operator==(const PackedArray& other) const -> PackedArray {
 auto PackedArray::operator!=(const PackedArray& other) const -> PackedArray {
   ExpectSameShape(*this, other, "operator!=");
   WidthOnlyNarrow(*this, "operator!=");
+  if (HasUnknown() || other.HasUnknown()) {
+    return AllX(1U, false);
+  }
   return OneBitResult(
       NarrowWordOf(*this) != NarrowWordOf(other), is_four_state_);
 }
@@ -493,6 +550,9 @@ auto PackedArray::operator!=(const PackedArray& other) const -> PackedArray {
 auto PackedArray::operator<(const PackedArray& other) const -> PackedArray {
   ExpectSameShape(*this, other, "operator<");
   WidthOnlyNarrow(*this, "operator<");
+  if (HasUnknown() || other.HasUnknown()) {
+    return AllX(1U, false);
+  }
   if (is_signed_) {
     return OneBitResult(ToInt64() < other.ToInt64(), is_four_state_);
   }
@@ -503,6 +563,9 @@ auto PackedArray::operator<(const PackedArray& other) const -> PackedArray {
 auto PackedArray::operator<=(const PackedArray& other) const -> PackedArray {
   ExpectSameShape(*this, other, "operator<=");
   WidthOnlyNarrow(*this, "operator<=");
+  if (HasUnknown() || other.HasUnknown()) {
+    return AllX(1U, false);
+  }
   if (is_signed_) {
     return OneBitResult(ToInt64() <= other.ToInt64(), is_four_state_);
   }
@@ -513,6 +576,9 @@ auto PackedArray::operator<=(const PackedArray& other) const -> PackedArray {
 auto PackedArray::operator>(const PackedArray& other) const -> PackedArray {
   ExpectSameShape(*this, other, "operator>");
   WidthOnlyNarrow(*this, "operator>");
+  if (HasUnknown() || other.HasUnknown()) {
+    return AllX(1U, false);
+  }
   if (is_signed_) {
     return OneBitResult(ToInt64() > other.ToInt64(), is_four_state_);
   }
@@ -523,6 +589,9 @@ auto PackedArray::operator>(const PackedArray& other) const -> PackedArray {
 auto PackedArray::operator>=(const PackedArray& other) const -> PackedArray {
   ExpectSameShape(*this, other, "operator>=");
   WidthOnlyNarrow(*this, "operator>=");
+  if (HasUnknown() || other.HasUnknown()) {
+    return AllX(1U, false);
+  }
   if (is_signed_) {
     return OneBitResult(ToInt64() >= other.ToInt64(), is_four_state_);
   }
@@ -532,6 +601,9 @@ auto PackedArray::operator>=(const PackedArray& other) const -> PackedArray {
 
 auto PackedArray::operator-() const -> PackedArray {
   WidthOnlyNarrow(*this, "operator- (unary)");
+  if (HasUnknown()) {
+    return AllX(bit_width_, is_signed_);
+  }
   const auto mask = MaskForWidth(bit_width_);
   return FromInt(
       static_cast<std::int64_t>((-NarrowWordOf(*this)) & mask), bit_width_,
@@ -558,29 +630,42 @@ auto PackedArray::operator~() const -> PackedArray {
   return result;
 }
 
-namespace {
-
-auto IsNonZero(const PackedArray& v) -> bool {
-  return std::ranges::any_of(
-      v.ValueWords(), [](std::uint64_t w) { return w != 0U; });
-}
-
-}  // namespace
-
 auto PackedArray::LogicalAnd(const PackedArray& other) const -> PackedArray {
-  return OneBitResult(
-      IsNonZero(*this) && IsNonZero(other),
-      is_four_state_ || other.is_four_state_);
+  const auto a = TruthinessOf(*this);
+  const auto b = TruthinessOf(other);
+  const bool result_four_state = is_four_state_ || other.is_four_state_;
+  if (a == Truthiness::kKnownZero || b == Truthiness::kKnownZero) {
+    return OneBitResult(false, result_four_state);
+  }
+  if (a == Truthiness::kKnownNonzero && b == Truthiness::kKnownNonzero) {
+    return OneBitResult(true, result_four_state);
+  }
+  return AllX(1U, false);
 }
 
 auto PackedArray::LogicalOr(const PackedArray& other) const -> PackedArray {
-  return OneBitResult(
-      IsNonZero(*this) || IsNonZero(other),
-      is_four_state_ || other.is_four_state_);
+  const auto a = TruthinessOf(*this);
+  const auto b = TruthinessOf(other);
+  const bool result_four_state = is_four_state_ || other.is_four_state_;
+  if (a == Truthiness::kKnownNonzero || b == Truthiness::kKnownNonzero) {
+    return OneBitResult(true, result_four_state);
+  }
+  if (a == Truthiness::kKnownZero && b == Truthiness::kKnownZero) {
+    return OneBitResult(false, result_four_state);
+  }
+  return AllX(1U, false);
 }
 
 auto PackedArray::LogicalNot() const -> PackedArray {
-  return OneBitResult(!IsNonZero(*this), is_four_state_);
+  switch (TruthinessOf(*this)) {
+    case Truthiness::kKnownZero:
+      return OneBitResult(true, is_four_state_);
+    case Truthiness::kKnownNonzero:
+      return OneBitResult(false, is_four_state_);
+    case Truthiness::kUnknown:
+      return AllX(1U, false);
+  }
+  throw InternalError("LogicalNot: unhandled Truthiness");
 }
 
 namespace {
@@ -596,26 +681,44 @@ auto ShiftAmountAsUint(const PackedArray& amount) -> std::uint64_t {
 
 auto PackedArray::ShiftLeft(const PackedArray& amount) const -> PackedArray {
   WidthOnlyNarrow(*this, "ShiftLeft");
+  // LRM 11.4.10: X/Z in the amount yields an all-X result; X/Z in the
+  // value rides along by shifting the unknown plane in parallel.
+  if (amount.HasUnknown()) {
+    return AllX(bit_width_, is_signed_);
+  }
   const auto amt = ShiftAmountAsUint(amount);
   if (amt >= bit_width_) {
     return FromInt(0, bit_width_, is_signed_, is_four_state_);
   }
   const auto mask = MaskForWidth(bit_width_);
-  return FromInt(
-      static_cast<std::int64_t>((NarrowWordOf(*this) << amt) & mask),
-      bit_width_, is_signed_, is_four_state_);
+  const auto new_value = (NarrowWordOf(*this) << amt) & mask;
+  if (!is_four_state_) {
+    return FromInt(
+        static_cast<std::int64_t>(new_value), bit_width_, is_signed_, false);
+  }
+  const auto unk_word = UnknownWords()[0] & mask;
+  const auto new_unknown = (unk_word << amt) & mask;
+  return FromWords({new_value}, {new_unknown}, bit_width_, is_signed_, true);
 }
 
 auto PackedArray::LogicalShiftRight(const PackedArray& amount) const
     -> PackedArray {
   WidthOnlyNarrow(*this, "LogicalShiftRight");
+  if (amount.HasUnknown()) {
+    return AllX(bit_width_, is_signed_);
+  }
   const auto amt = ShiftAmountAsUint(amount);
   if (amt >= bit_width_) {
     return FromInt(0, bit_width_, is_signed_, is_four_state_);
   }
-  return FromInt(
-      static_cast<std::int64_t>(NarrowWordOf(*this) >> amt), bit_width_,
-      is_signed_, is_four_state_);
+  const auto new_value = NarrowWordOf(*this) >> amt;
+  if (!is_four_state_) {
+    return FromInt(
+        static_cast<std::int64_t>(new_value), bit_width_, is_signed_, false);
+  }
+  const auto unk_word = UnknownWords()[0] & MaskForWidth(bit_width_);
+  const auto new_unknown = unk_word >> amt;
+  return FromWords({new_value}, {new_unknown}, bit_width_, is_signed_, true);
 }
 
 auto PackedArray::ArithmeticShiftRight(const PackedArray& amount) const
@@ -624,22 +727,49 @@ auto PackedArray::ArithmeticShiftRight(const PackedArray& amount) const
   if (!is_signed_) {
     return LogicalShiftRight(amount);
   }
+  if (amount.HasUnknown()) {
+    return AllX(bit_width_, is_signed_);
+  }
   const auto amt = ShiftAmountAsUint(amount);
   const auto signed_value = ToInt64();
   if (amt >= bit_width_) {
     return FromInt(signed_value < 0 ? -1 : 0, bit_width_, true, is_four_state_);
   }
-  return FromInt(signed_value >> amt, bit_width_, true, is_four_state_);
+  if (!is_four_state_) {
+    return FromInt(signed_value >> amt, bit_width_, true, false);
+  }
+  // Each plane shifts with its own MSB as the fill, so an X at the top
+  // extends down into the new top bits instead of degenerating to the
+  // value-plane sign.
+  const auto mask = MaskForWidth(bit_width_);
+  const auto value_shifted =
+      static_cast<std::uint64_t>(signed_value >> amt) & mask;
+  const auto unk_word = UnknownWords()[0] & mask;
+  std::uint64_t unk_shifted = unk_word >> amt;
+  if ((unk_word >> (bit_width_ - 1U)) != 0U) {
+    const auto fill_mask = mask & ~MaskForWidth(bit_width_ - amt);
+    unk_shifted |= fill_mask;
+  }
+  unk_shifted &= mask;
+  return FromWords({value_shifted}, {unk_shifted}, bit_width_, true, true);
 }
 
 auto PackedArray::Power(const PackedArray& exponent) const -> PackedArray {
   WidthOnlyNarrow(*this, "Power");
   WidthOnlyNarrow(exponent, "Power");
-  const auto base = ToInt64();
+  // The exponent is checked before the base so that `X ** 0 = 1` wins
+  // over X-propagation from the base (LRM 11.4.10).
+  if (exponent.HasUnknown()) {
+    return AllX(bit_width_, is_signed_);
+  }
   const auto exp = exponent.ToInt64();
   if (exp == 0) {
     return FromInt(1, bit_width_, is_signed_, is_four_state_);
   }
+  if (HasUnknown()) {
+    return AllX(bit_width_, is_signed_);
+  }
+  const auto base = ToInt64();
   if (exp < 0) {
     if (base == 1) return FromInt(1, bit_width_, is_signed_, is_four_state_);
     if (base == -1) {

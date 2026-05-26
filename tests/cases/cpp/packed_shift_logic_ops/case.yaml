@@ -14,3 +14,8 @@ expect:
     shr_arith_neg: "8'b11110011"
     shl_overflow: "4'b0000"
     shr_overflow: "4'b0000"
+    shl_amt_xz: "8'bxxxxxxxx"
+    shl_val_xz: "8'b011xx000"
+    shr_val_xz: "8'b01011xx0"
+    ashr_val_xz_neg: "8'b11011xx0"
+    ashr_msb_x: "8'bxxx00011"
