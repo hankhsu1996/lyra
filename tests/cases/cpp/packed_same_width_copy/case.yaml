@@ -7,5 +7,6 @@ input:
   files: [main.sv]
 expect:
   exit: 0
-  stdout:
-    exact: "1100\n10xz\n"
+  variables:
+    b_copy: "4'b1100"
+    y_copy: "4'b10xz"

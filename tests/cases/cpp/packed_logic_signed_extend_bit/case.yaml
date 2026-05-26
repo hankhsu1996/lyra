@@ -7,5 +7,5 @@ input:
   files: [main.sv]
 expect:
   exit: 0
-  stdout:
-    exact: "00000010\n"
+  variables:
+    b: "8'b00000010"

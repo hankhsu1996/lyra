@@ -1,10 +1,12 @@
 module Top;
-  bit [4:0] a;
-  bit y;
+  bit and_all_one;
+  bit and_top_zero;
+  bit or_top_one;
 
   initial begin
-    a = 5'b11111; y = &a; $display("%b", y);
-    a = 5'b01111; y = &a; $display("%b", y);
-    a = 5'b10000; y = |a; $display("%b", y);
+    bit [4:0] a;
+    a = 5'b11111; and_all_one = &a;
+    a = 5'b01111; and_top_zero = &a;
+    a = 5'b10000; or_top_one = |a;
   end
 endmodule

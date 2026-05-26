@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstdint>
+#include <initializer_list>
 #include <span>
 #include <variant>
 
@@ -32,12 +33,25 @@ class PackedArray {
       std::int64_t value, std::uint64_t bit_width, bool is_signed,
       bool is_four_state) -> PackedArray;
 
+  // Construct a PackedArray of arbitrary width from raw word planes. Used
+  // by cpp emit for any literal that does not fit a single int64 carrier:
+  // widths > 64 bits, or 4-state literals carrying X/Z bits. `value_words`
+  // must have ceil(bit_width / 64) entries; bits above `bit_width` in the
+  // top word are masked. For 2-state shapes `unknown_words` must be empty;
+  // for 4-state shapes it must either be empty (no X/Z) or match
+  // `value_words` in size.
+  [[nodiscard]] static auto FromWords(
+      std::initializer_list<std::uint64_t> value_words,
+      std::initializer_list<std::uint64_t> unknown_words,
+      std::uint64_t bit_width, bool is_signed, bool is_four_state)
+      -> PackedArray;
+
   // Width-aware conversion. Constructs a fresh PackedArray of the
   // destination shape and copies bits from `src`, sign- or zero-extending
   // per `src`'s signedness when widening, truncating when narrowing.
-  // Cross-state conversions clear X/Z to 0 when converting 4-state to
-  // 2-state. TODO(hankhsu): wide (>64-bit) and 4-state conversion paths
-  // throw `InternalError` pending the wide arithmetic helpers.
+  // 2-state -> 4-state leaves the unknown plane zero; 4-state -> 2-state
+  // collapses any X/Z bits to 0. Both wide (>64-bit) and 4-state paths are
+  // supported.
   [[nodiscard]] static auto ConvertFrom(
       const PackedArray& src, std::uint64_t dst_bit_width, bool dst_is_signed,
       bool dst_is_four_state) -> PackedArray;
@@ -63,6 +77,22 @@ class PackedArray {
   // Width-aware copy. The destination's attributes drive sign-extension,
   // zero-extension, or truncation as appropriate.
   auto AssignFrom(const PackedArray& other) -> void;
+
+  // Variable assignment in SystemVerilog preserves the destination's declared
+  // shape; the producer is expected to insert any width/state conversion (the
+  // cpp backend lowers slang's ConversionExpr into PackedArray::ConvertFrom).
+  // Both copy- and move-assignment route through AssignFrom, which throws
+  // InternalError on shape mismatch. This makes "(target = value)" the single
+  // emit shape for variable assignment and surfaces any missing conversion as
+  // a backend bug rather than silently relayout-ing the destination.
+  // Construction (copy/move ctor) does the opposite: a freshly-constructed
+  // PackedArray adopts the source's shape, since there is no declared shape
+  // to preserve.
+  PackedArray(const PackedArray&) = default;
+  PackedArray(PackedArray&&) noexcept = default;
+  auto operator=(const PackedArray& other) -> PackedArray&;
+  auto operator=(PackedArray&& other) noexcept(false) -> PackedArray&;
+  ~PackedArray() = default;
 
   // Extract the value as a 64-bit signed integer. Sign-extends from
   // bit_width when is_signed_ is true. X/Z bits map to 0. bit_width must
@@ -123,6 +153,17 @@ class PackedArray {
   [[nodiscard]] auto ReductionXnor() const -> PackedArray;
 
  private:
+  // Single source of truth for "construct a PackedArray with a known value".
+  // FromInt, FromWords, and any internal op that needs to materialize a
+  // result from word planes must delegate here. The helper guarantees both
+  // planes are fully written (value from `value_words`, unknown from
+  // `unknown_words` or zero when empty); no caller can leak the all-X
+  // residue left by LogicValue's default ctor.
+  [[nodiscard]] static auto MakeFromWordPlanes(
+      std::uint64_t bit_width, bool is_signed, bool is_four_state,
+      std::span<const std::uint64_t> value_words,
+      std::span<const std::uint64_t> unknown_words) -> PackedArray;
+
   std::uint64_t bit_width_;
   bool is_signed_;
   bool is_four_state_;

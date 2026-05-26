@@ -12,6 +12,7 @@
 #include "lyra/base/internal_error.hpp"
 #include "lyra/base/overloaded.hpp"
 #include "lyra/value/integral_format.hpp"
+#include "lyra/value/packed_array.hpp"
 #include "lyra/value/packed_internal.hpp"
 
 namespace lyra::value {
@@ -141,6 +142,16 @@ auto RuntimeValueView::FromLogicView(ConstLogicView view, bool is_signed)
       .data = IntegralValueView::Wide(
           value_words, unknown_words, view.Width(),
           IntegralStateKind::kFourState, is_signed)};
+}
+
+auto RuntimeValueView::FromPackedArray(const PackedArray& pa)
+    -> RuntimeValueView {
+  const auto state_kind = pa.IsFourState() ? IntegralStateKind::kFourState
+                                           : IntegralStateKind::kTwoState;
+  return RuntimeValueView{
+      .data = IntegralValueView::Wide(
+          pa.ValueWords(), pa.UnknownWords(), pa.BitWidth(), state_kind,
+          pa.IsSigned())};
 }
 
 namespace {

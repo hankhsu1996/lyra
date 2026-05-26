@@ -7,5 +7,16 @@ input:
   files: [main.sv]
 expect:
   exit: 0
-  stdout:
-    exact: "1\nx\n0\n0\nx\n1\n1\nx\n0\n1\n0\nx\n"
+  variables:
+    and_all_one: 1
+    and_with_x: "1'bx"
+    and_with_zero: 0
+    or_all_zero: 0
+    or_with_z: "1'bx"
+    or_with_one: 1
+    xor_clean: 1
+    xor_with_x: "1'bx"
+    nand_all_one: 0
+    nor_all_zero: 1
+    xnor_clean: 0
+    xnor_with_z: "1'bx"

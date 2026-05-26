@@ -1,4 +1,4 @@
-id: cpp.packed_bit_signed_extend
+id: cpp.packed_comparison_logic_ops
 tags: [cpp_run]
 input:
   command: [run, cpp]
@@ -8,4 +8,9 @@ input:
 expect:
   exit: 0
   variables:
-    b: "8'b11111010"
+    eq_: 1
+    neq_: 1
+    lt_: 1
+    le_: 1
+    gt_: 1
+    ge_: 1

@@ -14,16 +14,10 @@ auto RenderExpr(const RenderContext& ctx, const mir::Expr& expr)
 auto RenderLvalue(const RenderContext& ctx, const mir::Lvalue& target)
     -> diag::Result<std::string>;
 
-auto RenderExprAsNative(const RenderContext& ctx, const mir::Expr& expr)
-    -> diag::Result<std::string>;
-
 // Renders `expr` and, when its MIR type is a packed array, appends
 // `.IsTruthy()`. Used by every statement that consumes an expression as a C++
 // `bool` (`if`, `while`, `do`, `for` condition, etc.).
 auto RenderConditionAsBool(const RenderContext& ctx, const mir::Expr& expr)
-    -> diag::Result<std::string>;
-
-auto RenderPackedExprAsView(const RenderContext& ctx, const mir::Expr& expr)
     -> diag::Result<std::string>;
 
 }  // namespace lyra::backend::cpp

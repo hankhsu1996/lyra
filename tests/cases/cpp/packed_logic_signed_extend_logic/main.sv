@@ -1,13 +1,12 @@
 module Top;
-  logic signed [3:0] a;
-  logic [7:0] b;
+  logic [7:0] b_from_x;
+  logic [7:0] b_from_z;
 
   initial begin
+    logic signed [3:0] a;
     a = 4'bx010;
-    b = a;
-    $display("%b", b);
+    b_from_x = a;
     a = 4'bz010;
-    b = a;
-    $display("%b", b);
+    b_from_z = a;
   end
 endmodule

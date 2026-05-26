@@ -11,6 +11,7 @@
 #include "lyra/base/internal_error.hpp"
 #include "lyra/value/packed.hpp"
 #include "lyra/value/packed_bitwise.hpp"
+#include "lyra/value/packed_convert.hpp"
 #include "lyra/value/packed_internal.hpp"
 #include "lyra/value/packed_reduction.hpp"
 
@@ -73,24 +74,78 @@ auto PackedArray::Int(std::int32_t value) -> PackedArray {
   return FromInt(value, 32U, true, false);
 }
 
+auto PackedArray::MakeFromWordPlanes(
+    std::uint64_t bit_width, bool is_signed, bool is_four_state,
+    std::span<const std::uint64_t> value_words,
+    std::span<const std::uint64_t> unknown_words) -> PackedArray {
+  if (bit_width == 0U) {
+    throw InternalError(
+        "PackedArray::MakeFromWordPlanes: bit_width must be >= 1");
+  }
+  const std::size_t expected = (bit_width + 63U) / 64U;
+  if (value_words.size() != expected) {
+    throw InternalError(
+        "PackedArray::MakeFromWordPlanes: value word count mismatch");
+  }
+  if (!is_four_state && !unknown_words.empty()) {
+    throw InternalError(
+        "PackedArray::MakeFromWordPlanes: 2-state shape forbids unknown "
+        "words");
+  }
+  if (is_four_state && !unknown_words.empty() &&
+      unknown_words.size() != expected) {
+    throw InternalError(
+        "PackedArray::MakeFromWordPlanes: 4-state unknown word count "
+        "mismatch");
+  }
+
+  PackedArray p{bit_width, is_signed, is_four_state};
+  auto value_dst = std::visit(
+      [](auto& v) { return detail::PackedAccess::ValueWords(v.View()); },
+      p.storage_);
+  std::ranges::copy(value_words, value_dst.begin());
+  MaskUnusedTopBits(value_dst, bit_width);
+  if (is_four_state) {
+    auto& lv = std::get<LogicValue>(p.storage_);
+    auto unknown_dst = detail::PackedAccess::UnknownWords(lv.View());
+    if (unknown_words.empty()) {
+      std::ranges::fill(unknown_dst, std::uint64_t{0});
+    } else {
+      std::ranges::copy(unknown_words, unknown_dst.begin());
+      MaskUnusedTopBits(unknown_dst, bit_width);
+    }
+  }
+  return p;
+}
+
 auto PackedArray::FromInt(
     std::int64_t value, std::uint64_t bit_width, bool is_signed,
     bool is_four_state) -> PackedArray {
-  PackedArray p{bit_width, is_signed, is_four_state};
-  auto words = std::visit(
-      [](auto& v) { return detail::PackedAccess::ValueWords(v.View()); },
-      p.storage_);
+  const std::size_t n = (bit_width + 63U) / 64U;
+  absl::InlinedVector<std::uint64_t, kPackedWordsInlineCapacity> words(n);
   if (bit_width <= 64U) {
-    words[0] = static_cast<std::uint64_t>(value) & MaskForWidth(bit_width);
+    words[0] = static_cast<std::uint64_t>(value);
   } else {
     const std::uint64_t fill = (value < 0) ? ~std::uint64_t{0} : 0U;
     words[0] = static_cast<std::uint64_t>(value);
-    for (std::size_t i = 1; i < words.size(); ++i) {
+    for (std::size_t i = 1; i < n; ++i) {
       words[i] = fill;
     }
-    MaskUnusedTopBits(words, bit_width);
   }
-  return p;
+  return MakeFromWordPlanes(
+      bit_width, is_signed, is_four_state,
+      std::span<const std::uint64_t>{words.data(), words.size()}, {});
+}
+
+auto PackedArray::FromWords(
+    std::initializer_list<std::uint64_t> value_words,
+    std::initializer_list<std::uint64_t> unknown_words, std::uint64_t bit_width,
+    bool is_signed, bool is_four_state) -> PackedArray {
+  return MakeFromWordPlanes(
+      bit_width, is_signed, is_four_state,
+      std::span<const std::uint64_t>{value_words.begin(), value_words.size()},
+      std::span<const std::uint64_t>{
+          unknown_words.begin(), unknown_words.size()});
 }
 
 auto PackedArray::BitWidth() const -> std::uint64_t {
@@ -152,6 +207,21 @@ auto PackedArray::AsLogicView() const -> ConstLogicView {
   return lv->View();
 }
 
+auto PackedArray::operator=(const PackedArray& other) -> PackedArray& {
+  if (this != &other) {
+    AssignFrom(other);
+  }
+  return *this;
+}
+
+auto PackedArray::operator=(PackedArray&& other) noexcept(false)
+    -> PackedArray& {
+  if (this != &other) {
+    AssignFrom(other);
+  }
+  return *this;
+}
+
 auto PackedArray::AssignFrom(const PackedArray& other) -> void {
   ExpectSameShape(*this, other, "PackedArray::AssignFrom");
   auto dst = std::visit(
@@ -189,18 +259,31 @@ auto PackedArray::IsTruthy() const -> bool {
 auto PackedArray::ConvertFrom(
     const PackedArray& src, std::uint64_t dst_bit_width, bool dst_is_signed,
     bool dst_is_four_state) -> PackedArray {
-  if (src.BitWidth() > 64U || dst_bit_width > 64U) {
-    throw InternalError(
-        "PackedArray::ConvertFrom: wide (>64-bit) conversion not yet "
-        "implemented");
+  PackedArray dst{dst_bit_width, dst_is_signed, dst_is_four_state};
+  const Signedness src_signedness =
+      src.IsSigned() ? Signedness::kSigned : Signedness::kUnsigned;
+  if (dst_is_four_state) {
+    auto& dst_lv = std::get<LogicValue>(dst.storage_);
+    LogicView dst_view = dst_lv.View();
+    if (src.IsFourState()) {
+      const auto& src_lv = std::get<LogicValue>(src.storage_);
+      ConvertToLogic(src_lv.View(), dst_view, src_signedness);
+    } else {
+      const auto& src_bv = std::get<BitValue>(src.storage_);
+      ConvertToLogic(src_bv.View(), dst_view, src_signedness);
+    }
+  } else {
+    auto& dst_bv = std::get<BitValue>(dst.storage_);
+    BitView dst_view = dst_bv.View();
+    if (src.IsFourState()) {
+      const auto& src_lv = std::get<LogicValue>(src.storage_);
+      ConvertToBit(src_lv.View(), dst_view, src_signedness);
+    } else {
+      const auto& src_bv = std::get<BitValue>(src.storage_);
+      ConvertToBit(src_bv.View(), dst_view, src_signedness);
+    }
   }
-  // Narrow conversion across (state, signedness, width) combinations. Value
-  // bits flow through `ToInt64` (sign-extended per source signedness) then
-  // `FromInt` (truncated to destination width). 4-state X/Z bits collapse
-  // to 0 when crossing into 2-state; 2-state -> 4-state leaves the unknown
-  // plane zero. TODO(hankhsu): full X/Z propagation.
-  return FromInt(
-      src.ToInt64(), dst_bit_width, dst_is_signed, dst_is_four_state);
+  return dst;
 }
 
 namespace {
@@ -220,8 +303,13 @@ auto NarrowWordOf(const PackedArray& v) -> std::uint64_t {
   return v.ValueWords()[0] & MaskForWidth(v.BitWidth());
 }
 
-auto OneBitResult(bool flag) -> PackedArray {
-  return PackedArray::FromInt(flag ? 1 : 0, 1U, false, false);
+// Build a 1-bit result for comparison / logical ops. The result's
+// state-kind must match the operand's so the value can be assigned back to
+// a same-shape target without a shape-mismatch crash. (X/Z propagation in
+// the value is a separate concern under WidthOnlyNarrow's TODO; this helper
+// only fixes the shape.)
+auto OneBitResult(bool flag, bool is_four_state) -> PackedArray {
+  return PackedArray::FromInt(flag ? 1 : 0, 1U, false, is_four_state);
 }
 
 }  // namespace
@@ -259,6 +347,10 @@ auto PackedArray::operator/(const PackedArray& other) const -> PackedArray {
   WidthOnlyNarrow(*this, "operator/");
   const auto rhs = other.ToInt64();
   if (rhs == 0) {
+    // SV LRM 11.4.4: integer division by zero on 4-state yields X for every
+    // bit; on 2-state it is implementation-defined and we pick zero. The
+    // default ctor encodes both directly: LogicValue defaults to all-X
+    // (matching the SV `logic` default), BitValue defaults to all-zero.
     return PackedArray{bit_width_, is_signed_, is_four_state_};
   }
   if (is_signed_) {
@@ -275,6 +367,8 @@ auto PackedArray::operator%(const PackedArray& other) const -> PackedArray {
   WidthOnlyNarrow(*this, "operator%");
   const auto rhs = other.ToInt64();
   if (rhs == 0) {
+    // See operator/'s div-by-zero note: deliberate use of the default ctor's
+    // shape-default (all-X for 4-state, zero for 2-state).
     return PackedArray{bit_width_, is_signed_, is_four_state_};
   }
   if (is_signed_) {
@@ -385,49 +479,55 @@ auto PackedArray::BitwiseXnor(const PackedArray& other) const -> PackedArray {
 auto PackedArray::operator==(const PackedArray& other) const -> PackedArray {
   ExpectSameShape(*this, other, "operator==");
   WidthOnlyNarrow(*this, "operator==");
-  return OneBitResult(NarrowWordOf(*this) == NarrowWordOf(other));
+  return OneBitResult(
+      NarrowWordOf(*this) == NarrowWordOf(other), is_four_state_);
 }
 
 auto PackedArray::operator!=(const PackedArray& other) const -> PackedArray {
   ExpectSameShape(*this, other, "operator!=");
   WidthOnlyNarrow(*this, "operator!=");
-  return OneBitResult(NarrowWordOf(*this) != NarrowWordOf(other));
+  return OneBitResult(
+      NarrowWordOf(*this) != NarrowWordOf(other), is_four_state_);
 }
 
 auto PackedArray::operator<(const PackedArray& other) const -> PackedArray {
   ExpectSameShape(*this, other, "operator<");
   WidthOnlyNarrow(*this, "operator<");
   if (is_signed_) {
-    return OneBitResult(ToInt64() < other.ToInt64());
+    return OneBitResult(ToInt64() < other.ToInt64(), is_four_state_);
   }
-  return OneBitResult(NarrowWordOf(*this) < NarrowWordOf(other));
+  return OneBitResult(
+      NarrowWordOf(*this) < NarrowWordOf(other), is_four_state_);
 }
 
 auto PackedArray::operator<=(const PackedArray& other) const -> PackedArray {
   ExpectSameShape(*this, other, "operator<=");
   WidthOnlyNarrow(*this, "operator<=");
   if (is_signed_) {
-    return OneBitResult(ToInt64() <= other.ToInt64());
+    return OneBitResult(ToInt64() <= other.ToInt64(), is_four_state_);
   }
-  return OneBitResult(NarrowWordOf(*this) <= NarrowWordOf(other));
+  return OneBitResult(
+      NarrowWordOf(*this) <= NarrowWordOf(other), is_four_state_);
 }
 
 auto PackedArray::operator>(const PackedArray& other) const -> PackedArray {
   ExpectSameShape(*this, other, "operator>");
   WidthOnlyNarrow(*this, "operator>");
   if (is_signed_) {
-    return OneBitResult(ToInt64() > other.ToInt64());
+    return OneBitResult(ToInt64() > other.ToInt64(), is_four_state_);
   }
-  return OneBitResult(NarrowWordOf(*this) > NarrowWordOf(other));
+  return OneBitResult(
+      NarrowWordOf(*this) > NarrowWordOf(other), is_four_state_);
 }
 
 auto PackedArray::operator>=(const PackedArray& other) const -> PackedArray {
   ExpectSameShape(*this, other, "operator>=");
   WidthOnlyNarrow(*this, "operator>=");
   if (is_signed_) {
-    return OneBitResult(ToInt64() >= other.ToInt64());
+    return OneBitResult(ToInt64() >= other.ToInt64(), is_four_state_);
   }
-  return OneBitResult(NarrowWordOf(*this) >= NarrowWordOf(other));
+  return OneBitResult(
+      NarrowWordOf(*this) >= NarrowWordOf(other), is_four_state_);
 }
 
 auto PackedArray::operator-() const -> PackedArray {
@@ -435,7 +535,7 @@ auto PackedArray::operator-() const -> PackedArray {
   const auto mask = MaskForWidth(bit_width_);
   return FromInt(
       static_cast<std::int64_t>((-NarrowWordOf(*this)) & mask), bit_width_,
-      is_signed_, false);
+      is_signed_, is_four_state_);
 }
 
 auto PackedArray::operator~() const -> PackedArray {
@@ -468,15 +568,19 @@ auto IsNonZero(const PackedArray& v) -> bool {
 }  // namespace
 
 auto PackedArray::LogicalAnd(const PackedArray& other) const -> PackedArray {
-  return OneBitResult(IsNonZero(*this) && IsNonZero(other));
+  return OneBitResult(
+      IsNonZero(*this) && IsNonZero(other),
+      is_four_state_ || other.is_four_state_);
 }
 
 auto PackedArray::LogicalOr(const PackedArray& other) const -> PackedArray {
-  return OneBitResult(IsNonZero(*this) || IsNonZero(other));
+  return OneBitResult(
+      IsNonZero(*this) || IsNonZero(other),
+      is_four_state_ || other.is_four_state_);
 }
 
 auto PackedArray::LogicalNot() const -> PackedArray {
-  return OneBitResult(!IsNonZero(*this));
+  return OneBitResult(!IsNonZero(*this), is_four_state_);
 }
 
 namespace {
@@ -494,7 +598,7 @@ auto PackedArray::ShiftLeft(const PackedArray& amount) const -> PackedArray {
   WidthOnlyNarrow(*this, "ShiftLeft");
   const auto amt = ShiftAmountAsUint(amount);
   if (amt >= bit_width_) {
-    return PackedArray{bit_width_, is_signed_, is_four_state_};
+    return FromInt(0, bit_width_, is_signed_, is_four_state_);
   }
   const auto mask = MaskForWidth(bit_width_);
   return FromInt(
@@ -507,11 +611,11 @@ auto PackedArray::LogicalShiftRight(const PackedArray& amount) const
   WidthOnlyNarrow(*this, "LogicalShiftRight");
   const auto amt = ShiftAmountAsUint(amount);
   if (amt >= bit_width_) {
-    return PackedArray{bit_width_, is_signed_, is_four_state_};
+    return FromInt(0, bit_width_, is_signed_, is_four_state_);
   }
   return FromInt(
       static_cast<std::int64_t>(NarrowWordOf(*this) >> amt), bit_width_,
-      is_signed_, false);
+      is_signed_, is_four_state_);
 }
 
 auto PackedArray::ArithmeticShiftRight(const PackedArray& amount) const
@@ -542,7 +646,7 @@ auto PackedArray::Power(const PackedArray& exponent) const -> PackedArray {
       return FromInt(
           (exp & 1) != 0 ? -1 : 1, bit_width_, is_signed_, is_four_state_);
     }
-    return PackedArray{bit_width_, is_signed_, is_four_state_};
+    return FromInt(0, bit_width_, is_signed_, is_four_state_);
   }
   std::int64_t result = 1;
   std::int64_t b = base;
@@ -559,7 +663,8 @@ auto PackedArray::Power(const PackedArray& exponent) const -> PackedArray {
 
 auto PackedArray::ReductionAnd() const -> PackedArray {
   if (bit_width_ <= 64U && !is_four_state_) {
-    return OneBitResult(NarrowWordOf(*this) == MaskForWidth(bit_width_));
+    return OneBitResult(
+        NarrowWordOf(*this) == MaskForWidth(bit_width_), is_four_state_);
   }
   PackedArray result{1U, false, is_four_state_};
   if (is_four_state_) {
@@ -576,7 +681,7 @@ auto PackedArray::ReductionAnd() const -> PackedArray {
 
 auto PackedArray::ReductionOr() const -> PackedArray {
   if (bit_width_ <= 64U && !is_four_state_) {
-    return OneBitResult(NarrowWordOf(*this) != 0U);
+    return OneBitResult(NarrowWordOf(*this) != 0U, is_four_state_);
   }
   PackedArray result{1U, false, is_four_state_};
   if (is_four_state_) {
@@ -593,7 +698,8 @@ auto PackedArray::ReductionOr() const -> PackedArray {
 
 auto PackedArray::ReductionXor() const -> PackedArray {
   if (bit_width_ <= 64U && !is_four_state_) {
-    return OneBitResult((std::popcount(NarrowWordOf(*this)) & 1) != 0);
+    return OneBitResult(
+        (std::popcount(NarrowWordOf(*this)) & 1) != 0, is_four_state_);
   }
   PackedArray result{1U, false, is_four_state_};
   if (is_four_state_) {
@@ -610,7 +716,8 @@ auto PackedArray::ReductionXor() const -> PackedArray {
 
 auto PackedArray::ReductionNand() const -> PackedArray {
   if (bit_width_ <= 64U && !is_four_state_) {
-    return OneBitResult(NarrowWordOf(*this) != MaskForWidth(bit_width_));
+    return OneBitResult(
+        NarrowWordOf(*this) != MaskForWidth(bit_width_), is_four_state_);
   }
   PackedArray result{1U, false, is_four_state_};
   if (is_four_state_) {
@@ -627,7 +734,7 @@ auto PackedArray::ReductionNand() const -> PackedArray {
 
 auto PackedArray::ReductionNor() const -> PackedArray {
   if (bit_width_ <= 64U && !is_four_state_) {
-    return OneBitResult(NarrowWordOf(*this) == 0U);
+    return OneBitResult(NarrowWordOf(*this) == 0U, is_four_state_);
   }
   PackedArray result{1U, false, is_four_state_};
   if (is_four_state_) {
@@ -644,7 +751,8 @@ auto PackedArray::ReductionNor() const -> PackedArray {
 
 auto PackedArray::ReductionXnor() const -> PackedArray {
   if (bit_width_ <= 64U && !is_four_state_) {
-    return OneBitResult((std::popcount(NarrowWordOf(*this)) & 1) == 0);
+    return OneBitResult(
+        (std::popcount(NarrowWordOf(*this)) & 1) == 0, is_four_state_);
   }
   PackedArray result{1U, false, is_four_state_};
   if (is_four_state_) {

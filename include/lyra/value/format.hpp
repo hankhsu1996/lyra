@@ -10,6 +10,8 @@
 
 namespace lyra::value {
 
+class PackedArray;
+
 enum class PrintKind : std::uint8_t {
   kDisplay,
   kWrite,
@@ -106,6 +108,12 @@ struct RuntimeValueView {
       -> RuntimeValueView {
     return FromLogicView(view.AsConst(), is_signed);
   }
+
+  // The packed-array overload supersedes the view overloads at every cpp-emit
+  // call site (signedness is read from the PackedArray itself). The view
+  // overloads remain for callers that already hold a view.
+  [[nodiscard]] static auto FromPackedArray(const PackedArray& pa)
+      -> RuntimeValueView;
 };
 
 [[nodiscard]] auto FormatValue(

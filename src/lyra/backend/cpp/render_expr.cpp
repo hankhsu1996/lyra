@@ -3,7 +3,6 @@
 #include <cstddef>
 #include <cstdint>
 #include <format>
-#include <optional>
 #include <span>
 #include <string>
 #include <string_view>
@@ -150,34 +149,6 @@ auto RenderStructuralVarName(
   return ctx.StructuralScope().GetStructuralVar(ref.var).name;
 }
 
-auto IsPackedExplicit(const mir::CompilationUnit& unit, mir::TypeId type_id)
-    -> bool {
-  const auto& t = unit.GetType(type_id);
-  return t.IsPackedArray() &&
-         t.AsPackedArray().form == mir::PackedArrayForm::kExplicit;
-}
-
-auto MirTypeOfLvalue(const RenderContext& ctx, const mir::Lvalue& lv)
-    -> diag::Result<mir::TypeId> {
-  return std::visit(
-      Overloaded{
-          [&](const mir::StructuralVarRef& m) -> diag::Result<mir::TypeId> {
-            if (m.hops.value != 0) {
-              return diag::Unsupported(
-                  diag::DiagCode::kCppEmitExpressionFormNotImplemented,
-                  "cross-scope structural var access is not yet implemented "
-                  "in cpp emit",
-                  diag::UnsupportedCategory::kFeature);
-            }
-            return ctx.StructuralScope().GetStructuralVar(m.var).type;
-          },
-          [&](const mir::ProceduralVarRef& l) -> diag::Result<mir::TypeId> {
-            return ctx.ProceduralScopeAtHops(l.hops).vars.at(l.var.value).type;
-          },
-      },
-      lv);
-}
-
 auto IntegralConstantToInt64(const mir::IntegralConstant& c) -> std::int64_t {
   if (c.width == 0U) {
     throw InternalError("IntegralConstantToInt64: zero width");
@@ -203,37 +174,8 @@ auto IntegralConstantToInt64(const mir::IntegralConstant& c) -> std::int64_t {
   return static_cast<std::int64_t>(masked);
 }
 
-auto RenderPackedArrayIntegerLiteral(
-    const mir::PackedArrayType& pa, const mir::IntegralConstant& c)
+auto RenderWordList(std::span<const std::uint64_t> words, std::size_t n)
     -> std::string {
-  if (c.width > 64U) {
-    throw InternalError(
-        "RenderPackedArrayIntegerLiteral: width > 64 not yet implemented");
-  }
-  const auto value = IntegralConstantToInt64(c);
-  // Default-int shape (`int`, `bit signed [31:0]`, etc.): emit the concise
-  // factory that mirrors SV's natural int literal promotion.
-  if (pa.BitWidth() == 32U && pa.signedness == mir::Signedness::kSigned &&
-      pa.atom == mir::BitAtom::kBit) {
-    return std::format("lyra::value::PackedArray::Int({})", value);
-  }
-  const char* signed_lit =
-      pa.signedness == mir::Signedness::kSigned ? "true" : "false";
-  const char* four_state_lit = pa.atom != mir::BitAtom::kBit ? "true" : "false";
-  return std::format(
-      "lyra::value::PackedArray::FromInt({}LL, {}, {}, {})", value,
-      pa.BitWidth(), signed_lit, four_state_lit);
-}
-
-auto PackedRuntimeUnsupported() -> diag::Result<std::string> {
-  return diag::Unsupported(
-      diag::DiagCode::kCppEmitPackedRuntimeNotSupported,
-      "this packed expression form is not yet supported in cpp emit",
-      diag::UnsupportedCategory::kFeature);
-}
-
-auto RenderWordArrayInitializer(
-    std::span<const std::uint64_t> words, std::size_t n) -> std::string {
   std::string out = "{";
   for (std::size_t i = 0; i < n; ++i) {
     if (i != 0U) {
@@ -246,48 +188,43 @@ auto RenderWordArrayInitializer(
   return out;
 }
 
-auto RenderPackedLiteralView(
+auto RenderPackedArrayIntegerLiteral(
     const mir::PackedArrayType& pa, const mir::IntegralConstant& c)
     -> std::string {
-  const std::uint64_t width = pa.BitWidth();
-  const std::size_t n = (width + 63U) / 64U;
-  const std::string vw = RenderWordArrayInitializer(c.value_words, n);
-  if (pa.atom == mir::BitAtom::kBit) {
+  const bool is_four_state = pa.atom != mir::BitAtom::kBit;
+  const char* signed_lit =
+      pa.signedness == mir::Signedness::kSigned ? "true" : "false";
+  const char* four_state_lit = is_four_state ? "true" : "false";
+
+  // Narrow + no X/Z fits a single int64 carrier and reads better as
+  // PackedArray::Int / FromInt. Wide literals or X/Z-bearing literals must
+  // round-trip through explicit value/unknown word planes via FromWords.
+  const bool literal_has_xz = !c.state_words.empty() && c.state_words[0] != 0U;
+  const bool needs_word_planes = c.width > 64U || literal_has_xz;
+
+  if (!needs_word_planes) {
+    const auto value = IntegralConstantToInt64(c);
+    if (pa.BitWidth() == 32U && pa.signedness == mir::Signedness::kSigned &&
+        pa.atom == mir::BitAtom::kBit) {
+      return std::format("lyra::value::PackedArray::Int({})", value);
+    }
     return std::format(
-        "([&]() -> lyra::value::ConstBitView {{ "
-        "static constexpr std::array<std::uint64_t, {0}> kV = {1}; "
-        "return lyra::value::ConstBitView{{kV, 0, {2}}}; }}())",
-        n, vw, width);
+        "lyra::value::PackedArray::FromInt({}LL, {}, {}, {})", value,
+        pa.BitWidth(), signed_lit, four_state_lit);
   }
-  std::string uw;
-  if (c.state_words.empty()) {
-    uw = RenderWordArrayInitializer({}, n);
-  } else {
-    uw = RenderWordArrayInitializer(c.state_words, n);
+
+  if (literal_has_xz && !is_four_state) {
+    throw InternalError(
+        "RenderPackedArrayIntegerLiteral: 2-state PackedArray cannot hold "
+        "X/Z literal");
   }
+  const std::size_t n = (pa.BitWidth() + 63U) / 64U;
+  const std::string value_init = RenderWordList(c.value_words, n);
+  const std::string unknown_init =
+      is_four_state ? RenderWordList(c.state_words, n) : std::string{"{}"};
   return std::format(
-      "([&]() -> lyra::value::ConstLogicView {{ "
-      "static constexpr std::array<std::uint64_t, {0}> kV = {1}; "
-      "static constexpr std::array<std::uint64_t, {0}> kU = {2}; "
-      "return lyra::value::ConstLogicView{{kV, kU, 0, {3}}}; }}())",
-      n, vw, uw, width);
-}
-
-auto RenderPackedAssign(const RenderContext& ctx, const mir::AssignExpr& a)
-    -> diag::Result<std::string>;
-
-auto RenderExprAsPackedTopLevel(const RenderContext& ctx, const mir::Expr& expr)
-    -> diag::Result<std::string> {
-  return std::visit(
-      Overloaded{
-          [&](const mir::AssignExpr& a) -> diag::Result<std::string> {
-            return RenderPackedAssign(ctx, a);
-          },
-          [&](const auto&) -> diag::Result<std::string> {
-            return PackedRuntimeUnsupported();
-          },
-      },
-      expr.data);
+      "lyra::value::PackedArray::FromWords({}, {}, {}, {}, {})", value_init,
+      unknown_init, pa.BitWidth(), signed_lit, four_state_lit);
 }
 
 }  // namespace
@@ -306,292 +243,7 @@ auto RenderLvalue(const RenderContext& ctx, const mir::Lvalue& target)
       target);
 }
 
-auto RenderPackedExprAsView(const RenderContext& ctx, const mir::Expr& expr)
-    -> diag::Result<std::string> {
-  const auto& ty = ctx.Unit().GetType(expr.type);
-  if (!ty.IsPackedArray()) {
-    throw InternalError("RenderPackedExprAsView: type is not a packed array");
-  }
-  const auto& pa = ty.AsPackedArray();
-  const std::string view_call =
-      pa.atom == mir::BitAtom::kBit ? ".AsBitView()" : ".AsLogicView()";
-  return std::visit(
-      Overloaded{
-          [&](const mir::StructuralVarRef& m) -> diag::Result<std::string> {
-            auto name_or = RenderStructuralVarName(ctx, m);
-            if (!name_or) return std::unexpected(std::move(name_or.error()));
-            return *name_or + view_call;
-          },
-          [&](const mir::ProceduralVarRef& l) -> diag::Result<std::string> {
-            return LookupProceduralVarName(ctx, l) + view_call;
-          },
-          [&](const mir::IntegerLiteral& lit) -> diag::Result<std::string> {
-            return RenderPackedLiteralView(pa, lit.value);
-          },
-          [&](const auto&) -> diag::Result<std::string> {
-            return PackedRuntimeUnsupported();
-          },
-      },
-      expr.data);
-}
-
-namespace {
-
-auto SignednessLiteral(mir::Signedness s) -> std::string {
-  return s == mir::Signedness::kSigned ? "lyra::value::Signedness::kSigned"
-                                       : "lyra::value::Signedness::kUnsigned";
-}
-
-auto BitwiseRuntimeFunctionName(mir::UnaryOp op)
-    -> std::optional<std::string_view> {
-  if (op == mir::UnaryOp::kBitwiseNot) {
-    return std::string_view{"lyra::value::BitwiseNot"};
-  }
-  return std::nullopt;
-}
-
-auto BitwiseRuntimeFunctionName(mir::BinaryOp op)
-    -> std::optional<std::string_view> {
-  switch (op) {
-    case mir::BinaryOp::kBitwiseAnd:
-      return std::string_view{"lyra::value::BitwiseAnd"};
-    case mir::BinaryOp::kBitwiseOr:
-      return std::string_view{"lyra::value::BitwiseOr"};
-    case mir::BinaryOp::kBitwiseXor:
-      return std::string_view{"lyra::value::BitwiseXor"};
-    case mir::BinaryOp::kBitwiseXnor:
-      return std::string_view{"lyra::value::BitwiseXnor"};
-    default:
-      return std::nullopt;
-  }
-}
-
-auto ReductionRuntimeFunctionName(mir::UnaryOp op)
-    -> std::optional<std::string_view> {
-  switch (op) {
-    case mir::UnaryOp::kReductionAnd:
-      return std::string_view{"lyra::value::ReductionAnd"};
-    case mir::UnaryOp::kReductionOr:
-      return std::string_view{"lyra::value::ReductionOr"};
-    case mir::UnaryOp::kReductionXor:
-      return std::string_view{"lyra::value::ReductionXor"};
-    case mir::UnaryOp::kReductionNand:
-      return std::string_view{"lyra::value::ReductionNand"};
-    case mir::UnaryOp::kReductionNor:
-      return std::string_view{"lyra::value::ReductionNor"};
-    case mir::UnaryOp::kReductionXnor:
-      return std::string_view{"lyra::value::ReductionXnor"};
-    default:
-      return std::nullopt;
-  }
-}
-
-auto IsTwoStatePacked(const mir::PackedArrayType& a) -> bool {
-  return a.atom == mir::BitAtom::kBit;
-}
-
-auto IsSamePackedBitwiseShape(
-    const mir::PackedArrayType& a, const mir::PackedArrayType& b) -> bool {
-  if (a.form != mir::PackedArrayForm::kExplicit ||
-      b.form != mir::PackedArrayForm::kExplicit) {
-    return false;
-  }
-  if (a.BitWidth() != b.BitWidth()) {
-    return false;
-  }
-  return IsTwoStatePacked(a) == IsTwoStatePacked(b);
-}
-
-auto RenderPackedBitwiseOperand(
-    const RenderContext& ctx, const mir::Expr& operand_expr,
-    const mir::PackedArrayType& lhs_pa) -> diag::Result<std::string> {
-  const auto& op_ty = ctx.Unit().GetType(operand_expr.type);
-  if (!op_ty.IsPackedArray()) {
-    throw InternalError(
-        "RenderPackedBitwiseAssign: operand is not a packed array");
-  }
-  const auto& op_pa = op_ty.AsPackedArray();
-  if (!IsSamePackedBitwiseShape(op_pa, lhs_pa)) {
-    throw InternalError(
-        "RenderPackedBitwiseAssign: operand shape does not match LHS");
-  }
-  return RenderPackedExprAsView(ctx, operand_expr);
-}
-
-auto RenderPackedBitwiseAssign(
-    const RenderContext& ctx, const mir::AssignExpr& a,
-    const mir::PackedArrayType& lhs_pa, std::string_view lhs_view)
-    -> diag::Result<std::optional<std::string>> {
-  const mir::Expr& value_expr = ctx.Expr(a.value);
-
-  if (std::holds_alternative<mir::ConversionExpr>(value_expr.data)) {
-    return std::optional<std::string>{};
-  }
-
-  std::optional<std::string_view> fn_name;
-  bool is_unary = false;
-  if (const auto* u = std::get_if<mir::UnaryExpr>(&value_expr.data)) {
-    fn_name = BitwiseRuntimeFunctionName(u->op);
-    is_unary = true;
-  } else if (const auto* b = std::get_if<mir::BinaryExpr>(&value_expr.data)) {
-    fn_name = BitwiseRuntimeFunctionName(b->op);
-  }
-  if (!fn_name) {
-    return std::optional<std::string>{};
-  }
-
-  const auto& result_ty = ctx.Unit().GetType(value_expr.type);
-  if (!result_ty.IsPackedArray() ||
-      !IsSamePackedBitwiseShape(result_ty.AsPackedArray(), lhs_pa)) {
-    throw InternalError(
-        "RenderPackedBitwiseAssign: result type does not match LHS");
-  }
-
-  if (is_unary) {
-    const auto& u = std::get<mir::UnaryExpr>(value_expr.data);
-    auto operand_or =
-        RenderPackedBitwiseOperand(ctx, ctx.Expr(u.operand), lhs_pa);
-    if (!operand_or) {
-      return std::unexpected(std::move(operand_or.error()));
-    }
-    return std::optional<std::string>{
-        std::format("{}({}, {})", *fn_name, *operand_or, lhs_view)};
-  }
-
-  const auto& b = std::get<mir::BinaryExpr>(value_expr.data);
-  auto lhs_op_or = RenderPackedBitwiseOperand(ctx, ctx.Expr(b.lhs), lhs_pa);
-  if (!lhs_op_or) {
-    return std::unexpected(std::move(lhs_op_or.error()));
-  }
-  auto rhs_op_or = RenderPackedBitwiseOperand(ctx, ctx.Expr(b.rhs), lhs_pa);
-  if (!rhs_op_or) {
-    return std::unexpected(std::move(rhs_op_or.error()));
-  }
-  return std::optional<std::string>{std::format(
-      "{}({}, {}, {})", *fn_name, *lhs_op_or, *rhs_op_or, lhs_view)};
-}
-
-auto RenderPackedReductionAssign(
-    const RenderContext& ctx, const mir::AssignExpr& a,
-    const mir::PackedArrayType& lhs_pa, std::string_view lhs_view)
-    -> diag::Result<std::optional<std::string>> {
-  const mir::Expr& value_expr = ctx.Expr(a.value);
-
-  if (std::holds_alternative<mir::ConversionExpr>(value_expr.data)) {
-    return std::optional<std::string>{};
-  }
-
-  const auto* u = std::get_if<mir::UnaryExpr>(&value_expr.data);
-  if (u == nullptr) {
-    return std::optional<std::string>{};
-  }
-  const auto fn_name = ReductionRuntimeFunctionName(u->op);
-  if (!fn_name) {
-    return std::optional<std::string>{};
-  }
-
-  if (lhs_pa.form != mir::PackedArrayForm::kExplicit ||
-      lhs_pa.BitWidth() != 1U) {
-    throw InternalError(
-        "RenderPackedReductionAssign: LHS must be 1-bit kExplicit");
-  }
-  const auto& result_ty = ctx.Unit().GetType(value_expr.type);
-  if (!result_ty.IsPackedArray()) {
-    throw InternalError(
-        "RenderPackedReductionAssign: result is not a packed array");
-  }
-  const auto& result_pa = result_ty.AsPackedArray();
-  if (result_pa.form != mir::PackedArrayForm::kExplicit ||
-      result_pa.BitWidth() != 1U ||
-      IsTwoStatePacked(result_pa) != IsTwoStatePacked(lhs_pa)) {
-    throw InternalError(
-        "RenderPackedReductionAssign: result type does not match LHS");
-  }
-
-  const mir::Expr& operand_expr = ctx.Expr(u->operand);
-  const auto& operand_ty = ctx.Unit().GetType(operand_expr.type);
-  if (!operand_ty.IsPackedArray()) {
-    return std::optional<std::string>{};
-  }
-  const auto& operand_pa = operand_ty.AsPackedArray();
-  if (operand_pa.form != mir::PackedArrayForm::kExplicit) {
-    return std::optional<std::string>{};
-  }
-  if (IsTwoStatePacked(operand_pa) != IsTwoStatePacked(result_pa)) {
-    throw InternalError(
-        "RenderPackedReductionAssign: operand state-kind does not match "
-        "result");
-  }
-
-  auto operand_or = RenderPackedExprAsView(ctx, operand_expr);
-  if (!operand_or) {
-    return std::unexpected(std::move(operand_or.error()));
-  }
-  return std::optional<std::string>{
-      std::format("{}({}, {})", *fn_name, *operand_or, lhs_view)};
-}
-
-auto RenderPackedAssign(const RenderContext& ctx, const mir::AssignExpr& a)
-    -> diag::Result<std::string> {
-  auto lhs_t_or = MirTypeOfLvalue(ctx, a.target);
-  if (!lhs_t_or) return std::unexpected(std::move(lhs_t_or.error()));
-  const auto& lhs = ctx.Unit().GetType(*lhs_t_or).AsPackedArray();
-  auto lhs_name_or = RenderLvalue(ctx, a.target);
-  if (!lhs_name_or) return std::unexpected(std::move(lhs_name_or.error()));
-  const std::string lhs_view =
-      *lhs_name_or +
-      (lhs.atom == mir::BitAtom::kBit ? ".AsBitView()" : ".AsLogicView()");
-
-  auto bitwise_or = RenderPackedBitwiseAssign(ctx, a, lhs, lhs_view);
-  if (!bitwise_or) {
-    return std::unexpected(std::move(bitwise_or.error()));
-  }
-  if (bitwise_or->has_value()) {
-    return std::move(**bitwise_or);
-  }
-
-  auto reduction_or = RenderPackedReductionAssign(ctx, a, lhs, lhs_view);
-  if (!reduction_or) {
-    return std::unexpected(std::move(reduction_or.error()));
-  }
-  if (reduction_or->has_value()) {
-    return std::move(**reduction_or);
-  }
-
-  const mir::Expr* src_expr = &ctx.Expr(a.value);
-  while (const auto* cv = std::get_if<mir::ConversionExpr>(&src_expr->data)) {
-    const mir::Expr& op_expr = ctx.Expr(cv->operand);
-    const auto& op_ty = ctx.Unit().GetType(op_expr.type);
-    if (!op_ty.IsPackedArray() ||
-        op_ty.AsPackedArray().form != mir::PackedArrayForm::kExplicit) {
-      return PackedRuntimeUnsupported();
-    }
-    src_expr = &op_expr;
-  }
-
-  const auto& src_ty = ctx.Unit().GetType(src_expr->type);
-  if (!src_ty.IsPackedArray() ||
-      src_ty.AsPackedArray().form != mir::PackedArrayForm::kExplicit) {
-    return PackedRuntimeUnsupported();
-  }
-  const auto& src_pa = src_ty.AsPackedArray();
-
-  auto src_view_or = RenderPackedExprAsView(ctx, *src_expr);
-  if (!src_view_or) {
-    return std::unexpected(std::move(src_view_or.error()));
-  }
-
-  const std::string convert_fn = (lhs.atom == mir::BitAtom::kBit)
-                                     ? "lyra::value::ConvertToBit"
-                                     : "lyra::value::ConvertToLogic";
-  return std::format(
-      "{}({}, {}, {})", convert_fn, *src_view_or, lhs_view,
-      SignednessLiteral(src_pa.signedness));
-}
-
-}  // namespace
-
-auto RenderExprAsNative(const RenderContext& ctx, const mir::Expr& expr)
+auto RenderExpr(const RenderContext& ctx, const mir::Expr& expr)
     -> diag::Result<std::string> {
   return std::visit(
       Overloaded{
@@ -599,7 +251,7 @@ auto RenderExprAsNative(const RenderContext& ctx, const mir::Expr& expr)
             const auto& ty = ctx.Unit().GetType(expr.type);
             if (!ty.IsPackedArray()) {
               throw InternalError(
-                  "RenderExprAsNative: IntegerLiteral not typed as "
+                  "RenderExpr: IntegerLiteral not typed as "
                   "PackedArrayType");
             }
             return RenderPackedArrayIntegerLiteral(
@@ -631,48 +283,40 @@ auto RenderExprAsNative(const RenderContext& ctx, const mir::Expr& expr)
             return LookupProceduralVarName(ctx, l);
           },
           [&](const mir::UnaryExpr& u) -> diag::Result<std::string> {
-            auto operand_or = RenderExprAsNative(ctx, ctx.Expr(u.operand));
+            auto operand_or = RenderExpr(ctx, ctx.Expr(u.operand));
             if (!operand_or) {
               return std::unexpected(std::move(operand_or.error()));
             }
             return RenderUnaryOp(u.op, *operand_or);
           },
           [&](const mir::BinaryExpr& b) -> diag::Result<std::string> {
-            auto lhs_or = RenderExprAsNative(ctx, ctx.Expr(b.lhs));
+            auto lhs_or = RenderExpr(ctx, ctx.Expr(b.lhs));
             if (!lhs_or) return std::unexpected(std::move(lhs_or.error()));
-            auto rhs_or = RenderExprAsNative(ctx, ctx.Expr(b.rhs));
+            auto rhs_or = RenderExpr(ctx, ctx.Expr(b.rhs));
             if (!rhs_or) return std::unexpected(std::move(rhs_or.error()));
             return RenderBinaryOp(b.op, *lhs_or, *rhs_or);
           },
           [&](const mir::ConditionalExpr& c) -> diag::Result<std::string> {
             auto cond_or = RenderConditionAsBool(ctx, ctx.Expr(c.condition));
             if (!cond_or) return std::unexpected(std::move(cond_or.error()));
-            auto then_or = RenderExprAsNative(ctx, ctx.Expr(c.then_value));
+            auto then_or = RenderExpr(ctx, ctx.Expr(c.then_value));
             if (!then_or) return std::unexpected(std::move(then_or.error()));
-            auto else_or = RenderExprAsNative(ctx, ctx.Expr(c.else_value));
+            auto else_or = RenderExpr(ctx, ctx.Expr(c.else_value));
             if (!else_or) return std::unexpected(std::move(else_or.error()));
             return "(" + *cond_or + " ? " + *then_or + " : " + *else_or + ")";
           },
           [&](const mir::AssignExpr& a) -> diag::Result<std::string> {
-            auto target_type_or = MirTypeOfLvalue(ctx, a.target);
-            if (!target_type_or) {
-              return std::unexpected(std::move(target_type_or.error()));
-            }
-            const auto target_type = *target_type_or;
-            if (IsPackedExplicit(ctx.Unit(), target_type)) {
-              return RenderPackedAssign(ctx, a);
-            }
             auto target_or = RenderLvalue(ctx, a.target);
             if (!target_or) {
               return std::unexpected(std::move(target_or.error()));
             }
-            auto value_or = RenderExprAsNative(ctx, ctx.Expr(a.value));
+            auto value_or = RenderExpr(ctx, ctx.Expr(a.value));
             if (!value_or) return std::unexpected(std::move(value_or.error()));
             return "(" + *target_or + " = " + *value_or + ")";
           },
           [&](const mir::ConversionExpr& cv) -> diag::Result<std::string> {
             const auto& src_expr = ctx.Expr(cv.operand);
-            auto operand_or = RenderExprAsNative(ctx, src_expr);
+            auto operand_or = RenderExpr(ctx, src_expr);
             if (!operand_or) {
               return std::unexpected(std::move(operand_or.error()));
             }
@@ -718,17 +362,9 @@ auto RenderExprAsNative(const RenderContext& ctx, const mir::Expr& expr)
       expr.data);
 }
 
-auto RenderExpr(const RenderContext& ctx, const mir::Expr& expr)
-    -> diag::Result<std::string> {
-  if (IsPackedExplicit(ctx.Unit(), expr.type)) {
-    return RenderExprAsPackedTopLevel(ctx, expr);
-  }
-  return RenderExprAsNative(ctx, expr);
-}
-
 auto RenderConditionAsBool(const RenderContext& ctx, const mir::Expr& expr)
     -> diag::Result<std::string> {
-  auto text_or = RenderExprAsNative(ctx, expr);
+  auto text_or = RenderExpr(ctx, expr);
   if (!text_or) return std::unexpected(std::move(text_or.error()));
   const auto& ty = ctx.Unit().GetType(expr.type);
   if (ty.IsPackedArray()) {

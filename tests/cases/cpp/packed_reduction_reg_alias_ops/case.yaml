@@ -7,5 +7,5 @@ input:
   files: [main.sv]
 expect:
   exit: 0
-  stdout:
-    exact: "x\n"
+  variables:
+    and_with_z: "1'bx"

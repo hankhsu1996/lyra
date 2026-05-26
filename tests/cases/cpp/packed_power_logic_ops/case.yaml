@@ -1,0 +1,16 @@
+id: cpp.packed_power_logic_ops
+tags: [cpp_run]
+input:
+  command: [run, cpp]
+  project: false
+  top: Top
+  files: [main.sv]
+expect:
+  exit: 0
+  variables:
+    pow_pos: 243
+    pow_zero_exp: 1
+    pow_one_base_neg_exp: 1
+    pow_neg_one_base_even_neg_exp: 1
+    pow_neg_one_base_odd_neg_exp: -1
+    pow_neg_exp_zero_result: 0

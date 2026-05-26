@@ -7,5 +7,9 @@ input:
   files: [main.sv]
 expect:
   exit: 0
-  stdout:
-    exact: "0101\n1000\n1110\n0110\n1001\n"
+  variables:
+    not_: "4'b0101"
+    and_: "4'b1000"
+    or_: "4'b1110"
+    xor_: "4'b0110"
+    xnor_: "4'b1001"
