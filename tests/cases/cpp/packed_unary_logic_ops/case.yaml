@@ -1,0 +1,15 @@
+id: cpp.packed_unary_logic_ops
+tags: [cpp_run]
+input:
+  command: [run, cpp]
+  project: false
+  top: Top
+  files: [main.sv]
+expect:
+  exit: 0
+  variables:
+    pos_: "4'b1010"
+    neg_: "4'b0110"
+    bitnot: "4'b0101"
+    lognot_nonzero: 0
+    lognot_zero: 1

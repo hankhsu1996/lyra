@@ -1,0 +1,18 @@
+id: cpp.packed_arithmetic_logic_ops
+tags: [cpp_run]
+input:
+  command: [run, cpp]
+  project: false
+  top: Top
+  files: [main.sv]
+expect:
+  exit: 0
+  variables:
+    add_: 42
+    sub_: 18
+    sub_neg: -18
+    mul_: 35
+    mul_neg: -35
+    div_pos: 25
+    div_neg: -25
+    mod_: 2

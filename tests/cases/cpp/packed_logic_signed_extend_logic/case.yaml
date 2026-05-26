@@ -7,5 +7,6 @@ input:
   files: [main.sv]
 expect:
   exit: 0
-  stdout:
-    exact: "xxxxx010\nzzzzz010\n"
+  variables:
+    b_from_x: "8'bxxxxx010"
+    b_from_z: "8'bzzzzz010"

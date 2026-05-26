@@ -158,7 +158,7 @@ auto RenderStmt(
             std::string args_str;
             for (std::size_t i = 0; i < s.args.size(); ++i) {
               if (i != 0) args_str += ", ";
-              auto arg_or = RenderExprAsNative(ctx, ctx.Expr(s.args[i]));
+              auto arg_or = RenderExpr(ctx, ctx.Expr(s.args[i]));
               if (!arg_or) return std::unexpected(std::move(arg_or.error()));
               args_str += *arg_or;
             }

@@ -77,28 +77,20 @@ auto RenderRuntimeValueViewInit(
   // `%s` operands are typed as packed bit vectors by slang but reach the
   // runtime as a string_view. Dispatch on format kind, not just type.
   if (v.spec.kind == mir::FormatKind::kString) {
-    auto operand_or = RenderExprAsNative(ctx, ctx.Expr(v.value));
+    auto operand_or = RenderExpr(ctx, ctx.Expr(v.value));
     if (!operand_or) return std::unexpected(std::move(operand_or.error()));
     return std::format(
         "lyra::value::RuntimeValueView::String({})", *operand_or);
   }
 
   if (type.IsPackedArray()) {
-    const auto& pa = type.AsPackedArray();
-    const bool is_signed = pa.signedness == mir::Signedness::kSigned;
-    auto view_or = RenderPackedExprAsView(ctx, ctx.Expr(v.value));
-    if (!view_or) return std::unexpected(std::move(view_or.error()));
-    if (pa.atom == mir::BitAtom::kBit) {
-      return std::format(
-          "lyra::value::RuntimeValueView::FromBitView({}, {})", *view_or,
-          BoolLiteral(is_signed));
-    }
+    auto operand_or = RenderExpr(ctx, ctx.Expr(v.value));
+    if (!operand_or) return std::unexpected(std::move(operand_or.error()));
     return std::format(
-        "lyra::value::RuntimeValueView::FromLogicView({}, {})", *view_or,
-        BoolLiteral(is_signed));
+        "lyra::value::RuntimeValueView::FromPackedArray({})", *operand_or);
   }
   if (type.Kind() == mir::TypeKind::kString) {
-    auto operand_or = RenderExprAsNative(ctx, ctx.Expr(v.value));
+    auto operand_or = RenderExpr(ctx, ctx.Expr(v.value));
     if (!operand_or) return std::unexpected(std::move(operand_or.error()));
     return std::format(
         "lyra::value::RuntimeValueView::String({})", *operand_or);

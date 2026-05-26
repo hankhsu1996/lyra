@@ -1,10 +1,9 @@
 module Top;
-  reg [3:0] a;
-  reg y;
+  reg and_with_z;
 
   initial begin
+    reg [3:0] a;
     a = 4'b11z1;
-    y = &a;
-    $display("%b", y);
+    and_with_z = &a;
   end
 endmodule
