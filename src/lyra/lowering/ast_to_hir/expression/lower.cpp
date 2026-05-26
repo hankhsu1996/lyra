@@ -23,11 +23,11 @@
 #include <slang/syntax/AllSyntax.h>
 
 #include "lyra/base/internal_error.hpp"
+#include "lyra/base/overloaded.hpp"
 #include "lyra/diag/diagnostic.hpp"
 #include "lyra/hir/binary_op.hpp"
 #include "lyra/hir/conversion.hpp"
 #include "lyra/hir/expr.hpp"
-#include "lyra/hir/inspect.hpp"
 #include "lyra/hir/primary.hpp"
 #include "lyra/hir/subroutine_ref.hpp"
 #include "lyra/hir/type.hpp"
@@ -250,13 +250,21 @@ auto MakeTimeLiteralExpr(
   };
 }
 
-auto MakeRefExpr(hir::ValueRef ref, hir::TypeId type, diag::SourceSpan span)
+auto MakeRefExpr(hir::Primary ref, hir::TypeId type, diag::SourceSpan span)
     -> hir::Expr {
   return hir::Expr{
       .type = type,
-      .data = hir::PrimaryExpr{.data = hir::RefExpr{.target = std::move(ref)}},
+      .data = hir::PrimaryExpr{.data = std::move(ref)},
       .span = span,
   };
+}
+
+// Project an Lvalue (write context) into a Primary (read context). Lvalue and
+// Primary share the underlying ref types verbatim, so the projection is just
+// "lift the variant alternative". No data conversion.
+auto LvalueToPrimary(const hir::Lvalue& lvalue) -> hir::Primary {
+  return std::visit(
+      [](const auto& ref) -> hir::Primary { return ref; }, lvalue);
 }
 
 auto FromSlangSubroutineKind(slang::ast::SubroutineKind k)
@@ -337,12 +345,15 @@ auto LowerNamedValueProc(
 auto LowerProcExpr(
     const UnitLoweringFacts& unit_facts, UnitLoweringState& unit_state,
     ProcessLoweringState& proc_state, const ScopeStack& stack,
-    const slang::ast::Expression& expr) -> diag::Result<hir::Expr> {
+    const slang::ast::Expression& expr,
+    std::optional<hir::Lvalue> compound_lvalue_context)
+    -> diag::Result<hir::Expr> {
   const auto& mapper = unit_facts.SourceMapper();
   const auto span = mapper.SpanOf(expr.sourceRange);
 
   auto lower_child = [&](const slang::ast::Expression& e) {
-    return LowerProcExpr(unit_facts, unit_state, proc_state, stack, e);
+    return LowerProcExpr(
+        unit_facts, unit_state, proc_state, stack, e, compound_lvalue_context);
   };
   auto append_child =
       [&](const slang::ast::Expression& e) -> diag::Result<hir::ExprId> {
@@ -392,6 +403,18 @@ auto LowerProcExpr(
       return LowerNamedValueProc(
           unit_facts, unit_state, proc_state, stack,
           expr.as<slang::ast::NamedValueExpression>());
+
+    case slang::ast::ExpressionKind::LValueReference: {
+      if (!compound_lvalue_context.has_value()) {
+        throw InternalError(
+            "LowerProcExpr: slang LValueReference encountered outside "
+            "compound-assignment RHS");
+      }
+      auto type_id = type_id_of(expr);
+      if (!type_id) return std::unexpected(std::move(type_id.error()));
+      return MakeRefExpr(
+          LvalueToPrimary(*compound_lvalue_context), *type_id, span);
+    }
 
     case slang::ast::ExpressionKind::Conversion: {
       const auto& conv = expr.as<slang::ast::ConversionExpression>();
@@ -573,31 +596,21 @@ auto LowerProcExpr(
             "non-blocking assignments are not supported yet",
             diag::UnsupportedCategory::kFeature);
       }
-      if (as.op.has_value()) {
-        return diag::Unsupported(
-            span, diag::DiagCode::kUnsupportedCompoundAssignment,
-            "compound assignments are not supported yet",
-            diag::UnsupportedCategory::kFeature);
-      }
 
-      auto lhs_expr = lower_child(as.left());
-      if (!lhs_expr) return std::unexpected(std::move(lhs_expr.error()));
-      if (!hir::AsAssignableRef(*lhs_expr).has_value()) {
-        return diag::Unsupported(
-            mapper.SpanOf(as.left().sourceRange),
-            diag::DiagCode::kUnsupportedAssignmentTarget,
-            "assignment target is not supported yet",
-            diag::UnsupportedCategory::kFeature);
-      }
-      const hir::ExprId lhs_id = proc_state.AddExpr(*std::move(lhs_expr));
+      auto lhs_or =
+          LowerProcLvalue(unit_facts, unit_state, proc_state, stack, as.left());
+      if (!lhs_or) return std::unexpected(std::move(lhs_or.error()));
 
-      auto rhs_id = append_child(as.right());
-      if (!rhs_id) return std::unexpected(std::move(rhs_id.error()));
+      auto rhs_or = LowerProcExpr(
+          unit_facts, unit_state, proc_state, stack, as.right(), *lhs_or);
+      if (!rhs_or) return std::unexpected(std::move(rhs_or.error()));
+      const hir::ExprId rhs_id = proc_state.AddExpr(*std::move(rhs_or));
+
       auto type_id = type_id_of(expr);
       if (!type_id) return std::unexpected(std::move(type_id.error()));
       return hir::Expr{
           .type = *type_id,
-          .data = hir::AssignExpr{.lhs = lhs_id, .rhs = *rhs_id},
+          .data = hir::AssignExpr{.lhs = *std::move(lhs_or), .rhs = rhs_id},
           .span = span,
       };
     }
@@ -613,12 +626,15 @@ auto LowerProcExpr(
 auto LowerStructuralExpr(
     const UnitLoweringFacts& unit_facts, UnitLoweringState& unit_state,
     ScopeLoweringState& scope_state, const ScopeStack& stack,
-    const slang::ast::Expression& expr) -> diag::Result<hir::Expr> {
+    const slang::ast::Expression& expr,
+    std::optional<hir::Lvalue> compound_lvalue_context)
+    -> diag::Result<hir::Expr> {
   const auto& mapper = unit_facts.SourceMapper();
   const auto span = mapper.SpanOf(expr.sourceRange);
 
   auto lower_child = [&](const slang::ast::Expression& e) {
-    return LowerStructuralExpr(unit_facts, unit_state, scope_state, stack, e);
+    return LowerStructuralExpr(
+        unit_facts, unit_state, scope_state, stack, e, compound_lvalue_context);
   };
   auto add_child =
       [&](const slang::ast::Expression& e) -> diag::Result<hir::ExprId> {
@@ -690,6 +706,18 @@ auto LowerStructuralExpr(
       return MakeRefExpr(
           hir::StructuralVarRef{.hops = *hops, .var = binding->var_id},
           binding->type, span);
+    }
+
+    case slang::ast::ExpressionKind::LValueReference: {
+      if (!compound_lvalue_context.has_value()) {
+        throw InternalError(
+            "LowerStructuralExpr: slang LValueReference encountered outside "
+            "compound-assignment RHS");
+      }
+      auto type_id = type_id_of(expr);
+      if (!type_id) return std::unexpected(std::move(type_id.error()));
+      return MakeRefExpr(
+          LvalueToPrimary(*compound_lvalue_context), *type_id, span);
     }
 
     case slang::ast::ExpressionKind::Conversion: {
@@ -779,47 +807,58 @@ auto LowerStructuralExpr(
       };
     }
 
-    case slang::ast::ExpressionKind::Assignment: {
-      const auto& as = expr.as<slang::ast::AssignmentExpression>();
-      if (as.isNonBlocking()) {
-        return diag::Unsupported(
-            span, diag::DiagCode::kUnsupportedNonBlockingAssignment,
-            "non-blocking assignments are not supported yet",
-            diag::UnsupportedCategory::kFeature);
-      }
-      if (as.op.has_value()) {
-        return diag::Unsupported(
-            span, diag::DiagCode::kUnsupportedCompoundAssignment,
-            "compound assignments are not supported yet",
-            diag::UnsupportedCategory::kFeature);
-      }
-      auto lhs_expr = lower_child(as.left());
-      if (!lhs_expr) return std::unexpected(std::move(lhs_expr.error()));
-      if (!hir::AsAssignableRef(*lhs_expr).has_value()) {
-        return diag::Unsupported(
-            mapper.SpanOf(as.left().sourceRange),
-            diag::DiagCode::kUnsupportedAssignmentTarget,
-            "assignment target is not supported yet",
-            diag::UnsupportedCategory::kFeature);
-      }
-      const hir::ExprId lhs_id = scope_state.AddExpr(*std::move(lhs_expr));
-      auto rhs_id = add_child(as.right());
-      if (!rhs_id) return std::unexpected(std::move(rhs_id.error()));
-      auto type_id = type_id_of(expr);
-      if (!type_id) return std::unexpected(std::move(type_id.error()));
-      return hir::Expr{
-          .type = *type_id,
-          .data = hir::AssignExpr{.lhs = lhs_id, .rhs = *rhs_id},
-          .span = span,
-      };
-    }
-
     default:
       return diag::Unsupported(
           span, diag::DiagCode::kUnsupportedStructuralExpressionForm,
           "this structural expression form is not supported yet",
           diag::UnsupportedCategory::kFeature);
   }
+}
+
+namespace {
+
+// Extract the Lvalue from a lowered Expr whose Primary names a writable
+// storage location, or emit the "assignment target not supported" diagnostic
+// otherwise (e.g. literal, function call, binary expression).
+auto LvalueFromLoweredExpr(hir::Expr lowered, diag::SourceSpan span)
+    -> diag::Result<hir::Lvalue> {
+  auto unsupported = [&] {
+    return diag::Unsupported(
+        span, diag::DiagCode::kUnsupportedAssignmentTarget,
+        "assignment target is not supported yet",
+        diag::UnsupportedCategory::kFeature);
+  };
+  auto* primary = std::get_if<hir::PrimaryExpr>(&lowered.data);
+  if (primary == nullptr) return unsupported();
+  return std::visit(
+      Overloaded{
+          [&](const hir::StructuralVarRef& r) -> diag::Result<hir::Lvalue> {
+            return r;
+          },
+          [&](const hir::ProceduralVarRef& r) -> diag::Result<hir::Lvalue> {
+            return r;
+          },
+          [&](const hir::LoopVarRef& r) -> diag::Result<hir::Lvalue> {
+            return r;
+          },
+          [&](const auto&) -> diag::Result<hir::Lvalue> {
+            return unsupported();
+          },
+      },
+      primary->data);
+}
+
+}  // namespace
+
+auto LowerProcLvalue(
+    const UnitLoweringFacts& unit_facts, UnitLoweringState& unit_state,
+    ProcessLoweringState& proc_state, const ScopeStack& stack,
+    const slang::ast::Expression& expr) -> diag::Result<hir::Lvalue> {
+  auto lowered = LowerProcExpr(
+      unit_facts, unit_state, proc_state, stack, expr, std::nullopt);
+  if (!lowered) return std::unexpected(std::move(lowered.error()));
+  return LvalueFromLoweredExpr(
+      *std::move(lowered), unit_facts.SourceMapper().SpanOf(expr.sourceRange));
 }
 
 }  // namespace lyra::lowering::ast_to_hir

@@ -365,11 +365,21 @@ auto LowerLoopGenerate(
   if (!cond_or) return std::unexpected(std::move(cond_or.error()));
   const mir::ExprId cond_id = proc_scope_state.AddExpr(*std::move(cond_or));
 
-  auto step_or = LowerProceduralExpr(
+  // HIR carries the iter as the next-value expression for the loop variable;
+  // the loop semantic (this lowering) owns the actual write back.
+  auto step_value_or = LowerProceduralExpr(
       unit_state, scope_state, ctor_state, proc_scope_state, enclosing_scope,
       enclosing_scope.GetExpr(loop.iter));
-  if (!step_or) return std::unexpected(std::move(step_or.error()));
-  const mir::ExprId step_id = proc_scope_state.AddExpr(*std::move(step_or));
+  if (!step_value_or) {
+    return std::unexpected(std::move(step_value_or.error()));
+  }
+  const mir::TypeId step_type = (*step_value_or).type;
+  const mir::ExprId step_value_id =
+      proc_scope_state.AddExpr(*std::move(step_value_or));
+  const mir::ExprId step_id = proc_scope_state.AddExpr(
+      mir::Expr{
+          .data = mir::AssignExpr{.target = loop_local, .value = step_value_id},
+          .type = step_type});
 
   std::vector<mir::Expr> body_args;
   body_args.push_back(MakeForBodyInductionVarArg(loop_local_id, genvar_type));

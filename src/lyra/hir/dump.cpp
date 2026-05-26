@@ -251,7 +251,7 @@ class HirDumper {
     throw InternalError("HirDumper: unknown BinaryOp");
   }
 
-  static auto FormatValueRef(const ValueRef& v) -> std::string {
+  static auto FormatLvalue(const Lvalue& v) -> std::string {
     return std::visit(
         Overloaded{
             [](const StructuralVarRef& r) -> std::string {
@@ -342,8 +342,16 @@ class HirDumper {
                   "TimeLiteral(value={}, scale={})", lit.value,
                   FormatTimeScale(lit.scale));
             },
-            [](const RefExpr& r) -> std::string {
-              return std::format("RefExpr {}", FormatValueRef(r.target));
+            [](const StructuralVarRef& r) -> std::string {
+              return std::format(
+                  "StructuralVar[{}](hops={})", r.var.value, r.hops.value);
+            },
+            [](const ProceduralVarRef& r) -> std::string {
+              return std::format("ProceduralVar[{}]", r.var.value);
+            },
+            [](const LoopVarRef& r) -> std::string {
+              return std::format(
+                  "LoopVar[{}](hops={})", r.loop_var.value, r.hops.value);
             },
         },
         p);
@@ -430,7 +438,7 @@ class HirDumper {
             },
             [](const AssignExpr& a) -> std::string {
               return std::format(
-                  "AssignExpr lhs=Expr[{}] rhs=Expr[{}]", a.lhs.value,
+                  "AssignExpr lhs={} rhs=Expr[{}]", FormatLvalue(a.lhs),
                   a.rhs.value);
             },
             [this](const CallExpr& c) -> std::string {
