@@ -16,3 +16,8 @@ expect:
     div_pos: 25
     div_neg: -25
     mod_: 2
+    add_xz: "8'bxxxxxxxx"
+    sub_xz: "8'bxxxxxxxx"
+    mul_xz: "8'bxxxxxxxx"
+    div_xz: "8'bxxxxxxxx"
+    mod_xz: "8'bxxxxxxxx"

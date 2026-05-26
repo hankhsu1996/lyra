@@ -104,11 +104,14 @@ class PackedArray {
   // `while`, and ternary conditions emitted as `if (cond.IsTruthy())`.
   [[nodiscard]] auto IsTruthy() const -> bool;
 
-  // Binary operators. Operands are assumed to share the same
-  // `(bit_width, is_signed, is_four_state)` shape (slang's promotion
-  // contract). Comparison and logical operators produce a 1-bit 2-state
-  // result. Shift operators take the amount as a separate PackedArray;
-  // the amount's attributes are self-determined per LRM 11.6.
+  // Drives LRM 11.4 X/Z propagation: arithmetic, comparison, shift, and
+  // power return all-X (or 1-bit X) when any operand has HasUnknown().
+  [[nodiscard]] auto HasUnknown() const -> bool;
+
+  // Operands are assumed to share the same shape (slang's promotion
+  // contract). Comparison / logical results are 1-bit, 4-state when any
+  // operand is 4-state (so they can carry an X under LRM 11.4
+  // propagation). Shift amounts are self-determined per LRM 11.6.
   [[nodiscard]] auto operator+(const PackedArray& other) const -> PackedArray;
   [[nodiscard]] auto operator-(const PackedArray& other) const -> PackedArray;
   [[nodiscard]] auto operator*(const PackedArray& other) const -> PackedArray;

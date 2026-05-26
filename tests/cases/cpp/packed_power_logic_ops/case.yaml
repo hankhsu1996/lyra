@@ -14,3 +14,6 @@ expect:
     pow_neg_one_base_even_neg_exp: 1
     pow_neg_one_base_odd_neg_exp: -1
     pow_neg_exp_zero_result: 0
+    pow_base_x: "16'bxxxxxxxxxxxxxxxx"
+    pow_exp_x: "16'bxxxxxxxxxxxxxxxx"
+    pow_x_to_zero: 1

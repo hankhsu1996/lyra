@@ -13,3 +13,5 @@ expect:
     bitnot: "4'b0101"
     lognot_nonzero: 0
     lognot_zero: 1
+    neg_xz: "4'bxxxx"
+    lognot_xz: "1'bx"

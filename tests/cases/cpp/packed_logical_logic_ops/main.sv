@@ -2,6 +2,9 @@ module Top;
   logic and_tt, and_tf, and_ff;
   logic or_tt, or_tf, or_ff;
   logic not_t, not_f;
+  logic and_zero_dominates, and_one_with_x, and_x_x;
+  logic or_one_dominates, or_zero_with_x, or_x_x;
+  logic not_x;
   initial begin
     logic [3:0] a;
     logic [3:0] b;
@@ -21,5 +24,19 @@ module Top;
     not_t = !a;
     a = 4'b0000;
     not_f = !a;
+    a = 4'b0000; b = 4'bxxxx;
+    and_zero_dominates = a && b;
+    a = 4'b0001; b = 4'bxxxx;
+    and_one_with_x = a && b;
+    a = 4'bxxxx; b = 4'bxxxx;
+    and_x_x = a && b;
+    a = 4'b0001; b = 4'bxxxx;
+    or_one_dominates = a || b;
+    a = 4'b0000; b = 4'bxxxx;
+    or_zero_with_x = a || b;
+    a = 4'bxxxx; b = 4'bxxxx;
+    or_x_x = a || b;
+    a = 4'bxxxx;
+    not_x = !a;
   end
 endmodule
