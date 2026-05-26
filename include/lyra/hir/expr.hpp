@@ -11,6 +11,7 @@
 #include "lyra/hir/subroutine_ref.hpp"
 #include "lyra/hir/type.hpp"
 #include "lyra/hir/unary_op.hpp"
+#include "lyra/hir/value_ref.hpp"
 
 namespace lyra::hir {
 
@@ -36,7 +37,7 @@ struct ConditionalExpr {
 };
 
 struct AssignExpr {
-  ExprId lhs;
+  Lvalue lhs;
   ExprId rhs;
 };
 

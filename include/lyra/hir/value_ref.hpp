@@ -29,6 +29,11 @@ struct LoopVarRef {
   auto operator==(const LoopVarRef&) const -> bool = default;
 };
 
-using ValueRef = std::variant<StructuralVarRef, ProceduralVarRef, LoopVarRef>;
+// Lvalue names a storage location. Same shape is used in both
+// assignment-target position (directly) and read position (wrapped in
+// LvalueRead). Validity of LoopVarRef as a write target depends on context
+// and is enforced at HIR-to-MIR (only the for-loop induction header may
+// write a loop variable).
+using Lvalue = std::variant<StructuralVarRef, ProceduralVarRef, LoopVarRef>;
 
 }  // namespace lyra::hir

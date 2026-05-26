@@ -1,0 +1,13 @@
+id: cpp.compound_assign_bitwise
+tags: [cpp_run]
+input:
+  command: [run, cpp]
+  project: false
+  top: Top
+  files: [main.sv]
+expect:
+  exit: 0
+  variables:
+    and_result: 61440
+    or_result: 65295
+    xor_result: 21845

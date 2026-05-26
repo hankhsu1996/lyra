@@ -42,6 +42,8 @@ shared by all consumers: external references, child routing, and construction.
 - HIR holds the generate tree inside each module compilation unit. MIR lowers generate to
   constructor-time construction logic that builds the object tree.
 - The runtime constructor executes this logic to produce the live object graph.
+- `runtime_model.md` defines the constructor / simulation execution-context split that this doc
+  builds on. Generate logic is constructor-context; processes are simulation-context.
 
 ## Forbidden Shapes
 

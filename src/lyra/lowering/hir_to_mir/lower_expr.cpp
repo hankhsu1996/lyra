@@ -12,7 +12,6 @@
 #include "lyra/hir/binary_op.hpp"
 #include "lyra/hir/conversion.hpp"
 #include "lyra/hir/expr.hpp"
-#include "lyra/hir/inspect.hpp"
 #include "lyra/hir/integral_constant.hpp"
 #include "lyra/hir/process.hpp"
 #include "lyra/hir/structural_scope.hpp"
@@ -223,9 +222,9 @@ auto LowerStructuralParamRefExpr(
       .type = type};
 }
 
-auto LowerRefAsLvalue(
+auto LowerHirLvalueProc(
     const StructuralScopeLoweringState& scope_state,
-    const ProcessLoweringState& proc_state, const hir::ValueRef& ref)
+    const ProcessLoweringState& proc_state, const hir::Lvalue& lvalue)
     -> mir::Lvalue {
   return std::visit(
       Overloaded{
@@ -237,17 +236,17 @@ auto LowerRefAsLvalue(
           },
           [](const hir::LoopVarRef&) -> mir::Lvalue {
             throw InternalError(
-                "LowerRefAsLvalue (process): HIR LoopVarRef must not appear "
-                "as an lvalue; AST->HIR rejects assignment to a loop variable "
-                "via AsAssignableRef()");
+                "LowerHirLvalueProc: HIR LoopVarRef must not appear as an "
+                "lvalue in a process body; the for-loop header is constructor-"
+                "side, not procedural");
           },
       },
-      ref);
+      lvalue);
 }
 
-auto LowerRefAsLvalue(
+auto LowerHirLvalueStructural(
     const StructuralScopeLoweringState& scope_state,
-    const ConstructorLoweringState* ctor_state, const hir::ValueRef& ref,
+    const ConstructorLoweringState* ctor_state, const hir::Lvalue& lvalue,
     LoopVarLoweringMode loop_var_mode) -> mir::Lvalue {
   return std::visit(
       Overloaded{
@@ -262,19 +261,19 @@ auto LowerRefAsLvalue(
           [&](const hir::LoopVarRef& lv) -> mir::Lvalue {
             if (loop_var_mode != LoopVarLoweringMode::kProceduralInduction) {
               throw InternalError(
-                  "LowerRefAsLvalue (constructor): HIR LoopVarRef as lvalue "
-                  "is only valid in for-stmt header context "
-                  "(kProceduralInduction); StructuralParamRef is immutable");
+                  "LowerHirLvalueStructural: HIR LoopVarRef as lvalue is only "
+                  "valid in for-stmt header context (kProceduralInduction); "
+                  "StructuralParamRef is immutable");
             }
             if (ctor_state == nullptr) {
               throw InternalError(
-                  "LowerRefAsLvalue: kProceduralInduction mode requires a "
-                  "non-null ConstructorLoweringState");
+                  "LowerHirLvalueStructural: kProceduralInduction mode "
+                  "requires a non-null ConstructorLoweringState");
             }
             return ctor_state->TranslateLoopVar(lv.loop_var);
           },
       },
-      ref);
+      lvalue);
 }
 
 auto LowerUserCallee(
@@ -283,108 +282,93 @@ auto LowerUserCallee(
   return scope_state.TranslateStructuralSubroutine(u.hops, u.subroutine);
 }
 
-auto LowerPrimaryExpr(
+auto LowerHirIntegerLiteral(const hir::IntegerLiteral& i, mir::TypeId type)
+    -> mir::Expr {
+  return mir::Expr{
+      .data = mir::IntegerLiteral{.value = LowerHirIntegralConstant(i.value)},
+      .type = type};
+}
+
+auto LowerHirStringLiteral(const hir::StringLiteral& s, mir::TypeId type)
+    -> mir::Expr {
+  return mir::Expr{.data = mir::StringLiteral{.value = s.value}, .type = type};
+}
+
+auto LowerHirTimeLiteral(
+    const UnitLoweringState& unit_state, const hir::TimeLiteral& t)
+    -> mir::Expr {
+  return mir::Expr{
+      .data =
+          mir::TimeLiteral{.value = t.value, .scale = LowerTimeScale(t.scale)},
+      .type = unit_state.Builtins().realtime};
+}
+
+auto LowerHirPrimaryProc(
     const UnitLoweringState& unit_state,
     const StructuralScopeLoweringState& scope_state,
-    const ProcessLoweringState& proc_state, const hir::PrimaryExpr& p,
+    const ProcessLoweringState& proc_state, const hir::Primary& p,
     mir::TypeId type) -> mir::Expr {
   return std::visit(
       Overloaded{
           [&](const hir::IntegerLiteral& i) -> mir::Expr {
-            return mir::Expr{
-                .data =
-                    mir::IntegerLiteral{
-                        .value = LowerHirIntegralConstant(i.value)},
-                .type = type};
+            return LowerHirIntegerLiteral(i, type);
           },
           [&](const hir::StringLiteral& s) -> mir::Expr {
-            return mir::Expr{
-                .data = mir::StringLiteral{.value = s.value}, .type = type};
+            return LowerHirStringLiteral(s, type);
           },
           [&](const hir::TimeLiteral& t) -> mir::Expr {
-            return mir::Expr{
-                .data =
-                    mir::TimeLiteral{
-                        .value = t.value, .scale = LowerTimeScale(t.scale)},
-                .type = unit_state.Builtins().realtime};
+            return LowerHirTimeLiteral(unit_state, t);
           },
-          [&](const hir::RefExpr& r) -> mir::Expr {
-            return std::visit(
-                Overloaded{
-                    [&](const hir::StructuralVarRef& m) -> mir::Expr {
-                      return LowerStructuralVarRefExpr(scope_state, m, type);
-                    },
-                    [&](const hir::ProceduralVarRef& l) -> mir::Expr {
-                      return LowerProceduralVarRefExpr(proc_state, l, type);
-                    },
-                    [&](const hir::LoopVarRef& lv) -> mir::Expr {
-                      return LowerStructuralParamRefExpr(scope_state, lv, type);
-                    },
-                },
-                r.target);
+          [&](const hir::StructuralVarRef& m) -> mir::Expr {
+            return LowerStructuralVarRefExpr(scope_state, m, type);
+          },
+          [&](const hir::ProceduralVarRef& l) -> mir::Expr {
+            return LowerProceduralVarRefExpr(proc_state, l, type);
+          },
+          [&](const hir::LoopVarRef& lv) -> mir::Expr {
+            return LowerStructuralParamRefExpr(scope_state, lv, type);
           },
       },
-      p.data);
+      p);
 }
 
-auto LowerPrimaryExpr(
+auto LowerHirPrimaryStructural(
     const UnitLoweringState& unit_state,
     const StructuralScopeLoweringState& scope_state,
-    const ConstructorLoweringState* ctor_state, const hir::PrimaryExpr& p,
-    mir::TypeId type, LoopVarLoweringMode loop_var_mode)
-    -> diag::Result<mir::Expr> {
+    const ConstructorLoweringState* ctor_state, const hir::Primary& p,
+    mir::TypeId type, LoopVarLoweringMode loop_var_mode) -> mir::Expr {
   return std::visit(
       Overloaded{
-          [&](const hir::IntegerLiteral& i) -> diag::Result<mir::Expr> {
-            return mir::Expr{
-                .data =
-                    mir::IntegerLiteral{
-                        .value = LowerHirIntegralConstant(i.value)},
-                .type = type};
+          [&](const hir::IntegerLiteral& i) -> mir::Expr {
+            return LowerHirIntegerLiteral(i, type);
           },
-          [&](const hir::StringLiteral& s) -> diag::Result<mir::Expr> {
-            return mir::Expr{
-                .data = mir::StringLiteral{.value = s.value}, .type = type};
+          [&](const hir::StringLiteral& s) -> mir::Expr {
+            return LowerHirStringLiteral(s, type);
           },
-          [&](const hir::TimeLiteral& t) -> diag::Result<mir::Expr> {
-            return mir::Expr{
-                .data =
-                    mir::TimeLiteral{
-                        .value = t.value, .scale = LowerTimeScale(t.scale)},
-                .type = unit_state.Builtins().realtime};
+          [&](const hir::TimeLiteral& t) -> mir::Expr {
+            return LowerHirTimeLiteral(unit_state, t);
           },
-          [&](const hir::RefExpr& r) -> diag::Result<mir::Expr> {
-            return std::visit(
-                Overloaded{
-                    [&](const hir::StructuralVarRef& m)
-                        -> diag::Result<mir::Expr> {
-                      return LowerStructuralVarRefExpr(scope_state, m, type);
-                    },
-                    [](const hir::ProceduralVarRef&)
-                        -> diag::Result<mir::Expr> {
-                      return diag::Unsupported(
-                          diag::DiagCode::kUnsupportedStructuralExpressionForm,
-                          "procedural variable references are not allowed in "
-                          "constructor expressions",
-                          diag::UnsupportedCategory::kFeature);
-                    },
-                    [&](const hir::LoopVarRef& lv) -> diag::Result<mir::Expr> {
-                      if (loop_var_mode ==
-                          LoopVarLoweringMode::kProceduralInduction) {
-                        if (ctor_state == nullptr) {
-                          throw InternalError(
-                              "LowerPrimaryExpr: kProceduralInduction mode "
-                              "requires a non-null ConstructorLoweringState");
-                        }
-                        return LowerLoopVarRefExpr(*ctor_state, lv, type);
-                      }
-                      return LowerStructuralParamRefExpr(scope_state, lv, type);
-                    },
-                },
-                r.target);
+          [&](const hir::StructuralVarRef& m) -> mir::Expr {
+            return LowerStructuralVarRefExpr(scope_state, m, type);
+          },
+          [](const hir::ProceduralVarRef&) -> mir::Expr {
+            throw InternalError(
+                "LowerHirPrimaryStructural: HIR ProceduralVarRef does not "
+                "appear in constructor expressions");
+          },
+          [&](const hir::LoopVarRef& lv) -> mir::Expr {
+            if (loop_var_mode == LoopVarLoweringMode::kProceduralInduction) {
+              if (ctor_state == nullptr) {
+                throw InternalError(
+                    "LowerHirPrimaryStructural: kProceduralInduction mode "
+                    "requires a non-null ConstructorLoweringState");
+              }
+              return LowerLoopVarRefExpr(*ctor_state, lv, type);
+            }
+            return LowerStructuralParamRefExpr(scope_state, lv, type);
           },
       },
-      p.data);
+      p);
 }
 
 }  // namespace
@@ -400,8 +384,8 @@ auto LowerExpr(
   return std::visit(
       Overloaded{
           [&](const hir::PrimaryExpr& p) -> diag::Result<mir::Expr> {
-            return LowerPrimaryExpr(
-                unit_state, scope_state, proc_state, p, result_type);
+            return LowerHirPrimaryProc(
+                unit_state, scope_state, proc_state, p.data, result_type);
           },
           [&](const hir::UnaryExpr& u) -> diag::Result<mir::Expr> {
             auto operand_or = LowerExpr(
@@ -467,12 +451,6 @@ auto LowerExpr(
                 .type = result_type};
           },
           [&](const hir::AssignExpr& a) -> diag::Result<mir::Expr> {
-            const auto& lhs_expr = hir_process.exprs.at(a.lhs.value);
-            const auto ref = hir::AsAssignableRef(lhs_expr);
-            if (!ref.has_value()) {
-              throw InternalError(
-                  "AssignExpr lhs is not assignable (AST->HIR invariant)");
-            }
             auto rhs_or = LowerExpr(
                 unit_state, scope_state, proc_state, proc_scope_state,
                 hir_process, hir_process.exprs.at(a.rhs.value));
@@ -482,8 +460,8 @@ auto LowerExpr(
             return mir::Expr{
                 .data =
                     mir::AssignExpr{
-                        .target = LowerRefAsLvalue(
-                            scope_state, proc_state, ref->get().target),
+                        .target =
+                            LowerHirLvalueProc(scope_state, proc_state, a.lhs),
                         .value = rhs_id},
                 .type = result_type};
           },
@@ -553,8 +531,8 @@ auto LowerExprImpl(
   return std::visit(
       Overloaded{
           [&](const hir::PrimaryExpr& p) -> diag::Result<mir::Expr> {
-            return LowerPrimaryExpr(
-                unit_state, scope_state, ctor_state, p, result_type,
+            return LowerHirPrimaryStructural(
+                unit_state, scope_state, ctor_state, p.data, result_type,
                 loop_var_mode);
           },
           [&](const hir::UnaryExpr& u) -> diag::Result<mir::Expr> {
@@ -621,12 +599,6 @@ auto LowerExprImpl(
                 .type = result_type};
           },
           [&](const hir::AssignExpr& a) -> diag::Result<mir::Expr> {
-            const auto& lhs_expr = scope.GetExpr(a.lhs);
-            const auto ref = hir::AsAssignableRef(lhs_expr);
-            if (!ref.has_value()) {
-              throw InternalError(
-                  "AssignExpr lhs is not assignable (AST->HIR invariant)");
-            }
             auto rhs_or = LowerExprImpl(
                 unit_state, scope_state, ctor_state, proc_scope_state, scope,
                 scope.GetExpr(a.rhs), loop_var_mode);
@@ -636,9 +608,8 @@ auto LowerExprImpl(
             return mir::Expr{
                 .data =
                     mir::AssignExpr{
-                        .target = LowerRefAsLvalue(
-                            scope_state, ctor_state, ref->get().target,
-                            loop_var_mode),
+                        .target = LowerHirLvalueStructural(
+                            scope_state, ctor_state, a.lhs, loop_var_mode),
                         .value = rhs_id},
                 .type = result_type};
           },

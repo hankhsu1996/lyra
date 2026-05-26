@@ -1,0 +1,15 @@
+id: cpp.compound_assign_arithmetic
+tags: [cpp_run]
+input:
+  command: [run, cpp]
+  project: false
+  top: Top
+  files: [main.sv]
+expect:
+  exit: 0
+  variables:
+    add_result: 13
+    sub_result: 7
+    mul_result: 30
+    div_result: 3
+    mod_result: 1

@@ -7,6 +7,7 @@
 #include <vector>
 
 #include <slang/ast/Expression.h>
+#include <slang/ast/expressions/AssignmentExpressions.h>
 #include <slang/ast/symbols/BlockSymbols.h>
 #include <slang/ast/symbols/MemberSymbols.h>
 #include <slang/ast/symbols/ParameterSymbols.h>
@@ -228,6 +229,37 @@ auto BuildCaseGenerate(
   return gen;
 }
 
+// Lower the iter expression of a loop_generate header into the loop's
+// next-value expression for its loop variable. Per LRM 27.5,
+// genvar_iteration is restricted to: `i = e`, `i op= e`, `++i`, `i++`, `--i`,
+// `i--`. All four forms compute exactly one new value for THE loop variable;
+// HIR stores that next-value, not an assignment. The loop's iteration write
+// is owned by the loop semantic, not by a general assignment.
+auto LowerLoopIterNextValue(
+    const UnitLoweringFacts& unit_facts, UnitLoweringState& unit_state,
+    ScopeLoweringState& parent_state, const ScopeStack& stack,
+    const slang::ast::Expression& iter, const hir::Lvalue& loop_var_lvalue)
+    -> diag::Result<hir::Expr> {
+  const auto& mapper = unit_facts.SourceMapper();
+  const auto span = mapper.SpanOf(iter.sourceRange);
+
+  if (iter.kind == slang::ast::ExpressionKind::Assignment) {
+    const auto& assign = iter.as<slang::ast::AssignmentExpression>();
+    // For simple `i = e`, slang.right() is `e` (no LValueReference).
+    // For compound `i op= e`, slang.right() is the synthetic
+    // BinaryOp{op, LValueRef, e_resolved}; passing the loop-var lvalue as
+    // compound context resolves LValueRef to a read of the loop var.
+    return LowerStructuralExpr(
+        unit_facts, unit_state, parent_state, stack, assign.right(),
+        loop_var_lvalue);
+  }
+
+  return diag::Unsupported(
+      span, diag::DiagCode::kUnsupportedStructuralExpressionForm,
+      "this generate iteration form is not supported yet",
+      diag::UnsupportedCategory::kFeature);
+}
+
 auto BuildLoopGenerate(
     const UnitLoweringFacts& unit_facts, UnitLoweringState& unit_state,
     ScopeLoweringState& parent_state, ScopeStack& stack,
@@ -260,8 +292,11 @@ auto BuildLoopGenerate(
   if (!stop_expr) return std::unexpected(std::move(stop_expr.error()));
   const hir::ExprId stop_id = parent_state.AddExpr(*std::move(stop_expr));
 
-  auto iter_expr = LowerStructuralExpr(
-      unit_facts, unit_state, parent_state, stack, *array.iterExpression);
+  const hir::Lvalue loop_var_lvalue{
+      hir::LoopVarRef{.hops = hir::StructuralHops{0}, .loop_var = loop_var_id}};
+  auto iter_expr = LowerLoopIterNextValue(
+      unit_facts, unit_state, parent_state, stack, *array.iterExpression,
+      loop_var_lvalue);
   if (!iter_expr) return std::unexpected(std::move(iter_expr.error()));
   const hir::ExprId iter_id = parent_state.AddExpr(*std::move(iter_expr));
 

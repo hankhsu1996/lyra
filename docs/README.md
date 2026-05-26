@@ -19,4 +19,12 @@ the doc.
 
 ## Reading Order
 
-Read `architecture/README.md` first. It lists the architecture docs in the intended reading order.
+Read `architecture/README.md` first. It lists the architecture docs in the intended reading order
+and includes a **Concept Index** mapping topics (`generate`, `lvalue`, `scheduler`,
+`constructor context`, ...) to the doc that owns them.
+
+## Finding Things Fast
+
+If you know what concept you are looking for, jump straight to the Concept Index in
+`architecture/README.md`. If you are not sure what to call the concept, start at the top of the
+Reading Order: `north_star.md` then `compiler_overview.md` give the framing in under five minutes.
