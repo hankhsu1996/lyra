@@ -7,5 +7,7 @@ input:
   files: [main.sv]
 expect:
   exit: 0
-  stdout:
-    exact: "1\n0\n1\n"
+  variables:
+    and_all_one: 1
+    and_top_zero: 0
+    or_top_one: 1

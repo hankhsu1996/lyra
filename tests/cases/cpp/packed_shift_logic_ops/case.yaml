@@ -1,0 +1,16 @@
+id: cpp.packed_shift_logic_ops
+tags: [cpp_run]
+input:
+  command: [run, cpp]
+  project: false
+  top: Top
+  files: [main.sv]
+expect:
+  exit: 0
+  variables:
+    shl_: "8'b11010000"
+    shr_logical: "8'b00101101"
+    shr_arith_pos: "8'b00001101"
+    shr_arith_neg: "8'b11110011"
+    shl_overflow: "4'b0000"
+    shr_overflow: "4'b0000"
