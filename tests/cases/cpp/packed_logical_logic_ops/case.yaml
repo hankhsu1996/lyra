@@ -16,3 +16,10 @@ expect:
     or_ff: 0
     not_t: 0
     not_f: 1
+    and_zero_dominates: 0
+    and_one_with_x: "1'bx"
+    and_x_x: "1'bx"
+    or_one_dominates: 1
+    or_zero_with_x: "1'bx"
+    or_x_x: "1'bx"
+    not_x: "1'bx"

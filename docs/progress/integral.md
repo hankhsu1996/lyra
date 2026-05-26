@@ -11,9 +11,8 @@ Done when:
 - Every SystemVerilog integral type (`byte`, `shortint`, `int`, `longint`, `integer`, `time`, any
   `bit [N:0]`, any `logic [N:0]`, any `reg [N:0]`) emits as `lyra::value::PackedArray` and
   round-trips through `expect.variables`.
-- `RenderTypeAsCpp`, `RenderExprAsNative`, `RenderExprAsPackedTopLevel`,
-  `RenderRuntimeValueViewInit`, and related helpers no longer dispatch on `PackedArrayForm` or carry
-  separate native / container code paths.
+- `RenderTypeAsCpp`, the single `RenderExpr` path, `RenderRuntimeValueViewInit`, and related helpers
+  no longer dispatch on `PackedArrayForm` or carry separate native / container code paths.
 - The archive item set under `operators/binary`, `operators/unary`, `operators/shift_overflow`,
   `datatypes/integral`, `datatypes/packed`, `datatypes/wide_integral` reproduces.
 
@@ -39,13 +38,13 @@ emits `lyra::value::PackedArray` for every integral type. `RenderRuntimeValueVie
 `backend::cpp` continues to compile because variable declarations and `$display` are the only
 consumers that need PackedArray at this point.
 
-- [ ] J1 -- Add `lyra::value::PackedArray` class. Storage variant: inline word(s) for
+- [x] J1 -- Add `lyra::value::PackedArray` class. Storage variant: inline word(s) for
       `bit_width <= 64`, heap multi-word for `>64`; 4-state carries an unknown plane the same way.
-- [ ] J2 -- `RenderTypeAsCpp` returns `lyra::value::PackedArray` for every `PackedArrayType`,
+- [x] J2 -- `RenderTypeAsCpp` returns `lyra::value::PackedArray` for every `PackedArrayType`,
       regardless of `form`. Catch-all unrenderable type returns `diag::Unsupported`.
-- [ ] J3 -- Container init helper retires (only `PackedArray` exists; every integral declares with
+- [x] J3 -- Container init helper retires (only `PackedArray` exists; every integral declares with
       `{bit_width, is_signed, is_four_state}`).
-- [ ] J4 -- `RenderRuntimeValueViewInit` produces its `RuntimeValueView` from `PackedArray`.
+- [x] J4 -- `RenderRuntimeValueViewInit` produces its `RuntimeValueView` from `PackedArray`.
       `NarrowIntegral` / `FromBitView` / `FromLogicView` becomes one path.
 - [ ] J5 -- `tests/cases/cpp/` declaration cases for `byte` / `shortint` / `longint` / `time` /
       `integer` (with X/Z); update / replace any existing tests that asserted native-int output
@@ -56,16 +55,17 @@ consumers that need PackedArray at this point.
 Add operator overloads / methods so cpp emit can render `BinaryExpr` and `UnaryExpr` directly
 against `PackedArray`. The dispatch in `RenderExpr*` collapses to a single path.
 
-- [ ] J6 -- Bitwise (`&`, `|`, `^`, `~^`, `~`) as member operators or method on `PackedArray`.
-- [ ] J7 -- Arithmetic (`+`, `-`, `*`, `/`, `%`, `**`) with LRM corner cases (div-by-zero, power
-      semantics).
-- [ ] J8 -- Comparison (`==`, `!=`, `<`, `<=`, `>`, `>=`) returning a 1-bit `PackedArray`.
-- [ ] J9 -- Shift (`<<`, `>>`, `>>>`) with LRM overflow (`amount >= bit_width` yields 0 /
+- [x] J6 -- Bitwise (`&`, `|`, `^`, `~^`, `~`) as member operators or method on `PackedArray`.
+- [x] J7 -- Arithmetic (`+`, `-`, `*`, `/`, `%`, `**`) with LRM corner cases (div-by-zero, power
+      semantics). Narrow (`<=64`) only; wide arithmetic still throws `InternalError`.
+- [x] J8 -- Comparison (`==`, `!=`, `<`, `<=`, `>`, `>=`) returning a 1-bit `PackedArray`.
+- [x] J9 -- Shift (`<<`, `>>`, `>>>`) with LRM overflow (`amount >= bit_width` yields 0 /
       sign-fill).
-- [ ] J10 -- Logical (`&&`, `||`, `!`, `->`, `<->`) returning a 1-bit `PackedArray`.
-- [ ] J11 -- Reduction (`&a`, `|a`, `^a`, `~&a`, `~|a`, `~^a`) as `PackedArray` methods.
-- [ ] J12 -- 4-state X/Z propagation across all the above. (May land per op-family rather than all
-      at once.)
+- [x] J10 -- Logical (`&&`, `||`, `!`) returning a 1-bit `PackedArray`. `->` and `<->` are a
+      separate scalar-emit token wiring step tracked in `operators.md`.
+- [x] J11 -- Reduction (`&a`, `|a`, `^a`, `~&a`, `~|a`, `~^a`) as `PackedArray` methods.
+- [x] J12 -- 4-state X/Z propagation across arithmetic, comparison, shift, power, logical, and unary
+      `-`. Bitwise / reduction already propagate via the view-based truth-table path. Narrow only.
 - [ ] J13 -- Archive sweep: reproduce `operators/binary/default.yaml`, `operators/unary/...`,
       `operators/shift_overflow/...`, and their `four_state.yaml` companions.
 
@@ -74,9 +74,9 @@ against `PackedArray`. The dispatch in `RenderExpr*` collapses to a single path.
 Remove `RenderExprAsNative` / `RenderExprAsPackedTopLevel` split. Single `RenderExpr` path, single
 `ConversionExpr` arm.
 
-- [ ] J14 -- One `RenderExpr` path. `IsPackedExplicit`, `NeedsRuntimeContainerInit`, the
+- [x] J14 -- One `RenderExpr` path. `IsPackedExplicit`, `NeedsRuntimeContainerInit`, the
       `MakeBitView` / `BitViewToInt64` bridges (if they exist by then) all retire.
-- [ ] J15 -- `ConversionExpr` collapses to "construct a destination `PackedArray` from a source
+- [x] J15 -- `ConversionExpr` collapses to "construct a destination `PackedArray` from a source
       `PackedArray`" -- one case, handled by `PackedArray` itself.
 
 ## Cross-references
@@ -90,8 +90,9 @@ Remove `RenderExprAsNative` / `RenderExprAsPackedTopLevel` split. Single `Render
 - Slang reference: `slang/ast/types/AllTypes.h:IntegralType`.
 - Legacy archive reference: `archived/include/lyra/common/type.hpp:IntegralInfo`.
 
-## Supersedes
+## Relationship to `operators.md`
 
-`operators.md` -- its B1-B7 / U1-U4 sub-steps were scoped to the narrow native path; the work plan
-here covers the whole integral surface and subsumes them. `operators.md` will be deleted as part of
-Cut 1's first PR.
+`operators.md` now tracks the scalar-emit residue that the integral runtime does not own: items that
+need either a new HIR/MIR shape (`++`/`--`) or a cpp-emit token rewrite (`~^` / `^~` binary, `->`,
+`<->`, scalar reductions on `int`). The runtime side of every other binary / unary operator family,
+including 4-state X/Z propagation, lives here.

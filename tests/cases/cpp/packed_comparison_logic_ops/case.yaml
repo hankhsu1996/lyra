@@ -14,3 +14,9 @@ expect:
     le_: 1
     gt_: 1
     ge_: 1
+    eq_xz: "1'bx"
+    neq_xz: "1'bx"
+    lt_xz: "1'bx"
+    le_xz: "1'bx"
+    gt_xz: "1'bx"
+    ge_xz: "1'bx"
