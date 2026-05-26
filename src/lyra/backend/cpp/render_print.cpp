@@ -254,6 +254,15 @@ auto RenderRuntimeCallExpr(
           [&](const mir::RuntimeFinishCall& fc) -> diag::Result<std::string> {
             return RenderRuntimeFinishCall(fc);
           },
+          [&](const mir::RuntimeSubmitObservedCall& sc)
+              -> diag::Result<std::string> {
+            auto closure_or = RenderExpr(ctx, ctx.Expr(sc.closure));
+            if (!closure_or) {
+              return std::unexpected(std::move(closure_or.error()));
+            }
+            return std::format(
+                "this->SubmitObserved({}, {})", sc.site_id.value, *closure_or);
+          },
       },
       expr.call);
 }

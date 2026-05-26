@@ -1,0 +1,11 @@
+id: cpp.unique0_if_violation_multi
+tags: [cpp_run]
+input:
+  command: [run, cpp]
+  project: false
+  top: Top
+  files: [main.sv]
+expect:
+  exit: 0
+  stderr:
+    exact: "warning: unique0 check failed: matched 2 of 2 conditions\n"

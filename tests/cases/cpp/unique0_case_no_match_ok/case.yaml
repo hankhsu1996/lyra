@@ -1,0 +1,11 @@
+id: cpp.unique0_case_no_match_ok
+tags: [cpp_run]
+input:
+  command: [run, cpp]
+  project: false
+  top: Top
+  files: [main.sv]
+expect:
+  exit: 0
+  stderr:
+    exact: ""
