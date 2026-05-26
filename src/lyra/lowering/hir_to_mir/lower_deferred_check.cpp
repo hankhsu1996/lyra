@@ -10,13 +10,11 @@
 #include <vector>
 
 #include "lyra/base/internal_error.hpp"
-#include "lyra/hir/expr.hpp"
 #include "lyra/lowering/hir_to_mir/lower_expr.hpp"
 #include "lyra/lowering/hir_to_mir/lower_stmt.hpp"
 #include "lyra/lowering/hir_to_mir/procedural_scope_helpers.hpp"
 #include "lyra/mir/binary_op.hpp"
 #include "lyra/mir/closure.hpp"
-#include "lyra/mir/expr.hpp"
 #include "lyra/mir/expr_id.hpp"
 #include "lyra/mir/integral_constant.hpp"
 #include "lyra/mir/procedural_hops.hpp"
@@ -126,15 +124,11 @@ auto AppendStmt(mir::ProceduralScope& scope, mir::Stmt stmt) -> mir::StmtId {
 
 auto SnapshotPredicate(
     ProceduralScopeLoweringState& wrapper_state, std::size_t index,
-    mir::TypeId int32_type, mir::ExprId predicate_expr_id)
+    mir::TypeId predicate_type, mir::ExprId predicate_expr_id)
     -> mir::ProceduralVarId {
-  // int32 (not bit) so the assign can take a BinaryExpr source -- cpp emit's
-  // RenderPackedExprAsView rejects non-Ref/non-Literal sources, but the
-  // native int path accepts arbitrary expressions and the implicit
-  // bool->int conversion preserves truthiness.
   const std::string var_name = std::format("_lyra_unique_cond_{}", index);
   const mir::ProceduralVarId snap_var = wrapper_state.AddProceduralVar(
-      mir::ProceduralVarDecl{.name = var_name, .type = int32_type});
+      mir::ProceduralVarDecl{.name = var_name, .type = predicate_type});
 
   const mir::StmtId decl_id = wrapper_state.AddStmt(
       mir::Stmt{
@@ -157,7 +151,7 @@ auto SnapshotPredicate(
                       .hops = mir::ProceduralHops{.value = 0},
                       .var = snap_var}},
                   .value = predicate_expr_id},
-          .type = int32_type});
+          .type = predicate_type});
   const mir::StmtId assign_stmt_id = wrapper_state.AddStmt(
       mir::Stmt{
           .label = std::nullopt,
@@ -175,7 +169,7 @@ auto BuildDiagnosticThenScope(
   mir::ProceduralScope scope;
 
   std::vector<mir::RuntimePrintItem> items;
-  items.push_back(mir::RuntimePrintLiteral{.text = verdict.prefix_text});
+  items.emplace_back(mir::RuntimePrintLiteral{.text = verdict.prefix_text});
   if (verdict.include_count_value) {
     const mir::ExprId count_read_id = AppendExpr(
         scope,
@@ -184,12 +178,12 @@ auto BuildDiagnosticThenScope(
                 mir::ProceduralVarRef{
                     .hops = mir::ProceduralHops{.value = 1}, .var = count_var},
             .type = int32_type});
-    items.push_back(
+    items.emplace_back(
         mir::RuntimePrintValue(
             count_read_id, int32_type,
             mir::FormatSpec(
                 mir::FormatKind::kDecimal, mir::FormatModifiers{})));
-    items.push_back(mir::RuntimePrintLiteral{.text = verdict.suffix_text});
+    items.emplace_back(mir::RuntimePrintLiteral{.text = verdict.suffix_text});
   }
 
   const mir::ExprId diag_call_id = AppendExpr(
@@ -209,7 +203,7 @@ auto BuildDiagnosticThenScope(
   return scope;
 }
 
-auto BuildClosure(
+auto BuildUniqueCheckClosure(
     ProceduralScopeLoweringState& wrapper_state, mir::TypeId int32_type,
     mir::TypeId void_type, hir::UniquePriorityCheck check,
     const std::vector<mir::ProceduralVarId>& snapshot_vars)
@@ -221,20 +215,21 @@ auto BuildClosure(
   std::vector<mir::ExprId> inner_reads;
   inner_reads.reserve(snapshot_vars.size());
   for (std::size_t i = 0; i < snapshot_vars.size(); ++i) {
+    const mir::TypeId snap_type =
+        wrapper_state.GetProceduralVar(snapshot_vars[i]).type;
     const mir::ExprId outer_read_id = wrapper_state.AddExpr(
         mir::Expr{
             .data =
                 mir::ProceduralVarRef{
                     .hops = mir::ProceduralHops{.value = 0},
                     .var = snapshot_vars[i]},
-            .type = int32_type});
+            .type = snap_type});
 
     const mir::ProceduralVarId binding{
         static_cast<std::uint32_t>(body.vars.size())};
-    body.vars.push_back(
+    body.vars.emplace_back(
         mir::ProceduralVarDecl{
-            .name = std::format("_lyra_unique_bind_{}", i),
-            .type = int32_type});
+            .name = std::format("_lyra_unique_bind_{}", i), .type = snap_type});
     closure.captures.emplace_back(
         mir::ByValueCapture{.value = outer_read_id, .binding = binding});
 
@@ -244,7 +239,7 @@ auto BuildClosure(
             .data =
                 mir::ProceduralVarRef{
                     .hops = mir::ProceduralHops{.value = 0}, .var = binding},
-            .type = int32_type});
+            .type = snap_type});
     inner_reads.push_back(inner_read_id);
   }
 
@@ -366,12 +361,14 @@ auto BuildDeferredCheckCascade(
   std::vector<mir::ProceduralVarId> snapshot_vars;
   snapshot_vars.reserve(branches.size());
   for (std::size_t i = 0; i < branches.size(); ++i) {
-    snapshot_vars.push_back(
-        SnapshotPredicate(wrapper_state, i, int32_type, branches[i].predicate));
+    const mir::TypeId predicate_type =
+        wrapper_state.GetExpr(branches[i].predicate).type;
+    snapshot_vars.push_back(SnapshotPredicate(
+        wrapper_state, i, predicate_type, branches[i].predicate));
   }
 
-  mir::ClosureExpr closure =
-      BuildClosure(wrapper_state, int32_type, void_type, check, snapshot_vars);
+  mir::ClosureExpr closure = BuildUniqueCheckClosure(
+      wrapper_state, int32_type, void_type, check, snapshot_vars);
   const mir::ExprId closure_expr_id = wrapper_state.AddExpr(
       mir::Expr{.data = std::move(closure), .type = void_type});
 
