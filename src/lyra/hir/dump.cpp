@@ -2,6 +2,7 @@
 
 #include <cstddef>
 #include <format>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -70,6 +71,20 @@ class HirDumper {
 
   static auto FormatSignedness(Signedness s) -> std::string_view {
     return s == Signedness::kSigned ? "signed" : "unsigned";
+  }
+
+  static auto FormatUniquePriorityCheck(
+      std::optional<UniquePriorityCheck> check) -> std::string {
+    if (!check.has_value()) return "";
+    switch (*check) {
+      case UniquePriorityCheck::kUnique:
+        return "[unique]";
+      case UniquePriorityCheck::kUnique0:
+        return "[unique0]";
+      case UniquePriorityCheck::kPriority:
+        return "[priority]";
+    }
+    throw InternalError("HirDumper::FormatUniquePriorityCheck: unknown check");
   }
 
   static auto FormatPackedForm(PackedArrayForm f) -> std::string_view {
@@ -626,8 +641,8 @@ class HirDumper {
             [&](const IfStmt& i) {
               Line(
                   std::format(
-                      "Stmt[{}] IfStmt cond=Expr[{}]", id.value,
-                      i.condition.value));
+                      "Stmt[{}] IfStmt{} cond=Expr[{}]", id.value,
+                      FormatUniquePriorityCheck(i.check), i.condition.value));
               Indent();
               Line(
                   std::format(
@@ -648,8 +663,9 @@ class HirDumper {
             [&](const CaseStmt& c) {
               Line(
                   std::format(
-                      "Stmt[{}] CaseStmt cond=Expr[{}] (items={})", id.value,
-                      c.condition.value, c.items.size()));
+                      "Stmt[{}] CaseStmt{} cond=Expr[{}] (items={})", id.value,
+                      FormatUniquePriorityCheck(c.check), c.condition.value,
+                      c.items.size()));
               Indent();
               Line(
                   std::format(

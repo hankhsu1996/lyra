@@ -14,14 +14,13 @@ operator runtime, string runtime); see the per-item **Depends on** lines and the
 No open items are currently actionable inside this workstream alone. Every remaining item depends on
 machinery owned by another workstream; the table below lists the blockers.
 
-| Item    | Blocked on                                                                                                                                                                                                                                                                                                                                        |
-| ------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| C9, C10 | `datatypes/unpacked` (procedural unpacked array vars + `arr[i]` element-select expr).                                                                                                                                                                                                                                                             |
-| C11     | `operators/wildcard_equality` (masked-compare runtime helper for `==?` / `!=?`).                                                                                                                                                                                                                                                                  |
-| C12     | `operators/inside` (range patterns + set-membership runtime).                                                                                                                                                                                                                                                                                     |
-| C13     | A MIR action shape for deferred checks bound to the observed / reactive scheduling regions. The runtime reporting channel (severity, stderr routing, rate limit) is in place via the `$info` / `$warning` / `$error` work, so the remaining blocker is the deferred-callable machinery (and, when added, populating source locations end to end). |
-| C16     | `datatypes/enum`.                                                                                                                                                                                                                                                                                                                                 |
-| C17     | `datatypes/string` plus the string-equality runtime helper from `operators/binary_string`.                                                                                                                                                                                                                                                        |
+| Item    | Blocked on                                                                                 |
+| ------- | ------------------------------------------------------------------------------------------ |
+| C9, C10 | `datatypes/unpacked` (procedural unpacked array vars + `arr[i]` element-select expr).      |
+| C11     | `operators/wildcard_equality` (masked-compare runtime helper for `==?` / `!=?`).           |
+| C12     | `operators/inside` (range patterns + set-membership runtime).                              |
+| C16     | `datatypes/enum`.                                                                          |
+| C17     | `datatypes/string` plus the string-equality runtime helper from `operators/binary_string`. |
 
 ## Sub-Steps
 
@@ -87,17 +86,19 @@ machinery owned by another workstream; the table below lists the blockers.
 - [ ] C12 -- `case (... inside ...)`. Range patterns (`[lo:hi]`) and `inside` membership; lower to
       if/else cascade with `inside` semantics. **Depends on** `operators/inside` for the
       set-membership runtime.
-- [ ] C13 -- `unique` / `unique0` / `priority` qualifiers on `if` and `case`. The qualifier itself
-      is a single HIR / MIR enum field; the hard part is producing the warning without false
-      positives during combinational settle. SV's intended model is a deferred check: the qualifier
-      site records an observation at evaluation time, and a drain step after the settle epoch
-      classifies the final observation and emits at most one report per site. Covers archive items
-      `unique_priority_if` and `unique_priority_case`. The runtime reporting channel (severity-based
-      routing, rate limiting) landed alongside `$info` / `$warning` / `$error`, so the remaining
-      **dependency** is a MIR action shape for deferred checks bound to the observed / reactive
-      scheduling regions (`mir.md` forbids representing deferred behavior as a flag or lowering-pass
-      side effect, so the check must be an explicit callable invoked by the scheduler). End-to-end
-      source-location propagation also needs to land before warnings can pinpoint the failing site.
+- [x] C13 -- `unique` / `unique0` / `priority` qualifiers on `if` and `case`. HIR carries the
+      qualifier as an optional `UniquePriorityCheck` field on `IfStmt` / `CaseStmt`. HIR -> MIR
+      desugars the site into a `BlockStmt` that snapshots each branch's predicate into a fresh
+      procvar, hands a closure to the Observed region via `RuntimeSubmitObservedCall`, and renders
+      the original cascade as a plain `if`/`else if` chain reading the snapshots. The closure body
+      counts truthy snapshots and emits a warning through the existing `RuntimeDiagnosticCall` /
+      `LyraDiagnostic` path when the qualifier-specific predicate fires (`unique`: count != 1;
+      `unique0`: count > 1; `priority`: count == 0). The runtime drains `Module::observed_pending_`
+      per-object during `Engine::ExecuteObservedRegion`; re-submits at the same site within one time
+      slot collapse via vector-slot replacement, suppressing glitch-driven false positives. Covers
+      archive items `unique_priority_if` and `unique_priority_case`. Source-location propagation
+      still feeds `origin = nullopt`; the warning text reports the violation kind and the matched
+      count but not the file/line of the offending statement -- to be plumbed in a follow-up.
 - [x] C15 -- `case` with labels that are not compile-time constants (`case (sel) some_expr: ...`)
       and `case` with duplicate labels ("first match wins"). The uniform HIR -> MIR cascade
       described in C3 handles both: non-constant labels render as runtime `==` comparisons, and

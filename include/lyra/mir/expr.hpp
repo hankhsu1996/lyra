@@ -13,6 +13,7 @@
 #include "lyra/mir/runtime_diagnostic.hpp"
 #include "lyra/mir/runtime_finish.hpp"
 #include "lyra/mir/runtime_print.hpp"
+#include "lyra/mir/runtime_submit.hpp"
 #include "lyra/mir/structural_param.hpp"
 #include "lyra/mir/structural_subroutine.hpp"
 #include "lyra/mir/type.hpp"
@@ -70,8 +71,9 @@ struct CallExpr {
   std::vector<ExprId> arguments;
 };
 
-using RuntimeCall =
-    std::variant<RuntimePrintCall, RuntimeDiagnosticCall, RuntimeFinishCall>;
+using RuntimeCall = std::variant<
+    RuntimePrintCall, RuntimeDiagnosticCall, RuntimeFinishCall,
+    RuntimeSubmitObservedCall>;
 
 struct RuntimeCallExpr {
   RuntimeCall call;

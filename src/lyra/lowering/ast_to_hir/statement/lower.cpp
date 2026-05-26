@@ -14,6 +14,7 @@
 #include <slang/ast/statements/MiscStatements.h>
 #include <slang/ast/symbols/VariableSymbols.h>
 
+#include "lyra/base/internal_error.hpp"
 #include "lyra/diag/diag_code.hpp"
 #include "lyra/diag/diagnostic.hpp"
 #include "lyra/diag/kind.hpp"
@@ -27,6 +28,22 @@
 namespace lyra::lowering::ast_to_hir {
 
 namespace {
+
+auto LowerUniquePriorityCheck(slang::ast::UniquePriorityCheck check)
+    -> std::optional<hir::UniquePriorityCheck> {
+  switch (check) {
+    case slang::ast::UniquePriorityCheck::None:
+      return std::nullopt;
+    case slang::ast::UniquePriorityCheck::Unique:
+      return hir::UniquePriorityCheck::kUnique;
+    case slang::ast::UniquePriorityCheck::Unique0:
+      return hir::UniquePriorityCheck::kUnique0;
+    case slang::ast::UniquePriorityCheck::Priority:
+      return hir::UniquePriorityCheck::kPriority;
+  }
+  throw InternalError(
+      "LowerUniquePriorityCheck: unknown slang UniquePriorityCheck value");
+}
 
 auto LowerTimingControl(
     const UnitLoweringFacts& unit_facts, UnitLoweringState& unit_state,
@@ -286,12 +303,7 @@ auto LowerStatement(
             "casez/casex/case-inside are not yet supported",
             diag::UnsupportedCategory::kFeature);
       }
-      if (cs.check != slang::ast::UniquePriorityCheck::None) {
-        return diag::Unsupported(
-            span, diag::DiagCode::kUnsupportedStatementForm,
-            "unique/priority qualifiers on case are not yet supported",
-            diag::UnsupportedCategory::kFeature);
-      }
+      const auto case_check = LowerUniquePriorityCheck(cs.check);
       auto cond_expr = LowerProcExpr(
           unit_facts, scope_state.UnitState(), proc_state, stack, cs.expr);
       if (!cond_expr) return std::unexpected(std::move(cond_expr.error()));
@@ -330,18 +342,14 @@ auto LowerStatement(
               hir::CaseStmt{
                   .condition = cond_id,
                   .items = std::move(items),
-                  .default_stmt = default_id},
+                  .default_stmt = default_id,
+                  .check = case_check},
           .span = span};
     }
 
     case slang::ast::StatementKind::Conditional: {
       const auto& cs = stmt.as<slang::ast::ConditionalStatement>();
-      if (cs.check != slang::ast::UniquePriorityCheck::None) {
-        return diag::Unsupported(
-            span, diag::DiagCode::kUnsupportedStatementForm,
-            "unique/priority qualifiers on if are not yet supported",
-            diag::UnsupportedCategory::kFeature);
-      }
+      const auto if_check = LowerUniquePriorityCheck(cs.check);
       if (cs.conditions.size() != 1) {
         return diag::Unsupported(
             span, diag::DiagCode::kUnsupportedStatementForm,
@@ -376,7 +384,8 @@ auto LowerStatement(
               hir::IfStmt{
                   .condition = cond_id,
                   .then_stmt = then_id,
-                  .else_stmt = else_id},
+                  .else_stmt = else_id,
+                  .check = if_check},
           .span = span};
     }
 

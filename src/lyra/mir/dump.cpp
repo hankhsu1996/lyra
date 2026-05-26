@@ -600,6 +600,13 @@ class MirDumper {
                   [&](const RuntimeFinishCall& fc) {
                     Line(std::format("RuntimeFinishCall level={}", fc.level));
                   },
+                  [&](const RuntimeSubmitObservedCall& sc) {
+                    Line(
+                        std::format(
+                            "RuntimeSubmitObservedCall site={} "
+                            "closure=Expr[{}]",
+                            sc.site_id.value, sc.closure.value));
+                  },
               },
               rc->call);
           Dedent();
