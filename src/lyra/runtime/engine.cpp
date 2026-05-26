@@ -46,6 +46,7 @@ void Engine::BindRoot(std::string root_name, Module& top) {
   bound_ = true;
   root_ = std::make_unique<RuntimeScope>(
       nullptr, std::move(root_name), RuntimeScopeKind::kModuleInstance);
+  registered_modules_.push_back(&top);
   RuntimeBindContext ctx(*root_, services_);
   top.Bind(ctx);
 }
@@ -155,6 +156,9 @@ void Engine::ExecuteNbaRegion() {
 
 void Engine::ExecuteObservedRegion() {
   phase_ = SchedulerPhase::kObserved;
+  for (Module* m : registered_modules_) {
+    m->DrainObserved();
+  }
 }
 
 void Engine::ExecuteReactiveRegion() {

@@ -11,6 +11,7 @@
 
 #include "lyra/backend/cpp/render_context.hpp"
 #include "lyra/backend/cpp/render_print.hpp"
+#include "lyra/backend/cpp/render_stmt.hpp"
 #include "lyra/backend/cpp/string_literal.hpp"
 #include "lyra/base/internal_error.hpp"
 #include "lyra/base/overloaded.hpp"
@@ -243,6 +244,10 @@ auto RenderLvalue(const RenderContext& ctx, const mir::Lvalue& target)
       target);
 }
 
+auto RenderClosureExpr(
+    const RenderContext& ctx, const mir::ClosureExpr& closure)
+    -> diag::Result<std::string>;
+
 auto RenderExpr(const RenderContext& ctx, const mir::Expr& expr)
     -> diag::Result<std::string> {
   return std::visit(
@@ -352,14 +357,55 @@ auto RenderExpr(const RenderContext& ctx, const mir::Expr& expr)
           [&](const mir::RuntimeCallExpr& rc) -> diag::Result<std::string> {
             return RenderRuntimeCallExpr(ctx, rc);
           },
-          [](const mir::ClosureExpr&) -> diag::Result<std::string> {
-            return diag::Unsupported(
-                diag::DiagCode::kCppEmitExpressionFormNotImplemented,
-                "ClosureExpr is not yet implemented in cpp emit",
-                diag::UnsupportedCategory::kFeature);
+          [&](const mir::ClosureExpr& cl) -> diag::Result<std::string> {
+            return RenderClosureExpr(ctx, cl);
           },
       },
       expr.data);
+}
+
+auto RenderClosureExpr(
+    const RenderContext& ctx, const mir::ClosureExpr& closure)
+    -> diag::Result<std::string> {
+  if (closure.body == nullptr) {
+    throw InternalError("RenderClosureExpr: closure has no body");
+  }
+
+  // Always capture `this` so the closure body can reach module-scope members
+  // (the emitted module class's services_ pointer, structural vars, the
+  // SubmitObserved / DrainObserved interface on the Module base). The
+  // explicit by-value captures from the MIR list go after.
+  std::string captures_text = "this";
+  for (std::size_t i = 0; i < closure.captures.size(); ++i) {
+    captures_text += ", ";
+    auto rendered_or = std::visit(
+        Overloaded{
+            [&](const mir::ByValueCapture& bv) -> diag::Result<std::string> {
+              const std::string& bind_name =
+                  closure.body->vars.at(bv.binding.value).name;
+              auto value_or = RenderExpr(ctx, ctx.Expr(bv.value));
+              if (!value_or) {
+                return std::unexpected(std::move(value_or.error()));
+              }
+              return bind_name + " = " + *value_or;
+            },
+            [](const mir::ByReferenceCapture&) -> diag::Result<std::string> {
+              return diag::Unsupported(
+                  diag::DiagCode::kCppEmitExpressionFormNotImplemented,
+                  "by-reference capture is not yet implemented in cpp emit",
+                  diag::UnsupportedCategory::kFeature);
+            }},
+        closure.captures[i]);
+    if (!rendered_or) return std::unexpected(std::move(rendered_or.error()));
+    captures_text += *rendered_or;
+  }
+
+  const RenderContext body_ctx =
+      RenderContext::ForRoot(ctx.Unit(), ctx.StructuralScope(), *closure.body);
+  auto body_or = RenderProceduralScopeStatements(body_ctx, 1);
+  if (!body_or) return std::unexpected(std::move(body_or.error()));
+
+  return "[" + captures_text + "]() {\n" + *body_or + "}";
 }
 
 auto RenderConditionAsBool(const RenderContext& ctx, const mir::Expr& expr)

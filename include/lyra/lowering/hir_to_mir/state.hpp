@@ -18,6 +18,7 @@
 #include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/expr.hpp"
 #include "lyra/mir/procedural_var.hpp"
+#include "lyra/mir/runtime_submit.hpp"
 #include "lyra/mir/stmt.hpp"
 #include "lyra/mir/structural_hops.hpp"
 #include "lyra/mir/structural_param.hpp"
@@ -94,6 +95,16 @@ class UnitLoweringState {
 
   [[nodiscard]] auto Builtins() const -> const BuiltinMirTypes& {
     return builtins_;
+  }
+
+  // Allocates a fresh class-local DeferredCheckSiteId from the underlying
+  // CompilationUnit's counter. The method is const because UnitLoweringState's
+  // observable lowering state (type map, builtins) is unaffected; the counter
+  // lives on the unit and is mutated through the non-const pointer the wrapper
+  // already holds.
+  [[nodiscard]] auto AllocateDeferredCheckSiteId() const
+      -> mir::DeferredCheckSiteId {
+    return unit_->AllocateDeferredCheckSiteId();
   }
 
  private:

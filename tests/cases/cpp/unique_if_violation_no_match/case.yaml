@@ -1,0 +1,11 @@
+id: cpp.unique_if_violation_no_match
+tags: [cpp_run]
+input:
+  command: [run, cpp]
+  project: false
+  top: Top
+  files: [main.sv]
+expect:
+  exit: 0
+  stderr:
+    exact: "warning: unique check failed: matched 0 of 2 conditions\n"

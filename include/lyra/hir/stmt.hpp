@@ -40,10 +40,17 @@ struct BlockStmt {
   std::vector<StmtId> statements;
 };
 
+enum class UniquePriorityCheck : std::uint8_t {
+  kUnique,
+  kUnique0,
+  kPriority,
+};
+
 struct IfStmt {
   ExprId condition;
   StmtId then_stmt;
   std::optional<StmtId> else_stmt;
+  std::optional<UniquePriorityCheck> check;
 };
 
 struct CaseItem {
@@ -55,6 +62,7 @@ struct CaseStmt {
   ExprId condition;
   std::vector<CaseItem> items;
   std::optional<StmtId> default_stmt;
+  std::optional<UniquePriorityCheck> check;
 };
 
 struct ForInitDecl {

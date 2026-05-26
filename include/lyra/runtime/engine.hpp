@@ -125,6 +125,7 @@ class Engine {
   RuntimeServices services_{stream_, diagnostic_};
   std::unique_ptr<RuntimeScope> root_;
   SchedulerQueues queues_;
+  std::vector<Module*> registered_modules_;
   SimTime now_ = 0;
   SchedulerPhase phase_ = SchedulerPhase::kIdle;
   std::size_t current_delta_ = 0;

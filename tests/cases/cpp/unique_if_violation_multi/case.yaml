@@ -1,0 +1,11 @@
+id: cpp.unique_if_violation_multi
+tags: [cpp_run]
+input:
+  command: [run, cpp]
+  project: false
+  top: Top
+  files: [main.sv]
+expect:
+  exit: 0
+  stderr:
+    exact: "warning: unique check failed: matched 3 of 3 conditions\n"

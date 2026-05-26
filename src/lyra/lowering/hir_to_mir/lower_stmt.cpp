@@ -17,6 +17,7 @@
 #include "lyra/hir/stmt.hpp"
 #include "lyra/lowering/hir_to_mir/case_cascade.hpp"
 #include "lyra/lowering/hir_to_mir/delay_time_resolver.hpp"
+#include "lyra/lowering/hir_to_mir/lower_deferred_check.hpp"
 #include "lyra/lowering/hir_to_mir/lower_expr.hpp"
 #include "lyra/lowering/hir_to_mir/procedural_scope_helpers.hpp"
 #include "lyra/lowering/hir_to_mir/state.hpp"
@@ -91,29 +92,6 @@ auto LowerTimingControl(
           },
       },
       tc);
-}
-
-// Lowers a single HIR stmt into its own fresh ProceduralScope: pushes a
-// ProceduralDepthGuard so procvar refs inside see the correct hop count,
-// recursively invokes LowerStmt, and packages the result as the new scope's
-// sole root stmt. Used wherever a control-flow node needs a body / branch
-// scope (for, while, repeat, do-while, forever, if branches, case items).
-auto LowerStmtIntoChildScope(
-    const UnitLoweringState& unit_state,
-    const StructuralScopeLoweringState& scope_state,
-    ProcessLoweringState& proc_state, const hir::Process& hir_proc,
-    hir::StmtId hir_stmt_id) -> diag::Result<mir::ProceduralScope> {
-  ProceduralScopeLoweringState child_state;
-  ProceduralDepthGuard depth_guard{proc_state};
-  const hir::Stmt& hir_stmt = hir_proc.stmts.at(hir_stmt_id.value);
-  auto lowered = LowerStmt(
-      unit_state, scope_state, proc_state, child_state, hir_proc, hir_stmt);
-  if (!lowered) {
-    return std::unexpected(std::move(lowered.error()));
-  }
-  const mir::StmtId stmt_id = child_state.AddStmt(*std::move(lowered));
-  child_state.AddRootStmt(stmt_id);
-  return child_state.Finish();
 }
 
 auto LowerEmptyStmt(const hir::Stmt& stmt) -> diag::Result<mir::Stmt> {
@@ -215,6 +193,10 @@ auto LowerIfStmt(
     ProceduralScopeLoweringState& proc_scope_state,
     const hir::Process& hir_proc, const hir::Stmt& stmt, const hir::IfStmt& i)
     -> diag::Result<mir::Stmt> {
+  if (i.check.has_value()) {
+    return LowerUniqueIfStmt(
+        unit_state, scope_state, proc_state, hir_proc, stmt, i);
+  }
   auto cond_expr_or = LowerExpr(
       unit_state, scope_state, proc_state, proc_scope_state, hir_proc,
       hir_proc.exprs.at(i.condition.value));
@@ -317,6 +299,40 @@ auto LowerCaseStmt(
       return std::unexpected(std::move(def_or.error()));
     }
     default_scope = std::move(*def_or);
+  }
+
+  if (c.check.has_value()) {
+    // All predicates live at wrapper depth (sel_hops=0); bodies were lowered
+    // with the per-level depth guards above.
+    std::vector<mir::ExprId> predicates;
+    predicates.reserve(c.items.size());
+    for (std::size_t i = 0; i < c.items.size(); ++i) {
+      auto pred_or = BuildEqualityChain(
+          wrapper_state, snapshot, bit_type, 0, c.items[i].labels.size(),
+          [&](ProceduralScopeLoweringState& es,
+              std::size_t li) -> diag::Result<mir::ExprId> {
+            auto lab_or = LowerExpr(
+                unit_state, scope_state, proc_state, es, hir_proc,
+                hir_proc.exprs.at(c.items[i].labels[li].value));
+            if (!lab_or) {
+              return std::unexpected(std::move(lab_or.error()));
+            }
+            return es.AddExpr(*std::move(lab_or));
+          });
+      if (!pred_or) return std::unexpected(std::move(pred_or.error()));
+      predicates.push_back(*pred_or);
+    }
+
+    std::vector<DeferredCheckBranch> branches;
+    branches.reserve(c.items.size());
+    for (std::size_t i = 0; i < c.items.size(); ++i) {
+      branches.push_back(
+          DeferredCheckBranch{
+              .predicate = predicates[i], .body = std::move(body_scopes[i])});
+    }
+    return BuildDeferredCheckCascade(
+        unit_state, std::move(wrapper_state), std::move(branches),
+        std::move(default_scope), *c.check, stmt.label);
   }
 
   auto build_predicate = [&](ProceduralScopeLoweringState& enc,
@@ -723,6 +739,24 @@ auto LowerTimedStmt(
 }
 
 }  // namespace
+
+auto LowerStmtIntoChildScope(
+    const UnitLoweringState& unit_state,
+    const StructuralScopeLoweringState& scope_state,
+    ProcessLoweringState& proc_state, const hir::Process& hir_proc,
+    hir::StmtId hir_stmt_id) -> diag::Result<mir::ProceduralScope> {
+  ProceduralScopeLoweringState child_state;
+  ProceduralDepthGuard depth_guard{proc_state};
+  const hir::Stmt& hir_stmt = hir_proc.stmts.at(hir_stmt_id.value);
+  auto lowered = LowerStmt(
+      unit_state, scope_state, proc_state, child_state, hir_proc, hir_stmt);
+  if (!lowered) {
+    return std::unexpected(std::move(lowered.error()));
+  }
+  const mir::StmtId stmt_id = child_state.AddStmt(*std::move(lowered));
+  child_state.AddRootStmt(stmt_id);
+  return child_state.Finish();
+}
 
 auto LowerStmt(
     const UnitLoweringState& unit_state,
