@@ -874,6 +874,51 @@ auto PackedArray::WildcardEquals(const PackedArray& other) const
   return OneBitResult(true, is_four_state_);
 }
 
+auto PackedArray::Select(
+    const PackedArray& bit_offset, std::uint32_t width) const -> PackedArray {
+  if (width == 0U) {
+    throw InternalError("PackedArray::Select: width must be >= 1");
+  }
+  if (bit_offset.HasUnknown() || bit_offset.BitWidth() > 64U) {
+    if (is_four_state_) {
+      return AllX(width, false);
+    }
+    return PackedArray{width, false, false};
+  }
+  const std::int64_t start = bit_offset.ToInt64();
+  const auto src_value = ValueWords();
+  const auto src_unknown = UnknownWords();
+  const auto bw_signed = static_cast<std::int64_t>(bit_width_);
+  auto val_buf = MakeWordBuffer(width);
+  auto unk_buf = is_four_state_ ? MakeWordBuffer(width) : WordBuffer{};
+  for (std::uint32_t i = 0; i < width; ++i) {
+    const std::int64_t pos = start + static_cast<std::int64_t>(i);
+    const std::uint64_t out_mask = std::uint64_t{1} << (i % 64U);
+    if (pos < 0 || pos >= bw_signed) {
+      if (is_four_state_) {
+        val_buf[i / 64U] |= out_mask;
+        unk_buf[i / 64U] |= out_mask;
+      }
+      continue;
+    }
+    const auto w_idx = static_cast<std::size_t>(pos / 64);
+    const auto b_idx = static_cast<std::uint64_t>(pos % 64);
+    if (((src_value[w_idx] >> b_idx) & 1U) != 0U) {
+      val_buf[i / 64U] |= out_mask;
+    }
+    if (is_four_state_ && w_idx < src_unknown.size() &&
+        ((src_unknown[w_idx] >> b_idx) & 1U) != 0U) {
+      unk_buf[i / 64U] |= out_mask;
+    }
+  }
+  return MakeFromWordPlanes(
+      width, false, is_four_state_,
+      std::span<const std::uint64_t>{val_buf.data(), val_buf.size()},
+      is_four_state_
+          ? std::span<const std::uint64_t>{unk_buf.data(), unk_buf.size()}
+          : std::span<const std::uint64_t>{});
+}
+
 auto PackedArray::operator<(const PackedArray& other) const -> PackedArray {
   ExpectSameShape(*this, other, "operator<");
   if (HasUnknown() || other.HasUnknown()) {

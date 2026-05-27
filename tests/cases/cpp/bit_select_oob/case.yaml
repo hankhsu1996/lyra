@@ -1,0 +1,13 @@
+id: cpp.bit_select_oob
+tags: [cpp_run]
+input:
+  command: [run, cpp]
+  project: false
+  top: Top
+  files: [main.sv]
+expect:
+  exit: 0
+  variables:
+    const_oob_2state: 0
+    runtime_oob_2state: 0
+    negative_idx_2state: 0

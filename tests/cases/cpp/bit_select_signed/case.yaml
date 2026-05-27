@@ -1,0 +1,13 @@
+id: cpp.bit_select_signed
+tags: [cpp_run]
+input:
+  command: [run, cpp]
+  project: false
+  top: Top
+  files: [main.sv]
+expect:
+  exit: 0
+  variables:
+    msb: 1
+    near_msb: 0
+    via_int: 1

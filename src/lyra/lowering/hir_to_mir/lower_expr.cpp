@@ -759,6 +759,34 @@ auto LowerHirInsideExprProc(
       .type = result_type};
 }
 
+auto LowerHirElementSelectExprProc(
+    const UnitLoweringState& unit_state,
+    const StructuralScopeLoweringState& scope_state,
+    const ProcessLoweringState& proc_state,
+    ProceduralScopeLoweringState& proc_scope_state,
+    const hir::Process& hir_process, const hir::ElementSelectExpr& sel,
+    mir::TypeId result_type) -> diag::Result<mir::Expr> {
+  auto base_or = LowerExpr(
+      unit_state, scope_state, proc_state, proc_scope_state, hir_process,
+      hir_process.exprs.at(sel.base_value.value));
+  if (!base_or) return std::unexpected(std::move(base_or.error()));
+  const mir::ExprId base_id = proc_scope_state.AddExpr(*std::move(base_or));
+
+  auto idx_or = LowerExpr(
+      unit_state, scope_state, proc_state, proc_scope_state, hir_process,
+      hir_process.exprs.at(sel.index.value));
+  if (!idx_or) return std::unexpected(std::move(idx_or.error()));
+  const mir::ExprId idx_id = proc_scope_state.AddExpr(*std::move(idx_or));
+
+  return mir::Expr{
+      .data =
+          mir::ElementSelectExpr{
+              .base_value = base_id,
+              .index = idx_id,
+          },
+      .type = result_type};
+}
+
 }  // namespace
 
 auto LowerExpr(
@@ -809,6 +837,18 @@ auto LowerExpr(
             return LowerHirInsideExprProc(
                 unit_state, scope_state, proc_state, proc_scope_state,
                 hir_process, in, result_type);
+          },
+          [&](const hir::ElementSelectExpr& sel) -> diag::Result<mir::Expr> {
+            return LowerHirElementSelectExprProc(
+                unit_state, scope_state, proc_state, proc_scope_state,
+                hir_process, sel, result_type);
+          },
+          [](const hir::RangeSelectExpr&) -> diag::Result<mir::Expr> {
+            return diag::Unsupported(
+                diag::DiagCode::kUnsupportedExpressionForm,
+                "range-select (part-select / indexed part-select) is not yet "
+                "wired through HIR -> MIR",
+                diag::UnsupportedCategory::kOperation);
           },
       },
       expr.data);
@@ -976,6 +1016,19 @@ auto LowerExprImpl(
             return diag::Unsupported(
                 diag::DiagCode::kUnsupportedStructuralExpressionForm,
                 "inside operator is not allowed in constructor expressions",
+                diag::UnsupportedCategory::kFeature);
+          },
+          [](const hir::ElementSelectExpr&) -> diag::Result<mir::Expr> {
+            return diag::Unsupported(
+                diag::DiagCode::kUnsupportedStructuralExpressionForm,
+                "element-select in constructor expressions is not yet "
+                "supported",
+                diag::UnsupportedCategory::kFeature);
+          },
+          [](const hir::RangeSelectExpr&) -> diag::Result<mir::Expr> {
+            return diag::Unsupported(
+                diag::DiagCode::kUnsupportedStructuralExpressionForm,
+                "range-select in constructor expressions is not yet supported",
                 diag::UnsupportedCategory::kFeature);
           },
       },
