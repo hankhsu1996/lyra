@@ -131,18 +131,10 @@ struct BreakStmt {};
 
 struct ContinueStmt {};
 
-enum class AwaitKind : std::uint8_t {
-  kAlwaysBackedge,
-};
-
-struct AwaitStmt {
-  AwaitKind kind;
-};
-
 using StmtData = std::variant<
     EmptyStmt, ProceduralVarDeclStmt, ExprStmt, BlockStmt, IfStmt,
     ConstructOwnedObjectStmt, ForStmt, TimedStmt, WhileStmt, DoWhileStmt,
-    BreakStmt, ContinueStmt, AwaitStmt>;
+    BreakStmt, ContinueStmt>;
 
 struct Stmt {
   std::optional<std::string> label;
