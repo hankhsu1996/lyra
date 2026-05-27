@@ -1,0 +1,20 @@
+id: cpp.operator_inside_range
+tags: [cpp_run]
+input:
+  command: [run, cpp]
+  project: false
+  top: Top
+  files: [main.sv]
+expect:
+  exit: 0
+  variables:
+    in_range: 1
+    at_lo: 1
+    at_hi: 1
+    just_below_lo: 0
+    just_above_hi: 0
+    range_no_match: 0
+    mixed_value_hits: 1
+    mixed_range_hits: 1
+    mixed_no_match: 0
+    multi_range_hits_second: 1

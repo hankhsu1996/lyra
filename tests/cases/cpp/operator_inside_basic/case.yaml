@@ -1,0 +1,18 @@
+id: cpp.operator_inside_basic
+tags: [cpp_run]
+input:
+  command: [run, cpp]
+  project: false
+  top: Top
+  files: [main.sv]
+expect:
+  exit: 0
+  variables:
+    match_first: 1
+    match_middle: 1
+    match_last: 1
+    no_match_below: 0
+    no_match_between: 0
+    no_match_above: 0
+    single_item_match: 1
+    single_item_no_match: 0
