@@ -1,0 +1,14 @@
+id: cpp.bit_select_x_index
+tags: [cpp_run]
+input:
+  command: [run, cpp]
+  project: false
+  top: Top
+  files: [main.sv]
+expect:
+  exit: 0
+  variables:
+    const_oob_4state: "1'bx"
+    x_index_4state: "1'bx"
+    z_index_4state: "1'bx"
+    inrange_known_idx: 1

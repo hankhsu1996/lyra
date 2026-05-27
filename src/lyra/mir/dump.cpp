@@ -493,6 +493,11 @@ class MirDumper {
             [](const ClosureExpr& cl) -> std::string {
               return std::format("ClosureExpr captures={}", cl.captures.size());
             },
+            [](const ElementSelectExpr& sel) -> std::string {
+              return std::format(
+                  "ElementSelectExpr base=Expr[{}] index=Expr[{}]",
+                  sel.base_value.value, sel.index.value);
+            },
         },
         e.data);
     return std::format("{} type=Type[{}]", formatted, e.type.value);

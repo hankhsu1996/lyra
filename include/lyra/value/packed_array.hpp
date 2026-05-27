@@ -139,6 +139,11 @@ class PackedArray {
   // LRM 11.4.6: X/Z in `other` are wildcards; X/Z in `*this` are not.
   [[nodiscard]] auto WildcardEquals(const PackedArray& other) const
       -> PackedArray;
+
+  // LRM 7.4.5 / 11.5.1: extract `width` LSB-anchored bits at `bit_offset`;
+  // invalid (x/z or out-of-range) index gives x (4-state) or 0 (2-state).
+  [[nodiscard]] auto Select(
+      const PackedArray& bit_offset, std::uint32_t width) const -> PackedArray;
   [[nodiscard]] auto operator<(const PackedArray& other) const -> PackedArray;
   [[nodiscard]] auto operator<=(const PackedArray& other) const -> PackedArray;
   [[nodiscard]] auto operator>(const PackedArray& other) const -> PackedArray;

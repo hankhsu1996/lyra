@@ -1,0 +1,15 @@
+id: cpp.bit_select_const_idx
+tags: [cpp_run]
+input:
+  command: [run, cpp]
+  project: false
+  top: Top
+  files: [main.sv]
+expect:
+  exit: 0
+  variables:
+    bit0: 1
+    bit1: 0
+    bit2: 1
+    bit3: 1
+    bit7: 0

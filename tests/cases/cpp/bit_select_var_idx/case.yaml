@@ -1,0 +1,14 @@
+id: cpp.bit_select_var_idx
+tags: [cpp_run]
+input:
+  command: [run, cpp]
+  project: false
+  top: Top
+  files: [main.sv]
+expect:
+  exit: 0
+  variables:
+    at0: 1
+    at1: 0
+    at2: 1
+    at3: 1

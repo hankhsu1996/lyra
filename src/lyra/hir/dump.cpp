@@ -549,6 +549,38 @@ class HirDumper {
             [](const InsideExpr& in) -> std::string {
               return FormatInsideExprNode(in);
             },
+            [](const ElementSelectExpr& sel) -> std::string {
+              return std::format(
+                  "ElementSelectExpr base=Expr[{}] index=Expr[{}]",
+                  sel.base_value.value, sel.index.value);
+            },
+            [](const RangeSelectExpr& sel) -> std::string {
+              return std::visit(
+                  Overloaded{
+                      [&](const RangeConstantBounds& b) -> std::string {
+                        return std::format(
+                            "RangeSelectExpr base=Expr[{}] kind=Constant "
+                            "msb=Expr[{}] lsb=Expr[{}]",
+                            sel.base_value.value, b.msb_expr.value,
+                            b.lsb_expr.value);
+                      },
+                      [&](const RangeIndexedUpBounds& b) -> std::string {
+                        return std::format(
+                            "RangeSelectExpr base=Expr[{}] kind=IndexedUp "
+                            "base_index=Expr[{}] width=Expr[{}]",
+                            sel.base_value.value, b.base_index.value,
+                            b.width.value);
+                      },
+                      [&](const RangeIndexedDownBounds& b) -> std::string {
+                        return std::format(
+                            "RangeSelectExpr base=Expr[{}] kind=IndexedDown "
+                            "base_index=Expr[{}] width=Expr[{}]",
+                            sel.base_value.value, b.base_index.value,
+                            b.width.value);
+                      },
+                  },
+                  sel.bounds);
+            },
         },
         e.data);
     return std::format("type=Type[{}] {}", e.type.value, formatted);
