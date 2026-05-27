@@ -1,0 +1,19 @@
+id: cpp.scalar_reduction_int
+tags: [cpp_run]
+input:
+  command: [run, cpp]
+  project: false
+  top: Top
+  files: [main.sv]
+expect:
+  exit: 0
+  variables:
+    and_all_ones: 1
+    and_with_zero: 0
+    or_zero: 0
+    or_one: 1
+    xor_one_bit: 1
+    xor_two_bits: 0
+    nand_all_ones: 0
+    nor_zero: 1
+    xnor_one_bit: 0

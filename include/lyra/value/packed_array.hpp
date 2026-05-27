@@ -137,6 +137,10 @@ class PackedArray {
   [[nodiscard]] auto LogicalAnd(const PackedArray& other) const -> PackedArray;
   [[nodiscard]] auto LogicalOr(const PackedArray& other) const -> PackedArray;
   [[nodiscard]] auto LogicalNot() const -> PackedArray;
+  [[nodiscard]] auto LogicalImplication(const PackedArray& other) const
+      -> PackedArray;
+  [[nodiscard]] auto LogicalEquivalence(const PackedArray& other) const
+      -> PackedArray;
 
   [[nodiscard]] auto BitwiseXnor(const PackedArray& other) const -> PackedArray;
 

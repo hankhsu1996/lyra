@@ -6,9 +6,7 @@
 
 #include "lyra/base/internal_error.hpp"
 #include "lyra/base/overloaded.hpp"
-#include "lyra/diag/diag_code.hpp"
 #include "lyra/diag/diagnostic.hpp"
-#include "lyra/diag/kind.hpp"
 #include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/structural_scope.hpp"
 #include "lyra/mir/type.hpp"
@@ -28,16 +26,8 @@ auto RenderTypeAsCpp(
     mir::TypeId type_id) -> diag::Result<std::string> {
   return std::visit(
       Overloaded{
-          [](const mir::PackedArrayType& p) -> diag::Result<std::string> {
-            if (p.form == mir::PackedArrayForm::kInt ||
-                p.form == mir::PackedArrayForm::kInteger ||
-                p.form == mir::PackedArrayForm::kExplicit) {
-              return std::string{"lyra::value::PackedArray"};
-            }
-            return diag::Unsupported(
-                diag::DiagCode::kCppEmitPackedRuntimeNotSupported,
-                "this packed array form is not yet supported in cpp emit",
-                diag::UnsupportedCategory::kFeature);
+          [](const mir::PackedArrayType&) -> diag::Result<std::string> {
+            return std::string{"lyra::value::PackedArray"};
           },
           [](const mir::StringType&) -> diag::Result<std::string> {
             return std::string{"std::string"};

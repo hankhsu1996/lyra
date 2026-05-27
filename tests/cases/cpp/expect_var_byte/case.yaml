@@ -1,4 +1,4 @@
-id: cpp.scalar_bitwise_int
+id: cpp.expect_var_byte
 tags: [cpp_run]
 input:
   command: [run, cpp]
@@ -8,7 +8,7 @@ input:
 expect:
   exit: 0
   variables:
-    and_: 1
-    or_: 7
-    xor_: 6
-    xnor_: -7
+    pos_: 50
+    neg_: -30
+    sum_: 20
+    signed_wrap: -106
