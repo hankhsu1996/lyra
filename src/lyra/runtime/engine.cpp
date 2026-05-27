@@ -152,6 +152,23 @@ void Engine::FlushRuntimeUpdates() {
 
 void Engine::ExecuteNbaRegion() {
   phase_ = SchedulerPhase::kCommitNba;
+  // Swap-then-drain: SubmitNba called during commit (re-entrancy) is rejected
+  // upstream; this swap also protects against accidental iterator invalidation
+  // if any closure does run a SubmitNba via a future path.
+  auto pending = std::move(queues_.nba);
+  queues_.nba.clear();
+  for (auto& closure : pending) {
+    closure();
+  }
+}
+
+void Engine::SubmitNba(std::function<void()> closure) {
+  if (phase_ == SchedulerPhase::kCommitNba) {
+    throw InternalError(
+        "Engine::SubmitNba: re-entrant NBA submission during NBA region "
+        "is not supported");
+  }
+  queues_.nba.push_back(std::move(closure));
 }
 
 void Engine::ExecuteObservedRegion() {

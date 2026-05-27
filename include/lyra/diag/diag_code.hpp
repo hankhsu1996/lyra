@@ -28,7 +28,6 @@ enum class DiagCode : std::uint32_t {
   kUnsupportedExpressionForm,
   kUnsupportedStructuralExpressionForm,
   kUnsupportedNonVariableNamedReference,
-  kUnsupportedNonBlockingAssignment,
   kUnsupportedAssignmentTarget,
   kUnsupportedBinaryOperator,
   kUnsupportedTimingControlKind,

@@ -1,16 +1,21 @@
 #pragma once
 
+#include <functional>
+
 #include "lyra/base/internal_error.hpp"
 
 namespace lyra::runtime {
 
 class StreamDispatcher;
 class DiagnosticDispatcher;
+class Engine;
 
 class RuntimeServices {
  public:
-  RuntimeServices(StreamDispatcher& stream, DiagnosticDispatcher& diagnostic)
-      : stream_(&stream), diagnostic_(&diagnostic) {
+  RuntimeServices(
+      StreamDispatcher& stream, DiagnosticDispatcher& diagnostic,
+      Engine& engine)
+      : stream_(&stream), diagnostic_(&diagnostic), engine_(&engine) {
   }
 
   auto Stream() -> StreamDispatcher& {
@@ -27,9 +32,12 @@ class RuntimeServices {
     return *diagnostic_;
   }
 
+  void SubmitNba(std::function<void()> closure);
+
  private:
   StreamDispatcher* stream_ = nullptr;
   DiagnosticDispatcher* diagnostic_ = nullptr;
+  Engine* engine_ = nullptr;
 };
 
 }  // namespace lyra::runtime
