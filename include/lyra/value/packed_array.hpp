@@ -131,6 +131,9 @@ class PackedArray {
 
   [[nodiscard]] auto operator==(const PackedArray& other) const -> PackedArray;
   [[nodiscard]] auto operator!=(const PackedArray& other) const -> PackedArray;
+  // LRM 11.4.6: X/Z in `other` are wildcards; X/Z in `*this` are not.
+  [[nodiscard]] auto WildcardEquals(const PackedArray& other) const
+      -> PackedArray;
   [[nodiscard]] auto operator<(const PackedArray& other) const -> PackedArray;
   [[nodiscard]] auto operator<=(const PackedArray& other) const -> PackedArray;
   [[nodiscard]] auto operator>(const PackedArray& other) const -> PackedArray;

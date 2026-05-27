@@ -1,0 +1,15 @@
+id: cpp.operator_inside_wildcard
+tags: [cpp_run]
+input:
+  command: [run, cpp]
+  project: false
+  top: Top
+  files: [main.sv]
+expect:
+  exit: 0
+  variables:
+    item_z_wildcard_match: 1
+    item_z_wildcard_no_match: 0
+    item_x_wildcard_match: 1
+    item_question_wildcard_match: 1
+    mixed_value_and_wildcard_item: 1

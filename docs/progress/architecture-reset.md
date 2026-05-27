@@ -129,7 +129,7 @@ Granular tracking lives in `integral.md` (integral / packed / wide_integral) and
 - [ ] operators/unary -- `integral.md` for the integral surface; `++` / `--` gap in `operators.md`.
 - [ ] operators/value_temp_expansion -- subsumed by the binary-operator coverage in `integral.md`;
       the archived `ValueTemp` IR shape does not exist on the current pipeline.
-- [ ] operators/wildcard_equality -- `operators.md`.
+- [x] operators/wildcard_equality -- `operators.md`.
 
 ### optimization
 
