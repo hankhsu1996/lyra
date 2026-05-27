@@ -65,9 +65,37 @@ struct InsideExpr {
   std::vector<InsideItem> items;
 };
 
+struct ElementSelectExpr {
+  ExprId base_value;
+  ExprId index;
+};
+
+struct RangeConstantBounds {
+  ExprId msb_expr;
+  ExprId lsb_expr;
+};
+
+struct RangeIndexedUpBounds {
+  ExprId base_index;
+  ExprId width;
+};
+
+struct RangeIndexedDownBounds {
+  ExprId base_index;
+  ExprId width;
+};
+
+using RangeBounds = std::variant<
+    RangeConstantBounds, RangeIndexedUpBounds, RangeIndexedDownBounds>;
+
+struct RangeSelectExpr {
+  ExprId base_value;
+  RangeBounds bounds;
+};
+
 using ExprData = std::variant<
     PrimaryExpr, UnaryExpr, BinaryExpr, ConditionalExpr, AssignExpr, CallExpr,
-    ConversionExpr, InsideExpr>;
+    ConversionExpr, InsideExpr, ElementSelectExpr, RangeSelectExpr>;
 
 struct Expr {
   TypeId type;

@@ -79,10 +79,16 @@ struct RuntimeCallExpr {
   RuntimeCall call;
 };
 
+struct ElementSelectExpr {
+  ExprId base_value;
+  ExprId index;
+};
+
 using ExprData = std::variant<
     IntegerLiteral, StringLiteral, TimeLiteral, StructuralParamRef,
     StructuralVarRef, ProceduralVarRef, UnaryExpr, BinaryExpr, ConditionalExpr,
-    AssignExpr, CallExpr, RuntimeCallExpr, ConversionExpr, ClosureExpr>;
+    AssignExpr, CallExpr, RuntimeCallExpr, ConversionExpr, ClosureExpr,
+    ElementSelectExpr>;
 
 struct Expr {
   ExprData data;

@@ -1,0 +1,14 @@
+id: cpp.bit_select_wide
+tags: [cpp_run]
+input:
+  command: [run, cpp]
+  project: false
+  top: Top
+  files: [main.sv]
+expect:
+  exit: 0
+  variables:
+    lo: 1
+    mid_low: 0
+    mid_high: 1
+    hi: 1

@@ -17,6 +17,7 @@
 #include <slang/ast/expressions/LiteralExpressions.h>
 #include <slang/ast/expressions/MiscExpressions.h>
 #include <slang/ast/expressions/OperatorExpressions.h>
+#include <slang/ast/expressions/SelectExpressions.h>
 #include <slang/ast/symbols/SubroutineSymbols.h>
 #include <slang/ast/symbols/VariableSymbols.h>
 #include <slang/ast/types/AllTypes.h>
@@ -768,6 +769,99 @@ auto LowerInsideExprProc(
   };
 }
 
+auto LowerElementSelectExprProc(
+    const UnitLoweringFacts& unit_facts, UnitLoweringState& unit_state,
+    ProcessLoweringState& proc_state, const ScopeStack& stack,
+    const std::optional<hir::Lvalue>& compound_lvalue_context,
+    const slang::ast::ElementSelectExpression& sel,
+    const slang::ast::Expression& expr, diag::SourceSpan span)
+    -> diag::Result<hir::Expr> {
+  if (!sel.value().type->isIntegral() || expr.type->getBitWidth() != 1) {
+    return diag::Unsupported(
+        span, diag::DiagCode::kUnsupportedExpressionForm,
+        "element-select is only supported on a 1D integral operand with a "
+        "1-bit result (bit-select)",
+        diag::UnsupportedCategory::kOperation);
+  }
+  auto base_or = LowerProcExpr(
+      unit_facts, unit_state, proc_state, stack, sel.value(),
+      compound_lvalue_context);
+  if (!base_or) return std::unexpected(std::move(base_or.error()));
+  const hir::ExprId base_id = proc_state.AddExpr(*std::move(base_or));
+
+  auto idx_or = LowerProcExpr(
+      unit_facts, unit_state, proc_state, stack, sel.selector(),
+      compound_lvalue_context);
+  if (!idx_or) return std::unexpected(std::move(idx_or.error()));
+  const hir::ExprId idx_id = proc_state.AddExpr(*std::move(idx_or));
+
+  auto type_id = TypeIdOfSlangExpr(unit_facts, unit_state, expr);
+  if (!type_id) return std::unexpected(std::move(type_id.error()));
+  return hir::Expr{
+      .type = *type_id,
+      .data =
+          hir::ElementSelectExpr{
+              .base_value = base_id,
+              .index = idx_id,
+          },
+      .span = span,
+  };
+}
+
+auto LowerRangeSelectExprProc(
+    const UnitLoweringFacts& unit_facts, UnitLoweringState& unit_state,
+    ProcessLoweringState& proc_state, const ScopeStack& stack,
+    const std::optional<hir::Lvalue>& compound_lvalue_context,
+    const slang::ast::RangeSelectExpression& sel,
+    const slang::ast::Expression& expr, diag::SourceSpan span)
+    -> diag::Result<hir::Expr> {
+  auto base_or = LowerProcExpr(
+      unit_facts, unit_state, proc_state, stack, sel.value(),
+      compound_lvalue_context);
+  if (!base_or) return std::unexpected(std::move(base_or.error()));
+  const hir::ExprId base_id = proc_state.AddExpr(*std::move(base_or));
+
+  auto left_or = LowerProcExpr(
+      unit_facts, unit_state, proc_state, stack, sel.left(),
+      compound_lvalue_context);
+  if (!left_or) return std::unexpected(std::move(left_or.error()));
+  const hir::ExprId left_id = proc_state.AddExpr(*std::move(left_or));
+
+  auto right_or = LowerProcExpr(
+      unit_facts, unit_state, proc_state, stack, sel.right(),
+      compound_lvalue_context);
+  if (!right_or) return std::unexpected(std::move(right_or.error()));
+  const hir::ExprId right_id = proc_state.AddExpr(*std::move(right_or));
+
+  hir::RangeBounds bounds = [&]() -> hir::RangeBounds {
+    switch (sel.getSelectionKind()) {
+      case slang::ast::RangeSelectionKind::Simple:
+        return hir::RangeConstantBounds{
+            .msb_expr = left_id, .lsb_expr = right_id};
+      case slang::ast::RangeSelectionKind::IndexedUp:
+        return hir::RangeIndexedUpBounds{
+            .base_index = left_id, .width = right_id};
+      case slang::ast::RangeSelectionKind::IndexedDown:
+        return hir::RangeIndexedDownBounds{
+            .base_index = left_id, .width = right_id};
+    }
+    throw InternalError(
+        "LowerRangeSelectExprProc: unknown slang RangeSelectionKind");
+  }();
+
+  auto type_id = TypeIdOfSlangExpr(unit_facts, unit_state, expr);
+  if (!type_id) return std::unexpected(std::move(type_id.error()));
+  return hir::Expr{
+      .type = *type_id,
+      .data =
+          hir::RangeSelectExpr{
+              .base_value = base_id,
+              .bounds = std::move(bounds),
+          },
+      .span = span,
+  };
+}
+
 auto LowerConversionExprStructural(
     const UnitLoweringFacts& unit_facts, UnitLoweringState& unit_state,
     ScopeLoweringState& scope_state, const ScopeStack& stack,
@@ -980,6 +1074,16 @@ auto LowerProcExpr(
       return LowerInsideExprProc(
           unit_facts, unit_state, proc_state, stack, compound_lvalue_context,
           expr.as<slang::ast::InsideExpression>(), expr, span);
+
+    case slang::ast::ExpressionKind::ElementSelect:
+      return LowerElementSelectExprProc(
+          unit_facts, unit_state, proc_state, stack, compound_lvalue_context,
+          expr.as<slang::ast::ElementSelectExpression>(), expr, span);
+
+    case slang::ast::ExpressionKind::RangeSelect:
+      return LowerRangeSelectExprProc(
+          unit_facts, unit_state, proc_state, stack, compound_lvalue_context,
+          expr.as<slang::ast::RangeSelectExpression>(), expr, span);
 
     default:
       return diag::Unsupported(

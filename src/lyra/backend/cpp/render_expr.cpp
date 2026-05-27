@@ -409,6 +409,13 @@ auto RenderExpr(const RenderContext& ctx, const mir::Expr& expr)
           [&](const mir::ClosureExpr& cl) -> diag::Result<std::string> {
             return RenderClosureExpr(ctx, cl);
           },
+          [&](const mir::ElementSelectExpr& sel) -> diag::Result<std::string> {
+            auto base_or = RenderExpr(ctx, ctx.Expr(sel.base_value));
+            if (!base_or) return std::unexpected(std::move(base_or.error()));
+            auto idx_or = RenderExpr(ctx, ctx.Expr(sel.index));
+            if (!idx_or) return std::unexpected(std::move(idx_or.error()));
+            return std::format("({}).Select({}, 1)", *base_or, *idx_or);
+          },
       },
       expr.data);
 }
