@@ -4,7 +4,6 @@
 #include <expected>
 #include <unordered_set>
 #include <utility>
-#include <variant>
 #include <vector>
 
 #include <slang/ast/Scope.h>
@@ -78,7 +77,7 @@ auto LowerScopeMembersInto(
           diag::UnsupportedCategory::kFeature);
     }
     auto type_data =
-        LowerTypeData(var.getType(), mapper.PointSpanOf(var.location));
+        LowerType(var.getType(), mapper.PointSpanOf(var.location), unit_state);
     if (!type_data) return std::unexpected(std::move(type_data.error()));
     // Slang rejects `void` in any variable-declaration position before
     // elaboration, so a void-typed VariableSymbol can only reach this path
@@ -96,8 +95,8 @@ auto LowerScopeMembersInto(
       continue;
     }
     const auto& sym = member.as<slang::ast::SubroutineSymbol>();
-    auto return_type_data =
-        LowerTypeData(sym.getReturnType(), mapper.PointSpanOf(sym.location));
+    auto return_type_data = LowerType(
+        sym.getReturnType(), mapper.PointSpanOf(sym.location), unit_state);
     if (!return_type_data) {
       return std::unexpected(std::move(return_type_data.error()));
     }

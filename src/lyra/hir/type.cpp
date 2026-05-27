@@ -53,6 +53,7 @@ auto Type::Kind() const -> TypeKind {
   return std::visit(
       Overloaded{
           [](const PackedArrayType&) { return TypeKind::kPackedArray; },
+          [](const EnumType&) { return TypeKind::kEnum; },
           [](const UnpackedArrayType&) { return TypeKind::kUnpackedArray; },
           [](const DynamicArrayType&) { return TypeKind::kDynamicArray; },
           [](const QueueType&) { return TypeKind::kQueue; },
@@ -79,6 +80,17 @@ auto Type::AsPackedArray() const -> const PackedArrayType& {
     return *p;
   }
   throw InternalError("Type::AsPackedArray called on non-packed-array type");
+}
+
+auto Type::IsEnum() const -> bool {
+  return std::holds_alternative<EnumType>(data);
+}
+
+auto Type::AsEnum() const -> const EnumType& {
+  if (const auto* e = std::get_if<EnumType>(&data)) {
+    return *e;
+  }
+  throw InternalError("Type::AsEnum called on non-enum type");
 }
 
 }  // namespace lyra::hir

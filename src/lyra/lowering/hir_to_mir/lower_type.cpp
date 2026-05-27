@@ -85,6 +85,12 @@ auto TranslateTypeData(
                 .form = TranslatePackedArrayForm(src.form),
             };
           },
+          [&](const hir::EnumType& src) -> mir::TypeData {
+            // Enum erases to its base type in MIR: copy the base's translated
+            // mir::TypeData. (MIR has no enum concept; backends see
+            // PackedArray.)
+            return state.GetType(state.TranslateType(src.base_type)).data;
+          },
           [&](const hir::UnpackedArrayType& src) -> mir::TypeData {
             return mir::UnpackedArrayType{
                 .element_type = state.TranslateType(src.element_type),

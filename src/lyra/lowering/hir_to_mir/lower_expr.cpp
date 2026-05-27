@@ -258,6 +258,72 @@ auto LowerHirIntegerLiteral(const hir::IntegerLiteral& i, mir::TypeId type)
       .type = type};
 }
 
+auto LowerBuiltinMethodCall(
+    const UnitLoweringState& unit_state, const hir::Process& hir_process,
+    const hir::BuiltinMethodRef& callee,
+    const std::vector<hir::ExprId>& arguments, mir::TypeId result_type,
+    diag::SourceSpan span) -> diag::Result<mir::Expr> {
+  if (arguments.empty()) {
+    throw InternalError(
+        "LowerBuiltinMethodCall: built-in method call has no receiver");
+  }
+  const hir::TypeId receiver_type_id =
+      hir_process.exprs.at(arguments[0].value).type;
+  const auto& receiver_type = unit_state.GetHirType(receiver_type_id);
+  if (!receiver_type.IsEnum()) {
+    throw InternalError(
+        "LowerBuiltinMethodCall: enum builtin method on non-enum receiver");
+  }
+  const auto& enum_type = receiver_type.AsEnum();
+
+  switch (callee.kind) {
+    case hir::BuiltinMethodKind::kEnumFirst:
+    case hir::BuiltinMethodKind::kEnumLast: {
+      if (enum_type.members.empty()) {
+        throw InternalError("LowerBuiltinMethodCall: enum has no members");
+      }
+      const hir::EnumMember& picked =
+          (callee.kind == hir::BuiltinMethodKind::kEnumFirst)
+              ? enum_type.members.front()
+              : enum_type.members.back();
+      return mir::Expr{
+          .data =
+              mir::IntegerLiteral{
+                  .value = LowerHirIntegralConstant(picked.value)},
+          .type = result_type};
+    }
+    case hir::BuiltinMethodKind::kEnumNum: {
+      const auto count = static_cast<std::uint32_t>(enum_type.members.size());
+      hir::IntegralConstant value{
+          .value_words = {static_cast<std::uint64_t>(count)},
+          .state_words = {},
+          .width = 32U,
+          .signedness = hir::Signedness::kSigned,
+          .state_kind = hir::IntegralStateKind::kTwoState,
+      };
+      return mir::Expr{
+          .data = mir::IntegerLiteral{.value = LowerHirIntegralConstant(value)},
+          .type = result_type};
+    }
+    case hir::BuiltinMethodKind::kEnumNext:
+      return diag::Unsupported(
+          span, diag::DiagCode::kUnsupportedExpressionForm,
+          "enum method 'next' is not yet supported",
+          diag::UnsupportedCategory::kOperation);
+    case hir::BuiltinMethodKind::kEnumPrev:
+      return diag::Unsupported(
+          span, diag::DiagCode::kUnsupportedExpressionForm,
+          "enum method 'prev' is not yet supported",
+          diag::UnsupportedCategory::kOperation);
+    case hir::BuiltinMethodKind::kEnumName:
+      return diag::Unsupported(
+          span, diag::DiagCode::kUnsupportedExpressionForm,
+          "enum method 'name' is not yet supported",
+          diag::UnsupportedCategory::kOperation);
+  }
+  throw InternalError("LowerBuiltinMethodCall: unknown BuiltinMethodKind");
+}
+
 auto LowerHirStringLiteral(const hir::StringLiteral& s, mir::TypeId type)
     -> mir::Expr {
   return mir::Expr{.data = mir::StringLiteral{.value = s.value}, .type = type};
@@ -540,6 +606,12 @@ auto LowerExpr(
                                   .callee = LowerUserCallee(scope_state, usr),
                                   .arguments = std::move(args)},
                           .type = result_type};
+                    },
+                    [&](const hir::BuiltinMethodRef& bm)
+                        -> diag::Result<mir::Expr> {
+                      return LowerBuiltinMethodCall(
+                          unit_state, hir_process, bm, c.arguments, result_type,
+                          expr.span);
                     },
                 },
                 c.callee);

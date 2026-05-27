@@ -140,6 +140,18 @@ class HirDumper {
                   FormatBitAtom(p.atom), FormatSignedness(p.signedness),
                   FormatPackedDims(p.dims), FormatPackedForm(p.form));
             },
+            [](const EnumType& e) -> std::string {
+              std::string members;
+              for (std::size_t i = 0; i < e.members.size(); ++i) {
+                if (i > 0) members += ", ";
+                members += std::format(
+                    "{}={}", e.members[i].name,
+                    FormatIntegralConstant(e.members[i].value));
+              }
+              return std::format(
+                  "Enum(base=Type[{}], members=[{}])", e.base_type.value,
+                  members);
+            },
             [](const UnpackedArrayType& u) -> std::string {
               return std::format(
                   "UnpackedArray(elem=Type[{}], dims={})", u.element_type.value,
@@ -416,6 +428,30 @@ class HirDumper {
               const auto& desc = support::LookupSystemSubroutine(s.id);
               return std::format(
                   "SystemSubroutine[{}] \"{}\"", s.id.value, desc.name);
+            },
+            [](const BuiltinMethodRef& b) -> std::string {
+              std::string_view name;
+              switch (b.kind) {
+                case BuiltinMethodKind::kEnumFirst:
+                  name = "enum.first";
+                  break;
+                case BuiltinMethodKind::kEnumLast:
+                  name = "enum.last";
+                  break;
+                case BuiltinMethodKind::kEnumNum:
+                  name = "enum.num";
+                  break;
+                case BuiltinMethodKind::kEnumNext:
+                  name = "enum.next";
+                  break;
+                case BuiltinMethodKind::kEnumPrev:
+                  name = "enum.prev";
+                  break;
+                case BuiltinMethodKind::kEnumName:
+                  name = "enum.name";
+                  break;
+              }
+              return std::format("BuiltinMethod \"{}\"", name);
             },
         },
         callee);

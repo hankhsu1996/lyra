@@ -19,7 +19,7 @@ namespace lyra::lowering::hir_to_mir {
 auto LowerModuleUnit(const hir::ModuleUnit& unit)
     -> diag::Result<mir::CompilationUnit> {
   mir::CompilationUnit out;
-  UnitLoweringState unit_state(out);
+  UnitLoweringState unit_state(out, unit);
 
   for (std::size_t i = 0; i < unit.types.size(); ++i) {
     const hir::TypeId hir_id{static_cast<std::uint32_t>(i)};

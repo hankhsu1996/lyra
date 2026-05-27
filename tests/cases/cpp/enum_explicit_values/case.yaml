@@ -1,0 +1,13 @@
+id: cpp.enum_explicit_values
+tags: [cpp_run]
+input:
+  command: [run, cpp]
+  project: false
+  top: Top
+  files: [main.sv]
+expect:
+  exit: 0
+  variables:
+    r0: 1
+    r1: 5
+    r2: 10

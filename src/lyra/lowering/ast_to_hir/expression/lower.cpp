@@ -1,6 +1,7 @@
 #include "lyra/lowering/ast_to_hir/expression/lower.hpp"
 
 #include <expected>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -18,6 +19,8 @@
 #include <slang/ast/expressions/OperatorExpressions.h>
 #include <slang/ast/symbols/SubroutineSymbols.h>
 #include <slang/ast/symbols/VariableSymbols.h>
+#include <slang/ast/types/AllTypes.h>
+#include <slang/numeric/ConstantValue.h>
 #include <slang/numeric/SVInt.h>
 #include <slang/numeric/Time.h>
 #include <slang/syntax/AllSyntax.h>
@@ -140,6 +143,17 @@ auto LowerBinaryOp(slang::ast::BinaryOperator op) -> hir::BinaryOp {
   throw InternalError("LowerBinaryOp: unknown slang BinaryOperator");
 }
 
+auto LowerEnumMethodName(std::string_view name)
+    -> std::optional<hir::BuiltinMethodKind> {
+  if (name == "first") return hir::BuiltinMethodKind::kEnumFirst;
+  if (name == "last") return hir::BuiltinMethodKind::kEnumLast;
+  if (name == "num") return hir::BuiltinMethodKind::kEnumNum;
+  if (name == "next") return hir::BuiltinMethodKind::kEnumNext;
+  if (name == "prev") return hir::BuiltinMethodKind::kEnumPrev;
+  if (name == "name") return hir::BuiltinMethodKind::kEnumName;
+  return std::nullopt;
+}
+
 auto LowerUnaryOp(slang::ast::UnaryOperator op, diag::SourceSpan span)
     -> diag::Result<hir::UnaryOp> {
   switch (op) {
@@ -204,6 +218,27 @@ auto MakeUnbasedUnsizedLiteralExpr(
                       .value = LowerSVIntToIntegralConstant(lit.getValue()),
                       .base = hir::IntegerLiteralBase::kUnbased,
                       .declared_unsized = true,
+                  }},
+      .span = span,
+  };
+}
+
+auto MakeEnumValueExpr(
+    const slang::ast::EnumValueSymbol& sym, hir::TypeId type,
+    diag::SourceSpan span) -> hir::Expr {
+  const auto& cv = sym.getValue();
+  if (!cv.isInteger()) {
+    throw InternalError("MakeEnumValueExpr: enum value is not integral");
+  }
+  return hir::Expr{
+      .type = type,
+      .data =
+          hir::PrimaryExpr{
+              .data =
+                  hir::IntegerLiteral{
+                      .value = LowerSVIntToIntegralConstant(cv.integer()),
+                      .base = hir::IntegerLiteralBase::kDecimal,
+                      .declared_unsized = false,
                   }},
       .span = span,
   };
@@ -363,7 +398,7 @@ auto LowerProcExpr(
   };
   auto type_id_of =
       [&](const slang::ast::Expression& e) -> diag::Result<hir::TypeId> {
-    auto td = LowerTypeData(*e.type, mapper.SpanOf(e.sourceRange));
+    auto td = LowerType(*e.type, mapper.SpanOf(e.sourceRange), unit_state);
     if (!td) return std::unexpected(std::move(td.error()));
     return unit_state.AddType(*std::move(td));
   };
@@ -399,10 +434,17 @@ auto LowerProcExpr(
           span);
     }
 
-    case slang::ast::ExpressionKind::NamedValue:
+    case slang::ast::ExpressionKind::NamedValue: {
+      const auto& named = expr.as<slang::ast::NamedValueExpression>();
+      if (named.symbol.kind == slang::ast::SymbolKind::EnumValue) {
+        auto type_id = type_id_of(expr);
+        if (!type_id) return std::unexpected(std::move(type_id.error()));
+        return MakeEnumValueExpr(
+            named.symbol.as<slang::ast::EnumValueSymbol>(), *type_id, span);
+      }
       return LowerNamedValueProc(
-          unit_facts, unit_state, proc_state, stack,
-          expr.as<slang::ast::NamedValueExpression>());
+          unit_facts, unit_state, proc_state, stack, named);
+    }
 
     case slang::ast::ExpressionKind::LValueReference: {
       if (!compound_lvalue_context.has_value()) {
@@ -518,6 +560,24 @@ auto LowerProcExpr(
         const auto& info = std::get<slang::ast::CallExpression::SystemCallInfo>(
             call.subroutine);
         const std::string_view name = info.subroutine->name;
+
+        if (auto enum_method_kind = LowerEnumMethodName(name);
+            enum_method_kind.has_value() && !arg_ids.empty() &&
+            call.arguments()[0]->type->getCanonicalType().kind ==
+                slang::ast::SymbolKind::EnumType) {
+          auto type_id = type_id_of(expr);
+          if (!type_id) return std::unexpected(std::move(type_id.error()));
+          return hir::Expr{
+              .type = *type_id,
+              .data =
+                  hir::CallExpr{
+                      .callee =
+                          hir::BuiltinMethodRef{.kind = *enum_method_kind},
+                      .arguments = std::move(arg_ids),
+                  },
+              .span = span,
+          };
+        }
 
         const auto* desc = support::FindSystemSubroutine(name);
         if (desc == nullptr) {
@@ -642,7 +702,7 @@ auto LowerStructuralExpr(
   };
   auto type_id_of =
       [&](const slang::ast::Expression& e) -> diag::Result<hir::TypeId> {
-    auto td = LowerTypeData(*e.type, mapper.SpanOf(e.sourceRange));
+    auto td = LowerType(*e.type, mapper.SpanOf(e.sourceRange), unit_state);
     if (!td) return std::unexpected(std::move(td.error()));
     return unit_state.AddType(*std::move(td));
   };
@@ -665,6 +725,12 @@ auto LowerStructuralExpr(
     case slang::ast::ExpressionKind::NamedValue: {
       const auto& named = expr.as<slang::ast::NamedValueExpression>();
       const auto& sym = named.symbol;
+      if (sym.kind == slang::ast::SymbolKind::EnumValue) {
+        auto type_id = type_id_of(expr);
+        if (!type_id) return std::unexpected(std::move(type_id.error()));
+        return MakeEnumValueExpr(
+            sym.as<slang::ast::EnumValueSymbol>(), *type_id, span);
+      }
       if (sym.kind == slang::ast::SymbolKind::Variable ||
           sym.kind == slang::ast::SymbolKind::Parameter) {
         const auto& value_sym = sym.as<slang::ast::ValueSymbol>();
