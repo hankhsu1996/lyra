@@ -275,7 +275,7 @@ auto BuildLoopGenerate(
 
   const auto var_span =
       unit_facts.SourceMapper().PointSpanOf(loop_var_sym->location);
-  auto type_data = LowerTypeData(loop_var_sym->getType(), var_span);
+  auto type_data = LowerType(loop_var_sym->getType(), var_span, unit_state);
   if (!type_data) return std::unexpected(std::move(type_data.error()));
   const hir::TypeId loop_var_type = unit_state.AddType(*std::move(type_data));
 

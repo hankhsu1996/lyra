@@ -1,16 +1,23 @@
 #include "lyra/lowering/ast_to_hir/type.hpp"
 
 #include <cstdint>
+#include <string>
+#include <utility>
+#include <vector>
 
 #include <slang/ast/Symbol.h>
 #include <slang/ast/types/AllTypes.h>
 #include <slang/ast/types/Type.h>
 #include <slang/numeric/ConstantValue.h>
+#include <slang/numeric/SVInt.h>
 
 #include "lyra/base/internal_error.hpp"
 #include "lyra/diag/diagnostic.hpp"
 #include "lyra/diag/source_span.hpp"
+#include "lyra/hir/integral_constant.hpp"
 #include "lyra/hir/type.hpp"
+#include "lyra/lowering/ast_to_hir/integral_constant.hpp"
+#include "lyra/lowering/ast_to_hir/state.hpp"
 
 namespace lyra::lowering::ast_to_hir {
 
@@ -112,10 +119,37 @@ auto LowerExplicitPackedArray(
   };
 }
 
+auto LowerEnum(
+    const slang::ast::EnumType& enum_type, diag::SourceSpan decl_span,
+    UnitLoweringState& state) -> diag::Result<hir::EnumType> {
+  auto base_data = LowerType(enum_type.baseType, decl_span, state);
+  if (!base_data.has_value()) {
+    return std::unexpected(std::move(base_data.error()));
+  }
+  const hir::TypeId base_id = state.AddType(*std::move(base_data));
+  std::vector<hir::EnumMember> members;
+  for (const auto& value_sym : enum_type.values()) {
+    const auto& cv = value_sym.getValue();
+    if (!cv.isInteger()) {
+      throw InternalError("LowerEnum: enum value is not integral");
+    }
+    members.push_back(
+        hir::EnumMember{
+            .name = std::string(value_sym.name),
+            .value = LowerSVIntToIntegralConstant(cv.integer()),
+        });
+  }
+  return hir::EnumType{
+      .base_type = base_id,
+      .members = std::move(members),
+  };
+}
+
 }  // namespace
 
-auto LowerTypeData(const slang::ast::Type& type, diag::SourceSpan decl_span)
-    -> diag::Result<hir::TypeData> {
+auto LowerType(
+    const slang::ast::Type& type, diag::SourceSpan decl_span,
+    UnitLoweringState& state) -> diag::Result<hir::TypeData> {
   const auto& canonical = type.getCanonicalType();
 
   switch (canonical.kind) {
@@ -141,6 +175,14 @@ auto LowerTypeData(const slang::ast::Type& type, diag::SourceSpan decl_span)
       }
       return hir::TypeData{std::move(pa.value())};
     }
+    case slang::ast::SymbolKind::EnumType: {
+      auto e =
+          LowerEnum(canonical.as<slang::ast::EnumType>(), decl_span, state);
+      if (!e.has_value()) {
+        return std::unexpected(std::move(e.error()));
+      }
+      return hir::TypeData{*std::move(e)};
+    }
     case slang::ast::SymbolKind::FloatingType: {
       const auto& f = canonical.as<slang::ast::FloatingType>();
       switch (f.floatKind) {
@@ -151,7 +193,7 @@ auto LowerTypeData(const slang::ast::Type& type, diag::SourceSpan decl_span)
         case slang::ast::FloatingType::RealTime:
           return hir::TypeData{hir::RealTimeType{}};
       }
-      throw InternalError("LowerTypeData: unknown FloatingType kind");
+      throw InternalError("LowerType: unknown FloatingType kind");
     }
     case slang::ast::SymbolKind::StringType:
       return hir::TypeData{hir::StringType{}};
@@ -171,10 +213,6 @@ auto LowerTypeData(const slang::ast::Type& type, diag::SourceSpan decl_span)
           decl_span, diag::DiagCode::kUnsupportedPackedUnionType,
           "packed union types are not supported",
           diag::UnsupportedCategory::kType);
-    case slang::ast::SymbolKind::EnumType:
-      return diag::Unsupported(
-          decl_span, diag::DiagCode::kUnsupportedEnumType,
-          "enum types are not supported", diag::UnsupportedCategory::kType);
     case slang::ast::SymbolKind::FixedSizeUnpackedArrayType:
       return diag::Unsupported(
           decl_span, diag::DiagCode::kUnsupportedFixedSizeUnpackedArrayType,

@@ -3,9 +3,12 @@
 #include <cstdint>
 #include <vector>
 
-#include "lyra/hir/type.hpp"
-
 namespace lyra::hir {
+
+enum class Signedness {
+  kSigned,
+  kUnsigned,
+};
 
 enum class IntegralStateKind : std::uint8_t {
   kTwoState,

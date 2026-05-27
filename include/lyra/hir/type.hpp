@@ -3,8 +3,11 @@
 #include <compare>
 #include <cstdint>
 #include <optional>
+#include <string>
 #include <variant>
 #include <vector>
+
+#include "lyra/hir/integral_constant.hpp"
 
 namespace lyra::hir {
 
@@ -16,6 +19,7 @@ struct TypeId {
 
 enum class TypeKind {
   kPackedArray,
+  kEnum,
   kUnpackedArray,
   kDynamicArray,
   kQueue,
@@ -33,11 +37,6 @@ enum class BitAtom {
   kBit,
   kLogic,
   kReg,
-};
-
-enum class Signedness {
-  kSigned,
-  kUnsigned,
 };
 
 enum class PackedArrayForm {
@@ -68,6 +67,16 @@ struct PackedArrayType {
 
   [[nodiscard]] auto BitWidth() const -> std::uint64_t;
   [[nodiscard]] auto IsFourState() const -> bool;
+};
+
+struct EnumMember {
+  std::string name;
+  IntegralConstant value;
+};
+
+struct EnumType {
+  TypeId base_type;
+  std::vector<EnumMember> members;
 };
 
 struct UnpackedRange {
@@ -103,7 +112,7 @@ struct ChandleType {};
 struct VoidType {};
 
 using TypeData = std::variant<
-    PackedArrayType, UnpackedArrayType, DynamicArrayType, QueueType,
+    PackedArrayType, EnumType, UnpackedArrayType, DynamicArrayType, QueueType,
     AssociativeArrayType, StringType, EventType, RealType, ShortRealType,
     RealTimeType, ChandleType, VoidType>;
 
@@ -113,6 +122,8 @@ struct Type {
   [[nodiscard]] auto Kind() const -> TypeKind;
   [[nodiscard]] auto IsPackedArray() const -> bool;
   [[nodiscard]] auto AsPackedArray() const -> const PackedArrayType&;
+  [[nodiscard]] auto IsEnum() const -> bool;
+  [[nodiscard]] auto AsEnum() const -> const EnumType&;
 };
 
 }  // namespace lyra::hir

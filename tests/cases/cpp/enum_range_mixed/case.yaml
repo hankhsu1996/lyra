@@ -1,0 +1,15 @@
+id: cpp.enum_range_mixed
+tags: [cpp_run]
+input:
+  command: [run, cpp]
+  project: false
+  top: Top
+  files: [main.sv]
+expect:
+  exit: 0
+  variables:
+    r_add: 10
+    r_sub0: 11
+    r_sub4: 15
+    r_jmp6: 16
+    r_jmp8: 18
