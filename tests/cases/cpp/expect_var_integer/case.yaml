@@ -1,0 +1,14 @@
+id: cpp.expect_var_integer
+tags: [cpp_run]
+input:
+  command: [run, cpp]
+  project: false
+  top: Top
+  files: [main.sv]
+expect:
+  exit: 0
+  variables:
+    known_: 12345
+    neg_: -42
+    xz_partial: "32'bxxxxxxxxxxxxxxxxxxxxxxxxxxxx00zz"
+    xz_arith: "32'bxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"

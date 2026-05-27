@@ -90,12 +90,14 @@ auto RenderBinaryOp(
       return "(" + lhs + ").LogicalShiftRight(" + rhs + ")";
     case mir::BinaryOp::kArithmeticShiftRight:
       return "(" + lhs + ").ArithmeticShiftRight(" + rhs + ")";
+    case mir::BinaryOp::kLogicalImplication:
+      return "(" + lhs + ").LogicalImplication(" + rhs + ")";
+    case mir::BinaryOp::kLogicalEquivalence:
+      return "(" + lhs + ").LogicalEquivalence(" + rhs + ")";
     case mir::BinaryOp::kCaseEquality:
     case mir::BinaryOp::kCaseInequality:
     case mir::BinaryOp::kWildcardEquality:
     case mir::BinaryOp::kWildcardInequality:
-    case mir::BinaryOp::kLogicalImplication:
-    case mir::BinaryOp::kLogicalEquivalence:
       return diag::Unsupported(
           diag::DiagCode::kCppEmitBinaryOpNotImplemented,
           "this binary operator is not yet implemented in cpp emit",

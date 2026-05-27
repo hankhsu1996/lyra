@@ -2,6 +2,7 @@ module Top;
   int and_;
   int or_;
   int xor_;
+  int xnor_;
   initial begin
     int a;
     int b;
@@ -9,5 +10,6 @@ module Top;
     and_ = a & b;
     or_ = a | b;
     xor_ = a ^ b;
+    xnor_ = a ~^ b;
   end
 endmodule

@@ -11,7 +11,7 @@ item only when the corresponding archive tests can be reproduced -- or have been
 deprecated -- on the current architecture. "Intentionally deprecated" requires a `decisions/` entry;
 absent that, the item stays open.
 
-When a workstream has its own progress file (e.g. `operators.md`, `control-flow.md`), the granular
+When a workstream has its own progress file (e.g. `control-flow.md`, `integral.md`), the granular
 sub-step tracking lives there. The corresponding archive items below remain a high-level inventory;
 the dedicated file is the source of truth for "what is done, in what order, what is blocked".
 
@@ -112,11 +112,21 @@ unique_priority_if, while).
 
 ### operators
 
-Tracked in `operators.md`. Covers `operators/binary`, `operators/binary_string`,
-`operators/case_equality`, `operators/comparison_value_temp`, `operators/compound_assignment`,
-`operators/concat`, `operators/inside`, `operators/replicate`, `operators/replication_patterns`,
-`operators/shift_overflow`, `operators/unary`, `operators/value_temp_expansion`,
-`operators/wildcard_equality`.
+- [ ] operators/binary
+- [ ] operators/binary_string
+- [ ] operators/case_equality
+- [ ] operators/comparison_value_temp
+- [ ] operators/compound_assignment
+- [ ] operators/concat
+- [ ] operators/inside
+- [ ] operators/replicate
+- [ ] operators/replication_patterns
+- [ ] operators/shift_overflow
+- [ ] operators/unary -- `++` / `--` is the remaining gap on integral operands; needs a new HIR/MIR
+      shape for SV side-effect ordering. The rest of the integral unary surface lives under
+      `integral.md`.
+- [ ] operators/value_temp_expansion
+- [ ] operators/wildcard_equality
 
 ### optimization
 
