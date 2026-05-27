@@ -1,0 +1,19 @@
+id: cpp.wide_integral_arithmetic_basic
+tags: [cpp_run]
+input:
+  command: [run, cpp]
+  project: false
+  top: Top
+  files: [main.sv]
+expect:
+  exit: 0
+  variables:
+    a65: "65'h75bcd15"
+    sum65: "65'h12c"
+    a96: "96'h24cb016ea"
+    sum128: "128'h2ba7def3000"
+    diff128: "128'h2ba7def3000"
+    mul_max: "128'hfffffffffffffffe0000000000000001"
+    a200: "200'h2a"
+    neg_signed: "32'shffffffe2"
+    neg_wide: "128'shffffffffffffffffffffffffffffff9c"

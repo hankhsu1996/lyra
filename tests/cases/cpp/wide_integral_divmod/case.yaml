@@ -1,0 +1,21 @@
+id: cpp.wide_integral_divmod
+tags: [cpp_run]
+input:
+  command: [run, cpp]
+  project: false
+  top: Top
+  files: [main.sv]
+expect:
+  exit: 0
+  variables:
+    div_small: "128'h2"
+    div_cross_word: "128'h10000000000000000"
+    div_max_by_two: "128'h7fffffffffffffffffffffffffffffff"
+    mod_small: "128'h2"
+    mod_cross_word: "128'h0"
+    div_signed_neg: "128'shfffffffffffffffffffffffffffffffe"
+    mod_signed_neg: "128'sh0"
+    div_signed_quot_pos: "128'sh8"
+    div_by_zero_2state: "128'h0"
+    mod_by_zero_2state: "128'h0"
+    div_by_zero_4state: "128'bxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
