@@ -1,7 +1,9 @@
 #include "lyra/lowering/ast_to_hir/type.hpp"
 
 #include <cstdint>
+#include <initializer_list>
 #include <string>
+#include <string_view>
 #include <utility>
 #include <vector>
 
@@ -15,6 +17,7 @@
 #include "lyra/diag/diagnostic.hpp"
 #include "lyra/diag/source_span.hpp"
 #include "lyra/hir/integral_constant.hpp"
+#include "lyra/hir/method.hpp"
 #include "lyra/hir/type.hpp"
 #include "lyra/lowering/ast_to_hir/integral_constant.hpp"
 #include "lyra/lowering/ast_to_hir/state.hpp"
@@ -139,9 +142,27 @@ auto LowerEnum(
             .value = LowerSVIntToIntegralConstant(cv.integer()),
         });
   }
+  std::vector<hir::Method> methods;
+  methods.reserve(6);
+  for (const auto [name, kind] : std::initializer_list<
+           std::pair<std::string_view, hir::BuiltinMethodKind>>{
+           {"first", hir::BuiltinMethodKind::kEnumFirst},
+           {"last", hir::BuiltinMethodKind::kEnumLast},
+           {"num", hir::BuiltinMethodKind::kEnumNum},
+           {"next", hir::BuiltinMethodKind::kEnumNext},
+           {"prev", hir::BuiltinMethodKind::kEnumPrev},
+           {"name", hir::BuiltinMethodKind::kEnumName},
+       }) {
+    methods.push_back(
+        hir::Method{
+            .name = std::string{name},
+            .data = hir::BuiltinMethod{.kind = kind},
+        });
+  }
   return hir::EnumType{
       .base_type = base_id,
       .members = std::move(members),
+      .methods = std::move(methods),
   };
 }
 

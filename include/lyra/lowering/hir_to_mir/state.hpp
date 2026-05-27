@@ -14,7 +14,6 @@
 #include "lyra/hir/structural_hops.hpp"
 #include "lyra/hir/structural_scope.hpp"
 #include "lyra/hir/structural_var.hpp"
-#include "lyra/hir/subroutine.hpp"
 #include "lyra/hir/type.hpp"
 #include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/expr.hpp"

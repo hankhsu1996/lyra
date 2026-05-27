@@ -13,6 +13,7 @@
 #include "lyra/base/overloaded.hpp"
 #include "lyra/hir/binary_op.hpp"
 #include "lyra/hir/expr.hpp"
+#include "lyra/hir/method.hpp"
 #include "lyra/hir/module_unit.hpp"
 #include "lyra/hir/primary.hpp"
 #include "lyra/hir/procedural_var.hpp"
@@ -148,9 +149,14 @@ class HirDumper {
                     "{}={}", e.members[i].name,
                     FormatIntegralConstant(e.members[i].value));
               }
+              std::string methods;
+              for (std::size_t i = 0; i < e.methods.size(); ++i) {
+                if (i > 0) methods += ", ";
+                methods += e.methods[i].name;
+              }
               return std::format(
-                  "Enum(base=Type[{}], members=[{}])", e.base_type.value,
-                  members);
+                  "Enum(base=Type[{}], members=[{}], methods=[{}])",
+                  e.base_type.value, members, methods);
             },
             [](const UnpackedArrayType& u) -> std::string {
               return std::format(
@@ -445,29 +451,12 @@ class HirDumper {
               return std::format(
                   "SystemSubroutine[{}] \"{}\"", s.id.value, desc.name);
             },
-            [](const BuiltinMethodRef& b) -> std::string {
-              std::string_view name;
-              switch (b.kind) {
-                case BuiltinMethodKind::kEnumFirst:
-                  name = "enum.first";
-                  break;
-                case BuiltinMethodKind::kEnumLast:
-                  name = "enum.last";
-                  break;
-                case BuiltinMethodKind::kEnumNum:
-                  name = "enum.num";
-                  break;
-                case BuiltinMethodKind::kEnumNext:
-                  name = "enum.next";
-                  break;
-                case BuiltinMethodKind::kEnumPrev:
-                  name = "enum.prev";
-                  break;
-                case BuiltinMethodKind::kEnumName:
-                  name = "enum.name";
-                  break;
-              }
-              return std::format("BuiltinMethod \"{}\"", name);
+            [this](const MethodRef& m) -> std::string {
+              const auto& method =
+                  unit_->GetType(m.receiver_type).GetMethod(m.method);
+              return std::format(
+                  "Method[{}] \"{}\" on Type[{}]", m.method.value, method.name,
+                  m.receiver_type.value);
             },
         },
         callee);
@@ -567,6 +556,7 @@ class HirDumper {
   }
 
   void DumpUnit(const ModuleUnit& u) {
+    unit_ = &u;
     Line(std::format("ModuleUnit \"{}\"", u.name));
     Indent();
 
@@ -1002,6 +992,7 @@ class HirDumper {
   std::string out_;
   int indent_ = 0;
   std::vector<const StructuralScope*> scope_stack_;
+  const ModuleUnit* unit_ = nullptr;
 };
 
 }  // namespace
