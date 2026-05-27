@@ -104,6 +104,15 @@ auto LowerTimingControl(
                 case hir::EventEdge::kAnyChange:
                   edge = mir::EventEdge::kAnyChange;
                   break;
+                case hir::EventEdge::kPosedge:
+                  edge = mir::EventEdge::kPosedge;
+                  break;
+                case hir::EventEdge::kNegedge:
+                  edge = mir::EventEdge::kNegedge;
+                  break;
+                case hir::EventEdge::kBothEdges:
+                  edge = mir::EventEdge::kBothEdges;
+                  break;
               }
               triggers.push_back(
                   mir::EventTrigger{.signal = signal_id, .edge = edge});
@@ -327,14 +336,14 @@ auto LowerCaseStmt(
     // with the per-level depth guards above.
     std::vector<mir::ExprId> predicates;
     predicates.reserve(c.items.size());
-    for (std::size_t i = 0; i < c.items.size(); ++i) {
+    for (const auto& item : c.items) {
       auto pred_or = BuildEqualityChain(
-          wrapper_state, snapshot, bit_type, 0, c.items[i].labels.size(),
+          wrapper_state, snapshot, bit_type, 0, item.labels.size(),
           [&](ProceduralScopeLoweringState& es,
               std::size_t li) -> diag::Result<mir::ExprId> {
             auto lab_or = LowerExpr(
                 unit_state, scope_state, proc_state, es, hir_proc,
-                hir_proc.exprs.at(c.items[i].labels[li].value));
+                hir_proc.exprs.at(item.labels[li].value));
             if (!lab_or) {
               return std::unexpected(std::move(lab_or.error()));
             }

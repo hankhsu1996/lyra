@@ -56,6 +56,8 @@ Do NOT proceed with formatting or staging until you are on a feature branch.
 
 **Body:** Start with `## Summary` as a paragraph (not bullets). Add `## Design` or `## Testing` sections only if they add value.
 
+**Paragraph wrapping:** Keep each paragraph on a single line in the HEREDOC; GitHub markdown wraps automatically. Manually inserting newlines inside a paragraph produces broken-looking text in the rendered PR. Hard line breaks are only correct inside code blocks and bullet lists.
+
 ## Instructions
 
 ### Phase 1: Commit

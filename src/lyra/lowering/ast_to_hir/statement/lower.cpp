@@ -45,17 +45,25 @@ auto LowerUniquePriorityCheck(slang::ast::UniquePriorityCheck check)
       "LowerUniquePriorityCheck: unknown slang UniquePriorityCheck value");
 }
 
+auto LowerEventEdge(slang::ast::EdgeKind kind) -> hir::EventEdge {
+  switch (kind) {
+    case slang::ast::EdgeKind::None:
+      return hir::EventEdge::kAnyChange;
+    case slang::ast::EdgeKind::PosEdge:
+      return hir::EventEdge::kPosedge;
+    case slang::ast::EdgeKind::NegEdge:
+      return hir::EventEdge::kNegedge;
+    case slang::ast::EdgeKind::BothEdges:
+      return hir::EventEdge::kBothEdges;
+  }
+  throw InternalError("LowerEventEdge: unknown slang EdgeKind value");
+}
+
 auto LowerSignalEventTrigger(
     const UnitLoweringFacts& unit_facts, UnitLoweringState& unit_state,
     ProcessLoweringState& proc_state, const ScopeStack& stack,
     const slang::ast::SignalEventControl& sig, diag::SourceSpan span)
     -> diag::Result<hir::EventTrigger> {
-  if (sig.edge != slang::ast::EdgeKind::None) {
-    return diag::Unsupported(
-        span, diag::DiagCode::kUnsupportedEventEdge,
-        "edge specifiers (posedge/negedge/edge) are not yet supported",
-        diag::UnsupportedCategory::kFeature);
-  }
   if (sig.iffCondition != nullptr) {
     return diag::Unsupported(
         span, diag::DiagCode::kUnsupportedEventTriggerForm,
@@ -88,7 +96,7 @@ auto LowerSignalEventTrigger(
 
   return hir::EventTrigger{
       .signal = proc_state.AddExpr(*std::move(expr_or)),
-      .edge = hir::EventEdge::kAnyChange,
+      .edge = LowerEventEdge(sig.edge),
   };
 }
 
@@ -114,11 +122,27 @@ auto LowerTimingControl(
       return hir::TimingControl{
           hir::EventControl{.triggers = {*std::move(trigger_or)}}};
     }
-    case slang::ast::TimingControlKind::EventList:
-      return diag::Unsupported(
-          span, diag::DiagCode::kUnsupportedTimingControlKind,
-          "event lists (`@(a or b)`) are not yet supported",
-          diag::UnsupportedCategory::kFeature);
+    case slang::ast::TimingControlKind::EventList: {
+      const auto& list = tc.as<slang::ast::EventListControl>();
+      std::vector<hir::EventTrigger> triggers;
+      triggers.reserve(list.events.size());
+      for (const auto* event : list.events) {
+        if (event->kind != slang::ast::TimingControlKind::SignalEvent) {
+          return diag::Unsupported(
+              span, diag::DiagCode::kUnsupportedTimingControlKind,
+              "event list entries must be signal events; nested timing "
+              "controls are not yet supported",
+              diag::UnsupportedCategory::kFeature);
+        }
+        const auto& sig = event->as<slang::ast::SignalEventControl>();
+        auto trigger_or = LowerSignalEventTrigger(
+            unit_facts, unit_state, proc_state, stack, sig, span);
+        if (!trigger_or) return std::unexpected(std::move(trigger_or.error()));
+        triggers.push_back(*std::move(trigger_or));
+      }
+      return hir::TimingControl{
+          hir::EventControl{.triggers = std::move(triggers)}};
+    }
     case slang::ast::TimingControlKind::ImplicitEvent:
       return diag::Unsupported(
           span, diag::DiagCode::kUnsupportedTimingControlKind,

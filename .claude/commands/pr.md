@@ -46,6 +46,7 @@ Simple fixes may need only Summary. Don't force sections that have nothing meani
 - Summary: paragraph, not bullet points
 - Other sections: bullet points, checkboxes, or prose as appropriate
 - Use h3 subsections within sections if content is substantial
+- **Paragraph wrapping:** keep each paragraph on a single line in the HEREDOC; GitHub markdown wraps automatically. Manually inserting newlines inside a paragraph produces broken-looking text in the rendered PR. Hard line breaks belong only inside code blocks and bullet lists.
 
 **Adapt to PR type:**
 

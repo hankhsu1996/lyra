@@ -276,7 +276,9 @@ void Engine::ScheduleWait(RuntimeProcess& process, WaitRequest wait) {
       Overloaded{
           [&](DelayWait d) { ScheduleDelayWait(process, d); },
           [&](EventWait e) { ScheduleEventWait(process, e); },
-          [&](ValueChangeWait v) { ScheduleValueChangeWait(process, v); },
+          [&](ValueChangeWait& v) {
+            ScheduleValueChangeWait(process, std::move(v));
+          },
           [&](FinishWait) { finished_ = true; },
       },
       wait);
@@ -305,15 +307,33 @@ void Engine::TriggerEvent(RuntimeEvent& event) {
 
 void Engine::ScheduleValueChangeWait(
     RuntimeProcess& process, ValueChangeWait wait) {
-  if (wait.observable == nullptr) {
+  if (wait.triggers.empty()) {
     throw InternalError(
-        "Engine::ScheduleValueChangeWait: observable pointer is null");
+        "Engine::ScheduleValueChangeWait: trigger list is empty");
   }
-  wait.observable->Subscribe(process);
+  std::vector<Observable*> subs;
+  subs.reserve(wait.triggers.size());
+  for (const auto& trigger : wait.triggers) {
+    if (trigger.observable == nullptr) {
+      throw InternalError(
+          "Engine::ScheduleValueChangeWait: observable pointer is null");
+    }
+    trigger.observable->Subscribe(process, trigger.edge);
+    subs.push_back(trigger.observable);
+  }
+  process.SetPendingValueChangeSubscriptions(std::move(subs));
 }
 
-void Engine::TriggerValueChange(Observable& observable) {
-  for (RuntimeProcess* p : observable.TakeWaiters()) {
+void Engine::TriggerValueChange(
+    Observable& observable, EdgeTransition transition) {
+  for (RuntimeProcess* p : observable.TakeMatchingWaiters(transition)) {
+    // Clean up sibling subscriptions so they don't leak across waits when this
+    // process re-enters the runnable queue.
+    for (Observable* other : p->TakePendingValueChangeSubscriptions()) {
+      if (other != &observable) {
+        other->Unsubscribe(*p);
+      }
+    }
     ScheduleNextDelta(*p);
   }
 }

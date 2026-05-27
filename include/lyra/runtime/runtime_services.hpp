@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstdint>
 #include <functional>
 
 #include "lyra/base/internal_error.hpp"
@@ -10,6 +11,7 @@ class StreamDispatcher;
 class DiagnosticDispatcher;
 class Engine;
 class Observable;
+enum class EdgeTransition : std::uint8_t;
 
 class RuntimeServices {
  public:
@@ -35,7 +37,7 @@ class RuntimeServices {
 
   void SubmitNba(std::function<void()> closure);
 
-  void TriggerValueChange(Observable& observable);
+  void TriggerValueChange(Observable& observable, EdgeTransition transition);
 
  private:
   StreamDispatcher* stream_ = nullptr;

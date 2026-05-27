@@ -15,11 +15,12 @@ void RuntimeServices::SubmitNba(std::function<void()> closure) {
   engine_->SubmitNba(std::move(closure));
 }
 
-void RuntimeServices::TriggerValueChange(Observable& observable) {
+void RuntimeServices::TriggerValueChange(
+    Observable& observable, EdgeTransition transition) {
   if (engine_ == nullptr) {
     throw InternalError("RuntimeServices::TriggerValueChange: no Engine bound");
   }
-  engine_->TriggerValueChange(observable);
+  engine_->TriggerValueChange(observable, transition);
 }
 
 }  // namespace lyra::runtime

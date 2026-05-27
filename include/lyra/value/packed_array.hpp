@@ -63,6 +63,11 @@ class PackedArray {
   // LRM 11.4.5 `===` predicate form (host bool). Operator form: `CaseEqual`.
   [[nodiscard]] auto IsCaseEqual(const PackedArray& other) const -> bool;
 
+  // LRM 9.4.2 LSB: edge transitions are detected only on bit 0. Returns the
+  // bit as a 4-state code so the caller can apply Table 9-2 (0/x/z to 1
+  // posedge, 1/x/z to 0 negedge).
+  [[nodiscard]] auto Lsb() const -> FourStateBit;
+
   // LRM 11.4.5 `===` operator form (1-bit PackedArray); `==` returns 4-state
   // and propagates X, this returns deterministic 0 or 1.
   [[nodiscard]] auto CaseEqual(const PackedArray& other) const -> PackedArray;
