@@ -260,9 +260,8 @@ auto LowerHirIntegerLiteral(const hir::IntegerLiteral& i, mir::TypeId type)
 
 auto LowerBuiltinMethodCall(
     const UnitLoweringState& unit_state, const hir::Process& hir_process,
-    const hir::BuiltinMethodRef& callee,
-    const std::vector<hir::ExprId>& arguments, mir::TypeId result_type,
-    diag::SourceSpan span) -> diag::Result<mir::Expr> {
+    hir::BuiltinMethodKind kind, const std::vector<hir::ExprId>& arguments,
+    mir::TypeId result_type, diag::SourceSpan span) -> diag::Result<mir::Expr> {
   if (arguments.empty()) {
     throw InternalError(
         "LowerBuiltinMethodCall: built-in method call has no receiver");
@@ -276,14 +275,14 @@ auto LowerBuiltinMethodCall(
   }
   const auto& enum_type = receiver_type.AsEnum();
 
-  switch (callee.kind) {
+  switch (kind) {
     case hir::BuiltinMethodKind::kEnumFirst:
     case hir::BuiltinMethodKind::kEnumLast: {
       if (enum_type.members.empty()) {
         throw InternalError("LowerBuiltinMethodCall: enum has no members");
       }
       const hir::EnumMember& picked =
-          (callee.kind == hir::BuiltinMethodKind::kEnumFirst)
+          (kind == hir::BuiltinMethodKind::kEnumFirst)
               ? enum_type.members.front()
               : enum_type.members.back();
       return mir::Expr{
@@ -615,9 +614,26 @@ auto LowerHirCallExprProc(
                         .arguments = std::move(args)},
                 .type = result_type};
           },
-          [&](const hir::BuiltinMethodRef& bm) -> diag::Result<mir::Expr> {
-            return LowerBuiltinMethodCall(
-                unit_state, hir_process, bm, c.arguments, result_type, span);
+          [&](const hir::MethodRef& m) -> diag::Result<mir::Expr> {
+            const auto& method =
+                unit_state.GetHirType(m.receiver_type).GetMethod(m.method);
+            return std::visit(
+                Overloaded{
+                    [&](const hir::BuiltinMethod& b)
+                        -> diag::Result<mir::Expr> {
+                      return LowerBuiltinMethodCall(
+                          unit_state, hir_process, b.kind, c.arguments,
+                          result_type, span);
+                    },
+                    [&](const hir::StructuralMethod&)
+                        -> diag::Result<mir::Expr> {
+                      throw InternalError(
+                          "MethodRef -> StructuralMethod lowering: "
+                          "user-defined methods are not yet wired into HIR/MIR "
+                          "call dispatch");
+                    },
+                },
+                method.data);
           },
       },
       c.callee);

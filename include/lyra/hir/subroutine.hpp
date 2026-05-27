@@ -1,19 +1,12 @@
 #pragma once
 
-#include <compare>
 #include <cstdint>
 #include <string>
 
-#include "lyra/hir/type.hpp"
+#include "lyra/hir/subroutine_id.hpp"
+#include "lyra/hir/type_id.hpp"
 
 namespace lyra::hir {
-
-struct StructuralSubroutineId {
-  std::uint32_t value;
-
-  auto operator<=>(const StructuralSubroutineId&) const
-      -> std::strong_ordering = default;
-};
 
 enum class SubroutineKind : std::uint8_t {
   kTask,

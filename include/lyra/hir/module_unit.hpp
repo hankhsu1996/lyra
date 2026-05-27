@@ -5,6 +5,7 @@
 
 #include "lyra/hir/structural_scope.hpp"
 #include "lyra/hir/type.hpp"
+#include "lyra/hir/type_id.hpp"
 
 namespace lyra::hir {
 

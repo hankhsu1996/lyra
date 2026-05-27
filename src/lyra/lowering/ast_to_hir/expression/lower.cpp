@@ -143,17 +143,6 @@ auto LowerBinaryOp(slang::ast::BinaryOperator op) -> hir::BinaryOp {
   throw InternalError("LowerBinaryOp: unknown slang BinaryOperator");
 }
 
-auto LowerEnumMethodName(std::string_view name)
-    -> std::optional<hir::BuiltinMethodKind> {
-  if (name == "first") return hir::BuiltinMethodKind::kEnumFirst;
-  if (name == "last") return hir::BuiltinMethodKind::kEnumLast;
-  if (name == "num") return hir::BuiltinMethodKind::kEnumNum;
-  if (name == "next") return hir::BuiltinMethodKind::kEnumNext;
-  if (name == "prev") return hir::BuiltinMethodKind::kEnumPrev;
-  if (name == "name") return hir::BuiltinMethodKind::kEnumName;
-  return std::nullopt;
-}
-
 auto LowerUnaryOp(slang::ast::UnaryOperator op, diag::SourceSpan span)
     -> diag::Result<hir::UnaryOp> {
   switch (op) {
@@ -590,11 +579,15 @@ auto LowerCallExprProc(
     diag::SourceSpan span) -> diag::Result<hir::Expr> {
   std::vector<hir::ExprId> arg_ids;
   arg_ids.reserve(call.arguments().size());
-  for (const auto* arg : call.arguments()) {
+  std::optional<hir::TypeId> receiver_type;
+  for (std::size_t i = 0; i < call.arguments().size(); ++i) {
     auto arg_or = LowerProcExpr(
-        unit_facts, unit_state, proc_state, stack, *arg,
+        unit_facts, unit_state, proc_state, stack, *call.arguments()[i],
         compound_lvalue_context);
     if (!arg_or) return std::unexpected(std::move(arg_or.error()));
+    if (i == 0) {
+      receiver_type = arg_or->type;
+    }
     arg_ids.push_back(proc_state.AddExpr(*std::move(arg_or)));
   }
 
@@ -603,21 +596,26 @@ auto LowerCallExprProc(
         std::get<slang::ast::CallExpression::SystemCallInfo>(call.subroutine);
     const std::string_view name = info.subroutine->name;
 
-    if (auto enum_method_kind = LowerEnumMethodName(name);
-        enum_method_kind.has_value() && !arg_ids.empty() &&
-        call.arguments()[0]->type->getCanonicalType().kind ==
-            slang::ast::SymbolKind::EnumType) {
-      auto type_id = TypeIdOfSlangExpr(unit_facts, unit_state, expr);
-      if (!type_id) return std::unexpected(std::move(type_id.error()));
-      return hir::Expr{
-          .type = *type_id,
-          .data =
-              hir::CallExpr{
-                  .callee = hir::BuiltinMethodRef{.kind = *enum_method_kind},
-                  .arguments = std::move(arg_ids),
-              },
-          .span = span,
-      };
+    if (receiver_type.has_value()) {
+      if (auto method_id =
+              unit_state.GetType(*receiver_type).LookupMethod(name);
+          method_id.has_value()) {
+        auto type_id = TypeIdOfSlangExpr(unit_facts, unit_state, expr);
+        if (!type_id) return std::unexpected(std::move(type_id.error()));
+        return hir::Expr{
+            .type = *type_id,
+            .data =
+                hir::CallExpr{
+                    .callee =
+                        hir::MethodRef{
+                            .receiver_type = *receiver_type,
+                            .method = *method_id,
+                        },
+                    .arguments = std::move(arg_ids),
+                },
+            .span = span,
+        };
+      }
     }
 
     const auto* desc = support::FindSystemSubroutine(name);
