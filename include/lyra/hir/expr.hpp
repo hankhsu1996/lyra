@@ -53,9 +53,21 @@ struct CallExpr {
   std::vector<ExprId> arguments;
 };
 
+struct InsideRangePair {
+  ExprId lo;
+  ExprId hi;
+};
+
+using InsideItem = std::variant<ExprId, InsideRangePair>;
+
+struct InsideExpr {
+  ExprId lhs;
+  std::vector<InsideItem> items;
+};
+
 using ExprData = std::variant<
     PrimaryExpr, UnaryExpr, BinaryExpr, ConditionalExpr, AssignExpr, CallExpr,
-    ConversionExpr>;
+    ConversionExpr, InsideExpr>;
 
 struct Expr {
   TypeId type;

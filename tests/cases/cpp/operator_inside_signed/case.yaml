@@ -1,0 +1,15 @@
+id: cpp.operator_inside_signed
+tags: [cpp_run]
+input:
+  command: [run, cpp]
+  project: false
+  top: Top
+  files: [main.sv]
+expect:
+  exit: 0
+  variables:
+    neg_value_match: 1
+    neg_range_match: 1
+    neg_range_at_lo: 1
+    neg_range_at_hi: 1
+    pos_outside_neg_range: 0

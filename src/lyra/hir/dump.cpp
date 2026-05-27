@@ -466,6 +466,26 @@ class HirDumper {
     return *scope_stack_[scope_stack_.size() - 1 - hops.value];
   }
 
+  static auto FormatInsideExprNode(const InsideExpr& in) -> std::string {
+    std::string items;
+    for (std::size_t i = 0; i < in.items.size(); ++i) {
+      if (i != 0) items += ", ";
+      items += std::visit(
+          Overloaded{
+              [](const ExprId& id) {
+                return std::format("Expr[{}]", id.value);
+              },
+              [](const InsideRangePair& r) {
+                return std::format(
+                    "[Expr[{}]:Expr[{}]]", r.lo.value, r.hi.value);
+              },
+          },
+          in.items[i]);
+    }
+    return std::format(
+        "InsideExpr lhs=Expr[{}] items=[{}]", in.lhs.value, items);
+  }
+
   [[nodiscard]] auto FormatExpr(const Expr& e) const -> std::string {
     std::string formatted = std::visit(
         Overloaded{
@@ -511,6 +531,9 @@ class HirDumper {
               return std::format(
                   "ConversionExpr kind={} operand=Expr[{}]",
                   FormatConversionKind(cv.kind), cv.operand.value);
+            },
+            [](const InsideExpr& in) -> std::string {
+              return FormatInsideExprNode(in);
             },
         },
         e.data);
@@ -634,6 +657,228 @@ class HirDumper {
     Dedent();
   }
 
+  void DumpVarDeclStmtNode(const Process& p, StmtId id, const VarDeclStmt& v) {
+    Line(
+        std::format(
+            "Stmt[{}] VarDeclStmt var=ProceduralVar[{}]", id.value,
+            v.var.value));
+    if (v.init.has_value()) {
+      Indent();
+      Line(
+          std::format(
+              "init: Expr[{}] {}", v.init->value, FormatProcExpr(p, *v.init)));
+      Dedent();
+    }
+  }
+
+  void DumpExprStmtNode(const Process& p, StmtId id, const ExprStmt& e) {
+    Line(
+        std::format("Stmt[{}] ExprStmt expr=Expr[{}]", id.value, e.expr.value));
+    Indent();
+    Line(std::format("Expr[{}] {}", e.expr.value, FormatProcExpr(p, e.expr)));
+    Dedent();
+  }
+
+  void DumpBlockStmtNode(const Process& p, StmtId id, const BlockStmt& b) {
+    Line(
+        std::format(
+            "Stmt[{}] BlockStmt (count={})", id.value, b.statements.size()));
+    Indent();
+    for (const auto child : b.statements) {
+      DumpStmt(p, child);
+    }
+    Dedent();
+  }
+
+  void DumpIfStmtNode(const Process& p, StmtId id, const IfStmt& i) {
+    Line(
+        std::format(
+            "Stmt[{}] IfStmt{} cond=Expr[{}]", id.value,
+            FormatUniquePriorityCheck(i.check), i.condition.value));
+    Indent();
+    Line(
+        std::format(
+            "Expr[{}] {}", i.condition.value, FormatProcExpr(p, i.condition)));
+    Line("then:");
+    Indent();
+    DumpStmt(p, i.then_stmt);
+    Dedent();
+    if (i.else_stmt.has_value()) {
+      Line("else:");
+      Indent();
+      DumpStmt(p, *i.else_stmt);
+      Dedent();
+    }
+    Dedent();
+  }
+
+  void DumpCaseStmtNode(const Process& p, StmtId id, const CaseStmt& c) {
+    Line(
+        std::format(
+            "Stmt[{}] CaseStmt{} cond=Expr[{}] (items={})", id.value,
+            FormatUniquePriorityCheck(c.check), c.condition.value,
+            c.items.size()));
+    Indent();
+    Line(
+        std::format(
+            "Expr[{}] {}", c.condition.value, FormatProcExpr(p, c.condition)));
+    for (std::size_t k = 0; k < c.items.size(); ++k) {
+      const auto& item = c.items[k];
+      std::string labels_str;
+      for (std::size_t m = 0; m < item.labels.size(); ++m) {
+        if (m != 0) labels_str += ", ";
+        labels_str += std::format("Expr[{}]", item.labels[m].value);
+      }
+      Line(std::format("item[{}] labels=[{}]", k, labels_str));
+      Indent();
+      for (const hir::ExprId label_id : item.labels) {
+        Line(
+            std::format(
+                "Expr[{}] {}", label_id.value, FormatProcExpr(p, label_id)));
+      }
+      Line("stmt:");
+      Indent();
+      DumpStmt(p, item.stmt);
+      Dedent();
+      Dedent();
+    }
+    if (c.default_stmt.has_value()) {
+      Line("default:");
+      Indent();
+      DumpStmt(p, *c.default_stmt);
+      Dedent();
+    }
+    Dedent();
+  }
+
+  void DumpForStmtNode(const Process& p, StmtId id, const ForStmt& f) {
+    Line(
+        std::format(
+            "Stmt[{}] ForStmt (init={}, step={})", id.value, f.init.size(),
+            f.step.size()));
+    Indent();
+    for (std::size_t k = 0; k < f.init.size(); ++k) {
+      std::visit(
+          Overloaded{
+              [&](const ForInitDecl& d) {
+                Line(
+                    std::format(
+                        "init[{}]: Decl var=ProceduralVar[{}]", k,
+                        d.var.value));
+                if (d.init.has_value()) {
+                  Indent();
+                  Line(
+                      std::format(
+                          "Expr[{}] {}", d.init->value,
+                          FormatProcExpr(p, *d.init)));
+                  Dedent();
+                }
+              },
+              [&](const ForInitExpr& e) {
+                Line(
+                    std::format(
+                        "init[{}]: Expr[{}] {}", k, e.expr.value,
+                        FormatProcExpr(p, e.expr)));
+              },
+          },
+          f.init[k]);
+    }
+    if (f.condition.has_value()) {
+      Line(
+          std::format(
+              "cond: Expr[{}] {}", f.condition->value,
+              FormatProcExpr(p, *f.condition)));
+    }
+    for (std::size_t k = 0; k < f.step.size(); ++k) {
+      Line(
+          std::format(
+              "step[{}]: Expr[{}] {}", k, f.step[k].value,
+              FormatProcExpr(p, f.step[k])));
+    }
+    Line("body:");
+    Indent();
+    DumpStmt(p, f.body);
+    Dedent();
+    Dedent();
+  }
+
+  void DumpWhileStmtNode(const Process& p, StmtId id, const WhileStmt& w) {
+    Line(
+        std::format(
+            "Stmt[{}] WhileStmt cond=Expr[{}]", id.value, w.condition.value));
+    Indent();
+    Line(
+        std::format(
+            "Expr[{}] {}", w.condition.value, FormatProcExpr(p, w.condition)));
+    Line("body:");
+    Indent();
+    DumpStmt(p, w.body);
+    Dedent();
+    Dedent();
+  }
+
+  void DumpRepeatStmtNode(const Process& p, StmtId id, const RepeatStmt& r) {
+    Line(
+        std::format(
+            "Stmt[{}] RepeatStmt count=Expr[{}]", id.value, r.count.value));
+    Indent();
+    Line(std::format("Expr[{}] {}", r.count.value, FormatProcExpr(p, r.count)));
+    Line("body:");
+    Indent();
+    DumpStmt(p, r.body);
+    Dedent();
+    Dedent();
+  }
+
+  void DumpDoWhileStmtNode(const Process& p, StmtId id, const DoWhileStmt& d) {
+    Line(
+        std::format(
+            "Stmt[{}] DoWhileStmt cond=Expr[{}]", id.value, d.condition.value));
+    Indent();
+    Line(
+        std::format(
+            "Expr[{}] {}", d.condition.value, FormatProcExpr(p, d.condition)));
+    Line("body:");
+    Indent();
+    DumpStmt(p, d.body);
+    Dedent();
+    Dedent();
+  }
+
+  void DumpForeverStmtNode(const Process& p, StmtId id, const ForeverStmt& f) {
+    Line(std::format("Stmt[{}] ForeverStmt", id.value));
+    Indent();
+    Line("body:");
+    Indent();
+    DumpStmt(p, f.body);
+    Dedent();
+    Dedent();
+  }
+
+  void DumpTimedStmtNode(const Process& p, StmtId id, const TimedStmt& t) {
+    Line(std::format("Stmt[{}] TimedStmt", id.value));
+    Indent();
+    Line(std::format("timing: {}", FormatTimingControlHeader(t.timing)));
+    Indent();
+    std::visit(
+        Overloaded{
+            [&](const DelayControl& d) {
+              Line(
+                  std::format(
+                      "Expr[{}] {}", d.duration.value,
+                      FormatProcExpr(p, d.duration)));
+            },
+            [](const EventControl&) {},
+        },
+        t.timing);
+    Dedent();
+    Line("stmt:");
+    Indent();
+    DumpStmt(p, t.stmt);
+    Dedent();
+    Dedent();
+  }
+
   void DumpStmt(const Process& p, StmtId id) {
     const auto& s = p.stmts.at(id.value);
     std::visit(
@@ -641,313 +886,99 @@ class HirDumper {
             [&](const EmptyStmt&) {
               Line(std::format("Stmt[{}] EmptyStmt", id.value));
             },
-            [&](const VarDeclStmt& v) {
-              Line(
-                  std::format(
-                      "Stmt[{}] VarDeclStmt var=ProceduralVar[{}]", id.value,
-                      v.var.value));
-              if (v.init.has_value()) {
-                Indent();
-                Line(
-                    std::format(
-                        "init: Expr[{}] {}", v.init->value,
-                        FormatProcExpr(p, *v.init)));
-                Dedent();
-              }
-            },
-            [&](const ExprStmt& e) {
-              Line(
-                  std::format(
-                      "Stmt[{}] ExprStmt expr=Expr[{}]", id.value,
-                      e.expr.value));
-              Indent();
-              Line(
-                  std::format(
-                      "Expr[{}] {}", e.expr.value, FormatProcExpr(p, e.expr)));
-              Dedent();
-            },
-            [&](const BlockStmt& b) {
-              Line(
-                  std::format(
-                      "Stmt[{}] BlockStmt (count={})", id.value,
-                      b.statements.size()));
-              Indent();
-              for (const auto child : b.statements) {
-                DumpStmt(p, child);
-              }
-              Dedent();
-            },
-            [&](const IfStmt& i) {
-              Line(
-                  std::format(
-                      "Stmt[{}] IfStmt{} cond=Expr[{}]", id.value,
-                      FormatUniquePriorityCheck(i.check), i.condition.value));
-              Indent();
-              Line(
-                  std::format(
-                      "Expr[{}] {}", i.condition.value,
-                      FormatProcExpr(p, i.condition)));
-              Line("then:");
-              Indent();
-              DumpStmt(p, i.then_stmt);
-              Dedent();
-              if (i.else_stmt.has_value()) {
-                Line("else:");
-                Indent();
-                DumpStmt(p, *i.else_stmt);
-                Dedent();
-              }
-              Dedent();
-            },
-            [&](const CaseStmt& c) {
-              Line(
-                  std::format(
-                      "Stmt[{}] CaseStmt{} cond=Expr[{}] (items={})", id.value,
-                      FormatUniquePriorityCheck(c.check), c.condition.value,
-                      c.items.size()));
-              Indent();
-              Line(
-                  std::format(
-                      "Expr[{}] {}", c.condition.value,
-                      FormatProcExpr(p, c.condition)));
-              for (std::size_t k = 0; k < c.items.size(); ++k) {
-                const auto& item = c.items[k];
-                std::string labels_str;
-                for (std::size_t m = 0; m < item.labels.size(); ++m) {
-                  if (m != 0) labels_str += ", ";
-                  labels_str += std::format("Expr[{}]", item.labels[m].value);
-                }
-                Line(std::format("item[{}] labels=[{}]", k, labels_str));
-                Indent();
-                for (const hir::ExprId label_id : item.labels) {
-                  Line(
-                      std::format(
-                          "Expr[{}] {}", label_id.value,
-                          FormatProcExpr(p, label_id)));
-                }
-                Line("stmt:");
-                Indent();
-                DumpStmt(p, item.stmt);
-                Dedent();
-                Dedent();
-              }
-              if (c.default_stmt.has_value()) {
-                Line("default:");
-                Indent();
-                DumpStmt(p, *c.default_stmt);
-                Dedent();
-              }
-              Dedent();
-            },
-            [&](const ForStmt& f) {
-              Line(
-                  std::format(
-                      "Stmt[{}] ForStmt (init={}, step={})", id.value,
-                      f.init.size(), f.step.size()));
-              Indent();
-              for (std::size_t k = 0; k < f.init.size(); ++k) {
-                std::visit(
-                    Overloaded{
-                        [&](const ForInitDecl& d) {
-                          Line(
-                              std::format(
-                                  "init[{}]: Decl var=ProceduralVar[{}]", k,
-                                  d.var.value));
-                          if (d.init.has_value()) {
-                            Indent();
-                            Line(
-                                std::format(
-                                    "Expr[{}] {}", d.init->value,
-                                    FormatProcExpr(p, *d.init)));
-                            Dedent();
-                          }
-                        },
-                        [&](const ForInitExpr& e) {
-                          Line(
-                              std::format(
-                                  "init[{}]: Expr[{}] {}", k, e.expr.value,
-                                  FormatProcExpr(p, e.expr)));
-                        },
-                    },
-                    f.init[k]);
-              }
-              if (f.condition.has_value()) {
-                Line(
-                    std::format(
-                        "cond: Expr[{}] {}", f.condition->value,
-                        FormatProcExpr(p, *f.condition)));
-              }
-              for (std::size_t k = 0; k < f.step.size(); ++k) {
-                Line(
-                    std::format(
-                        "step[{}]: Expr[{}] {}", k, f.step[k].value,
-                        FormatProcExpr(p, f.step[k])));
-              }
-              Line("body:");
-              Indent();
-              DumpStmt(p, f.body);
-              Dedent();
-              Dedent();
-            },
-            [&](const WhileStmt& w) {
-              Line(
-                  std::format(
-                      "Stmt[{}] WhileStmt cond=Expr[{}]", id.value,
-                      w.condition.value));
-              Indent();
-              Line(
-                  std::format(
-                      "Expr[{}] {}", w.condition.value,
-                      FormatProcExpr(p, w.condition)));
-              Line("body:");
-              Indent();
-              DumpStmt(p, w.body);
-              Dedent();
-              Dedent();
-            },
-            [&](const RepeatStmt& r) {
-              Line(
-                  std::format(
-                      "Stmt[{}] RepeatStmt count=Expr[{}]", id.value,
-                      r.count.value));
-              Indent();
-              Line(
-                  std::format(
-                      "Expr[{}] {}", r.count.value,
-                      FormatProcExpr(p, r.count)));
-              Line("body:");
-              Indent();
-              DumpStmt(p, r.body);
-              Dedent();
-              Dedent();
-            },
-            [&](const DoWhileStmt& d) {
-              Line(
-                  std::format(
-                      "Stmt[{}] DoWhileStmt cond=Expr[{}]", id.value,
-                      d.condition.value));
-              Indent();
-              Line(
-                  std::format(
-                      "Expr[{}] {}", d.condition.value,
-                      FormatProcExpr(p, d.condition)));
-              Line("body:");
-              Indent();
-              DumpStmt(p, d.body);
-              Dedent();
-              Dedent();
-            },
-            [&](const ForeverStmt& f) {
-              Line(std::format("Stmt[{}] ForeverStmt", id.value));
-              Indent();
-              Line("body:");
-              Indent();
-              DumpStmt(p, f.body);
-              Dedent();
-              Dedent();
-            },
+            [&](const VarDeclStmt& v) { DumpVarDeclStmtNode(p, id, v); },
+            [&](const ExprStmt& e) { DumpExprStmtNode(p, id, e); },
+            [&](const BlockStmt& b) { DumpBlockStmtNode(p, id, b); },
+            [&](const IfStmt& i) { DumpIfStmtNode(p, id, i); },
+            [&](const CaseStmt& c) { DumpCaseStmtNode(p, id, c); },
+            [&](const ForStmt& f) { DumpForStmtNode(p, id, f); },
+            [&](const WhileStmt& w) { DumpWhileStmtNode(p, id, w); },
+            [&](const RepeatStmt& r) { DumpRepeatStmtNode(p, id, r); },
+            [&](const DoWhileStmt& d) { DumpDoWhileStmtNode(p, id, d); },
+            [&](const ForeverStmt& f) { DumpForeverStmtNode(p, id, f); },
             [&](const BreakStmt&) {
               Line(std::format("Stmt[{}] BreakStmt", id.value));
             },
             [&](const ContinueStmt&) {
               Line(std::format("Stmt[{}] ContinueStmt", id.value));
             },
-            [&](const TimedStmt& t) {
-              Line(std::format("Stmt[{}] TimedStmt", id.value));
-              Indent();
-              Line(
-                  std::format(
-                      "timing: {}", FormatTimingControlHeader(t.timing)));
-              Indent();
-              std::visit(
-                  Overloaded{
-                      [&](const DelayControl& d) {
-                        Line(
-                            std::format(
-                                "Expr[{}] {}", d.duration.value,
-                                FormatProcExpr(p, d.duration)));
-                      },
-                      [](const EventControl&) {},
-                  },
-                  t.timing);
-              Dedent();
-              Line("stmt:");
-              Indent();
-              DumpStmt(p, t.stmt);
-              Dedent();
-              Dedent();
-            },
+            [&](const TimedStmt& t) { DumpTimedStmtNode(p, id, t); },
         },
         s.data);
+  }
+
+  void DumpIfGenerateNode(
+      const StructuralScope& owner, const Generate& g, const IfGenerate& ig) {
+    Line(
+        std::format(
+            "Generate IfGenerate cond={}",
+            FormatScopeExpr(owner, ig.condition)));
+    Indent();
+    Line("then_scope:");
+    Indent();
+    DumpScope(g.child_scopes.at(ig.then_scope.value));
+    Dedent();
+    if (ig.else_scope.has_value()) {
+      Line("else_scope:");
+      Indent();
+      DumpScope(g.child_scopes.at(ig.else_scope->value));
+      Dedent();
+    } else {
+      Line("else_scope: <none>");
+    }
+    Dedent();
+  }
+
+  void DumpCaseGenerateNode(
+      const StructuralScope& owner, const Generate& g, const CaseGenerate& cg) {
+    Line(
+        std::format(
+            "Generate CaseGenerate cond={}",
+            FormatScopeExpr(owner, cg.condition)));
+    Indent();
+    for (std::size_t i = 0; i < cg.items.size(); ++i) {
+      const auto& item = cg.items[i];
+      std::string labels;
+      for (std::size_t j = 0; j < item.labels.size(); ++j) {
+        if (j != 0) labels += ", ";
+        labels += FormatScopeExpr(owner, item.labels[j]);
+      }
+      Line(std::format("item[{}] labels=[{}]", i, labels));
+      Indent();
+      DumpScope(g.child_scopes.at(item.scope.value));
+      Dedent();
+    }
+    if (cg.default_scope.has_value()) {
+      Line("default_scope:");
+      Indent();
+      DumpScope(g.child_scopes.at(cg.default_scope->value));
+      Dedent();
+    } else {
+      Line("default_scope: <none>");
+    }
+    Dedent();
+  }
+
+  void DumpLoopGenerateNode(const Generate& g, const LoopGenerate& lg) {
+    Line(
+        std::format(
+            "Generate LoopGenerate loop_var=LoopVar[{}] initial=Expr[{}] "
+            "stop=Expr[{}] iter=Expr[{}]",
+            lg.loop_var.value, lg.initial.value, lg.stop.value, lg.iter.value));
+    Indent();
+    Line("scope:");
+    Indent();
+    DumpScope(g.child_scopes.at(lg.scope.value));
+    Dedent();
+    Dedent();
   }
 
   void DumpGenerate(const StructuralScope& owner, const Generate& g) {
     std::visit(
         Overloaded{
-            [&](const IfGenerate& ig) {
-              Line(
-                  std::format(
-                      "Generate IfGenerate cond={}",
-                      FormatScopeExpr(owner, ig.condition)));
-              Indent();
-              Line("then_scope:");
-              Indent();
-              DumpScope(g.child_scopes.at(ig.then_scope.value));
-              Dedent();
-              if (ig.else_scope.has_value()) {
-                Line("else_scope:");
-                Indent();
-                DumpScope(g.child_scopes.at(ig.else_scope->value));
-                Dedent();
-              } else {
-                Line("else_scope: <none>");
-              }
-              Dedent();
-            },
-            [&](const CaseGenerate& cg) {
-              Line(
-                  std::format(
-                      "Generate CaseGenerate cond={}",
-                      FormatScopeExpr(owner, cg.condition)));
-              Indent();
-              for (std::size_t i = 0; i < cg.items.size(); ++i) {
-                const auto& item = cg.items[i];
-                std::string labels;
-                for (std::size_t j = 0; j < item.labels.size(); ++j) {
-                  if (j != 0) {
-                    labels += ", ";
-                  }
-                  labels += FormatScopeExpr(owner, item.labels[j]);
-                }
-                Line(std::format("item[{}] labels=[{}]", i, labels));
-                Indent();
-                DumpScope(g.child_scopes.at(item.scope.value));
-                Dedent();
-              }
-              if (cg.default_scope.has_value()) {
-                Line("default_scope:");
-                Indent();
-                DumpScope(g.child_scopes.at(cg.default_scope->value));
-                Dedent();
-              } else {
-                Line("default_scope: <none>");
-              }
-              Dedent();
-            },
-            [&](const LoopGenerate& lg) {
-              Line(
-                  std::format(
-                      "Generate LoopGenerate loop_var=LoopVar[{}] "
-                      "initial=Expr[{}] stop=Expr[{}] iter=Expr[{}]",
-                      lg.loop_var.value, lg.initial.value, lg.stop.value,
-                      lg.iter.value));
-              Indent();
-              Line("scope:");
-              Indent();
-              DumpScope(g.child_scopes.at(lg.scope.value));
-              Dedent();
-              Dedent();
-            },
+            [&](const IfGenerate& ig) { DumpIfGenerateNode(owner, g, ig); },
+            [&](const CaseGenerate& cg) { DumpCaseGenerateNode(owner, g, cg); },
+            [&](const LoopGenerate& lg) { DumpLoopGenerateNode(g, lg); },
         },
         g.data);
   }

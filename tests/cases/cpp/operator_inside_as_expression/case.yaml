@@ -1,0 +1,15 @@
+id: cpp.operator_inside_as_expression
+tags: [cpp_run]
+input:
+  command: [run, cpp]
+  project: false
+  top: Top
+  files: [main.sv]
+expect:
+  exit: 0
+  variables:
+    sum_one_match: 1
+    sum_both_match: 2
+    sum_no_match: 0
+    ternary_branch_taken: 100
+    ternary_branch_not_taken: 200

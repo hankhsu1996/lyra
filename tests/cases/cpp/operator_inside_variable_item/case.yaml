@@ -1,0 +1,14 @@
+id: cpp.operator_inside_variable_item
+tags: [cpp_run]
+input:
+  command: [run, cpp]
+  project: false
+  top: Top
+  files: [main.sv]
+expect:
+  exit: 0
+  variables:
+    var_item_match: 1
+    var_item_no_match: 0
+    var_range_match: 1
+    var_range_no_match: 0

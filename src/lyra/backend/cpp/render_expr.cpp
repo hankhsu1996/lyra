@@ -230,6 +230,30 @@ auto RenderPackedArrayIntegerLiteral(
       unknown_init, pa.BitWidth(), signed_lit, four_state_lit);
 }
 
+auto RenderIntegerLiteralExpr(
+    const RenderContext& ctx, const mir::Expr& expr,
+    const mir::IntegerLiteral& lit) -> diag::Result<std::string> {
+  const auto& ty = ctx.Unit().GetType(expr.type);
+  if (!ty.IsPackedArray()) {
+    throw InternalError(
+        "RenderExpr: IntegerLiteral not typed as PackedArrayType");
+  }
+  return RenderPackedArrayIntegerLiteral(ty.AsPackedArray(), lit.value);
+}
+
+auto RenderStructuralParamExpr(
+    const RenderContext& ctx, const mir::StructuralParamRef& r)
+    -> diag::Result<std::string> {
+  if (r.hops.value != 0) {
+    return diag::Unsupported(
+        diag::DiagCode::kCppEmitExpressionFormNotImplemented,
+        "cross-scope structural parameter access is not yet implemented in "
+        "cpp emit",
+        diag::UnsupportedCategory::kFeature);
+  }
+  return ctx.StructuralScope().GetStructuralParam(r.param).name;
+}
+
 }  // namespace
 
 auto RenderLvalue(const RenderContext& ctx, const mir::Lvalue& target)
@@ -246,23 +270,85 @@ auto RenderLvalue(const RenderContext& ctx, const mir::Lvalue& target)
       target);
 }
 
+namespace {
+
 auto RenderClosureExpr(
     const RenderContext& ctx, const mir::ClosureExpr& closure)
     -> diag::Result<std::string>;
+
+auto RenderUnaryExpr(const RenderContext& ctx, const mir::UnaryExpr& u)
+    -> diag::Result<std::string> {
+  auto operand_or = RenderExpr(ctx, ctx.Expr(u.operand));
+  if (!operand_or) return std::unexpected(std::move(operand_or.error()));
+  return RenderUnaryOp(u.op, *operand_or);
+}
+
+auto RenderBinaryExprNode(const RenderContext& ctx, const mir::BinaryExpr& b)
+    -> diag::Result<std::string> {
+  auto lhs_or = RenderExpr(ctx, ctx.Expr(b.lhs));
+  if (!lhs_or) return std::unexpected(std::move(lhs_or.error()));
+  auto rhs_or = RenderExpr(ctx, ctx.Expr(b.rhs));
+  if (!rhs_or) return std::unexpected(std::move(rhs_or.error()));
+  return RenderBinaryOp(b.op, *lhs_or, *rhs_or);
+}
+
+auto RenderConditionalExprNode(
+    const RenderContext& ctx, const mir::ConditionalExpr& c)
+    -> diag::Result<std::string> {
+  auto cond_or = RenderConditionAsBool(ctx, ctx.Expr(c.condition));
+  if (!cond_or) return std::unexpected(std::move(cond_or.error()));
+  auto then_or = RenderExpr(ctx, ctx.Expr(c.then_value));
+  if (!then_or) return std::unexpected(std::move(then_or.error()));
+  auto else_or = RenderExpr(ctx, ctx.Expr(c.else_value));
+  if (!else_or) return std::unexpected(std::move(else_or.error()));
+  return "(" + *cond_or + " ? " + *then_or + " : " + *else_or + ")";
+}
+
+auto RenderAssignExprNode(const RenderContext& ctx, const mir::AssignExpr& a)
+    -> diag::Result<std::string> {
+  auto target_or = RenderLvalue(ctx, a.target);
+  if (!target_or) return std::unexpected(std::move(target_or.error()));
+  auto value_or = RenderExpr(ctx, ctx.Expr(a.value));
+  if (!value_or) return std::unexpected(std::move(value_or.error()));
+  return "(" + *target_or + " = " + *value_or + ")";
+}
+
+auto RenderConversionExprNode(
+    const RenderContext& ctx, const mir::Expr& expr,
+    const mir::ConversionExpr& cv) -> diag::Result<std::string> {
+  const auto& src_expr = ctx.Expr(cv.operand);
+  auto operand_or = RenderExpr(ctx, src_expr);
+  if (!operand_or) return std::unexpected(std::move(operand_or.error()));
+  const auto& src_ty = ctx.Unit().GetType(src_expr.type);
+  const auto& dst_ty = ctx.Unit().GetType(expr.type);
+  // Same-shape conversion (slang's spurious promotions): pass through.
+  // Cross-shape: route through PackedArray::ConvertFrom.
+  if (src_ty.IsPackedArray() && dst_ty.IsPackedArray()) {
+    const auto& src_pa = src_ty.AsPackedArray();
+    const auto& dst_pa = dst_ty.AsPackedArray();
+    if (src_pa.BitWidth() == dst_pa.BitWidth() &&
+        src_pa.signedness == dst_pa.signedness && src_pa.atom == dst_pa.atom) {
+      return *operand_or;
+    }
+    const char* signed_lit =
+        dst_pa.signedness == mir::Signedness::kSigned ? "true" : "false";
+    const char* four_state_lit =
+        dst_pa.atom != mir::BitAtom::kBit ? "true" : "false";
+    return std::format(
+        "lyra::value::PackedArray::ConvertFrom({}, {}, {}, {})", *operand_or,
+        dst_pa.BitWidth(), signed_lit, four_state_lit);
+  }
+  return *operand_or;
+}
+
+}  // namespace
 
 auto RenderExpr(const RenderContext& ctx, const mir::Expr& expr)
     -> diag::Result<std::string> {
   return std::visit(
       Overloaded{
           [&](const mir::IntegerLiteral& lit) -> diag::Result<std::string> {
-            const auto& ty = ctx.Unit().GetType(expr.type);
-            if (!ty.IsPackedArray()) {
-              throw InternalError(
-                  "RenderExpr: IntegerLiteral not typed as "
-                  "PackedArrayType");
-            }
-            return RenderPackedArrayIntegerLiteral(
-                ty.AsPackedArray(), lit.value);
+            return RenderIntegerLiteralExpr(ctx, expr, lit);
           },
           [&](const mir::StringLiteral& s) -> diag::Result<std::string> {
             return RenderStdStringLiteral(s.value);
@@ -274,14 +360,7 @@ auto RenderExpr(const RenderContext& ctx, const mir::Expr& expr)
                 diag::UnsupportedCategory::kFeature);
           },
           [&](const mir::StructuralParamRef& r) -> diag::Result<std::string> {
-            if (r.hops.value != 0) {
-              return diag::Unsupported(
-                  diag::DiagCode::kCppEmitExpressionFormNotImplemented,
-                  "cross-scope structural parameter access is not yet "
-                  "implemented in cpp emit",
-                  diag::UnsupportedCategory::kFeature);
-            }
-            return ctx.StructuralScope().GetStructuralParam(r.param).name;
+            return RenderStructuralParamExpr(ctx, r);
           },
           [&](const mir::StructuralVarRef& m) -> diag::Result<std::string> {
             return RenderStructuralVarName(ctx, m);
@@ -290,65 +369,19 @@ auto RenderExpr(const RenderContext& ctx, const mir::Expr& expr)
             return LookupProceduralVarName(ctx, l);
           },
           [&](const mir::UnaryExpr& u) -> diag::Result<std::string> {
-            auto operand_or = RenderExpr(ctx, ctx.Expr(u.operand));
-            if (!operand_or) {
-              return std::unexpected(std::move(operand_or.error()));
-            }
-            return RenderUnaryOp(u.op, *operand_or);
+            return RenderUnaryExpr(ctx, u);
           },
           [&](const mir::BinaryExpr& b) -> diag::Result<std::string> {
-            auto lhs_or = RenderExpr(ctx, ctx.Expr(b.lhs));
-            if (!lhs_or) return std::unexpected(std::move(lhs_or.error()));
-            auto rhs_or = RenderExpr(ctx, ctx.Expr(b.rhs));
-            if (!rhs_or) return std::unexpected(std::move(rhs_or.error()));
-            return RenderBinaryOp(b.op, *lhs_or, *rhs_or);
+            return RenderBinaryExprNode(ctx, b);
           },
           [&](const mir::ConditionalExpr& c) -> diag::Result<std::string> {
-            auto cond_or = RenderConditionAsBool(ctx, ctx.Expr(c.condition));
-            if (!cond_or) return std::unexpected(std::move(cond_or.error()));
-            auto then_or = RenderExpr(ctx, ctx.Expr(c.then_value));
-            if (!then_or) return std::unexpected(std::move(then_or.error()));
-            auto else_or = RenderExpr(ctx, ctx.Expr(c.else_value));
-            if (!else_or) return std::unexpected(std::move(else_or.error()));
-            return "(" + *cond_or + " ? " + *then_or + " : " + *else_or + ")";
+            return RenderConditionalExprNode(ctx, c);
           },
           [&](const mir::AssignExpr& a) -> diag::Result<std::string> {
-            auto target_or = RenderLvalue(ctx, a.target);
-            if (!target_or) {
-              return std::unexpected(std::move(target_or.error()));
-            }
-            auto value_or = RenderExpr(ctx, ctx.Expr(a.value));
-            if (!value_or) return std::unexpected(std::move(value_or.error()));
-            return "(" + *target_or + " = " + *value_or + ")";
+            return RenderAssignExprNode(ctx, a);
           },
           [&](const mir::ConversionExpr& cv) -> diag::Result<std::string> {
-            const auto& src_expr = ctx.Expr(cv.operand);
-            auto operand_or = RenderExpr(ctx, src_expr);
-            if (!operand_or) {
-              return std::unexpected(std::move(operand_or.error()));
-            }
-            const auto& src_ty = ctx.Unit().GetType(src_expr.type);
-            const auto& dst_ty = ctx.Unit().GetType(expr.type);
-            // Same-shape conversion (slang's spurious promotions): pass
-            // through. Cross-shape: route through PackedArray::ConvertFrom.
-            if (src_ty.IsPackedArray() && dst_ty.IsPackedArray()) {
-              const auto& src_pa = src_ty.AsPackedArray();
-              const auto& dst_pa = dst_ty.AsPackedArray();
-              if (src_pa.BitWidth() == dst_pa.BitWidth() &&
-                  src_pa.signedness == dst_pa.signedness &&
-                  src_pa.atom == dst_pa.atom) {
-                return *operand_or;
-              }
-              const char* signed_lit =
-                  dst_pa.signedness == mir::Signedness::kSigned ? "true"
-                                                                : "false";
-              const char* four_state_lit =
-                  dst_pa.atom != mir::BitAtom::kBit ? "true" : "false";
-              return std::format(
-                  "lyra::value::PackedArray::ConvertFrom({}, {}, {}, {})",
-                  *operand_or, dst_pa.BitWidth(), signed_lit, four_state_lit);
-            }
-            return *operand_or;
+            return RenderConversionExprNode(ctx, expr, cv);
           },
           [](const mir::CallExpr&) -> diag::Result<std::string> {
             return diag::Unsupported(
@@ -365,6 +398,8 @@ auto RenderExpr(const RenderContext& ctx, const mir::Expr& expr)
       },
       expr.data);
 }
+
+namespace {
 
 auto RenderClosureExpr(
     const RenderContext& ctx, const mir::ClosureExpr& closure)
@@ -409,6 +444,8 @@ auto RenderClosureExpr(
 
   return "[" + captures_text + "]() {\n" + *body_or + "}";
 }
+
+}  // namespace
 
 auto RenderConditionAsBool(const RenderContext& ctx, const mir::Expr& expr)
     -> diag::Result<std::string> {
