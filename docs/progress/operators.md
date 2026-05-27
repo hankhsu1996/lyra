@@ -33,12 +33,15 @@ landed. Where a cut is independent the text says so.
       uses only var-refs. A procedural-temp snapshot pattern (see C3 case selector) covers the
       side-effect case if it becomes necessary.
 
-- [ ] W2 -- Wildcard equality `==?` / `!=?`. Add `BinaryOp::kWildcardEq` / `kWildcardNeq` plus a
-      `PackedArray::WildcardEquals` helper that treats X / Z in the right-hand operand as
-      do-not-care while still letting X / Z in the left-hand operand mismatch (LRM 11.4.6, 11.4.13).
-      W1's value-item path retrofits to use `WildcardEquals` so wildcard items in `inside` work.
-      Closes `operators/wildcard_equality/four_state.yaml` and `operators/inside/four_state.yaml`,
-      and unblocks `control-flow.md` C11.
+- [x] W2 -- Wildcard equality `==?` / `!=?`. The HIR / MIR `BinaryOp::kWildcardEquality` /
+      `kWildcardInequality` enums and the AST -> HIR -> MIR routing were already in place; this cut
+      adds the runtime helper `PackedArray::WildcardEquals` (asymmetric per LRM 11.4.6: X / Z in the
+      right operand are wildcards, X / Z in the left operand are not, so the result is 1'bx when the
+      left operand carries an X / Z that meets a known right-operand bit and no other bit definitely
+      mismatches). cpp emit lowers `kWildcardEquality` to `WildcardEquals(...)` and
+      `kWildcardInequality` to `WildcardEquals(...).LogicalNot()`. W1's value-item path retrofits
+      from `kEquality` to `kWildcardEquality` so wildcard items in `inside` work. Closes
+      `operators/wildcard_equality/four_state.yaml` and unblocks `control-flow.md` C11.
 
 - [ ] W3 -- Case equality `===` / `!==`. Add `BinaryOp::kCaseEq` / `kCaseNeq` plus a
       `PackedArray::CaseEquals` helper (bit-exact 4-state compare, X matches X). Independent of W1

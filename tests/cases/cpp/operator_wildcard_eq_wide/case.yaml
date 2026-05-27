@@ -1,0 +1,14 @@
+id: cpp.operator_wildcard_eq_wide
+tags: [cpp_run]
+input:
+  command: [run, cpp]
+  project: false
+  top: Top
+  files: [main.sv]
+expect:
+  exit: 0
+  variables:
+    wide_80_match: 1
+    wide_80_no_match: 0
+    wide_128_match: 1
+    wide_80_x_result: "1'bx"

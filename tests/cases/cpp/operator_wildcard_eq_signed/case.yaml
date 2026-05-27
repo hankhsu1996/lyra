@@ -1,0 +1,14 @@
+id: cpp.operator_wildcard_eq_signed
+tags: [cpp_run]
+input:
+  command: [run, cpp]
+  project: false
+  top: Top
+  files: [main.sv]
+expect:
+  exit: 0
+  variables:
+    signed_neg_match: 1
+    signed_pos_match: 1
+    mixed_unsigned_zero_ext: 0
+    signed_with_wildcard: 1

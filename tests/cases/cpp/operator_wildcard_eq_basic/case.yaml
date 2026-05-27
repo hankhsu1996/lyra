@@ -1,0 +1,20 @@
+id: cpp.operator_wildcard_eq_basic
+tags: [cpp_run]
+input:
+  command: [run, cpp]
+  project: false
+  top: Top
+  files: [main.sv]
+expect:
+  exit: 0
+  variables:
+    match_z_wildcard: 1
+    no_match_z_wildcard: 0
+    match_x_wildcard: 1
+    match_question_wildcard: 1
+    all_wildcard_pattern: 1
+    ne_no_match: 0
+    ne_match: 1
+    state2_eq_match: 1
+    state2_ne_no_match: 1
+    width_unsigned: 1
