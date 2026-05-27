@@ -2,6 +2,7 @@
 
 #include <cstddef>
 #include <string>
+#include <string_view>
 #include <utility>
 #include <variant>
 
@@ -52,6 +53,20 @@ auto RenderForInit(const RenderContext& ctx, const mir::ForInit& init)
       init);
 }
 
+auto RenderEventEdgeAsRuntime(mir::EventEdge edge) -> std::string_view {
+  switch (edge) {
+    case mir::EventEdge::kAnyChange:
+      return "lyra::runtime::Edge::kAnyChange";
+    case mir::EventEdge::kPosedge:
+      return "lyra::runtime::Edge::kPosedge";
+    case mir::EventEdge::kNegedge:
+      return "lyra::runtime::Edge::kNegedge";
+    case mir::EventEdge::kBothEdges:
+      return "lyra::runtime::Edge::kBothEdges";
+  }
+  throw InternalError("RenderEventEdgeAsRuntime: unknown EventEdge value");
+}
+
 auto RenderTimedStmt(
     const RenderContext& ctx, const mir::TimedStmt& s, std::size_t indent)
     -> diag::Result<std::string> {
@@ -62,23 +77,26 @@ auto RenderTimedStmt(
                    std::to_string(d.duration) + ");\n";
           },
           [&](const mir::EventControl& e) -> diag::Result<std::string> {
-            if (e.triggers.size() != 1) {
-              throw InternalError(
-                  "RenderTimedStmt: event control with multiple triggers "
-                  "should have been rejected at HIR lowering");
+            std::string out =
+                Indent(indent) + "co_await lyra::runtime::WaitAny({";
+            for (std::size_t i = 0; i < e.triggers.size(); ++i) {
+              const auto& sig_expr = ctx.Expr(e.triggers[i].signal);
+              const auto* svr =
+                  std::get_if<mir::StructuralVarRef>(&sig_expr.data);
+              if (svr == nullptr) {
+                throw InternalError(
+                    "RenderTimedStmt: event-control trigger is not a "
+                    "StructuralVarRef (should be rejected at HIR lowering)");
+              }
+              auto name_or = RenderStructuralVarName(ctx, *svr);
+              if (!name_or) return std::unexpected(std::move(name_or.error()));
+              if (i != 0) out += ", ";
+              out += "{&" + *name_or + ", " +
+                     std::string{RenderEventEdgeAsRuntime(e.triggers[i].edge)} +
+                     "}";
             }
-            const auto& sig_expr = ctx.Expr(e.triggers[0].signal);
-            const auto* svr =
-                std::get_if<mir::StructuralVarRef>(&sig_expr.data);
-            if (svr == nullptr) {
-              throw InternalError(
-                  "RenderTimedStmt: event-control trigger is not a "
-                  "StructuralVarRef (should be rejected at HIR lowering)");
-            }
-            auto name_or = RenderStructuralVarName(ctx, *svr);
-            if (!name_or) return std::unexpected(std::move(name_or.error()));
-            return Indent(indent) + "co_await lyra::runtime::WaitChange(" +
-                   *name_or + ");\n";
+            out += "});\n";
+            return out;
           },
       },
       s.timing);

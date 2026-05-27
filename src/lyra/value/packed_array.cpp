@@ -189,6 +189,20 @@ auto PackedArray::CaseEqual(const PackedArray& other) const -> PackedArray {
   return FromInt(IsCaseEqual(other) ? 1 : 0, 1, false, false);
 }
 
+auto PackedArray::Lsb() const -> FourStateBit {
+  const auto vw = ValueWords();
+  const bool value_bit = (vw[0] & std::uint64_t{1}) != 0U;
+  if (!is_four_state_) {
+    return value_bit ? FourStateBit::kOne : FourStateBit::kZero;
+  }
+  const auto uw = UnknownWords();
+  const bool unknown_bit = !uw.empty() && (uw[0] & std::uint64_t{1}) != 0U;
+  if (unknown_bit) {
+    return value_bit ? FourStateBit::kUnknown : FourStateBit::kHighImpedance;
+  }
+  return value_bit ? FourStateBit::kOne : FourStateBit::kZero;
+}
+
 auto PackedArray::AsBitView() -> BitView {
   auto* bv = std::get_if<BitValue>(&storage_);
   if (bv == nullptr) {
