@@ -213,6 +213,15 @@ class MirDumper {
                   case EventEdge::kAnyChange:
                     edge = "any";
                     break;
+                  case EventEdge::kPosedge:
+                    edge = "posedge";
+                    break;
+                  case EventEdge::kNegedge:
+                    edge = "negedge";
+                    break;
+                  case EventEdge::kBothEdges:
+                    edge = "edge";
+                    break;
                 }
                 out += std::format(
                     "{{signal=Expr[{}] edge={}}}", e.triggers[i].signal.value,

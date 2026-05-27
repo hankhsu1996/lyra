@@ -1,17 +1,60 @@
 #pragma once
 
+#include <algorithm>
 #include <concepts>
 #include <coroutine>
+#include <cstdint>
+#include <initializer_list>
 #include <utility>
 #include <vector>
 
 #include "lyra/runtime/process.hpp"
 #include "lyra/runtime/runtime_services.hpp"
 #include "lyra/runtime/wait_request.hpp"
+#include "lyra/value/packed.hpp"
 
 namespace lyra::runtime {
 
 class RuntimeProcess;
+
+// Classification of a single value change by its LSB transition (LRM 9.4.2
+// Table 9-2). `kChangeOnly` covers transitions that move the full value but
+// don't cross 0 or 1 on the LSB (e.g. x->z, or upper bits changing while the
+// LSB stays the same).
+enum class EdgeTransition : std::uint8_t {
+  kChangeOnly,
+  kPosedge,
+  kNegedge,
+};
+
+inline auto ClassifyEdge(
+    value::FourStateBit old_lsb, value::FourStateBit new_lsb)
+    -> EdgeTransition {
+  if (new_lsb == value::FourStateBit::kOne &&
+      old_lsb != value::FourStateBit::kOne) {
+    return EdgeTransition::kPosedge;
+  }
+  if (new_lsb == value::FourStateBit::kZero &&
+      old_lsb != value::FourStateBit::kZero) {
+    return EdgeTransition::kNegedge;
+  }
+  return EdgeTransition::kChangeOnly;
+}
+
+inline auto EdgeMatches(Edge subscribed, EdgeTransition transition) -> bool {
+  switch (subscribed) {
+    case Edge::kAnyChange:
+      return true;
+    case Edge::kPosedge:
+      return transition == EdgeTransition::kPosedge;
+    case Edge::kNegedge:
+      return transition == EdgeTransition::kNegedge;
+    case Edge::kBothEdges:
+      return transition == EdgeTransition::kPosedge ||
+             transition == EdgeTransition::kNegedge;
+  }
+  return false;
+}
 
 class Observable {
  public:
@@ -22,21 +65,48 @@ class Observable {
   auto operator=(Observable&&) -> Observable& = delete;
   ~Observable() = default;
 
-  void Subscribe(RuntimeProcess& p) {
-    waiters_.push_back(&p);
+  void Subscribe(RuntimeProcess& p, Edge edge) {
+    waiters_.push_back(Waiter{.process = &p, .edge = edge});
   }
 
-  [[nodiscard]] auto TakeWaiters() -> std::vector<RuntimeProcess*> {
-    return std::exchange(waiters_, {});
+  // Idempotent: a no-op if `p` is not currently subscribed. Used to clean up
+  // sibling subscriptions when a multi-trigger wait resumes on one Observable.
+  void Unsubscribe(RuntimeProcess& p) {
+    std::erase_if(waiters_, [&](const Waiter& w) { return w.process == &p; });
+  }
+
+  // Removes and returns the processes whose subscribed Edge matches the
+  // transition that just occurred. Non-matching waiters stay subscribed.
+  [[nodiscard]] auto TakeMatchingWaiters(EdgeTransition transition)
+      -> std::vector<RuntimeProcess*> {
+    std::vector<RuntimeProcess*> out;
+    auto keep_begin = std::ranges::partition(waiters_, [&](const Waiter& w) {
+                        return !EdgeMatches(w.edge, transition);
+                      }).begin();
+    out.reserve(static_cast<std::size_t>(waiters_.end() - keep_begin));
+    for (auto it = keep_begin; it != waiters_.end(); ++it) {
+      out.push_back(it->process);
+    }
+    waiters_.erase(keep_begin, waiters_.end());
+    return out;
   }
 
  private:
-  std::vector<RuntimeProcess*> waiters_;
+  struct Waiter {
+    RuntimeProcess* process;
+    Edge edge;
+  };
+  std::vector<Waiter> waiters_;
 };
 
 template <typename T>
 concept CaseEqualComparable = requires(const T& a, const T& b) {
   { a.IsCaseEqual(b) } -> std::same_as<bool>;
+};
+
+template <typename T>
+concept HasLsb = requires(const T& a) {
+  { a.Lsb() } -> std::same_as<value::FourStateBit>;
 };
 
 template <CaseEqualComparable T>
@@ -68,11 +138,6 @@ class Var : public Observable {
     return true;
   }
 
-  // NOLINTNEXTLINE(google-explicit-constructor,hicpp-explicit-conversions)
-  operator const T&() const noexcept {
-    return value_;
-  }
-
   [[nodiscard]] auto Get() const noexcept -> const T& {
     return value_;
   }
@@ -81,10 +146,10 @@ class Var : public Observable {
   T value_{};
 };
 
-class ValueChangeAwaitable {
+class EventControlAwaitable {
  public:
-  explicit ValueChangeAwaitable(Observable& observable)
-      : observable_(&observable) {
+  explicit EventControlAwaitable(std::vector<Trigger> triggers)
+      : triggers_(std::move(triggers)) {
   }
 
   // NOLINTNEXTLINE(readability-identifier-naming,readability-convert-member-functions-to-static)
@@ -94,8 +159,9 @@ class ValueChangeAwaitable {
 
   // NOLINTNEXTLINE(readability-identifier-naming)
   void await_suspend(
-      std::coroutine_handle<ProcessCoroutine::promise_type> handle) noexcept {
-    handle.promise().SetWaitRequest(ValueChangeWait{.observable = observable_});
+      std::coroutine_handle<ProcessCoroutine::promise_type> handle) {
+    handle.promise().SetWaitRequest(
+        ValueChangeWait{.triggers = std::move(triggers_)});
   }
 
   // NOLINTNEXTLINE(readability-identifier-naming)
@@ -103,18 +169,20 @@ class ValueChangeAwaitable {
   }
 
  private:
-  Observable* observable_;
+  std::vector<Trigger> triggers_;
 };
 
-template <typename T>
-auto WaitChange(Var<T>& var) -> ValueChangeAwaitable {
-  return ValueChangeAwaitable{var};
+inline auto WaitAny(std::initializer_list<Trigger> triggers)
+    -> EventControlAwaitable {
+  return EventControlAwaitable{std::vector<Trigger>(triggers)};
 }
 
-template <typename T>
+template <HasLsb T>
 void WriteVar(RuntimeServices& services, Var<T>& var, T new_val) {
+  const value::FourStateBit old_lsb = var.Get().Lsb();
+  const value::FourStateBit new_lsb = new_val.Lsb();
   if (var.AssignIfChanged(std::move(new_val))) {
-    services.TriggerValueChange(var);
+    services.TriggerValueChange(var, ClassifyEdge(old_lsb, new_lsb));
   }
 }
 

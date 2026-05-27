@@ -96,6 +96,9 @@ struct DelayControl {
 
 enum class EventEdge : std::uint8_t {
   kAnyChange,
+  kPosedge,
+  kNegedge,
+  kBothEdges,
 };
 
 struct EventTrigger {

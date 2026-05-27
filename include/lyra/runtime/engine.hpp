@@ -22,6 +22,7 @@ class Module;
 class Observable;
 class RuntimeEvent;
 class RuntimeProcess;
+enum class EdgeTransition : std::uint8_t;
 
 enum class SchedulerPhase : std::uint8_t {
   kIdle,
@@ -68,7 +69,7 @@ class Engine {
 
   void SubmitNba(std::function<void()> closure);
 
-  void TriggerValueChange(Observable& observable);
+  void TriggerValueChange(Observable& observable, EdgeTransition transition);
 
  private:
   struct PostponedWorkItem {};

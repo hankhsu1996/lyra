@@ -15,7 +15,7 @@ auto RenderLvalue(const RenderContext& ctx, const mir::Lvalue& target)
     -> diag::Result<std::string>;
 
 // Bare field name (no `.Get()` wrap) for callsites that need the Var place
-// itself rather than its value, e.g. `co_await WaitChange(clk)`.
+// itself rather than its value, e.g. the trigger pointers inside `WaitAny`.
 auto RenderStructuralVarName(
     const RenderContext& ctx, const mir::StructuralVarRef& ref)
     -> diag::Result<std::string>;
