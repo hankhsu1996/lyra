@@ -640,6 +640,40 @@ class MirDumper {
     procedural_scope_stack_.pop_back();
   }
 
+  void DumpProceduralVarDeclStmt(
+      const ProceduralScope& enclosing, StmtId id,
+      const ProceduralVarDeclStmt& s) {
+    const auto& owner = ResolveProceduralScopeAtHops(s.target.hops.value);
+    const auto& var = owner.vars.at(s.target.var.value);
+    Line(
+        std::format(
+            "Stmt[{}] ProceduralVarDeclStmt "
+            "target=ProceduralVarRef[hops={}, var={}] \"{}\"",
+            id.value, s.target.hops.value, s.target.var.value, var.name));
+    if (s.init.has_value()) {
+      Indent();
+      Line(
+          std::format(
+              "init: Expr[{}] {}", s.init->value,
+              FormatExpr(enclosing, *s.init)));
+      Dedent();
+    }
+  }
+
+  void DumpConstructOwnedObjectStmt(
+      StmtId id, const ConstructOwnedObjectStmt& s) {
+    std::string args_str;
+    for (std::size_t i = 0; i < s.args.size(); ++i) {
+      if (i != 0) args_str += ", ";
+      args_str += std::format("Expr[{}]", s.args[i].value);
+    }
+    Line(
+        std::format(
+            "Stmt[{}] ConstructOwnedObjectStmt target=StructuralVar[{}] "
+            "scope=StructuralScope[{}] args=[{}]",
+            id.value, s.target.value, s.scope_id.value, args_str));
+  }
+
   void DumpStmt(const ProceduralScope& enclosing, StmtId id) {
     const auto& stmt = enclosing.stmts.at(id.value);
     if (stmt.label.has_value()) {
@@ -651,39 +685,13 @@ class MirDumper {
               Line(std::format("Stmt[{}] EmptyStmt", id.value));
             },
             [&](const ProceduralVarDeclStmt& s) {
-              const auto& owner =
-                  ResolveProceduralScopeAtHops(s.target.hops.value);
-              const auto& var = owner.vars.at(s.target.var.value);
-              Line(
-                  std::format(
-                      "Stmt[{}] ProceduralVarDeclStmt "
-                      "target=ProceduralVarRef[hops={}, var={}] \"{}\"",
-                      id.value, s.target.hops.value, s.target.var.value,
-                      var.name));
-              if (s.init.has_value()) {
-                Indent();
-                Line(
-                    std::format(
-                        "init: Expr[{}] {}", s.init->value,
-                        FormatExpr(enclosing, *s.init)));
-                Dedent();
-              }
+              DumpProceduralVarDeclStmt(enclosing, id, s);
             },
             [&](const ExprStmt& s) { DumpExprStmt(s, enclosing, id); },
             [&](const BlockStmt& s) { DumpBlockStmt(stmt, s, id); },
             [&](const IfStmt& s) { DumpIfStmt(stmt, s, enclosing, id); },
             [&](const ConstructOwnedObjectStmt& s) {
-              std::string args_str;
-              for (std::size_t i = 0; i < s.args.size(); ++i) {
-                if (i != 0) args_str += ", ";
-                args_str += std::format("Expr[{}]", s.args[i].value);
-              }
-              Line(
-                  std::format(
-                      "Stmt[{}] ConstructOwnedObjectStmt "
-                      "target=StructuralVar[{}] "
-                      "scope=StructuralScope[{}] args=[{}]",
-                      id.value, s.target.value, s.scope_id.value, args_str));
+              DumpConstructOwnedObjectStmt(id, s);
             },
             [&](const ForStmt& s) { DumpForStmt(stmt, s, enclosing, id); },
             [&](const TimedStmt& t) { DumpTimedStmt(t, enclosing, id); },

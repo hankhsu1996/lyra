@@ -323,13 +323,29 @@ auto MakeReturnConventionType(
   throw InternalError("MakeReturnConventionType: unknown ReturnConvention");
 }
 
+auto TypeIdOfSlangExpr(
+    const UnitLoweringFacts& unit_facts, UnitLoweringState& unit_state,
+    const slang::ast::Expression& e) -> diag::Result<hir::TypeId> {
+  const auto& mapper = unit_facts.SourceMapper();
+  auto td = LowerType(*e.type, mapper.SpanOf(e.sourceRange), unit_state);
+  if (!td) return std::unexpected(std::move(td.error()));
+  return unit_state.AddType(*std::move(td));
+}
+
 auto LowerNamedValueProc(
-    const UnitLoweringFacts& unit_facts, const UnitLoweringState& unit_state,
+    const UnitLoweringFacts& unit_facts, UnitLoweringState& unit_state,
     const ProcessLoweringState& proc_state, const ScopeStack& stack,
     const slang::ast::NamedValueExpression& named) -> diag::Result<hir::Expr> {
   const auto& mapper = unit_facts.SourceMapper();
   const auto span = mapper.SpanOf(named.sourceRange);
   const auto& sym = named.symbol;
+
+  if (sym.kind == slang::ast::SymbolKind::EnumValue) {
+    auto type_id = TypeIdOfSlangExpr(unit_facts, unit_state, named);
+    if (!type_id) return std::unexpected(std::move(type_id.error()));
+    return MakeEnumValueExpr(
+        sym.as<slang::ast::EnumValueSymbol>(), *type_id, span);
+  }
 
   if (sym.kind == slang::ast::SymbolKind::Variable ||
       sym.kind == slang::ast::SymbolKind::Parameter) {
@@ -375,6 +391,511 @@ auto LowerNamedValueProc(
       binding->type, span);
 }
 
+auto LowerNamedValueStructural(
+    const UnitLoweringFacts& unit_facts, UnitLoweringState& unit_state,
+    const ScopeStack& stack, const slang::ast::NamedValueExpression& named)
+    -> diag::Result<hir::Expr> {
+  const auto& mapper = unit_facts.SourceMapper();
+  const auto span = mapper.SpanOf(named.sourceRange);
+  const auto& sym = named.symbol;
+  if (sym.kind == slang::ast::SymbolKind::EnumValue) {
+    auto type_id = TypeIdOfSlangExpr(unit_facts, unit_state, named);
+    if (!type_id) return std::unexpected(std::move(type_id.error()));
+    return MakeEnumValueExpr(
+        sym.as<slang::ast::EnumValueSymbol>(), *type_id, span);
+  }
+  if (sym.kind == slang::ast::SymbolKind::Variable ||
+      sym.kind == slang::ast::SymbolKind::Parameter) {
+    const auto& value_sym = sym.as<slang::ast::ValueSymbol>();
+    if (auto loop_binding = unit_state.LookupLoopVarBinding(value_sym)) {
+      const auto hops = stack.HopsTo(loop_binding->home_frame);
+      if (!hops.has_value()) {
+        throw InternalError(
+            "LowerStructuralExpr: loop-var binding home frame is not on "
+            "the current scope stack");
+      }
+      return MakeRefExpr(
+          hir::LoopVarRef{.hops = *hops, .loop_var = loop_binding->loop_var_id},
+          loop_binding->type, span);
+    }
+  }
+  if (sym.kind != slang::ast::SymbolKind::Variable) {
+    return diag::Unsupported(
+        span, diag::DiagCode::kUnsupportedNonVariableNamedReference,
+        "reference to non-variable declaration is not supported",
+        diag::UnsupportedCategory::kFeature);
+  }
+  const auto& var = sym.as<slang::ast::VariableSymbol>();
+  const auto binding = unit_state.LookupStructuralVarBinding(var);
+  if (!binding.has_value()) {
+    throw InternalError(
+        "LowerStructuralExpr: variable was not bound during scope lowering");
+  }
+  const auto hops = stack.HopsTo(binding->home_frame);
+  if (!hops.has_value()) {
+    throw InternalError(
+        "LowerStructuralExpr: variable home frame is not on the current "
+        "scope stack");
+  }
+  return MakeRefExpr(
+      hir::StructuralVarRef{.hops = *hops, .var = binding->var_id},
+      binding->type, span);
+}
+
+auto LowerLValueReferenceExpr(
+    diag::SourceSpan span,
+    const std::optional<hir::Lvalue>& compound_lvalue_context,
+    diag::Result<hir::TypeId> type_id, const char* origin)
+    -> diag::Result<hir::Expr> {
+  if (!compound_lvalue_context.has_value()) {
+    throw InternalError(
+        std::string{origin} +
+        ": slang LValueReference encountered outside compound-assignment RHS");
+  }
+  if (!type_id) return std::unexpected(std::move(type_id.error()));
+  return MakeRefExpr(LvalueToPrimary(*compound_lvalue_context), *type_id, span);
+}
+
+auto LowerConversionExprProc(
+    const UnitLoweringFacts& unit_facts, UnitLoweringState& unit_state,
+    ProcessLoweringState& proc_state, const ScopeStack& stack,
+    const std::optional<hir::Lvalue>& compound_lvalue_context,
+    const slang::ast::ConversionExpression& conv,
+    const slang::ast::Expression& expr, diag::SourceSpan span)
+    -> diag::Result<hir::Expr> {
+  auto operand_or = LowerProcExpr(
+      unit_facts, unit_state, proc_state, stack, conv.operand(),
+      compound_lvalue_context);
+  if (!operand_or) return std::unexpected(std::move(operand_or.error()));
+  const hir::ExprId operand_id = proc_state.AddExpr(*std::move(operand_or));
+  auto type_id = TypeIdOfSlangExpr(unit_facts, unit_state, expr);
+  if (!type_id) return std::unexpected(std::move(type_id.error()));
+  return hir::Expr{
+      .type = *type_id,
+      .data =
+          hir::ConversionExpr{
+              .operand = operand_id,
+              .kind = LowerConversionKind(conv.conversionKind),
+          },
+      .span = span,
+  };
+}
+
+auto LowerUnaryExprProc(
+    const UnitLoweringFacts& unit_facts, UnitLoweringState& unit_state,
+    ProcessLoweringState& proc_state, const ScopeStack& stack,
+    const std::optional<hir::Lvalue>& compound_lvalue_context,
+    const slang::ast::UnaryExpression& un, const slang::ast::Expression& expr,
+    diag::SourceSpan span) -> diag::Result<hir::Expr> {
+  auto op_or = LowerUnaryOp(un.op, span);
+  if (!op_or) return std::unexpected(std::move(op_or.error()));
+  auto operand_or = LowerProcExpr(
+      unit_facts, unit_state, proc_state, stack, un.operand(),
+      compound_lvalue_context);
+  if (!operand_or) return std::unexpected(std::move(operand_or.error()));
+  const hir::ExprId operand_id = proc_state.AddExpr(*std::move(operand_or));
+  auto type_id = TypeIdOfSlangExpr(unit_facts, unit_state, expr);
+  if (!type_id) return std::unexpected(std::move(type_id.error()));
+  return hir::Expr{
+      .type = *type_id,
+      .data = hir::UnaryExpr{.op = *op_or, .operand = operand_id},
+      .span = span,
+  };
+}
+
+auto LowerBinaryExprProc(
+    const UnitLoweringFacts& unit_facts, UnitLoweringState& unit_state,
+    ProcessLoweringState& proc_state, const ScopeStack& stack,
+    const std::optional<hir::Lvalue>& compound_lvalue_context,
+    const slang::ast::BinaryExpression& bin, const slang::ast::Expression& expr,
+    diag::SourceSpan span) -> diag::Result<hir::Expr> {
+  auto lhs_or = LowerProcExpr(
+      unit_facts, unit_state, proc_state, stack, bin.left(),
+      compound_lvalue_context);
+  if (!lhs_or) return std::unexpected(std::move(lhs_or.error()));
+  const hir::ExprId lhs_id = proc_state.AddExpr(*std::move(lhs_or));
+  auto rhs_or = LowerProcExpr(
+      unit_facts, unit_state, proc_state, stack, bin.right(),
+      compound_lvalue_context);
+  if (!rhs_or) return std::unexpected(std::move(rhs_or.error()));
+  const hir::ExprId rhs_id = proc_state.AddExpr(*std::move(rhs_or));
+  auto type_id = TypeIdOfSlangExpr(unit_facts, unit_state, expr);
+  if (!type_id) return std::unexpected(std::move(type_id.error()));
+  return hir::Expr{
+      .type = *type_id,
+      .data =
+          hir::BinaryExpr{
+              .op = LowerBinaryOp(bin.op),
+              .lhs = lhs_id,
+              .rhs = rhs_id,
+          },
+      .span = span,
+  };
+}
+
+auto LowerConditionalExprProc(
+    const UnitLoweringFacts& unit_facts, UnitLoweringState& unit_state,
+    ProcessLoweringState& proc_state, const ScopeStack& stack,
+    const std::optional<hir::Lvalue>& compound_lvalue_context,
+    const slang::ast::ConditionalExpression& cond,
+    const slang::ast::Expression& expr, diag::SourceSpan span)
+    -> diag::Result<hir::Expr> {
+  if (cond.conditions.size() != 1) {
+    return diag::Unsupported(
+        span, diag::DiagCode::kUnsupportedExpressionForm,
+        "conditional operator with `&&&` multi-condition is not yet "
+        "supported",
+        diag::UnsupportedCategory::kFeature);
+  }
+  if (cond.conditions[0].pattern != nullptr) {
+    return diag::Unsupported(
+        span, diag::DiagCode::kUnsupportedExpressionForm,
+        "conditional operator with `matches` pattern is not yet supported",
+        diag::UnsupportedCategory::kFeature);
+  }
+  auto cond_or = LowerProcExpr(
+      unit_facts, unit_state, proc_state, stack, *cond.conditions[0].expr,
+      compound_lvalue_context);
+  if (!cond_or) return std::unexpected(std::move(cond_or.error()));
+  const hir::ExprId cond_id = proc_state.AddExpr(*std::move(cond_or));
+  auto then_or = LowerProcExpr(
+      unit_facts, unit_state, proc_state, stack, cond.left(),
+      compound_lvalue_context);
+  if (!then_or) return std::unexpected(std::move(then_or.error()));
+  const hir::ExprId then_id = proc_state.AddExpr(*std::move(then_or));
+  auto else_or = LowerProcExpr(
+      unit_facts, unit_state, proc_state, stack, cond.right(),
+      compound_lvalue_context);
+  if (!else_or) return std::unexpected(std::move(else_or.error()));
+  const hir::ExprId else_id = proc_state.AddExpr(*std::move(else_or));
+  auto type_id = TypeIdOfSlangExpr(unit_facts, unit_state, expr);
+  if (!type_id) return std::unexpected(std::move(type_id.error()));
+  return hir::Expr{
+      .type = *type_id,
+      .data =
+          hir::ConditionalExpr{
+              .condition = cond_id,
+              .then_value = then_id,
+              .else_value = else_id,
+          },
+      .span = span,
+  };
+}
+
+auto LowerCallExprProc(
+    const UnitLoweringFacts& unit_facts, UnitLoweringState& unit_state,
+    ProcessLoweringState& proc_state, const ScopeStack& stack,
+    const std::optional<hir::Lvalue>& compound_lvalue_context,
+    const slang::ast::CallExpression& call, const slang::ast::Expression& expr,
+    diag::SourceSpan span) -> diag::Result<hir::Expr> {
+  std::vector<hir::ExprId> arg_ids;
+  arg_ids.reserve(call.arguments().size());
+  for (const auto* arg : call.arguments()) {
+    auto arg_or = LowerProcExpr(
+        unit_facts, unit_state, proc_state, stack, *arg,
+        compound_lvalue_context);
+    if (!arg_or) return std::unexpected(std::move(arg_or.error()));
+    arg_ids.push_back(proc_state.AddExpr(*std::move(arg_or)));
+  }
+
+  if (call.isSystemCall()) {
+    const auto& info =
+        std::get<slang::ast::CallExpression::SystemCallInfo>(call.subroutine);
+    const std::string_view name = info.subroutine->name;
+
+    if (auto enum_method_kind = LowerEnumMethodName(name);
+        enum_method_kind.has_value() && !arg_ids.empty() &&
+        call.arguments()[0]->type->getCanonicalType().kind ==
+            slang::ast::SymbolKind::EnumType) {
+      auto type_id = TypeIdOfSlangExpr(unit_facts, unit_state, expr);
+      if (!type_id) return std::unexpected(std::move(type_id.error()));
+      return hir::Expr{
+          .type = *type_id,
+          .data =
+              hir::CallExpr{
+                  .callee = hir::BuiltinMethodRef{.kind = *enum_method_kind},
+                  .arguments = std::move(arg_ids),
+              },
+          .span = span,
+      };
+    }
+
+    const auto* desc = support::FindSystemSubroutine(name);
+    if (desc == nullptr) {
+      throw InternalError(
+          std::string{"AST->HIR call: unresolved system subroutine '"} +
+          std::string{name} + "' after slang resolution");
+    }
+    const auto frontend_kind = FromSlangSubroutineKind(info.subroutine->kind);
+    if (desc->kind != frontend_kind) {
+      throw InternalError(
+          std::string{"AST->HIR call: registry/frontend kind mismatch for '"} +
+          std::string{name} + "'");
+    }
+    if (!desc->arg_policy.Accepts(arg_ids.size())) {
+      throw InternalError(
+          std::string{
+              "AST->HIR call: arg count outside descriptor policy for '"} +
+          std::string{name} + "'");
+    }
+
+    const auto result_type =
+        MakeReturnConventionType(unit_state, desc->result_conv);
+    return hir::Expr{
+        .type = result_type,
+        .data =
+            hir::CallExpr{
+                .callee = hir::SystemSubroutineRef{.id = desc->id},
+                .arguments = std::move(arg_ids),
+            },
+        .span = span,
+    };
+  }
+
+  const auto* sym =
+      std::get<const slang::ast::SubroutineSymbol*>(call.subroutine);
+  if (sym == nullptr) {
+    throw InternalError(
+        "AST->HIR call: user call missing resolved SubroutineSymbol");
+  }
+  const auto binding = unit_state.LookupSubroutineBinding(*sym);
+  if (!binding.has_value()) {
+    throw InternalError(
+        "AST->HIR call: resolved user subroutine has no registered HIR "
+        "binding");
+  }
+  const auto hops = stack.HopsTo(binding->owner_frame);
+  if (!hops.has_value()) {
+    throw InternalError(
+        "AST->HIR call: user subroutine owner frame is not on the current "
+        "scope stack");
+  }
+  auto result_type = TypeIdOfSlangExpr(unit_facts, unit_state, expr);
+  if (!result_type) return std::unexpected(std::move(result_type.error()));
+  return hir::Expr{
+      .type = *result_type,
+      .data =
+          hir::CallExpr{
+              .callee =
+                  hir::StructuralSubroutineRef{
+                      .hops = *hops, .subroutine = binding->subroutine_id},
+              .arguments = std::move(arg_ids),
+          },
+      .span = span,
+  };
+}
+
+auto LowerAssignmentExprProc(
+    const UnitLoweringFacts& unit_facts, UnitLoweringState& unit_state,
+    ProcessLoweringState& proc_state, const ScopeStack& stack,
+    const slang::ast::AssignmentExpression& as,
+    const slang::ast::Expression& expr, diag::SourceSpan span)
+    -> diag::Result<hir::Expr> {
+  const auto kind = as.isNonBlocking() ? hir::AssignKind::kNonBlocking
+                                       : hir::AssignKind::kBlocking;
+
+  auto lhs_or =
+      LowerProcLvalue(unit_facts, unit_state, proc_state, stack, as.left());
+  if (!lhs_or) return std::unexpected(std::move(lhs_or.error()));
+
+  auto rhs_or = LowerProcExpr(
+      unit_facts, unit_state, proc_state, stack, as.right(), *lhs_or);
+  if (!rhs_or) return std::unexpected(std::move(rhs_or.error()));
+  const hir::ExprId rhs_id = proc_state.AddExpr(*std::move(rhs_or));
+
+  auto type_id = TypeIdOfSlangExpr(unit_facts, unit_state, expr);
+  if (!type_id) return std::unexpected(std::move(type_id.error()));
+  return hir::Expr{
+      .type = *type_id,
+      .data =
+          hir::AssignExpr{
+              .kind = kind, .lhs = *std::move(lhs_or), .rhs = rhs_id},
+      .span = span,
+  };
+}
+
+auto LowerInsideExprProc(
+    const UnitLoweringFacts& unit_facts, UnitLoweringState& unit_state,
+    ProcessLoweringState& proc_state, const ScopeStack& stack,
+    const std::optional<hir::Lvalue>& compound_lvalue_context,
+    const slang::ast::InsideExpression& in, const slang::ast::Expression& expr,
+    diag::SourceSpan span) -> diag::Result<hir::Expr> {
+  const auto& mapper = unit_facts.SourceMapper();
+
+  auto lhs_or = LowerProcExpr(
+      unit_facts, unit_state, proc_state, stack, in.left(),
+      compound_lvalue_context);
+  if (!lhs_or) return std::unexpected(std::move(lhs_or.error()));
+  const hir::ExprId lhs_id = proc_state.AddExpr(*std::move(lhs_or));
+
+  std::vector<hir::InsideItem> items;
+  items.reserve(in.rangeList().size());
+  for (const auto* item : in.rangeList()) {
+    if (item->kind == slang::ast::ExpressionKind::ValueRange) {
+      const auto& vr = item->as<slang::ast::ValueRangeExpression>();
+      if (vr.rangeKind != slang::ast::ValueRangeKind::Simple) {
+        return diag::Unsupported(
+            mapper.SpanOf(vr.sourceRange),
+            diag::DiagCode::kUnsupportedExpressionForm,
+            "tolerance-range form in inside operator is not yet supported",
+            diag::UnsupportedCategory::kFeature);
+      }
+      auto lo_or = LowerProcExpr(
+          unit_facts, unit_state, proc_state, stack, vr.left(),
+          compound_lvalue_context);
+      if (!lo_or) return std::unexpected(std::move(lo_or.error()));
+      const hir::ExprId lo_id = proc_state.AddExpr(*std::move(lo_or));
+      auto hi_or = LowerProcExpr(
+          unit_facts, unit_state, proc_state, stack, vr.right(),
+          compound_lvalue_context);
+      if (!hi_or) return std::unexpected(std::move(hi_or.error()));
+      const hir::ExprId hi_id = proc_state.AddExpr(*std::move(hi_or));
+      items.emplace_back(hir::InsideRangePair{.lo = lo_id, .hi = hi_id});
+    } else {
+      auto val_or = LowerProcExpr(
+          unit_facts, unit_state, proc_state, stack, *item,
+          compound_lvalue_context);
+      if (!val_or) return std::unexpected(std::move(val_or.error()));
+      const hir::ExprId val_id = proc_state.AddExpr(*std::move(val_or));
+      items.emplace_back(val_id);
+    }
+  }
+
+  auto type_id = TypeIdOfSlangExpr(unit_facts, unit_state, expr);
+  if (!type_id) return std::unexpected(std::move(type_id.error()));
+  return hir::Expr{
+      .type = *type_id,
+      .data = hir::InsideExpr{.lhs = lhs_id, .items = std::move(items)},
+      .span = span,
+  };
+}
+
+auto LowerConversionExprStructural(
+    const UnitLoweringFacts& unit_facts, UnitLoweringState& unit_state,
+    ScopeLoweringState& scope_state, const ScopeStack& stack,
+    const std::optional<hir::Lvalue>& compound_lvalue_context,
+    const slang::ast::ConversionExpression& conv,
+    const slang::ast::Expression& expr, diag::SourceSpan span)
+    -> diag::Result<hir::Expr> {
+  auto operand_or = LowerStructuralExpr(
+      unit_facts, unit_state, scope_state, stack, conv.operand(),
+      compound_lvalue_context);
+  if (!operand_or) return std::unexpected(std::move(operand_or.error()));
+  const hir::ExprId operand_id = scope_state.AddExpr(*std::move(operand_or));
+  auto type_id = TypeIdOfSlangExpr(unit_facts, unit_state, expr);
+  if (!type_id) return std::unexpected(std::move(type_id.error()));
+  return hir::Expr{
+      .type = *type_id,
+      .data =
+          hir::ConversionExpr{
+              .operand = operand_id,
+              .kind = LowerConversionKind(conv.conversionKind),
+          },
+      .span = span,
+  };
+}
+
+auto LowerUnaryExprStructural(
+    const UnitLoweringFacts& unit_facts, UnitLoweringState& unit_state,
+    ScopeLoweringState& scope_state, const ScopeStack& stack,
+    const std::optional<hir::Lvalue>& compound_lvalue_context,
+    const slang::ast::UnaryExpression& un, const slang::ast::Expression& expr,
+    diag::SourceSpan span) -> diag::Result<hir::Expr> {
+  auto op_or = LowerUnaryOp(un.op, span);
+  if (!op_or) return std::unexpected(std::move(op_or.error()));
+  auto operand_or = LowerStructuralExpr(
+      unit_facts, unit_state, scope_state, stack, un.operand(),
+      compound_lvalue_context);
+  if (!operand_or) return std::unexpected(std::move(operand_or.error()));
+  const hir::ExprId operand_id = scope_state.AddExpr(*std::move(operand_or));
+  auto type_id = TypeIdOfSlangExpr(unit_facts, unit_state, expr);
+  if (!type_id) return std::unexpected(std::move(type_id.error()));
+  return hir::Expr{
+      .type = *type_id,
+      .data = hir::UnaryExpr{.op = *op_or, .operand = operand_id},
+      .span = span,
+  };
+}
+
+auto LowerBinaryExprStructural(
+    const UnitLoweringFacts& unit_facts, UnitLoweringState& unit_state,
+    ScopeLoweringState& scope_state, const ScopeStack& stack,
+    const std::optional<hir::Lvalue>& compound_lvalue_context,
+    const slang::ast::BinaryExpression& bin, const slang::ast::Expression& expr,
+    diag::SourceSpan span) -> diag::Result<hir::Expr> {
+  auto lhs_or = LowerStructuralExpr(
+      unit_facts, unit_state, scope_state, stack, bin.left(),
+      compound_lvalue_context);
+  if (!lhs_or) return std::unexpected(std::move(lhs_or.error()));
+  const hir::ExprId lhs_id = scope_state.AddExpr(*std::move(lhs_or));
+  auto rhs_or = LowerStructuralExpr(
+      unit_facts, unit_state, scope_state, stack, bin.right(),
+      compound_lvalue_context);
+  if (!rhs_or) return std::unexpected(std::move(rhs_or.error()));
+  const hir::ExprId rhs_id = scope_state.AddExpr(*std::move(rhs_or));
+  auto type_id = TypeIdOfSlangExpr(unit_facts, unit_state, expr);
+  if (!type_id) return std::unexpected(std::move(type_id.error()));
+  return hir::Expr{
+      .type = *type_id,
+      .data =
+          hir::BinaryExpr{
+              .op = LowerBinaryOp(bin.op),
+              .lhs = lhs_id,
+              .rhs = rhs_id,
+          },
+      .span = span,
+  };
+}
+
+auto LowerConditionalExprStructural(
+    const UnitLoweringFacts& unit_facts, UnitLoweringState& unit_state,
+    ScopeLoweringState& scope_state, const ScopeStack& stack,
+    const std::optional<hir::Lvalue>& compound_lvalue_context,
+    const slang::ast::ConditionalExpression& cond,
+    const slang::ast::Expression& expr, diag::SourceSpan span)
+    -> diag::Result<hir::Expr> {
+  if (cond.conditions.size() != 1) {
+    return diag::Unsupported(
+        span, diag::DiagCode::kUnsupportedStructuralExpressionForm,
+        "conditional operator with `&&&` multi-condition is not yet "
+        "supported",
+        diag::UnsupportedCategory::kFeature);
+  }
+  if (cond.conditions[0].pattern != nullptr) {
+    return diag::Unsupported(
+        span, diag::DiagCode::kUnsupportedStructuralExpressionForm,
+        "conditional operator with `matches` pattern is not yet supported",
+        diag::UnsupportedCategory::kFeature);
+  }
+  auto cond_or = LowerStructuralExpr(
+      unit_facts, unit_state, scope_state, stack, *cond.conditions[0].expr,
+      compound_lvalue_context);
+  if (!cond_or) return std::unexpected(std::move(cond_or.error()));
+  const hir::ExprId cond_id = scope_state.AddExpr(*std::move(cond_or));
+  auto then_or = LowerStructuralExpr(
+      unit_facts, unit_state, scope_state, stack, cond.left(),
+      compound_lvalue_context);
+  if (!then_or) return std::unexpected(std::move(then_or.error()));
+  const hir::ExprId then_id = scope_state.AddExpr(*std::move(then_or));
+  auto else_or = LowerStructuralExpr(
+      unit_facts, unit_state, scope_state, stack, cond.right(),
+      compound_lvalue_context);
+  if (!else_or) return std::unexpected(std::move(else_or.error()));
+  const hir::ExprId else_id = scope_state.AddExpr(*std::move(else_or));
+  auto type_id = TypeIdOfSlangExpr(unit_facts, unit_state, expr);
+  if (!type_id) return std::unexpected(std::move(type_id.error()));
+  return hir::Expr{
+      .type = *type_id,
+      .data =
+          hir::ConditionalExpr{
+              .condition = cond_id,
+              .then_value = then_id,
+              .else_value = else_id,
+          },
+      .span = span,
+  };
+}
+
 }  // namespace
 
 auto LowerProcExpr(
@@ -386,33 +907,16 @@ auto LowerProcExpr(
   const auto& mapper = unit_facts.SourceMapper();
   const auto span = mapper.SpanOf(expr.sourceRange);
 
-  auto lower_child = [&](const slang::ast::Expression& e) {
-    return LowerProcExpr(
-        unit_facts, unit_state, proc_state, stack, e, compound_lvalue_context);
-  };
-  auto append_child =
-      [&](const slang::ast::Expression& e) -> diag::Result<hir::ExprId> {
-    auto child = lower_child(e);
-    if (!child) return std::unexpected(std::move(child.error()));
-    return proc_state.AddExpr(*std::move(child));
-  };
-  auto type_id_of =
-      [&](const slang::ast::Expression& e) -> diag::Result<hir::TypeId> {
-    auto td = LowerType(*e.type, mapper.SpanOf(e.sourceRange), unit_state);
-    if (!td) return std::unexpected(std::move(td.error()));
-    return unit_state.AddType(*std::move(td));
-  };
-
   switch (expr.kind) {
     case slang::ast::ExpressionKind::IntegerLiteral: {
-      auto type_id = type_id_of(expr);
+      auto type_id = TypeIdOfSlangExpr(unit_facts, unit_state, expr);
       if (!type_id) return std::unexpected(std::move(type_id.error()));
       return MakeIntegerLiteralExpr(
           expr.as<slang::ast::IntegerLiteral>(), *type_id, span);
     }
 
     case slang::ast::ExpressionKind::UnbasedUnsizedIntegerLiteral: {
-      auto type_id = type_id_of(expr);
+      auto type_id = TypeIdOfSlangExpr(unit_facts, unit_state, expr);
       if (!type_id) return std::unexpected(std::move(type_id.error()));
       return MakeUnbasedUnsizedLiteralExpr(
           expr.as<slang::ast::UnbasedUnsizedIntegerLiteral>(), *type_id, span);
@@ -420,296 +924,64 @@ auto LowerProcExpr(
 
     case slang::ast::ExpressionKind::StringLiteral: {
       const auto& sl = expr.as<slang::ast::StringLiteral>();
-      auto type_id = type_id_of(expr);
+      auto type_id = TypeIdOfSlangExpr(unit_facts, unit_state, expr);
       if (!type_id) return std::unexpected(std::move(type_id.error()));
       return MakeStringLiteralExpr(std::string{sl.getValue()}, *type_id, span);
     }
 
     case slang::ast::ExpressionKind::TimeLiteral: {
       const auto& tl = expr.as<slang::ast::TimeLiteral>();
-      auto type_id = type_id_of(expr);
+      auto type_id = TypeIdOfSlangExpr(unit_facts, unit_state, expr);
       if (!type_id) return std::unexpected(std::move(type_id.error()));
       return MakeTimeLiteralExpr(
           tl.getValue(), LowerTimeUnit(tl.getScale().base.unit), *type_id,
           span);
     }
 
-    case slang::ast::ExpressionKind::NamedValue: {
-      const auto& named = expr.as<slang::ast::NamedValueExpression>();
-      if (named.symbol.kind == slang::ast::SymbolKind::EnumValue) {
-        auto type_id = type_id_of(expr);
-        if (!type_id) return std::unexpected(std::move(type_id.error()));
-        return MakeEnumValueExpr(
-            named.symbol.as<slang::ast::EnumValueSymbol>(), *type_id, span);
-      }
+    case slang::ast::ExpressionKind::NamedValue:
       return LowerNamedValueProc(
-          unit_facts, unit_state, proc_state, stack, named);
-    }
+          unit_facts, unit_state, proc_state, stack,
+          expr.as<slang::ast::NamedValueExpression>());
 
-    case slang::ast::ExpressionKind::LValueReference: {
-      if (!compound_lvalue_context.has_value()) {
-        throw InternalError(
-            "LowerProcExpr: slang LValueReference encountered outside "
-            "compound-assignment RHS");
-      }
-      auto type_id = type_id_of(expr);
-      if (!type_id) return std::unexpected(std::move(type_id.error()));
-      return MakeRefExpr(
-          LvalueToPrimary(*compound_lvalue_context), *type_id, span);
-    }
+    case slang::ast::ExpressionKind::LValueReference:
+      return LowerLValueReferenceExpr(
+          span, compound_lvalue_context,
+          TypeIdOfSlangExpr(unit_facts, unit_state, expr), "LowerProcExpr");
 
-    case slang::ast::ExpressionKind::Conversion: {
-      const auto& conv = expr.as<slang::ast::ConversionExpression>();
-      auto operand_id = append_child(conv.operand());
-      if (!operand_id) return std::unexpected(std::move(operand_id.error()));
-      auto type_id = type_id_of(expr);
-      if (!type_id) return std::unexpected(std::move(type_id.error()));
-      return hir::Expr{
-          .type = *type_id,
-          .data =
-              hir::ConversionExpr{
-                  .operand = *operand_id,
-                  .kind = LowerConversionKind(conv.conversionKind),
-              },
-          .span = span,
-      };
-    }
+    case slang::ast::ExpressionKind::Conversion:
+      return LowerConversionExprProc(
+          unit_facts, unit_state, proc_state, stack, compound_lvalue_context,
+          expr.as<slang::ast::ConversionExpression>(), expr, span);
 
-    case slang::ast::ExpressionKind::UnaryOp: {
-      const auto& un = expr.as<slang::ast::UnaryExpression>();
-      auto op_or = LowerUnaryOp(un.op, span);
-      if (!op_or) return std::unexpected(std::move(op_or.error()));
-      auto operand_id = append_child(un.operand());
-      if (!operand_id) return std::unexpected(std::move(operand_id.error()));
-      auto type_id = type_id_of(expr);
-      if (!type_id) return std::unexpected(std::move(type_id.error()));
-      return hir::Expr{
-          .type = *type_id,
-          .data = hir::UnaryExpr{.op = *op_or, .operand = *operand_id},
-          .span = span,
-      };
-    }
+    case slang::ast::ExpressionKind::UnaryOp:
+      return LowerUnaryExprProc(
+          unit_facts, unit_state, proc_state, stack, compound_lvalue_context,
+          expr.as<slang::ast::UnaryExpression>(), expr, span);
 
-    case slang::ast::ExpressionKind::BinaryOp: {
-      const auto& bin = expr.as<slang::ast::BinaryExpression>();
-      auto lhs_id = append_child(bin.left());
-      if (!lhs_id) return std::unexpected(std::move(lhs_id.error()));
-      auto rhs_id = append_child(bin.right());
-      if (!rhs_id) return std::unexpected(std::move(rhs_id.error()));
-      auto type_id = type_id_of(expr);
-      if (!type_id) return std::unexpected(std::move(type_id.error()));
-      return hir::Expr{
-          .type = *type_id,
-          .data =
-              hir::BinaryExpr{
-                  .op = LowerBinaryOp(bin.op),
-                  .lhs = *lhs_id,
-                  .rhs = *rhs_id,
-              },
-          .span = span,
-      };
-    }
+    case slang::ast::ExpressionKind::BinaryOp:
+      return LowerBinaryExprProc(
+          unit_facts, unit_state, proc_state, stack, compound_lvalue_context,
+          expr.as<slang::ast::BinaryExpression>(), expr, span);
 
-    case slang::ast::ExpressionKind::ConditionalOp: {
-      const auto& cond = expr.as<slang::ast::ConditionalExpression>();
-      if (cond.conditions.size() != 1) {
-        return diag::Unsupported(
-            span, diag::DiagCode::kUnsupportedExpressionForm,
-            "conditional operator with `&&&` multi-condition is not yet "
-            "supported",
-            diag::UnsupportedCategory::kFeature);
-      }
-      if (cond.conditions[0].pattern != nullptr) {
-        return diag::Unsupported(
-            span, diag::DiagCode::kUnsupportedExpressionForm,
-            "conditional operator with `matches` pattern is not yet supported",
-            diag::UnsupportedCategory::kFeature);
-      }
-      auto cond_id = append_child(*cond.conditions[0].expr);
-      if (!cond_id) return std::unexpected(std::move(cond_id.error()));
-      auto then_id = append_child(cond.left());
-      if (!then_id) return std::unexpected(std::move(then_id.error()));
-      auto else_id = append_child(cond.right());
-      if (!else_id) return std::unexpected(std::move(else_id.error()));
-      auto type_id = type_id_of(expr);
-      if (!type_id) return std::unexpected(std::move(type_id.error()));
-      return hir::Expr{
-          .type = *type_id,
-          .data =
-              hir::ConditionalExpr{
-                  .condition = *cond_id,
-                  .then_value = *then_id,
-                  .else_value = *else_id,
-              },
-          .span = span,
-      };
-    }
+    case slang::ast::ExpressionKind::ConditionalOp:
+      return LowerConditionalExprProc(
+          unit_facts, unit_state, proc_state, stack, compound_lvalue_context,
+          expr.as<slang::ast::ConditionalExpression>(), expr, span);
 
-    case slang::ast::ExpressionKind::Call: {
-      const auto& call = expr.as<slang::ast::CallExpression>();
+    case slang::ast::ExpressionKind::Call:
+      return LowerCallExprProc(
+          unit_facts, unit_state, proc_state, stack, compound_lvalue_context,
+          expr.as<slang::ast::CallExpression>(), expr, span);
 
-      std::vector<hir::ExprId> arg_ids;
-      arg_ids.reserve(call.arguments().size());
-      for (const auto* arg : call.arguments()) {
-        auto id = append_child(*arg);
-        if (!id) return std::unexpected(std::move(id.error()));
-        arg_ids.push_back(*id);
-      }
+    case slang::ast::ExpressionKind::Assignment:
+      return LowerAssignmentExprProc(
+          unit_facts, unit_state, proc_state, stack,
+          expr.as<slang::ast::AssignmentExpression>(), expr, span);
 
-      if (call.isSystemCall()) {
-        const auto& info = std::get<slang::ast::CallExpression::SystemCallInfo>(
-            call.subroutine);
-        const std::string_view name = info.subroutine->name;
-
-        if (auto enum_method_kind = LowerEnumMethodName(name);
-            enum_method_kind.has_value() && !arg_ids.empty() &&
-            call.arguments()[0]->type->getCanonicalType().kind ==
-                slang::ast::SymbolKind::EnumType) {
-          auto type_id = type_id_of(expr);
-          if (!type_id) return std::unexpected(std::move(type_id.error()));
-          return hir::Expr{
-              .type = *type_id,
-              .data =
-                  hir::CallExpr{
-                      .callee =
-                          hir::BuiltinMethodRef{.kind = *enum_method_kind},
-                      .arguments = std::move(arg_ids),
-                  },
-              .span = span,
-          };
-        }
-
-        const auto* desc = support::FindSystemSubroutine(name);
-        if (desc == nullptr) {
-          throw InternalError(
-              std::string{"AST->HIR call: unresolved system subroutine '"} +
-              std::string{name} + "' after slang resolution");
-        }
-        const auto frontend_kind =
-            FromSlangSubroutineKind(info.subroutine->kind);
-        if (desc->kind != frontend_kind) {
-          throw InternalError(
-              std::string{
-                  "AST->HIR call: registry/frontend kind mismatch for '"} +
-              std::string{name} + "'");
-        }
-        if (!desc->arg_policy.Accepts(arg_ids.size())) {
-          throw InternalError(
-              std::string{
-                  "AST->HIR call: arg count outside descriptor policy for '"} +
-              std::string{name} + "'");
-        }
-
-        const auto result_type =
-            MakeReturnConventionType(unit_state, desc->result_conv);
-        return hir::Expr{
-            .type = result_type,
-            .data =
-                hir::CallExpr{
-                    .callee = hir::SystemSubroutineRef{.id = desc->id},
-                    .arguments = std::move(arg_ids),
-                },
-            .span = span,
-        };
-      }
-
-      const auto* sym =
-          std::get<const slang::ast::SubroutineSymbol*>(call.subroutine);
-      if (sym == nullptr) {
-        throw InternalError(
-            "AST->HIR call: user call missing resolved SubroutineSymbol");
-      }
-      const auto binding = unit_state.LookupSubroutineBinding(*sym);
-      if (!binding.has_value()) {
-        throw InternalError(
-            "AST->HIR call: resolved user subroutine has no registered HIR "
-            "binding");
-      }
-      const auto hops = stack.HopsTo(binding->owner_frame);
-      if (!hops.has_value()) {
-        throw InternalError(
-            "AST->HIR call: user subroutine owner frame is not on the current "
-            "scope stack");
-      }
-      auto result_type = type_id_of(expr);
-      if (!result_type) {
-        return std::unexpected(std::move(result_type.error()));
-      }
-      return hir::Expr{
-          .type = *result_type,
-          .data =
-              hir::CallExpr{
-                  .callee =
-                      hir::StructuralSubroutineRef{
-                          .hops = *hops, .subroutine = binding->subroutine_id},
-                  .arguments = std::move(arg_ids),
-              },
-          .span = span,
-      };
-    }
-
-    case slang::ast::ExpressionKind::Assignment: {
-      const auto& as = expr.as<slang::ast::AssignmentExpression>();
-      const auto kind = as.isNonBlocking() ? hir::AssignKind::kNonBlocking
-                                           : hir::AssignKind::kBlocking;
-
-      auto lhs_or =
-          LowerProcLvalue(unit_facts, unit_state, proc_state, stack, as.left());
-      if (!lhs_or) return std::unexpected(std::move(lhs_or.error()));
-
-      auto rhs_or = LowerProcExpr(
-          unit_facts, unit_state, proc_state, stack, as.right(), *lhs_or);
-      if (!rhs_or) return std::unexpected(std::move(rhs_or.error()));
-      const hir::ExprId rhs_id = proc_state.AddExpr(*std::move(rhs_or));
-
-      auto type_id = type_id_of(expr);
-      if (!type_id) return std::unexpected(std::move(type_id.error()));
-      return hir::Expr{
-          .type = *type_id,
-          .data =
-              hir::AssignExpr{
-                  .kind = kind, .lhs = *std::move(lhs_or), .rhs = rhs_id},
-          .span = span,
-      };
-    }
-
-    case slang::ast::ExpressionKind::Inside: {
-      const auto& in = expr.as<slang::ast::InsideExpression>();
-      auto lhs_id = append_child(in.left());
-      if (!lhs_id) return std::unexpected(std::move(lhs_id.error()));
-
-      std::vector<hir::InsideItem> items;
-      items.reserve(in.rangeList().size());
-      for (const auto* item : in.rangeList()) {
-        if (item->kind == slang::ast::ExpressionKind::ValueRange) {
-          const auto& vr = item->as<slang::ast::ValueRangeExpression>();
-          if (vr.rangeKind != slang::ast::ValueRangeKind::Simple) {
-            return diag::Unsupported(
-                mapper.SpanOf(vr.sourceRange),
-                diag::DiagCode::kUnsupportedExpressionForm,
-                "tolerance-range form in inside operator is not yet supported",
-                diag::UnsupportedCategory::kFeature);
-          }
-          auto lo_id = append_child(vr.left());
-          if (!lo_id) return std::unexpected(std::move(lo_id.error()));
-          auto hi_id = append_child(vr.right());
-          if (!hi_id) return std::unexpected(std::move(hi_id.error()));
-          items.emplace_back(hir::InsideRangePair{.lo = *lo_id, .hi = *hi_id});
-        } else {
-          auto val_id = append_child(*item);
-          if (!val_id) return std::unexpected(std::move(val_id.error()));
-          items.emplace_back(*val_id);
-        }
-      }
-
-      auto type_id = type_id_of(expr);
-      if (!type_id) return std::unexpected(std::move(type_id.error()));
-      return hir::Expr{
-          .type = *type_id,
-          .data = hir::InsideExpr{.lhs = *lhs_id, .items = std::move(items)},
-          .span = span,
-      };
-    }
+    case slang::ast::ExpressionKind::Inside:
+      return LowerInsideExprProc(
+          unit_facts, unit_state, proc_state, stack, compound_lvalue_context,
+          expr.as<slang::ast::InsideExpression>(), expr, span);
 
     default:
       return diag::Unsupported(
@@ -728,186 +1000,51 @@ auto LowerStructuralExpr(
   const auto& mapper = unit_facts.SourceMapper();
   const auto span = mapper.SpanOf(expr.sourceRange);
 
-  auto lower_child = [&](const slang::ast::Expression& e) {
-    return LowerStructuralExpr(
-        unit_facts, unit_state, scope_state, stack, e, compound_lvalue_context);
-  };
-  auto add_child =
-      [&](const slang::ast::Expression& e) -> diag::Result<hir::ExprId> {
-    auto child = lower_child(e);
-    if (!child) return std::unexpected(std::move(child.error()));
-    return scope_state.AddExpr(*std::move(child));
-  };
-  auto type_id_of =
-      [&](const slang::ast::Expression& e) -> diag::Result<hir::TypeId> {
-    auto td = LowerType(*e.type, mapper.SpanOf(e.sourceRange), unit_state);
-    if (!td) return std::unexpected(std::move(td.error()));
-    return unit_state.AddType(*std::move(td));
-  };
-
   switch (expr.kind) {
     case slang::ast::ExpressionKind::IntegerLiteral: {
-      auto type_id = type_id_of(expr);
+      auto type_id = TypeIdOfSlangExpr(unit_facts, unit_state, expr);
       if (!type_id) return std::unexpected(std::move(type_id.error()));
       return MakeIntegerLiteralExpr(
           expr.as<slang::ast::IntegerLiteral>(), *type_id, span);
     }
 
     case slang::ast::ExpressionKind::UnbasedUnsizedIntegerLiteral: {
-      auto type_id = type_id_of(expr);
+      auto type_id = TypeIdOfSlangExpr(unit_facts, unit_state, expr);
       if (!type_id) return std::unexpected(std::move(type_id.error()));
       return MakeUnbasedUnsizedLiteralExpr(
           expr.as<slang::ast::UnbasedUnsizedIntegerLiteral>(), *type_id, span);
     }
 
-    case slang::ast::ExpressionKind::NamedValue: {
-      const auto& named = expr.as<slang::ast::NamedValueExpression>();
-      const auto& sym = named.symbol;
-      if (sym.kind == slang::ast::SymbolKind::EnumValue) {
-        auto type_id = type_id_of(expr);
-        if (!type_id) return std::unexpected(std::move(type_id.error()));
-        return MakeEnumValueExpr(
-            sym.as<slang::ast::EnumValueSymbol>(), *type_id, span);
-      }
-      if (sym.kind == slang::ast::SymbolKind::Variable ||
-          sym.kind == slang::ast::SymbolKind::Parameter) {
-        const auto& value_sym = sym.as<slang::ast::ValueSymbol>();
-        if (auto loop_binding = unit_state.LookupLoopVarBinding(value_sym)) {
-          const auto hops = stack.HopsTo(loop_binding->home_frame);
-          if (!hops.has_value()) {
-            throw InternalError(
-                "LowerStructuralExpr: loop-var binding home frame is not on "
-                "the current scope stack");
-          }
-          return MakeRefExpr(
-              hir::LoopVarRef{
-                  .hops = *hops, .loop_var = loop_binding->loop_var_id},
-              loop_binding->type, span);
-        }
-      }
-      if (sym.kind != slang::ast::SymbolKind::Variable) {
-        return diag::Unsupported(
-            mapper.SpanOf(named.sourceRange),
-            diag::DiagCode::kUnsupportedNonVariableNamedReference,
-            "reference to non-variable declaration is not supported",
-            diag::UnsupportedCategory::kFeature);
-      }
-      const auto& var = sym.as<slang::ast::VariableSymbol>();
-      const auto binding = unit_state.LookupStructuralVarBinding(var);
-      if (!binding.has_value()) {
-        throw InternalError(
-            "LowerStructuralExpr: variable was not bound during scope "
-            "lowering");
-      }
-      const auto hops = stack.HopsTo(binding->home_frame);
-      if (!hops.has_value()) {
-        throw InternalError(
-            "LowerStructuralExpr: variable home frame is not on the current "
-            "scope stack");
-      }
-      return MakeRefExpr(
-          hir::StructuralVarRef{.hops = *hops, .var = binding->var_id},
-          binding->type, span);
-    }
+    case slang::ast::ExpressionKind::NamedValue:
+      return LowerNamedValueStructural(
+          unit_facts, unit_state, stack,
+          expr.as<slang::ast::NamedValueExpression>());
 
-    case slang::ast::ExpressionKind::LValueReference: {
-      if (!compound_lvalue_context.has_value()) {
-        throw InternalError(
-            "LowerStructuralExpr: slang LValueReference encountered outside "
-            "compound-assignment RHS");
-      }
-      auto type_id = type_id_of(expr);
-      if (!type_id) return std::unexpected(std::move(type_id.error()));
-      return MakeRefExpr(
-          LvalueToPrimary(*compound_lvalue_context), *type_id, span);
-    }
+    case slang::ast::ExpressionKind::LValueReference:
+      return LowerLValueReferenceExpr(
+          span, compound_lvalue_context,
+          TypeIdOfSlangExpr(unit_facts, unit_state, expr),
+          "LowerStructuralExpr");
 
-    case slang::ast::ExpressionKind::Conversion: {
-      const auto& conv = expr.as<slang::ast::ConversionExpression>();
-      auto operand_id = add_child(conv.operand());
-      if (!operand_id) return std::unexpected(std::move(operand_id.error()));
-      auto type_id = type_id_of(expr);
-      if (!type_id) return std::unexpected(std::move(type_id.error()));
-      return hir::Expr{
-          .type = *type_id,
-          .data =
-              hir::ConversionExpr{
-                  .operand = *operand_id,
-                  .kind = LowerConversionKind(conv.conversionKind),
-              },
-          .span = span,
-      };
-    }
+    case slang::ast::ExpressionKind::Conversion:
+      return LowerConversionExprStructural(
+          unit_facts, unit_state, scope_state, stack, compound_lvalue_context,
+          expr.as<slang::ast::ConversionExpression>(), expr, span);
 
-    case slang::ast::ExpressionKind::UnaryOp: {
-      const auto& un = expr.as<slang::ast::UnaryExpression>();
-      auto op_or = LowerUnaryOp(un.op, span);
-      if (!op_or) return std::unexpected(std::move(op_or.error()));
-      auto operand_id = add_child(un.operand());
-      if (!operand_id) return std::unexpected(std::move(operand_id.error()));
-      auto type_id = type_id_of(expr);
-      if (!type_id) return std::unexpected(std::move(type_id.error()));
-      return hir::Expr{
-          .type = *type_id,
-          .data = hir::UnaryExpr{.op = *op_or, .operand = *operand_id},
-          .span = span,
-      };
-    }
+    case slang::ast::ExpressionKind::UnaryOp:
+      return LowerUnaryExprStructural(
+          unit_facts, unit_state, scope_state, stack, compound_lvalue_context,
+          expr.as<slang::ast::UnaryExpression>(), expr, span);
 
-    case slang::ast::ExpressionKind::BinaryOp: {
-      const auto& bin = expr.as<slang::ast::BinaryExpression>();
-      auto lhs_id = add_child(bin.left());
-      if (!lhs_id) return std::unexpected(std::move(lhs_id.error()));
-      auto rhs_id = add_child(bin.right());
-      if (!rhs_id) return std::unexpected(std::move(rhs_id.error()));
-      auto type_id = type_id_of(expr);
-      if (!type_id) return std::unexpected(std::move(type_id.error()));
-      return hir::Expr{
-          .type = *type_id,
-          .data =
-              hir::BinaryExpr{
-                  .op = LowerBinaryOp(bin.op),
-                  .lhs = *lhs_id,
-                  .rhs = *rhs_id,
-              },
-          .span = span,
-      };
-    }
+    case slang::ast::ExpressionKind::BinaryOp:
+      return LowerBinaryExprStructural(
+          unit_facts, unit_state, scope_state, stack, compound_lvalue_context,
+          expr.as<slang::ast::BinaryExpression>(), expr, span);
 
-    case slang::ast::ExpressionKind::ConditionalOp: {
-      const auto& cond = expr.as<slang::ast::ConditionalExpression>();
-      if (cond.conditions.size() != 1) {
-        return diag::Unsupported(
-            span, diag::DiagCode::kUnsupportedStructuralExpressionForm,
-            "conditional operator with `&&&` multi-condition is not yet "
-            "supported",
-            diag::UnsupportedCategory::kFeature);
-      }
-      if (cond.conditions[0].pattern != nullptr) {
-        return diag::Unsupported(
-            span, diag::DiagCode::kUnsupportedStructuralExpressionForm,
-            "conditional operator with `matches` pattern is not yet supported",
-            diag::UnsupportedCategory::kFeature);
-      }
-      auto cond_id = add_child(*cond.conditions[0].expr);
-      if (!cond_id) return std::unexpected(std::move(cond_id.error()));
-      auto then_id = add_child(cond.left());
-      if (!then_id) return std::unexpected(std::move(then_id.error()));
-      auto else_id = add_child(cond.right());
-      if (!else_id) return std::unexpected(std::move(else_id.error()));
-      auto type_id = type_id_of(expr);
-      if (!type_id) return std::unexpected(std::move(type_id.error()));
-      return hir::Expr{
-          .type = *type_id,
-          .data =
-              hir::ConditionalExpr{
-                  .condition = *cond_id,
-                  .then_value = *then_id,
-                  .else_value = *else_id,
-              },
-          .span = span,
-      };
-    }
+    case slang::ast::ExpressionKind::ConditionalOp:
+      return LowerConditionalExprStructural(
+          unit_facts, unit_state, scope_state, stack, compound_lvalue_context,
+          expr.as<slang::ast::ConditionalExpression>(), expr, span);
 
     default:
       return diag::Unsupported(

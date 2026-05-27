@@ -447,6 +447,302 @@ auto BuildNbaSubmitClosureExpr(
       .data = std::move(closure), .type = unit_state.Builtins().void_type};
 }
 
+auto LowerHirUnaryExprProc(
+    const UnitLoweringState& unit_state,
+    const StructuralScopeLoweringState& scope_state,
+    const ProcessLoweringState& proc_state,
+    ProceduralScopeLoweringState& proc_scope_state,
+    const hir::Process& hir_process, const hir::UnaryExpr& u,
+    mir::TypeId result_type) -> diag::Result<mir::Expr> {
+  auto operand_or = LowerExpr(
+      unit_state, scope_state, proc_state, proc_scope_state, hir_process,
+      hir_process.exprs.at(u.operand.value));
+  if (!operand_or) {
+    return std::unexpected(std::move(operand_or.error()));
+  }
+  const mir::ExprId operand_id =
+      proc_scope_state.AddExpr(*std::move(operand_or));
+  return mir::Expr{
+      .data = mir::UnaryExpr{.op = LowerUnaryOp(u.op), .operand = operand_id},
+      .type = result_type};
+}
+
+auto LowerHirBinaryExprProc(
+    const UnitLoweringState& unit_state,
+    const StructuralScopeLoweringState& scope_state,
+    const ProcessLoweringState& proc_state,
+    ProceduralScopeLoweringState& proc_scope_state,
+    const hir::Process& hir_process, const hir::BinaryExpr& b,
+    mir::TypeId result_type) -> diag::Result<mir::Expr> {
+  auto lhs_or = LowerExpr(
+      unit_state, scope_state, proc_state, proc_scope_state, hir_process,
+      hir_process.exprs.at(b.lhs.value));
+  if (!lhs_or) return std::unexpected(std::move(lhs_or.error()));
+  const mir::ExprId lhs_id = proc_scope_state.AddExpr(*std::move(lhs_or));
+  auto rhs_or = LowerExpr(
+      unit_state, scope_state, proc_state, proc_scope_state, hir_process,
+      hir_process.exprs.at(b.rhs.value));
+  if (!rhs_or) return std::unexpected(std::move(rhs_or.error()));
+  const mir::ExprId rhs_id = proc_scope_state.AddExpr(*std::move(rhs_or));
+  return mir::Expr{
+      .data =
+          mir::BinaryExpr{
+              .op = LowerBinaryOp(b.op), .lhs = lhs_id, .rhs = rhs_id},
+      .type = result_type};
+}
+
+auto LowerHirConditionalExprProc(
+    const UnitLoweringState& unit_state,
+    const StructuralScopeLoweringState& scope_state,
+    const ProcessLoweringState& proc_state,
+    ProceduralScopeLoweringState& proc_scope_state,
+    const hir::Process& hir_process, const hir::ConditionalExpr& c,
+    mir::TypeId result_type) -> diag::Result<mir::Expr> {
+  auto cond_or = LowerExpr(
+      unit_state, scope_state, proc_state, proc_scope_state, hir_process,
+      hir_process.exprs.at(c.condition.value));
+  if (!cond_or) return std::unexpected(std::move(cond_or.error()));
+  const mir::ExprId cond_id = proc_scope_state.AddExpr(*std::move(cond_or));
+  auto then_or = LowerExpr(
+      unit_state, scope_state, proc_state, proc_scope_state, hir_process,
+      hir_process.exprs.at(c.then_value.value));
+  if (!then_or) return std::unexpected(std::move(then_or.error()));
+  const mir::ExprId then_id = proc_scope_state.AddExpr(*std::move(then_or));
+  auto else_or = LowerExpr(
+      unit_state, scope_state, proc_state, proc_scope_state, hir_process,
+      hir_process.exprs.at(c.else_value.value));
+  if (!else_or) return std::unexpected(std::move(else_or.error()));
+  const mir::ExprId else_id = proc_scope_state.AddExpr(*std::move(else_or));
+  return mir::Expr{
+      .data =
+          mir::ConditionalExpr{
+              .condition = cond_id,
+              .then_value = then_id,
+              .else_value = else_id},
+      .type = result_type};
+}
+
+auto LowerHirAssignExprProc(
+    const UnitLoweringState& unit_state,
+    const StructuralScopeLoweringState& scope_state,
+    const ProcessLoweringState& proc_state,
+    ProceduralScopeLoweringState& proc_scope_state,
+    const hir::Process& hir_process, const hir::AssignExpr& a,
+    diag::SourceSpan span, mir::TypeId result_type) -> diag::Result<mir::Expr> {
+  auto rhs_or = LowerExpr(
+      unit_state, scope_state, proc_state, proc_scope_state, hir_process,
+      hir_process.exprs.at(a.rhs.value));
+  if (!rhs_or) return std::unexpected(std::move(rhs_or.error()));
+  const mir::TypeId rhs_type = (*rhs_or).type;
+  const mir::ExprId rhs_id = proc_scope_state.AddExpr(*std::move(rhs_or));
+  auto lhs = LowerHirLvalueProc(scope_state, proc_state, a.lhs);
+
+  if (a.kind == hir::AssignKind::kBlocking) {
+    return mir::Expr{
+        .data = mir::AssignExpr{.target = lhs, .value = rhs_id},
+        .type = result_type};
+  }
+
+  if (!std::holds_alternative<mir::StructuralVarRef>(lhs)) {
+    return diag::Unsupported(
+        span, diag::DiagCode::kUnsupportedAssignmentTarget,
+        "non-blocking assignment to procedural local is not supported yet",
+        diag::UnsupportedCategory::kFeature);
+  }
+
+  mir::Expr closure_expr =
+      BuildNbaSubmitClosureExpr(unit_state, std::move(lhs), rhs_id, rhs_type);
+  const mir::ExprId closure_id =
+      proc_scope_state.AddExpr(std::move(closure_expr));
+  return mir::Expr{
+      .data =
+          mir::RuntimeCallExpr{
+              .call = mir::RuntimeSubmitNbaCall{.closure = closure_id}},
+      .type = unit_state.Builtins().void_type};
+}
+
+auto LowerHirConversionExprProc(
+    const UnitLoweringState& unit_state,
+    const StructuralScopeLoweringState& scope_state,
+    const ProcessLoweringState& proc_state,
+    ProceduralScopeLoweringState& proc_scope_state,
+    const hir::Process& hir_process, const hir::ConversionExpr& cv,
+    mir::TypeId result_type) -> diag::Result<mir::Expr> {
+  auto operand_or = LowerExpr(
+      unit_state, scope_state, proc_state, proc_scope_state, hir_process,
+      hir_process.exprs.at(cv.operand.value));
+  if (!operand_or) {
+    return std::unexpected(std::move(operand_or.error()));
+  }
+  const mir::ExprId operand_id =
+      proc_scope_state.AddExpr(*std::move(operand_or));
+  return mir::Expr{
+      .data =
+          mir::ConversionExpr{
+              .operand = operand_id, .kind = LowerHirConversionKind(cv.kind)},
+      .type = result_type};
+}
+
+auto LowerHirCallExprProc(
+    const UnitLoweringState& unit_state,
+    const StructuralScopeLoweringState& scope_state,
+    const ProcessLoweringState& proc_state,
+    ProceduralScopeLoweringState& proc_scope_state,
+    const hir::Process& hir_process, const hir::CallExpr& c,
+    diag::SourceSpan span, mir::TypeId result_type) -> diag::Result<mir::Expr> {
+  return std::visit(
+      Overloaded{
+          [&](const hir::SystemSubroutineRef& sys) -> diag::Result<mir::Expr> {
+            return LowerSystemSubroutineCall(
+                unit_state, scope_state, proc_state, proc_scope_state,
+                hir_process, c, sys, span);
+          },
+          [&](const hir::StructuralSubroutineRef& usr)
+              -> diag::Result<mir::Expr> {
+            std::vector<mir::ExprId> args;
+            args.reserve(c.arguments.size());
+            for (const auto arg : c.arguments) {
+              auto arg_or = LowerExpr(
+                  unit_state, scope_state, proc_state, proc_scope_state,
+                  hir_process, hir_process.exprs.at(arg.value));
+              if (!arg_or) return std::unexpected(std::move(arg_or.error()));
+              args.push_back(proc_scope_state.AddExpr(*std::move(arg_or)));
+            }
+            return mir::Expr{
+                .data =
+                    mir::CallExpr{
+                        .callee = LowerUserCallee(scope_state, usr),
+                        .arguments = std::move(args)},
+                .type = result_type};
+          },
+          [&](const hir::BuiltinMethodRef& bm) -> diag::Result<mir::Expr> {
+            return LowerBuiltinMethodCall(
+                unit_state, hir_process, bm, c.arguments, result_type, span);
+          },
+      },
+      c.callee);
+}
+
+// Builds the 1-bit MIR predicate ExprId for one inside-operator item, comparing
+// against the already-lowered LHS. Value items use `==`; range items use
+// `(>= lo) && (<= hi)`. The returned ExprId references a freshly added MIR
+// expression in `proc_scope_state`.
+auto BuildHirInsideItemPredicateProc(
+    const UnitLoweringState& unit_state,
+    const StructuralScopeLoweringState& scope_state,
+    const ProcessLoweringState& proc_state,
+    ProceduralScopeLoweringState& proc_scope_state,
+    const hir::Process& hir_process, mir::ExprId lhs_id,
+    const hir::InsideItem& item, mir::TypeId result_type)
+    -> diag::Result<mir::ExprId> {
+  auto lower_id = [&](hir::ExprId id) -> diag::Result<mir::ExprId> {
+    auto lowered = LowerExpr(
+        unit_state, scope_state, proc_state, proc_scope_state, hir_process,
+        hir_process.exprs.at(id.value));
+    if (!lowered) {
+      return std::unexpected(std::move(lowered.error()));
+    }
+    return proc_scope_state.AddExpr(*std::move(lowered));
+  };
+
+  return std::visit(
+      Overloaded{
+          [&](const hir::ExprId& val_id) -> diag::Result<mir::ExprId> {
+            auto v = lower_id(val_id);
+            if (!v) return std::unexpected(std::move(v.error()));
+            return proc_scope_state.AddExpr(
+                mir::Expr{
+                    .data =
+                        mir::BinaryExpr{
+                            .op = mir::BinaryOp::kEquality,
+                            .lhs = lhs_id,
+                            .rhs = *v},
+                    .type = result_type});
+          },
+          [&](const hir::InsideRangePair& r) -> diag::Result<mir::ExprId> {
+            auto lo = lower_id(r.lo);
+            if (!lo) return std::unexpected(std::move(lo.error()));
+            auto hi = lower_id(r.hi);
+            if (!hi) return std::unexpected(std::move(hi.error()));
+            const mir::ExprId ge_id = proc_scope_state.AddExpr(
+                mir::Expr{
+                    .data =
+                        mir::BinaryExpr{
+                            .op = mir::BinaryOp::kGreaterEqual,
+                            .lhs = lhs_id,
+                            .rhs = *lo},
+                    .type = result_type});
+            const mir::ExprId le_id = proc_scope_state.AddExpr(
+                mir::Expr{
+                    .data =
+                        mir::BinaryExpr{
+                            .op = mir::BinaryOp::kLessEqual,
+                            .lhs = lhs_id,
+                            .rhs = *hi},
+                    .type = result_type});
+            return proc_scope_state.AddExpr(
+                mir::Expr{
+                    .data =
+                        mir::BinaryExpr{
+                            .op = mir::BinaryOp::kLogicalAnd,
+                            .lhs = ge_id,
+                            .rhs = le_id},
+                    .type = result_type});
+          },
+      },
+      item);
+}
+
+auto LowerHirInsideExprProc(
+    const UnitLoweringState& unit_state,
+    const StructuralScopeLoweringState& scope_state,
+    const ProcessLoweringState& proc_state,
+    ProceduralScopeLoweringState& proc_scope_state,
+    const hir::Process& hir_process, const hir::InsideExpr& in,
+    mir::TypeId result_type) -> diag::Result<mir::Expr> {
+  auto lhs_or = LowerExpr(
+      unit_state, scope_state, proc_state, proc_scope_state, hir_process,
+      hir_process.exprs.at(in.lhs.value));
+  if (!lhs_or) return std::unexpected(std::move(lhs_or.error()));
+  const mir::ExprId lhs_id = proc_scope_state.AddExpr(*std::move(lhs_or));
+
+  std::vector<mir::ExprId> predicates;
+  predicates.reserve(in.items.size());
+  for (const auto& item : in.items) {
+    auto pred_or = BuildHirInsideItemPredicateProc(
+        unit_state, scope_state, proc_state, proc_scope_state, hir_process,
+        lhs_id, item, result_type);
+    if (!pred_or) return std::unexpected(std::move(pred_or.error()));
+    predicates.push_back(*pred_or);
+  }
+
+  if (predicates.empty()) {
+    throw InternalError(
+        "LowerHirInsideExprProc: hir::InsideExpr has empty item list");
+  }
+  if (predicates.size() == 1) {
+    return mir::Expr{proc_scope_state.GetExpr(predicates.front())};
+  }
+  mir::ExprId acc = predicates.front();
+  for (std::size_t i = 1; i + 1 < predicates.size(); ++i) {
+    acc = proc_scope_state.AddExpr(
+        mir::Expr{
+            .data =
+                mir::BinaryExpr{
+                    .op = mir::BinaryOp::kLogicalOr,
+                    .lhs = acc,
+                    .rhs = predicates[i]},
+            .type = result_type});
+  }
+  return mir::Expr{
+      .data =
+          mir::BinaryExpr{
+              .op = mir::BinaryOp::kLogicalOr,
+              .lhs = acc,
+              .rhs = predicates.back()},
+      .type = result_type};
+}
+
 }  // namespace
 
 auto LowerExpr(
@@ -464,260 +760,154 @@ auto LowerExpr(
                 unit_state, scope_state, proc_state, p.data, result_type);
           },
           [&](const hir::UnaryExpr& u) -> diag::Result<mir::Expr> {
-            auto operand_or = LowerExpr(
+            return LowerHirUnaryExprProc(
                 unit_state, scope_state, proc_state, proc_scope_state,
-                hir_process, hir_process.exprs.at(u.operand.value));
-            if (!operand_or) {
-              return std::unexpected(std::move(operand_or.error()));
-            }
-            const mir::ExprId operand_id =
-                proc_scope_state.AddExpr(*std::move(operand_or));
-            return mir::Expr{
-                .data =
-                    mir::UnaryExpr{
-                        .op = LowerUnaryOp(u.op), .operand = operand_id},
-                .type = result_type};
+                hir_process, u, result_type);
           },
           [&](const hir::BinaryExpr& b) -> diag::Result<mir::Expr> {
-            auto lhs_or = LowerExpr(
+            return LowerHirBinaryExprProc(
                 unit_state, scope_state, proc_state, proc_scope_state,
-                hir_process, hir_process.exprs.at(b.lhs.value));
-            if (!lhs_or) return std::unexpected(std::move(lhs_or.error()));
-            const mir::ExprId lhs_id =
-                proc_scope_state.AddExpr(*std::move(lhs_or));
-            auto rhs_or = LowerExpr(
-                unit_state, scope_state, proc_state, proc_scope_state,
-                hir_process, hir_process.exprs.at(b.rhs.value));
-            if (!rhs_or) return std::unexpected(std::move(rhs_or.error()));
-            const mir::ExprId rhs_id =
-                proc_scope_state.AddExpr(*std::move(rhs_or));
-            return mir::Expr{
-                .data =
-                    mir::BinaryExpr{
-                        .op = LowerBinaryOp(b.op),
-                        .lhs = lhs_id,
-                        .rhs = rhs_id},
-                .type = result_type};
+                hir_process, b, result_type);
           },
           [&](const hir::ConditionalExpr& c) -> diag::Result<mir::Expr> {
-            auto cond_or = LowerExpr(
+            return LowerHirConditionalExprProc(
                 unit_state, scope_state, proc_state, proc_scope_state,
-                hir_process, hir_process.exprs.at(c.condition.value));
-            if (!cond_or) return std::unexpected(std::move(cond_or.error()));
-            const mir::ExprId cond_id =
-                proc_scope_state.AddExpr(*std::move(cond_or));
-            auto then_or = LowerExpr(
-                unit_state, scope_state, proc_state, proc_scope_state,
-                hir_process, hir_process.exprs.at(c.then_value.value));
-            if (!then_or) return std::unexpected(std::move(then_or.error()));
-            const mir::ExprId then_id =
-                proc_scope_state.AddExpr(*std::move(then_or));
-            auto else_or = LowerExpr(
-                unit_state, scope_state, proc_state, proc_scope_state,
-                hir_process, hir_process.exprs.at(c.else_value.value));
-            if (!else_or) return std::unexpected(std::move(else_or.error()));
-            const mir::ExprId else_id =
-                proc_scope_state.AddExpr(*std::move(else_or));
-            return mir::Expr{
-                .data =
-                    mir::ConditionalExpr{
-                        .condition = cond_id,
-                        .then_value = then_id,
-                        .else_value = else_id},
-                .type = result_type};
+                hir_process, c, result_type);
           },
           [&](const hir::AssignExpr& a) -> diag::Result<mir::Expr> {
-            auto rhs_or = LowerExpr(
+            return LowerHirAssignExprProc(
                 unit_state, scope_state, proc_state, proc_scope_state,
-                hir_process, hir_process.exprs.at(a.rhs.value));
-            if (!rhs_or) return std::unexpected(std::move(rhs_or.error()));
-            const mir::TypeId rhs_type = (*rhs_or).type;
-            const mir::ExprId rhs_id =
-                proc_scope_state.AddExpr(*std::move(rhs_or));
-            auto lhs = LowerHirLvalueProc(scope_state, proc_state, a.lhs);
-
-            if (a.kind == hir::AssignKind::kBlocking) {
-              return mir::Expr{
-                  .data = mir::AssignExpr{.target = lhs, .value = rhs_id},
-                  .type = result_type};
-            }
-
-            if (!std::holds_alternative<mir::StructuralVarRef>(lhs)) {
-              return diag::Unsupported(
-                  expr.span, diag::DiagCode::kUnsupportedAssignmentTarget,
-                  "non-blocking assignment to procedural local is not "
-                  "supported yet",
-                  diag::UnsupportedCategory::kFeature);
-            }
-
-            mir::Expr closure_expr = BuildNbaSubmitClosureExpr(
-                unit_state, std::move(lhs), rhs_id, rhs_type);
-            const mir::ExprId closure_id =
-                proc_scope_state.AddExpr(std::move(closure_expr));
-            return mir::Expr{
-                .data =
-                    mir::RuntimeCallExpr{
-                        .call =
-                            mir::RuntimeSubmitNbaCall{.closure = closure_id}},
-                .type = unit_state.Builtins().void_type};
+                hir_process, a, expr.span, result_type);
           },
           [&](const hir::ConversionExpr& cv) -> diag::Result<mir::Expr> {
-            auto operand_or = LowerExpr(
+            return LowerHirConversionExprProc(
                 unit_state, scope_state, proc_state, proc_scope_state,
-                hir_process, hir_process.exprs.at(cv.operand.value));
-            if (!operand_or) {
-              return std::unexpected(std::move(operand_or.error()));
-            }
-            const mir::ExprId operand_id =
-                proc_scope_state.AddExpr(*std::move(operand_or));
-            return mir::Expr{
-                .data =
-                    mir::ConversionExpr{
-                        .operand = operand_id,
-                        .kind = LowerHirConversionKind(cv.kind)},
-                .type = result_type};
+                hir_process, cv, result_type);
           },
           [&](const hir::CallExpr& c) -> diag::Result<mir::Expr> {
-            return std::visit(
-                Overloaded{
-                    [&](const hir::SystemSubroutineRef& sys)
-                        -> diag::Result<mir::Expr> {
-                      return LowerSystemSubroutineCall(
-                          unit_state, scope_state, proc_state, proc_scope_state,
-                          hir_process, c, sys, expr.span);
-                    },
-                    [&](const hir::StructuralSubroutineRef& usr)
-                        -> diag::Result<mir::Expr> {
-                      std::vector<mir::ExprId> args;
-                      args.reserve(c.arguments.size());
-                      for (const auto arg : c.arguments) {
-                        auto arg_or = LowerExpr(
-                            unit_state, scope_state, proc_state,
-                            proc_scope_state, hir_process,
-                            hir_process.exprs.at(arg.value));
-                        if (!arg_or)
-                          return std::unexpected(std::move(arg_or.error()));
-                        args.push_back(
-                            proc_scope_state.AddExpr(*std::move(arg_or)));
-                      }
-                      return mir::Expr{
-                          .data =
-                              mir::CallExpr{
-                                  .callee = LowerUserCallee(scope_state, usr),
-                                  .arguments = std::move(args)},
-                          .type = result_type};
-                    },
-                    [&](const hir::BuiltinMethodRef& bm)
-                        -> diag::Result<mir::Expr> {
-                      return LowerBuiltinMethodCall(
-                          unit_state, hir_process, bm, c.arguments, result_type,
-                          expr.span);
-                    },
-                },
-                c.callee);
+            return LowerHirCallExprProc(
+                unit_state, scope_state, proc_state, proc_scope_state,
+                hir_process, c, expr.span, result_type);
           },
           [&](const hir::InsideExpr& in) -> diag::Result<mir::Expr> {
-            auto lower_id = [&](hir::ExprId id) -> diag::Result<mir::ExprId> {
-              auto lowered = LowerExpr(
-                  unit_state, scope_state, proc_state, proc_scope_state,
-                  hir_process, hir_process.exprs.at(id.value));
-              if (!lowered) {
-                return std::unexpected(std::move(lowered.error()));
-              }
-              return proc_scope_state.AddExpr(*std::move(lowered));
-            };
-
-            auto lhs_id = lower_id(in.lhs);
-            if (!lhs_id) return std::unexpected(std::move(lhs_id.error()));
-
-            // Build per-item 1-bit predicate expressions and OR them together.
-            // Value item: lhs == item. Range item: (lhs >= lo) && (lhs <= hi).
-            std::vector<mir::ExprId> predicates;
-            predicates.reserve(in.items.size());
-            for (const auto& item : in.items) {
-              auto pred_or = std::visit(
-                  Overloaded{
-                      [&](const hir::ExprId& val_id)
-                          -> diag::Result<mir::ExprId> {
-                        auto v = lower_id(val_id);
-                        if (!v) return std::unexpected(std::move(v.error()));
-                        return proc_scope_state.AddExpr(
-                            mir::Expr{
-                                .data =
-                                    mir::BinaryExpr{
-                                        .op = mir::BinaryOp::kEquality,
-                                        .lhs = *lhs_id,
-                                        .rhs = *v},
-                                .type = result_type});
-                      },
-                      [&](const hir::InsideRangePair& r)
-                          -> diag::Result<mir::ExprId> {
-                        auto lo = lower_id(r.lo);
-                        if (!lo) return std::unexpected(std::move(lo.error()));
-                        auto hi = lower_id(r.hi);
-                        if (!hi) return std::unexpected(std::move(hi.error()));
-                        const mir::ExprId ge_id = proc_scope_state.AddExpr(
-                            mir::Expr{
-                                .data =
-                                    mir::BinaryExpr{
-                                        .op = mir::BinaryOp::kGreaterEqual,
-                                        .lhs = *lhs_id,
-                                        .rhs = *lo},
-                                .type = result_type});
-                        const mir::ExprId le_id = proc_scope_state.AddExpr(
-                            mir::Expr{
-                                .data =
-                                    mir::BinaryExpr{
-                                        .op = mir::BinaryOp::kLessEqual,
-                                        .lhs = *lhs_id,
-                                        .rhs = *hi},
-                                .type = result_type});
-                        return proc_scope_state.AddExpr(
-                            mir::Expr{
-                                .data =
-                                    mir::BinaryExpr{
-                                        .op = mir::BinaryOp::kLogicalAnd,
-                                        .lhs = ge_id,
-                                        .rhs = le_id},
-                                .type = result_type});
-                      },
-                  },
-                  item);
-              if (!pred_or) return std::unexpected(std::move(pred_or.error()));
-              predicates.push_back(*pred_or);
-            }
-
-            if (predicates.empty()) {
-              throw InternalError(
-                  "LowerExpr: hir::InsideExpr has empty item list");
-            }
-            if (predicates.size() == 1) {
-              return mir::Expr{proc_scope_state.GetExpr(predicates.front())};
-            }
-            mir::ExprId acc = predicates.front();
-            for (std::size_t i = 1; i + 1 < predicates.size(); ++i) {
-              acc = proc_scope_state.AddExpr(
-                  mir::Expr{
-                      .data =
-                          mir::BinaryExpr{
-                              .op = mir::BinaryOp::kLogicalOr,
-                              .lhs = acc,
-                              .rhs = predicates[i]},
-                      .type = result_type});
-            }
-            return mir::Expr{
-                .data =
-                    mir::BinaryExpr{
-                        .op = mir::BinaryOp::kLogicalOr,
-                        .lhs = acc,
-                        .rhs = predicates.back()},
-                .type = result_type};
+            return LowerHirInsideExprProc(
+                unit_state, scope_state, proc_state, proc_scope_state,
+                hir_process, in, result_type);
           },
       },
       expr.data);
 }
 
 namespace {
+
+auto LowerExprImpl(
+    const UnitLoweringState& unit_state,
+    const StructuralScopeLoweringState& scope_state,
+    const ConstructorLoweringState* ctor_state,
+    ProceduralScopeLoweringState& proc_scope_state,
+    const hir::StructuralScope& scope, const hir::Expr& expr,
+    LoopVarLoweringMode loop_var_mode) -> diag::Result<mir::Expr>;
+
+auto LowerHirUnaryExprStructural(
+    const UnitLoweringState& unit_state,
+    const StructuralScopeLoweringState& scope_state,
+    const ConstructorLoweringState* ctor_state,
+    ProceduralScopeLoweringState& proc_scope_state,
+    const hir::StructuralScope& scope, const hir::UnaryExpr& u,
+    LoopVarLoweringMode loop_var_mode, mir::TypeId result_type)
+    -> diag::Result<mir::Expr> {
+  auto operand_or = LowerExprImpl(
+      unit_state, scope_state, ctor_state, proc_scope_state, scope,
+      scope.GetExpr(u.operand), loop_var_mode);
+  if (!operand_or) {
+    return std::unexpected(std::move(operand_or.error()));
+  }
+  const mir::ExprId operand_id =
+      proc_scope_state.AddExpr(*std::move(operand_or));
+  return mir::Expr{
+      .data = mir::UnaryExpr{.op = LowerUnaryOp(u.op), .operand = operand_id},
+      .type = result_type};
+}
+
+auto LowerHirBinaryExprStructural(
+    const UnitLoweringState& unit_state,
+    const StructuralScopeLoweringState& scope_state,
+    const ConstructorLoweringState* ctor_state,
+    ProceduralScopeLoweringState& proc_scope_state,
+    const hir::StructuralScope& scope, const hir::BinaryExpr& b,
+    LoopVarLoweringMode loop_var_mode, mir::TypeId result_type)
+    -> diag::Result<mir::Expr> {
+  auto lhs_or = LowerExprImpl(
+      unit_state, scope_state, ctor_state, proc_scope_state, scope,
+      scope.GetExpr(b.lhs), loop_var_mode);
+  if (!lhs_or) return std::unexpected(std::move(lhs_or.error()));
+  const mir::ExprId lhs_id = proc_scope_state.AddExpr(*std::move(lhs_or));
+  auto rhs_or = LowerExprImpl(
+      unit_state, scope_state, ctor_state, proc_scope_state, scope,
+      scope.GetExpr(b.rhs), loop_var_mode);
+  if (!rhs_or) return std::unexpected(std::move(rhs_or.error()));
+  const mir::ExprId rhs_id = proc_scope_state.AddExpr(*std::move(rhs_or));
+  return mir::Expr{
+      .data =
+          mir::BinaryExpr{
+              .op = LowerBinaryOp(b.op), .lhs = lhs_id, .rhs = rhs_id},
+      .type = result_type};
+}
+
+auto LowerHirConditionalExprStructural(
+    const UnitLoweringState& unit_state,
+    const StructuralScopeLoweringState& scope_state,
+    const ConstructorLoweringState* ctor_state,
+    ProceduralScopeLoweringState& proc_scope_state,
+    const hir::StructuralScope& scope, const hir::ConditionalExpr& c,
+    LoopVarLoweringMode loop_var_mode, mir::TypeId result_type)
+    -> diag::Result<mir::Expr> {
+  auto cond_or = LowerExprImpl(
+      unit_state, scope_state, ctor_state, proc_scope_state, scope,
+      scope.GetExpr(c.condition), loop_var_mode);
+  if (!cond_or) return std::unexpected(std::move(cond_or.error()));
+  const mir::ExprId cond_id = proc_scope_state.AddExpr(*std::move(cond_or));
+  auto then_or = LowerExprImpl(
+      unit_state, scope_state, ctor_state, proc_scope_state, scope,
+      scope.GetExpr(c.then_value), loop_var_mode);
+  if (!then_or) return std::unexpected(std::move(then_or.error()));
+  const mir::ExprId then_id = proc_scope_state.AddExpr(*std::move(then_or));
+  auto else_or = LowerExprImpl(
+      unit_state, scope_state, ctor_state, proc_scope_state, scope,
+      scope.GetExpr(c.else_value), loop_var_mode);
+  if (!else_or) return std::unexpected(std::move(else_or.error()));
+  const mir::ExprId else_id = proc_scope_state.AddExpr(*std::move(else_or));
+  return mir::Expr{
+      .data =
+          mir::ConditionalExpr{
+              .condition = cond_id,
+              .then_value = then_id,
+              .else_value = else_id},
+      .type = result_type};
+}
+
+auto LowerHirConversionExprStructural(
+    const UnitLoweringState& unit_state,
+    const StructuralScopeLoweringState& scope_state,
+    const ConstructorLoweringState* ctor_state,
+    ProceduralScopeLoweringState& proc_scope_state,
+    const hir::StructuralScope& scope, const hir::ConversionExpr& cv,
+    LoopVarLoweringMode loop_var_mode, mir::TypeId result_type)
+    -> diag::Result<mir::Expr> {
+  auto operand_or = LowerExprImpl(
+      unit_state, scope_state, ctor_state, proc_scope_state, scope,
+      scope.GetExpr(cv.operand), loop_var_mode);
+  if (!operand_or) {
+    return std::unexpected(std::move(operand_or.error()));
+  }
+  const mir::ExprId operand_id =
+      proc_scope_state.AddExpr(*std::move(operand_or));
+  return mir::Expr{
+      .data =
+          mir::ConversionExpr{
+              .operand = operand_id, .kind = LowerHirConversionKind(cv.kind)},
+      .type = result_type};
+}
 
 auto LowerExprImpl(
     const UnitLoweringState& unit_state,
@@ -735,89 +925,30 @@ auto LowerExprImpl(
                 loop_var_mode);
           },
           [&](const hir::UnaryExpr& u) -> diag::Result<mir::Expr> {
-            auto operand_or = LowerExprImpl(
-                unit_state, scope_state, ctor_state, proc_scope_state, scope,
-                scope.GetExpr(u.operand), loop_var_mode);
-            if (!operand_or) {
-              return std::unexpected(std::move(operand_or.error()));
-            }
-            const mir::ExprId operand_id =
-                proc_scope_state.AddExpr(*std::move(operand_or));
-            return mir::Expr{
-                .data =
-                    mir::UnaryExpr{
-                        .op = LowerUnaryOp(u.op), .operand = operand_id},
-                .type = result_type};
+            return LowerHirUnaryExprStructural(
+                unit_state, scope_state, ctor_state, proc_scope_state, scope, u,
+                loop_var_mode, result_type);
           },
           [&](const hir::BinaryExpr& b) -> diag::Result<mir::Expr> {
-            auto lhs_or = LowerExprImpl(
-                unit_state, scope_state, ctor_state, proc_scope_state, scope,
-                scope.GetExpr(b.lhs), loop_var_mode);
-            if (!lhs_or) return std::unexpected(std::move(lhs_or.error()));
-            const mir::ExprId lhs_id =
-                proc_scope_state.AddExpr(*std::move(lhs_or));
-            auto rhs_or = LowerExprImpl(
-                unit_state, scope_state, ctor_state, proc_scope_state, scope,
-                scope.GetExpr(b.rhs), loop_var_mode);
-            if (!rhs_or) return std::unexpected(std::move(rhs_or.error()));
-            const mir::ExprId rhs_id =
-                proc_scope_state.AddExpr(*std::move(rhs_or));
-            return mir::Expr{
-                .data =
-                    mir::BinaryExpr{
-                        .op = LowerBinaryOp(b.op),
-                        .lhs = lhs_id,
-                        .rhs = rhs_id},
-                .type = result_type};
+            return LowerHirBinaryExprStructural(
+                unit_state, scope_state, ctor_state, proc_scope_state, scope, b,
+                loop_var_mode, result_type);
           },
           [&](const hir::ConditionalExpr& c) -> diag::Result<mir::Expr> {
-            auto cond_or = LowerExprImpl(
-                unit_state, scope_state, ctor_state, proc_scope_state, scope,
-                scope.GetExpr(c.condition), loop_var_mode);
-            if (!cond_or) return std::unexpected(std::move(cond_or.error()));
-            const mir::ExprId cond_id =
-                proc_scope_state.AddExpr(*std::move(cond_or));
-            auto then_or = LowerExprImpl(
-                unit_state, scope_state, ctor_state, proc_scope_state, scope,
-                scope.GetExpr(c.then_value), loop_var_mode);
-            if (!then_or) return std::unexpected(std::move(then_or.error()));
-            const mir::ExprId then_id =
-                proc_scope_state.AddExpr(*std::move(then_or));
-            auto else_or = LowerExprImpl(
-                unit_state, scope_state, ctor_state, proc_scope_state, scope,
-                scope.GetExpr(c.else_value), loop_var_mode);
-            if (!else_or) return std::unexpected(std::move(else_or.error()));
-            const mir::ExprId else_id =
-                proc_scope_state.AddExpr(*std::move(else_or));
-            return mir::Expr{
-                .data =
-                    mir::ConditionalExpr{
-                        .condition = cond_id,
-                        .then_value = then_id,
-                        .else_value = else_id},
-                .type = result_type};
+            return LowerHirConditionalExprStructural(
+                unit_state, scope_state, ctor_state, proc_scope_state, scope, c,
+                loop_var_mode, result_type);
           },
-          [&](const hir::AssignExpr&) -> diag::Result<mir::Expr> {
+          [](const hir::AssignExpr&) -> diag::Result<mir::Expr> {
             throw InternalError(
                 "LowerExprImpl (structural): HIR AssignExpr does not appear "
                 "in constructor-side expressions; structural code has no "
                 "general assignment");
           },
           [&](const hir::ConversionExpr& cv) -> diag::Result<mir::Expr> {
-            auto operand_or = LowerExprImpl(
+            return LowerHirConversionExprStructural(
                 unit_state, scope_state, ctor_state, proc_scope_state, scope,
-                scope.GetExpr(cv.operand), loop_var_mode);
-            if (!operand_or) {
-              return std::unexpected(std::move(operand_or.error()));
-            }
-            const mir::ExprId operand_id =
-                proc_scope_state.AddExpr(*std::move(operand_or));
-            return mir::Expr{
-                .data =
-                    mir::ConversionExpr{
-                        .operand = operand_id,
-                        .kind = LowerHirConversionKind(cv.kind)},
-                .type = result_type};
+                cv, loop_var_mode, result_type);
           },
           [](const hir::CallExpr&) -> diag::Result<mir::Expr> {
             return diag::Unsupported(
