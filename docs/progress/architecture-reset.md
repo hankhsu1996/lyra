@@ -8,8 +8,8 @@ this file is deleted.
 
 An item is unchecked even when partial support already exists in the current build. Check off an
 item only when the corresponding archive tests can be reproduced -- or have been intentionally
-deprecated -- on the current architecture. "Intentionally deprecated" requires a `decisions/` entry;
-absent that, the item stays open.
+deprecated -- on the current architecture. Intentional deprecation is annotated inline with the
+reason; substantive architectural decisions go in `decisions/`.
 
 When a workstream has its own progress file (e.g. `control-flow.md`, `integral.md`), the granular
 sub-step tracking lives there. The corresponding archive items below remain a high-level inventory;
@@ -52,13 +52,13 @@ unique_priority_if, while).
 - [ ] datatypes/default_init
 - [ ] datatypes/enum
 - [ ] datatypes/general
-- [ ] datatypes/integral
-- [ ] datatypes/packed
+- [ ] datatypes/integral -- `integral.md`.
+- [ ] datatypes/packed -- `packed.md`.
 - [ ] datatypes/real
 - [ ] datatypes/representation
 - [ ] datatypes/string
 - [ ] datatypes/unpacked
-- [ ] datatypes/wide_integral
+- [ ] datatypes/wide_integral -- `integral.md`.
 
 ### directives
 
@@ -112,21 +112,21 @@ unique_priority_if, while).
 
 ### operators
 
-- [ ] operators/binary
+- [ ] operators/binary -- `integral.md`.
 - [ ] operators/binary_string
-- [ ] operators/case_equality
-- [ ] operators/comparison_value_temp
-- [ ] operators/compound_assignment
-- [ ] operators/concat
-- [ ] operators/inside
-- [ ] operators/replicate
-- [ ] operators/replication_patterns
-- [ ] operators/shift_overflow
-- [ ] operators/unary -- `++` / `--` is the remaining gap on integral operands; needs a new HIR/MIR
-      shape for SV side-effect ordering. The rest of the integral unary surface lives under
-      `integral.md`.
-- [ ] operators/value_temp_expansion
-- [ ] operators/wildcard_equality
+- [ ] operators/case_equality -- `operators.md`.
+- [ ] operators/comparison_value_temp -- subsumed by the binary-operator coverage in `integral.md`;
+      the archived `ValueTemp` IR shape does not exist on the current pipeline.
+- [ ] operators/compound_assignment -- `operators.md`.
+- [ ] operators/concat -- `operators.md`.
+- [ ] operators/inside -- `operators.md`.
+- [ ] operators/replicate -- `operators.md`.
+- [ ] operators/replication_patterns -- `packed.md`.
+- [ ] operators/shift_overflow -- `integral.md`.
+- [ ] operators/unary -- `integral.md` for the integral surface; `++` / `--` gap in `operators.md`.
+- [ ] operators/value_temp_expansion -- subsumed by the binary-operator coverage in `integral.md`;
+      the archived `ValueTemp` IR shape does not exist on the current pipeline.
+- [ ] operators/wildcard_equality -- `operators.md`.
 
 ### optimization
 

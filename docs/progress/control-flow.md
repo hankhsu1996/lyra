@@ -17,8 +17,8 @@ machinery owned by another workstream; the table below lists the blockers.
 | Item    | Blocked on                                                                                 |
 | ------- | ------------------------------------------------------------------------------------------ |
 | C9, C10 | `datatypes/unpacked` (procedural unpacked array vars + `arr[i]` element-select expr).      |
-| C11     | `operators/wildcard_equality` (masked-compare runtime helper for `==?` / `!=?`).           |
-| C12     | `operators/inside` (range patterns + set-membership runtime).                              |
+| C11     | `operators.md` W2 (`==?` / `!=?` masked-compare runtime helper).                           |
+| C12     | `operators.md` W1 (basic `inside`) and W2 (wildcard items in the range list).              |
 | C16     | `datatypes/enum`.                                                                          |
 | C17     | `datatypes/string` plus the string-equality runtime helper from `operators/binary_string`. |
 
@@ -81,11 +81,11 @@ machinery owned by another workstream; the table below lists the blockers.
 - [ ] C10 -- `foreach` multi-dim, skipped dimensions, dynamic-array, queue. **Depends on** C9 plus
       `datatypes/general` (dynamic array, queue) and the `.size()` runtime query.
 - [ ] C11 -- `casez` / `casex`. Lower to an if/else cascade with masked comparisons in HIR -> MIR
-      (C++ `switch` does not support wildcard match). **Depends on** `operators/wildcard_equality`
-      for the `==?` / `!=?` runtime helper.
+      (C++ `switch` does not support wildcard match). **Depends on** `operators.md` W2 for the `==?`
+      / `!=?` runtime helper.
 - [ ] C12 -- `case (... inside ...)`. Range patterns (`[lo:hi]`) and `inside` membership; lower to
-      if/else cascade with `inside` semantics. **Depends on** `operators/inside` for the
-      set-membership runtime.
+      an if/else cascade whose conditions reuse the `InsideExpr` lowering. **Depends on**
+      `operators.md` W1 (basic `inside`) and W2 (wildcard items in the range list).
 - [x] C13 -- `unique` / `unique0` / `priority` qualifiers on `if` and `case`. HIR carries the
       qualifier as an optional `UniquePriorityCheck` field on `IfStmt` / `CaseStmt`. HIR -> MIR
       desugars the site into a `BlockStmt` that snapshots each branch's predicate into a fresh

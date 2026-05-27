@@ -70,7 +70,9 @@ against `PackedArray`. The dispatch in `RenderExpr*` collapses to a single path.
       compare, word+bit shift, bit-by-bit long division). 4-state X/Z propagation rides along.
 - [ ] J14 -- Archive sweep: reproduce `operators/binary/default.yaml`, `operators/unary/...`,
       `operators/shift_overflow/...`, `datatypes/wide_integral/...`, and their `four_state.yaml`
-      companions.
+      companions. **Prerequisite:** `operators.md` W4..W6 (bit-select / range-select / indexed
+      part-select reads); many archive cases select sub-bits of a packed value before applying the
+      operator under test.
 
 ### Cut 3 -- Expression dispatch consolidation
 
@@ -97,7 +99,6 @@ Remove `RenderExprAsNative` / `RenderExprAsPackedTopLevel` split. Single `Render
 
 ## Remaining operator gap
 
-`++` / `--`: requires a new HIR/MIR shape (statement-level vs expression-level given SV side-effect
-ordering); tracked directly under `operators/unary` in `architecture-reset.md`. Every other binary /
-unary operator family on integral operands -- including 4-state X/Z propagation -- lives here and is
-complete.
+`++` / `--`: tracked as `operators.md` W12 (new HIR / MIR shape, statement and expression forms, LRM
+evaluate-target-once semantics). Every other binary / unary operator family on integral operands --
+including 4-state X / Z propagation -- lives here and is complete.
