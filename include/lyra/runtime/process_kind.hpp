@@ -4,9 +4,6 @@ namespace lyra::runtime {
 
 enum class ProcessKind {
   kInitial,
-  kAlways,
-  kAlwaysComb,
-  kAlwaysFf,
   kFinal,
 };
 

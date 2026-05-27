@@ -508,24 +508,8 @@ class MirDumper {
         return "Initial";
       case ProcessKind::kFinal:
         return "Final";
-      case ProcessKind::kAlways:
-        return "Always";
-      case ProcessKind::kAlwaysComb:
-        return "AlwaysComb";
-      case ProcessKind::kAlwaysLatch:
-        return "AlwaysLatch";
-      case ProcessKind::kAlwaysFf:
-        return "AlwaysFf";
     }
     throw InternalError("MirDumper: unknown ProcessKind");
-  }
-
-  static auto FormatAwaitKind(AwaitKind k) -> std::string_view {
-    switch (k) {
-      case AwaitKind::kAlwaysBackedge:
-        return "AlwaysBackedge";
-    }
-    throw InternalError("MirDumper: unknown AwaitKind");
   }
 
   void DumpStructuralScope(const StructuralScope& s) {
@@ -730,12 +714,6 @@ class MirDumper {
             },
             [&](const ContinueStmt&) {
               Line(std::format("Stmt[{}] ContinueStmt", id.value));
-            },
-            [&](const AwaitStmt& s) {
-              Line(
-                  std::format(
-                      "Stmt[{}] AwaitStmt kind={}", id.value,
-                      FormatAwaitKind(s.kind)));
             },
         },
         stmt.data);
