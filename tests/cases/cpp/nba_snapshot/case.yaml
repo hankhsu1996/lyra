@@ -1,0 +1,12 @@
+id: cpp.nba_snapshot
+tags: [cpp_run]
+input:
+  command: [run, cpp]
+  project: false
+  top: Top
+  files: [main.sv]
+expect:
+  exit: 0
+  variables:
+    q: 6
+    t: 5

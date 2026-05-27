@@ -20,6 +20,7 @@
 #include "lyra/mir/runtime_diagnostic.hpp"
 #include "lyra/mir/runtime_finish.hpp"
 #include "lyra/mir/runtime_print.hpp"
+#include "lyra/mir/runtime_submit.hpp"
 #include "lyra/mir/type.hpp"
 
 namespace lyra::backend::cpp {
@@ -262,6 +263,14 @@ auto RenderRuntimeCallExpr(
             }
             return std::format(
                 "this->SubmitObserved({}, {})", sc.site_id.value, *closure_or);
+          },
+          [&](const mir::RuntimeSubmitNbaCall& nc)
+              -> diag::Result<std::string> {
+            auto closure_or = RenderExpr(ctx, ctx.Expr(nc.closure));
+            if (!closure_or) {
+              return std::unexpected(std::move(closure_or.error()));
+            }
+            return std::format("services_->SubmitNba({})", *closure_or);
           },
       },
       expr.call);

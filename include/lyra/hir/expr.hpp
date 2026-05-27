@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstdint>
 #include <variant>
 #include <vector>
 
@@ -36,7 +37,13 @@ struct ConditionalExpr {
   ExprId else_value;
 };
 
+enum class AssignKind : std::uint8_t {
+  kBlocking,
+  kNonBlocking,
+};
+
 struct AssignExpr {
+  AssignKind kind;
   Lvalue lhs;
   ExprId rhs;
 };

@@ -115,12 +115,6 @@ constexpr std::array kEntries{
             .category = UnsupportedCategory::kFeature,
             .name = "unsupported_non_variable_named_reference"}},
     std::pair{
-        DiagCode::kUnsupportedNonBlockingAssignment,
-        DiagCodeInfo{
-            .kind = DiagKind::kUnsupported,
-            .category = UnsupportedCategory::kFeature,
-            .name = "unsupported_non_blocking_assignment"}},
-    std::pair{
         DiagCode::kUnsupportedAssignmentTarget,
         DiagCodeInfo{
             .kind = DiagKind::kUnsupported,

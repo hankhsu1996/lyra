@@ -3,6 +3,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <deque>
+#include <functional>
 #include <map>
 #include <memory>
 #include <string>
@@ -64,15 +65,16 @@ class Engine {
     return services_;
   }
 
+  void SubmitNba(std::function<void()> closure);
+
  private:
-  struct NbaWorkItem {};
   struct PostponedWorkItem {};
 
   struct SchedulerQueues {
     std::deque<RuntimeProcess*> active;
     std::deque<RuntimeProcess*> inactive;
     std::vector<RuntimeProcess*> next_delta;
-    std::vector<NbaWorkItem> nba;
+    std::vector<std::function<void()>> nba;
     std::vector<PostponedWorkItem> postponed;
     std::map<SimTime, std::vector<RuntimeProcess*>> delayed;
     std::vector<RuntimeProcess*> finals;
@@ -122,7 +124,7 @@ class Engine {
 
   StreamDispatcher stream_;
   DiagnosticDispatcher diagnostic_;
-  RuntimeServices services_{stream_, diagnostic_};
+  RuntimeServices services_{stream_, diagnostic_, *this};
   std::unique_ptr<RuntimeScope> root_;
   SchedulerQueues queues_;
   std::vector<Module*> registered_modules_;

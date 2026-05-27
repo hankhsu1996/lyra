@@ -590,12 +590,8 @@ auto LowerProcExpr(
 
     case slang::ast::ExpressionKind::Assignment: {
       const auto& as = expr.as<slang::ast::AssignmentExpression>();
-      if (as.isNonBlocking()) {
-        return diag::Unsupported(
-            span, diag::DiagCode::kUnsupportedNonBlockingAssignment,
-            "non-blocking assignments are not supported yet",
-            diag::UnsupportedCategory::kFeature);
-      }
+      const auto kind = as.isNonBlocking() ? hir::AssignKind::kNonBlocking
+                                           : hir::AssignKind::kBlocking;
 
       auto lhs_or =
           LowerProcLvalue(unit_facts, unit_state, proc_state, stack, as.left());
@@ -610,7 +606,9 @@ auto LowerProcExpr(
       if (!type_id) return std::unexpected(std::move(type_id.error()));
       return hir::Expr{
           .type = *type_id,
-          .data = hir::AssignExpr{.lhs = *std::move(lhs_or), .rhs = rhs_id},
+          .data =
+              hir::AssignExpr{
+                  .kind = kind, .lhs = *std::move(lhs_or), .rhs = rhs_id},
           .span = span,
       };
     }

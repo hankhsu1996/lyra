@@ -1,6 +1,7 @@
 #include "lyra/lowering/hir_to_mir/lower_expr.hpp"
 
 #include <cstdint>
+#include <memory>
 #include <utility>
 #include <variant>
 #include <vector>
@@ -244,38 +245,6 @@ auto LowerHirLvalueProc(
       lvalue);
 }
 
-auto LowerHirLvalueStructural(
-    const StructuralScopeLoweringState& scope_state,
-    const ConstructorLoweringState* ctor_state, const hir::Lvalue& lvalue,
-    LoopVarLoweringMode loop_var_mode) -> mir::Lvalue {
-  return std::visit(
-      Overloaded{
-          [&](const hir::StructuralVarRef& m) -> mir::Lvalue {
-            return scope_state.TranslateStructuralVar(m.hops, m.var);
-          },
-          [](const hir::ProceduralVarRef&) -> mir::Lvalue {
-            throw InternalError(
-                "LowerRefAsLvalue (constructor): HIR ProceduralVarRef does "
-                "not appear in constructor bodies");
-          },
-          [&](const hir::LoopVarRef& lv) -> mir::Lvalue {
-            if (loop_var_mode != LoopVarLoweringMode::kProceduralInduction) {
-              throw InternalError(
-                  "LowerHirLvalueStructural: HIR LoopVarRef as lvalue is only "
-                  "valid in for-stmt header context (kProceduralInduction); "
-                  "StructuralParamRef is immutable");
-            }
-            if (ctor_state == nullptr) {
-              throw InternalError(
-                  "LowerHirLvalueStructural: kProceduralInduction mode "
-                  "requires a non-null ConstructorLoweringState");
-            }
-            return ctor_state->TranslateLoopVar(lv.loop_var);
-          },
-      },
-      lvalue);
-}
-
 auto LowerUserCallee(
     const StructuralScopeLoweringState& scope_state,
     const hir::StructuralSubroutineRef& u) -> mir::Callee {
@@ -371,6 +340,47 @@ auto LowerHirPrimaryStructural(
       p);
 }
 
+// Builds a ClosureExpr that snapshots the RHS by value into the body and writes
+// the snapshot to the structural target. The closure is the deferred-write
+// vehicle the NBA region invokes. The returned Expr has type `void` since the
+// closure value itself is consumed only by RuntimeSubmitNbaCall.
+auto BuildNbaSubmitClosureExpr(
+    const UnitLoweringState& unit_state, mir::Lvalue lhs_structural,
+    mir::ExprId rhs_id_in_outer, mir::TypeId rhs_type) -> mir::Expr {
+  ProceduralScopeLoweringState body;
+  const mir::ProceduralVarId snapshot_binding = body.AddProceduralVar(
+      mir::ProceduralVarDecl{.name = "_lyra_nba_rhs", .type = rhs_type});
+  const mir::ExprId snapshot_ref_id = body.AddExpr(
+      mir::Expr{
+          .data =
+              mir::ProceduralVarRef{
+                  .hops = mir::ProceduralHops{.value = 0},
+                  .var = snapshot_binding},
+          .type = rhs_type});
+  const mir::ExprId assign_id = body.AddExpr(
+      mir::Expr{
+          .data =
+              mir::AssignExpr{
+                  .target = std::move(lhs_structural),
+                  .value = snapshot_ref_id},
+          .type = rhs_type});
+  const mir::StmtId stmt_id = body.AddStmt(
+      mir::Stmt{
+          .label = std::nullopt,
+          .data = mir::ExprStmt{.expr = assign_id},
+          .child_procedural_scopes = {}});
+  body.AddRootStmt(stmt_id);
+
+  mir::ClosureExpr closure;
+  closure.captures.emplace_back(
+      mir::ByValueCapture{
+          .value = rhs_id_in_outer, .binding = snapshot_binding});
+  closure.body = std::make_unique<mir::ProceduralScope>(body.Finish());
+
+  return mir::Expr{
+      .data = std::move(closure), .type = unit_state.Builtins().void_type};
+}
+
 }  // namespace
 
 auto LowerExpr(
@@ -455,15 +465,35 @@ auto LowerExpr(
                 unit_state, scope_state, proc_state, proc_scope_state,
                 hir_process, hir_process.exprs.at(a.rhs.value));
             if (!rhs_or) return std::unexpected(std::move(rhs_or.error()));
+            const mir::TypeId rhs_type = (*rhs_or).type;
             const mir::ExprId rhs_id =
                 proc_scope_state.AddExpr(*std::move(rhs_or));
+            auto lhs = LowerHirLvalueProc(scope_state, proc_state, a.lhs);
+
+            if (a.kind == hir::AssignKind::kBlocking) {
+              return mir::Expr{
+                  .data = mir::AssignExpr{.target = lhs, .value = rhs_id},
+                  .type = result_type};
+            }
+
+            if (!std::holds_alternative<mir::StructuralVarRef>(lhs)) {
+              return diag::Unsupported(
+                  expr.span, diag::DiagCode::kUnsupportedAssignmentTarget,
+                  "non-blocking assignment to procedural local is not "
+                  "supported yet",
+                  diag::UnsupportedCategory::kFeature);
+            }
+
+            mir::Expr closure_expr = BuildNbaSubmitClosureExpr(
+                unit_state, std::move(lhs), rhs_id, rhs_type);
+            const mir::ExprId closure_id =
+                proc_scope_state.AddExpr(std::move(closure_expr));
             return mir::Expr{
                 .data =
-                    mir::AssignExpr{
-                        .target =
-                            LowerHirLvalueProc(scope_state, proc_state, a.lhs),
-                        .value = rhs_id},
-                .type = result_type};
+                    mir::RuntimeCallExpr{
+                        .call =
+                            mir::RuntimeSubmitNbaCall{.closure = closure_id}},
+                .type = unit_state.Builtins().void_type};
           },
           [&](const hir::ConversionExpr& cv) -> diag::Result<mir::Expr> {
             auto operand_or = LowerExpr(
@@ -598,20 +628,11 @@ auto LowerExprImpl(
                         .else_value = else_id},
                 .type = result_type};
           },
-          [&](const hir::AssignExpr& a) -> diag::Result<mir::Expr> {
-            auto rhs_or = LowerExprImpl(
-                unit_state, scope_state, ctor_state, proc_scope_state, scope,
-                scope.GetExpr(a.rhs), loop_var_mode);
-            if (!rhs_or) return std::unexpected(std::move(rhs_or.error()));
-            const mir::ExprId rhs_id =
-                proc_scope_state.AddExpr(*std::move(rhs_or));
-            return mir::Expr{
-                .data =
-                    mir::AssignExpr{
-                        .target = LowerHirLvalueStructural(
-                            scope_state, ctor_state, a.lhs, loop_var_mode),
-                        .value = rhs_id},
-                .type = result_type};
+          [&](const hir::AssignExpr&) -> diag::Result<mir::Expr> {
+            throw InternalError(
+                "LowerExprImpl (structural): HIR AssignExpr does not appear "
+                "in constructor-side expressions; structural code has no "
+                "general assignment");
           },
           [&](const hir::ConversionExpr& cv) -> diag::Result<mir::Expr> {
             auto operand_or = LowerExprImpl(
