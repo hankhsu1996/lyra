@@ -668,6 +668,31 @@ auto PackedArray::LogicalNot() const -> PackedArray {
   throw InternalError("LogicalNot: unhandled Truthiness");
 }
 
+auto PackedArray::LogicalImplication(const PackedArray& other) const
+    -> PackedArray {
+  const auto a = TruthinessOf(*this);
+  const auto b = TruthinessOf(other);
+  const bool result_four_state = is_four_state_ || other.is_four_state_;
+  if (a == Truthiness::kKnownZero || b == Truthiness::kKnownNonzero) {
+    return OneBitResult(true, result_four_state);
+  }
+  if (a == Truthiness::kKnownNonzero && b == Truthiness::kKnownZero) {
+    return OneBitResult(false, result_four_state);
+  }
+  return AllX(1U, false);
+}
+
+auto PackedArray::LogicalEquivalence(const PackedArray& other) const
+    -> PackedArray {
+  const auto a = TruthinessOf(*this);
+  const auto b = TruthinessOf(other);
+  const bool result_four_state = is_four_state_ || other.is_four_state_;
+  if (a == Truthiness::kUnknown || b == Truthiness::kUnknown) {
+    return AllX(1U, false);
+  }
+  return OneBitResult(a == b, result_four_state);
+}
+
 namespace {
 
 auto ShiftAmountAsUint(const PackedArray& amount) -> std::uint64_t {

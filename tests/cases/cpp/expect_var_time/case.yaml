@@ -1,0 +1,13 @@
+id: cpp.expect_var_time
+tags: [cpp_run]
+input:
+  command: [run, cpp]
+  project: false
+  top: Top
+  files: [main.sv]
+expect:
+  exit: 0
+  variables:
+    known_: 12345
+    big_: "64'h100000000"
+    xz_: "64'bxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx00zz"

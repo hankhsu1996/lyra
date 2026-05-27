@@ -46,9 +46,9 @@ consumers that need PackedArray at this point.
       `{bit_width, is_signed, is_four_state}`).
 - [x] J4 -- `RenderRuntimeValueViewInit` produces its `RuntimeValueView` from `PackedArray`.
       `NarrowIntegral` / `FromBitView` / `FromLogicView` becomes one path.
-- [ ] J5 -- `tests/cases/cpp/` declaration cases for `byte` / `shortint` / `longint` / `time` /
-      `integer` (with X/Z); update / replace any existing tests that asserted native-int output
-      text.
+- [x] J5 -- `RenderTypeAsCpp` collapses to a single arm for any `PackedArrayType` regardless of
+      `form`; `tests/cases/cpp/` declaration cases for `byte` / `shortint` / `longint` / `time` /
+      `integer` (with X/Z on the 4-state pair `integer` / `time`).
 
 ### Cut 2 -- Operator coverage on `PackedArray`
 
@@ -61,8 +61,7 @@ against `PackedArray`. The dispatch in `RenderExpr*` collapses to a single path.
 - [x] J8 -- Comparison (`==`, `!=`, `<`, `<=`, `>`, `>=`) returning a 1-bit `PackedArray`.
 - [x] J9 -- Shift (`<<`, `>>`, `>>>`) with LRM overflow (`amount >= bit_width` yields 0 /
       sign-fill).
-- [x] J10 -- Logical (`&&`, `||`, `!`) returning a 1-bit `PackedArray`. `->` and `<->` are a
-      separate scalar-emit token wiring step tracked in `operators.md`.
+- [x] J10 -- Logical (`&&`, `||`, `!`, `->`, `<->`) returning a 1-bit `PackedArray`.
 - [x] J11 -- Reduction (`&a`, `|a`, `^a`, `~&a`, `~|a`, `~^a`) as `PackedArray` methods.
 - [x] J12 -- 4-state X/Z propagation across arithmetic, comparison, shift, power, logical, and unary
       `-`. Bitwise / reduction already propagate via the view-based truth-table path. Narrow only.
@@ -85,14 +84,16 @@ Remove `RenderExprAsNative` / `RenderExprAsPackedTopLevel` split. Single `Render
 - LRM anchors: 6.11 (Table 6-8 integer types), 6.11.2 (4-state to 2-state convert), 10.7 (assignment
   extension / truncation), 11.6 (expression bit lengths), 11.7 (signed expressions), 11.8
   (expression evaluation rules, 11.8.4 for x/z handling).
-- Archive items closed: `operators/binary`, `operators/unary`, `operators/shift_overflow`,
-  `datatypes/integral`, `datatypes/packed`, `datatypes/wide_integral`.
+- Archive items this workstream targets: `operators/binary`, `operators/unary`,
+  `operators/shift_overflow`, `datatypes/integral`, `datatypes/packed`, `datatypes/wide_integral`.
+  Closes when J13 lands; `datatypes/wide_integral` additionally requires >64-bit arithmetic on
+  `PackedArray`.
 - Slang reference: `slang/ast/types/AllTypes.h:IntegralType`.
 - Legacy archive reference: `archived/include/lyra/common/type.hpp:IntegralInfo`.
 
-## Relationship to `operators.md`
+## Remaining operator gap
 
-`operators.md` now tracks the scalar-emit residue that the integral runtime does not own: items that
-need either a new HIR/MIR shape (`++`/`--`) or a cpp-emit token rewrite (`~^` / `^~` binary, `->`,
-`<->`, scalar reductions on `int`). The runtime side of every other binary / unary operator family,
-including 4-state X/Z propagation, lives here.
+`++` / `--`: requires a new HIR/MIR shape (statement-level vs expression-level given SV side-effect
+ordering); tracked directly under `operators/unary` in `architecture-reset.md`. Every other binary /
+unary operator family on integral operands -- including 4-state X/Z propagation -- lives here and is
+complete.
