@@ -1,0 +1,14 @@
+id: cpp.case_equality_basic
+tags: [cpp_run]
+input:
+  command: [run, cpp]
+  project: false
+  top: Top
+  files: [main.sv]
+expect:
+  exit: 0
+  variables:
+    eq_same: 1
+    eq_diff: 0
+    eq_xz: 1
+    neq_same: 0

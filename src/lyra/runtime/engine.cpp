@@ -21,6 +21,7 @@
 #include "lyra/runtime/runtime_scope_kind.hpp"
 #include "lyra/runtime/runtime_traversal.hpp"
 #include "lyra/runtime/stream_dispatcher.hpp"
+#include "lyra/runtime/var.hpp"
 #include "lyra/runtime/wait_request.hpp"
 
 namespace lyra::runtime {
@@ -275,6 +276,7 @@ void Engine::ScheduleWait(RuntimeProcess& process, WaitRequest wait) {
       Overloaded{
           [&](DelayWait d) { ScheduleDelayWait(process, d); },
           [&](EventWait e) { ScheduleEventWait(process, e); },
+          [&](ValueChangeWait v) { ScheduleValueChangeWait(process, v); },
           [&](FinishWait) { finished_ = true; },
       },
       wait);
@@ -297,6 +299,21 @@ void Engine::ScheduleEventWait(RuntimeProcess& process, EventWait wait) {
 
 void Engine::TriggerEvent(RuntimeEvent& event) {
   for (RuntimeProcess* p : event.TakeWaiters()) {
+    ScheduleNextDelta(*p);
+  }
+}
+
+void Engine::ScheduleValueChangeWait(
+    RuntimeProcess& process, ValueChangeWait wait) {
+  if (wait.observable == nullptr) {
+    throw InternalError(
+        "Engine::ScheduleValueChangeWait: observable pointer is null");
+  }
+  wait.observable->Subscribe(process);
+}
+
+void Engine::TriggerValueChange(Observable& observable) {
+  for (RuntimeProcess* p : observable.TakeWaiters()) {
     ScheduleNextDelta(*p);
   }
 }

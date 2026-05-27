@@ -60,6 +60,13 @@ class PackedArray {
   [[nodiscard]] auto IsSigned() const -> bool;
   [[nodiscard]] auto IsFourState() const -> bool;
 
+  // LRM 11.4.5 `===` predicate form (host bool). Operator form: `CaseEqual`.
+  [[nodiscard]] auto IsCaseEqual(const PackedArray& other) const -> bool;
+
+  // LRM 11.4.5 `===` operator form (1-bit PackedArray); `==` returns 4-state
+  // and propagates X, this returns deterministic 0 or 1.
+  [[nodiscard]] auto CaseEqual(const PackedArray& other) const -> PackedArray;
+
   // Word-level access for `RuntimeValueView` construction and intra-runtime
   // interop. The spans alias the PackedArray's storage and stay valid for
   // the object's lifetime.

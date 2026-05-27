@@ -27,8 +27,14 @@ auto RenderField(
     -> diag::Result<std::string> {
   auto type_or = RenderTypeAsCpp(unit, owner_scope, var.type);
   if (!type_or) return std::unexpected(std::move(type_or.error()));
-  std::string init;
   const auto& ty = unit.GetType(var.type);
+  if (IsObservableScalarType(ty)) {
+    std::string init = "{" + *type_or + "{" +
+                       RenderPackedArrayCtorArgs(ty.AsPackedArray()) + "}}";
+    return Indent(indent) + "lyra::runtime::Var<" + *type_or + "> " + var.name +
+           init + ";\n";
+  }
+  std::string init;
   if (ty.IsPackedArray()) {
     init = "{" + RenderPackedArrayCtorArgs(ty.AsPackedArray()) + "}";
   }
@@ -224,14 +230,16 @@ auto RenderScopeAsClass(
     out += "\n";
   }
 
-  out += Indent(indent + 1) + "lyra::runtime::RuntimeServices* services_{};\n";
-  out += "\n";
-
   auto ctor_or = RenderConstructor(this_anchor, s, indent + 1);
   if (!ctor_or) return std::unexpected(std::move(ctor_or.error()));
   out += *ctor_or;
   out += "\n";
   out += RenderBind(unit, s, indent + 1, is_top_level);
+
+  out += "\n";
+  out += Indent(indent) + " private:\n";
+  out += Indent(indent + 1) + "lyra::runtime::RuntimeServices* services_{};\n";
+  out += "\n";
 
   for (std::size_t i = 0; i < s.processes.size(); ++i) {
     out += "\n";
@@ -265,6 +273,7 @@ auto RenderScopeHeaderFile(
   out += "#include \"lyra/runtime/process_kind.hpp\"\n";
   out += "#include \"lyra/runtime/runtime_scope_kind.hpp\"\n";
   out += "#include \"lyra/runtime/runtime_services.hpp\"\n";
+  out += "#include \"lyra/runtime/var.hpp\"\n";
   out += "#include \"lyra/value/format.hpp\"\n";
   out += "#include \"lyra/value/packed.hpp\"\n";
   out += "#include \"lyra/value/packed_array.hpp\"\n";

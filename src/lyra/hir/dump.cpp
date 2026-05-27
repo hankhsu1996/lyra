@@ -392,7 +392,23 @@ class HirDumper {
               return std::format(
                   "DelayControl duration=Expr[{}]", d.duration.value);
             },
-            [](const EventControl&) -> std::string { return "EventControl"; },
+            [](const EventControl& e) -> std::string {
+              std::string out = "EventControl triggers=[";
+              for (std::size_t i = 0; i < e.triggers.size(); ++i) {
+                if (i != 0) out += ", ";
+                const char* edge = "any";
+                switch (e.triggers[i].edge) {
+                  case EventEdge::kAnyChange:
+                    edge = "any";
+                    break;
+                }
+                out += std::format(
+                    "{{signal=Expr[{}] edge={}}}", e.triggers[i].signal.value,
+                    edge);
+              }
+              out += "]";
+              return out;
+            },
         },
         tc);
   }

@@ -94,7 +94,20 @@ struct DelayControl {
   SimDuration duration;
 };
 
-using TimingControl = std::variant<DelayControl>;
+enum class EventEdge : std::uint8_t {
+  kAnyChange,
+};
+
+struct EventTrigger {
+  ExprId signal;
+  EventEdge edge;
+};
+
+struct EventControl {
+  std::vector<EventTrigger> triggers;
+};
+
+using TimingControl = std::variant<DelayControl, EventControl>;
 
 struct TimedStmt {
   TimingControl timing;

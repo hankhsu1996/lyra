@@ -9,6 +9,7 @@ namespace lyra::runtime {
 class StreamDispatcher;
 class DiagnosticDispatcher;
 class Engine;
+class Observable;
 
 class RuntimeServices {
  public:
@@ -33,6 +34,8 @@ class RuntimeServices {
   }
 
   void SubmitNba(std::function<void()> closure);
+
+  void TriggerValueChange(Observable& observable);
 
  private:
   StreamDispatcher* stream_ = nullptr;

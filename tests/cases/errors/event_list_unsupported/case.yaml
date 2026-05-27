@@ -1,7 +1,7 @@
-id: errors.cpp_emit_unsupported_binary_op
+id: errors.event_list_unsupported
 tags: [errors, diag]
 input:
-  command: [emit, cpp]
+  command: [dump, hir]
   project: false
   top: Top
   files: [main.sv]
@@ -10,7 +10,8 @@ expect:
   exit: 1
   stderr:
     contains:
+      - "main.sv:5:"
       - "unsupported:"
-      - "wildcard equality operators"
+      - "event lists"
     not_contains:
       - "internal error"

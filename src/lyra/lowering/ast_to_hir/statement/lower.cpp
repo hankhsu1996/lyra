@@ -45,6 +45,53 @@ auto LowerUniquePriorityCheck(slang::ast::UniquePriorityCheck check)
       "LowerUniquePriorityCheck: unknown slang UniquePriorityCheck value");
 }
 
+auto LowerSignalEventTrigger(
+    const UnitLoweringFacts& unit_facts, UnitLoweringState& unit_state,
+    ProcessLoweringState& proc_state, const ScopeStack& stack,
+    const slang::ast::SignalEventControl& sig, diag::SourceSpan span)
+    -> diag::Result<hir::EventTrigger> {
+  if (sig.edge != slang::ast::EdgeKind::None) {
+    return diag::Unsupported(
+        span, diag::DiagCode::kUnsupportedEventEdge,
+        "edge specifiers (posedge/negedge/edge) are not yet supported",
+        diag::UnsupportedCategory::kFeature);
+  }
+  if (sig.iffCondition != nullptr) {
+    return diag::Unsupported(
+        span, diag::DiagCode::kUnsupportedEventTriggerForm,
+        "`iff` qualifier on event control is not yet supported",
+        diag::UnsupportedCategory::kFeature);
+  }
+
+  auto expr_or =
+      LowerProcExpr(unit_facts, unit_state, proc_state, stack, sig.expr);
+  if (!expr_or) return std::unexpected(std::move(expr_or.error()));
+  const hir::Expr& lowered = *expr_or;
+
+  const auto* primary = std::get_if<hir::PrimaryExpr>(&lowered.data);
+  if (primary == nullptr ||
+      !std::holds_alternative<hir::StructuralVarRef>(primary->data)) {
+    return diag::Unsupported(
+        span, diag::DiagCode::kUnsupportedEventTriggerForm,
+        "event trigger must be a plain structural variable reference; "
+        "bit-selects, member access, named events, and hierarchical refs are "
+        "not yet supported",
+        diag::UnsupportedCategory::kFeature);
+  }
+  if (!unit_state.GetType(lowered.type).IsPackedArray()) {
+    return diag::Unsupported(
+        span, diag::DiagCode::kUnsupportedEventTriggerForm,
+        "event trigger must reference an integral signal; non-integral "
+        "trigger types are not yet supported",
+        diag::UnsupportedCategory::kFeature);
+  }
+
+  return hir::EventTrigger{
+      .signal = proc_state.AddExpr(*std::move(expr_or)),
+      .edge = hir::EventEdge::kAnyChange,
+  };
+}
+
 auto LowerTimingControl(
     const UnitLoweringFacts& unit_facts, UnitLoweringState& unit_state,
     ProcessLoweringState& proc_state, const ScopeStack& stack,
@@ -59,11 +106,29 @@ auto LowerTimingControl(
       return hir::TimingControl{hir::DelayControl{
           .duration = proc_state.AddExpr(*std::move(duration))}};
     }
-    case slang::ast::TimingControlKind::SignalEvent:
+    case slang::ast::TimingControlKind::SignalEvent: {
+      const auto& sig = tc.as<slang::ast::SignalEventControl>();
+      auto trigger_or = LowerSignalEventTrigger(
+          unit_facts, unit_state, proc_state, stack, sig, span);
+      if (!trigger_or) return std::unexpected(std::move(trigger_or.error()));
+      return hir::TimingControl{
+          hir::EventControl{.triggers = {*std::move(trigger_or)}}};
+    }
     case slang::ast::TimingControlKind::EventList:
+      return diag::Unsupported(
+          span, diag::DiagCode::kUnsupportedTimingControlKind,
+          "event lists (`@(a or b)`) are not yet supported",
+          diag::UnsupportedCategory::kFeature);
     case slang::ast::TimingControlKind::ImplicitEvent:
+      return diag::Unsupported(
+          span, diag::DiagCode::kUnsupportedTimingControlKind,
+          "implicit event control (`@*`) is not yet supported",
+          diag::UnsupportedCategory::kFeature);
     case slang::ast::TimingControlKind::RepeatedEvent:
-      return hir::TimingControl{hir::EventControl{}};
+      return diag::Unsupported(
+          span, diag::DiagCode::kUnsupportedTimingControlKind,
+          "repeated event control (`repeat (N) @(...)`) is not yet supported",
+          diag::UnsupportedCategory::kFeature);
     default:
       return diag::Unsupported(
           span, diag::DiagCode::kUnsupportedTimingControlKind,

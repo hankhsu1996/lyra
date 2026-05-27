@@ -70,8 +70,11 @@ auto ResolveDelayDuration(
 }
 
 auto LowerTimingControl(
-    const ProcessLoweringState& proc_state, const hir::Process& hir_proc,
-    const hir::TimingControl& tc, diag::SourceSpan span)
+    const UnitLoweringState& unit_state,
+    const StructuralScopeLoweringState& scope_state,
+    const ProcessLoweringState& proc_state,
+    ProceduralScopeLoweringState& proc_scope_state,
+    const hir::Process& hir_proc, const hir::TimingControl& tc)
     -> diag::Result<mir::TimingControl> {
   return std::visit(
       Overloaded{
@@ -84,11 +87,29 @@ auto LowerTimingControl(
             }
             return mir::TimingControl{mir::DelayControl{.duration = *ticks_or}};
           },
-          [&](const hir::EventControl&) -> diag::Result<mir::TimingControl> {
-            return diag::Unsupported(
-                span, diag::DiagCode::kUnsupportedTimingControlKind,
-                "event-control timing is not yet supported",
-                diag::UnsupportedCategory::kFeature);
+          [&](const hir::EventControl& e) -> diag::Result<mir::TimingControl> {
+            std::vector<mir::EventTrigger> triggers;
+            triggers.reserve(e.triggers.size());
+            for (const auto& t : e.triggers) {
+              auto signal_or = LowerExpr(
+                  unit_state, scope_state, proc_state, proc_scope_state,
+                  hir_proc, hir_proc.exprs.at(t.signal.value));
+              if (!signal_or) {
+                return std::unexpected(std::move(signal_or.error()));
+              }
+              const mir::ExprId signal_id =
+                  proc_scope_state.AddExpr(*std::move(signal_or));
+              mir::EventEdge edge = mir::EventEdge::kAnyChange;
+              switch (t.edge) {
+                case hir::EventEdge::kAnyChange:
+                  edge = mir::EventEdge::kAnyChange;
+                  break;
+              }
+              triggers.push_back(
+                  mir::EventTrigger{.signal = signal_id, .edge = edge});
+            }
+            return mir::TimingControl{
+                mir::EventControl{.triggers = std::move(triggers)}};
           },
       },
       tc);
@@ -719,8 +740,9 @@ auto LowerTimedStmt(
     ProceduralScopeLoweringState& proc_scope_state,
     const hir::Process& hir_proc, const hir::Stmt& stmt,
     const hir::TimedStmt& t) -> diag::Result<mir::Stmt> {
-  auto timing_or =
-      LowerTimingControl(proc_state, hir_proc, t.timing, stmt.span);
+  auto timing_or = LowerTimingControl(
+      unit_state, scope_state, proc_state, proc_scope_state, hir_proc,
+      t.timing);
   if (!timing_or) {
     return std::unexpected(std::move(timing_or.error()));
   }

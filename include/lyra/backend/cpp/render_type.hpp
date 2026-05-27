@@ -23,4 +23,9 @@ namespace lyra::backend::cpp {
 [[nodiscard]] auto RenderPackedArrayCtorArgs(const mir::PackedArrayType& pa)
     -> std::string;
 
+// True iff a structural field of this type is emitted as `Var<T>` (and writes
+// go through `lyra::runtime::WriteVar`). Today: only integral types via
+// `PackedArray`. The set grows as more SV value types gain `IsCaseEqual`.
+[[nodiscard]] auto IsObservableScalarType(const mir::Type& ty) -> bool;
+
 }  // namespace lyra::backend::cpp

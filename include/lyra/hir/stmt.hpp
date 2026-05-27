@@ -110,7 +110,18 @@ struct DelayControl {
   ExprId duration;
 };
 
-struct EventControl {};
+enum class EventEdge : std::uint8_t {
+  kAnyChange,
+};
+
+struct EventTrigger {
+  ExprId signal;
+  EventEdge edge;
+};
+
+struct EventControl {
+  std::vector<EventTrigger> triggers;
+};
 
 using TimingControl = std::variant<DelayControl, EventControl>;
 

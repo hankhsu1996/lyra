@@ -132,6 +132,18 @@ constexpr std::array kEntries{
             .kind = DiagKind::kUnsupported,
             .category = UnsupportedCategory::kFeature,
             .name = "unsupported_delay_expression_form"}},
+    std::pair{
+        DiagCode::kUnsupportedEventEdge,
+        DiagCodeInfo{
+            .kind = DiagKind::kUnsupported,
+            .category = UnsupportedCategory::kFeature,
+            .name = "unsupported_event_edge"}},
+    std::pair{
+        DiagCode::kUnsupportedEventTriggerForm,
+        DiagCodeInfo{
+            .kind = DiagKind::kUnsupported,
+            .category = UnsupportedCategory::kFeature,
+            .name = "unsupported_event_trigger_form"}},
 
     std::pair{
         DiagCode::kDelayValueOutOfRange,

@@ -12,6 +12,7 @@
 #include "lyra/backend/cpp/render_context.hpp"
 #include "lyra/backend/cpp/render_print.hpp"
 #include "lyra/backend/cpp/render_stmt.hpp"
+#include "lyra/backend/cpp/render_type.hpp"
 #include "lyra/backend/cpp/string_literal.hpp"
 #include "lyra/base/internal_error.hpp"
 #include "lyra/base/overloaded.hpp"
@@ -95,12 +96,15 @@ auto RenderBinaryOp(
     case mir::BinaryOp::kLogicalEquivalence:
       return "(" + lhs + ").LogicalEquivalence(" + rhs + ")";
     case mir::BinaryOp::kCaseEquality:
+      return "(" + lhs + ").CaseEqual(" + rhs + ")";
     case mir::BinaryOp::kCaseInequality:
+      return "(" + lhs + ").CaseEqual(" + rhs + ").LogicalNot()";
     case mir::BinaryOp::kWildcardEquality:
     case mir::BinaryOp::kWildcardInequality:
       return diag::Unsupported(
           diag::DiagCode::kCppEmitBinaryOpNotImplemented,
-          "this binary operator is not yet implemented in cpp emit",
+          "wildcard equality operators (`==?` / `!=?`) are not yet "
+          "implemented in cpp emit",
           diag::UnsupportedCategory::kFeature);
   }
   return "(" + lhs + std::string{tok} + rhs + ")";
@@ -137,19 +141,6 @@ auto LookupProceduralVarName(
     const RenderContext& ctx, const mir::ProceduralVarRef& ref)
     -> const std::string& {
   return ctx.ProceduralScopeAtHops(ref.hops).vars.at(ref.var.value).name;
-}
-
-auto RenderStructuralVarName(
-    const RenderContext& ctx, const mir::StructuralVarRef& ref)
-    -> diag::Result<std::string> {
-  if (ref.hops.value != 0) {
-    return diag::Unsupported(
-        diag::DiagCode::kCppEmitExpressionFormNotImplemented,
-        "cross-scope structural var access is not yet implemented in cpp "
-        "emit",
-        diag::UnsupportedCategory::kFeature);
-  }
-  return ctx.StructuralScope().GetStructuralVar(ref.var).name;
 }
 
 auto IntegralConstantToInt64(const mir::IntegralConstant& c) -> std::int64_t {
@@ -256,6 +247,19 @@ auto RenderStructuralParamExpr(
 
 }  // namespace
 
+auto RenderStructuralVarName(
+    const RenderContext& ctx, const mir::StructuralVarRef& ref)
+    -> diag::Result<std::string> {
+  if (ref.hops.value != 0) {
+    return diag::Unsupported(
+        diag::DiagCode::kCppEmitExpressionFormNotImplemented,
+        "cross-scope structural var access is not yet implemented in cpp "
+        "emit",
+        diag::UnsupportedCategory::kFeature);
+  }
+  return ctx.StructuralScope().GetStructuralVar(ref.var).name;
+}
+
 auto RenderLvalue(const RenderContext& ctx, const mir::Lvalue& target)
     -> diag::Result<std::string> {
   return std::visit(
@@ -310,6 +314,13 @@ auto RenderAssignExprNode(const RenderContext& ctx, const mir::AssignExpr& a)
   if (!target_or) return std::unexpected(std::move(target_or.error()));
   auto value_or = RenderExpr(ctx, ctx.Expr(a.value));
   if (!value_or) return std::unexpected(std::move(value_or.error()));
+  if (const auto* svr = std::get_if<mir::StructuralVarRef>(&a.target)) {
+    const auto& var_decl = ctx.StructuralScope().GetStructuralVar(svr->var);
+    if (IsObservableScalarType(ctx.Unit().GetType(var_decl.type))) {
+      return "lyra::runtime::WriteVar(*services_, " + *target_or + ", " +
+             *value_or + ")";
+    }
+  }
   return "(" + *target_or + " = " + *value_or + ")";
 }
 
@@ -363,7 +374,13 @@ auto RenderExpr(const RenderContext& ctx, const mir::Expr& expr)
             return RenderStructuralParamExpr(ctx, r);
           },
           [&](const mir::StructuralVarRef& m) -> diag::Result<std::string> {
-            return RenderStructuralVarName(ctx, m);
+            auto name_or = RenderStructuralVarName(ctx, m);
+            if (!name_or) return std::unexpected(std::move(name_or.error()));
+            const auto& ty = ctx.Unit().GetType(expr.type);
+            if (ty.IsPackedArray()) {
+              return *name_or + ".Get()";
+            }
+            return *name_or;
           },
           [&](const mir::ProceduralVarRef& l) -> diag::Result<std::string> {
             return LookupProceduralVarName(ctx, l);
