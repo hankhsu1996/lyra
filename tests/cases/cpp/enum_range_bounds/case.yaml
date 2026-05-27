@@ -1,0 +1,13 @@
+id: cpp.enum_range_bounds
+tags: [cpp_run]
+input:
+  command: [run, cpp]
+  project: false
+  top: Top
+  files: [main.sv]
+expect:
+  exit: 0
+  variables:
+    r6: 0
+    r7: 1
+    r8: 2

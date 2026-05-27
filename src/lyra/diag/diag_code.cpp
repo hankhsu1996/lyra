@@ -30,12 +30,6 @@ constexpr std::array kEntries{
             .category = UnsupportedCategory::kType,
             .name = "unsupported_packed_union_type"}},
     std::pair{
-        DiagCode::kUnsupportedEnumType,
-        DiagCodeInfo{
-            .kind = DiagKind::kUnsupported,
-            .category = UnsupportedCategory::kType,
-            .name = "unsupported_enum_type"}},
-    std::pair{
         DiagCode::kUnsupportedFixedSizeUnpackedArrayType,
         DiagCodeInfo{
             .kind = DiagKind::kUnsupported,

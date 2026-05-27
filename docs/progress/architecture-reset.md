@@ -49,6 +49,9 @@ unique_priority_if, while).
 
 ### datatypes
 
+Granular tracking lives in `integral.md` (integral / packed / wide_integral) and `datatypes.md`
+(every other family). The list below remains a high-level inventory.
+
 - [ ] datatypes/default_init
 - [ ] datatypes/enum
 - [ ] datatypes/general

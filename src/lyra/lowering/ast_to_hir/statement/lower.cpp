@@ -147,8 +147,9 @@ auto LowerStatement(
     case slang::ast::StatementKind::VariableDeclaration: {
       const auto& vd = stmt.as<slang::ast::VariableDeclStatement>();
       const auto& sym = vd.symbol;
-      auto type_data =
-          LowerTypeData(sym.getType(), mapper.PointSpanOf(sym.location));
+      auto type_data = LowerType(
+          sym.getType(), mapper.PointSpanOf(sym.location),
+          scope_state.UnitState());
       if (!type_data) return std::unexpected(std::move(type_data.error()));
       const auto type_id =
           scope_state.UnitState().AddType(*std::move(type_data));

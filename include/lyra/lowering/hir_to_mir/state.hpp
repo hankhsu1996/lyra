@@ -9,6 +9,7 @@
 #include "lyra/base/internal_error.hpp"
 #include "lyra/base/time.hpp"
 #include "lyra/hir/loop_var.hpp"
+#include "lyra/hir/module_unit.hpp"
 #include "lyra/hir/procedural_var.hpp"
 #include "lyra/hir/structural_hops.hpp"
 #include "lyra/hir/structural_scope.hpp"
@@ -39,7 +40,8 @@ struct BuiltinMirTypes {
 
 class UnitLoweringState {
  public:
-  explicit UnitLoweringState(mir::CompilationUnit& unit) : unit_(&unit) {
+  UnitLoweringState(mir::CompilationUnit& unit, const hir::ModuleUnit& hir_unit)
+      : unit_(&unit), hir_unit_(&hir_unit) {
     builtins_ = BuiltinMirTypes{
         .int32 = AddType(
             mir::TypeData{mir::PackedArrayType{
@@ -60,6 +62,10 @@ class UnitLoweringState {
 
   [[nodiscard]] auto Unit() const -> const mir::CompilationUnit& {
     return *unit_;
+  }
+
+  [[nodiscard]] auto GetHirType(hir::TypeId id) const -> const hir::Type& {
+    return hir_unit_->GetType(id);
   }
 
   auto AddType(mir::TypeData data) -> mir::TypeId {
@@ -109,6 +115,7 @@ class UnitLoweringState {
 
  private:
   mir::CompilationUnit* unit_;
+  const hir::ModuleUnit* hir_unit_;
   std::vector<mir::TypeId> type_map_;
   BuiltinMirTypes builtins_{};
 };

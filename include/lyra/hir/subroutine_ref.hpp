@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstdint>
 #include <variant>
 
 #include "lyra/hir/structural_hops.hpp"
@@ -17,7 +18,20 @@ struct SystemSubroutineRef {
   support::SystemSubroutineId id;
 };
 
-using SubroutineRef =
-    std::variant<StructuralSubroutineRef, SystemSubroutineRef>;
+enum class BuiltinMethodKind : std::uint8_t {
+  kEnumFirst,
+  kEnumLast,
+  kEnumNum,
+  kEnumNext,
+  kEnumPrev,
+  kEnumName,
+};
+
+struct BuiltinMethodRef {
+  BuiltinMethodKind kind;
+};
+
+using SubroutineRef = std::variant<
+    StructuralSubroutineRef, SystemSubroutineRef, BuiltinMethodRef>;
 
 }  // namespace lyra::hir
