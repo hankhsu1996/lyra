@@ -673,6 +673,44 @@ auto LowerProcExpr(
       };
     }
 
+    case slang::ast::ExpressionKind::Inside: {
+      const auto& in = expr.as<slang::ast::InsideExpression>();
+      auto lhs_id = append_child(in.left());
+      if (!lhs_id) return std::unexpected(std::move(lhs_id.error()));
+
+      std::vector<hir::InsideItem> items;
+      items.reserve(in.rangeList().size());
+      for (const auto* item : in.rangeList()) {
+        if (item->kind == slang::ast::ExpressionKind::ValueRange) {
+          const auto& vr = item->as<slang::ast::ValueRangeExpression>();
+          if (vr.rangeKind != slang::ast::ValueRangeKind::Simple) {
+            return diag::Unsupported(
+                mapper.SpanOf(vr.sourceRange),
+                diag::DiagCode::kUnsupportedExpressionForm,
+                "tolerance-range form in inside operator is not yet supported",
+                diag::UnsupportedCategory::kFeature);
+          }
+          auto lo_id = append_child(vr.left());
+          if (!lo_id) return std::unexpected(std::move(lo_id.error()));
+          auto hi_id = append_child(vr.right());
+          if (!hi_id) return std::unexpected(std::move(hi_id.error()));
+          items.emplace_back(hir::InsideRangePair{.lo = *lo_id, .hi = *hi_id});
+        } else {
+          auto val_id = append_child(*item);
+          if (!val_id) return std::unexpected(std::move(val_id.error()));
+          items.emplace_back(*val_id);
+        }
+      }
+
+      auto type_id = type_id_of(expr);
+      if (!type_id) return std::unexpected(std::move(type_id.error()));
+      return hir::Expr{
+          .type = *type_id,
+          .data = hir::InsideExpr{.lhs = *lhs_id, .items = std::move(items)},
+          .span = span,
+      };
+    }
+
     default:
       return diag::Unsupported(
           span, diag::DiagCode::kUnsupportedExpressionForm,

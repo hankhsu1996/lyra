@@ -512,6 +512,27 @@ class HirDumper {
                   "ConversionExpr kind={} operand=Expr[{}]",
                   FormatConversionKind(cv.kind), cv.operand.value);
             },
+            [](const InsideExpr& in) -> std::string {
+              std::string items;
+              for (std::size_t i = 0; i < in.items.size(); ++i) {
+                if (i != 0) {
+                  items += ", ";
+                }
+                items += std::visit(
+                    Overloaded{
+                        [](const ExprId& id) {
+                          return std::format("Expr[{}]", id.value);
+                        },
+                        [](const InsideRangePair& r) {
+                          return std::format(
+                              "[Expr[{}]:Expr[{}]]", r.lo.value, r.hi.value);
+                        },
+                    },
+                    in.items[i]);
+              }
+              return std::format(
+                  "InsideExpr lhs=Expr[{}] items=[{}]", in.lhs.value, items);
+            },
         },
         e.data);
     return std::format("type=Type[{}] {}", e.type.value, formatted);

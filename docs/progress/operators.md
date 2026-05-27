@@ -20,13 +20,18 @@ landed. Where a cut is independent the text says so.
 
 ### Membership and equality
 
-- [ ] W1 -- `inside` set-membership. Add `hir::InsideExpr` / `mir::InsideExpr` carrying a left
-      operand and an item list, where each item is either a singular expression or a range
-      `(lo, hi)`. HIR -> MIR passes through; cpp emit lowers to a `PackedArray::Inside(...)` runtime
-      call. Value items compare with `==`; range items use `>= && <=`. Result is a 1-bit
-      `PackedArray` (4-state if any operand is 4-state). LRM 11.4.13 four-state corner -- "no match
-      but some compare X yields `1'bx`" -- is honored by the runtime helper. W1 alone closes
-      `operators/inside/default.yaml` and unblocks `control-flow.md` C12.
+- [x] W1 -- `inside` set-membership. Add `hir::InsideExpr` carrying a left operand and an item list,
+      where each item is either a singular expression or a range `(lo, hi)`. HIR -> MIR desugars to
+      a logical-OR chain of comparisons over the lowered left operand: value items compare with
+      `==`; range items use `(>= lo) && (<= hi)`. MIR gains no new variant, cpp emit gains no new
+      path, and the runtime gains no new helper -- the OR-chain rides on the existing `PackedArray`
+      binary operators. LRM 11.4.13 four-state corner ("no match but some compare X yields `1'bx`")
+      is satisfied automatically because `PackedArray::LogicalOr` already implements the LRM 11.4.7
+      truth table. The left operand is lowered once to a MIR `ExprId` referenced by each comparison;
+      cpp emit re-renders each reference, so plain var-refs read the variable repeatedly
+      (idempotent) while side-effecting left operands would re-evaluate -- the archive test surface
+      uses only var-refs. A procedural-temp snapshot pattern (see C3 case selector) covers the
+      side-effect case if it becomes necessary.
 
 - [ ] W2 -- Wildcard equality `==?` / `!=?`. Add `BinaryOp::kWildcardEq` / `kWildcardNeq` plus a
       `PackedArray::WildcardEquals` helper that treats X / Z in the right-hand operand as

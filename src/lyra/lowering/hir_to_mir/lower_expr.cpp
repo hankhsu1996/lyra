@@ -616,6 +616,103 @@ auto LowerExpr(
                 },
                 c.callee);
           },
+          [&](const hir::InsideExpr& in) -> diag::Result<mir::Expr> {
+            auto lower_id = [&](hir::ExprId id) -> diag::Result<mir::ExprId> {
+              auto lowered = LowerExpr(
+                  unit_state, scope_state, proc_state, proc_scope_state,
+                  hir_process, hir_process.exprs.at(id.value));
+              if (!lowered) {
+                return std::unexpected(std::move(lowered.error()));
+              }
+              return proc_scope_state.AddExpr(*std::move(lowered));
+            };
+
+            auto lhs_id = lower_id(in.lhs);
+            if (!lhs_id) return std::unexpected(std::move(lhs_id.error()));
+
+            // Build per-item 1-bit predicate expressions and OR them together.
+            // Value item: lhs == item. Range item: (lhs >= lo) && (lhs <= hi).
+            std::vector<mir::ExprId> predicates;
+            predicates.reserve(in.items.size());
+            for (const auto& item : in.items) {
+              auto pred_or = std::visit(
+                  Overloaded{
+                      [&](const hir::ExprId& val_id)
+                          -> diag::Result<mir::ExprId> {
+                        auto v = lower_id(val_id);
+                        if (!v) return std::unexpected(std::move(v.error()));
+                        return proc_scope_state.AddExpr(
+                            mir::Expr{
+                                .data =
+                                    mir::BinaryExpr{
+                                        .op = mir::BinaryOp::kEquality,
+                                        .lhs = *lhs_id,
+                                        .rhs = *v},
+                                .type = result_type});
+                      },
+                      [&](const hir::InsideRangePair& r)
+                          -> diag::Result<mir::ExprId> {
+                        auto lo = lower_id(r.lo);
+                        if (!lo) return std::unexpected(std::move(lo.error()));
+                        auto hi = lower_id(r.hi);
+                        if (!hi) return std::unexpected(std::move(hi.error()));
+                        const mir::ExprId ge_id = proc_scope_state.AddExpr(
+                            mir::Expr{
+                                .data =
+                                    mir::BinaryExpr{
+                                        .op = mir::BinaryOp::kGreaterEqual,
+                                        .lhs = *lhs_id,
+                                        .rhs = *lo},
+                                .type = result_type});
+                        const mir::ExprId le_id = proc_scope_state.AddExpr(
+                            mir::Expr{
+                                .data =
+                                    mir::BinaryExpr{
+                                        .op = mir::BinaryOp::kLessEqual,
+                                        .lhs = *lhs_id,
+                                        .rhs = *hi},
+                                .type = result_type});
+                        return proc_scope_state.AddExpr(
+                            mir::Expr{
+                                .data =
+                                    mir::BinaryExpr{
+                                        .op = mir::BinaryOp::kLogicalAnd,
+                                        .lhs = ge_id,
+                                        .rhs = le_id},
+                                .type = result_type});
+                      },
+                  },
+                  item);
+              if (!pred_or) return std::unexpected(std::move(pred_or.error()));
+              predicates.push_back(*pred_or);
+            }
+
+            if (predicates.empty()) {
+              throw InternalError(
+                  "LowerExpr: hir::InsideExpr has empty item list");
+            }
+            if (predicates.size() == 1) {
+              return mir::Expr{proc_scope_state.GetExpr(predicates.front())};
+            }
+            mir::ExprId acc = predicates.front();
+            for (std::size_t i = 1; i + 1 < predicates.size(); ++i) {
+              acc = proc_scope_state.AddExpr(
+                  mir::Expr{
+                      .data =
+                          mir::BinaryExpr{
+                              .op = mir::BinaryOp::kLogicalOr,
+                              .lhs = acc,
+                              .rhs = predicates[i]},
+                      .type = result_type});
+            }
+            return mir::Expr{
+                .data =
+                    mir::BinaryExpr{
+                        .op = mir::BinaryOp::kLogicalOr,
+                        .lhs = acc,
+                        .rhs = predicates.back()},
+                .type = result_type};
+          },
       },
       expr.data);
 }
@@ -726,6 +823,12 @@ auto LowerExprImpl(
             return diag::Unsupported(
                 diag::DiagCode::kUnsupportedStructuralExpressionForm,
                 "calls are not allowed in constructor expressions",
+                diag::UnsupportedCategory::kFeature);
+          },
+          [](const hir::InsideExpr&) -> diag::Result<mir::Expr> {
+            return diag::Unsupported(
+                diag::DiagCode::kUnsupportedStructuralExpressionForm,
+                "inside operator is not allowed in constructor expressions",
                 diag::UnsupportedCategory::kFeature);
           },
       },
