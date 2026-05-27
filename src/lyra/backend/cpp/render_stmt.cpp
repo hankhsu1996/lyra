@@ -317,10 +317,6 @@ auto RenderStmt(
           [&](const mir::ContinueStmt&) -> diag::Result<std::string> {
             return Indent(indent) + "continue;\n";
           },
-          [&](const mir::AwaitStmt&) -> diag::Result<std::string> {
-            throw InternalError(
-                "RenderStmt: AwaitStmt is not yet supported by C++ emit");
-          },
       },
       stmt.data);
   if (!rendered_or) return std::unexpected(std::move(rendered_or.error()));

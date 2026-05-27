@@ -1,0 +1,12 @@
+id: cpp.always_ff_pipeline
+tags: [cpp_run]
+input:
+  command: [run, cpp]
+  project: false
+  top: Top
+  files: [main.sv]
+expect:
+  exit: 0
+  variables:
+    q1: 10
+    q2: 10

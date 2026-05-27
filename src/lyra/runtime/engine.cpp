@@ -94,10 +94,6 @@ void Engine::RegisterProcesses() {
         case ProcessKind::kFinal:
           queues_.finals.push_back(&process);
           break;
-        case ProcessKind::kAlways:
-        case ProcessKind::kAlwaysComb:
-        case ProcessKind::kAlwaysFf:
-          throw InternalError("Engine::Run: ProcessKind is not yet supported");
       }
     });
   });

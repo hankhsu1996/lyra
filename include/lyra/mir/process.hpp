@@ -16,10 +16,6 @@ struct ProcessId {
 enum class ProcessKind : std::uint8_t {
   kInitial,
   kFinal,
-  kAlways,
-  kAlwaysComb,
-  kAlwaysLatch,
-  kAlwaysFf,
 };
 
 struct Process {
