@@ -607,6 +607,12 @@ class MirDumper {
                             "closure=Expr[{}]",
                             sc.site_id.value, sc.closure.value));
                   },
+                  [&](const RuntimeSubmitNbaCall& nc) {
+                    Line(
+                        std::format(
+                            "RuntimeSubmitNbaCall closure=Expr[{}]",
+                            nc.closure.value));
+                  },
               },
               rc->call);
           Dedent();

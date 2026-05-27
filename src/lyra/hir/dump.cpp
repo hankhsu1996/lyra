@@ -452,9 +452,12 @@ class HirDumper {
                   c.condition.value, c.then_value.value, c.else_value.value);
             },
             [](const AssignExpr& a) -> std::string {
+              const auto* kind_str = a.kind == AssignKind::kNonBlocking
+                                         ? "nonblocking"
+                                         : "blocking";
               return std::format(
-                  "AssignExpr lhs={} rhs=Expr[{}]", FormatLvalue(a.lhs),
-                  a.rhs.value);
+                  "AssignExpr kind={} lhs={} rhs=Expr[{}]", kind_str,
+                  FormatLvalue(a.lhs), a.rhs.value);
             },
             [this](const CallExpr& c) -> std::string {
               std::string args;

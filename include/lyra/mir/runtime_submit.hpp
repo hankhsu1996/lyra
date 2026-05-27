@@ -22,4 +22,10 @@ struct RuntimeSubmitObservedCall {
   ExprId closure;
 };
 
+// Append-only submit to the engine's global NBA queue; the closure commits
+// in the slot's NBA region in enqueue order (LRM 4.4.2).
+struct RuntimeSubmitNbaCall {
+  ExprId closure;
+};
+
 }  // namespace lyra::mir
