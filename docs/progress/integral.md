@@ -57,25 +57,29 @@ against `PackedArray`. The dispatch in `RenderExpr*` collapses to a single path.
 
 - [x] J6 -- Bitwise (`&`, `|`, `^`, `~^`, `~`) as member operators or method on `PackedArray`.
 - [x] J7 -- Arithmetic (`+`, `-`, `*`, `/`, `%`, `**`) with LRM corner cases (div-by-zero, power
-      semantics). Narrow (`<=64`) only; wide arithmetic still throws `InternalError`.
+      semantics).
 - [x] J8 -- Comparison (`==`, `!=`, `<`, `<=`, `>`, `>=`) returning a 1-bit `PackedArray`.
 - [x] J9 -- Shift (`<<`, `>>`, `>>>`) with LRM overflow (`amount >= bit_width` yields 0 /
       sign-fill).
 - [x] J10 -- Logical (`&&`, `||`, `!`, `->`, `<->`) returning a 1-bit `PackedArray`.
 - [x] J11 -- Reduction (`&a`, `|a`, `^a`, `~&a`, `~|a`, `~^a`) as `PackedArray` methods.
 - [x] J12 -- 4-state X/Z propagation across arithmetic, comparison, shift, power, logical, and unary
-      `-`. Bitwise / reduction already propagate via the view-based truth-table path. Narrow only.
-- [ ] J13 -- Archive sweep: reproduce `operators/binary/default.yaml`, `operators/unary/...`,
-      `operators/shift_overflow/...`, and their `four_state.yaml` companions.
+      `-`. Bitwise / reduction already propagate via the view-based truth-table path.
+- [x] J13 -- Wide (`>64`-bit) coverage on arithmetic, comparison, shift, divmod, and power via
+      multi-word algorithms (carry/borrow add/sub, 32x32 schoolbook multiply, top-word-first
+      compare, word+bit shift, bit-by-bit long division). 4-state X/Z propagation rides along.
+- [ ] J14 -- Archive sweep: reproduce `operators/binary/default.yaml`, `operators/unary/...`,
+      `operators/shift_overflow/...`, `datatypes/wide_integral/...`, and their `four_state.yaml`
+      companions.
 
 ### Cut 3 -- Expression dispatch consolidation
 
 Remove `RenderExprAsNative` / `RenderExprAsPackedTopLevel` split. Single `RenderExpr` path, single
 `ConversionExpr` arm.
 
-- [x] J14 -- One `RenderExpr` path. `IsPackedExplicit`, `NeedsRuntimeContainerInit`, the
+- [x] J15 -- One `RenderExpr` path. `IsPackedExplicit`, `NeedsRuntimeContainerInit`, the
       `MakeBitView` / `BitViewToInt64` bridges (if they exist by then) all retire.
-- [x] J15 -- `ConversionExpr` collapses to "construct a destination `PackedArray` from a source
+- [x] J16 -- `ConversionExpr` collapses to "construct a destination `PackedArray` from a source
       `PackedArray`" -- one case, handled by `PackedArray` itself.
 
 ## Cross-references
@@ -86,8 +90,8 @@ Remove `RenderExprAsNative` / `RenderExprAsPackedTopLevel` split. Single `Render
   (expression evaluation rules, 11.8.4 for x/z handling).
 - Archive items this workstream targets: `operators/binary`, `operators/unary`,
   `operators/shift_overflow`, `datatypes/integral`, `datatypes/packed`, `datatypes/wide_integral`.
-  Closes when J13 lands; `datatypes/wide_integral` additionally requires >64-bit arithmetic on
-  `PackedArray`.
+  Closes when J14 lands. `datatypes/wide_integral/packed_2d` belongs to `datatypes/packed` (2D
+  element index / slice), not this workstream.
 - Slang reference: `slang/ast/types/AllTypes.h:IntegralType`.
 - Legacy archive reference: `archived/include/lyra/common/type.hpp:IntegralInfo`.
 

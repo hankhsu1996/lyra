@@ -1,0 +1,22 @@
+id: cpp.wide_integral_compare
+tags: [cpp_run]
+input:
+  command: [run, cpp]
+  project: false
+  top: Top
+  files: [main.sv]
+expect:
+  exit: 0
+  variables:
+    u_eq: 1
+    u_neq: 1
+    u_lt_low: 1
+    u_lt_high: 1
+    u_gt_top: 1
+    u_le_equal: 1
+    u_ge_equal: 1
+    s_neg_lt_pos: 1
+    s_neg_gt_neg: 1
+    s_neg_le_neg: 1
+    s_pos_ge_pos: 1
+    cross_word_lt: 1

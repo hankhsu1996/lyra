@@ -1,0 +1,18 @@
+id: cpp.wide_integral_power
+tags: [cpp_run]
+input:
+  command: [run, cpp]
+  project: false
+  top: Top
+  files: [main.sv]
+expect:
+  exit: 0
+  variables:
+    pow_small: "128'h51"
+    pow_two_64: "128'h10000000000000000"
+    pow_two_127: "128'h80000000000000000000000000000000"
+    pow_two_128_wraps: "128'h0"
+    pow_neg_one_even: "128'sh1"
+    pow_neg_one_odd: "128'shffffffffffffffffffffffffffffffff"
+    pow_base_zero_exp_zero: "128'h1"
+    pow_base_zero_exp_pos: "128'h0"

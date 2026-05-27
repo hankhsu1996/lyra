@@ -1,0 +1,20 @@
+id: cpp.wide_integral_shift
+tags: [cpp_run]
+input:
+  command: [run, cpp]
+  project: false
+  top: Top
+  files: [main.sv]
+expect:
+  exit: 0
+  variables:
+    shl_small: "128'h10"
+    shl_cross_word: "128'h10000000000000000"
+    shl_large: "128'h10000000000000000000000000"
+    shl_amount_overflow: "128'h0"
+    shr_small: "128'h10"
+    shr_cross_word: "128'h1"
+    shr_chain: "128'h100000000"
+    sar_unsigned: "128'h7fffffffffffffffffffffffffffffff"
+    sar_signed_neg: "128'shffffffffffffffffffffffffffffffe0"
+    sar_signed_neg_top: "128'shffffffffffffffffffffffffffffffff"
