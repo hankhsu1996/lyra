@@ -55,15 +55,35 @@ auto RenderForInit(const RenderContext& ctx, const mir::ForInit& init)
 auto RenderTimedStmt(
     const RenderContext& ctx, const mir::TimedStmt& s, std::size_t indent)
     -> diag::Result<std::string> {
-  std::string out;
-  std::visit(
+  auto timing_or = std::visit(
       Overloaded{
-          [&](const mir::DelayControl& d) {
-            out += Indent(indent) + "co_await lyra::runtime::Delay(" +
+          [&](const mir::DelayControl& d) -> diag::Result<std::string> {
+            return Indent(indent) + "co_await lyra::runtime::Delay(" +
                    std::to_string(d.duration) + ");\n";
+          },
+          [&](const mir::EventControl& e) -> diag::Result<std::string> {
+            if (e.triggers.size() != 1) {
+              throw InternalError(
+                  "RenderTimedStmt: event control with multiple triggers "
+                  "should have been rejected at HIR lowering");
+            }
+            const auto& sig_expr = ctx.Expr(e.triggers[0].signal);
+            const auto* svr =
+                std::get_if<mir::StructuralVarRef>(&sig_expr.data);
+            if (svr == nullptr) {
+              throw InternalError(
+                  "RenderTimedStmt: event-control trigger is not a "
+                  "StructuralVarRef (should be rejected at HIR lowering)");
+            }
+            auto name_or = RenderStructuralVarName(ctx, *svr);
+            if (!name_or) return std::unexpected(std::move(name_or.error()));
+            return Indent(indent) + "co_await lyra::runtime::WaitChange(" +
+                   *name_or + ");\n";
           },
       },
       s.timing);
+  if (!timing_or) return std::unexpected(std::move(timing_or.error()));
+  std::string out = *std::move(timing_or);
   auto inner_or =
       RenderStmt(ctx, ctx.ProceduralScope().stmts.at(s.stmt.value), indent);
   if (!inner_or) return std::unexpected(std::move(inner_or.error()));

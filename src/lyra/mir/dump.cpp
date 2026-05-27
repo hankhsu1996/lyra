@@ -204,6 +204,23 @@ class MirDumper {
             [](const DelayControl& d) -> std::string {
               return std::format("DelayControl ticks={}", d.duration);
             },
+            [](const EventControl& e) -> std::string {
+              std::string out = "EventControl triggers=[";
+              for (std::size_t i = 0; i < e.triggers.size(); ++i) {
+                if (i != 0) out += ", ";
+                const char* edge = "any";
+                switch (e.triggers[i].edge) {
+                  case EventEdge::kAnyChange:
+                    edge = "any";
+                    break;
+                }
+                out += std::format(
+                    "{{signal=Expr[{}] edge={}}}", e.triggers[i].signal.value,
+                    edge);
+              }
+              out += "]";
+              return out;
+            },
         },
         tc);
   }

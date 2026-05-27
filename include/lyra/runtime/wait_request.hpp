@@ -10,6 +10,7 @@
 namespace lyra::runtime {
 
 class RuntimeEvent;
+class Observable;
 
 struct DelayWait {
   SimDuration duration;
@@ -19,11 +20,16 @@ struct EventWait {
   RuntimeEvent* event = nullptr;
 };
 
+struct ValueChangeWait {
+  Observable* observable = nullptr;
+};
+
 struct FinishWait {
   int level;
 };
 
-using WaitRequest = std::variant<DelayWait, EventWait, FinishWait>;
+using WaitRequest =
+    std::variant<DelayWait, EventWait, ValueChangeWait, FinishWait>;
 
 class ProcessRunResult {
  public:

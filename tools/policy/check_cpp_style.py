@@ -25,6 +25,14 @@ Rules:
         later cut". User-visible "not yet supported" wording is the
         correct replacement. Scope: every .cpp/.hpp under src/, include/.
 
+  S004  Include style: C++ stdlib headers must use angle brackets
+        (`#include <vector>`), and lyra project headers must use double
+        quotes (`#include "lyra/..."`). 3rd-party libraries follow their
+        upstream convention (e.g. fmt uses `<fmt/...>`, absl uses
+        `"absl/..."` because of Bazel's `-iquote` exposure) and are not
+        policed by this rule.
+        Scope: every .cpp/.hpp under src/, include/, tests/.
+
 Usage:
   python3 tools/policy/check_cpp_style.py
 """
@@ -57,6 +65,33 @@ STAGE_LANGUAGE_PATTERNS = [
     (re.compile(r"(?i)\bdeferred\s+to\s+a\s+(?:later|future)\b"),
      "deferred to a later/future"),
 ]
+
+# S004: C++ stdlib headers (always angle-bracket form). This list is the
+# universal portion of the standard library; we intentionally do not police
+# 3rd-party libraries because each tracks its upstream convention (e.g.
+# bazel-imported absl uses `"absl/..."` per its `-iquote` exposure, while
+# fmt uses `<fmt/...>`).
+STDLIB_HEADERS = frozenset({
+    "algorithm", "array", "atomic", "bit", "bitset", "cassert", "ccomplex",
+    "cctype", "cerrno", "cfenv", "cfloat", "charconv", "chrono", "cinttypes",
+    "climits", "clocale", "cmath", "compare", "complex", "concepts",
+    "condition_variable", "coroutine", "csetjmp", "csignal", "cstdarg",
+    "cstdbool", "cstddef", "cstdint", "cstdio", "cstdlib", "cstring", "ctime",
+    "cuchar", "cwchar", "cwctype", "deque", "exception", "execution",
+    "expected", "filesystem", "format", "forward_list", "fstream",
+    "functional", "future", "initializer_list", "iomanip", "ios", "iosfwd",
+    "iostream", "istream", "iterator", "latch", "limits", "list", "locale",
+    "map", "memory", "memory_resource", "mutex", "new", "numbers", "numeric",
+    "optional", "ostream", "queue", "random", "ranges", "ratio", "regex",
+    "scoped_allocator", "semaphore", "set", "shared_mutex", "source_location",
+    "span", "sstream", "stack", "stdexcept", "stop_token", "streambuf",
+    "string", "string_view", "syncstream", "system_error", "thread", "tuple",
+    "type_traits", "typeindex", "typeinfo", "unordered_map", "unordered_set",
+    "utility", "valarray", "variant", "vector", "version",
+})
+
+INCLUDE_QUOTE_PATTERN = re.compile(r'^\s*#\s*include\s*"([^"]+)"')
+INCLUDE_ANGLE_PATTERN = re.compile(r'^\s*#\s*include\s*<([^>]+)>')
 
 
 def iter_cpp_files(repo_root: Path, roots=("src", "include", "tests")):
@@ -127,6 +162,27 @@ def check_s003(repo_root: Path) -> list[str]:
     return errors
 
 
+def check_s004(repo_root: Path) -> list[str]:
+    errors = []
+    for path, rel in iter_cpp_files(repo_root):
+        for lineno, line in enumerate(path.read_text().splitlines(), 1):
+            if (m := INCLUDE_QUOTE_PATTERN.match(line)):
+                inc = m.group(1)
+                if inc in STDLIB_HEADERS:
+                    errors.append(
+                        f"  {rel}:{lineno}: S004 stdlib header "
+                        f'"{inc}" must use angle brackets'
+                    )
+            elif (m := INCLUDE_ANGLE_PATTERN.match(line)):
+                inc = m.group(1)
+                if inc.startswith("lyra/"):
+                    errors.append(
+                        f"  {rel}:{lineno}: S004 lyra header <{inc}> "
+                        f'must use double quotes'
+                    )
+    return errors
+
+
 def run_self_tests() -> bool:
     def expect(cond, msg):
         if not cond:
@@ -161,6 +217,19 @@ def run_self_tests() -> bool:
     ok &= expect(not hits("scope is the lookup unit"),
                  "S003 'scope' unrelated bare")
     ok &= expect(not hits("// to cut the loop short"), "S003 'cut' unrelated")
+
+    def quote_inc(text):
+        m = INCLUDE_QUOTE_PATTERN.match(text)
+        return m.group(1) if m else None
+
+    def angle_inc(text):
+        m = INCLUDE_ANGLE_PATTERN.match(text)
+        return m.group(1) if m else None
+
+    ok &= expect(quote_inc('#include "vector"') == "vector", "S004 quote")
+    ok &= expect(angle_inc("#include <vector>") == "vector", "S004 angle")
+    ok &= expect("vector" in STDLIB_HEADERS, "S004 vector is stdlib")
+    ok &= expect("absl/x.h" not in STDLIB_HEADERS, "S004 absl not stdlib")
     return ok
 
 
@@ -169,6 +238,7 @@ CHECKS = [
      check_s001),
     ("S002 header files under src/", check_s002),
     ("S003 migration-progress / development-stage language", check_s003),
+    ("S004 include style (stdlib <>, lyra \"\")", check_s004),
 ]
 
 

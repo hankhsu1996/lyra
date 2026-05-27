@@ -175,6 +175,20 @@ auto PackedArray::UnknownWords() const -> std::span<const std::uint64_t> {
   return {};
 }
 
+auto PackedArray::IsCaseEqual(const PackedArray& other) const -> bool {
+  if (bit_width_ != other.bit_width_) return false;
+  if (is_four_state_ != other.is_four_state_) return false;
+  const auto vw_a = ValueWords();
+  const auto vw_b = other.ValueWords();
+  if (vw_a.size() != vw_b.size()) return false;
+  if (!std::ranges::equal(vw_a, vw_b)) return false;
+  return std::ranges::equal(UnknownWords(), other.UnknownWords());
+}
+
+auto PackedArray::CaseEqual(const PackedArray& other) const -> PackedArray {
+  return FromInt(IsCaseEqual(other) ? 1 : 0, 1, false, false);
+}
+
 auto PackedArray::AsBitView() -> BitView {
   auto* bv = std::get_if<BitValue>(&storage_);
   if (bv == nullptr) {
