@@ -7,6 +7,7 @@
 #include <expected>
 #include <format>
 #include <optional>
+#include <ranges>
 #include <span>
 #include <string>
 #include <string_view>
@@ -170,8 +171,7 @@ auto ParseBinaryFamilyBody(
   }
 
   std::uint64_t bit_pos = 0;
-  for (auto it = chars.rbegin(); it != chars.rend(); ++it) {
-    const char c = *it;
+  for (const char c : std::ranges::reverse_view(chars)) {
     if (c == 'x' || c == 'X' || c == 'z' || c == 'Z') {
       // Runtime 4-state encoding (see runtime/integral_format.cpp):
       //   X bit: value=1, unknown=1
@@ -314,15 +314,18 @@ auto ExpectedValue::BuildView() const -> value::RuntimeValueView {
     }
     case ExpectedValueKind::kSvLiteral: {
       if (value_words.size() == 1) {
+        const std::uint64_t unk = unknown_words.empty() ? 0U : unknown_words[0];
         return value::RuntimeValueView{
             .data = value::IntegralValueView::Narrow(
-                value_words[0], unknown_words[0], bit_width, state_kind,
-                is_signed)};
+                value_words[0], unk, bit_width, state_kind, is_signed)};
       }
+      const std::span<const std::uint64_t> unk_span =
+          state_kind == value::IntegralStateKind::kTwoState
+              ? std::span<const std::uint64_t>{}
+              : std::span<const std::uint64_t>(unknown_words);
       return value::RuntimeValueView{
           .data = value::IntegralValueView::Wide(
-              std::span<const std::uint64_t>(value_words),
-              std::span<const std::uint64_t>(unknown_words), bit_width,
+              std::span<const std::uint64_t>(value_words), unk_span, bit_width,
               state_kind, is_signed)};
     }
     case ExpectedValueKind::kStringScalar:

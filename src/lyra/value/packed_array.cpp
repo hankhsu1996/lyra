@@ -303,14 +303,6 @@ auto PackedArray::ConvertFrom(
 
 namespace {
 
-auto WidthOnlyNarrow(const PackedArray& v, std::string_view op) -> void {
-  if (v.BitWidth() > 64U) {
-    throw InternalError(
-        std::string{op} +
-        ": wide (>64-bit) packed integral operator not yet implemented");
-  }
-}
-
 auto NarrowWordOf(const PackedArray& v) -> std::uint64_t {
   return v.ValueWords()[0] & MaskForWidth(v.BitWidth());
 }
@@ -325,6 +317,246 @@ auto OneBitResult(bool flag, bool is_four_state) -> PackedArray {
 // unknown plane all-1, which is the all-X value.
 auto AllX(std::uint64_t bit_width, bool is_signed) -> PackedArray {
   return PackedArray{bit_width, is_signed, true};
+}
+
+using WordBuffer =
+    absl::InlinedVector<std::uint64_t, kPackedWordsInlineCapacity>;
+
+auto MakeWordBuffer(std::uint64_t bit_width) -> WordBuffer {
+  return WordBuffer(WordCountForBits(bit_width), std::uint64_t{0});
+}
+
+auto AddWordsInto(
+    std::span<const std::uint64_t> a, std::span<const std::uint64_t> b,
+    std::span<std::uint64_t> dst, std::uint64_t bit_width) -> void {
+  std::uint64_t carry = 0;
+  for (std::size_t i = 0; i < dst.size(); ++i) {
+    const std::uint64_t aw = i < a.size() ? a[i] : 0U;
+    const std::uint64_t bw = i < b.size() ? b[i] : 0U;
+    const std::uint64_t s1 = aw + bw;
+    const std::uint64_t c1 = s1 < aw ? 1U : 0U;
+    const std::uint64_t s2 = s1 + carry;
+    const std::uint64_t c2 = s2 < s1 ? 1U : 0U;
+    dst[i] = s2;
+    carry = c1 + c2;
+  }
+  MaskUnusedTopBits(dst, bit_width);
+}
+
+auto SubWordsInto(
+    std::span<const std::uint64_t> a, std::span<const std::uint64_t> b,
+    std::span<std::uint64_t> dst, std::uint64_t bit_width) -> void {
+  std::uint64_t borrow = 0;
+  for (std::size_t i = 0; i < dst.size(); ++i) {
+    const std::uint64_t aw = i < a.size() ? a[i] : 0U;
+    const std::uint64_t bw = i < b.size() ? b[i] : 0U;
+    const std::uint64_t d1 = aw - bw;
+    const std::uint64_t b1 = aw < bw ? 1U : 0U;
+    const std::uint64_t d2 = d1 - borrow;
+    const std::uint64_t b2 = d1 < borrow ? 1U : 0U;
+    dst[i] = d2;
+    borrow = b1 + b2;
+  }
+  MaskUnusedTopBits(dst, bit_width);
+}
+
+auto Mul64x64(std::uint64_t a, std::uint64_t b)
+    -> std::pair<std::uint64_t, std::uint64_t> {
+  const std::uint64_t a_lo = a & 0xFFFFFFFFULL;
+  const std::uint64_t a_hi = a >> 32U;
+  const std::uint64_t b_lo = b & 0xFFFFFFFFULL;
+  const std::uint64_t b_hi = b >> 32U;
+  const std::uint64_t ll = a_lo * b_lo;
+  const std::uint64_t lh = a_lo * b_hi;
+  const std::uint64_t hl = a_hi * b_lo;
+  const std::uint64_t hh = a_hi * b_hi;
+  const std::uint64_t mid =
+      (ll >> 32U) + (lh & 0xFFFFFFFFULL) + (hl & 0xFFFFFFFFULL);
+  const std::uint64_t low = (ll & 0xFFFFFFFFULL) | (mid << 32U);
+  const std::uint64_t high = hh + (lh >> 32U) + (hl >> 32U) + (mid >> 32U);
+  return {low, high};
+}
+
+auto MulWordsInto(
+    std::span<const std::uint64_t> a, std::span<const std::uint64_t> b,
+    std::span<std::uint64_t> dst, std::uint64_t bit_width) -> void {
+  std::ranges::fill(dst, std::uint64_t{0});
+  for (std::size_t i = 0; i < a.size() && i < dst.size(); ++i) {
+    std::uint64_t carry = 0;
+    for (std::size_t j = 0; i + j < dst.size(); ++j) {
+      if (j >= b.size() && carry == 0U) {
+        break;
+      }
+      const std::uint64_t bw = j < b.size() ? b[j] : 0U;
+      const auto [lo, hi] = Mul64x64(a[i], bw);
+      const std::uint64_t s1 = dst[i + j] + lo;
+      const std::uint64_t c1 = s1 < lo ? 1U : 0U;
+      const std::uint64_t s2 = s1 + carry;
+      const std::uint64_t c2 = s2 < s1 ? 1U : 0U;
+      dst[i + j] = s2;
+      carry = hi + c1 + c2;
+    }
+  }
+  MaskUnusedTopBits(dst, bit_width);
+}
+
+auto UnsignedCompare(
+    std::span<const std::uint64_t> a, std::span<const std::uint64_t> b) -> int {
+  for (std::size_t i = a.size(); i-- > 0;) {
+    const std::uint64_t aw = a[i];
+    const std::uint64_t bw = i < b.size() ? b[i] : 0U;
+    if (aw != bw) {
+      return aw < bw ? -1 : 1;
+    }
+  }
+  return 0;
+}
+
+auto SignedCompare(
+    std::span<const std::uint64_t> a, std::span<const std::uint64_t> b,
+    std::uint64_t bit_width) -> int {
+  if (a.empty()) {
+    return 0;
+  }
+  const std::uint64_t rem = bit_width % 64U;
+  const std::uint64_t sign_bit =
+      rem == 0U ? std::uint64_t{1} << 63U : std::uint64_t{1} << (rem - 1U);
+  const std::uint64_t a_top = a.back() ^ sign_bit;
+  const std::uint64_t b_top = b.back() ^ sign_bit;
+  if (a_top != b_top) {
+    return a_top < b_top ? -1 : 1;
+  }
+  for (std::size_t i = a.size() - 1U; i-- > 0;) {
+    const std::uint64_t aw = a[i];
+    const std::uint64_t bw = i < b.size() ? b[i] : 0U;
+    if (aw != bw) {
+      return aw < bw ? -1 : 1;
+    }
+  }
+  return 0;
+}
+
+auto BitAt(std::span<const std::uint64_t> words, std::uint64_t pos)
+    -> std::uint64_t {
+  const auto idx = static_cast<std::size_t>(pos / 64U);
+  if (idx >= words.size()) {
+    return 0U;
+  }
+  return (words[idx] >> (pos % 64U)) & std::uint64_t{1};
+}
+
+auto ShiftLeftWordsInto(
+    std::span<const std::uint64_t> src, std::uint64_t amount,
+    std::span<std::uint64_t> dst, std::uint64_t bit_width) -> void {
+  std::ranges::fill(dst, std::uint64_t{0});
+  if (amount >= bit_width) {
+    return;
+  }
+  const std::uint64_t word_shift = amount / 64U;
+  const std::uint64_t bit_shift = amount % 64U;
+  if (bit_shift == 0U) {
+    for (std::size_t i = 0; i < src.size() && (i + word_shift) < dst.size();
+         ++i) {
+      dst[i + word_shift] = src[i];
+    }
+  } else {
+    const std::uint64_t rev = 64U - bit_shift;
+    std::uint64_t prev_high = 0U;
+    for (std::size_t i = 0; i < src.size() && (i + word_shift) < dst.size();
+         ++i) {
+      const std::uint64_t cur = src[i];
+      dst[i + word_shift] = (cur << bit_shift) | prev_high;
+      prev_high = cur >> rev;
+    }
+  }
+  MaskUnusedTopBits(dst, bit_width);
+}
+
+auto LogicalShiftRightWordsInto(
+    std::span<const std::uint64_t> src, std::uint64_t amount,
+    std::span<std::uint64_t> dst, std::uint64_t bit_width) -> void {
+  std::ranges::fill(dst, std::uint64_t{0});
+  if (amount >= bit_width) {
+    return;
+  }
+  const std::uint64_t word_shift = amount / 64U;
+  const std::uint64_t bit_shift = amount % 64U;
+  if (bit_shift == 0U) {
+    for (std::size_t i = word_shift; i < src.size(); ++i) {
+      dst[i - word_shift] = src[i];
+    }
+  } else {
+    const std::uint64_t rev = 64U - bit_shift;
+    for (std::size_t i = word_shift; i < src.size(); ++i) {
+      const std::uint64_t cur = src[i];
+      const std::uint64_t next = (i + 1U) < src.size() ? src[i + 1U] : 0U;
+      dst[i - word_shift] = (cur >> bit_shift) | (next << rev);
+    }
+  }
+  MaskUnusedTopBits(dst, bit_width);
+}
+
+auto SetBitAt(std::span<std::uint64_t> words, std::uint64_t pos) -> void {
+  const auto idx = static_cast<std::size_t>(pos / 64U);
+  words[idx] |= std::uint64_t{1} << (pos % 64U);
+}
+
+auto IsZero(std::span<const std::uint64_t> words) -> bool {
+  return std::ranges::all_of(words, [](std::uint64_t w) { return w == 0U; });
+}
+
+auto ShiftLeftOneInPlace(
+    std::span<std::uint64_t> words, std::uint64_t bit_width) -> void {
+  std::uint64_t carry = 0;
+  for (auto& w : words) {
+    const std::uint64_t new_carry = w >> 63U;
+    w = (w << 1U) | carry;
+    carry = new_carry;
+  }
+  MaskUnusedTopBits(words, bit_width);
+}
+
+// Bit-by-bit unsigned long division. `numerator` and `divisor` are read-only
+// word arrays of width `bit_width`. `divisor` must be non-zero (caller
+// handles div-by-zero). Writes quotient to `quot` and remainder to `rem`.
+auto LongDivideUnsigned(
+    std::span<const std::uint64_t> numerator,
+    std::span<const std::uint64_t> divisor, std::span<std::uint64_t> quot,
+    std::span<std::uint64_t> rem, std::uint64_t bit_width) -> void {
+  std::ranges::fill(quot, std::uint64_t{0});
+  std::ranges::fill(rem, std::uint64_t{0});
+  for (std::uint64_t pos = bit_width; pos-- > 0;) {
+    ShiftLeftOneInPlace(rem, bit_width);
+    rem[0] |= BitAt(numerator, pos);
+    if (UnsignedCompare(rem, divisor) >= 0) {
+      SubWordsInto(rem, divisor, rem, bit_width);
+      SetBitAt(quot, pos);
+    }
+  }
+}
+
+auto FillTopBits(
+    std::span<std::uint64_t> dst, std::uint64_t bit_width, std::uint64_t amount)
+    -> void {
+  if (amount == 0U) {
+    return;
+  }
+  if (amount >= bit_width) {
+    std::ranges::fill(dst, ~std::uint64_t{0});
+    MaskUnusedTopBits(dst, bit_width);
+    return;
+  }
+  const std::uint64_t start = bit_width - amount;
+  auto i = static_cast<std::size_t>(start / 64U);
+  const std::uint64_t bit_offset = start % 64U;
+  if (bit_offset != 0U) {
+    dst[i] |= ~((std::uint64_t{1} << bit_offset) - 1U);
+    ++i;
+  }
+  for (; i < dst.size(); ++i) {
+    dst[i] = ~std::uint64_t{0};
+  }
+  MaskUnusedTopBits(dst, bit_width);
 }
 
 enum class Truthiness : std::uint8_t { kKnownZero, kKnownNonzero, kUnknown };
@@ -352,83 +584,117 @@ auto TruthinessOf(const PackedArray& v) -> Truthiness {
 
 auto PackedArray::operator+(const PackedArray& other) const -> PackedArray {
   ExpectSameShape(*this, other, "operator+");
-  WidthOnlyNarrow(*this, "operator+");
   if (HasUnknown() || other.HasUnknown()) {
     return AllX(bit_width_, is_signed_);
   }
-  const auto mask = MaskForWidth(bit_width_);
-  const auto sum = (NarrowWordOf(*this) + NarrowWordOf(other)) & mask;
-  return FromInt(
-      static_cast<std::int64_t>(sum), bit_width_, is_signed_, is_four_state_);
+  auto buf = MakeWordBuffer(bit_width_);
+  AddWordsInto(ValueWords(), other.ValueWords(), buf, bit_width_);
+  return MakeFromWordPlanes(
+      bit_width_, is_signed_, is_four_state_,
+      std::span<const std::uint64_t>{buf.data(), buf.size()}, {});
 }
 
 auto PackedArray::operator-(const PackedArray& other) const -> PackedArray {
   ExpectSameShape(*this, other, "operator-");
-  WidthOnlyNarrow(*this, "operator-");
   if (HasUnknown() || other.HasUnknown()) {
     return AllX(bit_width_, is_signed_);
   }
-  const auto mask = MaskForWidth(bit_width_);
-  const auto diff = (NarrowWordOf(*this) - NarrowWordOf(other)) & mask;
-  return FromInt(
-      static_cast<std::int64_t>(diff), bit_width_, is_signed_, is_four_state_);
+  auto buf = MakeWordBuffer(bit_width_);
+  SubWordsInto(ValueWords(), other.ValueWords(), buf, bit_width_);
+  return MakeFromWordPlanes(
+      bit_width_, is_signed_, is_four_state_,
+      std::span<const std::uint64_t>{buf.data(), buf.size()}, {});
 }
 
 auto PackedArray::operator*(const PackedArray& other) const -> PackedArray {
   ExpectSameShape(*this, other, "operator*");
-  WidthOnlyNarrow(*this, "operator*");
   if (HasUnknown() || other.HasUnknown()) {
     return AllX(bit_width_, is_signed_);
   }
-  const auto mask = MaskForWidth(bit_width_);
-  const auto product = (NarrowWordOf(*this) * NarrowWordOf(other)) & mask;
-  return FromInt(
-      static_cast<std::int64_t>(product), bit_width_, is_signed_,
-      is_four_state_);
+  auto buf = MakeWordBuffer(bit_width_);
+  MulWordsInto(ValueWords(), other.ValueWords(), buf, bit_width_);
+  return MakeFromWordPlanes(
+      bit_width_, is_signed_, is_four_state_,
+      std::span<const std::uint64_t>{buf.data(), buf.size()}, {});
 }
 
 auto PackedArray::operator/(const PackedArray& other) const -> PackedArray {
   ExpectSameShape(*this, other, "operator/");
-  WidthOnlyNarrow(*this, "operator/");
   if (HasUnknown() || other.HasUnknown()) {
     return AllX(bit_width_, is_signed_);
   }
-  const auto rhs = other.ToInt64();
-  if (rhs == 0) {
+  if (IsZero(other.ValueWords())) {
     // SV LRM 11.4.4: integer division by zero on 4-state yields X for every
     // bit; on 2-state it is implementation-defined and we pick zero. The
     // default ctor encodes both directly: LogicValue defaults to all-X
     // (matching the SV `logic` default), BitValue defaults to all-zero.
     return PackedArray{bit_width_, is_signed_, is_four_state_};
   }
-  if (is_signed_) {
-    return FromInt(ToInt64() / rhs, bit_width_, true, is_four_state_);
+  const bool neg_a = is_signed_ && BitAt(ValueWords(), bit_width_ - 1U) != 0U;
+  const bool neg_b =
+      is_signed_ && BitAt(other.ValueWords(), bit_width_ - 1U) != 0U;
+  auto a_abs = MakeWordBuffer(bit_width_);
+  auto b_abs = MakeWordBuffer(bit_width_);
+  if (neg_a) {
+    SubWordsInto({}, ValueWords(), a_abs, bit_width_);
+  } else {
+    std::ranges::copy(ValueWords(), a_abs.begin());
   }
-  const auto au = NarrowWordOf(*this);
-  const auto bu = static_cast<std::uint64_t>(rhs);
-  return FromInt(
-      static_cast<std::int64_t>(au / bu), bit_width_, false, is_four_state_);
+  if (neg_b) {
+    SubWordsInto({}, other.ValueWords(), b_abs, bit_width_);
+  } else {
+    std::ranges::copy(other.ValueWords(), b_abs.begin());
+  }
+  auto quot = MakeWordBuffer(bit_width_);
+  auto rem = MakeWordBuffer(bit_width_);
+  LongDivideUnsigned(a_abs, b_abs, quot, rem, bit_width_);
+  if (neg_a != neg_b) {
+    auto neg_quot = MakeWordBuffer(bit_width_);
+    SubWordsInto({}, quot, neg_quot, bit_width_);
+    quot = std::move(neg_quot);
+  }
+  return MakeFromWordPlanes(
+      bit_width_, is_signed_, is_four_state_,
+      std::span<const std::uint64_t>{quot.data(), quot.size()}, {});
 }
 
 auto PackedArray::operator%(const PackedArray& other) const -> PackedArray {
   ExpectSameShape(*this, other, "operator%");
-  WidthOnlyNarrow(*this, "operator%");
   if (HasUnknown() || other.HasUnknown()) {
     return AllX(bit_width_, is_signed_);
   }
-  const auto rhs = other.ToInt64();
-  if (rhs == 0) {
+  if (IsZero(other.ValueWords())) {
     // See operator/'s div-by-zero note: deliberate use of the default ctor's
     // shape-default (all-X for 4-state, zero for 2-state).
     return PackedArray{bit_width_, is_signed_, is_four_state_};
   }
-  if (is_signed_) {
-    return FromInt(ToInt64() % rhs, bit_width_, true, is_four_state_);
+  const bool neg_a = is_signed_ && BitAt(ValueWords(), bit_width_ - 1U) != 0U;
+  const bool neg_b =
+      is_signed_ && BitAt(other.ValueWords(), bit_width_ - 1U) != 0U;
+  auto a_abs = MakeWordBuffer(bit_width_);
+  auto b_abs = MakeWordBuffer(bit_width_);
+  if (neg_a) {
+    SubWordsInto({}, ValueWords(), a_abs, bit_width_);
+  } else {
+    std::ranges::copy(ValueWords(), a_abs.begin());
   }
-  const auto au = NarrowWordOf(*this);
-  const auto bu = static_cast<std::uint64_t>(rhs);
-  return FromInt(
-      static_cast<std::int64_t>(au % bu), bit_width_, false, is_four_state_);
+  if (neg_b) {
+    SubWordsInto({}, other.ValueWords(), b_abs, bit_width_);
+  } else {
+    std::ranges::copy(other.ValueWords(), b_abs.begin());
+  }
+  auto quot = MakeWordBuffer(bit_width_);
+  auto rem = MakeWordBuffer(bit_width_);
+  LongDivideUnsigned(a_abs, b_abs, quot, rem, bit_width_);
+  // SV/C truncated modulo: remainder takes the sign of the dividend.
+  if (neg_a) {
+    auto neg_rem = MakeWordBuffer(bit_width_);
+    SubWordsInto({}, rem, neg_rem, bit_width_);
+    rem = std::move(neg_rem);
+  }
+  return MakeFromWordPlanes(
+      bit_width_, is_signed_, is_four_state_,
+      std::span<const std::uint64_t>{rem.data(), rem.size()}, {});
 }
 
 auto PackedArray::operator&(const PackedArray& other) const -> PackedArray {
@@ -529,85 +795,75 @@ auto PackedArray::BitwiseXnor(const PackedArray& other) const -> PackedArray {
 
 auto PackedArray::operator==(const PackedArray& other) const -> PackedArray {
   ExpectSameShape(*this, other, "operator==");
-  WidthOnlyNarrow(*this, "operator==");
   if (HasUnknown() || other.HasUnknown()) {
     return AllX(1U, false);
   }
   return OneBitResult(
-      NarrowWordOf(*this) == NarrowWordOf(other), is_four_state_);
+      UnsignedCompare(ValueWords(), other.ValueWords()) == 0, is_four_state_);
 }
 
 auto PackedArray::operator!=(const PackedArray& other) const -> PackedArray {
   ExpectSameShape(*this, other, "operator!=");
-  WidthOnlyNarrow(*this, "operator!=");
   if (HasUnknown() || other.HasUnknown()) {
     return AllX(1U, false);
   }
   return OneBitResult(
-      NarrowWordOf(*this) != NarrowWordOf(other), is_four_state_);
+      UnsignedCompare(ValueWords(), other.ValueWords()) != 0, is_four_state_);
 }
 
 auto PackedArray::operator<(const PackedArray& other) const -> PackedArray {
   ExpectSameShape(*this, other, "operator<");
-  WidthOnlyNarrow(*this, "operator<");
   if (HasUnknown() || other.HasUnknown()) {
     return AllX(1U, false);
   }
-  if (is_signed_) {
-    return OneBitResult(ToInt64() < other.ToInt64(), is_four_state_);
-  }
-  return OneBitResult(
-      NarrowWordOf(*this) < NarrowWordOf(other), is_four_state_);
+  const int cmp =
+      is_signed_ ? SignedCompare(ValueWords(), other.ValueWords(), bit_width_)
+                 : UnsignedCompare(ValueWords(), other.ValueWords());
+  return OneBitResult(cmp < 0, is_four_state_);
 }
 
 auto PackedArray::operator<=(const PackedArray& other) const -> PackedArray {
   ExpectSameShape(*this, other, "operator<=");
-  WidthOnlyNarrow(*this, "operator<=");
   if (HasUnknown() || other.HasUnknown()) {
     return AllX(1U, false);
   }
-  if (is_signed_) {
-    return OneBitResult(ToInt64() <= other.ToInt64(), is_four_state_);
-  }
-  return OneBitResult(
-      NarrowWordOf(*this) <= NarrowWordOf(other), is_four_state_);
+  const int cmp =
+      is_signed_ ? SignedCompare(ValueWords(), other.ValueWords(), bit_width_)
+                 : UnsignedCompare(ValueWords(), other.ValueWords());
+  return OneBitResult(cmp <= 0, is_four_state_);
 }
 
 auto PackedArray::operator>(const PackedArray& other) const -> PackedArray {
   ExpectSameShape(*this, other, "operator>");
-  WidthOnlyNarrow(*this, "operator>");
   if (HasUnknown() || other.HasUnknown()) {
     return AllX(1U, false);
   }
-  if (is_signed_) {
-    return OneBitResult(ToInt64() > other.ToInt64(), is_four_state_);
-  }
-  return OneBitResult(
-      NarrowWordOf(*this) > NarrowWordOf(other), is_four_state_);
+  const int cmp =
+      is_signed_ ? SignedCompare(ValueWords(), other.ValueWords(), bit_width_)
+                 : UnsignedCompare(ValueWords(), other.ValueWords());
+  return OneBitResult(cmp > 0, is_four_state_);
 }
 
 auto PackedArray::operator>=(const PackedArray& other) const -> PackedArray {
   ExpectSameShape(*this, other, "operator>=");
-  WidthOnlyNarrow(*this, "operator>=");
   if (HasUnknown() || other.HasUnknown()) {
     return AllX(1U, false);
   }
-  if (is_signed_) {
-    return OneBitResult(ToInt64() >= other.ToInt64(), is_four_state_);
-  }
-  return OneBitResult(
-      NarrowWordOf(*this) >= NarrowWordOf(other), is_four_state_);
+  const int cmp =
+      is_signed_ ? SignedCompare(ValueWords(), other.ValueWords(), bit_width_)
+                 : UnsignedCompare(ValueWords(), other.ValueWords());
+  return OneBitResult(cmp >= 0, is_four_state_);
 }
 
 auto PackedArray::operator-() const -> PackedArray {
-  WidthOnlyNarrow(*this, "operator- (unary)");
   if (HasUnknown()) {
     return AllX(bit_width_, is_signed_);
   }
-  const auto mask = MaskForWidth(bit_width_);
-  return FromInt(
-      static_cast<std::int64_t>((-NarrowWordOf(*this)) & mask), bit_width_,
-      is_signed_, is_four_state_);
+  auto buf = MakeWordBuffer(bit_width_);
+  SubWordsInto({}, ValueWords(), buf, bit_width_);
+  return MakeFromWordPlanes(
+      bit_width_, is_signed_, is_four_state_,
+      std::span<const std::uint64_t>{buf.data(), buf.size()}, {});
 }
 
 auto PackedArray::operator~() const -> PackedArray {
@@ -695,60 +951,67 @@ auto PackedArray::LogicalEquivalence(const PackedArray& other) const
 
 namespace {
 
+// Capacity-saturating fold of a shift amount to a single word. Any amount
+// at or beyond `bit_width` of the operand becomes a no-op (`amt >=
+// bit_width` -> zero result), so saturating to ~0 for wide-amount values is
+// safe: callers only compare against `bit_width`.
 auto ShiftAmountAsUint(const PackedArray& amount) -> std::uint64_t {
-  if (amount.BitWidth() <= 64U) {
-    return amount.ValueWords()[0] & MaskForWidth(amount.BitWidth());
+  const auto words = amount.ValueWords();
+  for (std::size_t i = 1; i < words.size(); ++i) {
+    if (words[i] != 0U) {
+      return ~std::uint64_t{0};
+    }
   }
-  return ~std::uint64_t{0};
+  return words.empty() ? 0U : words[0];
 }
 
 }  // namespace
 
 auto PackedArray::ShiftLeft(const PackedArray& amount) const -> PackedArray {
-  WidthOnlyNarrow(*this, "ShiftLeft");
   // LRM 11.4.10: X/Z in the amount yields an all-X result; X/Z in the
   // value rides along by shifting the unknown plane in parallel.
   if (amount.HasUnknown()) {
     return AllX(bit_width_, is_signed_);
   }
   const auto amt = ShiftAmountAsUint(amount);
-  if (amt >= bit_width_) {
-    return FromInt(0, bit_width_, is_signed_, is_four_state_);
-  }
-  const auto mask = MaskForWidth(bit_width_);
-  const auto new_value = (NarrowWordOf(*this) << amt) & mask;
+  auto value_buf = MakeWordBuffer(bit_width_);
+  ShiftLeftWordsInto(ValueWords(), amt, value_buf, bit_width_);
   if (!is_four_state_) {
-    return FromInt(
-        static_cast<std::int64_t>(new_value), bit_width_, is_signed_, false);
+    return MakeFromWordPlanes(
+        bit_width_, is_signed_, false,
+        std::span<const std::uint64_t>{value_buf.data(), value_buf.size()}, {});
   }
-  const auto unk_word = UnknownWords()[0] & mask;
-  const auto new_unknown = (unk_word << amt) & mask;
-  return FromWords({new_value}, {new_unknown}, bit_width_, is_signed_, true);
+  auto unk_buf = MakeWordBuffer(bit_width_);
+  ShiftLeftWordsInto(UnknownWords(), amt, unk_buf, bit_width_);
+  return MakeFromWordPlanes(
+      bit_width_, is_signed_, true,
+      std::span<const std::uint64_t>{value_buf.data(), value_buf.size()},
+      std::span<const std::uint64_t>{unk_buf.data(), unk_buf.size()});
 }
 
 auto PackedArray::LogicalShiftRight(const PackedArray& amount) const
     -> PackedArray {
-  WidthOnlyNarrow(*this, "LogicalShiftRight");
   if (amount.HasUnknown()) {
     return AllX(bit_width_, is_signed_);
   }
   const auto amt = ShiftAmountAsUint(amount);
-  if (amt >= bit_width_) {
-    return FromInt(0, bit_width_, is_signed_, is_four_state_);
-  }
-  const auto new_value = NarrowWordOf(*this) >> amt;
+  auto value_buf = MakeWordBuffer(bit_width_);
+  LogicalShiftRightWordsInto(ValueWords(), amt, value_buf, bit_width_);
   if (!is_four_state_) {
-    return FromInt(
-        static_cast<std::int64_t>(new_value), bit_width_, is_signed_, false);
+    return MakeFromWordPlanes(
+        bit_width_, is_signed_, false,
+        std::span<const std::uint64_t>{value_buf.data(), value_buf.size()}, {});
   }
-  const auto unk_word = UnknownWords()[0] & MaskForWidth(bit_width_);
-  const auto new_unknown = unk_word >> amt;
-  return FromWords({new_value}, {new_unknown}, bit_width_, is_signed_, true);
+  auto unk_buf = MakeWordBuffer(bit_width_);
+  LogicalShiftRightWordsInto(UnknownWords(), amt, unk_buf, bit_width_);
+  return MakeFromWordPlanes(
+      bit_width_, is_signed_, true,
+      std::span<const std::uint64_t>{value_buf.data(), value_buf.size()},
+      std::span<const std::uint64_t>{unk_buf.data(), unk_buf.size()});
 }
 
 auto PackedArray::ArithmeticShiftRight(const PackedArray& amount) const
     -> PackedArray {
-  WidthOnlyNarrow(*this, "ArithmeticShiftRight");
   if (!is_signed_) {
     return LogicalShiftRight(amount);
   }
@@ -756,64 +1019,83 @@ auto PackedArray::ArithmeticShiftRight(const PackedArray& amount) const
     return AllX(bit_width_, is_signed_);
   }
   const auto amt = ShiftAmountAsUint(amount);
-  const auto signed_value = ToInt64();
-  if (amt >= bit_width_) {
-    return FromInt(signed_value < 0 ? -1 : 0, bit_width_, true, is_four_state_);
-  }
-  if (!is_four_state_) {
-    return FromInt(signed_value >> amt, bit_width_, true, false);
-  }
   // Each plane shifts with its own MSB as the fill, so an X at the top
   // extends down into the new top bits instead of degenerating to the
   // value-plane sign.
-  const auto mask = MaskForWidth(bit_width_);
-  const auto value_shifted =
-      static_cast<std::uint64_t>(signed_value >> amt) & mask;
-  const auto unk_word = UnknownWords()[0] & mask;
-  std::uint64_t unk_shifted = unk_word >> amt;
-  if ((unk_word >> (bit_width_ - 1U)) != 0U) {
-    const auto fill_mask = mask & ~MaskForWidth(bit_width_ - amt);
-    unk_shifted |= fill_mask;
+  const std::uint64_t value_sign = BitAt(ValueWords(), bit_width_ - 1U);
+  auto value_buf = MakeWordBuffer(bit_width_);
+  LogicalShiftRightWordsInto(ValueWords(), amt, value_buf, bit_width_);
+  if (value_sign != 0U) {
+    FillTopBits(value_buf, bit_width_, std::min(amt, bit_width_));
   }
-  unk_shifted &= mask;
-  return FromWords({value_shifted}, {unk_shifted}, bit_width_, true, true);
+  if (!is_four_state_) {
+    return MakeFromWordPlanes(
+        bit_width_, true, false,
+        std::span<const std::uint64_t>{value_buf.data(), value_buf.size()}, {});
+  }
+  const std::uint64_t unk_sign = BitAt(UnknownWords(), bit_width_ - 1U);
+  auto unk_buf = MakeWordBuffer(bit_width_);
+  LogicalShiftRightWordsInto(UnknownWords(), amt, unk_buf, bit_width_);
+  if (unk_sign != 0U) {
+    FillTopBits(unk_buf, bit_width_, std::min(amt, bit_width_));
+  }
+  return MakeFromWordPlanes(
+      bit_width_, true, true,
+      std::span<const std::uint64_t>{value_buf.data(), value_buf.size()},
+      std::span<const std::uint64_t>{unk_buf.data(), unk_buf.size()});
 }
 
 auto PackedArray::Power(const PackedArray& exponent) const -> PackedArray {
-  WidthOnlyNarrow(*this, "Power");
-  WidthOnlyNarrow(exponent, "Power");
   // The exponent is checked before the base so that `X ** 0 = 1` wins
   // over X-propagation from the base (LRM 11.4.10).
   if (exponent.HasUnknown()) {
     return AllX(bit_width_, is_signed_);
   }
-  const auto exp = exponent.ToInt64();
+  const auto exp_words = exponent.ValueWords();
+  for (std::size_t i = 1; i < exp_words.size(); ++i) {
+    if (exp_words[i] != 0U && exp_words[i] != ~std::uint64_t{0}) {
+      throw InternalError(
+          "PackedArray::Power: exponent magnitude exceeds 64 bits");
+    }
+  }
+  const std::uint64_t exp_low = exp_words.empty() ? 0U : exp_words[0];
+  const std::int64_t exp = exponent.IsSigned()
+                               ? SignExtendToInt64(exp_low, exponent.BitWidth())
+                               : static_cast<std::int64_t>(exp_low);
   if (exp == 0) {
     return FromInt(1, bit_width_, is_signed_, is_four_state_);
   }
   if (HasUnknown()) {
     return AllX(bit_width_, is_signed_);
   }
-  const auto base = ToInt64();
   if (exp < 0) {
-    if (base == 1) return FromInt(1, bit_width_, is_signed_, is_four_state_);
-    if (base == -1) {
-      return FromInt(
-          (exp & 1) != 0 ? -1 : 1, bit_width_, is_signed_, is_four_state_);
+    // Negative exp on integer base rounds to zero except for base == +-1.
+    const auto one = FromInt(1, bit_width_, is_signed_, is_four_state_);
+    if (UnsignedCompare(ValueWords(), one.ValueWords()) == 0) {
+      return one;
+    }
+    if (is_signed_) {
+      const auto neg_one = FromInt(-1, bit_width_, true, is_four_state_);
+      if (UnsignedCompare(ValueWords(), neg_one.ValueWords()) == 0) {
+        return FromInt(
+            (exp & 1) != 0 ? -1 : 1, bit_width_, is_signed_, is_four_state_);
+      }
     }
     return FromInt(0, bit_width_, is_signed_, is_four_state_);
   }
-  std::int64_t result = 1;
-  std::int64_t b = base;
+  PackedArray result = FromInt(1, bit_width_, is_signed_, is_four_state_);
+  PackedArray base = *this;
   std::int64_t e = exp;
   while (e > 0) {
     if ((e & 1) != 0) {
-      result *= b;
+      result = result * base;
     }
-    b *= b;
     e >>= 1;
+    if (e > 0) {
+      base = base * base;
+    }
   }
-  return FromInt(result, bit_width_, is_signed_, is_four_state_);
+  return result;
 }
 
 auto PackedArray::ReductionAnd() const -> PackedArray {
