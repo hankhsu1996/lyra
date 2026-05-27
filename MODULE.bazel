@@ -11,10 +11,10 @@ module(
 bazel_dep(name = "rules_cc", version = "0.1.1")
 
 # Slang SystemVerilog Compiler Library
-bazel_dep(name = "slang", version = "10.0")
+bazel_dep(name = "slang", version = "11.0")
 git_override(
     module_name = "slang",
-    commit = "a254c3d32d7182adefb44bf5880414533a106e32",
+    commit = "9943dd2788f35d0abe25d1832acfba5151f7360d",
     remote = "https://github.com/hankhsu1996/slang.git",
 )
 
