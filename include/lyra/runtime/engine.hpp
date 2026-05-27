@@ -19,6 +19,7 @@
 namespace lyra::runtime {
 
 class Module;
+class Observable;
 class RuntimeEvent;
 class RuntimeProcess;
 
@@ -67,6 +68,8 @@ class Engine {
 
   void SubmitNba(std::function<void()> closure);
 
+  void TriggerValueChange(Observable& observable);
+
  private:
   struct PostponedWorkItem {};
 
@@ -111,6 +114,8 @@ class Engine {
   void ScheduleWait(RuntimeProcess& process, WaitRequest wait);
   void ScheduleDelayWait(RuntimeProcess& process, DelayWait wait);
   static void ScheduleEventWait(RuntimeProcess& process, EventWait wait);
+  static void ScheduleValueChangeWait(
+      RuntimeProcess& process, ValueChangeWait wait);
 
   void ScheduleActive(RuntimeProcess& process);
   void ScheduleInactive(RuntimeProcess& process);

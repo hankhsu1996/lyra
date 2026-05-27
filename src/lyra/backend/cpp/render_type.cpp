@@ -21,6 +21,10 @@ auto RenderPackedArrayCtorArgs(const mir::PackedArrayType& pa) -> std::string {
          four_state_lit;
 }
 
+auto IsObservableScalarType(const mir::Type& ty) -> bool {
+  return ty.IsPackedArray();
+}
+
 auto RenderTypeAsCpp(
     const mir::CompilationUnit& unit, const mir::StructuralScope& owner_scope,
     mir::TypeId type_id) -> diag::Result<std::string> {

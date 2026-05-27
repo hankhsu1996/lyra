@@ -84,6 +84,21 @@ Remove `RenderExprAsNative` / `RenderExprAsPackedTopLevel` split. Single `Render
 - [x] J16 -- `ConversionExpr` collapses to "construct a destination `PackedArray` from a source
       `PackedArray`" -- one case, handled by `PackedArray` itself.
 
+### Cut 4 -- Equality family completion
+
+`==` (logical equality) is 4-state-propagating and returns a `PackedArray` that can be X. LRM gives
+two deterministic-bool equality forms for the cases `==` cannot answer: case equality (`===`) and
+wildcard equality (`==?`). Both were plumbed through HIR / MIR but rejected at cpp emit.
+
+- [x] J17 -- `PackedArray::IsCaseEqual` (LRM 11.4.5 `===`): bit-pattern compare across value and
+      unknown planes, returns deterministic `bool`. Wire `kCaseEquality` and `kCaseInequality` arms
+      in backend. Also consumed by `Var<T>` for event-control change detection (LRM 9.4.2 says
+      `@(x)` fires when the value "is not equal to its previous value" under bit-pattern equality;
+      that is `===` semantics).
+- [ ] J18 -- `PackedArray::WildcardEquals` (LRM 11.4.6 `==?` / `!=?`): bit-by-bit compare with the
+      RHS X/Z bits treated as don't-care; returns deterministic `bool`. Wire `kWildcardEquality` and
+      `kWildcardInequality` arms.
+
 ## Cross-references
 
 - Decision and findings: `../decisions/integral-representation.md`
@@ -100,5 +115,7 @@ Remove `RenderExprAsNative` / `RenderExprAsPackedTopLevel` split. Single `Render
 ## Remaining operator gap
 
 `++` / `--`: tracked as `operators.md` W12 (new HIR / MIR shape, statement and expression forms, LRM
-evaluate-target-once semantics). Every other binary / unary operator family on integral operands --
-including 4-state X / Z propagation -- lives here and is complete.
+evaluate-target-once semantics).
+
+`==?` / `!=?` wildcard equality: deterministic-bool form with RHS X/Z as don't-care (LRM 11.4.6).
+Plumbed through HIR / MIR; cpp emit rejects. Tracked as J18 in Cut 4 above.
