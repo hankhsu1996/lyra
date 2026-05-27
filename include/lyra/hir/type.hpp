@@ -1,21 +1,18 @@
 #pragma once
 
-#include <compare>
 #include <cstdint>
 #include <optional>
+#include <span>
 #include <string>
+#include <string_view>
 #include <variant>
 #include <vector>
 
 #include "lyra/hir/integral_constant.hpp"
+#include "lyra/hir/method.hpp"
+#include "lyra/hir/type_id.hpp"
 
 namespace lyra::hir {
-
-struct TypeId {
-  std::uint32_t value;
-
-  auto operator<=>(const TypeId&) const -> std::strong_ordering = default;
-};
 
 enum class TypeKind {
   kPackedArray,
@@ -77,6 +74,7 @@ struct EnumMember {
 struct EnumType {
   TypeId base_type;
   std::vector<EnumMember> members;
+  std::vector<Method> methods;
 };
 
 struct UnpackedRange {
@@ -124,6 +122,11 @@ struct Type {
   [[nodiscard]] auto AsPackedArray() const -> const PackedArrayType&;
   [[nodiscard]] auto IsEnum() const -> bool;
   [[nodiscard]] auto AsEnum() const -> const EnumType&;
+
+  [[nodiscard]] auto GetMethods() const -> std::span<const Method>;
+  [[nodiscard]] auto GetMethod(MethodId id) const -> const Method&;
+  [[nodiscard]] auto LookupMethod(std::string_view name) const
+      -> std::optional<MethodId>;
 };
 
 }  // namespace lyra::hir
