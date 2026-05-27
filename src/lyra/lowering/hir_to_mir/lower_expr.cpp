@@ -654,7 +654,7 @@ auto BuildHirInsideItemPredicateProc(
                 mir::Expr{
                     .data =
                         mir::BinaryExpr{
-                            .op = mir::BinaryOp::kEquality,
+                            .op = mir::BinaryOp::kWildcardEquality,
                             .lhs = lhs_id,
                             .rhs = *v},
                     .type = result_type});

@@ -825,6 +825,41 @@ auto PackedArray::operator!=(const PackedArray& other) const -> PackedArray {
       UnsignedCompare(ValueWords(), other.ValueWords()) != 0, is_four_state_);
 }
 
+auto PackedArray::WildcardEquals(const PackedArray& other) const
+    -> PackedArray {
+  ExpectSameShape(*this, other, "WildcardEquals");
+  const auto words = WordCountForBits(bit_width_);
+  const auto a_val = ValueWords();
+  const auto b_val = other.ValueWords();
+  const auto a_unk = UnknownWords();
+  const auto b_unk = other.UnknownWords();
+  const auto top_mask = MaskForWidth(bit_width_ - ((words - 1U) * 64U));
+  bool definite_mismatch = false;
+  bool lhs_unknown_at_compare = false;
+  for (std::size_t w = 0; w < words; ++w) {
+    const std::uint64_t bw_unk = w < b_unk.size() ? b_unk[w] : 0U;
+    const std::uint64_t aw_unk = w < a_unk.size() ? a_unk[w] : 0U;
+    std::uint64_t cmp_mask = ~bw_unk;
+    if (w + 1U == words) {
+      cmp_mask &= top_mask;
+    }
+    const std::uint64_t diff = a_val[w] ^ b_val[w];
+    if ((diff & ~aw_unk & cmp_mask) != 0U) {
+      definite_mismatch = true;
+    }
+    if ((aw_unk & cmp_mask) != 0U) {
+      lhs_unknown_at_compare = true;
+    }
+  }
+  if (definite_mismatch) {
+    return OneBitResult(false, is_four_state_);
+  }
+  if (lhs_unknown_at_compare) {
+    return AllX(1U, false);
+  }
+  return OneBitResult(true, is_four_state_);
+}
+
 auto PackedArray::operator<(const PackedArray& other) const -> PackedArray {
   ExpectSameShape(*this, other, "operator<");
   if (HasUnknown() || other.HasUnknown()) {

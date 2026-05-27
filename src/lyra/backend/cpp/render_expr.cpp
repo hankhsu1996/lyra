@@ -95,17 +95,14 @@ auto RenderBinaryOp(
       return "(" + lhs + ").LogicalImplication(" + rhs + ")";
     case mir::BinaryOp::kLogicalEquivalence:
       return "(" + lhs + ").LogicalEquivalence(" + rhs + ")";
+    case mir::BinaryOp::kWildcardEquality:
+      return "(" + lhs + ").WildcardEquals(" + rhs + ")";
+    case mir::BinaryOp::kWildcardInequality:
+      return "(" + lhs + ").WildcardEquals(" + rhs + ").LogicalNot()";
     case mir::BinaryOp::kCaseEquality:
       return "(" + lhs + ").CaseEqual(" + rhs + ")";
     case mir::BinaryOp::kCaseInequality:
       return "(" + lhs + ").CaseEqual(" + rhs + ").LogicalNot()";
-    case mir::BinaryOp::kWildcardEquality:
-    case mir::BinaryOp::kWildcardInequality:
-      return diag::Unsupported(
-          diag::DiagCode::kCppEmitBinaryOpNotImplemented,
-          "wildcard equality operators (`==?` / `!=?`) are not yet "
-          "implemented in cpp emit",
-          diag::UnsupportedCategory::kFeature);
   }
   return "(" + lhs + std::string{tok} + rhs + ")";
 }

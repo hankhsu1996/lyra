@@ -1,0 +1,16 @@
+id: cpp.operator_wildcard_eq_x_result
+tags: [cpp_run]
+input:
+  command: [run, cpp]
+  project: false
+  top: Top
+  files: [main.sv]
+expect:
+  exit: 0
+  variables:
+    lhs_x_at_non_wildcard: "1'bx"
+    lhs_z_at_non_wildcard: "1'bx"
+    lhs_x_at_wildcard: 1
+    lhs_all_x_rhs_all_wild: 1
+    mismatch_dominates_x: 0
+    ne_returns_x: "1'bx"
