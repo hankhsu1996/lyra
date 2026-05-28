@@ -13,6 +13,7 @@
 #include <slang/ast/symbols/SubroutineSymbols.h>
 #include <slang/ast/symbols/ValueSymbol.h>
 #include <slang/ast/symbols/VariableSymbols.h>
+#include <slang/ast/types/AllTypes.h>
 
 #include "lyra/base/internal_error.hpp"
 #include "lyra/diag/diagnostic.hpp"
@@ -25,7 +26,6 @@
 #include "lyra/lowering/ast_to_hir/process.hpp"
 #include "lyra/lowering/ast_to_hir/state.hpp"
 #include "lyra/lowering/ast_to_hir/time_resolution.hpp"
-#include "lyra/lowering/ast_to_hir/type.hpp"
 
 namespace lyra::lowering::ast_to_hir {
 
@@ -57,120 +57,162 @@ auto IsCaseConstruct(
   return false;
 }
 
+auto LowerTypeAliasMemberInto(
+    const UnitLoweringFacts& unit_facts, ScopeLoweringState& scope_state,
+    const slang::ast::TypeAliasType& alias) -> diag::Result<void> {
+  const auto& mapper = unit_facts.SourceMapper();
+  auto target_or = scope_state.UnitState().GetTypeId(
+      alias.targetType.getType(), mapper.PointSpanOf(alias.location));
+  if (!target_or) return std::unexpected(std::move(target_or.error()));
+  scope_state.AddTypeAlias(
+      hir::TypeAliasDecl{
+          .name = std::string{alias.name}, .target = *target_or});
+  return {};
+}
+
+auto LowerVariableMemberInto(
+    const UnitLoweringFacts& unit_facts, ScopeLoweringState& scope_state,
+    const slang::ast::VariableSymbol& var) -> diag::Result<void> {
+  const auto& mapper = unit_facts.SourceMapper();
+  auto& unit_state = scope_state.UnitState();
+  if (var.lifetime != slang::ast::VariableLifetime::Static) {
+    return diag::Unsupported(
+        mapper.PointSpanOf(var.location),
+        diag::DiagCode::kUnsupportedNonStaticVariableLifetime,
+        "only static variables are supported",
+        diag::UnsupportedCategory::kFeature);
+  }
+  auto type_id_or =
+      unit_state.GetTypeId(var.getType(), mapper.PointSpanOf(var.location));
+  if (!type_id_or) return std::unexpected(std::move(type_id_or.error()));
+  // Slang rejects `void` in any variable-declaration position before
+  // elaboration, so a void-typed VariableSymbol can only reach this path
+  // via a slang/Lyra integration bug.
+  if (std::holds_alternative<hir::VoidType>(
+          unit_state.GetType(*type_id_or).data)) {
+    throw InternalError(
+        "LowerVariableMemberInto: variable declaration produced void type");
+  }
+  scope_state.AddStructuralVar(var, *type_id_or);
+  return {};
+}
+
+auto LowerSubroutineMemberInto(
+    const UnitLoweringFacts& unit_facts, ScopeLoweringState& scope_state,
+    const slang::ast::SubroutineSymbol& sym) -> diag::Result<void> {
+  const auto& mapper = unit_facts.SourceMapper();
+  auto return_type_id_or = scope_state.UnitState().GetTypeId(
+      sym.getReturnType(), mapper.PointSpanOf(sym.location));
+  if (!return_type_id_or) {
+    return std::unexpected(std::move(return_type_id_or.error()));
+  }
+  scope_state.AddStructuralSubroutine(
+      sym, hir::StructuralSubroutineDecl{
+               .name = std::string{sym.name},
+               .kind = FromSlangSubroutineKind(sym.subroutineKind),
+               .result_type = *return_type_id_or});
+  return {};
+}
+
+auto LowerProceduralBlockMemberInto(
+    const UnitLoweringFacts& unit_facts, ScopeLoweringState& scope_state,
+    ScopeStack& stack, const slang::ast::ProceduralBlockSymbol& proc)
+    -> diag::Result<void> {
+  auto p = LowerProcess(unit_facts, scope_state, stack, proc);
+  if (!p) return std::unexpected(std::move(p.error()));
+  scope_state.AddProcess(*std::move(p));
+  return {};
+}
+
+auto LowerLoopGenerateMemberInto(
+    const UnitLoweringFacts& unit_facts, ScopeLoweringState& scope_state,
+    ScopeStack& stack, const slang::ast::GenerateBlockArraySymbol& array)
+    -> diag::Result<void> {
+  auto g = BuildLoopGenerate(
+      unit_facts, scope_state.UnitState(), scope_state, stack, array);
+  if (!g) return std::unexpected(std::move(g.error()));
+  scope_state.AddGenerate(*std::move(g));
+  return {};
+}
+
+auto LowerIfOrCaseGenerateMemberInto(
+    const UnitLoweringFacts& unit_facts, ScopeLoweringState& scope_state,
+    ScopeStack& stack, const slang::ast::GenerateBlockSymbol& block,
+    const slang::ast::Scope& slang_scope) -> diag::Result<void> {
+  // slang assigns constructIndex per direct generate construct in the
+  // containing scope (Scope.cpp:927-1033): incremented after each construct,
+  // shared across siblings of one if/case generate. The sibling-collect loop
+  // below groups the members that belong to the same construct.
+  std::vector<const slang::ast::GenerateBlockSymbol*> siblings;
+  for (const auto& candidate : slang_scope.members()) {
+    if (candidate.kind != slang::ast::SymbolKind::GenerateBlock) continue;
+    const auto& sibling = candidate.as<slang::ast::GenerateBlockSymbol>();
+    if (sibling.constructIndex == block.constructIndex) {
+      siblings.push_back(&sibling);
+    }
+  }
+  auto g = IsCaseConstruct(siblings) ? BuildCaseGenerate(
+                                           unit_facts, scope_state.UnitState(),
+                                           scope_state, stack, siblings)
+                                     : BuildIfGenerate(
+                                           unit_facts, scope_state.UnitState(),
+                                           scope_state, stack, siblings);
+  if (!g) return std::unexpected(std::move(g.error()));
+  scope_state.AddGenerate(*std::move(g));
+  return {};
+}
+
+auto LowerScopeMemberInto(
+    const UnitLoweringFacts& unit_facts, ScopeLoweringState& scope_state,
+    ScopeStack& stack, const slang::ast::Symbol& member,
+    const slang::ast::Scope& slang_scope) -> diag::Result<void> {
+  switch (member.kind) {
+    case slang::ast::SymbolKind::TypeAlias:
+      return LowerTypeAliasMemberInto(
+          unit_facts, scope_state, member.as<slang::ast::TypeAliasType>());
+    case slang::ast::SymbolKind::Variable:
+      return LowerVariableMemberInto(
+          unit_facts, scope_state, member.as<slang::ast::VariableSymbol>());
+    case slang::ast::SymbolKind::Subroutine:
+      return LowerSubroutineMemberInto(
+          unit_facts, scope_state, member.as<slang::ast::SubroutineSymbol>());
+    case slang::ast::SymbolKind::ProceduralBlock:
+      return LowerProceduralBlockMemberInto(
+          unit_facts, scope_state, stack,
+          member.as<slang::ast::ProceduralBlockSymbol>());
+    case slang::ast::SymbolKind::GenerateBlockArray:
+      return LowerLoopGenerateMemberInto(
+          unit_facts, scope_state, stack,
+          member.as<slang::ast::GenerateBlockArraySymbol>());
+    case slang::ast::SymbolKind::GenerateBlock:
+      return LowerIfOrCaseGenerateMemberInto(
+          unit_facts, scope_state, stack,
+          member.as<slang::ast::GenerateBlockSymbol>(), slang_scope);
+    default:
+      return {};
+  }
+}
+
 auto LowerScopeMembersInto(
     const UnitLoweringFacts& unit_facts, ScopeLoweringState& scope_state,
     ScopeStack& stack, const slang::ast::Scope& slang_scope)
     -> diag::Result<void> {
-  const auto& mapper = unit_facts.SourceMapper();
-  auto& unit_state = scope_state.UnitState();
-
-  for (const auto& member : slang_scope.members()) {
-    if (member.kind != slang::ast::SymbolKind::Variable) {
-      continue;
-    }
-    const auto& var = member.as<slang::ast::VariableSymbol>();
-    if (var.lifetime != slang::ast::VariableLifetime::Static) {
-      return diag::Unsupported(
-          mapper.PointSpanOf(var.location),
-          diag::DiagCode::kUnsupportedNonStaticVariableLifetime,
-          "only static variables are supported",
-          diag::UnsupportedCategory::kFeature);
-    }
-    auto type_data =
-        LowerType(var.getType(), mapper.PointSpanOf(var.location), unit_state);
-    if (!type_data) return std::unexpected(std::move(type_data.error()));
-    // Slang rejects `void` in any variable-declaration position before
-    // elaboration, so a void-typed VariableSymbol can only reach this path
-    // via a slang/Lyra integration bug.
-    if (std::holds_alternative<hir::VoidType>(*type_data)) {
-      throw InternalError(
-          "LowerScopeMembersInto: variable declaration produced void type");
-    }
-    const auto type_id = unit_state.AddType(*std::move(type_data));
-    scope_state.AddStructuralVar(var, type_id);
-  }
-
-  for (const auto& member : slang_scope.members()) {
-    if (member.kind != slang::ast::SymbolKind::Subroutine) {
-      continue;
-    }
-    const auto& sym = member.as<slang::ast::SubroutineSymbol>();
-    auto return_type_data = LowerType(
-        sym.getReturnType(), mapper.PointSpanOf(sym.location), unit_state);
-    if (!return_type_data) {
-      return std::unexpected(std::move(return_type_data.error()));
-    }
-    const auto return_type_id =
-        unit_state.AddType(*std::move(return_type_data));
-    scope_state.AddStructuralSubroutine(
-        sym, hir::StructuralSubroutineDecl{
-                 .name = std::string{sym.name},
-                 .kind = FromSlangSubroutineKind(sym.subroutineKind),
-                 .result_type = return_type_id});
-  }
-
-  for (const auto& member : slang_scope.members()) {
-    if (member.kind != slang::ast::SymbolKind::ProceduralBlock) {
-      continue;
-    }
-    const auto& proc = member.as<slang::ast::ProceduralBlockSymbol>();
-    auto p = LowerProcess(unit_facts, scope_state, stack, proc);
-    if (!p) return std::unexpected(std::move(p.error()));
-    scope_state.AddProcess(*std::move(p));
-  }
-
-  // slang assigns constructIndex per direct generate construct in the
-  // containing scope (Scope.cpp:927-1033): incremented after each construct,
-  // shared across siblings of one if/case generate. So within this scope's
-  // members it is unique per construct and serves as the sibling-grouping key.
+  // GenerateBlock siblings of one if/case generate share a constructIndex
+  // (slang Scope.cpp:927-1033); we hand the dispatcher only the first sibling
+  // and skip the rest, so the per-construct sibling-collect loop inside
+  // LowerIfOrCaseGenerateMemberInto runs exactly once per construct.
   std::unordered_set<std::uint32_t> consumed_construct_indices;
   for (const auto& member : slang_scope.members()) {
-    switch (member.kind) {
-      case slang::ast::SymbolKind::GenerateBlockArray: {
-        const auto& array = member.as<slang::ast::GenerateBlockArraySymbol>();
-        auto g = BuildLoopGenerate(
-            unit_facts, unit_state, scope_state, stack, array);
-        if (!g) return std::unexpected(std::move(g.error()));
-        scope_state.AddGenerate(*std::move(g));
-        break;
+    if (member.kind == slang::ast::SymbolKind::GenerateBlock) {
+      const auto& block = member.as<slang::ast::GenerateBlockSymbol>();
+      if (!consumed_construct_indices.insert(block.constructIndex).second) {
+        continue;
       }
-
-      case slang::ast::SymbolKind::GenerateBlock: {
-        const auto& block = member.as<slang::ast::GenerateBlockSymbol>();
-        if (!consumed_construct_indices.insert(block.constructIndex).second) {
-          continue;
-        }
-
-        std::vector<const slang::ast::GenerateBlockSymbol*> siblings;
-        for (const auto& candidate : slang_scope.members()) {
-          if (candidate.kind != slang::ast::SymbolKind::GenerateBlock) {
-            continue;
-          }
-          const auto& sibling = candidate.as<slang::ast::GenerateBlockSymbol>();
-          if (sibling.constructIndex == block.constructIndex) {
-            siblings.push_back(&sibling);
-          }
-        }
-
-        if (IsCaseConstruct(siblings)) {
-          auto g = BuildCaseGenerate(
-              unit_facts, unit_state, scope_state, stack, siblings);
-          if (!g) return std::unexpected(std::move(g.error()));
-          scope_state.AddGenerate(*std::move(g));
-        } else {
-          auto g = BuildIfGenerate(
-              unit_facts, unit_state, scope_state, stack, siblings);
-          if (!g) return std::unexpected(std::move(g.error()));
-          scope_state.AddGenerate(*std::move(g));
-        }
-        break;
-      }
-
-      default:
-        break;
     }
+    auto r =
+        LowerScopeMemberInto(unit_facts, scope_state, stack, member, slang_scope);
+    if (!r) return std::unexpected(std::move(r.error()));
   }
-
   return {};
 }
 

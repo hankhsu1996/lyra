@@ -13,8 +13,10 @@
 #include <slang/ast/symbols/SubroutineSymbols.h>
 #include <slang/ast/symbols/ValueSymbol.h>
 #include <slang/ast/symbols/VariableSymbols.h>
+#include <slang/ast/types/Type.h>
 
 #include "lyra/base/internal_error.hpp"
+#include "lyra/diag/diagnostic.hpp"
 #include "lyra/diag/source_span.hpp"
 #include "lyra/hir/expr.hpp"
 #include "lyra/hir/module_unit.hpp"
@@ -67,6 +69,17 @@ class UnitLoweringState {
  public:
   explicit UnitLoweringState(std::string name)
       : hir_unit_{.name = std::move(name), .types = {}, .root_scope = {}} {
+    // Intrinsic types are pre-registered so callers reference them by a
+    // stable id rather than re-adding entries on demand. Extend this section
+    // when more synthesized types accumulate (1-bit logic, etc.).
+    void_type_id_ = AddType(hir::TypeData{hir::VoidType{}});
+  }
+
+  // Canonical id for the synthesized `void` type (system-call sinks, lvalue
+  // refs used in non-value context, etc.). Single source of truth so the
+  // unit never holds more than one VoidType entry.
+  [[nodiscard]] auto VoidTypeId() const -> hir::TypeId {
+    return void_type_id_;
   }
 
   [[nodiscard]] auto HirUnit() const -> const hir::ModuleUnit& {
@@ -77,11 +90,12 @@ class UnitLoweringState {
     return hir_unit_;
   }
 
-  auto AddType(hir::TypeData data) -> hir::TypeId {
-    const hir::TypeId id{static_cast<std::uint32_t>(hir_unit_.types.size())};
-    hir_unit_.types.push_back(hir::Type{.data = std::move(data)});
-    return id;
-  }
+  // Canonical entry point for slang-driven types. Same slang canonical type
+  // always returns the same hir::TypeId by going through a canonical-pointer
+  // cache; callers never raw-add slang-backed types. Defined in type.cpp so
+  // the body lives next to LowerType.
+  auto GetTypeId(const slang::ast::Type& type, diag::SourceSpan span)
+      -> diag::Result<hir::TypeId>;
 
   [[nodiscard]] auto GetType(hir::TypeId id) const -> const hir::Type& {
     return hir_unit_.GetType(id);
@@ -160,10 +174,21 @@ class UnitLoweringState {
   }
 
  private:
+  // Adds a freshly-built TypeData entry and returns its id. Used internally
+  // by the ctor (intrinsic types) and GetTypeId (after a cache miss); no
+  // outside caller raw-adds types, so dedup invariants stay enforced.
+  auto AddType(hir::TypeData data) -> hir::TypeId {
+    const hir::TypeId id{static_cast<std::uint32_t>(hir_unit_.types.size())};
+    hir_unit_.types.push_back(hir::Type{.data = std::move(data)});
+    return id;
+  }
+
   hir::ModuleUnit hir_unit_;
   StructuralVarBindings structural_var_bindings_;
   SubroutineBindings subroutine_bindings_;
   LoopVarBindings loop_var_bindings_;
+  std::unordered_map<const slang::ast::Type*, hir::TypeId> type_cache_;
+  hir::TypeId void_type_id_{};
 };
 
 class ScopeStack {
@@ -238,6 +263,10 @@ class ScopeLoweringState {
         hir::StructuralVarDecl{.name = std::string{var.name}, .type = type});
     unit_state_->MapStructuralVarBinding(var, frame_, local, type);
     return local;
+  }
+
+  void AddTypeAlias(hir::TypeAliasDecl decl) {
+    scope_->type_aliases.push_back(std::move(decl));
   }
 
   auto AddLoopVarDecl(const slang::ast::ValueSymbol& sym, hir::TypeId type)

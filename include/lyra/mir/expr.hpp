@@ -6,6 +6,7 @@
 #include <vector>
 
 #include "lyra/mir/binary_op.hpp"
+#include "lyra/mir/builtin_method_kind.hpp"
 #include "lyra/mir/closure.hpp"
 #include "lyra/mir/conversion.hpp"
 #include "lyra/mir/expr_id.hpp"
@@ -16,7 +17,6 @@
 #include "lyra/mir/runtime_submit.hpp"
 #include "lyra/mir/structural_param.hpp"
 #include "lyra/mir/structural_subroutine.hpp"
-#include "lyra/mir/type.hpp"
 #include "lyra/mir/unary_op.hpp"
 #include "lyra/mir/value_ref.hpp"
 #include "lyra/support/system_subroutine.hpp"
@@ -64,7 +64,13 @@ struct SystemSubroutineCallee {
   support::SystemSubroutineId id;
 };
 
-using Callee = std::variant<SystemSubroutineCallee, StructuralSubroutineRef>;
+struct BuiltinMethodCallee {
+  TypeId receiver_type;
+  BuiltinMethodKind kind;
+};
+
+using Callee = std::variant<
+    SystemSubroutineCallee, StructuralSubroutineRef, BuiltinMethodCallee>;
 
 struct CallExpr {
   Callee callee;

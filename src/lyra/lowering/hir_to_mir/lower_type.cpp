@@ -86,10 +86,33 @@ auto TranslateTypeData(
             };
           },
           [&](const hir::EnumType& src) -> mir::TypeData {
-            // Enum erases to its base type in MIR: copy the base's translated
-            // mir::TypeData. (MIR has no enum concept; backends see
-            // PackedArray.)
-            return state.GetType(state.TranslateType(src.base_type)).data;
+            // Enum is kept as a distinct mir::EnumType wrapping its base
+            // PackedArray plus the member table. Value-level operations
+            // unwrap via Type::AsIntegralPacked(); method dispatch reads the
+            // members from this struct directly.
+            const auto& base_mir_data =
+                state.GetType(state.TranslateType(src.base_type)).data;
+            const auto* base_pa =
+                std::get_if<mir::PackedArrayType>(&base_mir_data);
+            if (base_pa == nullptr) {
+              throw InternalError(
+                  "TranslateTypeData: enum base did not lower to a "
+                  "PackedArrayType");
+            }
+            std::vector<mir::EnumMember> members;
+            members.reserve(src.members.size());
+            for (const auto& m : src.members) {
+              const std::int64_t value =
+                  m.value.value_words.empty()
+                      ? 0
+                      : static_cast<std::int64_t>(m.value.value_words[0]);
+              members.push_back(
+                  mir::EnumMember{.name = m.name, .value = value});
+            }
+            return mir::EnumType{
+                .base = *base_pa,
+                .members = std::move(members),
+            };
           },
           [&](const hir::UnpackedArrayType& src) -> mir::TypeData {
             return mir::UnpackedArrayType{

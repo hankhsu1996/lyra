@@ -1,23 +1,19 @@
 #pragma once
 
-#include <compare>
 #include <cstdint>
 #include <optional>
+#include <string>
 #include <variant>
 #include <vector>
 
 #include "lyra/mir/structural_scope_id.hpp"
+#include "lyra/mir/type_id.hpp"
 
 namespace lyra::mir {
 
-struct TypeId {
-  std::uint32_t value;
-
-  auto operator<=>(const TypeId&) const -> std::strong_ordering = default;
-};
-
 enum class TypeKind {
   kPackedArray,
+  kEnum,
   kUnpackedArray,
   kDynamicArray,
   kQueue,
@@ -75,6 +71,16 @@ struct PackedArrayType {
   [[nodiscard]] auto IsFourState() const -> bool;
 };
 
+struct EnumMember {
+  std::string name;
+  std::int64_t value;
+};
+
+struct EnumType {
+  PackedArrayType base;
+  std::vector<EnumMember> members;
+};
+
 struct UnpackedRange {
   std::int64_t left;
   std::int64_t right;
@@ -126,7 +132,7 @@ struct VectorType {
 };
 
 using TypeData = std::variant<
-    PackedArrayType, UnpackedArrayType, DynamicArrayType, QueueType,
+    PackedArrayType, EnumType, UnpackedArrayType, DynamicArrayType, QueueType,
     AssociativeArrayType, StringType, EventType, RealType, ShortRealType,
     RealTimeType, ChandleType, VoidType, ObjectType, OwningPtrType, VectorType>;
 
@@ -136,6 +142,14 @@ struct Type {
   [[nodiscard]] auto Kind() const -> TypeKind;
   [[nodiscard]] auto IsPackedArray() const -> bool;
   [[nodiscard]] auto AsPackedArray() const -> const PackedArrayType&;
+  [[nodiscard]] auto IsEnum() const -> bool;
+  [[nodiscard]] auto AsEnum() const -> const EnumType&;
+  // True for PackedArrayType or EnumType (since enum's value-level shape is
+  // its base PackedArray). Sites that treat enum as its integral
+  // representation use this predicate; sites that need to distinguish enum
+  // from packed should match on the variant directly.
+  [[nodiscard]] auto IsIntegralPacked() const -> bool;
+  [[nodiscard]] auto AsIntegralPacked() const -> const PackedArrayType&;
 };
 
 class CompilationUnit;

@@ -17,7 +17,6 @@
 #include "lyra/hir/process.hpp"
 #include "lyra/hir/structural_scope.hpp"
 #include "lyra/hir/subroutine_ref.hpp"
-#include "lyra/hir/type.hpp"
 #include "lyra/hir/unary_op.hpp"
 #include "lyra/hir/value_ref.hpp"
 #include "lyra/lowering/hir_to_mir/lower_system_subroutine.hpp"
@@ -258,69 +257,23 @@ auto LowerHirIntegerLiteral(const hir::IntegerLiteral& i, mir::TypeId type)
       .type = type};
 }
 
-auto LowerBuiltinMethodCall(
-    const UnitLoweringState& unit_state, const hir::Process& hir_process,
-    hir::BuiltinMethodKind kind, const std::vector<hir::ExprId>& arguments,
-    mir::TypeId result_type, diag::SourceSpan span) -> diag::Result<mir::Expr> {
-  if (arguments.empty()) {
-    throw InternalError(
-        "LowerBuiltinMethodCall: built-in method call has no receiver");
-  }
-  const hir::TypeId receiver_type_id =
-      hir_process.exprs.at(arguments[0].value).type;
-  const auto& receiver_type = unit_state.GetHirType(receiver_type_id);
-  if (!receiver_type.IsEnum()) {
-    throw InternalError(
-        "LowerBuiltinMethodCall: enum builtin method on non-enum receiver");
-  }
-  const auto& enum_type = receiver_type.AsEnum();
-
+auto LowerBuiltinMethodKind(hir::BuiltinMethodKind kind)
+    -> mir::BuiltinMethodKind {
   switch (kind) {
     case hir::BuiltinMethodKind::kEnumFirst:
-    case hir::BuiltinMethodKind::kEnumLast: {
-      if (enum_type.members.empty()) {
-        throw InternalError("LowerBuiltinMethodCall: enum has no members");
-      }
-      const hir::EnumMember& picked =
-          (kind == hir::BuiltinMethodKind::kEnumFirst)
-              ? enum_type.members.front()
-              : enum_type.members.back();
-      return mir::Expr{
-          .data =
-              mir::IntegerLiteral{
-                  .value = LowerHirIntegralConstant(picked.value)},
-          .type = result_type};
-    }
-    case hir::BuiltinMethodKind::kEnumNum: {
-      const auto count = static_cast<std::uint32_t>(enum_type.members.size());
-      hir::IntegralConstant value{
-          .value_words = {static_cast<std::uint64_t>(count)},
-          .state_words = {},
-          .width = 32U,
-          .signedness = hir::Signedness::kSigned,
-          .state_kind = hir::IntegralStateKind::kTwoState,
-      };
-      return mir::Expr{
-          .data = mir::IntegerLiteral{.value = LowerHirIntegralConstant(value)},
-          .type = result_type};
-    }
+      return mir::BuiltinMethodKind::kEnumFirst;
+    case hir::BuiltinMethodKind::kEnumLast:
+      return mir::BuiltinMethodKind::kEnumLast;
+    case hir::BuiltinMethodKind::kEnumNum:
+      return mir::BuiltinMethodKind::kEnumNum;
     case hir::BuiltinMethodKind::kEnumNext:
-      return diag::Unsupported(
-          span, diag::DiagCode::kUnsupportedExpressionForm,
-          "enum method 'next' is not yet supported",
-          diag::UnsupportedCategory::kOperation);
+      return mir::BuiltinMethodKind::kEnumNext;
     case hir::BuiltinMethodKind::kEnumPrev:
-      return diag::Unsupported(
-          span, diag::DiagCode::kUnsupportedExpressionForm,
-          "enum method 'prev' is not yet supported",
-          diag::UnsupportedCategory::kOperation);
+      return mir::BuiltinMethodKind::kEnumPrev;
     case hir::BuiltinMethodKind::kEnumName:
-      return diag::Unsupported(
-          span, diag::DiagCode::kUnsupportedExpressionForm,
-          "enum method 'name' is not yet supported",
-          diag::UnsupportedCategory::kOperation);
+      return mir::BuiltinMethodKind::kEnumName;
   }
-  throw InternalError("LowerBuiltinMethodCall: unknown BuiltinMethodKind");
+  throw InternalError("LowerBuiltinMethodKind: unknown hir::BuiltinMethodKind");
 }
 
 auto LowerHirStringLiteral(const hir::StringLiteral& s, mir::TypeId type)
@@ -614,26 +567,35 @@ auto LowerHirCallExprProc(
                         .arguments = std::move(args)},
                 .type = result_type};
           },
-          [&](const hir::MethodRef& m) -> diag::Result<mir::Expr> {
-            const auto& method =
-                unit_state.GetHirType(m.receiver_type).GetMethod(m.method);
-            return std::visit(
-                Overloaded{
-                    [&](const hir::BuiltinMethod& b)
-                        -> diag::Result<mir::Expr> {
-                      return LowerBuiltinMethodCall(
-                          unit_state, hir_process, b.kind, c.arguments,
-                          result_type, span);
-                    },
-                    [&](const hir::StructuralMethod&)
-                        -> diag::Result<mir::Expr> {
-                      throw InternalError(
-                          "MethodRef -> StructuralMethod lowering: "
-                          "user-defined methods are not yet wired into HIR/MIR "
-                          "call dispatch");
-                    },
-                },
-                method.data);
+          [&](const hir::BuiltinMethodRef& b) -> diag::Result<mir::Expr> {
+            if (c.arguments.empty()) {
+              throw InternalError(
+                  "BuiltinMethodRef call has no receiver argument");
+            }
+            const hir::TypeId hir_receiver_type =
+                hir_process.exprs.at(c.arguments.front().value).type;
+            std::vector<mir::ExprId> args;
+            args.reserve(c.arguments.size());
+            for (const auto arg : c.arguments) {
+              auto arg_or = LowerExpr(
+                  unit_state, scope_state, proc_state, proc_scope_state,
+                  hir_process, hir_process.exprs.at(arg.value));
+              if (!arg_or) {
+                return std::unexpected(std::move(arg_or.error()));
+              }
+              args.push_back(proc_scope_state.AddExpr(*std::move(arg_or)));
+            }
+            return mir::Expr{
+                .data =
+                    mir::CallExpr{
+                        .callee =
+                            mir::BuiltinMethodCallee{
+                                .receiver_type =
+                                    unit_state.TranslateType(hir_receiver_type),
+                                .kind = LowerBuiltinMethodKind(b.kind),
+                            },
+                        .arguments = std::move(args)},
+                .type = result_type};
           },
       },
       c.callee);
