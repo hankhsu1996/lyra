@@ -317,6 +317,20 @@ auto RenderStmt(
           [&](const mir::ContinueStmt&) -> diag::Result<std::string> {
             return Indent(indent) + "continue;\n";
           },
+          [&](const mir::SensitivityWaitStmt& s) -> diag::Result<std::string> {
+            std::string out =
+                Indent(indent) + "co_await lyra::runtime::WaitAny({";
+            for (std::size_t i = 0; i < s.reads.size(); ++i) {
+              auto name_or = RenderStructuralVarName(ctx, s.reads[i].ref);
+              if (!name_or) {
+                return std::unexpected(std::move(name_or.error()));
+              }
+              if (i != 0) out += ", ";
+              out += "{&" + *name_or + ", lyra::runtime::Edge::kAnyChange}";
+            }
+            out += "});\n";
+            return out;
+          },
       },
       stmt.data);
   if (!rendered_or) return std::unexpected(std::move(rendered_or.error()));

@@ -143,17 +143,23 @@ Granular tracking lives in `integral.md` (integral / packed / wide_integral) and
 
 ### processes
 
-- [ ] processes/continuous_assign
-- [ ] processes/delay
-- [ ] processes/edge_trigger_bit_select
-- [ ] processes/edge_trigger_dynamic
-- [ ] processes/event_triggers
-- [ ] processes/final_block
-- [ ] processes/generate
-- [ ] processes/initial
-- [ ] processes/named_event
-- [ ] processes/non_blocking
-- [ ] processes/wait_event
+Tracked in `processes.md`. Covers procedural blocks (`initial`, `final`, `always`, `always_comb`,
+`always_latch`, `always_ff`), timing controls (`#N`, `@(...)`), assignments (`<=`, `assign`), and
+synchronisation primitives (named events, `wait`, `fork`/`join_*`).
+
+- [ ] processes/continuous_assign -- `processes.md` P7.
+- [x] processes/delay -- `processes.md` T1.
+- [ ] processes/edge_trigger_bit_select -- `processes.md` T3 (whole-variable subset, done) and T5
+      (selected subset, blocked).
+- [ ] processes/edge_trigger_dynamic -- `processes.md` T5.
+- [x] processes/event_triggers -- `processes.md` T2, T3, T4 cover the event-control surface;
+      remaining named-event trigger lives in P9.
+- [x] processes/final_block -- `processes.md` P2.
+- [ ] processes/generate -- `processes.md` P12.
+- [x] processes/initial -- `processes.md` P1.
+- [ ] processes/named_event -- `processes.md` P9.
+- [x] processes/non_blocking -- `processes.md` P4.
+- [ ] processes/wait_event -- `processes.md` P11.
 
 ### scheduling
 

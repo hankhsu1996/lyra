@@ -2,8 +2,11 @@
 
 #include <expected>
 #include <utility>
+#include <vector>
 
 #include <slang/ast/symbols/BlockSymbols.h>
+#include <slang/ast/symbols/ValueSymbol.h>
+#include <slang/ast/symbols/VariableSymbols.h>
 
 #include "lyra/base/internal_error.hpp"
 #include "lyra/diag/diagnostic.hpp"
@@ -36,6 +39,32 @@ auto FromSlangProceduralBlockKind(slang::ast::ProceduralBlockKind kind)
       "ast_to_hir::FromSlangProceduralBlockKind: unknown ProceduralBlockKind");
 }
 
+// LRM 9.2.2.2.1 sensitivity is computed by slang::analysis::AnalysisManager;
+// here we translate the slang ValueSymbol pointers + bit ranges it produced
+// into the HIR StructuralVarRef + bit_range form used downstream.
+auto TranslateSensitivityEntries(
+    const UnitLoweringFacts& unit_facts, const UnitLoweringState& unit_state,
+    const ScopeStack& stack, const slang::ast::ProceduralBlockSymbol& proc)
+    -> std::vector<hir::SensitivityEntry> {
+  std::vector<hir::SensitivityEntry> out;
+  const auto& reads_map = unit_facts.SensitivityReads();
+  const auto it = reads_map.find(&proc);
+  if (it == reads_map.end()) return out;
+  for (const auto& read : it->second) {
+    const auto* var = read.symbol->as_if<slang::ast::VariableSymbol>();
+    if (var == nullptr) continue;
+    const auto binding = unit_state.LookupStructuralVarBinding(*var);
+    if (!binding.has_value()) continue;
+    const auto hops = stack.HopsTo(binding->home_frame);
+    if (!hops.has_value()) continue;
+    out.push_back(
+        hir::SensitivityEntry{
+            .ref = hir::StructuralVarRef{.hops = *hops, .var = binding->var_id},
+            .bit_range = read.bit_range});
+  }
+  return out;
+}
+
 }  // namespace
 
 auto LowerProcess(
@@ -51,8 +80,15 @@ auto LowerProcess(
 
   const auto& mapper = unit_facts.SourceMapper();
   const auto span = mapper.PointSpanOf(proc.location);
-  return proc_state.Finalize(
-      FromSlangProceduralBlockKind(proc.procedureKind), span, root_stmt_id);
+  const auto kind = FromSlangProceduralBlockKind(proc.procedureKind);
+
+  auto out = proc_state.Finalize(kind, span, root_stmt_id);
+  if (kind == hir::ProcessKind::kAlwaysComb ||
+      kind == hir::ProcessKind::kAlwaysLatch) {
+    out.implicit_sensitivity_list = TranslateSensitivityEntries(
+        unit_facts, scope_state.UnitState(), stack, proc);
+  }
+  return out;
 }
 
 }  // namespace lyra::lowering::ast_to_hir
