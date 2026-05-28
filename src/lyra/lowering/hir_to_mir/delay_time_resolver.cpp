@@ -74,15 +74,14 @@ auto DelayTimeResolver::ResolveIntegerDelay(
         span, diag::DiagCode::kDelayValueOutOfRange,
         "delay value overflows internal tick representation");
   }
-  const std::uint64_t ratio = *ratio_or;
   const auto unsigned_value = static_cast<std::uint64_t>(value);
-  if (ratio != 0 &&
-      unsigned_value > std::numeric_limits<std::uint64_t>::max() / ratio) {
+  if (*ratio_or != 0 &&
+      unsigned_value > std::numeric_limits<std::uint64_t>::max() / *ratio_or) {
     return diag::Error(
         span, diag::DiagCode::kDelayValueOutOfRange,
         "delay value overflows internal tick representation");
   }
-  return static_cast<SimDuration>(unsigned_value * ratio);
+  return static_cast<SimDuration>(unsigned_value * *ratio_or);
 }
 
 auto DelayTimeResolver::ResolveTimeLiteral(

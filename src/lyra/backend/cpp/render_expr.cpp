@@ -20,6 +20,7 @@
 #include "lyra/diag/diagnostic.hpp"
 #include "lyra/diag/kind.hpp"
 #include "lyra/mir/binary_op.hpp"
+#include "lyra/mir/builtin_method_kind.hpp"
 #include "lyra/mir/conversion.hpp"
 #include "lyra/mir/expr.hpp"
 #include "lyra/mir/integral_constant.hpp"
@@ -222,11 +223,18 @@ auto RenderIntegerLiteralExpr(
     const RenderContext& ctx, const mir::Expr& expr,
     const mir::IntegerLiteral& lit) -> diag::Result<std::string> {
   const auto& ty = ctx.Unit().GetType(expr.type);
-  if (!ty.IsPackedArray()) {
+  if (!ty.IsIntegralPacked()) {
     throw InternalError(
-        "RenderExpr: IntegerLiteral not typed as PackedArrayType");
+        "RenderExpr: IntegerLiteral not typed as PackedArrayType or "
+        "EnumType");
   }
-  return RenderPackedArrayIntegerLiteral(ty.AsPackedArray(), lit.value);
+  auto body = RenderPackedArrayIntegerLiteral(ty.AsIntegralPacked(), lit.value);
+  if (ty.IsEnum()) {
+    return std::format(
+        "{}{{{}}}", RenderEnumClassName(ctx.StructuralScope(), expr.type),
+        body);
+  }
+  return body;
 }
 
 auto RenderStructuralParamExpr(
@@ -395,22 +403,129 @@ auto RenderConversionExprNode(
   const auto& dst_ty = ctx.Unit().GetType(expr.type);
   // Same-shape conversion (slang's spurious promotions): pass through.
   // Cross-shape: route through PackedArray::ConvertFrom.
-  if (src_ty.IsPackedArray() && dst_ty.IsPackedArray()) {
-    const auto& src_pa = src_ty.AsPackedArray();
-    const auto& dst_pa = dst_ty.AsPackedArray();
+  if (src_ty.IsIntegralPacked() && dst_ty.IsIntegralPacked()) {
+    const auto& src_pa = src_ty.AsIntegralPacked();
+    const auto& dst_pa = dst_ty.AsIntegralPacked();
+    std::string body;
     if (src_pa.BitWidth() == dst_pa.BitWidth() &&
         src_pa.signedness == dst_pa.signedness && src_pa.atom == dst_pa.atom) {
-      return *operand_or;
+      body = *operand_or;
+    } else {
+      const char* signed_lit =
+          dst_pa.signedness == mir::Signedness::kSigned ? "true" : "false";
+      const char* four_state_lit =
+          dst_pa.atom != mir::BitAtom::kBit ? "true" : "false";
+      body = std::format(
+          "lyra::value::PackedArray::ConvertFrom({}, {}, {}, {})", *operand_or,
+          dst_pa.BitWidth(), signed_lit, four_state_lit);
     }
-    const char* signed_lit =
-        dst_pa.signedness == mir::Signedness::kSigned ? "true" : "false";
-    const char* four_state_lit =
-        dst_pa.atom != mir::BitAtom::kBit ? "true" : "false";
-    return std::format(
-        "lyra::value::PackedArray::ConvertFrom({}, {}, {}, {})", *operand_or,
-        dst_pa.BitWidth(), signed_lit, four_state_lit);
+    // LRM 6.19.3: integral-to-enum requires an explicit cast. The emitted
+    // enum class is a PackedArray subclass with an explicit PackedArray ctor;
+    // wrap the integral body with that ctor so the C++ result type matches the
+    // destination enum class.
+    if (dst_ty.IsEnum()) {
+      return std::format(
+          "{}{{{}}}", RenderEnumClassName(ctx.StructuralScope(), expr.type),
+          body);
+    }
+    // Enum-to-integral: slice the enum subobject into a fresh PackedArray so
+    // the C++ result type matches PackedArray-typed consumers (template
+    // deduction sees PackedArray, not the enum class).
+    if (src_ty.IsEnum() && !dst_ty.IsEnum()) {
+      return std::format("lyra::value::PackedArray{{{}}}", body);
+    }
+    return body;
   }
   return *operand_or;
+}
+
+auto BuiltinMethodMemberName(mir::BuiltinMethodKind kind) -> std::string_view {
+  switch (kind) {
+    case mir::BuiltinMethodKind::kEnumFirst:
+      return "First";
+    case mir::BuiltinMethodKind::kEnumLast:
+      return "Last";
+    case mir::BuiltinMethodKind::kEnumNum:
+      return "Num";
+    case mir::BuiltinMethodKind::kEnumName:
+      return "Name";
+    case mir::BuiltinMethodKind::kEnumNext:
+      return "Next";
+    case mir::BuiltinMethodKind::kEnumPrev:
+      return "Prev";
+  }
+  throw InternalError(
+      "BuiltinMethodMemberName: unknown mir::BuiltinMethodKind");
+}
+
+auto RenderCallExprNode(const RenderContext& ctx, const mir::CallExpr& call)
+    -> diag::Result<std::string> {
+  return std::visit(
+      Overloaded{
+          [](const mir::SystemSubroutineCallee&) -> diag::Result<std::string> {
+            return diag::Unsupported(
+                diag::DiagCode::kCppEmitExpressionFormNotImplemented,
+                "system subroutine call as expression is not yet implemented "
+                "in cpp emit",
+                diag::UnsupportedCategory::kFeature);
+          },
+          [](const mir::StructuralSubroutineRef&) -> diag::Result<std::string> {
+            return diag::Unsupported(
+                diag::DiagCode::kCppEmitExpressionFormNotImplemented,
+                "user subroutine call is not yet implemented in cpp emit",
+                diag::UnsupportedCategory::kFeature);
+          },
+          [&](const mir::BuiltinMethodCallee& b) -> diag::Result<std::string> {
+            const auto class_name =
+                RenderEnumClassName(ctx.StructuralScope(), b.receiver_type);
+            const auto member = BuiltinMethodMemberName(b.kind);
+            // first / last / num are static methods on the enum class; the
+            // remaining methods (name / next / prev) dispatch on the receiver.
+            const bool is_static =
+                b.kind == mir::BuiltinMethodKind::kEnumFirst ||
+                b.kind == mir::BuiltinMethodKind::kEnumLast ||
+                b.kind == mir::BuiltinMethodKind::kEnumNum;
+            const bool takes_step =
+                b.kind == mir::BuiltinMethodKind::kEnumNext ||
+                b.kind == mir::BuiltinMethodKind::kEnumPrev;
+            std::string raw_call;
+            if (is_static) {
+              raw_call = std::format("{}::{}()", class_name, member);
+            } else {
+              if (call.arguments.empty()) {
+                throw InternalError(
+                    "RenderCallExprNode: BuiltinMethodCallee expects a "
+                    "receiver argument");
+              }
+              auto receiver_or = RenderExpr(ctx, ctx.Expr(call.arguments[0]));
+              if (!receiver_or) {
+                return std::unexpected(std::move(receiver_or.error()));
+              }
+              // next / prev have an optional step. Omitted at the SV call
+              // site -> omit at the C++ call site too; the Enum<Derived>
+              // method's default argument supplies 1.
+              std::string step_arg;
+              if (takes_step && call.arguments.size() >= 2) {
+                auto step_or = RenderExpr(ctx, ctx.Expr(call.arguments[1]));
+                if (!step_or) {
+                  return std::unexpected(std::move(step_or.error()));
+                }
+                step_arg = std::format(
+                    "static_cast<unsigned>(({}).ToInt64())", *step_or);
+              }
+              raw_call =
+                  std::format("({}).{}({})", *receiver_or, member, step_arg);
+            }
+            // name() returns std::string; first/last/next/prev return the
+            // enum class directly (a PackedArray subclass). num() returns
+            // std::int32_t and needs wrapping into the SV `int` shape.
+            if (b.kind == mir::BuiltinMethodKind::kEnumNum) {
+              return std::format("lyra::value::PackedArray::Int({})", raw_call);
+            }
+            return raw_call;
+          },
+      },
+      call.callee);
 }
 
 }  // namespace
@@ -438,7 +553,7 @@ auto RenderExpr(const RenderContext& ctx, const mir::Expr& expr)
             auto name_or = RenderStructuralVarName(ctx, m);
             if (!name_or) return std::unexpected(std::move(name_or.error()));
             const auto& ty = ctx.Unit().GetType(expr.type);
-            if (ty.IsPackedArray()) {
+            if (ty.IsIntegralPacked()) {
               return *name_or + ".Get()";
             }
             return *name_or;
@@ -461,11 +576,8 @@ auto RenderExpr(const RenderContext& ctx, const mir::Expr& expr)
           [&](const mir::ConversionExpr& cv) -> diag::Result<std::string> {
             return RenderConversionExprNode(ctx, expr, cv);
           },
-          [](const mir::CallExpr&) -> diag::Result<std::string> {
-            return diag::Unsupported(
-                diag::DiagCode::kCppEmitExpressionFormNotImplemented,
-                "user subroutine call is not yet implemented in cpp emit",
-                diag::UnsupportedCategory::kFeature);
+          [&](const mir::CallExpr& call) -> diag::Result<std::string> {
+            return RenderCallExprNode(ctx, call);
           },
           [&](const mir::RuntimeCallExpr& rc) -> diag::Result<std::string> {
             return RenderRuntimeCallExpr(ctx, rc);
@@ -540,7 +652,7 @@ auto RenderConditionAsBool(const RenderContext& ctx, const mir::Expr& expr)
   auto text_or = RenderExpr(ctx, expr);
   if (!text_or) return std::unexpected(std::move(text_or.error()));
   const auto& ty = ctx.Unit().GetType(expr.type);
-  if (ty.IsPackedArray()) {
+  if (ty.IsIntegralPacked()) {
     return "(" + *text_or + ").IsTruthy()";
   }
   return *text_or;

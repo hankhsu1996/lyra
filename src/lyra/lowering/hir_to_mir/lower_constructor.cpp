@@ -503,7 +503,14 @@ auto LowerStructuralScope(
       .constructor_scope = {},
       .processes = {},
       .child_structural_scopes = {},
-      .structural_subroutines = {}};
+      .structural_subroutines = {},
+      .type_aliases = {}};
+  for (const auto& alias : scope.type_aliases) {
+    mir_scope.type_aliases.push_back(
+        mir::TypeAliasDecl{
+            .name = alias.name,
+            .target = unit_state.TranslateType(alias.target)});
+  }
   StructuralScopeLoweringState scope_state(parent_scope_state, mir_scope);
   const ScopeStackGuard guard(stack, scope);
 

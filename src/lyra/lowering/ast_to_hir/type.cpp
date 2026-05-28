@@ -1,9 +1,7 @@
 #include "lyra/lowering/ast_to_hir/type.hpp"
 
 #include <cstdint>
-#include <initializer_list>
 #include <string>
-#include <string_view>
 #include <utility>
 #include <vector>
 
@@ -17,7 +15,6 @@
 #include "lyra/diag/diagnostic.hpp"
 #include "lyra/diag/source_span.hpp"
 #include "lyra/hir/integral_constant.hpp"
-#include "lyra/hir/method.hpp"
 #include "lyra/hir/type.hpp"
 #include "lyra/lowering/ast_to_hir/integral_constant.hpp"
 #include "lyra/lowering/ast_to_hir/state.hpp"
@@ -125,11 +122,8 @@ auto LowerExplicitPackedArray(
 auto LowerEnum(
     const slang::ast::EnumType& enum_type, diag::SourceSpan decl_span,
     UnitLoweringState& state) -> diag::Result<hir::EnumType> {
-  auto base_data = LowerType(enum_type.baseType, decl_span, state);
-  if (!base_data.has_value()) {
-    return std::unexpected(std::move(base_data.error()));
-  }
-  const hir::TypeId base_id = state.AddType(*std::move(base_data));
+  auto base_id_or = state.GetTypeId(enum_type.baseType, decl_span);
+  if (!base_id_or) return std::unexpected(std::move(base_id_or.error()));
   std::vector<hir::EnumMember> members;
   for (const auto& value_sym : enum_type.values()) {
     const auto& cv = value_sym.getValue();
@@ -142,27 +136,9 @@ auto LowerEnum(
             .value = LowerSVIntToIntegralConstant(cv.integer()),
         });
   }
-  std::vector<hir::Method> methods;
-  methods.reserve(6);
-  for (const auto [name, kind] : std::initializer_list<
-           std::pair<std::string_view, hir::BuiltinMethodKind>>{
-           {"first", hir::BuiltinMethodKind::kEnumFirst},
-           {"last", hir::BuiltinMethodKind::kEnumLast},
-           {"num", hir::BuiltinMethodKind::kEnumNum},
-           {"next", hir::BuiltinMethodKind::kEnumNext},
-           {"prev", hir::BuiltinMethodKind::kEnumPrev},
-           {"name", hir::BuiltinMethodKind::kEnumName},
-       }) {
-    methods.push_back(
-        hir::Method{
-            .name = std::string{name},
-            .data = hir::BuiltinMethod{.kind = kind},
-        });
-  }
   return hir::EnumType{
-      .base_type = base_id,
+      .base_type = *base_id_or,
       .members = std::move(members),
-      .methods = std::move(methods),
   };
 }
 
@@ -268,6 +244,21 @@ auto LowerType(
           decl_span, diag::DiagCode::kUnsupportedTypeKind,
           "unsupported type kind", diag::UnsupportedCategory::kType);
   }
+}
+
+auto UnitLoweringState::GetTypeId(
+    const slang::ast::Type& type, diag::SourceSpan span)
+    -> diag::Result<hir::TypeId> {
+  const auto* canonical = &type.getCanonicalType();
+  const auto it = type_cache_.find(canonical);
+  if (it != type_cache_.end()) {
+    return it->second;
+  }
+  auto data_or = LowerType(type, span, *this);
+  if (!data_or) return std::unexpected(std::move(data_or.error()));
+  const hir::TypeId id = AddType(*std::move(data_or));
+  type_cache_.emplace(canonical, id);
+  return id;
 }
 
 }  // namespace lyra::lowering::ast_to_hir

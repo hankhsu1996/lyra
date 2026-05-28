@@ -11,7 +11,8 @@ on the current pipeline.
 
 ## Actionable
 
-E2 and E3 are actionable now; no remaining dependencies on other workstreams.
+No enum work remaining. Next family: pick from `datatypes/string`, `datatypes/unpacked`,
+`datatypes/general`, `datatypes/real`, `datatypes/default_init`, `datatypes/representation`.
 
 ## Enum
 
@@ -30,15 +31,25 @@ future `string` / `queue` builtins and user class methods; only the `Method::dat
 alternative differs (`BuiltinMethod` for LRM intrinsics, `StructuralMethod` for user-defined
 bodies).
 
-- [x] E1 -- Type plumbing, member references, compile-time methods. `LowerType` recognises
+Behavior lives in the runtime SDK (`include/lyra/value/enum_ops.hpp`): six hand-written `inline`
+functions (`EnumFirst` / `EnumLast` / `EnumNum` / `EnumName` / `EnumNext` / `EnumPrev`) operating on
+a generic `EnumMetadata{members, is_four_state}`. HIR -> MIR translates `MethodRef` to a
+`mir::BuiltinMethodCallee{enum_metadata_id, kind}` callee and populates a per-enum-type
+`EnumMetadata` entry on `mir::CompilationUnit::enum_metadata` (cached by HIR `TypeId`). cpp emit
+walks `enum_metadata` to emit `inline constexpr lyra::value::EnumMember[]` plus an
+`inline constexpr lyra::value::EnumMetadata` global per entry at TU top, and renders each call site
+as `lyra::value::Enum<Method>(lyra_enum_metadata_N, ...)`. The architecture choice between inline
+expansion vs runtime ops library is documented in `enum-method-architecture.md` (root).
+
+- [x] E1 -- Type plumbing, member references, method dispatch. `LowerType` recognises
       `slang::ast::EnumType` and populates the enum type's six-entry method table (`first` / `last`
       / `num` / `next` / `prev` / `name`). AST `NamedValueExpression` whose symbol kind is
       `EnumValue` lowers directly to `hir::IntegerLiteral` of the backing type. `v.first()` /
       `v.last()` / `v.num()` lower at AST -> HIR via a uniform call dispatch that looks up the
       method by name on the receiver's type, producing
-      `CallExpr{callee=MethodRef{receiver_type, method_id}, arguments=[receiver]}` without folding;
-      the fold happens at HIR -> MIR's `LowerBuiltinMethodCall` using the receiver's `hir::EnumType`
-      member table. HIR -> MIR's `TranslateTypeData` has an `EnumType` arm that copies the base's
+      `CallExpr{callee=MethodRef{receiver_type, method_id}, arguments=[receiver]}`. HIR -> MIR
+      translates each `MethodRef` to a `mir::BuiltinMethodCallee` referring to the receiver type's
+      `EnumMetadata`. HIR -> MIR's `TranslateTypeData` has an `EnumType` arm that copies the base's
       translated `mir::TypeData`, so the orchestrator stays uniform. Conversions enum -> integral
       are transparent; integral -> enum requires explicit cast (LRM 6.19.3). Covers all 11 cases of
       `enum/default.yaml` (basic, sequential, explicit, mixed, comparison, arithmetic, explicit base
@@ -49,27 +60,24 @@ bodies).
       `enum_passed_to_system_function` as a regression guard for the AST -> HIR Call dispatch (an
       enum-typed first argument to a `$`-prefixed system call must fall through to the system
       subroutine path when no method of that name exists on the receiver). Unblocks C16 in
-      `control-flow.md`. Methods `next` / `prev` / `name` return `diag::Unsupported` at HIR -> MIR
-      until E2 / E3.
-- [ ] E2 -- Runtime methods `next` / `prev` with optional step (LRM 6.19.5.3 / 6.19.5.4). AST -> HIR
-      already produces `CallExpr{callee=MethodRef{...}, arguments=[receiver, step?]}` (no shape
-      change). HIR -> MIR's `LowerBuiltinMethodCall` replaces the current `Unsupported` arms for
-      `kEnumNext` / `kEnumPrev` with a nested `ConditionalExpr` chain over the enum's
-      declaration-order member table: each branch matches one member by equality and produces the
-      wrapped `(i +/- step) mod count` target value as an `IntegerLiteral`; the default branch is
-      the enum's default initial value (per LRM 6.19.5, Table 6-7, for non-member receivers). `step`
-      is typed `int unsigned` by slang at AST level and must be a literal in this cut; non-constant
-      step returns `diag::Unsupported`. Covers `enum_methods/default.yaml` cases `enum_next`,
-      `enum_next_wrap`, `enum_prev`, `enum_prev_wrap`, `enum_next_step`, `enum_next_step_wrap`,
-      `enum_prev_step`, `enum_prev_step_wrap`.
-- [ ] E3 -- Method `name()` (LRM 6.19.5.6). Returns the string name of the current value, empty
-      string when the value is not a member. HIR -> MIR's `LowerBuiltinMethodCall` Name arm replaces
-      the current `Unsupported` with a nested `ConditionalExpr` chain mapping each
-      `members[i].value` to `mir::StringLiteral{members[i].name}`, with default branch
-      `mir::StringLiteral{""}`. Uses only existing `mir::ConditionalExpr`,
-      `mir::BinaryExpr{kEquality}`, and `mir::StringLiteral` -- all already supported end-to-end
-      through the cpp backend; no dependency on the `datatypes/string` workstream. Covers
-      `enum_methods/default.yaml` case `enum_name`.
+      `control-flow.md`.
+- [x] E2 -- Runtime methods `next` / `prev` with optional step (LRM 6.19.5.3 / 6.19.5.4). AST -> HIR
+      produces `CallExpr{callee=MethodRef{...}, arguments=[receiver, step?]}`; AST -> HIR fills in
+      the default `1` for the missing step (each enum's method table carries the formal parameter
+      with its default `IntegralConstant`). HIR -> MIR translates `MethodRef` to a
+      `BuiltinMethodCallee` referencing the type's `EnumMetadata` plus the method kind. cpp emit
+      renders the call as `lyra::value::EnumNext(metadata, receiver_value, step)` /
+      `lyra::value::EnumPrev(metadata, receiver_value, step)` and wraps the `std::int64_t` result in
+      a `PackedArray` of the enum's base shape. Non-member receivers fall through the runtime lookup
+      to a zero default (Table 6-7 4-state X behavior is a runtime gap tracked separately). Covers
+      `enum_methods/default.yaml` cases `enum_next`, `enum_next_wrap`, `enum_prev`,
+      `enum_prev_wrap`, `enum_next_step`, `enum_next_step_wrap`, `enum_prev_step`,
+      `enum_prev_step_wrap`, plus `enum_next_runtime_step` as a regression guard for non-literal
+      step.
+- [x] E3 -- Method `name()` (LRM 6.19.5.6). Returns the string name of the current value, empty
+      string when the value is not a member. cpp emit renders the call as
+      `lyra::value::EnumName(metadata, receiver_value)`; the SDK function returns `std::string`
+      directly. Covers `enum_methods/default.yaml` case `enum_name`.
 
 ### Cross-references
 

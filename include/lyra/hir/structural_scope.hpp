@@ -12,6 +12,7 @@
 #include "lyra/hir/process.hpp"
 #include "lyra/hir/structural_var.hpp"
 #include "lyra/hir/subroutine.hpp"
+#include "lyra/hir/type_alias.hpp"
 
 namespace lyra::hir {
 
@@ -74,6 +75,7 @@ struct StructuralScope {
   std::vector<Process> processes;
   std::vector<Generate> generates;
   std::vector<StructuralSubroutineDecl> structural_subroutines;
+  std::vector<TypeAliasDecl> type_aliases;
 
   [[nodiscard]] auto GetStructuralVar(StructuralVarId id) const
       -> const StructuralVarDecl& {

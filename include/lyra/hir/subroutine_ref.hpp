@@ -18,7 +18,7 @@ struct SystemSubroutineRef {
   support::SystemSubroutineId id;
 };
 
-using SubroutineRef =
-    std::variant<StructuralSubroutineRef, SystemSubroutineRef, MethodRef>;
+using SubroutineRef = std::variant<
+    StructuralSubroutineRef, SystemSubroutineRef, BuiltinMethodRef>;
 
 }  // namespace lyra::hir

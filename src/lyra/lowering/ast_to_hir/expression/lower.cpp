@@ -245,6 +245,17 @@ auto MakeStringLiteralExpr(
   };
 }
 
+auto LowerEnumMethodName(std::string_view name)
+    -> std::optional<hir::BuiltinMethodKind> {
+  if (name == "first") return hir::BuiltinMethodKind::kEnumFirst;
+  if (name == "last") return hir::BuiltinMethodKind::kEnumLast;
+  if (name == "num") return hir::BuiltinMethodKind::kEnumNum;
+  if (name == "next") return hir::BuiltinMethodKind::kEnumNext;
+  if (name == "prev") return hir::BuiltinMethodKind::kEnumPrev;
+  if (name == "name") return hir::BuiltinMethodKind::kEnumName;
+  return std::nullopt;
+}
+
 auto LowerTimeUnit(slang::TimeUnit u) -> hir::TimeScale {
   switch (u) {
     case slang::TimeUnit::Femtoseconds:
@@ -308,7 +319,7 @@ auto MakeReturnConventionType(
     -> hir::TypeId {
   switch (conv) {
     case support::ReturnConvention::kVoid:
-      return unit_state.AddType(hir::TypeData{hir::VoidType{}});
+      return unit_state.VoidTypeId();
   }
   throw InternalError("MakeReturnConventionType: unknown ReturnConvention");
 }
@@ -317,9 +328,7 @@ auto TypeIdOfSlangExpr(
     const UnitLoweringFacts& unit_facts, UnitLoweringState& unit_state,
     const slang::ast::Expression& e) -> diag::Result<hir::TypeId> {
   const auto& mapper = unit_facts.SourceMapper();
-  auto td = LowerType(*e.type, mapper.SpanOf(e.sourceRange), unit_state);
-  if (!td) return std::unexpected(std::move(td.error()));
-  return unit_state.AddType(*std::move(td));
+  return unit_state.GetTypeId(*e.type, mapper.SpanOf(e.sourceRange));
 }
 
 auto LowerNamedValueProc(
@@ -597,21 +606,21 @@ auto LowerCallExprProc(
         std::get<slang::ast::CallExpression::SystemCallInfo>(call.subroutine);
     const std::string_view name = info.subroutine->name;
 
-    if (receiver_type.has_value()) {
-      if (auto method_id =
-              unit_state.GetType(*receiver_type).LookupMethod(name);
-          method_id.has_value()) {
+    if (receiver_type.has_value() &&
+        unit_state.GetType(*receiver_type).IsEnum()) {
+      if (auto kind = LowerEnumMethodName(name); kind.has_value()) {
+        // `next` / `prev` have an optional `int unsigned step = 1` (LRM
+        // 6.19.5.3/4). When the user omits the step, the lowering hands the
+        // backend a single-argument call and lets the backend's intrinsic
+        // mechanism supply the default (C++ default-argument; LLVM constant
+        // 1; etc.). No synthesized literal is injected at the HIR boundary.
         auto type_id = TypeIdOfSlangExpr(unit_facts, unit_state, expr);
         if (!type_id) return std::unexpected(std::move(type_id.error()));
         return hir::Expr{
             .type = *type_id,
             .data =
                 hir::CallExpr{
-                    .callee =
-                        hir::MethodRef{
-                            .receiver_type = *receiver_type,
-                            .method = *method_id,
-                        },
+                    .callee = hir::BuiltinMethodRef{.kind = *kind},
                     .arguments = std::move(arg_ids),
                 },
             .span = span,

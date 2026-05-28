@@ -3,14 +3,10 @@
 #include <algorithm>
 #include <cstddef>
 #include <cstdint>
-#include <optional>
-#include <span>
-#include <string_view>
 #include <variant>
 
 #include "lyra/base/internal_error.hpp"
 #include "lyra/base/overloaded.hpp"
-#include "lyra/hir/method.hpp"
 
 namespace lyra::hir {
 
@@ -52,6 +48,35 @@ auto PackedArrayType::BitWidth() const -> std::uint64_t {
 
 auto PackedArrayType::IsFourState() const -> bool {
   return atom == BitAtom::kLogic || atom == BitAtom::kReg;
+}
+
+auto PackedArrayType::DefaultInitialValue() const -> IntegralConstant {
+  const auto width = static_cast<std::uint32_t>(BitWidth());
+  const std::size_t words = (static_cast<std::size_t>(width) + 63U) / 64U;
+  if (!IsFourState()) {
+    return IntegralConstant{
+        .value_words = std::vector<std::uint64_t>(words, 0U),
+        .state_words = {},
+        .width = width,
+        .signedness = signedness,
+        .state_kind = IntegralStateKind::kTwoState,
+    };
+  }
+  std::vector<std::uint64_t> v(words, ~std::uint64_t{0});
+  std::vector<std::uint64_t> s(words, ~std::uint64_t{0});
+  const std::uint32_t tail = width % 64U;
+  if (tail != 0U && !v.empty()) {
+    const std::uint64_t mask = (std::uint64_t{1} << tail) - 1U;
+    v.back() &= mask;
+    s.back() &= mask;
+  }
+  return IntegralConstant{
+      .value_words = std::move(v),
+      .state_words = std::move(s),
+      .width = width,
+      .signedness = signedness,
+      .state_kind = IntegralStateKind::kFourState,
+  };
 }
 
 auto Type::Kind() const -> TypeKind {
@@ -96,36 +121,6 @@ auto Type::AsEnum() const -> const EnumType& {
     return *e;
   }
   throw InternalError("Type::AsEnum called on non-enum type");
-}
-
-auto Type::GetMethods() const -> std::span<const Method> {
-  return std::visit(
-      Overloaded{
-          [](const EnumType& e) -> std::span<const Method> {
-            return e.methods;
-          },
-          [](const auto&) -> std::span<const Method> { return {}; },
-      },
-      data);
-}
-
-auto Type::GetMethod(MethodId id) const -> const Method& {
-  const auto methods = GetMethods();
-  if (id.value >= methods.size()) {
-    throw InternalError("Type::GetMethod: MethodId out of range");
-  }
-  return methods[id.value];
-}
-
-auto Type::LookupMethod(std::string_view name) const
-    -> std::optional<MethodId> {
-  const auto methods = GetMethods();
-  for (std::size_t i = 0; i < methods.size(); ++i) {
-    if (methods[i].name == name) {
-      return MethodId{static_cast<std::uint32_t>(i)};
-    }
-  }
-  return std::nullopt;
 }
 
 }  // namespace lyra::hir

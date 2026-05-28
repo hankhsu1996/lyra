@@ -23,7 +23,6 @@
 #include "lyra/lowering/ast_to_hir/expression/lower.hpp"
 #include "lyra/lowering/ast_to_hir/facts.hpp"
 #include "lyra/lowering/ast_to_hir/state.hpp"
-#include "lyra/lowering/ast_to_hir/type.hpp"
 
 namespace lyra::lowering::ast_to_hir {
 
@@ -74,9 +73,8 @@ auto LowerSignalEventTrigger(
   auto expr_or =
       LowerProcExpr(unit_facts, unit_state, proc_state, stack, sig.expr);
   if (!expr_or) return std::unexpected(std::move(expr_or.error()));
-  const hir::Expr& lowered = *expr_or;
 
-  const auto* primary = std::get_if<hir::PrimaryExpr>(&lowered.data);
+  const auto* primary = std::get_if<hir::PrimaryExpr>(&expr_or->data);
   if (primary == nullptr ||
       !std::holds_alternative<hir::StructuralVarRef>(primary->data)) {
     return diag::Unsupported(
@@ -86,7 +84,7 @@ auto LowerSignalEventTrigger(
         "not yet supported",
         diag::UnsupportedCategory::kFeature);
   }
-  if (!unit_state.GetType(lowered.type).IsPackedArray()) {
+  if (!unit_state.GetType(expr_or->type).IsPackedArray()) {
     return diag::Unsupported(
         span, diag::DiagCode::kUnsupportedEventTriggerForm,
         "event trigger must reference an integral signal; non-integral "
@@ -237,11 +235,10 @@ auto LowerVariableDeclStmt(
     -> diag::Result<hir::Stmt> {
   const auto& mapper = unit_facts.SourceMapper();
   const auto& sym = vd.symbol;
-  auto type_data = LowerType(
-      sym.getType(), mapper.PointSpanOf(sym.location), scope_state.UnitState());
-  if (!type_data) return std::unexpected(std::move(type_data.error()));
-  const auto type_id = scope_state.UnitState().AddType(*std::move(type_data));
-  const auto local_id = proc_state.AddProceduralVar(sym, type_id);
+  auto type_id_or = scope_state.UnitState().GetTypeId(
+      sym.getType(), mapper.PointSpanOf(sym.location));
+  if (!type_id_or) return std::unexpected(std::move(type_id_or.error()));
+  const auto local_id = proc_state.AddProceduralVar(sym, *type_id_or);
   std::optional<hir::ExprId> init_id;
   if (const auto* init_expr = sym.getInitializer()) {
     auto init_or = LowerProcExpr(
