@@ -1,6 +1,6 @@
 ---
 description: Create a commit and PR with auto-merge enabled
-allowed-tools: Bash(git status:*), Bash(git diff:*), Bash(git add:*), Bash(git branch:*), Bash(git switch:*), Bash(git log:*), Bash(git fetch:*), Bash(git rebase:*), Bash(git push:*), Bash(git rev-list:*), Bash(gh pr create:*), Bash(gh pr merge:*), Bash(clang-format:*), Bash(npx prettier:*), Bash(buildifier:*), Bash(find:*), Bash(python3 tools/policy/*), Bash(bazel build:*), Bash(bazel test:*)
+allowed-tools: Bash(git status:*), Bash(git diff:*), Bash(git add:*), Bash(git branch:*), Bash(git switch:*), Bash(git log:*), Bash(git fetch:*), Bash(git rebase:*), Bash(git push:*), Bash(git rev-list:*), Bash(gh pr create:*), Bash(gh pr merge:*), Bash(clang-format:*), Bash(npx prettier:*), Bash(buildifier:*), Bash(find:*), Bash(python3 tools/policy/*), Bash(bazel build:*), Bash(bazel test:*), Bash(ls:*)
 ---
 
 # Commit and PR
@@ -60,38 +60,34 @@ Do NOT proceed with formatting or staging until you are on a feature branch.
 
 ## Instructions
 
+Each tool runs **once**. Formatters run in write mode; rerunning them in check mode is redundant since the write call already left the tree canonical. The only tools that run as a separate check are the ones formatters don't fix (buildifier lint, policy checks).
+
 ### Phase 1: Commit
 
-**Rule of thumb:** Local must mirror CI exactly. If CI runs it, the skill must run it. If `tools/policy/check_*.py` or `.github/workflows/` gain new entries, treat them as required even if this skill is out of date.
-
 1. **Check branch** - If on main, infer branch name from changes and create it
-2. **Build and test** (mirrors CI):
+2. **Build and test:**
    - `bazel build //...`
    - `bazel test //... --test_output=errors`
    - Do not narrow `//...`. Fix failures before continuing.
-3. **Format all files:**
-   - C++: `find src include tests -name '*.cpp' -o -name '*.hpp' | xargs clang-format -i`
-   - Markdown: `npx prettier --write "**/*.md"`
-   - Bazel: `buildifier -r .`
-4. **Format-check** (mirrors CI):
-   - `find src include tests -name '*.cpp' -o -name '*.hpp' | xargs clang-format --dry-run --Werror`
-   - `buildifier -mode=check -r .`
+3. **Format (write mode, once each):**
+   - `find src include tests -name '*.cpp' -o -name '*.hpp' | xargs clang-format -i`
+   - `npx prettier --write "**/*.md"`
+   - `buildifier -r .`
+4. **Lint and policy:**
    - `buildifier -mode=check -lint=warn -r .`
-   - `npm run format:check`
-5. **Policy checks** (mirrors CI):
    - `python3 tools/policy/check_architecture.py`
    - `python3 tools/policy/check_ascii.py --diff-base origin/main`
    - `python3 tools/policy/check_cpp_style.py`
    - `python3 tools/policy/check_exceptions.py --diff-base origin/main`
-6. **Sanity check** - `ls tools/policy/check_*.py` and `ls .github/workflows/`. If a new `check_*.py` exists that the skill does not run, run it anyway and tell the user the skill is out of date.
-7. **Check git status** - Formatters may modify files beyond your original changeset. Run `git status --short` to see all modified files before staging.
-8. **Stage files** with `git add <files>` (not `git add -A`)
-9. **Commit** with `git commit` (this will prompt for permission - your checkpoint to review)
+5. **Sanity check** - `ls tools/policy/check_*.py` and `ls .github/workflows/`. If a new `check_*.py` exists that the skill does not run, run it anyway and tell the user the skill is out of date.
+6. **Check git status** - Formatters may modify files beyond your original changeset. Run `git status --short` to see all modified files before staging.
+7. **Stage files** with `git add <files>` (not `git add -A`)
+8. **Commit** with `git commit` (this will prompt for permission - your checkpoint to review)
 
 ### Phase 2: PR
 
-6. **Rebase if behind main:** If commits behind > 0, run `git rebase origin/main`
-7. **Push:** `git push -u origin <branch>`
-8. **Create PR:** `gh pr create --title "..." --body "..."`
-9. **Enable auto-merge:** `gh pr merge --auto --squash`
-10. **Return the PR URL** to the user
+9. **Rebase if behind main:** If commits behind > 0, run `git rebase origin/main`
+10. **Push:** `git push -u origin <branch>`
+11. **Create PR:** `gh pr create --title "..." --body "..."`
+12. **Enable auto-merge:** `gh pr merge --auto --squash`
+13. **Return the PR URL** to the user
