@@ -20,7 +20,6 @@
 #include "lyra/lowering/ast_to_hir/facts.hpp"
 #include "lyra/lowering/ast_to_hir/scope.hpp"
 #include "lyra/lowering/ast_to_hir/state.hpp"
-#include "lyra/lowering/ast_to_hir/type.hpp"
 
 namespace lyra::lowering::ast_to_hir {
 
@@ -275,12 +274,14 @@ auto BuildLoopGenerate(
 
   const auto var_span =
       unit_facts.SourceMapper().PointSpanOf(loop_var_sym->location);
-  auto type_data = LowerType(loop_var_sym->getType(), var_span, unit_state);
-  if (!type_data) return std::unexpected(std::move(type_data.error()));
-  const hir::TypeId loop_var_type = unit_state.AddType(*std::move(type_data));
+  auto loop_var_type_or =
+      unit_state.GetTypeId(loop_var_sym->getType(), var_span);
+  if (!loop_var_type_or) {
+    return std::unexpected(std::move(loop_var_type_or.error()));
+  }
 
   const hir::LoopVarDeclId loop_var_id =
-      parent_state.AddLoopVarDecl(*loop_var_sym, loop_var_type);
+      parent_state.AddLoopVarDecl(*loop_var_sym, *loop_var_type_or);
 
   auto initial_expr = LowerStructuralExpr(
       unit_facts, unit_state, parent_state, stack, *array.initialExpression);
@@ -313,7 +314,7 @@ auto BuildLoopGenerate(
         .symbol = body_param,
         .home_frame = parent_state.Frame(),
         .loop_var = loop_var_id,
-        .type = loop_var_type,
+        .type = *loop_var_type_or,
     };
 
     auto& loop_scope = gen.child_scopes.at(loop_scope_id.value);

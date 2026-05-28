@@ -40,8 +40,8 @@ auto RenderForInit(const RenderContext& ctx, const mir::ForInit& init)
                 return std::unexpected(std::move(rendered_or.error()));
               }
               out += " = " + *rendered_or;
-            } else if (ty.IsPackedArray()) {
-              out += "{" + RenderPackedArrayCtorArgs(ty.AsPackedArray()) + "}";
+            } else {
+              out += "{" + RenderTypeDefaultCtorArgs(ty) + "}";
             }
             return out;
           },
@@ -123,11 +123,8 @@ auto RenderProceduralVarDeclStmt(
     if (!init_or) return std::unexpected(std::move(init_or.error()));
     return Indent(indent) + *type_or + " " + lv.name + " = " + *init_or + ";\n";
   }
-  if (ty.IsPackedArray()) {
-    return Indent(indent) + *type_or + " " + lv.name + "{" +
-           RenderPackedArrayCtorArgs(ty.AsPackedArray()) + "};\n";
-  }
-  return Indent(indent) + *type_or + " " + lv.name + "{};\n";
+  return Indent(indent) + *type_or + " " + lv.name + "{" +
+         RenderTypeDefaultCtorArgs(ty) + "};\n";
 }
 
 auto RenderExprStmt(

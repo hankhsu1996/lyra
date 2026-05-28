@@ -1,6 +1,8 @@
 #include <cstddef>
+#include <format>
 #include <string>
 #include <utility>
+#include <variant>
 
 #include "lyra/backend/cpp/api.hpp"
 #include "lyra/backend/cpp/artifact.hpp"
@@ -8,6 +10,7 @@
 #include "lyra/backend/cpp/render_context.hpp"
 #include "lyra/backend/cpp/render_stmt.hpp"
 #include "lyra/backend/cpp/render_type.hpp"
+#include "lyra/backend/cpp/string_literal.hpp"
 #include "lyra/base/internal_error.hpp"
 #include "lyra/diag/diagnostic.hpp"
 #include "lyra/mir/compilation_unit.hpp"
@@ -28,17 +31,14 @@ auto RenderField(
   auto type_or = RenderTypeAsCpp(unit, owner_scope, var.type);
   if (!type_or) return std::unexpected(std::move(type_or.error()));
   const auto& ty = unit.GetType(var.type);
-  if (IsObservableScalarType(ty)) {
-    std::string init = "{" + *type_or + "{" +
-                       RenderPackedArrayCtorArgs(ty.AsPackedArray()) + "}}";
-    return Indent(indent) + "lyra::runtime::Var<" + *type_or + "> " + var.name +
-           init + ";\n";
-  }
-  std::string init;
-  if (ty.IsPackedArray()) {
-    init = "{" + RenderPackedArrayCtorArgs(ty.AsPackedArray()) + "}";
-  }
-  return Indent(indent) + *type_or + " " + var.name + init + ";\n";
+  const auto storage_type = IsObservableScalarType(ty)
+                                ? "lyra::runtime::Var<" + *type_or + ">"
+                                : *type_or;
+  // Var<T>'s variadic ctor forwards to T's ctor; raw T uses the same args
+  // directly. Either way the brace-list shape is the same.
+  const auto ctor_args = RenderTypeDefaultCtorArgs(ty);
+  return Indent(indent) + storage_type + " " + var.name + "{" + ctor_args +
+         "};\n";
 }
 
 auto RenderParamField(
@@ -261,13 +261,62 @@ auto RenderScopeHeaderFile(
   out += "#include \"lyra/runtime/runtime_scope_kind.hpp\"\n";
   out += "#include \"lyra/runtime/runtime_services.hpp\"\n";
   out += "#include \"lyra/runtime/var.hpp\"\n";
+  out += "#include \"lyra/value/enum.hpp\"\n";
   out += "#include \"lyra/value/format.hpp\"\n";
+  out += "#include \"lyra/value/packed_type.hpp\"\n";
   out += "#include \"lyra/value/packed.hpp\"\n";
   out += "#include \"lyra/value/packed_array.hpp\"\n";
   out += "#include \"lyra/value/packed_bitwise.hpp\"\n";
   out += "#include \"lyra/value/packed_convert.hpp\"\n";
   out += "#include \"lyra/value/packed_reduction.hpp\"\n";
   out += "\n";
+  bool any_enum = false;
+  for (std::size_t i = 0; i < unit.types.size(); ++i) {
+    const auto* enum_type = std::get_if<mir::EnumType>(&unit.types[i].data);
+    if (enum_type == nullptr) continue;
+    any_enum = true;
+    const auto class_name =
+        RenderEnumClassName(s, mir::TypeId{static_cast<std::uint32_t>(i)});
+    const auto& base = enum_type->base;
+    const char* signed_lit =
+        base.signedness == mir::Signedness::kSigned ? "true" : "false";
+    const char* four_state_lit =
+        base.atom != mir::BitAtom::kBit ? "true" : "false";
+    out += std::format(
+        "class {} final : public lyra::value::Enum<{}> {{\n", class_name,
+        class_name);
+    out += " public:\n";
+    out += "  using Enum::Enum;\n";
+    out += std::format(
+        "  static constexpr lyra::value::PackedType kBase{{.width = {}, "
+        ".is_signed = {}, .is_four_state = {}}};\n",
+        base.BitWidth(), signed_lit, four_state_lit);
+    out += "  static constexpr lyra::value::EnumMember kMembers[] = {\n";
+    for (const auto& member : enum_type->members) {
+      out += std::format(
+          "      {{{}, {}}},\n", RenderCStringLiteral(member.name),
+          member.value);
+    }
+    out += "  };\n";
+    out += "};\n";
+  }
+  if (any_enum) {
+    out += "\n";
+  }
+  // SV `typedef <target> <alias>;` -> C++ `using <alias> = <target>;`. Skip
+  // aliases whose name already matches the emitted class (the first typedef
+  // for a given target supplies the class name itself).
+  bool any_alias = false;
+  for (const auto& alias : s.type_aliases) {
+    auto target_or = RenderTypeAsCpp(unit, s, alias.target);
+    if (!target_or) return std::unexpected(std::move(target_or.error()));
+    if (alias.name == *target_or) continue;
+    out += std::format("using {} = {};\n", alias.name, *target_or);
+    any_alias = true;
+  }
+  if (any_alias) {
+    out += "\n";
+  }
   auto class_or = RenderScopeAsClass(unit, s, 0, true, nullptr);
   if (!class_or) return std::unexpected(std::move(class_or.error()));
   out += *class_or;

@@ -9,6 +9,7 @@
 #include "lyra/mir/structural_scope_id.hpp"
 #include "lyra/mir/structural_subroutine.hpp"
 #include "lyra/mir/structural_var.hpp"
+#include "lyra/mir/type_alias.hpp"
 
 namespace lyra::mir {
 
@@ -20,6 +21,7 @@ struct StructuralScope {
   std::vector<Process> processes;
   std::vector<StructuralScope> child_structural_scopes;
   std::vector<StructuralSubroutineDecl> structural_subroutines;
+  std::vector<TypeAliasDecl> type_aliases;
 
   [[nodiscard]] auto GetStructuralParam(StructuralParamId id) const
       -> const StructuralParamDecl& {

@@ -131,6 +131,21 @@ class MirDumper {
                   FormatBitAtom(p.atom), FormatSignedness(p.signedness),
                   FormatPackedDims(p.dims), FormatPackedForm(p.form));
             },
+            [](const EnumType& e) -> std::string {
+              std::string members;
+              for (std::size_t i = 0; i < e.members.size(); ++i) {
+                if (i > 0) members += ", ";
+                members +=
+                    std::format("{}={}", e.members[i].name, e.members[i].value);
+              }
+              return std::format(
+                  "Enum(base=PackedArray(atom={}, signed={}, dims={}, "
+                  "form={}), members=[{}])",
+                  FormatBitAtom(e.base.atom),
+                  FormatSignedness(e.base.signedness),
+                  FormatPackedDims(e.base.dims), FormatPackedForm(e.base.form),
+                  members);
+            },
             [](const UnpackedArrayType& u) -> std::string {
               return std::format(
                   "UnpackedArray(elem=Type[{}], dims={})", u.element_type.value,
@@ -353,6 +368,11 @@ class MirDumper {
               return std::format(
                   "StructuralSubroutineRef[hops={}, subroutine={}] \"{}\"",
                   r.hops.value, r.subroutine.value, target.name);
+            },
+            [](const BuiltinMethodCallee& b) -> std::string {
+              return std::format(
+                  "BuiltinMethodCallee[receiver_type=Type[{}], kind={}]",
+                  b.receiver_type.value, static_cast<int>(b.kind));
             },
         },
         callee);

@@ -1,5 +1,6 @@
 #include "lyra/backend/cpp/render_type.hpp"
 
+#include <format>
 #include <string>
 #include <utility>
 #include <variant>
@@ -21,8 +22,31 @@ auto RenderPackedArrayCtorArgs(const mir::PackedArrayType& pa) -> std::string {
          four_state_lit;
 }
 
+auto RenderTypeDefaultCtorArgs(const mir::Type& ty) -> std::string {
+  // Enum classes default-construct via their static `kBase`, so no shape
+  // arguments are needed at the call site. PackedArray has no default ctor;
+  // its shape (width, signedness, state domain) must be supplied.
+  if (ty.IsEnum()) return {};
+  if (ty.IsIntegralPacked()) {
+    return RenderPackedArrayCtorArgs(ty.AsIntegralPacked());
+  }
+  return {};
+}
+
 auto IsObservableScalarType(const mir::Type& ty) -> bool {
-  return ty.IsPackedArray();
+  return ty.IsIntegralPacked();
+}
+
+auto RenderEnumClassName(
+    const mir::StructuralScope& owner_scope, mir::TypeId id) -> std::string {
+  // First TypeAlias targeting `id` supplies the canonical class name. SV
+  // identifiers are valid C++ identifiers, so the alias name flows directly.
+  for (const auto& alias : owner_scope.type_aliases) {
+    if (alias.target == id) {
+      return alias.name;
+    }
+  }
+  return std::format("lyra_anon_enum_{}", id.value);
 }
 
 auto RenderTypeAsCpp(
@@ -32,6 +56,9 @@ auto RenderTypeAsCpp(
       Overloaded{
           [](const mir::PackedArrayType&) -> diag::Result<std::string> {
             return std::string{"lyra::value::PackedArray"};
+          },
+          [&](const mir::EnumType&) -> diag::Result<std::string> {
+            return RenderEnumClassName(owner_scope, type_id);
           },
           [](const mir::StringType&) -> diag::Result<std::string> {
             return std::string{"std::string"};

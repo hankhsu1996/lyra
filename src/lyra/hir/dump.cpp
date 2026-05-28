@@ -88,6 +88,25 @@ class HirDumper {
     throw InternalError("HirDumper::FormatUniquePriorityCheck: unknown check");
   }
 
+  static auto FormatBuiltinMethodKind(BuiltinMethodKind k) -> std::string_view {
+    switch (k) {
+      case BuiltinMethodKind::kEnumFirst:
+        return "first";
+      case BuiltinMethodKind::kEnumLast:
+        return "last";
+      case BuiltinMethodKind::kEnumNum:
+        return "num";
+      case BuiltinMethodKind::kEnumNext:
+        return "next";
+      case BuiltinMethodKind::kEnumPrev:
+        return "prev";
+      case BuiltinMethodKind::kEnumName:
+        return "name";
+    }
+    throw InternalError(
+        "HirDumper::FormatBuiltinMethodKind: unknown BuiltinMethodKind");
+  }
+
   static auto FormatPackedForm(PackedArrayForm f) -> std::string_view {
     switch (f) {
       case PackedArrayForm::kExplicit:
@@ -149,14 +168,9 @@ class HirDumper {
                     "{}={}", e.members[i].name,
                     FormatIntegralConstant(e.members[i].value));
               }
-              std::string methods;
-              for (std::size_t i = 0; i < e.methods.size(); ++i) {
-                if (i > 0) methods += ", ";
-                methods += e.methods[i].name;
-              }
               return std::format(
-                  "Enum(base=Type[{}], members=[{}], methods=[{}])",
-                  e.base_type.value, members, methods);
+                  "Enum(base=Type[{}], members=[{}])", e.base_type.value,
+                  members);
             },
             [](const UnpackedArrayType& u) -> std::string {
               return std::format(
@@ -460,12 +474,9 @@ class HirDumper {
               return std::format(
                   "SystemSubroutine[{}] \"{}\"", s.id.value, desc.name);
             },
-            [this](const MethodRef& m) -> std::string {
-              const auto& method =
-                  unit_->GetType(m.receiver_type).GetMethod(m.method);
+            [](const BuiltinMethodRef& b) -> std::string {
               return std::format(
-                  "Method[{}] \"{}\" on Type[{}]", m.method.value, method.name,
-                  m.receiver_type.value);
+                  "BuiltinMethod \"{}\"", FormatBuiltinMethodKind(b.kind));
             },
         },
         callee);

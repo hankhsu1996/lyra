@@ -84,7 +84,7 @@ auto RenderRuntimeValueViewInit(
         "lyra::value::RuntimeValueView::String({})", *operand_or);
   }
 
-  if (type.IsPackedArray()) {
+  if (type.IsIntegralPacked()) {
     auto operand_or = RenderExpr(ctx, ctx.Expr(v.value));
     if (!operand_or) return std::unexpected(std::move(operand_or.error()));
     return std::format(
