@@ -1,0 +1,12 @@
+id: cpp.always_star_block_body
+tags: [cpp_run]
+input:
+  command: [run, cpp]
+  project: false
+  top: Top
+  files: [main.sv]
+expect:
+  exit: 0
+  variables:
+    sum: 9
+    diff: 5

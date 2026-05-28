@@ -11,6 +11,7 @@
 #include "lyra/hir/stmt.hpp"
 #include "lyra/lowering/hir_to_mir/lower_stmt.hpp"
 #include "lyra/lowering/hir_to_mir/procedural_scope_helpers.hpp"
+#include "lyra/lowering/hir_to_mir/sensitivity_wait.hpp"
 #include "lyra/lowering/hir_to_mir/state.hpp"
 #include "lyra/mir/process.hpp"
 #include "lyra/mir/stmt.hpp"
@@ -35,10 +36,11 @@ auto LowerStraightLineProcess(
       .kind = kind, .root_procedural_scope = process_scope_state.Finish()};
 }
 
-// Lowers `src.root_stmt` into a forever-wrapped process. `tail_stmt`, if
-// present, is appended after the lowered body inside the loop -- carries a
-// SensitivityWaitStmt for always_comb / always_latch, nullopt for bare
-// always / always_ff. Composes during construction; no post-hoc mutation.
+// Wraps `src.root_stmt` in a `forever` loop. `tail_stmt`, if present, is
+// appended after the lowered body inside the loop -- carries the materialised
+// SensitivityWaitStmt for always_comb / always_latch (LRM 9.2.2.2.1), nullopt
+// for `always` / `always_ff` where the body itself carries any timing (e.g.
+// an explicit `@(...)` or `@*` wrapper).
 auto LowerForeverProcess(
     const UnitLoweringState& unit_state,
     const StructuralScopeLoweringState& scope_state, const hir::Process& src,
@@ -77,27 +79,6 @@ auto LowerForeverProcess(
       .root_procedural_scope = process_scope_state.Finish()};
 }
 
-// Builds the tail stmt that gates an always_comb / always_latch on its LRM
-// 9.2.2.2.1 implicit sensitivity. Identity-shaped end-to-end -- distinct from
-// mir::EventTrigger (which carries an expression for explicit `@(...)`).
-auto BuildSensitivityWaitStmt(
-    const StructuralScopeLoweringState& scope_state, const hir::Process& src)
-    -> mir::Stmt {
-  std::vector<mir::SensitivityRead> reads;
-  reads.reserve(src.implicit_sensitivity_list.size());
-  for (const auto& entry : src.implicit_sensitivity_list) {
-    reads.push_back(
-        mir::SensitivityRead{
-            .ref = scope_state.TranslateStructuralVar(
-                entry.ref.hops, entry.ref.var),
-            .bit_range = entry.bit_range});
-  }
-  return mir::Stmt{
-      .label = std::nullopt,
-      .data = mir::SensitivityWaitStmt{.reads = std::move(reads)},
-      .child_procedural_scopes = {}};
-}
-
 }  // namespace
 
 auto LowerProcess(
@@ -120,7 +101,7 @@ auto LowerProcess(
     case hir::ProcessKind::kAlwaysLatch:
       return LowerForeverProcess(
           unit_state, scope_state, src, proc_state,
-          BuildSensitivityWaitStmt(scope_state, src));
+          BuildSensitivityWaitStmt(scope_state, src.implicit_sensitivity_list));
   }
   throw InternalError("LowerProcess: unknown HIR ProcessKind");
 }

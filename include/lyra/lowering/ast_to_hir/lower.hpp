@@ -12,28 +12,34 @@
 #include "lyra/hir/module_unit.hpp"
 
 namespace slang::ast {
-class ProceduralBlockSymbol;
+class Statement;
 class ValueSymbol;
 }  // namespace slang::ast
 
 namespace lyra::lowering::ast_to_hir {
 
-// One element of the precomputed implicit sensitivity list for a single
-// always_comb / always_latch procedural block. Mirrors slang's ReadRange:
-// `symbol` is the structural variable being read; `bit_range` is the flat
-// bit range within its selectable-width packed encoding. Multiple entries
-// for the same symbol with disjoint bit ranges are kept as-is so downstream
-// can preserve precision when the runtime supports bit-level subscription.
+// One element of the precomputed implicit sensitivity list. Mirrors slang's
+// ReadRange: `symbol` is the structural variable being read; `bit_range` is
+// the flat bit range within its selectable-width packed encoding. Multiple
+// entries for the same symbol with disjoint bit ranges are kept as-is so
+// downstream can preserve precision when the runtime supports bit-level
+// subscription.
 struct SensitivityRead {
   const slang::ast::ValueSymbol* symbol;
   std::pair<std::uint64_t, std::uint64_t> bit_range;
 };
 
-// Per-procedure implicit sensitivity list (LRM 9.2.2.2.1), computed once by
-// slang::analysis::AnalysisManager. Slang excludes block-local declarations,
+// Precomputed implicit sensitivity, keyed uniformly by the slang Statement
+// that LRM associates the list with:
+//   - LRM 9.2.2.2.1 (always_comb / always_latch): key = &proc.getBody(); the
+//     sensitivity attaches to the procedure body statement.
+//   - LRM 9.4.2.2 (`always @*` / `@(*)`): key = the TimedStatement holding
+//     the `@*`; multiple `@*`s in one procedure each get their own entry.
+// Both cases reduce to "reads in a statement", so one map per statement
+// pointer is enough. Slang already excludes block-local declarations,
 // also-written variables, and timing-control-only identifiers per the LRM.
 using ImplicitSensitivityReads = std::unordered_map<
-    const slang::ast::ProceduralBlockSymbol*, std::vector<SensitivityRead>>;
+    const slang::ast::Statement*, std::vector<SensitivityRead>>;
 
 class LowerCompilationFacts {
  public:

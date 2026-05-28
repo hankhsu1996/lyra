@@ -1,0 +1,12 @@
+id: cpp.event_posedge_from_x
+tags: [cpp_run]
+input:
+  command: [run, cpp]
+  project: false
+  top: Top
+  files: [main.sv]
+expect:
+  exit: 0
+  variables:
+    fired_on_x_to_1: 1
+    fired_on_0_to_x: 1

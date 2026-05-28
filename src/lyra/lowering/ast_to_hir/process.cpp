@@ -5,13 +5,12 @@
 #include <vector>
 
 #include <slang/ast/symbols/BlockSymbols.h>
-#include <slang/ast/symbols/ValueSymbol.h>
-#include <slang/ast/symbols/VariableSymbols.h>
 
 #include "lyra/base/internal_error.hpp"
 #include "lyra/diag/diagnostic.hpp"
 #include "lyra/hir/process.hpp"
 #include "lyra/lowering/ast_to_hir/facts.hpp"
+#include "lyra/lowering/ast_to_hir/sensitivity.hpp"
 #include "lyra/lowering/ast_to_hir/state.hpp"
 #include "lyra/lowering/ast_to_hir/statement/lower.hpp"
 
@@ -39,30 +38,18 @@ auto FromSlangProceduralBlockKind(slang::ast::ProceduralBlockKind kind)
       "ast_to_hir::FromSlangProceduralBlockKind: unknown ProceduralBlockKind");
 }
 
-// LRM 9.2.2.2.1 sensitivity is computed by slang::analysis::AnalysisManager;
-// here we translate the slang ValueSymbol pointers + bit ranges it produced
-// into the HIR StructuralVarRef + bit_range form used downstream.
-auto TranslateSensitivityEntries(
+// Looks up sensitivity for `key_stmt` from the precomputed slang analysis
+// and translates it into HIR identity entries. Empty result is legal (no
+// reads, or unknown key) -- a SensitivityWaitStmt with an empty list means
+// "wait forever", which is the correct degenerate behaviour.
+auto LookupSensitivityEntries(
     const UnitLoweringFacts& unit_facts, const UnitLoweringState& unit_state,
-    const ScopeStack& stack, const slang::ast::ProceduralBlockSymbol& proc)
+    const ScopeStack& stack, const slang::ast::Statement& key_stmt)
     -> std::vector<hir::SensitivityEntry> {
-  std::vector<hir::SensitivityEntry> out;
   const auto& reads_map = unit_facts.SensitivityReads();
-  const auto it = reads_map.find(&proc);
-  if (it == reads_map.end()) return out;
-  for (const auto& read : it->second) {
-    const auto* var = read.symbol->as_if<slang::ast::VariableSymbol>();
-    if (var == nullptr) continue;
-    const auto binding = unit_state.LookupStructuralVarBinding(*var);
-    if (!binding.has_value()) continue;
-    const auto hops = stack.HopsTo(binding->home_frame);
-    if (!hops.has_value()) continue;
-    out.push_back(
-        hir::SensitivityEntry{
-            .ref = hir::StructuralVarRef{.hops = *hops, .var = binding->var_id},
-            .bit_range = read.bit_range});
-  }
-  return out;
+  const auto it = reads_map.find(&key_stmt);
+  if (it == reads_map.end()) return {};
+  return TranslateSensitivityReads(it->second, unit_state, stack);
 }
 
 }  // namespace
@@ -85,8 +72,11 @@ auto LowerProcess(
   auto out = proc_state.Finalize(kind, span, root_stmt_id);
   if (kind == hir::ProcessKind::kAlwaysComb ||
       kind == hir::ProcessKind::kAlwaysLatch) {
-    out.implicit_sensitivity_list = TranslateSensitivityEntries(
-        unit_facts, scope_state.UnitState(), stack, proc);
+    // LRM 9.2.2.2.1: implicit sensitivity is a property of the always_comb /
+    // always_latch procedure itself (no `@*` token in source). Attach it to
+    // the Process; HIR -> MIR materialises the trailing wait stmt.
+    out.implicit_sensitivity_list = LookupSensitivityEntries(
+        unit_facts, scope_state.UnitState(), stack, proc.getBody());
   }
   return out;
 }

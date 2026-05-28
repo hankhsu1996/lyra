@@ -1,16 +1,12 @@
 #include "lyra/compiler/compile.hpp"
 
-#include <cstddef>
-#include <cstdint>
 #include <format>
-#include <functional>
-#include <tuple>
-#include <unordered_set>
 #include <utility>
 #include <vector>
 
 #include <slang/analysis/AnalysisManager.h>
 #include <slang/analysis/AnalyzedProcedure.h>
+#include <slang/ast/Statement.h>
 #include <slang/ast/symbols/BlockSymbols.h>
 #include <slang/ast/symbols/ValueSymbol.h>
 
@@ -25,6 +21,23 @@ namespace lyra::compiler {
 
 namespace {
 
+// Translates slang's ReadRange entries into lyra's SensitivityRead shape.
+// Slang already returns deduplicated sets per LRM 9.2.2.2.1 / 9.4.2.2, so
+// the conversion is a straight 1:1 copy. Multiple entries for the same
+// symbol with disjoint bit ranges (e.g. `bus[3] | bus[5]`) are preserved so
+// downstream can subscribe at bit-range granularity once the runtime
+// supports it.
+template <typename SlangReads>
+auto TranslateReads(const SlangReads& reads)
+    -> std::vector<lowering::ast_to_hir::SensitivityRead> {
+  std::vector<lowering::ast_to_hir::SensitivityRead> entries;
+  entries.reserve(reads.size());
+  for (const auto& read : reads) {
+    entries.push_back({.symbol = read.symbol, .bit_range = read.bitRange});
+  }
+  return entries;
+}
+
 auto ComputeImplicitSensitivityReads(slang::ast::Compilation& compilation)
     -> lowering::ast_to_hir::ImplicitSensitivityReads {
   lowering::ast_to_hir::ImplicitSensitivityReads out;
@@ -33,39 +46,21 @@ auto ComputeImplicitSensitivityReads(slang::ast::Compilation& compilation)
     const auto* proc =
         ap.analyzedSymbol->as_if<slang::ast::ProceduralBlockSymbol>();
     if (proc == nullptr) return;
-    if (proc->procedureKind != slang::ast::ProceduralBlockKind::AlwaysComb &&
-        proc->procedureKind != slang::ast::ProceduralBlockKind::AlwaysLatch) {
-      return;
-    }
-    const auto& sens = ap.getSensitivityList();
-    if (sens.kind != slang::analysis::SensitivityList::Kind::Implicit) return;
-    // Preserve every (symbol, bit_range) slang produced; the same symbol may
-    // appear several times with disjoint ranges (e.g. `bus[3] | bus[5]`),
-    // and that precision is needed once the runtime supports bit-level
-    // subscription. Dedup only by exact (symbol, bit_range) so a defensive
-    // caller is shielded from accidental slang-side duplicates.
-    using DedupKey = std::tuple<
-        const slang::ast::ValueSymbol*, std::uint64_t, std::uint64_t>;
-    struct DedupHash {
-      auto operator()(const DedupKey& k) const noexcept -> std::size_t {
-        const auto h1 =
-            std::hash<const slang::ast::ValueSymbol*>{}(std::get<0>(k));
-        const auto h2 = std::hash<std::uint64_t>{}(std::get<1>(k));
-        const auto h3 = std::hash<std::uint64_t>{}(std::get<2>(k));
-        return h1 ^ (h2 * 0x9E3779B97F4A7C15ULL) ^ (h3 << 1);
+    // LRM 9.2.2.2.1: for always_comb / always_latch the procedure-level
+    // sensitivity attaches to the body statement of the procedure.
+    if (proc->procedureKind == slang::ast::ProceduralBlockKind::AlwaysComb ||
+        proc->procedureKind == slang::ast::ProceduralBlockKind::AlwaysLatch) {
+      const auto& sens = ap.getSensitivityList();
+      if (sens.kind == slang::analysis::SensitivityList::Kind::Implicit) {
+        out.emplace(&proc->getBody(), TranslateReads(sens.reads));
       }
-    };
-    std::vector<lowering::ast_to_hir::SensitivityRead> entries;
-    std::unordered_set<DedupKey, DedupHash> seen;
-    for (const auto& read : sens.reads) {
-      const slang::ast::ValueSymbol* symbol = read.symbol;
-      if (!seen.insert({symbol, read.bitRange.first, read.bitRange.second})
-               .second) {
-        continue;
-      }
-      entries.push_back({.symbol = symbol, .bit_range = read.bitRange});
     }
-    out.emplace(proc, std::move(entries));
+    // LRM 9.4.2.2: each `@*` TimedStatement carries its own sensitivity.
+    // Slang surfaces this regardless of the overall SensitivityList::Kind,
+    // so the same procedure can contribute multiple statement-keyed entries.
+    for (const auto& region : ap.getImplicitEventReadSets()) {
+      out.emplace(region.statement, TranslateReads(region.reads));
+    }
   });
   manager.analyze(compilation);
   return out;
