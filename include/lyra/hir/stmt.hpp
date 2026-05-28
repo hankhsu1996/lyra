@@ -4,12 +4,14 @@
 #include <cstdint>
 #include <optional>
 #include <string>
+#include <utility>
 #include <variant>
 #include <vector>
 
 #include "lyra/diag/source_span.hpp"
 #include "lyra/hir/expr_id.hpp"
 #include "lyra/hir/procedural_var.hpp"
+#include "lyra/hir/value_ref.hpp"
 
 namespace lyra::hir {
 
@@ -126,7 +128,30 @@ struct EventControl {
   std::vector<EventTrigger> triggers;
 };
 
-using TimingControl = std::variant<DelayControl, EventControl>;
+// One entry of an implicit sensitivity list (LRM 9.2.2.2.1 for always_comb /
+// always_latch; 9.4.2.2 for `always @*`). Identity-only: which structural
+// variable, which flat bit range of its packed encoding. bit_range matches
+// slang's selectable-width representation; for packed types it is lossless
+// w.r.t. longest static prefix. The current runtime collapses to whole-variable
+// subscription at HIR -> MIR, but the precision is preserved here so the
+// collapse can be removed when the runtime gains bit-level Observable.
+struct SensitivityEntry {
+  StructuralVarRef ref;
+  std::pair<std::uint64_t, std::uint64_t> bit_range;
+};
+
+// LRM 9.4.2.2 `@*` / `@(*)`. Identity-shaped (distinct from EventControl's
+// expression-shaped triggers): the sensitivity list is derived by slang's
+// AnalysisManager from the controlled statement's reads, never reassembled
+// into expressions. HIR keeps the slang AST shape -- the TimedStmt wraps the
+// controlled body -- and HIR -> MIR expands this into the runtime-oriented
+// "wait then body" sequence at lowering time.
+struct ImplicitEventControl {
+  std::vector<SensitivityEntry> sensitivity_list;
+};
+
+using TimingControl =
+    std::variant<DelayControl, EventControl, ImplicitEventControl>;
 
 struct TimedStmt {
   TimingControl timing;

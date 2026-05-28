@@ -43,21 +43,26 @@ order. Items in the [Actionable](#actionable) section can be picked up next; ite
       Pathological zero-delay loops (`always areg     = ~areg;`) are caught by the engine's
       `kMaxCurrentTimeIterations` settle limit. Covers `processes/initial` (always portion) and the
       `always_ff` body of `processes/wait_event`.
-- [x] P10 -- `always_comb` / `always_latch`. `slang::analysis::AnalysisManager` runs once per
-      compilation to compute the LRM 9.2.2.2.1 implicit sensitivity list (longest static prefix of
-      each read, excluding block-local declarations, also-written variables, and timing-control-only
-      identifiers; reads inside called functions are tracked). The resulting per-procedure
-      `ValueSymbol*` lists ride through `LowerCompilationFacts` into AST -> HIR, where they are
-      translated into `hir::SensitivityEntry` (StructuralVarRef + TypeId) and attached to
-      `hir::Process::implicit_sensitivity_list`. HIR -> MIR appends a synthesised `@(read_set)` tail
-      wait inside the existing `forever` body and emits `ProcessKind::kInitial` so the engine
-      schedules it on the active queue at time 0 (LRM 9.2.2.2: "automatically triggered once at time
-      zero"). `always_latch` lowers identically to `always_comb` (LRM 9.2.2.3: execution-equivalent;
-      only lint policy differs). Empty sensitivity lists (e.g. `always_comb     c = 7;`) degenerate
-      to once-at-time-zero. Select expressions in reads collapse to whole-variable subscription
-      until the runtime supports bit-level any-change. The single-driver restriction (LRM 9.2.2.2)
-      and forbidden-construct checks (no blocking timing, no fork-join) are enforced by slang's
-      frontend.
+- [x] P10 / P13 -- `always_comb` / `always_latch` (LRM 9.2.2.2.1) and `always @*` / `always @(*)`
+      (LRM 9.4.2.2). HIR follows slang's source-aligned shape; MIR abstracts to a single runtime
+      mental model. Harvest (`compile.cpp`): slang's `AnalysisManager` produces read sets via two
+      APIs (`getSensitivityList()` for the procedure and `getImplicitEventReadSets()` for each `@*`
+      region) -- both are stored in a single `ImplicitSensitivityReads` map keyed by
+      `slang::ast::Statement*` (the procedure's body statement for always_comb / always_latch; the
+      `@*`'s `TimedStatement` for `always @*`). HIR: `always_comb` / `always_latch` carry the
+      sensitivity on `hir::Process::implicit_sensitivity_list` while the body is a plain statement
+      (LRM 9.2.2.2.1 -- no `@*` token in source). `always @*` produces
+      `hir::TimedStmt{ timing: ImplicitEventControl{sensitivity}, stmt: body }` -- a wrapper that
+      mirrors slang's `TimedStatement(ImplicitEventControl, body)` 1:1. HIR -> MIR collapses both
+      forms onto MIR's `mir::SensitivityWaitStmt` leaf: always_comb / always_latch run
+      `forever { body; SensitivityWaitStmt; }` (body runs at time zero, then waits for changes per
+      LRM 9.2.2.2); `always @*` expands its TimedStmt into a
+      `mir::Block { SensitivityWaitStmt;     body; }` (waits first, no time-zero run per LRM
+      9.4.2.2.2). Empty sensitivity lists are legal (wait-forever). Select expressions in reads
+      collapse to whole-variable subscription until the runtime supports bit-level any-change. The
+      single-driver restriction and forbidden-construct checks (no blocking timing, no fork-join in
+      `always_comb`) are enforced by slang's frontend. Multiple `@*`s in one procedure each key by
+      their own TimedStatement and lower independently.
 
 ### Procedural assignments
 
@@ -75,9 +80,12 @@ order. Items in the [Actionable](#actionable) section can be picked up next; ite
 - [x] T2 -- Event control `@(x)` any-change. `mir::EventControl{triggers: [{signal, kAnyChange}]}`.
       `Var<T>` wrapper compares old vs new values and notifies the engine on any inequality. Covers
       `processes/event_triggers` (any-change subset).
-- [x] T3 -- Event control edge polarity `@(posedge clk)` / `@(negedge clk)`.
+- [x] T3 -- Event control edge polarity `@(posedge clk)` / `@(negedge clk)` / `@(edge clk)`.
       `EventEdge::{kPosedge,     kNegedge, kBothEdges, kAnyChange}` on each trigger;
-      `Observable::TakeMatchingWaiters` filters by edge per LRM Table 9-2. Covers
+      `Observable::TakeMatchingWaiters` filters by edge per LRM Table 9-2. `ClassifyEdge` in
+      `runtime/var.hpp` covers the full 4-state transition table: posedge fires on 0 -> {1, x, z}
+      and {x, z} -> 1; negedge fires on 1 -> {0, x, z} and {x, z} -> 0; x <-> z is `kChangeOnly`.
+      `kBothEdges` (the `edge` keyword) matches either posedge or negedge. Covers
       `processes/edge_trigger_bit_select` (whole-variable edges) and the edge subset of
       `processes/event_triggers`.
 - [x] T4 -- Event control event lists `@(posedge clk or negedge rst_n)` / comma form. A single

@@ -20,6 +20,7 @@
 #include "lyra/lowering/hir_to_mir/lower_deferred_check.hpp"
 #include "lyra/lowering/hir_to_mir/lower_expr.hpp"
 #include "lyra/lowering/hir_to_mir/procedural_scope_helpers.hpp"
+#include "lyra/lowering/hir_to_mir/sensitivity_wait.hpp"
 #include "lyra/lowering/hir_to_mir/state.hpp"
 #include "lyra/mir/procedural_hops.hpp"
 #include "lyra/mir/stmt.hpp"
@@ -119,6 +120,15 @@ auto LowerTimingControl(
             }
             return mir::TimingControl{
                 mir::EventControl{.triggers = std::move(triggers)}};
+          },
+          [](const hir::ImplicitEventControl&)
+              -> diag::Result<mir::TimingControl> {
+            // ImplicitEventControl never reaches the MIR TimingControl level:
+            // LowerTimedStmt intercepts it and expands the TimedStmt into a
+            // mir::Block { SensitivityWaitStmt; body; }.
+            throw InternalError(
+                "LowerTimingControl: ImplicitEventControl must be expanded by "
+                "LowerTimedStmt, not lowered as a MIR timing control");
           },
       },
       tc);
@@ -742,6 +752,38 @@ auto LowerContinueStmt(const hir::Stmt& stmt) -> diag::Result<mir::Stmt> {
       .child_procedural_scopes = {}};
 }
 
+// LRM 9.4.2.2: `@* body` -- the HIR TimedStmt with ImplicitEventControl
+// expands at HIR -> MIR into a Block { SensitivityWaitStmt; body; } inside a
+// fresh child scope. This is where HIR's slang-aligned wrapper structure
+// reduces to MIR's runtime-oriented "wait then body" sequencing.
+auto LowerImplicitEventTimedStmt(
+    const UnitLoweringState& unit_state,
+    const StructuralScopeLoweringState& scope_state,
+    ProcessLoweringState& proc_state, const hir::Process& hir_proc,
+    const hir::Stmt& stmt, const hir::TimedStmt& t,
+    const hir::ImplicitEventControl& ie) -> diag::Result<mir::Stmt> {
+  ProceduralScopeLoweringState child_proc_scope_state;
+  ProceduralDepthGuard depth_guard{proc_state};
+  child_proc_scope_state.AddRootStmt(child_proc_scope_state.AddStmt(
+      BuildSensitivityWaitStmt(scope_state, ie.sensitivity_list)));
+  const hir::Stmt& inner_hir = hir_proc.stmts.at(t.stmt.value);
+  auto inner_or = LowerStmt(
+      unit_state, scope_state, proc_state, child_proc_scope_state, hir_proc,
+      inner_hir);
+  if (!inner_or) {
+    return std::unexpected(std::move(inner_or.error()));
+  }
+  child_proc_scope_state.AddRootStmt(
+      child_proc_scope_state.AddStmt(*std::move(inner_or)));
+  std::vector<mir::ProceduralScope> child_scopes;
+  const mir::ProceduralScopeId scope_id =
+      AddChildProceduralScope(child_scopes, child_proc_scope_state.Finish());
+  return mir::Stmt{
+      .label = stmt.label,
+      .data = mir::BlockStmt{.scope = scope_id},
+      .child_procedural_scopes = std::move(child_scopes)};
+}
+
 auto LowerTimedStmt(
     const UnitLoweringState& unit_state,
     const StructuralScopeLoweringState& scope_state,
@@ -749,6 +791,10 @@ auto LowerTimedStmt(
     ProceduralScopeLoweringState& proc_scope_state,
     const hir::Process& hir_proc, const hir::Stmt& stmt,
     const hir::TimedStmt& t) -> diag::Result<mir::Stmt> {
+  if (const auto* ie = std::get_if<hir::ImplicitEventControl>(&t.timing)) {
+    return LowerImplicitEventTimedStmt(
+        unit_state, scope_state, proc_state, hir_proc, stmt, t, *ie);
+  }
   auto timing_or = LowerTimingControl(
       unit_state, scope_state, proc_state, proc_scope_state, hir_proc,
       t.timing);

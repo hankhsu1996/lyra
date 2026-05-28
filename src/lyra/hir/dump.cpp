@@ -438,6 +438,19 @@ class HirDumper {
               out += "]";
               return out;
             },
+            [](const ImplicitEventControl& ie) -> std::string {
+              std::string out = "ImplicitEventControl sensitivity=[";
+              for (std::size_t i = 0; i < ie.sensitivity_list.size(); ++i) {
+                if (i != 0) out += ", ";
+                const auto& r = ie.sensitivity_list[i];
+                out += std::format(
+                    "{{hops={} var=StructuralVar[{}] bits=[{}:{}]}}",
+                    r.ref.hops.value, r.ref.var.value, r.bit_range.first,
+                    r.bit_range.second);
+              }
+              out += "]";
+              return out;
+            },
         },
         tc);
   }
@@ -939,6 +952,7 @@ class HirDumper {
                       FormatProcExpr(p, d.duration)));
             },
             [](const EventControl&) {},
+            [](const ImplicitEventControl&) {},
         },
         t.timing);
     Dedent();
