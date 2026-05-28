@@ -1,6 +1,6 @@
 ---
 description: Create a commit with a well-formatted message
-allowed-tools: Bash(git status:*), Bash(git diff:*), Bash(git add:*), Bash(git branch:*), Bash(git switch:*), Bash(git log:*), Bash(clang-format:*), Bash(npx prettier:*), Bash(buildifier:*), Bash(find:*), Bash(python3 tools/policy/*), Bash(bazel build:*), Bash(bazel test:*)
+allowed-tools: Bash(git status:*), Bash(git diff:*), Bash(git add:*), Bash(git branch:*), Bash(git switch:*), Bash(git log:*), Bash(clang-format:*), Bash(npx prettier:*), Bash(buildifier:*), Bash(find:*), Bash(python3 tools/policy/*), Bash(bazel build:*), Bash(bazel test:*), Bash(ls:*)
 ---
 
 # Commit
@@ -26,11 +26,9 @@ Do NOT proceed with formatting or staging until you are on a feature branch.
 
 ## Pre-commit Checks
 
-Before committing, format ALL files and run every check that CI runs.
+Each tool runs **once**. Formatters run in write mode; running them again in check mode is redundant since the write call already left the tree canonical. The only tools that run as a separate check are the ones formatters don't fix (buildifier lint, policy checks).
 
-**Rule of thumb:** Local must mirror CI exactly. If CI runs it, the skill must run it. If a script in `tools/policy/` exists, it likely has a corresponding CI workflow under `.github/workflows/`.
-
-### Build and test (mirrors CI)
+### Build and test
 
 ```bash
 bazel build //...
@@ -39,49 +37,27 @@ bazel test //... --test_output=errors
 
 Same target set CI runs. Do not narrow `//...`. Fix failures before staging.
 
-### Format
-
-1. **C++ files** - Format all source files:
-
-   ```bash
-   find src include tests -name '*.cpp' -o -name '*.hpp' | xargs clang-format -i
-   ```
-
-2. **Documentation** - Format all markdown files:
-
-   ```bash
-   npx prettier --write "**/*.md"
-   ```
-
-3. **Bazel files** - Format all Bazel files:
-
-   ```bash
-   buildifier -r .
-   ```
-
-### Format-check (mirrors CI)
-
-After formatting, verify CI's format-check commands pass:
+### Format (write mode, once each)
 
 ```bash
-find src include tests -name '*.cpp' -o -name '*.hpp' | xargs clang-format --dry-run --Werror
-buildifier -mode=check -r .
-buildifier -mode=check -lint=warn -r .
-npm run format:check
+find src include tests -name '*.cpp' -o -name '*.hpp' | xargs clang-format -i
+npx prettier --write "**/*.md"
+buildifier -r .
 ```
 
-### Policy checks (mirrors CI)
+### Lint and policy
 
 ```bash
+buildifier -mode=check -lint=warn -r .
 python3 tools/policy/check_architecture.py
 python3 tools/policy/check_ascii.py --diff-base origin/main
 python3 tools/policy/check_cpp_style.py
 python3 tools/policy/check_exceptions.py --diff-base origin/main
 ```
 
-If any of the above fail, fix violations before committing. Do not stage / commit through known violations.
+Fix violations before committing. Do not stage / commit through known violations.
 
-**Sanity check before committing:** `ls tools/policy/check_*.py` and `ls .github/workflows/` and confirm the commands above still match. If a new `check_*.py` exists but the skill does not run it, run it anyway and tell the user the skill is out of date.
+**Sanity check:** `ls tools/policy/check_*.py` and `ls .github/workflows/`. If a new `check_*.py` exists that this skill does not run, run it anyway and tell the user the skill is out of date.
 
 ## Commit Format
 
@@ -121,10 +97,11 @@ Bullet points should be **concise** (under 60 chars each) and describe **what ch
 ## Instructions
 
 1. **Check branch first** - See "STOP: Check Branch First" section above. Do NOT skip this.
-2. Format all files (C++, markdown, Bazel)
-3. Run all policy checks - fix any violations before proceeding
-4. **Check git status again** - Formatters may modify files beyond your original changeset. Run `git status --short` to see all modified files before staging.
-5. Stage files with `git add <files>` (do NOT use `git add -A`)
-6. Run `git commit` as a separate command (do NOT chain with add)
+2. Build and test
+3. Format (clang-format, prettier, buildifier - once each, write mode)
+4. Lint and policy (buildifier lint + four `check_*.py`)
+5. **Check git status again** - Formatters may modify files beyond your original changeset. Run `git status --short` to see all modified files before staging.
+6. Stage files with `git add <files>` (do NOT use `git add -A`)
+7. Run `git commit` as a separate command (do NOT chain with add)
 
 **Note:** Never use `git commit --amend` if the previous commit has been pushed. If `git status` shows "Your branch is up to date with origin", the last commit is pushed - create a new commit instead.

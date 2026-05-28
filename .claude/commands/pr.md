@@ -1,11 +1,13 @@
 ---
 description: Create a pull request with a well-formatted description
-allowed-tools: Bash(git status:*), Bash(git log:*), Bash(git diff:*), Bash(git push:*), Bash(git branch:*), Bash(git fetch:*), Bash(git rev-list:*), Bash(git rebase:*), Bash(gh pr merge:*)
+allowed-tools: Bash(git status:*), Bash(git log:*), Bash(git diff:*), Bash(git push:*), Bash(git branch:*), Bash(git fetch:*), Bash(git rev-list:*), Bash(git rebase:*), Bash(gh pr create:*), Bash(gh pr merge:*)
 ---
 
 # Pull Request
 
 Create a PR following the project format.
+
+Assumes the working tree is already clean and commits are made. If you need to format, lint, or commit, use `/commit` or `/commit-pr` instead.
 
 ## Context
 
