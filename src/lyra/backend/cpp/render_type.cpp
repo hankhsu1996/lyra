@@ -63,6 +63,15 @@ auto RenderTypeAsCpp(
           [](const mir::StringType&) -> diag::Result<std::string> {
             return std::string{"std::string"};
           },
+          [](const mir::RealType&) -> diag::Result<std::string> {
+            return std::string{"double"};
+          },
+          [](const mir::ShortRealType&) -> diag::Result<std::string> {
+            return std::string{"float"};
+          },
+          [](const mir::RealTimeType&) -> diag::Result<std::string> {
+            return std::string{"double"};
+          },
           [&](const mir::ObjectType& o) -> diag::Result<std::string> {
             return std::string{
                 owner_scope.GetChildStructuralScope(o.target).name};

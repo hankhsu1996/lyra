@@ -389,6 +389,9 @@ class HirDumper {
                   "TimeLiteral(value={}, scale={})", lit.value,
                   FormatTimeScale(lit.scale));
             },
+            [](const RealLiteral& lit) -> std::string {
+              return std::format("RealLiteral({})", lit.value);
+            },
             [](const StructuralVarRef& r) -> std::string {
               return std::format(
                   "StructuralVar[{}](hops={})", r.var.value, r.hops.value);

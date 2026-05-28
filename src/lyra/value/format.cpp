@@ -118,6 +118,14 @@ auto RuntimeValueView::String(std::string_view sv) -> RuntimeValueView {
       }};
 }
 
+auto RuntimeValueView::Real64(double v) -> RuntimeValueView {
+  return RuntimeValueView{.data = Real64ValueView{.value = v}};
+}
+
+auto RuntimeValueView::Real32(float v) -> RuntimeValueView {
+  return RuntimeValueView{.data = Real32ValueView{.value = v}};
+}
+
 auto RuntimeValueView::FromBitView(ConstBitView view, bool is_signed)
     -> RuntimeValueView {
   if (detail::PackedAccess::BitOffset(view) != 0U) {
@@ -171,6 +179,25 @@ auto ApplyStringWidth(std::string body, const FormatSpec& spec) -> std::string {
 
 }  // namespace
 
+namespace {
+
+auto FormatRealBody(const FormatSpec& spec, double v) -> std::string {
+  // LRM Table 21-2: %f decimal, %e exponential, %g shorter of the two.
+  // Default precision matches C printf (6).
+  const int precision = spec.precision >= 0 ? spec.precision : 6;
+  switch (spec.kind) {
+    case FormatKind::kRealExponential:
+      return std::format("{:.{}e}", v, precision);
+    case FormatKind::kRealGeneral:
+      return std::format("{:.{}g}", v, precision);
+    case FormatKind::kRealDecimal:
+    default:
+      return std::format("{:.{}f}", v, precision);
+  }
+}
+
+}  // namespace
+
 auto FormatValue(const FormatSpec& spec, const RuntimeValueView& value)
     -> std::string {
   return std::visit(
@@ -181,6 +208,13 @@ auto FormatValue(const FormatSpec& spec, const RuntimeValueView& value)
           [&](const StringValueView& v) -> std::string {
             std::string body(v.data, v.size);
             return ApplyStringWidth(std::move(body), spec);
+          },
+          [&](const Real64ValueView& v) -> std::string {
+            return ApplyStringWidth(FormatRealBody(spec, v.value), spec);
+          },
+          [&](const Real32ValueView& v) -> std::string {
+            return ApplyStringWidth(
+                FormatRealBody(spec, static_cast<double>(v.value)), spec);
           },
       },
       value.data);

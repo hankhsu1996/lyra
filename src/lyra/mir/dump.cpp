@@ -450,6 +450,9 @@ class MirDumper {
                   "TimeLiteral(value={}, scale={})", lit.value,
                   FormatTimeScale(lit.scale));
             },
+            [](const RealLiteral& lit) -> std::string {
+              return std::format("RealLiteral({})", lit.value);
+            },
             [this](const StructuralParamRef& r) -> std::string {
               const auto& owner = ResolveScopeAtHops(r.hops.value);
               const auto& param = owner.GetStructuralParam(r.param);
@@ -985,6 +988,12 @@ class MirDumper {
         return "kOctal";
       case FormatKind::kString:
         return "kString";
+      case FormatKind::kRealDecimal:
+        return "kRealDecimal";
+      case FormatKind::kRealExponential:
+        return "kRealExponential";
+      case FormatKind::kRealGeneral:
+        return "kRealGeneral";
     }
     throw InternalError("FormatMirFormatKind: unknown FormatKind");
   }

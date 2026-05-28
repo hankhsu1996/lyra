@@ -25,6 +25,9 @@ enum class FormatKind : std::uint8_t {
   kBinary,
   kOctal,
   kString,
+  kRealDecimal,
+  kRealExponential,
+  kRealGeneral,
 };
 
 // Two-state vs four-state lives on the integral axis, not as a top-level
@@ -84,14 +87,27 @@ struct StringValueView {
   std::uint32_t size = 0;
 };
 
+struct Real64ValueView {
+  double value = 0.0;
+};
+
+struct Real32ValueView {
+  float value = 0.0F;
+};
+
 struct RuntimeValueView {
-  std::variant<IntegralValueView, StringValueView> data;
+  std::variant<
+      IntegralValueView, StringValueView, Real64ValueView, Real32ValueView>
+      data;
 
   [[nodiscard]] static auto NarrowIntegral(
       std::uint64_t word, std::uint32_t bit_width, bool is_signed)
       -> RuntimeValueView;
 
   [[nodiscard]] static auto String(std::string_view sv) -> RuntimeValueView;
+
+  [[nodiscard]] static auto Real64(double v) -> RuntimeValueView;
+  [[nodiscard]] static auto Real32(float v) -> RuntimeValueView;
 
   [[nodiscard]] static auto FromBitView(ConstBitView view, bool is_signed)
       -> RuntimeValueView;
