@@ -27,13 +27,17 @@ struct TimeLiteral {
   TimeScale scale;
 };
 
+struct RealLiteral {
+  double value;
+};
+
 // Primary mirrors LRM 11.2.1 - the atomic leaf level of the expression
 // grammar. Refs are listed directly here (not behind a wrapper) so they share
 // type identity with the Lvalue variant: the same StructuralVarRef value can
 // appear here when read and inside an Lvalue when written. Read vs write is
 // determined by where in the tree the ref appears, not by an extra type tag.
 using Primary = std::variant<
-    IntegerLiteral, StringLiteral, TimeLiteral, StructuralVarRef,
+    IntegerLiteral, StringLiteral, TimeLiteral, RealLiteral, StructuralVarRef,
     ProceduralVarRef, LoopVarRef>;
 
 }  // namespace lyra::hir

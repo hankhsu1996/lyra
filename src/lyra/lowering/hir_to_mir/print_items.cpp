@@ -29,8 +29,6 @@ namespace {
 
 auto SpecCharFor(support::FormatDirectiveKind k) -> std::string_view {
   switch (k) {
-    case support::FormatDirectiveKind::kReal:
-      return "f";
     case support::FormatDirectiveKind::kTime:
       return "t";
     case support::FormatDirectiveKind::kChar:
@@ -52,8 +50,14 @@ auto ToMirFormatKind(support::FormatDirectiveKind k) -> mir::FormatKind {
       return mir::FormatKind::kOctal;
     case support::FormatDirectiveKind::kString:
       return mir::FormatKind::kString;
+    case support::FormatDirectiveKind::kRealDecimal:
+      return mir::FormatKind::kRealDecimal;
+    case support::FormatDirectiveKind::kRealExponential:
+      return mir::FormatKind::kRealExponential;
+    case support::FormatDirectiveKind::kRealGeneral:
+      return mir::FormatKind::kRealGeneral;
     default:
-      throw InternalError("ToMirFormatKind: not an integral/string kind");
+      throw InternalError("ToMirFormatKind: not a value-format kind");
   }
 }
 
@@ -101,7 +105,6 @@ auto BuildPrintItemFromDirective(
           "format specifier %m is not implemented in this build",
           diag::UnsupportedCategory::kFeature);
 
-    case support::FormatDirectiveKind::kReal:
     case support::FormatDirectiveKind::kTime:
     case support::FormatDirectiveKind::kChar:
       return diag::Unsupported(
@@ -115,7 +118,10 @@ auto BuildPrintItemFromDirective(
     case support::FormatDirectiveKind::kHex:
     case support::FormatDirectiveKind::kBinary:
     case support::FormatDirectiveKind::kOctal:
-    case support::FormatDirectiveKind::kString: {
+    case support::FormatDirectiveKind::kString:
+    case support::FormatDirectiveKind::kRealDecimal:
+    case support::FormatDirectiveKind::kRealExponential:
+    case support::FormatDirectiveKind::kRealGeneral: {
       if (value_index >= args.size()) {
         return diag::Error(
             span, diag::DiagCode::kDisplayMissingArg,

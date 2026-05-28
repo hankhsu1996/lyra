@@ -327,6 +327,9 @@ auto AutoWidthFor(FormatKind kind, std::uint64_t bit_width) -> std::int32_t {
       return static_cast<std::int32_t>((bit_width + 2U) / 3U);
     case FormatKind::kDecimal:
     case FormatKind::kString:
+    case FormatKind::kRealDecimal:
+    case FormatKind::kRealExponential:
+    case FormatKind::kRealGeneral:
       return -1;
   }
   return -1;
@@ -376,6 +379,11 @@ auto FormatIntegral(const FormatSpec& spec, const IntegralValueView& v)
     case FormatKind::kString:
       throw InternalError(
           "FormatIntegral: kString must route through StringValueView");
+    case FormatKind::kRealDecimal:
+    case FormatKind::kRealExponential:
+    case FormatKind::kRealGeneral:
+      throw InternalError(
+          "FormatIntegral: real format kinds must route through real views");
   }
 
   if (spec.kind == FormatKind::kHex || spec.kind == FormatKind::kBinary ||

@@ -286,6 +286,15 @@ auto MakeTimeLiteralExpr(
   };
 }
 
+auto MakeRealLiteralExpr(double value, hir::TypeId type, diag::SourceSpan span)
+    -> hir::Expr {
+  return hir::Expr{
+      .type = type,
+      .data = hir::PrimaryExpr{.data = hir::RealLiteral{.value = value}},
+      .span = span,
+  };
+}
+
 auto MakeRefExpr(hir::Primary ref, hir::TypeId type, diag::SourceSpan span)
     -> hir::Expr {
   return hir::Expr{
@@ -1037,6 +1046,13 @@ auto LowerProcExpr(
       return MakeTimeLiteralExpr(
           tl.getValue(), LowerTimeUnit(tl.getScale().base.unit), *type_id,
           span);
+    }
+
+    case slang::ast::ExpressionKind::RealLiteral: {
+      const auto& rl = expr.as<slang::ast::RealLiteral>();
+      auto type_id = TypeIdOfSlangExpr(unit_facts, unit_state, expr);
+      if (!type_id) return std::unexpected(std::move(type_id.error()));
+      return MakeRealLiteralExpr(rl.getValue(), *type_id, span);
     }
 
     case slang::ast::ExpressionKind::NamedValue:

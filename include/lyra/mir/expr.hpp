@@ -38,6 +38,10 @@ struct TimeLiteral {
   TimeScale scale;
 };
 
+struct RealLiteral {
+  double value;
+};
+
 struct UnaryExpr {
   UnaryOp op;
   ExprId operand;
@@ -114,7 +118,7 @@ struct RangeSelectExpr {
 };
 
 using ExprData = std::variant<
-    IntegerLiteral, StringLiteral, TimeLiteral, StructuralParamRef,
+    IntegerLiteral, StringLiteral, TimeLiteral, RealLiteral, StructuralParamRef,
     StructuralVarRef, ProceduralVarRef, UnaryExpr, BinaryExpr, ConditionalExpr,
     AssignExpr, CallExpr, RuntimeCallExpr, ConversionExpr, ClosureExpr,
     ElementSelectExpr, RangeSelectExpr>;

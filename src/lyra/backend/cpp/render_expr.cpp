@@ -546,6 +546,18 @@ auto RenderExpr(const RenderContext& ctx, const mir::Expr& expr)
                 "TimeLiteral is not yet implemented in cpp emit",
                 diag::UnsupportedCategory::kFeature);
           },
+          [&](const mir::RealLiteral& r) -> diag::Result<std::string> {
+            const auto& ty = ctx.Unit().GetType(expr.type);
+            const bool is_short = ty.Kind() == mir::TypeKind::kShortReal;
+            // `std::format` with `{:.{}g}` and precision=17 round-trips a
+            // double; precision=9 round-trips a float (IEEE 754 minimum
+            // representable-pair widths). Trailing 'f' suffix on float
+            // literals keeps the C++ literal type matched to the variable.
+            if (is_short) {
+              return std::format("{:.9g}f", r.value);
+            }
+            return std::format("{:.17g}", r.value);
+          },
           [&](const mir::StructuralParamRef& r) -> diag::Result<std::string> {
             return RenderStructuralParamExpr(ctx, r);
           },

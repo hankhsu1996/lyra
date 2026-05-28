@@ -290,6 +290,11 @@ auto LowerHirTimeLiteral(
       .type = unit_state.Builtins().realtime};
 }
 
+auto LowerHirRealLiteral(const hir::RealLiteral& r, mir::TypeId type)
+    -> mir::Expr {
+  return mir::Expr{.data = mir::RealLiteral{.value = r.value}, .type = type};
+}
+
 auto LowerHirPrimaryProc(
     const UnitLoweringState& unit_state,
     const StructuralScopeLoweringState& scope_state,
@@ -305,6 +310,9 @@ auto LowerHirPrimaryProc(
           },
           [&](const hir::TimeLiteral& t) -> mir::Expr {
             return LowerHirTimeLiteral(unit_state, t);
+          },
+          [&](const hir::RealLiteral& r) -> mir::Expr {
+            return LowerHirRealLiteral(r, type);
           },
           [&](const hir::StructuralVarRef& m) -> mir::Expr {
             return LowerStructuralVarRefExpr(scope_state, m, type);
@@ -334,6 +342,9 @@ auto LowerHirPrimaryStructural(
           },
           [&](const hir::TimeLiteral& t) -> mir::Expr {
             return LowerHirTimeLiteral(unit_state, t);
+          },
+          [&](const hir::RealLiteral& r) -> mir::Expr {
+            return LowerHirRealLiteral(r, type);
           },
           [&](const hir::StructuralVarRef& m) -> mir::Expr {
             return LowerStructuralVarRefExpr(scope_state, m, type);

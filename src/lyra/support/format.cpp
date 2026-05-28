@@ -38,11 +38,13 @@ auto SpecCharToKind(char c) -> std::optional<FormatDirectiveKind> {
       return FormatDirectiveKind::kString;
     case 'f':
     case 'F':
+      return FormatDirectiveKind::kRealDecimal;
     case 'e':
     case 'E':
+      return FormatDirectiveKind::kRealExponential;
     case 'g':
     case 'G':
-      return FormatDirectiveKind::kReal;
+      return FormatDirectiveKind::kRealGeneral;
     case 't':
     case 'T':
       return FormatDirectiveKind::kTime;
@@ -87,7 +89,9 @@ auto FormatDirectiveNeedsValue(FormatDirectiveKind kind) -> bool {
     case FormatDirectiveKind::kBinary:
     case FormatDirectiveKind::kOctal:
     case FormatDirectiveKind::kString:
-    case FormatDirectiveKind::kReal:
+    case FormatDirectiveKind::kRealDecimal:
+    case FormatDirectiveKind::kRealExponential:
+    case FormatDirectiveKind::kRealGeneral:
     case FormatDirectiveKind::kTime:
     case FormatDirectiveKind::kChar:
       return true;
