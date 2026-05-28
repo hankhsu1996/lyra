@@ -744,6 +744,19 @@ class MirDumper {
             [&](const ContinueStmt&) {
               Line(std::format("Stmt[{}] ContinueStmt", id.value));
             },
+            [&](const SensitivityWaitStmt& s) {
+              Line(std::format("Stmt[{}] SensitivityWaitStmt", id.value));
+              Indent();
+              for (const auto& r : s.reads) {
+                Line(
+                    std::format(
+                        "StructuralVarRef hops={} var=StructuralVar[{}] "
+                        "bits=[{}:{}]",
+                        r.ref.hops.value, r.ref.var.value, r.bit_range.first,
+                        r.bit_range.second));
+              }
+              Dedent();
+            },
         },
         stmt.data);
   }

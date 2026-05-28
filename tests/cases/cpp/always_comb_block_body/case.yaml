@@ -1,0 +1,12 @@
+id: cpp.always_comb_block_body
+tags: [cpp_run]
+input:
+  command: [run, cpp]
+  project: false
+  top: Top
+  files: [main.sv]
+expect:
+  exit: 0
+  variables:
+    sum: 10
+    prod: 24

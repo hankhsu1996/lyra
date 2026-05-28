@@ -4,13 +4,16 @@
 #include <slang/ast/symbols/BlockSymbols.h>
 
 #include "lyra/frontend/slang_source_mapper.hpp"
+#include "lyra/lowering/ast_to_hir/lower.hpp"
 
 namespace lyra::lowering::ast_to_hir {
 
 class UnitLoweringFacts {
  public:
-  explicit UnitLoweringFacts(const frontend::SlangSourceMapper& source_mapper)
-      : source_mapper_(&source_mapper) {
+  UnitLoweringFacts(
+      const frontend::SlangSourceMapper& source_mapper,
+      const ImplicitSensitivityReads& sensitivity_reads)
+      : source_mapper_(&source_mapper), sensitivity_reads_(&sensitivity_reads) {
   }
 
   [[nodiscard]] auto SourceMapper() const
@@ -18,8 +21,14 @@ class UnitLoweringFacts {
     return *source_mapper_;
   }
 
+  [[nodiscard]] auto SensitivityReads() const
+      -> const ImplicitSensitivityReads& {
+    return *sensitivity_reads_;
+  }
+
  private:
   const frontend::SlangSourceMapper* source_mapper_;
+  const ImplicitSensitivityReads* sensitivity_reads_;
 };
 
 class ScopeLoweringFacts {
