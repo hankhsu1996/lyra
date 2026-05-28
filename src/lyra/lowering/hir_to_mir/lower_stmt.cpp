@@ -130,6 +130,16 @@ auto LowerTimingControl(
                 "LowerTimingControl: ImplicitEventControl must be expanded by "
                 "LowerTimedStmt, not lowered as a MIR timing control");
           },
+          [](const hir::NamedEventControl&)
+              -> diag::Result<mir::TimingControl> {
+            // NamedEventControl never reaches the MIR TimingControl level:
+            // LowerTimedStmt intercepts it and expands the TimedStmt into a
+            // mir::ExprStmt(method_call(event, Await)).
+            throw InternalError(
+                "LowerTimingControl: NamedEventControl must be expanded by "
+                "LowerTimedStmt into a method call, not lowered as a MIR "
+                "timing control");
+          },
       },
       tc);
 }
@@ -752,6 +762,97 @@ auto LowerContinueStmt(const hir::Stmt& stmt) -> diag::Result<mir::Stmt> {
       .child_procedural_scopes = {}};
 }
 
+// LRM 15.5.1 `-> e;`. HIR -> MIR collapses the trigger statement onto a plain
+// method-call expression on the named event. The runtime's
+// `NamedEvent::Trigger(services)` does not suspend, so no `co_await` wrap is
+// emitted -- backend dispatches on `IsBuiltinMethodSuspending(kind)`.
+auto LowerEventTriggerStmt(
+    const UnitLoweringState& unit_state,
+    const StructuralScopeLoweringState& scope_state,
+    const ProcessLoweringState& proc_state,
+    ProceduralScopeLoweringState& proc_scope_state,
+    const hir::Process& hir_proc, const hir::Stmt& stmt,
+    const hir::EventTriggerStmt& et) -> diag::Result<mir::Stmt> {
+  auto receiver_or = LowerExpr(
+      unit_state, scope_state, proc_state, proc_scope_state, hir_proc,
+      hir_proc.exprs.at(et.event.value));
+  if (!receiver_or) return std::unexpected(std::move(receiver_or.error()));
+  const mir::TypeId event_type = receiver_or->type;
+  const mir::ExprId receiver_id =
+      proc_scope_state.AddExpr(*std::move(receiver_or));
+  mir::Expr call{
+      .data =
+          mir::CallExpr{
+              .callee =
+                  mir::BuiltinMethodCallee{
+                      .receiver_type = event_type,
+                      .kind = mir::BuiltinMethodKind::kNamedEventTrigger,
+                  },
+              .arguments = {receiver_id},
+          },
+      .type = unit_state.Builtins().void_type};
+  const mir::ExprId call_id = proc_scope_state.AddExpr(std::move(call));
+  return mir::Stmt{
+      .label = stmt.label,
+      .data = mir::ExprStmt{.expr = call_id},
+      .child_procedural_scopes = {}};
+}
+
+// LRM 15.5.2 `@e body;`. HIR -> MIR expands the timed statement into a
+// Block { ExprStmt(MethodCall(Await)); body; } inside a fresh child scope --
+// the same shape used for `@*` (LRM 9.4.2.2), substituting a suspending
+// method call in place of SensitivityWaitStmt.
+auto LowerNamedEventTimedStmt(
+    const UnitLoweringState& unit_state,
+    const StructuralScopeLoweringState& scope_state,
+    ProcessLoweringState& proc_state, const hir::Process& hir_proc,
+    const hir::Stmt& stmt, const hir::TimedStmt& t,
+    const hir::NamedEventControl& nec) -> diag::Result<mir::Stmt> {
+  ProceduralScopeLoweringState child_proc_scope_state;
+  ProceduralDepthGuard depth_guard{proc_state};
+  auto receiver_or = LowerExpr(
+      unit_state, scope_state, proc_state, child_proc_scope_state, hir_proc,
+      hir_proc.exprs.at(nec.event.value));
+  if (!receiver_or) return std::unexpected(std::move(receiver_or.error()));
+  const mir::TypeId event_type = receiver_or->type;
+  const mir::ExprId receiver_id =
+      child_proc_scope_state.AddExpr(*std::move(receiver_or));
+  mir::Expr await_call{
+      .data =
+          mir::CallExpr{
+              .callee =
+                  mir::BuiltinMethodCallee{
+                      .receiver_type = event_type,
+                      .kind = mir::BuiltinMethodKind::kNamedEventAwait,
+                  },
+              .arguments = {receiver_id},
+          },
+      .type = unit_state.Builtins().void_type};
+  const mir::ExprId await_id =
+      child_proc_scope_state.AddExpr(std::move(await_call));
+  child_proc_scope_state.AddRootStmt(child_proc_scope_state.AddStmt(
+      mir::Stmt{
+          .label = std::nullopt,
+          .data = mir::ExprStmt{.expr = await_id},
+          .child_procedural_scopes = {}}));
+  const hir::Stmt& inner_hir = hir_proc.stmts.at(t.stmt.value);
+  auto inner_or = LowerStmt(
+      unit_state, scope_state, proc_state, child_proc_scope_state, hir_proc,
+      inner_hir);
+  if (!inner_or) {
+    return std::unexpected(std::move(inner_or.error()));
+  }
+  child_proc_scope_state.AddRootStmt(
+      child_proc_scope_state.AddStmt(*std::move(inner_or)));
+  std::vector<mir::ProceduralScope> child_scopes;
+  const mir::ProceduralScopeId scope_id =
+      AddChildProceduralScope(child_scopes, child_proc_scope_state.Finish());
+  return mir::Stmt{
+      .label = stmt.label,
+      .data = mir::BlockStmt{.scope = scope_id},
+      .child_procedural_scopes = std::move(child_scopes)};
+}
+
 // LRM 9.4.2.2: `@* body` -- the HIR TimedStmt with ImplicitEventControl
 // expands at HIR -> MIR into a Block { SensitivityWaitStmt; body; } inside a
 // fresh child scope. This is where HIR's slang-aligned wrapper structure
@@ -794,6 +895,10 @@ auto LowerTimedStmt(
   if (const auto* ie = std::get_if<hir::ImplicitEventControl>(&t.timing)) {
     return LowerImplicitEventTimedStmt(
         unit_state, scope_state, proc_state, hir_proc, stmt, t, *ie);
+  }
+  if (const auto* nec = std::get_if<hir::NamedEventControl>(&t.timing)) {
+    return LowerNamedEventTimedStmt(
+        unit_state, scope_state, proc_state, hir_proc, stmt, t, *nec);
   }
   auto timing_or = LowerTimingControl(
       unit_state, scope_state, proc_state, proc_scope_state, hir_proc,
@@ -897,6 +1002,11 @@ auto LowerStmt(
             return LowerTimedStmt(
                 unit_state, scope_state, proc_state, proc_scope_state, hir_proc,
                 stmt, t);
+          },
+          [&](const hir::EventTriggerStmt& et) {
+            return LowerEventTriggerStmt(
+                unit_state, scope_state, proc_state, proc_scope_state, hir_proc,
+                stmt, et);
           },
       },
       stmt.data);

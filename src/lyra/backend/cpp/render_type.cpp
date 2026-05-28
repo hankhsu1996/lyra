@@ -63,6 +63,9 @@ auto RenderTypeAsCpp(
           [](const mir::StringType&) -> diag::Result<std::string> {
             return std::string{"std::string"};
           },
+          [](const mir::EventType&) -> diag::Result<std::string> {
+            return std::string{"lyra::runtime::NamedEvent"};
+          },
           [](const mir::RealType&) -> diag::Result<std::string> {
             return std::string{"double"};
           },

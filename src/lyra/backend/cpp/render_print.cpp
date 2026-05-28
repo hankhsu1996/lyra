@@ -194,7 +194,8 @@ auto RenderRuntimePrintCall(
 
 auto RenderRuntimeFinishCall(const mir::RuntimeFinishCall& call)
     -> std::string {
-  return std::format("co_await lyra::runtime::Finish({})", call.level);
+  return std::format(
+      "co_await lyra::runtime::Finish(*services_, {})", call.level);
 }
 
 auto RenderRuntimeDiagnosticSeverity(mir::DiagnosticSeverity s)

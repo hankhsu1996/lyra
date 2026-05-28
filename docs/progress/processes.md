@@ -12,7 +12,6 @@ order. Items in the [Actionable](#actionable) section can be picked up next; ite
 
 | Item | Notes                                                                                             |
 | ---- | ------------------------------------------------------------------------------------------------- |
-| P9   | Named event (`event e; -> e; @e;`). New runtime primitive (named event handle, trigger, await).   |
 | P11  | `wait (expr)` level-sensitive control. Needs a re-arm primitive over the existing change channel. |
 
 ## Blocked
@@ -97,10 +96,21 @@ order. Items in the [Actionable](#actionable) section can be picked up next; ite
 
 ### Synchronisation primitives
 
-- [ ] P9 -- Named events: `event e;` declaration, `-> e;` trigger, `@e;` await. New runtime type
-      (named event handle, transient triggered state visible only within the current time slot per
-      LRM 15.5.2). Closes `processes/named_event` and the trigger portion of
-      `processes/event_triggers`.
+- [x] P9 -- Named events: `event e;` declaration, `-> e;` trigger, `@e;` await, `e.triggered` query
+      (LRM 15.5). HIR mirrors slang's source-aligned structure: a new `hir::EventTriggerStmt` for
+      `-> e;` and a new `hir::TimingControl::NamedEventControl` variant for `@e;`. HIR -> MIR
+      collapses both onto method calls on the `lyra::runtime::NamedEvent` runtime type by way of
+      `mir::BuiltinMethodKind::{kNamedEventTrigger,kNamedEventAwait,kNamedEventTriggered}` -- no new
+      MIR statement kinds and no new timing-control variant. `NamedEvent` is a pure data type: it
+      owns a `RuntimeEvent` (waiters list) and a `std::optional<SimTime> last_triggered_at_`.
+      `Trigger(services)` records `services.Now()` and wakes every waiter via
+      `services.ScheduleProcess`; `Triggered(services)` is a `last_triggered_at_ == services.Now()`
+      comparison, so LRM 15.5.3 "triggered persists for the current time step" emerges from a
+      timestamp comparison rather than a flag the engine has to clear. The engine has no
+      event-specific code -- no `TriggerEvent` member, no slot-persistent flag, no event wait
+      dispatch. `e.triggered` returns a 1-bit `PackedArray` so it composes with the rest of the
+      value pipeline. The `->>` non-blocking trigger, `wait_order(...)`, event aliasing (`e1 = e2`),
+      event nullness, and event comparison are not in this cut.
 - [ ] P11 -- `wait (expr)` level-sensitive control. Suspends the coroutine, subscribes to every
       signal read in `expr`, re-evaluates on any change, resumes when the expression becomes true.
       Distinct from `@(expr)` because it is level-sensitive (LRM 9.4.3): if `expr` is already true

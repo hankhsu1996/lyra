@@ -1,13 +1,13 @@
 #pragma once
 
 #include <coroutine>
-#include <optional>
 #include <utility>
 
 #include "lyra/base/internal_error.hpp"
-#include "lyra/runtime/wait_request.hpp"
 
 namespace lyra::runtime {
+
+class RuntimeProcess;
 
 class ProcessCoroutine {
  public:
@@ -15,7 +15,11 @@ class ProcessCoroutine {
   // NOLINTNEXTLINE(readability-identifier-naming)
   struct promise_type {
     bool failed = false;
-    std::optional<WaitRequest> wait_request;
+    // Back-pointer set by RuntimeProcess construction so awaitables can
+    // reach the owning RuntimeProcess from `await_suspend` (e.g. to
+    // subscribe it to a named event's waiter list, or to look up the
+    // current simulation time via the engine's RuntimeServices).
+    RuntimeProcess* process = nullptr;
 
     // NOLINTNEXTLINE(readability-identifier-naming)
     auto get_return_object() -> ProcessCoroutine {
@@ -38,16 +42,13 @@ class ProcessCoroutine {
       failed = true;
     }
 
-    void SetWaitRequest(WaitRequest req) {
-      wait_request = std::move(req);
-    }
-    auto TakeWaitRequest() -> std::optional<WaitRequest> {
-      auto out = std::move(wait_request);
-      wait_request.reset();
-      return out;
-    }
-    void ClearWaitRequest() {
-      wait_request.reset();
+    [[nodiscard]] auto Process() const -> RuntimeProcess& {
+      if (process == nullptr) {
+        throw InternalError(
+            "ProcessCoroutine::promise_type::Process: no RuntimeProcess "
+            "back-pointer set");
+      }
+      return *process;
     }
   };
 
@@ -71,31 +72,33 @@ class ProcessCoroutine {
     }
   }
 
-  auto Resume() -> ProcessRunResult {
+  // Resumes the coroutine. Returns true if the coroutine ran to completion
+  // (`co_return` reached); false if it suspended on some awaitable. The
+  // awaitable is responsible for arranging its own future wakeup during
+  // `await_suspend` -- the engine observes only completion / suspension.
+  auto Resume() -> bool {
     if (!handle_ || handle_.done()) {
-      return ProcessRunResult::Completed();
+      return true;
     }
-    handle_.promise().ClearWaitRequest();
     handle_.resume();
     if (handle_.promise().failed) {
       handle_.promise().failed = false;
       throw InternalError(
           "lyra::runtime::ProcessCoroutine::Resume: process coroutine failed");
     }
-    if (handle_.done()) {
-      return ProcessRunResult::Completed();
-    }
-    auto wait = handle_.promise().TakeWaitRequest();
-    if (!wait.has_value()) {
-      throw InternalError(
-          "lyra::runtime::ProcessCoroutine::Resume: process suspended without "
-          "a wait request");
-    }
-    return ProcessRunResult::Suspended(std::move(*wait));
+    return handle_.done();
   }
 
   [[nodiscard]] auto Done() const -> bool {
     return !handle_ || handle_.done();
+  }
+
+  // Wires the promise's back-pointer to the owning RuntimeProcess. Called
+  // from RuntimeProcess construction.
+  void BindProcess(RuntimeProcess& process) {
+    if (handle_) {
+      handle_.promise().process = &process;
+    }
   }
 
  private:

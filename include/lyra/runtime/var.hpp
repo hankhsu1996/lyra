@@ -8,9 +8,11 @@
 #include <utility>
 #include <vector>
 
+#include "lyra/base/internal_error.hpp"
 #include "lyra/runtime/process.hpp"
+#include "lyra/runtime/runtime_process.hpp"
 #include "lyra/runtime/runtime_services.hpp"
-#include "lyra/runtime/wait_request.hpp"
+#include "lyra/runtime/trigger.hpp"
 #include "lyra/value/packed.hpp"
 
 namespace lyra::runtime {
@@ -158,6 +160,15 @@ class Var : public Observable {
   T value_{};
 };
 
+// Suspends the calling process until one of the supplied Triggers fires
+// (matching its edge). Subscribes the process to every Observable directly
+// in `await_suspend`; the engine has no idea what kind of wait this is.
+// When one Observable wakes the process, the engine sweeps the rest via
+// `TakePendingValueChangeSubscriptions` to drop dangling subscriptions.
+//
+// An empty trigger list is legal -- the process suspends forever (used by
+// `always_comb` / `always_latch` with no inferred reads,
+// e.g. `always_comb c = 7;`).
 class EventControlAwaitable {
  public:
   explicit EventControlAwaitable(std::vector<Trigger> triggers)
@@ -172,8 +183,19 @@ class EventControlAwaitable {
   // NOLINTNEXTLINE(readability-identifier-naming)
   void await_suspend(
       std::coroutine_handle<ProcessCoroutine::promise_type> handle) {
-    handle.promise().SetWaitRequest(
-        ValueChangeWait{.triggers = std::move(triggers_)});
+    auto& process = handle.promise().Process();
+    std::vector<Observable*> subs;
+    subs.reserve(triggers_.size());
+    for (const auto& trigger : triggers_) {
+      if (trigger.observable == nullptr) {
+        throw InternalError(
+            "EventControlAwaitable::await_suspend: observable pointer is "
+            "null");
+      }
+      trigger.observable->Subscribe(process, trigger.edge);
+      subs.push_back(trigger.observable);
+    }
+    process.SetPendingValueChangeSubscriptions(std::move(subs));
   }
 
   // NOLINTNEXTLINE(readability-identifier-naming)

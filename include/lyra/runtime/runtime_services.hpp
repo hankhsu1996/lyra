@@ -4,6 +4,7 @@
 #include <functional>
 
 #include "lyra/base/internal_error.hpp"
+#include "lyra/base/time.hpp"
 
 namespace lyra::runtime {
 
@@ -11,6 +12,7 @@ class StreamDispatcher;
 class DiagnosticDispatcher;
 class Engine;
 class Observable;
+class RuntimeProcess;
 enum class EdgeTransition : std::uint8_t;
 
 class RuntimeServices {
@@ -38,6 +40,25 @@ class RuntimeServices {
   void SubmitNba(std::function<void()> closure);
 
   void TriggerValueChange(Observable& observable, EdgeTransition transition);
+
+  // Generic forwarders to Engine primitives used by runtime data types
+  // (NamedEvent, etc.) and by every awaitable's `await_suspend` so they
+  // manage their own producer/consumer wiring without going through
+  // engine-side per-feature code paths.
+  //
+  // ScheduleProcess     -- enqueue on next delta (event triggers, value
+  //                        change wakeups).
+  // ScheduleInactive    -- enqueue on the inactive region of this slot
+  //                        (`#0` delay).
+  // ScheduleAtTime      -- enqueue at a future SimTime (`#N` delay).
+  // RequestFinish       -- mark simulation to stop after the current slot
+  //                        completes (`$finish`).
+  // Now                 -- current simulation time.
+  void ScheduleProcess(RuntimeProcess& process);
+  void ScheduleInactive(RuntimeProcess& process);
+  void ScheduleAtTime(SimTime when, RuntimeProcess& process);
+  void RequestFinish(int level);
+  [[nodiscard]] auto Now() const -> SimTime;
 
  private:
   StreamDispatcher* stream_ = nullptr;

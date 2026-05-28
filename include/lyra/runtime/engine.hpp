@@ -14,13 +14,11 @@
 #include "lyra/runtime/runtime_scope.hpp"
 #include "lyra/runtime/runtime_services.hpp"
 #include "lyra/runtime/stream_dispatcher.hpp"
-#include "lyra/runtime/wait_request.hpp"
 
 namespace lyra::runtime {
 
 class Module;
 class Observable;
-class RuntimeEvent;
 class RuntimeProcess;
 enum class EdgeTransition : std::uint8_t;
 
@@ -71,6 +69,28 @@ class Engine {
 
   void TriggerValueChange(Observable& observable, EdgeTransition transition);
 
+  // Generic primitives exposed to runtime data types and awaitables so they
+  // can manage their own producer/consumer wiring without the engine needing
+  // to know about them. Each awaitable does its scheduling work in
+  // `await_suspend` by reaching back through `RuntimeServices` -- the engine
+  // never inspects what kind of wait a process is in.
+  //
+  // ScheduleProcess     -- enqueue on the next delta of the current slot
+  //                        (used by event triggers, value-change wakeups,
+  //                        anything that wants "wake on next opportunity").
+  // ScheduleInactive    -- enqueue on the inactive region of the current
+  //                        slot (used by `#0` delays).
+  // ScheduleAtTime      -- enqueue at a future SimTime (used by `#N`).
+  // RequestFinish       -- tear down the simulation (used by `$finish`).
+  // Now                 -- query current simulation time.
+  void ScheduleProcess(RuntimeProcess& process);
+  void ScheduleInactiveProcess(RuntimeProcess& process);
+  void ScheduleAtTime(SimTime when, RuntimeProcess& process);
+  void RequestFinish(int level);
+  [[nodiscard]] auto Now() const -> SimTime {
+    return now_;
+  }
+
  private:
   struct PostponedWorkItem {};
 
@@ -112,18 +132,10 @@ class Engine {
   [[nodiscard]] auto HasNextDeltaWork() const -> bool;
   [[nodiscard]] auto IsRunnablePhase() const -> bool;
 
-  void ScheduleWait(RuntimeProcess& process, WaitRequest wait);
-  void ScheduleDelayWait(RuntimeProcess& process, DelayWait wait);
-  static void ScheduleEventWait(RuntimeProcess& process, EventWait wait);
-  static void ScheduleValueChangeWait(
-      RuntimeProcess& process, ValueChangeWait wait);
-
   void ScheduleActive(RuntimeProcess& process);
   void ScheduleInactive(RuntimeProcess& process);
   void ScheduleNextDelta(RuntimeProcess& process);
   void ScheduleDelayed(SimTime wake_time, RuntimeProcess& process);
-
-  void TriggerEvent(RuntimeEvent& event);
 
   [[nodiscard]] static auto CheckedAdd(SimTime base, SimDuration delta)
       -> SimTime;

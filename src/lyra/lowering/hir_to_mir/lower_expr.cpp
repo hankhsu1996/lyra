@@ -272,6 +272,12 @@ auto LowerBuiltinMethodKind(hir::BuiltinMethodKind kind)
       return mir::BuiltinMethodKind::kEnumPrev;
     case hir::BuiltinMethodKind::kEnumName:
       return mir::BuiltinMethodKind::kEnumName;
+    case hir::BuiltinMethodKind::kNamedEventTrigger:
+      return mir::BuiltinMethodKind::kNamedEventTrigger;
+    case hir::BuiltinMethodKind::kNamedEventAwait:
+      return mir::BuiltinMethodKind::kNamedEventAwait;
+    case hir::BuiltinMethodKind::kNamedEventTriggered:
+      return mir::BuiltinMethodKind::kNamedEventTriggered;
   }
   throw InternalError("LowerBuiltinMethodKind: unknown hir::BuiltinMethodKind");
 }
