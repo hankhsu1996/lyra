@@ -209,8 +209,8 @@ auto LowerScopeMembersInto(
         continue;
       }
     }
-    auto r =
-        LowerScopeMemberInto(unit_facts, scope_state, stack, member, slang_scope);
+    auto r = LowerScopeMemberInto(
+        unit_facts, scope_state, stack, member, slang_scope);
     if (!r) return std::unexpected(std::move(r.error()));
   }
   return {};
