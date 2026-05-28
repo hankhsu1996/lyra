@@ -84,11 +84,34 @@ struct ElementSelectExpr {
   ExprId index;
 };
 
+struct RangeConstantBounds {
+  ExprId msb_expr;
+  ExprId lsb_expr;
+};
+
+struct RangeIndexedUpBounds {
+  ExprId base_index;
+  ExprId width;
+};
+
+struct RangeIndexedDownBounds {
+  ExprId base_index;
+  ExprId width;
+};
+
+using RangeBounds = std::variant<
+    RangeConstantBounds, RangeIndexedUpBounds, RangeIndexedDownBounds>;
+
+struct RangeSelectExpr {
+  ExprId base_value;
+  RangeBounds bounds;
+};
+
 using ExprData = std::variant<
     IntegerLiteral, StringLiteral, TimeLiteral, StructuralParamRef,
     StructuralVarRef, ProceduralVarRef, UnaryExpr, BinaryExpr, ConditionalExpr,
     AssignExpr, CallExpr, RuntimeCallExpr, ConversionExpr, ClosureExpr,
-    ElementSelectExpr>;
+    ElementSelectExpr, RangeSelectExpr>;
 
 struct Expr {
   ExprData data;

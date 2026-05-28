@@ -787,6 +787,89 @@ auto LowerHirElementSelectExprProc(
       .type = result_type};
 }
 
+auto LowerHirRangeSelectExprProc(
+    const UnitLoweringState& unit_state,
+    const StructuralScopeLoweringState& scope_state,
+    const ProcessLoweringState& proc_state,
+    ProceduralScopeLoweringState& proc_scope_state,
+    const hir::Process& hir_process, const hir::RangeSelectExpr& sel,
+    mir::TypeId result_type) -> diag::Result<mir::Expr> {
+  auto base_or = LowerExpr(
+      unit_state, scope_state, proc_state, proc_scope_state, hir_process,
+      hir_process.exprs.at(sel.base_value.value));
+  if (!base_or) return std::unexpected(std::move(base_or.error()));
+  const mir::ExprId base_id = proc_scope_state.AddExpr(*std::move(base_or));
+
+  auto bounds_or = std::visit(
+      Overloaded{
+          [&](const hir::RangeConstantBounds& b)
+              -> diag::Result<mir::RangeBounds> {
+            auto msb_or = LowerExpr(
+                unit_state, scope_state, proc_state, proc_scope_state,
+                hir_process, hir_process.exprs.at(b.msb_expr.value));
+            if (!msb_or) return std::unexpected(std::move(msb_or.error()));
+            const mir::ExprId msb_id =
+                proc_scope_state.AddExpr(*std::move(msb_or));
+            auto lsb_or = LowerExpr(
+                unit_state, scope_state, proc_state, proc_scope_state,
+                hir_process, hir_process.exprs.at(b.lsb_expr.value));
+            if (!lsb_or) return std::unexpected(std::move(lsb_or.error()));
+            const mir::ExprId lsb_id =
+                proc_scope_state.AddExpr(*std::move(lsb_or));
+            return mir::RangeConstantBounds{
+                .msb_expr = msb_id, .lsb_expr = lsb_id};
+          },
+          [&](const hir::RangeIndexedUpBounds& b)
+              -> diag::Result<mir::RangeBounds> {
+            auto base_idx_or = LowerExpr(
+                unit_state, scope_state, proc_state, proc_scope_state,
+                hir_process, hir_process.exprs.at(b.base_index.value));
+            if (!base_idx_or) {
+              return std::unexpected(std::move(base_idx_or.error()));
+            }
+            const mir::ExprId base_idx_id =
+                proc_scope_state.AddExpr(*std::move(base_idx_or));
+            auto width_or = LowerExpr(
+                unit_state, scope_state, proc_state, proc_scope_state,
+                hir_process, hir_process.exprs.at(b.width.value));
+            if (!width_or) return std::unexpected(std::move(width_or.error()));
+            const mir::ExprId width_id =
+                proc_scope_state.AddExpr(*std::move(width_or));
+            return mir::RangeIndexedUpBounds{
+                .base_index = base_idx_id, .width = width_id};
+          },
+          [&](const hir::RangeIndexedDownBounds& b)
+              -> diag::Result<mir::RangeBounds> {
+            auto base_idx_or = LowerExpr(
+                unit_state, scope_state, proc_state, proc_scope_state,
+                hir_process, hir_process.exprs.at(b.base_index.value));
+            if (!base_idx_or) {
+              return std::unexpected(std::move(base_idx_or.error()));
+            }
+            const mir::ExprId base_idx_id =
+                proc_scope_state.AddExpr(*std::move(base_idx_or));
+            auto width_or = LowerExpr(
+                unit_state, scope_state, proc_state, proc_scope_state,
+                hir_process, hir_process.exprs.at(b.width.value));
+            if (!width_or) return std::unexpected(std::move(width_or.error()));
+            const mir::ExprId width_id =
+                proc_scope_state.AddExpr(*std::move(width_or));
+            return mir::RangeIndexedDownBounds{
+                .base_index = base_idx_id, .width = width_id};
+          },
+      },
+      sel.bounds);
+  if (!bounds_or) return std::unexpected(std::move(bounds_or.error()));
+
+  return mir::Expr{
+      .data =
+          mir::RangeSelectExpr{
+              .base_value = base_id,
+              .bounds = *std::move(bounds_or),
+          },
+      .type = result_type};
+}
+
 }  // namespace
 
 auto LowerExpr(
@@ -843,12 +926,10 @@ auto LowerExpr(
                 unit_state, scope_state, proc_state, proc_scope_state,
                 hir_process, sel, result_type);
           },
-          [](const hir::RangeSelectExpr&) -> diag::Result<mir::Expr> {
-            return diag::Unsupported(
-                diag::DiagCode::kUnsupportedExpressionForm,
-                "range-select (part-select / indexed part-select) is not yet "
-                "wired through HIR -> MIR",
-                diag::UnsupportedCategory::kOperation);
+          [&](const hir::RangeSelectExpr& sel) -> diag::Result<mir::Expr> {
+            return LowerHirRangeSelectExprProc(
+                unit_state, scope_state, proc_state, proc_scope_state,
+                hir_process, sel, result_type);
           },
       },
       expr.data);

@@ -1,0 +1,14 @@
+id: cpp.range_select_const_basic
+tags: [cpp_run]
+input:
+  command: [run, cpp]
+  project: false
+  top: Top
+  files: [main.sv]
+expect:
+  exit: 0
+  variables:
+    low_nibble: "4'hD"
+    high_nibble: "4'hA"
+    low_byte: "8'hCD"
+    high_byte: "8'hAB"
