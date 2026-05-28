@@ -140,10 +140,16 @@ class PackedArray {
   [[nodiscard]] auto WildcardEquals(const PackedArray& other) const
       -> PackedArray;
 
-  // LRM 7.4.5 / 11.5.1: extract `width` LSB-anchored bits at `bit_offset`;
-  // invalid (x/z or out-of-range) index gives x (4-state) or 0 (2-state).
-  [[nodiscard]] auto Select(
-      const PackedArray& bit_offset, std::uint32_t width) const -> PackedArray;
+  // LRM 11.5.1 bit-select: extract the bit at `index` as a 1-bit PackedArray.
+  // Invalid (x/z or out-of-range) index yields x (4-state) or 0 (2-state).
+  [[nodiscard]] auto Index(const PackedArray& index) const -> PackedArray;
+
+  // LRM 7.4.5 slice / 11.5.1 part-select: extract `width` contiguous bits whose
+  // LSB sits at `lsb_bit`. Per LRM 7.4.5 the size is constant (compile-time
+  // `width`) but the position may be runtime (`lsb_bit`). Bits outside the
+  // declared range yield x (4-state) or 0 (2-state).
+  [[nodiscard]] auto Slice(
+      const PackedArray& lsb_bit, std::uint32_t width) const -> PackedArray;
   [[nodiscard]] auto operator<(const PackedArray& other) const -> PackedArray;
   [[nodiscard]] auto operator<=(const PackedArray& other) const -> PackedArray;
   [[nodiscard]] auto operator>(const PackedArray& other) const -> PackedArray;

@@ -1,0 +1,13 @@
+id: cpp.range_select_wide
+tags: [cpp_run]
+input:
+  command: [run, cpp]
+  project: false
+  top: Top
+  files: [main.sv]
+expect:
+  exit: 0
+  variables:
+    low32: "32'hDDEEFF00"
+    high32: "32'h11223344"
+    middle64: "64'h55667788_99AABBCC"

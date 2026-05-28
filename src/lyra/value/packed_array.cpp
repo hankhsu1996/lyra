@@ -874,18 +874,22 @@ auto PackedArray::WildcardEquals(const PackedArray& other) const
   return OneBitResult(true, is_four_state_);
 }
 
-auto PackedArray::Select(
-    const PackedArray& bit_offset, std::uint32_t width) const -> PackedArray {
+auto PackedArray::Index(const PackedArray& index) const -> PackedArray {
+  return Slice(index, 1U);
+}
+
+auto PackedArray::Slice(const PackedArray& lsb_bit, std::uint32_t width) const
+    -> PackedArray {
   if (width == 0U) {
-    throw InternalError("PackedArray::Select: width must be >= 1");
+    throw InternalError("PackedArray::Slice: width must be >= 1");
   }
-  if (bit_offset.HasUnknown() || bit_offset.BitWidth() > 64U) {
+  if (lsb_bit.HasUnknown() || lsb_bit.BitWidth() > 64U) {
     if (is_four_state_) {
       return AllX(width, false);
     }
     return PackedArray{width, false, false};
   }
-  const std::int64_t start = bit_offset.ToInt64();
+  const std::int64_t start = lsb_bit.ToInt64();
   const auto src_value = ValueWords();
   const auto src_unknown = UnknownWords();
   const auto bw_signed = static_cast<std::int64_t>(bit_width_);
