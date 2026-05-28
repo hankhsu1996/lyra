@@ -7,10 +7,8 @@
 #include <string>
 #include <string_view>
 #include <utility>
-#include <variant>
 
 #include "lyra/base/internal_error.hpp"
-#include "lyra/base/overloaded.hpp"
 #include "lyra/base/time.hpp"
 #include "lyra/runtime/bind_context.hpp"
 #include "lyra/runtime/event.hpp"
@@ -21,8 +19,8 @@
 #include "lyra/runtime/runtime_scope_kind.hpp"
 #include "lyra/runtime/runtime_traversal.hpp"
 #include "lyra/runtime/stream_dispatcher.hpp"
+#include "lyra/runtime/trigger.hpp"
 #include "lyra/runtime/var.hpp"
-#include "lyra/runtime/wait_request.hpp"
 
 namespace lyra::runtime {
 
@@ -186,15 +184,16 @@ void Engine::ExecutePostponedRegion() {
 void Engine::ExecuteFinalProcesses() {
   phase_ = SchedulerPhase::kPostponed;
   for (RuntimeProcess* p : queues_.finals) {
-    auto result = p->Resume();
-    if (result.IsCompleted()) {
+    const bool completed = p->Resume();
+    if (completed) {
       continue;
     }
-    auto wait = result.TakeWait();
-    // LRM 9.2.3: $finish inside a final procedure ends simulation
-    // immediately -- subsequent queued finals shall not run.
-    if (std::holds_alternative<FinishWait>(wait)) {
-      finished_ = true;
+    // Suspended: only legal if `$finish` was called (sets `finished_` via
+    // `RuntimeServices::RequestFinish`). LRM 9.2.3 says any `$finish` in a
+    // final ends simulation immediately -- subsequent queued finals shall
+    // not run. Any other suspension is a time-controlling statement, which
+    // is forbidden in `final` blocks.
+    if (finished_) {
       break;
     }
     throw InternalError(
@@ -260,63 +259,30 @@ void Engine::RunProcess(RuntimeProcess& process) {
     throw InternalError(
         "Engine::RunProcess: process resumed outside runnable phase");
   }
-  auto result = process.Resume();
-  if (result.IsCompleted()) {
-    return;
-  }
-  ScheduleWait(process, result.TakeWait());
+  // No wait dispatch: each awaitable has already arranged its own wakeup
+  // path during await_suspend. The engine only observes "process completed
+  // or still suspended" and acts accordingly.
+  process.Resume();
 }
 
-void Engine::ScheduleWait(RuntimeProcess& process, WaitRequest wait) {
-  std::visit(
-      Overloaded{
-          [&](DelayWait d) { ScheduleDelayWait(process, d); },
-          [&](EventWait e) { ScheduleEventWait(process, e); },
-          [&](ValueChangeWait& v) {
-            ScheduleValueChangeWait(process, std::move(v));
-          },
-          [&](FinishWait) { finished_ = true; },
-      },
-      wait);
+void Engine::ScheduleProcess(RuntimeProcess& process) {
+  ScheduleNextDelta(process);
 }
 
-void Engine::ScheduleDelayWait(RuntimeProcess& process, DelayWait wait) {
-  if (wait.duration == 0) {
-    ScheduleInactive(process);
-    return;
-  }
-  ScheduleDelayed(CheckedAdd(now_, wait.duration), process);
+void Engine::ScheduleInactiveProcess(RuntimeProcess& process) {
+  ScheduleInactive(process);
 }
 
-void Engine::ScheduleEventWait(RuntimeProcess& process, EventWait wait) {
-  if (wait.event == nullptr) {
-    throw InternalError("Engine::ScheduleEventWait: event pointer is null");
-  }
-  wait.event->AddWaiter(process);
+void Engine::ScheduleAtTime(SimTime when, RuntimeProcess& process) {
+  ScheduleDelayed(when, process);
 }
 
-void Engine::TriggerEvent(RuntimeEvent& event) {
-  for (RuntimeProcess* p : event.TakeWaiters()) {
-    ScheduleNextDelta(*p);
-  }
-}
-
-void Engine::ScheduleValueChangeWait(
-    RuntimeProcess& process, ValueChangeWait wait) {
-  // An empty trigger list is legal -- it means "wait for nothing", which
-  // suspends the process forever. always_comb / always_latch with no inferred
-  // reads (e.g. `always_comb c = 7;`) lowers to such a wait by design.
-  std::vector<Observable*> subs;
-  subs.reserve(wait.triggers.size());
-  for (const auto& trigger : wait.triggers) {
-    if (trigger.observable == nullptr) {
-      throw InternalError(
-          "Engine::ScheduleValueChangeWait: observable pointer is null");
-    }
-    trigger.observable->Subscribe(process, trigger.edge);
-    subs.push_back(trigger.observable);
-  }
-  process.SetPendingValueChangeSubscriptions(std::move(subs));
+void Engine::RequestFinish(int level) {
+  // `level` is the LRM 20.2 verbosity argument to `$finish`. Lyra's engine
+  // currently terminates regardless of level; the parameter is accepted to
+  // preserve the call shape for future verbosity-aware reporting.
+  (void)level;
+  finished_ = true;
 }
 
 void Engine::TriggerValueChange(

@@ -551,6 +551,12 @@ auto BuiltinMethodMemberName(mir::BuiltinMethodKind kind) -> std::string_view {
       return "Next";
     case mir::BuiltinMethodKind::kEnumPrev:
       return "Prev";
+    case mir::BuiltinMethodKind::kNamedEventTrigger:
+      return "Trigger";
+    case mir::BuiltinMethodKind::kNamedEventAwait:
+      return "Await";
+    case mir::BuiltinMethodKind::kNamedEventTriggered:
+      return "Triggered";
   }
   throw InternalError(
       "BuiltinMethodMemberName: unknown mir::BuiltinMethodKind");
@@ -574,9 +580,39 @@ auto RenderCallExpr(const RenderContext& ctx, const mir::CallExpr& call)
                 diag::UnsupportedCategory::kFeature);
           },
           [&](const mir::BuiltinMethodCallee& b) -> diag::Result<std::string> {
+            const auto member = BuiltinMethodMemberName(b.kind);
+            // Named-event methods (LRM 15.5) dispatch on a runtime
+            // `NamedEvent` field. Trigger and Triggered reach into
+            // RuntimeServices; Await is suspending and must be wrapped in
+            // `co_await`.
+            const bool is_named_event =
+                b.kind == mir::BuiltinMethodKind::kNamedEventTrigger ||
+                b.kind == mir::BuiltinMethodKind::kNamedEventAwait ||
+                b.kind == mir::BuiltinMethodKind::kNamedEventTriggered;
+            if (is_named_event) {
+              if (call.arguments.empty()) {
+                throw InternalError(
+                    "RenderCallExpr: NamedEvent method expects a receiver "
+                    "argument");
+              }
+              auto receiver_or = RenderExpr(ctx, ctx.Expr(call.arguments[0]));
+              if (!receiver_or) {
+                return std::unexpected(std::move(receiver_or.error()));
+              }
+              std::string args;
+              if (b.kind == mir::BuiltinMethodKind::kNamedEventTrigger ||
+                  b.kind == mir::BuiltinMethodKind::kNamedEventTriggered) {
+                args = "*services_";
+              }
+              std::string raw_call =
+                  std::format("({}).{}({})", *receiver_or, member, args);
+              if (mir::IsBuiltinMethodSuspending(b.kind)) {
+                return "co_await " + raw_call;
+              }
+              return raw_call;
+            }
             const auto class_name =
                 RenderEnumClassName(ctx.StructuralScope(), b.receiver_type);
-            const auto member = BuiltinMethodMemberName(b.kind);
             // first / last / num are static methods on the enum class; the
             // remaining methods (name / next / prev) dispatch on the receiver.
             const bool is_static =

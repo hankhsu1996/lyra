@@ -6,7 +6,6 @@
 
 #include "lyra/runtime/process.hpp"
 #include "lyra/runtime/process_kind.hpp"
-#include "lyra/runtime/wait_request.hpp"
 
 namespace lyra::runtime {
 
@@ -27,8 +26,11 @@ class RuntimeProcess {
 
   RuntimeProcess(const RuntimeProcess&) = delete;
   auto operator=(const RuntimeProcess&) -> RuntimeProcess& = delete;
-  RuntimeProcess(RuntimeProcess&&) noexcept = default;
-  auto operator=(RuntimeProcess&&) noexcept -> RuntimeProcess& = default;
+  // Non-movable: the coroutine promise stores a back-pointer to this
+  // RuntimeProcess, so its address must be stable for the lifetime of the
+  // coroutine. Owners (RuntimeScope) hold processes via unique_ptr.
+  RuntimeProcess(RuntimeProcess&&) noexcept = delete;
+  auto operator=(RuntimeProcess&&) noexcept -> RuntimeProcess& = delete;
   ~RuntimeProcess() = default;
 
   auto Owner() -> RuntimeScope&;
@@ -36,7 +38,9 @@ class RuntimeProcess {
   [[nodiscard]] auto State() const -> ProcessState {
     return state_;
   }
-  auto Resume() -> ProcessRunResult;
+  // Returns true if the coroutine ran to completion this resume, false if it
+  // suspended on some awaitable (the awaitable has arranged its own wakeup).
+  auto Resume() -> bool;
 
   // Used by the engine for multi-trigger event-control waits: when the process
   // subscribes to N Observables, the engine stores them here; when any one

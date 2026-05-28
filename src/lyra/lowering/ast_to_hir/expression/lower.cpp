@@ -637,6 +637,30 @@ auto LowerCallExprProc(
       }
     }
 
+    if (receiver_type.has_value() &&
+        std::holds_alternative<hir::EventType>(
+            unit_state.GetType(*receiver_type).data) &&
+        name == "triggered") {
+      // LRM 15.5.3: `e.triggered` returns true for the duration of the time
+      // slot in which the event was last triggered. Result type is bit (1'b0
+      // / 1'b1) -- slang already typed the expression; we just route the
+      // call through the named-event method.
+      auto type_id = TypeIdOfSlangExpr(unit_facts, unit_state, expr);
+      if (!type_id) return std::unexpected(std::move(type_id.error()));
+      return hir::Expr{
+          .type = *type_id,
+          .data =
+              hir::CallExpr{
+                  .callee =
+                      hir::BuiltinMethodRef{
+                          .kind = hir::BuiltinMethodKind::kNamedEventTriggered,
+                      },
+                  .arguments = std::move(arg_ids),
+              },
+          .span = span,
+      };
+    }
+
     const auto* desc = support::FindSystemSubroutine(name);
     if (desc == nullptr) {
       throw InternalError(
