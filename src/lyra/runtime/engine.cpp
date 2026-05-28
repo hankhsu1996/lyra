@@ -303,10 +303,9 @@ void Engine::TriggerEvent(RuntimeEvent& event) {
 
 void Engine::ScheduleValueChangeWait(
     RuntimeProcess& process, ValueChangeWait wait) {
-  if (wait.triggers.empty()) {
-    throw InternalError(
-        "Engine::ScheduleValueChangeWait: trigger list is empty");
-  }
+  // An empty trigger list is legal -- it means "wait for nothing", which
+  // suspends the process forever. always_comb / always_latch with no inferred
+  // reads (e.g. `always_comb c = 7;`) lowers to such a wait by design.
   std::vector<Observable*> subs;
   subs.reserve(wait.triggers.size());
   for (const auto& trigger : wait.triggers) {

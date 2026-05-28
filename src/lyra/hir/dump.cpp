@@ -692,6 +692,18 @@ class HirDumper {
       }
       Dedent();
     }
+    if (!p.implicit_sensitivity_list.empty()) {
+      Line("ImplicitSensitivityList:");
+      Indent();
+      for (const auto& r : p.implicit_sensitivity_list) {
+        Line(
+            std::format(
+                "StructuralVarRef hops={} var=StructuralVar[{}] bits=[{}:{}]",
+                r.ref.hops.value, r.ref.var.value, r.bit_range.first,
+                r.bit_range.second));
+      }
+      Dedent();
+    }
     if (!p.exprs.empty()) {
       Line("Exprs:");
       Indent();

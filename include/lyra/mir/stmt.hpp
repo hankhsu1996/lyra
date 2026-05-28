@@ -4,6 +4,7 @@
 #include <cstdint>
 #include <optional>
 #include <string>
+#include <utility>
 #include <variant>
 #include <vector>
 
@@ -12,6 +13,7 @@
 #include "lyra/mir/procedural_var.hpp"
 #include "lyra/mir/structural_scope_id.hpp"
 #include "lyra/mir/structural_var.hpp"
+#include "lyra/mir/value_ref.hpp"
 
 namespace lyra::mir {
 
@@ -131,10 +133,28 @@ struct BreakStmt {};
 
 struct ContinueStmt {};
 
+// One entry of the LRM 9.2.2.2.1 implicit sensitivity list. Identity-only:
+// which structural variable, which flat bit range of its packed encoding.
+// Distinct from EventTrigger by design -- EventTrigger carries an expression
+// (explicit `@(...)`); SensitivityRead carries identity (slang DFA result,
+// never reassembled into an expression).
+struct SensitivityRead {
+  StructuralVarRef ref;
+  std::pair<std::uint64_t, std::uint64_t> bit_range;
+};
+
+// Suspends the enclosing process until any signal in `reads` changes. Lowered
+// only at the tail of an always_comb / always_latch body's forever loop. An
+// empty `reads` list legitimately means "never wake up": the body runs once
+// (at time 0) then the process hangs forever.
+struct SensitivityWaitStmt {
+  std::vector<SensitivityRead> reads;
+};
+
 using StmtData = std::variant<
     EmptyStmt, ProceduralVarDeclStmt, ExprStmt, BlockStmt, IfStmt,
     ConstructOwnedObjectStmt, ForStmt, TimedStmt, WhileStmt, DoWhileStmt,
-    BreakStmt, ContinueStmt>;
+    BreakStmt, ContinueStmt, SensitivityWaitStmt>;
 
 struct Stmt {
   std::optional<std::string> label;
