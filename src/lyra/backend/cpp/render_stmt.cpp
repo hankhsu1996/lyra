@@ -73,7 +73,8 @@ auto RenderTimedStmt(
   auto timing_or = std::visit(
       Overloaded{
           [&](const mir::DelayControl& d) -> diag::Result<std::string> {
-            return Indent(indent) + "co_await lyra::runtime::Delay(" +
+            return Indent(indent) +
+                   "co_await lyra::runtime::Delay(*services_, " +
                    std::to_string(d.duration) + ");\n";
           },
           [&](const mir::EventControl& e) -> diag::Result<std::string> {

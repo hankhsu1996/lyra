@@ -11,6 +11,12 @@ enum class BuiltinMethodKind : std::uint8_t {
   kEnumNext,
   kEnumPrev,
   kEnumName,
+  // LRM 15.5 named event operations. Trigger / Await arise from collapsing
+  // `-> e;` and `@e;` at HIR -> MIR; Triggered surfaces from slang's
+  // `e.triggered` method call.
+  kNamedEventTrigger,
+  kNamedEventAwait,
+  kNamedEventTriggered,
 };
 
 struct BuiltinMethodRef {

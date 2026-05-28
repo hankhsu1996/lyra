@@ -4,13 +4,18 @@
 
 #include "lyra/base/time.hpp"
 #include "lyra/runtime/process.hpp"
-#include "lyra/runtime/wait_request.hpp"
+#include "lyra/runtime/runtime_services.hpp"
 
 namespace lyra::runtime {
 
+// Suspends the calling process for `duration` simulation-time units.
+// `#0` enqueues on the inactive region of the current slot; `#N>0` enqueues
+// at SimTime `now + N`. The engine does not know about delays as a category
+// -- it only sees a process arriving in a queue at the right time.
 class DelayAwaitable {
  public:
-  explicit DelayAwaitable(SimDuration duration) : duration_(duration) {
+  DelayAwaitable(RuntimeServices& services, SimDuration duration)
+      : services_(&services), duration_(duration) {
   }
 
   // NOLINTNEXTLINE(readability-identifier-naming,readability-convert-member-functions-to-static)
@@ -21,7 +26,12 @@ class DelayAwaitable {
   // NOLINTNEXTLINE(readability-identifier-naming)
   void await_suspend(
       std::coroutine_handle<ProcessCoroutine::promise_type> handle) noexcept {
-    handle.promise().SetWaitRequest(DelayWait{.duration = duration_});
+    auto& process = handle.promise().Process();
+    if (duration_ == 0) {
+      services_->ScheduleInactive(process);
+    } else {
+      services_->ScheduleAtTime(services_->Now() + duration_, process);
+    }
   }
 
   // NOLINTNEXTLINE(readability-identifier-naming)
@@ -29,11 +39,13 @@ class DelayAwaitable {
   }
 
  private:
+  RuntimeServices* services_;
   SimDuration duration_;
 };
 
-inline auto Delay(SimDuration duration) -> DelayAwaitable {
-  return DelayAwaitable{duration};
+inline auto Delay(RuntimeServices& services, SimDuration duration)
+    -> DelayAwaitable {
+  return DelayAwaitable{services, duration};
 }
 
 }  // namespace lyra::runtime

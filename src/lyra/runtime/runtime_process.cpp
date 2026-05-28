@@ -6,13 +6,15 @@
 #include "lyra/runtime/process.hpp"
 #include "lyra/runtime/process_kind.hpp"
 #include "lyra/runtime/runtime_scope.hpp"
-#include "lyra/runtime/wait_request.hpp"
 
 namespace lyra::runtime {
 
 RuntimeProcess::RuntimeProcess(
     RuntimeScope& owner, ProcessKind kind, ProcessCoroutine coroutine)
     : owner_(&owner), kind_(kind), coroutine_(std::move(coroutine)) {
+  // Wire the promise's back-pointer so coroutine-side code (awaitables)
+  // can recover the RuntimeProcess identity from within await_suspend.
+  coroutine_.BindProcess(*this);
 }
 
 auto RuntimeProcess::Owner() -> RuntimeScope& {
@@ -23,7 +25,7 @@ auto RuntimeProcess::Kind() const -> ProcessKind {
   return kind_;
 }
 
-auto RuntimeProcess::Resume() -> ProcessRunResult {
+auto RuntimeProcess::Resume() -> bool {
   if (state_ == ProcessState::kCompleted) {
     throw InternalError(
         "RuntimeProcess::Resume: cannot resume completed process");
@@ -32,13 +34,9 @@ auto RuntimeProcess::Resume() -> ProcessRunResult {
     throw InternalError("RuntimeProcess::Resume: reentrant resume");
   }
   state_ = ProcessState::kRunning;
-  auto result = coroutine_.Resume();
-  if (result.IsCompleted()) {
-    state_ = ProcessState::kCompleted;
-    return result;
-  }
-  state_ = ProcessState::kWaiting;
-  return result;
+  const bool completed = coroutine_.Resume();
+  state_ = completed ? ProcessState::kCompleted : ProcessState::kWaiting;
+  return completed;
 }
 
 }  // namespace lyra::runtime

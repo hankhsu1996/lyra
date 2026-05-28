@@ -150,18 +150,35 @@ struct ImplicitEventControl {
   std::vector<SensitivityEntry> sensitivity_list;
 };
 
-using TimingControl =
-    std::variant<DelayControl, EventControl, ImplicitEventControl>;
+// LRM 15.5.2 `@e;`. The controlled timing is a wait on a named event rather
+// than a value-change event. HIR mirrors slang's TimingControl shape; HIR ->
+// MIR collapses this onto a method call (`event.Await()`) on the named-event
+// data type. The `event` ExprId resolves to a PrimaryExpr of StructuralVarRef
+// pointing at the event variable.
+struct NamedEventControl {
+  ExprId event;
+};
+
+using TimingControl = std::variant<
+    DelayControl, EventControl, ImplicitEventControl, NamedEventControl>;
 
 struct TimedStmt {
   TimingControl timing;
   StmtId stmt;
 };
 
+// LRM 15.5.1 `-> e;`. Source-aligned with slang's EventTriggerStatement.
+// HIR -> MIR collapses this onto a method call (`event.Trigger()`) on the
+// named-event data type. The `event` ExprId resolves to a PrimaryExpr of
+// StructuralVarRef pointing at the event variable.
+struct EventTriggerStmt {
+  ExprId event;
+};
+
 using StmtData = std::variant<
     EmptyStmt, VarDeclStmt, ExprStmt, BlockStmt, IfStmt, CaseStmt, ForStmt,
     WhileStmt, RepeatStmt, DoWhileStmt, ForeverStmt, BreakStmt, ContinueStmt,
-    TimedStmt>;
+    TimedStmt, EventTriggerStmt>;
 
 struct Stmt {
   std::optional<std::string> label;

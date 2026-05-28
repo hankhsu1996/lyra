@@ -81,7 +81,7 @@ auto LowerSignalEventTrigger(
     return diag::Unsupported(
         span, diag::DiagCode::kUnsupportedEventTriggerForm,
         "event trigger must be a plain structural variable reference; "
-        "bit-selects, member access, named events, and hierarchical refs are "
+        "bit-selects, member access, and hierarchical refs are "
         "not yet supported",
         diag::UnsupportedCategory::kFeature);
   }
@@ -96,6 +96,44 @@ auto LowerSignalEventTrigger(
   return hir::EventTrigger{
       .signal = proc_state.AddExpr(*std::move(expr_or)),
       .edge = LowerEventEdge(sig.edge),
+  };
+}
+
+// LRM 15.5.2 `@e;` on a named event. Distinguished from value-change `@(sig)`
+// by the controlled expression's type. Identity-only -- no edge polarity
+// applies, so reject any edge qualifier here.
+auto LowerNamedEventControl(
+    const UnitLoweringFacts& unit_facts, UnitLoweringState& unit_state,
+    ProcessLoweringState& proc_state, const ScopeStack& stack,
+    const slang::ast::SignalEventControl& sig, diag::SourceSpan span)
+    -> diag::Result<hir::NamedEventControl> {
+  if (sig.iffCondition != nullptr) {
+    return diag::Unsupported(
+        span, diag::DiagCode::kUnsupportedEventTriggerForm,
+        "`iff` qualifier on event control is not yet supported",
+        diag::UnsupportedCategory::kFeature);
+  }
+  if (sig.edge != slang::ast::EdgeKind::None) {
+    return diag::Unsupported(
+        span, diag::DiagCode::kUnsupportedEventTriggerForm,
+        "edge specifier is not valid on a named event",
+        diag::UnsupportedCategory::kFeature);
+  }
+
+  auto expr_or =
+      LowerProcExpr(unit_facts, unit_state, proc_state, stack, sig.expr);
+  if (!expr_or) return std::unexpected(std::move(expr_or.error()));
+
+  const auto* primary = std::get_if<hir::PrimaryExpr>(&expr_or->data);
+  if (primary == nullptr ||
+      !std::holds_alternative<hir::StructuralVarRef>(primary->data)) {
+    return diag::Unsupported(
+        span, diag::DiagCode::kUnsupportedEventTriggerForm,
+        "named event reference must be a plain structural variable",
+        diag::UnsupportedCategory::kFeature);
+  }
+  return hir::NamedEventControl{
+      .event = proc_state.AddExpr(*std::move(expr_or)),
   };
 }
 
@@ -115,6 +153,15 @@ auto LowerTimingControl(
     }
     case slang::ast::TimingControlKind::SignalEvent: {
       const auto& sig = tc.as<slang::ast::SignalEventControl>();
+      // Named events (LRM 15.5.2) and value-change events (LRM 9.4.2) share
+      // slang's SignalEventControl shape; distinguish by the controlled
+      // expression's type.
+      if (sig.expr.type->isEvent()) {
+        auto nec_or = LowerNamedEventControl(
+            unit_facts, unit_state, proc_state, stack, sig, span);
+        if (!nec_or) return std::unexpected(std::move(nec_or.error()));
+        return hir::TimingControl{*std::move(nec_or)};
+      }
       auto trigger_or = LowerSignalEventTrigger(
           unit_facts, unit_state, proc_state, stack, sig, span);
       if (!trigger_or) return std::unexpected(std::move(trigger_or.error()));
@@ -508,6 +555,46 @@ auto LowerConditionalSlangStmt(
 
 }  // namespace
 
+// LRM 15.5.1 `-> e;`. Source-aligned with slang's EventTriggerStatement. The
+// `->>` non-blocking form and any delay-or-event-control prefix are deferred.
+auto LowerEventTriggerSlangStmt(
+    const UnitLoweringFacts& unit_facts, ProcessLoweringState& proc_state,
+    ScopeLoweringState& scope_state, const ScopeStack& stack,
+    const slang::ast::EventTriggerStatement& et, diag::SourceSpan span)
+    -> diag::Result<hir::Stmt> {
+  if (et.isNonBlocking) {
+    return diag::Unsupported(
+        span, diag::DiagCode::kUnsupportedStatementForm,
+        "non-blocking event trigger `->>` is not yet supported",
+        diag::UnsupportedCategory::kFeature);
+  }
+  if (et.timing != nullptr) {
+    return diag::Unsupported(
+        span, diag::DiagCode::kUnsupportedStatementForm,
+        "delayed event trigger (with intra-trigger timing control) is not yet "
+        "supported",
+        diag::UnsupportedCategory::kFeature);
+  }
+  auto expr_or = LowerProcExpr(
+      unit_facts, scope_state.UnitState(), proc_state, stack, et.target);
+  if (!expr_or) return std::unexpected(std::move(expr_or.error()));
+  const auto* primary = std::get_if<hir::PrimaryExpr>(&expr_or->data);
+  if (primary == nullptr ||
+      !std::holds_alternative<hir::StructuralVarRef>(primary->data)) {
+    return diag::Unsupported(
+        span, diag::DiagCode::kUnsupportedStatementForm,
+        "event trigger target must be a plain named-event reference",
+        diag::UnsupportedCategory::kFeature);
+  }
+  return hir::Stmt{
+      .label = std::nullopt,
+      .data =
+          hir::EventTriggerStmt{
+              .event = proc_state.AddExpr(*std::move(expr_or)),
+          },
+      .span = span};
+}
+
 auto LowerStatement(
     const UnitLoweringFacts& unit_facts, ProcessLoweringState& proc_state,
     ScopeLoweringState& scope_state, ScopeStack& stack,
@@ -517,6 +604,11 @@ auto LowerStatement(
   switch (stmt.kind) {
     case slang::ast::StatementKind::Empty:
       return LowerEmptyStmt(span);
+
+    case slang::ast::StatementKind::EventTrigger:
+      return LowerEventTriggerSlangStmt(
+          unit_facts, proc_state, scope_state, stack,
+          stmt.as<slang::ast::EventTriggerStatement>(), span);
 
     case slang::ast::StatementKind::Timed:
       return LowerTimedStmt(

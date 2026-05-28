@@ -102,6 +102,12 @@ class HirDumper {
         return "prev";
       case BuiltinMethodKind::kEnumName:
         return "name";
+      case BuiltinMethodKind::kNamedEventTrigger:
+        return "trigger";
+      case BuiltinMethodKind::kNamedEventAwait:
+        return "await";
+      case BuiltinMethodKind::kNamedEventTriggered:
+        return "triggered";
     }
     throw InternalError(
         "HirDumper::FormatBuiltinMethodKind: unknown BuiltinMethodKind");
@@ -453,6 +459,10 @@ class HirDumper {
               }
               out += "]";
               return out;
+            },
+            [](const NamedEventControl& n) -> std::string {
+              return std::format(
+                  "NamedEventControl event=Expr[{}]", n.event.value);
             },
         },
         tc);
@@ -961,6 +971,7 @@ class HirDumper {
             },
             [](const EventControl&) {},
             [](const ImplicitEventControl&) {},
+            [](const NamedEventControl&) {},
         },
         t.timing);
     Dedent();
@@ -995,6 +1006,12 @@ class HirDumper {
               Line(std::format("Stmt[{}] ContinueStmt", id.value));
             },
             [&](const TimedStmt& t) { DumpTimedStmtNode(p, id, t); },
+            [&](const EventTriggerStmt& et) {
+              Line(
+                  std::format(
+                      "Stmt[{}] EventTriggerStmt event=Expr[{}]", id.value,
+                      et.event.value));
+            },
         },
         s.data);
   }
