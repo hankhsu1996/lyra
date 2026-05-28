@@ -1,0 +1,13 @@
+id: cpp.range_select_indexed_up
+tags: [cpp_run]
+input:
+  command: [run, cpp]
+  project: false
+  top: Top
+  files: [main.sv]
+expect:
+  exit: 0
+  variables:
+    slice_lo: "4'hD"
+    slice_mid: "4'hC"
+    slice_hi: "4'hA"

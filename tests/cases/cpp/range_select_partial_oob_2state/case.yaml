@@ -1,0 +1,12 @@
+id: cpp.range_select_partial_oob_2state
+tags: [cpp_run]
+input:
+  command: [run, cpp]
+  project: false
+  top: Top
+  files: [main.sv]
+expect:
+  exit: 0
+  variables:
+    partial_high: "4'h3"
+    partial_low: "4'hC"

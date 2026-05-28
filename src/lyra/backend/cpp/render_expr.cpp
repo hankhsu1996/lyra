@@ -321,6 +321,70 @@ auto RenderAssignExprNode(const RenderContext& ctx, const mir::AssignExpr& a)
   return "(" + *target_or + " = " + *value_or + ")";
 }
 
+auto RenderSameShapeLiteral(
+    const mir::PackedArrayType& shape, std::int64_t value) -> std::string {
+  const char* signed_lit =
+      shape.signedness == mir::Signedness::kSigned ? "true" : "false";
+  const char* four_state_lit =
+      shape.atom != mir::BitAtom::kBit ? "true" : "false";
+  return std::format(
+      "lyra::value::PackedArray::FromInt({}LL, {}, {}, {})", value,
+      shape.BitWidth(), signed_lit, four_state_lit);
+}
+
+auto RenderRangeSelectExpr(
+    const RenderContext& ctx, const mir::Expr& expr,
+    const mir::RangeSelectExpr& sel) -> diag::Result<std::string> {
+  auto base_or = RenderExpr(ctx, ctx.Expr(sel.base_value));
+  if (!base_or) return std::unexpected(std::move(base_or.error()));
+
+  const auto& result_ty = ctx.Unit().GetType(expr.type);
+  if (!result_ty.IsPackedArray()) {
+    throw InternalError(
+        "RenderRangeSelectExpr: result type is not PackedArrayType");
+  }
+  const auto width =
+      static_cast<std::uint32_t>(result_ty.AsPackedArray().BitWidth());
+
+  return std::visit(
+      Overloaded{
+          [&](const mir::RangeConstantBounds& b) -> diag::Result<std::string> {
+            auto lsb_or = RenderExpr(ctx, ctx.Expr(b.lsb_expr));
+            if (!lsb_or) return std::unexpected(std::move(lsb_or.error()));
+            return std::format("({}).Slice({}, {})", *base_or, *lsb_or, width);
+          },
+          [&](const mir::RangeIndexedUpBounds& b) -> diag::Result<std::string> {
+            auto base_idx_or = RenderExpr(ctx, ctx.Expr(b.base_index));
+            if (!base_idx_or) {
+              return std::unexpected(std::move(base_idx_or.error()));
+            }
+            return std::format(
+                "({}).Slice({}, {})", *base_or, *base_idx_or, width);
+          },
+          [&](const mir::RangeIndexedDownBounds& b)
+              -> diag::Result<std::string> {
+            const auto& base_idx_expr = ctx.Expr(b.base_index);
+            auto base_idx_or = RenderExpr(ctx, base_idx_expr);
+            if (!base_idx_or) {
+              return std::unexpected(std::move(base_idx_or.error()));
+            }
+            const auto& base_idx_ty = ctx.Unit().GetType(base_idx_expr.type);
+            if (!base_idx_ty.IsPackedArray()) {
+              throw InternalError(
+                  "RenderRangeSelectExpr: base_index type is not "
+                  "PackedArrayType");
+            }
+            const auto width_minus_one = static_cast<std::int64_t>(width) - 1;
+            const auto offset_literal = RenderSameShapeLiteral(
+                base_idx_ty.AsPackedArray(), width_minus_one);
+            return std::format(
+                "({}).Slice(({}) - {}, {})", *base_or, *base_idx_or,
+                offset_literal, width);
+          },
+      },
+      sel.bounds);
+}
+
 auto RenderConversionExprNode(
     const RenderContext& ctx, const mir::Expr& expr,
     const mir::ConversionExpr& cv) -> diag::Result<std::string> {
@@ -414,7 +478,10 @@ auto RenderExpr(const RenderContext& ctx, const mir::Expr& expr)
             if (!base_or) return std::unexpected(std::move(base_or.error()));
             auto idx_or = RenderExpr(ctx, ctx.Expr(sel.index));
             if (!idx_or) return std::unexpected(std::move(idx_or.error()));
-            return std::format("({}).Select({}, 1)", *base_or, *idx_or);
+            return std::format("({}).Index({})", *base_or, *idx_or);
+          },
+          [&](const mir::RangeSelectExpr& sel) -> diag::Result<std::string> {
+            return RenderRangeSelectExpr(ctx, expr, sel);
           },
       },
       expr.data);

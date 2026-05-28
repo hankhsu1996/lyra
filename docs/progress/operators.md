@@ -51,17 +51,14 @@ landed. Where a cut is independent the text says so.
 ### Selectors
 
 LRM distinguishes two syntactically distinct selector operators with overlapping but **not
-identical** operand domains. HIR mirrors that distinction with **two separate expression variants**,
-not one merged node.
+identical** operand domains. HIR and MIR mirror that distinction with **two separate expression
+variants**, not one merged node.
 
-**Element-select** `expr[idx]` -- single-bracket index. LRM names the result by operand type:
-"bit-select" on a 1D packed integral (1 bit, LRM 11.5.1); "single element" on multi-dim packed /
-unpacked / dynamic / queue arrays (LRM 7.4.5); byte on string (LRM 6.16); key-indexed element on
-associative arrays (LRM 7.8).
+**Element-select** `expr[idx]` -- single-bracket index. LRM 7.4.5 names this "element" of the array;
+LRM 11.5.1 specializes it to "bit-select" when the operand is a 1D vector (result is 1 bit).
 
-**Range-select** `expr[hi:lo]` / `expr[base +: w]` / `expr[base -: w]`. LRM names the result
-"part-select" when the operand is a 1D packed array (bit-level, LRM 11.5.1) and "slice" when the
-operand is multi-dim packed / unpacked / dynamic / queue (element-level, LRM 7.4.5).
+**Range-select** `expr[hi:lo]` / `expr[base +: w]` / `expr[base -: w]`. LRM 7.4.5 names this "slice"
+of the array; LRM 11.5.1 specializes it to "part-select" when the operand is a 1D vector.
 
 LRM operand-domain validity:
 
@@ -76,12 +73,12 @@ LRM operand-domain validity:
 | scalar `reg` / `logic` / `bit`          | illegal (LRM 11.5.1) | illegal (LRM 11.5.1)                           |
 
 The asymmetry on associative arrays and strings (element-select valid, range-select not) is the
-reason for two HIR nodes rather than one merged variant. A single merged node would force every
+reason for two IR nodes rather than one merged variant. A single merged node would force every
 visitor that touches selectors to carry a cross-cutting validity check ("this arm is only legal on
 these operand types"). Two nodes keep name and validity domain in lockstep, and W7's lvalue-side
 extensions can be expressed without arm-by-arm guards.
 
-HIR shapes (locked):
+HIR shapes:
 
 ```
 struct ElementSelectExpr {                       // expr[idx]
@@ -101,126 +98,107 @@ struct RangeSelectExpr {
 };
 ```
 
-Bound payloads carry source-form `ExprId`s rather than pre-resolved storage bit positions; the
-constant-evaluation and direction-resolution happen at HIR -> MIR, where the operand's MIR type is
-in hand. HIR is locked in shape but not forced to be storage-normalized.
+MIR shape mirrors HIR 1:1. Each bounds field stays an `ExprId`, so HIR -> MIR is structurally a
+pass-through (recursively lower each `ExprId`, repack into the same variant arm). No constant
+evaluation or direction normalization happens at lowering -- slang has already validated the LRM
+contract during AST construction (constants are constant, indexed widths are positive, simple-form
+direction matches the operand's declared range; partial-OOB stays in the AST as a warning), and the
+result `Expr.type` carries the slice's width, so render can read it directly.
 
 Naming:
 
-- `ElementSelectExpr` matches slang's `ElementSelectExpression` and LRM 7.4.6 "element of the
-  array". **Not** "BitSelect": whether the result is 1 bit is operand-derived, not an operator
-  property.
-- `RangeSelectExpr` matches slang's `RangeSelectExpression`. LRM uses different result names
-  ("part-select" / "slice") per operand; the HIR node stays operand-neutral.
+- `ElementSelectExpr` / `RangeSelectExpr` match slang's `ElementSelectExpression` /
+  `RangeSelectExpression`. LRM 7.4.5 vocabulary aligns with slang on these names. **Not**
+  "BitSelect": whether the result is 1 bit is operand-derived, not an operator property.
 
-#### MIR: per-operator variants per storage class
+#### Runtime `PackedArray` API
 
-MIR mirrors HIR's split, but variants are organized by **(operator x storage class)** pair so that
-each MIR shape maps to exactly one runtime emit. For packed storage the operator distinction is
-preserved at MIR even though the runtime call (`PackedArray::Select(off, w)`) happens to be the same
-for both operators -- this keeps the operator-level intent visible in MIR dumps and prevents
-asymmetry once non-packed storage classes arrive.
+The runtime exposes two read-side methods, named after the LRM 7.4.5 vocabulary ("element" /
+"slice") in verb form for symmetry with the rest of CS practice (Python / NumPy / Rust):
 
 ```
-struct ElementSelectExpr {       // mir, packed-storage element-select (W4 wires this)
-  ExprId base_value;
-  ExprId index;                  // mirrors HIR; the operand was v[index] in source
-};
-
-// W5/W6 will add (operator-form bounds, mirroring HIR but with constants resolved
-// to storage bit positions / widths where LRM requires constant operands):
-struct RangeConstantBoundsMir   { int32_t msb_bit; int32_t lsb_bit; };  // direction-resolved
-struct RangeIndexedUpBoundsMir  { ExprId base_index; uint32_t width; };
-struct RangeIndexedDownBoundsMir{ ExprId base_index; uint32_t width; };
-using RangeBoundsMir = std::variant<
-    RangeConstantBoundsMir, RangeIndexedUpBoundsMir, RangeIndexedDownBoundsMir>;
-
-struct RangeSelectExpr {         // mir, packed-storage range-select
-  ExprId base_value;
-  RangeBoundsMir bounds;
-};
+auto Index(const PackedArray& index) const -> PackedArray;             // element-select (1 bit)
+auto Slice(const PackedArray& lsb_bit, std::uint32_t width) const -> PackedArray;  // range-select
 ```
 
-MIR carries source-form operands (just like `BinaryExpr` keeps `lhs` / `rhs` rather than a
-pre-evaluated result). The derivation to the runtime call `Select(bit_offset, width)` happens at the
-cpp render boundary:
+`Slice` codifies LRM 7.4.5's contract directly: "The size of the part-select or slice shall be
+constant, but the position can be variable" -- `width` is compile-time `uint32_t`, `lsb_bit` is a
+runtime `PackedArray` (so X / Z propagation falls out for free). The MSB position is implicit at
+`lsb_bit + width - 1`; we do not surface it as a separate parameter because the LRM size constraint
+makes it derivable.
 
-- `mir::ElementSelectExpr { base, index }` on a packed-integral operand whose element type is
-  `width` bits wide: render emits `(base).Select(index * width, width)`. For 1D bit-select
-  (`width == 1`) this collapses to `(base).Select(index, 1)`; multi-dim packed materializes the
-  multiplication.
-- `mir::RangeSelectExpr` with `RangeConstantBoundsMir { msb_bit, lsb_bit }`: render emits
-  `(base).Select(lsb_bit, msb_bit - lsb_bit + 1)`.
-- `mir::RangeSelectExpr` with `RangeIndexedUpBoundsMir { base_index, width }`: render emits
-  `(base).Select(base_index, width)`.
-- `mir::RangeSelectExpr` with `RangeIndexedDownBoundsMir { base_index, width }`: render emits
-  `(base).Select(base_index - width + 1, width)`.
+`Slice` operates on a **canonical LSB-anchored bit address space**, dimension-agnostic at the API
+boundary. Element-vs-bit accounting lives one layer up in the MIR type system, not in PackedArray.
+For 1D operands element width is 1 bit, so source-form indices coincide with bit positions and
+render passes them through verbatim. For future multi-dim packed operands (`bit [N:0][M:0] arr`
+etc.), LRM 7.4.5 says slice applies to one dimension and the other dimensions are preserved --
+element-level source-form positions must be multiplied by the inner element's bit width at render
+time before reaching `Slice`. W5 only wires 1D; the multi-dim extension is part of the `packed.md`
+workstream.
 
-Future non-packed storage classes get their own MIR variants reflecting different runtime models
-(e.g. `mir::UnpackedElementLoad { array_base, element_index }` for unpacked element-select via
-pointer + load, `mir::UnpackedSlice { ... }` for unpacked range-select, `mir::AssociativeLookup` for
-associative element-select). The naming pattern is `<Operator><Adjective>Expr` where the adjective
-distinguishes runtime model when needed.
+How `PackedArray` represents bits internally (flat word planes today; potentially sparse / pooled /
+chunked once optimization work begins) is an implementation detail that the `Index` / `Slice`
+contract is independent of. Both methods specify positions in the canonical bit address space and
+return a fresh `PackedArray` whose bits are the LRM-defined result; any future storage layout change
+must preserve this external contract.
 
-Conversions at HIR -> MIR (1D packed integral operand):
+`Index(idx)` is a convenience over `Slice(idx, 1)` for the 1-bit case, kept distinct so the call
+site preserves the LRM-level operator name (element-select vs slice).
 
-- `hir::ElementSelectExpr { base, index }` -> `mir::ElementSelectExpr { base, index }`. Pure
-  pass-through; no derived fields computed at this boundary.
-- `hir::RangeSelectExpr` with `RangeConstantBounds { msb_expr, lsb_expr }` -> evaluate the
-  constants, resolve the operand's declared range direction, produce
-  `RangeConstantBoundsMir { msb_bit, lsb_bit }` (storage positions, `msb_bit >= lsb_bit`).
-- `hir::RangeSelectExpr` with `RangeIndexedUpBounds { base_index, width_expr }` -> evaluate
-  `width_expr` to `uint32_t`, produce `RangeIndexedUpBoundsMir { base_index, width }`.
-- `hir::RangeSelectExpr` with `RangeIndexedDownBounds { base_index, width_expr }` -> evaluate
-  `width_expr`, produce `RangeIndexedDownBoundsMir { base_index, width }`.
+Both methods return a fresh `PackedArray` by value -- no views, consistent with every other
+`PackedArray` op. Result is unsigned regardless of operand signedness (LRM 11.8; slang applies
+`makeUnsigned` on the `Expr.type` we read).
 
-For multi-dim packed (future `packed.md` workstream), the same MIR variants are reused; the
-operand's element-type width is queried at render time.
+#### Render rules
 
-#### LRM 11.5.1 / 7.4.5 corner-case rules (runtime helper-side)
+Width comes from the slice expression's MIR result type (`unit.GetType(expr.type).BitWidth()`),
+which slang has already pinned at AST construction.
 
-- Any X / Z bit in a runtime `bit_offset` propagates: read result is all-X of `width` bits (4-state)
-  or all-0 (2-state).
+- `mir::ElementSelectExpr { base, index }` -> `(base).Index(<index rendered>)`.
+- `mir::RangeSelectExpr` with `RangeConstantBounds { msb_expr, lsb_expr }` ->
+  `(base).Slice(<lsb_expr rendered>, <width from result type>)`. `msb_expr` is preserved in MIR for
+  dump / debug symmetry with HIR; render does not consult it (the width via result type carries the
+  same information).
+- `mir::RangeSelectExpr` with `RangeIndexedUpBounds { base_index, width }` ->
+  `(base).Slice(<base_index rendered>, <width from result type>)`.
+- `mir::RangeSelectExpr` with `RangeIndexedDownBounds { base_index, width }` ->
+  `(base).Slice((<base_index rendered>) - PackedArray::FromInt(<width - 1>, <base_index shape>), <width from result type>)`.
+  The literal `width - 1` is constructed to match `base_index`'s PackedArray shape so the runtime
+  subtraction does not need cross-shape promotion.
+
+#### LRM 11.5.1 / 7.4.5 corner-case rules (handled inside `PackedArray::Slice`)
+
+- Any X / Z bit in the runtime `lsb_bit` propagates: result is all-X of `width` bits (4-state) or
+  all-0 (2-state).
 - Fully out-of-range read returns all-X / all-0.
 - Partially out-of-range read returns in-range bits verbatim and X / 0 for the OOB bits.
-- The result of any selector is **unsigned** regardless of operand signedness (LRM 11.8; slang
-  applies `makeUnsigned`); AST -> HIR records this on the `Expr.type`.
 - Bit-select / part-select of a scalar or real variable is illegal; slang rejects at AST
   construction, so HIR never sees the shape.
 
-- [x] W4 -- Bit-select read `v[idx]` (scope: 1D integral operand; result is 1 bit per LRM 11.5.1).
-      Introduce **both** HIR variants -- `hir::ElementSelectExpr` and `hir::RangeSelectExpr` with
-      all three `RangeBounds` arms -- so the HIR shape is locked across W4..W7 and later cuts only
-      wire MIR paths. Wire `hir::ElementSelectExpr` end-to-end through `mir::ElementSelectExpr` and
-      `PackedArray::Select(bit_offset, width)` (single read helper, named after LRM's "vector
-      bit-select and part-select" verb, matching the existing verb-form API style: `CaseEqual`,
-      `WildcardEquals`, `LogicalShiftRight`). `hir::RangeSelectExpr` is reachable from AST -> HIR
-      but HIR -> MIR rejects with `kUnsupportedExpressionForm` until W5 / W6 add
-      `mir::RangeSelectExpr`. Implements LRM 7.4.5 / 11.5.1 OOB and X / Z propagation rules on the
-      runtime side.
+- [x] W4 -- Element-select read `v[idx]` (scope: 1D integral operand; result is 1 bit per LRM
+      11.5.1). Wired end-to-end: `hir::ElementSelectExpr` -> `mir::ElementSelectExpr` ->
+      `PackedArray::Index(idx)`. HIR / MIR introduce all three `RangeBounds` arms at the same time
+      so the shape is locked across W4..W7; W5 wires `RangeSelectExpr` through HIR -> MIR and
+      render. Implements LRM 7.4.5 / 11.5.1 OOB and X / Z propagation rules on the runtime side
+      (`Slice` is the underlying helper; `Index(idx)` is `Slice(idx, 1)`).
 
-- [ ] W5 -- Non-indexed (constant) part-select read `v[msb:lsb]`. Add `mir::RangeSelectExpr` and
-      wire HIR -> MIR for `hir::RangeSelectExpr` carrying `RangeConstantBounds`. AST -> HIR routing
-      is already in W4; this cut evaluates the bound constants, resolves the operand's declared
-      range direction (LRM 11.5.1 `b_vect[0:7]` for `logic [0:31] b_vect` example), and emits
-      `mir::RangeSelectExpr` with `RangeConstantBoundsMir`. Runtime path reuses
-      `PackedArray::Select`.
+- [x] W5 -- Range-select read covering all three bounds forms: non-indexed constant `v[msb:lsb]`,
+      indexed-up `v[base +: w]`, indexed-down `v[base -: w]`. Wire `mir::RangeSelectExpr` mirroring
+      HIR (three `RangeBounds` variants, all `ExprId` fields). HIR -> MIR is a pure structural
+      pass-through. cpp render dispatches on the MIR bounds variant and emits
+      `(base).Slice(lsb_bit, width)`; for indexed-down it constructs the LSB position as
+      `base_index - PackedArray(width - 1)`. Runtime reuses `PackedArray::Slice`. Width at render
+      comes from the result type, not from any MIR-side constant extraction. Closes
+      `datatypes/packed/indexed_part_select/default.yaml` for the read half.
 
-- [ ] W6 -- Indexed part-select read `v[base +: width]` / `v[base -: width]`. Wire HIR -> MIR for
-      `hir::RangeSelectExpr` carrying `RangeIndexedUpBounds` / `RangeIndexedDownBounds`. `width`
-      must be a strictly positive constant integer expression (LRM 11.5.1); zero or negative widths
-      are rejected at HIR -> MIR. cpp render derives `bit_offset = base_index - width + 1` for the
-      down form. Runtime path reuses `PackedArray::Select` -- X / Z propagation on `base_index` and
-      partial-OOB rules follow the W4 path automatically.
-
-- [ ] W7 -- Selector lvalue (write side). Extend HIR / MIR `Lvalue` to carry a root `*Ref` plus an
+- [ ] W6 -- Selector lvalue (write side). Extend HIR / MIR `Lvalue` to carry a root `*Ref` plus an
       optional selector kind (Element or Range, mirroring the read-side shapes; multi-layer
-      selectors are `packed.md`). Add `PackedArray::AssignSelect(bit_offset, width, value)` -- the
-      single write helper, parallel to the existing `AssignFrom` partial-write convention. LRM
-      11.5.1 write rules: a fully-OOB write has **no effect** on the stored value (silent no-op, not
-      an error); a partially-OOB write affects **only the in-range bits**; an X / Z `bit_offset` is
-      treated as a fully-OOB write (no effect). Closes
-      `datatypes/packed/indexed_part_select/default.yaml` for both read and write halves.
+      selectors are `packed.md`). Add `PackedArray::AssignSlice(lsb_bit, width, value)` /
+      `PackedArray::AssignIndex(idx, value)` parallel to the existing `AssignFrom` partial-write
+      convention. LRM 11.5.1 write rules: a fully-OOB write has **no effect** on the stored value
+      (silent no-op, not an error); a partially-OOB write affects **only the in-range bits**; an X /
+      Z position is treated as a fully-OOB write (no effect). Closes
+      `datatypes/packed/indexed_part_select/default.yaml` for the write half.
 
 ### Construction
 
