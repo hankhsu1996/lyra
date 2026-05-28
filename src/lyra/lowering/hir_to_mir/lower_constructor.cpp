@@ -429,7 +429,35 @@ auto LowerGenerateAsStmt(
       gen.data);
 }
 
-auto LowerGenerateConstruction(
+// Lowers a single SV LRM 10.4 / 6.21 structural-var time-0 initializer into
+// an `ExprStmt(AssignExpr)` for the enclosing scope's constructor. The
+// returned stmt is added to the constructor's proc-scope by the caller.
+auto LowerStructuralVarInitAsStmt(
+    UnitLoweringState& unit_state,
+    const StructuralScopeLoweringState& scope_state,
+    const hir::StructuralScope& scope,
+    ProceduralScopeLoweringState& proc_scope_state,
+    hir::StructuralVarId hir_var_id, hir::ExprId init_expr_id)
+    -> diag::Result<mir::Stmt> {
+  auto init_or = LowerStructuralExpr(
+      unit_state, scope_state, proc_scope_state, scope,
+      scope.GetExpr(init_expr_id));
+  if (!init_or) return std::unexpected(std::move(init_or.error()));
+  const mir::TypeId mir_type = (*init_or).type;
+  const mir::ExprId rhs_id = proc_scope_state.AddExpr(*std::move(init_or));
+  const mir::StructuralVarRef target =
+      scope_state.TranslateStructuralVar(hir::StructuralHops{0}, hir_var_id);
+  const mir::ExprId assign_id = proc_scope_state.AddExpr(
+      mir::Expr{
+          .data = mir::AssignExpr{.target = target, .value = rhs_id},
+          .type = mir_type});
+  return mir::Stmt{
+      .label = std::nullopt,
+      .data = mir::ExprStmt{.expr = assign_id},
+      .child_procedural_scopes = {}};
+}
+
+auto LowerConstructor(
     UnitLoweringState& unit_state,
     const StructuralScopeLoweringState& scope_state,
     const hir::StructuralScope& scope,
@@ -441,6 +469,19 @@ auto LowerGenerateConstruction(
     const auto& gen_bindings = bindings_by_generate.at(i);
     auto stmt = LowerGenerateAsStmt(
         unit_state, scope_state, scope, gen, gen_bindings, proc_scope_state);
+    if (!stmt) return std::unexpected(std::move(stmt.error()));
+    const mir::StmtId sid = proc_scope_state.AddStmt(*std::move(stmt));
+    proc_scope_state.AddRootStmt(sid);
+  }
+  // Var inits run after generate construction so the structure is fully
+  // realized before any init expression evaluates -- matters when an init
+  // refers to a constructed child object; harmless otherwise.
+  for (std::size_t i = 0; i < scope.structural_vars.size(); ++i) {
+    const auto& hv = scope.structural_vars[i];
+    if (!hv.initializer.has_value()) continue;
+    auto stmt = LowerStructuralVarInitAsStmt(
+        unit_state, scope_state, scope, proc_scope_state,
+        hir::StructuralVarId{static_cast<std::uint32_t>(i)}, *hv.initializer);
     if (!stmt) return std::unexpected(std::move(stmt.error()));
     const mir::StmtId sid = proc_scope_state.AddStmt(*std::move(stmt));
     proc_scope_state.AddRootStmt(sid);
@@ -549,8 +590,7 @@ auto LowerStructuralScope(
       InstallGenerateOwnedChildScopes(unit_state, scope_state, stack, scope);
   if (!bindings_r) return std::unexpected(std::move(bindings_r.error()));
 
-  auto ctor_r =
-      LowerGenerateConstruction(unit_state, scope_state, scope, *bindings_r);
+  auto ctor_r = LowerConstructor(unit_state, scope_state, scope, *bindings_r);
   if (!ctor_r) return std::unexpected(std::move(ctor_r.error()));
   scope_state.SetConstructorScope(*std::move(ctor_r));
 
