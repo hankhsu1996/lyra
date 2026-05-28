@@ -1,7 +1,4 @@
 module Top;
-  real x;
-  initial begin
-    x = 3.14;
-    $display("%f", x);
-  end
+  real x = 3.14;
+  initial $display("%f", x);
 endmodule

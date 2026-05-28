@@ -1142,6 +1142,13 @@ auto LowerStructuralExpr(
           expr.as<slang::ast::UnbasedUnsizedIntegerLiteral>(), *type_id, span);
     }
 
+    case slang::ast::ExpressionKind::RealLiteral: {
+      const auto& rl = expr.as<slang::ast::RealLiteral>();
+      auto type_id = TypeIdOfSlangExpr(unit_facts, unit_state, expr);
+      if (!type_id) return std::unexpected(std::move(type_id.error()));
+      return MakeRealLiteralExpr(rl.getValue(), *type_id, span);
+    }
+
     case slang::ast::ExpressionKind::NamedValue:
       return LowerNamedValueStructural(
           unit_facts, unit_state, stack,
