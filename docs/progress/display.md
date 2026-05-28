@@ -16,9 +16,11 @@ implemented specifier.
 - [ ] DI2 -- `%t` (time). Format a time value against the active timescale. `lower_print.cpp`
       currently returns `kFormatSpecifierNotImplemented` for `kTime`. Requires a time variant on
       `RuntimeValueView` and time-unit awareness on the format spec.
-- [ ] DI3 -- `%f` / `%e` / `%g` (real). Format a real value. `lower_print.cpp` currently returns
-      `kFormatSpecifierNotImplemented` for `kReal`. Requires a real variant on `RuntimeValueView`
-      and a real path through HIR/MIR (no `real` type support today).
+- [x] DI3 -- `%f` / `%e` / `%g` (real). Shipped via real-types C1 in PR #789. `FormatKind` split
+      into `kRealDecimal` / `kRealExponential` / `kRealGeneral`; `RuntimeValueView` gained
+      `Real64ValueView` and `Real32ValueView`; `value::FormatValue` dispatches each kind through
+      `std::format` (`{:.{}f}`, `{:.{}e}`, `{:.{}g}`) with default precision 6 per LRM Table 21-2.
+      Coverage tracked under `datatypes.md` "Real" -> C1.
 - [ ] DI4 -- `%m` (hierarchical name). Requires runtime exposure of the current scope's hierarchical
       path. `lower_print.cpp` currently returns `kFormatModulePathNotImplemented`. Shares its
       underlying mechanism with the archive item `hierarchy/refs`, which the `expect.variables`

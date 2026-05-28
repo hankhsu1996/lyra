@@ -11,8 +11,11 @@ on the current pipeline.
 
 ## Actionable
 
-No enum work remaining. Next family: pick from `datatypes/string`, `datatypes/unpacked`,
-`datatypes/general`, `datatypes/real`, `datatypes/default_init`, `datatypes/representation`.
+Real C1 (decls / assignment / `%f` / `%e` / `%g`) landed in PR #789. Real C2 (arithmetic /
+relational / equality / logical operators on real, plus shortreal <-> real conversions) is in
+flight. Remaining real work: C3 (real <-> integral conversion) and C4 (LRM-illegal-form rejection).
+Other families remaining: `datatypes/string`, `datatypes/unpacked`, `datatypes/general`,
+`datatypes/default_init`, `datatypes/representation`.
 
 ## Enum
 
@@ -86,3 +89,63 @@ expansion vs runtime ops library is documented in `enum-method-architecture.md` 
 - Unblocks: C16 (enum-typed `case` selectors) in `control-flow.md`.
 - Slang reference: `slang/include/slang/ast/types/AllTypes.h` -- `EnumType`, `EnumValueSymbol`.
 - Legacy archive reference: `archived/include/lyra/common/type.hpp` -- `EnumInfo`, `EnumMember`.
+
+## Real
+
+Covers archive item `datatypes/real` (sub-folders `real_types`, `shortreal_types`,
+`realtime_types`). Per LRM 6.12, `real` is C `double`, `shortreal` is C `float`, and `realtime` is
+synonymous with `real`. Three runtime variants on `RuntimeValueView` (`Real64ValueView`,
+`Real32ValueView`) plus IEEE 754 round-trip-precision literal rendering (17 sig-digits for double, 9
+for float). Real values bypass the `Var<T>` wrapper because LRM 6.12 forbids edge event controls on
+real variables.
+
+- [x] C1 -- Declarations, blocking assignment, and `$display` formatting (`%f` / `%e` / `%g`). HIR
+      `RealLiteral` and MIR `RealLiteral` carry a `double` value; cpp emit renders `real` and
+      `realtime` to `double`, `shortreal` to `float`. `support::FormatDirectiveKind` and
+      `mir::FormatKind` split into `kRealDecimal` / `kRealExponential` / `kRealGeneral` so each
+      conversion specifier is a distinct semantic kind. `lower_print.cpp` routes the three real
+      kinds through `RuntimeValueView` real variants; `value::FormatValue` formats them via
+      `std::format` with `{:.{}f}`, `{:.{}e}`, `{:.{}g}` and default precision 6 (matches printf and
+      LRM Table 21-2). Covers the declaration / assignment / display cases across all three archive
+      subfolders (`real_declaration_*`, `*_local_variable`, `*_assignment` for
+      `real`/`shortreal`/`realtime`).
+- [x] C2 -- Operators legal on real per LRM 11.3.1 plus structural-level initializers
+      (`real a = 1.5;` at module scope). cpp emit splits `RenderBinaryOp` / `RenderUnaryOp` into
+      integral and real renderers. Real arithmetic uses native C++ ops; `**` uses `std::pow` (C++
+      overload resolution picks `(float, float) -> float` and `(double, double) -> double`, matching
+      LRM 11.3.1 result typing). The C++ bool result of a real relational / equality / logical op is
+      wrapped in `lyra::value::PackedArray::FromInt(..., 1, false, false)` so the runtime sees the
+      1-bit integral shape the rest of the pipeline expects. shortreal <-> real conversions go
+      through `ConversionExpr`: same-precision is pass-through; cross-precision emits
+      `static_cast<float>` / `static_cast<double>` so C++ never sees an implicit narrowing.
+      `<cmath>` joins the emit prologue. Structural-level initializers are wired end-to-end:
+      `hir::StructuralVarDecl` carries an optional `initializer` ExprId; AST -> HIR extracts
+      `var.getInitializer()` for real-family types via `LowerStructuralExpr`; HIR -> MIR appends an
+      `ExprStmt(AssignExpr)` per initialized var into the scope's `constructor_scope`; cpp emit's
+      existing fall-through `(target = value)` arm lands the assignment in the C++ constructor body.
+      This is safe for real-family vars because they do not wrap in `Var<T>` and therefore do not
+      need `services_`. Integral structural initializers remain a known gap (their
+      `Var<PackedArray>` write path needs `services_`, which is not bound until `Bind()`).
+- [ ] C3 -- Cross-family conversions: integral -> real (4-state x / z bits map to 0 per LRM 6.12.1)
+      and real -> integral (round-half-away-from-zero per LRM 6.12.1, _not_ truncate).
+      `int_literal_to_real` is the constant-folded subset; `int_to_real_conversion`,
+      `real_to_int_conversion`, `real_to_int_negative` exercise the runtime paths in
+      `real`/`shortreal`/`realtime` subfolders. Slang's `SVInt::fromDouble` already defaults
+      `round=true`, so the integer-side conversion needs only to invoke it; the bit-level `x/z -> 0`
+      step happens before promotion to double.
+- [ ] C4 -- LRM-illegal forms on real (LRM 6.12 + 11.3.1 / Table 11-1): edge event control
+      (`posedge` / `negedge` / `edge`) on real, bit-select / part-select of real, modulus `%` on
+      real, bitwise / reduction / shift / wildcard / case-equality on real. Reject in AST -> HIR
+      with `diag::Unsupported` carrying the LRM citation. No new behavior is enabled; this is solely
+      about producing a diagnostic instead of an `InternalError` for programs that compile under
+      slang but fall outside the legal real surface.
+
+### Cross-references
+
+- LRM 6.12 (Real, shortreal, realtime), 6.12.1 (Conversion), 11.3.1 (Operators with real operands),
+  Table 11-1 (Operators and data types), 11.4.3 (Arithmetic), 11.4.4 (Relational), 11.4.5
+  (Equality), 11.4.7 (Logical), 11.4.11 (Conditional), 21.2 / Table 21-2 (Format specifiers).
+- Archive items: `datatypes/real/{real_types,shortreal_types,realtime_types}`.
+- Display sub-step `display.md` DI3 (`%f` / `%e` / `%g`) lands together with C1.
+- IEEE 754 round-trip widths (17 / 9) keep emitted constants bit-identical across recompile;
+  documented inline in `render_expr.cpp`.

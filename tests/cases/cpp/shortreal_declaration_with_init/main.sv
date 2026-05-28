@@ -1,7 +1,4 @@
 module Top;
-  shortreal x;
-  initial begin
-    x = 2.5;
-    $display("%f", x);
-  end
+  shortreal x = 2.5;
+  initial $display("%f", x);
 endmodule

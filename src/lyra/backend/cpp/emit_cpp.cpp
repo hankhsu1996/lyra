@@ -246,6 +246,7 @@ auto RenderScopeHeaderFile(
   std::string out;
   out += "#pragma once\n";
   out += "#include <array>\n";
+  out += "#include <cmath>\n";
   out += "#include <cstdint>\n";
   out += "#include <memory>\n";
   out += "#include <span>\n";

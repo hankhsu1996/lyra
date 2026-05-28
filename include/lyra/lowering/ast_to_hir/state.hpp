@@ -255,12 +255,17 @@ class ScopeLoweringState {
       : unit_state_(&unit_state), scope_(&scope), frame_(frame) {
   }
 
-  auto AddStructuralVar(const slang::ast::VariableSymbol& var, hir::TypeId type)
+  auto AddStructuralVar(
+      const slang::ast::VariableSymbol& var, hir::TypeId type,
+      std::optional<hir::ExprId> initializer = std::nullopt)
       -> hir::StructuralVarId {
     const hir::StructuralVarId local{
         static_cast<std::uint32_t>(scope_->structural_vars.size())};
     scope_->structural_vars.push_back(
-        hir::StructuralVarDecl{.name = std::string{var.name}, .type = type});
+        hir::StructuralVarDecl{
+            .name = std::string{var.name},
+            .type = type,
+            .initializer = initializer});
     unit_state_->MapStructuralVarBinding(var, frame_, local, type);
     return local;
   }

@@ -649,9 +649,14 @@ class HirDumper {
     Indent();
     for (std::size_t i = 0; i < s.structural_vars.size(); ++i) {
       const auto& v = s.structural_vars[i];
+      std::string init_suffix;
+      if (v.initializer.has_value()) {
+        init_suffix = std::format(" init=Expr[{}]", v.initializer->value);
+      }
       Line(
           std::format(
-              "StructuralVar[{}] \"{}\" : Type[{}]", i, v.name, v.type.value));
+              "StructuralVar[{}] \"{}\" : Type[{}]{}", i, v.name, v.type.value,
+              init_suffix));
     }
     for (std::size_t i = 0; i < s.loop_var_decls.size(); ++i) {
       const auto& lv = s.loop_var_decls[i];
