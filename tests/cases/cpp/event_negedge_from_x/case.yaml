@@ -1,0 +1,12 @@
+id: cpp.event_negedge_from_x
+tags: [cpp_run]
+input:
+  command: [run, cpp]
+  project: false
+  top: Top
+  files: [main.sv]
+expect:
+  exit: 0
+  variables:
+    fired_on_x_to_0: 1
+    fired_on_1_to_x: 1

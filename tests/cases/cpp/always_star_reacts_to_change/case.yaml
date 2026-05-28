@@ -1,0 +1,16 @@
+id: cpp.always_star_reacts_to_change
+tags: [cpp_run]
+input:
+  command: [run, cpp]
+  project: false
+  top: Top
+  files: [main.sv]
+expect:
+  exit: 0
+  variables:
+    # result_at_t1 = 0 confirms LRM 9.4.2.2: `always @*` does NOT run at time
+    # zero, so it misses the initial-block writes that happen before its
+    # sensitivity subscription is in place.
+    result_at_t1: 0
+    result_after_a_change: 7
+    result_after_b_change: 15

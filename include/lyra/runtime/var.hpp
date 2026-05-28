@@ -17,10 +17,12 @@ namespace lyra::runtime {
 
 class RuntimeProcess;
 
-// Classification of a single value change by its LSB transition (LRM 9.4.2
-// Table 9-2). `kChangeOnly` covers transitions that move the full value but
-// don't cross 0 or 1 on the LSB (e.g. x->z, or upper bits changing while the
-// LSB stays the same).
+// Classification of a single value change by its LSB transition per LRM
+// 9.4.2 Table 9-2:
+//   - posedge: 0 -> {1, x, z}; {x, z} -> 1
+//   - negedge: 1 -> {0, x, z}; {x, z} -> 0
+//   - kChangeOnly: any other LSB-different change (x <-> z), or the full
+//     value moved but the LSB stayed the same (upper bits changing).
 enum class EdgeTransition : std::uint8_t {
   kChangeOnly,
   kPosedge,
@@ -30,12 +32,22 @@ enum class EdgeTransition : std::uint8_t {
 inline auto ClassifyEdge(
     value::FourStateBit old_lsb, value::FourStateBit new_lsb)
     -> EdgeTransition {
-  if (new_lsb == value::FourStateBit::kOne &&
-      old_lsb != value::FourStateBit::kOne) {
+  if (old_lsb == new_lsb) {
+    return EdgeTransition::kChangeOnly;
+  }
+  // Leaving 0 is posedge regardless of destination (1, x, or z).
+  if (old_lsb == value::FourStateBit::kZero) {
     return EdgeTransition::kPosedge;
   }
-  if (new_lsb == value::FourStateBit::kZero &&
-      old_lsb != value::FourStateBit::kZero) {
+  // Leaving 1 is negedge regardless of destination (0, x, or z).
+  if (old_lsb == value::FourStateBit::kOne) {
+    return EdgeTransition::kNegedge;
+  }
+  // Leaving x or z: only arrival at 0 or 1 counts; x <-> z is kChangeOnly.
+  if (new_lsb == value::FourStateBit::kOne) {
+    return EdgeTransition::kPosedge;
+  }
+  if (new_lsb == value::FourStateBit::kZero) {
     return EdgeTransition::kNegedge;
   }
   return EdgeTransition::kChangeOnly;

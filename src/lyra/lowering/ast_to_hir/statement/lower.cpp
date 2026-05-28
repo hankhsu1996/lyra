@@ -22,6 +22,7 @@
 #include "lyra/hir/stmt.hpp"
 #include "lyra/lowering/ast_to_hir/expression/lower.hpp"
 #include "lyra/lowering/ast_to_hir/facts.hpp"
+#include "lyra/lowering/ast_to_hir/sensitivity.hpp"
 #include "lyra/lowering/ast_to_hir/state.hpp"
 
 namespace lyra::lowering::ast_to_hir {
@@ -142,10 +143,10 @@ auto LowerTimingControl(
           hir::EventControl{.triggers = std::move(triggers)}};
     }
     case slang::ast::TimingControlKind::ImplicitEvent:
-      return diag::Unsupported(
-          span, diag::DiagCode::kUnsupportedTimingControlKind,
-          "implicit event control (`@*`) is not yet supported",
-          diag::UnsupportedCategory::kFeature);
+      // `@*` / `@(*)` lowers to `hir::ImplicitEventControl`. The sensitivity
+      // list is filled in by LowerTimedStmt, which has access to the parent
+      // TimedStatement pointer needed for the slang-side lookup.
+      return hir::TimingControl{hir::ImplicitEventControl{}};
     case slang::ast::TimingControlKind::RepeatedEvent:
       return diag::Unsupported(
           span, diag::DiagCode::kUnsupportedTimingControlKind,
@@ -172,6 +173,18 @@ auto LowerTimedStmt(
   auto timing = LowerTimingControl(
       unit_facts, scope_state.UnitState(), proc_state, stack, ts.timing, span);
   if (!timing) return std::unexpected(std::move(timing.error()));
+  // LRM 9.4.2.2: `@*` carries its sensitivity from a slang side-channel
+  // keyed by this TimedStatement. The TimingControl shell came back empty
+  // from LowerTimingControl; fill it in here where we still have the
+  // parent statement pointer.
+  if (auto* ie = std::get_if<hir::ImplicitEventControl>(&*timing)) {
+    const auto& reads_map = unit_facts.SensitivityReads();
+    const auto it = reads_map.find(&ts);
+    if (it != reads_map.end()) {
+      ie->sensitivity_list =
+          TranslateSensitivityReads(it->second, scope_state.UnitState(), stack);
+    }
+  }
   auto inner_stmt =
       LowerStatement(unit_facts, proc_state, scope_state, stack, ts.stmt);
   if (!inner_stmt) return std::unexpected(std::move(inner_stmt.error()));
