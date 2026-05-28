@@ -57,6 +57,12 @@ auto RenderRuntimeFormatKind(mir::FormatKind k) -> std::string_view {
       return "lyra::value::FormatKind::kOctal";
     case mir::FormatKind::kString:
       return "lyra::value::FormatKind::kString";
+    case mir::FormatKind::kRealDecimal:
+      return "lyra::value::FormatKind::kRealDecimal";
+    case mir::FormatKind::kRealExponential:
+      return "lyra::value::FormatKind::kRealExponential";
+    case mir::FormatKind::kRealGeneral:
+      return "lyra::value::FormatKind::kRealGeneral";
   }
   throw InternalError("RenderRuntimeFormatKind: unknown FormatKind");
 }
@@ -95,6 +101,19 @@ auto RenderRuntimeValueViewInit(
     if (!operand_or) return std::unexpected(std::move(operand_or.error()));
     return std::format(
         "lyra::value::RuntimeValueView::String({})", *operand_or);
+  }
+  if (type.Kind() == mir::TypeKind::kReal ||
+      type.Kind() == mir::TypeKind::kRealTime) {
+    auto operand_or = RenderExpr(ctx, ctx.Expr(v.value));
+    if (!operand_or) return std::unexpected(std::move(operand_or.error()));
+    return std::format(
+        "lyra::value::RuntimeValueView::Real64({})", *operand_or);
+  }
+  if (type.Kind() == mir::TypeKind::kShortReal) {
+    auto operand_or = RenderExpr(ctx, ctx.Expr(v.value));
+    if (!operand_or) return std::unexpected(std::move(operand_or.error()));
+    return std::format(
+        "lyra::value::RuntimeValueView::Real32({})", *operand_or);
   }
   throw InternalError(
       "RenderRuntimeValueViewInit: unsupported display operand type");
