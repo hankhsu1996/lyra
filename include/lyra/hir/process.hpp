@@ -33,9 +33,10 @@ struct Process {
   std::vector<Expr> exprs;
   std::vector<Stmt> stmts;
   std::vector<ProceduralVarDecl> procedural_vars;
-  // LRM 9.2.2.2.1; non-empty only for always_comb / always_latch. `@*` carries
-  // its own sensitivity inside hir::ImplicitEventControl on the body's
-  // TimedStmt, so it does not populate this field.
+  // LRM 9.2.2.2.1 implicit sensitivity for always_comb / always_latch
+  // (procedure-level; the body is a plain statement). Empty for every other
+  // process kind -- `always @*` carries its sensitivity inside
+  // hir::ImplicitEventControl on the body's TimedStmt instead.
   std::vector<SensitivityEntry> implicit_sensitivity_list;
 };
 

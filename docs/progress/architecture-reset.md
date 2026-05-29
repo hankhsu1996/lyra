@@ -159,7 +159,7 @@ synchronisation primitives (named events, `wait`, `fork`/`join_*`).
 - [x] processes/initial -- `processes.md` P1.
 - [ ] processes/named_event -- `processes.md` P9.
 - [x] processes/non_blocking -- `processes.md` P4.
-- [ ] processes/wait_event -- `processes.md` P11.
+- [x] processes/wait_event -- `processes.md` P11.
 
 ### scheduling
 

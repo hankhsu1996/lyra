@@ -858,10 +858,12 @@ auto LowerNamedEventTimedStmt(
       .child_procedural_scopes = std::move(child_scopes)};
 }
 
-// LRM 9.4.2.2: `@* body` -- the HIR TimedStmt with ImplicitEventControl
-// expands at HIR -> MIR into a Block { SensitivityWaitStmt; body; } inside a
-// fresh child scope. This is where HIR's slang-aligned wrapper structure
-// reduces to MIR's runtime-oriented "wait then body" sequencing.
+// LRM 9.4.2.2 `@* body` expands to:
+//
+//   child_scope {
+//     SensitivityWaitStmt(ie.sensitivity_list)
+//     body
+//   }
 auto LowerImplicitEventTimedStmt(
     const UnitLoweringState& unit_state,
     const StructuralScopeLoweringState& scope_state,
@@ -888,6 +890,77 @@ auto LowerImplicitEventTimedStmt(
       .label = stmt.label,
       .data = mir::BlockStmt{.scope = scope_id},
       .child_procedural_scopes = std::move(child_scopes)};
+}
+
+// LRM 9.4.3 `wait (cond) body` expands to:
+//
+//   wrapper_scope {
+//     while (!cond) {
+//       inner_scope { SensitivityWaitStmt(reads(cond)) }
+//     }
+//     body
+//   }
+//
+// The level-sensitive "skip suspend if cond is already true" semantic falls
+// out of the while-loop: an entry-true cond never enters the body.
+auto LowerWaitStmt(
+    const UnitLoweringState& unit_state,
+    const StructuralScopeLoweringState& scope_state,
+    ProcessLoweringState& proc_state, const hir::Process& hir_proc,
+    const hir::Stmt& stmt, const hir::WaitStmt& w) -> diag::Result<mir::Stmt> {
+  ProceduralScopeLoweringState wrapper_state;
+  ProceduralDepthGuard wrapper_depth_guard{proc_state};
+
+  const hir::Expr& hir_cond = hir_proc.exprs.at(w.cond.value);
+  auto cond_or = LowerExpr(
+      unit_state, scope_state, proc_state, wrapper_state, hir_proc, hir_cond);
+  if (!cond_or) {
+    return std::unexpected(std::move(cond_or.error()));
+  }
+  const mir::ExprId cond_id = wrapper_state.AddExpr(*std::move(cond_or));
+  const mir::TypeId cond_type = wrapper_state.GetExpr(cond_id).type;
+
+  const mir::ExprId not_cond_id = wrapper_state.AddExpr(
+      mir::Expr{
+          .data =
+              mir::UnaryExpr{
+                  .op = mir::UnaryOp::kLogicalNot, .operand = cond_id},
+          .type = cond_type});
+
+  const auto& reads = w.sensitivity_list;
+
+  ProceduralScopeLoweringState inner_state;
+  ProceduralDepthGuard inner_depth_guard{proc_state};
+  inner_state.AddRootStmt(
+      inner_state.AddStmt(BuildSensitivityWaitStmt(scope_state, reads)));
+
+  std::vector<mir::ProceduralScope> wrapper_child_scopes;
+  const mir::ProceduralScopeId inner_scope_id =
+      AddChildProceduralScope(wrapper_child_scopes, inner_state.Finish());
+
+  wrapper_state.AddRootStmt(wrapper_state.AddStmt(
+      mir::Stmt{
+          .label = std::nullopt,
+          .data =
+              mir::WhileStmt{.condition = not_cond_id, .scope = inner_scope_id},
+          .child_procedural_scopes = std::move(wrapper_child_scopes)}));
+
+  const hir::Stmt& body_hir = hir_proc.stmts.at(w.body.value);
+  auto body_or = LowerStmt(
+      unit_state, scope_state, proc_state, wrapper_state, hir_proc, body_hir);
+  if (!body_or) {
+    return std::unexpected(std::move(body_or.error()));
+  }
+  wrapper_state.AddRootStmt(wrapper_state.AddStmt(*std::move(body_or)));
+
+  std::vector<mir::ProceduralScope> outer_child_scopes;
+  const mir::ProceduralScopeId wrapper_scope_id =
+      AddChildProceduralScope(outer_child_scopes, wrapper_state.Finish());
+
+  return mir::Stmt{
+      .label = stmt.label,
+      .data = mir::BlockStmt{.scope = wrapper_scope_id},
+      .child_procedural_scopes = std::move(outer_child_scopes)};
 }
 
 auto LowerTimedStmt(
@@ -1012,6 +1085,10 @@ auto LowerStmt(
             return LowerEventTriggerStmt(
                 unit_state, scope_state, proc_state, proc_scope_state, hir_proc,
                 stmt, et);
+          },
+          [&](const hir::WaitStmt& w) {
+            return LowerWaitStmt(
+                unit_state, scope_state, proc_state, hir_proc, stmt, w);
           },
       },
       stmt.data);

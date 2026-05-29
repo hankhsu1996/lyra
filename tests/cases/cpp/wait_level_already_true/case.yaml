@@ -1,0 +1,12 @@
+id: cpp.wait_level_already_true
+tags: [cpp_run]
+input:
+  command: [run, cpp]
+  project: false
+  top: Top
+  files: [main.sv]
+expect:
+  exit: 0
+  variables:
+    marker: 1
+    ready: 1
