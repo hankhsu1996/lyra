@@ -1,0 +1,12 @@
+id: cpp.logic_xz_to_real
+tags: [cpp_run]
+input:
+  command: [run, cpp]
+  project: false
+  top: Top
+  files: [main.sv]
+expect:
+  exit: 0
+  stdout:
+    exact: |
+      129.000000

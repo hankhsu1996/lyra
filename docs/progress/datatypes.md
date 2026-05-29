@@ -11,11 +11,8 @@ on the current pipeline.
 
 ## Actionable
 
-Real C1 (decls / assignment / `%f` / `%e` / `%g`) landed in PR #789. Real C2 (arithmetic /
-relational / equality / logical operators on real, plus shortreal <-> real conversions) is in
-flight. Remaining real work: C3 (real <-> integral conversion) and C4 (LRM-illegal-form rejection).
-Other families remaining: `datatypes/string`, `datatypes/unpacked`, `datatypes/general`,
-`datatypes/default_init`, `datatypes/representation`.
+Real C1 / C2 / C3 / C4 are complete. Other families remaining: `datatypes/string`,
+`datatypes/unpacked`, `datatypes/general`, `datatypes/default_init`, `datatypes/representation`.
 
 ## Enum
 
@@ -126,19 +123,31 @@ real variables.
       This is safe for real-family vars because they do not wrap in `Var<T>` and therefore do not
       need `services_`. Integral structural initializers remain a known gap (their
       `Var<PackedArray>` write path needs `services_`, which is not bound until `Bind()`).
-- [ ] C3 -- Cross-family conversions: integral -> real (4-state x / z bits map to 0 per LRM 6.12.1)
-      and real -> integral (round-half-away-from-zero per LRM 6.12.1, _not_ truncate).
-      `int_literal_to_real` is the constant-folded subset; `int_to_real_conversion`,
-      `real_to_int_conversion`, `real_to_int_negative` exercise the runtime paths in
-      `real`/`shortreal`/`realtime` subfolders. Slang's `SVInt::fromDouble` already defaults
-      `round=true`, so the integer-side conversion needs only to invoke it; the bit-level `x/z -> 0`
-      step happens before promotion to double.
-- [ ] C4 -- LRM-illegal forms on real (LRM 6.12 + 11.3.1 / Table 11-1): edge event control
-      (`posedge` / `negedge` / `edge`) on real, bit-select / part-select of real, modulus `%` on
-      real, bitwise / reduction / shift / wildcard / case-equality on real. Reject in AST -> HIR
-      with `diag::Unsupported` carrying the LRM citation. No new behavior is enabled; this is solely
-      about producing a diagnostic instead of an `InternalError` for programs that compile under
-      slang but fall outside the legal real surface.
+- [x] C3 -- Cross-family conversions. cpp emit's `RenderConversionExpr` gains an integral -> real
+      arm (`static_cast<double>((operand).ToInt64())`; `PackedArray::ToInt64` collapses X / Z bits
+      to 0 per LRM 6.12.1) and a real -> integral arm
+      (`PackedArray::FromInt(std::llround(operand), <shape>)`; `std::llround`'s round-half-away-
+      from-zero rule matches LRM 6.12.1 exactly, contrasting with the archive's incorrect LLVM
+      `FPToSI` truncate path). Same-shape and unhandled-pair conversions fall through to the operand
+      unchanged: slang emits identity conversions (e.g., `string` -> `string`) and string-literal
+      lifts (`bit[N-1:0]` -> `string`) where the operand already renders as the destination's C++
+      type. Widths > 64 bits are caught by `PackedArray::FromInt` / `ToInt64`'s own width invariants
+      (follow-up: wide-int conversion via the FromWords path). Drive-by fix: `PackedArray::ToInt64`
+      previously read `ValueWords()` raw, leaving X / Z positions whatever bit pattern slang stored
+      in the value plane; it now masks by `~UnknownWords()` so its docstring's "X/Z bits map to 0"
+      promise actually holds. Tests: `int_to_real`, `int_to_real_negative`,
+      `real_to_int_round_down`, `real_to_int_round_up`, `real_to_int_half_positive`,
+      `real_to_int_half_negative`, `int_to_shortreal`, `shortreal_to_int`, `int_literal_to_real`,
+      `byte_to_real`, `longint_to_real`, `logic_xz_to_real`.
+- [x] C4 -- LRM-illegal forms on real (LRM 6.12 + 11.3.1 / Table 11-1). Slang filters 10 of 11 at
+      AST construction (edge event control on real, bit-select / part-select of real, real index in
+      bit-select, modulus `%`, bitwise / reduction / shift, wildcard `==?` / `!=?`, plus the
+      corresponding compound assignment forms). The one slang anomaly is case equality `===` / `!==`
+      on real (slang allows `bothNumeric` even though LRM Table 11-1 lists "Any except real and
+      shortreal"). That path falls through `RenderBinaryOpReal`'s default arm, which already returns
+      `diag::Unsupported` with an LRM 11.3.1 citation -- so the C2 defensive renderer is the
+      rejection mechanism with no additional code required. Negative test
+      `errors/real_case_equality_unsupported` guards this contract.
 
 ### Cross-references
 

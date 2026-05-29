@@ -501,6 +501,32 @@ auto RenderIntegralConversion(
   return body;
 }
 
+// LRM 6.12.1: integer-to-real implicit conversion treats X/Z bits as 0.
+// `PackedArray::ToInt64` already collapses X/Z bits to 0 (packed_array.hpp
+// docstring), so a plain `static_cast` to the destination real precision is
+// the full conversion. `shortreal` casts to `float`; `real` and `realtime`
+// (LRM 6.12 synonyms) cast to `double`.
+auto RenderIntegralToRealConversion(
+    std::string operand, const mir::Type& dst_ty) -> std::string {
+  const auto* cpp_ty =
+      dst_ty.Kind() == mir::TypeKind::kShortReal ? "float" : "double";
+  return std::format("static_cast<{}>(({}).ToInt64())", cpp_ty, operand);
+}
+
+// LRM 6.12.1: real-to-integer implicit conversion rounds the real to the
+// nearest integer with ties rounded away from zero (35.5 -> 36, -1.5 -> -2).
+// `std::llround` is the standard library function with exactly that rounding
+// rule; it returns `long long` (>= 64 bits), which feeds `PackedArray::FromInt`
+// to land the rounded value into the destination shape. Destination widths >
+// 64 bits would need a wide-int conversion path; that is currently caught by
+// `FromInt`'s own width invariant.
+auto RenderRealToIntegralConversion(
+    std::string operand, const mir::PackedArrayType& dst_pa) -> std::string {
+  return std::format(
+      "lyra::value::PackedArray::FromInt(std::llround({}), {})", operand,
+      RenderPackedArrayCtorArgs(dst_pa));
+}
+
 auto RenderConversionExpr(
     const RenderContext& ctx, const mir::Expr& expr,
     const mir::ConversionExpr& cv) -> diag::Result<std::string> {
@@ -517,6 +543,18 @@ auto RenderConversionExpr(
         ctx, expr.type, *std::move(operand_or), src_ty.AsIntegralPacked(),
         dst_ty.AsIntegralPacked(), src_ty.IsEnum(), dst_ty.IsEnum());
   }
+  if (src_ty.IsIntegralPacked() && IsRealFamilyType(dst_ty)) {
+    return RenderIntegralToRealConversion(*std::move(operand_or), dst_ty);
+  }
+  if (IsRealFamilyType(src_ty) && dst_ty.IsIntegralPacked()) {
+    return RenderRealToIntegralConversion(
+        *std::move(operand_or), dst_ty.AsIntegralPacked());
+  }
+  // Fall-through covers conversions whose source and destination already share
+  // a compatible C++ representation, so no transformation is needed at this
+  // boundary: same-kind identity conversions (e.g., string -> string), and
+  // slang's narrow `bit[N-1:0]` string-literal -> `string` lift where the
+  // operand already renders as the C++ string literal.
   return *std::move(operand_or);
 }
 

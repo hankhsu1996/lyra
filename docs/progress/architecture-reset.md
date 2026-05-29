@@ -57,7 +57,7 @@ Granular tracking lives in `integral.md` (integral / packed / wide_integral) and
 - [ ] datatypes/general
 - [ ] datatypes/integral -- `integral.md`.
 - [ ] datatypes/packed -- `packed.md`.
-- [ ] datatypes/real
+- [x] datatypes/real
 - [ ] datatypes/representation
 - [ ] datatypes/string
 - [ ] datatypes/unpacked
