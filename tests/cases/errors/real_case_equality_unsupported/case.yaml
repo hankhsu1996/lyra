@@ -1,0 +1,16 @@
+id: errors.real_case_equality_unsupported
+tags: [errors, diag]
+input:
+  command: [emit, cpp]
+  project: false
+  top: Top
+  files: [main.sv]
+  args: ["--no-color"]
+expect:
+  exit: 1
+  stderr:
+    contains:
+      - "unsupported:"
+      - "real"
+    not_contains:
+      - "internal error"

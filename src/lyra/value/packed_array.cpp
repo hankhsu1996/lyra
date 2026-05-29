@@ -299,7 +299,13 @@ auto PackedArray::ToInt64() const -> std::int64_t {
   if (bit_width_ > 64U) {
     throw InternalError("PackedArray::ToInt64: bit_width > 64");
   }
-  const auto raw = ValueWords()[0] & MaskForWidth(bit_width_);
+  // LRM 6.12.1 / 6.19: when a 4-state value is read into a 2-state context,
+  // X/Z bits collapse to 0. The unknown plane marks those positions, so the
+  // value plane is masked by `~unknown` before any further interpretation.
+  const auto value = ValueWords()[0];
+  const auto unk =
+      UnknownWords().empty() ? std::uint64_t{0} : UnknownWords()[0];
+  const auto raw = (value & ~unk) & MaskForWidth(bit_width_);
   return is_signed_ ? SignExtendToInt64(raw, bit_width_)
                     : static_cast<std::int64_t>(raw);
 }
