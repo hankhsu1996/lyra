@@ -11,6 +11,8 @@
 #include "lyra/mir/conversion.hpp"
 #include "lyra/mir/expr_id.hpp"
 #include "lyra/mir/integral_constant.hpp"
+#include "lyra/mir/lvalue.hpp"
+#include "lyra/mir/range_bounds.hpp"
 #include "lyra/mir/runtime_diagnostic.hpp"
 #include "lyra/mir/runtime_finish.hpp"
 #include "lyra/mir/runtime_print.hpp"
@@ -18,7 +20,6 @@
 #include "lyra/mir/structural_param.hpp"
 #include "lyra/mir/structural_subroutine.hpp"
 #include "lyra/mir/unary_op.hpp"
-#include "lyra/mir/value_ref.hpp"
 #include "lyra/support/system_subroutine.hpp"
 
 namespace lyra::mir {
@@ -93,24 +94,6 @@ struct ElementSelectExpr {
   ExprId base_value;
   ExprId index;
 };
-
-struct RangeConstantBounds {
-  ExprId msb_expr;
-  ExprId lsb_expr;
-};
-
-struct RangeIndexedUpBounds {
-  ExprId base_index;
-  ExprId width;
-};
-
-struct RangeIndexedDownBounds {
-  ExprId base_index;
-  ExprId width;
-};
-
-using RangeBounds = std::variant<
-    RangeConstantBounds, RangeIndexedUpBounds, RangeIndexedDownBounds>;
 
 struct RangeSelectExpr {
   ExprId base_value;

@@ -645,8 +645,13 @@ auto LowerRepeatStmt(
       mir::Expr{
           .data =
               mir::AssignExpr{
-                  .target = mir::Lvalue{mir::ProceduralVarRef{
-                      .hops = mir::ProceduralHops{.value = 0}, .var = idx_var}},
+                  .target =
+                      mir::Lvalue{
+                          .root =
+                              mir::ProceduralVarRef{
+                                  .hops = mir::ProceduralHops{.value = 0},
+                                  .var = idx_var},
+                          .selectors = {}},
                   .value = add_id},
           .type = int_type});
 

@@ -378,7 +378,10 @@ auto LowerLoopGenerate(
       proc_scope_state.AddExpr(*std::move(step_value_or));
   const mir::ExprId step_id = proc_scope_state.AddExpr(
       mir::Expr{
-          .data = mir::AssignExpr{.target = loop_local, .value = step_value_id},
+          .data =
+              mir::AssignExpr{
+                  .target = mir::Lvalue{.root = loop_local, .selectors = {}},
+                  .value = step_value_id},
           .type = step_type});
 
   std::vector<mir::Expr> body_args;
@@ -449,7 +452,10 @@ auto LowerStructuralVarInitAsStmt(
       scope_state.TranslateStructuralVar(hir::StructuralHops{0}, hir_var_id);
   const mir::ExprId assign_id = proc_scope_state.AddExpr(
       mir::Expr{
-          .data = mir::AssignExpr{.target = target, .value = rhs_id},
+          .data =
+              mir::AssignExpr{
+                  .target = mir::Lvalue{.root = target, .selectors = {}},
+                  .value = rhs_id},
           .type = mir_type});
   return mir::Stmt{
       .label = std::nullopt,

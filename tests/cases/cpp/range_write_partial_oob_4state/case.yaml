@@ -1,0 +1,13 @@
+id: cpp.range_write_partial_oob_4state
+tags: [cpp_run]
+input:
+  command: [run, cpp]
+  project: false
+  top: Top
+  files: [main.sv]
+expect:
+  exit: 0
+  variables:
+    partial_high: "8'b00111111"
+    partial_low: "8'b11111100"
+    fully_oob: "8'b11111111"

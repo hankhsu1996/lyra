@@ -5,21 +5,21 @@
 #include <vector>
 
 #include "lyra/mir/expr_id.hpp"
+#include "lyra/mir/lvalue.hpp"
 #include "lyra/mir/procedural_var.hpp"
-#include "lyra/mir/value_ref.hpp"
 
 namespace lyra::mir {
 
 struct ProceduralScope;
 
 struct ByValueCapture {
-  ExprId value;
-  ProceduralVarId binding;
+  ExprId value{};
+  ProceduralVarId binding{};
 };
 
 struct ByReferenceCapture {
   Lvalue source;
-  ProceduralVarId binding;
+  ProceduralVarId binding{};
 };
 
 using Capture = std::variant<ByValueCapture, ByReferenceCapture>;

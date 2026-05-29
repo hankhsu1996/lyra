@@ -304,7 +304,9 @@ class HirDumper {
     throw InternalError("HirDumper: unknown BinaryOp");
   }
 
-  static auto FormatLvalue(const Lvalue& v) -> std::string {
+  static auto FormatLvalueRoot(
+      const std::variant<StructuralVarRef, ProceduralVarRef, LoopVarRef>& root)
+      -> std::string {
     return std::visit(
         Overloaded{
             [](const StructuralVarRef& r) -> std::string {
@@ -319,7 +321,47 @@ class HirDumper {
                   "LoopVar[{}](hops={})", r.loop_var.value, r.hops.value);
             },
         },
-        v);
+        root);
+  }
+
+  static auto FormatLvalueSelector(const LvalueSelector& sel) -> std::string {
+    return std::visit(
+        Overloaded{
+            [](const ElementLvalueSelector& s) -> std::string {
+              return std::format("Element index=Expr[{}]", s.index.value);
+            },
+            [](const RangeLvalueSelector& s) -> std::string {
+              const auto bounds = std::visit(
+                  Overloaded{
+                      [](const RangeConstantBounds& b) -> std::string {
+                        return std::format(
+                            "const msb=Expr[{}] lsb=Expr[{}]", b.msb_expr.value,
+                            b.lsb_expr.value);
+                      },
+                      [](const RangeIndexedUpBounds& b) -> std::string {
+                        return std::format(
+                            "indexed_up base=Expr[{}] width=Expr[{}]",
+                            b.base_index.value, b.width.value);
+                      },
+                      [](const RangeIndexedDownBounds& b) -> std::string {
+                        return std::format(
+                            "indexed_down base=Expr[{}] width=Expr[{}]",
+                            b.base_index.value, b.width.value);
+                      },
+                  },
+                  s.bounds);
+              return std::format("Range {}", bounds);
+            },
+        },
+        sel);
+  }
+
+  static auto FormatLvalue(const Lvalue& v) -> std::string {
+    std::string out = FormatLvalueRoot(v.root);
+    for (const auto& sel : v.selectors) {
+      out += std::format(" [{}]", FormatLvalueSelector(sel));
+    }
+    return out;
   }
 
   static auto FormatTimeScale(TimeScale s) -> std::string_view {

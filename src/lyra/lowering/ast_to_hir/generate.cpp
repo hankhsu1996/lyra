@@ -294,7 +294,10 @@ auto BuildLoopGenerate(
   const hir::ExprId stop_id = parent_state.AddExpr(*std::move(stop_expr));
 
   const hir::Lvalue loop_var_lvalue{
-      hir::LoopVarRef{.hops = hir::StructuralHops{0}, .loop_var = loop_var_id}};
+      .root =
+          hir::LoopVarRef{
+              .hops = hir::StructuralHops{0}, .loop_var = loop_var_id},
+      .selectors = {}};
   auto iter_expr = LowerLoopIterNextValue(
       unit_facts, unit_state, parent_state, stack, *array.iterExpression,
       loop_var_lvalue);

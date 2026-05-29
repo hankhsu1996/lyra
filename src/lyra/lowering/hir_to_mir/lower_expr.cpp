@@ -1,6 +1,7 @@
 #include "lyra/lowering/hir_to_mir/lower_expr.hpp"
 
 #include <cstdint>
+#include <format>
 #include <memory>
 #include <utility>
 #include <variant>
@@ -222,26 +223,118 @@ auto LowerStructuralParamRefExpr(
       .type = type};
 }
 
-auto LowerHirLvalueProc(
+auto LowerHirLvalueRoot(
     const StructuralScopeLoweringState& scope_state,
     const ProcessLoweringState& proc_state, const hir::Lvalue& lvalue)
-    -> mir::Lvalue {
+    -> std::variant<mir::StructuralVarRef, mir::ProceduralVarRef> {
   return std::visit(
       Overloaded{
-          [&](const hir::StructuralVarRef& m) -> mir::Lvalue {
+          [&](const hir::StructuralVarRef& m)
+              -> std::variant<mir::StructuralVarRef, mir::ProceduralVarRef> {
             return scope_state.TranslateStructuralVar(m.hops, m.var);
           },
-          [&](const hir::ProceduralVarRef& l) -> mir::Lvalue {
+          [&](const hir::ProceduralVarRef& l)
+              -> std::variant<mir::StructuralVarRef, mir::ProceduralVarRef> {
             return proc_state.TranslateProceduralVar(l.var);
           },
-          [](const hir::LoopVarRef&) -> mir::Lvalue {
+          // `LoopVarRef` is rejected at AST->HIR as a process-body lvalue, so
+          // by the time we reach HIR->MIR's process-side lowering this arm is
+          // unreachable. It exists only because the HIR Lvalue variant must
+          // accept LoopVarRef for the constructor-side generate-for header.
+          [](const hir::LoopVarRef&)
+              -> std::variant<mir::StructuralVarRef, mir::ProceduralVarRef> {
             throw InternalError(
-                "LowerHirLvalueProc: HIR LoopVarRef must not appear as an "
-                "lvalue in a process body; the for-loop header is constructor-"
-                "side, not procedural");
+                "LowerHirLvalueRoot: HIR LoopVarRef reached process-side "
+                "lvalue lowering; AST->HIR should have rejected it");
           },
       },
-      lvalue);
+      lvalue.root);
+}
+
+auto LowerHirRangeBoundsProc(
+    const UnitLoweringState& unit_state,
+    const StructuralScopeLoweringState& scope_state,
+    const ProcessLoweringState& proc_state,
+    ProceduralScopeLoweringState& proc_scope_state,
+    const hir::Process& hir_process, const hir::RangeBounds& bounds)
+    -> diag::Result<mir::RangeBounds> {
+  auto lower_one = [&](hir::ExprId id) -> diag::Result<mir::ExprId> {
+    auto lowered = LowerExpr(
+        unit_state, scope_state, proc_state, proc_scope_state, hir_process,
+        hir_process.exprs.at(id.value));
+    if (!lowered) return std::unexpected(std::move(lowered.error()));
+    return proc_scope_state.AddExpr(*std::move(lowered));
+  };
+  return std::visit(
+      Overloaded{
+          [&](const hir::RangeConstantBounds& b)
+              -> diag::Result<mir::RangeBounds> {
+            auto msb = lower_one(b.msb_expr);
+            if (!msb) return std::unexpected(std::move(msb.error()));
+            auto lsb = lower_one(b.lsb_expr);
+            if (!lsb) return std::unexpected(std::move(lsb.error()));
+            return mir::RangeConstantBounds{.msb_expr = *msb, .lsb_expr = *lsb};
+          },
+          [&](const hir::RangeIndexedUpBounds& b)
+              -> diag::Result<mir::RangeBounds> {
+            auto base = lower_one(b.base_index);
+            if (!base) return std::unexpected(std::move(base.error()));
+            auto width = lower_one(b.width);
+            if (!width) return std::unexpected(std::move(width.error()));
+            return mir::RangeIndexedUpBounds{
+                .base_index = *base, .width = *width};
+          },
+          [&](const hir::RangeIndexedDownBounds& b)
+              -> diag::Result<mir::RangeBounds> {
+            auto base = lower_one(b.base_index);
+            if (!base) return std::unexpected(std::move(base.error()));
+            auto width = lower_one(b.width);
+            if (!width) return std::unexpected(std::move(width.error()));
+            return mir::RangeIndexedDownBounds{
+                .base_index = *base, .width = *width};
+          },
+      },
+      bounds);
+}
+
+auto LowerHirLvalueProc(
+    const UnitLoweringState& unit_state,
+    const StructuralScopeLoweringState& scope_state,
+    const ProcessLoweringState& proc_state,
+    ProceduralScopeLoweringState& proc_scope_state,
+    const hir::Process& hir_process, const hir::Lvalue& lvalue)
+    -> diag::Result<mir::Lvalue> {
+  mir::Lvalue out{
+      .root = LowerHirLvalueRoot(scope_state, proc_state, lvalue),
+      .selectors = {}};
+  out.selectors.reserve(lvalue.selectors.size());
+  for (const auto& sel : lvalue.selectors) {
+    auto lowered_sel = std::visit(
+        Overloaded{
+            [&](const hir::ElementLvalueSelector& s)
+                -> diag::Result<mir::LvalueSelector> {
+              auto idx = LowerExpr(
+                  unit_state, scope_state, proc_state, proc_scope_state,
+                  hir_process, hir_process.exprs.at(s.index.value));
+              if (!idx) return std::unexpected(std::move(idx.error()));
+              const mir::ExprId idx_id =
+                  proc_scope_state.AddExpr(*std::move(idx));
+              return mir::ElementLvalueSelector{.index = idx_id};
+            },
+            [&](const hir::RangeLvalueSelector& s)
+                -> diag::Result<mir::LvalueSelector> {
+              auto bounds = LowerHirRangeBoundsProc(
+                  unit_state, scope_state, proc_state, proc_scope_state,
+                  hir_process, s.bounds);
+              if (!bounds) return std::unexpected(std::move(bounds.error()));
+              return mir::RangeLvalueSelector{.bounds = *std::move(bounds)};
+            },
+        },
+        sel);
+    if (!lowered_sel) return std::unexpected(std::move(lowered_sel.error()));
+    out.selectors.emplace_back(*std::move(lowered_sel));
+  }
+  return out;
 }
 
 auto LowerUserCallee(
@@ -380,24 +473,98 @@ auto LowerHirPrimaryStructural(
 // vehicle the NBA region invokes. The returned Expr has type `void` since the
 // closure value itself is consumed only by RuntimeSubmitNbaCall.
 auto BuildNbaSubmitClosureExpr(
-    const UnitLoweringState& unit_state, mir::Lvalue lhs_structural,
+    const UnitLoweringState& unit_state,
+    const ProceduralScopeLoweringState& outer_scope_state, mir::Lvalue lhs,
     mir::ExprId rhs_id_in_outer, mir::TypeId rhs_type) -> mir::Expr {
   ProceduralScopeLoweringState body;
-  const mir::ProceduralVarId snapshot_binding = body.AddProceduralVar(
+  std::vector<mir::Capture> captures;
+
+  const mir::ProceduralVarId rhs_binding = body.AddProceduralVar(
       mir::ProceduralVarDecl{.name = "_lyra_nba_rhs", .type = rhs_type});
-  const mir::ExprId snapshot_ref_id = body.AddExpr(
+  captures.emplace_back(
+      mir::ByValueCapture{.value = rhs_id_in_outer, .binding = rhs_binding});
+  const mir::ExprId rhs_ref_id = body.AddExpr(
       mir::Expr{
           .data =
               mir::ProceduralVarRef{
-                  .hops = mir::ProceduralHops{.value = 0},
-                  .var = snapshot_binding},
+                  .hops = mir::ProceduralHops{.value = 0}, .var = rhs_binding},
           .type = rhs_type});
+
+  // Each ExprId reached through the selector chain refers to an Expr in the
+  // outer procedural scope. The closure body has its own scope so we cannot
+  // share ExprIds. Two paths:
+  //   - Constant literals (IntegerLiteral) are cloned verbatim into the body
+  //     so downstream consumers (e.g. cpp render's constant extraction for
+  //     selector counts) keep seeing a literal. No capture entry is needed.
+  //   - Other expressions are captured by value into a fresh procedural var;
+  //     the body uses a ProceduralVarRef to that binding. Each snapshot gets
+  //     a distinct name so the emitted C++ closure capture list does not
+  //     collide.
+  std::uint32_t snapshot_counter = 0;
+  auto snapshot = [&](mir::ExprId outer_id) -> mir::ExprId {
+    const auto& outer_expr = outer_scope_state.GetExpr(outer_id);
+    if (std::holds_alternative<mir::IntegerLiteral>(outer_expr.data)) {
+      return body.AddExpr(outer_expr);
+    }
+    const auto binding = body.AddProceduralVar(
+        mir::ProceduralVarDecl{
+            .name = std::format("_lyra_nba_idx{}", snapshot_counter++),
+            .type = outer_expr.type});
+    captures.emplace_back(
+        mir::ByValueCapture{.value = outer_id, .binding = binding});
+    return body.AddExpr(
+        mir::Expr{
+            .data =
+                mir::ProceduralVarRef{
+                    .hops = mir::ProceduralHops{.value = 0}, .var = binding},
+            .type = outer_expr.type});
+  };
+
+  mir::Lvalue body_lhs{.root = lhs.root, .selectors = {}};
+  body_lhs.selectors.reserve(lhs.selectors.size());
+  for (const auto& sel : lhs.selectors) {
+    body_lhs.selectors.emplace_back(
+        std::visit(
+            Overloaded{
+                [&](const mir::ElementLvalueSelector& s)
+                    -> mir::LvalueSelector {
+                  return mir::ElementLvalueSelector{.index = snapshot(s.index)};
+                },
+                [&](const mir::RangeLvalueSelector& s) -> mir::LvalueSelector {
+                  mir::RangeBounds new_bounds = std::visit(
+                      Overloaded{
+                          [&](const mir::RangeConstantBounds& b)
+                              -> mir::RangeBounds {
+                            return mir::RangeConstantBounds{
+                                .msb_expr = snapshot(b.msb_expr),
+                                .lsb_expr = snapshot(b.lsb_expr)};
+                          },
+                          [&](const mir::RangeIndexedUpBounds& b)
+                              -> mir::RangeBounds {
+                            return mir::RangeIndexedUpBounds{
+                                .base_index = snapshot(b.base_index),
+                                .width = snapshot(b.width)};
+                          },
+                          [&](const mir::RangeIndexedDownBounds& b)
+                              -> mir::RangeBounds {
+                            return mir::RangeIndexedDownBounds{
+                                .base_index = snapshot(b.base_index),
+                                .width = snapshot(b.width)};
+                          },
+                      },
+                      s.bounds);
+                  return mir::RangeLvalueSelector{
+                      .bounds = std::move(new_bounds)};
+                },
+            },
+            sel));
+  }
+
   const mir::ExprId assign_id = body.AddExpr(
       mir::Expr{
           .data =
               mir::AssignExpr{
-                  .target = std::move(lhs_structural),
-                  .value = snapshot_ref_id},
+                  .target = std::move(body_lhs), .value = rhs_ref_id},
           .type = rhs_type});
   const mir::StmtId stmt_id = body.AddStmt(
       mir::Stmt{
@@ -407,9 +574,7 @@ auto BuildNbaSubmitClosureExpr(
   body.AddRootStmt(stmt_id);
 
   mir::ClosureExpr closure;
-  closure.captures.emplace_back(
-      mir::ByValueCapture{
-          .value = rhs_id_in_outer, .binding = snapshot_binding});
+  closure.captures = std::move(captures);
   closure.body = std::make_unique<mir::ProceduralScope>(body.Finish());
 
   return mir::Expr{
@@ -504,23 +669,27 @@ auto LowerHirAssignExprProc(
   if (!rhs_or) return std::unexpected(std::move(rhs_or.error()));
   const mir::TypeId rhs_type = (*rhs_or).type;
   const mir::ExprId rhs_id = proc_scope_state.AddExpr(*std::move(rhs_or));
-  auto lhs = LowerHirLvalueProc(scope_state, proc_state, a.lhs);
+  auto lhs_or = LowerHirLvalueProc(
+      unit_state, scope_state, proc_state, proc_scope_state, hir_process,
+      a.lhs);
+  if (!lhs_or) return std::unexpected(std::move(lhs_or.error()));
+  mir::Lvalue lhs = *std::move(lhs_or);
 
   if (a.kind == hir::AssignKind::kBlocking) {
     return mir::Expr{
-        .data = mir::AssignExpr{.target = lhs, .value = rhs_id},
+        .data = mir::AssignExpr{.target = std::move(lhs), .value = rhs_id},
         .type = result_type};
   }
 
-  if (!std::holds_alternative<mir::StructuralVarRef>(lhs)) {
+  if (!std::holds_alternative<mir::StructuralVarRef>(lhs.root)) {
     return diag::Unsupported(
         span, diag::DiagCode::kUnsupportedAssignmentTarget,
         "non-blocking assignment to procedural local is not supported yet",
         diag::UnsupportedCategory::kFeature);
   }
 
-  mir::Expr closure_expr =
-      BuildNbaSubmitClosureExpr(unit_state, std::move(lhs), rhs_id, rhs_type);
+  mir::Expr closure_expr = BuildNbaSubmitClosureExpr(
+      unit_state, proc_scope_state, std::move(lhs), rhs_id, rhs_type);
   const mir::ExprId closure_id =
       proc_scope_state.AddExpr(std::move(closure_expr));
   return mir::Expr{
@@ -779,64 +948,8 @@ auto LowerHirRangeSelectExprProc(
   if (!base_or) return std::unexpected(std::move(base_or.error()));
   const mir::ExprId base_id = proc_scope_state.AddExpr(*std::move(base_or));
 
-  auto bounds_or = std::visit(
-      Overloaded{
-          [&](const hir::RangeConstantBounds& b)
-              -> diag::Result<mir::RangeBounds> {
-            auto msb_or = LowerExpr(
-                unit_state, scope_state, proc_state, proc_scope_state,
-                hir_process, hir_process.exprs.at(b.msb_expr.value));
-            if (!msb_or) return std::unexpected(std::move(msb_or.error()));
-            const mir::ExprId msb_id =
-                proc_scope_state.AddExpr(*std::move(msb_or));
-            auto lsb_or = LowerExpr(
-                unit_state, scope_state, proc_state, proc_scope_state,
-                hir_process, hir_process.exprs.at(b.lsb_expr.value));
-            if (!lsb_or) return std::unexpected(std::move(lsb_or.error()));
-            const mir::ExprId lsb_id =
-                proc_scope_state.AddExpr(*std::move(lsb_or));
-            return mir::RangeConstantBounds{
-                .msb_expr = msb_id, .lsb_expr = lsb_id};
-          },
-          [&](const hir::RangeIndexedUpBounds& b)
-              -> diag::Result<mir::RangeBounds> {
-            auto base_idx_or = LowerExpr(
-                unit_state, scope_state, proc_state, proc_scope_state,
-                hir_process, hir_process.exprs.at(b.base_index.value));
-            if (!base_idx_or) {
-              return std::unexpected(std::move(base_idx_or.error()));
-            }
-            const mir::ExprId base_idx_id =
-                proc_scope_state.AddExpr(*std::move(base_idx_or));
-            auto width_or = LowerExpr(
-                unit_state, scope_state, proc_state, proc_scope_state,
-                hir_process, hir_process.exprs.at(b.width.value));
-            if (!width_or) return std::unexpected(std::move(width_or.error()));
-            const mir::ExprId width_id =
-                proc_scope_state.AddExpr(*std::move(width_or));
-            return mir::RangeIndexedUpBounds{
-                .base_index = base_idx_id, .width = width_id};
-          },
-          [&](const hir::RangeIndexedDownBounds& b)
-              -> diag::Result<mir::RangeBounds> {
-            auto base_idx_or = LowerExpr(
-                unit_state, scope_state, proc_state, proc_scope_state,
-                hir_process, hir_process.exprs.at(b.base_index.value));
-            if (!base_idx_or) {
-              return std::unexpected(std::move(base_idx_or.error()));
-            }
-            const mir::ExprId base_idx_id =
-                proc_scope_state.AddExpr(*std::move(base_idx_or));
-            auto width_or = LowerExpr(
-                unit_state, scope_state, proc_state, proc_scope_state,
-                hir_process, hir_process.exprs.at(b.width.value));
-            if (!width_or) return std::unexpected(std::move(width_or.error()));
-            const mir::ExprId width_id =
-                proc_scope_state.AddExpr(*std::move(width_or));
-            return mir::RangeIndexedDownBounds{
-                .base_index = base_idx_id, .width = width_id};
-          },
-      },
+  auto bounds_or = LowerHirRangeBoundsProc(
+      unit_state, scope_state, proc_state, proc_scope_state, hir_process,
       sel.bounds);
   if (!bounds_or) return std::unexpected(std::move(bounds_or.error()));
 

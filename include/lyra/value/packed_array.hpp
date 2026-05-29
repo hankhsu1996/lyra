@@ -4,20 +4,58 @@
 #include <initializer_list>
 #include <span>
 #include <variant>
+#include <vector>
 
 #include "lyra/value/packed.hpp"
 
 namespace lyra::value {
 
+class PackedArrayRef;
+
+// Declared range of one packed dimension. Outermost dimension is dims[0]; the
+// inner element type's dim stack follows. For `bit [N-1:0]`: dims = [{N-1,
+// 0}] (1D, each element is one bit). For `bit [1:0][7:0]`: dims = [{1, 0},
+// {7, 0}] (2D, each outer element is `bit [7:0]`).
+//
+// This carries SystemVerilog's declared bounds. Storage layout is private --
+// PackedArray today uses flat-bit BitValue/LogicValue, but the API contract
+// is element-level (operator[] / Slice take outer-element positions), so
+// future storage optimizations (canonical byte alignment, vector-of-elements
+// for huge outer dims, etc.) change runtime internals without touching the
+// emit or this contract.
+struct PackedRange {
+  std::int64_t left;
+  std::int64_t right;
+
+  [[nodiscard]] auto ElementCount() const -> std::uint64_t {
+    return static_cast<std::uint64_t>(
+        (left >= right ? left - right : right - left) + 1);
+  }
+};
+
 // Unified integral value. Mirrors slang's `IntegralType` and the legacy
-// archive's `IntegralInfo`: one type, three attributes. `backend::cpp` emits
-// every SystemVerilog integral (`byte`, `shortint`, `int`, `longint`,
-// `integer`, `time`, `bit [N:0]`, `logic [N:0]`, `reg [N:0]`) as
-// `PackedArray`. Storage layout (inline word(s) versus heap) and the
-// presence of an unknown plane are private details chosen at construction
-// from `bit_width` and `is_four_state`.
+// archive's `IntegralInfo`: one type, three attributes plus a dim stack.
+// `backend::cpp` emits every SystemVerilog integral (`byte`, `shortint`,
+// `int`, `longint`, `integer`, `time`, `bit [N:0]`, `logic [N:0]`, `reg
+// [N:0]`, and multi-dim packed forms like `bit [N:0][M:0]`) as `PackedArray`.
+//
+// `dims_` carries the declared structure: 1D for vectors, multi-dim for
+// packed-of-packed. `operator[]` and `Slice` dispatch via `dims_` so the API
+// is element-level regardless of operand dimensionality -- the emitted C++
+// never bakes element-width arithmetic into call sites. Storage layout (flat
+// bit planes today; potentially canonical-byte-aligned or vector-of-elements
+// once optimization work begins) is private to PackedArray and disjoint from
+// the API contract.
 class PackedArray {
  public:
+  // Primary constructor: declared dim stack + sign + 4-state. Total bit
+  // width is the product of dim sizes (cached internally as `bit_width_`).
+  PackedArray(
+      std::initializer_list<PackedRange> dims, bool is_signed,
+      bool is_four_state);
+
+  // 1D shorthand for the common `bit [bit_width-1:0]` case. Equivalent to
+  // the dim-list constructor with `{{bit_width-1, 0}}`.
   PackedArray(std::uint64_t bit_width, bool is_signed, bool is_four_state);
 
   // Convenience factory for the default int shape (32-bit, signed, 2-state).
@@ -58,6 +96,9 @@ class PackedArray {
 
   [[nodiscard]] auto BitWidth() const -> std::uint64_t;
   [[nodiscard]] auto IsSigned() const -> bool;
+  // Declared dim stack, outermost first. Storage is flat regardless; this is
+  // an API-contract field that operator[] / Slice dispatch on.
+  [[nodiscard]] auto Dims() const -> std::span<const PackedRange>;
   [[nodiscard]] auto IsFourState() const -> bool;
 
   // LRM 11.4.5 `===` predicate form (host bool). Operator form: `CaseEqual`.
@@ -140,16 +181,40 @@ class PackedArray {
   [[nodiscard]] auto WildcardEquals(const PackedArray& other) const
       -> PackedArray;
 
-  // LRM 11.5.1 bit-select: extract the bit at `index` as a 1-bit PackedArray.
-  // Invalid (x/z or out-of-range) index yields x (4-state) or 0 (2-state).
-  [[nodiscard]] auto Index(const PackedArray& index) const -> PackedArray;
+  // Low-level bit-level primitives. `ExtractBits` reads `bit_width` contiguous
+  // bits starting at `lsb_bit`. `AssignSlice` writes those bits with the LRM
+  // 11.5.1 corner cases (X/Z lsb, fully-OOB lsb, lsb magnitude exceeding the
+  // 64-bit position carrier all collapse to a silent no-op; partial-OOB
+  // affects only in-range bits). Positions are in the canonical flat-bit
+  // address space, dimension-agnostic. The element-level chain methods below
+  // (`operator[]`, `Slice`) compose offsets in this address space and route
+  // here at the chain leaf.
+  [[nodiscard]] auto ExtractBits(
+      const PackedArray& lsb_bit, std::uint32_t bit_width) const -> PackedArray;
+  auto AssignSlice(
+      const PackedArray& lsb_bit, std::uint32_t bit_width,
+      const PackedArray& value) -> void;
 
-  // LRM 7.4.5 slice / 11.5.1 part-select: extract `width` contiguous bits whose
-  // LSB sits at `lsb_bit`. Per LRM 7.4.5 the size is constant (compile-time
-  // `width`) but the position may be runtime (`lsb_bit`). Bits outside the
-  // declared range yield x (4-state) or 0 (2-state).
+  // Proxy-chain entry points. Both methods take positions in the operand's
+  // outer-element units; PackedArray's `dims_` decides the element bit width
+  // internally. For a 1D operand (`dims_.size() == 1`), one "element" is one
+  // bit, so `ElementAt` is the LRM 11.5.1 bit-select and `Slice` is the LRM
+  // 11.5.1 part-select at bit level. For a multi-dim operand, one "element"
+  // is the inner subtype, and the API scales positions internally.
+  //
+  // Non-const overloads return a `PackedArrayRef` that composes further
+  // selectors and routes a final `operator=` through `AssignSlice`. Const
+  // overloads materialize the sub-slice as a fresh `PackedArray` for
+  // read-side use. Uniformly method-style (no `operator[]`) so a chain is
+  // visually consistent: `data.ElementAt(idx).Slice(lsb, count)`.
+  [[nodiscard]] auto ElementAt(const PackedArray& idx) -> PackedArrayRef;
+  [[nodiscard]] auto ElementAt(const PackedArray& idx) const -> PackedArray;
   [[nodiscard]] auto Slice(
-      const PackedArray& lsb_bit, std::uint32_t width) const -> PackedArray;
+      const PackedArray& lsb_in_outer_elements,
+      std::uint32_t count_in_outer_elements) -> PackedArrayRef;
+  [[nodiscard]] auto Slice(
+      const PackedArray& lsb_in_outer_elements,
+      std::uint32_t count_in_outer_elements) const -> PackedArray;
   [[nodiscard]] auto operator<(const PackedArray& other) const -> PackedArray;
   [[nodiscard]] auto operator<=(const PackedArray& other) const -> PackedArray;
   [[nodiscard]] auto operator>(const PackedArray& other) const -> PackedArray;
@@ -201,6 +266,46 @@ class PackedArray {
   bool is_signed_;
   bool is_four_state_;
   std::variant<BitValue, LogicValue> storage_;
+  std::vector<PackedRange> dims_;
+};
+
+// Writable reference into a sub-range of a PackedArray. Composes through
+// chained `operator[]` / `Slice` and triggers the LRM 11.5.1 partial-write
+// rules via `AssignSlice` on the root when assigned. Reading materializes
+// back to a fresh `PackedArray`.
+//
+// Carries a `dims_` stack mirroring the structural shape of this sub-view:
+// `dims_[0]` is the outer dim at the current chain layer; further chain
+// methods dispatch on it to compute element bit width and emit a
+// dimension-aware sub-Ref. The internal `bit_offset_` is kept in a canonical
+// 64-bit signed 4-state shape so chained `+` / `*` between layers do not
+// collide on shape, and X/Z in any layer's index/lsb propagates to the final
+// write (LRM "X/Z position is a no-op").
+class PackedArrayRef {
+ public:
+  PackedArrayRef(
+      PackedArray& root, const PackedArray& bit_offset, std::uint32_t bit_width,
+      std::vector<PackedRange> dims);
+
+  // Read-side: materialize the sub-slice.
+  [[nodiscard]] operator PackedArray()
+      const;  // NOLINT(google-explicit-constructor)
+
+  // Write-side: route through AssignSlice on root.
+  auto operator=(const PackedArray& value) -> PackedArrayRef&;
+
+  // Chain composition. Positions are in the current sub-view's outer-element
+  // units; the proxy scales internally based on `dims_`.
+  [[nodiscard]] auto ElementAt(const PackedArray& idx) const -> PackedArrayRef;
+  [[nodiscard]] auto Slice(
+      const PackedArray& lsb_in_outer_elements,
+      std::uint32_t count_in_outer_elements) const -> PackedArrayRef;
+
+ private:
+  PackedArray* root_;
+  PackedArray bit_offset_;
+  std::uint32_t bit_width_;
+  std::vector<PackedRange> dims_;
 };
 
 }  // namespace lyra::value
