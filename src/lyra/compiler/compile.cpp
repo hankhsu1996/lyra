@@ -21,12 +21,9 @@ namespace lyra::compiler {
 
 namespace {
 
-// Translates slang's ReadRange entries into lyra's SensitivityRead shape.
-// Slang already returns deduplicated sets per LRM 9.2.2.2.1 / 9.4.2.2, so
-// the conversion is a straight 1:1 copy. Multiple entries for the same
-// symbol with disjoint bit ranges (e.g. `bus[3] | bus[5]`) are preserved so
-// downstream can subscribe at bit-range granularity once the runtime
-// supports it.
+// Deduplicated `ReadRange`-shaped list from slang's DFA maps 1:1. Disjoint
+// bit ranges for the same symbol are preserved so the runtime can subscribe
+// at bit-range granularity once Observable gains that resolution.
 template <typename SlangReads>
 auto TranslateReads(const SlangReads& reads)
     -> std::vector<lowering::ast_to_hir::SensitivityRead> {
@@ -38,6 +35,10 @@ auto TranslateReads(const SlangReads& reads)
   return entries;
 }
 
+// Harvests slang's procedure-level and per-`@*` read sets via the
+// AnalysisManager listener. Other forms (wait, future wait_order, etc.)
+// run their own walkers locally at the lowering site and do not pass
+// through this listener.
 auto ComputeImplicitSensitivityReads(slang::ast::Compilation& compilation)
     -> lowering::ast_to_hir::ImplicitSensitivityReads {
   lowering::ast_to_hir::ImplicitSensitivityReads out;
@@ -56,8 +57,6 @@ auto ComputeImplicitSensitivityReads(slang::ast::Compilation& compilation)
       }
     }
     // LRM 9.4.2.2: each `@*` TimedStatement carries its own sensitivity.
-    // Slang surfaces this regardless of the overall SensitivityList::Kind,
-    // so the same procedure can contribute multiple statement-keyed entries.
     for (const auto& region : ap.getImplicitEventReadSets()) {
       out.emplace(region.statement, TranslateReads(region.reads));
     }

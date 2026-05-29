@@ -38,10 +38,10 @@ auto FromSlangProceduralBlockKind(slang::ast::ProceduralBlockKind kind)
       "ast_to_hir::FromSlangProceduralBlockKind: unknown ProceduralBlockKind");
 }
 
-// Looks up sensitivity for `key_stmt` from the precomputed slang analysis
-// and translates it into HIR identity entries. Empty result is legal (no
-// reads, or unknown key) -- a SensitivityWaitStmt with an empty list means
-// "wait forever", which is the correct degenerate behaviour.
+// Slang's procedure-body sensitivity for always_comb / always_latch
+// (LRM 9.2.2.2.1). Empty result is legal -- a SensitivityWaitStmt with an
+// empty list means "wait forever", which is the correct degenerate
+// behaviour for a procedure body with no external reads.
 auto LookupSensitivityEntries(
     const UnitLoweringFacts& unit_facts, const UnitLoweringState& unit_state,
     const ScopeStack& stack, const slang::ast::Statement& key_stmt)
