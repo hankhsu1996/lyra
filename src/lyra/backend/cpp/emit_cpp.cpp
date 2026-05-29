@@ -8,6 +8,7 @@
 #include "lyra/backend/cpp/artifact.hpp"
 #include "lyra/backend/cpp/formatting.hpp"
 #include "lyra/backend/cpp/render_context.hpp"
+#include "lyra/backend/cpp/render_expr.hpp"
 #include "lyra/backend/cpp/render_stmt.hpp"
 #include "lyra/backend/cpp/render_type.hpp"
 #include "lyra/backend/cpp/string_literal.hpp"
@@ -24,20 +25,28 @@ namespace lyra::backend::cpp {
 
 namespace {
 
+auto RenderFieldCtorArgs(
+    const RenderContext& ctor_ctx, const mir::StructuralVarDecl& var,
+    const mir::Type& ty) -> diag::Result<std::string> {
+  if (var.initializer.has_value()) {
+    return RenderExpr(ctor_ctx, ctor_ctx.Expr(*var.initializer));
+  }
+  return RenderTypeDefaultCtorArgs(ty);
+}
+
 auto RenderField(
-    const mir::CompilationUnit& unit, const mir::StructuralScope& owner_scope,
-    const mir::StructuralVarDecl& var, std::size_t indent)
-    -> diag::Result<std::string> {
-  auto type_or = RenderTypeAsCpp(unit, owner_scope, var.type);
+    const RenderContext& ctor_ctx, const mir::StructuralVarDecl& var,
+    std::size_t indent) -> diag::Result<std::string> {
+  const auto& unit = ctor_ctx.Unit();
+  auto type_or = RenderTypeAsCpp(unit, ctor_ctx.StructuralScope(), var.type);
   if (!type_or) return std::unexpected(std::move(type_or.error()));
   const auto& ty = unit.GetType(var.type);
   const auto storage_type = IsObservableScalarType(ty)
                                 ? "lyra::runtime::Var<" + *type_or + ">"
                                 : *type_or;
-  // Var<T>'s variadic ctor forwards to T's ctor; raw T uses the same args
-  // directly. Either way the brace-list shape is the same.
-  const auto ctor_args = RenderTypeDefaultCtorArgs(ty);
-  return Indent(indent) + storage_type + " " + var.name + "{" + ctor_args +
+  auto args_or = RenderFieldCtorArgs(ctor_ctx, var, ty);
+  if (!args_or) return std::unexpected(std::move(args_or.error()));
+  return Indent(indent) + storage_type + " " + var.name + "{" + *args_or +
          "};\n";
 }
 
@@ -209,7 +218,7 @@ auto RenderScopeAsClass(
   }
 
   for (const auto& v : s.structural_vars) {
-    auto field_or = RenderField(unit, s, v, indent + 1);
+    auto field_or = RenderField(this_anchor, v, indent + 1);
     if (!field_or) return std::unexpected(std::move(field_or.error()));
     out += *field_or;
   }

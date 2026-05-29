@@ -34,8 +34,13 @@ auto AppendCaseSnapshot(
       mir::Expr{
           .data =
               mir::AssignExpr{
-                  .target = mir::Lvalue{mir::ProceduralVarRef{
-                      .hops = mir::ProceduralHops{.value = 0}, .var = sel_var}},
+                  .target =
+                      mir::Lvalue{
+                          .root =
+                              mir::ProceduralVarRef{
+                                  .hops = mir::ProceduralHops{.value = 0},
+                                  .var = sel_var},
+                          .selectors = {}},
                   .value = cond_expr_id},
           .type = sel_type});
   const mir::StmtId sel_assign_stmt_id = wrapper_state.AddStmt(
