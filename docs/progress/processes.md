@@ -10,9 +10,9 @@ order. Items in the [Actionable](#actionable) section can be picked up next; ite
 
 ## Actionable
 
-| Item | Notes                                                                                             |
-| ---- | ------------------------------------------------------------------------------------------------- |
-| P11  | `wait (expr)` level-sensitive control. Needs a re-arm primitive over the existing change channel. |
+| Item | Notes                                                                  |
+| ---- | ---------------------------------------------------------------------- |
+| -    | No procedural-block items left in this workstream's actionable column. |
 
 ## Blocked
 
@@ -43,25 +43,14 @@ order. Items in the [Actionable](#actionable) section can be picked up next; ite
       `kMaxCurrentTimeIterations` settle limit. Covers `processes/initial` (always portion) and the
       `always_ff` body of `processes/wait_event`.
 - [x] P10 / P13 -- `always_comb` / `always_latch` (LRM 9.2.2.2.1) and `always @*` / `always @(*)`
-      (LRM 9.4.2.2). HIR follows slang's source-aligned shape; MIR abstracts to a single runtime
-      mental model. Harvest (`compile.cpp`): slang's `AnalysisManager` produces read sets via two
-      APIs (`getSensitivityList()` for the procedure and `getImplicitEventReadSets()` for each `@*`
-      region) -- both are stored in a single `ImplicitSensitivityReads` map keyed by
-      `slang::ast::Statement*` (the procedure's body statement for always_comb / always_latch; the
-      `@*`'s `TimedStatement` for `always @*`). HIR: `always_comb` / `always_latch` carry the
-      sensitivity on `hir::Process::implicit_sensitivity_list` while the body is a plain statement
-      (LRM 9.2.2.2.1 -- no `@*` token in source). `always @*` produces
-      `hir::TimedStmt{ timing: ImplicitEventControl{sensitivity}, stmt: body }` -- a wrapper that
-      mirrors slang's `TimedStatement(ImplicitEventControl, body)` 1:1. HIR -> MIR collapses both
-      forms onto MIR's `mir::SensitivityWaitStmt` leaf: always_comb / always_latch run
-      `forever { body; SensitivityWaitStmt; }` (body runs at time zero, then waits for changes per
-      LRM 9.2.2.2); `always @*` expands its TimedStmt into a
-      `mir::Block { SensitivityWaitStmt;     body; }` (waits first, no time-zero run per LRM
-      9.4.2.2.2). Empty sensitivity lists are legal (wait-forever). Select expressions in reads
-      collapse to whole-variable subscription until the runtime supports bit-level any-change. The
-      single-driver restriction and forbidden-construct checks (no blocking timing, no fork-join in
-      `always_comb`) are enforced by slang's frontend. Multiple `@*`s in one procedure each key by
-      their own TimedStatement and lower independently.
+      (LRM 9.4.2.2). Slang's `AnalysisManager` produces read sets (per-procedure for always_comb /
+      always_latch, per-region for `@*`), stored in `ImplicitSensitivityReads` keyed by
+      `slang::ast::Statement*`. HIR carries them on `Process::implicit_sensitivity_list` for the
+      always_comb / always_latch forms and on `ImplicitEventControl::sensitivity_list` for `@*`. HIR
+      -> MIR: always_comb / always_latch run `forever { body; SensitivityWaitStmt; }` (body at t=0
+      then wait per LRM 9.2.2.2); `@*` expands to `Block { SensitivityWaitStmt; body; }` (wait first
+      per LRM 9.4.2.2.2). Reads collapse to whole-variable subscription until the runtime supports
+      bit-level any-change.
 
 ### Procedural assignments
 
@@ -96,25 +85,20 @@ order. Items in the [Actionable](#actionable) section can be picked up next; ite
 
 ### Synchronisation primitives
 
-- [x] P9 -- Named events: `event e;` declaration, `-> e;` trigger, `@e;` await, `e.triggered` query
-      (LRM 15.5). HIR mirrors slang's source-aligned structure: a new `hir::EventTriggerStmt` for
-      `-> e;` and a new `hir::TimingControl::NamedEventControl` variant for `@e;`. HIR -> MIR
-      collapses both onto method calls on the `lyra::runtime::NamedEvent` runtime type by way of
-      `mir::BuiltinMethodKind::{kNamedEventTrigger,kNamedEventAwait,kNamedEventTriggered}` -- no new
-      MIR statement kinds and no new timing-control variant. `NamedEvent` is a pure data type: it
-      owns a `RuntimeEvent` (waiters list) and a `std::optional<SimTime> last_triggered_at_`.
-      `Trigger(services)` records `services.Now()` and wakes every waiter via
-      `services.ScheduleProcess`; `Triggered(services)` is a `last_triggered_at_ == services.Now()`
-      comparison, so LRM 15.5.3 "triggered persists for the current time step" emerges from a
-      timestamp comparison rather than a flag the engine has to clear. The engine has no
-      event-specific code -- no `TriggerEvent` member, no slot-persistent flag, no event wait
-      dispatch. `e.triggered` returns a 1-bit `PackedArray` so it composes with the rest of the
-      value pipeline. The `->>` non-blocking trigger, `wait_order(...)`, event aliasing (`e1 = e2`),
-      event nullness, and event comparison are not in this cut.
-- [ ] P11 -- `wait (expr)` level-sensitive control. Suspends the coroutine, subscribes to every
-      signal read in `expr`, re-evaluates on any change, resumes when the expression becomes true.
-      Distinct from `@(expr)` because it is level-sensitive (LRM 9.4.3): if `expr` is already true
-      on entry, no suspension occurs. Closes `processes/wait_event`.
+- [x] P9 -- Named events (LRM 15.5): `event e;` declaration, `-> e;` trigger, `@e;` await,
+      `e.triggered` query. HIR carries `EventTriggerStmt` for `-> e;` and
+      `TimingControl::NamedEventControl` for `@e;`; HIR -> MIR collapses both onto method calls on
+      the `lyra::runtime::NamedEvent` data type, which records `last_triggered_at_` (LRM 15.5.3
+      same-time-step persistence falls out of `last_triggered_at_ == services.Now()`) and wakes its
+      waiter list. `e.triggered` returns a 1-bit `PackedArray`. `->>` non-blocking trigger,
+      `wait_order(...)`, event aliasing / nullness / comparison are out of scope.
+- [x] P11 -- `wait (cond) body` level-sensitive control (LRM 9.4.3). HIR carries
+      `WaitStmt {cond, body, sensitivity_list}`; the sensitivity is collected locally at the
+      `LowerWaitStmt` site by a small ASTVisitor over `cond` (no upstream manager pass, since slang
+      owns no DFA for wait conditions). HIR -> MIR lowers to
+      `Block { While { !cond, SensitivityWait(reads) }; body }` -- the LRM 9.4.3 "skip suspend if
+      cond is already true" semantic falls out of the while-loop shape. `wait fork;` (9.6.1) and
+      `wait_order(...)` (15.6) are out of scope. Closes `processes/wait_event`.
 
 ### Concurrency
 

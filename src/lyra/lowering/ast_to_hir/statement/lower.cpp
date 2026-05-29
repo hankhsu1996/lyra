@@ -5,6 +5,7 @@
 #include <utility>
 #include <vector>
 
+#include <slang/ast/ASTVisitor.h>
 #include <slang/ast/Expression.h>
 #include <slang/ast/Statement.h>
 #include <slang/ast/Symbol.h>
@@ -12,7 +13,9 @@
 #include <slang/ast/statements/ConditionalStatements.h>
 #include <slang/ast/statements/LoopStatements.h>
 #include <slang/ast/statements/MiscStatements.h>
+#include <slang/ast/symbols/ValueSymbol.h>
 #include <slang/ast/symbols/VariableSymbols.h>
+#include <slang/ast/types/Type.h>
 
 #include "lyra/base/internal_error.hpp"
 #include "lyra/diag/diag_code.hpp"
@@ -190,9 +193,6 @@ auto LowerTimingControl(
           hir::EventControl{.triggers = std::move(triggers)}};
     }
     case slang::ast::TimingControlKind::ImplicitEvent:
-      // `@*` / `@(*)` lowers to `hir::ImplicitEventControl`. The sensitivity
-      // list is filled in by LowerTimedStmt, which has access to the parent
-      // TimedStatement pointer needed for the slang-side lookup.
       return hir::TimingControl{hir::ImplicitEventControl{}};
     case slang::ast::TimingControlKind::RepeatedEvent:
       return diag::Unsupported(
@@ -456,7 +456,7 @@ auto LowerContinueStmt(diag::SourceSpan span) -> diag::Result<hir::Stmt> {
       .label = std::nullopt, .data = hir::ContinueStmt{}, .span = span};
 }
 
-auto LowerCaseSlangStmt(
+auto LowerCaseStmt(
     const UnitLoweringFacts& unit_facts, ProcessLoweringState& proc_state,
     ScopeLoweringState& scope_state, ScopeStack& stack,
     const slang::ast::CaseStatement& cs, diag::SourceSpan span)
@@ -508,7 +508,7 @@ auto LowerCaseSlangStmt(
       .span = span};
 }
 
-auto LowerConditionalSlangStmt(
+auto LowerConditionalStmt(
     const UnitLoweringFacts& unit_facts, ProcessLoweringState& proc_state,
     ScopeLoweringState& scope_state, ScopeStack& stack,
     const slang::ast::ConditionalStatement& cs, diag::SourceSpan span)
@@ -557,7 +557,7 @@ auto LowerConditionalSlangStmt(
 
 // LRM 15.5.1 `-> e;`. Source-aligned with slang's EventTriggerStatement. The
 // `->>` non-blocking form and any delay-or-event-control prefix are deferred.
-auto LowerEventTriggerSlangStmt(
+auto LowerEventTriggerStmt(
     const UnitLoweringFacts& unit_facts, ProcessLoweringState& proc_state,
     ScopeLoweringState& scope_state, const ScopeStack& stack,
     const slang::ast::EventTriggerStatement& et, diag::SourceSpan span)
@@ -595,6 +595,67 @@ auto LowerEventTriggerSlangStmt(
       .span = span};
 }
 
+// Walks the cond of a `wait (cond)` (LRM 9.4.3), recording every value
+// reference as a read. Slang's `IsSelectExpr` concept closes the set of
+// leaves that produce a read (`NamedValueExpression` /
+// `HierarchicalValueExpression` here; the other three select wrappers
+// recurse via visitDefault to a leaf). Lvalue tracking is unnecessary
+// because LRM 11.3.6 forbids assignment operators inside timing-control
+// expressions, so every value reference in `cond` is a read.
+struct WaitCondReadCollector
+    : slang::ast::ASTVisitor<
+          WaitCondReadCollector, slang::ast::VisitFlags::Expressions> {
+  std::vector<SensitivityRead> out;
+
+  void handle(const slang::ast::NamedValueExpression& e) {
+    Record(e.symbol);
+    visitDefault(e);
+  }
+
+  void handle(const slang::ast::HierarchicalValueExpression& e) {
+    Record(e.symbol);
+    visitDefault(e);
+  }
+
+ private:
+  void Record(const slang::ast::ValueSymbol& sym) {
+    const auto width = sym.getType().getSelectableWidth();
+    out.push_back(
+        SensitivityRead{
+            .symbol = &sym, .bit_range = {0, width > 0 ? width - 1 : 0}});
+  }
+};
+
+// LRM 9.4.3 `wait (cond) body`. Sensitivity is derived locally by walking
+// `cond` -- no upstream `AnalysisManager` listener needed, since slang owns
+// no DFA for wait conditions.
+auto LowerWaitStmt(
+    const UnitLoweringFacts& unit_facts, ProcessLoweringState& proc_state,
+    ScopeLoweringState& scope_state, ScopeStack& stack,
+    const slang::ast::WaitStatement& w, diag::SourceSpan span)
+    -> diag::Result<hir::Stmt> {
+  auto cond_or = LowerProcExpr(
+      unit_facts, scope_state.UnitState(), proc_state, stack, w.cond);
+  if (!cond_or) return std::unexpected(std::move(cond_or.error()));
+  const hir::ExprId cond_id = proc_state.AddExpr(*std::move(cond_or));
+  auto body_or =
+      LowerStatement(unit_facts, proc_state, scope_state, stack, w.stmt);
+  if (!body_or) return std::unexpected(std::move(body_or.error()));
+  const hir::StmtId body_id = proc_state.AddStmt(*std::move(body_or));
+  WaitCondReadCollector collector;
+  w.cond.visit(collector);
+  auto sensitivity =
+      TranslateSensitivityReads(collector.out, scope_state.UnitState(), stack);
+  return hir::Stmt{
+      .label = std::nullopt,
+      .data =
+          hir::WaitStmt{
+              .cond = cond_id,
+              .body = body_id,
+              .sensitivity_list = std::move(sensitivity)},
+      .span = span};
+}
+
 auto LowerStatement(
     const UnitLoweringFacts& unit_facts, ProcessLoweringState& proc_state,
     ScopeLoweringState& scope_state, ScopeStack& stack,
@@ -606,9 +667,14 @@ auto LowerStatement(
       return LowerEmptyStmt(span);
 
     case slang::ast::StatementKind::EventTrigger:
-      return LowerEventTriggerSlangStmt(
+      return LowerEventTriggerStmt(
           unit_facts, proc_state, scope_state, stack,
           stmt.as<slang::ast::EventTriggerStatement>(), span);
+
+    case slang::ast::StatementKind::Wait:
+      return LowerWaitStmt(
+          unit_facts, proc_state, scope_state, stack,
+          stmt.as<slang::ast::WaitStatement>(), span);
 
     case slang::ast::StatementKind::Timed:
       return LowerTimedStmt(
@@ -667,12 +733,12 @@ auto LowerStatement(
       return LowerContinueStmt(span);
 
     case slang::ast::StatementKind::Case:
-      return LowerCaseSlangStmt(
+      return LowerCaseStmt(
           unit_facts, proc_state, scope_state, stack,
           stmt.as<slang::ast::CaseStatement>(), span);
 
     case slang::ast::StatementKind::Conditional:
-      return LowerConditionalSlangStmt(
+      return LowerConditionalStmt(
           unit_facts, proc_state, scope_state, stack,
           stmt.as<slang::ast::ConditionalStatement>(), span);
 

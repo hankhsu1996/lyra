@@ -1,0 +1,12 @@
+id: cpp.wait_level_null_body
+tags: [cpp_run]
+input:
+  command: [run, cpp]
+  project: false
+  top: Top
+  files: [main.sv]
+expect:
+  exit: 0
+  variables:
+    after_wait: 1
+    ready: 1

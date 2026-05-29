@@ -129,23 +129,19 @@ struct EventControl {
 };
 
 // One entry of an implicit sensitivity list (LRM 9.2.2.2.1 for always_comb /
-// always_latch; 9.4.2.2 for `always @*`). Identity-only: which structural
-// variable, which flat bit range of its packed encoding. bit_range matches
-// slang's selectable-width representation; for packed types it is lossless
-// w.r.t. longest static prefix. The current runtime collapses to whole-variable
-// subscription at HIR -> MIR, but the precision is preserved here so the
-// collapse can be removed when the runtime gains bit-level Observable.
+// always_latch; 9.4.2.2 for `@*`; 9.4.3 for `wait (expr)`). Identity-only:
+// which structural variable, which flat bit range of its packed encoding.
+// The current runtime collapses to whole-variable subscription at HIR ->
+// MIR; bit_range is preserved here so the collapse can be lifted once the
+// runtime gains bit-level Observable.
 struct SensitivityEntry {
   StructuralVarRef ref;
   std::pair<std::uint64_t, std::uint64_t> bit_range;
 };
 
-// LRM 9.4.2.2 `@*` / `@(*)`. Identity-shaped (distinct from EventControl's
-// expression-shaped triggers): the sensitivity list is derived by slang's
-// AnalysisManager from the controlled statement's reads, never reassembled
-// into expressions. HIR keeps the slang AST shape -- the TimedStmt wraps the
-// controlled body -- and HIR -> MIR expands this into the runtime-oriented
-// "wait then body" sequence at lowering time.
+// LRM 9.4.2.2 `@*` / `@(*)`. Sensitivity for the controlled body is
+// computed by slang's AnalysisManager (write-before-read exclusion via
+// must-def) and looked up at AST -> HIR via the precomputed read-set facts.
 struct ImplicitEventControl {
   std::vector<SensitivityEntry> sensitivity_list;
 };
@@ -175,10 +171,20 @@ struct EventTriggerStmt {
   ExprId event;
 };
 
+// LRM 9.4.3 level-sensitive `wait (cond) body`. `sensitivity_list` is the
+// precomputed read set of `cond`, populated at AST -> HIR from a slang-side
+// ASTVisitor over WaitStatement.cond -- symmetric with how `@*` and
+// always_comb carry slang-derived sensitivity.
+struct WaitStmt {
+  ExprId cond;
+  StmtId body;
+  std::vector<SensitivityEntry> sensitivity_list;
+};
+
 using StmtData = std::variant<
     EmptyStmt, VarDeclStmt, ExprStmt, BlockStmt, IfStmt, CaseStmt, ForStmt,
     WhileStmt, RepeatStmt, DoWhileStmt, ForeverStmt, BreakStmt, ContinueStmt,
-    TimedStmt, EventTriggerStmt>;
+    TimedStmt, EventTriggerStmt, WaitStmt>;
 
 struct Stmt {
   std::optional<std::string> label;

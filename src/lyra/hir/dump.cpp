@@ -1054,6 +1054,28 @@ class HirDumper {
                       "Stmt[{}] EventTriggerStmt event=Expr[{}]", id.value,
                       et.event.value));
             },
+            [&](const WaitStmt& w) {
+              std::string sens = "sensitivity=[";
+              for (std::size_t i = 0; i < w.sensitivity_list.size(); ++i) {
+                if (i != 0) sens += ", ";
+                const auto& r = w.sensitivity_list[i];
+                sens += std::format(
+                    "{{hops={} var=StructuralVar[{}] bits=[{}:{}]}}",
+                    r.ref.hops.value, r.ref.var.value, r.bit_range.first,
+                    r.bit_range.second);
+              }
+              sens += "]";
+              Line(
+                  std::format(
+                      "Stmt[{}] WaitStmt cond=Expr[{}] {}", id.value,
+                      w.cond.value, sens));
+              Indent();
+              Line("body:");
+              Indent();
+              DumpStmt(p, w.body);
+              Dedent();
+              Dedent();
+            },
         },
         s.data);
   }
