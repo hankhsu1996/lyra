@@ -1,0 +1,13 @@
+id: cpp.range_write_const
+tags: [cpp_run]
+input:
+  command: [run, cpp]
+  project: false
+  top: Top
+  files: [main.sv]
+expect:
+  exit: 0
+  variables:
+    data: "16'hABCD"
+    nibble_high: "16'hFBCD"
+    byte_low: "16'hABEF"

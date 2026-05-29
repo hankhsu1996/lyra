@@ -1,0 +1,12 @@
+id: cpp.range_write_x_pos
+tags: [cpp_run]
+input:
+  command: [run, cpp]
+  project: false
+  top: Top
+  files: [main.sv]
+expect:
+  exit: 0
+  variables:
+    data: "8'b11111111"
+    one_bit: "8'b11111111"

@@ -335,7 +335,9 @@ class MirDumper {
     throw InternalError("MirDumper: unknown BinaryOp");
   }
 
-  [[nodiscard]] auto FormatLvalue(const Lvalue& l) const -> std::string {
+  [[nodiscard]] auto FormatLvalueRoot(
+      const std::variant<StructuralVarRef, ProceduralVarRef>& root) const
+      -> std::string {
     return std::visit(
         Overloaded{
             [this](const StructuralVarRef& r) -> std::string {
@@ -353,7 +355,48 @@ class MirDumper {
                   r.var.value, var.name);
             },
         },
-        l);
+        root);
+  }
+
+  [[nodiscard]] static auto FormatLvalueSelector(const LvalueSelector& sel)
+      -> std::string {
+    return std::visit(
+        Overloaded{
+            [](const ElementLvalueSelector& s) -> std::string {
+              return std::format("Element index=Expr[{}]", s.index.value);
+            },
+            [](const RangeLvalueSelector& s) -> std::string {
+              const auto bounds = std::visit(
+                  Overloaded{
+                      [](const RangeConstantBounds& b) -> std::string {
+                        return std::format(
+                            "const msb=Expr[{}] lsb=Expr[{}]", b.msb_expr.value,
+                            b.lsb_expr.value);
+                      },
+                      [](const RangeIndexedUpBounds& b) -> std::string {
+                        return std::format(
+                            "indexed_up base=Expr[{}] width=Expr[{}]",
+                            b.base_index.value, b.width.value);
+                      },
+                      [](const RangeIndexedDownBounds& b) -> std::string {
+                        return std::format(
+                            "indexed_down base=Expr[{}] width=Expr[{}]",
+                            b.base_index.value, b.width.value);
+                      },
+                  },
+                  s.bounds);
+              return std::format("Range {}", bounds);
+            },
+        },
+        sel);
+  }
+
+  [[nodiscard]] auto FormatLvalue(const Lvalue& l) const -> std::string {
+    std::string out = FormatLvalueRoot(l.root);
+    for (const auto& sel : l.selectors) {
+      out += std::format(" [{}]", FormatLvalueSelector(sel));
+    }
+    return out;
   }
 
   [[nodiscard]] auto FormatCallee(const Callee& callee) const -> std::string {

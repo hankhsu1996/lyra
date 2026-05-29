@@ -1,7 +1,5 @@
 #pragma once
 
-#include <variant>
-
 #include "lyra/mir/procedural_hops.hpp"
 #include "lyra/mir/procedural_var.hpp"
 #include "lyra/mir/structural_hops.hpp"
@@ -18,7 +16,5 @@ struct ProceduralVarRef {
   ProceduralHops hops;
   ProceduralVarId var{};
 };
-
-using Lvalue = std::variant<StructuralVarRef, ProceduralVarRef>;
 
 }  // namespace lyra::mir

@@ -11,9 +11,6 @@ namespace lyra::backend::cpp {
 auto RenderExpr(const RenderContext& ctx, const mir::Expr& expr)
     -> diag::Result<std::string>;
 
-auto RenderLvalue(const RenderContext& ctx, const mir::Lvalue& target)
-    -> diag::Result<std::string>;
-
 // Bare field name (no `.Get()` wrap) for callsites that need the Var place
 // itself rather than its value, e.g. the trigger pointers inside `WaitAny`.
 auto RenderStructuralVarName(

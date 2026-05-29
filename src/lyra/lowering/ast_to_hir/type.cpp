@@ -155,7 +155,7 @@ auto LowerType(
       return hir::TypeData{hir::PackedArrayType{
           .atom = LowerScalarAtom(scalar.scalarKind),
           .signedness = hir::Signedness::kUnsigned,
-          .dims = {},
+          .dims = {hir::PackedRange{.left = 0, .right = 0}},
           .form = hir::PackedArrayForm::kExplicit,
       }};
     }

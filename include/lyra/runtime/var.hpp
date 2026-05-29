@@ -14,6 +14,7 @@
 #include "lyra/runtime/runtime_services.hpp"
 #include "lyra/runtime/trigger.hpp"
 #include "lyra/value/packed.hpp"
+#include "lyra/value/packed_array.hpp"
 
 namespace lyra::runtime {
 
@@ -118,10 +119,8 @@ concept CaseEqualComparable = requires(const T& a, const T& b) {
   { a.IsCaseEqual(b) } -> std::same_as<bool>;
 };
 
-template <typename T>
-concept HasLsb = requires(const T& a) {
-  { a.Lsb() } -> std::same_as<value::FourStateBit>;
-};
+template <CaseEqualComparable T>
+class ScopedMutation;
 
 template <CaseEqualComparable T>
 class Var : public Observable {
@@ -155,6 +154,15 @@ class Var : public Observable {
   [[nodiscard]] auto Get() const noexcept -> const T& {
     return value_;
   }
+
+  // RAII entry to partial-write context. Construct via `var.Mutate(services)`
+  // at the start of a chain; the returned handle snapshots the current value,
+  // forwards chain methods so `var.Mutate(svc)[idx].Slice(...) = v` works as a
+  // single expression, and commits the mutated snapshot through `WriteVar` in
+  // its destructor (fires subscribers on change). Lifetime is C++ standard
+  // full-expression temporary lifetime -- the handle is non-copyable and
+  // non-movable, so storing it past the statement is rejected at compile time.
+  auto Mutate(RuntimeServices& services) -> ScopedMutation<T>;
 
  private:
   T value_{};
@@ -211,13 +219,71 @@ inline auto WaitAny(std::initializer_list<Trigger> triggers)
   return EventControlAwaitable{std::vector<Trigger>(triggers)};
 }
 
-template <HasLsb T>
-void WriteVar(RuntimeServices& services, Var<T>& var, T new_val) {
+template <CaseEqualComparable T>
+inline void WriteVar(RuntimeServices& services, Var<T>& var, const T& new_val) {
   const value::FourStateBit old_lsb = var.Get().Lsb();
   const value::FourStateBit new_lsb = new_val.Lsb();
-  if (var.AssignIfChanged(std::move(new_val))) {
+  if (var.AssignIfChanged(new_val)) {
     services.TriggerValueChange(var, ClassifyEdge(old_lsb, new_lsb));
   }
+}
+
+// Non-template overload for the common Var<PackedArray> case. Lets the
+// emit-side pass a value::PackedArrayRef which implicitly converts to
+// const PackedArray& (template deduction would not trigger that conversion).
+inline void WriteVar(
+    RuntimeServices& services, Var<value::PackedArray>& var,
+    const value::PackedArray& new_val) {
+  const value::FourStateBit old_lsb = var.Get().Lsb();
+  const value::FourStateBit new_lsb = new_val.Lsb();
+  if (var.AssignIfChanged(new_val)) {
+    services.TriggerValueChange(var, ClassifyEdge(old_lsb, new_lsb));
+  }
+}
+
+// RAII handle that owns a snapshot of `var.Get()` for the lifetime of one
+// partial-write expression. Forwards chain methods to the snapshot so emitted
+// code reads like a normal `PackedArrayRef` chain. The destructor calls
+// `WriteVar` with the (possibly mutated) snapshot -- subscribers fire on
+// change. Non-copyable and non-movable: the contract is that it lives only
+// until the end of the constructing full expression. Returning it by value
+// from `Var<T>::Mutate` relies on C++17 mandatory copy elision (prvalues are
+// materialized in the caller's storage with no copy/move).
+template <CaseEqualComparable T>
+class ScopedMutation {
+ public:
+  ScopedMutation(RuntimeServices& services, Var<T>& var)
+      : services_(&services), var_(&var), snapshot_(var.Get()) {
+  }
+
+  ScopedMutation(const ScopedMutation&) = delete;
+  auto operator=(const ScopedMutation&) -> ScopedMutation& = delete;
+  ScopedMutation(ScopedMutation&&) = delete;
+  auto operator=(ScopedMutation&&) -> ScopedMutation& = delete;
+
+  ~ScopedMutation() {
+    WriteVar(*services_, *var_, std::move(snapshot_));
+  }
+
+  // Chain forwards. The returned `PackedArrayRef` holds a pointer into this
+  // ScopedMutation's snapshot_; both have the same full-expression lifetime,
+  // so the ref stays valid for the rest of the statement.
+  auto ElementAt(const value::PackedArray& idx) {
+    return snapshot_.ElementAt(idx);
+  }
+  auto Slice(const value::PackedArray& lsb, std::uint32_t count) {
+    return snapshot_.Slice(lsb, count);
+  }
+
+ private:
+  RuntimeServices* services_;
+  Var<T>* var_;
+  T snapshot_;
+};
+
+template <CaseEqualComparable T>
+auto Var<T>::Mutate(RuntimeServices& services) -> ScopedMutation<T> {
+  return ScopedMutation<T>{services, *this};
 }
 
 }  // namespace lyra::runtime

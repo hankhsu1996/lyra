@@ -1,0 +1,14 @@
+id: cpp.multi_dim_select_write
+tags: [cpp_run]
+input:
+  command: [run, cpp]
+  project: false
+  top: Top
+  files: [main.sv]
+expect:
+  exit: 0
+  variables:
+    out_full: "16'hABCD"
+    out_partial: "16'hAB0D"
+    out_bit: "16'hAB02"
+    out_bit_clear: "16'hABCC"

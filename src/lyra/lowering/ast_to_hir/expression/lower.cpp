@@ -304,12 +304,18 @@ auto MakeRefExpr(hir::Primary ref, hir::TypeId type, diag::SourceSpan span)
   };
 }
 
-// Project an Lvalue (write context) into a Primary (read context). Lvalue and
-// Primary share the underlying ref types verbatim, so the projection is just
-// "lift the variant alternative". No data conversion.
+// Project an Lvalue (write context) into a Primary (read context). Only
+// whole-var Lvalues (empty selector chain) can be projected directly; a
+// selector lvalue's read-context shape is an ElementSelectExpr or
+// RangeSelectExpr, which the caller must materialize separately.
 auto LvalueToPrimary(const hir::Lvalue& lvalue) -> hir::Primary {
+  if (!lvalue.selectors.empty()) {
+    throw InternalError(
+        "LvalueToPrimary: cannot project a selector lvalue into a Primary; "
+        "compound assignment to a selector target is not yet supported");
+  }
   return std::visit(
-      [](const auto& ref) -> hir::Primary { return ref; }, lvalue);
+      [](const auto& ref) -> hir::Primary { return ref; }, lvalue.root);
 }
 
 auto FromSlangSubroutineKind(slang::ast::SubroutineKind k)
@@ -818,13 +824,13 @@ auto LowerElementSelectExprProc(
     const slang::ast::ElementSelectExpression& sel,
     const slang::ast::Expression& expr, diag::SourceSpan span)
     -> diag::Result<hir::Expr> {
-  if (!sel.value().type->isIntegral() || expr.type->getBitWidth() != 1) {
+  if (!sel.value().type->isIntegral()) {
     return diag::Unsupported(
         span, diag::DiagCode::kUnsupportedExpressionForm,
-        "element-select is only supported on a 1D integral operand with a "
-        "1-bit result (bit-select)",
+        "element-select on non-integral operand is not yet supported",
         diag::UnsupportedCategory::kOperation);
   }
+
   auto base_or = LowerProcExpr(
       unit_facts, unit_state, proc_state, stack, sel.value(),
       compound_lvalue_context);
@@ -857,6 +863,13 @@ auto LowerRangeSelectExprProc(
     const slang::ast::RangeSelectExpression& sel,
     const slang::ast::Expression& expr, diag::SourceSpan span)
     -> diag::Result<hir::Expr> {
+  if (!sel.value().type->isIntegral()) {
+    return diag::Unsupported(
+        span, diag::DiagCode::kUnsupportedExpressionForm,
+        "range-select on non-integral operand is not yet supported",
+        diag::UnsupportedCategory::kOperation);
+  }
+
   auto base_or = LowerProcExpr(
       unit_facts, unit_state, proc_state, stack, sel.value(),
       compound_lvalue_context);
@@ -1212,50 +1225,111 @@ auto LowerStructuralExpr(
   }
 }
 
-namespace {
-
-// Extract the Lvalue from a lowered Expr whose Primary names a writable
-// storage location, or emit the "assignment target not supported" diagnostic
-// otherwise (e.g. literal, function call, binary expression).
-auto LvalueFromLoweredExpr(hir::Expr lowered, diag::SourceSpan span)
-    -> diag::Result<hir::Lvalue> {
+// Build the Lvalue chain by recursive descent on the slang AST. Inside-out:
+// the leaf (NamedValue) yields the root var ref; each outer ElementSelect /
+// RangeSelect layer lowers its index / bounds expressions and pushes a
+// selector onto the chain returned by the inner call. No intermediate select
+// Expr is materialized in the process expr store -- only the index / bounds
+// ExprIds that the chain actually references.
+auto LowerProcLvalue(
+    const UnitLoweringFacts& unit_facts, UnitLoweringState& unit_state,
+    ProcessLoweringState& proc_state, const ScopeStack& stack,
+    const slang::ast::Expression& expr) -> diag::Result<hir::Lvalue> {
+  const auto& mapper = unit_facts.SourceMapper();
+  const auto span = mapper.SpanOf(expr.sourceRange);
   auto unsupported = [&] {
     return diag::Unsupported(
         span, diag::DiagCode::kUnsupportedAssignmentTarget,
         "assignment target is not supported yet",
         diag::UnsupportedCategory::kFeature);
   };
-  auto* primary = std::get_if<hir::PrimaryExpr>(&lowered.data);
+
+  if (expr.kind == slang::ast::ExpressionKind::ElementSelect) {
+    const auto& sel = expr.as<slang::ast::ElementSelectExpression>();
+    if (!sel.value().type->isIntegral()) {
+      return diag::Unsupported(
+          span, diag::DiagCode::kUnsupportedAssignmentTarget,
+          "element-select lvalue on non-integral operand is not yet supported",
+          diag::UnsupportedCategory::kFeature);
+    }
+    auto inner =
+        LowerProcLvalue(unit_facts, unit_state, proc_state, stack, sel.value());
+    if (!inner) return std::unexpected(std::move(inner.error()));
+    auto idx_or = LowerProcExpr(
+        unit_facts, unit_state, proc_state, stack, sel.selector(),
+        std::nullopt);
+    if (!idx_or) return std::unexpected(std::move(idx_or.error()));
+    const hir::ExprId idx_id = proc_state.AddExpr(*std::move(idx_or));
+    inner->selectors.emplace_back(hir::ElementLvalueSelector{.index = idx_id});
+    return std::move(*inner);
+  }
+
+  if (expr.kind == slang::ast::ExpressionKind::RangeSelect) {
+    const auto& sel = expr.as<slang::ast::RangeSelectExpression>();
+    if (!sel.value().type->isIntegral()) {
+      return diag::Unsupported(
+          span, diag::DiagCode::kUnsupportedAssignmentTarget,
+          "range-select lvalue on non-integral operand is not yet supported",
+          diag::UnsupportedCategory::kFeature);
+    }
+    auto inner =
+        LowerProcLvalue(unit_facts, unit_state, proc_state, stack, sel.value());
+    if (!inner) return std::unexpected(std::move(inner.error()));
+    auto left_or = LowerProcExpr(
+        unit_facts, unit_state, proc_state, stack, sel.left(), std::nullopt);
+    if (!left_or) return std::unexpected(std::move(left_or.error()));
+    const hir::ExprId left_id = proc_state.AddExpr(*std::move(left_or));
+    auto right_or = LowerProcExpr(
+        unit_facts, unit_state, proc_state, stack, sel.right(), std::nullopt);
+    if (!right_or) return std::unexpected(std::move(right_or.error()));
+    const hir::ExprId right_id = proc_state.AddExpr(*std::move(right_or));
+    hir::RangeBounds bounds = [&]() -> hir::RangeBounds {
+      switch (sel.getSelectionKind()) {
+        case slang::ast::RangeSelectionKind::Simple:
+          return hir::RangeConstantBounds{
+              .msb_expr = left_id, .lsb_expr = right_id};
+        case slang::ast::RangeSelectionKind::IndexedUp:
+          return hir::RangeIndexedUpBounds{
+              .base_index = left_id, .width = right_id};
+        case slang::ast::RangeSelectionKind::IndexedDown:
+          return hir::RangeIndexedDownBounds{
+              .base_index = left_id, .width = right_id};
+      }
+      throw InternalError("LowerProcLvalue: unknown slang RangeSelectionKind");
+    }();
+    inner->selectors.emplace_back(
+        hir::RangeLvalueSelector{.bounds = std::move(bounds)});
+    return std::move(*inner);
+  }
+
+  // Leaf: lower as a regular expression and extract the root var ref. The
+  // wrapper Expr is discarded (not added to the process), so no dead Expr
+  // pollutes the store.
+  auto leaf = LowerProcExpr(
+      unit_facts, unit_state, proc_state, stack, expr, std::nullopt);
+  if (!leaf) return std::unexpected(std::move(leaf.error()));
+  auto* primary = std::get_if<hir::PrimaryExpr>(&leaf->data);
   if (primary == nullptr) return unsupported();
   return std::visit(
       Overloaded{
-          [&](const hir::StructuralVarRef& r) -> diag::Result<hir::Lvalue> {
-            return r;
+          [](const hir::StructuralVarRef& r) -> diag::Result<hir::Lvalue> {
+            return hir::Lvalue{.root = r, .selectors = {}};
           },
-          [&](const hir::ProceduralVarRef& r) -> diag::Result<hir::Lvalue> {
-            return r;
+          [](const hir::ProceduralVarRef& r) -> diag::Result<hir::Lvalue> {
+            return hir::Lvalue{.root = r, .selectors = {}};
           },
-          [&](const hir::LoopVarRef& r) -> diag::Result<hir::Lvalue> {
-            return r;
+          // LoopVarRef is a generate-for induction variable, not storage. It
+          // cannot appear as an assignment target in a process body. Reject
+          // here so the user sees an Unsupported diagnostic instead of a
+          // downstream InternalError when HIR->MIR tries to translate it.
+          [&](const hir::LoopVarRef&) -> diag::Result<hir::Lvalue> {
+            return unsupported();
           },
           [&](const auto&) -> diag::Result<hir::Lvalue> {
             return unsupported();
           },
       },
       primary->data);
-}
-
-}  // namespace
-
-auto LowerProcLvalue(
-    const UnitLoweringFacts& unit_facts, UnitLoweringState& unit_state,
-    ProcessLoweringState& proc_state, const ScopeStack& stack,
-    const slang::ast::Expression& expr) -> diag::Result<hir::Lvalue> {
-  auto lowered = LowerProcExpr(
-      unit_facts, unit_state, proc_state, stack, expr, std::nullopt);
-  if (!lowered) return std::unexpected(std::move(lowered.error()));
-  return LvalueFromLoweredExpr(
-      *std::move(lowered), unit_facts.SourceMapper().SpanOf(expr.sourceRange));
 }
 
 }  // namespace lyra::lowering::ast_to_hir
