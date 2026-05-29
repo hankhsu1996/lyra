@@ -71,26 +71,6 @@ auto LowerTypeAliasMemberInto(
   return {};
 }
 
-// SV LRM 10.4 + 6.21: a structural variable declaration may carry an
-// initializer (`real a = 1.5;`) that is conceptually evaluated once at time 0
-// before any process runs. Slang exposes the initializer via
-// `VariableSymbol::getInitializer()`; we lower it through the structural
-// expression path (the same path that handles parameter expressions) and
-// attach the resulting ExprId to the var decl. HIR -> MIR turns it into an
-// AssignExpr ExprStmt in the enclosing scope's constructor_scope.
-//
-// For now this path is only taken for real-family-typed vars. Integral-typed
-// structural vars wrap in `Var<PackedArray>`, whose runtime assign goes
-// through `WriteVar(*services_, ...)` -- but `services_` is bound by `Bind()`,
-// which the C++ constructor body precedes, so a naive constructor-body
-// assignment would dereference a null pointer. Integral structural-init
-// support is tracked as a separate gap.
-auto IsRealFamilyType(const hir::Type& ty) -> bool {
-  return ty.Kind() == hir::TypeKind::kReal ||
-         ty.Kind() == hir::TypeKind::kShortReal ||
-         ty.Kind() == hir::TypeKind::kRealTime;
-}
-
 auto LowerVariableMemberInto(
     const UnitLoweringFacts& unit_facts, ScopeLoweringState& scope_state,
     ScopeStack& stack, const slang::ast::VariableSymbol& var)
@@ -116,8 +96,7 @@ auto LowerVariableMemberInto(
         "LowerVariableMemberInto: variable declaration produced void type");
   }
   std::optional<hir::ExprId> initializer_id;
-  if (const auto* init = var.getInitializer();
-      init != nullptr && IsRealFamilyType(unit_state.GetType(*type_id_or))) {
+  if (const auto* init = var.getInitializer(); init != nullptr) {
     auto init_or =
         LowerStructuralExpr(unit_facts, unit_state, scope_state, stack, *init);
     if (!init_or) return std::unexpected(std::move(init_or.error()));

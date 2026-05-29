@@ -147,9 +147,13 @@ auto SnapshotPredicate(
       mir::Expr{
           .data =
               mir::AssignExpr{
-                  .target = mir::Lvalue{mir::ProceduralVarRef{
-                      .hops = mir::ProceduralHops{.value = 0},
-                      .var = snap_var}},
+                  .target =
+                      mir::Lvalue{
+                          .root =
+                              mir::ProceduralVarRef{
+                                  .hops = mir::ProceduralHops{.value = 0},
+                                  .var = snap_var},
+                          .selectors = {}},
                   .value = predicate_expr_id},
           .type = predicate_type});
   const mir::StmtId assign_stmt_id = wrapper_state.AddStmt(
@@ -289,14 +293,19 @@ auto BuildUniqueCheckClosure(
                           .rhs = cond_value},
                   .type = int32_type});
     const mir::ExprId assign = AppendExpr(
-        body, mir::Expr{
-                  .data =
-                      mir::AssignExpr{
-                          .target = mir::Lvalue{mir::ProceduralVarRef{
-                              .hops = mir::ProceduralHops{.value = 0},
-                              .var = count_var}},
-                          .value = added},
-                  .type = int32_type});
+        body,
+        mir::Expr{
+            .data =
+                mir::AssignExpr{
+                    .target =
+                        mir::Lvalue{
+                            .root =
+                                mir::ProceduralVarRef{
+                                    .hops = mir::ProceduralHops{.value = 0},
+                                    .var = count_var},
+                            .selectors = {}},
+                    .value = added},
+            .type = int32_type});
     const mir::StmtId step_id = AppendStmt(
         body, mir::Stmt{
                   .label = std::nullopt,
