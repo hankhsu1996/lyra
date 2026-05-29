@@ -8,11 +8,11 @@
 #include "lyra/hir/binary_op.hpp"
 #include "lyra/hir/conversion.hpp"
 #include "lyra/hir/expr_id.hpp"
+#include "lyra/hir/lvalue.hpp"
 #include "lyra/hir/primary.hpp"
+#include "lyra/hir/range_bounds.hpp"
 #include "lyra/hir/subroutine_ref.hpp"
-#include "lyra/hir/type.hpp"
 #include "lyra/hir/unary_op.hpp"
-#include "lyra/hir/value_ref.hpp"
 
 namespace lyra::hir {
 
@@ -69,24 +69,6 @@ struct ElementSelectExpr {
   ExprId base_value;
   ExprId index;
 };
-
-struct RangeConstantBounds {
-  ExprId msb_expr;
-  ExprId lsb_expr;
-};
-
-struct RangeIndexedUpBounds {
-  ExprId base_index;
-  ExprId width;
-};
-
-struct RangeIndexedDownBounds {
-  ExprId base_index;
-  ExprId width;
-};
-
-using RangeBounds = std::variant<
-    RangeConstantBounds, RangeIndexedUpBounds, RangeIndexedDownBounds>;
 
 struct RangeSelectExpr {
   ExprId base_value;

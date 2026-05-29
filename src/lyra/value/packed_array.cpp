@@ -6,6 +6,7 @@
 #include <span>
 #include <string>
 #include <string_view>
+#include <utility>
 #include <variant>
 
 #include "lyra/base/internal_error.hpp"
@@ -60,14 +61,34 @@ auto ExpectSameShape(
   }
 }
 
+auto TotalBitWidthOf(std::span<const PackedRange> dims) -> std::uint64_t {
+  std::uint64_t total = 1;
+  for (const auto& d : dims) {
+    total *= d.ElementCount();
+  }
+  return total;
+}
+
 }  // namespace
+
+PackedArray::PackedArray(
+    std::initializer_list<PackedRange> dims, bool is_signed, bool is_four_state)
+    : bit_width_(TotalBitWidthOf(
+          std::span<const PackedRange>{dims.begin(), dims.size()})),
+      is_signed_(is_signed),
+      is_four_state_(is_four_state),
+      storage_(MakeStorage(bit_width_, is_four_state)),
+      dims_(dims) {
+}
 
 PackedArray::PackedArray(
     std::uint64_t bit_width, bool is_signed, bool is_four_state)
     : bit_width_(bit_width),
       is_signed_(is_signed),
       is_four_state_(is_four_state),
-      storage_(MakeStorage(bit_width, is_four_state)) {
+      storage_(MakeStorage(bit_width, is_four_state)),
+      dims_({PackedRange{
+          .left = static_cast<std::int64_t>(bit_width) - 1, .right = 0}}) {
 }
 
 auto PackedArray::Int(std::int32_t value) -> PackedArray {
@@ -158,6 +179,10 @@ auto PackedArray::IsSigned() const -> bool {
 
 auto PackedArray::IsFourState() const -> bool {
   return is_four_state_;
+}
+
+auto PackedArray::Dims() const -> std::span<const PackedRange> {
+  return std::span<const PackedRange>{dims_.data(), dims_.size()};
 }
 
 auto PackedArray::ValueWords() const -> std::span<const std::uint64_t> {
@@ -874,28 +899,24 @@ auto PackedArray::WildcardEquals(const PackedArray& other) const
   return OneBitResult(true, is_four_state_);
 }
 
-auto PackedArray::Index(const PackedArray& index) const -> PackedArray {
-  return Slice(index, 1U);
-}
-
-auto PackedArray::Slice(const PackedArray& lsb_bit, std::uint32_t width) const
-    -> PackedArray {
-  if (width == 0U) {
-    throw InternalError("PackedArray::Slice: width must be >= 1");
+auto PackedArray::ExtractBits(
+    const PackedArray& lsb_bit, std::uint32_t bit_width) const -> PackedArray {
+  if (bit_width == 0U) {
+    throw InternalError("PackedArray::ExtractBits: bit_width must be >= 1");
   }
   if (lsb_bit.HasUnknown() || lsb_bit.BitWidth() > 64U) {
     if (is_four_state_) {
-      return AllX(width, false);
+      return AllX(bit_width, false);
     }
-    return PackedArray{width, false, false};
+    return PackedArray{bit_width, false, false};
   }
   const std::int64_t start = lsb_bit.ToInt64();
   const auto src_value = ValueWords();
   const auto src_unknown = UnknownWords();
   const auto bw_signed = static_cast<std::int64_t>(bit_width_);
-  auto val_buf = MakeWordBuffer(width);
-  auto unk_buf = is_four_state_ ? MakeWordBuffer(width) : WordBuffer{};
-  for (std::uint32_t i = 0; i < width; ++i) {
+  auto val_buf = MakeWordBuffer(bit_width);
+  auto unk_buf = is_four_state_ ? MakeWordBuffer(bit_width) : WordBuffer{};
+  for (std::uint32_t i = 0; i < bit_width; ++i) {
     const std::int64_t pos = start + static_cast<std::int64_t>(i);
     const std::uint64_t out_mask = std::uint64_t{1} << (i % 64U);
     if (pos < 0 || pos >= bw_signed) {
@@ -916,11 +937,240 @@ auto PackedArray::Slice(const PackedArray& lsb_bit, std::uint32_t width) const
     }
   }
   return MakeFromWordPlanes(
-      width, false, is_four_state_,
+      bit_width, false, is_four_state_,
       std::span<const std::uint64_t>{val_buf.data(), val_buf.size()},
       is_four_state_
           ? std::span<const std::uint64_t>{unk_buf.data(), unk_buf.size()}
           : std::span<const std::uint64_t>{});
+}
+
+auto PackedArray::AssignSlice(
+    const PackedArray& lsb_bit, std::uint32_t bit_width,
+    const PackedArray& value) -> void {
+  if (bit_width == 0U) {
+    throw InternalError("PackedArray::AssignSlice: bit_width must be >= 1");
+  }
+  if (value.BitWidth() != bit_width) {
+    throw InternalError(
+        "PackedArray::AssignSlice: value width does not match slice width");
+  }
+  if (value.IsFourState() != is_four_state_) {
+    throw InternalError(
+        "PackedArray::AssignSlice: value state kind does not match target");
+  }
+  if (lsb_bit.HasUnknown() || lsb_bit.BitWidth() > 64U) {
+    return;
+  }
+  const std::int64_t start = lsb_bit.ToInt64();
+  const auto bw_signed = static_cast<std::int64_t>(bit_width_);
+  auto dst_value = std::visit(
+      [](auto& v) { return detail::PackedAccess::ValueWords(v.View()); },
+      storage_);
+  std::span<std::uint64_t> dst_unknown;
+  if (is_four_state_) {
+    auto& dst_lv = std::get<LogicValue>(storage_);
+    dst_unknown = detail::PackedAccess::UnknownWords(dst_lv.View());
+  }
+  const auto src_value = value.ValueWords();
+  const auto src_unknown = value.UnknownWords();
+  for (std::uint32_t i = 0; i < bit_width; ++i) {
+    const std::int64_t pos = start + static_cast<std::int64_t>(i);
+    if (pos < 0 || pos >= bw_signed) {
+      continue;
+    }
+    const auto dst_w = static_cast<std::size_t>(pos / 64);
+    const std::uint64_t dst_mask = std::uint64_t{1}
+                                   << (static_cast<std::uint64_t>(pos) % 64U);
+    const auto src_w = static_cast<std::size_t>(i / 64U);
+    const std::uint64_t src_mask = std::uint64_t{1} << (i % 64U);
+    if ((src_value[src_w] & src_mask) != 0U) {
+      dst_value[dst_w] |= dst_mask;
+    } else {
+      dst_value[dst_w] &= ~dst_mask;
+    }
+    if (is_four_state_) {
+      const bool src_unk_bit =
+          src_w < src_unknown.size() && (src_unknown[src_w] & src_mask) != 0U;
+      if (src_unk_bit) {
+        dst_unknown[dst_w] |= dst_mask;
+      } else {
+        dst_unknown[dst_w] &= ~dst_mask;
+      }
+    }
+  }
+}
+
+namespace {
+
+// Canonical shape for PackedArrayRef bit offsets: 64-bit signed 4-state.
+// Wide enough to hold any valid bit position, signed so negative-OOB indices
+// stay negative through arithmetic, 4-state so X/Z propagates from any layer
+// to the final write (LRM 11.5.1 "X/Z position is a no-op").
+constexpr std::uint64_t kOffsetBitWidth = 64;
+constexpr bool kOffsetSigned = true;
+constexpr bool kOffsetFourState = true;
+
+auto Canonicalize(const PackedArray& p) -> PackedArray {
+  if (p.BitWidth() == kOffsetBitWidth && p.IsSigned() == kOffsetSigned &&
+      p.IsFourState() == kOffsetFourState) {
+    return p;
+  }
+  return PackedArray::ConvertFrom(
+      p, kOffsetBitWidth, kOffsetSigned, kOffsetFourState);
+}
+
+// Bit width of one element of `dims_view`'s outer dim. Caller guarantees
+// `dims_view.size() >= 1` and `total_bit_width % outer_count == 0`.
+auto OuterElementBitWidth(
+    std::uint64_t total_bit_width, std::span<const PackedRange> dims_view)
+    -> std::uint32_t {
+  if (dims_view.empty()) {
+    throw InternalError(
+        "OuterElementBitWidth: empty dim stack (selector applied to a "
+        "scalar, which the frontend should reject)");
+  }
+  return static_cast<std::uint32_t>(
+      total_bit_width / dims_view.front().ElementCount());
+}
+
+// Pops the outer dim from `dims_view` and returns the remainder as a fresh
+// vector. For 1-element results (single-bit / element-select on innermost
+// dim) the result is empty -- subsequent chain ops on it are illegal and
+// the frontend rejects them, so this stays well-defined as long as we never
+// recurse into an empty dim stack.
+auto PopOuterDim(std::span<const PackedRange> dims_view)
+    -> std::vector<PackedRange> {
+  if (dims_view.empty()) {
+    throw InternalError(
+        "PopOuterDim: empty dim stack (selector applied to a scalar)");
+  }
+  return std::vector<PackedRange>{dims_view.begin() + 1, dims_view.end()};
+}
+
+// Replaces the outer dim's count with `new_count`, preserving inner dims.
+// Used by `Slice` to construct the slice result's dim stack.
+auto ReplaceOuterDimCount(
+    std::span<const PackedRange> dims_view, std::uint32_t new_count)
+    -> std::vector<PackedRange> {
+  if (dims_view.empty()) {
+    throw InternalError(
+        "ReplaceOuterDimCount: empty dim stack (range select on a scalar)");
+  }
+  std::vector<PackedRange> result;
+  result.reserve(dims_view.size());
+  result.push_back(
+      PackedRange{
+          .left = static_cast<std::int64_t>(new_count) - 1, .right = 0});
+  for (std::size_t i = 1; i < dims_view.size(); ++i) {
+    result.push_back(dims_view[i]);
+  }
+  return result;
+}
+
+}  // namespace
+
+auto PackedArray::ElementAt(const PackedArray& idx) -> PackedArrayRef {
+  const auto element_bw = OuterElementBitWidth(bit_width_, dims_);
+  return PackedArrayRef{
+      *this,
+      element_bw == 1U
+          ? Canonicalize(idx)
+          : (Canonicalize(idx) * PackedArray::FromInt(
+                                     static_cast<std::int64_t>(element_bw),
+                                     kOffsetBitWidth, kOffsetSigned,
+                                     kOffsetFourState)),
+      element_bw, PopOuterDim(dims_)};
+}
+
+auto PackedArray::ElementAt(const PackedArray& idx) const -> PackedArray {
+  const auto element_bw = OuterElementBitWidth(bit_width_, dims_);
+  const auto bit_offset =
+      element_bw == 1U
+          ? Canonicalize(idx)
+          : (Canonicalize(idx) * PackedArray::FromInt(
+                                     static_cast<std::int64_t>(element_bw),
+                                     kOffsetBitWidth, kOffsetSigned,
+                                     kOffsetFourState));
+  return ExtractBits(bit_offset, element_bw);
+}
+
+auto PackedArray::Slice(
+    const PackedArray& lsb_in_outer_elements,
+    std::uint32_t count_in_outer_elements) -> PackedArrayRef {
+  const auto element_bw = OuterElementBitWidth(bit_width_, dims_);
+  return PackedArrayRef{
+      *this,
+      element_bw == 1U
+          ? Canonicalize(lsb_in_outer_elements)
+          : (Canonicalize(lsb_in_outer_elements) *
+             PackedArray::FromInt(
+                 static_cast<std::int64_t>(element_bw), kOffsetBitWidth,
+                 kOffsetSigned, kOffsetFourState)),
+      count_in_outer_elements * element_bw,
+      ReplaceOuterDimCount(dims_, count_in_outer_elements)};
+}
+
+auto PackedArray::Slice(
+    const PackedArray& lsb_in_outer_elements,
+    std::uint32_t count_in_outer_elements) const -> PackedArray {
+  const auto element_bw = OuterElementBitWidth(bit_width_, dims_);
+  const auto bit_offset =
+      element_bw == 1U
+          ? Canonicalize(lsb_in_outer_elements)
+          : (Canonicalize(lsb_in_outer_elements) *
+             PackedArray::FromInt(
+                 static_cast<std::int64_t>(element_bw), kOffsetBitWidth,
+                 kOffsetSigned, kOffsetFourState));
+  return ExtractBits(bit_offset, count_in_outer_elements * element_bw);
+}
+
+PackedArrayRef::PackedArrayRef(
+    PackedArray& root, const PackedArray& bit_offset, std::uint32_t bit_width,
+    std::vector<PackedRange> dims)
+    : root_(&root),
+      bit_offset_(Canonicalize(bit_offset)),
+      bit_width_(bit_width),
+      dims_(std::move(dims)) {
+}
+
+PackedArrayRef::operator PackedArray() const {
+  return std::as_const(*root_).ExtractBits(bit_offset_, bit_width_);
+}
+
+auto PackedArrayRef::operator=(const PackedArray& value) -> PackedArrayRef& {
+  root_->AssignSlice(bit_offset_, bit_width_, value);
+  return *this;
+}
+
+auto PackedArrayRef::ElementAt(const PackedArray& idx) const -> PackedArrayRef {
+  const auto element_bw = OuterElementBitWidth(bit_width_, dims_);
+  return PackedArrayRef{
+      *root_,
+      element_bw == 1U
+          ? (bit_offset_ + Canonicalize(idx))
+          : (bit_offset_ +
+             (Canonicalize(idx) * PackedArray::FromInt(
+                                      static_cast<std::int64_t>(element_bw),
+                                      kOffsetBitWidth, kOffsetSigned,
+                                      kOffsetFourState))),
+      element_bw, PopOuterDim(dims_)};
+}
+
+auto PackedArrayRef::Slice(
+    const PackedArray& lsb_in_outer_elements,
+    std::uint32_t count_in_outer_elements) const -> PackedArrayRef {
+  const auto element_bw = OuterElementBitWidth(bit_width_, dims_);
+  return PackedArrayRef{
+      *root_,
+      element_bw == 1U
+          ? (bit_offset_ + Canonicalize(lsb_in_outer_elements))
+          : (bit_offset_ +
+             (Canonicalize(lsb_in_outer_elements) *
+              PackedArray::FromInt(
+                  static_cast<std::int64_t>(element_bw), kOffsetBitWidth,
+                  kOffsetSigned, kOffsetFourState))),
+      count_in_outer_elements * element_bw,
+      ReplaceOuterDimCount(dims_, count_in_outer_elements)};
 }
 
 auto PackedArray::operator<(const PackedArray& other) const -> PackedArray {

@@ -183,7 +183,11 @@ auto RenderStructuralVarName(
   return ctx.StructuralScope().GetStructuralVar(ref.var).name;
 }
 
-auto RenderLvalue(const RenderContext& ctx, const mir::Lvalue& target)
+namespace {
+
+auto RenderLvalueRoot(
+    const RenderContext& ctx,
+    const std::variant<mir::StructuralVarRef, mir::ProceduralVarRef>& root)
     -> diag::Result<std::string> {
   return std::visit(
       Overloaded{
@@ -194,10 +198,8 @@ auto RenderLvalue(const RenderContext& ctx, const mir::Lvalue& target)
             return LookupProceduralVarName(ctx, l);
           },
       },
-      target);
+      root);
 }
-
-namespace {
 
 // Read-side render for a structural var ref. Integral packed vars wrap in
 // `Var<PackedArray>` whose held value is observed via `.Get()`; all other
@@ -452,25 +454,6 @@ auto RenderConditionalExpr(
   return "(" + *cond_or + " ? " + *then_or + " : " + *else_or + ")";
 }
 
-auto RenderAssignExpr(const RenderContext& ctx, const mir::AssignExpr& a)
-    -> diag::Result<std::string> {
-  auto target_or = RenderLvalue(ctx, a.target);
-  if (!target_or) return std::unexpected(std::move(target_or.error()));
-  auto value_or = RenderExpr(ctx, ctx.Expr(a.value));
-  if (!value_or) return std::unexpected(std::move(value_or.error()));
-  // Writes to a `Var<T>`-wrapped structural var go through `WriteVar` so the
-  // runtime can fire value-change triggers. Raw fields (real-family, string)
-  // use plain C++ assignment.
-  if (const auto* svr = std::get_if<mir::StructuralVarRef>(&a.target)) {
-    const auto& var_decl = ctx.StructuralScope().GetStructuralVar(svr->var);
-    if (IsObservableScalarType(ctx.Unit().GetType(var_decl.type))) {
-      return "lyra::runtime::WriteVar(*services_, " + *target_or + ", " +
-             *value_or + ")";
-    }
-  }
-  return "(" + *target_or + " = " + *value_or + ")";
-}
-
 // SV LRM 6.12.1 + 6.22: real-family conversions are pure float-precision
 // reshape. `realtime` is a synonym for `real`, so both share `double`. The
 // only emit-time work is on shortreal <-> real: insert an explicit
@@ -676,57 +659,188 @@ auto RenderElementSelectExpr(
   if (!base_or) return std::unexpected(std::move(base_or.error()));
   auto idx_or = RenderExpr(ctx, ctx.Expr(sel.index));
   if (!idx_or) return std::unexpected(std::move(idx_or.error()));
-  return std::format("({}).Index({})", *base_or, *idx_or);
+  return std::format("({}).ElementAt({})", *base_or, *idx_or);
+}
+
+// Constant integer extracted from a MIR expression. Caller is responsible for
+// ensuring the expression is a constant (slang guarantees this for constant
+// bounds and indexed widths per LRM 11.5.1).
+auto ConstantIntFromExpr(const mir::Expr& expr) -> std::int64_t {
+  if (const auto* lit = std::get_if<mir::IntegerLiteral>(&expr.data)) {
+    return IntegralConstantToInt64(lit->value);
+  }
+  throw InternalError(
+      "ConstantIntFromExpr: expression is not an IntegerLiteral");
+}
+
+// Emits the method-call suffix for a single selector layer applied to the
+// running chain. Positions are in the operand's outer-element units; the
+// runtime PackedArray / PackedArrayRef dispatches on its own dim stack to
+// turn them into bit offsets, so render never bakes element_bw into the
+// emitted call.
+auto RenderSelectorMethodCall(
+    const RenderContext& ctx, const mir::LvalueSelector& sel)
+    -> diag::Result<std::string> {
+  return std::visit(
+      Overloaded{
+          [&](const mir::ElementLvalueSelector& s)
+              -> diag::Result<std::string> {
+            auto idx = RenderExpr(ctx, ctx.Expr(s.index));
+            if (!idx) return std::unexpected(std::move(idx.error()));
+            return std::format(".ElementAt({})", *idx);
+          },
+          [&](const mir::RangeLvalueSelector& s) -> diag::Result<std::string> {
+            return std::visit(
+                Overloaded{
+                    [&](const mir::RangeConstantBounds& b)
+                        -> diag::Result<std::string> {
+                      auto lsb = RenderExpr(ctx, ctx.Expr(b.lsb_expr));
+                      if (!lsb) return std::unexpected(std::move(lsb.error()));
+                      const auto msb_val =
+                          ConstantIntFromExpr(ctx.Expr(b.msb_expr));
+                      const auto lsb_val =
+                          ConstantIntFromExpr(ctx.Expr(b.lsb_expr));
+                      const auto count = static_cast<std::uint32_t>(
+                          (msb_val >= lsb_val ? msb_val - lsb_val
+                                              : lsb_val - msb_val) +
+                          1);
+                      return std::format(".Slice({}, {}U)", *lsb, count);
+                    },
+                    [&](const mir::RangeIndexedUpBounds& b)
+                        -> diag::Result<std::string> {
+                      auto base = RenderExpr(ctx, ctx.Expr(b.base_index));
+                      if (!base) {
+                        return std::unexpected(std::move(base.error()));
+                      }
+                      const auto count = static_cast<std::uint32_t>(
+                          ConstantIntFromExpr(ctx.Expr(b.width)));
+                      return std::format(".Slice({}, {}U)", *base, count);
+                    },
+                    [&](const mir::RangeIndexedDownBounds& b)
+                        -> diag::Result<std::string> {
+                      const auto& base_mir = ctx.Expr(b.base_index);
+                      auto base = RenderExpr(ctx, base_mir);
+                      if (!base) {
+                        return std::unexpected(std::move(base.error()));
+                      }
+                      const auto& base_ty = ctx.Unit().GetType(base_mir.type);
+                      if (!base_ty.IsPackedArray()) {
+                        throw InternalError(
+                            "RenderSelectorMethodCall: IndexedDown base_index "
+                            "type is not PackedArrayType");
+                      }
+                      const auto count = static_cast<std::uint32_t>(
+                          ConstantIntFromExpr(ctx.Expr(b.width)));
+                      const auto sub_lit = RenderSameShapeLiteral(
+                          base_ty.AsPackedArray(),
+                          static_cast<std::int64_t>(count) - 1);
+                      const auto lsb =
+                          std::format("(({}) - {})", *base, sub_lit);
+                      return std::format(".Slice({}, {}U)", lsb, count);
+                    },
+                },
+                s.bounds);
+          },
+      },
+      sel);
+}
+
+auto RenderAssignExpr(const RenderContext& ctx, const mir::AssignExpr& a)
+    -> diag::Result<std::string> {
+  auto value_or = RenderExpr(ctx, ctx.Expr(a.value));
+  if (!value_or) return std::unexpected(std::move(value_or.error()));
+  auto root_or = RenderLvalueRoot(ctx, a.target.root);
+  if (!root_or) return std::unexpected(std::move(root_or.error()));
+
+  const bool observable = [&] {
+    const auto* svr = std::get_if<mir::StructuralVarRef>(&a.target.root);
+    if (svr == nullptr) return false;
+    const auto& var_decl = ctx.StructuralScope().GetStructuralVar(svr->var);
+    return IsObservableScalarType(ctx.Unit().GetType(var_decl.type));
+  }();
+
+  // Whole-var write: existing entry points (events / direct assign).
+  if (a.target.selectors.empty()) {
+    if (observable) {
+      return "lyra::runtime::WriteVar(*services_, " + *root_or + ", " +
+             *value_or + ")";
+    }
+    return "(" + *root_or + " = " + *value_or + ")";
+  }
+
+  // Selector chain: compose PackedArrayRef method calls. Per-layer element
+  // bit widths are derived by the runtime PackedArray / PackedArrayRef from
+  // their own dim stack; render emits source-form positions only.
+  //
+  // Procedural-local target: chain mutates the variable in place. Chain base
+  // is the variable name itself.
+  // Observable target: enter a partial-write scope via `Var<T>::Mutate(svc)`,
+  // which returns a `ScopedMutation` RAII handle that snapshots the current
+  // value. The chain runs against the snapshot via the same forwarding
+  // methods as on PackedArray; when the full expression ends, the handle's
+  // destructor commits the snapshot through `WriteVar` so subscribers fire.
+  // Same shape inside or outside an NBA closure body -- no nested lambda.
+  std::string chain = *root_or;
+  if (observable) {
+    chain += ".Mutate(*services_)";
+  }
+  for (const auto& sel : a.target.selectors) {
+    auto method = RenderSelectorMethodCall(ctx, sel);
+    if (!method) return std::unexpected(std::move(method.error()));
+    chain += *method;
+  }
+  return chain + " = " + *value_or;
 }
 
 auto RenderRangeSelectExpr(
     const RenderContext& ctx, const mir::Expr& expr,
     const mir::RangeSelectExpr& sel) -> diag::Result<std::string> {
-  auto base_or = RenderExpr(ctx, ctx.Expr(sel.base_value));
+  const auto& operand_expr = ctx.Expr(sel.base_value);
+  auto base_or = RenderExpr(ctx, operand_expr);
   if (!base_or) return std::unexpected(std::move(base_or.error()));
 
   const auto& result_ty = ctx.Unit().GetType(expr.type);
   if (!result_ty.IsPackedArray()) {
     throw InternalError(
-        "RenderRangeSelectExpr: result type is not PackedArrayType");
+        "RenderRangeSelectExpr: result must be PackedArrayType");
   }
-  const auto width =
-      static_cast<std::uint32_t>(result_ty.AsPackedArray().BitWidth());
+  // The slice's element-count is the outer dim of the result type. For a
+  // 1D operand this is bit count; for a multi-dim operand it is the
+  // selected outer-element count. PackedArray's `Slice` scales internally.
+  if (result_ty.AsPackedArray().dims.empty()) {
+    throw InternalError(
+        "RenderRangeSelectExpr: result PackedArrayType has no dims");
+  }
+  const auto count = static_cast<std::uint32_t>(
+      result_ty.AsPackedArray().dims.front().ElementCount());
 
   return std::visit(
       Overloaded{
           [&](const mir::RangeConstantBounds& b) -> diag::Result<std::string> {
             auto lsb_or = RenderExpr(ctx, ctx.Expr(b.lsb_expr));
             if (!lsb_or) return std::unexpected(std::move(lsb_or.error()));
-            return std::format("({}).Slice({}, {})", *base_or, *lsb_or, width);
+            return std::format("({}).Slice({}, {}U)", *base_or, *lsb_or, count);
           },
           [&](const mir::RangeIndexedUpBounds& b) -> diag::Result<std::string> {
-            auto base_idx_or = RenderExpr(ctx, ctx.Expr(b.base_index));
-            if (!base_idx_or) {
-              return std::unexpected(std::move(base_idx_or.error()));
-            }
-            return std::format(
-                "({}).Slice({}, {})", *base_or, *base_idx_or, width);
+            auto base = RenderExpr(ctx, ctx.Expr(b.base_index));
+            if (!base) return std::unexpected(std::move(base.error()));
+            return std::format("({}).Slice({}, {}U)", *base_or, *base, count);
           },
           [&](const mir::RangeIndexedDownBounds& b)
               -> diag::Result<std::string> {
-            const auto& base_idx_expr = ctx.Expr(b.base_index);
-            auto base_idx_or = RenderExpr(ctx, base_idx_expr);
-            if (!base_idx_or) {
-              return std::unexpected(std::move(base_idx_or.error()));
-            }
-            const auto& base_idx_ty = ctx.Unit().GetType(base_idx_expr.type);
-            if (!base_idx_ty.IsPackedArray()) {
+            const auto& base_mir = ctx.Expr(b.base_index);
+            auto base = RenderExpr(ctx, base_mir);
+            if (!base) return std::unexpected(std::move(base.error()));
+            const auto& base_ty = ctx.Unit().GetType(base_mir.type);
+            if (!base_ty.IsPackedArray()) {
               throw InternalError(
-                  "RenderRangeSelectExpr: base_index type is not "
+                  "RenderRangeSelectExpr: IndexedDown base_index type is not "
                   "PackedArrayType");
             }
-            const auto width_minus_one = static_cast<std::int64_t>(width) - 1;
-            const auto offset_literal = RenderSameShapeLiteral(
-                base_idx_ty.AsPackedArray(), width_minus_one);
-            return std::format(
-                "({}).Slice(({}) - {}, {})", *base_or, *base_idx_or,
-                offset_literal, width);
+            const auto sub_lit = RenderSameShapeLiteral(
+                base_ty.AsPackedArray(), static_cast<std::int64_t>(count) - 1);
+            const auto lsb = std::format("(({}) - {})", *base, sub_lit);
+            return std::format("({}).Slice({}, {}U)", *base_or, lsb, count);
           },
       },
       sel.bounds);

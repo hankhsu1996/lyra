@@ -1,0 +1,12 @@
+id: cpp.range_write_indexed_down
+tags: [cpp_run]
+input:
+  command: [run, cpp]
+  project: false
+  top: Top
+  files: [main.sv]
+expect:
+  exit: 0
+  variables:
+    out_const: "32'h0000AB00"
+    out_var: "32'h00CD0000"

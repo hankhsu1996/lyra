@@ -1,0 +1,13 @@
+id: cpp.bit_select_write
+tags: [cpp_run]
+input:
+  command: [run, cpp]
+  project: false
+  top: Top
+  files: [main.sv]
+expect:
+  exit: 0
+  variables:
+    out_const: "8'b00001000"
+    out_var: "8'b00100000"
+    cleared: "8'b11111110"
