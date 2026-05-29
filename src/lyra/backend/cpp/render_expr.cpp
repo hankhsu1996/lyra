@@ -234,6 +234,34 @@ auto WrapBoolAsResultShape(
       RenderPackedArrayCtorArgs(result_ty.AsIntegralPacked()));
 }
 
+auto RenderBinaryOpString(
+    mir::BinaryOp op, const std::string& lhs, const std::string& rhs,
+    const mir::Type& result_ty) -> diag::Result<std::string> {
+  // LRM 6.16 Table 6-9: equality compares contents; relational ops use
+  // lexicographic ordering (str.compare semantics). std::string's operator==
+  // and operator< match these directly.
+  switch (op) {
+    case mir::BinaryOp::kEquality:
+      return WrapBoolAsResultShape(result_ty, lhs + " == " + rhs);
+    case mir::BinaryOp::kInequality:
+      return WrapBoolAsResultShape(result_ty, lhs + " != " + rhs);
+    case mir::BinaryOp::kLessThan:
+      return WrapBoolAsResultShape(result_ty, lhs + " < " + rhs);
+    case mir::BinaryOp::kLessEqual:
+      return WrapBoolAsResultShape(result_ty, lhs + " <= " + rhs);
+    case mir::BinaryOp::kGreaterThan:
+      return WrapBoolAsResultShape(result_ty, lhs + " > " + rhs);
+    case mir::BinaryOp::kGreaterEqual:
+      return WrapBoolAsResultShape(result_ty, lhs + " >= " + rhs);
+    default:
+      break;
+  }
+  return diag::Unsupported(
+      diag::DiagCode::kCppEmitExpressionFormNotImplemented,
+      "binary operator is not legal on string operands per LRM 6.16",
+      diag::UnsupportedCategory::kFeature);
+}
+
 auto RenderBinaryOpReal(
     mir::BinaryOp op, const std::string& lhs, const std::string& rhs,
     const mir::Type& result_ty) -> diag::Result<std::string> {
@@ -431,12 +459,18 @@ auto RenderBinaryExpr(
   auto rhs_or = RenderExpr(ctx, rhs_expr);
   if (!rhs_or) return std::unexpected(std::move(rhs_or.error()));
   // Slang inserts a propagated `ConversionExpr` on the narrower operand so by
-  // the time we reach a binary op both sides are the same real precision. If
-  // either side is real-family, dispatch to the real renderer.
-  const bool is_real = IsRealFamilyType(ctx.Unit().GetType(lhs_expr.type)) ||
-                       IsRealFamilyType(ctx.Unit().GetType(rhs_expr.type));
-  if (is_real) {
+  // the time we reach a binary op both sides share a precision class. Dispatch
+  // by operand kind: real-family (LRM 11.3.1), string (LRM 6.16 Table 6-9),
+  // else integral PackedArray ops.
+  const auto& lhs_ty = ctx.Unit().GetType(lhs_expr.type);
+  const auto& rhs_ty = ctx.Unit().GetType(rhs_expr.type);
+  if (IsRealFamilyType(lhs_ty) || IsRealFamilyType(rhs_ty)) {
     return RenderBinaryOpReal(
+        b.op, *lhs_or, *rhs_or, ctx.Unit().GetType(expr.type));
+  }
+  if (lhs_ty.Kind() == mir::TypeKind::kString &&
+      rhs_ty.Kind() == mir::TypeKind::kString) {
+    return RenderBinaryOpString(
         b.op, *lhs_or, *rhs_or, ctx.Unit().GetType(expr.type));
   }
   return RenderBinaryOpIntegral(b.op, *lhs_or, *rhs_or);

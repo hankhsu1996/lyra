@@ -12,9 +12,10 @@ on the current pipeline.
 ## Actionable
 
 Real C1 / C2 / C3 / C4 are complete. Structural-var declaration initializers (SV LRM 6.8) are
-complete for the integral, enum, real, shortreal, and realtime families (SI1 below). Remaining
-families: `datatypes/string`, `datatypes/unpacked`, `datatypes/general`, `datatypes/default_init`,
-`datatypes/representation`.
+complete for the integral, enum, real, shortreal, and realtime families (SI1 below). String SC1
+(declaration with literal initializer plus equality and relational comparison) is complete; SC2
+(concat / replication) and SC3 (methods) remain. Other unfinished families: `datatypes/unpacked`,
+`datatypes/general`, `datatypes/default_init`, `datatypes/representation`.
 
 ## Enum
 
@@ -77,13 +78,42 @@ by lowering the initializer onto the C++ field declaration.
       families. Covers `real_declaration_with_init` (real) plus new cases `int_structural_init`,
       `bit_structural_init`, `byte_structural_init`, `longint_structural_init`,
       `logic_structural_init`.
-- [ ] SI2 -- Initializer expressions that read a module parameter (`int i = N * 3;`) or contain a
-      string literal (`string s = "hello";`). Both are surfaced as `diag::Unsupported` today -- the
-      gap is in structural-expression lowering, not in the initializer mechanism, but it blocks the
-      natural parameter-driven init pattern.
+- [ ] SI2 -- Initializer expressions that read a module parameter (`int i = N * 3;`). Surfaced as
+      `diag::Unsupported` today; the gap is in structural-expression lowering's handling of
+      parameter references, not in the initializer mechanism, but it blocks the natural
+      parameter-driven init pattern. (The string-literal half of this gap was resolved alongside
+      SC1.)
 
 ### Cross-references
 
 - LRM 6.8 (Variable declarations -- "Setting the initial value of a static variable... shall occur
   before any initial or always procedures are started"); Table 6-7 (Default initial values, used
   when no initializer is present, tracked separately under `datatypes/default_init`).
+
+## String
+
+Covers archive item `datatypes/string` (sub-folder `string_concat`). Per LRM 6.16, `string` is a
+dynamic-length sequence of bytes with `""` as the default (LRM Table 6-7) and the operator set in
+LRM Table 6-9: equality, lexicographic comparison, concatenation, replication, indexing, and a
+dedicated method family. String literals carry a bit-vector type by default; the frontend inserts an
+implicit conversion when a literal participates in an expression that involves a `string`-typed
+operand.
+
+- [x] SC1 -- Declaration with literal initializer (`string s = "hello";`), assignment from a string
+      literal, equality (`==`, `!=`), and relational comparison (`<`, `<=`, `>`, `>=`) on
+      string-typed operands. Compare semantics match LRM Table 6-9: equality compares contents;
+      relational uses lexicographic ordering. The literal-vs-literal case keeps the integral path
+      per the LRM exception (no change required -- the frontend preserves bit-vector typing for that
+      case).
+- [ ] SC2 -- Concatenation `{a, b, ...}` and replication `{N{s}}` in string mode (LRM 11.4.12.2):
+      when at least one operand is string-typed the entire expression evaluates to string. Covers
+      archive sub-folder `string_concat`.
+- [ ] SC3 -- Built-in methods listed in LRM 6.16.1 -- 6.16.15: `.len()`, `.substr(i, j)`,
+      `.compare(s)` / `.icompare(s)`, `.toupper()` / `.tolower()`, `.putc(i, c)` / `.getc(i)`, and
+      the numeric conversion family (`.itoa()`, `.hextoa()`, `.atoi()`, `.atohex()`, ...).
+
+### Cross-references
+
+- LRM 6.16 (String data type), Table 6-9 (String operators), 6.16.1 -- 6.16.15 (String methods),
+  Table 6-7 (Default initial values).
+- Archive items: `datatypes/string/{string_concat}`.

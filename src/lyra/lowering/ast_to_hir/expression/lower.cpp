@@ -40,7 +40,6 @@
 #include "lyra/lowering/ast_to_hir/facts.hpp"
 #include "lyra/lowering/ast_to_hir/integral_constant.hpp"
 #include "lyra/lowering/ast_to_hir/state.hpp"
-#include "lyra/lowering/ast_to_hir/type.hpp"
 #include "lyra/support/system_subroutine.hpp"
 
 namespace lyra::lowering::ast_to_hir {
@@ -1184,6 +1183,13 @@ auto LowerStructuralExpr(
       auto type_id = TypeIdOfSlangExpr(unit_facts, unit_state, expr);
       if (!type_id) return std::unexpected(std::move(type_id.error()));
       return MakeRealLiteralExpr(rl.getValue(), *type_id, span);
+    }
+
+    case slang::ast::ExpressionKind::StringLiteral: {
+      const auto& sl = expr.as<slang::ast::StringLiteral>();
+      auto type_id = TypeIdOfSlangExpr(unit_facts, unit_state, expr);
+      if (!type_id) return std::unexpected(std::move(type_id.error()));
+      return MakeStringLiteralExpr(std::string{sl.getValue()}, *type_id, span);
     }
 
     case slang::ast::ExpressionKind::NamedValue:
