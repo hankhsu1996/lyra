@@ -10,6 +10,7 @@
 
 #include "lyra/diag/source_span.hpp"
 #include "lyra/hir/expr_id.hpp"
+#include "lyra/hir/inside_item.hpp"
 #include "lyra/hir/procedural_var.hpp"
 #include "lyra/hir/value_ref.hpp"
 
@@ -63,6 +64,23 @@ struct CaseItem {
 struct CaseStmt {
   ExprId condition;
   std::vector<CaseItem> items;
+  std::optional<StmtId> default_stmt;
+  std::optional<UniquePriorityCheck> check;
+};
+
+// LRM 12.5.4 set-membership form `case (X) inside { ... }`. Distinct from
+// CaseStmt because both the per-item label shape (range_list, not value list)
+// and the per-item match semantics (asymmetric wildcard inside-membership per
+// LRM 11.4.13 / 11.4.6) differ -- a match here is only the deterministic
+// `1'b1` from the inside operator; `1'b0` and `1'bx` are both no-match.
+struct CaseInsideItem {
+  std::vector<InsideItem> items;
+  StmtId stmt;
+};
+
+struct CaseInsideStmt {
+  ExprId condition;
+  std::vector<CaseInsideItem> items;
   std::optional<StmtId> default_stmt;
   std::optional<UniquePriorityCheck> check;
 };
@@ -182,9 +200,9 @@ struct WaitStmt {
 };
 
 using StmtData = std::variant<
-    EmptyStmt, VarDeclStmt, ExprStmt, BlockStmt, IfStmt, CaseStmt, ForStmt,
-    WhileStmt, RepeatStmt, DoWhileStmt, ForeverStmt, BreakStmt, ContinueStmt,
-    TimedStmt, EventTriggerStmt, WaitStmt>;
+    EmptyStmt, VarDeclStmt, ExprStmt, BlockStmt, IfStmt, CaseStmt,
+    CaseInsideStmt, ForStmt, WhileStmt, RepeatStmt, DoWhileStmt, ForeverStmt,
+    BreakStmt, ContinueStmt, TimedStmt, EventTriggerStmt, WaitStmt>;
 
 struct Stmt {
   std::optional<std::string> label;

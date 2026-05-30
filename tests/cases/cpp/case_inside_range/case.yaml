@@ -1,0 +1,14 @@
+id: cpp.case_inside_range
+tags: [cpp_run]
+input:
+  command: [run, cpp]
+  project: false
+  top: Top
+  files: [main.sv]
+expect:
+  exit: 0
+  variables:
+    low: 1
+    mid: 2
+    high: 3
+    oor: 1

@@ -9,6 +9,7 @@
 #include "lyra/hir/binary_op.hpp"
 #include "lyra/hir/conversion.hpp"
 #include "lyra/hir/expr_id.hpp"
+#include "lyra/hir/inside_item.hpp"
 #include "lyra/hir/lvalue.hpp"
 #include "lyra/hir/primary.hpp"
 #include "lyra/hir/range_bounds.hpp"
@@ -61,13 +62,6 @@ struct CallExpr {
   SubroutineRef callee;
   std::vector<ExprId> arguments;
 };
-
-struct InsideRangePair {
-  ExprId lo;
-  ExprId hi;
-};
-
-using InsideItem = std::variant<ExprId, InsideRangePair>;
 
 struct InsideExpr {
   ExprId lhs;

@@ -1359,7 +1359,7 @@ auto PackedArray::operator~() const -> PackedArray {
   return result;
 }
 
-auto PackedArray::LogicalAnd(const PackedArray& other) const -> PackedArray {
+auto PackedArray::operator&&(const PackedArray& other) const -> PackedArray {
   const auto a = TruthinessOf(*this);
   const auto b = TruthinessOf(other);
   const bool result_four_state = is_four_state_ || other.is_four_state_;
@@ -1372,7 +1372,7 @@ auto PackedArray::LogicalAnd(const PackedArray& other) const -> PackedArray {
   return AllX(1U, false);
 }
 
-auto PackedArray::LogicalOr(const PackedArray& other) const -> PackedArray {
+auto PackedArray::operator||(const PackedArray& other) const -> PackedArray {
   const auto a = TruthinessOf(*this);
   const auto b = TruthinessOf(other);
   const bool result_four_state = is_four_state_ || other.is_four_state_;
@@ -1385,7 +1385,7 @@ auto PackedArray::LogicalOr(const PackedArray& other) const -> PackedArray {
   return AllX(1U, false);
 }
 
-auto PackedArray::LogicalNot() const -> PackedArray {
+auto PackedArray::operator!() const -> PackedArray {
   switch (TruthinessOf(*this)) {
     case Truthiness::kKnownZero:
       return OneBitResult(true, is_four_state_);
@@ -1394,7 +1394,7 @@ auto PackedArray::LogicalNot() const -> PackedArray {
     case Truthiness::kUnknown:
       return AllX(1U, false);
   }
-  throw InternalError("LogicalNot: unhandled Truthiness");
+  throw InternalError("operator!: unhandled Truthiness");
 }
 
 auto PackedArray::LogicalImplication(const PackedArray& other) const
