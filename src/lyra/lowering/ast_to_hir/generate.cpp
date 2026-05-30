@@ -17,6 +17,7 @@
 #include "lyra/hir/expr.hpp"
 #include "lyra/hir/structural_scope.hpp"
 #include "lyra/lowering/ast_to_hir/expression/lower.hpp"
+#include "lyra/lowering/ast_to_hir/expression/slang_atoms.hpp"
 #include "lyra/lowering/ast_to_hir/facts.hpp"
 #include "lyra/lowering/ast_to_hir/scope.hpp"
 #include "lyra/lowering/ast_to_hir/state.hpp"
@@ -231,32 +232,50 @@ auto BuildCaseGenerate(
 // Lower the iter expression of a loop_generate header into the loop's
 // next-value expression for its loop variable. Per LRM 27.5,
 // genvar_iteration is restricted to: `i = e`, `i op= e`, `++i`, `i++`, `--i`,
-// `i--`. All four forms compute exactly one new value for THE loop variable;
-// HIR stores that next-value, not an assignment. The loop's iteration write
-// is owned by the loop semantic, not by a general assignment.
+// `i--`. All four forms compute exactly one new value for THE loop variable.
+// Compound is rebuilt as `BinaryExpr{op, ReadOfLvalue, user_rhs}`; the genvar
+// is a constant-elaborated parameter so its read is trivial and slang's
+// promotion Conversions are no-ops at int <-> int.
 auto LowerLoopIterNextValue(
     const UnitLoweringFacts& unit_facts, UnitLoweringState& unit_state,
     ScopeLoweringState& parent_state, const ScopeStack& stack,
-    const slang::ast::Expression& iter, const hir::Lvalue& loop_var_lvalue)
-    -> diag::Result<hir::Expr> {
+    const slang::ast::Expression& iter) -> diag::Result<hir::Expr> {
   const auto& mapper = unit_facts.SourceMapper();
   const auto span = mapper.SpanOf(iter.sourceRange);
 
-  if (iter.kind == slang::ast::ExpressionKind::Assignment) {
-    const auto& assign = iter.as<slang::ast::AssignmentExpression>();
-    // For simple `i = e`, slang.right() is `e` (no LValueReference).
-    // For compound `i op= e`, slang.right() is the synthetic
-    // BinaryOp{op, LValueRef, e_resolved}; passing the loop-var lvalue as
-    // compound context resolves LValueRef to a read of the loop var.
-    return LowerStructuralExpr(
-        unit_facts, unit_state, parent_state, stack, assign.right(),
-        loop_var_lvalue);
+  if (iter.kind != slang::ast::ExpressionKind::Assignment) {
+    return diag::Unsupported(
+        span, diag::DiagCode::kUnsupportedStructuralExpressionForm,
+        "this generate iteration form is not supported yet",
+        diag::UnsupportedCategory::kFeature);
   }
 
-  return diag::Unsupported(
-      span, diag::DiagCode::kUnsupportedStructuralExpressionForm,
-      "this generate iteration form is not supported yet",
-      diag::UnsupportedCategory::kFeature);
+  const auto& assign = iter.as<slang::ast::AssignmentExpression>();
+  if (!assign.op.has_value()) {
+    return LowerStructuralExpr(
+        unit_facts, unit_state, parent_state, stack, assign.right());
+  }
+
+  auto read = LowerStructuralExpr(
+      unit_facts, unit_state, parent_state, stack, assign.left());
+  if (!read) return std::unexpected(std::move(read.error()));
+  const hir::ExprId read_id = parent_state.AddExpr(*std::move(read));
+
+  const auto& bare_rhs = BareCompoundUserRhs(assign.right());
+  auto rhs = LowerStructuralExpr(
+      unit_facts, unit_state, parent_state, stack, bare_rhs);
+  if (!rhs) return std::unexpected(std::move(rhs.error()));
+  const hir::ExprId rhs_id = parent_state.AddExpr(*std::move(rhs));
+
+  auto type_id = unit_state.GetTypeId(*iter.type, span);
+  if (!type_id) return std::unexpected(std::move(type_id.error()));
+  return hir::Expr{
+      .type = *type_id,
+      .data =
+          hir::BinaryExpr{
+              .op = LowerBinaryOp(*assign.op), .lhs = read_id, .rhs = rhs_id},
+      .span = span,
+  };
 }
 
 auto BuildLoopGenerate(
@@ -293,14 +312,8 @@ auto BuildLoopGenerate(
   if (!stop_expr) return std::unexpected(std::move(stop_expr.error()));
   const hir::ExprId stop_id = parent_state.AddExpr(*std::move(stop_expr));
 
-  const hir::Lvalue loop_var_lvalue{
-      .root =
-          hir::LoopVarRef{
-              .hops = hir::StructuralHops{0}, .loop_var = loop_var_id},
-      .selectors = {}};
   auto iter_expr = LowerLoopIterNextValue(
-      unit_facts, unit_state, parent_state, stack, *array.iterExpression,
-      loop_var_lvalue);
+      unit_facts, unit_state, parent_state, stack, *array.iterExpression);
   if (!iter_expr) return std::unexpected(std::move(iter_expr.error()));
   const hir::ExprId iter_id = parent_state.AddExpr(*std::move(iter_expr));
 

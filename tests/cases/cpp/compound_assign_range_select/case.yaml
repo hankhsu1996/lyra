@@ -1,0 +1,14 @@
+id: cpp.compound_assign_range_select
+tags: [cpp_run]
+input:
+  command: [run, cpp]
+  project: false
+  top: Top
+  files: [main.sv]
+expect:
+  exit: 0
+  variables:
+    add_const_range: 0x0080
+    or_const_range: 0x00B0
+    xor_indexed_up: 0xAA5A
+    sub_indexed_down: 0x00E0

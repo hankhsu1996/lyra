@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstdint>
+#include <optional>
 #include <variant>
 #include <vector>
 
@@ -42,9 +43,17 @@ enum class AssignKind : std::uint8_t {
   kNonBlocking,
 };
 
+// `compound_op.has_value()` marks a compound assignment (`+=`, `-=`, etc.):
+// the runtime reads the lvalue, combines with `rhs`, writes back -- the
+// LRM 11.4.1 "evaluate target only once" rule is delegated to the backend's
+// compound-op emit (the C++ proxy's `operator+=` etc.). `rhs` is already
+// typed to match `lhs`; AST -> HIR inserts a `ConversionExpr` if slang's
+// expansion required one. LRM A.6.2 forbids compound on non-blocking, so
+// `kind == kNonBlocking && compound_op.has_value()` is an InternalError.
 struct AssignExpr {
   AssignKind kind;
   Lvalue lhs;
+  std::optional<BinaryOp> compound_op = std::nullopt;
   ExprId rhs;
 };
 
