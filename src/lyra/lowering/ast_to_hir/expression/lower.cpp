@@ -609,8 +609,6 @@ auto LowerInsideExprProc(
     ProcessLoweringState& proc_state, const ScopeStack& stack,
     const slang::ast::InsideExpression& in, const slang::ast::Expression& expr,
     diag::SourceSpan span) -> diag::Result<hir::Expr> {
-  const auto& mapper = unit_facts.SourceMapper();
-
   auto lhs_or =
       LowerProcExpr(unit_facts, unit_state, proc_state, stack, in.left());
   if (!lhs_or) return std::unexpected(std::move(lhs_or.error()));
@@ -619,31 +617,10 @@ auto LowerInsideExprProc(
   std::vector<hir::InsideItem> items;
   items.reserve(in.rangeList().size());
   for (const auto* item : in.rangeList()) {
-    if (item->kind == slang::ast::ExpressionKind::ValueRange) {
-      const auto& vr = item->as<slang::ast::ValueRangeExpression>();
-      if (vr.rangeKind != slang::ast::ValueRangeKind::Simple) {
-        return diag::Unsupported(
-            mapper.SpanOf(vr.sourceRange),
-            diag::DiagCode::kUnsupportedExpressionForm,
-            "tolerance-range form in inside operator is not yet supported",
-            diag::UnsupportedCategory::kFeature);
-      }
-      auto lo_or =
-          LowerProcExpr(unit_facts, unit_state, proc_state, stack, vr.left());
-      if (!lo_or) return std::unexpected(std::move(lo_or.error()));
-      const hir::ExprId lo_id = proc_state.AddExpr(*std::move(lo_or));
-      auto hi_or =
-          LowerProcExpr(unit_facts, unit_state, proc_state, stack, vr.right());
-      if (!hi_or) return std::unexpected(std::move(hi_or.error()));
-      const hir::ExprId hi_id = proc_state.AddExpr(*std::move(hi_or));
-      items.emplace_back(hir::InsideRangePair{.lo = lo_id, .hi = hi_id});
-    } else {
-      auto val_or =
-          LowerProcExpr(unit_facts, unit_state, proc_state, stack, *item);
-      if (!val_or) return std::unexpected(std::move(val_or.error()));
-      const hir::ExprId val_id = proc_state.AddExpr(*std::move(val_or));
-      items.emplace_back(val_id);
-    }
+    auto item_or =
+        LowerInsideItem(unit_facts, unit_state, proc_state, stack, *item);
+    if (!item_or) return std::unexpected(std::move(item_or.error()));
+    items.push_back(*std::move(item_or));
   }
 
   auto type_id = TypeIdOfSlangExpr(unit_facts, unit_state, expr);
@@ -934,6 +911,35 @@ auto LowerConditionalExprStructural(
 }
 
 }  // namespace
+
+auto LowerInsideItem(
+    const UnitLoweringFacts& unit_facts, UnitLoweringState& unit_state,
+    ProcessLoweringState& proc_state, const ScopeStack& stack,
+    const slang::ast::Expression& item_expr) -> diag::Result<hir::InsideItem> {
+  if (item_expr.kind == slang::ast::ExpressionKind::ValueRange) {
+    const auto& vr = item_expr.as<slang::ast::ValueRangeExpression>();
+    if (vr.rangeKind != slang::ast::ValueRangeKind::Simple) {
+      return diag::Unsupported(
+          unit_facts.SourceMapper().SpanOf(vr.sourceRange),
+          diag::DiagCode::kUnsupportedExpressionForm,
+          "tolerance-range form in inside operator is not yet supported",
+          diag::UnsupportedCategory::kFeature);
+    }
+    auto lo_or =
+        LowerProcExpr(unit_facts, unit_state, proc_state, stack, vr.left());
+    if (!lo_or) return std::unexpected(std::move(lo_or.error()));
+    const hir::ExprId lo_id = proc_state.AddExpr(*std::move(lo_or));
+    auto hi_or =
+        LowerProcExpr(unit_facts, unit_state, proc_state, stack, vr.right());
+    if (!hi_or) return std::unexpected(std::move(hi_or.error()));
+    const hir::ExprId hi_id = proc_state.AddExpr(*std::move(hi_or));
+    return hir::InsideRangePair{.lo = lo_id, .hi = hi_id};
+  }
+  auto val_or =
+      LowerProcExpr(unit_facts, unit_state, proc_state, stack, item_expr);
+  if (!val_or) return std::unexpected(std::move(val_or.error()));
+  return proc_state.AddExpr(*std::move(val_or));
+}
 
 auto LowerProcExpr(
     const UnitLoweringFacts& unit_facts, UnitLoweringState& unit_state,

@@ -362,9 +362,9 @@ auto RenderBinaryOpIntegral(
       tok = " >= ";
       break;
     case mir::BinaryOp::kLogicalAnd:
-      return "(" + lhs + ").LogicalAnd(" + rhs + ")";
+      return "(" + lhs + " && " + rhs + ")";
     case mir::BinaryOp::kLogicalOr:
-      return "(" + lhs + ").LogicalOr(" + rhs + ")";
+      return "(" + lhs + " || " + rhs + ")";
     case mir::BinaryOp::kBitwiseXnor:
       return "(" + lhs + ").BitwiseXnor(" + rhs + ")";
     case mir::BinaryOp::kPower:
@@ -382,11 +382,11 @@ auto RenderBinaryOpIntegral(
     case mir::BinaryOp::kWildcardEquality:
       return "(" + lhs + ").WildcardEquals(" + rhs + ")";
     case mir::BinaryOp::kWildcardInequality:
-      return "(" + lhs + ").WildcardEquals(" + rhs + ").LogicalNot()";
+      return "(!(" + lhs + ").WildcardEquals(" + rhs + "))";
     case mir::BinaryOp::kCaseEquality:
       return "(" + lhs + ").CaseEqual(" + rhs + ")";
     case mir::BinaryOp::kCaseInequality:
-      return "(" + lhs + ").CaseEqual(" + rhs + ").LogicalNot()";
+      return "(!(" + lhs + ").CaseEqual(" + rhs + "))";
   }
   return "(" + lhs + std::string{tok} + rhs + ")";
 }
@@ -420,7 +420,7 @@ auto RenderUnaryOpIntegral(mir::UnaryOp op, const std::string& operand)
     case mir::UnaryOp::kBitwiseNot:
       return "(~" + operand + ")";
     case mir::UnaryOp::kLogicalNot:
-      return "(" + operand + ").LogicalNot()";
+      return "(!(" + operand + "))";
     case mir::UnaryOp::kReductionAnd:
       return "(" + operand + ").ReductionAnd()";
     case mir::UnaryOp::kReductionOr:
@@ -1251,9 +1251,8 @@ auto RenderConditionAsBool(const RenderContext& ctx, const mir::Expr& expr)
     -> diag::Result<std::string> {
   auto text_or = RenderExpr(ctx, expr);
   if (!text_or) return std::unexpected(std::move(text_or.error()));
-  if (ctx.Unit().GetType(expr.type).IsIntegralPacked()) {
-    return "(" + *text_or + ").IsTruthy()";
-  }
+  // PackedArray's `explicit operator bool` fires in any boolean context (if /
+  // while / for / ternary cond / `&&` / `||` / `!`), so no wrapping needed.
   return *text_or;
 }
 

@@ -3,6 +3,7 @@
 #include <cstdint>
 #include <format>
 #include <memory>
+#include <optional>
 #include <utility>
 #include <variant>
 #include <vector>
@@ -20,6 +21,7 @@
 #include "lyra/hir/subroutine_ref.hpp"
 #include "lyra/hir/unary_op.hpp"
 #include "lyra/hir/value_ref.hpp"
+#include "lyra/lowering/hir_to_mir/inside_predicate.hpp"
 #include "lyra/lowering/hir_to_mir/lower_system_subroutine.hpp"
 #include "lyra/lowering/hir_to_mir/state.hpp"
 #include "lyra/mir/binary_op.hpp"
@@ -907,76 +909,6 @@ auto LowerHirCallExprProc(
       c.callee);
 }
 
-// Builds the 1-bit MIR predicate ExprId for one inside-operator item, comparing
-// against the already-lowered LHS. Value items use `==`; range items use
-// `(>= lo) && (<= hi)`. The returned ExprId references a freshly added MIR
-// expression in `proc_scope_state`.
-auto BuildHirInsideItemPredicateProc(
-    const UnitLoweringState& unit_state,
-    const StructuralScopeLoweringState& scope_state,
-    const ProcessLoweringState& proc_state,
-    ProceduralScopeLoweringState& proc_scope_state,
-    const hir::Process& hir_process, mir::ExprId lhs_id,
-    const hir::InsideItem& item, mir::TypeId result_type)
-    -> diag::Result<mir::ExprId> {
-  auto lower_id = [&](hir::ExprId id) -> diag::Result<mir::ExprId> {
-    auto lowered = LowerExpr(
-        unit_state, scope_state, proc_state, proc_scope_state, hir_process,
-        hir_process.exprs.at(id.value));
-    if (!lowered) {
-      return std::unexpected(std::move(lowered.error()));
-    }
-    return proc_scope_state.AddExpr(*std::move(lowered));
-  };
-
-  return std::visit(
-      Overloaded{
-          [&](const hir::ExprId& val_id) -> diag::Result<mir::ExprId> {
-            auto v = lower_id(val_id);
-            if (!v) return std::unexpected(std::move(v.error()));
-            return proc_scope_state.AddExpr(
-                mir::Expr{
-                    .data =
-                        mir::BinaryExpr{
-                            .op = mir::BinaryOp::kWildcardEquality,
-                            .lhs = lhs_id,
-                            .rhs = *v},
-                    .type = result_type});
-          },
-          [&](const hir::InsideRangePair& r) -> diag::Result<mir::ExprId> {
-            auto lo = lower_id(r.lo);
-            if (!lo) return std::unexpected(std::move(lo.error()));
-            auto hi = lower_id(r.hi);
-            if (!hi) return std::unexpected(std::move(hi.error()));
-            const mir::ExprId ge_id = proc_scope_state.AddExpr(
-                mir::Expr{
-                    .data =
-                        mir::BinaryExpr{
-                            .op = mir::BinaryOp::kGreaterEqual,
-                            .lhs = lhs_id,
-                            .rhs = *lo},
-                    .type = result_type});
-            const mir::ExprId le_id = proc_scope_state.AddExpr(
-                mir::Expr{
-                    .data =
-                        mir::BinaryExpr{
-                            .op = mir::BinaryOp::kLessEqual,
-                            .lhs = lhs_id,
-                            .rhs = *hi},
-                    .type = result_type});
-            return proc_scope_state.AddExpr(
-                mir::Expr{
-                    .data =
-                        mir::BinaryExpr{
-                            .op = mir::BinaryOp::kLogicalAnd,
-                            .lhs = ge_id,
-                            .rhs = le_id},
-                    .type = result_type});
-          },
-      },
-      item);
-}
-
 auto LowerHirInsideExprProc(
     const UnitLoweringState& unit_state,
     const StructuralScopeLoweringState& scope_state,
@@ -990,41 +922,30 @@ auto LowerHirInsideExprProc(
   if (!lhs_or) return std::unexpected(std::move(lhs_or.error()));
   const mir::ExprId lhs_id = proc_scope_state.AddExpr(*std::move(lhs_or));
 
-  std::vector<mir::ExprId> predicates;
-  predicates.reserve(in.items.size());
-  for (const auto& item : in.items) {
-    auto pred_or = BuildHirInsideItemPredicateProc(
-        unit_state, scope_state, proc_state, proc_scope_state, hir_process,
-        lhs_id, item, result_type);
-    if (!pred_or) return std::unexpected(std::move(pred_or.error()));
-    predicates.push_back(*pred_or);
-  }
-
-  if (predicates.empty()) {
+  if (in.items.empty()) {
     throw InternalError(
         "LowerHirInsideExprProc: hir::InsideExpr has empty item list");
   }
-  if (predicates.size() == 1) {
-    return mir::Expr{proc_scope_state.GetExpr(predicates.front())};
+  std::optional<mir::ExprId> acc;
+  for (const auto& item : in.items) {
+    auto pred_or = BuildHirInsideItemPredicate(
+        unit_state, scope_state, proc_state, proc_scope_state, hir_process,
+        lhs_id, item, result_type);
+    if (!pred_or) return std::unexpected(std::move(pred_or.error()));
+    if (acc.has_value()) {
+      acc = proc_scope_state.AddExpr(
+          mir::Expr{
+              .data =
+                  mir::BinaryExpr{
+                      .op = mir::BinaryOp::kLogicalOr,
+                      .lhs = *acc,
+                      .rhs = *pred_or},
+              .type = result_type});
+    } else {
+      acc = *pred_or;
+    }
   }
-  mir::ExprId acc = predicates.front();
-  for (std::size_t i = 1; i + 1 < predicates.size(); ++i) {
-    acc = proc_scope_state.AddExpr(
-        mir::Expr{
-            .data =
-                mir::BinaryExpr{
-                    .op = mir::BinaryOp::kLogicalOr,
-                    .lhs = acc,
-                    .rhs = predicates[i]},
-            .type = result_type});
-  }
-  return mir::Expr{
-      .data =
-          mir::BinaryExpr{
-              .op = mir::BinaryOp::kLogicalOr,
-              .lhs = acc,
-              .rhs = predicates.back()},
-      .type = result_type};
+  return mir::Expr{proc_scope_state.GetExpr(*acc)};
 }
 
 auto LowerHirElementSelectExprProc(

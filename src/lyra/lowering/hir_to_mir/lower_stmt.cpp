@@ -17,6 +17,7 @@
 #include "lyra/hir/stmt.hpp"
 #include "lyra/lowering/hir_to_mir/case_cascade.hpp"
 #include "lyra/lowering/hir_to_mir/delay_time_resolver.hpp"
+#include "lyra/lowering/hir_to_mir/inside_predicate.hpp"
 #include "lyra/lowering/hir_to_mir/lower_deferred_check.hpp"
 #include "lyra/lowering/hir_to_mir/lower_expr.hpp"
 #include "lyra/lowering/hir_to_mir/procedural_scope_helpers.hpp"
@@ -406,6 +407,139 @@ auto LowerCaseStmt(
   return BuildCaseCascade(
       std::move(wrapper_state), stmt.label, c.items.size(),
       std::move(body_scopes), std::move(default_scope), build_predicate);
+}
+
+auto LowerCaseInsideStmt(
+    const UnitLoweringState& unit_state,
+    const StructuralScopeLoweringState& scope_state,
+    ProcessLoweringState& proc_state, const hir::Process& hir_proc,
+    const hir::Stmt& stmt, const hir::CaseInsideStmt& c)
+    -> diag::Result<mir::Stmt> {
+  const mir::TypeId bit_type = unit_state.Builtins().bit1;
+
+  ProceduralScopeLoweringState wrapper_state;
+  ProceduralDepthGuard wrapper_depth_guard{proc_state};
+
+  auto cond_or = LowerExpr(
+      unit_state, scope_state, proc_state, wrapper_state, hir_proc,
+      hir_proc.exprs.at(c.condition.value));
+  if (!cond_or) return std::unexpected(std::move(cond_or.error()));
+  mir::ExprId cond_expr_id = wrapper_state.AddExpr(*std::move(cond_or));
+
+  // Peel an outer ConversionExpr from a case-context-widened selector (same
+  // reason as the plain case form: cpp backend cannot init form=explicit from
+  // form=int, and the per-item inside predicate compares against the
+  // unwrapped source type directly).
+  if (const auto* cv = std::get_if<mir::ConversionExpr>(
+          &wrapper_state.GetExpr(cond_expr_id).data)) {
+    cond_expr_id = cv->operand;
+  }
+
+  const CaseSnapshotRefs snapshot =
+      AppendCaseSnapshot(wrapper_state, cond_expr_id);
+
+  auto with_extra_depth = [&](std::size_t extras, auto fn) {
+    std::vector<std::unique_ptr<ProceduralDepthGuard>> guards;
+    guards.reserve(extras);
+    for (std::size_t i = 0; i < extras; ++i) {
+      guards.push_back(std::make_unique<ProceduralDepthGuard>(proc_state));
+    }
+    return fn();
+  };
+
+  std::vector<mir::ProceduralScope> body_scopes;
+  body_scopes.reserve(c.items.size());
+  for (std::size_t i = 0; i < c.items.size(); ++i) {
+    auto body_or = with_extra_depth(i, [&] {
+      return LowerStmtIntoChildScope(
+          unit_state, scope_state, proc_state, hir_proc, c.items[i].stmt);
+    });
+    if (!body_or) {
+      return std::unexpected(std::move(body_or.error()));
+    }
+    body_scopes.push_back(std::move(*body_or));
+  }
+
+  std::optional<mir::ProceduralScope> default_scope;
+  if (c.default_stmt.has_value()) {
+    auto def_or = with_extra_depth(c.items.size(), [&] {
+      return LowerStmtIntoChildScope(
+          unit_state, scope_state, proc_state, hir_proc, *c.default_stmt);
+    });
+    if (!def_or) {
+      return std::unexpected(std::move(def_or.error()));
+    }
+    default_scope = std::move(*def_or);
+  }
+
+  // Builds the per-item inside-membership predicate against the snapshot ref,
+  // matching the LRM 11.4.13 OR-reduction semantics. Per LRM 12.5.4 the
+  // cascade's boolean-context test on this predicate already excludes 1'bx
+  // (`explicit operator bool` returns false for any X bit), so no explicit
+  // 2-state clamp is needed.
+  auto build_item_predicate =
+      [&](ProceduralScopeLoweringState& enc, std::size_t item_idx,
+          std::uint32_t sel_hops) -> diag::Result<mir::ExprId> {
+    return with_extra_depth(item_idx, [&] -> diag::Result<mir::ExprId> {
+      const mir::ExprId sel_ref = enc.AddExpr(
+          mir::Expr{
+              .data =
+                  mir::ProceduralVarRef{
+                      .hops = mir::ProceduralHops{.value = sel_hops},
+                      .var = snapshot.sel_var},
+              .type = snapshot.sel_type});
+      const auto& item = c.items[item_idx];
+      if (item.items.empty()) {
+        throw InternalError(
+            "LowerCaseInsideStmt: case-inside item has empty range_list");
+      }
+      std::optional<mir::ExprId> acc;
+      for (const auto& inside_item : item.items) {
+        auto pred_or = BuildHirInsideItemPredicate(
+            unit_state, scope_state, proc_state, enc, hir_proc, sel_ref,
+            inside_item, bit_type);
+        if (!pred_or) return std::unexpected(std::move(pred_or.error()));
+        if (acc.has_value()) {
+          acc = enc.AddExpr(
+              mir::Expr{
+                  .data =
+                      mir::BinaryExpr{
+                          .op = mir::BinaryOp::kLogicalOr,
+                          .lhs = *acc,
+                          .rhs = *pred_or},
+                  .type = bit_type});
+        } else {
+          acc = *pred_or;
+        }
+      }
+      return *acc;
+    });
+  };
+
+  if (c.check.has_value()) {
+    std::vector<mir::ExprId> predicates;
+    predicates.reserve(c.items.size());
+    for (std::size_t i = 0; i < c.items.size(); ++i) {
+      auto pred_or = build_item_predicate(wrapper_state, i, 0);
+      if (!pred_or) return std::unexpected(std::move(pred_or.error()));
+      predicates.push_back(*pred_or);
+    }
+
+    std::vector<DeferredCheckBranch> branches;
+    branches.reserve(c.items.size());
+    for (std::size_t i = 0; i < c.items.size(); ++i) {
+      branches.push_back(
+          DeferredCheckBranch{
+              .predicate = predicates[i], .body = std::move(body_scopes[i])});
+    }
+    return BuildDeferredCheckCascade(
+        unit_state, std::move(wrapper_state), std::move(branches),
+        std::move(default_scope), *c.check, stmt.label);
+  }
+
+  return BuildCaseCascade(
+      std::move(wrapper_state), stmt.label, c.items.size(),
+      std::move(body_scopes), std::move(default_scope), build_item_predicate);
 }
 
 auto LowerForStmt(
@@ -1047,6 +1181,10 @@ auto LowerStmt(
           },
           [&](const hir::CaseStmt& c) {
             return LowerCaseStmt(
+                unit_state, scope_state, proc_state, hir_proc, stmt, c);
+          },
+          [&](const hir::CaseInsideStmt& c) {
+            return LowerCaseInsideStmt(
                 unit_state, scope_state, proc_state, hir_proc, stmt, c);
           },
           [&](const hir::ForStmt& f) {

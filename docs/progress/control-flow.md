@@ -11,16 +11,12 @@ operator runtime, string runtime); see the per-item **Depends on** lines and the
 
 ## Actionable
 
-No open items are currently actionable inside this workstream alone. Every remaining item depends on
-machinery owned by another workstream; the table below lists the blockers.
+C11 is unblocked now that W2 has landed. C9 and C10 still wait on `datatypes/unpacked`.
 
-| Item    | Blocked on                                                                                 |
-| ------- | ------------------------------------------------------------------------------------------ |
-| C9, C10 | `datatypes/unpacked` (procedural unpacked array vars + `arr[i]` element-select expr).      |
-| C11     | `operators.md` W2 (`==?` / `!=?` masked-compare runtime helper).                           |
-| C12     | `operators.md` W1 (basic `inside`) and W2 (wildcard items in the range list).              |
-| C16     | `datatypes/enum`.                                                                          |
-| C17     | `datatypes/string` plus the string-equality runtime helper from `operators/binary_string`. |
+| Item    | Status                                                                               |
+| ------- | ------------------------------------------------------------------------------------ |
+| C11     | Unblocked (W2 shipped). HIR -> MIR cascade with `==?` per-label compare.             |
+| C9, C10 | Blocked on `datatypes/unpacked` (procedural unpacked array vars + `arr[i]` element). |
 
 ## Sub-Steps
 
@@ -83,9 +79,16 @@ machinery owned by another workstream; the table below lists the blockers.
 - [ ] C11 -- `casez` / `casex`. Lower to an if/else cascade with masked comparisons in HIR -> MIR
       (C++ `switch` does not support wildcard match). **Depends on** `operators.md` W2 for the `==?`
       / `!=?` runtime helper.
-- [ ] C12 -- `case (... inside ...)`. Range patterns (`[lo:hi]`) and `inside` membership; lower to
-      an if/else cascade whose conditions reuse the `InsideExpr` lowering. **Depends on**
-      `operators.md` W1 (basic `inside`) and W2 (wildcard items in the range list).
+- [x] C12 -- `case (... inside ...)`. Sibling statement family in HIR (distinct from plain case
+      because labels are `range_list` entries -- value or `[lo:hi]` range -- and per-item match uses
+      inside-membership rather than `==`). HIR -> MIR snapshots the selector (LRM 12.5
+      evaluate-once) and builds the per-item inside-membership predicate against the snapshot using
+      the same primitive the `inside` operator uses (asymmetric wildcard equality for value items,
+      `(>= lo) && (<= hi)` for ranges, LRM 11.4.13 OR-reduction across items). The cascade's
+      truthiness test already excludes `1'bx` per LRM 12.5.4 ("match only when inside returns
+      `1'b1`"); no explicit 2-state clamp needed. Coverage: `case_inside_basic`,
+      `case_inside_range`, `case_inside_mixed`, `case_inside_no_match`, and `case_inside_wildcard`
+      (RHS wildcard `4'b00??` against a 4-state logic selector).
 - [x] C13 -- `unique` / `unique0` / `priority` qualifiers on `if` and `case`. HIR carries the
       qualifier as an optional `UniquePriorityCheck` field on `IfStmt` / `CaseStmt`. HIR -> MIR
       desugars the site into a `BlockStmt` that snapshots each branch's predicate into a fresh
@@ -109,10 +112,15 @@ machinery owned by another workstream; the table below lists the blockers.
       type. Covers archive cases `case_constant_expression`, `case_first_match_wins`. Coverage adds
       `case_constant_expression`, `case_first_match_wins`, `case_runtime_multi_label`,
       `case_runtime_no_default`.
-- [ ] C16 -- `case` with enum-typed selectors and enum-value labels. **Depends on**
-      `datatypes/enum`.
-- [ ] C17 -- `case` with string selector / string labels. **Depends on** `datatypes/string` plus the
-      string-equality runtime helper tracked under `operators/binary_string`.
+- [x] C16 -- `case` with enum-typed selectors and enum-value labels. The uniform cascade from C3
+      handles this with no new lowering: slang's case-context type unification widens the labels to
+      the enum type, and the cascade's per-label `==` evaluates against the unified enum operands.
+      Coverage: `case_enum_basic` (single / multi-label / default-taken) and `case_enum_no_match`
+      (no default, selector unchanged from initial).
+- [x] C17 -- `case` with string selector / string labels. Same cascade reused: per-label `==` uses
+      the SC1 string equality helper, with the bool result projected back into the cascade's 1-bit
+      truthiness shape. Coverage: `case_string_basic` (single / multi-label / default-taken) and
+      `case_string_no_match`.
 
 ### Expressions
 

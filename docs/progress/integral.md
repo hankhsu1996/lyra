@@ -95,9 +95,9 @@ wildcard equality (`==?`). Both were plumbed through HIR / MIR but rejected at c
       in backend. Also consumed by `Var<T>` for event-control change detection (LRM 9.4.2 says
       `@(x)` fires when the value "is not equal to its previous value" under bit-pattern equality;
       that is `===` semantics).
-- [ ] J18 -- `PackedArray::WildcardEquals` (LRM 11.4.6 `==?` / `!=?`): bit-by-bit compare with the
-      RHS X/Z bits treated as don't-care; returns deterministic `bool`. Wire `kWildcardEquality` and
-      `kWildcardInequality` arms.
+- [x] J18 -- `PackedArray::WildcardEquals` (LRM 11.4.6 `==?` / `!=?`): bit-by-bit compare with the
+      RHS X/Z bits treated as don't-care. Wire `kWildcardEquality` and `kWildcardInequality` arms.
+      Same work item as `operators.md` W2; that file is the canonical home.
 
 ## Cross-references
 
@@ -116,6 +116,3 @@ wildcard equality (`==?`). Both were plumbed through HIR / MIR but rejected at c
 
 `++` / `--`: tracked as `operators.md` W12 (new HIR / MIR shape, statement and expression forms, LRM
 evaluate-target-once semantics).
-
-`==?` / `!=?` wildcard equality: deterministic-bool form with RHS X/Z as don't-care (LRM 11.4.6).
-Plumbed through HIR / MIR; cpp emit rejects. Tracked as J18 in Cut 4 above.
