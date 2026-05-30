@@ -6,9 +6,8 @@ module Top;
     a = 0;
     b = 0;
     marker = 0;
-    // Compound condition exercises the walker's BinaryExpr recursion: both
-    // `a` and `b` are picked up as reads, so a transition on either kicks
-    // re-evaluation of `a && b`.
+    // Compound `a && b` cond: both operands enter the read set, so a
+    // transition on either kicks re-evaluation.
     wait (a && b) marker = 1;
   end
 

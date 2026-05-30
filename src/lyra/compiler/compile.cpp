@@ -2,70 +2,16 @@
 
 #include <format>
 #include <utility>
-#include <vector>
-
-#include <slang/analysis/AnalysisManager.h>
-#include <slang/analysis/AnalyzedProcedure.h>
-#include <slang/ast/Statement.h>
-#include <slang/ast/symbols/BlockSymbols.h>
-#include <slang/ast/symbols/ValueSymbol.h>
 
 #include "lyra/diag/diag_code.hpp"
 #include "lyra/diag/diagnostic.hpp"
 #include "lyra/diag/sink.hpp"
 #include "lyra/frontend/load.hpp"
 #include "lyra/lowering/ast_to_hir/lower.hpp"
+#include "lyra/lowering/ast_to_hir/sensitivity.hpp"
 #include "lyra/lowering/hir_to_mir/lower_module_unit.hpp"
 
 namespace lyra::compiler {
-
-namespace {
-
-// Deduplicated `ReadRange`-shaped list from slang's DFA maps 1:1. Disjoint
-// bit ranges for the same symbol are preserved so the runtime can subscribe
-// at bit-range granularity once Observable gains that resolution.
-template <typename SlangReads>
-auto TranslateReads(const SlangReads& reads)
-    -> std::vector<lowering::ast_to_hir::SensitivityRead> {
-  std::vector<lowering::ast_to_hir::SensitivityRead> entries;
-  entries.reserve(reads.size());
-  for (const auto& read : reads) {
-    entries.push_back({.symbol = read.symbol, .bit_range = read.bitRange});
-  }
-  return entries;
-}
-
-// Harvests slang's procedure-level and per-`@*` read sets via the
-// AnalysisManager listener. Other forms (wait, future wait_order, etc.)
-// run their own walkers locally at the lowering site and do not pass
-// through this listener.
-auto ComputeImplicitSensitivityReads(slang::ast::Compilation& compilation)
-    -> lowering::ast_to_hir::ImplicitSensitivityReads {
-  lowering::ast_to_hir::ImplicitSensitivityReads out;
-  slang::analysis::AnalysisManager manager;
-  manager.addListener([&](const slang::analysis::AnalyzedProcedure& ap) {
-    const auto* proc =
-        ap.analyzedSymbol->as_if<slang::ast::ProceduralBlockSymbol>();
-    if (proc == nullptr) return;
-    // LRM 9.2.2.2.1: for always_comb / always_latch the procedure-level
-    // sensitivity attaches to the body statement of the procedure.
-    if (proc->procedureKind == slang::ast::ProceduralBlockKind::AlwaysComb ||
-        proc->procedureKind == slang::ast::ProceduralBlockKind::AlwaysLatch) {
-      const auto& sens = ap.getSensitivityList();
-      if (sens.kind == slang::analysis::SensitivityList::Kind::Implicit) {
-        out.emplace(&proc->getBody(), TranslateReads(sens.reads));
-      }
-    }
-    // LRM 9.4.2.2: each `@*` TimedStatement carries its own sensitivity.
-    for (const auto& region : ap.getImplicitEventReadSets()) {
-      out.emplace(region.statement, TranslateReads(region.reads));
-    }
-  });
-  manager.analyze(compilation);
-  return out;
-}
-
-}  // namespace
 
 auto Compile(
     const frontend::CompilationInput& input, diag::DiagnosticSink& sink,
@@ -90,7 +36,8 @@ auto Compile(
   }
 
   const auto sensitivity_reads =
-      ComputeImplicitSensitivityReads(*result.artifacts.parse->compilation);
+      lowering::ast_to_hir::BuildSensitivityReadStore(
+          *result.artifacts.parse->compilation);
 
   auto hir = lowering::ast_to_hir::LowerCompilation(
       lowering::ast_to_hir::LowerCompilationFacts(

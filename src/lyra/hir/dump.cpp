@@ -12,6 +12,7 @@
 #include "lyra/base/internal_error.hpp"
 #include "lyra/base/overloaded.hpp"
 #include "lyra/hir/binary_op.hpp"
+#include "lyra/hir/continuous_assign.hpp"
 #include "lyra/hir/expr.hpp"
 #include "lyra/hir/method.hpp"
 #include "lyra/hir/module_unit.hpp"
@@ -818,6 +819,9 @@ class HirDumper {
     for (const auto& p : s.processes) {
       DumpProcess(p);
     }
+    for (const auto& ca : s.continuous_assigns) {
+      DumpContinuousAssign(ca);
+    }
     for (const auto& g : s.generates) {
       DumpGenerate(s, g);
     }
@@ -880,6 +884,27 @@ class HirDumper {
       Dedent();
     }
     DumpStmt(p, p.root_stmt);
+    Dedent();
+  }
+
+  void DumpContinuousAssign(const ContinuousAssign& ca) {
+    Line(
+        std::format(
+            "ContinuousAssign lhs={} rhs=Expr[{}]", FormatLvalue(ca.lhs),
+            ca.rhs.value));
+    Indent();
+    if (!ca.sensitivity_list.empty()) {
+      Line("SensitivityList:");
+      Indent();
+      for (const auto& r : ca.sensitivity_list) {
+        Line(
+            std::format(
+                "StructuralVarRef hops={} var=StructuralVar[{}] bits=[{}:{}]",
+                r.ref.hops.value, r.ref.var.value, r.bit_range.first,
+                r.bit_range.second));
+      }
+      Dedent();
+    }
     Dedent();
   }
 

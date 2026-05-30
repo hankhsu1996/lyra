@@ -16,6 +16,7 @@
 #include "lyra/diag/diagnostic.hpp"
 #include "lyra/hir/structural_scope.hpp"
 #include "lyra/lowering/hir_to_mir/case_cascade.hpp"
+#include "lyra/lowering/hir_to_mir/lower_continuous_assign.hpp"
 #include "lyra/lowering/hir_to_mir/lower_expr.hpp"
 #include "lyra/lowering/hir_to_mir/lower_process.hpp"
 #include "lyra/lowering/hir_to_mir/procedural_scope_helpers.hpp"
@@ -539,6 +540,13 @@ auto LowerStructuralScope(
   for (const auto& p : scope.processes) {
     auto proc_or =
         LowerProcess(unit_state, scope_state, p, scope.time_resolution);
+    if (!proc_or) return std::unexpected(std::move(proc_or.error()));
+    scope_state.AddProcess(*std::move(proc_or));
+  }
+
+  for (const auto& ca : scope.continuous_assigns) {
+    auto proc_or = LowerContinuousAssign(
+        unit_state, scope_state, scope, ca, scope.time_resolution);
     if (!proc_or) return std::unexpected(std::move(proc_or.error()));
     scope_state.AddProcess(*std::move(proc_or));
   }

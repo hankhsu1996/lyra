@@ -5,7 +5,6 @@
 #include <utility>
 #include <vector>
 
-#include <slang/ast/ASTVisitor.h>
 #include <slang/ast/Expression.h>
 #include <slang/ast/Statement.h>
 #include <slang/ast/Symbol.h>
@@ -13,9 +12,7 @@
 #include <slang/ast/statements/ConditionalStatements.h>
 #include <slang/ast/statements/LoopStatements.h>
 #include <slang/ast/statements/MiscStatements.h>
-#include <slang/ast/symbols/ValueSymbol.h>
 #include <slang/ast/symbols/VariableSymbols.h>
-#include <slang/ast/types/Type.h>
 
 #include "lyra/base/internal_error.hpp"
 #include "lyra/diag/diag_code.hpp"
@@ -225,11 +222,10 @@ auto LowerTimedStmt(
   // from LowerTimingControl; fill it in here where we still have the
   // parent statement pointer.
   if (auto* ie = std::get_if<hir::ImplicitEventControl>(&*timing)) {
-    const auto& reads_map = unit_facts.SensitivityReads();
-    const auto it = reads_map.find(&ts);
-    if (it != reads_map.end()) {
+    if (const auto* reads = unit_facts.SensitivityReads().Lookup(ts);
+        reads != nullptr) {
       ie->sensitivity_list =
-          TranslateSensitivityReads(it->second, scope_state.UnitState(), stack);
+          TranslateSensitivityReads(*reads, scope_state.UnitState(), stack);
     }
   }
   auto inner_stmt =
@@ -595,40 +591,10 @@ auto LowerEventTriggerStmt(
       .span = span};
 }
 
-// Walks the cond of a `wait (cond)` (LRM 9.4.3), recording every value
-// reference as a read. Slang's `IsSelectExpr` concept closes the set of
-// leaves that produce a read (`NamedValueExpression` /
-// `HierarchicalValueExpression` here; the other three select wrappers
-// recurse via visitDefault to a leaf). Lvalue tracking is unnecessary
-// because LRM 11.3.6 forbids assignment operators inside timing-control
-// expressions, so every value reference in `cond` is a read.
-struct WaitCondReadCollector
-    : slang::ast::ASTVisitor<
-          WaitCondReadCollector, slang::ast::VisitFlags::Expressions> {
-  std::vector<SensitivityRead> out;
-
-  void handle(const slang::ast::NamedValueExpression& e) {
-    Record(e.symbol);
-    visitDefault(e);
-  }
-
-  void handle(const slang::ast::HierarchicalValueExpression& e) {
-    Record(e.symbol);
-    visitDefault(e);
-  }
-
- private:
-  void Record(const slang::ast::ValueSymbol& sym) {
-    const auto width = sym.getType().getSelectableWidth();
-    out.push_back(
-        SensitivityRead{
-            .symbol = &sym, .bit_range = {0, width > 0 ? width - 1 : 0}});
-  }
-};
-
-// LRM 9.4.3 `wait (cond) body`. Sensitivity is derived locally by walking
-// `cond` -- no upstream `AnalysisManager` listener needed, since slang owns
-// no DFA for wait conditions.
+// LRM 9.4.3 `wait (cond) body`. Sensitivity is precomputed by driving slang's
+// flow analysis on `w.cond` via a per-wait `DefaultDFA` run inside
+// `BuildSensitivityReadStore` (see `docs/decisions/read-set-inference.md`).
+// We look up the result here keyed by the cond expression.
 auto LowerWaitStmt(
     const UnitLoweringFacts& unit_facts, ProcessLoweringState& proc_state,
     ScopeLoweringState& scope_state, ScopeStack& stack,
@@ -642,10 +608,12 @@ auto LowerWaitStmt(
       LowerStatement(unit_facts, proc_state, scope_state, stack, w.stmt);
   if (!body_or) return std::unexpected(std::move(body_or.error()));
   const hir::StmtId body_id = proc_state.AddStmt(*std::move(body_or));
-  WaitCondReadCollector collector;
-  w.cond.visit(collector);
-  auto sensitivity =
-      TranslateSensitivityReads(collector.out, scope_state.UnitState(), stack);
+  std::vector<hir::SensitivityEntry> sensitivity;
+  if (const auto* reads = unit_facts.SensitivityReads().Lookup(w.cond);
+      reads != nullptr) {
+    sensitivity =
+        TranslateSensitivityReads(*reads, scope_state.UnitState(), stack);
+  }
   return hir::Stmt{
       .label = std::nullopt,
       .data =

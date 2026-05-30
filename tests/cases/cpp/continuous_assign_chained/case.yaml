@@ -1,0 +1,13 @@
+id: cpp.continuous_assign_chained
+tags: [cpp_run]
+input:
+  command: [run, cpp]
+  project: false
+  top: Top
+  files: [main.sv]
+expect:
+  exit: 0
+  variables:
+    a: 5
+    b: 5
+    c: 6

@@ -1225,4 +1225,97 @@ auto LowerProcLvalue(
       primary->data);
 }
 
+auto LowerStructuralLvalue(
+    const UnitLoweringFacts& unit_facts, UnitLoweringState& unit_state,
+    ScopeLoweringState& scope_state, const ScopeStack& stack,
+    const slang::ast::Expression& expr) -> diag::Result<hir::Lvalue> {
+  const auto& mapper = unit_facts.SourceMapper();
+  const auto span = mapper.SpanOf(expr.sourceRange);
+  auto unsupported = [&] {
+    return diag::Unsupported(
+        span, diag::DiagCode::kUnsupportedAssignmentTarget,
+        "assignment target is not supported yet",
+        diag::UnsupportedCategory::kFeature);
+  };
+
+  if (expr.kind == slang::ast::ExpressionKind::ElementSelect) {
+    const auto& sel = expr.as<slang::ast::ElementSelectExpression>();
+    if (!sel.value().type->isIntegral()) {
+      return diag::Unsupported(
+          span, diag::DiagCode::kUnsupportedAssignmentTarget,
+          "element-select lvalue on non-integral operand is not yet supported",
+          diag::UnsupportedCategory::kFeature);
+    }
+    auto inner = LowerStructuralLvalue(
+        unit_facts, unit_state, scope_state, stack, sel.value());
+    if (!inner) return std::unexpected(std::move(inner.error()));
+    auto idx_or = LowerStructuralExpr(
+        unit_facts, unit_state, scope_state, stack, sel.selector(),
+        std::nullopt);
+    if (!idx_or) return std::unexpected(std::move(idx_or.error()));
+    const hir::ExprId idx_id = scope_state.AddExpr(*std::move(idx_or));
+    inner->selectors.emplace_back(hir::ElementLvalueSelector{.index = idx_id});
+    return std::move(*inner);
+  }
+
+  if (expr.kind == slang::ast::ExpressionKind::RangeSelect) {
+    const auto& sel = expr.as<slang::ast::RangeSelectExpression>();
+    if (!sel.value().type->isIntegral()) {
+      return diag::Unsupported(
+          span, diag::DiagCode::kUnsupportedAssignmentTarget,
+          "range-select lvalue on non-integral operand is not yet supported",
+          diag::UnsupportedCategory::kFeature);
+    }
+    auto inner = LowerStructuralLvalue(
+        unit_facts, unit_state, scope_state, stack, sel.value());
+    if (!inner) return std::unexpected(std::move(inner.error()));
+    auto left_or = LowerStructuralExpr(
+        unit_facts, unit_state, scope_state, stack, sel.left(), std::nullopt);
+    if (!left_or) return std::unexpected(std::move(left_or.error()));
+    const hir::ExprId left_id = scope_state.AddExpr(*std::move(left_or));
+    auto right_or = LowerStructuralExpr(
+        unit_facts, unit_state, scope_state, stack, sel.right(), std::nullopt);
+    if (!right_or) return std::unexpected(std::move(right_or.error()));
+    const hir::ExprId right_id = scope_state.AddExpr(*std::move(right_or));
+    hir::RangeBounds bounds = [&]() -> hir::RangeBounds {
+      switch (sel.getSelectionKind()) {
+        case slang::ast::RangeSelectionKind::Simple:
+          return hir::RangeConstantBounds{
+              .msb_expr = left_id, .lsb_expr = right_id};
+        case slang::ast::RangeSelectionKind::IndexedUp:
+          return hir::RangeIndexedUpBounds{
+              .base_index = left_id, .width = right_id};
+        case slang::ast::RangeSelectionKind::IndexedDown:
+          return hir::RangeIndexedDownBounds{
+              .base_index = left_id, .width = right_id};
+      }
+      throw InternalError(
+          "LowerStructuralLvalue: unknown slang RangeSelectionKind");
+    }();
+    inner->selectors.emplace_back(
+        hir::RangeLvalueSelector{.bounds = std::move(bounds)});
+    return std::move(*inner);
+  }
+
+  // Leaf: lower as a structural expression and project to the StructuralVarRef
+  // root. Loop-induction vars and (impossible-at-scope-level) procedural vars
+  // are rejected here so the user sees an Unsupported diagnostic instead of
+  // a downstream InternalError.
+  auto leaf = LowerStructuralExpr(
+      unit_facts, unit_state, scope_state, stack, expr, std::nullopt);
+  if (!leaf) return std::unexpected(std::move(leaf.error()));
+  auto* primary = std::get_if<hir::PrimaryExpr>(&leaf->data);
+  if (primary == nullptr) return unsupported();
+  return std::visit(
+      Overloaded{
+          [](const hir::StructuralVarRef& r) -> diag::Result<hir::Lvalue> {
+            return hir::Lvalue{.root = r, .selectors = {}};
+          },
+          [&](const auto&) -> diag::Result<hir::Lvalue> {
+            return unsupported();
+          },
+      },
+      primary->data);
+}
+
 }  // namespace lyra::lowering::ast_to_hir

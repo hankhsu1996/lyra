@@ -21,6 +21,7 @@
 #include "lyra/hir/structural_scope.hpp"
 #include "lyra/hir/subroutine.hpp"
 #include "lyra/hir/type.hpp"
+#include "lyra/lowering/ast_to_hir/continuous_assign.hpp"
 #include "lyra/lowering/ast_to_hir/expression/lower.hpp"
 #include "lyra/lowering/ast_to_hir/facts.hpp"
 #include "lyra/lowering/ast_to_hir/generate.hpp"
@@ -133,6 +134,16 @@ auto LowerProceduralBlockMemberInto(
   return {};
 }
 
+auto LowerContinuousAssignMemberInto(
+    const UnitLoweringFacts& unit_facts, ScopeLoweringState& scope_state,
+    ScopeStack& stack, const slang::ast::ContinuousAssignSymbol& sym)
+    -> diag::Result<void> {
+  auto ca = LowerContinuousAssign(unit_facts, scope_state, stack, sym);
+  if (!ca) return std::unexpected(std::move(ca.error()));
+  scope_state.AddContinuousAssign(*std::move(ca));
+  return {};
+}
+
 auto LowerLoopGenerateMemberInto(
     const UnitLoweringFacts& unit_facts, ScopeLoweringState& scope_state,
     ScopeStack& stack, const slang::ast::GenerateBlockArraySymbol& array)
@@ -190,6 +201,10 @@ auto LowerScopeMemberInto(
       return LowerProceduralBlockMemberInto(
           unit_facts, scope_state, stack,
           member.as<slang::ast::ProceduralBlockSymbol>());
+    case slang::ast::SymbolKind::ContinuousAssign:
+      return LowerContinuousAssignMemberInto(
+          unit_facts, scope_state, stack,
+          member.as<slang::ast::ContinuousAssignSymbol>());
     case slang::ast::SymbolKind::GenerateBlockArray:
       return LowerLoopGenerateMemberInto(
           unit_facts, scope_state, stack,
