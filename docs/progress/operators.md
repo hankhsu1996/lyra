@@ -44,9 +44,10 @@ landed. Where a cut is independent the text says so.
       from `kEquality` to `kWildcardEquality` so wildcard items in `inside` work. Closes
       `operators/wildcard_equality/four_state.yaml` and unblocks `control-flow.md` C11.
 
-- [ ] W3 -- Case equality `===` / `!==`. Add `BinaryOp::kCaseEq` / `kCaseNeq` plus a
-      `PackedArray::CaseEquals` helper (bit-exact 4-state compare, X matches X). Independent of W1
-      and W2. Closes `operators/case_equality/default.yaml`.
+- [x] W3 -- Case equality `===` / `!==`. `BinaryOp::kCaseEquality` / `kCaseInequality` route through
+      `PackedArray::CaseEqual` (bit-exact 4-state compare, X matches X, Z matches Z, X does not
+      match Z). Closes `operators/case_equality/default.yaml` and `four_state.yaml` including
+      2-state operands, mixed X/Z patterns, and width promotion.
 
 ### Selectors
 

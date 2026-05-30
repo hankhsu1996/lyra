@@ -1,4 +1,4 @@
-id: cpp.case_equality_basic
+id: cpp.case_equality_two_state
 tags: [cpp_run]
 input:
   command: [run, cpp]
@@ -8,7 +8,7 @@ input:
 expect:
   exit: 0
   variables:
-    eq_same: 1
+    eq_match: 1
     eq_diff: 0
-    eq_xz: 1
-    neq_same: 0
+    neq_match: 0
+    neq_diff: 1
