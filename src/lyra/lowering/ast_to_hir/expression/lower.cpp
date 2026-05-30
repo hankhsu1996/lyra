@@ -1250,8 +1250,7 @@ auto LowerStructuralLvalue(
         unit_facts, unit_state, scope_state, stack, sel.value());
     if (!inner) return std::unexpected(std::move(inner.error()));
     auto idx_or = LowerStructuralExpr(
-        unit_facts, unit_state, scope_state, stack, sel.selector(),
-        std::nullopt);
+        unit_facts, unit_state, scope_state, stack, sel.selector());
     if (!idx_or) return std::unexpected(std::move(idx_or.error()));
     const hir::ExprId idx_id = scope_state.AddExpr(*std::move(idx_or));
     inner->selectors.emplace_back(hir::ElementLvalueSelector{.index = idx_id});
@@ -1270,11 +1269,11 @@ auto LowerStructuralLvalue(
         unit_facts, unit_state, scope_state, stack, sel.value());
     if (!inner) return std::unexpected(std::move(inner.error()));
     auto left_or = LowerStructuralExpr(
-        unit_facts, unit_state, scope_state, stack, sel.left(), std::nullopt);
+        unit_facts, unit_state, scope_state, stack, sel.left());
     if (!left_or) return std::unexpected(std::move(left_or.error()));
     const hir::ExprId left_id = scope_state.AddExpr(*std::move(left_or));
     auto right_or = LowerStructuralExpr(
-        unit_facts, unit_state, scope_state, stack, sel.right(), std::nullopt);
+        unit_facts, unit_state, scope_state, stack, sel.right());
     if (!right_or) return std::unexpected(std::move(right_or.error()));
     const hir::ExprId right_id = scope_state.AddExpr(*std::move(right_or));
     hir::RangeBounds bounds = [&]() -> hir::RangeBounds {
@@ -1302,7 +1301,7 @@ auto LowerStructuralLvalue(
   // are rejected here so the user sees an Unsupported diagnostic instead of
   // a downstream InternalError.
   auto leaf = LowerStructuralExpr(
-      unit_facts, unit_state, scope_state, stack, expr, std::nullopt);
+      unit_facts, unit_state, scope_state, stack, expr);
   if (!leaf) return std::unexpected(std::move(leaf.error()));
   auto* primary = std::get_if<hir::PrimaryExpr>(&leaf->data);
   if (primary == nullptr) return unsupported();
