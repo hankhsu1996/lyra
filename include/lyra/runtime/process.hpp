@@ -1,6 +1,7 @@
 #pragma once
 
 #include <coroutine>
+#include <exception>
 #include <utility>
 
 #include "lyra/base/internal_error.hpp"
@@ -14,7 +15,11 @@ class ProcessCoroutine {
   // C++20 coroutine protocol names are spelled by the standard.
   // NOLINTNEXTLINE(readability-identifier-naming)
   struct promise_type {
-    bool failed = false;
+    // Captures any exception that escapes the coroutine body. `Resume`
+    // rethrows it so the original `what()` and type reach the engine
+    // unchanged, instead of being collapsed into a generic "coroutine
+    // failed" message.
+    std::exception_ptr pending_exception;
     // Back-pointer set by RuntimeProcess construction so awaitables can
     // reach the owning RuntimeProcess from `await_suspend` (e.g. to
     // subscribe it to a named event's waiter list, or to look up the
@@ -39,7 +44,7 @@ class ProcessCoroutine {
     }
     // NOLINTNEXTLINE(readability-identifier-naming)
     void unhandled_exception() noexcept {
-      failed = true;
+      pending_exception = std::current_exception();
     }
 
     [[nodiscard]] auto Process() const -> RuntimeProcess& {
@@ -81,10 +86,9 @@ class ProcessCoroutine {
       return true;
     }
     handle_.resume();
-    if (handle_.promise().failed) {
-      handle_.promise().failed = false;
-      throw InternalError(
-          "lyra::runtime::ProcessCoroutine::Resume: process coroutine failed");
+    if (auto exc =
+            std::exchange(handle_.promise().pending_exception, nullptr)) {
+      std::rethrow_exception(exc);
     }
     return handle_.done();
   }

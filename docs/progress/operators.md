@@ -335,16 +335,27 @@ closure stays a single lambda -- there is no nested mutation lambda.
 
 ### Assignment families
 
-- [ ] W11 -- Compound assignment `+= -= *= /= %= &= |= ^= <<= >>= <<<= >>>=`. Add
-      `hir::CompoundAssignStmt { Lvalue target; BinaryOp op; ExprId rhs }`. HIR -> MIR snapshots
-      every index expression in `target` into fresh procedural temps before the read-modify-write so
-      the target lvalue evaluates exactly once (LRM 11.4.1). Covers `arr[i++] += x` and
-      partial-target shapes such as `data[i+:4] |= v` through the W6 selector chain.
+- [x] W11 -- Compound assignment `+= -= *= /= %= &= |= ^= <<= >>= <<<= >>>=`. Compound stays as
+      compound through HIR and MIR: `AssignExpr` carries an `optional<BinaryOp> compound_op` field
+      that is `nullopt` for a simple `=` and set for `op=`. Slang's expanded
+      `BinaryOp(LValueRef,     user_rhs)` tree is consumed at AST -> HIR -- the helper extracts the
+      user-written rhs from the side that does not wrap `LValueReference`, then re-types it to the
+      lhs type so the runtime stays at one shape (slang's per-operand promotion Conversions become
+      elaboration artifacts that lowering does not reproduce). C++ emit produces `<chain> op= rhs`
+      directly: `PackedArray`, `PackedArrayRef`, and `ScopedMutation<PackedArray>` each overload the
+      arithmetic / bitwise compounds as `operator+=` etc., and the three shifts as `ShiftLeftAssign`
+      / `LogicalShiftRightAssign` / `ArithmeticShiftRightAssign`. The LRM 11.4.1 "evaluate target
+      only once" rule falls out of the C++ standard's eval-once rule on the compound assignment
+      expression; no HIR-level snapshot pass is needed. NBA + compound is rejected at slang parsing
+      (LRM A.6.2); InternalError catches grammar drift. Closes `operators/compound_assignment` for
+      whole-var, selector, and mixed-state target shapes (`x += y`, `x[7:4] |= v`, `x[i +: 4] += k`,
+      `int %= logic[3:0]`).
 
 - [ ] W12 -- `++` / `--` (prefix and postfix). Add `hir::IncrDecrStmt` and `hir::IncrDecrExpr`
-      (separate from `AssignExpr` because the expression form returns the pre- or post-value). HIR
-      -> MIR uses the same evaluate-target-once snapshot pattern as W11. Closes the `++` / `--` gap
-      noted in `architecture-reset.md` for `operators/unary`.
+      (separate from `AssignExpr` because the expression form returns the pre- or post-value). Once
+      `++` / `--` are accepted in index positions, the same eval-once rule will need explicit
+      handling at the read-modify-write level; the natural home for that work is LIR's address-once
+      lowering rather than an HIR snapshot pass.
 
 ## Cross-references
 

@@ -345,14 +345,32 @@ auto ParseExpectedValue(std::string_view text, bool node_is_integer)
     ExpectedValue out;
     out.kind = ExpectedValueKind::kIntegerScalar;
     std::int64_t value = 0;
-    auto result = std::from_chars(
-        text.data(), text.data() + text.size(), value, 10);  // NOLINT
-    if (result.ec != std::errc{} || result.ptr != text.data() + text.size()) {
+    // yaml-cpp delivers the raw lexeme regardless of base prefix when
+    // node_is_integer is true. Honor the C/SV-style `0x` / `0X` prefix (and
+    // optional leading minus) so hex expectations like `0x08` work without
+    // forcing every yaml author to hand-convert to decimal. Bare unprefixed
+    // text parses as base 10 to match yaml's IntegerScalar contract.
+    std::string_view body = text;
+    bool negative = false;
+    if (!body.empty() && body.front() == '-') {
+      negative = true;
+      body.remove_prefix(1);
+    }
+    int base = 10;
+    if (body.size() >= 2 && body.front() == '0' &&
+        (body[1] == 'x' || body[1] == 'X')) {
+      base = 16;
+      body.remove_prefix(2);
+    }
+    auto result =
+        std::from_chars(body.data(), body.data() + body.size(), value, base);
+    if (result.ec != std::errc{} || result.ptr != body.data() + body.size()) {
       return std::unexpected(
           std::format(
               "expect.variables: cannot parse integer '{}'",
               std::string{text}));
     }
+    if (negative) value = -value;
     out.integer_value = value;
     out.bit_width = 32;
     out.is_signed = true;

@@ -1,0 +1,14 @@
+id: cpp.compound_assign_shift
+tags: [cpp_run]
+input:
+  command: [run, cpp]
+  project: false
+  top: Top
+  files: [main.sv]
+expect:
+  exit: 0
+  variables:
+    lshift_logical: 0x0010
+    rshift_logical: 0x0F00
+    lshift_arith: 16
+    rshift_arith: -4

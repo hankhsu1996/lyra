@@ -1,0 +1,14 @@
+id: cpp.compound_assign_element_select
+tags: [cpp_run]
+input:
+  command: [run, cpp]
+  project: false
+  top: Top
+  files: [main.sv]
+expect:
+  exit: 0
+  variables:
+    set_bit_const: 0x08
+    clear_bit_const: 0xDF
+    set_bit_dynamic: 0x08
+    add_dynamic_range: 0x0050

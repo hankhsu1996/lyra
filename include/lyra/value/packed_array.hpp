@@ -175,6 +175,45 @@ class PackedArray {
   [[nodiscard]] auto operator|(const PackedArray& other) const -> PackedArray;
   [[nodiscard]] auto operator^(const PackedArray& other) const -> PackedArray;
 
+  // LRM 11.4 compound assignments. Each is `*this = *this op rhs`; the
+  // binary `op` already enforces operand-shape compatibility, so frontends
+  // must hand both operands at the same shape (typically via a Conversion
+  // on the rhs to lhs.type at HIR construction). Shift compounds are
+  // method-style because the binary form is method-style too.
+  auto operator+=(const PackedArray& rhs) -> PackedArray& {
+    return *this = *this + rhs;
+  }
+  auto operator-=(const PackedArray& rhs) -> PackedArray& {
+    return *this = *this - rhs;
+  }
+  auto operator*=(const PackedArray& rhs) -> PackedArray& {
+    return *this = *this * rhs;
+  }
+  auto operator/=(const PackedArray& rhs) -> PackedArray& {
+    return *this = *this / rhs;
+  }
+  auto operator%=(const PackedArray& rhs) -> PackedArray& {
+    return *this = *this % rhs;
+  }
+  auto operator&=(const PackedArray& rhs) -> PackedArray& {
+    return *this = *this & rhs;
+  }
+  auto operator|=(const PackedArray& rhs) -> PackedArray& {
+    return *this = *this | rhs;
+  }
+  auto operator^=(const PackedArray& rhs) -> PackedArray& {
+    return *this = *this ^ rhs;
+  }
+  auto ShiftLeftAssign(const PackedArray& rhs) -> PackedArray& {
+    return *this = ShiftLeft(rhs);
+  }
+  auto LogicalShiftRightAssign(const PackedArray& rhs) -> PackedArray& {
+    return *this = LogicalShiftRight(rhs);
+  }
+  auto ArithmeticShiftRightAssign(const PackedArray& rhs) -> PackedArray& {
+    return *this = ArithmeticShiftRight(rhs);
+  }
+
   [[nodiscard]] auto operator==(const PackedArray& other) const -> PackedArray;
   [[nodiscard]] auto operator!=(const PackedArray& other) const -> PackedArray;
   // LRM 11.4.6: X/Z in `other` are wildcards; X/Z in `*this` are not.
@@ -293,6 +332,46 @@ class PackedArrayRef {
 
   // Write-side: route through AssignSlice on root.
   auto operator=(const PackedArray& value) -> PackedArrayRef&;
+
+  // LRM 11.4 compound assignments. Read the current sub-slice once, combine
+  // with `rhs` (frontend converts rhs to lhs.type), write back through
+  // `AssignSlice`. The fixed `bit_offset_` / `bit_width_` on the proxy are
+  // the eval-once mechanism: the lvalue chain is constructed once by the
+  // caller, the proxy captures the position, and both the read and write
+  // here use that same position with no re-evaluation of indices.
+  auto operator+=(const PackedArray& rhs) -> PackedArrayRef& {
+    return *this = PackedArray(*this) + rhs;
+  }
+  auto operator-=(const PackedArray& rhs) -> PackedArrayRef& {
+    return *this = PackedArray(*this) - rhs;
+  }
+  auto operator*=(const PackedArray& rhs) -> PackedArrayRef& {
+    return *this = PackedArray(*this) * rhs;
+  }
+  auto operator/=(const PackedArray& rhs) -> PackedArrayRef& {
+    return *this = PackedArray(*this) / rhs;
+  }
+  auto operator%=(const PackedArray& rhs) -> PackedArrayRef& {
+    return *this = PackedArray(*this) % rhs;
+  }
+  auto operator&=(const PackedArray& rhs) -> PackedArrayRef& {
+    return *this = PackedArray(*this) & rhs;
+  }
+  auto operator|=(const PackedArray& rhs) -> PackedArrayRef& {
+    return *this = PackedArray(*this) | rhs;
+  }
+  auto operator^=(const PackedArray& rhs) -> PackedArrayRef& {
+    return *this = PackedArray(*this) ^ rhs;
+  }
+  auto ShiftLeftAssign(const PackedArray& rhs) -> PackedArrayRef& {
+    return *this = PackedArray(*this).ShiftLeft(rhs);
+  }
+  auto LogicalShiftRightAssign(const PackedArray& rhs) -> PackedArrayRef& {
+    return *this = PackedArray(*this).LogicalShiftRight(rhs);
+  }
+  auto ArithmeticShiftRightAssign(const PackedArray& rhs) -> PackedArrayRef& {
+    return *this = PackedArray(*this).ArithmeticShiftRight(rhs);
+  }
 
   // Chain composition. Positions are in the current sub-view's outer-element
   // units; the proxy scales internally based on `dims_`.

@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstdint>
+#include <optional>
 #include <string>
 #include <variant>
 #include <vector>
@@ -60,8 +61,11 @@ struct ConditionalExpr {
   ExprId else_value;
 };
 
+// `compound_op.has_value()` marks the assignment as `target op= value`;
+// `nullopt` is a simple write. `value` is already typed to match `target`.
 struct AssignExpr {
   Lvalue target;
+  std::optional<BinaryOp> compound_op = std::nullopt;
   ExprId value;
 };
 

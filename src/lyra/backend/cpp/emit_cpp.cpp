@@ -337,6 +337,9 @@ auto RenderScopeHeaderFile(
 
 auto RenderHostMain(const mir::StructuralScope& entry) -> std::string {
   std::string out;
+  out += "#include <exception>\n";
+  out += "#include <iostream>\n";
+  out += "\n";
   out += "#include \"lyra/runtime/engine.hpp\"\n";
   out += "#include \"" + entry.name + ".hpp\"\n";
   out += "\n";
@@ -344,7 +347,12 @@ auto RenderHostMain(const mir::StructuralScope& entry) -> std::string {
   out += "  " + entry.name + " top;\n";
   out += "  lyra::runtime::Engine engine;\n";
   out += "  engine.BindRoot(\"top\", top);\n";
-  out += "  return engine.Run();\n";
+  out += "  try {\n";
+  out += "    return engine.Run();\n";
+  out += "  } catch (const std::exception& e) {\n";
+  out += "    std::cerr << e.what() << \"\\n\";\n";
+  out += "    return 1;\n";
+  out += "  }\n";
   out += "}\n";
   return out;
 }

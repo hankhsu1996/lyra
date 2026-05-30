@@ -676,9 +676,22 @@ auto LowerHirAssignExprProc(
   mir::Lvalue lhs = *std::move(lhs_or);
 
   if (a.kind == hir::AssignKind::kBlocking) {
+    const std::optional<mir::BinaryOp> compound_op =
+        a.compound_op.has_value() ? std::optional{LowerBinaryOp(*a.compound_op)}
+                                  : std::nullopt;
     return mir::Expr{
-        .data = mir::AssignExpr{.target = std::move(lhs), .value = rhs_id},
+        .data =
+            mir::AssignExpr{
+                .target = std::move(lhs),
+                .compound_op = compound_op,
+                .value = rhs_id},
         .type = result_type};
+  }
+
+  if (a.compound_op.has_value()) {
+    throw InternalError(
+        "LowerHirAssignExprProc: compound assignment with non-blocking kind "
+        "is not a legal SV form (LRM A.6.2 grammar)");
   }
 
   if (!std::holds_alternative<mir::StructuralVarRef>(lhs.root)) {

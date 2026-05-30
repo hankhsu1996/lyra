@@ -533,9 +533,13 @@ class MirDumper {
                   c.condition.value, c.then_value.value, c.else_value.value);
             },
             [this](const AssignExpr& a) -> std::string {
+              const std::string op_str =
+                  a.compound_op.has_value()
+                      ? std::format(" op={}", FormatBinaryOp(*a.compound_op))
+                      : std::string{};
               return std::format(
-                  "AssignExpr target={} value=Expr[{}]", FormatLvalue(a.target),
-                  a.value.value);
+                  "AssignExpr target={}{} value=Expr[{}]",
+                  FormatLvalue(a.target), op_str, a.value.value);
             },
             [this](const CallExpr& c) -> std::string {
               std::string args;

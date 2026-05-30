@@ -29,14 +29,13 @@
 #include "lyra/base/internal_error.hpp"
 #include "lyra/base/overloaded.hpp"
 #include "lyra/diag/diagnostic.hpp"
-#include "lyra/hir/binary_op.hpp"
 #include "lyra/hir/conversion.hpp"
 #include "lyra/hir/expr.hpp"
 #include "lyra/hir/primary.hpp"
 #include "lyra/hir/subroutine_ref.hpp"
 #include "lyra/hir/type.hpp"
-#include "lyra/hir/unary_op.hpp"
 #include "lyra/hir/value_ref.hpp"
+#include "lyra/lowering/ast_to_hir/expression/slang_atoms.hpp"
 #include "lyra/lowering/ast_to_hir/facts.hpp"
 #include "lyra/lowering/ast_to_hir/integral_constant.hpp"
 #include "lyra/lowering/ast_to_hir/state.hpp"
@@ -45,138 +44,6 @@
 namespace lyra::lowering::ast_to_hir {
 
 namespace {
-
-auto LowerSlangLiteralBase(const slang::syntax::SyntaxNode* syntax)
-    -> hir::IntegerLiteralBase {
-  if (syntax != nullptr &&
-      syntax->kind == slang::syntax::SyntaxKind::IntegerVectorExpression) {
-    const auto& iv = syntax->as<slang::syntax::IntegerVectorExpressionSyntax>();
-    switch (iv.base.numericFlags().base()) {
-      case slang::LiteralBase::Binary:
-        return hir::IntegerLiteralBase::kBinary;
-      case slang::LiteralBase::Octal:
-        return hir::IntegerLiteralBase::kOctal;
-      case slang::LiteralBase::Decimal:
-        return hir::IntegerLiteralBase::kDecimal;
-      case slang::LiteralBase::Hex:
-        return hir::IntegerLiteralBase::kHexadecimal;
-    }
-  }
-  return hir::IntegerLiteralBase::kDecimal;
-}
-
-auto LowerConversionKind(slang::ast::ConversionKind k) -> hir::ConversionKind {
-  switch (k) {
-    case slang::ast::ConversionKind::Implicit:
-      return hir::ConversionKind::kImplicit;
-    case slang::ast::ConversionKind::Propagated:
-      return hir::ConversionKind::kPropagated;
-    case slang::ast::ConversionKind::StreamingConcat:
-      return hir::ConversionKind::kStreamingConcat;
-    case slang::ast::ConversionKind::Explicit:
-      return hir::ConversionKind::kExplicit;
-    case slang::ast::ConversionKind::BitstreamCast:
-      return hir::ConversionKind::kBitstreamCast;
-  }
-  throw InternalError("LowerConversionKind: unknown slang ConversionKind");
-}
-
-auto LowerBinaryOp(slang::ast::BinaryOperator op) -> hir::BinaryOp {
-  switch (op) {
-    case slang::ast::BinaryOperator::Add:
-      return hir::BinaryOp::kAdd;
-    case slang::ast::BinaryOperator::Subtract:
-      return hir::BinaryOp::kSub;
-    case slang::ast::BinaryOperator::Multiply:
-      return hir::BinaryOp::kMul;
-    case slang::ast::BinaryOperator::Divide:
-      return hir::BinaryOp::kDiv;
-    case slang::ast::BinaryOperator::Mod:
-      return hir::BinaryOp::kMod;
-    case slang::ast::BinaryOperator::Power:
-      return hir::BinaryOp::kPower;
-    case slang::ast::BinaryOperator::BinaryAnd:
-      return hir::BinaryOp::kBitwiseAnd;
-    case slang::ast::BinaryOperator::BinaryOr:
-      return hir::BinaryOp::kBitwiseOr;
-    case slang::ast::BinaryOperator::BinaryXor:
-      return hir::BinaryOp::kBitwiseXor;
-    case slang::ast::BinaryOperator::BinaryXnor:
-      return hir::BinaryOp::kBitwiseXnor;
-    case slang::ast::BinaryOperator::Equality:
-      return hir::BinaryOp::kEquality;
-    case slang::ast::BinaryOperator::Inequality:
-      return hir::BinaryOp::kInequality;
-    case slang::ast::BinaryOperator::CaseEquality:
-      return hir::BinaryOp::kCaseEquality;
-    case slang::ast::BinaryOperator::CaseInequality:
-      return hir::BinaryOp::kCaseInequality;
-    case slang::ast::BinaryOperator::WildcardEquality:
-      return hir::BinaryOp::kWildcardEquality;
-    case slang::ast::BinaryOperator::WildcardInequality:
-      return hir::BinaryOp::kWildcardInequality;
-    case slang::ast::BinaryOperator::GreaterThanEqual:
-      return hir::BinaryOp::kGreaterEqual;
-    case slang::ast::BinaryOperator::GreaterThan:
-      return hir::BinaryOp::kGreaterThan;
-    case slang::ast::BinaryOperator::LessThanEqual:
-      return hir::BinaryOp::kLessEqual;
-    case slang::ast::BinaryOperator::LessThan:
-      return hir::BinaryOp::kLessThan;
-    case slang::ast::BinaryOperator::LogicalAnd:
-      return hir::BinaryOp::kLogicalAnd;
-    case slang::ast::BinaryOperator::LogicalOr:
-      return hir::BinaryOp::kLogicalOr;
-    case slang::ast::BinaryOperator::LogicalImplication:
-      return hir::BinaryOp::kLogicalImplication;
-    case slang::ast::BinaryOperator::LogicalEquivalence:
-      return hir::BinaryOp::kLogicalEquivalence;
-    case slang::ast::BinaryOperator::LogicalShiftLeft:
-      return hir::BinaryOp::kLogicalShiftLeft;
-    case slang::ast::BinaryOperator::LogicalShiftRight:
-      return hir::BinaryOp::kLogicalShiftRight;
-    case slang::ast::BinaryOperator::ArithmeticShiftLeft:
-      return hir::BinaryOp::kArithmeticShiftLeft;
-    case slang::ast::BinaryOperator::ArithmeticShiftRight:
-      return hir::BinaryOp::kArithmeticShiftRight;
-  }
-  throw InternalError("LowerBinaryOp: unknown slang BinaryOperator");
-}
-
-auto LowerUnaryOp(slang::ast::UnaryOperator op, diag::SourceSpan span)
-    -> diag::Result<hir::UnaryOp> {
-  switch (op) {
-    case slang::ast::UnaryOperator::Plus:
-      return hir::UnaryOp::kPlus;
-    case slang::ast::UnaryOperator::Minus:
-      return hir::UnaryOp::kMinus;
-    case slang::ast::UnaryOperator::BitwiseNot:
-      return hir::UnaryOp::kBitwiseNot;
-    case slang::ast::UnaryOperator::LogicalNot:
-      return hir::UnaryOp::kLogicalNot;
-    case slang::ast::UnaryOperator::BitwiseAnd:
-      return hir::UnaryOp::kReductionAnd;
-    case slang::ast::UnaryOperator::BitwiseOr:
-      return hir::UnaryOp::kReductionOr;
-    case slang::ast::UnaryOperator::BitwiseXor:
-      return hir::UnaryOp::kReductionXor;
-    case slang::ast::UnaryOperator::BitwiseNand:
-      return hir::UnaryOp::kReductionNand;
-    case slang::ast::UnaryOperator::BitwiseNor:
-      return hir::UnaryOp::kReductionNor;
-    case slang::ast::UnaryOperator::BitwiseXnor:
-      return hir::UnaryOp::kReductionXnor;
-    case slang::ast::UnaryOperator::Preincrement:
-    case slang::ast::UnaryOperator::Predecrement:
-    case slang::ast::UnaryOperator::Postincrement:
-    case slang::ast::UnaryOperator::Postdecrement:
-      return diag::Unsupported(
-          span, diag::DiagCode::kUnsupportedExpressionForm,
-          "increment and decrement expressions are not supported yet",
-          diag::UnsupportedCategory::kOperation);
-  }
-  throw InternalError("LowerUnaryOp: unknown slang UnaryOperator");
-}
 
 auto MakeIntegerLiteralExpr(
     const slang::ast::IntegerLiteral& lit, hir::TypeId type,
@@ -244,35 +111,6 @@ auto MakeStringLiteralExpr(
   };
 }
 
-auto LowerEnumMethodName(std::string_view name)
-    -> std::optional<hir::BuiltinMethodKind> {
-  if (name == "first") return hir::BuiltinMethodKind::kEnumFirst;
-  if (name == "last") return hir::BuiltinMethodKind::kEnumLast;
-  if (name == "num") return hir::BuiltinMethodKind::kEnumNum;
-  if (name == "next") return hir::BuiltinMethodKind::kEnumNext;
-  if (name == "prev") return hir::BuiltinMethodKind::kEnumPrev;
-  if (name == "name") return hir::BuiltinMethodKind::kEnumName;
-  return std::nullopt;
-}
-
-auto LowerTimeUnit(slang::TimeUnit u) -> hir::TimeScale {
-  switch (u) {
-    case slang::TimeUnit::Femtoseconds:
-      return hir::TimeScale::kFs;
-    case slang::TimeUnit::Picoseconds:
-      return hir::TimeScale::kPs;
-    case slang::TimeUnit::Nanoseconds:
-      return hir::TimeScale::kNs;
-    case slang::TimeUnit::Microseconds:
-      return hir::TimeScale::kUs;
-    case slang::TimeUnit::Milliseconds:
-      return hir::TimeScale::kMs;
-    case slang::TimeUnit::Seconds:
-      return hir::TimeScale::kS;
-  }
-  throw InternalError("LowerTimeUnit: unknown slang TimeUnit");
-}
-
 auto MakeTimeLiteralExpr(
     double value, hir::TimeScale scale, hir::TypeId type, diag::SourceSpan span)
     -> hir::Expr {
@@ -301,31 +139,6 @@ auto MakeRefExpr(hir::Primary ref, hir::TypeId type, diag::SourceSpan span)
       .data = hir::PrimaryExpr{.data = std::move(ref)},
       .span = span,
   };
-}
-
-// Project an Lvalue (write context) into a Primary (read context). Only
-// whole-var Lvalues (empty selector chain) can be projected directly; a
-// selector lvalue's read-context shape is an ElementSelectExpr or
-// RangeSelectExpr, which the caller must materialize separately.
-auto LvalueToPrimary(const hir::Lvalue& lvalue) -> hir::Primary {
-  if (!lvalue.selectors.empty()) {
-    throw InternalError(
-        "LvalueToPrimary: cannot project a selector lvalue into a Primary; "
-        "compound assignment to a selector target is not yet supported");
-  }
-  return std::visit(
-      [](const auto& ref) -> hir::Primary { return ref; }, lvalue.root);
-}
-
-auto FromSlangSubroutineKind(slang::ast::SubroutineKind k)
-    -> support::SystemSubroutineKind {
-  switch (k) {
-    case slang::ast::SubroutineKind::Function:
-      return support::SystemSubroutineKind::kFunction;
-    case slang::ast::SubroutineKind::Task:
-      return support::SystemSubroutineKind::kTask;
-  }
-  throw InternalError("FromSlangSubroutineKind: unknown SubroutineKind");
 }
 
 auto MakeReturnConventionType(
@@ -455,30 +268,14 @@ auto LowerNamedValueStructural(
       binding->type, span);
 }
 
-auto LowerLValueReferenceExpr(
-    diag::SourceSpan span,
-    const std::optional<hir::Lvalue>& compound_lvalue_context,
-    diag::Result<hir::TypeId> type_id, const char* origin)
-    -> diag::Result<hir::Expr> {
-  if (!compound_lvalue_context.has_value()) {
-    throw InternalError(
-        std::string{origin} +
-        ": slang LValueReference encountered outside compound-assignment RHS");
-  }
-  if (!type_id) return std::unexpected(std::move(type_id.error()));
-  return MakeRefExpr(LvalueToPrimary(*compound_lvalue_context), *type_id, span);
-}
-
 auto LowerConversionExprProc(
     const UnitLoweringFacts& unit_facts, UnitLoweringState& unit_state,
     ProcessLoweringState& proc_state, const ScopeStack& stack,
-    const std::optional<hir::Lvalue>& compound_lvalue_context,
     const slang::ast::ConversionExpression& conv,
     const slang::ast::Expression& expr, diag::SourceSpan span)
     -> diag::Result<hir::Expr> {
-  auto operand_or = LowerProcExpr(
-      unit_facts, unit_state, proc_state, stack, conv.operand(),
-      compound_lvalue_context);
+  auto operand_or =
+      LowerProcExpr(unit_facts, unit_state, proc_state, stack, conv.operand());
   if (!operand_or) return std::unexpected(std::move(operand_or.error()));
   const hir::ExprId operand_id = proc_state.AddExpr(*std::move(operand_or));
   auto type_id = TypeIdOfSlangExpr(unit_facts, unit_state, expr);
@@ -497,14 +294,12 @@ auto LowerConversionExprProc(
 auto LowerUnaryExprProc(
     const UnitLoweringFacts& unit_facts, UnitLoweringState& unit_state,
     ProcessLoweringState& proc_state, const ScopeStack& stack,
-    const std::optional<hir::Lvalue>& compound_lvalue_context,
     const slang::ast::UnaryExpression& un, const slang::ast::Expression& expr,
     diag::SourceSpan span) -> diag::Result<hir::Expr> {
   auto op_or = LowerUnaryOp(un.op, span);
   if (!op_or) return std::unexpected(std::move(op_or.error()));
-  auto operand_or = LowerProcExpr(
-      unit_facts, unit_state, proc_state, stack, un.operand(),
-      compound_lvalue_context);
+  auto operand_or =
+      LowerProcExpr(unit_facts, unit_state, proc_state, stack, un.operand());
   if (!operand_or) return std::unexpected(std::move(operand_or.error()));
   const hir::ExprId operand_id = proc_state.AddExpr(*std::move(operand_or));
   auto type_id = TypeIdOfSlangExpr(unit_facts, unit_state, expr);
@@ -519,17 +314,14 @@ auto LowerUnaryExprProc(
 auto LowerBinaryExprProc(
     const UnitLoweringFacts& unit_facts, UnitLoweringState& unit_state,
     ProcessLoweringState& proc_state, const ScopeStack& stack,
-    const std::optional<hir::Lvalue>& compound_lvalue_context,
     const slang::ast::BinaryExpression& bin, const slang::ast::Expression& expr,
     diag::SourceSpan span) -> diag::Result<hir::Expr> {
-  auto lhs_or = LowerProcExpr(
-      unit_facts, unit_state, proc_state, stack, bin.left(),
-      compound_lvalue_context);
+  auto lhs_or =
+      LowerProcExpr(unit_facts, unit_state, proc_state, stack, bin.left());
   if (!lhs_or) return std::unexpected(std::move(lhs_or.error()));
   const hir::ExprId lhs_id = proc_state.AddExpr(*std::move(lhs_or));
-  auto rhs_or = LowerProcExpr(
-      unit_facts, unit_state, proc_state, stack, bin.right(),
-      compound_lvalue_context);
+  auto rhs_or =
+      LowerProcExpr(unit_facts, unit_state, proc_state, stack, bin.right());
   if (!rhs_or) return std::unexpected(std::move(rhs_or.error()));
   const hir::ExprId rhs_id = proc_state.AddExpr(*std::move(rhs_or));
   auto type_id = TypeIdOfSlangExpr(unit_facts, unit_state, expr);
@@ -549,7 +341,6 @@ auto LowerBinaryExprProc(
 auto LowerConditionalExprProc(
     const UnitLoweringFacts& unit_facts, UnitLoweringState& unit_state,
     ProcessLoweringState& proc_state, const ScopeStack& stack,
-    const std::optional<hir::Lvalue>& compound_lvalue_context,
     const slang::ast::ConditionalExpression& cond,
     const slang::ast::Expression& expr, diag::SourceSpan span)
     -> diag::Result<hir::Expr> {
@@ -567,18 +358,15 @@ auto LowerConditionalExprProc(
         diag::UnsupportedCategory::kFeature);
   }
   auto cond_or = LowerProcExpr(
-      unit_facts, unit_state, proc_state, stack, *cond.conditions[0].expr,
-      compound_lvalue_context);
+      unit_facts, unit_state, proc_state, stack, *cond.conditions[0].expr);
   if (!cond_or) return std::unexpected(std::move(cond_or.error()));
   const hir::ExprId cond_id = proc_state.AddExpr(*std::move(cond_or));
-  auto then_or = LowerProcExpr(
-      unit_facts, unit_state, proc_state, stack, cond.left(),
-      compound_lvalue_context);
+  auto then_or =
+      LowerProcExpr(unit_facts, unit_state, proc_state, stack, cond.left());
   if (!then_or) return std::unexpected(std::move(then_or.error()));
   const hir::ExprId then_id = proc_state.AddExpr(*std::move(then_or));
-  auto else_or = LowerProcExpr(
-      unit_facts, unit_state, proc_state, stack, cond.right(),
-      compound_lvalue_context);
+  auto else_or =
+      LowerProcExpr(unit_facts, unit_state, proc_state, stack, cond.right());
   if (!else_or) return std::unexpected(std::move(else_or.error()));
   const hir::ExprId else_id = proc_state.AddExpr(*std::move(else_or));
   auto type_id = TypeIdOfSlangExpr(unit_facts, unit_state, expr);
@@ -598,7 +386,6 @@ auto LowerConditionalExprProc(
 auto LowerCallExprProc(
     const UnitLoweringFacts& unit_facts, UnitLoweringState& unit_state,
     ProcessLoweringState& proc_state, const ScopeStack& stack,
-    const std::optional<hir::Lvalue>& compound_lvalue_context,
     const slang::ast::CallExpression& call, const slang::ast::Expression& expr,
     diag::SourceSpan span) -> diag::Result<hir::Expr> {
   std::vector<hir::ExprId> arg_ids;
@@ -606,8 +393,7 @@ auto LowerCallExprProc(
   std::optional<hir::TypeId> receiver_type;
   for (std::size_t i = 0; i < call.arguments().size(); ++i) {
     auto arg_or = LowerProcExpr(
-        unit_facts, unit_state, proc_state, stack, *call.arguments()[i],
-        compound_lvalue_context);
+        unit_facts, unit_state, proc_state, stack, *call.arguments()[i]);
     if (!arg_or) return std::unexpected(std::move(arg_or.error()));
     if (i == 0) {
       receiver_type = arg_or->type;
@@ -737,25 +523,63 @@ auto LowerAssignmentExprProc(
     const slang::ast::AssignmentExpression& as,
     const slang::ast::Expression& expr, diag::SourceSpan span)
     -> diag::Result<hir::Expr> {
-  const auto kind = as.isNonBlocking() ? hir::AssignKind::kNonBlocking
-                                       : hir::AssignKind::kBlocking;
-
   auto lhs_or =
       LowerProcLvalue(unit_facts, unit_state, proc_state, stack, as.left());
   if (!lhs_or) return std::unexpected(std::move(lhs_or.error()));
 
-  auto rhs_or = LowerProcExpr(
-      unit_facts, unit_state, proc_state, stack, as.right(), *lhs_or);
-  if (!rhs_or) return std::unexpected(std::move(rhs_or.error()));
-  const hir::ExprId rhs_id = proc_state.AddExpr(*std::move(rhs_or));
-
   auto type_id = TypeIdOfSlangExpr(unit_facts, unit_state, expr);
   if (!type_id) return std::unexpected(std::move(type_id.error()));
+
+  const auto kind = as.isNonBlocking() ? hir::AssignKind::kNonBlocking
+                                       : hir::AssignKind::kBlocking;
+
+  if (!as.op.has_value()) {
+    auto rhs_or =
+        LowerProcExpr(unit_facts, unit_state, proc_state, stack, as.right());
+    if (!rhs_or) return std::unexpected(std::move(rhs_or.error()));
+    const hir::ExprId rhs_id = proc_state.AddExpr(*std::move(rhs_or));
+    return hir::Expr{
+        .type = *type_id,
+        .data =
+            hir::AssignExpr{
+                .kind = kind,
+                .lhs = *std::move(lhs_or),
+                .compound_op = std::nullopt,
+                .rhs = rhs_id},
+        .span = span,
+    };
+  }
+
+  if (as.isNonBlocking()) {
+    throw InternalError(
+        "LowerAssignmentExprProc: compound assignment with non-blocking "
+        "operator is not a legal SV form (LRM A.6.2 grammar)");
+  }
+
+  const auto& bare_user_rhs = BareCompoundUserRhs(as.right());
+  auto rhs_or =
+      LowerProcExpr(unit_facts, unit_state, proc_state, stack, bare_user_rhs);
+  if (!rhs_or) return std::unexpected(std::move(rhs_or.error()));
+  hir::Expr rhs_expr = *std::move(rhs_or);
+  if (rhs_expr.type.value != type_id->value) {
+    const hir::ExprId inner_id = proc_state.AddExpr(std::move(rhs_expr));
+    rhs_expr = hir::Expr{
+        .type = *type_id,
+        .data =
+            hir::ConversionExpr{
+                .operand = inner_id, .kind = hir::ConversionKind::kImplicit},
+        .span = span,
+    };
+  }
+  const hir::ExprId rhs_id = proc_state.AddExpr(std::move(rhs_expr));
   return hir::Expr{
       .type = *type_id,
       .data =
           hir::AssignExpr{
-              .kind = kind, .lhs = *std::move(lhs_or), .rhs = rhs_id},
+              .kind = kind,
+              .lhs = *std::move(lhs_or),
+              .compound_op = LowerBinaryOp(*as.op),
+              .rhs = rhs_id},
       .span = span,
   };
 }
@@ -763,14 +587,12 @@ auto LowerAssignmentExprProc(
 auto LowerInsideExprProc(
     const UnitLoweringFacts& unit_facts, UnitLoweringState& unit_state,
     ProcessLoweringState& proc_state, const ScopeStack& stack,
-    const std::optional<hir::Lvalue>& compound_lvalue_context,
     const slang::ast::InsideExpression& in, const slang::ast::Expression& expr,
     diag::SourceSpan span) -> diag::Result<hir::Expr> {
   const auto& mapper = unit_facts.SourceMapper();
 
-  auto lhs_or = LowerProcExpr(
-      unit_facts, unit_state, proc_state, stack, in.left(),
-      compound_lvalue_context);
+  auto lhs_or =
+      LowerProcExpr(unit_facts, unit_state, proc_state, stack, in.left());
   if (!lhs_or) return std::unexpected(std::move(lhs_or.error()));
   const hir::ExprId lhs_id = proc_state.AddExpr(*std::move(lhs_or));
 
@@ -786,21 +608,18 @@ auto LowerInsideExprProc(
             "tolerance-range form in inside operator is not yet supported",
             diag::UnsupportedCategory::kFeature);
       }
-      auto lo_or = LowerProcExpr(
-          unit_facts, unit_state, proc_state, stack, vr.left(),
-          compound_lvalue_context);
+      auto lo_or =
+          LowerProcExpr(unit_facts, unit_state, proc_state, stack, vr.left());
       if (!lo_or) return std::unexpected(std::move(lo_or.error()));
       const hir::ExprId lo_id = proc_state.AddExpr(*std::move(lo_or));
-      auto hi_or = LowerProcExpr(
-          unit_facts, unit_state, proc_state, stack, vr.right(),
-          compound_lvalue_context);
+      auto hi_or =
+          LowerProcExpr(unit_facts, unit_state, proc_state, stack, vr.right());
       if (!hi_or) return std::unexpected(std::move(hi_or.error()));
       const hir::ExprId hi_id = proc_state.AddExpr(*std::move(hi_or));
       items.emplace_back(hir::InsideRangePair{.lo = lo_id, .hi = hi_id});
     } else {
-      auto val_or = LowerProcExpr(
-          unit_facts, unit_state, proc_state, stack, *item,
-          compound_lvalue_context);
+      auto val_or =
+          LowerProcExpr(unit_facts, unit_state, proc_state, stack, *item);
       if (!val_or) return std::unexpected(std::move(val_or.error()));
       const hir::ExprId val_id = proc_state.AddExpr(*std::move(val_or));
       items.emplace_back(val_id);
@@ -819,7 +638,6 @@ auto LowerInsideExprProc(
 auto LowerElementSelectExprProc(
     const UnitLoweringFacts& unit_facts, UnitLoweringState& unit_state,
     ProcessLoweringState& proc_state, const ScopeStack& stack,
-    const std::optional<hir::Lvalue>& compound_lvalue_context,
     const slang::ast::ElementSelectExpression& sel,
     const slang::ast::Expression& expr, diag::SourceSpan span)
     -> diag::Result<hir::Expr> {
@@ -830,15 +648,13 @@ auto LowerElementSelectExprProc(
         diag::UnsupportedCategory::kOperation);
   }
 
-  auto base_or = LowerProcExpr(
-      unit_facts, unit_state, proc_state, stack, sel.value(),
-      compound_lvalue_context);
+  auto base_or =
+      LowerProcExpr(unit_facts, unit_state, proc_state, stack, sel.value());
   if (!base_or) return std::unexpected(std::move(base_or.error()));
   const hir::ExprId base_id = proc_state.AddExpr(*std::move(base_or));
 
-  auto idx_or = LowerProcExpr(
-      unit_facts, unit_state, proc_state, stack, sel.selector(),
-      compound_lvalue_context);
+  auto idx_or =
+      LowerProcExpr(unit_facts, unit_state, proc_state, stack, sel.selector());
   if (!idx_or) return std::unexpected(std::move(idx_or.error()));
   const hir::ExprId idx_id = proc_state.AddExpr(*std::move(idx_or));
 
@@ -858,7 +674,6 @@ auto LowerElementSelectExprProc(
 auto LowerRangeSelectExprProc(
     const UnitLoweringFacts& unit_facts, UnitLoweringState& unit_state,
     ProcessLoweringState& proc_state, const ScopeStack& stack,
-    const std::optional<hir::Lvalue>& compound_lvalue_context,
     const slang::ast::RangeSelectExpression& sel,
     const slang::ast::Expression& expr, diag::SourceSpan span)
     -> diag::Result<hir::Expr> {
@@ -869,21 +684,18 @@ auto LowerRangeSelectExprProc(
         diag::UnsupportedCategory::kOperation);
   }
 
-  auto base_or = LowerProcExpr(
-      unit_facts, unit_state, proc_state, stack, sel.value(),
-      compound_lvalue_context);
+  auto base_or =
+      LowerProcExpr(unit_facts, unit_state, proc_state, stack, sel.value());
   if (!base_or) return std::unexpected(std::move(base_or.error()));
   const hir::ExprId base_id = proc_state.AddExpr(*std::move(base_or));
 
-  auto left_or = LowerProcExpr(
-      unit_facts, unit_state, proc_state, stack, sel.left(),
-      compound_lvalue_context);
+  auto left_or =
+      LowerProcExpr(unit_facts, unit_state, proc_state, stack, sel.left());
   if (!left_or) return std::unexpected(std::move(left_or.error()));
   const hir::ExprId left_id = proc_state.AddExpr(*std::move(left_or));
 
-  auto right_or = LowerProcExpr(
-      unit_facts, unit_state, proc_state, stack, sel.right(),
-      compound_lvalue_context);
+  auto right_or =
+      LowerProcExpr(unit_facts, unit_state, proc_state, stack, sel.right());
   if (!right_or) return std::unexpected(std::move(right_or.error()));
   const hir::ExprId right_id = proc_state.AddExpr(*std::move(right_or));
 
@@ -935,7 +747,7 @@ auto LowerConcatExprProc(
   operand_ids.reserve(cc.operands().size());
   for (const auto* op : cc.operands()) {
     auto operand_or =
-        LowerProcExpr(unit_facts, unit_state, proc_state, stack, *op, {});
+        LowerProcExpr(unit_facts, unit_state, proc_state, stack, *op);
     if (!operand_or) return std::unexpected(std::move(operand_or.error()));
     operand_ids.push_back(proc_state.AddExpr(*std::move(operand_or)));
   }
@@ -962,11 +774,11 @@ auto LowerReplicationExprProc(
         diag::UnsupportedCategory::kOperation);
   }
   auto count_or =
-      LowerProcExpr(unit_facts, unit_state, proc_state, stack, rp.count(), {});
+      LowerProcExpr(unit_facts, unit_state, proc_state, stack, rp.count());
   if (!count_or) return std::unexpected(std::move(count_or.error()));
   const hir::ExprId count_id = proc_state.AddExpr(*std::move(count_or));
   auto concat_or =
-      LowerProcExpr(unit_facts, unit_state, proc_state, stack, rp.concat(), {});
+      LowerProcExpr(unit_facts, unit_state, proc_state, stack, rp.concat());
   if (!concat_or) return std::unexpected(std::move(concat_or.error()));
   const hir::ExprId concat_id = proc_state.AddExpr(*std::move(concat_or));
   return hir::Expr{
@@ -979,13 +791,11 @@ auto LowerReplicationExprProc(
 auto LowerConversionExprStructural(
     const UnitLoweringFacts& unit_facts, UnitLoweringState& unit_state,
     ScopeLoweringState& scope_state, const ScopeStack& stack,
-    const std::optional<hir::Lvalue>& compound_lvalue_context,
     const slang::ast::ConversionExpression& conv,
     const slang::ast::Expression& expr, diag::SourceSpan span)
     -> diag::Result<hir::Expr> {
   auto operand_or = LowerStructuralExpr(
-      unit_facts, unit_state, scope_state, stack, conv.operand(),
-      compound_lvalue_context);
+      unit_facts, unit_state, scope_state, stack, conv.operand());
   if (!operand_or) return std::unexpected(std::move(operand_or.error()));
   const hir::ExprId operand_id = scope_state.AddExpr(*std::move(operand_or));
   auto type_id = TypeIdOfSlangExpr(unit_facts, unit_state, expr);
@@ -1004,14 +814,12 @@ auto LowerConversionExprStructural(
 auto LowerUnaryExprStructural(
     const UnitLoweringFacts& unit_facts, UnitLoweringState& unit_state,
     ScopeLoweringState& scope_state, const ScopeStack& stack,
-    const std::optional<hir::Lvalue>& compound_lvalue_context,
     const slang::ast::UnaryExpression& un, const slang::ast::Expression& expr,
     diag::SourceSpan span) -> diag::Result<hir::Expr> {
   auto op_or = LowerUnaryOp(un.op, span);
   if (!op_or) return std::unexpected(std::move(op_or.error()));
   auto operand_or = LowerStructuralExpr(
-      unit_facts, unit_state, scope_state, stack, un.operand(),
-      compound_lvalue_context);
+      unit_facts, unit_state, scope_state, stack, un.operand());
   if (!operand_or) return std::unexpected(std::move(operand_or.error()));
   const hir::ExprId operand_id = scope_state.AddExpr(*std::move(operand_or));
   auto type_id = TypeIdOfSlangExpr(unit_facts, unit_state, expr);
@@ -1026,17 +834,14 @@ auto LowerUnaryExprStructural(
 auto LowerBinaryExprStructural(
     const UnitLoweringFacts& unit_facts, UnitLoweringState& unit_state,
     ScopeLoweringState& scope_state, const ScopeStack& stack,
-    const std::optional<hir::Lvalue>& compound_lvalue_context,
     const slang::ast::BinaryExpression& bin, const slang::ast::Expression& expr,
     diag::SourceSpan span) -> diag::Result<hir::Expr> {
   auto lhs_or = LowerStructuralExpr(
-      unit_facts, unit_state, scope_state, stack, bin.left(),
-      compound_lvalue_context);
+      unit_facts, unit_state, scope_state, stack, bin.left());
   if (!lhs_or) return std::unexpected(std::move(lhs_or.error()));
   const hir::ExprId lhs_id = scope_state.AddExpr(*std::move(lhs_or));
   auto rhs_or = LowerStructuralExpr(
-      unit_facts, unit_state, scope_state, stack, bin.right(),
-      compound_lvalue_context);
+      unit_facts, unit_state, scope_state, stack, bin.right());
   if (!rhs_or) return std::unexpected(std::move(rhs_or.error()));
   const hir::ExprId rhs_id = scope_state.AddExpr(*std::move(rhs_or));
   auto type_id = TypeIdOfSlangExpr(unit_facts, unit_state, expr);
@@ -1056,7 +861,6 @@ auto LowerBinaryExprStructural(
 auto LowerConditionalExprStructural(
     const UnitLoweringFacts& unit_facts, UnitLoweringState& unit_state,
     ScopeLoweringState& scope_state, const ScopeStack& stack,
-    const std::optional<hir::Lvalue>& compound_lvalue_context,
     const slang::ast::ConditionalExpression& cond,
     const slang::ast::Expression& expr, diag::SourceSpan span)
     -> diag::Result<hir::Expr> {
@@ -1074,18 +878,15 @@ auto LowerConditionalExprStructural(
         diag::UnsupportedCategory::kFeature);
   }
   auto cond_or = LowerStructuralExpr(
-      unit_facts, unit_state, scope_state, stack, *cond.conditions[0].expr,
-      compound_lvalue_context);
+      unit_facts, unit_state, scope_state, stack, *cond.conditions[0].expr);
   if (!cond_or) return std::unexpected(std::move(cond_or.error()));
   const hir::ExprId cond_id = scope_state.AddExpr(*std::move(cond_or));
   auto then_or = LowerStructuralExpr(
-      unit_facts, unit_state, scope_state, stack, cond.left(),
-      compound_lvalue_context);
+      unit_facts, unit_state, scope_state, stack, cond.left());
   if (!then_or) return std::unexpected(std::move(then_or.error()));
   const hir::ExprId then_id = scope_state.AddExpr(*std::move(then_or));
   auto else_or = LowerStructuralExpr(
-      unit_facts, unit_state, scope_state, stack, cond.right(),
-      compound_lvalue_context);
+      unit_facts, unit_state, scope_state, stack, cond.right());
   if (!else_or) return std::unexpected(std::move(else_or.error()));
   const hir::ExprId else_id = scope_state.AddExpr(*std::move(else_or));
   auto type_id = TypeIdOfSlangExpr(unit_facts, unit_state, expr);
@@ -1107,9 +908,7 @@ auto LowerConditionalExprStructural(
 auto LowerProcExpr(
     const UnitLoweringFacts& unit_facts, UnitLoweringState& unit_state,
     ProcessLoweringState& proc_state, const ScopeStack& stack,
-    const slang::ast::Expression& expr,
-    std::optional<hir::Lvalue> compound_lvalue_context)
-    -> diag::Result<hir::Expr> {
+    const slang::ast::Expression& expr) -> diag::Result<hir::Expr> {
   const auto& mapper = unit_facts.SourceMapper();
   const auto span = mapper.SpanOf(expr.sourceRange);
 
@@ -1157,33 +956,35 @@ auto LowerProcExpr(
           expr.as<slang::ast::NamedValueExpression>());
 
     case slang::ast::ExpressionKind::LValueReference:
-      return LowerLValueReferenceExpr(
-          span, compound_lvalue_context,
-          TypeIdOfSlangExpr(unit_facts, unit_state, expr), "LowerProcExpr");
+      throw InternalError(
+          "LowerProcExpr: slang LValueReference must not reach HIR; "
+          "compound assignment is lowered as a single AssignExpr with "
+          "compound_op, and the LValueReference-bearing BinaryOp tree slang "
+          "constructed is discarded at AST -> HIR");
 
     case slang::ast::ExpressionKind::Conversion:
       return LowerConversionExprProc(
-          unit_facts, unit_state, proc_state, stack, compound_lvalue_context,
+          unit_facts, unit_state, proc_state, stack,
           expr.as<slang::ast::ConversionExpression>(), expr, span);
 
     case slang::ast::ExpressionKind::UnaryOp:
       return LowerUnaryExprProc(
-          unit_facts, unit_state, proc_state, stack, compound_lvalue_context,
+          unit_facts, unit_state, proc_state, stack,
           expr.as<slang::ast::UnaryExpression>(), expr, span);
 
     case slang::ast::ExpressionKind::BinaryOp:
       return LowerBinaryExprProc(
-          unit_facts, unit_state, proc_state, stack, compound_lvalue_context,
+          unit_facts, unit_state, proc_state, stack,
           expr.as<slang::ast::BinaryExpression>(), expr, span);
 
     case slang::ast::ExpressionKind::ConditionalOp:
       return LowerConditionalExprProc(
-          unit_facts, unit_state, proc_state, stack, compound_lvalue_context,
+          unit_facts, unit_state, proc_state, stack,
           expr.as<slang::ast::ConditionalExpression>(), expr, span);
 
     case slang::ast::ExpressionKind::Call:
       return LowerCallExprProc(
-          unit_facts, unit_state, proc_state, stack, compound_lvalue_context,
+          unit_facts, unit_state, proc_state, stack,
           expr.as<slang::ast::CallExpression>(), expr, span);
 
     case slang::ast::ExpressionKind::Assignment:
@@ -1193,17 +994,17 @@ auto LowerProcExpr(
 
     case slang::ast::ExpressionKind::Inside:
       return LowerInsideExprProc(
-          unit_facts, unit_state, proc_state, stack, compound_lvalue_context,
+          unit_facts, unit_state, proc_state, stack,
           expr.as<slang::ast::InsideExpression>(), expr, span);
 
     case slang::ast::ExpressionKind::ElementSelect:
       return LowerElementSelectExprProc(
-          unit_facts, unit_state, proc_state, stack, compound_lvalue_context,
+          unit_facts, unit_state, proc_state, stack,
           expr.as<slang::ast::ElementSelectExpression>(), expr, span);
 
     case slang::ast::ExpressionKind::RangeSelect:
       return LowerRangeSelectExprProc(
-          unit_facts, unit_state, proc_state, stack, compound_lvalue_context,
+          unit_facts, unit_state, proc_state, stack,
           expr.as<slang::ast::RangeSelectExpression>(), expr, span);
 
     case slang::ast::ExpressionKind::Concatenation:
@@ -1227,9 +1028,7 @@ auto LowerProcExpr(
 auto LowerStructuralExpr(
     const UnitLoweringFacts& unit_facts, UnitLoweringState& unit_state,
     ScopeLoweringState& scope_state, const ScopeStack& stack,
-    const slang::ast::Expression& expr,
-    std::optional<hir::Lvalue> compound_lvalue_context)
-    -> diag::Result<hir::Expr> {
+    const slang::ast::Expression& expr) -> diag::Result<hir::Expr> {
   const auto& mapper = unit_facts.SourceMapper();
   const auto span = mapper.SpanOf(expr.sourceRange);
 
@@ -1268,29 +1067,29 @@ auto LowerStructuralExpr(
           expr.as<slang::ast::NamedValueExpression>());
 
     case slang::ast::ExpressionKind::LValueReference:
-      return LowerLValueReferenceExpr(
-          span, compound_lvalue_context,
-          TypeIdOfSlangExpr(unit_facts, unit_state, expr),
-          "LowerStructuralExpr");
+      throw InternalError(
+          "LowerStructuralExpr: slang LValueReference must not reach HIR; "
+          "generate-iter compound is rewritten as the next-value BinaryExpr "
+          "directly");
 
     case slang::ast::ExpressionKind::Conversion:
       return LowerConversionExprStructural(
-          unit_facts, unit_state, scope_state, stack, compound_lvalue_context,
+          unit_facts, unit_state, scope_state, stack,
           expr.as<slang::ast::ConversionExpression>(), expr, span);
 
     case slang::ast::ExpressionKind::UnaryOp:
       return LowerUnaryExprStructural(
-          unit_facts, unit_state, scope_state, stack, compound_lvalue_context,
+          unit_facts, unit_state, scope_state, stack,
           expr.as<slang::ast::UnaryExpression>(), expr, span);
 
     case slang::ast::ExpressionKind::BinaryOp:
       return LowerBinaryExprStructural(
-          unit_facts, unit_state, scope_state, stack, compound_lvalue_context,
+          unit_facts, unit_state, scope_state, stack,
           expr.as<slang::ast::BinaryExpression>(), expr, span);
 
     case slang::ast::ExpressionKind::ConditionalOp:
       return LowerConditionalExprStructural(
-          unit_facts, unit_state, scope_state, stack, compound_lvalue_context,
+          unit_facts, unit_state, scope_state, stack,
           expr.as<slang::ast::ConditionalExpression>(), expr, span);
 
     default:
@@ -1332,8 +1131,7 @@ auto LowerProcLvalue(
         LowerProcLvalue(unit_facts, unit_state, proc_state, stack, sel.value());
     if (!inner) return std::unexpected(std::move(inner.error()));
     auto idx_or = LowerProcExpr(
-        unit_facts, unit_state, proc_state, stack, sel.selector(),
-        std::nullopt);
+        unit_facts, unit_state, proc_state, stack, sel.selector());
     if (!idx_or) return std::unexpected(std::move(idx_or.error()));
     const hir::ExprId idx_id = proc_state.AddExpr(*std::move(idx_or));
     inner->selectors.emplace_back(hir::ElementLvalueSelector{.index = idx_id});
@@ -1351,12 +1149,12 @@ auto LowerProcLvalue(
     auto inner =
         LowerProcLvalue(unit_facts, unit_state, proc_state, stack, sel.value());
     if (!inner) return std::unexpected(std::move(inner.error()));
-    auto left_or = LowerProcExpr(
-        unit_facts, unit_state, proc_state, stack, sel.left(), std::nullopt);
+    auto left_or =
+        LowerProcExpr(unit_facts, unit_state, proc_state, stack, sel.left());
     if (!left_or) return std::unexpected(std::move(left_or.error()));
     const hir::ExprId left_id = proc_state.AddExpr(*std::move(left_or));
-    auto right_or = LowerProcExpr(
-        unit_facts, unit_state, proc_state, stack, sel.right(), std::nullopt);
+    auto right_or =
+        LowerProcExpr(unit_facts, unit_state, proc_state, stack, sel.right());
     if (!right_or) return std::unexpected(std::move(right_or.error()));
     const hir::ExprId right_id = proc_state.AddExpr(*std::move(right_or));
     hir::RangeBounds bounds = [&]() -> hir::RangeBounds {
@@ -1381,8 +1179,7 @@ auto LowerProcLvalue(
   // Leaf: lower as a regular expression and extract the root var ref. The
   // wrapper Expr is discarded (not added to the process), so no dead Expr
   // pollutes the store.
-  auto leaf = LowerProcExpr(
-      unit_facts, unit_state, proc_state, stack, expr, std::nullopt);
+  auto leaf = LowerProcExpr(unit_facts, unit_state, proc_state, stack, expr);
   if (!leaf) return std::unexpected(std::move(leaf.error()));
   auto* primary = std::get_if<hir::PrimaryExpr>(&leaf->data);
   if (primary == nullptr) return unsupported();
