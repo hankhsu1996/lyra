@@ -39,4 +39,15 @@ auto LowerStructuralExpr(
     const hir::StructuralScope& scope, const hir::Expr& expr)
     -> diag::Result<mir::Expr>;
 
+// Translate a scope-level HIR Lvalue (continuous-assignment LHS, LRM 10.3)
+// into a MIR Lvalue targeted at the given procedural scope. Selector
+// subexpressions are sourced from `scope.exprs` and added to
+// `proc_scope_state.exprs`. The root must be a `StructuralVarRef`.
+auto LowerHirLvalueStructural(
+    const UnitLoweringState& unit_state,
+    const StructuralScopeLoweringState& scope_state,
+    ProceduralScopeLoweringState& proc_scope_state,
+    const hir::StructuralScope& scope, const hir::Lvalue& lvalue)
+    -> diag::Result<mir::Lvalue>;
+
 }  // namespace lyra::lowering::hir_to_mir

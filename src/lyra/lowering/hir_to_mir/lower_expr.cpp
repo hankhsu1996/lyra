@@ -297,6 +297,50 @@ auto LowerHirRangeBoundsProc(
       bounds);
 }
 
+auto LowerHirRangeBoundsStructural(
+    const UnitLoweringState& unit_state,
+    const StructuralScopeLoweringState& scope_state,
+    ProceduralScopeLoweringState& proc_scope_state,
+    const hir::StructuralScope& scope, const hir::RangeBounds& bounds)
+    -> diag::Result<mir::RangeBounds> {
+  auto lower_one = [&](hir::ExprId id) -> diag::Result<mir::ExprId> {
+    auto lowered = LowerStructuralExpr(
+        unit_state, scope_state, proc_scope_state, scope, scope.GetExpr(id));
+    if (!lowered) return std::unexpected(std::move(lowered.error()));
+    return proc_scope_state.AddExpr(*std::move(lowered));
+  };
+  return std::visit(
+      Overloaded{
+          [&](const hir::RangeConstantBounds& b)
+              -> diag::Result<mir::RangeBounds> {
+            auto msb = lower_one(b.msb_expr);
+            if (!msb) return std::unexpected(std::move(msb.error()));
+            auto lsb = lower_one(b.lsb_expr);
+            if (!lsb) return std::unexpected(std::move(lsb.error()));
+            return mir::RangeConstantBounds{.msb_expr = *msb, .lsb_expr = *lsb};
+          },
+          [&](const hir::RangeIndexedUpBounds& b)
+              -> diag::Result<mir::RangeBounds> {
+            auto base = lower_one(b.base_index);
+            if (!base) return std::unexpected(std::move(base.error()));
+            auto width = lower_one(b.width);
+            if (!width) return std::unexpected(std::move(width.error()));
+            return mir::RangeIndexedUpBounds{
+                .base_index = *base, .width = *width};
+          },
+          [&](const hir::RangeIndexedDownBounds& b)
+              -> diag::Result<mir::RangeBounds> {
+            auto base = lower_one(b.base_index);
+            if (!base) return std::unexpected(std::move(base.error()));
+            auto width = lower_one(b.width);
+            if (!width) return std::unexpected(std::move(width.error()));
+            return mir::RangeIndexedDownBounds{
+                .base_index = *base, .width = *width};
+          },
+      },
+      bounds);
+}
+
 auto LowerHirLvalueProc(
     const UnitLoweringState& unit_state,
     const StructuralScopeLoweringState& scope_state,
@@ -1372,6 +1416,53 @@ auto LowerStructuralExpr(
   return LowerExprImpl(
       unit_state, scope_state, nullptr, proc_scope_state, scope, expr,
       LoopVarLoweringMode::kStructuralParam);
+}
+
+auto LowerHirLvalueStructural(
+    const UnitLoweringState& unit_state,
+    const StructuralScopeLoweringState& scope_state,
+    ProceduralScopeLoweringState& proc_scope_state,
+    const hir::StructuralScope& scope, const hir::Lvalue& lvalue)
+    -> diag::Result<mir::Lvalue> {
+  const auto* structural_root =
+      std::get_if<hir::StructuralVarRef>(&lvalue.root);
+  if (structural_root == nullptr) {
+    throw InternalError(
+        "LowerHirLvalueStructural: continuous-assign LHS root is not a "
+        "StructuralVarRef; AST -> HIR should have rejected non-structural "
+        "targets");
+  }
+  mir::Lvalue out{
+      .root = scope_state.TranslateStructuralVar(
+          structural_root->hops, structural_root->var),
+      .selectors = {}};
+  out.selectors.reserve(lvalue.selectors.size());
+  for (const auto& sel : lvalue.selectors) {
+    auto lowered_sel = std::visit(
+        Overloaded{
+            [&](const hir::ElementLvalueSelector& s)
+                -> diag::Result<mir::LvalueSelector> {
+              auto idx = LowerStructuralExpr(
+                  unit_state, scope_state, proc_scope_state, scope,
+                  scope.GetExpr(s.index));
+              if (!idx) return std::unexpected(std::move(idx.error()));
+              const mir::ExprId idx_id =
+                  proc_scope_state.AddExpr(*std::move(idx));
+              return mir::ElementLvalueSelector{.index = idx_id};
+            },
+            [&](const hir::RangeLvalueSelector& s)
+                -> diag::Result<mir::LvalueSelector> {
+              auto bounds = LowerHirRangeBoundsStructural(
+                  unit_state, scope_state, proc_scope_state, scope, s.bounds);
+              if (!bounds) return std::unexpected(std::move(bounds.error()));
+              return mir::RangeLvalueSelector{.bounds = *std::move(bounds)};
+            },
+        },
+        sel);
+    if (!lowered_sel) return std::unexpected(std::move(lowered_sel.error()));
+    out.selectors.emplace_back(*std::move(lowered_sel));
+  }
+  return out;
 }
 
 }  // namespace lyra::lowering::hir_to_mir

@@ -7,6 +7,7 @@
 #include <vector>
 
 #include "lyra/base/time.hpp"
+#include "lyra/hir/continuous_assign.hpp"
 #include "lyra/hir/expr.hpp"
 #include "lyra/hir/loop_var.hpp"
 #include "lyra/hir/process.hpp"
@@ -73,6 +74,7 @@ struct StructuralScope {
   std::vector<LoopVarDecl> loop_var_decls;
   std::vector<Expr> exprs;
   std::vector<Process> processes;
+  std::vector<ContinuousAssign> continuous_assigns;
   std::vector<Generate> generates;
   std::vector<StructuralSubroutineDecl> structural_subroutines;
   std::vector<TypeAliasDecl> type_aliases;
@@ -90,6 +92,10 @@ struct StructuralScope {
   }
   [[nodiscard]] auto GetProcess(ProcessId id) const -> const Process& {
     return processes.at(id.value);
+  }
+  [[nodiscard]] auto GetContinuousAssign(ContinuousAssignId id) const
+      -> const ContinuousAssign& {
+    return continuous_assigns.at(id.value);
   }
   [[nodiscard]] auto GetGenerate(GenerateId id) const -> const Generate& {
     return generates.at(id.value);

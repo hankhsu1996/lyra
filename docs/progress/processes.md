@@ -19,7 +19,6 @@ order. Items in the [Actionable](#actionable) section can be picked up next; ite
 | Item   | Blocked on                                                                                                            |
 | ------ | --------------------------------------------------------------------------------------------------------------------- |
 | P5, P6 | Bit-select / range-select expressions in MIR (`operators.md` W4 / W5). Edge triggers on selected lvalues need them.   |
-| P7     | `assign` continuous-assignment closures share infrastructure with `always_comb` (P10); start P10 first.               |
 | P8     | `fork` / `join_*`. Needs concurrent-process scheduling primitives; out of scope until single-process work is settled. |
 
 ## Sub-Steps
@@ -44,8 +43,9 @@ order. Items in the [Actionable](#actionable) section can be picked up next; ite
       `always_ff` body of `processes/wait_event`.
 - [x] P10 / P13 -- `always_comb` / `always_latch` (LRM 9.2.2.2.1) and `always @*` / `always @(*)`
       (LRM 9.4.2.2). Slang's `AnalysisManager` produces read sets (per-procedure for always_comb /
-      always_latch, per-region for `@*`), stored in `ImplicitSensitivityReads` keyed by
-      `slang::ast::Statement*`. HIR carries them on `Process::implicit_sensitivity_list` for the
+      always_latch, per-region for `@*`); the lyra pipeline stores them in `SensitivityReadStore`
+      keyed by `slang::ast::Statement*` (see `docs/decisions/read-set-inference.md` for the shared
+      inference architecture). HIR carries them on `Process::implicit_sensitivity_list` for the
       always_comb / always_latch forms and on `ImplicitEventControl::sensitivity_list` for `@*`. HIR
       -> MIR: always_comb / always_latch run `forever { body; SensitivityWaitStmt; }` (body at t=0
       then wait per LRM 9.2.2.2); `@*` expands to `Block { SensitivityWaitStmt; body; }` (wait first
@@ -58,8 +58,15 @@ order. Items in the [Actionable](#actionable) section can be picked up next; ite
       phase; the engine commits all closures in the kCommitNba phase before observing changes.
       Re-entrancy (`SubmitNba` during NBA commit) is rejected. Covers the basic NBA cases used by
       every `always_ff` example.
-- [ ] P7 -- Continuous assignment `assign x = y;`. Module-level construct, not a procedural block;
-      shares the read-set inference path with P10. Closes `processes/continuous_assign`.
+- [x] P7 -- Continuous assignment `assign x = y;` (LRM 10.3). Source-aligned in HIR as a scope-level
+      `ContinuousAssign {lhs, rhs, sensitivity_list}` whose LHS / RHS land in the enclosing
+      structural scope's expr pool alongside parameters and variable initialisers. Read set is
+      precomputed by slang's flow analysis (slang treats continuous assignment as a procedure for
+      analysis purposes, LRM 10.3.2 reads identical to LRM 9.2.2.2.1); the AST -> HIR lowering looks
+      it up keyed by the assignment expression (see `docs/decisions/read-set-inference.md`). HIR ->
+      MIR materialises a `mir::Process { kInitial, forever { lhs = rhs; SensitivityWait(reads); } }`
+      directly. Drive strength (10.3.4) and `assign #N` (10.3.3) are diagnosed; concat LHS rides on
+      the procedural side. Closes `processes/continuous_assign`.
 
 ### Timing controls
 
@@ -93,12 +100,13 @@ order. Items in the [Actionable](#actionable) section can be picked up next; ite
       waiter list. `e.triggered` returns a 1-bit `PackedArray`. `->>` non-blocking trigger,
       `wait_order(...)`, event aliasing / nullness / comparison are out of scope.
 - [x] P11 -- `wait (cond) body` level-sensitive control (LRM 9.4.3). HIR carries
-      `WaitStmt {cond, body, sensitivity_list}`; the sensitivity is collected locally at the
-      `LowerWaitStmt` site by a small ASTVisitor over `cond` (no upstream manager pass, since slang
-      owns no DFA for wait conditions). HIR -> MIR lowers to
-      `Block { While { !cond, SensitivityWait(reads) }; body }` -- the LRM 9.4.3 "skip suspend if
-      cond is already true" semantic falls out of the while-loop shape. `wait fork;` (9.6.1) and
-      `wait_order(...)` (15.6) are out of scope. Closes `processes/wait_event`.
+      `WaitStmt {cond, body, sensitivity_list}`. Sensitivity is precomputed by driving slang's
+      `DefaultDFA` on `cond` as a standalone expression during the AnalysisManager pass (see
+      `docs/decisions/read-set-inference.md`); the AST -> HIR lowering looks it up keyed by the cond
+      expression. HIR -> MIR lowers to `Block { While { !cond, SensitivityWait(reads) }; body }` --
+      the LRM 9.4.3 "skip suspend if cond is already true" semantic falls out of the while-loop
+      shape. `wait fork;` (9.6.1) and `wait_order(...)` (15.6) are out of scope. Closes
+      `processes/wait_event`.
 
 ### Concurrency
 

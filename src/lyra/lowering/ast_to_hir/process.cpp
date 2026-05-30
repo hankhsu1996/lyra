@@ -46,10 +46,9 @@ auto LookupSensitivityEntries(
     const UnitLoweringFacts& unit_facts, const UnitLoweringState& unit_state,
     const ScopeStack& stack, const slang::ast::Statement& key_stmt)
     -> std::vector<hir::SensitivityEntry> {
-  const auto& reads_map = unit_facts.SensitivityReads();
-  const auto it = reads_map.find(&key_stmt);
-  if (it == reads_map.end()) return {};
-  return TranslateSensitivityReads(it->second, unit_state, stack);
+  const auto* reads = unit_facts.SensitivityReads().Lookup(key_stmt);
+  if (reads == nullptr) return {};
+  return TranslateSensitivityReads(*reads, unit_state, stack);
 }
 
 }  // namespace
