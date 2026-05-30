@@ -12,6 +12,6 @@ expect:
     contains:
       - "main.sv:4:"
       - "unsupported:"
-      - "this expression form is not supported yet"
+      - "integral-mode concatenation is not yet supported"
     not_contains:
       - "internal error"

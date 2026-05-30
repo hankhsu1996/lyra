@@ -75,9 +75,21 @@ struct RangeSelectExpr {
   RangeBounds bounds;
 };
 
+struct ConcatExpr {
+  std::vector<ExprId> operands;
+};
+
+// LRM 11.4.12 / 11.4.12.2: `{multiplier{...}}` is a replication built around
+// an inner concatenation. The inner ExprId always points to a ConcatExpr.
+struct ReplicationExpr {
+  ExprId count;
+  ExprId concat;
+};
+
 using ExprData = std::variant<
     PrimaryExpr, UnaryExpr, BinaryExpr, ConditionalExpr, AssignExpr, CallExpr,
-    ConversionExpr, InsideExpr, ElementSelectExpr, RangeSelectExpr>;
+    ConversionExpr, InsideExpr, ElementSelectExpr, RangeSelectExpr, ConcatExpr,
+    ReplicationExpr>;
 
 struct Expr {
   TypeId type;

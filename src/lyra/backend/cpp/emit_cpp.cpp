@@ -280,6 +280,7 @@ auto RenderScopeHeaderFile(
   out += "#include \"lyra/value/packed_bitwise.hpp\"\n";
   out += "#include \"lyra/value/packed_convert.hpp\"\n";
   out += "#include \"lyra/value/packed_reduction.hpp\"\n";
+  out += "#include \"lyra/value/string_op.hpp\"\n";
   out += "\n";
   bool any_enum = false;
   for (std::size_t i = 0; i < unit.types.size(); ++i) {
