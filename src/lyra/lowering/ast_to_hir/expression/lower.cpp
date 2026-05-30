@@ -1300,8 +1300,8 @@ auto LowerStructuralLvalue(
   // root. Loop-induction vars and (impossible-at-scope-level) procedural vars
   // are rejected here so the user sees an Unsupported diagnostic instead of
   // a downstream InternalError.
-  auto leaf = LowerStructuralExpr(
-      unit_facts, unit_state, scope_state, stack, expr);
+  auto leaf =
+      LowerStructuralExpr(unit_facts, unit_state, scope_state, stack, expr);
   if (!leaf) return std::unexpected(std::move(leaf.error()));
   auto* primary = std::get_if<hir::PrimaryExpr>(&leaf->data);
   if (primary == nullptr) return unsupported();
