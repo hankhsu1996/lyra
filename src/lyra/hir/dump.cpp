@@ -604,8 +604,12 @@ class HirDumper {
               const auto* kind_str = a.kind == AssignKind::kNonBlocking
                                          ? "nonblocking"
                                          : "blocking";
+              const std::string op_str =
+                  a.compound_op.has_value()
+                      ? std::format(" op={}", FormatBinaryOp(*a.compound_op))
+                      : std::string{};
               return std::format(
-                  "AssignExpr kind={} lhs={} rhs=Expr[{}]", kind_str,
+                  "AssignExpr kind={}{} lhs={} rhs=Expr[{}]", kind_str, op_str,
                   FormatLvalue(a.lhs), a.rhs.value);
             },
             [this](const CallExpr& c) -> std::string {

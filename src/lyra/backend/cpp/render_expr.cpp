@@ -817,6 +817,48 @@ auto RenderSelectorMethodCall(
       sel);
 }
 
+// Render a compound op suffix for the SV `op=` family. Arithmetic /
+// bitwise compounds use the C++ operator tokens directly because
+// `PackedArray`/`PackedArrayRef`/`ScopedMutation` overload `operator+=`,
+// etc. Shifts route through method-style `XxxAssign(rhs)` calls because
+// the binary form is already method-style (no native C++ token for SV's
+// arithmetic / logical shift distinction). Returns either the operator
+// token (e.g. " += ") with caller-supplied rhs appended, or the full
+// method form `.XxxAssign(rhs)`.
+auto RenderCompoundAssign(
+    mir::BinaryOp op, const std::string& chain, const std::string& rhs)
+    -> std::string {
+  switch (op) {
+    case mir::BinaryOp::kAdd:
+      return chain + " += " + rhs;
+    case mir::BinaryOp::kSub:
+      return chain + " -= " + rhs;
+    case mir::BinaryOp::kMul:
+      return chain + " *= " + rhs;
+    case mir::BinaryOp::kDiv:
+      return chain + " /= " + rhs;
+    case mir::BinaryOp::kMod:
+      return chain + " %= " + rhs;
+    case mir::BinaryOp::kBitwiseAnd:
+      return chain + " &= " + rhs;
+    case mir::BinaryOp::kBitwiseOr:
+      return chain + " |= " + rhs;
+    case mir::BinaryOp::kBitwiseXor:
+      return chain + " ^= " + rhs;
+    case mir::BinaryOp::kShiftLeft:
+      return chain + ".ShiftLeftAssign(" + rhs + ")";
+    case mir::BinaryOp::kLogicalShiftRight:
+      return chain + ".LogicalShiftRightAssign(" + rhs + ")";
+    case mir::BinaryOp::kArithmeticShiftRight:
+      return chain + ".ArithmeticShiftRightAssign(" + rhs + ")";
+    default:
+      throw InternalError(
+          "RenderCompoundAssign: BinaryOp is not a legal SV compound "
+          "assignment operator (LRM 11.4 only allows arithmetic, bitwise, "
+          "and shift compounds)");
+  }
+}
+
 auto RenderAssignExpr(const RenderContext& ctx, const mir::AssignExpr& a)
     -> diag::Result<std::string> {
   auto value_or = RenderExpr(ctx, ctx.Expr(a.value));
@@ -833,6 +875,16 @@ auto RenderAssignExpr(const RenderContext& ctx, const mir::AssignExpr& a)
 
   // Whole-var write: existing entry points (events / direct assign).
   if (a.target.selectors.empty()) {
+    if (a.compound_op.has_value()) {
+      // For observable whole-var compound we still route through Mutate so
+      // the destructor commit fires subscribers exactly once -- the
+      // ScopedMutation overloads `op=` to mutate the snapshot in place.
+      // Procedural-local compounds operate on the underlying PackedArray
+      // directly via its own `op=` overloads.
+      const std::string chain =
+          observable ? *root_or + ".Mutate(*services_)" : *root_or;
+      return "(" + RenderCompoundAssign(*a.compound_op, chain, *value_or) + ")";
+    }
     if (observable) {
       return "lyra::runtime::WriteVar(*services_, " + *root_or + ", " +
              *value_or + ")";
@@ -860,6 +912,9 @@ auto RenderAssignExpr(const RenderContext& ctx, const mir::AssignExpr& a)
     auto method = RenderSelectorMethodCall(ctx, sel);
     if (!method) return std::unexpected(std::move(method.error()));
     chain += *method;
+  }
+  if (a.compound_op.has_value()) {
+    return "(" + RenderCompoundAssign(*a.compound_op, chain, *value_or) + ")";
   }
   return chain + " = " + *value_or;
 }

@@ -1,0 +1,17 @@
+id: cpp.compound_assign_mixed_type
+tags: [cpp_run]
+input:
+  command: [run, cpp]
+  project: false
+  top: Top
+  files: [main.sv]
+expect:
+  exit: 0
+  variables:
+    # x had 0xFFFFFF0F, y zero-extends to 32'h0000_000A, AND yields 0x0000_000A.
+    mixed_and_result: 0x0A
+    # x was 0, w zero-extends to 32'h0000_0003, OR yields 0x0000_0003.
+    mixed_or_result: 0x03
+    # narrowed_add[7:0] = 0x10 + (0x0123 narrowed to 0x23) = 0x33.
+    # High byte (0x00) unchanged -> 0x0033.
+    narrowed_add: 0x0033

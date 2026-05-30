@@ -275,6 +275,59 @@ class ScopedMutation {
     return snapshot_.Slice(lsb, count);
   }
 
+  // LRM 11.4 whole-var compound. Mirrors `x op= rhs` directly: snapshot is
+  // mutated through the underlying type's own `op=`, and the destructor
+  // commits via WriteVar. Keeping the emit shape `x.Mutate(svc) op= rhs`
+  // (instead of expanding to `WriteVar(svc, x, x.Get() op rhs)`) preserves
+  // the compound intent end-to-end and mirrors the selector form
+  // `x.Mutate(svc).Chain(...) op= rhs`.
+  auto operator+=(const value::PackedArray& rhs) -> ScopedMutation& {
+    snapshot_ += rhs;
+    return *this;
+  }
+  auto operator-=(const value::PackedArray& rhs) -> ScopedMutation& {
+    snapshot_ -= rhs;
+    return *this;
+  }
+  auto operator*=(const value::PackedArray& rhs) -> ScopedMutation& {
+    snapshot_ *= rhs;
+    return *this;
+  }
+  auto operator/=(const value::PackedArray& rhs) -> ScopedMutation& {
+    snapshot_ /= rhs;
+    return *this;
+  }
+  auto operator%=(const value::PackedArray& rhs) -> ScopedMutation& {
+    snapshot_ %= rhs;
+    return *this;
+  }
+  auto operator&=(const value::PackedArray& rhs) -> ScopedMutation& {
+    snapshot_ &= rhs;
+    return *this;
+  }
+  auto operator|=(const value::PackedArray& rhs) -> ScopedMutation& {
+    snapshot_ |= rhs;
+    return *this;
+  }
+  auto operator^=(const value::PackedArray& rhs) -> ScopedMutation& {
+    snapshot_ ^= rhs;
+    return *this;
+  }
+  auto ShiftLeftAssign(const value::PackedArray& rhs) -> ScopedMutation& {
+    snapshot_.ShiftLeftAssign(rhs);
+    return *this;
+  }
+  auto LogicalShiftRightAssign(const value::PackedArray& rhs)
+      -> ScopedMutation& {
+    snapshot_.LogicalShiftRightAssign(rhs);
+    return *this;
+  }
+  auto ArithmeticShiftRightAssign(const value::PackedArray& rhs)
+      -> ScopedMutation& {
+    snapshot_.ArithmeticShiftRightAssign(rhs);
+    return *this;
+  }
+
  private:
   RuntimeServices* services_;
   Var<T>* var_;
