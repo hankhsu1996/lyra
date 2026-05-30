@@ -1,0 +1,13 @@
+id: cpp.case_string_basic
+tags: [cpp_run]
+input:
+  command: [run, cpp]
+  project: false
+  top: Top
+  files: [main.sv]
+expect:
+  exit: 0
+  variables:
+    single: 2
+    multi: 23
+    defaulted: 100

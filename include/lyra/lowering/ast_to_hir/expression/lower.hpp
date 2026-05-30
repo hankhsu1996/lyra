@@ -4,6 +4,7 @@
 
 #include "lyra/diag/diagnostic.hpp"
 #include "lyra/hir/expr.hpp"
+#include "lyra/hir/inside_item.hpp"
 #include "lyra/lowering/ast_to_hir/facts.hpp"
 #include "lyra/lowering/ast_to_hir/state.hpp"
 
@@ -37,5 +38,14 @@ auto LowerStructuralLvalue(
     const UnitLoweringFacts& unit_facts, UnitLoweringState& unit_state,
     ScopeLoweringState& scope_state, const ScopeStack& stack,
     const slang::ast::Expression& expr) -> diag::Result<hir::Lvalue>;
+
+// Lower one entry from a slang range_list (the operand list of `inside` and
+// the per-item label list of `case (...) inside`). ValueRange entries become
+// an InsideRangePair; any other expression becomes a plain ExprId. The
+// resulting ExprId(s) are appended to proc_state's expression table.
+auto LowerInsideItem(
+    const UnitLoweringFacts& unit_facts, UnitLoweringState& unit_state,
+    ProcessLoweringState& proc_state, const ScopeStack& stack,
+    const slang::ast::Expression& item_expr) -> diag::Result<hir::InsideItem>;
 
 }  // namespace lyra::lowering::ast_to_hir

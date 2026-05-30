@@ -194,10 +194,15 @@ class PackedArray {
   // be <= 64.
   [[nodiscard]] auto ToInt64() const -> std::int64_t;
 
-  // SystemVerilog "non-zero" interpretation: any non-zero value bit makes
-  // the result true. X/Z bits do not count as non-zero. Used by `if`,
-  // `while`, and ternary conditions emitted as `if (cond.IsTruthy())`.
+  // SystemVerilog "non-zero" interpretation: any value bit set with the
+  // matching unknown-plane bit clear makes the result true. X/Z bits do not
+  // count as truthy. `operator bool` is explicit so it only fires in boolean
+  // contexts (`if`, `while`, ternary cond, `&&`, `||`, `!`) and never as an
+  // implicit conversion that would shadow the operator overloads.
   [[nodiscard]] auto IsTruthy() const -> bool;
+  [[nodiscard]] explicit operator bool() const {
+    return IsTruthy();
+  }
 
   // Drives LRM 11.4 X/Z propagation: arithmetic, comparison, shift, and
   // power return all-X (or 1-bit X) when any operand has HasUnknown().
@@ -305,10 +310,17 @@ class PackedArray {
   [[nodiscard]] auto operator-() const -> PackedArray;
   [[nodiscard]] auto operator~() const -> PackedArray;
 
-  // Methods for ops that have no C++ operator counterpart.
-  [[nodiscard]] auto LogicalAnd(const PackedArray& other) const -> PackedArray;
-  [[nodiscard]] auto LogicalOr(const PackedArray& other) const -> PackedArray;
-  [[nodiscard]] auto LogicalNot() const -> PackedArray;
+  // Logical operators. `&&` / `||` lose C++ short-circuit semantics when
+  // overloaded; that is acceptable here because callers (cpp emit, ad-hoc
+  // runtime use) work with already-materialized PackedArray values without
+  // side effects, and any optimizer pass that cares (clang's mem2reg, LLVM)
+  // sees these as plain member calls equivalent to the OR-chain it would
+  // see for `LogicalOr` -- there is no codegen difference.
+  [[nodiscard]] auto operator&&(const PackedArray& other) const -> PackedArray;
+  [[nodiscard]] auto operator||(const PackedArray& other) const -> PackedArray;
+  [[nodiscard]] auto operator!() const -> PackedArray;
+
+  // SV `->` and `<->` have no C++ operator counterpart; method-only.
   [[nodiscard]] auto LogicalImplication(const PackedArray& other) const
       -> PackedArray;
   [[nodiscard]] auto LogicalEquivalence(const PackedArray& other) const

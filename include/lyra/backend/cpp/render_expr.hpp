@@ -17,9 +17,10 @@ auto RenderStructuralVarName(
     const RenderContext& ctx, const mir::StructuralVarRef& ref)
     -> diag::Result<std::string>;
 
-// Renders `expr` and, when its MIR type is a packed array, appends
-// `.IsTruthy()`. Used by every statement that consumes an expression as a C++
-// `bool` (`if`, `while`, `do`, `for` condition, etc.).
+// Renders `expr` for use in a C++ boolean context (`if`, `while`, `do`, `for`
+// condition, ternary cond, `&&` / `||` / `!`). When the expression's MIR type
+// is a packed array, `PackedArray`'s `explicit operator bool` fires on the
+// contextual conversion; no explicit wrapping is needed.
 auto RenderConditionAsBool(const RenderContext& ctx, const mir::Expr& expr)
     -> diag::Result<std::string>;
 

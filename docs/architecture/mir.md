@@ -13,6 +13,10 @@ several possible backend targets for MIR, and does not define MIR's semantics.
 - The identity of each object and member within a compilation unit.
 - Lightweight structured control flow inside a callable body: `if`, loop, and sequence. No basic
   blocks at this layer.
+- A primitive expression set: literals, references, unary / binary / conditional operators, calls,
+  conversions, closures, element- and range-selects, concat, replication. SystemVerilog syntactic
+  sugar that decomposes into this set (`case`, `inside`, `casez` / `casex`, `foreach`) is lowered at
+  the HIR-to-MIR boundary and never carried as a MIR node.
 - Action shapes for constructs that bind behavior to schedule events (always blocks, continuous
   assignments, deferred assertions, concurrent assertions).
 - A textual dumper that serializes MIR for inspection, validation, and golden testing. The dumper is
@@ -57,6 +61,13 @@ several possible backend targets for MIR, and does not define MIR's semantics.
 - Side tables that recover topology from keys rather than direct ownership.
 - Deferred or concurrent assertions represented as flags or lowering-pass side effects instead of
   explicit callables.
+- A MIR node that preserves SystemVerilog syntactic sugar as an opaque payload: a `CaseStmt` /
+  `CaseInsideStmt` in MIR, an `InsideExpr` / `CasezExpr` / `CasexExpr` in MIR's expression set, a
+  `ForeachStmt` in MIR. Sugar of this kind is desugared to primitives upstream.
+- A runtime helper invocation that wraps a primitive operator family as an opaque call to recover
+  source-level shape (e.g., `Inside(lhs, items)`, `CaseMatch(sel, labels)`). Sugar collapses to
+  primitives in MIR; readability of generated backend source is not recovered by reintroducing
+  intrinsic-style calls downstream.
 
 ## Notes / Examples
 
@@ -64,3 +75,19 @@ Reviewing MIR via the dumper should feel like reading the compiled program's str
 backend emits MIR to C++ source: it is a backend output, not a debug view. The object-oriented
 semantic model maps naturally to C++ surface syntax, but C++ is not MIR's semantics and more than
 one backend may exist.
+
+The primitive expression set above is shaped by the downstream optimizer. Each backend
+(`backend::cpp` today, the LLVM backend via LIR) consumes MIR as primitives that its optimizer can
+fold, propagate, and pattern-match across. A sugar node carried into MIR forces every backend to
+either re-implement the desugaring or emit a runtime helper call; in the LLVM path the helper
+appears as an opaque call through which constant folding, dead-arm elimination, and jump-table
+synthesis cannot reach, and which LTO mitigates but does not eliminate. Backend-local readability of
+generated artifacts is a debug concern and is recovered through value-type C++ operator overloads in
+the runtime, not through sugar nodes in MIR.
+
+Constructs in the expression set that look like sugar are not. `ConditionalExpr` (`?:`) is preserved
+because MIR's `if` is a statement; there is no primitive rvalue branching in MIR's expression set
+that decomposes the ternary. `ConcatExpr` and `ReplicationExpr` are value-build primitives without a
+smaller decomposition. Select expressions are access primitives. Each of these stays in MIR for the
+same reason: removing it would require expanding into a statement-form rewrite that does not fit the
+expression context.

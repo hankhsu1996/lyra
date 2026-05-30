@@ -116,7 +116,7 @@ Granular tracking lives in `integral.md` (integral / packed / wide_integral) and
 
 - [ ] operators/binary -- `integral.md`.
 - [ ] operators/binary_string
-- [ ] operators/case_equality -- `operators.md`.
+- [x] operators/case_equality -- `operators.md`.
 - [ ] operators/comparison_value_temp -- subsumed by the binary-operator coverage in `integral.md`;
       the archived `ValueTemp` IR shape does not exist on the current pipeline.
 - [ ] operators/compound_assignment -- `operators.md`.

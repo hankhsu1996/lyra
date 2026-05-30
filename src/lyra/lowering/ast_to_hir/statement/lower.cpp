@@ -452,15 +452,65 @@ auto LowerContinueStmt(diag::SourceSpan span) -> diag::Result<hir::Stmt> {
       .label = std::nullopt, .data = hir::ContinueStmt{}, .span = span};
 }
 
+auto LowerCaseInsideStmt(
+    const UnitLoweringFacts& unit_facts, ProcessLoweringState& proc_state,
+    ScopeLoweringState& scope_state, ScopeStack& stack,
+    const slang::ast::CaseStatement& cs, diag::SourceSpan span)
+    -> diag::Result<hir::Stmt> {
+  const auto case_check = LowerUniquePriorityCheck(cs.check);
+  auto cond_expr = LowerProcExpr(
+      unit_facts, scope_state.UnitState(), proc_state, stack, cs.expr);
+  if (!cond_expr) return std::unexpected(std::move(cond_expr.error()));
+  const hir::ExprId cond_id = proc_state.AddExpr(*std::move(cond_expr));
+  std::vector<hir::CaseInsideItem> items;
+  items.reserve(cs.items.size());
+  for (const auto& item : cs.items) {
+    std::vector<hir::InsideItem> inside_items;
+    inside_items.reserve(item.expressions.size());
+    for (const auto* label_expr : item.expressions) {
+      auto item_or = LowerInsideItem(
+          unit_facts, scope_state.UnitState(), proc_state, stack, *label_expr);
+      if (!item_or) return std::unexpected(std::move(item_or.error()));
+      inside_items.push_back(*std::move(item_or));
+    }
+    auto item_stmt =
+        LowerStatement(unit_facts, proc_state, scope_state, stack, *item.stmt);
+    if (!item_stmt) return std::unexpected(std::move(item_stmt.error()));
+    const hir::StmtId item_id = proc_state.AddStmt(*std::move(item_stmt));
+    items.push_back(
+        hir::CaseInsideItem{.items = std::move(inside_items), .stmt = item_id});
+  }
+  std::optional<hir::StmtId> default_id;
+  if (cs.defaultCase != nullptr) {
+    auto default_stmt = LowerStatement(
+        unit_facts, proc_state, scope_state, stack, *cs.defaultCase);
+    if (!default_stmt) return std::unexpected(std::move(default_stmt.error()));
+    default_id = proc_state.AddStmt(*std::move(default_stmt));
+  }
+  return hir::Stmt{
+      .label = std::nullopt,
+      .data =
+          hir::CaseInsideStmt{
+              .condition = cond_id,
+              .items = std::move(items),
+              .default_stmt = default_id,
+              .check = case_check},
+      .span = span};
+}
+
 auto LowerCaseStmt(
     const UnitLoweringFacts& unit_facts, ProcessLoweringState& proc_state,
     ScopeLoweringState& scope_state, ScopeStack& stack,
     const slang::ast::CaseStatement& cs, diag::SourceSpan span)
     -> diag::Result<hir::Stmt> {
+  if (cs.condition == slang::ast::CaseStatementCondition::Inside) {
+    return LowerCaseInsideStmt(
+        unit_facts, proc_state, scope_state, stack, cs, span);
+  }
   if (cs.condition != slang::ast::CaseStatementCondition::Normal) {
     return diag::Unsupported(
         span, diag::DiagCode::kUnsupportedStatementForm,
-        "casez/casex/case-inside are not yet supported",
+        "casez/casex are not yet supported",
         diag::UnsupportedCategory::kFeature);
   }
   const auto case_check = LowerUniquePriorityCheck(cs.check);

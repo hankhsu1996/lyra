@@ -1002,6 +1002,54 @@ class HirDumper {
     Dedent();
   }
 
+  void DumpCaseInsideStmtNode(
+      const Process& p, StmtId id, const CaseInsideStmt& c) {
+    Line(
+        std::format(
+            "Stmt[{}] CaseInsideStmt{} cond=Expr[{}] (items={})", id.value,
+            FormatUniquePriorityCheck(c.check), c.condition.value,
+            c.items.size()));
+    Indent();
+    Line(
+        std::format(
+            "Expr[{}] {}", c.condition.value, FormatProcExpr(p, c.condition)));
+    for (std::size_t k = 0; k < c.items.size(); ++k) {
+      const auto& item = c.items[k];
+      Line(std::format("item[{}] range_list (count={})", k, item.items.size()));
+      Indent();
+      for (const auto& inside_item : item.items) {
+        std::visit(
+            Overloaded{
+                [&](const ExprId& val_id) {
+                  Line(
+                      std::format(
+                          "Expr[{}] {}", val_id.value,
+                          FormatProcExpr(p, val_id)));
+                },
+                [&](const InsideRangePair& r) {
+                  Line(
+                      std::format(
+                          "[Expr[{}]:Expr[{}]] {} : {}", r.lo.value, r.hi.value,
+                          FormatProcExpr(p, r.lo), FormatProcExpr(p, r.hi)));
+                },
+            },
+            inside_item);
+      }
+      Line("stmt:");
+      Indent();
+      DumpStmt(p, item.stmt);
+      Dedent();
+      Dedent();
+    }
+    if (c.default_stmt.has_value()) {
+      Line("default:");
+      Indent();
+      DumpStmt(p, *c.default_stmt);
+      Dedent();
+    }
+    Dedent();
+  }
+
   void DumpForStmtNode(const Process& p, StmtId id, const ForStmt& f) {
     Line(
         std::format(
@@ -1144,6 +1192,7 @@ class HirDumper {
             [&](const BlockStmt& b) { DumpBlockStmtNode(p, id, b); },
             [&](const IfStmt& i) { DumpIfStmtNode(p, id, i); },
             [&](const CaseStmt& c) { DumpCaseStmtNode(p, id, c); },
+            [&](const CaseInsideStmt& c) { DumpCaseInsideStmtNode(p, id, c); },
             [&](const ForStmt& f) { DumpForStmtNode(p, id, f); },
             [&](const WhileStmt& w) { DumpWhileStmtNode(p, id, w); },
             [&](const RepeatStmt& r) { DumpRepeatStmtNode(p, id, r); },
