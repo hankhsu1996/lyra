@@ -13,9 +13,9 @@ on the current pipeline.
 
 Real C1 / C2 / C3 / C4 are complete. Structural-var declaration initializers (SV LRM 6.8) are
 complete for the integral, enum, real, shortreal, and realtime families (SI1 below). String SC1
-(declaration with literal initializer plus equality and relational comparison) is complete; SC2
-(concat / replication) and SC3 (methods) remain. Other unfinished families: `datatypes/unpacked`,
-`datatypes/general`, `datatypes/default_init`, `datatypes/representation`.
+(declaration with literal initializer plus equality and relational comparison) and SC2 (string-mode
+concatenation and replication) are complete; SC3 (methods) remains. Other unfinished families:
+`datatypes/unpacked`, `datatypes/general`, `datatypes/default_init`, `datatypes/representation`.
 
 ## Enum
 
@@ -105,9 +105,13 @@ operand.
       relational uses lexicographic ordering. The literal-vs-literal case keeps the integral path
       per the LRM exception (no change required -- the frontend preserves bit-vector typing for that
       case).
-- [ ] SC2 -- Concatenation `{a, b, ...}` and replication `{N{s}}` in string mode (LRM 11.4.12.2):
-      when at least one operand is string-typed the entire expression evaluates to string. Covers
-      archive sub-folder `string_concat`.
+- [x] SC2 -- Concatenation `{a, b, ...}` and replication `{N{s}}` in string mode (LRM 11.4.12.2):
+      when the result type is `string` the entire expression evaluates to string. Replication
+      accepts a non-constant multiplier (LRM allows this for string mode), and a zero multiplier
+      yields the empty string. The literal-only form (`{"foo", "bar"}` where the frontend keeps the
+      integral result type and inserts an outer string conversion) is gated separately and stays
+      blocked behind `operators/concat` (integral-mode concatenation) plus the bit-vector-to-string
+      conversion path.
 - [ ] SC3 -- Built-in methods listed in LRM 6.16.1 -- 6.16.15: `.len()`, `.substr(i, j)`,
       `.compare(s)` / `.icompare(s)`, `.toupper()` / `.tolower()`, `.putc(i, c)` / `.getc(i)`, and
       the numeric conversion family (`.itoa()`, `.hextoa()`, `.atoi()`, `.atohex()`, ...).

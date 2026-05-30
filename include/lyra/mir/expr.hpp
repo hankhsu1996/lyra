@@ -100,11 +100,22 @@ struct RangeSelectExpr {
   RangeBounds bounds;
 };
 
+struct ConcatExpr {
+  std::vector<ExprId> operands;
+};
+
+// LRM 11.4.12 / 11.4.12.2: `{multiplier{...}}`. `concat` always points to a
+// ConcatExpr; mirrors the hir::ReplicationExpr shape.
+struct ReplicationExpr {
+  ExprId count;
+  ExprId concat;
+};
+
 using ExprData = std::variant<
     IntegerLiteral, StringLiteral, TimeLiteral, RealLiteral, StructuralParamRef,
     StructuralVarRef, ProceduralVarRef, UnaryExpr, BinaryExpr, ConditionalExpr,
     AssignExpr, CallExpr, RuntimeCallExpr, ConversionExpr, ClosureExpr,
-    ElementSelectExpr, RangeSelectExpr>;
+    ElementSelectExpr, RangeSelectExpr, ConcatExpr, ReplicationExpr>;
 
 struct Expr {
   ExprData data;

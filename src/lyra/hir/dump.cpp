@@ -660,6 +660,21 @@ class HirDumper {
                   },
                   sel.bounds);
             },
+            [](const ConcatExpr& c) -> std::string {
+              std::string operands;
+              for (std::size_t i = 0; i < c.operands.size(); ++i) {
+                if (i != 0) {
+                  operands += ", ";
+                }
+                operands += std::format("Expr[{}]", c.operands[i].value);
+              }
+              return std::format("ConcatExpr operands=[{}]", operands);
+            },
+            [](const ReplicationExpr& r) -> std::string {
+              return std::format(
+                  "ReplicationExpr count=Expr[{}] concat=Expr[{}]",
+                  r.count.value, r.concat.value);
+            },
         },
         e.data);
     return std::format("type=Type[{}] {}", e.type.value, formatted);

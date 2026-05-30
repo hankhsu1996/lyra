@@ -962,6 +962,49 @@ auto LowerHirRangeSelectExprProc(
       .type = result_type};
 }
 
+auto LowerHirConcatExprProc(
+    const UnitLoweringState& unit_state,
+    const StructuralScopeLoweringState& scope_state,
+    const ProcessLoweringState& proc_state,
+    ProceduralScopeLoweringState& proc_scope_state,
+    const hir::Process& hir_process, const hir::ConcatExpr& c,
+    mir::TypeId result_type) -> diag::Result<mir::Expr> {
+  std::vector<mir::ExprId> operand_ids;
+  operand_ids.reserve(c.operands.size());
+  for (const auto& id : c.operands) {
+    auto lowered = LowerExpr(
+        unit_state, scope_state, proc_state, proc_scope_state, hir_process,
+        hir_process.exprs.at(id.value));
+    if (!lowered) return std::unexpected(std::move(lowered.error()));
+    operand_ids.push_back(proc_scope_state.AddExpr(*std::move(lowered)));
+  }
+  return mir::Expr{
+      .data = mir::ConcatExpr{.operands = std::move(operand_ids)},
+      .type = result_type};
+}
+
+auto LowerHirReplicationExprProc(
+    const UnitLoweringState& unit_state,
+    const StructuralScopeLoweringState& scope_state,
+    const ProcessLoweringState& proc_state,
+    ProceduralScopeLoweringState& proc_scope_state,
+    const hir::Process& hir_process, const hir::ReplicationExpr& r,
+    mir::TypeId result_type) -> diag::Result<mir::Expr> {
+  auto count_or = LowerExpr(
+      unit_state, scope_state, proc_state, proc_scope_state, hir_process,
+      hir_process.exprs.at(r.count.value));
+  if (!count_or) return std::unexpected(std::move(count_or.error()));
+  const mir::ExprId count_id = proc_scope_state.AddExpr(*std::move(count_or));
+  auto concat_or = LowerExpr(
+      unit_state, scope_state, proc_state, proc_scope_state, hir_process,
+      hir_process.exprs.at(r.concat.value));
+  if (!concat_or) return std::unexpected(std::move(concat_or.error()));
+  const mir::ExprId concat_id = proc_scope_state.AddExpr(*std::move(concat_or));
+  return mir::Expr{
+      .data = mir::ReplicationExpr{.count = count_id, .concat = concat_id},
+      .type = result_type};
+}
+
 }  // namespace
 
 auto LowerExpr(
@@ -1022,6 +1065,16 @@ auto LowerExpr(
             return LowerHirRangeSelectExprProc(
                 unit_state, scope_state, proc_state, proc_scope_state,
                 hir_process, sel, result_type);
+          },
+          [&](const hir::ConcatExpr& c) -> diag::Result<mir::Expr> {
+            return LowerHirConcatExprProc(
+                unit_state, scope_state, proc_state, proc_scope_state,
+                hir_process, c, result_type);
+          },
+          [&](const hir::ReplicationExpr& r) -> diag::Result<mir::Expr> {
+            return LowerHirReplicationExprProc(
+                unit_state, scope_state, proc_state, proc_scope_state,
+                hir_process, r, result_type);
           },
       },
       expr.data);
@@ -1202,6 +1255,18 @@ auto LowerExprImpl(
             return diag::Unsupported(
                 diag::DiagCode::kUnsupportedStructuralExpressionForm,
                 "range-select in constructor expressions is not yet supported",
+                diag::UnsupportedCategory::kFeature);
+          },
+          [](const hir::ConcatExpr&) -> diag::Result<mir::Expr> {
+            return diag::Unsupported(
+                diag::DiagCode::kUnsupportedStructuralExpressionForm,
+                "concatenation in constructor expressions is not yet supported",
+                diag::UnsupportedCategory::kFeature);
+          },
+          [](const hir::ReplicationExpr&) -> diag::Result<mir::Expr> {
+            return diag::Unsupported(
+                diag::DiagCode::kUnsupportedStructuralExpressionForm,
+                "replication in constructor expressions is not yet supported",
                 diag::UnsupportedCategory::kFeature);
           },
       },
