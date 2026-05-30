@@ -11,16 +11,14 @@ operator runtime, string runtime); see the per-item **Depends on** lines and the
 
 ## Actionable
 
-No open items are currently actionable inside this workstream alone. Every remaining item depends on
-machinery owned by another workstream; the table below lists the blockers.
+C11 and C12 are unblocked now that their dependencies (W1, W2) have landed. C9 and C10 still wait on
+`datatypes/unpacked`.
 
-| Item    | Blocked on                                                                                 |
-| ------- | ------------------------------------------------------------------------------------------ |
-| C9, C10 | `datatypes/unpacked` (procedural unpacked array vars + `arr[i]` element-select expr).      |
-| C11     | `operators.md` W2 (`==?` / `!=?` masked-compare runtime helper).                           |
-| C12     | `operators.md` W1 (basic `inside`) and W2 (wildcard items in the range list).              |
-| C16     | `datatypes/enum`.                                                                          |
-| C17     | `datatypes/string` plus the string-equality runtime helper from `operators/binary_string`. |
+| Item    | Status                                                                               |
+| ------- | ------------------------------------------------------------------------------------ |
+| C11     | Unblocked (W2 shipped). HIR -> MIR cascade with `==?` per-label compare.             |
+| C12     | Unblocked (W1, W2 shipped). HIR -> MIR cascade reusing `InsideExpr` per-item lower.  |
+| C9, C10 | Blocked on `datatypes/unpacked` (procedural unpacked array vars + `arr[i]` element). |
 
 ## Sub-Steps
 
@@ -109,10 +107,15 @@ machinery owned by another workstream; the table below lists the blockers.
       type. Covers archive cases `case_constant_expression`, `case_first_match_wins`. Coverage adds
       `case_constant_expression`, `case_first_match_wins`, `case_runtime_multi_label`,
       `case_runtime_no_default`.
-- [ ] C16 -- `case` with enum-typed selectors and enum-value labels. **Depends on**
-      `datatypes/enum`.
-- [ ] C17 -- `case` with string selector / string labels. **Depends on** `datatypes/string` plus the
-      string-equality runtime helper tracked under `operators/binary_string`.
+- [x] C16 -- `case` with enum-typed selectors and enum-value labels. The uniform cascade from C3
+      handles this with no new lowering: slang's case-context type unification widens the labels to
+      the enum type, and the cascade's per-label `==` evaluates against the unified enum operands.
+      Coverage: `case_enum_basic` (single / multi-label / default-taken) and `case_enum_no_match`
+      (no default, selector unchanged from initial).
+- [x] C17 -- `case` with string selector / string labels. Same cascade reused: per-label `==` uses
+      the SC1 string equality helper, with the bool result projected back into the cascade's 1-bit
+      truthiness shape. Coverage: `case_string_basic` (single / multi-label / default-taken) and
+      `case_string_no_match`.
 
 ### Expressions
 
