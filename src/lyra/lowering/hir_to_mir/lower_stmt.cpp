@@ -770,7 +770,7 @@ auto LowerContinueStmt(const hir::Stmt& stmt) -> diag::Result<mir::Stmt> {
 // LRM 15.5.1 `-> e;`. HIR -> MIR collapses the trigger statement onto a plain
 // method-call expression on the named event. The runtime's
 // `NamedEvent::Trigger(services)` does not suspend, so no `co_await` wrap is
-// emitted -- backend dispatches on `IsBuiltinMethodSuspending(kind)`.
+// emitted -- backend dispatches on `mir::IsSuspending(EventMethodInfo)`.
 auto LowerEventTriggerStmt(
     const UnitLoweringState& unit_state,
     const StructuralScopeLoweringState& scope_state,
@@ -782,7 +782,6 @@ auto LowerEventTriggerStmt(
       unit_state, scope_state, proc_state, proc_scope_state, hir_proc,
       hir_proc.exprs.at(et.event.value));
   if (!receiver_or) return std::unexpected(std::move(receiver_or.error()));
-  const mir::TypeId event_type = receiver_or->type;
   const mir::ExprId receiver_id =
       proc_scope_state.AddExpr(*std::move(receiver_or));
   mir::Expr call{
@@ -790,9 +789,9 @@ auto LowerEventTriggerStmt(
           mir::CallExpr{
               .callee =
                   mir::BuiltinMethodCallee{
-                      .receiver_type = event_type,
-                      .kind = mir::BuiltinMethodKind::kNamedEventTrigger,
-                  },
+                      .method =
+                          mir::EventMethodInfo{
+                              .kind = mir::EventMethodKind::kTrigger}},
               .arguments = {receiver_id},
           },
       .type = unit_state.Builtins().void_type};
@@ -819,7 +818,6 @@ auto LowerNamedEventTimedStmt(
       unit_state, scope_state, proc_state, child_proc_scope_state, hir_proc,
       hir_proc.exprs.at(nec.event.value));
   if (!receiver_or) return std::unexpected(std::move(receiver_or.error()));
-  const mir::TypeId event_type = receiver_or->type;
   const mir::ExprId receiver_id =
       child_proc_scope_state.AddExpr(*std::move(receiver_or));
   mir::Expr await_call{
@@ -827,9 +825,9 @@ auto LowerNamedEventTimedStmt(
           mir::CallExpr{
               .callee =
                   mir::BuiltinMethodCallee{
-                      .receiver_type = event_type,
-                      .kind = mir::BuiltinMethodKind::kNamedEventAwait,
-                  },
+                      .method =
+                          mir::EventMethodInfo{
+                              .kind = mir::EventMethodKind::kAwait}},
               .arguments = {receiver_id},
           },
       .type = unit_state.Builtins().void_type};

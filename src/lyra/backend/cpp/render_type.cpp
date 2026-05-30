@@ -80,7 +80,7 @@ auto RenderTypeAsCpp(
             return RenderEnumClassName(owner_scope, type_id);
           },
           [](const mir::StringType&) -> diag::Result<std::string> {
-            return std::string{"std::string"};
+            return std::string{"lyra::value::String"};
           },
           [](const mir::EventType&) -> diag::Result<std::string> {
             return std::string{"lyra::runtime::NamedEvent"};

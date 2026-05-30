@@ -1,0 +1,13 @@
+id: cpp.string_substr_oob
+tags: [cpp_run]
+input:
+  command: [run, cpp]
+  project: false
+  top: Top
+  files: [main.sv]
+expect:
+  exit: 0
+  variables:
+    j_lt_i: ""
+    past_end: ""
+    neg_i: ""

@@ -1,0 +1,12 @@
+id: cpp.string_toupper
+tags: [cpp_run]
+input:
+  command: [run, cpp]
+  project: false
+  top: Top
+  files: [main.sv]
+expect:
+  exit: 0
+  variables:
+    r: "HELLO WORLD 123"
+    src: "Hello World 123"

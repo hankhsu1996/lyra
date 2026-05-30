@@ -20,7 +20,7 @@
 #include "lyra/diag/diagnostic.hpp"
 #include "lyra/diag/kind.hpp"
 #include "lyra/mir/binary_op.hpp"
-#include "lyra/mir/builtin_method_kind.hpp"
+#include "lyra/mir/builtin_method.hpp"
 #include "lyra/mir/conversion.hpp"
 #include "lyra/mir/expr.hpp"
 #include "lyra/mir/integral_constant.hpp"
@@ -592,29 +592,201 @@ auto RenderConversionExpr(
   return *std::move(operand_or);
 }
 
-auto BuiltinMethodMemberName(mir::BuiltinMethodKind kind) -> std::string_view {
-  switch (kind) {
-    case mir::BuiltinMethodKind::kEnumFirst:
+auto EnumMethodMemberName(mir::EnumMethodKind k) -> std::string_view {
+  switch (k) {
+    case mir::EnumMethodKind::kFirst:
       return "First";
-    case mir::BuiltinMethodKind::kEnumLast:
+    case mir::EnumMethodKind::kLast:
       return "Last";
-    case mir::BuiltinMethodKind::kEnumNum:
+    case mir::EnumMethodKind::kNum:
       return "Num";
-    case mir::BuiltinMethodKind::kEnumName:
+    case mir::EnumMethodKind::kName:
       return "Name";
-    case mir::BuiltinMethodKind::kEnumNext:
+    case mir::EnumMethodKind::kNext:
       return "Next";
-    case mir::BuiltinMethodKind::kEnumPrev:
+    case mir::EnumMethodKind::kPrev:
       return "Prev";
-    case mir::BuiltinMethodKind::kNamedEventTrigger:
+  }
+  throw InternalError("EnumMethodMemberName: unknown kind");
+}
+
+auto StringMethodMemberName(mir::StringMethodKind k) -> std::string_view {
+  switch (k) {
+    case mir::StringMethodKind::kLen:
+      return "Len";
+    case mir::StringMethodKind::kGetc:
+      return "Getc";
+    case mir::StringMethodKind::kPutc:
+      return "Putc";
+    case mir::StringMethodKind::kToupper:
+      return "Toupper";
+    case mir::StringMethodKind::kTolower:
+      return "Tolower";
+    case mir::StringMethodKind::kCompare:
+      return "Compare";
+    case mir::StringMethodKind::kIcompare:
+      return "Icompare";
+    case mir::StringMethodKind::kSubstr:
+      return "Substr";
+    case mir::StringMethodKind::kAtoi:
+      return "Atoi";
+    case mir::StringMethodKind::kAtohex:
+      return "Atohex";
+    case mir::StringMethodKind::kAtooct:
+      return "Atooct";
+    case mir::StringMethodKind::kAtobin:
+      return "Atobin";
+    case mir::StringMethodKind::kAtoreal:
+      return "Atoreal";
+    case mir::StringMethodKind::kItoa:
+      return "Itoa";
+    case mir::StringMethodKind::kHextoa:
+      return "Hextoa";
+    case mir::StringMethodKind::kOcttoa:
+      return "Octtoa";
+    case mir::StringMethodKind::kBintoa:
+      return "Bintoa";
+    case mir::StringMethodKind::kRealtoa:
+      return "Realtoa";
+  }
+  throw InternalError("StringMethodMemberName: unknown kind");
+}
+
+auto EventMethodMemberName(mir::EventMethodKind k) -> std::string_view {
+  switch (k) {
+    case mir::EventMethodKind::kTrigger:
       return "Trigger";
-    case mir::BuiltinMethodKind::kNamedEventAwait:
+    case mir::EventMethodKind::kAwait:
       return "Await";
-    case mir::BuiltinMethodKind::kNamedEventTriggered:
+    case mir::EventMethodKind::kTriggered:
       return "Triggered";
   }
-  throw InternalError(
-      "BuiltinMethodMemberName: unknown mir::BuiltinMethodKind");
+  throw InternalError("EventMethodMemberName: unknown kind");
+}
+
+// LRM 6.19.5: first/last/num are static on the enum class; name/next/prev
+// dispatch on the receiver. num returns std::int32_t and wraps into the SV
+// `int` shape via PackedArray::Int.
+auto RenderEnumMethodCall(
+    const RenderContext& ctx, const mir::CallExpr& call,
+    const mir::EnumMethodInfo& m) -> diag::Result<std::string> {
+  const auto member = EnumMethodMemberName(m.kind);
+  const auto class_name =
+      RenderEnumClassName(ctx.StructuralScope(), m.enum_type);
+  const bool is_static = m.kind == mir::EnumMethodKind::kFirst ||
+                         m.kind == mir::EnumMethodKind::kLast ||
+                         m.kind == mir::EnumMethodKind::kNum;
+  const bool takes_step = m.kind == mir::EnumMethodKind::kNext ||
+                          m.kind == mir::EnumMethodKind::kPrev;
+  std::string raw_call;
+  if (is_static) {
+    raw_call = std::format("{}::{}()", class_name, member);
+  } else {
+    if (call.arguments.empty()) {
+      throw InternalError(
+          "RenderEnumMethodCall: instance method expects a receiver "
+          "argument");
+    }
+    auto receiver_or = RenderExpr(ctx, ctx.Expr(call.arguments[0]));
+    if (!receiver_or) {
+      return std::unexpected(std::move(receiver_or.error()));
+    }
+    // next / prev have an optional step. Omitted at the SV call site ->
+    // omit at the C++ call site too; the Enum<Derived> method's default
+    // argument supplies 1.
+    std::string step_arg;
+    if (takes_step && call.arguments.size() >= 2) {
+      auto step_or = RenderExpr(ctx, ctx.Expr(call.arguments[1]));
+      if (!step_or) {
+        return std::unexpected(std::move(step_or.error()));
+      }
+      step_arg = std::format("static_cast<unsigned>(({}).ToInt64())", *step_or);
+    }
+    raw_call = std::format("({}).{}({})", *receiver_or, member, step_arg);
+  }
+  if (m.kind == mir::EnumMethodKind::kNum) {
+    return std::format("lyra::value::PackedArray::Int({})", raw_call);
+  }
+  return raw_call;
+}
+
+// LRM 6.16: dispatch on the receiver (arguments[0]); subsequent SV args are
+// the method parameters. Integral-typed args (SV int / integer / byte) live
+// in a PackedArray at the call site and project to std::int32_t / std::int64_t
+// via ToInt64. Integral return values are wrapped back into the appropriate
+// PackedArray shape.
+auto RenderStringMethodCall(
+    const RenderContext& ctx, const mir::CallExpr& call,
+    const mir::StringMethodInfo& m) -> diag::Result<std::string> {
+  if (call.arguments.empty()) {
+    throw InternalError(
+        "RenderStringMethodCall: instance method expects a receiver "
+        "argument");
+  }
+  auto receiver_or = RenderExpr(ctx, ctx.Expr(call.arguments[0]));
+  if (!receiver_or) {
+    return std::unexpected(std::move(receiver_or.error()));
+  }
+  std::string args_text;
+  for (std::size_t i = 1; i < call.arguments.size(); ++i) {
+    auto arg_or = RenderExpr(ctx, ctx.Expr(call.arguments[i]));
+    if (!arg_or) return std::unexpected(std::move(arg_or.error()));
+    const auto& arg_ty = ctx.Unit().GetType(ctx.Expr(call.arguments[i]).type);
+    std::string rendered = arg_ty.IsIntegralPacked()
+                               ? std::format(
+                                     "static_cast<std::int32_t>("
+                                     "({}).ToInt64())",
+                                     *arg_or)
+                               : std::move(*arg_or);
+    if (i > 1) args_text += ", ";
+    args_text += rendered;
+  }
+  const std::string raw_call = std::format(
+      "({}).{}({})", *receiver_or, StringMethodMemberName(m.kind), args_text);
+  switch (m.kind) {
+    case mir::StringMethodKind::kLen:
+    case mir::StringMethodKind::kCompare:
+    case mir::StringMethodKind::kIcompare:
+      // Returns SV int (32-bit signed 2-state).
+      return std::format("lyra::value::PackedArray::Int({})", raw_call);
+    case mir::StringMethodKind::kGetc:
+      // Returns SV byte (8-bit signed 2-state).
+      return std::format("lyra::value::PackedArray::Byte({})", raw_call);
+    case mir::StringMethodKind::kAtoi:
+    case mir::StringMethodKind::kAtohex:
+    case mir::StringMethodKind::kAtooct:
+    case mir::StringMethodKind::kAtobin:
+      // Returns SV integer (32-bit signed 4-state).
+      return std::format("lyra::value::PackedArray::Integer({})", raw_call);
+    // Atoreal returns C++ double, matching SV real.
+    // Toupper / Tolower / Substr return lyra::value::String.
+    // Putc / Itoa / Hextoa / Octtoa / Bintoa / Realtoa are void.
+    default:
+      return raw_call;
+  }
+}
+
+// LRM 15.5: Trigger and Triggered reach into RuntimeServices; Await is
+// suspending and must be wrapped in co_await.
+auto RenderEventMethodCall(
+    const RenderContext& ctx, const mir::CallExpr& call,
+    const mir::EventMethodInfo& m) -> diag::Result<std::string> {
+  if (call.arguments.empty()) {
+    throw InternalError(
+        "RenderEventMethodCall: event method expects a receiver argument");
+  }
+  auto receiver_or = RenderExpr(ctx, ctx.Expr(call.arguments[0]));
+  if (!receiver_or) {
+    return std::unexpected(std::move(receiver_or.error()));
+  }
+  const std::string args = (m.kind == mir::EventMethodKind::kTrigger ||
+                            m.kind == mir::EventMethodKind::kTriggered)
+                               ? "*services_"
+                               : "";
+  const std::string raw_call = std::format(
+      "({}).{}({})", *receiver_or, EventMethodMemberName(m.kind), args);
+  if (mir::IsSuspending(m)) return "co_await " + raw_call;
+  return raw_call;
 }
 
 auto RenderCallExpr(const RenderContext& ctx, const mir::CallExpr& call)
@@ -635,83 +807,19 @@ auto RenderCallExpr(const RenderContext& ctx, const mir::CallExpr& call)
                 diag::UnsupportedCategory::kFeature);
           },
           [&](const mir::BuiltinMethodCallee& b) -> diag::Result<std::string> {
-            const auto member = BuiltinMethodMemberName(b.kind);
-            // Named-event methods (LRM 15.5) dispatch on a runtime
-            // `NamedEvent` field. Trigger and Triggered reach into
-            // RuntimeServices; Await is suspending and must be wrapped in
-            // `co_await`.
-            const bool is_named_event =
-                b.kind == mir::BuiltinMethodKind::kNamedEventTrigger ||
-                b.kind == mir::BuiltinMethodKind::kNamedEventAwait ||
-                b.kind == mir::BuiltinMethodKind::kNamedEventTriggered;
-            if (is_named_event) {
-              if (call.arguments.empty()) {
-                throw InternalError(
-                    "RenderCallExpr: NamedEvent method expects a receiver "
-                    "argument");
-              }
-              auto receiver_or = RenderExpr(ctx, ctx.Expr(call.arguments[0]));
-              if (!receiver_or) {
-                return std::unexpected(std::move(receiver_or.error()));
-              }
-              std::string args;
-              if (b.kind == mir::BuiltinMethodKind::kNamedEventTrigger ||
-                  b.kind == mir::BuiltinMethodKind::kNamedEventTriggered) {
-                args = "*services_";
-              }
-              std::string raw_call =
-                  std::format("({}).{}({})", *receiver_or, member, args);
-              if (mir::IsBuiltinMethodSuspending(b.kind)) {
-                return "co_await " + raw_call;
-              }
-              return raw_call;
-            }
-            const auto class_name =
-                RenderEnumClassName(ctx.StructuralScope(), b.receiver_type);
-            // first / last / num are static methods on the enum class; the
-            // remaining methods (name / next / prev) dispatch on the receiver.
-            const bool is_static =
-                b.kind == mir::BuiltinMethodKind::kEnumFirst ||
-                b.kind == mir::BuiltinMethodKind::kEnumLast ||
-                b.kind == mir::BuiltinMethodKind::kEnumNum;
-            const bool takes_step =
-                b.kind == mir::BuiltinMethodKind::kEnumNext ||
-                b.kind == mir::BuiltinMethodKind::kEnumPrev;
-            std::string raw_call;
-            if (is_static) {
-              raw_call = std::format("{}::{}()", class_name, member);
-            } else {
-              if (call.arguments.empty()) {
-                throw InternalError(
-                    "RenderCallExpr: BuiltinMethodCallee expects a receiver "
-                    "argument");
-              }
-              auto receiver_or = RenderExpr(ctx, ctx.Expr(call.arguments[0]));
-              if (!receiver_or) {
-                return std::unexpected(std::move(receiver_or.error()));
-              }
-              // next / prev have an optional step. Omitted at the SV call
-              // site -> omit at the C++ call site too; the Enum<Derived>
-              // method's default argument supplies 1.
-              std::string step_arg;
-              if (takes_step && call.arguments.size() >= 2) {
-                auto step_or = RenderExpr(ctx, ctx.Expr(call.arguments[1]));
-                if (!step_or) {
-                  return std::unexpected(std::move(step_or.error()));
-                }
-                step_arg = std::format(
-                    "static_cast<unsigned>(({}).ToInt64())", *step_or);
-              }
-              raw_call =
-                  std::format("({}).{}({})", *receiver_or, member, step_arg);
-            }
-            // name() returns std::string; first/last/next/prev return the
-            // enum class directly (a PackedArray subclass). num() returns
-            // std::int32_t and needs wrapping into the SV `int` shape.
-            if (b.kind == mir::BuiltinMethodKind::kEnumNum) {
-              return std::format("lyra::value::PackedArray::Int({})", raw_call);
-            }
-            return raw_call;
+            return std::visit(
+                Overloaded{
+                    [&](const mir::EnumMethodInfo& m) {
+                      return RenderEnumMethodCall(ctx, call, m);
+                    },
+                    [&](const mir::StringMethodInfo& m) {
+                      return RenderStringMethodCall(ctx, call, m);
+                    },
+                    [&](const mir::EventMethodInfo& m) {
+                      return RenderEventMethodCall(ctx, call, m);
+                    },
+                },
+                b.method);
           },
       },
       call.callee);
@@ -1065,7 +1173,7 @@ auto RenderExpr(const RenderContext& ctx, const mir::Expr& expr)
             return RenderIntegerLiteralExpr(ctx, expr, lit);
           },
           [&](const mir::StringLiteral& s) -> diag::Result<std::string> {
-            return RenderStdStringLiteral(s.value);
+            return RenderSvStringLiteral(s.value);
           },
           [](const mir::TimeLiteral&) -> diag::Result<std::string> {
             return diag::Unsupported(

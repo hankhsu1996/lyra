@@ -1,0 +1,12 @@
+id: cpp.string_octtoa
+tags: [cpp_run]
+input:
+  command: [run, cpp]
+  project: false
+  top: Top
+  files: [main.sv]
+expect:
+  exit: 0
+  variables:
+    s_63: "77"
+    s_8: "10"

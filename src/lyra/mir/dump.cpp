@@ -413,9 +413,25 @@ class MirDumper {
                   r.hops.value, r.subroutine.value, target.name);
             },
             [](const BuiltinMethodCallee& b) -> std::string {
-              return std::format(
-                  "BuiltinMethodCallee[receiver_type=Type[{}], kind={}]",
-                  b.receiver_type.value, static_cast<int>(b.kind));
+              return std::visit(
+                  Overloaded{
+                      [](const EnumMethodInfo& m) -> std::string {
+                        return std::format(
+                            "EnumMethodInfo[enum_type=Type[{}], kind={}]",
+                            m.enum_type.value, static_cast<int>(m.kind));
+                      },
+                      [](const StringMethodInfo& m) -> std::string {
+                        return std::format(
+                            "StringMethodInfo[kind={}]",
+                            static_cast<int>(m.kind));
+                      },
+                      [](const EventMethodInfo& m) -> std::string {
+                        return std::format(
+                            "EventMethodInfo[kind={}]",
+                            static_cast<int>(m.kind));
+                      },
+                  },
+                  b.method);
             },
         },
         callee);

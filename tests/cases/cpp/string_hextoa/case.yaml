@@ -1,0 +1,12 @@
+id: cpp.string_hextoa
+tags: [cpp_run]
+input:
+  command: [run, cpp]
+  project: false
+  top: Top
+  files: [main.sv]
+expect:
+  exit: 0
+  variables:
+    s_ff: "ff"
+    s_dead: "deadbeef"

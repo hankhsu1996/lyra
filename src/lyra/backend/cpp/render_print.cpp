@@ -81,13 +81,16 @@ auto RenderRuntimeValueViewInit(
     -> diag::Result<std::string> {
   const auto& type = ctx.Unit().GetType(v.type);
 
-  // `%s` operands are typed as packed bit vectors by slang but reach the
-  // runtime as a string_view. Dispatch on format kind, not just type.
+  // `%s` operands always reach the runtime as a lyra::value::String --
+  // string-typed variables emit the variable directly, and bit-vector
+  // literals reach mir::StringLiteral which renders as a String{...} ctor.
+  // (Conversion from a bit-vector expression of integral type is gated
+  // behind the bit-vector-to-string conversion path.)
   if (v.spec.kind == mir::FormatKind::kString) {
     auto operand_or = RenderExpr(ctx, ctx.Expr(v.value));
     if (!operand_or) return std::unexpected(std::move(operand_or.error()));
     return std::format(
-        "lyra::value::RuntimeValueView::String({})", *operand_or);
+        "lyra::value::RuntimeValueView::String(({}).View())", *operand_or);
   }
 
   if (type.IsIntegralPacked()) {
@@ -100,7 +103,7 @@ auto RenderRuntimeValueViewInit(
     auto operand_or = RenderExpr(ctx, ctx.Expr(v.value));
     if (!operand_or) return std::unexpected(std::move(operand_or.error()));
     return std::format(
-        "lyra::value::RuntimeValueView::String({})", *operand_or);
+        "lyra::value::RuntimeValueView::String(({}).View())", *operand_or);
   }
   if (type.Kind() == mir::TypeKind::kReal ||
       type.Kind() == mir::TypeKind::kRealTime) {

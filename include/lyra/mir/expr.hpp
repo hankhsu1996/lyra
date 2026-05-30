@@ -7,7 +7,7 @@
 #include <vector>
 
 #include "lyra/mir/binary_op.hpp"
-#include "lyra/mir/builtin_method_kind.hpp"
+#include "lyra/mir/builtin_method.hpp"
 #include "lyra/mir/closure.hpp"
 #include "lyra/mir/conversion.hpp"
 #include "lyra/mir/expr_id.hpp"
@@ -71,11 +71,6 @@ struct AssignExpr {
 
 struct SystemSubroutineCallee {
   support::SystemSubroutineId id;
-};
-
-struct BuiltinMethodCallee {
-  TypeId receiver_type;
-  BuiltinMethodKind kind;
 };
 
 using Callee = std::variant<

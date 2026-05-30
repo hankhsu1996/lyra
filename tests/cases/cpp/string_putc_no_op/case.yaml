@@ -1,0 +1,13 @@
+id: cpp.string_putc_no_op
+tags: [cpp_run]
+input:
+  command: [run, cpp]
+  project: false
+  top: Top
+  files: [main.sv]
+expect:
+  exit: 0
+  variables:
+    s_zero: "Hi"
+    s_oob: "Hi"
+    s_neg: "Hi"
