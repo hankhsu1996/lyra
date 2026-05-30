@@ -88,29 +88,79 @@ class HirDumper {
     throw InternalError("HirDumper::FormatUniquePriorityCheck: unknown check");
   }
 
-  static auto FormatBuiltinMethodKind(BuiltinMethodKind k) -> std::string_view {
+  static auto FormatEnumMethodKind(EnumMethodKind k) -> std::string_view {
     switch (k) {
-      case BuiltinMethodKind::kEnumFirst:
+      case EnumMethodKind::kFirst:
         return "first";
-      case BuiltinMethodKind::kEnumLast:
+      case EnumMethodKind::kLast:
         return "last";
-      case BuiltinMethodKind::kEnumNum:
+      case EnumMethodKind::kNum:
         return "num";
-      case BuiltinMethodKind::kEnumNext:
+      case EnumMethodKind::kNext:
         return "next";
-      case BuiltinMethodKind::kEnumPrev:
+      case EnumMethodKind::kPrev:
         return "prev";
-      case BuiltinMethodKind::kEnumName:
+      case EnumMethodKind::kName:
         return "name";
-      case BuiltinMethodKind::kNamedEventTrigger:
+    }
+    throw InternalError(
+        "HirDumper::FormatEnumMethodKind: unknown EnumMethodKind");
+  }
+
+  static auto FormatStringMethodKind(StringMethodKind k) -> std::string_view {
+    switch (k) {
+      case StringMethodKind::kLen:
+        return "len";
+      case StringMethodKind::kGetc:
+        return "getc";
+      case StringMethodKind::kPutc:
+        return "putc";
+      case StringMethodKind::kToupper:
+        return "toupper";
+      case StringMethodKind::kTolower:
+        return "tolower";
+      case StringMethodKind::kCompare:
+        return "compare";
+      case StringMethodKind::kIcompare:
+        return "icompare";
+      case StringMethodKind::kSubstr:
+        return "substr";
+      case StringMethodKind::kAtoi:
+        return "atoi";
+      case StringMethodKind::kAtohex:
+        return "atohex";
+      case StringMethodKind::kAtooct:
+        return "atooct";
+      case StringMethodKind::kAtobin:
+        return "atobin";
+      case StringMethodKind::kAtoreal:
+        return "atoreal";
+      case StringMethodKind::kItoa:
+        return "itoa";
+      case StringMethodKind::kHextoa:
+        return "hextoa";
+      case StringMethodKind::kOcttoa:
+        return "octtoa";
+      case StringMethodKind::kBintoa:
+        return "bintoa";
+      case StringMethodKind::kRealtoa:
+        return "realtoa";
+    }
+    throw InternalError(
+        "HirDumper::FormatStringMethodKind: unknown StringMethodKind");
+  }
+
+  static auto FormatEventMethodKind(EventMethodKind k) -> std::string_view {
+    switch (k) {
+      case EventMethodKind::kTrigger:
         return "trigger";
-      case BuiltinMethodKind::kNamedEventAwait:
+      case EventMethodKind::kAwait:
         return "await";
-      case BuiltinMethodKind::kNamedEventTriggered:
+      case EventMethodKind::kTriggered:
         return "triggered";
     }
     throw InternalError(
-        "HirDumper::FormatBuiltinMethodKind: unknown BuiltinMethodKind");
+        "HirDumper::FormatEventMethodKind: unknown EventMethodKind");
   }
 
   static auto FormatPackedForm(PackedArrayForm f) -> std::string_view {
@@ -543,8 +593,22 @@ class HirDumper {
                   "SystemSubroutine[{}] \"{}\"", s.id.value, desc.name);
             },
             [](const BuiltinMethodRef& b) -> std::string {
-              return std::format(
-                  "BuiltinMethod \"{}\"", FormatBuiltinMethodKind(b.kind));
+              return std::visit(
+                  Overloaded{
+                      [](EnumMethodKind k) -> std::string {
+                        return std::format(
+                            "EnumMethod \"{}\"", FormatEnumMethodKind(k));
+                      },
+                      [](StringMethodKind k) -> std::string {
+                        return std::format(
+                            "StringMethod \"{}\"", FormatStringMethodKind(k));
+                      },
+                      [](EventMethodKind k) -> std::string {
+                        return std::format(
+                            "EventMethod \"{}\"", FormatEventMethodKind(k));
+                      },
+                  },
+                  b.method);
             },
         },
         callee);

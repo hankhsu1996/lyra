@@ -95,6 +95,14 @@ auto PackedArray::Int(std::int32_t value) -> PackedArray {
   return FromInt(value, 32U, true, false);
 }
 
+auto PackedArray::Byte(std::int8_t value) -> PackedArray {
+  return FromInt(value, 8U, true, false);
+}
+
+auto PackedArray::Integer(std::int32_t value) -> PackedArray {
+  return FromInt(value, 32U, true, true);
+}
+
 auto PackedArray::MakeFromWordPlanes(
     std::uint64_t bit_width, bool is_signed, bool is_four_state,
     std::span<const std::uint64_t> value_words,

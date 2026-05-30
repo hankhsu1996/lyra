@@ -1,0 +1,12 @@
+id: cpp.string_atooct
+tags: [cpp_run]
+input:
+  command: [run, cpp]
+  project: false
+  top: Top
+  files: [main.sv]
+expect:
+  exit: 0
+  variables:
+    seventy_seven: 63
+    one_two_three: 83

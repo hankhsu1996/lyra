@@ -1,0 +1,15 @@
+id: cpp.string_atoi
+tags: [cpp_run]
+input:
+  command: [run, cpp]
+  project: false
+  top: Top
+  files: [main.sv]
+expect:
+  exit: 0
+  variables:
+    plain: 123
+    with_underscore: 1234
+    no_digits: 0
+    stop_at_letter: 42
+    negative: -7

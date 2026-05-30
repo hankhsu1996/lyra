@@ -172,13 +172,36 @@ auto FromSlangSubroutineKind(slang::ast::SubroutineKind k)
 }
 
 auto LowerEnumMethodName(std::string_view name)
-    -> std::optional<hir::BuiltinMethodKind> {
-  if (name == "first") return hir::BuiltinMethodKind::kEnumFirst;
-  if (name == "last") return hir::BuiltinMethodKind::kEnumLast;
-  if (name == "num") return hir::BuiltinMethodKind::kEnumNum;
-  if (name == "next") return hir::BuiltinMethodKind::kEnumNext;
-  if (name == "prev") return hir::BuiltinMethodKind::kEnumPrev;
-  if (name == "name") return hir::BuiltinMethodKind::kEnumName;
+    -> std::optional<hir::EnumMethodKind> {
+  if (name == "first") return hir::EnumMethodKind::kFirst;
+  if (name == "last") return hir::EnumMethodKind::kLast;
+  if (name == "num") return hir::EnumMethodKind::kNum;
+  if (name == "next") return hir::EnumMethodKind::kNext;
+  if (name == "prev") return hir::EnumMethodKind::kPrev;
+  if (name == "name") return hir::EnumMethodKind::kName;
+  return std::nullopt;
+}
+
+auto LowerStringMethodName(std::string_view name)
+    -> std::optional<hir::StringMethodKind> {
+  if (name == "len") return hir::StringMethodKind::kLen;
+  if (name == "getc") return hir::StringMethodKind::kGetc;
+  if (name == "putc") return hir::StringMethodKind::kPutc;
+  if (name == "toupper") return hir::StringMethodKind::kToupper;
+  if (name == "tolower") return hir::StringMethodKind::kTolower;
+  if (name == "compare") return hir::StringMethodKind::kCompare;
+  if (name == "icompare") return hir::StringMethodKind::kIcompare;
+  if (name == "substr") return hir::StringMethodKind::kSubstr;
+  if (name == "atoi") return hir::StringMethodKind::kAtoi;
+  if (name == "atohex") return hir::StringMethodKind::kAtohex;
+  if (name == "atooct") return hir::StringMethodKind::kAtooct;
+  if (name == "atobin") return hir::StringMethodKind::kAtobin;
+  if (name == "atoreal") return hir::StringMethodKind::kAtoreal;
+  if (name == "itoa") return hir::StringMethodKind::kItoa;
+  if (name == "hextoa") return hir::StringMethodKind::kHextoa;
+  if (name == "octtoa") return hir::StringMethodKind::kOcttoa;
+  if (name == "bintoa") return hir::StringMethodKind::kBintoa;
+  if (name == "realtoa") return hir::StringMethodKind::kRealtoa;
   return std::nullopt;
 }
 

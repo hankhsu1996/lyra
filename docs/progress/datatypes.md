@@ -13,8 +13,8 @@ on the current pipeline.
 
 Real C1 / C2 / C3 / C4 are complete. Structural-var declaration initializers (SV LRM 6.8) are
 complete for the integral, enum, real, shortreal, and realtime families (SI1 below). String SC1
-(declaration with literal initializer plus equality and relational comparison) and SC2 (string-mode
-concatenation and replication) are complete; SC3 (methods) remains. Other unfinished families:
+(declaration with literal initializer plus equality and relational comparison), SC2 (string-mode
+concatenation and replication), and SC3 (built-in methods) are complete. Other unfinished families:
 `datatypes/unpacked`, `datatypes/general`, `datatypes/default_init`, `datatypes/representation`.
 
 ## Enum
@@ -112,9 +112,12 @@ operand.
       integral result type and inserts an outer string conversion) is gated separately and stays
       blocked behind `operators/concat` (integral-mode concatenation) plus the bit-vector-to-string
       conversion path.
-- [ ] SC3 -- Built-in methods listed in LRM 6.16.1 -- 6.16.15: `.len()`, `.substr(i, j)`,
+- [x] SC3 -- Built-in methods listed in LRM 6.16.1 -- 6.16.15: `.len()`, `.substr(i, j)`,
       `.compare(s)` / `.icompare(s)`, `.toupper()` / `.tolower()`, `.putc(i, c)` / `.getc(i)`, and
-      the numeric conversion family (`.itoa()`, `.hextoa()`, `.atoi()`, `.atohex()`, ...).
+      the numeric conversion family (`.atoi()` / `.atohex()` / `.atooct()` / `.atobin()` /
+      `.atoreal()` and the inverse-write `.itoa()` / `.hextoa()` / `.octtoa()` / `.bintoa()` /
+      `.realtoa()`). Out-of-range indices and zero-byte writes follow the LRM no-op rules;
+      `substr(i, j)` returns the empty string for `i<0`, `j<i`, or `j>=len`.
 
 ### Cross-references
 

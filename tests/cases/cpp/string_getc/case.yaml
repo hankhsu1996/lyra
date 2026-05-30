@@ -1,0 +1,12 @@
+id: cpp.string_getc
+tags: [cpp_run]
+input:
+  command: [run, cpp]
+  project: false
+  top: Top
+  files: [main.sv]
+expect:
+  exit: 0
+  variables:
+    c0: 72
+    c4: 111
