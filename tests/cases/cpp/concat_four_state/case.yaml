@@ -1,0 +1,13 @@
+id: cpp.concat_four_state
+tags: [cpp_run]
+input:
+  command: [run, cpp]
+  project: false
+  top: Top
+  files: [main.sv]
+expect:
+  exit: 0
+  variables:
+    x_compare_known: 0
+    z_compare_known: 0
+    xz_self_eq: 1

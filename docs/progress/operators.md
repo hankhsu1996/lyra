@@ -174,7 +174,8 @@ the inner subtype, and the runtime multiplies by the element bit width internall
 
 `PackedArrayRef` is a writable proxy carrying
 `(PackedArray* root, PackedArray bit_offset, uint32_t bit_width, vector<PackedRange> dims)`.
-Implicit `operator PackedArray()` materializes a fresh value via `root.ExtractBits`;
+Explicit `operator PackedArray()` materializes a fresh value via `root.ExtractBits` (callers wrap
+with `PackedArray(ref)` direct-init or rely on overloads taking `PackedArrayRef` directly);
 `operator=(const PackedArray&)` routes through `root.AssignSlice`. The same two chain methods
 compose into another `PackedArrayRef` with the dim stack's outer popped (`ElementAt`) or its outer
 count replaced (`Slice`). `bit_offset` is kept in a canonical 64-bit signed 4-state shape so chained
@@ -318,16 +319,22 @@ closure stays a single lambda -- there is no nested mutation lambda.
 
 ### Construction
 
-- [ ] W8 -- Concatenation read `{a, b, c}`. Add `hir::ConcatExpr` / `mir::ConcatExpr` with an
-      ordered operand list. Signed operands contribute raw bits; unsized literals are rejected at
-      slang frontend already (LRM 11.4.12). 4-state operands propagate by concatenating both value
-      and unknown planes in lockstep. Add `PackedArray::Concat(span<view>)`.
+- [x] W8 -- Concatenation read `{a, b, c}`. `hir::ConcatExpr` / `mir::ConcatExpr` route through
+      `PackedArray::Concat`, which packs each operand's bits MSB-first via word-level shift-and-OR
+      (no per-bit loop). Result is unsigned; 4-state iff any operand is 4-state, with both value and
+      unknown planes packed in lockstep. Signed operands contribute raw bits per LRM 11.4.12;
+      unsized literals are rejected at the slang frontend. Closes `operators/concat/default.yaml`
+      including mixed widths, nested concat, signed operands, wide (>64-bit) results, and X/Z
+      propagation.
 
-- [ ] W9 -- Replication `{N{x}}`. Add `hir::ReplicationExpr` / `mir::ReplicationExpr`; multiplier
-      must be a constant non-negative non-X/Z value (LRM 11.4.12.1). Zero multiplier collapses to
-      empty and is legal only when nested inside a `ConcatExpr` with at least one positive-sized
-      sibling. Add `PackedArray::Replicate(view, n)`. String replication is deferred to the string
-      workstream.
+- [x] W9 -- Replication `{N{x}}`. `hir::ReplicationExpr` / `mir::ReplicationExpr` route through
+      `PackedArray::Replicate`, which does N word-level shift-and-OR copies (O(result_words)). For
+      integral mode the multiplier is a slang-elaborated constant non-negative non-X/Z literal per
+      LRM 11.4.12.1. Zero multipliers produce a `void`-typed operand that the AST -> HIR concat
+      lowering drops, satisfying the LRM rule that zero replication is legal only inside a concat
+      with at least one positive-sized sibling. Closes `operators/replicate/default.yaml` including
+      replication in concat, nested concat, nested replication, signed operands, wide results, and
+      X/Z propagation. String replication remains via `ReplicateString` (#798).
 
 - [ ] W10 -- Concatenation lvalue `{a, b, c} = ...`. Add a `ConcatLvalue` arm to `Lvalue` carrying
       an ordered list of sub-lvalues. HIR -> MIR snapshots the right-hand side into a `PackedArray`

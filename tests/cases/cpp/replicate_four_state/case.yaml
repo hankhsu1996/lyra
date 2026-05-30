@@ -1,0 +1,13 @@
+id: cpp.replicate_four_state
+tags: [cpp_run]
+input:
+  command: [run, cpp]
+  project: false
+  top: Top
+  files: [main.sv]
+expect:
+  exit: 0
+  variables:
+    eq_known: 0
+    eq_self: 1
+    neq_self: 0
