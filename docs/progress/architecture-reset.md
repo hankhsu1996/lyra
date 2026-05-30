@@ -146,7 +146,7 @@ Tracked in `processes.md`. Covers procedural blocks (`initial`, `final`, `always
 `always_latch`, `always_ff`), timing controls (`#N`, `@(...)`), assignments (`<=`, `assign`), and
 synchronisation primitives (named events, `wait`, `fork`/`join_*`).
 
-- [ ] processes/continuous_assign -- `processes.md` P7.
+- [x] processes/continuous_assign -- `processes.md` P7.
 - [x] processes/delay -- `processes.md` T1.
 - [ ] processes/edge_trigger_bit_select -- `processes.md` T3 (whole-variable subset, done) and T5
       (selected subset, blocked).

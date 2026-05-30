@@ -1,47 +1,20 @@
 #pragma once
 
-#include <cstdint>
-#include <unordered_map>
-#include <utility>
-#include <vector>
-
 #include <slang/ast/Compilation.h>
 
 #include "lyra/diag/diagnostic.hpp"
 #include "lyra/frontend/slang_source_mapper.hpp"
 #include "lyra/hir/module_unit.hpp"
-
-namespace slang::ast {
-class Statement;
-class ValueSymbol;
-}  // namespace slang::ast
+#include "lyra/lowering/ast_to_hir/sensitivity.hpp"
 
 namespace lyra::lowering::ast_to_hir {
-
-// Mirrors slang's ReadRange. Multiple entries for the same symbol with
-// disjoint bit ranges are kept as-is so downstream can preserve precision
-// when the runtime supports bit-level subscription.
-struct SensitivityRead {
-  const slang::ast::ValueSymbol* symbol;
-  std::pair<std::uint64_t, std::uint64_t> bit_range;
-};
-
-// Slang-derived sensitivity precomputed via slang's AnalysisManager, keyed
-// by the slang Statement that LRM associates the list with:
-//   - LRM 9.2.2.2.1 (always_comb / always_latch): key = &proc.getBody().
-//   - LRM 9.4.2.2 (`@*` / `@(*)`): key = the TimedStatement holding `@*`.
-// Forms whose read set we derive ourselves (wait, future wait_order) walk
-// their own expression locally at the lowering site and do not use this
-// map.
-using ImplicitSensitivityReads = std::unordered_map<
-    const slang::ast::Statement*, std::vector<SensitivityRead>>;
 
 class LowerCompilationFacts {
  public:
   LowerCompilationFacts(
       slang::ast::Compilation& compilation,
       const frontend::SlangSourceMapper& source_mapper,
-      const ImplicitSensitivityReads& sensitivity_reads)
+      const SensitivityReadStore& sensitivity_reads)
       : compilation_(&compilation),
         source_mapper_(&source_mapper),
         sensitivity_reads_(&sensitivity_reads) {
@@ -54,15 +27,14 @@ class LowerCompilationFacts {
       -> const frontend::SlangSourceMapper& {
     return *source_mapper_;
   }
-  [[nodiscard]] auto SensitivityReads() const
-      -> const ImplicitSensitivityReads& {
+  [[nodiscard]] auto SensitivityReads() const -> const SensitivityReadStore& {
     return *sensitivity_reads_;
   }
 
  private:
   slang::ast::Compilation* compilation_;
   const frontend::SlangSourceMapper* source_mapper_;
-  const ImplicitSensitivityReads* sensitivity_reads_;
+  const SensitivityReadStore* sensitivity_reads_;
 };
 
 auto LowerCompilation(const LowerCompilationFacts& facts)

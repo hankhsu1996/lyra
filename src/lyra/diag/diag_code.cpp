@@ -132,6 +132,12 @@ constexpr std::array kEntries{
             .kind = DiagKind::kUnsupported,
             .category = UnsupportedCategory::kFeature,
             .name = "unsupported_event_trigger_form"}},
+    std::pair{
+        DiagCode::kUnsupportedContinuousAssignForm,
+        DiagCodeInfo{
+            .kind = DiagKind::kUnsupported,
+            .category = UnsupportedCategory::kFeature,
+            .name = "unsupported_continuous_assign_form"}},
 
     std::pair{
         DiagCode::kDelayValueOutOfRange,

@@ -302,6 +302,14 @@ class ScopeLoweringState {
     return id;
   }
 
+  auto AddContinuousAssign(hir::ContinuousAssign ca)
+      -> hir::ContinuousAssignId {
+    const hir::ContinuousAssignId id{
+        static_cast<std::uint32_t>(scope_->continuous_assigns.size())};
+    scope_->continuous_assigns.push_back(std::move(ca));
+    return id;
+  }
+
   auto AddGenerate(hir::Generate generate) -> hir::GenerateId {
     const hir::GenerateId id{
         static_cast<std::uint32_t>(scope_->generates.size())};
