@@ -1,0 +1,15 @@
+id: cpp.replicate_basic
+tags: [cpp_run]
+input:
+  command: [run, cpp]
+  project: false
+  top: Top
+  files: [main.sv]
+expect:
+  exit: 0
+  variables:
+    four_bytes: "32'hABABABAB"
+    four_nibbles: "16'hFFFF"
+    one_byte: "8'hAB"
+    signed_replicated: "32'hFFFFFFFF"
+    all_ones: 255

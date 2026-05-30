@@ -756,16 +756,25 @@ auto LowerConcatExprProc(
     -> diag::Result<hir::Expr> {
   auto type_id = TypeIdOfSlangExpr(unit_facts, unit_state, expr);
   if (!type_id) return std::unexpected(std::move(type_id.error()));
-  if (unit_state.GetType(*type_id).Kind() != hir::TypeKind::kString) {
+  const auto kind = unit_state.GetType(*type_id).Kind();
+  if (kind != hir::TypeKind::kString && kind != hir::TypeKind::kPackedArray) {
     return diag::Unsupported(
         span, diag::DiagCode::kUnsupportedExpressionForm,
-        "integral-mode concatenation is not yet supported (LRM 11.4.12); "
-        "see operators/concat",
+        "concatenation result type is neither string nor packed (LRM 11.4.12)",
         diag::UnsupportedCategory::kOperation);
   }
   std::vector<hir::ExprId> operand_ids;
   operand_ids.reserve(cc.operands().size());
   for (const auto* op : cc.operands()) {
+    // LRM 11.4.12.1: a zero-multiplier replication contributes no bits to
+    // the enclosing concatenation. Slang types such Replication nodes as
+    // `void`; recognize that exact AST shape so we drop only the documented
+    // zero-rep case and let any other unexpected void surface as an error
+    // through the normal type-kind check downstream.
+    if (op->kind == slang::ast::ExpressionKind::Replication &&
+        op->type->isVoid()) {
+      continue;
+    }
     auto operand_or =
         LowerProcExpr(unit_facts, unit_state, proc_state, stack, *op);
     if (!operand_or) return std::unexpected(std::move(operand_or.error()));
@@ -786,11 +795,12 @@ auto LowerReplicationExprProc(
     -> diag::Result<hir::Expr> {
   auto type_id = TypeIdOfSlangExpr(unit_facts, unit_state, expr);
   if (!type_id) return std::unexpected(std::move(type_id.error()));
-  if (unit_state.GetType(*type_id).Kind() != hir::TypeKind::kString) {
+  const auto kind = unit_state.GetType(*type_id).Kind();
+  if (kind != hir::TypeKind::kString && kind != hir::TypeKind::kPackedArray) {
     return diag::Unsupported(
         span, diag::DiagCode::kUnsupportedExpressionForm,
-        "integral-mode replication is not yet supported (LRM 11.4.12.1); "
-        "see operators/replicate",
+        "replication result type is neither string nor packed "
+        "(LRM 11.4.12.1)",
         diag::UnsupportedCategory::kOperation);
   }
   auto count_or =

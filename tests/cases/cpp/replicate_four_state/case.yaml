@@ -1,4 +1,4 @@
-id: cpp.case_equality_basic
+id: cpp.replicate_four_state
 tags: [cpp_run]
 input:
   command: [run, cpp]
@@ -8,7 +8,6 @@ input:
 expect:
   exit: 0
   variables:
-    eq_same: 1
-    eq_diff: 0
-    eq_xz: 1
-    neq_same: 0
+    eq_known: 0
+    eq_self: 1
+    neq_self: 0

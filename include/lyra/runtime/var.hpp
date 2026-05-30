@@ -183,12 +183,10 @@ class EventControlAwaitable {
       : triggers_(std::move(triggers)) {
   }
 
-  // NOLINTNEXTLINE(readability-identifier-naming,readability-convert-member-functions-to-static)
-  [[nodiscard]] auto await_ready() const noexcept -> bool {
+  [[nodiscard]] static auto await_ready() noexcept -> bool {
     return false;
   }
 
-  // NOLINTNEXTLINE(readability-identifier-naming)
   void await_suspend(
       std::coroutine_handle<ProcessCoroutine::promise_type> handle) {
     auto& process = handle.promise().Process();
@@ -206,8 +204,7 @@ class EventControlAwaitable {
     process.SetPendingValueChangeSubscriptions(std::move(subs));
   }
 
-  // NOLINTNEXTLINE(readability-identifier-naming)
-  void await_resume() const noexcept {
+  static void await_resume() noexcept {
   }
 
  private:
@@ -228,9 +225,9 @@ inline void WriteVar(RuntimeServices& services, Var<T>& var, const T& new_val) {
   }
 }
 
-// Non-template overload for the common Var<PackedArray> case. Lets the
-// emit-side pass a value::PackedArrayRef which implicitly converts to
-// const PackedArray& (template deduction would not trigger that conversion).
+// Non-template overload for the common Var<PackedArray> case. Template
+// deduction would otherwise miss `PackedArrayRef` arguments (the explicit
+// conversion does not participate in implicit conversion sequences).
 inline void WriteVar(
     RuntimeServices& services, Var<value::PackedArray>& var,
     const value::PackedArray& new_val) {
@@ -239,6 +236,15 @@ inline void WriteVar(
   if (var.AssignIfChanged(new_val)) {
     services.TriggerValueChange(var, ClassifyEdge(old_lsb, new_lsb));
   }
+}
+
+// Emit may produce a `PackedArrayRef` rvalue when the source expression is a
+// chain over a mutable PackedArray. Materialize via the explicit conversion
+// (direct-init) before forwarding to the value overload.
+inline void WriteVar(
+    RuntimeServices& services, Var<value::PackedArray>& var,
+    const value::PackedArrayRef& new_val) {
+  WriteVar(services, var, value::PackedArray(new_val));
 }
 
 // RAII handle that owns a snapshot of `var.Get()` for the lifetime of one

@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <bit>
 #include <cstdint>
+#include <ranges>
 #include <span>
 #include <string>
 #include <string_view>
@@ -336,6 +337,102 @@ auto PackedArray::IsTruthy() const -> bool {
 auto PackedArray::HasUnknown() const -> bool {
   return std::ranges::any_of(
       UnknownWords(), [](std::uint64_t w) { return w != 0U; });
+}
+
+namespace {
+
+// Word-level shift-and-OR copy: writes `src_bit_width` bits from `src` into
+// `dst` starting at bit position `dst_lsb`. Caller guarantees `dst` is wide
+// enough. Avoids the per-bit loop pattern in AssignSlice; complexity is
+// O(src_words) regardless of width.
+auto BlitBits(
+    std::span<std::uint64_t> dst, std::uint64_t dst_lsb,
+    std::span<const std::uint64_t> src, std::uint64_t src_bit_width) -> void {
+  if (src_bit_width == 0U) return;
+  const auto word_off = static_cast<std::size_t>(dst_lsb / 64U);
+  const auto bit_off = static_cast<std::uint64_t>(dst_lsb % 64U);
+  const auto src_words = WordCountForBits(src_bit_width);
+  const auto top_bits = src_bit_width % 64U;
+  const std::uint64_t top_mask =
+      top_bits == 0U ? ~std::uint64_t{0} : (std::uint64_t{1} << top_bits) - 1U;
+  for (std::size_t i = 0; i < src_words; ++i) {
+    std::uint64_t w = src[i];
+    if (i + 1U == src_words) w &= top_mask;
+    dst[word_off + i] |= w << bit_off;
+    if (bit_off != 0U && (word_off + i + 1U) < dst.size()) {
+      dst[word_off + i + 1U] |= w >> (64U - bit_off);
+    }
+  }
+}
+
+}  // namespace
+
+auto PackedArray::Concat(std::span<const PackedArray* const> operands)
+    -> PackedArray {
+  if (operands.empty()) {
+    throw InternalError("PackedArray::Concat: empty operand list");
+  }
+  std::uint64_t total = 0;
+  bool any_four_state = false;
+  for (const auto* op : operands) {
+    total += op->BitWidth();
+    any_four_state = any_four_state || op->IsFourState();
+  }
+  if (total == 0U) {
+    throw InternalError("PackedArray::Concat: total bit width is zero");
+  }
+  PackedArray result{total, false, any_four_state};
+  auto dst_value = std::visit(
+      [](auto& v) { return detail::PackedAccess::ValueWords(v.View()); },
+      result.storage_);
+  std::span<std::uint64_t> dst_unknown;
+  if (any_four_state) {
+    auto& lv = std::get<LogicValue>(result.storage_);
+    dst_unknown = detail::PackedAccess::UnknownWords(lv.View());
+  }
+  std::uint64_t cursor = 0;
+  for (const auto* op : operands | std::views::reverse) {
+    BlitBits(dst_value, cursor, op->ValueWords(), op->BitWidth());
+    if (any_four_state && op->IsFourState()) {
+      BlitBits(dst_unknown, cursor, op->UnknownWords(), op->BitWidth());
+    }
+    cursor += op->BitWidth();
+  }
+  return result;
+}
+
+auto PackedArray::Replicate(const PackedArray& operand, std::uint64_t count)
+    -> PackedArray {
+  const std::uint64_t total = operand.BitWidth() * count;
+  if (total == 0U) {
+    throw InternalError(
+        "PackedArray::Replicate: zero-width result (count == 0 is only legal "
+        "inside an outer concat with positive-sized siblings)");
+  }
+  PackedArray result{total, false, operand.IsFourState()};
+  auto dst_value = std::visit(
+      [](auto& v) { return detail::PackedAccess::ValueWords(v.View()); },
+      result.storage_);
+  std::span<std::uint64_t> dst_unknown;
+  if (operand.IsFourState()) {
+    auto& lv = std::get<LogicValue>(result.storage_);
+    dst_unknown = detail::PackedAccess::UnknownWords(lv.View());
+  }
+  for (std::uint64_t i = 0; i < count; ++i) {
+    const std::uint64_t cursor = i * operand.BitWidth();
+    BlitBits(dst_value, cursor, operand.ValueWords(), operand.BitWidth());
+    if (operand.IsFourState()) {
+      BlitBits(dst_unknown, cursor, operand.UnknownWords(), operand.BitWidth());
+    }
+  }
+  return result;
+}
+
+auto PackedArray::ConvertFrom(
+    const PackedArrayRef& src, std::uint64_t dst_bit_width, bool dst_is_signed,
+    bool dst_is_four_state) -> PackedArray {
+  return ConvertFrom(
+      PackedArray(src), dst_bit_width, dst_is_signed, dst_is_four_state);
 }
 
 auto PackedArray::ConvertFrom(
