@@ -12,8 +12,7 @@ class RuntimeProcess;
 
 class ProcessCoroutine {
  public:
-  // C++20 coroutine protocol names are spelled by the standard.
-  // NOLINTNEXTLINE(readability-identifier-naming)
+  // C++20 coroutine promise; names are spelled by the standard.
   struct promise_type {
     // Captures any exception that escapes the coroutine body. `Resume`
     // rethrows it so the original `what()` and type reach the engine
@@ -26,23 +25,18 @@ class ProcessCoroutine {
     // current simulation time via the engine's RuntimeServices).
     RuntimeProcess* process = nullptr;
 
-    // NOLINTNEXTLINE(readability-identifier-naming)
     auto get_return_object() -> ProcessCoroutine {
       return ProcessCoroutine{
           std::coroutine_handle<promise_type>::from_promise(*this)};
     }
-    // NOLINTNEXTLINE(readability-identifier-naming)
     static auto initial_suspend() noexcept -> std::suspend_always {
       return {};
     }
-    // NOLINTNEXTLINE(readability-identifier-naming)
     static auto final_suspend() noexcept -> std::suspend_always {
       return {};
     }
-    // NOLINTNEXTLINE(readability-identifier-naming)
     static void return_void() {
     }
-    // NOLINTNEXTLINE(readability-identifier-naming)
     void unhandled_exception() noexcept {
       pending_exception = std::current_exception();
     }

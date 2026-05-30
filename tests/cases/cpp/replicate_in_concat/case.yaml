@@ -1,0 +1,13 @@
+id: cpp.replicate_in_concat
+tags: [cpp_run]
+input:
+  command: [run, cpp]
+  project: false
+  top: Top
+  files: [main.sv]
+expect:
+  exit: 0
+  variables:
+    inner_replicate: "40'hAABBBBBBAA"
+    nested_concat: "16'hABAB"
+    zero_replicate: "16'hABCD"

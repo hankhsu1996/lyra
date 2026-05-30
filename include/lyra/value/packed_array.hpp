@@ -1,8 +1,11 @@
 #pragma once
 
+#include <array>
+#include <concepts>
 #include <cstdint>
 #include <initializer_list>
 #include <span>
+#include <type_traits>
 #include <variant>
 #include <vector>
 
@@ -99,6 +102,39 @@ class PackedArray {
   [[nodiscard]] static auto ConvertFrom(
       const PackedArray& src, std::uint64_t dst_bit_width, bool dst_is_signed,
       bool dst_is_four_state) -> PackedArray;
+
+  // Emit-side selector chain reads against a mutable base produce a
+  // `PackedArrayRef` rvalue; this overload materializes via direct-init so
+  // emit can pass the chain expression straight in.
+  [[nodiscard]] static auto ConvertFrom(
+      const PackedArrayRef& src, std::uint64_t dst_bit_width,
+      bool dst_is_signed, bool dst_is_four_state) -> PackedArray;
+
+  // LRM 11.4.12: `{a, b, c, ...}`. First operand occupies the result's MSBs,
+  // last occupies the LSBs. Total bit width is the sum of operand widths.
+  // Result is unsigned (LRM 11.8.1); 4-state iff any operand is 4-state.
+  // Variadic-template wrapper so each operand binds by `const&`, accepting
+  // both lvalues and prvalue temporaries (e.g., emitted literals) without
+  // copy. Forwards to the span-based impl below.
+  template <typename... Ops>
+    requires(
+        sizeof...(Ops) > 0 &&
+        (std::same_as<std::remove_cvref_t<Ops>, PackedArray> && ...))
+  [[nodiscard]] static auto Concat(const Ops&... ops) -> PackedArray {
+    const std::array<const PackedArray*, sizeof...(Ops)> ptrs{&ops...};
+    return Concat(std::span<const PackedArray* const>{ptrs});
+  }
+
+  [[nodiscard]] static auto Concat(std::span<const PackedArray* const> operands)
+      -> PackedArray;
+
+  // LRM 11.4.12.1: `{count{operand}}`. Result bit width is
+  // operand.BitWidth() * count, unsigned, 4-state iff operand is 4-state.
+  // Throws InternalError if the result would be zero-width -- the AST -> HIR
+  // concat lowering drops `{0{...}}` operands before they reach the runtime,
+  // so an in-runtime zero must indicate a frontend / lowering bug.
+  [[nodiscard]] static auto Replicate(
+      const PackedArray& operand, std::uint64_t count) -> PackedArray;
 
   [[nodiscard]] auto BitWidth() const -> std::uint64_t;
   [[nodiscard]] auto IsSigned() const -> bool;
@@ -332,9 +368,11 @@ class PackedArrayRef {
       PackedArray& root, const PackedArray& bit_offset, std::uint32_t bit_width,
       std::vector<PackedRange> dims);
 
-  // Read-side: materialize the sub-slice.
-  [[nodiscard]] operator PackedArray()
-      const;  // NOLINT(google-explicit-constructor)
+  // Read-side: materialize the sub-slice. Explicit so a chain expression
+  // does not silently decay to a PackedArray value in unrelated contexts;
+  // callers wrap with `PackedArray(ref)` (direct-init) when they need a
+  // materialized value.
+  [[nodiscard]] explicit operator PackedArray() const;
 
   // Write-side: route through AssignSlice on root.
   auto operator=(const PackedArray& value) -> PackedArrayRef&;

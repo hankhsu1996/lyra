@@ -18,12 +18,10 @@ class DelayAwaitable {
       : services_(&services), duration_(duration) {
   }
 
-  // NOLINTNEXTLINE(readability-identifier-naming,readability-convert-member-functions-to-static)
-  [[nodiscard]] auto await_ready() const noexcept -> bool {
+  [[nodiscard]] static auto await_ready() noexcept -> bool {
     return false;
   }
 
-  // NOLINTNEXTLINE(readability-identifier-naming)
   void await_suspend(
       std::coroutine_handle<ProcessCoroutine::promise_type> handle) noexcept {
     auto& process = handle.promise().Process();
@@ -34,8 +32,7 @@ class DelayAwaitable {
     }
   }
 
-  // NOLINTNEXTLINE(readability-identifier-naming)
-  void await_resume() const noexcept {
+  static void await_resume() noexcept {
   }
 
  private:

@@ -1,0 +1,17 @@
+id: cpp.case_equality_four_state
+tags: [cpp_run]
+input:
+  command: [run, cpp]
+  project: false
+  top: Top
+  files: [main.sv]
+expect:
+  exit: 0
+  variables:
+    x_eq_x: 1
+    z_eq_z: 1
+    x_eq_z: 0
+    mixed_eq_self: 1
+    mixed_neq_self: 0
+    x_vs_known: 0
+    z_vs_known: 0

@@ -1,0 +1,14 @@
+id: cpp.concat_wide
+tags: [cpp_run]
+input:
+  command: [run, cpp]
+  project: false
+  top: Top
+  files: [main.sv]
+expect:
+  exit: 0
+  variables:
+    w128_lo: "64'h0123456789ABCDEF"
+    w128_hi: "64'hFEDCBA9876543210"
+    w96_lo: "64'h2222222233333333"
+    w96_hi: "32'h11111111"
