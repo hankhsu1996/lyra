@@ -420,7 +420,27 @@ auto LowerCallExprProc(
             .type = *type_id,
             .data =
                 hir::CallExpr{
-                    .callee = hir::BuiltinMethodRef{.kind = *kind},
+                    .callee = hir::BuiltinMethodRef{.method = *kind},
+                    .arguments = std::move(arg_ids),
+                },
+            .span = span,
+        };
+      }
+    }
+
+    if (receiver_type.has_value() &&
+        unit_state.GetType(*receiver_type).Kind() == hir::TypeKind::kString) {
+      if (auto kind = LowerStringMethodName(name); kind.has_value()) {
+        // LRM 6.16.1 through 6.16.15 -- string intrinsic methods. The
+        // receiver is arguments[0]; remaining arguments are the SV method
+        // parameters (e.g. substr's `i, j`).
+        auto type_id = TypeIdOfSlangExpr(unit_facts, unit_state, expr);
+        if (!type_id) return std::unexpected(std::move(type_id.error()));
+        return hir::Expr{
+            .type = *type_id,
+            .data =
+                hir::CallExpr{
+                    .callee = hir::BuiltinMethodRef{.method = *kind},
                     .arguments = std::move(arg_ids),
                 },
             .span = span,
@@ -444,7 +464,7 @@ auto LowerCallExprProc(
               hir::CallExpr{
                   .callee =
                       hir::BuiltinMethodRef{
-                          .kind = hir::BuiltinMethodKind::kNamedEventTriggered,
+                          .method = hir::EventMethodKind::kTriggered,
                       },
                   .arguments = std::move(arg_ids),
               },

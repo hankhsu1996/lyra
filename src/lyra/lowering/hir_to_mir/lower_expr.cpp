@@ -350,29 +350,76 @@ auto LowerHirIntegerLiteral(const hir::IntegerLiteral& i, mir::TypeId type)
       .type = type};
 }
 
-auto LowerBuiltinMethodKind(hir::BuiltinMethodKind kind)
-    -> mir::BuiltinMethodKind {
-  switch (kind) {
-    case hir::BuiltinMethodKind::kEnumFirst:
-      return mir::BuiltinMethodKind::kEnumFirst;
-    case hir::BuiltinMethodKind::kEnumLast:
-      return mir::BuiltinMethodKind::kEnumLast;
-    case hir::BuiltinMethodKind::kEnumNum:
-      return mir::BuiltinMethodKind::kEnumNum;
-    case hir::BuiltinMethodKind::kEnumNext:
-      return mir::BuiltinMethodKind::kEnumNext;
-    case hir::BuiltinMethodKind::kEnumPrev:
-      return mir::BuiltinMethodKind::kEnumPrev;
-    case hir::BuiltinMethodKind::kEnumName:
-      return mir::BuiltinMethodKind::kEnumName;
-    case hir::BuiltinMethodKind::kNamedEventTrigger:
-      return mir::BuiltinMethodKind::kNamedEventTrigger;
-    case hir::BuiltinMethodKind::kNamedEventAwait:
-      return mir::BuiltinMethodKind::kNamedEventAwait;
-    case hir::BuiltinMethodKind::kNamedEventTriggered:
-      return mir::BuiltinMethodKind::kNamedEventTriggered;
+auto LowerEnumMethodKind(hir::EnumMethodKind k) -> mir::EnumMethodKind {
+  switch (k) {
+    case hir::EnumMethodKind::kFirst:
+      return mir::EnumMethodKind::kFirst;
+    case hir::EnumMethodKind::kLast:
+      return mir::EnumMethodKind::kLast;
+    case hir::EnumMethodKind::kNum:
+      return mir::EnumMethodKind::kNum;
+    case hir::EnumMethodKind::kNext:
+      return mir::EnumMethodKind::kNext;
+    case hir::EnumMethodKind::kPrev:
+      return mir::EnumMethodKind::kPrev;
+    case hir::EnumMethodKind::kName:
+      return mir::EnumMethodKind::kName;
   }
-  throw InternalError("LowerBuiltinMethodKind: unknown hir::BuiltinMethodKind");
+  throw InternalError("LowerEnumMethodKind: unknown hir::EnumMethodKind");
+}
+
+auto LowerStringMethodKind(hir::StringMethodKind k) -> mir::StringMethodKind {
+  switch (k) {
+    case hir::StringMethodKind::kLen:
+      return mir::StringMethodKind::kLen;
+    case hir::StringMethodKind::kGetc:
+      return mir::StringMethodKind::kGetc;
+    case hir::StringMethodKind::kPutc:
+      return mir::StringMethodKind::kPutc;
+    case hir::StringMethodKind::kToupper:
+      return mir::StringMethodKind::kToupper;
+    case hir::StringMethodKind::kTolower:
+      return mir::StringMethodKind::kTolower;
+    case hir::StringMethodKind::kCompare:
+      return mir::StringMethodKind::kCompare;
+    case hir::StringMethodKind::kIcompare:
+      return mir::StringMethodKind::kIcompare;
+    case hir::StringMethodKind::kSubstr:
+      return mir::StringMethodKind::kSubstr;
+    case hir::StringMethodKind::kAtoi:
+      return mir::StringMethodKind::kAtoi;
+    case hir::StringMethodKind::kAtohex:
+      return mir::StringMethodKind::kAtohex;
+    case hir::StringMethodKind::kAtooct:
+      return mir::StringMethodKind::kAtooct;
+    case hir::StringMethodKind::kAtobin:
+      return mir::StringMethodKind::kAtobin;
+    case hir::StringMethodKind::kAtoreal:
+      return mir::StringMethodKind::kAtoreal;
+    case hir::StringMethodKind::kItoa:
+      return mir::StringMethodKind::kItoa;
+    case hir::StringMethodKind::kHextoa:
+      return mir::StringMethodKind::kHextoa;
+    case hir::StringMethodKind::kOcttoa:
+      return mir::StringMethodKind::kOcttoa;
+    case hir::StringMethodKind::kBintoa:
+      return mir::StringMethodKind::kBintoa;
+    case hir::StringMethodKind::kRealtoa:
+      return mir::StringMethodKind::kRealtoa;
+  }
+  throw InternalError("LowerStringMethodKind: unknown hir::StringMethodKind");
+}
+
+auto LowerEventMethodKind(hir::EventMethodKind k) -> mir::EventMethodKind {
+  switch (k) {
+    case hir::EventMethodKind::kTrigger:
+      return mir::EventMethodKind::kTrigger;
+    case hir::EventMethodKind::kAwait:
+      return mir::EventMethodKind::kAwait;
+    case hir::EventMethodKind::kTriggered:
+      return mir::EventMethodKind::kTriggered;
+  }
+  throw InternalError("LowerEventMethodKind: unknown hir::EventMethodKind");
 }
 
 auto LowerHirStringLiteral(const hir::StringLiteral& s, mir::TypeId type)
@@ -784,15 +831,31 @@ auto LowerHirCallExprProc(
               }
               args.push_back(proc_scope_state.AddExpr(*std::move(arg_or)));
             }
+            auto callee = std::visit(
+                Overloaded{
+                    [&](hir::EnumMethodKind k) -> mir::BuiltinMethodCallee {
+                      return {
+                          .method = mir::EnumMethodInfo{
+                              .enum_type =
+                                  unit_state.TranslateType(hir_receiver_type),
+                              .kind = LowerEnumMethodKind(k)}};
+                    },
+                    [&](hir::StringMethodKind k) -> mir::BuiltinMethodCallee {
+                      return {
+                          .method = mir::StringMethodInfo{
+                              .kind = LowerStringMethodKind(k)}};
+                    },
+                    [&](hir::EventMethodKind k) -> mir::BuiltinMethodCallee {
+                      return {
+                          .method = mir::EventMethodInfo{
+                              .kind = LowerEventMethodKind(k)}};
+                    },
+                },
+                b.method);
             return mir::Expr{
                 .data =
                     mir::CallExpr{
-                        .callee =
-                            mir::BuiltinMethodCallee{
-                                .receiver_type =
-                                    unit_state.TranslateType(hir_receiver_type),
-                                .kind = LowerBuiltinMethodKind(b.kind),
-                            },
+                        .callee = std::move(callee),
                         .arguments = std::move(args)},
                 .type = result_type};
           },

@@ -41,7 +41,10 @@ auto FromSlangSubroutineKind(slang::ast::SubroutineKind k)
     -> support::SystemSubroutineKind;
 
 auto LowerEnumMethodName(std::string_view name)
-    -> std::optional<hir::BuiltinMethodKind>;
+    -> std::optional<hir::EnumMethodKind>;
+
+auto LowerStringMethodName(std::string_view name)
+    -> std::optional<hir::StringMethodKind>;
 
 // Recover the original user-written rhs from slang's compound expansion:
 // slang lowers `lhs op= e` to `right = Conv(lhs.type) { BinaryOp(op) {

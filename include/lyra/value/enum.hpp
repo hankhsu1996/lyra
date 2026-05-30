@@ -9,6 +9,7 @@
 
 #include "lyra/base/internal_error.hpp"
 #include "lyra/value/packed_array.hpp"
+#include "lyra/value/string.hpp"
 
 namespace lyra::value {
 
@@ -46,11 +47,11 @@ class Enum : public PackedArray {
     }
   }
 
-  [[nodiscard]] auto Name() const -> std::string {
+  [[nodiscard]] auto Name() const -> String {
     if (HasUnknown()) return {};
     const auto v = ToInt64();
     for (const auto& m : Derived::kMembers) {
-      if (m.value == v) return std::string{m.name};
+      if (m.value == v) return String{std::string{m.name}};
     }
     return {};
   }

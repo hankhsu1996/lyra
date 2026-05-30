@@ -1,0 +1,12 @@
+id: cpp.string_icompare
+tags: [cpp_run]
+input:
+  command: [run, cpp]
+  project: false
+  top: Top
+  files: [main.sv]
+expect:
+  exit: 0
+  variables:
+    case_diff_eq: 0
+    diff_lt: -1
