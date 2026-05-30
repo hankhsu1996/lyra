@@ -962,6 +962,44 @@ auto RenderClosureExpr(
   return "[" + captures_text + "]() {\n" + *body_or + "}";
 }
 
+auto RenderConcatExpr(const RenderContext& ctx, const mir::ConcatExpr& c)
+    -> diag::Result<std::string> {
+  // SC2 guarantee: lowering rejects integral-mode concatenation, so by the
+  // time we reach the renderer every operand is std::string-typed and
+  // operator+ over std::string matches LRM 6.16 Table 6-9 contents-join.
+  if (c.operands.empty()) {
+    throw InternalError("RenderConcatExpr: hir lowering produced empty concat");
+  }
+  std::string out = "(";
+  for (std::size_t i = 0; i < c.operands.size(); ++i) {
+    auto rendered = RenderExpr(ctx, ctx.Expr(c.operands[i]));
+    if (!rendered) return std::unexpected(std::move(rendered.error()));
+    if (i != 0) out += " + ";
+    out += *rendered;
+  }
+  out += ")";
+  return out;
+}
+
+auto RenderReplicationExpr(
+    const RenderContext& ctx, const mir::ReplicationExpr& r)
+    -> diag::Result<std::string> {
+  auto count = RenderExpr(ctx, ctx.Expr(r.count));
+  if (!count) return std::unexpected(std::move(count.error()));
+  auto concat = RenderExpr(ctx, ctx.Expr(r.concat));
+  if (!concat) return std::unexpected(std::move(concat.error()));
+  // The count operand is a SystemVerilog integral expression; the runtime
+  // helper takes int64_t. Convert via PackedArray::ToInt() if needed; for
+  // simple int/byte etc. that already render as PackedArray values, the .To*
+  // accessor handles it.
+  const auto& count_ty = ctx.Unit().GetType(ctx.Expr(r.count).type);
+  std::string count_text = count_ty.IsIntegralPacked()
+                               ? std::format("({}).ToInt64()", *count)
+                               : *count;
+  return std::format(
+      "lyra::value::ReplicateString({}, {})", *concat, count_text);
+}
+
 }  // namespace
 
 auto RenderExpr(const RenderContext& ctx, const mir::Expr& expr)
@@ -1021,6 +1059,12 @@ auto RenderExpr(const RenderContext& ctx, const mir::Expr& expr)
           },
           [&](const mir::RangeSelectExpr& sel) -> diag::Result<std::string> {
             return RenderRangeSelectExpr(ctx, expr, sel);
+          },
+          [&](const mir::ConcatExpr& c) -> diag::Result<std::string> {
+            return RenderConcatExpr(ctx, c);
+          },
+          [&](const mir::ReplicationExpr& r) -> diag::Result<std::string> {
+            return RenderReplicationExpr(ctx, r);
           },
       },
       expr.data);

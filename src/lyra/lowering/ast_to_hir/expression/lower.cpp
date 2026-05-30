@@ -916,6 +916,66 @@ auto LowerRangeSelectExprProc(
   };
 }
 
+auto LowerConcatExprProc(
+    const UnitLoweringFacts& unit_facts, UnitLoweringState& unit_state,
+    ProcessLoweringState& proc_state, const ScopeStack& stack,
+    const slang::ast::ConcatenationExpression& cc,
+    const slang::ast::Expression& expr, diag::SourceSpan span)
+    -> diag::Result<hir::Expr> {
+  auto type_id = TypeIdOfSlangExpr(unit_facts, unit_state, expr);
+  if (!type_id) return std::unexpected(std::move(type_id.error()));
+  if (unit_state.GetType(*type_id).Kind() != hir::TypeKind::kString) {
+    return diag::Unsupported(
+        span, diag::DiagCode::kUnsupportedExpressionForm,
+        "integral-mode concatenation is not yet supported (LRM 11.4.12); "
+        "see operators/concat",
+        diag::UnsupportedCategory::kOperation);
+  }
+  std::vector<hir::ExprId> operand_ids;
+  operand_ids.reserve(cc.operands().size());
+  for (const auto* op : cc.operands()) {
+    auto operand_or =
+        LowerProcExpr(unit_facts, unit_state, proc_state, stack, *op, {});
+    if (!operand_or) return std::unexpected(std::move(operand_or.error()));
+    operand_ids.push_back(proc_state.AddExpr(*std::move(operand_or)));
+  }
+  return hir::Expr{
+      .type = *type_id,
+      .data = hir::ConcatExpr{.operands = std::move(operand_ids)},
+      .span = span,
+  };
+}
+
+auto LowerReplicationExprProc(
+    const UnitLoweringFacts& unit_facts, UnitLoweringState& unit_state,
+    ProcessLoweringState& proc_state, const ScopeStack& stack,
+    const slang::ast::ReplicationExpression& rp,
+    const slang::ast::Expression& expr, diag::SourceSpan span)
+    -> diag::Result<hir::Expr> {
+  auto type_id = TypeIdOfSlangExpr(unit_facts, unit_state, expr);
+  if (!type_id) return std::unexpected(std::move(type_id.error()));
+  if (unit_state.GetType(*type_id).Kind() != hir::TypeKind::kString) {
+    return diag::Unsupported(
+        span, diag::DiagCode::kUnsupportedExpressionForm,
+        "integral-mode replication is not yet supported (LRM 11.4.12.1); "
+        "see operators/replicate",
+        diag::UnsupportedCategory::kOperation);
+  }
+  auto count_or =
+      LowerProcExpr(unit_facts, unit_state, proc_state, stack, rp.count(), {});
+  if (!count_or) return std::unexpected(std::move(count_or.error()));
+  const hir::ExprId count_id = proc_state.AddExpr(*std::move(count_or));
+  auto concat_or =
+      LowerProcExpr(unit_facts, unit_state, proc_state, stack, rp.concat(), {});
+  if (!concat_or) return std::unexpected(std::move(concat_or.error()));
+  const hir::ExprId concat_id = proc_state.AddExpr(*std::move(concat_or));
+  return hir::Expr{
+      .type = *type_id,
+      .data = hir::ReplicationExpr{.count = count_id, .concat = concat_id},
+      .span = span,
+  };
+}
+
 auto LowerConversionExprStructural(
     const UnitLoweringFacts& unit_facts, UnitLoweringState& unit_state,
     ScopeLoweringState& scope_state, const ScopeStack& stack,
@@ -1145,6 +1205,16 @@ auto LowerProcExpr(
       return LowerRangeSelectExprProc(
           unit_facts, unit_state, proc_state, stack, compound_lvalue_context,
           expr.as<slang::ast::RangeSelectExpression>(), expr, span);
+
+    case slang::ast::ExpressionKind::Concatenation:
+      return LowerConcatExprProc(
+          unit_facts, unit_state, proc_state, stack,
+          expr.as<slang::ast::ConcatenationExpression>(), expr, span);
+
+    case slang::ast::ExpressionKind::Replication:
+      return LowerReplicationExprProc(
+          unit_facts, unit_state, proc_state, stack,
+          expr.as<slang::ast::ReplicationExpression>(), expr, span);
 
     default:
       return diag::Unsupported(
