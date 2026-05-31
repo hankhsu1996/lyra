@@ -377,12 +377,12 @@ auto LowerLoopGenerate(
   const mir::TypeId step_type = (*step_value_or).type;
   const mir::ExprId step_value_id =
       proc_scope_state.AddExpr(*std::move(step_value_or));
+  const mir::ExprId step_target_id = proc_scope_state.AddExpr(
+      mir::Expr{.data = loop_local, .type = genvar_type});
   const mir::ExprId step_id = proc_scope_state.AddExpr(
       mir::Expr{
           .data =
-              mir::AssignExpr{
-                  .target = mir::Lvalue{.root = loop_local, .selectors = {}},
-                  .value = step_value_id},
+              mir::AssignExpr{.target = step_target_id, .value = step_value_id},
           .type = step_type});
 
   std::vector<mir::Expr> body_args;

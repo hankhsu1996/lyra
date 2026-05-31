@@ -185,22 +185,6 @@ auto RenderStructuralVarName(
 
 namespace {
 
-auto RenderLvalueRoot(
-    const RenderContext& ctx,
-    const std::variant<mir::StructuralVarRef, mir::ProceduralVarRef>& root)
-    -> diag::Result<std::string> {
-  return std::visit(
-      Overloaded{
-          [&](const mir::StructuralVarRef& m) -> diag::Result<std::string> {
-            return RenderStructuralVarName(ctx, m);
-          },
-          [&](const mir::ProceduralVarRef& l) -> diag::Result<std::string> {
-            return LookupProceduralVarName(ctx, l);
-          },
-      },
-      root);
-}
-
 // Read-side render for a structural var ref. Integral packed vars wrap in
 // `Var<PackedArray>` whose held value is observed via `.Get()`; all other
 // storage types (real-family, string, ObjectType) expose the value directly,
@@ -857,76 +841,125 @@ auto ConstantIntFromExpr(const mir::Expr& expr) -> std::int64_t {
       "ConstantIntFromExpr: expression is not an IntegerLiteral");
 }
 
-// Emits the method-call suffix for a single selector layer applied to the
-// running chain. Positions are in the operand's outer-element units; the
-// runtime PackedArray / PackedArrayRef dispatches on its own dim stack to
-// turn them into bit offsets, so render never bakes element_bw into the
-// emitted call.
-auto RenderSelectorMethodCall(
-    const RenderContext& ctx, const mir::LvalueSelector& sel)
+// Renders an LHS-shaped expression for use as an assignment target. The
+// `mutate_adapter` string (typically `.Mutate(*services_)` or empty) is
+// inserted immediately after the structural-var root so an observable
+// partial write enters a ScopedMutation before the selector chain begins.
+// Output shape:
+//   <root>{<mutate_adapter>}{.ElementAt(idx) | .Slice(lsb, w)}*
+auto RenderLhsExpr(
+    const RenderContext& ctx, const mir::Expr& expr,
+    std::string_view mutate_adapter) -> diag::Result<std::string>;
+
+auto RenderRangeBoundsAsSlice(
+    const RenderContext& ctx, const mir::RangeBounds& bounds)
     -> diag::Result<std::string> {
   return std::visit(
       Overloaded{
-          [&](const mir::ElementLvalueSelector& s)
-              -> diag::Result<std::string> {
-            auto idx = RenderExpr(ctx, ctx.Expr(s.index));
-            if (!idx) return std::unexpected(std::move(idx.error()));
-            return std::format(".ElementAt({})", *idx);
+          [&](const mir::RangeConstantBounds& b) -> diag::Result<std::string> {
+            auto lsb = RenderExpr(ctx, ctx.Expr(b.lsb_expr));
+            if (!lsb) return std::unexpected(std::move(lsb.error()));
+            const auto msb_val = ConstantIntFromExpr(ctx.Expr(b.msb_expr));
+            const auto lsb_val = ConstantIntFromExpr(ctx.Expr(b.lsb_expr));
+            const auto count = static_cast<std::uint32_t>(
+                (msb_val >= lsb_val ? msb_val - lsb_val : lsb_val - msb_val) +
+                1);
+            return std::format(".Slice({}, {}U)", *lsb, count);
           },
-          [&](const mir::RangeLvalueSelector& s) -> diag::Result<std::string> {
-            return std::visit(
-                Overloaded{
-                    [&](const mir::RangeConstantBounds& b)
-                        -> diag::Result<std::string> {
-                      auto lsb = RenderExpr(ctx, ctx.Expr(b.lsb_expr));
-                      if (!lsb) return std::unexpected(std::move(lsb.error()));
-                      const auto msb_val =
-                          ConstantIntFromExpr(ctx.Expr(b.msb_expr));
-                      const auto lsb_val =
-                          ConstantIntFromExpr(ctx.Expr(b.lsb_expr));
-                      const auto count = static_cast<std::uint32_t>(
-                          (msb_val >= lsb_val ? msb_val - lsb_val
-                                              : lsb_val - msb_val) +
-                          1);
-                      return std::format(".Slice({}, {}U)", *lsb, count);
-                    },
-                    [&](const mir::RangeIndexedUpBounds& b)
-                        -> diag::Result<std::string> {
-                      auto base = RenderExpr(ctx, ctx.Expr(b.base_index));
-                      if (!base) {
-                        return std::unexpected(std::move(base.error()));
-                      }
-                      const auto count = static_cast<std::uint32_t>(
-                          ConstantIntFromExpr(ctx.Expr(b.width)));
-                      return std::format(".Slice({}, {}U)", *base, count);
-                    },
-                    [&](const mir::RangeIndexedDownBounds& b)
-                        -> diag::Result<std::string> {
-                      const auto& base_mir = ctx.Expr(b.base_index);
-                      auto base = RenderExpr(ctx, base_mir);
-                      if (!base) {
-                        return std::unexpected(std::move(base.error()));
-                      }
-                      const auto& base_ty = ctx.Unit().GetType(base_mir.type);
-                      if (!base_ty.IsPackedArray()) {
-                        throw InternalError(
-                            "RenderSelectorMethodCall: IndexedDown base_index "
-                            "type is not PackedArrayType");
-                      }
-                      const auto count = static_cast<std::uint32_t>(
-                          ConstantIntFromExpr(ctx.Expr(b.width)));
-                      const auto sub_lit = RenderSameShapeLiteral(
-                          base_ty.AsPackedArray(),
-                          static_cast<std::int64_t>(count) - 1);
-                      const auto lsb =
-                          std::format("(({}) - {})", *base, sub_lit);
-                      return std::format(".Slice({}, {}U)", lsb, count);
-                    },
-                },
-                s.bounds);
+          [&](const mir::RangeIndexedUpBounds& b) -> diag::Result<std::string> {
+            auto base = RenderExpr(ctx, ctx.Expr(b.base_index));
+            if (!base) return std::unexpected(std::move(base.error()));
+            const auto count = static_cast<std::uint32_t>(
+                ConstantIntFromExpr(ctx.Expr(b.width)));
+            return std::format(".Slice({}, {}U)", *base, count);
+          },
+          [&](const mir::RangeIndexedDownBounds& b)
+              -> diag::Result<std::string> {
+            const auto& base_mir = ctx.Expr(b.base_index);
+            auto base = RenderExpr(ctx, base_mir);
+            if (!base) return std::unexpected(std::move(base.error()));
+            const auto& base_ty = ctx.Unit().GetType(base_mir.type);
+            if (!base_ty.IsPackedArray()) {
+              throw InternalError(
+                  "RenderRangeBoundsAsSlice: IndexedDown base_index "
+                  "type is not PackedArrayType");
+            }
+            const auto count = static_cast<std::uint32_t>(
+                ConstantIntFromExpr(ctx.Expr(b.width)));
+            const auto sub_lit = RenderSameShapeLiteral(
+                base_ty.AsPackedArray(), static_cast<std::int64_t>(count) - 1);
+            const auto lsb = std::format("(({}) - {})", *base, sub_lit);
+            return std::format(".Slice({}, {}U)", lsb, count);
           },
       },
-      sel);
+      bounds);
+}
+
+auto RenderLhsExpr(
+    const RenderContext& ctx, const mir::Expr& expr,
+    std::string_view mutate_adapter) -> diag::Result<std::string> {
+  return std::visit(
+      Overloaded{
+          [&](const mir::StructuralVarRef& r) -> diag::Result<std::string> {
+            auto name = RenderStructuralVarName(ctx, r);
+            if (!name) return std::unexpected(std::move(name.error()));
+            return *name + std::string{mutate_adapter};
+          },
+          [&](const mir::ProceduralVarRef& l) -> diag::Result<std::string> {
+            return LookupProceduralVarName(ctx, l);
+          },
+          [&](const mir::ElementSelectExpr& s) -> diag::Result<std::string> {
+            auto base =
+                RenderLhsExpr(ctx, ctx.Expr(s.base_value), mutate_adapter);
+            if (!base) return std::unexpected(std::move(base.error()));
+            auto idx = RenderExpr(ctx, ctx.Expr(s.index));
+            if (!idx) return std::unexpected(std::move(idx.error()));
+            return std::format("{}.ElementAt({})", *base, *idx);
+          },
+          [&](const mir::RangeSelectExpr& s) -> diag::Result<std::string> {
+            auto base =
+                RenderLhsExpr(ctx, ctx.Expr(s.base_value), mutate_adapter);
+            if (!base) return std::unexpected(std::move(base.error()));
+            auto suffix = RenderRangeBoundsAsSlice(ctx, s.bounds);
+            if (!suffix) return std::unexpected(std::move(suffix.error()));
+            return *base + *suffix;
+          },
+          [&](const auto&) -> diag::Result<std::string> {
+            throw InternalError(
+                "RenderLhsExpr: expression form is not addressable; "
+                "ValidateAssignableProcExpr should have rejected it");
+          },
+      },
+      expr.data);
+}
+
+// Walks an LHS expression to its root PrimaryExpr and returns the
+// StructuralVarRef there iff that's what the root is, else nullptr. Used
+// to detect whether the assignment touches an observable scalar.
+auto LhsRootStructuralVarForObservable(
+    const RenderContext& ctx, const mir::Expr& expr)
+    -> const mir::StructuralVarRef* {
+  const mir::Expr* current = &expr;
+  while (true) {
+    const mir::Expr& e = *current;
+    if (const auto* svr = std::get_if<mir::StructuralVarRef>(&e.data)) {
+      return svr;
+    }
+    if (const auto* sel = std::get_if<mir::ElementSelectExpr>(&e.data)) {
+      current = &ctx.Expr(sel->base_value);
+      continue;
+    }
+    if (const auto* sel = std::get_if<mir::RangeSelectExpr>(&e.data)) {
+      current = &ctx.Expr(sel->base_value);
+      continue;
+    }
+    return nullptr;
+  }
+}
+
+auto IsLhsBarePrimary(const mir::Expr& expr) -> bool {
+  return std::holds_alternative<mir::StructuralVarRef>(expr.data) ||
+         std::holds_alternative<mir::ProceduralVarRef>(expr.data);
 }
 
 // Render a compound op suffix for the SV `op=` family. Arithmetic /
@@ -975,18 +1008,21 @@ auto RenderAssignExpr(const RenderContext& ctx, const mir::AssignExpr& a)
     -> diag::Result<std::string> {
   auto value_or = RenderExpr(ctx, ctx.Expr(a.value));
   if (!value_or) return std::unexpected(std::move(value_or.error()));
-  auto root_or = RenderLvalueRoot(ctx, a.target.root);
-  if (!root_or) return std::unexpected(std::move(root_or.error()));
 
-  const bool observable = [&] {
-    const auto* svr = std::get_if<mir::StructuralVarRef>(&a.target.root);
-    if (svr == nullptr) return false;
-    const auto& var_decl = ctx.StructuralScope().GetStructuralVar(svr->var);
+  const mir::Expr& lhs_expr = ctx.Expr(a.target);
+  const mir::StructuralVarRef* observable_root =
+      LhsRootStructuralVarForObservable(ctx, lhs_expr);
+  const bool observable = observable_root != nullptr && [&] {
+    const auto& var_decl =
+        ctx.StructuralScope().GetStructuralVar(observable_root->var);
     return IsObservableScalarType(ctx.Unit().GetType(var_decl.type));
   }();
 
-  // Whole-var write: existing entry points (events / direct assign).
-  if (a.target.selectors.empty()) {
+  // Whole-var write: route observable structural targets through WriteVar
+  // (which fires subscribers), procedural locals get a direct C++ assignment.
+  if (IsLhsBarePrimary(lhs_expr)) {
+    auto root_or = RenderLhsExpr(ctx, lhs_expr, std::string_view{});
+    if (!root_or) return std::unexpected(std::move(root_or.error()));
     if (a.compound_op.has_value()) {
       // For observable whole-var compound we still route through Mutate so
       // the destructor commit fires subscribers exactly once -- the
@@ -1016,19 +1052,15 @@ auto RenderAssignExpr(const RenderContext& ctx, const mir::AssignExpr& a)
   // methods as on PackedArray; when the full expression ends, the handle's
   // destructor commits the snapshot through `WriteVar` so subscribers fire.
   // Same shape inside or outside an NBA closure body -- no nested lambda.
-  std::string chain = *root_or;
-  if (observable) {
-    chain += ".Mutate(*services_)";
-  }
-  for (const auto& sel : a.target.selectors) {
-    auto method = RenderSelectorMethodCall(ctx, sel);
-    if (!method) return std::unexpected(std::move(method.error()));
-    chain += *method;
-  }
+  const std::string_view mutate_adapter =
+      observable ? std::string_view{".Mutate(*services_)"} : std::string_view{};
+  auto chain_or = RenderLhsExpr(ctx, lhs_expr, mutate_adapter);
+  if (!chain_or) return std::unexpected(std::move(chain_or.error()));
   if (a.compound_op.has_value()) {
-    return "(" + RenderCompoundAssign(*a.compound_op, chain, *value_or) + ")";
+    return "(" + RenderCompoundAssign(*a.compound_op, *chain_or, *value_or) +
+           ")";
   }
-  return chain + " = " + *value_or;
+  return *chain_or + " = " + *value_or;
 }
 
 auto RenderRangeSelectExpr(
@@ -1109,12 +1141,6 @@ auto RenderClosureExpr(
                 return std::unexpected(std::move(value_or.error()));
               }
               return bind_name + " = " + *value_or;
-            },
-            [](const mir::ByReferenceCapture&) -> diag::Result<std::string> {
-              return diag::Unsupported(
-                  diag::DiagCode::kCppEmitExpressionFormNotImplemented,
-                  "by-reference capture is not yet implemented in cpp emit",
-                  diag::UnsupportedCategory::kFeature);
             }},
         closure.captures[i]);
     if (!rendered_or) return std::unexpected(std::move(rendered_or.error()));

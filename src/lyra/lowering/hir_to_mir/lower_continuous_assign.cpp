@@ -41,14 +41,14 @@ auto LowerContinuousAssign(
     const mir::TypeId assign_type = (*rhs_or).type;
     const mir::ExprId rhs_id = body_state.AddExpr(*std::move(rhs_or));
 
-    auto lhs_or = LowerHirLvalueStructural(
-        unit_state, scope_state, body_state, scope, src.lhs);
+    auto lhs_or = LowerStructuralExpr(
+        unit_state, scope_state, body_state, scope, scope.GetExpr(src.lhs));
     if (!lhs_or) return std::unexpected(std::move(lhs_or.error()));
+    const mir::ExprId lhs_id = body_state.AddExpr(*std::move(lhs_or));
 
     const mir::ExprId assign_id = body_state.AddExpr(
         mir::Expr{
-            .data =
-                mir::AssignExpr{.target = *std::move(lhs_or), .value = rhs_id},
+            .data = mir::AssignExpr{.target = lhs_id, .value = rhs_id},
             .type = assign_type});
     body_state.AddRootStmt(body_state.AddStmt(
         mir::Stmt{

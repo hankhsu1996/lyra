@@ -44,9 +44,17 @@ auto LowerContinuousAssign(
   }
   const auto& assign = assignment_expr.as<slang::ast::AssignmentExpression>();
 
-  auto lhs_or = LowerStructuralLvalue(
+  // Null proc_state -> scope (continuous-assign) context: structural-var
+  // targets only.
+  auto validate_lhs = ValidateAssignableSlangExpr(
+      unit_facts, scope_state.UnitState(), nullptr, assign.left());
+  if (!validate_lhs) {
+    return std::unexpected(std::move(validate_lhs.error()));
+  }
+  auto lhs_or = LowerStructuralExpr(
       unit_facts, scope_state.UnitState(), scope_state, stack, assign.left());
   if (!lhs_or) return std::unexpected(std::move(lhs_or.error()));
+  const hir::ExprId lhs_id = scope_state.AddExpr(*std::move(lhs_or));
 
   auto rhs_or = LowerStructuralExpr(
       unit_facts, scope_state.UnitState(), scope_state, stack, assign.right());
@@ -67,7 +75,7 @@ auto LowerContinuousAssign(
 
   return hir::ContinuousAssign{
       .span = span,
-      .lhs = *std::move(lhs_or),
+      .lhs = lhs_id,
       .rhs = rhs_id,
       .sensitivity_list = std::move(sensitivity),
   };

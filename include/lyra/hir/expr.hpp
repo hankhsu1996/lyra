@@ -10,7 +10,6 @@
 #include "lyra/hir/conversion.hpp"
 #include "lyra/hir/expr_id.hpp"
 #include "lyra/hir/inside_item.hpp"
-#include "lyra/hir/lvalue.hpp"
 #include "lyra/hir/primary.hpp"
 #include "lyra/hir/range_bounds.hpp"
 #include "lyra/hir/subroutine_ref.hpp"
@@ -51,9 +50,16 @@ enum class AssignKind : std::uint8_t {
 // typed to match `lhs`; AST -> HIR inserts a `ConversionExpr` if slang's
 // expansion required one. LRM A.6.2 forbids compound on non-blocking, so
 // `kind == kNonBlocking && compound_op.has_value()` is an InternalError.
+//
+// `lhs` is an ExprId pointing at any expression whose form is addressable.
+// Allowed forms: a PrimaryExpr var reference, ElementSelectExpr /
+// RangeSelectExpr on an addressable base, or a ConcatExpr of addressable
+// operands (the latter is the LRM 11.4.12 destructuring LHS form).
+// Lvalue-ness is positional -- determined by appearance in this `lhs`
+// field, not by an extra tag on the expression.
 struct AssignExpr {
   AssignKind kind;
-  Lvalue lhs;
+  ExprId lhs;
   std::optional<BinaryOp> compound_op = std::nullopt;
   ExprId rhs;
 };

@@ -1,0 +1,12 @@
+id: cpp.destructuring_assign_four_state
+tags: [cpp_run]
+input:
+  command: [run, cpp]
+  project: false
+  top: Top
+  files: [main.sv]
+expect:
+  exit: 0
+  variables:
+    a: "8'b10xx_1100"
+    b: "8'bzz11_0101"

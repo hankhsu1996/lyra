@@ -20,24 +20,20 @@ auto LowerStructuralExpr(
     ScopeLoweringState& scope_state, const ScopeStack& stack,
     const slang::ast::Expression& expr) -> diag::Result<hir::Expr>;
 
-// Lower a slang assignment LHS into an HIR Lvalue, with selector
-// subexpressions added to the process's expr pool. For the structural
-// counterpart (continuous-assignment LHS, LRM 10.3) see
-// LowerStructuralLvalue below.
-auto LowerProcLvalue(
+// Walks a slang assignment-target expression and rejects any form that is
+// not addressable. Lvalue-ness is positional: assignment targets carry an
+// ExprId pointing at any expression whose form is addressable. Allowed
+// forms are a NamedValue referring to a Variable (not a generate-loop
+// variable), ElementSelect / RangeSelect on an addressable base, and
+// Concatenation of addressable operands (LRM 11.4.12 destructuring LHS).
+//
+// `proc_state` distinguishes process-body context (non-null, allows both
+// structural-var and procedural-local targets) from continuous-assignment
+// context (null, structural-var only; LRM 10.3).
+auto ValidateAssignableSlangExpr(
     const UnitLoweringFacts& unit_facts, UnitLoweringState& unit_state,
-    ProcessLoweringState& proc_state, const ScopeStack& stack,
-    const slang::ast::Expression& expr) -> diag::Result<hir::Lvalue>;
-
-// Same shape as LowerProcLvalue but for scope-level assignment targets
-// (continuous assignment LHS, LRM 10.3). Selector subexpressions land in the
-// enclosing scope's expr pool. Root is restricted to StructuralVarRef --
-// neither procedural vars nor generate-loop induction vars are visible at
-// scope level.
-auto LowerStructuralLvalue(
-    const UnitLoweringFacts& unit_facts, UnitLoweringState& unit_state,
-    ScopeLoweringState& scope_state, const ScopeStack& stack,
-    const slang::ast::Expression& expr) -> diag::Result<hir::Lvalue>;
+    const ProcessLoweringState* proc_state, const slang::ast::Expression& expr)
+    -> diag::Result<void>;
 
 // Lower one entry from a slang range_list (the operand list of `inside` and
 // the per-item label list of `case (...) inside`). ValueRange entries become
