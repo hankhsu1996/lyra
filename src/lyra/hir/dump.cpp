@@ -964,10 +964,22 @@ class HirDumper {
   }
 
   void DumpCaseStmtNode(const Process& p, StmtId id, const CaseStmt& c) {
+    std::string_view kind_tag;
+    switch (c.condition_kind) {
+      case CaseCondition::kNormal:
+        kind_tag = "";
+        break;
+      case CaseCondition::kWildcardJustZ:
+        kind_tag = "z";
+        break;
+      case CaseCondition::kWildcardXOrZ:
+        kind_tag = "x";
+        break;
+    }
     Line(
         std::format(
-            "Stmt[{}] CaseStmt{} cond=Expr[{}] (items={})", id.value,
-            FormatUniquePriorityCheck(c.check), c.condition.value,
+            "Stmt[{}] CaseStmt{}{} cond=Expr[{}] (items={})", id.value,
+            kind_tag, FormatUniquePriorityCheck(c.check), c.condition.value,
             c.items.size()));
     Indent();
     Line(

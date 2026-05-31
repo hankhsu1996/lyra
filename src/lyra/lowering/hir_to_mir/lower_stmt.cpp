@@ -288,6 +288,17 @@ auto LowerCaseStmt(
     ProcessLoweringState& proc_state, const hir::Process& hir_proc,
     const hir::Stmt& stmt, const hir::CaseStmt& c) -> diag::Result<mir::Stmt> {
   const mir::TypeId bit_type = unit_state.Builtins().bit1;
+  const mir::BinaryOp compare_op = [&] {
+    switch (c.condition_kind) {
+      case hir::CaseCondition::kNormal:
+        return mir::BinaryOp::kEquality;
+      case hir::CaseCondition::kWildcardJustZ:
+        return mir::BinaryOp::kCasezEquality;
+      case hir::CaseCondition::kWildcardXOrZ:
+        return mir::BinaryOp::kCasexEquality;
+    }
+    throw InternalError("LowerCaseStmt: unknown hir::CaseCondition");
+  }();
 
   ProceduralScopeLoweringState wrapper_state;
   ProceduralDepthGuard wrapper_depth_guard{proc_state};
@@ -305,10 +316,30 @@ auto LowerCaseStmt(
   // packed type. The cpp backend cannot yet emit an assignment from a form=int
   // source into a form=explicit lvalue, and the cascade builds its own
   // equality comparisons regardless of the snapshot's form. Peel the outer
-  // conversion so the snapshot var matches the unwrapped source type.
+  // conversion so the snapshot var matches the unwrapped source type --
+  // but only when state-kind is preserved, otherwise the snapshot ends up
+  // 2-state while wildcard labels are 4-state and PackedArray::ExpectSameShape
+  // rejects the per-label compare.
+  auto packed_state = [&](mir::TypeId tid) -> std::optional<bool> {
+    const auto& ty = unit_state.GetType(tid);
+    if (const auto* pa = std::get_if<mir::PackedArrayType>(&ty.data)) {
+      return pa->IsFourState();
+    }
+    if (const auto* en = std::get_if<mir::EnumType>(&ty.data)) {
+      return en->base.IsFourState();
+    }
+    return std::nullopt;
+  };
   if (const auto* cv = std::get_if<mir::ConversionExpr>(
           &wrapper_state.GetExpr(cond_expr_id).data)) {
-    cond_expr_id = cv->operand;
+    const mir::TypeId dst_tid = wrapper_state.GetExpr(cond_expr_id).type;
+    const mir::TypeId src_tid = wrapper_state.GetExpr(cv->operand).type;
+    const auto dst_state = packed_state(dst_tid);
+    const auto src_state = packed_state(src_tid);
+    if (dst_state.has_value() && src_state.has_value() &&
+        *dst_state == *src_state) {
+      cond_expr_id = cv->operand;
+    }
   }
 
   const CaseSnapshotRefs snapshot =
@@ -359,7 +390,7 @@ auto LowerCaseStmt(
     predicates.reserve(c.items.size());
     for (const auto& item : c.items) {
       auto pred_or = BuildEqualityChain(
-          wrapper_state, snapshot, bit_type, 0, item.labels.size(),
+          wrapper_state, snapshot, bit_type, compare_op, 0, item.labels.size(),
           [&](ProceduralScopeLoweringState& es,
               std::size_t li) -> diag::Result<mir::ExprId> {
             auto lab_or = LowerExpr(
@@ -390,7 +421,8 @@ auto LowerCaseStmt(
                              std::size_t item_idx, std::uint32_t sel_hops) {
     return with_extra_depth(item_idx, [&] {
       return BuildEqualityChain(
-          enc, snapshot, bit_type, sel_hops, c.items[item_idx].labels.size(),
+          enc, snapshot, bit_type, compare_op, sel_hops,
+          c.items[item_idx].labels.size(),
           [&](ProceduralScopeLoweringState& es,
               std::size_t li) -> diag::Result<mir::ExprId> {
             auto lab_or = LowerExpr(

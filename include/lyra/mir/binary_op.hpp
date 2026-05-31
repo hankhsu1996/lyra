@@ -19,6 +19,8 @@ enum class BinaryOp {
   kCaseInequality,
   kWildcardEquality,
   kWildcardInequality,
+  kCasezEquality,
+  kCasexEquality,
   kGreaterEqual,
   kGreaterThan,
   kLessEqual,

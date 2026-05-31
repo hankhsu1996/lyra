@@ -1010,6 +1010,62 @@ auto PackedArray::WildcardEquals(const PackedArray& other) const
   return OneBitResult(true, is_four_state_);
 }
 
+auto PackedArray::CasezEquals(const PackedArray& other) const -> PackedArray {
+  ExpectSameShape(*this, other, "CasezEquals");
+  const auto words = WordCountForBits(bit_width_);
+  const auto a_val = ValueWords();
+  const auto b_val = other.ValueWords();
+  const auto a_unk = UnknownWords();
+  const auto b_unk = other.UnknownWords();
+  const auto top_mask = MaskForWidth(bit_width_ - ((words - 1U) * 64U));
+  for (std::size_t w = 0; w < words; ++w) {
+    const std::uint64_t aw_val = a_val[w];
+    const std::uint64_t bw_val = b_val[w];
+    const std::uint64_t aw_unk = w < a_unk.size() ? a_unk[w] : 0U;
+    const std::uint64_t bw_unk = w < b_unk.size() ? b_unk[w] : 0U;
+    // Lyra encoding (see packed.cpp): X = (value=1, unknown=1);
+    // Z = (value=0, unknown=1). casez masks out Z bits on either side; X bits
+    // on either side are NOT wildcards and must still match exactly.
+    const std::uint64_t a_z = aw_unk & ~aw_val;
+    const std::uint64_t b_z = bw_unk & ~bw_val;
+    std::uint64_t cmp_mask = ~(a_z | b_z);
+    if (w + 1U == words) {
+      cmp_mask &= top_mask;
+    }
+    if (((aw_val ^ bw_val) & cmp_mask) != 0U ||
+        ((aw_unk ^ bw_unk) & cmp_mask) != 0U) {
+      return OneBitResult(false, is_four_state_);
+    }
+  }
+  return OneBitResult(true, is_four_state_);
+}
+
+auto PackedArray::CasexEquals(const PackedArray& other) const -> PackedArray {
+  ExpectSameShape(*this, other, "CasexEquals");
+  const auto words = WordCountForBits(bit_width_);
+  const auto a_val = ValueWords();
+  const auto b_val = other.ValueWords();
+  const auto a_unk = UnknownWords();
+  const auto b_unk = other.UnknownWords();
+  const auto top_mask = MaskForWidth(bit_width_ - ((words - 1U) * 64U));
+  for (std::size_t w = 0; w < words; ++w) {
+    const std::uint64_t aw_val = a_val[w];
+    const std::uint64_t bw_val = b_val[w];
+    const std::uint64_t aw_unk = w < a_unk.size() ? a_unk[w] : 0U;
+    const std::uint64_t bw_unk = w < b_unk.size() ? b_unk[w] : 0U;
+    // casex masks out any-unknown bits on either side (X or Z); the value
+    // plane carries the comparison on the remaining bits.
+    std::uint64_t cmp_mask = ~(aw_unk | bw_unk);
+    if (w + 1U == words) {
+      cmp_mask &= top_mask;
+    }
+    if (((aw_val ^ bw_val) & cmp_mask) != 0U) {
+      return OneBitResult(false, is_four_state_);
+    }
+  }
+  return OneBitResult(true, is_four_state_);
+}
+
 auto PackedArray::ExtractBits(
     const PackedArray& lsb_bit, std::uint32_t bit_width) const -> PackedArray {
   if (bit_width == 0U) {

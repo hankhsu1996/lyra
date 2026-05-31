@@ -49,6 +49,18 @@ enum class UniquePriorityCheck : std::uint8_t {
   kPriority,
 };
 
+// LRM 12.5 plain case (`===` exact compare) and the LRM 12.5.1 do-not-care
+// forms casez (Z bidirectional wildcard) and casex (Z + X bidirectional
+// wildcard). All three share the cascade shape (selector snapshot, value-list
+// labels, first-match-wins, optional default); they differ only in the
+// per-label compare primitive HIR->MIR picks. case-inside is a separate
+// CaseInsideStmt because its labels are range_list entries.
+enum class CaseCondition : std::uint8_t {
+  kNormal,
+  kWildcardJustZ,
+  kWildcardXOrZ,
+};
+
 struct IfStmt {
   ExprId condition;
   StmtId then_stmt;
@@ -62,6 +74,7 @@ struct CaseItem {
 };
 
 struct CaseStmt {
+  CaseCondition condition_kind;
   ExprId condition;
   std::vector<CaseItem> items;
   std::optional<StmtId> default_stmt;

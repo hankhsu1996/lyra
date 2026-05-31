@@ -11,11 +11,11 @@ operator runtime, string runtime); see the per-item **Depends on** lines and the
 
 ## Actionable
 
-C11 is unblocked now that W2 has landed. C9 and C10 still wait on `datatypes/unpacked`.
+C9 and C10 (`foreach`) are the only remaining open control-flow items; both wait on
+`datatypes/unpacked`.
 
 | Item    | Status                                                                               |
 | ------- | ------------------------------------------------------------------------------------ |
-| C11     | Unblocked (W2 shipped). HIR -> MIR cascade with `==?` per-label compare.             |
 | C9, C10 | Blocked on `datatypes/unpacked` (procedural unpacked array vars + `arr[i]` element). |
 
 ## Sub-Steps
@@ -76,9 +76,16 @@ C11 is unblocked now that W2 has landed. C9 and C10 still wait on `datatypes/unp
       today). Cannot start before that work.
 - [ ] C10 -- `foreach` multi-dim, skipped dimensions, dynamic-array, queue. **Depends on** C9 plus
       `datatypes/general` (dynamic array, queue) and the `.size()` runtime query.
-- [ ] C11 -- `casez` / `casex`. Lower to an if/else cascade with masked comparisons in HIR -> MIR
-      (C++ `switch` does not support wildcard match). **Depends on** `operators.md` W2 for the `==?`
-      / `!=?` runtime helper.
+- [x] C11 -- `casez` / `casex`. LRM 12.5.1 do-not-care forms; share the plain-case cascade and
+      selector snapshot but swap the per-label compare for a bidirectional wildcard primitive (Z on
+      either operand for casez; Z or X on either operand for casex). Result is deterministic per LRM
+      12.5.1 because every unknown position is masked from comparison; this is distinct from the
+      asymmetric `==?` operator (LRM 11.4.6) which can yield `1'bx`. Coverage: `casez_basic` (RHS
+      `?` wildcards over 2-state selector), `casez_first_match` (LRM 12.5 source-order
+      first-match-wins between an overlapping wildcard label and an exact label), `casez_no_match`
+      (default-taken and no-default no-op), `casez_nested`, `casex_basic` (RHS `x` / `?` wildcards),
+      plus two bidirectional cases (`casez_lhs_z`, `casex_lhs_x`) that pin down the LRM 12.5.1
+      "either operand" contract not exercised by the archive's typical-usage 2-state-selector tests.
 - [x] C12 -- `case (... inside ...)`. Sibling statement family in HIR (distinct from plain case
       because labels are `range_list` entries -- value or `[lo:hi]` range -- and per-item match uses
       inside-membership rather than `==`). HIR -> MIR snapshots the selector (LRM 12.5
