@@ -421,8 +421,7 @@ auto RunCppCase(
   }
 
   auto outcome = BuildAndRunEmittedArtifacts(
-      work, cpp_paths.include_root, cpp_paths.cpp_runtime,
-      cpp_paths.extra_include_roots);
+      work, cpp_paths.include_root, cpp_paths.cpp_runtime);
   if (outcome.error.has_value()) {
     result.mismatch = "build+run failed: " + *outcome.error;
     return result;

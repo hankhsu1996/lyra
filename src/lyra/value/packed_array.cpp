@@ -152,7 +152,7 @@ auto PackedArray::FromInt(
     std::int64_t value, std::uint64_t bit_width, bool is_signed,
     bool is_four_state) -> PackedArray {
   const std::size_t n = (bit_width + 63U) / 64U;
-  absl::InlinedVector<std::uint64_t, kPackedWordsInlineCapacity> words(n);
+  PackedWordVector words(n);
   if (bit_width <= 64U) {
     words[0] = static_cast<std::uint64_t>(value);
   } else {
@@ -483,11 +483,8 @@ auto AllX(std::uint64_t bit_width, bool is_signed) -> PackedArray {
   return PackedArray{bit_width, is_signed, true};
 }
 
-using WordBuffer =
-    absl::InlinedVector<std::uint64_t, kPackedWordsInlineCapacity>;
-
-auto MakeWordBuffer(std::uint64_t bit_width) -> WordBuffer {
-  return WordBuffer(WordCountForBits(bit_width), std::uint64_t{0});
+auto MakeWordBuffer(std::uint64_t bit_width) -> PackedWordVector {
+  return PackedWordVector(WordCountForBits(bit_width), std::uint64_t{0});
 }
 
 auto AddWordsInto(
@@ -1082,7 +1079,8 @@ auto PackedArray::ExtractBits(
   const auto src_unknown = UnknownWords();
   const auto bw_signed = static_cast<std::int64_t>(bit_width_);
   auto val_buf = MakeWordBuffer(bit_width);
-  auto unk_buf = is_four_state_ ? MakeWordBuffer(bit_width) : WordBuffer{};
+  auto unk_buf =
+      is_four_state_ ? MakeWordBuffer(bit_width) : PackedWordVector{};
   for (std::uint32_t i = 0; i < bit_width; ++i) {
     const std::int64_t pos = start + static_cast<std::int64_t>(i);
     const std::uint64_t out_mask = std::uint64_t{1} << (i % 64U);
