@@ -309,6 +309,10 @@ class MirDumper {
         return "WildcardEquality";
       case BinaryOp::kWildcardInequality:
         return "WildcardInequality";
+      case BinaryOp::kCasezEquality:
+        return "CasezEquality";
+      case BinaryOp::kCasexEquality:
+        return "CasexEquality";
       case BinaryOp::kGreaterEqual:
         return "GreaterEqual";
       case BinaryOp::kGreaterThan:

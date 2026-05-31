@@ -15,7 +15,6 @@
 #include "lyra/mir/procedural_hops.hpp"
 #include "lyra/mir/procedural_var.hpp"
 #include "lyra/mir/stmt.hpp"
-#include "lyra/mir/type.hpp"
 
 namespace lyra::lowering::hir_to_mir {
 
@@ -38,14 +37,17 @@ auto AppendCaseSnapshot(
     ProceduralScopeLoweringState& wrapper_state, mir::ExprId cond_expr_id)
     -> CaseSnapshotRefs;
 
-// Builds (sel == L_0) || (sel == L_1) || ... into enc_state and returns the
-// final predicate ExprId. `lower_label(enc, label_idx)` lowers one label into
-// `enc` and returns its ExprId. label_count must be >= 1.
+// Builds (sel <op> L_0) || (sel <op> L_1) || ... into enc_state and returns
+// the final predicate ExprId. `compare_op` selects the per-label primitive
+// (kEquality for plain case / case-inside-value items, kCasezEquality /
+// kCasexEquality for casez / casex). `lower_label(enc, label_idx)` lowers one
+// label into `enc` and returns its ExprId. label_count must be >= 1.
 template <typename LabelLowerer>
 auto BuildEqualityChain(
     ProceduralScopeLoweringState& enc_state, CaseSnapshotRefs snapshot,
-    mir::TypeId bit_type, std::uint32_t sel_hops, std::size_t label_count,
-    LabelLowerer&& lower_label) -> diag::Result<mir::ExprId> {
+    mir::TypeId bit_type, mir::BinaryOp compare_op, std::uint32_t sel_hops,
+    std::size_t label_count, LabelLowerer&& lower_label)
+    -> diag::Result<mir::ExprId> {
   std::optional<mir::ExprId> acc;
   for (std::size_t i = 0; i < label_count; ++i) {
     auto label_or = std::forward<LabelLowerer>(lower_label)(enc_state, i);
@@ -64,9 +66,7 @@ auto BuildEqualityChain(
         mir::Expr{
             .data =
                 mir::BinaryExpr{
-                    .op = mir::BinaryOp::kEquality,
-                    .lhs = sel_ref,
-                    .rhs = label_id},
+                    .op = compare_op, .lhs = sel_ref, .rhs = label_id},
             .type = bit_type});
     if (acc.has_value()) {
       acc = enc_state.AddExpr(

@@ -387,6 +387,10 @@ auto RenderBinaryOpIntegral(
       return "(" + lhs + ").CaseEqual(" + rhs + ")";
     case mir::BinaryOp::kCaseInequality:
       return "(!(" + lhs + ").CaseEqual(" + rhs + "))";
+    case mir::BinaryOp::kCasezEquality:
+      return "(" + lhs + ").CasezEquals(" + rhs + ")";
+    case mir::BinaryOp::kCasexEquality:
+      return "(" + lhs + ").CasexEquals(" + rhs + ")";
   }
   return "(" + lhs + std::string{tok} + rhs + ")";
 }
