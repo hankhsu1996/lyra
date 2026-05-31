@@ -67,7 +67,10 @@ class UnitLoweringState {
     return hir_unit_->GetType(id);
   }
 
-  auto AddType(mir::TypeData data) -> mir::TypeId {
+  // const because the type table lives on *unit_ (held via non-const
+  // pointer); UnitLoweringState's own state (type map, builtins) is not
+  // touched.
+  [[nodiscard]] auto AddType(mir::TypeData data) const -> mir::TypeId {
     const mir::TypeId id{static_cast<std::uint32_t>(unit_->types.size())};
     unit_->types.push_back(mir::Type{.data = std::move(data)});
     return id;

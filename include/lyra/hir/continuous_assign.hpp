@@ -6,7 +6,6 @@
 
 #include "lyra/diag/source_span.hpp"
 #include "lyra/hir/expr_id.hpp"
-#include "lyra/hir/lvalue.hpp"
 #include "lyra/hir/stmt.hpp"
 
 namespace lyra::hir {
@@ -19,17 +18,18 @@ struct ContinuousAssignId {
 };
 
 // LRM 10.3 `assign lhs = rhs;` -- source-aligned with slang's
-// `ContinuousAssignSymbol` at scope level. The LHS and RHS live in the
-// containing `StructuralScope.exprs` pool (selector ExprIds in `lhs` and the
-// `rhs` ExprId both index into it), matching how every other scope-level
-// expression (parameter values, variable initialisers) is stored. HIR -> MIR
-// translates `lhs` and `rhs` into a synthesised `mir::Process` whose body is
+// `ContinuousAssignSymbol` at scope level. Both `lhs` and `rhs` are ExprIds
+// into the containing `StructuralScope.exprs` pool, matching how every other
+// scope-level expression (parameter values, variable initialisers) is stored.
+// The `lhs` form is restricted to a structural-var-rooted addressable
+// expression. HIR -> MIR
+// translates this into a synthesised `mir::Process` whose body is
 // `forever { lhs = rhs; SensitivityWaitStmt(sensitivity_list); }`, giving
 // continuous assignment the same runtime mental model as always_comb
 // (LRM 9.2.2.2.1).
 struct ContinuousAssign {
   diag::SourceSpan span;
-  Lvalue lhs;
+  ExprId lhs;
   ExprId rhs;
   std::vector<SensitivityEntry> sensitivity_list;
 };

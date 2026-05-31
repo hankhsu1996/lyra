@@ -39,15 +39,14 @@ auto LowerStructuralExpr(
     const hir::StructuralScope& scope, const hir::Expr& expr)
     -> diag::Result<mir::Expr>;
 
-// Translate a scope-level HIR Lvalue (continuous-assignment LHS, LRM 10.3)
-// into a MIR Lvalue targeted at the given procedural scope. Selector
-// subexpressions are sourced from `scope.exprs` and added to
-// `proc_scope_state.exprs`. The root must be a `StructuralVarRef`.
-auto LowerHirLvalueStructural(
+// Builds an NBA-region closure: snapshots `rhs_id_in_outer` by value into the
+// body and assigns it through `lhs_in_outer`. The returned Expr has type
+// `void`. `lhs_in_outer` must be an addressable expression rooted at a
+// structural var (procedural-local NBA is not supported).
+auto BuildNbaSubmitClosureExpr(
     const UnitLoweringState& unit_state,
-    const StructuralScopeLoweringState& scope_state,
-    ProceduralScopeLoweringState& proc_scope_state,
-    const hir::StructuralScope& scope, const hir::Lvalue& lvalue)
-    -> diag::Result<mir::Lvalue>;
+    const ProceduralScopeLoweringState& outer_scope_state,
+    mir::ExprId lhs_in_outer, mir::ExprId rhs_id_in_outer, mir::TypeId rhs_type)
+    -> mir::Expr;
 
 }  // namespace lyra::lowering::hir_to_mir

@@ -1,0 +1,16 @@
+id: errors.destructuring_replication_lhs
+tags: [errors, diag]
+input:
+  command: [emit, cpp]
+  project: false
+  top: Top
+  files: [main.sv]
+  args: ["--no-color"]
+expect:
+  exit: 1
+  stderr:
+    contains:
+      - "error:"
+      - "not assignable"
+    not_contains:
+      - "internal error"

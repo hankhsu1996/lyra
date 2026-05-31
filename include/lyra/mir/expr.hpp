@@ -12,7 +12,6 @@
 #include "lyra/mir/conversion.hpp"
 #include "lyra/mir/expr_id.hpp"
 #include "lyra/mir/integral_constant.hpp"
-#include "lyra/mir/lvalue.hpp"
 #include "lyra/mir/range_bounds.hpp"
 #include "lyra/mir/runtime_diagnostic.hpp"
 #include "lyra/mir/runtime_finish.hpp"
@@ -21,6 +20,7 @@
 #include "lyra/mir/structural_param.hpp"
 #include "lyra/mir/structural_subroutine.hpp"
 #include "lyra/mir/unary_op.hpp"
+#include "lyra/mir/value_ref.hpp"
 #include "lyra/support/system_subroutine.hpp"
 
 namespace lyra::mir {
@@ -63,8 +63,14 @@ struct ConditionalExpr {
 
 // `compound_op.has_value()` marks the assignment as `target op= value`;
 // `nullopt` is a simple write. `value` is already typed to match `target`.
+//
+// `target` is an ExprId pointing at one of: a PrimaryExpr var reference,
+// ElementSelectExpr / RangeSelectExpr on an addressable base. The
+// ConcatExpr-as-target form (LRM 11.4.12 destructuring LHS) is desugared
+// upstream into a snapshot + per-part assignment sequence, so render does
+// not encounter it.
 struct AssignExpr {
-  Lvalue target;
+  ExprId target;
   std::optional<BinaryOp> compound_op = std::nullopt;
   ExprId value;
 };

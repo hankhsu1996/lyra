@@ -41,7 +41,7 @@ If you are looking for a concept, this table points to the canonical doc.
 | Parameter values, specialization keys, per-specialization artifacts      | `specialization_model.md`   |
 | Identity rules; ownership; forbidden identity shapes                     | `identity_and_ownership.md` |
 | Lowering permissions (what each lowering may and may not do)             | `lowering_boundaries.md`    |
-| HIR shape (statements, expressions, lvalues, primaries)                  | `hir.md`                    |
+| HIR shape (statements, expressions, primaries)                           | `hir.md`                    |
 | MIR shape (objects, members, callables, closures)                        | `mir.md`                    |
 | LIR shape (CFG, basic blocks, storage)                                   | `lir.md`                    |
 | Stratified scheduler; regions; suspension protocol; NBA / closure submit | `scheduling.md`             |

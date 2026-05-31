@@ -5,7 +5,6 @@
 #include <vector>
 
 #include "lyra/mir/expr_id.hpp"
-#include "lyra/mir/lvalue.hpp"
 #include "lyra/mir/procedural_var.hpp"
 
 namespace lyra::mir {
@@ -17,12 +16,7 @@ struct ByValueCapture {
   ProceduralVarId binding{};
 };
 
-struct ByReferenceCapture {
-  Lvalue source;
-  ProceduralVarId binding{};
-};
-
-using Capture = std::variant<ByValueCapture, ByReferenceCapture>;
+using Capture = std::variant<ByValueCapture>;
 
 // A callable value with captured state and a procedural body.
 //
@@ -33,8 +27,7 @@ using Capture = std::variant<ByValueCapture, ByReferenceCapture>;
 // Invariants enforced by lowering (violations are compiler-bug class):
 //   1. Each capture's binding is a ProceduralVarId valid in body.vars and is
 //      unique across the capture list.
-//   2. Writes inside body to a binding require that binding's capture to be
-//      ByReferenceCapture. ByValueCapture bindings are read-only inside body.
+//   2. Bindings are read-only inside body.
 //   3. ProceduralVarRef inside body uses hops bounded by body's own scope
 //      nesting and does not escape into the enclosing process scope. Outer
 //      procedural state reaches body only through captures.

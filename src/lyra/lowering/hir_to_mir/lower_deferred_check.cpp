@@ -143,18 +143,17 @@ auto SnapshotPredicate(
           .child_procedural_scopes = {}});
   wrapper_state.AddRootStmt(decl_id);
 
+  const mir::ExprId snap_target_id = wrapper_state.AddExpr(
+      mir::Expr{
+          .data =
+              mir::ProceduralVarRef{
+                  .hops = mir::ProceduralHops{.value = 0}, .var = snap_var},
+          .type = predicate_type});
   const mir::ExprId assign_id = wrapper_state.AddExpr(
       mir::Expr{
           .data =
               mir::AssignExpr{
-                  .target =
-                      mir::Lvalue{
-                          .root =
-                              mir::ProceduralVarRef{
-                                  .hops = mir::ProceduralHops{.value = 0},
-                                  .var = snap_var},
-                          .selectors = {}},
-                  .value = predicate_expr_id},
+                  .target = snap_target_id, .value = predicate_expr_id},
           .type = predicate_type});
   const mir::StmtId assign_stmt_id = wrapper_state.AddStmt(
       mir::Stmt{
@@ -292,19 +291,17 @@ auto BuildUniqueCheckClosure(
                           .lhs = count_read,
                           .rhs = cond_value},
                   .type = int32_type});
-    const mir::ExprId assign = AppendExpr(
+    const mir::ExprId count_target = AppendExpr(
         body,
         mir::Expr{
             .data =
-                mir::AssignExpr{
-                    .target =
-                        mir::Lvalue{
-                            .root =
-                                mir::ProceduralVarRef{
-                                    .hops = mir::ProceduralHops{.value = 0},
-                                    .var = count_var},
-                            .selectors = {}},
-                    .value = added},
+                mir::ProceduralVarRef{
+                    .hops = mir::ProceduralHops{.value = 0}, .var = count_var},
+            .type = int32_type});
+    const mir::ExprId assign = AppendExpr(
+        body,
+        mir::Expr{
+            .data = mir::AssignExpr{.target = count_target, .value = added},
             .type = int32_type});
     const mir::StmtId step_id = AppendStmt(
         body, mir::Stmt{

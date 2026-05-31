@@ -189,6 +189,213 @@ auto LowerVarDeclStmt(
       .child_procedural_scopes = {}};
 }
 
+// LRM 11.4.12 LHS destructuring desugar. Triggered when an ExprStmt wraps an
+// AssignExpr whose LHS is a ConcatExpr -- the only context in which
+// destructuring is grammatically legal. Emits:
+//
+//   Block {
+//     ProceduralVarDeclStmt _t : PackedArray(total_w, unsigned, four_state)
+//     ExprStmt(AssignExpr _t = rhs)            -- RHS evaluated once
+//     ExprStmt(AssignExpr part[0] = _t.Slice(off_0, w_0))   -- MSB-most part
+//     ...
+//     ExprStmt(AssignExpr part[N-1] = _t.Slice(0, w_last))  -- LSB-most part
+//   }
+//
+// For NBA (`kind == kNonBlocking`), each per-part assignment goes through the
+// NBA closure machinery instead.
+auto LowerDestructuringAssign(
+    const UnitLoweringState& unit_state,
+    const StructuralScopeLoweringState& scope_state,
+    ProcessLoweringState& proc_state, const hir::Process& hir_proc,
+    const hir::Stmt& stmt, const hir::AssignExpr& assign,
+    const hir::ConcatExpr& lhs_concat) -> diag::Result<mir::Stmt> {
+  ProceduralScopeLoweringState wrapper_state;
+  ProceduralDepthGuard wrapper_depth_guard{proc_state};
+
+  std::vector<std::uint64_t> part_widths;
+  part_widths.reserve(lhs_concat.operands.size());
+  bool any_four_state = false;
+  std::uint64_t total_width = 0;
+  for (const hir::ExprId op_id : lhs_concat.operands) {
+    const hir::Expr& op = hir_proc.exprs.at(op_id.value);
+    const hir::Type& op_ty = unit_state.GetHirType(op.type);
+    if (!op_ty.IsPackedArray()) {
+      throw InternalError(
+          "LowerDestructuringAssign: destructuring operand is not "
+          "a packed integral type");
+    }
+    const auto& packed = op_ty.AsPackedArray();
+    const std::uint64_t w = packed.BitWidth();
+    part_widths.push_back(w);
+    total_width += w;
+    any_four_state = any_four_state || packed.IsFourState();
+  }
+  if (total_width == 0) {
+    throw InternalError(
+        "LowerDestructuringAssign: destructuring total width must be positive");
+  }
+
+  const mir::TypeId temp_type = unit_state.AddType(
+      mir::TypeData{mir::PackedArrayType{
+          .atom = any_four_state ? mir::BitAtom::kLogic : mir::BitAtom::kBit,
+          .signedness = mir::Signedness::kUnsigned,
+          .dims = {mir::PackedRange{
+              .left = static_cast<std::int64_t>(total_width) - 1, .right = 0}},
+          .form = mir::PackedArrayForm::kExplicit}});
+
+  const mir::ProceduralVarId temp_var = wrapper_state.AddProceduralVar(
+      mir::ProceduralVarDecl{.name = "_lyra_destruct_rhs", .type = temp_type});
+
+  const mir::StmtId temp_decl_id = wrapper_state.AddStmt(
+      mir::Stmt{
+          .label = std::nullopt,
+          .data =
+              mir::ProceduralVarDeclStmt{
+                  .target =
+                      mir::ProceduralVarRef{
+                          .hops = mir::ProceduralHops{.value = 0},
+                          .var = temp_var},
+                  .init = std::nullopt},
+          .child_procedural_scopes = {}});
+  wrapper_state.AddRootStmt(temp_decl_id);
+
+  // RHS is evaluated once; the snapshot temp is what gets distributed,
+  // which is what makes `{a, b} = {b, a}` swap correctly.
+  auto rhs_or = LowerExpr(
+      unit_state, scope_state, proc_state, wrapper_state, hir_proc,
+      hir_proc.exprs.at(assign.rhs.value));
+  if (!rhs_or) return std::unexpected(std::move(rhs_or.error()));
+  mir::ExprId rhs_id = wrapper_state.AddExpr(*std::move(rhs_or));
+  if (wrapper_state.GetExpr(rhs_id).type != temp_type) {
+    rhs_id = wrapper_state.AddExpr(
+        mir::Expr{
+            .data =
+                mir::ConversionExpr{
+                    .operand = rhs_id, .kind = mir::ConversionKind::kImplicit},
+            .type = temp_type});
+  }
+
+  const mir::ExprId temp_assign_target = wrapper_state.AddExpr(
+      mir::Expr{
+          .data =
+              mir::ProceduralVarRef{
+                  .hops = mir::ProceduralHops{.value = 0}, .var = temp_var},
+          .type = temp_type});
+  const mir::ExprId temp_assign_id = wrapper_state.AddExpr(
+      mir::Expr{
+          .data =
+              mir::AssignExpr{.target = temp_assign_target, .value = rhs_id},
+          .type = temp_type});
+  wrapper_state.AddRootStmt(wrapper_state.AddStmt(
+      mir::Stmt{
+          .label = std::nullopt,
+          .data = mir::ExprStmt{.expr = temp_assign_id},
+          .child_procedural_scopes = {}}));
+
+  const mir::TypeId int32 = unit_state.Builtins().int32;
+  auto make_int32_lit = [&](std::uint64_t v) -> mir::ExprId {
+    return wrapper_state.AddExpr(
+        mir::Expr{
+            .data =
+                mir::IntegerLiteral{
+                    .value =
+                        mir::IntegralConstant{
+                            .value_words = {v},
+                            .state_words = {},
+                            .width = 32,
+                            .signedness = mir::Signedness::kSigned,
+                            .state_kind = mir::IntegralStateKind::kTwoState}},
+            .type = int32});
+  };
+
+  // MSB-first per LRM 11.4.12: operands[0] occupies the high bits of the
+  // snapshot, operands.back() the low bits.
+  std::uint64_t offset = total_width;
+  for (std::size_t i = 0; i < lhs_concat.operands.size(); ++i) {
+    const std::uint64_t w = part_widths[i];
+    offset -= w;
+
+    auto part_lhs_or = LowerExpr(
+        unit_state, scope_state, proc_state, wrapper_state, hir_proc,
+        hir_proc.exprs.at(lhs_concat.operands[i].value));
+    if (!part_lhs_or) {
+      return std::unexpected(std::move(part_lhs_or.error()));
+    }
+    const mir::TypeId part_mir_type = (*part_lhs_or).type;
+    const mir::ExprId part_lhs_id =
+        wrapper_state.AddExpr(*std::move(part_lhs_or));
+
+    const mir::ExprId base_index = make_int32_lit(offset);
+    const mir::ExprId width_lit = make_int32_lit(w);
+    const mir::ExprId temp_ref = wrapper_state.AddExpr(
+        mir::Expr{
+            .data =
+                mir::ProceduralVarRef{
+                    .hops = mir::ProceduralHops{.value = 0}, .var = temp_var},
+            .type = temp_type});
+    const mir::TypeId slice_type = unit_state.AddType(
+        mir::TypeData{mir::PackedArrayType{
+            .atom = any_four_state ? mir::BitAtom::kLogic : mir::BitAtom::kBit,
+            .signedness = mir::Signedness::kUnsigned,
+            .dims = {mir::PackedRange{
+                .left = static_cast<std::int64_t>(w) - 1, .right = 0}},
+            .form = mir::PackedArrayForm::kExplicit}});
+    const mir::ExprId slice_id = wrapper_state.AddExpr(
+        mir::Expr{
+            .data =
+                mir::RangeSelectExpr{
+                    .base_value = temp_ref,
+                    .bounds =
+                        mir::RangeIndexedUpBounds{
+                            .base_index = base_index, .width = width_lit}},
+            .type = slice_type});
+    mir::ExprId rhs_for_part = slice_id;
+    if (part_mir_type != slice_type) {
+      rhs_for_part = wrapper_state.AddExpr(
+          mir::Expr{
+              .data =
+                  mir::ConversionExpr{
+                      .operand = slice_id,
+                      .kind = mir::ConversionKind::kImplicit},
+              .type = part_mir_type});
+    }
+
+    mir::ExprId per_part_expr_id{};
+    if (assign.kind == hir::AssignKind::kBlocking) {
+      per_part_expr_id = wrapper_state.AddExpr(
+          mir::Expr{
+              .data =
+                  mir::AssignExpr{.target = part_lhs_id, .value = rhs_for_part},
+              .type = part_mir_type});
+    } else {
+      mir::Expr closure_expr = BuildNbaSubmitClosureExpr(
+          unit_state, wrapper_state, part_lhs_id, rhs_for_part, part_mir_type);
+      const mir::ExprId closure_id =
+          wrapper_state.AddExpr(std::move(closure_expr));
+      per_part_expr_id = wrapper_state.AddExpr(
+          mir::Expr{
+              .data =
+                  mir::RuntimeCallExpr{
+                      .call = mir::RuntimeSubmitNbaCall{.closure = closure_id}},
+              .type = unit_state.Builtins().void_type});
+    }
+    wrapper_state.AddRootStmt(wrapper_state.AddStmt(
+        mir::Stmt{
+            .label = std::nullopt,
+            .data = mir::ExprStmt{.expr = per_part_expr_id},
+            .child_procedural_scopes = {}}));
+  }
+
+  std::vector<mir::ProceduralScope> child_scopes;
+  const mir::ProceduralScopeId wrapper_scope_id =
+      AddChildProceduralScope(child_scopes, wrapper_state.Finish());
+
+  return mir::Stmt{
+      .label = stmt.label,
+      .data = mir::BlockStmt{.scope = wrapper_scope_id},
+      .child_procedural_scopes = std::move(child_scopes)};
+}
+
 auto LowerExprStmt(
     const UnitLoweringState& unit_state,
     const StructuralScopeLoweringState& scope_state,
@@ -196,6 +403,26 @@ auto LowerExprStmt(
     ProceduralScopeLoweringState& proc_scope_state,
     const hir::Process& hir_proc, const hir::Stmt& stmt, const hir::ExprStmt& e)
     -> diag::Result<mir::Stmt> {
+  // LRM 11.4.12 LHS destructuring: detect AssignExpr-with-ConcatExpr-LHS
+  // and dispatch to the snapshot+distribute desugar. Destructuring is
+  // grammatically statement-only (LRM A.6.2), so this is the only context
+  // it can appear in. Compound destructuring is rejected by slang at
+  // parsing.
+  const hir::Expr& inner = hir_proc.exprs.at(e.expr.value);
+  if (const auto* assign = std::get_if<hir::AssignExpr>(&inner.data)) {
+    const hir::Expr& lhs = hir_proc.exprs.at(assign->lhs.value);
+    if (const auto* concat = std::get_if<hir::ConcatExpr>(&lhs.data)) {
+      if (assign->compound_op.has_value()) {
+        throw InternalError(
+            "LowerExprStmt: compound assignment with concatenation lvalue "
+            "is not a legal SV form (LRM A.6.2 grammar)");
+      }
+      return LowerDestructuringAssign(
+          unit_state, scope_state, proc_state, hir_proc, stmt, *assign,
+          *concat);
+    }
+  }
+
   auto expr_or = LowerExpr(
       unit_state, scope_state, proc_state, proc_scope_state, hir_proc,
       hir_proc.exprs.at(e.expr.value));
@@ -807,18 +1034,15 @@ auto LowerRepeatStmt(
                   .lhs = idx_ref_step,
                   .rhs = one_id},
           .type = int_type});
-  const mir::ExprId step_id = wrapper_state.AddExpr(
+  const mir::ExprId step_target_id = wrapper_state.AddExpr(
       mir::Expr{
           .data =
-              mir::AssignExpr{
-                  .target =
-                      mir::Lvalue{
-                          .root =
-                              mir::ProceduralVarRef{
-                                  .hops = mir::ProceduralHops{.value = 0},
-                                  .var = idx_var},
-                          .selectors = {}},
-                  .value = add_id},
+              mir::ProceduralVarRef{
+                  .hops = mir::ProceduralHops{.value = 0}, .var = idx_var},
+          .type = int_type});
+  const mir::ExprId step_id = wrapper_state.AddExpr(
+      mir::Expr{
+          .data = mir::AssignExpr{.target = step_target_id, .value = add_id},
           .type = int_type});
 
   auto body_or = LowerStmtIntoChildScope(

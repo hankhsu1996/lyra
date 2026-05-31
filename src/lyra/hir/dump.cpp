@@ -355,66 +355,6 @@ class HirDumper {
     throw InternalError("HirDumper: unknown BinaryOp");
   }
 
-  static auto FormatLvalueRoot(
-      const std::variant<StructuralVarRef, ProceduralVarRef, LoopVarRef>& root)
-      -> std::string {
-    return std::visit(
-        Overloaded{
-            [](const StructuralVarRef& r) -> std::string {
-              return std::format(
-                  "StructuralVar[{}](hops={})", r.var.value, r.hops.value);
-            },
-            [](const ProceduralVarRef& r) -> std::string {
-              return std::format("ProceduralVar[{}]", r.var.value);
-            },
-            [](const LoopVarRef& r) -> std::string {
-              return std::format(
-                  "LoopVar[{}](hops={})", r.loop_var.value, r.hops.value);
-            },
-        },
-        root);
-  }
-
-  static auto FormatLvalueSelector(const LvalueSelector& sel) -> std::string {
-    return std::visit(
-        Overloaded{
-            [](const ElementLvalueSelector& s) -> std::string {
-              return std::format("Element index=Expr[{}]", s.index.value);
-            },
-            [](const RangeLvalueSelector& s) -> std::string {
-              const auto bounds = std::visit(
-                  Overloaded{
-                      [](const RangeConstantBounds& b) -> std::string {
-                        return std::format(
-                            "const msb=Expr[{}] lsb=Expr[{}]", b.msb_expr.value,
-                            b.lsb_expr.value);
-                      },
-                      [](const RangeIndexedUpBounds& b) -> std::string {
-                        return std::format(
-                            "indexed_up base=Expr[{}] width=Expr[{}]",
-                            b.base_index.value, b.width.value);
-                      },
-                      [](const RangeIndexedDownBounds& b) -> std::string {
-                        return std::format(
-                            "indexed_down base=Expr[{}] width=Expr[{}]",
-                            b.base_index.value, b.width.value);
-                      },
-                  },
-                  s.bounds);
-              return std::format("Range {}", bounds);
-            },
-        },
-        sel);
-  }
-
-  static auto FormatLvalue(const Lvalue& v) -> std::string {
-    std::string out = FormatLvalueRoot(v.root);
-    for (const auto& sel : v.selectors) {
-      out += std::format(" [{}]", FormatLvalueSelector(sel));
-    }
-    return out;
-  }
-
   static auto FormatTimeScale(TimeScale s) -> std::string_view {
     switch (s) {
       case TimeScale::kFs:
@@ -674,8 +614,8 @@ class HirDumper {
                       ? std::format(" op={}", FormatBinaryOp(*a.compound_op))
                       : std::string{};
               return std::format(
-                  "AssignExpr kind={}{} lhs={} rhs=Expr[{}]", kind_str, op_str,
-                  FormatLvalue(a.lhs), a.rhs.value);
+                  "AssignExpr kind={}{} lhs=Expr[{}] rhs=Expr[{}]", kind_str,
+                  op_str, a.lhs.value, a.rhs.value);
             },
             [this](const CallExpr& c) -> std::string {
               std::string args;
@@ -890,7 +830,7 @@ class HirDumper {
   void DumpContinuousAssign(const ContinuousAssign& ca) {
     Line(
         std::format(
-            "ContinuousAssign lhs={} rhs=Expr[{}]", FormatLvalue(ca.lhs),
+            "ContinuousAssign lhs=Expr[{}] rhs=Expr[{}]", ca.lhs.value,
             ca.rhs.value));
     Indent();
     if (!ca.sensitivity_list.empty()) {
