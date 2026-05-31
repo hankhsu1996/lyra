@@ -388,6 +388,10 @@ class PackedArrayRef {
       PackedArray& root, const PackedArray& bit_offset, std::uint32_t bit_width,
       std::vector<PackedRange> dims);
 
+  PackedArrayRef(const PackedArrayRef&) = default;
+  PackedArrayRef(PackedArrayRef&&) = default;
+  ~PackedArrayRef() = default;
+
   // Read-side: materialize the sub-slice. Explicit so a chain expression
   // does not silently decay to a PackedArray value in unrelated contexts;
   // callers wrap with `PackedArray(ref)` (direct-init) when they need a
@@ -396,6 +400,18 @@ class PackedArrayRef {
 
   // Write-side: route through AssignSlice on root.
   auto operator=(const PackedArray& value) -> PackedArrayRef&;
+
+  // Without these, `lhs_ref = rhs_ref` would resolve to the implicitly
+  // generated copy / move assignment, which rebinds the lhs's bookkeeping
+  // pointers instead of writing through the proxy -- silently wrong. Both
+  // forms materialize the rhs and forward to the value-taking overload so
+  // the chain writes through `AssignSlice` as intended.
+  auto operator=(const PackedArrayRef& value) -> PackedArrayRef& {
+    return *this = PackedArray(value);
+  }
+  auto operator=(PackedArrayRef&& value) noexcept -> PackedArrayRef& {
+    return *this = PackedArray(value);
+  }
 
   // LRM 11.4 compound assignments. Read the current sub-slice once, combine
   // with `rhs` (frontend converts rhs to lhs.type), write back through

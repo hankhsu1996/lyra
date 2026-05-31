@@ -1,0 +1,13 @@
+id: cpp.destructuring_assign_basic
+tags: [cpp_run]
+input:
+  command: [run, cpp]
+  project: false
+  top: Top
+  files: [main.sv]
+expect:
+  exit: 0
+  variables:
+    a: "8'h12"
+    b: "8'h34"
+    c: "8'h56"

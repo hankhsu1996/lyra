@@ -30,18 +30,16 @@ auto AppendCaseSnapshot(
           .child_procedural_scopes = {}});
   wrapper_state.AddRootStmt(sel_decl_id);
 
+  const mir::ExprId sel_target_id = wrapper_state.AddExpr(
+      mir::Expr{
+          .data =
+              mir::ProceduralVarRef{
+                  .hops = mir::ProceduralHops{.value = 0}, .var = sel_var},
+          .type = sel_type});
   const mir::ExprId sel_assign_id = wrapper_state.AddExpr(
       mir::Expr{
           .data =
-              mir::AssignExpr{
-                  .target =
-                      mir::Lvalue{
-                          .root =
-                              mir::ProceduralVarRef{
-                                  .hops = mir::ProceduralHops{.value = 0},
-                                  .var = sel_var},
-                          .selectors = {}},
-                  .value = cond_expr_id},
+              mir::AssignExpr{.target = sel_target_id, .value = cond_expr_id},
           .type = sel_type});
   const mir::StmtId sel_assign_stmt_id = wrapper_state.AddStmt(
       mir::Stmt{

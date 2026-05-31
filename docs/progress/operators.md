@@ -70,8 +70,12 @@ merged node.
       sibling; the frontend's `void`-typed operand handling drops them naturally. Includes
       replication in concat, nested concat, nested replication, signed operands, wide results, and X
       / Z propagation. String replication lives in `datatypes.md` SC2.
-- [ ] W10 -- Concatenation lvalue `{a, b, c} = rhs`. Snapshots the RHS into a temp and distributes
-      its bits MSB-first into each sub-target via the W6 chain.
+- [x] W10 -- Destructuring assignment `{a, b, c} = rhs` / `<= rhs` (LRM 11.4.12 LHS form). RHS is
+      evaluated once and bits are distributed MSB-first, so `{a, b} = {b, a}` swaps. Parts may be
+      any writable lvalue (including W6 selector chains, e.g. `{a[7:4], b[7:4]} = rhs`). NBA form
+      requires every part to be a structural target. Replication operands are rejected per LRM
+      11.4.12.1. LRM 10.9 assignment-pattern LHS and LRM 11.4.14.3 streaming-unpack LHS are
+      separate constructs, both out of scope.
 
 ### Assignment families
 
@@ -90,5 +94,5 @@ merged node.
   replication), 11.4.13 (set membership), 11.5.1 (bit-select / part-select / indexed part-select on
   packed).
 - Unblocks: `control-flow.md` C11 (via W2), C12 (via W1 + W2); `integral.md` archive sweep relies on
-  W4..W6 for sub-bit operands; `packed.md` P3..P5 extend the W6 selector chain with field / variant
-  arms.
+  W4..W6 for sub-bit operands; `packed.md` P3..P5 extend the addressable-expression set with
+  packed-struct field access and packed-union variant access.
