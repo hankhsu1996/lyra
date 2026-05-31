@@ -1,0 +1,12 @@
+id: cpp.casez_basic
+tags: [cpp_run]
+input:
+  command: [run, cpp]
+  project: false
+  top: Top
+  files: [main.sv]
+expect:
+  exit: 0
+  variables:
+    r1: 2
+    r2: 1

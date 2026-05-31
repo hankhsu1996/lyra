@@ -507,12 +507,20 @@ auto LowerCaseStmt(
     return LowerCaseInsideStmt(
         unit_facts, proc_state, scope_state, stack, cs, span);
   }
-  if (cs.condition != slang::ast::CaseStatementCondition::Normal) {
-    return diag::Unsupported(
-        span, diag::DiagCode::kUnsupportedStatementForm,
-        "casez/casex are not yet supported",
-        diag::UnsupportedCategory::kFeature);
-  }
+  const hir::CaseCondition condition_kind = [&] {
+    switch (cs.condition) {
+      case slang::ast::CaseStatementCondition::Normal:
+        return hir::CaseCondition::kNormal;
+      case slang::ast::CaseStatementCondition::WildcardJustZ:
+        return hir::CaseCondition::kWildcardJustZ;
+      case slang::ast::CaseStatementCondition::WildcardXOrZ:
+        return hir::CaseCondition::kWildcardXOrZ;
+      case slang::ast::CaseStatementCondition::Inside:
+        break;
+    }
+    throw InternalError(
+        "LowerCaseStmt: Inside should have been dispatched above");
+  }();
   const auto case_check = LowerUniquePriorityCheck(cs.check);
   auto cond_expr = LowerProcExpr(
       unit_facts, scope_state.UnitState(), proc_state, stack, cs.expr);
@@ -547,6 +555,7 @@ auto LowerCaseStmt(
       .label = std::nullopt,
       .data =
           hir::CaseStmt{
+              .condition_kind = condition_kind,
               .condition = cond_id,
               .items = std::move(items),
               .default_stmt = default_id,

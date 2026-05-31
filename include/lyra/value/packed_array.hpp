@@ -266,6 +266,14 @@ class PackedArray {
   // LRM 11.4.6: X/Z in `other` are wildcards; X/Z in `*this` are not.
   [[nodiscard]] auto WildcardEquals(const PackedArray& other) const
       -> PackedArray;
+  // LRM 12.5.1 casez per-label compare: Z bits on either operand are
+  // wildcards (do-not-care); remaining bits must match exactly on both
+  // planes (X must still match X). Returns a deterministic 1-bit result.
+  [[nodiscard]] auto CasezEquals(const PackedArray& other) const -> PackedArray;
+  // LRM 12.5.1 casex per-label compare: any unknown bit (X or Z) on either
+  // operand is a wildcard; remaining bits must match on the value plane.
+  // Returns a deterministic 1-bit result.
+  [[nodiscard]] auto CasexEquals(const PackedArray& other) const -> PackedArray;
 
   // Low-level bit-level primitives. `ExtractBits` reads `bit_width` contiguous
   // bits starting at `lsb_bit`. `AssignSlice` writes those bits with the LRM

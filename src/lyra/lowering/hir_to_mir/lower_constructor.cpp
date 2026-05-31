@@ -314,7 +314,7 @@ auto LowerCaseGenerate(
   auto build_predicate = [&](ProceduralScopeLoweringState& enc,
                              std::size_t item_idx, std::uint32_t sel_hops) {
     return BuildEqualityChain(
-        enc, snapshot, bit_type, sel_hops,
+        enc, snapshot, bit_type, mir::BinaryOp::kEquality, sel_hops,
         case_gen.items[item_idx].labels.size(),
         [&](ProceduralScopeLoweringState& es,
             std::size_t li) -> diag::Result<mir::ExprId> {
