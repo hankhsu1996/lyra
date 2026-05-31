@@ -28,8 +28,7 @@ Rules:
   S004  Include style: C++ stdlib headers must use angle brackets
         (`#include <vector>`), and lyra project headers must use double
         quotes (`#include "lyra/..."`). 3rd-party libraries follow their
-        upstream convention (e.g. fmt uses `<fmt/...>`, absl uses
-        `"absl/..."` because of Bazel's `-iquote` exposure) and are not
+        upstream convention (e.g. fmt uses `<fmt/...>`) and are not
         policed by this rule.
         Scope: every .cpp/.hpp under src/, include/, tests/.
 
@@ -69,7 +68,6 @@ STAGE_LANGUAGE_PATTERNS = [
 # S004: C++ stdlib headers (always angle-bracket form). This list is the
 # universal portion of the standard library; we intentionally do not police
 # 3rd-party libraries because each tracks its upstream convention (e.g.
-# bazel-imported absl uses `"absl/..."` per its `-iquote` exposure, while
 # fmt uses `<fmt/...>`).
 STDLIB_HEADERS = frozenset({
     "algorithm", "array", "atomic", "bit", "bitset", "cassert", "ccomplex",
@@ -229,7 +227,7 @@ def run_self_tests() -> bool:
     ok &= expect(quote_inc('#include "vector"') == "vector", "S004 quote")
     ok &= expect(angle_inc("#include <vector>") == "vector", "S004 angle")
     ok &= expect("vector" in STDLIB_HEADERS, "S004 vector is stdlib")
-    ok &= expect("absl/x.h" not in STDLIB_HEADERS, "S004 absl not stdlib")
+    ok &= expect("fmt/core.h" not in STDLIB_HEADERS, "S004 fmt not stdlib")
     return ok
 
 

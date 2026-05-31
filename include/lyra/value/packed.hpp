@@ -5,14 +5,14 @@
 #include <span>
 #include <string_view>
 
-#include "absl/container/inlined_vector.h"
+#include "lyra/base/inlined_vector.hpp"
 
 namespace lyra::value {
 
 inline constexpr std::size_t kPackedWordsInlineCapacity = 1;
 
 using PackedWordVector =
-    absl::InlinedVector<std::uint64_t, kPackedWordsInlineCapacity>;
+    lyra::base::InlinedVector<std::uint64_t, kPackedWordsInlineCapacity>;
 
 enum class Signedness : std::uint8_t { kSigned, kUnsigned };
 enum class TwoStateBit : std::uint8_t { kZero, kOne };

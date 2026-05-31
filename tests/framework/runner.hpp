@@ -60,8 +60,6 @@ struct RunResult {
 struct CppRunPaths {
   std::filesystem::path include_root;
   std::filesystem::path cpp_runtime;
-  // Each entry becomes one `-I` on the emitted-code compile.
-  std::vector<std::filesystem::path> extra_include_roots;
 };
 
 auto LoadCases(const std::filesystem::path& cases_root)

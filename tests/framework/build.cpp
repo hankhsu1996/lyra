@@ -7,7 +7,6 @@
 #include <expected>
 #include <filesystem>
 #include <format>
-#include <span>
 #include <string>
 #include <string_view>
 #include <unistd.h>
@@ -99,9 +98,7 @@ auto MakeTempCaseDir() -> std::expected<std::filesystem::path, std::string> {
 auto BuildAndRunEmittedArtifacts(
     const std::filesystem::path& work_dir,
     const std::filesystem::path& include_root,
-    const std::filesystem::path& cpp_runtime,
-    std::span<const std::filesystem::path> extra_include_roots)
-    -> BuildAndRunOutcome {
+    const std::filesystem::path& cpp_runtime) -> BuildAndRunOutcome {
   BuildAndRunOutcome outcome;
 
   auto cxx_or = ResolveCxxCompiler();
@@ -135,10 +132,6 @@ auto BuildAndRunEmittedArtifacts(
       "-I",
       include_root.string(),
   };
-  for (const auto& extra : extra_include_roots) {
-    compile_args.emplace_back("-I");
-    compile_args.push_back(extra.string());
-  }
   compile_args.push_back(main_cpp.string());
   compile_args.push_back(cpp_runtime.string());
   compile_args.emplace_back("-o");
