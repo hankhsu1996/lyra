@@ -1,0 +1,16 @@
+id: cpp.wide_integral_conversion
+tags: [cpp_run]
+input:
+  command: [run, cpp]
+  project: false
+  top: Top
+  files: [main.sv]
+expect:
+  exit: 0
+  variables:
+    wide_zero_ext: "128'h12345678"
+    wide_sign_ext: "128'shffffffffffffffffffffffffffffffff"
+    narrow_trunc: "32'h12345678"
+    narrow_signed: -1
+    longint_to_wide: "128'h123456789abcdef0"
+    longint_roundtrip: "64'h123456789abcdef0"
