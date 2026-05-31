@@ -1,0 +1,20 @@
+id: cpp.int_signed_compare_boundary
+tags: [cpp_run]
+input:
+  command: [run, cpp]
+  project: false
+  top: Top
+  files: [main.sv]
+expect:
+  exit: 0
+  variables:
+    hi_lt: 1
+    hi_gt: 0
+    hi_eq: 0
+    neg_lt_zero: 1
+    neg_ge_zero: 0
+    min_lt_zero: 1
+    min_lt_max: 1
+    max_gt_zero: 1
+    allones_eq: 1
+    allones_ne_intmax: 1

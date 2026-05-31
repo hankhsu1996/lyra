@@ -1,0 +1,17 @@
+id: cpp.binary_mixed_width_promotion
+tags: [cpp_run]
+input:
+  command: [run, cpp]
+  project: false
+  top: Top
+  files: [main.sv]
+expect:
+  exit: 0
+  variables:
+    bit_plus_int: 11
+    int_plus_longint: 1100
+    bit_plus_longint: 1001
+    byte_lt_int: 1
+    byte_gt_int: 0
+    ubyte_lt_int: 0
+    ubyte_gt_int: 1
