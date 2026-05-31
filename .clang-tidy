@@ -21,7 +21,7 @@ CheckOptions:
   # Ignore external headers for misc-include-cleaner
   # Also ignore POSIX sys/ headers which the tool doesn't map correctly
   - key: misc-include-cleaner.IgnoreHeaders
-    value: "absl/.*;slang/.*;fmt/.*;spdlog/.*;toml\\+\\+/.*;yaml-cpp/.*;sys/.*"
+    value: "slang/.*;fmt/.*;spdlog/.*;toml\\+\\+/.*;yaml-cpp/.*;sys/.*"
 
   # Google's naming conventions.
   # See: https://gist.github.com/airglow923/1fa3bda42f2b193920d7f46ee8345e04
@@ -41,8 +41,14 @@ CheckOptions:
     value: k
   - key: readability-identifier-naming.FunctionCase
     value: CamelCase
+  # The names before the coroutine block are interface contracts (json,
+  # parsing). The coroutine-protocol names and the trailing standard-container
+  # interface names (begin/end/data/size/...) are lowercase by language and
+  # library contract -- range-based for needs begin/end, std::span and the std
+  # algorithms need data/size -- so they are exempt from CamelCase just like the
+  # coroutine hooks.
   - key: readability-identifier-naming.FunctionIgnoredRegexp
-    value: "(to_json|from_json|parse|format|handle|await_ready|await_suspend|await_resume|get_return_object|initial_suspend|final_suspend|return_void|return_value|yield_value|unhandled_exception)(_(\\w)+)?"
+    value: "(to_json|from_json|parse|format|handle|await_ready|await_suspend|await_resume|get_return_object|initial_suspend|final_suspend|return_void|return_value|yield_value|unhandled_exception|begin|end|cbegin|cend|data|size|empty|front|back|push_back|pop_back|emplace_back)(_(\\w)+)?"
   - key: readability-identifier-naming.StructIgnoredRegexp
     value: "^promise_type$"
   - key: readability-identifier-naming.GlobalConstantCase
