@@ -68,11 +68,16 @@ against `PackedArray`. The dispatch in `RenderExpr*` collapses to a single path.
 - [x] J13 -- Wide (`>64`-bit) coverage on arithmetic, comparison, shift, divmod, and power via
       multi-word algorithms (carry/borrow add/sub, 32x32 schoolbook multiply, top-word-first
       compare, word+bit shift, bit-by-bit long division). 4-state X/Z propagation rides along.
-- [ ] J14 -- Archive sweep: reproduce `operators/binary/default.yaml`, `operators/unary/...`,
-      `operators/shift_overflow/...`, `datatypes/wide_integral/...`, and their `four_state.yaml`
-      companions. **Prerequisite:** `operators.md` W4..W6 (bit-select / range-select / indexed
-      part-select reads); many archive cases select sub-bits of a packed value before applying the
-      operator under test.
+- [x] J14 -- Archive sweep on the integral operator surface: arithmetic, comparison, bitwise, shift,
+      logical, unary (excluding `++` / `--`), reduction, and conversion across `int`, `byte`,
+      `bit [N]`, `logic [N]`, and >64-bit packed values. Includes signed boundary, mixed-width
+      promotion, cross-word bitwise, cross-word reduction, and narrow<->wide zero/sign-extend +
+      truncation. `++` / `--` is split out as J19 because it is read-modify-write rather than a pure
+      operator and depends on the lvalue surface.
+- [ ] J19 -- `++` / `--` archive coverage (`pre_increment`, `post_increment`, `pre_decrement`,
+      `post_decrement`, `nested_increment_decrement` in `operators/unary/two_state.yaml`). **Depends
+      on** `operators.md` W12; the HIR / MIR shape and LRM 11.4.1 (evaluate target once) live there.
+      When W12 lands, the archive cases reproduce.
 
 ### Cut 3 -- Expression dispatch consolidation
 
@@ -105,14 +110,13 @@ wildcard equality (`==?`). Both were plumbed through HIR / MIR but rejected at c
 - LRM anchors: 6.11 (Table 6-8 integer types), 6.11.2 (4-state to 2-state convert), 10.7 (assignment
   extension / truncation), 11.6 (expression bit lengths), 11.7 (signed expressions), 11.8
   (expression evaluation rules, 11.8.4 for x/z handling).
-- Archive items this workstream targets: `operators/binary`, `operators/unary`,
-  `operators/shift_overflow`, `datatypes/integral`, `datatypes/packed`, `datatypes/wide_integral`.
-  Closes when J14 lands. `datatypes/wide_integral/packed_2d` belongs to `datatypes/packed` (2D
-  element index / slice), not this workstream.
+- Archive items this workstream targets: `operators/binary`, `operators/unary` (excluding `++` /
+  `--`, which is J19), `operators/shift_overflow`, `datatypes/integral`, `datatypes/packed`,
+  `datatypes/wide_integral`. Closes when J19 lands. `datatypes/wide_integral/packed_2d` belongs to
+  `datatypes/packed` (2D element index / slice), not this workstream.
 - Slang reference: `slang/ast/types/AllTypes.h:IntegralType`.
 - Legacy archive reference: `archived/include/lyra/common/type.hpp:IntegralInfo`.
 
 ## Remaining operator gap
 
-`++` / `--`: tracked as `operators.md` W12 (new HIR / MIR shape, statement and expression forms, LRM
-evaluate-target-once semantics).
+`++` / `--`: implementation tracked as `operators.md` W12; archive coverage tracked as J19 above.

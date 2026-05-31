@@ -60,7 +60,8 @@ Granular tracking lives in `integral.md` (integral / packed / wide_integral) and
 - [ ] datatypes/representation
 - [ ] datatypes/string
 - [ ] datatypes/unpacked
-- [ ] datatypes/wide_integral -- `integral.md`.
+- [ ] datatypes/wide_integral -- non-`packed_2d` archive sub-folders covered (`integral.md` J14);
+      `packed_2d` (2D element index / slice) belongs to `datatypes/packed`.
 
 ### directives
 
@@ -114,7 +115,7 @@ Granular tracking lives in `integral.md` (integral / packed / wide_integral) and
 
 ### operators
 
-- [ ] operators/binary -- `integral.md`.
+- [x] operators/binary -- `integral.md`.
 - [ ] operators/binary_string
 - [x] operators/case_equality -- `operators.md`.
 - [ ] operators/comparison_value_temp -- subsumed by the binary-operator coverage in `integral.md`;
@@ -124,8 +125,9 @@ Granular tracking lives in `integral.md` (integral / packed / wide_integral) and
 - [ ] operators/inside -- `operators.md`.
 - [ ] operators/replicate -- `operators.md`.
 - [ ] operators/replication_patterns -- `packed.md`.
-- [ ] operators/shift_overflow -- `integral.md`.
-- [ ] operators/unary -- `integral.md` for the integral surface; `++` / `--` gap in `operators.md`.
+- [x] operators/shift_overflow -- `integral.md`.
+- [ ] operators/unary -- integral surface covered (`integral.md` J14); `++` / `--` archive coverage
+      tracked at `integral.md` J19 (blocked on `operators.md` W12).
 - [ ] operators/value_temp_expansion -- subsumed by the binary-operator coverage in `integral.md`;
       the archived `ValueTemp` IR shape does not exist on the current pipeline.
 - [x] operators/wildcard_equality -- `operators.md`.
