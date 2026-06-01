@@ -1,0 +1,13 @@
+id: cpp.packed_union_part_select
+tags: [cpp_run]
+input:
+  command: [run, cpp]
+  project: false
+  top: Top
+  files: [main.sv]
+expect:
+  exit: 0
+  variables:
+    low_nibble: 0xd
+    mid_byte: 0xbc
+    high_nibble: 0xa

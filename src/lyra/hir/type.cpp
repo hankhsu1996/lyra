@@ -84,6 +84,7 @@ auto Type::Kind() const -> TypeKind {
       Overloaded{
           [](const PackedArrayType&) { return TypeKind::kPackedArray; },
           [](const PackedStructType&) { return TypeKind::kPackedStruct; },
+          [](const PackedUnionType&) { return TypeKind::kPackedUnion; },
           [](const EnumType&) { return TypeKind::kEnum; },
           [](const UnpackedArrayType&) { return TypeKind::kUnpackedArray; },
           [](const DynamicArrayType&) { return TypeKind::kDynamicArray; },
@@ -122,6 +123,17 @@ auto Type::AsPackedStruct() const -> const PackedStructType& {
     return *s;
   }
   throw InternalError("Type::AsPackedStruct called on non-packed-struct type");
+}
+
+auto Type::IsPackedUnion() const -> bool {
+  return std::holds_alternative<PackedUnionType>(data);
+}
+
+auto Type::AsPackedUnion() const -> const PackedUnionType& {
+  if (const auto* u = std::get_if<PackedUnionType>(&data)) {
+    return *u;
+  }
+  throw InternalError("Type::AsPackedUnion called on non-packed-union type");
 }
 
 auto Type::IsEnum() const -> bool {

@@ -1126,20 +1126,37 @@ auto RenderRangeSelectExpr(
     throw InternalError(
         "RenderRangeSelectExpr: result PackedArrayType has no dims");
   }
-  const auto count = static_cast<std::uint32_t>(
-      result_ty.AsPackedArray().dims.front().ElementCount());
+  const auto& result_pa = result_ty.AsPackedArray();
+  const auto count =
+      static_cast<std::uint32_t>(result_pa.dims.front().ElementCount());
+
+  // PackedArray::Slice() always produces an unsigned result (LRM 7.4.1
+  // part-select default). When the MIR result type carries signed semantics
+  // -- e.g. member access of a `logic signed` packed-struct/union field --
+  // re-tag the slice via ConvertFrom so a downstream sign-extending
+  // conversion sees the correct source signedness.
+  const auto wrap_for_sign = [&](std::string slice_expr) -> std::string {
+    if (result_pa.signedness == mir::Signedness::kSigned) {
+      return std::format(
+          "lyra::value::PackedArray::ConvertFrom({}, {})", slice_expr,
+          RenderPackedArrayCtorArgs(result_pa));
+    }
+    return slice_expr;
+  };
 
   return std::visit(
       Overloaded{
           [&](const mir::RangeConstantBounds& b) -> diag::Result<std::string> {
             auto lsb_or = RenderExpr(ctx, ctx.Expr(b.lsb_expr));
             if (!lsb_or) return std::unexpected(std::move(lsb_or.error()));
-            return std::format("({}).Slice({}, {}U)", *base_or, *lsb_or, count);
+            return wrap_for_sign(
+                std::format("({}).Slice({}, {}U)", *base_or, *lsb_or, count));
           },
           [&](const mir::RangeIndexedUpBounds& b) -> diag::Result<std::string> {
             auto base = RenderExpr(ctx, ctx.Expr(b.base_index));
             if (!base) return std::unexpected(std::move(base.error()));
-            return std::format("({}).Slice({}, {}U)", *base_or, *base, count);
+            return wrap_for_sign(
+                std::format("({}).Slice({}, {}U)", *base_or, *base, count));
           },
           [&](const mir::RangeIndexedDownBounds& b)
               -> diag::Result<std::string> {
@@ -1155,7 +1172,8 @@ auto RenderRangeSelectExpr(
             const auto sub_lit = RenderSameShapeLiteral(
                 base_ty.AsPackedArray(), static_cast<std::int64_t>(count) - 1);
             const auto lsb = std::format("(({}) - {})", *base, sub_lit);
-            return std::format("({}).Slice({}, {}U)", *base_or, lsb, count);
+            return wrap_for_sign(
+                std::format("({}).Slice({}, {}U)", *base_or, lsb, count));
           },
       },
       sel.bounds);

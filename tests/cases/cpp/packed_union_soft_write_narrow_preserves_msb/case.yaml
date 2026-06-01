@@ -1,0 +1,11 @@
+id: cpp.packed_union_soft_write_narrow_preserves_msb
+tags: [cpp_run]
+input:
+  command: [run, cpp]
+  project: false
+  top: Top
+  files: [main.sv]
+expect:
+  exit: 0
+  variables:
+    result: 0xffab

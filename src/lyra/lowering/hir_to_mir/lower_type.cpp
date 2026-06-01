@@ -97,6 +97,18 @@ auto TranslateTypeData(
                 .form = TranslatePackedArrayForm(src.base.form),
             };
           },
+          [&](const hir::PackedUnionType& src) -> mir::TypeData {
+            // LRM 7.3.1: untagged packed union "appears as a primary" is
+            // "treated as a single vector". Same MIR shape as packed
+            // struct -- the per-member (offset=0, width) table flows
+            // through to RangeSelect at expression lowering.
+            return mir::PackedArrayType{
+                .atom = TranslateBitAtom(src.base.atom),
+                .signedness = TranslateSignedness(src.base.signedness),
+                .dims = TranslatePackedRanges(src.base.dims),
+                .form = TranslatePackedArrayForm(src.base.form),
+            };
+          },
           [&](const hir::EnumType& src) -> mir::TypeData {
             // Enum is kept as a distinct mir::EnumType wrapping its base
             // PackedArray plus the member table. Value-level operations

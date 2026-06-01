@@ -232,6 +232,21 @@ class HirDumper {
                   FormatSignedness(s.base.signedness), s.base.BitWidth(),
                   fields);
             },
+            [](const PackedUnionType& u) -> std::string {
+              std::string fields;
+              for (std::size_t i = 0; i < u.fields.size(); ++i) {
+                if (i > 0) fields += ", ";
+                fields += std::format(
+                    "{}@bit{}+{}:Type[{}]", u.fields[i].name,
+                    u.fields[i].bit_offset, u.fields[i].bit_width,
+                    u.fields[i].type.value);
+              }
+              return std::format(
+                  "PackedUnion(atom={}, signed={}, width={}, fields=[{}])",
+                  FormatBitAtom(u.base.atom),
+                  FormatSignedness(u.base.signedness), u.base.BitWidth(),
+                  fields);
+            },
             [](const EnumType& e) -> std::string {
               std::string members;
               for (std::size_t i = 0; i < e.members.size(); ++i) {

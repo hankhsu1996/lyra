@@ -44,6 +44,18 @@ enum class LoopVarLoweringMode : std::uint8_t {
   kStructuralParam,
 };
 
+auto GetAggregateFields(const hir::Type& t)
+    -> const std::vector<hir::PackedAggregateField>& {
+  if (t.IsPackedStruct()) {
+    return t.AsPackedStruct().fields;
+  }
+  if (t.IsPackedUnion()) {
+    return t.AsPackedUnion().fields;
+  }
+  throw InternalError(
+      "GetAggregateFields: base type is not a packed struct or union");
+}
+
 auto LowerBinaryOp(hir::BinaryOp op) -> mir::BinaryOp {
   switch (op) {
     case hir::BinaryOp::kAdd:
@@ -972,11 +984,7 @@ auto LowerHirMemberAccessExprProc(
     mir::TypeId result_type) -> diag::Result<mir::Expr> {
   const auto& base_hir_expr = hir_process.exprs.at(sel.base_value.value);
   const auto& base_hir_type = unit_state.GetHirType(base_hir_expr.type);
-  if (!base_hir_type.IsPackedStruct()) {
-    throw InternalError(
-        "LowerHirMemberAccessExprProc: base type is not a PackedStructType");
-  }
-  const auto& fields = base_hir_type.AsPackedStruct().fields;
+  const auto& fields = GetAggregateFields(base_hir_type);
   if (sel.field_index >= fields.size()) {
     throw InternalError(
         "LowerHirMemberAccessExprProc: field_index out of range");
@@ -1312,12 +1320,7 @@ auto LowerHirMemberAccessExprStructural(
     -> diag::Result<mir::Expr> {
   const auto& base_hir_expr = scope.GetExpr(sel.base_value);
   const auto& base_hir_type = unit_state.GetHirType(base_hir_expr.type);
-  if (!base_hir_type.IsPackedStruct()) {
-    throw InternalError(
-        "LowerHirMemberAccessExprStructural: base type is not a "
-        "PackedStructType");
-  }
-  const auto& fields = base_hir_type.AsPackedStruct().fields;
+  const auto& fields = GetAggregateFields(base_hir_type);
   if (sel.field_index >= fields.size()) {
     throw InternalError(
         "LowerHirMemberAccessExprStructural: field_index out of range");
