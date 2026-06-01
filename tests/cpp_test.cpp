@@ -25,7 +25,6 @@ struct CppEnv {
   std::filesystem::path lyra_exe;
   std::filesystem::path cases_root;
   std::filesystem::path suites_yaml;
-  lyra::test::CppRunPaths cpp_paths;
 };
 
 auto ResolveEnv(Runfiles& rf) -> CppEnv {
@@ -33,14 +32,6 @@ auto ResolveEnv(Runfiles& rf) -> CppEnv {
   env.lyra_exe = rf.Rlocation("_main/lyra");
   env.cases_root = rf.Rlocation("_main/tests/cases");
   env.suites_yaml = rf.Rlocation("_main/tests/suites.yaml");
-
-  const std::filesystem::path engine_hpp =
-      rf.Rlocation("_main/include/lyra/runtime/engine.hpp");
-  env.cpp_paths.include_root =
-      engine_hpp.parent_path().parent_path().parent_path();
-
-  env.cpp_paths.cpp_runtime = rf.Rlocation("_main/libcpp_runtime.a");
-
   return env;
 }
 
@@ -51,7 +42,7 @@ class CppTest : public testing::Test {
 
  protected:
   void TestBody() override {
-    auto result = RunCase(env_->lyra_exe, *case_, env_->cpp_paths);
+    auto result = RunCase(env_->lyra_exe, *case_);
     if (result.mismatch) {
       ADD_FAILURE() << *result.mismatch;
     }

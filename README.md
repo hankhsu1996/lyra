@@ -21,15 +21,18 @@ prioritizing fast iteration (compile + run + debug) over peak simulation speed.
 bazel build //:lyra
 
 # Dump HIR or MIR for a source file
-./bazel-bin/lyra dump hir path/to/file.sv
-./bazel-bin/lyra dump mir path/to/file.sv
+./bazel-bin/lyra dump hir --no-project --top Top path/to/file.sv
+./bazel-bin/lyra dump mir --no-project --top Top path/to/file.sv
 
-# Emit C++ from a project (looks up lyra.toml in the current directory)
-cd examples/hello
-../../bazel-bin/lyra emit cpp
+# Run a source file end to end (builds and executes, streaming output)
+./bazel-bin/lyra run --no-project --top Top path/to/file.sv
+
+# Or write a self-contained C++ project, optionally building it
+./bazel-bin/lyra emit cpp --no-project --top Top -o out path/to/file.sv
+./bazel-bin/lyra compile --no-project --top Top -o out path/to/file.sv
 ```
 
-The CLI exposes `dump {hir,mir}` and `emit cpp`.
+The CLI exposes `dump {hir,mir}`, `emit cpp`, `compile`, and `run`.
 
 ## Tests
 

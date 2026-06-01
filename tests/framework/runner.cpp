@@ -351,25 +351,23 @@ auto WriteStringToFile(const std::filesystem::path& p, std::string_view content)
   return std::nullopt;
 }
 
-auto RunCppCase(
-    const std::filesystem::path& lyra_exe, const TestCase& c,
-    const CppRunPaths& cpp_paths) -> RunResult {
+auto RunCppCase(const std::filesystem::path& lyra_exe, const TestCase& c)
+    -> RunResult {
   RunResult result;
-  auto work_or = MakeTempCaseDir();
-  if (!work_or) {
-    result.mismatch = "MakeTempCaseDir failed: " + work_or.error();
-    return result;
-  }
-  const auto& work = *work_or;
   const std::string top = c.input.top.value_or("Top");
 
   // When `expect.variables` is set, rewrite the source to append a synthetic
   // `final` block that prints sentinel-bracketed marker lines. The rewritten
-  // source goes into the same temp work dir under the original basename, and
-  // becomes the new input to `lyra emit cpp`.
+  // source goes into a temp dir under the original basename and becomes the
+  // input to `lyra run`.
   std::vector<std::filesystem::path> resolved_input_files;
   resolved_input_files.reserve(c.input.files.size());
   if (!c.expect.variables.empty()) {
+    auto work_or = MakeTempCaseDir();
+    if (!work_or) {
+      result.mismatch = "MakeTempCaseDir failed: " + work_or.error();
+      return result;
+    }
     const auto src_path = c.case_dir / c.input.files[0];
     auto source_or = ReadFileToString(src_path);
     if (!source_or) {
@@ -388,7 +386,7 @@ auto RunCppCase(
           "expect.variables source rewrite: " + rewritten_or.error();
       return result;
     }
-    const auto rewritten_path = work / src_path.filename();
+    const auto rewritten_path = *work_or / src_path.filename();
     if (auto err = WriteStringToFile(rewritten_path, *rewritten_or)) {
       result.mismatch = *err;
       return result;
@@ -401,36 +399,21 @@ auto RunCppCase(
   }
 
   std::vector<std::string>& argv = result.argv;
-  argv.emplace_back("emit");
-  argv.emplace_back("cpp");
+  argv.emplace_back("run");
   argv.emplace_back("--no-project");
   argv.emplace_back("--top");
   argv.push_back(top);
-  argv.emplace_back("--out-dir");
-  argv.push_back(work.string());
   for (const auto& f : resolved_input_files) {
     argv.push_back(f.string());
   }
 
-  auto emit = RunChildProcess(lyra_exe, argv, std::chrono::seconds{30});
-  if (emit.termination != TerminationKind::kExitedNormally) {
-    result.proc = emit;
+  result.proc = RunChildProcess(lyra_exe, argv, std::chrono::seconds{60});
+  if (result.proc.termination != TerminationKind::kExitedNormally &&
+      result.proc.termination != TerminationKind::kExitedNonZero) {
     result.mismatch =
-        FormatCaseFailure(c.id, argv, emit) + "\nlyra emit cpp failed";
+        FormatCaseFailure(c.id, argv, result.proc) + "\nlyra run failed";
     return result;
   }
-
-  auto outcome = BuildAndRunEmittedArtifacts(
-      work, cpp_paths.include_root, cpp_paths.cpp_runtime);
-  if (outcome.error.has_value()) {
-    result.mismatch = "build+run failed: " + *outcome.error;
-    return result;
-  }
-
-  result.proc.exit_code = outcome.exit_code;
-  result.proc.stdout_text = std::move(outcome.stdout_text);
-  result.proc.stderr_text = std::move(outcome.stderr_text);
-  result.proc.termination = TerminationKind::kExitedNormally;
 
   auto record = [&](std::string header, std::string body) {
     std::string prefix =
@@ -512,11 +495,10 @@ auto IsCppRunCase(const TestCase& c) -> bool {
 
 }  // namespace
 
-auto RunCase(
-    const std::filesystem::path& lyra_exe, const TestCase& c,
-    const CppRunPaths& cpp_paths) -> RunResult {
+auto RunCase(const std::filesystem::path& lyra_exe, const TestCase& c)
+    -> RunResult {
   if (IsCppRunCase(c)) {
-    return RunCppCase(lyra_exe, c, cpp_paths);
+    return RunCppCase(lyra_exe, c);
   }
 
   RunResult result;
@@ -535,6 +517,23 @@ auto RunCase(
   for (const auto& a : c.input.extra_args) {
     argv.push_back(a);
   }
+
+  // `emit cpp` writes a self-contained project and requires an output
+  // directory; supply a throwaway one so error cases reach the diagnostic
+  // they probe. Cases that fail earlier in the pipeline never write to it.
+  const bool is_emit_cpp = c.input.command.size() == 2 &&
+                           c.input.command[0] == "emit" &&
+                           c.input.command[1] == "cpp";
+  if (is_emit_cpp) {
+    auto work_or = MakeTempCaseDir();
+    if (!work_or) {
+      result.mismatch = "MakeTempCaseDir failed: " + work_or.error();
+      return result;
+    }
+    argv.emplace_back("-o");
+    argv.push_back(work_or->string());
+  }
+
   for (const auto& f : c.input.files) {
     argv.push_back((c.case_dir / f).string());
   }
