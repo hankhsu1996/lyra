@@ -410,6 +410,14 @@ auto PackedArray::Concat(std::span<const PackedArray* const> operands)
     auto& lv = std::get<LogicValue>(result.storage_);
     dst_unknown = detail::PackedAccess::UnknownWords(lv.View());
   }
+  // `PackedArray` 4-state default is all-X (value=1, unknown=1) so a freshly
+  // constructed result for `any_four_state` has stale 1s in both planes. The
+  // bit-blit loop uses |= and would not clear them, so zero both spans before
+  // depositing operand bits.
+  std::ranges::fill(dst_value, std::uint64_t{0});
+  if (any_four_state) {
+    std::ranges::fill(dst_unknown, std::uint64_t{0});
+  }
   std::uint64_t cursor = 0;
   for (const auto* op : operands | std::views::reverse) {
     BlitBits(dst_value, cursor, op->ValueWords(), op->BitWidth());
@@ -437,6 +445,12 @@ auto PackedArray::Replicate(const PackedArray& operand, std::uint64_t count)
   if (operand.IsFourState()) {
     auto& lv = std::get<LogicValue>(result.storage_);
     dst_unknown = detail::PackedAccess::UnknownWords(lv.View());
+  }
+  // Same stale-X concern as `Concat`: zero both planes before BlitBits ORs in
+  // the operand bits.
+  std::ranges::fill(dst_value, std::uint64_t{0});
+  if (operand.IsFourState()) {
+    std::ranges::fill(dst_unknown, std::uint64_t{0});
   }
   for (std::uint64_t i = 0; i < count; ++i) {
     const std::uint64_t cursor = i * operand.BitWidth();

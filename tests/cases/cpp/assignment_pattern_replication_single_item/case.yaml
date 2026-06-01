@@ -1,0 +1,12 @@
+id: cpp.assignment_pattern_replication_single_item
+tags: [cpp_run]
+input:
+  command: [run, cpp]
+  project: false
+  top: Top
+  files: [main.sv]
+expect:
+  exit: 0
+  variables:
+    elem0: 0xab
+    elem3: 0xab

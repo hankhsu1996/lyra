@@ -41,12 +41,20 @@ auto RenderField(
   auto type_or = RenderTypeAsCpp(unit, ctor_ctx.StructuralScope(), var.type);
   if (!type_or) return std::unexpected(std::move(type_or.error()));
   const auto& ty = unit.GetType(var.type);
-  const auto storage_type = IsObservableScalarType(ty)
-                                ? "lyra::runtime::Var<" + *type_or + ">"
-                                : *type_or;
+  const auto is_observable = IsObservableScalarType(ty);
+  const auto storage_type =
+      is_observable ? "lyra::runtime::Var<" + *type_or + ">" : *type_or;
   auto args_or = RenderFieldCtorArgs(ctor_ctx, var, ty);
   if (!args_or) return std::unexpected(std::move(args_or.error()));
-  return Indent(indent) + storage_type + " " + var.name + "{" + *args_or +
+  // For `Var<T>` storage with no initializer the args are the inner T's
+  // ctor arguments; wrap in `T{...}` so a braced `std::initializer_list`
+  // argument is bound to `T`'s parameter directly instead of being passed
+  // through `Var`'s perfect-forwarding template (which cannot deduce
+  // `initializer_list` from a brace-enclosed list).
+  const std::string init_body = (is_observable && !var.initializer.has_value())
+                                    ? *type_or + "{" + *args_or + "}"
+                                    : *args_or;
+  return Indent(indent) + storage_type + " " + var.name + "{" + init_body +
          "};\n";
 }
 

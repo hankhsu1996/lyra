@@ -13,11 +13,7 @@ Done when:
 
 ## Actionable
 
-P5 builds assignment patterns on the field-access machinery P3 / P4 established.
-
-| Item | Status         |
-| ---- | -------------- |
-| P5   | Depends on P3. |
+All sub-steps are complete.
 
 ## Sub-Steps
 
@@ -35,10 +31,15 @@ The numeric IDs are stable references.
       single vector" projection. Tagged packed unions are deferred (need runtime tag-bit logic per
       LRM 11.9).
 
-- [ ] P5 -- Assignment patterns over packed aggregates (LRM 10.9): positional `'{a, b, c}`, default
-      `'{default: v}`, named `'{i: v, j: v}`, and replication `'{N{x}}`. Closes
-      `datatypes/packed/assignment_pattern_fill`, `assignment_pattern_multibit`,
-      `nested_aggregates`, and `operators/replication_patterns`.
+- [x] P5 -- Assignment patterns over packed aggregates (LRM 10.9). Positional `'{a, b, c}`, named /
+      type-key / index-key `'{x: v, default: w}`, `'{default: v}`, and replication `'{N{items}}`
+      over packed structs and packed arrays. The four non-replicated forms collapse into a per-field
+      expression list at the slang binding boundary; replication preserves the LRM shape and unrolls
+      into the same packed concat path used for `{a,b,c}`. The type-prefixed self-determined form
+      `T'{...}` is in. Closes `datatypes/packed/assignment_pattern_fill` and
+      `datatypes/packed/assignment_pattern_multibit`. Unpacked-array targets and LHS destructuring
+      (`'{a,b,c}=B`) are deferred (the unpacked surface lives behind the unpacked-array push; LHS
+      destructuring is a separate ergonomics follow-up).
 
 ## Cross-references
 

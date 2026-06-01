@@ -1,0 +1,13 @@
+id: cpp.assignment_pattern_nested_default
+tags: [cpp_run]
+input:
+  command: [run, cpp]
+  project: false
+  top: Top
+  files: [main.sv]
+expect:
+  exit: 0
+  variables:
+    a_x: 0x5
+    a_y: 0x5
+    b: 0x5
