@@ -55,13 +55,6 @@ struct RunResult {
   std::optional<std::string> mismatch;
 };
 
-// Paths needed to build and run an emitted C++ artifact. Used by the
-// `[run, cpp]` command path in RunCase.
-struct CppRunPaths {
-  std::filesystem::path include_root;
-  std::filesystem::path cpp_runtime;
-};
-
 auto LoadCases(const std::filesystem::path& cases_root)
     -> std::vector<TestCase>;
 
@@ -71,9 +64,8 @@ auto LoadSuite(const std::filesystem::path& suites_yaml, std::string_view name)
 auto FilterCases(const std::vector<TestCase>& cases, const Suite& suite)
     -> std::vector<TestCase>;
 
-auto RunCase(
-    const std::filesystem::path& lyra_exe, const TestCase& c,
-    const CppRunPaths& cpp_paths) -> RunResult;
+auto RunCase(const std::filesystem::path& lyra_exe, const TestCase& c)
+    -> RunResult;
 
 auto FormatCaseFailure(
     std::string_view case_id, std::span<const std::string> argv,

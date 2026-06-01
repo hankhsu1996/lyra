@@ -7,16 +7,16 @@ layer directly.
 
 ## Sub-Steps
 
-- [ ] D1 -- A single command that runs a SystemVerilog file end-to-end. Today the CLI can dump the
-      intermediate forms and emit the C++ backend's output, but no command takes a source file all
-      the way to an executed simulation, so developers fall back on the test harness. Execution
-      should be a first-class command accepting the same inputs as the dump and emit commands.
+- [x] D1 -- A single command that runs a SystemVerilog file end-to-end. Running a source file is now
+      a first-class command that takes the same inputs as the dump and emit commands, builds it, and
+      streams the simulation's output. A sibling command produces a built executable without running
+      it. The backend that performs the build is an implementation detail of these commands.
 
-- [ ] D4 -- A self-contained build for the C++ backend's output. The emitted C++ depends only on the
-      C++ standard library and the Lyra runtime, so a standalone build needs no third-party include
-      paths. What remains is that the backend emits no build recipe, so a developer still assembles
-      the compile and link by hand. The backend should emit the build alongside the C++ so one
-      documented command produces a runnable binary and the output is portable on its own.
+- [x] D4 -- A self-contained build for the C++ backend's output. Emitting the C++ now produces a
+      complete project on disk: the translation units, a build recipe, and a bundled copy of the
+      Lyra runtime the emitted code depends on. The directory stands on its own -- one documented
+      command rebuilds it, and it can be handed to another machine of the same platform without a
+      Lyra checkout. Building it and running it are the compile and run commands layered on top.
 
 ## Out of Scope
 

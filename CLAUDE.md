@@ -26,9 +26,11 @@ buildifier -r .
 ## Lyra CLI
 
 ```bash
-lyra dump hir [files...]         # Dump HIR (looks up lyra.toml by default)
-lyra dump mir [files...]         # Dump MIR
-lyra emit cpp [files...]         # Emit C++ source linked against the runtime
+lyra dump hir [files...]              # Dump HIR (looks up lyra.toml by default)
+lyra dump mir [files...]              # Dump MIR
+lyra emit cpp -o <dir> [files...]     # Write a self-contained C++ project (sources + build.sh + runtime)
+lyra compile -o <dir> [files...]      # Emit that project and build it -> <dir>/program
+lyra run [files...]                   # Emit, build, and execute, streaming the simulation output
 ```
 
 Common flags (apply to all subcommands):
@@ -40,7 +42,7 @@ Common flags (apply to all subcommands):
 -D NAME[=VALUE]                  # Preprocessor macro
 -G NAME=VALUE                    # Override a module parameter
 --single-unit                    # Compile all files as one compilation unit
--o <dir>                         # (emit cpp only) C++ output directory
+-o <dir>                         # Output directory (required for emit cpp and compile)
 ```
 
 ## SystemVerilog Version
@@ -77,7 +79,8 @@ bazel test //... --test_output=errors    # Same target set CI runs
 ## Benchmarks
 
 The benchmark runner under `tools/bench/` and the corresponding CI jobs depend on the `lyra run`
-subcommand and the runtime static library, neither of which is part of the current build.
+subcommand and the runtime static library. Both now exist, but the runner has not been re-validated
+against them.
 
 ## Code Style
 

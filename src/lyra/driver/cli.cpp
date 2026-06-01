@@ -4,17 +4,15 @@
 #include <expected>
 #include <filesystem>
 #include <format>
-#include <fstream>
+#include <optional>
+#include <span>
 #include <string>
-#include <system_error>
 #include <unistd.h>
 #include <utility>
 #include <vector>
 
 #include <fmt/core.h>
 
-#include "lyra/backend/cpp/api.hpp"
-#include "lyra/backend/cpp/artifact.hpp"
 #include "lyra/base/internal_error.hpp"
 #include "lyra/compiler/compile.hpp"
 #include "lyra/diag/diag_code.hpp"
@@ -22,14 +20,16 @@
 #include "lyra/diag/render.hpp"
 #include "lyra/diag/sink.hpp"
 #include "lyra/diag/source_manager.hpp"
+#include "lyra/driver/cpp_build.hpp"
+#include "lyra/driver/runtime_export.hpp"
 #include "lyra/frontend/load.hpp"
 #include "lyra/hir/dump.hpp"
 #include "lyra/mir/dump.hpp"
-#include "lyra/mir/structural_scope.hpp"
+#include "lyra/support/subprocess.hpp"
 
 namespace {
 
-enum class CommandKind { kDumpHir, kDumpMir, kEmitCpp };
+enum class CommandKind { kDumpHir, kDumpMir, kEmitCpp, kCompile, kRun };
 
 struct ParsedArgs {
   CommandKind cmd = CommandKind::kEmitCpp;
@@ -37,7 +37,7 @@ struct ParsedArgs {
   bool no_color = false;
   bool force_color = false;
   lyra::frontend::CompilationInput input;
-  std::string emit_out_dir;
+  std::string out_dir;
 };
 
 void AddCompilationFlags(argparse::ArgumentParser& cmd) {
@@ -111,12 +111,23 @@ auto ParseArgs(int argc, char** argv)
   argparse::ArgumentParser emit_cpp_cmd("cpp");
   AddCompilationFlags(emit_cpp_cmd);
   emit_cpp_cmd.add_argument("-o", "--out-dir")
-      .help("write C++ artifacts to this directory")
+      .help("write the self-contained C++ project to this directory")
       .default_value(std::string{});
   emit_cmd.add_subparser(emit_cpp_cmd);
 
+  argparse::ArgumentParser compile_cmd("compile");
+  AddCompilationFlags(compile_cmd);
+  compile_cmd.add_argument("-o", "--out-dir")
+      .help("write the self-contained project and built program here")
+      .default_value(std::string{});
+
+  argparse::ArgumentParser run_cmd("run");
+  AddCompilationFlags(run_cmd);
+
   program.add_subparser(dump_cmd);
   program.add_subparser(emit_cmd);
+  program.add_subparser(compile_cmd);
+  program.add_subparser(run_cmd);
 
   try {
     program.parse_args(argc, argv);
@@ -142,11 +153,28 @@ auto ParseArgs(int argc, char** argv)
     if (emit_cmd.is_subcommand_used("cpp")) {
       out.cmd = CommandKind::kEmitCpp;
       BindCompilationFlags(emit_cpp_cmd, out);
-      out.emit_out_dir = emit_cpp_cmd.get<std::string>("--out-dir");
+      out.out_dir = emit_cpp_cmd.get<std::string>("--out-dir");
+      if (out.out_dir.empty()) {
+        return std::unexpected(
+            std::format(
+                "emit cpp requires --out-dir\n{}", emit_cpp_cmd.help().str()));
+      }
     } else {
       return std::unexpected(
           std::format("emit requires 'cpp'\n{}", emit_cmd.help().str()));
     }
+  } else if (program.is_subcommand_used("compile")) {
+    out.cmd = CommandKind::kCompile;
+    BindCompilationFlags(compile_cmd, out);
+    out.out_dir = compile_cmd.get<std::string>("--out-dir");
+    if (out.out_dir.empty()) {
+      return std::unexpected(
+          std::format(
+              "compile requires --out-dir\n{}", compile_cmd.help().str()));
+    }
+  } else if (program.is_subcommand_used("run")) {
+    out.cmd = CommandKind::kRun;
+    BindCompilationFlags(run_cmd, out);
   } else {
     return std::unexpected(program.help().str());
   }
@@ -167,6 +195,9 @@ auto ResolveColorPreference(bool no_color_flag, bool force_color_flag) -> bool {
 
 auto main(int argc, char** argv) -> int {
   try {
+    const std::span<char* const> raw_args(argv, static_cast<std::size_t>(argc));
+    const std::string program_path =
+        raw_args.empty() ? std::string{} : std::string(raw_args.front());
     auto parsed = ParseArgs(argc, argv);
     const bool use_color =
         parsed.has_value()
@@ -210,7 +241,13 @@ auto main(int argc, char** argv) -> int {
                                 : lyra::compiler::StopAfter::kMir;
     auto result = lyra::compiler::Compile(args.input, sink, stop_after);
 
-    if (result.artifacts.parse) {
+    // `run` executes the simulation; its stdout/stderr are the simulation's
+    // own, so compile-phase warnings must not bleed into them. Surface slang
+    // diagnostics for run only when they carry errors (which abort below);
+    // other commands always show them. Use `compile`/`dump` to see warnings.
+    const bool suppress_compile_warnings =
+        args.cmd == CommandKind::kRun && result.slang_ok && !sink.HasErrors();
+    if (result.artifacts.parse && !suppress_compile_warnings) {
       std::string slang_text;
       lyra::frontend::RenderSlangDiagnostics(
           *result.artifacts.parse, use_color, slang_text);
@@ -236,70 +273,81 @@ auto main(int argc, char** argv) -> int {
       return 0;
     }
 
+    const lyra::diag::SourceManager* mgr =
+        result.artifacts.parse ? &result.artifacts.parse->diag_sources
+                               : nullptr;
+
+    auto resolve_runtime =
+        [&]() -> std::optional<lyra::driver::RuntimeLocation> {
+      auto loc_or = lyra::driver::ResolveRuntimeLocation(program_path);
+      if (!loc_or) {
+        report(
+            lyra::diag::Diagnostic::HostError(
+                lyra::diag::DiagCode::kHostIoError, std::move(loc_or.error())));
+        return std::nullopt;
+      }
+      return *loc_or;
+    };
+
     switch (args.cmd) {
       case CommandKind::kDumpMir:
         fmt::print("{}", lyra::mir::DumpMir(*result.artifacts.mir_unit));
         return 0;
       case CommandKind::kEmitCpp: {
-        const auto& root = result.artifacts.mir_unit->structural_scope;
-        if (root.name != args.input.top) {
-          throw lyra::InternalError(
-              std::format(
-                  "emit cpp: top scope '{}' does not match compilation unit "
-                  "root '{}'",
-                  args.input.top, root.name));
-        }
-        auto set_or = lyra::backend::cpp::EmitCpp(*result.artifacts.mir_unit);
-        if (!set_or) {
-          const lyra::diag::SourceManager* mgr =
-              result.artifacts.parse ? &result.artifacts.parse->diag_sources
-                                     : nullptr;
-          report(std::move(set_or.error()), mgr);
+        auto runtime = resolve_runtime();
+        if (!runtime) {
           return 1;
         }
-        const auto& set = *set_or;
-        if (args.emit_out_dir.empty()) {
-          for (const auto& file : set.files) {
-            fmt::print("=== {} ===\n{}", file.relpath, file.content);
-            if (!file.content.empty() && file.content.back() != '\n') {
-              fmt::print("\n");
-            }
-          }
-        } else {
-          std::error_code ec;
-          std::filesystem::create_directories(args.emit_out_dir, ec);
-          if (ec) {
-            throw lyra::InternalError(
-                std::format(
-                    "emit cpp: failed to create out-dir '{}': {}",
-                    args.emit_out_dir, ec.message()));
-          }
-          for (const auto& file : set.files) {
-            const auto path =
-                std::filesystem::path(args.emit_out_dir) / file.relpath;
-            std::filesystem::create_directories(path.parent_path(), ec);
-            if (ec) {
-              throw lyra::InternalError(
-                  std::format(
-                      "emit cpp: failed to create '{}': {}",
-                      path.parent_path().string(), ec.message()));
-            }
-            std::ofstream out_stream(path);
-            if (!out_stream) {
-              throw lyra::InternalError(
-                  std::format(
-                      "emit cpp: failed to open '{}' for write",
-                      path.string()));
-            }
-            out_stream << file.content;
-            out_stream.flush();
-            if (!out_stream) {
-              throw lyra::InternalError(
-                  std::format("emit cpp: failed to write '{}'", path.string()));
-            }
-          }
+        const std::filesystem::path dir = args.out_dir;
+        auto assembled = lyra::driver::AssembleProject(
+            *runtime, *result.artifacts.mir_unit, dir);
+        if (!assembled) {
+          report(std::move(assembled.error()), mgr);
+          return 1;
         }
+        fmt::print("emitted: {}\n", dir.string());
         return 0;
+      }
+      case CommandKind::kCompile: {
+        auto runtime = resolve_runtime();
+        if (!runtime) {
+          return 1;
+        }
+        const std::filesystem::path dir = args.out_dir;
+        auto assembled = lyra::driver::AssembleProject(
+            *runtime, *result.artifacts.mir_unit, dir);
+        if (!assembled) {
+          report(std::move(assembled.error()), mgr);
+          return 1;
+        }
+        auto built = lyra::driver::BuildProject(dir);
+        if (!built) {
+          report(std::move(built.error()), mgr);
+          return 1;
+        }
+        fmt::print("compiled: {}\n", built->string());
+        return 0;
+      }
+      case CommandKind::kRun: {
+        auto runtime = resolve_runtime();
+        if (!runtime) {
+          return 1;
+        }
+        auto tmp_or = lyra::support::MakeTempDir();
+        if (!tmp_or) {
+          report(
+              lyra::diag::Diagnostic::HostError(
+                  lyra::diag::DiagCode::kHostIoError,
+                  std::move(tmp_or.error())));
+          return 1;
+        }
+        auto exit_code = lyra::driver::RunInPlace(
+            *runtime, *result.artifacts.mir_unit, *tmp_or);
+        if (!exit_code) {
+          report(std::move(exit_code.error()), mgr);
+          return 1;
+        }
+        return *exit_code;
       }
       case CommandKind::kDumpHir:
         break;

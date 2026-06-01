@@ -189,14 +189,40 @@ cc_library(
     ],
 )
 
-cc_binary(
-    name = "lyra",
-    srcs = ["src/lyra/driver/cli.cpp"],
+cc_library(
+    name = "driver",
+    srcs = [
+        "src/lyra/driver/cpp_build.cpp",
+        "src/lyra/driver/runtime_export.cpp",
+    ],
+    hdrs = [
+        "include/lyra/driver/cpp_build.hpp",
+        "include/lyra/driver/project_layout.hpp",
+        "include/lyra/driver/runtime_export.hpp",
+    ],
+    includes = ["include"],
     visibility = ["//visibility:public"],
     deps = [
         ":backend_cpp",
+        ":diag",
+        ":mir",
+        ":support",
+        "@bazel_tools//tools/cpp/runfiles",
+    ],
+)
+
+cc_binary(
+    name = "lyra",
+    srcs = ["src/lyra/driver/cli.cpp"],
+    data = [
+        ":cpp_runtime",
+        ":runtime_headers",
+    ],
+    visibility = ["//visibility:public"],
+    deps = [
         ":compiler",
         ":diag",
+        ":driver",
         ":frontend",
         ":hir",
         ":mir",
