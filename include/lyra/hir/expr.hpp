@@ -96,6 +96,14 @@ struct RangeSelectExpr {
   RangeBounds bounds;
 };
 
+// LRM 7.2.1 packed struct field access. `field_index` identifies the member
+// in the base expression's PackedStructType field table; offset / width come
+// from that table at every consumer site.
+struct MemberAccessExpr {
+  ExprId base_value;
+  std::uint32_t field_index;
+};
+
 struct ConcatExpr {
   std::vector<ExprId> operands;
 };
@@ -110,7 +118,7 @@ struct ReplicationExpr {
 using ExprData = std::variant<
     PrimaryExpr, UnaryExpr, BinaryExpr, ConditionalExpr, AssignExpr, IncDecExpr,
     CallExpr, ConversionExpr, InsideExpr, ElementSelectExpr, RangeSelectExpr,
-    ConcatExpr, ReplicationExpr>;
+    MemberAccessExpr, ConcatExpr, ReplicationExpr>;
 
 struct Expr {
   TypeId type;

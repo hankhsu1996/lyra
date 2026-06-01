@@ -18,12 +18,6 @@ constexpr std::array kEntries{
             .category = UnsupportedCategory::kType,
             .name = "unsupported_packed_array_element_type"}},
     std::pair{
-        DiagCode::kUnsupportedPackedStructType,
-        DiagCodeInfo{
-            .kind = DiagKind::kUnsupported,
-            .category = UnsupportedCategory::kType,
-            .name = "unsupported_packed_struct_type"}},
-    std::pair{
         DiagCode::kUnsupportedPackedUnionType,
         DiagCodeInfo{
             .kind = DiagKind::kUnsupported,

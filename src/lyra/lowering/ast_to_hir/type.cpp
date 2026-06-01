@@ -6,6 +6,7 @@
 #include <vector>
 
 #include <slang/ast/Symbol.h>
+#include <slang/ast/symbols/VariableSymbols.h>
 #include <slang/ast/types/AllTypes.h>
 #include <slang/ast/types/Type.h>
 #include <slang/numeric/ConstantValue.h>
@@ -119,6 +120,46 @@ auto LowerExplicitPackedArray(
   };
 }
 
+auto LowerPackedStruct(
+    const slang::ast::PackedStructType& struct_type, diag::SourceSpan decl_span,
+    UnitLoweringState& state) -> diag::Result<hir::PackedStructType> {
+  const auto width = static_cast<std::int64_t>(struct_type.bitWidth);
+  if (width <= 0) {
+    throw InternalError("LowerPackedStruct: zero-width packed struct");
+  }
+  const auto atom =
+      struct_type.isFourState ? hir::BitAtom::kLogic : hir::BitAtom::kBit;
+  const auto signedness = struct_type.isSigned ? hir::Signedness::kSigned
+                                               : hir::Signedness::kUnsigned;
+  hir::PackedArrayType base{
+      .atom = atom,
+      .signedness = signedness,
+      .dims = {hir::PackedRange{.left = width - 1, .right = 0}},
+      .form = hir::PackedArrayForm::kExplicit,
+  };
+  std::vector<hir::PackedStructField> fields;
+  for (const auto& field :
+       struct_type.membersOfType<slang::ast::FieldSymbol>()) {
+    auto field_type_or = state.GetTypeId(field.getType(), decl_span);
+    if (!field_type_or) {
+      return std::unexpected(std::move(field_type_or.error()));
+    }
+    const auto field_width =
+        static_cast<std::uint64_t>(field.getType().getBitWidth());
+    fields.push_back(
+        hir::PackedStructField{
+            .name = std::string(field.name),
+            .type = *field_type_or,
+            .bit_offset = field.bitOffset,
+            .bit_width = field_width,
+        });
+  }
+  return hir::PackedStructType{
+      .base = std::move(base),
+      .fields = std::move(fields),
+  };
+}
+
 auto LowerEnum(
     const slang::ast::EnumType& enum_type, diag::SourceSpan decl_span,
     UnitLoweringState& state) -> diag::Result<hir::EnumType> {
@@ -200,11 +241,14 @@ auto LowerType(
       return hir::TypeData{hir::ChandleType{}};
     case slang::ast::SymbolKind::VoidType:
       return hir::TypeData{hir::VoidType{}};
-    case slang::ast::SymbolKind::PackedStructType:
-      return diag::Unsupported(
-          decl_span, diag::DiagCode::kUnsupportedPackedStructType,
-          "packed struct types are not supported",
-          diag::UnsupportedCategory::kType);
+    case slang::ast::SymbolKind::PackedStructType: {
+      auto s = LowerPackedStruct(
+          canonical.as<slang::ast::PackedStructType>(), decl_span, state);
+      if (!s.has_value()) {
+        return std::unexpected(std::move(s.error()));
+      }
+      return hir::TypeData{*std::move(s)};
+    }
     case slang::ast::SymbolKind::PackedUnionType:
       return diag::Unsupported(
           decl_span, diag::DiagCode::kUnsupportedPackedUnionType,
