@@ -920,6 +920,77 @@ auto LowerReplicationExprProc(
   };
 }
 
+auto IsAssignmentPatternPackedTarget(const hir::Type& target) -> bool {
+  return target.IsPackedArray() || target.IsPackedStruct() ||
+         target.IsPackedUnion();
+}
+
+auto LowerAssignmentPatternFromElementsProc(
+    const UnitLoweringFacts& unit_facts, UnitLoweringState& unit_state,
+    ProcessLoweringState& proc_state, const ScopeStack& stack,
+    const slang::ast::AssignmentPatternExpressionBase& ap,
+    const slang::ast::Expression& expr, diag::SourceSpan span)
+    -> diag::Result<hir::Expr> {
+  auto type_id = TypeIdOfSlangExpr(unit_facts, unit_state, expr);
+  if (!type_id) return std::unexpected(std::move(type_id.error()));
+  if (!IsAssignmentPatternPackedTarget(unit_state.GetType(*type_id))) {
+    return diag::Unsupported(
+        span, diag::DiagCode::kUnsupportedAssignmentPatternKind,
+        "assignment patterns over unpacked aggregates are not yet supported",
+        diag::UnsupportedCategory::kOperation);
+  }
+  std::vector<hir::ExprId> element_ids;
+  element_ids.reserve(ap.elements().size());
+  for (const auto* elem : ap.elements()) {
+    auto lowered =
+        LowerProcExpr(unit_facts, unit_state, proc_state, stack, *elem);
+    if (!lowered) return std::unexpected(std::move(lowered.error()));
+    element_ids.push_back(proc_state.AddExpr(*std::move(lowered)));
+  }
+  return hir::Expr{
+      .type = *type_id,
+      .data = hir::AssignmentPatternExpr{.elements = std::move(element_ids)},
+      .span = span,
+  };
+}
+
+auto LowerReplicatedAssignmentPatternExprProc(
+    const UnitLoweringFacts& unit_facts, UnitLoweringState& unit_state,
+    ProcessLoweringState& proc_state, const ScopeStack& stack,
+    const slang::ast::ReplicatedAssignmentPatternExpression& rp,
+    const slang::ast::Expression& expr, diag::SourceSpan span)
+    -> diag::Result<hir::Expr> {
+  auto type_id = TypeIdOfSlangExpr(unit_facts, unit_state, expr);
+  if (!type_id) return std::unexpected(std::move(type_id.error()));
+  if (!IsAssignmentPatternPackedTarget(unit_state.GetType(*type_id))) {
+    return diag::Unsupported(
+        span, diag::DiagCode::kUnsupportedAssignmentPatternKind,
+        "assignment patterns over unpacked aggregates are not yet supported",
+        diag::UnsupportedCategory::kOperation);
+  }
+  auto count_or =
+      LowerProcExpr(unit_facts, unit_state, proc_state, stack, rp.count());
+  if (!count_or) return std::unexpected(std::move(count_or.error()));
+  const hir::ExprId count_id = proc_state.AddExpr(*std::move(count_or));
+  std::vector<hir::ExprId> item_ids;
+  item_ids.reserve(rp.elements().size());
+  for (const auto* elem : rp.elements()) {
+    auto lowered =
+        LowerProcExpr(unit_facts, unit_state, proc_state, stack, *elem);
+    if (!lowered) return std::unexpected(std::move(lowered.error()));
+    item_ids.push_back(proc_state.AddExpr(*std::move(lowered)));
+  }
+  return hir::Expr{
+      .type = *type_id,
+      .data =
+          hir::AssignmentPatternReplicationExpr{
+              .count = count_id,
+              .items = std::move(item_ids),
+          },
+      .span = span,
+  };
+}
+
 auto LowerElementSelectExprStructural(
     const UnitLoweringFacts& unit_facts, UnitLoweringState& unit_state,
     ScopeLoweringState& scope_state, const ScopeStack& stack,
@@ -1059,6 +1130,35 @@ auto LowerConcatExprStructural(
   return hir::Expr{
       .type = *type_id,
       .data = hir::ConcatExpr{.operands = std::move(operand_ids)},
+      .span = span,
+  };
+}
+
+auto LowerAssignmentPatternFromElementsStructural(
+    const UnitLoweringFacts& unit_facts, UnitLoweringState& unit_state,
+    ScopeLoweringState& scope_state, const ScopeStack& stack,
+    const slang::ast::AssignmentPatternExpressionBase& ap,
+    const slang::ast::Expression& expr, diag::SourceSpan span)
+    -> diag::Result<hir::Expr> {
+  auto type_id = TypeIdOfSlangExpr(unit_facts, unit_state, expr);
+  if (!type_id) return std::unexpected(std::move(type_id.error()));
+  if (!IsAssignmentPatternPackedTarget(unit_state.GetType(*type_id))) {
+    return diag::Unsupported(
+        span, diag::DiagCode::kUnsupportedAssignmentPatternKind,
+        "assignment patterns over unpacked aggregates are not yet supported",
+        diag::UnsupportedCategory::kOperation);
+  }
+  std::vector<hir::ExprId> element_ids;
+  element_ids.reserve(ap.elements().size());
+  for (const auto* elem : ap.elements()) {
+    auto lowered =
+        LowerStructuralExpr(unit_facts, unit_state, scope_state, stack, *elem);
+    if (!lowered) return std::unexpected(std::move(lowered.error()));
+    element_ids.push_back(scope_state.AddExpr(*std::move(lowered)));
+  }
+  return hir::Expr{
+      .type = *type_id,
+      .data = hir::AssignmentPatternExpr{.elements = std::move(element_ids)},
       .span = span,
   };
 }
@@ -1331,6 +1431,31 @@ auto LowerProcExpr(
           unit_facts, unit_state, proc_state, stack,
           expr.as<slang::ast::ReplicationExpression>(), expr, span);
 
+    case slang::ast::ExpressionKind::SimpleAssignmentPattern: {
+      const auto& sap =
+          expr.as<slang::ast::SimpleAssignmentPatternExpression>();
+      if (sap.isLValue) {
+        return diag::Unsupported(
+            span, diag::DiagCode::kUnsupportedAssignmentPatternKind,
+            "assignment pattern as LHS destructuring is not yet supported",
+            diag::UnsupportedCategory::kOperation);
+      }
+      return LowerAssignmentPatternFromElementsProc(
+          unit_facts, unit_state, proc_state, stack, sap, expr, span);
+    }
+
+    case slang::ast::ExpressionKind::StructuredAssignmentPattern:
+      return LowerAssignmentPatternFromElementsProc(
+          unit_facts, unit_state, proc_state, stack,
+          expr.as<slang::ast::StructuredAssignmentPatternExpression>(), expr,
+          span);
+
+    case slang::ast::ExpressionKind::ReplicatedAssignmentPattern:
+      return LowerReplicatedAssignmentPatternExprProc(
+          unit_facts, unit_state, proc_state, stack,
+          expr.as<slang::ast::ReplicatedAssignmentPatternExpression>(), expr,
+          span);
+
     default:
       return diag::Unsupported(
           span, diag::DiagCode::kUnsupportedExpressionForm,
@@ -1433,6 +1558,25 @@ auto LowerStructuralExpr(
       return LowerConcatExprStructural(
           unit_facts, unit_state, scope_state, stack,
           expr.as<slang::ast::ConcatenationExpression>(), expr, span);
+
+    case slang::ast::ExpressionKind::SimpleAssignmentPattern: {
+      const auto& sap =
+          expr.as<slang::ast::SimpleAssignmentPatternExpression>();
+      if (sap.isLValue) {
+        return diag::Unsupported(
+            span, diag::DiagCode::kUnsupportedAssignmentPatternKind,
+            "assignment pattern as LHS destructuring is not yet supported",
+            diag::UnsupportedCategory::kOperation);
+      }
+      return LowerAssignmentPatternFromElementsStructural(
+          unit_facts, unit_state, scope_state, stack, sap, expr, span);
+    }
+
+    case slang::ast::ExpressionKind::StructuredAssignmentPattern:
+      return LowerAssignmentPatternFromElementsStructural(
+          unit_facts, unit_state, scope_state, stack,
+          expr.as<slang::ast::StructuredAssignmentPatternExpression>(), expr,
+          span);
 
     default:
       return diag::Unsupported(

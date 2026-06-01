@@ -746,6 +746,29 @@ class HirDumper {
                   "ReplicationExpr count=Expr[{}] concat=Expr[{}]",
                   r.count.value, r.concat.value);
             },
+            [](const AssignmentPatternExpr& a) -> std::string {
+              std::string elements;
+              for (std::size_t i = 0; i < a.elements.size(); ++i) {
+                if (i != 0) {
+                  elements += ", ";
+                }
+                elements += std::format("Expr[{}]", a.elements[i].value);
+              }
+              return std::format(
+                  "AssignmentPatternExpr elements=[{}]", elements);
+            },
+            [](const AssignmentPatternReplicationExpr& a) -> std::string {
+              std::string items;
+              for (std::size_t i = 0; i < a.items.size(); ++i) {
+                if (i != 0) {
+                  items += ", ";
+                }
+                items += std::format("Expr[{}]", a.items[i].value);
+              }
+              return std::format(
+                  "AssignmentPatternReplicationExpr count=Expr[{}] items=[{}]",
+                  a.count.value, items);
+            },
         },
         e.data);
     return std::format("type=Type[{}] {}", e.type.value, formatted);

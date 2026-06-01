@@ -1,0 +1,13 @@
+id: cpp.assignment_pattern_positional_struct
+tags: [cpp_run]
+input:
+  command: [run, cpp]
+  project: false
+  top: Top
+  files: [main.sv]
+expect:
+  exit: 0
+  variables:
+    f0: 0xa
+    f1: 0x5
+    f2: 0x3

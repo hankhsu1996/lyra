@@ -1,0 +1,14 @@
+id: cpp.assignment_pattern_replication_multi_item
+tags: [cpp_run]
+input:
+  command: [run, cpp]
+  project: false
+  top: Top
+  files: [main.sv]
+expect:
+  exit: 0
+  variables:
+    field0: 0x1
+    field1: 0x2
+    field2: 0x1
+    field3: 0x2

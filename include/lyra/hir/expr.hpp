@@ -115,10 +115,31 @@ struct ReplicationExpr {
   ExprId concat;
 };
 
+// LRM 10.9 assignment pattern (positional / named / type-key / index-key /
+// default forms). Slang has normalised all four forms into a flat per-field
+// expression list in target declaration order (= packed MSB-first), with
+// each item already wrapped in a ConversionExpression to the field's
+// declared type.
+struct AssignmentPatternExpr {
+  std::vector<ExprId> elements;
+};
+
+// LRM 10.9 replicated assignment pattern `'{count{items...}}`. `count` is
+// slang-validated as a constant positive integer. `items` is the per-
+// iteration expression list -- slang stores only one iteration's items with
+// that iteration's per-field casts and requires the target's per-iter type
+// chunks to repeat, so the lowered MIR shape is `Replication(count,
+// Concat(items))`.
+struct AssignmentPatternReplicationExpr {
+  ExprId count;
+  std::vector<ExprId> items;
+};
+
 using ExprData = std::variant<
     PrimaryExpr, UnaryExpr, BinaryExpr, ConditionalExpr, AssignExpr, IncDecExpr,
     CallExpr, ConversionExpr, InsideExpr, ElementSelectExpr, RangeSelectExpr,
-    MemberAccessExpr, ConcatExpr, ReplicationExpr>;
+    MemberAccessExpr, ConcatExpr, ReplicationExpr, AssignmentPatternExpr,
+    AssignmentPatternReplicationExpr>;
 
 struct Expr {
   TypeId type;

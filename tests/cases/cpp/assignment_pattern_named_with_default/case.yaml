@@ -1,0 +1,13 @@
+id: cpp.assignment_pattern_named_with_default
+tags: [cpp_run]
+input:
+  command: [run, cpp]
+  project: false
+  top: Top
+  files: [main.sv]
+expect:
+  exit: 0
+  variables:
+    fx: 0x1
+    fy: 0x0
+    fz: 0x0
