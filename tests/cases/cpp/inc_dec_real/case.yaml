@@ -1,0 +1,14 @@
+id: cpp.inc_dec_real
+tags: [cpp_run]
+input:
+  command: [run, cpp]
+  project: false
+  top: Top
+  files: [main.sv]
+expect:
+  exit: 0
+  stdout:
+    exact: |
+      2.500000
+      3.500000
+      3.500000

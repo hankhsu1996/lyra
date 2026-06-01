@@ -14,12 +14,7 @@ Done when:
 
 ## Actionable
 
-W10 (concat lvalue) and W12 (`++` / `--`) are the only open items.
-
-| Item | Status                                                                                  |
-| ---- | --------------------------------------------------------------------------------------- |
-| W10  | Ready; depends on W6 (shipped). Distributes RHS bits across an ordered sub-lvalue list. |
-| W12  | Read-modify-write on the lvalue surface. LRM 11.4.1 evaluate-target-once applies.       |
+All items closed; operator surface in scope is complete.
 
 ## Sub-Steps
 
@@ -83,9 +78,11 @@ merged node.
       target only once" applies; falls out of the C++ eval-once rule on the compound expression.
       NBA + compound is rejected at slang parsing per LRM A.6.2. Closes
       `operators/compound_assignment` for whole-var, selector, and mixed-state target shapes.
-- [ ] W12 -- `++` / `--` (prefix and postfix). The expression form returns the pre- or post-value,
-      so it is a distinct shape from `AssignExpr`. Once accepted in index positions, the same LRM
-      11.4.1 evaluate-target-once rule applies at the read-modify-write level.
+- [x] W12 -- `++` / `--` (prefix and postfix, LRM 11.4.2). Behave as blocking assignments; postfix
+      yields the operand's prior value, prefix yields the new value. Integer and real operands;
+      selector chains (`array[i]++`, `++a[15:8]`) and observable structural roots are covered. NBA
+      contexts (`b <= a++`, `var[i++] <= rhs`) evaluate the inc / dec exactly once at submit time.
+      Replication / concatenation operands are rejected as targets per LRM 11.4.12.1.
 
 ## Cross-references
 

@@ -1069,6 +1069,44 @@ auto RenderAssignExpr(const RenderContext& ctx, const mir::AssignExpr& a)
   return *chain_or + " = " + *value_or;
 }
 
+auto RenderIncDecExpr(const RenderContext& ctx, const mir::IncDecExpr& inc)
+    -> diag::Result<std::string> {
+  const mir::Expr& target_expr = ctx.Expr(inc.target);
+  const mir::StructuralVarRef* observable_root =
+      LhsRootStructuralVarForObservable(ctx, target_expr);
+  const bool observable = observable_root != nullptr && [&] {
+    const auto& var_decl =
+        ctx.StructuralScope().GetStructuralVar(observable_root->var);
+    return IsObservableScalarType(ctx.Unit().GetType(var_decl.type));
+  }();
+
+  std::string lhs;
+  if (IsLhsBarePrimary(target_expr)) {
+    auto root_or = RenderLhsExpr(ctx, target_expr, std::string_view{});
+    if (!root_or) return std::unexpected(std::move(root_or.error()));
+    lhs = observable ? *root_or + ".Mutate(*services_)" : *root_or;
+  } else {
+    const std::string_view mutate_adapter =
+        observable ? std::string_view{".Mutate(*services_)"}
+                   : std::string_view{};
+    auto chain_or = RenderLhsExpr(ctx, target_expr, mutate_adapter);
+    if (!chain_or) return std::unexpected(std::move(chain_or.error()));
+    lhs = *std::move(chain_or);
+  }
+
+  switch (inc.op) {
+    case mir::IncDecOp::kPreInc:
+      return "(++" + lhs + ")";
+    case mir::IncDecOp::kPostInc:
+      return "(" + lhs + "++)";
+    case mir::IncDecOp::kPreDec:
+      return "(--" + lhs + ")";
+    case mir::IncDecOp::kPostDec:
+      return "(" + lhs + "--)";
+  }
+  throw InternalError("RenderIncDecExpr: unknown IncDecOp");
+}
+
 auto RenderRangeSelectExpr(
     const RenderContext& ctx, const mir::Expr& expr,
     const mir::RangeSelectExpr& sel) -> diag::Result<std::string> {
@@ -1269,6 +1307,9 @@ auto RenderExprNatural(const RenderContext& ctx, const mir::Expr& expr)
           },
           [&](const mir::AssignExpr& a) -> diag::Result<std::string> {
             return RenderAssignExpr(ctx, a);
+          },
+          [&](const mir::IncDecExpr& inc) -> diag::Result<std::string> {
+            return RenderIncDecExpr(ctx, inc);
           },
           [&](const mir::ConversionExpr& cv) -> diag::Result<std::string> {
             return RenderConversionExpr(ctx, expr, cv);

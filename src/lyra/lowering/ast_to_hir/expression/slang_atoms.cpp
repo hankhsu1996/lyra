@@ -134,12 +134,27 @@ auto LowerUnaryOp(slang::ast::UnaryOperator op, diag::SourceSpan span)
     case slang::ast::UnaryOperator::Predecrement:
     case slang::ast::UnaryOperator::Postincrement:
     case slang::ast::UnaryOperator::Postdecrement:
-      return diag::Unsupported(
-          span, diag::DiagCode::kUnsupportedExpressionForm,
-          "increment and decrement expressions are not supported yet",
-          diag::UnsupportedCategory::kOperation);
+      throw InternalError(
+          "LowerUnaryOp: increment / decrement is handled via "
+          "LowerSlangIncDecOp into hir::IncDecExpr, not hir::UnaryExpr");
   }
   throw InternalError("LowerUnaryOp: unknown slang UnaryOperator");
+}
+
+auto LowerSlangIncDecOp(slang::ast::UnaryOperator op) -> hir::IncDecOp {
+  switch (op) {
+    case slang::ast::UnaryOperator::Preincrement:
+      return hir::IncDecOp::kPreInc;
+    case slang::ast::UnaryOperator::Postincrement:
+      return hir::IncDecOp::kPostInc;
+    case slang::ast::UnaryOperator::Predecrement:
+      return hir::IncDecOp::kPreDec;
+    case slang::ast::UnaryOperator::Postdecrement:
+      return hir::IncDecOp::kPostDec;
+    default:
+      throw InternalError(
+          "LowerSlangIncDecOp: not an increment / decrement operator");
+  }
 }
 
 auto LowerTimeUnit(slang::TimeUnit u) -> hir::TimeScale {

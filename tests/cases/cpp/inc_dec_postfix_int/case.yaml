@@ -1,0 +1,14 @@
+id: cpp.inc_dec_postfix_int
+tags: [cpp_run]
+input:
+  command: [run, cpp]
+  project: false
+  top: Top
+  files: [main.sv]
+expect:
+  exit: 0
+  variables:
+    a: 6
+    b: 5
+    c: 4
+    d: 5

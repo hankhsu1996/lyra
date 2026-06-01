@@ -9,6 +9,7 @@
 #include "lyra/hir/binary_op.hpp"
 #include "lyra/hir/conversion.hpp"
 #include "lyra/hir/expr_id.hpp"
+#include "lyra/hir/inc_dec_op.hpp"
 #include "lyra/hir/inside_item.hpp"
 #include "lyra/hir/primary.hpp"
 #include "lyra/hir/range_bounds.hpp"
@@ -64,6 +65,17 @@ struct AssignExpr {
   ExprId rhs;
 };
 
+// LRM 11.4.2: `++a`, `a++`, `--a`, `a--`. Behave as blocking assignments;
+// postfix yields the operand's prior value, prefix yields the new value. The
+// `target` is an ExprId whose form must be addressable -- the same allowed
+// forms as `AssignExpr.lhs` minus `ConcatExpr` (slang rejects `++{a,b}` at
+// AST construction). Lvalue-ness is positional, validated by
+// `ValidateAssignableSlangExpr` at AST -> HIR time.
+struct IncDecExpr {
+  IncDecOp op;
+  ExprId target;
+};
+
 struct CallExpr {
   SubroutineRef callee;
   std::vector<ExprId> arguments;
@@ -96,9 +108,9 @@ struct ReplicationExpr {
 };
 
 using ExprData = std::variant<
-    PrimaryExpr, UnaryExpr, BinaryExpr, ConditionalExpr, AssignExpr, CallExpr,
-    ConversionExpr, InsideExpr, ElementSelectExpr, RangeSelectExpr, ConcatExpr,
-    ReplicationExpr>;
+    PrimaryExpr, UnaryExpr, BinaryExpr, ConditionalExpr, AssignExpr, IncDecExpr,
+    CallExpr, ConversionExpr, InsideExpr, ElementSelectExpr, RangeSelectExpr,
+    ConcatExpr, ReplicationExpr>;
 
 struct Expr {
   TypeId type;

@@ -9,11 +9,7 @@ Done when every archive case under `operators/binary`, `operators/unary`,
 
 ## Actionable
 
-J19 is the only open item; everything else has shipped or is intentionally tracked elsewhere.
-
-| Item | Status                                                                           |
-| ---- | -------------------------------------------------------------------------------- |
-| J19  | Blocked on `operators.md` W12 (`++` / `--` shape and LRM 11.4.1 eval-once rule). |
+All items closed; integral surface complete.
 
 ## Sub-Steps
 
@@ -42,8 +38,8 @@ The numeric IDs are stable references and do not imply execution order.
       drives event-control change detection (LRM 9.4.2 "not equal to its previous value").
 - [x] J18 -- Wildcard equality `==?` / `!=?` (LRM 11.4.6): RHS X/Z treated as don't-care. Same work
       item as `operators.md` W2 (canonical home).
-- [ ] J19 -- `++` / `--` archive coverage (the five increment / decrement cases in
-      `operators/unary/two_state.yaml`). **Depends on** `operators.md` W12.
+- [x] J19 -- `++` / `--` archive coverage (the five increment / decrement cases in
+      `operators/unary/two_state.yaml`). Shipped together with `operators.md` W12.
 
 ## Cross-references
 
