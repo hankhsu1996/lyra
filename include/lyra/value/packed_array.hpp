@@ -485,7 +485,7 @@ class PackedArrayRef {
   // so an outer rvalue use (`b = ++var[3:0]`) consumes a materialized value
   // instead of holding a transient proxy past the end of the full expression.
   auto operator++() -> PackedArray {
-    PackedArray current(*this);
+    PackedArray current = Clone();
     auto updated =
         current + PackedArray::FromInt(
                       1, bit_width_, current.IsSigned(), current.IsFourState());
@@ -493,13 +493,13 @@ class PackedArrayRef {
     return updated;
   }
   auto operator++(int) -> PackedArray {
-    PackedArray prior(*this);
+    PackedArray prior = Clone();
     *this = prior + PackedArray::FromInt(
                         1, bit_width_, prior.IsSigned(), prior.IsFourState());
     return prior;
   }
   auto operator--() -> PackedArray {
-    PackedArray current(*this);
+    PackedArray current = Clone();
     auto updated =
         current - PackedArray::FromInt(
                       1, bit_width_, current.IsSigned(), current.IsFourState());
@@ -507,7 +507,7 @@ class PackedArrayRef {
     return updated;
   }
   auto operator--(int) -> PackedArray {
-    PackedArray prior(*this);
+    PackedArray prior = Clone();
     *this = prior - PackedArray::FromInt(
                         1, bit_width_, prior.IsSigned(), prior.IsFourState());
     return prior;

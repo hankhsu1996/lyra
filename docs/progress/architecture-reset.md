@@ -54,11 +54,11 @@ Granular tracking lives in `integral.md` (integral / packed / wide_integral) and
 - [ ] datatypes/default_init
 - [x] datatypes/enum
 - [ ] datatypes/general
-- [ ] datatypes/integral -- `integral.md`.
+- [x] datatypes/integral -- `integral.md`.
 - [ ] datatypes/packed -- `packed.md`.
 - [x] datatypes/real
 - [ ] datatypes/representation
-- [ ] datatypes/string
+- [x] datatypes/string -- `datatypes.md` (string family SC1..SC3).
 - [ ] datatypes/unpacked
 - [ ] datatypes/wide_integral -- non-`packed_2d` archive sub-folders covered (`integral.md` J14);
       `packed_2d` (2D element index / slice) belongs to `datatypes/packed`.
@@ -116,18 +116,18 @@ Granular tracking lives in `integral.md` (integral / packed / wide_integral) and
 ### operators
 
 - [x] operators/binary -- `integral.md`.
-- [ ] operators/binary_string
+- [x] operators/binary_string -- `datatypes.md` SC1 (string equality and lexicographic comparison).
 - [x] operators/case_equality -- `operators.md`.
 - [ ] operators/comparison_value_temp -- subsumed by the binary-operator coverage in `integral.md`;
       the archived `ValueTemp` IR shape does not exist on the current pipeline.
-- [ ] operators/compound_assignment -- `operators.md`.
-- [ ] operators/concat -- `operators.md`.
-- [ ] operators/inside -- `operators.md`.
-- [ ] operators/replicate -- `operators.md`.
+- [x] operators/compound_assignment -- `operators.md`.
+- [x] operators/concat -- `operators.md`.
+- [x] operators/inside -- `operators.md`.
+- [x] operators/replicate -- `operators.md`.
 - [ ] operators/replication_patterns -- `packed.md`.
 - [x] operators/shift_overflow -- `integral.md`.
-- [ ] operators/unary -- integral surface covered (`integral.md` J14); `++` / `--` archive coverage
-      tracked at `integral.md` J19 (blocked on `operators.md` W12).
+- [x] operators/unary -- integral surface covered (`integral.md` J14); `++` / `--` archive coverage
+      via `operators.md` W12 and `integral.md` J19.
 - [ ] operators/value_temp_expansion -- subsumed by the binary-operator coverage in `integral.md`;
       the archived `ValueTemp` IR shape does not exist on the current pipeline.
 - [x] operators/wildcard_equality -- `operators.md`.

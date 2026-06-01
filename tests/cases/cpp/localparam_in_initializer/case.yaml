@@ -1,0 +1,11 @@
+id: cpp.localparam_in_initializer
+tags: [cpp_run]
+input:
+  command: [run, cpp]
+  project: false
+  top: Top
+  files: [main.sv]
+expect:
+  exit: 0
+  variables:
+    i: 8
