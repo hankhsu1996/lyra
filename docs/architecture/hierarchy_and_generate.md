@@ -36,6 +36,10 @@ shared by all consumers: external references, child routing, and construction.
 6. Parameters affect constructor-time construction, not compile-time identity. A parameter value
    changes which children are constructed, how many, and with which sub-parameter bindings, but it
    does not fork the unit's compile-time artifacts or its identity.
+7. The constructed object tree is faithful to the frontend's elaboration. Every elaborated instance
+   and named scope has a corresponding constructed object, and generate-produced objects preserve
+   the elaborated index and identity. Reference resolution relies on this faithfulness (see
+   `reference_resolution.md`).
 
 ## Boundary to Adjacent Layers
 
@@ -44,6 +48,9 @@ shared by all consumers: external references, child routing, and construction.
 - The runtime constructor executes this logic to produce the live object graph.
 - `runtime_model.md` defines the constructor / simulation execution-context split that this doc
   builds on. Generate logic is constructor-context; processes are simulation-context.
+- `reference_resolution.md` owns how a reference reaches state across the object tree and when it
+  resolves. This doc owns the tree's shape and construction and its faithfulness to the frontend's
+  elaboration; that doc relies on this faithfulness to make cross-unit resolution total.
 
 ## Forbidden Shapes
 

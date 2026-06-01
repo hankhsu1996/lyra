@@ -17,6 +17,7 @@ references another; ownership is which entity holds a given piece of state.
 
 - The specific id kinds per IR layer (see `hir.md`, `mir.md`).
 - The hierarchy and generate ownership model (see `hierarchy_and_generate.md`).
+- How a cross-unit reference is resolved to a concrete target (see `reference_resolution.md`).
 
 ## Core Invariants
 
