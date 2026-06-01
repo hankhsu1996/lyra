@@ -50,3 +50,6 @@ scratch/
 
 # Node.js (Prettier tooling). package-lock.json is committed for reproducibility.
 node_modules/
+
+# Claude Code runtime artifacts
+.claude/scheduled_tasks.lock

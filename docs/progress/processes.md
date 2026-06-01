@@ -12,11 +12,13 @@ machinery owned by other workstreams; see [Blocked](#blocked).
 
 ## Blocked
 
-| Item | Blocked on                                                                                                       |
-| ---- | ---------------------------------------------------------------------------------------------------------------- |
-| T5   | Bit-select / range-select edge triggers; needs the selector machinery from `operators.md` W4 / W5.               |
-| P8   | `fork` / `join_*`. Needs concurrent-process scheduling primitives; out of scope until single-process is settled. |
-| P12  | Process generate; rides on the existing P1..P11 surface, mostly frontend elaboration.                            |
+| Item   | Blocked on                                                                                                                                                            |
+| ------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| P8     | `fork` / `join_*`. Needs concurrent-process scheduling primitives; out of scope until single-process work is settled.                                                 |
+| P12    | Process generate; rides on the existing P1..P11 surface, mostly frontend elaboration.                                                                                 |
+| T2..T5 | Compound event expressions (concatenation, arithmetic, dynamic index): needs the snapshot + re-eval wrapper at HIR -> MIR plus a runtime edge-classifier helper.      |
+| T2..T5 | Ascending / negative-base packed ranges (`logic [0:7]`, `logic [-1:6]`): runtime `PackedArray::ElementAt` does not yet honor LRM direction translation on write side. |
+| T2..T5 | Multi-dim packed events (`logic [1:0][7:0] bus; @(bus[1])`): emit of the dim-stack initializer for multi-dim packed variables is broken.                              |
 
 ## Sub-Steps
 
@@ -49,16 +51,20 @@ machinery owned by other workstreams; see [Blocked](#blocked).
 
 - [x] T1 -- Delay control `#N` (LRM 9.4.1). Engine schedules the suspended coroutine onto the
       delayed queue.
-- [x] T2 -- Event control `@(x)` any-change. Compares old vs new on each write and notifies on any
-      inequality.
-- [x] T3 -- Event control edge polarity `@(posedge clk)` / `@(negedge clk)` / `@(edge clk)` (LRM
-      Table 9-2). Full 4-state transition table: posedge fires on 0 -> {1, x, z} and {x, z} -> 1;
-      negedge fires on 1 -> {0, x, z} and {x, z} -> 0; x <-> z is a change-only event. `edge`
-      keyword matches either direction.
-- [x] T4 -- Event control event lists `@(posedge clk or negedge rst_n)` and comma form. The runtime
-      races the triggers and re-arms whichever signal won the wake-up.
-- [ ] T5 -- Edge trigger on bit-select / range-select (`@(posedge bus[2])`). **Depends on**
-      `operators.md` W4 / W5.
+- [x] T2..T5 -- Event control `@(...)` across all `expression`, `posedge`, `negedge`, `edge` forms,
+      including bit-select (`bus[N]`), range-select (`bus[hi:lo]`), and indexed part-select
+      (`bus[base +: w]` / `bus[base -: w]`) on packed types, plus event-list (`or` / `,`) of any of
+      the above. The pipeline routes every value-change wait (always_comb body, `@*`, `wait (cond)`,
+      `@(...)`) through `mir::SensitivityWaitStmt` carrying per-leaf `(var, bit_range, edge_kind)`
+      records; slang's flow analysis computes the leaves and the AST -> HIR lowering attaches the SV
+      edge identifier (with LRM 9.4.2 LSB-reduce for edge-qualified single-leaf expressions).
+      Runtime per-leaf classification samples each waiter's projection on every `WriteVar`, so
+      changes outside the projection do not cause spurious wakes (LRM 9.4.2 "no change in result"
+      rule). `ClassifyEdge` covers the LRM Table 9-2 4-state transition matrix; `kBothEdges` matches
+      either posedge or negedge. Covers `processes/event_triggers` and
+      `processes/edge_trigger_bit_select` for the packed-vector, constant-selector, single-leaf
+      subset. Compound expressions (concatenation, arithmetic, dynamic index) and base ranges with
+      ascending or negative bounds remain rejected -- see Blocked.
 
 ### Synchronisation primitives
 

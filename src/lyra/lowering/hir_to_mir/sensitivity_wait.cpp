@@ -3,11 +3,30 @@
 #include <utility>
 #include <vector>
 
+#include "lyra/base/internal_error.hpp"
 #include "lyra/hir/stmt.hpp"
 #include "lyra/lowering/hir_to_mir/state.hpp"
 #include "lyra/mir/stmt.hpp"
 
 namespace lyra::lowering::hir_to_mir {
+
+namespace {
+
+auto LowerEventEdge(hir::EventEdge edge) -> mir::EventEdge {
+  switch (edge) {
+    case hir::EventEdge::kAnyChange:
+      return mir::EventEdge::kAnyChange;
+    case hir::EventEdge::kPosedge:
+      return mir::EventEdge::kPosedge;
+    case hir::EventEdge::kNegedge:
+      return mir::EventEdge::kNegedge;
+    case hir::EventEdge::kBothEdges:
+      return mir::EventEdge::kBothEdges;
+  }
+  throw InternalError("LowerEventEdge: unknown hir::EventEdge value");
+}
+
+}  // namespace
 
 auto BuildSensitivityWaitStmt(
     const StructuralScopeLoweringState& scope_state,
@@ -19,7 +38,8 @@ auto BuildSensitivityWaitStmt(
         mir::SensitivityRead{
             .ref = scope_state.TranslateStructuralVar(
                 entry.ref.hops, entry.ref.var),
-            .bit_range = entry.bit_range});
+            .bit_range = entry.bit_range,
+            .edge_kind = LowerEventEdge(entry.edge_kind)});
   }
   return mir::Stmt{
       .label = std::nullopt,

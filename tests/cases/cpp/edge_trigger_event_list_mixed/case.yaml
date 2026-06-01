@@ -1,0 +1,11 @@
+id: cpp.edge_trigger_event_list_mixed
+tags: [cpp_run]
+input:
+  command: [run, cpp]
+  project: false
+  top: Top
+  files: [main.sv]
+expect:
+  exit: 0
+  variables:
+    count: 2

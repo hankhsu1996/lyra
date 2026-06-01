@@ -80,8 +80,15 @@ class Observable {
   auto operator=(Observable&&) -> Observable& = delete;
   ~Observable() = default;
 
-  void Subscribe(RuntimeProcess& p, Edge edge) {
-    waiters_.push_back(Waiter{.process = &p, .edge = edge});
+  void Subscribe(
+      RuntimeProcess& p, Edge edge, std::uint64_t lsb_bit_offset,
+      std::uint64_t bit_width) {
+    waiters_.push_back(
+        Waiter{
+            .process = &p,
+            .edge = edge,
+            .lsb_bit_offset = lsb_bit_offset,
+            .bit_width = bit_width});
   }
 
   // Idempotent: a no-op if `p` is not currently subscribed. Used to clean up
@@ -90,13 +97,15 @@ class Observable {
     std::erase_if(waiters_, [&](const Waiter& w) { return w.process == &p; });
   }
 
-  // Removes and returns the processes whose subscribed Edge matches the
-  // transition that just occurred. Non-matching waiters stay subscribed.
-  [[nodiscard]] auto TakeMatchingWaiters(EdgeTransition transition)
+  // Removes and returns the processes whose per-waiter classifier returns
+  // true. Non-matching waiters stay subscribed. The classifier receives each
+  // waiter's projection and edge and decides based on context the caller
+  // (WriteVar) captured (old/new value).
+  [[nodiscard]] auto TakeMatchingWaiters(const EdgeClassifier& classify)
       -> std::vector<RuntimeProcess*> {
     std::vector<RuntimeProcess*> out;
     auto keep_begin = std::ranges::partition(waiters_, [&](const Waiter& w) {
-                        return !EdgeMatches(w.edge, transition);
+                        return !classify(w.lsb_bit_offset, w.bit_width, w.edge);
                       }).begin();
     out.reserve(static_cast<std::size_t>(waiters_.end() - keep_begin));
     for (auto it = keep_begin; it != waiters_.end(); ++it) {
@@ -110,6 +119,8 @@ class Observable {
   struct Waiter {
     RuntimeProcess* process;
     Edge edge;
+    std::uint64_t lsb_bit_offset;
+    std::uint64_t bit_width;
   };
   std::vector<Waiter> waiters_;
 };
@@ -198,7 +209,8 @@ class EventControlAwaitable {
             "EventControlAwaitable::await_suspend: observable pointer is "
             "null");
       }
-      trigger.observable->Subscribe(process, trigger.edge);
+      trigger.observable->Subscribe(
+          process, trigger.edge, trigger.lsb_bit_offset, trigger.bit_width);
       subs.push_back(trigger.observable);
     }
     process.SetPendingValueChangeSubscriptions(std::move(subs));
@@ -216,35 +228,58 @@ inline auto WaitAny(std::initializer_list<Trigger> triggers)
   return EventControlAwaitable{std::vector<Trigger>(triggers)};
 }
 
+// Builds the per-leaf classifier that the Observable invokes per waiter.
+// For any-change waiters: compares the projected slice in `old` and `new` (or
+// fires unconditionally when the waiter is whole-var, `bit_width == 0`).
+// For edge waiters: classifies the transition at `lsb_bit_offset` (LRM Table
+// 9-2 via `ClassifyEdge`), then matches against the subscribed edge.
+inline auto MakePackedArrayEdgeClassifier(
+    const value::PackedArray& old_val, const value::PackedArray& new_val)
+    -> EdgeClassifier {
+  return [&old_val, &new_val](
+             std::uint64_t lsb, std::uint64_t width, Edge edge) -> bool {
+    if (edge == Edge::kAnyChange) {
+      if (width == 0U) {
+        return true;
+      }
+      const auto lsb_arg = value::PackedArray::FromInt(
+          static_cast<std::int64_t>(lsb), 64U, false, false);
+      const auto old_slice =
+          old_val.ExtractBits(lsb_arg, static_cast<std::uint32_t>(width));
+      const auto new_slice =
+          new_val.ExtractBits(lsb_arg, static_cast<std::uint32_t>(width));
+      return !old_slice.IsCaseEqual(new_slice);
+    }
+    const value::FourStateBit old_bit =
+        (width == 0U) ? old_val.Lsb() : old_val.GetBit(lsb);
+    const value::FourStateBit new_bit =
+        (width == 0U) ? new_val.Lsb() : new_val.GetBit(lsb);
+    return EdgeMatches(edge, ClassifyEdge(old_bit, new_bit));
+  };
+}
+
 template <CaseEqualComparable T>
 inline void WriteVar(RuntimeServices& services, Var<T>& var, const T& new_val) {
-  const value::FourStateBit old_lsb = var.Get().Lsb();
-  const value::FourStateBit new_lsb = new_val.Lsb();
   if (var.AssignIfChanged(new_val)) {
-    services.TriggerValueChange(var, ClassifyEdge(old_lsb, new_lsb));
+    services.TriggerValueChange(
+        var, [](std::uint64_t, std::uint64_t, Edge edge) -> bool {
+          return edge == Edge::kAnyChange;
+        });
   }
 }
 
-// Non-template overload for the common Var<PackedArray> case. Template
-// deduction would otherwise miss `PackedArrayRef` arguments (the explicit
-// conversion does not participate in implicit conversion sequences).
+// Non-template overload for the common Var<PackedArray> case. Required
+// because template deduction would otherwise fail when emit passes a freshly
+// cloned `PackedArray` rvalue (the template `T` cannot be deduced from
+// `Var<T>` and `PackedArray` together).
 inline void WriteVar(
     RuntimeServices& services, Var<value::PackedArray>& var,
     const value::PackedArray& new_val) {
-  const value::FourStateBit old_lsb = var.Get().Lsb();
-  const value::FourStateBit new_lsb = new_val.Lsb();
+  const value::PackedArray old_val = var.Get();
   if (var.AssignIfChanged(new_val)) {
-    services.TriggerValueChange(var, ClassifyEdge(old_lsb, new_lsb));
+    services.TriggerValueChange(
+        var, MakePackedArrayEdgeClassifier(old_val, new_val));
   }
-}
-
-// Emit may produce a `PackedArrayRef` rvalue when the source expression is a
-// chain over a mutable PackedArray. Materialize via the explicit conversion
-// (direct-init) before forwarding to the value overload.
-inline void WriteVar(
-    RuntimeServices& services, Var<value::PackedArray>& var,
-    const value::PackedArrayRef& new_val) {
-  WriteVar(services, var, value::PackedArray(new_val));
 }
 
 // RAII handle that owns a snapshot of `var.Get()` for the lifetime of one

@@ -150,9 +150,12 @@ synchronisation primitives (named events, `wait`, `fork`/`join_*`).
 
 - [x] processes/continuous_assign -- `processes.md` P7.
 - [x] processes/delay -- `processes.md` T1.
-- [ ] processes/edge_trigger_bit_select -- `processes.md` T3 (whole-variable subset, done) and T5
-      (selected subset, blocked).
-- [ ] processes/edge_trigger_dynamic -- `processes.md` T5.
+- [ ] processes/edge_trigger_bit_select -- `processes.md` T2..T5 cover constant bit-select /
+      range-select / indexed part-select on packed 1D types and event lists thereof. Multi-dim
+      packed, ascending / negative-base ranges, struct fields and unpacked elements are blocked on
+      separate workstreams (see `processes.md` Blocked).
+- [ ] processes/edge_trigger_dynamic -- blocked on compound-event snapshot + re-eval (see
+      `processes.md` Blocked).
 - [x] processes/event_triggers -- `processes.md` T2, T3, T4 cover the event-control surface;
       remaining named-event trigger lives in P9.
 - [x] processes/final_block -- `processes.md` P2.

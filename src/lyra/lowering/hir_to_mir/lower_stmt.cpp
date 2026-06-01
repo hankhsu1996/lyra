@@ -71,78 +71,11 @@ auto ResolveDelayDuration(
       diag::UnsupportedCategory::kFeature);
 }
 
-auto LowerTimingControl(
-    const UnitLoweringState& unit_state,
-    const StructuralScopeLoweringState& scope_state,
-    const ProcessLoweringState& proc_state,
-    ProceduralScopeLoweringState& proc_scope_state,
-    const hir::Process& hir_proc, const hir::TimingControl& tc)
-    -> diag::Result<mir::TimingControl> {
-  return std::visit(
-      Overloaded{
-          [&](const hir::DelayControl& d) -> diag::Result<mir::TimingControl> {
-            const DelayTimeResolver resolver{proc_state.Resolution()};
-            auto ticks_or = ResolveDelayDuration(
-                resolver, hir_proc.exprs.at(d.duration.value));
-            if (!ticks_or) {
-              return std::unexpected(std::move(ticks_or.error()));
-            }
-            return mir::TimingControl{mir::DelayControl{.duration = *ticks_or}};
-          },
-          [&](const hir::EventControl& e) -> diag::Result<mir::TimingControl> {
-            std::vector<mir::EventTrigger> triggers;
-            triggers.reserve(e.triggers.size());
-            for (const auto& t : e.triggers) {
-              auto signal_or = LowerExpr(
-                  unit_state, scope_state, proc_state, proc_scope_state,
-                  hir_proc, hir_proc.exprs.at(t.signal.value));
-              if (!signal_or) {
-                return std::unexpected(std::move(signal_or.error()));
-              }
-              const mir::ExprId signal_id =
-                  proc_scope_state.AddExpr(*std::move(signal_or));
-              mir::EventEdge edge = mir::EventEdge::kAnyChange;
-              switch (t.edge) {
-                case hir::EventEdge::kAnyChange:
-                  edge = mir::EventEdge::kAnyChange;
-                  break;
-                case hir::EventEdge::kPosedge:
-                  edge = mir::EventEdge::kPosedge;
-                  break;
-                case hir::EventEdge::kNegedge:
-                  edge = mir::EventEdge::kNegedge;
-                  break;
-                case hir::EventEdge::kBothEdges:
-                  edge = mir::EventEdge::kBothEdges;
-                  break;
-              }
-              triggers.push_back(
-                  mir::EventTrigger{.signal = signal_id, .edge = edge});
-            }
-            return mir::TimingControl{
-                mir::EventControl{.triggers = std::move(triggers)}};
-          },
-          [](const hir::ImplicitEventControl&)
-              -> diag::Result<mir::TimingControl> {
-            // ImplicitEventControl never reaches the MIR TimingControl level:
-            // LowerTimedStmt intercepts it and expands the TimedStmt into a
-            // mir::Block { SensitivityWaitStmt; body; }.
-            throw InternalError(
-                "LowerTimingControl: ImplicitEventControl must be expanded by "
-                "LowerTimedStmt, not lowered as a MIR timing control");
-          },
-          [](const hir::NamedEventControl&)
-              -> diag::Result<mir::TimingControl> {
-            // NamedEventControl never reaches the MIR TimingControl level:
-            // LowerTimedStmt intercepts it and expands the TimedStmt into a
-            // mir::ExprStmt(method_call(event, Await)).
-            throw InternalError(
-                "LowerTimingControl: NamedEventControl must be expanded by "
-                "LowerTimedStmt into a method call, not lowered as a MIR "
-                "timing control");
-          },
-      },
-      tc);
+auto ResolveDelayTicks(
+    const ProcessLoweringState& proc_state, const hir::Process& hir_proc,
+    const hir::DelayControl& d) -> diag::Result<SimDuration> {
+  const DelayTimeResolver resolver{proc_state.Resolution()};
+  return ResolveDelayDuration(resolver, hir_proc.exprs.at(d.duration.value));
 }
 
 auto LowerEmptyStmt(const hir::Stmt& stmt) -> diag::Result<mir::Stmt> {
@@ -1246,6 +1179,75 @@ auto LowerNamedEventTimedStmt(
       .child_procedural_scopes = std::move(child_scopes)};
 }
 
+// LRM 9.4.2 `@(...) body` (explicit event control). Each `hir::EventTrigger`
+// carries its event_expression and the DFA-computed leaf set. For the
+// single-leaf case ("the expression is a simple selector chain on a packed
+// var"), the leaf already carries the right edge polarity (or LSB-reduced
+// for edge-qualified) and we lower directly to:
+//
+//   child_scope {
+//     SensitivityWaitStmt(union of all triggers' single leaves)
+//     body
+//   }
+//
+// Multi-leaf event expressions (concatenation, arithmetic, cross-var, dynamic
+// index) require a snapshot + re-eval wrapper to enforce LRM 9.4.2 "fire only
+// when the expression's result changes" -- not yet implemented; reject with
+// diagnostic.
+auto LowerEventTimedStmt(
+    const UnitLoweringState& unit_state,
+    const StructuralScopeLoweringState& scope_state,
+    ProcessLoweringState& proc_state, const hir::Process& hir_proc,
+    const hir::Stmt& stmt, const hir::TimedStmt& t, const hir::EventControl& ec)
+    -> diag::Result<mir::Stmt> {
+  std::vector<hir::SensitivityEntry> union_reads;
+  union_reads.reserve(ec.triggers.size());
+  for (const auto& trigger : ec.triggers) {
+    // Compound (multi-leaf) requires a snapshot + re-eval wrapper to enforce
+    // LRM 9.4.2 "fire only when the expression's result changes" -- not yet
+    // implemented; reject. An empty leaf set falls through harmlessly (loop
+    // iterates zero times, mirroring SensitivityWaitStmt's "no reads = wait
+    // forever" convention).
+    if (trigger.sensitivity_list.size() > 1) {
+      return diag::Unsupported(
+          stmt.span, diag::DiagCode::kUnsupportedEventTriggerForm,
+          "compound event expressions (concatenation, arithmetic, dynamic "
+          "index) are not yet supported",
+          diag::UnsupportedCategory::kFeature);
+    }
+    for (auto leaf : trigger.sensitivity_list) {
+      // LRM 9.4.2 LSB-reduce: an edge event monitors only the LSB of the
+      // expression. The leaf's `bit_range` follows slang's `(lo, hi)`;
+      // collapsing to `(lo, lo)` keeps the LSB only.
+      if (leaf.edge_kind != hir::EventEdge::kAnyChange) {
+        leaf.bit_range = {leaf.bit_range.first, leaf.bit_range.first};
+      }
+      union_reads.push_back(leaf);
+    }
+  }
+
+  ProceduralScopeLoweringState child_proc_scope_state;
+  ProceduralDepthGuard depth_guard{proc_state};
+  child_proc_scope_state.AddRootStmt(child_proc_scope_state.AddStmt(
+      BuildSensitivityWaitStmt(scope_state, union_reads)));
+  const hir::Stmt& inner_hir = hir_proc.stmts.at(t.stmt.value);
+  auto inner_or = LowerStmt(
+      unit_state, scope_state, proc_state, child_proc_scope_state, hir_proc,
+      inner_hir);
+  if (!inner_or) {
+    return std::unexpected(std::move(inner_or.error()));
+  }
+  child_proc_scope_state.AddRootStmt(
+      child_proc_scope_state.AddStmt(*std::move(inner_or)));
+  std::vector<mir::ProceduralScope> child_scopes;
+  const mir::ProceduralScopeId scope_id =
+      AddChildProceduralScope(child_scopes, child_proc_scope_state.Finish());
+  return mir::Stmt{
+      .label = stmt.label,
+      .data = mir::BlockStmt{.scope = scope_id},
+      .child_procedural_scopes = std::move(child_scopes)};
+}
+
 // LRM 9.4.2.2 `@* body` expands to:
 //
 //   child_scope {
@@ -1351,13 +1353,56 @@ auto LowerWaitStmt(
       .child_procedural_scopes = std::move(outer_child_scopes)};
 }
 
+// LRM 9.4.1 `#N body` expands to:
+//
+//   child_scope {
+//     DelayStmt(ticks)
+//     body
+//   }
+//
+// Parallel to the SensitivityWaitStmt / NamedEvent expansions, except the
+// suspension is anchored to simulation time rather than a value-change or
+// named-event subscription.
+auto LowerDelayTimedStmt(
+    const UnitLoweringState& unit_state,
+    const StructuralScopeLoweringState& scope_state,
+    ProcessLoweringState& proc_state, const hir::Process& hir_proc,
+    const hir::Stmt& stmt, const hir::TimedStmt& t, const hir::DelayControl& d)
+    -> diag::Result<mir::Stmt> {
+  auto ticks_or = ResolveDelayTicks(proc_state, hir_proc, d);
+  if (!ticks_or) {
+    return std::unexpected(std::move(ticks_or.error()));
+  }
+  ProceduralScopeLoweringState child_proc_scope_state;
+  ProceduralDepthGuard depth_guard{proc_state};
+  child_proc_scope_state.AddRootStmt(child_proc_scope_state.AddStmt(
+      mir::Stmt{
+          .label = std::nullopt,
+          .data = mir::DelayStmt{.duration = *ticks_or},
+          .child_procedural_scopes = {}}));
+  const hir::Stmt& inner_hir = hir_proc.stmts.at(t.stmt.value);
+  auto inner_or = LowerStmt(
+      unit_state, scope_state, proc_state, child_proc_scope_state, hir_proc,
+      inner_hir);
+  if (!inner_or) {
+    return std::unexpected(std::move(inner_or.error()));
+  }
+  child_proc_scope_state.AddRootStmt(
+      child_proc_scope_state.AddStmt(*std::move(inner_or)));
+  std::vector<mir::ProceduralScope> child_scopes;
+  const mir::ProceduralScopeId scope_id =
+      AddChildProceduralScope(child_scopes, child_proc_scope_state.Finish());
+  return mir::Stmt{
+      .label = stmt.label,
+      .data = mir::BlockStmt{.scope = scope_id},
+      .child_procedural_scopes = std::move(child_scopes)};
+}
+
 auto LowerTimedStmt(
     const UnitLoweringState& unit_state,
     const StructuralScopeLoweringState& scope_state,
-    ProcessLoweringState& proc_state,
-    ProceduralScopeLoweringState& proc_scope_state,
-    const hir::Process& hir_proc, const hir::Stmt& stmt,
-    const hir::TimedStmt& t) -> diag::Result<mir::Stmt> {
+    ProcessLoweringState& proc_state, const hir::Process& hir_proc,
+    const hir::Stmt& stmt, const hir::TimedStmt& t) -> diag::Result<mir::Stmt> {
   if (const auto* ie = std::get_if<hir::ImplicitEventControl>(&t.timing)) {
     return LowerImplicitEventTimedStmt(
         unit_state, scope_state, proc_state, hir_proc, stmt, t, *ie);
@@ -1366,24 +1411,16 @@ auto LowerTimedStmt(
     return LowerNamedEventTimedStmt(
         unit_state, scope_state, proc_state, hir_proc, stmt, t, *nec);
   }
-  auto timing_or = LowerTimingControl(
-      unit_state, scope_state, proc_state, proc_scope_state, hir_proc,
-      t.timing);
-  if (!timing_or) {
-    return std::unexpected(std::move(timing_or.error()));
+  if (const auto* ec = std::get_if<hir::EventControl>(&t.timing)) {
+    return LowerEventTimedStmt(
+        unit_state, scope_state, proc_state, hir_proc, stmt, t, *ec);
   }
-  const hir::Stmt& inner_hir = hir_proc.stmts.at(t.stmt.value);
-  auto inner_or = LowerStmt(
-      unit_state, scope_state, proc_state, proc_scope_state, hir_proc,
-      inner_hir);
-  if (!inner_or) {
-    return std::unexpected(std::move(inner_or.error()));
+  const auto* d = std::get_if<hir::DelayControl>(&t.timing);
+  if (d == nullptr) {
+    throw InternalError("LowerTimedStmt: unknown hir::TimingControl variant");
   }
-  const mir::StmtId inner_id = proc_scope_state.AddStmt(*std::move(inner_or));
-  return mir::Stmt{
-      .label = stmt.label,
-      .data = mir::TimedStmt{.timing = *std::move(timing_or), .stmt = inner_id},
-      .child_procedural_scopes = {}};
+  return LowerDelayTimedStmt(
+      unit_state, scope_state, proc_state, hir_proc, stmt, t, *d);
 }
 
 }  // namespace
@@ -1470,8 +1507,7 @@ auto LowerStmt(
           [&](const hir::ContinueStmt&) { return LowerContinueStmt(stmt); },
           [&](const hir::TimedStmt& t) {
             return LowerTimedStmt(
-                unit_state, scope_state, proc_state, proc_scope_state, hir_proc,
-                stmt, t);
+                unit_state, scope_state, proc_state, hir_proc, stmt, t);
           },
           [&](const hir::EventTriggerStmt& et) {
             return LowerEventTriggerStmt(

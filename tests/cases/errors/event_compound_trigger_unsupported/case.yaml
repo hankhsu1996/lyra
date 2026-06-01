@@ -1,0 +1,16 @@
+id: errors.event_compound_trigger_unsupported
+tags: [errors, diag]
+input:
+  command: [emit, cpp]
+  project: false
+  top: Top
+  files: [main.sv]
+  args: ["--no-color"]
+expect:
+  exit: 1
+  stderr:
+    contains:
+      - "unsupported:"
+      - "compound event expressions"
+    not_contains:
+      - "internal error"

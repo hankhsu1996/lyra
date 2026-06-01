@@ -1,7 +1,7 @@
-id: errors.event_bit_select_unsupported
+id: errors.event_dynamic_index_unsupported
 tags: [errors, diag]
 input:
-  command: [dump, hir]
+  command: [emit, cpp]
   project: false
   top: Top
   files: [main.sv]
@@ -10,7 +10,7 @@ expect:
   exit: 1
   stderr:
     contains:
-      - "main.sv:4:"
       - "unsupported:"
+      - "compound event expressions"
     not_contains:
       - "internal error"
