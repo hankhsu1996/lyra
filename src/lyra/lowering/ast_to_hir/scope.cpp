@@ -8,6 +8,7 @@
 
 #include <slang/ast/Scope.h>
 #include <slang/ast/SemanticFacts.h>
+#include <slang/ast/Statement.h>
 #include <slang/ast/Symbol.h>
 #include <slang/ast/symbols/BlockSymbols.h>
 #include <slang/ast/symbols/SubroutineSymbols.h>
@@ -27,6 +28,7 @@
 #include "lyra/lowering/ast_to_hir/generate.hpp"
 #include "lyra/lowering/ast_to_hir/process.hpp"
 #include "lyra/lowering/ast_to_hir/state.hpp"
+#include "lyra/lowering/ast_to_hir/statement/lower.hpp"
 #include "lyra/lowering/ast_to_hir/time_resolution.hpp"
 
 namespace lyra::lowering::ast_to_hir {
@@ -107,20 +109,63 @@ auto LowerVariableMemberInto(
   return {};
 }
 
+auto FromSlangArgumentDirection(slang::ast::ArgumentDirection dir)
+    -> hir::ParamDirection {
+  switch (dir) {
+    case slang::ast::ArgumentDirection::In:
+      return hir::ParamDirection::kInput;
+    case slang::ast::ArgumentDirection::Out:
+      return hir::ParamDirection::kOutput;
+    case slang::ast::ArgumentDirection::InOut:
+      return hir::ParamDirection::kInOut;
+    case slang::ast::ArgumentDirection::Ref:
+      return hir::ParamDirection::kRef;
+  }
+  throw InternalError("FromSlangArgumentDirection: unknown ArgumentDirection");
+}
+
 auto LowerSubroutineMemberInto(
     const UnitLoweringFacts& unit_facts, ScopeLoweringState& scope_state,
-    const slang::ast::SubroutineSymbol& sym) -> diag::Result<void> {
+    ScopeStack& stack, const slang::ast::SubroutineSymbol& sym)
+    -> diag::Result<void> {
   const auto& mapper = unit_facts.SourceMapper();
-  auto return_type_id_or = scope_state.UnitState().GetTypeId(
+  auto& unit_state = scope_state.UnitState();
+  auto return_type_id_or = unit_state.GetTypeId(
       sym.getReturnType(), mapper.PointSpanOf(sym.location));
   if (!return_type_id_or) {
     return std::unexpected(std::move(return_type_id_or.error()));
   }
+
+  ProcessLoweringState sub_state(sym);
+
+  std::vector<hir::SubroutineParam> params;
+  params.reserve(sym.getArguments().size());
+  for (const auto* formal : sym.getArguments()) {
+    auto formal_type_or = unit_state.GetTypeId(
+        formal->getType(), mapper.PointSpanOf(formal->location));
+    if (!formal_type_or) {
+      return std::unexpected(std::move(formal_type_or.error()));
+    }
+    const hir::ProceduralVarId var =
+        sub_state.AddProceduralVar(*formal, *formal_type_or);
+    params.push_back(
+        hir::SubroutineParam{
+            .var = var,
+            .direction = FromSlangArgumentDirection(formal->direction)});
+  }
+
+  auto body_or =
+      LowerStatement(unit_facts, sub_state, scope_state, stack, sym.getBody());
+  if (!body_or) return std::unexpected(std::move(body_or.error()));
+  const hir::StmtId root = sub_state.AddStmt(*std::move(body_or));
+
   scope_state.AddStructuralSubroutine(
       sym, hir::StructuralSubroutineDecl{
                .name = std::string{sym.name},
                .kind = FromSlangSubroutineKind(sym.subroutineKind),
-               .result_type = *return_type_id_or});
+               .result_type = *return_type_id_or,
+               .params = std::move(params),
+               .body = sub_state.FinalizeBody(root)});
   return {};
 }
 
@@ -196,7 +241,8 @@ auto LowerScopeMemberInto(
           member.as<slang::ast::VariableSymbol>());
     case slang::ast::SymbolKind::Subroutine:
       return LowerSubroutineMemberInto(
-          unit_facts, scope_state, member.as<slang::ast::SubroutineSymbol>());
+          unit_facts, scope_state, stack,
+          member.as<slang::ast::SubroutineSymbol>());
     case slang::ast::SymbolKind::ProceduralBlock:
       return LowerProceduralBlockMemberInto(
           unit_facts, scope_state, stack,

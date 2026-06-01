@@ -106,7 +106,11 @@ auto LowerProcess(
   const auto span = mapper.PointSpanOf(proc.location);
   const auto kind = FromSlangProceduralBlockKind(proc.procedureKind);
 
-  auto out = proc_state.Finalize(kind, span, root_stmt_id);
+  hir::Process out{
+      .kind = kind,
+      .span = span,
+      .body = proc_state.FinalizeBody(root_stmt_id),
+      .implicit_sensitivity_list = {}};
   if (kind == hir::ProcessKind::kAlwaysComb ||
       kind == hir::ProcessKind::kAlwaysLatch) {
     // LRM 9.2.2.2.1: implicit sensitivity is a property of the always_comb /

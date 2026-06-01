@@ -751,7 +751,7 @@ class HirDumper {
     return std::format("type=Type[{}] {}", e.type.value, formatted);
   }
 
-  [[nodiscard]] auto FormatProcExpr(const Process& p, ExprId id) const
+  [[nodiscard]] auto FormatProcExpr(const ProceduralBody& p, ExprId id) const
       -> std::string {
     return FormatExpr(p.exprs.at(id.value));
   }
@@ -803,12 +803,7 @@ class HirDumper {
               "LoopVarDecl[{}] \"{}\" : Type[{}]", i, lv.name, lv.type.value));
     }
     for (std::size_t i = 0; i < s.structural_subroutines.size(); ++i) {
-      const auto& d = s.structural_subroutines[i];
-      Line(
-          std::format(
-              "StructuralSubroutine[{}] {} \"{}\" : Type[{}]", i,
-              d.kind == SubroutineKind::kTask ? "task" : "function", d.name,
-              d.result_type.value));
+      DumpStructuralSubroutine(i, s.structural_subroutines[i]);
     }
     if (!s.exprs.empty()) {
       Line("Exprs:");
@@ -829,6 +824,42 @@ class HirDumper {
     }
     Dedent();
     scope_stack_.pop_back();
+  }
+
+  void DumpStructuralSubroutine(
+      std::size_t index, const StructuralSubroutineDecl& d) {
+    Line(
+        std::format(
+            "StructuralSubroutine[{}] {} \"{}\" : Type[{}]", index,
+            d.kind == SubroutineKind::kTask ? "task" : "function", d.name,
+            d.result_type.value));
+    Indent();
+    for (std::size_t i = 0; i < d.params.size(); ++i) {
+      const auto& param = d.params[i];
+      Line(
+          std::format(
+              "Param[{}] {} var=ProceduralVar[{}]", i,
+              FormatParamDirection(param.direction), param.var.value));
+    }
+    DumpProceduralBody(d.body);
+    Dedent();
+  }
+
+  [[nodiscard]] static auto FormatParamDirection(ParamDirection dir)
+      -> std::string_view {
+    switch (dir) {
+      case ParamDirection::kInput:
+        return "input";
+      case ParamDirection::kOutput:
+        return "output";
+      case ParamDirection::kInOut:
+        return "inout";
+      case ParamDirection::kRef:
+        return "ref";
+      case ParamDirection::kConstRef:
+        return "const ref";
+    }
+    throw InternalError("FormatParamDirection: unknown hir::ParamDirection");
   }
 
   void DumpProcess(const Process& p) {
@@ -853,18 +884,6 @@ class HirDumper {
         break;
     }
     Indent();
-    if (!p.procedural_vars.empty()) {
-      Line("ProceduralVars:");
-      Indent();
-      for (std::size_t i = 0; i < p.procedural_vars.size(); ++i) {
-        const auto& lv = p.procedural_vars[i];
-        Line(
-            std::format(
-                "ProceduralVar[{}] \"{}\" : Type[{}]", i, lv.name,
-                lv.type.value));
-      }
-      Dedent();
-    }
     if (!p.implicit_sensitivity_list.empty()) {
       Line("ImplicitSensitivityList:");
       Indent();
@@ -877,16 +896,32 @@ class HirDumper {
       }
       Dedent();
     }
-    if (!p.exprs.empty()) {
-      Line("Exprs:");
+    DumpProceduralBody(p.body);
+    Dedent();
+  }
+
+  void DumpProceduralBody(const ProceduralBody& body) {
+    if (!body.procedural_vars.empty()) {
+      Line("ProceduralVars:");
       Indent();
-      for (std::size_t i = 0; i < p.exprs.size(); ++i) {
-        Line(std::format("Expr[{}] {}", i, FormatExpr(p.exprs[i])));
+      for (std::size_t i = 0; i < body.procedural_vars.size(); ++i) {
+        const auto& lv = body.procedural_vars[i];
+        Line(
+            std::format(
+                "ProceduralVar[{}] \"{}\" : Type[{}]", i, lv.name,
+                lv.type.value));
       }
       Dedent();
     }
-    DumpStmt(p, p.root_stmt);
-    Dedent();
+    if (!body.exprs.empty()) {
+      Line("Exprs:");
+      Indent();
+      for (std::size_t i = 0; i < body.exprs.size(); ++i) {
+        Line(std::format("Expr[{}] {}", i, FormatExpr(body.exprs[i])));
+      }
+      Dedent();
+    }
+    DumpStmt(body, body.root_stmt);
   }
 
   void DumpContinuousAssign(const ContinuousAssign& ca) {
@@ -910,7 +945,8 @@ class HirDumper {
     Dedent();
   }
 
-  void DumpVarDeclStmtNode(const Process& p, StmtId id, const VarDeclStmt& v) {
+  void DumpVarDeclStmtNode(
+      const ProceduralBody& p, StmtId id, const VarDeclStmt& v) {
     Line(
         std::format(
             "Stmt[{}] VarDeclStmt var=ProceduralVar[{}]", id.value,
@@ -924,7 +960,7 @@ class HirDumper {
     }
   }
 
-  void DumpExprStmtNode(const Process& p, StmtId id, const ExprStmt& e) {
+  void DumpExprStmtNode(const ProceduralBody& p, StmtId id, const ExprStmt& e) {
     Line(
         std::format("Stmt[{}] ExprStmt expr=Expr[{}]", id.value, e.expr.value));
     Indent();
@@ -932,7 +968,8 @@ class HirDumper {
     Dedent();
   }
 
-  void DumpBlockStmtNode(const Process& p, StmtId id, const BlockStmt& b) {
+  void DumpBlockStmtNode(
+      const ProceduralBody& p, StmtId id, const BlockStmt& b) {
     Line(
         std::format(
             "Stmt[{}] BlockStmt (count={})", id.value, b.statements.size()));
@@ -943,7 +980,7 @@ class HirDumper {
     Dedent();
   }
 
-  void DumpIfStmtNode(const Process& p, StmtId id, const IfStmt& i) {
+  void DumpIfStmtNode(const ProceduralBody& p, StmtId id, const IfStmt& i) {
     Line(
         std::format(
             "Stmt[{}] IfStmt{} cond=Expr[{}]", id.value,
@@ -965,7 +1002,7 @@ class HirDumper {
     Dedent();
   }
 
-  void DumpCaseStmtNode(const Process& p, StmtId id, const CaseStmt& c) {
+  void DumpCaseStmtNode(const ProceduralBody& p, StmtId id, const CaseStmt& c) {
     std::string_view kind_tag;
     switch (c.condition_kind) {
       case CaseCondition::kNormal:
@@ -1017,7 +1054,7 @@ class HirDumper {
   }
 
   void DumpCaseInsideStmtNode(
-      const Process& p, StmtId id, const CaseInsideStmt& c) {
+      const ProceduralBody& p, StmtId id, const CaseInsideStmt& c) {
     Line(
         std::format(
             "Stmt[{}] CaseInsideStmt{} cond=Expr[{}] (items={})", id.value,
@@ -1064,7 +1101,7 @@ class HirDumper {
     Dedent();
   }
 
-  void DumpForStmtNode(const Process& p, StmtId id, const ForStmt& f) {
+  void DumpForStmtNode(const ProceduralBody& p, StmtId id, const ForStmt& f) {
     Line(
         std::format(
             "Stmt[{}] ForStmt (init={}, step={})", id.value, f.init.size(),
@@ -1115,7 +1152,8 @@ class HirDumper {
     Dedent();
   }
 
-  void DumpWhileStmtNode(const Process& p, StmtId id, const WhileStmt& w) {
+  void DumpWhileStmtNode(
+      const ProceduralBody& p, StmtId id, const WhileStmt& w) {
     Line(
         std::format(
             "Stmt[{}] WhileStmt cond=Expr[{}]", id.value, w.condition.value));
@@ -1130,7 +1168,8 @@ class HirDumper {
     Dedent();
   }
 
-  void DumpRepeatStmtNode(const Process& p, StmtId id, const RepeatStmt& r) {
+  void DumpRepeatStmtNode(
+      const ProceduralBody& p, StmtId id, const RepeatStmt& r) {
     Line(
         std::format(
             "Stmt[{}] RepeatStmt count=Expr[{}]", id.value, r.count.value));
@@ -1143,7 +1182,8 @@ class HirDumper {
     Dedent();
   }
 
-  void DumpDoWhileStmtNode(const Process& p, StmtId id, const DoWhileStmt& d) {
+  void DumpDoWhileStmtNode(
+      const ProceduralBody& p, StmtId id, const DoWhileStmt& d) {
     Line(
         std::format(
             "Stmt[{}] DoWhileStmt cond=Expr[{}]", id.value, d.condition.value));
@@ -1158,7 +1198,8 @@ class HirDumper {
     Dedent();
   }
 
-  void DumpForeverStmtNode(const Process& p, StmtId id, const ForeverStmt& f) {
+  void DumpForeverStmtNode(
+      const ProceduralBody& p, StmtId id, const ForeverStmt& f) {
     Line(std::format("Stmt[{}] ForeverStmt", id.value));
     Indent();
     Line("body:");
@@ -1168,7 +1209,8 @@ class HirDumper {
     Dedent();
   }
 
-  void DumpTimedStmtNode(const Process& p, StmtId id, const TimedStmt& t) {
+  void DumpTimedStmtNode(
+      const ProceduralBody& p, StmtId id, const TimedStmt& t) {
     Line(std::format("Stmt[{}] TimedStmt", id.value));
     Indent();
     Line(std::format("timing: {}", FormatTimingControlHeader(t.timing)));
@@ -1194,7 +1236,7 @@ class HirDumper {
     Dedent();
   }
 
-  void DumpStmt(const Process& p, StmtId id) {
+  void DumpStmt(const ProceduralBody& p, StmtId id) {
     const auto& s = p.stmts.at(id.value);
     std::visit(
         Overloaded{
@@ -1217,6 +1259,22 @@ class HirDumper {
             },
             [&](const ContinueStmt&) {
               Line(std::format("Stmt[{}] ContinueStmt", id.value));
+            },
+            [&](const ReturnStmt& r) {
+              if (r.value.has_value()) {
+                Line(
+                    std::format(
+                        "Stmt[{}] ReturnStmt value=Expr[{}]", id.value,
+                        r.value->value));
+                Indent();
+                Line(
+                    std::format(
+                        "Expr[{}] {}", r.value->value,
+                        FormatProcExpr(p, *r.value)));
+                Dedent();
+              } else {
+                Line(std::format("Stmt[{}] ReturnStmt", id.value));
+              }
             },
             [&](const TimedStmt& t) { DumpTimedStmtNode(p, id, t); },
             [&](const EventTriggerStmt& et) {

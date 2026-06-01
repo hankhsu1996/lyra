@@ -295,6 +295,14 @@ auto RenderStmt(
           [&](const mir::ContinueStmt&) -> diag::Result<std::string> {
             return Indent(indent) + "continue;\n";
           },
+          [&](const mir::ReturnStmt& s) -> diag::Result<std::string> {
+            if (!s.value.has_value()) {
+              return Indent(indent) + "return;\n";
+            }
+            auto value_or = RenderExpr(ctx, ctx.Expr(*s.value));
+            if (!value_or) return std::unexpected(std::move(value_or.error()));
+            return Indent(indent) + "return " + *value_or + ";\n";
+          },
           [&](const mir::SensitivityWaitStmt& s) -> diag::Result<std::string> {
             return RenderSensitivityWaitStmt(ctx, s, indent);
           },

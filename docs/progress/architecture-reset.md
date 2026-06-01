@@ -80,13 +80,17 @@ Granular tracking lives in `integral.md` (integral / packed / wide_integral) and
 
 ### functions
 
-- [ ] functions/basic
-- [ ] functions/chandle
-- [ ] functions/container_outparams
-- [ ] functions/container_params
-- [ ] functions/nested_calls
-- [ ] functions/recursion
-- [ ] functions/string_return
+Tracked in `functions.md`, which scopes the full LRM 13 subroutine surface (functions and tasks),
+including features the archive does not exercise. The archive items below remain the high-level
+inventory; each is checked off when `functions.md` reproduces it.
+
+- [ ] functions/basic -- `functions.md` F1, F2, F5.
+- [ ] functions/chandle -- `functions.md` F9.
+- [ ] functions/container_outparams -- `functions.md` F4, F8.
+- [ ] functions/container_params -- `functions.md` F7, F8.
+- [x] functions/nested_calls -- `functions.md` F1.
+- [ ] functions/recursion -- `functions.md` F3.
+- [ ] functions/string_return -- `functions.md` F7.
 
 ### generate
 

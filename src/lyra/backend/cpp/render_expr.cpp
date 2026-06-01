@@ -794,11 +794,27 @@ auto RenderCallExpr(const RenderContext& ctx, const mir::CallExpr& call)
                 "in cpp emit",
                 diag::UnsupportedCategory::kFeature);
           },
-          [](const mir::StructuralSubroutineRef&) -> diag::Result<std::string> {
-            return diag::Unsupported(
-                diag::DiagCode::kCppEmitExpressionFormNotImplemented,
-                "user subroutine call is not yet implemented in cpp emit",
-                diag::UnsupportedCategory::kFeature);
+          [&](const mir::StructuralSubroutineRef& ref)
+              -> diag::Result<std::string> {
+            if (ref.hops.value != 0) {
+              return diag::Unsupported(
+                  diag::DiagCode::kCppEmitExpressionFormNotImplemented,
+                  "subroutine call across structural scopes is not yet "
+                  "implemented in cpp emit",
+                  diag::UnsupportedCategory::kFeature);
+            }
+            const auto& scope = ctx.StructuralScopeAtHops(
+                mir::StructuralHops{.value = ref.hops.value});
+            const std::string& name =
+                scope.GetStructuralSubroutine(ref.subroutine).name;
+            std::string args;
+            for (std::size_t i = 0; i < call.arguments.size(); ++i) {
+              auto arg_or = RenderExpr(ctx, ctx.Expr(call.arguments[i]));
+              if (!arg_or) return std::unexpected(std::move(arg_or.error()));
+              if (i != 0) args += ", ";
+              args += *arg_or;
+            }
+            return std::format("{}({})", name, args);
           },
           [&](const mir::BuiltinMethodCallee& b) -> diag::Result<std::string> {
             return std::visit(
