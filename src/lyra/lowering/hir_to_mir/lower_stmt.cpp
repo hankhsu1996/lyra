@@ -225,22 +225,6 @@ auto LowerDestructuringAssign(
           .data = mir::ExprStmt{.expr = temp_assign_id},
           .child_procedural_scopes = {}}));
 
-  const mir::TypeId int32 = unit_state.Builtins().int32;
-  auto make_int32_lit = [&](std::uint64_t v) -> mir::ExprId {
-    return wrapper_state.AddExpr(
-        mir::Expr{
-            .data =
-                mir::IntegerLiteral{
-                    .value =
-                        mir::IntegralConstant{
-                            .value_words = {v},
-                            .state_words = {},
-                            .width = 32,
-                            .signedness = mir::Signedness::kSigned,
-                            .state_kind = mir::IntegralStateKind::kTwoState}},
-            .type = int32});
-  };
-
   // MSB-first per LRM 11.4.12: operands[0] occupies the high bits of the
   // snapshot, operands.back() the low bits.
   std::uint64_t offset = total_width;
@@ -258,8 +242,10 @@ auto LowerDestructuringAssign(
     const mir::ExprId part_lhs_id =
         wrapper_state.AddExpr(*std::move(part_lhs_or));
 
-    const mir::ExprId base_index = make_int32_lit(offset);
-    const mir::ExprId width_lit = make_int32_lit(w);
+    const mir::ExprId base_index = wrapper_state.AddExpr(
+        unit_state.MakeInt32LiteralExpr(static_cast<std::int64_t>(offset)));
+    const mir::ExprId width_lit = wrapper_state.AddExpr(
+        unit_state.MakeInt32LiteralExpr(static_cast<std::int64_t>(w)));
     const mir::ExprId temp_ref = wrapper_state.AddExpr(
         mir::Expr{
             .data =
@@ -914,23 +900,10 @@ auto LowerRepeatStmt(
   const mir::ProceduralVarId idx_var = wrapper_state.AddProceduralVar(
       mir::ProceduralVarDecl{.name = "_lyra_repeat_index", .type = int_type});
 
-  auto make_int32_literal = [&](std::uint64_t v) -> mir::ExprId {
-    return wrapper_state.AddExpr(
-        mir::Expr{
-            .data =
-                mir::IntegerLiteral{
-                    .value =
-                        mir::IntegralConstant{
-                            .value_words = {v},
-                            .state_words = {},
-                            .width = 32,
-                            .signedness = mir::Signedness::kSigned,
-                            .state_kind = mir::IntegralStateKind::kTwoState}},
-            .type = int_type});
-  };
-
-  const mir::ExprId zero_id = make_int32_literal(0);
-  const mir::ExprId one_id = make_int32_literal(1);
+  const mir::ExprId zero_id =
+      wrapper_state.AddExpr(unit_state.MakeInt32LiteralExpr(0));
+  const mir::ExprId one_id =
+      wrapper_state.AddExpr(unit_state.MakeInt32LiteralExpr(1));
 
   const mir::ExprId idx_ref_cond = wrapper_state.AddExpr(
       mir::Expr{

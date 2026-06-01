@@ -16,7 +16,6 @@
 #include "lyra/mir/binary_op.hpp"
 #include "lyra/mir/closure.hpp"
 #include "lyra/mir/expr_id.hpp"
-#include "lyra/mir/integral_constant.hpp"
 #include "lyra/mir/procedural_hops.hpp"
 #include "lyra/mir/procedural_var.hpp"
 #include "lyra/mir/runtime_diagnostic.hpp"
@@ -89,25 +88,6 @@ auto VerdictFor(hir::UniquePriorityCheck check, std::size_t branch_count)
           .suffix_text = ""};
   }
   throw InternalError("VerdictFor: unknown HIR UniquePriorityCheck");
-}
-
-auto AppendInt32Literal(
-    mir::ProceduralScope& scope, mir::TypeId int32_type, std::uint64_t value)
-    -> mir::ExprId {
-  const mir::ExprId id{static_cast<std::uint32_t>(scope.exprs.size())};
-  scope.exprs.push_back(
-      mir::Expr{
-          .data =
-              mir::IntegerLiteral{
-                  .value =
-                      mir::IntegralConstant{
-                          .value_words = {value},
-                          .state_words = {},
-                          .width = 32,
-                          .signedness = mir::Signedness::kSigned,
-                          .state_kind = mir::IntegralStateKind::kTwoState}},
-          .type = int32_type});
-  return id;
 }
 
 auto AppendExpr(mir::ProceduralScope& scope, mir::Expr expr) -> mir::ExprId {
@@ -207,6 +187,7 @@ auto BuildDiagnosticThenScope(
 }
 
 auto BuildUniqueCheckClosure(
+    const UnitLoweringState& unit_state,
     ProceduralScopeLoweringState& wrapper_state, mir::TypeId int32_type,
     mir::TypeId void_type, hir::UniquePriorityCheck check,
     const std::vector<mir::ProceduralVarId>& snapshot_vars)
@@ -251,7 +232,8 @@ auto BuildUniqueCheckClosure(
   body.vars.push_back(
       mir::ProceduralVarDecl{.name = "_lyra_unique_count", .type = int32_type});
 
-  const mir::ExprId zero_init_id = AppendInt32Literal(body, int32_type, 0);
+  const mir::ExprId zero_init_id =
+      AppendExpr(body, unit_state.MakeInt32LiteralExpr(0));
   const mir::StmtId count_decl_id = AppendStmt(
       body, mir::Stmt{
                 .label = std::nullopt,
@@ -266,8 +248,10 @@ auto BuildUniqueCheckClosure(
   body.root_stmts.push_back(count_decl_id);
 
   for (const mir::ExprId bit_read : inner_reads) {
-    const mir::ExprId one_lit = AppendInt32Literal(body, int32_type, 1);
-    const mir::ExprId zero_lit = AppendInt32Literal(body, int32_type, 0);
+    const mir::ExprId one_lit =
+        AppendExpr(body, unit_state.MakeInt32LiteralExpr(1));
+    const mir::ExprId zero_lit =
+        AppendExpr(body, unit_state.MakeInt32LiteralExpr(0));
     const mir::ExprId cond_value = AppendExpr(
         body, mir::Expr{
                   .data =
@@ -320,8 +304,9 @@ auto BuildUniqueCheckClosure(
               mir::ProceduralVarRef{
                   .hops = mir::ProceduralHops{.value = 0}, .var = count_var},
           .type = int32_type});
-  const mir::ExprId expected_lit =
-      AppendInt32Literal(body, int32_type, verdict.expected);
+  const mir::ExprId expected_lit = AppendExpr(
+      body, unit_state.MakeInt32LiteralExpr(
+                static_cast<std::int64_t>(verdict.expected)));
   const mir::ExprId predicate_id = AppendExpr(
       body, mir::Expr{
                 .data =
@@ -374,7 +359,7 @@ auto BuildDeferredCheckCascade(
   }
 
   mir::ClosureExpr closure = BuildUniqueCheckClosure(
-      wrapper_state, int32_type, void_type, check, snapshot_vars);
+      unit_state, wrapper_state, int32_type, void_type, check, snapshot_vars);
   const mir::ExprId closure_expr_id = wrapper_state.AddExpr(
       mir::Expr{.data = std::move(closure), .type = void_type});
 
