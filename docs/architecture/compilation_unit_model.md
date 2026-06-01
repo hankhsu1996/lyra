@@ -44,6 +44,8 @@ Define what a compilation unit is, what it owns, and the rules that make it self
   elaboration hints; it does not define what a compilation unit is or which compilation units exist.
 - The runtime constructor consumes compile-time artifacts and per-instance records to build the
   object graph.
+- `reference_resolution.md` defines how the cross-unit access named here is resolved: at
+  construction, once, into a stored direct reference.
 
 ## Forbidden Shapes
 

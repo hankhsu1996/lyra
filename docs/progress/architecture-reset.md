@@ -98,6 +98,9 @@ inventory; each is checked off when `functions.md` reproduces it.
 
 ### hierarchy
 
+Tracked in `hierarchy.md`. Covers `hierarchy/instantiation`, `hierarchy/ports`, and
+`hierarchy/refs`, plus the instantiation side of `generate`.
+
 - [ ] hierarchy/instantiation
 - [ ] hierarchy/ports
 - [ ] hierarchy/refs
