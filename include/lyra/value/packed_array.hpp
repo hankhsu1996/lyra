@@ -275,6 +275,26 @@ class PackedArray {
     return *this = ArithmeticShiftRight(rhs);
   }
 
+  // LRM 11.4.2 inc/dec on a 1D integer value: prefix mutates in place and
+  // returns the new value (standard C++ idiom); postfix snapshots the old
+  // value, mutates, returns the snapshot.
+  auto operator++() -> PackedArray& {
+    return *this = *this + FromInt(1, bit_width_, is_signed_, is_four_state_);
+  }
+  auto operator++(int) -> PackedArray {
+    PackedArray prior = *this;
+    ++*this;
+    return prior;
+  }
+  auto operator--() -> PackedArray& {
+    return *this = *this - FromInt(1, bit_width_, is_signed_, is_four_state_);
+  }
+  auto operator--(int) -> PackedArray {
+    PackedArray prior = *this;
+    --*this;
+    return prior;
+  }
+
   [[nodiscard]] auto operator==(const PackedArray& other) const -> PackedArray;
   [[nodiscard]] auto operator!=(const PackedArray& other) const -> PackedArray;
   // LRM 11.4.6: X/Z in `other` are wildcards; X/Z in `*this` are not.
@@ -458,6 +478,39 @@ class PackedArrayRef {
   }
   auto ArithmeticShiftRightAssign(const PackedArray& rhs) -> PackedArrayRef& {
     return *this = Clone().ArithmeticShiftRight(rhs);
+  }
+
+  // LRM 11.4.2 inc/dec on a partial-write proxy. Both forms return PackedArray
+  // by value -- prefix returns the new sub-slice, postfix returns the old --
+  // so an outer rvalue use (`b = ++var[3:0]`) consumes a materialized value
+  // instead of holding a transient proxy past the end of the full expression.
+  auto operator++() -> PackedArray {
+    PackedArray current(*this);
+    auto updated =
+        current + PackedArray::FromInt(
+                      1, bit_width_, current.IsSigned(), current.IsFourState());
+    *this = updated;
+    return updated;
+  }
+  auto operator++(int) -> PackedArray {
+    PackedArray prior(*this);
+    *this = prior + PackedArray::FromInt(
+                        1, bit_width_, prior.IsSigned(), prior.IsFourState());
+    return prior;
+  }
+  auto operator--() -> PackedArray {
+    PackedArray current(*this);
+    auto updated =
+        current - PackedArray::FromInt(
+                      1, bit_width_, current.IsSigned(), current.IsFourState());
+    *this = updated;
+    return updated;
+  }
+  auto operator--(int) -> PackedArray {
+    PackedArray prior(*this);
+    *this = prior - PackedArray::FromInt(
+                        1, bit_width_, prior.IsSigned(), prior.IsFourState());
+    return prior;
   }
 
   // Chain composition. Positions are in the current sub-view's outer-element

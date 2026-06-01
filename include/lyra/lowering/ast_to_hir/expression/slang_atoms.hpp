@@ -13,6 +13,7 @@
 #include "lyra/diag/source_span.hpp"
 #include "lyra/hir/binary_op.hpp"
 #include "lyra/hir/conversion.hpp"
+#include "lyra/hir/inc_dec_op.hpp"
 #include "lyra/hir/method.hpp"
 #include "lyra/hir/primary.hpp"
 #include "lyra/hir/unary_op.hpp"
@@ -34,6 +35,11 @@ auto LowerBinaryOp(slang::ast::BinaryOperator op) -> hir::BinaryOp;
 
 auto LowerUnaryOp(slang::ast::UnaryOperator op, diag::SourceSpan span)
     -> diag::Result<hir::UnaryOp>;
+
+// LRM 11.4.2: maps slang's inc/dec UnaryOperator values to hir::IncDecOp.
+// Throws InternalError if `op` is not one of the four inc/dec variants
+// (callers must dispatch on `slang::ast::OpInfo::isLValue(op)` first).
+auto LowerSlangIncDecOp(slang::ast::UnaryOperator op) -> hir::IncDecOp;
 
 auto LowerTimeUnit(slang::TimeUnit u) -> hir::TimeScale;
 

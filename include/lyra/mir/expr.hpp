@@ -11,6 +11,7 @@
 #include "lyra/mir/closure.hpp"
 #include "lyra/mir/conversion.hpp"
 #include "lyra/mir/expr_id.hpp"
+#include "lyra/mir/inc_dec_op.hpp"
 #include "lyra/mir/integral_constant.hpp"
 #include "lyra/mir/range_bounds.hpp"
 #include "lyra/mir/runtime_diagnostic.hpp"
@@ -75,6 +76,15 @@ struct AssignExpr {
   ExprId value;
 };
 
+// LRM 11.4.2: `++a`, `a++`, `--a`, `a--`. Mirrors hir::IncDecExpr. The
+// `target` ExprId points at an addressable expression (PrimaryExpr var ref,
+// ElementSelectExpr, or RangeSelectExpr); ConcatExpr-as-target is illegal
+// per slang.
+struct IncDecExpr {
+  IncDecOp op;
+  ExprId target;
+};
+
 struct SystemSubroutineCallee {
   support::SystemSubroutineId id;
 };
@@ -119,8 +129,9 @@ struct ReplicationExpr {
 using ExprData = std::variant<
     IntegerLiteral, StringLiteral, TimeLiteral, RealLiteral, StructuralParamRef,
     StructuralVarRef, ProceduralVarRef, UnaryExpr, BinaryExpr, ConditionalExpr,
-    AssignExpr, CallExpr, RuntimeCallExpr, ConversionExpr, ClosureExpr,
-    ElementSelectExpr, RangeSelectExpr, ConcatExpr, ReplicationExpr>;
+    AssignExpr, IncDecExpr, CallExpr, RuntimeCallExpr, ConversionExpr,
+    ClosureExpr, ElementSelectExpr, RangeSelectExpr, ConcatExpr,
+    ReplicationExpr>;
 
 struct Expr {
   ExprData data;
