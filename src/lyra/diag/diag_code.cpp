@@ -225,6 +225,12 @@ constexpr std::array kEntries{
             .category = std::nullopt,
             .name = "host_io_error"}},
     std::pair{
+        DiagCode::kHostBuildFailed,
+        DiagCodeInfo{
+            .kind = DiagKind::kHostError,
+            .category = std::nullopt,
+            .name = "host_build_failed"}},
+    std::pair{
         DiagCode::kHostExpectedSingleTopModule,
         DiagCodeInfo{
             .kind = DiagKind::kHostError,

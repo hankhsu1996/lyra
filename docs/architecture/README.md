@@ -46,6 +46,7 @@ If you are looking for a concept, this table points to the canonical doc.
 | LIR shape (CFG, basic blocks, storage)                                   | `lir.md`                    |
 | Stratified scheduler; regions; suspension protocol; NBA / closure submit | `scheduling.md`             |
 | Incremental compilation; query-based caching                             | `incremental_build.md`      |
+| Locating/bundling the C++ runtime; run output contract                   | `runtime_distribution.md`   |
 | Test categories; suite layout; expectation forms                         | `testing_strategy.md`       |
 
 ## Document Shape

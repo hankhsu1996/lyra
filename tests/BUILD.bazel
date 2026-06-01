@@ -23,13 +23,27 @@ cc_test(
 )
 
 cc_test(
+    name = "run_tests",
+    srcs = ["run_test.cpp"],
+    data = ["//:lyra"],
+    # `compile`/`run` drive the host C++ compiler, so this is excluded from CI's
+    # `Test` job (which filters out `requires-host-cxx`). Run locally with
+    # `bazel test //tests:run_tests`.
+    tags = ["requires-host-cxx"],
+    deps = [
+        ":framework",
+        "//:support",
+        "@bazel_tools//tools/cpp/runfiles",
+        "@googletest//:gtest_main",
+    ],
+)
+
+cc_test(
     name = "cpp_tests",
     srcs = ["cpp_test.cpp"],
     data = [
         "suites.yaml",
-        "//:cpp_runtime",
         "//:lyra",
-        "//:runtime_headers",
     ] + glob(
         [
             "cases/**/*.yaml",
@@ -38,7 +52,7 @@ cc_test(
         allow_empty = True,
     ),
     shard_count = 16,
-    # cpp-backend cases compile emitted artifacts with the host C++ compiler.
+    # cpp-backend cases run `lyra run`, which builds with the host C++ compiler.
     # CI's `Test` job passes `--test_tag_filters=-requires-host-cxx` so this
     # target is excluded; run locally with `bazel test //tests:cpp_tests`.
     tags = ["requires-host-cxx"],
