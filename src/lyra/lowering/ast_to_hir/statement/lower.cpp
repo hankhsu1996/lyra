@@ -75,27 +75,30 @@ auto LowerSignalEventTrigger(
       LowerProcExpr(unit_facts, unit_state, proc_state, stack, sig.expr);
   if (!expr_or) return std::unexpected(std::move(expr_or.error()));
 
-  const auto* primary = std::get_if<hir::PrimaryExpr>(&expr_or->data);
-  if (primary == nullptr ||
-      !std::holds_alternative<hir::StructuralVarRef>(primary->data)) {
-    return diag::Unsupported(
-        span, diag::DiagCode::kUnsupportedEventTriggerForm,
-        "event trigger must be a plain structural variable reference; "
-        "bit-selects, member access, and hierarchical refs are "
-        "not yet supported",
-        diag::UnsupportedCategory::kFeature);
-  }
   if (!unit_state.GetType(expr_or->type).IsPackedArray()) {
     return diag::Unsupported(
         span, diag::DiagCode::kUnsupportedEventTriggerForm,
-        "event trigger must reference an integral signal; non-integral "
+        "event trigger expression must have an integral type; non-integral "
         "trigger types are not yet supported",
         diag::UnsupportedCategory::kFeature);
   }
 
+  const auto edge_kind = LowerEventEdge(sig.edge);
+
+  const auto& reads = unit_facts.Sensitivity().AnalyzeReads(
+      sig.expr, proc_state.ContainingSymbol());
+  auto sensitivity_list = TranslateSensitivityReads(reads, unit_state, stack);
+  // Faithful record of SV: every leaf carries the trigger's edge identifier.
+  // Whether the runtime can act on it directly (single leaf, LSB-reduce) or
+  // needs a snapshot + re-eval wrapper (compound) is a HIR -> MIR decision.
+  for (auto& leaf : sensitivity_list) {
+    leaf.edge_kind = edge_kind;
+  }
+
   return hir::EventTrigger{
       .signal = proc_state.AddExpr(*std::move(expr_or)),
-      .edge = LowerEventEdge(sig.edge),
+      .edge = edge_kind,
+      .sensitivity_list = std::move(sensitivity_list),
   };
 }
 
@@ -217,16 +220,14 @@ auto LowerTimedStmt(
   auto timing = LowerTimingControl(
       unit_facts, scope_state.UnitState(), proc_state, stack, ts.timing, span);
   if (!timing) return std::unexpected(std::move(timing.error()));
-  // LRM 9.4.2.2: `@*` carries its sensitivity from a slang side-channel
-  // keyed by this TimedStatement. The TimingControl shell came back empty
-  // from LowerTimingControl; fill it in here where we still have the
-  // parent statement pointer.
+  // LRM 9.4.2.2: `@*` watches every read in the controlled body. Analyze
+  // the body statement directly; the TimingControl shell came back empty
+  // from LowerTimingControl.
   if (auto* ie = std::get_if<hir::ImplicitEventControl>(&*timing)) {
-    if (const auto* reads = unit_facts.SensitivityReads().Lookup(ts);
-        reads != nullptr) {
-      ie->sensitivity_list =
-          TranslateSensitivityReads(*reads, scope_state.UnitState(), stack);
-    }
+    const auto& reads = unit_facts.Sensitivity().AnalyzeReads(
+        ts.stmt, proc_state.ContainingSymbol());
+    ie->sensitivity_list =
+        TranslateSensitivityReads(reads, scope_state.UnitState(), stack);
   }
   auto inner_stmt =
       LowerStatement(unit_facts, proc_state, scope_state, stack, ts.stmt);
@@ -667,12 +668,10 @@ auto LowerWaitStmt(
       LowerStatement(unit_facts, proc_state, scope_state, stack, w.stmt);
   if (!body_or) return std::unexpected(std::move(body_or.error()));
   const hir::StmtId body_id = proc_state.AddStmt(*std::move(body_or));
-  std::vector<hir::SensitivityEntry> sensitivity;
-  if (const auto* reads = unit_facts.SensitivityReads().Lookup(w.cond);
-      reads != nullptr) {
-    sensitivity =
-        TranslateSensitivityReads(*reads, scope_state.UnitState(), stack);
-  }
+  const auto& reads = unit_facts.Sensitivity().AnalyzeReads(
+      w.cond, proc_state.ContainingSymbol());
+  auto sensitivity =
+      TranslateSensitivityReads(reads, scope_state.UnitState(), stack);
   return hir::Stmt{
       .label = std::nullopt,
       .data =

@@ -36,8 +36,7 @@ auto CollectTopBodies(slang::ast::Compilation& compilation)
 
 auto LowerCompilation(const LowerCompilationFacts& facts)
     -> diag::Result<std::vector<hir::ModuleUnit>> {
-  const UnitLoweringFacts unit_facts(
-      facts.SourceMapper(), facts.SensitivityReads());
+  const UnitLoweringFacts unit_facts(facts.SourceMapper(), facts.Sensitivity());
   std::vector<hir::ModuleUnit> units;
   for (const auto* body : CollectTopBodies(facts.Compilation())) {
     auto u = LowerModule(unit_facts, *body);

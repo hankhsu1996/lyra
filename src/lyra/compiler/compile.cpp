@@ -35,14 +35,11 @@ auto Compile(
     return result;
   }
 
-  const auto sensitivity_reads =
-      lowering::ast_to_hir::BuildSensitivityReadStore(
-          *result.artifacts.parse->compilation);
-
+  lowering::ast_to_hir::SensitivityAnalyzer sensitivity_analyzer;
   auto hir = lowering::ast_to_hir::LowerCompilation(
       lowering::ast_to_hir::LowerCompilationFacts(
           *result.artifacts.parse->compilation,
-          result.artifacts.parse->source_mapper, sensitivity_reads));
+          result.artifacts.parse->source_mapper, sensitivity_analyzer));
   if (!hir) {
     sink.Report(std::move(hir.error()));
     return result;

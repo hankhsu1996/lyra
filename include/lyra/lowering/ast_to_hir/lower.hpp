@@ -14,10 +14,10 @@ class LowerCompilationFacts {
   LowerCompilationFacts(
       slang::ast::Compilation& compilation,
       const frontend::SlangSourceMapper& source_mapper,
-      const SensitivityReadStore& sensitivity_reads)
+      SensitivityAnalyzer& sensitivity_analyzer)
       : compilation_(&compilation),
         source_mapper_(&source_mapper),
-        sensitivity_reads_(&sensitivity_reads) {
+        sensitivity_analyzer_(&sensitivity_analyzer) {
   }
 
   [[nodiscard]] auto Compilation() const -> slang::ast::Compilation& {
@@ -27,14 +27,14 @@ class LowerCompilationFacts {
       -> const frontend::SlangSourceMapper& {
     return *source_mapper_;
   }
-  [[nodiscard]] auto SensitivityReads() const -> const SensitivityReadStore& {
-    return *sensitivity_reads_;
+  [[nodiscard]] auto Sensitivity() const -> SensitivityAnalyzer& {
+    return *sensitivity_analyzer_;
   }
 
  private:
   slang::ast::Compilation* compilation_;
   const frontend::SlangSourceMapper* source_mapper_;
-  const SensitivityReadStore* sensitivity_reads_;
+  SensitivityAnalyzer* sensitivity_analyzer_;
 };
 
 auto LowerCompilation(const LowerCompilationFacts& facts)

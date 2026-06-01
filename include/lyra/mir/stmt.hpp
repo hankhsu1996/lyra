@@ -92,10 +92,6 @@ struct ForStmt {
   ProceduralScopeId scope;
 };
 
-struct DelayControl {
-  SimDuration duration;
-};
-
 enum class EventEdge : std::uint8_t {
   kAnyChange,
   kPosedge,
@@ -103,20 +99,14 @@ enum class EventEdge : std::uint8_t {
   kBothEdges,
 };
 
-struct EventTrigger {
-  ExprId signal;
-  EventEdge edge;
-};
-
-struct EventControl {
-  std::vector<EventTrigger> triggers;
-};
-
-using TimingControl = std::variant<DelayControl, EventControl>;
-
-struct TimedStmt {
-  TimingControl timing;
-  StmtId stmt;
+// LRM 9.4.1 `#N`. A time-anchored suspension: the engine schedules the next
+// resume at `now + duration`. Standalone -- the controlled body (if any) is
+// a separate statement in the enclosing block. Disjoint from the value-change
+// suspension family (`SensitivityWaitStmt`) and the named-event method-call
+// family: those are data-dependency anchored, this one is clock anchored.
+// See `docs/decisions/event-control-unification.md` for the rationale.
+struct DelayStmt {
+  SimDuration duration;
 };
 
 struct WhileStmt {
@@ -133,14 +123,15 @@ struct BreakStmt {};
 
 struct ContinueStmt {};
 
-// One entry of the LRM 9.2.2.2.1 implicit sensitivity list. Identity-only:
-// which structural variable, which flat bit range of its packed encoding.
-// Distinct from EventTrigger by design -- EventTrigger carries an expression
-// (explicit `@(...)`); SensitivityRead carries identity (slang DFA result,
-// never reassembled into an expression).
+// One leaf entry of a wait's projection set. Identity-only: which structural
+// variable, which flat bit range of its packed encoding, and what edge
+// polarity the leaf was subscribed under (LRM 9.4.2 / 9.4.2.2 / 9.4.3). slang
+// DFA produces the (var, bit_range) pairs; the SV edge identifier (or
+// `kAnyChange` for implicit sensitivity) attaches per leaf at AST lowering.
 struct SensitivityRead {
   StructuralVarRef ref;
   std::pair<std::uint64_t, std::uint64_t> bit_range;
+  EventEdge edge_kind = EventEdge::kAnyChange;
 };
 
 // Suspends the enclosing process until any signal in `reads` changes. Lowered
@@ -153,7 +144,7 @@ struct SensitivityWaitStmt {
 
 using StmtData = std::variant<
     EmptyStmt, ProceduralVarDeclStmt, ExprStmt, BlockStmt, IfStmt,
-    ConstructOwnedObjectStmt, ForStmt, TimedStmt, WhileStmt, DoWhileStmt,
+    ConstructOwnedObjectStmt, ForStmt, DelayStmt, WhileStmt, DoWhileStmt,
     BreakStmt, ContinueStmt, SensitivityWaitStmt>;
 
 struct Stmt {

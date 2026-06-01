@@ -286,8 +286,8 @@ void Engine::RequestFinish(int level) {
 }
 
 void Engine::TriggerValueChange(
-    Observable& observable, EdgeTransition transition) {
-  for (RuntimeProcess* p : observable.TakeMatchingWaiters(transition)) {
+    Observable& observable, const EdgeClassifier& classify) {
+  for (RuntimeProcess* p : observable.TakeMatchingWaiters(classify)) {
     // Clean up sibling subscriptions so they don't leak across waits when this
     // process re-enters the runnable queue.
     for (Observable* other : p->TakePendingValueChangeSubscriptions()) {

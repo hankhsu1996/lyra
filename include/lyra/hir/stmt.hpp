@@ -150,24 +150,33 @@ enum class EventEdge : std::uint8_t {
   kBothEdges,
 };
 
+// One leaf entry of a wait's projection set. Identity-only: which structural
+// variable, which flat bit range of its packed encoding, and what edge
+// polarity the leaf was subscribed under. Implicit sensitivity sources
+// (always_comb / always_latch / `@*` / wait cond / continuous assignment)
+// supply leaves with `edge_kind == kAnyChange`. Explicit event control
+// `@(posedge ...)` / `@(negedge ...)` / `@(edge ...)` set the per-leaf edge.
+struct SensitivityEntry {
+  StructuralVarRef ref;
+  std::pair<std::uint64_t, std::uint64_t> bit_range;
+  EventEdge edge_kind = EventEdge::kAnyChange;
+};
+
+// One entry of an explicit `@(...)` event control. `signal` is the SV
+// expression being monitored; `edge` is the optional edge identifier; the
+// per-leaf `sensitivity_list` is the read set of `signal` (slang DFA) used
+// for subscription. For a compound expression (concat / arithmetic / dynamic
+// index) the leaves are over-broad relative to "fire only when the result
+// changes" -- HIR -> MIR builds a snapshot + re-eval loop around the leaf
+// wait that enforces LRM 9.4.2 correctness.
 struct EventTrigger {
   ExprId signal;
   EventEdge edge;
+  std::vector<SensitivityEntry> sensitivity_list;
 };
 
 struct EventControl {
   std::vector<EventTrigger> triggers;
-};
-
-// One entry of an implicit sensitivity list (LRM 9.2.2.2.1 for always_comb /
-// always_latch; 9.4.2.2 for `@*`; 9.4.3 for `wait (expr)`). Identity-only:
-// which structural variable, which flat bit range of its packed encoding.
-// The current runtime collapses to whole-variable subscription at HIR ->
-// MIR; bit_range is preserved here so the collapse can be lifted once the
-// runtime gains bit-level Observable.
-struct SensitivityEntry {
-  StructuralVarRef ref;
-  std::pair<std::uint64_t, std::uint64_t> bit_range;
 };
 
 // LRM 9.4.2.2 `@*` / `@(*)`. Sensitivity for the controlled body is

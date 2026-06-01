@@ -13,8 +13,8 @@ Done when:
 
 ## Actionable
 
-P3, P4, P5 are all open and ordered: P3 introduces packed-struct field access and unblocks P4
-(union field views ride on the same machinery); P5 builds assignment patterns on top.
+P3, P4, P5 are all open and ordered: P3 introduces packed-struct field access and unblocks P4 (union
+field views ride on the same machinery); P5 builds assignment patterns on top.
 
 | Item | Status                                                    |
 | ---- | --------------------------------------------------------- |

@@ -351,6 +351,18 @@ class ScopeLoweringState {
 
 class ProcessLoweringState {
  public:
+  // `containing_symbol` is the slang symbol whose AST subtree this process
+  // belongs to (a `ProceduralBlockSymbol` for `initial` / `always*`, the
+  // `ContinuousAssignSymbol` when reused for continuous-assignment lowering,
+  // etc.). Threaded into `SensitivityAnalyzer` as its name-lookup anchor.
+  explicit ProcessLoweringState(const slang::ast::Symbol& containing_symbol)
+      : containing_symbol_(&containing_symbol) {
+  }
+
+  [[nodiscard]] auto ContainingSymbol() const -> const slang::ast::Symbol& {
+    return *containing_symbol_;
+  }
+
   auto AddExpr(hir::Expr expr) -> hir::ExprId {
     const hir::ExprId id{static_cast<std::uint32_t>(hir_process_.exprs.size())};
     hir_process_.exprs.push_back(std::move(expr));
@@ -405,6 +417,7 @@ class ProcessLoweringState {
   hir::Process hir_process_;
   std::unordered_map<const slang::ast::VariableSymbol*, hir::ProceduralVarId>
       procedural_var_bindings_;
+  const slang::ast::Symbol* containing_symbol_;
 };
 
 }  // namespace lyra::lowering::ast_to_hir

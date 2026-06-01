@@ -16,11 +16,11 @@ void RuntimeServices::SubmitNba(std::function<void()> closure) {
 }
 
 void RuntimeServices::TriggerValueChange(
-    Observable& observable, EdgeTransition transition) {
+    Observable& observable, const EdgeClassifier& classify) {
   if (engine_ == nullptr) {
     throw InternalError("RuntimeServices::TriggerValueChange: no Engine bound");
   }
-  engine_->TriggerValueChange(observable, transition);
+  engine_->TriggerValueChange(observable, classify);
 }
 
 void RuntimeServices::ScheduleProcess(RuntimeProcess& process) {

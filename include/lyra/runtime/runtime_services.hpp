@@ -1,10 +1,10 @@
 #pragma once
 
-#include <cstdint>
 #include <functional>
 
 #include "lyra/base/internal_error.hpp"
 #include "lyra/base/time.hpp"
+#include "lyra/runtime/trigger.hpp"
 
 namespace lyra::runtime {
 
@@ -13,7 +13,6 @@ class DiagnosticDispatcher;
 class Engine;
 class Observable;
 class RuntimeProcess;
-enum class EdgeTransition : std::uint8_t;
 
 class RuntimeServices {
  public:
@@ -39,7 +38,8 @@ class RuntimeServices {
 
   void SubmitNba(std::function<void()> closure);
 
-  void TriggerValueChange(Observable& observable, EdgeTransition transition);
+  void TriggerValueChange(
+      Observable& observable, const EdgeClassifier& classify);
 
   // Generic forwarders to Engine primitives used by runtime data types
   // (NamedEvent, etc.) and by every awaitable's `await_suspend` so they

@@ -237,6 +237,26 @@ auto PackedArray::Lsb() const -> FourStateBit {
   return value_bit ? FourStateBit::kOne : FourStateBit::kZero;
 }
 
+auto PackedArray::GetBit(std::uint64_t flat_offset) const -> FourStateBit {
+  if (flat_offset >= bit_width_) {
+    return is_four_state_ ? FourStateBit::kUnknown : FourStateBit::kZero;
+  }
+  const auto w_idx = static_cast<std::size_t>(flat_offset / 64U);
+  const auto b_idx = static_cast<std::uint64_t>(flat_offset % 64U);
+  const auto vw = ValueWords();
+  const bool value_bit = ((vw[w_idx] >> b_idx) & std::uint64_t{1}) != 0U;
+  if (!is_four_state_) {
+    return value_bit ? FourStateBit::kOne : FourStateBit::kZero;
+  }
+  const auto uw = UnknownWords();
+  const bool unknown_bit =
+      w_idx < uw.size() && ((uw[w_idx] >> b_idx) & std::uint64_t{1}) != 0U;
+  if (unknown_bit) {
+    return value_bit ? FourStateBit::kUnknown : FourStateBit::kHighImpedance;
+  }
+  return value_bit ? FourStateBit::kOne : FourStateBit::kZero;
+}
+
 auto PackedArray::AsBitView() -> BitView {
   auto* bv = std::get_if<BitValue>(&storage_);
   if (bv == nullptr) {
@@ -432,7 +452,7 @@ auto PackedArray::ConvertFrom(
     const PackedArrayRef& src, std::uint64_t dst_bit_width, bool dst_is_signed,
     bool dst_is_four_state) -> PackedArray {
   return ConvertFrom(
-      PackedArray(src), dst_bit_width, dst_is_signed, dst_is_four_state);
+      src.Clone(), dst_bit_width, dst_is_signed, dst_is_four_state);
 }
 
 auto PackedArray::ConvertFrom(
@@ -1298,7 +1318,7 @@ PackedArrayRef::PackedArrayRef(
       dims_(std::move(dims)) {
 }
 
-PackedArrayRef::operator PackedArray() const {
+auto PackedArrayRef::Clone() const -> PackedArray {
   return std::as_const(*root_).ExtractBits(bit_offset_, bit_width_);
 }
 

@@ -14,13 +14,13 @@
 #include "lyra/runtime/runtime_scope.hpp"
 #include "lyra/runtime/runtime_services.hpp"
 #include "lyra/runtime/stream_dispatcher.hpp"
+#include "lyra/runtime/trigger.hpp"
 
 namespace lyra::runtime {
 
 class Module;
 class Observable;
 class RuntimeProcess;
-enum class EdgeTransition : std::uint8_t;
 
 enum class SchedulerPhase : std::uint8_t {
   kIdle,
@@ -67,7 +67,8 @@ class Engine {
 
   void SubmitNba(std::function<void()> closure);
 
-  void TriggerValueChange(Observable& observable, EdgeTransition transition);
+  void TriggerValueChange(
+      Observable& observable, const EdgeClassifier& classify);
 
   // Generic primitives exposed to runtime data types and awaitables so they
   // can manage their own producer/consumer wiring without the engine needing
