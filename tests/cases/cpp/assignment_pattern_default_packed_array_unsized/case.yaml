@@ -1,0 +1,12 @@
+id: cpp.assignment_pattern_default_packed_array_unsized
+tags: [cpp_run]
+input:
+  command: [run, cpp]
+  project: false
+  top: Top
+  files: [main.sv]
+expect:
+  exit: 0
+  variables:
+    a_all: 0x11
+    b_all: 0xff

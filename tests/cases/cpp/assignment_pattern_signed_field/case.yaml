@@ -1,0 +1,12 @@
+id: cpp.assignment_pattern_signed_field
+tags: [cpp_run]
+input:
+  command: [run, cpp]
+  project: false
+  top: Top
+  files: [main.sv]
+expect:
+  exit: 0
+  variables:
+    raw_us: 0xff
+    via_signed: -1

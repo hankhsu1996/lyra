@@ -1053,6 +1053,62 @@ auto LowerHirReplicationExprProc(
       .type = result_type};
 }
 
+auto LowerHirAssignmentPatternExprProc(
+    const UnitLoweringState& unit_state,
+    const StructuralScopeLoweringState& scope_state,
+    const ProcessLoweringState& proc_state,
+    ProceduralScopeLoweringState& proc_scope_state,
+    const hir::ProceduralBody& hir_process, const hir::AssignmentPatternExpr& a,
+    mir::TypeId result_type) -> diag::Result<mir::Expr> {
+  std::vector<mir::ExprId> operand_ids;
+  operand_ids.reserve(a.elements.size());
+  for (const auto& id : a.elements) {
+    auto lowered = LowerExpr(
+        unit_state, scope_state, proc_state, proc_scope_state, hir_process,
+        hir_process.exprs.at(id.value));
+    if (!lowered) return std::unexpected(std::move(lowered.error()));
+    operand_ids.push_back(proc_scope_state.AddExpr(*std::move(lowered)));
+  }
+  return mir::Expr{
+      .data = mir::ConcatExpr{.operands = std::move(operand_ids)},
+      .type = result_type};
+}
+
+auto LowerHirAssignmentPatternReplicationExprProc(
+    const UnitLoweringState& unit_state,
+    const StructuralScopeLoweringState& scope_state,
+    const ProcessLoweringState& proc_state,
+    ProceduralScopeLoweringState& proc_scope_state,
+    const hir::ProceduralBody& hir_process,
+    const hir::AssignmentPatternReplicationExpr& a, mir::TypeId result_type)
+    -> diag::Result<mir::Expr> {
+  std::vector<mir::ExprId> item_ids;
+  item_ids.reserve(a.items.size());
+  for (const auto& id : a.items) {
+    auto lowered = LowerExpr(
+        unit_state, scope_state, proc_state, proc_scope_state, hir_process,
+        hir_process.exprs.at(id.value));
+    if (!lowered) return std::unexpected(std::move(lowered.error()));
+    item_ids.push_back(proc_scope_state.AddExpr(*std::move(lowered)));
+  }
+  const mir::ExprId inner_concat_id = proc_scope_state.AddExpr(
+      mir::Expr{
+          .data = mir::ConcatExpr{.operands = std::move(item_ids)},
+          .type = result_type});
+  auto count_or = LowerExpr(
+      unit_state, scope_state, proc_state, proc_scope_state, hir_process,
+      hir_process.exprs.at(a.count.value));
+  if (!count_or) return std::unexpected(std::move(count_or.error()));
+  const mir::ExprId count_id = proc_scope_state.AddExpr(*std::move(count_or));
+  return mir::Expr{
+      .data =
+          mir::ReplicationExpr{
+              .count = count_id,
+              .concat = inner_concat_id,
+          },
+      .type = result_type};
+}
+
 }  // namespace
 
 auto LowerExpr(
@@ -1133,6 +1189,17 @@ auto LowerExpr(
             return LowerHirReplicationExprProc(
                 unit_state, scope_state, proc_state, proc_scope_state,
                 hir_process, r, result_type);
+          },
+          [&](const hir::AssignmentPatternExpr& a) -> diag::Result<mir::Expr> {
+            return LowerHirAssignmentPatternExprProc(
+                unit_state, scope_state, proc_state, proc_scope_state,
+                hir_process, a, result_type);
+          },
+          [&](const hir::AssignmentPatternReplicationExpr& a)
+              -> diag::Result<mir::Expr> {
+            return LowerHirAssignmentPatternReplicationExprProc(
+                unit_state, scope_state, proc_state, proc_scope_state,
+                hir_process, a, result_type);
           },
       },
       expr.data);
@@ -1368,6 +1435,28 @@ auto LowerHirConcatExprStructural(
       .type = result_type};
 }
 
+auto LowerHirAssignmentPatternExprStructural(
+    const UnitLoweringState& unit_state,
+    const StructuralScopeLoweringState& scope_state,
+    const ConstructorLoweringState* ctor_state,
+    ProceduralScopeLoweringState& proc_scope_state,
+    const hir::StructuralScope& scope, const hir::AssignmentPatternExpr& a,
+    LoopVarLoweringMode loop_var_mode, mir::TypeId result_type)
+    -> diag::Result<mir::Expr> {
+  std::vector<mir::ExprId> operand_ids;
+  operand_ids.reserve(a.elements.size());
+  for (const auto& id : a.elements) {
+    auto lowered = LowerExprImpl(
+        unit_state, scope_state, ctor_state, proc_scope_state, scope,
+        scope.GetExpr(id), loop_var_mode);
+    if (!lowered) return std::unexpected(std::move(lowered.error()));
+    operand_ids.push_back(proc_scope_state.AddExpr(*std::move(lowered)));
+  }
+  return mir::Expr{
+      .data = mir::ConcatExpr{.operands = std::move(operand_ids)},
+      .type = result_type};
+}
+
 auto LowerHirConversionExprStructural(
     const UnitLoweringState& unit_state,
     const StructuralScopeLoweringState& scope_state,
@@ -1474,6 +1563,19 @@ auto LowerExprImpl(
             return diag::Unsupported(
                 diag::DiagCode::kUnsupportedStructuralExpressionForm,
                 "replication in constructor expressions is not yet supported",
+                diag::UnsupportedCategory::kFeature);
+          },
+          [&](const hir::AssignmentPatternExpr& a) -> diag::Result<mir::Expr> {
+            return LowerHirAssignmentPatternExprStructural(
+                unit_state, scope_state, ctor_state, proc_scope_state, scope, a,
+                loop_var_mode, result_type);
+          },
+          [](const hir::AssignmentPatternReplicationExpr&)
+              -> diag::Result<mir::Expr> {
+            return diag::Unsupported(
+                diag::DiagCode::kUnsupportedStructuralExpressionForm,
+                "replicated assignment patterns in constructor expressions "
+                "are not yet supported",
                 diag::UnsupportedCategory::kFeature);
           },
       },
