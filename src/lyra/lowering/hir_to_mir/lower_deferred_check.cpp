@@ -34,7 +34,8 @@ struct UniqueIfCascade {
   std::optional<hir::StmtId> tail_else;
 };
 
-auto FlattenUniqueCascade(const hir::Process& proc, const hir::IfStmt& root)
+auto FlattenUniqueCascade(
+    const hir::ProceduralBody& proc, const hir::IfStmt& root)
     -> UniqueIfCascade {
   UniqueIfCascade out;
   out.conditions.push_back(root.condition);
@@ -458,7 +459,7 @@ auto BuildDeferredCheckCascade(
 auto LowerUniqueIfStmt(
     const UnitLoweringState& unit_state,
     const StructuralScopeLoweringState& scope_state,
-    ProcessLoweringState& proc_state, const hir::Process& hir_proc,
+    ProcessLoweringState& proc_state, const hir::ProceduralBody& hir_proc,
     const hir::Stmt& stmt, const hir::IfStmt& root) -> diag::Result<mir::Stmt> {
   const auto cascade = FlattenUniqueCascade(hir_proc, root);
 

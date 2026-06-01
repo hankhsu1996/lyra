@@ -364,22 +364,22 @@ class ProcessLoweringState {
   }
 
   auto AddExpr(hir::Expr expr) -> hir::ExprId {
-    const hir::ExprId id{static_cast<std::uint32_t>(hir_process_.exprs.size())};
-    hir_process_.exprs.push_back(std::move(expr));
+    const hir::ExprId id{static_cast<std::uint32_t>(body_.exprs.size())};
+    body_.exprs.push_back(std::move(expr));
     return id;
   }
 
   auto AddStmt(hir::Stmt stmt) -> hir::StmtId {
-    const hir::StmtId id{static_cast<std::uint32_t>(hir_process_.stmts.size())};
-    hir_process_.stmts.push_back(std::move(stmt));
+    const hir::StmtId id{static_cast<std::uint32_t>(body_.stmts.size())};
+    body_.stmts.push_back(std::move(stmt));
     return id;
   }
 
   auto AddProceduralVar(const slang::ast::VariableSymbol& var, hir::TypeId type)
       -> hir::ProceduralVarId {
     const hir::ProceduralVarId id{
-        static_cast<std::uint32_t>(hir_process_.procedural_vars.size())};
-    hir_process_.procedural_vars.push_back(
+        static_cast<std::uint32_t>(body_.procedural_vars.size())};
+    body_.procedural_vars.push_back(
         hir::ProceduralVarDecl{.name = std::string{var.name}, .type = type});
     const auto [_, inserted] = procedural_var_bindings_.emplace(&var, id);
     if (!inserted) {
@@ -401,20 +401,16 @@ class ProcessLoweringState {
 
   [[nodiscard]] auto GetProceduralVarType(hir::ProceduralVarId id) const
       -> hir::TypeId {
-    return hir_process_.procedural_vars.at(id.value).type;
+    return body_.procedural_vars.at(id.value).type;
   }
 
-  auto Finalize(
-      hir::ProcessKind kind, diag::SourceSpan span, hir::StmtId root_stmt)
-      -> hir::Process {
-    hir_process_.kind = kind;
-    hir_process_.span = span;
-    hir_process_.root_stmt = root_stmt;
-    return std::move(hir_process_);
+  auto FinalizeBody(hir::StmtId root_stmt) -> hir::ProceduralBody {
+    body_.root_stmt = root_stmt;
+    return std::move(body_);
   }
 
  private:
-  hir::Process hir_process_;
+  hir::ProceduralBody body_;
   std::unordered_map<const slang::ast::VariableSymbol*, hir::ProceduralVarId>
       procedural_var_bindings_;
   const slang::ast::Symbol* containing_symbol_;

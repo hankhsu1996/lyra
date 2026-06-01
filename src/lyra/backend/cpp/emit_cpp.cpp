@@ -121,6 +121,56 @@ auto RenderProcessMethod(
   return out;
 }
 
+// A value-returning function renders its result type; a void function or task
+// renders C++ `void`. Other formal directions are not in scope for the current
+// subroutine support, so non-input params are rejected here.
+auto RenderSubroutineResultType(
+    const mir::CompilationUnit& unit, const mir::StructuralScope& s,
+    mir::TypeId result_type) -> diag::Result<std::string> {
+  if (std::holds_alternative<mir::VoidType>(unit.GetType(result_type).data)) {
+    return std::string{"void"};
+  }
+  return RenderTypeAsCpp(unit, s, result_type);
+}
+
+auto RenderSubroutineMethod(
+    const RenderContext* parent_struct_ctx, const mir::CompilationUnit& unit,
+    const mir::StructuralScope& s, const mir::StructuralSubroutineDecl& sub,
+    std::size_t indent) -> diag::Result<std::string> {
+  auto result_or = RenderSubroutineResultType(unit, s, sub.result_type);
+  if (!result_or) return std::unexpected(std::move(result_or.error()));
+
+  std::string sig = *result_or + " " + sub.name + "(";
+  for (std::size_t i = 0; i < sub.params.size(); ++i) {
+    const auto& param = sub.params[i];
+    if (param.direction != mir::ParamDirection::kInput) {
+      return diag::Unsupported(
+          diag::DiagCode::kCppEmitExpressionFormNotImplemented,
+          "only input subroutine arguments are supported in cpp emit",
+          diag::UnsupportedCategory::kFeature);
+    }
+    auto type_or = RenderTypeAsCpp(unit, s, param.type);
+    if (!type_or) return std::unexpected(std::move(type_or.error()));
+    if (i != 0) sig += ", ";
+    sig += *type_or + " " + param.name;
+  }
+  sig += ")";
+
+  const RenderContext sub_ctx =
+      (parent_struct_ctx == nullptr)
+          ? RenderContext::ForRoot(unit, s, sub.root_procedural_scope)
+          : parent_struct_ctx->WithStructuralScope(
+                s, sub.root_procedural_scope);
+
+  std::string out;
+  out += Indent(indent) + sig + " {\n";
+  auto rendered_or = RenderProceduralScopeStatements(sub_ctx, indent + 1);
+  if (!rendered_or) return std::unexpected(std::move(rendered_or.error()));
+  out += *rendered_or;
+  out += Indent(indent) + "}\n";
+  return out;
+}
+
 auto RenderProcessKindLiteral(mir::ProcessKind kind) -> std::string {
   switch (kind) {
     case mir::ProcessKind::kInitial:
@@ -241,6 +291,14 @@ auto RenderScopeAsClass(
     out += "\n";
     auto method_or = RenderProcessMethod(
         parent_struct_ctx, unit, s, s.processes[i], i, indent + 1);
+    if (!method_or) return std::unexpected(std::move(method_or.error()));
+    out += *method_or;
+  }
+
+  for (const auto& sub : s.structural_subroutines) {
+    out += "\n";
+    auto method_or =
+        RenderSubroutineMethod(parent_struct_ctx, unit, s, sub, indent + 1);
     if (!method_or) return std::unexpected(std::move(method_or.error()));
     out += *method_or;
   }

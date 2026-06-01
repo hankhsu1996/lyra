@@ -16,7 +16,7 @@
 #include "lyra/diag/source_span.hpp"
 #include "lyra/hir/expr.hpp"
 #include "lyra/hir/primary.hpp"
-#include "lyra/hir/process.hpp"
+#include "lyra/hir/procedural_body.hpp"
 #include "lyra/lowering/hir_to_mir/lower_expr.hpp"
 #include "lyra/lowering/hir_to_mir/state.hpp"
 #include "lyra/mir/expr.hpp"
@@ -75,8 +75,8 @@ auto BuildPrintValueItem(
     const StructuralScopeLoweringState& scope_state,
     const ProcessLoweringState& proc_state,
     ProceduralScopeLoweringState& proc_scope_state,
-    const hir::Process& hir_proc, hir::ExprId hir_arg, mir::FormatSpec spec)
-    -> diag::Result<mir::RuntimePrintItem> {
+    const hir::ProceduralBody& hir_proc, hir::ExprId hir_arg,
+    mir::FormatSpec spec) -> diag::Result<mir::RuntimePrintItem> {
   auto lowered_or = LowerExpr(
       unit_state, scope_state, proc_state, proc_scope_state, hir_proc,
       hir_proc.exprs.at(hir_arg.value));
@@ -91,7 +91,7 @@ auto BuildPrintItemFromDirective(
     const StructuralScopeLoweringState& scope_state,
     const ProcessLoweringState& proc_state,
     ProceduralScopeLoweringState& proc_scope_state,
-    const hir::Process& hir_proc,
+    const hir::ProceduralBody& hir_proc,
     const support::ParsedFormatDirective& directive,
     std::span<const hir::ExprId> args, std::size_t& value_index,
     diag::SourceSpan span) -> diag::Result<mir::RuntimePrintItem> {
@@ -145,7 +145,8 @@ struct LiteralFormatStringRef {
   diag::SourceSpan span;
 };
 
-auto TryGetHirStringLiteral(const hir::Process& proc, hir::ExprId expr_id)
+auto TryGetHirStringLiteral(
+    const hir::ProceduralBody& proc, hir::ExprId expr_id)
     -> std::optional<LiteralFormatStringRef> {
   const auto& expr = proc.exprs.at(expr_id.value);
   const auto* primary = std::get_if<hir::PrimaryExpr>(&expr.data);
@@ -162,7 +163,7 @@ auto BuildRuntimePrintItemsFromCallArgs(
     const StructuralScopeLoweringState& scope_state,
     const ProcessLoweringState& proc_state,
     ProceduralScopeLoweringState& proc_scope_state,
-    const hir::Process& hir_proc, const hir::CallExpr& call,
+    const hir::ProceduralBody& hir_proc, const hir::CallExpr& call,
     diag::SourceSpan call_span)
     -> diag::Result<std::vector<mir::RuntimePrintItem>> {
   std::vector<mir::RuntimePrintItem> items;
