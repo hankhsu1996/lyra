@@ -14,9 +14,9 @@ several possible backend targets for MIR, and does not define MIR's semantics.
 - Lightweight structured control flow inside a callable body: `if`, loop, and sequence. No basic
   blocks at this layer.
 - A primitive expression set: literals, references, unary / binary / conditional operators, calls,
-  conversions, closures, element- and range-selects, concat, replication. SystemVerilog syntactic
-  sugar that decomposes into this set (`case`, `inside`, `casez` / `casex`, `foreach`) is lowered at
-  the HIR-to-MIR boundary and never carried as a MIR node.
+  conversions, closures, element- and range-selects, concat, replication, array-literal.
+  SystemVerilog syntactic sugar that decomposes into this set (`case`, `inside`, `casez` / `casex`,
+  `foreach`) is lowered at the HIR-to-MIR boundary and never carried as a MIR node.
 - Action shapes for constructs that bind behavior to schedule events (always blocks, continuous
   assignments, deferred assertions, concurrent assertions).
 - A textual dumper that serializes MIR for inspection, validation, and golden testing. The dumper is
@@ -87,7 +87,7 @@ the runtime, not through sugar nodes in MIR.
 
 Constructs in the expression set that look like sugar are not. `ConditionalExpr` (`?:`) is preserved
 because MIR's `if` is a statement; there is no primitive rvalue branching in MIR's expression set
-that decomposes the ternary. `ConcatExpr` and `ReplicationExpr` are value-build primitives without a
-smaller decomposition. Select expressions are access primitives. Each of these stays in MIR for the
-same reason: removing it would require expanding into a statement-form rewrite that does not fit the
-expression context.
+that decomposes the ternary. `ConcatExpr`, `ReplicationExpr`, and `ArrayLiteralExpr` are value-build
+primitives without a smaller decomposition. Select expressions are access primitives. Each of these
+stays in MIR for the same reason: removing it would require expanding into a statement-form rewrite
+that does not fit the expression context.

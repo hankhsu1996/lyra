@@ -196,18 +196,6 @@ class HirDumper {
     return out;
   }
 
-  static auto FormatUnpackedDims(const std::vector<UnpackedRange>& dims)
-      -> std::string {
-    if (dims.empty()) {
-      return "[]";
-    }
-    std::string out;
-    for (const auto& d : dims) {
-      out += std::format("[{}:{}]", d.left, d.right);
-    }
-    return out;
-  }
-
   static auto FormatType(const Type& t) -> std::string {
     return std::visit(
         Overloaded{
@@ -261,8 +249,8 @@ class HirDumper {
             },
             [](const UnpackedArrayType& u) -> std::string {
               return std::format(
-                  "UnpackedArray(elem=Type[{}], dims={})", u.element_type.value,
-                  FormatUnpackedDims(u.dims));
+                  "UnpackedArray(elem=Type[{}], dim=[{}:{}])",
+                  u.element_type.value, u.dim.left, u.dim.right);
             },
             [](const DynamicArrayType& d) -> std::string {
               return std::format(

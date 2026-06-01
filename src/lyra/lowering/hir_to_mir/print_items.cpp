@@ -56,6 +56,8 @@ auto ToMirFormatKind(support::FormatDirectiveKind k) -> mir::FormatKind {
       return mir::FormatKind::kRealExponential;
     case support::FormatDirectiveKind::kRealGeneral:
       return mir::FormatKind::kRealGeneral;
+    case support::FormatDirectiveKind::kAssignmentPattern:
+      return mir::FormatKind::kAssignmentPattern;
     default:
       throw InternalError("ToMirFormatKind: not a value-format kind");
   }
@@ -121,7 +123,8 @@ auto BuildPrintItemFromDirective(
     case support::FormatDirectiveKind::kString:
     case support::FormatDirectiveKind::kRealDecimal:
     case support::FormatDirectiveKind::kRealExponential:
-    case support::FormatDirectiveKind::kRealGeneral: {
+    case support::FormatDirectiveKind::kRealGeneral:
+    case support::FormatDirectiveKind::kAssignmentPattern: {
       if (value_index >= args.size()) {
         return diag::Error(
             span, diag::DiagCode::kDisplayMissingArg,

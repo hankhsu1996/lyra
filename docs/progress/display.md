@@ -18,6 +18,12 @@ since the test harness can only probe a variable whose type has an implemented s
       returning an MCD / FD, `$fclose`) and per-descriptor output dispatch.
 - [ ] DI6 -- `$strobe` postponed-region semantics. Strobe must defer its read-and-print to the
       postponed region of the same time slot (LRM 21.2).
+- [ ] DI7 -- `%p` / `%0p` assignment-pattern format for aggregate types (LRM 21.2.1.6). Initial
+      scope: unpacked array of integral elements, with output `'{<elem>, <elem>, ...}` and each
+      element formatted by the LRM 21.2.1.6 element rule for its singular type. Multi-dimensional
+      arrays nest naturally. Struct / union / enum / string / real element formats land with their
+      respective type workstreams. Drives the test framework's whole-array `expect.variables`
+      assertion path; see `unpacked.md` for the first consumer.
 
 ## Out of Scope
 

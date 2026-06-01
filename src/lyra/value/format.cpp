@@ -203,10 +203,21 @@ auto FormatValue(const FormatSpec& spec, const RuntimeValueView& value)
   return std::visit(
       Overloaded{
           [&](const IntegralValueView& v) -> std::string {
+            // LRM 21.2.1.6: a singular integral type with %p prints "as it
+            // would unformatted" -- the default $display radix is decimal.
+            if (spec.kind == FormatKind::kAssignmentPattern) {
+              FormatSpec decimal_spec = spec;
+              decimal_spec.kind = FormatKind::kDecimal;
+              return FormatIntegral(decimal_spec, v);
+            }
             return FormatIntegral(spec, v);
           },
           [&](const StringValueView& v) -> std::string {
             std::string body(v.data, v.size);
+            // LRM 21.2.1.6: a string with %p prints quoted.
+            if (spec.kind == FormatKind::kAssignmentPattern) {
+              return ApplyStringWidth("\"" + std::move(body) + "\"", spec);
+            }
             return ApplyStringWidth(std::move(body), spec);
           },
           [&](const Real64ValueView& v) -> std::string {

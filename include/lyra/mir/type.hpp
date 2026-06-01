@@ -89,14 +89,13 @@ struct EnumType {
 // a genuinely different shape and will get its own variant when that work
 // lands.
 
-struct UnpackedRange {
-  std::int64_t left;
-  std::int64_t right;
-};
-
+// MIR tracks unpacked arrays as plain C++ vectors: element type plus a
+// non-zero element count. The SV declared range (`[left:right]`, descending
+// or with a non-zero base) is resolved at the HIR-to-MIR boundary -- the
+// index translation lives inside ElementSelectExpr.index, not on the type.
 struct UnpackedArrayType {
   TypeId element_type;
-  std::vector<UnpackedRange> dims;
+  std::uint64_t size;
 };
 
 struct DynamicArrayType {

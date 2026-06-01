@@ -24,6 +24,7 @@ enum class FormatDirectiveKind : std::uint8_t {
   kTime,
   kChar,
   kModulePath,
+  kAssignmentPattern,
 };
 
 struct FormatDirectiveModifiers {

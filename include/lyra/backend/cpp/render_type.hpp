@@ -23,14 +23,6 @@ namespace lyra::backend::cpp {
 [[nodiscard]] auto RenderPackedArrayCtorArgs(const mir::PackedArrayType& pa)
     -> std::string;
 
-// Returns the constructor-argument list for a default-shaped instance of
-// `ty`, comma-separated. Drives both `T name{<args>}` (raw declaration) and
-// `Var<T> name{<args>}` (Var's variadic ctor forwards to T's). Empty when T
-// has a no-arg default ctor (enum classes via kBase, anything with a usable
-// default ctor).
-[[nodiscard]] auto RenderTypeDefaultCtorArgs(const mir::Type& ty)
-    -> std::string;
-
 // Renders the emitted C++ class name for a MIR enum type. The name is
 // derived from the first TypeAlias declaration targeting `id` in
 // `owner_scope` (so a `typedef enum {...} foo;` makes the class `foo`);

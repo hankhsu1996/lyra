@@ -41,17 +41,6 @@ auto RenderPackedArrayCtorArgs(const mir::PackedArrayType& pa) -> std::string {
   return dim_list + ", " + signed_lit + ", " + four_state_lit;
 }
 
-auto RenderTypeDefaultCtorArgs(const mir::Type& ty) -> std::string {
-  // Enum classes default-construct via their static `kBase`, so no shape
-  // arguments are needed at the call site. PackedArray has no default ctor;
-  // its shape (width, signedness, state domain) must be supplied.
-  if (ty.IsEnum()) return {};
-  if (ty.IsIntegralPacked()) {
-    return RenderPackedArrayCtorArgs(ty.AsIntegralPacked());
-  }
-  return {};
-}
-
 auto IsObservableScalarType(const mir::Type& ty) -> bool {
   return ty.IsIntegralPacked();
 }
@@ -93,6 +82,11 @@ auto RenderTypeAsCpp(
           },
           [](const mir::RealTimeType&) -> diag::Result<std::string> {
             return std::string{"double"};
+          },
+          [&](const mir::UnpackedArrayType& ua) -> diag::Result<std::string> {
+            auto inner_or = RenderTypeAsCpp(unit, owner_scope, ua.element_type);
+            if (!inner_or) return std::unexpected(std::move(inner_or.error()));
+            return "std::vector<" + *inner_or + ">";
           },
           [&](const mir::ObjectType& o) -> diag::Result<std::string> {
             return std::string{

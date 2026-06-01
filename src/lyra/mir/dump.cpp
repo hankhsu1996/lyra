@@ -110,18 +110,6 @@ class MirDumper {
     return out;
   }
 
-  static auto FormatUnpackedDims(const std::vector<UnpackedRange>& dims)
-      -> std::string {
-    if (dims.empty()) {
-      return "[]";
-    }
-    std::string out;
-    for (const auto& d : dims) {
-      out += std::format("[{}:{}]", d.left, d.right);
-    }
-    return out;
-  }
-
   static auto FormatType(const Type& t) -> std::string {
     return std::visit(
         Overloaded{
@@ -148,8 +136,8 @@ class MirDumper {
             },
             [](const UnpackedArrayType& u) -> std::string {
               return std::format(
-                  "UnpackedArray(elem=Type[{}], dims={})", u.element_type.value,
-                  FormatUnpackedDims(u.dims));
+                  "UnpackedArray(elem=Type[{}], size={})", u.element_type.value,
+                  u.size);
             },
             [](const DynamicArrayType& d) -> std::string {
               return std::format(
@@ -558,6 +546,16 @@ class MirDumper {
                   "ReplicationExpr count=Expr[{}] concat=Expr[{}]",
                   r.count.value, r.concat.value);
             },
+            [](const ArrayLiteralExpr& a) -> std::string {
+              std::string elements;
+              for (std::size_t i = 0; i < a.elements.size(); ++i) {
+                if (i != 0) {
+                  elements += ", ";
+                }
+                elements += std::format("Expr[{}]", a.elements[i].value);
+              }
+              return std::format("ArrayLiteralExpr elements=[{}]", elements);
+            },
         },
         e.data);
     return std::format("{} type=Type[{}]", formatted, e.type.value);
@@ -606,14 +604,10 @@ class MirDumper {
     Indent();
     for (std::size_t i = 0; i < s.structural_vars.size(); ++i) {
       const auto& v = s.structural_vars[i];
-      std::string init_suffix;
-      if (v.initializer.has_value()) {
-        init_suffix = std::format(" init=Expr[{}]", v.initializer->value);
-      }
       Line(
           std::format(
-              "[{}] \"{}\" : {}{}", i, v.name, FormatVarType(v.type),
-              init_suffix));
+              "[{}] \"{}\" : {} init=Expr[{}]", i, v.name,
+              FormatVarType(v.type), v.initializer.value));
     }
     Dedent();
 
@@ -766,14 +760,11 @@ class MirDumper {
             "Stmt[{}] ProceduralVarDeclStmt "
             "target=ProceduralVarRef[hops={}, var={}] \"{}\"",
             id.value, s.target.hops.value, s.target.var.value, var.name));
-    if (s.init.has_value()) {
-      Indent();
-      Line(
-          std::format(
-              "init: Expr[{}] {}", s.init->value,
-              FormatExpr(enclosing, *s.init)));
-      Dedent();
-    }
+    Indent();
+    Line(
+        std::format(
+            "init: Expr[{}] {}", s.init.value, FormatExpr(enclosing, s.init)));
+    Dedent();
   }
 
   void DumpConstructOwnedObjectStmt(
@@ -1049,6 +1040,8 @@ class MirDumper {
         return "kRealExponential";
       case FormatKind::kRealGeneral:
         return "kRealGeneral";
+      case FormatKind::kAssignmentPattern:
+        return "kAssignmentPattern";
     }
     throw InternalError("FormatMirFormatKind: unknown FormatKind");
   }
@@ -1090,12 +1083,9 @@ class MirDumper {
       std::visit(
           Overloaded{
               [&](const ForInitDecl& d) {
-                std::string init_str;
-                if (d.init.has_value()) {
-                  init_str = std::format(
-                      " = Expr[{}] {}", d.init->value,
-                      FormatExpr(enclosing, *d.init));
-                }
+                const std::string init_str = std::format(
+                    " = Expr[{}] {}", d.init.value,
+                    FormatExpr(enclosing, d.init));
                 const auto& owner =
                     ResolveProceduralScopeAtHops(d.induction_var.hops.value);
                 const auto& var = owner.vars.at(d.induction_var.var.value);

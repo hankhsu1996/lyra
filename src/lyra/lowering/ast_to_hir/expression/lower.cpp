@@ -733,7 +733,7 @@ auto LowerElementSelectExprProc(
     const slang::ast::ElementSelectExpression& sel,
     const slang::ast::Expression& expr, diag::SourceSpan span)
     -> diag::Result<hir::Expr> {
-  if (!sel.value().type->isIntegral()) {
+  if (!sel.value().type->isIntegral() && !sel.value().type->isUnpackedArray()) {
     return diag::Unsupported(
         span, diag::DiagCode::kUnsupportedExpressionForm,
         "element-select on non-integral operand is not yet supported",
@@ -920,11 +920,6 @@ auto LowerReplicationExprProc(
   };
 }
 
-auto IsAssignmentPatternPackedTarget(const hir::Type& target) -> bool {
-  return target.IsPackedArray() || target.IsPackedStruct() ||
-         target.IsPackedUnion();
-}
-
 auto LowerAssignmentPatternFromElementsProc(
     const UnitLoweringFacts& unit_facts, UnitLoweringState& unit_state,
     ProcessLoweringState& proc_state, const ScopeStack& stack,
@@ -933,12 +928,6 @@ auto LowerAssignmentPatternFromElementsProc(
     -> diag::Result<hir::Expr> {
   auto type_id = TypeIdOfSlangExpr(unit_facts, unit_state, expr);
   if (!type_id) return std::unexpected(std::move(type_id.error()));
-  if (!IsAssignmentPatternPackedTarget(unit_state.GetType(*type_id))) {
-    return diag::Unsupported(
-        span, diag::DiagCode::kUnsupportedAssignmentPatternKind,
-        "assignment patterns over unpacked aggregates are not yet supported",
-        diag::UnsupportedCategory::kOperation);
-  }
   std::vector<hir::ExprId> element_ids;
   element_ids.reserve(ap.elements().size());
   for (const auto* elem : ap.elements()) {
@@ -962,12 +951,6 @@ auto LowerReplicatedAssignmentPatternExprProc(
     -> diag::Result<hir::Expr> {
   auto type_id = TypeIdOfSlangExpr(unit_facts, unit_state, expr);
   if (!type_id) return std::unexpected(std::move(type_id.error()));
-  if (!IsAssignmentPatternPackedTarget(unit_state.GetType(*type_id))) {
-    return diag::Unsupported(
-        span, diag::DiagCode::kUnsupportedAssignmentPatternKind,
-        "assignment patterns over unpacked aggregates are not yet supported",
-        diag::UnsupportedCategory::kOperation);
-  }
   auto count_or =
       LowerProcExpr(unit_facts, unit_state, proc_state, stack, rp.count());
   if (!count_or) return std::unexpected(std::move(count_or.error()));
@@ -1142,12 +1125,6 @@ auto LowerAssignmentPatternFromElementsStructural(
     -> diag::Result<hir::Expr> {
   auto type_id = TypeIdOfSlangExpr(unit_facts, unit_state, expr);
   if (!type_id) return std::unexpected(std::move(type_id.error()));
-  if (!IsAssignmentPatternPackedTarget(unit_state.GetType(*type_id))) {
-    return diag::Unsupported(
-        span, diag::DiagCode::kUnsupportedAssignmentPatternKind,
-        "assignment patterns over unpacked aggregates are not yet supported",
-        diag::UnsupportedCategory::kOperation);
-  }
   std::vector<hir::ExprId> element_ids;
   element_ids.reserve(ap.elements().size());
   for (const auto* elem : ap.elements()) {

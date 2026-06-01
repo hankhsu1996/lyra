@@ -94,6 +94,17 @@ auto RenderPackedArrayIntegerLiteral(
   // PackedArray::Int / FromInt. Wide literals or X/Z-bearing literals must
   // round-trip through explicit value/unknown word planes via FromWords.
   const bool literal_has_xz = !c.state_words.empty() && c.state_words[0] != 0U;
+
+  // FromInt / FromWords both take a single `bit_width`, so a multi-dim PA
+  // shape cannot ride those paths. The only multi-dim literal the synthesiser
+  // produces is the type's LRM Table 6-7 default (all zeros for 2-state, all
+  // x for 4-state), which the dim-list constructor materialises directly --
+  // call it instead of pretending the literal is single-dim.
+  if (pa.dims.size() > 1U) {
+    return std::format(
+        "lyra::value::PackedArray({})", RenderPackedArrayCtorArgs(pa));
+  }
+
   const bool needs_word_planes = c.width > 64U || literal_has_xz;
 
   if (!needs_word_planes) {
@@ -148,11 +159,23 @@ auto RenderRealLiteralExpr(
   // widths). The trailing 'f' suffix on the float form keeps the C++ literal
   // type matched to the destination `float` so overload resolution and
   // initialization both land on the shortreal path.
+  //
+  // `g` strips trailing zeros and the decimal point for whole-number values,
+  // which would produce literals like `0f` or `42e3f` that the C++ lexer
+  // rejects (a digit sequence followed by `f` is not a valid float suffix).
+  // Force a decimal point when the formatted body has neither `.` nor an
+  // exponent, so `0` -> `0.0`, `42` -> `42.0`.
   const auto& ty = ctx.Unit().GetType(expr.type);
-  if (ty.Kind() == mir::TypeKind::kShortReal) {
-    return std::format("{:.9g}f", r.value);
+  const bool is_short = ty.Kind() == mir::TypeKind::kShortReal;
+  std::string body = is_short ? std::format("{:.9g}", r.value)
+                              : std::format("{:.17g}", r.value);
+  if (body.find_first_of(".eE") == std::string::npos) {
+    body += ".0";
   }
-  return std::format("{:.17g}", r.value);
+  if (is_short) {
+    body += "f";
+  }
+  return body;
 }
 
 auto RenderStructuralParamExpr(
@@ -845,10 +868,19 @@ auto RenderSameShapeLiteral(
 auto RenderElementSelectExpr(
     const RenderContext& ctx, const mir::ElementSelectExpr& sel)
     -> diag::Result<std::string> {
-  auto base_or = RenderExprNatural(ctx, ctx.Expr(sel.base_value));
+  const auto& base_expr = ctx.Expr(sel.base_value);
+  auto base_or = RenderExprNatural(ctx, base_expr);
   if (!base_or) return std::unexpected(std::move(base_or.error()));
   auto idx_or = RenderExpr(ctx, ctx.Expr(sel.index));
   if (!idx_or) return std::unexpected(std::move(idx_or.error()));
+  const auto& base_ty = ctx.Unit().GetType(base_expr.type);
+  // Unpacked vectors are zero-based; the SV declared-range translation
+  // already lives in `sel.index` (HIR-to-MIR rewrites it). Packed arrays
+  // keep their range-aware ElementAt path inside PackedArray.
+  if (std::holds_alternative<mir::UnpackedArrayType>(base_ty.data)) {
+    return std::format(
+        "({})[static_cast<std::size_t>(({}).ToInt64())]", *base_or, *idx_or);
+  }
   return std::format("({}).ElementAt({})", *base_or, *idx_or);
 }
 
@@ -1263,6 +1295,23 @@ auto RenderConcatExpr(
   return out;
 }
 
+auto RenderArrayLiteralExpr(
+    const RenderContext& ctx, const mir::Expr& expr,
+    const mir::ArrayLiteralExpr& a) -> diag::Result<std::string> {
+  auto vec_type_or =
+      RenderTypeAsCpp(ctx.Unit(), ctx.StructuralScope(), expr.type);
+  if (!vec_type_or) return std::unexpected(std::move(vec_type_or.error()));
+  std::string out = *vec_type_or + "{";
+  for (std::size_t i = 0; i < a.elements.size(); ++i) {
+    auto rendered = RenderExpr(ctx, ctx.Expr(a.elements[i]));
+    if (!rendered) return std::unexpected(std::move(rendered.error()));
+    if (i != 0) out += ", ";
+    out += *rendered;
+  }
+  out += "}";
+  return out;
+}
+
 auto RenderReplicationExpr(
     const RenderContext& ctx, const mir::Expr& expr,
     const mir::ReplicationExpr& r) -> diag::Result<std::string> {
@@ -1368,6 +1417,9 @@ auto RenderExprNatural(const RenderContext& ctx, const mir::Expr& expr)
           },
           [&](const mir::ReplicationExpr& r) -> diag::Result<std::string> {
             return RenderReplicationExpr(ctx, expr, r);
+          },
+          [&](const mir::ArrayLiteralExpr& a) -> diag::Result<std::string> {
+            return RenderArrayLiteralExpr(ctx, expr, a);
           },
       },
       expr.data);
