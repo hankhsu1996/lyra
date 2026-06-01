@@ -18,6 +18,7 @@
 #include <slang/ast/expressions/MiscExpressions.h>
 #include <slang/ast/expressions/OperatorExpressions.h>
 #include <slang/ast/expressions/SelectExpressions.h>
+#include <slang/ast/symbols/ParameterSymbols.h>
 #include <slang/ast/symbols/SubroutineSymbols.h>
 #include <slang/ast/symbols/VariableSymbols.h>
 #include <slang/ast/types/AllTypes.h>
@@ -97,6 +98,55 @@ auto MakeEnumValueExpr(
                   }},
       .span = span,
   };
+}
+
+auto MakeParameterValueExpr(
+    const slang::ast::ParameterSymbol& sym, hir::TypeId type,
+    diag::SourceSpan span) -> diag::Result<hir::Expr> {
+  const auto& cv = sym.getValue();
+  if (cv.isInteger()) {
+    return hir::Expr{
+        .type = type,
+        .data =
+            hir::PrimaryExpr{
+                .data =
+                    hir::IntegerLiteral{
+                        .value = LowerSVIntToIntegralConstant(cv.integer()),
+                        .base = hir::IntegerLiteralBase::kDecimal,
+                        .declared_unsized = false,
+                    }},
+        .span = span,
+    };
+  }
+  if (cv.isReal()) {
+    return hir::Expr{
+        .type = type,
+        .data = hir::PrimaryExpr{.data = hir::RealLiteral{.value = cv.real()}},
+        .span = span,
+    };
+  }
+  if (cv.isShortReal()) {
+    return hir::Expr{
+        .type = type,
+        .data =
+            hir::PrimaryExpr{
+                .data =
+                    hir::RealLiteral{
+                        .value = static_cast<double>(cv.shortReal())}},
+        .span = span,
+    };
+  }
+  if (cv.isString()) {
+    return hir::Expr{
+        .type = type,
+        .data = hir::PrimaryExpr{.data = hir::StringLiteral{.value = cv.str()}},
+        .span = span,
+    };
+  }
+  return diag::Unsupported(
+      span, diag::DiagCode::kUnsupportedExpressionForm,
+      "parameter of aggregate type is not yet supported",
+      diag::UnsupportedCategory::kFeature);
 }
 
 auto MakeStringLiteralExpr(
@@ -188,6 +238,13 @@ auto LowerNamedValueProc(
     }
   }
 
+  if (sym.kind == slang::ast::SymbolKind::Parameter) {
+    auto type_id = TypeIdOfSlangExpr(unit_facts, unit_state, named);
+    if (!type_id) return std::unexpected(std::move(type_id.error()));
+    return MakeParameterValueExpr(
+        sym.as<slang::ast::ParameterSymbol>(), *type_id, span);
+  }
+
   if (sym.kind != slang::ast::SymbolKind::Variable) {
     return diag::Unsupported(
         span, diag::DiagCode::kUnsupportedNonVariableNamedReference,
@@ -243,6 +300,12 @@ auto LowerNamedValueStructural(
           hir::LoopVarRef{.hops = *hops, .loop_var = loop_binding->loop_var_id},
           loop_binding->type, span);
     }
+  }
+  if (sym.kind == slang::ast::SymbolKind::Parameter) {
+    auto type_id = TypeIdOfSlangExpr(unit_facts, unit_state, named);
+    if (!type_id) return std::unexpected(std::move(type_id.error()));
+    return MakeParameterValueExpr(
+        sym.as<slang::ast::ParameterSymbol>(), *type_id, span);
   }
   if (sym.kind != slang::ast::SymbolKind::Variable) {
     return diag::Unsupported(
