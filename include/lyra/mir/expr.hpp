@@ -110,6 +110,12 @@ struct ElementSelectExpr {
   ExprId index;
 };
 
+// LRM 7.2.1 packed struct field access has no MIR-level distinct shape:
+// it lowers at HIR -> MIR into a constant-bounds RangeSelectExpr (since
+// "a packed structure can be selected as if it were a packed array",
+// LRM 7.2.1). A future MIR node for *unpacked* struct named access is a
+// genuinely different shape (it maps to C++ `s.member`, not bit math) and
+// will get its own variant when that work lands.
 struct RangeSelectExpr {
   ExprId base_value;
   RangeBounds bounds;

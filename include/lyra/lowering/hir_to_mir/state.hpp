@@ -17,6 +17,7 @@
 #include "lyra/hir/type.hpp"
 #include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/expr.hpp"
+#include "lyra/mir/integral_constant.hpp"
 #include "lyra/mir/procedural_var.hpp"
 #include "lyra/mir/runtime_submit.hpp"
 #include "lyra/mir/stmt.hpp"
@@ -103,6 +104,25 @@ class UnitLoweringState {
 
   [[nodiscard]] auto Builtins() const -> const BuiltinMirTypes& {
     return builtins_;
+  }
+
+  // Synthesize a 32-bit signed two-state `int`-typed `IntegerLiteral` Expr
+  // bound to the unit's canonical `int` TypeId. Lowering passes use this
+  // wherever they need a synthetic counter / range bound / sentinel; the
+  // caller does the `AddExpr` on whichever scope they own.
+  [[nodiscard]] auto MakeInt32LiteralExpr(std::int64_t value) const
+      -> mir::Expr {
+    return mir::Expr{
+        .data =
+            mir::IntegerLiteral{
+                .value =
+                    mir::IntegralConstant{
+                        .value_words = {static_cast<std::uint64_t>(value)},
+                        .state_words = {},
+                        .width = 32,
+                        .signedness = mir::Signedness::kSigned,
+                        .state_kind = mir::IntegralStateKind::kTwoState}},
+        .type = builtins_.int32};
   }
 
   // Allocates a fresh class-local DeferredCheckSiteId from the underlying

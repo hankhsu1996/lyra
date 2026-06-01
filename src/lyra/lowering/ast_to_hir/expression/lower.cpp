@@ -816,6 +816,36 @@ auto LowerRangeSelectExprProc(
   };
 }
 
+auto LowerMemberAccessExprProc(
+    const UnitLoweringFacts& unit_facts, UnitLoweringState& unit_state,
+    ProcessLoweringState& proc_state, const ScopeStack& stack,
+    const slang::ast::MemberAccessExpression& sel,
+    const slang::ast::Expression& expr, diag::SourceSpan span)
+    -> diag::Result<hir::Expr> {
+  const auto* field = &sel.member.as<slang::ast::FieldSymbol>();
+  if (sel.member.kind != slang::ast::SymbolKind::Field) {
+    return diag::Unsupported(
+        span, diag::DiagCode::kUnsupportedExpressionForm,
+        "member access target is not a struct field",
+        diag::UnsupportedCategory::kOperation);
+  }
+  auto base_or =
+      LowerProcExpr(unit_facts, unit_state, proc_state, stack, sel.value());
+  if (!base_or) return std::unexpected(std::move(base_or.error()));
+  const hir::ExprId base_id = proc_state.AddExpr(*std::move(base_or));
+  auto type_id = TypeIdOfSlangExpr(unit_facts, unit_state, expr);
+  if (!type_id) return std::unexpected(std::move(type_id.error()));
+  return hir::Expr{
+      .type = *type_id,
+      .data =
+          hir::MemberAccessExpr{
+              .base_value = base_id,
+              .field_index = field->fieldIndex,
+          },
+      .span = span,
+  };
+}
+
 auto LowerConcatExprProc(
     const UnitLoweringFacts& unit_facts, UnitLoweringState& unit_state,
     ProcessLoweringState& proc_state, const ScopeStack& stack,
@@ -961,6 +991,36 @@ auto LowerRangeSelectExprStructural(
       .data =
           hir::RangeSelectExpr{
               .base_value = base_id, .bounds = std::move(bounds)},
+      .span = span,
+  };
+}
+
+auto LowerMemberAccessExprStructural(
+    const UnitLoweringFacts& unit_facts, UnitLoweringState& unit_state,
+    ScopeLoweringState& scope_state, const ScopeStack& stack,
+    const slang::ast::MemberAccessExpression& sel,
+    const slang::ast::Expression& expr, diag::SourceSpan span)
+    -> diag::Result<hir::Expr> {
+  if (sel.member.kind != slang::ast::SymbolKind::Field) {
+    return diag::Unsupported(
+        span, diag::DiagCode::kUnsupportedStructuralExpressionForm,
+        "member access target is not a struct field",
+        diag::UnsupportedCategory::kOperation);
+  }
+  const auto& field = sel.member.as<slang::ast::FieldSymbol>();
+  auto base_or = LowerStructuralExpr(
+      unit_facts, unit_state, scope_state, stack, sel.value());
+  if (!base_or) return std::unexpected(std::move(base_or.error()));
+  const hir::ExprId base_id = scope_state.AddExpr(*std::move(base_or));
+  auto type_id = TypeIdOfSlangExpr(unit_facts, unit_state, expr);
+  if (!type_id) return std::unexpected(std::move(type_id.error()));
+  return hir::Expr{
+      .type = *type_id,
+      .data =
+          hir::MemberAccessExpr{
+              .base_value = base_id,
+              .field_index = field.fieldIndex,
+          },
       .span = span,
   };
 }
@@ -1252,6 +1312,11 @@ auto LowerProcExpr(
           unit_facts, unit_state, proc_state, stack,
           expr.as<slang::ast::RangeSelectExpression>(), expr, span);
 
+    case slang::ast::ExpressionKind::MemberAccess:
+      return LowerMemberAccessExprProc(
+          unit_facts, unit_state, proc_state, stack,
+          expr.as<slang::ast::MemberAccessExpression>(), expr, span);
+
     case slang::ast::ExpressionKind::Concatenation:
       return LowerConcatExprProc(
           unit_facts, unit_state, proc_state, stack,
@@ -1355,6 +1420,11 @@ auto LowerStructuralExpr(
           unit_facts, unit_state, scope_state, stack,
           expr.as<slang::ast::RangeSelectExpression>(), expr, span);
 
+    case slang::ast::ExpressionKind::MemberAccess:
+      return LowerMemberAccessExprStructural(
+          unit_facts, unit_state, scope_state, stack,
+          expr.as<slang::ast::MemberAccessExpression>(), expr, span);
+
     case slang::ast::ExpressionKind::Concatenation:
       return LowerConcatExprStructural(
           unit_facts, unit_state, scope_state, stack,
@@ -1412,6 +1482,14 @@ auto ValidateAssignableSlangExpr(
       return ValidateAssignableSlangExpr(
           unit_facts, unit_state, proc_state,
           expr.as<slang::ast::RangeSelectExpression>().value());
+    case EK::MemberAccess: {
+      const auto& ma = expr.as<slang::ast::MemberAccessExpression>();
+      if (ma.member.kind != slang::ast::SymbolKind::Field) {
+        return reject("member access target is not a struct field");
+      }
+      return ValidateAssignableSlangExpr(
+          unit_facts, unit_state, proc_state, ma.value());
+    }
     case EK::Concatenation: {
       const auto& cc = expr.as<slang::ast::ConcatenationExpression>();
       for (const auto* op : cc.operands()) {

@@ -217,6 +217,21 @@ class HirDumper {
                   FormatBitAtom(p.atom), FormatSignedness(p.signedness),
                   FormatPackedDims(p.dims), FormatPackedForm(p.form));
             },
+            [](const PackedStructType& s) -> std::string {
+              std::string fields;
+              for (std::size_t i = 0; i < s.fields.size(); ++i) {
+                if (i > 0) fields += ", ";
+                fields += std::format(
+                    "{}@bit{}+{}:Type[{}]", s.fields[i].name,
+                    s.fields[i].bit_offset, s.fields[i].bit_width,
+                    s.fields[i].type.value);
+              }
+              return std::format(
+                  "PackedStruct(atom={}, signed={}, width={}, fields=[{}])",
+                  FormatBitAtom(s.base.atom),
+                  FormatSignedness(s.base.signedness), s.base.BitWidth(),
+                  fields);
+            },
             [](const EnumType& e) -> std::string {
               std::string members;
               for (std::size_t i = 0; i < e.members.size(); ++i) {
@@ -695,6 +710,11 @@ class HirDumper {
                       },
                   },
                   sel.bounds);
+            },
+            [](const MemberAccessExpr& sel) -> std::string {
+              return std::format(
+                  "MemberAccessExpr base=Expr[{}] field={}",
+                  sel.base_value.value, sel.field_index);
             },
             [](const ConcatExpr& c) -> std::string {
               std::string operands;

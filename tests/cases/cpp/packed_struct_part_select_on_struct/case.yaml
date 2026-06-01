@@ -1,0 +1,14 @@
+id: cpp.packed_struct_part_select_on_struct
+tags: [cpp_run]
+input:
+  command: [run, cpp]
+  project: false
+  top: Top
+  files: [main.sv]
+expect:
+  exit: 0
+  variables:
+    low_byte: 0xcd
+    high_byte: 0xab
+    low_indexed: 0xcd
+    high_indexed: 0xab

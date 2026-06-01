@@ -959,6 +959,49 @@ auto LowerHirRangeSelectExprProc(
       .type = result_type};
 }
 
+// LRM 7.2.1: packed struct field access "can be selected as if it were a
+// packed array". HIR -> MIR resolves the field-table index to concrete
+// (offset, width) and produces a constant-bounds RangeSelectExpr -- the
+// same MIR shape `s[hi:lo]` produces. MIR carries no struct-specific node.
+auto LowerHirMemberAccessExprProc(
+    const UnitLoweringState& unit_state,
+    const StructuralScopeLoweringState& scope_state,
+    const ProcessLoweringState& proc_state,
+    ProceduralScopeLoweringState& proc_scope_state,
+    const hir::Process& hir_process, const hir::MemberAccessExpr& sel,
+    mir::TypeId result_type) -> diag::Result<mir::Expr> {
+  const auto& base_hir_expr = hir_process.exprs.at(sel.base_value.value);
+  const auto& base_hir_type = unit_state.GetHirType(base_hir_expr.type);
+  if (!base_hir_type.IsPackedStruct()) {
+    throw InternalError(
+        "LowerHirMemberAccessExprProc: base type is not a PackedStructType");
+  }
+  const auto& fields = base_hir_type.AsPackedStruct().fields;
+  if (sel.field_index >= fields.size()) {
+    throw InternalError(
+        "LowerHirMemberAccessExprProc: field_index out of range");
+  }
+  const auto& field = fields[sel.field_index];
+  auto base_or = LowerExpr(
+      unit_state, scope_state, proc_state, proc_scope_state, hir_process,
+      base_hir_expr);
+  if (!base_or) return std::unexpected(std::move(base_or.error()));
+  const mir::ExprId base_id = proc_scope_state.AddExpr(*std::move(base_or));
+  const auto lsb_id = proc_scope_state.AddExpr(unit_state.MakeInt32LiteralExpr(
+      static_cast<std::int64_t>(field.bit_offset)));
+  const auto msb_id = proc_scope_state.AddExpr(unit_state.MakeInt32LiteralExpr(
+      static_cast<std::int64_t>(field.bit_offset + field.bit_width - 1)));
+  return mir::Expr{
+      .data =
+          mir::RangeSelectExpr{
+              .base_value = base_id,
+              .bounds =
+                  mir::RangeConstantBounds{
+                      .msb_expr = msb_id, .lsb_expr = lsb_id},
+          },
+      .type = result_type};
+}
+
 auto LowerHirConcatExprProc(
     const UnitLoweringState& unit_state,
     const StructuralScopeLoweringState& scope_state,
@@ -1065,6 +1108,11 @@ auto LowerExpr(
           },
           [&](const hir::RangeSelectExpr& sel) -> diag::Result<mir::Expr> {
             return LowerHirRangeSelectExprProc(
+                unit_state, scope_state, proc_state, proc_scope_state,
+                hir_process, sel, result_type);
+          },
+          [&](const hir::MemberAccessExpr& sel) -> diag::Result<mir::Expr> {
+            return LowerHirMemberAccessExprProc(
                 unit_state, scope_state, proc_state, proc_scope_state,
                 hir_process, sel, result_type);
           },
@@ -1254,6 +1302,47 @@ auto LowerHirRangeSelectExprStructural(
       .type = result_type};
 }
 
+auto LowerHirMemberAccessExprStructural(
+    const UnitLoweringState& unit_state,
+    const StructuralScopeLoweringState& scope_state,
+    const ConstructorLoweringState* ctor_state,
+    ProceduralScopeLoweringState& proc_scope_state,
+    const hir::StructuralScope& scope, const hir::MemberAccessExpr& sel,
+    LoopVarLoweringMode loop_var_mode, mir::TypeId result_type)
+    -> diag::Result<mir::Expr> {
+  const auto& base_hir_expr = scope.GetExpr(sel.base_value);
+  const auto& base_hir_type = unit_state.GetHirType(base_hir_expr.type);
+  if (!base_hir_type.IsPackedStruct()) {
+    throw InternalError(
+        "LowerHirMemberAccessExprStructural: base type is not a "
+        "PackedStructType");
+  }
+  const auto& fields = base_hir_type.AsPackedStruct().fields;
+  if (sel.field_index >= fields.size()) {
+    throw InternalError(
+        "LowerHirMemberAccessExprStructural: field_index out of range");
+  }
+  const auto& field = fields[sel.field_index];
+  auto base_or = LowerExprImpl(
+      unit_state, scope_state, ctor_state, proc_scope_state, scope,
+      base_hir_expr, loop_var_mode);
+  if (!base_or) return std::unexpected(std::move(base_or.error()));
+  const mir::ExprId base_id = proc_scope_state.AddExpr(*std::move(base_or));
+  const auto lsb_id = proc_scope_state.AddExpr(unit_state.MakeInt32LiteralExpr(
+      static_cast<std::int64_t>(field.bit_offset)));
+  const auto msb_id = proc_scope_state.AddExpr(unit_state.MakeInt32LiteralExpr(
+      static_cast<std::int64_t>(field.bit_offset + field.bit_width - 1)));
+  return mir::Expr{
+      .data =
+          mir::RangeSelectExpr{
+              .base_value = base_id,
+              .bounds =
+                  mir::RangeConstantBounds{
+                      .msb_expr = msb_id, .lsb_expr = lsb_id},
+          },
+      .type = result_type};
+}
+
 auto LowerHirConcatExprStructural(
     const UnitLoweringState& unit_state,
     const StructuralScopeLoweringState& scope_state,
@@ -1365,6 +1454,11 @@ auto LowerExprImpl(
           },
           [&](const hir::RangeSelectExpr& s) -> diag::Result<mir::Expr> {
             return LowerHirRangeSelectExprStructural(
+                unit_state, scope_state, ctor_state, proc_scope_state, scope, s,
+                loop_var_mode, result_type);
+          },
+          [&](const hir::MemberAccessExpr& s) -> diag::Result<mir::Expr> {
+            return LowerHirMemberAccessExprStructural(
                 unit_state, scope_state, ctor_state, proc_scope_state, scope, s,
                 loop_var_mode, result_type);
           },

@@ -81,6 +81,13 @@ struct EnumType {
   std::vector<EnumMember> members;
 };
 
+// LRM 7.2.1 packed struct has no MIR-level distinct shape: HIR -> MIR
+// translates a `hir::PackedStructType` to its "single vector" projection
+// (`PackedArrayType`). Field accesses lower to constant-bounds RangeSelect
+// against that vector. A future MIR node for *unpacked* struct is a
+// genuinely different shape and will get its own variant when that work
+// lands.
+
 struct UnpackedRange {
   std::int64_t left;
   std::int64_t right;
@@ -144,10 +151,10 @@ struct Type {
   [[nodiscard]] auto AsPackedArray() const -> const PackedArrayType&;
   [[nodiscard]] auto IsEnum() const -> bool;
   [[nodiscard]] auto AsEnum() const -> const EnumType&;
-  // True for PackedArrayType or EnumType (since enum's value-level shape is
-  // its base PackedArray). Sites that treat enum as its integral
-  // representation use this predicate; sites that need to distinguish enum
-  // from packed should match on the variant directly.
+  // True for any type whose value-level shape is a single packed vector:
+  // PackedArrayType or EnumType (base). Sites that treat the type as its
+  // integral representation use this predicate; sites that need to
+  // distinguish should match on the variant directly.
   [[nodiscard]] auto IsIntegralPacked() const -> bool;
   [[nodiscard]] auto AsIntegralPacked() const -> const PackedArrayType&;
 };

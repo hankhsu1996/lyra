@@ -13,21 +13,23 @@ Done when:
 
 ## Actionable
 
-P3, P4, P5 are all open and ordered: P3 introduces packed-struct field access and unblocks P4 (union
-field views ride on the same machinery); P5 builds assignment patterns on top.
+P4 and P5 are open and ordered: P4 (union field views) rides on the same field-access machinery P3
+introduced; P5 builds assignment patterns on top.
 
-| Item | Status                                                    |
-| ---- | --------------------------------------------------------- |
-| P3   | Ready when `operators.md` W4..W6 are in place (they are). |
-| P4   | Depends on P3.                                            |
-| P5   | Depends on P3.                                            |
+| Item | Status         |
+| ---- | -------------- |
+| P4   | Depends on P3. |
+| P5   | Depends on P3. |
 
 ## Sub-Steps
 
 The numeric IDs are stable references.
 
-- [ ] P3 -- Packed struct field access (LRM 7.2.1). `s.f` and `s.f[3:0] = v` both supported,
-      composing with existing element / range selectors. Closes `datatypes/packed/packed_struct`.
+- [x] P3 -- Packed struct field access (LRM 7.2.1). Reads and writes through `s.f`, composing with
+      element / range selectors on either side (`s[0]`, `s[3:0]`, `s.f[3:0]`). Whole-struct copy,
+      equality, and arithmetic ride on the "treated as a single vector" projection. Mixed 2-state /
+      4-state member conversion (LRM 7.2.1 fourth paragraph) tracks the struct-level atom; per-field
+      state-promotion at the boundary is a follow-up.
 
 - [ ] P4 -- Packed union (LRM 7.3.1). All members overlay the same underlying bits; field access
       reads / writes the full union width and reinterprets per the accessed member's type. The type

@@ -85,6 +85,18 @@ auto TranslateTypeData(
                 .form = TranslatePackedArrayForm(src.form),
             };
           },
+          [&](const hir::PackedStructType& src) -> mir::TypeData {
+            // LRM 7.2.1: "treated as a single vector". MIR keeps only that
+            // projection -- a PackedArrayType. Per-field offset / width get
+            // baked into constant-bounds RangeSelect at expression
+            // lowering, so MIR carries no struct-specific type.
+            return mir::PackedArrayType{
+                .atom = TranslateBitAtom(src.base.atom),
+                .signedness = TranslateSignedness(src.base.signedness),
+                .dims = TranslatePackedRanges(src.base.dims),
+                .form = TranslatePackedArrayForm(src.base.form),
+            };
+          },
           [&](const hir::EnumType& src) -> mir::TypeData {
             // Enum is kept as a distinct mir::EnumType wrapping its base
             // PackedArray plus the member table. Value-level operations

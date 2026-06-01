@@ -13,6 +13,7 @@ namespace lyra::hir {
 
 enum class TypeKind {
   kPackedArray,
+  kPackedStruct,
   kEnum,
   kUnpackedArray,
   kDynamicArray,
@@ -74,6 +75,26 @@ struct EnumType {
   std::vector<EnumMember> members;
 };
 
+// LRM 7.2.1: each field occupies a contiguous bit range within the struct's
+// packed bit space. `bit_offset` is the LSB position of the field (slang's
+// FieldSymbol::bitOffset); the first-declared field has the highest offset.
+struct PackedStructField {
+  std::string name;
+  TypeId type;
+  std::uint64_t bit_offset;
+  std::uint64_t bit_width;
+};
+
+// LRM 7.2.1: "When a packed structure appears as a primary, it shall be
+// treated as a single vector." `base` is that whole-vector projection (width
+// = sum of field widths; 4-state iff any field is 4-state); value-level uses
+// route through it. `fields` is the per-member offset/width table that
+// member-access expressions consult.
+struct PackedStructType {
+  PackedArrayType base;
+  std::vector<PackedStructField> fields;
+};
+
 struct UnpackedRange {
   std::int64_t left;
   std::int64_t right;
@@ -107,9 +128,9 @@ struct ChandleType {};
 struct VoidType {};
 
 using TypeData = std::variant<
-    PackedArrayType, EnumType, UnpackedArrayType, DynamicArrayType, QueueType,
-    AssociativeArrayType, StringType, EventType, RealType, ShortRealType,
-    RealTimeType, ChandleType, VoidType>;
+    PackedArrayType, PackedStructType, EnumType, UnpackedArrayType,
+    DynamicArrayType, QueueType, AssociativeArrayType, StringType, EventType,
+    RealType, ShortRealType, RealTimeType, ChandleType, VoidType>;
 
 struct Type {
   TypeData data;
@@ -117,6 +138,8 @@ struct Type {
   [[nodiscard]] auto Kind() const -> TypeKind;
   [[nodiscard]] auto IsPackedArray() const -> bool;
   [[nodiscard]] auto AsPackedArray() const -> const PackedArrayType&;
+  [[nodiscard]] auto IsPackedStruct() const -> bool;
+  [[nodiscard]] auto AsPackedStruct() const -> const PackedStructType&;
   [[nodiscard]] auto IsEnum() const -> bool;
   [[nodiscard]] auto AsEnum() const -> const EnumType&;
 };

@@ -1,0 +1,14 @@
+id: cpp.packed_struct_part_select_from_field
+tags: [cpp_run]
+input:
+  command: [run, cpp]
+  project: false
+  top: Top
+  files: [main.sv]
+expect:
+  exit: 0
+  variables:
+    upper_a: 0xf
+    lower_a: 0
+    bit7_b: 0
+    bit0_b: 1
