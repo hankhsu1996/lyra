@@ -165,7 +165,9 @@ class PackedArray {
   // (e.g. `var.Get().Slice(...)`) materializes to `PackedArray` directly, so
   // the emit-side `.Clone()` wrap needs to compile on both sides; here it is
   // just an explicit copy.
-  [[nodiscard]] auto Clone() const -> PackedArray { return *this; }
+  [[nodiscard]] auto Clone() const -> PackedArray {
+    return *this;
+  }
 
   // Word-level access for `RuntimeValueView` construction and intra-runtime
   // interop. The spans alias the PackedArray's storage and stay valid for

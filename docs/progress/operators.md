@@ -74,8 +74,8 @@ merged node.
       evaluated once and bits are distributed MSB-first, so `{a, b} = {b, a}` swaps. Parts may be
       any writable lvalue (including W6 selector chains, e.g. `{a[7:4], b[7:4]} = rhs`). NBA form
       requires every part to be a structural target. Replication operands are rejected per LRM
-      11.4.12.1. LRM 10.9 assignment-pattern LHS and LRM 11.4.14.3 streaming-unpack LHS are
-      separate constructs, both out of scope.
+      11.4.12.1. LRM 10.9 assignment-pattern LHS and LRM 11.4.14.3 streaming-unpack LHS are separate
+      constructs, both out of scope.
 
 ### Assignment families
 
