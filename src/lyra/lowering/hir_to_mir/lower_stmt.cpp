@@ -13,7 +13,7 @@
 #include "lyra/hir/expr.hpp"
 #include "lyra/hir/integral_constant.hpp"
 #include "lyra/hir/primary.hpp"
-#include "lyra/hir/process.hpp"
+#include "lyra/hir/procedural_body.hpp"
 #include "lyra/hir/stmt.hpp"
 #include "lyra/lowering/hir_to_mir/case_cascade.hpp"
 #include "lyra/lowering/hir_to_mir/delay_time_resolver.hpp"
@@ -72,7 +72,7 @@ auto ResolveDelayDuration(
 }
 
 auto ResolveDelayTicks(
-    const ProcessLoweringState& proc_state, const hir::Process& hir_proc,
+    const ProcessLoweringState& proc_state, const hir::ProceduralBody& hir_proc,
     const hir::DelayControl& d) -> diag::Result<SimDuration> {
   const DelayTimeResolver resolver{proc_state.Resolution()};
   return ResolveDelayDuration(resolver, hir_proc.exprs.at(d.duration.value));
@@ -90,7 +90,7 @@ auto LowerVarDeclStmt(
     const StructuralScopeLoweringState& scope_state,
     ProcessLoweringState& proc_state,
     ProceduralScopeLoweringState& proc_scope_state,
-    const hir::Process& hir_proc, const hir::Stmt& stmt,
+    const hir::ProceduralBody& hir_proc, const hir::Stmt& stmt,
     const hir::VarDeclStmt& v) -> diag::Result<mir::Stmt> {
   const auto& hir_local = hir_proc.procedural_vars.at(v.var.value);
   const mir::TypeId type = unit_state.TranslateType(hir_local.type);
@@ -139,7 +139,7 @@ auto LowerVarDeclStmt(
 auto LowerDestructuringAssign(
     const UnitLoweringState& unit_state,
     const StructuralScopeLoweringState& scope_state,
-    ProcessLoweringState& proc_state, const hir::Process& hir_proc,
+    ProcessLoweringState& proc_state, const hir::ProceduralBody& hir_proc,
     const hir::Stmt& stmt, const hir::AssignExpr& assign,
     const hir::ConcatExpr& lhs_concat) -> diag::Result<mir::Stmt> {
   ProceduralScopeLoweringState wrapper_state;
@@ -320,8 +320,8 @@ auto LowerExprStmt(
     const StructuralScopeLoweringState& scope_state,
     ProcessLoweringState& proc_state,
     ProceduralScopeLoweringState& proc_scope_state,
-    const hir::Process& hir_proc, const hir::Stmt& stmt, const hir::ExprStmt& e)
-    -> diag::Result<mir::Stmt> {
+    const hir::ProceduralBody& hir_proc, const hir::Stmt& stmt,
+    const hir::ExprStmt& e) -> diag::Result<mir::Stmt> {
   // LRM 11.4.12 LHS destructuring: detect AssignExpr-with-ConcatExpr-LHS
   // and dispatch to the snapshot+distribute desugar. Destructuring is
   // grammatically statement-only (LRM A.6.2), so this is the only context
@@ -355,10 +355,31 @@ auto LowerExprStmt(
       .child_procedural_scopes = {}};
 }
 
+auto LowerReturnStmt(
+    const UnitLoweringState& unit_state,
+    const StructuralScopeLoweringState& scope_state,
+    ProcessLoweringState& proc_state,
+    ProceduralScopeLoweringState& proc_scope_state,
+    const hir::ProceduralBody& hir_proc, const hir::Stmt& stmt,
+    const hir::ReturnStmt& r) -> diag::Result<mir::Stmt> {
+  std::optional<mir::ExprId> value;
+  if (r.value.has_value()) {
+    auto value_or = LowerExpr(
+        unit_state, scope_state, proc_state, proc_scope_state, hir_proc,
+        hir_proc.exprs.at(r.value->value));
+    if (!value_or) return std::unexpected(std::move(value_or.error()));
+    value = proc_scope_state.AddExpr(*std::move(value_or));
+  }
+  return mir::Stmt{
+      .label = stmt.label,
+      .data = mir::ReturnStmt{.value = value},
+      .child_procedural_scopes = {}};
+}
+
 auto LowerBlockStmt(
     const UnitLoweringState& unit_state,
     const StructuralScopeLoweringState& scope_state,
-    ProcessLoweringState& proc_state, const hir::Process& hir_proc,
+    ProcessLoweringState& proc_state, const hir::ProceduralBody& hir_proc,
     const hir::Stmt& stmt, const hir::BlockStmt& b) -> diag::Result<mir::Stmt> {
   ProceduralScopeLoweringState child_proc_scope_state;
   ProceduralDepthGuard depth_guard{proc_state};
@@ -388,8 +409,8 @@ auto LowerIfStmt(
     const StructuralScopeLoweringState& scope_state,
     ProcessLoweringState& proc_state,
     ProceduralScopeLoweringState& proc_scope_state,
-    const hir::Process& hir_proc, const hir::Stmt& stmt, const hir::IfStmt& i)
-    -> diag::Result<mir::Stmt> {
+    const hir::ProceduralBody& hir_proc, const hir::Stmt& stmt,
+    const hir::IfStmt& i) -> diag::Result<mir::Stmt> {
   if (i.check.has_value()) {
     return LowerUniqueIfStmt(
         unit_state, scope_state, proc_state, hir_proc, stmt, i);
@@ -431,7 +452,7 @@ auto LowerIfStmt(
 auto LowerCaseStmt(
     const UnitLoweringState& unit_state,
     const StructuralScopeLoweringState& scope_state,
-    ProcessLoweringState& proc_state, const hir::Process& hir_proc,
+    ProcessLoweringState& proc_state, const hir::ProceduralBody& hir_proc,
     const hir::Stmt& stmt, const hir::CaseStmt& c) -> diag::Result<mir::Stmt> {
   const mir::TypeId bit_type = unit_state.Builtins().bit1;
   const mir::BinaryOp compare_op = [&] {
@@ -590,7 +611,7 @@ auto LowerCaseStmt(
 auto LowerCaseInsideStmt(
     const UnitLoweringState& unit_state,
     const StructuralScopeLoweringState& scope_state,
-    ProcessLoweringState& proc_state, const hir::Process& hir_proc,
+    ProcessLoweringState& proc_state, const hir::ProceduralBody& hir_proc,
     const hir::Stmt& stmt, const hir::CaseInsideStmt& c)
     -> diag::Result<mir::Stmt> {
   const mir::TypeId bit_type = unit_state.Builtins().bit1;
@@ -725,8 +746,8 @@ auto LowerForStmt(
     const StructuralScopeLoweringState& scope_state,
     ProcessLoweringState& proc_state,
     ProceduralScopeLoweringState& proc_scope_state,
-    const hir::Process& hir_proc, const hir::Stmt& stmt, const hir::ForStmt& f)
-    -> diag::Result<mir::Stmt> {
+    const hir::ProceduralBody& hir_proc, const hir::Stmt& stmt,
+    const hir::ForStmt& f) -> diag::Result<mir::Stmt> {
   std::vector<mir::ForInit> mir_init;
   mir_init.reserve(f.init.size());
   for (const auto& hinit : f.init) {
@@ -826,7 +847,7 @@ auto LowerWhileStmt(
     const StructuralScopeLoweringState& scope_state,
     ProcessLoweringState& proc_state,
     ProceduralScopeLoweringState& proc_scope_state,
-    const hir::Process& hir_proc, const hir::Stmt& stmt,
+    const hir::ProceduralBody& hir_proc, const hir::Stmt& stmt,
     const hir::WhileStmt& w) -> diag::Result<mir::Stmt> {
   auto cond_or = LowerExpr(
       unit_state, scope_state, proc_state, proc_scope_state, hir_proc,
@@ -855,7 +876,7 @@ auto LowerWhileStmt(
 auto LowerRepeatStmt(
     const UnitLoweringState& unit_state,
     const StructuralScopeLoweringState& scope_state,
-    ProcessLoweringState& proc_state, const hir::Process& hir_proc,
+    ProcessLoweringState& proc_state, const hir::ProceduralBody& hir_proc,
     const hir::Stmt& stmt, const hir::RepeatStmt& r)
     -> diag::Result<mir::Stmt> {
   const mir::TypeId int_type = unit_state.Builtins().int32;
@@ -996,7 +1017,7 @@ auto LowerDoWhileStmt(
     const StructuralScopeLoweringState& scope_state,
     ProcessLoweringState& proc_state,
     ProceduralScopeLoweringState& proc_scope_state,
-    const hir::Process& hir_proc, const hir::Stmt& stmt,
+    const hir::ProceduralBody& hir_proc, const hir::Stmt& stmt,
     const hir::DoWhileStmt& d) -> diag::Result<mir::Stmt> {
   auto body_or = LowerStmtIntoChildScope(
       unit_state, scope_state, proc_state, hir_proc, d.body);
@@ -1025,7 +1046,7 @@ auto LowerDoWhileStmt(
 auto LowerForeverStmt(
     const UnitLoweringState& unit_state,
     const StructuralScopeLoweringState& scope_state,
-    ProcessLoweringState& proc_state, const hir::Process& hir_proc,
+    ProcessLoweringState& proc_state, const hir::ProceduralBody& hir_proc,
     const hir::Stmt& stmt, const hir::ForeverStmt& f)
     -> diag::Result<mir::Stmt> {
   auto body_or = LowerStmtIntoChildScope(
@@ -1072,7 +1093,7 @@ auto LowerEventTriggerStmt(
     const StructuralScopeLoweringState& scope_state,
     const ProcessLoweringState& proc_state,
     ProceduralScopeLoweringState& proc_scope_state,
-    const hir::Process& hir_proc, const hir::Stmt& stmt,
+    const hir::ProceduralBody& hir_proc, const hir::Stmt& stmt,
     const hir::EventTriggerStmt& et) -> diag::Result<mir::Stmt> {
   auto receiver_or = LowerExpr(
       unit_state, scope_state, proc_state, proc_scope_state, hir_proc,
@@ -1105,7 +1126,7 @@ auto LowerEventTriggerStmt(
 auto LowerNamedEventTimedStmt(
     const UnitLoweringState& unit_state,
     const StructuralScopeLoweringState& scope_state,
-    ProcessLoweringState& proc_state, const hir::Process& hir_proc,
+    ProcessLoweringState& proc_state, const hir::ProceduralBody& hir_proc,
     const hir::Stmt& stmt, const hir::TimedStmt& t,
     const hir::NamedEventControl& nec) -> diag::Result<mir::Stmt> {
   ProceduralScopeLoweringState child_proc_scope_state;
@@ -1170,7 +1191,7 @@ auto LowerNamedEventTimedStmt(
 auto LowerEventTimedStmt(
     const UnitLoweringState& unit_state,
     const StructuralScopeLoweringState& scope_state,
-    ProcessLoweringState& proc_state, const hir::Process& hir_proc,
+    ProcessLoweringState& proc_state, const hir::ProceduralBody& hir_proc,
     const hir::Stmt& stmt, const hir::TimedStmt& t, const hir::EventControl& ec)
     -> diag::Result<mir::Stmt> {
   std::vector<hir::SensitivityEntry> union_reads;
@@ -1230,7 +1251,7 @@ auto LowerEventTimedStmt(
 auto LowerImplicitEventTimedStmt(
     const UnitLoweringState& unit_state,
     const StructuralScopeLoweringState& scope_state,
-    ProcessLoweringState& proc_state, const hir::Process& hir_proc,
+    ProcessLoweringState& proc_state, const hir::ProceduralBody& hir_proc,
     const hir::Stmt& stmt, const hir::TimedStmt& t,
     const hir::ImplicitEventControl& ie) -> diag::Result<mir::Stmt> {
   ProceduralScopeLoweringState child_proc_scope_state;
@@ -1269,7 +1290,7 @@ auto LowerImplicitEventTimedStmt(
 auto LowerWaitStmt(
     const UnitLoweringState& unit_state,
     const StructuralScopeLoweringState& scope_state,
-    ProcessLoweringState& proc_state, const hir::Process& hir_proc,
+    ProcessLoweringState& proc_state, const hir::ProceduralBody& hir_proc,
     const hir::Stmt& stmt, const hir::WaitStmt& w) -> diag::Result<mir::Stmt> {
   ProceduralScopeLoweringState wrapper_state;
   ProceduralDepthGuard wrapper_depth_guard{proc_state};
@@ -1339,7 +1360,7 @@ auto LowerWaitStmt(
 auto LowerDelayTimedStmt(
     const UnitLoweringState& unit_state,
     const StructuralScopeLoweringState& scope_state,
-    ProcessLoweringState& proc_state, const hir::Process& hir_proc,
+    ProcessLoweringState& proc_state, const hir::ProceduralBody& hir_proc,
     const hir::Stmt& stmt, const hir::TimedStmt& t, const hir::DelayControl& d)
     -> diag::Result<mir::Stmt> {
   auto ticks_or = ResolveDelayTicks(proc_state, hir_proc, d);
@@ -1374,7 +1395,7 @@ auto LowerDelayTimedStmt(
 auto LowerTimedStmt(
     const UnitLoweringState& unit_state,
     const StructuralScopeLoweringState& scope_state,
-    ProcessLoweringState& proc_state, const hir::Process& hir_proc,
+    ProcessLoweringState& proc_state, const hir::ProceduralBody& hir_proc,
     const hir::Stmt& stmt, const hir::TimedStmt& t) -> diag::Result<mir::Stmt> {
   if (const auto* ie = std::get_if<hir::ImplicitEventControl>(&t.timing)) {
     return LowerImplicitEventTimedStmt(
@@ -1401,7 +1422,7 @@ auto LowerTimedStmt(
 auto LowerStmtIntoChildScope(
     const UnitLoweringState& unit_state,
     const StructuralScopeLoweringState& scope_state,
-    ProcessLoweringState& proc_state, const hir::Process& hir_proc,
+    ProcessLoweringState& proc_state, const hir::ProceduralBody& hir_proc,
     hir::StmtId hir_stmt_id) -> diag::Result<mir::ProceduralScope> {
   ProceduralScopeLoweringState child_state;
   ProceduralDepthGuard depth_guard{proc_state};
@@ -1421,7 +1442,7 @@ auto LowerStmt(
     const StructuralScopeLoweringState& scope_state,
     ProcessLoweringState& proc_state,
     ProceduralScopeLoweringState& proc_scope_state,
-    const hir::Process& hir_proc, const hir::Stmt& stmt)
+    const hir::ProceduralBody& hir_proc, const hir::Stmt& stmt)
     -> diag::Result<mir::Stmt> {
   return std::visit(
       Overloaded{
@@ -1478,6 +1499,11 @@ auto LowerStmt(
           },
           [&](const hir::BreakStmt&) { return LowerBreakStmt(stmt); },
           [&](const hir::ContinueStmt&) { return LowerContinueStmt(stmt); },
+          [&](const hir::ReturnStmt& r) {
+            return LowerReturnStmt(
+                unit_state, scope_state, proc_state, proc_scope_state, hir_proc,
+                stmt, r);
+          },
           [&](const hir::TimedStmt& t) {
             return LowerTimedStmt(
                 unit_state, scope_state, proc_state, hir_proc, stmt, t);

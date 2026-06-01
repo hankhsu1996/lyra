@@ -139,6 +139,12 @@ struct BreakStmt {};
 
 struct ContinueStmt {};
 
+// LRM 13.4.1 `return [expr];`. `value` carries the returned expression for a
+// non-void function; it is absent for `return;` and for void functions / tasks.
+struct ReturnStmt {
+  std::optional<ExprId> value;
+};
+
 struct DelayControl {
   ExprId duration;
 };
@@ -224,7 +230,7 @@ struct WaitStmt {
 using StmtData = std::variant<
     EmptyStmt, VarDeclStmt, ExprStmt, BlockStmt, IfStmt, CaseStmt,
     CaseInsideStmt, ForStmt, WhileStmt, RepeatStmt, DoWhileStmt, ForeverStmt,
-    BreakStmt, ContinueStmt, TimedStmt, EventTriggerStmt, WaitStmt>;
+    BreakStmt, ContinueStmt, ReturnStmt, TimedStmt, EventTriggerStmt, WaitStmt>;
 
 struct Stmt {
   std::optional<std::string> label;

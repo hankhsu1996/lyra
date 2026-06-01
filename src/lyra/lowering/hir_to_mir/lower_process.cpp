@@ -20,18 +20,28 @@ namespace lyra::lowering::hir_to_mir {
 
 namespace {
 
+auto LowerStraightLineBodyInto(
+    const UnitLoweringState& unit_state,
+    const StructuralScopeLoweringState& scope_state,
+    const hir::ProceduralBody& body, ProcessLoweringState& proc_state,
+    ProceduralScopeLoweringState& body_scope_state) -> diag::Result<void> {
+  auto lowered = LowerStmt(
+      unit_state, scope_state, proc_state, body_scope_state, body,
+      body.stmts.at(body.root_stmt.value));
+  if (!lowered) return std::unexpected(std::move(lowered.error()));
+  body_scope_state.AddRootStmt(body_scope_state.AddStmt(*std::move(lowered)));
+  return {};
+}
+
 auto LowerStraightLineProcess(
     const UnitLoweringState& unit_state,
     const StructuralScopeLoweringState& scope_state, const hir::Process& src,
     ProcessLoweringState& proc_state, mir::ProcessKind kind)
     -> diag::Result<mir::Process> {
   ProceduralScopeLoweringState process_scope_state;
-  auto lowered = LowerStmt(
-      unit_state, scope_state, proc_state, process_scope_state, src,
-      src.stmts.at(src.root_stmt.value));
+  auto lowered = LowerStraightLineBodyInto(
+      unit_state, scope_state, src.body, proc_state, process_scope_state);
   if (!lowered) return std::unexpected(std::move(lowered.error()));
-  process_scope_state.AddRootStmt(
-      process_scope_state.AddStmt(*std::move(lowered)));
   return mir::Process{
       .kind = kind, .root_procedural_scope = process_scope_state.Finish()};
 }
@@ -49,11 +59,9 @@ auto LowerForeverProcess(
   ProceduralScopeLoweringState body_scope_state;
   {
     ProceduralDepthGuard guard{proc_state};
-    auto lowered = LowerStmt(
-        unit_state, scope_state, proc_state, body_scope_state, src,
-        src.stmts.at(src.root_stmt.value));
+    auto lowered = LowerStraightLineBodyInto(
+        unit_state, scope_state, src.body, proc_state, body_scope_state);
     if (!lowered) return std::unexpected(std::move(lowered.error()));
-    body_scope_state.AddRootStmt(body_scope_state.AddStmt(*std::move(lowered)));
     if (tail_stmt.has_value()) {
       body_scope_state.AddRootStmt(
           body_scope_state.AddStmt(*std::move(tail_stmt)));
@@ -104,6 +112,67 @@ auto LowerProcess(
           BuildSensitivityWaitStmt(scope_state, src.implicit_sensitivity_list));
   }
   throw InternalError("LowerProcess: unknown HIR ProcessKind");
+}
+
+namespace {
+
+auto LowerParamDirection(hir::ParamDirection dir) -> mir::ParamDirection {
+  switch (dir) {
+    case hir::ParamDirection::kInput:
+      return mir::ParamDirection::kInput;
+    case hir::ParamDirection::kOutput:
+      return mir::ParamDirection::kOutput;
+    case hir::ParamDirection::kInOut:
+      return mir::ParamDirection::kInOut;
+    case hir::ParamDirection::kRef:
+      return mir::ParamDirection::kRef;
+    case hir::ParamDirection::kConstRef:
+      return mir::ParamDirection::kConstRef;
+  }
+  throw InternalError("LowerParamDirection: unknown hir::ParamDirection");
+}
+
+}  // namespace
+
+auto LowerStructuralSubroutine(
+    const UnitLoweringState& unit_state,
+    const StructuralScopeLoweringState& scope_state,
+    const hir::StructuralSubroutineDecl& src, TimeResolution time_resolution)
+    -> diag::Result<mir::StructuralSubroutineDecl> {
+  ProcessLoweringState proc_state{time_resolution};
+  ProceduralScopeLoweringState body_scope_state;
+
+  // Formals are procedural vars of the body with no VarDeclStmt: pre-register
+  // them in the body scope at depth 0 so the body's references resolve. The
+  // backend renders these as C++ parameters rather than in-body declarations.
+  std::vector<mir::SubroutineParam> params;
+  params.reserve(src.params.size());
+  for (const auto& param : src.params) {
+    const auto& hir_var = src.body.procedural_vars.at(param.var.value);
+    const mir::TypeId type = unit_state.TranslateType(hir_var.type);
+    const mir::ProceduralVarId mir_var = body_scope_state.AddProceduralVar(
+        mir::ProceduralVarDecl{.name = hir_var.name, .type = type});
+    proc_state.MapProceduralVar(
+        param.var,
+        ProceduralVarBinding{
+            .declaration_procedural_depth = proc_state.CurrentProceduralDepth(),
+            .var = mir_var});
+    params.push_back(
+        mir::SubroutineParam{
+            .name = hir_var.name,
+            .type = type,
+            .direction = LowerParamDirection(param.direction)});
+  }
+
+  auto lowered = LowerStraightLineBodyInto(
+      unit_state, scope_state, src.body, proc_state, body_scope_state);
+  if (!lowered) return std::unexpected(std::move(lowered.error()));
+
+  return mir::StructuralSubroutineDecl{
+      .name = src.name,
+      .result_type = unit_state.TranslateType(src.result_type),
+      .params = std::move(params),
+      .root_procedural_scope = body_scope_state.Finish()};
 }
 
 }  // namespace lyra::lowering::hir_to_mir

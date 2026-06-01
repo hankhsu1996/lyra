@@ -5,7 +5,7 @@
 
 #include "lyra/base/overloaded.hpp"
 #include "lyra/hir/inside_item.hpp"
-#include "lyra/hir/process.hpp"
+#include "lyra/hir/procedural_body.hpp"
 #include "lyra/lowering/hir_to_mir/lower_expr.hpp"
 #include "lyra/mir/binary_op.hpp"
 #include "lyra/mir/expr.hpp"
@@ -17,7 +17,7 @@ auto BuildHirInsideItemPredicate(
     const StructuralScopeLoweringState& scope_state,
     const ProcessLoweringState& proc_state,
     ProceduralScopeLoweringState& proc_scope_state,
-    const hir::Process& hir_process, mir::ExprId lhs_id,
+    const hir::ProceduralBody& hir_process, mir::ExprId lhs_id,
     const hir::InsideItem& item, mir::TypeId result_type)
     -> diag::Result<mir::ExprId> {
   auto lower_id = [&](hir::ExprId id) -> diag::Result<mir::ExprId> {

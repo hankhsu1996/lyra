@@ -5,7 +5,7 @@
 #include <vector>
 
 #include "lyra/diag/diagnostic.hpp"
-#include "lyra/hir/process.hpp"
+#include "lyra/hir/procedural_body.hpp"
 #include "lyra/hir/stmt.hpp"
 #include "lyra/lowering/hir_to_mir/state.hpp"
 #include "lyra/mir/expr.hpp"
@@ -34,7 +34,7 @@ auto BuildDeferredCheckCascade(
 auto LowerUniqueIfStmt(
     const UnitLoweringState& unit_state,
     const StructuralScopeLoweringState& scope_state,
-    ProcessLoweringState& proc_state, const hir::Process& hir_proc,
+    ProcessLoweringState& proc_state, const hir::ProceduralBody& hir_proc,
     const hir::Stmt& stmt, const hir::IfStmt& root) -> diag::Result<mir::Stmt>;
 
 }  // namespace lyra::lowering::hir_to_mir

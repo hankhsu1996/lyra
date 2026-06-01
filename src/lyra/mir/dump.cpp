@@ -620,8 +620,7 @@ class MirDumper {
     Line("StructuralSubroutines:");
     Indent();
     for (std::size_t i = 0; i < s.structural_subroutines.size(); ++i) {
-      const auto& d = s.structural_subroutines[i];
-      Line(std::format("[{}] \"{}\"", i, d.name));
+      DumpStructuralSubroutine(s.structural_subroutines[i], i);
     }
     Dedent();
 
@@ -645,6 +644,41 @@ class MirDumper {
     Line(std::format("Process[{}] {}", index, FormatProcessKind(p)));
     Indent();
     DumpProceduralScope(p.root_procedural_scope);
+    Dedent();
+  }
+
+  [[nodiscard]] static auto FormatParamDirection(ParamDirection dir)
+      -> std::string_view {
+    switch (dir) {
+      case ParamDirection::kInput:
+        return "input";
+      case ParamDirection::kOutput:
+        return "output";
+      case ParamDirection::kInOut:
+        return "inout";
+      case ParamDirection::kRef:
+        return "ref";
+      case ParamDirection::kConstRef:
+        return "const ref";
+    }
+    throw InternalError("FormatParamDirection: unknown mir::ParamDirection");
+  }
+
+  void DumpStructuralSubroutine(
+      const StructuralSubroutineDecl& d, std::size_t index) {
+    Line(
+        std::format(
+            "[{}] \"{}\" : Type[{}]", index, d.name, d.result_type.value));
+    Indent();
+    for (std::size_t i = 0; i < d.params.size(); ++i) {
+      const auto& param = d.params[i];
+      Line(
+          std::format(
+              "Param[{}] {} \"{}\" : Type[{}]", i,
+              FormatParamDirection(param.direction), param.name,
+              param.type.value));
+    }
+    DumpProceduralScope(d.root_procedural_scope);
     Dedent();
   }
 
@@ -790,6 +824,22 @@ class MirDumper {
             },
             [&](const ContinueStmt&) {
               Line(std::format("Stmt[{}] ContinueStmt", id.value));
+            },
+            [&](const ReturnStmt& s) {
+              if (s.value.has_value()) {
+                Line(
+                    std::format(
+                        "Stmt[{}] ReturnStmt value=Expr[{}]", id.value,
+                        s.value->value));
+                Indent();
+                Line(
+                    std::format(
+                        "Expr[{}] {}", s.value->value,
+                        FormatExpr(enclosing, *s.value)));
+                Dedent();
+              } else {
+                Line(std::format("Stmt[{}] ReturnStmt", id.value));
+              }
             },
             [&](const SensitivityWaitStmt& s) {
               Line(std::format("Stmt[{}] SensitivityWaitStmt", id.value));

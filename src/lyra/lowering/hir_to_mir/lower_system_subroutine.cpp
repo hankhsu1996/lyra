@@ -5,7 +5,7 @@
 #include "lyra/base/overloaded.hpp"
 #include "lyra/diag/diagnostic.hpp"
 #include "lyra/hir/expr.hpp"
-#include "lyra/hir/process.hpp"
+#include "lyra/hir/procedural_body.hpp"
 #include "lyra/hir/subroutine_ref.hpp"
 #include "lyra/lowering/hir_to_mir/lower_diagnostic.hpp"
 #include "lyra/lowering/hir_to_mir/lower_finish.hpp"
@@ -21,7 +21,7 @@ auto LowerSystemSubroutineCall(
     const StructuralScopeLoweringState& scope_state,
     const ProcessLoweringState& proc_state,
     ProceduralScopeLoweringState& proc_scope_state,
-    const hir::Process& hir_proc, const hir::CallExpr& call,
+    const hir::ProceduralBody& hir_proc, const hir::CallExpr& call,
     const hir::SystemSubroutineRef& ref, diag::SourceSpan span)
     -> diag::Result<mir::Expr> {
   const auto& desc = support::LookupSystemSubroutine(ref.id);

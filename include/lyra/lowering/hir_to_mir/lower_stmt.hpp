@@ -1,7 +1,7 @@
 #pragma once
 
 #include "lyra/diag/diagnostic.hpp"
-#include "lyra/hir/process.hpp"
+#include "lyra/hir/procedural_body.hpp"
 #include "lyra/hir/stmt.hpp"
 #include "lyra/lowering/hir_to_mir/state.hpp"
 #include "lyra/mir/stmt.hpp"
@@ -13,7 +13,7 @@ auto LowerStmt(
     const StructuralScopeLoweringState& scope_state,
     ProcessLoweringState& proc_state,
     ProceduralScopeLoweringState& proc_scope_state,
-    const hir::Process& hir_proc, const hir::Stmt& stmt)
+    const hir::ProceduralBody& hir_proc, const hir::Stmt& stmt)
     -> diag::Result<mir::Stmt>;
 
 // Lowers a single HIR stmt into its own fresh ProceduralScope: pushes a
@@ -24,7 +24,7 @@ auto LowerStmt(
 auto LowerStmtIntoChildScope(
     const UnitLoweringState& unit_state,
     const StructuralScopeLoweringState& scope_state,
-    ProcessLoweringState& proc_state, const hir::Process& hir_proc,
+    ProcessLoweringState& proc_state, const hir::ProceduralBody& hir_proc,
     hir::StmtId hir_stmt_id) -> diag::Result<mir::ProceduralScope>;
 
 }  // namespace lyra::lowering::hir_to_mir

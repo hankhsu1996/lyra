@@ -123,6 +123,14 @@ struct BreakStmt {};
 
 struct ContinueStmt {};
 
+// LRM 13.4.1 `return [expr];`. `value` carries the returned expression for a
+// value-returning function; it is absent for `return;` and for void functions
+// / tasks. MIR keeps the structured statement; the backend renders it as a
+// C++ `return`.
+struct ReturnStmt {
+  std::optional<ExprId> value;
+};
+
 // One leaf entry of a wait's projection set. Identity-only: which structural
 // variable, which flat bit range of its packed encoding, and what edge
 // polarity the leaf was subscribed under (LRM 9.4.2 / 9.4.2.2 / 9.4.3). slang
@@ -145,7 +153,7 @@ struct SensitivityWaitStmt {
 using StmtData = std::variant<
     EmptyStmt, ProceduralVarDeclStmt, ExprStmt, BlockStmt, IfStmt,
     ConstructOwnedObjectStmt, ForStmt, DelayStmt, WhileStmt, DoWhileStmt,
-    BreakStmt, ContinueStmt, SensitivityWaitStmt>;
+    BreakStmt, ContinueStmt, ReturnStmt, SensitivityWaitStmt>;
 
 struct Stmt {
   std::optional<std::string> label;

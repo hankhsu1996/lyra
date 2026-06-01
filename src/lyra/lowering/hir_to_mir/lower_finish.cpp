@@ -11,7 +11,7 @@
 #include "lyra/hir/expr.hpp"
 #include "lyra/hir/integral_constant.hpp"
 #include "lyra/hir/primary.hpp"
-#include "lyra/hir/process.hpp"
+#include "lyra/hir/procedural_body.hpp"
 #include "lyra/mir/expr.hpp"
 #include "lyra/mir/runtime_finish.hpp"
 #include "lyra/support/system_subroutine.hpp"
@@ -35,7 +35,7 @@ auto TryExtractLiteralInt(const hir::Expr& expr)
 }  // namespace
 
 auto LowerFinishSystemSubroutineCall(
-    const UnitLoweringState& unit_state, const hir::Process& hir_proc,
+    const UnitLoweringState& unit_state, const hir::ProceduralBody& hir_proc,
     const hir::CallExpr& call, const support::SystemSubroutineDesc& desc,
     const support::TerminationSystemSubroutineInfo& info, diag::SourceSpan span)
     -> diag::Result<mir::Expr> {

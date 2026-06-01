@@ -5,7 +5,7 @@
 #include "lyra/diag/diagnostic.hpp"
 #include "lyra/diag/source_span.hpp"
 #include "lyra/hir/expr.hpp"
-#include "lyra/hir/process.hpp"
+#include "lyra/hir/procedural_body.hpp"
 #include "lyra/lowering/hir_to_mir/state.hpp"
 #include "lyra/mir/runtime_print.hpp"
 
@@ -22,7 +22,7 @@ auto BuildRuntimePrintItemsFromCallArgs(
     const StructuralScopeLoweringState& scope_state,
     const ProcessLoweringState& proc_state,
     ProceduralScopeLoweringState& proc_scope_state,
-    const hir::Process& hir_proc, const hir::CallExpr& call,
+    const hir::ProceduralBody& hir_proc, const hir::CallExpr& call,
     diag::SourceSpan call_span)
     -> diag::Result<std::vector<mir::RuntimePrintItem>>;
 

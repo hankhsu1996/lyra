@@ -609,6 +609,27 @@ auto LowerConditionalStmt(
       .span = span};
 }
 
+// LRM 13.4.1 `return [expr];`. A non-void function carries the returned
+// expression; void functions and tasks use the bare form, leaving `value`
+// absent.
+auto LowerReturnStmt(
+    const UnitLoweringFacts& unit_facts, ProcessLoweringState& proc_state,
+    ScopeLoweringState& scope_state, const ScopeStack& stack,
+    const slang::ast::ReturnStatement& rs, diag::SourceSpan span)
+    -> diag::Result<hir::Stmt> {
+  std::optional<hir::ExprId> value;
+  if (rs.expr != nullptr) {
+    auto expr_or = LowerProcExpr(
+        unit_facts, scope_state.UnitState(), proc_state, stack, *rs.expr);
+    if (!expr_or) return std::unexpected(std::move(expr_or.error()));
+    value = proc_state.AddExpr(*std::move(expr_or));
+  }
+  return hir::Stmt{
+      .label = std::nullopt,
+      .data = hir::ReturnStmt{.value = value},
+      .span = span};
+}
+
 }  // namespace
 
 // LRM 15.5.1 `-> e;`. Source-aligned with slang's EventTriggerStatement. The
@@ -767,6 +788,11 @@ auto LowerStatement(
       return LowerConditionalStmt(
           unit_facts, proc_state, scope_state, stack,
           stmt.as<slang::ast::ConditionalStatement>(), span);
+
+    case slang::ast::StatementKind::Return:
+      return LowerReturnStmt(
+          unit_facts, proc_state, scope_state, stack,
+          stmt.as<slang::ast::ReturnStatement>(), span);
 
     default:
       return diag::Unsupported(

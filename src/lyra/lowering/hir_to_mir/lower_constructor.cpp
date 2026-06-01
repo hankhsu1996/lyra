@@ -528,13 +528,27 @@ auto LowerStructuralScope(
     scope_state.MapStructuralVar(hir_id, mir_id);
   }
 
+  // Map every subroutine's identity before lowering any body, so a call in one
+  // body resolves a forward or mutual reference to a peer (LRM 13.7). Only the
+  // HIR -> MIR id mapping has to precede the bodies; the MIR id is the index
+  // each decl will occupy, and the loop below adds the lowered decls in that
+  // same order.
   for (std::size_t i = 0; i < scope.structural_subroutines.size(); ++i) {
-    const hir::StructuralSubroutineId hir_id{static_cast<std::uint32_t>(i)};
-    const auto& decl = scope.structural_subroutines[i];
-    const mir::StructuralSubroutineId mir_id =
-        scope_state.AddStructuralSubroutine(
-            mir::StructuralSubroutineDecl{.name = decl.name});
-    scope_state.MapStructuralSubroutine(hir_id, mir_id);
+    scope_state.MapStructuralSubroutine(
+        hir::StructuralSubroutineId{static_cast<std::uint32_t>(i)},
+        mir::StructuralSubroutineId{static_cast<std::uint32_t>(i)});
+  }
+  for (std::size_t i = 0; i < scope.structural_subroutines.size(); ++i) {
+    auto decl_or = LowerStructuralSubroutine(
+        unit_state, scope_state, scope.structural_subroutines[i],
+        scope.time_resolution);
+    if (!decl_or) return std::unexpected(std::move(decl_or.error()));
+    const mir::StructuralSubroutineId added =
+        scope_state.AddStructuralSubroutine(*std::move(decl_or));
+    if (added.value != i) {
+      throw InternalError(
+          "LowerStructuralScope: subroutine added out of mapped id order");
+    }
   }
 
   for (const auto& p : scope.processes) {

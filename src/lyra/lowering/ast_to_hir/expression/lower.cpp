@@ -245,7 +245,11 @@ auto LowerNamedValueProc(
         sym.as<slang::ast::ParameterSymbol>(), *type_id, span);
   }
 
-  if (sym.kind != slang::ast::SymbolKind::Variable) {
+  // A subroutine formal (LRM 13.5) is a VariableSymbol subclass with its own
+  // SymbolKind; it resolves through the same procedural-var binding as a body
+  // local.
+  if (sym.kind != slang::ast::SymbolKind::Variable &&
+      sym.kind != slang::ast::SymbolKind::FormalArgument) {
     return diag::Unsupported(
         span, diag::DiagCode::kUnsupportedNonVariableNamedReference,
         "reference to non-variable declaration is not supported",
