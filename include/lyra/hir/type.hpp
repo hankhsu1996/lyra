@@ -116,7 +116,7 @@ struct UnpackedRange {
 
 struct UnpackedArrayType {
   TypeId element_type;
-  std::vector<UnpackedRange> dims;
+  UnpackedRange dim;
 };
 
 struct DynamicArrayType {

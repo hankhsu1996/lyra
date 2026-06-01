@@ -916,6 +916,31 @@ auto LowerHirInsideExprProc(
   return mir::Expr{proc_scope_state.GetExpr(*acc)};
 }
 
+// Translates an SV-declared-range index into a zero-based C++ vector offset
+// for an unpacked array base. `[0:N]` (ascending from zero) needs no rewrite;
+// other ranges fold the base offset into the index expression so the
+// downstream backend can emit a uniform `vec[i]` access.
+auto WrapUnpackedIndex(
+    const UnitLoweringState& unit_state,
+    ProceduralScopeLoweringState& proc_scope_state,
+    const hir::UnpackedRange& declared, mir::ExprId raw_idx,
+    mir::TypeId idx_type) -> mir::ExprId {
+  if (declared.left == 0 && declared.right >= 0) {
+    return raw_idx;
+  }
+  const mir::ExprId literal_id =
+      proc_scope_state.AddExpr(unit_state.MakeInt32LiteralExpr(declared.left));
+  const bool descending = declared.left >= declared.right;
+  return proc_scope_state.AddExpr(
+      mir::Expr{
+          .data =
+              mir::BinaryExpr{
+                  .op = mir::BinaryOp::kSub,
+                  .lhs = descending ? literal_id : raw_idx,
+                  .rhs = descending ? raw_idx : literal_id},
+          .type = idx_type});
+}
+
 auto LowerHirElementSelectExprProc(
     const UnitLoweringState& unit_state,
     const StructuralScopeLoweringState& scope_state,
@@ -923,17 +948,26 @@ auto LowerHirElementSelectExprProc(
     ProceduralScopeLoweringState& proc_scope_state,
     const hir::ProceduralBody& hir_process, const hir::ElementSelectExpr& sel,
     mir::TypeId result_type) -> diag::Result<mir::Expr> {
+  const auto& hir_base = hir_process.exprs.at(sel.base_value.value);
   auto base_or = LowerExpr(
       unit_state, scope_state, proc_state, proc_scope_state, hir_process,
-      hir_process.exprs.at(sel.base_value.value));
+      hir_base);
   if (!base_or) return std::unexpected(std::move(base_or.error()));
   const mir::ExprId base_id = proc_scope_state.AddExpr(*std::move(base_or));
 
+  const auto& hir_idx = hir_process.exprs.at(sel.index.value);
   auto idx_or = LowerExpr(
       unit_state, scope_state, proc_state, proc_scope_state, hir_process,
-      hir_process.exprs.at(sel.index.value));
+      hir_idx);
   if (!idx_or) return std::unexpected(std::move(idx_or.error()));
-  const mir::ExprId idx_id = proc_scope_state.AddExpr(*std::move(idx_or));
+  mir::ExprId idx_id = proc_scope_state.AddExpr(*std::move(idx_or));
+
+  const auto& hir_base_ty = unit_state.GetHirType(hir_base.type);
+  if (const auto* ua = std::get_if<hir::UnpackedArrayType>(&hir_base_ty.data)) {
+    idx_id = WrapUnpackedIndex(
+        unit_state, proc_scope_state, ua->dim, idx_id,
+        unit_state.TranslateType(hir_idx.type));
+  }
 
   return mir::Expr{
       .data =
@@ -1053,6 +1087,10 @@ auto LowerHirReplicationExprProc(
       .type = result_type};
 }
 
+// Lowers an HIR AssignmentPatternExpr by dispatching on the destination
+// type's runtime shape: packed targets fold into MIR `ConcatExpr` (bit
+// concatenation matches the packed bit plane), unpacked arrays land as
+// `ArrayLiteralExpr` over distinct std::vector slots.
 auto LowerHirAssignmentPatternExprProc(
     const UnitLoweringState& unit_state,
     const StructuralScopeLoweringState& scope_state,
@@ -1060,17 +1098,23 @@ auto LowerHirAssignmentPatternExprProc(
     ProceduralScopeLoweringState& proc_scope_state,
     const hir::ProceduralBody& hir_process, const hir::AssignmentPatternExpr& a,
     mir::TypeId result_type) -> diag::Result<mir::Expr> {
-  std::vector<mir::ExprId> operand_ids;
-  operand_ids.reserve(a.elements.size());
+  std::vector<mir::ExprId> element_ids;
+  element_ids.reserve(a.elements.size());
   for (const auto& id : a.elements) {
     auto lowered = LowerExpr(
         unit_state, scope_state, proc_state, proc_scope_state, hir_process,
         hir_process.exprs.at(id.value));
     if (!lowered) return std::unexpected(std::move(lowered.error()));
-    operand_ids.push_back(proc_scope_state.AddExpr(*std::move(lowered)));
+    element_ids.push_back(proc_scope_state.AddExpr(*std::move(lowered)));
+  }
+  if (std::holds_alternative<mir::UnpackedArrayType>(
+          unit_state.GetType(result_type).data)) {
+    return mir::Expr{
+        .data = mir::ArrayLiteralExpr{.elements = std::move(element_ids)},
+        .type = result_type};
   }
   return mir::Expr{
-      .data = mir::ConcatExpr{.operands = std::move(operand_ids)},
+      .data = mir::ConcatExpr{.operands = std::move(element_ids)},
       .type = result_type};
 }
 
@@ -1301,16 +1345,27 @@ auto LowerHirElementSelectExprStructural(
     const hir::StructuralScope& scope, const hir::ElementSelectExpr& sel,
     LoopVarLoweringMode loop_var_mode, mir::TypeId result_type)
     -> diag::Result<mir::Expr> {
+  const auto& hir_base = scope.GetExpr(sel.base_value);
   auto base_or = LowerExprImpl(
-      unit_state, scope_state, ctor_state, proc_scope_state, scope,
-      scope.GetExpr(sel.base_value), loop_var_mode);
+      unit_state, scope_state, ctor_state, proc_scope_state, scope, hir_base,
+      loop_var_mode);
   if (!base_or) return std::unexpected(std::move(base_or.error()));
   const mir::ExprId base_id = proc_scope_state.AddExpr(*std::move(base_or));
+
+  const auto& hir_idx = scope.GetExpr(sel.index);
   auto idx_or = LowerExprImpl(
-      unit_state, scope_state, ctor_state, proc_scope_state, scope,
-      scope.GetExpr(sel.index), loop_var_mode);
+      unit_state, scope_state, ctor_state, proc_scope_state, scope, hir_idx,
+      loop_var_mode);
   if (!idx_or) return std::unexpected(std::move(idx_or.error()));
-  const mir::ExprId idx_id = proc_scope_state.AddExpr(*std::move(idx_or));
+  mir::ExprId idx_id = proc_scope_state.AddExpr(*std::move(idx_or));
+
+  const auto& hir_base_ty = unit_state.GetHirType(hir_base.type);
+  if (const auto* ua = std::get_if<hir::UnpackedArrayType>(&hir_base_ty.data)) {
+    idx_id = WrapUnpackedIndex(
+        unit_state, proc_scope_state, ua->dim, idx_id,
+        unit_state.TranslateType(hir_idx.type));
+  }
+
   return mir::Expr{
       .data = mir::ElementSelectExpr{.base_value = base_id, .index = idx_id},
       .type = result_type};
@@ -1443,17 +1498,23 @@ auto LowerHirAssignmentPatternExprStructural(
     const hir::StructuralScope& scope, const hir::AssignmentPatternExpr& a,
     LoopVarLoweringMode loop_var_mode, mir::TypeId result_type)
     -> diag::Result<mir::Expr> {
-  std::vector<mir::ExprId> operand_ids;
-  operand_ids.reserve(a.elements.size());
+  std::vector<mir::ExprId> element_ids;
+  element_ids.reserve(a.elements.size());
   for (const auto& id : a.elements) {
     auto lowered = LowerExprImpl(
         unit_state, scope_state, ctor_state, proc_scope_state, scope,
         scope.GetExpr(id), loop_var_mode);
     if (!lowered) return std::unexpected(std::move(lowered.error()));
-    operand_ids.push_back(proc_scope_state.AddExpr(*std::move(lowered)));
+    element_ids.push_back(proc_scope_state.AddExpr(*std::move(lowered)));
+  }
+  if (std::holds_alternative<mir::UnpackedArrayType>(
+          unit_state.GetType(result_type).data)) {
+    return mir::Expr{
+        .data = mir::ArrayLiteralExpr{.elements = std::move(element_ids)},
+        .type = result_type};
   }
   return mir::Expr{
-      .data = mir::ConcatExpr{.operands = std::move(operand_ids)},
+      .data = mir::ConcatExpr{.operands = std::move(element_ids)},
       .type = result_type};
 }
 
