@@ -67,49 +67,6 @@ auto RenderEventEdgeAsRuntime(mir::EventEdge edge) -> std::string_view {
   throw InternalError("RenderEventEdgeAsRuntime: unknown EventEdge value");
 }
 
-auto RenderTimedStmt(
-    const RenderContext& ctx, const mir::TimedStmt& s, std::size_t indent)
-    -> diag::Result<std::string> {
-  auto timing_or = std::visit(
-      Overloaded{
-          [&](const mir::DelayControl& d) -> diag::Result<std::string> {
-            return Indent(indent) +
-                   "co_await lyra::runtime::Delay(*services_, " +
-                   std::to_string(d.duration) + ");\n";
-          },
-          [&](const mir::EventControl& e) -> diag::Result<std::string> {
-            std::string out =
-                Indent(indent) + "co_await lyra::runtime::WaitAny({";
-            for (std::size_t i = 0; i < e.triggers.size(); ++i) {
-              const auto& sig_expr = ctx.Expr(e.triggers[i].signal);
-              const auto* svr =
-                  std::get_if<mir::StructuralVarRef>(&sig_expr.data);
-              if (svr == nullptr) {
-                throw InternalError(
-                    "RenderTimedStmt: event-control trigger is not a "
-                    "StructuralVarRef (should be rejected at HIR lowering)");
-              }
-              auto name_or = RenderStructuralVarName(ctx, *svr);
-              if (!name_or) return std::unexpected(std::move(name_or.error()));
-              if (i != 0) out += ", ";
-              out += "{&" + *name_or + ", " +
-                     std::string{RenderEventEdgeAsRuntime(e.triggers[i].edge)} +
-                     "}";
-            }
-            out += "});\n";
-            return out;
-          },
-      },
-      s.timing);
-  if (!timing_or) return std::unexpected(std::move(timing_or.error()));
-  std::string out = *std::move(timing_or);
-  auto inner_or =
-      RenderStmt(ctx, ctx.ProceduralScope().stmts.at(s.stmt.value), indent);
-  if (!inner_or) return std::unexpected(std::move(inner_or.error()));
-  out += *inner_or;
-  return out;
-}
-
 auto RenderProceduralVarDeclStmt(
     const RenderContext& ctx, const mir::ProceduralVarDeclStmt& s,
     std::size_t indent) -> diag::Result<std::string> {
@@ -266,6 +223,27 @@ auto RenderDoWhileStmtNode(
   return result;
 }
 
+auto RenderSensitivityWaitStmt(
+    const RenderContext& ctx, const mir::SensitivityWaitStmt& s,
+    std::size_t indent) -> diag::Result<std::string> {
+  std::string result = Indent(indent) + "co_await lyra::runtime::WaitAny({";
+  for (std::size_t i = 0; i < s.reads.size(); ++i) {
+    const auto& read = s.reads[i];
+    auto name_or = RenderStructuralVarName(ctx, read.ref);
+    if (!name_or) return std::unexpected(std::move(name_or.error()));
+    if (i != 0) result += ", ";
+    // bit_range follows slang's `(lo_bit, hi_bit)` inclusive convention; the
+    // runtime Trigger takes `(lsb_offset, width)`.
+    const auto lsb = read.bit_range.first;
+    const auto width = read.bit_range.second - read.bit_range.first + 1;
+    result += "{&" + *name_or + ", " +
+              std::string{RenderEventEdgeAsRuntime(read.edge_kind)} + ", " +
+              std::to_string(lsb) + "ULL, " + std::to_string(width) + "ULL}";
+  }
+  result += "});\n";
+  return result;
+}
+
 }  // namespace
 
 auto RenderStmt(
@@ -280,8 +258,10 @@ auto RenderStmt(
           [&](const mir::EmptyStmt&) -> diag::Result<std::string> {
             return Indent(indent) + ";\n";
           },
-          [&](const mir::TimedStmt& s) -> diag::Result<std::string> {
-            return RenderTimedStmt(ctx, s, indent);
+          [&](const mir::DelayStmt& s) -> diag::Result<std::string> {
+            return Indent(indent) +
+                   "co_await lyra::runtime::Delay(*services_, " +
+                   std::to_string(s.duration) + ");\n";
           },
           [&](const mir::ProceduralVarDeclStmt& s)
               -> diag::Result<std::string> {
@@ -316,18 +296,7 @@ auto RenderStmt(
             return Indent(indent) + "continue;\n";
           },
           [&](const mir::SensitivityWaitStmt& s) -> diag::Result<std::string> {
-            std::string out =
-                Indent(indent) + "co_await lyra::runtime::WaitAny({";
-            for (std::size_t i = 0; i < s.reads.size(); ++i) {
-              auto name_or = RenderStructuralVarName(ctx, s.reads[i].ref);
-              if (!name_or) {
-                return std::unexpected(std::move(name_or.error()));
-              }
-              if (i != 0) out += ", ";
-              out += "{&" + *name_or + ", lyra::runtime::Edge::kAnyChange}";
-            }
-            out += "});\n";
-            return out;
+            return RenderSensitivityWaitStmt(ctx, s, indent);
           },
       },
       stmt.data);

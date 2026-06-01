@@ -61,17 +61,13 @@ auto LowerContinuousAssign(
   if (!rhs_or) return std::unexpected(std::move(rhs_or.error()));
   const hir::ExprId rhs_id = scope_state.AddExpr(*std::move(rhs_or));
 
-  // Sensitivity is precomputed by slang's flow analysis on the assignment
-  // expression during `BuildSensitivityReadStore` (see
-  // `docs/decisions/read-set-inference.md`). Look up keyed by the
-  // AssignmentExpression -- the same Expression-keyed bucket future
-  // per-expression analyses (property / assert / wait_order events) use.
-  std::vector<hir::SensitivityEntry> sensitivity;
-  if (const auto* reads = unit_facts.SensitivityReads().Lookup(assign);
-      reads != nullptr) {
-    sensitivity =
-        TranslateSensitivityReads(*reads, scope_state.UnitState(), stack);
-  }
+  // LRM 10.3.2: continuous assignment sensitivity is the read set of the
+  // RHS expression. slang treats the `ContinuousAssignSymbol` as the
+  // procedural scope for analysis purposes.
+  const auto& reads =
+      unit_facts.Sensitivity().AnalyzeReads(assignment_expr, sym);
+  auto sensitivity =
+      TranslateSensitivityReads(reads, scope_state.UnitState(), stack);
 
   return hir::ContinuousAssign{
       .span = span,

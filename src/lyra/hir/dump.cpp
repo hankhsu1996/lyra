@@ -446,6 +446,20 @@ class HirDumper {
         p);
   }
 
+  static auto FormatEventEdge(EventEdge edge) -> std::string_view {
+    switch (edge) {
+      case EventEdge::kAnyChange:
+        return "any";
+      case EventEdge::kPosedge:
+        return "posedge";
+      case EventEdge::kNegedge:
+        return "negedge";
+      case EventEdge::kBothEdges:
+        return "edge";
+    }
+    throw InternalError("HirDumper::FormatEventEdge: unknown EventEdge");
+  }
+
   static auto FormatTimingControlHeader(const TimingControl& tc)
       -> std::string {
     return std::visit(
@@ -458,24 +472,20 @@ class HirDumper {
               std::string out = "EventControl triggers=[";
               for (std::size_t i = 0; i < e.triggers.size(); ++i) {
                 if (i != 0) out += ", ";
-                const char* edge = "any";
-                switch (e.triggers[i].edge) {
-                  case EventEdge::kAnyChange:
-                    edge = "any";
-                    break;
-                  case EventEdge::kPosedge:
-                    edge = "posedge";
-                    break;
-                  case EventEdge::kNegedge:
-                    edge = "negedge";
-                    break;
-                  case EventEdge::kBothEdges:
-                    edge = "edge";
-                    break;
-                }
                 out += std::format(
-                    "{{signal=Expr[{}] edge={}}}", e.triggers[i].signal.value,
-                    edge);
+                    "{{signal=Expr[{}] edge={} sensitivity=[",
+                    e.triggers[i].signal.value,
+                    FormatEventEdge(e.triggers[i].edge));
+                for (std::size_t j = 0;
+                     j < e.triggers[i].sensitivity_list.size(); ++j) {
+                  if (j != 0) out += ", ";
+                  const auto& r = e.triggers[i].sensitivity_list[j];
+                  out += std::format(
+                      "{{hops={} var=StructuralVar[{}] bits=[{}:{}] edge={}}}",
+                      r.ref.hops.value, r.ref.var.value, r.bit_range.first,
+                      r.bit_range.second, FormatEventEdge(r.edge_kind));
+                }
+                out += "]}";
               }
               out += "]";
               return out;
@@ -486,9 +496,9 @@ class HirDumper {
                 if (i != 0) out += ", ";
                 const auto& r = ie.sensitivity_list[i];
                 out += std::format(
-                    "{{hops={} var=StructuralVar[{}] bits=[{}:{}]}}",
+                    "{{hops={} var=StructuralVar[{}] bits=[{}:{}] edge={}}}",
                     r.ref.hops.value, r.ref.var.value, r.bit_range.first,
-                    r.bit_range.second);
+                    r.bit_range.second, FormatEventEdge(r.edge_kind));
               }
               out += "]";
               return out;

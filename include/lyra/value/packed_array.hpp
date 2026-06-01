@@ -151,9 +151,21 @@ class PackedArray {
   // posedge, 1/x/z to 0 negedge).
   [[nodiscard]] auto Lsb() const -> FourStateBit;
 
+  // Returns one bit at the flat-storage offset, encoded as a 4-state code.
+  // Used by the runtime's per-leaf edge classifier to sample the bit a waiter
+  // projected onto. LRM 11.5.1 OOB rule applies: a position outside `[0,
+  // BitWidth())` reads as X for 4-state and 0 for 2-state.
+  [[nodiscard]] auto GetBit(std::uint64_t flat_offset) const -> FourStateBit;
+
   // LRM 11.4.5 `===` operator form (1-bit PackedArray); `==` returns 4-state
   // and propagates X, this returns deterministic 0 or 1.
   [[nodiscard]] auto CaseEqual(const PackedArray& other) const -> PackedArray;
+
+  // Mirror of `PackedArrayRef::Clone`. A chain that ends on a const path
+  // (e.g. `var.Get().Slice(...)`) materializes to `PackedArray` directly, so
+  // the emit-side `.Clone()` wrap needs to compile on both sides; here it is
+  // just an explicit copy.
+  [[nodiscard]] auto Clone() const -> PackedArray { return *this; }
 
   // Word-level access for `RuntimeValueView` construction and intra-runtime
   // interop. The spans alias the PackedArray's storage and stay valid for
@@ -388,30 +400,23 @@ class PackedArrayRef {
       PackedArray& root, const PackedArray& bit_offset, std::uint32_t bit_width,
       std::vector<PackedRange> dims);
 
-  PackedArrayRef(const PackedArrayRef&) = default;
-  PackedArrayRef(PackedArrayRef&&) = default;
+  // Move-only: a ref aliases its root by raw pointer, so duplicating the
+  // handle and outliving the source would dangle. Moves are fine because the
+  // descriptor is just relocated. Chain composition relies on RVO / move.
+  PackedArrayRef(const PackedArrayRef&) = delete;
+  auto operator=(const PackedArrayRef&) -> PackedArrayRef& = delete;
+  PackedArrayRef(PackedArrayRef&&) noexcept = default;
+  auto operator=(PackedArrayRef&&) noexcept -> PackedArrayRef& = default;
   ~PackedArrayRef() = default;
 
-  // Read-side: materialize the sub-slice. Explicit so a chain expression
-  // does not silently decay to a PackedArray value in unrelated contexts;
-  // callers wrap with `PackedArray(ref)` (direct-init) when they need a
-  // materialized value.
-  [[nodiscard]] explicit operator PackedArray() const;
+  // Allocate an independent `PackedArray` holding the bits this view
+  // currently projects. There is no implicit conversion from ref to value;
+  // every materialization is spelled `.Clone()` so the allocation cost is
+  // visible at the call site.
+  [[nodiscard]] auto Clone() const -> PackedArray;
 
   // Write-side: route through AssignSlice on root.
   auto operator=(const PackedArray& value) -> PackedArrayRef&;
-
-  // Without these, `lhs_ref = rhs_ref` would resolve to the implicitly
-  // generated copy / move assignment, which rebinds the lhs's bookkeeping
-  // pointers instead of writing through the proxy -- silently wrong. Both
-  // forms materialize the rhs and forward to the value-taking overload so
-  // the chain writes through `AssignSlice` as intended.
-  auto operator=(const PackedArrayRef& value) -> PackedArrayRef& {
-    return *this = PackedArray(value);
-  }
-  auto operator=(PackedArrayRef&& value) noexcept -> PackedArrayRef& {
-    return *this = PackedArray(value);
-  }
 
   // LRM 11.4 compound assignments. Read the current sub-slice once, combine
   // with `rhs` (frontend converts rhs to lhs.type), write back through
@@ -420,37 +425,37 @@ class PackedArrayRef {
   // caller, the proxy captures the position, and both the read and write
   // here use that same position with no re-evaluation of indices.
   auto operator+=(const PackedArray& rhs) -> PackedArrayRef& {
-    return *this = PackedArray(*this) + rhs;
+    return *this = Clone() + rhs;
   }
   auto operator-=(const PackedArray& rhs) -> PackedArrayRef& {
-    return *this = PackedArray(*this) - rhs;
+    return *this = Clone() - rhs;
   }
   auto operator*=(const PackedArray& rhs) -> PackedArrayRef& {
-    return *this = PackedArray(*this) * rhs;
+    return *this = Clone() * rhs;
   }
   auto operator/=(const PackedArray& rhs) -> PackedArrayRef& {
-    return *this = PackedArray(*this) / rhs;
+    return *this = Clone() / rhs;
   }
   auto operator%=(const PackedArray& rhs) -> PackedArrayRef& {
-    return *this = PackedArray(*this) % rhs;
+    return *this = Clone() % rhs;
   }
   auto operator&=(const PackedArray& rhs) -> PackedArrayRef& {
-    return *this = PackedArray(*this) & rhs;
+    return *this = Clone() & rhs;
   }
   auto operator|=(const PackedArray& rhs) -> PackedArrayRef& {
-    return *this = PackedArray(*this) | rhs;
+    return *this = Clone() | rhs;
   }
   auto operator^=(const PackedArray& rhs) -> PackedArrayRef& {
-    return *this = PackedArray(*this) ^ rhs;
+    return *this = Clone() ^ rhs;
   }
   auto ShiftLeftAssign(const PackedArray& rhs) -> PackedArrayRef& {
-    return *this = PackedArray(*this).ShiftLeft(rhs);
+    return *this = Clone().ShiftLeft(rhs);
   }
   auto LogicalShiftRightAssign(const PackedArray& rhs) -> PackedArrayRef& {
-    return *this = PackedArray(*this).LogicalShiftRight(rhs);
+    return *this = Clone().LogicalShiftRight(rhs);
   }
   auto ArithmeticShiftRightAssign(const PackedArray& rhs) -> PackedArrayRef& {
-    return *this = PackedArray(*this).ArithmeticShiftRight(rhs);
+    return *this = Clone().ArithmeticShiftRight(rhs);
   }
 
   // Chain composition. Positions are in the current sub-view's outer-element

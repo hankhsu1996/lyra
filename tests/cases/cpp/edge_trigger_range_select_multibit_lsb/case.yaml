@@ -1,0 +1,12 @@
+id: cpp.edge_trigger_range_select_multibit_lsb
+tags: [cpp_run]
+input:
+  command: [run, cpp]
+  project: false
+  top: Top
+  files: [main.sv]
+expect:
+  exit: 0
+  variables:
+    result: 1
+    snapshot_at_5: 0

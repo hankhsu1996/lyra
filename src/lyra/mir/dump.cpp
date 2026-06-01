@@ -213,40 +213,18 @@ class MirDumper {
     throw InternalError("MirDumper::FormatTimeScale: unknown TimeScale");
   }
 
-  static auto FormatTimingControl(const TimingControl& tc) -> std::string {
-    return std::visit(
-        Overloaded{
-            [](const DelayControl& d) -> std::string {
-              return std::format("DelayControl ticks={}", d.duration);
-            },
-            [](const EventControl& e) -> std::string {
-              std::string out = "EventControl triggers=[";
-              for (std::size_t i = 0; i < e.triggers.size(); ++i) {
-                if (i != 0) out += ", ";
-                const char* edge = "any";
-                switch (e.triggers[i].edge) {
-                  case EventEdge::kAnyChange:
-                    edge = "any";
-                    break;
-                  case EventEdge::kPosedge:
-                    edge = "posedge";
-                    break;
-                  case EventEdge::kNegedge:
-                    edge = "negedge";
-                    break;
-                  case EventEdge::kBothEdges:
-                    edge = "edge";
-                    break;
-                }
-                out += std::format(
-                    "{{signal=Expr[{}] edge={}}}", e.triggers[i].signal.value,
-                    edge);
-              }
-              out += "]";
-              return out;
-            },
-        },
-        tc);
+  static auto FormatEventEdge(EventEdge edge) -> std::string_view {
+    switch (edge) {
+      case EventEdge::kAnyChange:
+        return "any";
+      case EventEdge::kPosedge:
+        return "posedge";
+      case EventEdge::kNegedge:
+        return "negedge";
+      case EventEdge::kBothEdges:
+        return "edge";
+    }
+    throw InternalError("MirDumper::FormatEventEdge: unknown EventEdge");
   }
 
   static auto FormatUnaryOp(UnaryOp op) -> std::string {
@@ -781,7 +759,11 @@ class MirDumper {
               DumpConstructOwnedObjectStmt(id, s);
             },
             [&](const ForStmt& s) { DumpForStmt(stmt, s, enclosing, id); },
-            [&](const TimedStmt& t) { DumpTimedStmt(t, enclosing, id); },
+            [&](const DelayStmt& d) {
+              Line(
+                  std::format(
+                      "Stmt[{}] DelayStmt ticks={}", id.value, d.duration));
+            },
             [&](const WhileStmt& s) { DumpWhileStmt(stmt, s, enclosing, id); },
             [&](const DoWhileStmt& s) {
               DumpDoWhileStmt(stmt, s, enclosing, id);
@@ -799,9 +781,9 @@ class MirDumper {
                 Line(
                     std::format(
                         "StructuralVarRef hops={} var=StructuralVar[{}] "
-                        "bits=[{}:{}]",
+                        "bits=[{}:{}] edge={}",
                         r.ref.hops.value, r.ref.var.value, r.bit_range.first,
-                        r.bit_range.second));
+                        r.bit_range.second, FormatEventEdge(r.edge_kind)));
               }
               Dedent();
             },
@@ -837,18 +819,6 @@ class MirDumper {
     Line(std::format("scope (ProceduralScopeId={}):", s.scope.value));
     Indent();
     DumpProceduralScope(parent.child_procedural_scopes.at(s.scope.value));
-    Dedent();
-    Dedent();
-  }
-
-  void DumpTimedStmt(
-      const TimedStmt& t, const ProceduralScope& enclosing, StmtId id) {
-    Line(std::format("Stmt[{}] TimedStmt", id.value));
-    Indent();
-    Line(std::format("timing: {}", FormatTimingControl(t.timing)));
-    Line("stmt:");
-    Indent();
-    DumpStmt(enclosing, t.stmt);
     Dedent();
     Dedent();
   }

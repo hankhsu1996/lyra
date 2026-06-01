@@ -29,6 +29,12 @@
 
 namespace lyra::backend::cpp {
 
+// Renders `expr` without forcing a `PackedArrayRef` chain to materialize.
+// Public `RenderExpr` wraps any leftover ref in `.Clone()` so consumers see
+// an owning value.
+auto RenderExprNatural(const RenderContext& ctx, const mir::Expr& expr)
+    -> diag::Result<std::string>;
+
 namespace {
 
 // Type-kind predicate. `real`, `shortreal`, and `realtime` (LRM 6.12)
@@ -823,7 +829,7 @@ auto RenderSameShapeLiteral(
 auto RenderElementSelectExpr(
     const RenderContext& ctx, const mir::ElementSelectExpr& sel)
     -> diag::Result<std::string> {
-  auto base_or = RenderExpr(ctx, ctx.Expr(sel.base_value));
+  auto base_or = RenderExprNatural(ctx, ctx.Expr(sel.base_value));
   if (!base_or) return std::unexpected(std::move(base_or.error()));
   auto idx_or = RenderExpr(ctx, ctx.Expr(sel.index));
   if (!idx_or) return std::unexpected(std::move(idx_or.error()));
@@ -1067,7 +1073,7 @@ auto RenderRangeSelectExpr(
     const RenderContext& ctx, const mir::Expr& expr,
     const mir::RangeSelectExpr& sel) -> diag::Result<std::string> {
   const auto& operand_expr = ctx.Expr(sel.base_value);
-  auto base_or = RenderExpr(ctx, operand_expr);
+  auto base_or = RenderExprNatural(ctx, operand_expr);
   if (!base_or) return std::unexpected(std::move(base_or.error()));
 
   const auto& result_ty = ctx.Unit().GetType(expr.type);
@@ -1207,9 +1213,24 @@ auto RenderReplicationExpr(
       "lyra::value::ReplicateString({}, {})", *concat, count_text);
 }
 
+auto ProducesPackedArrayRef(const mir::Expr& expr) -> bool {
+  return std::holds_alternative<mir::ElementSelectExpr>(expr.data) ||
+         std::holds_alternative<mir::RangeSelectExpr>(expr.data);
+}
+
 }  // namespace
 
 auto RenderExpr(const RenderContext& ctx, const mir::Expr& expr)
+    -> diag::Result<std::string> {
+  auto rendered_or = RenderExprNatural(ctx, expr);
+  if (!rendered_or) return rendered_or;
+  if (ProducesPackedArrayRef(expr)) {
+    return "(" + *std::move(rendered_or) + ").Clone()";
+  }
+  return rendered_or;
+}
+
+auto RenderExprNatural(const RenderContext& ctx, const mir::Expr& expr)
     -> diag::Result<std::string> {
   return std::visit(
       Overloaded{
