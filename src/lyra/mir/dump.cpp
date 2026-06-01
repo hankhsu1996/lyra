@@ -1049,6 +1049,8 @@ class MirDumper {
         return "kRealExponential";
       case FormatKind::kRealGeneral:
         return "kRealGeneral";
+      case FormatKind::kAssignmentPattern:
+        return "kAssignmentPattern";
     }
     throw InternalError("FormatMirFormatKind: unknown FormatKind");
   }
