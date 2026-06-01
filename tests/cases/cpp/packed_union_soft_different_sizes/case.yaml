@@ -1,0 +1,12 @@
+id: cpp.packed_union_soft_different_sizes
+tags: [cpp_run]
+input:
+  command: [run, cpp]
+  project: false
+  top: Top
+  files: [main.sv]
+expect:
+  exit: 0
+  variables:
+    result_word: 0xaabb
+    result_byte: 0xbb

@@ -11,7 +11,7 @@ namespace lyra::diag {
 // Stable identity for primary diagnostics. Notes have no code.
 enum class DiagCode : std::uint32_t {
   kUnsupportedPackedArrayElementType,
-  kUnsupportedPackedUnionType,
+  kUnsupportedTaggedPackedUnion,
   kUnsupportedFixedSizeUnpackedArrayType,
   kUnsupportedDynamicArrayType,
   kUnsupportedQueueType,

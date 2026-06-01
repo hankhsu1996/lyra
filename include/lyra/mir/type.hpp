@@ -81,11 +81,12 @@ struct EnumType {
   std::vector<EnumMember> members;
 };
 
-// LRM 7.2.1 packed struct has no MIR-level distinct shape: HIR -> MIR
-// translates a `hir::PackedStructType` to its "single vector" projection
+// LRM 7.2.1 / 7.3.1 packed struct and packed union have no MIR-level
+// distinct shape: HIR -> MIR translates `hir::PackedStructType` and
+// `hir::PackedUnionType` to their "single vector" projection
 // (`PackedArrayType`). Field accesses lower to constant-bounds RangeSelect
-// against that vector. A future MIR node for *unpacked* struct is a
-// genuinely different shape and will get its own variant when that work
+// against that vector. A future MIR node for *unpacked* struct / union is
+// a genuinely different shape and will get its own variant when that work
 // lands.
 
 struct UnpackedRange {

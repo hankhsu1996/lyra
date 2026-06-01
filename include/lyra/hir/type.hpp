@@ -14,6 +14,7 @@ namespace lyra::hir {
 enum class TypeKind {
   kPackedArray,
   kPackedStruct,
+  kPackedUnion,
   kEnum,
   kUnpackedArray,
   kDynamicArray,
@@ -75,10 +76,12 @@ struct EnumType {
   std::vector<EnumMember> members;
 };
 
-// LRM 7.2.1: each field occupies a contiguous bit range within the struct's
-// packed bit space. `bit_offset` is the LSB position of the field (slang's
-// FieldSymbol::bitOffset); the first-declared field has the highest offset.
-struct PackedStructField {
+// A named bit-range member of a packed aggregate (struct or union). For a
+// packed struct each field has its own contiguous slot computed by slang
+// (`FieldSymbol::bitOffset`); for an untagged packed union every field has
+// `bit_offset = 0` and `bit_width = member's own width` (LRM 7.3.1: members
+// are right-justified to the LSBs).
+struct PackedAggregateField {
   std::string name;
   TypeId type;
   std::uint64_t bit_offset;
@@ -92,7 +95,18 @@ struct PackedStructField {
 // member-access expressions consult.
 struct PackedStructType {
   PackedArrayType base;
-  std::vector<PackedStructField> fields;
+  std::vector<PackedAggregateField> fields;
+};
+
+// LRM 7.3.1 untagged packed union. `base` is the "single vector" projection
+// (width = max member width; 4-state iff any member is 4-state). Members
+// overlap at the LSBs; for hard packed unions every member equals the union
+// width, for soft packed unions a narrower member's bits sit at the LSBs and
+// MSBs beyond the member are preserved across writes. Tagged unions are a
+// separate future feature (require runtime tag-bit logic, LRM 11.9).
+struct PackedUnionType {
+  PackedArrayType base;
+  std::vector<PackedAggregateField> fields;
 };
 
 struct UnpackedRange {
@@ -128,9 +142,10 @@ struct ChandleType {};
 struct VoidType {};
 
 using TypeData = std::variant<
-    PackedArrayType, PackedStructType, EnumType, UnpackedArrayType,
-    DynamicArrayType, QueueType, AssociativeArrayType, StringType, EventType,
-    RealType, ShortRealType, RealTimeType, ChandleType, VoidType>;
+    PackedArrayType, PackedStructType, PackedUnionType, EnumType,
+    UnpackedArrayType, DynamicArrayType, QueueType, AssociativeArrayType,
+    StringType, EventType, RealType, ShortRealType, RealTimeType, ChandleType,
+    VoidType>;
 
 struct Type {
   TypeData data;
@@ -140,6 +155,8 @@ struct Type {
   [[nodiscard]] auto AsPackedArray() const -> const PackedArrayType&;
   [[nodiscard]] auto IsPackedStruct() const -> bool;
   [[nodiscard]] auto AsPackedStruct() const -> const PackedStructType&;
+  [[nodiscard]] auto IsPackedUnion() const -> bool;
+  [[nodiscard]] auto AsPackedUnion() const -> const PackedUnionType&;
   [[nodiscard]] auto IsEnum() const -> bool;
   [[nodiscard]] auto AsEnum() const -> const EnumType&;
 };
