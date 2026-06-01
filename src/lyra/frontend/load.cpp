@@ -7,6 +7,7 @@
 #include <slang/ast/Compilation.h>
 #include <slang/diagnostics/DiagnosticEngine.h>
 #include <slang/diagnostics/TextDiagnosticClient.h>
+#include <slang/parsing/Parser.h>
 #include <slang/text/SourceManager.h>
 #include <slang/util/Bag.h>
 
@@ -26,6 +27,9 @@ auto LoadFiles(const CompilationInput& input, diag::DiagnosticSink& sink)
 
   slang::Bag options;
   options.set(BuildLyraPreprocessorOptions(input.defines));
+  slang::parsing::ParserOptions parser_options;
+  parser_options.languageVersion = slang::LanguageVersion::v1800_2023;
+  options.set(parser_options);
 
   slang::ast::CompilationOptions comp_options;
   comp_options.languageVersion = slang::LanguageVersion::v1800_2023;

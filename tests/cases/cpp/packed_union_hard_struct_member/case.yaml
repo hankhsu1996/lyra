@@ -1,0 +1,13 @@
+id: cpp.packed_union_hard_struct_member
+tags: [cpp_run]
+input:
+  command: [run, cpp]
+  project: false
+  top: Top
+  files: [main.sv]
+expect:
+  exit: 0
+  variables:
+    result_word: 0xabcd
+    result_high: 0xab
+    result_low: 0xcd

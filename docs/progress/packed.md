@@ -13,12 +13,10 @@ Done when:
 
 ## Actionable
 
-P4 and P5 are open and ordered: P4 (union field views) rides on the same field-access machinery P3
-introduced; P5 builds assignment patterns on top.
+P5 builds assignment patterns on the field-access machinery P3 / P4 established.
 
 | Item | Status         |
 | ---- | -------------- |
-| P4   | Depends on P3. |
 | P5   | Depends on P3. |
 
 ## Sub-Steps
@@ -31,9 +29,11 @@ The numeric IDs are stable references.
       4-state member conversion (LRM 7.2.1 fourth paragraph) tracks the struct-level atom; per-field
       state-promotion at the boundary is a follow-up.
 
-- [ ] P4 -- Packed union (LRM 7.3.1). All members overlay the same underlying bits; field access
-      reads / writes the full union width and reinterprets per the accessed member's type. The type
-      system distinguishes the view. Closes `datatypes/packed/packed_union`.
+- [x] P4 -- Packed union (LRM 7.3.1). Untagged hard and soft packed unions; members overlay at the
+      LSBs and reads / writes reinterpret per the accessed member's declared type, including signed
+      reinterpretation. Whole-union copy, equality, bit / part selects ride on the "treated as a
+      single vector" projection. Tagged packed unions are deferred (need runtime tag-bit logic per
+      LRM 11.9).
 
 - [ ] P5 -- Assignment patterns over packed aggregates (LRM 10.9): positional `'{a, b, c}`, default
       `'{default: v}`, named `'{i: v, j: v}`, and replication `'{N{x}}`. Closes
@@ -42,8 +42,8 @@ The numeric IDs are stable references.
 
 ## Cross-references
 
-- LRM anchors: 7.2 (packed structs and unions), 7.4 (packed and unpacked arrays), 10.9 (assignment
-  patterns), 11.5.1 (bit-select / part-select on packed arrays and structs).
+- LRM anchors: 7.2 (packed structs), 7.3 (packed unions), 7.4 (packed and unpacked arrays), 10.9
+  (assignment patterns), 11.5.1 (bit-select / part-select on packed arrays, structs, and unions).
 - Prerequisite: `operators.md` W4..W6 (P3 adds packed-struct field access as a new addressable
   expression form on top of the existing selectors).
 - `datatypes/packed/indexed_part_select`, `datatypes/packed/packed_2d`, `packed_3d`,

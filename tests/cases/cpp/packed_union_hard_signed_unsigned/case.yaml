@@ -1,0 +1,12 @@
+id: cpp.packed_union_hard_signed_unsigned
+tags: [cpp_run]
+input:
+  command: [run, cpp]
+  project: false
+  top: Top
+  files: [main.sv]
+expect:
+  exit: 0
+  variables:
+    result_u: 255
+    result_s: -1

@@ -137,7 +137,7 @@ auto LowerPackedStruct(
       .dims = {hir::PackedRange{.left = width - 1, .right = 0}},
       .form = hir::PackedArrayForm::kExplicit,
   };
-  std::vector<hir::PackedStructField> fields;
+  std::vector<hir::PackedAggregateField> fields;
   for (const auto& field :
        struct_type.membersOfType<slang::ast::FieldSymbol>()) {
     auto field_type_or = state.GetTypeId(field.getType(), decl_span);
@@ -147,7 +147,7 @@ auto LowerPackedStruct(
     const auto field_width =
         static_cast<std::uint64_t>(field.getType().getBitWidth());
     fields.push_back(
-        hir::PackedStructField{
+        hir::PackedAggregateField{
             .name = std::string(field.name),
             .type = *field_type_or,
             .bit_offset = field.bitOffset,
@@ -155,6 +155,52 @@ auto LowerPackedStruct(
         });
   }
   return hir::PackedStructType{
+      .base = std::move(base),
+      .fields = std::move(fields),
+  };
+}
+
+auto LowerPackedUnion(
+    const slang::ast::PackedUnionType& union_type, diag::SourceSpan decl_span,
+    UnitLoweringState& state) -> diag::Result<hir::PackedUnionType> {
+  if (union_type.isTagged) {
+    return diag::Unsupported(
+        decl_span, diag::DiagCode::kUnsupportedTaggedPackedUnion,
+        "tagged packed unions are not yet supported",
+        diag::UnsupportedCategory::kType);
+  }
+  const auto width = static_cast<std::int64_t>(union_type.bitWidth);
+  if (width <= 0) {
+    throw InternalError("LowerPackedUnion: zero-width packed union");
+  }
+  const auto atom =
+      union_type.isFourState ? hir::BitAtom::kLogic : hir::BitAtom::kBit;
+  const auto signedness = union_type.isSigned ? hir::Signedness::kSigned
+                                              : hir::Signedness::kUnsigned;
+  hir::PackedArrayType base{
+      .atom = atom,
+      .signedness = signedness,
+      .dims = {hir::PackedRange{.left = width - 1, .right = 0}},
+      .form = hir::PackedArrayForm::kExplicit,
+  };
+  std::vector<hir::PackedAggregateField> fields;
+  for (const auto& field :
+       union_type.membersOfType<slang::ast::FieldSymbol>()) {
+    auto field_type_or = state.GetTypeId(field.getType(), decl_span);
+    if (!field_type_or) {
+      return std::unexpected(std::move(field_type_or.error()));
+    }
+    const auto field_width =
+        static_cast<std::uint64_t>(field.getType().getBitWidth());
+    fields.push_back(
+        hir::PackedAggregateField{
+            .name = std::string(field.name),
+            .type = *field_type_or,
+            .bit_offset = 0U,
+            .bit_width = field_width,
+        });
+  }
+  return hir::PackedUnionType{
       .base = std::move(base),
       .fields = std::move(fields),
   };
@@ -249,11 +295,14 @@ auto LowerType(
       }
       return hir::TypeData{*std::move(s)};
     }
-    case slang::ast::SymbolKind::PackedUnionType:
-      return diag::Unsupported(
-          decl_span, diag::DiagCode::kUnsupportedPackedUnionType,
-          "packed union types are not supported",
-          diag::UnsupportedCategory::kType);
+    case slang::ast::SymbolKind::PackedUnionType: {
+      auto u = LowerPackedUnion(
+          canonical.as<slang::ast::PackedUnionType>(), decl_span, state);
+      if (!u.has_value()) {
+        return std::unexpected(std::move(u.error()));
+      }
+      return hir::TypeData{*std::move(u)};
+    }
     case slang::ast::SymbolKind::FixedSizeUnpackedArrayType:
       return diag::Unsupported(
           decl_span, diag::DiagCode::kUnsupportedFixedSizeUnpackedArrayType,
