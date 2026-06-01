@@ -1058,8 +1058,9 @@ auto LowerHirAssignmentPatternExprProc(
     const StructuralScopeLoweringState& scope_state,
     const ProcessLoweringState& proc_state,
     ProceduralScopeLoweringState& proc_scope_state,
-    const hir::Process& hir_process, const hir::AssignmentPatternExpr& a,
-    mir::TypeId result_type) -> diag::Result<mir::Expr> {
+    const hir::ProceduralBody& hir_process,
+    const hir::AssignmentPatternExpr& a, mir::TypeId result_type)
+    -> diag::Result<mir::Expr> {
   std::vector<mir::ExprId> operand_ids;
   operand_ids.reserve(a.elements.size());
   for (const auto& id : a.elements) {
@@ -1079,7 +1080,7 @@ auto LowerHirAssignmentPatternReplicationExprProc(
     const StructuralScopeLoweringState& scope_state,
     const ProcessLoweringState& proc_state,
     ProceduralScopeLoweringState& proc_scope_state,
-    const hir::Process& hir_process,
+    const hir::ProceduralBody& hir_process,
     const hir::AssignmentPatternReplicationExpr& a, mir::TypeId result_type)
     -> diag::Result<mir::Expr> {
   std::vector<mir::ExprId> item_ids;
