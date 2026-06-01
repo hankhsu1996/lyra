@@ -60,16 +60,6 @@ auto TranslatePackedRanges(const std::vector<hir::PackedRange>& src)
   return out;
 }
 
-auto TranslateUnpackedRanges(const std::vector<hir::UnpackedRange>& src)
-    -> std::vector<mir::UnpackedRange> {
-  std::vector<mir::UnpackedRange> out;
-  out.reserve(src.size());
-  for (const auto& r : src) {
-    out.push_back(mir::UnpackedRange{.left = r.left, .right = r.right});
-  }
-  return out;
-}
-
 }  // namespace
 
 auto TranslateTypeData(
@@ -139,9 +129,12 @@ auto TranslateTypeData(
             };
           },
           [&](const hir::UnpackedArrayType& src) -> mir::TypeData {
+            const std::int64_t span = (src.dim.left >= src.dim.right)
+                                          ? (src.dim.left - src.dim.right)
+                                          : (src.dim.right - src.dim.left);
             return mir::UnpackedArrayType{
                 .element_type = state.TranslateType(src.element_type),
-                .dims = TranslateUnpackedRanges(src.dims),
+                .size = static_cast<std::uint64_t>(span) + 1U,
             };
           },
           [&](const hir::DynamicArrayType& src) -> mir::TypeData {

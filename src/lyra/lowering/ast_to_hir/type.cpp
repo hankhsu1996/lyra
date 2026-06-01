@@ -303,11 +303,20 @@ auto LowerType(
       }
       return hir::TypeData{*std::move(u)};
     }
-    case slang::ast::SymbolKind::FixedSizeUnpackedArrayType:
-      return diag::Unsupported(
-          decl_span, diag::DiagCode::kUnsupportedFixedSizeUnpackedArrayType,
-          "unpacked array types are not supported",
-          diag::UnsupportedCategory::kType);
+    case slang::ast::SymbolKind::FixedSizeUnpackedArrayType: {
+      const auto& fa = canonical.as<slang::ast::FixedSizeUnpackedArrayType>();
+      auto elem_id_or = state.GetTypeId(fa.elementType, decl_span);
+      if (!elem_id_or) {
+        return std::unexpected(std::move(elem_id_or.error()));
+      }
+      return hir::TypeData{hir::UnpackedArrayType{
+          .element_type = *elem_id_or,
+          .dim =
+              hir::UnpackedRange{
+                  .left = static_cast<std::int64_t>(fa.range.left),
+                  .right = static_cast<std::int64_t>(fa.range.right)},
+      }};
+    }
     case slang::ast::SymbolKind::DynamicArrayType:
       return diag::Unsupported(
           decl_span, diag::DiagCode::kUnsupportedDynamicArrayType,

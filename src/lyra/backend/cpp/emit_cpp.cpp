@@ -25,37 +25,25 @@ namespace lyra::backend::cpp {
 
 namespace {
 
-auto RenderFieldCtorArgs(
-    const RenderContext& ctor_ctx, const mir::StructuralVarDecl& var,
-    const mir::Type& ty) -> diag::Result<std::string> {
-  if (var.initializer.has_value()) {
-    return RenderExpr(ctor_ctx, ctor_ctx.Expr(*var.initializer));
-  }
-  return RenderTypeDefaultCtorArgs(ty);
-}
-
 auto RenderField(
     const RenderContext& ctor_ctx, const mir::StructuralVarDecl& var,
     std::size_t indent) -> diag::Result<std::string> {
   const auto& unit = ctor_ctx.Unit();
   auto type_or = RenderTypeAsCpp(unit, ctor_ctx.StructuralScope(), var.type);
   if (!type_or) return std::unexpected(std::move(type_or.error()));
-  const auto& ty = unit.GetType(var.type);
-  const auto is_observable = IsObservableScalarType(ty);
-  const auto storage_type =
-      is_observable ? "lyra::runtime::Var<" + *type_or + ">" : *type_or;
-  auto args_or = RenderFieldCtorArgs(ctor_ctx, var, ty);
-  if (!args_or) return std::unexpected(std::move(args_or.error()));
-  // For `Var<T>` storage with no initializer the args are the inner T's
-  // ctor arguments; wrap in `T{...}` so a braced `std::initializer_list`
-  // argument is bound to `T`'s parameter directly instead of being passed
-  // through `Var`'s perfect-forwarding template (which cannot deduce
-  // `initializer_list` from a brace-enclosed list).
-  const std::string init_body = (is_observable && !var.initializer.has_value())
-                                    ? *type_or + "{" + *args_or + "}"
-                                    : *args_or;
-  return Indent(indent) + storage_type + " " + var.name + "{" + init_body +
-         "};\n";
+  auto value_expr_or = RenderExpr(ctor_ctx, ctor_ctx.Expr(var.initializer));
+  if (!value_expr_or) {
+    return std::unexpected(std::move(value_expr_or.error()));
+  }
+  // Var<T> forwards its single payload through a variadic-of-1 ctor to T's
+  // copy ctor. Plain T uses copy-init because `T n(args);` at class scope
+  // would parse as a member-function declaration.
+  if (IsObservableScalarType(unit.GetType(var.type))) {
+    return Indent(indent) + "lyra::runtime::Var<" + *type_or + "> " + var.name +
+           "{" + *value_expr_or + "};\n";
+  }
+  return Indent(indent) + *type_or + " " + var.name + " = " + *value_expr_or +
+         ";\n";
 }
 
 auto RenderParamField(

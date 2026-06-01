@@ -51,7 +51,7 @@ struct EmptyStmt {};
 
 struct ProceduralVarDeclStmt {
   ProceduralVarRef target;
-  std::optional<ExprId> init;
+  ExprId init;
 };
 
 struct ExprStmt {
@@ -76,7 +76,7 @@ struct ConstructOwnedObjectStmt {
 
 struct ForInitDecl {
   ProceduralVarRef induction_var = {};
-  std::optional<ExprId> init;
+  ExprId init;
 };
 
 struct ForInitExpr {

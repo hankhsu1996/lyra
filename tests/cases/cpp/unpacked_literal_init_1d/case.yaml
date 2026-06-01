@@ -1,0 +1,11 @@
+id: cpp.unpacked_literal_init_1d
+tags: [cpp_run]
+input:
+  command: [run, cpp]
+  project: false
+  top: Top
+  files: [main.sv]
+expect:
+  exit: 0
+  stdout:
+    exact: "10\n20\n30\n"

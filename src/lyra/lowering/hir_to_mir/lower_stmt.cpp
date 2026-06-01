@@ -16,6 +16,7 @@
 #include "lyra/hir/procedural_body.hpp"
 #include "lyra/hir/stmt.hpp"
 #include "lyra/lowering/hir_to_mir/case_cascade.hpp"
+#include "lyra/lowering/hir_to_mir/default_value.hpp"
 #include "lyra/lowering/hir_to_mir/delay_time_resolver.hpp"
 #include "lyra/lowering/hir_to_mir/inside_predicate.hpp"
 #include "lyra/lowering/hir_to_mir/lower_deferred_check.hpp"
@@ -101,7 +102,7 @@ auto LowerVarDeclStmt(
       ProceduralVarBinding{
           .declaration_procedural_depth = proc_state.CurrentProceduralDepth(),
           .var = local_id});
-  std::optional<mir::ExprId> init_id;
+  mir::ExprId init_id{};
   if (v.init.has_value()) {
     auto init_or = LowerExpr(
         unit_state, scope_state, proc_state, proc_scope_state, hir_proc,
@@ -110,6 +111,8 @@ auto LowerVarDeclStmt(
       return std::unexpected(std::move(init_or.error()));
     }
     init_id = proc_scope_state.AddExpr(*std::move(init_or));
+  } else {
+    init_id = SynthesizeDefaultValueExpr(unit_state, proc_scope_state, type);
   }
   return mir::Stmt{
       .label = stmt.label,
@@ -178,7 +181,8 @@ auto LowerDestructuringAssign(
 
   const mir::ProceduralVarId temp_var = wrapper_state.AddProceduralVar(
       mir::ProceduralVarDecl{.name = "_lyra_destruct_rhs", .type = temp_type});
-
+  const mir::ExprId temp_default_init =
+      SynthesizeDefaultValueExpr(unit_state, wrapper_state, temp_type);
   const mir::StmtId temp_decl_id = wrapper_state.AddStmt(
       mir::Stmt{
           .label = std::nullopt,
@@ -188,7 +192,7 @@ auto LowerDestructuringAssign(
                       mir::ProceduralVarRef{
                           .hops = mir::ProceduralHops{.value = 0},
                           .var = temp_var},
-                  .init = std::nullopt},
+                  .init = temp_default_init},
           .child_procedural_scopes = {}});
   wrapper_state.AddRootStmt(temp_decl_id);
 
@@ -510,7 +514,7 @@ auto LowerCaseStmt(
   }
 
   const CaseSnapshotRefs snapshot =
-      AppendCaseSnapshot(wrapper_state, cond_expr_id);
+      AppendCaseSnapshot(unit_state, wrapper_state, cond_expr_id);
 
   // Each cascade level k > 0 sits one MIR scope deeper than the previous
   // level (it lives inside the prior level's else_scope). Bump proc_state by k
@@ -635,7 +639,7 @@ auto LowerCaseInsideStmt(
   }
 
   const CaseSnapshotRefs snapshot =
-      AppendCaseSnapshot(wrapper_state, cond_expr_id);
+      AppendCaseSnapshot(unit_state, wrapper_state, cond_expr_id);
 
   auto with_extra_depth = [&](std::size_t extras, auto fn) {
     std::vector<std::unique_ptr<ProceduralDepthGuard>> guards;
@@ -765,7 +769,7 @@ auto LowerForStmt(
                              .declaration_procedural_depth =
                                  proc_state.CurrentProceduralDepth(),
                              .var = local_id});
-              std::optional<mir::ExprId> init_id;
+              mir::ExprId init_id{};
               if (d.init.has_value()) {
                 auto init_or = LowerExpr(
                     unit_state, scope_state, proc_state, proc_scope_state,
@@ -774,6 +778,9 @@ auto LowerForStmt(
                   return std::unexpected(std::move(init_or.error()));
                 }
                 init_id = proc_scope_state.AddExpr(*std::move(init_or));
+              } else {
+                init_id = SynthesizeDefaultValueExpr(
+                    unit_state, proc_scope_state, type);
               }
               return mir::ForInit{mir::ForInitDecl{
                   .induction_var =

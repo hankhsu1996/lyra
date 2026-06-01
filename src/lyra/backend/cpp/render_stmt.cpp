@@ -31,19 +31,13 @@ auto RenderForInit(const RenderContext& ctx, const mir::ForInit& init)
             auto type_or =
                 RenderTypeAsCpp(ctx.Unit(), ctx.StructuralScope(), lv.type);
             if (!type_or) return std::unexpected(std::move(type_or.error()));
-            const auto& ty = ctx.Unit().GetType(lv.type);
-            std::string out = *type_or + " " + lv.name;
-            if (d.init.has_value()) {
-              const auto& v = ctx.ProceduralScope().exprs.at(d.init->value);
-              auto rendered_or = RenderExpr(ctx, v);
-              if (!rendered_or) {
-                return std::unexpected(std::move(rendered_or.error()));
-              }
-              out += " = " + *rendered_or;
-            } else {
-              out += "{" + RenderTypeDefaultCtorArgs(ty) + "}";
+            const auto& init_expr =
+                ctx.ProceduralScope().exprs.at(d.init.value);
+            auto rendered_or = RenderExpr(ctx, init_expr);
+            if (!rendered_or) {
+              return std::unexpected(std::move(rendered_or.error()));
             }
-            return out;
+            return *type_or + " " + lv.name + " = " + *rendered_or;
           },
           [&](const mir::ForInitExpr& e) -> diag::Result<std::string> {
             const auto& expr = ctx.ProceduralScope().exprs.at(e.expr.value);
@@ -74,15 +68,10 @@ auto RenderProceduralVarDeclStmt(
       ctx.ProceduralScopeAtHops(s.target.hops).vars.at(s.target.var.value);
   auto type_or = RenderTypeAsCpp(ctx.Unit(), ctx.StructuralScope(), lv.type);
   if (!type_or) return std::unexpected(std::move(type_or.error()));
-  const auto& ty = ctx.Unit().GetType(lv.type);
-  if (s.init.has_value()) {
-    const auto& init_expr = ctx.ProceduralScope().exprs.at(s.init->value);
-    auto init_or = RenderExpr(ctx, init_expr);
-    if (!init_or) return std::unexpected(std::move(init_or.error()));
-    return Indent(indent) + *type_or + " " + lv.name + " = " + *init_or + ";\n";
-  }
-  return Indent(indent) + *type_or + " " + lv.name + "{" +
-         RenderTypeDefaultCtorArgs(ty) + "};\n";
+  const auto& init_expr = ctx.ProceduralScope().exprs.at(s.init.value);
+  auto init_or = RenderExpr(ctx, init_expr);
+  if (!init_or) return std::unexpected(std::move(init_or.error()));
+  return Indent(indent) + *type_or + " " + lv.name + " = " + *init_or + ";\n";
 }
 
 auto RenderExprStmt(

@@ -28,6 +28,7 @@ enum class FormatKind : std::uint8_t {
   kRealDecimal,
   kRealExponential,
   kRealGeneral,
+  kAssignmentPattern,
 };
 
 // Two-state vs four-state lives on the integral axis, not as a top-level

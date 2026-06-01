@@ -116,10 +116,12 @@ struct ReplicationExpr {
 };
 
 // LRM 10.9 assignment pattern (positional / named / type-key / index-key /
-// default forms). Slang has normalised all four forms into a flat per-field
-// expression list in target declaration order (= packed MSB-first), with
-// each item already wrapped in a ConversionExpression to the field's
-// declared type.
+// default forms). Slang has normalised all four forms into a flat per-element
+// expression list in target declaration order (= packed MSB-first), with each
+// item already wrapped in a ConversionExpression to the field / element's
+// declared type. The shape covers both packed targets (struct / union /
+// packed array) and unpacked fixed-size arrays; HIR-to-MIR dispatches to the
+// right primitive based on the resolved target type.
 struct AssignmentPatternExpr {
   std::vector<ExprId> elements;
 };

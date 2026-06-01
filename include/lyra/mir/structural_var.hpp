@@ -2,7 +2,6 @@
 
 #include <compare>
 #include <cstdint>
-#include <optional>
 #include <string>
 
 #include "lyra/mir/expr_id.hpp"
@@ -17,10 +16,13 @@ struct StructuralVarId {
       -> std::strong_ordering = default;
 };
 
+// HIR distinguishes "no user initializer" from "explicit zero initializer";
+// MIR does not -- the LRM Table 6-7 default is materialised as a primitive
+// expression at the HIR-to-MIR boundary, so every variable carries one.
 struct StructuralVarDecl {
   std::string name;
   TypeId type;
-  std::optional<ExprId> initializer;
+  ExprId initializer;
 };
 
 }  // namespace lyra::mir

@@ -8,7 +8,7 @@
 #include <vector>
 
 #include "lyra/mir/expr_id.hpp"
-#include "lyra/mir/type.hpp"
+#include "lyra/mir/type_id.hpp"
 
 namespace lyra::mir {
 
@@ -28,6 +28,7 @@ enum class FormatKind : std::uint8_t {
   kRealDecimal,
   kRealExponential,
   kRealGeneral,
+  kAssignmentPattern,
 };
 
 struct FormatModifiers {

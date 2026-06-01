@@ -26,14 +26,15 @@ struct CaseSnapshotRefs {
 };
 
 // Appends the SV-case selector snapshot to wrapper_state:
-//   T _lyra_case_sel;        // ProceduralVarDeclStmt (no init)
-//   _lyra_case_sel = <cond>; // ExprStmt(AssignExpr)
+//   T _lyra_case_sel = T-default;   // ProceduralVarDeclStmt
+//   _lyra_case_sel = <cond>;        // ExprStmt(AssignExpr)
 //
 // Caller has already lowered the selector into wrapper_state's expression
 // table and passes its ExprId. The decl + assign are split (instead of a
 // single var-decl-with-init) so the cpp backend's packed-init gap does not
 // bite when the selector unifies to a packed-explicit type.
 auto AppendCaseSnapshot(
+    const UnitLoweringState& unit_state,
     ProceduralScopeLoweringState& wrapper_state, mir::ExprId cond_expr_id)
     -> CaseSnapshotRefs;
 

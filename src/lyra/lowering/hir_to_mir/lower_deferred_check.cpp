@@ -10,6 +10,7 @@
 #include <vector>
 
 #include "lyra/base/internal_error.hpp"
+#include "lyra/lowering/hir_to_mir/default_value.hpp"
 #include "lyra/lowering/hir_to_mir/lower_expr.hpp"
 #include "lyra/lowering/hir_to_mir/lower_stmt.hpp"
 #include "lyra/lowering/hir_to_mir/procedural_scope_helpers.hpp"
@@ -104,13 +105,15 @@ auto AppendStmt(mir::ProceduralScope& scope, mir::Stmt stmt) -> mir::StmtId {
 }
 
 auto SnapshotPredicate(
+    const UnitLoweringState& unit_state,
     ProceduralScopeLoweringState& wrapper_state, std::size_t index,
     mir::TypeId predicate_type, mir::ExprId predicate_expr_id)
     -> mir::ProceduralVarId {
   const std::string var_name = std::format("_lyra_unique_cond_{}", index);
   const mir::ProceduralVarId snap_var = wrapper_state.AddProceduralVar(
       mir::ProceduralVarDecl{.name = var_name, .type = predicate_type});
-
+  const mir::ExprId snap_default_init =
+      SynthesizeDefaultValueExpr(unit_state, wrapper_state, predicate_type);
   const mir::StmtId decl_id = wrapper_state.AddStmt(
       mir::Stmt{
           .label = std::nullopt,
@@ -120,7 +123,7 @@ auto SnapshotPredicate(
                       mir::ProceduralVarRef{
                           .hops = mir::ProceduralHops{.value = 0},
                           .var = snap_var},
-                  .init = std::nullopt},
+                  .init = snap_default_init},
           .child_procedural_scopes = {}});
   wrapper_state.AddRootStmt(decl_id);
 
@@ -356,7 +359,7 @@ auto BuildDeferredCheckCascade(
     const mir::TypeId predicate_type =
         wrapper_state.GetExpr(branches[i].predicate).type;
     snapshot_vars.push_back(SnapshotPredicate(
-        wrapper_state, i, predicate_type, branches[i].predicate));
+        unit_state, wrapper_state, i, predicate_type, branches[i].predicate));
   }
 
   mir::ClosureExpr closure = BuildUniqueCheckClosure(

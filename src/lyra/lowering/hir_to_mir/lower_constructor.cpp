@@ -16,6 +16,7 @@
 #include "lyra/diag/diagnostic.hpp"
 #include "lyra/hir/structural_scope.hpp"
 #include "lyra/lowering/hir_to_mir/case_cascade.hpp"
+#include "lyra/lowering/hir_to_mir/default_value.hpp"
 #include "lyra/lowering/hir_to_mir/lower_continuous_assign.hpp"
 #include "lyra/lowering/hir_to_mir/lower_expr.hpp"
 #include "lyra/lowering/hir_to_mir/lower_process.hpp"
@@ -296,7 +297,7 @@ auto LowerCaseGenerate(
   const mir::ExprId cond_expr_id = wrapper_state.AddExpr(*std::move(cond_or));
 
   const CaseSnapshotRefs snapshot =
-      AppendCaseSnapshot(wrapper_state, cond_expr_id);
+      AppendCaseSnapshot(unit_state, wrapper_state, cond_expr_id);
 
   std::vector<mir::ProceduralScope> body_scopes;
   body_scopes.reserve(case_gen.items.size());
@@ -435,7 +436,8 @@ auto LowerGenerateAsStmt(
 
 auto InstallGenerateOwnedChildScopes(
     UnitLoweringState& unit_state, StructuralScopeLoweringState& scope_state,
-    ScopeStack& stack, const hir::StructuralScope& scope)
+    ScopeStack& stack, const hir::StructuralScope& scope,
+    ProceduralScopeLoweringState& ctor_scope_state)
     -> diag::Result<std::vector<GenerateBindings>> {
   std::vector<GenerateBindings> bindings_by_generate;
   bindings_by_generate.reserve(scope.generates.size());
@@ -461,11 +463,13 @@ auto InstallGenerateOwnedChildScopes(
       const mir::TypeId var_type =
           spec.is_repeated ? MakeVectorOfOwnedObjectType(unit_state, child_id)
                            : MakeOwnedObjectType(unit_state, child_id);
+      const mir::ExprId companion_init =
+          SynthesizeDefaultValueExpr(unit_state, ctor_scope_state, var_type);
       const mir::StructuralVarId var_id = scope_state.AddStructuralVar(
           mir::StructuralVarDecl{
               .name = companion_name,
               .type = var_type,
-              .initializer = std::nullopt});
+              .initializer = companion_init});
 
       gen_bindings.by_scope_id.at(spec.scope_id.value) =
           ChildStructuralScopeBinding{.scope_id = child_id, .var_id = var_id};
@@ -512,19 +516,21 @@ auto LowerStructuralScope(
   for (std::size_t i = 0; i < scope.structural_vars.size(); ++i) {
     const hir::StructuralVarId hir_id{static_cast<std::uint32_t>(i)};
     const auto& d = scope.structural_vars[i];
-    std::optional<mir::ExprId> mir_init;
+    const mir::TypeId mir_type = unit_state.TranslateType(d.type);
+    mir::ExprId mir_init{};
     if (d.initializer.has_value()) {
       auto init_or = LowerStructuralExpr(
           unit_state, scope_state, ctor_scope_state, scope,
           scope.GetExpr(*d.initializer));
       if (!init_or) return std::unexpected(std::move(init_or.error()));
       mir_init = ctor_scope_state.AddExpr(*std::move(init_or));
+    } else {
+      mir_init =
+          SynthesizeDefaultValueExpr(unit_state, ctor_scope_state, mir_type);
     }
     const mir::StructuralVarId mir_id = scope_state.AddStructuralVar(
         mir::StructuralVarDecl{
-            .name = d.name,
-            .type = unit_state.TranslateType(d.type),
-            .initializer = mir_init});
+            .name = d.name, .type = mir_type, .initializer = mir_init});
     scope_state.MapStructuralVar(hir_id, mir_id);
   }
 
@@ -565,8 +571,8 @@ auto LowerStructuralScope(
     scope_state.AddProcess(*std::move(proc_or));
   }
 
-  auto bindings_r =
-      InstallGenerateOwnedChildScopes(unit_state, scope_state, stack, scope);
+  auto bindings_r = InstallGenerateOwnedChildScopes(
+      unit_state, scope_state, stack, scope, ctor_scope_state);
   if (!bindings_r) return std::unexpected(std::move(bindings_r.error()));
 
   for (std::size_t i = 0; i < scope.generates.size(); ++i) {

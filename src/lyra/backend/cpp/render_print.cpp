@@ -63,6 +63,8 @@ auto RenderRuntimeFormatKind(mir::FormatKind k) -> std::string_view {
       return "lyra::value::FormatKind::kRealExponential";
     case mir::FormatKind::kRealGeneral:
       return "lyra::value::FormatKind::kRealGeneral";
+    case mir::FormatKind::kAssignmentPattern:
+      return "lyra::value::FormatKind::kAssignmentPattern";
   }
   throw InternalError("RenderRuntimeFormatKind: unknown FormatKind");
 }

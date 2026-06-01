@@ -132,12 +132,18 @@ struct ReplicationExpr {
   ExprId concat;
 };
 
+// LRM 10.9.1: simple assignment pattern `'{e1, e2, ...}`. The aggregate type
+// lives on Expr::type.
+struct ArrayLiteralExpr {
+  std::vector<ExprId> elements;
+};
+
 using ExprData = std::variant<
     IntegerLiteral, StringLiteral, TimeLiteral, RealLiteral, StructuralParamRef,
     StructuralVarRef, ProceduralVarRef, UnaryExpr, BinaryExpr, ConditionalExpr,
     AssignExpr, IncDecExpr, CallExpr, RuntimeCallExpr, ConversionExpr,
     ClosureExpr, ElementSelectExpr, RangeSelectExpr, ConcatExpr,
-    ReplicationExpr>;
+    ReplicationExpr, ArrayLiteralExpr>;
 
 struct Expr {
   ExprData data;

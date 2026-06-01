@@ -54,6 +54,9 @@ auto SpecCharToKind(char c) -> std::optional<FormatDirectiveKind> {
     case 'm':
     case 'M':
       return FormatDirectiveKind::kModulePath;
+    case 'p':
+    case 'P':
+      return FormatDirectiveKind::kAssignmentPattern;
     default:
       return std::nullopt;
   }
@@ -94,6 +97,7 @@ auto FormatDirectiveNeedsValue(FormatDirectiveKind kind) -> bool {
     case FormatDirectiveKind::kRealGeneral:
     case FormatDirectiveKind::kTime:
     case FormatDirectiveKind::kChar:
+    case FormatDirectiveKind::kAssignmentPattern:
       return true;
   }
   return true;

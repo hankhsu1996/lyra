@@ -9,12 +9,14 @@ file covers every other family: `datatypes/enum`, `datatypes/string`, `datatypes
 ## Actionable
 
 Enum, real, string, the integral-family declaration initializers, and parameter references in
-expressions are complete. The unpacked / general / default-init / representation families remain.
+expressions are complete. Fixed-size unpacked arrays are in flight under `unpacked.md`; the general
+/ default-init / representation families remain.
 
-| Item | Status                                                               |
-| ---- | -------------------------------------------------------------------- |
-| -    | `datatypes/unpacked`, `datatypes/general`, `datatypes/default_init`, |
-|      | `datatypes/representation` -- no progress sub-steps opened yet.      |
+| Item | Status                                                          |
+| ---- | --------------------------------------------------------------- |
+| -    | `datatypes/unpacked` -- `unpacked.md`.                          |
+| -    | `datatypes/general`, `datatypes/default_init`,                  |
+|      | `datatypes/representation` -- no progress sub-steps opened yet. |
 
 ## Enum
 
