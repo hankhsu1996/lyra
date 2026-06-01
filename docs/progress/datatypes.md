@@ -8,14 +8,13 @@ file covers every other family: `datatypes/enum`, `datatypes/string`, `datatypes
 
 ## Actionable
 
-Enum, real, string, and the integral-family declaration initializers are complete. Parameter-driven
-initializers (SI2) and the unpacked / general / default-init / representation families remain.
+Enum, real, string, the integral-family declaration initializers, and parameter references in
+expressions are complete. The unpacked / general / default-init / representation families remain.
 
-| Item | Status                                                                          |
-| ---- | ------------------------------------------------------------------------------- |
-| SI2  | Parameter references in declaration initializers (see Structural Initializers). |
-| -    | `datatypes/unpacked`, `datatypes/general`, `datatypes/default_init`,            |
-|      | `datatypes/representation` -- no progress sub-steps opened yet.                 |
+| Item | Status                                                               |
+| ---- | -------------------------------------------------------------------- |
+| -    | `datatypes/unpacked`, `datatypes/general`, `datatypes/default_init`, |
+|      | `datatypes/representation` -- no progress sub-steps opened yet.      |
 
 ## Enum
 
@@ -64,9 +63,12 @@ LRM 6.8: a static-lifetime variable declaration may carry an initializer express
 
 - [x] SI1 -- Declaration initializers for the integral, enum, real, shortreal, and realtime
       families.
-- [ ] SI2 -- Initializer expressions that read a module parameter (`int i = N * 3;`). Diagnosed as
-      unsupported today; the gap is in how parameter references are lowered inside structural
-      expressions, not in the initializer mechanism itself.
+- [x] SI2 -- Parameter references in any expression context (LRM 6.20). A `NamedValueExpression`
+      whose symbol is a `parameter` / `localparam` lowers to the parameter's resolved value as a
+      literal, matching how enum-member references are handled. Covers integer, packed, real,
+      shortreal, and string parameter values; aggregate parameter types (unpacked array, queue,
+      packed struct) are blocked behind their respective type workstreams. Type parameters
+      (`parameter type T = int;`) ride on the type lowering path, not the expression path.
 
 ### Cross-references
 
