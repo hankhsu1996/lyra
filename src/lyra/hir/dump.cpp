@@ -617,6 +617,23 @@ class HirDumper {
                   "AssignExpr kind={}{} lhs=Expr[{}] rhs=Expr[{}]", kind_str,
                   op_str, a.lhs.value, a.rhs.value);
             },
+            [](const IncDecExpr& inc) -> std::string {
+              const auto* op_str = [&] {
+                switch (inc.op) {
+                  case IncDecOp::kPreInc:
+                    return "PreInc";
+                  case IncDecOp::kPostInc:
+                    return "PostInc";
+                  case IncDecOp::kPreDec:
+                    return "PreDec";
+                  case IncDecOp::kPostDec:
+                    return "PostDec";
+                }
+                return "?";
+              }();
+              return std::format(
+                  "IncDecExpr op={} target=Expr[{}]", op_str, inc.target.value);
+            },
             [this](const CallExpr& c) -> std::string {
               std::string args;
               for (std::size_t i = 0; i < c.arguments.size(); ++i) {

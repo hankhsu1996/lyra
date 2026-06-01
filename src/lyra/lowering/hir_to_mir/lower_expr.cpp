@@ -131,6 +131,20 @@ auto LowerUnaryOp(hir::UnaryOp op) -> mir::UnaryOp {
   throw InternalError("LowerUnaryOp: unknown HIR UnaryOp");
 }
 
+auto LowerIncDecOp(hir::IncDecOp op) -> mir::IncDecOp {
+  switch (op) {
+    case hir::IncDecOp::kPreInc:
+      return mir::IncDecOp::kPreInc;
+    case hir::IncDecOp::kPostInc:
+      return mir::IncDecOp::kPostInc;
+    case hir::IncDecOp::kPreDec:
+      return mir::IncDecOp::kPreDec;
+    case hir::IncDecOp::kPostDec:
+      return mir::IncDecOp::kPostDec;
+  }
+  throw InternalError("LowerIncDecOp: unknown HIR IncDecOp");
+}
+
 auto LowerTimeScale(hir::TimeScale s) -> mir::TimeScale {
   switch (s) {
     case hir::TimeScale::kFs:
@@ -730,6 +744,23 @@ auto LowerHirAssignExprProc(
       .type = unit_state.Builtins().void_type};
 }
 
+auto LowerHirIncDecExprProc(
+    const UnitLoweringState& unit_state,
+    const StructuralScopeLoweringState& scope_state,
+    const ProcessLoweringState& proc_state,
+    ProceduralScopeLoweringState& proc_scope_state,
+    const hir::Process& hir_process, const hir::IncDecExpr& inc,
+    mir::TypeId result_type) -> diag::Result<mir::Expr> {
+  auto target_or = LowerExpr(
+      unit_state, scope_state, proc_state, proc_scope_state, hir_process,
+      hir_process.exprs.at(inc.target.value));
+  if (!target_or) return std::unexpected(std::move(target_or.error()));
+  const mir::ExprId target_id = proc_scope_state.AddExpr(*std::move(target_or));
+  return mir::Expr{
+      .data = mir::IncDecExpr{.op = LowerIncDecOp(inc.op), .target = target_id},
+      .type = result_type};
+}
+
 auto LowerHirConversionExprProc(
     const UnitLoweringState& unit_state,
     const StructuralScopeLoweringState& scope_state,
@@ -1006,6 +1037,11 @@ auto LowerExpr(
             return LowerHirAssignExprProc(
                 unit_state, scope_state, proc_state, proc_scope_state,
                 hir_process, a, expr.span, result_type);
+          },
+          [&](const hir::IncDecExpr& inc) -> diag::Result<mir::Expr> {
+            return LowerHirIncDecExprProc(
+                unit_state, scope_state, proc_state, proc_scope_state,
+                hir_process, inc, result_type);
           },
           [&](const hir::ConversionExpr& cv) -> diag::Result<mir::Expr> {
             return LowerHirConversionExprProc(
@@ -1298,6 +1334,12 @@ auto LowerExprImpl(
                 "LowerExprImpl (structural): HIR AssignExpr does not appear "
                 "in constructor-side expressions; structural code has no "
                 "general assignment");
+          },
+          [](const hir::IncDecExpr&) -> diag::Result<mir::Expr> {
+            throw InternalError(
+                "LowerExprImpl (structural): HIR IncDecExpr does not appear "
+                "in constructor-side expressions; structural code has no "
+                "increment / decrement");
           },
           [&](const hir::ConversionExpr& cv) -> diag::Result<mir::Expr> {
             return LowerHirConversionExprStructural(

@@ -607,6 +607,31 @@ auto LowerAssignmentExprProc(
   };
 }
 
+auto LowerIncDecExprProc(
+    const UnitLoweringFacts& unit_facts, UnitLoweringState& unit_state,
+    ProcessLoweringState& proc_state, const ScopeStack& stack,
+    const slang::ast::UnaryExpression& un, const slang::ast::Expression& expr,
+    diag::SourceSpan span) -> diag::Result<hir::Expr> {
+  auto validate = ValidateAssignableSlangExpr(
+      unit_facts, unit_state, &proc_state, un.operand());
+  if (!validate) return std::unexpected(std::move(validate.error()));
+
+  auto target_or =
+      LowerProcExpr(unit_facts, unit_state, proc_state, stack, un.operand());
+  if (!target_or) return std::unexpected(std::move(target_or.error()));
+  const hir::ExprId target_id = proc_state.AddExpr(*std::move(target_or));
+
+  auto type_id = TypeIdOfSlangExpr(unit_facts, unit_state, expr);
+  if (!type_id) return std::unexpected(std::move(type_id.error()));
+
+  return hir::Expr{
+      .type = *type_id,
+      .data =
+          hir::IncDecExpr{.op = LowerSlangIncDecOp(un.op), .target = target_id},
+      .span = span,
+  };
+}
+
 auto LowerInsideExprProc(
     const UnitLoweringFacts& unit_facts, UnitLoweringState& unit_state,
     ProcessLoweringState& proc_state, const ScopeStack& stack,
@@ -1119,10 +1144,15 @@ auto LowerProcExpr(
           unit_facts, unit_state, proc_state, stack,
           expr.as<slang::ast::ConversionExpression>(), expr, span);
 
-    case slang::ast::ExpressionKind::UnaryOp:
+    case slang::ast::ExpressionKind::UnaryOp: {
+      const auto& un = expr.as<slang::ast::UnaryExpression>();
+      if (slang::ast::OpInfo::isLValue(un.op)) {
+        return LowerIncDecExprProc(
+            unit_facts, unit_state, proc_state, stack, un, expr, span);
+      }
       return LowerUnaryExprProc(
-          unit_facts, unit_state, proc_state, stack,
-          expr.as<slang::ast::UnaryExpression>(), expr, span);
+          unit_facts, unit_state, proc_state, stack, un, expr, span);
+    }
 
     case slang::ast::ExpressionKind::BinaryOp:
       return LowerBinaryExprProc(
@@ -1229,10 +1259,18 @@ auto LowerStructuralExpr(
           unit_facts, unit_state, scope_state, stack,
           expr.as<slang::ast::ConversionExpression>(), expr, span);
 
-    case slang::ast::ExpressionKind::UnaryOp:
+    case slang::ast::ExpressionKind::UnaryOp: {
+      const auto& un = expr.as<slang::ast::UnaryExpression>();
+      if (slang::ast::OpInfo::isLValue(un.op)) {
+        return diag::Unsupported(
+            span, diag::DiagCode::kUnsupportedStructuralExpressionForm,
+            "increment / decrement is not legal outside procedural code "
+            "(LRM 11.3.6, 11.4.2)",
+            diag::UnsupportedCategory::kOperation);
+      }
       return LowerUnaryExprStructural(
-          unit_facts, unit_state, scope_state, stack,
-          expr.as<slang::ast::UnaryExpression>(), expr, span);
+          unit_facts, unit_state, scope_state, stack, un, expr, span);
+    }
 
     case slang::ast::ExpressionKind::BinaryOp:
       return LowerBinaryExprStructural(

@@ -497,6 +497,23 @@ class MirDumper {
                   "AssignExpr target=Expr[{}]{} value=Expr[{}]", a.target.value,
                   op_str, a.value.value);
             },
+            [](const IncDecExpr& inc) -> std::string {
+              const auto* op_str = [&] {
+                switch (inc.op) {
+                  case IncDecOp::kPreInc:
+                    return "PreInc";
+                  case IncDecOp::kPostInc:
+                    return "PostInc";
+                  case IncDecOp::kPreDec:
+                    return "PreDec";
+                  case IncDecOp::kPostDec:
+                    return "PostDec";
+                }
+                return "?";
+              }();
+              return std::format(
+                  "IncDecExpr op={} target=Expr[{}]", op_str, inc.target.value);
+            },
             [this](const CallExpr& c) -> std::string {
               std::string args;
               for (std::size_t i = 0; i < c.arguments.size(); ++i) {

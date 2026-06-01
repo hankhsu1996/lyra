@@ -334,6 +334,31 @@ class ScopedMutation {
     return *this;
   }
 
+  // LRM 11.4.2 inc/dec on an observable whole-var. The snapshot is mutated
+  // in place; the destructor commits via WriteVar so subscribers fire exactly
+  // once. Prefix returns the new value; postfix returns the old. Both return
+  // by value (not `ScopedMutation&`) so outer rvalue use such as
+  // `b = ++observable_var` routes a materialized PackedArray through the
+  // outer WriteVar instead of a transient proxy.
+  auto operator++() -> value::PackedArray {
+    ++snapshot_;
+    return snapshot_;
+  }
+  auto operator++(int) -> value::PackedArray {
+    value::PackedArray prior = snapshot_;
+    ++snapshot_;
+    return prior;
+  }
+  auto operator--() -> value::PackedArray {
+    --snapshot_;
+    return snapshot_;
+  }
+  auto operator--(int) -> value::PackedArray {
+    value::PackedArray prior = snapshot_;
+    --snapshot_;
+    return prior;
+  }
+
  private:
   RuntimeServices* services_;
   Var<T>* var_;
