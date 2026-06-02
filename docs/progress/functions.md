@@ -85,9 +85,11 @@ everything and the inline "rides on" notes record the real dependencies.
 
 ### Tasks
 
-- [ ] T1 -- Tasks without timing controls (LRM 13.3). Enabled as a statement; results returned
-      through `output` / `inout` arguments; `return` exits before `endtask`. Behaves like a void
-      function and rides on F1 and F4.
+- [x] T1 -- Tasks without timing controls (LRM 13.3). Enabled as a statement; results returned
+      through `output` / `inout` arguments; `return` exits before `endtask`; an empty body is a
+      no-op. A task may enable other tasks and functions (LRM 13.2); a function enabling a task is
+      rejected. Behaves like a void function. The static-default lifetime where locals retain values
+      across enables (LRM 13.3.1) is not yet distinguished from automatic and is tracked by F3.
 - [ ] T2 -- Tasks containing time-controlling statements (LRM 13.3). `#`, `@(...)`, and `wait`
       inside a task suspend the calling process and resume it later, so a task enable can span
       multiple time steps. Rides on the timing-control machinery tracked in `processes.md`.

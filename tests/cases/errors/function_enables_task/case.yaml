@@ -1,0 +1,16 @@
+id: errors.function_enables_task
+tags: [errors, diag]
+input:
+  command: [emit, cpp]
+  project: false
+  top: Top
+  files: [main.sv]
+  args: ["--no-color"]
+expect:
+  exit: 1
+  stderr:
+    contains:
+      - "invoke a task"
+      - "function"
+    not_contains:
+      - "internal error"
