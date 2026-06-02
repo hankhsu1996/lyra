@@ -13,13 +13,13 @@ Done when:
 
 ## Actionable
 
-U1 is in flight; U2..U5 are open and ordered. U1 establishes the IR shape and the literal-init path;
-the rest extend on top.
+U1 and U2 are done; U3..U5 are open. U1 established the IR shape, the literal-init path, and element
+read; U2 added element write across blocking, non-blocking, and compound forms.
 
 | Item | Status                                                       |
 | ---- | ------------------------------------------------------------ |
-| U1   | In flight: type infrastructure + literal init + element read |
-| U2   | Open: element write                                          |
+| U1   | Done: type infrastructure + literal init + element read      |
+| U2   | Done: element write (blocking, NBA, compound)                |
 | U3   | Open: structured and replicated assignment patterns          |
 | U4   | Open: whole-array assignment, equality, constant-width slice |
 | U5   | Open: OOB read returning element default, base ranges        |
@@ -30,7 +30,7 @@ The numeric IDs are stable references and do not imply execution order beyond U1
 
 ### Type infrastructure and literal init
 
-- [ ] U1 -- Fixed-size unpacked array declarations of integral element types (LRM 7.4.2), with
+- [x] U1 -- Fixed-size unpacked array declarations of integral element types (LRM 7.4.2), with
       element read on a known-in-bounds index (LRM 7.4.5) and declaration initializer via the simple
       assignment pattern `'{e1, e2, ...}` (LRM 10.9). Multi-dimensional arrays fall out from the
       nested type shape (LRM 7.4.4). Default initialization without an initializer applies the
@@ -39,10 +39,10 @@ The numeric IDs are stable references and do not imply execution order beyond U1
 
 ### Element write
 
-- [ ] U2 -- Procedural element write `arr[i] = v`, including NBA (`arr[i] <= v`) and
-      compound-assignment forms (`arr[i] += v`). The lvalue path mirrors the rvalue element-select
-      from U1 with non-const access. Closes the element-access half of the `unpacked_arrays` archive
-      cases that compute results by populating the array procedurally and reading back.
+- [x] U2 -- Procedural element write `arr[i] = v`, including NBA (`arr[i] <= v`) and
+      compound-assignment forms (`arr[i] += v`, `arr[i] |= v`, etc., per LRM 11.4.1). The lvalue
+      path mirrors the rvalue element-select from U1 with non-const access; NBA wraps the same
+      lvalue inside the standard deferred-assign closure.
 
 ### Structured and replicated patterns
 

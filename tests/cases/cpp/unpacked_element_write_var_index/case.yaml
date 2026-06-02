@@ -1,0 +1,14 @@
+id: cpp.unpacked_element_write_var_index
+tags: [cpp_run]
+input:
+  command: [run, cpp]
+  project: false
+  top: Top
+  files: [main.sv]
+expect:
+  exit: 0
+  variables:
+    p0: 0
+    p1: 100
+    p2: 200
+    p3: 300

@@ -1,0 +1,13 @@
+id: cpp.unpacked_element_write_compound_bitwise
+tags: [cpp_run]
+input:
+  command: [run, cpp]
+  project: false
+  top: Top
+  files: [main.sv]
+expect:
+  exit: 0
+  variables:
+    p0: "8'h0F"
+    p1: "8'hF0"
+    p2: "8'hFF"

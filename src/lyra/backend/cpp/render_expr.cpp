@@ -865,6 +865,29 @@ auto RenderSameShapeLiteral(
       RenderPackedArrayCtorArgs(shape));
 }
 
+// Indexed element access shared by rvalue `RenderElementSelectExpr` and the
+// lvalue `RenderLhsExpr` ElementSelect arm. Packed and unpacked bases land on
+// different C++ access shapes:
+//   - Packed -> `lyra::value::PackedArray::ElementAt(idx)`, range-aware
+//     translation lives inside the runtime type.
+//   - Unpacked -> `std::vector::operator[]` with a zero-based size_t index;
+//     the HIR-to-MIR pass already rewrote any declared-range origin into a
+//     zero-based offset on `sel.index`.
+auto RenderIndexedElementAccess(
+    const mir::Type& base_ty, std::string_view base, std::string_view idx)
+    -> std::string {
+  if (std::holds_alternative<mir::UnpackedArrayType>(base_ty.data)) {
+    return std::format(
+        "({})[static_cast<std::size_t>(({}).ToInt64())]", base, idx);
+  }
+  if (std::holds_alternative<mir::PackedArrayType>(base_ty.data)) {
+    return std::format("({}).ElementAt({})", base, idx);
+  }
+  throw InternalError(
+      "RenderIndexedElementAccess: base type must be PackedArrayType or "
+      "UnpackedArrayType");
+}
+
 auto RenderElementSelectExpr(
     const RenderContext& ctx, const mir::ElementSelectExpr& sel)
     -> diag::Result<std::string> {
@@ -874,14 +897,7 @@ auto RenderElementSelectExpr(
   auto idx_or = RenderExpr(ctx, ctx.Expr(sel.index));
   if (!idx_or) return std::unexpected(std::move(idx_or.error()));
   const auto& base_ty = ctx.Unit().GetType(base_expr.type);
-  // Unpacked vectors are zero-based; the SV declared-range translation
-  // already lives in `sel.index` (HIR-to-MIR rewrites it). Packed arrays
-  // keep their range-aware ElementAt path inside PackedArray.
-  if (std::holds_alternative<mir::UnpackedArrayType>(base_ty.data)) {
-    return std::format(
-        "({})[static_cast<std::size_t>(({}).ToInt64())]", *base_or, *idx_or);
-  }
-  return std::format("({}).ElementAt({})", *base_or, *idx_or);
+  return RenderIndexedElementAccess(base_ty, *base_or, *idx_or);
 }
 
 // Constant integer extracted from a MIR expression. Caller is responsible for
@@ -963,12 +979,13 @@ auto RenderLhsExpr(
             return LookupProceduralVarName(ctx, l);
           },
           [&](const mir::ElementSelectExpr& s) -> diag::Result<std::string> {
-            auto base =
-                RenderLhsExpr(ctx, ctx.Expr(s.base_value), mutate_adapter);
+            const mir::Expr& base_expr = ctx.Expr(s.base_value);
+            auto base = RenderLhsExpr(ctx, base_expr, mutate_adapter);
             if (!base) return std::unexpected(std::move(base.error()));
             auto idx = RenderExpr(ctx, ctx.Expr(s.index));
             if (!idx) return std::unexpected(std::move(idx.error()));
-            return std::format("{}.ElementAt({})", *base, *idx);
+            const auto& base_ty = ctx.Unit().GetType(base_expr.type);
+            return RenderIndexedElementAccess(base_ty, *base, *idx);
           },
           [&](const mir::RangeSelectExpr& s) -> diag::Result<std::string> {
             auto base =
@@ -1272,27 +1289,27 @@ auto RenderConcatExpr(
     throw InternalError("RenderConcatExpr: hir lowering produced empty concat");
   }
   const auto& result_ty = ctx.Unit().GetType(expr.type);
-  if (result_ty.IsIntegralPacked()) {
-    std::string out = "lyra::value::PackedArray::Concat(";
+  const auto join = [&](std::string_view open, std::string_view sep,
+                        std::string_view close) -> diag::Result<std::string> {
+    std::string out{open};
     for (std::size_t i = 0; i < c.operands.size(); ++i) {
       auto rendered = RenderExpr(ctx, ctx.Expr(c.operands[i]));
       if (!rendered) return std::unexpected(std::move(rendered.error()));
-      if (i != 0) out += ", ";
+      if (i != 0) out += sep;
       out += *rendered;
     }
-    out += ")";
+    out += close;
     return out;
+  };
+  if (result_ty.IsIntegralPacked()) {
+    return join("lyra::value::PackedArray::Concat(", ", ", ")");
   }
-  // String mode (LRM 6.16): operator+ on std::string joins contents.
-  std::string out = "(";
-  for (std::size_t i = 0; i < c.operands.size(); ++i) {
-    auto rendered = RenderExpr(ctx, ctx.Expr(c.operands[i]));
-    if (!rendered) return std::unexpected(std::move(rendered.error()));
-    if (i != 0) out += " + ";
-    out += *rendered;
+  if (result_ty.Kind() == mir::TypeKind::kString) {
+    // LRM 6.16: string concat joins contents via std::string `operator+`.
+    return join("(", " + ", ")");
   }
-  out += ")";
-  return out;
+  throw InternalError(
+      "RenderConcatExpr: result type must be PackedArrayType or string");
 }
 
 auto RenderArrayLiteralExpr(
@@ -1330,8 +1347,12 @@ auto RenderReplicationExpr(
         "static_cast<std::uint64_t>({}))",
         *concat, count_text);
   }
-  return std::format(
-      "lyra::value::ReplicateString({}, {})", *concat, count_text);
+  if (result_ty.Kind() == mir::TypeKind::kString) {
+    return std::format(
+        "lyra::value::ReplicateString({}, {})", *concat, count_text);
+  }
+  throw InternalError(
+      "RenderReplicationExpr: result type must be PackedArrayType or string");
 }
 
 auto ProducesPackedArrayRef(const mir::Expr& expr) -> bool {
