@@ -2,6 +2,7 @@
 
 #include <format>
 #include <fstream>
+#include <span>
 #include <string>
 #include <string_view>
 #include <system_error>
@@ -53,9 +54,10 @@ auto RenderBuildScript() -> std::string {
 }
 
 auto EmitAndWriteSources(
-    const mir::CompilationUnit& unit, const std::filesystem::path& dir)
-    -> diag::Result<void> {
-  auto set_or = backend::cpp::EmitCpp(unit);
+    std::span<const mir::CompilationUnit> units,
+    std::span<const backend::cpp::TopInstance> tops,
+    const std::filesystem::path& dir) -> diag::Result<void> {
+  auto set_or = backend::cpp::EmitCpp(units, tops);
   if (!set_or) {
     return std::unexpected(std::move(set_or.error()));
   }
@@ -100,9 +102,10 @@ auto CompileProgram(
 }  // namespace
 
 auto AssembleProject(
-    const RuntimeLocation& runtime, const mir::CompilationUnit& unit,
+    const RuntimeLocation& runtime, std::span<const mir::CompilationUnit> units,
+    std::span<const backend::cpp::TopInstance> tops,
     const std::filesystem::path& dir) -> diag::Result<void> {
-  if (auto r = EmitAndWriteSources(unit, dir); !r) {
+  if (auto r = EmitAndWriteSources(units, tops, dir); !r) {
     return r;
   }
 
@@ -142,9 +145,10 @@ auto BuildProject(const std::filesystem::path& dir)
 }
 
 auto RunInPlace(
-    const RuntimeLocation& runtime, const mir::CompilationUnit& unit,
+    const RuntimeLocation& runtime, std::span<const mir::CompilationUnit> units,
+    std::span<const backend::cpp::TopInstance> tops,
     const std::filesystem::path& work_dir) -> diag::Result<int> {
-  if (auto r = EmitAndWriteSources(unit, work_dir); !r) {
+  if (auto r = EmitAndWriteSources(units, tops, work_dir); !r) {
     return std::unexpected(std::move(r.error()));
   }
   const auto program = work_dir / kProgramName;

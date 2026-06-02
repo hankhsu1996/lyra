@@ -6,6 +6,7 @@
 #include <functional>
 #include <map>
 #include <memory>
+#include <span>
 #include <string>
 #include <vector>
 
@@ -41,6 +42,13 @@ struct EngineOptions {
 
 [[nodiscard]] auto DefaultEngineOptions() -> EngineOptions;
 
+// One top-level block to install under $root: its instance name and the module
+// object the emitted program constructs for it.
+struct TopBinding {
+  std::string name;
+  Module* module;
+};
+
 class Engine {
  public:
   Engine();
@@ -54,7 +62,7 @@ class Engine {
   auto operator=(Engine&&) -> Engine& = delete;
   ~Engine() = default;
 
-  void BindRoot(std::string root_name, Module& top);
+  void BindDesign(std::span<const TopBinding> tops);
   auto Run() -> int;
 
   auto Stream() -> StreamDispatcher& {

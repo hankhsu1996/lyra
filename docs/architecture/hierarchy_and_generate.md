@@ -8,6 +8,8 @@ shared by all consumers: external references, child routing, and construction.
 ## Owns
 
 - The rule that the canonical hierarchy is an object tree, built at construction time.
+- The rule that the object tree is single-rooted at the implicit `$root` scope, which owns every
+  top-level block as a child.
 - The rule that generate constructs are constructor-time mechanisms that build the object tree.
   Generate is not a separate identity or topology system.
 - The rule that a semantically visible generate scope (named, navigable) is represented as a
@@ -40,6 +42,14 @@ shared by all consumers: external references, child routing, and construction.
    and named scope has a corresponding constructed object, and generate-produced objects preserve
    the elaborated index and identity. Reference resolution relies on this faithfulness (see
    `reference_resolution.md`).
+8. The object tree has a single implicit root scope, `$root`, that owns every top-level block as a
+   child. A design with multiple top-level modules (LRM 3.11) is still one tree rooted at `$root`;
+   each elaborated, uninstantiated module is a child of `$root`, not a separate disconnected root.
+   Path identity for a top-level block derives from this ownership, the same as for any other node.
+   One top is the N = 1 case of the same model, not a special case. Which modules are top-level
+   blocks is an elaboration property, distinct from the set of compiled units (see
+   `compilation_unit_model.md`): the two coincide only when nothing is instantiated and must not be
+   collapsed into one set.
 
 ## Boundary to Adjacent Layers
 

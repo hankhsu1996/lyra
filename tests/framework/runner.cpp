@@ -354,7 +354,6 @@ auto WriteStringToFile(const std::filesystem::path& p, std::string_view content)
 auto RunCppCase(const std::filesystem::path& lyra_exe, const TestCase& c)
     -> RunResult {
   RunResult result;
-  const std::string top = c.input.top.value_or("Top");
 
   // When `expect.variables` is set, rewrite the source to append a synthetic
   // `final` block that prints sentinel-bracketed marker lines. The rewritten
@@ -380,6 +379,7 @@ auto RunCppCase(const std::filesystem::path& lyra_exe, const TestCase& c)
       entries.push_back(
           {.name = v.name, .sv_format_specifier = v.value.sv_format_specifier});
     }
+    const std::string top = c.input.top.value_or("Top");
     auto rewritten_or = RewriteSourceWithProbes(*source_or, top, entries);
     if (!rewritten_or) {
       result.mismatch =
@@ -401,8 +401,10 @@ auto RunCppCase(const std::filesystem::path& lyra_exe, const TestCase& c)
   std::vector<std::string>& argv = result.argv;
   argv.emplace_back("run");
   argv.emplace_back("--no-project");
-  argv.emplace_back("--top");
-  argv.push_back(top);
+  if (c.input.top.has_value()) {
+    argv.emplace_back("--top");
+    argv.push_back(*c.input.top);
+  }
   for (const auto& f : resolved_input_files) {
     argv.push_back(f.string());
   }

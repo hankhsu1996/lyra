@@ -69,3 +69,8 @@ Define what a compilation unit is, what it owns, and the rules that make it self
 If resolving a name inside a compilation unit requires information not reachable from the unit
 itself, the compilation-unit boundary has been violated. The fix is to move ownership inward, not to
 add another lookup path outward.
+
+The term "compilation unit" here is the compiler's own: a module, package, or interface. It is not
+the LRM's "compilation unit" (LRM 3.12.1), which names the `$unit` file-set scope that holds
+declarations lying outside any design element. The two concepts are unrelated; do not conflate them
+when packages or `$unit`-scope declarations enter scope.
