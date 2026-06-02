@@ -13,20 +13,19 @@ Done when:
 
 ## Actionable
 
-U1..U6 are done. U7 covers OOB behaviour plus the direction-mismatched / negative-base range
-follow-up. U8 records a cross-cutting observability gap surfaced by the unpacked-vs-packed
+U1..U7 are done. U8 records a cross-cutting observability gap surfaced by the unpacked-vs-packed
 asymmetry; the implementation lives under `refactor.md` R2.
 
-| Item | Status                                                        |
-| ---- | ------------------------------------------------------------- |
-| U1   | Done: type infrastructure + literal init + element read       |
-| U2   | Done: element write (blocking, NBA, compound)                 |
-| U3   | Done: structured and replicated assignment patterns           |
-| U4   | Done: whole-array assignment (blocking and NBA)               |
-| U5   | Done: array equality, inequality, case-equality               |
-| U6   | Done: constant-width slice (read and write)                   |
-| U7   | Open: OOB element access and ascending / negative-base ranges |
-| U8   | Open: unpacked vars participate in value-change observability |
+| Item | Status                                                         |
+| ---- | -------------------------------------------------------------- |
+| U1   | Done: type infrastructure + literal init + element read        |
+| U2   | Done: element write (blocking, NBA, compound)                  |
+| U3   | Done: structured and replicated assignment patterns            |
+| U4   | Done: whole-array assignment (blocking and NBA)                |
+| U5   | Done: array equality, inequality, case-equality                |
+| U6   | Done: constant-width slice (read and write)                    |
+| U7   | Done: invalid-index handling and non-canonical declared ranges |
+| U8   | Open: unpacked vars participate in value-change observability  |
 
 ## Sub-Steps
 
@@ -83,11 +82,16 @@ The numeric IDs are stable references and do not imply execution order beyond U1
       unpacked array. Slice equality (`A[i +: c] == B[j +: c]`) falls out from U5's recursive
       equality once the rvalue slice produces a wrapper value.
 
-### OOB and ranges
+### Invalid index and non-canonical declared ranges
 
-- [ ] U7 -- OOB read returns the element type's LRM Table 6-7 default; OOB write is a no-op (LRM
-      Table 7-1, LRM 7.4.5). Ascending range bounds (`int a [0:N]`) and negative-base bounds
-      (`int a [-1:6]`) translate through the index-to-offset path correctly.
+- [x] U7 -- LRM 7.4.5 invalid-index handling: a read with an out-of-bounds position or any X / Z bit
+      in the index returns the element type's LRM Table 7-1 default; a write under the same
+      condition is a silent no-op. Slice reads against a partially-OOB position yield in-range
+      elements normally and defaults for the OOB portion; slice writes drop the OOB portion. Slice
+      offset translation honours every declared range form -- ascending-from-zero, ascending with a
+      non-zero base, descending, and negative-base -- so the in-memory offset of a slice's first
+      element matches the slice's syntactic-leftmost SV position. Direction-mismatched constant
+      ranges and entirely-OOB constant ranges remain frontend-rejected by slang's binding.
 
 ### Observability
 

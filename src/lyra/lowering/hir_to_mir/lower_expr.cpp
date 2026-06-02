@@ -1012,6 +1012,76 @@ auto WrapUnpackedIndex(
           .type = idx_type});
 }
 
+// LRM 7.4.5: an unpacked-array slice's first in-memory element is the
+// syntactic-leftmost SV position of the slice (slang enforces direction
+// match), translated through the declared range to a zero-based vector
+// offset. This is asymmetric to packed slice's `lowest LSB-bit` convention
+// because packed addresses are flat-bit and unpacked stores elements in
+// declared source order. The slice's element count comes from the result
+// type rather than the bounds expressions, so the helper does not need to
+// fold either bound to a literal -- negative-base sources can therefore
+// survive (slang exposes `-1` as a UnaryOp around an IntegerLiteral and
+// preserves it through binding).
+template <typename LowerOne>
+auto UnfoldHirRangeBoundsForUnpacked(
+    const UnitLoweringState& unit_state,
+    ProceduralScopeLoweringState& proc_scope_state,
+    const hir::RangeBounds& bounds, const hir::UnpackedRange& declared,
+    std::uint32_t count, LowerOne lower_one) -> diag::Result<RangeOffsetCount> {
+  const bool descending = declared.left >= declared.right;
+  auto with_delta = [&](mir::ExprId base, std::int64_t delta,
+                        mir::BinaryOp op) -> mir::ExprId {
+    const auto base_type = proc_scope_state.GetExpr(base).type;
+    const auto delta_lit =
+        proc_scope_state.AddExpr(unit_state.MakeInt32LiteralExpr(delta));
+    return proc_scope_state.AddExpr(
+        mir::Expr{
+            .data = mir::BinaryExpr{.op = op, .lhs = base, .rhs = delta_lit},
+            .type = base_type});
+  };
+  return std::visit(
+      Overloaded{
+          [&](const hir::RangeConstantBounds& b)
+              -> diag::Result<RangeOffsetCount> {
+            auto msb = lower_one(b.msb_expr);
+            if (!msb) return std::unexpected(std::move(msb.error()));
+            const auto msb_type = proc_scope_state.GetExpr(*msb).type;
+            const auto vec_offset = WrapUnpackedIndex(
+                unit_state, proc_scope_state, declared, *msb, msb_type);
+            return RangeOffsetCount{.offset_expr = vec_offset, .count = count};
+          },
+          [&](const hir::RangeIndexedUpBounds& b)
+              -> diag::Result<RangeOffsetCount> {
+            auto base = lower_one(b.base_index);
+            if (!base) return std::unexpected(std::move(base.error()));
+            const auto base_type = proc_scope_state.GetExpr(*base).type;
+            const auto leftmost_sv =
+                descending ? with_delta(
+                                 *base, static_cast<std::int64_t>(count) - 1,
+                                 mir::BinaryOp::kAdd)
+                           : *base;
+            const auto vec_offset = WrapUnpackedIndex(
+                unit_state, proc_scope_state, declared, leftmost_sv, base_type);
+            return RangeOffsetCount{.offset_expr = vec_offset, .count = count};
+          },
+          [&](const hir::RangeIndexedDownBounds& b)
+              -> diag::Result<RangeOffsetCount> {
+            auto base = lower_one(b.base_index);
+            if (!base) return std::unexpected(std::move(base.error()));
+            const auto base_type = proc_scope_state.GetExpr(*base).type;
+            const auto leftmost_sv =
+                descending ? *base
+                           : with_delta(
+                                 *base, static_cast<std::int64_t>(count) - 1,
+                                 mir::BinaryOp::kSub);
+            const auto vec_offset = WrapUnpackedIndex(
+                unit_state, proc_scope_state, declared, leftmost_sv, base_type);
+            return RangeOffsetCount{.offset_expr = vec_offset, .count = count};
+          },
+      },
+      bounds);
+}
+
 auto LowerHirElementSelectExprProc(
     const UnitLoweringState& unit_state,
     const StructuralScopeLoweringState& scope_state,
@@ -1056,9 +1126,10 @@ auto LowerHirRangeSelectExprProc(
     ProceduralScopeLoweringState& proc_scope_state,
     const hir::ProceduralBody& hir_process, const hir::RangeSelectExpr& sel,
     mir::TypeId result_type) -> diag::Result<mir::Expr> {
+  const auto& hir_base = hir_process.exprs.at(sel.base_value.value);
   auto base_or = LowerExpr(
       unit_state, scope_state, proc_state, proc_scope_state, hir_process,
-      hir_process.exprs.at(sel.base_value.value));
+      hir_base);
   if (!base_or) return std::unexpected(std::move(base_or.error()));
   const mir::ExprId base_id = proc_scope_state.AddExpr(*std::move(base_or));
 
@@ -1069,8 +1140,19 @@ auto LowerHirRangeSelectExprProc(
     if (!lowered) return std::unexpected(std::move(lowered.error()));
     return proc_scope_state.AddExpr(*std::move(lowered));
   };
-  auto unfolded = UnfoldHirRangeBoundsToOffsetCount(
-      unit_state, proc_scope_state, sel.bounds, lower_one);
+  const auto& hir_base_ty = unit_state.GetHirType(hir_base.type);
+  auto unfolded = [&]() {
+    if (const auto* ua =
+            std::get_if<hir::UnpackedArrayType>(&hir_base_ty.data)) {
+      const auto& result_ty = unit_state.GetType(result_type);
+      const auto count = static_cast<std::uint32_t>(
+          std::get<mir::UnpackedArrayType>(result_ty.data).size);
+      return UnfoldHirRangeBoundsForUnpacked(
+          unit_state, proc_scope_state, sel.bounds, ua->dim, count, lower_one);
+    }
+    return UnfoldHirRangeBoundsToOffsetCount(
+        unit_state, proc_scope_state, sel.bounds, lower_one);
+  }();
   if (!unfolded) return std::unexpected(std::move(unfolded.error()));
 
   return mir::Expr{
@@ -1461,9 +1543,10 @@ auto LowerHirRangeSelectExprStructural(
     const hir::StructuralScope& scope, const hir::RangeSelectExpr& sel,
     LoopVarLoweringMode loop_var_mode, mir::TypeId result_type)
     -> diag::Result<mir::Expr> {
+  const auto& hir_base = scope.GetExpr(sel.base_value);
   auto base_or = LowerExprImpl(
-      unit_state, scope_state, ctor_state, proc_scope_state, scope,
-      scope.GetExpr(sel.base_value), loop_var_mode);
+      unit_state, scope_state, ctor_state, proc_scope_state, scope, hir_base,
+      loop_var_mode);
   if (!base_or) return std::unexpected(std::move(base_or.error()));
   const mir::ExprId base_id = proc_scope_state.AddExpr(*std::move(base_or));
 
@@ -1474,8 +1557,19 @@ auto LowerHirRangeSelectExprStructural(
     if (!lowered) return std::unexpected(std::move(lowered.error()));
     return proc_scope_state.AddExpr(*std::move(lowered));
   };
-  auto unfolded = UnfoldHirRangeBoundsToOffsetCount(
-      unit_state, proc_scope_state, sel.bounds, lower_one);
+  const auto& hir_base_ty = unit_state.GetHirType(hir_base.type);
+  auto unfolded = [&]() {
+    if (const auto* ua =
+            std::get_if<hir::UnpackedArrayType>(&hir_base_ty.data)) {
+      const auto& result_ty = unit_state.GetType(result_type);
+      const auto count = static_cast<std::uint32_t>(
+          std::get<mir::UnpackedArrayType>(result_ty.data).size);
+      return UnfoldHirRangeBoundsForUnpacked(
+          unit_state, proc_scope_state, sel.bounds, ua->dim, count, lower_one);
+    }
+    return UnfoldHirRangeBoundsToOffsetCount(
+        unit_state, proc_scope_state, sel.bounds, lower_one);
+  }();
   if (!unfolded) return std::unexpected(std::move(unfolded.error()));
 
   return mir::Expr{

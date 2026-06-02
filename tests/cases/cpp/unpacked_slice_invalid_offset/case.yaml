@@ -1,0 +1,31 @@
+id: cpp.unpacked_slice_invalid_offset
+tags: [cpp_run]
+input:
+  command: [run, cpp]
+  project: false
+  top: Top
+  files: [main.sv]
+expect:
+  exit: 0
+  variables:
+    r2s_e0: 50
+    r2s_e1: 60
+    r2s_e2: 0
+    r4s_e0: "8'h50"
+    r4s_e1: "8'h60"
+    r4s_e2: "8'bxxxxxxxx"
+    xr_e0: "8'bxxxxxxxx"
+    xr_e1: "8'bxxxxxxxx"
+    xr_e2: "8'bxxxxxxxx"
+    w2s_e0: 10
+    w2s_e1: 20
+    w2s_e2: 30
+    w2s_e3: 40
+    w2s_e4: 77
+    w2s_e5: 88
+    xw_e0: "8'h10"
+    xw_e1: "8'h20"
+    xw_e2: "8'h30"
+    xw_e3: "8'h40"
+    xw_e4: "8'h50"
+    xw_e5: "8'h60"

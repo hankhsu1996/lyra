@@ -129,8 +129,14 @@ Unpacked array support follows these invariants:
    `render(element_type)` + `>`. The wrapper owns a private `std::vector<T>` and exposes a surface
    symmetric with `PackedArray` -- `ElementAt(const PackedArray&)`, `Slice(offset, count)`,
    `operator==` and `CaseEqual` returning a 1-bit `PackedArray` -- so the substrate-asymmetric
-   operations (equality with X / Z propagation, range selectors, future OOB and observability hooks)
-   live behind a single uniform method surface.
+   operations (equality with X / Z propagation, range selectors, observability hooks) live behind a
+   single uniform method surface. LRM 7.4.5 invalid-index handling lives in the wrapper too:
+   non-const `ElementAt` returns an `UnpackedElementRef<T>` proxy that captures the index's
+   validity, and the non-const `Slice` returns an `UnpackedArrayRef<T>` proxy that captures the
+   offset's validity. Reads through the proxies' `Clone()` return Table 7-1 defaults on invalid
+   access; writes through `operator=` and compound ops are silent no-ops. Slice reads on partially-
+   OOB positions handle the in-range and OOB elements per-element rather than at slice granularity,
+   matching `PackedArray::ExtractBits` / `AssignSlice`'s per-bit OOB treatment.
 
 3. **Default initialization emits an `UnpackedArray<T>{e0, e1, ...}` braced-init expression.**
 
