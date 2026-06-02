@@ -1,0 +1,12 @@
+id: cpp.unpacked_equality_in_condition
+tags: [cpp_run]
+input:
+  command: [run, cpp]
+  project: false
+  top: Top
+  files: [main.sv]
+expect:
+  exit: 0
+  variables:
+    taken_same: 1
+    taken_diff: 0

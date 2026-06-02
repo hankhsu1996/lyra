@@ -1,0 +1,13 @@
+id: cpp.unpacked_case_equality_basic
+tags: [cpp_run]
+input:
+  command: [run, cpp]
+  project: false
+  top: Top
+  files: [main.sv]
+expect:
+  exit: 0
+  variables:
+    case_eq_same: 1
+    case_eq_x_match: 1
+    case_eq_diff: 0

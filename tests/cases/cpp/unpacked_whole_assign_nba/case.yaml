@@ -1,0 +1,13 @@
+id: cpp.unpacked_whole_assign_nba
+tags: [cpp_run]
+input:
+  command: [run, cpp]
+  project: false
+  top: Top
+  files: [main.sv]
+expect:
+  exit: 0
+  variables:
+    p0: 70
+    p1: 80
+    p2: 90
