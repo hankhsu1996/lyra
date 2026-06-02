@@ -1,0 +1,10 @@
+id: cpp.hierarchy_multiple_instances
+tags: [cpp_run]
+input:
+  command: [run, cpp]
+  project: false
+  files: [main.sv]
+expect:
+  exit: 0
+  stdout:
+    exact: "x=2\nx=2\n"
