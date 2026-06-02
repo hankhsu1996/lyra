@@ -119,8 +119,7 @@ auto RenderProcessMethod(
 }
 
 // A value-returning function renders its result type; a void function or task
-// renders C++ `void`. Other formal directions are not in scope for the current
-// subroutine support, so non-input params are rejected here.
+// renders C++ `void`.
 auto RenderSubroutineResultType(
     const mir::CompilationUnit& unit, const mir::StructuralScope& s,
     mir::TypeId result_type) -> diag::Result<std::string> {
