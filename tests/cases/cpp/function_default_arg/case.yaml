@@ -1,0 +1,14 @@
+id: cpp.function_default_arg
+tags: [cpp_run]
+input:
+  command: [run, cpp]
+  project: false
+  top: Top
+  files: [main.sv]
+expect:
+  exit: 0
+  variables:
+    r_basic: 12
+    r_placeholder: 153
+    r_reeval_lo: 11
+    r_reeval_hi: 101

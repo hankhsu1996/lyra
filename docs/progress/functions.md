@@ -37,7 +37,7 @@ everything and the inline "rides on" notes record the real dependencies.
       `return` overrides a prior name-assignment; an empty body returns the implicit variable's
       current value; the implicit variable is default-initialized so a read-before-write sees a
       defined value.
-- [ ] F11 -- Struct / union return values (LRM 13.4.1). A hierarchical name beginning with the
+- [x] F11 -- Struct / union return values (LRM 13.4.1). A hierarchical name beginning with the
       function name denotes a member of the return value inside the body; member access on the
       returned aggregate at the call site.
 
@@ -57,7 +57,7 @@ everything and the inline "rides on" notes record the real dependencies.
       and the copy-out goes through the actual's own write path. Supported where the call stands in
       statement position (a bare call or the whole right side of a blocking assignment); a call with
       `output` / `inout` actuals nested inside a larger expression is not yet supported.
-- [ ] F6 -- Default argument values (LRM 13.5.3), binding by name (LRM 13.5.4), and the optional
+- [x] F6 -- Default argument values (LRM 13.5.3), binding by name (LRM 13.5.4), and the optional
       empty argument list for no-argument / all-defaulted subroutines (LRM 13.5.5). Default
       expressions evaluate in the declaration scope at each defaulting call.
 - [ ] F10 -- `ref` and `const ref` arguments (LRM 13.5.2). A reference shares the caller's storage;
@@ -67,13 +67,15 @@ everything and the inline "rides on" notes record the real dependencies.
 
 ### Local storage
 
-- [ ] F5 -- Function-local default initialization (LRM 13.3.2 default-init, 6.8). 2-state locals
-      default to 0, 4-state locals to X (four-state suite), unpacked arrays element-wise, managed
-      string / container locals to empty, unpacked unions to zero-fill.
+- [x] F5 -- Function-local default initialization (LRM 13.3.2 default-init, 6.8). 2-state locals
+      default to 0, 4-state locals to X (four-state suite), unpacked arrays element-wise, and string
+      locals to empty; the same default applies to every other data-type family Lyra supports.
+      Container and unpacked-union locals follow once those data types exist (containers ride on
+      F8).
 
 ### Data types across the boundary
 
-- [ ] F7 -- `string` arguments and return values. Managed lifecycle across the call boundary;
+- [x] F7 -- `string` arguments and return values. Managed lifecycle across the call boundary;
       concatenated and computed string returns.
 - [ ] F8 -- Container arguments and return values: dynamic array, queue, associative array. Managed
       ownership and lifecycle across the boundary, including `output` / `inout` containers and the
