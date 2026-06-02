@@ -13,17 +13,20 @@ Done when:
 
 ## Actionable
 
-U1..U3 are done; U4..U5 are open. U1 established the IR shape, the literal-init path, and element
-read; U2 added element write across blocking, non-blocking, and compound forms; U3 completed the
-remaining assignment-pattern forms (default fill, index keys, replication, and nested combinations).
+U1..U5 are done. U6..U7 cover the remaining LRM 7.4.6 surface -- constant-width slice -- plus an OOB
+/ range follow-up. U8 records a cross-cutting observability gap surfaced by the unpacked-vs-packed
+asymmetry; the implementation lives under `refactor.md` R2.
 
-| Item | Status                                                       |
-| ---- | ------------------------------------------------------------ |
-| U1   | Done: type infrastructure + literal init + element read      |
-| U2   | Done: element write (blocking, NBA, compound)                |
-| U3   | Done: structured and replicated assignment patterns          |
-| U4   | Open: whole-array assignment, equality, constant-width slice |
-| U5   | Open: OOB read returning element default, base ranges        |
+| Item | Status                                                        |
+| ---- | ------------------------------------------------------------- |
+| U1   | Done: type infrastructure + literal init + element read       |
+| U2   | Done: element write (blocking, NBA, compound)                 |
+| U3   | Done: structured and replicated assignment patterns           |
+| U4   | Done: whole-array assignment (blocking and NBA)               |
+| U5   | Done: array equality, inequality, case-equality               |
+| U6   | Open: constant-width slice (read and write)                   |
+| U7   | Open: OOB element access and ascending / negative-base ranges |
+| U8   | Open: unpacked vars participate in value-change observability |
 
 ## Sub-Steps
 
@@ -36,7 +39,7 @@ The numeric IDs are stable references and do not imply execution order beyond U1
       assignment pattern `'{e1, e2, ...}` (LRM 10.9). Multi-dimensional arrays fall out from the
       nested type shape (LRM 7.4.4). Default initialization without an initializer applies the
       element type's LRM Table 6-7 default. Procedural element write, structured / replicated
-      patterns, whole-array ops, and OOB behaviour are out of scope and live under U2..U5.
+      patterns, whole-array ops, and OOB behaviour are out of scope and live under U2..U7.
 
 ### Element write
 
@@ -52,18 +55,49 @@ The numeric IDs are stable references and do not imply execution order beyond U1
       forms across multi-dimensional targets) per LRM 10.9.1 / 10.9.2. Closes the
       `unpacked_array_constants` archive cases that depend on `default:` or index labels.
 
-### Whole-array operations
+### Whole-array assignment
 
-- [ ] U4 -- Whole-array assignment `A = B` for compatible types (LRM 7.6), equality `A == B` /
-      `A != B` (LRM 7.4.6), and constant-width slice `A[i +: c]` / `A[i -: c]` (LRM 7.4.5).
-      Compatibility follows the LRM 7.6 rules: equivalent element types and identical element
-      counts, with left-to-right element correspondence.
+- [x] U4 -- Whole-array assignment `A = B` for compatible fixed-size unpacked arrays (LRM 7.6).
+      Element count must match; range bounds may differ, and correspondence between source and
+      target elements is left-to-right per LRM 7.6 (`B[1] -> A[7]`, `B[8] -> A[0]` when `A` is
+      `[7:0]` and `B` is `[1:8]`). Both blocking (`A = B`) and non-blocking (`A <= B`) forms are
+      covered, with multi-dimensional targets composing through the nested element type.
+
+### Array equality
+
+- [x] U5 -- Array equality `A == B` and inequality `A != B`, plus case-equality `A === B` and
+      case-inequality `A !== B`, over compatible fixed-size unpacked arrays (LRM 7.4.6 + 11.4.5).
+      Result is a 1-bit value reduced from the per-element comparisons. For `==` / `!=`, X / Z in
+      any element comparison propagates to the aggregate result per LRM 11.4.5; for `===` / `!==`, X
+      / Z are matched as values and the result is always 0 or 1. Multi-dimensional aggregates
+      compose through the recursive element type. Equality on slices of an array
+      (`A[i +: c] != B[j +: c]`, also LRM 7.4.6) follows once U6 lands.
+
+### Constant-width slice
+
+- [ ] U6 -- Constant-width slice `A[i +: c]` and `A[i -: c]` over fixed-size unpacked arrays (LRM
+      7.4.5). Width `c` is a compile-time constant; base position `i` may be a runtime expression.
+      Both rvalue and lvalue forms; the lvalue form is treated as a single assignment to the entire
+      slice per LRM 7.6 and produces a single value change on the underlying array. The result type
+      of an rvalue slice is itself an unpacked array.
 
 ### OOB and ranges
 
-- [ ] U5 -- OOB read returns the element type's LRM Table 6-7 default; OOB write is a no-op (LRM
+- [ ] U7 -- OOB read returns the element type's LRM Table 6-7 default; OOB write is a no-op (LRM
       Table 7-1, LRM 7.4.5). Ascending range bounds (`int a [0:N]`) and negative-base bounds
       (`int a [-1:6]`) translate through the index-to-offset path correctly.
+
+### Observability
+
+- [ ] U8 -- Unpacked structural variables participate in value-change observability. Today an
+      unpacked-typed structural variable does not expose the value-change channel that packed
+      scalars use, so any construct that needs to react to a write on one -- event control (`@arr`,
+      `@(arr[i])`), level-sensitive `wait` reading an unpacked operand, always_comb / `@*` reading
+      an unpacked operand, continuous assignment with an unpacked source -- silently misses writes
+      or is rejected at the sensitivity-lowering boundary. The fix is cross-cutting (it also affects
+      strings, reals, and other non-integral value types) and is owned by `refactor.md` R2; this
+      item exists for visibility from the unpacked workstream. Triggered when a concrete consumer
+      needs the capability.
 
 ## Cross-references
 
@@ -73,6 +107,8 @@ The numeric IDs are stable references and do not imply execution order beyond U1
 - Archive items: `datatypes/unpacked/{unpacked_arrays, unpacked_array_constants}`, the unpacked
   subset of `oob_bounds`.
 - Decision: `../decisions/unpacked-array-representation.md`.
+- Cross-cutting: `refactor.md` R2 -- value-typed structural fields uniformly wrapped for
+  observability (U8).
 - Unblocks: `control-flow.md` C9 / C10 (`foreach` over unpacked).
 - Cross-references `display.md` DI7 (`%p` assignment-pattern format) for end-to-end test coverage of
   whole-array values.

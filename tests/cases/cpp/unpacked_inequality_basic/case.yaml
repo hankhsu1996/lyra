@@ -1,0 +1,12 @@
+id: cpp.unpacked_inequality_basic
+tags: [cpp_run]
+input:
+  command: [run, cpp]
+  project: false
+  top: Top
+  files: [main.sv]
+expect:
+  exit: 0
+  variables:
+    ne_same: 0
+    ne_diff: 1
