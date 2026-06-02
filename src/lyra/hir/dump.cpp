@@ -852,6 +852,9 @@ class HirDumper {
               "Param[{}] {} var=ProceduralVar[{}]", i,
               FormatParamDirection(param.direction), param.var.value));
     }
+    if (d.result_var.has_value()) {
+      Line(std::format("Result var=ProceduralVar[{}]", d.result_var->value));
+    }
     DumpProceduralBody(d.body);
     Dedent();
   }

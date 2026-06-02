@@ -154,6 +154,17 @@ auto LowerSubroutineMemberInto(
             .direction = FromSlangArgumentDirection(formal->direction)});
   }
 
+  // LRM 13.4.1: a non-void function implicitly declares a body-local variable
+  // of the return type, named after the function, that the body reads and
+  // writes to produce the return value. slang exposes it as `returnValVar`;
+  // void functions and tasks have none. Bind it after the formals so its
+  // procedural-var id follows them in declaration order.
+  std::optional<hir::ProceduralVarId> result_var;
+  if (sym.returnValVar != nullptr) {
+    result_var =
+        sub_state.AddProceduralVar(*sym.returnValVar, *return_type_id_or);
+  }
+
   auto body_or =
       LowerStatement(unit_facts, sub_state, scope_state, stack, sym.getBody());
   if (!body_or) return std::unexpected(std::move(body_or.error()));
@@ -165,6 +176,7 @@ auto LowerSubroutineMemberInto(
                .kind = FromSlangSubroutineKind(sym.subroutineKind),
                .result_type = *return_type_id_or,
                .params = std::move(params),
+               .result_var = result_var,
                .body = sub_state.FinalizeBody(root)});
   return {};
 }

@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstdint>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -30,11 +31,17 @@ struct SubroutineParam {
   ParamDirection direction = ParamDirection::kInput;
 };
 
+// LRM 13.4.1 implicit result variable: a non-void function implicitly declares
+// a body-local variable of the return type that the body reads and writes
+// through the function name. `result_var` indexes the body's procedural-var
+// arena for that variable; it is absent for void functions and tasks, which
+// yield no value.
 struct StructuralSubroutineDecl {
   std::string name;
   SubroutineKind kind;
   TypeId result_type;
   std::vector<SubroutineParam> params;
+  std::optional<ProceduralVarId> result_var;
   ProceduralBody body;
 };
 

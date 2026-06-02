@@ -9,10 +9,12 @@
 #include "lyra/base/time.hpp"
 #include "lyra/hir/process.hpp"
 #include "lyra/hir/stmt.hpp"
+#include "lyra/lowering/hir_to_mir/default_value.hpp"
 #include "lyra/lowering/hir_to_mir/lower_stmt.hpp"
 #include "lyra/lowering/hir_to_mir/procedural_scope_helpers.hpp"
 #include "lyra/lowering/hir_to_mir/sensitivity_wait.hpp"
 #include "lyra/lowering/hir_to_mir/state.hpp"
+#include "lyra/mir/expr.hpp"
 #include "lyra/mir/process.hpp"
 #include "lyra/mir/stmt.hpp"
 
@@ -164,13 +166,42 @@ auto LowerStructuralSubroutine(
             .direction = LowerParamDirection(param.direction)});
   }
 
+  // LRM 13.4.1 implicit result variable desugar. A non-void function returns
+  // the current value of its implicit same-name variable on fall-through; an
+  // assignment to the function name is just a write to that variable, and an
+  // explicit `return expr` overrides it because it exits before the trailing
+  // read. Materialize the variable as a default-initialized body local (named
+  // distinctly from the C++ method so a self-recursive call still resolves to
+  // the method), then close the body with `return <result>`. void functions
+  // and tasks have no result variable and no trailing return.
+  const mir::TypeId result_type = unit_state.TranslateType(src.result_type);
+  std::optional<mir::ProceduralVarRef> result_ref;
+  if (src.result_var.has_value()) {
+    const mir::ExprId default_init =
+        SynthesizeDefaultValueExpr(unit_state, body_scope_state, result_type);
+    result_ref = body_scope_state.AppendLocal(
+        mir::ProceduralVarDecl{.name = "_lyra_result", .type = result_type},
+        default_init);
+    proc_state.MapProceduralVar(
+        *src.result_var,
+        ProceduralVarBinding{
+            .declaration_procedural_depth = proc_state.CurrentProceduralDepth(),
+            .var = result_ref->var});
+  }
+
   auto lowered = LowerStraightLineBodyInto(
       unit_state, scope_state, src.body, proc_state, body_scope_state);
   if (!lowered) return std::unexpected(std::move(lowered.error()));
 
+  if (result_ref.has_value()) {
+    const mir::ExprId result_read = body_scope_state.AddExpr(
+        mir::Expr{.data = *result_ref, .type = result_type});
+    body_scope_state.AppendStmt(mir::ReturnStmt{.value = result_read});
+  }
+
   return mir::StructuralSubroutineDecl{
       .name = src.name,
-      .result_type = unit_state.TranslateType(src.result_type),
+      .result_type = result_type,
       .params = std::move(params),
       .root_procedural_scope = body_scope_state.Finish()};
 }

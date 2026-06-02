@@ -33,7 +33,7 @@ everything and the inline "rides on" notes record the real dependencies.
       `return expr`; nonvoid call as an expression operand and as a nested operand; void call as a
       statement; `void'(f())` to discard a nonvoid result. Sequential body statements, early /
       conditional return, and function-local variable declarations.
-- [ ] F2 -- Return-by-name via the implicit variable that shares the function's name (LRM 13.4.1).
+- [x] F2 -- Return-by-name via the implicit variable that shares the function's name (LRM 13.4.1).
       `return` overrides a prior name-assignment; an empty body returns the implicit variable's
       current value; the implicit variable is default-initialized so a read-before-write sees a
       defined value.
