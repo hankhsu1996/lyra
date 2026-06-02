@@ -1,0 +1,19 @@
+id: cpp.unpacked_slice_decl_directions
+tags: [cpp_run]
+input:
+  command: [run, cpp]
+  project: false
+  top: Top
+  files: [main.sv]
+expect:
+  exit: 0
+  variables:
+    anz_e0: 30
+    anz_e1: 40
+    anz_e2: 50
+    desc_e0: 50
+    desc_e1: 40
+    desc_e2: 30
+    neg_e0: 11
+    neg_e1: 22
+    neg_e2: 33
