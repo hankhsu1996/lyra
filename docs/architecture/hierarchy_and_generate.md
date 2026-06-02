@@ -61,6 +61,11 @@ shared by all consumers: external references, child routing, and construction.
 - `reference_resolution.md` owns how a reference reaches state across the object tree and when it
   resolves. This doc owns the tree's shape and construction and its faithfulness to the frontend's
   elaboration; that doc relies on this faithfulness to make cross-unit resolution total.
+- A node whose owned child is built from another compilation unit (an instantiation) crosses the
+  unit boundary: the parent references the child's interface by name, never its body or internal
+  ids. An owned child that belongs to the same unit (a named generate scope) is intra-unit and
+  crosses no boundary. `compilation_unit_model.md` owns the interface and the name-based linkage;
+  this doc owns only the resulting ownership edge in the object tree.
 
 ## Forbidden Shapes
 

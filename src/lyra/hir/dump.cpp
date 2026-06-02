@@ -833,6 +833,13 @@ class HirDumper {
     for (const auto& g : s.generates) {
       DumpGenerate(s, g);
     }
+    for (std::size_t i = 0; i < s.instance_members.size(); ++i) {
+      const auto& im = s.instance_members[i];
+      Line(
+          std::format(
+              "InstanceMember[{}] \"{}\" : {}", i, im.instance_name,
+              im.target_unit));
+    }
     Dedent();
     scope_stack_.pop_back();
   }

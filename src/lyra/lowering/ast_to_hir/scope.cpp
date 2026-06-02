@@ -11,6 +11,8 @@
 #include <slang/ast/Statement.h>
 #include <slang/ast/Symbol.h>
 #include <slang/ast/symbols/BlockSymbols.h>
+#include <slang/ast/symbols/CompilationUnitSymbols.h>
+#include <slang/ast/symbols/InstanceSymbols.h>
 #include <slang/ast/symbols/SubroutineSymbols.h>
 #include <slang/ast/symbols/ValueSymbol.h>
 #include <slang/ast/symbols/VariableSymbols.h>
@@ -239,6 +241,16 @@ auto LowerIfOrCaseGenerateMemberInto(
   return {};
 }
 
+auto LowerInstanceMemberInto(
+    ScopeLoweringState& scope_state, const slang::ast::InstanceSymbol& inst)
+    -> diag::Result<void> {
+  scope_state.AddInstanceMember(
+      hir::InstanceMemberDecl{
+          .instance_name = std::string{inst.name},
+          .target_unit = std::string{inst.getDefinition().name}});
+  return {};
+}
+
 auto LowerScopeMemberInto(
     const UnitLoweringFacts& unit_facts, ScopeLoweringState& scope_state,
     ScopeStack& stack, const slang::ast::Symbol& member,
@@ -271,6 +283,9 @@ auto LowerScopeMemberInto(
       return LowerIfOrCaseGenerateMemberInto(
           unit_facts, scope_state, stack,
           member.as<slang::ast::GenerateBlockSymbol>(), slang_scope);
+    case slang::ast::SymbolKind::Instance:
+      return LowerInstanceMemberInto(
+          scope_state, member.as<slang::ast::InstanceSymbol>());
     default:
       return {};
   }

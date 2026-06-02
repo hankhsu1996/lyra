@@ -1,3 +1,4 @@
+#include <algorithm>
 #include <argparse/argparse.hpp>
 #include <cstdio>
 #include <exception>
@@ -290,11 +291,14 @@ auto main(int argc, char** argv) -> int {
       return *loc_or;
     };
 
-    auto build_tops = [](const std::vector<lyra::mir::CompilationUnit>& units) {
+    auto build_tops = [](const std::vector<lyra::mir::CompilationUnit>& units,
+                         const std::vector<std::string>& top_names) {
       std::vector<lyra::backend::cpp::TopInstance> tops;
-      tops.reserve(units.size());
       for (const auto& unit : units) {
-        tops.push_back({.name = unit.structural_scope.name, .unit = &unit});
+        if (std::ranges::find(top_names, unit.structural_scope.name) !=
+            top_names.end()) {
+          tops.push_back({.name = unit.structural_scope.name, .unit = &unit});
+        }
       }
       return tops;
     };
@@ -312,7 +316,7 @@ auto main(int argc, char** argv) -> int {
         }
         const std::filesystem::path dir = args.out_dir;
         const auto& units = *result.artifacts.mir_units;
-        const auto tops = build_tops(units);
+        const auto tops = build_tops(units, result.artifacts.top_unit_names);
         auto assembled =
             lyra::driver::AssembleProject(*runtime, units, tops, dir);
         if (!assembled) {
@@ -329,7 +333,7 @@ auto main(int argc, char** argv) -> int {
         }
         const std::filesystem::path dir = args.out_dir;
         const auto& units = *result.artifacts.mir_units;
-        const auto tops = build_tops(units);
+        const auto tops = build_tops(units, result.artifacts.top_unit_names);
         auto assembled =
             lyra::driver::AssembleProject(*runtime, units, tops, dir);
         if (!assembled) {
@@ -358,7 +362,7 @@ auto main(int argc, char** argv) -> int {
           return 1;
         }
         const auto& units = *result.artifacts.mir_units;
-        const auto tops = build_tops(units);
+        const auto tops = build_tops(units, result.artifacts.top_unit_names);
         auto exit_code =
             lyra::driver::RunInPlace(*runtime, units, tops, *tmp_or);
         if (!exit_code) {

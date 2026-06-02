@@ -146,6 +146,14 @@ auto RenderConstructOwnedObjectStmt(
       "ConstructOwnedObjectStmt target is not an owning object var");
 }
 
+auto RenderConstructExternalUnitStmt(
+    const RenderContext& ctx, const mir::ConstructExternalUnitStmt& s,
+    std::size_t indent) -> diag::Result<std::string> {
+  const auto& var = ctx.StructuralScope().GetStructuralVar(s.target);
+  return Indent(indent) + var.name + " = std::make_unique<" + s.unit_name +
+         ">();\n";
+}
+
 auto RenderForStmtNode(
     const RenderContext& ctx, const mir::Stmt& stmt, const mir::ForStmt& s,
     std::size_t indent) -> diag::Result<std::string> {
@@ -268,6 +276,10 @@ auto RenderStmt(
           [&](const mir::ConstructOwnedObjectStmt& s)
               -> diag::Result<std::string> {
             return RenderConstructOwnedObjectStmt(ctx, s, indent);
+          },
+          [&](const mir::ConstructExternalUnitStmt& s)
+              -> diag::Result<std::string> {
+            return RenderConstructExternalUnitStmt(ctx, s, indent);
           },
           [&](const mir::ForStmt& s) -> diag::Result<std::string> {
             return RenderForStmtNode(ctx, stmt, s, indent);

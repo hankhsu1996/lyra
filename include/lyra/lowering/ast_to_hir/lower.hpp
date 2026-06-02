@@ -1,5 +1,8 @@
 #pragma once
 
+#include <string>
+#include <vector>
+
 #include <slang/ast/Compilation.h>
 
 #include "lyra/diag/diagnostic.hpp"
@@ -37,7 +40,16 @@ class LowerCompilationFacts {
   SensitivityAnalyzer* sensitivity_analyzer_;
 };
 
+// Lowers the top-level blocks and, transitively, every unit they instantiate.
+// The result is a superset of the tops: a unit reached only through
+// instantiation is compiled but is not itself a top.
 auto LowerCompilation(const LowerCompilationFacts& facts)
     -> diag::Result<std::vector<hir::ModuleUnit>>;
+
+// A top-level block is an auto-promoted, uninstantiated module. These names are
+// a subset of the compiled units: a unit reached only through instantiation is
+// compiled but is not a top.
+auto TopLevelUnitNames(slang::ast::Compilation& compilation)
+    -> std::vector<std::string>;
 
 }  // namespace lyra::lowering::ast_to_hir

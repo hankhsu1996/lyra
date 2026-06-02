@@ -3,6 +3,7 @@
 #include <compare>
 #include <cstdint>
 #include <optional>
+#include <string>
 #include <variant>
 #include <vector>
 
@@ -30,6 +31,21 @@ struct StructuralScopeId {
 
   auto operator<=>(const StructuralScopeId&) const
       -> std::strong_ordering = default;
+};
+
+struct InstanceMemberId {
+  std::uint32_t value;
+
+  auto operator<=>(const InstanceMemberId&) const
+      -> std::strong_ordering = default;
+};
+
+// `target_unit` is a cross-unit reference -- the name of the instantiated unit,
+// resolved by name at link time, a distinct domain from the unit-local id
+// kinds.
+struct InstanceMemberDecl {
+  std::string instance_name;
+  std::string target_unit;
 };
 
 struct IfGenerate {
@@ -76,6 +92,7 @@ struct StructuralScope {
   std::vector<Process> processes;
   std::vector<ContinuousAssign> continuous_assigns;
   std::vector<Generate> generates;
+  std::vector<InstanceMemberDecl> instance_members;
   std::vector<StructuralSubroutineDecl> structural_subroutines;
   std::vector<TypeAliasDecl> type_aliases;
 
@@ -99,6 +116,10 @@ struct StructuralScope {
   }
   [[nodiscard]] auto GetGenerate(GenerateId id) const -> const Generate& {
     return generates.at(id.value);
+  }
+  [[nodiscard]] auto GetInstanceMember(InstanceMemberId id) const
+      -> const InstanceMemberDecl& {
+    return instance_members.at(id.value);
   }
   [[nodiscard]] auto GetStructuralSubroutine(StructuralSubroutineId id) const
       -> const StructuralSubroutineDecl& {

@@ -26,6 +26,7 @@ enum class TypeKind {
   kChandle,
   kVoid,
   kObject,
+  kExternalUnitObject,
   kOwningPtr,
   kVector,
 };
@@ -126,6 +127,15 @@ struct ObjectType {
   auto operator==(const ObjectType&) const -> bool = default;
 };
 
+// The cross-unit twin of ObjectType: the target is another unit's name,
+// resolved by name at link time, not a scope of this unit -- so its layout is
+// not visible here.
+struct ExternalUnitObjectType {
+  std::string unit_name;
+
+  auto operator==(const ExternalUnitObjectType&) const -> bool = default;
+};
+
 struct OwningPtrType {
   TypeId pointee;
 
@@ -141,7 +151,8 @@ struct VectorType {
 using TypeData = std::variant<
     PackedArrayType, EnumType, UnpackedArrayType, DynamicArrayType, QueueType,
     AssociativeArrayType, StringType, EventType, RealType, ShortRealType,
-    RealTimeType, ChandleType, VoidType, ObjectType, OwningPtrType, VectorType>;
+    RealTimeType, ChandleType, VoidType, ObjectType, ExternalUnitObjectType,
+    OwningPtrType, VectorType>;
 
 struct Type {
   TypeData data;
@@ -170,5 +181,11 @@ class CompilationUnit;
 [[nodiscard]] auto GetOwnedObjectTarget(
     const CompilationUnit& unit, TypeId type)
     -> std::optional<StructuralScopeId>;
+
+[[nodiscard]] auto IsExternalUnitOwningType(
+    const CompilationUnit& unit, TypeId type) -> bool;
+
+[[nodiscard]] auto GetExternalUnitName(const CompilationUnit& unit, TypeId type)
+    -> std::optional<std::string>;
 
 }  // namespace lyra::mir

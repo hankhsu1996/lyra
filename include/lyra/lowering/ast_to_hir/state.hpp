@@ -317,6 +317,14 @@ class ScopeLoweringState {
     return id;
   }
 
+  auto AddInstanceMember(hir::InstanceMemberDecl decl)
+      -> hir::InstanceMemberId {
+    const hir::InstanceMemberId id{
+        static_cast<std::uint32_t>(scope_->instance_members.size())};
+    scope_->instance_members.push_back(std::move(decl));
+    return id;
+  }
+
   auto AddStructuralSubroutine(
       const slang::ast::SubroutineSymbol& sym,
       hir::StructuralSubroutineDecl decl) -> hir::StructuralSubroutineId {

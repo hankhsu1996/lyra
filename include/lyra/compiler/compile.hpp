@@ -2,6 +2,7 @@
 
 #include <cstdint>
 #include <optional>
+#include <string>
 #include <vector>
 
 #include "lyra/diag/sink.hpp"
@@ -22,6 +23,9 @@ struct CompileArtifacts {
   std::optional<frontend::ParseResult> parse;
   std::optional<std::vector<hir::ModuleUnit>> hir_units;
   std::optional<std::vector<mir::CompilationUnit>> mir_units;
+  // A subset of the compiled units: a unit reached only through instantiation
+  // is compiled but is not a top.
+  std::vector<std::string> top_unit_names;
 
   CompileArtifacts() = default;
   CompileArtifacts(const CompileArtifacts&) = delete;

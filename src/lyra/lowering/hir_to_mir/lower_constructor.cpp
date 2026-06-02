@@ -157,6 +157,43 @@ auto MakeVectorOfOwnedObjectType(
   return unit_state.AddType(mir::VectorType{.element = owned_type});
 }
 
+auto MakeExternalUnitOwningType(
+    UnitLoweringState& unit_state, std::string unit_name) -> mir::TypeId {
+  const mir::TypeId object_type = unit_state.AddType(
+      mir::ExternalUnitObjectType{.unit_name = std::move(unit_name)});
+  return unit_state.AddType(mir::OwningPtrType{.pointee = object_type});
+}
+
+void InstallInstanceMembers(
+    UnitLoweringState& unit_state, StructuralScopeLoweringState& scope_state,
+    const hir::StructuralScope& scope,
+    ProceduralScopeLoweringState& ctor_scope_state) {
+  for (const auto& im : scope.instance_members) {
+    for (const auto& v : scope_state.Scope().structural_vars) {
+      if (v.name == im.instance_name) {
+        throw InternalError(
+            "instance member name collides with an existing structural var "
+            "declaration in the enclosing scope");
+      }
+    }
+    const mir::TypeId var_type =
+        MakeExternalUnitOwningType(unit_state, im.target_unit);
+    const mir::ExprId init =
+        SynthesizeDefaultValueExpr(unit_state, ctor_scope_state, var_type);
+    const mir::StructuralVarId var_id = scope_state.AddStructuralVar(
+        mir::StructuralVarDecl{
+            .name = im.instance_name, .type = var_type, .initializer = init});
+    const mir::StmtId sid = ctor_scope_state.AddStmt(
+        mir::Stmt{
+            .label = std::nullopt,
+            .data =
+                mir::ConstructExternalUnitStmt{
+                    .target = var_id, .unit_name = im.target_unit},
+            .child_procedural_scopes = {}});
+    ctor_scope_state.AddRootStmt(sid);
+  }
+}
+
 void ValidateConstructOwnedObjectStmt(
     const mir::CompilationUnit& unit, const mir::StructuralScope& owner_scope,
     const ProceduralScopeLoweringState& proc_scope_state,
@@ -584,6 +621,9 @@ auto LowerStructuralScope(
     const mir::StmtId sid = ctor_scope_state.AddStmt(*std::move(stmt));
     ctor_scope_state.AddRootStmt(sid);
   }
+
+  InstallInstanceMembers(unit_state, scope_state, scope, ctor_scope_state);
+
   scope_state.SetConstructorScope(ctor_scope_state.Finish());
 
   return mir_scope;

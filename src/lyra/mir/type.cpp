@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cstdint>
 #include <optional>
+#include <string>
 #include <variant>
 
 #include "lyra/base/internal_error.hpp"
@@ -71,6 +72,9 @@ auto Type::Kind() const -> TypeKind {
           [](const ChandleType&) { return TypeKind::kChandle; },
           [](const VoidType&) { return TypeKind::kVoid; },
           [](const ObjectType&) { return TypeKind::kObject; },
+          [](const ExternalUnitObjectType&) {
+            return TypeKind::kExternalUnitObject;
+          },
           [](const OwningPtrType&) { return TypeKind::kOwningPtr; },
           [](const VectorType&) { return TypeKind::kVector; },
       },
@@ -159,6 +163,25 @@ auto GetOwnedObjectTarget(const CompilationUnit& unit, TypeId type)
     }
   }
   return std::nullopt;
+}
+
+auto IsExternalUnitOwningType(const CompilationUnit& unit, TypeId type)
+    -> bool {
+  return GetExternalUnitName(unit, type).has_value();
+}
+
+auto GetExternalUnitName(const CompilationUnit& unit, TypeId type)
+    -> std::optional<std::string> {
+  const auto* owning = std::get_if<OwningPtrType>(&unit.GetType(type).data);
+  if (owning == nullptr) {
+    return std::nullopt;
+  }
+  const auto* ext =
+      std::get_if<ExternalUnitObjectType>(&unit.GetType(owning->pointee).data);
+  if (ext == nullptr) {
+    return std::nullopt;
+  }
+  return ext->unit_name;
 }
 
 }  // namespace lyra::mir

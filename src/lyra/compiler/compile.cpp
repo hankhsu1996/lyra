@@ -43,6 +43,8 @@ auto Compile(
     return result;
   }
   result.artifacts.hir_units = std::move(*hir);
+  result.artifacts.top_unit_names = lowering::ast_to_hir::TopLevelUnitNames(
+      *result.artifacts.parse->compilation);
 
   if (stop_after == StopAfter::kHir) {
     return result;

@@ -50,7 +50,7 @@ C  Non-local access substrate
 
 ### Stage A -- Specialization as compilation unit
 
-- [ ] A1 -- More than one module definition compiles in a single run; the design is no longer
+- [x] A1 -- More than one module definition compiles in a single run; the design is no longer
       assumed to be a single top module. Each module is its own independently compiled unit. The LRM
       permits multiple top-level blocks (LRM 3.11): every elaborated but uninstantiated module is
       implicitly a top-level block, and all of them sit under one implicit root scope ($root). The
@@ -69,7 +69,7 @@ Unlocks the compile-time side of `instantiation/specialization_grouping` and
 
 ### Stage B -- Object-graph construction (instantiation)
 
-- [ ] B1 -- A module instantiates a child; the constructor builds the child as a distinct object
+- [x] B1 -- A module instantiates a child; the constructor builds the child as a distinct object
       owned by the parent in the object tree. Parent and child remain separate units.
 - [ ] B2 -- The same module instantiated several times yields independent objects, each owning its
       own state.

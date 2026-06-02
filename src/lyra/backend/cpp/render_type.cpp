@@ -92,6 +92,8 @@ auto RenderTypeAsCpp(
             return std::string{
                 owner_scope.GetChildStructuralScope(o.target).name};
           },
+          [](const mir::ExternalUnitObjectType& e)
+              -> diag::Result<std::string> { return e.unit_name; },
           [&](const mir::OwningPtrType& o) -> diag::Result<std::string> {
             auto inner_or = RenderTypeAsCpp(unit, owner_scope, o.pointee);
             if (!inner_or) return std::unexpected(std::move(inner_or.error()));
