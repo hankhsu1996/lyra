@@ -1,0 +1,13 @@
+id: cpp.unpacked_pattern_index_keys
+tags: [cpp_run]
+input:
+  command: [run, cpp]
+  project: false
+  top: Top
+  files: [main.sv]
+expect:
+  exit: 0
+  variables:
+    p0: 100
+    p1: 200
+    p2: 300

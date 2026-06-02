@@ -5,6 +5,7 @@
 #include <format>
 #include <memory>
 #include <optional>
+#include <span>
 #include <utility>
 #include <variant>
 #include <vector>
@@ -55,6 +56,39 @@ auto GetAggregateFields(const hir::Type& t)
   }
   throw InternalError(
       "GetAggregateFields: base type is not a packed struct or union");
+}
+
+// LRM 10.9.1: the replication count of an assignment pattern is a constant
+// expression; slang has already evaluated it to an integer literal. The
+// unpacked-target path uses this value to materialize the element list at
+// compile time (no runtime replication primitive exists for unpacked
+// aggregates -- the C++ mental model is a flat `std::vector` initializer).
+auto ExtractHirLiteralUint64(const hir::Expr& expr) -> std::uint64_t {
+  const auto* primary = std::get_if<hir::PrimaryExpr>(&expr.data);
+  if (primary == nullptr) {
+    throw InternalError(
+        "ExtractHirLiteralUint64: expected a primary expression");
+  }
+  const auto* lit = std::get_if<hir::IntegerLiteral>(&primary->data);
+  if (lit == nullptr) {
+    throw InternalError("ExtractHirLiteralUint64: expected an integer literal");
+  }
+  const auto& c = lit->value;
+  if (c.value_words.empty()) return 0;
+  return c.value_words[0];
+}
+
+auto BuildUnpackedReplicationFlatList(
+    std::span<const mir::ExprId> items_ids, std::uint64_t count,
+    mir::TypeId result_type) -> mir::Expr {
+  std::vector<mir::ExprId> flat;
+  flat.reserve(items_ids.size() * count);
+  for (std::uint64_t i = 0; i < count; ++i) {
+    flat.insert(flat.end(), items_ids.begin(), items_ids.end());
+  }
+  return mir::Expr{
+      .data = mir::ArrayLiteralExpr{.elements = std::move(flat)},
+      .type = result_type};
 }
 
 auto LowerBinaryOp(hir::BinaryOp op) -> mir::BinaryOp {
@@ -1152,6 +1186,12 @@ auto LowerHirAssignmentPatternReplicationExprProc(
     if (!lowered) return std::unexpected(std::move(lowered.error()));
     item_ids.push_back(proc_scope_state.AddExpr(*std::move(lowered)));
   }
+  if (std::holds_alternative<mir::UnpackedArrayType>(
+          unit_state.GetType(result_type).data)) {
+    const std::uint64_t count =
+        ExtractHirLiteralUint64(hir_process.exprs.at(a.count.value));
+    return BuildUnpackedReplicationFlatList(item_ids, count, result_type);
+  }
   const mir::ExprId inner_concat_id = proc_scope_state.AddExpr(
       mir::Expr{
           .data = mir::ConcatExpr{.operands = std::move(item_ids)},
@@ -1535,6 +1575,47 @@ auto LowerHirAssignmentPatternExprStructural(
       .type = result_type};
 }
 
+auto LowerHirAssignmentPatternReplicationExprStructural(
+    const UnitLoweringState& unit_state,
+    const StructuralScopeLoweringState& scope_state,
+    const ConstructorLoweringState* ctor_state,
+    ProceduralScopeLoweringState& proc_scope_state,
+    const hir::StructuralScope& scope,
+    const hir::AssignmentPatternReplicationExpr& a,
+    LoopVarLoweringMode loop_var_mode, mir::TypeId result_type)
+    -> diag::Result<mir::Expr> {
+  std::vector<mir::ExprId> item_ids;
+  item_ids.reserve(a.items.size());
+  for (const auto& id : a.items) {
+    auto lowered = LowerExprImpl(
+        unit_state, scope_state, ctor_state, proc_scope_state, scope,
+        scope.GetExpr(id), loop_var_mode);
+    if (!lowered) return std::unexpected(std::move(lowered.error()));
+    item_ids.push_back(proc_scope_state.AddExpr(*std::move(lowered)));
+  }
+  if (std::holds_alternative<mir::UnpackedArrayType>(
+          unit_state.GetType(result_type).data)) {
+    const std::uint64_t count = ExtractHirLiteralUint64(scope.GetExpr(a.count));
+    return BuildUnpackedReplicationFlatList(item_ids, count, result_type);
+  }
+  const mir::ExprId inner_concat_id = proc_scope_state.AddExpr(
+      mir::Expr{
+          .data = mir::ConcatExpr{.operands = std::move(item_ids)},
+          .type = result_type});
+  auto count_or = LowerExprImpl(
+      unit_state, scope_state, ctor_state, proc_scope_state, scope,
+      scope.GetExpr(a.count), loop_var_mode);
+  if (!count_or) return std::unexpected(std::move(count_or.error()));
+  const mir::ExprId count_id = proc_scope_state.AddExpr(*std::move(count_or));
+  return mir::Expr{
+      .data =
+          mir::ReplicationExpr{
+              .count = count_id,
+              .concat = inner_concat_id,
+          },
+      .type = result_type};
+}
+
 auto LowerHirConversionExprStructural(
     const UnitLoweringState& unit_state,
     const StructuralScopeLoweringState& scope_state,
@@ -1648,13 +1729,11 @@ auto LowerExprImpl(
                 unit_state, scope_state, ctor_state, proc_scope_state, scope, a,
                 loop_var_mode, result_type);
           },
-          [](const hir::AssignmentPatternReplicationExpr&)
+          [&](const hir::AssignmentPatternReplicationExpr& a)
               -> diag::Result<mir::Expr> {
-            return diag::Unsupported(
-                diag::DiagCode::kUnsupportedStructuralExpressionForm,
-                "replicated assignment patterns in constructor expressions "
-                "are not yet supported",
-                diag::UnsupportedCategory::kFeature);
+            return LowerHirAssignmentPatternReplicationExprStructural(
+                unit_state, scope_state, ctor_state, proc_scope_state, scope, a,
+                loop_var_mode, result_type);
           },
       },
       expr.data);
