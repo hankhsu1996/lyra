@@ -1,0 +1,12 @@
+id: cpp.hierarchy_parent_child_instance
+tags: [cpp_run]
+input:
+  command: [run, cpp]
+  project: false
+  files: [main.sv]
+expect:
+  exit: 0
+  stdout:
+    contains:
+      - "parent"
+      - "child"

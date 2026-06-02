@@ -74,9 +74,17 @@ struct ConstructOwnedObjectStmt {
   std::vector<ExprId> args;
 };
 
+// The cross-unit twin of ConstructOwnedObjectStmt: it carries no scope_id
+// because the child is a separate compilation unit, not a nested scope of this
+// one.
+struct ConstructExternalUnitStmt {
+  StructuralVarId target;
+  std::string unit_name;
+};
+
 struct ForInitDecl {
   ProceduralVarRef induction_var = {};
-  ExprId init;
+  ExprId init = {};
 };
 
 struct ForInitExpr {
@@ -152,8 +160,9 @@ struct SensitivityWaitStmt {
 
 using StmtData = std::variant<
     EmptyStmt, ProceduralVarDeclStmt, ExprStmt, BlockStmt, IfStmt,
-    ConstructOwnedObjectStmt, ForStmt, DelayStmt, WhileStmt, DoWhileStmt,
-    BreakStmt, ContinueStmt, ReturnStmt, SensitivityWaitStmt>;
+    ConstructOwnedObjectStmt, ConstructExternalUnitStmt, ForStmt, DelayStmt,
+    WhileStmt, DoWhileStmt, BreakStmt, ContinueStmt, ReturnStmt,
+    SensitivityWaitStmt>;
 
 struct Stmt {
   std::optional<std::string> label;
