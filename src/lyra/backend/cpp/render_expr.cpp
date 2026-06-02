@@ -328,21 +328,22 @@ auto RenderBinaryOpReal(
 }
 
 // LRM 11.2.2 + 11.4.5: aggregate equality / inequality / case-equality /
-// case-inequality. Slang's binding has already enforced equivalent operand
-// types, so the helper just routes to the matching runtime entry. Relational
-// operators are not defined on aggregate operands.
+// case-inequality. `UnpackedArray` overloads `==` / `!=` to return a 1-bit
+// `PackedArray` (X / Z propagating) and exposes `CaseEqual` as a method
+// returning a 1-bit `PackedArray` (0 / 1 only). Relational operators are not
+// defined on aggregate operands.
 auto RenderBinaryOpUnpacked(
     mir::BinaryOp op, const std::string& lhs, const std::string& rhs)
     -> diag::Result<std::string> {
   switch (op) {
     case mir::BinaryOp::kEquality:
-      return "lyra::value::AggregateEqual(" + lhs + ", " + rhs + ")";
+      return "(" + lhs + " == " + rhs + ")";
     case mir::BinaryOp::kInequality:
-      return "lyra::value::AggregateNotEqual(" + lhs + ", " + rhs + ")";
+      return "(" + lhs + " != " + rhs + ")";
     case mir::BinaryOp::kCaseEquality:
-      return "lyra::value::AggregateCaseEqual(" + lhs + ", " + rhs + ")";
+      return "(" + lhs + ").CaseEqual(" + rhs + ")";
     case mir::BinaryOp::kCaseInequality:
-      return "lyra::value::AggregateCaseNotEqual(" + lhs + ", " + rhs + ")";
+      return "!(" + lhs + ").CaseEqual(" + rhs + ")";
     default:
       break;
   }
@@ -887,34 +888,21 @@ auto RenderCallExpr(const RenderContext& ctx, const mir::CallExpr& call)
       call.callee);
 }
 
-auto RenderSameShapeLiteral(
-    const mir::PackedArrayType& shape, std::int64_t value) -> std::string {
-  return std::format(
-      "lyra::value::PackedArray::FromInt({}LL, {})", value,
-      RenderPackedArrayCtorArgs(shape));
-}
-
 // Indexed element access shared by rvalue `RenderElementSelectExpr` and the
-// lvalue `RenderLhsExpr` ElementSelect arm. Packed and unpacked bases land on
-// different C++ access shapes:
-//   - Packed -> `lyra::value::PackedArray::ElementAt(idx)`, range-aware
-//     translation lives inside the runtime type.
-//   - Unpacked -> `std::vector::operator[]` with a zero-based size_t index;
-//     the HIR-to-MIR pass already rewrote any declared-range origin into a
-//     zero-based offset on `sel.index`.
+// lvalue `RenderLhsExpr` ElementSelect arm. `PackedArray` and `UnpackedArray`
+// expose a symmetric `ElementAt(const PackedArray&)` so the emit string is
+// substrate-agnostic; declared-range translation and `ToInt64` canonicalize
+// inside the runtime type.
 auto RenderIndexedElementAccess(
     const mir::Type& base_ty, std::string_view base, std::string_view idx)
     -> std::string {
-  if (std::holds_alternative<mir::UnpackedArrayType>(base_ty.data)) {
-    return std::format(
-        "({})[static_cast<std::size_t>(({}).ToInt64())]", base, idx);
+  if (!std::holds_alternative<mir::UnpackedArrayType>(base_ty.data) &&
+      !std::holds_alternative<mir::PackedArrayType>(base_ty.data)) {
+    throw InternalError(
+        "RenderIndexedElementAccess: base type must be PackedArrayType or "
+        "UnpackedArrayType");
   }
-  if (std::holds_alternative<mir::PackedArrayType>(base_ty.data)) {
-    return std::format("({}).ElementAt({})", base, idx);
-  }
-  throw InternalError(
-      "RenderIndexedElementAccess: base type must be PackedArrayType or "
-      "UnpackedArrayType");
+  return std::format("({}).ElementAt({})", base, idx);
 }
 
 auto RenderElementSelectExpr(
@@ -929,69 +917,22 @@ auto RenderElementSelectExpr(
   return RenderIndexedElementAccess(base_ty, *base_or, *idx_or);
 }
 
-// Constant integer extracted from a MIR expression. Caller is responsible for
-// ensuring the expression is a constant (slang guarantees this for constant
-// bounds and indexed widths per LRM 11.5.1).
-auto ConstantIntFromExpr(const mir::Expr& expr) -> std::int64_t {
-  if (const auto* lit = std::get_if<mir::IntegerLiteral>(&expr.data)) {
-    return IntegralConstantToInt64(lit->value);
-  }
-  throw InternalError(
-      "ConstantIntFromExpr: expression is not an IntegerLiteral");
-}
-
 // Renders an LHS-shaped expression for use as an assignment target. The
 // `mutate_adapter` string (typically `.Mutate(*services_)` or empty) is
 // inserted immediately after the structural-var root so an observable
 // partial write enters a ScopedMutation before the selector chain begins.
 // Output shape:
-//   <root>{<mutate_adapter>}{.ElementAt(idx) | .Slice(lsb, w)}*
+//   <root>{<mutate_adapter>}{.ElementAt(idx) | .Slice(offset, count)}*
 auto RenderLhsExpr(
     const RenderContext& ctx, const mir::Expr& expr,
     std::string_view mutate_adapter) -> diag::Result<std::string>;
 
-auto RenderRangeBoundsAsSlice(
-    const RenderContext& ctx, const mir::RangeBounds& bounds)
+auto RenderRangeSliceSuffix(
+    const RenderContext& ctx, mir::ExprId offset_expr, std::uint32_t count)
     -> diag::Result<std::string> {
-  return std::visit(
-      Overloaded{
-          [&](const mir::RangeConstantBounds& b) -> diag::Result<std::string> {
-            auto lsb = RenderExpr(ctx, ctx.Expr(b.lsb_expr));
-            if (!lsb) return std::unexpected(std::move(lsb.error()));
-            const auto msb_val = ConstantIntFromExpr(ctx.Expr(b.msb_expr));
-            const auto lsb_val = ConstantIntFromExpr(ctx.Expr(b.lsb_expr));
-            const auto count = static_cast<std::uint32_t>(
-                (msb_val >= lsb_val ? msb_val - lsb_val : lsb_val - msb_val) +
-                1);
-            return std::format(".Slice({}, {}U)", *lsb, count);
-          },
-          [&](const mir::RangeIndexedUpBounds& b) -> diag::Result<std::string> {
-            auto base = RenderExpr(ctx, ctx.Expr(b.base_index));
-            if (!base) return std::unexpected(std::move(base.error()));
-            const auto count = static_cast<std::uint32_t>(
-                ConstantIntFromExpr(ctx.Expr(b.width)));
-            return std::format(".Slice({}, {}U)", *base, count);
-          },
-          [&](const mir::RangeIndexedDownBounds& b)
-              -> diag::Result<std::string> {
-            const auto& base_mir = ctx.Expr(b.base_index);
-            auto base = RenderExpr(ctx, base_mir);
-            if (!base) return std::unexpected(std::move(base.error()));
-            const auto& base_ty = ctx.Unit().GetType(base_mir.type);
-            if (!base_ty.IsPackedArray()) {
-              throw InternalError(
-                  "RenderRangeBoundsAsSlice: IndexedDown base_index "
-                  "type is not PackedArrayType");
-            }
-            const auto count = static_cast<std::uint32_t>(
-                ConstantIntFromExpr(ctx.Expr(b.width)));
-            const auto sub_lit = RenderSameShapeLiteral(
-                base_ty.AsPackedArray(), static_cast<std::int64_t>(count) - 1);
-            const auto lsb = std::format("(({}) - {})", *base, sub_lit);
-            return std::format(".Slice({}, {}U)", lsb, count);
-          },
-      },
-      bounds);
+  auto offset = RenderExpr(ctx, ctx.Expr(offset_expr));
+  if (!offset) return std::unexpected(std::move(offset.error()));
+  return std::format(".Slice({}, {}U)", *offset, count);
 }
 
 auto RenderLhsExpr(
@@ -1020,7 +961,7 @@ auto RenderLhsExpr(
             auto base =
                 RenderLhsExpr(ctx, ctx.Expr(s.base_value), mutate_adapter);
             if (!base) return std::unexpected(std::move(base.error()));
-            auto suffix = RenderRangeBoundsAsSlice(ctx, s.bounds);
+            auto suffix = RenderRangeSliceSuffix(ctx, s.offset_expr, s.count);
             if (!suffix) return std::unexpected(std::move(suffix.error()));
             return *base + *suffix;
           },
@@ -1208,69 +1149,26 @@ auto RenderRangeSelectExpr(
   auto base_or = RenderExprNatural(ctx, operand_expr);
   if (!base_or) return std::unexpected(std::move(base_or.error()));
 
-  const auto& result_ty = ctx.Unit().GetType(expr.type);
-  if (!result_ty.IsPackedArray()) {
-    throw InternalError(
-        "RenderRangeSelectExpr: result must be PackedArrayType");
-  }
-  // The slice's element-count is the outer dim of the result type. For a
-  // 1D operand this is bit count; for a multi-dim operand it is the
-  // selected outer-element count. PackedArray's `Slice` scales internally.
-  if (result_ty.AsPackedArray().dims.empty()) {
-    throw InternalError(
-        "RenderRangeSelectExpr: result PackedArrayType has no dims");
-  }
-  const auto& result_pa = result_ty.AsPackedArray();
-  const auto count =
-      static_cast<std::uint32_t>(result_pa.dims.front().ElementCount());
+  auto offset_or = RenderExpr(ctx, ctx.Expr(sel.offset_expr));
+  if (!offset_or) return std::unexpected(std::move(offset_or.error()));
+  auto slice_expr =
+      std::format("({}).Slice({}, {}U)", *base_or, *offset_or, sel.count);
 
   // PackedArray::Slice() always produces an unsigned result (LRM 7.4.1
   // part-select default). When the MIR result type carries signed semantics
   // -- e.g. member access of a `logic signed` packed-struct/union field --
   // re-tag the slice via ConvertFrom so a downstream sign-extending
-  // conversion sees the correct source signedness.
-  const auto wrap_for_sign = [&](std::string slice_expr) -> std::string {
-    if (result_pa.signedness == mir::Signedness::kSigned) {
-      return std::format(
-          "lyra::value::PackedArray::ConvertFrom({}, {})", slice_expr,
-          RenderPackedArrayCtorArgs(result_pa));
-    }
-    return slice_expr;
-  };
-
-  return std::visit(
-      Overloaded{
-          [&](const mir::RangeConstantBounds& b) -> diag::Result<std::string> {
-            auto lsb_or = RenderExpr(ctx, ctx.Expr(b.lsb_expr));
-            if (!lsb_or) return std::unexpected(std::move(lsb_or.error()));
-            return wrap_for_sign(
-                std::format("({}).Slice({}, {}U)", *base_or, *lsb_or, count));
-          },
-          [&](const mir::RangeIndexedUpBounds& b) -> diag::Result<std::string> {
-            auto base = RenderExpr(ctx, ctx.Expr(b.base_index));
-            if (!base) return std::unexpected(std::move(base.error()));
-            return wrap_for_sign(
-                std::format("({}).Slice({}, {}U)", *base_or, *base, count));
-          },
-          [&](const mir::RangeIndexedDownBounds& b)
-              -> diag::Result<std::string> {
-            const auto& base_mir = ctx.Expr(b.base_index);
-            auto base = RenderExpr(ctx, base_mir);
-            if (!base) return std::unexpected(std::move(base.error()));
-            const auto& base_ty = ctx.Unit().GetType(base_mir.type);
-            if (!base_ty.IsPackedArray()) {
-              throw InternalError(
-                  "RenderRangeSelectExpr: IndexedDown base_index type is not "
-                  "PackedArrayType");
-            }
-            const auto sub_lit = RenderSameShapeLiteral(
-                base_ty.AsPackedArray(), static_cast<std::int64_t>(count) - 1);
-            const auto lsb = std::format("(({}) - {})", *base, sub_lit);
-            return wrap_for_sign(
-                std::format("({}).Slice({}, {}U)", *base_or, lsb, count));
-          },
-      },
-      sel.bounds);
+  // conversion sees the correct source signedness. Unpacked slice produces
+  // an UnpackedArray<T> with no top-level signedness attribute, so the
+  // wrap is packed-only.
+  const auto& result_ty = ctx.Unit().GetType(expr.type);
+  if (result_ty.IsPackedArray() &&
+      result_ty.AsPackedArray().signedness == mir::Signedness::kSigned) {
+    return std::format(
+        "lyra::value::PackedArray::ConvertFrom({}, {})", slice_expr,
+        RenderPackedArrayCtorArgs(result_ty.AsPackedArray()));
+  }
+  return slice_expr;
 }
 
 auto RenderClosureExpr(

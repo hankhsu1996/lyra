@@ -2,7 +2,7 @@
 
 ## Date
 
-2026-06-01
+2026-06-02 (revised; original 2026-06-01)
 
 ## Status
 
@@ -123,30 +123,28 @@ Unpacked array support follows these invariants:
    inner `UnpackedArrayType` whose element is `int`. One IR layer per declared dimension. AST -> HIR
    consumes slang's nested `FixedSizeUnpackedArrayType` 1:1.
 
-2. **Backend cpp renders each unpacked type layer as `std::vector`.**
+2. **Backend cpp renders each unpacked type layer as `lyra::value::UnpackedArray<T>`.**
 
-   `mir::UnpackedArrayType { dim, element_type }` -> `std::vector<` + `render(element_type)` + `>`.
-   `std::vector` is chosen over `std::array<T, N>` to keep type rendering size-agnostic and to share
-   the storage spine with the variable-size containers tracked under `datatypes/general` -- they
-   extend the same spine with `.resize()` / `push_back()` semantics.
+   `mir::UnpackedArrayType { dim, element_type }` -> `lyra::value::UnpackedArray<` +
+   `render(element_type)` + `>`. The wrapper owns a private `std::vector<T>` and exposes a surface
+   symmetric with `PackedArray` -- `ElementAt(const PackedArray&)`, `Slice(offset, count)`,
+   `operator==` and `CaseEqual` returning a 1-bit `PackedArray` -- so the substrate-asymmetric
+   operations (equality with X / Z propagation, range selectors, future OOB and observability hooks)
+   live behind a single uniform method surface.
 
-3. **Default initialization emits `std::vector<T>(<count>, <element_default>)`.**
+3. **Default initialization emits an `UnpackedArray<T>{e0, e1, ...}` braced-init expression.**
 
-   The count comes from the type's `dim`; the element default ctor args come from the existing
-   `RenderTypeDefaultCtorArgs` chain applied recursively to the element type. For `int arr[3]`:
-
-   ```cpp
-   std::vector<lyra::value::PackedArray> arr(
-       3, lyra::value::PackedArray(32, true, false));
-   ```
-
-   For `int arr[4][8]` the recursion produces:
+   `default_value.cpp` synthesises an `ArrayLiteralExpr` populated with per-element defaults; the
+   backend renders the result through the literal-init path. For `int arr[3]`:
 
    ```cpp
-   std::vector<std::vector<lyra::value::PackedArray>> arr(
-       4, std::vector<lyra::value::PackedArray>(
-              8, lyra::value::PackedArray(32, true, false)));
+   lyra::value::UnpackedArray<lyra::value::PackedArray> arr{
+       lyra::value::PackedArray::Int(0),
+       lyra::value::PackedArray::Int(0),
+       lyra::value::PackedArray::Int(0)};
    ```
+
+   Multi-dim composes through the nested element type with the same shape at every layer.
 
 4. **`'{...}` is a first-class IR expression -- `hir::ArrayLiteral` / `mir::ArrayLiteral`.**
 
@@ -158,14 +156,13 @@ Unpacked array support follows these invariants:
    The expression's resolved type comes through the `Expr`-common `type` field (set by AST -> HIR
    using slang's resolved type on the pattern). ArrayLiteral joins concat and replication as a
    value-build primitive at MIR, per `mir.md`. Backend cpp renders to explicit-typed aggregate
-   construction:
+   construction (the wrapper accepts `std::initializer_list<T>`):
 
    ```cpp
-   std::vector<lyra::value::PackedArray>{
+   lyra::value::UnpackedArray<lyra::value::PackedArray>{
        lyra::value::PackedArray::Int(10),
        lyra::value::PackedArray::Int(20),
-       lyra::value::PackedArray::Int(30)
-   }
+       lyra::value::PackedArray::Int(30)}
    ```
 
 ## Consequences
@@ -177,20 +174,18 @@ Closed under this decision:
 - `UnpackedArrayType.dims: vector<UnpackedRange>` collapses to a single `dim: UnpackedRange` field
   at both HIR and MIR.
 - Backend cpp gains unpacked type rendering, unpacked default-init emit, and unpacked literal-init
-  emit. Element-read on unpacked bases uses the natural `operator[]` form.
+  emit. Element-read on unpacked bases routes through
+  `UnpackedArray<T>::ElementAt(const PackedArray&)`, symmetric with `PackedArray::ElementAt`.
 - 1D and multi-dim fall out at every layer from the recursive shape -- no separate code path per dim
   count.
 
 Out of scope but unblocked by this design:
 
-- Element write (`arr[i] = v` procedural). The rvalue element-select path is in scope; the lvalue
-  side follows the same shape with non-const `operator[]`.
-- Whole-array assignment (`A = B`), equality (`A == B`), and constant-width slicing (`A[i +: c]`).
-  `std::vector` provides all three directly; the work is at the IR / lowering layer.
-- Variable-size container types (dynamic array, queue, associative array). They share the
+- Variable-size container types (dynamic array, queue, associative array). They share the wrapper's
   `std::vector` storage spine and extend it with size-mutation semantics.
-- Element-level observability for whole-array `Var<>` wrapping. A homogeneous `IsCaseEqual` surface
-  over `std::vector` is sufficient when needed; this PR does not require it.
+- Element-level observability for whole-array `Var<>` wrapping. The wrapper's `operator==` already
+  returns a 1-bit `PackedArray` (X / Z propagating); observability sits on the same surface when
+  `refactor.md` R2 lands.
 
 ## Alternatives considered
 
@@ -208,11 +203,17 @@ complicates rendering and breaks the symmetry with the variable-size container p
 container kind. Stack-vs-heap allocation is not a measured concern in the simulator; a single heap
 alloc per declared unpacked array is acceptable.
 
-**A new `lyra::value::UnpackedArray<T, N>` template wrapper.** Rejected. `std::vector` already
-provides `operator[]`, list-init, count + default ctor, deep copy on assignment, and equality --
-everything Step 1 needs. The wrapper would add a surface area for `IsCaseEqual` and OOB handling
-that no caller exercises in the in-scope tests. Adding it later if element-level observability needs
-a custom entry point is cheaper than carrying it now.
+**`std::vector<T>` substrate without a wrapper class.** Originally chosen for the U1 scope, on the
+grounds that the standard container already provided `operator[]`, list-init, default ctor, deep
+copy, and equality. Reopened once U5 (aggregate equality with X / Z propagation) and U6 (slice
+returning a value or a write-back proxy) demonstrated that the substrate kept leaking asymmetries
+into every new operation: `std::vector::operator==` returns `bool` so an out-of-class
+`AggregateEqual` overload set had to fan in by ADL, and `std::vector` cannot host a `Slice` method
+to mirror `PackedArray::Slice` because the type is `std`-owned. Wrapping the substrate in
+`UnpackedArray<T>` (private `std::vector<T>` storage; public method surface symmetric with
+`PackedArray`) collapses both leaks into one place and gives the backend a single uniform call shape
+for both substrates. The original rejection's "no caller exercises it" rationale was scoped to the
+U1 work-list; subsequent unpacked sub-steps reversed that condition.
 
 **ArrayLiteral as an init-only `Decl` variant rather than a first-class expression.** Rejected.
 slang's AST already shapes `'{...}` as an Expression (`SimpleAssignmentPatternExpression`).
