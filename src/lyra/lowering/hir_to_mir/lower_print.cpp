@@ -21,14 +21,14 @@ namespace lyra::lowering::hir_to_mir {
 
 namespace {
 
-auto ToMirPrintKind(const support::PrintSystemSubroutineInfo& info)
-    -> mir::PrintKind {
+auto ToValuePrintKind(const support::PrintSystemSubroutineInfo& info)
+    -> value::PrintKind {
   if (info.sink_kind == support::PrintSinkKind::kStdout) {
-    return info.append_newline ? mir::PrintKind::kDisplay
-                               : mir::PrintKind::kWrite;
+    return info.append_newline ? value::PrintKind::kDisplay
+                               : value::PrintKind::kWrite;
   }
-  return info.append_newline ? mir::PrintKind::kFDisplay
-                             : mir::PrintKind::kFWrite;
+  return info.append_newline ? value::PrintKind::kFDisplay
+                             : value::PrintKind::kFWrite;
 }
 
 }  // namespace
@@ -58,7 +58,7 @@ auto LowerPrintSystemSubroutineCall(
       .data =
           mir::RuntimeCallExpr{
               .call = mir::RuntimePrintCall(
-                  ToMirPrintKind(print), std::nullopt, std::move(*items_or))},
+                  ToValuePrintKind(print), std::nullopt, std::move(*items_or))},
       .type = unit_state.Builtins().void_type};
 }
 

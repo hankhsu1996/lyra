@@ -7,7 +7,10 @@ since the test harness can only probe a variable whose type has an implemented s
 
 ## Sub-Steps
 
-- [ ] DI1 -- `%c` (char): low 7 bits of an integral arg as ASCII.
+- [x] DI1 -- `%c` (char): low byte of an integral argument as ASCII (LRM 21.2.1.1 example). The low
+      byte's X/Z poison collapses to a single character following simulator convention -- any X bit
+      yields `x`, otherwise any Z bit yields `z`. Width / precision modifiers are rejected by the
+      slang frontend, so the lowered form is always a single character.
 - [ ] DI2 -- `%t` (time): formatted against the active timescale. Requires a time variant in the
       runtime value surface and time-unit awareness on the format spec.
 - [x] DI3 -- `%f` / `%e` / `%g` (real). Default precision 6 per LRM Table 21-2. Coverage tracked

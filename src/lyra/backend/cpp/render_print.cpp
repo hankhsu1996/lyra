@@ -31,49 +31,51 @@ auto BoolLiteral(bool b) -> std::string_view {
   return b ? "true" : "false";
 }
 
-auto RenderRuntimePrintKind(mir::PrintKind k) -> std::string_view {
+auto RenderPrintKindLiteral(value::PrintKind k) -> std::string_view {
   switch (k) {
-    case mir::PrintKind::kDisplay:
+    case value::PrintKind::kDisplay:
       return "lyra::value::PrintKind::kDisplay";
-    case mir::PrintKind::kWrite:
+    case value::PrintKind::kWrite:
       return "lyra::value::PrintKind::kWrite";
-    case mir::PrintKind::kFDisplay:
+    case value::PrintKind::kFDisplay:
       return "lyra::value::PrintKind::kFDisplay";
-    case mir::PrintKind::kFWrite:
+    case value::PrintKind::kFWrite:
       return "lyra::value::PrintKind::kFWrite";
   }
-  throw InternalError("RenderRuntimePrintKind: unknown PrintKind");
+  throw InternalError("RenderPrintKindLiteral: unknown PrintKind");
 }
 
-auto RenderRuntimeFormatKind(mir::FormatKind k) -> std::string_view {
+auto RenderFormatKindLiteral(value::FormatKind k) -> std::string_view {
   switch (k) {
-    case mir::FormatKind::kDecimal:
+    case value::FormatKind::kDecimal:
       return "lyra::value::FormatKind::kDecimal";
-    case mir::FormatKind::kHex:
+    case value::FormatKind::kHex:
       return "lyra::value::FormatKind::kHex";
-    case mir::FormatKind::kBinary:
+    case value::FormatKind::kBinary:
       return "lyra::value::FormatKind::kBinary";
-    case mir::FormatKind::kOctal:
+    case value::FormatKind::kOctal:
       return "lyra::value::FormatKind::kOctal";
-    case mir::FormatKind::kString:
+    case value::FormatKind::kString:
       return "lyra::value::FormatKind::kString";
-    case mir::FormatKind::kRealDecimal:
+    case value::FormatKind::kChar:
+      return "lyra::value::FormatKind::kChar";
+    case value::FormatKind::kRealDecimal:
       return "lyra::value::FormatKind::kRealDecimal";
-    case mir::FormatKind::kRealExponential:
+    case value::FormatKind::kRealExponential:
       return "lyra::value::FormatKind::kRealExponential";
-    case mir::FormatKind::kRealGeneral:
+    case value::FormatKind::kRealGeneral:
       return "lyra::value::FormatKind::kRealGeneral";
-    case mir::FormatKind::kAssignmentPattern:
+    case value::FormatKind::kAssignmentPattern:
       return "lyra::value::FormatKind::kAssignmentPattern";
   }
-  throw InternalError("RenderRuntimeFormatKind: unknown FormatKind");
+  throw InternalError("RenderFormatKindLiteral: unknown FormatKind");
 }
 
 auto RenderFormatSpecInit(const mir::FormatSpec& spec) -> std::string {
   return std::format(
       "lyra::value::FormatSpec{{.kind = {}, .width = {}, .precision = {}, "
       ".zero_pad = {}, .left_align = {}, .timeunit_power = {}}}",
-      RenderRuntimeFormatKind(spec.kind), spec.modifiers.width,
+      RenderFormatKindLiteral(spec.kind), spec.modifiers.width,
       spec.modifiers.precision, BoolLiteral(spec.modifiers.zero_pad),
       BoolLiteral(spec.modifiers.left_align), spec.timeunit_power);
 }
@@ -83,17 +85,12 @@ auto RenderRuntimeValueViewInit(
     -> diag::Result<std::string> {
   const auto& type = ctx.Unit().GetType(v.type);
 
-  // `%s` operands always reach the runtime as a lyra::value::String --
-  // string-typed variables emit the variable directly, and bit-vector
-  // literals reach mir::StringLiteral which renders as a String{...} ctor.
-  // (Conversion from a bit-vector expression of integral type is gated
-  // behind the bit-vector-to-string conversion path.)
-  if (v.spec.kind == mir::FormatKind::kString) {
-    auto operand_or = RenderExpr(ctx, ctx.Expr(v.value));
-    if (!operand_or) return std::unexpected(std::move(operand_or.error()));
-    return std::format(
-        "lyra::value::RuntimeValueView::String(({}).View())", *operand_or);
-  }
+  // The view init is purely type-driven: a RuntimePrintValue's operand type
+  // determines which RuntimeValueView constructor to call. The format spec
+  // is forwarded unchanged to the runtime, which interprets it within the
+  // operand-type-specific formatter. Any spec/operand mismatch (e.g. `%s`
+  // on a bit vector) must be resolved upstream of the backend -- either at
+  // HIR -> MIR via an explicit ConversionExpr, or rejected as unsupported.
 
   if (type.IsIntegralPacked()) {
     auto operand_or = RenderExpr(ctx, ctx.Expr(v.value));
@@ -159,7 +156,7 @@ auto RenderRuntimePrintCall(
         "file-output runtime print is not yet implemented in cpp emit",
         diag::UnsupportedCategory::kFeature);
   }
-  const std::string_view kind_literal = RenderRuntimePrintKind(call.kind);
+  const std::string_view kind_literal = RenderPrintKindLiteral(call.kind);
 
   // Empty items: pass an explicit empty span. Avoids relying on the
   // `std::array<T, 0>` to `std::span<const T>` conversion path, which is

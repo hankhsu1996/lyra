@@ -169,7 +169,7 @@ auto BuildDiagnosticThenScope(
         mir::RuntimePrintValue(
             count_read_id, int32_type,
             mir::FormatSpec(
-                mir::FormatKind::kDecimal, mir::FormatModifiers{})));
+                value::FormatKind::kDecimal, mir::FormatModifiers{})));
     items.emplace_back(mir::RuntimePrintLiteral{.text = verdict.suffix_text});
   }
 

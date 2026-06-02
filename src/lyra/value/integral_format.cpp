@@ -299,6 +299,31 @@ auto FormatDecimalNumeric(const IntegralValueView& v) -> std::string {
   return out;
 }
 
+// LRM 21.2.1.1 example: %c emits the low byte as an ASCII character (e.g.
+// rval=101 -> 'e'). X/Z handling follows the Verilog simulator convention:
+// any X bit in the low byte collapses to "x"; otherwise any Z bit collapses
+// to "z"; otherwise the byte's value is the ASCII code.
+auto FormatCharBody(const IntegralValueView& v) -> std::string {
+  std::uint8_t value_byte = 0;
+  std::uint8_t unknown_byte = 0;
+  const std::uint64_t bits = std::min<std::uint64_t>(8U, v.BitWidth());
+  for (std::uint64_t i = 0; i < bits; ++i) {
+    if (ValueBit(v, i)) {
+      value_byte |= static_cast<std::uint8_t>(1U << i);
+    }
+    if (UnknownBit(v, i)) {
+      unknown_byte |= static_cast<std::uint8_t>(1U << i);
+    }
+  }
+  if (unknown_byte != 0U) {
+    const std::uint8_t x_bits = value_byte & unknown_byte;
+    return x_bits != 0U ? "x" : "z";
+  }
+  std::string out;
+  out.push_back(static_cast<char>(value_byte));
+  return out;
+}
+
 auto FormatDecimalBody(const IntegralValueView& v) -> std::string {
   switch (SummarizeUnknowns(v)) {
     case UnknownSummary::kNone:
@@ -327,6 +352,7 @@ auto AutoWidthFor(FormatKind kind, std::uint64_t bit_width) -> std::int32_t {
       return static_cast<std::int32_t>((bit_width + 2U) / 3U);
     case FormatKind::kDecimal:
     case FormatKind::kString:
+    case FormatKind::kChar:
     case FormatKind::kRealDecimal:
     case FormatKind::kRealExponential:
     case FormatKind::kRealGeneral:
@@ -376,6 +402,9 @@ auto FormatIntegral(const FormatSpec& spec, const IntegralValueView& v)
       break;
     case FormatKind::kOctal:
       body = FormatOctalBody(v);
+      break;
+    case FormatKind::kChar:
+      body = FormatCharBody(v);
       break;
     case FormatKind::kString:
       throw InternalError(

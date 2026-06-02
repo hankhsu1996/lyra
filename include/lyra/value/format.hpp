@@ -25,6 +25,7 @@ enum class FormatKind : std::uint8_t {
   kBinary,
   kOctal,
   kString,
+  kChar,
   kRealDecimal,
   kRealExponential,
   kRealGeneral,
