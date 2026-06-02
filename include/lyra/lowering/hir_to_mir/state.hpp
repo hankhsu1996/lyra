@@ -388,10 +388,18 @@ struct ProceduralVarBinding {
   mir::ProceduralVarId var;
 };
 
+class ProceduralScopeLoweringState;
+
 class ProcessLoweringState {
  public:
-  explicit ProcessLoweringState(TimeResolution time_resolution)
-      : time_resolution_(time_resolution) {
+  // A subroutine passes its root procedural scope as the static-frame scope so
+  // static-lifetime locals are collected there (LRM 13.3.1); a process / a
+  // continuous assign leaves it null and keeps every local in the activation.
+  explicit ProcessLoweringState(
+      TimeResolution time_resolution,
+      ProceduralScopeLoweringState* static_frame_scope = nullptr)
+      : time_resolution_(time_resolution),
+        static_frame_scope_(static_frame_scope) {
   }
 
   [[nodiscard]] auto Resolution() const -> TimeResolution {
@@ -410,6 +418,27 @@ class ProcessLoweringState {
   }
   [[nodiscard]] auto CurrentProceduralDepth() const -> std::uint32_t {
     return procedural_depth_;
+  }
+
+  // Static-lifetime locals land in the frame scope (the subroutine's root
+  // procedural scope) regardless of the block they are declared in, so a body
+  // reference reaches the storage by hops (LRM 13.3.1). Null for processes,
+  // where every local stays in the activation.
+  [[nodiscard]] auto CollectsStaticLocals() const -> bool {
+    return static_frame_scope_ != nullptr;
+  }
+  [[nodiscard]] auto StaticFrameScope() const -> ProceduralScopeLoweringState& {
+    if (static_frame_scope_ == nullptr) {
+      throw InternalError(
+          "ProcessLoweringState::StaticFrameScope: no frame scope set");
+    }
+    return *static_frame_scope_;
+  }
+  void AddStaticLocal(mir::StaticLocal local) {
+    static_locals_.push_back(local);
+  }
+  auto TakeStaticLocals() -> std::vector<mir::StaticLocal> {
+    return std::move(static_locals_);
   }
 
   void MapProceduralVar(
@@ -453,6 +482,8 @@ class ProcessLoweringState {
   TimeResolution time_resolution_;
   std::uint32_t procedural_depth_ = 0;
   std::vector<ProceduralVarBinding> bindings_;
+  ProceduralScopeLoweringState* static_frame_scope_ = nullptr;
+  std::vector<mir::StaticLocal> static_locals_;
 };
 
 class ProceduralDepthGuard {

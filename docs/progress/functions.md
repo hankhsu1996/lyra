@@ -43,10 +43,16 @@ everything and the inline "rides on" notes record the real dependencies.
 
 ### Lifetime and recursion
 
-- [ ] F3 -- `automatic` lifetime and recursion (LRM 13.3.1, 13.3.2, 13.4.2). Automatic subroutines
-      are reentrant with per-call storage; static (the module / package default) shares one copy
-      across concurrent activations and retains values between calls. Recursion requires automatic
-      storage. Rides on F1.
+- [x] F3 -- `automatic` lifetime and recursion (LRM 13.3.1, 13.3.2, 13.4.2). A subroutine local
+      follows its resolved lifetime: an automatic local is reinitialized on entry and lives only for
+      the activation, while a static local (the module / package default) has one per-instance copy
+      that retains its value between calls and is default-initialized once. Per-variable `automatic`
+      / `static` overrides are honored, so both lifetimes coexist in one body. Calls resolve
+      regardless of source order, so direct recursion, mutual recursion, and forward references to a
+      later-defined subroutine all work for automatic-lifetime subroutines. Not yet: separate static
+      storage across multiple instances of a module (rides on module hierarchy); static-lifetime
+      formal arguments and the implicit result variable, which still behave as automatic; and two
+      static locals sharing a name in sibling blocks of one subroutine.
 
 ### Arguments
 
@@ -90,8 +96,8 @@ everything and the inline "rides on" notes record the real dependencies.
 - [x] T1 -- Tasks without timing controls (LRM 13.3). Enabled as a statement; results returned
       through `output` / `inout` arguments; `return` exits before `endtask`; an empty body is a
       no-op. A task may enable other tasks and functions (LRM 13.2); a function enabling a task is
-      rejected. Behaves like a void function. The static-default lifetime where locals retain values
-      across enables (LRM 13.3.1) is not yet distinguished from automatic and is tracked by F3.
+      rejected. Behaves like a void function. Task locals follow the static / automatic lifetime
+      distinction established by F3.
 - [ ] T2 -- Tasks containing time-controlling statements (LRM 13.3). `#`, `@(...)`, and `wait`
       inside a task suspend the calling process and resume it later, so a task enable can span
       multiple time steps. Rides on the timing-control machinery tracked in `processes.md`.

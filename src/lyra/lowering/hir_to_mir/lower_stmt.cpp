@@ -99,6 +99,40 @@ auto LowerVarDeclStmt(
     const hir::VarDeclStmt& v) -> diag::Result<mir::Stmt> {
   const auto& hir_local = hir_proc.procedural_vars.at(v.var.value);
   const mir::TypeId type = unit_state.TranslateType(hir_local.type);
+
+  // LRM 13.3.1: a static body local does not live in the activation. Its
+  // storage and init go into the subroutine's frame scope (the root procedural
+  // scope), so a body reference reaches it by hops and the init is evaluated
+  // once when the instance is built. The body declaration itself emits nothing.
+  const bool is_static = hir_local.lifetime == hir::VariableLifetime::kStatic;
+  if (is_static && proc_state.CollectsStaticLocals()) {
+    auto& frame_scope = proc_state.StaticFrameScope();
+    const mir::ProceduralVarId static_id = frame_scope.AddProceduralVar(
+        mir::ProceduralVarDecl{
+            .name = hir_local.name,
+            .type = type,
+            .lifetime = mir::VariableLifetime::kStatic});
+    proc_state.MapProceduralVar(
+        v.var, ProceduralVarBinding{
+                   .declaration_procedural_depth = 0, .var = static_id});
+    mir::ExprId static_init{};
+    if (v.init.has_value()) {
+      auto init_or = LowerExpr(
+          unit_state, scope_state, proc_state, frame_scope, hir_proc,
+          hir_proc.exprs.at(v.init->value));
+      if (!init_or) return std::unexpected(std::move(init_or.error()));
+      static_init = frame_scope.AddExpr(*std::move(init_or));
+    } else {
+      static_init = SynthesizeDefaultValueExpr(unit_state, frame_scope, type);
+    }
+    proc_state.AddStaticLocal(
+        mir::StaticLocal{.var = static_id, .init = static_init});
+    return mir::Stmt{
+        .label = stmt.label,
+        .data = mir::EmptyStmt{},
+        .child_procedural_scopes = {}};
+  }
+
   const mir::ProceduralVarId local_id = proc_scope_state.AddProceduralVar(
       mir::ProceduralVarDecl{.name = hir_local.name, .type = type});
   proc_state.MapProceduralVar(
