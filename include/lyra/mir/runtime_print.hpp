@@ -9,27 +9,9 @@
 
 #include "lyra/mir/expr_id.hpp"
 #include "lyra/mir/type_id.hpp"
+#include "lyra/value/format.hpp"
 
 namespace lyra::mir {
-
-enum class PrintKind : std::uint8_t {
-  kDisplay,
-  kWrite,
-  kFDisplay,
-  kFWrite,
-};
-
-enum class FormatKind : std::uint8_t {
-  kDecimal,
-  kHex,
-  kBinary,
-  kOctal,
-  kString,
-  kRealDecimal,
-  kRealExponential,
-  kRealGeneral,
-  kAssignmentPattern,
-};
 
 struct FormatModifiers {
   std::int32_t width = -1;
@@ -39,11 +21,11 @@ struct FormatModifiers {
 };
 
 struct FormatSpec {
-  FormatKind kind;
+  value::FormatKind kind;
   FormatModifiers modifiers;
   std::int32_t timeunit_power;
 
-  FormatSpec(FormatKind k, FormatModifiers m, std::int32_t tp = 0)
+  FormatSpec(value::FormatKind k, FormatModifiers m, std::int32_t tp = 0)
       : kind(k), modifiers(m), timeunit_power(tp) {
   }
 };
@@ -65,12 +47,13 @@ struct RuntimePrintValue {
 using RuntimePrintItem = std::variant<RuntimePrintLiteral, RuntimePrintValue>;
 
 struct RuntimePrintCall {
-  PrintKind kind;
+  value::PrintKind kind;
   std::optional<ExprId> descriptor;
   std::vector<RuntimePrintItem> items;
 
   RuntimePrintCall(
-      PrintKind k, std::optional<ExprId> d, std::vector<RuntimePrintItem> i)
+      value::PrintKind k, std::optional<ExprId> d,
+      std::vector<RuntimePrintItem> i)
       : kind(k), descriptor(d), items(std::move(i)) {
   }
 };
