@@ -1,0 +1,15 @@
+id: cpp.rewind_basic
+tags: [cpp_run]
+input:
+  command: [run, cpp]
+  project: false
+  top: Top
+  files: [main.sv]
+expect:
+  exit: 0
+  variables:
+    first_byte: 114
+    rewind_result: 0
+    first_byte_again: 114
+  files:
+    scratch.txt: "rocket"

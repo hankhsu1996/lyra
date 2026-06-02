@@ -85,11 +85,30 @@ struct DiagnosticSystemSubroutineInfo {
 enum class FileIOKind : std::uint8_t {
   kOpen,
   kClose,
+  kGetc,
+  kUngetc,
+  kGets,
+  kRead,
+  kSeek,
+  kRewind,
+  kTell,
+  kEof,
+  kError,
+  kFlush,
 };
 
 struct FileIOSystemSubroutineInfo {
   FileIOKind kind;
 };
+
+// LRM 21.3.4: $fgets writes its first arg, $fread writes its first arg, and
+// $ferror writes its second arg. The kind alone implies which slot is the
+// output destination; consumers branch on `kind` rather than carry a
+// per-position direction array.
+[[nodiscard]] constexpr auto FileIOHasOutputArg(FileIOKind kind) -> bool {
+  return kind == FileIOKind::kGets || kind == FileIOKind::kRead ||
+         kind == FileIOKind::kError;
+}
 
 using SystemSubroutineSemantic = std::variant<
     PrintSystemSubroutineInfo, TerminationSystemSubroutineInfo,
@@ -393,6 +412,96 @@ inline constexpr std::array kSystemSubroutines = {
         .result_conv = ReturnConvention::kVoid,
         .arg_policy = ArgCountPolicy{.min_args = 1, .max_args = 1},
         .semantic = FileIOSystemSubroutineInfo{.kind = FileIOKind::kClose},
+    },
+    SystemSubroutineDesc{
+        .id = SystemSubroutineId{22},
+        .name = "$fgetc",
+        .origin = SystemSubroutineOrigin::kLanguageBuiltin,
+        .kind = SystemSubroutineKind::kFunction,
+        .result_conv = ReturnConvention::kInt32,
+        .arg_policy = ArgCountPolicy{.min_args = 1, .max_args = 1},
+        .semantic = FileIOSystemSubroutineInfo{.kind = FileIOKind::kGetc},
+    },
+    SystemSubroutineDesc{
+        .id = SystemSubroutineId{23},
+        .name = "$ungetc",
+        .origin = SystemSubroutineOrigin::kLanguageBuiltin,
+        .kind = SystemSubroutineKind::kFunction,
+        .result_conv = ReturnConvention::kInt32,
+        .arg_policy = ArgCountPolicy{.min_args = 2, .max_args = 2},
+        .semantic = FileIOSystemSubroutineInfo{.kind = FileIOKind::kUngetc},
+    },
+    SystemSubroutineDesc{
+        .id = SystemSubroutineId{24},
+        .name = "$fgets",
+        .origin = SystemSubroutineOrigin::kLanguageBuiltin,
+        .kind = SystemSubroutineKind::kFunction,
+        .result_conv = ReturnConvention::kInt32,
+        .arg_policy = ArgCountPolicy{.min_args = 2, .max_args = 2},
+        .semantic = FileIOSystemSubroutineInfo{.kind = FileIOKind::kGets},
+    },
+    SystemSubroutineDesc{
+        .id = SystemSubroutineId{25},
+        .name = "$fread",
+        .origin = SystemSubroutineOrigin::kLanguageBuiltin,
+        .kind = SystemSubroutineKind::kFunction,
+        .result_conv = ReturnConvention::kInt32,
+        .arg_policy = ArgCountPolicy{.min_args = 2, .max_args = 2},
+        .semantic = FileIOSystemSubroutineInfo{.kind = FileIOKind::kRead},
+    },
+    SystemSubroutineDesc{
+        .id = SystemSubroutineId{26},
+        .name = "$fseek",
+        .origin = SystemSubroutineOrigin::kLanguageBuiltin,
+        .kind = SystemSubroutineKind::kFunction,
+        .result_conv = ReturnConvention::kInt32,
+        .arg_policy = ArgCountPolicy{.min_args = 3, .max_args = 3},
+        .semantic = FileIOSystemSubroutineInfo{.kind = FileIOKind::kSeek},
+    },
+    SystemSubroutineDesc{
+        .id = SystemSubroutineId{27},
+        .name = "$rewind",
+        .origin = SystemSubroutineOrigin::kLanguageBuiltin,
+        .kind = SystemSubroutineKind::kFunction,
+        .result_conv = ReturnConvention::kInt32,
+        .arg_policy = ArgCountPolicy{.min_args = 1, .max_args = 1},
+        .semantic = FileIOSystemSubroutineInfo{.kind = FileIOKind::kRewind},
+    },
+    SystemSubroutineDesc{
+        .id = SystemSubroutineId{28},
+        .name = "$ftell",
+        .origin = SystemSubroutineOrigin::kLanguageBuiltin,
+        .kind = SystemSubroutineKind::kFunction,
+        .result_conv = ReturnConvention::kInt32,
+        .arg_policy = ArgCountPolicy{.min_args = 1, .max_args = 1},
+        .semantic = FileIOSystemSubroutineInfo{.kind = FileIOKind::kTell},
+    },
+    SystemSubroutineDesc{
+        .id = SystemSubroutineId{29},
+        .name = "$feof",
+        .origin = SystemSubroutineOrigin::kLanguageBuiltin,
+        .kind = SystemSubroutineKind::kFunction,
+        .result_conv = ReturnConvention::kInt32,
+        .arg_policy = ArgCountPolicy{.min_args = 1, .max_args = 1},
+        .semantic = FileIOSystemSubroutineInfo{.kind = FileIOKind::kEof},
+    },
+    SystemSubroutineDesc{
+        .id = SystemSubroutineId{30},
+        .name = "$ferror",
+        .origin = SystemSubroutineOrigin::kLanguageBuiltin,
+        .kind = SystemSubroutineKind::kFunction,
+        .result_conv = ReturnConvention::kInt32,
+        .arg_policy = ArgCountPolicy{.min_args = 2, .max_args = 2},
+        .semantic = FileIOSystemSubroutineInfo{.kind = FileIOKind::kError},
+    },
+    SystemSubroutineDesc{
+        .id = SystemSubroutineId{31},
+        .name = "$fflush",
+        .origin = SystemSubroutineOrigin::kLanguageBuiltin,
+        .kind = SystemSubroutineKind::kFunction,
+        .result_conv = ReturnConvention::kVoid,
+        .arg_policy = ArgCountPolicy{.min_args = 0, .max_args = 1},
+        .semantic = FileIOSystemSubroutineInfo{.kind = FileIOKind::kFlush},
     },
 };
 

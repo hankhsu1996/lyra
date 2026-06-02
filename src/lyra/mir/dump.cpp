@@ -731,6 +731,68 @@ class MirDumper {
                             "RuntimeFileCloseCall descriptor=Expr[{}]",
                             fc.descriptor.value));
                   },
+                  [&](const RuntimeFileGetcCall& fg) {
+                    Line(
+                        std::format(
+                            "RuntimeFileGetcCall fd=Expr[{}]", fg.fd.value));
+                  },
+                  [&](const RuntimeFileUngetcCall& fu) {
+                    Line(
+                        std::format(
+                            "RuntimeFileUngetcCall c=Expr[{}] fd=Expr[{}]",
+                            fu.c.value, fu.fd.value));
+                  },
+                  [&](const RuntimeFileGetsCall& fg) {
+                    Line(
+                        std::format(
+                            "RuntimeFileGetsCall str_dest=Expr[{}] "
+                            "fd=Expr[{}]",
+                            fg.str_dest.value, fg.fd.value));
+                  },
+                  [&](const RuntimeFileReadCall& fr) {
+                    Line(
+                        std::format(
+                            "RuntimeFileReadCall int_dest=Expr[{}] "
+                            "fd=Expr[{}]",
+                            fr.int_dest.value, fr.fd.value));
+                  },
+                  [&](const RuntimeFileSeekCall& fs) {
+                    Line(
+                        std::format(
+                            "RuntimeFileSeekCall fd=Expr[{}] "
+                            "offset=Expr[{}] operation=Expr[{}]",
+                            fs.fd.value, fs.offset.value, fs.operation.value));
+                  },
+                  [&](const RuntimeFileRewindCall& fr) {
+                    Line(
+                        std::format(
+                            "RuntimeFileRewindCall fd=Expr[{}]", fr.fd.value));
+                  },
+                  [&](const RuntimeFileTellCall& ft) {
+                    Line(
+                        std::format(
+                            "RuntimeFileTellCall fd=Expr[{}]", ft.fd.value));
+                  },
+                  [&](const RuntimeFileEofCall& fe) {
+                    Line(
+                        std::format(
+                            "RuntimeFileEofCall fd=Expr[{}]", fe.fd.value));
+                  },
+                  [&](const RuntimeFileErrorCall& fe) {
+                    Line(
+                        std::format(
+                            "RuntimeFileErrorCall fd=Expr[{}] "
+                            "str_dest=Expr[{}]",
+                            fe.fd.value, fe.str_dest.value));
+                  },
+                  [&](const RuntimeFileFlushCall& ff) {
+                    Line(
+                        std::format(
+                            "RuntimeFileFlushCall descriptor={}",
+                            ff.descriptor.has_value()
+                                ? std::format("Expr[{}]", ff.descriptor->value)
+                                : std::string("all")));
+                  },
               },
               rc->call);
           Dedent();

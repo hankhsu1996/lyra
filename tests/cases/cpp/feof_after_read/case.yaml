@@ -1,0 +1,17 @@
+id: cpp.feof_after_read
+tags: [cpp_run]
+input:
+  command: [run, cpp]
+  project: false
+  top: Top
+  files: [main.sv]
+expect:
+  exit: 0
+  variables:
+    eof_before_read: 0
+    byte_one: 120
+    eof_after_one: 0
+    byte_two: -1
+    eof_after_eof_get: 1
+  files:
+    scratch.txt: "x"

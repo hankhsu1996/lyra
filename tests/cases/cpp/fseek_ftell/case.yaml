@@ -1,0 +1,19 @@
+id: cpp.fseek_ftell
+tags: [cpp_run]
+input:
+  command: [run, cpp]
+  project: false
+  top: Top
+  files: [main.sv]
+expect:
+  exit: 0
+  variables:
+    pos_start: 0
+    pos_after_read: 3
+    seek_result: 0
+    pos_after_seek: 7
+    byte_after_seek: 55
+    end_seek_result: 0
+    pos_at_end: 10
+  files:
+    scratch.txt: "0123456789"

@@ -1,13 +1,18 @@
 #include "lyra/runtime/file_io.hpp"
 
+#include <array>
+#include <cerrno>
 #include <cstdint>
+#include <cstring>
 #include <fstream>
+#include <ios>
 #include <iostream>
 #include <optional>
 #include <ostream>
 #include <span>
 #include <string>
 #include <string_view>
+#include <utility>
 #include <variant>
 
 #include "lyra/base/overloaded.hpp"
@@ -108,6 +113,245 @@ void LyraFPrint(
     std::fstream* sink = services.Files().Resolve(channel);
     if (sink == nullptr) continue;
     WriteToFile(*sink, body, append_newline);
+  }
+}
+
+namespace {
+
+// Narrow a 32-bit signed int wrapped in a PackedArray. Identity for
+// well-formed int-shaped inputs; callers depend on this for descriptor /
+// offset / operation operands which all enter as `int`.
+auto AsInt32(const value::PackedArray& pa) -> std::int32_t {
+  return static_cast<std::int32_t>(pa.ToInt64());
+}
+
+auto MakeInt(std::int32_t v) -> value::PackedArray {
+  return value::PackedArray::Int(v);
+}
+
+// LRM 21.3.7 / 21.3.8: record the most recent errno + textual description
+// for the given fd. Stdio sentinels and non-FD descriptors silently no-op.
+void StampError(
+    RuntimeServices& services, std::int32_t fd, int err,
+    std::string_view fallback) {
+  std::string msg;
+  if (err != 0) {
+    msg = std::strerror(err);
+  } else {
+    msg = std::string{fallback};
+  }
+  services.Files().SetError(fd, err, std::move(msg));
+}
+
+}  // namespace
+
+auto LyraFGetc(RuntimeServices& services, const value::PackedArray& fd_pa)
+    -> value::PackedArray {
+  const std::int32_t fd = AsInt32(fd_pa);
+  std::fstream* stream = services.Files().Resolve(fd);
+  if (stream == nullptr) {
+    StampError(services, fd, EBADF, "$fgetc: not an open file descriptor");
+    return MakeInt(-1);
+  }
+  const int c = stream->get();
+  if (c == std::char_traits<char>::eof()) {
+    // LRM 21.3.4.1: EOF is signalled as -1 (wider than 8 bits so callers can
+    // distinguish from 0xFF). fstream's eof bit is now set; $feof picks it up.
+    StampError(services, fd, 0, "$fgetc: EOF");
+    return MakeInt(-1);
+  }
+  return MakeInt(c & 0xFF);
+}
+
+auto LyraFUngetc(
+    RuntimeServices& services, const value::PackedArray& c_pa,
+    const value::PackedArray& fd_pa) -> value::PackedArray {
+  const std::int32_t fd = AsInt32(fd_pa);
+  std::fstream* stream = services.Files().Resolve(fd);
+  if (stream == nullptr) {
+    StampError(services, fd, EBADF, "$ungetc: not an open file descriptor");
+    return MakeInt(-1);
+  }
+  const auto byte = static_cast<char>(AsInt32(c_pa) & 0xFF);
+  stream->clear();
+  stream->putback(byte);
+  if (!stream->good()) {
+    StampError(services, fd, errno, "$ungetc: putback failed");
+    return MakeInt(-1);
+  }
+  return MakeInt(0);
+}
+
+auto LyraFGets(
+    RuntimeServices& services, value::String& dest,
+    const value::PackedArray& fd_pa) -> value::PackedArray {
+  const std::int32_t fd = AsInt32(fd_pa);
+  std::fstream* stream = services.Files().Resolve(fd);
+  if (stream == nullptr) {
+    StampError(services, fd, EBADF, "$fgets: not an open file descriptor");
+    dest = value::String{};
+    return MakeInt(0);
+  }
+  // LRM 21.3.4.2: read up to and including newline OR until EOF. Trailing
+  // newline kept. fstream's getline strips the delimiter, so re-attach when
+  // we stopped on '\n' (vs hitting EOF).
+  std::string line;
+  std::getline(*stream, line, '\n');
+  if (line.empty() && stream->eof()) {
+    StampError(services, fd, 0, "$fgets: EOF");
+    dest = value::String{};
+    return MakeInt(0);
+  }
+  if (!stream->eof()) line.push_back('\n');
+  dest = value::String{line};
+  return MakeInt(static_cast<std::int32_t>(line.size()));
+}
+
+auto LyraFRead(
+    RuntimeServices& services, value::PackedArray& dest,
+    const value::PackedArray& fd_pa) -> value::PackedArray {
+  const std::int32_t fd = AsInt32(fd_pa);
+  std::fstream* stream = services.Files().Resolve(fd);
+  if (stream == nullptr) {
+    StampError(services, fd, EBADF, "$fread: not an open file descriptor");
+    return MakeInt(0);
+  }
+  const std::uint64_t width = dest.BitWidth();
+  if (width == 0U || width > 64U) {
+    StampError(services, fd, EINVAL, "$fread: bit width > 64 not supported");
+    return MakeInt(0);
+  }
+  const auto byte_count = static_cast<std::size_t>((width + 7U) / 8U);
+  std::array<char, 8> buf{};
+  stream->read(buf.data(), static_cast<std::streamsize>(byte_count));
+  const auto got = static_cast<std::size_t>(stream->gcount());
+  if (got == 0U) {
+    StampError(services, fd, 0, "$fread: EOF");
+    return MakeInt(0);
+  }
+  // LRM 21.3.4.4: big-endian (first byte read fills the MSBs). Partial reads
+  // place the bytes we did get into the destination's MSBs and leave the
+  // remainder zero; this matches the LRM "as much as available" reading.
+  std::int64_t value = 0;
+  for (std::size_t i = 0; i < byte_count; ++i) {
+    const auto byte = i < got ? static_cast<unsigned char>(buf.at(i)) : 0U;
+    value = static_cast<std::int64_t>(
+        (static_cast<std::uint64_t>(value) << 8U) |
+        static_cast<std::uint64_t>(byte));
+  }
+  dest = value::PackedArray::FromInt(
+      value, width, dest.IsSigned(), dest.IsFourState());
+  return MakeInt(static_cast<std::int32_t>(got));
+}
+
+auto LyraFSeek(
+    RuntimeServices& services, const value::PackedArray& fd_pa,
+    const value::PackedArray& offset, const value::PackedArray& operation)
+    -> value::PackedArray {
+  const std::int32_t fd = AsInt32(fd_pa);
+  std::fstream* stream = services.Files().Resolve(fd);
+  if (stream == nullptr) {
+    StampError(services, fd, EBADF, "$fseek: not an open file descriptor");
+    return MakeInt(-1);
+  }
+  const auto offset_v = static_cast<std::streamoff>(AsInt32(offset));
+  std::ios_base::seekdir dir{};
+  switch (AsInt32(operation)) {
+    case 0:
+      dir = std::ios_base::beg;
+      break;
+    case 1:
+      dir = std::ios_base::cur;
+      break;
+    case 2:
+      dir = std::ios_base::end;
+      break;
+    default:
+      StampError(services, fd, EINVAL, "$fseek: operation must be 0, 1, or 2");
+      return MakeInt(-1);
+  }
+  stream->clear();
+  stream->seekg(offset_v, dir);
+  stream->seekp(offset_v, dir);
+  if (stream->fail()) {
+    StampError(services, fd, errno, "$fseek: seek failed");
+    return MakeInt(-1);
+  }
+  return MakeInt(0);
+}
+
+auto LyraFRewind(RuntimeServices& services, const value::PackedArray& fd_pa)
+    -> value::PackedArray {
+  return LyraFSeek(services, fd_pa, MakeInt(0), MakeInt(0));
+}
+
+auto LyraFTell(RuntimeServices& services, const value::PackedArray& fd_pa)
+    -> value::PackedArray {
+  const std::int32_t fd = AsInt32(fd_pa);
+  std::fstream* stream = services.Files().Resolve(fd);
+  if (stream == nullptr) {
+    StampError(services, fd, EBADF, "$ftell: not an open file descriptor");
+    return MakeInt(-1);
+  }
+  const auto pos = stream->tellg();
+  if (pos == std::fstream::pos_type{-1}) {
+    StampError(services, fd, errno, "$ftell: tell failed");
+    return MakeInt(-1);
+  }
+  return MakeInt(static_cast<std::int32_t>(pos));
+}
+
+auto LyraFEof(RuntimeServices& services, const value::PackedArray& fd_pa)
+    -> value::PackedArray {
+  const std::int32_t fd = AsInt32(fd_pa);
+  std::fstream* stream = services.Files().Resolve(fd);
+  if (stream == nullptr) return MakeInt(0);
+  return MakeInt(stream->eof() ? 1 : 0);
+}
+
+auto LyraFError(
+    RuntimeServices& services, const value::PackedArray& fd_pa,
+    value::String& dest) -> value::PackedArray {
+  const std::int32_t fd = AsInt32(fd_pa);
+  const int errno_value = services.Files().LastError(fd);
+  if (errno_value == 0) {
+    dest = value::String{};
+    return MakeInt(0);
+  }
+  dest = value::String{services.Files().LastErrorMessage(fd)};
+  services.Files().ClearError(fd);
+  return MakeInt(errno_value);
+}
+
+void LyraFFlush(
+    RuntimeServices& services,
+    std::optional<value::PackedArray> descriptor_pa) {
+  // Flush-all path: iterate every set bit in the entire 1..30 MCD range and
+  // every reserved+pool FD index. Cheap enough vs disk cost.
+  if (!descriptor_pa.has_value()) {
+    for (std::uint32_t bit = 1; bit <= 30U; ++bit) {
+      std::fstream* s =
+          services.Files().Resolve(static_cast<std::int32_t>(1U << bit));
+      if (s != nullptr) s->flush();
+    }
+    return;
+  }
+  const std::int32_t descriptor = AsInt32(*descriptor_pa);
+  if (descriptor == 0) return;
+  const auto raw = static_cast<std::uint32_t>(descriptor);
+  if ((raw & (1U << 31U)) != 0U) {
+    // FD form: stdio sentinels need no flush from us (LyraFPrint already
+    // routes them through services.Stream() / std::cerr).
+    std::fstream* s = services.Files().Resolve(descriptor);
+    if (s != nullptr) s->flush();
+    return;
+  }
+  // MCD form: walk set bits and flush each owned channel.
+  for (std::uint32_t bit = 1; bit <= 30U; ++bit) {
+    if ((raw & (1U << bit)) == 0U) continue;
+    std::fstream* s =
+        services.Files().Resolve(static_cast<std::int32_t>(1U << bit));
+    if (s != nullptr) s->flush();
   }
 }
 
