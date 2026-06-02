@@ -1,0 +1,15 @@
+id: cpp.function_static_local
+tags: [cpp_run]
+input:
+  command: [run, cpp]
+  project: false
+  top: Top
+  files: [main.sv]
+expect:
+  exit: 0
+  variables:
+    r_id1: 1
+    r_id2: 2
+    r_id3: 3
+    r_mix1: 2
+    r_mix2: 4

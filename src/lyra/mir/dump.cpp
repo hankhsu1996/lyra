@@ -657,6 +657,13 @@ class MirDumper {
               FormatParamDirection(param.direction), param.name,
               param.type.value));
     }
+    for (std::size_t i = 0; i < d.static_locals.size(); ++i) {
+      const auto& sl = d.static_locals[i];
+      Line(
+          std::format(
+              "StaticLocal[{}] var=ProceduralVar[{}] init=Expr[{}]", i,
+              sl.var.value, sl.init.value));
+    }
     DumpProceduralScope(d.root_procedural_scope);
     Dedent();
   }
@@ -670,8 +677,9 @@ class MirDumper {
         const auto& v = scope.vars[i];
         Line(
             std::format(
-                "ProceduralVar[{}] \"{}\" : Type[{}]", i, v.name,
-                v.type.value));
+                "ProceduralVar[{}] \"{}\" : Type[{}]{}", i, v.name,
+                v.type.value,
+                v.lifetime == VariableLifetime::kStatic ? " static" : ""));
       }
       Dedent();
     }

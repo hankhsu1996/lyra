@@ -299,6 +299,17 @@ auto LowerScopeMembersInto(
   // (slang Scope.cpp:927-1033); we hand the dispatcher only the first sibling
   // and skip the rest, so the per-construct sibling-collect loop inside
   // LowerIfOrCaseGenerateMemberInto runs exactly once per construct.
+  // Forward-declare every subroutine's binding before lowering any body so a
+  // call resolves regardless of source order: direct self-recursion, mutual
+  // recursion, and forward references to a later-defined subroutine (LRM
+  // 13.4.2). Bodies are added in the same order by the main pass below.
+  for (const auto& member : slang_scope.members()) {
+    if (member.kind == slang::ast::SymbolKind::Subroutine) {
+      scope_state.ReserveSubroutineBinding(
+          member.as<slang::ast::SubroutineSymbol>());
+    }
+  }
+
   std::unordered_set<std::uint32_t> consumed_construct_indices;
   for (const auto& member : slang_scope.members()) {
     if (member.kind == slang::ast::SymbolKind::GenerateBlock) {
