@@ -317,6 +317,94 @@ auto RenderRuntimeCallExpr(
             return std::format(
                 "lyra::runtime::LyraFClose(*services_, {})", *desc_or);
           },
+          [&](const mir::RuntimeFileGetcCall& fg) -> diag::Result<std::string> {
+            auto fd_or = RenderExpr(ctx, ctx.Expr(fg.fd));
+            if (!fd_or) return std::unexpected(std::move(fd_or.error()));
+            return std::format(
+                "lyra::runtime::LyraFGetc(*services_, {})", *fd_or);
+          },
+          [&](const mir::RuntimeFileUngetcCall& fu)
+              -> diag::Result<std::string> {
+            auto c_or = RenderExpr(ctx, ctx.Expr(fu.c));
+            if (!c_or) return std::unexpected(std::move(c_or.error()));
+            auto fd_or = RenderExpr(ctx, ctx.Expr(fu.fd));
+            if (!fd_or) return std::unexpected(std::move(fd_or.error()));
+            return std::format(
+                "lyra::runtime::LyraFUngetc(*services_, {}, {})", *c_or,
+                *fd_or);
+          },
+          [&](const mir::RuntimeFileGetsCall& fg) -> diag::Result<std::string> {
+            // str_dest is a procedural-local temp introduced by the
+            // statement-position desugaring; emitting its name straight
+            // binds to LyraFGets's `value::String&` formal.
+            auto dest_or = RenderExpr(ctx, ctx.Expr(fg.str_dest));
+            if (!dest_or) return std::unexpected(std::move(dest_or.error()));
+            auto fd_or = RenderExpr(ctx, ctx.Expr(fg.fd));
+            if (!fd_or) return std::unexpected(std::move(fd_or.error()));
+            return std::format(
+                "lyra::runtime::LyraFGets(*services_, {}, {})", *dest_or,
+                *fd_or);
+          },
+          [&](const mir::RuntimeFileReadCall& fr) -> diag::Result<std::string> {
+            auto dest_or = RenderExpr(ctx, ctx.Expr(fr.int_dest));
+            if (!dest_or) return std::unexpected(std::move(dest_or.error()));
+            auto fd_or = RenderExpr(ctx, ctx.Expr(fr.fd));
+            if (!fd_or) return std::unexpected(std::move(fd_or.error()));
+            return std::format(
+                "lyra::runtime::LyraFRead(*services_, {}, {})", *dest_or,
+                *fd_or);
+          },
+          [&](const mir::RuntimeFileSeekCall& fs) -> diag::Result<std::string> {
+            auto fd_or = RenderExpr(ctx, ctx.Expr(fs.fd));
+            if (!fd_or) return std::unexpected(std::move(fd_or.error()));
+            auto off_or = RenderExpr(ctx, ctx.Expr(fs.offset));
+            if (!off_or) return std::unexpected(std::move(off_or.error()));
+            auto op_or = RenderExpr(ctx, ctx.Expr(fs.operation));
+            if (!op_or) return std::unexpected(std::move(op_or.error()));
+            return std::format(
+                "lyra::runtime::LyraFSeek(*services_, {}, {}, {})", *fd_or,
+                *off_or, *op_or);
+          },
+          [&](const mir::RuntimeFileRewindCall& fr)
+              -> diag::Result<std::string> {
+            auto fd_or = RenderExpr(ctx, ctx.Expr(fr.fd));
+            if (!fd_or) return std::unexpected(std::move(fd_or.error()));
+            return std::format(
+                "lyra::runtime::LyraFRewind(*services_, {})", *fd_or);
+          },
+          [&](const mir::RuntimeFileTellCall& ft) -> diag::Result<std::string> {
+            auto fd_or = RenderExpr(ctx, ctx.Expr(ft.fd));
+            if (!fd_or) return std::unexpected(std::move(fd_or.error()));
+            return std::format(
+                "lyra::runtime::LyraFTell(*services_, {})", *fd_or);
+          },
+          [&](const mir::RuntimeFileEofCall& fe) -> diag::Result<std::string> {
+            auto fd_or = RenderExpr(ctx, ctx.Expr(fe.fd));
+            if (!fd_or) return std::unexpected(std::move(fd_or.error()));
+            return std::format(
+                "lyra::runtime::LyraFEof(*services_, {})", *fd_or);
+          },
+          [&](const mir::RuntimeFileErrorCall& fe)
+              -> diag::Result<std::string> {
+            auto fd_or = RenderExpr(ctx, ctx.Expr(fe.fd));
+            if (!fd_or) return std::unexpected(std::move(fd_or.error()));
+            auto dest_or = RenderExpr(ctx, ctx.Expr(fe.str_dest));
+            if (!dest_or) return std::unexpected(std::move(dest_or.error()));
+            return std::format(
+                "lyra::runtime::LyraFError(*services_, {}, {})", *fd_or,
+                *dest_or);
+          },
+          [&](const mir::RuntimeFileFlushCall& ff)
+              -> diag::Result<std::string> {
+            if (!ff.descriptor.has_value()) {
+              return std::string(
+                  "lyra::runtime::LyraFFlush(*services_, std::nullopt)");
+            }
+            auto fd_or = RenderExpr(ctx, ctx.Expr(*ff.descriptor));
+            if (!fd_or) return std::unexpected(std::move(fd_or.error()));
+            return std::format(
+                "lyra::runtime::LyraFFlush(*services_, {})", *fd_or);
+          },
       },
       expr.call);
 }

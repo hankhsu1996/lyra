@@ -1,0 +1,15 @@
+id: cpp.ungetc_basic
+tags: [cpp_run]
+input:
+  command: [run, cpp]
+  project: false
+  top: Top
+  files: [main.sv]
+expect:
+  exit: 0
+  variables:
+    first: 97
+    unget_result: 0
+    second: 90
+  files:
+    scratch.txt: "ab"

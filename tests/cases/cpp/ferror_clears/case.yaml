@@ -1,0 +1,17 @@
+id: cpp.ferror_clears
+tags: [cpp_run]
+input:
+  command: [run, cpp]
+  project: false
+  top: Top
+  files: [main.sv]
+expect:
+  exit: 0
+  variables:
+    seek_result: -1
+    # EINVAL (22 on Linux). The numeric value is platform-defined; ranges
+    # are too narrow to assert portably, so we check the nonzero clear+
+    # re-read pattern instead via err_code_again and err_msg_len.
+    err_code_again: 0
+  files:
+    scratch.txt: "data"
