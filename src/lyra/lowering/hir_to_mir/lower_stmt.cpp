@@ -231,10 +231,8 @@ auto LowerDestructuringAssign(
     const mir::ExprId part_lhs_id =
         wrapper_state.AddExpr(*std::move(part_lhs_or));
 
-    const mir::ExprId base_index = wrapper_state.AddExpr(
+    const mir::ExprId offset_id = wrapper_state.AddExpr(
         unit_state.MakeInt32LiteralExpr(static_cast<std::int64_t>(offset)));
-    const mir::ExprId width_lit = wrapper_state.AddExpr(
-        unit_state.MakeInt32LiteralExpr(static_cast<std::int64_t>(w)));
     const mir::ExprId temp_ref = wrapper_state.AddExpr(
         mir::Expr{.data = snapshot_ref, .type = temp_type});
     const mir::TypeId slice_type = unit_state.AddType(
@@ -249,9 +247,8 @@ auto LowerDestructuringAssign(
             .data =
                 mir::RangeSelectExpr{
                     .base_value = temp_ref,
-                    .bounds =
-                        mir::RangeIndexedUpBounds{
-                            .base_index = base_index, .width = width_lit}},
+                    .offset_expr = offset_id,
+                    .count = static_cast<std::uint32_t>(w)},
             .type = slice_type});
     mir::ExprId rhs_for_part = slice_id;
     if (part_mir_type != slice_type) {

@@ -1294,14 +1294,14 @@ auto PackedArray::ElementAt(const PackedArray& idx) const -> PackedArray {
 }
 
 auto PackedArray::Slice(
-    const PackedArray& lsb_in_outer_elements,
+    const PackedArray& offset_in_outer_elements,
     std::uint32_t count_in_outer_elements) -> PackedArrayRef {
   const auto element_bw = OuterElementBitWidth(bit_width_, dims_);
   return PackedArrayRef{
       *this,
       element_bw == 1U
-          ? Canonicalize(lsb_in_outer_elements)
-          : (Canonicalize(lsb_in_outer_elements) *
+          ? Canonicalize(offset_in_outer_elements)
+          : (Canonicalize(offset_in_outer_elements) *
              PackedArray::FromInt(
                  static_cast<std::int64_t>(element_bw), kOffsetBitWidth,
                  kOffsetSigned, kOffsetFourState)),
@@ -1310,13 +1310,13 @@ auto PackedArray::Slice(
 }
 
 auto PackedArray::Slice(
-    const PackedArray& lsb_in_outer_elements,
+    const PackedArray& offset_in_outer_elements,
     std::uint32_t count_in_outer_elements) const -> PackedArray {
   const auto element_bw = OuterElementBitWidth(bit_width_, dims_);
   const auto bit_offset =
       element_bw == 1U
-          ? Canonicalize(lsb_in_outer_elements)
-          : (Canonicalize(lsb_in_outer_elements) *
+          ? Canonicalize(offset_in_outer_elements)
+          : (Canonicalize(offset_in_outer_elements) *
              PackedArray::FromInt(
                  static_cast<std::int64_t>(element_bw), kOffsetBitWidth,
                  kOffsetSigned, kOffsetFourState));
@@ -1356,15 +1356,15 @@ auto PackedArrayRef::ElementAt(const PackedArray& idx) const -> PackedArrayRef {
 }
 
 auto PackedArrayRef::Slice(
-    const PackedArray& lsb_in_outer_elements,
+    const PackedArray& offset_in_outer_elements,
     std::uint32_t count_in_outer_elements) const -> PackedArrayRef {
   const auto element_bw = OuterElementBitWidth(bit_width_, dims_);
   return PackedArrayRef{
       *root_,
       element_bw == 1U
-          ? (bit_offset_ + Canonicalize(lsb_in_outer_elements))
+          ? (bit_offset_ + Canonicalize(offset_in_outer_elements))
           : (bit_offset_ +
-             (Canonicalize(lsb_in_outer_elements) *
+             (Canonicalize(offset_in_outer_elements) *
               PackedArray::FromInt(
                   static_cast<std::int64_t>(element_bw), kOffsetBitWidth,
                   kOffsetSigned, kOffsetFourState))),

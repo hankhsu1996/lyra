@@ -86,7 +86,7 @@ auto RenderTypeAsCpp(
           [&](const mir::UnpackedArrayType& ua) -> diag::Result<std::string> {
             auto inner_or = RenderTypeAsCpp(unit, owner_scope, ua.element_type);
             if (!inner_or) return std::unexpected(std::move(inner_or.error()));
-            return "std::vector<" + *inner_or + ">";
+            return "lyra::value::UnpackedArray<" + *inner_or + ">";
           },
           [&](const mir::ObjectType& o) -> diag::Result<std::string> {
             return std::string{

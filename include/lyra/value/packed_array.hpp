@@ -334,14 +334,14 @@ class PackedArray {
   // selectors and routes a final `operator=` through `AssignSlice`. Const
   // overloads materialize the sub-slice as a fresh `PackedArray` for
   // read-side use. Uniformly method-style (no `operator[]`) so a chain is
-  // visually consistent: `data.ElementAt(idx).Slice(lsb, count)`.
+  // visually consistent: `data.ElementAt(idx).Slice(offset, count)`.
   [[nodiscard]] auto ElementAt(const PackedArray& idx) -> PackedArrayRef;
   [[nodiscard]] auto ElementAt(const PackedArray& idx) const -> PackedArray;
   [[nodiscard]] auto Slice(
-      const PackedArray& lsb_in_outer_elements,
+      const PackedArray& offset_in_outer_elements,
       std::uint32_t count_in_outer_elements) -> PackedArrayRef;
   [[nodiscard]] auto Slice(
-      const PackedArray& lsb_in_outer_elements,
+      const PackedArray& offset_in_outer_elements,
       std::uint32_t count_in_outer_elements) const -> PackedArray;
   [[nodiscard]] auto operator<(const PackedArray& other) const -> PackedArray;
   [[nodiscard]] auto operator<=(const PackedArray& other) const -> PackedArray;
@@ -517,7 +517,7 @@ class PackedArrayRef {
   // units; the proxy scales internally based on `dims_`.
   [[nodiscard]] auto ElementAt(const PackedArray& idx) const -> PackedArrayRef;
   [[nodiscard]] auto Slice(
-      const PackedArray& lsb_in_outer_elements,
+      const PackedArray& offset_in_outer_elements,
       std::uint32_t count_in_outer_elements) const -> PackedArrayRef;
 
  private:

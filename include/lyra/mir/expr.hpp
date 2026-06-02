@@ -13,7 +13,6 @@
 #include "lyra/mir/expr_id.hpp"
 #include "lyra/mir/inc_dec_op.hpp"
 #include "lyra/mir/integral_constant.hpp"
-#include "lyra/mir/range_bounds.hpp"
 #include "lyra/mir/runtime_diagnostic.hpp"
 #include "lyra/mir/runtime_file_io.hpp"
 #include "lyra/mir/runtime_finish.hpp"
@@ -112,15 +111,21 @@ struct ElementSelectExpr {
   ExprId index;
 };
 
-// LRM 7.2.1 packed struct field access has no MIR-level distinct shape:
-// it lowers at HIR -> MIR into a constant-bounds RangeSelectExpr (since
-// "a packed structure can be selected as if it were a packed array",
-// LRM 7.2.1). A future MIR node for *unpacked* struct named access is a
-// genuinely different shape (it maps to C++ `s.member`, not bit math) and
-// will get its own variant when that work lands.
+// Contiguous slice of `count` outer elements starting at `offset_expr`.
+// HIR's three source-faithful forms (`m:n`, `i +: w`, `i -: w`) collapse to
+// this single shape at HIR -> MIR; `count` is the LRM 7.4.5 compile-time
+// constant width, `offset_expr` is the lsb in outer-element units.
+//
+// LRM 7.2.1 packed struct field access has no MIR-level distinct shape: it
+// lowers at HIR -> MIR into this same slice form (since "a packed structure
+// can be selected as if it were a packed array", LRM 7.2.1). A future MIR
+// node for *unpacked* struct named access is a genuinely different shape (it
+// maps to C++ `s.member`, not bit math) and will get its own variant when
+// that work lands.
 struct RangeSelectExpr {
   ExprId base_value;
-  RangeBounds bounds;
+  ExprId offset_expr;
+  std::uint32_t count;
 };
 
 struct ConcatExpr {

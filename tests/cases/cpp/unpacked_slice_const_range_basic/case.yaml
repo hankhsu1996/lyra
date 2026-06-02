@@ -1,0 +1,13 @@
+id: cpp.unpacked_slice_const_range_basic
+tags: [cpp_run]
+input:
+  command: [run, cpp]
+  project: false
+  top: Top
+  files: [main.sv]
+expect:
+  exit: 0
+  variables:
+    p0: 20
+    p1: 30
+    p2: 40

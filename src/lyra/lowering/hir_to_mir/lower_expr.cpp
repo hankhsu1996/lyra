@@ -287,47 +287,92 @@ auto LowerStructuralParamRefExpr(
       .type = type};
 }
 
-auto LowerHirRangeBoundsProc(
+struct RangeOffsetCount {
+  mir::ExprId offset_expr;
+  std::uint32_t count;
+};
+
+auto MirIntegralConstantToInt64(const mir::IntegralConstant& c)
+    -> std::int64_t {
+  if (c.value_words.empty()) {
+    throw InternalError("MirIntegralConstantToInt64: zero width");
+  }
+  return static_cast<std::int64_t>(c.value_words.front());
+}
+
+auto IntConstFromMirExpr(const mir::Expr& expr) -> std::int64_t {
+  if (const auto* lit = std::get_if<mir::IntegerLiteral>(&expr.data)) {
+    return MirIntegralConstantToInt64(lit->value);
+  }
+  throw InternalError(
+      "IntConstFromMirExpr: expression is not an IntegerLiteral");
+}
+
+// LRM 7.4.5 + 11.5.1: the three source-faithful bound forms collapse to a
+// single (offset, count) shape at HIR -> MIR. ConstantBounds reduce by
+// reading both folded literals; IndexedUp uses base/width directly;
+// IndexedDown synthesizes `base - (count - 1)` as the offset since the
+// `-:` lsb sits below the named base.
+template <typename LowerOne>
+auto UnfoldHirRangeBoundsToOffsetCount(
     const UnitLoweringState& unit_state,
-    const StructuralScopeLoweringState& scope_state,
-    const ProcessLoweringState& proc_state,
     ProceduralScopeLoweringState& proc_scope_state,
-    const hir::ProceduralBody& hir_process, const hir::RangeBounds& bounds)
-    -> diag::Result<mir::RangeBounds> {
-  auto lower_one = [&](hir::ExprId id) -> diag::Result<mir::ExprId> {
-    auto lowered = LowerExpr(
-        unit_state, scope_state, proc_state, proc_scope_state, hir_process,
-        hir_process.exprs.at(id.value));
-    if (!lowered) return std::unexpected(std::move(lowered.error()));
-    return proc_scope_state.AddExpr(*std::move(lowered));
-  };
+    const hir::RangeBounds& bounds, LowerOne lower_one)
+    -> diag::Result<RangeOffsetCount> {
   return std::visit(
       Overloaded{
           [&](const hir::RangeConstantBounds& b)
-              -> diag::Result<mir::RangeBounds> {
+              -> diag::Result<RangeOffsetCount> {
             auto msb = lower_one(b.msb_expr);
             if (!msb) return std::unexpected(std::move(msb.error()));
             auto lsb = lower_one(b.lsb_expr);
             if (!lsb) return std::unexpected(std::move(lsb.error()));
-            return mir::RangeConstantBounds{.msb_expr = *msb, .lsb_expr = *lsb};
+            const auto msb_val =
+                IntConstFromMirExpr(proc_scope_state.GetExpr(*msb));
+            const auto lsb_val =
+                IntConstFromMirExpr(proc_scope_state.GetExpr(*lsb));
+            const auto count = static_cast<std::uint32_t>(
+                (msb_val >= lsb_val ? msb_val - lsb_val : lsb_val - msb_val) +
+                1);
+            // The offset is the numerically lower of the two bounds. For a
+            // descending range this is the syntactic right (`lsb_expr`), for
+            // ascending it is the syntactic left (`msb_expr`).
+            const auto offset_val = std::min(msb_val, lsb_val);
+            const auto offset_id = proc_scope_state.AddExpr(
+                unit_state.MakeInt32LiteralExpr(offset_val));
+            return RangeOffsetCount{.offset_expr = offset_id, .count = count};
           },
           [&](const hir::RangeIndexedUpBounds& b)
-              -> diag::Result<mir::RangeBounds> {
+              -> diag::Result<RangeOffsetCount> {
             auto base = lower_one(b.base_index);
             if (!base) return std::unexpected(std::move(base.error()));
             auto width = lower_one(b.width);
             if (!width) return std::unexpected(std::move(width.error()));
-            return mir::RangeIndexedUpBounds{
-                .base_index = *base, .width = *width};
+            const auto count = static_cast<std::uint32_t>(
+                IntConstFromMirExpr(proc_scope_state.GetExpr(*width)));
+            return RangeOffsetCount{.offset_expr = *base, .count = count};
           },
           [&](const hir::RangeIndexedDownBounds& b)
-              -> diag::Result<mir::RangeBounds> {
+              -> diag::Result<RangeOffsetCount> {
             auto base = lower_one(b.base_index);
             if (!base) return std::unexpected(std::move(base.error()));
             auto width = lower_one(b.width);
             if (!width) return std::unexpected(std::move(width.error()));
-            return mir::RangeIndexedDownBounds{
-                .base_index = *base, .width = *width};
+            const auto count = static_cast<std::uint32_t>(
+                IntConstFromMirExpr(proc_scope_state.GetExpr(*width)));
+            const auto base_type = proc_scope_state.GetExpr(*base).type;
+            const auto sub_lit =
+                proc_scope_state.AddExpr(unit_state.MakeInt32LiteralExpr(
+                    static_cast<std::int64_t>(count) - 1));
+            const auto offset = proc_scope_state.AddExpr(
+                mir::Expr{
+                    .data =
+                        mir::BinaryExpr{
+                            .op = mir::BinaryOp::kSub,
+                            .lhs = *base,
+                            .rhs = sub_lit},
+                    .type = base_type});
+            return RangeOffsetCount{.offset_expr = offset, .count = count};
           },
       },
       bounds);
@@ -538,33 +583,6 @@ auto SnapshotNonLhsSubexpr(
           .type = outer_expr.type});
 }
 
-auto CloneRangeBoundsForNbaBody(
-    const ProceduralScopeLoweringState& outer_scope_state,
-    ProceduralScopeLoweringState& body, std::vector<mir::Capture>& captures,
-    std::uint32_t& snapshot_counter, const mir::RangeBounds& bounds)
-    -> mir::RangeBounds {
-  auto snap = [&](mir::ExprId id) -> mir::ExprId {
-    return SnapshotNonLhsSubexpr(
-        outer_scope_state, body, captures, snapshot_counter, id);
-  };
-  return std::visit(
-      Overloaded{
-          [&](const mir::RangeConstantBounds& b) -> mir::RangeBounds {
-            return mir::RangeConstantBounds{
-                .msb_expr = snap(b.msb_expr), .lsb_expr = snap(b.lsb_expr)};
-          },
-          [&](const mir::RangeIndexedUpBounds& b) -> mir::RangeBounds {
-            return mir::RangeIndexedUpBounds{
-                .base_index = snap(b.base_index), .width = snap(b.width)};
-          },
-          [&](const mir::RangeIndexedDownBounds& b) -> mir::RangeBounds {
-            return mir::RangeIndexedDownBounds{
-                .base_index = snap(b.base_index), .width = snap(b.width)};
-          },
-      },
-      bounds);
-}
-
 // Recursively clone an LHS-shaped expression into the closure body. The LHS
 // structure (PrimaryExpr, ElementSelectExpr, RangeSelectExpr, ConcatExpr) is
 // reproduced as-is; per-layer subexpressions that are NOT part of the LHS
@@ -594,14 +612,16 @@ auto CloneLhsExprForNbaBody(
             const mir::ExprId base = CloneLhsExprForNbaBody(
                 outer_scope_state, body, captures, snapshot_counter,
                 s.base_value);
-            mir::RangeBounds new_bounds = CloneRangeBoundsForNbaBody(
-                outer_scope_state, body, captures, snapshot_counter, s.bounds);
+            const mir::ExprId offset = SnapshotNonLhsSubexpr(
+                outer_scope_state, body, captures, snapshot_counter,
+                s.offset_expr);
             return body.AddExpr(
                 mir::Expr{
                     .data =
                         mir::RangeSelectExpr{
                             .base_value = base,
-                            .bounds = std::move(new_bounds)},
+                            .offset_expr = offset,
+                            .count = s.count},
                     .type = outer_expr.type});
           },
           [&](const mir::ConcatExpr& c) -> mir::ExprId {
@@ -1042,24 +1062,31 @@ auto LowerHirRangeSelectExprProc(
   if (!base_or) return std::unexpected(std::move(base_or.error()));
   const mir::ExprId base_id = proc_scope_state.AddExpr(*std::move(base_or));
 
-  auto bounds_or = LowerHirRangeBoundsProc(
-      unit_state, scope_state, proc_state, proc_scope_state, hir_process,
-      sel.bounds);
-  if (!bounds_or) return std::unexpected(std::move(bounds_or.error()));
+  auto lower_one = [&](hir::ExprId id) -> diag::Result<mir::ExprId> {
+    auto lowered = LowerExpr(
+        unit_state, scope_state, proc_state, proc_scope_state, hir_process,
+        hir_process.exprs.at(id.value));
+    if (!lowered) return std::unexpected(std::move(lowered.error()));
+    return proc_scope_state.AddExpr(*std::move(lowered));
+  };
+  auto unfolded = UnfoldHirRangeBoundsToOffsetCount(
+      unit_state, proc_scope_state, sel.bounds, lower_one);
+  if (!unfolded) return std::unexpected(std::move(unfolded.error()));
 
   return mir::Expr{
       .data =
           mir::RangeSelectExpr{
               .base_value = base_id,
-              .bounds = *std::move(bounds_or),
+              .offset_expr = unfolded->offset_expr,
+              .count = unfolded->count,
           },
       .type = result_type};
 }
 
 // LRM 7.2.1: packed struct field access "can be selected as if it were a
-// packed array". HIR -> MIR resolves the field-table index to concrete
-// (offset, width) and produces a constant-bounds RangeSelectExpr -- the
-// same MIR shape `s[hi:lo]` produces. MIR carries no struct-specific node.
+// packed array". HIR -> MIR resolves the field-table index to a concrete
+// (offset, count) RangeSelectExpr -- the same MIR shape `s[hi:lo]` produces.
+// MIR carries no struct-specific node.
 auto LowerHirMemberAccessExprProc(
     const UnitLoweringState& unit_state,
     const StructuralScopeLoweringState& scope_state,
@@ -1080,17 +1107,15 @@ auto LowerHirMemberAccessExprProc(
       base_hir_expr);
   if (!base_or) return std::unexpected(std::move(base_or.error()));
   const mir::ExprId base_id = proc_scope_state.AddExpr(*std::move(base_or));
-  const auto lsb_id = proc_scope_state.AddExpr(unit_state.MakeInt32LiteralExpr(
-      static_cast<std::int64_t>(field.bit_offset)));
-  const auto msb_id = proc_scope_state.AddExpr(unit_state.MakeInt32LiteralExpr(
-      static_cast<std::int64_t>(field.bit_offset + field.bit_width - 1)));
+  const auto offset_id =
+      proc_scope_state.AddExpr(unit_state.MakeInt32LiteralExpr(
+          static_cast<std::int64_t>(field.bit_offset)));
   return mir::Expr{
       .data =
           mir::RangeSelectExpr{
               .base_value = base_id,
-              .bounds =
-                  mir::RangeConstantBounds{
-                      .msb_expr = msb_id, .lsb_expr = lsb_id},
+              .offset_expr = offset_id,
+              .count = static_cast<std::uint32_t>(field.bit_width),
           },
       .type = result_type};
 }
@@ -1442,50 +1467,24 @@ auto LowerHirRangeSelectExprStructural(
   if (!base_or) return std::unexpected(std::move(base_or.error()));
   const mir::ExprId base_id = proc_scope_state.AddExpr(*std::move(base_or));
 
-  auto lower_bound_subexpr = [&](hir::ExprId id) -> diag::Result<mir::ExprId> {
+  auto lower_one = [&](hir::ExprId id) -> diag::Result<mir::ExprId> {
     auto lowered = LowerExprImpl(
         unit_state, scope_state, ctor_state, proc_scope_state, scope,
         scope.GetExpr(id), loop_var_mode);
     if (!lowered) return std::unexpected(std::move(lowered.error()));
     return proc_scope_state.AddExpr(*std::move(lowered));
   };
-
-  auto bounds_or = std::visit(
-      Overloaded{
-          [&](const hir::RangeConstantBounds& b)
-              -> diag::Result<mir::RangeBounds> {
-            auto msb = lower_bound_subexpr(b.msb_expr);
-            if (!msb) return std::unexpected(std::move(msb.error()));
-            auto lsb = lower_bound_subexpr(b.lsb_expr);
-            if (!lsb) return std::unexpected(std::move(lsb.error()));
-            return mir::RangeConstantBounds{.msb_expr = *msb, .lsb_expr = *lsb};
-          },
-          [&](const hir::RangeIndexedUpBounds& b)
-              -> diag::Result<mir::RangeBounds> {
-            auto base = lower_bound_subexpr(b.base_index);
-            if (!base) return std::unexpected(std::move(base.error()));
-            auto width = lower_bound_subexpr(b.width);
-            if (!width) return std::unexpected(std::move(width.error()));
-            return mir::RangeIndexedUpBounds{
-                .base_index = *base, .width = *width};
-          },
-          [&](const hir::RangeIndexedDownBounds& b)
-              -> diag::Result<mir::RangeBounds> {
-            auto base = lower_bound_subexpr(b.base_index);
-            if (!base) return std::unexpected(std::move(base.error()));
-            auto width = lower_bound_subexpr(b.width);
-            if (!width) return std::unexpected(std::move(width.error()));
-            return mir::RangeIndexedDownBounds{
-                .base_index = *base, .width = *width};
-          },
-      },
-      sel.bounds);
-  if (!bounds_or) return std::unexpected(std::move(bounds_or.error()));
+  auto unfolded = UnfoldHirRangeBoundsToOffsetCount(
+      unit_state, proc_scope_state, sel.bounds, lower_one);
+  if (!unfolded) return std::unexpected(std::move(unfolded.error()));
 
   return mir::Expr{
       .data =
           mir::RangeSelectExpr{
-              .base_value = base_id, .bounds = *std::move(bounds_or)},
+              .base_value = base_id,
+              .offset_expr = unfolded->offset_expr,
+              .count = unfolded->count,
+          },
       .type = result_type};
 }
 
@@ -1510,17 +1509,15 @@ auto LowerHirMemberAccessExprStructural(
       base_hir_expr, loop_var_mode);
   if (!base_or) return std::unexpected(std::move(base_or.error()));
   const mir::ExprId base_id = proc_scope_state.AddExpr(*std::move(base_or));
-  const auto lsb_id = proc_scope_state.AddExpr(unit_state.MakeInt32LiteralExpr(
-      static_cast<std::int64_t>(field.bit_offset)));
-  const auto msb_id = proc_scope_state.AddExpr(unit_state.MakeInt32LiteralExpr(
-      static_cast<std::int64_t>(field.bit_offset + field.bit_width - 1)));
+  const auto offset_id =
+      proc_scope_state.AddExpr(unit_state.MakeInt32LiteralExpr(
+          static_cast<std::int64_t>(field.bit_offset)));
   return mir::Expr{
       .data =
           mir::RangeSelectExpr{
               .base_value = base_id,
-              .bounds =
-                  mir::RangeConstantBounds{
-                      .msb_expr = msb_id, .lsb_expr = lsb_id},
+              .offset_expr = offset_id,
+              .count = static_cast<std::uint32_t>(field.bit_width),
           },
       .type = result_type};
 }

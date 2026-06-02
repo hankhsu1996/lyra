@@ -13,8 +13,8 @@ Done when:
 
 ## Actionable
 
-U1..U5 are done. U6..U7 cover the remaining LRM 7.4.6 surface -- constant-width slice -- plus an OOB
-/ range follow-up. U8 records a cross-cutting observability gap surfaced by the unpacked-vs-packed
+U1..U6 are done. U7 covers OOB behaviour plus the direction-mismatched / negative-base range
+follow-up. U8 records a cross-cutting observability gap surfaced by the unpacked-vs-packed
 asymmetry; the implementation lives under `refactor.md` R2.
 
 | Item | Status                                                        |
@@ -24,7 +24,7 @@ asymmetry; the implementation lives under `refactor.md` R2.
 | U3   | Done: structured and replicated assignment patterns           |
 | U4   | Done: whole-array assignment (blocking and NBA)               |
 | U5   | Done: array equality, inequality, case-equality               |
-| U6   | Open: constant-width slice (read and write)                   |
+| U6   | Done: constant-width slice (read and write)                   |
 | U7   | Open: OOB element access and ascending / negative-base ranges |
 | U8   | Open: unpacked vars participate in value-change observability |
 
@@ -75,11 +75,13 @@ The numeric IDs are stable references and do not imply execution order beyond U1
 
 ### Constant-width slice
 
-- [ ] U6 -- Constant-width slice `A[i +: c]` and `A[i -: c]` over fixed-size unpacked arrays (LRM
-      7.4.5). Width `c` is a compile-time constant; base position `i` may be a runtime expression.
-      Both rvalue and lvalue forms; the lvalue form is treated as a single assignment to the entire
-      slice per LRM 7.6 and produces a single value change on the underlying array. The result type
-      of an rvalue slice is itself an unpacked array.
+- [x] U6 -- Constant-width slice `A[i +: c]`, `A[i -: c]`, and the direction-consistent constant
+      range form `A[m:n]` over fixed-size unpacked arrays (LRM 7.4.5). Width `c` is a compile-time
+      constant; base position `i` may be a runtime expression. Both rvalue and lvalue forms; the
+      lvalue form is treated as a single assignment to the entire slice per LRM 7.6 and produces a
+      single value change on the underlying array. The result type of an rvalue slice is itself an
+      unpacked array. Slice equality (`A[i +: c] == B[j +: c]`) falls out from U5's recursive
+      equality once the rvalue slice produces a wrapper value.
 
 ### OOB and ranges
 
