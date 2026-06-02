@@ -1,0 +1,14 @@
+id: cpp.unpacked_pattern_default_fill
+tags: [cpp_run]
+input:
+  command: [run, cpp]
+  project: false
+  top: Top
+  files: [main.sv]
+expect:
+  exit: 0
+  variables:
+    p0: 99
+    p1: 99
+    p2: 99
+    p3: 99
