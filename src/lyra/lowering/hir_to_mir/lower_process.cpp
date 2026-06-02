@@ -141,8 +141,8 @@ auto LowerStructuralSubroutine(
     const StructuralScopeLoweringState& scope_state,
     const hir::StructuralSubroutineDecl& src, TimeResolution time_resolution)
     -> diag::Result<mir::StructuralSubroutineDecl> {
-  ProcessLoweringState proc_state{time_resolution};
   ProceduralScopeLoweringState body_scope_state;
+  ProcessLoweringState proc_state{time_resolution, &body_scope_state};
 
   // Formals are procedural vars of the body with no VarDeclStmt: pre-register
   // them in the body scope at depth 0 so the body's references resolve. The
@@ -199,11 +199,13 @@ auto LowerStructuralSubroutine(
     body_scope_state.AppendStmt(mir::ReturnStmt{.value = result_read});
   }
 
+  std::vector<mir::StaticLocal> static_locals = proc_state.TakeStaticLocals();
   return mir::StructuralSubroutineDecl{
       .name = src.name,
       .result_type = result_type,
       .params = std::move(params),
-      .root_procedural_scope = body_scope_state.Finish()};
+      .root_procedural_scope = body_scope_state.Finish(),
+      .static_locals = std::move(static_locals)};
 }
 
 }  // namespace lyra::lowering::hir_to_mir

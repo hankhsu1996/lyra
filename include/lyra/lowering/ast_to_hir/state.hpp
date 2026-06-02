@@ -339,14 +339,30 @@ class ScopeLoweringState {
     return id;
   }
 
-  auto AddStructuralSubroutine(
-      const slang::ast::SubroutineSymbol& sym,
-      hir::StructuralSubroutineDecl decl) -> hir::StructuralSubroutineId {
-    const hir::StructuralSubroutineId local{
-        static_cast<std::uint32_t>(scope_->structural_subroutines.size())};
-    scope_->structural_subroutines.push_back(std::move(decl));
+  // Forward-declares a subroutine: registers its binding to a stable
+  // source-order id before any body is lowered, so a call resolves regardless
+  // of source order -- direct and mutual recursion and forward references (LRM
+  // 13.4.2). Bodies are added afterwards in the same order by
+  // AddStructuralSubroutine.
+  void ReserveSubroutineBinding(const slang::ast::SubroutineSymbol& sym) {
+    const hir::StructuralSubroutineId local{reserved_subroutine_count_++};
     unit_state_->MapSubroutineBinding(sym, frame_, local);
-    return local;
+  }
+
+  void AddStructuralSubroutine(
+      const slang::ast::SubroutineSymbol& sym,
+      hir::StructuralSubroutineDecl decl) {
+    const auto binding = unit_state_->LookupSubroutineBinding(sym);
+    if (!binding.has_value() ||
+        binding->subroutine_id.value !=
+            static_cast<std::uint32_t>(scope_->structural_subroutines.size())) {
+      throw InternalError(
+          "ScopeLoweringState::AddStructuralSubroutine: subroutine added out "
+          "of "
+          "reserved order; ReserveSubroutineBinding must run first in the same "
+          "order");
+    }
+    scope_->structural_subroutines.push_back(std::move(decl));
   }
 
   [[nodiscard]] auto UnitState() -> UnitLoweringState& {
@@ -369,6 +385,7 @@ class ScopeLoweringState {
   UnitLoweringState* unit_state_;
   hir::StructuralScope* scope_;
   ScopeFrameId frame_;
+  std::uint32_t reserved_subroutine_count_ = 0;
 };
 
 class ProcessLoweringState {
@@ -402,7 +419,12 @@ class ProcessLoweringState {
     const hir::ProceduralVarId id{
         static_cast<std::uint32_t>(body_.procedural_vars.size())};
     body_.procedural_vars.push_back(
-        hir::ProceduralVarDecl{.name = std::string{var.name}, .type = type});
+        hir::ProceduralVarDecl{
+            .name = std::string{var.name},
+            .type = type,
+            .lifetime = var.lifetime == slang::ast::VariableLifetime::Automatic
+                            ? hir::VariableLifetime::kAutomatic
+                            : hir::VariableLifetime::kStatic});
     const auto [_, inserted] = procedural_var_bindings_.emplace(&var, id);
     if (!inserted) {
       throw InternalError(

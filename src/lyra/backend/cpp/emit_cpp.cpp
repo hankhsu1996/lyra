@@ -155,13 +155,33 @@ auto RenderSubroutineMethod(
   }
   sig += ")";
 
+  const std::string frame_field =
+      sub.static_locals.empty() ? std::string{} : sub.name + "__static";
   const RenderContext sub_ctx =
-      (parent_struct_ctx == nullptr)
-          ? RenderContext::ForRoot(unit, s, sub.root_procedural_scope)
-          : parent_struct_ctx->WithStructuralScope(
-                s, sub.root_procedural_scope);
+      (parent_struct_ctx == nullptr
+           ? RenderContext::ForRoot(unit, s, sub.root_procedural_scope)
+           : parent_struct_ctx->WithStructuralScope(
+                 s, sub.root_procedural_scope))
+          .WithStaticFrame(frame_field);
 
   std::string out;
+  // LRM 13.3.1 static locals: one per-instance frame member, default-evaluated
+  // once at construction; the body reads and writes it across activations.
+  if (!sub.static_locals.empty()) {
+    out += Indent(indent) + "struct " + sub.name + "_StaticFrame {\n";
+    for (const auto& sl : sub.static_locals) {
+      const auto& var = sub.root_procedural_scope.vars.at(sl.var.value);
+      auto type_or = RenderTypeAsCpp(unit, s, var.type);
+      if (!type_or) return std::unexpected(std::move(type_or.error()));
+      auto init_or =
+          RenderExpr(sub_ctx, sub.root_procedural_scope.GetExpr(sl.init));
+      if (!init_or) return std::unexpected(std::move(init_or.error()));
+      out += Indent(indent + 1) + *type_or + " " + var.name + " = " + *init_or +
+             ";\n";
+    }
+    out += Indent(indent) + "} " + frame_field + "{};\n";
+  }
+
   out += Indent(indent) + sig + " {\n";
   auto rendered_or = RenderProceduralScopeStatements(sub_ctx, indent + 1);
   if (!rendered_or) return std::unexpected(std::move(rendered_or.error()));

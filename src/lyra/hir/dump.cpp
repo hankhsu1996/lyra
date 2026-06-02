@@ -929,8 +929,9 @@ class HirDumper {
         const auto& lv = body.procedural_vars[i];
         Line(
             std::format(
-                "ProceduralVar[{}] \"{}\" : Type[{}]", i, lv.name,
-                lv.type.value));
+                "ProceduralVar[{}] \"{}\" : Type[{}]{}", i, lv.name,
+                lv.type.value,
+                lv.lifetime == VariableLifetime::kStatic ? " static" : ""));
       }
       Dedent();
     }

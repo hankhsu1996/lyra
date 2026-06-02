@@ -1,0 +1,16 @@
+id: cpp.function_automatic_recursion
+tags: [cpp_run]
+input:
+  command: [run, cpp]
+  project: false
+  top: Top
+  files: [main.sv]
+expect:
+  exit: 0
+  variables:
+    r_fact: 120
+    r_reinit1: 5
+    r_reinit2: 5
+    r_forward: 21
+    r_even: 1
+    r_odd: 0

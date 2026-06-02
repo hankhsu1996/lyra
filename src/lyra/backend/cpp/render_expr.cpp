@@ -192,9 +192,12 @@ auto RenderStructuralParamExpr(
 }
 
 auto LookupProceduralVarName(
-    const RenderContext& ctx, const mir::ProceduralVarRef& ref)
-    -> const std::string& {
-  return ctx.ProceduralScopeAtHops(ref.hops).vars.at(ref.var.value).name;
+    const RenderContext& ctx, const mir::ProceduralVarRef& ref) -> std::string {
+  const auto& var = ctx.ProceduralScopeAtHops(ref.hops).vars.at(ref.var.value);
+  if (var.lifetime == mir::VariableLifetime::kStatic) {
+    return std::format("{}.{}", ctx.StaticFrame(), var.name);
+  }
+  return var.name;
 }
 
 }  // namespace
