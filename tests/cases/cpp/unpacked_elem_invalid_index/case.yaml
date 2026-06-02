@@ -1,0 +1,23 @@
+id: cpp.unpacked_elem_invalid_index
+tags: [cpp_run]
+input:
+  command: [run, cpp]
+  project: false
+  top: Top
+  files: [main.sv]
+expect:
+  exit: 0
+  variables:
+    oob_2s_pos: 0
+    oob_2s_neg: 0
+    in_range_2s: 20
+    oob_4s_pos: "8'bxxxxxxxx"
+    x_idx_4s: "8'bxxxxxxxx"
+    z_idx_4s: "8'bxxxxxxxx"
+    in_range_4s: "8'h22"
+    int_e0: 10
+    int_e1: 20
+    int_e2: 30
+    logic_e0: "8'h11"
+    logic_e1: "8'h22"
+    logic_e2: "8'h33"
