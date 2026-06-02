@@ -458,8 +458,20 @@ auto LowerCallExprProc(
   arg_ids.reserve(call.arguments().size());
   std::optional<hir::TypeId> receiver_type;
   for (std::size_t i = 0; i < call.arguments().size(); ++i) {
-    auto arg_or = LowerProcExpr(
-        unit_facts, unit_state, proc_state, stack, *call.arguments()[i]);
+    // LRM 13.5: slang models an `output` / `inout` actual as an
+    // AssignmentExpression whose right side is an EmptyArgument placeholder;
+    // the actual lvalue is the left side. HIR carries just that lvalue -- the
+    // copy-in / copy-out is synthesized at HIR-to-MIR from the formal's
+    // direction.
+    const slang::ast::Expression* arg = call.arguments()[i];
+    if (arg->kind == slang::ast::ExpressionKind::Assignment) {
+      const auto& as = arg->as<slang::ast::AssignmentExpression>();
+      if (as.right().kind == slang::ast::ExpressionKind::EmptyArgument) {
+        arg = &as.left();
+      }
+    }
+    auto arg_or =
+        LowerProcExpr(unit_facts, unit_state, proc_state, stack, *arg);
     if (!arg_or) return std::unexpected(std::move(arg_or.error()));
     if (i == 0) {
       receiver_type = arg_or->type;
@@ -1580,7 +1592,12 @@ auto ValidateAssignableSlangExpr(
     case EK::NamedValue: {
       const auto& nv = expr.as<slang::ast::NamedValueExpression>();
       const auto& sym = nv.symbol;
-      if (sym.kind != slang::ast::SymbolKind::Variable) {
+      // A subroutine formal (LRM 13.5) is a VariableSymbol subclass with its
+      // own SymbolKind; an `output` / `inout` formal is a legal assignment
+      // target inside the body, resolved through the same procedural-var
+      // binding as a body local.
+      if (sym.kind != slang::ast::SymbolKind::Variable &&
+          sym.kind != slang::ast::SymbolKind::FormalArgument) {
         return reject("assignment target must be a variable reference");
       }
       const auto& var = sym.as<slang::ast::VariableSymbol>();

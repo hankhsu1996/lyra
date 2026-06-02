@@ -2,6 +2,8 @@
 
 #include <expected>
 #include <memory>
+#include <optional>
+#include <string>
 #include <utility>
 #include <variant>
 #include <vector>
@@ -15,6 +17,8 @@
 #include "lyra/hir/primary.hpp"
 #include "lyra/hir/procedural_body.hpp"
 #include "lyra/hir/stmt.hpp"
+#include "lyra/hir/subroutine.hpp"
+#include "lyra/hir/subroutine_ref.hpp"
 #include "lyra/lowering/hir_to_mir/case_cascade.hpp"
 #include "lyra/lowering/hir_to_mir/default_value.hpp"
 #include "lyra/lowering/hir_to_mir/delay_time_resolver.hpp"
@@ -179,22 +183,11 @@ auto LowerDestructuringAssign(
               .left = static_cast<std::int64_t>(total_width) - 1, .right = 0}},
           .form = mir::PackedArrayForm::kExplicit}});
 
-  const mir::ProceduralVarId temp_var = wrapper_state.AddProceduralVar(
-      mir::ProceduralVarDecl{.name = "_lyra_destruct_rhs", .type = temp_type});
   const mir::ExprId temp_default_init =
       SynthesizeDefaultValueExpr(unit_state, wrapper_state, temp_type);
-  const mir::StmtId temp_decl_id = wrapper_state.AddStmt(
-      mir::Stmt{
-          .label = std::nullopt,
-          .data =
-              mir::ProceduralVarDeclStmt{
-                  .target =
-                      mir::ProceduralVarRef{
-                          .hops = mir::ProceduralHops{.value = 0},
-                          .var = temp_var},
-                  .init = temp_default_init},
-          .child_procedural_scopes = {}});
-  wrapper_state.AddRootStmt(temp_decl_id);
+  const mir::ProceduralVarRef snapshot_ref = wrapper_state.AppendLocal(
+      mir::ProceduralVarDecl{.name = "_lyra_destruct_rhs", .type = temp_type},
+      temp_default_init);
 
   // RHS is evaluated once; the snapshot temp is what gets distributed,
   // which is what makes `{a, b} = {b, a}` swap correctly.
@@ -212,22 +205,14 @@ auto LowerDestructuringAssign(
             .type = temp_type});
   }
 
-  const mir::ExprId temp_assign_target = wrapper_state.AddExpr(
-      mir::Expr{
-          .data =
-              mir::ProceduralVarRef{
-                  .hops = mir::ProceduralHops{.value = 0}, .var = temp_var},
-          .type = temp_type});
+  const mir::ExprId temp_assign_target =
+      wrapper_state.AddExpr(mir::Expr{.data = snapshot_ref, .type = temp_type});
   const mir::ExprId temp_assign_id = wrapper_state.AddExpr(
       mir::Expr{
           .data =
               mir::AssignExpr{.target = temp_assign_target, .value = rhs_id},
           .type = temp_type});
-  wrapper_state.AddRootStmt(wrapper_state.AddStmt(
-      mir::Stmt{
-          .label = std::nullopt,
-          .data = mir::ExprStmt{.expr = temp_assign_id},
-          .child_procedural_scopes = {}}));
+  wrapper_state.AppendStmt(mir::ExprStmt{.expr = temp_assign_id});
 
   // MSB-first per LRM 11.4.12: operands[0] occupies the high bits of the
   // snapshot, operands.back() the low bits.
@@ -251,11 +236,7 @@ auto LowerDestructuringAssign(
     const mir::ExprId width_lit = wrapper_state.AddExpr(
         unit_state.MakeInt32LiteralExpr(static_cast<std::int64_t>(w)));
     const mir::ExprId temp_ref = wrapper_state.AddExpr(
-        mir::Expr{
-            .data =
-                mir::ProceduralVarRef{
-                    .hops = mir::ProceduralHops{.value = 0}, .var = temp_var},
-            .type = temp_type});
+        mir::Expr{.data = snapshot_ref, .type = temp_type});
     const mir::TypeId slice_type = unit_state.AddType(
         mir::TypeData{mir::PackedArrayType{
             .atom = any_four_state ? mir::BitAtom::kLogic : mir::BitAtom::kBit,
@@ -302,11 +283,7 @@ auto LowerDestructuringAssign(
                       .call = mir::RuntimeSubmitNbaCall{.closure = closure_id}},
               .type = unit_state.Builtins().void_type});
     }
-    wrapper_state.AddRootStmt(wrapper_state.AddStmt(
-        mir::Stmt{
-            .label = std::nullopt,
-            .data = mir::ExprStmt{.expr = per_part_expr_id},
-            .child_procedural_scopes = {}}));
+    wrapper_state.AppendStmt(mir::ExprStmt{.expr = per_part_expr_id});
   }
 
   std::vector<mir::ProceduralScope> child_scopes;
@@ -316,6 +293,150 @@ auto LowerDestructuringAssign(
   return mir::Stmt{
       .label = stmt.label,
       .data = mir::BlockStmt{.scope = wrapper_scope_id},
+      .child_procedural_scopes = std::move(child_scopes)};
+}
+
+// A user subroutine whose formals include a non-`input` direction needs the
+// call desugared so the writebacks become explicit MIR statements; returns its
+// HIR declaration, or nullptr for a value-only call (system / builtin callee,
+// or an all-`input` user callee).
+auto SubroutineWithWritebacks(
+    const StructuralScopeLoweringState& scope_state, const hir::CallExpr& call)
+    -> const hir::StructuralSubroutineDecl* {
+  const auto* ref = std::get_if<hir::StructuralSubroutineRef>(&call.callee);
+  if (ref == nullptr) {
+    return nullptr;
+  }
+  const hir::StructuralSubroutineDecl& decl =
+      scope_state.LookupHirSubroutine(ref->hops, ref->subroutine);
+  for (const auto& param : decl.params) {
+    if (param.direction != hir::ParamDirection::kInput) {
+      return &decl;
+    }
+  }
+  return nullptr;
+}
+
+// LRM 13.5 output / inout argument passing. A subroutine call whose formals
+// take values out is desugared into a block: a fresh local per writeback
+// formal (default-initialized for `output`, copy-in initialized for `inout`),
+// the call with those locals bound to the formals, then a copy-out assignment
+// of each local back to its actual lvalue. This realizes the copy-in-copy-out
+// semantics -- output values pass at return through the actual's own write
+// path, which is required when the actual is an observable variable -- and
+// isolates the formal from the actual so a body that also reaches the actual
+// directly observes the LRM-defined value.
+//
+// `assign_target` is the lvalue for a `lhs = f(...)` statement, or nullopt for
+// a bare call statement (void function or discarded result).
+auto LowerSubroutineCallWithWritebacks(
+    const UnitLoweringState& unit_state,
+    const StructuralScopeLoweringState& scope_state,
+    ProcessLoweringState& proc_state, const hir::ProceduralBody& hir_proc,
+    const hir::Stmt& stmt, diag::SourceSpan span, const hir::CallExpr& call,
+    const hir::StructuralSubroutineRef& callee_ref,
+    const hir::StructuralSubroutineDecl& decl,
+    std::optional<hir::ExprId> assign_target, mir::TypeId result_type)
+    -> diag::Result<mir::Stmt> {
+  if (call.arguments.size() != decl.params.size()) {
+    throw InternalError(
+        "LowerSubroutineCallWithWritebacks: argument / formal count mismatch");
+  }
+
+  ProceduralScopeLoweringState wrapper;
+  ProceduralDepthGuard depth_guard{proc_state};
+
+  struct Writeback {
+    mir::ExprId actual;
+    mir::ProceduralVarRef temp;
+    mir::TypeId type;
+  };
+  std::vector<mir::ExprId> call_args;
+  call_args.reserve(call.arguments.size());
+  std::vector<Writeback> writebacks;
+
+  for (std::size_t i = 0; i < call.arguments.size(); ++i) {
+    const hir::ParamDirection dir = decl.params[i].direction;
+    const hir::Expr& hir_arg = hir_proc.exprs.at(call.arguments[i].value);
+
+    if (dir == hir::ParamDirection::kInput) {
+      auto arg_or = LowerExpr(
+          unit_state, scope_state, proc_state, wrapper, hir_proc, hir_arg);
+      if (!arg_or) return std::unexpected(std::move(arg_or.error()));
+      call_args.push_back(wrapper.AddExpr(*std::move(arg_or)));
+      continue;
+    }
+    if (dir == hir::ParamDirection::kRef ||
+        dir == hir::ParamDirection::kConstRef) {
+      return diag::Unsupported(
+          span, diag::DiagCode::kUnsupportedSubroutineArgument,
+          "ref / const ref subroutine arguments are not yet supported",
+          diag::UnsupportedCategory::kFeature);
+    }
+
+    const mir::TypeId formal_type = unit_state.TranslateType(
+        decl.body.GetProceduralVar(decl.params[i].var).type);
+    auto actual_or = LowerExpr(
+        unit_state, scope_state, proc_state, wrapper, hir_proc, hir_arg);
+    if (!actual_or) return std::unexpected(std::move(actual_or.error()));
+    const mir::ExprId actual_id = wrapper.AddExpr(*std::move(actual_or));
+
+    // `output` enters the body default-initialized (LRM 13.3.2); `inout`
+    // enters with the actual's current value copied in.
+    const mir::ExprId init =
+        dir == hir::ParamDirection::kInOut
+            ? actual_id
+            : SynthesizeDefaultValueExpr(unit_state, wrapper, formal_type);
+    const mir::ProceduralVarRef temp = wrapper.AppendLocal(
+        mir::ProceduralVarDecl{
+            .name = "_lyra_arg" + std::to_string(i), .type = formal_type},
+        init);
+    call_args.push_back(
+        wrapper.AddExpr(mir::Expr{.data = temp, .type = formal_type}));
+    writebacks.push_back(
+        {.actual = actual_id, .temp = temp, .type = formal_type});
+  }
+
+  const mir::ExprId call_id = wrapper.AddExpr(
+      mir::Expr{
+          .data =
+              mir::CallExpr{
+                  .callee = scope_state.TranslateStructuralSubroutine(
+                      callee_ref.hops, callee_ref.subroutine),
+                  .arguments = std::move(call_args)},
+          .type = result_type});
+
+  if (assign_target.has_value()) {
+    auto lhs_or = LowerExpr(
+        unit_state, scope_state, proc_state, wrapper, hir_proc,
+        hir_proc.exprs.at(assign_target->value));
+    if (!lhs_or) return std::unexpected(std::move(lhs_or.error()));
+    const mir::ExprId lhs_id = wrapper.AddExpr(*std::move(lhs_or));
+    const mir::ExprId assign_id = wrapper.AddExpr(
+        mir::Expr{
+            .data = mir::AssignExpr{.target = lhs_id, .value = call_id},
+            .type = result_type});
+    wrapper.AppendStmt(mir::ExprStmt{.expr = assign_id});
+  } else {
+    wrapper.AppendStmt(mir::ExprStmt{.expr = call_id});
+  }
+
+  for (const auto& wb : writebacks) {
+    const mir::ExprId temp_read =
+        wrapper.AddExpr(mir::Expr{.data = wb.temp, .type = wb.type});
+    const mir::ExprId copy_out = wrapper.AddExpr(
+        mir::Expr{
+            .data = mir::AssignExpr{.target = wb.actual, .value = temp_read},
+            .type = wb.type});
+    wrapper.AppendStmt(mir::ExprStmt{.expr = copy_out});
+  }
+
+  std::vector<mir::ProceduralScope> child_scopes;
+  const mir::ProceduralScopeId scope_id =
+      AddChildProceduralScope(child_scopes, wrapper.Finish());
+  return mir::Stmt{
+      .label = stmt.label,
+      .data = mir::BlockStmt{.scope = scope_id},
       .child_procedural_scopes = std::move(child_scopes)};
 }
 
@@ -343,6 +464,34 @@ auto LowerExprStmt(
       return LowerDestructuringAssign(
           unit_state, scope_state, proc_state, hir_proc, stmt, *assign,
           *concat);
+    }
+  }
+
+  // LRM 13.5: a subroutine call with output / inout actuals, in statement
+  // position, desugars to copy-in-copy-out. Two statement shapes carry it:
+  // a bare call (void function / discarded result) and a blocking assignment
+  // whose right side is the call itself (`lhs = f(...)`). A call nested deeper
+  // in an expression is rejected downstream in expression lowering.
+  if (const auto* call = std::get_if<hir::CallExpr>(&inner.data)) {
+    if (const auto* decl = SubroutineWithWritebacks(scope_state, *call)) {
+      return LowerSubroutineCallWithWritebacks(
+          unit_state, scope_state, proc_state, hir_proc, stmt, inner.span,
+          *call, std::get<hir::StructuralSubroutineRef>(call->callee), *decl,
+          std::nullopt, unit_state.TranslateType(inner.type));
+    }
+  }
+  if (const auto* assign = std::get_if<hir::AssignExpr>(&inner.data)) {
+    if (!assign->compound_op.has_value() &&
+        assign->kind == hir::AssignKind::kBlocking) {
+      const hir::Expr& rhs = hir_proc.exprs.at(assign->rhs.value);
+      if (const auto* call = std::get_if<hir::CallExpr>(&rhs.data)) {
+        if (const auto* decl = SubroutineWithWritebacks(scope_state, *call)) {
+          return LowerSubroutineCallWithWritebacks(
+              unit_state, scope_state, proc_state, hir_proc, stmt, rhs.span,
+              *call, std::get<hir::StructuralSubroutineRef>(call->callee),
+              *decl, assign->lhs, unit_state.TranslateType(rhs.type));
+        }
+      }
     }
   }
 
