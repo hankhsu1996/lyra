@@ -19,8 +19,10 @@
 #include "lyra/hir/procedural_body.hpp"
 #include "lyra/lowering/hir_to_mir/lower_expr.hpp"
 #include "lyra/lowering/hir_to_mir/state.hpp"
+#include "lyra/mir/conversion.hpp"
 #include "lyra/mir/expr.hpp"
 #include "lyra/mir/runtime_print.hpp"
+#include "lyra/mir/type.hpp"
 #include "lyra/support/format.hpp"
 
 namespace lyra::lowering::hir_to_mir {
@@ -31,35 +33,35 @@ auto SpecCharFor(support::FormatDirectiveKind k) -> std::string_view {
   switch (k) {
     case support::FormatDirectiveKind::kTime:
       return "t";
-    case support::FormatDirectiveKind::kChar:
-      return "c";
     default:
       return "?";
   }
 }
 
-auto ToMirFormatKind(support::FormatDirectiveKind k) -> mir::FormatKind {
+auto ToValueFormatKind(support::FormatDirectiveKind k) -> value::FormatKind {
   switch (k) {
     case support::FormatDirectiveKind::kDecimal:
-      return mir::FormatKind::kDecimal;
+      return value::FormatKind::kDecimal;
     case support::FormatDirectiveKind::kHex:
-      return mir::FormatKind::kHex;
+      return value::FormatKind::kHex;
     case support::FormatDirectiveKind::kBinary:
-      return mir::FormatKind::kBinary;
+      return value::FormatKind::kBinary;
     case support::FormatDirectiveKind::kOctal:
-      return mir::FormatKind::kOctal;
+      return value::FormatKind::kOctal;
     case support::FormatDirectiveKind::kString:
-      return mir::FormatKind::kString;
+      return value::FormatKind::kString;
+    case support::FormatDirectiveKind::kChar:
+      return value::FormatKind::kChar;
     case support::FormatDirectiveKind::kRealDecimal:
-      return mir::FormatKind::kRealDecimal;
+      return value::FormatKind::kRealDecimal;
     case support::FormatDirectiveKind::kRealExponential:
-      return mir::FormatKind::kRealExponential;
+      return value::FormatKind::kRealExponential;
     case support::FormatDirectiveKind::kRealGeneral:
-      return mir::FormatKind::kRealGeneral;
+      return value::FormatKind::kRealGeneral;
     case support::FormatDirectiveKind::kAssignmentPattern:
-      return mir::FormatKind::kAssignmentPattern;
+      return value::FormatKind::kAssignmentPattern;
     default:
-      throw InternalError("ToMirFormatKind: not a value-format kind");
+      throw InternalError("ToValueFormatKind: not a value-format kind");
   }
 }
 
@@ -83,8 +85,28 @@ auto BuildPrintValueItem(
       unit_state, scope_state, proc_state, proc_scope_state, hir_proc,
       hir_proc.exprs.at(hir_arg.value));
   if (!lowered_or) return std::unexpected(std::move(lowered_or.error()));
-  const mir::TypeId type = lowered_or->type;
-  const mir::ExprId value = proc_scope_state.AddExpr(*std::move(lowered_or));
+  mir::Expr lowered = *std::move(lowered_or);
+
+  // %s consumes a runtime String. Slang types SV string literals as packed
+  // bit vectors (LRM 5.9), so a `$display("%s", "hello")` arg arrives here
+  // with a packed-array type. Insert an implicit ConversionExpr targeting
+  // StringType so the backend's RuntimePrintValue rendering stays purely
+  // type-driven. Non-literal integral operands also flow through this same
+  // path -- when slang's bit-vector-to-string conversion lands at the
+  // operand level, this becomes a no-op; until then the conversion is the
+  // single chokepoint that records the semantic.
+  if (spec.kind == value::FormatKind::kString &&
+      unit_state.GetType(lowered.type).Kind() != mir::TypeKind::kString) {
+    const mir::ExprId inner = proc_scope_state.AddExpr(std::move(lowered));
+    lowered = mir::Expr{
+        .data =
+            mir::ConversionExpr{
+                .operand = inner, .kind = mir::ConversionKind::kImplicit},
+        .type = unit_state.Builtins().string};
+  }
+
+  const mir::TypeId type = lowered.type;
+  const mir::ExprId value = proc_scope_state.AddExpr(std::move(lowered));
   return mir::RuntimePrintValue(value, type, std::move(spec));
 }
 
@@ -108,7 +130,6 @@ auto BuildPrintItemFromDirective(
           diag::UnsupportedCategory::kFeature);
 
     case support::FormatDirectiveKind::kTime:
-    case support::FormatDirectiveKind::kChar:
       return diag::Unsupported(
           span, diag::DiagCode::kFormatSpecifierNotImplemented,
           std::format(
@@ -116,6 +137,7 @@ auto BuildPrintItemFromDirective(
               SpecCharFor(directive.kind)),
           diag::UnsupportedCategory::kFeature);
 
+    case support::FormatDirectiveKind::kChar:
     case support::FormatDirectiveKind::kDecimal:
     case support::FormatDirectiveKind::kHex:
     case support::FormatDirectiveKind::kBinary:
@@ -135,7 +157,7 @@ auto BuildPrintItemFromDirective(
           unit_state, scope_state, proc_state, proc_scope_state, hir_proc,
           hir_arg,
           mir::FormatSpec(
-              ToMirFormatKind(directive.kind),
+              ToValueFormatKind(directive.kind),
               ToMirFormatModifiers(directive.modifiers)));
     }
   }
@@ -198,7 +220,7 @@ auto BuildRuntimePrintItemsFromCallArgs(
     auto item_or = BuildPrintValueItem(
         unit_state, scope_state, proc_state, proc_scope_state, hir_proc,
         args[cursor],
-        mir::FormatSpec(mir::FormatKind::kDecimal, mir::FormatModifiers{}));
+        mir::FormatSpec(value::FormatKind::kDecimal, mir::FormatModifiers{}));
     if (!item_or) return std::unexpected(std::move(item_or.error()));
     items.push_back(*std::move(item_or));
     ++cursor;

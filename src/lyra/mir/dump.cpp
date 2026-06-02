@@ -930,7 +930,7 @@ class MirDumper {
     Line(
         std::format(
             "RuntimePrintCall kind={} descriptor={} items={}",
-            FormatMirPrintKind(call.kind),
+            DumpPrintKindLabel(call.kind),
             call.descriptor.has_value()
                 ? std::format("Expr[{}]", call.descriptor->value)
                 : std::string("stdout"),
@@ -979,7 +979,7 @@ class MirDumper {
                       "zero_pad={}, "
                       "left_align={}, timeunit_power={})",
                       i, v.value.value, v.type.value,
-                      FormatMirFormatKind(v.spec.kind), v.spec.modifiers.width,
+                      DumpFormatKindLabel(v.spec.kind), v.spec.modifiers.width,
                       v.spec.modifiers.precision,
                       v.spec.modifiers.zero_pad ? "true" : "false",
                       v.spec.modifiers.left_align ? "true" : "false",
@@ -1008,42 +1008,44 @@ class MirDumper {
     throw InternalError("FormatMirDiagnosticSeverity: unknown severity");
   }
 
-  static auto FormatMirPrintKind(PrintKind k) -> std::string_view {
+  static auto DumpPrintKindLabel(value::PrintKind k) -> std::string_view {
     switch (k) {
-      case PrintKind::kDisplay:
+      case value::PrintKind::kDisplay:
         return "kDisplay";
-      case PrintKind::kWrite:
+      case value::PrintKind::kWrite:
         return "kWrite";
-      case PrintKind::kFDisplay:
+      case value::PrintKind::kFDisplay:
         return "kFDisplay";
-      case PrintKind::kFWrite:
+      case value::PrintKind::kFWrite:
         return "kFWrite";
     }
-    throw InternalError("FormatMirPrintKind: unknown PrintKind");
+    throw InternalError("DumpPrintKindLabel: unknown value::PrintKind");
   }
 
-  static auto FormatMirFormatKind(FormatKind k) -> std::string_view {
+  static auto DumpFormatKindLabel(value::FormatKind k) -> std::string_view {
     switch (k) {
-      case FormatKind::kDecimal:
+      case value::FormatKind::kDecimal:
         return "kDecimal";
-      case FormatKind::kHex:
+      case value::FormatKind::kHex:
         return "kHex";
-      case FormatKind::kBinary:
+      case value::FormatKind::kBinary:
         return "kBinary";
-      case FormatKind::kOctal:
+      case value::FormatKind::kOctal:
         return "kOctal";
-      case FormatKind::kString:
+      case value::FormatKind::kString:
         return "kString";
-      case FormatKind::kRealDecimal:
+      case value::FormatKind::kChar:
+        return "kChar";
+      case value::FormatKind::kRealDecimal:
         return "kRealDecimal";
-      case FormatKind::kRealExponential:
+      case value::FormatKind::kRealExponential:
         return "kRealExponential";
-      case FormatKind::kRealGeneral:
+      case value::FormatKind::kRealGeneral:
         return "kRealGeneral";
-      case FormatKind::kAssignmentPattern:
+      case value::FormatKind::kAssignmentPattern:
         return "kAssignmentPattern";
     }
-    throw InternalError("FormatMirFormatKind: unknown FormatKind");
+    throw InternalError("DumpFormatKindLabel: unknown value::FormatKind");
   }
 
   static auto FormatStringLiteral(std::string_view s) -> std::string {

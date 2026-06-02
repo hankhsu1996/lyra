@@ -1,0 +1,12 @@
+id: cpp.display_c_low_byte
+tags: [cpp_run]
+input:
+  command: [run, cpp]
+  project: false
+  top: Top
+  files: [main.sv]
+expect:
+  exit: 0
+  stdout:
+    exact: |
+      rval has e ascii character value

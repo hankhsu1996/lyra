@@ -1,0 +1,14 @@
+id: cpp.display_c_ascii
+tags: [cpp_run]
+input:
+  command: [run, cpp]
+  project: false
+  top: Top
+  files: [main.sv]
+expect:
+  exit: 0
+  stdout:
+    exact: |
+      A
+      a
+      0
