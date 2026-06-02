@@ -8,6 +8,7 @@
 #include "lyra/hir/procedural_body.hpp"
 #include "lyra/hir/subroutine_ref.hpp"
 #include "lyra/lowering/hir_to_mir/lower_diagnostic.hpp"
+#include "lyra/lowering/hir_to_mir/lower_file_io.hpp"
 #include "lyra/lowering/hir_to_mir/lower_finish.hpp"
 #include "lyra/lowering/hir_to_mir/lower_print.hpp"
 #include "lyra/lowering/hir_to_mir/state.hpp"
@@ -43,6 +44,12 @@ auto LowerSystemSubroutineCall(
             return LowerDiagnosticSystemSubroutineCall(
                 unit_state, scope_state, proc_state, proc_scope_state, hir_proc,
                 call, desc, diag_info, span);
+          },
+          [&](const support::FileIOSystemSubroutineInfo& file_io)
+              -> diag::Result<mir::Expr> {
+            return LowerFileIOSystemSubroutineCall(
+                unit_state, scope_state, proc_state, proc_scope_state, hir_proc,
+                call, desc, file_io, span);
           },
       },
       desc.semantic);

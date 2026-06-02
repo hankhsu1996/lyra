@@ -32,6 +32,7 @@ enum class SystemSubroutineKind : std::uint8_t {
 
 enum class ReturnConvention : std::uint8_t {
   kVoid,
+  kInt32,
 };
 
 struct ArgCountPolicy {
@@ -81,9 +82,18 @@ struct DiagnosticSystemSubroutineInfo {
   DiagnosticSeverityKind severity;
 };
 
+enum class FileIOKind : std::uint8_t {
+  kOpen,
+  kClose,
+};
+
+struct FileIOSystemSubroutineInfo {
+  FileIOKind kind;
+};
+
 using SystemSubroutineSemantic = std::variant<
     PrintSystemSubroutineInfo, TerminationSystemSubroutineInfo,
-    DiagnosticSystemSubroutineInfo>;
+    DiagnosticSystemSubroutineInfo, FileIOSystemSubroutineInfo>;
 
 struct SystemSubroutineDesc {
   SystemSubroutineId id;
@@ -114,6 +124,48 @@ inline constexpr std::array kSystemSubroutines = {
     },
     SystemSubroutineDesc{
         .id = SystemSubroutineId{1},
+        .name = "$displayb",
+        .origin = SystemSubroutineOrigin::kLanguageBuiltin,
+        .kind = SystemSubroutineKind::kTask,
+        .result_conv = ReturnConvention::kVoid,
+        .arg_policy = ArgCountPolicy{.min_args = 0, .max_args = 255},
+        .semantic =
+            PrintSystemSubroutineInfo{
+                .radix = PrintRadix::kBinary,
+                .append_newline = true,
+                .is_strobe = false,
+                .sink_kind = PrintSinkKind::kStdout},
+    },
+    SystemSubroutineDesc{
+        .id = SystemSubroutineId{2},
+        .name = "$displayh",
+        .origin = SystemSubroutineOrigin::kLanguageBuiltin,
+        .kind = SystemSubroutineKind::kTask,
+        .result_conv = ReturnConvention::kVoid,
+        .arg_policy = ArgCountPolicy{.min_args = 0, .max_args = 255},
+        .semantic =
+            PrintSystemSubroutineInfo{
+                .radix = PrintRadix::kHex,
+                .append_newline = true,
+                .is_strobe = false,
+                .sink_kind = PrintSinkKind::kStdout},
+    },
+    SystemSubroutineDesc{
+        .id = SystemSubroutineId{3},
+        .name = "$displayo",
+        .origin = SystemSubroutineOrigin::kLanguageBuiltin,
+        .kind = SystemSubroutineKind::kTask,
+        .result_conv = ReturnConvention::kVoid,
+        .arg_policy = ArgCountPolicy{.min_args = 0, .max_args = 255},
+        .semantic =
+            PrintSystemSubroutineInfo{
+                .radix = PrintRadix::kOctal,
+                .append_newline = true,
+                .is_strobe = false,
+                .sink_kind = PrintSinkKind::kStdout},
+    },
+    SystemSubroutineDesc{
+        .id = SystemSubroutineId{4},
         .name = "$write",
         .origin = SystemSubroutineOrigin::kLanguageBuiltin,
         .kind = SystemSubroutineKind::kTask,
@@ -127,7 +179,49 @@ inline constexpr std::array kSystemSubroutines = {
                 .sink_kind = PrintSinkKind::kStdout},
     },
     SystemSubroutineDesc{
-        .id = SystemSubroutineId{2},
+        .id = SystemSubroutineId{5},
+        .name = "$writeb",
+        .origin = SystemSubroutineOrigin::kLanguageBuiltin,
+        .kind = SystemSubroutineKind::kTask,
+        .result_conv = ReturnConvention::kVoid,
+        .arg_policy = ArgCountPolicy{.min_args = 0, .max_args = 255},
+        .semantic =
+            PrintSystemSubroutineInfo{
+                .radix = PrintRadix::kBinary,
+                .append_newline = false,
+                .is_strobe = false,
+                .sink_kind = PrintSinkKind::kStdout},
+    },
+    SystemSubroutineDesc{
+        .id = SystemSubroutineId{6},
+        .name = "$writeh",
+        .origin = SystemSubroutineOrigin::kLanguageBuiltin,
+        .kind = SystemSubroutineKind::kTask,
+        .result_conv = ReturnConvention::kVoid,
+        .arg_policy = ArgCountPolicy{.min_args = 0, .max_args = 255},
+        .semantic =
+            PrintSystemSubroutineInfo{
+                .radix = PrintRadix::kHex,
+                .append_newline = false,
+                .is_strobe = false,
+                .sink_kind = PrintSinkKind::kStdout},
+    },
+    SystemSubroutineDesc{
+        .id = SystemSubroutineId{7},
+        .name = "$writeo",
+        .origin = SystemSubroutineOrigin::kLanguageBuiltin,
+        .kind = SystemSubroutineKind::kTask,
+        .result_conv = ReturnConvention::kVoid,
+        .arg_policy = ArgCountPolicy{.min_args = 0, .max_args = 255},
+        .semantic =
+            PrintSystemSubroutineInfo{
+                .radix = PrintRadix::kOctal,
+                .append_newline = false,
+                .is_strobe = false,
+                .sink_kind = PrintSinkKind::kStdout},
+    },
+    SystemSubroutineDesc{
+        .id = SystemSubroutineId{8},
         .name = "$fdisplay",
         .origin = SystemSubroutineOrigin::kLanguageBuiltin,
         .kind = SystemSubroutineKind::kTask,
@@ -141,7 +235,49 @@ inline constexpr std::array kSystemSubroutines = {
                 .sink_kind = PrintSinkKind::kFile},
     },
     SystemSubroutineDesc{
-        .id = SystemSubroutineId{3},
+        .id = SystemSubroutineId{9},
+        .name = "$fdisplayb",
+        .origin = SystemSubroutineOrigin::kLanguageBuiltin,
+        .kind = SystemSubroutineKind::kTask,
+        .result_conv = ReturnConvention::kVoid,
+        .arg_policy = ArgCountPolicy{.min_args = 1, .max_args = 255},
+        .semantic =
+            PrintSystemSubroutineInfo{
+                .radix = PrintRadix::kBinary,
+                .append_newline = true,
+                .is_strobe = false,
+                .sink_kind = PrintSinkKind::kFile},
+    },
+    SystemSubroutineDesc{
+        .id = SystemSubroutineId{10},
+        .name = "$fdisplayh",
+        .origin = SystemSubroutineOrigin::kLanguageBuiltin,
+        .kind = SystemSubroutineKind::kTask,
+        .result_conv = ReturnConvention::kVoid,
+        .arg_policy = ArgCountPolicy{.min_args = 1, .max_args = 255},
+        .semantic =
+            PrintSystemSubroutineInfo{
+                .radix = PrintRadix::kHex,
+                .append_newline = true,
+                .is_strobe = false,
+                .sink_kind = PrintSinkKind::kFile},
+    },
+    SystemSubroutineDesc{
+        .id = SystemSubroutineId{11},
+        .name = "$fdisplayo",
+        .origin = SystemSubroutineOrigin::kLanguageBuiltin,
+        .kind = SystemSubroutineKind::kTask,
+        .result_conv = ReturnConvention::kVoid,
+        .arg_policy = ArgCountPolicy{.min_args = 1, .max_args = 255},
+        .semantic =
+            PrintSystemSubroutineInfo{
+                .radix = PrintRadix::kOctal,
+                .append_newline = true,
+                .is_strobe = false,
+                .sink_kind = PrintSinkKind::kFile},
+    },
+    SystemSubroutineDesc{
+        .id = SystemSubroutineId{12},
         .name = "$fwrite",
         .origin = SystemSubroutineOrigin::kLanguageBuiltin,
         .kind = SystemSubroutineKind::kTask,
@@ -155,7 +291,49 @@ inline constexpr std::array kSystemSubroutines = {
                 .sink_kind = PrintSinkKind::kFile},
     },
     SystemSubroutineDesc{
-        .id = SystemSubroutineId{4},
+        .id = SystemSubroutineId{13},
+        .name = "$fwriteb",
+        .origin = SystemSubroutineOrigin::kLanguageBuiltin,
+        .kind = SystemSubroutineKind::kTask,
+        .result_conv = ReturnConvention::kVoid,
+        .arg_policy = ArgCountPolicy{.min_args = 1, .max_args = 255},
+        .semantic =
+            PrintSystemSubroutineInfo{
+                .radix = PrintRadix::kBinary,
+                .append_newline = false,
+                .is_strobe = false,
+                .sink_kind = PrintSinkKind::kFile},
+    },
+    SystemSubroutineDesc{
+        .id = SystemSubroutineId{14},
+        .name = "$fwriteh",
+        .origin = SystemSubroutineOrigin::kLanguageBuiltin,
+        .kind = SystemSubroutineKind::kTask,
+        .result_conv = ReturnConvention::kVoid,
+        .arg_policy = ArgCountPolicy{.min_args = 1, .max_args = 255},
+        .semantic =
+            PrintSystemSubroutineInfo{
+                .radix = PrintRadix::kHex,
+                .append_newline = false,
+                .is_strobe = false,
+                .sink_kind = PrintSinkKind::kFile},
+    },
+    SystemSubroutineDesc{
+        .id = SystemSubroutineId{15},
+        .name = "$fwriteo",
+        .origin = SystemSubroutineOrigin::kLanguageBuiltin,
+        .kind = SystemSubroutineKind::kTask,
+        .result_conv = ReturnConvention::kVoid,
+        .arg_policy = ArgCountPolicy{.min_args = 1, .max_args = 255},
+        .semantic =
+            PrintSystemSubroutineInfo{
+                .radix = PrintRadix::kOctal,
+                .append_newline = false,
+                .is_strobe = false,
+                .sink_kind = PrintSinkKind::kFile},
+    },
+    SystemSubroutineDesc{
+        .id = SystemSubroutineId{16},
         .name = "$finish",
         .origin = SystemSubroutineOrigin::kLanguageBuiltin,
         .kind = SystemSubroutineKind::kTask,
@@ -166,7 +344,7 @@ inline constexpr std::array kSystemSubroutines = {
                 .kind = TerminationKind::kFinish, .default_level = 1},
     },
     SystemSubroutineDesc{
-        .id = SystemSubroutineId{5},
+        .id = SystemSubroutineId{17},
         .name = "$info",
         .origin = SystemSubroutineOrigin::kLanguageBuiltin,
         .kind = SystemSubroutineKind::kFunction,
@@ -177,7 +355,7 @@ inline constexpr std::array kSystemSubroutines = {
                 .severity = DiagnosticSeverityKind::kInfo},
     },
     SystemSubroutineDesc{
-        .id = SystemSubroutineId{6},
+        .id = SystemSubroutineId{18},
         .name = "$warning",
         .origin = SystemSubroutineOrigin::kLanguageBuiltin,
         .kind = SystemSubroutineKind::kFunction,
@@ -188,7 +366,7 @@ inline constexpr std::array kSystemSubroutines = {
                 .severity = DiagnosticSeverityKind::kWarning},
     },
     SystemSubroutineDesc{
-        .id = SystemSubroutineId{7},
+        .id = SystemSubroutineId{19},
         .name = "$error",
         .origin = SystemSubroutineOrigin::kLanguageBuiltin,
         .kind = SystemSubroutineKind::kFunction,
@@ -197,6 +375,24 @@ inline constexpr std::array kSystemSubroutines = {
         .semantic =
             DiagnosticSystemSubroutineInfo{
                 .severity = DiagnosticSeverityKind::kError},
+    },
+    SystemSubroutineDesc{
+        .id = SystemSubroutineId{20},
+        .name = "$fopen",
+        .origin = SystemSubroutineOrigin::kLanguageBuiltin,
+        .kind = SystemSubroutineKind::kFunction,
+        .result_conv = ReturnConvention::kInt32,
+        .arg_policy = ArgCountPolicy{.min_args = 1, .max_args = 2},
+        .semantic = FileIOSystemSubroutineInfo{.kind = FileIOKind::kOpen},
+    },
+    SystemSubroutineDesc{
+        .id = SystemSubroutineId{21},
+        .name = "$fclose",
+        .origin = SystemSubroutineOrigin::kLanguageBuiltin,
+        .kind = SystemSubroutineKind::kFunction,
+        .result_conv = ReturnConvention::kVoid,
+        .arg_policy = ArgCountPolicy{.min_args = 1, .max_args = 1},
+        .semantic = FileIOSystemSubroutineInfo{.kind = FileIOKind::kClose},
     },
 };
 
@@ -230,6 +426,11 @@ inline constexpr std::array kSystemSubroutines = {
 [[nodiscard]] inline auto GetDiagnosticInfo(const SystemSubroutineDesc& desc)
     -> const DiagnosticSystemSubroutineInfo* {
   return std::get_if<DiagnosticSystemSubroutineInfo>(&desc.semantic);
+}
+
+[[nodiscard]] inline auto GetFileIOInfo(const SystemSubroutineDesc& desc)
+    -> const FileIOSystemSubroutineInfo* {
+  return std::get_if<FileIOSystemSubroutineInfo>(&desc.semantic);
 }
 
 }  // namespace lyra::support

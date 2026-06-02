@@ -73,6 +73,12 @@ class UnitLoweringState {
     // stable id rather than re-adding entries on demand. Extend this section
     // when more synthesized types accumulate (1-bit logic, etc.).
     void_type_id_ = AddType(hir::TypeData{hir::VoidType{}});
+    int32_type_id_ = AddType(
+        hir::TypeData{hir::PackedArrayType{
+            .atom = hir::BitAtom::kBit,
+            .signedness = hir::Signedness::kSigned,
+            .dims = {hir::PackedRange{.left = 31, .right = 0}},
+            .form = hir::PackedArrayForm::kInt}});
   }
 
   // Canonical id for the synthesized `void` type (system-call sinks, lvalue
@@ -80,6 +86,13 @@ class UnitLoweringState {
   // unit never holds more than one VoidType entry.
   [[nodiscard]] auto VoidTypeId() const -> hir::TypeId {
     return void_type_id_;
+  }
+
+  // Canonical id for the synthesized 32-bit signed packed `int`. Used by
+  // system functions whose return is fixed at int32 by the language
+  // (`$fopen` per LRM 21.3.1, etc.) rather than by a slang-derived type.
+  [[nodiscard]] auto Int32TypeId() const -> hir::TypeId {
+    return int32_type_id_;
   }
 
   [[nodiscard]] auto HirUnit() const -> const hir::ModuleUnit& {
@@ -189,6 +202,7 @@ class UnitLoweringState {
   LoopVarBindings loop_var_bindings_;
   std::unordered_map<const slang::ast::Type*, hir::TypeId> type_cache_;
   hir::TypeId void_type_id_{};
+  hir::TypeId int32_type_id_{};
 };
 
 class ScopeStack {

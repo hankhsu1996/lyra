@@ -1,0 +1,20 @@
+id: cpp.display_radix_variants
+tags: [cpp_run]
+input:
+  command: [run, cpp]
+  project: false
+  top: Top
+  files: [main.sv]
+expect:
+  exit: 0
+  stdout:
+    exact: |
+      171
+      10101011
+      ab
+      253
+      decimal via %d in $displayb: 171
+      binary via %b in $displayh: 1010
+      10xz
+      0x
+      3z

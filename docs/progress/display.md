@@ -17,8 +17,15 @@ since the test harness can only probe a variable whose type has an implemented s
       under `datatypes.md` Real C1.
 - [ ] DI4 -- `%m` (hierarchical name). Requires runtime exposure of the current scope's hierarchical
       path; shares its mechanism with archive item `hierarchy/refs`.
-- [ ] DI5 -- File sink (`$fdisplay`, `$fwrite`). Requires file-descriptor runtime state (`$fopen`
-      returning an MCD / FD, `$fclose`) and per-descriptor output dispatch.
+- [x] DI5 -- File sink. Twelve `$display` / `$write` / `$fdisplay` / `$fwrite` variants
+      (default-decimal plus `b` / `h` / `o` radix variants per LRM 21.2.1.1); descriptors per LRM
+      21.3.1 (MCD with bit 0 = stdout, FD with bit 31 set, OR-able MCDs that fan output across
+      sinks, channel reuse on close); `$fopen` / `$fclose` with the full mode-string family (`r` /
+      `rb` / `w` / `wb` / `a` / `ab` plus their `+` update variants). Read-mode `$fopen` opens a
+      real `FILE*` so the FD shape is genuine even though the read tasks themselves are out of
+      scope. The test framework gained `expect.files` with strict matching (any undeclared file in
+      the per-case sandbox fails the case) and per-case sandbox cwd so `$fopen("foo.txt")` writes
+      inside the sandbox.
 - [ ] DI6 -- `$strobe` postponed-region semantics. Strobe must defer its read-and-print to the
       postponed region of the same time slot (LRM 21.2).
 - [ ] DI7 -- `%p` / `%0p` assignment-pattern format for aggregate types (LRM 21.2.1.6). Initial
@@ -32,6 +39,13 @@ since the test harness can only probe a variable whose type has an implemented s
 
 - Format-string parse diagnostics (trailing `%`, missing specifier, width overflow, unknown
   specifier) -- already implemented, not gaps.
-- `$monitor`. Not modelled today; add an entry when a concrete consumer needs it.
+- `$monitor` / `$fmonitor`. Not modelled today; add an entry when a concrete consumer needs it.
+- `$strobe` / `$fstrobe` radix variants. The radix-dispatch mechanism is shared with DI5 but
+  strobe's "drain at end of time slot" semantic waits on DI6 (postponed region).
+- File read tasks (`$fgetc` / `$ungetc` / `$fgets` / `$fread` / `$fscanf` / `$fseek` / `$rewind` /
+  `$ftell` / `$feof` / `$ferror`) and `$fflush`. Independent workstream; `$fopen("...", "r")`
+  returns a valid FD today but the read tasks themselves are unimplemented.
+- `$sformat` / `$sformatf` / `$swrite` family (formatting into a string variable). Independent
+  feature.
 - `%u` / `%z` (binary-packed unsigned / signed) and `%v` (strength). Not on the immediate roadmap;
   add entries when concrete consumers appear.

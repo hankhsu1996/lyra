@@ -182,12 +182,6 @@ constexpr std::array kEntries{
             .category = std::nullopt,
             .name = "display_missing_arg"}},
     std::pair{
-        DiagCode::kFileDisplayNotImplemented,
-        DiagCodeInfo{
-            .kind = DiagKind::kUnsupported,
-            .category = UnsupportedCategory::kFeature,
-            .name = "file_display_not_implemented"}},
-    std::pair{
         DiagCode::kFormatModulePathNotImplemented,
         DiagCodeInfo{
             .kind = DiagKind::kUnsupported,

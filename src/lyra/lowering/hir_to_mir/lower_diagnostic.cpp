@@ -44,9 +44,18 @@ auto LowerDiagnosticSystemSubroutineCall(
     const support::DiagnosticSystemSubroutineInfo& info, diag::SourceSpan span)
     -> diag::Result<mir::Expr> {
   (void)desc;
+  // $info/$warning/$error use display-style format (LRM 20.10) with decimal
+  // as the bare-arg default radix; sink/newline fields are not consulted by
+  // the item builder for diagnostic calls (they drive separate Diagnostic
+  // dispatch downstream).
+  constexpr support::PrintSystemSubroutineInfo kDiagnosticPrintInfo{
+      .radix = support::PrintRadix::kDecimal,
+      .append_newline = true,
+      .is_strobe = false,
+      .sink_kind = support::PrintSinkKind::kStdout};
   auto items_or = BuildRuntimePrintItemsFromCallArgs(
       unit_state, scope_state, proc_state, proc_scope_state, hir_proc, call,
-      span);
+      kDiagnosticPrintInfo, 0, span);
   if (!items_or) return std::unexpected(std::move(items_or.error()));
 
   return mir::Expr{

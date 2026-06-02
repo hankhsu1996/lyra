@@ -10,6 +10,7 @@ namespace lyra::runtime {
 
 class StreamDispatcher;
 class DiagnosticDispatcher;
+class FileTable;
 class Engine;
 class Observable;
 class RuntimeProcess;
@@ -18,8 +19,11 @@ class RuntimeServices {
  public:
   RuntimeServices(
       StreamDispatcher& stream, DiagnosticDispatcher& diagnostic,
-      Engine& engine)
-      : stream_(&stream), diagnostic_(&diagnostic), engine_(&engine) {
+      FileTable& files, Engine& engine)
+      : stream_(&stream),
+        diagnostic_(&diagnostic),
+        files_(&files),
+        engine_(&engine) {
   }
 
   auto Stream() -> StreamDispatcher& {
@@ -34,6 +38,13 @@ class RuntimeServices {
       throw InternalError("RuntimeServices has no DiagnosticDispatcher");
     }
     return *diagnostic_;
+  }
+
+  auto Files() -> FileTable& {
+    if (files_ == nullptr) {
+      throw InternalError("RuntimeServices has no FileTable");
+    }
+    return *files_;
   }
 
   void SubmitNba(std::function<void()> closure);
@@ -63,6 +74,7 @@ class RuntimeServices {
  private:
   StreamDispatcher* stream_ = nullptr;
   DiagnosticDispatcher* diagnostic_ = nullptr;
+  FileTable* files_ = nullptr;
   Engine* engine_ = nullptr;
 };
 

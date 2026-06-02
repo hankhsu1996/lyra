@@ -183,17 +183,32 @@ auto TryGetHirStringLiteral(
 
 }  // namespace
 
+auto RadixToFormatKind(support::PrintRadix r) -> value::FormatKind {
+  switch (r) {
+    case support::PrintRadix::kDecimal:
+      return value::FormatKind::kDecimal;
+    case support::PrintRadix::kBinary:
+      return value::FormatKind::kBinary;
+    case support::PrintRadix::kOctal:
+      return value::FormatKind::kOctal;
+    case support::PrintRadix::kHex:
+      return value::FormatKind::kHex;
+  }
+  throw InternalError("RadixToFormatKind: unknown PrintRadix");
+}
+
 auto BuildRuntimePrintItemsFromCallArgs(
     const UnitLoweringState& unit_state,
     const StructuralScopeLoweringState& scope_state,
     const ProcessLoweringState& proc_state,
     ProceduralScopeLoweringState& proc_scope_state,
     const hir::ProceduralBody& hir_proc, const hir::CallExpr& call,
+    const support::PrintSystemSubroutineInfo& info, std::size_t arg_offset,
     diag::SourceSpan call_span)
     -> diag::Result<std::vector<mir::RuntimePrintItem>> {
   std::vector<mir::RuntimePrintItem> items;
   const auto& args = call.arguments;
-  std::size_t cursor = 0;
+  std::size_t cursor = arg_offset;
 
   if (cursor < args.size()) {
     if (auto literal = TryGetHirStringLiteral(hir_proc, args[cursor])) {
@@ -213,14 +228,14 @@ auto BuildRuntimePrintItemsFromCallArgs(
     }
   }
 
+  const value::FormatKind default_kind = RadixToFormatKind(info.radix);
   while (cursor < args.size()) {
     if (!items.empty()) {
       items.emplace_back(mir::RuntimePrintLiteral{.text = " "});
     }
     auto item_or = BuildPrintValueItem(
         unit_state, scope_state, proc_state, proc_scope_state, hir_proc,
-        args[cursor],
-        mir::FormatSpec(value::FormatKind::kDecimal, mir::FormatModifiers{}));
+        args[cursor], mir::FormatSpec(default_kind, mir::FormatModifiers{}));
     if (!item_or) return std::unexpected(std::move(item_or.error()));
     items.push_back(*std::move(item_or));
     ++cursor;
