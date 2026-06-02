@@ -13,9 +13,9 @@ Done when:
 
 ## Actionable
 
-U1..U4 are done. U5..U7 cover the remaining LRM 7.4.6 surface -- array equality, constant-width
-slice -- plus an OOB / range follow-up. U8 records a cross-cutting observability gap surfaced by the
-unpacked-vs-packed asymmetry; the implementation lives under `refactor.md` R2.
+U1..U5 are done. U6..U7 cover the remaining LRM 7.4.6 surface -- constant-width slice -- plus an OOB
+/ range follow-up. U8 records a cross-cutting observability gap surfaced by the unpacked-vs-packed
+asymmetry; the implementation lives under `refactor.md` R2.
 
 | Item | Status                                                        |
 | ---- | ------------------------------------------------------------- |
@@ -23,7 +23,7 @@ unpacked-vs-packed asymmetry; the implementation lives under `refactor.md` R2.
 | U2   | Done: element write (blocking, NBA, compound)                 |
 | U3   | Done: structured and replicated assignment patterns           |
 | U4   | Done: whole-array assignment (blocking and NBA)               |
-| U5   | Open: array equality and inequality                           |
+| U5   | Done: array equality, inequality, case-equality               |
 | U6   | Open: constant-width slice (read and write)                   |
 | U7   | Open: OOB element access and ascending / negative-base ranges |
 | U8   | Open: unpacked vars participate in value-change observability |
@@ -65,9 +65,12 @@ The numeric IDs are stable references and do not imply execution order beyond U1
 
 ### Array equality
 
-- [ ] U5 -- Array equality `A == B` and inequality `A != B` over compatible fixed-size unpacked
-      arrays (LRM 7.4.6). Result is a 1-bit value reduced from the per-element comparisons; X / Z
-      propagation follows the element type's equality semantics. Equality on slices of an array
+- [x] U5 -- Array equality `A == B` and inequality `A != B`, plus case-equality `A === B` and
+      case-inequality `A !== B`, over compatible fixed-size unpacked arrays (LRM 7.4.6 + 11.4.5).
+      Result is a 1-bit value reduced from the per-element comparisons. For `==` / `!=`, X / Z in
+      any element comparison propagates to the aggregate result per LRM 11.4.5; for `===` / `!==`, X
+      / Z are matched as values and the result is always 0 or 1. Multi-dimensional aggregates
+      compose through the recursive element type. Equality on slices of an array
       (`A[i +: c] != B[j +: c]`, also LRM 7.4.6) follows once U6 lands.
 
 ### Constant-width slice

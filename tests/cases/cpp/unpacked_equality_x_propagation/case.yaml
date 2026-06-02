@@ -1,0 +1,12 @@
+id: cpp.unpacked_equality_x_propagation
+tags: [cpp_run]
+input:
+  command: [run, cpp]
+  project: false
+  top: Top
+  files: [main.sv]
+expect:
+  exit: 0
+  variables:
+    eq_with_x: "1'bx"
+    ne_with_x: "1'bx"

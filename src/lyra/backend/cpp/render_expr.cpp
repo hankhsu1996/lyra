@@ -327,6 +327,31 @@ auto RenderBinaryOpReal(
       diag::UnsupportedCategory::kFeature);
 }
 
+// LRM 11.2.2 + 11.4.5: aggregate equality / inequality / case-equality /
+// case-inequality. Slang's binding has already enforced equivalent operand
+// types, so the helper just routes to the matching runtime entry. Relational
+// operators are not defined on aggregate operands.
+auto RenderBinaryOpUnpacked(
+    mir::BinaryOp op, const std::string& lhs, const std::string& rhs)
+    -> diag::Result<std::string> {
+  switch (op) {
+    case mir::BinaryOp::kEquality:
+      return "lyra::value::AggregateEqual(" + lhs + ", " + rhs + ")";
+    case mir::BinaryOp::kInequality:
+      return "lyra::value::AggregateNotEqual(" + lhs + ", " + rhs + ")";
+    case mir::BinaryOp::kCaseEquality:
+      return "lyra::value::AggregateCaseEqual(" + lhs + ", " + rhs + ")";
+    case mir::BinaryOp::kCaseInequality:
+      return "lyra::value::AggregateCaseNotEqual(" + lhs + ", " + rhs + ")";
+    default:
+      break;
+  }
+  return diag::Unsupported(
+      diag::DiagCode::kCppEmitExpressionFormNotImplemented,
+      "binary operator is not legal on aggregate operands per LRM 11.2.2",
+      diag::UnsupportedCategory::kFeature);
+}
+
 auto RenderBinaryOpIntegral(
     mir::BinaryOp op, const std::string& lhs, const std::string& rhs)
     -> diag::Result<std::string> {
@@ -489,6 +514,10 @@ auto RenderBinaryExpr(
       rhs_ty.Kind() == mir::TypeKind::kString) {
     return RenderBinaryOpString(
         b.op, *lhs_or, *rhs_or, ctx.Unit().GetType(expr.type));
+  }
+  if (std::holds_alternative<mir::UnpackedArrayType>(lhs_ty.data) &&
+      std::holds_alternative<mir::UnpackedArrayType>(rhs_ty.data)) {
+    return RenderBinaryOpUnpacked(b.op, *lhs_or, *rhs_or);
   }
   return RenderBinaryOpIntegral(b.op, *lhs_or, *rhs_or);
 }
