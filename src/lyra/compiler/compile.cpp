@@ -1,10 +1,8 @@
 #include "lyra/compiler/compile.hpp"
 
-#include <format>
 #include <utility>
+#include <vector>
 
-#include "lyra/diag/diag_code.hpp"
-#include "lyra/diag/diagnostic.hpp"
 #include "lyra/diag/sink.hpp"
 #include "lyra/frontend/load.hpp"
 #include "lyra/lowering/ast_to_hir/lower.hpp"
@@ -50,23 +48,17 @@ auto Compile(
     return result;
   }
 
-  if (result.artifacts.hir_units->size() != 1) {
-    sink.Report(
-        diag::Diagnostic::HostError(
-            diag::DiagCode::kHostExpectedSingleTopModule,
-            std::format(
-                "expected exactly one top module, got {}",
-                result.artifacts.hir_units->size())));
-    return result;
+  std::vector<mir::CompilationUnit> units;
+  units.reserve(result.artifacts.hir_units->size());
+  for (const auto& hir_unit : *result.artifacts.hir_units) {
+    auto mir = lowering::hir_to_mir::LowerModuleUnit(hir_unit);
+    if (!mir) {
+      sink.Report(std::move(mir.error()));
+      return result;
+    }
+    units.push_back(std::move(*mir));
   }
-
-  auto mir = lowering::hir_to_mir::LowerModuleUnit(
-      result.artifacts.hir_units->front());
-  if (!mir) {
-    sink.Report(std::move(mir.error()));
-    return result;
-  }
-  result.artifacts.mir_unit = std::move(*mir);
+  result.artifacts.mir_units = std::move(units);
 
   return result;
 }

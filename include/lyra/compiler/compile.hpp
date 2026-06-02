@@ -21,7 +21,7 @@ enum class StopAfter : std::uint8_t { kParse, kHir, kMir };
 struct CompileArtifacts {
   std::optional<frontend::ParseResult> parse;
   std::optional<std::vector<hir::ModuleUnit>> hir_units;
-  std::optional<mir::CompilationUnit> mir_unit;
+  std::optional<std::vector<mir::CompilationUnit>> mir_units;
 
   CompileArtifacts() = default;
   CompileArtifacts(const CompileArtifacts&) = delete;

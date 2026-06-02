@@ -1,5 +1,6 @@
 #include <cstddef>
 #include <format>
+#include <span>
 #include <string>
 #include <utility>
 #include <variant>
@@ -391,18 +392,29 @@ auto RenderScopeHeaderFile(
   return out;
 }
 
-auto RenderHostMain(const mir::StructuralScope& entry) -> std::string {
+auto RenderHostMain(std::span<const TopInstance> tops) -> std::string {
   std::string out;
   out += "#include <exception>\n";
   out += "#include <iostream>\n";
+  out += "#include <vector>\n";
   out += "\n";
   out += "#include \"lyra/runtime/engine.hpp\"\n";
-  out += "#include \"" + entry.name + ".hpp\"\n";
+  for (const auto& top : tops) {
+    out += "#include \"" + top.unit->structural_scope.name + ".hpp\"\n";
+  }
   out += "\n";
   out += "auto main() -> int {\n";
-  out += "  " + entry.name + " top;\n";
+  for (std::size_t i = 0; i < tops.size(); ++i) {
+    out += "  " + tops[i].unit->structural_scope.name + " top" +
+           std::to_string(i) + ";\n";
+  }
   out += "  lyra::runtime::Engine engine;\n";
-  out += "  engine.BindRoot(\"top\", top);\n";
+  out += "  std::vector<lyra::runtime::TopBinding> tops = {\n";
+  for (std::size_t i = 0; i < tops.size(); ++i) {
+    out += "      {\"" + tops[i].name + "\", &top" + std::to_string(i) + "},\n";
+  }
+  out += "  };\n";
+  out += "  engine.BindDesign(tops);\n";
   out += "  try {\n";
   out += "    return engine.Run();\n";
   out += "  } catch (const std::exception& e) {\n";
@@ -426,18 +438,22 @@ auto EmitCppDeclarations(const mir::CompilationUnit& unit)
   return headers;
 }
 
-auto EmitCppHostMain(const mir::StructuralScope& entry_scope) -> CppArtifact {
-  return {.relpath = "main.cpp", .content = RenderHostMain(entry_scope)};
+auto EmitCppHostMain(std::span<const TopInstance> tops) -> CppArtifact {
+  return {.relpath = "main.cpp", .content = RenderHostMain(tops)};
 }
 
-auto EmitCpp(const mir::CompilationUnit& unit) -> diag::Result<CppArtifactSet> {
+auto EmitCpp(
+    std::span<const mir::CompilationUnit> units,
+    std::span<const TopInstance> tops) -> diag::Result<CppArtifactSet> {
   CppArtifactSet set;
-  auto headers_or = EmitCppDeclarations(unit);
-  if (!headers_or) return std::unexpected(std::move(headers_or.error()));
-  for (auto& h : *headers_or) {
-    set.files.push_back(std::move(h));
+  for (const auto& unit : units) {
+    auto headers_or = EmitCppDeclarations(unit);
+    if (!headers_or) return std::unexpected(std::move(headers_or.error()));
+    for (auto& h : *headers_or) {
+      set.files.push_back(std::move(h));
+    }
   }
-  set.files.push_back(EmitCppHostMain(unit.structural_scope));
+  set.files.push_back(EmitCppHostMain(tops));
   return set;
 }
 
