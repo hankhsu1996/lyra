@@ -172,6 +172,10 @@ class MirDumper {
               return std::format(
                   "Object(scope=ChildStructuralScope[{}])", o.target.value);
             },
+            [](const ExternalUnitObjectType& e) -> std::string {
+              return std::format(
+                  "ExternalUnitObject(unit=\"{}\")", e.unit_name);
+            },
             [](const OwningPtrType& p) -> std::string {
               return std::format(
                   "OwningPtr(pointee=Type[{}])", p.pointee.value);
@@ -781,6 +785,15 @@ class MirDumper {
             id.value, s.target.value, s.scope_id.value, args_str));
   }
 
+  void DumpConstructExternalUnitStmt(
+      StmtId id, const ConstructExternalUnitStmt& s) {
+    Line(
+        std::format(
+            "Stmt[{}] ConstructExternalUnitStmt target=StructuralVar[{}] "
+            "unit=\"{}\"",
+            id.value, s.target.value, s.unit_name));
+  }
+
   void DumpStmt(const ProceduralScope& enclosing, StmtId id) {
     const auto& stmt = enclosing.stmts.at(id.value);
     if (stmt.label.has_value()) {
@@ -799,6 +812,9 @@ class MirDumper {
             [&](const IfStmt& s) { DumpIfStmt(stmt, s, enclosing, id); },
             [&](const ConstructOwnedObjectStmt& s) {
               DumpConstructOwnedObjectStmt(id, s);
+            },
+            [&](const ConstructExternalUnitStmt& s) {
+              DumpConstructExternalUnitStmt(id, s);
             },
             [&](const ForStmt& s) { DumpForStmt(stmt, s, enclosing, id); },
             [&](const DelayStmt& d) {

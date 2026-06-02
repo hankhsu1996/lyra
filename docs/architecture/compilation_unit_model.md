@@ -10,6 +10,8 @@ Define what a compilation unit is, what it owns, and the rules that make it self
 - The enumeration of compilation-unit kinds: module, package, interface.
 - The rule that a compilation unit compiles independently, given only its own contents and declared
   interface.
+- The interface a unit exposes across the compilation boundary: its name and signature (parameters
+  and ports), produced by the unit from its own contents and consumed by other units by name.
 - The shape of instance records: minimal, structural, and free of semantic content that belongs
   inside the unit.
 
@@ -37,6 +39,11 @@ Define what a compilation unit is, what it owns, and the rules that make it self
    full elaboration, but the compiler operates on compilation units and specializations. Instance
    expansion does not drive compilation, and compile-time identity does not depend on instance
    enumeration.
+8. A unit's only cross-boundary surface is its interface: its name and signature (parameters and
+   ports). The unit produces this interface from its own contents. A unit that instantiates or
+   references another depends only on that interface, identified by name, never on the other unit's
+   body or internal ids. Units compile independently and in any order and are combined by matching
+   names; they share no identifier space and exchange no internal state.
 
 ## Boundary to Adjacent Layers
 
@@ -56,6 +63,11 @@ Define what a compilation unit is, what it owns, and the rules that make it self
 - Instance records that carry a copy of the unit's semantic state.
 - Maps keyed by `(instance_id, local_symbol)` used to resolve a reference inside the unit.
 - Implicit cross-unit access that bypasses explicit import or external reference.
+- A design-wide index, ordinal, or numbering that two units both depend on to refer to each other. A
+  cross-unit reference is a name resolved against an interface, never a shared position in a global
+  table.
+- Compiling one unit against another unit's body or internal ids instead of against its interface
+  (name and signature).
 - Treating "the design" as a compilation unit.
 - Treating the frontend as the authority for compilation-unit identity, membership, or boundary. The
   frontend is input; the compiler is authority.

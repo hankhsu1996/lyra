@@ -1,9 +1,11 @@
+#include <algorithm>
 #include <cstddef>
 #include <format>
 #include <span>
 #include <string>
 #include <utility>
 #include <variant>
+#include <vector>
 
 #include "lyra/backend/cpp/api.hpp"
 #include "lyra/backend/cpp/artifact.hpp"
@@ -191,10 +193,21 @@ auto RenderBind(
     out += Indent(indent + 2) + RenderProcessKindLiteral(p.kind) + ",\n";
     out += Indent(indent + 2) + RenderProcessMethodName(i) + "());\n";
   }
-  // Bind eligibility is inferred from storage type structure today; when
-  // non-generate producers of `ObjectType` appear, switch to explicit scope
-  // metadata.
+  // An owned-object var binds its child under this scope. The scope kind is
+  // read off the owning type: an external-unit instance is a module instance;
+  // an intra-unit owned object is a generate scope.
   for (const auto& v : s.structural_vars) {
+    if (const auto ext_unit = mir::GetExternalUnitName(unit, v.type);
+        ext_unit.has_value()) {
+      out += Indent(indent + 1) + "if (" + v.name + ") {\n";
+      out += Indent(indent + 2) + "auto child = ctx.CreateChildScope(\n";
+      out += Indent(indent + 3) + "\"" + v.name + "\",\n";
+      out += Indent(indent + 3) +
+             "lyra::runtime::RuntimeScopeKind::kModuleInstance);\n";
+      out += Indent(indent + 2) + v.name + "->Bind(child);\n";
+      out += Indent(indent + 1) + "}\n";
+      continue;
+    }
     const auto target = mir::GetOwnedObjectTarget(unit, v.type);
     if (!target.has_value()) {
       continue;
@@ -304,6 +317,21 @@ auto RenderScopeAsClass(
   return out;
 }
 
+auto CollectExternalUnitNames(const mir::CompilationUnit& unit)
+    -> std::vector<std::string> {
+  std::vector<std::string> names;
+  for (const auto& t : unit.types) {
+    const auto* ext = std::get_if<mir::ExternalUnitObjectType>(&t.data);
+    if (ext == nullptr) {
+      continue;
+    }
+    if (std::ranges::find(names, ext->unit_name) == names.end()) {
+      names.push_back(ext->unit_name);
+    }
+  }
+  return names;
+}
+
 auto RenderScopeHeaderFile(
     const mir::CompilationUnit& unit, const mir::StructuralScope& s)
     -> diag::Result<std::string> {
@@ -338,6 +366,9 @@ auto RenderScopeHeaderFile(
   out += "#include \"lyra/value/packed_reduction.hpp\"\n";
   out += "#include \"lyra/value/string.hpp\"\n";
   out += "#include \"lyra/value/string_op.hpp\"\n";
+  for (const auto& name : CollectExternalUnitNames(unit)) {
+    out += "#include \"" + name + ".hpp\"\n";
+  }
   out += "\n";
   bool any_enum = false;
   for (std::size_t i = 0; i < unit.types.size(); ++i) {
