@@ -1,0 +1,13 @@
+id: cpp.function_string_boundary
+tags: [cpp_run]
+input:
+  command: [run, cpp]
+  project: false
+  top: Top
+  files: [main.sv]
+expect:
+  exit: 0
+  variables:
+    r_return: "Hello, World"
+    r_output: "filled"
+    r_inout: "hi!"

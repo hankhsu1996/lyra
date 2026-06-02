@@ -1,0 +1,13 @@
+id: cpp.function_local_default
+tags: [cpp_run]
+input:
+  command: [run, cpp]
+  project: false
+  top: Top
+  files: [main.sv]
+expect:
+  exit: 0
+  variables:
+    r_int: 0
+    r_str: ""
+    r_arr: 0
