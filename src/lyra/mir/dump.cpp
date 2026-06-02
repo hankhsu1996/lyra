@@ -512,28 +512,9 @@ class MirDumper {
                   sel.base_value.value, sel.index.value);
             },
             [](const RangeSelectExpr& sel) -> std::string {
-              const auto bounds = std::visit(
-                  Overloaded{
-                      [](const RangeConstantBounds& b) -> std::string {
-                        return std::format(
-                            "const msb=Expr[{}] lsb=Expr[{}]", b.msb_expr.value,
-                            b.lsb_expr.value);
-                      },
-                      [](const RangeIndexedUpBounds& b) -> std::string {
-                        return std::format(
-                            "indexed_up base=Expr[{}] width=Expr[{}]",
-                            b.base_index.value, b.width.value);
-                      },
-                      [](const RangeIndexedDownBounds& b) -> std::string {
-                        return std::format(
-                            "indexed_down base=Expr[{}] width=Expr[{}]",
-                            b.base_index.value, b.width.value);
-                      },
-                  },
-                  sel.bounds);
               return std::format(
-                  "RangeSelectExpr base=Expr[{}] {}", sel.base_value.value,
-                  bounds);
+                  "RangeSelectExpr base=Expr[{}] offset=Expr[{}] count={}",
+                  sel.base_value.value, sel.offset_expr.value, sel.count);
             },
             [](const ConcatExpr& c) -> std::string {
               std::string operands;
