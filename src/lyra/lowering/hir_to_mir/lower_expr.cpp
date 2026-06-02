@@ -334,7 +334,13 @@ auto UnfoldHirRangeBoundsToOffsetCount(
             const auto count = static_cast<std::uint32_t>(
                 (msb_val >= lsb_val ? msb_val - lsb_val : lsb_val - msb_val) +
                 1);
-            return RangeOffsetCount{.offset_expr = *lsb, .count = count};
+            // The offset is the numerically lower of the two bounds. For a
+            // descending range this is the syntactic right (`lsb_expr`), for
+            // ascending it is the syntactic left (`msb_expr`).
+            const auto offset_val = std::min(msb_val, lsb_val);
+            const auto offset_id = proc_scope_state.AddExpr(
+                unit_state.MakeInt32LiteralExpr(offset_val));
+            return RangeOffsetCount{.offset_expr = offset_id, .count = count};
           },
           [&](const hir::RangeIndexedUpBounds& b)
               -> diag::Result<RangeOffsetCount> {

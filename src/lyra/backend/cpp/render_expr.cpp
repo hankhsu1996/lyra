@@ -328,21 +328,22 @@ auto RenderBinaryOpReal(
 }
 
 // LRM 11.2.2 + 11.4.5: aggregate equality / inequality / case-equality /
-// case-inequality. Slang's binding has already enforced equivalent operand
-// types, so the helper just routes to the matching runtime entry. Relational
-// operators are not defined on aggregate operands.
+// case-inequality. `UnpackedArray` overloads `==` / `!=` to return a 1-bit
+// `PackedArray` (X / Z propagating) and exposes `CaseEqual` as a method
+// returning a 1-bit `PackedArray` (0 / 1 only). Relational operators are not
+// defined on aggregate operands.
 auto RenderBinaryOpUnpacked(
     mir::BinaryOp op, const std::string& lhs, const std::string& rhs)
     -> diag::Result<std::string> {
   switch (op) {
     case mir::BinaryOp::kEquality:
-      return "lyra::value::AggregateEqual(" + lhs + ", " + rhs + ")";
+      return "(" + lhs + " == " + rhs + ")";
     case mir::BinaryOp::kInequality:
-      return "lyra::value::AggregateNotEqual(" + lhs + ", " + rhs + ")";
+      return "(" + lhs + " != " + rhs + ")";
     case mir::BinaryOp::kCaseEquality:
-      return "lyra::value::AggregateCaseEqual(" + lhs + ", " + rhs + ")";
+      return "(" + lhs + ").CaseEqual(" + rhs + ")";
     case mir::BinaryOp::kCaseInequality:
-      return "lyra::value::AggregateCaseNotEqual(" + lhs + ", " + rhs + ")";
+      return "!(" + lhs + ").CaseEqual(" + rhs + ")";
     default:
       break;
   }
@@ -888,26 +889,20 @@ auto RenderCallExpr(const RenderContext& ctx, const mir::CallExpr& call)
 }
 
 // Indexed element access shared by rvalue `RenderElementSelectExpr` and the
-// lvalue `RenderLhsExpr` ElementSelect arm. Packed and unpacked bases land on
-// different C++ access shapes:
-//   - Packed -> `lyra::value::PackedArray::ElementAt(idx)`, range-aware
-//     translation lives inside the runtime type.
-//   - Unpacked -> `std::vector::operator[]` with a zero-based size_t index;
-//     the HIR-to-MIR pass already rewrote any declared-range origin into a
-//     zero-based offset on `sel.index`.
+// lvalue `RenderLhsExpr` ElementSelect arm. `PackedArray` and `UnpackedArray`
+// expose a symmetric `ElementAt(const PackedArray&)` so the emit string is
+// substrate-agnostic; declared-range translation and `ToInt64` canonicalize
+// inside the runtime type.
 auto RenderIndexedElementAccess(
     const mir::Type& base_ty, std::string_view base, std::string_view idx)
     -> std::string {
-  if (std::holds_alternative<mir::UnpackedArrayType>(base_ty.data)) {
-    return std::format(
-        "({})[static_cast<std::size_t>(({}).ToInt64())]", base, idx);
+  if (!std::holds_alternative<mir::UnpackedArrayType>(base_ty.data) &&
+      !std::holds_alternative<mir::PackedArrayType>(base_ty.data)) {
+    throw InternalError(
+        "RenderIndexedElementAccess: base type must be PackedArrayType or "
+        "UnpackedArrayType");
   }
-  if (std::holds_alternative<mir::PackedArrayType>(base_ty.data)) {
-    return std::format("({}).ElementAt({})", base, idx);
-  }
-  throw InternalError(
-      "RenderIndexedElementAccess: base type must be PackedArrayType or "
-      "UnpackedArrayType");
+  return std::format("({}).ElementAt({})", base, idx);
 }
 
 auto RenderElementSelectExpr(
@@ -1154,13 +1149,6 @@ auto RenderRangeSelectExpr(
   auto base_or = RenderExprNatural(ctx, operand_expr);
   if (!base_or) return std::unexpected(std::move(base_or.error()));
 
-  const auto& result_ty = ctx.Unit().GetType(expr.type);
-  if (!result_ty.IsPackedArray()) {
-    throw InternalError(
-        "RenderRangeSelectExpr: result must be PackedArrayType");
-  }
-  const auto& result_pa = result_ty.AsPackedArray();
-
   auto offset_or = RenderExpr(ctx, ctx.Expr(sel.offset_expr));
   if (!offset_or) return std::unexpected(std::move(offset_or.error()));
   auto slice_expr =
@@ -1170,11 +1158,15 @@ auto RenderRangeSelectExpr(
   // part-select default). When the MIR result type carries signed semantics
   // -- e.g. member access of a `logic signed` packed-struct/union field --
   // re-tag the slice via ConvertFrom so a downstream sign-extending
-  // conversion sees the correct source signedness.
-  if (result_pa.signedness == mir::Signedness::kSigned) {
+  // conversion sees the correct source signedness. Unpacked slice produces
+  // an UnpackedArray<T> with no top-level signedness attribute, so the
+  // wrap is packed-only.
+  const auto& result_ty = ctx.Unit().GetType(expr.type);
+  if (result_ty.IsPackedArray() &&
+      result_ty.AsPackedArray().signedness == mir::Signedness::kSigned) {
     return std::format(
         "lyra::value::PackedArray::ConvertFrom({}, {})", slice_expr,
-        RenderPackedArrayCtorArgs(result_pa));
+        RenderPackedArrayCtorArgs(result_ty.AsPackedArray()));
   }
   return slice_expr;
 }

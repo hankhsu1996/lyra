@@ -783,10 +783,11 @@ auto LowerRangeSelectExprProc(
     const slang::ast::RangeSelectExpression& sel,
     const slang::ast::Expression& expr, diag::SourceSpan span)
     -> diag::Result<hir::Expr> {
-  if (!sel.value().type->isIntegral()) {
+  if (!sel.value().type->isIntegral() && !sel.value().type->isUnpackedArray()) {
     return diag::Unsupported(
         span, diag::DiagCode::kUnsupportedExpressionForm,
-        "range-select on non-integral operand is not yet supported",
+        "range-select on non-integral, non-unpacked operand is not yet "
+        "supported",
         diag::UnsupportedCategory::kOperation);
   }
 
@@ -1023,10 +1024,11 @@ auto LowerRangeSelectExprStructural(
     const slang::ast::RangeSelectExpression& sel,
     const slang::ast::Expression& expr, diag::SourceSpan span)
     -> diag::Result<hir::Expr> {
-  if (!sel.value().type->isIntegral()) {
+  if (!sel.value().type->isIntegral() && !sel.value().type->isUnpackedArray()) {
     return diag::Unsupported(
         span, diag::DiagCode::kUnsupportedStructuralExpressionForm,
-        "range-select on non-integral operand is not yet supported",
+        "range-select on non-integral, non-unpacked operand is not yet "
+        "supported",
         diag::UnsupportedCategory::kOperation);
   }
   auto base_or = LowerStructuralExpr(

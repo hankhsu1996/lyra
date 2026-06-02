@@ -356,7 +356,6 @@ auto RenderScopeHeaderFile(
   out += "#include \"lyra/runtime/runtime_scope_kind.hpp\"\n";
   out += "#include \"lyra/runtime/runtime_services.hpp\"\n";
   out += "#include \"lyra/runtime/var.hpp\"\n";
-  out += "#include \"lyra/value/aggregate_equality.hpp\"\n";
   out += "#include \"lyra/value/enum.hpp\"\n";
   out += "#include \"lyra/value/format.hpp\"\n";
   out += "#include \"lyra/value/packed_type.hpp\"\n";
@@ -367,6 +366,7 @@ auto RenderScopeHeaderFile(
   out += "#include \"lyra/value/packed_reduction.hpp\"\n";
   out += "#include \"lyra/value/string.hpp\"\n";
   out += "#include \"lyra/value/string_op.hpp\"\n";
+  out += "#include \"lyra/value/unpacked_array.hpp\"\n";
   for (const auto& name : CollectExternalUnitNames(unit)) {
     out += "#include \"" + name + ".hpp\"\n";
   }
