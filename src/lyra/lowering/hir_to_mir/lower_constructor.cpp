@@ -503,7 +503,8 @@ auto LowerStructuralScope(
             .name = alias.name,
             .target = unit_state.TranslateType(alias.target)});
   }
-  StructuralScopeLoweringState scope_state(parent_scope_state, mir_scope);
+  StructuralScopeLoweringState scope_state(
+      parent_scope_state, mir_scope, scope);
   const ScopeStackGuard guard(stack, scope);
 
   for (const auto& binding : entry_bindings) {

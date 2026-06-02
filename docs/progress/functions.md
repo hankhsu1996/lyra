@@ -50,9 +50,13 @@ everything and the inline "rides on" notes record the real dependencies.
 
 ### Arguments
 
-- [ ] F4 -- `output` and `inout` arguments (LRM 13.5). `output` copies out at return, `inout` copies
+- [x] F4 -- `output` and `inout` arguments (LRM 13.5). `output` copies out at return, `inout` copies
       in at call and out at return; multiple outputs; mixed directions. Default direction is `input`
-      and subsequent formals inherit the previous direction and data type.
+      and subsequent formals inherit the previous direction and data type. Copy-in-copy-out is
+      observable: a body that also reaches an actual passed as `output` sees the LRM-defined value,
+      and the copy-out goes through the actual's own write path. Supported where the call stands in
+      statement position (a bare call or the whole right side of a blocking assignment); a call with
+      `output` / `inout` actuals nested inside a larger expression is not yet supported.
 - [ ] F6 -- Default argument values (LRM 13.5.3), binding by name (LRM 13.5.4), and the optional
       empty argument list for no-argument / all-defaulted subroutines (LRM 13.5.5). Default
       expressions evaluate in the declaration scope at each defaulting call.

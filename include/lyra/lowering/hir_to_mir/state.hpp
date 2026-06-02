@@ -161,12 +161,33 @@ struct GenerateBindings {
 class StructuralScopeLoweringState {
  public:
   StructuralScopeLoweringState(
-      const StructuralScopeLoweringState* parent, mir::StructuralScope& scope)
-      : parent_(parent), scope_(&scope) {
+      const StructuralScopeLoweringState* parent, mir::StructuralScope& scope,
+      const hir::StructuralScope& hir_scope)
+      : parent_(parent), scope_(&scope), hir_scope_(&hir_scope) {
   }
 
   [[nodiscard]] auto Parent() const -> const StructuralScopeLoweringState* {
     return parent_;
+  }
+
+  // Resolve a subroutine reference to its HIR declaration by walking `hops`
+  // scopes outward. The HIR declaration is complete before any body is lowered,
+  // so a call can read a peer's formals even when the peer's MIR declaration is
+  // not yet built (forward / mutual reference, LRM 13.7). The desugar reads the
+  // formals' directions and types from here.
+  [[nodiscard]] auto LookupHirSubroutine(
+      hir::StructuralHops hops, hir::StructuralSubroutineId id) const
+      -> const hir::StructuralSubroutineDecl& {
+    if (hops.value == 0) {
+      return hir_scope_->structural_subroutines.at(id.value);
+    }
+    if (parent_ == nullptr) {
+      throw InternalError(
+          "StructuralScopeLoweringState::LookupHirSubroutine: hops walk ran "
+          "past the root scope");
+    }
+    return parent_->LookupHirSubroutine(
+        hir::StructuralHops{.value = hops.value - 1}, id);
   }
 
   [[nodiscard]] auto Scope() const -> const mir::StructuralScope& {
@@ -356,6 +377,7 @@ class StructuralScopeLoweringState {
 
   const StructuralScopeLoweringState* parent_;
   mir::StructuralScope* scope_;
+  const hir::StructuralScope* hir_scope_;
   std::vector<mir::StructuralVarId> structural_var_map_;
   std::vector<std::optional<mir::StructuralParamId>> structural_param_map_;
   std::vector<mir::StructuralSubroutineId> structural_subroutine_map_;
@@ -514,6 +536,34 @@ class ProceduralScopeLoweringState {
 
   void AddRootStmt(mir::StmtId id) {
     scope_.root_stmts.push_back(id);
+  }
+
+  // Append a label-less, scope-less statement to the body in one step: stage
+  // it in the stmts arena and register it as a root statement. Encapsulates the
+  // AddStmt-then-AddRootStmt pairing so a synthesized statement cannot be added
+  // to the arena yet left out of the executed sequence.
+  auto AppendStmt(mir::StmtData data) -> mir::StmtId {
+    const mir::StmtId id = AddStmt(
+        mir::Stmt{
+            .label = std::nullopt,
+            .data = std::move(data),
+            .child_procedural_scopes = {}});
+    AddRootStmt(id);
+    return id;
+  }
+
+  // Declare a body-local variable: register it in the var arena and emit its
+  // declaration statement in the body. The two must co-occur for a genuine
+  // local, so they are exposed as one operation. (A subroutine formal is a
+  // ProceduralVar that is declared in the signature, not the body, and uses
+  // bare AddProceduralVar instead.)
+  auto AppendLocal(mir::ProceduralVarDecl decl, mir::ExprId init)
+      -> mir::ProceduralVarRef {
+    const mir::ProceduralVarId var = AddProceduralVar(std::move(decl));
+    const mir::ProceduralVarRef ref{
+        .hops = mir::ProceduralHops{.value = 0}, .var = var};
+    AppendStmt(mir::ProceduralVarDeclStmt{.target = ref, .init = init});
+    return ref;
   }
 
   auto Finish() -> mir::ProceduralScope {

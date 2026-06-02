@@ -139,16 +139,17 @@ auto RenderSubroutineMethod(
   std::string sig = *result_or + " " + sub.name + "(";
   for (std::size_t i = 0; i < sub.params.size(); ++i) {
     const auto& param = sub.params[i];
-    if (param.direction != mir::ParamDirection::kInput) {
-      return diag::Unsupported(
-          diag::DiagCode::kCppEmitExpressionFormNotImplemented,
-          "only input subroutine arguments are supported in cpp emit",
-          diag::UnsupportedCategory::kFeature);
-    }
     auto type_or = RenderTypeAsCpp(unit, s, param.type);
     if (!type_or) return std::unexpected(std::move(type_or.error()));
     if (i != 0) sig += ", ";
-    sig += *type_or + " " + param.name;
+    // An `input` formal is a by-value copy (LRM 13.5.1); an `output` / `inout`
+    // formal binds to the caller's writeback temp by reference so the body
+    // writes flow back at the copy-out. ref / const ref are rejected upstream.
+    if (param.direction == mir::ParamDirection::kInput) {
+      sig += *type_or + " " + param.name;
+    } else {
+      sig += *type_or + "& " + param.name;
+    }
   }
   sig += ")";
 

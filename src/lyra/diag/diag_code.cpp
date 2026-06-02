@@ -138,6 +138,12 @@ constexpr std::array kEntries{
             .kind = DiagKind::kUnsupported,
             .category = UnsupportedCategory::kOperation,
             .name = "unsupported_assignment_pattern_kind"}},
+    std::pair{
+        DiagCode::kUnsupportedSubroutineArgument,
+        DiagCodeInfo{
+            .kind = DiagKind::kUnsupported,
+            .category = UnsupportedCategory::kFeature,
+            .name = "unsupported_subroutine_argument"}},
 
     std::pair{
         DiagCode::kDelayValueOutOfRange,

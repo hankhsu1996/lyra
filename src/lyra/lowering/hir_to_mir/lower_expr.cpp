@@ -19,6 +19,7 @@
 #include "lyra/hir/integral_constant.hpp"
 #include "lyra/hir/procedural_body.hpp"
 #include "lyra/hir/structural_scope.hpp"
+#include "lyra/hir/subroutine.hpp"
 #include "lyra/hir/subroutine_ref.hpp"
 #include "lyra/hir/unary_op.hpp"
 #include "lyra/hir/value_ref.hpp"
@@ -811,6 +812,22 @@ auto LowerHirCallExprProc(
           },
           [&](const hir::StructuralSubroutineRef& usr)
               -> diag::Result<mir::Expr> {
+            // LRM 13.5: a call with output / inout actuals is desugared to
+            // copy-in-copy-out at statement position (see LowerExprStmt).
+            // Reaching it here means the call is a nested expression operand,
+            // where the copy-out statement has nowhere to be sequenced; that
+            // form is not yet supported.
+            const hir::StructuralSubroutineDecl& decl =
+                scope_state.LookupHirSubroutine(usr.hops, usr.subroutine);
+            for (const auto& param : decl.params) {
+              if (param.direction != hir::ParamDirection::kInput) {
+                return diag::Unsupported(
+                    span, diag::DiagCode::kUnsupportedSubroutineArgument,
+                    "a call with output / inout arguments is only supported "
+                    "in statement position, not as a nested expression",
+                    diag::UnsupportedCategory::kFeature);
+              }
+            }
             std::vector<mir::ExprId> args;
             args.reserve(c.arguments.size());
             for (const auto arg : c.arguments) {

@@ -32,6 +32,7 @@ enum class DiagCode : std::uint32_t {
   kUnsupportedEventTriggerForm,
   kUnsupportedContinuousAssignForm,
   kUnsupportedAssignmentPatternKind,
+  kUnsupportedSubroutineArgument,
 
   kDelayValueOutOfRange,
   kFormatStringTrailingPercent,
