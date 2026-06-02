@@ -1,0 +1,14 @@
+id: cpp.unpacked_whole_assign_basic
+tags: [cpp_run]
+input:
+  command: [run, cpp]
+  project: false
+  top: Top
+  files: [main.sv]
+expect:
+  exit: 0
+  variables:
+    p0: 10
+    p1: 20
+    p2: 30
+    p3: 40

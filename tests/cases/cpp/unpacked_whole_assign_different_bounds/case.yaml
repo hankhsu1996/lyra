@@ -1,0 +1,18 @@
+id: cpp.unpacked_whole_assign_different_bounds
+tags: [cpp_run]
+input:
+  command: [run, cpp]
+  project: false
+  top: Top
+  files: [main.sv]
+expect:
+  exit: 0
+  variables:
+    p_a7: 11
+    p_a6: 22
+    p_a5: 33
+    p_a4: 44
+    p_a3: 55
+    p_a2: 66
+    p_a1: 77
+    p_a0: 88
