@@ -1152,6 +1152,37 @@ auto LowerAssignmentPatternFromElementsStructural(
   };
 }
 
+auto LowerReplicatedAssignmentPatternExprStructural(
+    const UnitLoweringFacts& unit_facts, UnitLoweringState& unit_state,
+    ScopeLoweringState& scope_state, const ScopeStack& stack,
+    const slang::ast::ReplicatedAssignmentPatternExpression& rp,
+    const slang::ast::Expression& expr, diag::SourceSpan span)
+    -> diag::Result<hir::Expr> {
+  auto type_id = TypeIdOfSlangExpr(unit_facts, unit_state, expr);
+  if (!type_id) return std::unexpected(std::move(type_id.error()));
+  auto count_or = LowerStructuralExpr(
+      unit_facts, unit_state, scope_state, stack, rp.count());
+  if (!count_or) return std::unexpected(std::move(count_or.error()));
+  const hir::ExprId count_id = scope_state.AddExpr(*std::move(count_or));
+  std::vector<hir::ExprId> item_ids;
+  item_ids.reserve(rp.elements().size());
+  for (const auto* elem : rp.elements()) {
+    auto lowered =
+        LowerStructuralExpr(unit_facts, unit_state, scope_state, stack, *elem);
+    if (!lowered) return std::unexpected(std::move(lowered.error()));
+    item_ids.push_back(scope_state.AddExpr(*std::move(lowered)));
+  }
+  return hir::Expr{
+      .type = *type_id,
+      .data =
+          hir::AssignmentPatternReplicationExpr{
+              .count = count_id,
+              .items = std::move(item_ids),
+          },
+      .span = span,
+  };
+}
+
 auto LowerConversionExprStructural(
     const UnitLoweringFacts& unit_facts, UnitLoweringState& unit_state,
     ScopeLoweringState& scope_state, const ScopeStack& stack,
@@ -1565,6 +1596,12 @@ auto LowerStructuralExpr(
       return LowerAssignmentPatternFromElementsStructural(
           unit_facts, unit_state, scope_state, stack,
           expr.as<slang::ast::StructuredAssignmentPatternExpression>(), expr,
+          span);
+
+    case slang::ast::ExpressionKind::ReplicatedAssignmentPattern:
+      return LowerReplicatedAssignmentPatternExprStructural(
+          unit_facts, unit_state, scope_state, stack,
+          expr.as<slang::ast::ReplicatedAssignmentPatternExpression>(), expr,
           span);
 
     default:

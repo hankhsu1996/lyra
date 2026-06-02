@@ -1,0 +1,16 @@
+id: cpp.unpacked_pattern_mixed_nested_2d
+tags: [cpp_run]
+input:
+  command: [run, cpp]
+  project: false
+  top: Top
+  files: [main.sv]
+expect:
+  exit: 0
+  variables:
+    p00: 1
+    p01: 2
+    p02: 3
+    p10: 0
+    p11: 0
+    p12: 0

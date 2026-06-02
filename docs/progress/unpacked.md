@@ -13,14 +13,15 @@ Done when:
 
 ## Actionable
 
-U1 and U2 are done; U3..U5 are open. U1 established the IR shape, the literal-init path, and element
-read; U2 added element write across blocking, non-blocking, and compound forms.
+U1..U3 are done; U4..U5 are open. U1 established the IR shape, the literal-init path, and element
+read; U2 added element write across blocking, non-blocking, and compound forms; U3 completed the
+remaining assignment-pattern forms (default fill, index keys, replication, and nested combinations).
 
 | Item | Status                                                       |
 | ---- | ------------------------------------------------------------ |
 | U1   | Done: type infrastructure + literal init + element read      |
 | U2   | Done: element write (blocking, NBA, compound)                |
-| U3   | Open: structured and replicated assignment patterns          |
+| U3   | Done: structured and replicated assignment patterns          |
 | U4   | Open: whole-array assignment, equality, constant-width slice |
 | U5   | Open: OOB read returning element default, base ranges        |
 
@@ -46,9 +47,10 @@ The numeric IDs are stable references and do not imply execution order beyond U1
 
 ### Structured and replicated patterns
 
-- [ ] U3 -- Structured assignment pattern (`'{default: v}`, `'{i: v, j: v}`) and replicated
-      assignment pattern (`'{N{v}}`) per LRM 10.9.2 / 10.9.3. Closes the `unpacked_array_constants`
-      archive cases that depend on `default:` or index labels.
+- [x] U3 -- Structured assignment pattern (`'{default: v}`, `'{i: v, j: v}`, and the mixed form) and
+      replicated assignment pattern (`'{N{v}}`, including multi-item items and arbitrarily nested
+      forms across multi-dimensional targets) per LRM 10.9.1 / 10.9.2. Closes the
+      `unpacked_array_constants` archive cases that depend on `default:` or index labels.
 
 ### Whole-array operations
 

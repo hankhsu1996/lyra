@@ -1,0 +1,16 @@
+id: cpp.unpacked_pattern_replicated_multi_item
+tags: [cpp_run]
+input:
+  command: [run, cpp]
+  project: false
+  top: Top
+  files: [main.sv]
+expect:
+  exit: 0
+  variables:
+    p0: 1
+    p1: 2
+    p2: 3
+    p3: 1
+    p4: 2
+    p5: 3
