@@ -5,6 +5,7 @@
 #include <fstream>
 #include <memory>
 #include <optional>
+#include <string>
 #include <string_view>
 #include <vector>
 
@@ -63,6 +64,16 @@ class FileTable {
   // bit before calling. Bit 0 alone -> nullptr (stdout sentinel).
   auto Resolve(std::int32_t descriptor) -> std::fstream*;
 
+  // LRM 21.3.7 $ferror state. The runtime entry points stamp the most recent
+  // error for an FD via `SetError`; `$ferror(fd, str)` returns the saved
+  // errno and copies the message into `str`, then clears the slot. MCDs are
+  // write-only and have no per-channel error reporting on this surface.
+  void SetError(std::int32_t fd, int errno_value, std::string message);
+  [[nodiscard]] auto LastError(std::int32_t fd) const -> int;
+  [[nodiscard]] auto LastErrorMessage(std::int32_t fd) const
+      -> std::string_view;
+  void ClearError(std::int32_t fd);
+
   // FD encoding constants exposed for dispatch-site value comparisons.
   static constexpr std::int32_t kFdHighBit =
       static_cast<std::int32_t>(static_cast<std::uint32_t>(1) << 31U);
@@ -77,8 +88,14 @@ class FileTable {
   // returns nullptr for them; the dispatch site special-cases them).
   static constexpr std::size_t kFdReservedSlots = 3;
 
+  struct ErrorRecord {
+    int errno_value = 0;
+    std::string message;
+  };
+
   std::array<std::unique_ptr<std::fstream>, kMcdSlotCount> mcd_slots_{};
   std::vector<std::unique_ptr<std::fstream>> fd_pool_{kFdReservedSlots};
+  std::vector<ErrorRecord> fd_errors_{kFdReservedSlots};
 };
 
 }  // namespace lyra::runtime

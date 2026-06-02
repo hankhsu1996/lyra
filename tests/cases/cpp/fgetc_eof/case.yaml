@@ -1,0 +1,14 @@
+id: cpp.fgetc_eof
+tags: [cpp_run]
+input:
+  command: [run, cpp]
+  project: false
+  top: Top
+  files: [main.sv]
+expect:
+  exit: 0
+  variables:
+    after_read: 120
+    after_eof: -1
+  files:
+    scratch.txt: "x"

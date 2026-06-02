@@ -25,11 +25,13 @@
 #include "lyra/lowering/hir_to_mir/inside_predicate.hpp"
 #include "lyra/lowering/hir_to_mir/lower_deferred_check.hpp"
 #include "lyra/lowering/hir_to_mir/lower_expr.hpp"
+#include "lyra/lowering/hir_to_mir/lower_file_io.hpp"
 #include "lyra/lowering/hir_to_mir/procedural_scope_helpers.hpp"
 #include "lyra/lowering/hir_to_mir/sensitivity_wait.hpp"
 #include "lyra/lowering/hir_to_mir/state.hpp"
 #include "lyra/mir/procedural_hops.hpp"
 #include "lyra/mir/stmt.hpp"
+#include "lyra/support/system_subroutine.hpp"
 
 namespace lyra::lowering::hir_to_mir {
 
@@ -510,17 +512,70 @@ auto LowerExprStmt(
           *call, std::get<hir::StructuralSubroutineRef>(call->callee), *decl,
           std::nullopt, unit_state.TranslateType(inner.type));
     }
+    // System-subroutine tasks with an output arg ($fgets / $fread / $ferror)
+    // ride the same copy-out shape but build a RuntimeFileXxxCall MIR node
+    // instead of a user-function CallExpr. Other system subroutines (no
+    // output args) fall through to the value-only LowerExpr path below.
+    if (const auto* sys_ref =
+            std::get_if<hir::SystemSubroutineRef>(&call->callee)) {
+      const auto& desc = support::LookupSystemSubroutine(sys_ref->id);
+      if (const auto* file_info = support::GetFileIOInfo(desc)) {
+        if (support::FileIOHasOutputArg(file_info->kind)) {
+          return LowerFileIOSystemSubroutineCallStmt(
+              unit_state, scope_state, proc_state, hir_proc, stmt, inner.span,
+              *call, desc, *file_info, std::nullopt,
+              unit_state.TranslateType(inner.type));
+        }
+      }
+    }
   }
   if (const auto* assign = std::get_if<hir::AssignExpr>(&inner.data)) {
     if (!assign->compound_op.has_value() &&
         assign->kind == hir::AssignKind::kBlocking) {
-      const hir::Expr& rhs = hir_proc.exprs.at(assign->rhs.value);
-      if (const auto* call = std::get_if<hir::CallExpr>(&rhs.data)) {
+      // Peek through an implicit conversion wrapper that slang inserts when
+      // the call's return type does not match the LHS type bit-for-bit (e.g.
+      // `int x = $fgets(...);` where $fgets returns `integer`). The call
+      // shape underneath is what determines the output-arg desugaring; the
+      // conversion stays on the return value, wrapped around the call
+      // result inside the synthesized AssignExpr.
+      hir::ExprId rhs_id = assign->rhs;
+      const hir::Expr* rhs = &hir_proc.exprs.at(rhs_id.value);
+      const hir::Expr* call_carrier = rhs;
+      std::optional<hir::TypeId> conv_target_type = std::nullopt;
+      if (const auto* conv = std::get_if<hir::ConversionExpr>(&rhs->data)) {
+        rhs_id = conv->operand;
+        call_carrier = &hir_proc.exprs.at(rhs_id.value);
+        conv_target_type = rhs->type;
+      }
+      if (const auto* call = std::get_if<hir::CallExpr>(&call_carrier->data)) {
         if (const auto* decl = SubroutineWithWritebacks(scope_state, *call)) {
-          return LowerSubroutineCallWithWritebacks(
-              unit_state, scope_state, proc_state, hir_proc, stmt, rhs.span,
-              *call, std::get<hir::StructuralSubroutineRef>(call->callee),
-              *decl, assign->lhs, unit_state.TranslateType(rhs.type));
+          // UDF F4 today rejects nested conversions; preserve that by only
+          // firing when the call sits directly under the AssignExpr.
+          if (!conv_target_type.has_value()) {
+            return LowerSubroutineCallWithWritebacks(
+                unit_state, scope_state, proc_state, hir_proc, stmt,
+                call_carrier->span, *call,
+                std::get<hir::StructuralSubroutineRef>(call->callee), *decl,
+                assign->lhs, unit_state.TranslateType(call_carrier->type));
+          }
+        }
+        if (const auto* sys_ref =
+                std::get_if<hir::SystemSubroutineRef>(&call->callee)) {
+          const auto& desc = support::LookupSystemSubroutine(sys_ref->id);
+          if (const auto* file_info = support::GetFileIOInfo(desc)) {
+            if (support::FileIOHasOutputArg(file_info->kind)) {
+              // When slang wraps the call result in an implicit conversion to
+              // match the LHS, route the call return through the same
+              // conversion before the writeback assigns to the user's LHS.
+              const mir::TypeId result_type = unit_state.TranslateType(
+                  conv_target_type.has_value() ? *conv_target_type
+                                               : call_carrier->type);
+              return LowerFileIOSystemSubroutineCallStmt(
+                  unit_state, scope_state, proc_state, hir_proc, stmt,
+                  call_carrier->span, *call, desc, *file_info, assign->lhs,
+                  result_type);
+            }
+          }
         }
       }
     }

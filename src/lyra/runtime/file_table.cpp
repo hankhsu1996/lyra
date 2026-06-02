@@ -60,10 +60,12 @@ auto FileTable::Open(
     for (std::size_t i = kFdReservedSlots; i < fd_pool_.size(); ++i) {
       if (fd_pool_.at(i) == nullptr) {
         fd_pool_.at(i) = std::move(stream);
+        fd_errors_.at(i) = ErrorRecord{};
         return kFdHighBit | static_cast<std::int32_t>(i);
       }
     }
     fd_pool_.push_back(std::move(stream));
+    fd_errors_.emplace_back();
     return kFdHighBit | static_cast<std::int32_t>(fd_pool_.size() - 1);
   }
   // MCD path: open write-truncate (LRM 21.3.1 omits the type for MCD form).
@@ -88,6 +90,7 @@ void FileTable::Close(std::int32_t descriptor) {
     const std::size_t idx = raw & 0x7FFF'FFFFU;
     if (idx < kFdReservedSlots || idx >= fd_pool_.size()) return;
     fd_pool_.at(idx).reset();
+    fd_errors_.at(idx) = ErrorRecord{};
     return;
   }
   // MCD: iterate each set bit in 1..30 and close that slot. Bit 0 is the
@@ -112,6 +115,48 @@ auto FileTable::Resolve(std::int32_t descriptor) -> std::fstream* {
     if (raw == (1U << slot)) return mcd_slots_.at(slot).get();
   }
   return nullptr;
+}
+
+namespace {
+
+// Decode an FD-shaped descriptor into a pool index, or nullopt for any value
+// that's not an owned FD (MCD, stdio sentinel, out of range, or zero).
+auto FdPoolIndex(std::int32_t descriptor, std::size_t pool_size)
+    -> std::optional<std::size_t> {
+  if (descriptor == 0) return std::nullopt;
+  const auto raw = static_cast<std::uint32_t>(descriptor);
+  if ((raw & (1U << 31U)) == 0U) return std::nullopt;
+  const std::size_t idx = raw & 0x7FFF'FFFFU;
+  if (idx < 3U || idx >= pool_size) return std::nullopt;
+  return idx;
+}
+
+}  // namespace
+
+void FileTable::SetError(
+    std::int32_t fd, int errno_value, std::string message) {
+  const auto idx = FdPoolIndex(fd, fd_pool_.size());
+  if (!idx.has_value()) return;
+  fd_errors_.at(*idx) =
+      ErrorRecord{.errno_value = errno_value, .message = std::move(message)};
+}
+
+auto FileTable::LastError(std::int32_t fd) const -> int {
+  const auto idx = FdPoolIndex(fd, fd_pool_.size());
+  if (!idx.has_value()) return 0;
+  return fd_errors_.at(*idx).errno_value;
+}
+
+auto FileTable::LastErrorMessage(std::int32_t fd) const -> std::string_view {
+  const auto idx = FdPoolIndex(fd, fd_pool_.size());
+  if (!idx.has_value()) return {};
+  return fd_errors_.at(*idx).message;
+}
+
+void FileTable::ClearError(std::int32_t fd) {
+  const auto idx = FdPoolIndex(fd, fd_pool_.size());
+  if (!idx.has_value()) return;
+  fd_errors_.at(*idx) = ErrorRecord{};
 }
 
 }  // namespace lyra::runtime
