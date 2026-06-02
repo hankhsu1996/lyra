@@ -727,6 +727,21 @@ class MirDumper {
                             "RuntimeSubmitNbaCall closure=Expr[{}]",
                             nc.closure.value));
                   },
+                  [&](const RuntimeFileOpenCall& fo) {
+                    Line(
+                        std::format(
+                            "RuntimeFileOpenCall name=Expr[{}] mode={}",
+                            fo.name.value,
+                            fo.mode.has_value()
+                                ? std::format("Expr[{}]", fo.mode->value)
+                                : std::string("mcd")));
+                  },
+                  [&](const RuntimeFileCloseCall& fc) {
+                    Line(
+                        std::format(
+                            "RuntimeFileCloseCall descriptor=Expr[{}]",
+                            fc.descriptor.value));
+                  },
               },
               rc->call);
           Dedent();

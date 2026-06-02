@@ -151,6 +151,47 @@ auto SummarizeUnknowns(const IntegralValueView& v) -> UnknownSummary {
   return IsAllZ(v) ? UnknownSummary::kAllZ : UnknownSummary::kPartialZ;
 }
 
+enum class GroupSummary : std::uint8_t {
+  kNone,
+  kAllX,
+  kAllZ,
+  kPartialX,
+  kPartialZ,
+};
+
+// LRM 21.2.1.3: per-group X/Z classification for hex/octal display.
+// Any X in the group -> uppercase X (kPartialX); Z-only partial -> uppercase Z.
+auto SummarizeGroup(
+    std::uint32_t value_bits, std::uint32_t unknown_bits, std::uint32_t mask)
+    -> GroupSummary {
+  if (unknown_bits == 0U) return GroupSummary::kNone;
+  const std::uint32_t x_bits = value_bits & unknown_bits;
+  const std::uint32_t z_bits = (~value_bits) & unknown_bits & mask;
+  if (x_bits == mask) return GroupSummary::kAllX;
+  if (z_bits == mask) return GroupSummary::kAllZ;
+  if (x_bits != 0U) return GroupSummary::kPartialX;
+  return GroupSummary::kPartialZ;
+}
+
+// Returns the X/Z letter for an unknown group; caller dispatches kNone to the
+// radix-specific digit lookup (hex digits for %h, '0'..'7' for %o).
+auto UnknownLetterForGroup(GroupSummary s) -> char {
+  switch (s) {
+    case GroupSummary::kAllX:
+      return 'x';
+    case GroupSummary::kAllZ:
+      return 'z';
+    case GroupSummary::kPartialX:
+      return 'X';
+    case GroupSummary::kPartialZ:
+      return 'Z';
+    case GroupSummary::kNone:
+      break;
+  }
+  throw InternalError(
+      "UnknownLetterForGroup: kNone has no letter; caller must dispatch");
+}
+
 auto FormatBinaryBody(const IntegralValueView& v) -> std::string {
   std::string body;
   body.reserve(static_cast<std::size_t>(v.BitWidth()));
@@ -184,14 +225,11 @@ auto FormatHexBody(const IntegralValueView& v) -> std::string {
       if (UnknownBit(v, nibble_start + b)) nibble_unk |= (1U << b);
     }
     const std::uint32_t nibble_mask = (1U << nibble_bits) - 1U;
-    if (nibble_unk == 0U) {
+    const auto summary = SummarizeGroup(nibble_val, nibble_unk, nibble_mask);
+    if (summary == GroupSummary::kNone) {
       body.push_back(kHexDigits[nibble_val]);
-    } else if (nibble_unk == nibble_mask && nibble_val == nibble_mask) {
-      body.push_back('x');
-    } else if (nibble_unk == nibble_mask && nibble_val == 0U) {
-      body.push_back('z');
     } else {
-      body.push_back('X');
+      body.push_back(UnknownLetterForGroup(summary));
     }
   }
   return body;
@@ -212,14 +250,11 @@ auto FormatOctalBody(const IntegralValueView& v) -> std::string {
       if (UnknownBit(v, octet_start + b)) octet_unk |= (1U << b);
     }
     const std::uint32_t octet_mask = (1U << octet_bits) - 1U;
-    if (octet_unk == 0U) {
+    const auto summary = SummarizeGroup(octet_val, octet_unk, octet_mask);
+    if (summary == GroupSummary::kNone) {
       body.push_back(static_cast<char>('0' + octet_val));
-    } else if (octet_unk == octet_mask && octet_val == octet_mask) {
-      body.push_back('x');
-    } else if (octet_unk == octet_mask && octet_val == 0U) {
-      body.push_back('z');
     } else {
-      body.push_back('X');
+      body.push_back(UnknownLetterForGroup(summary));
     }
   }
   return body;

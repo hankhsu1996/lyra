@@ -196,6 +196,8 @@ auto MakeReturnConventionType(
   switch (conv) {
     case support::ReturnConvention::kVoid:
       return unit_state.VoidTypeId();
+    case support::ReturnConvention::kInt32:
+      return unit_state.Int32TypeId();
   }
   throw InternalError("MakeReturnConventionType: unknown ReturnConvention");
 }

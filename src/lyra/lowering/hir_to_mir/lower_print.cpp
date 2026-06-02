@@ -1,16 +1,15 @@
 #include "lyra/lowering/hir_to_mir/lower_print.hpp"
 
+#include <cstddef>
 #include <expected>
-#include <format>
 #include <optional>
-#include <string>
 #include <utility>
 
-#include "lyra/diag/diag_code.hpp"
 #include "lyra/diag/diagnostic.hpp"
 #include "lyra/diag/source_span.hpp"
 #include "lyra/hir/expr.hpp"
 #include "lyra/hir/procedural_body.hpp"
+#include "lyra/lowering/hir_to_mir/lower_expr.hpp"
 #include "lyra/lowering/hir_to_mir/print_items.hpp"
 #include "lyra/lowering/hir_to_mir/state.hpp"
 #include "lyra/mir/expr.hpp"
@@ -42,23 +41,31 @@ auto LowerPrintSystemSubroutineCall(
     const support::SystemSubroutineDesc& desc,
     const support::PrintSystemSubroutineInfo& print, diag::SourceSpan span)
     -> diag::Result<mir::Expr> {
+  (void)desc;
+  std::optional<mir::ExprId> descriptor = std::nullopt;
+  std::size_t arg_offset = 0;
   if (print.sink_kind == support::PrintSinkKind::kFile) {
-    return diag::Unsupported(
-        span, diag::DiagCode::kFileDisplayNotImplemented,
-        std::format(
-            "{} is not implemented in this build", std::string{desc.name}),
-        diag::UnsupportedCategory::kFeature);
+    // LRM 21.3.2: the first argument of $fdisplay / $fwrite is an MCD/FD
+    // descriptor; remaining arguments are the print payload. The runtime
+    // decodes the bit pattern (MCD vs FD per LRM 21.3.1) at dispatch time.
+    auto lowered_or = LowerExpr(
+        unit_state, scope_state, proc_state, proc_scope_state, hir_proc,
+        hir_proc.exprs.at(call.arguments[0].value));
+    if (!lowered_or) return std::unexpected(std::move(lowered_or.error()));
+    descriptor = proc_scope_state.AddExpr(*std::move(lowered_or));
+    arg_offset = 1;
   }
+
   auto items_or = BuildRuntimePrintItemsFromCallArgs(
       unit_state, scope_state, proc_state, proc_scope_state, hir_proc, call,
-      span);
+      print, arg_offset, span);
   if (!items_or) return std::unexpected(std::move(items_or.error()));
 
   return mir::Expr{
       .data =
           mir::RuntimeCallExpr{
               .call = mir::RuntimePrintCall(
-                  ToValuePrintKind(print), std::nullopt, std::move(*items_or))},
+                  ToValuePrintKind(print), descriptor, std::move(*items_or))},
       .type = unit_state.Builtins().void_type};
 }
 

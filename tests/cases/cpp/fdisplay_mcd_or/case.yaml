@@ -1,0 +1,17 @@
+id: cpp.fdisplay_mcd_or
+tags: [cpp_run]
+input:
+  command: [run, cpp]
+  project: false
+  top: Top
+  files: [main.sv]
+expect:
+  exit: 0
+  stdout:
+    exact: |
+      to all three
+  files:
+    file1.txt: |
+      to all three
+    file2.txt: |
+      to all three

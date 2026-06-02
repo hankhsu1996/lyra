@@ -13,11 +13,10 @@
 #include "lyra/backend/cpp/string_literal.hpp"
 #include "lyra/base/internal_error.hpp"
 #include "lyra/base/overloaded.hpp"
-#include "lyra/diag/diag_code.hpp"
 #include "lyra/diag/diagnostic.hpp"
-#include "lyra/diag/kind.hpp"
 #include "lyra/mir/expr.hpp"
 #include "lyra/mir/runtime_diagnostic.hpp"
+#include "lyra/mir/runtime_file_io.hpp"
 #include "lyra/mir/runtime_finish.hpp"
 #include "lyra/mir/runtime_print.hpp"
 #include "lyra/mir/runtime_submit.hpp"
@@ -150,22 +149,26 @@ namespace {
 auto RenderRuntimePrintCall(
     const RenderContext& ctx, const mir::RuntimePrintCall& call)
     -> diag::Result<std::string> {
-  if (call.descriptor.has_value()) {
-    return diag::Unsupported(
-        diag::DiagCode::kCppEmitExpressionFormNotImplemented,
-        "file-output runtime print is not yet implemented in cpp emit",
-        diag::UnsupportedCategory::kFeature);
-  }
   const std::string_view kind_literal = RenderPrintKindLiteral(call.kind);
+
+  // Descriptor-bearing calls emit LyraFPrint and prepend the descriptor
+  // expression; descriptor-less calls keep the simpler LyraPrint shape.
+  std::string descriptor_arg;
+  std::string_view call_target = "lyra::runtime::LyraPrint";
+  if (call.descriptor.has_value()) {
+    auto desc_or = RenderExpr(ctx, ctx.Expr(*call.descriptor));
+    if (!desc_or) return std::unexpected(std::move(desc_or.error()));
+    descriptor_arg = std::format("{}, ", *desc_or);
+    call_target = "lyra::runtime::LyraFPrint";
+  }
 
   // Empty items: pass an explicit empty span. Avoids relying on the
   // `std::array<T, 0>` to `std::span<const T>` conversion path, which is
   // legal but a fragile spelling to depend on.
   if (call.items.empty()) {
     return std::format(
-        "lyra::runtime::LyraPrint(*services_, {}, "
-        "std::span<const lyra::value::PrintItem>{{}})",
-        kind_literal);
+        "{}(*services_, {}, {}std::span<const lyra::value::PrintItem>{{}})",
+        call_target, kind_literal, descriptor_arg);
   }
 
   // The PrintItem array is built inline via `std::array<PrintItem, N>{...}`;
@@ -181,9 +184,8 @@ auto RenderRuntimePrintCall(
   }
 
   std::string out = std::format(
-      "lyra::runtime::LyraPrint(*services_, {}, "
-      "std::array<lyra::value::PrintItem, {}>{{",
-      kind_literal, call.items.size());
+      "{}(*services_, {}, {}std::array<lyra::value::PrintItem, {}>{{",
+      call_target, kind_literal, descriptor_arg, call.items.size());
   for (std::size_t i = 0; i < item_inits.size(); ++i) {
     if (i != 0) {
       out += ", ";
@@ -293,6 +295,27 @@ auto RenderRuntimeCallExpr(
               return std::unexpected(std::move(closure_or.error()));
             }
             return std::format("services_->SubmitNba({})", *closure_or);
+          },
+          [&](const mir::RuntimeFileOpenCall& fo) -> diag::Result<std::string> {
+            auto name_or = RenderExpr(ctx, ctx.Expr(fo.name));
+            if (!name_or) return std::unexpected(std::move(name_or.error()));
+            if (fo.mode.has_value()) {
+              auto mode_or = RenderExpr(ctx, ctx.Expr(*fo.mode));
+              if (!mode_or) return std::unexpected(std::move(mode_or.error()));
+              return std::format(
+                  "lyra::runtime::LyraFOpen(*services_, {}, {})", *name_or,
+                  *mode_or);
+            }
+            return std::format(
+                "lyra::runtime::LyraFOpen(*services_, {}, std::nullopt)",
+                *name_or);
+          },
+          [&](const mir::RuntimeFileCloseCall& fc)
+              -> diag::Result<std::string> {
+            auto desc_or = RenderExpr(ctx, ctx.Expr(fc.descriptor));
+            if (!desc_or) return std::unexpected(std::move(desc_or.error()));
+            return std::format(
+                "lyra::runtime::LyraFClose(*services_, {})", *desc_or);
           },
       },
       expr.call);

@@ -78,7 +78,8 @@ auto ComputePollTimeoutMs(
 
 auto RunChildProcess(
     const std::filesystem::path& exe, std::span<const std::string> args,
-    std::chrono::seconds timeout) -> ProcessOutcome {
+    std::chrono::seconds timeout, std::optional<std::filesystem::path> cwd)
+    -> ProcessOutcome {
   std::array<int, 2> stdout_pipe{};
   std::array<int, 2> stderr_pipe{};
   if (pipe(stdout_pipe.data()) != 0) {
@@ -104,6 +105,11 @@ auto RunChildProcess(
   posix_spawn_file_actions_addclose(&actions, stdout_pipe[1]);
   posix_spawn_file_actions_addclose(&actions, stderr_pipe[0]);
   posix_spawn_file_actions_addclose(&actions, stderr_pipe[1]);
+  std::string cwd_str;
+  if (cwd.has_value()) {
+    cwd_str = cwd->string();
+    posix_spawn_file_actions_addchdir_np(&actions, cwd_str.c_str());
+  }
 
   std::string exe_str = exe.string();
   std::vector<char*> argv;

@@ -185,6 +185,46 @@ auto ParseCase(
         }
       }
     }
+    const auto& files_node = ex["files"];
+    if (files_node) {
+      if (!files_node.IsMap()) {
+        throw std::runtime_error(
+            std::format(
+                "{}: 'expect.files' must be a map of relative-path -> content",
+                yaml_path.string()));
+      }
+      for (const auto& kv : files_node) {
+        const auto rel = kv.first.as<std::string>();
+        if (rel.empty() || rel.front() == '/' ||
+            rel.find("..") != std::string::npos) {
+          throw std::runtime_error(
+              std::format(
+                  "{}: expect.files key '{}' must be a relative path with no "
+                  "`..` component",
+                  yaml_path.string(), rel));
+        }
+        if (!kv.second.IsScalar()) {
+          throw std::runtime_error(
+              std::format(
+                  "{}: expect.files['{}'] must be a string with the exact "
+                  "expected file content",
+                  yaml_path.string(), rel));
+        }
+        c.expect.files.push_back(
+            {.relative_path = rel, .content = kv.second.as<std::string>()});
+      }
+      if (!c.expect.files.empty()) {
+        const bool is_cpp_run = c.input.command.size() == 2 &&
+                                c.input.command[0] == "run" &&
+                                c.input.command[1] == "cpp";
+        if (!is_cpp_run) {
+          throw std::runtime_error(
+              std::format(
+                  "{}: expect.files only valid for `[run, cpp]` cases",
+                  yaml_path.string()));
+        }
+      }
+    }
   }
 
   return c;
@@ -409,7 +449,22 @@ auto RunCppCase(const std::filesystem::path& lyra_exe, const TestCase& c)
     argv.push_back(f.string());
   }
 
-  result.proc = RunChildProcess(lyra_exe, argv, std::chrono::seconds{60});
+  // When expect.files is set the child inherits a per-case sandbox cwd so
+  // $fopen("foo.txt") writes inside the sandbox; the sandbox content is
+  // verified after the run and unexpected files fail the case.
+  std::optional<std::filesystem::path> sandbox_cwd;
+  if (!c.expect.files.empty()) {
+    auto sb_or = MakeTempCaseDir();
+    if (!sb_or) {
+      result.mismatch =
+          "MakeTempCaseDir (expect.files sandbox) failed: " + sb_or.error();
+      return result;
+    }
+    sandbox_cwd = *sb_or;
+  }
+
+  result.proc =
+      RunChildProcess(lyra_exe, argv, std::chrono::seconds{60}, sandbox_cwd);
   if (result.proc.termination != TerminationKind::kExitedNormally &&
       result.proc.termination != TerminationKind::kExitedNonZero) {
     result.mismatch =
@@ -486,6 +541,51 @@ auto RunCppCase(const std::filesystem::path& lyra_exe, const TestCase& c)
           result.proc.stderr_text, c.expect.stderr_spec, "stderr")) {
     record("stderr mismatch", *mm);
     return result;
+  }
+
+  if (!c.expect.files.empty() && sandbox_cwd.has_value()) {
+    std::unordered_set<std::string> expected_relpaths;
+    expected_relpaths.reserve(c.expect.files.size());
+    for (const auto& ef : c.expect.files)
+      expected_relpaths.insert(ef.relative_path);
+    for (const auto& entry :
+         std::filesystem::recursive_directory_iterator(*sandbox_cwd)) {
+      if (!entry.is_regular_file()) continue;
+      const auto rel = std::filesystem::relative(entry.path(), *sandbox_cwd)
+                           .generic_string();
+      if (!expected_relpaths.contains(rel)) {
+        record(
+            "expect.files",
+            std::format(
+                "file '{}' was created in the sandbox but not declared in "
+                "expect.files",
+                rel));
+        return result;
+      }
+    }
+    for (const auto& ef : c.expect.files) {
+      const auto abs = *sandbox_cwd / ef.relative_path;
+      if (!std::filesystem::exists(abs)) {
+        record(
+            "expect.files",
+            std::format(
+                "declared file '{}' was not created", ef.relative_path));
+        return result;
+      }
+      auto content_or = ReadFileToString(abs);
+      if (!content_or) {
+        record("expect.files", content_or.error());
+        return result;
+      }
+      if (*content_or != ef.content) {
+        record(
+            "expect.files",
+            std::format(
+                "file '{}': content mismatch\nexpected: {}\ngot: {}",
+                ef.relative_path, ef.content, *content_or));
+        return result;
+      }
+    }
   }
   return result;
 }

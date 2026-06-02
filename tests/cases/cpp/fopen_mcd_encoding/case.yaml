@@ -1,0 +1,14 @@
+id: cpp.fopen_mcd_encoding
+tags: [cpp_run]
+input:
+  command: [run, cpp]
+  project: false
+  top: Top
+  files: [main.sv]
+expect:
+  exit: 0
+  variables:
+    is_single_bit: 1
+    bit31_clear: 1
+  files:
+    mcd_check.txt: ""

@@ -40,7 +40,6 @@ enum class DiagCode : std::uint32_t {
   kFormatStringWidthOverflow,
   kFormatStringUnknownSpecifier,
   kDisplayMissingArg,
-  kFileDisplayNotImplemented,
   kFormatModulePathNotImplemented,
   kFormatSpecifierNotImplemented,
   kSystemSubroutineExecutionNotImplemented,
