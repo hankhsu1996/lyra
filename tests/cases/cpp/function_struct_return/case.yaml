@@ -1,0 +1,14 @@
+id: cpp.function_struct_return
+tags: [cpp_run]
+input:
+  command: [run, cpp]
+  project: false
+  top: Top
+  files: [main.sv]
+expect:
+  exit: 0
+  variables:
+    r_byname: "8'hA5"
+    r_explicit: "8'hC3"
+    r_member: "4'hA"
+    r_union: "8'h9F"
