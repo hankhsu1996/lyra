@@ -4,6 +4,7 @@
 #include <iostream>
 #include <limits>
 #include <memory>
+#include <span>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -38,16 +39,20 @@ Engine::Engine(EngineOptions options)
       diagnostic_(std::move(options.diagnostic_sink)) {
 }
 
-void Engine::BindRoot(std::string root_name, Module& top) {
+void Engine::BindDesign(std::span<const TopBinding> tops) {
   if (bound_) {
-    throw InternalError("Engine::BindRoot called more than once");
+    throw InternalError("Engine::BindDesign called more than once");
   }
   bound_ = true;
   root_ = std::make_unique<RuntimeScope>(
-      nullptr, std::move(root_name), RuntimeScopeKind::kModuleInstance);
-  registered_modules_.push_back(&top);
-  RuntimeBindContext ctx(*root_, services_);
-  top.Bind(ctx);
+      nullptr, "$root", RuntimeScopeKind::kModuleInstance);
+  RuntimeBindContext root_ctx(*root_, services_);
+  for (const auto& top : tops) {
+    RuntimeBindContext child_ctx =
+        root_ctx.CreateChildScope(top.name, RuntimeScopeKind::kModuleInstance);
+    registered_modules_.push_back(top.module);
+    top.module->Bind(child_ctx);
+  }
 }
 
 auto Engine::Run() -> int {
@@ -74,7 +79,7 @@ auto Engine::Run() -> int {
 
 void Engine::EnsureReadyToRun() {
   if (!bound_) {
-    throw InternalError("Engine::Run called before BindRoot");
+    throw InternalError("Engine::Run called before BindDesign");
   }
   if (ran_) {
     throw InternalError("Engine::Run called more than once");

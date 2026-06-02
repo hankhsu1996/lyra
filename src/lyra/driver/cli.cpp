@@ -13,6 +13,7 @@
 
 #include <fmt/core.h>
 
+#include "lyra/backend/cpp/api.hpp"
 #include "lyra/base/internal_error.hpp"
 #include "lyra/compiler/compile.hpp"
 #include "lyra/diag/diag_code.hpp"
@@ -289,9 +290,20 @@ auto main(int argc, char** argv) -> int {
       return *loc_or;
     };
 
+    auto build_tops = [](const std::vector<lyra::mir::CompilationUnit>& units) {
+      std::vector<lyra::backend::cpp::TopInstance> tops;
+      tops.reserve(units.size());
+      for (const auto& unit : units) {
+        tops.push_back({.name = unit.structural_scope.name, .unit = &unit});
+      }
+      return tops;
+    };
+
     switch (args.cmd) {
       case CommandKind::kDumpMir:
-        fmt::print("{}", lyra::mir::DumpMir(*result.artifacts.mir_unit));
+        for (const auto& unit : *result.artifacts.mir_units) {
+          fmt::print("{}", lyra::mir::DumpMir(unit));
+        }
         return 0;
       case CommandKind::kEmitCpp: {
         auto runtime = resolve_runtime();
@@ -299,8 +311,10 @@ auto main(int argc, char** argv) -> int {
           return 1;
         }
         const std::filesystem::path dir = args.out_dir;
-        auto assembled = lyra::driver::AssembleProject(
-            *runtime, *result.artifacts.mir_unit, dir);
+        const auto& units = *result.artifacts.mir_units;
+        const auto tops = build_tops(units);
+        auto assembled =
+            lyra::driver::AssembleProject(*runtime, units, tops, dir);
         if (!assembled) {
           report(std::move(assembled.error()), mgr);
           return 1;
@@ -314,8 +328,10 @@ auto main(int argc, char** argv) -> int {
           return 1;
         }
         const std::filesystem::path dir = args.out_dir;
-        auto assembled = lyra::driver::AssembleProject(
-            *runtime, *result.artifacts.mir_unit, dir);
+        const auto& units = *result.artifacts.mir_units;
+        const auto tops = build_tops(units);
+        auto assembled =
+            lyra::driver::AssembleProject(*runtime, units, tops, dir);
         if (!assembled) {
           report(std::move(assembled.error()), mgr);
           return 1;
@@ -341,8 +357,10 @@ auto main(int argc, char** argv) -> int {
                   std::move(tmp_or.error())));
           return 1;
         }
-        auto exit_code = lyra::driver::RunInPlace(
-            *runtime, *result.artifacts.mir_unit, *tmp_or);
+        const auto& units = *result.artifacts.mir_units;
+        const auto tops = build_tops(units);
+        auto exit_code =
+            lyra::driver::RunInPlace(*runtime, units, tops, *tmp_or);
         if (!exit_code) {
           report(std::move(exit_code.error()), mgr);
           return 1;

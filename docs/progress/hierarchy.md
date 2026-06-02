@@ -41,7 +41,8 @@ C  Non-local access substrate
 
 - A gates everything: until more than one module can be compiled as its own unit, there is no second
   object to instantiate, connect, or reference.
-- B gates C: a handle can only be bound once the target instance exists in the object tree.
+- B gates C: a cross-unit reference can only be bound once the target instance exists in the object
+  tree.
 - C gates D and E: both are cross-unit references resolved over the same construction-time path.
 - D and E are independent of each other; their relative order is an open question (see below).
 
@@ -50,7 +51,13 @@ C  Non-local access substrate
 ### Stage A -- Specialization as compilation unit
 
 - [ ] A1 -- More than one module definition compiles in a single run; the design is no longer
-      assumed to be a single top module. Each module is its own independently compiled unit.
+      assumed to be a single top module. Each module is its own independently compiled unit. The LRM
+      permits multiple top-level blocks (LRM 3.11): every elaborated but uninstantiated module is
+      implicitly a top-level block, and all of them sit under one implicit root scope ($root). The
+      program constructs every top-level block as a child of $root and runs them all under a single
+      scheduler on one shared time axis -- there is no single "main" block. This is end-to-end
+      testable with no instantiation edge: two independent top modules each run their own processes
+      under the shared schedule.
 - [ ] A2 -- Inputs are classified into code-shape-affecting (enter the specialization key) versus
       constructor/config inputs (flow in at construction). One compiled artifact exists per distinct
       code shape, not per instance.

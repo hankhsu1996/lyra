@@ -33,6 +33,10 @@ The simulation runs after the constructor returns. Processes get pulled off sche
 resumed. They read and write per-object state. They do not create or destroy objects. The graph
 shape does not change once the simulation starts.
 
+At program entry the runtime constructs every top-level block under the implicit root scope `$root`
+(see `hierarchy_and_generate.md`). A single scheduler then drives the processes of all of them on
+one time axis; multiple top-level modules are one simulation, not several.
+
 ## Generate is not compile-time expansion
 
 A generate-for with 1024 iterations does not produce 1024 things at compile time. Compile-time
