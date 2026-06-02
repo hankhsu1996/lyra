@@ -71,13 +71,16 @@ Unlocks the compile-time side of `instantiation/specialization_grouping` and
 
 - [x] B1 -- A module instantiates a child; the constructor builds the child as a distinct object
       owned by the parent in the object tree. Parent and child remain separate units.
-- [ ] B2 -- The same module instantiated several times yields independent objects, each owning its
+- [x] B2 -- The same module instantiated several times yields independent objects, each owning its
       own state.
-- [ ] B3 -- Instantiation nests: a child that itself instantiates a grandchild builds a multi-level
+- [x] B3 -- Instantiation nests: a child that itself instantiates a grandchild builds a multi-level
       object tree.
-- [ ] B4 -- A child's own (non-port) local state and processes run correctly inside its object.
-- [ ] B5 -- Generate (`for` / `if` / `case`) constructs child instances as part of the object tree,
-      including arrays of instances; which children exist is a construction-time decision.
+- [x] B4 -- A child's own (non-port) local state and processes run correctly inside its object.
+- [x] B5 -- Generate (`for` / `if` / `case`) wraps child instances: which generate blocks exist, and
+      how many loop iterations, is a construction-time decision, and each block owns its instances
+      as part of the object tree.
+- [ ] B6 -- An instance array (`Child c[3]()`) is one named member that expands to a vector of
+      independent child objects.
 
 Unlocks `instantiation/multiple_instances`, `instantiation/nested_hierarchy`,
 `instantiation/local_variables`, the runtime side of `instantiation/param_slots`, and

@@ -1,0 +1,13 @@
+id: cpp.hierarchy_nested_instance
+tags: [cpp_run]
+input:
+  command: [run, cpp]
+  project: false
+  files: [main.sv]
+expect:
+  exit: 0
+  stdout:
+    contains:
+      - "top"
+      - "mid m=9"
+      - "leaf v=5 dbl=10"
