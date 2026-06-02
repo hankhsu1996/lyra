@@ -1,0 +1,13 @@
+id: cpp.fopen_fd_encoding
+tags: [cpp_run]
+input:
+  command: [run, cpp]
+  project: false
+  top: Top
+  files: [main.sv]
+expect:
+  exit: 0
+  variables:
+    bit31_set: 1
+  files:
+    fd_check.txt: ""

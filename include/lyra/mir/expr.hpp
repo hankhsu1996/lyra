@@ -15,6 +15,7 @@
 #include "lyra/mir/integral_constant.hpp"
 #include "lyra/mir/range_bounds.hpp"
 #include "lyra/mir/runtime_diagnostic.hpp"
+#include "lyra/mir/runtime_file_io.hpp"
 #include "lyra/mir/runtime_finish.hpp"
 #include "lyra/mir/runtime_print.hpp"
 #include "lyra/mir/runtime_submit.hpp"
@@ -99,7 +100,8 @@ struct CallExpr {
 
 using RuntimeCall = std::variant<
     RuntimePrintCall, RuntimeDiagnosticCall, RuntimeFinishCall,
-    RuntimeSubmitObservedCall, RuntimeSubmitNbaCall>;
+    RuntimeSubmitObservedCall, RuntimeSubmitNbaCall, RuntimeFileOpenCall,
+    RuntimeFileCloseCall>;
 
 struct RuntimeCallExpr {
   RuntimeCall call;

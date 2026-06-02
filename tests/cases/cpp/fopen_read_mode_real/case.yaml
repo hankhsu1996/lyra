@@ -1,0 +1,14 @@
+id: cpp.fopen_read_mode_real
+tags: [cpp_run]
+input:
+  command: [run, cpp]
+  project: false
+  top: Top
+  files: [main.sv]
+expect:
+  exit: 0
+  variables:
+    read_fd_valid: 1
+  files:
+    input.txt: |
+      data

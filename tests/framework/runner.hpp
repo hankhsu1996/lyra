@@ -27,11 +27,17 @@ struct ExpectedVariable {
   ExpectedValue value;
 };
 
+struct ExpectedFile {
+  std::string relative_path;
+  std::string content;
+};
+
 struct CaseExpect {
   std::optional<int> exit_code;
   ExpectedOutput stdout_spec;
   ExpectedOutput stderr_spec;
   std::vector<ExpectedVariable> variables;
+  std::vector<ExpectedFile> files;
 };
 
 struct TestCase {

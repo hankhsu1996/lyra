@@ -12,6 +12,7 @@
 
 #include "lyra/base/time.hpp"
 #include "lyra/runtime/diagnostic.hpp"
+#include "lyra/runtime/file_table.hpp"
 #include "lyra/runtime/runtime_scope.hpp"
 #include "lyra/runtime/runtime_services.hpp"
 #include "lyra/runtime/stream_dispatcher.hpp"
@@ -151,7 +152,8 @@ class Engine {
 
   StreamDispatcher stream_;
   DiagnosticDispatcher diagnostic_;
-  RuntimeServices services_{stream_, diagnostic_, *this};
+  FileTable files_;
+  RuntimeServices services_{stream_, diagnostic_, files_, *this};
   std::unique_ptr<RuntimeScope> root_;
   SchedulerQueues queues_;
   std::vector<Module*> registered_modules_;

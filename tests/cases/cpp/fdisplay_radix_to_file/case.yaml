@@ -1,0 +1,14 @@
+id: cpp.fdisplay_radix_to_file
+tags: [cpp_run]
+input:
+  command: [run, cpp]
+  project: false
+  top: Top
+  files: [main.sv]
+expect:
+  exit: 0
+  files:
+    out.txt: |
+      ab
+      0101
+      077

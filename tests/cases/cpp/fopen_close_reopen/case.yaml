@@ -1,0 +1,15 @@
+id: cpp.fopen_close_reopen
+tags: [cpp_run]
+input:
+  command: [run, cpp]
+  project: false
+  top: Top
+  files: [main.sv]
+expect:
+  exit: 0
+  variables:
+    both_valid: 1
+    reused_slot: 1
+  files:
+    first.txt: ""
+    second.txt: ""
