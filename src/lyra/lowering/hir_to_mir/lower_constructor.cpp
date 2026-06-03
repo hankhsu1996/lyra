@@ -230,10 +230,19 @@ void InstallCrossUnitRefs(
   for (const auto& cu : scope.cross_unit_refs) {
     const mir::StructuralVarId instance_var =
         instance_member_vars.at(cu.instance.value);
+    std::vector<mir::PathStep> path;
+    path.reserve(cu.path.size());
+    for (const auto& step : cu.path) {
+      if (const auto* member = std::get_if<hir::MemberHop>(&step)) {
+        path.emplace_back(mir::MemberHop{member->name});
+      } else {
+        path.emplace_back(mir::IndexHop{std::get<hir::IndexHop>(step).index});
+      }
+    }
     const mir::CrossUnitRefId slot = scope_state.AddCrossUnitRef(
         mir::CrossUnitRefDecl{
             .instance_var = instance_var,
-            .member_path = cu.member_path,
+            .path = std::move(path),
             .type = unit_state.TranslateType(cu.type)});
     const mir::StmtId sid = ctor_scope_state.AddStmt(
         mir::Stmt{

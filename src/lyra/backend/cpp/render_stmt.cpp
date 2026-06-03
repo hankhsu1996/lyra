@@ -184,10 +184,10 @@ auto RenderConstructExternalUnitStmt(
 }
 
 // Points the slot at the leaf member it references, once the subtree exists.
-// The slot is a `Var<T>*`; the head instance var and every intervening instance
-// are owning pointers, so the path is reached by chaining `->` from the head
-// down to the leaf and taking its address (LRM 23.6 resolved at construction,
-// reference_resolution.md).
+// The slot is a `Var<T>*`; the head var and every intervening instance are
+// owning pointers reached with `->`, and an instance-array hop indexes the
+// owning vector with `[i]`. Taking the address yields the resolved reference
+// (LRM 23.6 resolved at construction, reference_resolution.md).
 auto RenderResolveCrossUnitRefStmt(
     const RenderContext& ctx, const mir::ResolveCrossUnitRefStmt& s,
     std::size_t indent) -> diag::Result<std::string> {
@@ -195,8 +195,12 @@ auto RenderResolveCrossUnitRefStmt(
   const auto& inst = ctx.StructuralScope().GetStructuralVar(slot.instance_var);
   std::string out =
       Indent(indent) + CrossUnitRefSlotName(s.slot.value) + " = &" + inst.name;
-  for (const auto& member : slot.member_path) {
-    out += "->" + member;
+  for (const auto& step : slot.path) {
+    if (const auto* member = std::get_if<mir::MemberHop>(&step)) {
+      out += "->" + member->name;
+    } else {
+      out += "[" + std::to_string(std::get<mir::IndexHop>(step).index) + "]";
+    }
   }
   out += ";\n";
   return out;

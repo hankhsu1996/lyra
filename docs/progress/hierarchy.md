@@ -114,8 +114,8 @@ consume. Coverage is demonstrated through Stage D and Stage E.
       remain.
 - [ ] D5 -- The hierarchical path of an instance (for `%m`, display, and scope queries) derives from
       object-tree ownership.
-- [ ] D6 -- A hierarchical path that indexes an instance array (`c[i].x`) resolves to the selected
-      element.
+- [x] D6 -- A hierarchical path that indexes an instance array (`c[i].x`) resolves to the selected
+      element, including multi-dimensional arrays (`c[i][j].x`).
 - [ ] D7 -- A hierarchical reference crosses a generate-block scope boundary: a path step through a
       generate block (`g.sig`), or a reference originating inside a generate block that names a
       signal in an enclosing scope.

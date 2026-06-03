@@ -1,5 +1,6 @@
 #include "lyra/lowering/ast_to_hir/expression/lower.hpp"
 
+#include <cstdint>
 #include <expected>
 #include <optional>
 #include <string>
@@ -285,12 +286,12 @@ auto LowerNamedValueProc(
       binding->type, span);
 }
 
-// LRM 23.6 hierarchical reference. Resolves a downward path through scalar
-// instances (`c.x`, `m.l.x`, ...) into a cross-unit reference slot whose recipe
-// is the navigation path from a local child member down to the leaf; the
-// constructor resolution lives downstream (reference_resolution.md). Upward,
-// instance-array-indexed, generate-scope, and interface-port forms are rejected
-// explicitly here so they never lower into a silently-wrong shape.
+// LRM 23.6 hierarchical reference. Resolves a downward path through instances
+// and instance arrays (`c.x`, `m.l.x`, `c[1].x`, ...) into a cross-unit
+// reference slot whose recipe is the navigation path from a local child member
+// down to the leaf; the constructor resolution lives downstream
+// (reference_resolution.md). Upward, generate-scope, and interface-port forms
+// are rejected explicitly here so they never lower into a silently-wrong shape.
 auto LowerHierarchicalValueProc(
     const UnitLoweringFacts& unit_facts, UnitLoweringState& unit_state,
     const ScopeStack& stack, const slang::ast::HierarchicalValueExpression& hve)
@@ -321,36 +322,28 @@ auto LowerHierarchicalValueProc(
   }
 
   // ref.path is slang's resolved top-down navigation: path.front() is the head
-  // instance (this unit's local member); the remaining elements name the
-  // members down to the leaf (path.back() is `target`). A non-name selector is
-  // an instance-array index step, not yet supported.
-  for (const auto& step : ref.path) {
-    if (!std::holds_alternative<std::string_view>(step.selector)) {
-      return diag::Unsupported(
-          span, diag::DiagCode::kUnsupportedExpressionForm,
-          "instance-array index in hierarchical path is not yet supported",
-          diag::UnsupportedCategory::kOperation);
-    }
-  }
+  // (this unit's local instance or instance-array member); the rest navigate
+  // down to the leaf (path.back() is `target`), each step a named member or an
+  // instance-array index.
   const slang::ast::Symbol& head_sym = *ref.path.front().symbol;
-  if (head_sym.kind != slang::ast::SymbolKind::Instance) {
+  const bool head_is_instance_member =
+      head_sym.kind == slang::ast::SymbolKind::Instance ||
+      head_sym.kind == slang::ast::SymbolKind::InstanceArray;
+  if (!head_is_instance_member) {
     return diag::Unsupported(
         span, diag::DiagCode::kUnsupportedExpressionForm,
         "hierarchical reference through a generate-block scope is not yet "
         "supported",
         diag::UnsupportedCategory::kOperation);
   }
-  // The head is a scalar instance reached downward from this unit's scope, so
-  // it is a direct instance member, which the pre-pass always binds. A downward
-  // path cannot reach a sibling top-level unit (that routes through $root and
-  // is caught by isUpward above), so a missing binding is a compiler-bug
-  // invariant.
-  const auto head_binding = unit_state.LookupInstanceMemberBinding(
-      head_sym.as<slang::ast::InstanceSymbol>());
+  // An instance / instance-array member reached downward from this unit's scope
+  // is a direct member, which the pre-pass always binds. A downward path cannot
+  // reach a sibling top-level unit (that routes through $root and is caught by
+  // isUpward above), so a missing binding is a compiler-bug invariant.
+  const auto head_binding = unit_state.LookupInstanceMemberBinding(head_sym);
   if (!head_binding.has_value()) {
     throw InternalError(
-        "LowerHierarchicalValueProc: downward head instance has no local "
-        "member binding");
+        "LowerHierarchicalValueProc: downward head member has no binding");
   }
   const auto hops = stack.HopsTo(head_binding->home_frame);
   if (!hops.has_value() || hops->value != 0) {
@@ -361,10 +354,24 @@ auto LowerHierarchicalValueProc(
         diag::UnsupportedCategory::kOperation);
   }
 
-  std::vector<std::string> member_path;
-  member_path.reserve(ref.path.size() - 1);
+  std::vector<hir::PathStep> path;
+  path.reserve(ref.path.size() - 1);
   for (const auto& step : ref.path.subspan(1)) {
-    member_path.emplace_back(std::get<std::string_view>(step.selector));
+    if (std::holds_alternative<std::string_view>(step.selector)) {
+      path.emplace_back(
+          hir::MemberHop{
+              std::string{std::get<std::string_view>(step.selector)}});
+    } else if (std::holds_alternative<std::int32_t>(step.selector)) {
+      path.emplace_back(
+          hir::IndexHop{static_cast<std::uint32_t>(
+              std::get<std::int32_t>(step.selector))});
+    } else {
+      return diag::Unsupported(
+          span, diag::DiagCode::kUnsupportedExpressionForm,
+          "instance-array range select in a hierarchical path is not yet "
+          "supported",
+          diag::UnsupportedCategory::kOperation);
+    }
   }
 
   auto type_id = TypeIdOfSlangExpr(unit_facts, unit_state, hve);
@@ -372,8 +379,8 @@ auto LowerHierarchicalValueProc(
 
   const auto& var = target.as<slang::ast::VariableSymbol>();
   const hir::CrossUnitRefId slot = unit_state.MapOrGetCrossUnitRef(
-      var, head_binding->home_frame, head_binding->member_id,
-      std::move(member_path), *type_id);
+      var, head_binding->home_frame, head_binding->member_id, std::move(path),
+      *type_id);
   return MakeRefExpr(hir::CrossUnitVarRef{.id = slot}, *type_id, span);
 }
 

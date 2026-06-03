@@ -1,6 +1,8 @@
 #pragma once
 
+#include <cstdint>
 #include <string>
+#include <variant>
 #include <vector>
 
 #include "lyra/base/time.hpp"
@@ -16,15 +18,25 @@
 
 namespace lyra::mir {
 
+// One step of a cross-unit reference's downward navigation past the head: a
+// named member (`->name`) or an instance-array index (`[index]`).
+struct MemberHop {
+  std::string name;
+};
+struct IndexHop {
+  std::uint32_t index;
+};
+using PathStep = std::variant<MemberHop, IndexHop>;
+
 // A cross-unit reference resolved once at construction. `instance_var` is the
-// structural var holding the owned child instance -- the head of the downward
-// path; `member_path` is the chain of member names from the head's child down
-// to the referenced leaf (`c.x` is `{"x"}`; `m.l.x` is `{"l", "x"}`); `type` is
-// the referenced leaf's type. The backend stores a direct reference to
-// `instance_var->...->leaf` by chaining `->` over the path.
+// structural var holding the owned child instance (or instance-array) -- the
+// head of the downward path; `path` carries the navigation past the head down
+// to the referenced leaf; `type` is the referenced leaf's type. The backend
+// stores a direct reference to the leaf by chaining the path's hops from
+// `instance_var`.
 struct CrossUnitRefDecl {
   StructuralVarId instance_var;
-  std::vector<std::string> member_path;
+  std::vector<PathStep> path;
   TypeId type;
 };
 
