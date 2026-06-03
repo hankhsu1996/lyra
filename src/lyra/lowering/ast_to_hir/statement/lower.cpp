@@ -24,6 +24,7 @@
 #include "lyra/lowering/ast_to_hir/facts.hpp"
 #include "lyra/lowering/ast_to_hir/sensitivity.hpp"
 #include "lyra/lowering/ast_to_hir/state.hpp"
+#include "lyra/lowering/ast_to_hir/statement/foreach.hpp"
 
 namespace lyra::lowering::ast_to_hir {
 
@@ -772,6 +773,11 @@ auto LowerStatement(
       return LowerForeverLoopStmt(
           unit_facts, proc_state, scope_state, stack,
           stmt.as<slang::ast::ForeverLoopStatement>(), span);
+
+    case slang::ast::StatementKind::ForeachLoop:
+      return LowerForeachLoopStmt(
+          unit_facts, proc_state, scope_state, stack,
+          stmt.as<slang::ast::ForeachLoopStatement>(), span);
 
     case slang::ast::StatementKind::Break:
       return LowerBreakStmt(span);

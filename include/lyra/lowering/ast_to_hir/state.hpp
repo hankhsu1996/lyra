@@ -434,6 +434,23 @@ class ProcessLoweringState {
     return id;
   }
 
+  // Procedural variable with no slang symbol behind it. Name resolution
+  // keys on slang symbol pointers, so a synthetic var cannot shadow a user
+  // identifier; the `__lyra_` prefix is convention so the var is visually
+  // distinct in dumps and emit. Lifetime is automatic because no SV
+  // declaration governs it.
+  auto AddSyntheticProceduralVar(std::string_view name, hir::TypeId type)
+      -> hir::ProceduralVarId {
+    const hir::ProceduralVarId id{
+        static_cast<std::uint32_t>(body_.procedural_vars.size())};
+    body_.procedural_vars.push_back(
+        hir::ProceduralVarDecl{
+            .name = std::string{name},
+            .type = type,
+            .lifetime = hir::VariableLifetime::kAutomatic});
+    return id;
+  }
+
   [[nodiscard]] auto LookupProceduralVar(const slang::ast::VariableSymbol& var)
       const -> std::optional<hir::ProceduralVarId> {
     const auto it = procedural_var_bindings_.find(&var);

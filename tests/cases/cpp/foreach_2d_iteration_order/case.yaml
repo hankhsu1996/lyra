@@ -1,0 +1,15 @@
+id: cpp.foreach_2d_iteration_order
+tags: [cpp_run]
+input:
+  command: [run, cpp]
+  project: false
+  top: Top
+  files: [main.sv]
+expect:
+  exit: 0
+  variables:
+    first_i: 0
+    first_j: 0
+    last_i: 1
+    last_j: 2
+    order: 102101112

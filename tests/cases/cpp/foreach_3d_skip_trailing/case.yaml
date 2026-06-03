@@ -1,0 +1,14 @@
+id: cpp.foreach_3d_skip_trailing
+tags: [cpp_run]
+input:
+  command: [run, cpp]
+  project: false
+  top: Top
+  files: [main.sv]
+expect:
+  exit: 0
+  variables:
+    count: 2
+    sum_i: 1
+    first_i: 0
+    last_i: 1

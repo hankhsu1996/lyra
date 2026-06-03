@@ -247,11 +247,12 @@ auto LowerNamedValueProc(
         sym.as<slang::ast::ParameterSymbol>(), *type_id, span);
   }
 
-  // A subroutine formal (LRM 13.5) is a VariableSymbol subclass with its own
-  // SymbolKind; it resolves through the same procedural-var binding as a body
-  // local.
+  // Subroutine formals (LRM 13.5) and foreach iterators (LRM 12.7.3) are
+  // VariableSymbol subclasses and route through the same procedural-var
+  // binding as ordinary body locals.
   if (sym.kind != slang::ast::SymbolKind::Variable &&
-      sym.kind != slang::ast::SymbolKind::FormalArgument) {
+      sym.kind != slang::ast::SymbolKind::FormalArgument &&
+      sym.kind != slang::ast::SymbolKind::Iterator) {
     return diag::Unsupported(
         span, diag::DiagCode::kUnsupportedNonVariableNamedReference,
         "reference to non-variable declaration is not supported",
