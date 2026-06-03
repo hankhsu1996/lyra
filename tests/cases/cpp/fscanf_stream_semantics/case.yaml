@@ -1,0 +1,43 @@
+id: cpp.fscanf_stream_semantics
+tags: [cpp_run]
+input:
+  command: [run, cpp]
+  project: false
+  top: Top
+  files: [main.sv]
+expect:
+  exit: 0
+  variables:
+    # Empty file: EOF before any conversion.
+    code_empty: -1
+    a_empty: 99
+    # Partial match: 12 matches, abc fails second %d.
+    code_partial: 1
+    a_partial: 12
+    b_partial: 99
+    # Literal mismatch: only first %d matches; 'x' must be readable after.
+    code_lit: 1
+    a_lit: 12
+    b_lit: 99
+    leftover_byte: 120  # 'x' = 0x78 = 120 in $feof+$fgetc check below
+    # Drain: code matched, then we peek past last digit so $feof is true.
+    code_drain: 1
+    a_drain: 777
+    peek_past_eof: -1
+    eof_after_drain: 1
+    # Read 'A', ungetc it, scan %c -- should re-read 'A' (0x41 = 65).
+    first_byte: 65
+    ret_ungetc: 0
+    code_ungetc: 1
+    c_ungetc: 65
+    # Assign-RHS: matched count, both vars assigned.
+    code_rhs: 2
+    a_rhs: 5
+    b_rhs: 9
+  files:
+    empty.txt: ""
+    partial.txt: "12 abc"
+    lit.txt: "12x34"
+    drain.txt: "777"
+    ung.txt: "AB"
+    rhs.txt: "5 9"

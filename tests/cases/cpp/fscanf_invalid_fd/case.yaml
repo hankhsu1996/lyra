@@ -1,0 +1,17 @@
+id: cpp.fscanf_invalid_fd
+tags: [cpp_run]
+input:
+  command: [run, cpp]
+  project: false
+  top: Top
+  files: [main.sv]
+expect:
+  exit: 0
+  variables:
+    code: -1
+    a: 99
+    errno_val: 9                                # EBADF on Linux (LRM 21.3.7)
+    err_msg: "$fscanf: not an open file descriptor"
+    err_msg_len: 36
+  files:
+    dummy.txt: ""

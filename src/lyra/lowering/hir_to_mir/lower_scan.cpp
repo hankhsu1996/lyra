@@ -63,53 +63,60 @@ auto LowerScanSystemSubroutineCallStmt(
     const support::ScanSystemSubroutineInfo& info,
     std::optional<hir::ExprId> assign_target, mir::TypeId result_type)
     -> diag::Result<mir::Stmt> {
-  if (info.source != support::ScanSourceKind::kString) {
-    throw InternalError(
-        "LowerScanSystemSubroutineCallStmt: only kString source is wired "
-        "today, but the descriptor has a different source kind");
-  }
   if (call.arguments.size() < 3) {
     throw InternalError(
-        "LowerScanSystemSubroutineCallStmt: $sscanf requires at least input, "
-        "format, and one output argument (slang's ArgCountPolicy should have "
-        "rejected fewer)");
+        "LowerScanSystemSubroutineCallStmt: scan family requires at least "
+        "source, format, and one output argument (slang's ArgCountPolicy "
+        "should have rejected fewer)");
   }
 
   ProceduralScopeLoweringState wrapper;
   ProceduralDepthGuard depth_guard{proc_state};
 
-  // LRM 21.3.4.3 also permits integral and unpacked-array-of-byte input
-  // sources; first-cut runtime only handles `string`. A string-literal
-  // actual reaches lowering as a packed byte-array, so wrap any non-string
-  // packed-array input in an implicit ConversionExpr to string -- the
-  // backend's render-side identity path turns the literal byte form into
-  // the C++ string literal which binds to `value::String` natively. Other
-  // input shapes (e.g. unpacked byte arrays) are rejected here.
-  auto input_or = LowerExpr(
+  auto source_or = LowerExpr(
       unit_state, scope_state, proc_state, wrapper, hir_proc,
       hir_proc.exprs.at(call.arguments[0].value));
-  if (!input_or) return std::unexpected(std::move(input_or.error()));
-  const mir::TypeId input_type = input_or->type;
-  mir::ExprId input_id = wrapper.AddExpr(*std::move(input_or));
-  const mir::TypeKind input_kind = unit_state.GetType(input_type).Kind();
-  if (input_kind != mir::TypeKind::kString) {
-    if (input_kind != mir::TypeKind::kPackedArray) {
-      return diag::Unsupported(
-          span, diag::DiagCode::kUnsupportedSubroutineArgument,
-          std::format(
-              "{} input source must be a string or string-literal expression; "
-              "integral and unpacked-array-of-byte sources (LRM 21.3.4.3) are "
-              "not yet supported",
-              std::string{desc.name}),
-          diag::UnsupportedCategory::kFeature);
-    }
-    input_id = wrapper.AddExpr(
-        mir::Expr{
-            .data =
-                mir::ConversionExpr{
-                    .operand = input_id,
-                    .kind = mir::ConversionKind::kImplicit},
-            .type = unit_state.Builtins().string});
+  if (!source_or) return std::unexpected(std::move(source_or.error()));
+  const mir::TypeId source_type = source_or->type;
+  mir::ExprId source_id = wrapper.AddExpr(*std::move(source_or));
+  const mir::TypeKind source_kind = unit_state.GetType(source_type).Kind();
+  switch (info.source) {
+    case support::ScanSourceKind::kString:
+      if (source_kind != mir::TypeKind::kString) {
+        if (source_kind != mir::TypeKind::kPackedArray) {
+          return diag::Unsupported(
+              span, diag::DiagCode::kUnsupportedSubroutineArgument,
+              std::format(
+                  "{} input source of unpacked-array-of-byte type "
+                  "(LRM 21.3.4.3) is not yet supported",
+                  std::string{desc.name}),
+              diag::UnsupportedCategory::kFeature);
+        }
+        // LRM 5.9 + 6.16: string literals and integral expressions both
+        // reach lowering as packed bit-vectors whose bytes are the input
+        // characters; the implicit conversion reinterprets those bits as
+        // a string view.
+        source_id = wrapper.AddExpr(
+            mir::Expr{
+                .data =
+                    mir::ConversionExpr{
+                        .operand = source_id,
+                        .kind = mir::ConversionKind::kImplicit},
+                .type = unit_state.Builtins().string});
+      }
+      break;
+    case support::ScanSourceKind::kFile:
+      if (source_kind != mir::TypeKind::kPackedArray) {
+        // LRM 21.3.1 binds fd as a 32-bit int; slang's type-check on the
+        // $fscanf signature rejects non-integral arguments before HIR.
+        // Any other MIR type reaching here is an invariant violation
+        // upstream, not a missing feature.
+        throw InternalError(
+            "LowerScanSystemSubroutineCallStmt: $fscanf fd must be a "
+            "packed-integer-typed expression (LRM 21.3.1); slang's "
+            "type-check should have rejected non-integral arguments");
+      }
+      break;
   }
 
   auto format_or = LowerExpr(
@@ -126,7 +133,7 @@ auto LowerScanSystemSubroutineCallStmt(
   std::vector<mir::ExprId> slot_refs;
   slot_refs.reserve(call.arguments.size() - 2);
   for (std::size_t i = 2; i < call.arguments.size(); ++i) {
-    const std::string temp_name = "_lyra_sscanf_dest_" + std::to_string(i - 2);
+    const std::string temp_name = "_lyra_scan_dest_" + std::to_string(i - 2);
     auto slot_or = BuildOutputArgSlot(
         unit_state, scope_state, proc_state, wrapper, hir_proc,
         call.arguments[i], temp_name);
@@ -140,8 +147,9 @@ auto LowerScanSystemSubroutineCallStmt(
       .data =
           mir::RuntimeCallExpr{
               .call =
-                  mir::RuntimeSScanCall{
-                      .input = input_id,
+                  mir::RuntimeScanCall{
+                      .source_kind = info.source,
+                      .source = source_id,
                       .format = format_id,
                       .slots = std::move(slot_refs)}},
       .type = unit_state.Builtins().int32};
