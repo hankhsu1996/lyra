@@ -411,10 +411,10 @@ auto RenderRuntimeCallExpr(
             return std::format(
                 "lyra::runtime::LyraFFlush(*services_, {})", *fd_or);
           },
-          [&](const mir::RuntimeSScanCall& ss) -> diag::Result<std::string> {
-            auto input_or = RenderExpr(ctx, ctx.Expr(ss.input));
-            if (!input_or) {
-              return std::unexpected(std::move(input_or.error()));
+          [&](const mir::RuntimeScanCall& ss) -> diag::Result<std::string> {
+            auto source_or = RenderExpr(ctx, ctx.Expr(ss.source));
+            if (!source_or) {
+              return std::unexpected(std::move(source_or.error()));
             }
             auto format_or = RenderExpr(ctx, ctx.Expr(ss.format));
             if (!format_or) {
@@ -432,9 +432,18 @@ auto RenderRuntimeCallExpr(
               slot_pieces +=
                   std::format("lyra::runtime::ScanSlot::Make({})", *slot_or);
             }
-            return std::format(
-                "lyra::runtime::LyraSScanf({}, {}, {{{}}})", *input_or,
-                *format_or, slot_pieces);
+            switch (ss.source_kind) {
+              case support::ScanSourceKind::kString:
+                return std::format(
+                    "lyra::runtime::LyraSScanf({}, {}, {{{}}})", *source_or,
+                    *format_or, slot_pieces);
+              case support::ScanSourceKind::kFile:
+                return std::format(
+                    "lyra::runtime::LyraFScanf(*services_, {}, {}, {{{}}})",
+                    *source_or, *format_or, slot_pieces);
+            }
+            throw InternalError(
+                "RuntimeScanCall: unknown ScanSourceKind in render");
           },
       },
       expr.call);

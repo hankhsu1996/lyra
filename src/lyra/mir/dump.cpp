@@ -794,7 +794,7 @@ class MirDumper {
                                 ? std::format("Expr[{}]", ff.descriptor->value)
                                 : std::string("all")));
                   },
-                  [&](const RuntimeSScanCall& ss) {
+                  [&](const RuntimeScanCall& ss) {
                     std::string slot_list;
                     for (std::size_t k = 0; k < ss.slots.size(); ++k) {
                       if (k != 0) {
@@ -802,11 +802,16 @@ class MirDumper {
                       }
                       slot_list += std::format("Expr[{}]", ss.slots[k].value);
                     }
+                    const std::string_view kind_text =
+                        ss.source_kind == support::ScanSourceKind::kString
+                            ? "string"
+                            : "file";
                     Line(
                         std::format(
-                            "RuntimeSScanCall input=Expr[{}] format=Expr[{}] "
-                            "slots=[{}]",
-                            ss.input.value, ss.format.value, slot_list));
+                            "RuntimeScanCall source_kind={} source=Expr[{}] "
+                            "format=Expr[{}] slots=[{}]",
+                            kind_text, ss.source.value, ss.format.value,
+                            slot_list));
                   },
               },
               rc->call);

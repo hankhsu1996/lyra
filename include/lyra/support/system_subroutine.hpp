@@ -111,11 +111,11 @@ struct FileIOSystemSubroutineInfo {
 }
 
 // LRM 21.3.4.3 scan family ($sscanf / $fscanf). The kind axis tracks where
-// the scanned characters come from. Only kString is implemented today; the
-// kFile variant ($fscanf) wires the same scanner core over a file-source
-// adapter in a follow-up.
+// the scanned characters come from; the scanner core is shared and only
+// the source-adapter and runtime entry differ.
 enum class ScanSourceKind : std::uint8_t {
   kString,
+  kFile,
 };
 
 struct ScanSystemSubroutineInfo {
@@ -524,6 +524,15 @@ inline constexpr std::array kSystemSubroutines = {
         .result_conv = ReturnConvention::kInt32,
         .arg_policy = ArgCountPolicy{.min_args = 3, .max_args = 255},
         .semantic = ScanSystemSubroutineInfo{.source = ScanSourceKind::kString},
+    },
+    SystemSubroutineDesc{
+        .id = SystemSubroutineId{33},
+        .name = "$fscanf",
+        .origin = SystemSubroutineOrigin::kLanguageBuiltin,
+        .kind = SystemSubroutineKind::kFunction,
+        .result_conv = ReturnConvention::kInt32,
+        .arg_policy = ArgCountPolicy{.min_args = 3, .max_args = 255},
+        .semantic = ScanSystemSubroutineInfo{.source = ScanSourceKind::kFile},
     },
 };
 

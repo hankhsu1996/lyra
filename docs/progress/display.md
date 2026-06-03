@@ -37,6 +37,36 @@ since the test harness can only probe a variable whose type has an implemented s
       workstreams. Drives the test framework's whole-array `expect.variables` assertion path:
       sequence-valued YAML entries (`a: [10, 20, 30]`) lower to a recursive `UnpackedArrayValueView`
       and round-trip through the same `FormatValue` the runtime uses.
+- [x] DI8 -- `$sscanf` and `$fscanf` over a shared scanner core (LRM 21.3.4.3). Statement-position
+      call (bare or blocking assign-RHS); conversions `%d` / `%h` / `%x` / `%b` / `%o` / `%s` / `%c`
+      / `%%`; 4-state vocabulary (`x` / `z` / `?` / `_`) inside the integer conversions; single-char
+      `x`/`z`/`?` fill for `%d`. Output-arg copy-out uses LRM 13.5 with copy-in initialization so
+      unmatched slots preserve the actual's prior value (LRM 21.3.4.3 only writes successfully
+      matched outputs). `$sscanf` takes a string or string-literal input; `$fscanf` takes an int FD,
+      honours "offending input character is left unread" via the underlying FD's putback buffer, and
+      stamps `$ferror` on invalid / closed descriptors.
+
+## Scan family follow-ups
+
+Tracks remaining LRM 21.3.4.3 corners explicitly rejected by the scan family. Each item is a
+user-observable feature gap (lowering-time `diag::Unsupported` or runtime rejection) that should
+close as the corresponding behaviour lands.
+
+- [ ] Expression-position `$sscanf` / `$fscanf` (e.g. `if ($sscanf(...))`). Rejected at lowering;
+      only statement position (bare call or blocking assign-RHS) supports the LRM 13.5 copy-out
+      desugaring today.
+- [ ] Field width (`%5d`) and assignment suppression (`%*d`) for both scan functions (LRM 21.3.4.3
+      Table 21-7). Rejected at runtime so the matched count never silently desyncs from the user's
+      argument list.
+- [ ] `$sscanf` input source of unpacked-array-of-byte type (LRM 21.3.4.3). String and integral
+      inputs work; the unpacked aggregate variant is rejected at lowering.
+- [ ] `$sscanf` NUL-as-whitespace (LRM 21.3.4.3 sscanf-only). NUL is currently treated as a literal
+      byte rather than a separator.
+- [ ] `$sscanf` "format string or str argument contains x/z bits implies EOF (-1)" (LRM 21.3.4.3
+      sscanf-only). Slang binds str / format expressions to value bytes on this pipeline so the
+      corner cannot be observed in practice yet; revisit once 4-state string surfaces exist.
+- [ ] `$fseek` / `$rewind` cancelling pending `$ungetc` operations (LRM 21.3.5). Independent
+      file-positioning gap; not triggered by the scan family but shares the FD surface.
 
 ## Out of Scope
 
@@ -45,17 +75,6 @@ since the test harness can only probe a variable whose type has an implemented s
 - `$monitor` / `$fmonitor`. Not modelled today; add an entry when a concrete consumer needs it.
 - `$strobe` / `$fstrobe` radix variants. The radix-dispatch mechanism is shared with DI5 but
   strobe's "drain at end of time slot" semantic waits on DI6 (postponed region).
-- `$sscanf` implemented per LRM 21.3.4.3: string and string-literal input, statement-position call
-  (bare or blocking assign-RHS), conversions `%d` / `%h` / `%x` / `%b` / `%o` / `%s` / `%c` / `%%`,
-  4-state vocabulary (`x` / `z` / `?` / `_`) inside the integer conversions, single-char `x`/`z`/`?`
-  fill for `%d`. Output-arg copy-out uses LRM 13.5 with copy-in initialization so unmatched slots
-  preserve the actual's prior value (LRM 21.3.4.3 only writes successfully matched outputs).
-- `$fscanf` deferred. Reuses the same scanner core over a file-source adapter plus FD error
-  stamping; no new scanner work expected.
-- `$sscanf` field width (`%5d`) and assignment suppression (`%*d`) deferred. Detected and rejected
-  at runtime so the matched count never silently desyncs from the user's argument list.
-- `$sscanf` integral and unpacked-array-of-byte input sources (LRM 21.3.4.3) deferred; string and
-  string-literal inputs are accepted today.
 - Other file read tasks (`$fgetc` / `$ungetc` / `$fgets` / `$fread` / `$fseek` / `$rewind` /
   `$ftell` / `$feof` / `$ferror` / `$fflush`) are implemented per LRM 21.3.4..21.3.8.
 - `$sformat` / `$sformatf` / `$swrite` family (formatting into a string variable). Independent

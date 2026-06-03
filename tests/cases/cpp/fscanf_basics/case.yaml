@@ -1,0 +1,17 @@
+id: cpp.fscanf_basics
+tags: [cpp_run]
+input:
+  command: [run, cpp]
+  project: false
+  top: Top
+  files: [main.sv]
+expect:
+  exit: 0
+  variables:
+    code: 3
+    a: 42
+    b: 0xdead
+    s: "hello"
+  files:
+    scan_input.txt: |
+      42 dead hello

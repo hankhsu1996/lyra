@@ -8,6 +8,8 @@
 
 namespace lyra::runtime {
 
+class RuntimeServices;
+
 // LRM 21.3.4.3 scanner output slot. Each conversion in the format string
 // writes through one slot; the slot's variant alternative decides which
 // per-spec parser path the runtime takes. The Make factory picks the right
@@ -62,5 +64,18 @@ class ScanSlot {
 auto LyraSScanf(
     const value::String& input, const value::String& format,
     std::initializer_list<ScanSlot> slots) -> value::PackedArray;
+
+// LRM 21.3.4.3 $fscanf entry. Resolves `fd` to the underlying fstream via
+// RuntimeServices::Files(), runs the same scanner core as LyraSScanf over
+// a FileScanSource, and pushes the offending-character pushback back into
+// the fstream's putback buffer before returning so the next $fgetc sees
+// it. Invalid / closed / MCD descriptors stamp EBADF on the FD's $ferror
+// slot and return -1 (LRM "If the input ends before the first matching
+// failure or conversion, EOF (-1) is returned"). The result is wrapped in
+// a 32-bit PackedArray to parallel LyraSScanf.
+auto LyraFScanf(
+    RuntimeServices& services, const value::PackedArray& fd,
+    const value::String& format, std::initializer_list<ScanSlot> slots)
+    -> value::PackedArray;
 
 }  // namespace lyra::runtime
