@@ -862,6 +862,21 @@ class MirDumper {
                         std::format(
                             "RuntimeSFormatCall items={}", sf.items.size()));
                   },
+                  [&](const RuntimeTimeCall& tc) {
+                    std::string_view kind_text = "time";
+                    switch (tc.kind) {
+                      case support::TimeKind::kTime:
+                        kind_text = "time";
+                        break;
+                      case support::TimeKind::kStime:
+                        kind_text = "stime";
+                        break;
+                      case support::TimeKind::kRealtime:
+                        kind_text = "realtime";
+                        break;
+                    }
+                    Line(std::format("RuntimeTimeCall kind={}", kind_text));
+                  },
               },
               rc->call);
           Dedent();

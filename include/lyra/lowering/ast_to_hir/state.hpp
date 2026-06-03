@@ -90,6 +90,13 @@ class UnitLoweringState {
             .dims = {hir::PackedRange{.left = 31, .right = 0}},
             .form = hir::PackedArrayForm::kInt}});
     string_type_id_ = AddType(hir::TypeData{hir::StringType{}});
+    time_type_id_ = AddType(
+        hir::TypeData{hir::PackedArrayType{
+            .atom = hir::BitAtom::kLogic,
+            .signedness = hir::Signedness::kUnsigned,
+            .dims = {hir::PackedRange{.left = 63, .right = 0}},
+            .form = hir::PackedArrayForm::kTime}});
+    realtime_type_id_ = AddType(hir::TypeData{hir::RealTimeType{}});
   }
 
   // Canonical id for the synthesized `void` type (system-call sinks, lvalue
@@ -111,6 +118,19 @@ class UnitLoweringState {
   // 21.3.3) rather than by a slang-derived type.
   [[nodiscard]] auto StringTypeId() const -> hir::TypeId {
     return string_type_id_;
+  }
+
+  // Canonical id for the synthesized 64-bit unsigned `time` (LRM 6.11). Used
+  // by $time, whose return is fixed at `time` by the language (LRM 20.3.1).
+  [[nodiscard]] auto TimeTypeId() const -> hir::TypeId {
+    return time_type_id_;
+  }
+
+  // Canonical id for the synthesized `realtime` (LRM 6.12.1). Used by
+  // $realtime, whose return is fixed at `realtime` by the language (LRM
+  // 20.3.3).
+  [[nodiscard]] auto RealTimeTypeId() const -> hir::TypeId {
+    return realtime_type_id_;
   }
 
   [[nodiscard]] auto HirUnit() const -> const hir::ModuleUnit& {
@@ -294,6 +314,8 @@ class UnitLoweringState {
   hir::TypeId void_type_id_{};
   hir::TypeId int32_type_id_{};
   hir::TypeId string_type_id_{};
+  hir::TypeId time_type_id_{};
+  hir::TypeId realtime_type_id_{};
 };
 
 class ScopeStack {

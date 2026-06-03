@@ -276,6 +276,14 @@ auto RenderScopeAsClass(
   out += Indent(indent + 2) + "return kTimePrecisionPower;\n";
   out += Indent(indent + 1) + "}\n\n";
 
+  // The scope's own time unit (LRM 3.14.2). $time / $realtime read here to
+  // scale the design-global tick back to this design element's unit (LRM
+  // 20.3); an unqualified reference in a process or subroutine body resolves
+  // to the lexically enclosing scope's value.
+  out += Indent(indent + 1) + "static constexpr std::int8_t kTimeUnitPower = " +
+         std::to_string(static_cast<int>(s.time_resolution.unit_power)) +
+         ";\n\n";
+
   for (const auto& child : s.child_structural_scopes) {
     auto child_or =
         RenderScopeAsClass(unit, child, indent + 1, false, &this_anchor);
@@ -399,6 +407,7 @@ auto RenderScopeHeaderFile(
   out += "#include \"lyra/runtime/scope.hpp\"\n";
   out += "#include \"lyra/runtime/scan.hpp\"\n";
   out += "#include \"lyra/runtime/sformat.hpp\"\n";
+  out += "#include \"lyra/runtime/sim_time.hpp\"\n";
   out += "#include \"lyra/runtime/var.hpp\"\n";
   out += "#include \"lyra/value/enum.hpp\"\n";
   out += "#include \"lyra/value/format.hpp\"\n";

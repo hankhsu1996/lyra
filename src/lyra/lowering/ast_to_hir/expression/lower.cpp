@@ -202,6 +202,10 @@ auto MakeReturnConventionType(
       return unit_state.Int32TypeId();
     case support::ReturnConvention::kString:
       return unit_state.StringTypeId();
+    case support::ReturnConvention::kTime64:
+      return unit_state.TimeTypeId();
+    case support::ReturnConvention::kRealTime:
+      return unit_state.RealTimeTypeId();
   }
   throw InternalError("MakeReturnConventionType: unknown ReturnConvention");
 }

@@ -34,6 +34,8 @@ enum class ReturnConvention : std::uint8_t {
   kVoid,
   kInt32,
   kString,
+  kTime64,
+  kRealTime,
 };
 
 struct ArgCountPolicy {
@@ -136,10 +138,25 @@ struct SFormatSystemSubroutineInfo {
   bool has_output_arg;
 };
 
+// LRM 20.3 simulation-time read functions. The kind selects $time (64-bit
+// integer, rounded), $stime (low 32 bits) or $realtime (real, fraction kept);
+// all three scale the current time from the design-global tick to the calling
+// scope's time unit, so they share one runtime scaling core.
+enum class TimeKind : std::uint8_t {
+  kTime,
+  kStime,
+  kRealtime,
+};
+
+struct TimeSystemSubroutineInfo {
+  TimeKind kind;
+};
+
 using SystemSubroutineSemantic = std::variant<
     PrintSystemSubroutineInfo, TerminationSystemSubroutineInfo,
     DiagnosticSystemSubroutineInfo, FileIOSystemSubroutineInfo,
-    ScanSystemSubroutineInfo, SFormatSystemSubroutineInfo>;
+    ScanSystemSubroutineInfo, SFormatSystemSubroutineInfo,
+    TimeSystemSubroutineInfo>;
 
 struct SystemSubroutineDesc {
   SystemSubroutineId id;
@@ -682,6 +699,33 @@ inline constexpr std::array kSystemSubroutines = {
                 .is_strobe = true,
                 .sink_kind = PrintSinkKind::kStdout},
     },
+    SystemSubroutineDesc{
+        .id = SystemSubroutineId{44},
+        .name = "$time",
+        .origin = SystemSubroutineOrigin::kLanguageBuiltin,
+        .kind = SystemSubroutineKind::kFunction,
+        .result_conv = ReturnConvention::kTime64,
+        .arg_policy = ArgCountPolicy{.min_args = 0, .max_args = 0},
+        .semantic = TimeSystemSubroutineInfo{.kind = TimeKind::kTime},
+    },
+    SystemSubroutineDesc{
+        .id = SystemSubroutineId{45},
+        .name = "$stime",
+        .origin = SystemSubroutineOrigin::kLanguageBuiltin,
+        .kind = SystemSubroutineKind::kFunction,
+        .result_conv = ReturnConvention::kInt32,
+        .arg_policy = ArgCountPolicy{.min_args = 0, .max_args = 0},
+        .semantic = TimeSystemSubroutineInfo{.kind = TimeKind::kStime},
+    },
+    SystemSubroutineDesc{
+        .id = SystemSubroutineId{46},
+        .name = "$realtime",
+        .origin = SystemSubroutineOrigin::kLanguageBuiltin,
+        .kind = SystemSubroutineKind::kFunction,
+        .result_conv = ReturnConvention::kRealTime,
+        .arg_policy = ArgCountPolicy{.min_args = 0, .max_args = 0},
+        .semantic = TimeSystemSubroutineInfo{.kind = TimeKind::kRealtime},
+    },
 };
 
 }  // namespace detail
@@ -729,6 +773,11 @@ inline constexpr std::array kSystemSubroutines = {
 [[nodiscard]] inline auto GetSFormatInfo(const SystemSubroutineDesc& desc)
     -> const SFormatSystemSubroutineInfo* {
   return std::get_if<SFormatSystemSubroutineInfo>(&desc.semantic);
+}
+
+[[nodiscard]] inline auto GetTimeInfo(const SystemSubroutineDesc& desc)
+    -> const TimeSystemSubroutineInfo* {
+  return std::get_if<TimeSystemSubroutineInfo>(&desc.semantic);
 }
 
 }  // namespace lyra::support
