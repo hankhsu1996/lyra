@@ -100,7 +100,7 @@ class Observable {
   // Removes and returns the processes whose per-waiter classifier returns
   // true. Non-matching waiters stay subscribed. The classifier receives each
   // waiter's projection and edge and decides based on context the caller
-  // (WriteVar) captured (old/new value).
+  // (Var::Set) captured (old/new value).
   [[nodiscard]] auto TakeMatchingWaiters(const EdgeClassifier& classify)
       -> std::vector<RuntimeProcess*> {
     std::vector<RuntimeProcess*> out;
@@ -166,10 +166,15 @@ class Var : public Observable {
     return value_;
   }
 
+  // Commits a whole-variable write and, on a real change (LRM 4.3 update
+  // event), wakes subscribers through the engine. Defined out of line below so
+  // it can reach the PackedArray edge classifier.
+  void Set(RuntimeServices& services, const T& new_val);
+
   // RAII entry to partial-write context. Construct via `var.Mutate(services)`
   // at the start of a chain; the returned handle snapshots the current value,
   // forwards chain methods so `var.Mutate(svc)[idx].Slice(...) = v` works as a
-  // single expression, and commits the mutated snapshot through `WriteVar` in
+  // single expression, and commits the mutated snapshot through `Var::Set` in
   // its destructor (fires subscribers on change). Lifetime is C++ standard
   // full-expression temporary lifetime -- the handle is non-copyable and
   // non-movable, so storing it past the statement is rejected at compile time.
@@ -177,6 +182,37 @@ class Var : public Observable {
 
  private:
   T value_{};
+};
+
+// A reference to a variable cell (LRM 13.5.2 pass-by-reference). Transparently
+// views either an observable `Var<T>` (writes route through `Var::Set` so the
+// update event fires and subscribers wake) or a plain `T` cell (raw read /
+// write, no observers). It shares `Var`'s `Get` / `Set` surface, so a ref
+// formal renders identically to a var. Copyable, so a ref formal can be
+// forwarded as a ref argument to a nested call.
+template <CaseEqualComparable T>
+class Ref {
+ public:
+  explicit Ref(Var<T>& cell) : signal_(&cell) {
+  }
+  explicit Ref(T& cell) : plain_(&cell) {
+  }
+
+  [[nodiscard]] auto Get() const -> const T& {
+    return signal_ != nullptr ? signal_->Get() : *plain_;
+  }
+
+  void Set(RuntimeServices& services, const T& new_val) {
+    if (signal_ != nullptr) {
+      signal_->Set(services, new_val);
+    } else {
+      *plain_ = new_val;
+    }
+  }
+
+ private:
+  Var<T>* signal_ = nullptr;
+  T* plain_ = nullptr;
 };
 
 // Suspends the calling process until one of the supplied Triggers fires
@@ -259,33 +295,29 @@ inline auto MakePackedArrayEdgeClassifier(
 }
 
 template <CaseEqualComparable T>
-inline void WriteVar(RuntimeServices& services, Var<T>& var, const T& new_val) {
-  if (var.AssignIfChanged(new_val)) {
-    services.TriggerValueChange(
-        var, [](std::uint64_t, std::uint64_t, Edge edge) -> bool {
-          return edge == Edge::kAnyChange;
-        });
-  }
-}
-
-// Non-template overload for the common Var<PackedArray> case. Required
-// because template deduction would otherwise fail when emit passes a freshly
-// cloned `PackedArray` rvalue (the template `T` cannot be deduced from
-// `Var<T>` and `PackedArray` together).
-inline void WriteVar(
-    RuntimeServices& services, Var<value::PackedArray>& var,
-    const value::PackedArray& new_val) {
-  const value::PackedArray old_val = var.Get();
-  if (var.AssignIfChanged(new_val)) {
-    services.TriggerValueChange(
-        var, MakePackedArrayEdgeClassifier(old_val, new_val));
+void Var<T>::Set(RuntimeServices& services, const T& new_val) {
+  // A PackedArray write classifies the LSB transition per waiter (LRM 9.4.2
+  // Table 9-2); every other cell type only has any-change waiters.
+  if constexpr (std::same_as<T, value::PackedArray>) {
+    const value::PackedArray old_val = Get();
+    if (AssignIfChanged(new_val)) {
+      services.TriggerValueChange(
+          *this, MakePackedArrayEdgeClassifier(old_val, new_val));
+    }
+  } else {
+    if (AssignIfChanged(new_val)) {
+      services.TriggerValueChange(
+          *this, [](std::uint64_t, std::uint64_t, Edge edge) -> bool {
+            return edge == Edge::kAnyChange;
+          });
+    }
   }
 }
 
 // RAII handle that owns a snapshot of `var.Get()` for the lifetime of one
 // partial-write expression. Forwards chain methods to the snapshot so emitted
 // code reads like a normal `PackedArrayRef` chain. The destructor calls
-// `WriteVar` with the (possibly mutated) snapshot -- subscribers fire on
+// `Var::Set` with the (possibly mutated) snapshot -- subscribers fire on
 // change. Non-copyable and non-movable: the contract is that it lives only
 // until the end of the constructing full expression. Returning it by value
 // from `Var<T>::Mutate` relies on C++17 mandatory copy elision (prvalues are
@@ -303,7 +335,7 @@ class ScopedMutation {
   auto operator=(ScopedMutation&&) -> ScopedMutation& = delete;
 
   ~ScopedMutation() {
-    WriteVar(*services_, *var_, std::move(snapshot_));
+    var_->Set(*services_, std::move(snapshot_));
   }
 
   // Chain forwards. The returned `PackedArrayRef` holds a pointer into this
@@ -318,8 +350,8 @@ class ScopedMutation {
 
   // LRM 11.4 whole-var compound. Mirrors `x op= rhs` directly: snapshot is
   // mutated through the underlying type's own `op=`, and the destructor
-  // commits via WriteVar. Keeping the emit shape `x.Mutate(svc) op= rhs`
-  // (instead of expanding to `WriteVar(svc, x, x.Get() op rhs)`) preserves
+  // commits via Var::Set. Keeping the emit shape `x.Mutate(svc) op= rhs`
+  // (instead of expanding to `x.Set(svc, x.Get() op rhs)`) preserves
   // the compound intent end-to-end and mirrors the selector form
   // `x.Mutate(svc).Chain(...) op= rhs`.
   auto operator+=(const value::PackedArray& rhs) -> ScopedMutation& {
@@ -370,11 +402,11 @@ class ScopedMutation {
   }
 
   // LRM 11.4.2 inc/dec on an observable whole-var. The snapshot is mutated
-  // in place; the destructor commits via WriteVar so subscribers fire exactly
+  // in place; the destructor commits via Var::Set so subscribers fire exactly
   // once. Prefix returns the new value; postfix returns the old. Both return
   // by value (not `ScopedMutation&`) so outer rvalue use such as
   // `b = ++observable_var` routes a materialized PackedArray through the
-  // outer WriteVar instead of a transient proxy.
+  // outer Var::Set instead of a transient proxy.
   auto operator++() -> value::PackedArray {
     ++snapshot_;
     return snapshot_;

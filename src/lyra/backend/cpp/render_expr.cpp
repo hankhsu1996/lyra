@@ -37,6 +37,10 @@ auto RenderExprNatural(const RenderContext& ctx, const mir::Expr& expr)
 
 namespace {
 
+auto RenderLhsExpr(
+    const RenderContext& ctx, const mir::Expr& expr,
+    std::string_view mutate_adapter) -> diag::Result<std::string>;
+
 // Type-kind predicate. `real`, `shortreal`, and `realtime` (LRM 6.12)
 // collectively form the "real family"; arithmetic / relational / logical
 // operator dispatch all branch on this. Taking the full `mir::Type` instead
@@ -198,6 +202,15 @@ auto LookupProceduralVarName(
     return std::format("{}.{}", ctx.StaticFrame(), var.name);
   }
   return var.name;
+}
+
+// True iff the procedural var is a `ref` / `const ref` formal, rendered as a
+// `Ref<T>` whose read is `.Get()` and whose write is `.Set(*services_, ...)`
+// (LRM 13.5.2), the same surface as a structural Var.
+auto IsReferenceProceduralVar(
+    const RenderContext& ctx, const mir::ProceduralVarRef& ref) -> bool {
+  return ctx.ProceduralScopeAtHops(ref.hops).vars.at(ref.var.value).binding ==
+         mir::VariableBinding::kReference;
 }
 
 }  // namespace
@@ -861,16 +874,35 @@ auto RenderCallExpr(const RenderContext& ctx, const mir::CallExpr& call)
             }
             const auto& scope = ctx.StructuralScopeAtHops(
                 mir::StructuralHops{.value = ref.hops.value});
-            const std::string& name =
-                scope.GetStructuralSubroutine(ref.subroutine).name;
+            const auto& decl = scope.GetStructuralSubroutine(ref.subroutine);
             std::string args;
             for (std::size_t i = 0; i < call.arguments.size(); ++i) {
-              auto arg_or = RenderExpr(ctx, ctx.Expr(call.arguments[i]));
-              if (!arg_or) return std::unexpected(std::move(arg_or.error()));
+              const mir::Expr& actual = ctx.Expr(call.arguments[i]);
+              const mir::ParamDirection dir = decl.params[i].direction;
+              std::string rendered;
+              if (dir == mir::ParamDirection::kRef ||
+                  dir == mir::ParamDirection::kConstRef) {
+                // A ref / const ref actual binds the variable's cell: render
+                // its lvalue and wrap it in a `Ref<T>`. Constructor overload
+                // picks the observable (`Var<T>`) or plain (`T`) backing; a ref
+                // formal passed on forwards via the copy ctor (LRM 13.5.2).
+                auto lhs_or = RenderLhsExpr(ctx, actual, std::string_view{});
+                if (!lhs_or) return std::unexpected(std::move(lhs_or.error()));
+                auto type_or = RenderTypeAsCpp(
+                    ctx.Unit(), ctx.StructuralScope(), decl.params[i].type);
+                if (!type_or)
+                  return std::unexpected(std::move(type_or.error()));
+                rendered =
+                    "lyra::runtime::Ref<" + *type_or + ">(" + *lhs_or + ")";
+              } else {
+                auto arg_or = RenderExpr(ctx, actual);
+                if (!arg_or) return std::unexpected(std::move(arg_or.error()));
+                rendered = *std::move(arg_or);
+              }
               if (i != 0) args += ", ";
-              args += *arg_or;
+              args += rendered;
             }
-            return std::format("{}({})", name, args);
+            return std::format("{}({})", decl.name, args);
           },
           [&](const mir::BuiltinMethodCallee& b) -> diag::Result<std::string> {
             return std::visit(
@@ -924,12 +956,6 @@ auto RenderElementSelectExpr(
 // `mutate_adapter` string (typically `.Mutate(*services_)` or empty) is
 // inserted immediately after the structural-var root so an observable
 // partial write enters a ScopedMutation before the selector chain begins.
-// Output shape:
-//   <root>{<mutate_adapter>}{.ElementAt(idx) | .Slice(offset, count)}*
-auto RenderLhsExpr(
-    const RenderContext& ctx, const mir::Expr& expr,
-    std::string_view mutate_adapter) -> diag::Result<std::string>;
-
 auto RenderRangeSliceSuffix(
     const RenderContext& ctx, mir::ExprId offset_expr, std::uint32_t count)
     -> diag::Result<std::string> {
@@ -938,6 +964,8 @@ auto RenderRangeSliceSuffix(
   return std::format(".Slice({}, {}U)", *offset, count);
 }
 
+// Output shape:
+//   <root>{<mutate_adapter>}{.ElementAt(idx) | .Slice(offset, count)}*
 auto RenderLhsExpr(
     const RenderContext& ctx, const mir::Expr& expr,
     std::string_view mutate_adapter) -> diag::Result<std::string> {
@@ -977,33 +1005,47 @@ auto RenderLhsExpr(
       expr.data);
 }
 
-// Walks an LHS expression to its root PrimaryExpr and returns the
-// StructuralVarRef there iff that's what the root is, else nullptr. Used
-// to detect whether the assignment touches an observable scalar.
+// Walks an LHS expression through element / range selects to its root primary.
+// Whether a write touches an observable cell or a reference formal is decided
+// by what that root is.
+auto LhsRootPrimary(const RenderContext& ctx, const mir::Expr& expr)
+    -> const mir::Expr& {
+  const mir::Expr* current = &expr;
+  while (true) {
+    if (const auto* sel = std::get_if<mir::ElementSelectExpr>(&current->data)) {
+      current = &ctx.Expr(sel->base_value);
+      continue;
+    }
+    if (const auto* sel = std::get_if<mir::RangeSelectExpr>(&current->data)) {
+      current = &ctx.Expr(sel->base_value);
+      continue;
+    }
+    return *current;
+  }
+}
+
+// The root structural var iff the LHS root is one, else nullptr -- used to
+// detect whether the assignment touches an observable scalar.
 auto LhsRootStructuralVarForObservable(
     const RenderContext& ctx, const mir::Expr& expr)
     -> const mir::StructuralVarRef* {
-  const mir::Expr* current = &expr;
-  while (true) {
-    const mir::Expr& e = *current;
-    if (const auto* svr = std::get_if<mir::StructuralVarRef>(&e.data)) {
-      return svr;
-    }
-    if (const auto* sel = std::get_if<mir::ElementSelectExpr>(&e.data)) {
-      current = &ctx.Expr(sel->base_value);
-      continue;
-    }
-    if (const auto* sel = std::get_if<mir::RangeSelectExpr>(&e.data)) {
-      current = &ctx.Expr(sel->base_value);
-      continue;
-    }
-    return nullptr;
-  }
+  return std::get_if<mir::StructuralVarRef>(&LhsRootPrimary(ctx, expr).data);
 }
 
 auto IsLhsBarePrimary(const mir::Expr& expr) -> bool {
   return std::holds_alternative<mir::StructuralVarRef>(expr.data) ||
          std::holds_alternative<mir::ProceduralVarRef>(expr.data);
+}
+
+// The root procedural var iff the LHS root is a `ref` / `const ref` formal,
+// else nullptr. A write whose root is a reference formal must route through
+// `Ref::Set` (LRM 13.5.2).
+auto LhsRootReferenceProceduralVar(
+    const RenderContext& ctx, const mir::Expr& expr)
+    -> const mir::ProceduralVarRef* {
+  const auto* pvr =
+      std::get_if<mir::ProceduralVarRef>(&LhsRootPrimary(ctx, expr).data);
+  return pvr != nullptr && IsReferenceProceduralVar(ctx, *pvr) ? pvr : nullptr;
 }
 
 // Render a compound op suffix for the SV `op=` family. Arithmetic /
@@ -1054,6 +1096,23 @@ auto RenderAssignExpr(const RenderContext& ctx, const mir::AssignExpr& a)
   if (!value_or) return std::unexpected(std::move(value_or.error()));
 
   const mir::Expr& lhs_expr = ctx.Expr(a.target);
+
+  // A `ref` / `const ref` formal aliases the actual's cell; a whole write
+  // routes through `Ref::Set` so the actual's update-event path fires (LRM
+  // 13.5.2). Compound and partial writes through a ref formal are not yet
+  // supported.
+  if (const auto* ref_root = LhsRootReferenceProceduralVar(ctx, lhs_expr)) {
+    if (!IsLhsBarePrimary(lhs_expr) || a.compound_op.has_value()) {
+      return diag::Unsupported(
+          diag::DiagCode::kCppEmitExpressionFormNotImplemented,
+          "compound or partial assignment through a ref / const ref formal is "
+          "not yet implemented in cpp emit",
+          diag::UnsupportedCategory::kFeature);
+    }
+    return LookupProceduralVarName(ctx, *ref_root) + ".Set(*services_, " +
+           *value_or + ")";
+  }
+
   const mir::StructuralVarRef* observable_root =
       LhsRootStructuralVarForObservable(ctx, lhs_expr);
   const bool observable = observable_root != nullptr && [&] {
@@ -1062,7 +1121,7 @@ auto RenderAssignExpr(const RenderContext& ctx, const mir::AssignExpr& a)
     return IsObservableScalarType(ctx.Unit().GetType(var_decl.type));
   }();
 
-  // Whole-var write: route observable structural targets through WriteVar
+  // Whole-var write: route observable structural targets through Var::Set
   // (which fires subscribers), procedural locals get a direct C++ assignment.
   if (IsLhsBarePrimary(lhs_expr)) {
     auto root_or = RenderLhsExpr(ctx, lhs_expr, std::string_view{});
@@ -1078,8 +1137,7 @@ auto RenderAssignExpr(const RenderContext& ctx, const mir::AssignExpr& a)
       return "(" + RenderCompoundAssign(*a.compound_op, chain, *value_or) + ")";
     }
     if (observable) {
-      return "lyra::runtime::WriteVar(*services_, " + *root_or + ", " +
-             *value_or + ")";
+      return *root_or + ".Set(*services_, " + *value_or + ")";
     }
     return "(" + *root_or + " = " + *value_or + ")";
   }
@@ -1094,7 +1152,7 @@ auto RenderAssignExpr(const RenderContext& ctx, const mir::AssignExpr& a)
   // which returns a `ScopedMutation` RAII handle that snapshots the current
   // value. The chain runs against the snapshot via the same forwarding
   // methods as on PackedArray; when the full expression ends, the handle's
-  // destructor commits the snapshot through `WriteVar` so subscribers fire.
+  // destructor commits the snapshot through `Var::Set` so subscribers fire.
   // Same shape inside or outside an NBA closure body -- no nested lambda.
   const std::string_view mutate_adapter =
       observable ? std::string_view{".Mutate(*services_)"} : std::string_view{};
@@ -1110,6 +1168,13 @@ auto RenderAssignExpr(const RenderContext& ctx, const mir::AssignExpr& a)
 auto RenderIncDecExpr(const RenderContext& ctx, const mir::IncDecExpr& inc)
     -> diag::Result<std::string> {
   const mir::Expr& target_expr = ctx.Expr(inc.target);
+  if (LhsRootReferenceProceduralVar(ctx, target_expr) != nullptr) {
+    return diag::Unsupported(
+        diag::DiagCode::kCppEmitExpressionFormNotImplemented,
+        "increment / decrement of a ref / const ref formal is not yet "
+        "implemented in cpp emit",
+        diag::UnsupportedCategory::kFeature);
+  }
   const mir::StructuralVarRef* observable_root =
       LhsRootStructuralVarForObservable(ctx, target_expr);
   const bool observable = observable_root != nullptr && [&] {
@@ -1328,7 +1393,8 @@ auto RenderExprNatural(const RenderContext& ctx, const mir::Expr& expr)
             return RenderStructuralVarReadExpr(ctx, expr, m);
           },
           [&](const mir::ProceduralVarRef& l) -> diag::Result<std::string> {
-            return LookupProceduralVarName(ctx, l);
+            const std::string name = LookupProceduralVarName(ctx, l);
+            return IsReferenceProceduralVar(ctx, l) ? name + ".Get()" : name;
           },
           [&](const mir::UnaryExpr& u) -> diag::Result<std::string> {
             return RenderUnaryExpr(ctx, expr, u);

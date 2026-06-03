@@ -35,8 +35,8 @@ namespace lyra::backend::cpp {
     const mir::StructuralScope& owner_scope, mir::TypeId id) -> std::string;
 
 // True iff a structural field of this type is emitted as `Var<T>` (and writes
-// go through `lyra::runtime::WriteVar`). Today: only integral types via
-// `PackedArray`. The set grows as more SV value types gain `IsCaseEqual`.
+// go through `Var<T>::Set`). Today: only integral types via `PackedArray`. The
+// set grows as more SV value types gain `IsCaseEqual`.
 [[nodiscard]] auto IsObservableScalarType(const mir::Type& ty) -> bool;
 
 }  // namespace lyra::backend::cpp

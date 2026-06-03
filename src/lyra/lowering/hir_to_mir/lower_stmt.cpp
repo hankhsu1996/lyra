@@ -343,7 +343,7 @@ auto SubroutineWithWritebacks(
   const hir::StructuralSubroutineDecl& decl =
       scope_state.LookupHirSubroutine(ref->hops, ref->subroutine);
   for (const auto& param : decl.params) {
-    if (param.direction != hir::ParamDirection::kInput) {
+    if (hir::RequiresWriteback(param.direction)) {
       return &decl;
     }
   }
@@ -366,7 +366,7 @@ auto LowerSubroutineCallWithWritebacks(
     const UnitLoweringState& unit_state,
     const StructuralScopeLoweringState& scope_state,
     ProcessLoweringState& proc_state, const hir::ProceduralBody& hir_proc,
-    const hir::Stmt& stmt, diag::SourceSpan span, const hir::CallExpr& call,
+    const hir::Stmt& stmt, const hir::CallExpr& call,
     const hir::StructuralSubroutineRef& callee_ref,
     const hir::StructuralSubroutineDecl& decl,
     std::optional<hir::ExprId> assign_target, mir::TypeId result_type)
@@ -392,19 +392,16 @@ auto LowerSubroutineCallWithWritebacks(
     const hir::ParamDirection dir = decl.params[i].direction;
     const hir::Expr& hir_arg = hir_proc.exprs.at(call.arguments[i].value);
 
-    if (dir == hir::ParamDirection::kInput) {
+    // input passes a value; ref / const ref alias the actual lvalue. Neither
+    // copies back, so both pass the lowered actual directly with no temp
+    // (LRM 13.5.1, 13.5.2). Only output / inout fall through to the writeback
+    // temp below.
+    if (!hir::RequiresWriteback(dir)) {
       auto arg_or = LowerExpr(
           unit_state, scope_state, proc_state, wrapper, hir_proc, hir_arg);
       if (!arg_or) return std::unexpected(std::move(arg_or.error()));
       call_args.push_back(wrapper.AddExpr(*std::move(arg_or)));
       continue;
-    }
-    if (dir == hir::ParamDirection::kRef ||
-        dir == hir::ParamDirection::kConstRef) {
-      return diag::Unsupported(
-          span, diag::DiagCode::kUnsupportedSubroutineArgument,
-          "ref / const ref subroutine arguments are not yet supported",
-          diag::UnsupportedCategory::kFeature);
     }
 
     const mir::TypeId formal_type = unit_state.TranslateType(
@@ -508,8 +505,8 @@ auto LowerExprStmt(
   if (const auto* call = std::get_if<hir::CallExpr>(&inner.data)) {
     if (const auto* decl = SubroutineWithWritebacks(scope_state, *call)) {
       return LowerSubroutineCallWithWritebacks(
-          unit_state, scope_state, proc_state, hir_proc, stmt, inner.span,
-          *call, std::get<hir::StructuralSubroutineRef>(call->callee), *decl,
+          unit_state, scope_state, proc_state, hir_proc, stmt, *call,
+          std::get<hir::StructuralSubroutineRef>(call->callee), *decl,
           std::nullopt, unit_state.TranslateType(inner.type));
     }
     // System-subroutine tasks with an output arg ($fgets / $fread / $ferror)
@@ -553,8 +550,7 @@ auto LowerExprStmt(
           // firing when the call sits directly under the AssignExpr.
           if (!conv_target_type.has_value()) {
             return LowerSubroutineCallWithWritebacks(
-                unit_state, scope_state, proc_state, hir_proc, stmt,
-                call_carrier->span, *call,
+                unit_state, scope_state, proc_state, hir_proc, stmt, *call,
                 std::get<hir::StructuralSubroutineRef>(call->callee), *decl,
                 assign->lhs, unit_state.TranslateType(call_carrier->type));
           }

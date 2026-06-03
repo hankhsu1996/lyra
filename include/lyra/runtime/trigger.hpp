@@ -35,7 +35,7 @@ struct Trigger {
 
 // Per-leaf fire decision: receives a waiter's `(lsb_bit_offset, bit_width,
 // edge)` and returns whether to wake it. The caller (the producer of the
-// value change -- typically `WriteVar` on `Var<PackedArray>`) captures the
+// value change -- typically `Var<PackedArray>::Set`) captures the
 // value context (old/new) so the `Observable` stays value-type agnostic.
 using EdgeClassifier =
     std::function<bool(std::uint64_t lsb, std::uint64_t width, Edge edge)>;

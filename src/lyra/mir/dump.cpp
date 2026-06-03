@@ -677,9 +677,10 @@ class MirDumper {
         const auto& v = scope.vars[i];
         Line(
             std::format(
-                "ProceduralVar[{}] \"{}\" : Type[{}]{}", i, v.name,
+                "ProceduralVar[{}] \"{}\" : Type[{}]{}{}", i, v.name,
                 v.type.value,
-                v.lifetime == VariableLifetime::kStatic ? " static" : ""));
+                v.lifetime == VariableLifetime::kStatic ? " static" : "",
+                v.binding == VariableBinding::kReference ? " ref" : ""));
       }
       Dedent();
     }

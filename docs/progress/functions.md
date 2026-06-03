@@ -66,10 +66,15 @@ everything and the inline "rides on" notes record the real dependencies.
 - [x] F6 -- Default argument values (LRM 13.5.3), binding by name (LRM 13.5.4), and the optional
       empty argument list for no-argument / all-defaulted subroutines (LRM 13.5.5). Default
       expressions evaluate in the declaration scope at each defaulting call.
-- [ ] F10 -- `ref` and `const ref` arguments (LRM 13.5.2). A reference shares the caller's storage;
-      changes are visible immediately. `const ref` is read-only. Legal only for automatic-lifetime
-      subroutines and only for a variable, class property, unpacked-struct member, or unpacked-array
-      element. Outdated-reference rules for resized / deleted container elements.
+- [x] F10 -- `ref` and `const ref` arguments (LRM 13.5.2). A reference aliases the caller's
+      variable; reads and writes go through that variable's own access path, so a write is visible
+      immediately and, when the variable is observable, wakes its event subscribers (LRM 4.3 update
+      event). `const ref` is read-only. Legal only for automatic-lifetime subroutines and for a
+      variable or unpacked-array element; mixes with `output` / `inout` in one call. Not yet:
+      compound, partial, or increment / decrement writes through a reference formal (whole-variable
+      reads and writes are supported); class properties and unpacked-struct members (those data
+      types); and the outdated-reference rules for resized / deleted container elements, which ride
+      on F8.
 
 ### Local storage
 
