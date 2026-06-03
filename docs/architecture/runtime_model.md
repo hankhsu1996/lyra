@@ -22,6 +22,26 @@ Read every SystemVerilog construct in a module as a piece of a C++ class:
 Generate constructs are constructor code. `initial` and `always*` are runtime methods. They run in
 different contexts and they do different jobs.
 
+## Storage and binding follow the type; construction is the variable part
+
+Reading a module as a class separates two things that are easy to conflate.
+
+A scope's **members** are uniform: each is a name and a type (see `mir.md`). A signal, a child
+instance, an instance array, and a named generate scope are all members; they differ only in their
+type. How a member is stored, and how it is registered into the object graph, follow from that type
+alone. Registering an owned child walks the member's type: a vector layer iterates and indexes by
+position; an owning pointer to an object registers one child scope, whose kind -- module instance
+versus generate scope -- is read off the object type, then recurses into that child. One walk covers
+a scalar instance, an instance array of any dimensionality, and a generate scope, with no per-form
+branch and no separate classification.
+
+**Construction** -- the constructor statements that fill those members -- is the part that
+legitimately varies, because SystemVerilog construction semantics vary. A signal takes its default
+value. A single instance is built once. An instance array is built by replication over its element
+count. A generate-for is a loop driven by a genvar. A generate-if is a branch. These are statements
+in the constructor body, and the variation lives there and only there: it never leaks into how
+members are stored or bound.
+
 ## Constructor runs at t = 0, simulation runs at t >= 0
 
 The constructor allocates per-object state, binds the parameter values it was called with, walks

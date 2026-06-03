@@ -146,12 +146,38 @@ auto RenderConstructOwnedObjectStmt(
       "ConstructOwnedObjectStmt target is not an owning object var");
 }
 
+// Materializes an external-unit member by recursing on its type, mirroring the
+// type walk in RenderTypeAsCpp: each vector layer emits a counted loop that
+// grows the vector and recurses into the new element; the owning-pointer leaf
+// assigns a freshly constructed child. `dims` carries one element count per
+// vector layer, so a scalar (no vector layer) renders just the leaf.
+auto RenderExternalUnitFill(
+    const RenderContext& ctx, const std::string& lvalue, mir::TypeId type,
+    const std::string& unit_name, const std::vector<std::uint32_t>& dims,
+    std::size_t depth, std::size_t indent) -> std::string {
+  if (const auto* vec =
+          std::get_if<mir::VectorType>(&ctx.Unit().GetType(type).data)) {
+    const std::string idx = "i" + std::to_string(depth);
+    std::string out;
+    out += Indent(indent) + "for (std::size_t " + idx + " = 0; " + idx + " < " +
+           std::to_string(dims.at(depth)) + "; ++" + idx + ") {\n";
+    out += Indent(indent + 1) + lvalue + ".emplace_back();\n";
+    out += RenderExternalUnitFill(
+        ctx, lvalue + "[" + idx + "]", vec->element, unit_name, dims, depth + 1,
+        indent + 1);
+    out += Indent(indent) + "}\n";
+    return out;
+  }
+  return Indent(indent) + lvalue + " = std::make_unique<" + unit_name +
+         ">();\n";
+}
+
 auto RenderConstructExternalUnitStmt(
     const RenderContext& ctx, const mir::ConstructExternalUnitStmt& s,
     std::size_t indent) -> diag::Result<std::string> {
   const auto& var = ctx.StructuralScope().GetStructuralVar(s.target);
-  return Indent(indent) + var.name + " = std::make_unique<" + s.unit_name +
-         ">();\n";
+  return RenderExternalUnitFill(
+      ctx, var.name, var.type, s.unit_name, s.dims, 0, indent);
 }
 
 auto RenderForStmtNode(

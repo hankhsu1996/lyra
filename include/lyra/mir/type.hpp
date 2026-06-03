@@ -182,10 +182,17 @@ class CompilationUnit;
     const CompilationUnit& unit, TypeId type)
     -> std::optional<StructuralScopeId>;
 
-[[nodiscard]] auto IsExternalUnitOwningType(
-    const CompilationUnit& unit, TypeId type) -> bool;
+enum class OwnedChildKind { kModuleInstance, kGenerateScope };
 
-[[nodiscard]] auto GetExternalUnitName(const CompilationUnit& unit, TypeId type)
-    -> std::optional<std::string>;
+// The classification of an owned-child member, read off the leaf object type
+// after stripping any vector layers: an intra-unit object is a generate scope
+// (with its target scope), an external-unit object is a module instance.
+struct OwnedChildLeaf {
+  OwnedChildKind kind = OwnedChildKind::kModuleInstance;
+  std::optional<StructuralScopeId> intra_target;
+};
+
+[[nodiscard]] auto GetOwnedChildLeaf(const CompilationUnit& unit, TypeId type)
+    -> std::optional<OwnedChildLeaf>;
 
 }  // namespace lyra::mir

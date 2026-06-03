@@ -50,6 +50,11 @@ shared by all consumers: external references, child routing, and construction.
    blocks is an elaboration property, distinct from the set of compiled units (see
    `compilation_unit_model.md`): the two coincide only when nothing is instantiated and must not be
    collapsed into one set.
+9. Instance multiplicity and generate are orthogonal axes. An array of instances (`c[3]`) is a
+   cardinality property of one member's type -- a vector of owned children (see `mir.md`) -- not a
+   generate construct. A generate builds named child scopes as constructor-time logic; an array
+   replicates one child member. Either may appear without the other, and a generate scope may itself
+   contain instance arrays. Neither axis subsumes the other.
 
 ## Boundary to Adjacent Layers
 
@@ -77,6 +82,9 @@ shared by all consumers: external references, child routing, and construction.
 - A child-routing or external-reference path that reconstructs hierarchy from flattened symbol
   names.
 - Per-instance generate trees that duplicate the unit's construction logic.
+- Treating an instance array as a generate construct, or modeling generate replication as an array
+  type. Multiplicity is a property of a member's type; generate is constructor-time scope
+  construction. The two axes must not be conflated or made to subsume each other.
 - Parameter values used as part of compile-time identity. Parameters are constructor inputs that
   steer construction, not identity keys that fork compile-time artifacts.
 

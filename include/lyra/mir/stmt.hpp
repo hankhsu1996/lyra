@@ -76,10 +76,13 @@ struct ConstructOwnedObjectStmt {
 
 // The cross-unit twin of ConstructOwnedObjectStmt: it carries no scope_id
 // because the child is a separate compilation unit, not a nested scope of this
-// one.
+// one. `dims` is empty for a scalar instance and holds one element count per
+// array dimension, outermost first; the backend materializes the nested vector
+// by replication over these counts.
 struct ConstructExternalUnitStmt {
   StructuralVarId target;
   std::string unit_name;
+  std::vector<std::uint32_t> dims;
 };
 
 struct ForInitDecl {

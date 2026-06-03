@@ -1,0 +1,16 @@
+id: cpp.hierarchy_instance_array_2d
+tags: [cpp_run]
+input:
+  command: [run, cpp]
+  project: false
+  files: [main.sv]
+expect:
+  exit: 0
+  stdout:
+    exact: |
+      x=2
+      x=2
+      x=2
+      x=2
+      x=2
+      x=2

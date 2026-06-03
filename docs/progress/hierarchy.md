@@ -79,7 +79,7 @@ Unlocks the compile-time side of `instantiation/specialization_grouping` and
 - [x] B5 -- Generate (`for` / `if` / `case`) wraps child instances: which generate blocks exist, and
       how many loop iterations, is a construction-time decision, and each block owns its instances
       as part of the object tree.
-- [ ] B6 -- An instance array (`Child c[3]()`) is one named member that expands to a vector of
+- [x] B6 -- An instance array (`Child c[3]()`) is one named member that expands to a vector of
       independent child objects.
 
 Unlocks `instantiation/multiple_instances`, `instantiation/nested_hierarchy`,

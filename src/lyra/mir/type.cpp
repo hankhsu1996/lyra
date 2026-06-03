@@ -165,23 +165,26 @@ auto GetOwnedObjectTarget(const CompilationUnit& unit, TypeId type)
   return std::nullopt;
 }
 
-auto IsExternalUnitOwningType(const CompilationUnit& unit, TypeId type)
-    -> bool {
-  return GetExternalUnitName(unit, type).has_value();
-}
-
-auto GetExternalUnitName(const CompilationUnit& unit, TypeId type)
-    -> std::optional<std::string> {
-  const auto* owning = std::get_if<OwningPtrType>(&unit.GetType(type).data);
+auto GetOwnedChildLeaf(const CompilationUnit& unit, TypeId type)
+    -> std::optional<OwnedChildLeaf> {
+  const Type* leaf = &unit.GetType(type);
+  while (const auto* vec = std::get_if<VectorType>(&leaf->data)) {
+    leaf = &unit.GetType(vec->element);
+  }
+  const auto* owning = std::get_if<OwningPtrType>(&leaf->data);
   if (owning == nullptr) {
     return std::nullopt;
   }
-  const auto* ext =
-      std::get_if<ExternalUnitObjectType>(&unit.GetType(owning->pointee).data);
-  if (ext == nullptr) {
-    return std::nullopt;
+  const auto& pointee = unit.GetType(owning->pointee).data;
+  if (const auto* obj = std::get_if<ObjectType>(&pointee)) {
+    return OwnedChildLeaf{
+        .kind = OwnedChildKind::kGenerateScope, .intra_target = obj->target};
   }
-  return ext->unit_name;
+  if (std::holds_alternative<ExternalUnitObjectType>(pointee)) {
+    return OwnedChildLeaf{
+        .kind = OwnedChildKind::kModuleInstance, .intra_target = std::nullopt};
+  }
+  return std::nullopt;
 }
 
 }  // namespace lyra::mir
