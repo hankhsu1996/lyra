@@ -280,11 +280,16 @@ auto LowerInstanceArrayMemberInto(
     level = arr.elements.front();
   }
   const auto& leaf = level->as<slang::ast::InstanceSymbol>();
-  scope_state.AddInstanceMember(
+  const hir::InstanceMemberId member_id = scope_state.AddInstanceMember(
       hir::InstanceMemberDecl{
           .instance_name = std::string{array.name},
           .target_unit = std::string{leaf.getDefinition().name},
           .array_dims = std::move(dims)});
+  // A downward cross-unit reference whose path indexes this array (`c[i].x`)
+  // resolves the leading `c` to this member; the binding lets process-body
+  // lowering find it regardless of source order.
+  scope_state.UnitState().MapInstanceMemberBinding(
+      array, scope_state.Frame(), member_id);
   return {};
 }
 

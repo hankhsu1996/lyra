@@ -312,7 +312,7 @@ auto RenderRuntimeCallExpr(
               return std::unexpected(std::move(print_or.error()));
             }
             return std::format(
-                "services_->SubmitPostponed([=, this]() {{ {}; }})", *print_or);
+                "Services().SubmitPostponed([=, this]() {{ {}; }})", *print_or);
           },
           [&](const mir::RuntimeFileOpenCall& fo) -> diag::Result<std::string> {
             auto name_or = RenderExpr(ctx, ctx.Expr(fo.name));

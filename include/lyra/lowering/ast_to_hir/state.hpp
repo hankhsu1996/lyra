@@ -72,8 +72,8 @@ struct InstanceMemberBinding {
   hir::InstanceMemberId member_id;
 };
 
-using InstanceMemberBindings = std::unordered_map<
-    const slang::ast::InstanceSymbol*, InstanceMemberBinding>;
+using InstanceMemberBindings =
+    std::unordered_map<const slang::ast::Symbol*, InstanceMemberBinding>;
 
 class UnitLoweringState {
  public:
@@ -221,23 +221,22 @@ class UnitLoweringState {
   }
 
   void MapInstanceMemberBinding(
-      const slang::ast::InstanceSymbol& inst, ScopeFrameId home_frame,
+      const slang::ast::Symbol& member, ScopeFrameId home_frame,
       hir::InstanceMemberId member_id) {
     const auto [_, inserted] = instance_member_bindings_.emplace(
-        &inst, InstanceMemberBinding{
-                   .home_frame = home_frame, .member_id = member_id});
+        &member, InstanceMemberBinding{
+                     .home_frame = home_frame, .member_id = member_id});
     if (!inserted) {
       throw InternalError(
-          "UnitLoweringState::MapInstanceMemberBinding: instance symbol "
-          "already "
-          "mapped");
+          "UnitLoweringState::MapInstanceMemberBinding: instance member "
+          "already mapped");
     }
   }
 
   [[nodiscard]] auto LookupInstanceMemberBinding(
-      const slang::ast::InstanceSymbol& inst) const
+      const slang::ast::Symbol& member) const
       -> std::optional<InstanceMemberBinding> {
-    const auto it = instance_member_bindings_.find(&inst);
+    const auto it = instance_member_bindings_.find(&member);
     if (it == instance_member_bindings_.end()) {
       return std::nullopt;
     }
@@ -250,7 +249,7 @@ class UnitLoweringState {
   // HIR scope by TakeCrossUnitRefsForFrame when the scope finishes lowering.
   auto MapOrGetCrossUnitRef(
       const slang::ast::ValueSymbol& target, ScopeFrameId home_frame,
-      hir::InstanceMemberId instance, std::string target_member,
+      hir::InstanceMemberId instance, std::vector<hir::PathStep> path,
       hir::TypeId type) -> hir::CrossUnitRefId {
     if (const auto it = cross_unit_ref_dedup_.find(&target);
         it != cross_unit_ref_dedup_.end()) {
@@ -260,9 +259,7 @@ class UnitLoweringState {
     const hir::CrossUnitRefId id{static_cast<std::uint32_t>(slots.size())};
     slots.push_back(
         hir::CrossUnitRefDecl{
-            .instance = instance,
-            .target_member = std::move(target_member),
-            .type = type});
+            .instance = instance, .path = std::move(path), .type = type});
     cross_unit_ref_dedup_.emplace(&target, id);
     return id;
   }

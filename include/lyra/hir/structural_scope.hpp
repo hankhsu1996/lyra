@@ -41,15 +41,29 @@ struct InstanceMemberId {
       -> std::strong_ordering = default;
 };
 
+// One step of a cross-unit reference's downward navigation past the head: a
+// named member (`->name`) or an instance-array index (`[index]`). A dotted path
+// is a sequence of these; `m.l.x` is two member hops, `c[1].x` is an index hop
+// then a member hop.
+struct MemberHop {
+  std::string name;
+};
+struct IndexHop {
+  std::uint32_t index;
+};
+using PathStep = std::variant<MemberHop, IndexHop>;
+
 // A cross-unit reference resolved once at construction (see
-// reference_resolution.md). `instance` names the owned child instance member
-// this unit reaches into; `target_member` is the child's interface member name,
-// referenced by name across the unit boundary; `type` is the slang-resolved
-// type of the referenced member. The slot is read / written / observed through
-// a stored direct reference the constructor materializes.
+// reference_resolution.md). `instance` names the owned child instance (or
+// instance-array) member this unit reaches into -- the head of the downward
+// path. `path` carries the navigation past the head down to the referenced
+// leaf, referenced by name across the unit boundary. `type` is the
+// slang-resolved type of the referenced leaf. The slot is read / written /
+// observed through a stored direct reference the constructor materializes by
+// chaining the path's hops.
 struct CrossUnitRefDecl {
   InstanceMemberId instance;
-  std::string target_member;
+  std::vector<PathStep> path;
   TypeId type;
 };
 

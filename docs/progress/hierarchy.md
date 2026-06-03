@@ -90,13 +90,14 @@ Unlocks `instantiation/multiple_instances`, `instantiation/nested_hierarchy`,
 
 - [x] C1 -- Cross-unit references resolve once at construction into a stored direct reference, read
       directly thereafter (per `reference_resolution.md`). This is the substrate Stages D and E
-      consume. Landed for the downward, single-level form (a direct child's member); the
-      resolve-once slot is the shared path ports will populate. Multi-level navigation and upward
-      resolution feed the same slot in later cuts.
+      consume. Landed for downward references at any depth: the slot's recipe is a navigation path
+      from a local child member down to the referenced leaf, materialized once after the subtree is
+      built. The resolve-once slot is the shared path ports will populate; upward resolution feeds
+      the same slot in a later cut.
 - [x] C2 -- A process on one instance can observe a member of another instance and re-evaluate when
       that member changes, without the observed instance knowing who watches it (cross-instance
-      sensitivity). The combinational process subscribes through the resolved slot; demonstrated for
-      a downward, single-level reference.
+      sensitivity). The combinational process subscribes through the resolved slot, independent of
+      how deep the slot's path reaches.
 
 This stage produces no user-visible feature on its own; it is the substrate the next two stages
 consume. Coverage is demonstrated through Stage D and Stage E.
@@ -105,13 +106,19 @@ consume. Coverage is demonstrated through Stage D and Stage E.
 
 - [x] D1 -- A downward reference reads and writes a signal in a child instance.
 - [ ] D2 -- An upward reference reads and writes a signal in an ancestor instance.
-- [ ] D3 -- Multi-level dotted paths resolve through the object tree across more than one level.
+- [x] D3 -- Multi-level dotted paths resolve through the object tree across more than one level.
+      Landed for downward paths through scalar instances.
 - [ ] D4 -- A combinational process reading a hierarchical reference re-triggers when the referenced
-      signal changes, including paths spanning multiple levels and reads from several instances. The
-      single-level downward case re-triggers today (it rode in with D1); multi-level and
-      multi-instance paths remain.
+      signal changes, including paths spanning multiple levels and reads from several instances.
+      Downward paths re-trigger today at any depth; reads from several instances within one process
+      remain.
 - [ ] D5 -- The hierarchical path of an instance (for `%m`, display, and scope queries) derives from
       object-tree ownership.
+- [x] D6 -- A hierarchical path that indexes an instance array (`c[i].x`) resolves to the selected
+      element, including multi-dimensional arrays (`c[i][j].x`).
+- [ ] D7 -- A hierarchical reference crosses a generate-block scope boundary: a path step through a
+      generate block (`g.sig`), or a reference originating inside a generate block that names a
+      signal in an enclosing scope.
 
 Unlocks `refs/hierarchical_refs`, `refs/upward_refs`, and `instantiation/hierarchical_sensitivity`.
 
@@ -143,10 +150,12 @@ Unlocks the `ports/*` archive group.
 ## Out of Scope
 
 - Interfaces, modports, and programs as compilation-unit kinds. They are unit kinds in
-  `compilation_unit_model.md` but are a separate workstream from module hierarchy.
+  `compilation_unit_model.md` but are a separate workstream from module hierarchy. A hierarchical
+  reference resolved via an interface port belongs to that workstream.
 - Primitive and gate-level instances (UDPs, built-in gates).
 - Bind directives and configuration (`config` / `bind`).
 - Net resolution and net merging: multi-driver resolved nets and net collapsing across ports. A
   single-driver net port behaves as a continuous assignment and is in scope; multi-driver net
   resolution is a separate design-global concern. `inout` ports are bidirectional net connections in
-  this same deferred net domain.
+  this same deferred net domain. A hierarchical reference whose target is a net-typed (non-variable)
+  signal follows net value support, which is not yet established in any scope.
