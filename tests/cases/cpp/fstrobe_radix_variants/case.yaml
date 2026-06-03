@@ -1,0 +1,15 @@
+id: cpp.fstrobe_radix_variants
+tags: [cpp_run]
+input:
+  command: [run, cpp]
+  project: false
+  top: Top
+  files: [main.sv]
+expect:
+  exit: 0
+  files:
+    out.txt: |
+      171
+      10101011
+      ab
+      253
