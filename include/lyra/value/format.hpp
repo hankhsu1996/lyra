@@ -172,4 +172,31 @@ struct PrintValueItem {
 
 using PrintItem = std::variant<PrintLiteralItem, PrintValueItem>;
 
+// Concise constructors for a formatted print value, so emitted code reads as
+// `PrintValue(x, spec)` instead of spelling out the value-view wrapper. The
+// overload set picks the right RuntimeValueView from the operand's type.
+[[nodiscard]] inline auto PrintValue(const PackedArray& value, FormatSpec spec)
+    -> PrintItem {
+  return PrintValueItem{
+      .spec = spec, .value = RuntimeValueView::FromPackedArray(value)};
+}
+[[nodiscard]] inline auto PrintValue(std::string_view value, FormatSpec spec)
+    -> PrintItem {
+  return PrintValueItem{.spec = spec, .value = RuntimeValueView::String(value)};
+}
+[[nodiscard]] inline auto PrintValue(double value, FormatSpec spec)
+    -> PrintItem {
+  return PrintValueItem{.spec = spec, .value = RuntimeValueView::Real64(value)};
+}
+[[nodiscard]] inline auto PrintValue(float value, FormatSpec spec)
+    -> PrintItem {
+  return PrintValueItem{.spec = spec, .value = RuntimeValueView::Real32(value)};
+}
+template <typename T>
+[[nodiscard]] auto PrintValue(const UnpackedArray<T>& value, FormatSpec spec)
+    -> PrintItem {
+  return PrintValueItem{
+      .spec = spec, .value = RuntimeValueView::FromUnpackedArray(value)};
+}
+
 }  // namespace lyra::value
