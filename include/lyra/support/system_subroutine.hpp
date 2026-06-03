@@ -626,6 +626,62 @@ inline constexpr std::array kSystemSubroutines = {
                 .expects_format_string = true,
                 .has_output_arg = false},
     },
+    SystemSubroutineDesc{
+        .id = SystemSubroutineId{40},
+        .name = "$strobe",
+        .origin = SystemSubroutineOrigin::kLanguageBuiltin,
+        .kind = SystemSubroutineKind::kTask,
+        .result_conv = ReturnConvention::kVoid,
+        .arg_policy = ArgCountPolicy{.min_args = 0, .max_args = 255},
+        .semantic =
+            PrintSystemSubroutineInfo{
+                .radix = PrintRadix::kDecimal,
+                .append_newline = true,
+                .is_strobe = true,
+                .sink_kind = PrintSinkKind::kStdout},
+    },
+    SystemSubroutineDesc{
+        .id = SystemSubroutineId{41},
+        .name = "$strobeb",
+        .origin = SystemSubroutineOrigin::kLanguageBuiltin,
+        .kind = SystemSubroutineKind::kTask,
+        .result_conv = ReturnConvention::kVoid,
+        .arg_policy = ArgCountPolicy{.min_args = 0, .max_args = 255},
+        .semantic =
+            PrintSystemSubroutineInfo{
+                .radix = PrintRadix::kBinary,
+                .append_newline = true,
+                .is_strobe = true,
+                .sink_kind = PrintSinkKind::kStdout},
+    },
+    SystemSubroutineDesc{
+        .id = SystemSubroutineId{42},
+        .name = "$strobeh",
+        .origin = SystemSubroutineOrigin::kLanguageBuiltin,
+        .kind = SystemSubroutineKind::kTask,
+        .result_conv = ReturnConvention::kVoid,
+        .arg_policy = ArgCountPolicy{.min_args = 0, .max_args = 255},
+        .semantic =
+            PrintSystemSubroutineInfo{
+                .radix = PrintRadix::kHex,
+                .append_newline = true,
+                .is_strobe = true,
+                .sink_kind = PrintSinkKind::kStdout},
+    },
+    SystemSubroutineDesc{
+        .id = SystemSubroutineId{43},
+        .name = "$strobeo",
+        .origin = SystemSubroutineOrigin::kLanguageBuiltin,
+        .kind = SystemSubroutineKind::kTask,
+        .result_conv = ReturnConvention::kVoid,
+        .arg_policy = ArgCountPolicy{.min_args = 0, .max_args = 255},
+        .semantic =
+            PrintSystemSubroutineInfo{
+                .radix = PrintRadix::kOctal,
+                .append_newline = true,
+                .is_strobe = true,
+                .sink_kind = PrintSinkKind::kStdout},
+    },
 };
 
 }  // namespace detail

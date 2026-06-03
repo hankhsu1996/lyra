@@ -1,0 +1,13 @@
+id: cpp.strobe_after_nba_lrm_21_2_2
+tags: [cpp_run]
+input:
+  command: [run, cpp]
+  project: false
+  top: Top
+  files: [main.sv]
+expect:
+  exit: 0
+  stdout:
+    exact: |
+      display cnt=0
+      strobe  cnt=1

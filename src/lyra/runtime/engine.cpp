@@ -180,6 +180,15 @@ void Engine::SubmitNba(std::function<void()> closure) {
   queues_.nba.push_back(std::move(closure));
 }
 
+void Engine::SubmitPostponed(std::function<void()> closure) {
+  if (phase_ == SchedulerPhase::kPostponed) {
+    throw InternalError(
+        "Engine::SubmitPostponed: re-entrant postponed submission during "
+        "postponed region is not supported");
+  }
+  queues_.postponed.push_back(std::move(closure));
+}
+
 void Engine::ExecuteObservedRegion() {
   phase_ = SchedulerPhase::kObserved;
   WalkScopePreOrder(*root_, [](Scope& scope) { scope.DrainObserved(); });
@@ -191,6 +200,11 @@ void Engine::ExecuteReactiveRegion() {
 
 void Engine::ExecutePostponedRegion() {
   phase_ = SchedulerPhase::kPostponed;
+  auto pending = std::move(queues_.postponed);
+  queues_.postponed.clear();
+  for (auto& closure : pending) {
+    closure();
+  }
 }
 
 void Engine::ExecuteFinalProcesses() {

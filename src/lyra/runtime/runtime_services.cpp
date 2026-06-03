@@ -15,6 +15,13 @@ void RuntimeServices::SubmitNba(std::function<void()> closure) {
   engine_->SubmitNba(std::move(closure));
 }
 
+void RuntimeServices::SubmitPostponed(std::function<void()> closure) {
+  if (engine_ == nullptr) {
+    throw InternalError("RuntimeServices::SubmitPostponed: no Engine bound");
+  }
+  engine_->SubmitPostponed(std::move(closure));
+}
+
 void RuntimeServices::TriggerValueChange(
     Observable& observable, const EdgeClassifier& classify) {
   if (engine_ == nullptr) {

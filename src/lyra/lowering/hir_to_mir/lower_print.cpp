@@ -14,6 +14,7 @@
 #include "lyra/lowering/hir_to_mir/state.hpp"
 #include "lyra/mir/expr.hpp"
 #include "lyra/mir/runtime_print.hpp"
+#include "lyra/mir/runtime_submit.hpp"
 #include "lyra/support/system_subroutine.hpp"
 
 namespace lyra::lowering::hir_to_mir {
@@ -61,11 +62,27 @@ auto LowerPrintSystemSubroutineCall(
       print.radix, arg_offset, FormatStringRequirement::kOptional, span);
   if (!items_or) return std::unexpected(std::move(items_or.error()));
 
+  mir::RuntimePrintCall print_call(
+      ToValuePrintKind(print), descriptor, std::move(*items_or));
+
+  if (!print.is_strobe) {
+    return mir::Expr{
+        .data = mir::RuntimeCallExpr{.call = std::move(print_call)},
+        .type = unit_state.Builtins().void_type};
+  }
+
+  // LRM 21.2.2: $strobe defers the same print to the postponed region. The
+  // items keep their outer-scope ExprIds; the backend wraps the rendered
+  // print in a postponed-region lambda whose init-capture list snapshots
+  // any procedural-local operands. StructuralVarRef operands resolve
+  // through `this->`, so the lambda body reads them at fire time and sees
+  // the NBA-committed values.
   return mir::Expr{
       .data =
           mir::RuntimeCallExpr{
-              .call = mir::RuntimePrintCall(
-                  ToValuePrintKind(print), descriptor, std::move(*items_or))},
+              .call =
+                  mir::RuntimeSubmitPostponedCall{
+                      .print = std::move(print_call)}},
       .type = unit_state.Builtins().void_type};
 }
 

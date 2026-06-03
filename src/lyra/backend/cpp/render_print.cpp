@@ -299,6 +299,21 @@ auto RenderRuntimeCallExpr(
             }
             return std::format("Services().SubmitNba({})", *closure_or);
           },
+          [&](const mir::RuntimeSubmitPostponedCall& pc)
+              -> diag::Result<std::string> {
+            // LRM 21.2.2: wrap the print in a lambda that fires from the
+            // postponed region. `[=, this]` snapshots procedural locals
+            // by value (NBAs do not touch them, so a snapshot is also
+            // semantically correct -- and frame-death-safe for `initial`
+            // bodies) and resolves module signals through `this`, so
+            // they read NBA-committed values at fire time.
+            auto print_or = RenderRuntimePrintCall(ctx, pc.print);
+            if (!print_or) {
+              return std::unexpected(std::move(print_or.error()));
+            }
+            return std::format(
+                "services_->SubmitPostponed([=, this]() {{ {}; }})", *print_or);
+          },
           [&](const mir::RuntimeFileOpenCall& fo) -> diag::Result<std::string> {
             auto name_or = RenderExpr(ctx, ctx.Expr(fo.name));
             if (!name_or) return std::unexpected(std::move(name_or.error()));

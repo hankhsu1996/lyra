@@ -571,18 +571,22 @@ auto LowerHirPrimaryStructural(
 // values clone verbatim so the body still sees an IntegerLiteral (some
 // downstream code paths extract constants from literal-shape exprs). Other
 // expressions are captured by value into a fresh procedural var so the body
-// reads the value as it stood at submit time.
+// reads the value as it stood at submit time. `name_prefix` distinguishes the
+// caller (`"nba"`, `"strobe"`, ...) so the synthesized binding names stay
+// readable when MIR dumps are inspected.
 auto SnapshotNonLhsSubexpr(
     const ProceduralScopeLoweringState& outer_scope_state,
     ProceduralScopeLoweringState& body, std::vector<mir::Capture>& captures,
-    std::uint32_t& snapshot_counter, mir::ExprId outer_id) -> mir::ExprId {
+    std::uint32_t& snapshot_counter, mir::ExprId outer_id,
+    std::string_view name_prefix) -> mir::ExprId {
   const auto& outer_expr = outer_scope_state.GetExpr(outer_id);
   if (std::holds_alternative<mir::IntegerLiteral>(outer_expr.data)) {
     return body.AddExpr(outer_expr);
   }
   const auto binding = body.AddProceduralVar(
       mir::ProceduralVarDecl{
-          .name = std::format("_lyra_nba_idx{}", snapshot_counter++),
+          .name =
+              std::format("_lyra_{}_arg{}", name_prefix, snapshot_counter++),
           .type = outer_expr.type});
   captures.emplace_back(
       mir::ByValueCapture{.value = outer_id, .binding = binding});
@@ -611,7 +615,8 @@ auto CloneLhsExprForNbaBody(
                 outer_scope_state, body, captures, snapshot_counter,
                 s.base_value);
             const mir::ExprId index = SnapshotNonLhsSubexpr(
-                outer_scope_state, body, captures, snapshot_counter, s.index);
+                outer_scope_state, body, captures, snapshot_counter, s.index,
+                "nba");
             return body.AddExpr(
                 mir::Expr{
                     .data =
@@ -625,7 +630,7 @@ auto CloneLhsExprForNbaBody(
                 s.base_value);
             const mir::ExprId offset = SnapshotNonLhsSubexpr(
                 outer_scope_state, body, captures, snapshot_counter,
-                s.offset_expr);
+                s.offset_expr, "nba");
             return body.AddExpr(
                 mir::Expr{
                     .data =
