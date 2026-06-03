@@ -8,6 +8,4 @@ input:
 expect:
   exit: 0
   variables:
-    p0: "8'h0F"
-    p1: "8'hF0"
-    p2: "8'hFF"
+    a: ["8'h0F", "8'hF0", "8'hFF"]

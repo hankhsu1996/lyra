@@ -8,6 +8,4 @@ input:
 expect:
   exit: 0
   variables:
-    p0: 20
-    p1: 30
-    p2: 40
+    b: [20, 30, 40]

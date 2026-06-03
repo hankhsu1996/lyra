@@ -8,6 +8,4 @@ input:
 expect:
   exit: 0
   variables:
-    q0: 70
-    q1: 80
-    q2: 90
+    b: [70, 80, 90]

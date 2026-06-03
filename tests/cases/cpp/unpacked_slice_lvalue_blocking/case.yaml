@@ -8,9 +8,4 @@ input:
 expect:
   exit: 0
   variables:
-    p0: 10
-    p1: 77
-    p2: 88
-    p3: 99
-    p4: 50
-    p5: 60
+    a: [10, 77, 88, 99, 50, 60]

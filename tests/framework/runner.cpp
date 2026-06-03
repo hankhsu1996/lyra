@@ -49,6 +49,60 @@ auto ParseExpected(const YAML::Node& node) -> ExpectedOutput {
   return out;
 }
 
+// Recursive YAML -> ExpectedValue. A sequence node maps to LRM 21.2.1.6
+// kUnpackedArray; element kinds may mix freely. A scalar dispatches through
+// ParseExpectedValue, which discriminates integer / SV literal / string.
+// `path` accumulates the dotted YAML location for error messages.
+auto ParseExpectedNode(const YAML::Node& node, std::string_view path)
+    -> std::expected<ExpectedValue, std::string> {
+  if (node.IsSequence()) {
+    ExpectedValue out;
+    out.kind = ExpectedValueKind::kUnpackedArray;
+    out.format_spec.kind = value::FormatKind::kAssignmentPattern;
+    out.sv_format_specifier = "%p";
+    out.elements.reserve(node.size());
+    std::size_t i = 0;
+    for (const auto& child : node) {
+      auto child_path = std::format("{}[{}]", path, i);
+      auto child_or = ParseExpectedNode(child, child_path);
+      if (!child_or) {
+        return std::unexpected(std::move(child_or.error()));
+      }
+      out.elements.push_back(std::move(*child_or));
+      ++i;
+    }
+    return out;
+  }
+  if (!node.IsScalar()) {
+    return std::unexpected(
+        std::format(
+            "expect.variables['{}'] must be a scalar, an SV literal string, "
+            "or a sequence",
+            path));
+  }
+  // yaml-cpp tags: "!" for explicit-string (quoted), "?" for plain scalar
+  // (could be int or unquoted string). Plain scalars that parse as integer
+  // are treated as YAML int; everything else is a string, which may further
+  // match the SV literal pattern.
+  const std::string tag = node.Tag();
+  const auto raw_text = node.as<std::string>();
+  bool node_is_integer = false;
+  if (tag != "!") {
+    try {
+      (void)node.as<std::int64_t>();
+      node_is_integer = true;
+    } catch (const YAML::Exception&) {
+      node_is_integer = false;
+    }
+  }
+  auto parsed_or = ParseExpectedValue(raw_text, node_is_integer);
+  if (!parsed_or) {
+    return std::unexpected(
+        std::format("expect.variables['{}']: {}", path, parsed_or.error()));
+  }
+  return std::move(*parsed_or);
+}
+
 auto ParseCase(
     const std::filesystem::path& case_dir,
     const std::filesystem::path& yaml_path) -> TestCase {
@@ -134,34 +188,10 @@ auto ParseCase(
       }
       for (const auto& kv : vars) {
         const auto name = kv.first.as<std::string>();
-        const auto& value_node = kv.second;
-        if (!value_node.IsScalar()) {
-          throw std::runtime_error(
-              std::format(
-                  "{}: expect.variables['{}'] must be a scalar (int or string)",
-                  yaml_path.string(), name));
-        }
-        // yaml-cpp tags: "!" for explicit-string (quoted), "?" for plain
-        // scalar (could be int or unquoted string). Plain scalars that parse
-        // as integer are treated as YAML int; everything else is a string,
-        // which may further match the SV literal pattern.
-        const std::string tag = value_node.Tag();
-        const auto raw_text = value_node.as<std::string>();
-        bool node_is_integer = false;
-        if (tag != "!") {
-          try {
-            (void)value_node.as<std::int64_t>();
-            node_is_integer = true;
-          } catch (const YAML::Exception&) {
-            node_is_integer = false;
-          }
-        }
-        auto parsed_or = ParseExpectedValue(raw_text, node_is_integer);
+        auto parsed_or = ParseExpectedNode(kv.second, name);
         if (!parsed_or) {
           throw std::runtime_error(
-              std::format(
-                  "{}: expect.variables['{}']: {}", yaml_path.string(), name,
-                  parsed_or.error()));
+              std::format("{}: {}", yaml_path.string(), parsed_or.error()));
         }
         c.expect.variables.push_back(
             {.name = name, .value = std::move(*parsed_or)});

@@ -6,6 +6,7 @@
 #include <initializer_list>
 #include <vector>
 
+#include "lyra/value/format.hpp"
 #include "lyra/value/packed_array.hpp"
 
 namespace lyra::value {
@@ -62,6 +63,15 @@ class UnpackedArray {
 
   [[nodiscard]] auto Size() const -> std::size_t {
     return data_.size();
+  }
+
+  // Flat-storage element read. `i` is in [0, Size()); no SV-index translation,
+  // no invalid-index handling. Sole consumer is the runtime aggregate-format
+  // path (`RuntimeValueView::FromUnpackedArray`), which traverses storage to
+  // build per-element views. SV-semantics access goes through
+  // `ElementAt(PackedArray)`.
+  [[nodiscard]] auto RawAt(std::size_t i) const -> const T& {
+    return data_[i];
   }
 
   // LRM 7.4.5: read returns Table 7-1 default on invalid index. Returns a
@@ -388,5 +398,27 @@ class UnpackedArrayRef {
   std::uint32_t count_;
   bool valid_ = true;
 };
+
+// LRM 21.2.1.6 aggregate-view construction. Element views borrow into `arr`'s
+// per-element storage and the parent view owns the recursive element vector,
+// so the whole tree is valid as long as `arr` is alive. Dispatch on the
+// element type via `if constexpr`: terminal `PackedArray` produces an
+// integral leaf via `FromPackedArray`; nested `UnpackedArray<U>` recurses.
+template <typename T>
+auto RuntimeValueView::FromUnpackedArray(const UnpackedArray<T>& arr)
+    -> RuntimeValueView {
+  std::vector<RuntimeValueView> elements;
+  elements.reserve(arr.Size());
+  for (std::size_t i = 0; i < arr.Size(); ++i) {
+    const T& elem = arr.RawAt(i);
+    if constexpr (std::same_as<T, PackedArray>) {
+      elements.push_back(RuntimeValueView::FromPackedArray(elem));
+    } else {
+      elements.push_back(RuntimeValueView::FromUnpackedArray(elem));
+    }
+  }
+  return RuntimeValueView{
+      .data = UnpackedArrayValueView{.elements = std::move(elements)}};
+}
 
 }  // namespace lyra::value

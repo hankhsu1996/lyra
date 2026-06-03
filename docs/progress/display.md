@@ -28,12 +28,15 @@ since the test harness can only probe a variable whose type has an implemented s
       inside the sandbox.
 - [ ] DI6 -- `$strobe` postponed-region semantics. Strobe must defer its read-and-print to the
       postponed region of the same time slot (LRM 21.2).
-- [ ] DI7 -- `%p` / `%0p` assignment-pattern format for aggregate types (LRM 21.2.1.6). Initial
-      scope: unpacked array of integral elements, with output `'{<elem>, <elem>, ...}` and each
-      element formatted by the LRM 21.2.1.6 element rule for its singular type. Multi-dimensional
-      arrays nest naturally. Struct / union / enum / string / real element formats land with their
-      respective type workstreams. Drives the test framework's whole-array `expect.variables`
-      assertion path; see `unpacked.md` for the first consumer.
+- [x] DI7 -- `%p` / `%0p` assignment-pattern format for aggregate types (LRM 21.2.1.6). Scope: fixed
+      unpacked array of integral elements. Output is `'{<elem>, <elem>, ...}` with `, ` between
+      elements; multi-dimensional arrays nest naturally. Singular integral elements follow the LRM
+      "as it would unformatted" rule (default `$display` radix, i.e. decimal); singular string
+      elements print quoted. `%0p` produces identical text in this scope; LRM 21.2.1.6 allows it.
+      Struct / union / enum / string-typed / real element formats land with their respective type
+      workstreams. Drives the test framework's whole-array `expect.variables` assertion path:
+      sequence-valued YAML entries (`a: [10, 20, 30]`) lower to a recursive `UnpackedArrayValueView`
+      and round-trip through the same `FormatValue` the runtime uses.
 
 ## Out of Scope
 
