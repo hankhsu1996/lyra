@@ -23,6 +23,9 @@ others read from.
   design-global time precision -- the finest precision across the whole design (LRM 3.14.3) -- so a
   design that mixes precisions schedules every delay on one consistent time axis.
 - The `time` and `realtime` data types exist and time literals lower to values.
+- `$time`, `$realtime` and `$stime` read the current simulation time scaled to the calling design
+  element's time unit (LRM 20.3): `$time` rounds to an integer, `$realtime` keeps the fraction, and
+  `$stime` is the low 32 bits.
 
 ## Sub-Steps
 
@@ -36,7 +39,7 @@ others read from.
 
 ### Reading simulation time
 
-- [ ] TS2 -- `$time`, `$realtime`, `$stime` (LRM 20.3): return the current simulation time scaled to
+- [x] TS2 -- `$time`, `$realtime`, `$stime` (LRM 20.3): return the current simulation time scaled to
       the time unit of the calling code's lexical scope -- the design element that contains the
       call, not the activation that runs it. Time unit is a static per-design-element property (LRM
       3.14.2), so a subroutine uses its declaration scope's unit even when enabled across a unit

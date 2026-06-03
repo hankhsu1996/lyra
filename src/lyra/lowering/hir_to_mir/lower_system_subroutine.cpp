@@ -65,6 +65,30 @@ auto LowerSystemSubroutineCall(
                 unit_state, scope_state, proc_state, proc_scope_state, hir_proc,
                 call, sformat, span);
           },
+          [&](const support::TimeSystemSubroutineInfo& time_info)
+              -> diag::Result<mir::Expr> {
+            // No arguments to lower (LRM 20.3 takes none); the scope-unit
+            // scaling happens at render time against the emitted
+            // `kTimeUnitPower`, so the node carries only the kind. The result
+            // type is fixed by the function (LRM 20.3.1/.2/.3).
+            mir::TypeId result_type = unit_state.Builtins().time;
+            switch (time_info.kind) {
+              case support::TimeKind::kTime:
+                result_type = unit_state.Builtins().time;
+                break;
+              case support::TimeKind::kStime:
+                result_type = unit_state.Builtins().int32;
+                break;
+              case support::TimeKind::kRealtime:
+                result_type = unit_state.Builtins().realtime;
+                break;
+            }
+            return mir::Expr{
+                .data =
+                    mir::RuntimeCallExpr{
+                        .call = mir::RuntimeTimeCall{.kind = time_info.kind}},
+                .type = result_type};
+          },
       },
       desc.semantic);
 }
