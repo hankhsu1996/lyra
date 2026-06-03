@@ -58,7 +58,7 @@ machinery owned by other workstreams; see [Blocked](#blocked).
       `@(...)`) through `mir::SensitivityWaitStmt` carrying per-leaf `(var, bit_range, edge_kind)`
       records; slang's flow analysis computes the leaves and the AST -> HIR lowering attaches the SV
       edge identifier (with LRM 9.4.2 LSB-reduce for edge-qualified single-leaf expressions).
-      Runtime per-leaf classification samples each waiter's projection on every `WriteVar`, so
+      Runtime per-leaf classification samples each waiter's projection on every variable write, so
       changes outside the projection do not cause spurious wakes (LRM 9.4.2 "no change in result"
       rule). `ClassifyEdge` covers the LRM Table 9-2 4-state transition matrix; `kBothEdges` matches
       either posedge or negedge. Covers `processes/event_triggers` and

@@ -152,8 +152,16 @@ auto LowerStructuralSubroutine(
   for (const auto& param : src.params) {
     const auto& hir_var = src.body.procedural_vars.at(param.var.value);
     const mir::TypeId type = unit_state.TranslateType(hir_var.type);
+    // A ref / const ref formal aliases the actual's cell, so its body var is a
+    // reference binding the backend renders as `Ref<T>` (LRM 13.5.2).
+    const mir::VariableBinding binding =
+        (param.direction == hir::ParamDirection::kRef ||
+         param.direction == hir::ParamDirection::kConstRef)
+            ? mir::VariableBinding::kReference
+            : mir::VariableBinding::kValue;
     const mir::ProceduralVarId mir_var = body_scope_state.AddProceduralVar(
-        mir::ProceduralVarDecl{.name = hir_var.name, .type = type});
+        mir::ProceduralVarDecl{
+            .name = hir_var.name, .type = type, .binding = binding});
     proc_state.MapProceduralVar(
         param.var,
         ProceduralVarBinding{

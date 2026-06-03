@@ -1,0 +1,16 @@
+id: cpp.function_ref
+tags: [cpp_run]
+input:
+  command: [run, cpp]
+  project: false
+  top: Top
+  files: [main.sv]
+expect:
+  exit: 0
+  variables:
+    a: 7
+    b: 3
+    src: 21
+    ro: 42
+    e: 6
+    e_ret: 106
