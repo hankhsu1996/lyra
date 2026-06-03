@@ -104,7 +104,7 @@ using RuntimeCall = std::variant<
     RuntimeFileCloseCall, RuntimeFileGetcCall, RuntimeFileUngetcCall,
     RuntimeFileGetsCall, RuntimeFileReadCall, RuntimeFileSeekCall,
     RuntimeFileRewindCall, RuntimeFileTellCall, RuntimeFileEofCall,
-    RuntimeFileErrorCall, RuntimeFileFlushCall, RuntimeSScanCall>;
+    RuntimeFileErrorCall, RuntimeFileFlushCall, RuntimeScanCall>;
 
 struct RuntimeCallExpr {
   RuntimeCall call;

@@ -1,15 +1,19 @@
 #include "lyra/runtime/scan.hpp"
 
 #include <algorithm>
+#include <cerrno>
 #include <cstddef>
 #include <cstdint>
 #include <format>
+#include <fstream>
 #include <span>
 #include <string>
 #include <string_view>
 #include <vector>
 
 #include "lyra/base/internal_error.hpp"
+#include "lyra/runtime/file_table.hpp"
+#include "lyra/runtime/runtime_services.hpp"
 #include "lyra/runtime/scan_source.hpp"
 #include "lyra/value/packed_array.hpp"
 #include "lyra/value/string.hpp"
@@ -54,7 +58,7 @@ struct ScannedBit {
   return -1;
 }
 
-void SkipSourceWhitespace(StringScanSource& src) {
+void SkipSourceWhitespace(ScanSource& src) {
   while (true) {
     const int ch = src.Peek();
     if (ch == -1 || !IsAsciiWhitespace(ch)) {
@@ -148,9 +152,8 @@ void AssignFromI64(value::PackedArray& dest, std::int64_t value) {
   if (dest == nullptr) {
     throw InternalError(
         std::format(
-            "$sscanf: format spec '%{}' expects an integral output argument, "
-            "but "
-            "the corresponding actual is not integral",
+            "$sscanf/$fscanf: format spec '%{}' expects an integral output "
+            "argument, but the corresponding actual is not integral",
             spec));
   }
   return *dest;
@@ -162,8 +165,8 @@ void AssignFromI64(value::PackedArray& dest, std::int64_t value) {
   if (dest == nullptr) {
     throw InternalError(
         std::format(
-            "$sscanf: format spec '%{}' expects a string output argument, but "
-            "the corresponding actual is not a string",
+            "$sscanf/$fscanf: format spec '%{}' expects a string output "
+            "argument, but the corresponding actual is not a string",
             spec));
   }
   return *dest;
@@ -173,8 +176,7 @@ void AssignFromI64(value::PackedArray& dest, std::int64_t value) {
 // (with `_` separators) or a single x/X/z/Z/? that fills the entire dest.
 // Mixed (`12x`) stops at the first non-digit -- the `x` is not consumed
 // here, so a following `%h` could still match it.
-[[nodiscard]] auto ScanDecimal(StringScanSource& src, const ScanSlot& slot)
-    -> bool {
+[[nodiscard]] auto ScanDecimal(ScanSource& src, const ScanSlot& slot) -> bool {
   SkipSourceWhitespace(src);
   int ch = src.Peek();
   if (ch == -1) {
@@ -233,8 +235,7 @@ void AssignFromI64(value::PackedArray& dest, std::int64_t value) {
 // LRM 21.3.4.3 Table 21-7 `%h` / `%x`. Each character -> one 4-bit nibble.
 // Hex digits 0..9 a..f A..F land as (val=digit, unk=0); xX as
 // (val=1111, unk=1111); zZ? as (val=0000, unk=1111); `_` is a separator.
-[[nodiscard]] auto ScanHex(StringScanSource& src, const ScanSlot& slot)
-    -> bool {
+[[nodiscard]] auto ScanHex(ScanSource& src, const ScanSlot& slot) -> bool {
   SkipSourceWhitespace(src);
   value::PackedArray& dest = RequireIntegralSlot(slot, "h");
   std::vector<ScannedBit> bits;
@@ -279,8 +280,7 @@ void AssignFromI64(value::PackedArray& dest, std::int64_t value) {
 
 // LRM 21.3.4.3 Table 21-7 `%o`. 3 bits per octal digit; xX -> (111,111),
 // zZ? -> (000,111); `_` is a separator.
-[[nodiscard]] auto ScanOctal(StringScanSource& src, const ScanSlot& slot)
-    -> bool {
+[[nodiscard]] auto ScanOctal(ScanSource& src, const ScanSlot& slot) -> bool {
   SkipSourceWhitespace(src);
   value::PackedArray& dest = RequireIntegralSlot(slot, "o");
   std::vector<ScannedBit> bits;
@@ -325,8 +325,7 @@ void AssignFromI64(value::PackedArray& dest, std::int64_t value) {
 
 // LRM 21.3.4.3 Table 21-7 `%b`. Per-character to one bit: 0/1 -> (val,0),
 // xX -> (1,1), zZ? -> (0,1), `_` separator.
-[[nodiscard]] auto ScanBinary(StringScanSource& src, const ScanSlot& slot)
-    -> bool {
+[[nodiscard]] auto ScanBinary(ScanSource& src, const ScanSlot& slot) -> bool {
   SkipSourceWhitespace(src);
   value::PackedArray& dest = RequireIntegralSlot(slot, "b");
   std::vector<ScannedBit> bits;
@@ -364,8 +363,7 @@ void AssignFromI64(value::PackedArray& dest, std::int64_t value) {
 
 // Standard scanf `%s`: skip leading whitespace, then read non-whitespace
 // chars until whitespace or EOF.
-[[nodiscard]] auto ScanString(StringScanSource& src, const ScanSlot& slot)
-    -> bool {
+[[nodiscard]] auto ScanString(ScanSource& src, const ScanSlot& slot) -> bool {
   SkipSourceWhitespace(src);
   std::string buf;
   while (true) {
@@ -385,8 +383,7 @@ void AssignFromI64(value::PackedArray& dest, std::int64_t value) {
 }
 
 // Standard scanf `%c`: no whitespace skip, one byte stored as int8.
-[[nodiscard]] auto ScanChar(StringScanSource& src, const ScanSlot& slot)
-    -> bool {
+[[nodiscard]] auto ScanChar(ScanSource& src, const ScanSlot& slot) -> bool {
   const int ch = src.Consume();
   if (ch == -1) {
     return false;
@@ -396,9 +393,9 @@ void AssignFromI64(value::PackedArray& dest, std::int64_t value) {
   return true;
 }
 
-[[nodiscard]] auto ScanFromStringSource(
-    StringScanSource& src, std::string_view fmt,
-    std::span<const ScanSlot> slots) -> std::int32_t {
+[[nodiscard]] auto ScanFromSource(
+    ScanSource& src, std::string_view fmt, std::span<const ScanSlot> slots)
+    -> std::int32_t {
   std::int32_t items = 0;
   std::size_t slot_ix = 0;
   bool first_conversion = true;
@@ -431,7 +428,7 @@ void AssignFromI64(value::PackedArray& dest, std::int64_t value) {
     ++fmt_ix;
     if (fmt_ix >= fmt.size()) {
       throw InternalError(
-          "$sscanf: format string ended after '%' with no conversion "
+          "$sscanf/$fscanf: format string ended after '%' with no conversion "
           "specifier");
     }
     const char spec = fmt[fmt_ix];
@@ -454,14 +451,14 @@ void AssignFromI64(value::PackedArray& dest, std::int64_t value) {
     // miscount items.
     if (spec == '*' || IsDecDigit(static_cast<unsigned char>(spec))) {
       throw InternalError(
-          "$sscanf: field width and assignment suppression are not yet "
-          "supported (LRM 21.3.4.3)");
+          "$sscanf/$fscanf: field width and assignment suppression are not "
+          "yet supported (LRM 21.3.4.3)");
     }
 
     if (slot_ix >= slots.size()) {
       throw InternalError(
-          "$sscanf: format string has more conversion specifiers than "
-          "output arguments");
+          "$sscanf/$fscanf: format string has more conversion specifiers "
+          "than output arguments");
     }
     const ScanSlot slot = slots[slot_ix];
 
@@ -489,7 +486,8 @@ void AssignFromI64(value::PackedArray& dest, std::int64_t value) {
       default:
         throw InternalError(
             std::format(
-                "$sscanf: unsupported conversion specifier '%{}'", spec));
+                "$sscanf/$fscanf: unsupported conversion specifier '%{}'",
+                spec));
     }
 
     if (!ok) {
@@ -514,9 +512,33 @@ auto LyraSScanf(
     const value::String& input, const value::String& format,
     std::initializer_list<ScanSlot> slots) -> value::PackedArray {
   StringScanSource src(input.View());
-  const std::int32_t items = ScanFromStringSource(
+  const std::int32_t items = ScanFromSource(
       src, format.View(),
       std::span<const ScanSlot>{slots.begin(), slots.size()});
+  return value::PackedArray::Int(items);
+}
+
+auto LyraFScanf(
+    RuntimeServices& services, const value::PackedArray& fd_pa,
+    const value::String& format, std::initializer_list<ScanSlot> slots)
+    -> value::PackedArray {
+  const auto fd = static_cast<std::int32_t>(fd_pa.ToInt64());
+  std::fstream* stream = services.Files().Resolve(fd);
+  if (stream == nullptr) {
+    // MCD descriptors, closed FDs, and unmapped FDs all land here. LRM
+    // 21.3.4.3 specifies EOF (-1) when the input ends before the first
+    // matching failure or conversion; we treat "no readable stream" as
+    // that condition and additionally stamp $ferror so an SV caller
+    // querying it sees EBADF.
+    services.Files().SetError(
+        fd, EBADF, "$fscanf: not an open file descriptor");
+    return value::PackedArray::Int(-1);
+  }
+  FileScanSource src(*stream);
+  const std::int32_t items = ScanFromSource(
+      src, format.View(),
+      std::span<const ScanSlot>{slots.begin(), slots.size()});
+  src.FlushPushback();
   return value::PackedArray::Int(items);
 }
 

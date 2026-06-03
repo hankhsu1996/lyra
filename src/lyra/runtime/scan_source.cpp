@@ -43,4 +43,54 @@ void StringScanSource::Unget(int byte) {
   pushback_ = byte;
 }
 
+FileScanSource::FileScanSource(std::fstream& stream) : stream_(&stream) {
+}
+
+auto FileScanSource::Peek() -> int {
+  if (peeked_.has_value()) {
+    return *peeked_;
+  }
+  const int byte = stream_->get();
+  if (byte == std::char_traits<char>::eof()) {
+    return -1;
+  }
+  peeked_ = byte;
+  return byte;
+}
+
+auto FileScanSource::Consume() -> int {
+  if (peeked_.has_value()) {
+    const int byte = *peeked_;
+    peeked_.reset();
+    return byte;
+  }
+  const int byte = stream_->get();
+  return byte == std::char_traits<char>::eof() ? -1 : byte;
+}
+
+void FileScanSource::Unget(int byte) {
+  if (byte == -1) {
+    return;
+  }
+  if (peeked_.has_value()) {
+    throw InternalError(
+        "FileScanSource::Unget: pushback slot already holds a byte; "
+        "scanner attempted to Unget twice without an intervening Consume");
+  }
+  peeked_ = byte;
+}
+
+void FileScanSource::FlushPushback() {
+  if (!peeked_.has_value()) {
+    return;
+  }
+  // Clear eofbit / failbit so putback succeeds even when Peek hit EOF
+  // earlier in the scan. LRM 21.3.4.3 "the offending input character is
+  // left unread in the input stream" -- pushing back here makes the
+  // unconsumed peeked byte visible to the next $fgetc on this FD.
+  stream_->clear();
+  stream_->putback(static_cast<char>(*peeked_));
+  peeked_.reset();
+}
+
 }  // namespace lyra::runtime
