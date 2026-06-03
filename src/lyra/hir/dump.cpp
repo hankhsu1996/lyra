@@ -774,6 +774,15 @@ class HirDumper {
                   "AssignmentPatternReplicationExpr count=Expr[{}] items=[{}]",
                   a.count.value, items);
             },
+            [](const DynamicArrayNewExpr& n) -> std::string {
+              if (n.initializer.has_value()) {
+                return std::format(
+                    "DynamicArrayNewExpr size=Expr[{}] initializer=Expr[{}]",
+                    n.size.value, n.initializer->value);
+              }
+              return std::format(
+                  "DynamicArrayNewExpr size=Expr[{}]", n.size.value);
+            },
         },
         e.data);
     return std::format("type=Type[{}] {}", e.type.value, formatted);

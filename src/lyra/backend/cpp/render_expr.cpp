@@ -971,18 +971,19 @@ auto RenderCallExpr(const RenderContext& ctx, const mir::CallExpr& call)
 }
 
 // Indexed element access shared by rvalue `RenderElementSelectExpr` and the
-// lvalue `RenderLhsExpr` ElementSelect arm. `PackedArray` and `UnpackedArray`
-// expose a symmetric `ElementAt(const PackedArray&)` so the emit string is
-// substrate-agnostic; declared-range translation and `ToInt64` canonicalize
-// inside the runtime type.
+// lvalue `RenderLhsExpr` ElementSelect arm. `PackedArray`, `UnpackedArray`,
+// and `DynamicArray` expose a symmetric `ElementAt(const PackedArray&)` so
+// the emit string is substrate-agnostic; declared-range translation and
+// `ToInt64` canonicalize inside the runtime type.
 auto RenderIndexedElementAccess(
     const mir::Type& base_ty, std::string_view base, std::string_view idx)
     -> std::string {
-  if (!std::holds_alternative<mir::UnpackedArrayType>(base_ty.data) &&
-      !std::holds_alternative<mir::PackedArrayType>(base_ty.data)) {
+  if (!std::holds_alternative<mir::PackedArrayType>(base_ty.data) &&
+      !std::holds_alternative<mir::UnpackedArrayType>(base_ty.data) &&
+      !std::holds_alternative<mir::DynamicArrayType>(base_ty.data)) {
     throw InternalError(
-        "RenderIndexedElementAccess: base type must be PackedArrayType or "
-        "UnpackedArrayType");
+        "RenderIndexedElementAccess: base type must be PackedArrayType, "
+        "UnpackedArrayType, or DynamicArrayType");
   }
   return std::format("({}).ElementAt({})", base, idx);
 }
@@ -1373,6 +1374,45 @@ auto RenderArrayLiteralExpr(
   return out;
 }
 
+// LRM 7.5.1 / 7.6: constructor invocation. Emits `RenderType(type)(args...)`
+// -- parenthesised so brace-vs-paren overload resolution is unambiguous and
+// the runtime ctor is selected by arg-list shape.
+//
+// An `ArrayLiteralExpr` argument is rendered as `{e1, e2, ...}` without the
+// type prefix so it decays to `std::initializer_list<T>` for the parameter
+// slot. This is what allows `UnpackedArray<T>(default_value, {e1, e2, ...})`
+// to compile against the wrapper's `(T, std::initializer_list<T>)` ctor.
+auto RenderConstructExpr(
+    const RenderContext& ctx, const mir::Expr& expr,
+    const mir::ConstructExpr& c) -> diag::Result<std::string> {
+  auto type_or = RenderTypeAsCpp(ctx.Unit(), ctx.StructuralScope(), expr.type);
+  if (!type_or) return std::unexpected(std::move(type_or.error()));
+  std::string out = *type_or + "(";
+  for (std::size_t i = 0; i < c.args.size(); ++i) {
+    const auto& arg_expr = ctx.Expr(c.args[i]);
+    std::string rendered;
+    if (const auto* al = std::get_if<mir::ArrayLiteralExpr>(&arg_expr.data)) {
+      std::string list = "{";
+      for (std::size_t j = 0; j < al->elements.size(); ++j) {
+        auto element = RenderExpr(ctx, ctx.Expr(al->elements[j]));
+        if (!element) return std::unexpected(std::move(element.error()));
+        if (j != 0) list += ", ";
+        list += *element;
+      }
+      list += "}";
+      rendered = std::move(list);
+    } else {
+      auto r = RenderExpr(ctx, arg_expr);
+      if (!r) return std::unexpected(std::move(r.error()));
+      rendered = *std::move(r);
+    }
+    if (i != 0) out += ", ";
+    out += rendered;
+  }
+  out += ")";
+  return out;
+}
+
 auto RenderReplicationExpr(
     const RenderContext& ctx, const mir::Expr& expr,
     const mir::ReplicationExpr& r) -> diag::Result<std::string> {
@@ -1489,6 +1529,9 @@ auto RenderExprNatural(const RenderContext& ctx, const mir::Expr& expr)
           },
           [&](const mir::ArrayLiteralExpr& a) -> diag::Result<std::string> {
             return RenderArrayLiteralExpr(ctx, expr, a);
+          },
+          [&](const mir::ConstructExpr& c) -> diag::Result<std::string> {
+            return RenderConstructExpr(ctx, expr, c);
           },
       },
       expr.data);

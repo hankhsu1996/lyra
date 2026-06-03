@@ -137,11 +137,23 @@ struct AssignmentPatternReplicationExpr {
   std::vector<ExprId> items;
 };
 
+// LRM 7.5.1 `new[N]` / `new[N](other)` dynamic array constructor. The result
+// type (the dynamic array type) lives on Expr::type; `size` evaluates to a
+// longint per LRM 7.5.1 (slang enforces the operand type), and `initializer`
+// holds the optional `(other)` source array used for copy-with-pad-or-truncate
+// per LRM 7.5.1. HIR-to-MIR lowers this to a generic construct expression
+// whose argument list is `[size, element-default prototype, optional copy
+// source]`; the prototype is synthesized at lowering from the element type.
+struct DynamicArrayNewExpr {
+  ExprId size;
+  std::optional<ExprId> initializer;
+};
+
 using ExprData = std::variant<
     PrimaryExpr, UnaryExpr, BinaryExpr, ConditionalExpr, AssignExpr, IncDecExpr,
     CallExpr, ConversionExpr, InsideExpr, ElementSelectExpr, RangeSelectExpr,
     MemberAccessExpr, ConcatExpr, ReplicationExpr, AssignmentPatternExpr,
-    AssignmentPatternReplicationExpr>;
+    AssignmentPatternReplicationExpr, DynamicArrayNewExpr>;
 
 struct Expr {
   TypeId type;

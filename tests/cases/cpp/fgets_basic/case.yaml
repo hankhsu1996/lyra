@@ -12,7 +12,7 @@ expect:
     second_count: 4
     first_len: 6
     second_len: 4
-    first_last_byte: 10            # '\n' kept per LRM 21.3.4.2
-    second_line: "tail"            # no embedded newline, safe to probe
+    first_last_byte: 10 # '\n' kept per LRM 21.3.4.2
+    second_line: "tail" # no embedded newline, safe to probe
   files:
     scratch.txt: "hello\ntail"

@@ -6,7 +6,7 @@ input:
   top: Top
   files: [main.sv]
 expect:
-  exit: 1                  # `lyra run` catches the runtime error and exits 1
+  exit: 1 # `lyra run` catches the runtime error and exits 1
   stderr:
     contains:
       - "field width and assignment suppression are not yet supported"

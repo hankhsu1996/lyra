@@ -544,6 +544,16 @@ class MirDumper {
               }
               return std::format("ArrayLiteralExpr elements=[{}]", elements);
             },
+            [](const ConstructExpr& c) -> std::string {
+              std::string args;
+              for (std::size_t i = 0; i < c.args.size(); ++i) {
+                if (i != 0) {
+                  args += ", ";
+                }
+                args += std::format("Expr[{}]", c.args[i].value);
+              }
+              return std::format("ConstructExpr args=[{}]", args);
+            },
         },
         e.data);
     return std::format("{} type=Type[{}]", formatted, e.type.value);
