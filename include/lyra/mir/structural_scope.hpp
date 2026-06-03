@@ -3,6 +3,7 @@
 #include <string>
 #include <vector>
 
+#include "lyra/base/time.hpp"
 #include "lyra/mir/process.hpp"
 #include "lyra/mir/stmt.hpp"
 #include "lyra/mir/structural_param.hpp"
@@ -27,6 +28,10 @@ struct CrossUnitRefDecl {
 
 struct StructuralScope {
   std::string name;
+  // The scope's resolved time unit and precision (LRM 3.14.2). The emitted
+  // class exposes the precision so the engine can take the design-global
+  // minimum (LRM 3.14.3) and so delays scale to it.
+  TimeResolution time_resolution;
   std::vector<StructuralParamDecl> structural_params;
   std::vector<StructuralVarDecl> structural_vars;
   std::vector<CrossUnitRefDecl> cross_unit_refs;

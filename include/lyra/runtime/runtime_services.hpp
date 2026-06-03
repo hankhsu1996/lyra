@@ -75,6 +75,10 @@ class RuntimeServices {
   void RequestFinish(int level);
   [[nodiscard]] auto Now() const -> SimTime;
 
+  // The design-global time precision (LRM 3.14.3) the delay awaitable scales a
+  // scope-precision delay against to reach the engine's tick.
+  [[nodiscard]] auto GlobalPrecisionPower() const -> std::int8_t;
+
  private:
   StreamDispatcher* stream_ = nullptr;
   DiagnosticDispatcher* diagnostic_ = nullptr;
