@@ -3,10 +3,10 @@
 #include <algorithm>
 #include <cstddef>
 #include <cstdint>
-#include <stdexcept>
 #include <utility>
 #include <vector>
 
+#include "lyra/base/internal_error.hpp"
 #include "lyra/value/packed_array.hpp"
 
 namespace lyra::value {
@@ -44,7 +44,7 @@ class DynamicArray {
       : default_value_(std::move(default_value)) {
     const std::int64_t n_val = n.ToInt64();
     if (n_val < 0) {
-      throw std::runtime_error(
+      throw InternalError(
           "DynamicArray::new[N]: size operand is negative (LRM 7.5.1)");
     }
     data_.assign(static_cast<std::size_t>(n_val), default_value_);
@@ -56,7 +56,7 @@ class DynamicArray {
       : default_value_(std::move(default_value)) {
     const std::int64_t n_val = n.ToInt64();
     if (n_val < 0) {
-      throw std::runtime_error(
+      throw InternalError(
           "DynamicArray::new[N](src): size operand is negative (LRM 7.5.1)");
     }
     const auto target = static_cast<std::size_t>(n_val);
@@ -152,7 +152,7 @@ class DynamicElementRef {
   // a user-side ordering bug rather than a supported path.
   [[nodiscard]] auto ElementAt(const PackedArray& idx) {
     if (!valid_) {
-      throw std::runtime_error(
+      throw InternalError(
           "DynamicArray::ElementAt: chain access through an invalid proxy");
     }
     return base_->data_[offset_].ElementAt(idx);
