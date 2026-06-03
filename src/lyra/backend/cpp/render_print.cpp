@@ -484,6 +484,27 @@ auto RenderRuntimeCallExpr(
                 "std::array<lyra::value::PrintItem, {}>{{{{{}}}}})",
                 sf.items.size(), body);
           },
+          [&](const mir::RuntimeTimeCall& tc) -> diag::Result<std::string> {
+            // The scaling target is the enclosing scope's time unit, read
+            // from its emitted `kTimeUnitPower` constant; unqualified lookup
+            // resolves it to the design element that lexically contains the
+            // call (LRM 20.3.1 / 3.14.2). The runtime scales against the
+            // engine's design-global tick.
+            switch (tc.kind) {
+              case support::TimeKind::kTime:
+                return std::string(
+                    "lyra::runtime::SimTimeInUnit(Services(), "
+                    "kTimeUnitPower)");
+              case support::TimeKind::kStime:
+                return std::string(
+                    "lyra::runtime::STimeInUnit(Services(), kTimeUnitPower)");
+              case support::TimeKind::kRealtime:
+                return std::string(
+                    "lyra::runtime::RealTimeInUnit(Services(), "
+                    "kTimeUnitPower)");
+            }
+            throw InternalError("RenderRuntimeCallExpr: unknown TimeKind");
+          },
       },
       expr.call);
 }
