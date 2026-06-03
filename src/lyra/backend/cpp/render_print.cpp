@@ -405,6 +405,31 @@ auto RenderRuntimeCallExpr(
             return std::format(
                 "lyra::runtime::LyraFFlush(*services_, {})", *fd_or);
           },
+          [&](const mir::RuntimeSScanCall& ss) -> diag::Result<std::string> {
+            auto input_or = RenderExpr(ctx, ctx.Expr(ss.input));
+            if (!input_or) {
+              return std::unexpected(std::move(input_or.error()));
+            }
+            auto format_or = RenderExpr(ctx, ctx.Expr(ss.format));
+            if (!format_or) {
+              return std::unexpected(std::move(format_or.error()));
+            }
+            std::string slot_pieces;
+            for (std::size_t k = 0; k < ss.slots.size(); ++k) {
+              auto slot_or = RenderExpr(ctx, ctx.Expr(ss.slots[k]));
+              if (!slot_or) {
+                return std::unexpected(std::move(slot_or.error()));
+              }
+              if (k != 0) {
+                slot_pieces += ", ";
+              }
+              slot_pieces +=
+                  std::format("lyra::runtime::ScanSlot::Make({})", *slot_or);
+            }
+            return std::format(
+                "lyra::runtime::LyraSScanf({}, {}, {{{}}})", *input_or,
+                *format_or, slot_pieces);
+          },
       },
       expr.call);
 }

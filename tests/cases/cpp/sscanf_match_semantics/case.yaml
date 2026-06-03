@@ -1,0 +1,29 @@
+id: cpp.sscanf_match_semantics
+tags: [cpp_run]
+input:
+  command: [run, cpp]
+  project: false
+  top: Top
+  files: [main.sv]
+expect:
+  exit: 0
+  variables:
+    code_partial: 1
+    a_partial: 12
+    b_partial: 99
+    code_eof: -1
+    a_eof: 42
+    code_lit: 1
+    a_lit: 12
+    b_lit: 99
+    code_ws: 3
+    a_ws: 1
+    b_ws: 2
+    c_ws: 3
+    code_multi: 3
+    a_multi: 12
+    b_multi: 0xAB
+    s_multi: "hi"
+    s_multi_len: 2
+    code_pct: 1
+    x_pct: 100

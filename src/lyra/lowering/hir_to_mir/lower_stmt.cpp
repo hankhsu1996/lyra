@@ -20,12 +20,14 @@
 #include "lyra/hir/subroutine.hpp"
 #include "lyra/hir/subroutine_ref.hpp"
 #include "lyra/lowering/hir_to_mir/case_cascade.hpp"
+#include "lyra/lowering/hir_to_mir/copy_out_desugar.hpp"
 #include "lyra/lowering/hir_to_mir/default_value.hpp"
 #include "lyra/lowering/hir_to_mir/delay_time_resolver.hpp"
 #include "lyra/lowering/hir_to_mir/inside_predicate.hpp"
 #include "lyra/lowering/hir_to_mir/lower_deferred_check.hpp"
 #include "lyra/lowering/hir_to_mir/lower_expr.hpp"
 #include "lyra/lowering/hir_to_mir/lower_file_io.hpp"
+#include "lyra/lowering/hir_to_mir/lower_scan.hpp"
 #include "lyra/lowering/hir_to_mir/procedural_scope_helpers.hpp"
 #include "lyra/lowering/hir_to_mir/sensitivity_wait.hpp"
 #include "lyra/lowering/hir_to_mir/state.hpp"
@@ -379,14 +381,9 @@ auto LowerSubroutineCallWithWritebacks(
   ProceduralScopeLoweringState wrapper;
   ProceduralDepthGuard depth_guard{proc_state};
 
-  struct Writeback {
-    mir::ExprId actual;
-    mir::ProceduralVarRef temp;
-    mir::TypeId type;
-  };
   std::vector<mir::ExprId> call_args;
   call_args.reserve(call.arguments.size());
-  std::vector<Writeback> writebacks;
+  std::vector<OutputArgSlot> writebacks;
 
   for (std::size_t i = 0; i < call.arguments.size(); ++i) {
     const hir::ParamDirection dir = decl.params[i].direction;
@@ -430,47 +427,26 @@ auto LowerSubroutineCallWithWritebacks(
         {.actual = actual_id, .temp = temp, .type = formal_type});
   }
 
-  const mir::ExprId call_id = wrapper.AddExpr(
-      mir::Expr{
-          .data =
-              mir::CallExpr{
-                  .callee = scope_state.TranslateStructuralSubroutine(
-                      callee_ref.hops, callee_ref.subroutine),
-                  .arguments = std::move(call_args)},
-          .type = result_type});
+  mir::Expr call_expr{
+      .data =
+          mir::CallExpr{
+              .callee = scope_state.TranslateStructuralSubroutine(
+                  callee_ref.hops, callee_ref.subroutine),
+              .arguments = std::move(call_args)},
+      .type = result_type};
 
+  std::optional<mir::ExprId> assign_target_id = std::nullopt;
   if (assign_target.has_value()) {
     auto lhs_or = LowerExpr(
         unit_state, scope_state, proc_state, wrapper, hir_proc,
         hir_proc.exprs.at(assign_target->value));
     if (!lhs_or) return std::unexpected(std::move(lhs_or.error()));
-    const mir::ExprId lhs_id = wrapper.AddExpr(*std::move(lhs_or));
-    const mir::ExprId assign_id = wrapper.AddExpr(
-        mir::Expr{
-            .data = mir::AssignExpr{.target = lhs_id, .value = call_id},
-            .type = result_type});
-    wrapper.AppendStmt(mir::ExprStmt{.expr = assign_id});
-  } else {
-    wrapper.AppendStmt(mir::ExprStmt{.expr = call_id});
+    assign_target_id = wrapper.AddExpr(*std::move(lhs_or));
   }
 
-  for (const auto& wb : writebacks) {
-    const mir::ExprId temp_read =
-        wrapper.AddExpr(mir::Expr{.data = wb.temp, .type = wb.type});
-    const mir::ExprId copy_out = wrapper.AddExpr(
-        mir::Expr{
-            .data = mir::AssignExpr{.target = wb.actual, .value = temp_read},
-            .type = wb.type});
-    wrapper.AppendStmt(mir::ExprStmt{.expr = copy_out});
-  }
-
-  std::vector<mir::ProceduralScope> child_scopes;
-  const mir::ProceduralScopeId scope_id =
-      AddChildProceduralScope(child_scopes, wrapper.Finish());
-  return mir::Stmt{
-      .label = stmt.label,
-      .data = mir::BlockStmt{.scope = scope_id},
-      .child_procedural_scopes = std::move(child_scopes)};
+  return BuildCopyOutBlock(
+      wrapper, stmt, result_type, std::move(call_expr), assign_target_id,
+      writebacks);
 }
 
 auto LowerExprStmt(
@@ -527,6 +503,12 @@ auto LowerExprStmt(
               unit_state.TranslateType(inner.type));
         }
       }
+      if (const auto* scan_info = support::GetScanInfo(desc)) {
+        return LowerScanSystemSubroutineCallStmt(
+            unit_state, scope_state, proc_state, hir_proc, stmt, inner.span,
+            *call, desc, *scan_info, std::nullopt,
+            unit_state.TranslateType(inner.type));
+      }
     }
   }
   if (const auto* assign = std::get_if<hir::AssignExpr>(&inner.data)) {
@@ -562,19 +544,25 @@ auto LowerExprStmt(
         if (const auto* sys_ref =
                 std::get_if<hir::SystemSubroutineRef>(&call->callee)) {
           const auto& desc = support::LookupSystemSubroutine(sys_ref->id);
+          // When slang wraps the call result in an implicit conversion to
+          // match the LHS, route the call return through the same
+          // conversion before the writeback assigns to the user's LHS.
+          const mir::TypeId result_type = unit_state.TranslateType(
+              conv_target_type.has_value() ? *conv_target_type
+                                           : call_carrier->type);
           if (const auto* file_info = support::GetFileIOInfo(desc)) {
             if (support::FileIOHasOutputArg(file_info->kind)) {
-              // When slang wraps the call result in an implicit conversion to
-              // match the LHS, route the call return through the same
-              // conversion before the writeback assigns to the user's LHS.
-              const mir::TypeId result_type = unit_state.TranslateType(
-                  conv_target_type.has_value() ? *conv_target_type
-                                               : call_carrier->type);
               return LowerFileIOSystemSubroutineCallStmt(
                   unit_state, scope_state, proc_state, hir_proc, stmt,
                   call_carrier->span, *call, desc, *file_info, assign->lhs,
                   result_type);
             }
+          }
+          if (const auto* scan_info = support::GetScanInfo(desc)) {
+            return LowerScanSystemSubroutineCallStmt(
+                unit_state, scope_state, proc_state, hir_proc, stmt,
+                call_carrier->span, *call, desc, *scan_info, assign->lhs,
+                result_type);
           }
         }
       }

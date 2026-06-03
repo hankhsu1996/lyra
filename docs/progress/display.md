@@ -42,15 +42,19 @@ since the test harness can only probe a variable whose type has an implemented s
 - `$monitor` / `$fmonitor`. Not modelled today; add an entry when a concrete consumer needs it.
 - `$strobe` / `$fstrobe` radix variants. The radix-dispatch mechanism is shared with DI5 but
   strobe's "drain at end of time slot" semantic waits on DI6 (postponed region).
-- `$fscanf` / `$sscanf`. Tracked separately; the format-string scanner that handles SV's 4-state
-  input vocabulary (`x` / `z` / `?` / `_` in numeric fields), sized literals, and the variadic
-  output-arg pipeline is a self-contained cut on top of the file-read surface. Other file read tasks
-  (`$fgetc` / `$ungetc` / `$fgets` / `$fread` / `$fseek` / `$rewind` / `$ftell` / `$feof` /
-  `$ferror` / `$fflush`) are implemented per LRM 21.3.4..21.3.8. The output-arg tasks ride the same
-  LRM 13.5 copy-out shape used by user-defined functions with `output` formals; only
-  statement-position calls are supported. When `$fscanf` lands, fold its variadic copy-out
-  desugaring with the existing UDF F4 path and the file IO output-arg path into one shared helper --
-  three call sites with stable shape will be the right time to extract the abstraction.
+- `$sscanf` implemented per LRM 21.3.4.3: string and string-literal input, statement-position call
+  (bare or blocking assign-RHS), conversions `%d` / `%h` / `%x` / `%b` / `%o` / `%s` / `%c` / `%%`,
+  4-state vocabulary (`x` / `z` / `?` / `_`) inside the integer conversions, single-char `x`/`z`/`?`
+  fill for `%d`. Output-arg copy-out uses LRM 13.5 with copy-in initialization so unmatched slots
+  preserve the actual's prior value (LRM 21.3.4.3 only writes successfully matched outputs).
+- `$fscanf` deferred. Reuses the same scanner core over a file-source adapter plus FD error
+  stamping; no new scanner work expected.
+- `$sscanf` field width (`%5d`) and assignment suppression (`%*d`) deferred. Detected and rejected
+  at runtime so the matched count never silently desyncs from the user's argument list.
+- `$sscanf` integral and unpacked-array-of-byte input sources (LRM 21.3.4.3) deferred; string and
+  string-literal inputs are accepted today.
+- Other file read tasks (`$fgetc` / `$ungetc` / `$fgets` / `$fread` / `$fseek` / `$rewind` /
+  `$ftell` / `$feof` / `$ferror` / `$fflush`) are implemented per LRM 21.3.4..21.3.8.
 - `$sformat` / `$sformatf` / `$swrite` family (formatting into a string variable). Independent
   feature.
 - `%u` / `%z` (binary-packed unsigned / signed) and `%v` (strength). Not on the immediate roadmap;
