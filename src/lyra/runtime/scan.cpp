@@ -5,11 +5,11 @@
 #include <cstdint>
 #include <format>
 #include <span>
-#include <stdexcept>
 #include <string>
 #include <string_view>
 #include <vector>
 
+#include "lyra/base/internal_error.hpp"
 #include "lyra/runtime/scan_source.hpp"
 #include "lyra/value/packed_array.hpp"
 #include "lyra/value/string.hpp"
@@ -146,7 +146,7 @@ void AssignFromI64(value::PackedArray& dest, std::int64_t value) {
     const ScanSlot& slot, std::string_view spec) -> value::PackedArray& {
   value::PackedArray* dest = slot.AsIntegral();
   if (dest == nullptr) {
-    throw std::runtime_error(
+    throw InternalError(
         std::format(
             "$sscanf: format spec '%{}' expects an integral output argument, "
             "but "
@@ -160,7 +160,7 @@ void AssignFromI64(value::PackedArray& dest, std::int64_t value) {
     const ScanSlot& slot, std::string_view spec) -> value::String& {
   value::String* dest = slot.AsString();
   if (dest == nullptr) {
-    throw std::runtime_error(
+    throw InternalError(
         std::format(
             "$sscanf: format spec '%{}' expects a string output argument, but "
             "the corresponding actual is not a string",
@@ -430,7 +430,7 @@ void AssignFromI64(value::PackedArray& dest, std::int64_t value) {
 
     ++fmt_ix;
     if (fmt_ix >= fmt.size()) {
-      throw std::runtime_error(
+      throw InternalError(
           "$sscanf: format string ended after '%' with no conversion "
           "specifier");
     }
@@ -453,13 +453,13 @@ void AssignFromI64(value::PackedArray& dest, std::int64_t value) {
     // detect explicitly so a future-supported format does not silently
     // miscount items.
     if (spec == '*' || IsDecDigit(static_cast<unsigned char>(spec))) {
-      throw std::runtime_error(
+      throw InternalError(
           "$sscanf: field width and assignment suppression are not yet "
           "supported (LRM 21.3.4.3)");
     }
 
     if (slot_ix >= slots.size()) {
-      throw std::runtime_error(
+      throw InternalError(
           "$sscanf: format string has more conversion specifiers than "
           "output arguments");
     }
@@ -487,7 +487,7 @@ void AssignFromI64(value::PackedArray& dest, std::int64_t value) {
         ok = ScanChar(src, slot);
         break;
       default:
-        throw std::runtime_error(
+        throw InternalError(
             std::format(
                 "$sscanf: unsupported conversion specifier '%{}'", spec));
     }
