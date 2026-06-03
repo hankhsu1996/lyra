@@ -248,11 +248,16 @@ auto LowerIfOrCaseGenerateMemberInto(
 auto LowerInstanceMemberInto(
     ScopeLoweringState& scope_state, const slang::ast::InstanceSymbol& inst)
     -> diag::Result<void> {
-  scope_state.AddInstanceMember(
+  const hir::InstanceMemberId member_id = scope_state.AddInstanceMember(
       hir::InstanceMemberDecl{
           .instance_name = std::string{inst.name},
           .target_unit = std::string{inst.getDefinition().name},
           .array_dims = {}});
+  // A downward cross-unit reference (`c.x`) resolves the leading `c` to this
+  // member; the binding lets process-body lowering find it regardless of
+  // source order.
+  scope_state.UnitState().MapInstanceMemberBinding(
+      inst, scope_state.Frame(), member_id);
   return {};
 }
 
@@ -315,13 +320,9 @@ auto LowerScopeMemberInto(
       return LowerIfOrCaseGenerateMemberInto(
           unit_facts, scope_state, stack,
           member.as<slang::ast::GenerateBlockSymbol>(), slang_scope);
-    case slang::ast::SymbolKind::Instance:
-      return LowerInstanceMemberInto(
-          scope_state, member.as<slang::ast::InstanceSymbol>());
-    case slang::ast::SymbolKind::InstanceArray:
-      return LowerInstanceArrayMemberInto(
-          scope_state, member.as<slang::ast::InstanceArraySymbol>());
     default:
+      // Instance / InstanceArray members are lowered in a pre-pass (see
+      // LowerScopeMembersInto); every other member kind is not modeled.
       return {};
   }
 }
@@ -345,8 +346,28 @@ auto LowerScopeMembersInto(
     }
   }
 
+  // Instance members are lowered ahead of process bodies so a downward
+  // cross-unit reference (`c.x`) resolves its leading `c` even when the
+  // referencing process precedes the instance in source order (declarations
+  // are scope-wide). The main pass below skips them.
+  for (const auto& member : slang_scope.members()) {
+    if (member.kind == slang::ast::SymbolKind::Instance) {
+      auto r = LowerInstanceMemberInto(
+          scope_state, member.as<slang::ast::InstanceSymbol>());
+      if (!r) return std::unexpected(std::move(r.error()));
+    } else if (member.kind == slang::ast::SymbolKind::InstanceArray) {
+      auto r = LowerInstanceArrayMemberInto(
+          scope_state, member.as<slang::ast::InstanceArraySymbol>());
+      if (!r) return std::unexpected(std::move(r.error()));
+    }
+  }
+
   std::unordered_set<std::uint32_t> consumed_construct_indices;
   for (const auto& member : slang_scope.members()) {
+    if (member.kind == slang::ast::SymbolKind::Instance ||
+        member.kind == slang::ast::SymbolKind::InstanceArray) {
+      continue;
+    }
     if (member.kind == slang::ast::SymbolKind::GenerateBlock) {
       const auto& block = member.as<slang::ast::GenerateBlockSymbol>();
       if (!consumed_construct_indices.insert(block.constructIndex).second) {
@@ -379,7 +400,10 @@ auto LowerScopeInto(
     unit_state.MapLoopVarBinding(
         *binding.symbol, binding.home_frame, binding.loop_var, binding.type);
   }
-  return LowerScopeMembersInto(unit_facts, scope_state, stack, slang_scope);
+  auto r = LowerScopeMembersInto(unit_facts, scope_state, stack, slang_scope);
+  if (!r) return std::unexpected(std::move(r.error()));
+  scope.cross_unit_refs = unit_state.TakeCrossUnitRefsForFrame(guard.Frame());
+  return {};
 }
 
 }  // namespace lyra::lowering::ast_to_hir

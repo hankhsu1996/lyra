@@ -460,8 +460,25 @@ class HirDumper {
               return std::format(
                   "LoopVar[{}](hops={})", r.loop_var.value, r.hops.value);
             },
+            [](const CrossUnitVarRef& r) -> std::string {
+              return std::format("CrossUnitRef[{}]", r.id.value);
+            },
         },
         p);
+  }
+
+  static auto FormatSensitivityRef(const SensitivityRef& ref) -> std::string {
+    return std::visit(
+        Overloaded{
+            [](const StructuralVarRef& r) -> std::string {
+              return std::format(
+                  "hops={} var=StructuralVar[{}]", r.hops.value, r.var.value);
+            },
+            [](const CrossUnitVarRef& r) -> std::string {
+              return std::format("cross_unit_ref={}", r.id.value);
+            },
+        },
+        ref);
   }
 
   static auto FormatEventEdge(EventEdge edge) -> std::string_view {
@@ -499,8 +516,8 @@ class HirDumper {
                   if (j != 0) out += ", ";
                   const auto& r = e.triggers[i].sensitivity_list[j];
                   out += std::format(
-                      "{{hops={} var=StructuralVar[{}] bits=[{}:{}] edge={}}}",
-                      r.ref.hops.value, r.ref.var.value, r.bit_range.first,
+                      "{{{} bits=[{}:{}] edge={}}}",
+                      FormatSensitivityRef(r.ref), r.bit_range.first,
                       r.bit_range.second, FormatEventEdge(r.edge_kind));
                 }
                 out += "]}";
@@ -514,9 +531,9 @@ class HirDumper {
                 if (i != 0) out += ", ";
                 const auto& r = ie.sensitivity_list[i];
                 out += std::format(
-                    "{{hops={} var=StructuralVar[{}] bits=[{}:{}] edge={}}}",
-                    r.ref.hops.value, r.ref.var.value, r.bit_range.first,
-                    r.bit_range.second, FormatEventEdge(r.edge_kind));
+                    "{{{} bits=[{}:{}] edge={}}}", FormatSensitivityRef(r.ref),
+                    r.bit_range.first, r.bit_range.second,
+                    FormatEventEdge(r.edge_kind));
               }
               out += "]";
               return out;
@@ -915,9 +932,8 @@ class HirDumper {
       for (const auto& r : p.implicit_sensitivity_list) {
         Line(
             std::format(
-                "StructuralVarRef hops={} var=StructuralVar[{}] bits=[{}:{}]",
-                r.ref.hops.value, r.ref.var.value, r.bit_range.first,
-                r.bit_range.second));
+                "{} bits=[{}:{}]", FormatSensitivityRef(r.ref),
+                r.bit_range.first, r.bit_range.second));
       }
       Dedent();
     }
@@ -962,9 +978,8 @@ class HirDumper {
       for (const auto& r : ca.sensitivity_list) {
         Line(
             std::format(
-                "StructuralVarRef hops={} var=StructuralVar[{}] bits=[{}:{}]",
-                r.ref.hops.value, r.ref.var.value, r.bit_range.first,
-                r.bit_range.second));
+                "{} bits=[{}:{}]", FormatSensitivityRef(r.ref),
+                r.bit_range.first, r.bit_range.second));
       }
       Dedent();
     }
@@ -1315,9 +1330,8 @@ class HirDumper {
                 if (i != 0) sens += ", ";
                 const auto& r = w.sensitivity_list[i];
                 sens += std::format(
-                    "{{hops={} var=StructuralVar[{}] bits=[{}:{}]}}",
-                    r.ref.hops.value, r.ref.var.value, r.bit_range.first,
-                    r.bit_range.second);
+                    "{{{} bits=[{}:{}]}}", FormatSensitivityRef(r.ref),
+                    r.bit_range.first, r.bit_range.second);
               }
               sens += "]";
               Line(

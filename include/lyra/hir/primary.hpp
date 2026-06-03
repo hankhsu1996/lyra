@@ -40,6 +40,6 @@ struct RealLiteral {
 // tag.
 using Primary = std::variant<
     IntegerLiteral, StringLiteral, TimeLiteral, RealLiteral, StructuralVarRef,
-    ProceduralVarRef, LoopVarRef>;
+    ProceduralVarRef, LoopVarRef, CrossUnitVarRef>;
 
 }  // namespace lyra::hir

@@ -163,7 +163,7 @@ enum class EventEdge : std::uint8_t {
 // supply leaves with `edge_kind == kAnyChange`. Explicit event control
 // `@(posedge ...)` / `@(negedge ...)` / `@(edge ...)` set the per-leaf edge.
 struct SensitivityEntry {
-  StructuralVarRef ref;
+  SensitivityRef ref;
   std::pair<std::uint64_t, std::uint64_t> bit_range;
   EventEdge edge_kind = EventEdge::kAnyChange;
 };

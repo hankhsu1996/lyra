@@ -436,7 +436,7 @@ auto RenderRuntimeCallExpr(
                     *format_or, slot_pieces);
               case support::ScanSourceKind::kFile:
                 return std::format(
-                    "lyra::runtime::LyraFScanf(*services_, {}, {}, {{{}}})",
+                    "lyra::runtime::LyraFScanf(Services(), {}, {}, {{{}}})",
                     *source_or, *format_or, slot_pieces);
             }
             throw InternalError(

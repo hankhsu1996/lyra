@@ -88,23 +88,28 @@ Unlocks `instantiation/multiple_instances`, `instantiation/nested_hierarchy`,
 
 ### Stage C -- Non-local access substrate
 
-- [ ] C1 -- Cross-unit references resolve once at construction into a stored direct reference, read
+- [x] C1 -- Cross-unit references resolve once at construction into a stored direct reference, read
       directly thereafter (per `reference_resolution.md`). This is the substrate Stages D and E
-      consume.
-- [ ] C2 -- A process on one instance can observe a member of another instance and re-evaluate when
+      consume. Landed for the downward, single-level form (a direct child's member); the
+      resolve-once slot is the shared path ports will populate. Multi-level navigation and upward
+      resolution feed the same slot in later cuts.
+- [x] C2 -- A process on one instance can observe a member of another instance and re-evaluate when
       that member changes, without the observed instance knowing who watches it (cross-instance
-      sensitivity).
+      sensitivity). The combinational process subscribes through the resolved slot; demonstrated for
+      a downward, single-level reference.
 
 This stage produces no user-visible feature on its own; it is the substrate the next two stages
 consume. Coverage is demonstrated through Stage D and Stage E.
 
 ### Stage D -- Hierarchical references
 
-- [ ] D1 -- A downward reference reads and writes a signal in a child instance.
+- [x] D1 -- A downward reference reads and writes a signal in a child instance.
 - [ ] D2 -- An upward reference reads and writes a signal in an ancestor instance.
 - [ ] D3 -- Multi-level dotted paths resolve through the object tree across more than one level.
 - [ ] D4 -- A combinational process reading a hierarchical reference re-triggers when the referenced
-      signal changes, including paths spanning multiple levels and reads from several instances.
+      signal changes, including paths spanning multiple levels and reads from several instances. The
+      single-level downward case re-triggers today (it rode in with D1); multi-level and
+      multi-instance paths remain.
 - [ ] D5 -- The hierarchical path of an instance (for `%m`, display, and scope queries) derives from
       object-tree ownership.
 

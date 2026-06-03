@@ -201,6 +201,13 @@ class StructuralScopeLoweringState {
     return id;
   }
 
+  auto AddCrossUnitRef(mir::CrossUnitRefDecl decl) -> mir::CrossUnitRefId {
+    const mir::CrossUnitRefId id{
+        static_cast<std::uint32_t>(scope_->cross_unit_refs.size())};
+    scope_->cross_unit_refs.push_back(std::move(decl));
+    return id;
+  }
+
   auto AddStructuralParam(mir::StructuralParamDecl param)
       -> mir::StructuralParamId {
     const mir::StructuralParamId id{

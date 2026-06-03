@@ -443,6 +443,9 @@ class MirDumper {
                   "ProceduralVarRef[hops={}, var={}] \"{}\"", r.hops.value,
                   r.var.value, var.name);
             },
+            [](const CrossUnitVarRef& r) -> std::string {
+              return std::format("CrossUnitVarRef[slot={}]", r.id.value);
+            },
             [](const UnaryExpr& u) -> std::string {
               return std::format(
                   "UnaryExpr op={} operand=Expr[{}]", FormatUnaryOp(u.op),
@@ -595,6 +598,19 @@ class MirDumper {
               FormatVarType(v.type), v.initializer.value));
     }
     Dedent();
+
+    if (!s.cross_unit_refs.empty()) {
+      Line("CrossUnitRefs:");
+      Indent();
+      for (std::size_t i = 0; i < s.cross_unit_refs.size(); ++i) {
+        const auto& cu = s.cross_unit_refs[i];
+        Line(
+            std::format(
+                "[{}] StructuralVar[{}].\"{}\" : {}", i, cu.instance_var.value,
+                cu.target_member, FormatVarType(cu.type)));
+      }
+      Dedent();
+    }
 
     Line("StructuralSubroutines:");
     Indent();
@@ -923,6 +939,12 @@ class MirDumper {
             [&](const ConstructExternalUnitStmt& s) {
               DumpConstructExternalUnitStmt(id, s);
             },
+            [&](const ResolveCrossUnitRefStmt& s) {
+              Line(
+                  std::format(
+                      "Stmt[{}] ResolveCrossUnitRefStmt slot={}", id.value,
+                      s.slot.value));
+            },
             [&](const ForStmt& s) { DumpForStmt(stmt, s, enclosing, id); },
             [&](const DelayStmt& d) {
               Line(
@@ -959,11 +981,22 @@ class MirDumper {
               Line(std::format("Stmt[{}] SensitivityWaitStmt", id.value));
               Indent();
               for (const auto& r : s.reads) {
+                const std::string ref_str = std::visit(
+                    Overloaded{
+                        [](const StructuralVarRef& sv) -> std::string {
+                          return std::format(
+                              "StructuralVarRef hops={} var=StructuralVar[{}]",
+                              sv.hops.value, sv.var.value);
+                        },
+                        [](const CrossUnitVarRef& cu) -> std::string {
+                          return std::format(
+                              "CrossUnitVarRef slot={}", cu.id.value);
+                        },
+                    },
+                    r.ref);
                 Line(
                     std::format(
-                        "StructuralVarRef hops={} var=StructuralVar[{}] "
-                        "bits=[{}:{}] edge={}",
-                        r.ref.hops.value, r.ref.var.value, r.bit_range.first,
+                        "{} bits=[{}:{}] edge={}", ref_str, r.bit_range.first,
                         r.bit_range.second, FormatEventEdge(r.edge_kind)));
               }
               Dedent();
