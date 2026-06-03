@@ -26,8 +26,14 @@ since the test harness can only probe a variable whose type has an implemented s
       scope. The test framework gained `expect.files` with strict matching (any undeclared file in
       the per-case sandbox fails the case) and per-case sandbox cwd so `$fopen("foo.txt")` writes
       inside the sandbox.
-- [ ] DI6 -- `$strobe` postponed-region semantics. Strobe must defer its read-and-print to the
-      postponed region of the same time slot (LRM 21.2).
+- [x] DI6 -- `$strobe` / `$strobeb` / `$strobeh` / `$strobeo` (LRM 21.2.2). Lowers to the same
+      `RuntimePrintCall` `$display[bho]` produces, wrapped in a postponed-submit MIR node; the C++
+      backend renders the print inside a `services_->SubmitPostponed([=, this]() { ... })` lambda.
+      Lambda init-capture snapshots procedural locals by value (safe even when the issuing
+      `initial` frame has already returned), and module-signal operands resolve through `this->`
+      and are read at fire time -- so they see NBA-committed values, which is the LRM 21.2.2
+      semantic. The postponed queue uses the same swap-and-drain shape NBA uses; re-entrant
+      submission during the drain is rejected.
 - [x] DI7 -- `%p` / `%0p` assignment-pattern format for aggregate types (LRM 21.2.1.6). Scope: fixed
       unpacked array of integral elements. Output is `'{<elem>, <elem>, ...}` with `, ` between
       elements; multi-dimensional arrays nest naturally. Singular integral elements follow the LRM
@@ -90,13 +96,20 @@ the corresponding behaviour lands.
 - [ ] `$sformat` / `$sformatf` format_string of integral or unpacked-array-of-byte type (LRM
       21.3.3). Shares the runtime-format-parser blocker with the first item.
 
+## Strobe family follow-ups
+
+Tracks the remaining LRM 21.2.2 file-sink variants now that the stdout-sink half has shipped.
+
+- [ ] `$fstrobe` / `$fstrobeb` / `$fstrobeh` / `$fstrobeo` (LRM 21.2.2, file sink). The
+      `PrintSinkKind::kFile` axis on `PrintSystemSubroutineInfo` and the descriptor / MCD-FD
+      dispatch already exist (DI5); the gap is four descriptor rows plus threading the
+      file-descriptor argument through the strobe closure-submit helper.
+
 ## Out of Scope
 
 - Format-string parse diagnostics (trailing `%`, missing specifier, width overflow, unknown
   specifier) -- already implemented, not gaps.
 - `$monitor` / `$fmonitor`. Not modelled today; add an entry when a concrete consumer needs it.
-- `$strobe` / `$fstrobe` radix variants. The radix-dispatch mechanism is shared with DI5 but
-  strobe's "drain at end of time slot" semantic waits on DI6 (postponed region).
 - Other file read tasks (`$fgetc` / `$ungetc` / `$fgets` / `$fread` / `$fseek` / `$rewind` /
   `$ftell` / `$feof` / `$ferror` / `$fflush`) are implemented per LRM 21.3.4..21.3.8.
 - `%u` / `%z` (binary-packed unsigned / signed) and `%v` (strength). Not on the immediate roadmap;
