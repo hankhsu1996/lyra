@@ -131,23 +131,30 @@ Unpacked array support follows these invariants:
    `operator==` and `CaseEqual` returning a 1-bit `PackedArray` -- so the substrate-asymmetric
    operations (equality with X / Z propagation, range selectors, observability hooks) live behind a
    single uniform method surface. LRM 7.4.5 invalid-index handling lives in the wrapper too:
-   non-const `ElementAt` returns an `UnpackedElementRef<T>` proxy that captures the index's
-   validity, and the non-const `Slice` returns an `UnpackedArrayRef<T>` proxy that captures the
-   offset's validity. Reads through the proxies' `Clone()` return Table 7-1 defaults on invalid
-   access; writes through `operator=` and compound ops are silent no-ops. Slice reads on partially-
-   OOB positions handle the in-range and OOB elements per-element rather than at slice granularity,
-   matching `PackedArray::ExtractBits` / `AssignSlice`'s per-bit OOB treatment.
+   `ElementAt` returns `T&` (or `const T&` from the const overload); on an invalid index the
+   returned reference is to the wrapper's `oob_slot_` shield, restored to canonical state via
+   `T::ResetToDefault` immediately before being handed out so any prior OOB write is erased.
+   Element-level compound semantics live on `PackedArray` directly -- the wrapper carries no per-T
+   forwarder. `Slice` (non-const) returns an `UnpackedArrayRef<T>` proxy for slice writeback; slice
+   reads on partially-OOB positions handle the in-range and OOB elements per-element rather than at
+   slice granularity, matching `PackedArray::ExtractBits` / `AssignSlice`'s per-bit OOB treatment.
+   See `docs/decisions/runtime-shape-and-default-value.md` for the shield contract.
 
-3. **Default initialization emits an `UnpackedArray<T>{e0, e1, ...}` braced-init expression.**
+3. **Default initialization emits a `ConstructExpr` whose first positional argument is the
+   canonical-default element and whose remaining elements ride in an `ArrayLiteralExpr` rendered as
+   a brace-init-list.**
 
    `default_value.cpp` synthesises an `ArrayLiteralExpr` populated with per-element defaults; the
-   backend renders the result through the literal-init path. For `int arr[3]`:
+   backend wraps it in `ConstructExpr` so the wrapper's
+   `(T canonical_default, std::initializer_list<T>)` constructor receives both the canonical-default
+   seed for `oob_slot_` and the initial elements. For `int arr[3]`:
 
    ```cpp
-   lyra::value::UnpackedArray<lyra::value::PackedArray> arr{
+   lyra::value::UnpackedArray<lyra::value::PackedArray> arr(
        lyra::value::PackedArray::Int(0),
-       lyra::value::PackedArray::Int(0),
-       lyra::value::PackedArray::Int(0)};
+       {lyra::value::PackedArray::Int(0),
+        lyra::value::PackedArray::Int(0),
+        lyra::value::PackedArray::Int(0)});
    ```
 
    Multi-dim composes through the nested element type with the same shape at every layer.
