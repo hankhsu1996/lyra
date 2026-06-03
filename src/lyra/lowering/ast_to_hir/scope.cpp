@@ -28,6 +28,7 @@
 #include "lyra/lowering/ast_to_hir/expression/lower.hpp"
 #include "lyra/lowering/ast_to_hir/facts.hpp"
 #include "lyra/lowering/ast_to_hir/generate.hpp"
+#include "lyra/lowering/ast_to_hir/port_connection.hpp"
 #include "lyra/lowering/ast_to_hir/process.hpp"
 #include "lyra/lowering/ast_to_hir/state.hpp"
 #include "lyra/lowering/ast_to_hir/statement/lower.hpp"
@@ -383,6 +384,13 @@ auto LowerScopeMembersInto(
         unit_facts, scope_state, stack, member, slang_scope);
     if (!r) return std::unexpected(std::move(r.error()));
   }
+
+  // A variable port connection is an implied continuous assignment
+  // (LRM 23.3.3), synthesized after every variable and instance binding exists
+  // so its source and child-side endpoint resolve regardless of source order.
+  auto pc = LowerScopePortConnectionsInto(
+      unit_facts, scope_state, stack, slang_scope);
+  if (!pc) return std::unexpected(std::move(pc.error()));
   return {};
 }
 

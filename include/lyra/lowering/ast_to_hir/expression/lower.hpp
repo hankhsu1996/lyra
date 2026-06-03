@@ -1,12 +1,20 @@
 #pragma once
 
+#include <vector>
+
 #include <slang/ast/Expression.h>
 
 #include "lyra/diag/diagnostic.hpp"
+#include "lyra/diag/source_span.hpp"
 #include "lyra/hir/expr.hpp"
 #include "lyra/hir/inside_item.hpp"
+#include "lyra/hir/structural_scope.hpp"
 #include "lyra/lowering/ast_to_hir/facts.hpp"
 #include "lyra/lowering/ast_to_hir/state.hpp"
+
+namespace slang::ast {
+class ValueSymbol;
+}  // namespace slang::ast
 
 namespace lyra::lowering::ast_to_hir {
 
@@ -43,5 +51,17 @@ auto LowerInsideItem(
     const UnitLoweringFacts& unit_facts, UnitLoweringState& unit_state,
     ProcessLoweringState& proc_state, const ScopeStack& stack,
     const slang::ast::Expression& item_expr) -> diag::Result<hir::InsideItem>;
+
+// Builds a reference expression to a leaf reached by navigating `path` from a
+// local instance member (the head) down into a child unit. `target` is the
+// leaf value symbol (the cross-unit dedup key); `member` and `home_frame`
+// locate the head. Both a hierarchical reference (`c.x`, `m.l.x`) and a port
+// connection's child-side endpoint resolve through this one path
+// (reference_resolution.md).
+auto MakeCrossUnitMemberRef(
+    UnitLoweringState& unit_state, const slang::ast::ValueSymbol& target,
+    ScopeFrameId home_frame, hir::InstanceMemberId member,
+    std::vector<hir::PathStep> path, hir::TypeId type, diag::SourceSpan span)
+    -> hir::Expr;
 
 }  // namespace lyra::lowering::ast_to_hir

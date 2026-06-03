@@ -133,6 +133,12 @@ constexpr std::array kEntries{
             .category = UnsupportedCategory::kFeature,
             .name = "unsupported_continuous_assign_form"}},
     std::pair{
+        DiagCode::kUnsupportedPortConnectionForm,
+        DiagCodeInfo{
+            .kind = DiagKind::kUnsupported,
+            .category = UnsupportedCategory::kFeature,
+            .name = "unsupported_port_connection_form"}},
+    std::pair{
         DiagCode::kUnsupportedAssignmentPatternKind,
         DiagCodeInfo{
             .kind = DiagKind::kUnsupported,

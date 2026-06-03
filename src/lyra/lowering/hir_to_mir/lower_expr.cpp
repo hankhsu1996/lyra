@@ -546,7 +546,7 @@ auto LowerHirPrimaryStructural(
           [](const hir::ProceduralVarRef&) -> mir::Expr {
             throw InternalError(
                 "LowerHirPrimaryStructural: HIR ProceduralVarRef does not "
-                "appear in constructor expressions");
+                "appear in structural expressions");
           },
           [&](const hir::LoopVarRef& lv) -> mir::Expr {
             if (loop_var_mode == LoopVarLoweringMode::kProceduralInduction) {
@@ -559,11 +559,14 @@ auto LowerHirPrimaryStructural(
             }
             return LowerStructuralParamRefExpr(scope_state, lv, type);
           },
-          [](const hir::CrossUnitVarRef&) -> mir::Expr {
-            throw InternalError(
-                "LowerHirPrimaryStructural: HIR CrossUnitVarRef does not "
-                "appear "
-                "in constructor expressions");
+          [&](const hir::CrossUnitVarRef& c) -> mir::Expr {
+            // A continuous assignment lowers as a scope-level structural
+            // expression, yet it may read or write a cross-unit member: a
+            // hierarchical reference or a port connection (LRM 10.3, 23.3.3).
+            // The slot resolves once at construction (reference_resolution.md).
+            return mir::Expr{
+                .data = mir::CrossUnitVarRef{.id = {.value = c.id.value}},
+                .type = type};
           },
       },
       p);

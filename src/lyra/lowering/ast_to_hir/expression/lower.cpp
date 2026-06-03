@@ -382,10 +382,9 @@ auto LowerHierarchicalValueProc(
   if (!type_id) return std::unexpected(std::move(type_id.error()));
 
   const auto& var = target.as<slang::ast::VariableSymbol>();
-  const hir::CrossUnitRefId slot = unit_state.MapOrGetCrossUnitRef(
-      var, head_binding->home_frame, head_binding->member_id, std::move(path),
-      *type_id);
-  return MakeRefExpr(hir::CrossUnitVarRef{.id = slot}, *type_id, span);
+  return MakeCrossUnitMemberRef(
+      unit_state, var, head_binding->home_frame, head_binding->member_id,
+      std::move(path), *type_id, span);
 }
 
 auto LowerNamedValueStructural(
@@ -1446,6 +1445,16 @@ auto LowerConditionalExprStructural(
 }
 
 }  // namespace
+
+auto MakeCrossUnitMemberRef(
+    UnitLoweringState& unit_state, const slang::ast::ValueSymbol& target,
+    ScopeFrameId home_frame, hir::InstanceMemberId member,
+    std::vector<hir::PathStep> path, hir::TypeId type, diag::SourceSpan span)
+    -> hir::Expr {
+  const hir::CrossUnitRefId slot = unit_state.MapOrGetCrossUnitRef(
+      target, home_frame, member, std::move(path), type);
+  return MakeRefExpr(hir::CrossUnitVarRef{.id = slot}, type, span);
+}
 
 auto LowerInsideItem(
     const UnitLoweringFacts& unit_facts, UnitLoweringState& unit_state,
