@@ -794,6 +794,20 @@ class MirDumper {
                                 ? std::format("Expr[{}]", ff.descriptor->value)
                                 : std::string("all")));
                   },
+                  [&](const RuntimeSScanCall& ss) {
+                    std::string slot_list;
+                    for (std::size_t k = 0; k < ss.slots.size(); ++k) {
+                      if (k != 0) {
+                        slot_list += ", ";
+                      }
+                      slot_list += std::format("Expr[{}]", ss.slots[k].value);
+                    }
+                    Line(
+                        std::format(
+                            "RuntimeSScanCall input=Expr[{}] format=Expr[{}] "
+                            "slots=[{}]",
+                            ss.input.value, ss.format.value, slot_list));
+                  },
               },
               rc->call);
           Dedent();

@@ -1,0 +1,15 @@
+id: cpp.sscanf_format_b
+tags: [cpp_run]
+input:
+  command: [run, cpp]
+  project: false
+  top: Top
+  files: [main.sv]
+expect:
+  exit: 0
+  variables:
+    code_basic: 1
+    code_mixed: 1
+  stdout:
+    exact: |
+      a_basic=1010 a_mixed=1x0z

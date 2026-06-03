@@ -388,6 +388,7 @@ auto RenderScopeHeaderFile(
   out += "#include \"lyra/runtime/process_kind.hpp\"\n";
   out += "#include \"lyra/runtime/runtime_scope_kind.hpp\"\n";
   out += "#include \"lyra/runtime/runtime_services.hpp\"\n";
+  out += "#include \"lyra/runtime/scan.hpp\"\n";
   out += "#include \"lyra/runtime/var.hpp\"\n";
   out += "#include \"lyra/value/enum.hpp\"\n";
   out += "#include \"lyra/value/format.hpp\"\n";
