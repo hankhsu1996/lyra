@@ -106,12 +106,13 @@ auto RenderProcessMethod(
     std::size_t index, std::size_t indent) -> diag::Result<std::string> {
   std::string out;
   out += Indent(indent) + "auto " + RenderProcessMethodName(index) +
-         "() -> lyra::runtime::ProcessCoroutine {\n";
+         "() -> lyra::runtime::Coroutine {\n";
   const RenderContext proc_ctx =
-      (parent_struct_ctx == nullptr)
-          ? RenderContext::ForRoot(unit, s, process.root_procedural_scope)
-          : parent_struct_ctx->WithStructuralScope(
-                s, process.root_procedural_scope);
+      ((parent_struct_ctx == nullptr)
+           ? RenderContext::ForRoot(unit, s, process.root_procedural_scope)
+           : parent_struct_ctx->WithStructuralScope(
+                 s, process.root_procedural_scope))
+          .WithCoroutine(true);
   auto rendered_or = RenderProceduralScopeStatements(proc_ctx, indent + 1);
   if (!rendered_or) return std::unexpected(std::move(rendered_or.error()));
   out += *rendered_or;
@@ -135,10 +136,20 @@ auto RenderSubroutineMethod(
     const RenderContext* parent_struct_ctx, const mir::CompilationUnit& unit,
     const mir::StructuralScope& s, const mir::StructuralSubroutineDecl& sub,
     std::size_t indent) -> diag::Result<std::string> {
-  auto result_or = RenderSubroutineResultType(unit, s, sub.result_type);
-  if (!result_or) return std::unexpected(std::move(result_or.error()));
+  // A task may suspend on timing controls, so it is a coroutine enabled with
+  // `co_await`; a function executes in zero time and renders its result type
+  // (LRM 13.3 / 13.4).
+  const bool is_task = sub.kind == mir::SubroutineKind::kTask;
+  std::string return_type;
+  if (is_task) {
+    return_type = "lyra::runtime::Coroutine";
+  } else {
+    auto result_or = RenderSubroutineResultType(unit, s, sub.result_type);
+    if (!result_or) return std::unexpected(std::move(result_or.error()));
+    return_type = *std::move(result_or);
+  }
 
-  std::string sig = *result_or + " " + sub.name + "(";
+  std::string sig = return_type + " " + sub.name + "(";
   for (std::size_t i = 0; i < sub.params.size(); ++i) {
     const auto& param = sub.params[i];
     auto type_or = RenderTypeAsCpp(unit, s, param.type);
@@ -175,7 +186,8 @@ auto RenderSubroutineMethod(
            ? RenderContext::ForRoot(unit, s, sub.root_procedural_scope)
            : parent_struct_ctx->WithStructuralScope(
                  s, sub.root_procedural_scope))
-          .WithStaticFrame(frame_field);
+          .WithStaticFrame(frame_field)
+          .WithCoroutine(is_task);
 
   std::string out;
   // LRM 13.3.1 static locals: one per-instance frame member, default-evaluated
@@ -199,6 +211,9 @@ auto RenderSubroutineMethod(
   auto rendered_or = RenderProceduralScopeStatements(sub_ctx, indent + 1);
   if (!rendered_or) return std::unexpected(std::move(rendered_or.error()));
   out += *rendered_or;
+  if (is_task) {
+    out += Indent(indent + 1) + "co_return;\n";
+  }
   out += Indent(indent) + "}\n";
   return out;
 }
@@ -392,13 +407,13 @@ auto RenderScopeHeaderFile(
   out += "#include <string>\n";
   out += "#include <vector>\n";
   out += "#include \"lyra/runtime/bind_context.hpp\"\n";
+  out += "#include \"lyra/runtime/coroutine.hpp\"\n";
   out += "#include \"lyra/runtime/delay.hpp\"\n";
   out += "#include \"lyra/runtime/file_io.hpp\"\n";
   out += "#include \"lyra/runtime/finish.hpp\"\n";
   out += "#include \"lyra/runtime/io.hpp\"\n";
   out += "#include \"lyra/runtime/module.hpp\"\n";
   out += "#include \"lyra/runtime/named_event.hpp\"\n";
-  out += "#include \"lyra/runtime/process.hpp\"\n";
   out += "#include \"lyra/runtime/process_kind.hpp\"\n";
   out += "#include \"lyra/runtime/runtime_scope_kind.hpp\"\n";
   out += "#include \"lyra/runtime/runtime_services.hpp\"\n";

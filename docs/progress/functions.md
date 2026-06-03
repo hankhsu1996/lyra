@@ -103,9 +103,12 @@ everything and the inline "rides on" notes record the real dependencies.
       no-op. A task may enable other tasks and functions (LRM 13.2); a function enabling a task is
       rejected. Behaves like a void function. Task locals follow the static / automatic lifetime
       distinction established by F3.
-- [ ] T2 -- Tasks containing time-controlling statements (LRM 13.3). `#`, `@(...)`, and `wait`
-      inside a task suspend the calling process and resume it later, so a task enable can span
-      multiple time steps. Rides on the timing-control machinery tracked in `processes.md`.
+- [x] T2 -- Tasks containing time-controlling statements (LRM 13.3). `#`, `@(...)`, and `wait`
+      inside a task suspend the enabling process and resume it later, so a task enable can span
+      multiple time steps; control returns to the enabler only after the task completes. A task may
+      enable another time-consuming task and the suspension propagates through the whole enable
+      chain. `output` / `inout` / `ref` arguments written after a suspension flow back when the task
+      resumes. Rides on the timing-control machinery tracked in `processes.md`.
 
 ## Blocked
 

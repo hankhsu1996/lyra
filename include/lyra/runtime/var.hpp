@@ -2,23 +2,21 @@
 
 #include <algorithm>
 #include <concepts>
-#include <coroutine>
 #include <cstdint>
 #include <initializer_list>
+#include <optional>
 #include <utility>
 #include <vector>
 
 #include "lyra/base/internal_error.hpp"
-#include "lyra/runtime/process.hpp"
-#include "lyra/runtime/runtime_process.hpp"
+#include "lyra/runtime/coroutine.hpp"
 #include "lyra/runtime/runtime_services.hpp"
 #include "lyra/runtime/trigger.hpp"
 #include "lyra/value/packed.hpp"
 #include "lyra/value/packed_array.hpp"
+#include "lyra/value/unpacked_array.hpp"
 
 namespace lyra::runtime {
-
-class RuntimeProcess;
 
 // Classification of a single value change by its LSB transition per LRM
 // 9.4.2 Table 9-2:
@@ -81,35 +79,37 @@ class Observable {
   ~Observable() = default;
 
   void Subscribe(
-      RuntimeProcess& p, Edge edge, std::uint64_t lsb_bit_offset,
+      CoroutineHandle handle, Edge edge, std::uint64_t lsb_bit_offset,
       std::uint64_t bit_width) {
     waiters_.push_back(
         Waiter{
-            .process = &p,
+            .handle = handle,
             .edge = edge,
             .lsb_bit_offset = lsb_bit_offset,
             .bit_width = bit_width});
   }
 
-  // Idempotent: a no-op if `p` is not currently subscribed. Used to clean up
-  // sibling subscriptions when a multi-trigger wait resumes on one Observable.
-  void Unsubscribe(RuntimeProcess& p) {
-    std::erase_if(waiters_, [&](const Waiter& w) { return w.process == &p; });
+  // Idempotent: a no-op if `handle` is not currently subscribed. Used to clean
+  // up sibling subscriptions when a multi-trigger wait resumes on one
+  // Observable.
+  void Unsubscribe(CoroutineHandle handle) {
+    std::erase_if(
+        waiters_, [&](const Waiter& w) { return w.handle == handle; });
   }
 
-  // Removes and returns the processes whose per-waiter classifier returns
-  // true. Non-matching waiters stay subscribed. The classifier receives each
-  // waiter's projection and edge and decides based on context the caller
+  // Removes and returns the coroutine frames whose per-waiter classifier
+  // returns true. Non-matching waiters stay subscribed. The classifier receives
+  // each waiter's projection and edge and decides based on context the caller
   // (Var::Set) captured (old/new value).
   [[nodiscard]] auto TakeMatchingWaiters(const EdgeClassifier& classify)
-      -> std::vector<RuntimeProcess*> {
-    std::vector<RuntimeProcess*> out;
+      -> std::vector<CoroutineHandle> {
+    std::vector<CoroutineHandle> out;
     auto keep_begin = std::ranges::partition(waiters_, [&](const Waiter& w) {
                         return !classify(w.lsb_bit_offset, w.bit_width, w.edge);
                       }).begin();
     out.reserve(static_cast<std::size_t>(waiters_.end() - keep_begin));
     for (auto it = keep_begin; it != waiters_.end(); ++it) {
-      out.push_back(it->process);
+      out.push_back(it->handle);
     }
     waiters_.erase(keep_begin, waiters_.end());
     return out;
@@ -117,7 +117,7 @@ class Observable {
 
  private:
   struct Waiter {
-    RuntimeProcess* process;
+    CoroutineHandle handle;
     Edge edge;
     std::uint64_t lsb_bit_offset;
     std::uint64_t bit_width;
@@ -185,11 +185,13 @@ class Var : public Observable {
 };
 
 // A reference to a variable cell (LRM 13.5.2 pass-by-reference). Transparently
-// views either an observable `Var<T>` (writes route through `Var::Set` so the
-// update event fires and subscribers wake) or a plain `T` cell (raw read /
-// write, no observers). It shares `Var`'s `Get` / `Set` surface, so a ref
-// formal renders identically to a var. Copyable, so a ref formal can be
-// forwarded as a ref argument to a nested call.
+// views one of three backings: an observable `Var<T>` (writes route through
+// `Var::Set` so the update event fires and subscribers wake), a plain `T` cell
+// (raw read / write, no observers), or an unpacked-array element through its
+// write-back proxy (so an invalid / out-of-range index reads a default and
+// drops the write per LRM 7.4.5). `Get` returns by value because the proxy
+// backing has no storage to reference for an invalid index. Copyable, so a ref
+// formal can be forwarded as a ref argument to a nested call.
 template <CaseEqualComparable T>
 class Ref {
  public:
@@ -197,31 +199,42 @@ class Ref {
   }
   explicit Ref(T& cell) : plain_(&cell) {
   }
+  explicit Ref(value::UnpackedElementRef<T> elem) : elem_(std::move(elem)) {
+  }
 
-  [[nodiscard]] auto Get() const -> const T& {
-    return signal_ != nullptr ? signal_->Get() : *plain_;
+  [[nodiscard]] auto Get() const -> T {
+    if (signal_ != nullptr) {
+      return signal_->Get();
+    }
+    if (plain_ != nullptr) {
+      return *plain_;
+    }
+    return elem_->Clone();
   }
 
   void Set(RuntimeServices& services, const T& new_val) {
     if (signal_ != nullptr) {
       signal_->Set(services, new_val);
-    } else {
+    } else if (plain_ != nullptr) {
       *plain_ = new_val;
+    } else {
+      *elem_ = new_val;
     }
   }
 
  private:
   Var<T>* signal_ = nullptr;
   T* plain_ = nullptr;
+  std::optional<value::UnpackedElementRef<T>> elem_;
 };
 
-// Suspends the calling process until one of the supplied Triggers fires
-// (matching its edge). Subscribes the process to every Observable directly
-// in `await_suspend`; the engine has no idea what kind of wait this is.
-// When one Observable wakes the process, the engine sweeps the rest via
-// `TakePendingValueChangeSubscriptions` to drop dangling subscriptions.
+// Suspends the calling frame until one of the supplied Triggers fires
+// (matching its edge). Subscribes the frame to every Observable in
+// `await_suspend` and records the set on the frame's promise; the engine has no
+// idea what kind of wait this is. When one Observable wakes the frame, the
+// engine sweeps the recorded set to drop the dangling subscriptions.
 //
-// An empty trigger list is legal -- the process suspends forever (used by
+// An empty trigger list is legal -- the frame suspends forever (used by
 // `always_comb` / `always_latch` with no inferred reads,
 // e.g. `always_comb c = 7;`).
 class EventControlAwaitable {
@@ -234,9 +247,7 @@ class EventControlAwaitable {
     return false;
   }
 
-  void await_suspend(
-      std::coroutine_handle<ProcessCoroutine::promise_type> handle) {
-    auto& process = handle.promise().Process();
+  void await_suspend(CoroutineHandle handle) {
     std::vector<Observable*> subs;
     subs.reserve(triggers_.size());
     for (const auto& trigger : triggers_) {
@@ -246,10 +257,10 @@ class EventControlAwaitable {
             "null");
       }
       trigger.observable->Subscribe(
-          process, trigger.edge, trigger.lsb_bit_offset, trigger.bit_width);
+          handle, trigger.edge, trigger.lsb_bit_offset, trigger.bit_width);
       subs.push_back(trigger.observable);
     }
-    process.SetPendingValueChangeSubscriptions(std::move(subs));
+    handle.promise().pending_value_change_subscriptions = std::move(subs);
   }
 
   static void await_resume() noexcept {

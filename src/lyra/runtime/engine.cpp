@@ -12,7 +12,6 @@
 #include "lyra/base/internal_error.hpp"
 #include "lyra/base/time.hpp"
 #include "lyra/runtime/bind_context.hpp"
-#include "lyra/runtime/event.hpp"
 #include "lyra/runtime/module.hpp"
 #include "lyra/runtime/process_kind.hpp"
 #include "lyra/runtime/runtime_process.hpp"
@@ -92,10 +91,10 @@ void Engine::RegisterProcesses() {
     scope.ForEachProcess([this](RuntimeProcess& process) {
       switch (process.Kind()) {
         case ProcessKind::kInitial:
-          ScheduleActive(process);
+          ScheduleActive(process.TopHandle());
           break;
         case ProcessKind::kFinal:
-          queues_.finals.push_back(&process);
+          queues_.finals.push_back(process.TopHandle());
           break;
       }
     });
@@ -137,12 +136,12 @@ void Engine::ExecuteInactiveRegion() {
   DrainRunnableQueue(queues_.inactive);
 }
 
-void Engine::DrainRunnableQueue(std::deque<RuntimeProcess*>& queue) {
+void Engine::DrainRunnableQueue(std::deque<CoroutineHandle>& queue) {
   const std::size_t snapshot_size = queue.size();
   for (std::size_t i = 0; i < snapshot_size; ++i) {
-    RuntimeProcess* process = queue.front();
+    CoroutineHandle handle = queue.front();
     queue.pop_front();
-    RunProcess(*process);
+    RunProcess(handle);
   }
 }
 
@@ -188,8 +187,8 @@ void Engine::ExecutePostponedRegion() {
 
 void Engine::ExecuteFinalProcesses() {
   phase_ = SchedulerPhase::kPostponed;
-  for (RuntimeProcess* p : queues_.finals) {
-    const bool completed = p->Resume();
+  for (CoroutineHandle handle : queues_.finals) {
+    const bool completed = handle.promise().Process().ResumeWith(handle);
     if (completed) {
       continue;
     }
@@ -216,8 +215,8 @@ void Engine::AdvanceDeltaCycle() {
 }
 
 void Engine::PromoteNextDeltaToActive() {
-  for (RuntimeProcess* p : queues_.next_delta) {
-    ScheduleActive(*p);
+  for (CoroutineHandle handle : queues_.next_delta) {
+    ScheduleActive(handle);
   }
   queues_.next_delta.clear();
 }
@@ -226,8 +225,8 @@ void Engine::AdvanceToNextTime() {
   phase_ = SchedulerPhase::kAdvanceTime;
   auto it = queues_.delayed.begin();
   now_ = it->first;
-  for (RuntimeProcess* p : it->second) {
-    ScheduleActive(*p);
+  for (CoroutineHandle handle : it->second) {
+    ScheduleActive(handle);
   }
   queues_.delayed.erase(it);
 }
@@ -255,7 +254,7 @@ auto Engine::IsRunnablePhase() const -> bool {
          phase_ == SchedulerPhase::kReactive;
 }
 
-void Engine::RunProcess(RuntimeProcess& process) {
+void Engine::RunProcess(CoroutineHandle handle) {
   // Sole gate for post-$finish user code; finals bypass via their own path.
   if (finished_) {
     return;
@@ -264,22 +263,12 @@ void Engine::RunProcess(RuntimeProcess& process) {
     throw InternalError(
         "Engine::RunProcess: process resumed outside runnable phase");
   }
-  // No wait dispatch: each awaitable has already arranged its own wakeup
-  // path during await_suspend. The engine only observes "process completed
-  // or still suspended" and acts accordingly.
-  process.Resume();
-}
-
-void Engine::ScheduleProcess(RuntimeProcess& process) {
-  ScheduleNextDelta(process);
-}
-
-void Engine::ScheduleInactiveProcess(RuntimeProcess& process) {
-  ScheduleInactive(process);
-}
-
-void Engine::ScheduleAtTime(SimTime when, RuntimeProcess& process) {
-  ScheduleDelayed(when, process);
+  // No wait dispatch: each awaitable has already arranged its own wakeup path
+  // during await_suspend. The engine only observes "process completed or still
+  // suspended" and acts accordingly. Capture the owning process before
+  // resuming, since `handle` may be an enabled task's frame that is destroyed
+  // as control returns up the enable chain.
+  handle.promise().Process().ResumeWith(handle);
 }
 
 void Engine::RequestFinish(int level) {
@@ -292,32 +281,33 @@ void Engine::RequestFinish(int level) {
 
 void Engine::TriggerValueChange(
     Observable& observable, const EdgeClassifier& classify) {
-  for (RuntimeProcess* p : observable.TakeMatchingWaiters(classify)) {
+  for (CoroutineHandle handle : observable.TakeMatchingWaiters(classify)) {
     // Clean up sibling subscriptions so they don't leak across waits when this
-    // process re-enters the runnable queue.
-    for (Observable* other : p->TakePendingValueChangeSubscriptions()) {
+    // frame re-enters the runnable queue.
+    for (Observable* other : std::exchange(
+             handle.promise().pending_value_change_subscriptions, {})) {
       if (other != &observable) {
-        other->Unsubscribe(*p);
+        other->Unsubscribe(handle);
       }
     }
-    ScheduleNextDelta(*p);
+    ScheduleNextDelta(handle);
   }
 }
 
-void Engine::ScheduleActive(RuntimeProcess& process) {
-  queues_.active.push_back(&process);
+void Engine::ScheduleActive(CoroutineHandle handle) {
+  queues_.active.push_back(handle);
 }
 
-void Engine::ScheduleInactive(RuntimeProcess& process) {
-  queues_.inactive.push_back(&process);
+void Engine::ScheduleInactive(CoroutineHandle handle) {
+  queues_.inactive.push_back(handle);
 }
 
-void Engine::ScheduleNextDelta(RuntimeProcess& process) {
-  queues_.next_delta.push_back(&process);
+void Engine::ScheduleNextDelta(CoroutineHandle handle) {
+  queues_.next_delta.push_back(handle);
 }
 
-void Engine::ScheduleDelayed(SimTime wake_time, RuntimeProcess& process) {
-  queues_.delayed[wake_time].push_back(&process);
+void Engine::ScheduleAtTime(SimTime when, CoroutineHandle handle) {
+  queues_.delayed[when].push_back(handle);
 }
 
 auto Engine::CheckedAdd(SimTime base, SimDuration delta) -> SimTime {

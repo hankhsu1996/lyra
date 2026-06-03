@@ -1,16 +1,11 @@
 #pragma once
 
 #include <cstdint>
-#include <utility>
-#include <vector>
 
-#include "lyra/runtime/process.hpp"
+#include "lyra/runtime/coroutine.hpp"
 #include "lyra/runtime/process_kind.hpp"
 
 namespace lyra::runtime {
-
-class Observable;
-class RuntimeScope;
 
 enum class ProcessState : std::uint8_t {
   kCreated,
@@ -21,8 +16,7 @@ enum class ProcessState : std::uint8_t {
 
 class RuntimeProcess {
  public:
-  RuntimeProcess(
-      RuntimeScope& owner, ProcessKind kind, ProcessCoroutine coroutine);
+  RuntimeProcess(ProcessKind kind, Coroutine coroutine);
 
   RuntimeProcess(const RuntimeProcess&) = delete;
   auto operator=(const RuntimeProcess&) -> RuntimeProcess& = delete;
@@ -33,32 +27,27 @@ class RuntimeProcess {
   auto operator=(RuntimeProcess&&) noexcept -> RuntimeProcess& = delete;
   ~RuntimeProcess() = default;
 
-  auto Owner() -> RuntimeScope&;
   [[nodiscard]] auto Kind() const -> ProcessKind;
-  [[nodiscard]] auto State() const -> ProcessState {
-    return state_;
-  }
-  // Returns true if the coroutine ran to completion this resume, false if it
-  // suspended on some awaitable (the awaitable has arranged its own wakeup).
-  auto Resume() -> bool;
+  // Resumes `handle` -- the specific coroutine frame that suspended (the
+  // innermost one when a task enabled by this process is suspended). Symmetric
+  // transfer carries control back up the enable chain. Returns true if the
+  // whole process ran to completion (judged on the top-level coroutine), false
+  // if it suspended again on some awaitable. Captured `handle` may be destroyed
+  // by the time this returns, so completion and exceptions are read off the
+  // top-level coroutine, not `handle`.
+  auto ResumeWith(CoroutineHandle handle) -> bool;
 
-  // Used by the engine for multi-trigger event-control waits: when the process
-  // subscribes to N Observables, the engine stores them here; when any one
-  // fires, the engine sweeps the rest to remove the dangling subscriptions.
-  void SetPendingValueChangeSubscriptions(std::vector<Observable*> subs) {
-    pending_value_change_subs_ = std::move(subs);
-  }
-
-  auto TakePendingValueChangeSubscriptions() -> std::vector<Observable*> {
-    return std::exchange(pending_value_change_subs_, {});
+  // The top-level coroutine frame. Awaitables register the innermost handle for
+  // wakeup; this is what the engine schedules to start the process and what
+  // completion is judged against.
+  [[nodiscard]] auto TopHandle() const -> CoroutineHandle {
+    return coroutine_.Handle();
   }
 
  private:
-  RuntimeScope* owner_ = nullptr;
   ProcessKind kind_;
-  ProcessCoroutine coroutine_;
+  Coroutine coroutine_;
   ProcessState state_ = ProcessState::kCreated;
-  std::vector<Observable*> pending_value_change_subs_;
 };
 
 }  // namespace lyra::runtime

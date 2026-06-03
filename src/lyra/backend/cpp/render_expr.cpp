@@ -884,8 +884,9 @@ auto RenderCallExpr(const RenderContext& ctx, const mir::CallExpr& call)
                   dir == mir::ParamDirection::kConstRef) {
                 // A ref / const ref actual binds the variable's cell: render
                 // its lvalue and wrap it in a `Ref<T>`. Constructor overload
-                // picks the observable (`Var<T>`) or plain (`T`) backing; a ref
-                // formal passed on forwards via the copy ctor (LRM 13.5.2).
+                // picks the observable (`Var<T>`), plain (`T`), or
+                // unpacked-element backing; a ref formal passed on forwards via
+                // the copy ctor (LRM 13.5.2).
                 auto lhs_or = RenderLhsExpr(ctx, actual, std::string_view{});
                 if (!lhs_or) return std::unexpected(std::move(lhs_or.error()));
                 auto type_or = RenderTypeAsCpp(
@@ -902,7 +903,14 @@ auto RenderCallExpr(const RenderContext& ctx, const mir::CallExpr& call)
               if (i != 0) args += ", ";
               args += rendered;
             }
-            return std::format("{}({})", decl.name, args);
+            std::string call = std::format("{}({})", decl.name, args);
+            // A task is a coroutine enabled with `co_await`; the only legal
+            // callers are process / task bodies, which are themselves
+            // coroutines (LRM 13.4 b forbids a function enabling a task).
+            if (decl.kind == mir::SubroutineKind::kTask) {
+              return "co_await " + std::move(call);
+            }
+            return call;
           },
           [&](const mir::BuiltinMethodCallee& b) -> diag::Result<std::string> {
             return std::visit(

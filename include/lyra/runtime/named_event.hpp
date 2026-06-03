@@ -1,22 +1,20 @@
 #pragma once
 
-#include <coroutine>
 #include <optional>
 
 #include "lyra/base/time.hpp"
+#include "lyra/runtime/coroutine.hpp"
 #include "lyra/runtime/event.hpp"
-#include "lyra/runtime/process.hpp"
-#include "lyra/runtime/runtime_process.hpp"
 #include "lyra/runtime/runtime_services.hpp"
 #include "lyra/value/packed_array.hpp"
 
 namespace lyra::runtime {
 
-// Awaitable returned by `NamedEvent::Await()`. Subscribes the calling
-// process directly to the underlying `RuntimeEvent`'s waiter list. The
-// engine never sees a "waiting for an event" state -- the coroutine simply
-// suspends. The producer reaches back via `RuntimeServices::ScheduleProcess`
-// when it triggers, so the engine has no event-specific code path.
+// Awaitable returned by `NamedEvent::Await()`. Subscribes the calling frame
+// directly to the underlying `RuntimeEvent`'s waiter list. The engine never
+// sees a "waiting for an event" state -- the coroutine simply suspends. The
+// producer reaches back via `RuntimeServices::ScheduleNextDelta` when it
+// triggers, so the engine has no event-specific code path.
 class EventAwaitable {
  public:
   explicit EventAwaitable(RuntimeEvent& event) : event_(&event) {
@@ -26,9 +24,8 @@ class EventAwaitable {
     return false;
   }
 
-  void await_suspend(
-      std::coroutine_handle<ProcessCoroutine::promise_type> handle) noexcept {
-    event_->AddWaiter(handle.promise().Process());
+  void await_suspend(CoroutineHandle handle) noexcept {
+    event_->AddWaiter(handle);
   }
 
   static void await_resume() noexcept {
@@ -60,8 +57,8 @@ class NamedEvent {
   // currently-waiting process via the engine's generic scheduling primitive.
   void Trigger(RuntimeServices& services) {
     last_triggered_at_ = services.Now();
-    for (RuntimeProcess* p : event_.TakeWaiters()) {
-      services.ScheduleProcess(*p);
+    for (CoroutineHandle waiter : event_.TakeWaiters()) {
+      services.ScheduleNextDelta(waiter);
     }
   }
 

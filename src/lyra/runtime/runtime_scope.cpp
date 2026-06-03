@@ -5,7 +5,7 @@
 #include <string_view>
 #include <utility>
 
-#include "lyra/runtime/process.hpp"
+#include "lyra/runtime/coroutine.hpp"
 #include "lyra/runtime/process_kind.hpp"
 #include "lyra/runtime/runtime_process.hpp"
 #include "lyra/runtime/runtime_scope_kind.hpp"
@@ -36,10 +36,10 @@ auto RuntimeScope::AddChildScope(std::string name, RuntimeScopeKind kind)
   return *children_.back();
 }
 
-auto RuntimeScope::AddProcess(ProcessKind kind, ProcessCoroutine coroutine)
+auto RuntimeScope::AddProcess(ProcessKind kind, Coroutine coroutine)
     -> RuntimeProcess& {
   processes_.push_back(
-      std::make_unique<RuntimeProcess>(*this, kind, std::move(coroutine)));
+      std::make_unique<RuntimeProcess>(kind, std::move(coroutine)));
   return *processes_.back();
 }
 

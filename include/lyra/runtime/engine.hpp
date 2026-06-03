@@ -11,6 +11,7 @@
 #include <vector>
 
 #include "lyra/base/time.hpp"
+#include "lyra/runtime/coroutine.hpp"
 #include "lyra/runtime/diagnostic.hpp"
 #include "lyra/runtime/file_table.hpp"
 #include "lyra/runtime/runtime_scope.hpp"
@@ -85,7 +86,7 @@ class Engine {
   // `await_suspend` by reaching back through `RuntimeServices` -- the engine
   // never inspects what kind of wait a process is in.
   //
-  // ScheduleProcess     -- enqueue on the next delta of the current slot
+  // ScheduleNextDelta   -- enqueue on the next delta of the current slot
   //                        (used by event triggers, value-change wakeups,
   //                        anything that wants "wake on next opportunity").
   // ScheduleInactive    -- enqueue on the inactive region of the current
@@ -93,9 +94,9 @@ class Engine {
   // ScheduleAtTime      -- enqueue at a future SimTime (used by `#N`).
   // RequestFinish       -- tear down the simulation (used by `$finish`).
   // Now                 -- query current simulation time.
-  void ScheduleProcess(RuntimeProcess& process);
-  void ScheduleInactiveProcess(RuntimeProcess& process);
-  void ScheduleAtTime(SimTime when, RuntimeProcess& process);
+  void ScheduleNextDelta(CoroutineHandle handle);
+  void ScheduleInactive(CoroutineHandle handle);
+  void ScheduleAtTime(SimTime when, CoroutineHandle handle);
   void RequestFinish(int level);
   [[nodiscard]] auto Now() const -> SimTime {
     return now_;
@@ -105,13 +106,13 @@ class Engine {
   struct PostponedWorkItem {};
 
   struct SchedulerQueues {
-    std::deque<RuntimeProcess*> active;
-    std::deque<RuntimeProcess*> inactive;
-    std::vector<RuntimeProcess*> next_delta;
+    std::deque<CoroutineHandle> active;
+    std::deque<CoroutineHandle> inactive;
+    std::vector<CoroutineHandle> next_delta;
     std::vector<std::function<void()>> nba;
     std::vector<PostponedWorkItem> postponed;
-    std::map<SimTime, std::vector<RuntimeProcess*>> delayed;
-    std::vector<RuntimeProcess*> finals;
+    std::map<SimTime, std::vector<CoroutineHandle>> delayed;
+    std::vector<CoroutineHandle> finals;
   };
 
   static constexpr std::size_t kMaxCurrentTimeIterations = 10000;
@@ -119,8 +120,8 @@ class Engine {
 
   void EnsureReadyToRun();
   void RegisterProcesses();
-  void RunProcess(RuntimeProcess& process);
-  void DrainRunnableQueue(std::deque<RuntimeProcess*>& queue);
+  void RunProcess(CoroutineHandle handle);
+  void DrainRunnableQueue(std::deque<CoroutineHandle>& queue);
 
   void ExecuteCurrentTimeSlot();
   void ExecuteActiveRegion();
@@ -142,10 +143,7 @@ class Engine {
   [[nodiscard]] auto HasNextDeltaWork() const -> bool;
   [[nodiscard]] auto IsRunnablePhase() const -> bool;
 
-  void ScheduleActive(RuntimeProcess& process);
-  void ScheduleInactive(RuntimeProcess& process);
-  void ScheduleNextDelta(RuntimeProcess& process);
-  void ScheduleDelayed(SimTime wake_time, RuntimeProcess& process);
+  void ScheduleActive(CoroutineHandle handle);
 
   [[nodiscard]] static auto CheckedAdd(SimTime base, SimDuration delta)
       -> SimTime;

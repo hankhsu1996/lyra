@@ -23,25 +23,25 @@ void RuntimeServices::TriggerValueChange(
   engine_->TriggerValueChange(observable, classify);
 }
 
-void RuntimeServices::ScheduleProcess(RuntimeProcess& process) {
+void RuntimeServices::ScheduleNextDelta(CoroutineHandle handle) {
   if (engine_ == nullptr) {
-    throw InternalError("RuntimeServices::ScheduleProcess: no Engine bound");
+    throw InternalError("RuntimeServices::ScheduleNextDelta: no Engine bound");
   }
-  engine_->ScheduleProcess(process);
+  engine_->ScheduleNextDelta(handle);
 }
 
-void RuntimeServices::ScheduleInactive(RuntimeProcess& process) {
+void RuntimeServices::ScheduleInactive(CoroutineHandle handle) {
   if (engine_ == nullptr) {
     throw InternalError("RuntimeServices::ScheduleInactive: no Engine bound");
   }
-  engine_->ScheduleInactiveProcess(process);
+  engine_->ScheduleInactive(handle);
 }
 
-void RuntimeServices::ScheduleAtTime(SimTime when, RuntimeProcess& process) {
+void RuntimeServices::ScheduleAtTime(SimTime when, CoroutineHandle handle) {
   if (engine_ == nullptr) {
     throw InternalError("RuntimeServices::ScheduleAtTime: no Engine bound");
   }
-  engine_->ScheduleAtTime(when, process);
+  engine_->ScheduleAtTime(when, handle);
 }
 
 void RuntimeServices::RequestFinish(int level) {
