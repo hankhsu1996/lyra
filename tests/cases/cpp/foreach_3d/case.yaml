@@ -1,0 +1,17 @@
+id: cpp.foreach_3d
+tags: [cpp_run]
+input:
+  command: [run, cpp]
+  project: false
+  top: Top
+  files: [main.sv]
+expect:
+  exit: 0
+  variables:
+    count: 24
+    first_i: 0
+    first_j: 0
+    first_k: 0
+    last_i: 1
+    last_j: 2
+    last_k: 3

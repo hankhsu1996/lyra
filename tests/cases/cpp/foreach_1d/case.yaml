@@ -1,0 +1,14 @@
+id: cpp.foreach_1d
+tags: [cpp_run]
+input:
+  command: [run, cpp]
+  project: false
+  top: Top
+  files: [main.sv]
+expect:
+  exit: 0
+  variables:
+    sum_all: 15
+    sum_break: 6
+    last_break: 2
+    sum_continue: 12

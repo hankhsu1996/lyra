@@ -1,0 +1,12 @@
+id: cpp.foreach_break_inside_outer_loop
+tags: [cpp_run]
+input:
+  command: [run, cpp]
+  project: false
+  top: Top
+  files: [main.sv]
+expect:
+  exit: 0
+  variables:
+    outer_iters: 3
+    total_sum: 30
