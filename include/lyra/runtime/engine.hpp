@@ -7,21 +7,19 @@
 #include <map>
 #include <memory>
 #include <span>
-#include <string>
 #include <vector>
 
 #include "lyra/base/time.hpp"
 #include "lyra/runtime/coroutine.hpp"
 #include "lyra/runtime/diagnostic.hpp"
 #include "lyra/runtime/file_table.hpp"
-#include "lyra/runtime/runtime_scope.hpp"
 #include "lyra/runtime/runtime_services.hpp"
+#include "lyra/runtime/scope.hpp"
 #include "lyra/runtime/stream_dispatcher.hpp"
 #include "lyra/runtime/trigger.hpp"
 
 namespace lyra::runtime {
 
-class Module;
 class Observable;
 class RuntimeProcess;
 
@@ -44,11 +42,10 @@ struct EngineOptions {
 
 [[nodiscard]] auto DefaultEngineOptions() -> EngineOptions;
 
-// One top-level block to install under $root: its instance name and the module
-// object the emitted program constructs for it.
+// One top-level block to install under $root. The scope object the emitted
+// program constructs for it already carries its instance name.
 struct TopBinding {
-  std::string name;
-  Module* module;
+  Scope* scope;
 };
 
 class Engine {
@@ -152,9 +149,8 @@ class Engine {
   DiagnosticDispatcher diagnostic_;
   FileTable files_;
   RuntimeServices services_{stream_, diagnostic_, files_, *this};
-  std::unique_ptr<RuntimeScope> root_;
+  std::unique_ptr<Scope> root_;
   SchedulerQueues queues_;
-  std::vector<Module*> registered_modules_;
   SimTime now_ = 0;
   SchedulerPhase phase_ = SchedulerPhase::kIdle;
   std::size_t current_delta_ = 0;

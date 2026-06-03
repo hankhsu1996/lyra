@@ -34,6 +34,12 @@ auto RenderField(
   const auto& unit = ctor_ctx.Unit();
   auto type_or = RenderTypeAsCpp(unit, ctor_ctx.StructuralScope(), var.type);
   if (!type_or) return std::unexpected(std::move(type_or.error()));
+  // An owned-child member (a unique_ptr, or a vector of them) is filled in the
+  // constructor body; the field itself is just default-constructed storage, so
+  // it needs no initializer.
+  if (mir::GetOwnedChildLeaf(unit, var.type).has_value()) {
+    return Indent(indent) + *type_or + " " + var.name + ";\n";
+  }
   auto value_expr_or = RenderExpr(ctor_ctx, ctor_ctx.Expr(var.initializer));
   if (!value_expr_or) {
     return std::unexpected(std::move(value_expr_or.error()));
@@ -64,25 +70,19 @@ auto CtorParamName(std::size_t index) -> std::string {
 
 auto RenderConstructor(
     const RenderContext& scope_ctx, const mir::StructuralScope& s,
-    std::size_t indent) -> diag::Result<std::string> {
-  std::string sig = s.name + "(";
-  std::string init_list;
+    const std::string& base_class, std::size_t indent)
+    -> diag::Result<std::string> {
+  std::string sig = s.name + "(lyra::runtime::Scope* parent, std::string name";
+  std::string init_list = base_class + "(parent, std::move(name))";
   for (std::size_t i = 0; i < s.structural_params.size(); ++i) {
-    if (i != 0) {
-      sig += ", ";
-      init_list += ", ";
-    }
     const auto& p = s.structural_params[i];
     const auto param_name = CtorParamName(i);
     auto type_or = RenderTypeAsCpp(scope_ctx.Unit(), s, p.type);
     if (!type_or) return std::unexpected(std::move(type_or.error()));
-    sig += *type_or + " " + param_name;
-    init_list += p.name + "(" + param_name + ")";
+    sig += ", " + *type_or + " " + param_name;
+    init_list += ", " + p.name + "(" + param_name + ")";
   }
-  sig += ")";
-  if (!init_list.empty()) {
-    sig += " : " + init_list;
-  }
+  sig += ") : " + init_list;
 
   if (s.constructor_scope.root_stmts.empty()) {
     return Indent(indent) + sig + " {}\n";
@@ -228,73 +228,15 @@ auto RenderProcessKindLiteral(mir::ProcessKind kind) -> std::string {
   throw InternalError("RenderProcessKindLiteral: unknown ProcessKind");
 }
 
-// Binds an owned child by recursing on its member type, mirroring the type
-// walk in RenderTypeAsCpp: a vector layer iterates and indexes, an owning
-// pointer to an object registers one child scope and stops. `access` is the
-// C++ lvalue reaching the storage; `name_expr` is the C++ expression that
-// evaluates to the runtime scope-name string. One walk covers a scalar child,
-// an array of any dimensionality, an instance, and a generate scope.
-auto RenderBindChildWalk(
-    const mir::CompilationUnit& unit, const std::string& access,
-    mir::TypeId type, const std::string& name_expr, const std::string& kind,
-    std::size_t depth, std::size_t indent) -> std::string {
-  if (const auto* vec =
-          std::get_if<mir::VectorType>(&unit.GetType(type).data)) {
-    const std::string idx = "idx" + std::to_string(depth);
-    std::string out;
-    out += Indent(indent) + "for (std::size_t " + idx + " = 0; " + idx + " < " +
-           access + ".size(); ++" + idx + ") {\n";
-    out += RenderBindChildWalk(
-        unit, access + "[" + idx + "]", vec->element,
-        name_expr + " + \"[\" + std::to_string(" + idx + ") + \"]\"", kind,
-        depth + 1, indent + 1);
-    out += Indent(indent) + "}\n";
-    return out;
-  }
+auto RenderCreateProcesses(const mir::StructuralScope& s, std::size_t indent)
+    -> std::string {
   std::string out;
-  out += Indent(indent) + "{\n";
-  out += Indent(indent + 1) + "auto child = ctx.CreateChildScope(\n";
-  out += Indent(indent + 2) + name_expr + ",\n";
-  out += Indent(indent + 2) + kind + ");\n";
-  out += Indent(indent + 1) + access + "->Bind(child);\n";
-  out += Indent(indent) + "}\n";
-  return out;
-}
-
-auto RenderBind(
-    const mir::CompilationUnit& unit, const mir::StructuralScope& s,
-    std::size_t indent, bool is_top_level) -> std::string {
-  std::string out;
-  out += Indent(indent) + "void Bind(lyra::runtime::RuntimeBindContext& ctx)" +
-         (is_top_level ? " override {\n" : " {\n");
-  out += Indent(indent + 1) + "services_ = &ctx.Services();\n";
+  out += Indent(indent) + "void CreateProcesses() override {\n";
   for (std::size_t i = 0; i < s.processes.size(); ++i) {
     const auto& p = s.processes[i];
-    out += Indent(indent + 1) + "ctx.AddProcess(\n";
-    out += Indent(indent + 2) + RenderProcessKindLiteral(p.kind) + ",\n";
-    out += Indent(indent + 2) + RenderProcessMethodName(i) + "());\n";
-  }
-  // A member that owns a child binds it under this scope. The owned-child
-  // classification -- scope kind and base name -- is read off the leaf object
-  // type; the bind itself recurses on the member type, so cardinality and
-  // dimensionality need no separate handling. Members that own no child (signal
-  // and value members) yield no leaf and are skipped.
-  for (const auto& v : s.structural_vars) {
-    const auto leaf = mir::GetOwnedChildLeaf(unit, v.type);
-    if (!leaf.has_value()) {
-      continue;
-    }
-    const std::string base_name =
-        leaf->intra_target.has_value()
-            ? s.GetChildStructuralScope(*leaf->intra_target).name
-            : v.name;
-    const std::string kind =
-        leaf->kind == mir::OwnedChildKind::kModuleInstance
-            ? "lyra::runtime::RuntimeScopeKind::kModuleInstance"
-            : "lyra::runtime::RuntimeScopeKind::kGenerateScope";
-    out += RenderBindChildWalk(
-        unit, v.name, v.type, "std::string(\"" + base_name + "\")", kind, 0,
-        indent + 1);
+    out += Indent(indent + 1) + "AddProcess(" +
+           RenderProcessKindLiteral(p.kind) + ", " +
+           RenderProcessMethodName(i) + "());\n";
   }
   out += Indent(indent) + "}\n";
   return out;
@@ -312,12 +254,14 @@ auto RenderScopeAsClass(
           ? RenderContext::ForRoot(unit, s, s.constructor_scope)
           : parent_struct_ctx->WithStructuralScope(s, s.constructor_scope);
 
+  // A unit-root scope is an instance; a nested generate block is a generate
+  // scope. The base type carries the kind.
+  const std::string base_class =
+      is_top_level ? "lyra::runtime::Instance" : "lyra::runtime::GenScope";
+
   std::string out;
-  out += Indent(indent) + "class " + s.name;
-  if (is_top_level) {
-    out += " final : public lyra::runtime::Module";
-  }
-  out += " {\n";
+  out += Indent(indent) + "class " + s.name + " final : public " + base_class +
+         " {\n";
   out += Indent(indent) + " public:\n";
 
   for (const auto& child : s.child_structural_scopes) {
@@ -330,34 +274,42 @@ auto RenderScopeAsClass(
     out += "\n";
   }
 
+  auto ctor_or = RenderConstructor(this_anchor, s, base_class, indent + 1);
+  if (!ctor_or) return std::unexpected(std::move(ctor_or.error()));
+  out += *ctor_or;
+  // Child links are registered automatically at construction and walked by the
+  // base; only a scope's own processes need a per-class override.
+  if (!s.processes.empty()) {
+    out += "\n";
+    out += RenderCreateProcesses(s, indent + 1);
+  }
+
+  // Members follow the constructor and methods. They are public so cross-unit
+  // references can reach them directly (see reference_resolution.md).
+  if (!s.structural_params.empty() || !s.structural_vars.empty()) {
+    out += "\n";
+  }
   for (const auto& p : s.structural_params) {
     auto field_or = RenderParamField(unit, s, p, indent + 1);
     if (!field_or) return std::unexpected(std::move(field_or.error()));
     out += *field_or;
   }
-  if (!s.structural_params.empty()) {
+  if (!s.structural_params.empty() && !s.structural_vars.empty()) {
     out += "\n";
   }
-
   for (const auto& v : s.structural_vars) {
     auto field_or = RenderField(this_anchor, v, indent + 1);
     if (!field_or) return std::unexpected(std::move(field_or.error()));
     out += *field_or;
   }
-  if (!s.structural_vars.empty()) {
-    out += "\n";
-  }
 
-  auto ctor_or = RenderConstructor(this_anchor, s, indent + 1);
-  if (!ctor_or) return std::unexpected(std::move(ctor_or.error()));
-  out += *ctor_or;
-  out += "\n";
-  out += RenderBind(unit, s, indent + 1, is_top_level);
+  if (s.processes.empty() && s.structural_subroutines.empty()) {
+    out += Indent(indent) + "};\n";
+    return out;
+  }
 
   out += "\n";
   out += Indent(indent) + " private:\n";
-  out += Indent(indent + 1) + "lyra::runtime::RuntimeServices* services_{};\n";
-  out += "\n";
 
   for (std::size_t i = 0; i < s.processes.size(); ++i) {
     out += "\n";
@@ -402,21 +354,20 @@ auto RenderScopeHeaderFile(
   out += "#include <array>\n";
   out += "#include <cmath>\n";
   out += "#include <cstdint>\n";
+  out += "#include <functional>\n";
   out += "#include <memory>\n";
   out += "#include <span>\n";
   out += "#include <string>\n";
   out += "#include <vector>\n";
-  out += "#include \"lyra/runtime/bind_context.hpp\"\n";
   out += "#include \"lyra/runtime/coroutine.hpp\"\n";
   out += "#include \"lyra/runtime/delay.hpp\"\n";
   out += "#include \"lyra/runtime/file_io.hpp\"\n";
   out += "#include \"lyra/runtime/finish.hpp\"\n";
   out += "#include \"lyra/runtime/io.hpp\"\n";
-  out += "#include \"lyra/runtime/module.hpp\"\n";
   out += "#include \"lyra/runtime/named_event.hpp\"\n";
   out += "#include \"lyra/runtime/process_kind.hpp\"\n";
-  out += "#include \"lyra/runtime/runtime_scope_kind.hpp\"\n";
   out += "#include \"lyra/runtime/runtime_services.hpp\"\n";
+  out += "#include \"lyra/runtime/scope.hpp\"\n";
   out += "#include \"lyra/runtime/scan.hpp\"\n";
   out += "#include \"lyra/runtime/sformat.hpp\"\n";
   out += "#include \"lyra/runtime/var.hpp\"\n";
@@ -502,12 +453,12 @@ auto RenderHostMain(std::span<const TopInstance> tops) -> std::string {
   out += "auto main() -> int {\n";
   for (std::size_t i = 0; i < tops.size(); ++i) {
     out += "  " + tops[i].unit->structural_scope.name + " top" +
-           std::to_string(i) + ";\n";
+           std::to_string(i) + "{nullptr, \"" + tops[i].name + "\"};\n";
   }
   out += "  lyra::runtime::Engine engine;\n";
   out += "  std::vector<lyra::runtime::TopBinding> tops = {\n";
   for (std::size_t i = 0; i < tops.size(); ++i) {
-    out += "      {\"" + tops[i].name + "\", &top" + std::to_string(i) + "},\n";
+    out += "      {&top" + std::to_string(i) + "},\n";
   }
   out += "  };\n";
   out += "  engine.BindDesign(tops);\n";

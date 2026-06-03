@@ -26,18 +26,19 @@ auto RenderForInit(const RenderContext& ctx, const mir::ForInit& init)
   return std::visit(
       Overloaded{
           [&](const mir::ForInitDecl& d) -> diag::Result<std::string> {
+            // The induction variable's C++ type is whatever the initializer
+            // yields (every integral value is a PackedArray), so `auto` is the
+            // exact same type as spelling it out -- and reads as the idiomatic
+            // loop counter.
             const auto& lv = ctx.ProceduralScopeAtHops(d.induction_var.hops)
                                  .vars.at(d.induction_var.var.value);
-            auto type_or =
-                RenderTypeAsCpp(ctx.Unit(), ctx.StructuralScope(), lv.type);
-            if (!type_or) return std::unexpected(std::move(type_or.error()));
             const auto& init_expr =
                 ctx.ProceduralScope().exprs.at(d.init.value);
             auto rendered_or = RenderExpr(ctx, init_expr);
             if (!rendered_or) {
               return std::unexpected(std::move(rendered_or.error()));
             }
-            return *type_or + " " + lv.name + " = " + *rendered_or;
+            return "auto " + lv.name + " = " + *rendered_or;
           },
           [&](const mir::ForInitExpr& e) -> diag::Result<std::string> {
             const auto& expr = ctx.ProceduralScope().exprs.at(e.expr.value);
@@ -127,15 +128,15 @@ auto RenderConstructOwnedObjectStmt(
   const auto& var = ctx.StructuralScope().GetStructuralVar(s.target);
   const auto& target_scope =
       ctx.StructuralScope().GetChildStructuralScope(s.scope_id);
-  std::string args_str;
-  for (std::size_t i = 0; i < s.args.size(); ++i) {
-    if (i != 0) args_str += ", ";
-    auto arg_or = RenderExpr(ctx, ctx.Expr(s.args[i]));
+  std::string trailing_args;
+  for (const auto arg_id : s.args) {
+    auto arg_or = RenderExpr(ctx, ctx.Expr(arg_id));
     if (!arg_or) return std::unexpected(std::move(arg_or.error()));
-    args_str += *arg_or;
+    trailing_args += ", " + *arg_or;
   }
-  const std::string make =
-      "std::make_unique<" + target_scope.name + ">(" + args_str + ")";
+  const std::string make = "std::make_unique<" + target_scope.name +
+                           ">(this, \"" + target_scope.name + "\"" +
+                           trailing_args + ")";
   if (mir::IsVectorOfOwningObjectType(ctx.Unit(), var.type)) {
     return Indent(indent) + var.name + ".push_back(" + make + ");\n";
   }
@@ -149,12 +150,14 @@ auto RenderConstructOwnedObjectStmt(
 // Materializes an external-unit member by recursing on its type, mirroring the
 // type walk in RenderTypeAsCpp: each vector layer emits a counted loop that
 // grows the vector and recurses into the new element; the owning-pointer leaf
-// assigns a freshly constructed child. `dims` carries one element count per
-// vector layer, so a scalar (no vector layer) renders just the leaf.
+// assigns a freshly constructed child whose parent is `this` and whose name is
+// the member's compile-time label. `dims` carries one element count per vector
+// layer, so a scalar (no vector layer) renders just the leaf.
 auto RenderExternalUnitFill(
     const RenderContext& ctx, const std::string& lvalue, mir::TypeId type,
-    const std::string& unit_name, const std::vector<std::uint32_t>& dims,
-    std::size_t depth, std::size_t indent) -> std::string {
+    const std::string& unit_name, const std::string& label,
+    const std::vector<std::uint32_t>& dims, std::size_t depth,
+    std::size_t indent) -> std::string {
   if (const auto* vec =
           std::get_if<mir::VectorType>(&ctx.Unit().GetType(type).data)) {
     const std::string idx = "i" + std::to_string(depth);
@@ -163,13 +166,13 @@ auto RenderExternalUnitFill(
            std::to_string(dims.at(depth)) + "; ++" + idx + ") {\n";
     out += Indent(indent + 1) + lvalue + ".emplace_back();\n";
     out += RenderExternalUnitFill(
-        ctx, lvalue + "[" + idx + "]", vec->element, unit_name, dims, depth + 1,
-        indent + 1);
+        ctx, lvalue + "[" + idx + "]", vec->element, unit_name, label, dims,
+        depth + 1, indent + 1);
     out += Indent(indent) + "}\n";
     return out;
   }
   return Indent(indent) + lvalue + " = std::make_unique<" + unit_name +
-         ">();\n";
+         ">(this, \"" + label + "\");\n";
 }
 
 auto RenderConstructExternalUnitStmt(
@@ -177,7 +180,7 @@ auto RenderConstructExternalUnitStmt(
     std::size_t indent) -> diag::Result<std::string> {
   const auto& var = ctx.StructuralScope().GetStructuralVar(s.target);
   return RenderExternalUnitFill(
-      ctx, var.name, var.type, s.unit_name, s.dims, 0, indent);
+      ctx, var.name, var.type, s.unit_name, var.name, s.dims, 0, indent);
 }
 
 auto RenderForStmtNode(
@@ -283,7 +286,7 @@ auto RenderStmt(
           },
           [&](const mir::DelayStmt& s) -> diag::Result<std::string> {
             return Indent(indent) +
-                   "co_await lyra::runtime::Delay(*services_, " +
+                   "co_await lyra::runtime::Delay(Services(), " +
                    std::to_string(s.duration) + ");\n";
           },
           [&](const mir::ProceduralVarDeclStmt& s)
@@ -349,6 +352,18 @@ auto RenderStmt(
 auto RenderProceduralScopeStatements(
     const RenderContext& ctx, std::size_t indent) -> diag::Result<std::string> {
   const auto& scope = ctx.ProceduralScope();
+  // When a scope's whole content is a single begin/end block, the enclosing
+  // braces (a function body, a loop or branch body, an outer block) already
+  // scope it; render the block's body directly instead of emitting a redundant
+  // `{ }`. Recursing collapses a chain of such blocks.
+  if (scope.root_stmts.size() == 1) {
+    const auto& only = scope.stmts.at(scope.root_stmts.front().value);
+    if (const auto* block = std::get_if<mir::BlockStmt>(&only.data)) {
+      const auto& inner = only.child_procedural_scopes.at(block->scope.value);
+      return RenderProceduralScopeStatements(
+          ctx.WithProceduralScope(inner), indent);
+    }
+  }
   std::string out;
   for (const auto& sid : scope.root_stmts) {
     auto rendered_or = RenderStmt(ctx, scope.stmts.at(sid.value), indent);

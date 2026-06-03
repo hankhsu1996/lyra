@@ -17,7 +17,7 @@ namespace lyra::driver {
 auto AssembleProject(
     const RuntimeLocation& runtime, std::span<const mir::CompilationUnit> units,
     std::span<const backend::cpp::TopInstance> tops,
-    const std::filesystem::path& dir) -> diag::Result<void>;
+    const std::filesystem::path& dir, bool format) -> diag::Result<void>;
 
 // Build the assembled project in `dir` by invoking the C++ compiler directly
 // (the same recipe `build.sh` carries). Returns the produced executable's path;
@@ -32,6 +32,6 @@ auto BuildProject(const std::filesystem::path& dir)
 auto RunInPlace(
     const RuntimeLocation& runtime, std::span<const mir::CompilationUnit> units,
     std::span<const backend::cpp::TopInstance> tops,
-    const std::filesystem::path& work_dir) -> diag::Result<int>;
+    const std::filesystem::path& work_dir, bool format) -> diag::Result<int>;
 
 }  // namespace lyra::driver

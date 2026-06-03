@@ -53,10 +53,27 @@ auto RenderBuildScript() -> std::string {
       kRuntimeLibFile, kProgramName);
 }
 
+// Best-effort: reformat the emitted C++ files in place with clang-format if it
+// is on PATH. A missing formatter or a non-zero exit is ignored -- the emitted
+// code is valid C++ either way, so formatting never gates emission.
+void FormatSources(
+    std::span<const backend::cpp::CppArtifact> files,
+    const std::filesystem::path& dir) {
+  auto clang_format = support::FindOnPath("clang-format");
+  if (!clang_format) {
+    return;
+  }
+  std::vector<std::string> args = {"-i", "-style=Google"};
+  for (const auto& file : files) {
+    args.push_back((dir / file.relpath).string());
+  }
+  (void)support::RunProcessCaptured(*clang_format, args);
+}
+
 auto EmitAndWriteSources(
     std::span<const mir::CompilationUnit> units,
     std::span<const backend::cpp::TopInstance> tops,
-    const std::filesystem::path& dir) -> diag::Result<void> {
+    const std::filesystem::path& dir, bool format) -> diag::Result<void> {
   auto set_or = backend::cpp::EmitCpp(units, tops);
   if (!set_or) {
     return std::unexpected(std::move(set_or.error()));
@@ -65,6 +82,9 @@ auto EmitAndWriteSources(
     if (auto r = WriteFile(dir / file.relpath, file.content); !r) {
       return r;
     }
+  }
+  if (format) {
+    FormatSources(set_or->files, dir);
   }
   return {};
 }
@@ -104,8 +124,8 @@ auto CompileProgram(
 auto AssembleProject(
     const RuntimeLocation& runtime, std::span<const mir::CompilationUnit> units,
     std::span<const backend::cpp::TopInstance> tops,
-    const std::filesystem::path& dir) -> diag::Result<void> {
-  if (auto r = EmitAndWriteSources(units, tops, dir); !r) {
+    const std::filesystem::path& dir, bool format) -> diag::Result<void> {
+  if (auto r = EmitAndWriteSources(units, tops, dir, format); !r) {
     return r;
   }
 
@@ -147,8 +167,8 @@ auto BuildProject(const std::filesystem::path& dir)
 auto RunInPlace(
     const RuntimeLocation& runtime, std::span<const mir::CompilationUnit> units,
     std::span<const backend::cpp::TopInstance> tops,
-    const std::filesystem::path& work_dir) -> diag::Result<int> {
-  if (auto r = EmitAndWriteSources(units, tops, work_dir); !r) {
+    const std::filesystem::path& work_dir, bool format) -> diag::Result<int> {
+  if (auto r = EmitAndWriteSources(units, tops, work_dir, format); !r) {
     return std::unexpected(std::move(r.error()));
   }
   const auto program = work_dir / kProgramName;
