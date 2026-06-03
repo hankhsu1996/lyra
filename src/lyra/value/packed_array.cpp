@@ -198,6 +198,20 @@ auto PackedArray::IsFourState() const -> bool {
   return is_four_state_;
 }
 
+auto PackedArray::ResetToDefault() -> void {
+  // Re-construct the storage in place. `BitValue(W)`'s default state is
+  // all-zero and `LogicValue(W)`'s is all-X, which match the LRM Table 6-7
+  // canonical defaults for 2-state and 4-state respectively. Routing through
+  // the value-type ctors keeps the LRM rule encoded in exactly one place
+  // (the ctors themselves). `bit_width_`, `is_signed_`, `is_four_state_`,
+  // and `dims_` are preserved.
+  if (is_four_state_) {
+    storage_.emplace<LogicValue>(bit_width_);
+  } else {
+    storage_.emplace<BitValue>(bit_width_);
+  }
+}
+
 auto PackedArray::Dims() const -> std::span<const PackedRange> {
   return std::span<const PackedRange>{dims_.data(), dims_.size()};
 }

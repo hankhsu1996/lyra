@@ -20,8 +20,8 @@ follow once dynamic array's storage and runtime conventions are settled and prov
 
 | Item | Status                                                               |
 | ---- | -------------------------------------------------------------------- |
-| DA1  | Open: construction, element read, blocking element write, multi-dim. |
-| DA2  | Open: NBA, compound element write, whole-array assignment.           |
+| DA1  | Done: construction, element read, blocking element write, multi-dim. |
+| DA2  | Done: NBA, compound element write, whole-array assignment.           |
 | DA3  | Open: literal init and assignment patterns.                          |
 | DA4  | Open: aggregate equality and inequality.                             |
 | DA5  | Open: constant-width slice (subject to LRM check).                   |
@@ -40,7 +40,7 @@ array (Table 6-7).
 
 The numeric IDs are stable references and do not imply execution order beyond DA1 -> DA2.
 
-- [ ] DA1 -- Type infrastructure, construction, element read, and blocking element write, including
+- [x] DA1 -- Type infrastructure, construction, element read, and blocking element write, including
       multi-dimensional dynamic arrays. Covers declaration `int arr []` and `int matrix [][]` with
       empty default (LRM Table 6-7), `new[N]` construction with a runtime size expression,
       `new[N](other)` copy construction from another dynamic array of the same element type (LRM
@@ -53,10 +53,12 @@ The numeric IDs are stable references and do not imply execution order beyond DA
       C10 dynamic-array subset). SV-callable methods, including `.size()`, are not part of DA1 and
       ship with the method family in DA6.
 
-- [ ] DA2 -- Aggregate write paths. NBA element write `arr[i] <= v`, compound element write per LRM
-      11.4.1, whole-array assignment `A = B` which grows A to B's size per LRM 7.6, and the NBA form
-      of whole-array assignment. Element-level paths follow the lvalue surface from U2; whole-array
-      paths follow U4 with size-takeover on the destination.
+- [x] DA2 -- Aggregate write paths. Compound element write per LRM 11.4.1, whole-array assignment
+      `A = B` which grows A to B's size per LRM 7.6, and the NBA form of whole-array assignment.
+      Element-level paths follow the lvalue surface from U2; whole-array paths follow U4 with
+      size-takeover on the destination. NBA on a single element (`arr[i] <= v`) is excluded by LRM
+      10.4.2 -- the NBA LHS rules forbid bit/element selects on dynamically sized targets, so the
+      construct is rejected upstream by slang and produces no Lyra-side path.
 
 - [ ] DA3 -- Literal init and assignment patterns (LRM 10.9). Declaration initializer
       `int arr [] = '{e1, e2, ...}` where the pattern determines array size, procedural assignment
@@ -107,8 +109,8 @@ can be any singular type or `string` (LRM 7.8); storage is sparse; the iteration
 - Archive items: `datatypes/general/*`.
 - Unblocks: `control-flow.md` C10 (foreach over dynamic / queue / associative subset).
 - Decision: `../decisions/runtime-shape-and-default-value.md` -- runtime shape is retained on
-  `PackedArray`; collection wrappers carry an explicit `default_value_` member for OOB synthesis and
-  resize-fill.
+  `PackedArray`; collection wrappers carry one `oob_slot_` member that doubles as canonical-default
+  source and OOB-write discard target, reset via `T::ResetToDefault` on every OOB access.
 - Cross-cutting: `refactor.md` R2 -- value-typed structural fields uniformly wrapped for
   observability (the U8 analogue for these container types once they participate in event control,
   level-sensitive `wait`, `always_comb`, or continuous assignment).

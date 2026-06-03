@@ -1,0 +1,14 @@
+id: cpp.dynamic_array_whole_assign_blocking
+tags: [cpp_run]
+input:
+  command: [run, cpp]
+  project: false
+  top: Top
+  files: [main.sv]
+expect:
+  exit: 0
+  variables:
+    c0: 100
+    c1: 200
+    c2: 300
+    c3: 400

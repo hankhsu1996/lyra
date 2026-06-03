@@ -154,6 +154,13 @@ class PackedArray {
   [[nodiscard]] auto Dims() const -> std::span<const PackedRange>;
   [[nodiscard]] auto IsFourState() const -> bool;
 
+  // Restore the value to this shape's canonical default in place: all-zero
+  // for 2-state, all-X for 4-state (LRM Table 6-7 / Table 7-1). Shape fields
+  // (`bit_width_`, `is_signed_`, `is_four_state_`, `dims_`) are preserved.
+  // Container shield slots call this on OOB access so the slot mirrors what
+  // a freshly-defaulted element would read as.
+  auto ResetToDefault() -> void;
+
   // LRM 11.4.5 `===` predicate form (host bool). Operator form: `CaseEqual`.
   [[nodiscard]] auto IsCaseEqual(const PackedArray& other) const -> bool;
 

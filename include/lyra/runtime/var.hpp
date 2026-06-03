@@ -4,7 +4,6 @@
 #include <concepts>
 #include <cstdint>
 #include <initializer_list>
-#include <optional>
 #include <utility>
 #include <vector>
 
@@ -14,7 +13,6 @@
 #include "lyra/runtime/trigger.hpp"
 #include "lyra/value/packed.hpp"
 #include "lyra/value/packed_array.hpp"
-#include "lyra/value/unpacked_array.hpp"
 
 namespace lyra::runtime {
 
@@ -184,14 +182,11 @@ class Var : public Observable {
   T value_{};
 };
 
-// A reference to a variable cell (LRM 13.5.2 pass-by-reference). Transparently
-// views one of three backings: an observable `Var<T>` (writes route through
-// `Var::Set` so the update event fires and subscribers wake), a plain `T` cell
-// (raw read / write, no observers), or an unpacked-array element through its
-// write-back proxy (so an invalid / out-of-range index reads a default and
-// drops the write per LRM 7.4.5). `Get` returns by value because the proxy
-// backing has no storage to reference for an invalid index. Copyable, so a ref
-// formal can be forwarded as a ref argument to a nested call.
+// A reference to a variable cell. Transparently views one of two backings:
+// an observable `Var<T>` (writes route through `Var::Set` so the update
+// event fires and subscribers wake), or a plain `T` cell (raw read / write,
+// no observers). Copyable, so a ref formal can be forwarded as a ref
+// argument to a nested call.
 template <CaseEqualComparable T>
 class Ref {
  public:
@@ -199,33 +194,25 @@ class Ref {
   }
   explicit Ref(T& cell) : plain_(&cell) {
   }
-  explicit Ref(value::UnpackedElementRef<T> elem) : elem_(std::move(elem)) {
-  }
 
   [[nodiscard]] auto Get() const -> T {
     if (signal_ != nullptr) {
       return signal_->Get();
     }
-    if (plain_ != nullptr) {
-      return *plain_;
-    }
-    return elem_->Clone();
+    return *plain_;
   }
 
   void Set(RuntimeServices& services, const T& new_val) {
     if (signal_ != nullptr) {
       signal_->Set(services, new_val);
-    } else if (plain_ != nullptr) {
-      *plain_ = new_val;
     } else {
-      *elem_ = new_val;
+      *plain_ = new_val;
     }
   }
 
  private:
   Var<T>* signal_ = nullptr;
   T* plain_ = nullptr;
-  std::optional<value::UnpackedElementRef<T>> elem_;
 };
 
 // Suspends the calling frame until one of the supplied Triggers fires

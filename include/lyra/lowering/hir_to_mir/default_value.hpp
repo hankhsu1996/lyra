@@ -24,11 +24,12 @@ namespace lyra::lowering::hir_to_mir {
 // Wraps a list of element ExprIds destined for an `UnpackedArrayType`
 // constructor in `ConstructExpr{[element_default,
 // ArrayLiteralExpr{elements}]}`. This is the construction shape every site that
-// produces an unpacked-array value must use: the `default_value_` member
-// required by `UnpackedArray<T>`'s runtime ctor is supplied here via
-// `SynthesizeDefaultValueExpr` on the element type, and the elements ride in an
-// `ArrayLiteralExpr` that the `ConstructExpr` renderer emits as a
-// brace-init-list. See `docs/decisions/runtime-shape-and-default-value.md`.
+// produces an unpacked-array value must use: the canonical-default element
+// required by `UnpackedArray<T>`'s runtime ctor (to seed `oob_slot_`) is
+// supplied here via `SynthesizeDefaultValueExpr` on the element type, and the
+// elements ride in an `ArrayLiteralExpr` that the `ConstructExpr` renderer
+// emits as a brace-init-list. See
+// `docs/decisions/runtime-shape-and-default-value.md`.
 [[nodiscard]] auto BuildUnpackedArrayConstructExpr(
     const UnitLoweringState& unit_state,
     ProceduralScopeLoweringState& scope_state, mir::TypeId unpacked_type_id,

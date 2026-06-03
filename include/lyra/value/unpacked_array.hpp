@@ -1,6 +1,5 @@
 #pragma once
 
-#include <concepts>
 #include <cstddef>
 #include <cstdint>
 #include <initializer_list>
@@ -16,8 +15,6 @@ template <typename T>
 class UnpackedArray;
 template <typename T>
 class UnpackedArrayRef;
-template <typename T>
-class UnpackedElementRef;
 
 // SystemVerilog fixed-size unpacked array (LRM 7.4.2). One C++ container layer
 // per declared unpacked dimension; multi-dim composes as
@@ -28,28 +25,28 @@ class UnpackedElementRef;
 // 1-bit `PackedArray` so equality on aggregates propagates through the same
 // value-type the integral surface uses.
 //
-// `default_value_` carries the element type's LRM Table 6-7 default and is
-// the single source for OOB synthesis (LRM 7.4.5) on every access path. It
-// is supplied at construction -- there is no zero-argument constructor,
-// because `T = PackedArray` requires runtime shape parameters that cannot
-// be recovered from the C++ type alone. See `docs/decisions/runtime-shape-
-// and-default-value.md`.
+// `oob_slot_` is the LRM 7.4.5 invalid-index shield. Its state is restored
+// to the canonical default on every OOB access via `T::ResetToDefault`, so
+// reads after an OOB write observe the LRM Table 7-1 default rather than
+// whatever the prior write left in the slot. It is supplied at construction
+// because `T = PackedArray` requires runtime shape parameters (bit width,
+// signedness, 2/4-state) that cannot be recovered from the C++ type alone.
+// See `docs/decisions/runtime-shape-and-default-value.md`.
 template <typename T>
 class UnpackedArray {
  public:
   using ElementType = T;
 
-  // Empty container with `default_value_` populated. Internal use only --
-  // SV fixed-size arrays are always non-empty; this form serves `Slice` and
+  // Empty container with the shield slot seeded. Internal use only -- SV
+  // fixed-size arrays are always non-empty; this form serves `Slice` and
   // similar paths that build a fresh `UnpackedArray` element-by-element.
-  explicit UnpackedArray(T default_value)
-      : default_value_(std::move(default_value)) {
+  explicit UnpackedArray(T oob_slot) : oob_slot_(std::move(oob_slot)) {
   }
 
-  // Element-list construction: `default_value_` for OOB synthesis, plus the
-  // explicit initial elements (LRM 10.9 assignment pattern lowering).
-  UnpackedArray(T default_value, std::initializer_list<T> init)
-      : default_value_(std::move(default_value)), data_(init) {
+  // Element-list construction: shield slot seeded, plus the explicit
+  // initial elements (LRM 10.9 assignment pattern lowering).
+  UnpackedArray(T oob_slot, std::initializer_list<T> init)
+      : oob_slot_(std::move(oob_slot)), data_(init) {
   }
 
   UnpackedArray(const UnpackedArray&) = default;
@@ -71,54 +68,72 @@ class UnpackedArray {
     return data_[i];
   }
 
-  // LRM 7.4.5: read returns Table 7-1 default on invalid index. The stored
-  // `default_value_` is the source of truth for the default; no oracle from
-  // existing storage is needed.
-  [[nodiscard]] auto ElementAt(const PackedArray& idx) const -> T {
+  [[nodiscard]] auto Clone() const -> UnpackedArray {
+    return *this;
+  }
+
+  // LRM Table 7-1 default for a fixed-size unpacked array is "Array, all of
+  // whose elements have the value specified in this table for that array's
+  // element type." When this container is itself the OOB shield slot of an
+  // outer container, the outer calls this method to restore the canonical
+  // all-defaults state before handing out a reference. This is O(N) in the
+  // unpacked dim and is the LRM-mandated cost of "all elements at default."
+  auto ResetToDefault() -> void {
+    for (auto& elem : data_) {
+      elem.ResetToDefault();
+    }
+  }
+
+  // LRM 7.4.5: an invalid index makes the access route through `oob_slot_`.
+  // The slot is restored to canonical state before the reference is handed
+  // out, so OOB writes that mutate it are invisible to any subsequent
+  // access. The non-const overload returns a writable reference; writes
+  // through it land on the shield rather than on real storage and are
+  // erased on the next OOB access.
+  [[nodiscard]] auto ElementAt(const PackedArray& idx) -> T& {
     if (IsInvalidIndex(idx)) {
-      return default_value_;
+      oob_slot_.ResetToDefault();
+      return oob_slot_;
     }
     return data_[static_cast<std::size_t>(idx.ToInt64())];
   }
 
-  // Non-const overload yields a write-back proxy. The proxy captures the
-  // index's validity at construction; subsequent `operator=` / compound ops
-  // / chain calls observe that captured validity. Symmetric with
-  // `PackedArray::ElementAt(...) -> PackedArrayRef`.
-  [[nodiscard]] auto ElementAt(const PackedArray& idx)
-      -> UnpackedElementRef<T> {
-    return MakeElementRef(*this, idx);
+  [[nodiscard]] auto ElementAt(const PackedArray& idx) const -> const T& {
+    if (IsInvalidIndex(idx)) {
+      oob_slot_.ResetToDefault();
+      return oob_slot_;
+    }
+    return data_[static_cast<std::size_t>(idx.ToInt64())];
   }
 
   // LRM 7.4.5 contiguous-range selector. The const overload materializes a
-  // fresh sub-array; partial-OOB positions yield `default_value_`, X / Z
-  // offset yields a wholly-default sub-array. The non-const overload returns
-  // a write-back proxy with the same invalid-index policy on `operator=`.
-  [[nodiscard]] auto Slice(
-      const PackedArray& offset_in_outer_elements,
-      std::uint32_t count_in_outer_elements) const -> UnpackedArray {
-    UnpackedArray result(default_value_);
-    result.data_.reserve(count_in_outer_elements);
-    const bool offset_unknown = offset_in_outer_elements.HasUnknown();
-    const std::int64_t base =
-        offset_unknown ? 0 : offset_in_outer_elements.ToInt64();
+  // fresh sub-array; partial-OOB positions yield the canonical default,
+  // X / Z offset yields a wholly-default sub-array. The non-const overload
+  // returns a write-back proxy with the same invalid-index policy on
+  // `operator=`.
+  [[nodiscard]] auto Slice(const PackedArray& offset, std::uint32_t count) const
+      -> UnpackedArray {
+    const T canonical = MakeCanonicalElement();
+    UnpackedArray result(canonical);
+    if (offset.HasUnknown()) {
+      result.data_.assign(count, canonical);
+      return result;
+    }
+    result.data_.reserve(count);
+    const auto base = offset.ToInt64();
     const auto size = static_cast<std::int64_t>(data_.size());
-    for (std::uint32_t i = 0; i < count_in_outer_elements; ++i) {
-      const std::int64_t pos = base + static_cast<std::int64_t>(i);
-      if (offset_unknown || pos < 0 || pos >= size) {
-        result.data_.push_back(default_value_);
-      } else {
-        result.data_.push_back(data_[static_cast<std::size_t>(pos)]);
-      }
+    for (std::uint32_t i = 0; i < count; ++i) {
+      const auto pos = base + static_cast<std::int64_t>(i);
+      const bool in_bounds = pos >= 0 && pos < size;
+      result.data_.push_back(
+          in_bounds ? data_[static_cast<std::size_t>(pos)] : canonical);
     }
     return result;
   }
 
-  [[nodiscard]] auto Slice(
-      const PackedArray& offset_in_outer_elements,
-      std::uint32_t count_in_outer_elements) -> UnpackedArrayRef<T> {
-    return UnpackedArrayRef<T>{
-        *this, offset_in_outer_elements, count_in_outer_elements};
+  [[nodiscard]] auto Slice(const PackedArray& offset, std::uint32_t count)
+      -> UnpackedArrayRef<T> {
+    return UnpackedArrayRef<T>{*this, offset, count};
   }
 
   // LRM 11.2.2 + 11.4.5 aggregate equality / case-equality. Slang's binding
@@ -154,13 +169,13 @@ class UnpackedArray {
                         static_cast<std::uint64_t>(data_.size());
   }
 
-  static auto MakeElementRef(UnpackedArray& self, const PackedArray& idx)
-      -> UnpackedElementRef<T> {
-    if (self.IsInvalidIndex(idx)) {
-      return UnpackedElementRef<T>{self, std::size_t{0}, false};
-    }
-    return UnpackedElementRef<T>{
-        self, static_cast<std::size_t>(idx.ToInt64()), true};
+  // Returns a fresh `T` at this container's element shape in LRM Table 7-1
+  // canonical state. Used by paths that need a default element disconnected
+  // from the OOB shield identity (Slice fill, Slice-ref Clone).
+  [[nodiscard]] auto MakeCanonicalElement() const -> T {
+    T fresh = oob_slot_;
+    fresh.ResetToDefault();
+    return fresh;
   }
 
   [[nodiscard]] static auto CaseEqElement(
@@ -175,159 +190,17 @@ class UnpackedArray {
     return a.CaseEqual(b);
   }
 
-  T default_value_;
+  mutable T oob_slot_;
   std::vector<T> data_;
 
   friend class UnpackedArrayRef<T>;
-  friend class UnpackedElementRef<T>;
-};
-
-// Write-back proxy for `UnpackedArray::ElementAt` non-const. Captures index
-// validity at construction; subsequent reads through `Clone()` and writes
-// through `operator=` (or compound ops, when T is `PackedArray`) honor that
-// validity per LRM 7.4.5. Chain methods (`ElementAt`, `Slice`) on a proxy
-// over a nested-aggregate element propagate the validity flag so an invalid
-// outer index makes the entire chain a no-op write / Table 7-1 default read.
-template <typename T>
-class UnpackedElementRef {
- public:
-  UnpackedElementRef(UnpackedArray<T>& base, std::size_t offset, bool valid)
-      : base_(&base), offset_(offset), valid_(valid) {
-  }
-  // Copyable: the proxy is a thin (array, offset, validity) view, so a copy is
-  // another view of the same element. A `Ref` binding a ref formal to an
-  // unpacked element (LRM 13.5.2) holds the proxy and is itself copyable to
-  // forward to nested calls.
-  UnpackedElementRef(const UnpackedElementRef&) = default;
-  auto operator=(const UnpackedElementRef&) -> UnpackedElementRef& = default;
-  UnpackedElementRef(UnpackedElementRef&&) noexcept = default;
-  auto operator=(UnpackedElementRef&&) noexcept
-      -> UnpackedElementRef& = default;
-  ~UnpackedElementRef() = default;
-
-  [[nodiscard]] auto Clone() const -> T {
-    if (valid_) {
-      return base_->data_[offset_];
-    }
-    return base_->default_value_;
-  }
-
-  auto operator=(const T& value) -> UnpackedElementRef& {
-    if (valid_) {
-      base_->data_[offset_] = value;
-    }
-    return *this;
-  }
-
-  // Compound assignment for PackedArray-element arrays. The load-modify-store
-  // pattern is gated by `valid_` so an invalid index is a silent no-op end to
-  // end, including the read that would otherwise observe garbage memory.
-  auto operator+=(const PackedArray& rhs) -> UnpackedElementRef&
-    requires std::same_as<T, PackedArray>
-  {
-    if (valid_) base_->data_[offset_] += rhs;
-    return *this;
-  }
-  auto operator-=(const PackedArray& rhs) -> UnpackedElementRef&
-    requires std::same_as<T, PackedArray>
-  {
-    if (valid_) base_->data_[offset_] -= rhs;
-    return *this;
-  }
-  auto operator*=(const PackedArray& rhs) -> UnpackedElementRef&
-    requires std::same_as<T, PackedArray>
-  {
-    if (valid_) base_->data_[offset_] *= rhs;
-    return *this;
-  }
-  auto operator/=(const PackedArray& rhs) -> UnpackedElementRef&
-    requires std::same_as<T, PackedArray>
-  {
-    if (valid_) base_->data_[offset_] /= rhs;
-    return *this;
-  }
-  auto operator%=(const PackedArray& rhs) -> UnpackedElementRef&
-    requires std::same_as<T, PackedArray>
-  {
-    if (valid_) base_->data_[offset_] %= rhs;
-    return *this;
-  }
-  auto operator&=(const PackedArray& rhs) -> UnpackedElementRef&
-    requires std::same_as<T, PackedArray>
-  {
-    if (valid_) base_->data_[offset_] &= rhs;
-    return *this;
-  }
-  auto operator|=(const PackedArray& rhs) -> UnpackedElementRef&
-    requires std::same_as<T, PackedArray>
-  {
-    if (valid_) base_->data_[offset_] |= rhs;
-    return *this;
-  }
-  auto operator^=(const PackedArray& rhs) -> UnpackedElementRef&
-    requires std::same_as<T, PackedArray>
-  {
-    if (valid_) base_->data_[offset_] ^= rhs;
-    return *this;
-  }
-  auto ShiftLeftAssign(const PackedArray& rhs) -> UnpackedElementRef&
-    requires std::same_as<T, PackedArray>
-  {
-    if (valid_) base_->data_[offset_].ShiftLeftAssign(rhs);
-    return *this;
-  }
-  auto LogicalShiftRightAssign(const PackedArray& rhs) -> UnpackedElementRef&
-    requires std::same_as<T, PackedArray>
-  {
-    if (valid_) base_->data_[offset_].LogicalShiftRightAssign(rhs);
-    return *this;
-  }
-  auto ArithmeticShiftRightAssign(const PackedArray& rhs) -> UnpackedElementRef&
-    requires std::same_as<T, PackedArray>
-  {
-    if (valid_) base_->data_[offset_].ArithmeticShiftRightAssign(rhs);
-    return *this;
-  }
-
-  // Chain composition for nested aggregates. An invalid outer makes the chain
-  // bind to the outer's `default_value_` (always present, properly
-  // constructed for the inner type) and propagates invalidity onto the
-  // returned inner proxy.
-  [[nodiscard]] auto ElementAt(const PackedArray& idx) {
-    auto& inner = valid_ ? base_->data_[offset_] : base_->default_value_;
-    auto proxy = inner.ElementAt(idx);
-    if (!valid_) proxy.MarkInvalid();
-    return proxy;
-  }
-
-  [[nodiscard]] auto Slice(
-      const PackedArray& offset_in_outer_elements,
-      std::uint32_t count_in_outer_elements) {
-    auto& inner = valid_ ? base_->data_[offset_] : base_->default_value_;
-    auto proxy = inner.Slice(offset_in_outer_elements, count_in_outer_elements);
-    if (!valid_) proxy.MarkInvalid();
-    return proxy;
-  }
-
-  // Drop validity after construction. Used by chain composition when the
-  // outer proxy is invalid -- the inner proxy is constructed normally then
-  // demoted so any subsequent write is dropped.
-  auto MarkInvalid() -> void {
-    valid_ = false;
-  }
-
- private:
-  UnpackedArray<T>* base_;
-  std::size_t offset_;
-  bool valid_;
 };
 
 // LRM 7.6: an assignment to an unpacked slice is a single assignment to the
 // entire slice. The proxy holds a non-owning pointer back to the source array
-// plus the (offset, count) window. Invalid offset (X / Z, fully OOB) makes
-// `Clone()` return a wholly-default sub-array and `operator=` a no-op;
-// partial-OOB behaves per-element. Move-only so the proxy cannot outlive the
-// source it aliases.
+// plus the (offset, count) window. X / Z offset makes `Clone()` return a
+// wholly-default sub-array and `operator=` a no-op; partial-OOB behaves
+// per-element. Move-only so the proxy cannot outlive the source it aliases.
 template <typename T>
 class UnpackedArrayRef {
  public:
@@ -335,7 +208,7 @@ class UnpackedArrayRef {
       UnpackedArray<T>& base, const PackedArray& offset, std::uint32_t count)
       : base_(&base),
         offset_unknown_(offset.HasUnknown()),
-        offset_(offset.HasUnknown() ? 0 : offset.ToInt64()),
+        offset_(offset_unknown_ ? 0 : offset.ToInt64()),
         count_(count) {
   }
   UnpackedArrayRef(const UnpackedArrayRef&) = delete;
@@ -345,33 +218,32 @@ class UnpackedArrayRef {
   ~UnpackedArrayRef() = default;
 
   [[nodiscard]] auto Clone() const -> UnpackedArray<T> {
-    UnpackedArray<T> result(base_->default_value_);
+    const T canonical = base_->MakeCanonicalElement();
+    UnpackedArray<T> result(canonical);
+    if (offset_unknown_) {
+      result.data_.assign(count_, canonical);
+      return result;
+    }
     result.data_.reserve(count_);
     const auto size = static_cast<std::int64_t>(base_->data_.size());
     for (std::uint32_t i = 0; i < count_; ++i) {
-      const std::int64_t pos = offset_ + static_cast<std::int64_t>(i);
-      if (!valid_ || offset_unknown_ || pos < 0 || pos >= size) {
-        result.data_.push_back(base_->default_value_);
-      } else {
-        result.data_.push_back(base_->data_[static_cast<std::size_t>(pos)]);
-      }
+      const auto pos = offset_ + static_cast<std::int64_t>(i);
+      const bool in_bounds = pos >= 0 && pos < size;
+      result.data_.push_back(
+          in_bounds ? base_->data_[static_cast<std::size_t>(pos)] : canonical);
     }
     return result;
   }
 
   auto operator=(const UnpackedArray<T>& value) -> UnpackedArrayRef& {
-    if (!valid_ || offset_unknown_) return *this;
+    if (offset_unknown_) return *this;
     const auto size = static_cast<std::int64_t>(base_->data_.size());
     for (std::uint32_t i = 0; i < count_; ++i) {
-      const std::int64_t pos = offset_ + static_cast<std::int64_t>(i);
+      const auto pos = offset_ + static_cast<std::int64_t>(i);
       if (pos < 0 || pos >= size) continue;
       base_->data_[static_cast<std::size_t>(pos)] = value.data_[i];
     }
     return *this;
-  }
-
-  auto MarkInvalid() -> void {
-    valid_ = false;
   }
 
  private:
@@ -379,7 +251,6 @@ class UnpackedArrayRef {
   bool offset_unknown_;
   std::int64_t offset_;
   std::uint32_t count_;
-  bool valid_ = true;
 };
 
 // LRM 21.2.1.6 aggregate-view construction. Element views borrow into `arr`'s

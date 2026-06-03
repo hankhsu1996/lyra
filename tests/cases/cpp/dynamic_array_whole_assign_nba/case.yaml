@@ -1,0 +1,13 @@
+id: cpp.dynamic_array_whole_assign_nba
+tags: [cpp_run]
+input:
+  command: [run, cpp]
+  project: false
+  top: Top
+  files: [main.sv]
+expect:
+  exit: 0
+  variables:
+    c0: 70
+    c1: 80
+    c2: 90
