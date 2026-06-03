@@ -1,0 +1,12 @@
+id: cpp.foreach_return_exits_function
+tags: [cpp_run]
+input:
+  command: [run, cpp]
+  project: false
+  top: Top
+  files: [main.sv]
+expect:
+  exit: 0
+  variables:
+    result: 3
+    trailing_marker: 0

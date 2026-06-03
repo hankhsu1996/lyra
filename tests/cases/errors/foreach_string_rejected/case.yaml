@@ -1,0 +1,16 @@
+id: errors.foreach_string_rejected
+tags: [errors, diag]
+input:
+  command: [emit, cpp]
+  project: false
+  top: Top
+  files: [main.sv]
+  args: ["--no-color"]
+expect:
+  exit: 1
+  stderr:
+    contains:
+      - "main.sv:"
+      - "foreach over string is not yet supported"
+    not_contains:
+      - "internal error"

@@ -1,0 +1,15 @@
+id: cpp.foreach_3d_skip_middle
+tags: [cpp_run]
+input:
+  command: [run, cpp]
+  project: false
+  top: Top
+  files: [main.sv]
+expect:
+  exit: 0
+  variables:
+    count: 8
+    first_i: 0
+    first_k: 0
+    last_i: 1
+    last_k: 3

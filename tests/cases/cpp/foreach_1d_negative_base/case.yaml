@@ -1,0 +1,14 @@
+id: cpp.foreach_1d_negative_base
+tags: [cpp_run]
+input:
+  command: [run, cpp]
+  project: false
+  top: Top
+  files: [main.sv]
+expect:
+  exit: 0
+  variables:
+    first_idx: -2
+    last_idx: 1
+    sum_idx: -2
+    sum_val: 100

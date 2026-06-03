@@ -1,0 +1,14 @@
+id: cpp.foreach_1d_descending_packed
+tags: [cpp_run]
+input:
+  command: [run, cpp]
+  project: false
+  top: Top
+  files: [main.sv]
+expect:
+  exit: 0
+  variables:
+    first_idx: 3
+    last_idx: 0
+    sum_idx: 6
+    set_count: 2

@@ -1,0 +1,15 @@
+id: cpp.foreach_2d_packed_inner
+tags: [cpp_run]
+input:
+  command: [run, cpp]
+  project: false
+  top: Top
+  files: [main.sv]
+expect:
+  exit: 0
+  variables:
+    count: 24
+    first_i: 0
+    first_j: 7
+    last_i: 2
+    last_j: 0

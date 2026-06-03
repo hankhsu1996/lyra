@@ -1,0 +1,13 @@
+id: cpp.foreach_2d_break_exits_all
+tags: [cpp_run]
+input:
+  command: [run, cpp]
+  project: false
+  top: Top
+  files: [main.sv]
+expect:
+  exit: 0
+  variables:
+    sum: 10
+    last_i: 0
+    last_j: 0

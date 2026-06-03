@@ -84,6 +84,53 @@ Entries get checked off as their PRs land. When the last entry lands, the file i
       needed for correctness. **Trigger**: alongside R3's emit rework, or when a second fixed-extent
       object-collection consumer appears.
 
+- [ ] R5 -- Resurrect a smoke-suite tier so the emit-cpp path gets CI gating. Today
+      `tests/suites.yaml` carries only the monolithic `architecture_reset` suite, and the
+      `cpp_tests` target is tagged `requires-host-cxx` while CI's `Test` job filters that tag out --
+      so every PR merges without any automated check that the emitted C++ still compiles and runs. A
+      toolchain-compat regression (runtime header or emitted code reaching for a stdlib feature
+      absent from the floor toolchain), or an emit-vs-runtime ABI break, is only caught when a
+      contributor runs `cpp_tests` locally. Target shape: a `cpp_run_smoke` suite defined in
+      `tests/suites.yaml`, populated by `cpp_run_smoke`-tagged cases -- one representative per
+      distinct emit codegen family (integral / unpacked array / process / `$display` / loop / etc.),
+      5-10 cases total, target wall-clock under 30 seconds. A dedicated CI lane runs that suite via
+      the existing `cpp_tests` target with whatever toolchain `ubuntu-latest` ships -- no explicit
+      LLVM install. The lane is the anchor for a (yet-to-be-written)
+      `docs/decisions/emit-cpp-baseline.md` that pins the supported toolchain floor. The shape
+      mirrors the pre-reset `aot_smoke` suite (see `archived/tests/suites.yaml`); the only
+      adaptation is regex-on-path becoming tag-on-case, since cpp is currently the only backend and
+      tags travel with cases more naturally than external catalogs do. **Why deferred**: this is its
+      own focused PR (decision doc + suite entry + tag application + CI lane); folding it into a
+      feature PR makes both diffs noisy. Full `cpp_tests` in CI remains separately gated on the LLVM
+      JIT backend replacing per-case clang invocations (expected 5-10x faster), at which point a
+      sibling `jit_smoke` / `jit_full` pair can be added on the same pattern. **Trigger**:
+      standalone -- can be picked up at any time. The longer it waits, the larger the window for an
+      unspotted toolchain-compat regression to land in emit or runtime headers.
+
+- [ ] R6 -- Consolidate the "synthesize an expression of canonical type X" helpers that lowerings
+      reach for whenever they need a temporary, sentinel, or computed bound. The HIR -> MIR side
+      already exposes `UnitLoweringState::MakeInt32LiteralExpr(int64)` and has ~8 consumers across
+      `lower_expr.cpp`, `lower_stmt.cpp`, and `lower_deferred_check.cpp`. The AST -> HIR side has no
+      equivalent public helper: `expression/lower.cpp` carries an anonymous-namespace
+      `MakeIntegerLiteralExpr` that takes a slang `IntegerLiteral&` (no raw-int64 entry point) and
+      an anonymous `MakeRefExpr` for procedural / structural / loop var refs. New consumers that
+      can't see those private helpers (most recently `statement/foreach.cpp`) reroll their own
+      copies inline -- `MakeInt32Constant` + `MakeInt32LiteralExpr` + `MakeProcVarRefExpr` are all
+      sitting in foreach's anonymous namespace today, and similar copies will accumulate at every
+      future desugar site that needs a synthetic counter, sentinel, or width-constant. Target shape:
+      a small set of public helpers on each layer's `UnitLoweringState` mirroring the MIR-side
+      `MakeInt32LiteralExpr` -- minimally a raw-int64 int32 literal expr builder, a bool literal
+      expr builder, and ref-expr builders for the three var families -- with the `IntegralConstant`
+      construction (the masked-word layout) factored into a single function rather than copy-pasted
+      at every site. **Why deferred**: foreach's local helpers are correct, scoped to one TU, and
+      shipping them inline kept the immediate PR focused. The duplication only becomes painful when
+      the next consumer arrives. **Trigger**: when a second AST -> HIR lowering needs a raw-int64
+      int32 literal expr (or a synthetic ProceduralVarRef expr), at which point the per-consumer
+      copy is the smell that forces extraction. Related to R1, which is the further move of
+      promoting the canonical `Builtins` table and these helpers from the lowering-state scope to
+      the IR (`mir::CompilationUnit` and the AST -> HIR analogue) -- R6 is the prerequisite cleanup;
+      R1 is the architectural promotion.
+
 ## Out of Scope
 
 - Per-feature workstreams. Those live in the dedicated feature files (`control-flow.md`,
