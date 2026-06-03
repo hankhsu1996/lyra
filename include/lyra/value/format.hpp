@@ -5,12 +5,15 @@
 #include <string>
 #include <string_view>
 #include <variant>
+#include <vector>
 
 #include "lyra/value/packed.hpp"
 
 namespace lyra::value {
 
 class PackedArray;
+template <typename T>
+class UnpackedArray;
 
 enum class PrintKind : std::uint8_t {
   kDisplay,
@@ -97,9 +100,21 @@ struct Real32ValueView {
   float value = 0.0F;
 };
 
+struct RuntimeValueView;
+
+// LRM 21.2.1.6 aggregate operand view. Owns the recursive vector of element
+// views; each element view borrows into the operand's per-element storage
+// (matching the singular-view lifetime contract). For nested unpacked arrays
+// the element views are themselves UnpackedArrayValueView, so a multi-dim
+// operand is one tree rooted at the outermost view.
+struct UnpackedArrayValueView {
+  std::vector<RuntimeValueView> elements;
+};
+
 struct RuntimeValueView {
   std::variant<
-      IntegralValueView, StringValueView, Real64ValueView, Real32ValueView>
+      IntegralValueView, StringValueView, Real64ValueView, Real32ValueView,
+      UnpackedArrayValueView>
       data;
 
   [[nodiscard]] static auto NarrowIntegral(
@@ -131,6 +146,14 @@ struct RuntimeValueView {
   // call site (signedness is read from the PackedArray itself). The view
   // overloads remain for callers that already hold a view.
   [[nodiscard]] static auto FromPackedArray(const PackedArray& pa)
+      -> RuntimeValueView;
+
+  // LRM 21.2.1.6: aggregate operand. The returned view owns a recursive
+  // vector of per-element views that borrow into `arr`'s storage. Defined
+  // out-of-line as a template because `T` may be `PackedArray` (terminal) or
+  // `UnpackedArray<U>` (recursive).
+  template <typename T>
+  [[nodiscard]] static auto FromUnpackedArray(const UnpackedArray<T>& arr)
       -> RuntimeValueView;
 };
 

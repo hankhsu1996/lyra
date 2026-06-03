@@ -116,6 +116,12 @@ auto RenderRuntimeValueViewInit(
     return std::format(
         "lyra::value::RuntimeValueView::Real32({})", *operand_or);
   }
+  if (type.Kind() == mir::TypeKind::kUnpackedArray) {
+    auto operand_or = RenderExpr(ctx, ctx.Expr(v.value));
+    if (!operand_or) return std::unexpected(std::move(operand_or.error()));
+    return std::format(
+        "lyra::value::RuntimeValueView::FromUnpackedArray({})", *operand_or);
+  }
   throw InternalError(
       "RenderRuntimeValueViewInit: unsupported display operand type");
 }

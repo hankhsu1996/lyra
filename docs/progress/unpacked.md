@@ -116,5 +116,6 @@ The numeric IDs are stable references and do not imply execution order beyond U1
 - Cross-cutting: `refactor.md` R2 -- value-typed structural fields uniformly wrapped for
   observability (U8).
 - Unblocks: `control-flow.md` C9 / C10 (`foreach` over unpacked).
-- Cross-references `display.md` DI7 (`%p` assignment-pattern format) for end-to-end test coverage of
-  whole-array values.
+- `display.md` DI7 (`%p` assignment-pattern format) delivered alongside this workstream and powers
+  the test framework's whole-array `expect.variables` assertion path; init / pattern / whole-assign
+  / slice tests now assert against the entire array value.

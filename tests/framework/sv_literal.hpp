@@ -10,7 +10,7 @@
 
 namespace lyra::test {
 
-// Categorises a YAML scalar drawn from an `expect.variables` entry and turns
+// Categorises a YAML node drawn from an `expect.variables` entry and turns
 // it into the runtime value + format spec the test framework will use to
 // (a) inject the `$display` call into the rewritten SV source and
 // (b) compute the expected marker payload via `runtime::FormatValue`.
@@ -19,6 +19,8 @@ namespace lyra::test {
 //   - YAML integer (e.g. `30`)            -> kIntegerScalar
 //   - YAML string matching SV literal     -> kSvLiteral (numeric value)
 //   - any other YAML string               -> kStringScalar (raw characters)
+//   - YAML sequence (e.g. `[10, 20, 30]`) -> kUnpackedArray (LRM 21.2.1.6
+//                                            assignment pattern, %p / %0p)
 //
 // SV literal pattern: `<width>'[s][bhodBHOD]<digits>`. Digits may contain
 // `_` separators and (for binary/hex) `x`/`z` 4-state placeholders.
@@ -27,12 +29,13 @@ enum class ExpectedValueKind : std::uint8_t {
   kIntegerScalar,
   kSvLiteral,
   kStringScalar,
+  kUnpackedArray,
 };
 
 struct ExpectedValue {
   ExpectedValueKind kind = ExpectedValueKind::kIntegerScalar;
 
-  // Owned storage backing `view`.
+  // Owned storage backing `view` (singular cases).
   std::int64_t integer_value = 0;
   std::vector<std::uint64_t> value_words;
   std::vector<std::uint64_t> unknown_words;
@@ -41,10 +44,14 @@ struct ExpectedValue {
   value::IntegralStateKind state_kind = value::IntegralStateKind::kTwoState;
   std::string string_value;
 
+  // LRM 21.2.1.6 aggregate elements, owned and traversed recursively for
+  // `kUnpackedArray`. Empty for singular kinds.
+  std::vector<ExpectedValue> elements;
+
   value::FormatSpec format_spec;
 
   // The SV `$display` format specifier corresponding to `format_spec`,
-  // injected into the rewritten source (e.g. "%0d", "%b", "%s").
+  // injected into the rewritten source (e.g. "%0d", "%b", "%s", "%p").
   std::string sv_format_specifier;
 
   // Build a borrowed view into this object's storage. The view stays valid
