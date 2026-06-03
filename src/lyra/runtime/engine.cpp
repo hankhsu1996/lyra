@@ -11,13 +11,10 @@
 
 #include "lyra/base/internal_error.hpp"
 #include "lyra/base/time.hpp"
-#include "lyra/runtime/bind_context.hpp"
-#include "lyra/runtime/module.hpp"
 #include "lyra/runtime/process_kind.hpp"
 #include "lyra/runtime/runtime_process.hpp"
-#include "lyra/runtime/runtime_scope.hpp"
-#include "lyra/runtime/runtime_scope_kind.hpp"
 #include "lyra/runtime/runtime_traversal.hpp"
+#include "lyra/runtime/scope.hpp"
 #include "lyra/runtime/stream_dispatcher.hpp"
 #include "lyra/runtime/trigger.hpp"
 #include "lyra/runtime/var.hpp"
@@ -43,14 +40,10 @@ void Engine::BindDesign(std::span<const TopBinding> tops) {
     throw InternalError("Engine::BindDesign called more than once");
   }
   bound_ = true;
-  root_ = std::make_unique<RuntimeScope>(
-      nullptr, "$root", RuntimeScopeKind::kModuleInstance);
-  RuntimeBindContext root_ctx(*root_, services_);
+  root_ = std::make_unique<Scope>(nullptr, "$root");
   for (const auto& top : tops) {
-    RuntimeBindContext child_ctx =
-        root_ctx.CreateChildScope(top.name, RuntimeScopeKind::kModuleInstance);
-    registered_modules_.push_back(top.module);
-    top.module->Bind(child_ctx);
+    root_->AddChild(*top.scope);
+    top.scope->Bind(services_);
   }
 }
 
@@ -87,7 +80,7 @@ void Engine::EnsureReadyToRun() {
 }
 
 void Engine::RegisterProcesses() {
-  WalkScopePreOrder(*root_, [this](RuntimeScope& scope) {
+  WalkScopePreOrder(*root_, [this](Scope& scope) {
     scope.ForEachProcess([this](RuntimeProcess& process) {
       switch (process.Kind()) {
         case ProcessKind::kInitial:
@@ -172,9 +165,7 @@ void Engine::SubmitNba(std::function<void()> closure) {
 
 void Engine::ExecuteObservedRegion() {
   phase_ = SchedulerPhase::kObserved;
-  for (Module* m : registered_modules_) {
-    m->DrainObserved();
-  }
+  WalkScopePreOrder(*root_, [](Scope& scope) { scope.DrainObserved(); });
 }
 
 void Engine::ExecuteReactiveRegion() {

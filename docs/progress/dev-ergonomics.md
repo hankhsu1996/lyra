@@ -19,3 +19,5 @@ layer directly.
   features.
 - Comparison tooling that drives both Lyra and a reference simulator.
 - Performance instrumentation.
+- Readability of the emitted C++ artifact (see `emit-readability.md`). This file owns the feedback
+  loop; that one owns how legible its output is.

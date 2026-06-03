@@ -38,6 +38,7 @@ struct ParsedArgs {
   bool no_project = false;
   bool no_color = false;
   bool force_color = false;
+  bool format = false;
   lyra::frontend::CompilationInput input;
   std::string out_dir;
 };
@@ -72,6 +73,10 @@ void AddCompilationFlags(argparse::ArgumentParser& cmd) {
       .help("compile all files as a single compilation unit")
       .default_value(false)
       .implicit_value(true);
+  cmd.add_argument("--format")
+      .help("reformat the emitted C++ with clang-format (skipped if absent)")
+      .default_value(false)
+      .implicit_value(true);
   cmd.add_argument("files").help("SystemVerilog source files").remaining();
 }
 
@@ -92,6 +97,7 @@ void BindCompilationFlags(
     out.input.param_overrides = std::move(*ovr);
   }
   out.input.single_unit = cmd.get<bool>("--single-unit");
+  out.format = cmd.get<bool>("--format");
   if (auto files = cmd.present<std::vector<std::string>>("files")) {
     out.input.files = std::move(*files);
   }
@@ -317,8 +323,8 @@ auto main(int argc, char** argv) -> int {
         const std::filesystem::path dir = args.out_dir;
         const auto& units = *result.artifacts.mir_units;
         const auto tops = build_tops(units, result.artifacts.top_unit_names);
-        auto assembled =
-            lyra::driver::AssembleProject(*runtime, units, tops, dir);
+        auto assembled = lyra::driver::AssembleProject(
+            *runtime, units, tops, dir, args.format);
         if (!assembled) {
           report(std::move(assembled.error()), mgr);
           return 1;
@@ -334,8 +340,8 @@ auto main(int argc, char** argv) -> int {
         const std::filesystem::path dir = args.out_dir;
         const auto& units = *result.artifacts.mir_units;
         const auto tops = build_tops(units, result.artifacts.top_unit_names);
-        auto assembled =
-            lyra::driver::AssembleProject(*runtime, units, tops, dir);
+        auto assembled = lyra::driver::AssembleProject(
+            *runtime, units, tops, dir, args.format);
         if (!assembled) {
           report(std::move(assembled.error()), mgr);
           return 1;
@@ -363,8 +369,8 @@ auto main(int argc, char** argv) -> int {
         }
         const auto& units = *result.artifacts.mir_units;
         const auto tops = build_tops(units, result.artifacts.top_unit_names);
-        auto exit_code =
-            lyra::driver::RunInPlace(*runtime, units, tops, *tmp_or);
+        auto exit_code = lyra::driver::RunInPlace(
+            *runtime, units, tops, *tmp_or, args.format);
         if (!exit_code) {
           report(std::move(exit_code.error()), mgr);
           return 1;

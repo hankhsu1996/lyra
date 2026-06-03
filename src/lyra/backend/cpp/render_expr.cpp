@@ -113,9 +113,13 @@ auto RenderPackedArrayIntegerLiteral(
 
   if (!needs_word_planes) {
     const auto value = IntegralConstantToInt64(c);
-    if (pa.BitWidth() == 32U && pa.signedness == mir::Signedness::kSigned &&
-        pa.atom == mir::BitAtom::kBit) {
-      return std::format("lyra::value::PackedArray::Int({})", value);
+    // 32-bit signed has the named shorthands Int (2-state) / Integer
+    // (4-state); both read far better than the explicit FromInt for the
+    // ubiquitous `int` / `integer` literal.
+    if (pa.BitWidth() == 32U && pa.signedness == mir::Signedness::kSigned) {
+      return std::format(
+          "lyra::value::PackedArray::{}({})",
+          pa.atom == mir::BitAtom::kBit ? "Int" : "Integer", value);
     }
     return std::format(
         "lyra::value::PackedArray::FromInt({}LL, {})", value,
@@ -205,7 +209,7 @@ auto LookupProceduralVarName(
 }
 
 // True iff the procedural var is a `ref` / `const ref` formal, rendered as a
-// `Ref<T>` whose read is `.Get()` and whose write is `.Set(*services_, ...)`
+// `Ref<T>` whose read is `.Get()` and whose write is `.Set(Services(), ...)`
 // (LRM 13.5.2), the same surface as a structural Var.
 auto IsReferenceProceduralVar(
     const RenderContext& ctx, const mir::ProceduralVarRef& ref) -> bool {
@@ -628,10 +632,31 @@ auto RenderConversionExpr(
     const RenderContext& ctx, const mir::Expr& expr,
     const mir::ConversionExpr& cv) -> diag::Result<std::string> {
   const auto& src_expr = ctx.Expr(cv.operand);
-  auto operand_or = RenderExpr(ctx, src_expr);
-  if (!operand_or) return std::unexpected(std::move(operand_or.error()));
   const auto& src_ty = ctx.Unit().GetType(src_expr.type);
   const auto& dst_ty = ctx.Unit().GetType(expr.type);
+
+  // Fold a conversion that only restates an integer literal in a same-width,
+  // same-signedness shape (the state axis differs): emit the literal directly
+  // in the destination shape instead of wrapping a runtime ConvertFrom around
+  // it. A width or signedness change keeps the conversion; a 4-state literal
+  // carrying X/Z narrowing to 2-state is not foldable and keeps it too.
+  if (const auto* lit = std::get_if<mir::IntegerLiteral>(&src_expr.data);
+      lit != nullptr && src_ty.IsIntegralPacked() &&
+      dst_ty.IsIntegralPacked() && !src_ty.IsEnum() && !dst_ty.IsEnum()) {
+    const auto& src_pa = src_ty.AsIntegralPacked();
+    const auto& dst_pa = dst_ty.AsIntegralPacked();
+    const bool same_width_and_sign = src_pa.BitWidth() == dst_pa.BitWidth() &&
+                                     src_pa.signedness == dst_pa.signedness;
+    const bool literal_has_xz =
+        !lit->value.state_words.empty() && lit->value.state_words[0] != 0U;
+    const bool dst_two_state = dst_pa.atom == mir::BitAtom::kBit;
+    if (same_width_and_sign && !(literal_has_xz && dst_two_state)) {
+      return RenderPackedArrayIntegerLiteral(dst_pa, lit->value);
+    }
+  }
+
+  auto operand_or = RenderExpr(ctx, src_expr);
+  if (!operand_or) return std::unexpected(std::move(operand_or.error()));
   if (IsRealFamilyType(src_ty) && IsRealFamilyType(dst_ty)) {
     return RenderRealConversion(*std::move(operand_or), src_ty, dst_ty);
   }
@@ -844,7 +869,7 @@ auto RenderEventMethodCall(
   }
   const std::string args = (m.kind == mir::EventMethodKind::kTrigger ||
                             m.kind == mir::EventMethodKind::kTriggered)
-                               ? "*services_"
+                               ? "Services()"
                                : "";
   const std::string raw_call = std::format(
       "({}).{}({})", *receiver_or, EventMethodMemberName(m.kind), args);
@@ -961,7 +986,7 @@ auto RenderElementSelectExpr(
 }
 
 // Renders an LHS-shaped expression for use as an assignment target. The
-// `mutate_adapter` string (typically `.Mutate(*services_)` or empty) is
+// `mutate_adapter` string (typically `.Mutate(Services())` or empty) is
 // inserted immediately after the structural-var root so an observable
 // partial write enters a ScopedMutation before the selector chain begins.
 auto RenderRangeSliceSuffix(
@@ -1117,7 +1142,7 @@ auto RenderAssignExpr(const RenderContext& ctx, const mir::AssignExpr& a)
           "not yet implemented in cpp emit",
           diag::UnsupportedCategory::kFeature);
     }
-    return LookupProceduralVarName(ctx, *ref_root) + ".Set(*services_, " +
+    return LookupProceduralVarName(ctx, *ref_root) + ".Set(Services(), " +
            *value_or + ")";
   }
 
@@ -1141,11 +1166,11 @@ auto RenderAssignExpr(const RenderContext& ctx, const mir::AssignExpr& a)
       // Procedural-local compounds operate on the underlying PackedArray
       // directly via its own `op=` overloads.
       const std::string chain =
-          observable ? *root_or + ".Mutate(*services_)" : *root_or;
+          observable ? *root_or + ".Mutate(Services())" : *root_or;
       return "(" + RenderCompoundAssign(*a.compound_op, chain, *value_or) + ")";
     }
     if (observable) {
-      return *root_or + ".Set(*services_, " + *value_or + ")";
+      return *root_or + ".Set(Services(), " + *value_or + ")";
     }
     return "(" + *root_or + " = " + *value_or + ")";
   }
@@ -1163,7 +1188,7 @@ auto RenderAssignExpr(const RenderContext& ctx, const mir::AssignExpr& a)
   // destructor commits the snapshot through `Var::Set` so subscribers fire.
   // Same shape inside or outside an NBA closure body -- no nested lambda.
   const std::string_view mutate_adapter =
-      observable ? std::string_view{".Mutate(*services_)"} : std::string_view{};
+      observable ? std::string_view{".Mutate(Services())"} : std::string_view{};
   auto chain_or = RenderLhsExpr(ctx, lhs_expr, mutate_adapter);
   if (!chain_or) return std::unexpected(std::move(chain_or.error()));
   if (a.compound_op.has_value()) {
@@ -1195,10 +1220,10 @@ auto RenderIncDecExpr(const RenderContext& ctx, const mir::IncDecExpr& inc)
   if (IsLhsBarePrimary(target_expr)) {
     auto root_or = RenderLhsExpr(ctx, target_expr, std::string_view{});
     if (!root_or) return std::unexpected(std::move(root_or.error()));
-    lhs = observable ? *root_or + ".Mutate(*services_)" : *root_or;
+    lhs = observable ? *root_or + ".Mutate(Services())" : *root_or;
   } else {
     const std::string_view mutate_adapter =
-        observable ? std::string_view{".Mutate(*services_)"}
+        observable ? std::string_view{".Mutate(Services())"}
                    : std::string_view{};
     auto chain_or = RenderLhsExpr(ctx, target_expr, mutate_adapter);
     if (!chain_or) return std::unexpected(std::move(chain_or.error()));
@@ -1254,10 +1279,10 @@ auto RenderClosureExpr(
     throw InternalError("RenderClosureExpr: closure has no body");
   }
 
-  // Always capture `this` so the closure body can reach module-scope members
-  // (the emitted module class's services_ pointer, structural vars, the
-  // SubmitObserved / DrainObserved interface on the Module base). The
-  // explicit by-value captures from the MIR list go after.
+  // Always capture `this` so the closure body can reach scope members (the
+  // Scope base's Services() accessor and SubmitObserved interface, plus the
+  // emitted class's structural vars). The explicit by-value captures from the
+  // MIR list go after.
   std::string captures_text = "this";
   for (std::size_t i = 0; i < closure.captures.size(); ++i) {
     captures_text += ", ";
