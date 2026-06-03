@@ -1,0 +1,16 @@
+id: errors.sscanf_in_expression
+tags: [errors, diag]
+input:
+  command: [emit, cpp]
+  project: false
+  top: Top
+  files: [main.sv]
+  args: ["--no-color"]
+expect:
+  exit: 1
+  stderr:
+    contains:
+      - "unsupported:"
+      - "writes through output arguments"
+    not_contains:
+      - "internal error"

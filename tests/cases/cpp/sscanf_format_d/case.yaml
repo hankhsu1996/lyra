@@ -1,0 +1,22 @@
+id: cpp.sscanf_format_d
+tags: [cpp_run]
+input:
+  command: [run, cpp]
+  project: false
+  top: Top
+  files: [main.sv]
+expect:
+  exit: 0
+  variables:
+    code_dec: 1
+    code_neg: 1
+    code_under: 1
+    code_x: 1
+    code_z: 1
+    code_q: 1
+    x_dec: 42
+    x_neg: -17
+    x_under: 1234567
+  stdout:
+    exact: |
+      x_fill=xxxxxxxx z_fill=zzzzzzzz q_fill=zzzz

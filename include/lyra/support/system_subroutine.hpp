@@ -110,9 +110,22 @@ struct FileIOSystemSubroutineInfo {
          kind == FileIOKind::kError;
 }
 
+// LRM 21.3.4.3 scan family ($sscanf / $fscanf). The kind axis tracks where
+// the scanned characters come from. Only kString is implemented today; the
+// kFile variant ($fscanf) wires the same scanner core over a file-source
+// adapter in a follow-up.
+enum class ScanSourceKind : std::uint8_t {
+  kString,
+};
+
+struct ScanSystemSubroutineInfo {
+  ScanSourceKind source;
+};
+
 using SystemSubroutineSemantic = std::variant<
     PrintSystemSubroutineInfo, TerminationSystemSubroutineInfo,
-    DiagnosticSystemSubroutineInfo, FileIOSystemSubroutineInfo>;
+    DiagnosticSystemSubroutineInfo, FileIOSystemSubroutineInfo,
+    ScanSystemSubroutineInfo>;
 
 struct SystemSubroutineDesc {
   SystemSubroutineId id;
@@ -503,6 +516,15 @@ inline constexpr std::array kSystemSubroutines = {
         .arg_policy = ArgCountPolicy{.min_args = 0, .max_args = 1},
         .semantic = FileIOSystemSubroutineInfo{.kind = FileIOKind::kFlush},
     },
+    SystemSubroutineDesc{
+        .id = SystemSubroutineId{32},
+        .name = "$sscanf",
+        .origin = SystemSubroutineOrigin::kLanguageBuiltin,
+        .kind = SystemSubroutineKind::kFunction,
+        .result_conv = ReturnConvention::kInt32,
+        .arg_policy = ArgCountPolicy{.min_args = 3, .max_args = 255},
+        .semantic = ScanSystemSubroutineInfo{.source = ScanSourceKind::kString},
+    },
 };
 
 }  // namespace detail
@@ -540,6 +562,11 @@ inline constexpr std::array kSystemSubroutines = {
 [[nodiscard]] inline auto GetFileIOInfo(const SystemSubroutineDesc& desc)
     -> const FileIOSystemSubroutineInfo* {
   return std::get_if<FileIOSystemSubroutineInfo>(&desc.semantic);
+}
+
+[[nodiscard]] inline auto GetScanInfo(const SystemSubroutineDesc& desc)
+    -> const ScanSystemSubroutineInfo* {
+  return std::get_if<ScanSystemSubroutineInfo>(&desc.semantic);
 }
 
 }  // namespace lyra::support

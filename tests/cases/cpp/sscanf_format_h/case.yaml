@@ -1,0 +1,19 @@
+id: cpp.sscanf_format_h
+tags: [cpp_run]
+input:
+  command: [run, cpp]
+  project: false
+  top: Top
+  files: [main.sv]
+expect:
+  exit: 0
+  variables:
+    code_basic: 1
+    code_under: 1
+    code_x_nib: 1
+    code_z_nib: 1
+    x_basic: 0xdead
+    x_under: 0xdead
+  stdout:
+    exact: |
+      x_nib=0011xxxx z_nib=0011zzzz

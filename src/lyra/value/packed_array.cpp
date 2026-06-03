@@ -178,6 +178,14 @@ auto PackedArray::FromWords(
           unknown_words.begin(), unknown_words.size()});
 }
 
+auto PackedArray::FromWords(
+    std::span<const std::uint64_t> value_words,
+    std::span<const std::uint64_t> unknown_words, std::uint64_t bit_width,
+    bool is_signed, bool is_four_state) -> PackedArray {
+  return MakeFromWordPlanes(
+      bit_width, is_signed, is_four_state, value_words, unknown_words);
+}
+
 auto PackedArray::BitWidth() const -> std::uint64_t {
   return bit_width_;
 }

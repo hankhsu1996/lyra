@@ -93,6 +93,17 @@ class PackedArray {
       std::uint64_t bit_width, bool is_signed, bool is_four_state)
       -> PackedArray;
 
+  // Span-based twin of FromWords for callers that assemble word planes
+  // dynamically (e.g. the $sscanf scanner accumulating an arbitrary number
+  // of bits). Same shape contract: `value_words.size() ==
+  // ceil(bit_width / 64)`; for 2-state shapes `unknown_words` must be empty;
+  // for 4-state shapes it must either be empty (no X/Z) or match
+  // `value_words` in size.
+  [[nodiscard]] static auto FromWords(
+      std::span<const std::uint64_t> value_words,
+      std::span<const std::uint64_t> unknown_words, std::uint64_t bit_width,
+      bool is_signed, bool is_four_state) -> PackedArray;
+
   // Width-aware conversion. Constructs a fresh PackedArray of the
   // destination shape and copies bits from `src`, sign- or zero-extending
   // per `src`'s signedness when widening, truncating when narrowing.

@@ -1,0 +1,12 @@
+id: cpp.sscanf_format_c
+tags: [cpp_run]
+input:
+  command: [run, cpp]
+  project: false
+  top: Top
+  files: [main.sv]
+expect:
+  exit: 0
+  variables:
+    code: 1
+    b: 65          # ASCII 'A'

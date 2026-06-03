@@ -1,0 +1,12 @@
+id: errors.sscanf_field_width
+tags: [cpp_run]
+input:
+  command: [run, cpp]
+  project: false
+  top: Top
+  files: [main.sv]
+expect:
+  exit: 1                  # `lyra run` catches the runtime error and exits 1
+  stderr:
+    contains:
+      - "field width and assignment suppression are not yet supported"
