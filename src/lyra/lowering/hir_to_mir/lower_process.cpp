@@ -118,6 +118,16 @@ auto LowerProcess(
 
 namespace {
 
+auto LowerSubroutineKind(hir::SubroutineKind kind) -> mir::SubroutineKind {
+  switch (kind) {
+    case hir::SubroutineKind::kTask:
+      return mir::SubroutineKind::kTask;
+    case hir::SubroutineKind::kFunction:
+      return mir::SubroutineKind::kFunction;
+  }
+  throw InternalError("LowerSubroutineKind: unknown hir::SubroutineKind");
+}
+
 auto LowerParamDirection(hir::ParamDirection dir) -> mir::ParamDirection {
   switch (dir) {
     case hir::ParamDirection::kInput:
@@ -210,6 +220,7 @@ auto LowerStructuralSubroutine(
   std::vector<mir::StaticLocal> static_locals = proc_state.TakeStaticLocals();
   return mir::StructuralSubroutineDecl{
       .name = src.name,
+      .kind = LowerSubroutineKind(src.kind),
       .result_type = result_type,
       .params = std::move(params),
       .root_procedural_scope = body_scope_state.Finish(),
