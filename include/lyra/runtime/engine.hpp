@@ -73,6 +73,7 @@ class Engine {
   }
 
   void SubmitNba(std::function<void()> closure);
+  void SubmitPostponed(std::function<void()> closure);
 
   void TriggerValueChange(
       Observable& observable, const EdgeClassifier& classify);
@@ -103,14 +104,12 @@ class Engine {
   }
 
  private:
-  struct PostponedWorkItem {};
-
   struct SchedulerQueues {
     std::deque<CoroutineHandle> active;
     std::deque<CoroutineHandle> inactive;
     std::vector<CoroutineHandle> next_delta;
     std::vector<std::function<void()>> nba;
-    std::vector<PostponedWorkItem> postponed;
+    std::vector<std::function<void()>> postponed;
     std::map<SimTime, std::vector<CoroutineHandle>> delayed;
     std::vector<CoroutineHandle> finals;
   };

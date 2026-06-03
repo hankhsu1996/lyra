@@ -101,12 +101,12 @@ struct CallExpr {
 
 using RuntimeCall = std::variant<
     RuntimePrintCall, RuntimeDiagnosticCall, RuntimeFinishCall,
-    RuntimeSubmitObservedCall, RuntimeSubmitNbaCall, RuntimeFileOpenCall,
-    RuntimeFileCloseCall, RuntimeFileGetcCall, RuntimeFileUngetcCall,
-    RuntimeFileGetsCall, RuntimeFileReadCall, RuntimeFileSeekCall,
-    RuntimeFileRewindCall, RuntimeFileTellCall, RuntimeFileEofCall,
-    RuntimeFileErrorCall, RuntimeFileFlushCall, RuntimeScanCall,
-    RuntimeSFormatCall>;
+    RuntimeSubmitObservedCall, RuntimeSubmitNbaCall, RuntimeSubmitPostponedCall,
+    RuntimeFileOpenCall, RuntimeFileCloseCall, RuntimeFileGetcCall,
+    RuntimeFileUngetcCall, RuntimeFileGetsCall, RuntimeFileReadCall,
+    RuntimeFileSeekCall, RuntimeFileRewindCall, RuntimeFileTellCall,
+    RuntimeFileEofCall, RuntimeFileErrorCall, RuntimeFileFlushCall,
+    RuntimeScanCall, RuntimeSFormatCall>;
 
 struct RuntimeCallExpr {
   RuntimeCall call;

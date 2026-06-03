@@ -48,6 +48,7 @@ class RuntimeServices {
   }
 
   void SubmitNba(std::function<void()> closure);
+  void SubmitPostponed(std::function<void()> closure);
 
   void TriggerValueChange(
       Observable& observable, const EdgeClassifier& classify);

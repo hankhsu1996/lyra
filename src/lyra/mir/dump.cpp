@@ -745,6 +745,12 @@ class MirDumper {
                             "RuntimeSubmitNbaCall closure=Expr[{}]",
                             nc.closure.value));
                   },
+                  [&](const RuntimeSubmitPostponedCall& pc) {
+                    Line("RuntimeSubmitPostponedCall");
+                    Indent();
+                    DumpRuntimePrintCallItems(pc.print, scope);
+                    Dedent();
+                  },
                   [&](const RuntimeFileOpenCall& fo) {
                     Line(
                         std::format(
