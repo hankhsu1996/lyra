@@ -164,6 +164,20 @@ auto MakeExternalUnitOwningType(
   return unit_state.AddType(mir::OwningPtrType{.pointee = object_type});
 }
 
+// Builds an external-unit member type: an owning pointer to the unit's object,
+// wrapped in one vector layer per array dimension (`num_dims == 0` is a scalar
+// instance). The backend materializes the nested vector by replication.
+auto MakeExternalUnitMemberType(
+    UnitLoweringState& unit_state, std::string unit_name, std::size_t num_dims)
+    -> mir::TypeId {
+  mir::TypeId type =
+      MakeExternalUnitOwningType(unit_state, std::move(unit_name));
+  for (std::size_t i = 0; i < num_dims; ++i) {
+    type = unit_state.AddType(mir::VectorType{.element = type});
+  }
+  return type;
+}
+
 void InstallInstanceMembers(
     UnitLoweringState& unit_state, StructuralScopeLoweringState& scope_state,
     const hir::StructuralScope& scope,
@@ -176,19 +190,22 @@ void InstallInstanceMembers(
             "declaration in the enclosing scope");
       }
     }
-    const mir::TypeId var_type =
-        MakeExternalUnitOwningType(unit_state, im.target_unit);
+    const mir::TypeId var_type = MakeExternalUnitMemberType(
+        unit_state, im.target_unit, im.array_dims.size());
     const mir::ExprId init =
         SynthesizeDefaultValueExpr(unit_state, ctor_scope_state, var_type);
     const mir::StructuralVarId var_id = scope_state.AddStructuralVar(
         mir::StructuralVarDecl{
             .name = im.instance_name, .type = var_type, .initializer = init});
+
     const mir::StmtId sid = ctor_scope_state.AddStmt(
         mir::Stmt{
             .label = std::nullopt,
             .data =
                 mir::ConstructExternalUnitStmt{
-                    .target = var_id, .unit_name = im.target_unit},
+                    .target = var_id,
+                    .unit_name = im.target_unit,
+                    .dims = im.array_dims},
             .child_procedural_scopes = {}});
     ctor_scope_state.AddRootStmt(sid);
   }

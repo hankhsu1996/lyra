@@ -835,10 +835,14 @@ class HirDumper {
     }
     for (std::size_t i = 0; i < s.instance_members.size(); ++i) {
       const auto& im = s.instance_members[i];
+      std::string array_suffix;
+      for (const auto dim : im.array_dims) {
+        array_suffix += std::format("[{}]", dim);
+      }
       Line(
           std::format(
-              "InstanceMember[{}] \"{}\" : {}", i, im.instance_name,
-              im.target_unit));
+              "InstanceMember[{}] \"{}\"{} : {}", i, im.instance_name,
+              array_suffix, im.target_unit));
     }
     Dedent();
     scope_stack_.pop_back();

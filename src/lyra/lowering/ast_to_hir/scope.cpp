@@ -251,7 +251,35 @@ auto LowerInstanceMemberInto(
   scope_state.AddInstanceMember(
       hir::InstanceMemberDecl{
           .instance_name = std::string{inst.name},
-          .target_unit = std::string{inst.getDefinition().name}});
+          .target_unit = std::string{inst.getDefinition().name},
+          .array_dims = {}});
+  return {};
+}
+
+auto LowerInstanceArrayMemberInto(
+    ScopeLoweringState& scope_state,
+    const slang::ast::InstanceArraySymbol& array) -> diag::Result<void> {
+  // Each nested InstanceArray level contributes one dimension; the descent
+  // bottoms out at the per-element instance, which names the target unit. A
+  // zero-element level (`Child c[0:-1]`, LRM 23.3.2) has no element to descend
+  // into or to name the unit from and constructs nothing, so it contributes no
+  // member.
+  std::vector<std::uint32_t> dims;
+  const slang::ast::Symbol* level = &array;
+  while (level->kind == slang::ast::SymbolKind::InstanceArray) {
+    const auto& arr = level->as<slang::ast::InstanceArraySymbol>();
+    if (arr.elements.empty()) {
+      return {};
+    }
+    dims.push_back(static_cast<std::uint32_t>(arr.elements.size()));
+    level = arr.elements.front();
+  }
+  const auto& leaf = level->as<slang::ast::InstanceSymbol>();
+  scope_state.AddInstanceMember(
+      hir::InstanceMemberDecl{
+          .instance_name = std::string{array.name},
+          .target_unit = std::string{leaf.getDefinition().name},
+          .array_dims = std::move(dims)});
   return {};
 }
 
@@ -290,6 +318,9 @@ auto LowerScopeMemberInto(
     case slang::ast::SymbolKind::Instance:
       return LowerInstanceMemberInto(
           scope_state, member.as<slang::ast::InstanceSymbol>());
+    case slang::ast::SymbolKind::InstanceArray:
+      return LowerInstanceArrayMemberInto(
+          scope_state, member.as<slang::ast::InstanceArraySymbol>());
     default:
       return {};
   }

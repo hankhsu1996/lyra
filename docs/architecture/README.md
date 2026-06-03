@@ -39,13 +39,16 @@ If you are looking for a concept, this table points to the canonical doc.
 | Pipeline (HIR -> MIR -> LIR -> LLVM IR); compile-time vs runtime split    | `compiler_overview.md`      |
 | Compilation unit; class-level artifacts; instance records                 | `compilation_unit_model.md` |
 | Constructor vs simulation execution contexts; structural vs process       | `runtime_model.md`          |
+| Storage and binding vs construction; type-driven member walk              | `runtime_model.md`          |
 | Generate as constructor-time logic; object graph shape                    | `hierarchy_and_generate.md` |
+| Instance array as a data type; multiplicity vs generate axes              | `hierarchy_and_generate.md` |
 | Intra-unit vs cross-unit references; compile-time vs construction resolve | `reference_resolution.md`   |
 | Parameter values, specialization keys, per-specialization artifacts       | `specialization_model.md`   |
 | Identity rules; ownership; forbidden identity shapes                      | `identity_and_ownership.md` |
 | Lowering permissions (what each lowering may and may not do)              | `lowering_boundaries.md`    |
 | HIR shape (statements, expressions, primaries)                            | `hir.md`                    |
 | MIR shape (objects, members, callables, closures)                         | `mir.md`                    |
+| Member and type model; object types; owning pointer; vector wrapper       | `mir.md`                    |
 | LIR shape (CFG, basic blocks, storage)                                    | `lir.md`                    |
 | Stratified scheduler; regions; suspension protocol; NBA / closure submit  | `scheduling.md`             |
 | Incremental compilation; query-based caching                              | `incremental_build.md`      |

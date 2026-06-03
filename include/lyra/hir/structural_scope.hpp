@@ -42,10 +42,13 @@ struct InstanceMemberId {
 
 // `target_unit` is a cross-unit reference -- the name of the instantiated unit,
 // resolved by name at link time, a distinct domain from the unit-local id
-// kinds.
+// kinds. `array_dims` is empty for a scalar instance and holds one element
+// count per dimension, outermost first, for an instance array (`Child c[2][3]`
+// is `{2, 3}`).
 struct InstanceMemberDecl {
   std::string instance_name;
   std::string target_unit;
+  std::vector<std::uint32_t> array_dims;
 };
 
 struct IfGenerate {
