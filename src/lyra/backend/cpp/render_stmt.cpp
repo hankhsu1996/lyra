@@ -320,7 +320,7 @@ auto RenderStmt(
           [&](const mir::DelayStmt& s) -> diag::Result<std::string> {
             return Indent(indent) +
                    "co_await lyra::runtime::Delay(Services(), " +
-                   std::to_string(s.duration) + ");\n";
+                   std::to_string(s.duration) + ", kTimePrecisionPower);\n";
           },
           [&](const mir::ProceduralVarDeclStmt& s)
               -> diag::Result<std::string> {

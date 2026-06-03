@@ -577,6 +577,7 @@ auto LowerStructuralScope(
     -> diag::Result<mir::StructuralScope> {
   mir::StructuralScope mir_scope{
       .name = std::move(name),
+      .time_resolution = scope.time_resolution,
       .structural_params = {},
       .structural_vars = {},
       .cross_unit_refs = {},

@@ -58,4 +58,12 @@ auto RuntimeServices::Now() const -> SimTime {
   return engine_->Now();
 }
 
+auto RuntimeServices::GlobalPrecisionPower() const -> std::int8_t {
+  if (engine_ == nullptr) {
+    throw InternalError(
+        "RuntimeServices::GlobalPrecisionPower: no Engine bound");
+  }
+  return engine_->GlobalPrecisionPower();
+}
+
 }  // namespace lyra::runtime

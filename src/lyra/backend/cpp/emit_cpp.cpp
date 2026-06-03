@@ -264,6 +264,18 @@ auto RenderScopeAsClass(
          " {\n";
   out += Indent(indent) + " public:\n";
 
+  // The scope's own time precision (LRM 3.14.2). The engine takes the minimum
+  // across the tree as the design-global tick (LRM 3.14.3); a delay in this
+  // scope scales from this precision to that tick.
+  out += Indent(indent + 1) +
+         "static constexpr std::int8_t kTimePrecisionPower = " +
+         std::to_string(static_cast<int>(s.time_resolution.precision_power)) +
+         ";\n";
+  out += Indent(indent + 1) +
+         "auto TimePrecisionPower() const -> std::int8_t override {\n";
+  out += Indent(indent + 2) + "return kTimePrecisionPower;\n";
+  out += Indent(indent + 1) + "}\n\n";
+
   for (const auto& child : s.child_structural_scopes) {
     auto child_or =
         RenderScopeAsClass(unit, child, indent + 1, false, &this_anchor);

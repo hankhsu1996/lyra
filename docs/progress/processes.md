@@ -14,7 +14,6 @@ machinery owned by other workstreams; see [Blocked](#blocked).
 
 | Item   | Blocked on                                                                                                                                                            |
 | ------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| P8     | `fork` / `join_*`. Needs concurrent-process scheduling primitives; out of scope until single-process work is settled.                                                 |
 | P12    | Process generate; rides on the existing P1..P11 surface, mostly frontend elaboration.                                                                                 |
 | T2..T5 | Compound event expressions (concatenation, arithmetic, dynamic index): needs the snapshot + re-eval wrapper at HIR -> MIR plus a runtime edge-classifier helper.      |
 | T2..T5 | Ascending / negative-base packed ranges (`logic [0:7]`, `logic [-1:6]`): runtime `PackedArray::ElementAt` does not yet honor LRM direction translation on write side. |
@@ -78,10 +77,9 @@ machinery owned by other workstreams; see [Blocked](#blocked).
 
 ### Concurrency
 
-- [ ] P8 -- `fork` / `join` / `join_any` / `join_none` (LRM 9.3). Spawns child coroutines; parent
-      suspends until the join condition is met. Distinct from every other procedural construct
-      because the body produces multiple parallel threads. Deferred until the single-process surface
-      is settled.
+- [ ] P8 -- `fork` / `join` / `join_any` / `join_none` (LRM 9.3). Spawns concurrent processes; the
+      parent resumes per the join condition. Now tracked in its own workstream (`fork-join.md`),
+      unblocked: the single-process timing surface (T1, T2..T5, P9, P11) is settled.
 
 ### Generate
 

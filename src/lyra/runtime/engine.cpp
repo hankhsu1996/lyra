@@ -1,6 +1,8 @@
 #include "lyra/runtime/engine.hpp"
 
+#include <algorithm>
 #include <cstddef>
+#include <cstdint>
 #include <iostream>
 #include <limits>
 #include <memory>
@@ -49,6 +51,7 @@ void Engine::BindDesign(std::span<const TopBinding> tops) {
 
 auto Engine::Run() -> int {
   EnsureReadyToRun();
+  ResolveGlobalTimePrecision();
   RegisterProcesses();
 
   while (HasScheduledWork() && !finished_) {
@@ -77,6 +80,20 @@ void Engine::EnsureReadyToRun() {
     throw InternalError("Engine::Run called more than once");
   }
   ran_ = true;
+}
+
+void Engine::ResolveGlobalTimePrecision() {
+  bool found = false;
+  std::int8_t min_power = kDefaultTimePrecisionPower;
+  WalkScopePreOrder(*root_, [&](Scope& scope) {
+    const std::int8_t power = scope.TimePrecisionPower();
+    if (power == kUnspecifiedTimePrecisionPower) {
+      return;
+    }
+    min_power = found ? std::min(min_power, power) : power;
+    found = true;
+  });
+  global_precision_power_ = found ? min_power : kDefaultTimePrecisionPower;
 }
 
 void Engine::RegisterProcesses() {

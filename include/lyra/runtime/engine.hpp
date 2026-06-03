@@ -98,6 +98,9 @@ class Engine {
   [[nodiscard]] auto Now() const -> SimTime {
     return now_;
   }
+  [[nodiscard]] auto GlobalPrecisionPower() const -> std::int8_t {
+    return global_precision_power_;
+  }
 
  private:
   struct PostponedWorkItem {};
@@ -116,6 +119,10 @@ class Engine {
   static constexpr std::size_t kMaxDeltaCyclesPerTimeSlot = 10000;
 
   void EnsureReadyToRun();
+  // Fixes the design-global time precision (LRM 3.14.3) as the minimum declared
+  // precision across the bound scope tree. The simulation tick; delays scale to
+  // it.
+  void ResolveGlobalTimePrecision();
   void RegisterProcesses();
   void RunProcess(CoroutineHandle handle);
   void DrainRunnableQueue(std::deque<CoroutineHandle>& queue);
@@ -152,6 +159,7 @@ class Engine {
   std::unique_ptr<Scope> root_;
   SchedulerQueues queues_;
   SimTime now_ = 0;
+  std::int8_t global_precision_power_ = kDefaultTimePrecisionPower;
   SchedulerPhase phase_ = SchedulerPhase::kIdle;
   std::size_t current_delta_ = 0;
   bool bound_ = false;
