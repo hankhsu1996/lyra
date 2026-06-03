@@ -75,9 +75,9 @@ suspend
 ```
 
 The runtime extends `Trigger`, `Observable::Waiter`, and the `Observable::Subscribe` API to carry
-`(lsb_bit_offset, bit_width, edge)` per waiter. `WriteVar` on `Var<PackedArray>` snapshots
-`var.Get()` before the assignment, then invokes a per-leaf classifier that compares
-`old.ExtractBits(lsb, width)` against `new.ExtractBits(lsb, width)` for any-change waiters and
+`(lsb_bit_offset, bit_width, edge)` per waiter. `Var<PackedArray>::Set` snapshots `var.Get()` before
+the assignment, then invokes a per-leaf classifier that compares `old.ExtractBits(lsb, width)`
+against `new.ExtractBits(lsb, width)` for any-change waiters and
 `ClassifyEdge(old.GetBit(lsb), new.GetBit(lsb))` for edge waiters. The classifier is type-erased via
 `std::function`; the `Observable` itself stays value-type agnostic.
 

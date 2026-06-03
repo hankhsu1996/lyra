@@ -870,11 +870,13 @@ auto LowerHirCallExprProc(
             // copy-in-copy-out at statement position (see LowerExprStmt).
             // Reaching it here means the call is a nested expression operand,
             // where the copy-out statement has nowhere to be sequenced; that
-            // form is not yet supported.
+            // form is not yet supported. ref / const ref alias the actual and
+            // copy nothing back (LRM 13.5.2), so they are fine as operands and
+            // fall through to the value-only argument lowering below.
             const hir::StructuralSubroutineDecl& decl =
                 scope_state.LookupHirSubroutine(usr.hops, usr.subroutine);
             for (const auto& param : decl.params) {
-              if (param.direction != hir::ParamDirection::kInput) {
+              if (hir::RequiresWriteback(param.direction)) {
                 return diag::Unsupported(
                     span, diag::DiagCode::kUnsupportedSubroutineArgument,
                     "a call with output / inout arguments is only supported "

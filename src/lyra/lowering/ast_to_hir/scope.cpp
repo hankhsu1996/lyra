@@ -111,9 +111,12 @@ auto LowerVariableMemberInto(
   return {};
 }
 
-auto FromSlangArgumentDirection(slang::ast::ArgumentDirection dir)
+// slang has no ConstRef direction (LRM 13.5.2): a `const ref` formal carries
+// direction Ref with the Const variable flag, so the const-ness must be read
+// off the formal rather than the direction enum alone.
+auto ParamDirectionOf(const slang::ast::FormalArgumentSymbol& formal)
     -> hir::ParamDirection {
-  switch (dir) {
+  switch (formal.direction) {
     case slang::ast::ArgumentDirection::In:
       return hir::ParamDirection::kInput;
     case slang::ast::ArgumentDirection::Out:
@@ -121,9 +124,11 @@ auto FromSlangArgumentDirection(slang::ast::ArgumentDirection dir)
     case slang::ast::ArgumentDirection::InOut:
       return hir::ParamDirection::kInOut;
     case slang::ast::ArgumentDirection::Ref:
-      return hir::ParamDirection::kRef;
+      return formal.flags.has(slang::ast::VariableFlags::Const)
+                 ? hir::ParamDirection::kConstRef
+                 : hir::ParamDirection::kRef;
   }
-  throw InternalError("FromSlangArgumentDirection: unknown ArgumentDirection");
+  throw InternalError("ParamDirectionOf: unknown ArgumentDirection");
 }
 
 auto LowerSubroutineMemberInto(
@@ -152,8 +157,7 @@ auto LowerSubroutineMemberInto(
         sub_state.AddProceduralVar(*formal, *formal_type_or);
     params.push_back(
         hir::SubroutineParam{
-            .var = var,
-            .direction = FromSlangArgumentDirection(formal->direction)});
+            .var = var, .direction = ParamDirectionOf(*formal)});
   }
 
   // LRM 13.4.1: a non-void function implicitly declares a body-local variable

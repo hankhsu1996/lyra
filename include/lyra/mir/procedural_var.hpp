@@ -24,10 +24,21 @@ enum class VariableLifetime : std::uint8_t {
   kAutomatic,
 };
 
+// LRM 13.5.2 pass-by-reference. A kValue var owns its storage; a kReference var
+// (a `ref` / `const ref` formal) is an alias to the actual's cell, so the
+// backend renders it as a `Ref<T>` and reads / writes route through the
+// actual's own access path. The backend distinguishes the two read / write
+// renderings on this axis.
+enum class VariableBinding : std::uint8_t {
+  kValue,
+  kReference,
+};
+
 struct ProceduralVarDecl {
   std::string name;
   TypeId type;
   VariableLifetime lifetime = VariableLifetime::kAutomatic;
+  VariableBinding binding = VariableBinding::kValue;
 };
 
 }  // namespace lyra::mir
