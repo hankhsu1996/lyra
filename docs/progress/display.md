@@ -45,6 +45,14 @@ since the test harness can only probe a variable whose type has an implemented s
       matched outputs). `$sscanf` takes a string or string-literal input; `$fscanf` takes an int FD,
       honours "offending input character is left unread" via the underlying FD's putback buffer, and
       stamps `$ferror` on invalid / closed descriptors.
+- [x] DI9 -- `$sformat` / `$sformatf` / `$swrite` family (LRM 21.3.3). Six subroutines: `$swrite` /
+      `$swriteb` / `$swriteh` / `$swriteo` with auto-format (per-task default radix per LRM
+      21.2.1.1), `$sformat` with explicit literal format, and `$sformatf` returning the formatted
+      string as a function result. Reuses the print engine's literal-format walker and the
+      `value::FormatValue` runtime so the conversion-spec set is identical to `$display` / `$write`
+      (`%d` / `%h` / `%x` / `%b` / `%o` / `%s` / `%c` / `%%` / `%p` / `%0p` / `%f` / `%e` / `%g`
+      plus width / precision / zero-pad / left-align modifiers). No newline appended (LRM 21.3.3 is
+      a string-producer; newline policy belongs to the display / write family).
 
 ## Scan family follow-ups
 
@@ -68,6 +76,20 @@ close as the corresponding behaviour lands.
 - [ ] `$fseek` / `$rewind` cancelling pending `$ungetc` operations (LRM 21.3.5). Independent
       file-positioning gap; not triggered by the scan family but shares the FD surface.
 
+## String-format family follow-ups
+
+Tracks remaining LRM 21.3.3 corners explicitly rejected by `$sformat` / `$sformatf` / `$swrite*`.
+Each item is a user-observable feature gap (lowering-time `diag::Unsupported`) that should close as
+the corresponding behaviour lands.
+
+- [ ] Runtime-evaluated format string for `$sformat` / `$sformatf` (LRM 21.3.3 NOTE: format string
+      may be a non-constant expression). Non-literal format expressions are rejected at lowering; a
+      runtime-side format parser is the prerequisite.
+- [ ] `$sformat` / `$swrite*` output_var of integral or unpacked-array-of-byte type (LRM 21.3.3 +
+      LRM 5.9 assignment rules). Today only string-typed output_var is accepted.
+- [ ] `$sformat` / `$sformatf` format_string of integral or unpacked-array-of-byte type (LRM
+      21.3.3). Shares the runtime-format-parser blocker with the first item.
+
 ## Out of Scope
 
 - Format-string parse diagnostics (trailing `%`, missing specifier, width overflow, unknown
@@ -77,7 +99,5 @@ close as the corresponding behaviour lands.
   strobe's "drain at end of time slot" semantic waits on DI6 (postponed region).
 - Other file read tasks (`$fgetc` / `$ungetc` / `$fgets` / `$fread` / `$fseek` / `$rewind` /
   `$ftell` / `$feof` / `$ferror` / `$fflush`) are implemented per LRM 21.3.4..21.3.8.
-- `$sformat` / `$sformatf` / `$swrite` family (formatting into a string variable). Independent
-  feature.
 - `%u` / `%z` (binary-packed unsigned / signed) and `%v` (strength). Not on the immediate roadmap;
   add entries when concrete consumers appear.

@@ -33,6 +33,7 @@ enum class SystemSubroutineKind : std::uint8_t {
 enum class ReturnConvention : std::uint8_t {
   kVoid,
   kInt32,
+  kString,
 };
 
 struct ArgCountPolicy {
@@ -122,10 +123,23 @@ struct ScanSystemSubroutineInfo {
   ScanSourceKind source;
 };
 
+// LRM 21.3.3 string-format family. The conversion engine is shared with
+// $display / $write; this descriptor only carries the axes the lowering
+// pass needs to dispatch correctly: the default radix for the auto-format
+// $swrite* variants, whether an explicit format string is expected
+// (false for $swrite*, true for $sformat / $sformatf), and whether the
+// call carries an output-var arg (true for $sformat / $swrite*, false
+// for $sformatf which yields its result as the call's rvalue).
+struct SFormatSystemSubroutineInfo {
+  PrintRadix radix;
+  bool expects_format_string;
+  bool has_output_arg;
+};
+
 using SystemSubroutineSemantic = std::variant<
     PrintSystemSubroutineInfo, TerminationSystemSubroutineInfo,
     DiagnosticSystemSubroutineInfo, FileIOSystemSubroutineInfo,
-    ScanSystemSubroutineInfo>;
+    ScanSystemSubroutineInfo, SFormatSystemSubroutineInfo>;
 
 struct SystemSubroutineDesc {
   SystemSubroutineId id;
@@ -534,6 +548,84 @@ inline constexpr std::array kSystemSubroutines = {
         .arg_policy = ArgCountPolicy{.min_args = 3, .max_args = 255},
         .semantic = ScanSystemSubroutineInfo{.source = ScanSourceKind::kFile},
     },
+    SystemSubroutineDesc{
+        .id = SystemSubroutineId{34},
+        .name = "$swrite",
+        .origin = SystemSubroutineOrigin::kLanguageBuiltin,
+        .kind = SystemSubroutineKind::kTask,
+        .result_conv = ReturnConvention::kVoid,
+        .arg_policy = ArgCountPolicy{.min_args = 1, .max_args = 255},
+        .semantic =
+            SFormatSystemSubroutineInfo{
+                .radix = PrintRadix::kDecimal,
+                .expects_format_string = false,
+                .has_output_arg = true},
+    },
+    SystemSubroutineDesc{
+        .id = SystemSubroutineId{35},
+        .name = "$swriteb",
+        .origin = SystemSubroutineOrigin::kLanguageBuiltin,
+        .kind = SystemSubroutineKind::kTask,
+        .result_conv = ReturnConvention::kVoid,
+        .arg_policy = ArgCountPolicy{.min_args = 1, .max_args = 255},
+        .semantic =
+            SFormatSystemSubroutineInfo{
+                .radix = PrintRadix::kBinary,
+                .expects_format_string = false,
+                .has_output_arg = true},
+    },
+    SystemSubroutineDesc{
+        .id = SystemSubroutineId{36},
+        .name = "$swriteh",
+        .origin = SystemSubroutineOrigin::kLanguageBuiltin,
+        .kind = SystemSubroutineKind::kTask,
+        .result_conv = ReturnConvention::kVoid,
+        .arg_policy = ArgCountPolicy{.min_args = 1, .max_args = 255},
+        .semantic =
+            SFormatSystemSubroutineInfo{
+                .radix = PrintRadix::kHex,
+                .expects_format_string = false,
+                .has_output_arg = true},
+    },
+    SystemSubroutineDesc{
+        .id = SystemSubroutineId{37},
+        .name = "$swriteo",
+        .origin = SystemSubroutineOrigin::kLanguageBuiltin,
+        .kind = SystemSubroutineKind::kTask,
+        .result_conv = ReturnConvention::kVoid,
+        .arg_policy = ArgCountPolicy{.min_args = 1, .max_args = 255},
+        .semantic =
+            SFormatSystemSubroutineInfo{
+                .radix = PrintRadix::kOctal,
+                .expects_format_string = false,
+                .has_output_arg = true},
+    },
+    SystemSubroutineDesc{
+        .id = SystemSubroutineId{38},
+        .name = "$sformat",
+        .origin = SystemSubroutineOrigin::kLanguageBuiltin,
+        .kind = SystemSubroutineKind::kTask,
+        .result_conv = ReturnConvention::kVoid,
+        .arg_policy = ArgCountPolicy{.min_args = 2, .max_args = 255},
+        .semantic =
+            SFormatSystemSubroutineInfo{
+                .radix = PrintRadix::kDecimal,
+                .expects_format_string = true,
+                .has_output_arg = true},
+    },
+    SystemSubroutineDesc{
+        .id = SystemSubroutineId{39},
+        .name = "$sformatf",
+        .origin = SystemSubroutineOrigin::kLanguageBuiltin,
+        .kind = SystemSubroutineKind::kFunction,
+        .result_conv = ReturnConvention::kString,
+        .arg_policy = ArgCountPolicy{.min_args = 1, .max_args = 255},
+        .semantic =
+            SFormatSystemSubroutineInfo{
+                .radix = PrintRadix::kDecimal,
+                .expects_format_string = true,
+                .has_output_arg = false},
+    },
 };
 
 }  // namespace detail
@@ -576,6 +668,11 @@ inline constexpr std::array kSystemSubroutines = {
 [[nodiscard]] inline auto GetScanInfo(const SystemSubroutineDesc& desc)
     -> const ScanSystemSubroutineInfo* {
   return std::get_if<ScanSystemSubroutineInfo>(&desc.semantic);
+}
+
+[[nodiscard]] inline auto GetSFormatInfo(const SystemSubroutineDesc& desc)
+    -> const SFormatSystemSubroutineInfo* {
+  return std::get_if<SFormatSystemSubroutineInfo>(&desc.semantic);
 }
 
 }  // namespace lyra::support

@@ -198,6 +198,8 @@ auto MakeReturnConventionType(
       return unit_state.VoidTypeId();
     case support::ReturnConvention::kInt32:
       return unit_state.Int32TypeId();
+    case support::ReturnConvention::kString:
+      return unit_state.StringTypeId();
   }
   throw InternalError("MakeReturnConventionType: unknown ReturnConvention");
 }

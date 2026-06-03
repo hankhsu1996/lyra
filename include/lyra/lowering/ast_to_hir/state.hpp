@@ -79,6 +79,7 @@ class UnitLoweringState {
             .signedness = hir::Signedness::kSigned,
             .dims = {hir::PackedRange{.left = 31, .right = 0}},
             .form = hir::PackedArrayForm::kInt}});
+    string_type_id_ = AddType(hir::TypeData{hir::StringType{}});
   }
 
   // Canonical id for the synthesized `void` type (system-call sinks, lvalue
@@ -93,6 +94,13 @@ class UnitLoweringState {
   // (`$fopen` per LRM 21.3.1, etc.) rather than by a slang-derived type.
   [[nodiscard]] auto Int32TypeId() const -> hir::TypeId {
     return int32_type_id_;
+  }
+
+  // Canonical id for the synthesized `string` type. Used by system functions
+  // whose return is fixed at `string` by the language (`$sformatf` per LRM
+  // 21.3.3) rather than by a slang-derived type.
+  [[nodiscard]] auto StringTypeId() const -> hir::TypeId {
+    return string_type_id_;
   }
 
   [[nodiscard]] auto HirUnit() const -> const hir::ModuleUnit& {
@@ -203,6 +211,7 @@ class UnitLoweringState {
   std::unordered_map<const slang::ast::Type*, hir::TypeId> type_cache_;
   hir::TypeId void_type_id_{};
   hir::TypeId int32_type_id_{};
+  hir::TypeId string_type_id_{};
 };
 
 class ScopeStack {

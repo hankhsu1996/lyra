@@ -1,0 +1,13 @@
+id: cpp.sformatf_basics
+tags: [cpp_run]
+input:
+  command: [run, cpp]
+  project: false
+  top: Top
+  files: [main.sv]
+expect:
+  exit: 0
+  variables:
+    s_assign: "x=42"
+    branch_taken: 1
+    s_passed: "[2a]"

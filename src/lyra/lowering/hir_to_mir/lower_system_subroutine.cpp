@@ -12,6 +12,7 @@
 #include "lyra/lowering/hir_to_mir/lower_finish.hpp"
 #include "lyra/lowering/hir_to_mir/lower_print.hpp"
 #include "lyra/lowering/hir_to_mir/lower_scan.hpp"
+#include "lyra/lowering/hir_to_mir/lower_sformat.hpp"
 #include "lyra/lowering/hir_to_mir/state.hpp"
 #include "lyra/mir/expr.hpp"
 #include "lyra/support/system_subroutine.hpp"
@@ -57,6 +58,12 @@ auto LowerSystemSubroutineCall(
             return LowerScanSystemSubroutineCall(
                 unit_state, scope_state, proc_state, proc_scope_state, hir_proc,
                 call, desc, scan, span);
+          },
+          [&](const support::SFormatSystemSubroutineInfo& sformat)
+              -> diag::Result<mir::Expr> {
+            return LowerSFormatSystemSubroutineCall(
+                unit_state, scope_state, proc_state, proc_scope_state, hir_proc,
+                call, sformat, span);
           },
       },
       desc.semantic);
