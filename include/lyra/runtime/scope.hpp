@@ -16,6 +16,11 @@ namespace lyra::runtime {
 
 class RuntimeServices;
 
+// Returned by a scope that declares no timescale of its own (the synthetic
+// `$root`). The engine's design-global precision minimum ignores it, so a
+// purely structural node does not pull the simulation tick finer.
+inline constexpr std::int8_t kUnspecifiedTimePrecisionPower = 127;
+
 // A node in the one canonical object tree. Every constructed SystemVerilog
 // scope -- a module instance, a generate block, the implicit `$root` -- is a
 // Scope. It carries the scope's identity (name, parent), the services handle
@@ -34,6 +39,14 @@ class Scope {
 
   [[nodiscard]] auto Parent() const -> Scope*;
   [[nodiscard]] auto Name() const -> std::string_view;
+
+  // The scope's declared time precision as a power of ten (LRM Table 20-2).
+  // A scope that declares a timescale overrides this; the base returns the
+  // unspecified sentinel. The engine takes the minimum across the tree to fix
+  // the design-global precision (LRM 3.14.3).
+  [[nodiscard]] virtual auto TimePrecisionPower() const -> std::int8_t {
+    return kUnspecifiedTimePrecisionPower;
+  }
 
   // Wires the services handle, creates this scope's processes, then recurses
   // into the children. Identity (name, parent, kind-as-type) is already fixed

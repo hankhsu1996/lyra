@@ -125,6 +125,9 @@ enum class EventEdge : std::uint8_t {
 // family: those are data-dependency anchored, this one is clock anchored.
 // See `docs/decisions/event-control-unification.md` for the rationale.
 struct DelayStmt {
+  // `duration` is in the declaring scope's time-precision steps. The scope owns
+  // its precision (emitted as a class constant); the runtime scales from there
+  // to the design-global tick (LRM 3.14.3).
   SimDuration duration;
 };
 
