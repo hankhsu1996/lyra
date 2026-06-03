@@ -124,28 +124,34 @@ Unlocks `refs/hierarchical_refs`, `refs/upward_refs`, and `instantiation/hierarc
 
 ### Stage E -- Ports
 
-- [ ] E1 -- Port directions (input / output) and named port connections at the instantiation site.
-- [ ] E2 -- An input port reflects its parent-side source continuously: when the source changes, the
+- [x] E1 -- Port directions (input / output) and named or positional port connections at the
+      instantiation site. Landed for variable-typed ports as the implied continuous assignment
+      between the two objects' own storage (LRM 23.3.3).
+- [x] E2 -- An input port reflects its parent-side source continuously: when the source changes, the
       child sees the new value and its dependent processes re-evaluate.
-- [ ] E3 -- An output port propagates a child write so the parent-side target observes it.
-- [ ] E4 -- Expression-driven and constant-valued port connections.
+- [x] E3 -- An output port propagates a child write so the parent-side target observes it.
+- [x] E4 -- Expression-driven and constant-valued port connections. A constant connection drives the
+      port once at construction and then holds.
 - [ ] E5 -- Single-driver net-typed ports alongside variable-typed ports; both behave as continuous
       assignments between the two objects' own storage.
-- [ ] E6 -- Pass-through ports (a port forwarded into a deeper child while the module keeps its own
-      local state) and sibling-to-sibling connections through a shared parent signal.
+- [x] E6 -- Pass-through ports (a port forwarded into a deeper child while the module keeps its own
+      local state) and sibling-to-sibling connections through a shared parent signal. Landed for
+      variable-typed ports; both endpoints keep their own storage.
+- [ ] E7 -- A `ref` port aliases the connected variable as a hierarchical reference, sharing its
+      storage with no separate continuous assignment (LRM 23.3.3.2).
+- [ ] E8 -- An input port left unconnected takes its declared default value (LRM 23.2.2.4).
+- [ ] E9 -- A port connection on an instance array drives each element.
+- [ ] E10 -- A port connection whose type is non-integral (an unpacked struct or array).
 
 Unlocks the `ports/*` archive group.
 
 ## Open Questions
 
-- Relative order of Stage D and Stage E. Both sit on the Stage C substrate. Hierarchical references
-  exercise the read / write / sensitivity surface most directly and may be the cleaner forcing
-  function for C; ports add connection direction and continuous propagation on top. Ports are more
-  fundamental to real designs. Order to be decided when Stage C lands.
 - How much of the specialization-key classification (which inputs are code-shape-affecting) is
   pinned in A2 versus refined as later stages reveal more code-shape-affecting inputs.
-- Whether positional port connections and connection shorthands (`.*`, `.name` implicit) are in
-  scope for Stage E or deferred.
+- Connection shorthands (`.*`, `.name` implicit) resolve to the same connection set as explicit
+  named connections in the frontend; whether any need distinct handling is open. Positional and
+  explicit named connections are both supported.
 
 ## Out of Scope
 
