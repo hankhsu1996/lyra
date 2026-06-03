@@ -8,11 +8,4 @@ input:
 expect:
   exit: 0
   variables:
-    p_a7: 11
-    p_a6: 22
-    p_a5: 33
-    p_a4: 44
-    p_a3: 55
-    p_a2: 66
-    p_a1: 77
-    p_a0: 88
+    a: [11, 22, 33, 44, 55, 66, 77, 88]

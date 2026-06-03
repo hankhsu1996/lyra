@@ -227,6 +227,24 @@ auto FormatValue(const FormatSpec& spec, const RuntimeValueView& value)
             return ApplyStringWidth(
                 FormatRealBody(spec, static_cast<double>(v.value)), spec);
           },
+          [&](const UnpackedArrayValueView& v) -> std::string {
+            // LRM 21.2.1.6: aggregate operand prints as assignment pattern.
+            // Each element recurses through FormatValue with the same spec;
+            // the singular arms above implement the LRM per-type element
+            // rules (integral -> decimal, string -> quoted). Multi-dim
+            // composes naturally because nested elements are themselves
+            // UnpackedArrayValueView.
+            std::string out;
+            out += "'{";
+            for (std::size_t i = 0; i < v.elements.size(); ++i) {
+              if (i != 0) {
+                out += ", ";
+              }
+              out += FormatValue(spec, v.elements[i]);
+            }
+            out += "}";
+            return out;
+          },
       },
       value.data);
 }

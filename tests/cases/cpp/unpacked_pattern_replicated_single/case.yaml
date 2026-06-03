@@ -8,7 +8,4 @@ input:
 expect:
   exit: 0
   variables:
-    p0: 7
-    p1: 7
-    p2: 7
-    p3: 7
+    a: [7, 7, 7, 7]

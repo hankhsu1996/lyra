@@ -7,5 +7,5 @@ input:
   files: [main.sv]
 expect:
   exit: 0
-  stdout:
-    exact: "10\n20\n30\n"
+  variables:
+    a: [10, 20, 30]

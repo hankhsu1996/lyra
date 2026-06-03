@@ -8,8 +8,4 @@ input:
 expect:
   exit: 0
   variables:
-    p0: 1
-    p1: 0
-    p2: 2
-    p3: 0
-    p4: 0
+    a: [1, 0, 2, 0, 0]

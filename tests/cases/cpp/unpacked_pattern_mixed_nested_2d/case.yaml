@@ -8,9 +8,6 @@ input:
 expect:
   exit: 0
   variables:
-    p00: 1
-    p01: 2
-    p02: 3
-    p10: 0
-    p11: 0
-    p12: 0
+    a:
+      - [1, 2, 3]
+      - [0, 0, 0]

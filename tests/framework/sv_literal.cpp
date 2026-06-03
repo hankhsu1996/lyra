@@ -333,6 +333,16 @@ auto ExpectedValue::BuildView() const -> value::RuntimeValueView {
           .data = value::StringValueView{
               .data = string_value.data(),
               .size = static_cast<std::uint32_t>(string_value.size())}};
+    case ExpectedValueKind::kUnpackedArray: {
+      std::vector<value::RuntimeValueView> element_views;
+      element_views.reserve(elements.size());
+      for (const auto& e : elements) {
+        element_views.push_back(e.BuildView());
+      }
+      return value::RuntimeValueView{
+          .data = value::UnpackedArrayValueView{
+              .elements = std::move(element_views)}};
+    }
   }
   return value::RuntimeValueView{
       .data = value::IntegralValueView::Narrow(
