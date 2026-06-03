@@ -230,7 +230,7 @@ class UnitLoweringState {
   // HIR scope by TakeCrossUnitRefsForFrame when the scope finishes lowering.
   auto MapOrGetCrossUnitRef(
       const slang::ast::ValueSymbol& target, ScopeFrameId home_frame,
-      hir::InstanceMemberId instance, std::string target_member,
+      hir::InstanceMemberId instance, std::vector<std::string> member_path,
       hir::TypeId type) -> hir::CrossUnitRefId {
     if (const auto it = cross_unit_ref_dedup_.find(&target);
         it != cross_unit_ref_dedup_.end()) {
@@ -241,7 +241,7 @@ class UnitLoweringState {
     slots.push_back(
         hir::CrossUnitRefDecl{
             .instance = instance,
-            .target_member = std::move(target_member),
+            .member_path = std::move(member_path),
             .type = type});
     cross_unit_ref_dedup_.emplace(&target, id);
     return id;

@@ -17,12 +17,14 @@
 namespace lyra::mir {
 
 // A cross-unit reference resolved once at construction. `instance_var` is the
-// structural var holding the owned child instance; `target_member` is the
-// child's interface member name; `type` is the referenced member's type. The
-// backend stores a direct reference to `instance_var->target_member`.
+// structural var holding the owned child instance -- the head of the downward
+// path; `member_path` is the chain of member names from the head's child down
+// to the referenced leaf (`c.x` is `{"x"}`; `m.l.x` is `{"l", "x"}`); `type` is
+// the referenced leaf's type. The backend stores a direct reference to
+// `instance_var->...->leaf` by chaining `->` over the path.
 struct CrossUnitRefDecl {
   StructuralVarId instance_var;
-  std::string target_member;
+  std::vector<std::string> member_path;
   TypeId type;
 };
 

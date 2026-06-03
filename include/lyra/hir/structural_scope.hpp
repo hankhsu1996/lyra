@@ -43,13 +43,15 @@ struct InstanceMemberId {
 
 // A cross-unit reference resolved once at construction (see
 // reference_resolution.md). `instance` names the owned child instance member
-// this unit reaches into; `target_member` is the child's interface member name,
-// referenced by name across the unit boundary; `type` is the slang-resolved
-// type of the referenced member. The slot is read / written / observed through
-// a stored direct reference the constructor materializes.
+// this unit reaches into -- the head of the downward path. `member_path` is the
+// chain of member names from the head's child down to the referenced leaf,
+// referenced by name across the unit boundary (`c.x` is `{"x"}`; `m.l.x` is
+// `{"l", "x"}`). `type` is the slang-resolved type of the referenced leaf. The
+// slot is read / written / observed through a stored direct reference the
+// constructor materializes by chaining `->` over the path.
 struct CrossUnitRefDecl {
   InstanceMemberId instance;
-  std::string target_member;
+  std::vector<std::string> member_path;
   TypeId type;
 };
 

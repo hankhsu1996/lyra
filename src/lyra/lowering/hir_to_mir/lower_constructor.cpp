@@ -233,7 +233,7 @@ void InstallCrossUnitRefs(
     const mir::CrossUnitRefId slot = scope_state.AddCrossUnitRef(
         mir::CrossUnitRefDecl{
             .instance_var = instance_var,
-            .target_member = cu.target_member,
+            .member_path = cu.member_path,
             .type = unit_state.TranslateType(cu.type)});
     const mir::StmtId sid = ctor_scope_state.AddStmt(
         mir::Stmt{
