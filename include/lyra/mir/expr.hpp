@@ -18,6 +18,7 @@
 #include "lyra/mir/runtime_finish.hpp"
 #include "lyra/mir/runtime_print.hpp"
 #include "lyra/mir/runtime_scan.hpp"
+#include "lyra/mir/runtime_sformat.hpp"
 #include "lyra/mir/runtime_submit.hpp"
 #include "lyra/mir/structural_param.hpp"
 #include "lyra/mir/structural_subroutine_ref.hpp"
@@ -104,7 +105,8 @@ using RuntimeCall = std::variant<
     RuntimeFileCloseCall, RuntimeFileGetcCall, RuntimeFileUngetcCall,
     RuntimeFileGetsCall, RuntimeFileReadCall, RuntimeFileSeekCall,
     RuntimeFileRewindCall, RuntimeFileTellCall, RuntimeFileEofCall,
-    RuntimeFileErrorCall, RuntimeFileFlushCall, RuntimeScanCall>;
+    RuntimeFileErrorCall, RuntimeFileFlushCall, RuntimeScanCall,
+    RuntimeSFormatCall>;
 
 struct RuntimeCallExpr {
   RuntimeCall call;

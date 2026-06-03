@@ -1,0 +1,16 @@
+id: errors.sformat_non_literal_format
+tags: [errors, diag]
+input:
+  command: [emit, cpp]
+  project: false
+  top: Top
+  files: [main.sv]
+  args: ["--no-color"]
+expect:
+  exit: 1
+  stderr:
+    contains:
+      - "unsupported:"
+      - "format string must be a string literal"
+    not_contains:
+      - "internal error"
