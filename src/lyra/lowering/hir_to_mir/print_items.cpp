@@ -203,32 +203,47 @@ auto BuildRuntimePrintItemsFromCallArgs(
     const ProcessLoweringState& proc_state,
     ProceduralScopeLoweringState& proc_scope_state,
     const hir::ProceduralBody& hir_proc, const hir::CallExpr& call,
-    const support::PrintSystemSubroutineInfo& info, std::size_t arg_offset,
-    diag::SourceSpan call_span)
+    support::PrintRadix default_radix, std::size_t arg_offset,
+    FormatStringRequirement fmt_req, diag::SourceSpan call_span)
     -> diag::Result<std::vector<mir::RuntimePrintItem>> {
   std::vector<mir::RuntimePrintItem> items;
   const auto& args = call.arguments;
   std::size_t cursor = arg_offset;
 
+  std::optional<LiteralFormatStringRef> literal;
   if (cursor < args.size()) {
-    if (auto literal = TryGetHirStringLiteral(hir_proc, args[cursor])) {
-      auto parsed_or =
-          support::ParseLiteralFormatString(literal->text, literal->span);
-      if (!parsed_or) return std::unexpected(std::move(parsed_or.error()));
-      ++cursor;
-      auto value_index = cursor;
-      for (const auto& directive : *parsed_or) {
-        auto item_or = BuildPrintItemFromDirective(
-            unit_state, scope_state, proc_state, proc_scope_state, hir_proc,
-            directive, args, value_index, literal->span);
-        if (!item_or) return std::unexpected(std::move(item_or.error()));
-        items.push_back(std::move(*item_or));
-      }
-      cursor = value_index;
+    literal = TryGetHirStringLiteral(hir_proc, args[cursor]);
+  }
+  if (!literal.has_value() && fmt_req == FormatStringRequirement::kRequired) {
+    // LRM 21.3.3 NOTE permits non-literal format strings; this build defers
+    // them. Tracked under docs/progress/display.md "String-format family
+    // follow-ups".
+    const diag::SourceSpan span =
+        cursor < args.size() ? hir_proc.exprs.at(args[cursor].value).span
+                             : call_span;
+    return diag::Unsupported(
+        span, diag::DiagCode::kUnsupportedSubroutineArgument,
+        "format string must be a string literal in this build (LRM 21.3.3 "
+        "runtime-evaluated format strings deferred)",
+        diag::UnsupportedCategory::kFeature);
+  }
+  if (literal.has_value()) {
+    auto parsed_or =
+        support::ParseLiteralFormatString(literal->text, literal->span);
+    if (!parsed_or) return std::unexpected(std::move(parsed_or.error()));
+    ++cursor;
+    auto value_index = cursor;
+    for (const auto& directive : *parsed_or) {
+      auto item_or = BuildPrintItemFromDirective(
+          unit_state, scope_state, proc_state, proc_scope_state, hir_proc,
+          directive, args, value_index, literal->span);
+      if (!item_or) return std::unexpected(std::move(item_or.error()));
+      items.push_back(std::move(*item_or));
     }
+    cursor = value_index;
   }
 
-  const value::FormatKind default_kind = RadixToFormatKind(info.radix);
+  const value::FormatKind default_kind = RadixToFormatKind(default_radix);
   while (cursor < args.size()) {
     if (!items.empty()) {
       items.emplace_back(mir::RuntimePrintLiteral{.text = " "});

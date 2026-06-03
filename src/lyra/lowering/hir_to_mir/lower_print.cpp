@@ -58,7 +58,7 @@ auto LowerPrintSystemSubroutineCall(
 
   auto items_or = BuildRuntimePrintItemsFromCallArgs(
       unit_state, scope_state, proc_state, proc_scope_state, hir_proc, call,
-      print, arg_offset, span);
+      print.radix, arg_offset, FormatStringRequirement::kOptional, span);
   if (!items_or) return std::unexpected(std::move(items_or.error()));
 
   return mir::Expr{

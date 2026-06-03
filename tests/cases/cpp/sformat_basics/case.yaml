@@ -1,0 +1,15 @@
+id: cpp.sformat_basics
+tags: [cpp_run]
+input:
+  command: [run, cpp]
+  project: false
+  top: Top
+  files: [main.sv]
+expect:
+  exit: 0
+  variables:
+    out_specs: "d=42 h=dead o=377 b=1011"
+    out_strings: "hi=world lit=literal"
+    out_width: "[    7]"
+    out_lalign: "[hi   ]"
+    out_zpad: "[0007]"

@@ -1,0 +1,16 @@
+id: errors.sformat_non_string_output
+tags: [errors, diag]
+input:
+  command: [emit, cpp]
+  project: false
+  top: Top
+  files: [main.sv]
+  args: ["--no-color"]
+expect:
+  exit: 1
+  stderr:
+    contains:
+      - "unsupported:"
+      - "output_var must be string-typed"
+    not_contains:
+      - "internal error"

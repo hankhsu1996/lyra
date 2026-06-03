@@ -1,0 +1,16 @@
+id: cpp.swrite_auto_format
+tags: [cpp_run]
+input:
+  command: [run, cpp]
+  project: false
+  top: Top
+  files: [main.sv]
+expect:
+  exit: 0
+  variables:
+    # Same value 8'h2A formatted via each $swrite* default radix; widths
+    # follow the $display family defaults (LRM 21.2.1.1).
+    s_dec: "42"
+    s_bin: "00101010"
+    s_hex: "2a"
+    s_oct: "052"
