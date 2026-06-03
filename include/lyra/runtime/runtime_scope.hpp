@@ -6,7 +6,7 @@
 #include <utility>
 #include <vector>
 
-#include "lyra/runtime/process.hpp"
+#include "lyra/runtime/coroutine.hpp"
 #include "lyra/runtime/process_kind.hpp"
 #include "lyra/runtime/runtime_process.hpp"
 #include "lyra/runtime/runtime_scope_kind.hpp"
@@ -22,8 +22,7 @@ class RuntimeScope {
   [[nodiscard]] auto Kind() const -> RuntimeScopeKind;
 
   auto AddChildScope(std::string name, RuntimeScopeKind kind) -> RuntimeScope&;
-  auto AddProcess(ProcessKind kind, ProcessCoroutine coroutine)
-      -> RuntimeProcess&;
+  auto AddProcess(ProcessKind kind, Coroutine coroutine) -> RuntimeProcess&;
 
   template <typename Fn>
   void ForEachChild(Fn&& fn) {

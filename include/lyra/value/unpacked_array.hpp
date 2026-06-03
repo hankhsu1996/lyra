@@ -210,8 +210,12 @@ class UnpackedElementRef {
   UnpackedElementRef(UnpackedArray<T>& base, std::size_t offset, bool valid)
       : base_(&base), offset_(offset), valid_(valid) {
   }
-  UnpackedElementRef(const UnpackedElementRef&) = delete;
-  auto operator=(const UnpackedElementRef&) -> UnpackedElementRef& = delete;
+  // Copyable: the proxy is a thin (array, offset, validity) view, so a copy is
+  // another view of the same element. A `Ref` binding a ref formal to an
+  // unpacked element (LRM 13.5.2) holds the proxy and is itself copyable to
+  // forward to nested calls.
+  UnpackedElementRef(const UnpackedElementRef&) = default;
+  auto operator=(const UnpackedElementRef&) -> UnpackedElementRef& = default;
   UnpackedElementRef(UnpackedElementRef&&) noexcept = default;
   auto operator=(UnpackedElementRef&&) noexcept
       -> UnpackedElementRef& = default;

@@ -1,8 +1,6 @@
 #pragma once
 
-#include <coroutine>
-
-#include "lyra/runtime/process.hpp"
+#include "lyra/runtime/coroutine.hpp"
 #include "lyra/runtime/runtime_services.hpp"
 
 namespace lyra::runtime {
@@ -21,8 +19,7 @@ class FinishAwaitable {
     return false;
   }
 
-  void await_suspend(
-      std::coroutine_handle<ProcessCoroutine::promise_type> handle) noexcept {
+  void await_suspend(CoroutineHandle handle) noexcept {
     (void)handle;
     services_->RequestFinish(level_);
   }

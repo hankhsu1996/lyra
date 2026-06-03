@@ -2,7 +2,7 @@
 
 #include <string>
 
-#include "lyra/runtime/process.hpp"
+#include "lyra/runtime/coroutine.hpp"
 #include "lyra/runtime/process_kind.hpp"
 #include "lyra/runtime/runtime_scope_kind.hpp"
 
@@ -19,8 +19,7 @@ class RuntimeBindContext {
   auto CurrentScope() -> RuntimeScope&;
   auto Services() -> RuntimeServices&;
 
-  auto AddProcess(ProcessKind kind, ProcessCoroutine coroutine)
-      -> RuntimeProcess&;
+  auto AddProcess(ProcessKind kind, Coroutine coroutine) -> RuntimeProcess&;
   auto CreateChildScope(std::string name, RuntimeScopeKind kind)
       -> RuntimeBindContext;
 

@@ -1,0 +1,12 @@
+id: cpp.task_timing_event
+tags: [cpp_run]
+input:
+  command: [run, cpp]
+  project: false
+  top: Top
+  files: [main.sv]
+expect:
+  exit: 0
+  variables:
+    go: 1
+    done: 1

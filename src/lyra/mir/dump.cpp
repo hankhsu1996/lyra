@@ -626,6 +626,17 @@ class MirDumper {
     Dedent();
   }
 
+  [[nodiscard]] static auto FormatSubroutineKind(SubroutineKind kind)
+      -> std::string_view {
+    switch (kind) {
+      case SubroutineKind::kTask:
+        return "task";
+      case SubroutineKind::kFunction:
+        return "function";
+    }
+    throw InternalError("FormatSubroutineKind: unknown mir::SubroutineKind");
+  }
+
   [[nodiscard]] static auto FormatParamDirection(ParamDirection dir)
       -> std::string_view {
     switch (dir) {
@@ -647,7 +658,8 @@ class MirDumper {
       const StructuralSubroutineDecl& d, std::size_t index) {
     Line(
         std::format(
-            "[{}] \"{}\" : Type[{}]", index, d.name, d.result_type.value));
+            "[{}] {} \"{}\" : Type[{}]", index, FormatSubroutineKind(d.kind),
+            d.name, d.result_type.value));
     Indent();
     for (std::size_t i = 0; i < d.params.size(); ++i) {
       const auto& param = d.params[i];

@@ -12,12 +12,18 @@ This doc covers the decisions behind the engine itself: process model, suspensio
 structure, deferred work, `$finish` semantics, and the MIR boundary. Sensitivity tracking, change
 detection, and edge detection are separate runtime subsystems.
 
-## Processes are coroutines
+## Processes and tasks are coroutines
 
-A process body compiles into a `ProcessCoroutine` whose `co_await` expressions hand a `WaitRequest`
-to the scheduler. The scheduler holds a `std::coroutine_handle` and calls `.resume()` to continue
-the body. Process state -- procedural locals, the implicit program counter -- lives in the coroutine
-frame, which the engine does not introspect.
+A process body -- and a task body, which may consume time -- compiles into a `Coroutine` whose
+`co_await` expressions hand a `WaitRequest` to the scheduler. The scheduler holds a
+`std::coroutine_handle` and calls `.resume()` to continue the body. Process state -- procedural
+locals, the implicit program counter -- lives in the coroutine frame, which the engine does not
+introspect.
+
+A task is enabled with `co_await`: enabling a time-consuming task suspends the enabling process
+until the task completes (LRM 13.3). The scheduler resumes the innermost suspended frame, and each
+completed task transfers control back to its enabler, so suspension flows through the whole enable
+chain without the engine tracking call depth.
 
 Fibers are rejected: per-process stacks would multiply memory by orders of magnitude for any
 nontrivial design. Coroutine frames hold only the locals live across suspension points. Hand-rolled

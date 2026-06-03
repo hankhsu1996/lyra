@@ -323,6 +323,12 @@ auto RenderStmt(
             return Indent(indent) + "continue;\n";
           },
           [&](const mir::ReturnStmt& s) -> diag::Result<std::string> {
+            // A task body is a coroutine, so its early `return` is
+            // `co_return`; a task carries no return value (LRM 13.3). A
+            // function body is a plain method.
+            if (ctx.InCoroutine()) {
+              return Indent(indent) + "co_return;\n";
+            }
             if (!s.value.has_value()) {
               return Indent(indent) + "return;\n";
             }

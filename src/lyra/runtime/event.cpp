@@ -5,11 +5,11 @@
 
 namespace lyra::runtime {
 
-void RuntimeEvent::AddWaiter(RuntimeProcess& process) {
-  waiters_.push_back(&process);
+void RuntimeEvent::AddWaiter(CoroutineHandle waiter) {
+  waiters_.push_back(waiter);
 }
 
-auto RuntimeEvent::TakeWaiters() -> std::vector<RuntimeProcess*> {
+auto RuntimeEvent::TakeWaiters() -> std::vector<CoroutineHandle> {
   return std::exchange(waiters_, {});
 }
 

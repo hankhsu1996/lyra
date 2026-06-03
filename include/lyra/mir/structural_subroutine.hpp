@@ -11,6 +11,15 @@
 
 namespace lyra::mir {
 
+// LRM 13.3 / 13.4: a task may consume simulation time and is enabled as a
+// statement, while a function executes in zero time and yields a value in an
+// expression. MIR carries the semantic kind; how each is realized in C++ is the
+// backend's decision.
+enum class SubroutineKind : std::uint8_t {
+  kTask,
+  kFunction,
+};
+
 // LRM 13.5 argument direction. MIR carries the semantic direction only; the
 // C++ argument-passing mode is the backend's decision.
 enum class ParamDirection : std::uint8_t {
@@ -46,6 +55,7 @@ struct StaticLocal {
 // the activation.
 struct StructuralSubroutineDecl {
   std::string name;
+  SubroutineKind kind;
   TypeId result_type;
   std::vector<SubroutineParam> params;
   ProceduralScope root_procedural_scope;

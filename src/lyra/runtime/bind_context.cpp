@@ -4,7 +4,7 @@
 #include <utility>
 
 #include "lyra/base/internal_error.hpp"
-#include "lyra/runtime/process.hpp"
+#include "lyra/runtime/coroutine.hpp"
 #include "lyra/runtime/process_kind.hpp"
 #include "lyra/runtime/runtime_process.hpp"
 #include "lyra/runtime/runtime_scope.hpp"
@@ -32,8 +32,8 @@ auto RuntimeBindContext::Services() -> RuntimeServices& {
   return *services_;
 }
 
-auto RuntimeBindContext::AddProcess(
-    ProcessKind kind, ProcessCoroutine coroutine) -> RuntimeProcess& {
+auto RuntimeBindContext::AddProcess(ProcessKind kind, Coroutine coroutine)
+    -> RuntimeProcess& {
   return CurrentScope().AddProcess(kind, std::move(coroutine));
 }
 

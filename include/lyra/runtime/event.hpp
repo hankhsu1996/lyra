@@ -2,9 +2,9 @@
 
 #include <vector>
 
-namespace lyra::runtime {
+#include "lyra/runtime/coroutine.hpp"
 
-class RuntimeProcess;
+namespace lyra::runtime {
 
 class RuntimeEvent {
  public:
@@ -16,11 +16,11 @@ class RuntimeEvent {
   auto operator=(RuntimeEvent&&) -> RuntimeEvent& = delete;
   ~RuntimeEvent() = default;
 
-  void AddWaiter(RuntimeProcess& process);
-  [[nodiscard]] auto TakeWaiters() -> std::vector<RuntimeProcess*>;
+  void AddWaiter(CoroutineHandle waiter);
+  [[nodiscard]] auto TakeWaiters() -> std::vector<CoroutineHandle>;
 
  private:
-  std::vector<RuntimeProcess*> waiters_;
+  std::vector<CoroutineHandle> waiters_;
 };
 
 }  // namespace lyra::runtime

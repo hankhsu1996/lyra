@@ -4,6 +4,7 @@
 
 #include "lyra/base/internal_error.hpp"
 #include "lyra/base/time.hpp"
+#include "lyra/runtime/coroutine.hpp"
 #include "lyra/runtime/trigger.hpp"
 
 namespace lyra::runtime {
@@ -13,7 +14,6 @@ class DiagnosticDispatcher;
 class FileTable;
 class Engine;
 class Observable;
-class RuntimeProcess;
 
 class RuntimeServices {
  public:
@@ -57,7 +57,7 @@ class RuntimeServices {
   // manage their own producer/consumer wiring without going through
   // engine-side per-feature code paths.
   //
-  // ScheduleProcess     -- enqueue on next delta (event triggers, value
+  // ScheduleNextDelta   -- enqueue on next delta (event triggers, value
   //                        change wakeups).
   // ScheduleInactive    -- enqueue on the inactive region of this slot
   //                        (`#0` delay).
@@ -65,9 +65,13 @@ class RuntimeServices {
   // RequestFinish       -- mark simulation to stop after the current slot
   //                        completes (`$finish`).
   // Now                 -- current simulation time.
-  void ScheduleProcess(RuntimeProcess& process);
-  void ScheduleInactive(RuntimeProcess& process);
-  void ScheduleAtTime(SimTime when, RuntimeProcess& process);
+  //
+  // The scheduled unit is the coroutine frame that suspended (the innermost one
+  // when a task enabled by the process is suspended), so resuming it re-enters
+  // exactly that suspension point.
+  void ScheduleNextDelta(CoroutineHandle handle);
+  void ScheduleInactive(CoroutineHandle handle);
+  void ScheduleAtTime(SimTime when, CoroutineHandle handle);
   void RequestFinish(int level);
   [[nodiscard]] auto Now() const -> SimTime;
 

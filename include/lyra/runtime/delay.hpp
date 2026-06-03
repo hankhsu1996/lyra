@@ -1,9 +1,7 @@
 #pragma once
 
-#include <coroutine>
-
 #include "lyra/base/time.hpp"
-#include "lyra/runtime/process.hpp"
+#include "lyra/runtime/coroutine.hpp"
 #include "lyra/runtime/runtime_services.hpp"
 
 namespace lyra::runtime {
@@ -22,13 +20,11 @@ class DelayAwaitable {
     return false;
   }
 
-  void await_suspend(
-      std::coroutine_handle<ProcessCoroutine::promise_type> handle) noexcept {
-    auto& process = handle.promise().Process();
+  void await_suspend(CoroutineHandle handle) noexcept {
     if (duration_ == 0) {
-      services_->ScheduleInactive(process);
+      services_->ScheduleInactive(handle);
     } else {
-      services_->ScheduleAtTime(services_->Now() + duration_, process);
+      services_->ScheduleAtTime(services_->Now() + duration_, handle);
     }
   }
 
