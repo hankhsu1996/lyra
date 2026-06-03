@@ -10,7 +10,7 @@ expect:
   variables:
     code: -1
     a: 99
-    errno_val: 9                                # EBADF on Linux (LRM 21.3.7)
+    errno_val: 9 # EBADF on Linux (LRM 21.3.7)
     err_msg: "$fscanf: not an open file descriptor"
     err_msg_len: 36
   files:

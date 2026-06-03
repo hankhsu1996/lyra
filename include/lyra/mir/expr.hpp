@@ -151,12 +151,23 @@ struct ArrayLiteralExpr {
   std::vector<ExprId> elements;
 };
 
+// Invokes the result type's constructor with positional arguments; the result
+// type lives on Expr::type. Used for runtime-sized container construction --
+// LRM 7.5.1 dynamic-array `new[N]` / `new[N](other)`, and the LRM 7.6
+// dynamic-array whole-array assignment that desugars to the same shape.
+// Distinct from ArrayLiteralExpr in semantics: args are constructor
+// arguments, not initializer-list elements, so the brace-vs-paren overload
+// distinction is preserved at the C++ surface.
+struct ConstructExpr {
+  std::vector<ExprId> args;
+};
+
 using ExprData = std::variant<
     IntegerLiteral, StringLiteral, TimeLiteral, RealLiteral, StructuralParamRef,
     StructuralVarRef, ProceduralVarRef, CrossUnitVarRef, UnaryExpr, BinaryExpr,
     ConditionalExpr, AssignExpr, IncDecExpr, CallExpr, RuntimeCallExpr,
     ConversionExpr, ClosureExpr, ElementSelectExpr, RangeSelectExpr, ConcatExpr,
-    ReplicationExpr, ArrayLiteralExpr>;
+    ReplicationExpr, ArrayLiteralExpr, ConstructExpr>;
 
 struct Expr {
   ExprData data;

@@ -24,6 +24,7 @@
 #include "lyra/hir/subroutine_ref.hpp"
 #include "lyra/hir/unary_op.hpp"
 #include "lyra/hir/value_ref.hpp"
+#include "lyra/lowering/hir_to_mir/default_value.hpp"
 #include "lyra/lowering/hir_to_mir/inside_predicate.hpp"
 #include "lyra/lowering/hir_to_mir/lower_system_subroutine.hpp"
 #include "lyra/lowering/hir_to_mir/state.hpp"
@@ -79,6 +80,8 @@ auto ExtractHirLiteralUint64(const hir::Expr& expr) -> std::uint64_t {
 }
 
 auto BuildUnpackedReplicationFlatList(
+    const UnitLoweringState& unit_state,
+    ProceduralScopeLoweringState& proc_scope_state,
     std::span<const mir::ExprId> items_ids, std::uint64_t count,
     mir::TypeId result_type) -> mir::Expr {
   std::vector<mir::ExprId> flat;
@@ -86,9 +89,8 @@ auto BuildUnpackedReplicationFlatList(
   for (std::uint64_t i = 0; i < count; ++i) {
     flat.insert(flat.end(), items_ids.begin(), items_ids.end());
   }
-  return mir::Expr{
-      .data = mir::ArrayLiteralExpr{.elements = std::move(flat)},
-      .type = result_type};
+  return BuildUnpackedArrayConstructExpr(
+      unit_state, proc_scope_state, result_type, std::move(flat));
 }
 
 auto LowerBinaryOp(hir::BinaryOp op) -> mir::BinaryOp {
@@ -1285,9 +1287,8 @@ auto LowerHirAssignmentPatternExprProc(
   }
   if (std::holds_alternative<mir::UnpackedArrayType>(
           unit_state.GetType(result_type).data)) {
-    return mir::Expr{
-        .data = mir::ArrayLiteralExpr{.elements = std::move(element_ids)},
-        .type = result_type};
+    return BuildUnpackedArrayConstructExpr(
+        unit_state, proc_scope_state, result_type, std::move(element_ids));
   }
   return mir::Expr{
       .data = mir::ConcatExpr{.operands = std::move(element_ids)},
@@ -1315,7 +1316,8 @@ auto LowerHirAssignmentPatternReplicationExprProc(
           unit_state.GetType(result_type).data)) {
     const std::uint64_t count =
         ExtractHirLiteralUint64(hir_process.exprs.at(a.count.value));
-    return BuildUnpackedReplicationFlatList(item_ids, count, result_type);
+    return BuildUnpackedReplicationFlatList(
+        unit_state, proc_scope_state, item_ids, count, result_type);
   }
   const mir::ExprId inner_concat_id = proc_scope_state.AddExpr(
       mir::Expr{
@@ -1333,6 +1335,49 @@ auto LowerHirAssignmentPatternReplicationExprProc(
               .concat = inner_concat_id,
           },
       .type = result_type};
+}
+
+// LRM 7.5.1 `new[N]` / `new[N](other)`. The argument list on the lowered
+// `ConstructExpr` is `[size, element-default prototype, optional copy
+// source]`: the prototype carries the element type's LRM Table 6-7 default
+// so the runtime ctor populates new slots without re-querying the type, and
+// the optional copy source feeds the LRM 7.5.1 truncate / pad behaviour on
+// `new[N](other)`.
+auto LowerHirDynamicArrayNewExprProc(
+    const UnitLoweringState& unit_state,
+    const StructuralScopeLoweringState& scope_state,
+    const ProcessLoweringState& proc_state,
+    ProceduralScopeLoweringState& proc_scope_state,
+    const hir::ProceduralBody& hir_process, const hir::DynamicArrayNewExpr& n,
+    mir::TypeId result_type) -> diag::Result<mir::Expr> {
+  auto size_or = LowerExpr(
+      unit_state, scope_state, proc_state, proc_scope_state, hir_process,
+      hir_process.exprs.at(n.size.value));
+  if (!size_or) return std::unexpected(std::move(size_or.error()));
+  const mir::ExprId size_id = proc_scope_state.AddExpr(*std::move(size_or));
+
+  const auto& result_ty = unit_state.GetType(result_type);
+  const auto* da = std::get_if<mir::DynamicArrayType>(&result_ty.data);
+  if (da == nullptr) {
+    throw InternalError(
+        "LowerHirDynamicArrayNewExprProc: result type is not DynamicArrayType");
+  }
+  const mir::ExprId prototype_id = SynthesizeDefaultValueExpr(
+      unit_state, proc_scope_state, da->element_type);
+
+  std::vector<mir::ExprId> args;
+  args.reserve(n.initializer.has_value() ? 3U : 2U);
+  args.push_back(size_id);
+  args.push_back(prototype_id);
+  if (n.initializer.has_value()) {
+    auto init_or = LowerExpr(
+        unit_state, scope_state, proc_state, proc_scope_state, hir_process,
+        hir_process.exprs.at(n.initializer->value));
+    if (!init_or) return std::unexpected(std::move(init_or.error()));
+    args.push_back(proc_scope_state.AddExpr(*std::move(init_or)));
+  }
+  return mir::Expr{
+      .data = mir::ConstructExpr{.args = std::move(args)}, .type = result_type};
 }
 
 }  // namespace
@@ -1426,6 +1471,11 @@ auto LowerExpr(
             return LowerHirAssignmentPatternReplicationExprProc(
                 unit_state, scope_state, proc_state, proc_scope_state,
                 hir_process, a, result_type);
+          },
+          [&](const hir::DynamicArrayNewExpr& n) -> diag::Result<mir::Expr> {
+            return LowerHirDynamicArrayNewExprProc(
+                unit_state, scope_state, proc_state, proc_scope_state,
+                hir_process, n, result_type);
           },
       },
       expr.data);
@@ -1675,9 +1725,8 @@ auto LowerHirAssignmentPatternExprStructural(
   }
   if (std::holds_alternative<mir::UnpackedArrayType>(
           unit_state.GetType(result_type).data)) {
-    return mir::Expr{
-        .data = mir::ArrayLiteralExpr{.elements = std::move(element_ids)},
-        .type = result_type};
+    return BuildUnpackedArrayConstructExpr(
+        unit_state, proc_scope_state, result_type, std::move(element_ids));
   }
   return mir::Expr{
       .data = mir::ConcatExpr{.operands = std::move(element_ids)},
@@ -1705,7 +1754,8 @@ auto LowerHirAssignmentPatternReplicationExprStructural(
   if (std::holds_alternative<mir::UnpackedArrayType>(
           unit_state.GetType(result_type).data)) {
     const std::uint64_t count = ExtractHirLiteralUint64(scope.GetExpr(a.count));
-    return BuildUnpackedReplicationFlatList(item_ids, count, result_type);
+    return BuildUnpackedReplicationFlatList(
+        unit_state, proc_scope_state, item_ids, count, result_type);
   }
   const mir::ExprId inner_concat_id = proc_scope_state.AddExpr(
       mir::Expr{
@@ -1843,6 +1893,13 @@ auto LowerExprImpl(
             return LowerHirAssignmentPatternReplicationExprStructural(
                 unit_state, scope_state, ctor_state, proc_scope_state, scope, a,
                 loop_var_mode, result_type);
+          },
+          [](const hir::DynamicArrayNewExpr&) -> diag::Result<mir::Expr> {
+            return diag::Unsupported(
+                diag::DiagCode::kUnsupportedStructuralExpressionForm,
+                "dynamic-array new[] is not allowed in constructor "
+                "expressions; LRM 7.5.1 restricts it to blocking assignments",
+                diag::UnsupportedCategory::kFeature);
           },
       },
       expr.data);

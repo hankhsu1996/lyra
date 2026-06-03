@@ -1,4 +1,4 @@
-id: cpp.sscanf_format_c
+id: cpp.dynamic_array_new_copy_pad
 tags: [cpp_run]
 input:
   command: [run, cpp]
@@ -8,5 +8,8 @@ input:
 expect:
   exit: 0
   variables:
-    code: 1
-    b: 65 # ASCII 'A'
+    d0: 100
+    d1: 200
+    d2: 300
+    d3: 0
+    d4: 0

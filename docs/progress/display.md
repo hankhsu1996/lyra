@@ -29,11 +29,11 @@ since the test harness can only probe a variable whose type has an implemented s
 - [x] DI6 -- `$strobe` / `$strobeb` / `$strobeh` / `$strobeo` (LRM 21.2.2). Lowers to the same
       `RuntimePrintCall` `$display[bho]` produces, wrapped in a postponed-submit MIR node; the C++
       backend renders the print inside a `services_->SubmitPostponed([=, this]() { ... })` lambda.
-      Lambda init-capture snapshots procedural locals by value (safe even when the issuing
-      `initial` frame has already returned), and module-signal operands resolve through `this->`
-      and are read at fire time -- so they see NBA-committed values, which is the LRM 21.2.2
-      semantic. The postponed queue uses the same swap-and-drain shape NBA uses; re-entrant
-      submission during the drain is rejected.
+      Lambda init-capture snapshots procedural locals by value (safe even when the issuing `initial`
+      frame has already returned), and module-signal operands resolve through `this->` and are read
+      at fire time -- so they see NBA-committed values, which is the LRM 21.2.2 semantic. The
+      postponed queue uses the same swap-and-drain shape NBA uses; re-entrant submission during the
+      drain is rejected.
 - [x] DI7 -- `%p` / `%0p` assignment-pattern format for aggregate types (LRM 21.2.1.6). Scope: fixed
       unpacked array of integral elements. Output is `'{<elem>, <elem>, ...}` with `, ` between
       elements; multi-dimensional arrays nest naturally. Singular integral elements follow the LRM

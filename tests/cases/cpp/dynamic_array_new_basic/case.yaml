@@ -1,4 +1,4 @@
-id: cpp.sscanf_format_c
+id: cpp.dynamic_array_new_basic
 tags: [cpp_run]
 input:
   command: [run, cpp]
@@ -8,5 +8,7 @@ input:
 expect:
   exit: 0
   variables:
-    code: 1
-    b: 65 # ASCII 'A'
+    a0: 10
+    a1: 20
+    a2: 30
+    sum: 60

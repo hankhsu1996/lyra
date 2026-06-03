@@ -317,11 +317,14 @@ auto LowerType(
                   .right = static_cast<std::int64_t>(fa.range.right)},
       }};
     }
-    case slang::ast::SymbolKind::DynamicArrayType:
-      return diag::Unsupported(
-          decl_span, diag::DiagCode::kUnsupportedDynamicArrayType,
-          "dynamic array types are not supported",
-          diag::UnsupportedCategory::kType);
+    case slang::ast::SymbolKind::DynamicArrayType: {
+      const auto& da = canonical.as<slang::ast::DynamicArrayType>();
+      auto elem_id_or = state.GetTypeId(da.elementType, decl_span);
+      if (!elem_id_or) {
+        return std::unexpected(std::move(elem_id_or.error()));
+      }
+      return hir::TypeData{hir::DynamicArrayType{.element_type = *elem_id_or}};
+    }
     case slang::ast::SymbolKind::QueueType:
       return diag::Unsupported(
           decl_span, diag::DiagCode::kUnsupportedQueueType,
