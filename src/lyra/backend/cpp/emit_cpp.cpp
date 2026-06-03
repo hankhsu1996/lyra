@@ -411,6 +411,7 @@ auto RenderScopeHeaderFile(
   out += "#include \"lyra/value/string.hpp\"\n";
   out += "#include \"lyra/value/string_op.hpp\"\n";
   out += "#include \"lyra/value/unpacked_array.hpp\"\n";
+  out += "#include \"lyra/value/dynamic_array.hpp\"\n";
   for (const auto& name : CollectExternalUnitNames(unit)) {
     out += "#include \"" + name + ".hpp\"\n";
   }

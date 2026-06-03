@@ -1075,6 +1075,40 @@ auto LowerReplicatedAssignmentPatternExprProc(
   };
 }
 
+// LRM 7.5.1 `new[N]` / `new[N](other)` dynamic-array constructor. Result type
+// is the dynamic array type slang resolved for the expression; the optional
+// initializer is `(other)` -- the LRM 7.5.1 source array for the copy-with-
+// pad-or-truncate form.
+auto LowerNewArrayExprProc(
+    const UnitLoweringFacts& unit_facts, UnitLoweringState& unit_state,
+    ProcessLoweringState& proc_state, const ScopeStack& stack,
+    const slang::ast::NewArrayExpression& na,
+    const slang::ast::Expression& expr, diag::SourceSpan span)
+    -> diag::Result<hir::Expr> {
+  auto type_id = TypeIdOfSlangExpr(unit_facts, unit_state, expr);
+  if (!type_id) return std::unexpected(std::move(type_id.error()));
+  auto size_or =
+      LowerProcExpr(unit_facts, unit_state, proc_state, stack, na.sizeExpr());
+  if (!size_or) return std::unexpected(std::move(size_or.error()));
+  const hir::ExprId size_id = proc_state.AddExpr(*std::move(size_or));
+  std::optional<hir::ExprId> initializer_id;
+  if (na.initExpr() != nullptr) {
+    auto init_or = LowerProcExpr(
+        unit_facts, unit_state, proc_state, stack, *na.initExpr());
+    if (!init_or) return std::unexpected(std::move(init_or.error()));
+    initializer_id = proc_state.AddExpr(*std::move(init_or));
+  }
+  return hir::Expr{
+      .type = *type_id,
+      .data =
+          hir::DynamicArrayNewExpr{
+              .size = size_id,
+              .initializer = initializer_id,
+          },
+      .span = span,
+  };
+}
+
 auto LowerElementSelectExprStructural(
     const UnitLoweringFacts& unit_facts, UnitLoweringState& unit_state,
     ScopeLoweringState& scope_state, const ScopeStack& stack,
@@ -1570,6 +1604,11 @@ auto LowerProcExpr(
           unit_facts, unit_state, proc_state, stack,
           expr.as<slang::ast::ReplicatedAssignmentPatternExpression>(), expr,
           span);
+
+    case slang::ast::ExpressionKind::NewArray:
+      return LowerNewArrayExprProc(
+          unit_facts, unit_state, proc_state, stack,
+          expr.as<slang::ast::NewArrayExpression>(), expr, span);
 
     default:
       return diag::Unsupported(

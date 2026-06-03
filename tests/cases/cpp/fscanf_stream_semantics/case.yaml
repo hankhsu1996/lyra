@@ -19,7 +19,7 @@ expect:
     code_lit: 1
     a_lit: 12
     b_lit: 99
-    leftover_byte: 120  # 'x' = 0x78 = 120 in $feof+$fgetc check below
+    leftover_byte: 120 # 'x' = 0x78 = 120 in $feof+$fgetc check below
     # Drain: code matched, then we peek past last digit so $feof is true.
     code_drain: 1
     a_drain: 777
