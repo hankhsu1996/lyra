@@ -1,0 +1,13 @@
+id: cpp.fstrobe_after_nba_lrm_21_2_2
+tags: [cpp_run]
+input:
+  command: [run, cpp]
+  project: false
+  top: Top
+  files: [main.sv]
+expect:
+  exit: 0
+  files:
+    out.txt: |
+      fdisplay cnt=0
+      fstrobe  cnt=1

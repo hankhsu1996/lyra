@@ -98,12 +98,19 @@ the corresponding behaviour lands.
 
 ## Strobe family follow-ups
 
-Tracks the remaining LRM 21.2.2 file-sink variants now that the stdout-sink half has shipped.
-
-- [ ] `$fstrobe` / `$fstrobeb` / `$fstrobeh` / `$fstrobeo` (LRM 21.2.2, file sink). The
-      `PrintSinkKind::kFile` axis on `PrintSystemSubroutineInfo` and the descriptor / MCD-FD
-      dispatch already exist (DI5); the gap is four descriptor rows plus threading the
-      file-descriptor argument through the strobe closure-submit helper.
+- [x] `$fstrobe` / `$fstrobeb` / `$fstrobeh` / `$fstrobeo` (LRM 21.2.2 + 21.3.2, file sink). Four
+      descriptor rows with `sink_kind = kFile`, `is_strobe = true`, and `min_args = 1` were enough
+      to light up the whole family end-to-end: the HIR -> MIR lowering, the C++ backend, and the
+      runtime were already orthogonal across the `sink_kind` and `is_strobe` axes after DI5 and DI6
+      shipped. First argument is an MCD or FD per LRM 21.3.1; the rest is the print payload at the
+      per-task default radix. Postponed lambdas reference the descriptor through their capture list,
+      so module-scope FDs read NBA-committed values at fire time and procedural- local FDs snapshot
+      at submit time.
+- [ ] LRM 21.3.2 implicit cancel on `$fclose`. "Active `$fmonitor` and/or `$fstrobe` operations on a
+      file descriptor or multichannel descriptor are implicitly cancelled by an `$fclose`
+      operation." Today the postponed lambda fires unconditionally and the underlying `LyraFPrint`
+      hits the closed FD; the cancel path needs an FD/MCD -> pending-callback tracking layer and
+      will likely be tackled together with `$fmonitor`, which shares the cancellation mechanism.
 
 ## Out of Scope
 

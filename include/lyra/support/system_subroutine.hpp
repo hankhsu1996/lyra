@@ -726,6 +726,62 @@ inline constexpr std::array kSystemSubroutines = {
         .arg_policy = ArgCountPolicy{.min_args = 0, .max_args = 0},
         .semantic = TimeSystemSubroutineInfo{.kind = TimeKind::kRealtime},
     },
+    SystemSubroutineDesc{
+        .id = SystemSubroutineId{47},
+        .name = "$fstrobe",
+        .origin = SystemSubroutineOrigin::kLanguageBuiltin,
+        .kind = SystemSubroutineKind::kTask,
+        .result_conv = ReturnConvention::kVoid,
+        .arg_policy = ArgCountPolicy{.min_args = 1, .max_args = 255},
+        .semantic =
+            PrintSystemSubroutineInfo{
+                .radix = PrintRadix::kDecimal,
+                .append_newline = true,
+                .is_strobe = true,
+                .sink_kind = PrintSinkKind::kFile},
+    },
+    SystemSubroutineDesc{
+        .id = SystemSubroutineId{48},
+        .name = "$fstrobeb",
+        .origin = SystemSubroutineOrigin::kLanguageBuiltin,
+        .kind = SystemSubroutineKind::kTask,
+        .result_conv = ReturnConvention::kVoid,
+        .arg_policy = ArgCountPolicy{.min_args = 1, .max_args = 255},
+        .semantic =
+            PrintSystemSubroutineInfo{
+                .radix = PrintRadix::kBinary,
+                .append_newline = true,
+                .is_strobe = true,
+                .sink_kind = PrintSinkKind::kFile},
+    },
+    SystemSubroutineDesc{
+        .id = SystemSubroutineId{49},
+        .name = "$fstrobeh",
+        .origin = SystemSubroutineOrigin::kLanguageBuiltin,
+        .kind = SystemSubroutineKind::kTask,
+        .result_conv = ReturnConvention::kVoid,
+        .arg_policy = ArgCountPolicy{.min_args = 1, .max_args = 255},
+        .semantic =
+            PrintSystemSubroutineInfo{
+                .radix = PrintRadix::kHex,
+                .append_newline = true,
+                .is_strobe = true,
+                .sink_kind = PrintSinkKind::kFile},
+    },
+    SystemSubroutineDesc{
+        .id = SystemSubroutineId{50},
+        .name = "$fstrobeo",
+        .origin = SystemSubroutineOrigin::kLanguageBuiltin,
+        .kind = SystemSubroutineKind::kTask,
+        .result_conv = ReturnConvention::kVoid,
+        .arg_policy = ArgCountPolicy{.min_args = 1, .max_args = 255},
+        .semantic =
+            PrintSystemSubroutineInfo{
+                .radix = PrintRadix::kOctal,
+                .append_newline = true,
+                .is_strobe = true,
+                .sink_kind = PrintSinkKind::kFile},
+    },
 };
 
 }  // namespace detail
