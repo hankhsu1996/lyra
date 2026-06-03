@@ -2,6 +2,7 @@
 
 #include <compare>
 #include <cstdint>
+#include <map>
 #include <optional>
 #include <ranges>
 #include <string>
@@ -9,6 +10,7 @@
 #include <utility>
 #include <vector>
 
+#include <slang/ast/symbols/InstanceSymbols.h>
 #include <slang/ast/symbols/ParameterSymbols.h>
 #include <slang/ast/symbols/SubroutineSymbols.h>
 #include <slang/ast/symbols/ValueSymbol.h>
@@ -64,6 +66,14 @@ struct LoopVarBinding {
 
 using LoopVarBindings =
     std::unordered_map<const slang::ast::ValueSymbol*, LoopVarBinding>;
+
+struct InstanceMemberBinding {
+  ScopeFrameId home_frame;
+  hir::InstanceMemberId member_id;
+};
+
+using InstanceMemberBindings = std::unordered_map<
+    const slang::ast::InstanceSymbol*, InstanceMemberBinding>;
 
 class UnitLoweringState {
  public:
@@ -190,6 +200,73 @@ class UnitLoweringState {
     return it->second;
   }
 
+  void MapInstanceMemberBinding(
+      const slang::ast::InstanceSymbol& inst, ScopeFrameId home_frame,
+      hir::InstanceMemberId member_id) {
+    const auto [_, inserted] = instance_member_bindings_.emplace(
+        &inst, InstanceMemberBinding{
+                   .home_frame = home_frame, .member_id = member_id});
+    if (!inserted) {
+      throw InternalError(
+          "UnitLoweringState::MapInstanceMemberBinding: instance symbol "
+          "already "
+          "mapped");
+    }
+  }
+
+  [[nodiscard]] auto LookupInstanceMemberBinding(
+      const slang::ast::InstanceSymbol& inst) const
+      -> std::optional<InstanceMemberBinding> {
+    const auto it = instance_member_bindings_.find(&inst);
+    if (it == instance_member_bindings_.end()) {
+      return std::nullopt;
+    }
+    return it->second;
+  }
+
+  // Dedups by target symbol (one slot per referenced cross-unit member) and
+  // accumulates the slot decl under its owning scope's frame. The returned id
+  // is the slot's index within that scope's `cross_unit_refs`, flushed onto the
+  // HIR scope by TakeCrossUnitRefsForFrame when the scope finishes lowering.
+  auto MapOrGetCrossUnitRef(
+      const slang::ast::ValueSymbol& target, ScopeFrameId home_frame,
+      hir::InstanceMemberId instance, std::string target_member,
+      hir::TypeId type) -> hir::CrossUnitRefId {
+    if (const auto it = cross_unit_ref_dedup_.find(&target);
+        it != cross_unit_ref_dedup_.end()) {
+      return it->second;
+    }
+    auto& slots = cross_unit_refs_by_frame_[home_frame];
+    const hir::CrossUnitRefId id{static_cast<std::uint32_t>(slots.size())};
+    slots.push_back(
+        hir::CrossUnitRefDecl{
+            .instance = instance,
+            .target_member = std::move(target_member),
+            .type = type});
+    cross_unit_ref_dedup_.emplace(&target, id);
+    return id;
+  }
+
+  [[nodiscard]] auto LookupCrossUnitRef(const slang::ast::ValueSymbol& target)
+      const -> std::optional<hir::CrossUnitRefId> {
+    const auto it = cross_unit_ref_dedup_.find(&target);
+    if (it == cross_unit_ref_dedup_.end()) {
+      return std::nullopt;
+    }
+    return it->second;
+  }
+
+  auto TakeCrossUnitRefsForFrame(ScopeFrameId frame)
+      -> std::vector<hir::CrossUnitRefDecl> {
+    const auto it = cross_unit_refs_by_frame_.find(frame);
+    if (it == cross_unit_refs_by_frame_.end()) {
+      return {};
+    }
+    auto out = std::move(it->second);
+    cross_unit_refs_by_frame_.erase(it);
+    return out;
+  }
+
   auto MoveHirUnit() -> hir::ModuleUnit {
     return std::move(hir_unit_);
   }
@@ -208,6 +285,11 @@ class UnitLoweringState {
   StructuralVarBindings structural_var_bindings_;
   SubroutineBindings subroutine_bindings_;
   LoopVarBindings loop_var_bindings_;
+  InstanceMemberBindings instance_member_bindings_;
+  std::unordered_map<const slang::ast::ValueSymbol*, hir::CrossUnitRefId>
+      cross_unit_ref_dedup_;
+  std::map<ScopeFrameId, std::vector<hir::CrossUnitRefDecl>>
+      cross_unit_refs_by_frame_;
   std::unordered_map<const slang::ast::Type*, hir::TypeId> type_cache_;
   hir::TypeId void_type_id_{};
   hir::TypeId int32_type_id_{};

@@ -178,10 +178,16 @@ auto MakeExternalUnitMemberType(
   return type;
 }
 
-void InstallInstanceMembers(
+// Returns the StructuralVarId of each instance member, indexed by
+// InstanceMemberId, so cross-unit reference resolution can reach the child
+// instance var by the same id the HIR recipe carries.
+auto InstallInstanceMembers(
     UnitLoweringState& unit_state, StructuralScopeLoweringState& scope_state,
     const hir::StructuralScope& scope,
-    ProceduralScopeLoweringState& ctor_scope_state) {
+    ProceduralScopeLoweringState& ctor_scope_state)
+    -> std::vector<mir::StructuralVarId> {
+  std::vector<mir::StructuralVarId> instance_member_vars;
+  instance_member_vars.reserve(scope.instance_members.size());
   for (const auto& im : scope.instance_members) {
     for (const auto& v : scope_state.Scope().structural_vars) {
       if (v.name == im.instance_name) {
@@ -197,6 +203,7 @@ void InstallInstanceMembers(
     const mir::StructuralVarId var_id = scope_state.AddStructuralVar(
         mir::StructuralVarDecl{
             .name = im.instance_name, .type = var_type, .initializer = init});
+    instance_member_vars.push_back(var_id);
 
     const mir::StmtId sid = ctor_scope_state.AddStmt(
         mir::Stmt{
@@ -206,6 +213,32 @@ void InstallInstanceMembers(
                     .target = var_id,
                     .unit_name = im.target_unit,
                     .dims = im.array_dims},
+            .child_procedural_scopes = {}});
+    ctor_scope_state.AddRootStmt(sid);
+  }
+  return instance_member_vars;
+}
+
+// Cross-unit references resolve once at construction, after the child
+// instances are built (reference_resolution.md). Each slot's resolution
+// statement runs at the tail of the constructor body.
+void InstallCrossUnitRefs(
+    UnitLoweringState& unit_state, StructuralScopeLoweringState& scope_state,
+    const hir::StructuralScope& scope,
+    const std::vector<mir::StructuralVarId>& instance_member_vars,
+    ProceduralScopeLoweringState& ctor_scope_state) {
+  for (const auto& cu : scope.cross_unit_refs) {
+    const mir::StructuralVarId instance_var =
+        instance_member_vars.at(cu.instance.value);
+    const mir::CrossUnitRefId slot = scope_state.AddCrossUnitRef(
+        mir::CrossUnitRefDecl{
+            .instance_var = instance_var,
+            .target_member = cu.target_member,
+            .type = unit_state.TranslateType(cu.type)});
+    const mir::StmtId sid = ctor_scope_state.AddStmt(
+        mir::Stmt{
+            .label = std::nullopt,
+            .data = mir::ResolveCrossUnitRefStmt{.slot = slot},
             .child_procedural_scopes = {}});
     ctor_scope_state.AddRootStmt(sid);
   }
@@ -546,6 +579,7 @@ auto LowerStructuralScope(
       .name = std::move(name),
       .structural_params = {},
       .structural_vars = {},
+      .cross_unit_refs = {},
       .constructor_scope = {},
       .processes = {},
       .child_structural_scopes = {},
@@ -639,7 +673,10 @@ auto LowerStructuralScope(
     ctor_scope_state.AddRootStmt(sid);
   }
 
-  InstallInstanceMembers(unit_state, scope_state, scope, ctor_scope_state);
+  const auto instance_member_vars =
+      InstallInstanceMembers(unit_state, scope_state, scope, ctor_scope_state);
+  InstallCrossUnitRefs(
+      unit_state, scope_state, scope, instance_member_vars, ctor_scope_state);
 
   scope_state.SetConstructorScope(ctor_scope_state.Finish());
 

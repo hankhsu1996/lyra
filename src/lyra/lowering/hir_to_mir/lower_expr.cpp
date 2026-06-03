@@ -510,6 +510,11 @@ auto LowerHirPrimaryProc(
           [&](const hir::LoopVarRef& lv) -> mir::Expr {
             return LowerStructuralParamRefExpr(scope_state, lv, type);
           },
+          [&](const hir::CrossUnitVarRef& c) -> mir::Expr {
+            return mir::Expr{
+                .data = mir::CrossUnitVarRef{.id = {.value = c.id.value}},
+                .type = type};
+          },
       },
       p);
 }
@@ -551,6 +556,12 @@ auto LowerHirPrimaryStructural(
               return LowerLoopVarRefExpr(*ctor_state, lv, type);
             }
             return LowerStructuralParamRefExpr(scope_state, lv, type);
+          },
+          [](const hir::CrossUnitVarRef&) -> mir::Expr {
+            throw InternalError(
+                "LowerHirPrimaryStructural: HIR CrossUnitVarRef does not "
+                "appear "
+                "in constructor expressions");
           },
       },
       p);

@@ -9,6 +9,7 @@
 #include <utility>
 #include <variant>
 
+#include "lyra/backend/cpp/formatting.hpp"
 #include "lyra/backend/cpp/render_context.hpp"
 #include "lyra/backend/cpp/render_print.hpp"
 #include "lyra/backend/cpp/render_stmt.hpp"
@@ -249,6 +250,19 @@ auto RenderStructuralVarReadExpr(
     return *name_or + ".Get()";
   }
   return *name_or;
+}
+
+// Read-side render for a cross-unit reference: the slot is a resolved
+// `Var<T>*`, so the held value is observed via `->Get()` (integral packed) or
+// a dereference (other storage), mirroring the structural-var read split.
+auto RenderCrossUnitVarReadExpr(
+    const RenderContext& ctx, const mir::Expr& expr,
+    const mir::CrossUnitVarRef& m) -> diag::Result<std::string> {
+  const std::string slot = CrossUnitRefSlotName(m.id.value);
+  if (ctx.Unit().GetType(expr.type).IsIntegralPacked()) {
+    return slot + "->Get()";
+  }
+  return "(*" + slot + ")";
 }
 
 // Builds the C++ literal that materializes a 1-bit PackedArray of the SV-typed
@@ -1009,6 +1023,10 @@ auto RenderLhsExpr(
             if (!name) return std::unexpected(std::move(name.error()));
             return *name + std::string{mutate_adapter};
           },
+          [&](const mir::CrossUnitVarRef& r) -> diag::Result<std::string> {
+            return "(*" + CrossUnitRefSlotName(r.id.value) + ")" +
+                   std::string{mutate_adapter};
+          },
           [&](const mir::ProceduralVarRef& l) -> diag::Result<std::string> {
             return LookupProceduralVarName(ctx, l);
           },
@@ -1057,16 +1075,26 @@ auto LhsRootPrimary(const RenderContext& ctx, const mir::Expr& expr)
   }
 }
 
-// The root structural var iff the LHS root is one, else nullptr -- used to
-// detect whether the assignment touches an observable scalar.
-auto LhsRootStructuralVarForObservable(
-    const RenderContext& ctx, const mir::Expr& expr)
-    -> const mir::StructuralVarRef* {
-  return std::get_if<mir::StructuralVarRef>(&LhsRootPrimary(ctx, expr).data);
+// Whether the LHS root is an observable scalar -- a structural var or a
+// cross-unit reference slot whose target is an observable scalar type. A write
+// to such a root routes through `Var::Set` / `Var::Mutate` so subscribers fire.
+auto LhsRootIsObservableScalar(const RenderContext& ctx, const mir::Expr& expr)
+    -> bool {
+  const mir::Expr& root = LhsRootPrimary(ctx, expr);
+  if (const auto* sv = std::get_if<mir::StructuralVarRef>(&root.data)) {
+    return IsObservableScalarType(ctx.Unit().GetType(
+        ctx.StructuralScope().GetStructuralVar(sv->var).type));
+  }
+  if (const auto* cu = std::get_if<mir::CrossUnitVarRef>(&root.data)) {
+    return IsObservableScalarType(
+        ctx.Unit().GetType(ctx.StructuralScope().GetCrossUnitRef(cu->id).type));
+  }
+  return false;
 }
 
 auto IsLhsBarePrimary(const mir::Expr& expr) -> bool {
   return std::holds_alternative<mir::StructuralVarRef>(expr.data) ||
+         std::holds_alternative<mir::CrossUnitVarRef>(expr.data) ||
          std::holds_alternative<mir::ProceduralVarRef>(expr.data);
 }
 
@@ -1146,13 +1174,7 @@ auto RenderAssignExpr(const RenderContext& ctx, const mir::AssignExpr& a)
            *value_or + ")";
   }
 
-  const mir::StructuralVarRef* observable_root =
-      LhsRootStructuralVarForObservable(ctx, lhs_expr);
-  const bool observable = observable_root != nullptr && [&] {
-    const auto& var_decl =
-        ctx.StructuralScope().GetStructuralVar(observable_root->var);
-    return IsObservableScalarType(ctx.Unit().GetType(var_decl.type));
-  }();
+  const bool observable = LhsRootIsObservableScalar(ctx, lhs_expr);
 
   // Whole-var write: route observable structural targets through Var::Set
   // (which fires subscribers), procedural locals get a direct C++ assignment.
@@ -1208,13 +1230,7 @@ auto RenderIncDecExpr(const RenderContext& ctx, const mir::IncDecExpr& inc)
         "implemented in cpp emit",
         diag::UnsupportedCategory::kFeature);
   }
-  const mir::StructuralVarRef* observable_root =
-      LhsRootStructuralVarForObservable(ctx, target_expr);
-  const bool observable = observable_root != nullptr && [&] {
-    const auto& var_decl =
-        ctx.StructuralScope().GetStructuralVar(observable_root->var);
-    return IsObservableScalarType(ctx.Unit().GetType(var_decl.type));
-  }();
+  const bool observable = LhsRootIsObservableScalar(ctx, target_expr);
 
   std::string lhs;
   if (IsLhsBarePrimary(target_expr)) {
@@ -1424,6 +1440,9 @@ auto RenderExprNatural(const RenderContext& ctx, const mir::Expr& expr)
           },
           [&](const mir::StructuralVarRef& m) -> diag::Result<std::string> {
             return RenderStructuralVarReadExpr(ctx, expr, m);
+          },
+          [&](const mir::CrossUnitVarRef& m) -> diag::Result<std::string> {
+            return RenderCrossUnitVarReadExpr(ctx, expr, m);
           },
           [&](const mir::ProceduralVarRef& l) -> diag::Result<std::string> {
             const std::string name = LookupProceduralVarName(ctx, l);

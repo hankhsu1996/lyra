@@ -1,12 +1,15 @@
 #include "lyra/lowering/hir_to_mir/sensitivity_wait.hpp"
 
 #include <utility>
+#include <variant>
 #include <vector>
 
 #include "lyra/base/internal_error.hpp"
+#include "lyra/base/overloaded.hpp"
 #include "lyra/hir/stmt.hpp"
 #include "lyra/lowering/hir_to_mir/state.hpp"
 #include "lyra/mir/stmt.hpp"
+#include "lyra/mir/value_ref.hpp"
 
 namespace lyra::lowering::hir_to_mir {
 
@@ -34,10 +37,19 @@ auto BuildSensitivityWaitStmt(
   std::vector<mir::SensitivityRead> reads;
   reads.reserve(sensitivity_list.size());
   for (const auto& entry : sensitivity_list) {
+    mir::SensitivityRef ref = std::visit(
+        Overloaded{
+            [&](const hir::StructuralVarRef& r) -> mir::SensitivityRef {
+              return scope_state.TranslateStructuralVar(r.hops, r.var);
+            },
+            [](const hir::CrossUnitVarRef& r) -> mir::SensitivityRef {
+              return mir::CrossUnitVarRef{.id = {.value = r.id.value}};
+            },
+        },
+        entry.ref);
     reads.push_back(
         mir::SensitivityRead{
-            .ref = scope_state.TranslateStructuralVar(
-                entry.ref.hops, entry.ref.var),
+            .ref = std::move(ref),
             .bit_range = entry.bit_range,
             .edge_kind = LowerEventEdge(entry.edge_kind)});
   }

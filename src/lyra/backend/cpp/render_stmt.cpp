@@ -183,6 +183,19 @@ auto RenderConstructExternalUnitStmt(
       ctx, var.name, var.type, s.unit_name, var.name, s.dims, 0, indent);
 }
 
+// Points the slot at the child member it references, once the child exists.
+// The slot is a `Var<T>*`; the child instance var is an owning pointer, so the
+// member is reached with `->` and its address taken (LRM 23.6 resolved at
+// construction, reference_resolution.md).
+auto RenderResolveCrossUnitRefStmt(
+    const RenderContext& ctx, const mir::ResolveCrossUnitRefStmt& s,
+    std::size_t indent) -> diag::Result<std::string> {
+  const auto& slot = ctx.StructuralScope().GetCrossUnitRef(s.slot);
+  const auto& inst = ctx.StructuralScope().GetStructuralVar(slot.instance_var);
+  return Indent(indent) + CrossUnitRefSlotName(s.slot.value) + " = &" +
+         inst.name + "->" + slot.target_member + ";\n";
+}
+
 auto RenderForStmtNode(
     const RenderContext& ctx, const mir::Stmt& stmt, const mir::ForStmt& s,
     std::size_t indent) -> diag::Result<std::string> {
@@ -249,20 +262,40 @@ auto RenderDoWhileStmtNode(
   return result;
 }
 
+// The Observable pointer a sensitivity leaf subscribes to: a structural var
+// yields the address of its own field; a cross-unit slot is already a resolved
+// `Var<T>*`, so the slot name is the pointer.
+auto RenderSensitivityRefPtr(
+    const RenderContext& ctx, const mir::SensitivityRef& ref)
+    -> diag::Result<std::string> {
+  return std::visit(
+      Overloaded{
+          [&](const mir::StructuralVarRef& r) -> diag::Result<std::string> {
+            auto name = RenderStructuralVarName(ctx, r);
+            if (!name) return std::unexpected(std::move(name.error()));
+            return "&" + *name;
+          },
+          [&](const mir::CrossUnitVarRef& r) -> diag::Result<std::string> {
+            return CrossUnitRefSlotName(r.id.value);
+          },
+      },
+      ref);
+}
+
 auto RenderSensitivityWaitStmt(
     const RenderContext& ctx, const mir::SensitivityWaitStmt& s,
     std::size_t indent) -> diag::Result<std::string> {
   std::string result = Indent(indent) + "co_await lyra::runtime::WaitAny({";
   for (std::size_t i = 0; i < s.reads.size(); ++i) {
     const auto& read = s.reads[i];
-    auto name_or = RenderStructuralVarName(ctx, read.ref);
-    if (!name_or) return std::unexpected(std::move(name_or.error()));
+    auto ptr_or = RenderSensitivityRefPtr(ctx, read.ref);
+    if (!ptr_or) return std::unexpected(std::move(ptr_or.error()));
     if (i != 0) result += ", ";
     // bit_range follows slang's `(lo_bit, hi_bit)` inclusive convention; the
     // runtime Trigger takes `(lsb_offset, width)`.
     const auto lsb = read.bit_range.first;
     const auto width = read.bit_range.second - read.bit_range.first + 1;
-    result += "{&" + *name_or + ", " +
+    result += "{" + *ptr_or + ", " +
               std::string{RenderEventEdgeAsRuntime(read.edge_kind)} + ", " +
               std::to_string(lsb) + "ULL, " + std::to_string(width) + "ULL}";
   }
@@ -309,6 +342,10 @@ auto RenderStmt(
           [&](const mir::ConstructExternalUnitStmt& s)
               -> diag::Result<std::string> {
             return RenderConstructExternalUnitStmt(ctx, s, indent);
+          },
+          [&](const mir::ResolveCrossUnitRefStmt& s)
+              -> diag::Result<std::string> {
+            return RenderResolveCrossUnitRefStmt(ctx, s, indent);
           },
           [&](const mir::ForStmt& s) -> diag::Result<std::string> {
             return RenderForStmtNode(ctx, stmt, s, indent);

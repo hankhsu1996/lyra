@@ -8,6 +8,7 @@
 #include <vector>
 
 #include <slang/ast/Expression.h>
+#include <slang/ast/HierarchicalReference.h>
 #include <slang/ast/SemanticFacts.h>
 #include <slang/ast/Symbol.h>
 #include <slang/ast/SystemSubroutine.h>
@@ -18,6 +19,7 @@
 #include <slang/ast/expressions/MiscExpressions.h>
 #include <slang/ast/expressions/OperatorExpressions.h>
 #include <slang/ast/expressions/SelectExpressions.h>
+#include <slang/ast/symbols/InstanceSymbols.h>
 #include <slang/ast/symbols/ParameterSymbols.h>
 #include <slang/ast/symbols/SubroutineSymbols.h>
 #include <slang/ast/symbols/VariableSymbols.h>
@@ -280,6 +282,87 @@ auto LowerNamedValueProc(
   return MakeRefExpr(
       hir::StructuralVarRef{.hops = *hops, .var = binding->var_id},
       binding->type, span);
+}
+
+// LRM 23.6 hierarchical reference. Resolves the downward, single-level scalar
+// form (`c.x`, `c` a direct child instance of the referring scope) into a
+// cross-unit reference slot; the slot's navigation recipe and the constructor
+// resolution live downstream (reference_resolution.md). Upward, multi-level,
+// instance-array, and interface-port forms are rejected explicitly here so they
+// never lower into a silently-wrong shape.
+auto LowerHierarchicalValueProc(
+    const UnitLoweringFacts& unit_facts, UnitLoweringState& unit_state,
+    const ScopeStack& stack, const slang::ast::HierarchicalValueExpression& hve)
+    -> diag::Result<hir::Expr> {
+  const auto span = unit_facts.SourceMapper().SpanOf(hve.sourceRange);
+  const auto& ref = hve.ref;
+
+  if (ref.isViaIfacePort()) {
+    return diag::Unsupported(
+        span, diag::DiagCode::kUnsupportedExpressionForm,
+        "interface-port hierarchical reference is not yet supported",
+        diag::UnsupportedCategory::kFeature);
+  }
+  if (ref.isUpward()) {
+    return diag::Unsupported(
+        span, diag::DiagCode::kUnsupportedExpressionForm,
+        "upward hierarchical reference is not yet supported",
+        diag::UnsupportedCategory::kFeature);
+  }
+
+  const auto& target = hve.symbol;
+  if (target.kind != slang::ast::SymbolKind::Variable) {
+    return diag::Unsupported(
+        span, diag::DiagCode::kUnsupportedExpressionForm,
+        "cross-unit reference to a non-variable declaration is not yet "
+        "supported",
+        diag::UnsupportedCategory::kFeature);
+  }
+
+  // Single-level downward: the referenced member must be a direct member of a
+  // child instance body. A deeper target (`c.gen.x`) sits in a nested scope and
+  // is a multi-level reference, which is not yet supported.
+  const slang::ast::Scope* parent = target.getParentScope();
+  if (parent == nullptr ||
+      parent->asSymbol().kind != slang::ast::SymbolKind::InstanceBody) {
+    return diag::Unsupported(
+        span, diag::DiagCode::kUnsupportedExpressionForm,
+        "multi-level hierarchical reference is not yet supported",
+        diag::UnsupportedCategory::kFeature);
+  }
+  const slang::ast::InstanceSymbol* inst =
+      parent->asSymbol().as<slang::ast::InstanceBodySymbol>().parentInstance;
+  if (inst == nullptr) {
+    return diag::Unsupported(
+        span, diag::DiagCode::kUnsupportedExpressionForm,
+        "hierarchical reference target has no instance parent",
+        diag::UnsupportedCategory::kFeature);
+  }
+
+  const auto inst_binding = unit_state.LookupInstanceMemberBinding(*inst);
+  if (!inst_binding.has_value()) {
+    return diag::Unsupported(
+        span, diag::DiagCode::kUnsupportedExpressionForm,
+        "hierarchical reference through this instance form is not yet "
+        "supported",
+        diag::UnsupportedCategory::kFeature);
+  }
+  const auto hops = stack.HopsTo(inst_binding->home_frame);
+  if (!hops.has_value() || hops->value != 0) {
+    return diag::Unsupported(
+        span, diag::DiagCode::kUnsupportedExpressionForm,
+        "multi-level hierarchical reference is not yet supported",
+        diag::UnsupportedCategory::kFeature);
+  }
+
+  auto type_id = TypeIdOfSlangExpr(unit_facts, unit_state, hve);
+  if (!type_id) return std::unexpected(std::move(type_id.error()));
+
+  const auto& var = target.as<slang::ast::VariableSymbol>();
+  const hir::CrossUnitRefId slot = unit_state.MapOrGetCrossUnitRef(
+      var, inst_binding->home_frame, inst_binding->member_id,
+      std::string{var.name}, *type_id);
+  return MakeRefExpr(hir::CrossUnitVarRef{.id = slot}, *type_id, span);
 }
 
 auto LowerNamedValueStructural(
@@ -1386,6 +1469,11 @@ auto LowerProcExpr(
           unit_facts, unit_state, proc_state, stack,
           expr.as<slang::ast::NamedValueExpression>());
 
+    case slang::ast::ExpressionKind::HierarchicalValue:
+      return LowerHierarchicalValueProc(
+          unit_facts, unit_state, stack,
+          expr.as<slang::ast::HierarchicalValueExpression>());
+
     case slang::ast::ExpressionKind::LValueReference:
       throw InternalError(
           "LowerProcExpr: slang LValueReference must not reach HIR; "
@@ -1675,6 +1763,22 @@ auto ValidateAssignableSlangExpr(
       }
       return ValidateAssignableSlangExpr(
           unit_facts, unit_state, proc_state, ma.value());
+    }
+    case EK::HierarchicalValue: {
+      // A downward cross-unit write (`c.x = ...`). The downward / single-level
+      // / scalar guard and the slot creation run during lowering
+      // (LowerHierarchicalValueProc on the assignment target); validation only
+      // confirms the target is a variable. A continuous-assignment context has
+      // no process, and cross-unit continuous-assign targets are deferred.
+      const auto& hv = expr.as<slang::ast::HierarchicalValueExpression>();
+      if (hv.symbol.kind != slang::ast::SymbolKind::Variable) {
+        return reject("assignment target must be a variable reference");
+      }
+      if (proc_state == nullptr) {
+        return reject(
+            "continuous-assignment target must be a structural variable");
+      }
+      return {};
     }
     case EK::Concatenation: {
       const auto& cc = expr.as<slang::ast::ConcatenationExpression>();

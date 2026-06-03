@@ -153,9 +153,9 @@ struct ArrayLiteralExpr {
 
 using ExprData = std::variant<
     IntegerLiteral, StringLiteral, TimeLiteral, RealLiteral, StructuralParamRef,
-    StructuralVarRef, ProceduralVarRef, UnaryExpr, BinaryExpr, ConditionalExpr,
-    AssignExpr, IncDecExpr, CallExpr, RuntimeCallExpr, ConversionExpr,
-    ClosureExpr, ElementSelectExpr, RangeSelectExpr, ConcatExpr,
+    StructuralVarRef, ProceduralVarRef, CrossUnitVarRef, UnaryExpr, BinaryExpr,
+    ConditionalExpr, AssignExpr, IncDecExpr, CallExpr, RuntimeCallExpr,
+    ConversionExpr, ClosureExpr, ElementSelectExpr, RangeSelectExpr, ConcatExpr,
     ReplicationExpr, ArrayLiteralExpr>;
 
 struct Expr {
