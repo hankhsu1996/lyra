@@ -303,6 +303,23 @@ auto RenderScopeAsClass(
     out += *field_or;
   }
 
+  // A cross-unit reference slot holds a resolved pointer into a child's member;
+  // the constructor points it at `&child->member`. It mirrors that member's
+  // storage: a `Var<T>*` for an observable scalar, a plain `T*` otherwise.
+  for (std::size_t i = 0; i < s.cross_unit_refs.size(); ++i) {
+    const auto& cu = s.cross_unit_refs[i];
+    auto type_or = RenderTypeAsCpp(unit, s, cu.type);
+    if (!type_or) return std::unexpected(std::move(type_or.error()));
+    const std::string slot =
+        CrossUnitRefSlotName(static_cast<std::uint32_t>(i));
+    if (IsObservableScalarType(unit.GetType(cu.type))) {
+      out += Indent(indent + 1) + "lyra::runtime::Var<" + *type_or + ">* " +
+             slot + " = nullptr;\n";
+    } else {
+      out += Indent(indent + 1) + *type_or + "* " + slot + " = nullptr;\n";
+    }
+  }
+
   if (s.processes.empty() && s.structural_subroutines.empty()) {
     out += Indent(indent) + "};\n";
     return out;

@@ -85,6 +85,14 @@ struct ConstructExternalUnitStmt {
   std::vector<std::uint32_t> dims;
 };
 
+// Resolves a cross-unit reference slot once at construction, after the target
+// child is built (reference_resolution.md): the backend materializes a stored
+// direct reference to the child's member. The navigation recipe lives in the
+// enclosing scope's `cross_unit_refs` table, keyed by `slot`.
+struct ResolveCrossUnitRefStmt {
+  CrossUnitRefId slot;
+};
+
 struct ForInitDecl {
   ProceduralVarRef induction_var = {};
   ExprId init = {};
@@ -148,7 +156,7 @@ struct ReturnStmt {
 // DFA produces the (var, bit_range) pairs; the SV edge identifier (or
 // `kAnyChange` for implicit sensitivity) attaches per leaf at AST lowering.
 struct SensitivityRead {
-  StructuralVarRef ref;
+  SensitivityRef ref;
   std::pair<std::uint64_t, std::uint64_t> bit_range;
   EventEdge edge_kind = EventEdge::kAnyChange;
 };
@@ -163,9 +171,9 @@ struct SensitivityWaitStmt {
 
 using StmtData = std::variant<
     EmptyStmt, ProceduralVarDeclStmt, ExprStmt, BlockStmt, IfStmt,
-    ConstructOwnedObjectStmt, ConstructExternalUnitStmt, ForStmt, DelayStmt,
-    WhileStmt, DoWhileStmt, BreakStmt, ContinueStmt, ReturnStmt,
-    SensitivityWaitStmt>;
+    ConstructOwnedObjectStmt, ConstructExternalUnitStmt,
+    ResolveCrossUnitRefStmt, ForStmt, DelayStmt, WhileStmt, DoWhileStmt,
+    BreakStmt, ContinueStmt, ReturnStmt, SensitivityWaitStmt>;
 
 struct Stmt {
   std::optional<std::string> label;

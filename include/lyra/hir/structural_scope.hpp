@@ -15,6 +15,7 @@
 #include "lyra/hir/structural_var.hpp"
 #include "lyra/hir/subroutine.hpp"
 #include "lyra/hir/type_alias.hpp"
+#include "lyra/hir/value_ref.hpp"
 
 namespace lyra::hir {
 
@@ -38,6 +39,18 @@ struct InstanceMemberId {
 
   auto operator<=>(const InstanceMemberId&) const
       -> std::strong_ordering = default;
+};
+
+// A cross-unit reference resolved once at construction (see
+// reference_resolution.md). `instance` names the owned child instance member
+// this unit reaches into; `target_member` is the child's interface member name,
+// referenced by name across the unit boundary; `type` is the slang-resolved
+// type of the referenced member. The slot is read / written / observed through
+// a stored direct reference the constructor materializes.
+struct CrossUnitRefDecl {
+  InstanceMemberId instance;
+  std::string target_member;
+  TypeId type;
 };
 
 // `target_unit` is a cross-unit reference -- the name of the instantiated unit,
@@ -96,6 +109,7 @@ struct StructuralScope {
   std::vector<ContinuousAssign> continuous_assigns;
   std::vector<Generate> generates;
   std::vector<InstanceMemberDecl> instance_members;
+  std::vector<CrossUnitRefDecl> cross_unit_refs;
   std::vector<StructuralSubroutineDecl> structural_subroutines;
   std::vector<TypeAliasDecl> type_aliases;
 
@@ -123,6 +137,10 @@ struct StructuralScope {
   [[nodiscard]] auto GetInstanceMember(InstanceMemberId id) const
       -> const InstanceMemberDecl& {
     return instance_members.at(id.value);
+  }
+  [[nodiscard]] auto GetCrossUnitRef(CrossUnitRefId id) const
+      -> const CrossUnitRefDecl& {
+    return cross_unit_refs.at(id.value);
   }
   [[nodiscard]] auto GetStructuralSubroutine(StructuralSubroutineId id) const
       -> const StructuralSubroutineDecl& {
