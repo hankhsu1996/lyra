@@ -868,11 +868,15 @@ class MirDumper {
 
   void DumpConstructExternalUnitStmt(
       StmtId id, const ConstructExternalUnitStmt& s) {
+    std::string dims;
+    for (const auto dim : s.dims) {
+      dims += std::format("[{}]", dim);
+    }
     Line(
         std::format(
             "Stmt[{}] ConstructExternalUnitStmt target=StructuralVar[{}] "
-            "unit=\"{}\"",
-            id.value, s.target.value, s.unit_name));
+            "unit=\"{}\"{}",
+            id.value, s.target.value, s.unit_name, dims));
   }
 
   void DumpStmt(const ProceduralScope& enclosing, StmtId id) {

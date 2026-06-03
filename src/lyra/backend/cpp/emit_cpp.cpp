@@ -213,6 +213,39 @@ auto RenderProcessKindLiteral(mir::ProcessKind kind) -> std::string {
   throw InternalError("RenderProcessKindLiteral: unknown ProcessKind");
 }
 
+// Binds an owned child by recursing on its member type, mirroring the type
+// walk in RenderTypeAsCpp: a vector layer iterates and indexes, an owning
+// pointer to an object registers one child scope and stops. `access` is the
+// C++ lvalue reaching the storage; `name_expr` is the C++ expression that
+// evaluates to the runtime scope-name string. One walk covers a scalar child,
+// an array of any dimensionality, an instance, and a generate scope.
+auto RenderBindChildWalk(
+    const mir::CompilationUnit& unit, const std::string& access,
+    mir::TypeId type, const std::string& name_expr, const std::string& kind,
+    std::size_t depth, std::size_t indent) -> std::string {
+  if (const auto* vec =
+          std::get_if<mir::VectorType>(&unit.GetType(type).data)) {
+    const std::string idx = "idx" + std::to_string(depth);
+    std::string out;
+    out += Indent(indent) + "for (std::size_t " + idx + " = 0; " + idx + " < " +
+           access + ".size(); ++" + idx + ") {\n";
+    out += RenderBindChildWalk(
+        unit, access + "[" + idx + "]", vec->element,
+        name_expr + " + \"[\" + std::to_string(" + idx + ") + \"]\"", kind,
+        depth + 1, indent + 1);
+    out += Indent(indent) + "}\n";
+    return out;
+  }
+  std::string out;
+  out += Indent(indent) + "{\n";
+  out += Indent(indent + 1) + "auto child = ctx.CreateChildScope(\n";
+  out += Indent(indent + 2) + name_expr + ",\n";
+  out += Indent(indent + 2) + kind + ");\n";
+  out += Indent(indent + 1) + access + "->Bind(child);\n";
+  out += Indent(indent) + "}\n";
+  return out;
+}
+
 auto RenderBind(
     const mir::CompilationUnit& unit, const mir::StructuralScope& s,
     std::size_t indent, bool is_top_level) -> std::string {
@@ -226,46 +259,27 @@ auto RenderBind(
     out += Indent(indent + 2) + RenderProcessKindLiteral(p.kind) + ",\n";
     out += Indent(indent + 2) + RenderProcessMethodName(i) + "());\n";
   }
-  // An owned-object var binds its child under this scope. The scope kind is
-  // read off the owning type: an external-unit instance is a module instance;
-  // an intra-unit owned object is a generate scope.
+  // A member that owns a child binds it under this scope. The owned-child
+  // classification -- scope kind and base name -- is read off the leaf object
+  // type; the bind itself recurses on the member type, so cardinality and
+  // dimensionality need no separate handling. Members that own no child (signal
+  // and value members) yield no leaf and are skipped.
   for (const auto& v : s.structural_vars) {
-    if (const auto ext_unit = mir::GetExternalUnitName(unit, v.type);
-        ext_unit.has_value()) {
-      out += Indent(indent + 1) + "if (" + v.name + ") {\n";
-      out += Indent(indent + 2) + "auto child = ctx.CreateChildScope(\n";
-      out += Indent(indent + 3) + "\"" + v.name + "\",\n";
-      out += Indent(indent + 3) +
-             "lyra::runtime::RuntimeScopeKind::kModuleInstance);\n";
-      out += Indent(indent + 2) + v.name + "->Bind(child);\n";
-      out += Indent(indent + 1) + "}\n";
+    const auto leaf = mir::GetOwnedChildLeaf(unit, v.type);
+    if (!leaf.has_value()) {
       continue;
     }
-    const auto target = mir::GetOwnedObjectTarget(unit, v.type);
-    if (!target.has_value()) {
-      continue;
-    }
-    const auto& child_scope = s.GetChildStructuralScope(*target);
-
-    if (mir::IsVectorOfOwningObjectType(unit, v.type)) {
-      out += Indent(indent + 1) + "for (std::size_t idx = 0; idx < " + v.name +
-             ".size(); ++idx) {\n";
-      out += Indent(indent + 2) + "auto child = ctx.CreateChildScope(\n";
-      out += Indent(indent + 3) + "\"" + child_scope.name +
-             "[\" + std::to_string(idx) + \"]\",\n";
-      out += Indent(indent + 3) +
-             "lyra::runtime::RuntimeScopeKind::kGenerateScope);\n";
-      out += Indent(indent + 2) + v.name + "[idx]->Bind(child);\n";
-      out += Indent(indent + 1) + "}\n";
-    } else {
-      out += Indent(indent + 1) + "if (" + v.name + ") {\n";
-      out += Indent(indent + 2) + "auto child = ctx.CreateChildScope(\n";
-      out += Indent(indent + 3) + "\"" + child_scope.name + "\",\n";
-      out += Indent(indent + 3) +
-             "lyra::runtime::RuntimeScopeKind::kGenerateScope);\n";
-      out += Indent(indent + 2) + v.name + "->Bind(child);\n";
-      out += Indent(indent + 1) + "}\n";
-    }
+    const std::string base_name =
+        leaf->intra_target.has_value()
+            ? s.GetChildStructuralScope(*leaf->intra_target).name
+            : v.name;
+    const std::string kind =
+        leaf->kind == mir::OwnedChildKind::kModuleInstance
+            ? "lyra::runtime::RuntimeScopeKind::kModuleInstance"
+            : "lyra::runtime::RuntimeScopeKind::kGenerateScope";
+    out += RenderBindChildWalk(
+        unit, v.name, v.type, "std::string(\"" + base_name + "\")", kind, 0,
+        indent + 1);
   }
   out += Indent(indent) + "}\n";
   return out;
