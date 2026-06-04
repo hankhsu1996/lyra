@@ -79,7 +79,7 @@ auto ExtractHirLiteralUint64(const hir::Expr& expr) -> std::uint64_t {
   return c.value_words[0];
 }
 
-auto BuildUnpackedReplicationFlatList(
+auto BuildArrayReplicationFlatList(
     const UnitLoweringState& unit_state,
     ProceduralScopeLoweringState& proc_scope_state,
     std::span<const mir::ExprId> items_ids, std::uint64_t count,
@@ -89,8 +89,13 @@ auto BuildUnpackedReplicationFlatList(
   for (std::uint64_t i = 0; i < count; ++i) {
     flat.insert(flat.end(), items_ids.begin(), items_ids.end());
   }
-  return BuildUnpackedArrayConstructExpr(
+  return BuildArrayConstructExpr(
       unit_state, proc_scope_state, result_type, std::move(flat));
+}
+
+auto IsArrayContainerType(const mir::Type& ty) -> bool {
+  return std::holds_alternative<mir::UnpackedArrayType>(ty.data) ||
+         std::holds_alternative<mir::DynamicArrayType>(ty.data);
 }
 
 auto LowerBinaryOp(hir::BinaryOp op) -> mir::BinaryOp {
@@ -1270,8 +1275,9 @@ auto LowerHirReplicationExprProc(
 
 // Lowers an HIR AssignmentPatternExpr by dispatching on the destination
 // type's runtime shape: packed targets fold into MIR `ConcatExpr` (bit
-// concatenation matches the packed bit plane), unpacked arrays land as
-// `ArrayLiteralExpr` over distinct std::vector slots.
+// concatenation matches the packed bit plane), array containers (unpacked
+// and dynamic) land as `ArrayLiteralExpr` over distinct `std::vector` slots
+// wrapped by a `ConstructExpr` against the container ctor.
 auto LowerHirAssignmentPatternExprProc(
     const UnitLoweringState& unit_state,
     const StructuralScopeLoweringState& scope_state,
@@ -1288,9 +1294,8 @@ auto LowerHirAssignmentPatternExprProc(
     if (!lowered) return std::unexpected(std::move(lowered.error()));
     element_ids.push_back(proc_scope_state.AddExpr(*std::move(lowered)));
   }
-  if (std::holds_alternative<mir::UnpackedArrayType>(
-          unit_state.GetType(result_type).data)) {
-    return BuildUnpackedArrayConstructExpr(
+  if (IsArrayContainerType(unit_state.GetType(result_type))) {
+    return BuildArrayConstructExpr(
         unit_state, proc_scope_state, result_type, std::move(element_ids));
   }
   return mir::Expr{
@@ -1315,11 +1320,10 @@ auto LowerHirAssignmentPatternReplicationExprProc(
     if (!lowered) return std::unexpected(std::move(lowered.error()));
     item_ids.push_back(proc_scope_state.AddExpr(*std::move(lowered)));
   }
-  if (std::holds_alternative<mir::UnpackedArrayType>(
-          unit_state.GetType(result_type).data)) {
+  if (IsArrayContainerType(unit_state.GetType(result_type))) {
     const std::uint64_t count =
         ExtractHirLiteralUint64(hir_process.exprs.at(a.count.value));
-    return BuildUnpackedReplicationFlatList(
+    return BuildArrayReplicationFlatList(
         unit_state, proc_scope_state, item_ids, count, result_type);
   }
   const mir::ExprId inner_concat_id = proc_scope_state.AddExpr(
@@ -1726,9 +1730,8 @@ auto LowerHirAssignmentPatternExprStructural(
     if (!lowered) return std::unexpected(std::move(lowered.error()));
     element_ids.push_back(proc_scope_state.AddExpr(*std::move(lowered)));
   }
-  if (std::holds_alternative<mir::UnpackedArrayType>(
-          unit_state.GetType(result_type).data)) {
-    return BuildUnpackedArrayConstructExpr(
+  if (IsArrayContainerType(unit_state.GetType(result_type))) {
+    return BuildArrayConstructExpr(
         unit_state, proc_scope_state, result_type, std::move(element_ids));
   }
   return mir::Expr{
@@ -1754,10 +1757,9 @@ auto LowerHirAssignmentPatternReplicationExprStructural(
     if (!lowered) return std::unexpected(std::move(lowered.error()));
     item_ids.push_back(proc_scope_state.AddExpr(*std::move(lowered)));
   }
-  if (std::holds_alternative<mir::UnpackedArrayType>(
-          unit_state.GetType(result_type).data)) {
+  if (IsArrayContainerType(unit_state.GetType(result_type))) {
     const std::uint64_t count = ExtractHirLiteralUint64(scope.GetExpr(a.count));
-    return BuildUnpackedReplicationFlatList(
+    return BuildArrayReplicationFlatList(
         unit_state, proc_scope_state, item_ids, count, result_type);
   }
   const mir::ExprId inner_concat_id = proc_scope_state.AddExpr(

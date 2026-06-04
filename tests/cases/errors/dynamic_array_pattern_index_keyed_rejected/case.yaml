@@ -1,0 +1,16 @@
+id: errors.dynamic_array_pattern_index_keyed_rejected
+tags: [errors, diag]
+input:
+  command: [emit, cpp]
+  project: false
+  top: Top
+  files: [main.sv]
+  args: ["--no-color"]
+expect:
+  exit: 1
+  stderr:
+    contains:
+      - "main.sv:"
+      - "index-keyed assignment pattern on a dynamic array is not yet supported"
+    not_contains:
+      - "internal error"

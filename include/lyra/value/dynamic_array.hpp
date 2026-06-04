@@ -2,6 +2,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <span>
 #include <utility>
 #include <vector>
 
@@ -56,6 +57,14 @@ class DynamicArray {
           "DynamicArray::new[N](src): size operand is negative (LRM 7.5.1)");
     }
     data_.resize(static_cast<std::size_t>(n_val), oob_slot_);
+  }
+
+  // LRM 10.9.1 assignment-pattern construction: shield slot seeded, size
+  // taken from the pattern's element list. Mirrors `UnpackedArray`'s span
+  // ctor so a single emit path produces `std::array<T, N>{...}` as the
+  // second argument for either container.
+  DynamicArray(T oob_slot, std::span<const T> init)
+      : oob_slot_(std::move(oob_slot)), data_(init.begin(), init.end()) {
   }
 
   DynamicArray(const DynamicArray&) = default;

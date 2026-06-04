@@ -141,38 +141,44 @@ Unpacked array support follows these invariants:
    See `docs/decisions/runtime-shape-and-default-value.md` for the shield contract.
 
 3. **Default initialization emits a `ConstructExpr` whose first positional argument is the
-   canonical-default element and whose remaining elements ride in an `ArrayLiteralExpr` rendered as
-   a brace-init-list.**
+   canonical-default element and whose second is an `ArrayLiteralExpr` rendered as
+   `std::array<T, N>{...}`.**
 
    `default_value.cpp` synthesises an `ArrayLiteralExpr` populated with per-element defaults; the
-   backend wraps it in `ConstructExpr` so the wrapper's
-   `(T canonical_default, std::initializer_list<T>)` constructor receives both the canonical-default
-   seed for `oob_slot_` and the initial elements. For `int arr[3]`:
+   backend wraps it in `ConstructExpr` so the wrapper's `(T canonical_default, std::span<const T>)`
+   constructor receives both the canonical-default seed for `oob_slot_` and the initial elements.
+   The `std::array<T, N>` rvalue produced by the element list implicitly converts to the ctor's
+   `std::span<const T>` parameter. For `int arr[3]`:
 
    ```cpp
    lyra::value::UnpackedArray<lyra::value::PackedArray> arr(
        lyra::value::PackedArray::Int(0),
-       {lyra::value::PackedArray::Int(0),
-        lyra::value::PackedArray::Int(0),
-        lyra::value::PackedArray::Int(0)});
+       std::array<lyra::value::PackedArray, 3>{
+           lyra::value::PackedArray::Int(0),
+           lyra::value::PackedArray::Int(0),
+           lyra::value::PackedArray::Int(0)});
    ```
 
-   Multi-dim composes through the nested element type with the same shape at every layer.
+   Multi-dim composes through the nested element type with the same shape at every layer. The same
+   element-list shape applies to `DynamicArray<T>` -- the only thing that varies is the outer
+   container type.
 
-4. **`'{...}` is a first-class IR expression -- `hir::ArrayLiteral` / `mir::ArrayLiteral`.**
+4. **`'{...}` is a first-class IR expression -- `hir::ArrayLiteral` / `mir::ArrayLiteral` --
+   rendered as `std::array<T, N>{...}`.**
 
    ```text
    hir::ArrayLiteral { elements: vector<ExprId> }
    mir::ArrayLiteral { elements: vector<ExprId> }
    ```
 
-   The expression's resolved type comes through the `Expr`-common `type` field (set by AST -> HIR
-   using slang's resolved type on the pattern). ArrayLiteral joins concat and replication as a
-   value-build primitive at MIR, per `mir.md`. Backend cpp renders to explicit-typed aggregate
-   construction (the wrapper accepts `std::initializer_list<T>`):
+   The expression's resolved type comes through the `Expr`-common `type` field (the container type;
+   the element type is read off it at render time). ArrayLiteral joins concat and replication as a
+   value-build primitive at MIR, per `mir.md`. Backend cpp always renders as
+   `std::array<elem, N>{...}` -- a context-independent rendering whose value implicitly converts to
+   the wrapper ctor's `std::span<const T>` parameter:
 
    ```cpp
-   lyra::value::UnpackedArray<lyra::value::PackedArray>{
+   std::array<lyra::value::PackedArray, 3>{
        lyra::value::PackedArray::Int(10),
        lyra::value::PackedArray::Int(20),
        lyra::value::PackedArray::Int(30)}
@@ -233,3 +239,12 @@ slang's AST already shapes `'{...}` as an Expression (`SimpleAssignmentPatternEx
 Procedural array assignment (`arr = '{1,2,3}`) requires the literal in RHS position; an init-only
 form would force a parallel rewrite when that lands. ConcatExpr and ReplicationExpr are first-class
 expressions despite also being context-typed -- ArrayLiteral is in the same family per `mir.md`.
+
+**Element list as `std::initializer_list<T>` with a backend special-case that strips the type prefix
+when the literal appears inside a `ConstructExpr` argument slot.** Rejected. The backend rendering
+becomes context-dependent (the same MIR primitive renders differently as a standalone expression vs
+as a `ConstructExpr` argument), which couples `RenderArrayLiteralExpr` and `RenderConstructExpr`.
+`std::span<const T>` with `std::array<T, N>{...}` at the call site keeps rendering uniform:
+`ArrayLiteralExpr` always emits `std::array<T, N>{...}`, `std::array` implicitly converts to
+`std::span<const T>`, and no parent-context inspection is needed. The cost is a slightly longer emit
+string, which has no readability cost for emitted code.
