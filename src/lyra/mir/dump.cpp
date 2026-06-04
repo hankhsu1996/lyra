@@ -803,11 +803,34 @@ class MirDumper {
                             fg.str_dest.value, fg.fd.value));
                   },
                   [&](const RuntimeFileReadCall& fr) {
-                    Line(
-                        std::format(
-                            "RuntimeFileReadCall int_dest=Expr[{}] "
-                            "fd=Expr[{}]",
-                            fr.int_dest.value, fr.fd.value));
+                    std::visit(
+                        Overloaded{
+                            [&](const RuntimeFileReadCall::PackedTarget& pt) {
+                              Line(
+                                  std::format(
+                                      "RuntimeFileReadCall packed dest="
+                                      "Expr[{}] fd=Expr[{}]",
+                                      pt.dest.value, fr.fd.value));
+                            },
+                            [&](const RuntimeFileReadCall::UnpackedTarget& ut) {
+                              std::string head = std::format(
+                                  "RuntimeFileReadCall unpacked dest=Expr[{}] "
+                                  "fd=Expr[{}] declared_left={} "
+                                  "declared_right={}",
+                                  ut.dest.value, fr.fd.value, ut.declared_left,
+                                  ut.declared_right);
+                              if (ut.start.has_value()) {
+                                head += std::format(
+                                    " start=Expr[{}]", ut.start->value);
+                              }
+                              if (ut.count.has_value()) {
+                                head += std::format(
+                                    " count=Expr[{}]", ut.count->value);
+                              }
+                              Line(head);
+                            },
+                        },
+                        fr.target);
                   },
                   [&](const RuntimeFileSeekCall& fs) {
                     Line(

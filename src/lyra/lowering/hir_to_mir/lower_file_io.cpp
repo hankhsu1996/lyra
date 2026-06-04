@@ -35,7 +35,7 @@ auto LowerFileOpenCall(
     -> diag::Result<mir::Expr> {
   auto name_or = LowerExpr(
       unit_state, scope_state, proc_state, proc_scope_state, hir_proc,
-      hir_proc.exprs.at(call.arguments[0].value));
+      hir_proc.exprs.at(call.arguments[0]->value));
   if (!name_or) return std::unexpected(std::move(name_or.error()));
   const mir::ExprId name_id = proc_scope_state.AddExpr(*std::move(name_or));
 
@@ -43,7 +43,7 @@ auto LowerFileOpenCall(
   if (call.arguments.size() == 2) {
     auto mode_or = LowerExpr(
         unit_state, scope_state, proc_state, proc_scope_state, hir_proc,
-        hir_proc.exprs.at(call.arguments[1].value));
+        hir_proc.exprs.at(call.arguments[1]->value));
     if (!mode_or) return std::unexpected(std::move(mode_or.error()));
     mode_id = proc_scope_state.AddExpr(*std::move(mode_or));
   }
@@ -65,7 +65,7 @@ auto LowerFileCloseCall(
     -> diag::Result<mir::Expr> {
   auto desc_or = LowerExpr(
       unit_state, scope_state, proc_state, proc_scope_state, hir_proc,
-      hir_proc.exprs.at(call.arguments[0].value));
+      hir_proc.exprs.at(call.arguments[0]->value));
   if (!desc_or) return std::unexpected(std::move(desc_or.error()));
   const mir::ExprId descriptor_id =
       proc_scope_state.AddExpr(*std::move(desc_or));
@@ -86,7 +86,7 @@ auto LowerFileGetcCall(
     -> diag::Result<mir::Expr> {
   auto fd_or = LowerExpr(
       unit_state, scope_state, proc_state, proc_scope_state, hir_proc,
-      hir_proc.exprs.at(call.arguments[0].value));
+      hir_proc.exprs.at(call.arguments[0]->value));
   if (!fd_or) return std::unexpected(std::move(fd_or.error()));
   const mir::ExprId fd_id = proc_scope_state.AddExpr(*std::move(fd_or));
   return mir::Expr{
@@ -104,12 +104,12 @@ auto LowerFileUngetcCall(
     -> diag::Result<mir::Expr> {
   auto c_or = LowerExpr(
       unit_state, scope_state, proc_state, proc_scope_state, hir_proc,
-      hir_proc.exprs.at(call.arguments[0].value));
+      hir_proc.exprs.at(call.arguments[0]->value));
   if (!c_or) return std::unexpected(std::move(c_or.error()));
   const mir::ExprId c_id = proc_scope_state.AddExpr(*std::move(c_or));
   auto fd_or = LowerExpr(
       unit_state, scope_state, proc_state, proc_scope_state, hir_proc,
-      hir_proc.exprs.at(call.arguments[1].value));
+      hir_proc.exprs.at(call.arguments[1]->value));
   if (!fd_or) return std::unexpected(std::move(fd_or.error()));
   const mir::ExprId fd_id = proc_scope_state.AddExpr(*std::move(fd_or));
   return mir::Expr{
@@ -128,17 +128,17 @@ auto LowerFileSeekCall(
     -> diag::Result<mir::Expr> {
   auto fd_or = LowerExpr(
       unit_state, scope_state, proc_state, proc_scope_state, hir_proc,
-      hir_proc.exprs.at(call.arguments[0].value));
+      hir_proc.exprs.at(call.arguments[0]->value));
   if (!fd_or) return std::unexpected(std::move(fd_or.error()));
   const mir::ExprId fd_id = proc_scope_state.AddExpr(*std::move(fd_or));
   auto off_or = LowerExpr(
       unit_state, scope_state, proc_state, proc_scope_state, hir_proc,
-      hir_proc.exprs.at(call.arguments[1].value));
+      hir_proc.exprs.at(call.arguments[1]->value));
   if (!off_or) return std::unexpected(std::move(off_or.error()));
   const mir::ExprId off_id = proc_scope_state.AddExpr(*std::move(off_or));
   auto op_or = LowerExpr(
       unit_state, scope_state, proc_state, proc_scope_state, hir_proc,
-      hir_proc.exprs.at(call.arguments[2].value));
+      hir_proc.exprs.at(call.arguments[2]->value));
   if (!op_or) return std::unexpected(std::move(op_or.error()));
   const mir::ExprId op_id = proc_scope_state.AddExpr(*std::move(op_or));
   return mir::Expr{
@@ -159,7 +159,7 @@ auto LowerFileRewindCall(
     -> diag::Result<mir::Expr> {
   auto fd_or = LowerExpr(
       unit_state, scope_state, proc_state, proc_scope_state, hir_proc,
-      hir_proc.exprs.at(call.arguments[0].value));
+      hir_proc.exprs.at(call.arguments[0]->value));
   if (!fd_or) return std::unexpected(std::move(fd_or.error()));
   const mir::ExprId fd_id = proc_scope_state.AddExpr(*std::move(fd_or));
   return mir::Expr{
@@ -177,7 +177,7 @@ auto LowerFileTellCall(
     -> diag::Result<mir::Expr> {
   auto fd_or = LowerExpr(
       unit_state, scope_state, proc_state, proc_scope_state, hir_proc,
-      hir_proc.exprs.at(call.arguments[0].value));
+      hir_proc.exprs.at(call.arguments[0]->value));
   if (!fd_or) return std::unexpected(std::move(fd_or.error()));
   const mir::ExprId fd_id = proc_scope_state.AddExpr(*std::move(fd_or));
   return mir::Expr{
@@ -195,7 +195,7 @@ auto LowerFileEofCall(
     -> diag::Result<mir::Expr> {
   auto fd_or = LowerExpr(
       unit_state, scope_state, proc_state, proc_scope_state, hir_proc,
-      hir_proc.exprs.at(call.arguments[0].value));
+      hir_proc.exprs.at(call.arguments[0]->value));
   if (!fd_or) return std::unexpected(std::move(fd_or.error()));
   const mir::ExprId fd_id = proc_scope_state.AddExpr(*std::move(fd_or));
   return mir::Expr{
@@ -215,7 +215,7 @@ auto LowerFileFlushCall(
   if (!call.arguments.empty()) {
     auto fd_or = LowerExpr(
         unit_state, scope_state, proc_state, proc_scope_state, hir_proc,
-        hir_proc.exprs.at(call.arguments[0].value));
+        hir_proc.exprs.at(call.arguments[0]->value));
     if (!fd_or) return std::unexpected(std::move(fd_or.error()));
     descriptor = proc_scope_state.AddExpr(*std::move(fd_or));
   }
@@ -328,12 +328,12 @@ auto LowerFileIOSystemSubroutineCallStmt(
       // $fgets(str_lvalue, fd) -- arg[0] is the output string lvalue.
       auto slot_or = BuildOutputArgSlot(
           unit_state, scope_state, proc_state, wrapper, hir_proc,
-          call.arguments[0], "_lyra_fgets_dest");
+          *call.arguments[0], "_lyra_fgets_dest");
       if (!slot_or) return std::unexpected(std::move(slot_or.error()));
       slots.push_back(*slot_or);
       auto fd_or = LowerExpr(
           unit_state, scope_state, proc_state, wrapper, hir_proc,
-          hir_proc.exprs.at(call.arguments[1].value));
+          hir_proc.exprs.at(call.arguments[1]->value));
       if (!fd_or) return std::unexpected(std::move(fd_or.error()));
       const mir::ExprId fd_id = wrapper.AddExpr(*std::move(fd_or));
       const mir::ExprId temp_ref = wrapper.AddExpr(
@@ -348,25 +348,95 @@ auto LowerFileIOSystemSubroutineCallStmt(
       break;
     }
     case support::FileIOKind::kRead: {
-      // $fread(integral_lvalue, fd) -- arg[0] is the output integral lvalue.
-      auto slot_or = BuildOutputArgSlot(
-          unit_state, scope_state, proc_state, wrapper, hir_proc,
-          call.arguments[0], "_lyra_fread_dest");
-      if (!slot_or) return std::unexpected(std::move(slot_or.error()));
-      slots.push_back(*slot_or);
+      // LRM 21.3.4.4: arg[0] is either a packed integral lvalue
+      // (integral form) or an unpacked array (memory form).
+      const auto& dest_hir = hir_proc.exprs.at(call.arguments[0]->value);
+      const auto& dest_hir_ty = unit_state.GetHirType(dest_hir.type);
       auto fd_or = LowerExpr(
           unit_state, scope_state, proc_state, wrapper, hir_proc,
-          hir_proc.exprs.at(call.arguments[1].value));
+          hir_proc.exprs.at(call.arguments[1]->value));
       if (!fd_or) return std::unexpected(std::move(fd_or.error()));
       const mir::ExprId fd_id = wrapper.AddExpr(*std::move(fd_or));
-      const mir::ExprId temp_ref = wrapper.AddExpr(
-          mir::Expr{.data = slots[0].temp, .type = slots[0].type});
+
+      const auto* unpacked =
+          std::get_if<hir::UnpackedArrayType>(&dest_hir_ty.data);
+      if (unpacked == nullptr) {
+        // Integral form. LRM "start and count are ignored if $fread is
+        // loading an integral variable" -- we reject the tolerant case
+        // outright so the user gets a clear diagnostic instead of silent
+        // arg-dropping.
+        if (call.arguments.size() != 2) {
+          return diag::Unsupported(
+              diag::DiagCode::kUnsupportedSubroutineArgument,
+              "$fread: integral form does not accept start/count "
+              "arguments (LRM 21.3.4.4 says they are ignored; we reject "
+              "to surface the mistake)",
+              diag::UnsupportedCategory::kFeature);
+        }
+        auto slot_or = BuildOutputArgSlot(
+            unit_state, scope_state, proc_state, wrapper, hir_proc,
+            *call.arguments[0], "_lyra_fread_dest");
+        if (!slot_or) return std::unexpected(std::move(slot_or.error()));
+        slots.push_back(*slot_or);
+        const mir::ExprId temp_ref = wrapper.AddExpr(
+            mir::Expr{.data = slots[0].temp, .type = slots[0].type});
+        call_expr = mir::Expr{
+            .data =
+                mir::RuntimeCallExpr{
+                    .call =
+                        mir::RuntimeFileReadCall{
+                            .target =
+                                mir::RuntimeFileReadCall::PackedTarget{
+                                    .dest = temp_ref},
+                            .fd = fd_id}},
+            .type = unit_state.Builtins().int32};
+        break;
+      }
+      // Unpacked-array destination (LRM 21.3.4.4 "memory form"). Only 1D
+      // unpacked of integral packed elements is in scope; struct / union /
+      // multi-dim / dynamic-array element types are deferred.
+      const auto& elem_ty = unit_state.GetHirType(unpacked->element_type);
+      if (!std::holds_alternative<hir::PackedArrayType>(elem_ty.data)) {
+        return diag::Unsupported(
+            diag::DiagCode::kUnsupportedSubroutineArgument,
+            "$fread memory form: only 1D unpacked arrays of integral "
+            "packed elements are supported (LRM 21.3.4.4)",
+            diag::UnsupportedCategory::kFeature);
+      }
+      auto extract_optional =
+          [&](std::size_t idx) -> diag::Result<std::optional<mir::ExprId>> {
+        if (call.arguments.size() <= idx) return std::nullopt;
+        if (!call.arguments[idx].has_value()) return std::nullopt;
+        const auto& a = hir_proc.exprs.at(call.arguments[idx]->value);
+        auto lowered = LowerExpr(
+            unit_state, scope_state, proc_state, wrapper, hir_proc, a);
+        if (!lowered) return std::unexpected(std::move(lowered.error()));
+        return wrapper.AddExpr(*std::move(lowered));
+      };
+      auto start_or = extract_optional(2);
+      if (!start_or) return std::unexpected(std::move(start_or.error()));
+      auto count_or = extract_optional(3);
+      if (!count_or) return std::unexpected(std::move(count_or.error()));
+      // The unpacked-array lvalue flows in without copy-out: the runtime
+      // helper mutates elements through the live reference, so the
+      // BuildOutputArgSlot temp the integral path uses isn't needed here.
+      auto dest_or = LowerExpr(
+          unit_state, scope_state, proc_state, wrapper, hir_proc, dest_hir);
+      if (!dest_or) return std::unexpected(std::move(dest_or.error()));
+      const mir::ExprId dest_id = wrapper.AddExpr(*std::move(dest_or));
       call_expr = mir::Expr{
           .data =
               mir::RuntimeCallExpr{
                   .call =
                       mir::RuntimeFileReadCall{
-                          .int_dest = temp_ref, .fd = fd_id}},
+                          .target =
+                              mir::RuntimeFileReadCall::UnpackedTarget{
+                                  .dest = dest_id,
+                                  .start = *start_or,
+                                  .count = *count_or,
+                                  .declared_left = unpacked->dim.left,
+                                  .declared_right = unpacked->dim.right},
+                          .fd = fd_id}},
           .type = unit_state.Builtins().int32};
       break;
     }
@@ -374,12 +444,12 @@ auto LowerFileIOSystemSubroutineCallStmt(
       // $ferror(fd, str_lvalue) -- arg[1] is the output string lvalue.
       auto fd_or = LowerExpr(
           unit_state, scope_state, proc_state, wrapper, hir_proc,
-          hir_proc.exprs.at(call.arguments[0].value));
+          hir_proc.exprs.at(call.arguments[0]->value));
       if (!fd_or) return std::unexpected(std::move(fd_or.error()));
       const mir::ExprId fd_id = wrapper.AddExpr(*std::move(fd_or));
       auto slot_or = BuildOutputArgSlot(
           unit_state, scope_state, proc_state, wrapper, hir_proc,
-          call.arguments[1], "_lyra_ferror_dest");
+          *call.arguments[1], "_lyra_ferror_dest");
       if (!slot_or) return std::unexpected(std::move(slot_or.error()));
       slots.push_back(*slot_or);
       const mir::ExprId temp_ref = wrapper.AddExpr(

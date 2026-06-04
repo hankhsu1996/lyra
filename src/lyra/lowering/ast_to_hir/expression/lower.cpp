@@ -564,7 +564,7 @@ auto LowerCallExprProc(
     ProcessLoweringState& proc_state, const ScopeStack& stack,
     const slang::ast::CallExpression& call, const slang::ast::Expression& expr,
     diag::SourceSpan span) -> diag::Result<hir::Expr> {
-  std::vector<hir::ExprId> arg_ids;
+  std::vector<std::optional<hir::ExprId>> arg_ids;
   arg_ids.reserve(call.arguments().size());
   std::optional<hir::TypeId> receiver_type;
   for (std::size_t i = 0; i < call.arguments().size(); ++i) {
@@ -580,13 +580,21 @@ auto LowerCallExprProc(
         arg = &as.left();
       }
     }
+    // LRM 21.3.4.4 form 2d: a standalone EmptyArgument marks a positional
+    // elision (`$fread(mem, fd, , count)`). Surface as `std::nullopt` so the
+    // per-subroutine HIR-to-MIR handler can decide whether elision is valid
+    // at this position; positions stay aligned with slang's arg list.
+    if (arg->kind == slang::ast::ExpressionKind::EmptyArgument) {
+      arg_ids.emplace_back(std::nullopt);
+      continue;
+    }
     auto arg_or =
         LowerProcExpr(unit_facts, unit_state, proc_state, stack, *arg);
     if (!arg_or) return std::unexpected(std::move(arg_or.error()));
     if (i == 0) {
       receiver_type = arg_or->type;
     }
-    arg_ids.push_back(proc_state.AddExpr(*std::move(arg_or)));
+    arg_ids.emplace_back(proc_state.AddExpr(*std::move(arg_or)));
   }
 
   if (call.isSystemCall()) {

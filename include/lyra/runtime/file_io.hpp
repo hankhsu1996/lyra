@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstdint>
 #include <functional>
 #include <optional>
 #include <span>
@@ -7,6 +8,7 @@
 #include "lyra/value/format.hpp"
 #include "lyra/value/packed_array.hpp"
 #include "lyra/value/string.hpp"
+#include "lyra/value/unpacked_array.hpp"
 
 namespace lyra::runtime {
 
@@ -70,14 +72,26 @@ auto LyraFGets(
     RuntimeServices& services, value::String& dest,
     const value::PackedArray& fd) -> value::PackedArray;
 
-// LRM 21.3.4.4 $fread(integral_var, fd). Reads ceil(BitWidth/8) bytes from
-// fd in big-endian order into `dest`. The destination's bit_width /
-// signedness / 4-state-ness are read from its current shape so the runtime
-// can produce a value of the right shape. Returns the byte count, 0 on
-// error. Widths > 64 bits are not supported (returns 0).
+// LRM 21.3.4.4 $fread into a packed destination. Reads (BitWidth+7)/8 bytes
+// big-endian (first byte fills MSBs); the destination's existing shape
+// drives the result's width / sign / 4-state. Returns byte count, 0 on
+// error.
 auto LyraFRead(
     RuntimeServices& services, value::PackedArray& dest,
     const value::PackedArray& fd) -> value::PackedArray;
+
+// LRM 21.3.4.4 $fread into an unpacked destination. Iterates `dest`
+// elements starting at SV index `sv_start` (default = lowest declared
+// index) for at most `count` (default = until EOF / highest index),
+// always advancing toward the highest numerical SV index (LRM "shall
+// continue upward toward the highest address"); descending ranges
+// therefore walk storage backwards. EOF mid-element zero-pads that
+// element's LSBs, matching the packed form's "as much as available".
+auto LyraFRead(
+    RuntimeServices& services, value::UnpackedArray<value::PackedArray>& dest,
+    const value::PackedArray& fd, std::optional<std::int64_t> sv_start,
+    std::optional<std::int64_t> count, std::int64_t declared_left,
+    std::int64_t declared_right) -> value::PackedArray;
 
 // LRM 21.3.5 $fseek(fd, offset, operation). `operation` is 0/1/2 for
 // SEEK_SET/SEEK_CUR/SEEK_END. Returns 0 on success or -1 on error.

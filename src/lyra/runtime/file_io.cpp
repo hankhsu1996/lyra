@@ -293,6 +293,78 @@ auto LyraFRead(
   return MakeInt(static_cast<std::int32_t>(got));
 }
 
+auto LyraFRead(
+    RuntimeServices& services, value::UnpackedArray<value::PackedArray>& dest,
+    const value::PackedArray& fd_pa, std::optional<std::int64_t> sv_start,
+    std::optional<std::int64_t> count, std::int64_t declared_left,
+    std::int64_t declared_right) -> value::PackedArray {
+  const std::int32_t fd = AsInt32(fd_pa);
+  auto* slot = services.Files().ResolveSlot(fd);
+  if (slot == nullptr) {
+    Stamp(services, fd, EBADF, "$fread: not an open file descriptor");
+    return MakeInt(0);
+  }
+  if (!slot->permits_read) {
+    Stamp(services, fd, EBADF, "$fread: file not open for reading");
+    return MakeInt(0);
+  }
+  if (dest.Size() == 0U) return MakeInt(0);
+
+  const bool ascending = declared_left <= declared_right;
+  const auto lowest_sv = std::min(declared_left, declared_right);
+  const auto highest_sv = std::max(declared_left, declared_right);
+  const auto start_sv = sv_start.value_or(lowest_sv);
+  // LRM 21.3.4.4: out-of-range start has no defined behaviour. Stamp EBADF
+  // and return 0 so the user sees the failure rather than a silent no-op.
+  if (start_sv < lowest_sv || start_sv > highest_sv) {
+    Stamp(services, fd, EINVAL, "$fread: start index out of array range");
+    return MakeInt(0);
+  }
+  const auto available_elements =
+      static_cast<std::size_t>(highest_sv - start_sv + 1);
+  const auto target_count =
+      count.has_value()
+          ? std::min(static_cast<std::size_t>(*count), available_elements)
+          : available_elements;
+
+  const auto element_width = dest.RawAt(0).BitWidth();
+  const bool elem_signed = dest.RawAt(0).IsSigned();
+  const bool elem_four_state = dest.RawAt(0).IsFourState();
+  const auto bytes_per_elem =
+      static_cast<std::size_t>((element_width + 7U) / 8U);
+  std::size_t total_bytes = 0;
+
+  for (std::size_t k = 0; k < target_count; ++k) {
+    std::vector<char> buf(bytes_per_elem, '\0');
+    std::size_t pos = 0;
+    // LRM 21.3.4.1: drain any $ungetc-deposited byte only on the very first
+    // element's first byte; subsequent bytes come straight from the stream.
+    if (k == 0 && slot->putback.has_value()) {
+      buf[pos++] = *slot->putback;
+      slot->putback.reset();
+    }
+    const auto rest = std::span<char>(buf).subspan(pos);
+    slot->file->read(rest.data(), static_cast<std::streamsize>(rest.size()));
+    const auto got_this = pos + static_cast<std::size_t>(slot->file->gcount());
+    if (got_this == 0U) break;
+    // Partial element gets LSB zero-padding via BytesToPackedArray's
+    // "shorter input -> trailing zeros" path -- consistent with the
+    // packed form's "as much as available" behaviour.
+    auto effective = std::span<const char>(buf).first(got_this);
+    auto elem_value = BytesToPackedArray(
+        effective, element_width, elem_signed, elem_four_state);
+    const std::int64_t sv_index = start_sv + static_cast<std::int64_t>(k);
+    const std::int64_t storage_idx =
+        ascending ? (sv_index - declared_left) : (declared_left - sv_index);
+    dest.ElementAt(
+        value::PackedArray::Int(static_cast<std::int32_t>(storage_idx))) =
+        std::move(elem_value);
+    total_bytes += got_this;
+    if (got_this < bytes_per_elem) break;
+  }
+  return MakeInt(static_cast<std::int32_t>(total_bytes));
+}
+
 auto LyraFSeek(
     RuntimeServices& services, const value::PackedArray& fd_pa,
     const value::PackedArray& offset, const value::PackedArray& operation)

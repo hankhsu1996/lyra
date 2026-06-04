@@ -1,0 +1,24 @@
+id: cpp.fread_memory_form
+tags: [cpp_run]
+input:
+  command: [run, cpp]
+  project: false
+  top: Top
+  files: [main.sv]
+expect:
+  exit: 0
+  variables:
+    n_a: 16
+    form_a: ["32'h01020304", "32'h05060708", "32'h090A0B0C", "32'h0D0E0F10"]
+    n_b: 16
+    form_b: ["32'h01020304", "32'h05060708", "32'h090A0B0C", "32'h0D0E0F10"]
+    n_c: 8
+    form_c: ["32'h0", "32'h01020304", "32'h05060708", "32'h0"]
+    n_d: 8
+    # form_d declared [20:17]; storage data_[0]=form_d[20], data_[3]=form_d[17].
+    # Loading fills SV 17 then 18: data_[3]=0x01020304, data_[2]=0x05060708.
+    form_d: ["32'h0", "32'h0", "32'h05060708", "32'h01020304"]
+    n_w: 6
+    form_w: ["9'h100", "9'h180", "9'h0FF"]
+    n_partial: 7
+    form_partial: ["32'hAABBCCDD", "32'hEEFF1100", "32'h0", "32'h0"]

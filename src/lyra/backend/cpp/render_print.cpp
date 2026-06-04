@@ -383,13 +383,57 @@ auto RenderRuntimeCallExpr(
                 *fd_or);
           },
           [&](const mir::RuntimeFileReadCall& fr) -> diag::Result<std::string> {
-            auto dest_or = RenderExpr(ctx, ctx.Expr(fr.int_dest));
-            if (!dest_or) return std::unexpected(std::move(dest_or.error()));
             auto fd_or = RenderExpr(ctx, ctx.Expr(fr.fd));
             if (!fd_or) return std::unexpected(std::move(fd_or.error()));
-            return std::format(
-                "lyra::runtime::LyraFRead(Services(), {}, {})", *dest_or,
-                *fd_or);
+            return std::visit(
+                Overloaded{
+                    [&](const mir::RuntimeFileReadCall::PackedTarget& it)
+                        -> diag::Result<std::string> {
+                      auto dest_or = RenderExpr(ctx, ctx.Expr(it.dest));
+                      if (!dest_or) {
+                        return std::unexpected(std::move(dest_or.error()));
+                      }
+                      return std::format(
+                          "lyra::runtime::LyraFRead(Services(), {}, {})",
+                          *dest_or, *fd_or);
+                    },
+                    [&](const mir::RuntimeFileReadCall::UnpackedTarget& ut)
+                        -> diag::Result<std::string> {
+                      auto dest_or = RenderExpr(ctx, ctx.Expr(ut.dest));
+                      if (!dest_or) {
+                        return std::unexpected(std::move(dest_or.error()));
+                      }
+                      auto render_opt =
+                          [&](const std::optional<mir::ExprId>& slot)
+                          -> diag::Result<std::string> {
+                        if (!slot.has_value()) {
+                          return std::string{"std::optional<std::int64_t>{}"};
+                        }
+                        auto rendered = RenderExpr(ctx, ctx.Expr(*slot));
+                        if (!rendered) {
+                          return std::unexpected(std::move(rendered.error()));
+                        }
+                        return std::format(
+                            "std::optional<std::int64_t>{{"
+                            "static_cast<std::int64_t>(({}).ToInt64())}}",
+                            *rendered);
+                      };
+                      auto start_or = render_opt(ut.start);
+                      if (!start_or) {
+                        return std::unexpected(std::move(start_or.error()));
+                      }
+                      auto count_or = render_opt(ut.count);
+                      if (!count_or) {
+                        return std::unexpected(std::move(count_or.error()));
+                      }
+                      return std::format(
+                          "lyra::runtime::LyraFRead(Services(), {}, {}, "
+                          "{}, {}, {}LL, {}LL)",
+                          *dest_or, *fd_or, *start_or, *count_or,
+                          ut.declared_left, ut.declared_right);
+                    },
+                },
+                fr.target);
           },
           [&](const mir::RuntimeFileSeekCall& fs) -> diag::Result<std::string> {
             auto fd_or = RenderExpr(ctx, ctx.Expr(fs.fd));
