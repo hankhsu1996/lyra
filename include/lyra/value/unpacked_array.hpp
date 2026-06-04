@@ -6,6 +6,7 @@
 #include <utility>
 #include <vector>
 
+#include "lyra/value/array_case_equal.hpp"
 #include "lyra/value/format.hpp"
 #include "lyra/value/packed_array.hpp"
 
@@ -157,9 +158,9 @@ class UnpackedArray {
 
   [[nodiscard]] auto CaseEqual(const UnpackedArray& other) const
       -> PackedArray {
-    PackedArray result = CaseEqElement(data_[0], other.data_[0]);
+    PackedArray result = detail::ArrayCaseEqElement(data_[0], other.data_[0]);
     for (std::size_t i = 1; i < data_.size(); ++i) {
-      result = result && CaseEqElement(data_[i], other.data_[i]);
+      result = result && detail::ArrayCaseEqElement(data_[i], other.data_[i]);
     }
     return result;
   }
@@ -179,18 +180,6 @@ class UnpackedArray {
     T fresh = oob_slot_;
     fresh.ResetToDefault();
     return fresh;
-  }
-
-  [[nodiscard]] static auto CaseEqElement(
-      const PackedArray& a, const PackedArray& b) -> PackedArray {
-    auto raw = a.CaseEqual(b);
-    const bool four_state = a.IsFourState() || b.IsFourState();
-    return four_state ? PackedArray::ConvertFrom(raw, 1, false, true) : raw;
-  }
-  template <typename U>
-  [[nodiscard]] static auto CaseEqElement(
-      const UnpackedArray<U>& a, const UnpackedArray<U>& b) -> PackedArray {
-    return a.CaseEqual(b);
   }
 
   mutable T oob_slot_;

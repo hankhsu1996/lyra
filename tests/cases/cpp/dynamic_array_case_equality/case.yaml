@@ -1,0 +1,25 @@
+id: cpp.dynamic_array_case_equality
+tags: [cpp_run]
+input:
+  command: [run, cpp]
+  project: false
+  top: Top
+  files: [main.sv]
+expect:
+  exit: 0
+  variables:
+    ce_1d: 1
+    nce_1d: 0
+    ce_size_mismatch: 0
+    nce_size_mismatch: 1
+    ce_diff_val: 0
+    nce_diff_val: 1
+    ce_empty_empty: 1
+    nce_empty_empty: 0
+    ce_empty_nonempty: 0
+    nce_empty_nonempty: 1
+    ce_2d: 1
+    ce_fixed_outer: 1
+    ce_dyn_outer: 1
+    ce_x_match: 1
+    ce_x_mismatch: 0
