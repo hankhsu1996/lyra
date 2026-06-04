@@ -196,7 +196,56 @@ auto FormatRealBody(const FormatSpec& spec, double v) -> std::string {
   }
 }
 
+auto Pow10Double(int exp) -> double {
+  double result = 1.0;
+  for (int i = 0; i < exp; ++i) {
+    result *= 10.0;
+  }
+  for (int i = 0; i < -exp; ++i) {
+    result /= 10.0;
+  }
+  return result;
+}
+
+auto TimeOperandMagnitude(const RuntimeValueView& value) -> double {
+  if (const auto* integral = std::get_if<IntegralValueView>(&value.data)) {
+    return std::visit(
+        Overloaded{
+            [](const NarrowIntegralView& n) {
+              return static_cast<double>(n.value_word);
+            },
+            [](const WideIntegralView& w) {
+              return w.value_words.empty()
+                         ? 0.0
+                         : static_cast<double>(w.value_words[0]);
+            }},
+        integral->data);
+  }
+  if (const auto* real64 = std::get_if<Real64ValueView>(&value.data)) {
+    return real64->value;
+  }
+  if (const auto* real32 = std::get_if<Real32ValueView>(&value.data)) {
+    return static_cast<double>(real32->value);
+  }
+  throw InternalError("FormatTime: %t operand is not numeric");
+}
+
 }  // namespace
+
+auto FormatTime(
+    const FormatSpec& spec, const RuntimeValueView& value, const TimeFormat& tf)
+    -> std::string {
+  const double scaled = TimeOperandMagnitude(value) *
+                        Pow10Double(spec.timeunit_power - tf.units_power);
+  const int precision = tf.precision >= 0 ? tf.precision : 0;
+  std::string body = std::format("{:.{}f}", scaled, precision);
+  body += tf.suffix;
+  if (tf.min_width > 0 &&
+      body.size() < static_cast<std::size_t>(tf.min_width)) {
+    body.insert(0, static_cast<std::size_t>(tf.min_width) - body.size(), ' ');
+  }
+  return body;
+}
 
 auto FormatValue(const FormatSpec& spec, const RuntimeValueView& value)
     -> std::string {

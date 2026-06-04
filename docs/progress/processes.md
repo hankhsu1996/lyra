@@ -3,7 +3,7 @@
 Tracks SystemVerilog procedural-block constructs and the supporting timing-control machinery. Covers
 archive items under `archived/tests/sv_features/processes/`.
 
-The numeric IDs (P1..P13, T1..T5) are stable references and do **not** imply execution order.
+The numeric IDs (P1..P14, T1..T5) are stable references and do **not** imply execution order.
 
 ## Actionable
 
@@ -28,6 +28,10 @@ machinery owned by other workstreams; see [Blocked](#blocked).
 - [x] P2 -- `final` (LRM 9.2.3). Drained at end of simulation. `$finish` inside `final` ends
       simulation immediately. Time-controlling statements inside `final` are rejected at the runtime
       boundary because they would suspend a coroutine the engine cannot resume.
+- [ ] P14 -- `$finish` / `$stop` verbosity level (LRM 20.2). The level argument (0 / 1 / 2) is
+      parsed and validated at lowering, but the engine terminates regardless of its value; the
+      level-gated end-of-simulation reporting (nothing / time / time plus statistics) is not
+      implemented.
 - [x] P3 -- `always` / `always_ff` (LRM 9.2.2). `always_ff` collapses to the same shape as `always`
       because the LRM 9.2.2.4 restrictions are lint-only and the frontend already enforces them.
       Pathological zero-delay loops are caught by the engine's settle limit.

@@ -19,8 +19,10 @@ class FinishAwaitable {
     return false;
   }
 
-  void await_suspend(CoroutineHandle handle) noexcept {
-    (void)handle;
+  // The coroutine protocol passes the awaiting handle, but `$finish` suspends
+  // forever (the engine drops the frame), so the handle is unused.
+  // NOLINTNEXTLINE(readability-named-parameter)
+  void await_suspend(CoroutineHandle) noexcept {
     services_->RequestFinish(level_);
   }
 

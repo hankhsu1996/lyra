@@ -7,12 +7,15 @@
 #include <variant>
 
 #include "lyra/base/overloaded.hpp"
+#include "lyra/runtime/runtime_services.hpp"
 #include "lyra/value/format.hpp"
 #include "lyra/value/string.hpp"
 
 namespace lyra::runtime {
 
-auto LyraSFormat(std::span<const value::PrintItem> items) -> value::String {
+auto LyraSFormat(
+    RuntimeServices& services, std::span<const value::PrintItem> items)
+    -> value::String {
   std::string buf;
   for (const value::PrintItem& item : items) {
     std::visit(
@@ -21,6 +24,11 @@ auto LyraSFormat(std::span<const value::PrintItem> items) -> value::String {
               buf.append(std::string_view{lit.data, lit.size});
             },
             [&](const value::PrintValueItem& v) {
+              if (v.spec.kind == value::FormatKind::kTime) {
+                buf.append(
+                    value::FormatTime(v.spec, v.value, services.TimeFormat()));
+                return;
+              }
               buf.append(value::FormatValue(v.spec, v.value));
             },
         },

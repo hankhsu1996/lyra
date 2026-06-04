@@ -14,20 +14,14 @@
 
 namespace lyra::lowering::hir_to_mir {
 
-// LRM 21.3.4.3 $sscanf reached in expression position (e.g. inside an `if`
-// or a non-blocking-assignment context). $sscanf writes through output
-// argument lvalues, which only lowers cleanly at the statement boundary
-// where the temp + writeback BlockStmt can wrap the call; nested forms
-// return Unsupported. Statement-position calls bypass this entry via
-// LowerScanSystemSubroutineCallStmt, dispatched from lower_stmt.cpp.
-auto LowerScanSystemSubroutineCall(
-    const UnitLoweringState& unit_state,
-    const StructuralScopeLoweringState& scope_state,
-    const ProcessLoweringState& proc_state,
-    ProceduralScopeLoweringState& proc_scope_state,
-    const hir::ProceduralBody& hir_proc, const hir::CallExpr& call,
-    const support::SystemSubroutineDesc& desc,
-    const support::ScanSystemSubroutineInfo& info, diag::SourceSpan span)
+// Reject a $sscanf / $fscanf reached in expression position (e.g. inside an
+// `if` or a non-blocking-assignment context). The scan family writes through
+// output argument lvalues, which only lowers cleanly at the statement boundary
+// where the temp + writeback BlockStmt can wrap the call (see
+// LowerScanSystemSubroutineCallStmt, dispatched from lower_stmt.cpp); every
+// other position is unsupported.
+auto RejectScanCallInExprPosition(
+    const support::SystemSubroutineDesc& desc, diag::SourceSpan span)
     -> diag::Result<mir::Expr>;
 
 // Statement-position $sscanf desugaring (LRM 13.5 copy-out for every output

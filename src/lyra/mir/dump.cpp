@@ -885,6 +885,18 @@ class MirDumper {
                     }
                     Line(std::format("RuntimeTimeCall kind={}", kind_text));
                   },
+                  [&](const RuntimeSetTimeFormatCall& tf) {
+                    Line(
+                        std::format(
+                            "RuntimeSetTimeFormatCall args={}",
+                            tf.args.has_value() ? "4" : "default"));
+                  },
+                  [&](const RuntimePrintTimescaleCall& pt) {
+                    Line(
+                        std::format(
+                            "RuntimePrintTimescaleCall scope={}",
+                            pt.scope_name));
+                  },
               },
               rc->call);
           Dedent();
@@ -1172,13 +1184,12 @@ class MirDumper {
                       "Item[{}] Value value=Expr[{}] type=Type[{}] "
                       "spec=Format(kind={}, width={}, precision={}, "
                       "zero_pad={}, "
-                      "left_align={}, timeunit_power={})",
+                      "left_align={})",
                       i, v.value.value, v.type.value,
                       DumpFormatKindLabel(v.spec.kind), v.spec.modifiers.width,
                       v.spec.modifiers.precision,
                       v.spec.modifiers.zero_pad ? "true" : "false",
-                      v.spec.modifiers.left_align ? "true" : "false",
-                      v.spec.timeunit_power));
+                      v.spec.modifiers.left_align ? "true" : "false"));
               Indent();
               Line(
                   std::format(
@@ -1239,6 +1250,8 @@ class MirDumper {
         return "kRealGeneral";
       case value::FormatKind::kAssignmentPattern:
         return "kAssignmentPattern";
+      case value::FormatKind::kTime:
+        return "kTime";
     }
     throw InternalError("DumpFormatKindLabel: unknown value::FormatKind");
   }

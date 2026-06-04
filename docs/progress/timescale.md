@@ -26,6 +26,10 @@ others read from.
 - `$time`, `$realtime` and `$stime` read the current simulation time scaled to the calling design
   element's time unit (LRM 20.3): `$time` rounds to an integer, `$realtime` keeps the fraction, and
   `$stime` is the low 32 bits.
+- `%t` formats a time value against the design-wide `$timeformat` display unit, precision, suffix
+  and field width (LRM 21.2.1.3 / 20.4.3), and `$printtimescale` reports a scope's unit and
+  precision (LRM 20.4.2). The display unit is applied design-wide, so `%t` reports on one uniform
+  scale across scopes, distinct from the per-scope unit scaling of `$time`.
 
 ## Sub-Steps
 
@@ -49,12 +53,14 @@ others read from.
 
 ### Formatting simulation time
 
-- [ ] TS3 -- `%t` time format (LRM 21.2), `$timeformat` (LRM 20.4.3) and `$printtimescale` (LRM
+- [x] TS3 -- `%t` time format (LRM 21.2), `$timeformat` (LRM 20.4.3) and `$printtimescale` (LRM
       20.4.2): `%t` formats a time value against the `$timeformat` settings -- a display unit,
       fractional-digit count, suffix, and minimum field width, defaulting to the smallest precision
       across all timescale directives. The display unit is `$timeformat`'s, applied design-wide, not
       the calling scope's unit, so it is uniform across the design (distinct from TS2's per-scope
-      scaling). Closes `display.md` DI2. Rides on TS1.
+      scaling). Closes `display.md` DI2. Rides on TS1. `$printtimescale` covers the no-argument
+      (current scope) form; the `$unit` / `$root` / hierarchical-name argument forms ride on the
+      cross-scope name resolution tracked under `display.md` DI4.
 
 ## Design direction
 

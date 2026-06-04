@@ -23,10 +23,8 @@ struct FormatModifiers {
 struct FormatSpec {
   value::FormatKind kind;
   FormatModifiers modifiers;
-  std::int32_t timeunit_power;
 
-  FormatSpec(value::FormatKind k, FormatModifiers m, std::int32_t tp = 0)
-      : kind(k), modifiers(m), timeunit_power(tp) {
+  FormatSpec(value::FormatKind k, FormatModifiers m) : kind(k), modifiers(m) {
   }
 };
 

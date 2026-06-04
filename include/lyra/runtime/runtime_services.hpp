@@ -1,11 +1,18 @@
 #pragma once
 
+#include <cstdint>
 #include <functional>
 
 #include "lyra/base/internal_error.hpp"
 #include "lyra/base/time.hpp"
 #include "lyra/runtime/coroutine.hpp"
 #include "lyra/runtime/trigger.hpp"
+#include "lyra/value/format.hpp"
+
+namespace lyra::value {
+class PackedArray;
+class String;
+}  // namespace lyra::value
 
 namespace lyra::runtime {
 
@@ -79,6 +86,15 @@ class RuntimeServices {
   // The design-global time precision (LRM 3.14.3) the delay awaitable scales a
   // scope-precision delay against to reach the engine's tick.
   [[nodiscard]] auto GlobalPrecisionPower() const -> std::int8_t;
+
+  // The design-wide `$timeformat` state (LRM 20.4.3) read by `%t`, and the
+  // setter / reset that `$timeformat` invokes.
+  [[nodiscard]] auto TimeFormat() const -> const value::TimeFormat&;
+  void SetTimeFormat(
+      const value::PackedArray& units_power,
+      const value::PackedArray& precision, const value::String& suffix,
+      const value::PackedArray& min_width);
+  void ResetTimeFormat();
 
  private:
   StreamDispatcher* stream_ = nullptr;

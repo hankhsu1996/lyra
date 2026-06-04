@@ -1,0 +1,13 @@
+id: cpp.timescale_time_format_mixed
+tags: [cpp_run]
+input:
+  command: [run, cpp]
+  project: false
+  top: Top
+  files: [main.sv]
+expect:
+  exit: 0
+  stdout:
+    exact: |
+      Top=2.50ns
+      Slow=3.00ns
