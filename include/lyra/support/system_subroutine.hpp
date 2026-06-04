@@ -152,11 +152,21 @@ struct TimeSystemSubroutineInfo {
   TimeKind kind;
 };
 
+// LRM 20.4.3: `$timeformat` sets the design-wide `%t` display unit, precision,
+// suffix, and minimum field width (or restores the defaults when called with no
+// arguments).
+struct TimeFormatSystemSubroutineInfo {};
+
+// LRM 20.4.2: `$printtimescale` prints a design element's time unit and
+// precision. Only the no-argument (current scope) form is modeled.
+struct PrintTimescaleSystemSubroutineInfo {};
+
 using SystemSubroutineSemantic = std::variant<
     PrintSystemSubroutineInfo, TerminationSystemSubroutineInfo,
     DiagnosticSystemSubroutineInfo, FileIOSystemSubroutineInfo,
     ScanSystemSubroutineInfo, SFormatSystemSubroutineInfo,
-    TimeSystemSubroutineInfo>;
+    TimeSystemSubroutineInfo, TimeFormatSystemSubroutineInfo,
+    PrintTimescaleSystemSubroutineInfo>;
 
 struct SystemSubroutineDesc {
   SystemSubroutineId id;
@@ -781,6 +791,24 @@ inline constexpr std::array kSystemSubroutines = {
                 .append_newline = true,
                 .is_strobe = true,
                 .sink_kind = PrintSinkKind::kFile},
+    },
+    SystemSubroutineDesc{
+        .id = SystemSubroutineId{51},
+        .name = "$timeformat",
+        .origin = SystemSubroutineOrigin::kLanguageBuiltin,
+        .kind = SystemSubroutineKind::kTask,
+        .result_conv = ReturnConvention::kVoid,
+        .arg_policy = ArgCountPolicy{.min_args = 0, .max_args = 4},
+        .semantic = TimeFormatSystemSubroutineInfo{},
+    },
+    SystemSubroutineDesc{
+        .id = SystemSubroutineId{52},
+        .name = "$printtimescale",
+        .origin = SystemSubroutineOrigin::kLanguageBuiltin,
+        .kind = SystemSubroutineKind::kTask,
+        .result_conv = ReturnConvention::kVoid,
+        .arg_policy = ArgCountPolicy{.min_args = 0, .max_args = 0},
+        .semantic = PrintTimescaleSystemSubroutineInfo{},
     },
 };
 

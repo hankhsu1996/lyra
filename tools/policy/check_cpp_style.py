@@ -32,6 +32,25 @@ Rules:
         policed by this rule.
         Scope: every .cpp/.hpp under src/, include/, tests/.
 
+  S005  No cast-to-void of a bare name as a statement -- `(void)x;` or
+        `static_cast<void>(x);` where `x` is a plain identifier. This is the
+        unused-parameter / unused-variable suppression hack. The correct fix
+        is to drop the parameter, leave it unnamed (when an interface mandates
+        its presence), or remove the dead variable -- never silence the
+        warning. Intentional discard of a call's return value (`(void)f();`)
+        is spared: the identifier char class stops at `(`, so anything with a
+        call does not match.
+        Scope: every .cpp/.hpp under src/, include/, tests/.
+
+  S006  No `[[maybe_unused]]` on a parameter or variable. Like `(void)x;`, it
+        keeps something unused and silences the warning instead of fixing the
+        cause. Remove the parameter (narrow the signature so the caller passes
+        only what is used), or for a parameter an external interface mandates
+        but the body cannot use, leave it unnamed (with a single-line
+        `// NOLINT(readability-named-parameter)` only if that check then
+        objects).
+        Scope: every .cpp/.hpp under src/, include/, tests/.
+
 Usage:
   python3 tools/policy/check_cpp_style.py
 """
@@ -90,6 +109,19 @@ STDLIB_HEADERS = frozenset({
 
 INCLUDE_QUOTE_PATTERN = re.compile(r'^\s*#\s*include\s*"([^"]+)"')
 INCLUDE_ANGLE_PATTERN = re.compile(r'^\s*#\s*include\s*<([^>]+)>')
+
+# S005: cast-to-void of a bare name as a statement. A member/scope chain
+# (`a.b`, `a->b`, `ns::x`) is still a bare name; a call (`f(...)`) is not,
+# because the identifier char class never crosses a `(`.
+_VOID_NAME = r"[A-Za-z_]\w*(?:\s*(?:\.|->|::)\s*[A-Za-z_]\w*)*"
+VOID_DISCARD_PATTERNS = [
+    re.compile(r"\(\s*void\s*\)\s*" + _VOID_NAME + r"\s*;"),
+    re.compile(r"static_cast\s*<\s*void\s*>\s*\(\s*" + _VOID_NAME + r"\s*\)\s*;"),
+]
+
+# S006: the `[[maybe_unused]]` attribute. Same smell as S005 -- it keeps an
+# unused parameter/variable and silences the warning instead of removing it.
+MAYBE_UNUSED_PATTERN = re.compile(r"\[\[\s*maybe_unused\s*\]\]")
 
 
 def iter_cpp_files(repo_root: Path, roots=("src", "include", "tests")):
@@ -181,6 +213,34 @@ def check_s004(repo_root: Path) -> list[str]:
     return errors
 
 
+def check_s005(repo_root: Path) -> list[str]:
+    errors = []
+    for path, rel in iter_cpp_files(repo_root):
+        for lineno, line in enumerate(path.read_text().splitlines(), 1):
+            for pattern in VOID_DISCARD_PATTERNS:
+                if (m := pattern.search(line)):
+                    errors.append(
+                        f"  {rel}:{lineno}: S005 cast-to-void '{m.group(0)}' "
+                        f"suppresses an unused-parameter/variable warning; "
+                        f"drop or unname the parameter instead"
+                    )
+                    break
+    return errors
+
+
+def check_s006(repo_root: Path) -> list[str]:
+    errors = []
+    for path, rel in iter_cpp_files(repo_root):
+        for lineno, line in enumerate(path.read_text().splitlines(), 1):
+            if MAYBE_UNUSED_PATTERN.search(line):
+                errors.append(
+                    f"  {rel}:{lineno}: S006 [[maybe_unused]] keeps an unused "
+                    f"parameter/variable; remove it or leave the parameter "
+                    f"unnamed instead"
+                )
+    return errors
+
+
 def run_self_tests() -> bool:
     def expect(cond, msg):
         if not cond:
@@ -228,6 +288,25 @@ def run_self_tests() -> bool:
     ok &= expect(angle_inc("#include <vector>") == "vector", "S004 angle")
     ok &= expect("vector" in STDLIB_HEADERS, "S004 vector is stdlib")
     ok &= expect("fmt/core.h" not in STDLIB_HEADERS, "S004 fmt not stdlib")
+
+    def void_hit(text):
+        return any(p.search(text) for p in VOID_DISCARD_PATTERNS)
+
+    ok &= expect(void_hit("(void)handle;"), "S005 (void)name")
+    ok &= expect(void_hit("    (void)call_span;"), "S005 indented")
+    ok &= expect(void_hit("(void)foo.bar;"), "S005 member chain")
+    ok &= expect(void_hit("(void)ns::x;"), "S005 scope chain")
+    ok &= expect(void_hit("static_cast<void>(x);"), "S005 static_cast name")
+    ok &= expect(not void_hit("(void)RunProcess(args);"), "S005 spares call")
+    ok &= expect(not void_hit("(void)node.as<std::int64_t>();"),
+                 "S005 spares templated call")
+    ok &= expect(not void_hit("static_cast<void>(f());"),
+                 "S005 spares static_cast call")
+
+    ok &= expect(MAYBE_UNUSED_PATTERN.search("[[maybe_unused]] int x"),
+                 "S006 attribute")
+    ok &= expect(not MAYBE_UNUSED_PATTERN.search("int x = 0;"),
+                 "S006 unrelated")
     return ok
 
 
@@ -237,6 +316,8 @@ CHECKS = [
     ("S002 header files under src/", check_s002),
     ("S003 migration-progress / development-stage language", check_s003),
     ("S004 include style (stdlib <>, lyra \"\")", check_s004),
+    ("S005 cast-to-void unused-parameter/variable suppression", check_s005),
+    ("S006 [[maybe_unused]] suppression", check_s006),
 ]
 
 

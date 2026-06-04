@@ -20,6 +20,7 @@
 #include "lyra/mir/runtime_finish.hpp"
 #include "lyra/mir/runtime_print.hpp"
 #include "lyra/mir/runtime_submit.hpp"
+#include "lyra/mir/runtime_timescale.hpp"
 #include "lyra/mir/type.hpp"
 
 namespace lyra::backend::cpp {
@@ -62,6 +63,8 @@ auto RenderFormatKindLiteral(value::FormatKind k) -> std::string_view {
       return "lyra::value::FormatKind::kRealGeneral";
     case value::FormatKind::kAssignmentPattern:
       return "lyra::value::FormatKind::kAssignmentPattern";
+    case value::FormatKind::kTime:
+      return "lyra::value::FormatKind::kTime";
   }
   throw InternalError("RenderFormatKindLiteral: unknown FormatKind");
 }
@@ -87,8 +90,12 @@ auto RenderFormatSpecInit(const mir::FormatSpec& spec) -> std::string {
   if (spec.modifiers.left_align) {
     fields.emplace_back(".left_align = true");
   }
-  if (spec.timeunit_power != 0) {
-    fields.push_back(std::format(".timeunit_power = {}", spec.timeunit_power));
+  // LRM 21.2.1.3 / 3.14.2: `%t` scales from the enclosing scope's time unit.
+  // The unit is the scope class constant, resolved by unqualified C++ name
+  // lookup to the lexically enclosing design element -- mirrors how $time
+  // reads it, so a `%t` inside a subroutine uses its declaration scope's unit.
+  if (spec.kind == value::FormatKind::kTime) {
+    fields.emplace_back(".timeunit_power = kTimeUnitPower");
   }
   std::string joined;
   for (const auto& field : fields) {
@@ -473,7 +480,7 @@ auto RenderRuntimeCallExpr(
           [&](const mir::RuntimeSFormatCall& sf) -> diag::Result<std::string> {
             if (sf.items.empty()) {
               return std::string(
-                  "lyra::runtime::LyraSFormat("
+                  "lyra::runtime::LyraSFormat(Services(), "
                   "std::span<const lyra::value::PrintItem>{})");
             }
             std::vector<std::string> item_pieces;
@@ -493,7 +500,7 @@ auto RenderRuntimeCallExpr(
               body += item_pieces[k];
             }
             return std::format(
-                "lyra::runtime::LyraSFormat("
+                "lyra::runtime::LyraSFormat(Services(), "
                 "std::array<lyra::value::PrintItem, {}>{{{{{}}}}})",
                 sf.items.size(), body);
           },
@@ -517,6 +524,34 @@ auto RenderRuntimeCallExpr(
                     "kTimeUnitPower)");
             }
             throw InternalError("RenderRuntimeCallExpr: unknown TimeKind");
+          },
+          [&](const mir::RuntimeSetTimeFormatCall& tf)
+              -> diag::Result<std::string> {
+            if (!tf.args.has_value()) {
+              return std::string("Services().ResetTimeFormat()");
+            }
+            auto units = RenderExpr(ctx, ctx.Expr(tf.args->units));
+            if (!units) return std::unexpected(std::move(units.error()));
+            auto precision = RenderExpr(ctx, ctx.Expr(tf.args->precision));
+            if (!precision) {
+              return std::unexpected(std::move(precision.error()));
+            }
+            auto suffix = RenderExpr(ctx, ctx.Expr(tf.args->suffix));
+            if (!suffix) return std::unexpected(std::move(suffix.error()));
+            auto width = RenderExpr(ctx, ctx.Expr(tf.args->min_width));
+            if (!width) return std::unexpected(std::move(width.error()));
+            return std::format(
+                "Services().SetTimeFormat({}, {}, {}, {})", *units, *precision,
+                *suffix, *width);
+          },
+          [&](const mir::RuntimePrintTimescaleCall& pt)
+              -> diag::Result<std::string> {
+            // Unit and precision come from the enclosing scope class constants
+            // (LRM 20.4.2, current-scope form); the name is baked at lowering.
+            return std::format(
+                "lyra::runtime::LyraPrintTimescale(Services(), {}, "
+                "kTimeUnitPower, kTimePrecisionPower)",
+                RenderCStringLiteral(pt.scope_name));
           },
       },
       expr.call);

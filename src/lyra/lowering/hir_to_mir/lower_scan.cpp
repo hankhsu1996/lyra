@@ -4,7 +4,6 @@
 #include <format>
 #include <optional>
 #include <string>
-#include <string_view>
 #include <utility>
 #include <vector>
 
@@ -25,9 +24,8 @@
 
 namespace lyra::lowering::hir_to_mir {
 
-namespace {
-
-auto RejectScanCallInExprPosition(std::string_view name, diag::SourceSpan span)
+auto RejectScanCallInExprPosition(
+    const support::SystemSubroutineDesc& desc, diag::SourceSpan span)
     -> diag::Result<mir::Expr> {
   return diag::Unsupported(
       span, diag::DiagCode::kUnsupportedSubroutineArgument,
@@ -35,23 +33,8 @@ auto RejectScanCallInExprPosition(std::string_view name, diag::SourceSpan span)
           "{} writes through output arguments and is only supported as a "
           "bare call or as the right-hand side of a blocking assignment "
           "(LRM 13.5 copy-out semantics)",
-          std::string{name}),
+          std::string{desc.name}),
       diag::UnsupportedCategory::kFeature);
-}
-
-}  // namespace
-
-auto LowerScanSystemSubroutineCall(
-    [[maybe_unused]] const UnitLoweringState& unit_state,
-    [[maybe_unused]] const StructuralScopeLoweringState& scope_state,
-    [[maybe_unused]] const ProcessLoweringState& proc_state,
-    [[maybe_unused]] ProceduralScopeLoweringState& proc_scope_state,
-    [[maybe_unused]] const hir::ProceduralBody& hir_proc,
-    [[maybe_unused]] const hir::CallExpr& call,
-    const support::SystemSubroutineDesc& desc,
-    [[maybe_unused]] const support::ScanSystemSubroutineInfo& info,
-    diag::SourceSpan span) -> diag::Result<mir::Expr> {
-  return RejectScanCallInExprPosition(desc.name, span);
 }
 
 auto LowerScanSystemSubroutineCallStmt(

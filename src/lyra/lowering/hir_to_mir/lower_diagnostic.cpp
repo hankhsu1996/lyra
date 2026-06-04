@@ -40,10 +40,8 @@ auto LowerDiagnosticSystemSubroutineCall(
     const ProcessLoweringState& proc_state,
     ProceduralScopeLoweringState& proc_scope_state,
     const hir::ProceduralBody& hir_proc, const hir::CallExpr& call,
-    const support::SystemSubroutineDesc& desc,
     const support::DiagnosticSystemSubroutineInfo& info, diag::SourceSpan span)
     -> diag::Result<mir::Expr> {
-  (void)desc;
   // $info/$warning/$error use display-style format (LRM 20.10) with decimal
   // as the bare-arg default radix; the diagnostic sink runs separately.
   auto items_or = BuildRuntimePrintItemsFromCallArgs(

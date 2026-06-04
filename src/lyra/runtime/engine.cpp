@@ -94,6 +94,9 @@ void Engine::ResolveGlobalTimePrecision() {
     found = true;
   });
   global_precision_power_ = found ? min_power : kDefaultTimePrecisionPower;
+  // LRM Table 20-3: the default `%t` display unit is the design-global
+  // precision (the smallest across all timescale directives).
+  time_format_.units_power = global_precision_power_;
 }
 
 void Engine::RegisterProcesses() {
@@ -293,11 +296,10 @@ void Engine::RunProcess(CoroutineHandle handle) {
   handle.promise().Process().ResumeWith(handle);
 }
 
-void Engine::RequestFinish(int level) {
-  // `level` is the LRM 20.2 verbosity argument to `$finish`. Lyra's engine
-  // currently terminates regardless of level; the parameter is accepted to
-  // preserve the call shape for future verbosity-aware reporting.
-  (void)level;
+void Engine::RequestFinish(int) {  // NOLINT(readability-named-parameter)
+  // The LRM 20.2 `$finish` verbosity argument is validated at lowering and
+  // threaded here for interface completeness, but the engine terminates
+  // regardless of its value; acting on it is a known gap.
   finished_ = true;
 }
 
