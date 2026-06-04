@@ -148,8 +148,12 @@ struct ReplicationExpr {
   ExprId concat;
 };
 
-// LRM 10.9.1: simple assignment pattern `'{e1, e2, ...}`. The aggregate type
-// lives on Expr::type.
+// LRM 10.9.1 array assignment pattern `'{e1, e2, ...}` element list. Always
+// appears as an argument of a `ConstructExpr` whose result is an array
+// container; renders as `std::array<T, N>{e1, ...}` so the surrounding ctor
+// resolves uniformly against a `std::span<const T>` parameter. `Expr::type`
+// is the parent container type (`UnpackedArrayType` / `DynamicArrayType`);
+// the element type is read off it at render time.
 struct ArrayLiteralExpr {
   std::vector<ExprId> elements;
 };
