@@ -164,12 +164,19 @@ void StampError(
 auto LyraFGetc(RuntimeServices& services, const value::PackedArray& fd_pa)
     -> value::PackedArray {
   const std::int32_t fd = AsInt32(fd_pa);
-  std::fstream* stream = services.Files().Resolve(fd);
-  if (stream == nullptr) {
+  auto* slot = services.Files().ResolveSlot(fd);
+  if (slot == nullptr) {
     StampError(services, fd, EBADF, "$fgetc: not an open file descriptor");
     return MakeInt(-1);
   }
-  const int c = stream->get();
+  // LRM 21.3.4.1: drain any byte left by $ungetc (or by the scanner's
+  // "offending character" pushback) before consulting the stream.
+  if (slot->putback.has_value()) {
+    const auto byte = static_cast<unsigned char>(*slot->putback);
+    slot->putback.reset();
+    return MakeInt(byte);
+  }
+  const int c = slot->file->get();
   if (c == std::char_traits<char>::eof()) {
     // LRM 21.3.4.1: EOF is signalled as -1 (wider than 8 bits so callers can
     // distinguish from 0xFF). fstream's eof bit is now set; $feof picks it up.
@@ -183,18 +190,22 @@ auto LyraFUngetc(
     RuntimeServices& services, const value::PackedArray& c_pa,
     const value::PackedArray& fd_pa) -> value::PackedArray {
   const std::int32_t fd = AsInt32(fd_pa);
-  std::fstream* stream = services.Files().Resolve(fd);
-  if (stream == nullptr) {
+  auto* slot = services.Files().ResolveSlot(fd);
+  if (slot == nullptr) {
     StampError(services, fd, EBADF, "$ungetc: not an open file descriptor");
     return MakeInt(-1);
   }
-  const auto byte = static_cast<char>(AsInt32(c_pa) & 0xFF);
-  stream->clear();
-  stream->putback(byte);
-  if (!stream->good()) {
-    StampError(services, fd, errno, "$ungetc: putback failed");
+  // LRM 21.3.4.1 NOTE: implementations may limit pushback depth. We keep a
+  // single-byte buffer per FD; a second $ungetc before any read returns
+  // EOF per "if an error occurs pushing a character ... code is set to
+  // EOF". Using a Lyra-side slot instead of std::fstream's putback area
+  // lifts libstdc++'s "must read first" restriction so $ungetc on a
+  // freshly-opened stream works as the LRM specifies.
+  if (slot->putback.has_value()) {
+    StampError(services, fd, EAGAIN, "$ungetc: putback buffer full");
     return MakeInt(-1);
   }
+  slot->putback = static_cast<char>(AsInt32(c_pa) & 0xFF);
   return MakeInt(0);
 }
 
@@ -202,23 +213,33 @@ auto LyraFGets(
     RuntimeServices& services, value::String& dest,
     const value::PackedArray& fd_pa) -> value::PackedArray {
   const std::int32_t fd = AsInt32(fd_pa);
-  std::fstream* stream = services.Files().Resolve(fd);
-  if (stream == nullptr) {
+  auto* slot = services.Files().ResolveSlot(fd);
+  if (slot == nullptr) {
     StampError(services, fd, EBADF, "$fgets: not an open file descriptor");
     dest = value::String{};
     return MakeInt(0);
   }
-  // LRM 21.3.4.2: read up to and including newline OR until EOF. Trailing
-  // newline kept. fstream's getline strips the delimiter, so re-attach when
-  // we stopped on '\n' (vs hitting EOF).
+  // LRM 21.3.4.2 + 21.3.4.1: byte-by-byte loop so any pending $ungetc
+  // byte is the first byte of the line. std::getline would bypass the
+  // slot-side putback.
   std::string line;
-  std::getline(*stream, line, '\n');
-  if (line.empty() && stream->eof()) {
+  while (true) {
+    int c = 0;
+    if (slot->putback.has_value()) {
+      c = static_cast<unsigned char>(*slot->putback);
+      slot->putback.reset();
+    } else {
+      c = slot->file->get();
+    }
+    if (c == std::char_traits<char>::eof()) break;
+    line.push_back(static_cast<char>(c));
+    if (c == '\n') break;
+  }
+  if (line.empty()) {
     StampError(services, fd, 0, "$fgets: EOF");
     dest = value::String{};
     return MakeInt(0);
   }
-  if (!stream->eof()) line.push_back('\n');
   dest = value::String{line};
   return MakeInt(static_cast<std::int32_t>(line.size()));
 }
@@ -227,8 +248,8 @@ auto LyraFRead(
     RuntimeServices& services, value::PackedArray& dest,
     const value::PackedArray& fd_pa) -> value::PackedArray {
   const std::int32_t fd = AsInt32(fd_pa);
-  std::fstream* stream = services.Files().Resolve(fd);
-  if (stream == nullptr) {
+  auto* slot = services.Files().ResolveSlot(fd);
+  if (slot == nullptr) {
     StampError(services, fd, EBADF, "$fread: not an open file descriptor");
     return MakeInt(0);
   }
@@ -239,8 +260,17 @@ auto LyraFRead(
   }
   const auto byte_count = static_cast<std::size_t>((width + 7U) / 8U);
   std::vector<char> buf(byte_count, '\0');
-  stream->read(buf.data(), static_cast<std::streamsize>(byte_count));
-  const auto got = static_cast<std::size_t>(stream->gcount());
+  std::size_t pos = 0;
+  // LRM 21.3.4.1: any pending $ungetc byte is the next byte read from
+  // the FD; place it at the head of the buffer before consulting the
+  // stream.
+  if (slot->putback.has_value()) {
+    buf[pos++] = *slot->putback;
+    slot->putback.reset();
+  }
+  const auto rest = std::span<char>(buf).subspan(pos);
+  slot->file->read(rest.data(), static_cast<std::streamsize>(rest.size()));
+  const auto got = pos + static_cast<std::size_t>(slot->file->gcount());
   if (got == 0U) {
     StampError(services, fd, 0, "$fread: EOF");
     return MakeInt(0);
@@ -259,8 +289,8 @@ auto LyraFSeek(
     const value::PackedArray& offset, const value::PackedArray& operation)
     -> value::PackedArray {
   const std::int32_t fd = AsInt32(fd_pa);
-  std::fstream* stream = services.Files().Resolve(fd);
-  if (stream == nullptr) {
+  auto* slot = services.Files().ResolveSlot(fd);
+  if (slot == nullptr) {
     StampError(services, fd, EBADF, "$fseek: not an open file descriptor");
     return MakeInt(-1);
   }
@@ -280,13 +310,17 @@ auto LyraFSeek(
       StampError(services, fd, EINVAL, "$fseek: operation must be 0, 1, or 2");
       return MakeInt(-1);
   }
-  stream->clear();
-  stream->seekg(offset_v, dir);
-  stream->seekp(offset_v, dir);
-  if (stream->fail()) {
+  auto& stream = *slot->file;
+  stream.clear();
+  stream.seekg(offset_v, dir);
+  stream.seekp(offset_v, dir);
+  if (stream.fail()) {
     StampError(services, fd, errno, "$fseek: seek failed");
     return MakeInt(-1);
   }
+  // LRM 21.3.5: "Repositioning the current file position with $fseek or
+  // $rewind shall cancel any $ungetc operations."
+  slot->putback.reset();
   return MakeInt(0);
 }
 

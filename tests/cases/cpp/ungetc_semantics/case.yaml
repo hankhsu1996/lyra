@@ -1,0 +1,21 @@
+id: cpp.ungetc_semantics
+tags: [cpp_run]
+input:
+  command: [run, cpp]
+  project: false
+  top: Top
+  files: [main.sv]
+expect:
+  exit: 0
+  variables:
+    basic_first: 65
+    basic_unget_ret: 0
+    basic_second: 90
+    read_after_unget: "16'h5841"
+    gets_after_unget: "XAB"
+    unget_first_ret: 0
+    unget_second_ret: -1
+    after_seek: 65
+    after_rewind: 65
+  files:
+    scratch.txt: "AB"

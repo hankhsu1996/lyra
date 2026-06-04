@@ -58,6 +58,31 @@ class ChannelCancellation {
 // while observers of the old source see a permanent stop.
 class FileTable {
  public:
+  struct ErrorRecord {
+    int errno_value = 0;
+    std::string message;
+  };
+
+  // A live FD slot. Public so consumers needing more than just the
+  // `std::fstream*` (slot-side putback for $ungetc / $fgetc / $fseek /
+  // $rewind / the scanner) can reach the fields directly via
+  // `ResolveSlot`. The narrow `Resolve` stays for consumers that only
+  // need the stream ($fprint family, $fflush, $feof, $ftell).
+  struct FdSlot {
+    std::unique_ptr<std::fstream> file;
+    ErrorRecord error;
+    std::stop_source cancel_source;
+    // LRM 21.3.4.1 + 21.3.5: $ungetc parks a byte here; $fgetc / $fgets /
+    // $fread / the scan-source drain it before touching the underlying
+    // stream; $fseek / $rewind clear it ("Repositioning the current file
+    // position with $fseek or $rewind shall cancel any $ungetc
+    // operations"). We do not use std::fstream's own putback area: it
+    // rejects pushback on a freshly-opened stream and its seek-cancel
+    // behaviour is implementation-defined, neither of which matches the
+    // LRM contract.
+    std::optional<char> putback;
+  };
+
   FileTable() = default;
   ~FileTable() = default;
   FileTable(const FileTable&) = delete;
@@ -91,6 +116,13 @@ class FileTable {
   // For MCD inputs, callers are expected to have masked down to a single
   // bit before calling. Bit 0 alone -> nullptr (stdout sentinel).
   auto Resolve(std::int32_t descriptor) -> std::fstream*;
+
+  // Returns the owned `FdSlot*` for an FD descriptor, or nullptr if the
+  // descriptor does not address an owned FD slot (zero, MCD, stdio
+  // sentinel, or unmapped index). Used by consumers that need slot-side
+  // state (the putback buffer for $ungetc / $fgetc / $fseek / $rewind /
+  // the scan-source).
+  auto ResolveSlot(std::int32_t descriptor) -> FdSlot*;
 
   // LRM 21.3.7 $ferror state. The runtime entry points stamp the most recent
   // error for an FD via `SetError`; `$ferror(fd, str)` returns the saved
@@ -127,17 +159,6 @@ class FileTable {
   // FD pool indexes 0/1/2 are stdio sentinels and stay empty (Resolve
   // returns nullptr for them; the dispatch site special-cases them).
   static constexpr std::size_t kFdReservedSlots = 3;
-
-  struct ErrorRecord {
-    int errno_value = 0;
-    std::string message;
-  };
-
-  struct FdSlot {
-    std::unique_ptr<std::fstream> file;
-    ErrorRecord error;
-    std::stop_source cancel_source;
-  };
 
   struct McdSlot {
     std::unique_ptr<std::fstream> file;

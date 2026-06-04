@@ -77,7 +77,11 @@ auto FileTable::Open(
       }
     }
     fd_pool_.emplace_back(
-        FdSlot{.file = std::move(stream), .error = {}, .cancel_source = {}});
+        FdSlot{
+            .file = std::move(stream),
+            .error = {},
+            .cancel_source = {},
+            .putback = std::nullopt});
     return kFdHighBit | static_cast<std::int32_t>(fd_pool_.size() - 1);
   }
   // MCD path: open write-truncate (LRM 21.3.1 omits the type for MCD form).
@@ -108,6 +112,8 @@ void FileTable::Close(std::int32_t descriptor) {
     // so the next $fopen on this slot starts with a fresh signal.
     slot.cancel_source.request_stop();
     slot.cancel_source = std::stop_source{};
+    // Any pending $ungetc dies with the slot.
+    slot.putback.reset();
     return;
   }
   // MCD: iterate each set bit in 1..30 and close that slot. Bit 0 is the
@@ -135,6 +141,20 @@ auto FileTable::Resolve(std::int32_t descriptor) -> std::fstream* {
     if (raw == (1U << slot)) return mcd_slots_.at(slot).file.get();
   }
   return nullptr;
+}
+
+auto FileTable::ResolveSlot(std::int32_t descriptor) -> FdSlot* {
+  if (descriptor == 0) return nullptr;
+  const auto raw = static_cast<std::uint32_t>(descriptor);
+  // Slot access is only meaningful for FD-shape descriptors. MCDs are
+  // write-only sinks with no putback / mode state; stdio sentinels are
+  // not owned at this layer.
+  if ((raw & (1U << 31U)) == 0U) return nullptr;
+  const std::size_t idx = raw & 0x7FFF'FFFFU;
+  if (idx < kFdReservedSlots || idx >= fd_pool_.size()) return nullptr;
+  auto& slot = fd_pool_.at(idx);
+  if (slot.file == nullptr) return nullptr;
+  return &slot;
 }
 
 namespace {

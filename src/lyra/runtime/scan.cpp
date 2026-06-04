@@ -5,7 +5,6 @@
 #include <cstddef>
 #include <cstdint>
 #include <format>
-#include <fstream>
 #include <span>
 #include <string>
 #include <string_view>
@@ -523,8 +522,8 @@ auto LyraFScanf(
     const value::String& format, std::initializer_list<ScanSlot> slots)
     -> value::PackedArray {
   const auto fd = static_cast<std::int32_t>(fd_pa.ToInt64());
-  std::fstream* stream = services.Files().Resolve(fd);
-  if (stream == nullptr) {
+  auto* slot = services.Files().ResolveSlot(fd);
+  if (slot == nullptr) {
     // MCD descriptors, closed FDs, and unmapped FDs all land here. LRM
     // 21.3.4.3 specifies EOF (-1) when the input ends before the first
     // matching failure or conversion; we treat "no readable stream" as
@@ -534,7 +533,7 @@ auto LyraFScanf(
         fd, EBADF, "$fscanf: not an open file descriptor");
     return value::PackedArray::Int(-1);
   }
-  FileScanSource src(*stream);
+  FileScanSource src(*slot);
   const std::int32_t items = ScanFromSource(
       src, format.View(),
       std::span<const ScanSlot>{slots.begin(), slots.size()});
