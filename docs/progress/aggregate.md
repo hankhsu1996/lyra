@@ -23,7 +23,7 @@ follow once dynamic array's storage and runtime conventions are settled and prov
 | DA1  | Done: construction, element read, blocking element write, multi-dim. |
 | DA2  | Done: NBA, compound element write, whole-array assignment.           |
 | DA3  | Done: positional and replicated assignment patterns (LRM 10.9.1).    |
-| DA4  | Open: aggregate equality and inequality.                             |
+| DA4  | Done: aggregate equality, inequality, case-equality.                 |
 | DA5  | Open: constant-width slice (subject to LRM check).                   |
 | DA6  | Open: SV-callable method family (`.size()`, `.delete()`, ...).       |
 | DA7  | Open: invalid-index handling.                                        |
@@ -70,10 +70,13 @@ The numeric IDs are stable references and do not imply execution order beyond DA
       only when the indices cover a dense `0..N-1` set, which adds no expressive power over the
       positional form and is rejected at HIR lowering with a "use positional" diagnostic.
 
-- [ ] DA4 -- Aggregate equality. `A == B`, `A != B`, `A === B`, `A !== B` per LRM 7.4.6 and 11.4.5.
-      Size mismatch yields 0 directly; equal sizes reduce element-by-element comparisons to a 1-bit
-      result. X / Z propagation rules match U5. Multi-dimensional dynamic arrays compose through the
-      recursive element type.
+- [x] DA4 -- Aggregate equality. `A == B`, `A != B`, `A === B`, `A !== B` per LRM 11.2.2 + 11.4.5.
+      LRM 11.2.2 requires equivalent operand type but is silent on runtime size mismatch; the
+      industry-standard reading (Verilator-confirmed) yields 0 on size mismatch and 1 on
+      empty-vs-empty (the identity of the element-wise `&&` reduction). For matched non-empty sizes,
+      `==` / `!=` propagate X / Z through the per-element comparison; `===` / `!==` match X / Z as
+      values and are deterministic. Multi-dimensional and mixed-container nesting (`int [3][]`,
+      `int [][3]`) compose through the recursive element type.
 
 - [ ] DA5 -- Constant-width slice (read and write), subject to LRM confirmation. If the LRM permits
       the `+:` / `-:` indexed-part-select form on `T []`, the in-scope subset mirrors U6:

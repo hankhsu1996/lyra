@@ -7,6 +7,7 @@
 #include <vector>
 
 #include "lyra/base/internal_error.hpp"
+#include "lyra/value/array_case_equal.hpp"
 #include "lyra/value/packed_array.hpp"
 
 namespace lyra::value {
@@ -115,6 +116,44 @@ class DynamicArray {
       return oob_slot_;
     }
     return data_[static_cast<std::size_t>(idx.ToInt64())];
+  }
+
+  // LRM 11.2.2 + 11.4.5 aggregate equality. Runtime size mismatch yields
+  // 0 and matching-size empties yield 1; the LRM is silent on both, this
+  // matches industry convention (Verilator). For matching non-empty sizes,
+  // `==` / `!=` propagate X / Z through the `&&` reduction over element
+  // comparisons; `CaseEqual` matches X / Z as values and is deterministic.
+  [[nodiscard]] auto operator==(const DynamicArray& other) const
+      -> PackedArray {
+    if (data_.size() != other.data_.size()) {
+      return PackedArray::FromInt(0, 1, false, false);
+    }
+    if (data_.empty()) {
+      return PackedArray::FromInt(1, 1, false, false);
+    }
+    PackedArray result = data_[0] == other.data_[0];
+    for (std::size_t i = 1; i < data_.size(); ++i) {
+      result = result && (data_[i] == other.data_[i]);
+    }
+    return result;
+  }
+  [[nodiscard]] auto operator!=(const DynamicArray& other) const
+      -> PackedArray {
+    return !(*this == other);
+  }
+
+  [[nodiscard]] auto CaseEqual(const DynamicArray& other) const -> PackedArray {
+    if (data_.size() != other.data_.size()) {
+      return PackedArray::FromInt(0, 1, false, false);
+    }
+    if (data_.empty()) {
+      return PackedArray::FromInt(1, 1, false, false);
+    }
+    PackedArray result = detail::ArrayCaseEqElement(data_[0], other.data_[0]);
+    for (std::size_t i = 1; i < data_.size(); ++i) {
+      result = result && detail::ArrayCaseEqElement(data_[i], other.data_[i]);
+    }
+    return result;
   }
 
  private:
