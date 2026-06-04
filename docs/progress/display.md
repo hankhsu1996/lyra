@@ -106,11 +106,17 @@ the corresponding behaviour lands.
       per-task default radix. Postponed lambdas reference the descriptor through their capture list,
       so module-scope FDs read NBA-committed values at fire time and procedural- local FDs snapshot
       at submit time.
-- [ ] LRM 21.3.2 implicit cancel on `$fclose`. "Active `$fmonitor` and/or `$fstrobe` operations on a
-      file descriptor or multichannel descriptor are implicitly cancelled by an `$fclose`
-      operation." Today the postponed lambda fires unconditionally and the underlying `LyraFPrint`
-      hits the closed FD; the cancel path needs an FD/MCD -> pending-callback tracking layer and
-      will likely be tackled together with `$fmonitor`, which shares the cancellation mechanism.
+- [x] LRM 21.3.2 implicit cancel on `$fclose`. Cancellation is modelled as a resource event: every
+      FD and every MCD channel owns a cancel signal that `$fclose` fires (and replaces with a fresh
+      one) on every affected channel, so the next `$fopen` reusing the channel starts with a clean
+      signal while any observer captured before the close keeps seeing the original cancelled state
+      -- channel reuse cannot revive a dead submission. The strobe runtime acquires the cancel
+      observer at submit time and short-circuits the wrapped print if any participating channel
+      reports cancelled; an OR-ed MCD resolves as cancelled when any participating channel does,
+      matching the literal LRM wording "operations on a ... multichannel descriptor are implicitly
+      cancelled". Cancel state lives on the channel rather than per submission, so memory stays
+      bounded for free. The same per-channel signal will carry future `$fmonitor` cancellation when
+      that lands.
 
 ## Out of Scope
 
