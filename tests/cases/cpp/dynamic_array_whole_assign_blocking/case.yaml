@@ -8,7 +8,4 @@ input:
 expect:
   exit: 0
   variables:
-    c0: 100
-    c1: 200
-    c2: 300
-    c3: 400
+    a: [100, 200, 300, 400]

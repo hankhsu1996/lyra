@@ -8,5 +8,4 @@ input:
 expect:
   exit: 0
   variables:
-    d0: 11
-    d1: 22
+    dst: [11, 22]

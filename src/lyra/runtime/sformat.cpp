@@ -24,12 +24,11 @@ auto LyraSFormat(
               buf.append(std::string_view{lit.data, lit.size});
             },
             [&](const value::PrintValueItem& v) {
-              if (v.spec.kind == value::FormatKind::kTime) {
-                buf.append(
-                    value::FormatTime(v.spec, v.value, services.TimeFormat()));
-                return;
-              }
-              buf.append(value::FormatValue(v.spec, v.value));
+              buf.append(
+                  value::Format(
+                      v.spec, v.arg,
+                      value::FormatContext{
+                          .time_format = &services.TimeFormat()}));
             },
         },
         item);

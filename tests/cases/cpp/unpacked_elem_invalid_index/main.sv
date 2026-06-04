@@ -6,9 +6,6 @@ module Top;
   int oob_2s_pos, oob_2s_neg, in_range_2s;
   logic [7:0] oob_4s_pos, x_idx_4s, z_idx_4s, in_range_4s;
 
-  int int_e0, int_e1, int_e2;
-  logic [7:0] logic_e0, logic_e1, logic_e2;
-
   initial begin
     // Reads: 2-state OOB -> 0, 4-state OOB -> 'x, X / Z index -> 'x.
     idx = 100; oob_2s_pos  = int_arr[idx];
@@ -25,8 +22,5 @@ module Top;
     idx = -5;  int_arr[idx]   = 888;
     idx = 'x;  logic_arr[idx] = 8'hAA;
     idx = 'z;  logic_arr[idx] = 8'hBB;
-
-    int_e0   = int_arr[0];   int_e1   = int_arr[1];   int_e2   = int_arr[2];
-    logic_e0 = logic_arr[0]; logic_e1 = logic_arr[1]; logic_e2 = logic_arr[2];
   end
 endmodule
