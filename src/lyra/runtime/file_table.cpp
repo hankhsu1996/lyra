@@ -1,14 +1,17 @@
 #include "lyra/runtime/file_table.hpp"
 
+#include <algorithm>
 #include <cstdint>
 #include <fstream>
 #include <ios>
 #include <memory>
 #include <optional>
+#include <stop_token>
 #include <string>
 #include <string_view>
 #include <unordered_map>
 #include <utility>
+#include <vector>
 
 namespace lyra::runtime {
 
@@ -46,6 +49,15 @@ auto ParseMode(std::string_view mode)
 
 }  // namespace
 
+ChannelCancellation::ChannelCancellation(std::vector<std::stop_token> tokens)
+    : tokens_(std::move(tokens)) {
+}
+
+auto ChannelCancellation::IsCancelled() const noexcept -> bool {
+  return std::ranges::any_of(
+      tokens_, [](const std::stop_token& t) { return t.stop_requested(); });
+}
+
 auto FileTable::Open(
     std::string_view name, std::optional<std::string_view> mode)
     -> std::int32_t {
@@ -58,14 +70,14 @@ auto FileTable::Open(
     // Reuse the first free slot above the reserved stdio indexes; grow on
     // demand. fstream destructor closes/flushes on slot reset.
     for (std::size_t i = kFdReservedSlots; i < fd_pool_.size(); ++i) {
-      if (fd_pool_.at(i) == nullptr) {
-        fd_pool_.at(i) = std::move(stream);
-        fd_errors_.at(i) = ErrorRecord{};
+      if (fd_pool_.at(i).file == nullptr) {
+        fd_pool_.at(i).file = std::move(stream);
+        fd_pool_.at(i).error = ErrorRecord{};
         return kFdHighBit | static_cast<std::int32_t>(i);
       }
     }
-    fd_pool_.push_back(std::move(stream));
-    fd_errors_.emplace_back();
+    fd_pool_.emplace_back(
+        FdSlot{.file = std::move(stream), .error = {}, .cancel_source = {}});
     return kFdHighBit | static_cast<std::int32_t>(fd_pool_.size() - 1);
   }
   // MCD path: open write-truncate (LRM 21.3.1 omits the type for MCD form).
@@ -73,8 +85,8 @@ auto FileTable::Open(
       name_z, std::ios_base::out | std::ios_base::trunc);
   if (!stream->is_open()) return 0;
   for (std::size_t slot = 1; slot < kMcdSlotCount; ++slot) {
-    if (mcd_slots_.at(slot) == nullptr) {
-      mcd_slots_.at(slot) = std::move(stream);
+    if (mcd_slots_.at(slot).file == nullptr) {
+      mcd_slots_.at(slot).file = std::move(stream);
       return static_cast<std::int32_t>(1U << slot);
     }
   }
@@ -89,15 +101,23 @@ void FileTable::Close(std::int32_t descriptor) {
   if ((raw & (1U << 31U)) != 0U) {
     const std::size_t idx = raw & 0x7FFF'FFFFU;
     if (idx < kFdReservedSlots || idx >= fd_pool_.size()) return;
-    fd_pool_.at(idx).reset();
-    fd_errors_.at(idx) = ErrorRecord{};
+    auto& slot = fd_pool_.at(idx);
+    slot.file.reset();
+    slot.error = ErrorRecord{};
+    // LRM 21.3.2: fire cancel on any pending observers; replace the source
+    // so the next $fopen on this slot starts with a fresh signal.
+    slot.cancel_source.request_stop();
+    slot.cancel_source = std::stop_source{};
     return;
   }
   // MCD: iterate each set bit in 1..30 and close that slot. Bit 0 is the
   // stdout sentinel and is never closed.
-  for (std::size_t slot = 1; slot < kMcdSlotCount; ++slot) {
-    if ((raw & (1U << slot)) == 0U) continue;
-    mcd_slots_.at(slot).reset();
+  for (std::size_t slot_idx = 1; slot_idx < kMcdSlotCount; ++slot_idx) {
+    if ((raw & (1U << slot_idx)) == 0U) continue;
+    auto& slot = mcd_slots_.at(slot_idx);
+    slot.file.reset();
+    slot.cancel_source.request_stop();
+    slot.cancel_source = std::stop_source{};
   }
 }
 
@@ -108,11 +128,11 @@ auto FileTable::Resolve(std::int32_t descriptor) -> std::fstream* {
     const std::size_t idx = raw & 0x7FFF'FFFFU;
     // Stdio sentinels (0/1/2) and out-of-range indexes are not owned here.
     if (idx < kFdReservedSlots || idx >= fd_pool_.size()) return nullptr;
-    return fd_pool_.at(idx).get();
+    return fd_pool_.at(idx).file.get();
   }
   // MCD single bit. Bit 0 alone is the stdout sentinel -- not owned here.
   for (std::size_t slot = 1; slot < kMcdSlotCount; ++slot) {
-    if (raw == (1U << slot)) return mcd_slots_.at(slot).get();
+    if (raw == (1U << slot)) return mcd_slots_.at(slot).file.get();
   }
   return nullptr;
 }
@@ -137,26 +157,49 @@ void FileTable::SetError(
     std::int32_t fd, int errno_value, std::string message) {
   const auto idx = FdPoolIndex(fd, fd_pool_.size());
   if (!idx.has_value()) return;
-  fd_errors_.at(*idx) =
+  fd_pool_.at(*idx).error =
       ErrorRecord{.errno_value = errno_value, .message = std::move(message)};
 }
 
 auto FileTable::LastError(std::int32_t fd) const -> int {
   const auto idx = FdPoolIndex(fd, fd_pool_.size());
   if (!idx.has_value()) return 0;
-  return fd_errors_.at(*idx).errno_value;
+  return fd_pool_.at(*idx).error.errno_value;
 }
 
 auto FileTable::LastErrorMessage(std::int32_t fd) const -> std::string_view {
   const auto idx = FdPoolIndex(fd, fd_pool_.size());
   if (!idx.has_value()) return {};
-  return fd_errors_.at(*idx).message;
+  return fd_pool_.at(*idx).error.message;
 }
 
 void FileTable::ClearError(std::int32_t fd) {
   const auto idx = FdPoolIndex(fd, fd_pool_.size());
   if (!idx.has_value()) return;
-  fd_errors_.at(*idx) = ErrorRecord{};
+  fd_pool_.at(*idx).error = ErrorRecord{};
+}
+
+auto FileTable::CancellationFor(std::int32_t descriptor)
+    -> ChannelCancellation {
+  std::vector<std::stop_token> tokens;
+  if (descriptor == 0) return ChannelCancellation{std::move(tokens)};
+  const auto raw = static_cast<std::uint32_t>(descriptor);
+  if ((raw & (1U << 31U)) != 0U) {
+    const std::size_t idx = raw & 0x7FFF'FFFFU;
+    // Stdio sentinels (0/1/2) and out-of-range indexes have no observable
+    // close event -- contribute no token.
+    if (idx >= kFdReservedSlots && idx < fd_pool_.size()) {
+      tokens.push_back(fd_pool_.at(idx).cancel_source.get_token());
+    }
+    return ChannelCancellation{std::move(tokens)};
+  }
+  // MCD: collect one token per set bit in 1..30. Bit 0 is stdout sentinel
+  // (cannot be closed) so it contributes nothing.
+  for (std::size_t slot = 1; slot < kMcdSlotCount; ++slot) {
+    if ((raw & (1U << slot)) == 0U) continue;
+    tokens.push_back(mcd_slots_.at(slot).cancel_source.get_token());
+  }
+  return ChannelCancellation{std::move(tokens)};
 }
 
 }  // namespace lyra::runtime

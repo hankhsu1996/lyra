@@ -5,6 +5,7 @@
 #include <cstdint>
 #include <cstring>
 #include <fstream>
+#include <functional>
 #include <ios>
 #include <iostream>
 #include <optional>
@@ -70,6 +71,18 @@ auto LyraFOpen(
 void LyraFClose(
     RuntimeServices& services, const value::PackedArray& descriptor) {
   services.Files().Close(static_cast<std::int32_t>(descriptor.ToInt64()));
+}
+
+void LyraSubmitFStrobe(
+    RuntimeServices& services, const value::PackedArray& descriptor,
+    std::function<void()> print_action) {
+  auto cancel = services.Files().CancellationFor(
+      static_cast<std::int32_t>(descriptor.ToInt64()));
+  services.SubmitPostponed(
+      [cancel = std::move(cancel), action = std::move(print_action)]() mutable {
+        if (cancel.IsCancelled()) return;
+        action();
+      });
 }
 
 void LyraFPrint(
