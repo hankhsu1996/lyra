@@ -15,9 +15,5 @@ expect:
     x_idx_4s: "8'bxxxxxxxx"
     z_idx_4s: "8'bxxxxxxxx"
     in_range_4s: "8'h22"
-    int_e0: 10
-    int_e1: 20
-    int_e2: 30
-    logic_e0: "8'h11"
-    logic_e1: "8'h22"
-    logic_e2: "8'h33"
+    int_arr: [10, 20, 30]
+    logic_arr: ["8'h11", "8'h22", "8'h33"]

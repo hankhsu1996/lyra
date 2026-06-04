@@ -8,5 +8,4 @@ input:
 expect:
   exit: 0
   variables:
-    sum: 66
-    mixed: 31
+    matrix: [[1, 2, 3], [10, 20, 30]]

@@ -111,20 +111,19 @@ auto RenderPrintValueArg(
   const auto& type = ctx.Unit().GetType(v.type);
 
   // The argument is type-driven: the `PrintValue` overload set selects the
-  // right RuntimeValueView from the operand's C++ type, so the backend only
-  // hands it the bare operand (a string passes its view). Any spec/operand
-  // mismatch (e.g. `%s` on a bit vector) must be resolved upstream of the
-  // backend -- at HIR -> MIR via an explicit ConversionExpr, or rejected.
+  // right `Formatter<T>` from the operand's C++ type, so the backend only
+  // hands it the bare operand. Any spec/operand mismatch (e.g. `%s` on a bit
+  // vector) must be resolved upstream of the backend -- at HIR -> MIR via an
+  // explicit ConversionExpr, or rejected.
   auto operand_or = RenderExpr(ctx, ctx.Expr(v.value));
   if (!operand_or) return std::unexpected(std::move(operand_or.error()));
 
-  if (type.Kind() == mir::TypeKind::kString) {
-    return std::format("({}).View()", *operand_or);
-  }
   if (type.IsIntegralPacked() || type.Kind() == mir::TypeKind::kReal ||
       type.Kind() == mir::TypeKind::kRealTime ||
       type.Kind() == mir::TypeKind::kShortReal ||
-      type.Kind() == mir::TypeKind::kUnpackedArray) {
+      type.Kind() == mir::TypeKind::kString ||
+      type.Kind() == mir::TypeKind::kUnpackedArray ||
+      type.Kind() == mir::TypeKind::kDynamicArray) {
     return *operand_or;
   }
   throw InternalError("RenderPrintValueArg: unsupported display operand type");

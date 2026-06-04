@@ -24,12 +24,11 @@ void LyraPrint(
               stream.Append(std::string_view{lit.data, lit.size});
             },
             [&](const value::PrintValueItem& v) {
-              if (v.spec.kind == value::FormatKind::kTime) {
-                stream.Append(
-                    value::FormatTime(v.spec, v.value, services.TimeFormat()));
-                return;
-              }
-              stream.Append(value::FormatValue(v.spec, v.value));
+              stream.Append(
+                  value::Format(
+                      v.spec, v.arg,
+                      value::FormatContext{
+                          .time_format = &services.TimeFormat()}));
             },
         },
         item);

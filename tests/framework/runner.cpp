@@ -50,14 +50,14 @@ auto ParseExpected(const YAML::Node& node) -> ExpectedOutput {
 }
 
 // Recursive YAML -> ExpectedValue. A sequence node maps to LRM 21.2.1.6
-// kUnpackedArray; element kinds may mix freely. A scalar dispatches through
+// kAggregate; element kinds may mix freely. A scalar dispatches through
 // ParseExpectedValue, which discriminates integer / SV literal / string.
 // `path` accumulates the dotted YAML location for error messages.
 auto ParseExpectedNode(const YAML::Node& node, std::string_view path)
     -> std::expected<ExpectedValue, std::string> {
   if (node.IsSequence()) {
     ExpectedValue out;
-    out.kind = ExpectedValueKind::kUnpackedArray;
+    out.kind = ExpectedValueKind::kAggregate;
     out.format_spec.kind = value::FormatKind::kAssignmentPattern;
     out.sv_format_specifier = "%p";
     out.elements.reserve(node.size());

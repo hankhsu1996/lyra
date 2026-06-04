@@ -187,9 +187,9 @@ class PackedArray {
     return *this;
   }
 
-  // Word-level access for `RuntimeValueView` construction and intra-runtime
-  // interop. The spans alias the PackedArray's storage and stay valid for
-  // the object's lifetime.
+  // Word-level access for `Formatter<PackedArray>` construction and
+  // intra-runtime interop. The spans alias the PackedArray's storage and stay
+  // valid for the object's lifetime.
   [[nodiscard]] auto ValueWords() const -> std::span<const std::uint64_t>;
   [[nodiscard]] auto UnknownWords() const -> std::span<const std::uint64_t>;
 

@@ -1,4 +1,4 @@
-id: cpp.dynamic_array_assignment_pattern
+id: cpp.dynamic_array_display_p
 tags: [cpp_run]
 input:
   command: [run, cpp]
@@ -9,7 +9,7 @@ expect:
   exit: 0
   variables:
     a: [10, 20, 30]
-    r: [7, 7, 7, 7]
-    j: [[1, 2], [3, 4, 5]]
-    m: [[8, 9], [8, 9], [8, 9]]
-    p: [1, 2, 3, 4]
+    b: []
+    c: [[1, 2], [3, 4, 5]]
+    d: [[100, 200, 300], [400]]
+    e: [[7, 8], [9, 10], [11, 12]]

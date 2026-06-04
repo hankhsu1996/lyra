@@ -3,6 +3,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <span>
+#include <string>
 #include <utility>
 #include <vector>
 
@@ -64,10 +65,10 @@ class UnpackedArray {
   }
 
   // Flat-storage element read. `i` is in [0, Size()); no SV-index translation,
-  // no invalid-index handling. Sole consumer is the runtime aggregate-format
-  // path (`RuntimeValueView::FromUnpackedArray`), which traverses storage to
-  // build per-element views. SV-semantics access goes through
-  // `ElementAt(PackedArray)`.
+  // no invalid-index handling. Sole consumer is the aggregate-format path
+  // (`Formatter<UnpackedArray<T>>::Format`), which traverses storage to defer
+  // each element to its own `Formatter` specialization. SV-semantics access
+  // goes through `ElementAt(PackedArray)`.
   [[nodiscard]] auto RawAt(std::size_t i) const -> const T& {
     return data_[i];
   }
@@ -245,26 +246,28 @@ class UnpackedArrayRef {
   std::uint32_t count_;
 };
 
-// LRM 21.2.1.6 aggregate-view construction. Element views borrow into `arr`'s
-// per-element storage and the parent view owns the recursive element vector,
-// so the whole tree is valid as long as `arr` is alive. Dispatch on the
-// element type via `if constexpr`: terminal `PackedArray` produces an
-// integral leaf via `FromPackedArray`; nested `UnpackedArray<U>` recurses.
+// LRM 21.2.1.6 aggregate format. Per the per-type Formatter trait the
+// container walks its own elements and recursively defers each element to
+// `Format(spec, MakeFormatArg(elem))`. Aggregates only ever carry
+// `kAssignmentPattern`, which rewrites to `kDecimal` at the integral leaf
+// and never reaches a context-bound kind (`%t` is rejected on aggregate
+// operands upstream), so no `FormatContext` is threaded through. Multi-dim
+// and mixed-container nesting (`int arr[3][]`) fall out because every
+// nested element type carries its own Formatter.
 template <typename T>
-auto RuntimeValueView::FromUnpackedArray(const UnpackedArray<T>& arr)
-    -> RuntimeValueView {
-  std::vector<RuntimeValueView> elements;
-  elements.reserve(arr.Size());
-  for (std::size_t i = 0; i < arr.Size(); ++i) {
-    const T& elem = arr.RawAt(i);
-    if constexpr (std::same_as<T, PackedArray>) {
-      elements.push_back(RuntimeValueView::FromPackedArray(elem));
-    } else {
-      elements.push_back(RuntimeValueView::FromUnpackedArray(elem));
+struct Formatter<UnpackedArray<T>> {
+  static auto Format(const FormatSpec& spec, const UnpackedArray<T>& value)
+      -> std::string {
+    std::string out = "'{";
+    for (std::size_t i = 0; i < value.Size(); ++i) {
+      if (i != 0) {
+        out += ", ";
+      }
+      out += lyra::value::Format(spec, MakeFormatArg(value.RawAt(i)));
     }
+    out += "}";
+    return out;
   }
-  return RuntimeValueView{
-      .data = UnpackedArrayValueView{.elements = std::move(elements)}};
-}
+};
 
 }  // namespace lyra::value

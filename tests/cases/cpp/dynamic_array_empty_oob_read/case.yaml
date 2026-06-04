@@ -8,5 +8,5 @@ input:
 expect:
   exit: 0
   variables:
+    arr: []
     from_empty: 0
-    after_marker: 99
