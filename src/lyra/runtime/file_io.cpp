@@ -2,7 +2,6 @@
 
 #include <cerrno>
 #include <cstdint>
-#include <cstring>
 #include <fstream>
 #include <functional>
 #include <ios>
@@ -145,18 +144,14 @@ auto MakeInt(std::int32_t v) -> value::PackedArray {
   return value::PackedArray::Int(v);
 }
 
-// LRM 21.3.7 / 21.3.8: record the most recent errno + textual description
-// for the given fd. Stdio sentinels and non-FD descriptors silently no-op.
-void StampError(
+// LRM 21.3.7: $ferror reports the most recent file-I/O error for an FD.
+// Stamp the descriptive message verbatim (naming the system task) so a
+// caller reading $ferror after a failure gets a useful string; the errno
+// is reported separately as the return value of $ferror.
+void Stamp(
     RuntimeServices& services, std::int32_t fd, int err,
-    std::string_view fallback) {
-  std::string msg;
-  if (err != 0) {
-    msg = std::strerror(err);
-  } else {
-    msg = std::string{fallback};
-  }
-  services.Files().SetError(fd, err, std::move(msg));
+    std::string_view message) {
+  services.Files().SetError(fd, err, std::string{message});
 }
 
 }  // namespace
@@ -166,12 +161,12 @@ auto LyraFGetc(RuntimeServices& services, const value::PackedArray& fd_pa)
   const std::int32_t fd = AsInt32(fd_pa);
   auto* slot = services.Files().ResolveSlot(fd);
   if (slot == nullptr) {
-    StampError(services, fd, EBADF, "$fgetc: not an open file descriptor");
+    Stamp(services, fd, EBADF, "$fgetc: not an open file descriptor");
     return MakeInt(-1);
   }
   // LRM 21.3.4: read entries require an FD opened with r or r+ type.
   if (!slot->permits_read) {
-    services.Files().SetError(fd, EBADF, "$fgetc: file not open for reading");
+    Stamp(services, fd, EBADF, "$fgetc: file not open for reading");
     return MakeInt(-1);
   }
   // LRM 21.3.4.1: drain any byte left by $ungetc (or by the scanner's
@@ -185,7 +180,7 @@ auto LyraFGetc(RuntimeServices& services, const value::PackedArray& fd_pa)
   if (c == std::char_traits<char>::eof()) {
     // LRM 21.3.4.1: EOF is signalled as -1 (wider than 8 bits so callers can
     // distinguish from 0xFF). fstream's eof bit is now set; $feof picks it up.
-    StampError(services, fd, 0, "$fgetc: EOF");
+    Stamp(services, fd, 0, "$fgetc: EOF");
     return MakeInt(-1);
   }
   return MakeInt(c & 0xFF);
@@ -197,7 +192,7 @@ auto LyraFUngetc(
   const std::int32_t fd = AsInt32(fd_pa);
   auto* slot = services.Files().ResolveSlot(fd);
   if (slot == nullptr) {
-    StampError(services, fd, EBADF, "$ungetc: not an open file descriptor");
+    Stamp(services, fd, EBADF, "$ungetc: not an open file descriptor");
     return MakeInt(-1);
   }
   // LRM 21.3.4.1 NOTE: implementations may limit pushback depth. We keep a
@@ -207,7 +202,7 @@ auto LyraFUngetc(
   // lifts libstdc++'s "must read first" restriction so $ungetc on a
   // freshly-opened stream works as the LRM specifies.
   if (slot->putback.has_value()) {
-    StampError(services, fd, EAGAIN, "$ungetc: putback buffer full");
+    Stamp(services, fd, EAGAIN, "$ungetc: putback buffer full");
     return MakeInt(-1);
   }
   slot->putback = static_cast<char>(AsInt32(c_pa) & 0xFF);
@@ -220,12 +215,12 @@ auto LyraFGets(
   const std::int32_t fd = AsInt32(fd_pa);
   auto* slot = services.Files().ResolveSlot(fd);
   if (slot == nullptr) {
-    StampError(services, fd, EBADF, "$fgets: not an open file descriptor");
+    Stamp(services, fd, EBADF, "$fgets: not an open file descriptor");
     dest = value::String{};
     return MakeInt(0);
   }
   if (!slot->permits_read) {
-    services.Files().SetError(fd, EBADF, "$fgets: file not open for reading");
+    Stamp(services, fd, EBADF, "$fgets: file not open for reading");
     dest = value::String{};
     return MakeInt(0);
   }
@@ -246,7 +241,7 @@ auto LyraFGets(
     if (c == '\n') break;
   }
   if (line.empty()) {
-    StampError(services, fd, 0, "$fgets: EOF");
+    Stamp(services, fd, 0, "$fgets: EOF");
     dest = value::String{};
     return MakeInt(0);
   }
@@ -260,16 +255,16 @@ auto LyraFRead(
   const std::int32_t fd = AsInt32(fd_pa);
   auto* slot = services.Files().ResolveSlot(fd);
   if (slot == nullptr) {
-    StampError(services, fd, EBADF, "$fread: not an open file descriptor");
+    Stamp(services, fd, EBADF, "$fread: not an open file descriptor");
     return MakeInt(0);
   }
   if (!slot->permits_read) {
-    services.Files().SetError(fd, EBADF, "$fread: file not open for reading");
+    Stamp(services, fd, EBADF, "$fread: file not open for reading");
     return MakeInt(0);
   }
   const std::uint64_t width = dest.BitWidth();
   if (width == 0U) {
-    StampError(services, fd, EINVAL, "$fread: destination has zero bit width");
+    Stamp(services, fd, EINVAL, "$fread: destination has zero bit width");
     return MakeInt(0);
   }
   const auto byte_count = static_cast<std::size_t>((width + 7U) / 8U);
@@ -286,7 +281,7 @@ auto LyraFRead(
   slot->file->read(rest.data(), static_cast<std::streamsize>(rest.size()));
   const auto got = pos + static_cast<std::size_t>(slot->file->gcount());
   if (got == 0U) {
-    StampError(services, fd, 0, "$fread: EOF");
+    Stamp(services, fd, 0, "$fread: EOF");
     return MakeInt(0);
   }
   // LRM 21.3.4.4: 2-value, big-endian (first byte fills the MSBs). On a
@@ -305,7 +300,7 @@ auto LyraFSeek(
   const std::int32_t fd = AsInt32(fd_pa);
   auto* slot = services.Files().ResolveSlot(fd);
   if (slot == nullptr) {
-    StampError(services, fd, EBADF, "$fseek: not an open file descriptor");
+    Stamp(services, fd, EBADF, "$fseek: not an open file descriptor");
     return MakeInt(-1);
   }
   const auto offset_v = static_cast<std::streamoff>(AsInt32(offset));
@@ -321,7 +316,7 @@ auto LyraFSeek(
       dir = std::ios_base::end;
       break;
     default:
-      StampError(services, fd, EINVAL, "$fseek: operation must be 0, 1, or 2");
+      Stamp(services, fd, EINVAL, "$fseek: operation must be 0, 1, or 2");
       return MakeInt(-1);
   }
   auto& stream = *slot->file;
@@ -329,7 +324,7 @@ auto LyraFSeek(
   stream.seekg(offset_v, dir);
   stream.seekp(offset_v, dir);
   if (stream.fail()) {
-    StampError(services, fd, errno, "$fseek: seek failed");
+    Stamp(services, fd, errno, "$fseek: seek failed");
     return MakeInt(-1);
   }
   // LRM 21.3.5: "Repositioning the current file position with $fseek or
@@ -348,12 +343,12 @@ auto LyraFTell(RuntimeServices& services, const value::PackedArray& fd_pa)
   const std::int32_t fd = AsInt32(fd_pa);
   std::fstream* stream = services.Files().Resolve(fd);
   if (stream == nullptr) {
-    StampError(services, fd, EBADF, "$ftell: not an open file descriptor");
+    Stamp(services, fd, EBADF, "$ftell: not an open file descriptor");
     return MakeInt(-1);
   }
   const auto pos = stream->tellg();
   if (pos == std::fstream::pos_type{-1}) {
-    StampError(services, fd, errno, "$ftell: tell failed");
+    Stamp(services, fd, errno, "$ftell: tell failed");
     return MakeInt(-1);
   }
   return MakeInt(static_cast<std::int32_t>(pos));
