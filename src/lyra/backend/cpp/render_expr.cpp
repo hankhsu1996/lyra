@@ -1357,13 +1357,36 @@ auto RenderConcatExpr(
       "RenderConcatExpr: result type must be PackedArrayType or string");
 }
 
+// LRM 10.9.1 array assignment pattern: renders as `std::array<T, N>{e1, ...}`.
+// `expr.type` is the parent container type (`UnpackedArrayType` /
+// `DynamicArrayType`); the element type is read off it and emitted as the
+// `std::array` element parameter. The resulting `std::array<T, N>` implicitly
+// converts to the container ctor's `std::span<const T>` parameter, so this
+// rendering is context-independent: the same string is correct standalone
+// and as a `ConstructExpr` argument.
 auto RenderArrayLiteralExpr(
     const RenderContext& ctx, const mir::Expr& expr,
     const mir::ArrayLiteralExpr& a) -> diag::Result<std::string> {
-  auto vec_type_or =
-      RenderTypeAsCpp(ctx.Unit(), ctx.StructuralScope(), expr.type);
-  if (!vec_type_or) return std::unexpected(std::move(vec_type_or.error()));
-  std::string out = *vec_type_or + "{";
+  const auto& container_ty = ctx.Unit().GetType(expr.type);
+  const mir::TypeId elem_type_id = std::visit(
+      [](const auto& ty) -> mir::TypeId {
+        using TyT = std::decay_t<decltype(ty)>;
+        if constexpr (
+            std::same_as<TyT, mir::UnpackedArrayType> ||
+            std::same_as<TyT, mir::DynamicArrayType>) {
+          return ty.element_type;
+        } else {
+          throw InternalError(
+              "RenderArrayLiteralExpr: result type must be UnpackedArrayType "
+              "or DynamicArrayType");
+        }
+      },
+      container_ty.data);
+  auto elem_type_or =
+      RenderTypeAsCpp(ctx.Unit(), ctx.StructuralScope(), elem_type_id);
+  if (!elem_type_or) return std::unexpected(std::move(elem_type_or.error()));
+  std::string out =
+      std::format("std::array<{}, {}>{{", *elem_type_or, a.elements.size());
   for (std::size_t i = 0; i < a.elements.size(); ++i) {
     auto rendered = RenderExpr(ctx, ctx.Expr(a.elements[i]));
     if (!rendered) return std::unexpected(std::move(rendered.error()));
@@ -1377,11 +1400,6 @@ auto RenderArrayLiteralExpr(
 // LRM 7.5.1 / 7.6: constructor invocation. Emits `RenderType(type)(args...)`
 // -- parenthesised so brace-vs-paren overload resolution is unambiguous and
 // the runtime ctor is selected by arg-list shape.
-//
-// An `ArrayLiteralExpr` argument is rendered as `{e1, e2, ...}` without the
-// type prefix so it decays to `std::initializer_list<T>` for the parameter
-// slot. This is what allows `UnpackedArray<T>(default_value, {e1, e2, ...})`
-// to compile against the wrapper's `(T, std::initializer_list<T>)` ctor.
 auto RenderConstructExpr(
     const RenderContext& ctx, const mir::Expr& expr,
     const mir::ConstructExpr& c) -> diag::Result<std::string> {
@@ -1389,25 +1407,10 @@ auto RenderConstructExpr(
   if (!type_or) return std::unexpected(std::move(type_or.error()));
   std::string out = *type_or + "(";
   for (std::size_t i = 0; i < c.args.size(); ++i) {
-    const auto& arg_expr = ctx.Expr(c.args[i]);
-    std::string rendered;
-    if (const auto* al = std::get_if<mir::ArrayLiteralExpr>(&arg_expr.data)) {
-      std::string list = "{";
-      for (std::size_t j = 0; j < al->elements.size(); ++j) {
-        auto element = RenderExpr(ctx, ctx.Expr(al->elements[j]));
-        if (!element) return std::unexpected(std::move(element.error()));
-        if (j != 0) list += ", ";
-        list += *element;
-      }
-      list += "}";
-      rendered = std::move(list);
-    } else {
-      auto r = RenderExpr(ctx, arg_expr);
-      if (!r) return std::unexpected(std::move(r.error()));
-      rendered = *std::move(r);
-    }
+    auto r = RenderExpr(ctx, ctx.Expr(c.args[i]));
+    if (!r) return std::unexpected(std::move(r.error()));
     if (i != 0) out += ", ";
-    out += rendered;
+    out += *r;
   }
   out += ")";
   return out;

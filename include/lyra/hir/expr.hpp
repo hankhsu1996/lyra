@@ -119,9 +119,9 @@ struct ReplicationExpr {
 // default forms). Slang has normalised all four forms into a flat per-element
 // expression list in target declaration order (= packed MSB-first), with each
 // item already wrapped in a ConversionExpression to the field / element's
-// declared type. The shape covers both packed targets (struct / union /
-// packed array) and unpacked fixed-size arrays; HIR-to-MIR dispatches to the
-// right primitive based on the resolved target type.
+// declared type. The shape covers packed targets (struct / union / packed
+// array), fixed-size unpacked arrays, and dynamic arrays; HIR-to-MIR
+// dispatches to the right primitive based on the resolved target type.
 struct AssignmentPatternExpr {
   std::vector<ExprId> elements;
 };
@@ -130,8 +130,9 @@ struct AssignmentPatternExpr {
 // slang-validated as a constant positive integer. `items` is the per-
 // iteration expression list -- slang stores only one iteration's items with
 // that iteration's per-field casts and requires the target's per-iter type
-// chunks to repeat, so the lowered MIR shape is `Replication(count,
-// Concat(items))`.
+// chunks to repeat. The lowered MIR shape is `Replication(count,
+// Concat(items))` for packed targets and a `Construct(canonical_default,
+// ArrayLiteral{items repeated count times})` for unpacked / dynamic targets.
 struct AssignmentPatternReplicationExpr {
   ExprId count;
   std::vector<ExprId> items;

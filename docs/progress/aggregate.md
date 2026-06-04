@@ -22,7 +22,7 @@ follow once dynamic array's storage and runtime conventions are settled and prov
 | ---- | -------------------------------------------------------------------- |
 | DA1  | Done: construction, element read, blocking element write, multi-dim. |
 | DA2  | Done: NBA, compound element write, whole-array assignment.           |
-| DA3  | Open: literal init and assignment patterns.                          |
+| DA3  | Done: positional and replicated assignment patterns (LRM 10.9.1).    |
 | DA4  | Open: aggregate equality and inequality.                             |
 | DA5  | Open: constant-width slice (subject to LRM check).                   |
 | DA6  | Open: SV-callable method family (`.size()`, `.delete()`, ...).       |
@@ -60,11 +60,15 @@ The numeric IDs are stable references and do not imply execution order beyond DA
       10.4.2 -- the NBA LHS rules forbid bit/element selects on dynamically sized targets, so the
       construct is rejected upstream by slang and produces no Lyra-side path.
 
-- [ ] DA3 -- Literal init and assignment patterns (LRM 10.9). Declaration initializer
+- [x] DA3 -- Literal init and assignment patterns (LRM 10.9.1). Declaration initializer
       `int arr [] = '{e1, e2, ...}` where the pattern determines array size, procedural assignment
       `arr = '{...}` which resizes the destination, and the replicated form `'{N{v}}` with a
-      compile-time count. Any LRM-defined structured shapes on dynamic arrays (for example
-      `'{default: v}` once a base size exists) land here too.
+      compile-time count. Multi-dimensional forms fall out from the recursive element-type
+      representation; jagged sizing per row is the natural consequence of each inner pattern
+      determining its row's size. Structured forms with `default:` keys are rejected by slang for
+      dynamic-array targets (LRM forbids `default` here); index-keyed forms are accepted by slang
+      only when the indices cover a dense `0..N-1` set, which adds no expressive power over the
+      positional form and is rejected at HIR lowering with a "use positional" diagnostic.
 
 - [ ] DA4 -- Aggregate equality. `A == B`, `A != B`, `A === B`, `A !== B` per LRM 7.4.6 and 11.4.5.
       Size mismatch yields 0 directly; equal sizes reduce element-by-element comparisons to a 1-bit

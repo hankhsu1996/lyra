@@ -1625,11 +1625,24 @@ auto LowerProcExpr(
           unit_facts, unit_state, proc_state, stack, sap, expr, span);
     }
 
-    case slang::ast::ExpressionKind::StructuredAssignmentPattern:
+    case slang::ast::ExpressionKind::StructuredAssignmentPattern: {
+      // Slang accepts `'{idx:val, ...}` for a dynamic-array target as long
+      // as indices cover a dense `0..N-1`. The legal subset is equivalent to
+      // positional and adds no expressive power; rejecting it here keeps the
+      // dispatch narrow until a consumer needs the structured form.
+      if (expr.type->getCanonicalType().kind ==
+          slang::ast::SymbolKind::DynamicArrayType) {
+        return diag::Unsupported(
+            span, diag::DiagCode::kUnsupportedAssignmentPatternKind,
+            "index-keyed assignment pattern on a dynamic array is not yet "
+            "supported; use positional form",
+            diag::UnsupportedCategory::kOperation);
+      }
       return LowerAssignmentPatternFromElementsProc(
           unit_facts, unit_state, proc_state, stack,
           expr.as<slang::ast::StructuredAssignmentPatternExpression>(), expr,
           span);
+    }
 
     case slang::ast::ExpressionKind::ReplicatedAssignmentPattern:
       return LowerReplicatedAssignmentPatternExprProc(
@@ -1758,11 +1771,20 @@ auto LowerStructuralExpr(
           unit_facts, unit_state, scope_state, stack, sap, expr, span);
     }
 
-    case slang::ast::ExpressionKind::StructuredAssignmentPattern:
+    case slang::ast::ExpressionKind::StructuredAssignmentPattern: {
+      if (expr.type->getCanonicalType().kind ==
+          slang::ast::SymbolKind::DynamicArrayType) {
+        return diag::Unsupported(
+            span, diag::DiagCode::kUnsupportedAssignmentPatternKind,
+            "index-keyed assignment pattern on a dynamic array is not yet "
+            "supported; use positional form",
+            diag::UnsupportedCategory::kOperation);
+      }
       return LowerAssignmentPatternFromElementsStructural(
           unit_facts, unit_state, scope_state, stack,
           expr.as<slang::ast::StructuredAssignmentPatternExpression>(), expr,
           span);
+    }
 
     case slang::ast::ExpressionKind::ReplicatedAssignmentPattern:
       return LowerReplicatedAssignmentPatternExprStructural(

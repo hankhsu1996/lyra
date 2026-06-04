@@ -2,7 +2,7 @@
 
 #include <cstddef>
 #include <cstdint>
-#include <initializer_list>
+#include <span>
 #include <utility>
 #include <vector>
 
@@ -44,9 +44,12 @@ class UnpackedArray {
   }
 
   // Element-list construction: shield slot seeded, plus the explicit
-  // initial elements (LRM 10.9 assignment pattern lowering).
-  UnpackedArray(T oob_slot, std::initializer_list<T> init)
-      : oob_slot_(std::move(oob_slot)), data_(init) {
+  // initial elements (LRM 10.9 assignment pattern lowering). The element
+  // list is taken as a span so the emit side can hand in a `std::array<T,
+  // N>{...}` literal whose self-determined type is unambiguous, rather
+  // than relying on context-dependent braced-init binding.
+  UnpackedArray(T oob_slot, std::span<const T> init)
+      : oob_slot_(std::move(oob_slot)), data_(init.begin(), init.end()) {
   }
 
   UnpackedArray(const UnpackedArray&) = default;

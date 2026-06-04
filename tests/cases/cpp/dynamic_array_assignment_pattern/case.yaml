@@ -1,0 +1,30 @@
+id: cpp.dynamic_array_assignment_pattern
+tags: [cpp_run]
+input:
+  command: [run, cpp]
+  project: false
+  top: Top
+  files: [main.sv]
+expect:
+  exit: 0
+  variables:
+    a0: 10
+    a1: 20
+    a2: 30
+    r0: 7
+    r3: 7
+    j00: 1
+    j01: 2
+    j10: 3
+    j11: 4
+    j12: 5
+    m00: 8
+    m01: 9
+    m10: 8
+    m11: 9
+    m20: 8
+    m21: 9
+    p0: 1
+    p1: 2
+    p2: 3
+    p3: 4
