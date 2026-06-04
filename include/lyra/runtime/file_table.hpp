@@ -5,11 +5,31 @@
 #include <fstream>
 #include <memory>
 #include <optional>
+#include <stop_token>
 #include <string>
 #include <string_view>
 #include <vector>
 
 namespace lyra::runtime {
+
+// LRM 21.3.2 cancellation observable. One or more output channels' joint
+// cancel state; `IsCancelled()` returns true once any participating channel
+// has been closed since this view was acquired. Captured by value into a
+// postponed closure so the closure short-circuits when the descriptor it
+// targets is invalidated mid-slot.
+//
+// "Whole-operation cancellation" -- any participating channel closing kills
+// the entire submit, matching the literal LRM wording "operations on a ...
+// multichannel descriptor are implicitly cancelled".
+class ChannelCancellation {
+ public:
+  [[nodiscard]] auto IsCancelled() const noexcept -> bool;
+
+ private:
+  friend class FileTable;
+  explicit ChannelCancellation(std::vector<std::stop_token> tokens);
+  std::vector<std::stop_token> tokens_;
+};
 
 // Owns file handles opened by `$fopen` (LRM 21.3.1). Two descriptor shapes
 // share the same int32 namespace:
@@ -30,6 +50,12 @@ namespace lyra::runtime {
 // Owned slots hold `std::unique_ptr<std::fstream>`; fstream's destructor
 // flushes and closes when the slot is reset, so no raw fopen / fclose
 // machinery lives at this layer.
+//
+// Each slot also owns a `std::stop_source` -- the LRM 21.3.2 cancel signal
+// for postponed operations tied to the channel ($fstrobe, and any future
+// $fmonitor). Close() request_stops the slot's source and replaces it with
+// a fresh one, so channel-reuse after close starts with a clean signal
+// while observers of the old source see a permanent stop.
 class FileTable {
  public:
   FileTable() = default;
@@ -51,7 +77,9 @@ class FileTable {
   // Closes the file(s) addressed by `descriptor`. For an MCD, iterates set
   // bits in 1..30 and closes each. For an FD, closes that single owned
   // slot. Bit 0 (stdout) and the pre-bound STDIN / STDOUT / STDERR FDs are
-  // never closed.
+  // never closed. Also fires the cancel signal on every affected slot
+  // (LRM 21.3.2) and replaces each slot's stop_source so the next open on
+  // a reused slot starts with a fresh signal.
   void Close(std::int32_t descriptor);
 
   // Returns the owned `std::fstream*` for `descriptor`, or nullptr if the
@@ -74,6 +102,18 @@ class FileTable {
       -> std::string_view;
   void ClearError(std::int32_t fd);
 
+  // Returns a `ChannelCancellation` covering every owned channel
+  // `descriptor` names (LRM 21.3.2). For an FD the view holds one token
+  // from the FD slot's source; for an MCD the view holds a token per set
+  // bit (1..30), with bit 0 / stdio sentinels / 0 silently skipped because
+  // they cannot be closed. Held-by-value by the consumer; once a slot's
+  // source is request_stopped, the consumer's stop_tokens see the stop
+  // even if the slot is later reused (the new open installs a fresh
+  // source -- the old token still observes the old, permanently-stopped
+  // state through its own refcount).
+  [[nodiscard]] auto CancellationFor(std::int32_t descriptor)
+      -> ChannelCancellation;
+
   // FD encoding constants exposed for dispatch-site value comparisons.
   static constexpr std::int32_t kFdHighBit =
       static_cast<std::int32_t>(static_cast<std::uint32_t>(1) << 31U);
@@ -93,9 +133,19 @@ class FileTable {
     std::string message;
   };
 
-  std::array<std::unique_ptr<std::fstream>, kMcdSlotCount> mcd_slots_{};
-  std::vector<std::unique_ptr<std::fstream>> fd_pool_{kFdReservedSlots};
-  std::vector<ErrorRecord> fd_errors_{kFdReservedSlots};
+  struct FdSlot {
+    std::unique_ptr<std::fstream> file;
+    ErrorRecord error;
+    std::stop_source cancel_source;
+  };
+
+  struct McdSlot {
+    std::unique_ptr<std::fstream> file;
+    std::stop_source cancel_source;
+  };
+
+  std::array<McdSlot, kMcdSlotCount> mcd_slots_{};
+  std::vector<FdSlot> fd_pool_{kFdReservedSlots};
 };
 
 }  // namespace lyra::runtime

@@ -1,7 +1,9 @@
 #include "lyra/runtime/io.hpp"
 
+#include <functional>
 #include <span>
 #include <string_view>
+#include <utility>
 #include <variant>
 
 #include "lyra/base/overloaded.hpp"
@@ -31,6 +33,11 @@ void LyraPrint(
   const bool append_newline =
       kind == value::PrintKind::kDisplay || kind == value::PrintKind::kFDisplay;
   stream.FinishRecord(append_newline);
+}
+
+void LyraSubmitStrobe(
+    RuntimeServices& services, std::function<void()> print_action) {
+  services.SubmitPostponed(std::move(print_action));
 }
 
 }  // namespace lyra::runtime

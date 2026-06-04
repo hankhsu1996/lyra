@@ -301,18 +301,31 @@ auto RenderRuntimeCallExpr(
           },
           [&](const mir::RuntimeSubmitPostponedCall& pc)
               -> diag::Result<std::string> {
-            // LRM 21.2.2: wrap the print in a lambda that fires from the
-            // postponed region. `[=, this]` snapshots procedural locals
-            // by value (NBAs do not touch them, so a snapshot is also
-            // semantically correct -- and frame-death-safe for `initial`
-            // bodies) and resolves module signals through `this`, so
-            // they read NBA-committed values at fire time.
+            // LRM 21.2.2: defer the print to the postponed region via the
+            // matching $strobe-family runtime entry. The lambda captures
+            // procedural locals by value ([=, this]) -- NBAs do not touch
+            // them and the snapshot is frame-death-safe for `initial`
+            // bodies; structural signals resolve through `this->` at fire
+            // time and so see NBA-committed values. LRM 21.3.2 cancellation
+            // on $fclose is the file-sink entry's responsibility.
             auto print_or = RenderRuntimePrintCall(ctx, pc.print);
             if (!print_or) {
               return std::unexpected(std::move(print_or.error()));
             }
+            if (!pc.print.descriptor.has_value()) {
+              return std::format(
+                  "lyra::runtime::LyraSubmitStrobe(Services(), "
+                  "[=, this]() {{ {}; }})",
+                  *print_or);
+            }
+            auto desc_or = RenderExpr(ctx, ctx.Expr(*pc.print.descriptor));
+            if (!desc_or) {
+              return std::unexpected(std::move(desc_or.error()));
+            }
             return std::format(
-                "Services().SubmitPostponed([=, this]() {{ {}; }})", *print_or);
+                "lyra::runtime::LyraSubmitFStrobe(Services(), {}, "
+                "[=, this]() {{ {}; }})",
+                *desc_or, *print_or);
           },
           [&](const mir::RuntimeFileOpenCall& fo) -> diag::Result<std::string> {
             auto name_or = RenderExpr(ctx, ctx.Expr(fo.name));
