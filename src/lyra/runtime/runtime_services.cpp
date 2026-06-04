@@ -1,10 +1,14 @@
 #include "lyra/runtime/runtime_services.hpp"
 
+#include <cstdint>
 #include <functional>
+#include <string>
 #include <utility>
 
 #include "lyra/base/internal_error.hpp"
 #include "lyra/runtime/engine.hpp"
+#include "lyra/value/packed_array.hpp"
+#include "lyra/value/string.hpp"
 
 namespace lyra::runtime {
 
@@ -71,6 +75,33 @@ auto RuntimeServices::GlobalPrecisionPower() const -> std::int8_t {
         "RuntimeServices::GlobalPrecisionPower: no Engine bound");
   }
   return engine_->GlobalPrecisionPower();
+}
+
+auto RuntimeServices::TimeFormat() const -> const value::TimeFormat& {
+  if (engine_ == nullptr) {
+    throw InternalError("RuntimeServices::TimeFormat: no Engine bound");
+  }
+  return engine_->TimeFormat();
+}
+
+void RuntimeServices::SetTimeFormat(
+    const value::PackedArray& units_power, const value::PackedArray& precision,
+    const value::String& suffix, const value::PackedArray& min_width) {
+  if (engine_ == nullptr) {
+    throw InternalError("RuntimeServices::SetTimeFormat: no Engine bound");
+  }
+  engine_->SetTimeFormat(
+      static_cast<std::int8_t>(units_power.ToInt64()),
+      static_cast<std::int32_t>(precision.ToInt64()),
+      std::string(suffix.View()),
+      static_cast<std::int32_t>(min_width.ToInt64()));
+}
+
+void RuntimeServices::ResetTimeFormat() {
+  if (engine_ == nullptr) {
+    throw InternalError("RuntimeServices::ResetTimeFormat: no Engine bound");
+  }
+  engine_->ResetTimeFormat();
 }
 
 }  // namespace lyra::runtime

@@ -33,6 +33,7 @@ enum class FormatKind : std::uint8_t {
   kRealExponential,
   kRealGeneral,
   kAssignmentPattern,
+  kTime,
 };
 
 // Two-state vs four-state lives on the integral axis, not as a top-level
@@ -50,6 +51,16 @@ struct FormatSpec {
   bool zero_pad = false;
   bool left_align = false;
   std::int32_t timeunit_power = 0;
+};
+
+// LRM 20.4.3 / Table 20-3: the design-wide settings that drive every `%t`. The
+// runtime owns one mutable instance (on the Engine); `$timeformat` writes it.
+// `units_power` is the display unit as an LRM Table 20-2 power value.
+struct TimeFormat {
+  std::int8_t units_power = 0;
+  std::int32_t precision = 0;
+  std::string suffix;
+  std::int32_t min_width = 20;
 };
 
 struct NarrowIntegralView {
@@ -159,6 +170,13 @@ struct RuntimeValueView {
 
 [[nodiscard]] auto FormatValue(
     const FormatSpec& spec, const RuntimeValueView& value) -> std::string;
+
+// LRM 21.2.1.3: `%t`. Rescales the operand from the calling scope's time unit
+// (`spec.timeunit_power`) to the design-wide display unit (`tf.units_power`),
+// then formats with the `$timeformat` precision / suffix / min field width.
+[[nodiscard]] auto FormatTime(
+    const FormatSpec& spec, const RuntimeValueView& value, const TimeFormat& tf)
+    -> std::string;
 
 struct PrintLiteralItem {
   const char* data;

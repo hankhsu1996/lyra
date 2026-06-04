@@ -41,7 +41,6 @@ auto FindModuleDeclarations(std::string_view source) -> std::vector<ModuleHit> {
   std::size_t i = 0;
   const std::size_t n = source.size();
   while (i < n) {
-    std::size_t line_start = i;
     i = SkipWhitespace(source, i);
     if (i + 6 <= n && source.substr(i, 6) == "module") {
       const std::size_t after = i + 6;
@@ -65,7 +64,6 @@ auto FindModuleDeclarations(std::string_view source) -> std::vector<ModuleHit> {
     if (i < n) {
       ++i;
     }
-    (void)line_start;
   }
   return hits;
 }

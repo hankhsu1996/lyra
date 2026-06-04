@@ -7,6 +7,8 @@
 #include <map>
 #include <memory>
 #include <span>
+#include <string>
+#include <utility>
 #include <vector>
 
 #include "lyra/base/time.hpp"
@@ -17,6 +19,7 @@
 #include "lyra/runtime/scope.hpp"
 #include "lyra/runtime/stream_dispatcher.hpp"
 #include "lyra/runtime/trigger.hpp"
+#include "lyra/value/format.hpp"
 
 namespace lyra::runtime {
 
@@ -103,6 +106,27 @@ class Engine {
     return global_precision_power_;
   }
 
+  // LRM 20.4.3: the design-wide `$timeformat` settings that drive every `%t`.
+  [[nodiscard]] auto TimeFormat() const -> const value::TimeFormat& {
+    return time_format_;
+  }
+  void SetTimeFormat(
+      std::int8_t units_power, std::int32_t precision, std::string suffix,
+      std::int32_t min_width) {
+    time_format_ = value::TimeFormat{
+        .units_power = units_power,
+        .precision = precision,
+        .suffix = std::move(suffix),
+        .min_width = min_width};
+  }
+  // LRM Table 20-3: the no-argument `$timeformat` form restores the defaults --
+  // display unit is the design-global precision, precision 0, no suffix, field
+  // width 20.
+  void ResetTimeFormat() {
+    time_format_ = value::TimeFormat{};
+    time_format_.units_power = global_precision_power_;
+  }
+
  private:
   struct SchedulerQueues {
     std::deque<CoroutineHandle> active;
@@ -159,6 +183,7 @@ class Engine {
   SchedulerQueues queues_;
   SimTime now_ = 0;
   std::int8_t global_precision_power_ = kDefaultTimePrecisionPower;
+  value::TimeFormat time_format_;
   SchedulerPhase phase_ = SchedulerPhase::kIdle;
   std::size_t current_delta_ = 0;
   bool bound_ = false;

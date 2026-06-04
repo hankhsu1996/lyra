@@ -308,9 +308,7 @@ auto LowerFileIOSystemSubroutineCallStmt(
     const UnitLoweringState& unit_state,
     const StructuralScopeLoweringState& scope_state,
     ProcessLoweringState& proc_state, const hir::ProceduralBody& hir_proc,
-    const hir::Stmt& stmt, [[maybe_unused]] diag::SourceSpan span,
-    const hir::CallExpr& call,
-    [[maybe_unused]] const support::SystemSubroutineDesc& desc,
+    const hir::Stmt& stmt, const hir::CallExpr& call,
     const support::FileIOSystemSubroutineInfo& info,
     std::optional<hir::ExprId> assign_target, mir::TypeId result_type)
     -> diag::Result<mir::Stmt> {

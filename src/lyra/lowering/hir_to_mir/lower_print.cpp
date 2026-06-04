@@ -39,10 +39,8 @@ auto LowerPrintSystemSubroutineCall(
     const ProcessLoweringState& proc_state,
     ProceduralScopeLoweringState& proc_scope_state,
     const hir::ProceduralBody& hir_proc, const hir::CallExpr& call,
-    const support::SystemSubroutineDesc& desc,
     const support::PrintSystemSubroutineInfo& print, diag::SourceSpan span)
     -> diag::Result<mir::Expr> {
-  (void)desc;
   std::optional<mir::ExprId> descriptor = std::nullopt;
   std::size_t arg_offset = 0;
   if (print.sink_kind == support::PrintSinkKind::kFile) {

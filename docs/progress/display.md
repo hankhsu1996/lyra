@@ -11,8 +11,9 @@ since the test harness can only probe a variable whose type has an implemented s
       byte's X/Z poison collapses to a single character following simulator convention -- any X bit
       yields `x`, otherwise any Z bit yields `z`. Width / precision modifiers are rejected by the
       slang frontend, so the lowered form is always a single character.
-- [ ] DI2 -- `%t` (time): formatted against the active timescale. Tracked in `timescale.md` TS3; it
-      rides on the design-global precision and scope-unit scaling that workstream establishes.
+- [x] DI2 -- `%t` (time): formatted against the active timescale. Implemented under `timescale.md`
+      TS3 -- the display unit, precision, suffix and field width come from `$timeformat` (LRM
+      20.4.3), applied design-wide.
 - [x] DI3 -- `%f` / `%e` / `%g` (real). Default precision 6 per LRM Table 21-2. Coverage tracked
       under `datatypes.md` Real C1.
 - [ ] DI4 -- `%m` (hierarchical name). Requires runtime exposure of the current scope's hierarchical

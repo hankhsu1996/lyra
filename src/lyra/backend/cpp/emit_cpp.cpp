@@ -408,6 +408,7 @@ auto RenderScopeHeaderFile(
   out += "#include \"lyra/runtime/scan.hpp\"\n";
   out += "#include \"lyra/runtime/sformat.hpp\"\n";
   out += "#include \"lyra/runtime/sim_time.hpp\"\n";
+  out += "#include \"lyra/runtime/timescale.hpp\"\n";
   out += "#include \"lyra/runtime/var.hpp\"\n";
   out += "#include \"lyra/value/enum.hpp\"\n";
   out += "#include \"lyra/value/format.hpp\"\n";

@@ -20,7 +20,6 @@ auto LowerDiagnosticSystemSubroutineCall(
     const ProcessLoweringState& proc_state,
     ProceduralScopeLoweringState& proc_scope_state,
     const hir::ProceduralBody& hir_proc, const hir::CallExpr& call,
-    const support::SystemSubroutineDesc& desc,
     const support::DiagnosticSystemSubroutineInfo& info, diag::SourceSpan span)
     -> diag::Result<mir::Expr>;
 

@@ -194,12 +194,6 @@ constexpr std::array kEntries{
             .category = UnsupportedCategory::kFeature,
             .name = "format_module_path_not_implemented"}},
     std::pair{
-        DiagCode::kFormatSpecifierNotImplemented,
-        DiagCodeInfo{
-            .kind = DiagKind::kUnsupported,
-            .category = UnsupportedCategory::kFeature,
-            .name = "format_specifier_not_implemented"}},
-    std::pair{
         DiagCode::kSystemSubroutineExecutionNotImplemented,
         DiagCodeInfo{
             .kind = DiagKind::kUnsupported,

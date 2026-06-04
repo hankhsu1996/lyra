@@ -496,9 +496,8 @@ auto LowerExprStmt(
       if (const auto* file_info = support::GetFileIOInfo(desc)) {
         if (support::FileIOHasOutputArg(file_info->kind)) {
           return LowerFileIOSystemSubroutineCallStmt(
-              unit_state, scope_state, proc_state, hir_proc, stmt, inner.span,
-              *call, desc, *file_info, std::nullopt,
-              unit_state.TranslateType(inner.type));
+              unit_state, scope_state, proc_state, hir_proc, stmt, *call,
+              *file_info, std::nullopt, unit_state.TranslateType(inner.type));
         }
       }
       if (const auto* scan_info = support::GetScanInfo(desc)) {
@@ -555,9 +554,8 @@ auto LowerExprStmt(
           if (const auto* file_info = support::GetFileIOInfo(desc)) {
             if (support::FileIOHasOutputArg(file_info->kind)) {
               return LowerFileIOSystemSubroutineCallStmt(
-                  unit_state, scope_state, proc_state, hir_proc, stmt,
-                  call_carrier->span, *call, desc, *file_info, assign->lhs,
-                  result_type);
+                  unit_state, scope_state, proc_state, hir_proc, stmt, *call,
+                  *file_info, assign->lhs, result_type);
             }
           }
           if (const auto* scan_info = support::GetScanInfo(desc)) {

@@ -13,6 +13,7 @@
 #include "lyra/lowering/hir_to_mir/lower_print.hpp"
 #include "lyra/lowering/hir_to_mir/lower_scan.hpp"
 #include "lyra/lowering/hir_to_mir/lower_sformat.hpp"
+#include "lyra/lowering/hir_to_mir/lower_timescale.hpp"
 #include "lyra/lowering/hir_to_mir/state.hpp"
 #include "lyra/mir/expr.hpp"
 #include "lyra/support/system_subroutine.hpp"
@@ -34,7 +35,7 @@ auto LowerSystemSubroutineCall(
               -> diag::Result<mir::Expr> {
             return LowerPrintSystemSubroutineCall(
                 unit_state, scope_state, proc_state, proc_scope_state, hir_proc,
-                call, desc, print, span);
+                call, print, span);
           },
           [&](const support::TerminationSystemSubroutineInfo& term)
               -> diag::Result<mir::Expr> {
@@ -45,7 +46,7 @@ auto LowerSystemSubroutineCall(
               -> diag::Result<mir::Expr> {
             return LowerDiagnosticSystemSubroutineCall(
                 unit_state, scope_state, proc_state, proc_scope_state, hir_proc,
-                call, desc, diag_info, span);
+                call, diag_info, span);
           },
           [&](const support::FileIOSystemSubroutineInfo& file_io)
               -> diag::Result<mir::Expr> {
@@ -53,11 +54,12 @@ auto LowerSystemSubroutineCall(
                 unit_state, scope_state, proc_state, proc_scope_state, hir_proc,
                 call, desc, file_io, span);
           },
-          [&](const support::ScanSystemSubroutineInfo& scan)
+          // Expression-position $sscanf only rejects; it needs no scan-info
+          // payload, so the visitor alternative is unnamed.
+          // NOLINTNEXTLINE(readability-named-parameter)
+          [&](const support::ScanSystemSubroutineInfo&)
               -> diag::Result<mir::Expr> {
-            return LowerScanSystemSubroutineCall(
-                unit_state, scope_state, proc_state, proc_scope_state, hir_proc,
-                call, desc, scan, span);
+            return RejectScanCallInExprPosition(desc, span);
           },
           [&](const support::SFormatSystemSubroutineInfo& sformat)
               -> diag::Result<mir::Expr> {
@@ -88,6 +90,17 @@ auto LowerSystemSubroutineCall(
                     mir::RuntimeCallExpr{
                         .call = mir::RuntimeTimeCall{.kind = time_info.kind}},
                 .type = result_type};
+          },
+          [&](const support::TimeFormatSystemSubroutineInfo&)
+              -> diag::Result<mir::Expr> {
+            return LowerTimeFormatSystemSubroutineCall(
+                unit_state, scope_state, proc_state, proc_scope_state, hir_proc,
+                call, span);
+          },
+          [&](const support::PrintTimescaleSystemSubroutineInfo&)
+              -> diag::Result<mir::Expr> {
+            return LowerPrintTimescaleSystemSubroutineCall(
+                unit_state, scope_state);
           },
       },
       desc.semantic);

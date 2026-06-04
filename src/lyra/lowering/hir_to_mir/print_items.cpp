@@ -2,7 +2,6 @@
 
 #include <cstddef>
 #include <expected>
-#include <format>
 #include <optional>
 #include <span>
 #include <string_view>
@@ -29,15 +28,6 @@ namespace lyra::lowering::hir_to_mir {
 
 namespace {
 
-auto SpecCharFor(support::FormatDirectiveKind k) -> std::string_view {
-  switch (k) {
-    case support::FormatDirectiveKind::kTime:
-      return "t";
-    default:
-      return "?";
-  }
-}
-
 auto ToValueFormatKind(support::FormatDirectiveKind k) -> value::FormatKind {
   switch (k) {
     case support::FormatDirectiveKind::kDecimal:
@@ -60,6 +50,8 @@ auto ToValueFormatKind(support::FormatDirectiveKind k) -> value::FormatKind {
       return value::FormatKind::kRealGeneral;
     case support::FormatDirectiveKind::kAssignmentPattern:
       return value::FormatKind::kAssignmentPattern;
+    case support::FormatDirectiveKind::kTime:
+      return value::FormatKind::kTime;
     default:
       throw InternalError("ToValueFormatKind: not a value-format kind");
   }
@@ -130,13 +122,6 @@ auto BuildPrintItemFromDirective(
           diag::UnsupportedCategory::kFeature);
 
     case support::FormatDirectiveKind::kTime:
-      return diag::Unsupported(
-          span, diag::DiagCode::kFormatSpecifierNotImplemented,
-          std::format(
-              "format specifier %{} is not implemented in this build",
-              SpecCharFor(directive.kind)),
-          diag::UnsupportedCategory::kFeature);
-
     case support::FormatDirectiveKind::kChar:
     case support::FormatDirectiveKind::kDecimal:
     case support::FormatDirectiveKind::kHex:
@@ -255,7 +240,6 @@ auto BuildRuntimePrintItemsFromCallArgs(
     items.push_back(*std::move(item_or));
     ++cursor;
   }
-  (void)call_span;
   return items;
 }
 
