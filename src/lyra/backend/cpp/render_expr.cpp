@@ -362,11 +362,13 @@ auto RenderBinaryOpReal(
 }
 
 // LRM 11.2.2 + 11.4.5: aggregate equality / inequality / case-equality /
-// case-inequality. `UnpackedArray` overloads `==` / `!=` to return a 1-bit
-// `PackedArray` (X / Z propagating) and exposes `CaseEqual` as a method
-// returning a 1-bit `PackedArray` (0 / 1 only). Relational operators are not
-// defined on aggregate operands.
-auto RenderBinaryOpUnpacked(
+// case-inequality. Both `UnpackedArray` and `DynamicArray` overload `==` /
+// `!=` to return a 1-bit `PackedArray` (X / Z propagating) and expose
+// `CaseEqual` as a method returning a 1-bit `PackedArray` (0 / 1 only). The
+// dynamic-array overloads additionally short-circuit on runtime size
+// mismatch -> 0 (industry convention, LRM 11.2.2 is silent). Relational
+// operators are not defined on aggregate operands.
+auto RenderBinaryOpArray(
     mir::BinaryOp op, const std::string& lhs, const std::string& rhs)
     -> diag::Result<std::string> {
   switch (op) {
@@ -550,9 +552,14 @@ auto RenderBinaryExpr(
     return RenderBinaryOpString(
         b.op, *lhs_or, *rhs_or, ctx.Unit().GetType(expr.type));
   }
-  if (std::holds_alternative<mir::UnpackedArrayType>(lhs_ty.data) &&
-      std::holds_alternative<mir::UnpackedArrayType>(rhs_ty.data)) {
-    return RenderBinaryOpUnpacked(b.op, *lhs_or, *rhs_or);
+  const bool lhs_is_array =
+      std::holds_alternative<mir::UnpackedArrayType>(lhs_ty.data) ||
+      std::holds_alternative<mir::DynamicArrayType>(lhs_ty.data);
+  const bool rhs_is_array =
+      std::holds_alternative<mir::UnpackedArrayType>(rhs_ty.data) ||
+      std::holds_alternative<mir::DynamicArrayType>(rhs_ty.data);
+  if (lhs_is_array && rhs_is_array) {
+    return RenderBinaryOpArray(b.op, *lhs_or, *rhs_or);
   }
   return RenderBinaryOpIntegral(b.op, *lhs_or, *rhs_or);
 }

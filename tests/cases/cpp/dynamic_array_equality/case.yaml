@@ -1,0 +1,29 @@
+id: cpp.dynamic_array_equality
+tags: [cpp_run]
+input:
+  command: [run, cpp]
+  project: false
+  top: Top
+  files: [main.sv]
+expect:
+  exit: 0
+  variables:
+    eq_1d: 1
+    ne_1d: 0
+    eq_size_mismatch: 0
+    ne_size_mismatch: 1
+    eq_diff_val: 0
+    ne_diff_val: 1
+    eq_empty_empty: 1
+    ne_empty_empty: 0
+    eq_empty_nonempty: 0
+    ne_empty_nonempty: 1
+    eq_2d: 1
+    eq_2d_row_mismatch: 0
+    eq_2d_outer_mismatch: 0
+    eq_fixed_outer: 1
+    eq_fixed_outer_inner_diff: 0
+    eq_dyn_outer: 1
+    eq_dyn_outer_size_diff: 0
+    eq_with_x: "1'bx"
+    ne_with_x: "1'bx"
