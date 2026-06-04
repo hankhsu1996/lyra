@@ -1,6 +1,5 @@
 #include "lyra/runtime/file_io.hpp"
 
-#include <array>
 #include <cerrno>
 #include <cstdint>
 #include <cstring>
@@ -15,8 +14,10 @@
 #include <string_view>
 #include <utility>
 #include <variant>
+#include <vector>
 
 #include "lyra/base/overloaded.hpp"
+#include "lyra/runtime/byte_codec.hpp"
 #include "lyra/runtime/file_table.hpp"
 #include "lyra/runtime/runtime_services.hpp"
 #include "lyra/runtime/stream_dispatcher.hpp"
@@ -232,30 +233,24 @@ auto LyraFRead(
     return MakeInt(0);
   }
   const std::uint64_t width = dest.BitWidth();
-  if (width == 0U || width > 64U) {
-    StampError(services, fd, EINVAL, "$fread: bit width > 64 not supported");
+  if (width == 0U) {
+    StampError(services, fd, EINVAL, "$fread: destination has zero bit width");
     return MakeInt(0);
   }
   const auto byte_count = static_cast<std::size_t>((width + 7U) / 8U);
-  std::array<char, 8> buf{};
+  std::vector<char> buf(byte_count, '\0');
   stream->read(buf.data(), static_cast<std::streamsize>(byte_count));
   const auto got = static_cast<std::size_t>(stream->gcount());
   if (got == 0U) {
     StampError(services, fd, 0, "$fread: EOF");
     return MakeInt(0);
   }
-  // LRM 21.3.4.4: big-endian (first byte read fills the MSBs). Partial reads
-  // place the bytes we did get into the destination's MSBs and leave the
-  // remainder zero; this matches the LRM "as much as available" reading.
-  std::int64_t value = 0;
-  for (std::size_t i = 0; i < byte_count; ++i) {
-    const auto byte = i < got ? static_cast<unsigned char>(buf.at(i)) : 0U;
-    value = static_cast<std::int64_t>(
-        (static_cast<std::uint64_t>(value) << 8U) |
-        static_cast<std::uint64_t>(byte));
-  }
-  dest = value::PackedArray::FromInt(
-      value, width, dest.IsSigned(), dest.IsFourState());
+  // LRM 21.3.4.4: 2-value, big-endian (first byte fills the MSBs). On a
+  // short read, the trailing buffer is already zero from the vector
+  // constructor and lands in the destination's LSBs ("as much as
+  // available"). BytesToPackedArray supports any width; the destination's
+  // declared shape (sign / 4-state) is preserved.
+  dest = BytesToPackedArray(buf, width, dest.IsSigned(), dest.IsFourState());
   return MakeInt(static_cast<std::int32_t>(got));
 }
 
