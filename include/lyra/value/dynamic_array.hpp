@@ -3,11 +3,13 @@
 #include <cstddef>
 #include <cstdint>
 #include <span>
+#include <string>
 #include <utility>
 #include <vector>
 
 #include "lyra/base/internal_error.hpp"
 #include "lyra/value/array_case_equal.hpp"
+#include "lyra/value/format.hpp"
 #include "lyra/value/packed_array.hpp"
 
 namespace lyra::value {
@@ -166,6 +168,25 @@ class DynamicArray {
 
   mutable T oob_slot_;
   std::vector<T> data_;
+};
+
+// LRM 21.2.1.6 aggregate format. Mirrors `Formatter<UnpackedArray<T>>` --
+// no `FormatContext` thread-through (aggregates never carry context-bound
+// kinds); empty arrays compose naturally because the loop runs zero times.
+template <typename T>
+struct Formatter<DynamicArray<T>> {
+  static auto Format(const FormatSpec& spec, const DynamicArray<T>& value)
+      -> std::string {
+    std::string out = "'{";
+    for (std::size_t i = 0; i < value.Size(); ++i) {
+      if (i != 0) {
+        out += ", ";
+      }
+      out += lyra::value::Format(spec, MakeFormatArg(value.RawAt(i)));
+    }
+    out += "}";
+    return out;
+  }
 };
 
 }  // namespace lyra::value

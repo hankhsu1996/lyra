@@ -16,6 +16,8 @@
 #include <vector>
 
 #include "lyra/value/format.hpp"
+#include "lyra/value/packed_array.hpp"
+#include "lyra/value/string.hpp"
 
 namespace lyra::test {
 
@@ -304,49 +306,76 @@ auto TryParseSvLiteral(std::string_view text)
 
 }  // namespace
 
-auto ExpectedValue::BuildView() const -> value::RuntimeValueView {
-  switch (kind) {
-    case ExpectedValueKind::kIntegerScalar: {
-      const auto word = static_cast<std::uint64_t>(integer_value);
-      return value::RuntimeValueView{
-          .data = value::IntegralValueView::Narrow(
-              word, 0U, 32U, value::IntegralStateKind::kTwoState, true)};
-    }
+namespace {
+
+// Materialize the expected value as a runtime `PackedArray` so the integral
+// format pipeline (kAssignmentPattern rewrite, auto-width, X/Z propagation,
+// etc.) is shared with the live runtime, not re-implemented.
+auto MaterializeIntegral(const ExpectedValue& v) -> value::PackedArray {
+  if (v.kind == ExpectedValueKind::kIntegerScalar) {
+    const auto word = static_cast<std::uint64_t>(v.integer_value);
+    return value::PackedArray::FromWords(
+        std::span<const std::uint64_t>(&word, 1),
+        std::span<const std::uint64_t>{}, 32U, true, false);
+  }
+  const bool four_state = v.state_kind == value::IntegralStateKind::kFourState;
+  const std::span<const std::uint64_t> unk_span =
+      four_state ? std::span<const std::uint64_t>(v.unknown_words)
+                 : std::span<const std::uint64_t>{};
+  return value::PackedArray::FromWords(
+      std::span<const std::uint64_t>(v.value_words), unk_span, v.bit_width,
+      v.is_signed, four_state);
+}
+
+// Type-erased dispatcher routed through `FormatArg.format_fn`. Mirrors the
+// `Formatter<T>::Format` dispatch the live runtime uses -- the test
+// framework owns the expected-value tree and renders each kind through the
+// same per-type formatter the runtime calls on the matching live value.
+auto FormatExpectedValue(
+    const value::FormatSpec& spec, const void* p,
+    const value::FormatContext& ctx) -> std::string {
+  const auto& v = *static_cast<const ExpectedValue*>(p);
+  switch (v.kind) {
+    case ExpectedValueKind::kIntegerScalar:
     case ExpectedValueKind::kSvLiteral: {
-      if (value_words.size() == 1) {
-        const std::uint64_t unk = unknown_words.empty() ? 0U : unknown_words[0];
-        return value::RuntimeValueView{
-            .data = value::IntegralValueView::Narrow(
-                value_words[0], unk, bit_width, state_kind, is_signed)};
-      }
-      const std::span<const std::uint64_t> unk_span =
-          state_kind == value::IntegralStateKind::kTwoState
-              ? std::span<const std::uint64_t>{}
-              : std::span<const std::uint64_t>(unknown_words);
-      return value::RuntimeValueView{
-          .data = value::IntegralValueView::Wide(
-              std::span<const std::uint64_t>(value_words), unk_span, bit_width,
-              state_kind, is_signed)};
+      auto pa = MaterializeIntegral(v);
+      return value::Formatter<value::PackedArray>::Format(spec, pa, ctx);
     }
-    case ExpectedValueKind::kStringScalar:
-      return value::RuntimeValueView{
-          .data = value::StringValueView{
-              .data = string_value.data(),
-              .size = static_cast<std::uint32_t>(string_value.size())}};
-    case ExpectedValueKind::kUnpackedArray: {
-      std::vector<value::RuntimeValueView> element_views;
-      element_views.reserve(elements.size());
-      for (const auto& e : elements) {
-        element_views.push_back(e.BuildView());
+    case ExpectedValueKind::kStringScalar: {
+      const value::String tmp{v.string_value};
+      return value::Formatter<value::String>::Format(spec, tmp);
+    }
+    case ExpectedValueKind::kAggregate: {
+      std::string out = "'{";
+      for (std::size_t i = 0; i < v.elements.size(); ++i) {
+        if (i != 0) {
+          out += ", ";
+        }
+        out += value::Format(
+            spec,
+            value::FormatArg{
+                .ptr = &v.elements[i],
+                .format_fn = &FormatExpectedValue,
+            },
+            ctx);
       }
-      return value::RuntimeValueView{
-          .data = value::UnpackedArrayValueView{
-              .elements = std::move(element_views)}};
+      out += "}";
+      return out;
     }
   }
-  return value::RuntimeValueView{
-      .data = value::IntegralValueView::Narrow(
-          0U, 0U, 32U, value::IntegralStateKind::kTwoState, true)};
+  // Defensive fallback: any unknown kind renders as an empty 32-bit integer
+  // to surface the bug without crashing the test harness.
+  auto zero = value::PackedArray::FromInt(0, 32U, true, false);
+  return value::Formatter<value::PackedArray>::Format(spec, zero, ctx);
+}
+
+}  // namespace
+
+auto ExpectedValue::BuildFormatArg() const -> value::FormatArg {
+  return value::FormatArg{
+      .ptr = this,
+      .format_fn = &FormatExpectedValue,
+  };
 }
 
 auto ParseExpectedValue(std::string_view text, bool node_is_integer)
@@ -405,7 +434,7 @@ auto ParseExpectedValue(std::string_view text, bool node_is_integer)
 }
 
 auto RenderExpectedFormatted(const ExpectedValue& value) -> std::string {
-  return value::FormatValue(value.format_spec, value.BuildView());
+  return value::Format(value.format_spec, value.BuildFormatArg());
 }
 
 }  // namespace lyra::test

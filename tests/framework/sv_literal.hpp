@@ -13,14 +13,16 @@ namespace lyra::test {
 // Categorises a YAML node drawn from an `expect.variables` entry and turns
 // it into the runtime value + format spec the test framework will use to
 // (a) inject the `$display` call into the rewritten SV source and
-// (b) compute the expected marker payload via `runtime::FormatValue`.
+// (b) compute the expected marker payload via `value::Format`.
 //
 // Resolution rules:
 //   - YAML integer (e.g. `30`)            -> kIntegerScalar
 //   - YAML string matching SV literal     -> kSvLiteral (numeric value)
 //   - any other YAML string               -> kStringScalar (raw characters)
-//   - YAML sequence (e.g. `[10, 20, 30]`) -> kUnpackedArray (LRM 21.2.1.6
-//                                            assignment pattern, %p / %0p)
+//   - YAML sequence (e.g. `[10, 20, 30]`) -> kAggregate (LRM 21.2.1.6
+//                                            assignment pattern, %p / %0p;
+//                                            applies to any container -- fixed
+//                                            unpacked, dynamic, queue, assoc)
 //
 // SV literal pattern: `<width>'[s][bhodBHOD]<digits>`. Digits may contain
 // `_` separators and (for binary/hex) `x`/`z` 4-state placeholders.
@@ -29,13 +31,14 @@ enum class ExpectedValueKind : std::uint8_t {
   kIntegerScalar,
   kSvLiteral,
   kStringScalar,
-  kUnpackedArray,
+  kAggregate,
 };
 
 struct ExpectedValue {
   ExpectedValueKind kind = ExpectedValueKind::kIntegerScalar;
 
-  // Owned storage backing `view` (singular cases).
+  // Owned storage that the materialized `PackedArray` borrows into when the
+  // expected value is built into a `value::FormatArg` (singular cases).
   std::int64_t integer_value = 0;
   std::vector<std::uint64_t> value_words;
   std::vector<std::uint64_t> unknown_words;
@@ -45,7 +48,7 @@ struct ExpectedValue {
   std::string string_value;
 
   // LRM 21.2.1.6 aggregate elements, owned and traversed recursively for
-  // `kUnpackedArray`. Empty for singular kinds.
+  // `kAggregate`. Empty for singular kinds.
   std::vector<ExpectedValue> elements;
 
   value::FormatSpec format_spec;
@@ -54,9 +57,9 @@ struct ExpectedValue {
   // injected into the rewritten source (e.g. "%0d", "%b", "%s", "%p").
   std::string sv_format_specifier;
 
-  // Build a borrowed view into this object's storage. The view stays valid
-  // as long as the parent ExpectedValue is alive.
-  [[nodiscard]] auto BuildView() const -> value::RuntimeValueView;
+  // Build a type-erased FormatArg that borrows into this object's storage.
+  // The arg stays valid as long as the parent ExpectedValue is alive.
+  [[nodiscard]] auto BuildFormatArg() const -> value::FormatArg;
 };
 
 // Parse a YAML scalar into an ExpectedValue. `node_is_integer` indicates that

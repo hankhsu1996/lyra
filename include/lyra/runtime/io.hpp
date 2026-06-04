@@ -11,7 +11,7 @@ class RuntimeServices;
 
 // Single high-level runtime print API. The compiler emits one call per
 // $display/$write/...; the runtime walks the items, formats values via
-// FormatValue, and finalizes the record (newline for kDisplay/kFDisplay).
+// value::Format, and finalizes the record (newline for kDisplay/kFDisplay).
 void LyraPrint(
     RuntimeServices& services, value::PrintKind kind,
     std::span<const value::PrintItem> items);

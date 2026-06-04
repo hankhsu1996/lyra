@@ -96,12 +96,11 @@ void LyraDiagnostic(
               body.append(std::string_view{lit.data, lit.size});
             },
             [&](const value::PrintValueItem& v) {
-              if (v.spec.kind == value::FormatKind::kTime) {
-                body.append(
-                    value::FormatTime(v.spec, v.value, services.TimeFormat()));
-                return;
-              }
-              body.append(value::FormatValue(v.spec, v.value));
+              body.append(
+                  value::Format(
+                      v.spec, v.arg,
+                      value::FormatContext{
+                          .time_format = &services.TimeFormat()}));
             },
         },
         item);

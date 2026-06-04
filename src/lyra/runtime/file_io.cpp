@@ -28,8 +28,10 @@ namespace lyra::runtime {
 
 namespace {
 
-auto FormatItemsToString(std::span<const value::PrintItem> items)
+auto FormatItemsToString(
+    RuntimeServices& services, std::span<const value::PrintItem> items)
     -> std::string {
+  const value::FormatContext ctx{.time_format = &services.TimeFormat()};
   std::string out;
   for (const value::PrintItem& item : items) {
     std::visit(
@@ -38,7 +40,7 @@ auto FormatItemsToString(std::span<const value::PrintItem> items)
               out.append(std::string_view{lit.data, lit.size});
             },
             [&](const value::PrintValueItem& v) {
-              out.append(value::FormatValue(v.spec, v.value));
+              out.append(value::Format(v.spec, v.arg, ctx));
             },
         },
         item);
@@ -93,7 +95,7 @@ void LyraFPrint(
   if (descriptor == 0) return;
   const bool append_newline =
       kind == value::PrintKind::kDisplay || kind == value::PrintKind::kFDisplay;
-  const std::string body = FormatItemsToString(items);
+  const std::string body = FormatItemsToString(services, items);
   const auto raw = static_cast<std::uint32_t>(descriptor);
 
   // FD path: bit 31 set => single descriptor. Stdio sentinels route through

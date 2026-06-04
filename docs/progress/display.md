@@ -36,14 +36,16 @@ since the test harness can only probe a variable whose type has an implemented s
       postponed queue uses the same swap-and-drain shape NBA uses; re-entrant submission during the
       drain is rejected.
 - [x] DI7 -- `%p` / `%0p` assignment-pattern format for aggregate types (LRM 21.2.1.6). Scope: fixed
-      unpacked array of integral elements. Output is `'{<elem>, <elem>, ...}` with `, ` between
-      elements; multi-dimensional arrays nest naturally. Singular integral elements follow the LRM
-      "as it would unformatted" rule (default `$display` radix, i.e. decimal); singular string
-      elements print quoted. `%0p` produces identical text in this scope; LRM 21.2.1.6 allows it.
-      Struct / union / enum / string-typed / real element formats land with their respective type
-      workstreams. Drives the test framework's whole-array `expect.variables` assertion path:
-      sequence-valued YAML entries (`a: [10, 20, 30]`) lower to a recursive `UnpackedArrayValueView`
-      and round-trip through the same `FormatValue` the runtime uses.
+      unpacked and dynamic array of integral elements, including mixed-container nesting
+      (`int     arr[3][]`, `int arr[][3]`, `int arr[][]`). Output is `'{<elem>, <elem>, ...}` with
+      `, ` between elements; empty containers print `'{}`; multi-dimensional and mixed-container
+      forms nest naturally. Singular integral elements follow the LRM "as it would unformatted" rule
+      (default `$display` radix, i.e. decimal); singular string elements print quoted. `%0p`
+      produces identical text in this scope; LRM 21.2.1.6 allows it. Struct / union / enum /
+      string-typed / real element formats land with their respective type workstreams. Drives the
+      test framework's whole-array `expect.variables` assertion path: sequence-valued YAML entries
+      (`a: [10, 20, 30]`) round-trip through the same aggregate-render path the runtime uses, for
+      either container family.
 - [x] DI8 -- `$sscanf` and `$fscanf` over a shared scanner core (LRM 21.3.4.3). Statement-position
       call (bare or blocking assign-RHS); conversions `%d` / `%h` / `%x` / `%b` / `%o` / `%s` / `%c`
       / `%%`; 4-state vocabulary (`x` / `z` / `?` / `_`) inside the integer conversions; single-char
@@ -56,10 +58,10 @@ since the test harness can only probe a variable whose type has an implemented s
       `$swriteb` / `$swriteh` / `$swriteo` with auto-format (per-task default radix per LRM
       21.2.1.1), `$sformat` with explicit literal format, and `$sformatf` returning the formatted
       string as a function result. Reuses the print engine's literal-format walker and the
-      `value::FormatValue` runtime so the conversion-spec set is identical to `$display` / `$write`
-      (`%d` / `%h` / `%x` / `%b` / `%o` / `%s` / `%c` / `%%` / `%p` / `%0p` / `%f` / `%e` / `%g`
-      plus width / precision / zero-pad / left-align modifiers). No newline appended (LRM 21.3.3 is
-      a string-producer; newline policy belongs to the display / write family).
+      `value::Format` runtime so the conversion-spec set is identical to `$display` / `$write` (`%d`
+      / `%h` / `%x` / `%b` / `%o` / `%s` / `%c` / `%%` / `%p` / `%0p` / `%f` / `%e` / `%g` plus
+      width / precision / zero-pad / left-align modifiers). No newline appended (LRM 21.3.3 is a
+      string-producer; newline policy belongs to the display / write family).
 
 ## Scan family follow-ups
 

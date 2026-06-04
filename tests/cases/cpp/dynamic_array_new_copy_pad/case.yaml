@@ -8,8 +8,4 @@ input:
 expect:
   exit: 0
   variables:
-    d0: 100
-    d1: 200
-    d2: 300
-    d3: 0
-    d4: 0
+    dst: [100, 200, 300, 0, 0]

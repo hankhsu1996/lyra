@@ -8,6 +8,4 @@ input:
 expect:
   exit: 0
   variables:
-    a0: "8'h0F"
-    a1: "8'hF0"
-    a2: "8'hFF"
+    arr: ["8'h0F", "8'hF0", "8'hFF"]

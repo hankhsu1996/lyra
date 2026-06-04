@@ -64,7 +64,7 @@ class DiagnosticDispatcher {
   std::unordered_map<CountKey, std::uint32_t, CountKeyHash> emit_counts_;
 };
 
-// Formats `items` via value::FormatValue, builds a DiagnosticRecord, and emits
+// Formats `items` via value::Format, builds a DiagnosticRecord, and emits
 // it through services.Diagnostic(). The body is fully formatted before being
 // handed to the dispatcher so the dispatcher can prepend its own envelope
 // (origin, severity prefix) without re-parsing user content.

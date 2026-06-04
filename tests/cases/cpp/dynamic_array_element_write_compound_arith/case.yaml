@@ -8,6 +8,4 @@ input:
 expect:
   exit: 0
   variables:
-    a0: 15
-    a1: 15
-    a2: 60
+    arr: [15, 15, 60]
