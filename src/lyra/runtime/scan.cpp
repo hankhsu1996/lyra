@@ -533,6 +533,10 @@ auto LyraFScanf(
         fd, EBADF, "$fscanf: not an open file descriptor");
     return value::PackedArray::Int(-1);
   }
+  if (!slot->permits_read) {
+    services.Files().SetError(fd, EBADF, "$fscanf: file not open for reading");
+    return value::PackedArray::Int(-1);
+  }
   FileScanSource src(*slot);
   const std::int32_t items = ScanFromSource(
       src, format.View(),

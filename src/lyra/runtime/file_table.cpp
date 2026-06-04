@@ -17,34 +17,56 @@ namespace lyra::runtime {
 
 namespace {
 
-// LRM 21.3.1 Table 21-6 mode strings -> std::ios_base::openmode flags.
-// Unknown modes return nullopt so $fopen yields 0 per LRM "if a file cannot
-// be opened ... a zero is returned".
-auto ParseMode(std::string_view mode)
-    -> std::optional<std::ios_base::openmode> {
+// LRM 21.3.1 Table 21-6 mode strings -> openmode flags + per-direction
+// permission bits. Unknown modes return nullopt so $fopen yields 0 per
+// LRM "if a file cannot be opened ... a zero is returned". The
+// permission bits drive LRM 21.3.4's "fd can be read from only if
+// opened with r or r+" check in the read entries.
+struct ParsedMode {
+  std::ios_base::openmode flags;
+  bool permits_read;
+  bool permits_write;
+};
+
+auto ParseMode(std::string_view mode) -> std::optional<ParsedMode> {
   using std::ios_base;
-  static const std::unordered_map<std::string_view, ios_base::openmode> kMap{
-      {"r", ios_base::in},
-      {"rb", ios_base::in | ios_base::binary},
-      {"w", ios_base::out | ios_base::trunc},
-      {"wb", ios_base::out | ios_base::trunc | ios_base::binary},
-      {"a", ios_base::out | ios_base::app},
-      {"ab", ios_base::out | ios_base::app | ios_base::binary},
-      {"r+", ios_base::in | ios_base::out},
-      {"rb+", ios_base::in | ios_base::out | ios_base::binary},
-      {"r+b", ios_base::in | ios_base::out | ios_base::binary},
-      {"w+", ios_base::in | ios_base::out | ios_base::trunc},
+  struct ModeRow {
+    ios_base::openmode flags;
+    bool read;
+    bool write;
+  };
+  constexpr auto kRead = ios_base::in;
+  constexpr auto kWrite = ios_base::out;
+  constexpr auto kTrunc = ios_base::trunc;
+  constexpr auto kApp = ios_base::app;
+  constexpr auto kBin = ios_base::binary;
+  static const std::unordered_map<std::string_view, ModeRow> kMap{
+      {"r", {.flags = kRead, .read = true, .write = false}},
+      {"rb", {.flags = kRead | kBin, .read = true, .write = false}},
+      {"w", {.flags = kWrite | kTrunc, .read = false, .write = true}},
+      {"wb", {.flags = kWrite | kTrunc | kBin, .read = false, .write = true}},
+      {"a", {.flags = kWrite | kApp, .read = false, .write = true}},
+      {"ab", {.flags = kWrite | kApp | kBin, .read = false, .write = true}},
+      {"r+", {.flags = kRead | kWrite, .read = true, .write = true}},
+      {"rb+", {.flags = kRead | kWrite | kBin, .read = true, .write = true}},
+      {"r+b", {.flags = kRead | kWrite | kBin, .read = true, .write = true}},
+      {"w+", {.flags = kRead | kWrite | kTrunc, .read = true, .write = true}},
       {"wb+",
-       ios_base::in | ios_base::out | ios_base::trunc | ios_base::binary},
+       {.flags = kRead | kWrite | kTrunc | kBin, .read = true, .write = true}},
       {"w+b",
-       ios_base::in | ios_base::out | ios_base::trunc | ios_base::binary},
-      {"a+", ios_base::in | ios_base::out | ios_base::app},
-      {"ab+", ios_base::in | ios_base::out | ios_base::app | ios_base::binary},
-      {"a+b", ios_base::in | ios_base::out | ios_base::app | ios_base::binary},
+       {.flags = kRead | kWrite | kTrunc | kBin, .read = true, .write = true}},
+      {"a+", {.flags = kRead | kWrite | kApp, .read = true, .write = true}},
+      {"ab+",
+       {.flags = kRead | kWrite | kApp | kBin, .read = true, .write = true}},
+      {"a+b",
+       {.flags = kRead | kWrite | kApp | kBin, .read = true, .write = true}},
   };
   const auto it = kMap.find(mode);
   if (it == kMap.end()) return std::nullopt;
-  return it->second;
+  return ParsedMode{
+      .flags = it->second.flags,
+      .permits_read = it->second.read,
+      .permits_write = it->second.write};
 }
 
 }  // namespace
@@ -63,9 +85,9 @@ auto FileTable::Open(
     -> std::int32_t {
   const std::string name_z{name};
   if (mode.has_value()) {
-    const auto flags = ParseMode(*mode);
-    if (!flags.has_value()) return 0;
-    auto stream = std::make_unique<std::fstream>(name_z, *flags);
+    const auto parsed = ParseMode(*mode);
+    if (!parsed.has_value()) return 0;
+    auto stream = std::make_unique<std::fstream>(name_z, parsed->flags);
     if (!stream->is_open()) return 0;
     // Reuse the first free slot above the reserved stdio indexes; grow on
     // demand. fstream destructor closes/flushes on slot reset.
@@ -73,6 +95,8 @@ auto FileTable::Open(
       if (fd_pool_.at(i).file == nullptr) {
         fd_pool_.at(i).file = std::move(stream);
         fd_pool_.at(i).error = ErrorRecord{};
+        fd_pool_.at(i).permits_read = parsed->permits_read;
+        fd_pool_.at(i).permits_write = parsed->permits_write;
         return kFdHighBit | static_cast<std::int32_t>(i);
       }
     }
@@ -81,7 +105,9 @@ auto FileTable::Open(
             .file = std::move(stream),
             .error = {},
             .cancel_source = {},
-            .putback = std::nullopt});
+            .putback = std::nullopt,
+            .permits_read = parsed->permits_read,
+            .permits_write = parsed->permits_write});
     return kFdHighBit | static_cast<std::int32_t>(fd_pool_.size() - 1);
   }
   // MCD path: open write-truncate (LRM 21.3.1 omits the type for MCD form).

@@ -169,6 +169,11 @@ auto LyraFGetc(RuntimeServices& services, const value::PackedArray& fd_pa)
     StampError(services, fd, EBADF, "$fgetc: not an open file descriptor");
     return MakeInt(-1);
   }
+  // LRM 21.3.4: read entries require an FD opened with r or r+ type.
+  if (!slot->permits_read) {
+    services.Files().SetError(fd, EBADF, "$fgetc: file not open for reading");
+    return MakeInt(-1);
+  }
   // LRM 21.3.4.1: drain any byte left by $ungetc (or by the scanner's
   // "offending character" pushback) before consulting the stream.
   if (slot->putback.has_value()) {
@@ -219,6 +224,11 @@ auto LyraFGets(
     dest = value::String{};
     return MakeInt(0);
   }
+  if (!slot->permits_read) {
+    services.Files().SetError(fd, EBADF, "$fgets: file not open for reading");
+    dest = value::String{};
+    return MakeInt(0);
+  }
   // LRM 21.3.4.2 + 21.3.4.1: byte-by-byte loop so any pending $ungetc
   // byte is the first byte of the line. std::getline would bypass the
   // slot-side putback.
@@ -251,6 +261,10 @@ auto LyraFRead(
   auto* slot = services.Files().ResolveSlot(fd);
   if (slot == nullptr) {
     StampError(services, fd, EBADF, "$fread: not an open file descriptor");
+    return MakeInt(0);
+  }
+  if (!slot->permits_read) {
+    services.Files().SetError(fd, EBADF, "$fread: file not open for reading");
     return MakeInt(0);
   }
   const std::uint64_t width = dest.BitWidth();

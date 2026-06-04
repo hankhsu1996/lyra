@@ -65,9 +65,10 @@ class FileTable {
 
   // A live FD slot. Public so consumers needing more than just the
   // `std::fstream*` (slot-side putback for $ungetc / $fgetc / $fseek /
-  // $rewind / the scanner) can reach the fields directly via
-  // `ResolveSlot`. The narrow `Resolve` stays for consumers that only
-  // need the stream ($fprint family, $fflush, $feof, $ftell).
+  // $rewind / the scanner; mode bits for read-side rejection) can reach
+  // the fields directly via `ResolveSlot`. The narrow `Resolve` stays
+  // for consumers that only need the stream ($fprint family, $fflush,
+  // $feof, $ftell).
   struct FdSlot {
     std::unique_ptr<std::fstream> file;
     ErrorRecord error;
@@ -81,6 +82,12 @@ class FileTable {
     // behaviour is implementation-defined, neither of which matches the
     // LRM contract.
     std::optional<char> putback;
+    // LRM 21.3.4: "Files opened using file descriptors (fd) can be read
+    // from only if they were opened with either the r or r+ type
+    // values." Captured from the mode string at $fopen time; the read
+    // entries reject the FD with EBADF when this is false.
+    bool permits_read = false;
+    bool permits_write = false;
   };
 
   FileTable() = default;
