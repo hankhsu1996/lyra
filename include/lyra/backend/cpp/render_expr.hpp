@@ -1,6 +1,7 @@
 #pragma once
 
 #include <string>
+#include <string_view>
 
 #include "lyra/backend/cpp/render_context.hpp"
 #include "lyra/diag/diagnostic.hpp"
@@ -16,6 +17,13 @@ auto RenderExpr(const RenderContext& ctx, const mir::Expr& expr)
 auto RenderStructuralVarName(
     const RenderContext& ctx, const mir::StructuralVarRef& ref)
     -> diag::Result<std::string>;
+
+// Renders `expr` as an lvalue: bare root + optional `mutate_adapter`
+// (e.g. `.Mutate(svc)` for partial-write chains) + element / range select
+// suffixes. Throws InternalError on non-addressable forms.
+auto RenderLhsExpr(
+    const RenderContext& ctx, const mir::Expr& expr,
+    std::string_view mutate_adapter) -> diag::Result<std::string>;
 
 // Renders `expr` for use in a C++ boolean context (`if`, `while`, `do`, `for`
 // condition, ternary cond, `&&` / `||` / `!`). When the expression's MIR type

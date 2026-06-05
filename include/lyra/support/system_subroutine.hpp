@@ -30,9 +30,16 @@ enum class SystemSubroutineKind : std::uint8_t {
   kFunction,
 };
 
+// `kInt32` is SV `int` (2-state); `kInteger` is SV `integer` (4-state).
+// Both surface as 32-bit signed, but slang's propagated conversions in
+// arithmetic context align on the 4-state form, so functions whose LRM
+// example types the return as `integer` (e.g. `$sscanf`, `$fscanf` per
+// LRM 21.3.4.3) must pick `kInteger` to avoid state-axis mismatch on
+// surrounding operators.
 enum class ReturnConvention : std::uint8_t {
   kVoid,
   kInt32,
+  kInteger,
   kString,
   kTime64,
   kRealTime,
@@ -565,7 +572,7 @@ inline constexpr std::array kSystemSubroutines = {
         .name = "$sscanf",
         .origin = SystemSubroutineOrigin::kLanguageBuiltin,
         .kind = SystemSubroutineKind::kFunction,
-        .result_conv = ReturnConvention::kInt32,
+        .result_conv = ReturnConvention::kInteger,
         .arg_policy = ArgCountPolicy{.min_args = 3, .max_args = 255},
         .semantic = ScanSystemSubroutineInfo{.source = ScanSourceKind::kString},
     },
@@ -574,7 +581,7 @@ inline constexpr std::array kSystemSubroutines = {
         .name = "$fscanf",
         .origin = SystemSubroutineOrigin::kLanguageBuiltin,
         .kind = SystemSubroutineKind::kFunction,
-        .result_conv = ReturnConvention::kInt32,
+        .result_conv = ReturnConvention::kInteger,
         .arg_policy = ArgCountPolicy{.min_args = 3, .max_args = 255},
         .semantic = ScanSystemSubroutineInfo{.source = ScanSourceKind::kFile},
     },

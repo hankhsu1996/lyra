@@ -503,9 +503,12 @@ auto RenderRuntimeCallExpr(
             if (!format_or) {
               return std::unexpected(std::move(format_or.error()));
             }
+            // Slots render as bare lvalues so `ScanSlot::Make` binds a
+            // `Var<>` / cell reference for observable writes.
             std::string slot_pieces;
             for (std::size_t k = 0; k < ss.slots.size(); ++k) {
-              auto slot_or = RenderExpr(ctx, ctx.Expr(ss.slots[k]));
+              auto slot_or =
+                  RenderLhsExpr(ctx, ctx.Expr(ss.slots[k]), std::string_view{});
               if (!slot_or) {
                 return std::unexpected(std::move(slot_or.error()));
               }
@@ -518,8 +521,8 @@ auto RenderRuntimeCallExpr(
             switch (ss.source_kind) {
               case support::ScanSourceKind::kString:
                 return std::format(
-                    "lyra::runtime::LyraSScanf({}, {}, {{{}}})", *source_or,
-                    *format_or, slot_pieces);
+                    "lyra::runtime::LyraSScanf(Services(), {}, {}, {{{}}})",
+                    *source_or, *format_or, slot_pieces);
               case support::ScanSourceKind::kFile:
                 return std::format(
                     "lyra::runtime::LyraFScanf({}, {}, {}, {{{}}})",

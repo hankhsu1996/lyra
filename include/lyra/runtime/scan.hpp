@@ -3,6 +3,7 @@
 #include <initializer_list>
 #include <variant>
 
+#include "lyra/runtime/var.hpp"
 #include "lyra/value/packed_array.hpp"
 #include "lyra/value/string.hpp"
 
@@ -10,69 +11,64 @@ namespace lyra::runtime {
 
 class RuntimeServices;
 
-// LRM 21.3.4.3 scanner output slot. Each conversion in the format string
-// writes through one slot; the slot's variant alternative decides which
-// per-spec parser path the runtime takes. The Make factory picks the right
-// alternative from the temp's C++ type, so emitted call sites stay
-// uniform: `ScanSlot::Make(temp_int)` / `ScanSlot::Make(temp_str)`.
+// LRM 21.3.4.3 scanner output slot. Integral lvalues ride `Ref<PackedArray>`
+// so structural vars route writes through `Var::Set` (firing the LRM 4.3
+// update event) while procedural locals fall through to direct assignment.
+// String vars are not observable on this pipeline today, so the string
+// alternative is a raw pointer with no services threading.
 class ScanSlot {
  public:
+  static auto Make(Var<value::PackedArray>& dest) -> ScanSlot {
+    return ScanSlot{Ref<value::PackedArray>{dest}};
+  }
   static auto Make(value::PackedArray& dest) -> ScanSlot {
-    return ScanSlot{&dest};
+    return ScanSlot{Ref<value::PackedArray>{dest}};
   }
   static auto Make(value::String& dest) -> ScanSlot {
     return ScanSlot{&dest};
   }
 
-  // Typed accessors for the scanner core. Returns nullptr if the slot does
-  // not carry that alternative; the per-spec parser then raises a
-  // type-mismatch runtime_error (lowering should have prevented this, so
-  // the mismatch path is just defensive).
-  [[nodiscard]] auto AsIntegral() const -> value::PackedArray* {
-    if (const auto* p = std::get_if<value::PackedArray*>(&dest_)) {
-      return *p;
-    }
-    return nullptr;
+  [[nodiscard]] auto IsIntegral() const -> bool {
+    return std::holds_alternative<Ref<value::PackedArray>>(dest_);
   }
-  [[nodiscard]] auto AsString() const -> value::String* {
-    if (const auto* p = std::get_if<value::String*>(&dest_)) {
-      return *p;
-    }
-    return nullptr;
+  [[nodiscard]] auto IsString() const -> bool {
+    return std::holds_alternative<value::String*>(dest_);
+  }
+
+  // Per-spec parsers snapshot the current value to read width / sign /
+  // 4-state metadata, mutate locally, then commit through `SetIntegral`.
+  [[nodiscard]] auto GetIntegral() const -> value::PackedArray {
+    return std::get<Ref<value::PackedArray>>(dest_).Get();
+  }
+
+  void SetIntegral(
+      RuntimeServices& services, const value::PackedArray& new_val) const {
+    std::get<Ref<value::PackedArray>>(dest_).Set(services, new_val);
+  }
+  void SetString(const value::String& new_val) const {
+    *std::get<value::String*>(dest_) = new_val;
   }
 
  private:
-  explicit ScanSlot(value::PackedArray* p) : dest_(p) {
+  explicit ScanSlot(Ref<value::PackedArray> r) : dest_(r) {
   }
   explicit ScanSlot(value::String* p) : dest_(p) {
   }
 
-  std::variant<value::PackedArray*, value::String*> dest_;
+  std::variant<Ref<value::PackedArray>, value::String*> dest_;
 };
 
-// LRM 21.3.4.3 $sscanf entry. Parses `input` against `format` and writes
-// matched conversions into `slots`. Returns the number of items
-// successfully matched and assigned, or -1 on EOF before any conversion
-// (matching LRM "code can be 0 ... If the input ends before the first
-// matching failure or conversion, EOF is returned"). The result is
-// wrapped in a 32-bit PackedArray so emit sites can hand it straight to
-// `WriteVar` for an `int` LHS, parallel to the rest of the file IO
-// runtime surface. `slots` is taken by initializer_list so the emitted
-// call site can build it inline without a named temp; each ScanSlot
-// holds a pointer to the caller's lvalue, so const access through the
-// list still mutates the user's variable.
+// LRM 21.3.4.3 $sscanf. Returns matched-conversion count, or -1 on EOF
+// before any conversion.
 auto LyraSScanf(
-    const value::String& input, const value::String& format,
-    std::initializer_list<ScanSlot> slots) -> value::PackedArray;
+    RuntimeServices& services, const value::String& input,
+    const value::String& format, std::initializer_list<ScanSlot> slots)
+    -> value::PackedArray;
 
-// LRM 21.3.4.3 $fscanf entry. Resolves `fd` to the underlying fstream via
-// RuntimeServices::Files(), runs the same scanner core as LyraSScanf over
-// a FileScanSource, and pushes the offending-character pushback back into
-// the fstream's putback buffer before returning so the next $fgetc sees
-// it. Invalid / closed / MCD descriptors stamp EBADF on the FD's $ferror
-// slot and return -1 (LRM "If the input ends before the first matching
-// failure or conversion, EOF (-1) is returned"). The result is wrapped in
-// a 32-bit PackedArray to parallel LyraSScanf.
+// LRM 21.3.4.3 $fscanf. Resolves `fd` via `RuntimeServices::Files()`,
+// parks the offending-character pushback in the slot's putback so the
+// next read on the same FD sees it. Invalid / closed / MCD descriptors
+// stamp `EBADF` on `$ferror` and return -1.
 auto LyraFScanf(
     RuntimeServices& services, const value::PackedArray& fd,
     const value::String& format, std::initializer_list<ScanSlot> slots)

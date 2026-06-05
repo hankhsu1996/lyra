@@ -54,12 +54,11 @@ auto LowerSystemSubroutineCall(
                 unit_state, scope_state, proc_state, proc_scope_state, hir_proc,
                 call, desc, file_io, span);
           },
-          // Expression-position $sscanf only rejects; it needs no scan-info
-          // payload, so the visitor alternative is unnamed.
-          // NOLINTNEXTLINE(readability-named-parameter)
-          [&](const support::ScanSystemSubroutineInfo&)
+          [&](const support::ScanSystemSubroutineInfo& scan_info)
               -> diag::Result<mir::Expr> {
-            return RejectScanCallInExprPosition(desc, span);
+            return LowerScanSystemSubroutineCall(
+                unit_state, scope_state, proc_state, proc_scope_state, hir_proc,
+                call, scan_info, span);
           },
           [&](const support::SFormatSystemSubroutineInfo& sformat)
               -> diag::Result<mir::Expr> {
