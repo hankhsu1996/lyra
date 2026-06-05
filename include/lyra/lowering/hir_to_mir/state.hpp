@@ -257,6 +257,19 @@ class StructuralScopeLoweringState {
     scope_->constructor_scope = std::move(ctor);
   }
 
+  // Records the MIR target each HIR cross-unit ref slot lowers to, in HIR slot
+  // order: an upward ref materializes as a StructuralVarRef to a synthesized
+  // ExternalRef member, a downward ref keeps a CrossUnitVarRef. Reads and
+  // sensitivity resolve a slot through this table.
+  void AddCrossUnitRefTarget(mir::SensitivityRef target) {
+    cross_unit_ref_targets_.push_back(std::move(target));
+  }
+
+  [[nodiscard]] auto CrossUnitRefTarget(hir::CrossUnitRefId hir_id) const
+      -> const mir::SensitivityRef& {
+    return cross_unit_ref_targets_.at(hir_id.value);
+  }
+
   void MapStructuralVar(
       hir::StructuralVarId hir_id, mir::StructuralVarId mir_id) {
     if (hir_id.value != structural_var_map_.size()) {
@@ -402,6 +415,7 @@ class StructuralScopeLoweringState {
   std::vector<mir::StructuralVarId> structural_var_map_;
   std::vector<std::optional<mir::StructuralParamId>> structural_param_map_;
   std::vector<mir::StructuralSubroutineId> structural_subroutine_map_;
+  std::vector<mir::SensitivityRef> cross_unit_ref_targets_;
 };
 
 struct ProceduralVarBinding {

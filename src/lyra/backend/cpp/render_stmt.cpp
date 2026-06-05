@@ -241,11 +241,10 @@ auto RenderConstructExternalUnitStmt(
       s.dims, 0, indent);
 }
 
-// Points the slot at the leaf member it references, once the subtree exists.
-// The slot is a `Var<T>*`; the head var and every intervening instance are
-// owning pointers reached with `->`, and an instance-array hop indexes the
-// owning vector with `[i]`. Taking the address yields the resolved reference
-// (LRM 23.6 resolved at construction, reference_resolution.md).
+// Points the downward slot at the leaf member it references, once the subtree
+// exists: the head var and every intervening instance are owning pointers
+// reached with `->`, and an instance-array hop indexes the owning vector with
+// `[i]` (LRM 23.6 resolved at construction, reference_resolution.md).
 auto RenderResolveCrossUnitRefStmt(
     const RenderContext& ctx, const mir::ResolveCrossUnitRefStmt& s,
     std::size_t indent) -> diag::Result<std::string> {
@@ -331,9 +330,10 @@ auto RenderDoWhileStmtNode(
   return result;
 }
 
-// The Observable pointer a sensitivity leaf subscribes to: a structural var
-// yields the address of its own field; a cross-unit slot is already a resolved
-// `Var<T>*`, so the slot name is the pointer.
+// The Observable pointer a sensitivity leaf subscribes to: a plain structural
+// var yields the address of its own field; an ExternalRef member subscribes
+// through its resolved cell (AsObservable); a downward slot is already a
+// resolved `Var<T>*`, so the slot name is the pointer.
 auto RenderSensitivityRefPtr(
     const RenderContext& ctx, const mir::SensitivityRef& ref)
     -> diag::Result<std::string> {
@@ -342,6 +342,12 @@ auto RenderSensitivityRefPtr(
           [&](const mir::StructuralVarRef& r) -> diag::Result<std::string> {
             auto name = RenderStructuralVarName(ctx, r);
             if (!name) return std::unexpected(std::move(name.error()));
+            const auto& var =
+                ctx.StructuralScopeAtHops(r.hops).GetStructuralVar(r.var);
+            if (std::holds_alternative<mir::ExternalRefType>(
+                    ctx.Unit().GetType(var.type).data)) {
+              return *name + ".AsObservable()";
+            }
             return "&" + *name;
           },
           [&](const mir::CrossUnitVarRef& r) -> diag::Result<std::string> {

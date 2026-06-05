@@ -42,8 +42,8 @@ auto BuildSensitivityWaitStmt(
             [&](const hir::StructuralVarRef& r) -> mir::SensitivityRef {
               return scope_state.TranslateStructuralVar(r.hops, r.var);
             },
-            [](const hir::CrossUnitVarRef& r) -> mir::SensitivityRef {
-              return mir::CrossUnitVarRef{.id = {.value = r.id.value}};
+            [&](const hir::CrossUnitVarRef& r) -> mir::SensitivityRef {
+              return scope_state.CrossUnitRefTarget(r.id);
             },
         },
         entry.ref);

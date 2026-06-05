@@ -105,7 +105,29 @@ consume. Coverage is demonstrated through Stage D and Stage E.
 ### Stage D -- Hierarchical references
 
 - [x] D1 -- A downward reference reads and writes a signal in a child instance.
-- [ ] D2 -- An upward reference reads and writes a signal in an ancestor instance.
+- [x] D2 -- An upward reference reads and writes a signal directly on the matched ancestor, at any
+      depth. The child cannot know its depth when compiled, so it resolves the reference at
+      construction inside its own artifact: it climbs its parent chain to the ancestor named by the
+      reference (matching an instance or module name, LRM 23.8) and fetches the signal by name,
+      naming no ancestor type (see `docs/decisions/upward-reference-resolution.md`,
+      `docs/architecture/emission_model.md`). A reference wrapped in a value-level operation
+      (`Top.g[3]`, `Top.g + 1`) works -- the value part is ordinary expression handling. The
+      remaining forms below are each rejected with a clean "unsupported" diagnostic, except D2d.
+- [x] D2a -- An upward reference that descends through a child after the climb (`Top.sib.y`,
+      `Top.mid.deep.z`, `Top.bank[2].y`): the climb reaches the ancestor, then the reference steps
+      down by name into the ancestor's owned children to the leaf, at any depth and through array
+      indices. The tail is by-name for the same reason the climb is -- the referrer owns neither the
+      ancestor nor its children -- so each owner answers for its own children, indexing its own
+      storage. A leaf directly on the ancestor is the empty-tail zero-case of the same walk.
+- [ ] D2b -- An upward reference written inside a generate block rather than the module body.
+- [ ] D2c -- An upward reference whose first component is not a module instance: a named generate or
+      procedural block, or a `$root`-anchored absolute path.
+- [ ] D2d -- LRM 23.9 instance-name precedence: when the first component is written as an instance
+      name and several instances of the same module nest on the chain, the reference must bind the
+      named instance. Today the climb keys on the module name, so it can silently bind the nearer
+      same-module ancestor instead -- the one form that resolves wrong without an error. The common
+      module-name form is correct at any depth; this gap needs the source-written first identifier,
+      which the elaborated AST does not retain.
 - [x] D3 -- Multi-level dotted paths resolve through the object tree across more than one level.
       Landed for downward paths through scalar instances.
 - [ ] D4 -- A combinational process reading a hierarchical reference re-triggers when the referenced

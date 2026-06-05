@@ -64,6 +64,14 @@ auto LowerInstancePortConnectionsInto(
   }
 
   for (const auto* conn : inst.getPortConnections()) {
+    // An interface port's connection symbol is an InterfacePortSymbol, not a
+    // PortSymbol; casting it as one is undefined. Interface ports are a
+    // separate workstream (compilation_unit_model.md).
+    if (conn->port.kind != slang::ast::SymbolKind::Port) {
+      return PortConnectionUnsupported(
+          span,
+          "interface or non-variable port connection is not yet supported");
+    }
     const auto& port = conn->port.as<slang::ast::PortSymbol>();
 
     if (port.direction == slang::ast::ArgumentDirection::Ref) {
@@ -101,7 +109,8 @@ auto LowerInstancePortConnectionsInto(
     auto type_id = unit_state.GetTypeId(port_type, span);
     if (!type_id) return std::unexpected(std::move(type_id.error()));
     hir::Expr child_ref = MakeCrossUnitMemberRef(
-        unit_state, *internal, binding->home_frame, binding->member_id,
+        unit_state, *internal, binding->home_frame,
+        hir::DownwardHead{.instance = binding->member_id},
         {hir::MemberHop{std::string{internal->name}}}, *type_id, span);
 
     if (port.direction == slang::ast::ArgumentDirection::In) {

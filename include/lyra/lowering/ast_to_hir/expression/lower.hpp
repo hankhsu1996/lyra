@@ -52,15 +52,16 @@ auto LowerInsideItem(
     ProcessLoweringState& proc_state, const ScopeStack& stack,
     const slang::ast::Expression& item_expr) -> diag::Result<hir::InsideItem>;
 
-// Builds a reference expression to a leaf reached by navigating `path` from a
-// local instance member (the head) down into a child unit. `target` is the
-// leaf value symbol (the cross-unit dedup key); `member` and `home_frame`
-// locate the head. Both a hierarchical reference (`c.x`, `m.l.x`) and a port
-// connection's child-side endpoint resolve through this one path
+// Builds a reference expression to a leaf reached by navigating `path` down
+// from `head`. `target` is the leaf value symbol (the cross-unit dedup key);
+// `home_frame` is the owning structural scope's frame. A downward head reaches
+// into an owned child member; an upward head climbs to an ancestor at
+// construction. Hierarchical references (`c.x`, `Top.g`) and a port
+// connection's child-side endpoint all resolve through this one path
 // (reference_resolution.md).
 auto MakeCrossUnitMemberRef(
     UnitLoweringState& unit_state, const slang::ast::ValueSymbol& target,
-    ScopeFrameId home_frame, hir::InstanceMemberId member,
+    ScopeFrameId home_frame, hir::CrossUnitRefHead head,
     std::vector<hir::PathStep> path, hir::TypeId type, diag::SourceSpan span)
     -> hir::Expr;
 

@@ -1,0 +1,11 @@
+id: cpp.hierarchy_upward_down_tail
+tags: [cpp_run]
+input:
+  command: [run, cpp]
+  project: false
+  top: Top
+  files: [main.sv]
+expect:
+  exit: 0
+  stdout:
+    exact: "11 22 33\n44 22 55\n"

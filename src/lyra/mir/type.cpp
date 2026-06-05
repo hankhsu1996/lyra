@@ -77,6 +77,7 @@ auto Type::Kind() const -> TypeKind {
           },
           [](const OwningPtrType&) { return TypeKind::kOwningPtr; },
           [](const VectorType&) { return TypeKind::kVector; },
+          [](const ExternalRefType&) { return TypeKind::kExternalRef; },
       },
       data);
 }

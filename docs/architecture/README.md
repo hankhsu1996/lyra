@@ -24,10 +24,12 @@ Read top to bottom on first pass:
 10. `hierarchy_and_generate.md` -- hierarchy and generate ownership
 11. `reference_resolution.md` -- intra-unit vs cross-unit references; compile-time vs
     construction-time resolution
-12. `identity_and_ownership.md` -- identity rules and forbidden shapes
-13. `lowering_boundaries.md` -- what each lowering may and may not do
-14. `incremental_build.md` -- query-based incremental compilation and caching
-15. `testing_strategy.md` -- test categories and structure
+12. `emission_model.md` -- how a backend emits independent per-unit artifacts and realizes
+    cross-unit resolution through the SDK
+13. `identity_and_ownership.md` -- identity rules and forbidden shapes
+14. `lowering_boundaries.md` -- what each lowering may and may not do
+15. `incremental_build.md` -- query-based incremental compilation and caching
+16. `testing_strategy.md` -- test categories and structure
 
 ## Concept Index
 
@@ -43,6 +45,7 @@ If you are looking for a concept, this table points to the canonical doc.
 | Generate as constructor-time logic; object graph shape                    | `hierarchy_and_generate.md` |
 | Instance array as a data type; multiplicity vs generate axes              | `hierarchy_and_generate.md` |
 | Intra-unit vs cross-unit references; compile-time vs construction resolve | `reference_resolution.md`   |
+| Per-unit artifact emission; cross-unit realization via the SDK; no wiring | `emission_model.md`         |
 | Parameter values, specialization keys, per-specialization artifacts       | `specialization_model.md`   |
 | Identity rules; ownership; forbidden identity shapes                      | `identity_and_ownership.md` |
 | Lowering permissions (what each lowering may and may not do)              | `lowering_boundaries.md`    |
@@ -54,6 +57,25 @@ If you are looking for a concept, this table points to the canonical doc.
 | Incremental compilation; query-based caching                              | `incremental_build.md`      |
 | Locating/bundling the C++ runtime; run output contract                    | `runtime_distribution.md`   |
 | Test categories; suite layout; expectation forms                          | `testing_strategy.md`       |
+
+## Required Reading by Decision
+
+Before designing a change, **read `north_star.md` first -- always**. Then read the docs that govern
+the decision's subject, top to bottom, and **check the design against every relevant doc's
+"Forbidden Shapes" before proposing it**. A design that matches a Forbidden Shape is wrong even if
+it compiles and passes tests.
+
+| Decision touches...                                          | Binding docs (read all, top-down)                                                                        |
+| ------------------------------------------------------------ | -------------------------------------------------------------------------------------------------------- |
+| Cross-unit access / hierarchical refs / ports / connectivity | `north_star`, `compilation_unit_model`, `reference_resolution`, `emission_model`                         |
+| Backend emit / artifact structure / SDK boundary             | `north_star`, `compilation_unit_model`, `reference_resolution`, `emission_model`, `runtime_distribution` |
+| Compilation boundaries / unit dependencies / incrementality  | `north_star`, `compilation_unit_model`, `incremental_build`                                              |
+| Hierarchy / generate / object graph / construction           | `north_star`, `hierarchy_and_generate`, `runtime_model`                                                  |
+| Identity / ownership / id kinds                              | `north_star`, `identity_and_ownership`                                                                   |
+
+The failure mode this guards against: anchoring on current code -- which may be a transitional
+shortcut -- instead of the contract. Current code that contradicts a contract is wrong; read the
+contract, not the code, for design direction.
 
 ## Document Shape
 

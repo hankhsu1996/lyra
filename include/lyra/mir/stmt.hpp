@@ -104,10 +104,9 @@ struct ConstructExternalUnitStmt {
   std::vector<std::uint32_t> dims;
 };
 
-// Resolves a cross-unit reference slot once at construction, after the target
-// child is built (reference_resolution.md): the backend materializes a stored
-// direct reference to the child's member. The navigation recipe lives in the
-// enclosing scope's `cross_unit_refs` table, keyed by `slot`.
+// Fills downward cross-unit slot `slot` once at construction, after the target
+// child exists: the backend stores a direct reference by navigating the recipe
+// in the enclosing scope's `cross_unit_refs` table (reference_resolution.md).
 struct ResolveCrossUnitRefStmt {
   CrossUnitRefId slot;
 };
