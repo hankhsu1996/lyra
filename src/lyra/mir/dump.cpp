@@ -619,9 +619,11 @@ class MirDumper {
     Indent();
     for (std::size_t i = 0; i < s.structural_vars.size(); ++i) {
       const auto& v = s.structural_vars[i];
+      const std::string as =
+          v.source_name.empty() ? "" : std::format(" as \"{}\"", v.source_name);
       Line(
           std::format(
-              "[{}] \"{}\" : {} init=Expr[{}]", i, v.name,
+              "[{}] \"{}\"{} : {} init=Expr[{}]", i, v.name, as,
               FormatVarType(v.type), v.initializer.value));
     }
     Dedent();

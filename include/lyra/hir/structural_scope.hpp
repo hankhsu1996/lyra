@@ -129,6 +129,9 @@ struct Generate {
 
 struct StructuralScope {
   StructuralScopeId id{};
+  // LRM source name of a generate child (label, or `genblk<n>` when unnamed,
+  // LRM 27.6); empty for other scopes.
+  std::string source_name;
   TimeResolution time_resolution;
   std::vector<StructuralVarDecl> structural_vars;
   std::vector<LoopVarDecl> loop_var_decls;

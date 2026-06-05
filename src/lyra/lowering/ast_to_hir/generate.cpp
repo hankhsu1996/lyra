@@ -87,6 +87,7 @@ auto AddChildScope(
     const slang::ast::GenerateBlockSymbol& block)
     -> diag::Result<hir::StructuralScopeId> {
   hir::StructuralScope scope;
+  scope.source_name = std::string{block.name};
   auto r = LowerScopeInto(unit_facts, unit_state, scope, block, stack);
   if (!r) return std::unexpected(std::move(r.error()));
   return AddChildStructuralScope(generate, std::move(scope));
@@ -318,8 +319,10 @@ auto BuildLoopGenerate(
   const hir::ExprId iter_id = parent_state.AddExpr(*std::move(iter_expr));
 
   hir::Generate gen{};
+  hir::StructuralScope loop_scope_seed;
+  loop_scope_seed.source_name = std::string{array.name};
   const hir::StructuralScopeId loop_scope_id =
-      AddChildStructuralScope(gen, hir::StructuralScope{});
+      AddChildStructuralScope(gen, std::move(loop_scope_seed));
 
   if (!array.entries.empty()) {
     const auto& canonical_entry = *array.entries.front();
