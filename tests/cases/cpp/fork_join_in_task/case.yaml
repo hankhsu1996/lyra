@@ -1,0 +1,14 @@
+id: cpp.fork_join_in_task
+tags: [cpp_run]
+input:
+  command: [run, cpp]
+  project: false
+  top: Test
+  files: [main.sv]
+expect:
+  exit: 0
+  stdout:
+    exact: |
+      [10] branch A
+      [20] branch B
+      [20] after task

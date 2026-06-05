@@ -637,6 +637,64 @@ auto LowerBlockStmt(
       .child_procedural_scopes = std::move(child_scopes)};
 }
 
+auto LowerJoinMode(hir::JoinMode mode) -> mir::JoinMode {
+  switch (mode) {
+    case hir::JoinMode::kAll:
+      return mir::JoinMode::kAll;
+    case hir::JoinMode::kAny:
+      return mir::JoinMode::kAny;
+    case hir::JoinMode::kNone:
+      return mir::JoinMode::kNone;
+  }
+  return mir::JoinMode::kAll;
+}
+
+// LRM 9.3.2: each parallel statement becomes a concurrent process. Each branch
+// lowers to a closure -- a captured callable value with (for FJ1) an empty
+// capture list -- composed into the enclosing scope's expr arena, exactly as
+// the NBA deferred-write closure is composed. The ForkStmt then references the
+// branch closures by id; it owns no nested scopes. The closure runs as a
+// coroutine by virtue of being a fork branch (spawned), not by any property of
+// the closure node.
+auto LowerForkStmt(
+    const UnitLoweringState& unit_state,
+    const StructuralScopeLoweringState& scope_state,
+    ProcessLoweringState& proc_state,
+    ProceduralScopeLoweringState& proc_scope_state,
+    const hir::ProceduralBody& hir_proc, const hir::Stmt& stmt,
+    const hir::ForkStmt& f) -> diag::Result<mir::Stmt> {
+  std::vector<mir::ExprId> branch_ids;
+  branch_ids.reserve(f.branches.size());
+  for (const hir::StmtId branch_hir_id : f.branches) {
+    const hir::Stmt& branch = hir_proc.stmts.at(branch_hir_id.value);
+    ProceduralScopeLoweringState branch_scope_state;
+    ProceduralDepthGuard depth_guard{proc_state};
+    auto lowered = LowerStmt(
+        unit_state, scope_state, proc_state, branch_scope_state, hir_proc,
+        branch);
+    if (!lowered) {
+      return std::unexpected(std::move(lowered.error()));
+    }
+    const mir::StmtId branch_stmt_id =
+        branch_scope_state.AddStmt(*std::move(lowered));
+    branch_scope_state.AddRootStmt(branch_stmt_id);
+
+    mir::ClosureExpr closure;
+    closure.body =
+        std::make_unique<mir::ProceduralScope>(branch_scope_state.Finish());
+    branch_ids.push_back(proc_scope_state.AddExpr(
+        mir::Expr{
+            .data = std::move(closure),
+            .type = unit_state.Builtins().void_type}));
+  }
+  return mir::Stmt{
+      .label = stmt.label,
+      .data =
+          mir::ForkStmt{
+              .mode = LowerJoinMode(f.mode), .branches = std::move(branch_ids)},
+      .child_procedural_scopes = {}};
+}
+
 auto LowerIfStmt(
     const UnitLoweringState& unit_state,
     const StructuralScopeLoweringState& scope_state,
@@ -1696,6 +1754,11 @@ auto LowerStmt(
           [&](const hir::BlockStmt& b) {
             return LowerBlockStmt(
                 unit_state, scope_state, proc_state, hir_proc, stmt, b);
+          },
+          [&](const hir::ForkStmt& f) {
+            return LowerForkStmt(
+                unit_state, scope_state, proc_state, proc_scope_state, hir_proc,
+                stmt, f);
           },
           [&](const hir::IfStmt& i) {
             return LowerIfStmt(

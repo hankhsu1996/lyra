@@ -259,11 +259,86 @@ auto LowerStatementListStmt(
       .span = span};
 }
 
+// LRM 9.3.2 parallel block. Each parallel statement becomes one branch. FJ1
+// covers branches that touch only module-scope state; forms that need
+// procedural state or a hierarchy name, and forks inside a function, are
+// rejected here rather than miscompiled.
+auto LowerForkStmt(
+    const UnitLoweringFacts& unit_facts, ProcessLoweringState& proc_state,
+    ScopeLoweringState& scope_state, ScopeStack& stack,
+    const slang::ast::BlockStatement& block, diag::SourceSpan span)
+    -> diag::Result<hir::Stmt> {
+  // A function body is not a coroutine and cannot suspend, so it cannot spawn a
+  // branch (LRM 13.4). A task body is a coroutine and is supported.
+  if (proc_state.ContainingSymbol().kind ==
+          slang::ast::SymbolKind::Subroutine &&
+      proc_state.ContainingSymbol()
+              .as<slang::ast::SubroutineSymbol>()
+              .subroutineKind == slang::ast::SubroutineKind::Function) {
+    return diag::Unsupported(
+        span, diag::DiagCode::kUnsupportedForkJoinForm,
+        "a fork-join block inside a function is not yet supported",
+        diag::UnsupportedCategory::kFeature);
+  }
+  if (block.blockSymbol != nullptr && !block.blockSymbol->name.empty()) {
+    return diag::Unsupported(
+        span, diag::DiagCode::kUnsupportedForkJoinForm,
+        "a named fork-join block is not yet supported",
+        diag::UnsupportedCategory::kFeature);
+  }
+
+  hir::JoinMode mode = hir::JoinMode::kAll;
+  switch (block.blockKind) {
+    case slang::ast::StatementBlockKind::JoinAll:
+      mode = hir::JoinMode::kAll;
+      break;
+    case slang::ast::StatementBlockKind::JoinAny:
+      mode = hir::JoinMode::kAny;
+      break;
+    case slang::ast::StatementBlockKind::JoinNone:
+      mode = hir::JoinMode::kNone;
+      break;
+    case slang::ast::StatementBlockKind::Sequential:
+      throw InternalError("LowerForkStmt: called on a sequential block");
+  }
+
+  std::vector<const slang::ast::Statement*> branch_stmts;
+  if (block.body.kind == slang::ast::StatementKind::List) {
+    const auto& list = block.body.as<slang::ast::StatementList>();
+    branch_stmts.assign(list.list.begin(), list.list.end());
+  } else {
+    branch_stmts.push_back(&block.body);
+  }
+
+  std::vector<hir::StmtId> branches;
+  branches.reserve(branch_stmts.size());
+  proc_state.EnterForkBranch();
+  for (const auto* child : branch_stmts) {
+    auto child_stmt =
+        LowerStatement(unit_facts, proc_state, scope_state, stack, *child);
+    if (!child_stmt) {
+      proc_state.ExitForkBranch();
+      return std::unexpected(std::move(child_stmt.error()));
+    }
+    branches.push_back(proc_state.AddStmt(*std::move(child_stmt)));
+  }
+  proc_state.ExitForkBranch();
+
+  return hir::Stmt{
+      .label = std::nullopt,
+      .data = hir::ForkStmt{.mode = mode, .branches = std::move(branches)},
+      .span = span};
+}
+
 auto LowerBlockStmt(
     const UnitLoweringFacts& unit_facts, ProcessLoweringState& proc_state,
     ScopeLoweringState& scope_state, ScopeStack& stack,
     const slang::ast::BlockStatement& block, diag::SourceSpan span)
     -> diag::Result<hir::Stmt> {
+  if (block.blockKind != slang::ast::StatementBlockKind::Sequential) {
+    return LowerForkStmt(
+        unit_facts, proc_state, scope_state, stack, block, span);
+  }
   std::vector<hir::StmtId> kids;
   if (block.body.kind == slang::ast::StatementKind::List) {
     const auto& list = block.body.as<slang::ast::StatementList>();
