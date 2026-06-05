@@ -40,12 +40,25 @@ auto RenderField(
   if (mir::GetOwnedChildLeaf(unit, var.type).has_value()) {
     return Indent(indent) + *type_or + " " + var.name + ";\n";
   }
-  // An upward reference is an ExternUp member constructed with its symbol; it
-  // registers itself and relocates at Bind, so it has no value initializer.
+  // An upward reference is an ExternUp member constructed with its symbol --
+  // the ancestor name, the by-name tail down through its owned children, and
+  // the leaf signal. It registers itself and relocates at Bind, so it has no
+  // value initializer.
   if (const auto* er =
           std::get_if<mir::ExternalRefType>(&unit.GetType(var.type).data)) {
+    std::string tail = "{";
+    for (std::size_t i = 0; i < er->tail.size(); ++i) {
+      if (i != 0) tail += ", ";
+      tail += "{\"" + er->tail[i].name + "\", {";
+      for (std::size_t j = 0; j < er->tail[i].indices.size(); ++j) {
+        if (j != 0) tail += ", ";
+        tail += std::to_string(er->tail[i].indices[j]);
+      }
+      tail += "}}";
+    }
+    tail += "}";
     return Indent(indent) + *type_or + " " + var.name + "{this, \"" +
-           er->ancestor + "\", \"" + er->signal + "\"};\n";
+           er->ancestor + "\", " + tail + ", \"" + er->signal + "\"};\n";
   }
   auto value_expr_or = RenderExpr(ctor_ctx, ctor_ctx.Expr(var.initializer));
   if (!value_expr_or) {
@@ -340,6 +353,40 @@ auto RenderScopeAsClass(
       out += "\n";
       out += Indent(indent + 1) +
              "auto GetSignal(std::string_view n) -> void* override {\n";
+      out += body;
+      out += Indent(indent + 2) + "return nullptr;\n";
+      out += Indent(indent + 1) + "}\n";
+    }
+  }
+
+  // Exposes this scope's owned children by name -- the twin of GetSignal for
+  // the object tree. A by-name reference (an upward reference's tail) cannot
+  // name a child's type, so the owner indexes its own storage and answers
+  // (emission_model.md). These are exactly the members GetSignal skips.
+  {
+    std::string body;
+    for (const auto& v : s.structural_vars) {
+      if (!mir::GetOwnedChildLeaf(unit, v.type).has_value()) {
+        continue;
+      }
+      std::string access = v.name;
+      mir::TypeId leaf_type = v.type;
+      std::size_t dim = 0;
+      while (const auto* vec =
+                 std::get_if<mir::VectorType>(&unit.GetType(leaf_type).data)) {
+        access += ".at(ref.indices[" + std::to_string(dim) + "])";
+        leaf_type = vec->element;
+        ++dim;
+      }
+      access += ".get()";
+      body += Indent(indent + 2) + "if (ref.name == \"" + v.name +
+              "\") return " + access + ";\n";
+    }
+    if (!body.empty()) {
+      out += "\n";
+      out += Indent(indent + 1) +
+             "auto GetChild(lyra::runtime::ChildRef ref) "
+             "-> lyra::runtime::Scope* override {\n";
       out += body;
       out += Indent(indent + 2) + "return nullptr;\n";
       out += Indent(indent + 1) + "}\n";

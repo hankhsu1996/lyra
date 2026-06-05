@@ -184,9 +184,16 @@ class MirDumper {
               return std::format("Vector(elem=Type[{}])", v.element.value);
             },
             [](const ExternalRefType& e) -> std::string {
+              std::string tail;
+              for (const auto& hop : e.tail) {
+                tail += "." + hop.name;
+                for (const std::uint32_t index : hop.indices) {
+                  tail += std::format("[{}]", index);
+                }
+              }
               return std::format(
-                  "ExternalRef(elem=Type[{}], ancestor={}, signal={})",
-                  e.element.value, e.ancestor, e.signal);
+                  "ExternalRef(elem=Type[{}], ancestor={}, tail={}, signal={})",
+                  e.element.value, e.ancestor, tail, e.signal);
             },
         },
         t.data);

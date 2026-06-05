@@ -65,15 +65,17 @@ non-conforming code, not as a relaxation of the contract.
      dependency and is unknown to the referrer at compile time. The referrer holds the reference as
      an ordinary member whose type marks it external; at Bind that member navigates the runtime
      object graph (the parent chain) to the ancestor named by the reference, matching its instance
-     name or module definition name (LRM 23.8), and obtains the named signal through the SDK. The
-     referrer's artifact carries zero knowledge of the ancestor's unit -- it never names the
-     ancestor type and never includes its artifact, and no cross-unit slot or side table records the
-     upward reference.
-6. **A unit exposes its hierarchically reachable signals through the SDK.** So that an upward
-   referrer (which cannot name the ancestor's type) can obtain a signal from an ancestor found only
-   at runtime, each unit makes its reachable signals available through a uniform SDK surface on the
-   object graph node. The referrer obtains the signal by name once at construction and stores the
-   direct reference; it never embeds the ancestor's layout.
+     name or module definition name (LRM 23.8), then steps down any remaining path through the
+     ancestor's owned children by name, and obtains the leaf signal through the SDK. The referrer's
+     artifact carries zero knowledge of the ancestor's or those children's units -- it never names
+     their types and never includes their artifacts, and no cross-unit slot or side table records
+     the upward reference.
+6. **A unit exposes its hierarchically reachable signals and owned children through the SDK.** So
+   that an upward referrer (which cannot name the ancestor's or an intervening child's type) can
+   reach a signal in an ancestor found only at runtime, each unit makes its reachable signals and
+   its owned children available by name through a uniform SDK surface on the object graph node -- a
+   child step indexes the owner's own storage. The referrer walks that surface once at construction
+   and stores the direct reference; it never embeds another unit's layout.
 
 ## Boundary to Adjacent Layers
 

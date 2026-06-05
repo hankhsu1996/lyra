@@ -220,8 +220,9 @@ auto InstallInstanceMembers(
 }
 
 // An upward cross-unit reference materializes as an ExternalRef member: the
-// (ancestor, signal) symbol lives on its type, and the runtime ExternUp member
-// self-relocates at Bind by climbing the parent chain
+// symbol -- ancestor name, by-name tail through its owned children, and leaf
+// signal -- lives on its type, and the runtime ExternUp member self-relocates
+// at Bind by climbing the parent chain then walking the tail
 // (docs/architecture/emission_model.md). This runs before processes so reads
 // resolve to the member. Every cross-unit ref slot's MIR target is recorded in
 // HIR slot order; a downward slot keeps a CrossUnitVarRef that
@@ -233,17 +234,41 @@ void MaterializeCrossUnitRefTargets(
   std::uint32_t downward_slot = 0;
   for (const auto& cu : scope.cross_unit_refs) {
     if (const auto* up = std::get_if<hir::UpwardHead>(&cu.head)) {
+      // `cu.path` runs from the ancestor down to the leaf, shared with the
+      // downward direction. Fold it into by-name child hops (each member opens
+      // a hop, following array indices attach to it) and the final leaf signal.
+      std::vector<mir::ChildStep> tail;
+      for (const auto& step : cu.path) {
+        if (const auto* member = std::get_if<hir::MemberHop>(&step)) {
+          tail.push_back(mir::ChildStep{.name = member->name, .indices = {}});
+        } else {
+          tail.back().indices.push_back(std::get<hir::IndexHop>(step).index);
+        }
+      }
+      std::string signal = std::move(tail.back().name);
+      tail.pop_back();
+
+      std::string member_name = "up_" + up->ancestor_name;
+      for (const auto& hop : tail) {
+        member_name += "_" + hop.name;
+        for (const std::uint32_t index : hop.indices) {
+          member_name += std::to_string(index);
+        }
+      }
+      member_name += "_" + signal;
+
       const mir::TypeId leaf = unit_state.TranslateType(cu.type);
       const mir::TypeId ext_type = unit_state.AddType(
           mir::ExternalRefType{
               .element = leaf,
               .ancestor = up->ancestor_name,
-              .signal = up->signal_name});
+              .tail = std::move(tail),
+              .signal = std::move(signal)});
       const mir::ExprId init =
           SynthesizeDefaultValueExpr(unit_state, ctor_scope_state, leaf);
       const mir::StructuralVarId var = scope_state.AddStructuralVar(
           mir::StructuralVarDecl{
-              .name = "up_" + up->ancestor_name + "_" + up->signal_name,
+              .name = std::move(member_name),
               .type = ext_type,
               .initializer = init});
       scope_state.AddCrossUnitRefTarget(

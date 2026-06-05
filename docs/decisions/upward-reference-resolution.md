@@ -125,10 +125,17 @@ nesting on the chain it can bind the nearer one. That is a known gap (`docs/prog
 D2d) -- the resolved AST gives the ancestor's name and definition name, but not which form the
 source wrote, and recovering that needs the source token the elaborated AST does not retain.
 
-Once the ancestor is found, the leaf signal is obtained through `Scope::GetSignal("g")`, which the
-ancestor's own emitted code answers by returning a pointer to its own member. The referrer casts the
-returned `void*` to its own `Var<T>` cell type -- a type it already knows from its declaration --
-never to the ancestor's type. The by-name SDK realization (`DefName`, `GetSignal`, the
+Once the ancestor is found, the reference may still descend into the ancestor's subtree before
+reaching the leaf (`Top.sib.y` climbs to `Top`, then steps down into the owned child `sib`). That
+tail is by-name too, for the same reason the climb is: the referrer owns neither the ancestor nor
+its children, so it cannot navigate by typed pointer. Each step asks the current scope for an owned
+child through `Scope::GetChild` -- the twin of `GetSignal` for the object tree, which the owner
+answers by indexing its own storage (an array hop is the owner's own `vector` subscript, never a
+re-derived offset). The final leaf is fetched with `Scope::GetSignal("y")`, which the ancestor's own
+emitted code answers by returning a pointer to its own member. The referrer casts the returned
+`void*` to its own `Var<T>` cell type -- a type it already knows from its declaration -- never to
+the ancestor's type. When the leaf sits directly on the ancestor the tail is empty, the zero-case of
+the same walk. The by-name SDK realization (`DefName`, `GetSignal`, `GetChild`, the
 construction-time climb) is owned by `emission_model.md`; this record fixes only the resolution
 strategy, not its emitted shape.
 
@@ -158,32 +165,38 @@ construction. Concretely:
    naming a signal the referrer does not own:
 
    ```cpp
-   struct Leaf {                                  // module Leaf; always_comb x = Top.g;
-     Var<int> x;
-     ExternUp<int> g{this, "Top", "g"};           // extern member: symbol on the type;
-                                                  // self-registers, relocates at Bind
+   struct Leaf {                                  // always_comb x = Top.g;  y = Top.sib.s;
+     Var<int> x, y;
+     ExternUp<int> g{this, "Top", {}, "g"};           // empty tail: leaf on the ancestor
+     ExternUp<int> s{this, "Top", {{"sib", {}}}, "s"};// tail steps down into owned child `sib`
      // always_comb:  x = g.Get();   sensitivity subscribes to g.AsObservable()
    };
 
    struct Top {
      Var<int> g;
+     unique_ptr<Sib> sib;
      unique_ptr<Leaf> l;
-     Top(...) { l = make_unique<Leaf>(this, "l"); }     // knows nothing about Leaf's g
+     Top(...) { ... }                                   // knows nothing about Leaf's g / s
      string_view DefName() const override { return "Top"; }
-     void* GetSignal(string_view n) override {          // answers for its own members
+     void* GetSignal(string_view n) override {          // answers for its own signals
        if (n == "g") return &g;
+       return nullptr;
+     }
+     Scope* GetChild(ChildRef ref) override {           // answers for its own children
+       if (ref.name == "sib") return sib.get();         // (an array hop: bank.at(ref.indices[0]))
        return nullptr;
      }
    };
    ```
 
-   The climb -- match the parent chain by `Name()`/`DefName()`, then `GetSignal` -- lives once in
-   the runtime SDK as `Scope::ResolveUpward`, called by `ExternUp<T>::Relocate` at Bind. The
-   referrer carries the reference as an ordinary member whose type is `ExternalRef<T>` (the symbol
-   rides on the type); reads, writes, and sensitivity are the normal structural-var paths,
-   dispatched by that type. MIR keeps no cross-unit slot or resolve statement for an upward
-   reference -- the typed member is the whole story, which is why `type is the classification` holds
-   here (see `docs/architecture/mir.md` and `emission_model.md`).
+   The walk -- climb the parent chain by `Name()`/`DefName()` to the ancestor, step down any tail
+   through `Scope::GetChild`, then `Scope::GetSignal` the leaf -- lives once in the runtime SDK
+   (`Scope::ResolveUpwardScope` plus the by-name `GetChild`/`GetSignal` surface), driven by
+   `ExternUp<T>::Relocate` at Bind. The referrer carries the reference as an ordinary member whose
+   type is `ExternalRef<T>` (the symbol rides on the type); reads, writes, and sensitivity are the
+   normal structural-var paths, dispatched by that type. MIR keeps no cross-unit slot or resolve
+   statement for an upward reference -- the typed member is the whole story, which is why
+   `type is the classification` holds here (see `docs/architecture/mir.md` and `emission_model.md`).
 
 5. **No compile-time depth, no global tree walk, no interface threading, no RTTI retry.** The climb
    is the construction-time resolution that `reference_resolution.md` prescribes (resolve once into
@@ -197,17 +210,16 @@ construction. Concretely:
   correct ancestor whether the ancestor is one or several levels up; depth is never represented as a
   number anywhere.
 - **The match keys are the runtime instance name and module definition name (`Scope::Name()` /
-  `Scope::DefName()`).** The `ExternalRef` type carries only the reference's source-level identifier
-  (the match key) and the leaf signal name (the `GetSignal` argument); it carries no ancestor type,
-  so the referrer's artifact stays self-contained.
+  `Scope::DefName()`).** The `ExternalRef` type carries only the match key, the by-name tail down
+  through the ancestor's owned children, and the leaf signal name (the `GetSignal` argument); it
+  carries no ancestor or child type, so the referrer's artifact stays self-contained.
 - **The climb is a construction-time loop, run once per extern member.** It is never on the
   simulation hot path, which reads the stored pointer.
 - **Upward references are not unified with `ref` ports.** A `ref` port is supplied by the parent
   because the connection is explicit there; an upward reference is resolved by the child because the
   parent cannot know about it. Both are cross-unit references resolved at construction, but their
   head resolution differs by necessity.
-- **Out of scope, guarded explicitly:** a down-tail through a child after the climb (`Top.other.y`,
-  needs a by-name child-navigation surface); an upward reference written inside a generate block; a
+- **Out of scope, guarded explicitly:** an upward reference written inside a generate block; a
   `$root`-anchored absolute path; an upward reference through an interface port; an ancestor that is
   a named generate or procedural block rather than a module instance (such a scope does not yet
   expose itself as a climb-match target with `GetSignal`); and the corner where a nearer ancestor

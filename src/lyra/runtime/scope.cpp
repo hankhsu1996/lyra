@@ -56,18 +56,17 @@ void Scope::RegisterExtern(ExternBase* member) {
   externs_.push_back(member);
 }
 
-auto Scope::ResolveUpward(std::string_view ancestor, std::string_view signal)
-    -> void* {
+auto Scope::ResolveUpwardScope(std::string_view ancestor) -> Scope* {
   Scope* s = parent_;
   while (s != nullptr && s->Name() != ancestor && s->DefName() != ancestor) {
     s = s->Parent();
   }
   if (s == nullptr) {
     throw InternalError(
-        "Scope::ResolveUpward: no ancestor named " + std::string(ancestor) +
-        " on the parent chain");
+        "Scope::ResolveUpwardScope: no ancestor named " +
+        std::string(ancestor) + " on the parent chain");
   }
-  return s->GetSignal(signal);
+  return s;
 }
 
 auto Scope::Services() -> RuntimeServices& {

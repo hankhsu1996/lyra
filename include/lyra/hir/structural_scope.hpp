@@ -56,18 +56,17 @@ using PathStep = std::variant<MemberHop, IndexHop>;
 // Where a cross-unit reference starts its navigation. A downward reference
 // reaches into an owned child instance (or instance-array) member. An upward
 // reference (LRM 23.6) climbs the parent chain at construction to the nearest
-// ancestor whose instance name or module name is `ancestor_name` (the
-// reference's source-level first component), then fetches `signal_name` from
-// that ancestor by name through the SDK -- it never names the ancestor's unit
-// type, which it does not depend on (docs/architecture/emission_model.md). The
-// child cannot know its depth at compile time, so it locates the ancestor by
-// name rather than a baked-in offset.
+// ancestor whose instance or module name is `ancestor_name`; from there both
+// directions share `path` to reach the leaf, by name across the unit boundary
+// -- the referrer never names the ancestor's unit type, which it does not
+// depend on (docs/architecture/emission_model.md). The child cannot know its
+// depth at compile time, so it locates the ancestor by name rather than a
+// baked-in offset.
 struct DownwardHead {
   InstanceMemberId instance;
 };
 struct UpwardHead {
   std::string ancestor_name;
-  std::string signal_name;
 };
 using CrossUnitRefHead = std::variant<DownwardHead, UpwardHead>;
 

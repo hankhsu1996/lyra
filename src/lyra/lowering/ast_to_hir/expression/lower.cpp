@@ -360,10 +360,10 @@ auto LowerHierarchicalValueProc(
   const slang::ast::Symbol& head_sym = *ref.path.front().symbol;
 
   if (ref.isUpward()) {
-    // An upward reference (LRM 23.8) climbs the parent chain to the ancestor
-    // named by the reference's first source component, then fetches the leaf
-    // signal from it by name. A named generate / procedural block ancestor or a
-    // `$root`-anchored path (neither a module instance) is not yet supported.
+    // An upward reference (LRM 23.8) climbs the parent chain to the named
+    // ancestor, then shares `path` with the downward direction to reach the
+    // leaf. A named generate / procedural block ancestor or a `$root`-anchored
+    // path (neither a module instance) is not yet supported.
     if (head_sym.kind != slang::ast::SymbolKind::Instance) {
       return diag::Unsupported(
           span, diag::DiagCode::kUnsupportedExpressionForm,
@@ -371,20 +371,9 @@ auto LowerHierarchicalValueProc(
           "instance is not yet supported",
           diag::UnsupportedCategory::kOperation);
     }
-    // First cut: the leaf sits directly on the matched ancestor (path is
-    // ancestor + leaf). Descending through a child instance after the climb
-    // needs a separate by-name child-navigation surface.
-    if (ref.path.size() != 2) {
-      return diag::Unsupported(
-          span, diag::DiagCode::kUnsupportedExpressionForm,
-          "upward hierarchical reference that descends through a child "
-          "instance "
-          "is not yet supported",
-          diag::UnsupportedCategory::kOperation);
-    }
-    // The slot lives in the owning structural scope and the climb starts from
-    // its object. A reference inside a generate block would need its slot on a
-    // nested generate class; restrict to the unit root for now.
+    // The extern member lives on the owning structural scope and the climb
+    // starts from its object. A reference inside a generate block would need
+    // its member on a nested generate class; restrict to the unit root for now.
     if (stack.Depth() != 1) {
       return diag::Unsupported(
           span, diag::DiagCode::kUnsupportedExpressionForm,
@@ -398,13 +387,10 @@ auto LowerHierarchicalValueProc(
     // like `Top.g[3]` may carry none).
     std::string ancestor_name{
         head_sym.as<slang::ast::InstanceSymbol>().getDefinition().name};
-    std::string signal_name{ref.path.back().symbol->name};
     return MakeCrossUnitMemberRef(
         unit_state, var, stack.Current(),
-        hir::UpwardHead{
-            .ancestor_name = std::move(ancestor_name),
-            .signal_name = std::move(signal_name)},
-        {}, *type_id, span);
+        hir::UpwardHead{.ancestor_name = std::move(ancestor_name)},
+        std::move(path), *type_id, span);
   }
 
   // Downward: the head is an owned instance / instance-array member this unit's

@@ -113,8 +113,12 @@ consume. Coverage is demonstrated through Stage D and Stage E.
       `docs/architecture/emission_model.md`). A reference wrapped in a value-level operation
       (`Top.g[3]`, `Top.g + 1`) works -- the value part is ordinary expression handling. The
       remaining forms below are each rejected with a clean "unsupported" diagnostic, except D2d.
-- [ ] D2a -- An upward reference that descends through a child after the climb (`Top.sib.y`): reach
-      the ancestor, then navigate back down by name into a sibling subtree.
+- [x] D2a -- An upward reference that descends through a child after the climb (`Top.sib.y`,
+      `Top.mid.deep.z`, `Top.bank[2].y`): the climb reaches the ancestor, then the reference steps
+      down by name into the ancestor's owned children to the leaf, at any depth and through array
+      indices. The tail is by-name for the same reason the climb is -- the referrer owns neither the
+      ancestor nor its children -- so each owner answers for its own children, indexing its own
+      storage. A leaf directly on the ancestor is the empty-tail zero-case of the same walk.
 - [ ] D2b -- An upward reference written inside a generate block rather than the module body.
 - [ ] D2c -- An upward reference whose first component is not a module instance: a named generate or
       procedural block, or a `$root`-anchored absolute path.

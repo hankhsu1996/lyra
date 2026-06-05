@@ -1,8 +1,10 @@
 #pragma once
 
+#include <cstddef>
 #include <cstdint>
 #include <functional>
 #include <memory>
+#include <span>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -16,6 +18,14 @@ namespace lyra::runtime {
 
 class RuntimeServices;
 class ExternBase;
+
+// Names one owned child to fetch from a scope: the member name plus one index
+// per array dimension (empty for a scalar child). A non-owning view; the caller
+// keeps the backing storage alive.
+struct ChildRef {
+  std::string_view name;
+  std::span<const std::size_t> indices;
+};
 
 // Returned by a scope that declares no timescale of its own (the synthetic
 // `$root`). The engine's design-global precision minimum ignores it, so a
@@ -59,12 +69,21 @@ class Scope {
     return nullptr;
   }
 
+  // Returns the owned child scope named by `ref`, or nullptr if it has none.
+  // The twin of `GetSignal` for the object tree: a by-name reference cannot
+  // name the child's type, so the owner indexes its own storage and answers
+  // (docs/architecture/emission_model.md).
+  // NOLINTNEXTLINE(readability-named-parameter)
+  [[nodiscard]] virtual auto GetChild(ChildRef) -> Scope* {
+    return nullptr;
+  }
+
   // Climbs the parent chain to the ancestor whose instance name (`Name()`) or
-  // module name (`DefName()`) is `ancestor` and returns its signal named
-  // `signal` (LRM 23.8). The single shared implementation of an upward
-  // reference's runtime navigation; an `ExternUp` member calls it once at Bind.
-  [[nodiscard]] auto ResolveUpward(
-      std::string_view ancestor, std::string_view signal) -> void*;
+  // module name (`DefName()`) is `ancestor` (LRM 23.8) and returns it. The
+  // shared start of an upward reference's runtime navigation; from there an
+  // `ExternUp` member walks any by-name tail and fetches the leaf, once at
+  // Bind.
+  [[nodiscard]] auto ResolveUpwardScope(std::string_view ancestor) -> Scope*;
 
   // An `ExternUp` member registers itself here from its constructor; Bind
   // relocates all registered members once the whole tree exists.
