@@ -76,9 +76,14 @@ struct IncDecExpr {
   ExprId target;
 };
 
+// LRM 21.3.4.4 form 2d (`$fread(mem, fd, , count)`) and any future
+// system-call positional-elision case lands here as `std::nullopt` at the
+// elided slot; user calls and most system calls leave every entry filled.
+// Per-subroutine HIR-to-MIR lowering decides whether elision is meaningful
+// at each position.
 struct CallExpr {
   SubroutineRef callee;
-  std::vector<ExprId> arguments;
+  std::vector<std::optional<ExprId>> arguments;
 };
 
 struct InsideExpr {

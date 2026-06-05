@@ -1,6 +1,8 @@
 #pragma once
 
+#include <cstdint>
 #include <optional>
+#include <variant>
 
 #include "lyra/mir/expr_id.hpp"
 
@@ -44,13 +46,24 @@ struct RuntimeFileGetsCall {
   ExprId fd{};
 };
 
-// LRM 21.3.4.4 $fread(integral_var, fd). Reads big-endian bytes into the
-// integral-typed lvalue temp `int_dest`, filling the most significant bytes
-// first. Returns the number of bytes read, 0 on error. The 4-state bit is
-// always set to 0 (LRM "data ... are taken as 2-value data"). The
-// memory-array form (`$fread(mem, fd[, start[, count]])`) is not modeled.
+// LRM 21.3.4.4 $fread. The destination's type selects which variant the
+// HIR-to-MIR lowering builds: a packed value falls under PackedTarget,
+// an unpacked array under UnpackedTarget. `declared_left` /
+// `declared_right` bake the SV unpacked dim's bounds so the runtime can
+// translate `start` (SV-level) to a storage offset and walk storage
+// backward for descending ranges.
 struct RuntimeFileReadCall {
-  ExprId int_dest{};
+  struct PackedTarget {
+    ExprId dest{};
+  };
+  struct UnpackedTarget {
+    ExprId dest{};
+    std::optional<ExprId> start = std::nullopt;
+    std::optional<ExprId> count = std::nullopt;
+    std::int64_t declared_left = 0;
+    std::int64_t declared_right = 0;
+  };
+  std::variant<PackedTarget, UnpackedTarget> target;
   ExprId fd{};
 };
 

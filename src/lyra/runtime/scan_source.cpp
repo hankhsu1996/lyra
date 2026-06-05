@@ -43,14 +43,21 @@ void StringScanSource::Unget(int byte) {
   pushback_ = byte;
 }
 
-FileScanSource::FileScanSource(std::fstream& stream) : stream_(&stream) {
+FileScanSource::FileScanSource(FileTable::FdSlot& slot) : slot_(&slot) {
 }
 
 auto FileScanSource::Peek() -> int {
   if (peeked_.has_value()) {
     return *peeked_;
   }
-  const int byte = stream_->get();
+  // LRM 21.3.4.1: drain any byte left by an earlier $ungetc (or a prior
+  // scan's "offending character") before reading from the stream.
+  if (slot_->putback.has_value()) {
+    peeked_ = static_cast<unsigned char>(*slot_->putback);
+    slot_->putback.reset();
+    return *peeked_;
+  }
+  const int byte = slot_->file->get();
   if (byte == std::char_traits<char>::eof()) {
     return -1;
   }
@@ -64,7 +71,12 @@ auto FileScanSource::Consume() -> int {
     peeked_.reset();
     return byte;
   }
-  const int byte = stream_->get();
+  if (slot_->putback.has_value()) {
+    const int byte = static_cast<unsigned char>(*slot_->putback);
+    slot_->putback.reset();
+    return byte;
+  }
+  const int byte = slot_->file->get();
   return byte == std::char_traits<char>::eof() ? -1 : byte;
 }
 
@@ -84,12 +96,18 @@ void FileScanSource::FlushPushback() {
   if (!peeked_.has_value()) {
     return;
   }
-  // Clear eofbit / failbit so putback succeeds even when Peek hit EOF
-  // earlier in the scan. LRM 21.3.4.3 "the offending input character is
-  // left unread in the input stream" -- pushing back here makes the
-  // unconsumed peeked byte visible to the next $fgetc on this FD.
-  stream_->clear();
-  stream_->putback(static_cast<char>(*peeked_));
+  // LRM 21.3.4.3 "the offending input character is left unread in the
+  // input stream" -- park the unconsumed peek in the slot's putback so
+  // the next read on this FD sees it. Invariant: the slot's putback is
+  // empty here. Any pre-existing pushback would have been drained into
+  // peeked_ by the very first Peek of this scan, so anything still in
+  // peeked_ now must have come from the stream (or a scanner-side
+  // Unget), never sat in slot.putback yet.
+  if (slot_->putback.has_value()) {
+    throw InternalError(
+        "FileScanSource::FlushPushback: slot putback unexpectedly non-empty");
+  }
+  slot_->putback = static_cast<char>(*peeked_);
   peeked_.reset();
 }
 

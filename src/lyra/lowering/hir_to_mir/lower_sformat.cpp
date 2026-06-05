@@ -113,9 +113,14 @@ auto LowerSFormatSystemSubroutineCallStmt(
         "rejected the call");
   }
 
+  if (!call.arguments[0].has_value()) {
+    throw InternalError(
+        "LowerSFormatSystemSubroutineCallStmt: output_var arg unexpectedly "
+        "elided");
+  }
   auto out_or = LowerExpr(
       unit_state, scope_state, proc_state, proc_scope_state, hir_proc,
-      hir_proc.exprs.at(call.arguments[0].value));
+      hir_proc.exprs.at(call.arguments[0]->value));
   if (!out_or) return std::unexpected(std::move(out_or.error()));
   const mir::TypeId out_type = out_or->type;
   if (unit_state.GetType(out_type).Kind() != mir::TypeKind::kString) {

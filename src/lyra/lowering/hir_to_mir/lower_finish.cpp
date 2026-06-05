@@ -41,7 +41,10 @@ auto LowerFinishSystemSubroutineCall(
     -> diag::Result<mir::Expr> {
   int level = info.default_level;
   if (!call.arguments.empty()) {
-    const hir::ExprId arg_id = call.arguments.front();
+    if (!call.arguments.front().has_value()) {
+      throw InternalError("$finish argument unexpectedly elided");
+    }
+    const hir::ExprId arg_id = *call.arguments.front();
     const hir::Expr& arg_expr = hir_proc.exprs.at(arg_id.value);
     const auto literal = TryExtractLiteralInt(arg_expr);
     if (!literal.has_value()) {

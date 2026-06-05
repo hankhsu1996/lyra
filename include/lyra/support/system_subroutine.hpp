@@ -500,7 +500,10 @@ inline constexpr std::array kSystemSubroutines = {
         .origin = SystemSubroutineOrigin::kLanguageBuiltin,
         .kind = SystemSubroutineKind::kFunction,
         .result_conv = ReturnConvention::kInt32,
-        .arg_policy = ArgCountPolicy{.min_args = 2, .max_args = 2},
+        // LRM 21.3.4.4: integral form has 2 args; memory form supports
+        // (mem, fd), (mem, fd, start), (mem, fd, start, count), and the
+        // (mem, fd, , count) comma-elision shape -- all 2..4 positional.
+        .arg_policy = ArgCountPolicy{.min_args = 2, .max_args = 4},
         .semantic = FileIOSystemSubroutineInfo{.kind = FileIOKind::kRead},
     },
     SystemSubroutineDesc{
