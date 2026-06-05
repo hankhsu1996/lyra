@@ -29,6 +29,7 @@ enum class TypeKind {
   kExternalUnitObject,
   kOwningPtr,
   kVector,
+  kExternalRef,
 };
 
 enum class BitAtom {
@@ -148,11 +149,39 @@ struct VectorType {
   auto operator==(const VectorType&) const -> bool = default;
 };
 
+// One by-name step from a resolved scope into an owned child it answers for:
+// the child member's name plus one index per array dimension (empty for a
+// scalar child). The ancestor indexes its own storage, so a multi-dimensional
+// instance array is just more indices, never a flattened offset. (Distinct from
+// StructuralHops, which is a count of lexical frames climbed, not a path step.)
+struct ChildStep {
+  std::string name;
+  std::vector<std::uint32_t> indices;
+
+  auto operator==(const ChildStep&) const -> bool = default;
+};
+
+// An upward hierarchical reference's storage: a resolved pointer to a leaf of
+// `element`, reached by climbing to the ancestor named `ancestor`, walking
+// `tail` down through its owned children by name, then fetching `signal` (LRM
+// 23.8). `tail` is empty when the leaf sits directly on the ancestor. Like
+// ExternalUnitObjectType it carries the cross-unit symbol on the type; the
+// address binds at construction, never the layout. Emitted as the runtime
+// `ExternUp<element>` member.
+struct ExternalRefType {
+  TypeId element;
+  std::string ancestor;
+  std::vector<ChildStep> tail;
+  std::string signal;
+
+  auto operator==(const ExternalRefType&) const -> bool = default;
+};
+
 using TypeData = std::variant<
     PackedArrayType, EnumType, UnpackedArrayType, DynamicArrayType, QueueType,
     AssociativeArrayType, StringType, EventType, RealType, ShortRealType,
     RealTimeType, ChandleType, VoidType, ObjectType, ExternalUnitObjectType,
-    OwningPtrType, VectorType>;
+    OwningPtrType, VectorType, ExternalRefType>;
 
 struct Type {
   TypeData data;

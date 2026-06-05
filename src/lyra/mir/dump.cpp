@@ -183,6 +183,18 @@ class MirDumper {
             [](const VectorType& v) -> std::string {
               return std::format("Vector(elem=Type[{}])", v.element.value);
             },
+            [](const ExternalRefType& e) -> std::string {
+              std::string tail;
+              for (const auto& hop : e.tail) {
+                tail += "." + hop.name;
+                for (const std::uint32_t index : hop.indices) {
+                  tail += std::format("[{}]", index);
+                }
+              }
+              return std::format(
+                  "ExternalRef(elem=Type[{}], ancestor={}, tail={}, signal={})",
+                  e.element.value, e.ancestor, tail, e.signal);
+            },
         },
         t.data);
   }
@@ -627,10 +639,11 @@ class MirDumper {
             path += std::format("[{}]", std::get<IndexHop>(step).index);
           }
         }
+        const std::string head =
+            std::format("StructuralVar[{}]", cu.instance_var.value);
         Line(
             std::format(
-                "[{}] StructuralVar[{}]{} : {}", i, cu.instance_var.value, path,
-                FormatVarType(cu.type)));
+                "[{}] {}{} : {}", i, head, path, FormatVarType(cu.type)));
       }
       Dedent();
     }

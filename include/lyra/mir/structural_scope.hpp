@@ -28,12 +28,11 @@ struct IndexHop {
 };
 using PathStep = std::variant<MemberHop, IndexHop>;
 
-// A cross-unit reference resolved once at construction. `instance_var` is the
-// structural var holding the owned child instance (or instance-array) -- the
-// head of the downward path; `path` carries the navigation past the head down
-// to the referenced leaf; `type` is the referenced leaf's type. The backend
-// stores a direct reference to the leaf by chaining the path's hops from
-// `instance_var`.
+// A downward cross-unit reference resolved once at construction. `instance_var`
+// is the structural var holding the owned child instance (or instance-array) --
+// the head of the downward path; `path` carries the navigation past the head
+// down to the referenced leaf of `type`. Upward references are not cross-unit
+// refs -- they are ExternalRef members (docs/architecture/emission_model.md).
 struct CrossUnitRefDecl {
   StructuralVarId instance_var;
   std::vector<PathStep> path;
