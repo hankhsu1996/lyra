@@ -364,9 +364,13 @@ auto RenderScopeAsClass(
   // name a child's type, so the owner indexes its own storage and answers
   // (emission_model.md). These are exactly the members GetSignal skips.
   {
-    std::string body;
+    // Group owned children by the name a reference uses; same-name if/else arms
+    // (LRM 27.5) share one key, so a conditional arm is guarded and the group
+    // returns whichever was constructed.
+    std::vector<std::pair<std::string, std::string>> groups;
     for (const auto& v : s.structural_vars) {
-      if (!mir::GetOwnedChildLeaf(unit, v.type).has_value()) {
+      const auto leaf = mir::GetOwnedChildLeaf(unit, v.type);
+      if (!leaf.has_value()) {
         continue;
       }
       std::string access = v.name;
@@ -378,9 +382,26 @@ auto RenderScopeAsClass(
         leaf_type = vec->element;
         ++dim;
       }
-      access += ".get()";
-      body += Indent(indent + 2) + "if (ref.name == \"" + v.name +
-              "\") return " + access + ";\n";
+      const bool conditional =
+          leaf->kind == mir::OwnedChildKind::kGenerateScope && dim == 0;
+      const std::string line =
+          conditional ? Indent(indent + 3) + "if (" + v.name + ") return " +
+                            access + ".get();\n"
+                      : Indent(indent + 3) + "return " + access + ".get();\n";
+      const std::string& key = v.source_name.empty() ? v.name : v.source_name;
+      auto it = std::ranges::find(
+          groups, key, &std::pair<std::string, std::string>::first);
+      if (it == groups.end()) {
+        groups.emplace_back(key, line);
+      } else {
+        it->second += line;
+      }
+    }
+    std::string body;
+    for (const auto& [key, lines] : groups) {
+      body += Indent(indent + 2) + "if (ref.name == \"" + key + "\") {\n";
+      body += lines;
+      body += Indent(indent + 2) + "}\n";
     }
     if (!body.empty()) {
       out += "\n";

@@ -138,9 +138,14 @@ consume. Coverage is demonstrated through Stage D and Stage E.
       object-tree ownership.
 - [x] D6 -- A hierarchical path that indexes an instance array (`c[i].x`) resolves to the selected
       element, including multi-dimensional arrays (`c[i][j].x`).
-- [ ] D7 -- A hierarchical reference crosses a generate-block scope boundary: a path step through a
-      generate block (`g.sig`), or a reference originating inside a generate block that names a
-      signal in an enclosing scope.
+- [ ] D7 -- A hierarchical reference crosses a generate-block scope boundary. A by-name reference
+      reaches a generate block by its LRM name (the source label, or `genblk<n>` when unnamed, LRM
+      27.6), indexes a loop-generate block, and continues to a signal or a further child inside it;
+      when an if/case construct's alternatives share a name (LRM 27.5) the reference binds whichever
+      alternative was instantiated. Landed for the by-name direction -- an upward reference whose
+      downward tail crosses the generate boundary. Still open: a reference from the scope that owns
+      the generate descending into its own generate block, and a reference originating inside a
+      generate block that names a signal in an enclosing scope.
 
 Unlocks `refs/hierarchical_refs`, `refs/upward_refs`, and `instantiation/hierarchical_sensitivity`.
 

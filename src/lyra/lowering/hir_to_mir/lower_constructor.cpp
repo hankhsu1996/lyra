@@ -628,6 +628,7 @@ auto InstallGenerateOwnedChildScopes(
       const mir::StructuralVarId var_id = scope_state.AddStructuralVar(
           mir::StructuralVarDecl{
               .name = companion_name,
+              .source_name = spec.scope->source_name,
               .type = var_type,
               .initializer = companion_init});
 
