@@ -27,9 +27,15 @@ class RenderContext {
 
   [[nodiscard]] auto WithProceduralScope(
       const mir::ProceduralScope& child) const -> RenderContext {
-    return RenderContext{
-        *unit_,        *scope_,       child,        this, structural_parent_,
-        temp_counter_, static_frame_, in_coroutine_};
+    return RenderContext{*unit_,
+                         *scope_,
+                         child,
+                         this,
+                         structural_parent_,
+                         temp_counter_,
+                         static_frame_,
+                         in_coroutine_,
+                         receiver_};
   }
 
   [[nodiscard]] auto WithStructuralScope(
@@ -37,7 +43,7 @@ class RenderContext {
       const mir::ProceduralScope& root_proc_scope) const -> RenderContext {
     return RenderContext{*unit_,  child_scope, root_proc_scope,
                          nullptr, this,        temp_counter_,
-                         {},      false};
+                         {},      false,       "this"};
   }
 
   // A subroutine body renders its static locals through this per-instance frame
@@ -51,7 +57,8 @@ class RenderContext {
                          structural_parent_,
                          temp_counter_,
                          accessor,
-                         in_coroutine_};
+                         in_coroutine_,
+                         receiver_};
   }
 
   // Marks the current body as a coroutine (a process or a task), where `return`
@@ -66,7 +73,27 @@ class RenderContext {
         structural_parent_,
         temp_counter_,
         static_frame_,
-        in_coroutine};
+        in_coroutine,
+        receiver_};
+  }
+
+  // Names the object the body reaches module state and Services() through. A
+  // method body leaves this "this" and emits implicit-`this` access; a fork
+  // branch (LRM 9.3.2) renders as an inline coroutine closure with no implicit
+  // `this`, so its body names the frame-copied receiver parameter `self`
+  // explicitly.
+  [[nodiscard]] auto WithReceiver(std::string_view object) const
+      -> RenderContext {
+    return RenderContext{
+        *unit_,
+        *scope_,
+        *proc_scope_,
+        procedural_parent_,
+        structural_parent_,
+        temp_counter_,
+        static_frame_,
+        in_coroutine_,
+        object};
   }
 
   RenderContext(const RenderContext&) = delete;
@@ -130,6 +157,35 @@ class RenderContext {
     return std::format("{}_{}", prefix, (*temp_counter_)++);
   }
 
+  // The object the current body reaches the enclosing scope instance through:
+  // `this` in a method body, `self` in a fork-branch closure body. Named where
+  // the object itself is spelled -- a spawned inner closure is invoked with it
+  // and captures it, so a nested fork passes `self` on down.
+  [[nodiscard]] auto ReceiverObject() const -> std::string_view {
+    return receiver_;
+  }
+
+  // The prefix every scope-member access carries. Always explicit -- `this->`
+  // in a method body, `self->` in a fork-branch closure body -- so a process
+  // body and a branch body render identically up to the receiver name.
+  [[nodiscard]] auto MemberPrefix() const -> std::string {
+    return std::string(receiver_) + "->";
+  }
+
+  // The C++ expression naming the RuntimeServices the body submits effects
+  // through (`this->Services()` / `self->Services()`).
+  [[nodiscard]] auto ServicesRef() const -> std::string {
+    return MemberPrefix() + "Services()";
+  }
+
+  // The capture clause of a `[=]`-default deferred lambda (NBA / `$strobe`)
+  // that also grabs the receiver. A `self` pointer is a local captured by the
+  // bare `[=]`; the `this` keyword must be named explicitly because C++20
+  // deprecates `[=]` capture of `this`.
+  [[nodiscard]] auto DeferredByValueCapture() const -> std::string_view {
+    return receiver_ == "this" ? "[=, this]" : "[=]";
+  }
+
  private:
   RenderContext(
       const mir::CompilationUnit& unit, const mir::StructuralScope& scope,
@@ -147,7 +203,8 @@ class RenderContext {
       const mir::ProceduralScope& proc_scope,
       const RenderContext* procedural_parent,
       const RenderContext* structural_parent, std::size_t* temp_counter,
-      std::string_view static_frame, bool in_coroutine)
+      std::string_view static_frame, bool in_coroutine,
+      std::string_view receiver)
       : unit_(&unit),
         scope_(&scope),
         proc_scope_(&proc_scope),
@@ -155,7 +212,8 @@ class RenderContext {
         structural_parent_(structural_parent),
         temp_counter_(temp_counter),
         static_frame_(static_frame),
-        in_coroutine_(in_coroutine) {
+        in_coroutine_(in_coroutine),
+        receiver_(receiver) {
   }
 
   const mir::CompilationUnit* unit_;
@@ -166,6 +224,7 @@ class RenderContext {
   std::size_t* temp_counter_;
   std::string_view static_frame_;
   bool in_coroutine_ = false;
+  std::string_view receiver_ = "this";
   mutable std::size_t owned_temp_counter_ = 0;
 };
 

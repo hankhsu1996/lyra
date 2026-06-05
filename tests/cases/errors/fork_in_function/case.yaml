@@ -1,0 +1,16 @@
+id: errors.fork_in_function
+tags: [errors, diag]
+input:
+  command: [emit, cpp]
+  project: false
+  top: Test
+  files: [main.sv]
+  args: ["--no-color"]
+expect:
+  exit: 1
+  stderr:
+    contains:
+      - "unsupported:"
+      - "fork-join block inside a function"
+    not_contains:
+      - "internal error"

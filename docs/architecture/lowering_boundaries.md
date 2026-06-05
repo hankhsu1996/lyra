@@ -33,6 +33,14 @@ set of allowed transformations.
 6. Lowering does not introduce new semantic identity. The target layer's identity kinds are defined
    by the target layer's contract; a lowering may only use identity kinds that belong to the input
    or output layer.
+7. The pipeline branches at MIR into two backends: the C++ emitter (MIR-to-C++, the path used today)
+   and the LIR-then-LLVM path. A backend emit makes no semantic decisions -- every semantic fact is
+   fixed in MIR -- and chooses only how to represent each MIR node in its target, a representation
+   fixed by the node's kind. The two backends represent the same node differently (a coroutine
+   method versus an LLVM coroutine frame) yet realize the same behaviour, which holds only because
+   neither adds, infers, or re-derives a semantic fact. MIR-to-C++ is not as mechanical as
+   LIR-to-LLVM -- it still chooses C++ forms for higher-level MIR nodes -- but the choice is a fixed
+   function of the node, never a judgement about what the program means.
 
 ## Boundary to Adjacent Layers
 

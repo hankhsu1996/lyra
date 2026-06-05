@@ -43,6 +43,21 @@ struct BlockStmt {
   std::vector<StmtId> statements;
 };
 
+// LRM 9.3.2 Table 9-1: which join keyword controls when the forking process
+// resumes.
+enum class JoinMode : std::uint8_t {
+  kAll,
+  kAny,
+  kNone,
+};
+
+// LRM 9.3.2 parallel block. Each branch is a statement run as its own
+// concurrent process; `mode` sets when the parent resumes.
+struct ForkStmt {
+  JoinMode mode;
+  std::vector<StmtId> branches;
+};
+
 enum class UniquePriorityCheck : std::uint8_t {
   kUnique,
   kUnique0,
@@ -228,7 +243,7 @@ struct WaitStmt {
 };
 
 using StmtData = std::variant<
-    EmptyStmt, VarDeclStmt, ExprStmt, BlockStmt, IfStmt, CaseStmt,
+    EmptyStmt, VarDeclStmt, ExprStmt, BlockStmt, ForkStmt, IfStmt, CaseStmt,
     CaseInsideStmt, ForStmt, WhileStmt, RepeatStmt, DoWhileStmt, ForeverStmt,
     BreakStmt, ContinueStmt, ReturnStmt, TimedStmt, EventTriggerStmt, WaitStmt>;
 

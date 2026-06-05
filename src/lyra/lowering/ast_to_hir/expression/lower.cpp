@@ -271,6 +271,13 @@ auto LowerNamedValueProc(
   const auto& var = sym.as<slang::ast::VariableSymbol>();
 
   if (auto local = proc_state.LookupProceduralVar(var)) {
+    if (proc_state.InForkBranch()) {
+      return diag::Unsupported(
+          span, diag::DiagCode::kUnsupportedForkJoinForm,
+          "a fork-join branch referencing a procedural variable is not yet "
+          "supported; branches may touch only module-scope signals",
+          diag::UnsupportedCategory::kFeature);
+    }
     const hir::TypeId type_id = proc_state.GetProceduralVarType(*local);
     return MakeRefExpr(hir::ProceduralVarRef{.var = *local}, type_id, span);
   }

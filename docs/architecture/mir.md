@@ -60,6 +60,12 @@ several possible backend targets for MIR, and does not define MIR's semantics.
 9. Instance multiplicity is the vector wrapper, a property of the member's type, and is orthogonal
    to whether the owned object is an intra-unit scope or an external unit. The same wrapper composes
    over either object form and to any depth.
+10. Every semantic decision is explicit in MIR's structure. MIR is consumed by more than one backend
+    -- the C++ emitter today, the LIR-then-LLVM path next -- and each chooses only how to represent
+    MIR's stated semantics in its target. A backend reads a semantic fact from a MIR node or
+    reference; it never re-derives or re-decides one. This is what lets two backends produce the
+    same behaviour from the same MIR: anything they would otherwise have to infer must already be
+    stated.
 
 ## Boundary to Adjacent Layers
 
@@ -90,6 +96,19 @@ several possible backend targets for MIR, and does not define MIR's semantics.
   source-level shape (e.g., `Inside(lhs, items)`, `CaseMatch(sel, labels)`). Sugar collapses to
   primitives in MIR; readability of generated backend source is not recovered by reintroducing
   intrinsic-style calls downstream.
+- A backend that recovers a semantic fact MIR does not state by inferring it from a node's body
+  contents or any side signal, instead of reading it from an explicit node or reference. Reading
+  which node consumes a value is reading structure and is allowed; scanning a body to decide what it
+  must be is re-deriving. If two backends could infer a fact differently, it is not yet in MIR and
+  belongs there.
+- A node field that no backend's realization reads, or that restates what the node's structural
+  context -- the nodes it references, or the node that consumes it -- already fixes. A node's fields
+  are the inputs to its fixed per-backend realization: a field a realization can ignore is dead, and
+  a field that duplicates what the surrounding structure already determines is redundant. Both are
+  the same defect from two sides -- the encoded fact is either absent from the structure (and
+  belongs there as structure) or already present (and the field is noise). The falsifiable check on
+  a new field is: does every backend's realization read it, and does it state something the
+  structure does not?
 
 ## Notes / Examples
 
@@ -122,3 +141,17 @@ expression set that decomposes the ternary. Value-build primitives for aggregate
 (concatenation, replication, structured literal, and similar) have no smaller decomposition. Select
 expressions are access primitives. Each of these stays in MIR for the same reason: removing it would
 require expanding into a statement-form rewrite that does not fit the expression context.
+
+A closure is a captured callable value: a capture list plus a procedural-scope body, the one IR
+shape for "a body bound to a snapshot of its environment, run later." A closure is synthesized only
+by HIR-to-MIR lowering; no source construct produces one. Its body reaches enclosing procedural
+state only through the captures, and reaches module-scope storage directly -- the way a lambda
+references globals without capture. The closure node carries nothing about how it executes: like a
+language-level lambda, it has no "suspends" property. Whether a closure runs synchronously or as a
+coroutine follows from its use, which is itself explicit in MIR -- a closure submitted as a deferred
+effect (a non-blocking assignment, a postponed `$strobe`) runs to completion in a later scheduling
+region; a closure referenced by a parallel block (a fork-join branch, LRM 9.3.2) is spawned as a
+concurrent process and therefore a coroutine. The capture model and the body are identical across
+both. A process, a subroutine, and a closure are the three callable forms whose bodies are all the
+same procedural scope; they differ only in how the body binds its environment and in how it is
+invoked.

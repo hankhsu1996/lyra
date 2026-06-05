@@ -1,0 +1,13 @@
+id: cpp.fork_branch_deferred_effects
+tags: [cpp_run]
+input:
+  command: [run, cpp]
+  project: false
+  top: Test
+  files: [main.sv]
+expect:
+  exit: 0
+  stdout:
+    exact: |
+      [0] strobe a=5
+      [10] after join a=9

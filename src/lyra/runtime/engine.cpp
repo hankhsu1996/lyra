@@ -109,6 +109,10 @@ void Engine::RegisterProcesses() {
         case ProcessKind::kFinal:
           queues_.finals.push_back(process.TopHandle());
           break;
+        case ProcessKind::kSpawned:
+          throw InternalError(
+              "Engine::RegisterProcesses: a spawned process must not appear in "
+              "static scope registration");
       }
     });
   });
@@ -289,11 +293,20 @@ void Engine::RunProcess(CoroutineHandle handle) {
         "Engine::RunProcess: process resumed outside runnable phase");
   }
   // No wait dispatch: each awaitable has already arranged its own wakeup path
-  // during await_suspend. The engine only observes "process completed or still
-  // suspended" and acts accordingly. Capture the owning process before
-  // resuming, since `handle` may be an enabled task's frame that is destroyed
-  // as control returns up the enable chain.
-  handle.promise().Process().ResumeWith(handle);
+  // during await_suspend. Capture the owning process before resuming, since
+  // `handle` may be an enabled task's frame that is destroyed as control
+  // returns up the enable chain.
+  RuntimeProcess& process = handle.promise().Process();
+  const bool completed = process.ResumeWith(handle);
+  // A spawned process (a fork-join branch) is owned by the engine for its
+  // dynamic lifetime; drop it the moment it finishes -- executor-standard
+  // drop-on-completion, co-located with the resume that completed it. Static
+  // processes are owned by their scope and outlive the simulation.
+  if (completed && process.Kind() == ProcessKind::kSpawned) {
+    std::erase_if(spawned_, [&](const std::unique_ptr<RuntimeProcess>& p) {
+      return p.get() == &process;
+    });
+  }
 }
 
 void Engine::RequestFinish(int) {  // NOLINT(readability-named-parameter)
@@ -332,6 +345,14 @@ void Engine::ScheduleNextDelta(CoroutineHandle handle) {
 
 void Engine::ScheduleAtTime(SimTime when, CoroutineHandle handle) {
   queues_.delayed[when].push_back(handle);
+}
+
+void Engine::Spawn(Coroutine coroutine) {
+  auto process = std::make_unique<RuntimeProcess>(
+      ProcessKind::kSpawned, std::move(coroutine));
+  const CoroutineHandle handle = process->TopHandle();
+  spawned_.push_back(std::move(process));
+  ScheduleActive(handle);
 }
 
 auto Engine::CheckedAdd(SimTime base, SimDuration delta) -> SimTime {
