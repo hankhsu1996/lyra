@@ -1406,6 +1406,11 @@ auto RenderClosureExpr(
                 return std::unexpected(std::move(value_or.error()));
               }
               return bind_name + " = " + *value_or;
+            },
+            [&](const mir::ByReferenceCapture&) -> diag::Result<std::string> {
+              throw InternalError(
+                  "RenderClosureExpr: by-reference capture appears only in a "
+                  "fork branch, which renders through RenderForkStmtNode");
             }},
         closure.captures[i]);
     if (!rendered_or) return std::unexpected(std::move(rendered_or.error()));

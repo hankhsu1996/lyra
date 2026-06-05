@@ -1170,6 +1170,19 @@ class MirDumper {
                       FormatExpr(enclosing, bv.value)));
               Dedent();
             },
+            [&](const ByReferenceCapture& br) {
+              Line(
+                  std::format(
+                      "[{}] ByReferenceCapture target=Expr[{}] binding="
+                      "ProceduralVarId{{{}}}",
+                      index, br.target.value, br.binding.value));
+              Indent();
+              Line(
+                  std::format(
+                      "Expr[{}] {}", br.target.value,
+                      FormatExpr(enclosing, br.target)));
+              Dedent();
+            },
         },
         capture);
   }

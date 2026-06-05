@@ -274,11 +274,17 @@ auto LowerNamedValueProc(
   const auto& var = sym.as<slang::ast::VariableSymbol>();
 
   if (auto local = proc_state.LookupProceduralVar(var)) {
-    if (proc_state.InForkBranch()) {
+    // A branch reaches its enclosing process's variables through a by-reference
+    // capture computed at HIR-to-MIR: the process activation outlives the
+    // spawned branch (LRM 6.21), so the shared storage stays live. A fork
+    // inside a task is deferred -- the task activation does not yet outlive its
+    // spawned branches.
+    if (proc_state.InForkBranch() && proc_state.ContainingSymbol().kind ==
+                                         slang::ast::SymbolKind::Subroutine) {
       return diag::Unsupported(
           span, diag::DiagCode::kUnsupportedForkJoinForm,
-          "a fork-join branch referencing a procedural variable is not yet "
-          "supported; branches may touch only module-scope signals",
+          "a fork-join branch inside a task referencing a procedural variable "
+          "is not yet supported",
           diag::UnsupportedCategory::kFeature);
     }
     const hir::TypeId type_id = proc_state.GetProceduralVarType(*local);

@@ -11,6 +11,6 @@ expect:
   stderr:
     contains:
       - "unsupported:"
-      - "fork-join branch referencing a procedural variable"
+      - "fork-join branch inside a task referencing a procedural variable"
     not_contains:
       - "internal error"
