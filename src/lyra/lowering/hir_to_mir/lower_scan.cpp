@@ -56,9 +56,17 @@ auto LowerScanSystemSubroutineCallStmt(
   ProceduralScopeLoweringState wrapper;
   ProceduralDepthGuard depth_guard{proc_state};
 
+  // Scan family rejects positional elision -- all source/format/output
+  // slots are required by LRM 21.3.4.3 syntax (slang enforces the count
+  // policy upstream).
+  if (!call.arguments[0].has_value() || !call.arguments[1].has_value()) {
+    throw InternalError(
+        "LowerScanSystemSubroutineCallStmt: scan source/format args "
+        "unexpectedly elided");
+  }
   auto source_or = LowerExpr(
       unit_state, scope_state, proc_state, wrapper, hir_proc,
-      hir_proc.exprs.at(call.arguments[0].value));
+      hir_proc.exprs.at(call.arguments[0]->value));
   if (!source_or) return std::unexpected(std::move(source_or.error()));
   const mir::TypeId source_type = source_or->type;
   mir::ExprId source_id = wrapper.AddExpr(*std::move(source_or));
@@ -104,7 +112,7 @@ auto LowerScanSystemSubroutineCallStmt(
 
   auto format_or = LowerExpr(
       unit_state, scope_state, proc_state, wrapper, hir_proc,
-      hir_proc.exprs.at(call.arguments[1].value));
+      hir_proc.exprs.at(call.arguments[1]->value));
   if (!format_or) return std::unexpected(std::move(format_or.error()));
   const mir::ExprId format_id = wrapper.AddExpr(*std::move(format_or));
 
@@ -116,10 +124,15 @@ auto LowerScanSystemSubroutineCallStmt(
   std::vector<mir::ExprId> slot_refs;
   slot_refs.reserve(call.arguments.size() - 2);
   for (std::size_t i = 2; i < call.arguments.size(); ++i) {
+    if (!call.arguments[i].has_value()) {
+      throw InternalError(
+          "LowerScanSystemSubroutineCallStmt: scan output arg unexpectedly "
+          "elided");
+    }
     const std::string temp_name = "_lyra_scan_dest_" + std::to_string(i - 2);
     auto slot_or = BuildOutputArgSlot(
         unit_state, scope_state, proc_state, wrapper, hir_proc,
-        call.arguments[i], temp_name);
+        *call.arguments[i], temp_name);
     if (!slot_or) return std::unexpected(std::move(slot_or.error()));
     slots.push_back(*slot_or);
     slot_refs.push_back(wrapper.AddExpr(

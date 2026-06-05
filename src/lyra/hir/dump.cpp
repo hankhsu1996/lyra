@@ -716,7 +716,11 @@ class HirDumper {
                 if (i != 0) {
                   args += ", ";
                 }
-                args += std::format("Expr[{}]", c.arguments[i].value);
+                if (c.arguments[i].has_value()) {
+                  args += std::format("Expr[{}]", c.arguments[i]->value);
+                } else {
+                  args += "<elided>";
+                }
               }
               return std::format(
                   "CallExpr callee={} args=[{}]", FormatSubroutineRef(c.callee),

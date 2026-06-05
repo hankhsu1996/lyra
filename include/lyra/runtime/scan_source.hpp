@@ -1,9 +1,10 @@
 #pragma once
 
 #include <cstddef>
-#include <fstream>
 #include <optional>
 #include <string_view>
+
+#include "lyra/runtime/file_table.hpp"
 
 namespace lyra::runtime {
 
@@ -47,16 +48,16 @@ class StringScanSource : public ScanSource {
   std::optional<int> pushback_ = std::nullopt;
 };
 
-// The scanner-local pushback (`peeked_`) holds a byte that has been read
-// from the underlying fstream into the scanner but not yet logically
-// consumed. `FlushPushback` must be called when the scanner finishes with
-// the source so any unconsumed byte (typically the "offending character"
+// Reads from a live FD slot. The scanner-local `peeked_` holds a byte the
+// scanner peeked but did not consume. `FlushPushback` must be called when
+// the scanner finishes so any leftover (typically the "offending character"
 // per LRM 21.3.4.3 "the offending input character is left unread in the
-// input stream") is pushed back into the fstream's putback buffer and
-// becomes observable to the next read on the same FD.
+// input stream") moves into the slot's putback and becomes observable to
+// the next $fgetc / $fgets / $fread / $fscanf on the same FD (LRM
+// 21.3.4.1).
 class FileScanSource : public ScanSource {
  public:
-  explicit FileScanSource(std::fstream& stream);
+  explicit FileScanSource(FileTable::FdSlot& slot);
 
   auto Peek() -> int override;
   auto Consume() -> int override;
@@ -65,7 +66,7 @@ class FileScanSource : public ScanSource {
   void FlushPushback();
 
  private:
-  std::fstream* stream_;
+  FileTable::FdSlot* slot_;
   std::optional<int> peeked_ = std::nullopt;
 };
 

@@ -388,7 +388,15 @@ auto LowerSubroutineCallWithWritebacks(
 
   for (std::size_t i = 0; i < call.arguments.size(); ++i) {
     const hir::ParamDirection dir = decl.params[i].direction;
-    const hir::Expr& hir_arg = hir_proc.exprs.at(call.arguments[i].value);
+    // User subroutine calls never elide positional args (LRM 13.5 -- only
+    // EmptyArgument-on-Assignment-right occurs for output params, already
+    // stripped in AST->HIR).
+    if (!call.arguments[i].has_value()) {
+      throw InternalError(
+          "LowerSubroutineCallWithWritebacks: user-call positional arg "
+          "unexpectedly elided");
+    }
+    const hir::Expr& hir_arg = hir_proc.exprs.at(call.arguments[i]->value);
 
     // input passes a value; ref / const ref alias the actual lvalue. Neither
     // copies back, so both pass the lowered actual directly with no temp

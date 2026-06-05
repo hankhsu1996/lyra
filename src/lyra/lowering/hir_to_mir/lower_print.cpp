@@ -47,9 +47,12 @@ auto LowerPrintSystemSubroutineCall(
     // LRM 21.3.2: the first argument of $fdisplay / $fwrite is an MCD/FD
     // descriptor; remaining arguments are the print payload. The runtime
     // decodes the bit pattern (MCD vs FD per LRM 21.3.1) at dispatch time.
+    if (!call.arguments[0].has_value()) {
+      throw InternalError("$f-print descriptor argument unexpectedly elided");
+    }
     auto lowered_or = LowerExpr(
         unit_state, scope_state, proc_state, proc_scope_state, hir_proc,
-        hir_proc.exprs.at(call.arguments[0].value));
+        hir_proc.exprs.at(call.arguments[0]->value));
     if (!lowered_or) return std::unexpected(std::move(lowered_or.error()));
     descriptor = proc_scope_state.AddExpr(*std::move(lowered_or));
     arg_offset = 1;

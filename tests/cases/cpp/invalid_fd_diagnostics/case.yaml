@@ -1,0 +1,27 @@
+id: cpp.invalid_fd_diagnostics
+tags: [cpp_run]
+input:
+  command: [run, cpp]
+  project: false
+  top: Top
+  files: [main.sv]
+expect:
+  exit: 0
+  variables:
+    getc_ret: -1
+    getc_errno: 9 # EBADF on Linux
+    getc_msg: "$fgetc: not an open file descriptor"
+    gets_ret: 0
+    gets_buf: ""
+    gets_errno: 9
+    gets_msg: "$fgets: not an open file descriptor"
+    fread_ret: 0
+    fread_errno: 9
+    fread_msg: "$fread: not an open file descriptor"
+    fscanf_ret: -1
+    fscanf_dest: 99
+    fscanf_errno: 9
+    fscanf_msg: "$fscanf: not an open file descriptor"
+    fscanf_msg_len: 36
+  files:
+    scratch.txt: ""

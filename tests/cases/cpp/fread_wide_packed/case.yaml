@@ -1,0 +1,18 @@
+id: cpp.fread_wide_packed
+tags: [cpp_run]
+input:
+  command: [run, cpp]
+  project: false
+  top: Top
+  files: [main.sv]
+expect:
+  exit: 0
+  variables:
+    n128: 16
+    n256: 32
+    n100: 13
+    n_partial: 4
+    v128: "128'h0123456789ABCDEFFEDCBA9876543210"
+    v256: "256'h000102030405060708090A0B0C0D0E0F101112131415161718191A1B1C1D1E1F"
+    v100: "100'hABCD123456789ABCDEF011223"
+    v_partial: "128'hDEADBEEF000000000000000000000000"

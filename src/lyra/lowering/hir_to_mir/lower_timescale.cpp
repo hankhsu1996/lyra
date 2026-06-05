@@ -7,6 +7,7 @@
 #include <string>
 #include <utility>
 
+#include "lyra/base/internal_error.hpp"
 #include "lyra/diag/diag_code.hpp"
 #include "lyra/diag/diagnostic.hpp"
 #include "lyra/hir/expr.hpp"
@@ -36,9 +37,13 @@ auto LowerTimeFormatSystemSubroutineCall(
     }
     std::array<mir::ExprId, 4> ids{};
     for (std::size_t i = 0; i < args.size(); ++i) {
+      if (!args[i].has_value()) {
+        throw InternalError(
+            "$timeformat positional argument unexpectedly elided");
+      }
       auto lowered = LowerExpr(
           unit_state, scope_state, proc_state, proc_scope_state, hir_proc,
-          hir_proc.exprs.at(args[i].value));
+          hir_proc.exprs.at(args[i]->value));
       if (!lowered) return std::unexpected(std::move(lowered.error()));
       ids.at(i) = proc_scope_state.AddExpr(*std::move(lowered));
     }

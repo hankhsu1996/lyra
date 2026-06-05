@@ -192,7 +192,18 @@ auto BuildRuntimePrintItemsFromCallArgs(
     FormatStringRequirement fmt_req, diag::SourceSpan call_span)
     -> diag::Result<std::vector<mir::RuntimePrintItem>> {
   std::vector<mir::RuntimePrintItem> items;
-  const auto& args = call.arguments;
+  // The print family does not permit positional elision; flatten the
+  // optional-bearing arg list once so the per-directive loop can pass plain
+  // ExprIds around. An elided slot here indicates a frontend or HIR-lowering
+  // bug -- elision is only legal at the $fread mem-form's start position.
+  std::vector<hir::ExprId> args;
+  args.reserve(call.arguments.size());
+  for (const auto& slot : call.arguments) {
+    if (!slot.has_value()) {
+      throw InternalError("print-family call argument is unexpectedly elided");
+    }
+    args.push_back(*slot);
+  }
   std::size_t cursor = arg_offset;
 
   std::optional<LiteralFormatStringRef> literal;

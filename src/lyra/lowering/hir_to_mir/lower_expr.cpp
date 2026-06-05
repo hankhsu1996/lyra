@@ -938,10 +938,17 @@ auto LowerHirCallExprProc(
             }
             std::vector<mir::ExprId> args;
             args.reserve(c.arguments.size());
-            for (const auto arg : c.arguments) {
+            for (const auto& arg : c.arguments) {
+              // User-function calls do not permit positional elision; the
+              // EmptyArgument-on-Assignment-right case for output params is
+              // already unwrapped to the lvalue in AST->HIR.
+              if (!arg.has_value()) {
+                throw InternalError(
+                    "user-function call argument unexpectedly elided");
+              }
               auto arg_or = LowerExpr(
                   unit_state, scope_state, proc_state, proc_scope_state,
-                  hir_process, hir_process.exprs.at(arg.value));
+                  hir_process, hir_process.exprs.at(arg->value));
               if (!arg_or) return std::unexpected(std::move(arg_or.error()));
               args.push_back(proc_scope_state.AddExpr(*std::move(arg_or)));
             }
@@ -957,14 +964,22 @@ auto LowerHirCallExprProc(
               throw InternalError(
                   "BuiltinMethodRef call has no receiver argument");
             }
+            if (!c.arguments.front().has_value()) {
+              throw InternalError(
+                  "BuiltinMethodRef receiver unexpectedly elided");
+            }
             const hir::TypeId hir_receiver_type =
-                hir_process.exprs.at(c.arguments.front().value).type;
+                hir_process.exprs.at(c.arguments.front()->value).type;
             std::vector<mir::ExprId> args;
             args.reserve(c.arguments.size());
-            for (const auto arg : c.arguments) {
+            for (const auto& arg : c.arguments) {
+              if (!arg.has_value()) {
+                throw InternalError(
+                    "builtin-method call argument unexpectedly elided");
+              }
               auto arg_or = LowerExpr(
                   unit_state, scope_state, proc_state, proc_scope_state,
-                  hir_process, hir_process.exprs.at(arg.value));
+                  hir_process, hir_process.exprs.at(arg->value));
               if (!arg_or) {
                 return std::unexpected(std::move(arg_or.error()));
               }

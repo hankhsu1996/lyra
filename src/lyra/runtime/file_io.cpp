@@ -1,9 +1,7 @@
 #include "lyra/runtime/file_io.hpp"
 
-#include <array>
 #include <cerrno>
 #include <cstdint>
-#include <cstring>
 #include <fstream>
 #include <functional>
 #include <ios>
@@ -15,8 +13,10 @@
 #include <string_view>
 #include <utility>
 #include <variant>
+#include <vector>
 
 #include "lyra/base/overloaded.hpp"
+#include "lyra/runtime/byte_codec.hpp"
 #include "lyra/runtime/file_table.hpp"
 #include "lyra/runtime/runtime_services.hpp"
 #include "lyra/runtime/stream_dispatcher.hpp"
@@ -144,18 +144,14 @@ auto MakeInt(std::int32_t v) -> value::PackedArray {
   return value::PackedArray::Int(v);
 }
 
-// LRM 21.3.7 / 21.3.8: record the most recent errno + textual description
-// for the given fd. Stdio sentinels and non-FD descriptors silently no-op.
-void StampError(
+// LRM 21.3.7: $ferror reports the most recent file-I/O error for an FD.
+// Stamp the descriptive message verbatim (naming the system task) so a
+// caller reading $ferror after a failure gets a useful string; the errno
+// is reported separately as the return value of $ferror.
+void Stamp(
     RuntimeServices& services, std::int32_t fd, int err,
-    std::string_view fallback) {
-  std::string msg;
-  if (err != 0) {
-    msg = std::strerror(err);
-  } else {
-    msg = std::string{fallback};
-  }
-  services.Files().SetError(fd, err, std::move(msg));
+    std::string_view message) {
+  services.Files().SetError(fd, err, std::string{message});
 }
 
 }  // namespace
@@ -163,16 +159,28 @@ void StampError(
 auto LyraFGetc(RuntimeServices& services, const value::PackedArray& fd_pa)
     -> value::PackedArray {
   const std::int32_t fd = AsInt32(fd_pa);
-  std::fstream* stream = services.Files().Resolve(fd);
-  if (stream == nullptr) {
-    StampError(services, fd, EBADF, "$fgetc: not an open file descriptor");
+  auto* slot = services.Files().ResolveSlot(fd);
+  if (slot == nullptr) {
+    Stamp(services, fd, EBADF, "$fgetc: not an open file descriptor");
     return MakeInt(-1);
   }
-  const int c = stream->get();
+  // LRM 21.3.4: read entries require an FD opened with r or r+ type.
+  if (!slot->permits_read) {
+    Stamp(services, fd, EBADF, "$fgetc: file not open for reading");
+    return MakeInt(-1);
+  }
+  // LRM 21.3.4.1: drain any byte left by $ungetc (or by the scanner's
+  // "offending character" pushback) before consulting the stream.
+  if (slot->putback.has_value()) {
+    const auto byte = static_cast<unsigned char>(*slot->putback);
+    slot->putback.reset();
+    return MakeInt(byte);
+  }
+  const int c = slot->file->get();
   if (c == std::char_traits<char>::eof()) {
     // LRM 21.3.4.1: EOF is signalled as -1 (wider than 8 bits so callers can
     // distinguish from 0xFF). fstream's eof bit is now set; $feof picks it up.
-    StampError(services, fd, 0, "$fgetc: EOF");
+    Stamp(services, fd, 0, "$fgetc: EOF");
     return MakeInt(-1);
   }
   return MakeInt(c & 0xFF);
@@ -182,18 +190,22 @@ auto LyraFUngetc(
     RuntimeServices& services, const value::PackedArray& c_pa,
     const value::PackedArray& fd_pa) -> value::PackedArray {
   const std::int32_t fd = AsInt32(fd_pa);
-  std::fstream* stream = services.Files().Resolve(fd);
-  if (stream == nullptr) {
-    StampError(services, fd, EBADF, "$ungetc: not an open file descriptor");
+  auto* slot = services.Files().ResolveSlot(fd);
+  if (slot == nullptr) {
+    Stamp(services, fd, EBADF, "$ungetc: not an open file descriptor");
     return MakeInt(-1);
   }
-  const auto byte = static_cast<char>(AsInt32(c_pa) & 0xFF);
-  stream->clear();
-  stream->putback(byte);
-  if (!stream->good()) {
-    StampError(services, fd, errno, "$ungetc: putback failed");
+  // LRM 21.3.4.1 NOTE: implementations may limit pushback depth. We keep a
+  // single-byte buffer per FD; a second $ungetc before any read returns
+  // EOF per "if an error occurs pushing a character ... code is set to
+  // EOF". Using a Lyra-side slot instead of std::fstream's putback area
+  // lifts libstdc++'s "must read first" restriction so $ungetc on a
+  // freshly-opened stream works as the LRM specifies.
+  if (slot->putback.has_value()) {
+    Stamp(services, fd, EAGAIN, "$ungetc: putback buffer full");
     return MakeInt(-1);
   }
+  slot->putback = static_cast<char>(AsInt32(c_pa) & 0xFF);
   return MakeInt(0);
 }
 
@@ -201,23 +213,38 @@ auto LyraFGets(
     RuntimeServices& services, value::String& dest,
     const value::PackedArray& fd_pa) -> value::PackedArray {
   const std::int32_t fd = AsInt32(fd_pa);
-  std::fstream* stream = services.Files().Resolve(fd);
-  if (stream == nullptr) {
-    StampError(services, fd, EBADF, "$fgets: not an open file descriptor");
+  auto* slot = services.Files().ResolveSlot(fd);
+  if (slot == nullptr) {
+    Stamp(services, fd, EBADF, "$fgets: not an open file descriptor");
     dest = value::String{};
     return MakeInt(0);
   }
-  // LRM 21.3.4.2: read up to and including newline OR until EOF. Trailing
-  // newline kept. fstream's getline strips the delimiter, so re-attach when
-  // we stopped on '\n' (vs hitting EOF).
+  if (!slot->permits_read) {
+    Stamp(services, fd, EBADF, "$fgets: file not open for reading");
+    dest = value::String{};
+    return MakeInt(0);
+  }
+  // LRM 21.3.4.2 + 21.3.4.1: byte-by-byte loop so any pending $ungetc
+  // byte is the first byte of the line. std::getline would bypass the
+  // slot-side putback.
   std::string line;
-  std::getline(*stream, line, '\n');
-  if (line.empty() && stream->eof()) {
-    StampError(services, fd, 0, "$fgets: EOF");
+  while (true) {
+    int c = 0;
+    if (slot->putback.has_value()) {
+      c = static_cast<unsigned char>(*slot->putback);
+      slot->putback.reset();
+    } else {
+      c = slot->file->get();
+    }
+    if (c == std::char_traits<char>::eof()) break;
+    line.push_back(static_cast<char>(c));
+    if (c == '\n') break;
+  }
+  if (line.empty()) {
+    Stamp(services, fd, 0, "$fgets: EOF");
     dest = value::String{};
     return MakeInt(0);
   }
-  if (!stream->eof()) line.push_back('\n');
   dest = value::String{line};
   return MakeInt(static_cast<std::int32_t>(line.size()));
 }
@@ -226,37 +253,116 @@ auto LyraFRead(
     RuntimeServices& services, value::PackedArray& dest,
     const value::PackedArray& fd_pa) -> value::PackedArray {
   const std::int32_t fd = AsInt32(fd_pa);
-  std::fstream* stream = services.Files().Resolve(fd);
-  if (stream == nullptr) {
-    StampError(services, fd, EBADF, "$fread: not an open file descriptor");
+  auto* slot = services.Files().ResolveSlot(fd);
+  if (slot == nullptr) {
+    Stamp(services, fd, EBADF, "$fread: not an open file descriptor");
+    return MakeInt(0);
+  }
+  if (!slot->permits_read) {
+    Stamp(services, fd, EBADF, "$fread: file not open for reading");
     return MakeInt(0);
   }
   const std::uint64_t width = dest.BitWidth();
-  if (width == 0U || width > 64U) {
-    StampError(services, fd, EINVAL, "$fread: bit width > 64 not supported");
+  if (width == 0U) {
+    Stamp(services, fd, EINVAL, "$fread: destination has zero bit width");
     return MakeInt(0);
   }
   const auto byte_count = static_cast<std::size_t>((width + 7U) / 8U);
-  std::array<char, 8> buf{};
-  stream->read(buf.data(), static_cast<std::streamsize>(byte_count));
-  const auto got = static_cast<std::size_t>(stream->gcount());
+  std::vector<char> buf(byte_count, '\0');
+  std::size_t pos = 0;
+  // LRM 21.3.4.1: any pending $ungetc byte is the next byte read from
+  // the FD; place it at the head of the buffer before consulting the
+  // stream.
+  if (slot->putback.has_value()) {
+    buf[pos++] = *slot->putback;
+    slot->putback.reset();
+  }
+  const auto rest = std::span<char>(buf).subspan(pos);
+  slot->file->read(rest.data(), static_cast<std::streamsize>(rest.size()));
+  const auto got = pos + static_cast<std::size_t>(slot->file->gcount());
   if (got == 0U) {
-    StampError(services, fd, 0, "$fread: EOF");
+    Stamp(services, fd, 0, "$fread: EOF");
     return MakeInt(0);
   }
-  // LRM 21.3.4.4: big-endian (first byte read fills the MSBs). Partial reads
-  // place the bytes we did get into the destination's MSBs and leave the
-  // remainder zero; this matches the LRM "as much as available" reading.
-  std::int64_t value = 0;
-  for (std::size_t i = 0; i < byte_count; ++i) {
-    const auto byte = i < got ? static_cast<unsigned char>(buf.at(i)) : 0U;
-    value = static_cast<std::int64_t>(
-        (static_cast<std::uint64_t>(value) << 8U) |
-        static_cast<std::uint64_t>(byte));
-  }
-  dest = value::PackedArray::FromInt(
-      value, width, dest.IsSigned(), dest.IsFourState());
+  // LRM 21.3.4.4: 2-value, big-endian (first byte fills the MSBs). On a
+  // short read, the trailing buffer is already zero from the vector
+  // constructor and lands in the destination's LSBs ("as much as
+  // available"). BytesToPackedArray supports any width; the destination's
+  // declared shape (sign / 4-state) is preserved.
+  dest = BytesToPackedArray(buf, width, dest.IsSigned(), dest.IsFourState());
   return MakeInt(static_cast<std::int32_t>(got));
+}
+
+auto LyraFRead(
+    RuntimeServices& services, value::UnpackedArray<value::PackedArray>& dest,
+    const value::PackedArray& fd_pa, std::optional<std::int64_t> sv_start,
+    std::optional<std::int64_t> count, std::int64_t declared_left,
+    std::int64_t declared_right) -> value::PackedArray {
+  const std::int32_t fd = AsInt32(fd_pa);
+  auto* slot = services.Files().ResolveSlot(fd);
+  if (slot == nullptr) {
+    Stamp(services, fd, EBADF, "$fread: not an open file descriptor");
+    return MakeInt(0);
+  }
+  if (!slot->permits_read) {
+    Stamp(services, fd, EBADF, "$fread: file not open for reading");
+    return MakeInt(0);
+  }
+  if (dest.Size() == 0U) return MakeInt(0);
+
+  const bool ascending = declared_left <= declared_right;
+  const auto lowest_sv = std::min(declared_left, declared_right);
+  const auto highest_sv = std::max(declared_left, declared_right);
+  const auto start_sv = sv_start.value_or(lowest_sv);
+  // LRM 21.3.4.4: out-of-range start has no defined behaviour. Stamp EBADF
+  // and return 0 so the user sees the failure rather than a silent no-op.
+  if (start_sv < lowest_sv || start_sv > highest_sv) {
+    Stamp(services, fd, EINVAL, "$fread: start index out of array range");
+    return MakeInt(0);
+  }
+  const auto available_elements =
+      static_cast<std::size_t>(highest_sv - start_sv + 1);
+  const auto target_count =
+      count.has_value()
+          ? std::min(static_cast<std::size_t>(*count), available_elements)
+          : available_elements;
+
+  const auto element_width = dest.RawAt(0).BitWidth();
+  const bool elem_signed = dest.RawAt(0).IsSigned();
+  const bool elem_four_state = dest.RawAt(0).IsFourState();
+  const auto bytes_per_elem =
+      static_cast<std::size_t>((element_width + 7U) / 8U);
+  std::size_t total_bytes = 0;
+
+  for (std::size_t k = 0; k < target_count; ++k) {
+    std::vector<char> buf(bytes_per_elem, '\0');
+    std::size_t pos = 0;
+    // LRM 21.3.4.1: drain any $ungetc-deposited byte only on the very first
+    // element's first byte; subsequent bytes come straight from the stream.
+    if (k == 0 && slot->putback.has_value()) {
+      buf[pos++] = *slot->putback;
+      slot->putback.reset();
+    }
+    const auto rest = std::span<char>(buf).subspan(pos);
+    slot->file->read(rest.data(), static_cast<std::streamsize>(rest.size()));
+    const auto got_this = pos + static_cast<std::size_t>(slot->file->gcount());
+    if (got_this == 0U) break;
+    // Partial element gets LSB zero-padding via BytesToPackedArray's
+    // "shorter input -> trailing zeros" path -- consistent with the
+    // packed form's "as much as available" behaviour.
+    auto effective = std::span<const char>(buf).first(got_this);
+    auto elem_value = BytesToPackedArray(
+        effective, element_width, elem_signed, elem_four_state);
+    const std::int64_t sv_index = start_sv + static_cast<std::int64_t>(k);
+    const std::int64_t storage_idx =
+        ascending ? (sv_index - declared_left) : (declared_left - sv_index);
+    dest.ElementAt(
+        value::PackedArray::Int(static_cast<std::int32_t>(storage_idx))) =
+        std::move(elem_value);
+    total_bytes += got_this;
+    if (got_this < bytes_per_elem) break;
+  }
+  return MakeInt(static_cast<std::int32_t>(total_bytes));
 }
 
 auto LyraFSeek(
@@ -264,9 +370,9 @@ auto LyraFSeek(
     const value::PackedArray& offset, const value::PackedArray& operation)
     -> value::PackedArray {
   const std::int32_t fd = AsInt32(fd_pa);
-  std::fstream* stream = services.Files().Resolve(fd);
-  if (stream == nullptr) {
-    StampError(services, fd, EBADF, "$fseek: not an open file descriptor");
+  auto* slot = services.Files().ResolveSlot(fd);
+  if (slot == nullptr) {
+    Stamp(services, fd, EBADF, "$fseek: not an open file descriptor");
     return MakeInt(-1);
   }
   const auto offset_v = static_cast<std::streamoff>(AsInt32(offset));
@@ -282,16 +388,20 @@ auto LyraFSeek(
       dir = std::ios_base::end;
       break;
     default:
-      StampError(services, fd, EINVAL, "$fseek: operation must be 0, 1, or 2");
+      Stamp(services, fd, EINVAL, "$fseek: operation must be 0, 1, or 2");
       return MakeInt(-1);
   }
-  stream->clear();
-  stream->seekg(offset_v, dir);
-  stream->seekp(offset_v, dir);
-  if (stream->fail()) {
-    StampError(services, fd, errno, "$fseek: seek failed");
+  auto& stream = *slot->file;
+  stream.clear();
+  stream.seekg(offset_v, dir);
+  stream.seekp(offset_v, dir);
+  if (stream.fail()) {
+    Stamp(services, fd, errno, "$fseek: seek failed");
     return MakeInt(-1);
   }
+  // LRM 21.3.5: "Repositioning the current file position with $fseek or
+  // $rewind shall cancel any $ungetc operations."
+  slot->putback.reset();
   return MakeInt(0);
 }
 
@@ -305,12 +415,12 @@ auto LyraFTell(RuntimeServices& services, const value::PackedArray& fd_pa)
   const std::int32_t fd = AsInt32(fd_pa);
   std::fstream* stream = services.Files().Resolve(fd);
   if (stream == nullptr) {
-    StampError(services, fd, EBADF, "$ftell: not an open file descriptor");
+    Stamp(services, fd, EBADF, "$ftell: not an open file descriptor");
     return MakeInt(-1);
   }
   const auto pos = stream->tellg();
   if (pos == std::fstream::pos_type{-1}) {
-    StampError(services, fd, errno, "$ftell: tell failed");
+    Stamp(services, fd, errno, "$ftell: tell failed");
     return MakeInt(-1);
   }
   return MakeInt(static_cast<std::int32_t>(pos));

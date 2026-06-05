@@ -1,0 +1,26 @@
+id: cpp.read_mode_enforcement
+tags: [cpp_run]
+input:
+  command: [run, cpp]
+  project: false
+  top: Top
+  files: [main.sv]
+expect:
+  exit: 0
+  variables:
+    getc_ret: -1
+    getc_err_code: 9 # EBADF on Linux
+    getc_err_msg: "$fgetc: file not open for reading"
+    gets_ret: 0
+    gets_buf: ""
+    gets_err_code: 9
+    gets_err_msg: "$fgets: file not open for reading"
+    fread_ret: 0
+    fread_err_code: 9
+    fread_err_msg: "$fread: file not open for reading"
+    fscanf_ret: -1
+    fscanf_err_code: 9
+    fscanf_err_msg: "$fscanf: file not open for reading"
+    rw_first_byte: 88
+  files:
+    data.txt: "X"
