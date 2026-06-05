@@ -1,0 +1,13 @@
+id: cpp.fork_branch_outer_static
+tags: [cpp_run]
+input:
+  command: [run, cpp]
+  project: false
+  top: Test
+  files: [main.sv]
+expect:
+  exit: 0
+  stdout:
+    exact: |
+      [10] read x=5
+      [20] after join x=7

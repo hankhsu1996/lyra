@@ -25,6 +25,7 @@
 #include "lyra/hir/unary_op.hpp"
 #include "lyra/hir/value_ref.hpp"
 #include "lyra/lowering/hir_to_mir/default_value.hpp"
+#include "lyra/lowering/hir_to_mir/fork_capture.hpp"
 #include "lyra/lowering/hir_to_mir/inside_predicate.hpp"
 #include "lyra/lowering/hir_to_mir/lower_system_subroutine.hpp"
 #include "lyra/lowering/hir_to_mir/state.hpp"
@@ -274,6 +275,19 @@ auto LowerStructuralVarRefExpr(
 auto LowerProceduralVarRefExpr(
     const ProcessLoweringState& proc_state, const hir::ProceduralVarRef& l,
     mir::TypeId type) -> mir::Expr {
+  // Inside a fork branch body, a reference that resolves to an enclosing scope
+  // (declared above the branch boundary) is captured by reference as the body
+  // is lowered (LRM 6.21), so it reads the binding rather than reaching out.
+  if (auto* sink = proc_state.ActiveForkCaptureSink()) {
+    const auto& binding = proc_state.LookupProceduralVar(l.var);
+    if (binding.declaration_procedural_depth < sink->BoundaryDepth()) {
+      return mir::Expr{
+          .data = sink->Capture(
+              binding.var, binding.declaration_procedural_depth, type,
+              proc_state.CurrentProceduralDepth()),
+          .type = type};
+    }
+  }
   return mir::Expr{
       .data = proc_state.TranslateProceduralVar(l.var), .type = type};
 }

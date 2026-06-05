@@ -31,6 +31,27 @@ of the same wait -- resume after zero completions -- `join_any` the one-completi
 the all-completions case; they are one mechanism parameterized by a threshold, not three separate
 constructs.
 
+A branch reads and writes the variables of its enclosing scope. The enclosing scope's lifetime
+encompasses the execution of every process the fork spawns (LRM 6.21), so the storage a branch
+reaches stays alive for as long as that branch runs -- even a detached `join_none` / `join_any`
+branch that textually outlives the fork statement. What a branch may safely reach then follows from
+where that storage lives:
+
+- A variable of an enclosing process (`initial` / `always` / `final`) is reached for shared read and
+  write. The process activation outlives the simulation, so a branch under any join mode shares the
+  one live location, observing the value current when it executes. The LRM 9.3.2 loop example relies
+  on this: a branch reads the enclosing loop variable after the loop has finished and sees its final
+  value.
+- Per-iteration data uses an automatic variable declared in the fork's `block_item_declaration`,
+  initialized on entry to the block before any process is spawned, so each spawned process captures
+  its own copy by value.
+- Referring to a subroutine's by-reference formal argument from a `join_any` / `join_none` branch is
+  illegal unless the formal is declared `ref static` (LRM 9.3.2); the frontend rejects it, so it
+  never reaches lowering.
+- The one case LRM 6.21 mandates that is not yet built: an automatic local of an enclosing task
+  reached by a detached branch. The task activation must outlive the spawned branch -- the runtime
+  guarantees this for process activations but not yet for task activations.
+
 ## Sub-Steps
 
 ### Spawning and the join condition
@@ -40,10 +61,9 @@ constructs.
       (`join_any`), or immediately (`join_none`). The LRM 9.3.2 ordering rule holds -- spawned
       processes do not run until the parent blocks at the join or terminates. Branches carry their
       own delay so the three join modes are observable (the parent resumes after the slowest, the
-      earliest, or not at all). Branches read and write module-scope signals only; a branch that
-      references a procedural variable and a named fork block are rejected with a diagnostic rather
-      than miscompiled. A fork inside a task is supported; a fork inside a function stays rejected
-      (a function cannot suspend). Per-branch local storage and the loop-spawn idiom ride on FJ4.
+      earliest, or not at all). A named fork block is rejected with a diagnostic (FJ5); a fork
+      inside a function stays rejected (a function cannot suspend), while a fork inside a task is
+      supported. How a branch reaches its enclosing scope's variables is FJ4.
 
 ### Timing across branches
 
@@ -62,12 +82,16 @@ constructs.
 
 ### Per-branch storage
 
-- [ ] FJ4 -- Variables declared in the fork block scope are initialized on entry, before any process
-      is spawned (LRM 9.3.2). The loop-spawn idiom -- a fork inside a loop whose branch declares an
-      automatic local capturing the loop variable -- gives each spawned process its own
-      per-iteration copy. In `join_any` / `join_none` blocks it is illegal to refer to a
-      subroutine's formal arguments by reference except in those initializers, unless the formal is
-      declared `ref static` (LRM 9.3.2).
+- [ ] FJ4 -- A fork branch reads and writes the variables of its enclosing process, lifting the FJ1
+      restriction to module-scope signals. The branch shares the one live location under every join
+      mode, observing the value current when it executes (LRM 6.21, 9.3.2). Per-iteration data comes
+      from an automatic variable declared in the fork's `block_item_declaration`, initialized on
+      block entry before any process is spawned -- the loop-spawn idiom captures its own copy by
+      value (LRM 9.3.2). A reference to a subroutine's by-reference formal argument from a
+      `join_any` / `join_none` branch is rejected unless declared `ref static` (LRM 9.3.2), and the
+      frontend already rejects it. Deferred: an automatic local of an enclosing task reached by a
+      detached branch -- LRM 6.21 requires the task activation to outlive the branch, which the
+      runtime does for processes but not yet for task activations.
 
 ### Naming
 

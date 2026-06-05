@@ -110,11 +110,13 @@ auto RenderForkJoinModeLiteral(mir::JoinMode mode) -> std::string_view {
 }
 
 // LRM 9.3.2: each branch is an anonymous ClosureExpr spawned as a concurrent
-// coroutine. It renders inline at the fork as a stateless lambda taking the
-// enclosing scope instance as a by-value `self` parameter -- a parameter is
-// frame-copied, so the spawned coroutine never outlives a captured receiver the
-// way a `[this]` capture would -- through which its body reaches module state
-// and Services(). The fork waits per the join mode.
+// coroutine. It renders inline at the fork as a stateless lambda whose
+// parameters are frame-copied -- so the spawned coroutine never dangles the way
+// a captured lambda would. The first parameter is the enclosing scope instance
+// `self`, through which the body reaches module state and Services(); each
+// closure capture adds one more parameter (a `T&` bound to an enclosing
+// variable for a by-reference capture, a `T` for a by-value capture). The fork
+// waits per the join mode.
 auto RenderForkStmtNode(
     const RenderContext& ctx, const mir::ForkStmt& s, std::size_t indent)
     -> diag::Result<std::string> {
@@ -133,16 +135,43 @@ auto RenderForkStmtNode(
       throw InternalError(
           "RenderForkStmtNode: fork branch closure has no body");
     }
+    std::string params = class_name + "* self";
+    std::string args{receiver_object};
+    for (const auto& capture : closure->captures) {
+      mir::ProceduralVarId binding{};
+      std::string ref_marker;
+      std::string arg;
+      if (const auto* by_ref = std::get_if<mir::ByReferenceCapture>(&capture)) {
+        binding = by_ref->binding;
+        ref_marker = "& ";
+        auto target_or = RenderExpr(ctx, ctx.Expr(by_ref->target));
+        if (!target_or) return std::unexpected(std::move(target_or.error()));
+        arg = *std::move(target_or);
+      } else {
+        const auto& by_value = std::get<mir::ByValueCapture>(capture);
+        binding = by_value.binding;
+        ref_marker = " ";
+        auto value_or = RenderExpr(ctx, ctx.Expr(by_value.value));
+        if (!value_or) return std::unexpected(std::move(value_or.error()));
+        arg = *std::move(value_or);
+      }
+      const auto& bind = closure->body->vars.at(binding.value);
+      auto type_or =
+          RenderTypeAsCpp(ctx.Unit(), ctx.StructuralScope(), bind.type);
+      if (!type_or) return std::unexpected(std::move(type_or.error()));
+      params += ", " + *type_or + ref_marker + bind.name;
+      args += ", " + arg;
+    }
     const RenderContext branch_ctx = ctx.WithProceduralScope(*closure->body)
                                          .WithCoroutine(true)
                                          .WithReceiver("self");
     auto body_or = RenderProceduralScopeStatements(branch_ctx, indent + 2);
     if (!body_or) return std::unexpected(std::move(body_or.error()));
-    out += Indent(indent + 1) + vec + ".push_back([](" + class_name +
-           "* self) -> lyra::runtime::Coroutine {\n";
+    out += Indent(indent + 1) + vec + ".push_back([](" + params +
+           ") -> lyra::runtime::Coroutine {\n";
     out += *body_or;
     out += Indent(indent + 2) + "co_return;\n";
-    out += Indent(indent + 1) + "}(" + receiver_object + "));\n";
+    out += Indent(indent + 1) + "}(" + args + "));\n";
   }
   out += Indent(indent + 1) + "co_await lyra::runtime::Fork(" +
          ctx.ServicesRef() + ", std::move(" + vec + "), " +

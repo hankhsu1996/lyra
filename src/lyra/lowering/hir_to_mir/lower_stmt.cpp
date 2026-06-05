@@ -23,6 +23,7 @@
 #include "lyra/lowering/hir_to_mir/copy_out_desugar.hpp"
 #include "lyra/lowering/hir_to_mir/default_value.hpp"
 #include "lyra/lowering/hir_to_mir/delay_time_resolver.hpp"
+#include "lyra/lowering/hir_to_mir/fork_capture.hpp"
 #include "lyra/lowering/hir_to_mir/inside_predicate.hpp"
 #include "lyra/lowering/hir_to_mir/lower_deferred_check.hpp"
 #include "lyra/lowering/hir_to_mir/lower_expr.hpp"
@@ -638,13 +639,32 @@ auto LowerJoinMode(hir::JoinMode mode) -> mir::JoinMode {
   return mir::JoinMode::kAll;
 }
 
+// True if a fork branch declares a procedural local anywhere in its body. A
+// branch-local initializer that reads an enclosing variable needs a by-value
+// snapshot (the loop-spawn idiom), which is not yet supported; until then a
+// branch that declares a local is rejected rather than risk sharing an
+// enclosing automatic by reference where the LRM wants a per-spawn copy.
+auto ForkBranchDeclaresLocal(const mir::ProceduralScope& scope) -> bool {
+  for (const auto& s : scope.stmts) {
+    if (std::holds_alternative<mir::ProceduralVarDeclStmt>(s.data)) {
+      return true;
+    }
+    for (const auto& child : s.child_procedural_scopes) {
+      if (ForkBranchDeclaresLocal(child)) {
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
 // LRM 9.3.2: each parallel statement becomes a concurrent process. Each branch
-// lowers to a closure -- a captured callable value with (for FJ1) an empty
-// capture list -- composed into the enclosing scope's expr arena, exactly as
-// the NBA deferred-write closure is composed. The ForkStmt then references the
-// branch closures by id; it owns no nested scopes. The closure runs as a
-// coroutine by virtue of being a fork branch (spawned), not by any property of
-// the closure node.
+// lowers to a closure -- a captured callable value -- composed into the
+// enclosing scope's expr arena, exactly as the NBA deferred-write closure is
+// composed. References to the enclosing process's variables become by-reference
+// captures (LRM 6.21). The ForkStmt then references the branch closures by id;
+// it owns no nested scopes. The closure runs as a coroutine by virtue of being
+// a fork branch (spawned), not by any property of the closure node.
 auto LowerForkStmt(
     const UnitLoweringState& unit_state,
     const StructuralScopeLoweringState& scope_state,
@@ -658,9 +678,20 @@ auto LowerForkStmt(
     const hir::Stmt& branch = hir_proc.stmts.at(branch_hir_id.value);
     ProceduralScopeLoweringState branch_scope_state;
     ProceduralDepthGuard depth_guard{proc_state};
+
+    // Collect the branch's by-reference captures as its body is lowered: a body
+    // reference resolving above this boundary depth routes through the sink,
+    // which composes the capture and binding on the spot (LRM 6.21). A nested
+    // fork restores the prior sink on exit.
+    ForkCaptureSink sink{
+        proc_state.CurrentProceduralDepth(), branch_scope_state,
+        proc_scope_state};
+    ForkCaptureSink* const previous_sink = proc_state.ActiveForkCaptureSink();
+    proc_state.SetForkCaptureSink(&sink);
     auto lowered = LowerStmt(
         unit_state, scope_state, proc_state, branch_scope_state, hir_proc,
         branch);
+    proc_state.SetForkCaptureSink(previous_sink);
     if (!lowered) {
       return std::unexpected(std::move(lowered.error()));
     }
@@ -668,9 +699,18 @@ auto LowerForkStmt(
         branch_scope_state.AddStmt(*std::move(lowered));
     branch_scope_state.AddRootStmt(branch_stmt_id);
 
+    mir::ProceduralScope body = branch_scope_state.Finish();
+    if (ForkBranchDeclaresLocal(body)) {
+      return diag::Unsupported(
+          stmt.span, diag::DiagCode::kUnsupportedForkJoinForm,
+          "a fork-join branch that declares a local variable is not yet "
+          "supported",
+          diag::UnsupportedCategory::kFeature);
+    }
+
     mir::ClosureExpr closure;
-    closure.body =
-        std::make_unique<mir::ProceduralScope>(branch_scope_state.Finish());
+    closure.captures = sink.TakeCaptures();
+    closure.body = std::make_unique<mir::ProceduralScope>(std::move(body));
     branch_ids.push_back(proc_scope_state.AddExpr(
         mir::Expr{
             .data = std::move(closure),
