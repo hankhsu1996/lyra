@@ -424,6 +424,7 @@ struct ProceduralVarBinding {
 };
 
 class ProceduralScopeLoweringState;
+class ForkCaptureSink;
 
 class ProcessLoweringState {
  public:
@@ -513,11 +514,24 @@ class ProcessLoweringState {
     };
   }
 
+  // The capture sink active while a fork branch body is lowered, or null. A
+  // branch-body reference resolving above the branch boundary routes through it
+  // so the closure's by-reference captures are composed as the body is built
+  // (LRM 6.21). Fork lowering installs it; the const expr lowering only reads
+  // it.
+  void SetForkCaptureSink(ForkCaptureSink* sink) {
+    fork_capture_sink_ = sink;
+  }
+  [[nodiscard]] auto ActiveForkCaptureSink() const -> ForkCaptureSink* {
+    return fork_capture_sink_;
+  }
+
  private:
   TimeResolution time_resolution_;
   std::uint32_t procedural_depth_ = 0;
   std::vector<ProceduralVarBinding> bindings_;
   ProceduralScopeLoweringState* static_frame_scope_ = nullptr;
+  ForkCaptureSink* fork_capture_sink_ = nullptr;
   std::vector<mir::StaticLocal> static_locals_;
 };
 

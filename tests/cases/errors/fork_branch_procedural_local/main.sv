@@ -1,9 +1,11 @@
 `timescale 1ns / 1ns
 module Test;
-  initial begin
-    int x = 5;
+  task automatic run_branches();
+    automatic int x = 5;
     fork
       #10 $display("%0d", x);
     join
-  end
+  endtask
+
+  initial run_branches();
 endmodule

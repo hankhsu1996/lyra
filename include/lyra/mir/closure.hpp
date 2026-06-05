@@ -16,7 +16,17 @@ struct ByValueCapture {
   ProceduralVarId binding{};
 };
 
-using Capture = std::variant<ByValueCapture>;
+// A by-reference capture binds the body's `binding` var to an enclosing-scope
+// lvalue (`target`). The spawned body reaches it through a frame-copied
+// reference parameter; the enclosing storage outlives the body (LRM 6.21), so
+// reads and writes share the one live location. Used by fork branches that
+// touch their enclosing process's variables.
+struct ByReferenceCapture {
+  ExprId target{};
+  ProceduralVarId binding{};
+};
+
+using Capture = std::variant<ByValueCapture, ByReferenceCapture>;
 
 // A callable value with captured state and a procedural body.
 //
@@ -27,7 +37,8 @@ using Capture = std::variant<ByValueCapture>;
 // Invariants enforced by lowering (violations are compiler-bug class):
 //   1. Each capture's binding is a ProceduralVarId valid in body.vars and is
 //      unique across the capture list.
-//   2. Bindings are read-only inside body.
+//   2. A ByValueCapture binding is read-only inside body. A ByReferenceCapture
+//      binding may be read and written -- it aliases the enclosing storage.
 //   3. ProceduralVarRef inside body uses hops bounded by body's own scope
 //      nesting and does not escape into the enclosing process scope. Outer
 //      procedural state reaches body only through captures.
