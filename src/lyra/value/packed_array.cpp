@@ -9,6 +9,7 @@
 #include <string_view>
 #include <utility>
 #include <variant>
+#include <vector>
 
 #include "lyra/base/internal_error.hpp"
 #include "lyra/value/packed.hpp"
@@ -184,6 +185,33 @@ auto PackedArray::FromWords(
     bool is_signed, bool is_four_state) -> PackedArray {
   return MakeFromWordPlanes(
       bit_width, is_signed, is_four_state, value_words, unknown_words);
+}
+
+auto PackedArray::FromBytes(
+    std::span<const char> bytes, std::uint64_t bit_width, bool is_signed,
+    bool is_four_state) -> PackedArray {
+  const auto word_count = static_cast<std::size_t>((bit_width + 63U) / 64U);
+  std::vector<std::uint64_t> val_words(word_count, 0U);
+  const auto total_input_bits = static_cast<std::uint64_t>(bytes.size()) * 8U;
+  const auto bits_to_use = std::min<std::uint64_t>(total_input_bits, bit_width);
+  // LRM 5.9 / 21.3.4.4: walk input bits MSB-first. The i-th input bit lands
+  // at destination bit position (bit_width - 1 - i); the source bit is byte
+  // (i / 8)'s (7 - i % 8) position. Excess input bits never enter the loop;
+  // shortfalls leave trailing val_words bits at zero from construction.
+  for (std::uint64_t i = 0; i < bits_to_use; ++i) {
+    const auto byte =
+        static_cast<std::uint64_t>(static_cast<unsigned char>(bytes[i / 8U]));
+    const auto src_shift = 7U - (i % 8U);
+    if (((byte >> src_shift) & 1U) != 0U) {
+      const auto bit_pos = bit_width - 1U - i;
+      const auto word_ix = static_cast<std::size_t>(bit_pos / 64U);
+      const auto bit_ix = static_cast<std::size_t>(bit_pos % 64U);
+      val_words[word_ix] |= std::uint64_t{1} << bit_ix;
+    }
+  }
+  return PackedArray::FromWords(
+      std::span<const std::uint64_t>{val_words},
+      std::span<const std::uint64_t>{}, bit_width, is_signed, is_four_state);
 }
 
 auto PackedArray::BitWidth() const -> std::uint64_t {

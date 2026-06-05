@@ -3,6 +3,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <format>
+#include <optional>
 #include <span>
 #include <string>
 #include <string_view>
@@ -649,35 +650,51 @@ auto RenderRealToIntegralConversion(
       RenderPackedArrayCtorArgs(dst_pa));
 }
 
+// Peephole: a same-width / same-signedness integer-literal conversion that
+// only flips the state axis (4-state <-> 2-state, no X/Z loss) folds to the
+// literal in the destination shape -- no runtime ConvertFrom needed. Returns
+// nullopt when the conversion is not eligible; the main dispatch then runs.
+auto TryFoldLiteralIntegerConversion(
+    const RenderContext& ctx, const mir::Expr& expr,
+    const mir::ConversionExpr& cv) -> std::optional<std::string> {
+  const auto& src_expr = ctx.Expr(cv.operand);
+  const auto* lit = std::get_if<mir::IntegerLiteral>(&src_expr.data);
+  if (lit == nullptr) return std::nullopt;
+  const auto& src_ty = ctx.Unit().GetType(src_expr.type);
+  const auto& dst_ty = ctx.Unit().GetType(expr.type);
+  if (!src_ty.IsIntegralPacked() || !dst_ty.IsIntegralPacked() ||
+      src_ty.IsEnum() || dst_ty.IsEnum()) {
+    return std::nullopt;
+  }
+  const auto& src_pa = src_ty.AsIntegralPacked();
+  const auto& dst_pa = dst_ty.AsIntegralPacked();
+  if (src_pa.BitWidth() != dst_pa.BitWidth() ||
+      src_pa.signedness != dst_pa.signedness) {
+    return std::nullopt;
+  }
+  const bool literal_has_xz =
+      !lit->value.state_words.empty() && lit->value.state_words[0] != 0U;
+  const bool dst_two_state = dst_pa.atom == mir::BitAtom::kBit;
+  if (literal_has_xz && dst_two_state) return std::nullopt;
+  return RenderPackedArrayIntegerLiteral(dst_pa, lit->value);
+}
+
 auto RenderConversionExpr(
     const RenderContext& ctx, const mir::Expr& expr,
     const mir::ConversionExpr& cv) -> diag::Result<std::string> {
+  if (auto folded = TryFoldLiteralIntegerConversion(ctx, expr, cv);
+      folded.has_value()) {
+    return *std::move(folded);
+  }
+
   const auto& src_expr = ctx.Expr(cv.operand);
   const auto& src_ty = ctx.Unit().GetType(src_expr.type);
   const auto& dst_ty = ctx.Unit().GetType(expr.type);
-
-  // Fold a conversion that only restates an integer literal in a same-width,
-  // same-signedness shape (the state axis differs): emit the literal directly
-  // in the destination shape instead of wrapping a runtime ConvertFrom around
-  // it. A width or signedness change keeps the conversion; a 4-state literal
-  // carrying X/Z narrowing to 2-state is not foldable and keeps it too.
-  if (const auto* lit = std::get_if<mir::IntegerLiteral>(&src_expr.data);
-      lit != nullptr && src_ty.IsIntegralPacked() &&
-      dst_ty.IsIntegralPacked() && !src_ty.IsEnum() && !dst_ty.IsEnum()) {
-    const auto& src_pa = src_ty.AsIntegralPacked();
-    const auto& dst_pa = dst_ty.AsIntegralPacked();
-    const bool same_width_and_sign = src_pa.BitWidth() == dst_pa.BitWidth() &&
-                                     src_pa.signedness == dst_pa.signedness;
-    const bool literal_has_xz =
-        !lit->value.state_words.empty() && lit->value.state_words[0] != 0U;
-    const bool dst_two_state = dst_pa.atom == mir::BitAtom::kBit;
-    if (same_width_and_sign && !(literal_has_xz && dst_two_state)) {
-      return RenderPackedArrayIntegerLiteral(dst_pa, lit->value);
-    }
-  }
-
   auto operand_or = RenderExpr(ctx, src_expr);
   if (!operand_or) return std::unexpected(std::move(operand_or.error()));
+
+  // Dispatch by (source category, destination category). Each branch is
+  // one (src, dst) emit form.
   if (IsRealFamilyType(src_ty) && IsRealFamilyType(dst_ty)) {
     return RenderRealConversion(*std::move(operand_or), src_ty, dst_ty);
   }
@@ -693,11 +710,18 @@ auto RenderConversionExpr(
     return RenderRealToIntegralConversion(
         *std::move(operand_or), dst_ty.AsIntegralPacked());
   }
-  // Fall-through covers conversions whose source and destination already share
-  // a compatible C++ representation, so no transformation is needed at this
-  // boundary: same-kind identity conversions (e.g., string -> string), and
-  // slang's narrow `bit[N-1:0]` string-literal -> `string` lift where the
-  // operand already renders as the C++ string literal.
+  // LRM 21.3.4.3: $sscanf unpacked-array-of-byte source lifts to string.
+  // The lowering layer inserts the ConversionExpr at the call boundary,
+  // leaving this site as the single emit point.
+  if (src_ty.Kind() == mir::TypeKind::kUnpackedArray &&
+      dst_ty.Kind() == mir::TypeKind::kString) {
+    return std::format(
+        "lyra::value::String::FromByteArray({})", *std::move(operand_or));
+  }
+  // Identity / no-op rendering: the conversion exists in MIR but the
+  // operand's already-rendered C++ matches the destination shape. Covers
+  // string -> string identity, and slang's `bit[N-1:0]` string literal ->
+  // `string` lift where RenderExpr already returns a `value::String{...}`.
   return *std::move(operand_or);
 }
 

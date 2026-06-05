@@ -5,9 +5,11 @@
 #include <cstddef>
 #include <cstdint>
 #include <format>
+#include <optional>
 #include <span>
 #include <string>
 #include <string_view>
+#include <utility>
 #include <vector>
 
 #include "lyra/base/internal_error.hpp"
@@ -60,7 +62,7 @@ struct ScannedBit {
 void SkipSourceWhitespace(ScanSource& src) {
   while (true) {
     const int ch = src.Peek();
-    if (ch == -1 || !IsAsciiWhitespace(ch)) {
+    if (ch == -1 || !src.IsWhitespace(ch)) {
       return;
     }
     src.Consume();
@@ -171,28 +173,46 @@ void AssignFromI64(value::PackedArray& dest, std::int64_t value) {
   return *dest;
 }
 
+// Per-spec parsers below: each one consumes input from `src` and returns
+// the structured parse result. `nullopt` means "no match" (LRM input
+// failure for that directive). Parsers are pure with respect to output --
+// they never touch a `ScanSlot`. The dispatcher decides whether to
+// commit (writing into the slot) or discard the result (assignment
+// suppression `%*spec`).
+
+// ScanDecimal result. Mutually exclusive forms per LRM 21.3.4.3 `%d`:
+// either an integer value, or one of the single-char fills (x / X
+// collapse to kFillX; z / Z / ? collapse to kFillZ).
+struct DecimalResult {
+  enum class Form : std::uint8_t { kInt, kFillX, kFillZ };
+  Form form;
+  std::int64_t int_value = 0;  // valid only when form == kInt
+};
+
 // LRM 21.3.4.3 Table 21-7 `%d`. Either a sign-prefixed decimal digit run
 // (with `_` separators) or a single x/X/z/Z/? that fills the entire dest.
 // Mixed (`12x`) stops at the first non-digit -- the `x` is not consumed
-// here, so a following `%h` could still match it.
-[[nodiscard]] auto ScanDecimal(ScanSource& src, const ScanSlot& slot) -> bool {
+// here, so a following `%h` could still match it. `max_width == 0` means
+// no limit; non-zero caps the digit / `_` chars consumed (C-scanf
+// convention: the sign does not count toward the width).
+[[nodiscard]] auto ScanDecimal(ScanSource& src, std::size_t max_width)
+    -> std::optional<DecimalResult> {
   SkipSourceWhitespace(src);
   int ch = src.Peek();
-  if (ch == -1) {
-    return false;
-  }
+  if (ch == -1) return std::nullopt;
 
-  value::PackedArray& dest = RequireIntegralSlot(slot, "d");
+  std::size_t consumed = 0;
+  auto can_consume = [&]() { return max_width == 0 || consumed < max_width; };
 
   if (ch == 'x' || ch == 'X') {
+    if (!can_consume()) return std::nullopt;
     src.Consume();
-    FillAllX(dest);
-    return true;
+    return DecimalResult{.form = DecimalResult::Form::kFillX};
   }
   if (ch == 'z' || ch == 'Z' || ch == '?') {
+    if (!can_consume()) return std::nullopt;
     src.Consume();
-    FillAllZ(dest);
-    return true;
+    return DecimalResult{.form = DecimalResult::Form::kFillZ};
   }
 
   bool negative = false;
@@ -208,38 +228,40 @@ void AssignFromI64(value::PackedArray& dest, std::int64_t value) {
     if (had_sign) {
       src.Unget(negative ? '-' : '+');
     }
-    return false;
+    return std::nullopt;
   }
 
   std::int64_t acc = 0;
   bool consumed_digit = false;
-  while (ch != -1 && (IsDecDigit(ch) || ch == '_')) {
+  while (ch != -1 && can_consume() && (IsDecDigit(ch) || ch == '_')) {
     if (ch != '_') {
       acc = (acc * 10) + (ch - '0');
       consumed_digit = true;
     }
     src.Consume();
+    ++consumed;
     ch = src.Peek();
   }
-  if (!consumed_digit) {
-    return false;
-  }
-  if (negative) {
-    acc = -acc;
-  }
-  AssignFromI64(dest, acc);
-  return true;
+  if (!consumed_digit) return std::nullopt;
+  if (negative) acc = -acc;
+  return DecimalResult{.form = DecimalResult::Form::kInt, .int_value = acc};
 }
 
 // LRM 21.3.4.3 Table 21-7 `%h` / `%x`. Each character -> one 4-bit nibble.
 // Hex digits 0..9 a..f A..F land as (val=digit, unk=0); xX as
 // (val=1111, unk=1111); zZ? as (val=0000, unk=1111); `_` is a separator.
-[[nodiscard]] auto ScanHex(ScanSource& src, const ScanSlot& slot) -> bool {
+// `max_width` caps total chars consumed (digits + `_`); zero means
+// unlimited.
+[[nodiscard]] auto ScanHex(ScanSource& src, std::size_t max_width)
+    -> std::optional<std::vector<ScannedBit>> {
   SkipSourceWhitespace(src);
-  value::PackedArray& dest = RequireIntegralSlot(slot, "h");
   std::vector<ScannedBit> bits;
   bool consumed_digit = false;
+  std::size_t consumed = 0;
   while (true) {
+    if (max_width != 0 && consumed >= max_width) {
+      break;
+    }
     const int ch = src.Peek();
     if (ch == -1) {
       break;
@@ -269,22 +291,25 @@ void AssignFromI64(value::PackedArray& dest, std::int64_t value) {
       break;
     }
     src.Consume();
+    ++consumed;
   }
-  if (!consumed_digit) {
-    return false;
-  }
-  AssignBitsMsbFirst(dest, std::span<const ScannedBit>{bits});
-  return true;
+  if (!consumed_digit) return std::nullopt;
+  return bits;
 }
 
 // LRM 21.3.4.3 Table 21-7 `%o`. 3 bits per octal digit; xX -> (111,111),
-// zZ? -> (000,111); `_` is a separator.
-[[nodiscard]] auto ScanOctal(ScanSource& src, const ScanSlot& slot) -> bool {
+// zZ? -> (000,111); `_` is a separator. `max_width` caps total chars
+// consumed.
+[[nodiscard]] auto ScanOctal(ScanSource& src, std::size_t max_width)
+    -> std::optional<std::vector<ScannedBit>> {
   SkipSourceWhitespace(src);
-  value::PackedArray& dest = RequireIntegralSlot(slot, "o");
   std::vector<ScannedBit> bits;
   bool consumed_digit = false;
+  std::size_t consumed = 0;
   while (true) {
+    if (max_width != 0 && consumed >= max_width) {
+      break;
+    }
     const int ch = src.Peek();
     if (ch == -1) {
       break;
@@ -314,22 +339,25 @@ void AssignFromI64(value::PackedArray& dest, std::int64_t value) {
       break;
     }
     src.Consume();
+    ++consumed;
   }
-  if (!consumed_digit) {
-    return false;
-  }
-  AssignBitsMsbFirst(dest, std::span<const ScannedBit>{bits});
-  return true;
+  if (!consumed_digit) return std::nullopt;
+  return bits;
 }
 
 // LRM 21.3.4.3 Table 21-7 `%b`. Per-character to one bit: 0/1 -> (val,0),
-// xX -> (1,1), zZ? -> (0,1), `_` separator.
-[[nodiscard]] auto ScanBinary(ScanSource& src, const ScanSlot& slot) -> bool {
+// xX -> (1,1), zZ? -> (0,1), `_` separator. `max_width` caps total chars
+// consumed.
+[[nodiscard]] auto ScanBinary(ScanSource& src, std::size_t max_width)
+    -> std::optional<std::vector<ScannedBit>> {
   SkipSourceWhitespace(src);
-  value::PackedArray& dest = RequireIntegralSlot(slot, "b");
   std::vector<ScannedBit> bits;
   bool consumed_digit = false;
+  std::size_t consumed = 0;
   while (true) {
+    if (max_width != 0 && consumed >= max_width) {
+      break;
+    }
     const int ch = src.Peek();
     if (ch == -1) {
       break;
@@ -352,44 +380,64 @@ void AssignFromI64(value::PackedArray& dest, std::int64_t value) {
       break;
     }
     src.Consume();
+    ++consumed;
   }
-  if (!consumed_digit) {
-    return false;
-  }
-  AssignBitsMsbFirst(dest, std::span<const ScannedBit>{bits});
-  return true;
+  if (!consumed_digit) return std::nullopt;
+  return bits;
 }
 
 // Standard scanf `%s`: skip leading whitespace, then read non-whitespace
-// chars until whitespace or EOF.
-[[nodiscard]] auto ScanString(ScanSource& src, const ScanSlot& slot) -> bool {
+// chars until whitespace or EOF. `max_width` caps total chars consumed.
+[[nodiscard]] auto ScanString(ScanSource& src, std::size_t max_width)
+    -> std::optional<std::string> {
   SkipSourceWhitespace(src);
   std::string buf;
   while (true) {
+    if (max_width != 0 && buf.size() >= max_width) {
+      break;
+    }
     const int ch = src.Peek();
-    if (ch == -1 || IsAsciiWhitespace(ch)) {
+    if (ch == -1 || src.IsWhitespace(ch)) {
       break;
     }
     buf.push_back(static_cast<char>(ch));
     src.Consume();
   }
-  if (buf.empty()) {
-    return false;
-  }
-  value::String& dest = RequireStringSlot(slot, "s");
-  dest = value::String(std::move(buf));
-  return true;
+  if (buf.empty()) return std::nullopt;
+  return buf;
 }
 
-// Standard scanf `%c`: no whitespace skip, one byte stored as int8.
-[[nodiscard]] auto ScanChar(ScanSource& src, const ScanSlot& slot) -> bool {
-  const int ch = src.Consume();
-  if (ch == -1) {
-    return false;
+// Standard scanf `%c`: no whitespace skip, one byte. The scanf `%5c`
+// extension (read N bytes into a char array) needs a string-slot output
+// shape, which is a separate feature; reject it here so the gap stays
+// visible.
+[[nodiscard]] auto ScanChar(ScanSource& src, std::size_t max_width)
+    -> std::optional<unsigned char> {
+  if (max_width > 1U) {
+    throw InternalError(
+        "$sscanf/$fscanf: max field width on '%c' is not yet supported "
+        "(needs a string-slot output shape)");
   }
-  value::PackedArray& dest = RequireIntegralSlot(slot, "c");
-  AssignFromI64(dest, static_cast<std::int64_t>(ch & 0xFF));
-  return true;
+  const int ch = src.Consume();
+  if (ch == -1) return std::nullopt;
+  return static_cast<unsigned char>(ch & 0xFF);
+}
+
+// Commit phase: apply a parse result into the destination slot. Called
+// only when the conversion is not suppressed; the dispatcher already
+// resolved the slot via Require*Slot.
+void CommitDecimal(value::PackedArray& dest, const DecimalResult& result) {
+  switch (result.form) {
+    case DecimalResult::Form::kInt:
+      AssignFromI64(dest, result.int_value);
+      return;
+    case DecimalResult::Form::kFillX:
+      FillAllX(dest);
+      return;
+    case DecimalResult::Form::kFillZ:
+      FillAllZ(dest);
+      return;
+  }
 }
 
 [[nodiscard]] auto ScanFromSource(
@@ -424,16 +472,49 @@ void AssignFromI64(value::PackedArray& dest, std::int64_t value) {
       continue;
     }
 
+    // After '%': optional `*` (assignment suppression), optional decimal
+    // max-field-width digits, then the conversion code (LRM 21.3.4.3(c)).
     ++fmt_ix;
     if (fmt_ix >= fmt.size()) {
       throw InternalError(
           "$sscanf/$fscanf: format string ended after '%' with no conversion "
           "specifier");
     }
+
+    bool suppress = false;
+    if (fmt[fmt_ix] == '*') {
+      suppress = true;
+      ++fmt_ix;
+      if (fmt_ix >= fmt.size()) {
+        throw InternalError(
+            "$sscanf/$fscanf: format string ended after '%*' with no "
+            "conversion specifier");
+      }
+    }
+
+    std::size_t max_width = 0;
+    while (fmt_ix < fmt.size() &&
+           IsDecDigit(static_cast<unsigned char>(fmt[fmt_ix]))) {
+      max_width =
+          (max_width * 10) + static_cast<std::size_t>(fmt[fmt_ix] - '0');
+      ++fmt_ix;
+    }
+    if (fmt_ix >= fmt.size()) {
+      throw InternalError(
+          "$sscanf/$fscanf: format string ended in a conversion spec with no "
+          "specifier code");
+    }
     const char spec = fmt[fmt_ix];
     ++fmt_ix;
 
+    // `%%` literal -- LRM treats it as a non-conversion directive; modifiers
+    // do not apply.
     if (spec == '%') {
+      if (suppress || max_width != 0) {
+        throw InternalError(
+            "$sscanf/$fscanf: '%%' literal does not accept assignment "
+            "suppression or field width modifiers");
+      }
       const int ch = src.Peek();
       if (ch == -1) {
         return first_conversion ? -1 : items;
@@ -445,43 +526,82 @@ void AssignFromI64(value::PackedArray& dest, std::int64_t value) {
       continue;
     }
 
-    // Field width (`%5d`) and assignment suppression (`%*d`) are deferred;
-    // detect explicitly so a future-supported format does not silently
-    // miscount items.
-    if (spec == '*' || IsDecDigit(static_cast<unsigned char>(spec))) {
+    if (!suppress && slot_ix >= slots.size()) {
       throw InternalError(
-          "$sscanf/$fscanf: field width and assignment suppression are not "
-          "yet supported (LRM 21.3.4.3)");
+          "$sscanf/$fscanf: format string has more (non-suppressed) "
+          "conversion specifiers than output arguments");
     }
 
-    if (slot_ix >= slots.size()) {
-      throw InternalError(
-          "$sscanf/$fscanf: format string has more conversion specifiers "
-          "than output arguments");
-    }
-    const ScanSlot slot = slots[slot_ix];
-
+    // Two-phase per spec: (1) parse the input -- pure, mode-independent;
+    // (2) commit the result into the slot if the conversion is not
+    // suppressed. Suppress lives in this dispatcher; parsers are
+    // suppression-agnostic.
     bool ok = false;
     switch (spec) {
-      case 'd':
-        ok = ScanDecimal(src, slot);
+      case 'd': {
+        if (auto parsed = ScanDecimal(src, max_width); parsed.has_value()) {
+          ok = true;
+          if (!suppress) {
+            CommitDecimal(RequireIntegralSlot(slots[slot_ix], "d"), *parsed);
+          }
+        }
         break;
+      }
       case 'h':
-      case 'x':
-        ok = ScanHex(src, slot);
+      case 'x': {
+        if (auto parsed = ScanHex(src, max_width); parsed.has_value()) {
+          ok = true;
+          if (!suppress) {
+            AssignBitsMsbFirst(
+                RequireIntegralSlot(slots[slot_ix], spec == 'x' ? "x" : "h"),
+                std::span<const ScannedBit>{*parsed});
+          }
+        }
         break;
-      case 'b':
-        ok = ScanBinary(src, slot);
+      }
+      case 'b': {
+        if (auto parsed = ScanBinary(src, max_width); parsed.has_value()) {
+          ok = true;
+          if (!suppress) {
+            AssignBitsMsbFirst(
+                RequireIntegralSlot(slots[slot_ix], "b"),
+                std::span<const ScannedBit>{*parsed});
+          }
+        }
         break;
-      case 'o':
-        ok = ScanOctal(src, slot);
+      }
+      case 'o': {
+        if (auto parsed = ScanOctal(src, max_width); parsed.has_value()) {
+          ok = true;
+          if (!suppress) {
+            AssignBitsMsbFirst(
+                RequireIntegralSlot(slots[slot_ix], "o"),
+                std::span<const ScannedBit>{*parsed});
+          }
+        }
         break;
-      case 's':
-        ok = ScanString(src, slot);
+      }
+      case 's': {
+        if (auto parsed = ScanString(src, max_width); parsed.has_value()) {
+          ok = true;
+          if (!suppress) {
+            RequireStringSlot(slots[slot_ix], "s") =
+                value::String(std::move(*parsed));
+          }
+        }
         break;
-      case 'c':
-        ok = ScanChar(src, slot);
+      }
+      case 'c': {
+        if (auto parsed = ScanChar(src, max_width); parsed.has_value()) {
+          ok = true;
+          if (!suppress) {
+            AssignFromI64(
+                RequireIntegralSlot(slots[slot_ix], "c"),
+                static_cast<std::int64_t>(*parsed));
+          }
+        }
         break;
+      }
       default:
         throw InternalError(
             std::format(
@@ -499,8 +619,13 @@ void AssignFromI64(value::PackedArray& dest, std::int64_t value) {
       return items;
     }
     first_conversion = false;
-    ++items;
-    ++slot_ix;
+    // LRM "success of suppressed assignments is not directly determinable":
+    // suppressed conversions advance the input but do not bump items or
+    // consume an output slot.
+    if (!suppress) {
+      ++items;
+      ++slot_ix;
+    }
   }
   return items;
 }

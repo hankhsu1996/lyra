@@ -122,6 +122,28 @@ Entries get checked off as their PRs land. When the last entry lands, the file i
       the IR (`mir::CompilationUnit` and the AST -> HIR analogue) -- R6 is the prerequisite cleanup;
       R1 is the architectural promotion.
 
+- [ ] R7 -- Move the literal-fold peephole from the C++ backend into HIR-to-MIR. Today
+      `RenderConversionExpr` in `src/lyra/backend/cpp/render_expr.cpp` carries a
+      `TryFoldLiteralIntegerConversion` helper that detects "MIR `ConversionExpr` wrapping a
+      `mir::IntegerLiteral` whose source and destination shapes are equivalent (same width, same
+      signedness, no X/Z loss)" and renders the literal directly in the destination shape, skipping
+      the runtime `PackedArray::ConvertFrom` call. That fold is a pure semantic decision driven
+      entirely by MIR data, so per `lowering_boundaries.md` Core Invariant 5 ("downstream layers do
+      not re-derive upstream decisions") and `mir.md` Core Invariant 5 ("dumper is the golden-test
+      surface, lossless wrt MIR structure"), it belongs at the HIR -> MIR boundary, not in the
+      backend. Target shape: `LowerHirConversionExprProc` (and its structural twin) recognises a HIR
+      `ConversionExpr` whose operand is a `hir::IntegerLiteral` with a foldable shape pair and emits
+      a `mir::IntegerLiteral` directly in the destination shape -- no `mir::ConversionExpr` node is
+      ever materialised for the no-op case. The backend's render path then becomes pure
+      `(src_kind, dst_kind)` dispatch with no peephole; the MIR dumper shows exactly what the
+      backend will emit (no "node exists but renders to nothing" surprises). **Why deferred**: the
+      current backend-side fold is correct and the scan-family PR that exposed it
+      (`feature/     scan-family-corners`) should not also rewrite the conversion-lowering path --
+      the MIR dump goldens that exercise this fold need separate scrutiny. **Trigger**: standalone
+      -- can be picked up at any time. Highest leverage is just before any other change to
+      `LowerHirConversionExprProc` (or any new constant-folding pass on MIR), because both want a
+      MIR free of redundant `ConversionExpr` nodes.
+
 ## Out of Scope
 
 - Per-feature workstreams. Those live in the dedicated feature files (`control-flow.md`,

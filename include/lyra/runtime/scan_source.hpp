@@ -16,6 +16,10 @@ namespace lyra::runtime {
 // `Consume` returns the next byte and advances. `Unget` pushes one byte back
 // so the next `Peek` / `Consume` returns it again; pushing while a byte is
 // already pending throws InternalError to surface scanner-side misuse.
+// `IsWhitespace` is the source-aware whitespace policy used by both
+// `SkipSourceWhitespace` and `%s`. The base implementation matches ASCII
+// whitespace; `StringScanSource` overrides to also treat NUL as whitespace
+// (LRM 21.3.4.3(a) sscanf-only rule).
 class ScanSource {
  public:
   ScanSource() = default;
@@ -28,6 +32,7 @@ class ScanSource {
   virtual auto Peek() -> int = 0;
   virtual auto Consume() -> int = 0;
   virtual void Unget(int byte) = 0;
+  virtual auto IsWhitespace(int ch) -> bool;
 };
 
 // The pushback slot holds a byte the scanner Peek'd but decided not to
@@ -41,6 +46,7 @@ class StringScanSource : public ScanSource {
   auto Peek() -> int override;
   auto Consume() -> int override;
   void Unget(int byte) override;
+  auto IsWhitespace(int ch) -> bool override;
 
  private:
   std::string_view buf_;

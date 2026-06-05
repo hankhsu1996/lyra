@@ -1,0 +1,21 @@
+id: cpp.sscanf_format_modifiers
+tags: [cpp_run]
+input:
+  command: [run, cpp]
+  project: false
+  top: Top
+  files: [main.sv]
+expect:
+  exit: 0
+  variables:
+    count_w: 4
+    w_d: 123
+    w_h: 0xabc
+    w_b: 15
+    w_s: "hello"
+    count_sup: 2
+    sup_a: 10
+    sup_b: 30
+    count_mix: 2
+    mix_a: 999
+    mix_b: 7

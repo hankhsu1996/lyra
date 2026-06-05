@@ -510,9 +510,8 @@ auto LowerExprStmt(
       }
       if (const auto* scan_info = support::GetScanInfo(desc)) {
         return LowerScanSystemSubroutineCallStmt(
-            unit_state, scope_state, proc_state, hir_proc, stmt, inner.span,
-            *call, desc, *scan_info, std::nullopt,
-            unit_state.TranslateType(inner.type));
+            unit_state, scope_state, proc_state, hir_proc, stmt, *call,
+            *scan_info, std::nullopt, unit_state.TranslateType(inner.type));
       }
       if (const auto* sformat_info = support::GetSFormatInfo(desc)) {
         return LowerSFormatSystemSubroutineCallStmt(
@@ -568,9 +567,8 @@ auto LowerExprStmt(
           }
           if (const auto* scan_info = support::GetScanInfo(desc)) {
             return LowerScanSystemSubroutineCallStmt(
-                unit_state, scope_state, proc_state, hir_proc, stmt,
-                call_carrier->span, *call, desc, *scan_info, assign->lhs,
-                result_type);
+                unit_state, scope_state, proc_state, hir_proc, stmt, *call,
+                *scan_info, assign->lhs, result_type);
           }
         }
       }

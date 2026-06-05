@@ -16,7 +16,6 @@
 #include <vector>
 
 #include "lyra/base/overloaded.hpp"
-#include "lyra/runtime/byte_codec.hpp"
 #include "lyra/runtime/file_table.hpp"
 #include "lyra/runtime/runtime_services.hpp"
 #include "lyra/runtime/stream_dispatcher.hpp"
@@ -287,9 +286,10 @@ auto LyraFRead(
   // LRM 21.3.4.4: 2-value, big-endian (first byte fills the MSBs). On a
   // short read, the trailing buffer is already zero from the vector
   // constructor and lands in the destination's LSBs ("as much as
-  // available"). BytesToPackedArray supports any width; the destination's
-  // declared shape (sign / 4-state) is preserved.
-  dest = BytesToPackedArray(buf, width, dest.IsSigned(), dest.IsFourState());
+  // available"). PackedArray::FromBytes supports any width; the
+  // destination's declared shape (sign / 4-state) is preserved.
+  dest = value::PackedArray::FromBytes(
+      buf, width, dest.IsSigned(), dest.IsFourState());
   return MakeInt(static_cast<std::int32_t>(got));
 }
 
@@ -347,11 +347,11 @@ auto LyraFRead(
     slot->file->read(rest.data(), static_cast<std::streamsize>(rest.size()));
     const auto got_this = pos + static_cast<std::size_t>(slot->file->gcount());
     if (got_this == 0U) break;
-    // Partial element gets LSB zero-padding via BytesToPackedArray's
+    // Partial element gets LSB zero-padding via PackedArray::FromBytes'
     // "shorter input -> trailing zeros" path -- consistent with the
     // packed form's "as much as available" behaviour.
     auto effective = std::span<const char>(buf).first(got_this);
-    auto elem_value = BytesToPackedArray(
+    auto elem_value = value::PackedArray::FromBytes(
         effective, element_width, elem_signed, elem_four_state);
     const std::int64_t sv_index = start_sv + static_cast<std::int64_t>(k);
     const std::int64_t storage_idx =

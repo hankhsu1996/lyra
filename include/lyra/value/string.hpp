@@ -9,6 +9,9 @@
 #include <string_view>
 #include <utility>
 
+#include "lyra/value/packed_array.hpp"
+#include "lyra/value/unpacked_array.hpp"
+
 namespace lyra::value {
 
 // Runtime representation of the SystemVerilog `string` type (LRM 6.16). The
@@ -24,6 +27,23 @@ class String {
   explicit String(std::string s) : impl_(std::move(s)) {
   }
   explicit String(std::string_view s) : impl_(s) {
+  }
+
+  // LRM 21.3.4.3: $sscanf accepts an unpacked array of byte as input,
+  // viewed as a contiguous character sequence in element order. The low
+  // byte of each element becomes one std::string byte (embedded NULs
+  // preserved); StringScanSource::IsWhitespace handles the sscanf-only
+  // NUL-as-whitespace rule.
+  [[nodiscard]] static auto FromByteArray(
+      const UnpackedArray<PackedArray>& bytes) -> String {
+    std::string out;
+    out.reserve(bytes.Size());
+    for (std::size_t i = 0; i < bytes.Size(); ++i) {
+      const auto byte =
+          static_cast<unsigned char>(bytes.RawAt(i).ToInt64() & 0xFF);
+      out.push_back(static_cast<char>(byte));
+    }
+    return String{std::move(out)};
   }
 
   [[nodiscard]] auto operator==(const String& o) const -> bool {
