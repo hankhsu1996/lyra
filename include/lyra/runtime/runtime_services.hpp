@@ -81,6 +81,7 @@ class RuntimeServices {
   void ScheduleInactive(CoroutineHandle handle);
   void ScheduleAtTime(SimTime when, CoroutineHandle handle);
   void RequestFinish(int level);
+  void Spawn(Coroutine coroutine);
   [[nodiscard]] auto Now() const -> SimTime;
 
   // The design-global time precision (LRM 3.14.3) the delay awaitable scales a

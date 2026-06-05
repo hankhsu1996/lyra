@@ -2,6 +2,7 @@
 
 #include <coroutine>
 #include <exception>
+#include <functional>
 #include <utility>
 #include <vector>
 
@@ -41,6 +42,11 @@ class Coroutine {
     // (`@(a or b)`); when one fires the engine sweeps the rest to drop the
     // stale subscriptions. Per-wait state, so it lives on the frame.
     std::vector<Observable*> pending_value_change_subscriptions;
+    // Run when this frame completes, before transferring to any continuation. A
+    // spawned fork branch sets this to report completion to its join group; the
+    // callback owns whatever state it needs (a shared_ptr keeping that group
+    // alive), so the coroutine machinery never names the construct.
+    std::function<void()> on_complete;
 
     auto get_return_object() -> Coroutine {
       return Coroutine{
@@ -60,6 +66,9 @@ class Coroutine {
       static auto await_suspend(
           std::coroutine_handle<promise_type> handle) noexcept
           -> std::coroutine_handle<> {
+        if (auto& on_complete = handle.promise().on_complete) {
+          on_complete();
+        }
         std::coroutine_handle<promise_type> cont =
             handle.promise().continuation;
         if (cont) {

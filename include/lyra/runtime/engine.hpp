@@ -15,6 +15,7 @@
 #include "lyra/runtime/coroutine.hpp"
 #include "lyra/runtime/diagnostic.hpp"
 #include "lyra/runtime/file_table.hpp"
+#include "lyra/runtime/runtime_process.hpp"
 #include "lyra/runtime/runtime_services.hpp"
 #include "lyra/runtime/scope.hpp"
 #include "lyra/runtime/stream_dispatcher.hpp"
@@ -95,10 +96,14 @@ class Engine {
   // ScheduleAtTime      -- enqueue at a future SimTime (used by `#N`).
   // RequestFinish       -- tear down the simulation (used by `$finish`).
   // Now                 -- query current simulation time.
+  // Spawn               -- adopt a coroutine created mid-simulation as a
+  //                        runnable process and schedule it (used by fork-join
+  //                        branches); construct-neutral by design.
   void ScheduleNextDelta(CoroutineHandle handle);
   void ScheduleInactive(CoroutineHandle handle);
   void ScheduleAtTime(SimTime when, CoroutineHandle handle);
   void RequestFinish(int level);
+  void Spawn(Coroutine coroutine);
   [[nodiscard]] auto Now() const -> SimTime {
     return now_;
   }
@@ -180,6 +185,10 @@ class Engine {
   FileTable files_;
   RuntimeServices services_{stream_, diagnostic_, files_, *this};
   std::unique_ptr<Scope> root_;
+  // Processes created during simulation (fork-join branches), owned for their
+  // dynamic lifetime. Each is dropped in RunProcess when it completes; static
+  // processes live on their scope instead.
+  std::vector<std::unique_ptr<RuntimeProcess>> spawned_;
   SchedulerQueues queues_;
   SimTime now_ = 0;
   std::int8_t global_precision_power_ = kDefaultTimePrecisionPower;

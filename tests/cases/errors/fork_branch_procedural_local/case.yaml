@@ -1,0 +1,16 @@
+id: errors.fork_branch_procedural_local
+tags: [errors, diag]
+input:
+  command: [emit, cpp]
+  project: false
+  top: Test
+  files: [main.sv]
+  args: ["--no-color"]
+expect:
+  exit: 1
+  stderr:
+    contains:
+      - "unsupported:"
+      - "fork-join branch referencing a procedural variable"
+    not_contains:
+      - "internal error"

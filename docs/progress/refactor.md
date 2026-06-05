@@ -144,6 +144,32 @@ Entries get checked off as their PRs land. When the last entry lands, the file i
       `LowerHirConversionExprProc` (or any new constant-folding pass on MIR), because both want a
       MIR free of redundant `ConversionExpr` nodes.
 
+- [ ] R8 -- Unify the callable forms onto one concept. Today a process (`mir::Process`), a
+      subroutine (`mir::StructuralSubroutineDecl`), and a closure (`mir::ClosureExpr`) are three
+      separate types whose bodies are all the same `ProceduralScope`; the code already notes the
+      duplication ("a subroutine is a callable peer of a process"). Each hardcodes a fixed point in
+      three orthogonal axes: how the body binds outer state (the enclosing object only / named
+      parameters / captured values), whether the body suspends (coroutine vs plain), and whether it
+      is an anonymous value or a named declaration. The combinations in use today are partial --
+      process is (object-only, suspends, value-spawned-at-startup), function is (params, no-suspend,
+      named, returns), task is (params, suspends, named), closure is (captures, no-suspend,
+      anonymous value). A fork-join branch is the missing fourth-axis combination -- an anonymous
+      value, with captured state, that suspends -- which no form provides. This cut fills it the
+      minimal way, by completing `ClosureExpr` with a suspend axis (so a closure value may be
+      suspending or not), which unifies the NBA / `$strobe` closure and the fork branch under one
+      type but leaves the three-way duplication between process, subroutine, and closure standing.
+      Target shape: a single callable concept carrying a `ProceduralScope` body, a list of bound
+      inputs that unifies parameters and captures behind one binding-mode axis, a suspend flag, and
+      an optional result type; the five forms become instances differing only in their axis values
+      and in how the referencing site invokes them (spawn at startup, call, submit, spawn
+      concurrently). **Why deferred**: this rebases the whole process / subroutine / closure
+      machinery across lowering, MIR, the dumper, and the backend; the fork cut needs only the
+      suspend axis on `ClosureExpr` and reaches it without touching processes or subroutines, so
+      folding the full merge into a feature cut is scope explosion. **Trigger**: when a further
+      feature needs yet another axis combination, or when a change has to be made three times across
+      the duplicated forms; the suspending closure this cut introduces is the first concrete
+      cross-form driver, so the unification now has a real motivation rather than being speculative.
+
 ## Out of Scope
 
 - Per-feature workstreams. Those live in the dedicated feature files (`control-flow.md`,

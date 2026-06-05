@@ -35,12 +35,15 @@ constructs.
 
 ### Spawning and the join condition
 
-- [ ] FJ1 -- A fork spawns each parallel statement as its own concurrent process, and the join
+- [x] FJ1 -- A fork spawns each parallel statement as its own concurrent process, and the join
       keyword sets when the forking process resumes: after all of them (`join`), after the first
       (`join_any`), or immediately (`join_none`). The LRM 9.3.2 ordering rule holds -- spawned
-      processes do not run until the parent blocks at the join or terminates. Minimal end-to-end
-      shape: single-statement branches with no internal timing, where each join mode is observable
-      through the order in which the parent and the branches write shared state.
+      processes do not run until the parent blocks at the join or terminates. Branches carry their
+      own delay so the three join modes are observable (the parent resumes after the slowest, the
+      earliest, or not at all). Branches read and write module-scope signals only; a branch that
+      references a procedural variable and a named fork block are rejected with a diagnostic rather
+      than miscompiled. A fork inside a task is supported; a fork inside a function stays rejected
+      (a function cannot suspend). Per-branch local storage and the loop-spawn idiom ride on FJ4.
 
 ### Timing across branches
 
@@ -79,24 +82,21 @@ constructs.
 - [ ] FJ7 -- `disable fork` terminates all descendant processes of the calling process, including
       descendants of subprocesses that have already terminated (LRM 9.6.3).
 
-## Blocked
+### Fork inside a function
 
-- The runtime side of FJ1 -- a running process bringing new processes into being mid-simulation, and
-  the ownership and scheduling of those children -- rides on the single object-tree refactor
-  (`refactor.md` R3). Today processes are born only at construction and the scheduler walks a
-  topology tree mirrored at bind time; fork needs processes created during simulation that attach to
-  the live hierarchy. Designing the spawn / ownership substrate against the current dual-tree shape
-  would be invalidated when R3 collapses it, so the runtime design waits on R3. The suspending-
-  coroutine and join-barrier machinery this builds on is settled (`functions.md` T2). The LRM
-  semantics above, the join threshold model, and the fork statement's IR representation are
-  independent of R3.
+- [ ] FJ8 -- `fork ... join_none` inside a function (LRM 13.4.4). A function is not a coroutine and
+      cannot suspend, so it cannot await a join; only `join_none` is legal there, and it must spawn
+      its branches without suspending. FJ1 rejects every fork inside a function. (`join` /
+      `join_any` inside a function stays a compile error -- see Rejected at the frontend. A fork
+      inside a task is supported by FJ1.)
 
 ## Rejected at the frontend
 
 - A `return` statement inside a fork-join block is a compile error: the branch lives in a separate
   process (LRM 9.3.2).
-- A function body may contain only `fork ... join_none`, never `join` or `join_any`, because a
-  function cannot suspend (LRM 13.4). See `functions.md`.
+- Inside a function, `fork ... join` and `fork ... join_any` are a compile error: a function cannot
+  suspend (LRM 13.4). Only `join_none` is legal there, and enabling it is tracked by FJ8. See
+  `functions.md`.
 
 ## Out of Scope
 

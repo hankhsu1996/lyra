@@ -34,6 +34,18 @@ namespace lyra::hir {
 
 namespace {
 
+auto ForkJoinModeLabel(JoinMode mode) -> std::string_view {
+  switch (mode) {
+    case JoinMode::kAll:
+      return "join";
+    case JoinMode::kAny:
+      return "join_any";
+    case JoinMode::kNone:
+      return "join_none";
+  }
+  return "join";
+}
+
 class HirDumper {
  public:
   auto Dump(const std::vector<ModuleUnit>& units) -> std::string {
@@ -1065,6 +1077,18 @@ class HirDumper {
     Dedent();
   }
 
+  void DumpForkStmtNode(const ProceduralBody& p, StmtId id, const ForkStmt& f) {
+    Line(
+        std::format(
+            "Stmt[{}] ForkStmt {} (branches={})", id.value,
+            ForkJoinModeLabel(f.mode), f.branches.size()));
+    Indent();
+    for (const auto branch : f.branches) {
+      DumpStmt(p, branch);
+    }
+    Dedent();
+  }
+
   void DumpIfStmtNode(const ProceduralBody& p, StmtId id, const IfStmt& i) {
     Line(
         std::format(
@@ -1331,6 +1355,7 @@ class HirDumper {
             [&](const VarDeclStmt& v) { DumpVarDeclStmtNode(p, id, v); },
             [&](const ExprStmt& e) { DumpExprStmtNode(p, id, e); },
             [&](const BlockStmt& b) { DumpBlockStmtNode(p, id, b); },
+            [&](const ForkStmt& f) { DumpForkStmtNode(p, id, f); },
             [&](const IfStmt& i) { DumpIfStmtNode(p, id, i); },
             [&](const CaseStmt& c) { DumpCaseStmtNode(p, id, c); },
             [&](const CaseInsideStmt& c) { DumpCaseInsideStmtNode(p, id, c); },

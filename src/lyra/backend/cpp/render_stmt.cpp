@@ -5,6 +5,7 @@
 #include <string_view>
 #include <utility>
 #include <variant>
+#include <vector>
 
 #include "lyra/backend/cpp/formatting.hpp"
 #include "lyra/backend/cpp/render_context.hpp"
@@ -96,6 +97,60 @@ auto RenderBlockStmtNode(
   return result;
 }
 
+auto RenderForkJoinModeLiteral(mir::JoinMode mode) -> std::string_view {
+  switch (mode) {
+    case mir::JoinMode::kAll:
+      return "lyra::runtime::JoinMode::kAll";
+    case mir::JoinMode::kAny:
+      return "lyra::runtime::JoinMode::kAny";
+    case mir::JoinMode::kNone:
+      return "lyra::runtime::JoinMode::kNone";
+  }
+  return "lyra::runtime::JoinMode::kAll";
+}
+
+// LRM 9.3.2: each branch is an anonymous ClosureExpr spawned as a concurrent
+// coroutine. It renders inline at the fork as a stateless lambda taking the
+// enclosing scope instance as a by-value `self` parameter -- a parameter is
+// frame-copied, so the spawned coroutine never outlives a captured receiver the
+// way a `[this]` capture would -- through which its body reaches module state
+// and Services(). The fork waits per the join mode.
+auto RenderForkStmtNode(
+    const RenderContext& ctx, const mir::ForkStmt& s, std::size_t indent)
+    -> diag::Result<std::string> {
+  const std::string vec = ctx.AllocateTemp("fork_branches");
+  const std::string& class_name = ctx.StructuralScope().name;
+  const std::string receiver_object{ctx.ReceiverObject()};
+  std::string out = Indent(indent) + "{\n";
+  out += Indent(indent + 1) + "std::vector<lyra::runtime::Coroutine> " + vec +
+         ";\n";
+  for (const auto branch : s.branches) {
+    const auto* closure = std::get_if<mir::ClosureExpr>(&ctx.Expr(branch).data);
+    if (closure == nullptr) {
+      throw InternalError("RenderForkStmtNode: fork branch is not a closure");
+    }
+    if (closure->body == nullptr) {
+      throw InternalError(
+          "RenderForkStmtNode: fork branch closure has no body");
+    }
+    const RenderContext branch_ctx = ctx.WithProceduralScope(*closure->body)
+                                         .WithCoroutine(true)
+                                         .WithReceiver("self");
+    auto body_or = RenderProceduralScopeStatements(branch_ctx, indent + 2);
+    if (!body_or) return std::unexpected(std::move(body_or.error()));
+    out += Indent(indent + 1) + vec + ".push_back([](" + class_name +
+           "* self) -> lyra::runtime::Coroutine {\n";
+    out += *body_or;
+    out += Indent(indent + 2) + "co_return;\n";
+    out += Indent(indent + 1) + "}(" + receiver_object + "));\n";
+  }
+  out += Indent(indent + 1) + "co_await lyra::runtime::Fork(" +
+         ctx.ServicesRef() + ", std::move(" + vec + "), " +
+         std::string(RenderForkJoinModeLiteral(s.mode)) + ");\n";
+  out += Indent(indent) + "}\n";
+  return out;
+}
+
 auto RenderIfStmtNode(
     const RenderContext& ctx, const mir::Stmt& stmt, const mir::IfStmt& s,
     std::size_t indent) -> diag::Result<std::string> {
@@ -138,10 +193,12 @@ auto RenderConstructOwnedObjectStmt(
                            ">(this, \"" + target_scope.name + "\"" +
                            trailing_args + ")";
   if (mir::IsVectorOfOwningObjectType(ctx.Unit(), var.type)) {
-    return Indent(indent) + var.name + ".push_back(" + make + ");\n";
+    return Indent(indent) + ctx.MemberPrefix() + var.name + ".push_back(" +
+           make + ");\n";
   }
   if (mir::IsOwningObjectType(ctx.Unit(), var.type)) {
-    return Indent(indent) + var.name + " = " + make + ";\n";
+    return Indent(indent) + ctx.MemberPrefix() + var.name + " = " + make +
+           ";\n";
   }
   throw InternalError(
       "ConstructOwnedObjectStmt target is not an owning object var");
@@ -180,7 +237,8 @@ auto RenderConstructExternalUnitStmt(
     std::size_t indent) -> diag::Result<std::string> {
   const auto& var = ctx.StructuralScope().GetStructuralVar(s.target);
   return RenderExternalUnitFill(
-      ctx, var.name, var.type, s.unit_name, var.name, s.dims, 0, indent);
+      ctx, ctx.MemberPrefix() + var.name, var.type, s.unit_name, var.name,
+      s.dims, 0, indent);
 }
 
 // Points the slot at the leaf member it references, once the subtree exists.
@@ -193,8 +251,9 @@ auto RenderResolveCrossUnitRefStmt(
     std::size_t indent) -> diag::Result<std::string> {
   const auto& slot = ctx.StructuralScope().GetCrossUnitRef(s.slot);
   const auto& inst = ctx.StructuralScope().GetStructuralVar(slot.instance_var);
-  std::string out =
-      Indent(indent) + CrossUnitRefSlotName(s.slot.value) + " = &" + inst.name;
+  std::string out = Indent(indent) + ctx.MemberPrefix() +
+                    CrossUnitRefSlotName(s.slot.value) + " = &" +
+                    ctx.MemberPrefix() + inst.name;
   for (const auto& step : slot.path) {
     if (const auto* member = std::get_if<mir::MemberHop>(&step)) {
       out += "->" + member->name;
@@ -286,7 +345,7 @@ auto RenderSensitivityRefPtr(
             return "&" + *name;
           },
           [&](const mir::CrossUnitVarRef& r) -> diag::Result<std::string> {
-            return CrossUnitRefSlotName(r.id.value);
+            return ctx.MemberPrefix() + CrossUnitRefSlotName(r.id.value);
           },
       },
       ref);
@@ -328,9 +387,9 @@ auto RenderStmt(
             return Indent(indent) + ";\n";
           },
           [&](const mir::DelayStmt& s) -> diag::Result<std::string> {
-            return Indent(indent) +
-                   "co_await lyra::runtime::Delay(Services(), " +
-                   std::to_string(s.duration) + ", kTimePrecisionPower);\n";
+            return Indent(indent) + "co_await lyra::runtime::Delay(" +
+                   ctx.ServicesRef() + ", " + std::to_string(s.duration) +
+                   ", kTimePrecisionPower);\n";
           },
           [&](const mir::ProceduralVarDeclStmt& s)
               -> diag::Result<std::string> {
@@ -341,6 +400,9 @@ auto RenderStmt(
           },
           [&](const mir::BlockStmt& s) -> diag::Result<std::string> {
             return RenderBlockStmtNode(ctx, stmt, s, indent);
+          },
+          [&](const mir::ForkStmt& s) -> diag::Result<std::string> {
+            return RenderForkStmtNode(ctx, s, indent);
           },
           [&](const mir::IfStmt& s) -> diag::Result<std::string> {
             return RenderIfStmtNode(ctx, stmt, s, indent);

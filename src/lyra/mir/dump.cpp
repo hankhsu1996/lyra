@@ -1011,6 +1011,7 @@ class MirDumper {
             },
             [&](const ExprStmt& s) { DumpExprStmt(s, enclosing, id); },
             [&](const BlockStmt& s) { DumpBlockStmt(stmt, s, id); },
+            [&](const ForkStmt& s) { DumpForkStmt(s, id); },
             [&](const IfStmt& s) { DumpIfStmt(stmt, s, enclosing, id); },
             [&](const ConstructOwnedObjectStmt& s) {
               DumpConstructOwnedObjectStmt(id, s);
@@ -1242,6 +1243,18 @@ class MirDumper {
     throw InternalError("FormatMirDiagnosticSeverity: unknown severity");
   }
 
+  static auto ForkJoinModeLabel(JoinMode mode) -> std::string_view {
+    switch (mode) {
+      case JoinMode::kAll:
+        return "join";
+      case JoinMode::kAny:
+        return "join_any";
+      case JoinMode::kNone:
+        return "join_none";
+    }
+    throw InternalError("ForkJoinModeLabel: unknown JoinMode");
+  }
+
   static auto DumpPrintKindLabel(value::PrintKind k) -> std::string_view {
     switch (k) {
       case value::PrintKind::kDisplay:
@@ -1374,6 +1387,18 @@ class MirDumper {
             s.scope.value));
     Indent();
     DumpProceduralScope(parent.child_procedural_scopes.at(s.scope.value));
+    Dedent();
+  }
+
+  void DumpForkStmt(const ForkStmt& s, StmtId id) {
+    Line(
+        std::format(
+            "Stmt[{}] ForkStmt {} (branches={})", id.value,
+            ForkJoinModeLabel(s.mode), s.branches.size()));
+    Indent();
+    for (const auto branch : s.branches) {
+      Line(std::format("branch=Expr[{}]", branch.value));
+    }
     Dedent();
   }
 

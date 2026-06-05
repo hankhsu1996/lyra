@@ -81,8 +81,8 @@ struct ArrayMethodInfo {
 };
 
 // True for methods whose backend emission must wrap the call site in
-// `co_await`. The runtime returns an awaitable that submits the appropriate
-// WaitRequest via the coroutine's promise.
+// `co_await`. The runtime returns an awaitable that suspends the calling
+// coroutine and reschedules it through RuntimeServices when the event fires.
 [[nodiscard]] inline auto IsSuspending(const EventMethodInfo& info) -> bool {
   return info.kind == EventMethodKind::kAwait;
 }

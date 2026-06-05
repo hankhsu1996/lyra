@@ -580,11 +580,27 @@ class ProcessLoweringState {
     return std::move(body_);
   }
 
+  // FJ1 lowers each fork-join branch as a separate process whose body may touch
+  // only structural (module-scope) state. While a branch is being lowered this
+  // depth is nonzero, and a reference to a procedural variable is rejected --
+  // per-branch local storage and capture of the parent's locals ride on a later
+  // cut. A counter (not a flag) so a nested fork stays rejected correctly.
+  void EnterForkBranch() {
+    ++fork_branch_depth_;
+  }
+  void ExitForkBranch() {
+    --fork_branch_depth_;
+  }
+  [[nodiscard]] auto InForkBranch() const -> bool {
+    return fork_branch_depth_ > 0;
+  }
+
  private:
   hir::ProceduralBody body_;
   std::unordered_map<const slang::ast::VariableSymbol*, hir::ProceduralVarId>
       procedural_var_bindings_;
   const slang::ast::Symbol* containing_symbol_;
+  int fork_branch_depth_ = 0;
 };
 
 }  // namespace lyra::lowering::ast_to_hir

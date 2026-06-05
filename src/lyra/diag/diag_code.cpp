@@ -150,6 +150,12 @@ constexpr std::array kEntries{
             .kind = DiagKind::kUnsupported,
             .category = UnsupportedCategory::kFeature,
             .name = "unsupported_subroutine_argument"}},
+    std::pair{
+        DiagCode::kUnsupportedForkJoinForm,
+        DiagCodeInfo{
+            .kind = DiagKind::kUnsupported,
+            .category = UnsupportedCategory::kFeature,
+            .name = "unsupported_fork_join_form"}},
 
     std::pair{
         DiagCode::kDelayValueOutOfRange,

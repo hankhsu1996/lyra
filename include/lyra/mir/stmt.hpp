@@ -62,6 +62,25 @@ struct BlockStmt {
   ProceduralScopeId scope;
 };
 
+// LRM 9.3.2 Table 9-1: when the forking process resumes relative to its
+// branches.
+enum class JoinMode : std::uint8_t {
+  kAll,
+  kAny,
+  kNone,
+};
+
+// LRM 9.3.2 parallel block. Each branch is a closure (a captured callable
+// value) in the enclosing scope's expr arena, referenced here by id; the
+// backend spawns each as a concurrent process and the parent waits per `mode`.
+// Being a fork branch is what makes the closure run as a coroutine -- the
+// closure node itself carries no such property. A fork carries no nested scopes
+// of its own.
+struct ForkStmt {
+  JoinMode mode;
+  std::vector<ExprId> branches;
+};
+
 struct IfStmt {
   ExprId condition;
   ProceduralScopeId then_scope;
@@ -173,7 +192,7 @@ struct SensitivityWaitStmt {
 };
 
 using StmtData = std::variant<
-    EmptyStmt, ProceduralVarDeclStmt, ExprStmt, BlockStmt, IfStmt,
+    EmptyStmt, ProceduralVarDeclStmt, ExprStmt, BlockStmt, ForkStmt, IfStmt,
     ConstructOwnedObjectStmt, ConstructExternalUnitStmt,
     ResolveCrossUnitRefStmt, ForStmt, DelayStmt, WhileStmt, DoWhileStmt,
     BreakStmt, ContinueStmt, ReturnStmt, SensitivityWaitStmt>;
