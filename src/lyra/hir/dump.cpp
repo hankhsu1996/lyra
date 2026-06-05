@@ -164,6 +164,33 @@ class HirDumper {
         "HirDumper::FormatEventMethodKind: unknown EventMethodKind");
   }
 
+  static auto FormatArrayMethodKind(ArrayMethodKind k) -> std::string_view {
+    switch (k) {
+      case ArrayMethodKind::kSize:
+        return "size";
+      case ArrayMethodKind::kDelete:
+        return "delete";
+      case ArrayMethodKind::kReverse:
+        return "reverse";
+      case ArrayMethodKind::kSort:
+        return "sort";
+      case ArrayMethodKind::kRsort:
+        return "rsort";
+      case ArrayMethodKind::kSum:
+        return "sum";
+      case ArrayMethodKind::kProduct:
+        return "product";
+      case ArrayMethodKind::kAnd:
+        return "and";
+      case ArrayMethodKind::kOr:
+        return "or";
+      case ArrayMethodKind::kXor:
+        return "xor";
+    }
+    throw InternalError(
+        "HirDumper::FormatArrayMethodKind: unknown ArrayMethodKind");
+  }
+
   static auto FormatPackedForm(PackedArrayForm f) -> std::string_view {
     switch (f) {
       case PackedArrayForm::kExplicit:
@@ -592,6 +619,10 @@ class HirDumper {
                       [](EventMethodKind k) -> std::string {
                         return std::format(
                             "EventMethod \"{}\"", FormatEventMethodKind(k));
+                      },
+                      [](ArrayMethodKind k) -> std::string {
+                        return std::format(
+                            "ArrayMethod \"{}\"", FormatArrayMethodKind(k));
                       },
                   },
                   b.method);

@@ -9,8 +9,6 @@
 #include <slang/numeric/Time.h>
 #include <slang/syntax/SyntaxNode.h>
 
-#include "lyra/diag/diagnostic.hpp"
-#include "lyra/diag/source_span.hpp"
 #include "lyra/hir/binary_op.hpp"
 #include "lyra/hir/conversion.hpp"
 #include "lyra/hir/inc_dec_op.hpp"
@@ -33,8 +31,7 @@ auto LowerConversionKind(slang::ast::ConversionKind k) -> hir::ConversionKind;
 
 auto LowerBinaryOp(slang::ast::BinaryOperator op) -> hir::BinaryOp;
 
-auto LowerUnaryOp(slang::ast::UnaryOperator op, diag::SourceSpan span)
-    -> diag::Result<hir::UnaryOp>;
+auto LowerUnaryOp(slang::ast::UnaryOperator op) -> hir::UnaryOp;
 
 // LRM 11.4.2: maps slang's inc/dec UnaryOperator values to hir::IncDecOp.
 // Throws InternalError if `op` is not one of the four inc/dec variants
@@ -51,6 +48,9 @@ auto LowerEnumMethodName(std::string_view name)
 
 auto LowerStringMethodName(std::string_view name)
     -> std::optional<hir::StringMethodKind>;
+
+auto LowerArrayMethodName(std::string_view name)
+    -> std::optional<hir::ArrayMethodKind>;
 
 // Recover the original user-written rhs from slang's compound expansion:
 // slang lowers `lhs op= e` to `right = Conv(lhs.type) { BinaryOp(op) {

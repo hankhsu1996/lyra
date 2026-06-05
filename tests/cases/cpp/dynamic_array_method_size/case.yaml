@@ -1,0 +1,15 @@
+id: cpp.dynamic_array_method_size
+tags: [cpp_run]
+input:
+  command: [run, cpp]
+  project: false
+  top: Top
+  files: [main.sv]
+expect:
+  exit: 0
+  variables:
+    n_empty: 0
+    n_three: 3
+    n_after_writes: 3
+    n_resized: 5
+    n_outer: 2
