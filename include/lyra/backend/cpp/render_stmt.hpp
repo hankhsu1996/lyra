@@ -6,6 +6,7 @@
 #include "lyra/backend/cpp/render_context.hpp"
 #include "lyra/diag/diagnostic.hpp"
 #include "lyra/mir/stmt.hpp"
+#include "lyra/mir/structural_scope.hpp"
 
 namespace lyra::backend::cpp {
 

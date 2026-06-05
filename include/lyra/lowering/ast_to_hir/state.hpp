@@ -262,7 +262,7 @@ class UnitLoweringState {
   // HIR scope by TakeCrossUnitRefsForFrame when the scope finishes lowering.
   auto MapOrGetCrossUnitRef(
       const slang::ast::ValueSymbol& target, ScopeFrameId home_frame,
-      hir::InstanceMemberId instance, std::vector<hir::PathStep> path,
+      hir::CrossUnitRefHead head, std::vector<hir::PathStep> path,
       hir::TypeId type) -> hir::CrossUnitRefId {
     if (const auto it = cross_unit_ref_dedup_.find(&target);
         it != cross_unit_ref_dedup_.end()) {
@@ -272,7 +272,7 @@ class UnitLoweringState {
     const hir::CrossUnitRefId id{static_cast<std::uint32_t>(slots.size())};
     slots.push_back(
         hir::CrossUnitRefDecl{
-            .instance = instance, .path = std::move(path), .type = type});
+            .head = std::move(head), .path = std::move(path), .type = type});
     cross_unit_ref_dedup_.emplace(&target, id);
     return id;
   }
@@ -342,6 +342,19 @@ class ScopeStack {
       throw InternalError("ScopeStack::Pop: unbalanced pop");
     }
     frames_.pop_back();
+  }
+
+  // The frame of the scope currently being lowered. An upward cross-unit
+  // reference stores its slot here (its owning structural scope), since it has
+  // no owned-member head to locate it by.
+  [[nodiscard]] auto Current() const -> ScopeFrameId {
+    return frames_.back();
+  }
+
+  // Structural nesting depth; 1 is the unit root, more means inside a generate
+  // scope.
+  [[nodiscard]] auto Depth() const -> std::size_t {
+    return frames_.size();
   }
 
   [[nodiscard]] auto HopsTo(ScopeFrameId target) const

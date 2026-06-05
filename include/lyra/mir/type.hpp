@@ -29,6 +29,7 @@ enum class TypeKind {
   kExternalUnitObject,
   kOwningPtr,
   kVector,
+  kExternalRef,
 };
 
 enum class BitAtom {
@@ -148,11 +149,24 @@ struct VectorType {
   auto operator==(const VectorType&) const -> bool = default;
 };
 
+// An upward hierarchical reference's storage: a resolved pointer to a leaf of
+// `element` living in the ancestor named `ancestor` under signal `signal` (LRM
+// 23.8). Like ExternalUnitObjectType it carries the cross-unit symbol on the
+// type; the address binds at construction, never the layout. Emitted as the
+// runtime `ExternUp<element>` member.
+struct ExternalRefType {
+  TypeId element;
+  std::string ancestor;
+  std::string signal;
+
+  auto operator==(const ExternalRefType&) const -> bool = default;
+};
+
 using TypeData = std::variant<
     PackedArrayType, EnumType, UnpackedArrayType, DynamicArrayType, QueueType,
     AssociativeArrayType, StringType, EventType, RealType, ShortRealType,
     RealTimeType, ChandleType, VoidType, ObjectType, ExternalUnitObjectType,
-    OwningPtrType, VectorType>;
+    OwningPtrType, VectorType, ExternalRefType>;
 
 struct Type {
   TypeData data;

@@ -278,6 +278,19 @@ auto LowerProceduralVarRefExpr(
       .data = proc_state.TranslateProceduralVar(l.var), .type = type};
 }
 
+// A cross-unit ref resolves to the MIR target recorded for its slot: an upward
+// ref reads its ExternalRef member through a StructuralVarRef, a downward ref
+// keeps a CrossUnitVarRef. `type` is the referenced leaf type either way.
+auto LowerCrossUnitVarRefExpr(
+    const StructuralScopeLoweringState& scope_state,
+    const hir::CrossUnitVarRef& c, mir::TypeId type) -> mir::Expr {
+  return std::visit(
+      [&](const auto& ref) -> mir::Expr {
+        return mir::Expr{.data = ref, .type = type};
+      },
+      scope_state.CrossUnitRefTarget(c.id));
+}
+
 auto LowerLoopVarRefExpr(
     const ConstructorLoweringState& ctor_state, const hir::LoopVarRef& lv,
     mir::TypeId type) -> mir::Expr {
@@ -544,9 +557,7 @@ auto LowerHirPrimaryProc(
             return LowerStructuralParamRefExpr(scope_state, lv, type);
           },
           [&](const hir::CrossUnitVarRef& c) -> mir::Expr {
-            return mir::Expr{
-                .data = mir::CrossUnitVarRef{.id = {.value = c.id.value}},
-                .type = type};
+            return LowerCrossUnitVarRefExpr(scope_state, c, type);
           },
       },
       p);
@@ -594,10 +605,7 @@ auto LowerHirPrimaryStructural(
             // A continuous assignment lowers as a scope-level structural
             // expression, yet it may read or write a cross-unit member: a
             // hierarchical reference or a port connection (LRM 10.3, 23.3.3).
-            // The slot resolves once at construction (reference_resolution.md).
-            return mir::Expr{
-                .data = mir::CrossUnitVarRef{.id = {.value = c.id.value}},
-                .type = type};
+            return LowerCrossUnitVarRefExpr(scope_state, c, type);
           },
       },
       p);

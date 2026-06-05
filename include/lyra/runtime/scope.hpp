@@ -15,6 +15,7 @@
 namespace lyra::runtime {
 
 class RuntimeServices;
+class ExternBase;
 
 // Returned by a scope that declares no timescale of its own (the synthetic
 // `$root`). The engine's design-global precision minimum ignores it, so a
@@ -39,6 +40,35 @@ class Scope {
 
   [[nodiscard]] auto Parent() const -> Scope*;
   [[nodiscard]] auto Name() const -> std::string_view;
+
+  // The scope's module definition name. An upward hierarchical reference climbs
+  // the parent chain matching its first name component against each ancestor's
+  // instance name (`Name()`) or module name (this), since the LRM lets the
+  // first component be either (LRM 23.8). The base never matches; a generated
+  // unit class overrides it.
+  [[nodiscard]] virtual auto DefName() const -> std::string_view {
+    return {};
+  }
+
+  // Returns the address of a signal this scope owns by that name, or nullptr if
+  // it has none. An upward reference cannot name its ancestor's type, so it
+  // fetches the signal by name and the ancestor's own class answers
+  // (docs/architecture/emission_model.md).
+  // NOLINTNEXTLINE(readability-named-parameter)
+  [[nodiscard]] virtual auto GetSignal(std::string_view) -> void* {
+    return nullptr;
+  }
+
+  // Climbs the parent chain to the ancestor whose instance name (`Name()`) or
+  // module name (`DefName()`) is `ancestor` and returns its signal named
+  // `signal` (LRM 23.8). The single shared implementation of an upward
+  // reference's runtime navigation; an `ExternUp` member calls it once at Bind.
+  [[nodiscard]] auto ResolveUpward(
+      std::string_view ancestor, std::string_view signal) -> void*;
+
+  // An `ExternUp` member registers itself here from its constructor; Bind
+  // relocates all registered members once the whole tree exists.
+  void RegisterExtern(ExternBase* member);
 
   // The scope's declared time precision as a power of ten (LRM Table 20-2).
   // A scope that declares a timescale overrides this; the base returns the
@@ -94,6 +124,9 @@ class Scope {
   std::vector<std::unique_ptr<RuntimeProcess>> processes_;
   // Empty std::function == clean slot; no parallel dirty bitmap needed.
   std::vector<std::function<void()>> observed_pending_;
+  // Non-owning links to this scope's ExternUp members; relocated at Bind once
+  // the whole tree exists. The members are owned by the derived class.
+  std::vector<ExternBase*> externs_;
 };
 
 // A module / interface / program instance: an owned child built from another

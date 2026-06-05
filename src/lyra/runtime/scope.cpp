@@ -9,6 +9,7 @@
 
 #include "lyra/base/internal_error.hpp"
 #include "lyra/runtime/coroutine.hpp"
+#include "lyra/runtime/extern_up.hpp"
 #include "lyra/runtime/process_kind.hpp"
 #include "lyra/runtime/runtime_process.hpp"
 #include "lyra/runtime/runtime_services.hpp"
@@ -42,8 +43,31 @@ auto Scope::Name() const -> std::string_view {
 
 void Scope::Bind(RuntimeServices& services) {
   services_ = &services;
+  // The whole tree is constructed before Bind runs, so every ancestor and the
+  // full parent chain exist when an ExternUp member relocates by climbing.
+  for (ExternBase* member : externs_) {
+    member->Relocate();
+  }
   CreateProcesses();
   ForEachChild([&services](Scope& child) { child.Bind(services); });
+}
+
+void Scope::RegisterExtern(ExternBase* member) {
+  externs_.push_back(member);
+}
+
+auto Scope::ResolveUpward(std::string_view ancestor, std::string_view signal)
+    -> void* {
+  Scope* s = parent_;
+  while (s != nullptr && s->Name() != ancestor && s->DefName() != ancestor) {
+    s = s->Parent();
+  }
+  if (s == nullptr) {
+    throw InternalError(
+        "Scope::ResolveUpward: no ancestor named " + std::string(ancestor) +
+        " on the parent chain");
+  }
+  return s->GetSignal(signal);
 }
 
 auto Scope::Services() -> RuntimeServices& {

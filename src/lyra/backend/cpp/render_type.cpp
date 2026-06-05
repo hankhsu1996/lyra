@@ -42,7 +42,10 @@ auto RenderPackedArrayCtorArgs(const mir::PackedArrayType& pa) -> std::string {
 }
 
 auto IsObservableScalarType(const mir::Type& ty) -> bool {
-  return ty.IsIntegralPacked();
+  // An ExternalRef member is a Var-like observable: it forwards reads, writes,
+  // and subscription to its resolved cell, so a write routes through Set.
+  return ty.IsIntegralPacked() ||
+         std::holds_alternative<mir::ExternalRefType>(ty.data);
 }
 
 auto RenderEnumClassName(
@@ -108,6 +111,11 @@ auto RenderTypeAsCpp(
             auto inner_or = RenderTypeAsCpp(unit, owner_scope, v.element);
             if (!inner_or) return std::unexpected(std::move(inner_or.error()));
             return "std::vector<" + *inner_or + ">";
+          },
+          [&](const mir::ExternalRefType& e) -> diag::Result<std::string> {
+            auto inner_or = RenderTypeAsCpp(unit, owner_scope, e.element);
+            if (!inner_or) return std::unexpected(std::move(inner_or.error()));
+            return "lyra::runtime::ExternUp<" + *inner_or + ">";
           },
           [](const auto&) -> diag::Result<std::string> {
             throw InternalError(

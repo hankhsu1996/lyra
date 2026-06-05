@@ -219,17 +219,56 @@ auto InstallInstanceMembers(
   return instance_member_vars;
 }
 
-// Cross-unit references resolve once at construction, after the child
-// instances are built (reference_resolution.md). Each slot's resolution
-// statement runs at the tail of the constructor body.
+// An upward cross-unit reference materializes as an ExternalRef member: the
+// (ancestor, signal) symbol lives on its type, and the runtime ExternUp member
+// self-relocates at Bind by climbing the parent chain
+// (docs/architecture/emission_model.md). This runs before processes so reads
+// resolve to the member. Every cross-unit ref slot's MIR target is recorded in
+// HIR slot order; a downward slot keeps a CrossUnitVarRef that
+// InstallCrossUnitRefs materializes into the constructor.
+void MaterializeCrossUnitRefTargets(
+    UnitLoweringState& unit_state, StructuralScopeLoweringState& scope_state,
+    const hir::StructuralScope& scope,
+    ProceduralScopeLoweringState& ctor_scope_state) {
+  std::uint32_t downward_slot = 0;
+  for (const auto& cu : scope.cross_unit_refs) {
+    if (const auto* up = std::get_if<hir::UpwardHead>(&cu.head)) {
+      const mir::TypeId leaf = unit_state.TranslateType(cu.type);
+      const mir::TypeId ext_type = unit_state.AddType(
+          mir::ExternalRefType{
+              .element = leaf,
+              .ancestor = up->ancestor_name,
+              .signal = up->signal_name});
+      const mir::ExprId init =
+          SynthesizeDefaultValueExpr(unit_state, ctor_scope_state, leaf);
+      const mir::StructuralVarId var = scope_state.AddStructuralVar(
+          mir::StructuralVarDecl{
+              .name = "up_" + up->ancestor_name + "_" + up->signal_name,
+              .type = ext_type,
+              .initializer = init});
+      scope_state.AddCrossUnitRefTarget(
+          mir::StructuralVarRef{.hops = {.value = 0}, .var = var});
+    } else {
+      scope_state.AddCrossUnitRefTarget(
+          mir::CrossUnitVarRef{.id = {.value = downward_slot}});
+      ++downward_slot;
+    }
+  }
+}
+
+// A downward slot resolves in the constructor by navigating an owned child
+// member after the children are built (reference_resolution.md). Upward slots
+// are materialized as ExternalRef members upstream and skipped here.
 void InstallCrossUnitRefs(
     UnitLoweringState& unit_state, StructuralScopeLoweringState& scope_state,
     const hir::StructuralScope& scope,
     const std::vector<mir::StructuralVarId>& instance_member_vars,
     ProceduralScopeLoweringState& ctor_scope_state) {
   for (const auto& cu : scope.cross_unit_refs) {
-    const mir::StructuralVarId instance_var =
-        instance_member_vars.at(cu.instance.value);
+    const auto* down = std::get_if<hir::DownwardHead>(&cu.head);
+    if (down == nullptr) {
+      continue;
+    }
     std::vector<mir::PathStep> path;
     path.reserve(cu.path.size());
     for (const auto& step : cu.path) {
@@ -241,7 +280,7 @@ void InstallCrossUnitRefs(
     }
     const mir::CrossUnitRefId slot = scope_state.AddCrossUnitRef(
         mir::CrossUnitRefDecl{
-            .instance_var = instance_var,
+            .instance_var = instance_member_vars.at(down->instance.value),
             .path = std::move(path),
             .type = unit_state.TranslateType(cu.type)});
     const mir::StmtId sid = ctor_scope_state.AddStmt(
@@ -632,6 +671,12 @@ auto LowerStructuralScope(
             .name = d.name, .type = mir_type, .initializer = mir_init});
     scope_state.MapStructuralVar(hir_id, mir_id);
   }
+
+  // Upward refs become ExternalRef members and every cross-unit slot's MIR
+  // target is recorded before any body is lowered, so reads and sensitivity in
+  // subroutines and processes resolve each slot.
+  MaterializeCrossUnitRefTargets(
+      unit_state, scope_state, scope, ctor_scope_state);
 
   // Map every subroutine's identity before lowering any body, so a call in one
   // body resolves a forward or mutual reference to a peer (LRM 13.7). Only the
