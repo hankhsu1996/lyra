@@ -4,7 +4,18 @@
 
 namespace lyra::runtime {
 
+auto ScanSource::IsWhitespace(int ch) -> bool {
+  return ch == ' ' || ch == '\t' || ch == '\n' || ch == '\r' || ch == '\f' ||
+         ch == '\v';
+}
+
 StringScanSource::StringScanSource(std::string_view buf) : buf_(buf) {
+}
+
+auto StringScanSource::IsWhitespace(int ch) -> bool {
+  // LRM 21.3.4.3(a): for $sscanf, null characters shall also be considered
+  // white space.
+  return ch == '\0' || ScanSource::IsWhitespace(ch);
 }
 
 auto StringScanSource::Peek() -> int {

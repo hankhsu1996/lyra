@@ -41,8 +41,7 @@ auto LowerScanSystemSubroutineCallStmt(
     const UnitLoweringState& unit_state,
     const StructuralScopeLoweringState& scope_state,
     ProcessLoweringState& proc_state, const hir::ProceduralBody& hir_proc,
-    const hir::Stmt& stmt, diag::SourceSpan span, const hir::CallExpr& call,
-    const support::SystemSubroutineDesc& desc,
+    const hir::Stmt& stmt, const hir::CallExpr& call,
     const support::ScanSystemSubroutineInfo& info,
     std::optional<hir::ExprId> assign_target, mir::TypeId result_type)
     -> diag::Result<mir::Stmt> {
@@ -72,21 +71,18 @@ auto LowerScanSystemSubroutineCallStmt(
   mir::ExprId source_id = wrapper.AddExpr(*std::move(source_or));
   const mir::TypeKind source_kind = unit_state.GetType(source_type).Kind();
   switch (info.source) {
-    case support::ScanSourceKind::kString:
-      if (source_kind != mir::TypeKind::kString) {
-        if (source_kind != mir::TypeKind::kPackedArray) {
-          return diag::Unsupported(
-              span, diag::DiagCode::kUnsupportedSubroutineArgument,
-              std::format(
-                  "{} input source of unpacked-array-of-byte type "
-                  "(LRM 21.3.4.3) is not yet supported",
-                  std::string{desc.name}),
-              diag::UnsupportedCategory::kFeature);
-        }
-        // LRM 5.9 + 6.16: string literals and integral expressions both
-        // reach lowering as packed bit-vectors whose bytes are the input
-        // characters; the implicit conversion reinterprets those bits as
-        // a string view.
+    case support::ScanSourceKind::kString: {
+      // LRM 21.3.4.3 lists exactly three valid source types for $sscanf:
+      // string, integral, and unpacked array of byte. The runtime entry
+      // takes `value::String`; the two non-string shapes lift here via an
+      // implicit ConversionExpr. Any other type is invalid SV; slang's
+      // type-check is expected to reject upstream.
+      if (source_kind == mir::TypeKind::kString) {
+        break;
+      }
+      if (source_kind == mir::TypeKind::kPackedArray) {
+        // LRM 5.9 + 6.16: string literals and integral expressions reach
+        // lowering as packed bit-vectors whose bytes are the input chars.
         source_id = wrapper.AddExpr(
             mir::Expr{
                 .data =
@@ -94,8 +90,37 @@ auto LowerScanSystemSubroutineCallStmt(
                         .operand = source_id,
                         .kind = mir::ConversionKind::kImplicit},
                 .type = unit_state.Builtins().string});
+        break;
       }
-      break;
+      if (source_kind == mir::TypeKind::kUnpackedArray) {
+        const auto& ua = std::get<mir::UnpackedArrayType>(
+            unit_state.GetType(source_type).data);
+        const auto& elem = unit_state.GetType(ua.element_type);
+        if (!elem.IsIntegralPacked() ||
+            elem.AsIntegralPacked().BitWidth() != 8U) {
+          throw InternalError(
+              "LowerScanSystemSubroutineCallStmt: $sscanf source unpacked "
+              "array must have an 8-bit integral element per LRM 21.3.4.3 "
+              "'unpacked array of byte'; slang's type-check should have "
+              "rejected other element shapes");
+        }
+        // LRM 21.3.4.3: byte-array source linearises element-order into the
+        // scanner's input stream; the backend renders the conversion as a
+        // `value::String::FromByteArray` call.
+        source_id = wrapper.AddExpr(
+            mir::Expr{
+                .data =
+                    mir::ConversionExpr{
+                        .operand = source_id,
+                        .kind = mir::ConversionKind::kImplicit},
+                .type = unit_state.Builtins().string});
+        break;
+      }
+      throw InternalError(
+          "LowerScanSystemSubroutineCallStmt: $sscanf source must be string, "
+          "integral, or unpacked array of byte (LRM 21.3.4.3); slang's "
+          "type-check should have rejected other source types");
+    }
     case support::ScanSourceKind::kFile:
       if (source_kind != mir::TypeKind::kPackedArray) {
         // LRM 21.3.1 binds fd as a 32-bit int; slang's type-check on the
