@@ -69,9 +69,14 @@ Tracks remaining LRM 21.3.4.3 corners explicitly rejected by the scan family. Ea
 user-observable feature gap (lowering-time `diag::Unsupported` or runtime rejection) that should
 close as the corresponding behaviour lands.
 
-- [ ] Expression-position `$sscanf` / `$fscanf` (e.g. `if ($sscanf(...))`). Rejected at lowering;
-      only statement position (bare call or blocking assign-RHS) supports the LRM 13.5 copy-out
-      desugaring today.
+- [x] Expression-position `$sscanf` / `$fscanf` (if-condition, blocking assign-RHS, case selector,
+      arithmetic operand). The scan family is modelled per LRM 21.3.4.3 as a system function whose
+      `integer` return is observable in any expression position; writes to output args are runtime
+      side effects routed through `Var::Set` for observable structural lvalues.
+- [ ] Complex-lvalue scan output args (bit-select `a[3:0]`, element index `arr[i]`, struct field
+      `s.f`, etc., per LRM 21.3.4.3). Today the lowering restricts output args to bare variable
+      references; the runtime `ScanSlot` ABI binds a whole-variable `Var<T>` / cell reference, not a
+      partial-write target, so complex lvalues need a different slot shape.
 - [x] Field width (`%5d`) and assignment suppression (`%*d`) for both scan functions (LRM 21.3.4.3
       Table 21-7). The runtime format parser handles the optional `*` and decimal width modifiers;
       suppressed conversions advance the input but do not bump the matched count or consume an

@@ -202,7 +202,7 @@ class Ref {
     return *plain_;
   }
 
-  void Set(RuntimeServices& services, const T& new_val) {
+  void Set(RuntimeServices& services, const T& new_val) const {
     if (signal_ != nullptr) {
       signal_->Set(services, new_val);
     } else {

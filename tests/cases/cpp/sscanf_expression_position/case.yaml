@@ -1,0 +1,22 @@
+id: cpp.sscanf_expression_position
+tags: [cpp_run]
+input:
+  command: [run, cpp]
+  project: false
+  top: Top
+  files: [main.sv]
+expect:
+  exit: 0
+  variables:
+    if_a: 42
+    if_taken: 43
+    if_skipped_a: -1
+    if_skipped: 7
+    arith_a: 11
+    arith_b: 22
+    arith_sum: 233
+    case_a: 7
+    case_branch: "one"
+    both_a: 5
+    both_b: 9
+    both_total: 2

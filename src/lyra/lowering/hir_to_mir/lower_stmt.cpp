@@ -27,7 +27,6 @@
 #include "lyra/lowering/hir_to_mir/lower_deferred_check.hpp"
 #include "lyra/lowering/hir_to_mir/lower_expr.hpp"
 #include "lyra/lowering/hir_to_mir/lower_file_io.hpp"
-#include "lyra/lowering/hir_to_mir/lower_scan.hpp"
 #include "lyra/lowering/hir_to_mir/lower_sformat.hpp"
 #include "lyra/lowering/hir_to_mir/procedural_scope_helpers.hpp"
 #include "lyra/lowering/hir_to_mir/sensitivity_wait.hpp"
@@ -508,11 +507,6 @@ auto LowerExprStmt(
               *file_info, std::nullopt, unit_state.TranslateType(inner.type));
         }
       }
-      if (const auto* scan_info = support::GetScanInfo(desc)) {
-        return LowerScanSystemSubroutineCallStmt(
-            unit_state, scope_state, proc_state, hir_proc, stmt, *call,
-            *scan_info, std::nullopt, unit_state.TranslateType(inner.type));
-      }
       if (const auto* sformat_info = support::GetSFormatInfo(desc)) {
         return LowerSFormatSystemSubroutineCallStmt(
             unit_state, scope_state, proc_state, proc_scope_state, hir_proc,
@@ -564,11 +558,6 @@ auto LowerExprStmt(
                   unit_state, scope_state, proc_state, hir_proc, stmt, *call,
                   *file_info, assign->lhs, result_type);
             }
-          }
-          if (const auto* scan_info = support::GetScanInfo(desc)) {
-            return LowerScanSystemSubroutineCallStmt(
-                unit_state, scope_state, proc_state, hir_proc, stmt, *call,
-                *scan_info, assign->lhs, result_type);
           }
         }
       }

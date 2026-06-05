@@ -32,6 +32,7 @@ namespace lyra::lowering::hir_to_mir {
 
 struct BuiltinMirTypes {
   mir::TypeId int32;
+  mir::TypeId integer;
   mir::TypeId bit1;
   mir::TypeId string;
   mir::TypeId void_type;
@@ -50,6 +51,12 @@ class UnitLoweringState {
                 .signedness = mir::Signedness::kSigned,
                 .dims = {mir::PackedRange{.left = 31, .right = 0}},
                 .form = mir::PackedArrayForm::kInt}}),
+        .integer = AddType(
+            mir::TypeData{mir::PackedArrayType{
+                .atom = mir::BitAtom::kLogic,
+                .signedness = mir::Signedness::kSigned,
+                .dims = {mir::PackedRange{.left = 31, .right = 0}},
+                .form = mir::PackedArrayForm::kInteger}}),
         .bit1 = AddType(
             mir::TypeData{mir::PackedArrayType{
                 .atom = mir::BitAtom::kBit,
