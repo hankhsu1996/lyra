@@ -761,6 +761,32 @@ auto StringMethodMemberName(mir::StringMethodKind k) -> std::string_view {
   throw InternalError("StringMethodMemberName: unknown kind");
 }
 
+auto ArrayMethodMemberName(mir::ArrayMethodKind k) -> std::string_view {
+  switch (k) {
+    case mir::ArrayMethodKind::kSize:
+      return "Size";
+    case mir::ArrayMethodKind::kDelete:
+      return "Delete";
+    case mir::ArrayMethodKind::kReverse:
+      return "Reverse";
+    case mir::ArrayMethodKind::kSort:
+      return "Sort";
+    case mir::ArrayMethodKind::kRsort:
+      return "Rsort";
+    case mir::ArrayMethodKind::kSum:
+      return "Sum";
+    case mir::ArrayMethodKind::kProduct:
+      return "Product";
+    case mir::ArrayMethodKind::kAnd:
+      return "And";
+    case mir::ArrayMethodKind::kOr:
+      return "Or";
+    case mir::ArrayMethodKind::kXor:
+      return "Xor";
+  }
+  throw InternalError("ArrayMethodMemberName: unknown kind");
+}
+
 auto EventMethodMemberName(mir::EventMethodKind k) -> std::string_view {
   switch (k) {
     case mir::EventMethodKind::kTrigger:
@@ -898,6 +924,31 @@ auto RenderEventMethodCall(
   return raw_call;
 }
 
+// LRM 7.5.2 / 7.5.3 / 7.12.2 / 7.12.3: dispatch on the receiver
+// (arguments[0]); none of the no-`with` methods in this PR take additional
+// arguments. `Size()` returns std::size_t and gets wrapped in
+// `PackedArray::Int` to land in SV `int` shape (mirrors EnumMethod::kNum).
+// All other methods either return void (in-place mutators) or already return
+// the receiver's element type (reductions); no wrap.
+auto RenderArrayMethodCall(
+    const RenderContext& ctx, const mir::CallExpr& call,
+    const mir::ArrayMethodInfo& m) -> diag::Result<std::string> {
+  if (call.arguments.empty()) {
+    throw InternalError(
+        "RenderArrayMethodCall: array method expects a receiver argument");
+  }
+  auto receiver_or = RenderExpr(ctx, ctx.Expr(call.arguments[0]));
+  if (!receiver_or) {
+    return std::unexpected(std::move(receiver_or.error()));
+  }
+  const std::string raw_call =
+      std::format("({}).{}()", *receiver_or, ArrayMethodMemberName(m.kind));
+  if (m.kind == mir::ArrayMethodKind::kSize) {
+    return std::format("lyra::value::PackedArray::Int({})", raw_call);
+  }
+  return raw_call;
+}
+
 auto RenderCallExpr(const RenderContext& ctx, const mir::CallExpr& call)
     -> diag::Result<std::string> {
   return std::visit(
@@ -969,6 +1020,9 @@ auto RenderCallExpr(const RenderContext& ctx, const mir::CallExpr& call)
                     },
                     [&](const mir::EventMethodInfo& m) {
                       return RenderEventMethodCall(ctx, call, m);
+                    },
+                    [&](const mir::ArrayMethodInfo& m) {
+                      return RenderArrayMethodCall(ctx, call, m);
                     },
                 },
                 b.method);

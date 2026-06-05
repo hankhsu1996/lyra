@@ -48,6 +48,21 @@ enum class EventMethodKind : std::uint8_t {
   kTriggered,
 };
 
+// LRM 7.5.2 / 7.5.3 dynamic-array methods plus the LRM 7.12.2 / 7.12.3
+// no-`with`, no-queue-return subset of the array-method family.
+enum class ArrayMethodKind : std::uint8_t {
+  kSize,
+  kDelete,
+  kReverse,
+  kSort,
+  kRsort,
+  kSum,
+  kProduct,
+  kAnd,
+  kOr,
+  kXor,
+};
+
 struct EnumMethodInfo {
   TypeId enum_type;
   EnumMethodKind kind;
@@ -61,6 +76,10 @@ struct EventMethodInfo {
   EventMethodKind kind;
 };
 
+struct ArrayMethodInfo {
+  ArrayMethodKind kind;
+};
+
 // True for methods whose backend emission must wrap the call site in
 // `co_await`. The runtime returns an awaitable that submits the appropriate
 // WaitRequest via the coroutine's promise.
@@ -69,7 +88,9 @@ struct EventMethodInfo {
 }
 
 struct BuiltinMethodCallee {
-  std::variant<EnumMethodInfo, StringMethodInfo, EventMethodInfo> method;
+  std::variant<
+      EnumMethodInfo, StringMethodInfo, EventMethodInfo, ArrayMethodInfo>
+      method;
 };
 
 }  // namespace lyra::mir

@@ -472,8 +472,7 @@ auto LowerUnaryExprProc(
     ProcessLoweringState& proc_state, const ScopeStack& stack,
     const slang::ast::UnaryExpression& un, const slang::ast::Expression& expr,
     diag::SourceSpan span) -> diag::Result<hir::Expr> {
-  auto op_or = LowerUnaryOp(un.op, span);
-  if (!op_or) return std::unexpected(std::move(op_or.error()));
+  const hir::UnaryOp op = LowerUnaryOp(un.op);
   auto operand_or =
       LowerProcExpr(unit_facts, unit_state, proc_state, stack, un.operand());
   if (!operand_or) return std::unexpected(std::move(operand_or.error()));
@@ -482,7 +481,7 @@ auto LowerUnaryExprProc(
   if (!type_id) return std::unexpected(std::move(type_id.error()));
   return hir::Expr{
       .type = *type_id,
-      .data = hir::UnaryExpr{.op = *op_or, .operand = operand_id},
+      .data = hir::UnaryExpr{.op = op, .operand = operand_id},
       .span = span,
   };
 }
@@ -658,6 +657,29 @@ auto LowerCallExprProc(
               },
           .span = span,
       };
+    }
+
+    if (receiver_type.has_value() &&
+        std::holds_alternative<hir::DynamicArrayType>(
+            unit_state.GetType(*receiver_type).data)) {
+      if (auto kind = LowerArrayMethodName(name); kind.has_value()) {
+        // LRM 7.5.2 / 7.5.3 dynamic-array methods plus LRM 7.12.2 / 7.12.3
+        // no-`with` subset. Receiver is arguments[0]; this PR's surface
+        // takes no further arguments. Slang upstream gates element-type
+        // constraints (integral for reductions, comparable for sort), so
+        // any call landing here is well-typed.
+        auto type_id = TypeIdOfSlangExpr(unit_facts, unit_state, expr);
+        if (!type_id) return std::unexpected(std::move(type_id.error()));
+        return hir::Expr{
+            .type = *type_id,
+            .data =
+                hir::CallExpr{
+                    .callee = hir::BuiltinMethodRef{.method = *kind},
+                    .arguments = std::move(arg_ids),
+                },
+            .span = span,
+        };
+      }
     }
 
     const auto* desc = support::FindSystemSubroutine(name);
@@ -1357,8 +1379,7 @@ auto LowerUnaryExprStructural(
     ScopeLoweringState& scope_state, const ScopeStack& stack,
     const slang::ast::UnaryExpression& un, const slang::ast::Expression& expr,
     diag::SourceSpan span) -> diag::Result<hir::Expr> {
-  auto op_or = LowerUnaryOp(un.op, span);
-  if (!op_or) return std::unexpected(std::move(op_or.error()));
+  const hir::UnaryOp op = LowerUnaryOp(un.op);
   auto operand_or = LowerStructuralExpr(
       unit_facts, unit_state, scope_state, stack, un.operand());
   if (!operand_or) return std::unexpected(std::move(operand_or.error()));
@@ -1367,7 +1388,7 @@ auto LowerUnaryExprStructural(
   if (!type_id) return std::unexpected(std::move(type_id.error()));
   return hir::Expr{
       .type = *type_id,
-      .data = hir::UnaryExpr{.op = *op_or, .operand = operand_id},
+      .data = hir::UnaryExpr{.op = op, .operand = operand_id},
       .span = span,
   };
 }

@@ -221,6 +221,24 @@ class PackedArray {
   auto operator=(PackedArray&& other) noexcept(false) -> PackedArray&;
   ~PackedArray() = default;
 
+  // Storage-level swap, bypassing AssignFrom's shape-preservation rule.
+  // Found by ADL so STL element-relocation primitives (`std::ranges::sort`,
+  // `reverse`, etc.) can shuffle PackedArrays inside a container without
+  // tripping the user-facing "assignment preserves destination shape"
+  // invariant. Element relocation within a container is structural motion,
+  // not an SV-visible assignment, so adopting source shape via swap is the
+  // correct primitive for that context. Name is lowercase to satisfy the
+  // ADL contract std::swap and std::ranges::swap require.
+  // NOLINTNEXTLINE(readability-identifier-naming)
+  friend auto swap(PackedArray& a, PackedArray& b) noexcept -> void {
+    using std::swap;
+    swap(a.bit_width_, b.bit_width_);
+    swap(a.is_signed_, b.is_signed_);
+    swap(a.is_four_state_, b.is_four_state_);
+    swap(a.storage_, b.storage_);
+    swap(a.dims_, b.dims_);
+  }
+
   // Extract the value as a 64-bit signed integer. Sign-extends from
   // bit_width when is_signed_ is true. X/Z bits map to 0. bit_width must
   // be <= 64.
