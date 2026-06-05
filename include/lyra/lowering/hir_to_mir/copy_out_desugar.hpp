@@ -15,21 +15,19 @@ namespace lyra::lowering::hir_to_mir {
 
 // LRM 13.5 copy-out desugaring at the statement boundary. A subroutine call
 // whose actuals are observable lvalues routes the writeback through an
-// explicit MIR assignment so the variable's own write path runs. Three
+// explicit MIR assignment so the variable's own write path runs. Two
 // callers share the shape: file IO tasks with an output argument
-// ($fgets / $fread / $ferror), $sscanf, and the UDF F4 path (which inlines
-// its own slot construction because per-formal direction picks between
-// `output` and `inout` init -- only the wrap-up step is shared here).
+// ($fgets / $fread / $ferror) and the UDF F4 path (which inlines its own
+// slot construction because per-formal direction picks between `output`
+// and `inout` init -- only the wrap-up step is shared here).
 //
 // The helper takes two phases: callers register one slot per output arg via
 // BuildOutputArgSlot, then assemble the call expression themselves, then
 // hand the slot list + call to BuildCopyOutBlock to compose:
 //   { temp_0 = actual_0; ... ; [lhs =] call(temps...); actual_0 = temp_0; ... }
-// as a BlockStmt. Temps are always copy-in initialized from the actual:
-// for callees that fully overwrite the temp (file IO) the init is
-// observable-equivalent to any other choice; for callees that may leave a
-// temp untouched ($sscanf on a mismatch) copy-in is required so the
-// unconditional writeback round-trips to a no-op.
+// as a BlockStmt. Temps are copy-in initialized from the actual so any
+// formal that may be left untouched by the callee round-trips through the
+// unconditional writeback as a no-op.
 
 struct OutputArgSlot {
   mir::ExprId actual{};

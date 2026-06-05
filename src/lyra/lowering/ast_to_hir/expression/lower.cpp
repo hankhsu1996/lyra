@@ -202,6 +202,8 @@ auto MakeReturnConventionType(
       return unit_state.VoidTypeId();
     case support::ReturnConvention::kInt32:
       return unit_state.Int32TypeId();
+    case support::ReturnConvention::kInteger:
+      return unit_state.IntegerTypeId();
     case support::ReturnConvention::kString:
       return unit_state.StringTypeId();
     case support::ReturnConvention::kTime64:

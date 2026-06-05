@@ -39,10 +39,6 @@ auto RenderExprNatural(const RenderContext& ctx, const mir::Expr& expr)
 
 namespace {
 
-auto RenderLhsExpr(
-    const RenderContext& ctx, const mir::Expr& expr,
-    std::string_view mutate_adapter) -> diag::Result<std::string>;
-
 // Type-kind predicate. `real`, `shortreal`, and `realtime` (LRM 6.12)
 // collectively form the "real family"; arithmetic / relational / logical
 // operator dispatch all branch on this. Taking the full `mir::Type` instead
@@ -1101,6 +1097,8 @@ auto RenderRangeSliceSuffix(
   return std::format(".Slice({}, {}U)", *offset, count);
 }
 
+}  // namespace
+
 // Output shape:
 //   <root>{<mutate_adapter>}{.ElementAt(idx) | .Slice(offset, count)}*
 auto RenderLhsExpr(
@@ -1146,6 +1144,8 @@ auto RenderLhsExpr(
       },
       expr.data);
 }
+
+namespace {
 
 // Walks an LHS expression through element / range selects to its root primary.
 // Whether a write touches an observable cell or a reference formal is decided

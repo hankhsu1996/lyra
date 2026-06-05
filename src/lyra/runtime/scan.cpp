@@ -147,38 +147,29 @@ void AssignFromI64(value::PackedArray& dest, std::int64_t value) {
       value, dest.BitWidth(), dest.IsSigned(), dest.IsFourState());
 }
 
-[[nodiscard]] auto RequireIntegralSlot(
-    const ScanSlot& slot, std::string_view spec) -> value::PackedArray& {
-  value::PackedArray* dest = slot.AsIntegral();
-  if (dest == nullptr) {
+void RequireIntegralSlot(const ScanSlot& slot, std::string_view spec) {
+  if (!slot.IsIntegral()) {
     throw InternalError(
         std::format(
             "$sscanf/$fscanf: format spec '%{}' expects an integral output "
             "argument, but the corresponding actual is not integral",
             spec));
   }
-  return *dest;
 }
 
-[[nodiscard]] auto RequireStringSlot(
-    const ScanSlot& slot, std::string_view spec) -> value::String& {
-  value::String* dest = slot.AsString();
-  if (dest == nullptr) {
+void RequireStringSlot(const ScanSlot& slot, std::string_view spec) {
+  if (!slot.IsString()) {
     throw InternalError(
         std::format(
             "$sscanf/$fscanf: format spec '%{}' expects a string output "
             "argument, but the corresponding actual is not a string",
             spec));
   }
-  return *dest;
 }
 
-// Per-spec parsers below: each one consumes input from `src` and returns
-// the structured parse result. `nullopt` means "no match" (LRM input
-// failure for that directive). Parsers are pure with respect to output --
-// they never touch a `ScanSlot`. The dispatcher decides whether to
-// commit (writing into the slot) or discard the result (assignment
-// suppression `%*spec`).
+// Per-spec parser convention: each returns `nullopt` on LRM-defined input
+// failure; the dispatcher commits the result into the slot (or discards
+// it under `%*spec` assignment suppression).
 
 // ScanDecimal result. Mutually exclusive forms per LRM 21.3.4.3 `%d`:
 // either an integer value, or one of the single-char fills (x / X
@@ -423,26 +414,44 @@ struct DecimalResult {
   return static_cast<unsigned char>(ch & 0xFF);
 }
 
-// Commit phase: apply a parse result into the destination slot. Called
-// only when the conversion is not suppressed; the dispatcher already
-// resolved the slot via Require*Slot.
-void CommitDecimal(value::PackedArray& dest, const DecimalResult& result) {
+// Commit helpers: snapshot the slot's current value, apply the parsed
+// result, then write back through `SetIntegral` so observability fires.
+void CommitDecimal(
+    const ScanSlot& slot, RuntimeServices& services,
+    const DecimalResult& result) {
+  value::PackedArray dest = slot.GetIntegral();
   switch (result.form) {
     case DecimalResult::Form::kInt:
       AssignFromI64(dest, result.int_value);
-      return;
+      break;
     case DecimalResult::Form::kFillX:
       FillAllX(dest);
-      return;
+      break;
     case DecimalResult::Form::kFillZ:
       FillAllZ(dest);
-      return;
+      break;
   }
+  slot.SetIntegral(services, dest);
+}
+
+void CommitBits(
+    const ScanSlot& slot, RuntimeServices& services,
+    std::span<const ScannedBit> bits) {
+  value::PackedArray dest = slot.GetIntegral();
+  AssignBitsMsbFirst(dest, bits);
+  slot.SetIntegral(services, dest);
+}
+
+void CommitChar(
+    const ScanSlot& slot, RuntimeServices& services, unsigned char ch) {
+  value::PackedArray dest = slot.GetIntegral();
+  AssignFromI64(dest, static_cast<std::int64_t>(ch));
+  slot.SetIntegral(services, dest);
 }
 
 [[nodiscard]] auto ScanFromSource(
-    ScanSource& src, std::string_view fmt, std::span<const ScanSlot> slots)
-    -> std::int32_t {
+    RuntimeServices& services, ScanSource& src, std::string_view fmt,
+    std::span<const ScanSlot> slots) -> std::int32_t {
   std::int32_t items = 0;
   std::size_t slot_ix = 0;
   bool first_conversion = true;
@@ -542,7 +551,8 @@ void CommitDecimal(value::PackedArray& dest, const DecimalResult& result) {
         if (auto parsed = ScanDecimal(src, max_width); parsed.has_value()) {
           ok = true;
           if (!suppress) {
-            CommitDecimal(RequireIntegralSlot(slots[slot_ix], "d"), *parsed);
+            RequireIntegralSlot(slots[slot_ix], "d");
+            CommitDecimal(slots[slot_ix], services, *parsed);
           }
         }
         break;
@@ -552,9 +562,8 @@ void CommitDecimal(value::PackedArray& dest, const DecimalResult& result) {
         if (auto parsed = ScanHex(src, max_width); parsed.has_value()) {
           ok = true;
           if (!suppress) {
-            AssignBitsMsbFirst(
-                RequireIntegralSlot(slots[slot_ix], spec == 'x' ? "x" : "h"),
-                std::span<const ScannedBit>{*parsed});
+            RequireIntegralSlot(slots[slot_ix], spec == 'x' ? "x" : "h");
+            CommitBits(slots[slot_ix], services, *parsed);
           }
         }
         break;
@@ -563,9 +572,8 @@ void CommitDecimal(value::PackedArray& dest, const DecimalResult& result) {
         if (auto parsed = ScanBinary(src, max_width); parsed.has_value()) {
           ok = true;
           if (!suppress) {
-            AssignBitsMsbFirst(
-                RequireIntegralSlot(slots[slot_ix], "b"),
-                std::span<const ScannedBit>{*parsed});
+            RequireIntegralSlot(slots[slot_ix], "b");
+            CommitBits(slots[slot_ix], services, *parsed);
           }
         }
         break;
@@ -574,9 +582,8 @@ void CommitDecimal(value::PackedArray& dest, const DecimalResult& result) {
         if (auto parsed = ScanOctal(src, max_width); parsed.has_value()) {
           ok = true;
           if (!suppress) {
-            AssignBitsMsbFirst(
-                RequireIntegralSlot(slots[slot_ix], "o"),
-                std::span<const ScannedBit>{*parsed});
+            RequireIntegralSlot(slots[slot_ix], "o");
+            CommitBits(slots[slot_ix], services, *parsed);
           }
         }
         break;
@@ -585,8 +592,8 @@ void CommitDecimal(value::PackedArray& dest, const DecimalResult& result) {
         if (auto parsed = ScanString(src, max_width); parsed.has_value()) {
           ok = true;
           if (!suppress) {
-            RequireStringSlot(slots[slot_ix], "s") =
-                value::String(std::move(*parsed));
+            RequireStringSlot(slots[slot_ix], "s");
+            slots[slot_ix].SetString(value::String(std::move(*parsed)));
           }
         }
         break;
@@ -595,9 +602,8 @@ void CommitDecimal(value::PackedArray& dest, const DecimalResult& result) {
         if (auto parsed = ScanChar(src, max_width); parsed.has_value()) {
           ok = true;
           if (!suppress) {
-            AssignFromI64(
-                RequireIntegralSlot(slots[slot_ix], "c"),
-                static_cast<std::int64_t>(*parsed));
+            RequireIntegralSlot(slots[slot_ix], "c");
+            CommitChar(slots[slot_ix], services, *parsed);
           }
         }
         break;
@@ -633,13 +639,14 @@ void CommitDecimal(value::PackedArray& dest, const DecimalResult& result) {
 }  // namespace
 
 auto LyraSScanf(
-    const value::String& input, const value::String& format,
-    std::initializer_list<ScanSlot> slots) -> value::PackedArray {
+    RuntimeServices& services, const value::String& input,
+    const value::String& format, std::initializer_list<ScanSlot> slots)
+    -> value::PackedArray {
   StringScanSource src(input.View());
   const std::int32_t items = ScanFromSource(
-      src, format.View(),
+      services, src, format.View(),
       std::span<const ScanSlot>{slots.begin(), slots.size()});
-  return value::PackedArray::Int(items);
+  return value::PackedArray::Integer(items);
 }
 
 auto LyraFScanf(
@@ -656,18 +663,18 @@ auto LyraFScanf(
     // querying it sees EBADF.
     services.Files().SetError(
         fd, EBADF, "$fscanf: not an open file descriptor");
-    return value::PackedArray::Int(-1);
+    return value::PackedArray::Integer(-1);
   }
   if (!slot->permits_read) {
     services.Files().SetError(fd, EBADF, "$fscanf: file not open for reading");
-    return value::PackedArray::Int(-1);
+    return value::PackedArray::Integer(-1);
   }
   FileScanSource src(*slot);
   const std::int32_t items = ScanFromSource(
-      src, format.View(),
+      services, src, format.View(),
       std::span<const ScanSlot>{slots.begin(), slots.size()});
   src.FlushPushback();
-  return value::PackedArray::Int(items);
+  return value::PackedArray::Integer(items);
 }
 
 }  // namespace lyra::runtime

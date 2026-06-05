@@ -89,6 +89,12 @@ class UnitLoweringState {
             .signedness = hir::Signedness::kSigned,
             .dims = {hir::PackedRange{.left = 31, .right = 0}},
             .form = hir::PackedArrayForm::kInt}});
+    integer_type_id_ = AddType(
+        hir::TypeData{hir::PackedArrayType{
+            .atom = hir::BitAtom::kLogic,
+            .signedness = hir::Signedness::kSigned,
+            .dims = {hir::PackedRange{.left = 31, .right = 0}},
+            .form = hir::PackedArrayForm::kInteger}});
     string_type_id_ = AddType(hir::TypeData{hir::StringType{}});
     time_type_id_ = AddType(
         hir::TypeData{hir::PackedArrayType{
@@ -111,6 +117,13 @@ class UnitLoweringState {
   // (`$fopen` per LRM 21.3.1, etc.) rather than by a slang-derived type.
   [[nodiscard]] auto Int32TypeId() const -> hir::TypeId {
     return int32_type_id_;
+  }
+
+  // Canonical id for the synthesized 32-bit signed 4-state `integer` (LRM
+  // 6.11). Used by system functions whose LRM example types the return as
+  // `integer` (e.g. `integer code = $sscanf(...)` per LRM 21.3.4.3).
+  [[nodiscard]] auto IntegerTypeId() const -> hir::TypeId {
+    return integer_type_id_;
   }
 
   // Canonical id for the synthesized `string` type. Used by system functions
@@ -310,6 +323,7 @@ class UnitLoweringState {
   std::unordered_map<const slang::ast::Type*, hir::TypeId> type_cache_;
   hir::TypeId void_type_id_{};
   hir::TypeId int32_type_id_{};
+  hir::TypeId integer_type_id_{};
   hir::TypeId string_type_id_{};
   hir::TypeId time_type_id_{};
   hir::TypeId realtime_type_id_{};
