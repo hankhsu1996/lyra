@@ -1,0 +1,13 @@
+id: cpp.dynamic_array_method_delete
+tags: [cpp_run]
+input:
+  command: [run, cpp]
+  project: false
+  top: Top
+  files: [main.sv]
+expect:
+  exit: 0
+  variables:
+    arr: [7, 8, 9]
+    size_after_delete: 0
+    matrix: []

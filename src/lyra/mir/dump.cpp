@@ -340,6 +340,11 @@ class MirDumper {
                             "EventMethodInfo[kind={}]",
                             static_cast<int>(m.kind));
                       },
+                      [](const ArrayMethodInfo& m) -> std::string {
+                        return std::format(
+                            "ArrayMethodInfo[kind={}]",
+                            static_cast<int>(m.kind));
+                      },
                   },
                   b.method);
             },

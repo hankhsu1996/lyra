@@ -107,8 +107,7 @@ auto LowerBinaryOp(slang::ast::BinaryOperator op) -> hir::BinaryOp {
   throw InternalError("LowerBinaryOp: unknown slang BinaryOperator");
 }
 
-auto LowerUnaryOp(slang::ast::UnaryOperator op, diag::SourceSpan span)
-    -> diag::Result<hir::UnaryOp> {
+auto LowerUnaryOp(slang::ast::UnaryOperator op) -> hir::UnaryOp {
   switch (op) {
     case slang::ast::UnaryOperator::Plus:
       return hir::UnaryOp::kPlus;
@@ -217,6 +216,21 @@ auto LowerStringMethodName(std::string_view name)
   if (name == "octtoa") return hir::StringMethodKind::kOcttoa;
   if (name == "bintoa") return hir::StringMethodKind::kBintoa;
   if (name == "realtoa") return hir::StringMethodKind::kRealtoa;
+  return std::nullopt;
+}
+
+auto LowerArrayMethodName(std::string_view name)
+    -> std::optional<hir::ArrayMethodKind> {
+  if (name == "size") return hir::ArrayMethodKind::kSize;
+  if (name == "delete") return hir::ArrayMethodKind::kDelete;
+  if (name == "reverse") return hir::ArrayMethodKind::kReverse;
+  if (name == "sort") return hir::ArrayMethodKind::kSort;
+  if (name == "rsort") return hir::ArrayMethodKind::kRsort;
+  if (name == "sum") return hir::ArrayMethodKind::kSum;
+  if (name == "product") return hir::ArrayMethodKind::kProduct;
+  if (name == "and") return hir::ArrayMethodKind::kAnd;
+  if (name == "or") return hir::ArrayMethodKind::kOr;
+  if (name == "xor") return hir::ArrayMethodKind::kXor;
   return std::nullopt;
 }
 

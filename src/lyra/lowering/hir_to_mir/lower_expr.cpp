@@ -470,6 +470,32 @@ auto LowerEventMethodKind(hir::EventMethodKind k) -> mir::EventMethodKind {
   throw InternalError("LowerEventMethodKind: unknown hir::EventMethodKind");
 }
 
+auto LowerArrayMethodKind(hir::ArrayMethodKind k) -> mir::ArrayMethodKind {
+  switch (k) {
+    case hir::ArrayMethodKind::kSize:
+      return mir::ArrayMethodKind::kSize;
+    case hir::ArrayMethodKind::kDelete:
+      return mir::ArrayMethodKind::kDelete;
+    case hir::ArrayMethodKind::kReverse:
+      return mir::ArrayMethodKind::kReverse;
+    case hir::ArrayMethodKind::kSort:
+      return mir::ArrayMethodKind::kSort;
+    case hir::ArrayMethodKind::kRsort:
+      return mir::ArrayMethodKind::kRsort;
+    case hir::ArrayMethodKind::kSum:
+      return mir::ArrayMethodKind::kSum;
+    case hir::ArrayMethodKind::kProduct:
+      return mir::ArrayMethodKind::kProduct;
+    case hir::ArrayMethodKind::kAnd:
+      return mir::ArrayMethodKind::kAnd;
+    case hir::ArrayMethodKind::kOr:
+      return mir::ArrayMethodKind::kOr;
+    case hir::ArrayMethodKind::kXor:
+      return mir::ArrayMethodKind::kXor;
+  }
+  throw InternalError("LowerArrayMethodKind: unknown hir::ArrayMethodKind");
+}
+
 auto LowerHirStringLiteral(const hir::StringLiteral& s, mir::TypeId type)
     -> mir::Expr {
   return mir::Expr{.data = mir::StringLiteral{.value = s.value}, .type = type};
@@ -962,6 +988,11 @@ auto LowerHirCallExprProc(
                       return {
                           .method = mir::EventMethodInfo{
                               .kind = LowerEventMethodKind(k)}};
+                    },
+                    [&](hir::ArrayMethodKind k) -> mir::BuiltinMethodCallee {
+                      return {
+                          .method = mir::ArrayMethodInfo{
+                              .kind = LowerArrayMethodKind(k)}};
                     },
                 },
                 b.method);

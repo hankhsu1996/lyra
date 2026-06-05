@@ -1,0 +1,15 @@
+id: cpp.dynamic_array_method_order
+tags: [cpp_run]
+input:
+  command: [run, cpp]
+  project: false
+  top: Top
+  files: [main.sv]
+expect:
+  exit: 0
+  variables:
+    sorted: [-5, -1, 2, 3]
+    rsorted: [3, 2, -1, -5]
+    empty_sorted: []
+    single_sorted: [9]
+    sorted_dup: [1, 1, 2, 2, 3]

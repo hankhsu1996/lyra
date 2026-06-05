@@ -1,0 +1,14 @@
+id: cpp.dynamic_array_method_reverse
+tags: [cpp_run]
+input:
+  command: [run, cpp]
+  project: false
+  top: Top
+  files: [main.sv]
+expect:
+  exit: 0
+  variables:
+    empty: []
+    single: [42]
+    multi: [50, 40, 30, 20, 10]
+    matrix: [[10, 20, 30], [1, 2, 3]]

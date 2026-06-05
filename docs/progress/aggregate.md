@@ -25,7 +25,9 @@ follow once dynamic array's storage and runtime conventions are settled and prov
 | DA3  | Done: positional and replicated assignment patterns (LRM 10.9.1).    |
 | DA4  | Done: aggregate equality, inequality, case-equality.                 |
 | DA5  | Open: constant-width slice (subject to LRM check).                   |
-| DA6  | Open: SV-callable method family (`.size()`, `.delete()`, ...).       |
+| DA6a | Done: method dispatch + no-`with` subset.                            |
+| DA6b | Open: `with` clause + iterator + non-queue-return method variants.   |
+| DA6c | Open: queue runtime + locator family (find\*, min, max, unique\*).   |
 | DA7  | Open: invalid-index handling.                                        |
 | Q1.. | Not yet scoped: queue.                                               |
 | A1.. | Not yet scoped: associative array.                                   |
@@ -84,11 +86,24 @@ The numeric IDs are stable references and do not imply execution order beyond DA
       direction and OOB semantics carry over from U6 / U7. If the LRM forbids slicing on dynamic
       arrays, DA5 closes by emitting the rejection diagnostic instead.
 
-- [ ] DA6 -- SV-callable method family. `.size()` query (LRM 7.5.1), `.delete()` clears all
-      elements, and any other LRM-defined methods on dynamic arrays, plus the LRM 7.10
-      array-querying methods that apply (`$size`, `$dimensions`, etc.). Sets up the SV
-      method-dispatch path for the aggregate types in this file; queue and associative array will
-      extend the same machinery with their respective method families.
+- [x] DA6a -- Method dispatch infrastructure plus the no-`with`, no-queue-return method subset.
+      `.size()` and `.delete()` (LRM 7.5.2 / 7.5.3); the LRM 7.12.2 ordering subset that takes no
+      `with` clause (`.reverse()`, `.sort()`, `.rsort()`); the LRM 7.12.3 reduction subset that
+      takes no `with` clause (`.sum()`, `.product()`, `.and()`, `.or()`, `.xor()`). Dispatch routes
+      receiver-type-bound calls through the existing `BuiltinMethodRef` first-class home alongside
+      enum / string / event methods; system-function array-querying counterparts (`$size`,
+      `$dimensions`, etc. -- LRM 7.11 / 20.7) are a separate dispatch path and not bundled here.
+      Slang gates element-type constraints upstream (integral element for reductions, comparable for
+      sort).
+
+- [ ] DA6b -- `with`-clause variants of the methods that accept one (`sort`, `rsort`, reductions),
+      built on a new iterator-binding pass that lowers slang's `IteratorCallInfo` into HIR/MIR and
+      emits a closure at the backend.
+
+- [ ] DA6c + Q1 -- Queue\<T\> runtime and the locator-family methods that return one (`find` family,
+      `min`, `max`, `unique`, `unique_index`). Opens the queue workstream. `shuffle()` (needs RNG
+      model) and `map()` (SV2023, needs `with` infra + version gate) are standalone follow-ups after
+      DA6c lands.
 
 - [ ] DA7 -- Invalid-index handling. Read on an out-of-range index returns the element type's LRM
       Table 7-1 default; write on an out-of-range index is a silent no-op; X / Z bits in the index
@@ -109,10 +124,11 @@ can be any singular type or `string` (LRM 7.8); storage is sparse; the iteration
 ## Cross-references
 
 - LRM anchors: 7.4.5 (Indexing and slicing of arrays), 7.4.6 (Operations on arrays), 7.5 (Dynamic
-  arrays), 7.6 (Array assignments), 7.8 (Associative arrays), 7.9 (Associative array methods), 7.10
-  (Queues and array-querying methods), 10.9 (Assignment patterns), 11.4.1 (Assignment operators),
-  11.4.5 (Equality operators), Table 6-7 (Default initial values), Table 7-1 (Value read from a
-  nonexistent array entry).
+  arrays), 7.5.2 (`size()`), 7.5.3 (`delete()`), 7.6 (Array assignments), 7.8 (Associative arrays),
+  7.9 (Associative array methods), 7.10 (Queues), 7.11 (Array querying functions), 7.12 (Array
+  manipulation methods), 7.12.1 (Locator), 7.12.2 (Ordering), 7.12.3 (Reduction), 7.12.4 (Iterator
+  index), 10.9 (Assignment patterns), 11.4.1 (Assignment operators), 11.4.5 (Equality operators),
+  Table 6-7 (Default initial values), Table 7-1 (Value read from a nonexistent array entry).
 - Archive items: `datatypes/general/*`.
 - Unblocks: `control-flow.md` C10 (foreach over dynamic / queue / associative subset).
 - Decision: `../decisions/runtime-shape-and-default-value.md` -- runtime shape is retained on

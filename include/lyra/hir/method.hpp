@@ -46,8 +46,29 @@ enum class EventMethodKind : std::uint8_t {
   kTriggered,
 };
 
+// LRM 7.5.2 / 7.5.3 dynamic-array methods plus the LRM 7.12.2 / 7.12.3
+// no-`with`, no-queue-return subset of the array-method family. The arms
+// are named for "array" rather than "dynamic array" because the method
+// semantics are LRM-uniform across container kinds (fixed unpacked, queue);
+// only the AST -> HIR receiver-detection block differs per container, and
+// other containers will extend the routing without renaming this enum.
+enum class ArrayMethodKind : std::uint8_t {
+  kSize,
+  kDelete,
+  kReverse,
+  kSort,
+  kRsort,
+  kSum,
+  kProduct,
+  kAnd,
+  kOr,
+  kXor,
+};
+
 struct BuiltinMethodRef {
-  std::variant<EnumMethodKind, StringMethodKind, EventMethodKind> method;
+  std::variant<
+      EnumMethodKind, StringMethodKind, EventMethodKind, ArrayMethodKind>
+      method;
 };
 
 }  // namespace lyra::hir

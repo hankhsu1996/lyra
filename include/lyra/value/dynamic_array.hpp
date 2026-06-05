@@ -1,7 +1,9 @@
 #pragma once
 
+#include <algorithm>
 #include <cstddef>
 #include <cstdint>
+#include <functional>
 #include <span>
 #include <string>
 #include <utility>
@@ -75,6 +77,21 @@ class DynamicArray {
   auto operator=(const DynamicArray&) -> DynamicArray& = default;
   auto operator=(DynamicArray&&) noexcept -> DynamicArray& = default;
   ~DynamicArray() = default;
+
+  // ADL swap so STL element-relocation primitives can shuffle nested
+  // DynamicArrays inside an outer container (e.g. `matrix.reverse()` on
+  // `int matrix[][]` swaps two row arrays). The default move-assign on
+  // DynamicArray<PackedArray> trips PackedArray::AssignFrom's
+  // shape-preservation rule because storage moves out without the
+  // shape scalars being reset; swapping member-wise avoids the path.
+  // Mirrors PackedArray's friend swap; same NOLINT rationale (ADL name
+  // is mandated lowercase).
+  // NOLINTNEXTLINE(readability-identifier-naming)
+  friend auto swap(DynamicArray& a, DynamicArray& b) noexcept -> void {
+    using std::swap;
+    swap(a.oob_slot_, b.oob_slot_);
+    swap(a.data_, b.data_);
+  }
 
   [[nodiscard]] auto Size() const -> std::size_t {
     return data_.size();
@@ -158,7 +175,92 @@ class DynamicArray {
     return result;
   }
 
+  // LRM 7.5.3: empties the array, resulting in a zero-sized array. Body is
+  // identical to ResetToDefault (LRM Table 6-7 default for dynamic array is
+  // the empty array), but the two surface names track distinct contracts:
+  // Delete is the user-facing method name; ResetToDefault is the OOB-shield
+  // protocol shared with PackedArray / UnpackedArray.
+  auto Delete() -> void {
+    data_.clear();
+  }
+
+  // LRM 7.12.2 reverse: in-place reversal; `with` clause is a compiler
+  // error and is filtered upstream by slang.
+  auto Reverse() -> void {
+    std::ranges::reverse(data_);
+  }
+
+  // LRM 7.12.2 sort / rsort: in-place ordering using the element type's
+  // relational operators. Slang upstream rejects element types lacking
+  // `<`/`>`/`==`. PackedArray::operator< returns a 1-bit PackedArray
+  // truth value whose explicit bool conversion is the sort comparator.
+  //
+  // Selection sort is used (O(n^2)) rather than std::ranges::sort because
+  // libstdc++'s introsort uses `tmp = std::move(arr[i])` during insertion
+  // sort, which empties arr[i] and breaks PackedArray's
+  // shape-preservation invariant on the subsequent `arr[i] = std::move(...)`.
+  // Selection sort touches elements only via the ADL friend swap, which
+  // exchanges storage directly and stays shape-safe. Test-sized arrays
+  // (the only consumers under DA6-a) make the asymptotic cost a non-issue.
+  auto Sort() -> void {
+    SelectionSortBy(std::less<>{});
+  }
+  auto Rsort() -> void {
+    SelectionSortBy(std::greater<>{});
+  }
+
+  // LRM 7.12.3 reductions: fold the element type's arithmetic / bitwise
+  // operator over the elements. Slang upstream restricts the element type to
+  // integral. Empty-array result is element-shape zero (slang behaviour;
+  // LRM is silent) -- the OOB shield slot already carries the canonical
+  // default and is the cheapest in-shape zero.
+  [[nodiscard]] auto Sum() const -> T {
+    return Fold([](const T& a, const T& b) { return a + b; });
+  }
+  [[nodiscard]] auto Product() const -> T {
+    return Fold([](const T& a, const T& b) { return a * b; });
+  }
+  [[nodiscard]] auto And() const -> T {
+    return Fold([](const T& a, const T& b) { return a & b; });
+  }
+  [[nodiscard]] auto Or() const -> T {
+    return Fold([](const T& a, const T& b) { return a | b; });
+  }
+  [[nodiscard]] auto Xor() const -> T {
+    return Fold([](const T& a, const T& b) { return a ^ b; });
+  }
+
  private:
+  template <typename Compare>
+  auto SelectionSortBy(Compare cmp) -> void {
+    using std::swap;
+    for (std::size_t i = 0; i + 1 < data_.size(); ++i) {
+      std::size_t pick = i;
+      for (std::size_t j = i + 1; j < data_.size(); ++j) {
+        if (static_cast<bool>(cmp(data_[j], data_[pick]))) {
+          pick = j;
+        }
+      }
+      if (pick != i) {
+        swap(data_[i], data_[pick]);
+      }
+    }
+  }
+
+  template <typename F>
+  [[nodiscard]] auto Fold(F op) const -> T {
+    if (data_.empty()) {
+      T zero = oob_slot_;
+      zero.ResetToDefault();
+      return zero;
+    }
+    T result = data_[0];
+    for (std::size_t i = 1; i < data_.size(); ++i) {
+      result = op(result, data_[i]);
+    }
+    return result;
+  }
+
   [[nodiscard]] auto IsInvalidIndex(const PackedArray& idx) const -> bool {
     if (idx.HasUnknown()) return true;
     const auto v = idx.ToInt64();

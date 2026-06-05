@@ -1,0 +1,22 @@
+id: cpp.dynamic_array_method_reduction
+tags: [cpp_run]
+input:
+  command: [run, cpp]
+  project: false
+  top: Top
+  files: [main.sv]
+expect:
+  exit: 0
+  variables:
+    s_sum: 100
+    s_product: 240000
+    s_and: "8'h08"
+    s_or: "8'h7F"
+    s_xor: "8'h4F"
+    empty_sum: 0
+    empty_product: 0
+    empty_and: 0
+    empty_or: 0
+    empty_xor: 0
+    single_sum: 42
+    single_product: 42
