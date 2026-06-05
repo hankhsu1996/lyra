@@ -72,18 +72,31 @@ close as the corresponding behaviour lands.
 - [ ] Expression-position `$sscanf` / `$fscanf` (e.g. `if ($sscanf(...))`). Rejected at lowering;
       only statement position (bare call or blocking assign-RHS) supports the LRM 13.5 copy-out
       desugaring today.
-- [ ] Field width (`%5d`) and assignment suppression (`%*d`) for both scan functions (LRM 21.3.4.3
-      Table 21-7). Rejected at runtime so the matched count never silently desyncs from the user's
-      argument list.
-- [ ] `$sscanf` input source of unpacked-array-of-byte type (LRM 21.3.4.3). String and integral
-      inputs work; the unpacked aggregate variant is rejected at lowering.
-- [ ] `$sscanf` NUL-as-whitespace (LRM 21.3.4.3 sscanf-only). NUL is currently treated as a literal
-      byte rather than a separator.
+- [x] Field width (`%5d`) and assignment suppression (`%*d`) for both scan functions (LRM 21.3.4.3
+      Table 21-7). The runtime format parser handles the optional `*` and decimal width modifiers;
+      suppressed conversions advance the input but do not bump the matched count or consume an
+      output slot (LRM "success of suppressed assignments is not directly determinable"); the C
+      scanf convention applies for `%d`'s sign (not counted toward the width). `%c` retains a
+      one-byte read; the scanf "`%5c` reads 5 bytes" extension needs a string-slot output and is
+      tracked separately.
+- [x] `$sscanf` input source of unpacked-array-of-byte type (LRM 21.3.4.3). The HIR-to-MIR boundary
+      inserts an implicit conversion to string for unpacked arrays whose element is an 8-bit
+      integral; the backend emits a `value::String::FromByteArray` call that linearises the
+      element-order byte stream (embedded NULs preserved) into the scanner's input. Any source type
+      outside LRM 21.3.4.3's three permitted shapes (string, integral, unpacked array of byte) is an
+      upstream-validation invariant; the lowering throws `InternalError` because slang's type-check
+      is expected to reject it.
+- [x] `$sscanf` NUL-as-whitespace (LRM 21.3.4.3 sscanf-only). The scan-source interface gained an
+      `IsWhitespace` policy that the string source overrides to also accept NUL;
+      `SkipSourceWhitespace` and `%s`'s stop condition both consult the source rather than a free
+      helper, so NUL acts as a field separator under `$sscanf` only -- `$fscanf` keeps the
+      ASCII-only policy.
 - [ ] `$sscanf` "format string or str argument contains x/z bits implies EOF (-1)" (LRM 21.3.4.3
       sscanf-only). Slang binds str / format expressions to value bytes on this pipeline so the
       corner cannot be observed in practice yet; revisit once 4-state string surfaces exist.
-- [ ] `$fseek` / `$rewind` cancelling pending `$ungetc` operations (LRM 21.3.5). Independent
-      file-positioning gap; not triggered by the scan family but shares the FD surface.
+- [x] `$fseek` / `$rewind` cancelling pending `$ungetc` operations (LRM 21.3.5). The Lyra-owned
+      per-FD putback slot is cleared whenever the file position is repositioned, so any subsequent
+      read consults the underlying stream rather than the stale pushback byte.
 
 ## String-format family follow-ups
 

@@ -1,0 +1,16 @@
+id: cpp.sscanf_nul_whitespace
+tags: [cpp_run]
+input:
+  command: [run, cpp]
+  project: false
+  top: Top
+  files: [main.sv]
+expect:
+  exit: 0
+  variables:
+    count_ints: 2
+    a_int: 42
+    b_int: 9900
+    count_strs: 2
+    s1: "hello"
+    s2: "world"

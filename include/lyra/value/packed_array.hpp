@@ -104,6 +104,18 @@ class PackedArray {
       std::span<const std::uint64_t> unknown_words, std::uint64_t bit_width,
       bool is_signed, bool is_four_state) -> PackedArray;
 
+  // LRM 5.9 / 21.3.4.4 byte-stream-to-packed convention: the first byte
+  // fills the destination's most significant location. Used wherever the
+  // SystemVerilog spec defines a byte order against a packed bit-vector
+  // (`$fread` of an integral variable, `$fread` of an unpacked-array
+  // element, `"abc"` packed-string literal). Shortfalls (`bytes` carrying
+  // fewer than `bit_width` bits) zero-pad the LSBs; excess input bits are
+  // silently truncated. The unknown plane is left zero (the SV spec treats
+  // file / byte-array bytes as 2-state).
+  [[nodiscard]] static auto FromBytes(
+      std::span<const char> bytes, std::uint64_t bit_width, bool is_signed,
+      bool is_four_state) -> PackedArray;
+
   // Width-aware conversion. Constructs a fresh PackedArray of the
   // destination shape and copies bits from `src`, sign- or zero-extending
   // per `src`'s signedness when widening, truncating when narrowing.
