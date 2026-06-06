@@ -93,8 +93,18 @@ struct SystemSubroutineCallee {
   support::SystemSubroutineId id;
 };
 
+// Calls a closure stored as an expression in the same procedural scope.
+// The backend renders the call as `(closure_lambda)(args)` -- the standard
+// IIFE shape when invoked synchronously. Used for SV expression-position
+// constructs whose evaluation has side effects (e.g., `$sscanf` writing
+// through its output args while yielding the matched count).
+struct ClosureRef {
+  ExprId closure{};
+};
+
 using Callee = std::variant<
-    SystemSubroutineCallee, StructuralSubroutineRef, BuiltinMethodCallee>;
+    SystemSubroutineCallee, StructuralSubroutineRef, BuiltinMethodCallee,
+    ClosureRef>;
 
 struct CallExpr {
   Callee callee;

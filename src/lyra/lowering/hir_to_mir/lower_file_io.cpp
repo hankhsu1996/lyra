@@ -29,7 +29,7 @@ namespace {
 auto LowerFileOpenCall(
     const UnitLoweringState& unit_state,
     const StructuralScopeLoweringState& scope_state,
-    const ProcessLoweringState& proc_state,
+    ProcessLoweringState& proc_state,
     ProceduralScopeLoweringState& proc_scope_state,
     const hir::ProceduralBody& hir_proc, const hir::CallExpr& call)
     -> diag::Result<mir::Expr> {
@@ -59,7 +59,7 @@ auto LowerFileOpenCall(
 auto LowerFileCloseCall(
     const UnitLoweringState& unit_state,
     const StructuralScopeLoweringState& scope_state,
-    const ProcessLoweringState& proc_state,
+    ProcessLoweringState& proc_state,
     ProceduralScopeLoweringState& proc_scope_state,
     const hir::ProceduralBody& hir_proc, const hir::CallExpr& call)
     -> diag::Result<mir::Expr> {
@@ -80,7 +80,7 @@ auto LowerFileCloseCall(
 auto LowerFileGetcCall(
     const UnitLoweringState& unit_state,
     const StructuralScopeLoweringState& scope_state,
-    const ProcessLoweringState& proc_state,
+    ProcessLoweringState& proc_state,
     ProceduralScopeLoweringState& proc_scope_state,
     const hir::ProceduralBody& hir_proc, const hir::CallExpr& call)
     -> diag::Result<mir::Expr> {
@@ -98,7 +98,7 @@ auto LowerFileGetcCall(
 auto LowerFileUngetcCall(
     const UnitLoweringState& unit_state,
     const StructuralScopeLoweringState& scope_state,
-    const ProcessLoweringState& proc_state,
+    ProcessLoweringState& proc_state,
     ProceduralScopeLoweringState& proc_scope_state,
     const hir::ProceduralBody& hir_proc, const hir::CallExpr& call)
     -> diag::Result<mir::Expr> {
@@ -122,7 +122,7 @@ auto LowerFileUngetcCall(
 auto LowerFileSeekCall(
     const UnitLoweringState& unit_state,
     const StructuralScopeLoweringState& scope_state,
-    const ProcessLoweringState& proc_state,
+    ProcessLoweringState& proc_state,
     ProceduralScopeLoweringState& proc_scope_state,
     const hir::ProceduralBody& hir_proc, const hir::CallExpr& call)
     -> diag::Result<mir::Expr> {
@@ -153,7 +153,7 @@ auto LowerFileSeekCall(
 auto LowerFileRewindCall(
     const UnitLoweringState& unit_state,
     const StructuralScopeLoweringState& scope_state,
-    const ProcessLoweringState& proc_state,
+    ProcessLoweringState& proc_state,
     ProceduralScopeLoweringState& proc_scope_state,
     const hir::ProceduralBody& hir_proc, const hir::CallExpr& call)
     -> diag::Result<mir::Expr> {
@@ -171,7 +171,7 @@ auto LowerFileRewindCall(
 auto LowerFileTellCall(
     const UnitLoweringState& unit_state,
     const StructuralScopeLoweringState& scope_state,
-    const ProcessLoweringState& proc_state,
+    ProcessLoweringState& proc_state,
     ProceduralScopeLoweringState& proc_scope_state,
     const hir::ProceduralBody& hir_proc, const hir::CallExpr& call)
     -> diag::Result<mir::Expr> {
@@ -189,7 +189,7 @@ auto LowerFileTellCall(
 auto LowerFileEofCall(
     const UnitLoweringState& unit_state,
     const StructuralScopeLoweringState& scope_state,
-    const ProcessLoweringState& proc_state,
+    ProcessLoweringState& proc_state,
     ProceduralScopeLoweringState& proc_scope_state,
     const hir::ProceduralBody& hir_proc, const hir::CallExpr& call)
     -> diag::Result<mir::Expr> {
@@ -207,7 +207,7 @@ auto LowerFileEofCall(
 auto LowerFileFlushCall(
     const UnitLoweringState& unit_state,
     const StructuralScopeLoweringState& scope_state,
-    const ProcessLoweringState& proc_state,
+    ProcessLoweringState& proc_state,
     ProceduralScopeLoweringState& proc_scope_state,
     const hir::ProceduralBody& hir_proc, const hir::CallExpr& call)
     -> diag::Result<mir::Expr> {
@@ -249,7 +249,7 @@ auto RejectOutputArgFileCallInExprPosition(
 auto LowerFileIOSystemSubroutineCall(
     const UnitLoweringState& unit_state,
     const StructuralScopeLoweringState& scope_state,
-    const ProcessLoweringState& proc_state,
+    ProcessLoweringState& proc_state,
     ProceduralScopeLoweringState& proc_scope_state,
     const hir::ProceduralBody& hir_proc, const hir::CallExpr& call,
     const support::SystemSubroutineDesc& desc,

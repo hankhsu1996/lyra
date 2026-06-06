@@ -334,6 +334,10 @@ class MirDumper {
                   "StructuralSubroutineRef[hops={}, subroutine={}] \"{}\"",
                   r.hops.value, r.subroutine.value, target.name);
             },
+            [](const ClosureRef& cr) -> std::string {
+              return std::format(
+                  "ClosureRef[closure=Expr[{}]]", cr.closure.value);
+            },
             [](const BuiltinMethodCallee& b) -> std::string {
               return std::visit(
                   Overloaded{
@@ -895,7 +899,21 @@ class MirDumper {
                       if (k != 0) {
                         slot_list += ", ";
                       }
-                      slot_list += std::format("Expr[{}]", ss.slots[k].value);
+                      slot_list += std::visit(
+                          Overloaded{
+                              [](const IntegralScanSlot& s) -> std::string {
+                                return std::format(
+                                    "Integral{{temp=Expr[{}], width={}, "
+                                    "signed={}, four_state={}}}",
+                                    s.temp.value, s.bit_width,
+                                    s.is_signed ? "true" : "false",
+                                    s.is_four_state ? "true" : "false");
+                              },
+                              [](const StringScanSlot& s) -> std::string {
+                                return std::format(
+                                    "String{{temp=Expr[{}]}}", s.temp.value);
+                              }},
+                          ss.slots[k]);
                     }
                     const std::string_view kind_text =
                         ss.source_kind == support::ScanSourceKind::kString

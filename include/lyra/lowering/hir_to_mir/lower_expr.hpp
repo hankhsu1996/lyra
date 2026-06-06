@@ -9,10 +9,16 @@
 
 namespace lyra::lowering::hir_to_mir {
 
+// `proc_state` is taken by mutable reference: most expression lowering is
+// pure-functional with respect to it, but a system-subroutine expression
+// that models a closure-IIFE (e.g. `$sscanf`) constructs a new procedural
+// scope on the way through, which pushes a depth frame and installs a
+// capture sink. The non-const signature carries that possibility honestly
+// instead of routing the mutation through `mutable` back doors.
 auto LowerExpr(
     const UnitLoweringState& unit_state,
     const StructuralScopeLoweringState& scope_state,
-    const ProcessLoweringState& proc_state,
+    ProcessLoweringState& proc_state,
     ProceduralScopeLoweringState& proc_scope_state,
     const hir::ProceduralBody& hir_process, const hir::Expr& expr)
     -> diag::Result<mir::Expr>;

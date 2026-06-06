@@ -36,7 +36,7 @@ auto ToValuePrintKind(const support::PrintSystemSubroutineInfo& info)
 auto LowerPrintSystemSubroutineCall(
     const UnitLoweringState& unit_state,
     const StructuralScopeLoweringState& scope_state,
-    const ProcessLoweringState& proc_state,
+    ProcessLoweringState& proc_state,
     ProceduralScopeLoweringState& proc_scope_state,
     const hir::ProceduralBody& hir_proc, const hir::CallExpr& call,
     const support::PrintSystemSubroutineInfo& print, diag::SourceSpan span)

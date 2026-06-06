@@ -1051,6 +1051,20 @@ auto RenderCallExpr(const RenderContext& ctx, const mir::CallExpr& call)
                 },
                 b.method);
           },
+          [&](const mir::ClosureRef& cr) -> diag::Result<std::string> {
+            auto closure_or = RenderExpr(ctx, ctx.Expr(cr.closure));
+            if (!closure_or) {
+              return std::unexpected(std::move(closure_or.error()));
+            }
+            std::string args;
+            for (std::size_t i = 0; i < call.arguments.size(); ++i) {
+              auto arg_or = RenderExpr(ctx, ctx.Expr(call.arguments[i]));
+              if (!arg_or) return std::unexpected(std::move(arg_or.error()));
+              if (i != 0) args += ", ";
+              args += *std::move(arg_or);
+            }
+            return "(" + *closure_or + ")(" + args + ")";
+          },
       },
       call.callee);
 }
@@ -1407,10 +1421,16 @@ auto RenderClosureExpr(
               }
               return bind_name + " = " + *value_or;
             },
-            [&](const mir::ByReferenceCapture&) -> diag::Result<std::string> {
-              throw InternalError(
-                  "RenderClosureExpr: by-reference capture appears only in a "
-                  "fork branch, which renders through RenderForkStmtNode");
+            [&](const mir::ByReferenceCapture& br)
+                -> diag::Result<std::string> {
+              const std::string& bind_name =
+                  closure.body->vars.at(br.binding.value).name;
+              auto lvalue_or =
+                  RenderLhsExpr(ctx, ctx.Expr(br.target), std::string_view{});
+              if (!lvalue_or) {
+                return std::unexpected(std::move(lvalue_or.error()));
+              }
+              return "&" + bind_name + " = " + *lvalue_or;
             }},
         closure.captures[i]);
     if (!rendered_or) return std::unexpected(std::move(rendered_or.error()));

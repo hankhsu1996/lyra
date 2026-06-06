@@ -10,6 +10,7 @@
 #include <string>
 #include <string_view>
 #include <utility>
+#include <variant>
 #include <vector>
 
 #include "lyra/base/internal_error.hpp"
@@ -69,15 +70,12 @@ void SkipSourceWhitespace(ScanSource& src) {
   }
 }
 
-// Write `bits` (MSB-first, i.e. bits[0] is the leftmost scanned digit /
-// bit) into `dest`. If `bits.size() < dest.BitWidth()`, MSBs of dest fill
-// with zero. If `bits.size() > dest.BitWidth()`, the high (leading) bits
-// are dropped -- only the trailing dest_width bits land. For a 2-state
-// dest, X/Z scanned bits collapse to 0 per the LRM 4-state -> 2-state
-// convention.
-void AssignBitsMsbFirst(
-    value::PackedArray& dest, std::span<const ScannedBit> bits) {
-  const std::uint64_t width = dest.BitWidth();
+// Build a PackedArray of the target shape from MSB-first scanned bits.
+// `bits.size() < width` zero-fills the MSBs; `bits.size() > width` drops
+// the high bits. For a 2-state target, X/Z scanned bits collapse to 0.
+auto MakePackedFromBits(
+    std::span<const ScannedBit> bits, std::uint32_t width, bool is_signed,
+    bool is_four_state) -> value::PackedArray {
   const auto word_count = static_cast<std::size_t>((width + 63U) / 64U);
   std::vector<std::uint64_t> val_words(word_count, 0U);
   std::vector<std::uint64_t> unk_words(word_count, 0U);
@@ -97,95 +95,93 @@ void AssignBitsMsbFirst(
     }
   }
 
-  const bool four_state = dest.IsFourState();
-  if (!four_state) {
+  if (!is_four_state) {
     for (std::size_t w = 0; w < word_count; ++w) {
       val_words[w] &= ~unk_words[w];
     }
-    dest = value::PackedArray::FromWords(
+    return value::PackedArray::FromWords(
         std::span<const std::uint64_t>{val_words},
-        std::span<const std::uint64_t>{}, width, dest.IsSigned(), false);
-    return;
+        std::span<const std::uint64_t>{}, width, is_signed, false);
   }
-  dest = value::PackedArray::FromWords(
+  return value::PackedArray::FromWords(
       std::span<const std::uint64_t>{val_words},
-      std::span<const std::uint64_t>{unk_words}, width, dest.IsSigned(), true);
+      std::span<const std::uint64_t>{unk_words}, width, is_signed, true);
 }
 
-void FillAllX(value::PackedArray& dest) {
-  const std::uint64_t width = dest.BitWidth();
-  const bool four_state = dest.IsFourState();
-  if (!four_state) {
-    dest = value::PackedArray::FromInt(0, width, dest.IsSigned(), false);
-    return;
+auto MakePackedAllX(std::uint32_t width, bool is_signed, bool is_four_state)
+    -> value::PackedArray {
+  if (!is_four_state) {
+    return value::PackedArray::FromInt(0, width, is_signed, false);
   }
   const auto word_count = static_cast<std::size_t>((width + 63U) / 64U);
   std::vector<std::uint64_t> val_words(word_count, ~std::uint64_t{0});
   std::vector<std::uint64_t> unk_words(word_count, ~std::uint64_t{0});
-  dest = value::PackedArray::FromWords(
+  return value::PackedArray::FromWords(
       std::span<const std::uint64_t>{val_words},
-      std::span<const std::uint64_t>{unk_words}, width, dest.IsSigned(), true);
+      std::span<const std::uint64_t>{unk_words}, width, is_signed, true);
 }
 
-void FillAllZ(value::PackedArray& dest) {
-  const std::uint64_t width = dest.BitWidth();
-  const bool four_state = dest.IsFourState();
-  if (!four_state) {
-    dest = value::PackedArray::FromInt(0, width, dest.IsSigned(), false);
-    return;
+auto MakePackedAllZ(std::uint32_t width, bool is_signed, bool is_four_state)
+    -> value::PackedArray {
+  if (!is_four_state) {
+    return value::PackedArray::FromInt(0, width, is_signed, false);
   }
   const auto word_count = static_cast<std::size_t>((width + 63U) / 64U);
   std::vector<std::uint64_t> val_words(word_count, 0U);
   std::vector<std::uint64_t> unk_words(word_count, ~std::uint64_t{0});
-  dest = value::PackedArray::FromWords(
+  return value::PackedArray::FromWords(
       std::span<const std::uint64_t>{val_words},
-      std::span<const std::uint64_t>{unk_words}, width, dest.IsSigned(), true);
+      std::span<const std::uint64_t>{unk_words}, width, is_signed, true);
 }
 
-void AssignFromI64(value::PackedArray& dest, std::int64_t value) {
-  dest = value::PackedArray::FromInt(
-      value, dest.BitWidth(), dest.IsSigned(), dest.IsFourState());
+auto MakePackedFromI64(
+    std::int64_t value, std::uint32_t width, bool is_signed, bool is_four_state)
+    -> value::PackedArray {
+  return value::PackedArray::FromInt(value, width, is_signed, is_four_state);
 }
 
-void RequireIntegralSlot(const ScanSlot& slot, std::string_view spec) {
-  if (!slot.IsIntegral()) {
+[[nodiscard]] auto RequireIntegralTarget(
+    const ScanTarget& target, std::string_view spec)
+    -> const IntegralScanTarget& {
+  const auto* t = std::get_if<IntegralScanTarget>(&target);
+  if (t == nullptr) {
     throw InternalError(
         std::format(
             "$sscanf/$fscanf: format spec '%{}' expects an integral output "
             "argument, but the corresponding actual is not integral",
             spec));
   }
+  return *t;
 }
 
-void RequireStringSlot(const ScanSlot& slot, std::string_view spec) {
-  if (!slot.IsString()) {
+[[nodiscard]] auto RequireStringTarget(
+    const ScanTarget& target, std::string_view spec)
+    -> const StringScanTarget& {
+  const auto* t = std::get_if<StringScanTarget>(&target);
+  if (t == nullptr) {
     throw InternalError(
         std::format(
             "$sscanf/$fscanf: format spec '%{}' expects a string output "
             "argument, but the corresponding actual is not a string",
             spec));
   }
+  return *t;
 }
 
 // Per-spec parser convention: each returns `nullopt` on LRM-defined input
-// failure; the dispatcher commits the result into the slot (or discards
-// it under `%*spec` assignment suppression).
+// failure. The dispatcher builds the final value from the parsed result
+// plus the target's type metadata.
 
-// ScanDecimal result. Mutually exclusive forms per LRM 21.3.4.3 `%d`:
-// either an integer value, or one of the single-char fills (x / X
-// collapse to kFillX; z / Z / ? collapse to kFillZ).
 struct DecimalResult {
   enum class Form : std::uint8_t { kInt, kFillX, kFillZ };
   Form form;
-  std::int64_t int_value = 0;  // valid only when form == kInt
+  std::int64_t int_value = 0;
 };
 
 // LRM 21.3.4.3 Table 21-7 `%d`. Either a sign-prefixed decimal digit run
 // (with `_` separators) or a single x/X/z/Z/? that fills the entire dest.
-// Mixed (`12x`) stops at the first non-digit -- the `x` is not consumed
-// here, so a following `%h` could still match it. `max_width == 0` means
-// no limit; non-zero caps the digit / `_` chars consumed (C-scanf
-// convention: the sign does not count toward the width).
+// `max_width == 0` means no limit; non-zero caps the digit / `_` chars
+// consumed (C-scanf convention: the sign does not count toward the width).
 [[nodiscard]] auto ScanDecimal(ScanSource& src, std::size_t max_width)
     -> std::optional<DecimalResult> {
   SkipSourceWhitespace(src);
@@ -239,10 +235,6 @@ struct DecimalResult {
 }
 
 // LRM 21.3.4.3 Table 21-7 `%h` / `%x`. Each character -> one 4-bit nibble.
-// Hex digits 0..9 a..f A..F land as (val=digit, unk=0); xX as
-// (val=1111, unk=1111); zZ? as (val=0000, unk=1111); `_` is a separator.
-// `max_width` caps total chars consumed (digits + `_`); zero means
-// unlimited.
 [[nodiscard]] auto ScanHex(ScanSource& src, std::size_t max_width)
     -> std::optional<std::vector<ScannedBit>> {
   SkipSourceWhitespace(src);
@@ -288,9 +280,7 @@ struct DecimalResult {
   return bits;
 }
 
-// LRM 21.3.4.3 Table 21-7 `%o`. 3 bits per octal digit; xX -> (111,111),
-// zZ? -> (000,111); `_` is a separator. `max_width` caps total chars
-// consumed.
+// LRM 21.3.4.3 Table 21-7 `%o`. 3 bits per octal digit.
 [[nodiscard]] auto ScanOctal(ScanSource& src, std::size_t max_width)
     -> std::optional<std::vector<ScannedBit>> {
   SkipSourceWhitespace(src);
@@ -336,9 +326,7 @@ struct DecimalResult {
   return bits;
 }
 
-// LRM 21.3.4.3 Table 21-7 `%b`. Per-character to one bit: 0/1 -> (val,0),
-// xX -> (1,1), zZ? -> (0,1), `_` separator. `max_width` caps total chars
-// consumed.
+// LRM 21.3.4.3 Table 21-7 `%b`. Per-character to one bit.
 [[nodiscard]] auto ScanBinary(ScanSource& src, std::size_t max_width)
     -> std::optional<std::vector<ScannedBit>> {
   SkipSourceWhitespace(src);
@@ -378,7 +366,7 @@ struct DecimalResult {
 }
 
 // Standard scanf `%s`: skip leading whitespace, then read non-whitespace
-// chars until whitespace or EOF. `max_width` caps total chars consumed.
+// chars until whitespace or EOF.
 [[nodiscard]] auto ScanString(ScanSource& src, std::size_t max_width)
     -> std::optional<std::string> {
   SkipSourceWhitespace(src);
@@ -414,46 +402,46 @@ struct DecimalResult {
   return static_cast<unsigned char>(ch & 0xFF);
 }
 
-// Commit helpers: snapshot the slot's current value, apply the parsed
-// result, then write back through `SetIntegral` so observability fires.
-void CommitDecimal(
-    const ScanSlot& slot, RuntimeServices& services,
-    const DecimalResult& result) {
-  value::PackedArray dest = slot.GetIntegral();
-  switch (result.form) {
+// Build helpers: from parsed value + target metadata to a final
+// PackedArray of the target's declared shape.
+
+auto BuildIntegralFromDecimal(
+    const DecimalResult& parsed, const IntegralScanTarget& target)
+    -> value::PackedArray {
+  switch (parsed.form) {
     case DecimalResult::Form::kInt:
-      AssignFromI64(dest, result.int_value);
-      break;
+      return MakePackedFromI64(
+          parsed.int_value, target.bit_width, target.is_signed,
+          target.is_four_state);
     case DecimalResult::Form::kFillX:
-      FillAllX(dest);
-      break;
+      return MakePackedAllX(
+          target.bit_width, target.is_signed, target.is_four_state);
     case DecimalResult::Form::kFillZ:
-      FillAllZ(dest);
-      break;
+      return MakePackedAllZ(
+          target.bit_width, target.is_signed, target.is_four_state);
   }
-  slot.SetIntegral(services, dest);
+  throw InternalError("BuildIntegralFromDecimal: unreachable form");
 }
 
-void CommitBits(
-    const ScanSlot& slot, RuntimeServices& services,
-    std::span<const ScannedBit> bits) {
-  value::PackedArray dest = slot.GetIntegral();
-  AssignBitsMsbFirst(dest, bits);
-  slot.SetIntegral(services, dest);
+auto BuildIntegralFromBits(
+    std::span<const ScannedBit> bits, const IntegralScanTarget& target)
+    -> value::PackedArray {
+  return MakePackedFromBits(
+      bits, target.bit_width, target.is_signed, target.is_four_state);
 }
 
-void CommitChar(
-    const ScanSlot& slot, RuntimeServices& services, unsigned char ch) {
-  value::PackedArray dest = slot.GetIntegral();
-  AssignFromI64(dest, static_cast<std::int64_t>(ch));
-  slot.SetIntegral(services, dest);
+auto BuildIntegralFromChar(unsigned char ch, const IntegralScanTarget& target)
+    -> value::PackedArray {
+  return MakePackedFromI64(
+      static_cast<std::int64_t>(ch), target.bit_width, target.is_signed,
+      target.is_four_state);
 }
 
 [[nodiscard]] auto ScanFromSource(
-    RuntimeServices& services, ScanSource& src, std::string_view fmt,
-    std::span<const ScanSlot> slots) -> std::int32_t {
+    ScanSource& src, std::string_view fmt, std::span<const ScanTarget> targets)
+    -> std::int32_t {
   std::int32_t items = 0;
-  std::size_t slot_ix = 0;
+  std::size_t target_ix = 0;
   bool first_conversion = true;
   std::size_t fmt_ix = 0;
 
@@ -461,8 +449,6 @@ void CommitChar(
     const char fc = fmt[fmt_ix];
 
     if (IsAsciiWhitespace(static_cast<unsigned char>(fc))) {
-      // Any whitespace in the format matches zero-or-more whitespace in
-      // the input.
       SkipSourceWhitespace(src);
       ++fmt_ix;
       continue;
@@ -516,8 +502,6 @@ void CommitChar(
     const char spec = fmt[fmt_ix];
     ++fmt_ix;
 
-    // `%%` literal -- LRM treats it as a non-conversion directive; modifiers
-    // do not apply.
     if (spec == '%') {
       if (suppress || max_width != 0) {
         throw InternalError(
@@ -535,24 +519,20 @@ void CommitChar(
       continue;
     }
 
-    if (!suppress && slot_ix >= slots.size()) {
+    if (!suppress && target_ix >= targets.size()) {
       throw InternalError(
           "$sscanf/$fscanf: format string has more (non-suppressed) "
           "conversion specifiers than output arguments");
     }
 
-    // Two-phase per spec: (1) parse the input -- pure, mode-independent;
-    // (2) commit the result into the slot if the conversion is not
-    // suppressed. Suppress lives in this dispatcher; parsers are
-    // suppression-agnostic.
     bool ok = false;
     switch (spec) {
       case 'd': {
         if (auto parsed = ScanDecimal(src, max_width); parsed.has_value()) {
           ok = true;
           if (!suppress) {
-            RequireIntegralSlot(slots[slot_ix], "d");
-            CommitDecimal(slots[slot_ix], services, *parsed);
+            const auto& t = RequireIntegralTarget(targets[target_ix], "d");
+            *t.dest = BuildIntegralFromDecimal(*parsed, t);
           }
         }
         break;
@@ -562,8 +542,9 @@ void CommitChar(
         if (auto parsed = ScanHex(src, max_width); parsed.has_value()) {
           ok = true;
           if (!suppress) {
-            RequireIntegralSlot(slots[slot_ix], spec == 'x' ? "x" : "h");
-            CommitBits(slots[slot_ix], services, *parsed);
+            const auto& t = RequireIntegralTarget(
+                targets[target_ix], spec == 'x' ? "x" : "h");
+            *t.dest = BuildIntegralFromBits(*parsed, t);
           }
         }
         break;
@@ -572,8 +553,8 @@ void CommitChar(
         if (auto parsed = ScanBinary(src, max_width); parsed.has_value()) {
           ok = true;
           if (!suppress) {
-            RequireIntegralSlot(slots[slot_ix], "b");
-            CommitBits(slots[slot_ix], services, *parsed);
+            const auto& t = RequireIntegralTarget(targets[target_ix], "b");
+            *t.dest = BuildIntegralFromBits(*parsed, t);
           }
         }
         break;
@@ -582,8 +563,8 @@ void CommitChar(
         if (auto parsed = ScanOctal(src, max_width); parsed.has_value()) {
           ok = true;
           if (!suppress) {
-            RequireIntegralSlot(slots[slot_ix], "o");
-            CommitBits(slots[slot_ix], services, *parsed);
+            const auto& t = RequireIntegralTarget(targets[target_ix], "o");
+            *t.dest = BuildIntegralFromBits(*parsed, t);
           }
         }
         break;
@@ -592,8 +573,8 @@ void CommitChar(
         if (auto parsed = ScanString(src, max_width); parsed.has_value()) {
           ok = true;
           if (!suppress) {
-            RequireStringSlot(slots[slot_ix], "s");
-            slots[slot_ix].SetString(value::String(std::move(*parsed)));
+            const auto& t = RequireStringTarget(targets[target_ix], "s");
+            *t.dest = value::String(std::move(*parsed));
           }
         }
         break;
@@ -602,8 +583,8 @@ void CommitChar(
         if (auto parsed = ScanChar(src, max_width); parsed.has_value()) {
           ok = true;
           if (!suppress) {
-            RequireIntegralSlot(slots[slot_ix], "c");
-            CommitChar(slots[slot_ix], services, *parsed);
+            const auto& t = RequireIntegralTarget(targets[target_ix], "c");
+            *t.dest = BuildIntegralFromChar(*parsed, t);
           }
         }
         break;
@@ -616,21 +597,15 @@ void CommitChar(
     }
 
     if (!ok) {
-      // Mismatch / EOF mid-conversion. The LRM distinguishes "EOF before
-      // any conversion" (-1) from "match failure after some" (return the
-      // count so far).
       if (first_conversion && src.Peek() == -1) {
         return -1;
       }
       return items;
     }
     first_conversion = false;
-    // LRM "success of suppressed assignments is not directly determinable":
-    // suppressed conversions advance the input but do not bump items or
-    // consume an output slot.
     if (!suppress) {
       ++items;
-      ++slot_ix;
+      ++target_ix;
     }
   }
   return items;
@@ -639,28 +614,22 @@ void CommitChar(
 }  // namespace
 
 auto LyraSScanf(
-    RuntimeServices& services, const value::String& input,
-    const value::String& format, std::initializer_list<ScanSlot> slots)
-    -> value::PackedArray {
+    const value::String& input, const value::String& format,
+    std::initializer_list<ScanTarget> targets) -> value::PackedArray {
   StringScanSource src(input.View());
   const std::int32_t items = ScanFromSource(
-      services, src, format.View(),
-      std::span<const ScanSlot>{slots.begin(), slots.size()});
+      src, format.View(),
+      std::span<const ScanTarget>{targets.begin(), targets.size()});
   return value::PackedArray::Integer(items);
 }
 
 auto LyraFScanf(
     RuntimeServices& services, const value::PackedArray& fd_pa,
-    const value::String& format, std::initializer_list<ScanSlot> slots)
+    const value::String& format, std::initializer_list<ScanTarget> targets)
     -> value::PackedArray {
   const auto fd = static_cast<std::int32_t>(fd_pa.ToInt64());
   auto* slot = services.Files().ResolveSlot(fd);
   if (slot == nullptr) {
-    // MCD descriptors, closed FDs, and unmapped FDs all land here. LRM
-    // 21.3.4.3 specifies EOF (-1) when the input ends before the first
-    // matching failure or conversion; we treat "no readable stream" as
-    // that condition and additionally stamp $ferror so an SV caller
-    // querying it sees EBADF.
     services.Files().SetError(
         fd, EBADF, "$fscanf: not an open file descriptor");
     return value::PackedArray::Integer(-1);
@@ -671,8 +640,8 @@ auto LyraFScanf(
   }
   FileScanSource src(*slot);
   const std::int32_t items = ScanFromSource(
-      services, src, format.View(),
-      std::span<const ScanSlot>{slots.begin(), slots.size()});
+      src, format.View(),
+      std::span<const ScanTarget>{targets.begin(), targets.size()});
   src.FlushPushback();
   return value::PackedArray::Integer(items);
 }

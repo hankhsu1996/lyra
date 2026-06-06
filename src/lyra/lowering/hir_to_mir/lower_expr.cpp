@@ -24,8 +24,8 @@
 #include "lyra/hir/subroutine_ref.hpp"
 #include "lyra/hir/unary_op.hpp"
 #include "lyra/hir/value_ref.hpp"
+#include "lyra/lowering/hir_to_mir/capture_sink.hpp"
 #include "lyra/lowering/hir_to_mir/default_value.hpp"
-#include "lyra/lowering/hir_to_mir/fork_capture.hpp"
 #include "lyra/lowering/hir_to_mir/inside_predicate.hpp"
 #include "lyra/lowering/hir_to_mir/lower_system_subroutine.hpp"
 #include "lyra/lowering/hir_to_mir/state.hpp"
@@ -273,12 +273,12 @@ auto LowerStructuralVarRefExpr(
 }
 
 auto LowerProceduralVarRefExpr(
-    const ProcessLoweringState& proc_state, const hir::ProceduralVarRef& l,
+    ProcessLoweringState& proc_state, const hir::ProceduralVarRef& l,
     mir::TypeId type) -> mir::Expr {
-  // Inside a fork branch body, a reference that resolves to an enclosing scope
-  // (declared above the branch boundary) is captured by reference as the body
-  // is lowered (LRM 6.21), so it reads the binding rather than reaching out.
-  if (auto* sink = proc_state.ActiveForkCaptureSink()) {
+  // Inside a closure body that installed a capture sink, a reference
+  // resolving above the sink's boundary is captured (by identity) and
+  // rewritten to read the body-side binding the sink composes.
+  if (auto* sink = proc_state.ActiveCaptureSink()) {
     const auto& binding = proc_state.LookupProceduralVar(l.var);
     if (binding.declaration_procedural_depth < sink->BoundaryDepth()) {
       return mir::Expr{
@@ -545,8 +545,8 @@ auto LowerHirRealLiteral(const hir::RealLiteral& r, mir::TypeId type)
 auto LowerHirPrimaryProc(
     const UnitLoweringState& unit_state,
     const StructuralScopeLoweringState& scope_state,
-    const ProcessLoweringState& proc_state, const hir::Primary& p,
-    mir::TypeId type) -> mir::Expr {
+    ProcessLoweringState& proc_state, const hir::Primary& p, mir::TypeId type)
+    -> mir::Expr {
   return std::visit(
       Overloaded{
           [&](const hir::IntegerLiteral& i) -> mir::Expr {
@@ -759,7 +759,7 @@ auto IsExprRootedAtStructuralVar(
 auto LowerHirUnaryExprProc(
     const UnitLoweringState& unit_state,
     const StructuralScopeLoweringState& scope_state,
-    const ProcessLoweringState& proc_state,
+    ProcessLoweringState& proc_state,
     ProceduralScopeLoweringState& proc_scope_state,
     const hir::ProceduralBody& hir_process, const hir::UnaryExpr& u,
     mir::TypeId result_type) -> diag::Result<mir::Expr> {
@@ -779,7 +779,7 @@ auto LowerHirUnaryExprProc(
 auto LowerHirBinaryExprProc(
     const UnitLoweringState& unit_state,
     const StructuralScopeLoweringState& scope_state,
-    const ProcessLoweringState& proc_state,
+    ProcessLoweringState& proc_state,
     ProceduralScopeLoweringState& proc_scope_state,
     const hir::ProceduralBody& hir_process, const hir::BinaryExpr& b,
     mir::TypeId result_type) -> diag::Result<mir::Expr> {
@@ -803,7 +803,7 @@ auto LowerHirBinaryExprProc(
 auto LowerHirConditionalExprProc(
     const UnitLoweringState& unit_state,
     const StructuralScopeLoweringState& scope_state,
-    const ProcessLoweringState& proc_state,
+    ProcessLoweringState& proc_state,
     ProceduralScopeLoweringState& proc_scope_state,
     const hir::ProceduralBody& hir_process, const hir::ConditionalExpr& c,
     mir::TypeId result_type) -> diag::Result<mir::Expr> {
@@ -834,7 +834,7 @@ auto LowerHirConditionalExprProc(
 auto LowerHirAssignExprProc(
     const UnitLoweringState& unit_state,
     const StructuralScopeLoweringState& scope_state,
-    const ProcessLoweringState& proc_state,
+    ProcessLoweringState& proc_state,
     ProceduralScopeLoweringState& proc_scope_state,
     const hir::ProceduralBody& hir_process, const hir::AssignExpr& a,
     diag::SourceSpan span, mir::TypeId result_type) -> diag::Result<mir::Expr> {
@@ -888,7 +888,7 @@ auto LowerHirAssignExprProc(
 auto LowerHirIncDecExprProc(
     const UnitLoweringState& unit_state,
     const StructuralScopeLoweringState& scope_state,
-    const ProcessLoweringState& proc_state,
+    ProcessLoweringState& proc_state,
     ProceduralScopeLoweringState& proc_scope_state,
     const hir::ProceduralBody& hir_process, const hir::IncDecExpr& inc,
     mir::TypeId result_type) -> diag::Result<mir::Expr> {
@@ -905,7 +905,7 @@ auto LowerHirIncDecExprProc(
 auto LowerHirConversionExprProc(
     const UnitLoweringState& unit_state,
     const StructuralScopeLoweringState& scope_state,
-    const ProcessLoweringState& proc_state,
+    ProcessLoweringState& proc_state,
     ProceduralScopeLoweringState& proc_scope_state,
     const hir::ProceduralBody& hir_process, const hir::ConversionExpr& cv,
     mir::TypeId result_type) -> diag::Result<mir::Expr> {
@@ -927,7 +927,7 @@ auto LowerHirConversionExprProc(
 auto LowerHirCallExprProc(
     const UnitLoweringState& unit_state,
     const StructuralScopeLoweringState& scope_state,
-    const ProcessLoweringState& proc_state,
+    ProcessLoweringState& proc_state,
     ProceduralScopeLoweringState& proc_scope_state,
     const hir::ProceduralBody& hir_process, const hir::CallExpr& c,
     diag::SourceSpan span, mir::TypeId result_type) -> diag::Result<mir::Expr> {
@@ -1047,7 +1047,7 @@ auto LowerHirCallExprProc(
 auto LowerHirInsideExprProc(
     const UnitLoweringState& unit_state,
     const StructuralScopeLoweringState& scope_state,
-    const ProcessLoweringState& proc_state,
+    ProcessLoweringState& proc_state,
     ProceduralScopeLoweringState& proc_scope_state,
     const hir::ProceduralBody& hir_process, const hir::InsideExpr& in,
     mir::TypeId result_type) -> diag::Result<mir::Expr> {
@@ -1181,7 +1181,7 @@ auto UnfoldHirRangeBoundsForUnpacked(
 auto LowerHirElementSelectExprProc(
     const UnitLoweringState& unit_state,
     const StructuralScopeLoweringState& scope_state,
-    const ProcessLoweringState& proc_state,
+    ProcessLoweringState& proc_state,
     ProceduralScopeLoweringState& proc_scope_state,
     const hir::ProceduralBody& hir_process, const hir::ElementSelectExpr& sel,
     mir::TypeId result_type) -> diag::Result<mir::Expr> {
@@ -1218,7 +1218,7 @@ auto LowerHirElementSelectExprProc(
 auto LowerHirRangeSelectExprProc(
     const UnitLoweringState& unit_state,
     const StructuralScopeLoweringState& scope_state,
-    const ProcessLoweringState& proc_state,
+    ProcessLoweringState& proc_state,
     ProceduralScopeLoweringState& proc_scope_state,
     const hir::ProceduralBody& hir_process, const hir::RangeSelectExpr& sel,
     mir::TypeId result_type) -> diag::Result<mir::Expr> {
@@ -1268,7 +1268,7 @@ auto LowerHirRangeSelectExprProc(
 auto LowerHirMemberAccessExprProc(
     const UnitLoweringState& unit_state,
     const StructuralScopeLoweringState& scope_state,
-    const ProcessLoweringState& proc_state,
+    ProcessLoweringState& proc_state,
     ProceduralScopeLoweringState& proc_scope_state,
     const hir::ProceduralBody& hir_process, const hir::MemberAccessExpr& sel,
     mir::TypeId result_type) -> diag::Result<mir::Expr> {
@@ -1301,7 +1301,7 @@ auto LowerHirMemberAccessExprProc(
 auto LowerHirConcatExprProc(
     const UnitLoweringState& unit_state,
     const StructuralScopeLoweringState& scope_state,
-    const ProcessLoweringState& proc_state,
+    ProcessLoweringState& proc_state,
     ProceduralScopeLoweringState& proc_scope_state,
     const hir::ProceduralBody& hir_process, const hir::ConcatExpr& c,
     mir::TypeId result_type) -> diag::Result<mir::Expr> {
@@ -1322,7 +1322,7 @@ auto LowerHirConcatExprProc(
 auto LowerHirReplicationExprProc(
     const UnitLoweringState& unit_state,
     const StructuralScopeLoweringState& scope_state,
-    const ProcessLoweringState& proc_state,
+    ProcessLoweringState& proc_state,
     ProceduralScopeLoweringState& proc_scope_state,
     const hir::ProceduralBody& hir_process, const hir::ReplicationExpr& r,
     mir::TypeId result_type) -> diag::Result<mir::Expr> {
@@ -1349,7 +1349,7 @@ auto LowerHirReplicationExprProc(
 auto LowerHirAssignmentPatternExprProc(
     const UnitLoweringState& unit_state,
     const StructuralScopeLoweringState& scope_state,
-    const ProcessLoweringState& proc_state,
+    ProcessLoweringState& proc_state,
     ProceduralScopeLoweringState& proc_scope_state,
     const hir::ProceduralBody& hir_process, const hir::AssignmentPatternExpr& a,
     mir::TypeId result_type) -> diag::Result<mir::Expr> {
@@ -1374,7 +1374,7 @@ auto LowerHirAssignmentPatternExprProc(
 auto LowerHirAssignmentPatternReplicationExprProc(
     const UnitLoweringState& unit_state,
     const StructuralScopeLoweringState& scope_state,
-    const ProcessLoweringState& proc_state,
+    ProcessLoweringState& proc_state,
     ProceduralScopeLoweringState& proc_scope_state,
     const hir::ProceduralBody& hir_process,
     const hir::AssignmentPatternReplicationExpr& a, mir::TypeId result_type)
@@ -1421,7 +1421,7 @@ auto LowerHirAssignmentPatternReplicationExprProc(
 auto LowerHirDynamicArrayNewExprProc(
     const UnitLoweringState& unit_state,
     const StructuralScopeLoweringState& scope_state,
-    const ProcessLoweringState& proc_state,
+    ProcessLoweringState& proc_state,
     ProceduralScopeLoweringState& proc_scope_state,
     const hir::ProceduralBody& hir_process, const hir::DynamicArrayNewExpr& n,
     mir::TypeId result_type) -> diag::Result<mir::Expr> {
@@ -1460,7 +1460,7 @@ auto LowerHirDynamicArrayNewExprProc(
 auto LowerExpr(
     const UnitLoweringState& unit_state,
     const StructuralScopeLoweringState& scope_state,
-    const ProcessLoweringState& proc_state,
+    ProcessLoweringState& proc_state,
     ProceduralScopeLoweringState& proc_scope_state,
     const hir::ProceduralBody& hir_process, const hir::Expr& expr)
     -> diag::Result<mir::Expr> {
