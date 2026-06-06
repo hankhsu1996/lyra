@@ -170,6 +170,37 @@ Entries get checked off as their PRs land. When the last entry lands, the file i
       the duplicated forms; the suspending closure this cut introduces is the first concrete
       cross-form driver, so the unification now has a real motivation rather than being speculative.
 
+- [ ] R9 -- Split `ProcessLoweringState` along the fact-vs-traversal-state line so const-correctness
+      can be restored to expression lowering. Today the class mixes two categorically different
+      kinds of information. The first kind is "facts about this process" -- HIR-to-MIR var bindings,
+      the static-frame scope, the time resolution, the accumulated static-locals list. Facts are
+      filled at statement-declaration lowering and are read-only from that point on; expressions
+      never legitimately change them. The second kind is "where is the lowering pass currently
+      standing" -- the procedural depth counter, the active capture sink for closure-body lowering.
+      That is traversal state: it is pushed on entry into a nested scope and popped on exit, and
+      stays balanced across any one full lowering. Because both kinds shared one class, the
+      `const ProcessLoweringState&` qualifier on expression-lowering signatures was honest for facts
+      and accidentally worked for traversal state only because ordinary expressions do not open
+      scopes. The qualifier broke the moment an expression-form construct that creates a procedural
+      scope appeared (the `$sscanf` / `$fscanf` closure-IIFE), forcing a binary choice between
+      smuggling the mutation through `mutable` back doors and dropping the qualifier from the entire
+      expression lowering layer. We chose the latter as the temporary shape, which means "expression
+      lowering does not change process facts" is now a docstring convention rather than a
+      signature-level invariant. Target shape: separate the two kinds. Facts live on an immutable
+      object handed in by reference -- it is the process's identity, set once by upstream lowering
+      and read by everyone below. Traversal state lives on a separate, explicitly mutable object
+      pushed/popped via RAII guards; closure-body construction installs its capture sink there. The
+      LowerExpr signature then carries the right qualifier on each: const on facts, mutable on
+      state. The invariant "expression lowering does not change process facts" is restored at the
+      signature level, and the existing mutation pattern for traversal state stops needing to argue
+      with `const`. **Why deferred**: the fact-vs-state split rebases every `Lower*` function
+      signature across the lowering layer and every site that constructs or extends the lowering
+      objects; folding it into the scan-family PR doubled the diff without architectural gain on
+      that PR's terms. **Trigger**: when a second expression-form construct that opens a procedural
+      scope appears (any future closure-IIFE expression -- the user-function-call-with-output-args
+      case, for instance), or sooner if the loss of the const-on-facts invariant produces a real
+      mistake.
+
 ## Out of Scope
 
 - Per-feature workstreams. Those live in the dedicated feature files (`control-flow.md`,

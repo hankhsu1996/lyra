@@ -20,7 +20,8 @@ struct ByValueCapture {
 // lvalue (`target`). The spawned body reaches it through a frame-copied
 // reference parameter; the enclosing storage outlives the body (LRM 6.21), so
 // reads and writes share the one live location. Used by fork branches that
-// touch their enclosing process's variables.
+// touch their enclosing process's variables and by synchronous IIFEs (e.g.
+// `$sscanf` / `$fscanf`) whose body writes back to its output args.
 struct ByReferenceCapture {
   ExprId target{};
   ProceduralVarId binding{};

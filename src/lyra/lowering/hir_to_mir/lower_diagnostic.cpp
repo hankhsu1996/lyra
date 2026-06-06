@@ -37,7 +37,7 @@ auto ToMirDiagnosticSeverity(support::DiagnosticSeverityKind k)
 auto LowerDiagnosticSystemSubroutineCall(
     const UnitLoweringState& unit_state,
     const StructuralScopeLoweringState& scope_state,
-    const ProcessLoweringState& proc_state,
+    ProcessLoweringState& proc_state,
     ProceduralScopeLoweringState& proc_scope_state,
     const hir::ProceduralBody& hir_proc, const hir::CallExpr& call,
     const support::DiagnosticSystemSubroutineInfo& info, diag::SourceSpan span)

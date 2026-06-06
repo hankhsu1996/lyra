@@ -139,6 +139,25 @@ class UnitLoweringState {
         .type = builtins_.int32};
   }
 
+  // 4-state signed 32-bit literal, typed `integer` (LRM 6.11.1). Used by
+  // sites that need to compare against the matched-count return of
+  // `$sscanf` / `$fscanf` -- those return `integer`, so the operand on
+  // the other side of the comparison must match state-kind.
+  [[nodiscard]] auto MakeIntegerLiteralExpr(std::int64_t value) const
+      -> mir::Expr {
+    return mir::Expr{
+        .data =
+            mir::IntegerLiteral{
+                .value =
+                    mir::IntegralConstant{
+                        .value_words = {static_cast<std::uint64_t>(value)},
+                        .state_words = {},
+                        .width = 32,
+                        .signedness = mir::Signedness::kSigned,
+                        .state_kind = mir::IntegralStateKind::kFourState}},
+        .type = builtins_.integer};
+  }
+
   // Allocates a fresh class-local DeferredCheckSiteId from the underlying
   // CompilationUnit's counter. The method is const because UnitLoweringState's
   // observable lowering state (type map, builtins) is unaffected; the counter
@@ -424,7 +443,7 @@ struct ProceduralVarBinding {
 };
 
 class ProceduralScopeLoweringState;
-class ForkCaptureSink;
+class CaptureSink;
 
 class ProcessLoweringState {
  public:
@@ -514,16 +533,16 @@ class ProcessLoweringState {
     };
   }
 
-  // The capture sink active while a fork branch body is lowered, or null. A
-  // branch-body reference resolving above the branch boundary routes through it
-  // so the closure's by-reference captures are composed as the body is built
-  // (LRM 6.21). Fork lowering installs it; the const expr lowering only reads
-  // it.
-  void SetForkCaptureSink(ForkCaptureSink* sink) {
-    fork_capture_sink_ = sink;
+  // The capture sink active while a closure body is lowered, or null. A
+  // body reference whose declaration sits above the sink's boundary routes
+  // through it so the closure's captures are composed as the body is
+  // built. Install at closure-body construction; the leaf lowering only
+  // reads it.
+  void SetCaptureSink(CaptureSink* sink) {
+    active_capture_sink_ = sink;
   }
-  [[nodiscard]] auto ActiveForkCaptureSink() const -> ForkCaptureSink* {
-    return fork_capture_sink_;
+  [[nodiscard]] auto ActiveCaptureSink() const -> CaptureSink* {
+    return active_capture_sink_;
   }
 
  private:
@@ -531,7 +550,7 @@ class ProcessLoweringState {
   std::uint32_t procedural_depth_ = 0;
   std::vector<ProceduralVarBinding> bindings_;
   ProceduralScopeLoweringState* static_frame_scope_ = nullptr;
-  ForkCaptureSink* fork_capture_sink_ = nullptr;
+  CaptureSink* active_capture_sink_ = nullptr;
   std::vector<mir::StaticLocal> static_locals_;
 };
 
@@ -644,6 +663,29 @@ class ProceduralScopeLoweringState {
         .hops = mir::ProceduralHops{.value = 0}, .var = var};
     AppendStmt(mir::ProceduralVarDeclStmt{.target = ref, .init = init});
     return ref;
+  }
+
+  // Append an `if (cond) <then_body>` statement, consuming `then_body` as
+  // the IfStmt's nested then-scope. Encapsulates the AddChildProceduralScope
+  // + AddStmt + AddRootStmt sequence so callers do not have to manage the
+  // child_procedural_scopes vector by hand.
+  auto AppendIfThen(mir::ExprId cond, mir::ProceduralScope then_body)
+      -> mir::StmtId {
+    std::vector<mir::ProceduralScope> child_scopes;
+    const mir::ProceduralScopeId then_scope_id{
+        static_cast<std::uint32_t>(child_scopes.size())};
+    child_scopes.push_back(std::move(then_body));
+    const mir::StmtId id = AddStmt(
+        mir::Stmt{
+            .label = std::nullopt,
+            .data =
+                mir::IfStmt{
+                    .condition = cond,
+                    .then_scope = then_scope_id,
+                    .else_scope = std::nullopt},
+            .child_procedural_scopes = std::move(child_scopes)});
+    AddRootStmt(id);
+    return id;
   }
 
   auto Finish() -> mir::ProceduralScope {

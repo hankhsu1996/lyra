@@ -73,10 +73,14 @@ close as the corresponding behaviour lands.
       arithmetic operand). The scan family is modelled per LRM 21.3.4.3 as a system function whose
       `integer` return is observable in any expression position; writes to output args are runtime
       side effects routed through `Var::Set` for observable structural lvalues.
-- [ ] Complex-lvalue scan output args (bit-select `a[3:0]`, element index `arr[i]`, struct field
-      `s.f`, etc., per LRM 21.3.4.3). Today the lowering restricts output args to bare variable
-      references; the runtime `ScanSlot` ABI binds a whole-variable `Var<T>` / cell reference, not a
-      partial-write target, so complex lvalues need a different slot shape.
+- [x] Complex-lvalue scan output args (bit-select `a[3:0]`, element index `arr[i]`, struct field
+      `s.f`, multi-dim packed element `m[i]`, etc., per LRM 21.3.4.3). The scan call is modelled as
+      a closure invoked immediately (the IIFE pattern): the closure body parses into procedural
+      temps, conditionally writes back to the original output lvalues, and yields the matched count.
+      Lvalue polymorphism is absorbed by the body's writeback assignments through the existing
+      `AssignExpr` path; the runtime sees only plain temp pointers plus per-slot type metadata.
+      Output lvalues that are not reducible to writable expressions (e.g., the result of a
+      non-lvalue function call) remain rejected.
 - [x] Field width (`%5d`) and assignment suppression (`%*d`) for both scan functions (LRM 21.3.4.3
       Table 21-7). The runtime format parser handles the optional `*` and decimal width modifiers;
       suppressed conversions advance the input but do not bump the matched count or consume an

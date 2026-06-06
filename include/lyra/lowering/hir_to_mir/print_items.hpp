@@ -47,7 +47,7 @@ auto RadixToFormatKind(support::PrintRadix r) -> value::FormatKind;
 auto BuildRuntimePrintItemsFromCallArgs(
     const UnitLoweringState& unit_state,
     const StructuralScopeLoweringState& scope_state,
-    const ProcessLoweringState& proc_state,
+    ProcessLoweringState& proc_state,
     ProceduralScopeLoweringState& proc_scope_state,
     const hir::ProceduralBody& hir_proc, const hir::CallExpr& call,
     support::PrintRadix default_radix, std::size_t arg_offset,

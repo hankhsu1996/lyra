@@ -503,26 +503,54 @@ auto RenderRuntimeCallExpr(
             if (!format_or) {
               return std::unexpected(std::move(format_or.error()));
             }
-            // Slots render as bare lvalues so `ScanSlot::Make` binds a
-            // `Var<>` / cell reference for observable writes.
+            // Slots render as ScanTarget variant literals. Each carries a
+            // pointer to a procedural-local temp in the surrounding closure
+            // body plus the per-slot type metadata the parser needs to
+            // materialize a fresh value of the lvalue's shape.
             std::string slot_pieces;
             for (std::size_t k = 0; k < ss.slots.size(); ++k) {
-              auto slot_or =
-                  RenderLhsExpr(ctx, ctx.Expr(ss.slots[k]), std::string_view{});
-              if (!slot_or) {
-                return std::unexpected(std::move(slot_or.error()));
+              auto piece_or = std::visit(
+                  Overloaded{
+                      [&](const mir::IntegralScanSlot& s)
+                          -> diag::Result<std::string> {
+                        auto temp_or = RenderLhsExpr(
+                            ctx, ctx.Expr(s.temp), std::string_view{});
+                        if (!temp_or) {
+                          return std::unexpected(std::move(temp_or.error()));
+                        }
+                        return std::format(
+                            "lyra::runtime::IntegralScanTarget{{.dest = &{}, "
+                            ".bit_width = {}U, .is_signed = {}, "
+                            ".is_four_state = {}}}",
+                            *temp_or, s.bit_width,
+                            s.is_signed ? "true" : "false",
+                            s.is_four_state ? "true" : "false");
+                      },
+                      [&](const mir::StringScanSlot& s)
+                          -> diag::Result<std::string> {
+                        auto temp_or = RenderLhsExpr(
+                            ctx, ctx.Expr(s.temp), std::string_view{});
+                        if (!temp_or) {
+                          return std::unexpected(std::move(temp_or.error()));
+                        }
+                        return std::format(
+                            "lyra::runtime::StringScanTarget{{.dest = &{}}}",
+                            *temp_or);
+                      }},
+                  ss.slots[k]);
+              if (!piece_or) {
+                return std::unexpected(std::move(piece_or.error()));
               }
               if (k != 0) {
                 slot_pieces += ", ";
               }
-              slot_pieces +=
-                  std::format("lyra::runtime::ScanSlot::Make({})", *slot_or);
+              slot_pieces += *piece_or;
             }
             switch (ss.source_kind) {
               case support::ScanSourceKind::kString:
                 return std::format(
-                    "lyra::runtime::LyraSScanf(Services(), {}, {}, {{{}}})",
-                    *source_or, *format_or, slot_pieces);
+                    "lyra::runtime::LyraSScanf({}, {}, {{{}}})", *source_or,
+                    *format_or, slot_pieces);
               case support::ScanSourceKind::kFile:
                 return std::format(
                     "lyra::runtime::LyraFScanf({}, {}, {}, {{{}}})",
