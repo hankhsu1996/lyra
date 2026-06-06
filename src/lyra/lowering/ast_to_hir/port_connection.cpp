@@ -57,7 +57,7 @@ auto LowerInstancePortConnectionsInto(
 
   // The instance member is bound in the pre-pass; a downward port reach cannot
   // miss it, so absence is a compiler-bug invariant.
-  const auto binding = unit_state.LookupInstanceMemberBinding(inst);
+  const auto binding = unit_state.LookupOwnedChildBinding(inst);
   if (!binding.has_value()) {
     throw InternalError(
         "LowerInstancePortConnectionsInto: instance member has no binding");
@@ -109,8 +109,7 @@ auto LowerInstancePortConnectionsInto(
     auto type_id = unit_state.GetTypeId(port_type, span);
     if (!type_id) return std::unexpected(std::move(type_id.error()));
     hir::Expr child_ref = MakeCrossUnitMemberRef(
-        unit_state, *internal, binding->home_frame,
-        hir::DownwardHead{.instance = binding->member_id},
+        unit_state, *internal, binding->home_frame, binding->head,
         {hir::MemberHop{std::string{internal->name}}}, *type_id, span);
 
     if (port.direction == slang::ast::ArgumentDirection::In) {
