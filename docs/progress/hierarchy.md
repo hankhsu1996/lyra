@@ -142,10 +142,12 @@ consume. Coverage is demonstrated through Stage D and Stage E.
       reaches a generate block by its LRM name (the source label, or `genblk<n>` when unnamed, LRM
       27.6), indexes a loop-generate block, and continues to a signal or a further child inside it;
       when an if/case construct's alternatives share a name (LRM 27.5) the reference binds whichever
-      alternative was instantiated. Landed for the by-name direction -- an upward reference whose
-      downward tail crosses the generate boundary. Still open: a reference from the scope that owns
-      the generate descending into its own generate block, and a reference originating inside a
-      generate block that names a signal in an enclosing scope.
+      alternative was instantiated. Landed for a reference whose head reaches the generate from its
+      owning scope or from outside: an upward reference whose downward tail enters the generate, and
+      a reference from the scope that owns the generate descending into its own block (loop and
+      conditional forms, and regardless of whether the reference precedes the generate in source).
+      Still open: a reference originating inside a generate block that names a signal in an
+      enclosing scope.
 
 Unlocks `refs/hierarchical_refs`, `refs/upward_refs`, and `instantiation/hierarchical_sensitivity`.
 

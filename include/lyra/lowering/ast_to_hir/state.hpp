@@ -67,13 +67,20 @@ struct LoopVarBinding {
 using LoopVarBindings =
     std::unordered_map<const slang::ast::ValueSymbol*, LoopVarBinding>;
 
-struct InstanceMemberBinding {
+// A downward reference's leading component names an owned child this scope
+// declares: an instance / instance-array member (`c.x`, `c[1].x`), or a
+// generate block (`g[1].x`, LRM 27) -- the GenerateBlockArray for a loop, the
+// GenerateBlock arm for an if/case. The child's slang symbol maps to the head
+// the reference navigates from, so the reference resolves regardless of whether
+// it precedes the child in source. `head` is exactly the downward head, ready
+// to hand to MakeCrossUnitMemberRef.
+struct OwnedChildBinding {
   ScopeFrameId home_frame;
-  hir::InstanceMemberId member_id;
+  hir::DownwardHead head;
 };
 
-using InstanceMemberBindings =
-    std::unordered_map<const slang::ast::Symbol*, InstanceMemberBinding>;
+using OwnedChildBindings =
+    std::unordered_map<const slang::ast::Symbol*, OwnedChildBinding>;
 
 class UnitLoweringState {
  public:
@@ -233,24 +240,23 @@ class UnitLoweringState {
     return it->second;
   }
 
-  void MapInstanceMemberBinding(
-      const slang::ast::Symbol& member, ScopeFrameId home_frame,
-      hir::InstanceMemberId member_id) {
-    const auto [_, inserted] = instance_member_bindings_.emplace(
-        &member, InstanceMemberBinding{
-                     .home_frame = home_frame, .member_id = member_id});
+  void MapOwnedChildBinding(
+      const slang::ast::Symbol& child, ScopeFrameId home_frame,
+      hir::DownwardHead head) {
+    const auto [_, inserted] = owned_child_bindings_.emplace(
+        &child,
+        OwnedChildBinding{.home_frame = home_frame, .head = std::move(head)});
     if (!inserted) {
       throw InternalError(
-          "UnitLoweringState::MapInstanceMemberBinding: instance member "
-          "already mapped");
+          "UnitLoweringState::MapOwnedChildBinding: owned child already "
+          "mapped");
     }
   }
 
-  [[nodiscard]] auto LookupInstanceMemberBinding(
-      const slang::ast::Symbol& member) const
-      -> std::optional<InstanceMemberBinding> {
-    const auto it = instance_member_bindings_.find(&member);
-    if (it == instance_member_bindings_.end()) {
+  [[nodiscard]] auto LookupOwnedChildBinding(const slang::ast::Symbol& child)
+      const -> std::optional<OwnedChildBinding> {
+    const auto it = owned_child_bindings_.find(&child);
+    if (it == owned_child_bindings_.end()) {
       return std::nullopt;
     }
     return it->second;
@@ -315,7 +321,7 @@ class UnitLoweringState {
   StructuralVarBindings structural_var_bindings_;
   SubroutineBindings subroutine_bindings_;
   LoopVarBindings loop_var_bindings_;
-  InstanceMemberBindings instance_member_bindings_;
+  OwnedChildBindings owned_child_bindings_;
   std::unordered_map<const slang::ast::ValueSymbol*, hir::CrossUnitRefId>
       cross_unit_ref_dedup_;
   std::map<ScopeFrameId, std::vector<hir::CrossUnitRefDecl>>
@@ -466,6 +472,16 @@ class ScopeLoweringState {
         static_cast<std::uint32_t>(scope_->generates.size())};
     scope_->generates.push_back(std::move(generate));
     return id;
+  }
+
+  // The id the next AddGenerate will assign. A generate's head binding is
+  // registered while its body is built, before AddGenerate appends it, so the
+  // binding must name this prospective id; building a generate never appends to
+  // this scope's generates (nested generates belong to child scopes), so the id
+  // is stable across the build.
+  [[nodiscard]] auto NextGenerateId() const -> hir::GenerateId {
+    return hir::GenerateId{
+        static_cast<std::uint32_t>(scope_->generates.size())};
   }
 
   auto AddInstanceMember(hir::InstanceMemberDecl decl)

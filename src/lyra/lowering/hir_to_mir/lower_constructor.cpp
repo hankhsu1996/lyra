@@ -288,11 +288,21 @@ void InstallCrossUnitRefs(
     UnitLoweringState& unit_state, StructuralScopeLoweringState& scope_state,
     const hir::StructuralScope& scope,
     const std::vector<mir::StructuralVarId>& instance_member_vars,
+    const std::vector<GenerateBindings>& gen_bindings,
     ProceduralScopeLoweringState& ctor_scope_state) {
   for (const auto& cu : scope.cross_unit_refs) {
     const auto* down = std::get_if<hir::DownwardHead>(&cu.head);
     if (down == nullptr) {
       continue;
+    }
+    mir::StructuralVarId head_var{};
+    if (const auto* im = std::get_if<hir::InstanceMemberId>(&down->child)) {
+      head_var = instance_member_vars.at(im->value);
+    } else {
+      const auto& g = std::get<hir::GenerateChildRef>(down->child);
+      head_var = gen_bindings.at(g.generate.value)
+                     .by_scope_id.at(g.scope.value)
+                     .var_id;
     }
     std::vector<mir::PathStep> path;
     path.reserve(cu.path.size());
@@ -305,7 +315,7 @@ void InstallCrossUnitRefs(
     }
     const mir::CrossUnitRefId slot = scope_state.AddCrossUnitRef(
         mir::CrossUnitRefDecl{
-            .instance_var = instance_member_vars.at(down->instance.value),
+            .instance_var = head_var,
             .path = std::move(path),
             .type = unit_state.TranslateType(cu.type)});
     const mir::StmtId sid = ctor_scope_state.AddStmt(
@@ -757,7 +767,8 @@ auto LowerStructuralScope(
   const auto instance_member_vars =
       InstallInstanceMembers(unit_state, scope_state, scope, ctor_scope_state);
   InstallCrossUnitRefs(
-      unit_state, scope_state, scope, instance_member_vars, ctor_scope_state);
+      unit_state, scope_state, scope, instance_member_vars, *bindings_r,
+      ctor_scope_state);
 
   scope_state.SetConstructorScope(ctor_scope_state.Finish());
 

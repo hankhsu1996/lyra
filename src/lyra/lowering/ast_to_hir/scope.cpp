@@ -257,8 +257,8 @@ auto LowerInstanceMemberInto(
   // A downward cross-unit reference (`c.x`) resolves the leading `c` to this
   // member; the binding lets process-body lowering find it regardless of
   // source order.
-  scope_state.UnitState().MapInstanceMemberBinding(
-      inst, scope_state.Frame(), member_id);
+  scope_state.UnitState().MapOwnedChildBinding(
+      inst, scope_state.Frame(), hir::DownwardHead{.child = member_id});
   return {};
 }
 
@@ -289,8 +289,8 @@ auto LowerInstanceArrayMemberInto(
   // A downward cross-unit reference whose path indexes this array (`c[i].x`)
   // resolves the leading `c` to this member; the binding lets process-body
   // lowering find it regardless of source order.
-  scope_state.UnitState().MapInstanceMemberBinding(
-      array, scope_state.Frame(), member_id);
+  scope_state.UnitState().MapOwnedChildBinding(
+      array, scope_state.Frame(), hir::DownwardHead{.child = member_id});
   return {};
 }
 
@@ -368,10 +368,17 @@ auto LowerScopeMembersInto(
     }
   }
 
+  // Structural members (variables, generates, subroutine bodies) are lowered
+  // before behavioral ones (processes, continuous assigns), so a process or
+  // continuous assign resolves a downward reference into a generate block it
+  // textually precedes -- declarations are scope-wide (LRM 27), the same reason
+  // instances are bound in the pre-pass above.
   std::unordered_set<std::uint32_t> consumed_construct_indices;
   for (const auto& member : slang_scope.members()) {
     if (member.kind == slang::ast::SymbolKind::Instance ||
-        member.kind == slang::ast::SymbolKind::InstanceArray) {
+        member.kind == slang::ast::SymbolKind::InstanceArray ||
+        member.kind == slang::ast::SymbolKind::ProceduralBlock ||
+        member.kind == slang::ast::SymbolKind::ContinuousAssign) {
       continue;
     }
     if (member.kind == slang::ast::SymbolKind::GenerateBlock) {
@@ -379,6 +386,15 @@ auto LowerScopeMembersInto(
       if (!consumed_construct_indices.insert(block.constructIndex).second) {
         continue;
       }
+    }
+    auto r = LowerScopeMemberInto(
+        unit_facts, scope_state, stack, member, slang_scope);
+    if (!r) return std::unexpected(std::move(r.error()));
+  }
+  for (const auto& member : slang_scope.members()) {
+    if (member.kind != slang::ast::SymbolKind::ProceduralBlock &&
+        member.kind != slang::ast::SymbolKind::ContinuousAssign) {
+      continue;
     }
     auto r = LowerScopeMemberInto(
         unit_facts, scope_state, stack, member, slang_scope);
