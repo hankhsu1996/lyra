@@ -54,7 +54,10 @@ struct IndexHop {
 using PathStep = std::variant<MemberHop, IndexHop>;
 
 // Where a cross-unit reference starts its navigation. A downward reference
-// reaches into an owned child instance (or instance-array) member. An upward
+// reaches into an owned child the referrer's own scope declares -- an
+// instance/instance-array member, or a generate block (LRM 27) identified by
+// its position in the scope. Both resolve to one owned-child companion var at
+// construction, so the navigation past the head is identical. An upward
 // reference (LRM 23.6) climbs the parent chain at construction to the nearest
 // ancestor whose instance or module name is `ancestor_name`; from there both
 // directions share `path` to reach the leaf, by name across the unit boundary
@@ -62,8 +65,12 @@ using PathStep = std::variant<MemberHop, IndexHop>;
 // depend on (docs/architecture/emission_model.md). The child cannot know its
 // depth at compile time, so it locates the ancestor by name rather than a
 // baked-in offset.
+struct GenerateChildRef {
+  GenerateId generate;
+  StructuralScopeId scope;
+};
 struct DownwardHead {
-  InstanceMemberId instance;
+  std::variant<InstanceMemberId, GenerateChildRef> child;
 };
 struct UpwardHead {
   std::string ancestor_name;

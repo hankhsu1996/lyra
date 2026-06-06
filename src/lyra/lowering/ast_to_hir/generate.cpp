@@ -83,14 +83,21 @@ auto DeriveLoopVariableSubstitution(
 
 auto AddChildScope(
     const UnitLoweringFacts& unit_facts, UnitLoweringState& unit_state,
-    ScopeStack& stack, hir::Generate& generate,
-    const slang::ast::GenerateBlockSymbol& block)
+    ScopeStack& stack, hir::Generate& generate, ScopeFrameId home_frame,
+    hir::GenerateId generate_id, const slang::ast::GenerateBlockSymbol& block)
     -> diag::Result<hir::StructuralScopeId> {
   hir::StructuralScope scope;
   scope.source_name = std::string{block.name};
   auto r = LowerScopeInto(unit_facts, unit_state, scope, block, stack);
   if (!r) return std::unexpected(std::move(r.error()));
-  return AddChildStructuralScope(generate, std::move(scope));
+  const hir::StructuralScopeId scope_id =
+      AddChildStructuralScope(generate, std::move(scope));
+  unit_state.MapOwnedChildBinding(
+      block, home_frame,
+      hir::DownwardHead{
+          .child = hir::GenerateChildRef{
+              .generate = generate_id, .scope = scope_id}});
+  return scope_id;
 }
 
 }  // namespace
@@ -137,13 +144,17 @@ auto BuildIfGenerate(
   const hir::ExprId cond_id = parent_state.AddExpr(*std::move(cond_expr));
 
   hir::Generate gen{};
+  const ScopeFrameId gen_frame = parent_state.Frame();
+  const hir::GenerateId gen_id = parent_state.NextGenerateId();
 
-  auto then_id = AddChildScope(unit_facts, unit_state, stack, gen, *then_block);
+  auto then_id = AddChildScope(
+      unit_facts, unit_state, stack, gen, gen_frame, gen_id, *then_block);
   if (!then_id) return std::unexpected(std::move(then_id.error()));
 
   std::optional<hir::StructuralScopeId> else_id;
   if (else_block != nullptr) {
-    auto built = AddChildScope(unit_facts, unit_state, stack, gen, *else_block);
+    auto built = AddChildScope(
+        unit_facts, unit_state, stack, gen, gen_frame, gen_id, *else_block);
     if (!built) return std::unexpected(std::move(built.error()));
     else_id = *built;
   }
@@ -181,6 +192,8 @@ auto BuildCaseGenerate(
   const hir::ExprId cond_id = parent_state.AddExpr(*std::move(cond_expr));
 
   hir::Generate gen{};
+  const ScopeFrameId gen_frame = parent_state.Frame();
+  const hir::GenerateId gen_id = parent_state.NextGenerateId();
 
   std::vector<hir::CaseGenerateItem> items;
   std::optional<hir::StructuralScopeId> default_id;
@@ -198,8 +211,8 @@ auto BuildCaseGenerate(
           labels.push_back(
               parent_state.AddExpr(*std::move(label_expr_lowered)));
         }
-        auto item_id =
-            AddChildScope(unit_facts, unit_state, stack, gen, *block);
+        auto item_id = AddChildScope(
+            unit_facts, unit_state, stack, gen, gen_frame, gen_id, *block);
         if (!item_id) return std::unexpected(std::move(item_id.error()));
         items.push_back(
             hir::CaseGenerateItem{
@@ -212,7 +225,8 @@ auto BuildCaseGenerate(
               "BuildCaseGenerate: case-generate has more than one default "
               "branch");
         }
-        auto built = AddChildScope(unit_facts, unit_state, stack, gen, *block);
+        auto built = AddChildScope(
+            unit_facts, unit_state, stack, gen, gen_frame, gen_id, *block);
         if (!built) return std::unexpected(std::move(built.error()));
         default_id = *built;
         break;
@@ -323,6 +337,12 @@ auto BuildLoopGenerate(
   loop_scope_seed.source_name = std::string{array.name};
   const hir::StructuralScopeId loop_scope_id =
       AddChildStructuralScope(gen, std::move(loop_scope_seed));
+  unit_state.MapOwnedChildBinding(
+      array, parent_state.Frame(),
+      hir::DownwardHead{
+          .child = hir::GenerateChildRef{
+              .generate = parent_state.NextGenerateId(),
+              .scope = loop_scope_id}});
 
   if (!array.entries.empty()) {
     const auto& canonical_entry = *array.entries.front();

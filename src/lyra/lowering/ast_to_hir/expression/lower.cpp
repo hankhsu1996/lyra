@@ -307,9 +307,10 @@ auto LowerNamedValueProc(
 }
 
 // LRM 23.6 hierarchical reference. The head of the navigation differs by
-// direction: a downward path (`c.x`, `m.l.x`, `c[1].x`) starts at a local child
-// member; an upward path (`Top.g`, `Top.sib.y`) starts by climbing the parent
-// chain at construction to the named ancestor instance. The shared tail
+// direction: a downward path (`c.x`, `c[1].x`, `g[1].u.x`) starts at a local
+// owned child -- an instance member or a generate block; an upward path
+// (`Top.g`, `Top.sib.y`) starts by climbing the parent chain at construction to
+// the named ancestor instance. The shared tail
 // (`path.subspan(1)`) and the resolve-once slot are common
 // (reference_resolution.md, docs/decisions/upward-reference-resolution.md).
 auto LowerHierarchicalValueProc(
@@ -399,36 +400,40 @@ auto LowerHierarchicalValueProc(
         std::move(path), *type_id, span);
   }
 
-  // Downward: the head is an owned instance / instance-array member this unit's
-  // scope directly binds (the pre-pass always binds it). A missing binding is a
-  // compiler-bug invariant. Crossing a generate-block scope is not yet
-  // supported.
-  const bool head_is_instance_member =
+  // Downward: the head is an owned child this unit's scope declares -- an
+  // instance / instance-array member, or a generate block (LRM 27). Both are
+  // bound before any process body is lowered, so a reference resolves
+  // regardless of source order; a missing binding is a compiler-bug invariant.
+  const bool head_is_owned_child =
       head_sym.kind == slang::ast::SymbolKind::Instance ||
-      head_sym.kind == slang::ast::SymbolKind::InstanceArray;
-  if (!head_is_instance_member) {
+      head_sym.kind == slang::ast::SymbolKind::InstanceArray ||
+      head_sym.kind == slang::ast::SymbolKind::GenerateBlock ||
+      head_sym.kind == slang::ast::SymbolKind::GenerateBlockArray;
+  if (!head_is_owned_child) {
     return diag::Unsupported(
         span, diag::DiagCode::kUnsupportedExpressionForm,
-        "hierarchical reference through a generate-block scope is not yet "
-        "supported",
+        "hierarchical reference through this scope kind is not yet supported",
         diag::UnsupportedCategory::kOperation);
   }
-  const auto head_binding = unit_state.LookupInstanceMemberBinding(head_sym);
-  if (!head_binding.has_value()) {
+  const auto binding = unit_state.LookupOwnedChildBinding(head_sym);
+  if (!binding.has_value()) {
     throw InternalError(
-        "LowerHierarchicalValueProc: downward head member has no binding");
+        "LowerHierarchicalValueProc: downward owned-child head has no binding");
   }
-  const auto hops = stack.HopsTo(head_binding->home_frame);
+
+  // The owner navigates its own storage, so the head must live on the
+  // referencing frame. A reference reaching the owned child from a nested
+  // generate frame (`hops != 0`) is a separate, unsupported case.
+  const auto hops = stack.HopsTo(binding->home_frame);
   if (!hops.has_value() || hops->value != 0) {
     return diag::Unsupported(
         span, diag::DiagCode::kUnsupportedExpressionForm,
-        "hierarchical reference across a generate-block scope boundary is not "
-        "yet supported",
+        "hierarchical reference reaching an owned child from a nested generate "
+        "scope is not yet supported",
         diag::UnsupportedCategory::kOperation);
   }
   return MakeCrossUnitMemberRef(
-      unit_state, var, head_binding->home_frame,
-      hir::DownwardHead{.instance = head_binding->member_id}, std::move(path),
+      unit_state, var, binding->home_frame, binding->head, std::move(path),
       *type_id, span);
 }
 
