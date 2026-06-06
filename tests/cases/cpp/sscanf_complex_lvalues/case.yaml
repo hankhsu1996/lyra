@@ -1,0 +1,20 @@
+id: cpp.sscanf_complex_lvalues
+tags: [cpp_run]
+input:
+  command: [run, cpp]
+  project: false
+  top: Top
+  files: [main.sv]
+expect:
+  exit: 0
+  variables:
+    count_unp: 2
+    count_dyn: 2
+    count_slice: 1
+    count_field: 2
+    unp_if: 5
+    count_tern: 1
+    dyn_tern: 7
+    unp: [10, 20, 5]
+    dyn: [7, 40]
+    v: 0xab

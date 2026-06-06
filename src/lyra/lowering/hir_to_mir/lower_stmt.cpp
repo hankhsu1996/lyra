@@ -19,11 +19,11 @@
 #include "lyra/hir/stmt.hpp"
 #include "lyra/hir/subroutine.hpp"
 #include "lyra/hir/subroutine_ref.hpp"
+#include "lyra/lowering/hir_to_mir/capture_sink.hpp"
 #include "lyra/lowering/hir_to_mir/case_cascade.hpp"
 #include "lyra/lowering/hir_to_mir/copy_out_desugar.hpp"
 #include "lyra/lowering/hir_to_mir/default_value.hpp"
 #include "lyra/lowering/hir_to_mir/delay_time_resolver.hpp"
-#include "lyra/lowering/hir_to_mir/fork_capture.hpp"
 #include "lyra/lowering/hir_to_mir/inside_predicate.hpp"
 #include "lyra/lowering/hir_to_mir/lower_deferred_check.hpp"
 #include "lyra/lowering/hir_to_mir/lower_expr.hpp"
@@ -82,7 +82,7 @@ auto ResolveDelayDuration(
 }
 
 auto ResolveDelayTicks(
-    const ProcessLoweringState& proc_state, const hir::ProceduralBody& hir_proc,
+    ProcessLoweringState& proc_state, const hir::ProceduralBody& hir_proc,
     const hir::DelayControl& d) -> diag::Result<SimDuration> {
   const DelayTimeResolver resolver{proc_state.Resolution()};
   return ResolveDelayDuration(resolver, hir_proc.exprs.at(d.duration.value));
@@ -679,19 +679,19 @@ auto LowerForkStmt(
     ProceduralScopeLoweringState branch_scope_state;
     ProceduralDepthGuard depth_guard{proc_state};
 
-    // Collect the branch's by-reference captures as its body is lowered: a body
-    // reference resolving above this boundary depth routes through the sink,
-    // which composes the capture and binding on the spot (LRM 6.21). A nested
+    // Collect the branch's captures as its body is lowered: a body reference
+    // resolving above this boundary depth routes through the sink, which
+    // composes the capture and binding on the spot (LRM 6.21). A nested
     // fork restores the prior sink on exit.
-    ForkCaptureSink sink{
+    CaptureSink sink{
         proc_state.CurrentProceduralDepth(), branch_scope_state,
         proc_scope_state};
-    ForkCaptureSink* const previous_sink = proc_state.ActiveForkCaptureSink();
-    proc_state.SetForkCaptureSink(&sink);
+    CaptureSink* const previous_sink = proc_state.ActiveCaptureSink();
+    proc_state.SetCaptureSink(&sink);
     auto lowered = LowerStmt(
         unit_state, scope_state, proc_state, branch_scope_state, hir_proc,
         branch);
-    proc_state.SetForkCaptureSink(previous_sink);
+    proc_state.SetCaptureSink(previous_sink);
     if (!lowered) {
       return std::unexpected(std::move(lowered.error()));
     }
@@ -1414,7 +1414,7 @@ auto LowerContinueStmt(const hir::Stmt& stmt) -> diag::Result<mir::Stmt> {
 auto LowerEventTriggerStmt(
     const UnitLoweringState& unit_state,
     const StructuralScopeLoweringState& scope_state,
-    const ProcessLoweringState& proc_state,
+    ProcessLoweringState& proc_state,
     ProceduralScopeLoweringState& proc_scope_state,
     const hir::ProceduralBody& hir_proc, const hir::Stmt& stmt,
     const hir::EventTriggerStmt& et) -> diag::Result<mir::Stmt> {

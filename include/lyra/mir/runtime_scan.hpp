@@ -1,5 +1,7 @@
 #pragma once
 
+#include <cstdint>
+#include <variant>
 #include <vector>
 
 #include "lyra/mir/expr_id.hpp"
@@ -7,20 +9,32 @@
 
 namespace lyra::mir {
 
-// LRM 21.3.4.3 $sscanf / $fscanf. `source_kind` selects the runtime entry
-// and constrains `source`'s MIR type:
-//   kString -> `source` is string-typed
-//   kFile   -> `source` is int-typed (FD per LRM 21.3.1)
-// `format` is always string-typed. Each slot is a bare lvalue (Structural
-// or Procedural var ref) bound by `ScanSlot::Make` at the backend; the
-// runtime writes through it directly (observable for structural vars via
-// `Var::Set`). Each slot's MIR-level type drives the backend's overload
-// selection.
+// LRM 21.3.4.3 `$sscanf` / `$fscanf`. The runtime call is positioned
+// inside a closure body synthesized by the lowering; each slot's `temp`
+// references a procedural-local sink in that body. Lvalue semantics
+// (observable structural vars, partial selectors, etc.) belong to the
+// closure body's conditional writeback assignments, NOT to this call --
+// the runtime sees only plain temp pointers plus per-slot type metadata
+// and the matched-conversion count.
+
+struct IntegralScanSlot {
+  ExprId temp{};  // ProceduralVarRef to a PackedArray temp
+  std::uint32_t bit_width{};
+  bool is_signed{};
+  bool is_four_state{};
+};
+
+struct StringScanSlot {
+  ExprId temp{};  // ProceduralVarRef to a String temp
+};
+
+using ScanSlotDesc = std::variant<IntegralScanSlot, StringScanSlot>;
+
 struct RuntimeScanCall {
   support::ScanSourceKind source_kind{};
   ExprId source{};
   ExprId format{};
-  std::vector<ExprId> slots;
+  std::vector<ScanSlotDesc> slots;
 };
 
 }  // namespace lyra::mir

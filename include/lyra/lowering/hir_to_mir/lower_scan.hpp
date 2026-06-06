@@ -10,13 +10,20 @@
 
 namespace lyra::lowering::hir_to_mir {
 
-// LRM 21.3.4.3 `$sscanf` / `$fscanf`. Position-independent: the matched
-// count returns through the call's MIR Expr value and writes to output
-// args happen as runtime side effects (see `runtime::ScanSlot`).
+// LRM 21.3.4.3 `$sscanf` / `$fscanf`. The call is modelled as a closure
+// invoked immediately (the IIFE pattern). The closure's body parses into
+// procedural-local temps, conditionally writes back to the original output
+// lvalues, and yields the matched-conversion count. The body's writeback
+// assignments use the existing `AssignExpr` path -- lvalue polymorphism
+// stays at the backend; the runtime sees plain temp pointers plus
+// per-slot type metadata. `proc_state` is taken by mutable reference
+// because the body construction pushes a procedural depth frame and
+// installs a capture sink, both of which mutate state during the
+// closure's body lowering.
 auto LowerScanSystemSubroutineCall(
     const UnitLoweringState& unit_state,
     const StructuralScopeLoweringState& scope_state,
-    const ProcessLoweringState& proc_state,
+    ProcessLoweringState& proc_state,
     ProceduralScopeLoweringState& proc_scope_state,
     const hir::ProceduralBody& hir_proc, const hir::CallExpr& call,
     const support::ScanSystemSubroutineInfo& info, diag::SourceSpan span)

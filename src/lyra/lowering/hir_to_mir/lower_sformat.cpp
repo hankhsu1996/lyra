@@ -29,7 +29,7 @@ namespace {
 auto BuildSFormatCallExpr(
     const UnitLoweringState& unit_state,
     const StructuralScopeLoweringState& scope_state,
-    const ProcessLoweringState& proc_state,
+    ProcessLoweringState& proc_state,
     ProceduralScopeLoweringState& proc_scope_state,
     const hir::ProceduralBody& hir_proc, const hir::CallExpr& call,
     const support::SFormatSystemSubroutineInfo& info, std::size_t arg_offset,
@@ -67,7 +67,7 @@ auto RejectNonStringOutput(
 auto LowerSFormatSystemSubroutineCall(
     const UnitLoweringState& unit_state,
     const StructuralScopeLoweringState& scope_state,
-    const ProcessLoweringState& proc_state,
+    ProcessLoweringState& proc_state,
     ProceduralScopeLoweringState& proc_scope_state,
     const hir::ProceduralBody& hir_proc, const hir::CallExpr& call,
     const support::SFormatSystemSubroutineInfo& info, diag::SourceSpan span)

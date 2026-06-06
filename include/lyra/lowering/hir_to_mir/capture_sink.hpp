@@ -13,29 +13,37 @@
 
 namespace lyra::lowering::hir_to_mir {
 
-// Collects a fork branch's by-reference captures as the branch body is lowered
-// (LRM 6.21: the process activation outlives the branch, so the shared storage
-// stays live). Installed on ProcessLoweringState for the duration of one
-// branch: a body reference that resolves above the branch boundary is captured
-// here and rewritten on the spot to a binding local to the branch, so the
-// closure carries its captures by the time it is built -- never by a post-hoc
-// rewrite. `root` receives the binding vars; `outer` (the fork's enclosing
-// scope) receives the captured lvalues.
-class ForkCaptureSink {
+// Identity-only capture collector for a closure body. Installed on
+// ProcessLoweringState for the duration of a single closure construction:
+// during the body's lowering, any procedural-var reference that resolves
+// above the sink's boundary is rerouted here -- a binding in the body
+// scope is allocated (deduplicated by identity) and the reference is
+// rewritten to read that binding. The sink never inspects how the
+// reference is used; closure semantics are the caller's concern.
+//
+// Captures emit as by-reference. Lyra's closure use cases that need this
+// mechanism (sync IIFE for `$sscanf` / `$fscanf`, fork branches per LRM
+// 6.21) are precisely those where the enclosing storage outlives the body,
+// so aliasing is correct for both reads and writes. Capture mechanisms
+// that require a snapshot semantic (the NBA RHS, for instance) belong in
+// a distinct flow that evaluates the value at submission time and stores
+// it independently of any reference to enclosing storage; this sink is
+// not that flow.
+class CaptureSink {
  public:
-  ForkCaptureSink(
-      std::uint32_t boundary_depth, ProceduralScopeLoweringState& root,
+  CaptureSink(
+      std::uint32_t boundary_depth, ProceduralScopeLoweringState& body,
       ProceduralScopeLoweringState& outer)
-      : boundary_depth_(boundary_depth), root_(&root), outer_(&outer) {
+      : boundary_depth_(boundary_depth), body_(&body), outer_(&outer) {
   }
 
   [[nodiscard]] auto BoundaryDepth() const -> std::uint32_t {
     return boundary_depth_;
   }
 
-  // Captures the enclosing variable `outer_var` (declared `decl_depth` scopes
-  // deep) and returns the body reference -- a binding local to the branch root,
-  // read at `current_depth`.
+  // Capture `outer_var` (declared `decl_depth` scopes deep) and return the
+  // body-side reference -- a binding local to the body, read at
+  // `current_depth`.
   auto Capture(
       mir::ProceduralVarId outer_var, std::uint32_t decl_depth,
       mir::TypeId type, std::uint32_t current_depth) -> mir::ProceduralVarRef {
@@ -64,9 +72,9 @@ class ForkCaptureSink {
         return entry.binding;
       }
     }
-    const mir::ProceduralVarId binding = root_->AddProceduralVar(
+    const mir::ProceduralVarId binding = body_->AddProceduralVar(
         mir::ProceduralVarDecl{
-            .name = "_lyra_fork_cap_" + std::to_string(captures_.size()),
+            .name = "_lyra_cap_" + std::to_string(captures_.size()),
             .type = type});
     const mir::ExprId target = outer_->AddExpr(
         mir::Expr{
@@ -88,7 +96,7 @@ class ForkCaptureSink {
   }
 
   std::uint32_t boundary_depth_;
-  ProceduralScopeLoweringState* root_;
+  ProceduralScopeLoweringState* body_;
   ProceduralScopeLoweringState* outer_;
   std::vector<mir::Capture> captures_;
   std::vector<Entry> captured_;
