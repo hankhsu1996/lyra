@@ -73,6 +73,11 @@ enum class ValueMethodKind : std::uint8_t {
   kIsUnknown,
 };
 
+// LRM 7.12.4 iterator intrinsic methods (only `index` is in scope today).
+enum class IteratorMethodKind : std::uint8_t {
+  kIndex,
+};
+
 struct EnumMethodInfo {
   TypeId enum_type;
   EnumMethodKind kind;
@@ -94,6 +99,10 @@ struct ValueMethodInfo {
   ValueMethodKind kind;
 };
 
+struct IteratorMethodInfo {
+  IteratorMethodKind kind;
+};
+
 // True for methods whose backend emission must wrap the call site in
 // `co_await`. The runtime returns an awaitable that suspends the calling
 // coroutine and reschedules it through RuntimeServices when the event fires.
@@ -104,7 +113,7 @@ struct ValueMethodInfo {
 struct BuiltinMethodCallee {
   std::variant<
       EnumMethodInfo, StringMethodInfo, EventMethodInfo, ArrayMethodInfo,
-      ValueMethodInfo>
+      ValueMethodInfo, IteratorMethodInfo>
       method;
 };
 
