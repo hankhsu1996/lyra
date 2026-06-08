@@ -63,6 +63,16 @@ enum class ArrayMethodKind : std::uint8_t {
   kXor,
 };
 
+// Side-effect-free queries that are defined for every runtime value type
+// (string, packed integral, unpacked array, ...). The receiver's MIR type
+// alone determines the emit shape; lowering passes the operand uniformly.
+// The LRM 21.3.4.3 "unknown bits in $sscanf str / format imply EOF" guard
+// lowers to kIsUnknown; future LRM 20.9 `$isunknown` lowers to the same
+// leaf.
+enum class ValueMethodKind : std::uint8_t {
+  kIsUnknown,
+};
+
 struct EnumMethodInfo {
   TypeId enum_type;
   EnumMethodKind kind;
@@ -80,6 +90,10 @@ struct ArrayMethodInfo {
   ArrayMethodKind kind;
 };
 
+struct ValueMethodInfo {
+  ValueMethodKind kind;
+};
+
 // True for methods whose backend emission must wrap the call site in
 // `co_await`. The runtime returns an awaitable that suspends the calling
 // coroutine and reschedules it through RuntimeServices when the event fires.
@@ -89,7 +103,8 @@ struct ArrayMethodInfo {
 
 struct BuiltinMethodCallee {
   std::variant<
-      EnumMethodInfo, StringMethodInfo, EventMethodInfo, ArrayMethodInfo>
+      EnumMethodInfo, StringMethodInfo, EventMethodInfo, ArrayMethodInfo,
+      ValueMethodInfo>
       method;
 };
 

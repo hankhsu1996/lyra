@@ -72,6 +72,11 @@ class PackedArray {
   // Default integer shape (32-bit, signed, 4-state) per LRM 6.11 Table 6-8.
   [[nodiscard]] static auto Integer(std::int32_t value) -> PackedArray;
 
+  // 1-bit unsigned 2-state shape, used by the builtin-method renderer to
+  // lift a C++ `bool` result (e.g. `PackedArray::HasUnknown()`) into a
+  // PackedArray of SV `bit` type. Sibling of `Int(int32_t)` / `Byte`.
+  [[nodiscard]] static auto Bit(bool value) -> PackedArray;
+
   // Construct a narrow PackedArray (bit_width <= 64) from an integer value.
   // The `std::int64_t` parameter is the carrier type wide enough to cover
   // every narrow width; the resulting shape is set by `bit_width`, with bits
