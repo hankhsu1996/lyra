@@ -201,6 +201,40 @@ Entries get checked off as their PRs land. When the last entry lands, the file i
       case, for instance), or sooner if the loss of the const-on-facts invariant produces a real
       mistake.
 
+- [ ] R10 -- Investigate the lowering layer's organization of fact vs state at the layer level (not
+      just inside `ProcessLoweringState`, which R9 already tracks). The smell surfaced from
+      scan-family work: helpers that compose multi-step MIR construction end up with long parameter
+      lists that thread
+      `(unit_state, structural_scope_state, process_state, procedural_scope_state)` through every
+      call -- typically four references where only one is the operation's real input. The
+      fact-vs-state split is not currently first-class in the layer's organization. Some objects are
+      pure lookup -- HIR-to-MIR var bindings, type tables, builtin type IDs, the static-frame scope;
+      those are facts and want `const` on every signature that uses them. Others accumulate across
+      the lowering -- the procedural scope being built up via add-expr / append-stmt / append-local
+      methods; those are state and are already builder-shaped at the method level, but the surface
+      around them is unstructured (free functions threading the builder plus its facts through every
+      parameter list). Two observations from the scan PR sharpen the question. First: the builder
+      shape is already partially present (`ProceduralScopeLoweringState` exposes `AddExpr` /
+      `AppendStmt` / `AppendIfThen` / `AppendLocal` / `Finish` -- a clean builder API). Second: the
+      awkwardness in helper signatures is not the builder's fault; it is that every helper has to
+      thread the surrounding facts back in separately to do anything builder-shaped on the state. A
+      clearer layer-level organization might separate the two kinds explicitly -- facts handed in by
+      const reference once and read freely, state handed in by mutable reference and operated on
+      through builder methods -- so helpers either operate on a fact (no state argument, no mutation
+      possible) or compose state operations through the builder (fewer threaded-through references).
+      **Target shape unknown.** Possible directions include: a lowering-context struct that splits
+      the fact bundle and the state bundle into two distinct types; encapsulating multi-step body
+      construction into builder methods on a closure-body builder type whose constructor captures
+      the facts once; or some pattern this codebase has not yet adopted. The right shape probably
+      emerges from a second concrete driver, not from an abstract design pass. **Why deferred**:
+      there is no clear target yet, and the current shape, while verbose, is auditable -- every
+      helper signature spells out exactly which facts it reads and which state it mutates, which is
+      the codebase's standing rule. Refactoring without a clear target risks importing a worse
+      pattern. **Trigger**: investigate when (a) a second feature area accumulates a similar
+      verbose-helper smell, or (b) R9 lands and exposes a natural layer-level split that this entry
+      can ride on, or (c) a concrete confusion (someone touches the wrong piece because the facts
+      and state were not clearly separated) makes the cost real.
+
 ## Out of Scope
 
 - Per-feature workstreams. Those live in the dedicated feature files (`control-flow.md`,

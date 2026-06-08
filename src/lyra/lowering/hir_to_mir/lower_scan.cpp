@@ -61,6 +61,64 @@ auto LiftStringSource(
           .type = unit_state.Builtins().string});
 }
 
+// LRM 21.3.4.3 valid scan format types: string or integral (lifted via
+// implicit conversion). The byte-array form is source-only per spec.
+auto LiftStringFormat(
+    const UnitLoweringState& unit_state, ProceduralScopeLoweringState& scope,
+    mir::TypeId format_type, mir::ExprId format_id) -> mir::ExprId {
+  const auto& t = unit_state.GetType(format_type);
+  if (t.Kind() == mir::TypeKind::kString) return format_id;
+  if (!t.IsIntegralPacked()) {
+    throw InternalError(
+        "LiftStringFormat: scan format is not string or integral (LRM "
+        "21.3.4.3)");
+  }
+  return scope.AddExpr(
+      mir::Expr{
+          .data =
+              mir::ConversionExpr{
+                  .operand = format_id, .kind = mir::ConversionKind::kImplicit},
+          .type = unit_state.Builtins().string});
+}
+
+// LRM 21.3.4.3: "If the format string or the str argument to $sscanf
+// contains unknown bits (x or z), then the system function shall return
+// EOF (-1)." Emitted unconditionally as a body-entry guard inside the
+// closure-IIFE; whether the operand can actually carry x/z is the
+// backend's render-time concern (the MIR primitive is universal across
+// value types). Placement is BEFORE the PackedArray->String lift, since
+// the lift silently drops x/z.
+//
+// The rule names $sscanf literally, but the str argument's role under
+// $fscanf is a file descriptor (no string semantics), and the format
+// argument's role is identical under both subroutines. The caller picks
+// which arguments receive the guard: $sscanf str, $sscanf format,
+// $fscanf format -- never the $fscanf descriptor.
+auto EmitIsUnknownGuard(
+    const UnitLoweringState& unit_state, ProceduralScopeLoweringState& body,
+    ProcessLoweringState& proc_state, mir::TypeId bit_t, mir::ExprId operand_id)
+    -> void {
+  const mir::ExprId guard_id = body.AddExpr(
+      mir::Expr{
+          .data =
+              mir::CallExpr{
+                  .callee =
+                      mir::BuiltinMethodCallee{
+                          .method =
+                              mir::ValueMethodInfo{
+                                  .kind = mir::ValueMethodKind::kIsUnknown}},
+                  .arguments = {operand_id}},
+          .type = bit_t});
+
+  ProceduralScopeLoweringState then_body;
+  ProceduralDepthGuard then_depth{proc_state};
+  const mir::ExprId minus_one = then_body.AddExpr(
+      unit_state.MakeIntegerLiteralExpr(static_cast<std::int64_t>(-1)));
+  then_body.AppendStmt(mir::ReturnStmt{.value = minus_one});
+
+  body.AppendIfThen(guard_id, then_body.Finish());
+}
+
 // The per-slot type metadata the runtime needs to materialize a fresh
 // value of the output arg's declared shape. Derived from the HIR type
 // alone -- no MIR Expr for the output arg is needed at this point.
@@ -168,6 +226,10 @@ auto LowerScanSystemSubroutineCall(
 
   // Source / format are rvalues inside the body. The leaf lowering routes
   // procedural-var leaves through the sink, producing body-side bindings.
+  // For each operand the order is: raw-lower -> x/z guard (if 4-state
+  // integral) -> conversion lift to string. The guard reads the raw
+  // PackedArray; the lift is post-guard because conversion to string
+  // silently drops x/z bits and would defeat the LRM 21.3.4.3 EOF rule.
   auto source_or = LowerExpr(
       unit_state, scope_state, proc_state, body, hir_proc,
       hir_proc.exprs.at(call.arguments[0]->value));
@@ -175,6 +237,7 @@ auto LowerScanSystemSubroutineCall(
   const mir::TypeId source_type = source_or->type;
   mir::ExprId source_id = body.AddExpr(*std::move(source_or));
   if (info.source == support::ScanSourceKind::kString) {
+    EmitIsUnknownGuard(unit_state, body, proc_state, bit_t, source_id);
     source_id = LiftStringSource(unit_state, body, source_type, source_id);
   } else if (
       unit_state.GetType(source_type).Kind() != mir::TypeKind::kPackedArray) {
@@ -186,7 +249,10 @@ auto LowerScanSystemSubroutineCall(
       unit_state, scope_state, proc_state, body, hir_proc,
       hir_proc.exprs.at(call.arguments[1]->value));
   if (!format_or) return std::unexpected(std::move(format_or.error()));
-  const mir::ExprId format_id = body.AddExpr(*std::move(format_or));
+  const mir::TypeId format_type = format_or->type;
+  mir::ExprId format_id = body.AddExpr(*std::move(format_or));
+  EmitIsUnknownGuard(unit_state, body, proc_state, bit_t, format_id);
+  format_id = LiftStringFormat(unit_state, body, format_type, format_id);
 
   // Allocate body-side temps for each slot. The parse call writes them;
   // the conditional commit later reads them back into the original

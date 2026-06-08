@@ -717,6 +717,26 @@ auto RenderConversionExpr(
     return std::format(
         "lyra::value::String::FromByteArray({})", *std::move(operand_or));
   }
+  // LRM 5.9 / 21.3.4.3: packed integral source / format lifts to string by
+  // viewing the bit vector as an MSB-first byte sequence. The $sscanf /
+  // $fscanf body emits an unknown-bits guard before this conversion runs,
+  // so x/z is never observed in the scan path; $display "%s" on an x/z-
+  // bearing packed operand sees `'\0'` per the policy documented at the
+  // String::FromPackedArray declaration.
+  //
+  // SV string literals are typed by slang as `bit[N:0]` packed (LRM 5.9)
+  // but the emitter renders them directly as `lyra::value::String{"..."}`,
+  // so the operand at C++ level is already a String when the source is a
+  // StringLiteral node -- the conversion is a slang-typing artifact, not a
+  // real byte-unpacking need. Skip the wrap in that case; the rendered
+  // operand is the lift's result.
+  if (src_ty.IsIntegralPacked() && dst_ty.Kind() == mir::TypeKind::kString) {
+    if (std::holds_alternative<mir::StringLiteral>(src_expr.data)) {
+      return *std::move(operand_or);
+    }
+    return std::format(
+        "lyra::value::String::FromPackedArray({})", *std::move(operand_or));
+  }
   // Identity / no-op rendering: the conversion exists in MIR but the
   // operand's already-rendered C++ matches the destination shape. Covers
   // string -> string identity, and slang's `bit[N-1:0]` string literal ->
@@ -972,6 +992,40 @@ auto RenderArrayMethodCall(
   return raw_call;
 }
 
+// Side-effect-free per-value queries. Dispatch by the receiver's MIR
+// type because the answer is type-static for everything except 4-state
+// integral packed: a string (LRM 6.16) and a byte-element unpacked array
+// have no unknown plane, and a 2-state packed has its unknown plane fixed
+// at zero. Emitting `Bit(false)` for those cases keeps the closure-IIFE
+// body shape uniform (`if (.IsUnknown()) return -1;`) while making the
+// guard a trivial constant the C++ optimizer dead-code-eliminates.
+auto RenderValueMethodCall(
+    const RenderContext& ctx, const mir::CallExpr& call,
+    const mir::ValueMethodInfo& m) -> diag::Result<std::string> {
+  if (call.arguments.empty()) {
+    throw InternalError(
+        "RenderValueMethodCall: value method expects a receiver argument");
+  }
+  const mir::Expr& receiver = ctx.Expr(call.arguments[0]);
+  switch (m.kind) {
+    case mir::ValueMethodKind::kIsUnknown: {
+      const auto& ty = ctx.Unit().GetType(receiver.type);
+      if (ty.IsIntegralPacked() && ty.AsIntegralPacked().IsFourState()) {
+        auto receiver_or = RenderExpr(ctx, receiver);
+        if (!receiver_or) {
+          return std::unexpected(std::move(receiver_or.error()));
+        }
+        // Runtime helper retains its historical `HasUnknown` spelling;
+        // the MIR enum tracks LRM 20.9 `$isunknown` naming.
+        return std::format(
+            "lyra::value::PackedArray::Bit(({}).HasUnknown())", *receiver_or);
+      }
+      return std::string{"lyra::value::PackedArray::Bit(false)"};
+    }
+  }
+  throw InternalError("RenderValueMethodCall: unknown kind");
+}
+
 auto RenderCallExpr(const RenderContext& ctx, const mir::CallExpr& call)
     -> diag::Result<std::string> {
   return std::visit(
@@ -1047,6 +1101,9 @@ auto RenderCallExpr(const RenderContext& ctx, const mir::CallExpr& call)
                     },
                     [&](const mir::ArrayMethodInfo& m) {
                       return RenderArrayMethodCall(ctx, call, m);
+                    },
+                    [&](const mir::ValueMethodInfo& m) {
+                      return RenderValueMethodCall(ctx, call, m);
                     },
                 },
                 b.method);

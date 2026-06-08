@@ -1,0 +1,16 @@
+id: cpp.fscanf_integral_format
+tags: [cpp_run]
+input:
+  command: [run, cpp]
+  project: false
+  top: Top
+  files: [main.sv]
+expect:
+  exit: 0
+  variables:
+    code: 2
+    a: 99
+    b: 0xcafe
+  files:
+    fscanf_fmt.txt: |
+      99 cafe

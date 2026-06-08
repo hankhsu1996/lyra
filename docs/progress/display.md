@@ -100,9 +100,19 @@ close as the corresponding behaviour lands.
       `SkipSourceWhitespace` and `%s`'s stop condition both consult the source rather than a free
       helper, so NUL acts as a field separator under `$sscanf` only -- `$fscanf` keeps the
       ASCII-only policy.
-- [ ] `$sscanf` "format string or str argument contains x/z bits implies EOF (-1)" (LRM 21.3.4.3
-      sscanf-only). Slang binds str / format expressions to value bytes on this pipeline so the
-      corner cannot be observed in practice yet; revisit once 4-state string surfaces exist.
+- [x] `$sscanf` / `$fscanf` integral str / format and the LRM 21.3.4.3 x/z -> EOF (-1) corner.
+      Packed bit vectors lift to string via a shared `value::String::FromPackedArray` conversion
+      (LRM 5.9 MSB-first byte order), so any integral expression in str or format position now
+      reaches the scanner unchanged. The closure-IIFE body emits an unconditional
+      `if (operand.IsUnknown()) return -1` guard at body entry for source and format; the backend
+      renders the guard as a real `HasUnknown()` query when the operand is a 4-state packed integer
+      and as `Bit(false)` for everything else (string, 2-state packed, byte array), keeping the body
+      shape uniform and dead-code-eliminated where there is no x/z to check. The rule names
+      `$sscanf` literally but the format argument's role is identical under `$fscanf`, so the guard
+      fires on `$fscanf`'s format as well; `$fscanf`'s file descriptor has no string semantics and
+      is exempt. The same conversion path unblocks `$display("%s", x)` on a packed integral operand,
+      which previously built but threw at runtime; x/z bits in that path render as `'\0'` since LRM
+      does not pin `%s` behaviour for 4-state operands.
 - [x] `$fseek` / `$rewind` cancelling pending `$ungetc` operations (LRM 21.3.5). The Lyra-owned
       per-FD putback slot is cleared whenever the file position is repositioned, so any subsequent
       read consults the underlying stream rather than the stale pushback byte.
