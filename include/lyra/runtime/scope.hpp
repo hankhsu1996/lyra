@@ -52,10 +52,10 @@ class Scope {
   [[nodiscard]] auto Name() const -> std::string_view;
 
   // The scope's module definition name. An upward hierarchical reference climbs
-  // the parent chain matching its first name component against each ancestor's
-  // instance name (`Name()`) or module name (this), since the LRM lets the
-  // first component be either (LRM 23.8). The base never matches; a generated
-  // unit class overrides it.
+  // the parent chain matching against this (LRM 23.8): the referrer's emitted
+  // code keys the climb on the target's definition name, so an ancestor matches
+  // by its definition name, never by its instance name. The base never matches;
+  // a generated unit class overrides it.
   [[nodiscard]] virtual auto DefName() const -> std::string_view {
     return {};
   }
@@ -78,11 +78,12 @@ class Scope {
     return nullptr;
   }
 
-  // Climbs the parent chain to the ancestor whose instance name (`Name()`) or
-  // module name (`DefName()`) is `ancestor` (LRM 23.8) and returns it. The
-  // shared start of an upward reference's runtime navigation; from there an
-  // `ExternUp` member walks any by-name tail and fetches the leaf, once at
-  // Bind.
+  // Climbs the parent chain to the nearest ancestor whose module definition
+  // name (`DefName()`) is `ancestor` and returns it (LRM 23.8). `ancestor` is
+  // always a definition name, so the match is on `DefName()` alone; an ancestor
+  // whose instance name merely equals it does not match. The shared start of an
+  // upward reference's runtime navigation; from there an `ExternUp` member
+  // walks any by-name tail and fetches the leaf, once at Bind.
   [[nodiscard]] auto ResolveUpwardScope(std::string_view ancestor) -> Scope*;
 
   // An `ExternUp` member registers itself here from its constructor; Bind

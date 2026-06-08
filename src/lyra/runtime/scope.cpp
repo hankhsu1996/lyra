@@ -58,7 +58,7 @@ void Scope::RegisterExtern(ExternBase* member) {
 
 auto Scope::ResolveUpwardScope(std::string_view ancestor) -> Scope* {
   Scope* s = parent_;
-  while (s != nullptr && s->Name() != ancestor && s->DefName() != ancestor) {
+  while (s != nullptr && s->DefName() != ancestor) {
     s = s->Parent();
   }
   if (s == nullptr) {

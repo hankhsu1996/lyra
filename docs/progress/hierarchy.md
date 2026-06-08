@@ -108,8 +108,9 @@ consume. Coverage is demonstrated through Stage D and Stage E.
 - [x] D2 -- An upward reference reads and writes a signal directly on the matched ancestor, at any
       depth. The child cannot know its depth when compiled, so it resolves the reference at
       construction inside its own artifact: it climbs its parent chain to the ancestor named by the
-      reference (matching an instance or module name, LRM 23.8) and fetches the signal by name,
-      naming no ancestor type (see `docs/decisions/upward-reference-resolution.md`,
+      reference (matching the module name, LRM 23.8; a nearer ancestor whose instance name happens
+      to equal that module name does not shadow the target) and fetches the signal by name, naming
+      no ancestor type (see `docs/decisions/upward-reference-resolution.md`,
       `docs/architecture/emission_model.md`). A reference wrapped in a value-level operation
       (`Top.g[3]`, `Top.g + 1`) works -- the value part is ordinary expression handling. The
       remaining forms below are each rejected with a clean "unsupported" diagnostic, except D2d.

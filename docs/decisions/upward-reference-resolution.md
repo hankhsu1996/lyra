@@ -116,14 +116,18 @@ The match key is the ancestor's **module definition name**, read from the resolv
 (`path[0].symbol`'s definition name) -- a semantic value, never from source syntax (a wrapped
 sub-expression like `Top.g[3]` may carry no syntax at all). It is class-level: every instance of the
 referring module shares the same module name, so one artifact serves all depths. At runtime the
-climb compares it against each ancestor's instance name (`Scope::Name()`) **or** module definition
-name (`Scope::DefName()`); a module-name reference (`Top.g`) matches the ancestor whose `DefName()`
-is `"Top"`, including the aliased `module Tb; Top dut();` where the instance name is `dut`. The one
-form this does not yet honor is LRM 23.9 instance-name precedence: a reference written as an
-**instance** name (`u_mid.s`) keys on the module name too, so with several instances of that module
-nesting on the chain it can bind the nearer one. That is a known gap (`docs/progress/hierarchy.md`
-D2d) -- the resolved AST gives the ancestor's name and definition name, but not which form the
-source wrote, and recovering that needs the source token the elaborated AST does not retain.
+climb compares it against each ancestor's module definition name (`Scope::DefName()`) alone; a
+module-name reference (`Top.g`) matches the ancestor whose `DefName()` is `"Top"`, including the
+aliased `module Tb; Top dut();` where the instance name is `dut`. The climb deliberately does
+**not** also match an ancestor's instance name (`Scope::Name()`): the key is always a definition
+name, so an instance-name match would only ever fire on a nearer ancestor whose instance name
+happens to equal that definition name (an instance literally named `M` when the target is module
+`M`), binding the wrong object. The one form this does not yet honor is LRM 23.9 instance-name
+precedence: a reference written as an **instance** name (`u_mid.s`) keys on the module name too, so
+with several instances of that module nesting on the chain it can bind the nearer one. That is a
+known gap (`docs/progress/hierarchy.md` D2d) -- the resolved AST gives the ancestor's name and
+definition name, but not which form the source wrote, and recovering that needs the source token the
+elaborated AST does not retain.
 
 Once the ancestor is found, the reference may still descend into the ancestor's subtree before
 reaching the leaf (`Top.sib.y` climbs to `Top`, then steps down into the owned child `sib`). That
@@ -151,10 +155,10 @@ construction. Concretely:
 
 2. **The ancestor (`path[0]`) is matched by its module definition name, and the signal is fetched by
    name.** The key is the resolved ancestor's module name (a semantic value, never from syntax). The
-   climb compares it against each ancestor's `Scope::Name()` or `Scope::DefName()` and stops at the
-   nearest match, then calls `Scope::GetSignal(<signal>)` to obtain the leaf and casts the returned
-   `void*` to the member's own declared cell type. No `dynamic_cast` retry loop, and no cast to the
-   ancestor's type. (Instance-name precedence, LRM 23.9, is a known gap -- see F7.)
+   climb compares it against each ancestor's `Scope::DefName()` and stops at the nearest match, then
+   calls `Scope::GetSignal(<signal>)` to obtain the leaf and casts the returned `void*` to the
+   member's own declared cell type. No `dynamic_cast` retry loop, and no cast to the ancestor's
+   type. (Instance-name precedence, LRM 23.9, is a known gap -- see F7.)
 
 3. **The climb walks only the direct ancestor line.** It never steps into a sibling. A sibling or
    cousin target is the downward tail (`path[1..]`) applied from the ancestor, using the existing
@@ -189,8 +193,8 @@ construction. Concretely:
    };
    ```
 
-   The walk -- climb the parent chain by `Name()`/`DefName()` to the ancestor, step down any tail
-   through `Scope::GetChild`, then `Scope::GetSignal` the leaf -- lives once in the runtime SDK
+   The walk -- climb the parent chain by `DefName()` to the ancestor, step down any tail through
+   `Scope::GetChild`, then `Scope::GetSignal` the leaf -- lives once in the runtime SDK
    (`Scope::ResolveUpwardScope` plus the by-name `GetChild`/`GetSignal` surface), driven by
    `ExternUp<T>::Relocate` at Bind. The referrer carries the reference as an ordinary member whose
    type is `ExternalRef<T>` (the symbol rides on the type); reads, writes, and sensitivity are the
@@ -209,10 +213,10 @@ construction. Concretely:
 - **Multiple depths work with one artifact and no specialization.** The same module climbs to the
   correct ancestor whether the ancestor is one or several levels up; depth is never represented as a
   number anywhere.
-- **The match keys are the runtime instance name and module definition name (`Scope::Name()` /
-  `Scope::DefName()`).** The `ExternalRef` type carries only the match key, the by-name tail down
-  through the ancestor's owned children, and the leaf signal name (the `GetSignal` argument); it
-  carries no ancestor or child type, so the referrer's artifact stays self-contained.
+- **The match key is the ancestor's module definition name (`Scope::DefName()`).** The `ExternalRef`
+  type carries only the match key, the by-name tail down through the ancestor's owned children, and
+  the leaf signal name (the `GetSignal` argument); it carries no ancestor or child type, so the
+  referrer's artifact stays self-contained.
 - **The climb is a construction-time loop, run once per extern member.** It is never on the
   simulation hot path, which reads the stored pointer.
 - **Upward references are not unified with `ref` ports.** A `ref` port is supplied by the parent
@@ -220,7 +224,6 @@ construction. Concretely:
   parent cannot know about it. Both are cross-unit references resolved at construction, but their
   head resolution differs by necessity.
 - **Out of scope, guarded explicitly:** an upward reference written inside a generate block; a
-  `$root`-anchored absolute path; an upward reference through an interface port; an ancestor that is
-  a named generate or procedural block rather than a module instance (such a scope does not yet
-  expose itself as a climb-match target with `GetSignal`); and the corner where a nearer ancestor
-  carries the same instance name as the named one.
+  `$root`-anchored absolute path; an upward reference through an interface port; and an ancestor
+  that is a named generate or procedural block rather than a module instance (such a scope does not
+  yet expose itself as a climb-match target with `GetSignal`).
