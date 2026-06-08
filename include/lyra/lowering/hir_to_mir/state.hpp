@@ -15,6 +15,7 @@
 #include "lyra/hir/structural_scope.hpp"
 #include "lyra/hir/structural_var.hpp"
 #include "lyra/hir/type.hpp"
+#include "lyra/lowering/hir_to_mir/procedural_depth.hpp"
 #include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/expr.hpp"
 #include "lyra/mir/integral_constant.hpp"
@@ -438,7 +439,7 @@ class StructuralScopeLoweringState {
 };
 
 struct ProceduralVarBinding {
-  std::uint32_t declaration_procedural_depth;
+  ProceduralDepth declaration_procedural_depth;
   mir::ProceduralVarId var;
 };
 
@@ -462,16 +463,16 @@ class ProcessLoweringState {
   }
 
   void EnterProceduralScope() {
-    ++procedural_depth_;
+    procedural_depth_ = procedural_depth_.Inner();
   }
   void LeaveProceduralScope() {
-    if (procedural_depth_ == 0) {
+    if (procedural_depth_ == ProceduralDepth{}) {
       throw InternalError(
           "ProcessLoweringState::LeaveProceduralScope: depth underflow");
     }
-    --procedural_depth_;
+    procedural_depth_ = procedural_depth_.Outer();
   }
-  [[nodiscard]] auto CurrentProceduralDepth() const -> std::uint32_t {
+  [[nodiscard]] auto CurrentProceduralDepth() const -> ProceduralDepth {
     return procedural_depth_;
   }
 
@@ -525,10 +526,7 @@ class ProcessLoweringState {
           "exceeds current depth (forward reference into a child scope)");
     }
     return mir::ProceduralVarRef{
-        .hops =
-            mir::ProceduralHops{
-                .value =
-                    procedural_depth_ - binding.declaration_procedural_depth},
+        .hops = procedural_depth_ - binding.declaration_procedural_depth,
         .var = binding.var,
     };
   }
@@ -547,7 +545,7 @@ class ProcessLoweringState {
 
  private:
   TimeResolution time_resolution_;
-  std::uint32_t procedural_depth_ = 0;
+  ProceduralDepth procedural_depth_;
   std::vector<ProceduralVarBinding> bindings_;
   ProceduralScopeLoweringState* static_frame_scope_ = nullptr;
   CaptureSink* active_capture_sink_ = nullptr;

@@ -31,26 +31,26 @@ of the same wait -- resume after zero completions -- `join_any` the one-completi
 the all-completions case; they are one mechanism parameterized by a threshold, not three separate
 constructs.
 
-A branch reads and writes the variables of its enclosing scope. The enclosing scope's lifetime
-encompasses the execution of every process the fork spawns (LRM 6.21), so the storage a branch
-reaches stays alive for as long as that branch runs -- even a detached `join_none` / `join_any`
-branch that textually outlives the fork statement. What a branch may safely reach then follows from
-where that storage lives:
+A branch reads and writes the variables of its enclosing scope. What a branch may reach, and for how
+long, follows from where the storage lives and how long the enclosing activation keeps its locals:
 
-- A variable of an enclosing process (`initial` / `always` / `final`) is reached for shared read and
-  write. The process activation outlives the simulation, so a branch under any join mode shares the
-  one live location, observing the value current when it executes. The LRM 9.3.2 loop example relies
-  on this: a branch reads the enclosing loop variable after the loop has finished and sees its final
-  value.
 - Per-iteration data uses an automatic variable declared in the fork's `block_item_declaration`,
-  initialized on entry to the block before any process is spawned, so each spawned process captures
-  its own copy by value.
+  initialized on entry to the block before any process is spawned. Each spawned process takes its
+  own copy by value, so it is self-contained and stays correct under every join mode -- this is the
+  loop-spawn idiom (LRM 9.3.2). A branch may likewise declare its own locals.
+- A variable of an enclosing process (`initial` / `always` / `final`) is reached by reference for
+  shared read and write while that process is still live -- which holds whenever the parent is
+  blocked at the join, and for a `join_none` / `join_any` branch up until the parent procedure
+  completes. The LRM 9.3.2 loop example reads the enclosing loop variable after the loop finishes
+  and sees its final value.
 - Referring to a subroutine's by-reference formal argument from a `join_any` / `join_none` branch is
   illegal unless the formal is declared `ref static` (LRM 9.3.2); the frontend rejects it, so it
   never reaches lowering.
-- The one case LRM 6.21 mandates that is not yet built: an automatic local of an enclosing task
-  reached by a detached branch. The task activation must outlive the spawned branch -- the runtime
-  guarantees this for process activations but not yet for task activations.
+- Not yet built: a detached `join_none` / `join_any` branch that reads an enclosing variable by
+  reference after the enclosing procedure (process or task) has completed. LRM 6.21 requires the
+  enclosing storage to outlive the branch, but a procedure releases its locals when its body ends;
+  honouring this needs lifetime-extended shared storage for the captured locals, which is not yet in
+  place. The by-value snapshot above sidesteps it, so the loop-spawn idiom is unaffected.
 
 ## Sub-Steps
 
@@ -82,16 +82,17 @@ where that storage lives:
 
 ### Per-branch storage
 
-- [ ] FJ4 -- A fork branch reads and writes the variables of its enclosing process, lifting the FJ1
-      restriction to module-scope signals. The branch shares the one live location under every join
-      mode, observing the value current when it executes (LRM 6.21, 9.3.2). Per-iteration data comes
-      from an automatic variable declared in the fork's `block_item_declaration`, initialized on
-      block entry before any process is spawned -- the loop-spawn idiom captures its own copy by
-      value (LRM 9.3.2). A reference to a subroutine's by-reference formal argument from a
-      `join_any` / `join_none` branch is rejected unless declared `ref static` (LRM 9.3.2), and the
-      frontend already rejects it. Deferred: an automatic local of an enclosing task reached by a
-      detached branch -- LRM 6.21 requires the task activation to outlive the branch, which the
-      runtime does for processes but not yet for task activations.
+- [x] FJ4 -- Per-branch storage. A fork is a procedural scope: a `block_item_declaration` is
+      initialized on entry to the block, before any process spawns, and each branch takes its value
+      as a by-value snapshot, so the loop-spawn idiom gives every spawned process its own
+      per-iteration copy (LRM 9.3.2). A branch may also declare its own locals. A branch reads and
+      writes the variables of its enclosing process by reference while that process is live, lifting
+      the FJ1 restriction to module-scope signals (LRM 6.21). A reference to a subroutine's
+      by-reference formal from a `join_any` / `join_none` branch stays rejected unless declared
+      `ref static` (LRM 9.3.2). Deferred: a detached branch that reads an enclosing variable by
+      reference after the enclosing procedure (process or task) has completed -- the captured local
+      needs lifetime-extended shared storage, which the runtime does not yet provide. The by-value
+      snapshot does not depend on this, so the loop-spawn idiom is complete.
 
 ### Naming
 

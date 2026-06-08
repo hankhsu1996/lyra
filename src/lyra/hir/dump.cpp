@@ -1080,9 +1080,12 @@ class HirDumper {
   void DumpForkStmtNode(const ProceduralBody& p, StmtId id, const ForkStmt& f) {
     Line(
         std::format(
-            "Stmt[{}] ForkStmt {} (branches={})", id.value,
-            ForkJoinModeLabel(f.mode), f.branches.size()));
+            "Stmt[{}] ForkStmt {} (locals={}, branches={})", id.value,
+            ForkJoinModeLabel(f.mode), f.locals.size(), f.branches.size()));
     Indent();
+    for (const auto local : f.locals) {
+      DumpStmt(p, local);
+    }
     for (const auto branch : f.branches) {
       DumpStmt(p, branch);
     }

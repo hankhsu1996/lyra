@@ -70,14 +70,19 @@ enum class JoinMode : std::uint8_t {
   kNone,
 };
 
-// LRM 9.3.2 parallel block. Each branch is a closure (a captured callable
-// value) in the enclosing scope's expr arena, referenced here by id; the
-// backend spawns each as a concurrent process and the parent waits per `mode`.
-// Being a fork branch is what makes the closure run as a coroutine -- the
-// closure node itself carries no such property. A fork carries no nested scopes
-// of its own.
+// LRM 9.3.2 parallel block. The fork is itself a procedural scope: `scope`
+// (in the owning stmt's child_procedural_scopes) holds the
+// block_item_declaration locals, which are initialized at block entry -- in the
+// parent, before any branch spawns -- giving each spawned branch a by-value
+// snapshot. Each branch is a closure (a captured callable value) in `scope`'s
+// expr arena, referenced here by id; a branch captures a fork-scope local by
+// value (the snapshot) and an enclosing-process variable by reference
+// (LRM 6.21). The backend spawns each branch as a concurrent process and the
+// parent waits per `mode`. Being a fork branch is what makes the closure run as
+// a coroutine -- the closure node itself carries no such property.
 struct ForkStmt {
   JoinMode mode;
+  ProceduralScopeId scope;
   std::vector<ExprId> branches;
 };
 

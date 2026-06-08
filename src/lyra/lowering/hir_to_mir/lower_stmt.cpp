@@ -119,7 +119,8 @@ auto LowerVarDeclStmt(
             .lifetime = mir::VariableLifetime::kStatic});
     proc_state.MapProceduralVar(
         v.var, ProceduralVarBinding{
-                   .declaration_procedural_depth = 0, .var = static_id});
+                   .declaration_procedural_depth = ProceduralDepth{.value = 0},
+                   .var = static_id});
     mir::ExprId static_init{};
     if (v.init.has_value()) {
       auto init_or = LowerExpr(
@@ -639,53 +640,47 @@ auto LowerJoinMode(hir::JoinMode mode) -> mir::JoinMode {
   return mir::JoinMode::kAll;
 }
 
-// True if a fork branch declares a procedural local anywhere in its body. A
-// branch-local initializer that reads an enclosing variable needs a by-value
-// snapshot (the loop-spawn idiom), which is not yet supported; until then a
-// branch that declares a local is rejected rather than risk sharing an
-// enclosing automatic by reference where the LRM wants a per-spawn copy.
-auto ForkBranchDeclaresLocal(const mir::ProceduralScope& scope) -> bool {
-  for (const auto& s : scope.stmts) {
-    if (std::holds_alternative<mir::ProceduralVarDeclStmt>(s.data)) {
-      return true;
-    }
-    for (const auto& child : s.child_procedural_scopes) {
-      if (ForkBranchDeclaresLocal(child)) {
-        return true;
-      }
-    }
-  }
-  return false;
-}
-
-// LRM 9.3.2: each parallel statement becomes a concurrent process. Each branch
-// lowers to a closure -- a captured callable value -- composed into the
-// enclosing scope's expr arena, exactly as the NBA deferred-write closure is
-// composed. References to the enclosing process's variables become by-reference
-// captures (LRM 6.21). The ForkStmt then references the branch closures by id;
-// it owns no nested scopes. The closure runs as a coroutine by virtue of being
-// a fork branch (spawned), not by any property of the closure node.
+// LRM 9.3.2: a fork is a procedural scope. Its block_item_declarations lower
+// into that scope and initialize at block entry -- in the parent, before any
+// branch spawns. Each branch lowers to a closure composed into the fork scope's
+// expr arena. The capture sink collects every enclosing reference the body
+// makes as an identity; fork then assigns each capture's kind, which it can
+// because it knows its own declarations sit at the fork-scope depth: a capture
+// of a fork-scope local is a by-value snapshot (each spawned branch carries its
+// own copy -- the loop-spawn idiom), and a capture of an enclosing-process
+// variable is a by-reference alias (LRM 6.21). The ForkStmt holds the fork
+// scope and references the branch closures by id; the closure runs as a
+// coroutine by virtue of being a fork branch (spawned), not by any property of
+// the closure node.
 auto LowerForkStmt(
     const UnitLoweringState& unit_state,
     const StructuralScopeLoweringState& scope_state,
-    ProcessLoweringState& proc_state,
-    ProceduralScopeLoweringState& proc_scope_state,
-    const hir::ProceduralBody& hir_proc, const hir::Stmt& stmt,
-    const hir::ForkStmt& f) -> diag::Result<mir::Stmt> {
+    ProcessLoweringState& proc_state, const hir::ProceduralBody& hir_proc,
+    const hir::Stmt& stmt, const hir::ForkStmt& f) -> diag::Result<mir::Stmt> {
+  ProceduralDepthGuard fork_depth_guard{proc_state};
+  ProceduralScopeLoweringState fork_scope_state;
+  const ProceduralDepth fork_depth = proc_state.CurrentProceduralDepth();
+
+  for (const hir::StmtId local_hir_id : f.locals) {
+    auto lowered = LowerStmt(
+        unit_state, scope_state, proc_state, fork_scope_state, hir_proc,
+        hir_proc.stmts.at(local_hir_id.value));
+    if (!lowered) {
+      return std::unexpected(std::move(lowered.error()));
+    }
+    fork_scope_state.AddRootStmt(fork_scope_state.AddStmt(*std::move(lowered)));
+  }
+
   std::vector<mir::ExprId> branch_ids;
   branch_ids.reserve(f.branches.size());
   for (const hir::StmtId branch_hir_id : f.branches) {
     const hir::Stmt& branch = hir_proc.stmts.at(branch_hir_id.value);
     ProceduralScopeLoweringState branch_scope_state;
-    ProceduralDepthGuard depth_guard{proc_state};
+    ProceduralDepthGuard branch_depth_guard{proc_state};
 
-    // Collect the branch's captures as its body is lowered: a body reference
-    // resolving above this boundary depth routes through the sink, which
-    // composes the capture and binding on the spot (LRM 6.21). A nested
-    // fork restores the prior sink on exit.
     CaptureSink sink{
         proc_state.CurrentProceduralDepth(), branch_scope_state,
-        proc_scope_state};
+        fork_scope_state};
     CaptureSink* const previous_sink = proc_state.ActiveCaptureSink();
     proc_state.SetCaptureSink(&sink);
     auto lowered = LowerStmt(
@@ -695,33 +690,45 @@ auto LowerForkStmt(
     if (!lowered) {
       return std::unexpected(std::move(lowered.error()));
     }
-    const mir::StmtId branch_stmt_id =
-        branch_scope_state.AddStmt(*std::move(lowered));
-    branch_scope_state.AddRootStmt(branch_stmt_id);
+    branch_scope_state.AddRootStmt(
+        branch_scope_state.AddStmt(*std::move(lowered)));
 
-    mir::ProceduralScope body = branch_scope_state.Finish();
-    if (ForkBranchDeclaresLocal(body)) {
-      return diag::Unsupported(
-          stmt.span, diag::DiagCode::kUnsupportedForkJoinForm,
-          "a fork-join branch that declares a local variable is not yet "
-          "supported",
-          diag::UnsupportedCategory::kFeature);
+    // A capture of a fork-scope local (declared at fork_depth) is a by-value
+    // snapshot; one from further out is a by-reference alias. The source
+    // expression is the same either way; only the capture kind differs.
+    std::vector<mir::Capture> captures;
+    for (const CaptureRequest& request : sink.TakeRequests()) {
+      if (request.decl_depth == fork_depth) {
+        captures.emplace_back(
+            mir::ByValueCapture{
+                .value = request.source, .binding = request.binding});
+      } else {
+        captures.emplace_back(
+            mir::ByReferenceCapture{
+                .target = request.source, .binding = request.binding});
+      }
     }
-
     mir::ClosureExpr closure;
-    closure.captures = sink.TakeCaptures();
-    closure.body = std::make_unique<mir::ProceduralScope>(std::move(body));
-    branch_ids.push_back(proc_scope_state.AddExpr(
+    closure.captures = std::move(captures);
+    closure.body =
+        std::make_unique<mir::ProceduralScope>(branch_scope_state.Finish());
+    branch_ids.push_back(fork_scope_state.AddExpr(
         mir::Expr{
             .data = std::move(closure),
             .type = unit_state.Builtins().void_type}));
   }
+
+  std::vector<mir::ProceduralScope> child_scopes;
+  const mir::ProceduralScopeId scope_id =
+      AddChildProceduralScope(child_scopes, fork_scope_state.Finish());
   return mir::Stmt{
       .label = stmt.label,
       .data =
           mir::ForkStmt{
-              .mode = LowerJoinMode(f.mode), .branches = std::move(branch_ids)},
-      .child_procedural_scopes = {}};
+              .mode = LowerJoinMode(f.mode),
+              .scope = scope_id,
+              .branches = std::move(branch_ids)},
+      .child_procedural_scopes = std::move(child_scopes)};
 }
 
 auto LowerIfStmt(
@@ -1786,8 +1793,7 @@ auto LowerStmt(
           },
           [&](const hir::ForkStmt& f) {
             return LowerForkStmt(
-                unit_state, scope_state, proc_state, proc_scope_state, hir_proc,
-                stmt, f);
+                unit_state, scope_state, proc_state, hir_proc, stmt, f);
           },
           [&](const hir::IfStmt& i) {
             return LowerIfStmt(

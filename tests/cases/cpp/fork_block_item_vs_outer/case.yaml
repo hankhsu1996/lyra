@@ -1,0 +1,12 @@
+id: cpp.fork_block_item_vs_outer
+tags: [cpp_run]
+input:
+  command: [run, cpp]
+  project: false
+  top: Test
+  files: [main.sv]
+expect:
+  exit: 0
+  stdout:
+    exact: |
+      k=1 m=2 x=9
