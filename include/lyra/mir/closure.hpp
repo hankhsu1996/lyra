@@ -29,25 +29,47 @@ struct ByReferenceCapture {
 
 using Capture = std::variant<ByValueCapture, ByReferenceCapture>;
 
-// A callable value with captured state and a procedural body.
+// A per-invocation closure parameter (LRM 7.12.4 with-clause `item` /
+// `index`). `binding` is a procedural-var slot in the closure body that
+// holds the per-call argument value; body reads go through
+// `ProceduralVarRef{binding}` -- the same mechanism captures use. The
+// difference between a `Capture` and a `Parameter` is when the binding is
+// filled: captures snapshot once at closure creation, parameters receive a
+// new value on each invocation.
+struct Parameter {
+  ProceduralVarId binding{};
+};
+
+// A callable value with captured state, per-invocation parameters, and a
+// procedural body.
 //
 // Closures are synthesized exclusively by HIR-to-MIR lowering. No SystemVerilog
-// source construct produces one directly; both the capture list and the body
-// statements are compiler-generated.
+// source construct produces one directly; the capture list, parameter list,
+// and body statements are all compiler-generated.
 //
 // Invariants enforced by lowering (violations are compiler-bug class):
-//   1. Each capture's binding is a ProceduralVarId valid in body.vars and is
-//      unique across the capture list.
+//   1. Each capture's binding and each parameter's binding is a
+//      ProceduralVarId valid in body.vars and is unique across the union of
+//      the two lists.
 //   2. A ByValueCapture binding is read-only inside body. A ByReferenceCapture
 //      binding may be read and written -- it aliases the enclosing storage.
+//      A parameter binding is read-only inside body; the value is supplied
+//      by the caller per invocation.
 //   3. ProceduralVarRef inside body uses hops bounded by body's own scope
 //      nesting and does not escape into the enclosing process scope. Outer
 //      procedural state reaches body only through captures.
+//   4. A closure with non-empty `params` is invoked many times (each call
+//      supplies new parameter values) and renders as a lambda whose `(...)`
+//      clause lists the parameters and whose body ends with a `ReturnStmt`
+//      carrying the result expression. An empty-`params` closure is invoked
+//      once (fork branch / deferred IIFE) and renders as a captures-as-args
+//      IIFE.
 //
 // StructuralVarRef inside body may carry hops that reach module-scope storage
 // directly, the same way C++ lambdas may reference globals without capture.
 struct ClosureExpr {
   std::vector<Capture> captures;
+  std::vector<Parameter> params;
   std::unique_ptr<ProceduralScope> body;
 
   ClosureExpr();

@@ -722,22 +722,67 @@ auto LowerCallExprProc(
             unit_state.GetType(*receiver_type).data)) {
       if (auto kind = LowerArrayMethodName(name); kind.has_value()) {
         // LRM 7.5.2 / 7.5.3 dynamic-array methods plus LRM 7.12.2 / 7.12.3
-        // no-`with` subset. Receiver is arguments[0]; this PR's surface
-        // takes no further arguments. Slang upstream gates element-type
-        // constraints (integral for reductions, comparable for sort), so
-        // any call landing here is well-typed.
+        // family. The no-`with` form takes only the receiver. The `with`
+        // form (LRM 7.12.4) binds an iterator and a body expression which
+        // HIR carries as the optional `WithClause` -- HIR -> MIR turns it
+        // into a closure argument.
         auto type_id = TypeIdOfSlangExpr(unit_facts, unit_state, expr);
         if (!type_id) return std::unexpected(std::move(type_id.error()));
+        std::optional<hir::WithClause> with_clause;
+        if (std::holds_alternative<
+                slang::ast::CallExpression::IteratorCallInfo>(info.extraInfo)) {
+          const auto& iter_info =
+              std::get<slang::ast::CallExpression::IteratorCallInfo>(
+                  info.extraInfo);
+          const auto& iter_var =
+              iter_info.iterVar->as<slang::ast::VariableSymbol>();
+          auto iter_type = unit_state.GetTypeId(iter_var.getType(), span);
+          if (!iter_type) {
+            return std::unexpected(std::move(iter_type.error()));
+          }
+          const hir::ProceduralVarId iterator_id =
+              proc_state.AddProceduralVar(iter_var, *iter_type);
+          auto body_or = LowerProcExpr(
+              unit_facts, unit_state, proc_state, stack, *iter_info.iterExpr);
+          if (!body_or) return std::unexpected(std::move(body_or.error()));
+          const auto body_expr_id = proc_state.AddExpr(*std::move(body_or));
+          with_clause =
+              hir::WithClause{.iterator = iterator_id, .expr = body_expr_id};
+        }
         return hir::Expr{
             .type = *type_id,
             .data =
                 hir::CallExpr{
                     .callee = hir::BuiltinMethodRef{.method = *kind},
                     .arguments = std::move(arg_ids),
+                    .with_clause = std::move(with_clause),
                 },
             .span = span,
         };
       }
+    }
+
+    // LRM 7.12.4 `item.index`: slang resolves to a SystemSubroutine with
+    // `KnownSystemName::Index`. Only legal inside an array-method `with`
+    // body; the call lowers to a `BuiltinMethodRef{IteratorMethodKind::
+    // kIndex}` and HIR -> MIR rewrites it to a `ProceduralVarRef` on the
+    // closure's `index` parameter binding.
+    if (info.subroutine != nullptr &&
+        info.subroutine->knownNameId ==
+            slang::parsing::KnownSystemName::Index) {
+      auto type_id = TypeIdOfSlangExpr(unit_facts, unit_state, expr);
+      if (!type_id) return std::unexpected(std::move(type_id.error()));
+      return hir::Expr{
+          .type = *type_id,
+          .data =
+              hir::CallExpr{
+                  .callee =
+                      hir::BuiltinMethodRef{
+                          .method = hir::IteratorMethodKind::kIndex},
+                  .arguments = std::move(arg_ids),
+              },
+          .span = span,
+      };
     }
 
     const auto* desc = support::FindSystemSubroutine(name);
