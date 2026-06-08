@@ -51,10 +51,14 @@ enum class JoinMode : std::uint8_t {
   kNone,
 };
 
-// LRM 9.3.2 parallel block. Each branch is a statement run as its own
+// LRM 9.3.2 parallel block. `locals` are the fork's block_item_declarations
+// (VarDeclStmt) -- initialized at block entry, before any branch spawns, to
+// give each branch a by-value snapshot; they precede the parallel statements in
+// the fork's scope. Each branch in `branches` is a statement run as its own
 // concurrent process; `mode` sets when the parent resumes.
 struct ForkStmt {
   JoinMode mode;
+  std::vector<StmtId> locals;
   std::vector<StmtId> branches;
 };
 

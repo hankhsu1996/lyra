@@ -109,25 +109,34 @@ auto RenderForkJoinModeLiteral(mir::JoinMode mode) -> std::string_view {
   return "lyra::runtime::JoinMode::kAll";
 }
 
-// LRM 9.3.2: each branch is an anonymous ClosureExpr spawned as a concurrent
-// coroutine. It renders inline at the fork as a stateless lambda whose
-// parameters are frame-copied -- so the spawned coroutine never dangles the way
-// a captured lambda would. The first parameter is the enclosing scope instance
-// `self`, through which the body reaches module state and Services(); each
-// closure capture adds one more parameter (a `T&` bound to an enclosing
-// variable for a by-reference capture, a `T` for a by-value capture). The fork
-// waits per the join mode.
+// LRM 9.3.2: a fork is a procedural scope, rendered as a block at the fork
+// site. Its block_item_declarations initialize first, in the parent, before any
+// branch spawns -- so a branch's by-value capture of one of them is a snapshot.
+// Each branch is an anonymous ClosureExpr spawned as a concurrent coroutine,
+// rendered inline as a stateless lambda whose parameters are frame-copied -- so
+// the spawned coroutine never dangles the way a captured lambda would. The
+// first parameter is the enclosing scope instance `self`, through which the
+// body reaches module state and Services(); each closure capture adds one more
+// parameter (a `T` snapshot for a by-value capture of a fork-scope local, a
+// `T&` for a by-reference capture of an enclosing variable). The fork waits per
+// the join mode.
 auto RenderForkStmtNode(
-    const RenderContext& ctx, const mir::ForkStmt& s, std::size_t indent)
-    -> diag::Result<std::string> {
+    const RenderContext& ctx, const mir::Stmt& stmt, const mir::ForkStmt& s,
+    std::size_t indent) -> diag::Result<std::string> {
   const std::string vec = ctx.AllocateTemp("fork_branches");
   const std::string& class_name = ctx.StructuralScope().name;
   const std::string receiver_object{ctx.ReceiverObject()};
+  const RenderContext fork_ctx =
+      ctx.WithProceduralScope(stmt.child_procedural_scopes.at(s.scope.value));
   std::string out = Indent(indent) + "{\n";
+  auto locals_or = RenderProceduralScopeStatements(fork_ctx, indent + 1);
+  if (!locals_or) return std::unexpected(std::move(locals_or.error()));
+  out += *locals_or;
   out += Indent(indent + 1) + "std::vector<lyra::runtime::Coroutine> " + vec +
          ";\n";
   for (const auto branch : s.branches) {
-    const auto* closure = std::get_if<mir::ClosureExpr>(&ctx.Expr(branch).data);
+    const auto* closure =
+        std::get_if<mir::ClosureExpr>(&fork_ctx.Expr(branch).data);
     if (closure == nullptr) {
       throw InternalError("RenderForkStmtNode: fork branch is not a closure");
     }
@@ -144,14 +153,14 @@ auto RenderForkStmtNode(
       if (const auto* by_ref = std::get_if<mir::ByReferenceCapture>(&capture)) {
         binding = by_ref->binding;
         ref_marker = "& ";
-        auto target_or = RenderExpr(ctx, ctx.Expr(by_ref->target));
+        auto target_or = RenderExpr(fork_ctx, fork_ctx.Expr(by_ref->target));
         if (!target_or) return std::unexpected(std::move(target_or.error()));
         arg = *std::move(target_or);
       } else {
         const auto& by_value = std::get<mir::ByValueCapture>(capture);
         binding = by_value.binding;
         ref_marker = " ";
-        auto value_or = RenderExpr(ctx, ctx.Expr(by_value.value));
+        auto value_or = RenderExpr(fork_ctx, fork_ctx.Expr(by_value.value));
         if (!value_or) return std::unexpected(std::move(value_or.error()));
         arg = *std::move(value_or);
       }
@@ -162,9 +171,10 @@ auto RenderForkStmtNode(
       params += ", " + *type_or + ref_marker + bind.name;
       args += ", " + arg;
     }
-    const RenderContext branch_ctx = ctx.WithProceduralScope(*closure->body)
-                                         .WithCoroutine(true)
-                                         .WithReceiver("self");
+    const RenderContext branch_ctx =
+        fork_ctx.WithProceduralScope(*closure->body)
+            .WithCoroutine(true)
+            .WithReceiver("self");
     auto body_or = RenderProceduralScopeStatements(branch_ctx, indent + 2);
     if (!body_or) return std::unexpected(std::move(body_or.error()));
     out += Indent(indent + 1) + vec + ".push_back([](" + params +
@@ -437,7 +447,7 @@ auto RenderStmt(
             return RenderBlockStmtNode(ctx, stmt, s, indent);
           },
           [&](const mir::ForkStmt& s) -> diag::Result<std::string> {
-            return RenderForkStmtNode(ctx, s, indent);
+            return RenderForkStmtNode(ctx, stmt, s, indent);
           },
           [&](const mir::IfStmt& s) -> diag::Result<std::string> {
             return RenderIfStmtNode(ctx, stmt, s, indent);
