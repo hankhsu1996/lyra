@@ -302,12 +302,33 @@ auto LowerForkStmt(
       throw InternalError("LowerForkStmt: called on a sequential block");
   }
 
-  std::vector<const slang::ast::Statement*> branch_stmts;
+  std::vector<const slang::ast::Statement*> body_stmts;
   if (block.body.kind == slang::ast::StatementKind::List) {
     const auto& list = block.body.as<slang::ast::StatementList>();
-    branch_stmts.assign(list.list.begin(), list.list.end());
+    body_stmts.assign(list.list.begin(), list.list.end());
   } else {
-    branch_stmts.push_back(&block.body);
+    body_stmts.push_back(&block.body);
+  }
+
+  // LRM 9.3.2: a fork's block_item_declarations are not parallel statements --
+  // they are locals of the fork scope, initialized in the parent at block entry
+  // before any branch spawns. The grammar places them before the statements, so
+  // they form a prefix; each remaining statement is a branch. Locals lower in
+  // the enclosing (parent) context; only the branches enter the fork-branch
+  // scope.
+  std::vector<hir::StmtId> locals;
+  std::vector<const slang::ast::Statement*> branch_stmts;
+  for (const auto* child : body_stmts) {
+    if (child->kind == slang::ast::StatementKind::VariableDeclaration) {
+      auto local_stmt =
+          LowerStatement(unit_facts, proc_state, scope_state, stack, *child);
+      if (!local_stmt) {
+        return std::unexpected(std::move(local_stmt.error()));
+      }
+      locals.push_back(proc_state.AddStmt(*std::move(local_stmt)));
+    } else {
+      branch_stmts.push_back(child);
+    }
   }
 
   std::vector<hir::StmtId> branches;
@@ -326,7 +347,11 @@ auto LowerForkStmt(
 
   return hir::Stmt{
       .label = std::nullopt,
-      .data = hir::ForkStmt{.mode = mode, .branches = std::move(branches)},
+      .data =
+          hir::ForkStmt{
+              .mode = mode,
+              .locals = std::move(locals),
+              .branches = std::move(branches)},
       .span = span};
 }
 

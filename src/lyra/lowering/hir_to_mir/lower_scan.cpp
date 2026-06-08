@@ -284,8 +284,17 @@ auto LowerScanSystemSubroutineCall(
 
   proc_state.SetCaptureSink(previous_sink);
 
+  // The sync IIFE aliases the caller's storage, which is live throughout the
+  // closure's evaluation -- so every captured identity is a by-reference
+  // capture.
+  std::vector<mir::Capture> captures;
+  for (const CaptureRequest& request : sink.TakeRequests()) {
+    captures.emplace_back(
+        mir::ByReferenceCapture{
+            .target = request.source, .binding = request.binding});
+  }
   mir::ClosureExpr closure;
-  closure.captures = sink.TakeCaptures();
+  closure.captures = std::move(captures);
   closure.body = std::make_unique<mir::ProceduralScope>(body.Finish());
 
   const mir::ExprId closure_id = proc_scope_state.AddExpr(

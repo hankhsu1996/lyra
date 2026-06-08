@@ -1044,7 +1044,7 @@ class MirDumper {
             },
             [&](const ExprStmt& s) { DumpExprStmt(s, enclosing, id); },
             [&](const BlockStmt& s) { DumpBlockStmt(stmt, s, id); },
-            [&](const ForkStmt& s) { DumpForkStmt(s, id); },
+            [&](const ForkStmt& s) { DumpForkStmt(stmt, s, id); },
             [&](const IfStmt& s) { DumpIfStmt(stmt, s, enclosing, id); },
             [&](const ConstructOwnedObjectStmt& s) {
               DumpConstructOwnedObjectStmt(id, s);
@@ -1436,7 +1436,7 @@ class MirDumper {
     Dedent();
   }
 
-  void DumpForkStmt(const ForkStmt& s, StmtId id) {
+  void DumpForkStmt(const Stmt& parent, const ForkStmt& s, StmtId id) {
     Line(
         std::format(
             "Stmt[{}] ForkStmt {} (branches={})", id.value,
@@ -1445,6 +1445,10 @@ class MirDumper {
     for (const auto branch : s.branches) {
       Line(std::format("branch=Expr[{}]", branch.value));
     }
+    Line(std::format("scope (ProceduralScopeId={}):", s.scope.value));
+    Indent();
+    DumpProceduralScope(parent.child_procedural_scopes.at(s.scope.value));
+    Dedent();
     Dedent();
   }
 

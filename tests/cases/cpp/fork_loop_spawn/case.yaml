@@ -1,0 +1,14 @@
+id: cpp.fork_loop_spawn
+tags: [cpp_run]
+input:
+  command: [run, cpp]
+  project: false
+  top: Test
+  files: [main.sv]
+expect:
+  exit: 0
+  stdout:
+    exact: |
+      k=0
+      k=1
+      k=2
