@@ -194,8 +194,8 @@ auto ModuleLowerer::MapOrGetCrossUnitRef(
     const slang::ast::ValueSymbol& target, ScopeFrameId home_frame,
     hir::CrossUnitRefHead head, std::vector<hir::PathStep> path,
     hir::TypeId type) -> hir::CrossUnitRefId {
-  if (const auto it = cross_unit_ref_dedup_.find(&target);
-      it != cross_unit_ref_dedup_.end()) {
+  auto& frame_dedup = cross_unit_ref_dedup_[home_frame];
+  if (const auto it = frame_dedup.find(&target); it != frame_dedup.end()) {
     return it->second;
   }
   auto& slots = cross_unit_refs_by_frame_[home_frame];
@@ -203,14 +203,19 @@ auto ModuleLowerer::MapOrGetCrossUnitRef(
   slots.push_back(
       hir::CrossUnitRefDecl{
           .head = std::move(head), .path = std::move(path), .type = type});
-  cross_unit_ref_dedup_.emplace(&target, id);
+  frame_dedup.emplace(&target, id);
   return id;
 }
 
-auto ModuleLowerer::LookupCrossUnitRef(const slang::ast::ValueSymbol& target)
-    const -> std::optional<hir::CrossUnitRefId> {
-  const auto it = cross_unit_ref_dedup_.find(&target);
-  if (it == cross_unit_ref_dedup_.end()) {
+auto ModuleLowerer::LookupCrossUnitRef(
+    ScopeFrameId frame, const slang::ast::ValueSymbol& target) const
+    -> std::optional<hir::CrossUnitRefId> {
+  const auto fit = cross_unit_ref_dedup_.find(frame);
+  if (fit == cross_unit_ref_dedup_.end()) {
+    return std::nullopt;
+  }
+  const auto it = fit->second.find(&target);
+  if (it == fit->second.end()) {
     return std::nullopt;
   }
   return it->second;
@@ -261,7 +266,7 @@ auto ModuleLowerer::TranslateSensitivityReads(
     // A read of a cross-unit member resolves to the slot that body lowering
     // created for it; subscribing through the slot is what makes always_comb
     // re-trigger on a child's signal.
-    if (const auto slot = LookupCrossUnitRef(*var)) {
+    if (const auto slot = LookupCrossUnitRef(frame.Current(), *var)) {
       out.push_back(
           hir::SensitivityEntry{
               .ref = hir::CrossUnitVarRef{.id = *slot},

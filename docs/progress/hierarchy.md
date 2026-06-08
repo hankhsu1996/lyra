@@ -120,7 +120,11 @@ consume. Coverage is demonstrated through Stage D and Stage E.
       indices. The tail is by-name for the same reason the climb is -- the referrer owns neither the
       ancestor nor its children -- so each owner answers for its own children, indexing its own
       storage. A leaf directly on the ancestor is the empty-tail zero-case of the same walk.
-- [ ] D2b -- An upward reference written inside a generate block rather than the module body.
+- [x] D2b -- An upward reference written inside a generate block (conditional or loop) rather than
+      the module body. It resolves the same as one in the module body -- its member rides the
+      generate-block scope and climbs that object's own parent chain -- including an upward write,
+      per-iteration members in a loop block, and several blocks naming the same ancestor signal
+      (each block gets its own resolution within its own scope).
 - [ ] D2c -- An upward reference whose first component is not a module instance: a named generate or
       procedural block, or a `$root`-anchored absolute path.
 - [ ] D2d -- LRM 23.9 instance-name precedence: when the first component is written as an instance
@@ -146,9 +150,10 @@ consume. Coverage is demonstrated through Stage D and Stage E.
       alternative was instantiated. Landed for a reference whose head reaches the generate from its
       owning scope or from outside: an upward reference whose downward tail enters the generate, and
       a reference from the scope that owns the generate descending into its own block (loop and
-      conditional forms, and regardless of whether the reference precedes the generate in source).
-      Still open: a reference originating inside a generate block that names a signal in an
-      enclosing scope.
+      conditional forms, and regardless of whether the reference precedes the generate in source);
+      and a reference originating inside a generate block (see D2b). Still open: a reference from an
+      enclosing scope descending into a _child instance's_ generate block (e.g. `leaf.g.x` from the
+      parent), which the downward path does not yet navigate by name across the generate boundary.
 
 Unlocks `refs/hierarchical_refs`, `refs/upward_refs`, and `instantiation/hierarchical_sensitivity`.
 
