@@ -65,9 +65,16 @@ enum class ArrayMethodKind : std::uint8_t {
   kXor,
 };
 
+// LRM 7.12.4 iterator intrinsic methods (only `index` is in scope today;
+// extends naturally if SV adds more iterator methods).
+enum class IteratorMethodKind : std::uint8_t {
+  kIndex,
+};
+
 struct BuiltinMethodRef {
   std::variant<
-      EnumMethodKind, StringMethodKind, EventMethodKind, ArrayMethodKind>
+      EnumMethodKind, StringMethodKind, EventMethodKind, ArrayMethodKind,
+      IteratorMethodKind>
       method;
 };
 

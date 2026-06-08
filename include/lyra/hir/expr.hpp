@@ -76,6 +76,20 @@ struct IncDecExpr {
   ExprId target;
 };
 
+// LRM 7.12 array-method `with` clause. Present only on array-method calls
+// (sort, rsort, sum, product, and, or, xor) that take a `with`. `iterator`
+// is a procedural-var entry on the enclosing process body; references to it
+// inside `expr` resolve through the normal `LookupProceduralVar` path.
+// HIR -> MIR pre-allocates a body procedural var for the iterator at
+// closure-construction time and remaps this id to that body var, so the
+// closure's `LowerExpr` walk sees the iterator as a body-local. Captures
+// are discovered automatically by the `CaptureSink` installed around that
+// walk -- they are not pre-listed here.
+struct WithClause {
+  ProceduralVarId iterator;
+  ExprId expr;
+};
+
 // LRM 21.3.4.4 form 2d (`$fread(mem, fd, , count)`) and any future
 // system-call positional-elision case lands here as `std::nullopt` at the
 // elided slot; user calls and most system calls leave every entry filled.
@@ -84,6 +98,7 @@ struct IncDecExpr {
 struct CallExpr {
   SubroutineRef callee;
   std::vector<std::optional<ExprId>> arguments;
+  std::optional<WithClause> with_clause = std::nullopt;
 };
 
 struct InsideExpr {

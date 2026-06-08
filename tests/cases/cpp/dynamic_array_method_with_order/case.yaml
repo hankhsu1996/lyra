@@ -1,0 +1,16 @@
+id: cpp.dynamic_array_method_with_order
+tags: [cpp_run]
+input:
+  command: [run, cpp]
+  project: false
+  top: Top
+  files: [main.sv]
+expect:
+  exit: 0
+  variables:
+    sorted_payload_0: 1
+    sorted_payload_1: 2
+    sorted_payload_2: 3
+    rsorted_payload_0: 30
+    rsorted_payload_1: 20
+    rsorted_payload_2: 10

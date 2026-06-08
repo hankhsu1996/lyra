@@ -523,6 +523,16 @@ auto LowerArrayMethodKind(hir::ArrayMethodKind k) -> mir::ArrayMethodKind {
   throw InternalError("LowerArrayMethodKind: unknown hir::ArrayMethodKind");
 }
 
+auto LowerIteratorMethodKind(hir::IteratorMethodKind k)
+    -> mir::IteratorMethodKind {
+  switch (k) {
+    case hir::IteratorMethodKind::kIndex:
+      return mir::IteratorMethodKind::kIndex;
+  }
+  throw InternalError(
+      "LowerIteratorMethodKind: unknown hir::IteratorMethodKind");
+}
+
 auto LowerHirStringLiteral(const hir::StringLiteral& s, mir::TypeId type)
     -> mir::Expr {
   return mir::Expr{.data = mir::StringLiteral{.value = s.value}, .type = type};
@@ -924,6 +934,92 @@ auto LowerHirConversionExprProc(
       .type = result_type};
 }
 
+// LRM 7.12.2 / 7.12.3 with-clause closure synthesis. The body is a normal
+// expression lowered through `LowerExpr`; only the closure-specific leaf
+// behaviour lives elsewhere -- captures via `CaptureSink`, iterator and
+// index resolution via pre-allocated body procedural-var bindings remapped
+// for the iterator HIR id and tracked on `proc_state` for the kIndex call.
+//
+// Returns a `mir::ClosureExpr` packaged as a `mir::Expr` of void type;
+// caller adds it to the appropriate scope and uses the resulting ExprId as
+// the second argument of the array-method call.
+auto BuildArrayMethodClosure(
+    const UnitLoweringState& unit_state,
+    const StructuralScopeLoweringState& scope_state,
+    ProcessLoweringState& proc_state,
+    ProceduralScopeLoweringState& outer_scope_state,
+    const hir::ProceduralBody& hir_process, hir::TypeId hir_receiver_type,
+    const hir::WithClause& with_clause) -> diag::Result<mir::Expr> {
+  const auto& hir_recv_ty = unit_state.GetHirType(hir_receiver_type);
+  const auto* hir_da = std::get_if<hir::DynamicArrayType>(&hir_recv_ty.data);
+  if (hir_da == nullptr) {
+    throw InternalError(
+        "BuildArrayMethodClosure: receiver is not a dynamic-array type");
+  }
+  const mir::TypeId item_type = unit_state.TranslateType(hir_da->element_type);
+  const mir::TypeId index_type = unit_state.Builtins().int32;
+  const auto& iterator_decl =
+      hir_process.procedural_vars.at(with_clause.iterator.value);
+
+  ProceduralScopeLoweringState body_scope_state;
+  ProceduralDepthGuard depth_guard{proc_state};
+  const ProceduralDepth body_depth = proc_state.CurrentProceduralDepth();
+
+  // Pre-allocate the body procedural vars that hold the per-invocation
+  // arguments. The iterator HIR id is then remapped to the item binding so
+  // the body lowering sees the iterator as body-local (CaptureSink leaves
+  // body-local refs alone).
+  const mir::ProceduralVarId item_binding = body_scope_state.AddProceduralVar(
+      mir::ProceduralVarDecl{.name = iterator_decl.name, .type = item_type});
+  const mir::ProceduralVarId index_binding = body_scope_state.AddProceduralVar(
+      mir::ProceduralVarDecl{.name = "index", .type = index_type});
+  proc_state.MapProceduralVar(
+      with_clause.iterator,
+      ProceduralVarBinding{
+          .declaration_procedural_depth = body_depth, .var = item_binding});
+
+  CaptureSink sink{body_depth, body_scope_state, outer_scope_state};
+  CaptureSink* const previous_sink = proc_state.ActiveCaptureSink();
+  const auto previous_index_binding = proc_state.ActiveIndexBinding();
+  proc_state.SetCaptureSink(&sink);
+  proc_state.SetActiveIndexBinding(index_binding);
+
+  auto body_expr_or = LowerExpr(
+      unit_state, scope_state, proc_state, body_scope_state, hir_process,
+      hir_process.exprs.at(with_clause.expr.value));
+
+  proc_state.SetActiveIndexBinding(previous_index_binding);
+  proc_state.SetCaptureSink(previous_sink);
+
+  if (!body_expr_or) return std::unexpected(std::move(body_expr_or.error()));
+
+  const mir::ExprId body_return_value =
+      body_scope_state.AddExpr(*std::move(body_expr_or));
+  const mir::StmtId return_id = body_scope_state.AddStmt(
+      mir::Stmt{
+          .label = std::nullopt,
+          .data = mir::ReturnStmt{.value = body_return_value},
+          .child_procedural_scopes = {}});
+  body_scope_state.AddRootStmt(return_id);
+
+  // LRM 7.12: the with-expression is re-evaluated per element; any reference
+  // to an enclosing local aliases that storage rather than snapshotting it.
+  std::vector<mir::Capture> captures;
+  for (const CaptureRequest& request : sink.TakeRequests()) {
+    captures.emplace_back(
+        mir::ByReferenceCapture{
+            .target = request.source, .binding = request.binding});
+  }
+  mir::ClosureExpr closure;
+  closure.captures = std::move(captures);
+  closure.params.push_back(mir::Parameter{.binding = item_binding});
+  closure.params.push_back(mir::Parameter{.binding = index_binding});
+  closure.body =
+      std::make_unique<mir::ProceduralScope>(body_scope_state.Finish());
+  return mir::Expr{
+      .data = std::move(closure), .type = unit_state.Builtins().void_type};
+}
+
 auto LowerHirCallExprProc(
     const UnitLoweringState& unit_state,
     const StructuralScopeLoweringState& scope_state,
@@ -982,6 +1078,24 @@ auto LowerHirCallExprProc(
                 .type = result_type};
           },
           [&](const hir::BuiltinMethodRef& b) -> diag::Result<mir::Expr> {
+            // LRM 7.12.4 `item.index` -> the closure's `index` parameter
+            // binding. Reaches here from a with-clause body and the binding
+            // was installed by `BuildArrayMethodClosure`; reaching here
+            // without one is a lowering bug.
+            if (std::holds_alternative<hir::IteratorMethodKind>(b.method)) {
+              const auto index_binding = proc_state.ActiveIndexBinding();
+              if (!index_binding.has_value()) {
+                throw InternalError(
+                    "LowerHirCallExprProc: IteratorMethodKind outside an "
+                    "array-method `with` body (LRM 7.12.4)");
+              }
+              return mir::Expr{
+                  .data =
+                      mir::ProceduralVarRef{
+                          .hops = mir::ProceduralHops{.value = 0},
+                          .var = *index_binding},
+                  .type = result_type};
+            }
             if (c.arguments.empty()) {
               throw InternalError(
                   "BuiltinMethodRef call has no receiver argument");
@@ -993,7 +1107,7 @@ auto LowerHirCallExprProc(
             const hir::TypeId hir_receiver_type =
                 hir_process.exprs.at(c.arguments.front()->value).type;
             std::vector<mir::ExprId> args;
-            args.reserve(c.arguments.size());
+            args.reserve(c.arguments.size() + 1);
             for (const auto& arg : c.arguments) {
               if (!arg.has_value()) {
                 throw InternalError(
@@ -1006,6 +1120,18 @@ auto LowerHirCallExprProc(
                 return std::unexpected(std::move(arg_or.error()));
               }
               args.push_back(proc_scope_state.AddExpr(*std::move(arg_or)));
+            }
+            // LRM 7.12.2 / 7.12.3 with-clause: synthesize the closure and
+            // append it as the second positional argument so the backend
+            // can route to the `*By` runtime method mechanically.
+            if (c.with_clause.has_value()) {
+              auto closure_or = BuildArrayMethodClosure(
+                  unit_state, scope_state, proc_state, proc_scope_state,
+                  hir_process, hir_receiver_type, *c.with_clause);
+              if (!closure_or) {
+                return std::unexpected(std::move(closure_or.error()));
+              }
+              args.push_back(proc_scope_state.AddExpr(*std::move(closure_or)));
             }
             auto callee = std::visit(
                 Overloaded{
@@ -1030,6 +1156,11 @@ auto LowerHirCallExprProc(
                       return {
                           .method = mir::ArrayMethodInfo{
                               .kind = LowerArrayMethodKind(k)}};
+                    },
+                    [&](hir::IteratorMethodKind k) -> mir::BuiltinMethodCallee {
+                      return {
+                          .method = mir::IteratorMethodInfo{
+                              .kind = LowerIteratorMethodKind(k)}};
                     },
                 },
                 b.method);

@@ -636,6 +636,12 @@ class HirDumper {
                         return std::format(
                             "ArrayMethod \"{}\"", FormatArrayMethodKind(k));
                       },
+                      [](IteratorMethodKind k) -> std::string {
+                        return std::format(
+                            "IteratorMethod \"{}\"",
+                            k == IteratorMethodKind::kIndex ? "index"
+                                                            : "unknown");
+                      },
                   },
                   b.method);
             },
@@ -734,9 +740,15 @@ class HirDumper {
                   args += "<elided>";
                 }
               }
+              std::string with_text;
+              if (c.with_clause.has_value()) {
+                with_text = std::format(
+                    " with={{iterator=ProceduralVarId[{}], expr=Expr[{}]}}",
+                    c.with_clause->iterator.value, c.with_clause->expr.value);
+              }
               return std::format(
-                  "CallExpr callee={} args=[{}]", FormatSubroutineRef(c.callee),
-                  args);
+                  "CallExpr callee={} args=[{}]{}",
+                  FormatSubroutineRef(c.callee), args, with_text);
             },
             [](const ConversionExpr& cv) -> std::string {
               return std::format(

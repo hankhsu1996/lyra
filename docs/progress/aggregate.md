@@ -26,7 +26,7 @@ follow once dynamic array's storage and runtime conventions are settled and prov
 | DA4  | Done: aggregate equality, inequality, case-equality.                 |
 | DA5  | Open: constant-width slice (subject to LRM check).                   |
 | DA6a | Done: method dispatch + no-`with` subset.                            |
-| DA6b | Open: `with` clause + iterator + non-queue-return method variants.   |
+| DA6b | Done: `with` clause + iterator on sort / rsort / reduction methods.  |
 | DA6c | Open: queue runtime + locator family (find\*, min, max, unique\*).   |
 | DA7  | Open: invalid-index handling.                                        |
 | Q1.. | Not yet scoped: queue.                                               |
@@ -96,9 +96,13 @@ The numeric IDs are stable references and do not imply execution order beyond DA
       Slang gates element-type constraints upstream (integral element for reductions, comparable for
       sort).
 
-- [ ] DA6b -- `with`-clause variants of the methods that accept one (`sort`, `rsort`, reductions),
-      built on a new iterator-binding pass that lowers slang's `IteratorCallInfo` into HIR/MIR and
-      emits a closure at the backend.
+- [x] DA6b -- `with`-clause variants of the methods that accept one (`sort`, `rsort`, reductions),
+      plus the LRM 7.12.4 `item.index` iterator method. AST -> HIR consumes slang's
+      `IteratorCallInfo` and binds the iterator HIR id; HIR -> MIR synthesises a `mir::ClosureExpr`
+      using main's existing `CaptureSink` (so non-iterator outer reads in the body become
+      by-reference captures automatically) and adds parameter bindings for `item` and `index`. The
+      backend renders the closure as a lambda-with-captures and routes the call to the runtime's
+      `*By` overloads.
 
 - [ ] DA6c + Q1 -- Queue\<T\> runtime and the locator-family methods that return one (`find` family,
       `min`, `max`, `unique`, `unique_index`). Opens the queue workstream. `shuffle()` (needs RNG

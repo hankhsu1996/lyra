@@ -543,12 +543,26 @@ class ProcessLoweringState {
     return active_capture_sink_;
   }
 
+  // LRM 7.12.4 with-clause body: the `index` parameter binding live during
+  // closure construction. `LowerHirCallExprProc` reads this when the body
+  // dispatches an `IteratorMethodKind::kIndex` call so the call resolves to
+  // the closure's `index` parameter slot. Outside a with-clause body this is
+  // `nullopt`; reaching the kIndex arm without a value is a lowering bug.
+  void SetActiveIndexBinding(std::optional<mir::ProceduralVarId> binding) {
+    active_index_binding_ = binding;
+  }
+  [[nodiscard]] auto ActiveIndexBinding() const
+      -> std::optional<mir::ProceduralVarId> {
+    return active_index_binding_;
+  }
+
  private:
   TimeResolution time_resolution_;
   ProceduralDepth procedural_depth_;
   std::vector<ProceduralVarBinding> bindings_;
   ProceduralScopeLoweringState* static_frame_scope_ = nullptr;
   CaptureSink* active_capture_sink_ = nullptr;
+  std::optional<mir::ProceduralVarId> active_index_binding_;
   std::vector<mir::StaticLocal> static_locals_;
 };
 

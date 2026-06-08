@@ -230,6 +230,54 @@ class DynamicArray {
     return Fold([](const T& a, const T& b) { return a ^ b; });
   }
 
+  // LRM 7.12.2 / 7.12.3 `with`-clause variants. The closure receives each
+  // element and its index per call and returns a key (for ordering) or a
+  // summand (for reduction). The closure's result type is the inferred
+  // template parameter R; for reductions R must be element-shape (slang
+  // accepts width-widening with-expressions, which the closure body
+  // synthesizes via ConversionExpr at HIR -> MIR). PackedArray is used as
+  // the index type so the user-facing `item.index` reads as a regular
+  // integral value in SV semantics; the closure body converts to
+  // std::size_t at compare sites if needed.
+  template <typename F>
+  auto SortBy(F&& key) -> void {
+    SelectionSortByKey(std::forward<F>(key), std::less<>{});
+  }
+  template <typename F>
+  auto RsortBy(F&& key) -> void {
+    SelectionSortByKey(std::forward<F>(key), std::greater<>{});
+  }
+  template <typename F>
+  [[nodiscard]] auto SumBy(F&& key) const
+      -> std::invoke_result_t<F&, const T&, const PackedArray&> {
+    return FoldBy(
+        std::forward<F>(key), [](auto& acc, auto& v) { acc = acc + v; });
+  }
+  template <typename F>
+  [[nodiscard]] auto ProductBy(F&& key) const
+      -> std::invoke_result_t<F&, const T&, const PackedArray&> {
+    return FoldBy(
+        std::forward<F>(key), [](auto& acc, auto& v) { acc = acc * v; });
+  }
+  template <typename F>
+  [[nodiscard]] auto AndBy(F&& key) const
+      -> std::invoke_result_t<F&, const T&, const PackedArray&> {
+    return FoldBy(
+        std::forward<F>(key), [](auto& acc, auto& v) { acc = acc & v; });
+  }
+  template <typename F>
+  [[nodiscard]] auto OrBy(F&& key) const
+      -> std::invoke_result_t<F&, const T&, const PackedArray&> {
+    return FoldBy(
+        std::forward<F>(key), [](auto& acc, auto& v) { acc = acc | v; });
+  }
+  template <typename F>
+  [[nodiscard]] auto XorBy(F&& key) const
+      -> std::invoke_result_t<F&, const T&, const PackedArray&> {
+    return FoldBy(
+        std::forward<F>(key), [](auto& acc, auto& v) { acc = acc ^ v; });
+  }
+
  private:
   template <typename Compare>
   auto SelectionSortBy(Compare cmp) -> void {
@@ -247,6 +295,34 @@ class DynamicArray {
     }
   }
 
+  // The keyed sort path is `selection sort over (key, index)`: a per-element
+  // key is materialized once via the closure (passing both the element and
+  // the per-element index), then the elements move in sync with the keys.
+  // Selection sort is used for the same shape-preservation reason as the
+  // unkeyed path; the small keys vector is the price.
+  template <typename F, typename Compare>
+  auto SelectionSortByKey(F key, Compare cmp) -> void {
+    using KeyT = std::invoke_result_t<F&, const T&, const PackedArray&>;
+    std::vector<KeyT> keys;
+    keys.reserve(data_.size());
+    for (std::size_t i = 0; i < data_.size(); ++i) {
+      keys.push_back(key(data_[i], PackedArray::Int(static_cast<int>(i))));
+    }
+    using std::swap;
+    for (std::size_t i = 0; i + 1 < data_.size(); ++i) {
+      std::size_t pick = i;
+      for (std::size_t j = i + 1; j < data_.size(); ++j) {
+        if (static_cast<bool>(cmp(keys[j], keys[pick]))) {
+          pick = j;
+        }
+      }
+      if (pick != i) {
+        swap(keys[i], keys[pick]);
+        swap(data_[i], data_[pick]);
+      }
+    }
+  }
+
   template <typename F>
   [[nodiscard]] auto Fold(F op) const -> T {
     if (data_.empty()) {
@@ -259,6 +335,27 @@ class DynamicArray {
       result = op(result, data_[i]);
     }
     return result;
+  }
+
+  // The empty-array case mirrors `Fold`: synthesize an element-shape zero
+  // via the OOB shield slot and feed it through the closure once so the
+  // result carries whatever shape the closure produces, then zero it out.
+  template <typename F, typename Combine>
+  [[nodiscard]] auto FoldBy(F key, Combine combine) const
+      -> std::invoke_result_t<F&, const T&, const PackedArray&> {
+    if (data_.empty()) {
+      T zero = oob_slot_;
+      zero.ResetToDefault();
+      auto acc = key(zero, PackedArray::Int(0));
+      acc.ResetToDefault();
+      return acc;
+    }
+    auto acc = key(data_[0], PackedArray::Int(0));
+    for (std::size_t i = 1; i < data_.size(); ++i) {
+      auto v = key(data_[i], PackedArray::Int(static_cast<int>(i)));
+      combine(acc, v);
+    }
+    return acc;
   }
 
   [[nodiscard]] auto IsInvalidIndex(const PackedArray& idx) const -> bool {

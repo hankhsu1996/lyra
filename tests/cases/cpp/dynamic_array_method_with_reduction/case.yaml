@@ -1,0 +1,13 @@
+id: cpp.dynamic_array_method_with_reduction
+tags: [cpp_run]
+input:
+  command: [run, cpp]
+  project: false
+  top: Top
+  files: [main.sv]
+expect:
+  exit: 0
+  variables:
+    sum_doubled: 60
+    sum_with_threshold: 40
+    product_plus_one: 24

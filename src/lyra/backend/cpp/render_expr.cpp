@@ -984,6 +984,19 @@ auto RenderArrayMethodCall(
   if (!receiver_or) {
     return std::unexpected(std::move(receiver_or.error()));
   }
+  // LRM 7.12.2 / 7.12.3 with-clause: HIR -> MIR appends the closure as the
+  // second positional argument. The runtime exposes a parallel `*By`
+  // overload that takes the closure; both members share the no-with
+  // base name in `ArrayMethodMemberName`.
+  if (call.arguments.size() == 2) {
+    auto closure_or = RenderExpr(ctx, ctx.Expr(call.arguments[1]));
+    if (!closure_or) {
+      return std::unexpected(std::move(closure_or.error()));
+    }
+    return std::format(
+        "({}).{}By({})", *receiver_or, ArrayMethodMemberName(m.kind),
+        *closure_or);
+  }
   const std::string raw_call =
       std::format("({}).{}()", *receiver_or, ArrayMethodMemberName(m.kind));
   if (m.kind == mir::ArrayMethodKind::kSize) {
@@ -1104,6 +1117,18 @@ auto RenderCallExpr(const RenderContext& ctx, const mir::CallExpr& call)
                     },
                     [&](const mir::ValueMethodInfo& m) {
                       return RenderValueMethodCall(ctx, call, m);
+                    },
+                    [](const mir::IteratorMethodInfo&)
+                        -> diag::Result<std::string> {
+                      // LRM 7.12.4 `item.index` is resolved at HIR -> MIR to
+                      // a `ProceduralVarRef` on the closure's `index`
+                      // parameter binding; reaching the backend means
+                      // closure synthesis failed to rewrite it.
+                      throw InternalError(
+                          "RenderCallExpr: IteratorMethodInfo reached the "
+                          "backend (LRM 7.12.4 -- HIR -> MIR should have "
+                          "rewritten `item.index` to a ProceduralVarRef on "
+                          "the closure parameter binding)");
                     },
                 },
                 b.method);
@@ -1494,13 +1519,56 @@ auto RenderClosureExpr(
     captures_text += *rendered_or;
   }
 
+  // LRM 7.12.4 with-clause closures (or any closure built with a non-empty
+  // `params` list) render as a value-returning lambda whose parameter
+  // clause names the bindings in declaration order and whose body ends with
+  // `return <value>;` (lowered from a tail `ReturnStmt`). Closures with no
+  // `params` (fork branches, NBA submit) keep the existing `()` form.
+  std::string params_text;
+  for (std::size_t i = 0; i < closure.params.size(); ++i) {
+    const auto& bind = closure.body->vars.at(closure.params[i].binding.value);
+    auto type_or =
+        RenderTypeAsCpp(ctx.Unit(), ctx.StructuralScope(), bind.type);
+    if (!type_or) return std::unexpected(std::move(type_or.error()));
+    if (i != 0) params_text += ", ";
+    params_text += "const " + *type_or + "& " + bind.name;
+  }
+
+  // Derive the lambda return type from the tail `ReturnStmt`'s value
+  // expression -- closures synthesized for LRM 7.12.2 / 7.12.3 always end
+  // there. An empty-params closure (fork branch / NBA submit) carries no
+  // return value; leave the lambda return type unspecified so C++ deduces
+  // `void`.
+  std::string return_clause;
+  if (!closure.params.empty()) {
+    const auto& root_stmts = closure.body->root_stmts;
+    if (root_stmts.empty()) {
+      throw InternalError(
+          "RenderClosureExpr: with-clause closure body has no root "
+          "statements (expected a tail ReturnStmt)");
+    }
+    const auto& tail = closure.body->stmts.at(root_stmts.back().value);
+    const auto* ret = std::get_if<mir::ReturnStmt>(&tail.data);
+    if (ret == nullptr || !ret->value.has_value()) {
+      throw InternalError(
+          "RenderClosureExpr: with-clause closure body does not end with a "
+          "value-returning `ReturnStmt`");
+    }
+    const auto& ret_expr = closure.body->GetExpr(*ret->value);
+    auto ret_ty_or =
+        RenderTypeAsCpp(ctx.Unit(), ctx.StructuralScope(), ret_expr.type);
+    if (!ret_ty_or) return std::unexpected(std::move(ret_ty_or.error()));
+    return_clause = " -> " + *ret_ty_or;
+  }
+
   const RenderContext body_ctx =
       RenderContext::ForRoot(ctx.Unit(), ctx.StructuralScope(), *closure.body)
           .WithReceiver(ctx.ReceiverObject());
   auto body_or = RenderProceduralScopeStatements(body_ctx, 1);
   if (!body_or) return std::unexpected(std::move(body_or.error()));
 
-  return "[" + captures_text + "]() {\n" + *body_or + "}";
+  return "[" + captures_text + "](" + params_text + ")" + return_clause +
+         " {\n" + *body_or + "}";
 }
 
 auto RenderConcatExpr(

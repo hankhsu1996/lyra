@@ -366,6 +366,11 @@ class MirDumper {
                             "ValueMethodInfo[kind={}]",
                             static_cast<int>(m.kind));
                       },
+                      [](const IteratorMethodInfo& m) -> std::string {
+                        return std::format(
+                            "IteratorMethodInfo[kind={}]",
+                            static_cast<int>(m.kind));
+                      },
                   },
                   b.method);
             },
@@ -533,7 +538,9 @@ class MirDumper {
                   FormatConversionKind(cv.kind), cv.operand.value);
             },
             [](const ClosureExpr& cl) -> std::string {
-              return std::format("ClosureExpr captures={}", cl.captures.size());
+              return std::format(
+                  "ClosureExpr captures={} params={}", cl.captures.size(),
+                  cl.params.size());
             },
             [](const ElementSelectExpr& sel) -> std::string {
               return std::format(
@@ -1164,6 +1171,19 @@ class MirDumper {
       Indent();
       for (std::size_t i = 0; i < closure.captures.size(); ++i) {
         DumpCapture(i, closure.captures[i], enclosing);
+      }
+      Dedent();
+    }
+    if (closure.params.empty()) {
+      Line("params: (none)");
+    } else {
+      Line("params:");
+      Indent();
+      for (std::size_t i = 0; i < closure.params.size(); ++i) {
+        Line(
+            std::format(
+                "[{}] Parameter binding=ProceduralVarId{{{}}}", i,
+                closure.params[i].binding.value));
       }
       Dedent();
     }
