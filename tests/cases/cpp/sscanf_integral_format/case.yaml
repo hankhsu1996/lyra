@@ -1,0 +1,16 @@
+id: cpp.sscanf_integral_format
+tags: [cpp_run]
+input:
+  command: [run, cpp]
+  project: false
+  top: Top
+  files: [main.sv]
+expect:
+  exit: 0
+  variables:
+    count2: 2
+    count4: 2
+    a2: 10
+    b2: 20
+    a4: 30
+    b4: 40

@@ -46,6 +46,44 @@ class String {
     return String{std::move(out)};
   }
 
+  // LRM 5.9 / 21.3.4.3: a packed bit vector viewed as a contiguous byte
+  // sequence. The byte at offset 0 of the result is the destination's most
+  // significant byte (matches PackedArray::FromBytes' MSB-first convention).
+  // Bits below the lowest 8-bit boundary are dropped: only bit_width / 8
+  // bytes are produced. Any byte whose 8 source bits contain x or z values
+  // yields '\0' for that byte. $sscanf / $fscanf never observe the x/z
+  // fallback because the closure-IIFE body emits an
+  // `if (operand.HasUnknown()) return -1` guard at body entry before the
+  // conversion runs (LRM 21.3.4.3 unknown-bits-imply-EOF rule); $display
+  // "%s" on an x/z-bearing packed operand sees the fallback (LRM does not
+  // pin %s rendering for 4-state operands).
+  [[nodiscard]] static auto FromPackedArray(const PackedArray& bits) -> String {
+    const std::uint64_t bit_width = bits.BitWidth();
+    const std::uint64_t byte_count = bit_width / 8U;
+    std::string out;
+    out.reserve(static_cast<std::size_t>(byte_count));
+    const auto val_words = bits.ValueWords();
+    const auto unk_words = bits.UnknownWords();
+    for (std::uint64_t byte_i = 0; byte_i < byte_count; ++byte_i) {
+      unsigned char byte = 0;
+      bool any_unknown = false;
+      for (std::uint64_t bit_in_byte = 0; bit_in_byte < 8U; ++bit_in_byte) {
+        const std::uint64_t bit_pos =
+            (bit_width - 1U) - (byte_i * 8U) - bit_in_byte;
+        const auto word_ix = static_cast<std::size_t>(bit_pos / 64U);
+        const auto bit_ix = static_cast<std::size_t>(bit_pos % 64U);
+        if (!unk_words.empty() && ((unk_words[word_ix] >> bit_ix) & 1U) != 0U) {
+          any_unknown = true;
+        }
+        if (((val_words[word_ix] >> bit_ix) & 1U) != 0U) {
+          byte |= static_cast<unsigned char>(1U << (7U - bit_in_byte));
+        }
+      }
+      out.push_back(any_unknown ? '\0' : static_cast<char>(byte));
+    }
+    return String{std::move(out)};
+  }
+
   [[nodiscard]] auto operator==(const String& o) const -> bool {
     return impl_ == o.impl_;
   }

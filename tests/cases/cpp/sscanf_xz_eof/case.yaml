@@ -1,0 +1,18 @@
+id: cpp.sscanf_xz_eof
+tags: [cpp_run]
+input:
+  command: [run, cpp]
+  project: false
+  top: Top
+  files: [main.sv]
+expect:
+  exit: 0
+  variables:
+    count_xs: -1
+    count_zs: -1
+    count_xf: -1
+    v_xs: 999
+    v_zs: 999
+    v_xf: 999
+    count_clean: 1
+    v_clean: 50

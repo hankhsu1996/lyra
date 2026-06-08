@@ -1,0 +1,15 @@
+id: cpp.sscanf_integral_source
+tags: [cpp_run]
+input:
+  command: [run, cpp]
+  project: false
+  top: Top
+  files: [main.sv]
+expect:
+  exit: 0
+  variables:
+    count2: 1
+    count4: 2
+    v_two_state: 1234
+    v_four_state: 56
+    v_after: 78
