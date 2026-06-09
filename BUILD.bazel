@@ -196,10 +196,12 @@ cc_library(
     name = "driver",
     srcs = [
         "src/lyra/driver/cpp_build.cpp",
+        "src/lyra/driver/pch.cpp",
         "src/lyra/driver/runtime_export.cpp",
     ],
     hdrs = [
         "include/lyra/driver/cpp_build.hpp",
+        "include/lyra/driver/pch.hpp",
         "include/lyra/driver/project_layout.hpp",
         "include/lyra/driver/runtime_export.hpp",
     ],

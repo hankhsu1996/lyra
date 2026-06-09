@@ -15,10 +15,12 @@ compile-time and runtime.
 - The contract that separates semantic modeling (HIR, MIR) from execution modeling (LIR, LLVM IR).
 - The contract that separates compile-time artifacts (class-level) from runtime artifacts
   (object-level).
-- The positioning of the C++ backend: a first-class MIR consumer that emits C++ code. Debug
-  inspection of HIR and MIR is separate: dumpers produce textual traversals for reading and golden
-  testing, while `backend::cpp` is the real emitter. Dumpers and backends are both pure over their
-  input IR and must not introduce or reinterpret semantics.
+- The positioning of the C++ backend: a first-class MIR consumer that emits C++ code, serving as
+  both an execution artifact and the human-readable rendering of MIR. The latter is how MIR's
+  semantic correctness is validated by a developer reading from SystemVerilog source through MIR's
+  semantic model. Debug inspection of HIR and MIR is separate: dumpers produce textual traversals
+  for reading and golden testing, while `backend::cpp` is the real emitter. Dumpers and backends are
+  both pure over their input IR and must not introduce or reinterpret semantics.
 
 ## Does Not Own
 
@@ -65,6 +67,10 @@ compile-time and runtime.
   one or more backends".
 - A dumper that diverges semantically from its input IR or introduces meaning not present in the IR.
 - Treating a dumper's text as a backend artifact, or treating a backend's output as a debug view.
+- Trading the C++ backend's emitted readability for its compile time. Emit readability is how MIR's
+  semantic correctness is validated; compile-time wins must come from the runtime library, build
+  infrastructure (precompiled headers, parallel compilation), or backend-internal organization that
+  does not change the emitted form.
 
 ## Notes / Examples
 
