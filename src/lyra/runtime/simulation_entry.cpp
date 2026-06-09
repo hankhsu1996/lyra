@@ -2,8 +2,8 @@
 
 #include <cstdlib>
 #include <exception>
+#include <iostream>
 #include <new>
-#include <print>
 
 #include "lyra/base/internal_error.hpp"
 #include "lyra/runtime/engine.hpp"
@@ -14,13 +14,13 @@ auto RunSimulation(Engine& engine) -> int {
   try {
     return engine.Run();
   } catch (const InternalError& e) {
-    std::print(stderr, "{}\n", e.what());
+    std::cerr << e.what() << "\n";
     return EXIT_FAILURE;
   } catch (const std::bad_alloc&) {
-    std::print(stderr, "out of memory\n");
+    std::cerr << "out of memory\n";
     return EXIT_FAILURE;
   } catch (const std::exception& e) {
-    std::print(stderr, "unexpected error: {}\n", e.what());
+    std::cerr << "unexpected error: " << e.what() << "\n";
     return EXIT_FAILURE;
   }
 }
