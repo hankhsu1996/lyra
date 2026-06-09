@@ -23,6 +23,7 @@
 #include "lyra/diag/sink.hpp"
 #include "lyra/diag/source_manager.hpp"
 #include "lyra/driver/cpp_build.hpp"
+#include "lyra/driver/pch.hpp"
 #include "lyra/driver/runtime_export.hpp"
 #include "lyra/frontend/load.hpp"
 #include "lyra/hir/dump.hpp"
@@ -31,7 +32,14 @@
 
 namespace {
 
-enum class CommandKind { kDumpHir, kDumpMir, kEmitCpp, kCompile, kRun };
+enum class CommandKind {
+  kDumpHir,
+  kDumpMir,
+  kEmitCpp,
+  kCompile,
+  kRun,
+  kCacheClear,
+};
 
 struct ParsedArgs {
   CommandKind cmd = CommandKind::kEmitCpp;
@@ -39,6 +47,8 @@ struct ParsedArgs {
   bool no_color = false;
   bool force_color = false;
   bool format = false;
+  bool no_pch = false;
+  std::string pch_cache_dir;
   lyra::frontend::CompilationInput input;
   std::string out_dir;
 };
@@ -123,19 +133,43 @@ auto ParseArgs(int argc, char** argv)
       .default_value(std::string{});
   emit_cmd.add_subparser(emit_cpp_cmd);
 
+  // The C++ compile path (used by `compile` and `run`) caches a precompiled
+  // header keyed on the runtime tree contents. `--no-pch` short-circuits the
+  // cache (equivalent to setting `LYRA_NO_PCH=1` in the environment), and
+  // `--pch-cache-dir` overrides where the cache lives (used by the test
+  // framework to land cache files inside its per-shard scratch dir).
+  const auto add_pch_flags = [](argparse::ArgumentParser& p) {
+    p.add_argument("--no-pch")
+        .help("disable the precompiled-header cache for this invocation")
+        .default_value(false)
+        .implicit_value(true);
+    p.add_argument("--pch-cache-dir")
+        .help("override the PCH cache directory")
+        .default_value(std::string{});
+  };
+
   argparse::ArgumentParser compile_cmd("compile");
   AddCompilationFlags(compile_cmd);
+  add_pch_flags(compile_cmd);
   compile_cmd.add_argument("-o", "--out-dir")
       .help("write the self-contained project and built program here")
       .default_value(std::string{});
 
   argparse::ArgumentParser run_cmd("run");
   AddCompilationFlags(run_cmd);
+  add_pch_flags(run_cmd);
+
+  argparse::ArgumentParser cache_cmd("cache");
+  argparse::ArgumentParser cache_clear_cmd("clear");
+  cache_clear_cmd.add_description(
+      "remove the active precompiled-header cache directory's contents");
+  cache_cmd.add_subparser(cache_clear_cmd);
 
   program.add_subparser(dump_cmd);
   program.add_subparser(emit_cmd);
   program.add_subparser(compile_cmd);
   program.add_subparser(run_cmd);
+  program.add_subparser(cache_cmd);
 
   try {
     program.parse_args(argc, argv);
@@ -174,6 +208,8 @@ auto ParseArgs(int argc, char** argv)
   } else if (program.is_subcommand_used("compile")) {
     out.cmd = CommandKind::kCompile;
     BindCompilationFlags(compile_cmd, out);
+    out.no_pch = compile_cmd.get<bool>("--no-pch");
+    out.pch_cache_dir = compile_cmd.get<std::string>("--pch-cache-dir");
     out.out_dir = compile_cmd.get<std::string>("--out-dir");
     if (out.out_dir.empty()) {
       return std::unexpected(
@@ -183,6 +219,15 @@ auto ParseArgs(int argc, char** argv)
   } else if (program.is_subcommand_used("run")) {
     out.cmd = CommandKind::kRun;
     BindCompilationFlags(run_cmd, out);
+    out.no_pch = run_cmd.get<bool>("--no-pch");
+    out.pch_cache_dir = run_cmd.get<std::string>("--pch-cache-dir");
+  } else if (program.is_subcommand_used("cache")) {
+    if (cache_cmd.is_subcommand_used("clear")) {
+      out.cmd = CommandKind::kCacheClear;
+    } else {
+      return std::unexpected(
+          std::format("cache requires 'clear'\n{}", cache_cmd.help().str()));
+    }
   } else {
     return std::unexpected(program.help().str());
   }
@@ -227,6 +272,38 @@ auto main(int argc, char** argv) -> int {
       return 1;
     }
     auto& args = *parsed;
+
+    // PCH options condensed into a single explicit value passed down to the
+    // build helpers. The `--no-pch` flag is authoritative; the `LYRA_NO_PCH`
+    // environment hint is honored at this boundary only and disappears from
+    // every lower layer.
+    const auto pch_opts = [&] {
+      lyra::driver::pch::Options o;
+      o.disabled = args.no_pch;
+      if (const char* v = std::getenv("LYRA_NO_PCH");
+          v != nullptr && *v != '\0' && std::string_view(v) != "0") {
+        o.disabled = true;
+      }
+      if (!args.pch_cache_dir.empty()) {
+        o.cache_dir_override = std::filesystem::path(args.pch_cache_dir);
+      }
+      return o;
+    }();
+
+    // `cache clear` does not consult a project, take input files, or invoke
+    // the compiler pipeline. Dispatch it before the compilation-input checks
+    // below so it works whether or not a project is configured.
+    if (args.cmd == CommandKind::kCacheClear) {
+      auto cleared_or = lyra::driver::pch::Clear(pch_opts);
+      if (!cleared_or) {
+        report(std::move(cleared_or.error()));
+        return 1;
+      }
+      fmt::print(
+          "cleared {} precompiled-header file{}\n", *cleared_or,
+          *cleared_or == 1 ? "" : "s");
+      return 0;
+    }
 
     if (!args.no_project) {
       report(
@@ -346,7 +423,7 @@ auto main(int argc, char** argv) -> int {
           report(std::move(assembled.error()), mgr);
           return 1;
         }
-        auto built = lyra::driver::BuildProject(dir);
+        auto built = lyra::driver::BuildProject(dir, pch_opts);
         if (!built) {
           report(std::move(built.error()), mgr);
           return 1;
@@ -370,7 +447,7 @@ auto main(int argc, char** argv) -> int {
         const auto& units = *result.artifacts.mir_units;
         const auto tops = build_tops(units, result.artifacts.top_unit_names);
         auto exit_code = lyra::driver::RunInPlace(
-            *runtime, units, tops, *tmp_or, args.format);
+            *runtime, units, tops, *tmp_or, args.format, pch_opts);
         if (!exit_code) {
           report(std::move(exit_code.error()), mgr);
           return 1;
@@ -378,6 +455,7 @@ auto main(int argc, char** argv) -> int {
         return *exit_code;
       }
       case CommandKind::kDumpHir:
+      case CommandKind::kCacheClear:
         break;
     }
     return 0;

@@ -471,6 +471,16 @@ auto RunCppCase(const std::filesystem::path& lyra_exe, const TestCase& c)
   std::vector<std::string>& argv = result.argv;
   argv.emplace_back("run");
   argv.emplace_back("--no-project");
+  // Land the precompiled-header cache inside bazel's per-shard scratch dir
+  // so PCH files share across the shard's many cases without leaking into
+  // the user's home cache or contending across parallel shards. The CLI
+  // layer reads this argument explicitly; the lyra binary has no implicit
+  // TEST_TMPDIR handling of its own.
+  if (const char* tmp = std::getenv("TEST_TMPDIR");
+      tmp != nullptr && *tmp != '\0') {
+    argv.emplace_back("--pch-cache-dir");
+    argv.push_back(std::string(tmp) + "/lyra-pch");
+  }
   if (c.input.top.has_value()) {
     argv.emplace_back("--top");
     argv.push_back(*c.input.top);

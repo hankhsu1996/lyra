@@ -1,10 +1,21 @@
 # Emitted Code Readability
 
-The emitted C++ exists to compile, but it is also read by hand -- to understand what the compiler
-produced for a given SystemVerilog source and to see where behavior originates. This file tracks the
-gap between "it compiles" and "it reads like code a person would write." The work is done when a
-developer can open an emitted unit and follow it top-down without boilerplate or incidental
-structure getting in the way.
+The emitted C++ exists to compile, but it is also the **human-readable rendering of MIR** -- the way
+a developer validates that MIR's semantic model captures the SystemVerilog source correctly. Until
+LIR and LLVM IR exist, it is the primary surface for that validation alongside the MIR dumper: a
+developer reads the SystemVerilog source, reads the emitted C++, and confirms MIR's semantic model
+produced the expected shape. Compile and run is the machine half of the verification; reading the
+emit is the human half.
+
+This file tracks the gap between "it compiles" and "it reads like code a person would write." The
+work is done when a developer can open an emitted unit and follow it top-down without boilerplate or
+incidental structure getting in the way.
+
+**Compile-time trades.** Emit readability outranks emit compile time. A change that makes the
+emitted form less readable to shave per-case compile time is a wrong trade -- compile-time wins must
+come from the runtime library, build infrastructure (precompiled headers, parallel compilation), or
+backend-internal organization that does not change the emitted form. `compiler_overview.md` carries
+this as a Forbidden Shape.
 
 This is the artifact-legibility companion to `dev-ergonomics.md`: that file owns the run / observe /
 locate-divergence feedback loop; this one owns the readability of what the loop produces.

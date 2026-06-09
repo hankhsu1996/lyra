@@ -5,6 +5,7 @@
 
 #include "lyra/backend/cpp/api.hpp"
 #include "lyra/diag/diagnostic.hpp"
+#include "lyra/driver/pch.hpp"
 #include "lyra/driver/runtime_export.hpp"
 #include "lyra/mir/compilation_unit.hpp"
 
@@ -22,7 +23,8 @@ auto AssembleProject(
 // Build the assembled project in `dir` by invoking the C++ compiler directly
 // (the same recipe `build.sh` carries). Returns the produced executable's path;
 // a non-zero compiler exit surfaces its stderr as a diagnostic.
-auto BuildProject(const std::filesystem::path& dir)
+auto BuildProject(
+    const std::filesystem::path& dir, const pch::Options& pch_opts)
     -> diag::Result<std::filesystem::path>;
 
 // Emit `units`' sources into `work_dir`, build them in place against `runtime`
@@ -32,6 +34,7 @@ auto BuildProject(const std::filesystem::path& dir)
 auto RunInPlace(
     const RuntimeLocation& runtime, std::span<const mir::CompilationUnit> units,
     std::span<const backend::cpp::TopInstance> tops,
-    const std::filesystem::path& work_dir, bool format) -> diag::Result<int>;
+    const std::filesystem::path& work_dir, bool format,
+    const pch::Options& pch_opts) -> diag::Result<int>;
 
 }  // namespace lyra::driver

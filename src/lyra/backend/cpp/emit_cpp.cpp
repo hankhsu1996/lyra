@@ -615,11 +615,10 @@ auto RenderScopeHeaderFile(
 
 auto RenderHostMain(std::span<const TopInstance> tops) -> std::string {
   std::string out;
-  out += "#include <exception>\n";
-  out += "#include <iostream>\n";
   out += "#include <vector>\n";
   out += "\n";
   out += "#include \"lyra/runtime/engine.hpp\"\n";
+  out += "#include \"lyra/runtime/simulation_entry.hpp\"\n";
   for (const auto& top : tops) {
     out += "#include \"" + top.unit->structural_scope.name + ".hpp\"\n";
   }
@@ -636,12 +635,7 @@ auto RenderHostMain(std::span<const TopInstance> tops) -> std::string {
   }
   out += "  };\n";
   out += "  engine.BindDesign(tops);\n";
-  out += "  try {\n";
-  out += "    return engine.Run();\n";
-  out += "  } catch (const std::exception& e) {\n";
-  out += "    std::cerr << e.what() << \"\\n\";\n";
-  out += "    return 1;\n";
-  out += "  }\n";
+  out += "  return lyra::runtime::RunSimulation(engine);\n";
   out += "}\n";
   return out;
 }

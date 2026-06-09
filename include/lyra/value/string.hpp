@@ -4,7 +4,6 @@
 #include <cctype>
 #include <cstdint>
 #include <cstdlib>
-#include <format>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -197,21 +196,13 @@ class String {
 
   // LRM 6.16.11 through 6.16.15. Each replaces receiver with the ASCII
   // representation of the argument in the corresponding base / format.
-  void Itoa(std::int32_t i) {
-    impl_ = std::format("{}", i);
-  }
-  void Hextoa(std::int32_t i) {
-    impl_ = std::format("{:x}", static_cast<std::uint32_t>(i));
-  }
-  void Octtoa(std::int32_t i) {
-    impl_ = std::format("{:o}", static_cast<std::uint32_t>(i));
-  }
-  void Bintoa(std::int32_t i) {
-    impl_ = std::format("{:b}", static_cast<std::uint32_t>(i));
-  }
-  void Realtoa(double r) {
-    impl_ = std::format("{}", r);
-  }
+  // Out-of-line so std::format does not leak into every translation unit
+  // that includes this header.
+  void Itoa(std::int32_t i);
+  void Hextoa(std::int32_t i);
+  void Octtoa(std::int32_t i);
+  void Bintoa(std::int32_t i);
+  void Realtoa(double r);
 
   [[nodiscard]] auto View() const -> std::string_view {
     return impl_;
