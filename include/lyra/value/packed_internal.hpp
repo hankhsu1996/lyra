@@ -1,12 +1,9 @@
 #pragma once
 
-#include <cstddef>
 #include <cstdint>
-#include <format>
 #include <span>
 #include <string_view>
 
-#include "lyra/base/internal_error.hpp"
 #include "lyra/value/packed.hpp"
 
 namespace lyra::value::detail {
@@ -49,43 +46,20 @@ struct PackedAccess {
   }
 };
 
-inline auto RequireSameWidth(
-    std::string_view where, std::uint64_t a, std::uint64_t b) -> void {
-  if (a != b) {
-    throw InternalError(
-        std::format("{}: width mismatch ({} vs {})", where, a, b));
-  }
-}
+// Out-of-line so std::format does not leak into every translation unit
+// that includes this header.
+auto RequireSameWidth(std::string_view where, std::uint64_t a, std::uint64_t b)
+    -> void;
 
-inline auto RequireSameWidth(
+auto RequireSameWidth(
     std::string_view where, std::uint64_t a, std::uint64_t b, std::uint64_t c)
-    -> void {
-  if (a != b || a != c) {
-    throw InternalError(
-        std::format("{}: width mismatch ({} vs {} vs {})", where, a, b, c));
-  }
-}
+    -> void;
 
-inline auto RequireAligned(std::string_view where, std::uint64_t bit_offset)
-    -> void {
-  if (bit_offset != 0U) {
-    throw InternalError(
-        std::format(
-            "{}: requires bit_offset == 0 (got {})", where, bit_offset));
-  }
-}
+auto RequireAligned(std::string_view where, std::uint64_t bit_offset) -> void;
 
-inline auto RequireWordCount(
+auto RequireWordCount(
     std::string_view where, std::span<const std::uint64_t> words,
-    std::uint64_t bit_width) -> void {
-  const std::size_t expected = WordCountForBits(bit_width);
-  if (words.size() != expected) {
-    throw InternalError(
-        std::format(
-            "{}: word count mismatch ({} vs expected {})", where, words.size(),
-            expected));
-  }
-}
+    std::uint64_t bit_width) -> void;
 
 inline auto RequireWordCount(
     std::string_view where, std::span<std::uint64_t> words,
