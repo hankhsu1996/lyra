@@ -231,16 +231,18 @@ auto RenderConstructOwnedObjectStmt(
   const std::string make = "std::make_unique<" + target_scope.name +
                            ">(this, \"" + target_scope.name + "\"" +
                            trailing_args + ")";
-  if (mir::IsVectorOfOwningObjectType(ctx.Unit(), var.type)) {
-    return Indent(indent) + ctx.MemberPrefix() + var.name + ".push_back(" +
-           make + ");\n";
+  const auto child = mir::GetChildScope(ctx.Unit(), var.type);
+  if (!child.has_value() ||
+      !std::holds_alternative<mir::GenerateScopeChild>(*child)) {
+    throw InternalError(
+        "ConstructOwnedObjectStmt target is not an owned object var");
   }
-  if (mir::IsOwningObjectType(ctx.Unit(), var.type)) {
-    return Indent(indent) + ctx.MemberPrefix() + var.name + " = " + make +
-           ";\n";
+  const std::string lhs = ctx.MemberPrefix() + var.name;
+  if (std::holds_alternative<mir::VectorType>(
+          ctx.Unit().GetType(var.type).data)) {
+    return Indent(indent) + lhs + ".push_back(" + make + ");\n";
   }
-  throw InternalError(
-      "ConstructOwnedObjectStmt target is not an owning object var");
+  return Indent(indent) + lhs + " = " + make + ";\n";
 }
 
 // Materializes an external-unit member by recursing on its type, mirroring the

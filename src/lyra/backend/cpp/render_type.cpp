@@ -102,10 +102,18 @@ auto RenderTypeAsCpp(
           },
           [](const mir::ExternalUnitObjectType& e)
               -> diag::Result<std::string> { return e.unit_name; },
-          [&](const mir::OwningPtrType& o) -> diag::Result<std::string> {
-            auto inner_or = RenderTypeAsCpp(unit, owner_scope, o.pointee);
+          [&](const mir::PointerType& p) -> diag::Result<std::string> {
+            auto inner_or = RenderTypeAsCpp(unit, owner_scope, p.pointee);
             if (!inner_or) return std::unexpected(std::move(inner_or.error()));
-            return "std::unique_ptr<" + *inner_or + ">";
+            switch (p.ownership) {
+              case mir::PointerOwnership::kUnique:
+                return "std::unique_ptr<" + *inner_or + ">";
+              case mir::PointerOwnership::kShared:
+                return "std::shared_ptr<" + *inner_or + ">";
+              case mir::PointerOwnership::kBorrowed:
+                return *inner_or + "*";
+            }
+            throw InternalError("RenderTypeAsCpp: unknown PointerOwnership");
           },
           [&](const mir::VectorType& v) -> diag::Result<std::string> {
             auto inner_or = RenderTypeAsCpp(unit, owner_scope, v.element);

@@ -9,7 +9,6 @@
 #include "lyra/base/internal_error.hpp"
 #include "lyra/base/overloaded.hpp"
 #include "lyra/mir/compilation_unit.hpp"
-#include "lyra/mir/structural_scope_id.hpp"
 
 namespace lyra::mir {
 
@@ -75,7 +74,7 @@ auto Type::Kind() const -> TypeKind {
           [](const ExternalUnitObjectType&) {
             return TypeKind::kExternalUnitObject;
           },
-          [](const OwningPtrType&) { return TypeKind::kOwningPtr; },
+          [](const PointerType&) { return TypeKind::kPointer; },
           [](const VectorType&) { return TypeKind::kVector; },
           [](const ExternalRefType&) { return TypeKind::kExternalRef; },
       },
@@ -123,67 +122,33 @@ auto Type::AsIntegralPacked() const -> const PackedArrayType& {
 
 namespace {
 
-auto AsObjectScope(const CompilationUnit& unit, TypeId type)
-    -> std::optional<StructuralScopeId> {
-  const auto* obj = std::get_if<ObjectType>(&unit.GetType(type).data);
-  if (obj == nullptr) {
+auto AsUniquePointee(const CompilationUnit& unit, TypeId type)
+    -> std::optional<TypeId> {
+  const auto* ptr = std::get_if<PointerType>(&unit.GetType(type).data);
+  if (ptr == nullptr || ptr->ownership != PointerOwnership::kUnique) {
     return std::nullopt;
   }
-  return obj->target;
+  return ptr->pointee;
 }
 
 }  // namespace
 
-auto IsOwningObjectType(const CompilationUnit& unit, TypeId type) -> bool {
-  const auto* owning = std::get_if<OwningPtrType>(&unit.GetType(type).data);
-  if (owning == nullptr) {
-    return false;
+auto GetChildScope(const CompilationUnit& unit, TypeId type)
+    -> std::optional<ChildScope> {
+  TypeId leaf = type;
+  while (const auto* vec = std::get_if<VectorType>(&unit.GetType(leaf).data)) {
+    leaf = vec->element;
   }
-  return AsObjectScope(unit, owning->pointee).has_value();
-}
-
-auto IsVectorOfOwningObjectType(const CompilationUnit& unit, TypeId type)
-    -> bool {
-  const auto* vec = std::get_if<VectorType>(&unit.GetType(type).data);
-  if (vec == nullptr) {
-    return false;
-  }
-  return IsOwningObjectType(unit, vec->element);
-}
-
-auto GetOwnedObjectTarget(const CompilationUnit& unit, TypeId type)
-    -> std::optional<StructuralScopeId> {
-  const auto& data = unit.GetType(type).data;
-  if (const auto* owning = std::get_if<OwningPtrType>(&data)) {
-    return AsObjectScope(unit, owning->pointee);
-  }
-  if (const auto* vec = std::get_if<VectorType>(&data)) {
-    if (const auto* owning =
-            std::get_if<OwningPtrType>(&unit.GetType(vec->element).data)) {
-      return AsObjectScope(unit, owning->pointee);
-    }
-  }
-  return std::nullopt;
-}
-
-auto GetOwnedChildLeaf(const CompilationUnit& unit, TypeId type)
-    -> std::optional<OwnedChildLeaf> {
-  const Type* leaf = &unit.GetType(type);
-  while (const auto* vec = std::get_if<VectorType>(&leaf->data)) {
-    leaf = &unit.GetType(vec->element);
-  }
-  const auto* owning = std::get_if<OwningPtrType>(&leaf->data);
-  if (owning == nullptr) {
+  const auto pointee = AsUniquePointee(unit, leaf);
+  if (!pointee.has_value()) {
     return std::nullopt;
   }
-  const auto& pointee = unit.GetType(owning->pointee).data;
-  if (const auto* obj = std::get_if<ObjectType>(&pointee)) {
-    return OwnedChildLeaf{
-        .kind = OwnedChildKind::kGenerateScope, .intra_target = obj->target};
+  const auto& data = unit.GetType(*pointee).data;
+  if (const auto* obj = std::get_if<ObjectType>(&data)) {
+    return ChildScope{GenerateScopeChild{.target = obj->target}};
   }
-  if (std::holds_alternative<ExternalUnitObjectType>(pointee)) {
-    return OwnedChildLeaf{
-        .kind = OwnedChildKind::kModuleInstance, .intra_target = std::nullopt};
+  if (std::holds_alternative<ExternalUnitObjectType>(data)) {
+    return ChildScope{ModuleInstanceChild{}};
   }
   return std::nullopt;
 }

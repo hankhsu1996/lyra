@@ -37,7 +37,7 @@ auto RenderField(
   // An owned-child member (a unique_ptr, or a vector of them) is filled in the
   // constructor body; the field itself is just default-constructed storage, so
   // it needs no initializer.
-  if (mir::GetOwnedChildLeaf(unit, var.type).has_value()) {
+  if (mir::GetChildScope(unit, var.type).has_value()) {
     return Indent(indent) + *type_or + " " + var.name + ";\n";
   }
   // An upward reference is an ExternUp member constructed with its symbol --
@@ -362,7 +362,7 @@ auto RenderScopeAsClass(
   {
     std::string body;
     for (const auto& v : s.structural_vars) {
-      if (mir::GetOwnedChildLeaf(unit, v.type).has_value()) {
+      if (mir::GetChildScope(unit, v.type).has_value()) {
         continue;
       }
       if (std::holds_alternative<mir::ExternalRefType>(
@@ -392,8 +392,8 @@ auto RenderScopeAsClass(
     // returns whichever was constructed.
     std::vector<std::pair<std::string, std::string>> groups;
     for (const auto& v : s.structural_vars) {
-      const auto leaf = mir::GetOwnedChildLeaf(unit, v.type);
-      if (!leaf.has_value()) {
+      const auto child = mir::GetChildScope(unit, v.type);
+      if (!child.has_value()) {
         continue;
       }
       std::string access = v.name;
@@ -406,7 +406,7 @@ auto RenderScopeAsClass(
         ++dim;
       }
       const bool conditional =
-          leaf->kind == mir::OwnedChildKind::kGenerateScope && dim == 0;
+          std::holds_alternative<mir::GenerateScopeChild>(*child) && dim == 0;
       const std::string line =
           conditional ? Indent(indent + 3) + "if (" + v.name + ") return " +
                             access + ".get();\n"

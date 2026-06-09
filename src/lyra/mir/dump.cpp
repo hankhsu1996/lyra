@@ -176,9 +176,19 @@ class MirDumper {
               return std::format(
                   "ExternalUnitObject(unit=\"{}\")", e.unit_name);
             },
-            [](const OwningPtrType& p) -> std::string {
-              return std::format(
-                  "OwningPtr(pointee=Type[{}])", p.pointee.value);
+            [](const PointerType& p) -> std::string {
+              switch (p.ownership) {
+                case PointerOwnership::kUnique:
+                  return std::format(
+                      "Pointer(unique, pointee=Type[{}])", p.pointee.value);
+                case PointerOwnership::kShared:
+                  return std::format(
+                      "Pointer(shared, pointee=Type[{}])", p.pointee.value);
+                case PointerOwnership::kBorrowed:
+                  return std::format(
+                      "Pointer(borrowed, pointee=Type[{}])", p.pointee.value);
+              }
+              throw InternalError("MirDumper: unknown PointerOwnership");
             },
             [](const VectorType& v) -> std::string {
               return std::format("Vector(elem=Type[{}])", v.element.value);

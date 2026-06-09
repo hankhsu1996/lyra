@@ -142,36 +142,33 @@ auto EnumerateGenerateChildSpecs(
   return specs;
 }
 
-auto MakeOwnedObjectType(
+auto MakeUniqueObjectPointer(
     UnitLoweringState& unit_state, mir::StructuralScopeId child_id)
     -> mir::TypeId {
   const mir::TypeId object_type =
       unit_state.AddType(mir::ObjectType{.target = child_id});
-  return unit_state.AddType(mir::OwningPtrType{.pointee = object_type});
+  return unit_state.AddType(
+      mir::PointerType{
+          .pointee = object_type, .ownership = mir::PointerOwnership::kUnique});
 }
 
-auto MakeVectorOfOwnedObjectType(
-    UnitLoweringState& unit_state, mir::StructuralScopeId child_id)
-    -> mir::TypeId {
-  const mir::TypeId owned_type = MakeOwnedObjectType(unit_state, child_id);
-  return unit_state.AddType(mir::VectorType{.element = owned_type});
-}
-
-auto MakeExternalUnitOwningType(
+auto MakeUniqueExternalUnitPointer(
     UnitLoweringState& unit_state, std::string unit_name) -> mir::TypeId {
   const mir::TypeId object_type = unit_state.AddType(
       mir::ExternalUnitObjectType{.unit_name = std::move(unit_name)});
-  return unit_state.AddType(mir::OwningPtrType{.pointee = object_type});
+  return unit_state.AddType(
+      mir::PointerType{
+          .pointee = object_type, .ownership = mir::PointerOwnership::kUnique});
 }
 
-// Builds an external-unit member type: an owning pointer to the unit's object,
+// Builds an external-unit member type: a unique pointer to the unit's object,
 // wrapped in one vector layer per array dimension (`num_dims == 0` is a scalar
 // instance). The backend materializes the nested vector by replication.
 auto MakeExternalUnitMemberType(
     UnitLoweringState& unit_state, std::string unit_name, std::size_t num_dims)
     -> mir::TypeId {
   mir::TypeId type =
-      MakeExternalUnitOwningType(unit_state, std::move(unit_name));
+      MakeUniqueExternalUnitPointer(unit_state, std::move(unit_name));
   for (std::size_t i = 0; i < num_dims; ++i) {
     type = unit_state.AddType(mir::VectorType{.element = type});
   }
@@ -357,8 +354,10 @@ void ValidateConstructOwnedObjectStmt(
         "scope");
   }
   const auto& var = owner_scope.GetStructuralVar(stmt.target);
-  const auto target = mir::GetOwnedObjectTarget(unit, var.type);
-  if (!target.has_value() || *target != stmt.scope_id) {
+  const auto child = mir::GetChildScope(unit, var.type);
+  const auto* generate =
+      child ? std::get_if<mir::GenerateScopeChild>(&*child) : nullptr;
+  if (generate == nullptr || generate->target != stmt.scope_id) {
     throw InternalError(
         "ConstructOwnedObjectStmt: target var does not own the requested "
         "scope");
@@ -645,9 +644,10 @@ auto InstallGenerateOwnedChildScopes(
 
       const mir::StructuralScopeId child_id =
           scope_state.AddChildStructuralScope(*std::move(child_r));
-      const mir::TypeId var_type =
-          spec.is_repeated ? MakeVectorOfOwnedObjectType(unit_state, child_id)
-                           : MakeOwnedObjectType(unit_state, child_id);
+      mir::TypeId var_type = MakeUniqueObjectPointer(unit_state, child_id);
+      if (spec.is_repeated) {
+        var_type = unit_state.AddType(mir::VectorType{.element = var_type});
+      }
       const mir::ExprId companion_init =
           SynthesizeDefaultValueExpr(unit_state, ctor_scope_state, var_type);
       const mir::StructuralVarId var_id = scope_state.AddStructuralVar(

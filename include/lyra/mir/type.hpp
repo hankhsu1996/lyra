@@ -27,7 +27,7 @@ enum class TypeKind {
   kVoid,
   kObject,
   kExternalUnitObject,
-  kOwningPtr,
+  kPointer,
   kVector,
   kExternalRef,
 };
@@ -137,10 +137,20 @@ struct ExternalUnitObjectType {
   auto operator==(const ExternalUnitObjectType&) const -> bool = default;
 };
 
-struct OwningPtrType {
-  TypeId pointee;
+enum class PointerOwnership {
+  kUnique,
+  kShared,
+  kBorrowed,
+};
 
-  auto operator==(const OwningPtrType&) const -> bool = default;
+// One level of indirection, classified by its lifetime axis: `kUnique` and
+// `kShared` own the pointee (`unique_ptr<T>` / `shared_ptr<T>`); `kBorrowed`
+// owns nothing and only refers (`T*`).
+struct PointerType {
+  TypeId pointee;
+  PointerOwnership ownership;
+
+  auto operator==(const PointerType&) const -> bool = default;
 };
 
 struct VectorType {
@@ -181,7 +191,7 @@ using TypeData = std::variant<
     PackedArrayType, EnumType, UnpackedArrayType, DynamicArrayType, QueueType,
     AssociativeArrayType, StringType, EventType, RealType, ShortRealType,
     RealTimeType, ChandleType, VoidType, ObjectType, ExternalUnitObjectType,
-    OwningPtrType, VectorType, ExternalRefType>;
+    PointerType, VectorType, ExternalRefType>;
 
 struct Type {
   TypeData data;
@@ -201,27 +211,16 @@ struct Type {
 
 class CompilationUnit;
 
-[[nodiscard]] auto IsOwningObjectType(const CompilationUnit& unit, TypeId type)
-    -> bool;
-
-[[nodiscard]] auto IsVectorOfOwningObjectType(
-    const CompilationUnit& unit, TypeId type) -> bool;
-
-[[nodiscard]] auto GetOwnedObjectTarget(
-    const CompilationUnit& unit, TypeId type)
-    -> std::optional<StructuralScopeId>;
-
-enum class OwnedChildKind { kModuleInstance, kGenerateScope };
-
-// The classification of an owned-child member, read off the leaf object type
-// after stripping any vector layers: an intra-unit object is a generate scope
-// (with its target scope), an external-unit object is a module instance.
-struct OwnedChildLeaf {
-  OwnedChildKind kind = OwnedChildKind::kModuleInstance;
-  std::optional<StructuralScopeId> intra_target;
+// A child-scope member, classified by the leaf object type after stripping any
+// vector layers: an intra-unit object is a generate scope (carrying its target
+// scope), an external-unit object is a module instance.
+struct GenerateScopeChild {
+  StructuralScopeId target;
 };
+struct ModuleInstanceChild {};
+using ChildScope = std::variant<GenerateScopeChild, ModuleInstanceChild>;
 
-[[nodiscard]] auto GetOwnedChildLeaf(const CompilationUnit& unit, TypeId type)
-    -> std::optional<OwnedChildLeaf>;
+[[nodiscard]] auto GetChildScope(const CompilationUnit& unit, TypeId type)
+    -> std::optional<ChildScope>;
 
 }  // namespace lyra::mir
