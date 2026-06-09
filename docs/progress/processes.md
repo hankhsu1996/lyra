@@ -3,7 +3,7 @@
 Tracks SystemVerilog procedural-block constructs and the supporting timing-control machinery. Covers
 archive items under `archived/tests/sv_features/processes/`.
 
-The numeric IDs (P1..P14, T1..T5) are stable references and do **not** imply execution order.
+The numeric IDs (P1..P15, T1..T5) are stable references and do **not** imply execution order.
 
 ## Actionable
 
@@ -40,6 +40,17 @@ machinery owned by other workstreams; see [Blocked](#blocked).
       (always_comb / always_latch) or after the first wait (`@*`), then waits on any change to the
       read set. Reads collapse to whole-variable subscription until the runtime supports bit-level
       any-change.
+
+### Variable lifetime
+
+- [x] P15 -- Process-body variable lifetime (LRM 6.21). A local declared in an `initial` / `always`
+      / `final` body follows its resolved lifetime. An automatic local is reinitialized on each
+      entry and lives only for that activation; a static local (the module default) has one
+      per-instance copy that is default-initialized once and persists across activations, so it
+      stays live after the process body completes -- which is what lets a detached fork branch read
+      it (`fork-join.md` FJ4). A bare declaration takes the module's static default. Static locals
+      that share a name across sibling or nested blocks of one process are kept distinct. See
+      `decisions/variable-lifetime-storage.md` for the storage rationale.
 
 ### Procedural assignments
 

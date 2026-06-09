@@ -3,7 +3,7 @@ module Top;
   initial begin
     count = 0;
     for (int i = 0; i < 2; i = i + 1) begin
-      int j = 0;
+      automatic int j = 0;
       while (j < 3) begin
         if (j == 1) break;
         count = count + 1;

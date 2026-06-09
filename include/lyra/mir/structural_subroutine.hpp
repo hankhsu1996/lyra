@@ -4,8 +4,6 @@
 #include <string>
 #include <vector>
 
-#include "lyra/mir/expr_id.hpp"
-#include "lyra/mir/procedural_var.hpp"
 #include "lyra/mir/stmt.hpp"
 #include "lyra/mir/type_id.hpp"
 
@@ -36,16 +34,6 @@ struct SubroutineParam {
   std::string name;
   TypeId type;
   ParamDirection direction = ParamDirection::kInput;
-};
-
-// A static-lifetime body local (LRM 13.3.1). It does not live in the
-// activation; the backend gives it one storage slot per module instance. `var`
-// indexes `root_procedural_scope.vars` (body references reach it through that
-// id); `init` indexes `root_procedural_scope.exprs` and is evaluated once when
-// the instance is built, not on each call.
-struct StaticLocal {
-  ProceduralVarId var;
-  ExprId init;
 };
 
 // A subroutine is a callable peer of a process: its body is a ProceduralScope,

@@ -1,0 +1,13 @@
+id: cpp.function_static_sibling_same_name
+tags: [cpp_run]
+input:
+  command: [run, cpp]
+  project: false
+  top: Top
+  files: [main.sv]
+expect:
+  exit: 0
+  stdout:
+    exact: |
+      110
+      220
