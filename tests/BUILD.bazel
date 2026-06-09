@@ -39,6 +39,23 @@ cc_test(
 )
 
 cc_test(
+    name = "pch_audit_test",
+    srcs = ["pch_audit_test.cpp"],
+    data = ["//:lyra"],
+    # Spawns the host C++ compiler with `-H` to enumerate every header opened
+    # while building the prelude PCH. Filtered out of CI's `Test` job for the
+    # same reason as run_tests/cpp_tests; run locally as needed.
+    tags = ["requires-host-cxx"],
+    deps = [
+        "//:driver",
+        "//:support",
+        "@bazel_tools//tools/cpp/runfiles",
+        "@fmt",
+        "@googletest//:gtest_main",
+    ],
+)
+
+cc_test(
     name = "cpp_tests",
     srcs = ["cpp_test.cpp"],
     data = [

@@ -10,6 +10,8 @@ namespace lyra::driver {
 inline constexpr std::string_view kRuntimeIncludeDir = "runtime/include";
 inline constexpr std::string_view kRuntimeLibDir = "runtime/lib";
 inline constexpr std::string_view kRuntimeLibFile = "libcpp_runtime.a";
+inline constexpr std::string_view kRuntimeCacheDir = "runtime/cache";
+inline constexpr std::string_view kPreludeHeader = "lyra/runtime/prelude.hpp";
 inline constexpr std::string_view kMainSource = "main.cpp";
 inline constexpr std::string_view kProgramName = "program";
 inline constexpr std::string_view kCxxStandardFlag = "-std=c++23";
