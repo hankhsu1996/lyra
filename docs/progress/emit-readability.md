@@ -50,3 +50,7 @@ locate-divergence feedback loop; this one owns the readability of what the loop 
 - The run / observe / locate-divergence loop (`dev-ergonomics.md`).
 - Shortening fully-qualified type names. Generated code cannot assume the namespace context it will
   be read in, so full qualification is kept deliberately; it is not a gap to close.
+- In-place declaration of a static-lifetime body local. A SystemVerilog static local is
+  per-instance, and C++ has no per-instance variable declared inside a method body, so it is emitted
+  as a member on the enclosing class rather than at its source position, and its name carries a
+  uniqueness suffix. The hoist is inherent to per-instance static storage; it is not a gap to close.

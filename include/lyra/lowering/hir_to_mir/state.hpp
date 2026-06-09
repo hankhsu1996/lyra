@@ -448,9 +448,11 @@ class CaptureSink;
 
 class ProcessLoweringState {
  public:
-  // A subroutine passes its root procedural scope as the static-frame scope so
-  // static-lifetime locals are collected there (LRM 13.3.1); a process / a
-  // continuous assign leaves it null and keeps every local in the activation.
+  // A process or subroutine passes its root procedural scope as the
+  // static-frame scope so static-lifetime locals are collected there,
+  // instance-owned, instead of in the activation (LRM 6.21 / 13.3.1). Null only
+  // for a synthesized process with no declarations to collect (a continuous
+  // assign).
   explicit ProcessLoweringState(
       TimeResolution time_resolution,
       ProceduralScopeLoweringState* static_frame_scope = nullptr)
@@ -476,10 +478,11 @@ class ProcessLoweringState {
     return procedural_depth_;
   }
 
-  // Static-lifetime locals land in the frame scope (the subroutine's root
-  // procedural scope) regardless of the block they are declared in, so a body
-  // reference reaches the storage by hops (LRM 13.3.1). Null for processes,
-  // where every local stays in the activation.
+  // Static-lifetime locals land in the frame scope (the process or subroutine
+  // root procedural scope) regardless of the block they are declared in, so a
+  // body reference reaches the storage by hops (LRM 6.21 / 13.3.1). False only
+  // when no frame scope was provided (a synthesized continuous-assign process,
+  // which declares nothing).
   [[nodiscard]] auto CollectsStaticLocals() const -> bool {
     return static_frame_scope_ != nullptr;
   }

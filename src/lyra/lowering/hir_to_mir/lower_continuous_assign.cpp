@@ -76,7 +76,8 @@ auto LowerContinuousAssign(
           .child_procedural_scopes = std::move(child_scopes)}));
   return mir::Process{
       .kind = mir::ProcessKind::kInitial,
-      .root_procedural_scope = process_state.Finish()};
+      .root_procedural_scope = process_state.Finish(),
+      .static_locals = {}};
 }
 
 }  // namespace lyra::lowering::hir_to_mir

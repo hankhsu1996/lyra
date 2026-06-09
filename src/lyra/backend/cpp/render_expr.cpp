@@ -202,7 +202,8 @@ auto LookupProceduralVarName(
   const auto& var = ctx.ProceduralScopeAtHops(ref.hops).vars.at(ref.var.value);
   if (var.lifetime == mir::VariableLifetime::kStatic) {
     return std::format(
-        "{}{}.{}", ctx.MemberPrefix(), ctx.StaticFrame(), var.name);
+        "{}{}.{}", ctx.MemberPrefix(), ctx.StaticFrame(),
+        StaticFrameMemberName(var.name, ref.var.value));
   }
   return var.name;
 }

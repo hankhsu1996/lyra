@@ -2,6 +2,7 @@
 
 #include <compare>
 #include <cstdint>
+#include <vector>
 
 #include "lyra/mir/stmt.hpp"
 
@@ -21,6 +22,7 @@ enum class ProcessKind : std::uint8_t {
 struct Process {
   ProcessKind kind = ProcessKind::kInitial;
   ProceduralScope root_procedural_scope;
+  std::vector<StaticLocal> static_locals;
 };
 
 }  // namespace lyra::mir
