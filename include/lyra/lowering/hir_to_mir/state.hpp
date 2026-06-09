@@ -235,6 +235,11 @@ class StructuralScopeLoweringState {
     return id;
   }
 
+  [[nodiscard]] auto GetStructuralVar(mir::StructuralVarId id) const
+      -> const mir::StructuralVarDecl& {
+    return scope_->GetStructuralVar(id);
+  }
+
   auto AddCrossUnitRef(mir::CrossUnitRefDecl decl) -> mir::CrossUnitRefId {
     const mir::CrossUnitRefId id{
         static_cast<std::uint32_t>(scope_->cross_unit_refs.size())};

@@ -280,27 +280,53 @@ auto RenderConstructExternalUnitStmt(
       s.dims, 0, indent);
 }
 
-// Points the downward slot at the leaf member it references, once the subtree
-// exists: the head var and every intervening instance are owning pointers
-// reached with `->`, and an instance-array hop indexes the owning vector with
-// `[i]` (LRM 23.6 resolved at construction, reference_resolution.md).
+// Emits a `ChildRef` literal for a by-name owned-child hop: the LRM name plus,
+// for an indexed loop block or instance array, the per-dimension indices in a
+// temporary `std::array` whose lifetime spans the surrounding navigation call.
+auto RenderChildRefLiteral(
+    const std::string& name, const std::vector<std::uint32_t>& indices)
+    -> std::string {
+  std::string out = "lyra::runtime::ChildRef{.name = \"" + name + "\"";
+  if (!indices.empty()) {
+    out += ", .indices = std::array<std::size_t, " +
+           std::to_string(indices.size()) + ">{";
+    for (std::size_t i = 0; i < indices.size(); ++i) {
+      if (i != 0) out += ", ";
+      out += std::to_string(indices[i]);
+    }
+    out += "}";
+  }
+  out += "}";
+  return out;
+}
+
+// A downward cross-unit reference resolves by name across the unit boundary
+// (emission_model.md). The navigation is already resolved in MIR -- `steps` are
+// the owned children to fetch with `GetChild` in order, `signal` is the leaf to
+// fetch with `GetSignal` -- so this renders each step mechanically and casts to
+// the slot's own cell type (`Var<T>*` for an observable scalar, `T*`
+// otherwise), a representation fixed by the slot's type.
 auto RenderResolveCrossUnitRefStmt(
     const RenderContext& ctx, const mir::ResolveCrossUnitRefStmt& s,
     std::size_t indent) -> diag::Result<std::string> {
   const auto& slot = ctx.StructuralScope().GetCrossUnitRef(s.slot);
-  const auto& inst = ctx.StructuralScope().GetStructuralVar(slot.instance_var);
-  std::string out = Indent(indent) + ctx.MemberPrefix() +
-                    CrossUnitRefSlotName(s.slot.value) + " = &" +
-                    ctx.MemberPrefix() + inst.name;
-  for (const auto& step : slot.path) {
-    if (const auto* member = std::get_if<mir::MemberHop>(&step)) {
-      out += "->" + member->name;
-    } else {
-      out += "[" + std::to_string(std::get<mir::IndexHop>(step).index) + "]";
-    }
+
+  auto elem_or = RenderTypeAsCpp(ctx.Unit(), ctx.StructuralScope(), slot.type);
+  if (!elem_or) return std::unexpected(std::move(elem_or.error()));
+  const std::string cast_type =
+      IsObservableScalarType(ctx.Unit().GetType(slot.type))
+          ? "lyra::runtime::Var<" + *elem_or + ">*"
+          : *elem_or + "*";
+
+  std::string nav = ctx.MemberPrefix();
+  for (const auto& step : slot.steps) {
+    nav += "GetChild(" + RenderChildRefLiteral(step.name, step.indices) + ")->";
   }
-  out += ";\n";
-  return out;
+  nav += "GetSignal(\"" + slot.signal + "\")";
+
+  return Indent(indent) + ctx.MemberPrefix() +
+         CrossUnitRefSlotName(s.slot.value) + " = static_cast<" + cast_type +
+         ">(" + nav + ");\n";
 }
 
 auto RenderForStmtNode(

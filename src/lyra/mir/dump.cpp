@@ -649,19 +649,16 @@ class MirDumper {
       Indent();
       for (std::size_t i = 0; i < s.cross_unit_refs.size(); ++i) {
         const auto& cu = s.cross_unit_refs[i];
-        std::string path;
-        for (const auto& step : cu.path) {
-          if (const auto* member = std::get_if<MemberHop>(&step)) {
-            path += "." + member->name;
-          } else {
-            path += std::format("[{}]", std::get<IndexHop>(step).index);
+        std::string nav;
+        for (const auto& step : cu.steps) {
+          nav += step.name;
+          for (const std::uint32_t index : step.indices) {
+            nav += std::format("[{}]", index);
           }
+          nav += ".";
         }
-        const std::string head =
-            std::format("StructuralVar[{}]", cu.instance_var.value);
-        Line(
-            std::format(
-                "[{}] {}{} : {}", i, head, path, FormatVarType(cu.type)));
+        nav += cu.signal;
+        Line(std::format("[{}] {} : {}", i, nav, FormatVarType(cu.type)));
       }
       Dedent();
     }

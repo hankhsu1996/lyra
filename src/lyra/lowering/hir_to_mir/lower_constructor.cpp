@@ -304,19 +304,34 @@ void InstallCrossUnitRefs(
                      .by_scope_id.at(g.scope.value)
                      .var_id;
     }
-    std::vector<mir::PathStep> path;
-    path.reserve(cu.path.size());
+    // Resolve the by-name navigation here so the backend renders it
+    // mechanically: the owned child is the first GetChild step, each member on
+    // the HIR path opens another step (following array indices attach to it),
+    // and the last name is the GetSignal leaf (emission_model.md).
+    const auto& head = scope_state.GetStructuralVar(head_var);
+    std::vector<mir::ChildStep> steps;
+    steps.push_back(
+        mir::ChildStep{
+            .name = head.source_name.empty() ? head.name : head.source_name,
+            .indices = {}});
     for (const auto& step : cu.path) {
       if (const auto* member = std::get_if<hir::MemberHop>(&step)) {
-        path.emplace_back(mir::MemberHop{member->name});
+        steps.push_back(mir::ChildStep{.name = member->name, .indices = {}});
       } else {
-        path.emplace_back(mir::IndexHop{std::get<hir::IndexHop>(step).index});
+        steps.back().indices.push_back(std::get<hir::IndexHop>(step).index);
       }
     }
+    if (steps.size() < 2) {
+      throw InternalError(
+          "InstallCrossUnitRefs: downward cross-unit reference has no leaf "
+          "signal past its owned child");
+    }
+    std::string signal = std::move(steps.back().name);
+    steps.pop_back();
     const mir::CrossUnitRefId slot = scope_state.AddCrossUnitRef(
         mir::CrossUnitRefDecl{
-            .instance_var = head_var,
-            .path = std::move(path),
+            .steps = std::move(steps),
+            .signal = std::move(signal),
             .type = unit_state.TranslateType(cu.type)});
     const mir::StmtId sid = ctor_scope_state.AddStmt(
         mir::Stmt{

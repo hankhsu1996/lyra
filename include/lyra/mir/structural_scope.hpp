@@ -1,8 +1,6 @@
 #pragma once
 
-#include <cstdint>
 #include <string>
-#include <variant>
 #include <vector>
 
 #include "lyra/base/time.hpp"
@@ -12,30 +10,25 @@
 #include "lyra/mir/structural_scope_id.hpp"
 #include "lyra/mir/structural_subroutine.hpp"
 #include "lyra/mir/structural_var.hpp"
+#include "lyra/mir/type.hpp"
 #include "lyra/mir/type_alias.hpp"
 #include "lyra/mir/type_id.hpp"
 #include "lyra/mir/value_ref.hpp"
 
 namespace lyra::mir {
 
-// One step of a cross-unit reference's downward navigation past the head: a
-// named member (`->name`) or an instance-array index (`[index]`).
-struct MemberHop {
-  std::string name;
-};
-struct IndexHop {
-  std::uint32_t index;
-};
-using PathStep = std::variant<MemberHop, IndexHop>;
-
-// A downward cross-unit reference resolved once at construction. `instance_var`
-// is the structural var holding the owned child instance (or instance-array) --
-// the head of the downward path; `path` carries the navigation past the head
-// down to the referenced leaf of `type`. Upward references are not cross-unit
-// refs -- they are ExternalRef members (docs/architecture/emission_model.md).
+// A downward cross-unit reference resolved once at construction. The navigation
+// is fully by name across the unit boundary (emission_model.md): `steps` are
+// the owned children fetched in order with `GetChild` -- `steps.front()` is the
+// referrer's own owned child (instance, instance-array, or generate scope), and
+// each later step crosses one boundary deeper -- and `signal` is the leaf of
+// `type`, fetched with `GetSignal` from the last step's scope. Mirrors
+// ExternalRefType's `tail` + `signal`; the navigation structure is resolved
+// here so the backend renders each step mechanically with no path
+// interpretation.
 struct CrossUnitRefDecl {
-  StructuralVarId instance_var;
-  std::vector<PathStep> path;
+  std::vector<ChildStep> steps;
+  std::string signal;
   TypeId type;
 };
 

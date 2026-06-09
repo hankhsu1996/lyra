@@ -143,17 +143,16 @@ consume. Coverage is demonstrated through Stage D and Stage E.
       object-tree ownership.
 - [x] D6 -- A hierarchical path that indexes an instance array (`c[i].x`) resolves to the selected
       element, including multi-dimensional arrays (`c[i][j].x`).
-- [ ] D7 -- A hierarchical reference crosses a generate-block scope boundary. A by-name reference
+- [x] D7 -- A hierarchical reference crosses a generate-block scope boundary. A by-name reference
       reaches a generate block by its LRM name (the source label, or `genblk<n>` when unnamed, LRM
       27.6), indexes a loop-generate block, and continues to a signal or a further child inside it;
       when an if/case construct's alternatives share a name (LRM 27.5) the reference binds whichever
-      alternative was instantiated. Landed for a reference whose head reaches the generate from its
-      owning scope or from outside: an upward reference whose downward tail enters the generate, and
-      a reference from the scope that owns the generate descending into its own block (loop and
-      conditional forms, and regardless of whether the reference precedes the generate in source);
-      and a reference originating inside a generate block (see D2b). Still open: a reference from an
-      enclosing scope descending into a _child instance's_ generate block (e.g. `leaf.g.x` from the
-      parent), which the downward path does not yet navigate by name across the generate boundary.
+      alternative was instantiated. Covered for every head: an upward reference whose downward tail
+      enters the generate; a reference from the scope that owns the generate descending into its own
+      block (and regardless of whether the reference precedes the generate in source); a reference
+      originating inside a generate block (see D2b); and a reference from an enclosing scope into a
+      child instance's generate block (`leaf.g.x`, `leaf.bank[i].y`, and deeper through an instance
+      inside the block).
 
 Unlocks `refs/hierarchical_refs`, `refs/upward_refs`, and `instantiation/hierarchical_sensitivity`.
 
