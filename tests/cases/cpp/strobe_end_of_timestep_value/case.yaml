@@ -1,4 +1,4 @@
-id: cpp.strobe_procedural_local_snapshot
+id: cpp.strobe_end_of_timestep_value
 tags: [cpp_run]
 input:
   command: [run, cpp]
@@ -9,4 +9,4 @@ expect:
   exit: 0
   stdout:
     exact: |
-      5
+      99

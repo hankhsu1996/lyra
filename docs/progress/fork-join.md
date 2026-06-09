@@ -38,19 +38,19 @@ long, follows from where the storage lives and how long the enclosing activation
   initialized on entry to the block before any process is spawned. Each spawned process takes its
   own copy by value, so it is self-contained and stays correct under every join mode -- this is the
   loop-spawn idiom (LRM 9.3.2). A branch may likewise declare its own locals.
-- A variable of an enclosing process (`initial` / `always` / `final`) is reached by reference for
-  shared read and write while that process is still live -- which holds whenever the parent is
-  blocked at the join, and for a `join_none` / `join_any` branch up until the parent procedure
-  completes. The LRM 9.3.2 loop example reads the enclosing loop variable after the loop finishes
+- A variable of an enclosing process (`initial` / `always` / `final`) has static lifetime (LRM
+  6.21): it exists for the whole simulation, in storage owned by the instance rather than by the
+  process activation. A branch reaches it by reference for shared read and write under every join
+  mode, including a detached `join_none` / `join_any` branch that runs after the process body has
+  completed. The LRM 9.3.2 loop example reads the enclosing loop variable after the loop finishes
   and sees its final value.
 - Referring to a subroutine's by-reference formal argument from a `join_any` / `join_none` branch is
   illegal unless the formal is declared `ref static` (LRM 9.3.2); the frontend rejects it, so it
   never reaches lowering.
-- Not yet built: a detached `join_none` / `join_any` branch that reads an enclosing variable by
-  reference after the enclosing procedure (process or task) has completed. LRM 6.21 requires the
-  enclosing storage to outlive the branch, but a procedure releases its locals when its body ends;
-  honouring this needs lifetime-extended shared storage for the captured locals, which is not yet in
-  place. The by-value snapshot above sidesteps it, so the loop-spawn idiom is unaffected.
+- A branch inside a task that references the task's own procedural variable is rejected at the
+  frontend, not lowered: a task's automatic locals do not outlive the call, so a detached branch
+  could read them after the call returns. The enclosing-process case above does not have this
+  limitation because process variables are static.
 
 ## Sub-Steps
 
@@ -86,13 +86,13 @@ long, follows from where the storage lives and how long the enclosing activation
       initialized on entry to the block, before any process spawns, and each branch takes its value
       as a by-value snapshot, so the loop-spawn idiom gives every spawned process its own
       per-iteration copy (LRM 9.3.2). A branch may also declare its own locals. A branch reads and
-      writes the variables of its enclosing process by reference while that process is live, lifting
-      the FJ1 restriction to module-scope signals (LRM 6.21). A reference to a subroutine's
-      by-reference formal from a `join_any` / `join_none` branch stays rejected unless declared
-      `ref static` (LRM 9.3.2). Deferred: a detached branch that reads an enclosing variable by
-      reference after the enclosing procedure (process or task) has completed -- the captured local
-      needs lifetime-extended shared storage, which the runtime does not yet provide. The by-value
-      snapshot does not depend on this, so the loop-spawn idiom is complete.
+      writes the variables of its enclosing process by reference, lifting the FJ1 restriction to
+      module-scope signals (LRM 6.21); because a process variable has static lifetime, a detached
+      `join_none` / `join_any` branch reaches it correctly even after the process body has
+      completed. A reference to a subroutine's by-reference formal from a `join_any` / `join_none`
+      branch stays rejected unless declared `ref static`, and a branch inside a task that references
+      the task's procedural variable stays rejected at the frontend (a task's automatic locals do
+      not outlive the call).
 
 ### Naming
 

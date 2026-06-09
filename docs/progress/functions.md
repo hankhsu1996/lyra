@@ -47,12 +47,12 @@ everything and the inline "rides on" notes record the real dependencies.
       follows its resolved lifetime: an automatic local is reinitialized on entry and lives only for
       the activation, while a static local (the module / package default) has one per-instance copy
       that retains its value between calls and is default-initialized once. Per-variable `automatic`
-      / `static` overrides are honored, so both lifetimes coexist in one body. Calls resolve
-      regardless of source order, so direct recursion, mutual recursion, and forward references to a
+      / `static` overrides are honored, so both lifetimes coexist in one body, and static locals
+      that share a name across sibling or nested blocks are kept distinct. Calls resolve regardless
+      of source order, so direct recursion, mutual recursion, and forward references to a
       later-defined subroutine all work for automatic-lifetime subroutines. Not yet: separate static
-      storage across multiple instances of a module (rides on module hierarchy); static-lifetime
-      formal arguments and the implicit result variable, which still behave as automatic; and two
-      static locals sharing a name in sibling blocks of one subroutine.
+      storage across multiple instances of a module (rides on module hierarchy); and static-lifetime
+      formal arguments and the implicit result variable, which still behave as automatic.
 
 ### Arguments
 

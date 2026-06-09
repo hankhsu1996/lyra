@@ -692,6 +692,13 @@ class MirDumper {
   void DumpProcess(const Process& p, std::size_t index) {
     Line(std::format("Process[{}] {}", index, FormatProcessKind(p)));
     Indent();
+    for (std::size_t i = 0; i < p.static_locals.size(); ++i) {
+      const auto& sl = p.static_locals[i];
+      Line(
+          std::format(
+              "StaticLocal[{}] var=ProceduralVar[{}] init=Expr[{}]", i,
+              sl.var.value, sl.init.value));
+    }
     DumpProceduralScope(p.root_procedural_scope);
     Dedent();
   }

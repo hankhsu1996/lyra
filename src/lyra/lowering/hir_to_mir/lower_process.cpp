@@ -38,14 +38,20 @@ auto LowerStraightLineBodyInto(
 auto LowerStraightLineProcess(
     const UnitLoweringState& unit_state,
     const StructuralScopeLoweringState& scope_state, const hir::Process& src,
-    ProcessLoweringState& proc_state, mir::ProcessKind kind)
+    TimeResolution time_resolution, mir::ProcessKind kind)
     -> diag::Result<mir::Process> {
+  // The process root scope is also its static frame: a static-lifetime body
+  // local lands here (instance-owned, LRM 6.21 / 9.3.4) instead of in the
+  // coroutine activation, the same shape a subroutine uses.
   ProceduralScopeLoweringState process_scope_state;
+  ProcessLoweringState proc_state{time_resolution, &process_scope_state};
   auto lowered = LowerStraightLineBodyInto(
       unit_state, scope_state, src.body, proc_state, process_scope_state);
   if (!lowered) return std::unexpected(std::move(lowered.error()));
   return mir::Process{
-      .kind = kind, .root_procedural_scope = process_scope_state.Finish()};
+      .kind = kind,
+      .root_procedural_scope = process_scope_state.Finish(),
+      .static_locals = proc_state.TakeStaticLocals()};
 }
 
 // Wraps `src.root_stmt` in a `forever` loop. `tail_stmt`, if present, is
@@ -56,8 +62,14 @@ auto LowerStraightLineProcess(
 auto LowerForeverProcess(
     const UnitLoweringState& unit_state,
     const StructuralScopeLoweringState& scope_state, const hir::Process& src,
-    ProcessLoweringState& proc_state, std::optional<mir::Stmt> tail_stmt)
+    TimeResolution time_resolution, std::optional<mir::Stmt> tail_stmt)
     -> diag::Result<mir::Process> {
+  // The static frame is the process root scope, which sits outside the forever
+  // loop, so a static body local persists across the loop iterations that model
+  // successive activations (LRM 6.21). The loop body lowers one depth in, so a
+  // body reference reaches the frame by one hop.
+  ProceduralScopeLoweringState process_scope_state;
+  ProcessLoweringState proc_state{time_resolution, &process_scope_state};
   ProceduralScopeLoweringState body_scope_state;
   {
     ProceduralDepthGuard guard{proc_state};
@@ -70,7 +82,6 @@ auto LowerForeverProcess(
     }
   }
 
-  ProceduralScopeLoweringState process_scope_state;
   std::vector<mir::ProceduralScope> child_scopes;
   const mir::ProceduralScopeId body_scope_id =
       AddChildProceduralScope(child_scopes, body_scope_state.Finish());
@@ -86,7 +97,8 @@ auto LowerForeverProcess(
           .child_procedural_scopes = std::move(child_scopes)}));
   return mir::Process{
       .kind = mir::ProcessKind::kInitial,
-      .root_procedural_scope = process_scope_state.Finish()};
+      .root_procedural_scope = process_scope_state.Finish(),
+      .static_locals = proc_state.TakeStaticLocals()};
 }
 
 }  // namespace
@@ -95,22 +107,23 @@ auto LowerProcess(
     const UnitLoweringState& unit_state,
     const StructuralScopeLoweringState& scope_state, const hir::Process& src,
     TimeResolution time_resolution) -> diag::Result<mir::Process> {
-  ProcessLoweringState proc_state{time_resolution};
   switch (src.kind) {
     case hir::ProcessKind::kInitial:
       return LowerStraightLineProcess(
-          unit_state, scope_state, src, proc_state, mir::ProcessKind::kInitial);
+          unit_state, scope_state, src, time_resolution,
+          mir::ProcessKind::kInitial);
     case hir::ProcessKind::kFinal:
       return LowerStraightLineProcess(
-          unit_state, scope_state, src, proc_state, mir::ProcessKind::kFinal);
+          unit_state, scope_state, src, time_resolution,
+          mir::ProcessKind::kFinal);
     case hir::ProcessKind::kAlways:
     case hir::ProcessKind::kAlwaysFf:
       return LowerForeverProcess(
-          unit_state, scope_state, src, proc_state, std::nullopt);
+          unit_state, scope_state, src, time_resolution, std::nullopt);
     case hir::ProcessKind::kAlwaysComb:
     case hir::ProcessKind::kAlwaysLatch:
       return LowerForeverProcess(
-          unit_state, scope_state, src, proc_state,
+          unit_state, scope_state, src, time_resolution,
           BuildSensitivityWaitStmt(scope_state, src.implicit_sensitivity_list));
   }
   throw InternalError("LowerProcess: unknown HIR ProcessKind");

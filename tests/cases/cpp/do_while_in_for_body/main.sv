@@ -2,7 +2,7 @@ module Top;
   initial begin
     int total = 0;
     for (int i = 0; i < 3; i = i + 1) begin
-      int k = 0;
+      automatic int k = 0;
       do begin
         total = total + 1;
         k = k + 1;
