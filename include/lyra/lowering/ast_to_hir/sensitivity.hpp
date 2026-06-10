@@ -6,8 +6,6 @@
 #include <utility>
 #include <vector>
 
-#include "lyra/hir/stmt.hpp"
-
 namespace slang::analysis {
 class AnalysisContext;
 class AnalysisManager;
@@ -21,9 +19,6 @@ class ValueSymbol;
 }  // namespace slang::ast
 
 namespace lyra::lowering::ast_to_hir {
-
-class ScopeStack;
-class UnitLoweringState;
 
 // One leaf read produced by `SensitivityAnalyzer`.
 struct SensitivityRead {
@@ -76,13 +71,5 @@ class SensitivityAnalyzer {
   std::unordered_map<const slang::ast::Statement*, std::vector<SensitivityRead>>
       statement_cache_;
 };
-
-// Translates slang-side reads to HIR `SensitivityEntry`s. Reads whose symbol
-// has no visible structural binding (e.g. ports of an instance the caller is
-// not in) are silently skipped.
-auto TranslateSensitivityReads(
-    const std::vector<SensitivityRead>& reads,
-    const UnitLoweringState& unit_state, const ScopeStack& stack)
-    -> std::vector<hir::SensitivityEntry>;
 
 }  // namespace lyra::lowering::ast_to_hir

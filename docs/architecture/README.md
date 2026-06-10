@@ -28,8 +28,10 @@ Read top to bottom on first pass:
     cross-unit resolution through the SDK
 13. `identity_and_ownership.md` -- identity rules and forbidden shapes
 14. `lowering_boundaries.md` -- what each lowering may and may not do
-15. `incremental_build.md` -- query-based incremental compilation and caching
-16. `testing_strategy.md` -- test categories and structure
+15. `lowering_organization.md` -- how lowering passes organize their internal objects (facts,
+    registries, builders, walk frame)
+16. `incremental_build.md` -- query-based incremental compilation and caching
+17. `testing_strategy.md` -- test categories and structure
 
 ## Concept Index
 
@@ -49,6 +51,7 @@ If you are looking for a concept, this table points to the canonical doc.
 | Parameter values, specialization keys, per-specialization artifacts       | `specialization_model.md`   |
 | Identity rules; ownership; forbidden identity shapes                      | `identity_and_ownership.md` |
 | Lowering permissions (what each lowering may and may not do)              | `lowering_boundaries.md`    |
+| Lowering pass organization (facts / registry / builder / walk frame)      | `lowering_organization.md`  |
 | HIR shape (statements, expressions, primaries)                            | `hir.md`                    |
 | MIR shape (objects, members, callables, closures)                         | `mir.md`                    |
 | Member and type model; object types; owning pointer; vector wrapper       | `mir.md`                    |

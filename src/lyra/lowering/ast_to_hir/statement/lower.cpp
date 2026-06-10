@@ -1,547 +1,34 @@
-#include "lyra/lowering/ast_to_hir/statement/lower.hpp"
-
 #include <expected>
 #include <optional>
 #include <utility>
-#include <vector>
 
-#include <slang/ast/Expression.h>
 #include <slang/ast/Statement.h>
 #include <slang/ast/Symbol.h>
-#include <slang/ast/TimingControl.h>
 #include <slang/ast/statements/ConditionalStatements.h>
 #include <slang/ast/statements/LoopStatements.h>
 #include <slang/ast/statements/MiscStatements.h>
 #include <slang/ast/symbols/VariableSymbols.h>
 
-#include "lyra/base/internal_error.hpp"
 #include "lyra/diag/diag_code.hpp"
-#include "lyra/diag/diagnostic.hpp"
 #include "lyra/diag/kind.hpp"
-#include "lyra/hir/expr.hpp"
-#include "lyra/hir/stmt.hpp"
-#include "lyra/lowering/ast_to_hir/expression/lower.hpp"
-#include "lyra/lowering/ast_to_hir/facts.hpp"
-#include "lyra/lowering/ast_to_hir/sensitivity.hpp"
-#include "lyra/lowering/ast_to_hir/state.hpp"
-#include "lyra/lowering/ast_to_hir/statement/foreach.hpp"
+#include "lyra/lowering/ast_to_hir/module_lowerer.hpp"
+#include "lyra/lowering/ast_to_hir/process_lowerer.hpp"
+#include "lyra/lowering/ast_to_hir/statement/blocks.hpp"
+#include "lyra/lowering/ast_to_hir/statement/branches.hpp"
+#include "lyra/lowering/ast_to_hir/statement/dispatch.hpp"
+#include "lyra/lowering/ast_to_hir/statement/loops.hpp"
+#include "lyra/lowering/ast_to_hir/statement/timing.hpp"
 
 namespace lyra::lowering::ast_to_hir {
 
 namespace {
 
-auto LowerUniquePriorityCheck(slang::ast::UniquePriorityCheck check)
-    -> std::optional<hir::UniquePriorityCheck> {
-  switch (check) {
-    case slang::ast::UniquePriorityCheck::None:
-      return std::nullopt;
-    case slang::ast::UniquePriorityCheck::Unique:
-      return hir::UniquePriorityCheck::kUnique;
-    case slang::ast::UniquePriorityCheck::Unique0:
-      return hir::UniquePriorityCheck::kUnique0;
-    case slang::ast::UniquePriorityCheck::Priority:
-      return hir::UniquePriorityCheck::kPriority;
-  }
-  throw InternalError(
-      "LowerUniquePriorityCheck: unknown slang UniquePriorityCheck value");
-}
-
-auto LowerEventEdge(slang::ast::EdgeKind kind) -> hir::EventEdge {
-  switch (kind) {
-    case slang::ast::EdgeKind::None:
-      return hir::EventEdge::kAnyChange;
-    case slang::ast::EdgeKind::PosEdge:
-      return hir::EventEdge::kPosedge;
-    case slang::ast::EdgeKind::NegEdge:
-      return hir::EventEdge::kNegedge;
-    case slang::ast::EdgeKind::BothEdges:
-      return hir::EventEdge::kBothEdges;
-  }
-  throw InternalError("LowerEventEdge: unknown slang EdgeKind value");
-}
-
-auto LowerSignalEventTrigger(
-    const UnitLoweringFacts& unit_facts, UnitLoweringState& unit_state,
-    ProcessLoweringState& proc_state, const ScopeStack& stack,
-    const slang::ast::SignalEventControl& sig, diag::SourceSpan span)
-    -> diag::Result<hir::EventTrigger> {
-  if (sig.iffCondition != nullptr) {
-    return diag::Unsupported(
-        span, diag::DiagCode::kUnsupportedEventTriggerForm,
-        "`iff` qualifier on event control is not yet supported",
-        diag::UnsupportedCategory::kFeature);
-  }
-
-  auto expr_or =
-      LowerProcExpr(unit_facts, unit_state, proc_state, stack, sig.expr);
-  if (!expr_or) return std::unexpected(std::move(expr_or.error()));
-
-  if (!unit_state.GetType(expr_or->type).IsPackedArray()) {
-    return diag::Unsupported(
-        span, diag::DiagCode::kUnsupportedEventTriggerForm,
-        "event trigger expression must have an integral type; non-integral "
-        "trigger types are not yet supported",
-        diag::UnsupportedCategory::kFeature);
-  }
-
-  const auto edge_kind = LowerEventEdge(sig.edge);
-
-  const auto& reads = unit_facts.Sensitivity().AnalyzeReads(
-      sig.expr, proc_state.ContainingSymbol());
-  auto sensitivity_list = TranslateSensitivityReads(reads, unit_state, stack);
-  // Faithful record of SV: every leaf carries the trigger's edge identifier.
-  // Whether the runtime can act on it directly (single leaf, LSB-reduce) or
-  // needs a snapshot + re-eval wrapper (compound) is a HIR -> MIR decision.
-  for (auto& leaf : sensitivity_list) {
-    leaf.edge_kind = edge_kind;
-  }
-
-  return hir::EventTrigger{
-      .signal = proc_state.AddExpr(*std::move(expr_or)),
-      .edge = edge_kind,
-      .sensitivity_list = std::move(sensitivity_list),
-  };
-}
-
-// LRM 15.5.2 `@e;` on a named event. Distinguished from value-change `@(sig)`
-// by the controlled expression's type. Identity-only -- no edge polarity
-// applies, so reject any edge qualifier here.
-auto LowerNamedEventControl(
-    const UnitLoweringFacts& unit_facts, UnitLoweringState& unit_state,
-    ProcessLoweringState& proc_state, const ScopeStack& stack,
-    const slang::ast::SignalEventControl& sig, diag::SourceSpan span)
-    -> diag::Result<hir::NamedEventControl> {
-  if (sig.iffCondition != nullptr) {
-    return diag::Unsupported(
-        span, diag::DiagCode::kUnsupportedEventTriggerForm,
-        "`iff` qualifier on event control is not yet supported",
-        diag::UnsupportedCategory::kFeature);
-  }
-  if (sig.edge != slang::ast::EdgeKind::None) {
-    return diag::Unsupported(
-        span, diag::DiagCode::kUnsupportedEventTriggerForm,
-        "edge specifier is not valid on a named event",
-        diag::UnsupportedCategory::kFeature);
-  }
-
-  auto expr_or =
-      LowerProcExpr(unit_facts, unit_state, proc_state, stack, sig.expr);
-  if (!expr_or) return std::unexpected(std::move(expr_or.error()));
-
-  const auto* primary = std::get_if<hir::PrimaryExpr>(&expr_or->data);
-  if (primary == nullptr ||
-      !std::holds_alternative<hir::StructuralVarRef>(primary->data)) {
-    return diag::Unsupported(
-        span, diag::DiagCode::kUnsupportedEventTriggerForm,
-        "named event reference must be a plain structural variable",
-        diag::UnsupportedCategory::kFeature);
-  }
-  return hir::NamedEventControl{
-      .event = proc_state.AddExpr(*std::move(expr_or)),
-  };
-}
-
-auto LowerTimingControl(
-    const UnitLoweringFacts& unit_facts, UnitLoweringState& unit_state,
-    ProcessLoweringState& proc_state, const ScopeStack& stack,
-    const slang::ast::TimingControl& tc, diag::SourceSpan span)
-    -> diag::Result<hir::TimingControl> {
-  switch (tc.kind) {
-    case slang::ast::TimingControlKind::Delay: {
-      const auto& delay = tc.as<slang::ast::DelayControl>();
-      auto duration =
-          LowerProcExpr(unit_facts, unit_state, proc_state, stack, delay.expr);
-      if (!duration) return std::unexpected(std::move(duration.error()));
-      return hir::TimingControl{hir::DelayControl{
-          .duration = proc_state.AddExpr(*std::move(duration))}};
-    }
-    case slang::ast::TimingControlKind::SignalEvent: {
-      const auto& sig = tc.as<slang::ast::SignalEventControl>();
-      // Named events (LRM 15.5.2) and value-change events (LRM 9.4.2) share
-      // slang's SignalEventControl shape; distinguish by the controlled
-      // expression's type.
-      if (sig.expr.type->isEvent()) {
-        auto nec_or = LowerNamedEventControl(
-            unit_facts, unit_state, proc_state, stack, sig, span);
-        if (!nec_or) return std::unexpected(std::move(nec_or.error()));
-        return hir::TimingControl{*std::move(nec_or)};
-      }
-      auto trigger_or = LowerSignalEventTrigger(
-          unit_facts, unit_state, proc_state, stack, sig, span);
-      if (!trigger_or) return std::unexpected(std::move(trigger_or.error()));
-      return hir::TimingControl{
-          hir::EventControl{.triggers = {*std::move(trigger_or)}}};
-    }
-    case slang::ast::TimingControlKind::EventList: {
-      const auto& list = tc.as<slang::ast::EventListControl>();
-      std::vector<hir::EventTrigger> triggers;
-      triggers.reserve(list.events.size());
-      for (const auto* event : list.events) {
-        if (event->kind != slang::ast::TimingControlKind::SignalEvent) {
-          return diag::Unsupported(
-              span, diag::DiagCode::kUnsupportedTimingControlKind,
-              "event list entries must be signal events; nested timing "
-              "controls are not yet supported",
-              diag::UnsupportedCategory::kFeature);
-        }
-        const auto& sig = event->as<slang::ast::SignalEventControl>();
-        auto trigger_or = LowerSignalEventTrigger(
-            unit_facts, unit_state, proc_state, stack, sig, span);
-        if (!trigger_or) return std::unexpected(std::move(trigger_or.error()));
-        triggers.push_back(*std::move(trigger_or));
-      }
-      return hir::TimingControl{
-          hir::EventControl{.triggers = std::move(triggers)}};
-    }
-    case slang::ast::TimingControlKind::ImplicitEvent:
-      return hir::TimingControl{hir::ImplicitEventControl{}};
-    case slang::ast::TimingControlKind::RepeatedEvent:
-      return diag::Unsupported(
-          span, diag::DiagCode::kUnsupportedTimingControlKind,
-          "repeated event control (`repeat (N) @(...)`) is not yet supported",
-          diag::UnsupportedCategory::kFeature);
-    default:
-      return diag::Unsupported(
-          span, diag::DiagCode::kUnsupportedTimingControlKind,
-          "this timing control kind is not yet supported",
-          diag::UnsupportedCategory::kFeature);
-  }
-}
+// Trivial statement handlers kept inline here -- each is a short literal
+// constructor, not large enough to warrant its own subsystem file.
 
 auto LowerEmptyStmt(diag::SourceSpan span) -> diag::Result<hir::Stmt> {
   return hir::Stmt{
       .label = std::nullopt, .data = hir::EmptyStmt{}, .span = span};
-}
-
-auto LowerTimedStmt(
-    const UnitLoweringFacts& unit_facts, ProcessLoweringState& proc_state,
-    ScopeLoweringState& scope_state, ScopeStack& stack,
-    const slang::ast::TimedStatement& ts, diag::SourceSpan span)
-    -> diag::Result<hir::Stmt> {
-  auto timing = LowerTimingControl(
-      unit_facts, scope_state.UnitState(), proc_state, stack, ts.timing, span);
-  if (!timing) return std::unexpected(std::move(timing.error()));
-  // LRM 9.4.2.2: `@*` watches every read in the controlled body. Analyze
-  // the body statement directly; the TimingControl shell came back empty
-  // from LowerTimingControl.
-  if (auto* ie = std::get_if<hir::ImplicitEventControl>(&*timing)) {
-    const auto& reads = unit_facts.Sensitivity().AnalyzeReads(
-        ts.stmt, proc_state.ContainingSymbol());
-    ie->sensitivity_list =
-        TranslateSensitivityReads(reads, scope_state.UnitState(), stack);
-  }
-  auto inner_stmt =
-      LowerStatement(unit_facts, proc_state, scope_state, stack, ts.stmt);
-  if (!inner_stmt) return std::unexpected(std::move(inner_stmt.error()));
-  const hir::StmtId inner_id = proc_state.AddStmt(*std::move(inner_stmt));
-  return hir::Stmt{
-      .label = std::nullopt,
-      .data = hir::TimedStmt{.timing = *std::move(timing), .stmt = inner_id},
-      .span = span};
-}
-
-auto LowerStatementListStmt(
-    const UnitLoweringFacts& unit_facts, ProcessLoweringState& proc_state,
-    ScopeLoweringState& scope_state, ScopeStack& stack,
-    const slang::ast::StatementList& list, diag::SourceSpan span)
-    -> diag::Result<hir::Stmt> {
-  std::vector<hir::StmtId> kids;
-  kids.reserve(list.list.size());
-  for (const auto* child : list.list) {
-    auto child_stmt =
-        LowerStatement(unit_facts, proc_state, scope_state, stack, *child);
-    if (!child_stmt) return std::unexpected(std::move(child_stmt.error()));
-    kids.push_back(proc_state.AddStmt(*std::move(child_stmt)));
-  }
-  return hir::Stmt{
-      .label = std::nullopt,
-      .data = hir::BlockStmt{.statements = std::move(kids)},
-      .span = span};
-}
-
-// LRM 9.3.2 parallel block. Each parallel statement becomes one branch. FJ1
-// covers branches that touch only module-scope state; forms that need
-// procedural state or a hierarchy name, and forks inside a function, are
-// rejected here rather than miscompiled.
-auto LowerForkStmt(
-    const UnitLoweringFacts& unit_facts, ProcessLoweringState& proc_state,
-    ScopeLoweringState& scope_state, ScopeStack& stack,
-    const slang::ast::BlockStatement& block, diag::SourceSpan span)
-    -> diag::Result<hir::Stmt> {
-  // A function body is not a coroutine and cannot suspend, so it cannot spawn a
-  // branch (LRM 13.4). A task body is a coroutine and is supported.
-  if (proc_state.ContainingSymbol().kind ==
-          slang::ast::SymbolKind::Subroutine &&
-      proc_state.ContainingSymbol()
-              .as<slang::ast::SubroutineSymbol>()
-              .subroutineKind == slang::ast::SubroutineKind::Function) {
-    return diag::Unsupported(
-        span, diag::DiagCode::kUnsupportedForkJoinForm,
-        "a fork-join block inside a function is not yet supported",
-        diag::UnsupportedCategory::kFeature);
-  }
-  if (block.blockSymbol != nullptr && !block.blockSymbol->name.empty()) {
-    return diag::Unsupported(
-        span, diag::DiagCode::kUnsupportedForkJoinForm,
-        "a named fork-join block is not yet supported",
-        diag::UnsupportedCategory::kFeature);
-  }
-
-  hir::JoinMode mode = hir::JoinMode::kAll;
-  switch (block.blockKind) {
-    case slang::ast::StatementBlockKind::JoinAll:
-      mode = hir::JoinMode::kAll;
-      break;
-    case slang::ast::StatementBlockKind::JoinAny:
-      mode = hir::JoinMode::kAny;
-      break;
-    case slang::ast::StatementBlockKind::JoinNone:
-      mode = hir::JoinMode::kNone;
-      break;
-    case slang::ast::StatementBlockKind::Sequential:
-      throw InternalError("LowerForkStmt: called on a sequential block");
-  }
-
-  std::vector<const slang::ast::Statement*> body_stmts;
-  if (block.body.kind == slang::ast::StatementKind::List) {
-    const auto& list = block.body.as<slang::ast::StatementList>();
-    body_stmts.assign(list.list.begin(), list.list.end());
-  } else {
-    body_stmts.push_back(&block.body);
-  }
-
-  // LRM 9.3.2: a fork's block_item_declarations are not parallel statements --
-  // they are locals of the fork scope, initialized in the parent at block entry
-  // before any branch spawns. The grammar places them before the statements, so
-  // they form a prefix; each remaining statement is a branch. Locals lower in
-  // the enclosing (parent) context; only the branches enter the fork-branch
-  // scope.
-  std::vector<hir::StmtId> locals;
-  std::vector<const slang::ast::Statement*> branch_stmts;
-  for (const auto* child : body_stmts) {
-    if (child->kind == slang::ast::StatementKind::VariableDeclaration) {
-      auto local_stmt =
-          LowerStatement(unit_facts, proc_state, scope_state, stack, *child);
-      if (!local_stmt) {
-        return std::unexpected(std::move(local_stmt.error()));
-      }
-      locals.push_back(proc_state.AddStmt(*std::move(local_stmt)));
-    } else {
-      branch_stmts.push_back(child);
-    }
-  }
-
-  std::vector<hir::StmtId> branches;
-  branches.reserve(branch_stmts.size());
-  proc_state.EnterForkBranch();
-  for (const auto* child : branch_stmts) {
-    auto child_stmt =
-        LowerStatement(unit_facts, proc_state, scope_state, stack, *child);
-    if (!child_stmt) {
-      proc_state.ExitForkBranch();
-      return std::unexpected(std::move(child_stmt.error()));
-    }
-    branches.push_back(proc_state.AddStmt(*std::move(child_stmt)));
-  }
-  proc_state.ExitForkBranch();
-
-  return hir::Stmt{
-      .label = std::nullopt,
-      .data =
-          hir::ForkStmt{
-              .mode = mode,
-              .locals = std::move(locals),
-              .branches = std::move(branches)},
-      .span = span};
-}
-
-auto LowerBlockStmt(
-    const UnitLoweringFacts& unit_facts, ProcessLoweringState& proc_state,
-    ScopeLoweringState& scope_state, ScopeStack& stack,
-    const slang::ast::BlockStatement& block, diag::SourceSpan span)
-    -> diag::Result<hir::Stmt> {
-  if (block.blockKind != slang::ast::StatementBlockKind::Sequential) {
-    return LowerForkStmt(
-        unit_facts, proc_state, scope_state, stack, block, span);
-  }
-  std::vector<hir::StmtId> kids;
-  if (block.body.kind == slang::ast::StatementKind::List) {
-    const auto& list = block.body.as<slang::ast::StatementList>();
-    kids.reserve(list.list.size());
-    for (const auto* child : list.list) {
-      auto child_stmt =
-          LowerStatement(unit_facts, proc_state, scope_state, stack, *child);
-      if (!child_stmt) return std::unexpected(std::move(child_stmt.error()));
-      kids.push_back(proc_state.AddStmt(*std::move(child_stmt)));
-    }
-  } else {
-    auto child_stmt =
-        LowerStatement(unit_facts, proc_state, scope_state, stack, block.body);
-    if (!child_stmt) return std::unexpected(std::move(child_stmt.error()));
-    kids.push_back(proc_state.AddStmt(*std::move(child_stmt)));
-  }
-  return hir::Stmt{
-      .label = std::nullopt,
-      .data = hir::BlockStmt{.statements = std::move(kids)},
-      .span = span};
-}
-
-auto LowerVariableDeclStmt(
-    const UnitLoweringFacts& unit_facts, ProcessLoweringState& proc_state,
-    ScopeLoweringState& scope_state, const ScopeStack& stack,
-    const slang::ast::VariableDeclStatement& vd, diag::SourceSpan span)
-    -> diag::Result<hir::Stmt> {
-  const auto& mapper = unit_facts.SourceMapper();
-  const auto& sym = vd.symbol;
-  auto type_id_or = scope_state.UnitState().GetTypeId(
-      sym.getType(), mapper.PointSpanOf(sym.location));
-  if (!type_id_or) return std::unexpected(std::move(type_id_or.error()));
-  const auto local_id = proc_state.AddProceduralVar(sym, *type_id_or);
-  std::optional<hir::ExprId> init_id;
-  if (const auto* init_expr = sym.getInitializer()) {
-    auto init_or = LowerProcExpr(
-        unit_facts, scope_state.UnitState(), proc_state, stack, *init_expr);
-    if (!init_or) return std::unexpected(std::move(init_or.error()));
-    init_id = proc_state.AddExpr(*std::move(init_or));
-  }
-  return hir::Stmt{
-      .label = std::nullopt,
-      .data = hir::VarDeclStmt{.var = local_id, .init = init_id},
-      .span = span};
-}
-
-auto LowerExpressionStmt(
-    const UnitLoweringFacts& unit_facts, ProcessLoweringState& proc_state,
-    ScopeLoweringState& scope_state, const ScopeStack& stack,
-    const slang::ast::ExpressionStatement& es, diag::SourceSpan span)
-    -> diag::Result<hir::Stmt> {
-  auto expr = LowerProcExpr(
-      unit_facts, scope_state.UnitState(), proc_state, stack, es.expr);
-  if (!expr) return std::unexpected(std::move(expr.error()));
-  const hir::ExprId id = proc_state.AddExpr(*std::move(expr));
-  return hir::Stmt{
-      .label = std::nullopt, .data = hir::ExprStmt{.expr = id}, .span = span};
-}
-
-auto LowerForLoopStmt(
-    const UnitLoweringFacts& unit_facts, ProcessLoweringState& proc_state,
-    ScopeLoweringState& scope_state, ScopeStack& stack,
-    const slang::ast::ForLoopStatement& fs, diag::SourceSpan span)
-    -> diag::Result<hir::Stmt> {
-  // slang elaborates `for (int i = 0; ...)` as an independent preceding
-  // VariableDeclStatement plus a ForLoopStatement whose `initializers` is
-  // empty and `loopVars` only points at the already-declared symbol. The
-  // preceding VarDeclStatement carries the initializer, so loopVars is
-  // informational only and is ignored here.
-  std::vector<hir::ForInit> hir_init;
-  hir_init.reserve(fs.initializers.size());
-  for (const auto* init_expr : fs.initializers) {
-    auto init_or = LowerProcExpr(
-        unit_facts, scope_state.UnitState(), proc_state, stack, *init_expr);
-    if (!init_or) return std::unexpected(std::move(init_or.error()));
-    hir_init.emplace_back(
-        hir::ForInitExpr{.expr = proc_state.AddExpr(*std::move(init_or))});
-  }
-  std::optional<hir::ExprId> cond_id;
-  if (fs.stopExpr != nullptr) {
-    auto cond_or = LowerProcExpr(
-        unit_facts, scope_state.UnitState(), proc_state, stack, *fs.stopExpr);
-    if (!cond_or) return std::unexpected(std::move(cond_or.error()));
-    cond_id = proc_state.AddExpr(*std::move(cond_or));
-  }
-  std::vector<hir::ExprId> step_ids;
-  step_ids.reserve(fs.steps.size());
-  for (const auto* step_expr : fs.steps) {
-    auto step_or = LowerProcExpr(
-        unit_facts, scope_state.UnitState(), proc_state, stack, *step_expr);
-    if (!step_or) return std::unexpected(std::move(step_or.error()));
-    step_ids.push_back(proc_state.AddExpr(*std::move(step_or)));
-  }
-  auto body_stmt =
-      LowerStatement(unit_facts, proc_state, scope_state, stack, fs.body);
-  if (!body_stmt) return std::unexpected(std::move(body_stmt.error()));
-  const hir::StmtId body_id = proc_state.AddStmt(*std::move(body_stmt));
-  return hir::Stmt{
-      .label = std::nullopt,
-      .data =
-          hir::ForStmt{
-              .init = std::move(hir_init),
-              .condition = cond_id,
-              .step = std::move(step_ids),
-              .body = body_id},
-      .span = span};
-}
-
-auto LowerWhileLoopStmt(
-    const UnitLoweringFacts& unit_facts, ProcessLoweringState& proc_state,
-    ScopeLoweringState& scope_state, ScopeStack& stack,
-    const slang::ast::WhileLoopStatement& ws, diag::SourceSpan span)
-    -> diag::Result<hir::Stmt> {
-  auto cond_or = LowerProcExpr(
-      unit_facts, scope_state.UnitState(), proc_state, stack, ws.cond);
-  if (!cond_or) return std::unexpected(std::move(cond_or.error()));
-  const hir::ExprId cond_id = proc_state.AddExpr(*std::move(cond_or));
-  auto body_or =
-      LowerStatement(unit_facts, proc_state, scope_state, stack, ws.body);
-  if (!body_or) return std::unexpected(std::move(body_or.error()));
-  const hir::StmtId body_id = proc_state.AddStmt(*std::move(body_or));
-  return hir::Stmt{
-      .label = std::nullopt,
-      .data = hir::WhileStmt{.condition = cond_id, .body = body_id},
-      .span = span};
-}
-
-auto LowerRepeatLoopStmt(
-    const UnitLoweringFacts& unit_facts, ProcessLoweringState& proc_state,
-    ScopeLoweringState& scope_state, ScopeStack& stack,
-    const slang::ast::RepeatLoopStatement& rs, diag::SourceSpan span)
-    -> diag::Result<hir::Stmt> {
-  auto count_or = LowerProcExpr(
-      unit_facts, scope_state.UnitState(), proc_state, stack, rs.count);
-  if (!count_or) return std::unexpected(std::move(count_or.error()));
-  const hir::ExprId count_id = proc_state.AddExpr(*std::move(count_or));
-  auto body_or =
-      LowerStatement(unit_facts, proc_state, scope_state, stack, rs.body);
-  if (!body_or) return std::unexpected(std::move(body_or.error()));
-  const hir::StmtId body_id = proc_state.AddStmt(*std::move(body_or));
-  return hir::Stmt{
-      .label = std::nullopt,
-      .data = hir::RepeatStmt{.count = count_id, .body = body_id},
-      .span = span};
-}
-
-auto LowerDoWhileLoopStmt(
-    const UnitLoweringFacts& unit_facts, ProcessLoweringState& proc_state,
-    ScopeLoweringState& scope_state, ScopeStack& stack,
-    const slang::ast::DoWhileLoopStatement& ds, diag::SourceSpan span)
-    -> diag::Result<hir::Stmt> {
-  auto body_or =
-      LowerStatement(unit_facts, proc_state, scope_state, stack, ds.body);
-  if (!body_or) return std::unexpected(std::move(body_or.error()));
-  const hir::StmtId body_id = proc_state.AddStmt(*std::move(body_or));
-  auto cond_or = LowerProcExpr(
-      unit_facts, scope_state.UnitState(), proc_state, stack, ds.cond);
-  if (!cond_or) return std::unexpected(std::move(cond_or.error()));
-  const hir::ExprId cond_id = proc_state.AddExpr(*std::move(cond_or));
-  return hir::Stmt{
-      .label = std::nullopt,
-      .data = hir::DoWhileStmt{.condition = cond_id, .body = body_id},
-      .span = span};
-}
-
-auto LowerForeverLoopStmt(
-    const UnitLoweringFacts& unit_facts, ProcessLoweringState& proc_state,
-    ScopeLoweringState& scope_state, ScopeStack& stack,
-    const slang::ast::ForeverLoopStatement& fs, diag::SourceSpan span)
-    -> diag::Result<hir::Stmt> {
-  auto body_or =
-      LowerStatement(unit_facts, proc_state, scope_state, stack, fs.body);
-  if (!body_or) return std::unexpected(std::move(body_or.error()));
-  const hir::StmtId body_id = proc_state.AddStmt(*std::move(body_or));
-  return hir::Stmt{
-      .label = std::nullopt,
-      .data = hir::ForeverStmt{.body = body_id},
-      .span = span};
 }
 
 auto LowerBreakStmt(diag::SourceSpan span) -> diag::Result<hir::Stmt> {
@@ -554,176 +41,51 @@ auto LowerContinueStmt(diag::SourceSpan span) -> diag::Result<hir::Stmt> {
       .label = std::nullopt, .data = hir::ContinueStmt{}, .span = span};
 }
 
-auto LowerCaseInsideStmt(
-    const UnitLoweringFacts& unit_facts, ProcessLoweringState& proc_state,
-    ScopeLoweringState& scope_state, ScopeStack& stack,
-    const slang::ast::CaseStatement& cs, diag::SourceSpan span)
+auto LowerVariableDeclStmt(
+    ProcessLowerer& proc, WalkFrame frame,
+    const slang::ast::VariableDeclStatement& vd, diag::SourceSpan span)
     -> diag::Result<hir::Stmt> {
-  const auto case_check = LowerUniquePriorityCheck(cs.check);
-  auto cond_expr = LowerProcExpr(
-      unit_facts, scope_state.UnitState(), proc_state, stack, cs.expr);
-  if (!cond_expr) return std::unexpected(std::move(cond_expr.error()));
-  const hir::ExprId cond_id = proc_state.AddExpr(*std::move(cond_expr));
-  std::vector<hir::CaseInsideItem> items;
-  items.reserve(cs.items.size());
-  for (const auto& item : cs.items) {
-    std::vector<hir::InsideItem> inside_items;
-    inside_items.reserve(item.expressions.size());
-    for (const auto* label_expr : item.expressions) {
-      auto item_or = LowerInsideItem(
-          unit_facts, scope_state.UnitState(), proc_state, stack, *label_expr);
-      if (!item_or) return std::unexpected(std::move(item_or.error()));
-      inside_items.push_back(*std::move(item_or));
-    }
-    auto item_stmt =
-        LowerStatement(unit_facts, proc_state, scope_state, stack, *item.stmt);
-    if (!item_stmt) return std::unexpected(std::move(item_stmt.error()));
-    const hir::StmtId item_id = proc_state.AddStmt(*std::move(item_stmt));
-    items.push_back(
-        hir::CaseInsideItem{.items = std::move(inside_items), .stmt = item_id});
-  }
-  std::optional<hir::StmtId> default_id;
-  if (cs.defaultCase != nullptr) {
-    auto default_stmt = LowerStatement(
-        unit_facts, proc_state, scope_state, stack, *cs.defaultCase);
-    if (!default_stmt) return std::unexpected(std::move(default_stmt.error()));
-    default_id = proc_state.AddStmt(*std::move(default_stmt));
+  const auto& mapper = proc.Module().SourceMapper();
+  const auto& sym = vd.symbol;
+  auto type_id_or =
+      proc.Module().GetTypeId(sym.getType(), mapper.PointSpanOf(sym.location));
+  if (!type_id_or) return std::unexpected(std::move(type_id_or.error()));
+  const auto local_id = proc.AddProceduralVar(sym, *type_id_or);
+  std::optional<hir::ExprId> init_id;
+  if (const auto* init_expr = sym.getInitializer()) {
+    auto init_or = proc.LowerExpr(*init_expr, frame);
+    if (!init_or) return std::unexpected(std::move(init_or.error()));
+    init_id = proc.AddExpr(*std::move(init_or));
   }
   return hir::Stmt{
       .label = std::nullopt,
-      .data =
-          hir::CaseInsideStmt{
-              .condition = cond_id,
-              .items = std::move(items),
-              .default_stmt = default_id,
-              .check = case_check},
+      .data = hir::VarDeclStmt{.var = local_id, .init = init_id},
       .span = span};
 }
 
-auto LowerCaseStmt(
-    const UnitLoweringFacts& unit_facts, ProcessLoweringState& proc_state,
-    ScopeLoweringState& scope_state, ScopeStack& stack,
-    const slang::ast::CaseStatement& cs, diag::SourceSpan span)
+auto LowerExpressionStmt(
+    ProcessLowerer& proc, WalkFrame frame,
+    const slang::ast::ExpressionStatement& es, diag::SourceSpan span)
     -> diag::Result<hir::Stmt> {
-  if (cs.condition == slang::ast::CaseStatementCondition::Inside) {
-    return LowerCaseInsideStmt(
-        unit_facts, proc_state, scope_state, stack, cs, span);
-  }
-  const hir::CaseCondition condition_kind = [&] {
-    switch (cs.condition) {
-      case slang::ast::CaseStatementCondition::Normal:
-        return hir::CaseCondition::kNormal;
-      case slang::ast::CaseStatementCondition::WildcardJustZ:
-        return hir::CaseCondition::kWildcardJustZ;
-      case slang::ast::CaseStatementCondition::WildcardXOrZ:
-        return hir::CaseCondition::kWildcardXOrZ;
-      case slang::ast::CaseStatementCondition::Inside:
-        break;
-    }
-    throw InternalError(
-        "LowerCaseStmt: Inside should have been dispatched above");
-  }();
-  const auto case_check = LowerUniquePriorityCheck(cs.check);
-  auto cond_expr = LowerProcExpr(
-      unit_facts, scope_state.UnitState(), proc_state, stack, cs.expr);
-  if (!cond_expr) return std::unexpected(std::move(cond_expr.error()));
-  const hir::ExprId cond_id = proc_state.AddExpr(*std::move(cond_expr));
-  std::vector<hir::CaseItem> items;
-  items.reserve(cs.items.size());
-  for (const auto& item : cs.items) {
-    std::vector<hir::ExprId> label_ids;
-    label_ids.reserve(item.expressions.size());
-    for (const auto* label_expr : item.expressions) {
-      auto label_or = LowerProcExpr(
-          unit_facts, scope_state.UnitState(), proc_state, stack, *label_expr);
-      if (!label_or) return std::unexpected(std::move(label_or.error()));
-      label_ids.push_back(proc_state.AddExpr(*std::move(label_or)));
-    }
-    auto item_stmt =
-        LowerStatement(unit_facts, proc_state, scope_state, stack, *item.stmt);
-    if (!item_stmt) return std::unexpected(std::move(item_stmt.error()));
-    const hir::StmtId item_id = proc_state.AddStmt(*std::move(item_stmt));
-    items.push_back(
-        hir::CaseItem{.labels = std::move(label_ids), .stmt = item_id});
-  }
-  std::optional<hir::StmtId> default_id;
-  if (cs.defaultCase != nullptr) {
-    auto default_stmt = LowerStatement(
-        unit_facts, proc_state, scope_state, stack, *cs.defaultCase);
-    if (!default_stmt) return std::unexpected(std::move(default_stmt.error()));
-    default_id = proc_state.AddStmt(*std::move(default_stmt));
-  }
+  auto expr = proc.LowerExpr(es.expr, frame);
+  if (!expr) return std::unexpected(std::move(expr.error()));
+  const hir::ExprId id = proc.AddExpr(*std::move(expr));
   return hir::Stmt{
-      .label = std::nullopt,
-      .data =
-          hir::CaseStmt{
-              .condition_kind = condition_kind,
-              .condition = cond_id,
-              .items = std::move(items),
-              .default_stmt = default_id,
-              .check = case_check},
-      .span = span};
-}
-
-auto LowerConditionalStmt(
-    const UnitLoweringFacts& unit_facts, ProcessLoweringState& proc_state,
-    ScopeLoweringState& scope_state, ScopeStack& stack,
-    const slang::ast::ConditionalStatement& cs, diag::SourceSpan span)
-    -> diag::Result<hir::Stmt> {
-  const auto if_check = LowerUniquePriorityCheck(cs.check);
-  if (cs.conditions.size() != 1) {
-    return diag::Unsupported(
-        span, diag::DiagCode::kUnsupportedStatementForm,
-        "multi-condition if expressions are not yet supported",
-        diag::UnsupportedCategory::kFeature);
-  }
-  const auto& cond = cs.conditions.front();
-  if (cond.pattern != nullptr) {
-    return diag::Unsupported(
-        span, diag::DiagCode::kUnsupportedStatementForm,
-        "pattern matching in if conditions is not yet supported",
-        diag::UnsupportedCategory::kFeature);
-  }
-  auto cond_expr = LowerProcExpr(
-      unit_facts, scope_state.UnitState(), proc_state, stack, *cond.expr);
-  if (!cond_expr) return std::unexpected(std::move(cond_expr.error()));
-  const hir::ExprId cond_id = proc_state.AddExpr(*std::move(cond_expr));
-  auto then_stmt =
-      LowerStatement(unit_facts, proc_state, scope_state, stack, cs.ifTrue);
-  if (!then_stmt) return std::unexpected(std::move(then_stmt.error()));
-  const hir::StmtId then_id = proc_state.AddStmt(*std::move(then_stmt));
-  std::optional<hir::StmtId> else_id;
-  if (cs.ifFalse != nullptr) {
-    auto else_stmt =
-        LowerStatement(unit_facts, proc_state, scope_state, stack, *cs.ifFalse);
-    if (!else_stmt) return std::unexpected(std::move(else_stmt.error()));
-    else_id = proc_state.AddStmt(*std::move(else_stmt));
-  }
-  return hir::Stmt{
-      .label = std::nullopt,
-      .data =
-          hir::IfStmt{
-              .condition = cond_id,
-              .then_stmt = then_id,
-              .else_stmt = else_id,
-              .check = if_check},
-      .span = span};
+      .label = std::nullopt, .data = hir::ExprStmt{.expr = id}, .span = span};
 }
 
 // LRM 13.4.1 `return [expr];`. A non-void function carries the returned
 // expression; void functions and tasks use the bare form, leaving `value`
 // absent.
 auto LowerReturnStmt(
-    const UnitLoweringFacts& unit_facts, ProcessLoweringState& proc_state,
-    ScopeLoweringState& scope_state, const ScopeStack& stack,
+    ProcessLowerer& proc, WalkFrame frame,
     const slang::ast::ReturnStatement& rs, diag::SourceSpan span)
     -> diag::Result<hir::Stmt> {
   std::optional<hir::ExprId> value;
   if (rs.expr != nullptr) {
-    auto expr_or = LowerProcExpr(
-        unit_facts, scope_state.UnitState(), proc_state, stack, *rs.expr);
+    auto expr_or = proc.LowerExpr(*rs.expr, frame);
     if (!expr_or) return std::unexpected(std::move(expr_or.error()));
-    value = proc_state.AddExpr(*std::move(expr_or));
+    value = proc.AddExpr(*std::move(expr_or));
   }
   return hir::Stmt{
       .label = std::nullopt,
@@ -733,82 +95,10 @@ auto LowerReturnStmt(
 
 }  // namespace
 
-// LRM 15.5.1 `-> e;`. Source-aligned with slang's EventTriggerStatement. The
-// `->>` non-blocking form and any delay-or-event-control prefix are deferred.
-auto LowerEventTriggerStmt(
-    const UnitLoweringFacts& unit_facts, ProcessLoweringState& proc_state,
-    ScopeLoweringState& scope_state, const ScopeStack& stack,
-    const slang::ast::EventTriggerStatement& et, diag::SourceSpan span)
-    -> diag::Result<hir::Stmt> {
-  if (et.isNonBlocking) {
-    return diag::Unsupported(
-        span, diag::DiagCode::kUnsupportedStatementForm,
-        "non-blocking event trigger `->>` is not yet supported",
-        diag::UnsupportedCategory::kFeature);
-  }
-  if (et.timing != nullptr) {
-    return diag::Unsupported(
-        span, diag::DiagCode::kUnsupportedStatementForm,
-        "delayed event trigger (with intra-trigger timing control) is not yet "
-        "supported",
-        diag::UnsupportedCategory::kFeature);
-  }
-  auto expr_or = LowerProcExpr(
-      unit_facts, scope_state.UnitState(), proc_state, stack, et.target);
-  if (!expr_or) return std::unexpected(std::move(expr_or.error()));
-  const auto* primary = std::get_if<hir::PrimaryExpr>(&expr_or->data);
-  if (primary == nullptr ||
-      !std::holds_alternative<hir::StructuralVarRef>(primary->data)) {
-    return diag::Unsupported(
-        span, diag::DiagCode::kUnsupportedStatementForm,
-        "event trigger target must be a plain named-event reference",
-        diag::UnsupportedCategory::kFeature);
-  }
-  return hir::Stmt{
-      .label = std::nullopt,
-      .data =
-          hir::EventTriggerStmt{
-              .event = proc_state.AddExpr(*std::move(expr_or)),
-          },
-      .span = span};
-}
-
-// LRM 9.4.3 `wait (cond) body`. Sensitivity is precomputed by driving slang's
-// flow analysis on `w.cond` via a per-wait `DefaultDFA` run inside
-// `BuildSensitivityReadStore` (see `docs/decisions/read-set-inference.md`).
-// We look up the result here keyed by the cond expression.
-auto LowerWaitStmt(
-    const UnitLoweringFacts& unit_facts, ProcessLoweringState& proc_state,
-    ScopeLoweringState& scope_state, ScopeStack& stack,
-    const slang::ast::WaitStatement& w, diag::SourceSpan span)
-    -> diag::Result<hir::Stmt> {
-  auto cond_or = LowerProcExpr(
-      unit_facts, scope_state.UnitState(), proc_state, stack, w.cond);
-  if (!cond_or) return std::unexpected(std::move(cond_or.error()));
-  const hir::ExprId cond_id = proc_state.AddExpr(*std::move(cond_or));
-  auto body_or =
-      LowerStatement(unit_facts, proc_state, scope_state, stack, w.stmt);
-  if (!body_or) return std::unexpected(std::move(body_or.error()));
-  const hir::StmtId body_id = proc_state.AddStmt(*std::move(body_or));
-  const auto& reads = unit_facts.Sensitivity().AnalyzeReads(
-      w.cond, proc_state.ContainingSymbol());
-  auto sensitivity =
-      TranslateSensitivityReads(reads, scope_state.UnitState(), stack);
-  return hir::Stmt{
-      .label = std::nullopt,
-      .data =
-          hir::WaitStmt{
-              .cond = cond_id,
-              .body = body_id,
-              .sensitivity_list = std::move(sensitivity)},
-      .span = span};
-}
-
 auto LowerStatement(
-    const UnitLoweringFacts& unit_facts, ProcessLoweringState& proc_state,
-    ScopeLoweringState& scope_state, ScopeStack& stack,
-    const slang::ast::Statement& stmt) -> diag::Result<hir::Stmt> {
-  const auto& mapper = unit_facts.SourceMapper();
+    ProcessLowerer& proc, WalkFrame frame, const slang::ast::Statement& stmt)
+    -> diag::Result<hir::Stmt> {
+  const auto& mapper = proc.Module().SourceMapper();
   const auto span = mapper.SpanOf(stmt.sourceRange);
   switch (stmt.kind) {
     case slang::ast::StatementKind::Empty:
@@ -816,68 +106,55 @@ auto LowerStatement(
 
     case slang::ast::StatementKind::EventTrigger:
       return LowerEventTriggerStmt(
-          unit_facts, proc_state, scope_state, stack,
-          stmt.as<slang::ast::EventTriggerStatement>(), span);
+          proc, frame, stmt.as<slang::ast::EventTriggerStatement>(), span);
 
     case slang::ast::StatementKind::Wait:
       return LowerWaitStmt(
-          unit_facts, proc_state, scope_state, stack,
-          stmt.as<slang::ast::WaitStatement>(), span);
+          proc, frame, stmt.as<slang::ast::WaitStatement>(), span);
 
     case slang::ast::StatementKind::Timed:
       return LowerTimedStmt(
-          unit_facts, proc_state, scope_state, stack,
-          stmt.as<slang::ast::TimedStatement>(), span);
+          proc, frame, stmt.as<slang::ast::TimedStatement>(), span);
 
     case slang::ast::StatementKind::List:
       return LowerStatementListStmt(
-          unit_facts, proc_state, scope_state, stack,
-          stmt.as<slang::ast::StatementList>(), span);
+          proc, frame, stmt.as<slang::ast::StatementList>(), span);
 
     case slang::ast::StatementKind::Block:
       return LowerBlockStmt(
-          unit_facts, proc_state, scope_state, stack,
-          stmt.as<slang::ast::BlockStatement>(), span);
+          proc, frame, stmt.as<slang::ast::BlockStatement>(), span);
 
     case slang::ast::StatementKind::VariableDeclaration:
       return LowerVariableDeclStmt(
-          unit_facts, proc_state, scope_state, stack,
-          stmt.as<slang::ast::VariableDeclStatement>(), span);
+          proc, frame, stmt.as<slang::ast::VariableDeclStatement>(), span);
 
     case slang::ast::StatementKind::ExpressionStatement:
       return LowerExpressionStmt(
-          unit_facts, proc_state, scope_state, stack,
-          stmt.as<slang::ast::ExpressionStatement>(), span);
+          proc, frame, stmt.as<slang::ast::ExpressionStatement>(), span);
 
     case slang::ast::StatementKind::ForLoop:
       return LowerForLoopStmt(
-          unit_facts, proc_state, scope_state, stack,
-          stmt.as<slang::ast::ForLoopStatement>(), span);
+          proc, frame, stmt.as<slang::ast::ForLoopStatement>(), span);
 
     case slang::ast::StatementKind::WhileLoop:
       return LowerWhileLoopStmt(
-          unit_facts, proc_state, scope_state, stack,
-          stmt.as<slang::ast::WhileLoopStatement>(), span);
+          proc, frame, stmt.as<slang::ast::WhileLoopStatement>(), span);
 
     case slang::ast::StatementKind::RepeatLoop:
       return LowerRepeatLoopStmt(
-          unit_facts, proc_state, scope_state, stack,
-          stmt.as<slang::ast::RepeatLoopStatement>(), span);
+          proc, frame, stmt.as<slang::ast::RepeatLoopStatement>(), span);
 
     case slang::ast::StatementKind::DoWhileLoop:
       return LowerDoWhileLoopStmt(
-          unit_facts, proc_state, scope_state, stack,
-          stmt.as<slang::ast::DoWhileLoopStatement>(), span);
+          proc, frame, stmt.as<slang::ast::DoWhileLoopStatement>(), span);
 
     case slang::ast::StatementKind::ForeverLoop:
       return LowerForeverLoopStmt(
-          unit_facts, proc_state, scope_state, stack,
-          stmt.as<slang::ast::ForeverLoopStatement>(), span);
+          proc, frame, stmt.as<slang::ast::ForeverLoopStatement>(), span);
 
     case slang::ast::StatementKind::ForeachLoop:
-      return LowerForeachLoopStmt(
-          unit_facts, proc_state, scope_state, stack,
-          stmt.as<slang::ast::ForeachLoopStatement>(), span);
+      return proc.LowerForeachStmt(
+          stmt.as<slang::ast::ForeachLoopStatement>(), frame);
 
     case slang::ast::StatementKind::Break:
       return LowerBreakStmt(span);
@@ -887,18 +164,15 @@ auto LowerStatement(
 
     case slang::ast::StatementKind::Case:
       return LowerCaseStmt(
-          unit_facts, proc_state, scope_state, stack,
-          stmt.as<slang::ast::CaseStatement>(), span);
+          proc, frame, stmt.as<slang::ast::CaseStatement>(), span);
 
     case slang::ast::StatementKind::Conditional:
       return LowerConditionalStmt(
-          unit_facts, proc_state, scope_state, stack,
-          stmt.as<slang::ast::ConditionalStatement>(), span);
+          proc, frame, stmt.as<slang::ast::ConditionalStatement>(), span);
 
     case slang::ast::StatementKind::Return:
       return LowerReturnStmt(
-          unit_facts, proc_state, scope_state, stack,
-          stmt.as<slang::ast::ReturnStatement>(), span);
+          proc, frame, stmt.as<slang::ast::ReturnStatement>(), span);
 
     default:
       return diag::Unsupported(
@@ -906,6 +180,14 @@ auto LowerStatement(
           "this statement form is not supported yet",
           diag::UnsupportedCategory::kFeature);
   }
+}
+
+// Class method wrapper. The pass-class entry delegates to the free-function
+// dispatcher above.
+auto ProcessLowerer::LowerStmt(
+    const slang::ast::Statement& stmt, WalkFrame frame)
+    -> diag::Result<hir::Stmt> {
+  return LowerStatement(*this, frame, stmt);
 }
 
 }  // namespace lyra::lowering::ast_to_hir

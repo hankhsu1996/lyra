@@ -1,8 +1,7 @@
-#include "lyra/lowering/ast_to_hir/generate.hpp"
-
 #include <expected>
 #include <optional>
 #include <span>
+#include <string>
 #include <utility>
 #include <vector>
 
@@ -16,11 +15,9 @@
 #include "lyra/diag/diagnostic.hpp"
 #include "lyra/hir/expr.hpp"
 #include "lyra/hir/structural_scope.hpp"
-#include "lyra/lowering/ast_to_hir/expression/lower.hpp"
 #include "lyra/lowering/ast_to_hir/expression/slang_atoms.hpp"
-#include "lyra/lowering/ast_to_hir/facts.hpp"
-#include "lyra/lowering/ast_to_hir/scope.hpp"
-#include "lyra/lowering/ast_to_hir/state.hpp"
+#include "lyra/lowering/ast_to_hir/module_lowerer.hpp"
+#include "lyra/lowering/ast_to_hir/scope_lowerer.hpp"
 
 namespace lyra::lowering::ast_to_hir {
 
@@ -36,20 +33,8 @@ auto AddChildStructuralScope(hir::Generate& gen, hir::StructuralScope scope)
 }
 
 // Derive the per-entry implicit-genvar ParameterSymbol that substitutes for
-// `array.loopVariable` inside the canonical entry body.
-//
-// Invariant: header refs to the loop variable use pointer identity to
-// `array.loopVariable`; body refs use this derived ParameterSymbol. Both are
-// registered as keys in UnitLoweringState's loop-var binding map and resolve
-// to the same hir::LoopVarDeclId.
-//
-// The derivation is necessary because slang gives no API connecting the
-// header `loopVariable` and an entry's implicit genvar parameter -- they
-// share name, source location, and the `isFromGenvar` flag, but are
-// independently allocated objects. See slang
-// source/ast/symbols/BlockSymbols.cpp:794-816 for the construction.
-//
-// Caller must guard array.entries.empty() before calling this helper.
+// `array.loopVariable` inside the canonical entry body. See
+// slang source/ast/symbols/BlockSymbols.cpp:794-816 for construction details.
 auto DeriveLoopVariableSubstitution(
     const slang::ast::GenerateBlockArraySymbol& array,
     const slang::ast::GenerateBlockSymbol& entry)
@@ -59,7 +44,8 @@ auto DeriveLoopVariableSubstitution(
   }
   if (entry.getParentScope() != &array) {
     throw InternalError(
-        "DeriveLoopVariableSubstitution: entry is not a direct child of array");
+        "DeriveLoopVariableSubstitution: entry is not a direct child of "
+        "array");
   }
 
   const slang::ast::ParameterSymbol* found = nullptr;
@@ -81,32 +67,37 @@ auto DeriveLoopVariableSubstitution(
   return found;
 }
 
+// Adds a generate child scope: constructs a fresh ScopeLowerer for the slang
+// block, runs it, registers the owned-child binding.
 auto AddChildScope(
-    const UnitLoweringFacts& unit_facts, UnitLoweringState& unit_state,
-    ScopeStack& stack, hir::Generate& generate, ScopeFrameId home_frame,
-    hir::GenerateId generate_id, const slang::ast::GenerateBlockSymbol& block)
-    -> diag::Result<hir::StructuralScopeId> {
+    ModuleLowerer& module, hir::Generate& generate, ScopeFrameId home_frame,
+    hir::GenerateId generate_id, const slang::ast::GenerateBlockSymbol& block,
+    WalkFrame frame) -> diag::Result<hir::StructuralScopeId> {
   hir::StructuralScope scope;
   scope.source_name = std::string{block.name};
-  auto r = LowerScopeInto(unit_facts, unit_state, scope, block, stack);
-  if (!r) return std::unexpected(std::move(r.error()));
+
+  // Insert the scope first so we can pass its inner reference to the child
+  // lowerer; child writes go into the inserted scope.
   const hir::StructuralScopeId scope_id =
       AddChildStructuralScope(generate, std::move(scope));
-  unit_state.MapOwnedChildBinding(
+  auto& inserted_scope = generate.child_scopes.at(scope_id.value);
+
+  ScopeLowerer child(module, inserted_scope, block);
+  module.MapOwnedChildBinding(
       block, home_frame,
       hir::DownwardHead{
           .child = hir::GenerateChildRef{
               .generate = generate_id, .scope = scope_id}});
+  auto r = child.Run(frame);
+  if (!r) return std::unexpected(std::move(r.error()));
   return scope_id;
 }
 
 }  // namespace
 
-auto BuildIfGenerate(
-    const UnitLoweringFacts& unit_facts, UnitLoweringState& unit_state,
-    ScopeLoweringState& parent_state, ScopeStack& stack,
-    std::span<const slang::ast::GenerateBlockSymbol* const> siblings)
-    -> diag::Result<hir::Generate> {
+auto ScopeLowerer::BuildIfGenerate(
+    std::span<const slang::ast::GenerateBlockSymbol* const> siblings,
+    WalkFrame frame) -> diag::Result<hir::Generate> {
   const slang::ast::GenerateBlockSymbol* then_block = nullptr;
   const slang::ast::GenerateBlockSymbol* else_block = nullptr;
   for (const auto* block : siblings) {
@@ -119,42 +110,43 @@ auto BuildIfGenerate(
         break;
       default:
         throw InternalError(
-            "BuildIfGenerate: unexpected branch kind in if-generate sibling "
-            "group");
+            "ScopeLowerer::BuildIfGenerate: unexpected branch kind in "
+            "if-generate sibling group");
     }
   }
   if (then_block == nullptr) {
     throw InternalError(
-        "BuildIfGenerate: if-generate group has no IfTrue branch");
+        "ScopeLowerer::BuildIfGenerate: if-generate group has no IfTrue "
+        "branch");
   }
   const auto* cond = then_block->getConditionExpression();
   if (cond == nullptr) {
     throw InternalError(
-        "BuildIfGenerate: IfTrue branch has no bound condition expression");
+        "ScopeLowerer::BuildIfGenerate: IfTrue branch has no bound "
+        "condition expression");
   }
   if (else_block != nullptr && else_block->getConditionExpression() != cond) {
     throw InternalError(
-        "BuildIfGenerate: sibling branches have mismatched condition "
-        "expressions");
+        "ScopeLowerer::BuildIfGenerate: sibling branches have mismatched "
+        "condition expressions");
   }
 
-  auto cond_expr =
-      LowerStructuralExpr(unit_facts, unit_state, parent_state, stack, *cond);
+  auto cond_expr = LowerExpr(*cond, frame);
   if (!cond_expr) return std::unexpected(std::move(cond_expr.error()));
-  const hir::ExprId cond_id = parent_state.AddExpr(*std::move(cond_expr));
+  const hir::ExprId cond_id = AddExpr(*std::move(cond_expr));
 
   hir::Generate gen{};
-  const ScopeFrameId gen_frame = parent_state.Frame();
-  const hir::GenerateId gen_id = parent_state.NextGenerateId();
+  const ScopeFrameId gen_frame = frame_;
+  const hir::GenerateId gen_id = NextGenerateId();
 
-  auto then_id = AddChildScope(
-      unit_facts, unit_state, stack, gen, gen_frame, gen_id, *then_block);
+  auto then_id =
+      AddChildScope(*module_, gen, gen_frame, gen_id, *then_block, frame);
   if (!then_id) return std::unexpected(std::move(then_id.error()));
 
   std::optional<hir::StructuralScopeId> else_id;
   if (else_block != nullptr) {
-    auto built = AddChildScope(
-        unit_facts, unit_state, stack, gen, gen_frame, gen_id, *else_block);
+    auto built =
+        AddChildScope(*module_, gen, gen_frame, gen_id, *else_block, frame);
     if (!built) return std::unexpected(std::move(built.error()));
     else_id = *built;
   }
@@ -164,36 +156,34 @@ auto BuildIfGenerate(
   return gen;
 }
 
-auto BuildCaseGenerate(
-    const UnitLoweringFacts& unit_facts, UnitLoweringState& unit_state,
-    ScopeLoweringState& parent_state, ScopeStack& stack,
-    std::span<const slang::ast::GenerateBlockSymbol* const> siblings)
-    -> diag::Result<hir::Generate> {
+auto ScopeLowerer::BuildCaseGenerate(
+    std::span<const slang::ast::GenerateBlockSymbol* const> siblings,
+    WalkFrame frame) -> diag::Result<hir::Generate> {
   if (siblings.empty()) {
     throw InternalError(
-        "BuildCaseGenerate: case-generate sibling group is empty");
+        "ScopeLowerer::BuildCaseGenerate: case-generate sibling group is "
+        "empty");
   }
   const auto* discriminator = siblings.front()->getConditionExpression();
   if (discriminator == nullptr) {
     throw InternalError(
-        "BuildCaseGenerate: sibling has no condition expression");
+        "ScopeLowerer::BuildCaseGenerate: sibling has no condition expression");
   }
   for (const auto* block : siblings) {
     if (block->getConditionExpression() != discriminator) {
       throw InternalError(
-          "BuildCaseGenerate: siblings have mismatched condition "
-          "expressions");
+          "ScopeLowerer::BuildCaseGenerate: siblings have mismatched "
+          "condition expressions");
     }
   }
 
-  auto cond_expr = LowerStructuralExpr(
-      unit_facts, unit_state, parent_state, stack, *discriminator);
+  auto cond_expr = LowerExpr(*discriminator, frame);
   if (!cond_expr) return std::unexpected(std::move(cond_expr.error()));
-  const hir::ExprId cond_id = parent_state.AddExpr(*std::move(cond_expr));
+  const hir::ExprId cond_id = AddExpr(*std::move(cond_expr));
 
   hir::Generate gen{};
-  const ScopeFrameId gen_frame = parent_state.Frame();
-  const hir::GenerateId gen_id = parent_state.NextGenerateId();
+  const ScopeFrameId gen_frame = frame_;
+  const hir::GenerateId gen_id = NextGenerateId();
 
   std::vector<hir::CaseGenerateItem> items;
   std::optional<hir::StructuralScopeId> default_id;
@@ -204,15 +194,14 @@ auto BuildCaseGenerate(
         std::vector<hir::ExprId> labels;
         labels.reserve(block->caseItemExpressions.size());
         for (const auto* label_expr : block->caseItemExpressions) {
-          auto label_expr_lowered = LowerStructuralExpr(
-              unit_facts, unit_state, parent_state, stack, *label_expr);
-          if (!label_expr_lowered)
+          auto label_expr_lowered = LowerExpr(*label_expr, frame);
+          if (!label_expr_lowered) {
             return std::unexpected(std::move(label_expr_lowered.error()));
-          labels.push_back(
-              parent_state.AddExpr(*std::move(label_expr_lowered)));
+          }
+          labels.push_back(AddExpr(*std::move(label_expr_lowered)));
         }
-        auto item_id = AddChildScope(
-            unit_facts, unit_state, stack, gen, gen_frame, gen_id, *block);
+        auto item_id =
+            AddChildScope(*module_, gen, gen_frame, gen_id, *block, frame);
         if (!item_id) return std::unexpected(std::move(item_id.error()));
         items.push_back(
             hir::CaseGenerateItem{
@@ -222,18 +211,19 @@ auto BuildCaseGenerate(
       case slang::ast::GenerateBranchKind::CaseDefault: {
         if (default_id.has_value()) {
           throw InternalError(
-              "BuildCaseGenerate: case-generate has more than one default "
-              "branch");
+              "ScopeLowerer::BuildCaseGenerate: case-generate has more than "
+              "one default branch");
         }
-        auto built = AddChildScope(
-            unit_facts, unit_state, stack, gen, gen_frame, gen_id, *block);
+        auto built =
+            AddChildScope(*module_, gen, gen_frame, gen_id, *block, frame);
         if (!built) return std::unexpected(std::move(built.error()));
         default_id = *built;
         break;
       }
       default:
         throw InternalError(
-            "BuildCaseGenerate: unexpected branch kind in case-generate");
+            "ScopeLowerer::BuildCaseGenerate: unexpected branch kind in "
+            "case-generate");
     }
   }
 
@@ -244,18 +234,15 @@ auto BuildCaseGenerate(
   return gen;
 }
 
+namespace {
+
 // Lower the iter expression of a loop_generate header into the loop's
-// next-value expression for its loop variable. Per LRM 27.5,
-// genvar_iteration is restricted to: `i = e`, `i op= e`, `++i`, `i++`, `--i`,
-// `i--`. All four forms compute exactly one new value for THE loop variable.
-// Compound is rebuilt as `BinaryExpr{op, ReadOfLvalue, user_rhs}`; the genvar
-// is a constant-elaborated parameter so its read is trivial and slang's
-// promotion Conversions are no-ops at int <-> int.
+// next-value expression for its loop variable (LRM 27.5).
 auto LowerLoopIterNextValue(
-    const UnitLoweringFacts& unit_facts, UnitLoweringState& unit_state,
-    ScopeLoweringState& parent_state, const ScopeStack& stack,
-    const slang::ast::Expression& iter) -> diag::Result<hir::Expr> {
-  const auto& mapper = unit_facts.SourceMapper();
+    ScopeLowerer& parent, ModuleLowerer& module,
+    const slang::ast::Expression& iter, WalkFrame frame)
+    -> diag::Result<hir::Expr> {
+  const auto& mapper = module.SourceMapper();
   const auto span = mapper.SpanOf(iter.sourceRange);
 
   if (iter.kind != slang::ast::ExpressionKind::Assignment) {
@@ -267,22 +254,19 @@ auto LowerLoopIterNextValue(
 
   const auto& assign = iter.as<slang::ast::AssignmentExpression>();
   if (!assign.op.has_value()) {
-    return LowerStructuralExpr(
-        unit_facts, unit_state, parent_state, stack, assign.right());
+    return parent.LowerExpr(assign.right(), frame);
   }
 
-  auto read = LowerStructuralExpr(
-      unit_facts, unit_state, parent_state, stack, assign.left());
+  auto read = parent.LowerExpr(assign.left(), frame);
   if (!read) return std::unexpected(std::move(read.error()));
-  const hir::ExprId read_id = parent_state.AddExpr(*std::move(read));
+  const hir::ExprId read_id = parent.AddExpr(*std::move(read));
 
   const auto& bare_rhs = BareCompoundUserRhs(assign.right());
-  auto rhs = LowerStructuralExpr(
-      unit_facts, unit_state, parent_state, stack, bare_rhs);
+  auto rhs = parent.LowerExpr(bare_rhs, frame);
   if (!rhs) return std::unexpected(std::move(rhs.error()));
-  const hir::ExprId rhs_id = parent_state.AddExpr(*std::move(rhs));
+  const hir::ExprId rhs_id = parent.AddExpr(*std::move(rhs));
 
-  auto type_id = unit_state.GetTypeId(*iter.type, span);
+  auto type_id = module.GetTypeId(*iter.type, span);
   if (!type_id) return std::unexpected(std::move(type_id.error()));
   return hir::Expr{
       .type = *type_id,
@@ -293,73 +277,70 @@ auto LowerLoopIterNextValue(
   };
 }
 
-auto BuildLoopGenerate(
-    const UnitLoweringFacts& unit_facts, UnitLoweringState& unit_state,
-    ScopeLoweringState& parent_state, ScopeStack& stack,
-    const slang::ast::GenerateBlockArraySymbol& array)
+}  // namespace
+
+auto ScopeLowerer::BuildLoopGenerate(
+    const slang::ast::GenerateBlockArraySymbol& array, WalkFrame frame)
     -> diag::Result<hir::Generate> {
   const auto* loop_var_sym = array.loopVariable;
   if (loop_var_sym == nullptr || array.initialExpression == nullptr ||
       array.stopExpression == nullptr || array.iterExpression == nullptr) {
     throw InternalError(
-        "BuildLoopGenerate: GenerateBlockArraySymbol is missing loopVariable "
-        "or bound header expressions");
+        "ScopeLowerer::BuildLoopGenerate: GenerateBlockArraySymbol is "
+        "missing loopVariable or bound header expressions");
   }
 
   const auto var_span =
-      unit_facts.SourceMapper().PointSpanOf(loop_var_sym->location);
-  auto loop_var_type_or =
-      unit_state.GetTypeId(loop_var_sym->getType(), var_span);
+      module_->SourceMapper().PointSpanOf(loop_var_sym->location);
+  auto loop_var_type_or = module_->GetTypeId(loop_var_sym->getType(), var_span);
   if (!loop_var_type_or) {
     return std::unexpected(std::move(loop_var_type_or.error()));
   }
 
   const hir::LoopVarDeclId loop_var_id =
-      parent_state.AddLoopVarDecl(*loop_var_sym, *loop_var_type_or);
+      AddLoopVarDecl(*loop_var_sym, *loop_var_type_or);
 
-  auto initial_expr = LowerStructuralExpr(
-      unit_facts, unit_state, parent_state, stack, *array.initialExpression);
+  auto initial_expr = LowerExpr(*array.initialExpression, frame);
   if (!initial_expr) return std::unexpected(std::move(initial_expr.error()));
-  const hir::ExprId initial_id = parent_state.AddExpr(*std::move(initial_expr));
+  const hir::ExprId initial_id = AddExpr(*std::move(initial_expr));
 
-  auto stop_expr = LowerStructuralExpr(
-      unit_facts, unit_state, parent_state, stack, *array.stopExpression);
+  auto stop_expr = LowerExpr(*array.stopExpression, frame);
   if (!stop_expr) return std::unexpected(std::move(stop_expr.error()));
-  const hir::ExprId stop_id = parent_state.AddExpr(*std::move(stop_expr));
+  const hir::ExprId stop_id = AddExpr(*std::move(stop_expr));
 
-  auto iter_expr = LowerLoopIterNextValue(
-      unit_facts, unit_state, parent_state, stack, *array.iterExpression);
+  auto iter_expr =
+      LowerLoopIterNextValue(*this, *module_, *array.iterExpression, frame);
   if (!iter_expr) return std::unexpected(std::move(iter_expr.error()));
-  const hir::ExprId iter_id = parent_state.AddExpr(*std::move(iter_expr));
+  const hir::ExprId iter_id = AddExpr(*std::move(iter_expr));
 
   hir::Generate gen{};
   hir::StructuralScope loop_scope_seed;
   loop_scope_seed.source_name = std::string{array.name};
   const hir::StructuralScopeId loop_scope_id =
       AddChildStructuralScope(gen, std::move(loop_scope_seed));
-  unit_state.MapOwnedChildBinding(
-      array, parent_state.Frame(),
+  module_->MapOwnedChildBinding(
+      array, frame_,
       hir::DownwardHead{
           .child = hir::GenerateChildRef{
-              .generate = parent_state.NextGenerateId(),
-              .scope = loop_scope_id}});
+              .generate = NextGenerateId(), .scope = loop_scope_id}});
 
   if (!array.entries.empty()) {
     const auto& canonical_entry = *array.entries.front();
     const auto* body_param =
         DeriveLoopVariableSubstitution(array, canonical_entry);
 
-    const ScopeEntryLoopVarBinding body_binding{
-        .symbol = body_param,
-        .home_frame = parent_state.Frame(),
-        .loop_var = loop_var_id,
-        .type = *loop_var_type_or,
-    };
+    std::vector<ScopeEntryLoopVarBinding> body_bindings{
+        ScopeEntryLoopVarBinding{
+            .symbol = body_param,
+            .home_frame = frame_,
+            .loop_var = loop_var_id,
+            .type = *loop_var_type_or,
+        }};
 
     auto& loop_scope = gen.child_scopes.at(loop_scope_id.value);
-    auto r = LowerScopeInto(
-        unit_facts, unit_state, loop_scope, canonical_entry, stack,
-        std::span{&body_binding, 1});
+    ScopeLowerer child(
+        *module_, loop_scope, canonical_entry, std::move(body_bindings));
+    auto r = child.Run(frame);
     if (!r) return std::unexpected(std::move(r.error()));
   }
 
