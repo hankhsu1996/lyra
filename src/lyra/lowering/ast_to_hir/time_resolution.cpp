@@ -9,6 +9,8 @@
 
 namespace lyra::lowering::ast_to_hir {
 
+namespace {
+
 auto TimeScaleValueToPower(slang::TimeScaleValue v) -> std::int8_t {
   const int unit_power = -3 * static_cast<int>(v.unit);
   int mag_power = 0;
@@ -25,6 +27,8 @@ auto TimeScaleValueToPower(slang::TimeScaleValue v) -> std::int8_t {
   }
   return static_cast<std::int8_t>(unit_power + mag_power);
 }
+
+}  // namespace
 
 auto ResolveTimeResolution(std::optional<slang::TimeScale> ts)
     -> TimeResolution {

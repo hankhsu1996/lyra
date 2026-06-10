@@ -1,5 +1,3 @@
-#include "lyra/lowering/ast_to_hir/lower.hpp"
-
 #include <expected>
 #include <string>
 #include <unordered_set>
@@ -13,8 +11,8 @@
 
 #include "lyra/diag/diagnostic.hpp"
 #include "lyra/hir/module_unit.hpp"
-#include "lyra/lowering/ast_to_hir/facts.hpp"
-#include "lyra/lowering/ast_to_hir/module.hpp"
+#include "lyra/lowering/ast_to_hir/lower.hpp"
+#include "lyra/lowering/ast_to_hir/module_lowerer.hpp"
 
 namespace lyra::lowering::ast_to_hir {
 
@@ -41,27 +39,48 @@ struct UnitCollector
   }
 };
 
+// Per-compilation lowerer: walks the top instances, dedups to one canonical
+// body per distinct unit, and constructs one ModuleLowerer per unit. Runs
+// once via Run(); file-local because no driver consumer needs to see it.
+class CompilationLowerer {
+ public:
+  explicit CompilationLowerer(const LowerCompilationFacts& facts)
+      : facts_(facts), unit_facts_(facts.SourceMapper(), facts.Sensitivity()) {
+  }
+
+  auto Run() -> diag::Result<std::vector<hir::ModuleUnit>> {
+    const auto unit_bodies = CollectUnits();
+    std::vector<hir::ModuleUnit> units;
+    units.reserve(unit_bodies.size());
+    for (const auto* body : unit_bodies) {
+      ModuleLowerer module(unit_facts_, *body);
+      auto u = module.Run();
+      if (!u) return std::unexpected(std::move(u.error()));
+      units.push_back(*std::move(u));
+    }
+    return units;
+  }
+
+ private:
+  auto CollectUnits() -> std::vector<const slang::ast::InstanceBodySymbol*> {
+    const auto& root = facts_.Compilation().getRoot();
+    UnitCollector collector;
+    for (const auto* top : root.topInstances) {
+      top->visit(collector);
+    }
+    return std::move(collector.order);
+  }
+
+  LowerCompilationFacts facts_;
+  LoweringFacts unit_facts_;
+};
+
 }  // namespace
 
 auto LowerCompilation(const LowerCompilationFacts& facts)
     -> diag::Result<std::vector<hir::ModuleUnit>> {
-  const UnitLoweringFacts unit_facts(facts.SourceMapper(), facts.Sensitivity());
-  const auto& root = facts.Compilation().getRoot();
-
-  UnitCollector collector;
-  for (const auto* top : root.topInstances) {
-    top->visit(collector);
-  }
-
-  std::vector<hir::ModuleUnit> units;
-  units.reserve(collector.order.size());
-  for (const auto* body : collector.order) {
-    auto u = LowerModule(unit_facts, *body);
-    if (!u) return std::unexpected(std::move(u.error()));
-    units.push_back(*std::move(u));
-  }
-
-  return units;
+  CompilationLowerer lowerer(facts);
+  return lowerer.Run();
 }
 
 auto TopLevelUnitNames(slang::ast::Compilation& compilation)

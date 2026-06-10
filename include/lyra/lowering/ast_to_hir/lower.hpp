@@ -12,6 +12,10 @@
 
 namespace lyra::lowering::ast_to_hir {
 
+// Driver-supplied facts threaded into AST-to-HIR lowering. `Compilation&` is
+// the slang elaboration root; `SourceMapper&` translates slang source
+// locations; `SensitivityAnalyzer&` is reused across modules so its read
+// cache survives.
 class LowerCompilationFacts {
  public:
   LowerCompilationFacts(
@@ -46,9 +50,9 @@ class LowerCompilationFacts {
 auto LowerCompilation(const LowerCompilationFacts& facts)
     -> diag::Result<std::vector<hir::ModuleUnit>>;
 
-// A top-level block is an auto-promoted, uninstantiated module. These names are
-// a subset of the compiled units: a unit reached only through instantiation is
-// compiled but is not a top.
+// A top-level block is an auto-promoted, uninstantiated module. These names
+// are a subset of the compiled units: a unit reached only through
+// instantiation is compiled but is not a top.
 auto TopLevelUnitNames(slang::ast::Compilation& compilation)
     -> std::vector<std::string>;
 

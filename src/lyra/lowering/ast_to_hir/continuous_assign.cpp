@@ -1,25 +1,25 @@
-#include "lyra/lowering/ast_to_hir/continuous_assign.hpp"
+#include "lyra/hir/continuous_assign.hpp"
 
 #include <expected>
 #include <utility>
 
 #include <slang/ast/Expression.h>
 #include <slang/ast/expressions/AssignmentExpressions.h>
+#include <slang/ast/symbols/MemberSymbols.h>
 
 #include "lyra/base/internal_error.hpp"
 #include "lyra/diag/diag_code.hpp"
 #include "lyra/diag/diagnostic.hpp"
 #include "lyra/diag/kind.hpp"
-#include "lyra/lowering/ast_to_hir/expression/lower.hpp"
-#include "lyra/lowering/ast_to_hir/sensitivity.hpp"
+#include "lyra/lowering/ast_to_hir/module_lowerer.hpp"
+#include "lyra/lowering/ast_to_hir/scope_lowerer.hpp"
 
 namespace lyra::lowering::ast_to_hir {
 
-auto LowerContinuousAssign(
-    const UnitLoweringFacts& unit_facts, ScopeLoweringState& scope_state,
-    ScopeStack& stack, const slang::ast::ContinuousAssignSymbol& sym)
+auto ScopeLowerer::LowerContinuousAssign(
+    const slang::ast::ContinuousAssignSymbol& sym, WalkFrame frame)
     -> diag::Result<hir::ContinuousAssign> {
-  const auto& mapper = unit_facts.SourceMapper();
+  const auto& mapper = module_->SourceMapper();
   const auto span = mapper.PointSpanOf(sym.location);
 
   if (sym.getDelay() != nullptr) {
@@ -39,35 +39,29 @@ auto LowerContinuousAssign(
   const auto& assignment_expr = sym.getAssignment();
   if (assignment_expr.kind != slang::ast::ExpressionKind::Assignment) {
     throw InternalError(
-        "LowerContinuousAssign: ContinuousAssignSymbol.getAssignment() did not "
-        "return an AssignmentExpression");
+        "ScopeLowerer::LowerContinuousAssign: ContinuousAssignSymbol."
+        "getAssignment() did not return an AssignmentExpression");
   }
   const auto& assign = assignment_expr.as<slang::ast::AssignmentExpression>();
 
-  // Null proc_state -> scope (continuous-assign) context: structural-var
-  // targets only.
-  auto validate_lhs = ValidateAssignableSlangExpr(
-      unit_facts, scope_state.UnitState(), nullptr, assign.left());
+  // Structural (continuous-assign) context: structural-var targets only.
+  auto validate_lhs = ValidateAssignableStructural(assign.left());
   if (!validate_lhs) {
     return std::unexpected(std::move(validate_lhs.error()));
   }
-  auto lhs_or = LowerStructuralExpr(
-      unit_facts, scope_state.UnitState(), scope_state, stack, assign.left());
+  auto lhs_or = LowerExpr(assign.left(), frame);
   if (!lhs_or) return std::unexpected(std::move(lhs_or.error()));
-  const hir::ExprId lhs_id = scope_state.AddExpr(*std::move(lhs_or));
+  const hir::ExprId lhs_id = AddExpr(*std::move(lhs_or));
 
-  auto rhs_or = LowerStructuralExpr(
-      unit_facts, scope_state.UnitState(), scope_state, stack, assign.right());
+  auto rhs_or = LowerExpr(assign.right(), frame);
   if (!rhs_or) return std::unexpected(std::move(rhs_or.error()));
-  const hir::ExprId rhs_id = scope_state.AddExpr(*std::move(rhs_or));
+  const hir::ExprId rhs_id = AddExpr(*std::move(rhs_or));
 
   // LRM 10.3.2: continuous assignment sensitivity is the read set of the
-  // RHS expression. slang treats the `ContinuousAssignSymbol` as the
+  // RHS expression. slang treats the ContinuousAssignSymbol as the
   // procedural scope for analysis purposes.
-  const auto& reads =
-      unit_facts.Sensitivity().AnalyzeReads(assignment_expr, sym);
-  auto sensitivity =
-      TranslateSensitivityReads(reads, scope_state.UnitState(), stack);
+  const auto& reads = module_->Sensitivity().AnalyzeReads(assignment_expr, sym);
+  auto sensitivity = module_->TranslateSensitivityReads(reads, frame);
 
   return hir::ContinuousAssign{
       .span = span,

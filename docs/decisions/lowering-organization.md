@@ -1,0 +1,245 @@
+# Lowering organization
+
+Date: 2026-06-08 Status: accepted
+
+## Context
+
+The lowering layer carried god-objects -- `ProcessLoweringState`, `UnitLoweringState`,
+`StructuralScopeLoweringState`, `ProceduralScopeLoweringState` -- each mixing several categories of
+state. R9 and R10 in `docs/progress/refactor.md` identified the smell: `const ProcessLoweringState&`
+qualifiers compensating for a misleading `*State` name; helper signatures threading four references
+where typically one is the real input; ambient mutable state on objects whose names claimed to be
+const-friendly.
+
+Successive closure-shaped features (NBA submit, fork-join branch, scan IIFE, with-clause plus
+iterator index) each added a new ambient field to `ProcessLoweringState` and a parallel install /
+restore dance at every producer site. The pattern was unsustainable: each new walk-time concept
+either added a sig-thrashing signature parameter or a parallel ambient field on the wrong object.
+
+The MIR-to-C++ backend showed a related smell. `RenderContext` carried facts and walk-position state
+in one immutable struct, with `With*()` copy-on-descend semantics; the `mutable owned_temp_counter_`
+escape hatch existed because the immutable pattern did not fit accumulating state. Free `Render*`
+functions took the Context as a separate parameter rather than being methods on a renderer class.
+
+Three pass layers (AST-to-HIR, HIR-to-MIR, MIR-to-C++) each carried a variant of the same
+organizational decision; the decisions had drifted enough that consistency and symmetry had been
+lost. This decision is the architecture reset: it pins one shape used across every lowering and
+rendering pass. The architecture contract is in `docs/architecture/lowering_organization.md`.
+
+## Decision
+
+**Every lowering or rendering pass is implemented as a class scoped to one task instance.** A class
+named for the unit of work and the action (`ProcessLowerer`, `CppProcessRenderer`, `ScopeLowerer`)
+is constructed at the entry to one process / scope / unit lowering and destroyed when that task
+completes.
+
+**The constructor injects facts.** Read-only inputs (type tables, builtin TypeIds, structural-scope
+facts, HIR references, time resolution) are constructor parameters. After construction, facts are
+not mutated.
+
+**The class owns its registries and builders.** Append-only accumulators (procedural-var bindings,
+static-locals list) and the per-task root scope builder are class members. Their lifetimes equal the
+class instance's lifetime.
+
+**Walker methods take exactly two parameters.** Each private walker method has the signature
+`(const NodeType& node, WalkFrame frame) -> diag::Result<OutputType>` (or raw `OutputType` when the
+method cannot emit a diagnostic). Walker methods access class state through `this`; they do not
+receive per-pass state as separate parameters.
+
+**`WalkFrame` is a small value type for per-recursion state.** It carries the current write-target
+scope-builder reference, the current procedural depth, an optional closure context, and any future
+stack-discipline traversal state. It is passed by value.
+
+**Scalability promise.** A new fact is a class-member addition and a constructor-parameter addition;
+walker method signatures do not change. A new walk-time concept is a `WalkFrame` struct-field
+addition; walker method signatures and class members do not change. The historical "every new
+concept thrashes every helper signature" pattern is converted into "per-concept growth localized to
+one location."
+
+**Pattern is shared across lowering and rendering passes; concrete types are not.** No base type
+spans the pass boundary. The HIR-to-MIR `ProcessLowerer` and the MIR-to-C++ `CppProcessRenderer`
+share only the pattern shape.
+
+## Rejected alternatives
+
+- **Free functions threading separate facts, registries, and builders as narrow references.** The
+  sig-audit-strongest shape. Signature width grows with the product of helpers and concepts; the
+  closure-shaped feature history (NBA, fork-join, scan IIFE, with-clause + iterator) is direct
+  evidence that the thrash pattern is real and persistent.
+
+- **`LoweringContext` god-bag carrying all of unit + process + scope + walk-state.** The
+  hospitality-desk failure mode: anything that needs threading lands in the bag. Cross-kind bundling
+  hides which references a helper actually mutates. The codebase has historical evidence of this
+  exact failure.
+
+- **`UnitContext` / `ProcessContext` per-scope bundles.** Smaller hospitality desk, same growth
+  pattern. The boundary is lifetime, not role; transient buffers and scratch space qualify and
+  accumulate.
+
+- **`UnitLowering` / `ProcessLowering` multi-kind bundles** (facts plus registries plus builders in
+  one type). A body-lowering helper holding such a bundle by `const&` and a decl-lowering helper
+  holding it by `&` regenerates the `const State&` paradox this decision exists to remove.
+
+- **Ambient `CaptureSink*` field on a facts-shaped class with RAII save / restore.** Closes the
+  symptom (no caller forgets to restore) without removing the root cause (ambient mutable state on
+  an object whose name claims const). Each new closure-shaped feature adds a parallel ambient field.
+
+- **`MarkClosureBody` post-construction mutation on a scope state.** Two-phase construction violates
+  the rule that an object's contract is fixed at construction.
+
+- **Immutable Context with `With*()` copy-on-descend (the current MIR-to-C++ backend shape).** The
+  superficial appeal is descent symmetry; the costs accumulate: the `Context` name is the same
+  hospitality desk at every layer; the immutability is breached by a `mutable` escape hatch the
+  moment accumulation is needed (the backend's `owned_temp_counter_` is exactly that breach); the
+  class that ends up owning the accumulators sits beside the Context as a parallel structure,
+  doubling the surface. A single class with a by-value walk frame is cleaner: identical descent
+  semantics, no escape hatch, no parallel structure.
+
+- **A single walker struct passed as the one fat parameter.** Same pathology as a context. Different
+  name does not change the failure mode.
+
+- **A shared base class spanning lowering and rendering pass classes.** Per-pass content is
+  different; a base would be either empty (useless) or invite layer-specific fields to leak across,
+  recreating the hospitality-desk failure mode at a higher altitude.
+
+- **A `*State` suffix retained on the new class.** The suffix was the source of the const paradox.
+  Removing it forces the choice of an honest name (`Lowerer`, `Renderer`, `Builder`).
+
+## Consequences
+
+- `ProcessLoweringState` is replaced by `ProcessLowerer`, a class scoped to one process lowering.
+  Time resolution, static-frame scope reference, and the HIR process reference become facts injected
+  at construction. The procedural-var binding table and the static-locals list become class-owned
+  registries. Procedural depth, active capture sink, and active iterator-index binding move to
+  `WalkFrame`.
+
+- `UnitLoweringState` is replaced by per-purpose objects: the HIR-to-MIR type-translation map
+  becomes a `TypeMap` registry; canonical TypeIds remain as `BuiltinMirTypes` facts. Their
+  composition into the surrounding `ScopeLowerer` / `ProcessLowerer` classes is per pass; no
+  `UnitLoweringState`-equivalent god class survives.
+
+- `StructuralScopeLoweringState` and `ProceduralScopeLoweringState` become `StructuralScopeBuilder`
+  and `ProceduralScopeBuilder`. They are pure builders. The scope-lowering pass class owns or
+  references one builder per output scope.
+
+- `ScopeStack`, `ProceduralDepthGuard`, and `ScopeStackGuard` are absorbed by `WalkFrame`. No
+  separate guard types survive.
+
+- `RenderContext` in the MIR-to-C++ backend is replaced by `CppProcessRenderer` (and analogous
+  classes per task instance: scope renderer, unit renderer). The `With*()` copy-on-descend
+  convention becomes "construct a new `WalkFrame` and recurse"; `mutable owned_temp_counter_`
+  becomes a class-owned registry. Free `Render*` functions become class methods.
+
+- `LowerExpr`, `LowerStmt`, `RenderExpr`, `RenderStmt`, and their internal helpers in every pass
+  change signature once. The signature shape after this is fixed.
+
+- Subsequent closure-shaped features (assoc-array iterator forms, further iterator methods,
+  additional capture patterns) add a `WalkFrame` field; no signature change. Subsequent facts add a
+  class member and a constructor parameter; no walker signature change.
+
+- AST-to-HIR adopts the same pattern (`ScopeLowerer` and analogues); concrete facts, registries,
+  builders, and walk-frame fields are layer-specific.
+
+- The R9 and R10 entries in `refactor.md` close at the target-shape level. Their implementation PRs
+  remain open until the migration lands across all three passes.
+
+## Follow-up Decision: Multi-File Organization Within an Expression / Statement Layer
+
+### Context
+
+After the AST-to-HIR migration landed, the expression-lowering and statement-lowering
+implementations each lived in a single file (`expression/lower.cpp` at ~2,000 lines;
+`statement/lower.cpp` at ~800 lines). The dispatch switch and every per-kind handler shared one
+translation unit. Two concerns drove this follow-up decision:
+
+1. The single-file shape does not scale. Each new expression / statement kind grows one file
+   monotonically. Single-file lowering at this size becomes the next refactor target as more LRM
+   features land.
+2. The first decomposition idea -- per-subsystem private namespace (`expr_detail::`) plus a single
+   internal contract header containing dispatchers plus shared utilities plus per-kind handler
+   declarations -- introduced a new namespace convention not used elsewhere in the codebase, and the
+   shared header drifted into the same shape (a junk drawer of `LowerInsideItemImpl`,
+   `ValidateAssignableImpl`, `MakeRefExpr`, `TypeIdOfSlangExpr`, `MakeReturnConventionType`) that
+   the architecture reset existed to prevent.
+
+The lesson from `RenderContext` and `ProcessLoweringState` was: when a single header / class carries
+"everything the layer needs", the structure invites unbounded growth and the convention that limits
+it is one code review away from failing. The same trap was reappearing in the "internal contract
+header" form.
+
+### Decision
+
+The AST-to-HIR expression and statement layers are decomposed into one central dispatcher plus
+per-subsystem header / implementation pairs, where each subsystem corresponds to one LRM-level
+expression / statement family. The split is structural, not stylistic.
+
+- One `dispatch.hpp` per layer declares only the recursive dispatcher entries (`LowerProcExpr` /
+  `LowerStructuralExpr` on the expression side; the statement dispatcher on the statement side). It
+  declares nothing else.
+- One subsystem header per family declares the per-kind handlers it owns. Operators (unary, binary,
+  conditional, conversion), references (named-value, hierarchical), calls, selects (element-select,
+  range-select, member-access), aggregates (concat, replication, assignment-pattern,
+  replicated-assignment-pattern, new-array), assignment (assignment, inc / dec, assignability
+  validation), and inside (inside operator, inside-item). On the statement side: blocks, loops,
+  branches, timing.
+- One subsystem implementation defines the handlers and any anonymous-namespace helpers private to
+  the family.
+- All declarations live in the layer's main namespace (`lyra::lowering::ast_to_hir`); no `detail::`
+  sub-namespace is introduced. The "internal" signal is the header's location inside the subsystem
+  folder, matching the existing convention used by `hir_to_mir`'s `inside_predicate.hpp` /
+  `case_cascade.hpp` / `default_value.hpp`.
+- Per-kind handlers are free functions taking the relevant pass class instance by reference
+  (`ProcessLowerer&` or `ScopeLowerer&`) plus the walk frame plus the slang node. They are not
+  methods on the pass class; methods would grow the public class declaration and the recompile cost
+  of every translation unit that includes it, and would reproduce the kind-by-kind growth the
+  architecture reset abolished at the lower-layer level.
+
+### Rejected alternatives
+
+- **Per-subsystem private namespace (`expr_detail::`) plus single shared header.** Introduces a new
+  namespace convention not used elsewhere; the shared header drifts toward a junk drawer.
+
+- **One mega internal header (`expression/handlers.hpp` or similar) listing every dispatcher, shared
+  utility, and per-kind handler in one namespace.** The header itself becomes a coupling hub: every
+  subsystem includes it for everything; any handler signature change forces every subsystem to
+  recompile; the natural home for "shared between two subsystems" is "drop it in the mega header",
+  which is the same Context-bloat pattern at the file level.
+
+- **Per-kind handlers as methods on the pass class.** Grows the public class declaration by one
+  method per kind; every consumer of the class header recompiles when a kind is added. The pass
+  class identity drifts from "owns the process's facts / builder" to "knows how to lower every kind
+  of expression", which is the god-bag failure mode at the class level.
+
+- **Per-kind handlers as free functions with narrowed parameters (separate facts / registry /
+  builder references in the signature).** Reproduces the sig-explosion shape the architecture reset
+  exists to escape. The pass class instance is the single access pass to the task; narrowing the
+  signature does not add safety because the pass class API is already bounded by the four-kind rule
+  and the IR shape upstream.
+
+- **Compile-time / CI structural enforcement on pass class method counts.** Considered as an
+  additional safeguard against future drift on the pass class's derived-accessor API. Not adopted:
+  the existing structural safeguards (the four-kind rule, the IR-shape cascade for any new state,
+  the contract's forbidden shapes) cover the high-risk growth paths; the residual risk (a derived
+  accessor that wraps existing state in a new method) has small blast radius and is left to code
+  review.
+
+### Consequences
+
+- The single-file `expression/lower.cpp` and `statement/lower.cpp` become central dispatcher files
+  plus per-subsystem files. Each file is bounded in scope and in line count.
+- Adding a new expression / statement kind touches three files: the subsystem header that owns its
+  family, the subsystem implementation, and the central dispatcher's switch. No other subsystem
+  recompiles.
+- Adding a new family creates a new subsystem header / implementation pair and adds switch cases in
+  the central dispatcher; existing subsystems are not touched.
+- The `dispatch.hpp` admission rule (declare only dispatcher entries; redirect everything else to
+  its true home) is documented inline in the file header so reviewers and contributors have a clear
+  referent for "does this belong here?".
+- `TypeIdOfSlangExpr` is replaced by `ModuleLowerer::GetTypeIdOf`, a class method. `MakeRefExpr`
+  becomes a subsystem-local helper in `references.cpp` (its only consumer).
+  `MakeReturnConventionType` becomes a subsystem-local helper in `calls.cpp` (its only consumer).
+  `LowerInsideItemImpl` and `ValidateAssignableImpl` live in `inside.hpp` and `assignment.hpp`
+  respectively. The dispatch header carries none of these.
+- The architecture contract `lowering_organization.md` gains invariants 10-12 and the "Multi-File
+  Organization Within a Pass Layer" section codifying this shape so the HIR-to-MIR (R10) and
+  MIR-to-cpp (R11) migrations land on the same pattern.

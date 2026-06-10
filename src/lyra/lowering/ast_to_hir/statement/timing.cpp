@@ -1,0 +1,265 @@
+#include "lyra/lowering/ast_to_hir/statement/timing.hpp"
+
+#include <expected>
+#include <optional>
+#include <utility>
+#include <variant>
+#include <vector>
+
+#include <slang/ast/Statement.h>
+#include <slang/ast/TimingControl.h>
+#include <slang/ast/statements/MiscStatements.h>
+
+#include "lyra/base/internal_error.hpp"
+#include "lyra/diag/diag_code.hpp"
+#include "lyra/diag/kind.hpp"
+#include "lyra/hir/value_ref.hpp"
+#include "lyra/lowering/ast_to_hir/module_lowerer.hpp"
+#include "lyra/lowering/ast_to_hir/statement/dispatch.hpp"
+
+namespace lyra::lowering::ast_to_hir {
+
+namespace {
+
+auto LowerEventEdge(slang::ast::EdgeKind kind) -> hir::EventEdge {
+  switch (kind) {
+    case slang::ast::EdgeKind::None:
+      return hir::EventEdge::kAnyChange;
+    case slang::ast::EdgeKind::PosEdge:
+      return hir::EventEdge::kPosedge;
+    case slang::ast::EdgeKind::NegEdge:
+      return hir::EventEdge::kNegedge;
+    case slang::ast::EdgeKind::BothEdges:
+      return hir::EventEdge::kBothEdges;
+  }
+  throw InternalError("LowerEventEdge: unknown slang EdgeKind value");
+}
+
+auto LowerSignalEventTrigger(
+    ProcessLowerer& proc, WalkFrame frame,
+    const slang::ast::SignalEventControl& sig, diag::SourceSpan span)
+    -> diag::Result<hir::EventTrigger> {
+  if (sig.iffCondition != nullptr) {
+    return diag::Unsupported(
+        span, diag::DiagCode::kUnsupportedEventTriggerForm,
+        "`iff` qualifier on event control is not yet supported",
+        diag::UnsupportedCategory::kFeature);
+  }
+
+  auto expr_or = proc.LowerExpr(sig.expr, frame);
+  if (!expr_or) return std::unexpected(std::move(expr_or.error()));
+
+  if (!proc.Module().GetType(expr_or->type).IsPackedArray()) {
+    return diag::Unsupported(
+        span, diag::DiagCode::kUnsupportedEventTriggerForm,
+        "event trigger expression must have an integral type; non-integral "
+        "trigger types are not yet supported",
+        diag::UnsupportedCategory::kFeature);
+  }
+
+  const auto edge_kind = LowerEventEdge(sig.edge);
+
+  const auto& reads = proc.Module().Sensitivity().AnalyzeReads(
+      sig.expr, proc.ContainingSymbol());
+  auto sensitivity_list = proc.Module().TranslateSensitivityReads(reads, frame);
+  // Faithful record of SV: every leaf carries the trigger's edge identifier.
+  // Whether the runtime can act on it directly (single leaf, LSB-reduce) or
+  // needs a snapshot + re-eval wrapper (compound) is a HIR -> MIR decision.
+  for (auto& leaf : sensitivity_list) {
+    leaf.edge_kind = edge_kind;
+  }
+
+  return hir::EventTrigger{
+      .signal = proc.AddExpr(*std::move(expr_or)),
+      .edge = edge_kind,
+      .sensitivity_list = std::move(sensitivity_list),
+  };
+}
+
+// LRM 15.5.2 `@e;` on a named event. Distinguished from value-change `@(sig)`
+// by the controlled expression's type. Identity-only -- no edge polarity
+// applies, so reject any edge qualifier here.
+auto LowerNamedEventControl(
+    ProcessLowerer& proc, WalkFrame frame,
+    const slang::ast::SignalEventControl& sig, diag::SourceSpan span)
+    -> diag::Result<hir::NamedEventControl> {
+  if (sig.iffCondition != nullptr) {
+    return diag::Unsupported(
+        span, diag::DiagCode::kUnsupportedEventTriggerForm,
+        "`iff` qualifier on event control is not yet supported",
+        diag::UnsupportedCategory::kFeature);
+  }
+  if (sig.edge != slang::ast::EdgeKind::None) {
+    return diag::Unsupported(
+        span, diag::DiagCode::kUnsupportedEventTriggerForm,
+        "edge specifier is not valid on a named event",
+        diag::UnsupportedCategory::kFeature);
+  }
+
+  auto expr_or = proc.LowerExpr(sig.expr, frame);
+  if (!expr_or) return std::unexpected(std::move(expr_or.error()));
+
+  const auto* primary = std::get_if<hir::PrimaryExpr>(&expr_or->data);
+  if (primary == nullptr ||
+      !std::holds_alternative<hir::StructuralVarRef>(primary->data)) {
+    return diag::Unsupported(
+        span, diag::DiagCode::kUnsupportedEventTriggerForm,
+        "named event reference must be a plain structural variable",
+        diag::UnsupportedCategory::kFeature);
+  }
+  return hir::NamedEventControl{
+      .event = proc.AddExpr(*std::move(expr_or)),
+  };
+}
+
+auto LowerTimingControl(
+    ProcessLowerer& proc, WalkFrame frame, const slang::ast::TimingControl& tc,
+    diag::SourceSpan span) -> diag::Result<hir::TimingControl> {
+  switch (tc.kind) {
+    case slang::ast::TimingControlKind::Delay: {
+      const auto& delay = tc.as<slang::ast::DelayControl>();
+      auto duration = proc.LowerExpr(delay.expr, frame);
+      if (!duration) return std::unexpected(std::move(duration.error()));
+      return hir::TimingControl{
+          hir::DelayControl{.duration = proc.AddExpr(*std::move(duration))}};
+    }
+    case slang::ast::TimingControlKind::SignalEvent: {
+      const auto& sig = tc.as<slang::ast::SignalEventControl>();
+      // Named events (LRM 15.5.2) and value-change events (LRM 9.4.2) share
+      // slang's SignalEventControl shape; distinguish by the controlled
+      // expression's type.
+      if (sig.expr.type->isEvent()) {
+        auto nec_or = LowerNamedEventControl(proc, frame, sig, span);
+        if (!nec_or) return std::unexpected(std::move(nec_or.error()));
+        return hir::TimingControl{*std::move(nec_or)};
+      }
+      auto trigger_or = LowerSignalEventTrigger(proc, frame, sig, span);
+      if (!trigger_or) return std::unexpected(std::move(trigger_or.error()));
+      return hir::TimingControl{
+          hir::EventControl{.triggers = {*std::move(trigger_or)}}};
+    }
+    case slang::ast::TimingControlKind::EventList: {
+      const auto& list = tc.as<slang::ast::EventListControl>();
+      std::vector<hir::EventTrigger> triggers;
+      triggers.reserve(list.events.size());
+      for (const auto* event : list.events) {
+        if (event->kind != slang::ast::TimingControlKind::SignalEvent) {
+          return diag::Unsupported(
+              span, diag::DiagCode::kUnsupportedTimingControlKind,
+              "event list entries must be signal events; nested timing "
+              "controls are not yet supported",
+              diag::UnsupportedCategory::kFeature);
+        }
+        const auto& sig = event->as<slang::ast::SignalEventControl>();
+        auto trigger_or = LowerSignalEventTrigger(proc, frame, sig, span);
+        if (!trigger_or) return std::unexpected(std::move(trigger_or.error()));
+        triggers.push_back(*std::move(trigger_or));
+      }
+      return hir::TimingControl{
+          hir::EventControl{.triggers = std::move(triggers)}};
+    }
+    case slang::ast::TimingControlKind::ImplicitEvent:
+      return hir::TimingControl{hir::ImplicitEventControl{}};
+    case slang::ast::TimingControlKind::RepeatedEvent:
+      return diag::Unsupported(
+          span, diag::DiagCode::kUnsupportedTimingControlKind,
+          "repeated event control (`repeat (N) @(...)`) is not yet supported",
+          diag::UnsupportedCategory::kFeature);
+    default:
+      return diag::Unsupported(
+          span, diag::DiagCode::kUnsupportedTimingControlKind,
+          "this timing control kind is not yet supported",
+          diag::UnsupportedCategory::kFeature);
+  }
+}
+
+}  // namespace
+
+auto LowerTimedStmt(
+    ProcessLowerer& proc, WalkFrame frame, const slang::ast::TimedStatement& ts,
+    diag::SourceSpan span) -> diag::Result<hir::Stmt> {
+  auto timing = LowerTimingControl(proc, frame, ts.timing, span);
+  if (!timing) return std::unexpected(std::move(timing.error()));
+  // LRM 9.4.2.2: `@*` watches every read in the controlled body. Analyze
+  // the body statement directly; the TimingControl shell came back empty
+  // from LowerTimingControl.
+  if (auto* ie = std::get_if<hir::ImplicitEventControl>(&*timing)) {
+    const auto& reads = proc.Module().Sensitivity().AnalyzeReads(
+        ts.stmt, proc.ContainingSymbol());
+    ie->sensitivity_list =
+        proc.Module().TranslateSensitivityReads(reads, frame);
+  }
+  auto inner_stmt = LowerStatement(proc, frame, ts.stmt);
+  if (!inner_stmt) return std::unexpected(std::move(inner_stmt.error()));
+  const hir::StmtId inner_id = proc.AddStmt(*std::move(inner_stmt));
+  return hir::Stmt{
+      .label = std::nullopt,
+      .data = hir::TimedStmt{.timing = *std::move(timing), .stmt = inner_id},
+      .span = span};
+}
+
+// LRM 15.5.1 `-> e;`. Source-aligned with slang's EventTriggerStatement. The
+// `->>` non-blocking form and any delay-or-event-control prefix are deferred.
+auto LowerEventTriggerStmt(
+    ProcessLowerer& proc, WalkFrame frame,
+    const slang::ast::EventTriggerStatement& et, diag::SourceSpan span)
+    -> diag::Result<hir::Stmt> {
+  if (et.isNonBlocking) {
+    return diag::Unsupported(
+        span, diag::DiagCode::kUnsupportedStatementForm,
+        "non-blocking event trigger `->>` is not yet supported",
+        diag::UnsupportedCategory::kFeature);
+  }
+  if (et.timing != nullptr) {
+    return diag::Unsupported(
+        span, diag::DiagCode::kUnsupportedStatementForm,
+        "delayed event trigger (with intra-trigger timing control) is not yet "
+        "supported",
+        diag::UnsupportedCategory::kFeature);
+  }
+  auto expr_or = proc.LowerExpr(et.target, frame);
+  if (!expr_or) return std::unexpected(std::move(expr_or.error()));
+  const auto* primary = std::get_if<hir::PrimaryExpr>(&expr_or->data);
+  if (primary == nullptr ||
+      !std::holds_alternative<hir::StructuralVarRef>(primary->data)) {
+    return diag::Unsupported(
+        span, diag::DiagCode::kUnsupportedStatementForm,
+        "event trigger target must be a plain named-event reference",
+        diag::UnsupportedCategory::kFeature);
+  }
+  return hir::Stmt{
+      .label = std::nullopt,
+      .data =
+          hir::EventTriggerStmt{
+              .event = proc.AddExpr(*std::move(expr_or)),
+          },
+      .span = span};
+}
+
+// LRM 9.4.3 `wait (cond) body`. Sensitivity is precomputed by driving slang's
+// flow analysis on `w.cond` via a per-wait `DefaultDFA` run inside
+// `BuildSensitivityReadStore` (see `docs/decisions/read-set-inference.md`).
+// We look up the result here keyed by the cond expression.
+auto LowerWaitStmt(
+    ProcessLowerer& proc, WalkFrame frame, const slang::ast::WaitStatement& w,
+    diag::SourceSpan span) -> diag::Result<hir::Stmt> {
+  auto cond_or = proc.LowerExpr(w.cond, frame);
+  if (!cond_or) return std::unexpected(std::move(cond_or.error()));
+  const hir::ExprId cond_id = proc.AddExpr(*std::move(cond_or));
+  auto body_or = LowerStatement(proc, frame, w.stmt);
+  if (!body_or) return std::unexpected(std::move(body_or.error()));
+  const hir::StmtId body_id = proc.AddStmt(*std::move(body_or));
+  const auto& reads =
+      proc.Module().Sensitivity().AnalyzeReads(w.cond, proc.ContainingSymbol());
+  auto sensitivity = proc.Module().TranslateSensitivityReads(reads, frame);
+  return hir::Stmt{
+      .label = std::nullopt,
+      .data =
+          hir::WaitStmt{
+              .cond = cond_id,
+              .body = body_id,
+              .sensitivity_list = std::move(sensitivity)},
+      .span = span};
+}
+
+}  // namespace lyra::lowering::ast_to_hir
