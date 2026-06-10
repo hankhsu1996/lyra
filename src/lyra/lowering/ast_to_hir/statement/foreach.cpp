@@ -1,5 +1,3 @@
-#include "lyra/lowering/ast_to_hir/statement/foreach.hpp"
-
 #include <cstdint>
 #include <expected>
 #include <string_view>
@@ -22,8 +20,8 @@
 #include "lyra/hir/primary.hpp"
 #include "lyra/hir/stmt.hpp"
 #include "lyra/hir/value_ref.hpp"
-#include "lyra/lowering/ast_to_hir/expression/lower.hpp"
-#include "lyra/lowering/ast_to_hir/statement/lower.hpp"
+#include "lyra/lowering/ast_to_hir/module_lowerer.hpp"
+#include "lyra/lowering/ast_to_hir/process_lowerer.hpp"
 
 namespace lyra::lowering::ast_to_hir {
 
@@ -81,17 +79,16 @@ struct DimMeta {
 
 // lo +/- ((counter / inner_product) % count)
 auto BuildDecomposeExpr(
-    ProcessLoweringState& proc_state, hir::TypeId int32_type,
-    diag::SourceSpan span, hir::ProceduralVarId counter_var, const DimMeta& dim)
-    -> hir::ExprId {
+    ProcessLowerer& proc, hir::TypeId int32_type, diag::SourceSpan span,
+    hir::ProceduralVarId counter_var, const DimMeta& dim) -> hir::ExprId {
   const auto counter_ref_id =
-      proc_state.AddExpr(MakeProcVarRefExpr(counter_var, int32_type, span));
+      proc.AddExpr(MakeProcVarRefExpr(counter_var, int32_type, span));
 
   hir::ExprId divided_id = counter_ref_id;
   if (dim.inner_product != 1) {
-    const auto inner_id = proc_state.AddExpr(
-        MakeInt32LiteralExpr(dim.inner_product, int32_type, span));
-    divided_id = proc_state.AddExpr(
+    const auto inner_id =
+        proc.AddExpr(MakeInt32LiteralExpr(dim.inner_product, int32_type, span));
+    divided_id = proc.AddExpr(
         hir::Expr{
             .type = int32_type,
             .data =
@@ -103,8 +100,8 @@ auto BuildDecomposeExpr(
   }
 
   const auto count_id =
-      proc_state.AddExpr(MakeInt32LiteralExpr(dim.count, int32_type, span));
-  const auto offset_id = proc_state.AddExpr(
+      proc.AddExpr(MakeInt32LiteralExpr(dim.count, int32_type, span));
+  const auto offset_id = proc.AddExpr(
       hir::Expr{
           .type = int32_type,
           .data =
@@ -115,8 +112,8 @@ auto BuildDecomposeExpr(
           .span = span});
 
   const auto lo_id =
-      proc_state.AddExpr(MakeInt32LiteralExpr(dim.lo, int32_type, span));
-  return proc_state.AddExpr(
+      proc.AddExpr(MakeInt32LiteralExpr(dim.lo, int32_type, span));
+  return proc.AddExpr(
       hir::Expr{
           .type = int32_type,
           .data =
@@ -160,17 +157,18 @@ auto RejectUnsupportedArrayType(
 
 }  // namespace
 
-auto LowerForeachLoopStmt(
-    const UnitLoweringFacts& unit_facts, ProcessLoweringState& proc_state,
-    ScopeLoweringState& scope_state, ScopeStack& stack,
-    const slang::ast::ForeachLoopStatement& fs, diag::SourceSpan span)
+auto ProcessLowerer::LowerForeachStmt(
+    const slang::ast::ForeachLoopStatement& fs, WalkFrame frame)
     -> diag::Result<hir::Stmt> {
+  auto& proc = *this;
+  auto& module = proc.Module();
+  const auto span = module.SourceMapper().SpanOf(fs.sourceRange);
   const auto& canonical = fs.arrayRef.type->getCanonicalType();
   if (auto check = RejectUnsupportedArrayType(canonical, span); !check) {
     return std::unexpected(std::move(check.error()));
   }
 
-  const hir::TypeId int32_type = scope_state.UnitState().Int32TypeId();
+  const hir::TypeId int32_type = module.Builtins().int32;
 
   std::vector<DimMeta> dims;
   dims.reserve(fs.loopDims.size());
@@ -180,9 +178,9 @@ auto LowerForeachLoopStmt(
     }
     if (!dim.range.has_value()) {
       throw InternalError(
-          "LowerForeachLoopStmt: non-skipped dim has no constant range; the "
-          "type-level rejection above should have caught dynamic / queue / "
-          "associative element types");
+          "ProcessLowerer::LowerForeachStmt: non-skipped dim has no constant "
+          "range; the type-level rejection above should have caught dynamic / "
+          "queue / associative element types");
     }
     const auto& range = *dim.range;
     const bool ascending = range.left <= range.right;
@@ -200,19 +198,17 @@ auto LowerForeachLoopStmt(
   // All-dims-skipped: arrayRef still needs evaluation for side effects, body
   // runs once.
   if (dims.empty()) {
-    auto array_or = LowerProcExpr(
-        unit_facts, scope_state.UnitState(), proc_state, stack, fs.arrayRef);
+    auto array_or = proc.LowerExpr(fs.arrayRef, frame);
     if (!array_or) return std::unexpected(std::move(array_or.error()));
-    const auto array_eval_id = proc_state.AddExpr(*std::move(array_or));
-    const auto array_eval_stmt = proc_state.AddStmt(
+    const auto array_eval_id = proc.AddExpr(*std::move(array_or));
+    const auto array_eval_stmt = proc.AddStmt(
         hir::Stmt{
             .label = std::nullopt,
             .data = hir::ExprStmt{.expr = array_eval_id},
             .span = span});
-    auto body_or =
-        LowerStatement(unit_facts, proc_state, scope_state, stack, fs.body);
+    auto body_or = proc.LowerStmt(fs.body, frame);
     if (!body_or) return std::unexpected(std::move(body_or.error()));
-    const auto body_stmt_id = proc_state.AddStmt(*std::move(body_or));
+    const auto body_stmt_id = proc.AddStmt(*std::move(body_or));
     return hir::Stmt{
         .label = std::nullopt,
         .data = hir::BlockStmt{.statements = {array_eval_stmt, body_stmt_id}},
@@ -231,21 +227,20 @@ auto LowerForeachLoopStmt(
   // lowered body, so the counter must claim the lowest id; loop variables
   // follow in the same outer-to-inner order their VarDeclStmts appear in.
   const hir::ProceduralVarId counter_var =
-      proc_state.AddSyntheticProceduralVar(kFlatCounterName, int32_type);
+      proc.AddSyntheticProceduralVar(kFlatCounterName, int32_type);
   for (const auto& dim : dims) {
-    proc_state.AddProceduralVar(*dim.loop_var, int32_type);
+    proc.AddProceduralVar(*dim.loop_var, int32_type);
   }
 
-  const auto zero_id =
-      proc_state.AddExpr(MakeInt32LiteralExpr(0, int32_type, span));
+  const auto zero_id = proc.AddExpr(MakeInt32LiteralExpr(0, int32_type, span));
   std::vector<hir::ForInit> init;
   init.emplace_back(hir::ForInitDecl{.var = counter_var, .init = zero_id});
 
   const auto cond_counter_ref_id =
-      proc_state.AddExpr(MakeProcVarRefExpr(counter_var, int32_type, span));
+      proc.AddExpr(MakeProcVarRefExpr(counter_var, int32_type, span));
   const auto total_id =
-      proc_state.AddExpr(MakeInt32LiteralExpr(total, int32_type, span));
-  const auto cond_id = proc_state.AddExpr(
+      proc.AddExpr(MakeInt32LiteralExpr(total, int32_type, span));
+  const auto cond_id = proc.AddExpr(
       hir::Expr{
           .type = int32_type,
           .data =
@@ -256,8 +251,8 @@ auto LowerForeachLoopStmt(
           .span = span});
 
   const auto step_counter_ref_id =
-      proc_state.AddExpr(MakeProcVarRefExpr(counter_var, int32_type, span));
-  const auto step_id = proc_state.AddExpr(
+      proc.AddExpr(MakeProcVarRefExpr(counter_var, int32_type, span));
+  const auto step_id = proc.AddExpr(
       hir::Expr{
           .type = int32_type,
           .data =
@@ -268,27 +263,26 @@ auto LowerForeachLoopStmt(
   std::vector<hir::StmtId> inner_stmts;
   inner_stmts.reserve(dims.size() + 1);
   for (const auto& dim : dims) {
-    const auto local_id = *proc_state.LookupProceduralVar(*dim.loop_var);
+    const auto local_id = *proc.LookupProceduralVar(*dim.loop_var);
     const auto init_expr_id =
-        BuildDecomposeExpr(proc_state, int32_type, span, counter_var, dim);
-    inner_stmts.push_back(proc_state.AddStmt(
+        BuildDecomposeExpr(proc, int32_type, span, counter_var, dim);
+    inner_stmts.push_back(proc.AddStmt(
         hir::Stmt{
             .label = std::nullopt,
             .data = hir::VarDeclStmt{.var = local_id, .init = init_expr_id},
             .span = span}));
   }
-  auto body_or =
-      LowerStatement(unit_facts, proc_state, scope_state, stack, fs.body);
+  auto body_or = proc.LowerStmt(fs.body, frame);
   if (!body_or) return std::unexpected(std::move(body_or.error()));
-  inner_stmts.push_back(proc_state.AddStmt(*std::move(body_or)));
+  inner_stmts.push_back(proc.AddStmt(*std::move(body_or)));
 
-  const auto inner_block_id = proc_state.AddStmt(
+  const auto inner_block_id = proc.AddStmt(
       hir::Stmt{
           .label = std::nullopt,
           .data = hir::BlockStmt{.statements = std::move(inner_stmts)},
           .span = span});
 
-  const auto for_stmt_id = proc_state.AddStmt(
+  const auto for_stmt_id = proc.AddStmt(
       hir::Stmt{
           .label = std::nullopt,
           .data =

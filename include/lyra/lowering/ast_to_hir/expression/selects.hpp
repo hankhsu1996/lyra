@@ -1,0 +1,58 @@
+#pragma once
+
+// Lowering of access/projection expressions: ElementSelect (LRM 11.5.1),
+// RangeSelect (LRM 11.5.1 part-select / indexed part-select), and
+// MemberAccess (LRM 11.5.2 struct/union member access). Both procedural and
+// structural contexts.
+
+#include "lyra/diag/diagnostic.hpp"
+#include "lyra/diag/source_span.hpp"
+#include "lyra/hir/expr.hpp"
+#include "lyra/lowering/ast_to_hir/process_lowerer.hpp"
+#include "lyra/lowering/ast_to_hir/scope_lowerer.hpp"
+#include "lyra/lowering/ast_to_hir/walk_frame.hpp"
+
+namespace slang::ast {
+class ElementSelectExpression;
+class Expression;
+class MemberAccessExpression;
+class RangeSelectExpression;
+}  // namespace slang::ast
+
+namespace lyra::lowering::ast_to_hir {
+
+// Procedural-context handlers.
+auto LowerElementSelectExprProc(
+    ProcessLowerer& proc, WalkFrame frame,
+    const slang::ast::ElementSelectExpression& sel,
+    const slang::ast::Expression& expr, diag::SourceSpan span)
+    -> diag::Result<hir::Expr>;
+auto LowerRangeSelectExprProc(
+    ProcessLowerer& proc, WalkFrame frame,
+    const slang::ast::RangeSelectExpression& sel,
+    const slang::ast::Expression& expr, diag::SourceSpan span)
+    -> diag::Result<hir::Expr>;
+auto LowerMemberAccessExprProc(
+    ProcessLowerer& proc, WalkFrame frame,
+    const slang::ast::MemberAccessExpression& sel,
+    const slang::ast::Expression& expr, diag::SourceSpan span)
+    -> diag::Result<hir::Expr>;
+
+// Structural-context handlers.
+auto LowerElementSelectExprStructural(
+    ScopeLowerer& scope, WalkFrame frame,
+    const slang::ast::ElementSelectExpression& sel,
+    const slang::ast::Expression& expr, diag::SourceSpan span)
+    -> diag::Result<hir::Expr>;
+auto LowerRangeSelectExprStructural(
+    ScopeLowerer& scope, WalkFrame frame,
+    const slang::ast::RangeSelectExpression& sel,
+    const slang::ast::Expression& expr, diag::SourceSpan span)
+    -> diag::Result<hir::Expr>;
+auto LowerMemberAccessExprStructural(
+    ScopeLowerer& scope, WalkFrame frame,
+    const slang::ast::MemberAccessExpression& sel,
+    const slang::ast::Expression& expr, diag::SourceSpan span)
+    -> diag::Result<hir::Expr>;
+
+}  // namespace lyra::lowering::ast_to_hir
