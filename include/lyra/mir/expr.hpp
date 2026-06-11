@@ -102,9 +102,31 @@ struct ClosureRef {
   ExprId closure{};
 };
 
+enum class RuntimeFn : std::uint8_t {
+  kGetChild,
+  kGetSignal,
+  kRegisterSignal,
+};
+
+// Calls a runtime by-name interface method on a scope handle. `fn` selects the
+// method; `name` is the compile-time signal / child name. Argument 0 is the
+// scope handle the method is invoked on:
+//   - `kGetChild`: the remaining arguments are the per-dimension array indices
+//     (none for a scalar), each a runtime expression; renders
+//     `<scope>->GetChild(name, {indices})`.
+//   - `kGetSignal`: renders `<scope>->GetSignal(name)`.
+//   - `kRegisterSignal`: argument 1 is the signal var whose address is
+//     registered under `name`; renders `<scope>->RegisterSignal(name, &<var>)`.
+//     A scope records its own by-name interface during construction with this.
+// The name and indices are never bundled into one struct.
+struct RuntimeNavCallee {
+  RuntimeFn fn;
+  std::string name;
+};
+
 using Callee = std::variant<
     SystemSubroutineCallee, StructuralSubroutineRef, BuiltinMethodCallee,
-    ClosureRef>;
+    ClosureRef, RuntimeNavCallee>;
 
 struct CallExpr {
   Callee callee;
@@ -124,6 +146,18 @@ using RuntimeCall = std::variant<
 struct RuntimeCallExpr {
   RuntimeCall call;
 };
+
+// Dereferences a borrowed pointer to reach the cell it refers to. An
+// lvalue-producing navigation like ElementSelectExpr; `Expr::type` is the
+// pointee value type.
+struct DerefExpr {
+  ExprId pointer;
+};
+
+// The enclosing scope object (`this` in a method body, `self` in a fork-branch
+// closure). The starting handle of an object-tree navigation; `Expr::type` is a
+// borrowed pointer to ScopeType.
+struct SelfScopeExpr {};
 
 struct ElementSelectExpr {
   ExprId base_value;
@@ -181,8 +215,8 @@ struct ConstructExpr {
 
 using ExprData = std::variant<
     IntegerLiteral, StringLiteral, TimeLiteral, RealLiteral, StructuralParamRef,
-    StructuralVarRef, ProceduralVarRef, CrossUnitVarRef, UnaryExpr, BinaryExpr,
-    ConditionalExpr, AssignExpr, IncDecExpr, CallExpr, RuntimeCallExpr,
+    StructuralVarRef, ProceduralVarRef, UnaryExpr, BinaryExpr, ConditionalExpr,
+    AssignExpr, IncDecExpr, CallExpr, RuntimeCallExpr, DerefExpr, SelfScopeExpr,
     ConversionExpr, ClosureExpr, ElementSelectExpr, RangeSelectExpr, ConcatExpr,
     ReplicationExpr, ArrayLiteralExpr, ConstructExpr>;
 

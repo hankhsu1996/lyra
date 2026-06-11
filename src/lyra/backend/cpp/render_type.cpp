@@ -102,10 +102,29 @@ auto RenderTypeAsCpp(
           },
           [](const mir::ExternalUnitObjectType& e)
               -> diag::Result<std::string> { return e.unit_name; },
-          [&](const mir::OwningPtrType& o) -> diag::Result<std::string> {
-            auto inner_or = RenderTypeAsCpp(unit, owner_scope, o.pointee);
+          [](const mir::ScopeType&) -> diag::Result<std::string> {
+            return std::string{"lyra::runtime::Scope"};
+          },
+          [&](const mir::PointerType& p) -> diag::Result<std::string> {
+            auto inner_or = RenderTypeAsCpp(unit, owner_scope, p.pointee);
             if (!inner_or) return std::unexpected(std::move(inner_or.error()));
-            return "std::unique_ptr<" + *inner_or + ">";
+            switch (p.ownership) {
+              case mir::PointerOwnership::kUnique:
+                return "std::unique_ptr<" + *inner_or + ">";
+              case mir::PointerOwnership::kShared:
+                return "std::shared_ptr<" + *inner_or + ">";
+              case mir::PointerOwnership::kBorrowed: {
+                // A borrowed pointer refers to the pointee's storage cell: a
+                // `Var<T>` for an observable scalar, the bare type otherwise
+                // (e.g. a `Scope`), so the slot mirrors what it points at.
+                const std::string storage =
+                    IsObservableScalarType(unit.GetType(p.pointee))
+                        ? "lyra::runtime::Var<" + *inner_or + ">"
+                        : *inner_or;
+                return storage + "*";
+              }
+            }
+            throw InternalError("RenderTypeAsCpp: unknown PointerOwnership");
           },
           [&](const mir::VectorType& v) -> diag::Result<std::string> {
             auto inner_or = RenderTypeAsCpp(unit, owner_scope, v.element);

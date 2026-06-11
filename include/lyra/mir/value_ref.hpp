@@ -1,9 +1,5 @@
 #pragma once
 
-#include <compare>
-#include <cstdint>
-#include <variant>
-
 #include "lyra/mir/procedural_hops.hpp"
 #include "lyra/mir/procedural_var.hpp"
 #include "lyra/mir/structural_hops.hpp"
@@ -21,22 +17,10 @@ struct ProceduralVarRef {
   ProceduralVarId var{};
 };
 
-struct CrossUnitRefId {
-  std::uint32_t value;
-
-  auto operator<=>(const CrossUnitRefId&) const
-      -> std::strong_ordering = default;
-};
-
-// A reference into a child instance's member, resolved once at construction
-// into a stored direct reference; the navigation recipe lives in the enclosing
-// scope's `cross_unit_refs` table keyed by this id.
-struct CrossUnitVarRef {
-  CrossUnitRefId id;
-};
-
-// A sensitivity leaf observes either a this-unit structural var or a cross-unit
-// member; both resolve to a stored `Observable` the scheduler subscribes to.
-using SensitivityRef = std::variant<StructuralVarRef, CrossUnitVarRef>;
+// A sensitivity leaf observes a structural var that resolves to a stored
+// `Observable` the scheduler subscribes to: a plain signal, an upward
+// ExternalRef member, or a downward borrowed-pointer slot. All three are
+// StructuralVarRefs; the var's type tells the renderer how to reach the cell.
+using SensitivityRef = StructuralVarRef;
 
 }  // namespace lyra::mir

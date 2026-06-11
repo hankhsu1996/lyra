@@ -1,8 +1,6 @@
 #pragma once
 
-#include <cstdint>
 #include <string>
-#include <variant>
 #include <vector>
 
 #include "lyra/base/time.hpp"
@@ -13,31 +11,8 @@
 #include "lyra/mir/structural_subroutine.hpp"
 #include "lyra/mir/structural_var.hpp"
 #include "lyra/mir/type_alias.hpp"
-#include "lyra/mir/type_id.hpp"
-#include "lyra/mir/value_ref.hpp"
 
 namespace lyra::mir {
-
-// One step of a cross-unit reference's downward navigation past the head: a
-// named member (`->name`) or an instance-array index (`[index]`).
-struct MemberHop {
-  std::string name;
-};
-struct IndexHop {
-  std::uint32_t index;
-};
-using PathStep = std::variant<MemberHop, IndexHop>;
-
-// A downward cross-unit reference resolved once at construction. `instance_var`
-// is the structural var holding the owned child instance (or instance-array) --
-// the head of the downward path; `path` carries the navigation past the head
-// down to the referenced leaf of `type`. Upward references are not cross-unit
-// refs -- they are ExternalRef members (docs/architecture/emission_model.md).
-struct CrossUnitRefDecl {
-  StructuralVarId instance_var;
-  std::vector<PathStep> path;
-  TypeId type;
-};
 
 struct StructuralScope {
   std::string name;
@@ -47,7 +22,6 @@ struct StructuralScope {
   TimeResolution time_resolution;
   std::vector<StructuralParamDecl> structural_params;
   std::vector<StructuralVarDecl> structural_vars;
-  std::vector<CrossUnitRefDecl> cross_unit_refs;
   ProceduralScope constructor_scope;
   std::vector<Process> processes;
   std::vector<StructuralScope> child_structural_scopes;
@@ -61,10 +35,6 @@ struct StructuralScope {
   [[nodiscard]] auto GetStructuralVar(StructuralVarId id) const
       -> const StructuralVarDecl& {
     return structural_vars.at(id.value);
-  }
-  [[nodiscard]] auto GetCrossUnitRef(CrossUnitRefId id) const
-      -> const CrossUnitRefDecl& {
-    return cross_unit_refs.at(id.value);
   }
   [[nodiscard]] auto GetProcess(ProcessId id) const -> const Process& {
     return processes.at(id.value);

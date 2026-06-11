@@ -142,36 +142,33 @@ auto EnumerateGenerateChildSpecs(
   return specs;
 }
 
-auto MakeOwnedObjectType(
+auto MakeUniqueObjectPointer(
     UnitLoweringState& unit_state, mir::StructuralScopeId child_id)
     -> mir::TypeId {
   const mir::TypeId object_type =
       unit_state.AddType(mir::ObjectType{.target = child_id});
-  return unit_state.AddType(mir::OwningPtrType{.pointee = object_type});
+  return unit_state.AddType(
+      mir::PointerType{
+          .pointee = object_type, .ownership = mir::PointerOwnership::kUnique});
 }
 
-auto MakeVectorOfOwnedObjectType(
-    UnitLoweringState& unit_state, mir::StructuralScopeId child_id)
-    -> mir::TypeId {
-  const mir::TypeId owned_type = MakeOwnedObjectType(unit_state, child_id);
-  return unit_state.AddType(mir::VectorType{.element = owned_type});
-}
-
-auto MakeExternalUnitOwningType(
+auto MakeUniqueExternalUnitPointer(
     UnitLoweringState& unit_state, std::string unit_name) -> mir::TypeId {
   const mir::TypeId object_type = unit_state.AddType(
       mir::ExternalUnitObjectType{.unit_name = std::move(unit_name)});
-  return unit_state.AddType(mir::OwningPtrType{.pointee = object_type});
+  return unit_state.AddType(
+      mir::PointerType{
+          .pointee = object_type, .ownership = mir::PointerOwnership::kUnique});
 }
 
-// Builds an external-unit member type: an owning pointer to the unit's object,
+// Builds an external-unit member type: a unique pointer to the unit's object,
 // wrapped in one vector layer per array dimension (`num_dims == 0` is a scalar
 // instance). The backend materializes the nested vector by replication.
 auto MakeExternalUnitMemberType(
     UnitLoweringState& unit_state, std::string unit_name, std::size_t num_dims)
     -> mir::TypeId {
   mir::TypeId type =
-      MakeExternalUnitOwningType(unit_state, std::move(unit_name));
+      MakeUniqueExternalUnitPointer(unit_state, std::move(unit_name));
   for (std::size_t i = 0; i < num_dims; ++i) {
     type = unit_state.AddType(mir::VectorType{.element = type});
   }
@@ -223,14 +220,18 @@ auto InstallInstanceMembers(
 // symbol -- ancestor name, by-name tail through its owned children, and leaf
 // signal -- lives on its type, and the runtime ExternUp member self-relocates
 // at Bind by climbing the parent chain then walking the tail
-// (docs/architecture/emission_model.md). This runs before processes so reads
-// resolve to the member. Every cross-unit ref slot's MIR target is recorded in
-// HIR slot order; a downward slot keeps a CrossUnitVarRef that
-// InstallCrossUnitRefs materializes into the constructor.
-void MaterializeCrossUnitRefTargets(
+// (docs/architecture/emission_model.md). A downward reference gets a borrowed-
+// pointer slot structural var, null until the constructor resolves it. Both
+// run before processes so reads resolve to the slot; both record their MIR read
+// target as a StructuralVarRef to that member, in HIR slot order. The returned
+// vector carries the downward slot var per ref (nullopt for upward), consumed
+// by InstallCrossUnitRefs once the children exist.
+auto MaterializeCrossUnitRefTargets(
     UnitLoweringState& unit_state, StructuralScopeLoweringState& scope_state,
     const hir::StructuralScope& scope,
-    ProceduralScopeLoweringState& ctor_scope_state) {
+    ProceduralScopeLoweringState& ctor_scope_state)
+    -> std::vector<std::optional<mir::StructuralVarId>> {
+  std::vector<std::optional<mir::StructuralVarId>> slot_vars;
   std::uint32_t downward_slot = 0;
   for (const auto& cu : scope.cross_unit_refs) {
     if (const auto* up = std::get_if<hir::UpwardHead>(&cu.head)) {
@@ -273,28 +274,113 @@ void MaterializeCrossUnitRefTargets(
               .initializer = init});
       scope_state.AddCrossUnitRefTarget(
           mir::StructuralVarRef{.hops = {.value = 0}, .var = var});
+      slot_vars.emplace_back(std::nullopt);
     } else {
+      const mir::TypeId leaf = unit_state.TranslateType(cu.type);
+      const mir::TypeId slot_type = unit_state.AddType(
+          mir::PointerType{
+              .pointee = leaf, .ownership = mir::PointerOwnership::kBorrowed});
+      const mir::ExprId init =
+          SynthesizeDefaultValueExpr(unit_state, ctor_scope_state, slot_type);
+      const mir::StructuralVarId slot = scope_state.AddStructuralVar(
+          mir::StructuralVarDecl{
+              .name = "xref" + std::to_string(downward_slot),
+              .type = slot_type,
+              .initializer = init});
       scope_state.AddCrossUnitRefTarget(
-          mir::CrossUnitVarRef{.id = {.value = downward_slot}});
+          mir::StructuralVarRef{.hops = {.value = 0}, .var = slot});
+      slot_vars.emplace_back(slot);
       ++downward_slot;
     }
   }
+  return slot_vars;
 }
 
-// A downward slot resolves in the constructor by navigating an owned child
-// member after the children are built (reference_resolution.md). Upward slots
-// are materialized as ExternalRef members upstream and skipped here.
+// Builds the resolve value for a downward reference: a chain of generic
+// navigation calls from the enclosing scope. The owned-child head and each
+// crossed member open a `GetChild(name, indices)`; the leaf signal is a
+// `GetSignal(name)` whose result type is the slot's borrowed-pointer cell type,
+// so render casts the untyped storage pointer mechanically. Per-dimension array
+// indices are ordinary integer-literal arguments, never bundled with the name.
+auto BuildDownwardNavValue(
+    const UnitLoweringState& unit_state,
+    ProceduralScopeLoweringState& ctor_scope_state,
+    const std::string& head_name, const std::vector<hir::PathStep>& path,
+    mir::TypeId slot_type, mir::TypeId scope_ptr_type) -> mir::ExprId {
+  struct NavHop {
+    std::string name;
+    std::vector<mir::ExprId> indices;
+  };
+  std::vector<NavHop> hops;
+  hops.push_back(NavHop{.name = head_name, .indices = {}});
+  for (const auto& step : path) {
+    if (const auto* member = std::get_if<hir::MemberHop>(&step)) {
+      hops.push_back(NavHop{.name = member->name, .indices = {}});
+    } else {
+      const std::uint32_t index = std::get<hir::IndexHop>(step).index;
+      hops.back().indices.push_back(ctor_scope_state.AddExpr(
+          unit_state.MakeInt32LiteralExpr(static_cast<std::int64_t>(index))));
+    }
+  }
+  if (hops.size() < 2) {
+    throw InternalError(
+        "BuildDownwardNavValue: downward reference has no leaf signal past its "
+        "owned child");
+  }
+
+  mir::ExprId cur = ctor_scope_state.AddExpr(
+      mir::Expr{.data = mir::SelfScopeExpr{}, .type = scope_ptr_type});
+  for (std::size_t i = 0; i + 1 < hops.size(); ++i) {
+    std::vector<mir::ExprId> args;
+    args.push_back(cur);
+    for (const mir::ExprId idx : hops[i].indices) {
+      args.push_back(idx);
+    }
+    cur = ctor_scope_state.AddExpr(
+        mir::Expr{
+            .data =
+                mir::CallExpr{
+                    .callee =
+                        mir::RuntimeNavCallee{
+                            .fn = mir::RuntimeFn::kGetChild,
+                            .name = hops[i].name},
+                    .arguments = std::move(args)},
+            .type = scope_ptr_type});
+  }
+  return ctor_scope_state.AddExpr(
+      mir::Expr{
+          .data =
+              mir::CallExpr{
+                  .callee =
+                      mir::RuntimeNavCallee{
+                          .fn = mir::RuntimeFn::kGetSignal,
+                          .name = hops.back().name},
+                  .arguments = {cur}},
+          .type = slot_type});
+}
+
+// A downward slot resolves in the constructor by navigating from the enclosing
+// scope after the children are built (reference_resolution.md): an ordinary
+// assignment of the navigation value into the borrowed-pointer slot. Upward
+// slots are materialized as ExternalRef members upstream and skipped here.
 void InstallCrossUnitRefs(
     UnitLoweringState& unit_state, StructuralScopeLoweringState& scope_state,
     const hir::StructuralScope& scope,
     const std::vector<mir::StructuralVarId>& instance_member_vars,
     const std::vector<GenerateBindings>& gen_bindings,
+    const std::vector<std::optional<mir::StructuralVarId>>& slot_vars,
     ProceduralScopeLoweringState& ctor_scope_state) {
-  for (const auto& cu : scope.cross_unit_refs) {
+  const mir::TypeId scope_ptr_type = unit_state.AddType(
+      mir::PointerType{
+          .pointee = unit_state.AddType(mir::ScopeType{}),
+          .ownership = mir::PointerOwnership::kBorrowed});
+  for (std::size_t ci = 0; ci < scope.cross_unit_refs.size(); ++ci) {
+    const auto& cu = scope.cross_unit_refs[ci];
     const auto* down = std::get_if<hir::DownwardHead>(&cu.head);
     if (down == nullptr) {
       continue;
     }
+    const mir::StructuralVarId slot = *slot_vars.at(ci);
     mir::StructuralVarId head_var{};
     if (const auto* im = std::get_if<hir::InstanceMemberId>(&down->child)) {
       head_var = instance_member_vars.at(im->value);
@@ -304,24 +390,25 @@ void InstallCrossUnitRefs(
                      .by_scope_id.at(g.scope.value)
                      .var_id;
     }
-    std::vector<mir::PathStep> path;
-    path.reserve(cu.path.size());
-    for (const auto& step : cu.path) {
-      if (const auto* member = std::get_if<hir::MemberHop>(&step)) {
-        path.emplace_back(mir::MemberHop{member->name});
-      } else {
-        path.emplace_back(mir::IndexHop{std::get<hir::IndexHop>(step).index});
-      }
-    }
-    const mir::CrossUnitRefId slot = scope_state.AddCrossUnitRef(
-        mir::CrossUnitRefDecl{
-            .instance_var = head_var,
-            .path = std::move(path),
-            .type = unit_state.TranslateType(cu.type)});
+    const auto& head = scope_state.GetStructuralVar(head_var);
+    const std::string head_name =
+        head.source_name.empty() ? head.name : head.source_name;
+    const mir::TypeId slot_type = scope_state.GetStructuralVar(slot).type;
+    const mir::ExprId nav = BuildDownwardNavValue(
+        unit_state, ctor_scope_state, head_name, cu.path, slot_type,
+        scope_ptr_type);
+    const mir::ExprId target = ctor_scope_state.AddExpr(
+        mir::Expr{
+            .data = mir::StructuralVarRef{.hops = {.value = 0}, .var = slot},
+            .type = slot_type});
+    const mir::ExprId assign = ctor_scope_state.AddExpr(
+        mir::Expr{
+            .data = mir::AssignExpr{.target = target, .value = nav},
+            .type = slot_type});
     const mir::StmtId sid = ctor_scope_state.AddStmt(
         mir::Stmt{
             .label = std::nullopt,
-            .data = mir::ResolveCrossUnitRefStmt{.slot = slot},
+            .data = mir::ExprStmt{.expr = assign},
             .child_procedural_scopes = {}});
     ctor_scope_state.AddRootStmt(sid);
   }
@@ -342,8 +429,10 @@ void ValidateConstructOwnedObjectStmt(
         "scope");
   }
   const auto& var = owner_scope.GetStructuralVar(stmt.target);
-  const auto target = mir::GetOwnedObjectTarget(unit, var.type);
-  if (!target.has_value() || *target != stmt.scope_id) {
+  const auto child = mir::GetChildScope(unit, var.type);
+  const auto* generate =
+      child ? std::get_if<mir::GenerateScopeChild>(&*child) : nullptr;
+  if (generate == nullptr || generate->target != stmt.scope_id) {
     throw InternalError(
         "ConstructOwnedObjectStmt: target var does not own the requested "
         "scope");
@@ -630,9 +719,10 @@ auto InstallGenerateOwnedChildScopes(
 
       const mir::StructuralScopeId child_id =
           scope_state.AddChildStructuralScope(*std::move(child_r));
-      const mir::TypeId var_type =
-          spec.is_repeated ? MakeVectorOfOwnedObjectType(unit_state, child_id)
-                           : MakeOwnedObjectType(unit_state, child_id);
+      mir::TypeId var_type = MakeUniqueObjectPointer(unit_state, child_id);
+      if (spec.is_repeated) {
+        var_type = unit_state.AddType(mir::VectorType{.element = var_type});
+      }
       const mir::ExprId companion_init =
           SynthesizeDefaultValueExpr(unit_state, ctor_scope_state, var_type);
       const mir::StructuralVarId var_id = scope_state.AddStructuralVar(
@@ -664,7 +754,6 @@ auto LowerStructuralScope(
       .time_resolution = scope.time_resolution,
       .structural_params = {},
       .structural_vars = {},
-      .cross_unit_refs = {},
       .constructor_scope = {},
       .processes = {},
       .child_structural_scopes = {},
@@ -687,6 +776,11 @@ auto LowerStructuralScope(
   }
 
   ProceduralScopeLoweringState ctor_scope_state;
+  const mir::TypeId scope_ptr_type = unit_state.AddType(
+      mir::PointerType{
+          .pointee = unit_state.AddType(mir::ScopeType{}),
+          .ownership = mir::PointerOwnership::kBorrowed});
+  const mir::TypeId void_type = unit_state.AddType(mir::VoidType{});
   for (std::size_t i = 0; i < scope.structural_vars.size(); ++i) {
     const hir::StructuralVarId hir_id{static_cast<std::uint32_t>(i)};
     const auto& d = scope.structural_vars[i];
@@ -706,12 +800,48 @@ auto LowerStructuralScope(
         mir::StructuralVarDecl{
             .name = d.name, .type = mir_type, .initializer = mir_init});
     scope_state.MapStructuralVar(hir_id, mir_id);
+
+    // A value-typed var is a signal: record its address under its name so a
+    // cross-unit referrer resolves it by name at construction. Owned children
+    // (pointer / vector / object) and resolution slots register differently.
+    const auto& var_data = unit_state.GetType(mir_type).data;
+    const bool is_signal =
+        !std::holds_alternative<mir::PointerType>(var_data) &&
+        !std::holds_alternative<mir::VectorType>(var_data) &&
+        !std::holds_alternative<mir::ExternalRefType>(var_data) &&
+        !std::holds_alternative<mir::ObjectType>(var_data) &&
+        !std::holds_alternative<mir::ExternalUnitObjectType>(var_data);
+    if (is_signal) {
+      const mir::ExprId self = ctor_scope_state.AddExpr(
+          mir::Expr{.data = mir::SelfScopeExpr{}, .type = scope_ptr_type});
+      const mir::ExprId var_ref = ctor_scope_state.AddExpr(
+          mir::Expr{
+              .data =
+                  mir::StructuralVarRef{.hops = {.value = 0}, .var = mir_id},
+              .type = mir_type});
+      const mir::ExprId call = ctor_scope_state.AddExpr(
+          mir::Expr{
+              .data =
+                  mir::CallExpr{
+                      .callee =
+                          mir::RuntimeNavCallee{
+                              .fn = mir::RuntimeFn::kRegisterSignal,
+                              .name = d.name},
+                      .arguments = {self, var_ref}},
+              .type = void_type});
+      const mir::StmtId sid = ctor_scope_state.AddStmt(
+          mir::Stmt{
+              .label = std::nullopt,
+              .data = mir::ExprStmt{.expr = call},
+              .child_procedural_scopes = {}});
+      ctor_scope_state.AddRootStmt(sid);
+    }
   }
 
   // Upward refs become ExternalRef members and every cross-unit slot's MIR
   // target is recorded before any body is lowered, so reads and sensitivity in
   // subroutines and processes resolve each slot.
-  MaterializeCrossUnitRefTargets(
+  const auto cross_unit_slot_vars = MaterializeCrossUnitRefTargets(
       unit_state, scope_state, scope, ctor_scope_state);
 
   // Map every subroutine's identity before lowering any body, so a call in one
@@ -768,7 +898,7 @@ auto LowerStructuralScope(
       InstallInstanceMembers(unit_state, scope_state, scope, ctor_scope_state);
   InstallCrossUnitRefs(
       unit_state, scope_state, scope, instance_member_vars, *bindings_r,
-      ctor_scope_state);
+      cross_unit_slot_vars, ctor_scope_state);
 
   scope_state.SetConstructorScope(ctor_scope_state.Finish());
 

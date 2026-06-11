@@ -72,10 +72,11 @@ non-conforming code, not as a relaxation of the contract.
      the upward reference.
 6. **A unit exposes its hierarchically reachable signals and owned children through the SDK.** So
    that an upward referrer (which cannot name the ancestor's or an intervening child's type) can
-   reach a signal in an ancestor found only at runtime, each unit makes its reachable signals and
-   its owned children available by name through a uniform SDK surface on the object graph node -- a
-   child step indexes the owner's own storage. The referrer walks that surface once at construction
-   and stores the direct reference; it never embeds another unit's layout.
+   reach a signal in an ancestor found only at runtime, each unit registers its reachable signals
+   and its owned children by name into the object graph node during construction, and the base SDK
+   answers a by-name query from those registrations -- the unit never inspects who asks, and the
+   dispatch is one generic scan, not a per-unit synthesized branch. The referrer walks that surface
+   once at construction and stores the direct reference; it never embeds another unit's layout.
 
 ## Boundary to Adjacent Layers
 

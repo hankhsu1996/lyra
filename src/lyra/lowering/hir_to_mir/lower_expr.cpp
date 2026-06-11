@@ -292,17 +292,25 @@ auto LowerProceduralVarRefExpr(
       .data = proc_state.TranslateProceduralVar(l.var), .type = type};
 }
 
-// A cross-unit ref resolves to the MIR target recorded for its slot: an upward
-// ref reads its ExternalRef member through a StructuralVarRef, a downward ref
-// keeps a CrossUnitVarRef. `type` is the referenced leaf type either way.
+// A cross-unit ref reads through the MIR target recorded for its slot, a
+// StructuralVarRef to the slot member. A downward slot is a borrowed pointer,
+// so the read dereferences to the cell; an upward ExternalRef member reads
+// directly. `type` is the referenced leaf type either way.
 auto LowerCrossUnitVarRefExpr(
+    const UnitLoweringState& unit_state,
     const StructuralScopeLoweringState& scope_state,
+    ProceduralScopeLoweringState& proc_scope_state,
     const hir::CrossUnitVarRef& c, mir::TypeId type) -> mir::Expr {
-  return std::visit(
-      [&](const auto& ref) -> mir::Expr {
-        return mir::Expr{.data = ref, .type = type};
-      },
-      scope_state.CrossUnitRefTarget(c.id));
+  const mir::StructuralVarRef target = scope_state.CrossUnitRefTarget(c.id);
+  const mir::TypeId var_type = scope_state.GetStructuralVar(target.var).type;
+  const auto* ptr =
+      std::get_if<mir::PointerType>(&unit_state.GetType(var_type).data);
+  if (ptr != nullptr && ptr->ownership == mir::PointerOwnership::kBorrowed) {
+    const mir::ExprId pointer =
+        proc_scope_state.AddExpr(mir::Expr{.data = target, .type = var_type});
+    return mir::Expr{.data = mir::DerefExpr{.pointer = pointer}, .type = type};
+  }
+  return mir::Expr{.data = target, .type = type};
 }
 
 auto LowerLoopVarRefExpr(
@@ -555,8 +563,9 @@ auto LowerHirRealLiteral(const hir::RealLiteral& r, mir::TypeId type)
 auto LowerHirPrimaryProc(
     const UnitLoweringState& unit_state,
     const StructuralScopeLoweringState& scope_state,
-    ProcessLoweringState& proc_state, const hir::Primary& p, mir::TypeId type)
-    -> mir::Expr {
+    ProcessLoweringState& proc_state,
+    ProceduralScopeLoweringState& proc_scope_state, const hir::Primary& p,
+    mir::TypeId type) -> mir::Expr {
   return std::visit(
       Overloaded{
           [&](const hir::IntegerLiteral& i) -> mir::Expr {
@@ -581,7 +590,8 @@ auto LowerHirPrimaryProc(
             return LowerStructuralParamRefExpr(scope_state, lv, type);
           },
           [&](const hir::CrossUnitVarRef& c) -> mir::Expr {
-            return LowerCrossUnitVarRefExpr(scope_state, c, type);
+            return LowerCrossUnitVarRefExpr(
+                unit_state, scope_state, proc_scope_state, c, type);
           },
       },
       p);
@@ -590,7 +600,8 @@ auto LowerHirPrimaryProc(
 auto LowerHirPrimaryStructural(
     const UnitLoweringState& unit_state,
     const StructuralScopeLoweringState& scope_state,
-    const ConstructorLoweringState* ctor_state, const hir::Primary& p,
+    const ConstructorLoweringState* ctor_state,
+    ProceduralScopeLoweringState& proc_scope_state, const hir::Primary& p,
     mir::TypeId type, LoopVarLoweringMode loop_var_mode) -> mir::Expr {
   return std::visit(
       Overloaded{
@@ -629,7 +640,8 @@ auto LowerHirPrimaryStructural(
             // A continuous assignment lowers as a scope-level structural
             // expression, yet it may read or write a cross-unit member: a
             // hierarchical reference or a port connection (LRM 10.3, 23.3.3).
-            return LowerCrossUnitVarRefExpr(scope_state, c, type);
+            return LowerCrossUnitVarRefExpr(
+                unit_state, scope_state, proc_scope_state, c, type);
           },
       },
       p);
@@ -1600,7 +1612,8 @@ auto LowerExpr(
       Overloaded{
           [&](const hir::PrimaryExpr& p) -> diag::Result<mir::Expr> {
             return LowerHirPrimaryProc(
-                unit_state, scope_state, proc_state, p.data, result_type);
+                unit_state, scope_state, proc_state, proc_scope_state, p.data,
+                result_type);
           },
           [&](const hir::UnaryExpr& u) -> diag::Result<mir::Expr> {
             return LowerHirUnaryExprProc(
@@ -2014,8 +2027,8 @@ auto LowerExprImpl(
       Overloaded{
           [&](const hir::PrimaryExpr& p) -> diag::Result<mir::Expr> {
             return LowerHirPrimaryStructural(
-                unit_state, scope_state, ctor_state, p.data, result_type,
-                loop_var_mode);
+                unit_state, scope_state, ctor_state, proc_scope_state, p.data,
+                result_type, loop_var_mode);
           },
           [&](const hir::UnaryExpr& u) -> diag::Result<mir::Expr> {
             return LowerHirUnaryExprStructural(

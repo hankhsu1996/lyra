@@ -12,14 +12,6 @@ namespace lyra::backend::cpp {
   return result;
 }
 
-// Member name for a cross-unit reference slot: the resolved `Var<T>*` the
-// constructor points at the child's member. The same name backs the slot's
-// declaration, its constructor resolution, and every read / write / subscribe.
-[[nodiscard]] inline auto CrossUnitRefSlotName(std::uint32_t slot)
-    -> std::string {
-  return "xref_" + std::to_string(slot);
-}
-
 // Member name of a static-lifetime body local inside its per-instance
 // `_StaticFrame`. Flattening nested blocks into one frame can repeat an SV name
 // (same identifier in sibling or nested blocks), so the frame-scope var id is
