@@ -252,20 +252,6 @@ auto RenderStructuralVarReadExpr(
   return *name_or;
 }
 
-// Read-side render for a cross-unit reference: the slot is a resolved
-// `Var<T>*`, so the held value is observed via `->Get()` (integral packed) or
-// a dereference (other storage), mirroring the structural-var read split.
-auto RenderCrossUnitVarReadExpr(
-    const RenderContext& ctx, const mir::Expr& expr,
-    const mir::CrossUnitVarRef& m) -> diag::Result<std::string> {
-  const std::string slot =
-      ctx.MemberPrefix() + CrossUnitRefSlotName(m.id.value);
-  if (ctx.Unit().GetType(expr.type).IsIntegralPacked()) {
-    return slot + "->Get()";
-  }
-  return "(*" + slot + ")";
-}
-
 // Builds the C++ literal that materializes a 1-bit PackedArray of the SV-typed
 // shape carried by `result_ty`. Used to wrap the C++ `bool` result of a
 // real-operand relational / equality / logical operator into the 1-bit
@@ -1040,8 +1026,9 @@ auto RenderValueMethodCall(
   throw InternalError("RenderValueMethodCall: unknown kind");
 }
 
-auto RenderCallExpr(const RenderContext& ctx, const mir::CallExpr& call)
-    -> diag::Result<std::string> {
+auto RenderCallExpr(
+    const RenderContext& ctx, const mir::CallExpr& call,
+    mir::TypeId result_type) -> diag::Result<std::string> {
   return std::visit(
       Overloaded{
           [](const mir::SystemSubroutineCallee&) -> diag::Result<std::string> {
@@ -1148,6 +1135,51 @@ auto RenderCallExpr(const RenderContext& ctx, const mir::CallExpr& call)
             }
             return "(" + *closure_or + ")(" + args + ")";
           },
+          [&](const mir::RuntimeNavCallee& nav) -> diag::Result<std::string> {
+            auto base_or = RenderExpr(ctx, ctx.Expr(call.arguments.at(0)));
+            if (!base_or) return std::unexpected(std::move(base_or.error()));
+            switch (nav.fn) {
+              case mir::RuntimeFn::kGetChild: {
+                std::string indices = "{}";
+                if (call.arguments.size() > 1) {
+                  indices = "std::array{";
+                  for (std::size_t i = 1; i < call.arguments.size(); ++i) {
+                    auto idx_or =
+                        RenderExpr(ctx, ctx.Expr(call.arguments.at(i)));
+                    if (!idx_or)
+                      return std::unexpected(std::move(idx_or.error()));
+                    if (i != 1) indices += ", ";
+                    indices +=
+                        "std::size_t((" + *std::move(idx_or) + ").ToInt64())";
+                  }
+                  indices += "}";
+                }
+                return *base_or + "->GetChild(\"" + nav.name + "\", " +
+                       indices + ")";
+              }
+              case mir::RuntimeFn::kGetSignal: {
+                // GetSignal returns an untyped storage pointer; the call's
+                // result type names the cell, so the cast is fixed by that
+                // type.
+                auto cell_or = RenderTypeAsCpp(
+                    ctx.Unit(), ctx.StructuralScope(), result_type);
+                if (!cell_or)
+                  return std::unexpected(std::move(cell_or.error()));
+                return "static_cast<" + *cell_or + ">(" + *base_or +
+                       "->GetSignal(\"" + nav.name + "\"))";
+              }
+              case mir::RuntimeFn::kRegisterSignal: {
+                // Registers the signal's own cell address under its name; the
+                // var argument renders as a bare lvalue so `&` takes the cell.
+                auto var_or = RenderLhsExpr(
+                    ctx, ctx.Expr(call.arguments.at(1)), std::string_view{});
+                if (!var_or) return std::unexpected(std::move(var_or.error()));
+                return *base_or + "->RegisterSignal(\"" + nav.name + "\", &" +
+                       *var_or + ")";
+              }
+            }
+            throw InternalError("RenderCallExpr: unknown RuntimeFn");
+          },
       },
       call.callee);
 }
@@ -1208,11 +1240,6 @@ auto RenderLhsExpr(
             if (!name) return std::unexpected(std::move(name.error()));
             return *name + std::string{mutate_adapter};
           },
-          [&](const mir::CrossUnitVarRef& r) -> diag::Result<std::string> {
-            return "(*" + ctx.MemberPrefix() +
-                   CrossUnitRefSlotName(r.id.value) + ")" +
-                   std::string{mutate_adapter};
-          },
           [&](const mir::ProceduralVarRef& l) -> diag::Result<std::string> {
             return LookupProceduralVarName(ctx, l);
           },
@@ -1232,6 +1259,11 @@ auto RenderLhsExpr(
             auto suffix = RenderRangeSliceSuffix(ctx, s.offset_expr, s.count);
             if (!suffix) return std::unexpected(std::move(suffix.error()));
             return *base + *suffix;
+          },
+          [&](const mir::DerefExpr& d) -> diag::Result<std::string> {
+            auto ptr = RenderExpr(ctx, ctx.Expr(d.pointer));
+            if (!ptr) return std::unexpected(std::move(ptr.error()));
+            return "(*" + *ptr + ")" + std::string{mutate_adapter};
           },
           [&](const auto&) -> diag::Result<std::string> {
             throw InternalError(
@@ -1263,9 +1295,10 @@ auto LhsRootPrimary(const RenderContext& ctx, const mir::Expr& expr)
   }
 }
 
-// Whether the LHS root is an observable scalar -- a structural var or a
-// cross-unit reference slot whose target is an observable scalar type. A write
-// to such a root routes through `Var::Set` / `Var::Mutate` so subscribers fire.
+// Whether the LHS root is an observable scalar -- a structural var, or a
+// dereferenced borrowed-pointer slot whose pointee is an observable scalar
+// type. A write to such a root routes through `Var::Set` / `Var::Mutate` so
+// subscribers fire.
 auto LhsRootIsObservableScalar(const RenderContext& ctx, const mir::Expr& expr)
     -> bool {
   const mir::Expr& root = LhsRootPrimary(ctx, expr);
@@ -1273,16 +1306,15 @@ auto LhsRootIsObservableScalar(const RenderContext& ctx, const mir::Expr& expr)
     return IsObservableScalarType(ctx.Unit().GetType(
         ctx.StructuralScope().GetStructuralVar(sv->var).type));
   }
-  if (const auto* cu = std::get_if<mir::CrossUnitVarRef>(&root.data)) {
-    return IsObservableScalarType(
-        ctx.Unit().GetType(ctx.StructuralScope().GetCrossUnitRef(cu->id).type));
+  if (std::holds_alternative<mir::DerefExpr>(root.data)) {
+    return IsObservableScalarType(ctx.Unit().GetType(root.type));
   }
   return false;
 }
 
 auto IsLhsBarePrimary(const mir::Expr& expr) -> bool {
   return std::holds_alternative<mir::StructuralVarRef>(expr.data) ||
-         std::holds_alternative<mir::CrossUnitVarRef>(expr.data) ||
+         std::holds_alternative<mir::DerefExpr>(expr.data) ||
          std::holds_alternative<mir::ProceduralVarRef>(expr.data);
 }
 
@@ -1648,6 +1680,13 @@ auto RenderArrayLiteralExpr(
 auto RenderConstructExpr(
     const RenderContext& ctx, const mir::Expr& expr,
     const mir::ConstructExpr& c) -> diag::Result<std::string> {
+  // A pointer value-initializes to null; `nullptr` is the valid spelling of
+  // that (the functional-cast form `T*()` is ill-formed for a raw pointer
+  // type).
+  if (c.args.empty() && std::holds_alternative<mir::PointerType>(
+                            ctx.Unit().GetType(expr.type).data)) {
+    return std::string{"nullptr"};
+  }
   auto type_or = RenderTypeAsCpp(ctx.Unit(), ctx.StructuralScope(), expr.type);
   if (!type_or) return std::unexpected(std::move(type_or.error()));
   std::string out = *type_or + "(";
@@ -1704,6 +1743,20 @@ auto RenderExpr(const RenderContext& ctx, const mir::Expr& expr)
   return rendered_or;
 }
 
+// Read-side render of a borrowed-pointer dereference: the cell is reached with
+// `(*ptr)` and observed via `.Get()` for an integral packed pointee, mirroring
+// the structural-var read split.
+auto RenderDerefExpr(
+    const RenderContext& ctx, const mir::Expr& expr, const mir::DerefExpr& d)
+    -> diag::Result<std::string> {
+  auto ptr_or = RenderExpr(ctx, ctx.Expr(d.pointer));
+  if (!ptr_or) return std::unexpected(std::move(ptr_or.error()));
+  if (ctx.Unit().GetType(expr.type).IsIntegralPacked()) {
+    return "(*" + *ptr_or + ").Get()";
+  }
+  return "(*" + *ptr_or + ")";
+}
+
 auto RenderExprNatural(const RenderContext& ctx, const mir::Expr& expr)
     -> diag::Result<std::string> {
   return std::visit(
@@ -1729,9 +1782,6 @@ auto RenderExprNatural(const RenderContext& ctx, const mir::Expr& expr)
           [&](const mir::StructuralVarRef& m) -> diag::Result<std::string> {
             return RenderStructuralVarReadExpr(ctx, expr, m);
           },
-          [&](const mir::CrossUnitVarRef& m) -> diag::Result<std::string> {
-            return RenderCrossUnitVarReadExpr(ctx, expr, m);
-          },
           [&](const mir::ProceduralVarRef& l) -> diag::Result<std::string> {
             const std::string name = LookupProceduralVarName(ctx, l);
             return IsReferenceProceduralVar(ctx, l) ? name + ".Get()" : name;
@@ -1755,10 +1805,16 @@ auto RenderExprNatural(const RenderContext& ctx, const mir::Expr& expr)
             return RenderConversionExpr(ctx, expr, cv);
           },
           [&](const mir::CallExpr& call) -> diag::Result<std::string> {
-            return RenderCallExpr(ctx, call);
+            return RenderCallExpr(ctx, call, expr.type);
           },
           [&](const mir::RuntimeCallExpr& rc) -> diag::Result<std::string> {
             return RenderRuntimeCallExpr(ctx, rc);
+          },
+          [&](const mir::DerefExpr& d) -> diag::Result<std::string> {
+            return RenderDerefExpr(ctx, expr, d);
+          },
+          [&](const mir::SelfScopeExpr&) -> diag::Result<std::string> {
+            return std::string(ctx.ReceiverObject());
           },
           [&](const mir::ClosureExpr& cl) -> diag::Result<std::string> {
             return RenderClosureExpr(ctx, cl);

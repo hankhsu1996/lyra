@@ -27,6 +27,7 @@ enum class TypeKind {
   kVoid,
   kObject,
   kExternalUnitObject,
+  kScope,
   kPointer,
   kVector,
   kExternalRef,
@@ -137,6 +138,14 @@ struct ExternalUnitObjectType {
   auto operator==(const ExternalUnitObjectType&) const -> bool = default;
 };
 
+// The runtime object-tree base class `lyra::runtime::Scope`, type-erased. A
+// by-name navigation handle (`GetChild` / `ResolveUpward` result) is a
+// `PointerType{ScopeType, kBorrowed}`; the concrete child class is unknown
+// across the unit boundary, so only the runtime base is named.
+struct ScopeType {
+  auto operator==(const ScopeType&) const -> bool = default;
+};
+
 enum class PointerOwnership {
   kUnique,
   kShared,
@@ -161,9 +170,10 @@ struct VectorType {
 
 // One by-name step from a resolved scope into an owned child it answers for:
 // the child member's name plus one index per array dimension (empty for a
-// scalar child). The ancestor indexes its own storage, so a multi-dimensional
-// instance array is just more indices, never a flattened offset. (Distinct from
-// StructuralHops, which is a count of lexical frames climbed, not a path step.)
+// scalar child). The ancestor answers by name from the children it registered,
+// so a multi-dimensional instance array is just more indices, never a flattened
+// offset. (Distinct from StructuralHops, which is a count of lexical frames
+// climbed, not a path step.)
 struct ChildStep {
   std::string name;
   std::vector<std::uint32_t> indices;
@@ -191,7 +201,7 @@ using TypeData = std::variant<
     PackedArrayType, EnumType, UnpackedArrayType, DynamicArrayType, QueueType,
     AssociativeArrayType, StringType, EventType, RealType, ShortRealType,
     RealTimeType, ChandleType, VoidType, ObjectType, ExternalUnitObjectType,
-    PointerType, VectorType, ExternalRefType>;
+    ScopeType, PointerType, VectorType, ExternalRefType>;
 
 struct Type {
   TypeData data;

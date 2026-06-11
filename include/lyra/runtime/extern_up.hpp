@@ -53,8 +53,7 @@ class ExternUp : public ExternBase {
   void Relocate() override {
     Scope* scope = owner_->ResolveUpwardScope(ancestor_);
     for (const ChildStep& hop : tail_) {
-      scope =
-          scope->GetChild(ChildRef{.name = hop.name, .indices = hop.indices});
+      scope = scope->GetChild(hop.name, hop.indices);
     }
     cell_ = static_cast<Var<T>*>(scope->GetSignal(signal_));
   }

@@ -1,11 +1,15 @@
 #include "lyra/runtime/scope.hpp"
 
+#include <algorithm>
+#include <cstddef>
 #include <cstdint>
 #include <functional>
 #include <memory>
+#include <span>
 #include <string>
 #include <string_view>
 #include <utility>
+#include <vector>
 
 #include "lyra/base/internal_error.hpp"
 #include "lyra/runtime/coroutine.hpp"
@@ -31,6 +35,38 @@ void Scope::ForEachChild(const ChildVisitor& fn) {
   for (Scope* child : children_) {
     fn(*child);
   }
+}
+
+void Scope::RegisterSignal(std::string_view name, void* address) {
+  signals_.push_back(SignalEntry{.name = name, .address = address});
+}
+
+void Scope::RegisterChild(
+    std::string_view name, std::span<const std::size_t> indices, Scope& child) {
+  child_entries_.push_back(
+      ChildEntry{
+          .name = name,
+          .indices = std::vector<std::size_t>(indices.begin(), indices.end()),
+          .scope = &child});
+}
+
+auto Scope::GetSignal(std::string_view name) -> void* {
+  for (const SignalEntry& signal : signals_) {
+    if (signal.name == name) {
+      return signal.address;
+    }
+  }
+  return nullptr;
+}
+
+auto Scope::GetChild(
+    std::string_view name, std::span<const std::size_t> indices) -> Scope* {
+  for (const ChildEntry& child : child_entries_) {
+    if (child.name == name && std::ranges::equal(child.indices, indices)) {
+      return child.scope;
+    }
+  }
+  return nullptr;
 }
 
 auto Scope::Parent() const -> Scope* {

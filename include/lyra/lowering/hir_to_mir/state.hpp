@@ -240,13 +240,6 @@ class StructuralScopeLoweringState {
     return scope_->GetStructuralVar(id);
   }
 
-  auto AddCrossUnitRef(mir::CrossUnitRefDecl decl) -> mir::CrossUnitRefId {
-    const mir::CrossUnitRefId id{
-        static_cast<std::uint32_t>(scope_->cross_unit_refs.size())};
-    scope_->cross_unit_refs.push_back(std::move(decl));
-    return id;
-  }
-
   auto AddStructuralParam(mir::StructuralParamDecl param)
       -> mir::StructuralParamId {
     const mir::StructuralParamId id{
@@ -283,9 +276,9 @@ class StructuralScopeLoweringState {
   }
 
   // Records the MIR target each HIR cross-unit ref slot lowers to, in HIR slot
-  // order: an upward ref materializes as a StructuralVarRef to a synthesized
-  // ExternalRef member, a downward ref keeps a CrossUnitVarRef. Reads and
-  // sensitivity resolve a slot through this table.
+  // order: a StructuralVarRef to the slot member -- a synthesized ExternalRef
+  // member for an upward ref, a borrowed-pointer slot for a downward ref. Reads
+  // and sensitivity resolve a slot through this table.
   void AddCrossUnitRefTarget(mir::SensitivityRef target) {
     cross_unit_ref_targets_.push_back(std::move(target));
   }

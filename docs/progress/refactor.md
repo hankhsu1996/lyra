@@ -201,6 +201,32 @@ Entries get checked off as their PRs land. When the last entry lands, the file i
       migration; the backend is `~80%` aligned today but moving the last 20% requires touching every
       renderer in one pass. **Trigger**: scheduled with R9 and R10.
 
+- [ ] R10 -- Model the observable (`Var<T>`) storage as a first-class MIR wrapper type so the cpp
+      backend stops re-deriving "is this observable storage" at render time. Today a signal's MIR
+      type is its value type (`PackedArray`, `string`, ...); whether the field is stored as
+      `lyra::runtime::Var<T>` is a backend predicate (`IsObservableScalarType`) computed at render
+      and consulted at every value access -- the field declaration wraps in `Var<T>`, a read appends
+      `.Get()`, a write routes through `.Set()` / `.Mutate()`, and sensitivity subscribes to the
+      cell. `Var<T>` is a template storage wrapper exactly analogous to the `unique_ptr` / `vector`
+      wrappers MIR already models as `PointerType` / `VectorType`, yet it has no MIR type of its
+      own, so the backend keeps asking the value type "are you observable?" in several places
+      instead of reading a concept off the type. Target shape: a first-class observable wrapper type
+      in MIR (sibling to `PointerType` / `VectorType`); a signal field's type becomes that wrapper,
+      `RenderTypeAsCpp` maps it straight to `Var<T>`, and every value access becomes a mechanical
+      switch on the wrapper variant (a read unwraps to the value type, a write targets the cell)
+      rather than an `IsObservableScalarType` call. The one wrinkle the pointer / vector wrappers do
+      not have is the value/storage duality -- a signal is also read as a value, so the wrapper read
+      must unwrap to `T` -- which the read / write nodes resolve by switching on the wrapper type.
+      The backend then never asks "is this observable" anywhere; the type carries it, and render is
+      a pure structural map. **Why deferred**: orthogonal to the cross-unit hierarchical-reference
+      work in flight; it cross-cuts all signal value access (field declaration, read, write,
+      sensitivity) and is its own focused cut, and the current predicate is behaviorally correct.
+      **Trigger**: standalone -- highest leverage taken together with R2, which reworks the same
+      `IsObservableScalarType` decision from the capability-gating angle (wrap every value type
+      uniformly, push unsupported change-tracking to explicit diagnostics). R10 makes the wrapper a
+      type; R2 makes the wrap uniform and capability-honest -- done together they remove
+      `IsObservableScalarType` entirely and leave the backend a pure renderer.
+
 ## Out of Scope
 
 - Per-feature workstreams. Those live in the dedicated feature files (`control-flow.md`,

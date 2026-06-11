@@ -238,11 +238,17 @@ auto RenderConstructOwnedObjectStmt(
         "ConstructOwnedObjectStmt target is not an owned object var");
   }
   const std::string lhs = ctx.MemberPrefix() + var.name;
+  const std::string reg_name =
+      var.source_name.empty() ? var.name : var.source_name;
   if (std::holds_alternative<mir::VectorType>(
           ctx.Unit().GetType(var.type).data)) {
-    return Indent(indent) + lhs + ".push_back(" + make + ");\n";
+    return Indent(indent) + lhs + ".push_back(" + make + ");\n" +
+           Indent(indent) + ctx.MemberPrefix() + "RegisterChild(\"" + reg_name +
+           "\", std::array{" + lhs + ".size() - 1}, *" + lhs + ".back());\n";
   }
-  return Indent(indent) + lhs + " = " + make + ";\n";
+  return Indent(indent) + lhs + " = " + make + ";\n" + Indent(indent) +
+         ctx.MemberPrefix() + "RegisterChild(\"" + reg_name + "\", {}, *" +
+         lhs + ");\n";
 }
 
 // Materializes an external-unit member by recursing on its type, mirroring the
@@ -269,8 +275,20 @@ auto RenderExternalUnitFill(
     out += Indent(indent) + "}\n";
     return out;
   }
-  return Indent(indent) + lvalue + " = std::make_unique<" + unit_name +
-         ">(this, \"" + label + "\");\n";
+  std::string out = Indent(indent) + lvalue + " = std::make_unique<" +
+                    unit_name + ">(this, \"" + label + "\");\n";
+  std::string idx = "{}";
+  if (depth > 0) {
+    idx = "std::array{";
+    for (std::size_t d = 0; d < depth; ++d) {
+      if (d != 0) idx += ", ";
+      idx += "i" + std::to_string(d);
+    }
+    idx += "}";
+  }
+  out += Indent(indent) + ctx.MemberPrefix() + "RegisterChild(\"" + label +
+         "\", " + idx + ", *" + lvalue + ");\n";
+  return out;
 }
 
 auto RenderConstructExternalUnitStmt(
@@ -280,55 +298,6 @@ auto RenderConstructExternalUnitStmt(
   return RenderExternalUnitFill(
       ctx, ctx.MemberPrefix() + var.name, var.type, s.unit_name, var.name,
       s.dims, 0, indent);
-}
-
-// Emits a `ChildRef` literal for a by-name owned-child hop: the LRM name plus,
-// for an indexed loop block or instance array, the per-dimension indices in a
-// temporary `std::array` whose lifetime spans the surrounding navigation call.
-auto RenderChildRefLiteral(
-    const std::string& name, const std::vector<std::uint32_t>& indices)
-    -> std::string {
-  std::string out = "lyra::runtime::ChildRef{.name = \"" + name + "\"";
-  if (!indices.empty()) {
-    out += ", .indices = std::array<std::size_t, " +
-           std::to_string(indices.size()) + ">{";
-    for (std::size_t i = 0; i < indices.size(); ++i) {
-      if (i != 0) out += ", ";
-      out += std::to_string(indices[i]);
-    }
-    out += "}";
-  }
-  out += "}";
-  return out;
-}
-
-// A downward cross-unit reference resolves by name across the unit boundary
-// (emission_model.md). The navigation is already resolved in MIR -- `steps` are
-// the owned children to fetch with `GetChild` in order, `signal` is the leaf to
-// fetch with `GetSignal` -- so this renders each step mechanically and casts to
-// the slot's own cell type (`Var<T>*` for an observable scalar, `T*`
-// otherwise), a representation fixed by the slot's type.
-auto RenderResolveCrossUnitRefStmt(
-    const RenderContext& ctx, const mir::ResolveCrossUnitRefStmt& s,
-    std::size_t indent) -> diag::Result<std::string> {
-  const auto& slot = ctx.StructuralScope().GetCrossUnitRef(s.slot);
-
-  auto elem_or = RenderTypeAsCpp(ctx.Unit(), ctx.StructuralScope(), slot.type);
-  if (!elem_or) return std::unexpected(std::move(elem_or.error()));
-  const std::string cast_type =
-      IsObservableScalarType(ctx.Unit().GetType(slot.type))
-          ? "lyra::runtime::Var<" + *elem_or + ">*"
-          : *elem_or + "*";
-
-  std::string nav = ctx.MemberPrefix();
-  for (const auto& step : slot.steps) {
-    nav += "GetChild(" + RenderChildRefLiteral(step.name, step.indices) + ")->";
-  }
-  nav += "GetSignal(\"" + slot.signal + "\")";
-
-  return Indent(indent) + ctx.MemberPrefix() +
-         CrossUnitRefSlotName(s.slot.value) + " = static_cast<" + cast_type +
-         ">(" + nav + ");\n";
 }
 
 auto RenderForStmtNode(
@@ -404,24 +373,22 @@ auto RenderDoWhileStmtNode(
 auto RenderSensitivityRefPtr(
     const RenderContext& ctx, const mir::SensitivityRef& ref)
     -> diag::Result<std::string> {
-  return std::visit(
-      Overloaded{
-          [&](const mir::StructuralVarRef& r) -> diag::Result<std::string> {
-            auto name = RenderStructuralVarName(ctx, r);
-            if (!name) return std::unexpected(std::move(name.error()));
-            const auto& var =
-                ctx.StructuralScopeAtHops(r.hops).GetStructuralVar(r.var);
-            if (std::holds_alternative<mir::ExternalRefType>(
-                    ctx.Unit().GetType(var.type).data)) {
-              return *name + ".AsObservable()";
-            }
-            return "&" + *name;
-          },
-          [&](const mir::CrossUnitVarRef& r) -> diag::Result<std::string> {
-            return ctx.MemberPrefix() + CrossUnitRefSlotName(r.id.value);
-          },
-      },
-      ref);
+  auto name = RenderStructuralVarName(ctx, ref);
+  if (!name) return std::unexpected(std::move(name.error()));
+  const auto& var =
+      ctx.StructuralScopeAtHops(ref.hops).GetStructuralVar(ref.var);
+  if (std::holds_alternative<mir::ExternalRefType>(
+          ctx.Unit().GetType(var.type).data)) {
+    return *name + ".AsObservable()";
+  }
+  // A borrowed-pointer slot already holds a `Var<T>*` (= Observable*); the
+  // pointer value is the subscription target, no address-of.
+  if (const auto* ptr =
+          std::get_if<mir::PointerType>(&ctx.Unit().GetType(var.type).data);
+      ptr != nullptr && ptr->ownership == mir::PointerOwnership::kBorrowed) {
+    return *name;
+  }
+  return "&" + *name;
 }
 
 auto RenderSensitivityWaitStmt(
@@ -487,10 +454,6 @@ auto RenderStmt(
           [&](const mir::ConstructExternalUnitStmt& s)
               -> diag::Result<std::string> {
             return RenderConstructExternalUnitStmt(ctx, s, indent);
-          },
-          [&](const mir::ResolveCrossUnitRefStmt& s)
-              -> diag::Result<std::string> {
-            return RenderResolveCrossUnitRefStmt(ctx, s, indent);
           },
           [&](const mir::ForStmt& s) -> diag::Result<std::string> {
             return RenderForStmtNode(ctx, stmt, s, indent);

@@ -34,12 +34,6 @@ auto RenderField(
   const auto& unit = ctor_ctx.Unit();
   auto type_or = RenderTypeAsCpp(unit, ctor_ctx.StructuralScope(), var.type);
   if (!type_or) return std::unexpected(std::move(type_or.error()));
-  // An owned-child member (a unique_ptr, or a vector of them) is filled in the
-  // constructor body; the field itself is just default-constructed storage, so
-  // it needs no initializer.
-  if (mir::GetChildScope(unit, var.type).has_value()) {
-    return Indent(indent) + *type_or + " " + var.name + ";\n";
-  }
   // An upward reference is an ExternUp member constructed with its symbol --
   // the ancestor name, the by-name tail down through its owned children, and
   // the leaf signal. It registers itself and relocates at Bind, so it has no
@@ -355,88 +349,6 @@ auto RenderScopeAsClass(
            s.name + "\"; }\n";
   }
 
-  // Exposes this scope's own signals by name. A descendant's upward reference
-  // cannot name this unit's type, so it fetches the signal by name and this
-  // unit answers (emission_model.md). Owned-child members and ExternUp members
-  // (this unit's own upward references) are not this unit's signals.
-  {
-    std::string body;
-    for (const auto& v : s.structural_vars) {
-      if (mir::GetChildScope(unit, v.type).has_value()) {
-        continue;
-      }
-      if (std::holds_alternative<mir::ExternalRefType>(
-              unit.GetType(v.type).data)) {
-        continue;
-      }
-      body += Indent(indent + 2) + "if (n == \"" + v.name + "\") return &" +
-              v.name + ";\n";
-    }
-    if (!body.empty()) {
-      out += "\n";
-      out += Indent(indent + 1) +
-             "auto GetSignal(std::string_view n) -> void* override {\n";
-      out += body;
-      out += Indent(indent + 2) + "return nullptr;\n";
-      out += Indent(indent + 1) + "}\n";
-    }
-  }
-
-  // Exposes this scope's owned children by name -- the twin of GetSignal for
-  // the object tree. A by-name reference (an upward reference's tail) cannot
-  // name a child's type, so the owner indexes its own storage and answers
-  // (emission_model.md). These are exactly the members GetSignal skips.
-  {
-    // Group owned children by the name a reference uses; same-name if/else arms
-    // (LRM 27.5) share one key, so a conditional arm is guarded and the group
-    // returns whichever was constructed.
-    std::vector<std::pair<std::string, std::string>> groups;
-    for (const auto& v : s.structural_vars) {
-      const auto child = mir::GetChildScope(unit, v.type);
-      if (!child.has_value()) {
-        continue;
-      }
-      std::string access = v.name;
-      mir::TypeId leaf_type = v.type;
-      std::size_t dim = 0;
-      while (const auto* vec =
-                 std::get_if<mir::VectorType>(&unit.GetType(leaf_type).data)) {
-        access += ".at(ref.indices[" + std::to_string(dim) + "])";
-        leaf_type = vec->element;
-        ++dim;
-      }
-      const bool conditional =
-          std::holds_alternative<mir::GenerateScopeChild>(*child) && dim == 0;
-      const std::string line =
-          conditional ? Indent(indent + 3) + "if (" + v.name + ") return " +
-                            access + ".get();\n"
-                      : Indent(indent + 3) + "return " + access + ".get();\n";
-      const std::string& key = v.source_name.empty() ? v.name : v.source_name;
-      auto it = std::ranges::find(
-          groups, key, &std::pair<std::string, std::string>::first);
-      if (it == groups.end()) {
-        groups.emplace_back(key, line);
-      } else {
-        it->second += line;
-      }
-    }
-    std::string body;
-    for (const auto& [key, lines] : groups) {
-      body += Indent(indent + 2) + "if (ref.name == \"" + key + "\") {\n";
-      body += lines;
-      body += Indent(indent + 2) + "}\n";
-    }
-    if (!body.empty()) {
-      out += "\n";
-      out += Indent(indent + 1) +
-             "auto GetChild(lyra::runtime::ChildRef ref) "
-             "-> lyra::runtime::Scope* override {\n";
-      out += body;
-      out += Indent(indent + 2) + "return nullptr;\n";
-      out += Indent(indent + 1) + "}\n";
-    }
-  }
-
   // Members follow the constructor and methods. They are public so cross-unit
   // references can reach them directly (see reference_resolution.md).
   if (!s.structural_params.empty() || !s.structural_vars.empty()) {
@@ -454,21 +366,6 @@ auto RenderScopeAsClass(
     auto field_or = RenderField(this_anchor, v, indent + 1);
     if (!field_or) return std::unexpected(std::move(field_or.error()));
     out += *field_or;
-  }
-
-  // A downward cross-unit reference slot holds the resolved pointer to a
-  // child's member, mirroring its storage: a `Var<T>*` for an observable
-  // scalar, a plain `T*` otherwise. Filled in the constructor.
-  for (std::size_t i = 0; i < s.cross_unit_refs.size(); ++i) {
-    const auto& cu = s.cross_unit_refs[i];
-    auto type_or = RenderTypeAsCpp(unit, s, cu.type);
-    if (!type_or) return std::unexpected(std::move(type_or.error()));
-    const std::string slot_type = IsObservableScalarType(unit.GetType(cu.type))
-                                      ? "lyra::runtime::Var<" + *type_or + ">*"
-                                      : *type_or + "*";
-    out += Indent(indent + 1) + slot_type + " " +
-           CrossUnitRefSlotName(static_cast<std::uint32_t>(i)) +
-           " = nullptr;\n";
   }
 
   if (s.processes.empty() && s.structural_subroutines.empty()) {

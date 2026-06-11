@@ -120,13 +120,6 @@ struct ConstructExternalUnitStmt {
   std::vector<std::uint32_t> dims;
 };
 
-// Fills downward cross-unit slot `slot` once at construction, after the target
-// child exists: the backend stores a direct reference by navigating the recipe
-// in the enclosing scope's `cross_unit_refs` table (reference_resolution.md).
-struct ResolveCrossUnitRefStmt {
-  CrossUnitRefId slot;
-};
-
 struct ForInitDecl {
   ProceduralVarRef induction_var = {};
   ExprId init = {};
@@ -208,9 +201,9 @@ struct SensitivityWaitStmt {
 
 using StmtData = std::variant<
     EmptyStmt, ProceduralVarDeclStmt, ExprStmt, BlockStmt, ForkStmt, IfStmt,
-    ConstructOwnedObjectStmt, ConstructExternalUnitStmt,
-    ResolveCrossUnitRefStmt, ForStmt, DelayStmt, WhileStmt, DoWhileStmt,
-    BreakStmt, ContinueStmt, ReturnStmt, SensitivityWaitStmt>;
+    ConstructOwnedObjectStmt, ConstructExternalUnitStmt, ForStmt, DelayStmt,
+    WhileStmt, DoWhileStmt, BreakStmt, ContinueStmt, ReturnStmt,
+    SensitivityWaitStmt>;
 
 struct Stmt {
   std::optional<std::string> label;

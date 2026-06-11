@@ -90,10 +90,10 @@ Unlocks `instantiation/multiple_instances`, `instantiation/nested_hierarchy`,
 
 - [x] C1 -- Cross-unit references resolve once at construction into a stored direct reference, read
       directly thereafter (per `reference_resolution.md`). This is the substrate Stages D and E
-      consume. Landed for downward references at any depth: the slot's recipe is a navigation path
-      from a local child member down to the referenced leaf, materialized once after the subtree is
-      built. The resolve-once slot is the shared path ports will populate; upward resolution feeds
-      the same slot in a later cut.
+      consume. Landed for downward references at any depth: the slot is filled once, after the
+      subtree is built, by navigating from the referrer's own child down to the referenced leaf. The
+      resolve-once slot is the shared path ports will populate; upward resolution feeds the same
+      slot in a later cut.
 - [x] C2 -- A process on one instance can observe a member of another instance and re-evaluate when
       that member changes, without the observed instance knowing who watches it (cross-instance
       sensitivity). The combinational process subscribes through the resolved slot, independent of
@@ -118,8 +118,9 @@ consume. Coverage is demonstrated through Stage D and Stage E.
       `Top.mid.deep.z`, `Top.bank[2].y`): the climb reaches the ancestor, then the reference steps
       down by name into the ancestor's owned children to the leaf, at any depth and through array
       indices. The tail is by-name for the same reason the climb is -- the referrer owns neither the
-      ancestor nor its children -- so each owner answers for its own children, indexing its own
-      storage. A leaf directly on the ancestor is the empty-tail zero-case of the same walk.
+      ancestor nor its children -- so each owner answers for its own children from the names it
+      registered at construction. A leaf directly on the ancestor is the empty-tail zero-case of the
+      same walk.
 - [x] D2b -- An upward reference written inside a generate block (conditional or loop) rather than
       the module body. It resolves the same as one in the module body -- its member rides the
       generate-block scope and climbs that object's own parent chain -- including an upward write,

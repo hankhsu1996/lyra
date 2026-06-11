@@ -133,15 +133,15 @@ Once the ancestor is found, the reference may still descend into the ancestor's 
 reaching the leaf (`Top.sib.y` climbs to `Top`, then steps down into the owned child `sib`). That
 tail is by-name too, for the same reason the climb is: the referrer owns neither the ancestor nor
 its children, so it cannot navigate by typed pointer. Each step asks the current scope for an owned
-child through `Scope::GetChild` -- the twin of `GetSignal` for the object tree, which the owner
-answers by indexing its own storage (an array hop is the owner's own `vector` subscript, never a
-re-derived offset). The final leaf is fetched with `Scope::GetSignal("y")`, which the ancestor's own
-emitted code answers by returning a pointer to its own member. The referrer casts the returned
-`void*` to its own `Var<T>` cell type -- a type it already knows from its declaration -- never to
-the ancestor's type. When the leaf sits directly on the ancestor the tail is empty, the zero-case of
-the same walk. The by-name SDK realization (`DefName`, `GetSignal`, `GetChild`, the
-construction-time climb) is owned by `emission_model.md`; this record fixes only the resolution
-strategy, not its emitted shape.
+child through `Scope::GetChild` -- the twin of `GetSignal` for the object tree. The owner does not
+answer with per-unit code: it registered each owned child by name during construction (an array
+element under its per-dimension indices, never a re-derived offset), and the base `Scope` returns
+the match. The final leaf is fetched with `Scope::GetSignal("y")`, answered the same way from the
+ancestor's registered signals. The referrer casts the returned `void*` to its own `Var<T>` cell type
+-- a type it already knows from its declaration -- never to the ancestor's type. When the leaf sits
+directly on the ancestor the tail is empty, the zero-case of the same walk. The by-name SDK
+realization (`DefName`, `GetSignal`, `GetChild`, the construction-time climb) is owned by
+`emission_model.md`; this record fixes only the resolution strategy, not its emitted shape.
 
 ## Decision
 
@@ -180,18 +180,19 @@ construction. Concretely:
      Var<int> g;
      unique_ptr<Sib> sib;
      unique_ptr<Leaf> l;
-     Top(...) { ... }                                   // knows nothing about Leaf's g / s
+     Top(...) {                                         // knows nothing about Leaf's g / s
+       ...
+       RegisterSignal("g", &g);                         // records its own by-name interface
+       RegisterChild("sib", {}, *sib);                  // (an array element: RegisterChild("bank", {i}, *bank[i]))
+     }
      string_view DefName() const override { return "Top"; }
-     void* GetSignal(string_view n) override {          // answers for its own signals
-       if (n == "g") return &g;
-       return nullptr;
-     }
-     Scope* GetChild(ChildRef ref) override {           // answers for its own children
-       if (ref.name == "sib") return sib.get();         // (an array hop: bank.at(ref.indices[0]))
-       return nullptr;
-     }
    };
    ```
+
+   `GetSignal` / `GetChild` are not per-unit overrides: every scope records its own signals and
+   owned children by name into the base `Scope` during construction, and the base answers a by-name
+   query from those registrations -- so a unit never inspects who asks, and the dispatch is one
+   generic scan, not a synthesized per-unit `if`-chain.
 
    The walk -- climb the parent chain by `DefName()` to the ancestor, step down any tail through
    `Scope::GetChild`, then `Scope::GetSignal` the leaf -- lives once in the runtime SDK
