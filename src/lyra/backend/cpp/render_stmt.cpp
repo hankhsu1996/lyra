@@ -231,16 +231,24 @@ auto RenderConstructOwnedObjectStmt(
   const std::string make = "std::make_unique<" + target_scope.name +
                            ">(this, \"" + target_scope.name + "\"" +
                            trailing_args + ")";
-  if (mir::IsVectorOfOwningObjectType(ctx.Unit(), var.type)) {
-    return Indent(indent) + ctx.MemberPrefix() + var.name + ".push_back(" +
-           make + ");\n";
+  const auto child = mir::GetChildScope(ctx.Unit(), var.type);
+  if (!child.has_value() ||
+      !std::holds_alternative<mir::GenerateScopeChild>(*child)) {
+    throw InternalError(
+        "ConstructOwnedObjectStmt target is not an owned object var");
   }
-  if (mir::IsOwningObjectType(ctx.Unit(), var.type)) {
-    return Indent(indent) + ctx.MemberPrefix() + var.name + " = " + make +
-           ";\n";
+  const std::string lhs = ctx.MemberPrefix() + var.name;
+  const std::string reg_name =
+      var.source_name.empty() ? var.name : var.source_name;
+  if (std::holds_alternative<mir::VectorType>(
+          ctx.Unit().GetType(var.type).data)) {
+    return Indent(indent) + lhs + ".push_back(" + make + ");\n" +
+           Indent(indent) + ctx.MemberPrefix() + "RegisterChild(\"" + reg_name +
+           "\", std::array{" + lhs + ".size() - 1}, *" + lhs + ".back());\n";
   }
-  throw InternalError(
-      "ConstructOwnedObjectStmt target is not an owning object var");
+  return Indent(indent) + lhs + " = " + make + ";\n" + Indent(indent) +
+         ctx.MemberPrefix() + "RegisterChild(\"" + reg_name + "\", {}, *" +
+         lhs + ");\n";
 }
 
 // Materializes an external-unit member by recursing on its type, mirroring the
@@ -267,8 +275,20 @@ auto RenderExternalUnitFill(
     out += Indent(indent) + "}\n";
     return out;
   }
-  return Indent(indent) + lvalue + " = std::make_unique<" + unit_name +
-         ">(this, \"" + label + "\");\n";
+  std::string out = Indent(indent) + lvalue + " = std::make_unique<" +
+                    unit_name + ">(this, \"" + label + "\");\n";
+  std::string idx = "{}";
+  if (depth > 0) {
+    idx = "std::array{";
+    for (std::size_t d = 0; d < depth; ++d) {
+      if (d != 0) idx += ", ";
+      idx += "i" + std::to_string(d);
+    }
+    idx += "}";
+  }
+  out += Indent(indent) + ctx.MemberPrefix() + "RegisterChild(\"" + label +
+         "\", " + idx + ", *" + lvalue + ");\n";
+  return out;
 }
 
 auto RenderConstructExternalUnitStmt(
@@ -278,29 +298,6 @@ auto RenderConstructExternalUnitStmt(
   return RenderExternalUnitFill(
       ctx, ctx.MemberPrefix() + var.name, var.type, s.unit_name, var.name,
       s.dims, 0, indent);
-}
-
-// Points the downward slot at the leaf member it references, once the subtree
-// exists: the head var and every intervening instance are owning pointers
-// reached with `->`, and an instance-array hop indexes the owning vector with
-// `[i]` (LRM 23.6 resolved at construction, reference_resolution.md).
-auto RenderResolveCrossUnitRefStmt(
-    const RenderContext& ctx, const mir::ResolveCrossUnitRefStmt& s,
-    std::size_t indent) -> diag::Result<std::string> {
-  const auto& slot = ctx.StructuralScope().GetCrossUnitRef(s.slot);
-  const auto& inst = ctx.StructuralScope().GetStructuralVar(slot.instance_var);
-  std::string out = Indent(indent) + ctx.MemberPrefix() +
-                    CrossUnitRefSlotName(s.slot.value) + " = &" +
-                    ctx.MemberPrefix() + inst.name;
-  for (const auto& step : slot.path) {
-    if (const auto* member = std::get_if<mir::MemberHop>(&step)) {
-      out += "->" + member->name;
-    } else {
-      out += "[" + std::to_string(std::get<mir::IndexHop>(step).index) + "]";
-    }
-  }
-  out += ";\n";
-  return out;
 }
 
 auto RenderForStmtNode(
@@ -376,24 +373,22 @@ auto RenderDoWhileStmtNode(
 auto RenderSensitivityRefPtr(
     const RenderContext& ctx, const mir::SensitivityRef& ref)
     -> diag::Result<std::string> {
-  return std::visit(
-      Overloaded{
-          [&](const mir::StructuralVarRef& r) -> diag::Result<std::string> {
-            auto name = RenderStructuralVarName(ctx, r);
-            if (!name) return std::unexpected(std::move(name.error()));
-            const auto& var =
-                ctx.StructuralScopeAtHops(r.hops).GetStructuralVar(r.var);
-            if (std::holds_alternative<mir::ExternalRefType>(
-                    ctx.Unit().GetType(var.type).data)) {
-              return *name + ".AsObservable()";
-            }
-            return "&" + *name;
-          },
-          [&](const mir::CrossUnitVarRef& r) -> diag::Result<std::string> {
-            return ctx.MemberPrefix() + CrossUnitRefSlotName(r.id.value);
-          },
-      },
-      ref);
+  auto name = RenderStructuralVarName(ctx, ref);
+  if (!name) return std::unexpected(std::move(name.error()));
+  const auto& var =
+      ctx.StructuralScopeAtHops(ref.hops).GetStructuralVar(ref.var);
+  if (std::holds_alternative<mir::ExternalRefType>(
+          ctx.Unit().GetType(var.type).data)) {
+    return *name + ".AsObservable()";
+  }
+  // A borrowed-pointer slot already holds a `Var<T>*` (= Observable*); the
+  // pointer value is the subscription target, no address-of.
+  if (const auto* ptr =
+          std::get_if<mir::PointerType>(&ctx.Unit().GetType(var.type).data);
+      ptr != nullptr && ptr->ownership == mir::PointerOwnership::kBorrowed) {
+    return *name;
+  }
+  return "&" + *name;
 }
 
 auto RenderSensitivityWaitStmt(
@@ -459,10 +454,6 @@ auto RenderStmt(
           [&](const mir::ConstructExternalUnitStmt& s)
               -> diag::Result<std::string> {
             return RenderConstructExternalUnitStmt(ctx, s, indent);
-          },
-          [&](const mir::ResolveCrossUnitRefStmt& s)
-              -> diag::Result<std::string> {
-            return RenderResolveCrossUnitRefStmt(ctx, s, indent);
           },
           [&](const mir::ForStmt& s) -> diag::Result<std::string> {
             return RenderForStmtNode(ctx, stmt, s, indent);

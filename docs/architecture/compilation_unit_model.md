@@ -68,6 +68,11 @@ Define what a compilation unit is, what it owns, and the rules that make it self
   table.
 - Compiling one unit against another unit's body or internal ids instead of against its interface
   (name and signature).
+- A unit that knows or enumerates the units that reference it: a consumer/referrer list, a back-edge
+  from a member to the references that read it, or code that resolves a reference on a referrer's
+  behalf by pushing its own member outward. A unit produces only its own interface from its own
+  contents; who depends on that interface is not part of the unit and is never visible to it.
+  Resolution is always pulled by the referrer, never pushed by the target.
 - Treating "the design" as a compilation unit.
 - Treating the frontend as the authority for compilation-unit identity, membership, or boundary. The
   frontend is input; the compiler is authority.

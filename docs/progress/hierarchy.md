@@ -90,10 +90,10 @@ Unlocks `instantiation/multiple_instances`, `instantiation/nested_hierarchy`,
 
 - [x] C1 -- Cross-unit references resolve once at construction into a stored direct reference, read
       directly thereafter (per `reference_resolution.md`). This is the substrate Stages D and E
-      consume. Landed for downward references at any depth: the slot's recipe is a navigation path
-      from a local child member down to the referenced leaf, materialized once after the subtree is
-      built. The resolve-once slot is the shared path ports will populate; upward resolution feeds
-      the same slot in a later cut.
+      consume. Landed for downward references at any depth: the slot is filled once, after the
+      subtree is built, by navigating from the referrer's own child down to the referenced leaf. The
+      resolve-once slot is the shared path ports will populate; upward resolution feeds the same
+      slot in a later cut.
 - [x] C2 -- A process on one instance can observe a member of another instance and re-evaluate when
       that member changes, without the observed instance knowing who watches it (cross-instance
       sensitivity). The combinational process subscribes through the resolved slot, independent of
@@ -108,8 +108,9 @@ consume. Coverage is demonstrated through Stage D and Stage E.
 - [x] D2 -- An upward reference reads and writes a signal directly on the matched ancestor, at any
       depth. The child cannot know its depth when compiled, so it resolves the reference at
       construction inside its own artifact: it climbs its parent chain to the ancestor named by the
-      reference (matching an instance or module name, LRM 23.8) and fetches the signal by name,
-      naming no ancestor type (see `docs/decisions/upward-reference-resolution.md`,
+      reference (matching the module name, LRM 23.8; a nearer ancestor whose instance name happens
+      to equal that module name does not shadow the target) and fetches the signal by name, naming
+      no ancestor type (see `docs/decisions/upward-reference-resolution.md`,
       `docs/architecture/emission_model.md`). A reference wrapped in a value-level operation
       (`Top.g[3]`, `Top.g + 1`) works -- the value part is ordinary expression handling. The
       remaining forms below are each rejected with a clean "unsupported" diagnostic, except D2d.
@@ -117,9 +118,14 @@ consume. Coverage is demonstrated through Stage D and Stage E.
       `Top.mid.deep.z`, `Top.bank[2].y`): the climb reaches the ancestor, then the reference steps
       down by name into the ancestor's owned children to the leaf, at any depth and through array
       indices. The tail is by-name for the same reason the climb is -- the referrer owns neither the
-      ancestor nor its children -- so each owner answers for its own children, indexing its own
-      storage. A leaf directly on the ancestor is the empty-tail zero-case of the same walk.
-- [ ] D2b -- An upward reference written inside a generate block rather than the module body.
+      ancestor nor its children -- so each owner answers for its own children from the names it
+      registered at construction. A leaf directly on the ancestor is the empty-tail zero-case of the
+      same walk.
+- [x] D2b -- An upward reference written inside a generate block (conditional or loop) rather than
+      the module body. It resolves the same as one in the module body -- its member rides the
+      generate-block scope and climbs that object's own parent chain -- including an upward write,
+      per-iteration members in a loop block, and several blocks naming the same ancestor signal
+      (each block gets its own resolution within its own scope).
 - [ ] D2c -- An upward reference whose first component is not a module instance: a named generate or
       procedural block, or a `$root`-anchored absolute path.
 - [ ] D2d -- LRM 23.9 instance-name precedence: when the first component is written as an instance
@@ -138,16 +144,16 @@ consume. Coverage is demonstrated through Stage D and Stage E.
       object-tree ownership.
 - [x] D6 -- A hierarchical path that indexes an instance array (`c[i].x`) resolves to the selected
       element, including multi-dimensional arrays (`c[i][j].x`).
-- [ ] D7 -- A hierarchical reference crosses a generate-block scope boundary. A by-name reference
+- [x] D7 -- A hierarchical reference crosses a generate-block scope boundary. A by-name reference
       reaches a generate block by its LRM name (the source label, or `genblk<n>` when unnamed, LRM
       27.6), indexes a loop-generate block, and continues to a signal or a further child inside it;
       when an if/case construct's alternatives share a name (LRM 27.5) the reference binds whichever
-      alternative was instantiated. Landed for a reference whose head reaches the generate from its
-      owning scope or from outside: an upward reference whose downward tail enters the generate, and
-      a reference from the scope that owns the generate descending into its own block (loop and
-      conditional forms, and regardless of whether the reference precedes the generate in source).
-      Still open: a reference originating inside a generate block that names a signal in an
-      enclosing scope.
+      alternative was instantiated. Covered for every head: an upward reference whose downward tail
+      enters the generate; a reference from the scope that owns the generate descending into its own
+      block (and regardless of whether the reference precedes the generate in source); a reference
+      originating inside a generate block (see D2b); and a reference from an enclosing scope into a
+      child instance's generate block (`leaf.g.x`, `leaf.bank[i].y`, and deeper through an instance
+      inside the block).
 
 Unlocks `refs/hierarchical_refs`, `refs/upward_refs`, and `instantiation/hierarchical_sensitivity`.
 

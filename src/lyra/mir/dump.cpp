@@ -176,9 +176,20 @@ class MirDumper {
               return std::format(
                   "ExternalUnitObject(unit=\"{}\")", e.unit_name);
             },
-            [](const OwningPtrType& p) -> std::string {
-              return std::format(
-                  "OwningPtr(pointee=Type[{}])", p.pointee.value);
+            [](const ScopeType&) -> std::string { return "Scope"; },
+            [](const PointerType& p) -> std::string {
+              switch (p.ownership) {
+                case PointerOwnership::kUnique:
+                  return std::format(
+                      "Pointer(unique, pointee=Type[{}])", p.pointee.value);
+                case PointerOwnership::kShared:
+                  return std::format(
+                      "Pointer(shared, pointee=Type[{}])", p.pointee.value);
+                case PointerOwnership::kBorrowed:
+                  return std::format(
+                      "Pointer(borrowed, pointee=Type[{}])", p.pointee.value);
+              }
+              throw InternalError("MirDumper: unknown PointerOwnership");
             },
             [](const VectorType& v) -> std::string {
               return std::format("Vector(elem=Type[{}])", v.element.value);
@@ -338,6 +349,11 @@ class MirDumper {
               return std::format(
                   "ClosureRef[closure=Expr[{}]]", cr.closure.value);
             },
+            [](const RuntimeNavCallee& nav) -> std::string {
+              return std::format(
+                  "RuntimeNavCallee[fn={}, name=\"{}\"]",
+                  static_cast<int>(nav.fn), nav.name);
+            },
             [](const BuiltinMethodCallee& b) -> std::string {
               return std::visit(
                   Overloaded{
@@ -474,9 +490,6 @@ class MirDumper {
                   "ProceduralVarRef[hops={}, var={}] \"{}\"", r.hops.value,
                   r.var.value, var.name);
             },
-            [](const CrossUnitVarRef& r) -> std::string {
-              return std::format("CrossUnitVarRef[slot={}]", r.id.value);
-            },
             [](const UnaryExpr& u) -> std::string {
               return std::format(
                   "UnaryExpr op={} operand=Expr[{}]", FormatUnaryOp(u.op),
@@ -531,6 +544,10 @@ class MirDumper {
             },
             [](const RuntimeCallExpr&) -> std::string {
               return "RuntimeCallExpr";
+            },
+            [](const SelfScopeExpr&) -> std::string { return "SelfScopeExpr"; },
+            [](const DerefExpr& d) -> std::string {
+              return std::format("DerefExpr pointer=Expr[{}]", d.pointer.value);
             },
             [](const ConversionExpr& cv) -> std::string {
               return std::format(
@@ -643,28 +660,6 @@ class MirDumper {
               FormatVarType(v.type), v.initializer.value));
     }
     Dedent();
-
-    if (!s.cross_unit_refs.empty()) {
-      Line("CrossUnitRefs:");
-      Indent();
-      for (std::size_t i = 0; i < s.cross_unit_refs.size(); ++i) {
-        const auto& cu = s.cross_unit_refs[i];
-        std::string path;
-        for (const auto& step : cu.path) {
-          if (const auto* member = std::get_if<MemberHop>(&step)) {
-            path += "." + member->name;
-          } else {
-            path += std::format("[{}]", std::get<IndexHop>(step).index);
-          }
-        }
-        const std::string head =
-            std::format("StructuralVar[{}]", cu.instance_var.value);
-        Line(
-            std::format(
-                "[{}] {}{} : {}", i, head, path, FormatVarType(cu.type)));
-      }
-      Dedent();
-    }
 
     Line("StructuralSubroutines:");
     Indent();
@@ -1071,12 +1066,6 @@ class MirDumper {
             [&](const ConstructExternalUnitStmt& s) {
               DumpConstructExternalUnitStmt(id, s);
             },
-            [&](const ResolveCrossUnitRefStmt& s) {
-              Line(
-                  std::format(
-                      "Stmt[{}] ResolveCrossUnitRefStmt slot={}", id.value,
-                      s.slot.value));
-            },
             [&](const ForStmt& s) { DumpForStmt(stmt, s, enclosing, id); },
             [&](const DelayStmt& d) {
               Line(
@@ -1113,19 +1102,9 @@ class MirDumper {
               Line(std::format("Stmt[{}] SensitivityWaitStmt", id.value));
               Indent();
               for (const auto& r : s.reads) {
-                const std::string ref_str = std::visit(
-                    Overloaded{
-                        [](const StructuralVarRef& sv) -> std::string {
-                          return std::format(
-                              "StructuralVarRef hops={} var=StructuralVar[{}]",
-                              sv.hops.value, sv.var.value);
-                        },
-                        [](const CrossUnitVarRef& cu) -> std::string {
-                          return std::format(
-                              "CrossUnitVarRef slot={}", cu.id.value);
-                        },
-                    },
-                    r.ref);
+                const std::string ref_str = std::format(
+                    "StructuralVarRef hops={} var=StructuralVar[{}]",
+                    r.ref.hops.value, r.ref.var.value);
                 Line(
                     std::format(
                         "{} bits=[{}:{}] edge={}", ref_str, r.bit_range.first,

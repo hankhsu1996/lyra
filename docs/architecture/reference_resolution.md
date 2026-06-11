@@ -81,6 +81,18 @@ The same resolution serves both accessing the target's value and observing its c
 
 - Compiled body code that bakes in another unit's layout to resolve a cross-unit reference at
   compile time.
+- Resolving a cross-unit reference from the target's side: the referenced unit wiring, pushing, or
+  storing its own member into the units that reference it. A unit compiles against its own interface
+  and cannot know who references it, so it never drives resolution for a consumer and never carries
+  a list of its referrers. Every cross-unit reference -- downward or upward -- is driven by the
+  referrer, which reaches the target by name at construction; the target only answers by-name
+  queries about its own interface.
+- The referrer reaching a cross-unit target by typed member access into the other unit's body
+  (naming the other unit's members, fields, or child types) instead of by name against its
+  interface. Typed access bakes the target unit's layout into the referrer and breaks independent
+  compilation -- this holds even for a downward reference whose referrer instantiated the target,
+  and even when the access is evaluated at construction rather than compile time. The referrer knows
+  the target's name, never its layout.
 - A resolution path for ports that is distinct from the one for hierarchical references. Two
   mechanisms for cross-unit access is the canonical violation.
 - Resolving a cross-unit reference by flattened symbol-name lookup or a design-global path table

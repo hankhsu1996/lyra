@@ -219,8 +219,9 @@ class ModuleLowerer {
   auto AddType(hir::TypeData data) -> hir::TypeId;
   // Cross-unit ref dedup lookup. Private: TranslateSensitivityReads is the
   // only caller; external code uses MapOrGetCrossUnitRef.
-  [[nodiscard]] auto LookupCrossUnitRef(const slang::ast::ValueSymbol& target)
-      const -> std::optional<hir::CrossUnitRefId>;
+  [[nodiscard]] auto LookupCrossUnitRef(
+      ScopeFrameId frame, const slang::ast::ValueSymbol& target) const
+      -> std::optional<hir::CrossUnitRefId>;
 
   // Facts.
   LoweringFacts facts_;
@@ -236,7 +237,12 @@ class ModuleLowerer {
   SubroutineBindings subroutine_bindings_;
   LoopVarBindings loop_var_bindings_;
   OwnedChildBindings owned_child_bindings_;
-  std::unordered_map<const slang::ast::ValueSymbol*, hir::CrossUnitRefId>
+  // Dedup by (home_frame, target): the slot id is an index within a scope's
+  // own `cross_unit_refs`, so two scopes referencing the same member each need
+  // their own slot.
+  std::map<
+      ScopeFrameId,
+      std::unordered_map<const slang::ast::ValueSymbol*, hir::CrossUnitRefId>>
       cross_unit_ref_dedup_;
   std::map<ScopeFrameId, std::vector<hir::CrossUnitRefDecl>>
       cross_unit_refs_by_frame_;

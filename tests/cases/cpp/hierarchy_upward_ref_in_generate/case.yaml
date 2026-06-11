@@ -1,0 +1,11 @@
+id: cpp.hierarchy_upward_ref_in_generate
+tags: [cpp_run]
+input:
+  command: [run, cpp]
+  project: false
+  top: Top
+  files: [main.sv]
+expect:
+  exit: 0
+  stdout:
+    exact: "gi=42\ngj=42\ngf=42,42\nsig=99\n"

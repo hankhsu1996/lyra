@@ -271,20 +271,14 @@ auto LowerHierarchicalValueProc(
           "instance is not yet supported",
           diag::UnsupportedCategory::kOperation);
     }
-    // The extern member lives on the owning structural scope and the climb
-    // starts from its object. A reference inside a generate block would need
-    // its member on a nested generate class; restrict to the unit root for now.
-    if (frame.Depth() != 1) {
-      return diag::Unsupported(
-          span, diag::DiagCode::kUnsupportedExpressionForm,
-          "upward hierarchical reference inside a generate block is not yet "
-          "supported",
-          diag::UnsupportedCategory::kOperation);
-    }
     // The climb key is the ancestor's module name (LRM 23.8) -- class-level, so
     // one artifact serves every instance regardless of depth. It comes from the
     // resolved ancestor symbol, never from syntax (a wrapped sub-expression
-    // like `Top.g[3]` may carry none).
+    // like `Top.g[3]` may carry none). The extern member is synthesized on the
+    // referrer's own structural scope (`frame.Current()`), whether that is the
+    // unit root or a generate block: its `ExternUp` climbs that object's own
+    // parent chain at Bind, so a reference written inside a generate block
+    // resolves the same way (its member rides the generate-scope class).
     std::string ancestor_name{
         head_sym.as<slang::ast::InstanceSymbol>().getDefinition().name};
     return module.MakeCrossUnitMemberRef(

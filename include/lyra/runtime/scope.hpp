@@ -19,14 +19,6 @@ namespace lyra::runtime {
 class RuntimeServices;
 class ExternBase;
 
-// Names one owned child to fetch from a scope: the member name plus one index
-// per array dimension (empty for a scalar child). A non-owning view; the caller
-// keeps the backing storage alive.
-struct ChildRef {
-  std::string_view name;
-  std::span<const std::size_t> indices;
-};
-
 // Returned by a scope that declares no timescale of its own (the synthetic
 // `$root`). The engine's design-global precision minimum ignores it, so a
 // purely structural node does not pull the simulation tick finer.
@@ -52,37 +44,41 @@ class Scope {
   [[nodiscard]] auto Name() const -> std::string_view;
 
   // The scope's module definition name. An upward hierarchical reference climbs
-  // the parent chain matching its first name component against each ancestor's
-  // instance name (`Name()`) or module name (this), since the LRM lets the
-  // first component be either (LRM 23.8). The base never matches; a generated
-  // unit class overrides it.
+  // the parent chain matching against this (LRM 23.8): the referrer's emitted
+  // code keys the climb on the target's definition name, so an ancestor matches
+  // by its definition name, never by its instance name. The base never matches;
+  // a generated unit class overrides it.
   [[nodiscard]] virtual auto DefName() const -> std::string_view {
     return {};
   }
 
-  // Returns the address of a signal this scope owns by that name, or nullptr if
-  // it has none. An upward reference cannot name its ancestor's type, so it
-  // fetches the signal by name and the ancestor's own class answers
-  // (docs/architecture/emission_model.md).
-  // NOLINTNEXTLINE(readability-named-parameter)
-  [[nodiscard]] virtual auto GetSignal(std::string_view) -> void* {
-    return nullptr;
-  }
+  // Records, during construction, the address of a signal this scope owns under
+  // its source name, and the owned child reachable at `name` plus one index per
+  // array dimension (empty for a scalar). A unit answers by-name queries about
+  // its own interface from these registrations; it never inspects who asks
+  // (reference_resolution.md). `name` points at an emitted string literal; the
+  // indices are copied so the entry outlives the constructor's arguments.
+  void RegisterSignal(std::string_view name, void* address);
+  void RegisterChild(
+      std::string_view name, std::span<const std::size_t> indices,
+      Scope& child);
 
-  // Returns the owned child scope named by `ref`, or nullptr if it has none.
-  // The twin of `GetSignal` for the object tree: a by-name reference cannot
-  // name the child's type, so the owner indexes its own storage and answers
-  // (docs/architecture/emission_model.md).
-  // NOLINTNEXTLINE(readability-named-parameter)
-  [[nodiscard]] virtual auto GetChild(ChildRef) -> Scope* {
-    return nullptr;
-  }
+  // Returns the address of the signal registered under `name`, or the owned
+  // child registered at `name` with `indices`; nullptr if none. A cross-unit
+  // referrer reaches a target by name because it knows the target's type but
+  // not its layout; the owner, which knows its layout, answered at construction
+  // by registering the address. Resolution runs once at construction, never on
+  // the simulation path.
+  [[nodiscard]] auto GetSignal(std::string_view name) -> void*;
+  [[nodiscard]] auto GetChild(
+      std::string_view name, std::span<const std::size_t> indices) -> Scope*;
 
-  // Climbs the parent chain to the ancestor whose instance name (`Name()`) or
-  // module name (`DefName()`) is `ancestor` (LRM 23.8) and returns it. The
-  // shared start of an upward reference's runtime navigation; from there an
-  // `ExternUp` member walks any by-name tail and fetches the leaf, once at
-  // Bind.
+  // Climbs the parent chain to the nearest ancestor whose module definition
+  // name (`DefName()`) is `ancestor` and returns it (LRM 23.8). `ancestor` is
+  // always a definition name, so the match is on `DefName()` alone; an ancestor
+  // whose instance name merely equals it does not match. The shared start of an
+  // upward reference's runtime navigation; from there an `ExternUp` member
+  // walks any by-name tail and fetches the leaf, once at Bind.
   [[nodiscard]] auto ResolveUpwardScope(std::string_view ancestor) -> Scope*;
 
   // An `ExternUp` member registers itself here from its constructor; Bind
@@ -134,12 +130,27 @@ class Scope {
   virtual void CreateProcesses() {
   }
 
+  struct SignalEntry {
+    std::string_view name;
+    void* address;
+  };
+  struct ChildEntry {
+    std::string_view name;
+    std::vector<std::size_t> indices;
+    Scope* scope;
+  };
+
   Scope* parent_ = nullptr;
   std::string name_;
   RuntimeServices* services_ = nullptr;
   // Non-owning child links; the typed members on the derived class own the
   // children. This is the object tree's own structure, not a parallel one.
   std::vector<Scope*> children_;
+  // By-name interface this scope answers cross-unit queries from. Filled during
+  // construction; scanned only at construction-time resolution, never on the
+  // simulation path.
+  std::vector<SignalEntry> signals_;
+  std::vector<ChildEntry> child_entries_;
   std::vector<std::unique_ptr<RuntimeProcess>> processes_;
   // Empty std::function == clean slot; no parallel dirty bitmap needed.
   std::vector<std::function<void()>> observed_pending_;

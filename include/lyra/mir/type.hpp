@@ -27,7 +27,8 @@ enum class TypeKind {
   kVoid,
   kObject,
   kExternalUnitObject,
-  kOwningPtr,
+  kScope,
+  kPointer,
   kVector,
   kExternalRef,
 };
@@ -137,10 +138,28 @@ struct ExternalUnitObjectType {
   auto operator==(const ExternalUnitObjectType&) const -> bool = default;
 };
 
-struct OwningPtrType {
-  TypeId pointee;
+// The runtime object-tree base class `lyra::runtime::Scope`, type-erased. A
+// by-name navigation handle (`GetChild` / `ResolveUpward` result) is a
+// `PointerType{ScopeType, kBorrowed}`; the concrete child class is unknown
+// across the unit boundary, so only the runtime base is named.
+struct ScopeType {
+  auto operator==(const ScopeType&) const -> bool = default;
+};
 
-  auto operator==(const OwningPtrType&) const -> bool = default;
+enum class PointerOwnership {
+  kUnique,
+  kShared,
+  kBorrowed,
+};
+
+// One level of indirection, classified by its lifetime axis: `kUnique` and
+// `kShared` own the pointee (`unique_ptr<T>` / `shared_ptr<T>`); `kBorrowed`
+// owns nothing and only refers (`T*`).
+struct PointerType {
+  TypeId pointee;
+  PointerOwnership ownership;
+
+  auto operator==(const PointerType&) const -> bool = default;
 };
 
 struct VectorType {
@@ -151,9 +170,10 @@ struct VectorType {
 
 // One by-name step from a resolved scope into an owned child it answers for:
 // the child member's name plus one index per array dimension (empty for a
-// scalar child). The ancestor indexes its own storage, so a multi-dimensional
-// instance array is just more indices, never a flattened offset. (Distinct from
-// StructuralHops, which is a count of lexical frames climbed, not a path step.)
+// scalar child). The ancestor answers by name from the children it registered,
+// so a multi-dimensional instance array is just more indices, never a flattened
+// offset. (Distinct from StructuralHops, which is a count of lexical frames
+// climbed, not a path step.)
 struct ChildStep {
   std::string name;
   std::vector<std::uint32_t> indices;
@@ -181,7 +201,7 @@ using TypeData = std::variant<
     PackedArrayType, EnumType, UnpackedArrayType, DynamicArrayType, QueueType,
     AssociativeArrayType, StringType, EventType, RealType, ShortRealType,
     RealTimeType, ChandleType, VoidType, ObjectType, ExternalUnitObjectType,
-    OwningPtrType, VectorType, ExternalRefType>;
+    ScopeType, PointerType, VectorType, ExternalRefType>;
 
 struct Type {
   TypeData data;
@@ -201,27 +221,16 @@ struct Type {
 
 class CompilationUnit;
 
-[[nodiscard]] auto IsOwningObjectType(const CompilationUnit& unit, TypeId type)
-    -> bool;
-
-[[nodiscard]] auto IsVectorOfOwningObjectType(
-    const CompilationUnit& unit, TypeId type) -> bool;
-
-[[nodiscard]] auto GetOwnedObjectTarget(
-    const CompilationUnit& unit, TypeId type)
-    -> std::optional<StructuralScopeId>;
-
-enum class OwnedChildKind { kModuleInstance, kGenerateScope };
-
-// The classification of an owned-child member, read off the leaf object type
-// after stripping any vector layers: an intra-unit object is a generate scope
-// (with its target scope), an external-unit object is a module instance.
-struct OwnedChildLeaf {
-  OwnedChildKind kind = OwnedChildKind::kModuleInstance;
-  std::optional<StructuralScopeId> intra_target;
+// A child-scope member, classified by the leaf object type after stripping any
+// vector layers: an intra-unit object is a generate scope (carrying its target
+// scope), an external-unit object is a module instance.
+struct GenerateScopeChild {
+  StructuralScopeId target;
 };
+struct ModuleInstanceChild {};
+using ChildScope = std::variant<GenerateScopeChild, ModuleInstanceChild>;
 
-[[nodiscard]] auto GetOwnedChildLeaf(const CompilationUnit& unit, TypeId type)
-    -> std::optional<OwnedChildLeaf>;
+[[nodiscard]] auto GetChildScope(const CompilationUnit& unit, TypeId type)
+    -> std::optional<ChildScope>;
 
 }  // namespace lyra::mir

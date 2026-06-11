@@ -132,7 +132,7 @@ auto SynthesizeDefaultValueExpr(
                 mir::Expr{
                     .data = mir::ConstructExpr{.args = {}}, .type = type_id});
           },
-          [&](const mir::OwningPtrType&) -> mir::ExprId {
+          [&](const mir::PointerType&) -> mir::ExprId {
             return scope_state.AddExpr(
                 mir::Expr{
                     .data = mir::ConstructExpr{.args = {}}, .type = type_id});
