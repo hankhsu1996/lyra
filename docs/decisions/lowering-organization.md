@@ -29,32 +29,48 @@ rendering pass. The architecture contract is in `docs/architecture/lowering_orga
 ## Decision
 
 **Every lowering or rendering pass is implemented as a class scoped to one task instance.** A class
-named for the unit of work and the action (`ProcessLowerer`, `CppProcessRenderer`, `ScopeLowerer`)
-is constructed at the entry to one process / scope / unit lowering and destroyed when that task
-completes.
+named for the unit of work and the action (`ProcessLowerer`, `CppProcessRenderer`,
+`StructuralScopeLowerer`) is constructed at the entry to one process / scope / unit lowering and
+destroyed when that task completes.
 
 **The constructor injects facts.** Read-only inputs (type tables, builtin TypeIds, structural-scope
 facts, HIR references, time resolution) are constructor parameters. After construction, facts are
 not mutated.
 
-**The class owns its registries and builders.** Append-only accumulators (procedural-var bindings,
-static-locals list) and the per-task root scope builder are class members. Their lifetimes equal the
-class instance's lifetime.
+**The class owns its registries and the root output; nested builders live on the stack.** Every
+class member is one of three kinds: facts (constructor-injected, never mutated), registries
+(append-only accumulators with `Add` / `Lookup`), or the root output the pass is constructing. The
+root output (`hir::ModuleUnit`, `mir::CompilationUnit`, etc.) is the deliverable; it lives as a
+class member with lifetime equal to the pass instance, is shared by every handler, and is moved out
+of the class by `Run`'s return -- after which the class holds no IR pointer. Nested IR scopes opened
+mid-walk (a procedural scope for an if-branch, a closure body, a fork-branch body) are
+stack-allocated inside the walker that opens them, populated by recursion through
+`frame.current_*_scope`, finalized by move, and embedded into their owning slot in the parent IR.
+The root and nested scopes are not treated uniformly; their lifetimes differ, so their homes differ.
 
-**Walker methods take exactly two parameters.** Each private walker method has the signature
-`(const NodeType& node, WalkFrame frame) -> diag::Result<OutputType>` (or raw `OutputType` when the
-method cannot emit a diagnostic). Walker methods access class state through `this`; they do not
-receive per-pass state as separate parameters.
+**Dispatcher methods take exactly two parameters; per-kind handlers are free functions.** The pass
+class exposes dispatcher methods (`LowerExpr`, `LowerStmt`, `InternType`, ...) with signature
+`(const NodeType& node, WalkFrame frame) -> diag::Result<OutputType>`. Each dispatcher method's body
+is one switch over node kind routing to per-kind handlers in subsystem files. Per-kind handlers are
+free functions with signature
+`(PassClass& pass, WalkFrame frame, const NodeKind& node, diag::SourceSpan span) ->  diag::Result<OutputType>`
+-- the pass class instance is passed explicitly because the handler lives outside the class, but it
+is the same single access channel. Subsystem `.cpp` files include the pass class header only; there
+is no separate dispatch-contract header.
 
-**`WalkFrame` is a small value type for per-recursion state.** It carries the current write-target
-scope-builder reference, the current procedural depth, an optional closure context, and any future
-stack-discipline traversal state. It is passed by value.
+**`WalkFrame` is a small value type for per-recursion traversal state only.** It carries a pointer
+to the current write-target nested builder, the current procedural depth, an optional closure
+context, and any future stack-discipline traversal state. It is passed by value. Walk-invariant
+facts (the unit being constructed, source mapper, builtins) are class members, not `WalkFrame`
+fields. Nested-scope writes go through `frame.current_*_scope->Add...`; root-output writes go
+through narrow methods on the class that encapsulate cross-state invariants.
 
 **Scalability promise.** A new fact is a class-member addition and a constructor-parameter addition;
-walker method signatures do not change. A new walk-time concept is a `WalkFrame` struct-field
-addition; walker method signatures and class members do not change. The historical "every new
-concept thrashes every helper signature" pattern is converted into "per-concept growth localized to
-one location."
+dispatcher and per-kind-handler signatures do not change. A new walk-time concept is a `WalkFrame`
+struct-field addition; signatures and class members do not change. A new node kind is one switch
+case in a dispatcher method body plus one per-kind handler in a subsystem file; the class header
+does not change. The historical "every new concept thrashes every helper signature" pattern is
+converted into "per-concept growth localized to one location."
 
 **Pattern is shared across lowering and rendering passes; concrete types are not.** No base type
 spans the pass boundary. The HIR-to-MIR `ProcessLowerer` and the MIR-to-C++ `CppProcessRenderer`
@@ -115,12 +131,15 @@ share only the pattern shape.
 
 - `UnitLoweringState` is replaced by per-purpose objects: the HIR-to-MIR type-translation map
   becomes a `TypeMap` registry; canonical TypeIds remain as `BuiltinMirTypes` facts. Their
-  composition into the surrounding `ScopeLowerer` / `ProcessLowerer` classes is per pass; no
-  `UnitLoweringState`-equivalent god class survives.
+  composition into the surrounding `StructuralScopeLowerer` / `ProcessLowerer` classes is per pass;
+  no `UnitLoweringState`-equivalent god class survives.
 
-- `StructuralScopeLoweringState` and `ProceduralScopeLoweringState` become `StructuralScopeBuilder`
-  and `ProceduralScopeBuilder`. They are pure builders. The scope-lowering pass class owns or
-  references one builder per output scope.
+- `StructuralScopeLoweringState` and `ProceduralScopeLoweringState` are dissolved into their
+  corresponding IR scope types (`hir::StructuralScope`, `mir::ProceduralScope`, etc.), which gain
+  construction methods (`AddX` / `AppendX`) alongside their existing accessors -- the IR scope type
+  _is_ the builder, with no parallel wrapper. Nested scope instances are stack-allocated inside the
+  walker that opens them; the root output instance lives on the pass class. The walk frame carries a
+  pointer to the current nested write target.
 
 - `ScopeStack`, `ProceduralDepthGuard`, and `ScopeStackGuard` are absorbed by `WalkFrame`. No
   separate guard types survive.
@@ -137,8 +156,9 @@ share only the pattern shape.
   additional capture patterns) add a `WalkFrame` field; no signature change. Subsequent facts add a
   class member and a constructor parameter; no walker signature change.
 
-- AST-to-HIR adopts the same pattern (`ScopeLowerer` and analogues); concrete facts, registries,
-  builders, and walk-frame fields are layer-specific.
+- AST-to-HIR adopts the same pattern (`StructuralScopeLowerer` and analogues); concrete facts,
+  registries, and walk-frame fields are layer-specific. Nested builders are never class members at
+  any layer; the root output is always a class member.
 
 - The R9 and R10 entries in `refactor.md` close at the target-shape level. Their implementation PRs
   remain open until the migration lands across all three passes.
@@ -169,13 +189,16 @@ header" form.
 
 ### Decision
 
-The AST-to-HIR expression and statement layers are decomposed into one central dispatcher plus
-per-subsystem header / implementation pairs, where each subsystem corresponds to one LRM-level
-expression / statement family. The split is structural, not stylistic.
+The AST-to-HIR expression and statement layers are decomposed so the dispatcher is a method on the
+pass class and per-kind handlers live in per-subsystem header / implementation pairs, where each
+subsystem corresponds to one LRM-level expression / statement family. The split is structural, not
+stylistic.
 
-- One `dispatch.hpp` per layer declares only the recursive dispatcher entries (`LowerProcExpr` /
-  `LowerStructuralExpr` on the expression side; the statement dispatcher on the statement side). It
-  declares nothing else.
+- The pass class header (`process_lowerer.hpp`, `structural_scope_lowerer.hpp`,
+  `module_lowerer.hpp`) declares the dispatcher methods (`LowerExpr`, `LowerStmt`, `InternType`,
+  ...). The dispatcher method's body in the class's `.cpp` is one switch over node kind routing to
+  per-kind handlers. There is no separate dispatch-contract header (`dispatch.hpp` is rejected --
+  see below).
 - One subsystem header per family declares the per-kind handlers it owns. Operators (unary, binary,
   conditional, conversion), references (named-value, hierarchical), calls, selects (element-select,
   range-select, member-access), aggregates (concat, replication, assignment-pattern,
@@ -183,16 +206,16 @@ expression / statement family. The split is structural, not stylistic.
   validation), and inside (inside operator, inside-item). On the statement side: blocks, loops,
   branches, timing.
 - One subsystem implementation defines the handlers and any anonymous-namespace helpers private to
-  the family.
+  the family. Subsystem `.cpp` files include the pass class header (for the `Lowerer&` parameter
+  type and for recursion via `lowerer.LowerX(...)`) and the subsystem header.
 - All declarations live in the layer's main namespace (`lyra::lowering::ast_to_hir`); no `detail::`
   sub-namespace is introduced. The "internal" signal is the header's location inside the subsystem
-  folder, matching the existing convention used by `hir_to_mir`'s `inside_predicate.hpp` /
-  `case_cascade.hpp` / `default_value.hpp`.
+  folder.
 - Per-kind handlers are free functions taking the relevant pass class instance by reference
-  (`ProcessLowerer&` or `ScopeLowerer&`) plus the walk frame plus the slang node. They are not
-  methods on the pass class; methods would grow the public class declaration and the recompile cost
-  of every translation unit that includes it, and would reproduce the kind-by-kind growth the
-  architecture reset abolished at the lower-layer level.
+  (`ProcessLowerer&` or `StructuralScopeLowerer&`) plus the walk frame plus the slang node plus the
+  source span. They are not methods on the pass class; methods would grow the public class
+  declaration and the recompile cost of every translation unit that includes it, and would reproduce
+  the kind-by-kind growth the architecture reset abolished at the lower-layer level.
 
 ### Rejected alternatives
 
@@ -213,13 +236,13 @@ expression / statement family. The split is structural, not stylistic.
 - **Per-kind handlers as free functions with narrowed parameters (separate facts / registry /
   builder references in the signature).** Reproduces the sig-explosion shape the architecture reset
   exists to escape. The pass class instance is the single access pass to the task; narrowing the
-  signature does not add safety because the pass class API is already bounded by the four-kind rule
+  signature does not add safety because the pass class API is already bounded by the two-kind rule
   and the IR shape upstream.
 
 - **Compile-time / CI structural enforcement on pass class method counts.** Considered as an
   additional safeguard against future drift on the pass class's derived-accessor API. Not adopted:
-  the existing structural safeguards (the four-kind rule, the IR-shape cascade for any new state,
-  the contract's forbidden shapes) cover the high-risk growth paths; the residual risk (a derived
+  the existing structural safeguards (the two-kind rule, the IR-shape cascade for any new state, the
+  contract's forbidden shapes) cover the high-risk growth paths; the residual risk (a derived
   accessor that wraps existing state in a new method) has small blast radius and is left to code
   review.
 
@@ -232,14 +255,12 @@ expression / statement family. The split is structural, not stylistic.
   recompiles.
 - Adding a new family creates a new subsystem header / implementation pair and adds switch cases in
   the central dispatcher; existing subsystems are not touched.
-- The `dispatch.hpp` admission rule (declare only dispatcher entries; redirect everything else to
-  its true home) is documented inline in the file header so reviewers and contributors have a clear
-  referent for "does this belong here?".
-- `TypeIdOfSlangExpr` is replaced by `ModuleLowerer::GetTypeIdOf`, a class method. `MakeRefExpr`
-  becomes a subsystem-local helper in `references.cpp` (its only consumer).
-  `MakeReturnConventionType` becomes a subsystem-local helper in `calls.cpp` (its only consumer).
-  `LowerInsideItemImpl` and `ValidateAssignableImpl` live in `inside.hpp` and `assignment.hpp`
-  respectively. The dispatch header carries none of these.
+- `TypeIdOfSlangExpr` is replaced by `ModuleLowerer::InternType`, a class method that encapsulates
+  both the slang-keyed dedup cache and the output's type table together (the dedup invariant is
+  enforced structurally, not by caller discipline). `MakeRefExpr` becomes a subsystem-local helper
+  in `references.cpp` (its only consumer). `MakeReturnConventionType` becomes a subsystem-local
+  helper in `calls.cpp` (its only consumer). `LowerInsideItemImpl` and `ValidateAssignableImpl` live
+  in `inside.hpp` and `assignment.hpp` respectively.
 - The architecture contract `lowering_organization.md` gains invariants 10-12 and the "Multi-File
   Organization Within a Pass Layer" section codifying this shape so the HIR-to-MIR (R10) and
   MIR-to-cpp (R11) migrations land on the same pattern.

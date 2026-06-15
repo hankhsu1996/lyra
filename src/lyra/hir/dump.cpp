@@ -1442,12 +1442,12 @@ class HirDumper {
     Indent();
     Line("then_scope:");
     Indent();
-    DumpScope(g.child_scopes.at(ig.then_scope.value));
+    DumpScope(g.GetChildScope(ig.then_scope));
     Dedent();
     if (ig.else_scope.has_value()) {
       Line("else_scope:");
       Indent();
-      DumpScope(g.child_scopes.at(ig.else_scope->value));
+      DumpScope(g.GetChildScope(*ig.else_scope));
       Dedent();
     } else {
       Line("else_scope: <none>");
@@ -1471,13 +1471,13 @@ class HirDumper {
       }
       Line(std::format("item[{}] labels=[{}]", i, labels));
       Indent();
-      DumpScope(g.child_scopes.at(item.scope.value));
+      DumpScope(g.GetChildScope(item.scope));
       Dedent();
     }
     if (cg.default_scope.has_value()) {
       Line("default_scope:");
       Indent();
-      DumpScope(g.child_scopes.at(cg.default_scope->value));
+      DumpScope(g.GetChildScope(*cg.default_scope));
       Dedent();
     } else {
       Line("default_scope: <none>");
@@ -1494,7 +1494,7 @@ class HirDumper {
     Indent();
     Line("scope:");
     Indent();
-    DumpScope(g.child_scopes.at(lg.scope.value));
+    DumpScope(g.GetChildScope(lg.scope));
     Dedent();
     Dedent();
   }

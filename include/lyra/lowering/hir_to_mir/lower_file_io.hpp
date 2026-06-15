@@ -1,13 +1,14 @@
 #pragma once
 
 #include <optional>
+#include <string>
+#include <string_view>
 
 #include "lyra/diag/diagnostic.hpp"
 #include "lyra/diag/source_span.hpp"
 #include "lyra/hir/expr.hpp"
-#include "lyra/hir/procedural_body.hpp"
-#include "lyra/hir/stmt.hpp"
-#include "lyra/lowering/hir_to_mir/state.hpp"
+#include "lyra/lowering/hir_to_mir/process_lowerer.hpp"
+#include "lyra/lowering/hir_to_mir/walk_frame.hpp"
 #include "lyra/mir/expr.hpp"
 #include "lyra/mir/stmt.hpp"
 #include "lyra/support/system_subroutine.hpp"
@@ -22,14 +23,9 @@ namespace lyra::lowering::hir_to_mir {
 // statement-position desugaring runs upstream via
 // LowerFileIOSystemSubroutineCallStmt.
 auto LowerFileIOSystemSubroutineCall(
-    const UnitLoweringState& unit_state,
-    const StructuralScopeLoweringState& scope_state,
-    ProcessLoweringState& proc_state,
-    ProceduralScopeLoweringState& proc_scope_state,
-    const hir::ProceduralBody& hir_proc, const hir::CallExpr& call,
-    const support::SystemSubroutineDesc& desc,
-    const support::FileIOSystemSubroutineInfo& info, diag::SourceSpan span)
-    -> diag::Result<mir::Expr>;
+    ProcessLowerer& process, WalkFrame frame, const hir::CallExpr& call,
+    std::string_view name, const support::FileIOSystemSubroutineInfo& info,
+    diag::SourceSpan span) -> diag::Result<mir::Expr>;
 
 // LRM 13.5 copy-out at the statement boundary for the three file IO tasks
 // that write through an output argument. Synthesizes the BlockStmt that UDF
@@ -39,11 +35,8 @@ auto LowerFileIOSystemSubroutineCall(
 // `lhs = $fgets(...)` shape; nullopt means a bare-call statement. The
 // result_type is the call's int32 return slot.
 auto LowerFileIOSystemSubroutineCallStmt(
-    const UnitLoweringState& unit_state,
-    const StructuralScopeLoweringState& scope_state,
-    ProcessLoweringState& proc_state, const hir::ProceduralBody& hir_proc,
-    const hir::Stmt& stmt, const hir::CallExpr& call,
-    const support::FileIOSystemSubroutineInfo& info,
+    ProcessLowerer& process, WalkFrame frame, std::optional<std::string> label,
+    const hir::CallExpr& call, const support::FileIOSystemSubroutineInfo& info,
     std::optional<hir::ExprId> assign_target, mir::TypeId result_type)
     -> diag::Result<mir::Stmt>;
 

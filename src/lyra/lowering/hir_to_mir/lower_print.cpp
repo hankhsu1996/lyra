@@ -5,13 +5,14 @@
 #include <optional>
 #include <utility>
 
+#include "lyra/base/internal_error.hpp"
 #include "lyra/diag/diagnostic.hpp"
 #include "lyra/diag/source_span.hpp"
 #include "lyra/hir/expr.hpp"
 #include "lyra/hir/procedural_body.hpp"
 #include "lyra/lowering/hir_to_mir/lower_expr.hpp"
 #include "lyra/lowering/hir_to_mir/print_items.hpp"
-#include "lyra/lowering/hir_to_mir/state.hpp"
+#include "lyra/lowering/hir_to_mir/process_lowerer.hpp"
 #include "lyra/mir/expr.hpp"
 #include "lyra/mir/runtime_print.hpp"
 #include "lyra/mir/runtime_submit.hpp"
@@ -34,13 +35,12 @@ auto ToValuePrintKind(const support::PrintSystemSubroutineInfo& info)
 }  // namespace
 
 auto LowerPrintSystemSubroutineCall(
-    const UnitLoweringState& unit_state,
-    const StructuralScopeLoweringState& scope_state,
-    ProcessLoweringState& proc_state,
-    ProceduralScopeLoweringState& proc_scope_state,
-    const hir::ProceduralBody& hir_proc, const hir::CallExpr& call,
+    ProcessLowerer& process, WalkFrame frame, const hir::CallExpr& call,
     const support::PrintSystemSubroutineInfo& print, diag::SourceSpan span)
     -> diag::Result<mir::Expr> {
+  const auto& hir_proc = process.HirBody();
+  auto& proc_scope = *frame.current_procedural_scope;
+
   std::optional<mir::ExprId> descriptor = std::nullopt;
   std::size_t arg_offset = 0;
   if (print.sink_kind == support::PrintSinkKind::kFile) {
@@ -50,17 +50,16 @@ auto LowerPrintSystemSubroutineCall(
     if (!call.arguments[0].has_value()) {
       throw InternalError("$f-print descriptor argument unexpectedly elided");
     }
-    auto lowered_or = LowerExpr(
-        unit_state, scope_state, proc_state, proc_scope_state, hir_proc,
-        hir_proc.exprs.at(call.arguments[0]->value));
+    auto lowered_or =
+        LowerExpr(process, frame, hir_proc.exprs.at(call.arguments[0]->value));
     if (!lowered_or) return std::unexpected(std::move(lowered_or.error()));
-    descriptor = proc_scope_state.AddExpr(*std::move(lowered_or));
+    descriptor = proc_scope.AddExpr(*std::move(lowered_or));
     arg_offset = 1;
   }
 
   auto items_or = BuildRuntimePrintItemsFromCallArgs(
-      unit_state, scope_state, proc_state, proc_scope_state, hir_proc, call,
-      print.radix, arg_offset, FormatStringRequirement::kOptional, span);
+      process, frame, call, print.radix, arg_offset,
+      FormatStringRequirement::kOptional, span);
   if (!items_or) return std::unexpected(std::move(items_or.error()));
 
   mir::RuntimePrintCall print_call(
@@ -69,7 +68,7 @@ auto LowerPrintSystemSubroutineCall(
   if (!print.is_strobe) {
     return mir::Expr{
         .data = mir::RuntimeCallExpr{.call = std::move(print_call)},
-        .type = unit_state.Builtins().void_type};
+        .type = process.Module().Unit().builtins.void_type};
   }
 
   // LRM 21.2.2: $strobe defers the same print to the postponed region. The
@@ -84,7 +83,7 @@ auto LowerPrintSystemSubroutineCall(
               .call =
                   mir::RuntimeSubmitPostponedCall{
                       .print = std::move(print_call)}},
-      .type = unit_state.Builtins().void_type};
+      .type = process.Module().Unit().builtins.void_type};
 }
 
 }  // namespace lyra::lowering::hir_to_mir

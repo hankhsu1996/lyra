@@ -1,13 +1,13 @@
 #pragma once
 
 #include <optional>
+#include <string>
 #include <string_view>
 #include <vector>
 
 #include "lyra/diag/diagnostic.hpp"
-#include "lyra/hir/procedural_body.hpp"
-#include "lyra/hir/stmt.hpp"
-#include "lyra/lowering/hir_to_mir/state.hpp"
+#include "lyra/lowering/hir_to_mir/process_lowerer.hpp"
+#include "lyra/lowering/hir_to_mir/walk_frame.hpp"
 #include "lyra/mir/expr.hpp"
 #include "lyra/mir/stmt.hpp"
 
@@ -35,29 +35,28 @@ struct OutputArgSlot {
   mir::TypeId type{};
 };
 
-// Lower `actual_hir` as an lvalue, allocate a same-typed temp in `wrapper`
-// initialized from the lowered actual, and return the slot bookkeeping.
-// UDF F4 (LowerSubroutineCallWithWritebacks) does not use this helper
-// because its formal type may differ from the actual type via implicit
-// conversion, and its `output`-direction formals require default init per
-// LRM 13.3.2.
+// Lower `actual_hir` as an lvalue, allocate a same-typed temp in
+// `frame.current_procedural_scope` initialized from the lowered actual, and
+// return the slot bookkeeping. UDF F4 (LowerSubroutineCallWithWritebacks)
+// does not use this helper because its formal type may differ from the
+// actual type via implicit conversion, and its `output`-direction formals
+// require default init per LRM 13.3.2.
 auto BuildOutputArgSlot(
-    const UnitLoweringState& unit_state,
-    const StructuralScopeLoweringState& scope_state,
-    ProcessLoweringState& proc_state, ProceduralScopeLoweringState& wrapper,
-    const hir::ProceduralBody& hir_proc, hir::ExprId actual_hir,
+    ProcessLowerer& proc, WalkFrame frame, hir::ExprId actual_hir,
     std::string_view temp_name) -> diag::Result<OutputArgSlot>;
 
-// Append `call_expr` to `wrapper` (optionally wrapping the call result in
-// an implicit ConversionExpr to match `result_type` when the call's
-// natural return type differs), then a writeback `actual = read(temp)`
-// for each slot, and wrap the resulting child scope in a BlockStmt
-// carrying `stmt.label`. `assign_target_id` is the LHS for an
-// `lhs = f(...)` shape; `nullopt` produces a bare-call statement.
+// Append `call_expr` to `wrapper` (optionally wrapping the call result in an
+// implicit ConversionExpr to match `result_type` when the call's natural return
+// type differs), then a writeback `actual = read(temp)` for each slot, and wrap
+// the resulting scope in a BlockStmt carrying `stmt.label`. `assign_target_id`
+// is the LHS for an `lhs = f(...)` shape; `nullopt` produces a bare-call
+// statement. The completed `wrapper` is installed as a child of
+// `*parent_frame.current_procedural_scope`, and the returned Stmt's BlockStmt
+// references it by id.
 auto BuildCopyOutBlock(
-    ProceduralScopeLoweringState& wrapper, const hir::Stmt& stmt,
-    mir::TypeId result_type, mir::Expr call_expr,
-    std::optional<mir::ExprId> assign_target_id,
+    WalkFrame parent_frame, mir::ProceduralScope wrapper,
+    std::optional<std::string> label, mir::TypeId result_type,
+    mir::Expr call_expr, std::optional<mir::ExprId> assign_target_id,
     const std::vector<OutputArgSlot>& slots) -> mir::Stmt;
 
 }  // namespace lyra::lowering::hir_to_mir

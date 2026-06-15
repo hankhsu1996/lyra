@@ -12,14 +12,13 @@
 
 namespace slang::ast {
 class CallExpression;
-class Expression;
 }  // namespace slang::ast
 
 namespace lyra::lowering::ast_to_hir {
 
 auto LowerCallExprProc(
     ProcessLowerer& proc, WalkFrame frame,
-    const slang::ast::CallExpression& call, const slang::ast::Expression& expr,
-    diag::SourceSpan span) -> diag::Result<hir::Expr>;
+    const slang::ast::CallExpression& call, diag::SourceSpan span)
+    -> diag::Result<hir::Expr>;
 
 }  // namespace lyra::lowering::ast_to_hir

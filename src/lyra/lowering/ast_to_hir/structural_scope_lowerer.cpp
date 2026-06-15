@@ -1,4 +1,4 @@
-#include "lyra/lowering/ast_to_hir/scope_lowerer.hpp"
+#include "lyra/lowering/ast_to_hir/structural_scope_lowerer.hpp"
 
 #include <cstdint>
 #include <expected>
@@ -85,119 +85,26 @@ auto ParamDirectionOf(const slang::ast::FormalArgumentSymbol& formal)
 
 }  // namespace
 
-ScopeLowerer::ScopeLowerer(
-    ModuleLowerer& module, hir::StructuralScope& scope,
-    const slang::ast::Scope& slang_scope,
+StructuralScopeLowerer::StructuralScopeLowerer(
+    ModuleLowerer& module, const slang::ast::Scope& slang_scope,
     std::vector<ScopeEntryLoopVarBinding> entry_loop_var_bindings)
     : module_(&module),
       slang_scope_(&slang_scope),
       frame_(module.NextScopeFrameId()),
-      entry_loop_var_bindings_(std::move(entry_loop_var_bindings)),
-      scope_(&scope) {
+      entry_loop_var_bindings_(std::move(entry_loop_var_bindings)) {
 }
 
-// Builder API.
-
-auto ScopeLowerer::AddStructuralVar(
-    const slang::ast::VariableSymbol& var, hir::TypeId type,
-    std::optional<hir::ExprId> initializer) -> hir::StructuralVarId {
-  const hir::StructuralVarId local{
-      static_cast<std::uint32_t>(scope_->structural_vars.size())};
-  scope_->structural_vars.push_back(
-      hir::StructuralVarDecl{
-          .name = std::string{var.name},
-          .type = type,
-          .initializer = initializer});
-  module_->MapStructuralVarBinding(var, frame_, local, type);
-  return local;
-}
-
-void ScopeLowerer::AddTypeAlias(hir::TypeAliasDecl decl) {
-  scope_->type_aliases.push_back(std::move(decl));
-}
-
-auto ScopeLowerer::AddLoopVarDecl(
-    const slang::ast::ValueSymbol& sym, hir::TypeId type)
-    -> hir::LoopVarDeclId {
-  const hir::LoopVarDeclId id{
-      static_cast<std::uint32_t>(scope_->loop_var_decls.size())};
-  scope_->loop_var_decls.push_back(
-      hir::LoopVarDecl{.name = std::string{sym.name}, .type = type});
-  module_->MapLoopVarBinding(sym, frame_, id, type);
-  return id;
-}
-
-auto ScopeLowerer::AddExpr(hir::Expr expr) -> hir::ExprId {
-  const hir::ExprId id{static_cast<std::uint32_t>(scope_->exprs.size())};
-  scope_->exprs.push_back(std::move(expr));
-  return id;
-}
-
-auto ScopeLowerer::AddProcess(hir::Process process) -> hir::ProcessId {
-  const hir::ProcessId id{static_cast<std::uint32_t>(scope_->processes.size())};
-  scope_->processes.push_back(std::move(process));
-  return id;
-}
-
-auto ScopeLowerer::AddContinuousAssign(hir::ContinuousAssign ca)
-    -> hir::ContinuousAssignId {
-  const hir::ContinuousAssignId id{
-      static_cast<std::uint32_t>(scope_->continuous_assigns.size())};
-  scope_->continuous_assigns.push_back(std::move(ca));
-  return id;
-}
-
-auto ScopeLowerer::AddGenerate(hir::Generate generate) -> hir::GenerateId {
-  const hir::GenerateId id{
-      static_cast<std::uint32_t>(scope_->generates.size())};
-  scope_->generates.push_back(std::move(generate));
-  return id;
-}
-
-auto ScopeLowerer::NextGenerateId() const -> hir::GenerateId {
-  return hir::GenerateId{static_cast<std::uint32_t>(scope_->generates.size())};
-}
-
-auto ScopeLowerer::AddInstanceMember(hir::InstanceMemberDecl decl)
-    -> hir::InstanceMemberId {
-  const hir::InstanceMemberId id{
-      static_cast<std::uint32_t>(scope_->instance_members.size())};
-  scope_->instance_members.push_back(std::move(decl));
-  return id;
-}
-
-void ScopeLowerer::ReserveSubroutineBinding(
-    const slang::ast::SubroutineSymbol& sym) {
-  const hir::StructuralSubroutineId local{reserved_subroutine_count_++};
-  module_->MapSubroutineBinding(sym, frame_, local);
-}
-
-void ScopeLowerer::AddStructuralSubroutine(
-    const slang::ast::SubroutineSymbol& sym,
-    hir::StructuralSubroutineDecl decl) {
-  const auto binding = module_->LookupSubroutineBinding(sym);
-  if (!binding.has_value() ||
-      binding->subroutine_id.value !=
-          static_cast<std::uint32_t>(scope_->structural_subroutines.size())) {
-    throw InternalError(
-        "ScopeLowerer::AddStructuralSubroutine: subroutine added out of "
-        "reserved order; ReserveSubroutineBinding must run first in the same "
-        "order");
-  }
-  scope_->structural_subroutines.push_back(std::move(decl));
-}
-
-// Run: scope-level member-by-member dispatch.
-
-auto ScopeLowerer::Run(WalkFrame parent_frame) -> diag::Result<void> {
-  const WalkFrame frame = parent_frame.WithStructuralFrame(frame_);
-  scope_->time_resolution = ResolveTimeResolution(slang_scope_->getTimeScale());
+auto StructuralScopeLowerer::Run(WalkFrame parent_frame)
+    -> diag::Result<hir::StructuralScope> {
+  hir::StructuralScope scope;
+  const WalkFrame frame = parent_frame.WithStructuralFrame(frame_, &scope);
+  scope.time_resolution = ResolveTimeResolution(slang_scope_->getTimeScale());
   // Apply any loop-generate entry bindings (loop-generate body inherits the
   // loop var from its parent's frame so body refs compute correct hops up).
   for (const auto& binding : entry_loop_var_bindings_) {
     if (binding.symbol == nullptr) {
       throw InternalError(
-          "ScopeLowerer::Run: null scope-entry loop-var "
+          "StructuralScopeLowerer::Run: null scope-entry loop-var "
           "binding symbol");
     }
     module_->MapLoopVarBinding(
@@ -206,10 +113,14 @@ auto ScopeLowerer::Run(WalkFrame parent_frame) -> diag::Result<void> {
 
   // Forward-declare every subroutine's binding before lowering any body so a
   // call resolves regardless of source order: direct self-recursion, mutual
-  // recursion, and forward references (LRM 13.4.2).
+  // recursion, and forward references (LRM 13.4.2). Ids are sequential in
+  // source order and match the index `PopulateSubroutineMember` will write to.
+  std::uint32_t reserved_subroutine_id = 0;
   for (const auto& member : slang_scope_->members()) {
     if (member.kind == slang::ast::SymbolKind::Subroutine) {
-      ReserveSubroutineBinding(member.as<slang::ast::SubroutineSymbol>());
+      module_->MapSubroutineBinding(
+          member.as<slang::ast::SubroutineSymbol>(), frame_,
+          hir::StructuralSubroutineId{reserved_subroutine_id++});
     }
   }
 
@@ -219,11 +130,12 @@ auto ScopeLowerer::Run(WalkFrame parent_frame) -> diag::Result<void> {
   // are scope-wide).
   for (const auto& member : slang_scope_->members()) {
     if (member.kind == slang::ast::SymbolKind::Instance) {
-      auto r = PopulateInstanceMember(member.as<slang::ast::InstanceSymbol>());
+      auto r = PopulateInstanceMember(
+          member.as<slang::ast::InstanceSymbol>(), frame);
       if (!r) return std::unexpected(std::move(r.error()));
     } else if (member.kind == slang::ast::SymbolKind::InstanceArray) {
       auto r = PopulateInstanceArrayMember(
-          member.as<slang::ast::InstanceArraySymbol>());
+          member.as<slang::ast::InstanceArraySymbol>(), frame);
       if (!r) return std::unexpected(std::move(r.error()));
     }
   }
@@ -266,15 +178,16 @@ auto ScopeLowerer::Run(WalkFrame parent_frame) -> diag::Result<void> {
   auto pc = PopulatePortConnections(*slang_scope_, frame);
   if (!pc) return std::unexpected(std::move(pc.error()));
 
-  scope_->cross_unit_refs = module_->TakeCrossUnitRefsForFrame(frame_);
-  return {};
+  scope.cross_unit_refs = module_->TakeCrossUnitRefsForFrame(frame_);
+  return scope;
 }
 
-auto ScopeLowerer::PopulateMember(
+auto StructuralScopeLowerer::PopulateMember(
     const slang::ast::Symbol& member, WalkFrame frame) -> diag::Result<void> {
   switch (member.kind) {
     case slang::ast::SymbolKind::TypeAlias:
-      return PopulateTypeAliasMember(member.as<slang::ast::TypeAliasType>());
+      return PopulateTypeAliasMember(
+          member.as<slang::ast::TypeAliasType>(), frame);
     case slang::ast::SymbolKind::Variable:
       return PopulateVariableMember(
           member.as<slang::ast::VariableSymbol>(), frame);
@@ -298,19 +211,20 @@ auto ScopeLowerer::PopulateMember(
   }
 }
 
-auto ScopeLowerer::PopulateTypeAliasMember(
-    const slang::ast::TypeAliasType& alias) -> diag::Result<void> {
+auto StructuralScopeLowerer::PopulateTypeAliasMember(
+    const slang::ast::TypeAliasType& alias, WalkFrame frame)
+    -> diag::Result<void> {
   const auto& mapper = module_->SourceMapper();
-  auto target_or = module_->GetTypeId(
+  auto target_or = module_->InternType(
       alias.targetType.getType(), mapper.PointSpanOf(alias.location));
   if (!target_or) return std::unexpected(std::move(target_or.error()));
-  AddTypeAlias(
+  frame.current_structural_scope->AddTypeAlias(
       hir::TypeAliasDecl{
           .name = std::string{alias.name}, .target = *target_or});
   return {};
 }
 
-auto ScopeLowerer::PopulateVariableMember(
+auto StructuralScopeLowerer::PopulateVariableMember(
     const slang::ast::VariableSymbol& var, WalkFrame frame)
     -> diag::Result<void> {
   const auto& mapper = module_->SourceMapper();
@@ -322,49 +236,59 @@ auto ScopeLowerer::PopulateVariableMember(
         diag::UnsupportedCategory::kFeature);
   }
   auto type_id_or =
-      module_->GetTypeId(var.getType(), mapper.PointSpanOf(var.location));
+      module_->InternType(var.getType(), mapper.PointSpanOf(var.location));
   if (!type_id_or) return std::unexpected(std::move(type_id_or.error()));
   // Slang rejects `void` in any variable-declaration position before
   // elaboration, so a void-typed VariableSymbol can only reach this path
   // via a slang/Lyra integration bug.
   if (std::holds_alternative<hir::VoidType>(
-          module_->GetType(*type_id_or).data)) {
+          module_->Unit().GetType(*type_id_or).data)) {
     throw InternalError(
-        "ScopeLowerer::PopulateVariableMember: variable declaration produced "
+        "StructuralScopeLowerer::PopulateVariableMember: variable declaration "
+        "produced "
         "void type");
   }
   std::optional<hir::ExprId> initializer_id;
   if (const auto* init = var.getInitializer(); init != nullptr) {
     auto init_or = LowerExpr(*init, frame);
     if (!init_or) return std::unexpected(std::move(init_or.error()));
-    initializer_id = AddExpr(*std::move(init_or));
+    initializer_id =
+        frame.current_structural_scope->AddExpr(*std::move(init_or));
   }
-  AddStructuralVar(var, *type_id_or, initializer_id);
+  const hir::StructuralVarId local =
+      frame.current_structural_scope->AddStructuralVar(
+          hir::StructuralVarDecl{
+              .name = std::string{var.name},
+              .type = *type_id_or,
+              .initializer = initializer_id});
+  module_->MapStructuralVarBinding(var, frame_, local, *type_id_or);
   return {};
 }
 
-auto ScopeLowerer::PopulateSubroutineMember(
+auto StructuralScopeLowerer::PopulateSubroutineMember(
     const slang::ast::SubroutineSymbol& sym, WalkFrame frame)
     -> diag::Result<void> {
   const auto& mapper = module_->SourceMapper();
   auto return_type_id_or =
-      module_->GetTypeId(sym.getReturnType(), mapper.PointSpanOf(sym.location));
+      module_->InternType(sym.getReturnType(), mapper.PointSpanOf(sym.location));
   if (!return_type_id_or) {
     return std::unexpected(std::move(return_type_id_or.error()));
   }
 
+  hir::ProceduralBody sub_body;
   ProcessLowerer sub_lowerer(*module_, sym);
+  const WalkFrame sub_frame = frame.WithProceduralBody(&sub_body);
 
   std::vector<hir::SubroutineParam> params;
   params.reserve(sym.getArguments().size());
   for (const auto* formal : sym.getArguments()) {
-    auto formal_type_or = module_->GetTypeId(
+    auto formal_type_or = module_->InternType(
         formal->getType(), mapper.PointSpanOf(formal->location));
     if (!formal_type_or) {
       return std::unexpected(std::move(formal_type_or.error()));
     }
     const hir::ProceduralVarId var =
-        sub_lowerer.AddProceduralVar(*formal, *formal_type_or);
+        sub_lowerer.AddProceduralVar(sub_body, *formal, *formal_type_or);
     params.push_back(
         hir::SubroutineParam{
             .var = var, .direction = ParamDirectionOf(*formal)});
@@ -375,54 +299,65 @@ auto ScopeLowerer::PopulateSubroutineMember(
   // reads and writes to produce the return value.
   std::optional<hir::ProceduralVarId> result_var;
   if (sym.returnValVar != nullptr) {
-    result_var =
-        sub_lowerer.AddProceduralVar(*sym.returnValVar, *return_type_id_or);
+    result_var = sub_lowerer.AddProceduralVar(
+        sub_body, *sym.returnValVar, *return_type_id_or);
   }
 
-  auto body_stmt_or = sub_lowerer.LowerStmt(sym.getBody(), frame);
+  auto body_stmt_or = sub_lowerer.LowerStmt(sym.getBody(), sub_frame);
   if (!body_stmt_or) return std::unexpected(std::move(body_stmt_or.error()));
-  const auto root_id_or = sub_lowerer.AddStmt(*std::move(body_stmt_or));
+  sub_body.root_stmt = sub_body.AddStmt(*std::move(body_stmt_or));
 
-  AddStructuralSubroutine(
-      sym, hir::StructuralSubroutineDecl{
-               .name = std::string{sym.name},
-               .kind = ToHirSubroutineKind(sym.subroutineKind),
-               .result_type = *return_type_id_or,
-               .params = std::move(params),
-               .result_var = result_var,
-               .body = sub_lowerer.FinalizeBody(root_id_or)});
+  const auto binding = module_->LookupSubroutineBinding(sym);
+  if (!binding.has_value() ||
+      binding->subroutine_id.value !=
+          static_cast<std::uint32_t>(
+              frame.current_structural_scope->structural_subroutines.size())) {
+    throw InternalError(
+        "StructuralScopeLowerer::PopulateSubroutineMember: subroutine added "
+        "out of "
+        "reserved order; ReserveSubroutineBinding must run first in the same "
+        "order");
+  }
+  frame.current_structural_scope->AddStructuralSubroutine(
+      hir::StructuralSubroutineDecl{
+          .name = std::string{sym.name},
+          .kind = ToHirSubroutineKind(sym.subroutineKind),
+          .result_type = *return_type_id_or,
+          .params = std::move(params),
+          .result_var = result_var,
+          .body = std::move(sub_body)});
   return {};
 }
 
-auto ScopeLowerer::PopulateProceduralBlockMember(
+auto StructuralScopeLowerer::PopulateProceduralBlockMember(
     const slang::ast::ProceduralBlockSymbol& proc, WalkFrame frame)
     -> diag::Result<void> {
   ProcessLowerer proc_lowerer(*module_, proc);
   auto p = proc_lowerer.Run(proc, frame);
   if (!p) return std::unexpected(std::move(p.error()));
-  AddProcess(*std::move(p));
+  frame.current_structural_scope->AddProcess(*std::move(p));
   return {};
 }
 
-auto ScopeLowerer::PopulateContinuousAssignMember(
+auto StructuralScopeLowerer::PopulateContinuousAssignMember(
     const slang::ast::ContinuousAssignSymbol& sym, WalkFrame frame)
     -> diag::Result<void> {
   auto ca = LowerContinuousAssign(sym, frame);
   if (!ca) return std::unexpected(std::move(ca.error()));
-  AddContinuousAssign(*std::move(ca));
+  frame.current_structural_scope->AddContinuousAssign(*std::move(ca));
   return {};
 }
 
-auto ScopeLowerer::PopulateLoopGenerateMember(
+auto StructuralScopeLowerer::PopulateLoopGenerateMember(
     const slang::ast::GenerateBlockArraySymbol& array, WalkFrame frame)
     -> diag::Result<void> {
   auto g = BuildLoopGenerate(array, frame);
   if (!g) return std::unexpected(std::move(g.error()));
-  AddGenerate(*std::move(g));
+  frame.current_structural_scope->AddGenerate(*std::move(g));
   return {};
 }
 
-auto ScopeLowerer::PopulateIfOrCaseGenerateMember(
+auto StructuralScopeLowerer::PopulateIfOrCaseGenerateMember(
     const slang::ast::GenerateBlockSymbol& block, WalkFrame frame)
     -> diag::Result<void> {
   // slang assigns constructIndex per direct generate construct in the
@@ -439,17 +374,19 @@ auto ScopeLowerer::PopulateIfOrCaseGenerateMember(
   auto g = IsCaseConstruct(siblings) ? BuildCaseGenerate(siblings, frame)
                                      : BuildIfGenerate(siblings, frame);
   if (!g) return std::unexpected(std::move(g.error()));
-  AddGenerate(*std::move(g));
+  frame.current_structural_scope->AddGenerate(*std::move(g));
   return {};
 }
 
-auto ScopeLowerer::PopulateInstanceMember(
-    const slang::ast::InstanceSymbol& inst) -> diag::Result<void> {
-  const hir::InstanceMemberId member_id = AddInstanceMember(
-      hir::InstanceMemberDecl{
-          .instance_name = std::string{inst.name},
-          .target_unit = std::string{inst.getDefinition().name},
-          .array_dims = {}});
+auto StructuralScopeLowerer::PopulateInstanceMember(
+    const slang::ast::InstanceSymbol& inst, WalkFrame frame)
+    -> diag::Result<void> {
+  const hir::InstanceMemberId member_id =
+      frame.current_structural_scope->AddInstanceMember(
+          hir::InstanceMemberDecl{
+              .instance_name = std::string{inst.name},
+              .target_unit = std::string{inst.getDefinition().name},
+              .array_dims = {}});
   // A downward cross-unit reference (`c.x`) resolves the leading `c` to
   // this member; the binding lets process-body lowering find it regardless
   // of source order.
@@ -458,8 +395,9 @@ auto ScopeLowerer::PopulateInstanceMember(
   return {};
 }
 
-auto ScopeLowerer::PopulateInstanceArrayMember(
-    const slang::ast::InstanceArraySymbol& array) -> diag::Result<void> {
+auto StructuralScopeLowerer::PopulateInstanceArrayMember(
+    const slang::ast::InstanceArraySymbol& array, WalkFrame frame)
+    -> diag::Result<void> {
   // Each nested InstanceArray level contributes one dimension; the descent
   // bottoms out at the per-element instance, which names the target unit.
   // A zero-element level (`Child c[0:-1]`, LRM 23.3.2) has no element to
@@ -476,11 +414,12 @@ auto ScopeLowerer::PopulateInstanceArrayMember(
     level = arr.elements.front();
   }
   const auto& leaf = level->as<slang::ast::InstanceSymbol>();
-  const hir::InstanceMemberId member_id = AddInstanceMember(
-      hir::InstanceMemberDecl{
-          .instance_name = std::string{array.name},
-          .target_unit = std::string{leaf.getDefinition().name},
-          .array_dims = std::move(dims)});
+  const hir::InstanceMemberId member_id =
+      frame.current_structural_scope->AddInstanceMember(
+          hir::InstanceMemberDecl{
+              .instance_name = std::string{array.name},
+              .target_unit = std::string{leaf.getDefinition().name},
+              .array_dims = std::move(dims)});
   module_->MapOwnedChildBinding(
       array, frame_, hir::DownwardHead{.child = member_id});
   return {};

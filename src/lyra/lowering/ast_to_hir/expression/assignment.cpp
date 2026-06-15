@@ -18,33 +18,34 @@
 #include "lyra/diag/diag_code.hpp"
 #include "lyra/diag/kind.hpp"
 #include "lyra/hir/conversion.hpp"
-#include "lyra/lowering/ast_to_hir/expression/dispatch.hpp"
 #include "lyra/lowering/ast_to_hir/expression/slang_atoms.hpp"
+#include "lyra/lowering/ast_to_hir/process_lowerer.hpp"
 
 namespace lyra::lowering::ast_to_hir {
 
 auto LowerAssignmentExprProc(
     ProcessLowerer& proc, WalkFrame frame,
-    const slang::ast::AssignmentExpression& as,
-    const slang::ast::Expression& expr, diag::SourceSpan span)
+    const slang::ast::AssignmentExpression& as, diag::SourceSpan span)
     -> diag::Result<hir::Expr> {
   auto& module = proc.Module();
   auto validate = ValidateAssignableImpl(module, true, as.left());
   if (!validate) return std::unexpected(std::move(validate.error()));
-  auto lhs_or = LowerProcExpr(proc, frame, as.left());
+  auto lhs_or = proc.LowerExpr(as.left(), frame);
   if (!lhs_or) return std::unexpected(std::move(lhs_or.error()));
-  const hir::ExprId lhs_id = proc.AddExpr(*std::move(lhs_or));
+  const hir::ExprId lhs_id =
+      frame.current_procedural_body->AddExpr(*std::move(lhs_or));
 
-  auto type_id = module.GetTypeIdOf(expr);
+  auto type_id = module.InternType(*as.type, span);
   if (!type_id) return std::unexpected(std::move(type_id.error()));
 
   const auto kind = as.isNonBlocking() ? hir::AssignKind::kNonBlocking
                                        : hir::AssignKind::kBlocking;
 
   if (!as.op.has_value()) {
-    auto rhs_or = LowerProcExpr(proc, frame, as.right());
+    auto rhs_or = proc.LowerExpr(as.right(), frame);
     if (!rhs_or) return std::unexpected(std::move(rhs_or.error()));
-    const hir::ExprId rhs_id = proc.AddExpr(*std::move(rhs_or));
+    const hir::ExprId rhs_id =
+        frame.current_procedural_body->AddExpr(*std::move(rhs_or));
     return hir::Expr{
         .type = *type_id,
         .data =
@@ -64,11 +65,12 @@ auto LowerAssignmentExprProc(
   }
 
   const auto& bare_user_rhs = BareCompoundUserRhs(as.right());
-  auto rhs_or = LowerProcExpr(proc, frame, bare_user_rhs);
+  auto rhs_or = proc.LowerExpr(bare_user_rhs, frame);
   if (!rhs_or) return std::unexpected(std::move(rhs_or.error()));
   hir::Expr rhs_expr = *std::move(rhs_or);
   if (rhs_expr.type.value != type_id->value) {
-    const hir::ExprId inner_id = proc.AddExpr(std::move(rhs_expr));
+    const hir::ExprId inner_id =
+        frame.current_procedural_body->AddExpr(std::move(rhs_expr));
     rhs_expr = hir::Expr{
         .type = *type_id,
         .data =
@@ -77,7 +79,8 @@ auto LowerAssignmentExprProc(
         .span = span,
     };
   }
-  const hir::ExprId rhs_id = proc.AddExpr(std::move(rhs_expr));
+  const hir::ExprId rhs_id =
+      frame.current_procedural_body->AddExpr(std::move(rhs_expr));
   return hir::Expr{
       .type = *type_id,
       .data =
@@ -92,17 +95,18 @@ auto LowerAssignmentExprProc(
 
 auto LowerIncDecExprProc(
     ProcessLowerer& proc, WalkFrame frame,
-    const slang::ast::UnaryExpression& un, const slang::ast::Expression& expr,
-    diag::SourceSpan span) -> diag::Result<hir::Expr> {
+    const slang::ast::UnaryExpression& un, diag::SourceSpan span)
+    -> diag::Result<hir::Expr> {
   auto& module = proc.Module();
   auto validate = ValidateAssignableImpl(module, true, un.operand());
   if (!validate) return std::unexpected(std::move(validate.error()));
 
-  auto target_or = LowerProcExpr(proc, frame, un.operand());
+  auto target_or = proc.LowerExpr(un.operand(), frame);
   if (!target_or) return std::unexpected(std::move(target_or.error()));
-  const hir::ExprId target_id = proc.AddExpr(*std::move(target_or));
+  const hir::ExprId target_id =
+      frame.current_procedural_body->AddExpr(*std::move(target_or));
 
-  auto type_id = module.GetTypeIdOf(expr);
+  auto type_id = module.InternType(*un.type, span);
   if (!type_id) return std::unexpected(std::move(type_id.error()));
 
   return hir::Expr{
