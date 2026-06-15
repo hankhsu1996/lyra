@@ -89,8 +89,7 @@ auto LowerPredefinedInteger(slang::ast::PredefinedIntegerType::Kind k)
           .form = hir::PackedArrayForm::kTime,
       };
   }
-  throw InternalError(
-      "LowerPredefinedInteger: unknown predefined integer kind");
+  throw InternalError("LowerPredefinedInteger: unknown integer kind");
 }
 
 auto LowerExplicitPackedArray(
@@ -139,7 +138,7 @@ auto LowerPackedStruct(
   std::vector<hir::PackedAggregateField> fields;
   for (const auto& field :
        struct_type.membersOfType<slang::ast::FieldSymbol>()) {
-    auto field_type_or = module.GetTypeId(field.getType(), decl_span);
+    auto field_type_or = module.InternType(field.getType(), decl_span);
     if (!field_type_or) {
       return std::unexpected(std::move(field_type_or.error()));
     }
@@ -185,7 +184,7 @@ auto LowerPackedUnion(
   std::vector<hir::PackedAggregateField> fields;
   for (const auto& field :
        union_type.membersOfType<slang::ast::FieldSymbol>()) {
-    auto field_type_or = module.GetTypeId(field.getType(), decl_span);
+    auto field_type_or = module.InternType(field.getType(), decl_span);
     if (!field_type_or) {
       return std::unexpected(std::move(field_type_or.error()));
     }
@@ -208,7 +207,7 @@ auto LowerPackedUnion(
 auto LowerEnum(
     const slang::ast::EnumType& enum_type, diag::SourceSpan decl_span,
     ModuleLowerer& module) -> diag::Result<hir::EnumType> {
-  auto base_id_or = module.GetTypeId(enum_type.baseType, decl_span);
+  auto base_id_or = module.InternType(enum_type.baseType, decl_span);
   if (!base_id_or) return std::unexpected(std::move(base_id_or.error()));
   std::vector<hir::EnumMember> members;
   for (const auto& value_sym : enum_type.values()) {
@@ -228,12 +227,9 @@ auto LowerEnum(
   };
 }
 
-}  // namespace
-
-auto ModuleLowerer::LowerType(
-    const slang::ast::Type& type, diag::SourceSpan decl_span)
-    -> diag::Result<hir::TypeData> {
-  auto& module = *this;
+auto TranslateTypeData(
+    ModuleLowerer& module, const slang::ast::Type& type,
+    diag::SourceSpan decl_span) -> diag::Result<hir::TypeData> {
   const auto& canonical = type.getCanonicalType();
 
   switch (canonical.kind) {
@@ -277,7 +273,7 @@ auto ModuleLowerer::LowerType(
         case slang::ast::FloatingType::RealTime:
           return hir::TypeData{hir::RealTimeType{}};
       }
-      throw InternalError("LowerType: unknown FloatingType kind");
+      throw InternalError("TranslateTypeData: unknown FloatingType kind");
     }
     case slang::ast::SymbolKind::StringType:
       return hir::TypeData{hir::StringType{}};
@@ -305,7 +301,7 @@ auto ModuleLowerer::LowerType(
     }
     case slang::ast::SymbolKind::FixedSizeUnpackedArrayType: {
       const auto& fa = canonical.as<slang::ast::FixedSizeUnpackedArrayType>();
-      auto elem_id_or = module.GetTypeId(fa.elementType, decl_span);
+      auto elem_id_or = module.InternType(fa.elementType, decl_span);
       if (!elem_id_or) {
         return std::unexpected(std::move(elem_id_or.error()));
       }
@@ -319,7 +315,7 @@ auto ModuleLowerer::LowerType(
     }
     case slang::ast::SymbolKind::DynamicArrayType: {
       const auto& da = canonical.as<slang::ast::DynamicArrayType>();
-      auto elem_id_or = module.GetTypeId(da.elementType, decl_span);
+      auto elem_id_or = module.InternType(da.elementType, decl_span);
       if (!elem_id_or) {
         return std::unexpected(std::move(elem_id_or.error()));
       }
@@ -349,6 +345,22 @@ auto ModuleLowerer::LowerType(
           decl_span, diag::DiagCode::kUnsupportedTypeKind,
           "unsupported type kind", diag::UnsupportedCategory::kType);
   }
+}
+
+}  // namespace
+
+auto ModuleLowerer::InternType(
+    const slang::ast::Type& type, diag::SourceSpan span)
+    -> diag::Result<hir::TypeId> {
+  const auto* canonical = &type.getCanonicalType();
+  if (const auto it = type_cache_.find(canonical); it != type_cache_.end()) {
+    return it->second;
+  }
+  auto data_or = TranslateTypeData(*this, type, span);
+  if (!data_or) return std::unexpected(std::move(data_or.error()));
+  const hir::TypeId id = unit_.AddType(*std::move(data_or));
+  type_cache_.emplace(canonical, id);
+  return id;
 }
 
 }  // namespace lyra::lowering::ast_to_hir

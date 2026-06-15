@@ -7,7 +7,8 @@
 #include "lyra/frontend/load.hpp"
 #include "lyra/lowering/ast_to_hir/lower.hpp"
 #include "lyra/lowering/ast_to_hir/sensitivity.hpp"
-#include "lyra/lowering/hir_to_mir/lower_module_unit.hpp"
+#include "lyra/lowering/hir_to_mir/module_lowerer.hpp"
+#include "lyra/mir/compilation_unit.hpp"
 
 namespace lyra::compiler {
 
@@ -53,12 +54,13 @@ auto Compile(
   std::vector<mir::CompilationUnit> units;
   units.reserve(result.artifacts.hir_units->size());
   for (const auto& hir_unit : *result.artifacts.hir_units) {
-    auto mir = lowering::hir_to_mir::LowerModuleUnit(hir_unit);
-    if (!mir) {
-      sink.Report(std::move(mir.error()));
+    lowering::hir_to_mir::ModuleLowerer module(hir_unit);
+    auto unit_or = module.Run();
+    if (!unit_or) {
+      sink.Report(std::move(unit_or.error()));
       return result;
     }
-    units.push_back(std::move(*mir));
+    units.push_back(*std::move(unit_or));
   }
   result.artifacts.mir_units = std::move(units);
 

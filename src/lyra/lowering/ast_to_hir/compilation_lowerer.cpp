@@ -54,9 +54,9 @@ class CompilationLowerer {
     units.reserve(unit_bodies.size());
     for (const auto* body : unit_bodies) {
       ModuleLowerer module(unit_facts_, *body);
-      auto u = module.Run();
-      if (!u) return std::unexpected(std::move(u.error()));
-      units.push_back(*std::move(u));
+      auto unit_or = module.Run();
+      if (!unit_or) return std::unexpected(std::move(unit_or.error()));
+      units.push_back(*std::move(unit_or));
     }
     return units;
   }

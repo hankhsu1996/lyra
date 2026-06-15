@@ -9,10 +9,8 @@
 
 #include "lyra/diag/diagnostic.hpp"
 #include "lyra/hir/procedural_body.hpp"
-#include "lyra/hir/stmt.hpp"
 #include "lyra/lowering/hir_to_mir/lower_expr.hpp"
-#include "lyra/lowering/hir_to_mir/procedural_scope_helpers.hpp"
-#include "lyra/lowering/hir_to_mir/state.hpp"
+#include "lyra/lowering/hir_to_mir/process_lowerer.hpp"
 #include "lyra/mir/conversion.hpp"
 #include "lyra/mir/expr.hpp"
 #include "lyra/mir/stmt.hpp"
@@ -20,14 +18,11 @@
 namespace lyra::lowering::hir_to_mir {
 
 auto BuildOutputArgSlot(
-    const UnitLoweringState& unit_state,
-    const StructuralScopeLoweringState& scope_state,
-    ProcessLoweringState& proc_state, ProceduralScopeLoweringState& wrapper,
-    const hir::ProceduralBody& hir_proc, hir::ExprId actual_hir,
+    ProcessLowerer& proc, WalkFrame frame, hir::ExprId actual_hir,
     std::string_view temp_name) -> diag::Result<OutputArgSlot> {
-  auto actual_or = LowerExpr(
-      unit_state, scope_state, proc_state, wrapper, hir_proc,
-      hir_proc.exprs.at(actual_hir.value));
+  const auto& hir_body = proc.HirBody();
+  auto& wrapper = *frame.current_procedural_scope;
+  auto actual_or = LowerExpr(proc, frame, hir_body.exprs.at(actual_hir.value));
   if (!actual_or) return std::unexpected(std::move(actual_or.error()));
   const mir::TypeId actual_type = actual_or->type;
   const mir::ExprId actual_id = wrapper.AddExpr(*std::move(actual_or));
@@ -39,9 +34,9 @@ auto BuildOutputArgSlot(
 }
 
 auto BuildCopyOutBlock(
-    ProceduralScopeLoweringState& wrapper, const hir::Stmt& stmt,
-    mir::TypeId result_type, mir::Expr call_expr,
-    std::optional<mir::ExprId> assign_target_id,
+    WalkFrame parent_frame, mir::ProceduralScope wrapper,
+    std::optional<std::string> label, mir::TypeId result_type,
+    mir::Expr call_expr, std::optional<mir::ExprId> assign_target_id,
     const std::vector<OutputArgSlot>& slots) -> mir::Stmt {
   const mir::TypeId call_type = call_expr.type;
   const mir::ExprId call_id = wrapper.AddExpr(std::move(call_expr));
@@ -77,13 +72,10 @@ auto BuildCopyOutBlock(
     wrapper.AppendStmt(mir::ExprStmt{.expr = copy_out});
   }
 
-  std::vector<mir::ProceduralScope> child_scopes;
   const mir::ProceduralScopeId scope_id =
-      AddChildProceduralScope(child_scopes, wrapper.Finish());
+      parent_frame.current_procedural_scope->AddChildScope(std::move(wrapper));
   return mir::Stmt{
-      .label = stmt.label,
-      .data = mir::BlockStmt{.scope = scope_id},
-      .child_procedural_scopes = std::move(child_scopes)};
+      .label = std::move(label), .data = mir::BlockStmt{.scope = scope_id}};
 }
 
 }  // namespace lyra::lowering::hir_to_mir

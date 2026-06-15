@@ -8,8 +8,10 @@
 
 #include "lyra/base/internal_error.hpp"
 #include "lyra/base/overloaded.hpp"
+#include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/expr.hpp"
 #include "lyra/mir/integral_constant.hpp"
+#include "lyra/mir/stmt.hpp"
 #include "lyra/mir/type.hpp"
 
 namespace lyra::lowering::hir_to_mir {
@@ -49,58 +51,58 @@ auto DefaultIntegralConstant(const mir::PackedArrayType& pa)
 }  // namespace
 
 auto SynthesizeDefaultValueExpr(
-    const UnitLoweringState& unit_state,
-    ProceduralScopeLoweringState& scope_state, mir::TypeId type_id)
+    const ModuleLowerer& module, WalkFrame frame, mir::TypeId type)
     -> mir::ExprId {
-  const auto& ty = unit_state.GetType(type_id);
+  auto& scope = *frame.current_procedural_scope;
+  const auto& ty = module.Unit().GetType(type);
   return std::visit(
       Overloaded{
           [&](const mir::PackedArrayType& pa) -> mir::ExprId {
-            return scope_state.AddExpr(
+            return scope.AddExpr(
                 mir::Expr{
                     .data =
                         mir::IntegerLiteral{
                             .value = DefaultIntegralConstant(pa)},
-                    .type = type_id});
+                    .type = type});
           },
           [&](const mir::EnumType& e) -> mir::ExprId {
-            return scope_state.AddExpr(
+            return scope.AddExpr(
                 mir::Expr{
                     .data =
                         mir::IntegerLiteral{
                             .value = DefaultIntegralConstant(e.base)},
-                    .type = type_id});
+                    .type = type});
           },
           [&](const mir::StringType&) -> mir::ExprId {
-            return scope_state.AddExpr(
+            return scope.AddExpr(
                 mir::Expr{
                     .data = mir::StringLiteral{.value = std::string{}},
-                    .type = type_id});
+                    .type = type});
           },
           [&](const mir::RealType&) -> mir::ExprId {
-            return scope_state.AddExpr(
+            return scope.AddExpr(
                 mir::Expr{
-                    .data = mir::RealLiteral{.value = 0.0}, .type = type_id});
+                    .data = mir::RealLiteral{.value = 0.0}, .type = type});
           },
           [&](const mir::ShortRealType&) -> mir::ExprId {
-            return scope_state.AddExpr(
+            return scope.AddExpr(
                 mir::Expr{
-                    .data = mir::RealLiteral{.value = 0.0}, .type = type_id});
+                    .data = mir::RealLiteral{.value = 0.0}, .type = type});
           },
           [&](const mir::RealTimeType&) -> mir::ExprId {
-            return scope_state.AddExpr(
+            return scope.AddExpr(
                 mir::Expr{
-                    .data = mir::RealLiteral{.value = 0.0}, .type = type_id});
+                    .data = mir::RealLiteral{.value = 0.0}, .type = type});
           },
           [&](const mir::UnpackedArrayType& ua) -> mir::ExprId {
             std::vector<mir::ExprId> elements;
             elements.reserve(ua.size);
             for (std::uint64_t i = 0; i < ua.size; ++i) {
-              elements.push_back(SynthesizeDefaultValueExpr(
-                  unit_state, scope_state, ua.element_type));
+              elements.push_back(
+                  SynthesizeDefaultValueExpr(module, frame, ua.element_type));
             }
-            return scope_state.AddExpr(BuildArrayConstructExpr(
-                unit_state, scope_state, type_id, std::move(elements)));
+            return scope.AddExpr(BuildArrayConstructExpr(
+                module, frame, type, std::move(elements)));
           },
           // LRM Table 6-7: a dynamic array's default is the empty array.
           // The wrapper still needs the element type's default supplied at
@@ -109,12 +111,12 @@ auto SynthesizeDefaultValueExpr(
           // chain: ConstructExpr{element_default} -> `DynamicArray<T>(...)`
           // ctor that stores the value and leaves `data_` empty.
           [&](const mir::DynamicArrayType& da) -> mir::ExprId {
-            const mir::ExprId element_default = SynthesizeDefaultValueExpr(
-                unit_state, scope_state, da.element_type);
-            return scope_state.AddExpr(
+            const mir::ExprId element_default =
+                SynthesizeDefaultValueExpr(module, frame, da.element_type);
+            return scope.AddExpr(
                 mir::Expr{
                     .data = mir::ConstructExpr{.args = {element_default}},
-                    .type = type_id});
+                    .type = type});
           },
           // Types whose runtime default is the C++ language-level default
           // (named-event handle, child module instance, `unique_ptr<Child>`,
@@ -123,24 +125,24 @@ auto SynthesizeDefaultValueExpr(
           // grammar at all. Empty `ConstructExpr` renders as `T()` and
           // invokes the type's default ctor.
           [&](const mir::EventType&) -> mir::ExprId {
-            return scope_state.AddExpr(
+            return scope.AddExpr(
                 mir::Expr{
-                    .data = mir::ConstructExpr{.args = {}}, .type = type_id});
+                    .data = mir::ConstructExpr{.args = {}}, .type = type});
           },
           [&](const mir::ObjectType&) -> mir::ExprId {
-            return scope_state.AddExpr(
+            return scope.AddExpr(
                 mir::Expr{
-                    .data = mir::ConstructExpr{.args = {}}, .type = type_id});
+                    .data = mir::ConstructExpr{.args = {}}, .type = type});
           },
           [&](const mir::PointerType&) -> mir::ExprId {
-            return scope_state.AddExpr(
+            return scope.AddExpr(
                 mir::Expr{
-                    .data = mir::ConstructExpr{.args = {}}, .type = type_id});
+                    .data = mir::ConstructExpr{.args = {}}, .type = type});
           },
           [&](const mir::VectorType&) -> mir::ExprId {
-            return scope_state.AddExpr(
+            return scope.AddExpr(
                 mir::Expr{
-                    .data = mir::ConstructExpr{.args = {}}, .type = type_id});
+                    .data = mir::ConstructExpr{.args = {}}, .type = type});
           },
           [&](const auto&) -> mir::ExprId {
             throw InternalError(
@@ -152,11 +154,11 @@ auto SynthesizeDefaultValueExpr(
 }
 
 auto BuildArrayConstructExpr(
-    const UnitLoweringState& unit_state,
-    ProceduralScopeLoweringState& scope_state, mir::TypeId array_type_id,
+    const ModuleLowerer& module, WalkFrame frame, mir::TypeId array_type,
     std::vector<mir::ExprId> elements) -> mir::Expr {
-  const auto& ty = unit_state.GetType(array_type_id);
-  const mir::TypeId element_type_id = std::visit(
+  auto& scope = *frame.current_procedural_scope;
+  const auto& ty = module.Unit().GetType(array_type);
+  const mir::TypeId element_type = std::visit(
       [](const auto& t) -> mir::TypeId {
         using TyT = std::decay_t<decltype(t)>;
         if constexpr (
@@ -165,20 +167,20 @@ auto BuildArrayConstructExpr(
           return t.element_type;
         } else {
           throw InternalError(
-              "BuildArrayConstructExpr: type_id is not UnpackedArrayType or "
+              "BuildArrayConstructExpr: type is not UnpackedArrayType or "
               "DynamicArrayType");
         }
       },
       ty.data);
   const mir::ExprId element_default =
-      SynthesizeDefaultValueExpr(unit_state, scope_state, element_type_id);
-  const mir::ExprId list_id = scope_state.AddExpr(
+      SynthesizeDefaultValueExpr(module, frame, element_type);
+  const mir::ExprId list_id = scope.AddExpr(
       mir::Expr{
           .data = mir::ArrayLiteralExpr{.elements = std::move(elements)},
-          .type = array_type_id});
+          .type = array_type});
   return mir::Expr{
       .data = mir::ConstructExpr{.args = {element_default, list_id}},
-      .type = array_type_id};
+      .type = array_type};
 }
 
 }  // namespace lyra::lowering::hir_to_mir

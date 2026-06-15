@@ -184,6 +184,68 @@ struct StructuralScope {
       -> const StructuralSubroutineDecl& {
     return structural_subroutines.at(id.value);
   }
+
+  auto AddStructuralVar(StructuralVarDecl decl) -> StructuralVarId {
+    const StructuralVarId id{
+        static_cast<std::uint32_t>(structural_vars.size())};
+    structural_vars.push_back(std::move(decl));
+    return id;
+  }
+  auto AddLoopVarDecl(LoopVarDecl decl) -> LoopVarDeclId {
+    const LoopVarDeclId id{static_cast<std::uint32_t>(loop_var_decls.size())};
+    loop_var_decls.push_back(std::move(decl));
+    return id;
+  }
+  auto AddExpr(Expr expr) -> ExprId {
+    const ExprId id{static_cast<std::uint32_t>(exprs.size())};
+    exprs.push_back(std::move(expr));
+    return id;
+  }
+  auto AddProcess(Process process) -> ProcessId {
+    const ProcessId id{static_cast<std::uint32_t>(processes.size())};
+    processes.push_back(std::move(process));
+    return id;
+  }
+  auto AddContinuousAssign(ContinuousAssign ca) -> ContinuousAssignId {
+    const ContinuousAssignId id{
+        static_cast<std::uint32_t>(continuous_assigns.size())};
+    continuous_assigns.push_back(std::move(ca));
+    return id;
+  }
+  auto AddGenerate(Generate generate) -> GenerateId {
+    const GenerateId id{static_cast<std::uint32_t>(generates.size())};
+    generates.push_back(std::move(generate));
+    return id;
+  }
+  [[nodiscard]] auto NextGenerateId() const -> GenerateId {
+    return GenerateId{static_cast<std::uint32_t>(generates.size())};
+  }
+  auto AddInstanceMember(InstanceMemberDecl decl) -> InstanceMemberId {
+    const InstanceMemberId id{
+        static_cast<std::uint32_t>(instance_members.size())};
+    instance_members.push_back(std::move(decl));
+    return id;
+  }
+  auto AddCrossUnitRef(CrossUnitRefDecl decl) -> CrossUnitRefId {
+    const CrossUnitRefId id{static_cast<std::uint32_t>(cross_unit_refs.size())};
+    cross_unit_refs.push_back(std::move(decl));
+    return id;
+  }
+  auto AddStructuralSubroutine(StructuralSubroutineDecl decl)
+      -> StructuralSubroutineId {
+    const StructuralSubroutineId id{
+        static_cast<std::uint32_t>(structural_subroutines.size())};
+    structural_subroutines.push_back(std::move(decl));
+    return id;
+  }
+  [[nodiscard]] auto NextStructuralSubroutineId() const
+      -> StructuralSubroutineId {
+    return StructuralSubroutineId{
+        static_cast<std::uint32_t>(structural_subroutines.size())};
+  }
+  void AddTypeAlias(TypeAliasDecl decl) {
+    type_aliases.push_back(std::move(decl));
+  }
 };
 
 inline auto Generate::GetChildScope(StructuralScopeId id) const

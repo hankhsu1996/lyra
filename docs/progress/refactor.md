@@ -171,24 +171,26 @@ Entries get checked off as their PRs land. When the last entry lands, the file i
       cross-form driver, so the unification now has a real motivation rather than being speculative.
 
 - [x] R9 -- AST-to-HIR migration to the class-based organization defined in
-      `docs/architecture/lowering_organization.md`. `UnitLoweringState`, `ProcessLoweringState`, and
-      `ScopeLoweringState` are gone; per-task-instance `ModuleLowerer`, `ScopeLowerer`,
-      `ProcessLowerer`, and `CompilationLowerer` classes own facts, registries, and builders.
-      `ScopeStack` and `fork_branch_depth_` are absorbed by `WalkFrame`. All helpers across
-      `expression/` and `statement/` migrated; no transitional shape remains.
+      `docs/architecture/lowering_organization.md`. The `*LoweringState` god-objects are gone;
+      per-task-instance `ModuleLowerer`, `StructuralScopeLowerer`, `ProcessLowerer`, and
+      `CompilationLowerer` classes hold facts and registries. `ScopeStack` and `fork_branch_depth_`
+      are absorbed by `WalkFrame`. All helpers across `expression/` and `statement/` migrated; no
+      transitional shape remains.
 
-- [ ] R10 -- HIR-to-MIR migration to the class-based organization defined in
-      `docs/architecture/lowering_organization.md`. Replaces `UnitLoweringState`,
-      `StructuralScopeLoweringState`, `ProcessLoweringState`, `ProceduralScopeLoweringState`, and
-      `ConstructorLoweringState` with per-task-instance classes (`ProcessLowerer`,
-      `StructuralScopeLowerer`, and analogues). Procedural depth, active capture sink, and active
-      iterator-index binding move to `WalkFrame`. Type translation map and binding registries become
-      class-owned registries; `*Builder` becomes the new name for the former `*ScopeLoweringState`.
-      The four `LowerExpr` / `LowerStmt` entry points and `~56` internal helpers change signature in
-      one cut; `CaptureSink` (already class-shaped) integrates as a walk-frame field. Subroutine
-      lowering shares the same `static_locals` registry shape as process lowering and migrates in
-      the same PR. **Why deferred**: largest single-layer migration; closes the R9/R10 historical
-      entries that this layer's god-objects motivated. **Trigger**: scheduled with R9 and R11.
+- [x] R10 -- HIR-to-MIR migration to the class-based organization defined in
+      `docs/architecture/lowering_organization.md`. Every handler is now
+      `(Lowerer&, WalkFrame, node)`; the `WalkFrame` value type carries `current_compilation_unit` /
+      `current_structural_scope` / `current_procedural_scope` / `static_frame_scope` /
+      `procedural_depth` / `active_closure` / `active_index_binding` and every write goes through
+      `frame.current_*_scope->Add...` uniformly. `ModuleLowerer`, `StructuralScopeLowerer`, and
+      `ProcessLowerer` hold facts and registries only -- no borrowed pointer to in-flight IR, no
+      delegate `Add` / `Allocate` wrapper, no ambient `Set*` / `Enter*` / `Leave*`.
+      `ProceduralDepthGuard` is gone. The dead `facts.hpp` is deleted. `state.hpp` has been split
+      into `module_lowerer.hpp` / `structural_scope_lowerer.hpp` / `process_lowerer.hpp`. AST-to-HIR
+      `StructuralScopeLowerer.scope_`, `ModuleLowerer.hir_unit_`, and `ProcessLowerer.body_` are
+      likewise off the lowerer. `~1400` local-variable sites renamed (`unit_state` -> `module`,
+      `scope_state` -> `scope`, `proc_state` -> `process`, `proc_scope_state` -> `proc_scope`,
+      etc.). The per-LRM-family subsystem split ships as its own focused cut; see R13.
 
 - [ ] R11 -- MIR-to-C++ backend migration to the class-based organization defined in
       `docs/architecture/lowering_organization.md`. Replaces `RenderContext` plus the `With*()`
@@ -199,9 +201,9 @@ Entries get checked off as their PRs land. When the last entry lands, the file i
       `WalkFrame`. All `~51` free `Render*` functions across `render_expr.cpp` and `render_stmt.cpp`
       become class methods in one cut; no transitional shape coexists. **Why deferred**: large-scope
       migration; the backend is `~80%` aligned today but moving the last 20% requires touching every
-      renderer in one pass. **Trigger**: scheduled with R9 and R10.
+      renderer in one pass. **Trigger**: scheduled with R10.
 
-- [ ] R10 -- Model the observable (`Var<T>`) storage as a first-class MIR wrapper type so the cpp
+- [ ] R12 -- Model the observable (`Var<T>`) storage as a first-class MIR wrapper type so the cpp
       backend stops re-deriving "is this observable storage" at render time. Today a signal's MIR
       type is its value type (`PackedArray`, `string`, ...); whether the field is stored as
       `lyra::runtime::Var<T>` is a backend predicate (`IsObservableScalarType`) computed at render
@@ -223,9 +225,26 @@ Entries get checked off as their PRs land. When the last entry lands, the file i
       sensitivity) and is its own focused cut, and the current predicate is behaviorally correct.
       **Trigger**: standalone -- highest leverage taken together with R2, which reworks the same
       `IsObservableScalarType` decision from the capability-gating angle (wrap every value type
-      uniformly, push unsupported change-tracking to explicit diagnostics). R10 makes the wrapper a
+      uniformly, push unsupported change-tracking to explicit diagnostics). R12 makes the wrapper a
       type; R2 makes the wrap uniform and capability-honest -- done together they remove
       `IsObservableScalarType` entirely and leave the backend a pure renderer.
+
+- [ ] R13 -- HIR-to-MIR per-LRM-family subsystem split. Today every expression and statement handler
+      lives in flat `lower_*.cpp` files (`lower_expr.cpp`, `lower_stmt.cpp`, `lower_print.cpp`,
+      etc.). Invariants 10-11 in `docs/architecture/lowering_organization.md` require the per-kind
+      handlers to group by semantic family in subsystem header/implementation pairs alongside a
+      single central dispatcher:
+      `expression/{operators,calls,references,selects,     aggregates,inside}.{hpp,cpp}`,
+      `expression/system/{print,scan,sformat,file_io,diagnostic,     timescale,control}.{hpp,cpp}`,
+      `statement/{blocks,branches,loops,timing,fork_join,assignment,     flow}.{hpp,cpp}`, plus one
+      `dispatch.hpp` per family root that declares the recursive dispatcher entries (`LowerProcExpr`
+      / `LowerStructuralExpr` / `LowerStatement`). The class shape (`ModuleLowerer`,
+      `StructuralScopeLowerer`, `ProcessLowerer`), the `WalkFrame` value type, the IR-as-builder
+      construction methods, and the handler signatures `(Lowerer&, WalkFrame, node)` already landed
+      in R10; what remains is the file-tree reorganization and the dispatcher consolidation. **Why
+      deferred**: the moves cross-cut every handler file and produce a large diff for a
+      behavior-preserving reshape; landing it as a focused cut keeps the diff legible and avoids
+      interleaving with semantic work. **Trigger**: scheduled with R10.
 
 ## Out of Scope
 

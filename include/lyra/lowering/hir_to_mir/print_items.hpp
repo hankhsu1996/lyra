@@ -7,8 +7,8 @@
 #include "lyra/diag/diagnostic.hpp"
 #include "lyra/diag/source_span.hpp"
 #include "lyra/hir/expr.hpp"
-#include "lyra/hir/procedural_body.hpp"
-#include "lyra/lowering/hir_to_mir/state.hpp"
+#include "lyra/lowering/hir_to_mir/process_lowerer.hpp"
+#include "lyra/lowering/hir_to_mir/walk_frame.hpp"
 #include "lyra/mir/runtime_print.hpp"
 #include "lyra/support/system_subroutine.hpp"
 #include "lyra/value/format.hpp"
@@ -45,11 +45,7 @@ auto RadixToFormatKind(support::PrintRadix r) -> value::FormatKind;
 // is the MCD/FD descriptor, or for `$sformat` / `$swrite*` whose first
 // argument is the output_var lvalue; 0 otherwise.
 auto BuildRuntimePrintItemsFromCallArgs(
-    const UnitLoweringState& unit_state,
-    const StructuralScopeLoweringState& scope_state,
-    ProcessLoweringState& proc_state,
-    ProceduralScopeLoweringState& proc_scope_state,
-    const hir::ProceduralBody& hir_proc, const hir::CallExpr& call,
+    ProcessLowerer& process, WalkFrame frame, const hir::CallExpr& call,
     support::PrintRadix default_radix, std::size_t arg_offset,
     FormatStringRequirement fmt_req, diag::SourceSpan call_span)
     -> diag::Result<std::vector<mir::RuntimePrintItem>>;

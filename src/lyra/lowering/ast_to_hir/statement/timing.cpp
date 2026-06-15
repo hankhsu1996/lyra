@@ -15,7 +15,6 @@
 #include "lyra/diag/kind.hpp"
 #include "lyra/hir/value_ref.hpp"
 #include "lyra/lowering/ast_to_hir/module_lowerer.hpp"
-#include "lyra/lowering/ast_to_hir/statement/dispatch.hpp"
 
 namespace lyra::lowering::ast_to_hir {
 
@@ -49,7 +48,7 @@ auto LowerSignalEventTrigger(
   auto expr_or = proc.LowerExpr(sig.expr, frame);
   if (!expr_or) return std::unexpected(std::move(expr_or.error()));
 
-  if (!proc.Module().GetType(expr_or->type).IsPackedArray()) {
+  if (!proc.Module().Unit().GetType(expr_or->type).IsPackedArray()) {
     return diag::Unsupported(
         span, diag::DiagCode::kUnsupportedEventTriggerForm,
         "event trigger expression must have an integral type; non-integral "
@@ -70,7 +69,7 @@ auto LowerSignalEventTrigger(
   }
 
   return hir::EventTrigger{
-      .signal = proc.AddExpr(*std::move(expr_or)),
+      .signal = frame.current_procedural_body->AddExpr(*std::move(expr_or)),
       .edge = edge_kind,
       .sensitivity_list = std::move(sensitivity_list),
   };
@@ -108,7 +107,7 @@ auto LowerNamedEventControl(
         diag::UnsupportedCategory::kFeature);
   }
   return hir::NamedEventControl{
-      .event = proc.AddExpr(*std::move(expr_or)),
+      .event = frame.current_procedural_body->AddExpr(*std::move(expr_or)),
   };
 }
 
@@ -120,8 +119,9 @@ auto LowerTimingControl(
       const auto& delay = tc.as<slang::ast::DelayControl>();
       auto duration = proc.LowerExpr(delay.expr, frame);
       if (!duration) return std::unexpected(std::move(duration.error()));
-      return hir::TimingControl{
-          hir::DelayControl{.duration = proc.AddExpr(*std::move(duration))}};
+      return hir::TimingControl{hir::DelayControl{
+          .duration =
+              frame.current_procedural_body->AddExpr(*std::move(duration))}};
     }
     case slang::ast::TimingControlKind::SignalEvent: {
       const auto& sig = tc.as<slang::ast::SignalEventControl>();
@@ -189,9 +189,10 @@ auto LowerTimedStmt(
     ie->sensitivity_list =
         proc.Module().TranslateSensitivityReads(reads, frame);
   }
-  auto inner_stmt = LowerStatement(proc, frame, ts.stmt);
+  auto inner_stmt = proc.LowerStmt(ts.stmt, frame);
   if (!inner_stmt) return std::unexpected(std::move(inner_stmt.error()));
-  const hir::StmtId inner_id = proc.AddStmt(*std::move(inner_stmt));
+  const hir::StmtId inner_id =
+      frame.current_procedural_body->AddStmt(*std::move(inner_stmt));
   return hir::Stmt{
       .label = std::nullopt,
       .data = hir::TimedStmt{.timing = *std::move(timing), .stmt = inner_id},
@@ -231,7 +232,8 @@ auto LowerEventTriggerStmt(
       .label = std::nullopt,
       .data =
           hir::EventTriggerStmt{
-              .event = proc.AddExpr(*std::move(expr_or)),
+              .event =
+                  frame.current_procedural_body->AddExpr(*std::move(expr_or)),
           },
       .span = span};
 }
@@ -245,10 +247,12 @@ auto LowerWaitStmt(
     diag::SourceSpan span) -> diag::Result<hir::Stmt> {
   auto cond_or = proc.LowerExpr(w.cond, frame);
   if (!cond_or) return std::unexpected(std::move(cond_or.error()));
-  const hir::ExprId cond_id = proc.AddExpr(*std::move(cond_or));
-  auto body_or = LowerStatement(proc, frame, w.stmt);
+  const hir::ExprId cond_id =
+      frame.current_procedural_body->AddExpr(*std::move(cond_or));
+  auto body_or = proc.LowerStmt(w.stmt, frame);
   if (!body_or) return std::unexpected(std::move(body_or.error()));
-  const hir::StmtId body_id = proc.AddStmt(*std::move(body_or));
+  const hir::StmtId body_id =
+      frame.current_procedural_body->AddStmt(*std::move(body_or));
   const auto& reads =
       proc.Module().Sensitivity().AnalyzeReads(w.cond, proc.ContainingSymbol());
   auto sensitivity = proc.Module().TranslateSensitivityReads(reads, frame);

@@ -1,7 +1,6 @@
 #include "lyra/lowering/hir_to_mir/lower_stmt.hpp"
 
 #include <expected>
-#include <memory>
 #include <optional>
 #include <string>
 #include <utility>
@@ -29,9 +28,9 @@
 #include "lyra/lowering/hir_to_mir/lower_expr.hpp"
 #include "lyra/lowering/hir_to_mir/lower_file_io.hpp"
 #include "lyra/lowering/hir_to_mir/lower_sformat.hpp"
-#include "lyra/lowering/hir_to_mir/procedural_scope_helpers.hpp"
+#include "lyra/lowering/hir_to_mir/process_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/sensitivity_wait.hpp"
-#include "lyra/lowering/hir_to_mir/state.hpp"
+#include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/procedural_hops.hpp"
 #include "lyra/mir/stmt.hpp"
 #include "lyra/support/system_subroutine.hpp"
@@ -81,92 +80,81 @@ auto ResolveDelayDuration(
       diag::UnsupportedCategory::kFeature);
 }
 
-auto ResolveDelayTicks(
-    ProcessLoweringState& proc_state, const hir::ProceduralBody& hir_proc,
-    const hir::DelayControl& d) -> diag::Result<SimDuration> {
-  const DelayTimeResolver resolver{proc_state.Resolution()};
-  return ResolveDelayDuration(resolver, hir_proc.exprs.at(d.duration.value));
+auto ResolveDelayTicks(ProcessLowerer& process, const hir::DelayControl& d)
+    -> diag::Result<SimDuration> {
+  const DelayTimeResolver resolver{process.Resolution()};
+  return ResolveDelayDuration(
+      resolver, process.HirBody().exprs.at(d.duration.value));
 }
 
-auto LowerEmptyStmt(const hir::Stmt& stmt) -> diag::Result<mir::Stmt> {
-  return mir::Stmt{
-      .label = stmt.label,
-      .data = mir::EmptyStmt{},
-      .child_procedural_scopes = {}};
+auto LowerEmptyStmt(std::optional<std::string> label)
+    -> diag::Result<mir::Stmt> {
+  return mir::Stmt{.label = std::move(label), .data = mir::EmptyStmt{}};
 }
 
 auto LowerVarDeclStmt(
-    const UnitLoweringState& unit_state,
-    const StructuralScopeLoweringState& scope_state,
-    ProcessLoweringState& proc_state,
-    ProceduralScopeLoweringState& proc_scope_state,
-    const hir::ProceduralBody& hir_proc, const hir::Stmt& stmt,
+    ProcessLowerer& process, WalkFrame frame, std::optional<std::string> label,
     const hir::VarDeclStmt& v) -> diag::Result<mir::Stmt> {
+  const hir::ProceduralBody& hir_proc = process.HirBody();
   const auto& hir_local = hir_proc.procedural_vars.at(v.var.value);
-  const mir::TypeId type = unit_state.TranslateType(hir_local.type);
+  const mir::TypeId type = process.Module().TranslateType(hir_local.type);
 
   // LRM 13.3.1: a static body local does not live in the activation. Its
   // storage and init go into the subroutine's frame scope (the root procedural
   // scope), so a body reference reaches it by hops and the init is evaluated
   // once when the instance is built. The body declaration itself emits nothing.
   const bool is_static = hir_local.lifetime == hir::VariableLifetime::kStatic;
-  if (is_static && proc_state.CollectsStaticLocals()) {
-    auto& frame_scope = proc_state.StaticFrameScope();
+  if (is_static && frame.static_frame_scope != nullptr) {
+    auto& frame_scope = *frame.static_frame_scope;
     const mir::ProceduralVarId static_id = frame_scope.AddProceduralVar(
         mir::ProceduralVarDecl{
             .name = hir_local.name,
             .type = type,
             .lifetime = mir::VariableLifetime::kStatic});
-    proc_state.MapProceduralVar(
+    process.MapProceduralVar(
         v.var, ProceduralVarBinding{
                    .declaration_procedural_depth = ProceduralDepth{.value = 0},
                    .var = static_id});
     mir::ExprId static_init{};
     if (v.init.has_value()) {
       auto init_or = LowerExpr(
-          unit_state, scope_state, proc_state, frame_scope, hir_proc,
+          process, frame.WithProceduralScope(&frame_scope),
           hir_proc.exprs.at(v.init->value));
       if (!init_or) return std::unexpected(std::move(init_or.error()));
       static_init = frame_scope.AddExpr(*std::move(init_or));
     } else {
-      static_init = SynthesizeDefaultValueExpr(unit_state, frame_scope, type);
+      static_init = SynthesizeDefaultValueExpr(
+          process.Module(), frame.WithProceduralScope(&frame_scope), type);
     }
-    proc_state.AddStaticLocal(
+    process.AddStaticLocal(
         mir::StaticLocal{.var = static_id, .init = static_init});
-    return mir::Stmt{
-        .label = stmt.label,
-        .data = mir::EmptyStmt{},
-        .child_procedural_scopes = {}};
+    return mir::Stmt{.label = std::move(label), .data = mir::EmptyStmt{}};
   }
 
-  const mir::ProceduralVarId local_id = proc_scope_state.AddProceduralVar(
+  auto& proc_scope = *frame.current_procedural_scope;
+  const mir::ProceduralVarId local_id = proc_scope.AddProceduralVar(
       mir::ProceduralVarDecl{.name = hir_local.name, .type = type});
-  proc_state.MapProceduralVar(
-      v.var,
-      ProceduralVarBinding{
-          .declaration_procedural_depth = proc_state.CurrentProceduralDepth(),
-          .var = local_id});
+  process.MapProceduralVar(
+      v.var, ProceduralVarBinding{
+                 .declaration_procedural_depth = frame.procedural_depth,
+                 .var = local_id});
   mir::ExprId init_id{};
   if (v.init.has_value()) {
-    auto init_or = LowerExpr(
-        unit_state, scope_state, proc_state, proc_scope_state, hir_proc,
-        hir_proc.exprs.at(v.init->value));
+    auto init_or = LowerExpr(process, frame, hir_proc.exprs.at(v.init->value));
     if (!init_or) {
       return std::unexpected(std::move(init_or.error()));
     }
-    init_id = proc_scope_state.AddExpr(*std::move(init_or));
+    init_id = proc_scope.AddExpr(*std::move(init_or));
   } else {
-    init_id = SynthesizeDefaultValueExpr(unit_state, proc_scope_state, type);
+    init_id = SynthesizeDefaultValueExpr(process.Module(), frame, type);
   }
   return mir::Stmt{
-      .label = stmt.label,
-      .data =
-          mir::ProceduralVarDeclStmt{
-              .target =
-                  mir::ProceduralVarRef{
-                      .hops = mir::ProceduralHops{.value = 0}, .var = local_id},
-              .init = init_id},
-      .child_procedural_scopes = {}};
+      .label = std::move(label),
+      .data = mir::ProceduralVarDeclStmt{
+          .target =
+              mir::ProceduralVarRef{
+                  .hops = mir::ProceduralHops{.value = 0}, .var = local_id},
+          .init = init_id}};
 }
 
 // LRM 11.4.12 LHS destructuring desugar. Triggered when an ExprStmt wraps an
@@ -184,13 +172,12 @@ auto LowerVarDeclStmt(
 // For NBA (`kind == kNonBlocking`), each per-part assignment goes through the
 // NBA closure machinery instead.
 auto LowerDestructuringAssign(
-    const UnitLoweringState& unit_state,
-    const StructuralScopeLoweringState& scope_state,
-    ProcessLoweringState& proc_state, const hir::ProceduralBody& hir_proc,
-    const hir::Stmt& stmt, const hir::AssignExpr& assign,
-    const hir::ConcatExpr& lhs_concat) -> diag::Result<mir::Stmt> {
-  ProceduralScopeLoweringState wrapper_state;
-  ProceduralDepthGuard wrapper_depth_guard{proc_state};
+    ProcessLowerer& process, WalkFrame frame, std::optional<std::string> label,
+    const hir::AssignExpr& assign, const hir::ConcatExpr& lhs_concat)
+    -> diag::Result<mir::Stmt> {
+  const hir::ProceduralBody& hir_proc = process.HirBody();
+  mir::ProceduralScope wrapper;
+  const WalkFrame wrapper_frame = frame.WithProceduralScope(&wrapper).Deeper();
 
   std::vector<std::uint64_t> part_widths;
   part_widths.reserve(lhs_concat.operands.size());
@@ -198,7 +185,7 @@ auto LowerDestructuringAssign(
   std::uint64_t total_width = 0;
   for (const hir::ExprId op_id : lhs_concat.operands) {
     const hir::Expr& op = hir_proc.exprs.at(op_id.value);
-    const hir::Type& op_ty = unit_state.GetHirType(op.type);
+    const hir::Type& op_ty = process.Module().Hir().GetType(op.type);
     if (!op_ty.IsPackedArray()) {
       throw InternalError(
           "LowerDestructuringAssign: destructuring operand is not "
@@ -215,7 +202,7 @@ auto LowerDestructuringAssign(
         "LowerDestructuringAssign: destructuring total width must be positive");
   }
 
-  const mir::TypeId temp_type = unit_state.AddType(
+  const mir::TypeId temp_type = process.Module().Unit().AddType(
       mir::TypeData{mir::PackedArrayType{
           .atom = any_four_state ? mir::BitAtom::kLogic : mir::BitAtom::kBit,
           .signedness = mir::Signedness::kUnsigned,
@@ -224,20 +211,19 @@ auto LowerDestructuringAssign(
           .form = mir::PackedArrayForm::kExplicit}});
 
   const mir::ExprId temp_default_init =
-      SynthesizeDefaultValueExpr(unit_state, wrapper_state, temp_type);
-  const mir::ProceduralVarRef snapshot_ref = wrapper_state.AppendLocal(
+      SynthesizeDefaultValueExpr(process.Module(), wrapper_frame, temp_type);
+  const mir::ProceduralVarRef snapshot_ref = wrapper.AppendLocal(
       mir::ProceduralVarDecl{.name = "_lyra_destruct_rhs", .type = temp_type},
       temp_default_init);
 
   // RHS is evaluated once; the snapshot temp is what gets distributed,
   // which is what makes `{a, b} = {b, a}` swap correctly.
-  auto rhs_or = LowerExpr(
-      unit_state, scope_state, proc_state, wrapper_state, hir_proc,
-      hir_proc.exprs.at(assign.rhs.value));
+  auto rhs_or =
+      LowerExpr(process, wrapper_frame, hir_proc.exprs.at(assign.rhs.value));
   if (!rhs_or) return std::unexpected(std::move(rhs_or.error()));
-  mir::ExprId rhs_id = wrapper_state.AddExpr(*std::move(rhs_or));
-  if (wrapper_state.GetExpr(rhs_id).type != temp_type) {
-    rhs_id = wrapper_state.AddExpr(
+  mir::ExprId rhs_id = wrapper.AddExpr(*std::move(rhs_or));
+  if (wrapper.GetExpr(rhs_id).type != temp_type) {
+    rhs_id = wrapper.AddExpr(
         mir::Expr{
             .data =
                 mir::ConversionExpr{
@@ -246,13 +232,13 @@ auto LowerDestructuringAssign(
   }
 
   const mir::ExprId temp_assign_target =
-      wrapper_state.AddExpr(mir::Expr{.data = snapshot_ref, .type = temp_type});
-  const mir::ExprId temp_assign_id = wrapper_state.AddExpr(
+      wrapper.AddExpr(mir::Expr{.data = snapshot_ref, .type = temp_type});
+  const mir::ExprId temp_assign_id = wrapper.AddExpr(
       mir::Expr{
           .data =
               mir::AssignExpr{.target = temp_assign_target, .value = rhs_id},
           .type = temp_type});
-  wrapper_state.AppendStmt(mir::ExprStmt{.expr = temp_assign_id});
+  wrapper.AppendStmt(mir::ExprStmt{.expr = temp_assign_id});
 
   // MSB-first per LRM 11.4.12: operands[0] occupies the high bits of the
   // snapshot, operands.back() the low bits.
@@ -262,27 +248,28 @@ auto LowerDestructuringAssign(
     offset -= w;
 
     auto part_lhs_or = LowerExpr(
-        unit_state, scope_state, proc_state, wrapper_state, hir_proc,
+        process, wrapper_frame,
         hir_proc.exprs.at(lhs_concat.operands[i].value));
     if (!part_lhs_or) {
       return std::unexpected(std::move(part_lhs_or.error()));
     }
     const mir::TypeId part_mir_type = (*part_lhs_or).type;
-    const mir::ExprId part_lhs_id =
-        wrapper_state.AddExpr(*std::move(part_lhs_or));
+    const mir::ExprId part_lhs_id = wrapper.AddExpr(*std::move(part_lhs_or));
 
-    const mir::ExprId offset_id = wrapper_state.AddExpr(
-        unit_state.MakeInt32LiteralExpr(static_cast<std::int64_t>(offset)));
-    const mir::ExprId temp_ref = wrapper_state.AddExpr(
-        mir::Expr{.data = snapshot_ref, .type = temp_type});
-    const mir::TypeId slice_type = unit_state.AddType(
+    const mir::ExprId offset_id = wrapper.AddExpr(
+        mir::MakeInt32Literal(
+            process.Module().Unit().builtins.int32,
+            static_cast<std::int64_t>(offset)));
+    const mir::ExprId temp_ref =
+        wrapper.AddExpr(mir::Expr{.data = snapshot_ref, .type = temp_type});
+    const mir::TypeId slice_type = process.Module().Unit().AddType(
         mir::TypeData{mir::PackedArrayType{
             .atom = any_four_state ? mir::BitAtom::kLogic : mir::BitAtom::kBit,
             .signedness = mir::Signedness::kUnsigned,
             .dims = {mir::PackedRange{
                 .left = static_cast<std::int64_t>(w) - 1, .right = 0}},
             .form = mir::PackedArrayForm::kExplicit}});
-    const mir::ExprId slice_id = wrapper_state.AddExpr(
+    const mir::ExprId slice_id = wrapper.AddExpr(
         mir::Expr{
             .data =
                 mir::RangeSelectExpr{
@@ -292,7 +279,7 @@ auto LowerDestructuringAssign(
             .type = slice_type});
     mir::ExprId rhs_for_part = slice_id;
     if (part_mir_type != slice_type) {
-      rhs_for_part = wrapper_state.AddExpr(
+      rhs_for_part = wrapper.AddExpr(
           mir::Expr{
               .data =
                   mir::ConversionExpr{
@@ -303,34 +290,32 @@ auto LowerDestructuringAssign(
 
     mir::ExprId per_part_expr_id{};
     if (assign.kind == hir::AssignKind::kBlocking) {
-      per_part_expr_id = wrapper_state.AddExpr(
+      per_part_expr_id = wrapper.AddExpr(
           mir::Expr{
               .data =
                   mir::AssignExpr{.target = part_lhs_id, .value = rhs_for_part},
               .type = part_mir_type});
     } else {
       mir::Expr closure_expr = BuildNbaSubmitClosureExpr(
-          unit_state, wrapper_state, part_lhs_id, rhs_for_part, part_mir_type);
-      const mir::ExprId closure_id =
-          wrapper_state.AddExpr(std::move(closure_expr));
-      per_part_expr_id = wrapper_state.AddExpr(
+          process.Module(), wrapper_frame, part_lhs_id, rhs_for_part,
+          part_mir_type);
+      const mir::ExprId closure_id = wrapper.AddExpr(std::move(closure_expr));
+      per_part_expr_id = wrapper.AddExpr(
           mir::Expr{
               .data =
                   mir::RuntimeCallExpr{
                       .call = mir::RuntimeSubmitNbaCall{.closure = closure_id}},
-              .type = unit_state.Builtins().void_type});
+              .type = process.Module().Unit().builtins.void_type});
     }
-    wrapper_state.AppendStmt(mir::ExprStmt{.expr = per_part_expr_id});
+    wrapper.AppendStmt(mir::ExprStmt{.expr = per_part_expr_id});
   }
 
-  std::vector<mir::ProceduralScope> child_scopes;
   const mir::ProceduralScopeId wrapper_scope_id =
-      AddChildProceduralScope(child_scopes, wrapper_state.Finish());
+      frame.current_procedural_scope->AddChildScope(std::move(wrapper));
 
   return mir::Stmt{
-      .label = stmt.label,
-      .data = mir::BlockStmt{.scope = wrapper_scope_id},
-      .child_procedural_scopes = std::move(child_scopes)};
+      .label = std::move(label),
+      .data = mir::BlockStmt{.scope = wrapper_scope_id}};
 }
 
 // A user subroutine whose formals include a non-`input` direction needs the
@@ -338,14 +323,14 @@ auto LowerDestructuringAssign(
 // HIR declaration, or nullptr for a value-only call (system / builtin callee,
 // or an all-`input` user callee).
 auto SubroutineWithWritebacks(
-    const StructuralScopeLoweringState& scope_state, const hir::CallExpr& call)
+    const StructuralScopeLowerer& scope, const hir::CallExpr& call)
     -> const hir::StructuralSubroutineDecl* {
   const auto* ref = std::get_if<hir::StructuralSubroutineRef>(&call.callee);
   if (ref == nullptr) {
     return nullptr;
   }
   const hir::StructuralSubroutineDecl& decl =
-      scope_state.LookupHirSubroutine(ref->hops, ref->subroutine);
+      scope.LookupHirSubroutine(ref->hops, ref->subroutine);
   for (const auto& param : decl.params) {
     if (hir::RequiresWriteback(param.direction)) {
       return &decl;
@@ -367,11 +352,8 @@ auto SubroutineWithWritebacks(
 // `assign_target` is the lvalue for a `lhs = f(...)` statement, or nullopt for
 // a bare call statement (void function or discarded result).
 auto LowerSubroutineCallWithWritebacks(
-    const UnitLoweringState& unit_state,
-    const StructuralScopeLoweringState& scope_state,
-    ProcessLoweringState& proc_state, const hir::ProceduralBody& hir_proc,
-    const hir::Stmt& stmt, const hir::CallExpr& call,
-    const hir::StructuralSubroutineRef& callee_ref,
+    ProcessLowerer& process, WalkFrame frame, std::optional<std::string> label,
+    const hir::CallExpr& call, const hir::StructuralSubroutineRef& callee_ref,
     const hir::StructuralSubroutineDecl& decl,
     std::optional<hir::ExprId> assign_target, mir::TypeId result_type)
     -> diag::Result<mir::Stmt> {
@@ -380,8 +362,9 @@ auto LowerSubroutineCallWithWritebacks(
         "LowerSubroutineCallWithWritebacks: argument / formal count mismatch");
   }
 
-  ProceduralScopeLoweringState wrapper;
-  ProceduralDepthGuard depth_guard{proc_state};
+  const hir::ProceduralBody& hir_proc = process.HirBody();
+  mir::ProceduralScope wrapper;
+  const WalkFrame wrapper_frame = frame.WithProceduralScope(&wrapper).Deeper();
 
   std::vector<mir::ExprId> call_args;
   call_args.reserve(call.arguments.size());
@@ -404,17 +387,15 @@ auto LowerSubroutineCallWithWritebacks(
     // (LRM 13.5.1, 13.5.2). Only output / inout fall through to the writeback
     // temp below.
     if (!hir::RequiresWriteback(dir)) {
-      auto arg_or = LowerExpr(
-          unit_state, scope_state, proc_state, wrapper, hir_proc, hir_arg);
+      auto arg_or = LowerExpr(process, wrapper_frame, hir_arg);
       if (!arg_or) return std::unexpected(std::move(arg_or.error()));
       call_args.push_back(wrapper.AddExpr(*std::move(arg_or)));
       continue;
     }
 
-    const mir::TypeId formal_type = unit_state.TranslateType(
+    const mir::TypeId formal_type = process.Module().TranslateType(
         decl.body.GetProceduralVar(decl.params[i].var).type);
-    auto actual_or = LowerExpr(
-        unit_state, scope_state, proc_state, wrapper, hir_proc, hir_arg);
+    auto actual_or = LowerExpr(process, wrapper_frame, hir_arg);
     if (!actual_or) return std::unexpected(std::move(actual_or.error()));
     const mir::ExprId actual_id = wrapper.AddExpr(*std::move(actual_or));
 
@@ -423,7 +404,8 @@ auto LowerSubroutineCallWithWritebacks(
     const mir::ExprId init =
         dir == hir::ParamDirection::kInOut
             ? actual_id
-            : SynthesizeDefaultValueExpr(unit_state, wrapper, formal_type);
+            : SynthesizeDefaultValueExpr(
+                  process.Module(), wrapper_frame, formal_type);
     const mir::ProceduralVarRef temp = wrapper.AppendLocal(
         mir::ProceduralVarDecl{
             .name = "_lyra_arg" + std::to_string(i), .type = formal_type},
@@ -437,7 +419,7 @@ auto LowerSubroutineCallWithWritebacks(
   mir::Expr call_expr{
       .data =
           mir::CallExpr{
-              .callee = scope_state.TranslateStructuralSubroutine(
+              .callee = process.Scope().TranslateStructuralSubroutine(
                   callee_ref.hops, callee_ref.subroutine),
               .arguments = std::move(call_args)},
       .type = result_type};
@@ -445,24 +427,22 @@ auto LowerSubroutineCallWithWritebacks(
   std::optional<mir::ExprId> assign_target_id = std::nullopt;
   if (assign_target.has_value()) {
     auto lhs_or = LowerExpr(
-        unit_state, scope_state, proc_state, wrapper, hir_proc,
-        hir_proc.exprs.at(assign_target->value));
+        process, wrapper_frame, hir_proc.exprs.at(assign_target->value));
     if (!lhs_or) return std::unexpected(std::move(lhs_or.error()));
     assign_target_id = wrapper.AddExpr(*std::move(lhs_or));
   }
 
   return BuildCopyOutBlock(
-      wrapper, stmt, result_type, std::move(call_expr), assign_target_id,
-      writebacks);
+      frame, std::move(wrapper), std::move(label), result_type,
+      std::move(call_expr), assign_target_id, writebacks);
 }
 
 auto LowerExprStmt(
-    const UnitLoweringState& unit_state,
-    const StructuralScopeLoweringState& scope_state,
-    ProcessLoweringState& proc_state,
-    ProceduralScopeLoweringState& proc_scope_state,
-    const hir::ProceduralBody& hir_proc, const hir::Stmt& stmt,
+    ProcessLowerer& process, WalkFrame frame, std::optional<std::string> label,
     const hir::ExprStmt& e) -> diag::Result<mir::Stmt> {
+  const hir::ProceduralBody& hir_proc = process.HirBody();
+  auto& proc_scope = *frame.current_procedural_scope;
+
   // LRM 11.4.12 LHS destructuring: detect AssignExpr-with-ConcatExpr-LHS
   // and dispatch to the snapshot+distribute desugar. Destructuring is
   // grammatically statement-only (LRM A.6.2), so this is the only context
@@ -478,8 +458,7 @@ auto LowerExprStmt(
             "is not a legal SV form (LRM A.6.2 grammar)");
       }
       return LowerDestructuringAssign(
-          unit_state, scope_state, proc_state, hir_proc, stmt, *assign,
-          *concat);
+          process, frame, std::move(label), *assign, *concat);
     }
   }
 
@@ -489,11 +468,11 @@ auto LowerExprStmt(
   // whose right side is the call itself (`lhs = f(...)`). A call nested deeper
   // in an expression is rejected downstream in expression lowering.
   if (const auto* call = std::get_if<hir::CallExpr>(&inner.data)) {
-    if (const auto* decl = SubroutineWithWritebacks(scope_state, *call)) {
+    if (const auto* decl = SubroutineWithWritebacks(process.Scope(), *call)) {
       return LowerSubroutineCallWithWritebacks(
-          unit_state, scope_state, proc_state, hir_proc, stmt, *call,
+          process, frame, std::move(label), *call,
           std::get<hir::StructuralSubroutineRef>(call->callee), *decl,
-          std::nullopt, unit_state.TranslateType(inner.type));
+          std::nullopt, process.Module().TranslateType(inner.type));
     }
     // System-subroutine tasks with an output arg ($fgets / $fread / $ferror)
     // ride the same copy-out shape but build a RuntimeFileXxxCall MIR node
@@ -505,14 +484,14 @@ auto LowerExprStmt(
       if (const auto* file_info = support::GetFileIOInfo(desc)) {
         if (support::FileIOHasOutputArg(file_info->kind)) {
           return LowerFileIOSystemSubroutineCallStmt(
-              unit_state, scope_state, proc_state, hir_proc, stmt, *call,
-              *file_info, std::nullopt, unit_state.TranslateType(inner.type));
+              process, frame, std::move(label), *call, *file_info, std::nullopt,
+              process.Module().TranslateType(inner.type));
         }
       }
       if (const auto* sformat_info = support::GetSFormatInfo(desc)) {
         return LowerSFormatSystemSubroutineCallStmt(
-            unit_state, scope_state, proc_state, proc_scope_state, hir_proc,
-            stmt, inner.span, *call, desc, *sformat_info);
+            process, frame, std::move(label), inner.span, *call, desc.name,
+            *sformat_info);
       }
     }
   }
@@ -535,14 +514,16 @@ auto LowerExprStmt(
         conv_target_type = rhs->type;
       }
       if (const auto* call = std::get_if<hir::CallExpr>(&call_carrier->data)) {
-        if (const auto* decl = SubroutineWithWritebacks(scope_state, *call)) {
+        if (const auto* decl =
+                SubroutineWithWritebacks(process.Scope(), *call)) {
           // UDF F4 today rejects nested conversions; preserve that by only
           // firing when the call sits directly under the AssignExpr.
           if (!conv_target_type.has_value()) {
             return LowerSubroutineCallWithWritebacks(
-                unit_state, scope_state, proc_state, hir_proc, stmt, *call,
+                process, frame, std::move(label), *call,
                 std::get<hir::StructuralSubroutineRef>(call->callee), *decl,
-                assign->lhs, unit_state.TranslateType(call_carrier->type));
+                assign->lhs,
+                process.Module().TranslateType(call_carrier->type));
           }
         }
         if (const auto* sys_ref =
@@ -551,14 +532,14 @@ auto LowerExprStmt(
           // When slang wraps the call result in an implicit conversion to
           // match the LHS, route the call return through the same
           // conversion before the writeback assigns to the user's LHS.
-          const mir::TypeId result_type = unit_state.TranslateType(
+          const mir::TypeId result_type = process.Module().TranslateType(
               conv_target_type.has_value() ? *conv_target_type
                                            : call_carrier->type);
           if (const auto* file_info = support::GetFileIOInfo(desc)) {
             if (support::FileIOHasOutputArg(file_info->kind)) {
               return LowerFileIOSystemSubroutineCallStmt(
-                  unit_state, scope_state, proc_state, hir_proc, stmt, *call,
-                  *file_info, assign->lhs, result_type);
+                  process, frame, std::move(label), *call, *file_info,
+                  assign->lhs, result_type);
             }
           }
         }
@@ -566,66 +547,50 @@ auto LowerExprStmt(
     }
   }
 
-  auto expr_or = LowerExpr(
-      unit_state, scope_state, proc_state, proc_scope_state, hir_proc,
-      hir_proc.exprs.at(e.expr.value));
+  auto expr_or = LowerExpr(process, frame, hir_proc.exprs.at(e.expr.value));
   if (!expr_or) {
     return std::unexpected(std::move(expr_or.error()));
   }
   return mir::Stmt{
-      .label = stmt.label,
-      .data =
-          mir::ExprStmt{.expr = proc_scope_state.AddExpr(*std::move(expr_or))},
-      .child_procedural_scopes = {}};
+      .label = std::move(label),
+      .data = mir::ExprStmt{.expr = proc_scope.AddExpr(*std::move(expr_or))}};
 }
 
 auto LowerReturnStmt(
-    const UnitLoweringState& unit_state,
-    const StructuralScopeLoweringState& scope_state,
-    ProcessLoweringState& proc_state,
-    ProceduralScopeLoweringState& proc_scope_state,
-    const hir::ProceduralBody& hir_proc, const hir::Stmt& stmt,
+    ProcessLowerer& process, WalkFrame frame, std::optional<std::string> label,
     const hir::ReturnStmt& r) -> diag::Result<mir::Stmt> {
+  auto& proc_scope = *frame.current_procedural_scope;
   std::optional<mir::ExprId> value;
   if (r.value.has_value()) {
-    auto value_or = LowerExpr(
-        unit_state, scope_state, proc_state, proc_scope_state, hir_proc,
-        hir_proc.exprs.at(r.value->value));
+    auto value_or =
+        LowerExpr(process, frame, process.HirBody().exprs.at(r.value->value));
     if (!value_or) return std::unexpected(std::move(value_or.error()));
-    value = proc_scope_state.AddExpr(*std::move(value_or));
+    value = proc_scope.AddExpr(*std::move(value_or));
   }
   return mir::Stmt{
-      .label = stmt.label,
-      .data = mir::ReturnStmt{.value = value},
-      .child_procedural_scopes = {}};
+      .label = std::move(label), .data = mir::ReturnStmt{.value = value}};
 }
 
 auto LowerBlockStmt(
-    const UnitLoweringState& unit_state,
-    const StructuralScopeLoweringState& scope_state,
-    ProcessLoweringState& proc_state, const hir::ProceduralBody& hir_proc,
-    const hir::Stmt& stmt, const hir::BlockStmt& b) -> diag::Result<mir::Stmt> {
-  ProceduralScopeLoweringState child_proc_scope_state;
-  ProceduralDepthGuard depth_guard{proc_state};
+    ProcessLowerer& process, WalkFrame frame, std::optional<std::string> label,
+    const hir::BlockStmt& b) -> diag::Result<mir::Stmt> {
+  const hir::ProceduralBody& hir_proc = process.HirBody();
+  mir::ProceduralScope child_proc_scope;
+  const WalkFrame child_frame =
+      frame.WithProceduralScope(&child_proc_scope).Deeper();
   for (const hir::StmtId child_hir_id : b.statements) {
     const hir::Stmt& child = hir_proc.stmts.at(child_hir_id.value);
-    auto lowered = LowerStmt(
-        unit_state, scope_state, proc_state, child_proc_scope_state, hir_proc,
-        child);
+    auto lowered = LowerStmt(process, child_frame, child);
     if (!lowered) {
       return std::unexpected(std::move(lowered.error()));
     }
-    const mir::StmtId child_id =
-        child_proc_scope_state.AddStmt(*std::move(lowered));
-    child_proc_scope_state.AddRootStmt(child_id);
+    child_proc_scope.AppendStmt(*std::move(lowered));
   }
-  std::vector<mir::ProceduralScope> child_scopes;
   const mir::ProceduralScopeId scope_id =
-      AddChildProceduralScope(child_scopes, child_proc_scope_state.Finish());
+      frame.current_procedural_scope->AddChildScope(
+          std::move(child_proc_scope));
   return mir::Stmt{
-      .label = stmt.label,
-      .data = mir::BlockStmt{.scope = scope_id},
-      .child_procedural_scopes = std::move(child_scopes)};
+      .label = std::move(label), .data = mir::BlockStmt{.scope = scope_id}};
 }
 
 auto LowerJoinMode(hir::JoinMode mode) -> mir::JoinMode {
@@ -653,45 +618,38 @@ auto LowerJoinMode(hir::JoinMode mode) -> mir::JoinMode {
 // coroutine by virtue of being a fork branch (spawned), not by any property of
 // the closure node.
 auto LowerForkStmt(
-    const UnitLoweringState& unit_state,
-    const StructuralScopeLoweringState& scope_state,
-    ProcessLoweringState& proc_state, const hir::ProceduralBody& hir_proc,
-    const hir::Stmt& stmt, const hir::ForkStmt& f) -> diag::Result<mir::Stmt> {
-  ProceduralDepthGuard fork_depth_guard{proc_state};
-  ProceduralScopeLoweringState fork_scope_state;
-  const ProceduralDepth fork_depth = proc_state.CurrentProceduralDepth();
+    ProcessLowerer& process, WalkFrame frame, std::optional<std::string> label,
+    const hir::ForkStmt& f) -> diag::Result<mir::Stmt> {
+  const hir::ProceduralBody& hir_proc = process.HirBody();
+  mir::ProceduralScope fork_scope;
+  const WalkFrame fork_frame = frame.WithProceduralScope(&fork_scope).Deeper();
+  const ProceduralDepth fork_depth = fork_frame.procedural_depth;
 
   for (const hir::StmtId local_hir_id : f.locals) {
-    auto lowered = LowerStmt(
-        unit_state, scope_state, proc_state, fork_scope_state, hir_proc,
-        hir_proc.stmts.at(local_hir_id.value));
+    auto lowered =
+        LowerStmt(process, fork_frame, hir_proc.stmts.at(local_hir_id.value));
     if (!lowered) {
       return std::unexpected(std::move(lowered.error()));
     }
-    fork_scope_state.AddRootStmt(fork_scope_state.AddStmt(*std::move(lowered)));
+    fork_scope.AppendStmt(*std::move(lowered));
   }
 
   std::vector<mir::ExprId> branch_ids;
   branch_ids.reserve(f.branches.size());
   for (const hir::StmtId branch_hir_id : f.branches) {
     const hir::Stmt& branch = hir_proc.stmts.at(branch_hir_id.value);
-    ProceduralScopeLoweringState branch_scope_state;
-    ProceduralDepthGuard branch_depth_guard{proc_state};
+    mir::ProceduralScope branch_scope;
 
     CaptureSink sink{
-        proc_state.CurrentProceduralDepth(), branch_scope_state,
-        fork_scope_state};
-    CaptureSink* const previous_sink = proc_state.ActiveCaptureSink();
-    proc_state.SetCaptureSink(&sink);
-    auto lowered = LowerStmt(
-        unit_state, scope_state, proc_state, branch_scope_state, hir_proc,
-        branch);
-    proc_state.SetCaptureSink(previous_sink);
+        fork_frame.procedural_depth.Inner(), branch_scope, fork_scope};
+    const WalkFrame branch_frame = fork_frame.WithClosure(&sink)
+                                       .WithProceduralScope(&branch_scope)
+                                       .Deeper();
+    auto lowered = LowerStmt(process, branch_frame, branch);
     if (!lowered) {
       return std::unexpected(std::move(lowered.error()));
     }
-    branch_scope_state.AddRootStmt(
-        branch_scope_state.AddStmt(*std::move(lowered)));
+    branch_scope.AppendStmt(*std::move(lowered));
 
     // A capture of a fork-scope local (declared at fork_depth) is a by-value
     // snapshot; one from further out is a by-reference alias. The source
@@ -711,77 +669,63 @@ auto LowerForkStmt(
     mir::ClosureExpr closure;
     closure.captures = std::move(captures);
     closure.body =
-        std::make_unique<mir::ProceduralScope>(branch_scope_state.Finish());
-    branch_ids.push_back(fork_scope_state.AddExpr(
+        std::make_unique<mir::ProceduralScope>(std::move(branch_scope));
+    branch_ids.push_back(fork_scope.AddExpr(
         mir::Expr{
             .data = std::move(closure),
-            .type = unit_state.Builtins().void_type}));
+            .type = process.Module().Unit().builtins.void_type}));
   }
 
-  std::vector<mir::ProceduralScope> child_scopes;
   const mir::ProceduralScopeId scope_id =
-      AddChildProceduralScope(child_scopes, fork_scope_state.Finish());
+      frame.current_procedural_scope->AddChildScope(std::move(fork_scope));
   return mir::Stmt{
-      .label = stmt.label,
-      .data =
-          mir::ForkStmt{
-              .mode = LowerJoinMode(f.mode),
-              .scope = scope_id,
-              .branches = std::move(branch_ids)},
-      .child_procedural_scopes = std::move(child_scopes)};
+      .label = std::move(label),
+      .data = mir::ForkStmt{
+          .mode = LowerJoinMode(f.mode),
+          .scope = scope_id,
+          .branches = std::move(branch_ids)}};
 }
 
 auto LowerIfStmt(
-    const UnitLoweringState& unit_state,
-    const StructuralScopeLoweringState& scope_state,
-    ProcessLoweringState& proc_state,
-    ProceduralScopeLoweringState& proc_scope_state,
-    const hir::ProceduralBody& hir_proc, const hir::Stmt& stmt,
+    ProcessLowerer& process, WalkFrame frame, std::optional<std::string> label,
     const hir::IfStmt& i) -> diag::Result<mir::Stmt> {
   if (i.check.has_value()) {
-    return LowerUniqueIfStmt(
-        unit_state, scope_state, proc_state, hir_proc, stmt, i);
+    return LowerUniqueIfStmt(process, frame, std::move(label), i);
   }
-  auto cond_expr_or = LowerExpr(
-      unit_state, scope_state, proc_state, proc_scope_state, hir_proc,
-      hir_proc.exprs.at(i.condition.value));
+  auto& proc_scope = *frame.current_procedural_scope;
+  auto cond_expr_or =
+      LowerExpr(process, frame, process.HirBody().exprs.at(i.condition.value));
   if (!cond_expr_or) {
     return std::unexpected(std::move(cond_expr_or.error()));
   }
-  const mir::ExprId cond_id =
-      proc_scope_state.AddExpr(*std::move(cond_expr_or));
+  const mir::ExprId cond_id = proc_scope.AddExpr(*std::move(cond_expr_or));
 
-  std::vector<mir::ProceduralScope> child_scopes;
-  auto then_or = LowerStmtIntoChildScope(
-      unit_state, scope_state, proc_state, hir_proc, i.then_stmt);
+  auto then_or = LowerStmtIntoChildScope(process, frame, i.then_stmt);
   if (!then_or) return std::unexpected(std::move(then_or.error()));
   const mir::ProceduralScopeId then_scope_id =
-      AddChildProceduralScope(child_scopes, std::move(*then_or));
+      frame.current_procedural_scope->AddChildScope(std::move(*then_or));
 
   std::optional<mir::ProceduralScopeId> else_scope_id;
   if (i.else_stmt.has_value()) {
-    auto else_or = LowerStmtIntoChildScope(
-        unit_state, scope_state, proc_state, hir_proc, *i.else_stmt);
+    auto else_or = LowerStmtIntoChildScope(process, frame, *i.else_stmt);
     if (!else_or) return std::unexpected(std::move(else_or.error()));
-    else_scope_id = AddChildProceduralScope(child_scopes, std::move(*else_or));
+    else_scope_id =
+        frame.current_procedural_scope->AddChildScope(std::move(*else_or));
   }
 
   return mir::Stmt{
-      .label = stmt.label,
-      .data =
-          mir::IfStmt{
-              .condition = cond_id,
-              .then_scope = then_scope_id,
-              .else_scope = else_scope_id},
-      .child_procedural_scopes = std::move(child_scopes)};
+      .label = std::move(label),
+      .data = mir::IfStmt{
+          .condition = cond_id,
+          .then_scope = then_scope_id,
+          .else_scope = else_scope_id}};
 }
 
 auto LowerCaseStmt(
-    const UnitLoweringState& unit_state,
-    const StructuralScopeLoweringState& scope_state,
-    ProcessLoweringState& proc_state, const hir::ProceduralBody& hir_proc,
-    const hir::Stmt& stmt, const hir::CaseStmt& c) -> diag::Result<mir::Stmt> {
-  const mir::TypeId bit_type = unit_state.Builtins().bit1;
+    ProcessLowerer& process, WalkFrame frame, std::optional<std::string> label,
+    const hir::CaseStmt& c) -> diag::Result<mir::Stmt> {
+  const hir::ProceduralBody& hir_proc = process.HirBody();
+  const mir::TypeId bit_type = process.Module().Unit().builtins.bit1;
   const mir::BinaryOp compare_op = [&] {
     switch (c.condition_kind) {
       case hir::CaseCondition::kNormal:
@@ -794,16 +738,15 @@ auto LowerCaseStmt(
     throw InternalError("LowerCaseStmt: unknown hir::CaseCondition");
   }();
 
-  ProceduralScopeLoweringState wrapper_state;
-  ProceduralDepthGuard wrapper_depth_guard{proc_state};
+  mir::ProceduralScope wrapper;
+  const WalkFrame wrapper_frame = frame.WithProceduralScope(&wrapper).Deeper();
 
-  auto cond_or = LowerExpr(
-      unit_state, scope_state, proc_state, wrapper_state, hir_proc,
-      hir_proc.exprs.at(c.condition.value));
+  auto cond_or =
+      LowerExpr(process, wrapper_frame, hir_proc.exprs.at(c.condition.value));
   if (!cond_or) {
     return std::unexpected(std::move(cond_or.error()));
   }
-  mir::ExprId cond_expr_id = wrapper_state.AddExpr(*std::move(cond_or));
+  mir::ExprId cond_expr_id = wrapper.AddExpr(*std::move(cond_or));
 
   // Slang's case-context type unification may wrap the selector in a
   // ConversionExpr widening from a built-in (form=int) type to a form=explicit
@@ -815,7 +758,7 @@ auto LowerCaseStmt(
   // 2-state while wildcard labels are 4-state and PackedArray::ExpectSameShape
   // rejects the per-label compare.
   auto packed_state = [&](mir::TypeId tid) -> std::optional<bool> {
-    const auto& ty = unit_state.GetType(tid);
+    const auto& ty = process.Module().Unit().GetType(tid);
     if (const auto* pa = std::get_if<mir::PackedArrayType>(&ty.data)) {
       return pa->IsFourState();
     }
@@ -825,9 +768,9 @@ auto LowerCaseStmt(
     return std::nullopt;
   };
   if (const auto* cv = std::get_if<mir::ConversionExpr>(
-          &wrapper_state.GetExpr(cond_expr_id).data)) {
-    const mir::TypeId dst_tid = wrapper_state.GetExpr(cond_expr_id).type;
-    const mir::TypeId src_tid = wrapper_state.GetExpr(cv->operand).type;
+          &wrapper.GetExpr(cond_expr_id).data)) {
+    const mir::TypeId dst_tid = wrapper.GetExpr(cond_expr_id).type;
+    const mir::TypeId src_tid = wrapper.GetExpr(cv->operand).type;
     const auto dst_state = packed_state(dst_tid);
     const auto src_state = packed_state(src_tid);
     if (dst_state.has_value() && src_state.has_value() &&
@@ -837,28 +780,24 @@ auto LowerCaseStmt(
   }
 
   const CaseSnapshotRefs snapshot =
-      AppendCaseSnapshot(unit_state, wrapper_state, cond_expr_id);
+      AppendCaseSnapshot(process.Module(), wrapper_frame, cond_expr_id);
 
   // Each cascade level k > 0 sits one MIR scope deeper than the previous
-  // level (it lives inside the prior level's else_scope). Bump proc_state by k
-  // extra guards before lowering the contents of level k so procvar refs
-  // receive the correct hops.
-  auto with_extra_depth = [&](std::size_t extras, auto fn) {
-    std::vector<std::unique_ptr<ProceduralDepthGuard>> guards;
-    guards.reserve(extras);
+  // level (it lives inside the prior level's else_scope). Compose a frame
+  // that is `extras` deeper before lowering the contents of level k so
+  // procvar refs receive the correct hops.
+  auto deeper_by = [](WalkFrame f, std::size_t extras) {
     for (std::size_t i = 0; i < extras; ++i) {
-      guards.push_back(std::make_unique<ProceduralDepthGuard>(proc_state));
+      f = f.Deeper();
     }
-    return fn();
+    return f;
   };
 
   std::vector<mir::ProceduralScope> body_scopes;
   body_scopes.reserve(c.items.size());
   for (std::size_t i = 0; i < c.items.size(); ++i) {
-    auto body_or = with_extra_depth(i, [&] {
-      return LowerStmtIntoChildScope(
-          unit_state, scope_state, proc_state, hir_proc, c.items[i].stmt);
-    });
+    auto body_or = LowerStmtIntoChildScope(
+        process, deeper_by(wrapper_frame, i), c.items[i].stmt);
     if (!body_or) {
       return std::unexpected(std::move(body_or.error()));
     }
@@ -867,10 +806,8 @@ auto LowerCaseStmt(
 
   std::optional<mir::ProceduralScope> default_scope;
   if (c.default_stmt.has_value()) {
-    auto def_or = with_extra_depth(c.items.size(), [&] {
-      return LowerStmtIntoChildScope(
-          unit_state, scope_state, proc_state, hir_proc, *c.default_stmt);
-    });
+    auto def_or = LowerStmtIntoChildScope(
+        process, deeper_by(wrapper_frame, c.items.size()), *c.default_stmt);
     if (!def_or) {
       return std::unexpected(std::move(def_or.error()));
     }
@@ -879,21 +816,21 @@ auto LowerCaseStmt(
 
   if (c.check.has_value()) {
     // All predicates live at wrapper depth (sel_hops=0); bodies were lowered
-    // with the per-level depth guards above.
+    // with per-level deeper frames above.
     std::vector<mir::ExprId> predicates;
     predicates.reserve(c.items.size());
     for (const auto& item : c.items) {
       auto pred_or = BuildEqualityChain(
-          wrapper_state, snapshot, bit_type, compare_op, 0, item.labels.size(),
-          [&](ProceduralScopeLoweringState& es,
+          wrapper_frame, snapshot, bit_type, compare_op, 0, item.labels.size(),
+          [&](WalkFrame label_frame,
               std::size_t li) -> diag::Result<mir::ExprId> {
             auto lab_or = LowerExpr(
-                unit_state, scope_state, proc_state, es, hir_proc,
-                hir_proc.exprs.at(item.labels[li].value));
+                process, label_frame, hir_proc.exprs.at(item.labels[li].value));
             if (!lab_or) {
               return std::unexpected(std::move(lab_or.error()));
             }
-            return es.AddExpr(*std::move(lab_or));
+            return label_frame.current_procedural_scope->AddExpr(
+                *std::move(lab_or));
           });
       if (!pred_or) return std::unexpected(std::move(pred_or.error()));
       predicates.push_back(*pred_or);
@@ -907,79 +844,72 @@ auto LowerCaseStmt(
               .predicate = predicates[i], .body = std::move(body_scopes[i])});
     }
     return BuildDeferredCheckCascade(
-        unit_state, std::move(wrapper_state), std::move(branches),
-        std::move(default_scope), *c.check, stmt.label);
+        process.Module(), frame, std::move(wrapper), std::move(branches),
+        std::move(default_scope), *c.check, std::move(label));
   }
 
-  auto build_predicate = [&](ProceduralScopeLoweringState& enc,
-                             std::size_t item_idx, std::uint32_t sel_hops) {
-    return with_extra_depth(item_idx, [&] {
-      return BuildEqualityChain(
-          enc, snapshot, bit_type, compare_op, sel_hops,
-          c.items[item_idx].labels.size(),
-          [&](ProceduralScopeLoweringState& es,
-              std::size_t li) -> diag::Result<mir::ExprId> {
-            auto lab_or = LowerExpr(
-                unit_state, scope_state, proc_state, es, hir_proc,
-                hir_proc.exprs.at(c.items[item_idx].labels[li].value));
-            if (!lab_or) {
-              return std::unexpected(std::move(lab_or.error()));
-            }
-            return es.AddExpr(*std::move(lab_or));
-          });
-    });
+  auto build_predicate = [&](WalkFrame enc_frame, std::size_t item_idx,
+                             std::uint32_t sel_hops) {
+    const WalkFrame level_frame = deeper_by(enc_frame, item_idx);
+    return BuildEqualityChain(
+        level_frame, snapshot, bit_type, compare_op, sel_hops,
+        c.items[item_idx].labels.size(),
+        [&](WalkFrame label_frame,
+            std::size_t li) -> diag::Result<mir::ExprId> {
+          auto lab_or = LowerExpr(
+              process, label_frame,
+              hir_proc.exprs.at(c.items[item_idx].labels[li].value));
+          if (!lab_or) {
+            return std::unexpected(std::move(lab_or.error()));
+          }
+          return label_frame.current_procedural_scope->AddExpr(
+              *std::move(lab_or));
+        });
   };
 
   return BuildCaseCascade(
-      std::move(wrapper_state), stmt.label, c.items.size(),
+      frame, std::move(wrapper), std::move(label), c.items.size(),
       std::move(body_scopes), std::move(default_scope), build_predicate);
 }
 
 auto LowerCaseInsideStmt(
-    const UnitLoweringState& unit_state,
-    const StructuralScopeLoweringState& scope_state,
-    ProcessLoweringState& proc_state, const hir::ProceduralBody& hir_proc,
-    const hir::Stmt& stmt, const hir::CaseInsideStmt& c)
-    -> diag::Result<mir::Stmt> {
-  const mir::TypeId bit_type = unit_state.Builtins().bit1;
+    ProcessLowerer& process, WalkFrame frame, std::optional<std::string> label,
+    const hir::CaseInsideStmt& c) -> diag::Result<mir::Stmt> {
+  const hir::ProceduralBody& hir_proc = process.HirBody();
+  const mir::TypeId bit_type = process.Module().Unit().builtins.bit1;
 
-  ProceduralScopeLoweringState wrapper_state;
-  ProceduralDepthGuard wrapper_depth_guard{proc_state};
+  mir::ProceduralScope wrapper;
+  const WalkFrame wrapper_frame = frame.WithProceduralScope(&wrapper).Deeper();
 
-  auto cond_or = LowerExpr(
-      unit_state, scope_state, proc_state, wrapper_state, hir_proc,
-      hir_proc.exprs.at(c.condition.value));
+  auto cond_or =
+      LowerExpr(process, wrapper_frame, hir_proc.exprs.at(c.condition.value));
   if (!cond_or) return std::unexpected(std::move(cond_or.error()));
-  mir::ExprId cond_expr_id = wrapper_state.AddExpr(*std::move(cond_or));
+  mir::ExprId cond_expr_id = wrapper.AddExpr(*std::move(cond_or));
 
   // Peel an outer ConversionExpr from a case-context-widened selector (same
   // reason as the plain case form: cpp backend cannot init form=explicit from
   // form=int, and the per-item inside predicate compares against the
   // unwrapped source type directly).
   if (const auto* cv = std::get_if<mir::ConversionExpr>(
-          &wrapper_state.GetExpr(cond_expr_id).data)) {
+          &wrapper.GetExpr(cond_expr_id).data)) {
     cond_expr_id = cv->operand;
   }
 
   const CaseSnapshotRefs snapshot =
-      AppendCaseSnapshot(unit_state, wrapper_state, cond_expr_id);
+      AppendCaseSnapshot(process.Module(), wrapper_frame, cond_expr_id);
 
-  auto with_extra_depth = [&](std::size_t extras, auto fn) {
-    std::vector<std::unique_ptr<ProceduralDepthGuard>> guards;
-    guards.reserve(extras);
+  auto deeper_by = [](WalkFrame f, std::size_t extras) {
     for (std::size_t i = 0; i < extras; ++i) {
-      guards.push_back(std::make_unique<ProceduralDepthGuard>(proc_state));
+      f = f.Deeper();
     }
-    return fn();
+    return f;
   };
 
   std::vector<mir::ProceduralScope> body_scopes;
   body_scopes.reserve(c.items.size());
   for (std::size_t i = 0; i < c.items.size(); ++i) {
-    auto body_or = with_extra_depth(i, [&] {
-      return LowerStmtIntoChildScope(
-          unit_state, scope_state, proc_state, hir_proc, c.items[i].stmt);
-    });
+    auto body_or = LowerStmtIntoChildScope(
+        process, deeper_by(wrapper_frame, i), c.items[i].stmt);
     if (!body_or) {
       return std::unexpected(std::move(body_or.error()));
     }
@@ -988,10 +918,8 @@ auto LowerCaseInsideStmt(
 
   std::optional<mir::ProceduralScope> default_scope;
   if (c.default_stmt.has_value()) {
-    auto def_or = with_extra_depth(c.items.size(), [&] {
-      return LowerStmtIntoChildScope(
-          unit_state, scope_state, proc_state, hir_proc, *c.default_stmt);
-    });
+    auto def_or = LowerStmtIntoChildScope(
+        process, deeper_by(wrapper_frame, c.items.size()), *c.default_stmt);
     if (!def_or) {
       return std::unexpected(std::move(def_or.error()));
     }
@@ -1004,49 +932,48 @@ auto LowerCaseInsideStmt(
   // (`explicit operator bool` returns false for any X bit), so no explicit
   // 2-state clamp is needed.
   auto build_item_predicate =
-      [&](ProceduralScopeLoweringState& enc, std::size_t item_idx,
+      [&](WalkFrame enc_frame, std::size_t item_idx,
           std::uint32_t sel_hops) -> diag::Result<mir::ExprId> {
-    return with_extra_depth(item_idx, [&] -> diag::Result<mir::ExprId> {
-      const mir::ExprId sel_ref = enc.AddExpr(
-          mir::Expr{
-              .data =
-                  mir::ProceduralVarRef{
-                      .hops = mir::ProceduralHops{.value = sel_hops},
-                      .var = snapshot.sel_var},
-              .type = snapshot.sel_type});
-      const auto& item = c.items[item_idx];
-      if (item.items.empty()) {
-        throw InternalError(
-            "LowerCaseInsideStmt: case-inside item has empty range_list");
+    const WalkFrame level_frame = deeper_by(enc_frame, item_idx);
+    auto& enc = *level_frame.current_procedural_scope;
+    const mir::ExprId sel_ref = enc.AddExpr(
+        mir::Expr{
+            .data =
+                mir::ProceduralVarRef{
+                    .hops = mir::ProceduralHops{.value = sel_hops},
+                    .var = snapshot.sel_var},
+            .type = snapshot.sel_type});
+    const auto& item = c.items[item_idx];
+    if (item.items.empty()) {
+      throw InternalError(
+          "LowerCaseInsideStmt: case-inside item has empty range_list");
+    }
+    std::optional<mir::ExprId> acc;
+    for (const auto& inside_item : item.items) {
+      auto pred_or = BuildHirInsideItemPredicate(
+          process, level_frame, sel_ref, inside_item, bit_type);
+      if (!pred_or) return std::unexpected(std::move(pred_or.error()));
+      if (acc.has_value()) {
+        acc = enc.AddExpr(
+            mir::Expr{
+                .data =
+                    mir::BinaryExpr{
+                        .op = mir::BinaryOp::kLogicalOr,
+                        .lhs = *acc,
+                        .rhs = *pred_or},
+                .type = bit_type});
+      } else {
+        acc = *pred_or;
       }
-      std::optional<mir::ExprId> acc;
-      for (const auto& inside_item : item.items) {
-        auto pred_or = BuildHirInsideItemPredicate(
-            unit_state, scope_state, proc_state, enc, hir_proc, sel_ref,
-            inside_item, bit_type);
-        if (!pred_or) return std::unexpected(std::move(pred_or.error()));
-        if (acc.has_value()) {
-          acc = enc.AddExpr(
-              mir::Expr{
-                  .data =
-                      mir::BinaryExpr{
-                          .op = mir::BinaryOp::kLogicalOr,
-                          .lhs = *acc,
-                          .rhs = *pred_or},
-                  .type = bit_type});
-        } else {
-          acc = *pred_or;
-        }
-      }
-      return *acc;
-    });
+    }
+    return *acc;
   };
 
   if (c.check.has_value()) {
     std::vector<mir::ExprId> predicates;
     predicates.reserve(c.items.size());
     for (std::size_t i = 0; i < c.items.size(); ++i) {
-      auto pred_or = build_item_predicate(wrapper_state, i, 0);
+      auto pred_or = build_item_predicate(wrapper_frame, i, 0);
       if (!pred_or) return std::unexpected(std::move(pred_or.error()));
       predicates.push_back(*pred_or);
     }
@@ -1059,22 +986,21 @@ auto LowerCaseInsideStmt(
               .predicate = predicates[i], .body = std::move(body_scopes[i])});
     }
     return BuildDeferredCheckCascade(
-        unit_state, std::move(wrapper_state), std::move(branches),
-        std::move(default_scope), *c.check, stmt.label);
+        process.Module(), frame, std::move(wrapper), std::move(branches),
+        std::move(default_scope), *c.check, std::move(label));
   }
 
   return BuildCaseCascade(
-      std::move(wrapper_state), stmt.label, c.items.size(),
+      frame, std::move(wrapper), std::move(label), c.items.size(),
       std::move(body_scopes), std::move(default_scope), build_item_predicate);
 }
 
 auto LowerForStmt(
-    const UnitLoweringState& unit_state,
-    const StructuralScopeLoweringState& scope_state,
-    ProcessLoweringState& proc_state,
-    ProceduralScopeLoweringState& proc_scope_state,
-    const hir::ProceduralBody& hir_proc, const hir::Stmt& stmt,
+    ProcessLowerer& process, WalkFrame frame, std::optional<std::string> label,
     const hir::ForStmt& f) -> diag::Result<mir::Stmt> {
+  const hir::ProceduralBody& hir_proc = process.HirBody();
+  auto& proc_scope = *frame.current_procedural_scope;
+
   std::vector<mir::ForInit> mir_init;
   mir_init.reserve(f.init.size());
   for (const auto& hinit : f.init) {
@@ -1082,28 +1008,26 @@ auto LowerForStmt(
         Overloaded{
             [&](const hir::ForInitDecl& d) -> diag::Result<mir::ForInit> {
               const auto& hir_local = hir_proc.procedural_vars.at(d.var.value);
-              const mir::TypeId type = unit_state.TranslateType(hir_local.type);
-              const mir::ProceduralVarId local_id =
-                  proc_scope_state.AddProceduralVar(
-                      mir::ProceduralVarDecl{
-                          .name = hir_local.name, .type = type});
-              proc_state.MapProceduralVar(
-                  d.var, ProceduralVarBinding{
-                             .declaration_procedural_depth =
-                                 proc_state.CurrentProceduralDepth(),
-                             .var = local_id});
+              const mir::TypeId type =
+                  process.Module().TranslateType(hir_local.type);
+              const mir::ProceduralVarId local_id = proc_scope.AddProceduralVar(
+                  mir::ProceduralVarDecl{.name = hir_local.name, .type = type});
+              process.MapProceduralVar(
+                  d.var,
+                  ProceduralVarBinding{
+                      .declaration_procedural_depth = frame.procedural_depth,
+                      .var = local_id});
               mir::ExprId init_id{};
               if (d.init.has_value()) {
-                auto init_or = LowerExpr(
-                    unit_state, scope_state, proc_state, proc_scope_state,
-                    hir_proc, hir_proc.exprs.at(d.init->value));
+                auto init_or =
+                    LowerExpr(process, frame, hir_proc.exprs.at(d.init->value));
                 if (!init_or) {
                   return std::unexpected(std::move(init_or.error()));
                 }
-                init_id = proc_scope_state.AddExpr(*std::move(init_or));
+                init_id = proc_scope.AddExpr(*std::move(init_or));
               } else {
-                init_id = SynthesizeDefaultValueExpr(
-                    unit_state, proc_scope_state, type);
+                init_id =
+                    SynthesizeDefaultValueExpr(process.Module(), frame, type);
               }
               return mir::ForInit{mir::ForInitDecl{
                   .induction_var =
@@ -1113,14 +1037,13 @@ auto LowerForStmt(
                   .init = init_id}};
             },
             [&](const hir::ForInitExpr& e) -> diag::Result<mir::ForInit> {
-              auto expr_or = LowerExpr(
-                  unit_state, scope_state, proc_state, proc_scope_state,
-                  hir_proc, hir_proc.exprs.at(e.expr.value));
+              auto expr_or =
+                  LowerExpr(process, frame, hir_proc.exprs.at(e.expr.value));
               if (!expr_or) {
                 return std::unexpected(std::move(expr_or.error()));
               }
               return mir::ForInit{mir::ForInitExpr{
-                  .expr = proc_scope_state.AddExpr(*std::move(expr_or))}};
+                  .expr = proc_scope.AddExpr(*std::move(expr_or))}};
             },
         },
         hinit);
@@ -1130,100 +1053,82 @@ auto LowerForStmt(
 
   std::optional<mir::ExprId> cond_id;
   if (f.condition.has_value()) {
-    auto cond_or = LowerExpr(
-        unit_state, scope_state, proc_state, proc_scope_state, hir_proc,
-        hir_proc.exprs.at(f.condition->value));
+    auto cond_or =
+        LowerExpr(process, frame, hir_proc.exprs.at(f.condition->value));
     if (!cond_or) {
       return std::unexpected(std::move(cond_or.error()));
     }
-    cond_id = proc_scope_state.AddExpr(*std::move(cond_or));
+    cond_id = proc_scope.AddExpr(*std::move(cond_or));
   }
 
   std::vector<mir::ExprId> step_ids;
   step_ids.reserve(f.step.size());
   for (const hir::ExprId step_hid : f.step) {
-    auto step_or = LowerExpr(
-        unit_state, scope_state, proc_state, proc_scope_state, hir_proc,
-        hir_proc.exprs.at(step_hid.value));
+    auto step_or = LowerExpr(process, frame, hir_proc.exprs.at(step_hid.value));
     if (!step_or) {
       return std::unexpected(std::move(step_or.error()));
     }
-    step_ids.push_back(proc_scope_state.AddExpr(*std::move(step_or)));
+    step_ids.push_back(proc_scope.AddExpr(*std::move(step_or)));
   }
 
-  auto body_or = LowerStmtIntoChildScope(
-      unit_state, scope_state, proc_state, hir_proc, f.body);
+  auto body_or = LowerStmtIntoChildScope(process, frame, f.body);
   if (!body_or) {
     return std::unexpected(std::move(body_or.error()));
   }
 
-  std::vector<mir::ProceduralScope> child_scopes;
   const mir::ProceduralScopeId body_scope_id =
-      AddChildProceduralScope(child_scopes, std::move(*body_or));
+      frame.current_procedural_scope->AddChildScope(std::move(*body_or));
 
   return mir::Stmt{
-      .label = stmt.label,
-      .data =
-          mir::ForStmt{
-              .init = std::move(mir_init),
-              .condition = cond_id,
-              .step = std::move(step_ids),
-              .scope = body_scope_id},
-      .child_procedural_scopes = std::move(child_scopes)};
+      .label = std::move(label),
+      .data = mir::ForStmt{
+          .init = std::move(mir_init),
+          .condition = cond_id,
+          .step = std::move(step_ids),
+          .scope = body_scope_id}};
 }
 
 auto LowerWhileStmt(
-    const UnitLoweringState& unit_state,
-    const StructuralScopeLoweringState& scope_state,
-    ProcessLoweringState& proc_state,
-    ProceduralScopeLoweringState& proc_scope_state,
-    const hir::ProceduralBody& hir_proc, const hir::Stmt& stmt,
+    ProcessLowerer& process, WalkFrame frame, std::optional<std::string> label,
     const hir::WhileStmt& w) -> diag::Result<mir::Stmt> {
-  auto cond_or = LowerExpr(
-      unit_state, scope_state, proc_state, proc_scope_state, hir_proc,
-      hir_proc.exprs.at(w.condition.value));
+  auto& proc_scope = *frame.current_procedural_scope;
+  auto cond_or =
+      LowerExpr(process, frame, process.HirBody().exprs.at(w.condition.value));
   if (!cond_or) {
     return std::unexpected(std::move(cond_or.error()));
   }
-  const mir::ExprId cond_id = proc_scope_state.AddExpr(*std::move(cond_or));
+  const mir::ExprId cond_id = proc_scope.AddExpr(*std::move(cond_or));
 
-  auto body_or = LowerStmtIntoChildScope(
-      unit_state, scope_state, proc_state, hir_proc, w.body);
+  auto body_or = LowerStmtIntoChildScope(process, frame, w.body);
   if (!body_or) {
     return std::unexpected(std::move(body_or.error()));
   }
 
-  std::vector<mir::ProceduralScope> child_scopes;
   const mir::ProceduralScopeId body_scope_id =
-      AddChildProceduralScope(child_scopes, std::move(*body_or));
+      frame.current_procedural_scope->AddChildScope(std::move(*body_or));
 
   return mir::Stmt{
-      .label = stmt.label,
-      .data = mir::WhileStmt{.condition = cond_id, .scope = body_scope_id},
-      .child_procedural_scopes = std::move(child_scopes)};
+      .label = std::move(label),
+      .data = mir::WhileStmt{.condition = cond_id, .scope = body_scope_id}};
 }
 
 auto LowerRepeatStmt(
-    const UnitLoweringState& unit_state,
-    const StructuralScopeLoweringState& scope_state,
-    ProcessLoweringState& proc_state, const hir::ProceduralBody& hir_proc,
-    const hir::Stmt& stmt, const hir::RepeatStmt& r)
-    -> diag::Result<mir::Stmt> {
-  const mir::TypeId int_type = unit_state.Builtins().int32;
-  const mir::TypeId bit_type = unit_state.Builtins().bit1;
+    ProcessLowerer& process, WalkFrame frame, std::optional<std::string> label,
+    const hir::RepeatStmt& r) -> diag::Result<mir::Stmt> {
+  const mir::TypeId int_type = process.Module().Unit().builtins.int32;
+  const mir::TypeId bit_type = process.Module().Unit().builtins.bit1;
 
-  ProceduralScopeLoweringState wrapper_state;
-  ProceduralDepthGuard wrapper_depth_guard{proc_state};
+  mir::ProceduralScope wrapper;
+  const WalkFrame wrapper_frame = frame.WithProceduralScope(&wrapper).Deeper();
 
   auto count_or = LowerExpr(
-      unit_state, scope_state, proc_state, wrapper_state, hir_proc,
-      hir_proc.exprs.at(r.count.value));
+      process, wrapper_frame, process.HirBody().exprs.at(r.count.value));
   if (!count_or) {
     return std::unexpected(std::move(count_or.error()));
   }
-  mir::ExprId count_expr_id = wrapper_state.AddExpr(*std::move(count_or));
-  if (wrapper_state.GetExpr(count_expr_id).type != int_type) {
-    count_expr_id = wrapper_state.AddExpr(
+  mir::ExprId count_expr_id = wrapper.AddExpr(*std::move(count_or));
+  if (wrapper.GetExpr(count_expr_id).type != int_type) {
+    count_expr_id = wrapper.AddExpr(
         mir::Expr{
             .data =
                 mir::ConversionExpr{
@@ -1232,43 +1137,40 @@ auto LowerRepeatStmt(
             .type = int_type});
   }
 
-  const mir::ProceduralVarId count_var = wrapper_state.AddProceduralVar(
+  const mir::ProceduralVarId count_var = wrapper.AddProceduralVar(
       mir::ProceduralVarDecl{.name = "_lyra_repeat_count", .type = int_type});
 
-  const mir::StmtId count_decl_id = wrapper_state.AddStmt(
+  wrapper.AppendStmt(
       mir::Stmt{
           .label = std::nullopt,
-          .data =
-              mir::ProceduralVarDeclStmt{
-                  .target =
-                      mir::ProceduralVarRef{
-                          .hops = mir::ProceduralHops{.value = 0},
-                          .var = count_var},
-                  .init = count_expr_id},
-          .child_procedural_scopes = {}});
-  wrapper_state.AddRootStmt(count_decl_id);
+          .data = mir::ProceduralVarDeclStmt{
+              .target =
+                  mir::ProceduralVarRef{
+                      .hops = mir::ProceduralHops{.value = 0},
+                      .var = count_var},
+              .init = count_expr_id}});
 
-  const mir::ProceduralVarId idx_var = wrapper_state.AddProceduralVar(
+  const mir::ProceduralVarId idx_var = wrapper.AddProceduralVar(
       mir::ProceduralVarDecl{.name = "_lyra_repeat_index", .type = int_type});
 
-  const mir::ExprId zero_id =
-      wrapper_state.AddExpr(unit_state.MakeInt32LiteralExpr(0));
-  const mir::ExprId one_id =
-      wrapper_state.AddExpr(unit_state.MakeInt32LiteralExpr(1));
+  const mir::ExprId zero_id = wrapper.AddExpr(
+      mir::MakeInt32Literal(process.Module().Unit().builtins.int32, 0));
+  const mir::ExprId one_id = wrapper.AddExpr(
+      mir::MakeInt32Literal(process.Module().Unit().builtins.int32, 1));
 
-  const mir::ExprId idx_ref_cond = wrapper_state.AddExpr(
+  const mir::ExprId idx_ref_cond = wrapper.AddExpr(
       mir::Expr{
           .data =
               mir::ProceduralVarRef{
                   .hops = mir::ProceduralHops{.value = 0}, .var = idx_var},
           .type = int_type});
-  const mir::ExprId count_ref_cond = wrapper_state.AddExpr(
+  const mir::ExprId count_ref_cond = wrapper.AddExpr(
       mir::Expr{
           .data =
               mir::ProceduralVarRef{
                   .hops = mir::ProceduralHops{.value = 0}, .var = count_var},
           .type = int_type});
-  const mir::ExprId cond_id = wrapper_state.AddExpr(
+  const mir::ExprId cond_id = wrapper.AddExpr(
       mir::Expr{
           .data =
               mir::BinaryExpr{
@@ -1277,13 +1179,13 @@ auto LowerRepeatStmt(
                   .rhs = count_ref_cond},
           .type = bit_type});
 
-  const mir::ExprId idx_ref_step = wrapper_state.AddExpr(
+  const mir::ExprId idx_ref_step = wrapper.AddExpr(
       mir::Expr{
           .data =
               mir::ProceduralVarRef{
                   .hops = mir::ProceduralHops{.value = 0}, .var = idx_var},
           .type = int_type});
-  const mir::ExprId add_id = wrapper_state.AddExpr(
+  const mir::ExprId add_id = wrapper.AddExpr(
       mir::Expr{
           .data =
               mir::BinaryExpr{
@@ -1291,26 +1193,24 @@ auto LowerRepeatStmt(
                   .lhs = idx_ref_step,
                   .rhs = one_id},
           .type = int_type});
-  const mir::ExprId step_target_id = wrapper_state.AddExpr(
+  const mir::ExprId step_target_id = wrapper.AddExpr(
       mir::Expr{
           .data =
               mir::ProceduralVarRef{
                   .hops = mir::ProceduralHops{.value = 0}, .var = idx_var},
           .type = int_type});
-  const mir::ExprId step_id = wrapper_state.AddExpr(
+  const mir::ExprId step_id = wrapper.AddExpr(
       mir::Expr{
           .data = mir::AssignExpr{.target = step_target_id, .value = add_id},
           .type = int_type});
 
-  auto body_or = LowerStmtIntoChildScope(
-      unit_state, scope_state, proc_state, hir_proc, r.body);
+  auto body_or = LowerStmtIntoChildScope(process, wrapper_frame, r.body);
   if (!body_or) {
     return std::unexpected(std::move(body_or.error()));
   }
 
-  std::vector<mir::ProceduralScope> for_child_scopes;
   const mir::ProceduralScopeId body_scope_id =
-      AddChildProceduralScope(for_child_scopes, std::move(*body_or));
+      wrapper.AddChildScope(std::move(*body_or));
 
   std::vector<mir::ForInit> for_init;
   for_init.emplace_back(
@@ -1320,98 +1220,75 @@ auto LowerRepeatStmt(
                   .hops = mir::ProceduralHops{.value = 0}, .var = idx_var},
           .init = zero_id});
 
-  const mir::StmtId for_stmt_id = wrapper_state.AddStmt(
+  wrapper.AppendStmt(
       mir::Stmt{
           .label = std::nullopt,
-          .data =
-              mir::ForStmt{
-                  .init = std::move(for_init),
-                  .condition = cond_id,
-                  .step = {step_id},
-                  .scope = body_scope_id},
-          .child_procedural_scopes = std::move(for_child_scopes)});
-  wrapper_state.AddRootStmt(for_stmt_id);
+          .data = mir::ForStmt{
+              .init = std::move(for_init),
+              .condition = cond_id,
+              .step = {step_id},
+              .scope = body_scope_id}});
 
-  std::vector<mir::ProceduralScope> child_scopes;
   const mir::ProceduralScopeId wrapper_scope_id =
-      AddChildProceduralScope(child_scopes, wrapper_state.Finish());
+      frame.current_procedural_scope->AddChildScope(std::move(wrapper));
 
   return mir::Stmt{
-      .label = stmt.label,
-      .data = mir::BlockStmt{.scope = wrapper_scope_id},
-      .child_procedural_scopes = std::move(child_scopes)};
+      .label = std::move(label),
+      .data = mir::BlockStmt{.scope = wrapper_scope_id}};
 }
 
 auto LowerDoWhileStmt(
-    const UnitLoweringState& unit_state,
-    const StructuralScopeLoweringState& scope_state,
-    ProcessLoweringState& proc_state,
-    ProceduralScopeLoweringState& proc_scope_state,
-    const hir::ProceduralBody& hir_proc, const hir::Stmt& stmt,
+    ProcessLowerer& process, WalkFrame frame, std::optional<std::string> label,
     const hir::DoWhileStmt& d) -> diag::Result<mir::Stmt> {
-  auto body_or = LowerStmtIntoChildScope(
-      unit_state, scope_state, proc_state, hir_proc, d.body);
+  auto& proc_scope = *frame.current_procedural_scope;
+  auto body_or = LowerStmtIntoChildScope(process, frame, d.body);
   if (!body_or) {
     return std::unexpected(std::move(body_or.error()));
   }
 
-  auto cond_or = LowerExpr(
-      unit_state, scope_state, proc_state, proc_scope_state, hir_proc,
-      hir_proc.exprs.at(d.condition.value));
+  auto cond_or =
+      LowerExpr(process, frame, process.HirBody().exprs.at(d.condition.value));
   if (!cond_or) {
     return std::unexpected(std::move(cond_or.error()));
   }
-  const mir::ExprId cond_id = proc_scope_state.AddExpr(*std::move(cond_or));
+  const mir::ExprId cond_id = proc_scope.AddExpr(*std::move(cond_or));
 
-  std::vector<mir::ProceduralScope> child_scopes;
   const mir::ProceduralScopeId body_scope_id =
-      AddChildProceduralScope(child_scopes, std::move(*body_or));
+      frame.current_procedural_scope->AddChildScope(std::move(*body_or));
 
   return mir::Stmt{
-      .label = stmt.label,
-      .data = mir::DoWhileStmt{.condition = cond_id, .scope = body_scope_id},
-      .child_procedural_scopes = std::move(child_scopes)};
+      .label = std::move(label),
+      .data = mir::DoWhileStmt{.condition = cond_id, .scope = body_scope_id}};
 }
 
 auto LowerForeverStmt(
-    const UnitLoweringState& unit_state,
-    const StructuralScopeLoweringState& scope_state,
-    ProcessLoweringState& proc_state, const hir::ProceduralBody& hir_proc,
-    const hir::Stmt& stmt, const hir::ForeverStmt& f)
-    -> diag::Result<mir::Stmt> {
-  auto body_or = LowerStmtIntoChildScope(
-      unit_state, scope_state, proc_state, hir_proc, f.body);
+    ProcessLowerer& process, WalkFrame frame, std::optional<std::string> label,
+    const hir::ForeverStmt& f) -> diag::Result<mir::Stmt> {
+  auto body_or = LowerStmtIntoChildScope(process, frame, f.body);
   if (!body_or) {
     return std::unexpected(std::move(body_or.error()));
   }
 
-  std::vector<mir::ProceduralScope> child_scopes;
   const mir::ProceduralScopeId body_scope_id =
-      AddChildProceduralScope(child_scopes, std::move(*body_or));
+      frame.current_procedural_scope->AddChildScope(std::move(*body_or));
 
   return mir::Stmt{
-      .label = stmt.label,
-      .data =
-          mir::ForStmt{
-              .init = {},
-              .condition = std::nullopt,
-              .step = {},
-              .scope = body_scope_id},
-      .child_procedural_scopes = std::move(child_scopes)};
+      .label = std::move(label),
+      .data = mir::ForStmt{
+          .init = {},
+          .condition = std::nullopt,
+          .step = {},
+          .scope = body_scope_id}};
 }
 
-auto LowerBreakStmt(const hir::Stmt& stmt) -> diag::Result<mir::Stmt> {
-  return mir::Stmt{
-      .label = stmt.label,
-      .data = mir::BreakStmt{},
-      .child_procedural_scopes = {}};
+auto LowerBreakStmt(std::optional<std::string> label)
+    -> diag::Result<mir::Stmt> {
+  return mir::Stmt{.label = std::move(label), .data = mir::BreakStmt{}};
 }
 
-auto LowerContinueStmt(const hir::Stmt& stmt) -> diag::Result<mir::Stmt> {
-  return mir::Stmt{
-      .label = stmt.label,
-      .data = mir::ContinueStmt{},
-      .child_procedural_scopes = {}};
+auto LowerContinueStmt(std::optional<std::string> label)
+    -> diag::Result<mir::Stmt> {
+  return mir::Stmt{.label = std::move(label), .data = mir::ContinueStmt{}};
 }
 
 // LRM 15.5.1 `-> e;`. HIR -> MIR collapses the trigger statement onto a plain
@@ -1419,18 +1296,13 @@ auto LowerContinueStmt(const hir::Stmt& stmt) -> diag::Result<mir::Stmt> {
 // `NamedEvent::Trigger(services)` does not suspend, so no `co_await` wrap is
 // emitted -- backend dispatches on `mir::IsSuspending(EventMethodInfo)`.
 auto LowerEventTriggerStmt(
-    const UnitLoweringState& unit_state,
-    const StructuralScopeLoweringState& scope_state,
-    ProcessLoweringState& proc_state,
-    ProceduralScopeLoweringState& proc_scope_state,
-    const hir::ProceduralBody& hir_proc, const hir::Stmt& stmt,
+    ProcessLowerer& process, WalkFrame frame, std::optional<std::string> label,
     const hir::EventTriggerStmt& et) -> diag::Result<mir::Stmt> {
-  auto receiver_or = LowerExpr(
-      unit_state, scope_state, proc_state, proc_scope_state, hir_proc,
-      hir_proc.exprs.at(et.event.value));
+  auto& proc_scope = *frame.current_procedural_scope;
+  auto receiver_or =
+      LowerExpr(process, frame, process.HirBody().exprs.at(et.event.value));
   if (!receiver_or) return std::unexpected(std::move(receiver_or.error()));
-  const mir::ExprId receiver_id =
-      proc_scope_state.AddExpr(*std::move(receiver_or));
+  const mir::ExprId receiver_id = proc_scope.AddExpr(*std::move(receiver_or));
   mir::Expr call{
       .data =
           mir::CallExpr{
@@ -1441,12 +1313,10 @@ auto LowerEventTriggerStmt(
                               .kind = mir::EventMethodKind::kTrigger}},
               .arguments = {receiver_id},
           },
-      .type = unit_state.Builtins().void_type};
-  const mir::ExprId call_id = proc_scope_state.AddExpr(std::move(call));
+      .type = process.Module().Unit().builtins.void_type};
+  const mir::ExprId call_id = proc_scope.AddExpr(std::move(call));
   return mir::Stmt{
-      .label = stmt.label,
-      .data = mir::ExprStmt{.expr = call_id},
-      .child_procedural_scopes = {}};
+      .label = std::move(label), .data = mir::ExprStmt{.expr = call_id}};
 }
 
 // LRM 15.5.2 `@e body;`. HIR -> MIR expands the timed statement into a
@@ -1454,19 +1324,18 @@ auto LowerEventTriggerStmt(
 // the same shape used for `@*` (LRM 9.4.2.2), substituting a suspending
 // method call in place of SensitivityWaitStmt.
 auto LowerNamedEventTimedStmt(
-    const UnitLoweringState& unit_state,
-    const StructuralScopeLoweringState& scope_state,
-    ProcessLoweringState& proc_state, const hir::ProceduralBody& hir_proc,
-    const hir::Stmt& stmt, const hir::TimedStmt& t,
-    const hir::NamedEventControl& nec) -> diag::Result<mir::Stmt> {
-  ProceduralScopeLoweringState child_proc_scope_state;
-  ProceduralDepthGuard depth_guard{proc_state};
-  auto receiver_or = LowerExpr(
-      unit_state, scope_state, proc_state, child_proc_scope_state, hir_proc,
-      hir_proc.exprs.at(nec.event.value));
+    ProcessLowerer& process, WalkFrame frame, std::optional<std::string> label,
+    const hir::TimedStmt& t, const hir::NamedEventControl& nec)
+    -> diag::Result<mir::Stmt> {
+  const hir::ProceduralBody& hir_proc = process.HirBody();
+  mir::ProceduralScope child_proc_scope;
+  const WalkFrame child_frame =
+      frame.WithProceduralScope(&child_proc_scope).Deeper();
+  auto receiver_or =
+      LowerExpr(process, child_frame, hir_proc.exprs.at(nec.event.value));
   if (!receiver_or) return std::unexpected(std::move(receiver_or.error()));
   const mir::ExprId receiver_id =
-      child_proc_scope_state.AddExpr(*std::move(receiver_or));
+      child_proc_scope.AddExpr(*std::move(receiver_or));
   mir::Expr await_call{
       .data =
           mir::CallExpr{
@@ -1477,30 +1346,22 @@ auto LowerNamedEventTimedStmt(
                               .kind = mir::EventMethodKind::kAwait}},
               .arguments = {receiver_id},
           },
-      .type = unit_state.Builtins().void_type};
-  const mir::ExprId await_id =
-      child_proc_scope_state.AddExpr(std::move(await_call));
-  child_proc_scope_state.AddRootStmt(child_proc_scope_state.AddStmt(
+      .type = process.Module().Unit().builtins.void_type};
+  const mir::ExprId await_id = child_proc_scope.AddExpr(std::move(await_call));
+  child_proc_scope.AppendStmt(
       mir::Stmt{
-          .label = std::nullopt,
-          .data = mir::ExprStmt{.expr = await_id},
-          .child_procedural_scopes = {}}));
+          .label = std::nullopt, .data = mir::ExprStmt{.expr = await_id}});
   const hir::Stmt& inner_hir = hir_proc.stmts.at(t.stmt.value);
-  auto inner_or = LowerStmt(
-      unit_state, scope_state, proc_state, child_proc_scope_state, hir_proc,
-      inner_hir);
+  auto inner_or = LowerStmt(process, child_frame, inner_hir);
   if (!inner_or) {
     return std::unexpected(std::move(inner_or.error()));
   }
-  child_proc_scope_state.AddRootStmt(
-      child_proc_scope_state.AddStmt(*std::move(inner_or)));
-  std::vector<mir::ProceduralScope> child_scopes;
+  child_proc_scope.AppendStmt(*std::move(inner_or));
   const mir::ProceduralScopeId scope_id =
-      AddChildProceduralScope(child_scopes, child_proc_scope_state.Finish());
+      frame.current_procedural_scope->AddChildScope(
+          std::move(child_proc_scope));
   return mir::Stmt{
-      .label = stmt.label,
-      .data = mir::BlockStmt{.scope = scope_id},
-      .child_procedural_scopes = std::move(child_scopes)};
+      .label = std::move(label), .data = mir::BlockStmt{.scope = scope_id}};
 }
 
 // LRM 9.4.2 `@(...) body` (explicit event control). Each `hir::EventTrigger`
@@ -1519,10 +1380,8 @@ auto LowerNamedEventTimedStmt(
 // when the expression's result changes" -- not yet implemented; reject with
 // diagnostic.
 auto LowerEventTimedStmt(
-    const UnitLoweringState& unit_state,
-    const StructuralScopeLoweringState& scope_state,
-    ProcessLoweringState& proc_state, const hir::ProceduralBody& hir_proc,
-    const hir::Stmt& stmt, const hir::TimedStmt& t, const hir::EventControl& ec)
+    ProcessLowerer& process, WalkFrame frame, std::optional<std::string> label,
+    diag::SourceSpan span, const hir::TimedStmt& t, const hir::EventControl& ec)
     -> diag::Result<mir::Stmt> {
   std::vector<hir::SensitivityEntry> union_reads;
   union_reads.reserve(ec.triggers.size());
@@ -1534,7 +1393,7 @@ auto LowerEventTimedStmt(
     // forever" convention).
     if (trigger.sensitivity_list.size() > 1) {
       return diag::Unsupported(
-          stmt.span, diag::DiagCode::kUnsupportedEventTriggerForm,
+          span, diag::DiagCode::kUnsupportedEventTriggerForm,
           "compound event expressions (concatenation, arithmetic, dynamic "
           "index) are not yet supported",
           diag::UnsupportedCategory::kFeature);
@@ -1550,26 +1409,22 @@ auto LowerEventTimedStmt(
     }
   }
 
-  ProceduralScopeLoweringState child_proc_scope_state;
-  ProceduralDepthGuard depth_guard{proc_state};
-  child_proc_scope_state.AddRootStmt(child_proc_scope_state.AddStmt(
-      BuildSensitivityWaitStmt(scope_state, union_reads)));
-  const hir::Stmt& inner_hir = hir_proc.stmts.at(t.stmt.value);
-  auto inner_or = LowerStmt(
-      unit_state, scope_state, proc_state, child_proc_scope_state, hir_proc,
-      inner_hir);
+  mir::ProceduralScope child_proc_scope;
+  const WalkFrame child_frame =
+      frame.WithProceduralScope(&child_proc_scope).Deeper();
+  child_proc_scope.AppendStmt(
+      BuildSensitivityWaitStmt(process.Scope(), union_reads));
+  const hir::Stmt& inner_hir = process.HirBody().stmts.at(t.stmt.value);
+  auto inner_or = LowerStmt(process, child_frame, inner_hir);
   if (!inner_or) {
     return std::unexpected(std::move(inner_or.error()));
   }
-  child_proc_scope_state.AddRootStmt(
-      child_proc_scope_state.AddStmt(*std::move(inner_or)));
-  std::vector<mir::ProceduralScope> child_scopes;
+  child_proc_scope.AppendStmt(*std::move(inner_or));
   const mir::ProceduralScopeId scope_id =
-      AddChildProceduralScope(child_scopes, child_proc_scope_state.Finish());
+      frame.current_procedural_scope->AddChildScope(
+          std::move(child_proc_scope));
   return mir::Stmt{
-      .label = stmt.label,
-      .data = mir::BlockStmt{.scope = scope_id},
-      .child_procedural_scopes = std::move(child_scopes)};
+      .label = std::move(label), .data = mir::BlockStmt{.scope = scope_id}};
 }
 
 // LRM 9.4.2.2 `@* body` expands to:
@@ -1579,31 +1434,25 @@ auto LowerEventTimedStmt(
 //     body
 //   }
 auto LowerImplicitEventTimedStmt(
-    const UnitLoweringState& unit_state,
-    const StructuralScopeLoweringState& scope_state,
-    ProcessLoweringState& proc_state, const hir::ProceduralBody& hir_proc,
-    const hir::Stmt& stmt, const hir::TimedStmt& t,
-    const hir::ImplicitEventControl& ie) -> diag::Result<mir::Stmt> {
-  ProceduralScopeLoweringState child_proc_scope_state;
-  ProceduralDepthGuard depth_guard{proc_state};
-  child_proc_scope_state.AddRootStmt(child_proc_scope_state.AddStmt(
-      BuildSensitivityWaitStmt(scope_state, ie.sensitivity_list)));
-  const hir::Stmt& inner_hir = hir_proc.stmts.at(t.stmt.value);
-  auto inner_or = LowerStmt(
-      unit_state, scope_state, proc_state, child_proc_scope_state, hir_proc,
-      inner_hir);
+    ProcessLowerer& process, WalkFrame frame, std::optional<std::string> label,
+    const hir::TimedStmt& t, const hir::ImplicitEventControl& ie)
+    -> diag::Result<mir::Stmt> {
+  mir::ProceduralScope child_proc_scope;
+  const WalkFrame child_frame =
+      frame.WithProceduralScope(&child_proc_scope).Deeper();
+  child_proc_scope.AppendStmt(
+      BuildSensitivityWaitStmt(process.Scope(), ie.sensitivity_list));
+  const hir::Stmt& inner_hir = process.HirBody().stmts.at(t.stmt.value);
+  auto inner_or = LowerStmt(process, child_frame, inner_hir);
   if (!inner_or) {
     return std::unexpected(std::move(inner_or.error()));
   }
-  child_proc_scope_state.AddRootStmt(
-      child_proc_scope_state.AddStmt(*std::move(inner_or)));
-  std::vector<mir::ProceduralScope> child_scopes;
+  child_proc_scope.AppendStmt(*std::move(inner_or));
   const mir::ProceduralScopeId scope_id =
-      AddChildProceduralScope(child_scopes, child_proc_scope_state.Finish());
+      frame.current_procedural_scope->AddChildScope(
+          std::move(child_proc_scope));
   return mir::Stmt{
-      .label = stmt.label,
-      .data = mir::BlockStmt{.scope = scope_id},
-      .child_procedural_scopes = std::move(child_scopes)};
+      .label = std::move(label), .data = mir::BlockStmt{.scope = scope_id}};
 }
 
 // LRM 9.4.3 `wait (cond) body` expands to:
@@ -1618,23 +1467,21 @@ auto LowerImplicitEventTimedStmt(
 // The level-sensitive "skip suspend if cond is already true" semantic falls
 // out of the while-loop: an entry-true cond never enters the body.
 auto LowerWaitStmt(
-    const UnitLoweringState& unit_state,
-    const StructuralScopeLoweringState& scope_state,
-    ProcessLoweringState& proc_state, const hir::ProceduralBody& hir_proc,
-    const hir::Stmt& stmt, const hir::WaitStmt& w) -> diag::Result<mir::Stmt> {
-  ProceduralScopeLoweringState wrapper_state;
-  ProceduralDepthGuard wrapper_depth_guard{proc_state};
+    ProcessLowerer& process, WalkFrame frame, std::optional<std::string> label,
+    const hir::WaitStmt& w) -> diag::Result<mir::Stmt> {
+  const hir::ProceduralBody& hir_proc = process.HirBody();
+  mir::ProceduralScope wrapper;
+  const WalkFrame wrapper_frame = frame.WithProceduralScope(&wrapper).Deeper();
 
   const hir::Expr& hir_cond = hir_proc.exprs.at(w.cond.value);
-  auto cond_or = LowerExpr(
-      unit_state, scope_state, proc_state, wrapper_state, hir_proc, hir_cond);
+  auto cond_or = LowerExpr(process, wrapper_frame, hir_cond);
   if (!cond_or) {
     return std::unexpected(std::move(cond_or.error()));
   }
-  const mir::ExprId cond_id = wrapper_state.AddExpr(*std::move(cond_or));
-  const mir::TypeId cond_type = wrapper_state.GetExpr(cond_id).type;
+  const mir::ExprId cond_id = wrapper.AddExpr(*std::move(cond_or));
+  const mir::TypeId cond_type = wrapper.GetExpr(cond_id).type;
 
-  const mir::ExprId not_cond_id = wrapper_state.AddExpr(
+  const mir::ExprId not_cond_id = wrapper.AddExpr(
       mir::Expr{
           .data =
               mir::UnaryExpr{
@@ -1643,38 +1490,31 @@ auto LowerWaitStmt(
 
   const auto& reads = w.sensitivity_list;
 
-  ProceduralScopeLoweringState inner_state;
-  ProceduralDepthGuard inner_depth_guard{proc_state};
-  inner_state.AddRootStmt(
-      inner_state.AddStmt(BuildSensitivityWaitStmt(scope_state, reads)));
+  mir::ProceduralScope inner_scope;
+  inner_scope.AppendStmt(BuildSensitivityWaitStmt(process.Scope(), reads));
 
-  std::vector<mir::ProceduralScope> wrapper_child_scopes;
   const mir::ProceduralScopeId inner_scope_id =
-      AddChildProceduralScope(wrapper_child_scopes, inner_state.Finish());
+      wrapper.AddChildScope(std::move(inner_scope));
 
-  wrapper_state.AddRootStmt(wrapper_state.AddStmt(
+  wrapper.AppendStmt(
       mir::Stmt{
           .label = std::nullopt,
-          .data =
-              mir::WhileStmt{.condition = not_cond_id, .scope = inner_scope_id},
-          .child_procedural_scopes = std::move(wrapper_child_scopes)}));
+          .data = mir::WhileStmt{
+              .condition = not_cond_id, .scope = inner_scope_id}});
 
   const hir::Stmt& body_hir = hir_proc.stmts.at(w.body.value);
-  auto body_or = LowerStmt(
-      unit_state, scope_state, proc_state, wrapper_state, hir_proc, body_hir);
+  auto body_or = LowerStmt(process, wrapper_frame, body_hir);
   if (!body_or) {
     return std::unexpected(std::move(body_or.error()));
   }
-  wrapper_state.AddRootStmt(wrapper_state.AddStmt(*std::move(body_or)));
+  wrapper.AppendStmt(*std::move(body_or));
 
-  std::vector<mir::ProceduralScope> outer_child_scopes;
   const mir::ProceduralScopeId wrapper_scope_id =
-      AddChildProceduralScope(outer_child_scopes, wrapper_state.Finish());
+      frame.current_procedural_scope->AddChildScope(std::move(wrapper));
 
   return mir::Stmt{
-      .label = stmt.label,
-      .data = mir::BlockStmt{.scope = wrapper_scope_id},
-      .child_procedural_scopes = std::move(outer_child_scopes)};
+      .label = std::move(label),
+      .data = mir::BlockStmt{.scope = wrapper_scope_id}};
 }
 
 // LRM 9.4.1 `#N body` expands to:
@@ -1688,168 +1528,126 @@ auto LowerWaitStmt(
 // suspension is anchored to simulation time rather than a value-change or
 // named-event subscription.
 auto LowerDelayTimedStmt(
-    const UnitLoweringState& unit_state,
-    const StructuralScopeLoweringState& scope_state,
-    ProcessLoweringState& proc_state, const hir::ProceduralBody& hir_proc,
-    const hir::Stmt& stmt, const hir::TimedStmt& t, const hir::DelayControl& d)
+    ProcessLowerer& process, WalkFrame frame, std::optional<std::string> label,
+    const hir::TimedStmt& t, const hir::DelayControl& d)
     -> diag::Result<mir::Stmt> {
-  auto ticks_or = ResolveDelayTicks(proc_state, hir_proc, d);
+  auto ticks_or = ResolveDelayTicks(process, d);
   if (!ticks_or) {
     return std::unexpected(std::move(ticks_or.error()));
   }
-  ProceduralScopeLoweringState child_proc_scope_state;
-  ProceduralDepthGuard depth_guard{proc_state};
-  child_proc_scope_state.AddRootStmt(child_proc_scope_state.AddStmt(
+  mir::ProceduralScope child_proc_scope;
+  const WalkFrame child_frame =
+      frame.WithProceduralScope(&child_proc_scope).Deeper();
+  child_proc_scope.AppendStmt(
       mir::Stmt{
           .label = std::nullopt,
-          .data = mir::DelayStmt{.duration = *ticks_or},
-          .child_procedural_scopes = {}}));
-  const hir::Stmt& inner_hir = hir_proc.stmts.at(t.stmt.value);
-  auto inner_or = LowerStmt(
-      unit_state, scope_state, proc_state, child_proc_scope_state, hir_proc,
-      inner_hir);
+          .data = mir::DelayStmt{.duration = *ticks_or}});
+  const hir::Stmt& inner_hir = process.HirBody().stmts.at(t.stmt.value);
+  auto inner_or = LowerStmt(process, child_frame, inner_hir);
   if (!inner_or) {
     return std::unexpected(std::move(inner_or.error()));
   }
-  child_proc_scope_state.AddRootStmt(
-      child_proc_scope_state.AddStmt(*std::move(inner_or)));
-  std::vector<mir::ProceduralScope> child_scopes;
+  child_proc_scope.AppendStmt(*std::move(inner_or));
   const mir::ProceduralScopeId scope_id =
-      AddChildProceduralScope(child_scopes, child_proc_scope_state.Finish());
+      frame.current_procedural_scope->AddChildScope(
+          std::move(child_proc_scope));
   return mir::Stmt{
-      .label = stmt.label,
-      .data = mir::BlockStmt{.scope = scope_id},
-      .child_procedural_scopes = std::move(child_scopes)};
+      .label = std::move(label), .data = mir::BlockStmt{.scope = scope_id}};
 }
 
 auto LowerTimedStmt(
-    const UnitLoweringState& unit_state,
-    const StructuralScopeLoweringState& scope_state,
-    ProcessLoweringState& proc_state, const hir::ProceduralBody& hir_proc,
-    const hir::Stmt& stmt, const hir::TimedStmt& t) -> diag::Result<mir::Stmt> {
+    ProcessLowerer& process, WalkFrame frame, std::optional<std::string> label,
+    diag::SourceSpan span, const hir::TimedStmt& t) -> diag::Result<mir::Stmt> {
   if (const auto* ie = std::get_if<hir::ImplicitEventControl>(&t.timing)) {
     return LowerImplicitEventTimedStmt(
-        unit_state, scope_state, proc_state, hir_proc, stmt, t, *ie);
+        process, frame, std::move(label), t, *ie);
   }
   if (const auto* nec = std::get_if<hir::NamedEventControl>(&t.timing)) {
-    return LowerNamedEventTimedStmt(
-        unit_state, scope_state, proc_state, hir_proc, stmt, t, *nec);
+    return LowerNamedEventTimedStmt(process, frame, std::move(label), t, *nec);
   }
   if (const auto* ec = std::get_if<hir::EventControl>(&t.timing)) {
-    return LowerEventTimedStmt(
-        unit_state, scope_state, proc_state, hir_proc, stmt, t, *ec);
+    return LowerEventTimedStmt(process, frame, std::move(label), span, t, *ec);
   }
   const auto* d = std::get_if<hir::DelayControl>(&t.timing);
   if (d == nullptr) {
     throw InternalError("LowerTimedStmt: unknown hir::TimingControl variant");
   }
-  return LowerDelayTimedStmt(
-      unit_state, scope_state, proc_state, hir_proc, stmt, t, *d);
+  return LowerDelayTimedStmt(process, frame, std::move(label), t, *d);
 }
 
 }  // namespace
 
 auto LowerStmtIntoChildScope(
-    const UnitLoweringState& unit_state,
-    const StructuralScopeLoweringState& scope_state,
-    ProcessLoweringState& proc_state, const hir::ProceduralBody& hir_proc,
-    hir::StmtId hir_stmt_id) -> diag::Result<mir::ProceduralScope> {
-  ProceduralScopeLoweringState child_state;
-  ProceduralDepthGuard depth_guard{proc_state};
-  const hir::Stmt& hir_stmt = hir_proc.stmts.at(hir_stmt_id.value);
-  auto lowered = LowerStmt(
-      unit_state, scope_state, proc_state, child_state, hir_proc, hir_stmt);
+    ProcessLowerer& process, WalkFrame frame, hir::StmtId hir_stmt_id)
+    -> diag::Result<mir::ProceduralScope> {
+  mir::ProceduralScope child_scope;
+  const WalkFrame child_frame =
+      frame.WithProceduralScope(&child_scope).Deeper();
+  const hir::Stmt& hir_stmt = process.HirBody().stmts.at(hir_stmt_id.value);
+  auto lowered = LowerStmt(process, child_frame, hir_stmt);
   if (!lowered) {
     return std::unexpected(std::move(lowered.error()));
   }
-  const mir::StmtId stmt_id = child_state.AddStmt(*std::move(lowered));
-  child_state.AddRootStmt(stmt_id);
-  return child_state.Finish();
+  child_scope.AppendStmt(*std::move(lowered));
+  return std::move(child_scope);
 }
 
-auto LowerStmt(
-    const UnitLoweringState& unit_state,
-    const StructuralScopeLoweringState& scope_state,
-    ProcessLoweringState& proc_state,
-    ProceduralScopeLoweringState& proc_scope_state,
-    const hir::ProceduralBody& hir_proc, const hir::Stmt& stmt)
+auto LowerStmt(ProcessLowerer& process, WalkFrame frame, const hir::Stmt& stmt)
     -> diag::Result<mir::Stmt> {
   return std::visit(
       Overloaded{
-          [&](const hir::EmptyStmt&) { return LowerEmptyStmt(stmt); },
+          [&](const hir::EmptyStmt&) { return LowerEmptyStmt(stmt.label); },
           [&](const hir::VarDeclStmt& v) {
-            return LowerVarDeclStmt(
-                unit_state, scope_state, proc_state, proc_scope_state, hir_proc,
-                stmt, v);
+            return LowerVarDeclStmt(process, frame, stmt.label, v);
           },
           [&](const hir::ExprStmt& e) {
-            return LowerExprStmt(
-                unit_state, scope_state, proc_state, proc_scope_state, hir_proc,
-                stmt, e);
+            return LowerExprStmt(process, frame, stmt.label, e);
           },
           [&](const hir::BlockStmt& b) {
-            return LowerBlockStmt(
-                unit_state, scope_state, proc_state, hir_proc, stmt, b);
+            return LowerBlockStmt(process, frame, stmt.label, b);
           },
           [&](const hir::ForkStmt& f) {
-            return LowerForkStmt(
-                unit_state, scope_state, proc_state, hir_proc, stmt, f);
+            return LowerForkStmt(process, frame, stmt.label, f);
           },
           [&](const hir::IfStmt& i) {
-            return LowerIfStmt(
-                unit_state, scope_state, proc_state, proc_scope_state, hir_proc,
-                stmt, i);
+            return LowerIfStmt(process, frame, stmt.label, i);
           },
           [&](const hir::CaseStmt& c) {
-            return LowerCaseStmt(
-                unit_state, scope_state, proc_state, hir_proc, stmt, c);
+            return LowerCaseStmt(process, frame, stmt.label, c);
           },
           [&](const hir::CaseInsideStmt& c) {
-            return LowerCaseInsideStmt(
-                unit_state, scope_state, proc_state, hir_proc, stmt, c);
+            return LowerCaseInsideStmt(process, frame, stmt.label, c);
           },
           [&](const hir::ForStmt& f) {
-            return LowerForStmt(
-                unit_state, scope_state, proc_state, proc_scope_state, hir_proc,
-                stmt, f);
+            return LowerForStmt(process, frame, stmt.label, f);
           },
           [&](const hir::WhileStmt& w) {
-            return LowerWhileStmt(
-                unit_state, scope_state, proc_state, proc_scope_state, hir_proc,
-                stmt, w);
+            return LowerWhileStmt(process, frame, stmt.label, w);
           },
           [&](const hir::RepeatStmt& r) {
-            return LowerRepeatStmt(
-                unit_state, scope_state, proc_state, hir_proc, stmt, r);
+            return LowerRepeatStmt(process, frame, stmt.label, r);
           },
           [&](const hir::DoWhileStmt& d) {
-            return LowerDoWhileStmt(
-                unit_state, scope_state, proc_state, proc_scope_state, hir_proc,
-                stmt, d);
+            return LowerDoWhileStmt(process, frame, stmt.label, d);
           },
           [&](const hir::ForeverStmt& f) {
-            return LowerForeverStmt(
-                unit_state, scope_state, proc_state, hir_proc, stmt, f);
+            return LowerForeverStmt(process, frame, stmt.label, f);
           },
-          [&](const hir::BreakStmt&) { return LowerBreakStmt(stmt); },
-          [&](const hir::ContinueStmt&) { return LowerContinueStmt(stmt); },
+          [&](const hir::BreakStmt&) { return LowerBreakStmt(stmt.label); },
+          [&](const hir::ContinueStmt&) {
+            return LowerContinueStmt(stmt.label);
+          },
           [&](const hir::ReturnStmt& r) {
-            return LowerReturnStmt(
-                unit_state, scope_state, proc_state, proc_scope_state, hir_proc,
-                stmt, r);
+            return LowerReturnStmt(process, frame, stmt.label, r);
           },
           [&](const hir::TimedStmt& t) {
-            return LowerTimedStmt(
-                unit_state, scope_state, proc_state, hir_proc, stmt, t);
+            return LowerTimedStmt(process, frame, stmt.label, stmt.span, t);
           },
           [&](const hir::EventTriggerStmt& et) {
-            return LowerEventTriggerStmt(
-                unit_state, scope_state, proc_state, proc_scope_state, hir_proc,
-                stmt, et);
+            return LowerEventTriggerStmt(process, frame, stmt.label, et);
           },
           [&](const hir::WaitStmt& w) {
-            return LowerWaitStmt(
-                unit_state, scope_state, proc_state, hir_proc, stmt, w);
+            return LowerWaitStmt(process, frame, stmt.label, w);
           },
       },
       stmt.data);

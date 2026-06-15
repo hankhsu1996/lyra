@@ -123,7 +123,7 @@ auto LowerNamedValueProc(
   const auto& sym = named.symbol;
 
   if (sym.kind == slang::ast::SymbolKind::EnumValue) {
-    auto type_id = module.GetTypeIdOf(named);
+    auto type_id = module.InternType(*named.type, span);
     if (!type_id) return std::unexpected(std::move(type_id.error()));
     return MakeEnumValueExpr(
         sym.as<slang::ast::EnumValueSymbol>(), *type_id, span);
@@ -146,7 +146,7 @@ auto LowerNamedValueProc(
   }
 
   if (sym.kind == slang::ast::SymbolKind::Parameter) {
-    auto type_id = module.GetTypeIdOf(named);
+    auto type_id = module.InternType(*named.type, span);
     if (!type_id) return std::unexpected(std::move(type_id.error()));
     return MakeParameterValueExpr(
         sym.as<slang::ast::ParameterSymbol>(), *type_id, span);
@@ -179,7 +179,8 @@ auto LowerNamedValueProc(
           "is not yet supported",
           diag::UnsupportedCategory::kFeature);
     }
-    const hir::TypeId type_id = proc.GetProceduralVarType(*local);
+    const hir::TypeId type_id =
+        frame.current_procedural_body->procedural_vars.at(local->value).type;
     return MakeRefExpr(hir::ProceduralVarRef{.var = *local}, type_id, span);
   }
 
@@ -229,7 +230,7 @@ auto LowerHierarchicalValueProc(
         diag::UnsupportedCategory::kOperation);
   }
 
-  auto type_id = module.GetTypeIdOf(hve);
+  auto type_id = module.InternType(*hve.type, span);
   if (!type_id) return std::unexpected(std::move(type_id.error()));
 
   // ref.path is slang's resolved top-down navigation: path.front() is the head
@@ -330,7 +331,7 @@ auto LowerNamedValueStructural(
   const auto span = mapper.SpanOf(named.sourceRange);
   const auto& sym = named.symbol;
   if (sym.kind == slang::ast::SymbolKind::EnumValue) {
-    auto type_id = module.GetTypeIdOf(named);
+    auto type_id = module.InternType(*named.type, span);
     if (!type_id) return std::unexpected(std::move(type_id.error()));
     return MakeEnumValueExpr(
         sym.as<slang::ast::EnumValueSymbol>(), *type_id, span);
@@ -351,7 +352,7 @@ auto LowerNamedValueStructural(
     }
   }
   if (sym.kind == slang::ast::SymbolKind::Parameter) {
-    auto type_id = module.GetTypeIdOf(named);
+    auto type_id = module.InternType(*named.type, span);
     if (!type_id) return std::unexpected(std::move(type_id.error()));
     return MakeParameterValueExpr(
         sym.as<slang::ast::ParameterSymbol>(), *type_id, span);

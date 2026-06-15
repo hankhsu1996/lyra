@@ -17,7 +17,7 @@
 #include "lyra/hir/primary.hpp"
 #include "lyra/hir/procedural_body.hpp"
 #include "lyra/lowering/hir_to_mir/lower_expr.hpp"
-#include "lyra/lowering/hir_to_mir/state.hpp"
+#include "lyra/lowering/hir_to_mir/process_lowerer.hpp"
 #include "lyra/mir/conversion.hpp"
 #include "lyra/mir/expr.hpp"
 #include "lyra/mir/runtime_print.hpp"
@@ -67,15 +67,11 @@ auto ToMirFormatModifiers(const support::FormatDirectiveModifiers& m)
 }
 
 auto BuildPrintValueItem(
-    const UnitLoweringState& unit_state,
-    const StructuralScopeLoweringState& scope_state,
-    ProcessLoweringState& proc_state,
-    ProceduralScopeLoweringState& proc_scope_state,
-    const hir::ProceduralBody& hir_proc, hir::ExprId hir_arg,
+    ProcessLowerer& process, WalkFrame frame, hir::ExprId hir_arg,
     mir::FormatSpec spec) -> diag::Result<mir::RuntimePrintItem> {
-  auto lowered_or = LowerExpr(
-      unit_state, scope_state, proc_state, proc_scope_state, hir_proc,
-      hir_proc.exprs.at(hir_arg.value));
+  const auto& hir_proc = process.HirBody();
+  auto& proc_scope = *frame.current_procedural_scope;
+  auto lowered_or = LowerExpr(process, frame, hir_proc.exprs.at(hir_arg.value));
   if (!lowered_or) return std::unexpected(std::move(lowered_or.error()));
   mir::Expr lowered = *std::move(lowered_or);
 
@@ -88,26 +84,23 @@ auto BuildPrintValueItem(
   // operand level, this becomes a no-op; until then the conversion is the
   // single chokepoint that records the semantic.
   if (spec.kind == value::FormatKind::kString &&
-      unit_state.GetType(lowered.type).Kind() != mir::TypeKind::kString) {
-    const mir::ExprId inner = proc_scope_state.AddExpr(std::move(lowered));
+      process.Module().Unit().GetType(lowered.type).Kind() !=
+          mir::TypeKind::kString) {
+    const mir::ExprId inner = proc_scope.AddExpr(std::move(lowered));
     lowered = mir::Expr{
         .data =
             mir::ConversionExpr{
                 .operand = inner, .kind = mir::ConversionKind::kImplicit},
-        .type = unit_state.Builtins().string};
+        .type = process.Module().Unit().builtins.string};
   }
 
   const mir::TypeId type = lowered.type;
-  const mir::ExprId value = proc_scope_state.AddExpr(std::move(lowered));
+  const mir::ExprId value = proc_scope.AddExpr(std::move(lowered));
   return mir::RuntimePrintValue(value, type, std::move(spec));
 }
 
 auto BuildPrintItemFromDirective(
-    const UnitLoweringState& unit_state,
-    const StructuralScopeLoweringState& scope_state,
-    ProcessLoweringState& proc_state,
-    ProceduralScopeLoweringState& proc_scope_state,
-    const hir::ProceduralBody& hir_proc,
+    ProcessLowerer& process, WalkFrame frame,
     const support::ParsedFormatDirective& directive,
     std::span<const hir::ExprId> args, std::size_t& value_index,
     diag::SourceSpan span) -> diag::Result<mir::RuntimePrintItem> {
@@ -139,8 +132,7 @@ auto BuildPrintItemFromDirective(
       }
       const hir::ExprId hir_arg = args[value_index++];
       return BuildPrintValueItem(
-          unit_state, scope_state, proc_state, proc_scope_state, hir_proc,
-          hir_arg,
+          process, frame, hir_arg,
           mir::FormatSpec(
               ToValueFormatKind(directive.kind),
               ToMirFormatModifiers(directive.modifiers)));
@@ -183,14 +175,11 @@ auto RadixToFormatKind(support::PrintRadix r) -> value::FormatKind {
 }
 
 auto BuildRuntimePrintItemsFromCallArgs(
-    const UnitLoweringState& unit_state,
-    const StructuralScopeLoweringState& scope_state,
-    ProcessLoweringState& proc_state,
-    ProceduralScopeLoweringState& proc_scope_state,
-    const hir::ProceduralBody& hir_proc, const hir::CallExpr& call,
+    ProcessLowerer& process, WalkFrame frame, const hir::CallExpr& call,
     support::PrintRadix default_radix, std::size_t arg_offset,
     FormatStringRequirement fmt_req, diag::SourceSpan call_span)
     -> diag::Result<std::vector<mir::RuntimePrintItem>> {
+  const auto& hir_proc = process.HirBody();
   std::vector<mir::RuntimePrintItem> items;
   // The print family does not permit positional elision; flatten the
   // optional-bearing arg list once so the per-directive loop can pass plain
@@ -231,8 +220,7 @@ auto BuildRuntimePrintItemsFromCallArgs(
     auto value_index = cursor;
     for (const auto& directive : *parsed_or) {
       auto item_or = BuildPrintItemFromDirective(
-          unit_state, scope_state, proc_state, proc_scope_state, hir_proc,
-          directive, args, value_index, literal->span);
+          process, frame, directive, args, value_index, literal->span);
       if (!item_or) return std::unexpected(std::move(item_or.error()));
       items.push_back(std::move(*item_or));
     }
@@ -245,8 +233,8 @@ auto BuildRuntimePrintItemsFromCallArgs(
       items.emplace_back(mir::RuntimePrintLiteral{.text = " "});
     }
     auto item_or = BuildPrintValueItem(
-        unit_state, scope_state, proc_state, proc_scope_state, hir_proc,
-        args[cursor], mir::FormatSpec(default_kind, mir::FormatModifiers{}));
+        process, frame, args[cursor],
+        mir::FormatSpec(default_kind, mir::FormatModifiers{}));
     if (!item_or) return std::unexpected(std::move(item_or.error()));
     items.push_back(*std::move(item_or));
     ++cursor;

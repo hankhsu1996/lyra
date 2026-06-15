@@ -9,25 +9,22 @@
 #include "lyra/lowering/hir_to_mir/lower_expr.hpp"
 #include "lyra/mir/binary_op.hpp"
 #include "lyra/mir/expr.hpp"
+#include "lyra/mir/stmt.hpp"
 
 namespace lyra::lowering::hir_to_mir {
 
 auto BuildHirInsideItemPredicate(
-    const UnitLoweringState& unit_state,
-    const StructuralScopeLoweringState& scope_state,
-    ProcessLoweringState& proc_state,
-    ProceduralScopeLoweringState& proc_scope_state,
-    const hir::ProceduralBody& hir_process, mir::ExprId lhs_id,
+    ProcessLowerer& proc, WalkFrame frame, mir::ExprId lhs_id,
     const hir::InsideItem& item, mir::TypeId result_type)
     -> diag::Result<mir::ExprId> {
+  const auto& hir_body = proc.HirBody();
+  auto& scope = *frame.current_procedural_scope;
   auto lower_id = [&](hir::ExprId id) -> diag::Result<mir::ExprId> {
-    auto lowered = LowerExpr(
-        unit_state, scope_state, proc_state, proc_scope_state, hir_process,
-        hir_process.exprs.at(id.value));
+    auto lowered = LowerExpr(proc, frame, hir_body.exprs.at(id.value));
     if (!lowered) {
       return std::unexpected(std::move(lowered.error()));
     }
-    return proc_scope_state.AddExpr(*std::move(lowered));
+    return scope.AddExpr(*std::move(lowered));
   };
 
   return std::visit(
@@ -35,7 +32,7 @@ auto BuildHirInsideItemPredicate(
           [&](const hir::ExprId& val_id) -> diag::Result<mir::ExprId> {
             auto v = lower_id(val_id);
             if (!v) return std::unexpected(std::move(v.error()));
-            return proc_scope_state.AddExpr(
+            return scope.AddExpr(
                 mir::Expr{
                     .data =
                         mir::BinaryExpr{
@@ -49,7 +46,7 @@ auto BuildHirInsideItemPredicate(
             if (!lo) return std::unexpected(std::move(lo.error()));
             auto hi = lower_id(r.hi);
             if (!hi) return std::unexpected(std::move(hi.error()));
-            const mir::ExprId ge_id = proc_scope_state.AddExpr(
+            const mir::ExprId ge_id = scope.AddExpr(
                 mir::Expr{
                     .data =
                         mir::BinaryExpr{
@@ -57,7 +54,7 @@ auto BuildHirInsideItemPredicate(
                             .lhs = lhs_id,
                             .rhs = *lo},
                     .type = result_type});
-            const mir::ExprId le_id = proc_scope_state.AddExpr(
+            const mir::ExprId le_id = scope.AddExpr(
                 mir::Expr{
                     .data =
                         mir::BinaryExpr{
@@ -65,7 +62,7 @@ auto BuildHirInsideItemPredicate(
                             .lhs = lhs_id,
                             .rhs = *hi},
                     .type = result_type});
-            return proc_scope_state.AddExpr(
+            return scope.AddExpr(
                 mir::Expr{
                     .data =
                         mir::BinaryExpr{

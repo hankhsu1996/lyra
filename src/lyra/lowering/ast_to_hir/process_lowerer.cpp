@@ -1,11 +1,9 @@
 #include "lyra/lowering/ast_to_hir/process_lowerer.hpp"
 
 #include <algorithm>
-#include <cstdint>
 #include <expected>
 #include <optional>
 #include <string>
-#include <string_view>
 #include <unordered_map>
 #include <utility>
 #include <vector>
@@ -85,11 +83,14 @@ ProcessLowerer::ProcessLowerer(
 }
 
 auto ProcessLowerer::Run(
-    const slang::ast::ProceduralBlockSymbol& proc, WalkFrame frame)
+    const slang::ast::ProceduralBlockSymbol& proc, WalkFrame parent_frame)
     -> diag::Result<hir::Process> {
+  hir::ProceduralBody body;
+  const WalkFrame frame = parent_frame.WithProceduralBody(&body);
+
   auto root_stmt = LowerStmt(proc.getBody(), frame);
   if (!root_stmt) return std::unexpected(std::move(root_stmt.error()));
-  const hir::StmtId root_stmt_id = AddStmt(*std::move(root_stmt));
+  body.root_stmt = body.AddStmt(*std::move(root_stmt));
 
   const auto& mapper = module_->SourceMapper();
   const auto span = mapper.PointSpanOf(proc.location);
@@ -98,7 +99,7 @@ auto ProcessLowerer::Run(
   hir::Process out{
       .kind = kind,
       .span = span,
-      .body = FinalizeBody(root_stmt_id),
+      .body = std::move(body),
       .implicit_sensitivity_list = {}};
   if (kind == hir::ProcessKind::kAlwaysComb ||
       kind == hir::ProcessKind::kAlwaysLatch) {
@@ -119,30 +120,10 @@ auto ProcessLowerer::Run(
   return out;
 }
 
-auto ProcessLowerer::FinalizeBody(hir::StmtId root_stmt)
-    -> hir::ProceduralBody {
-  body_.root_stmt = root_stmt;
-  return std::move(body_);
-}
-
-auto ProcessLowerer::AddExpr(hir::Expr expr) -> hir::ExprId {
-  const hir::ExprId id{static_cast<std::uint32_t>(body_.exprs.size())};
-  body_.exprs.push_back(std::move(expr));
-  return id;
-}
-
-auto ProcessLowerer::AddStmt(hir::Stmt stmt) -> hir::StmtId {
-  const hir::StmtId id{static_cast<std::uint32_t>(body_.stmts.size())};
-  body_.stmts.push_back(std::move(stmt));
-  return id;
-}
-
 auto ProcessLowerer::AddProceduralVar(
-    const slang::ast::VariableSymbol& var, hir::TypeId type)
-    -> hir::ProceduralVarId {
-  const hir::ProceduralVarId id{
-      static_cast<std::uint32_t>(body_.procedural_vars.size())};
-  body_.procedural_vars.push_back(
+    hir::ProceduralBody& body, const slang::ast::VariableSymbol& var,
+    hir::TypeId type) -> hir::ProceduralVarId {
+  const hir::ProceduralVarId id = body.AddProceduralVar(
       hir::ProceduralVarDecl{
           .name = std::string{var.name},
           .type = type,
@@ -158,18 +139,6 @@ auto ProcessLowerer::AddProceduralVar(
   return id;
 }
 
-auto ProcessLowerer::AddSyntheticProceduralVar(
-    std::string_view name, hir::TypeId type) -> hir::ProceduralVarId {
-  const hir::ProceduralVarId id{
-      static_cast<std::uint32_t>(body_.procedural_vars.size())};
-  body_.procedural_vars.push_back(
-      hir::ProceduralVarDecl{
-          .name = std::string{name},
-          .type = type,
-          .lifetime = hir::VariableLifetime::kAutomatic});
-  return id;
-}
-
 auto ProcessLowerer::LookupProceduralVar(const slang::ast::VariableSymbol& var)
     const -> std::optional<hir::ProceduralVarId> {
   const auto it = procedural_var_bindings_.find(&var);
@@ -177,11 +146,6 @@ auto ProcessLowerer::LookupProceduralVar(const slang::ast::VariableSymbol& var)
     return std::nullopt;
   }
   return it->second;
-}
-
-auto ProcessLowerer::GetProceduralVarType(hir::ProceduralVarId id) const
-    -> hir::TypeId {
-  return body_.procedural_vars.at(id.value).type;
 }
 
 }  // namespace lyra::lowering::ast_to_hir

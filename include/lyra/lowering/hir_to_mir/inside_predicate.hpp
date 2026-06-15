@@ -2,8 +2,10 @@
 
 #include "lyra/diag/diagnostic.hpp"
 #include "lyra/hir/inside_item.hpp"
-#include "lyra/hir/procedural_body.hpp"
-#include "lyra/lowering/hir_to_mir/state.hpp"
+#include "lyra/lowering/hir_to_mir/process_lowerer.hpp"
+#include "lyra/lowering/hir_to_mir/walk_frame.hpp"
+#include "lyra/mir/expr_id.hpp"
+#include "lyra/mir/type_id.hpp"
 
 namespace lyra::lowering::hir_to_mir {
 
@@ -15,11 +17,7 @@ namespace lyra::lowering::hir_to_mir {
 // cascade (LRM 12.5.4). Callers OR-chain the per-item results to obtain the
 // final inside predicate.
 auto BuildHirInsideItemPredicate(
-    const UnitLoweringState& unit_state,
-    const StructuralScopeLoweringState& scope_state,
-    ProcessLoweringState& proc_state,
-    ProceduralScopeLoweringState& proc_scope_state,
-    const hir::ProceduralBody& hir_process, mir::ExprId lhs_id,
+    ProcessLowerer& proc, WalkFrame frame, mir::ExprId lhs_id,
     const hir::InsideItem& item, mir::TypeId result_type)
     -> diag::Result<mir::ExprId>;
 

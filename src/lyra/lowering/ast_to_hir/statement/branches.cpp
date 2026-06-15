@@ -11,7 +11,6 @@
 #include "lyra/base/internal_error.hpp"
 #include "lyra/diag/diag_code.hpp"
 #include "lyra/diag/kind.hpp"
-#include "lyra/lowering/ast_to_hir/statement/dispatch.hpp"
 
 namespace lyra::lowering::ast_to_hir {
 
@@ -39,7 +38,8 @@ auto LowerCaseInsideStmt(
   const auto case_check = LowerUniquePriorityCheck(cs.check);
   auto cond_expr = proc.LowerExpr(cs.expr, frame);
   if (!cond_expr) return std::unexpected(std::move(cond_expr.error()));
-  const hir::ExprId cond_id = proc.AddExpr(*std::move(cond_expr));
+  const hir::ExprId cond_id =
+      frame.current_procedural_body->AddExpr(*std::move(cond_expr));
   std::vector<hir::CaseInsideItem> items;
   items.reserve(cs.items.size());
   for (const auto& item : cs.items) {
@@ -50,17 +50,19 @@ auto LowerCaseInsideStmt(
       if (!item_or) return std::unexpected(std::move(item_or.error()));
       inside_items.push_back(*std::move(item_or));
     }
-    auto item_stmt = LowerStatement(proc, frame, *item.stmt);
+    auto item_stmt = proc.LowerStmt(*item.stmt, frame);
     if (!item_stmt) return std::unexpected(std::move(item_stmt.error()));
-    const hir::StmtId item_id = proc.AddStmt(*std::move(item_stmt));
+    const hir::StmtId item_id =
+        frame.current_procedural_body->AddStmt(*std::move(item_stmt));
     items.push_back(
         hir::CaseInsideItem{.items = std::move(inside_items), .stmt = item_id});
   }
   std::optional<hir::StmtId> default_id;
   if (cs.defaultCase != nullptr) {
-    auto default_stmt = LowerStatement(proc, frame, *cs.defaultCase);
+    auto default_stmt = proc.LowerStmt(*cs.defaultCase, frame);
     if (!default_stmt) return std::unexpected(std::move(default_stmt.error()));
-    default_id = proc.AddStmt(*std::move(default_stmt));
+    default_id =
+        frame.current_procedural_body->AddStmt(*std::move(default_stmt));
   }
   return hir::Stmt{
       .label = std::nullopt,
@@ -98,7 +100,8 @@ auto LowerCaseStmt(
   const auto case_check = LowerUniquePriorityCheck(cs.check);
   auto cond_expr = proc.LowerExpr(cs.expr, frame);
   if (!cond_expr) return std::unexpected(std::move(cond_expr.error()));
-  const hir::ExprId cond_id = proc.AddExpr(*std::move(cond_expr));
+  const hir::ExprId cond_id =
+      frame.current_procedural_body->AddExpr(*std::move(cond_expr));
   std::vector<hir::CaseItem> items;
   items.reserve(cs.items.size());
   for (const auto& item : cs.items) {
@@ -107,19 +110,22 @@ auto LowerCaseStmt(
     for (const auto* label_expr : item.expressions) {
       auto label_or = proc.LowerExpr(*label_expr, frame);
       if (!label_or) return std::unexpected(std::move(label_or.error()));
-      label_ids.push_back(proc.AddExpr(*std::move(label_or)));
+      label_ids.push_back(
+          frame.current_procedural_body->AddExpr(*std::move(label_or)));
     }
-    auto item_stmt = LowerStatement(proc, frame, *item.stmt);
+    auto item_stmt = proc.LowerStmt(*item.stmt, frame);
     if (!item_stmt) return std::unexpected(std::move(item_stmt.error()));
-    const hir::StmtId item_id = proc.AddStmt(*std::move(item_stmt));
+    const hir::StmtId item_id =
+        frame.current_procedural_body->AddStmt(*std::move(item_stmt));
     items.push_back(
         hir::CaseItem{.labels = std::move(label_ids), .stmt = item_id});
   }
   std::optional<hir::StmtId> default_id;
   if (cs.defaultCase != nullptr) {
-    auto default_stmt = LowerStatement(proc, frame, *cs.defaultCase);
+    auto default_stmt = proc.LowerStmt(*cs.defaultCase, frame);
     if (!default_stmt) return std::unexpected(std::move(default_stmt.error()));
-    default_id = proc.AddStmt(*std::move(default_stmt));
+    default_id =
+        frame.current_procedural_body->AddStmt(*std::move(default_stmt));
   }
   return hir::Stmt{
       .label = std::nullopt,
@@ -153,15 +159,17 @@ auto LowerConditionalStmt(
   }
   auto cond_expr = proc.LowerExpr(*cond.expr, frame);
   if (!cond_expr) return std::unexpected(std::move(cond_expr.error()));
-  const hir::ExprId cond_id = proc.AddExpr(*std::move(cond_expr));
-  auto then_stmt = LowerStatement(proc, frame, cs.ifTrue);
+  const hir::ExprId cond_id =
+      frame.current_procedural_body->AddExpr(*std::move(cond_expr));
+  auto then_stmt = proc.LowerStmt(cs.ifTrue, frame);
   if (!then_stmt) return std::unexpected(std::move(then_stmt.error()));
-  const hir::StmtId then_id = proc.AddStmt(*std::move(then_stmt));
+  const hir::StmtId then_id =
+      frame.current_procedural_body->AddStmt(*std::move(then_stmt));
   std::optional<hir::StmtId> else_id;
   if (cs.ifFalse != nullptr) {
-    auto else_stmt = LowerStatement(proc, frame, *cs.ifFalse);
+    auto else_stmt = proc.LowerStmt(*cs.ifFalse, frame);
     if (!else_stmt) return std::unexpected(std::move(else_stmt.error()));
-    else_id = proc.AddStmt(*std::move(else_stmt));
+    else_id = frame.current_procedural_body->AddStmt(*std::move(else_stmt));
   }
   return hir::Stmt{
       .label = std::nullopt,
