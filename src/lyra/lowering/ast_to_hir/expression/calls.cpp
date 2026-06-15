@@ -19,9 +19,9 @@
 #include "lyra/base/internal_error.hpp"
 #include "lyra/hir/subroutine_ref.hpp"
 #include "lyra/hir/type.hpp"
-#include "lyra/lowering/ast_to_hir/expression/dispatch.hpp"
 #include "lyra/lowering/ast_to_hir/expression/slang_atoms.hpp"
 #include "lyra/lowering/ast_to_hir/module_lowerer.hpp"
+#include "lyra/lowering/ast_to_hir/process_lowerer.hpp"
 #include "lyra/support/system_subroutine.hpp"
 
 namespace lyra::lowering::ast_to_hir {
@@ -31,21 +31,21 @@ namespace {
 // Maps a frontend ReturnConvention to the builtin HIR TypeId that represents
 // it. Local to the calls subsystem (system subroutines are the only consumer).
 auto MakeReturnConventionType(
-    ModuleLowerer& module, support::ReturnConvention conv) -> hir::TypeId {
-  const auto& b = module.Builtins();
+    const hir::BuiltinHirTypes& builtins, support::ReturnConvention conv)
+    -> hir::TypeId {
   switch (conv) {
     case support::ReturnConvention::kVoid:
-      return b.void_type;
+      return builtins.void_type;
     case support::ReturnConvention::kInt32:
-      return b.int32;
+      return builtins.int32;
     case support::ReturnConvention::kInteger:
-      return b.integer;
+      return builtins.integer;
     case support::ReturnConvention::kString:
-      return b.string;
+      return builtins.string;
     case support::ReturnConvention::kTime64:
-      return b.time;
+      return builtins.time;
     case support::ReturnConvention::kRealTime:
-      return b.realtime;
+      return builtins.realtime;
   }
   throw InternalError("MakeReturnConventionType: unknown ReturnConvention");
 }
@@ -54,8 +54,8 @@ auto MakeReturnConventionType(
 
 auto LowerCallExprProc(
     ProcessLowerer& proc, WalkFrame frame,
-    const slang::ast::CallExpression& call, const slang::ast::Expression& expr,
-    diag::SourceSpan span) -> diag::Result<hir::Expr> {
+    const slang::ast::CallExpression& call, diag::SourceSpan span)
+    -> diag::Result<hir::Expr> {
   auto& module = proc.Module();
   std::vector<std::optional<hir::ExprId>> arg_ids;
   arg_ids.reserve(call.arguments().size());
@@ -81,12 +81,13 @@ auto LowerCallExprProc(
       arg_ids.emplace_back(std::nullopt);
       continue;
     }
-    auto arg_or = LowerProcExpr(proc, frame, *arg);
+    auto arg_or = proc.LowerExpr(*arg, frame);
     if (!arg_or) return std::unexpected(std::move(arg_or.error()));
     if (i == 0) {
       receiver_type = arg_or->type;
     }
-    arg_ids.emplace_back(proc.AddExpr(*std::move(arg_or)));
+    arg_ids.emplace_back(
+        frame.current_procedural_body->AddExpr(*std::move(arg_or)));
   }
 
   if (call.isSystemCall()) {
@@ -94,14 +95,15 @@ auto LowerCallExprProc(
         std::get<slang::ast::CallExpression::SystemCallInfo>(call.subroutine);
     const std::string_view name = info.subroutine->name;
 
-    if (receiver_type.has_value() && module.GetType(*receiver_type).IsEnum()) {
+    if (receiver_type.has_value() &&
+        module.Unit().GetType(*receiver_type).IsEnum()) {
       if (auto kind = LowerEnumMethodName(name); kind.has_value()) {
         // `next` / `prev` have an optional `int unsigned step = 1` (LRM
         // 6.19.5.3/4). When the user omits the step, the lowering hands the
         // backend a single-argument call and lets the backend's intrinsic
         // mechanism supply the default (C++ default-argument; LLVM constant
         // 1; etc.). No synthesized literal is injected at the HIR boundary.
-        auto type_id = module.GetTypeIdOf(expr);
+        auto type_id = module.InternType(*call.type, span);
         if (!type_id) return std::unexpected(std::move(type_id.error()));
         return hir::Expr{
             .type = *type_id,
@@ -116,12 +118,13 @@ auto LowerCallExprProc(
     }
 
     if (receiver_type.has_value() &&
-        module.GetType(*receiver_type).Kind() == hir::TypeKind::kString) {
+        module.Unit().GetType(*receiver_type).Kind() ==
+            hir::TypeKind::kString) {
       if (auto kind = LowerStringMethodName(name); kind.has_value()) {
         // LRM 6.16.1 through 6.16.15 -- string intrinsic methods. The
         // receiver is arguments[0]; remaining arguments are the SV method
         // parameters (e.g. substr's `i, j`).
-        auto type_id = module.GetTypeIdOf(expr);
+        auto type_id = module.InternType(*call.type, span);
         if (!type_id) return std::unexpected(std::move(type_id.error()));
         return hir::Expr{
             .type = *type_id,
@@ -137,13 +140,13 @@ auto LowerCallExprProc(
 
     if (receiver_type.has_value() &&
         std::holds_alternative<hir::EventType>(
-            module.GetType(*receiver_type).data) &&
+            module.Unit().GetType(*receiver_type).data) &&
         name == "triggered") {
       // LRM 15.5.3: `e.triggered` returns true for the duration of the time
       // slot in which the event was last triggered. Result type is bit (1'b0
       // / 1'b1) -- slang already typed the expression; we just route the
       // call through the named-event method.
-      auto type_id = module.GetTypeIdOf(expr);
+      auto type_id = module.InternType(*call.type, span);
       if (!type_id) return std::unexpected(std::move(type_id.error()));
       return hir::Expr{
           .type = *type_id,
@@ -161,14 +164,14 @@ auto LowerCallExprProc(
 
     if (receiver_type.has_value() &&
         std::holds_alternative<hir::DynamicArrayType>(
-            module.GetType(*receiver_type).data)) {
+            module.Unit().GetType(*receiver_type).data)) {
       if (auto kind = LowerArrayMethodName(name); kind.has_value()) {
         // LRM 7.5.2 / 7.5.3 dynamic-array methods plus LRM 7.12.2 / 7.12.3
         // family. The no-`with` form takes only the receiver. The `with`
         // form (LRM 7.12.4) binds an iterator and a body expression which
         // HIR carries as the optional `WithClause` -- HIR -> MIR turns it
         // into a closure argument.
-        auto type_id = module.GetTypeIdOf(expr);
+        auto type_id = module.InternType(*call.type, span);
         if (!type_id) return std::unexpected(std::move(type_id.error()));
         std::optional<hir::WithClause> with_clause;
         if (std::holds_alternative<
@@ -178,15 +181,16 @@ auto LowerCallExprProc(
                   info.extraInfo);
           const auto& iter_var =
               iter_info.iterVar->as<slang::ast::VariableSymbol>();
-          auto iter_type = module.GetTypeId(iter_var.getType(), span);
+          auto iter_type = module.InternType(iter_var.getType(), span);
           if (!iter_type) {
             return std::unexpected(std::move(iter_type.error()));
           }
-          const hir::ProceduralVarId iterator_id =
-              proc.AddProceduralVar(iter_var, *iter_type);
-          auto body_or = LowerProcExpr(proc, frame, *iter_info.iterExpr);
+          const hir::ProceduralVarId iterator_id = proc.AddProceduralVar(
+              *frame.current_procedural_body, iter_var, *iter_type);
+          auto body_or = proc.LowerExpr(*iter_info.iterExpr, frame);
           if (!body_or) return std::unexpected(std::move(body_or.error()));
-          const auto body_expr_id = proc.AddExpr(*std::move(body_or));
+          const auto body_expr_id =
+              frame.current_procedural_body->AddExpr(*std::move(body_or));
           with_clause =
               hir::WithClause{.iterator = iterator_id, .expr = body_expr_id};
         }
@@ -211,7 +215,7 @@ auto LowerCallExprProc(
     if (info.subroutine != nullptr &&
         info.subroutine->knownNameId ==
             slang::parsing::KnownSystemName::Index) {
-      auto type_id = module.GetTypeIdOf(expr);
+      auto type_id = module.InternType(*call.type, span);
       if (!type_id) return std::unexpected(std::move(type_id.error()));
       return hir::Expr{
           .type = *type_id,
@@ -246,7 +250,7 @@ auto LowerCallExprProc(
     }
 
     const auto result_type =
-        MakeReturnConventionType(module, desc->result_conv);
+        MakeReturnConventionType(module.Unit().builtins, desc->result_conv);
     return hir::Expr{
         .type = result_type,
         .data =
@@ -276,7 +280,7 @@ auto LowerCallExprProc(
         "AST->HIR call: user subroutine owner frame is not on the current "
         "scope stack");
   }
-  auto result_type = module.GetTypeIdOf(expr);
+  auto result_type = module.InternType(*call.type, span);
   if (!result_type) return std::unexpected(std::move(result_type.error()));
   return hir::Expr{
       .type = *result_type,

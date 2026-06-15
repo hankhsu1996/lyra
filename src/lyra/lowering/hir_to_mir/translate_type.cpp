@@ -1,12 +1,10 @@
-#include "lyra/lowering/hir_to_mir/lower_type.hpp"
-
 #include <variant>
 #include <vector>
 
 #include "lyra/base/internal_error.hpp"
 #include "lyra/base/overloaded.hpp"
 #include "lyra/hir/type.hpp"
-#include "lyra/lowering/hir_to_mir/state.hpp"
+#include "lyra/lowering/hir_to_mir/module_lowerer.hpp"
 #include "lyra/mir/type.hpp"
 
 namespace lyra::lowering::hir_to_mir {
@@ -62,8 +60,7 @@ auto TranslatePackedRanges(const std::vector<hir::PackedRange>& src)
 
 }  // namespace
 
-auto TranslateTypeData(
-    const hir::TypeData& data, const UnitLoweringState& state)
+auto ModuleLowerer::TranslateTypeData(const hir::TypeData& data) const
     -> mir::TypeData {
   return std::visit(
       Overloaded{
@@ -105,7 +102,7 @@ auto TranslateTypeData(
             // unwrap via Type::AsIntegralPacked(); method dispatch reads the
             // members from this struct directly.
             const auto& base_mir_data =
-                state.GetType(state.TranslateType(src.base_type)).data;
+                Unit().GetType(TranslateType(src.base_type)).data;
             const auto* base_pa =
                 std::get_if<mir::PackedArrayType>(&base_mir_data);
             if (base_pa == nullptr) {
@@ -133,29 +130,28 @@ auto TranslateTypeData(
                                           ? (src.dim.left - src.dim.right)
                                           : (src.dim.right - src.dim.left);
             return mir::UnpackedArrayType{
-                .element_type = state.TranslateType(src.element_type),
+                .element_type = TranslateType(src.element_type),
                 .size = static_cast<std::uint64_t>(span) + 1U,
             };
           },
           [&](const hir::DynamicArrayType& src) -> mir::TypeData {
             return mir::DynamicArrayType{
-                .element_type = state.TranslateType(src.element_type),
+                .element_type = TranslateType(src.element_type),
             };
           },
           [&](const hir::QueueType& src) -> mir::TypeData {
             return mir::QueueType{
-                .element_type = state.TranslateType(src.element_type),
+                .element_type = TranslateType(src.element_type),
                 .max_bound = src.max_bound,
             };
           },
           [&](const hir::AssociativeArrayType& src) -> mir::TypeData {
             return mir::AssociativeArrayType{
-                .element_type = state.TranslateType(src.element_type),
-                .key_type =
-                    src.key_type.has_value()
-                        ? std::optional<mir::TypeId>{state.TranslateType(
-                              *src.key_type)}
-                        : std::nullopt,
+                .element_type = TranslateType(src.element_type),
+                .key_type = src.key_type.has_value()
+                                ? std::optional<mir::TypeId>{TranslateType(
+                                      *src.key_type)}
+                                : std::nullopt,
             };
           },
           [](const hir::StringType&) -> mir::TypeData {

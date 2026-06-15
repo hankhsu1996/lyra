@@ -12,11 +12,11 @@
 #include "lyra/diag/diagnostic.hpp"
 #include "lyra/diag/kind.hpp"
 #include "lyra/lowering/ast_to_hir/module_lowerer.hpp"
-#include "lyra/lowering/ast_to_hir/scope_lowerer.hpp"
+#include "lyra/lowering/ast_to_hir/structural_scope_lowerer.hpp"
 
 namespace lyra::lowering::ast_to_hir {
 
-auto ScopeLowerer::LowerContinuousAssign(
+auto StructuralScopeLowerer::LowerContinuousAssign(
     const slang::ast::ContinuousAssignSymbol& sym, WalkFrame frame)
     -> diag::Result<hir::ContinuousAssign> {
   const auto& mapper = module_->SourceMapper();
@@ -39,7 +39,7 @@ auto ScopeLowerer::LowerContinuousAssign(
   const auto& assignment_expr = sym.getAssignment();
   if (assignment_expr.kind != slang::ast::ExpressionKind::Assignment) {
     throw InternalError(
-        "ScopeLowerer::LowerContinuousAssign: ContinuousAssignSymbol."
+        "StructuralScopeLowerer::LowerContinuousAssign: ContinuousAssignSymbol."
         "getAssignment() did not return an AssignmentExpression");
   }
   const auto& assign = assignment_expr.as<slang::ast::AssignmentExpression>();
@@ -51,11 +51,13 @@ auto ScopeLowerer::LowerContinuousAssign(
   }
   auto lhs_or = LowerExpr(assign.left(), frame);
   if (!lhs_or) return std::unexpected(std::move(lhs_or.error()));
-  const hir::ExprId lhs_id = AddExpr(*std::move(lhs_or));
+  const hir::ExprId lhs_id =
+      frame.current_structural_scope->AddExpr(*std::move(lhs_or));
 
   auto rhs_or = LowerExpr(assign.right(), frame);
   if (!rhs_or) return std::unexpected(std::move(rhs_or.error()));
-  const hir::ExprId rhs_id = AddExpr(*std::move(rhs_or));
+  const hir::ExprId rhs_id =
+      frame.current_structural_scope->AddExpr(*std::move(rhs_or));
 
   // LRM 10.3.2: continuous assignment sensitivity is the read set of the
   // RHS expression. slang treats the ContinuousAssignSymbol as the

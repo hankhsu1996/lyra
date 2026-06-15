@@ -21,14 +21,13 @@ namespace lyra::lowering::ast_to_hir {
 
 auto LowerAssignmentExprProc(
     ProcessLowerer& proc, WalkFrame frame,
-    const slang::ast::AssignmentExpression& as,
-    const slang::ast::Expression& expr, diag::SourceSpan span)
+    const slang::ast::AssignmentExpression& as, diag::SourceSpan span)
     -> diag::Result<hir::Expr>;
 
 auto LowerIncDecExprProc(
     ProcessLowerer& proc, WalkFrame frame,
-    const slang::ast::UnaryExpression& un, const slang::ast::Expression& expr,
-    diag::SourceSpan span) -> diag::Result<hir::Expr>;
+    const slang::ast::UnaryExpression& un, diag::SourceSpan span)
+    -> diag::Result<hir::Expr>;
 
 // Walks a slang assignment-target expression and rejects any form that is
 // not addressable. `procedural_context` distinguishes the rule for procedural

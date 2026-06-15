@@ -20,8 +20,8 @@
 #include "lyra/hir/continuous_assign.hpp"
 #include "lyra/hir/structural_scope.hpp"
 #include "lyra/lowering/ast_to_hir/module_lowerer.hpp"
-#include "lyra/lowering/ast_to_hir/scope_lowerer.hpp"
 #include "lyra/lowering/ast_to_hir/sensitivity.hpp"
+#include "lyra/lowering/ast_to_hir/structural_scope_lowerer.hpp"
 
 namespace lyra::lowering::ast_to_hir {
 
@@ -48,7 +48,7 @@ auto ArrayElementInstance(const slang::ast::InstanceArraySymbol& array)
 }
 
 auto PopulateInstancePortConnections(
-    ScopeLowerer& scope, ModuleLowerer& module,
+    StructuralScopeLowerer& scope, ModuleLowerer& module,
     const slang::ast::InstanceSymbol& inst, WalkFrame frame)
     -> diag::Result<void> {
   const auto span = module.SourceMapper().PointSpanOf(inst.location);
@@ -101,7 +101,7 @@ auto PopulateInstancePortConnections(
           span, "unconnected port default value is not yet supported");
     }
 
-    auto type_id = module.GetTypeId(port_type, span);
+    auto type_id = module.InternType(port_type, span);
     if (!type_id) return std::unexpected(std::move(type_id.error()));
     hir::Expr child_ref = module.MakeCrossUnitMemberRef(
         *internal, binding->home_frame, binding->head,
@@ -111,10 +111,12 @@ auto PopulateInstancePortConnections(
       // Input: the parent-side source drives the child port.
       auto rhs_or = scope.LowerExpr(*expr, frame);
       if (!rhs_or) return std::unexpected(std::move(rhs_or.error()));
-      const hir::ExprId lhs_id = scope.AddExpr(std::move(child_ref));
-      const hir::ExprId rhs_id = scope.AddExpr(*std::move(rhs_or));
+      const hir::ExprId lhs_id =
+          frame.current_structural_scope->AddExpr(std::move(child_ref));
+      const hir::ExprId rhs_id =
+          frame.current_structural_scope->AddExpr(*std::move(rhs_or));
       const auto& reads = module.Sensitivity().AnalyzeReads(*expr, inst);
-      scope.AddContinuousAssign(
+      frame.current_structural_scope->AddContinuousAssign(
           hir::ContinuousAssign{
               .span = span,
               .lhs = lhs_id,
@@ -135,12 +137,14 @@ auto PopulateInstancePortConnections(
     const auto& assign = expr->as<slang::ast::AssignmentExpression>();
     auto lhs_or = scope.LowerExpr(assign.left(), frame);
     if (!lhs_or) return std::unexpected(std::move(lhs_or.error()));
-    const hir::ExprId lhs_id = scope.AddExpr(*std::move(lhs_or));
-    const hir::ExprId rhs_id = scope.AddExpr(std::move(child_ref));
+    const hir::ExprId lhs_id =
+        frame.current_structural_scope->AddExpr(*std::move(lhs_or));
+    const hir::ExprId rhs_id =
+        frame.current_structural_scope->AddExpr(std::move(child_ref));
     const std::uint64_t width = port_type.getBitWidth();
     const std::vector<SensitivityRead> reads{
         SensitivityRead{.symbol = internal, .bit_range = {0, width - 1}}};
-    scope.AddContinuousAssign(
+    frame.current_structural_scope->AddContinuousAssign(
         hir::ContinuousAssign{
             .span = span,
             .lhs = lhs_id,
@@ -153,7 +157,7 @@ auto PopulateInstancePortConnections(
 
 }  // namespace
 
-auto ScopeLowerer::PopulatePortConnections(
+auto StructuralScopeLowerer::PopulatePortConnections(
     const slang::ast::Scope& slang_scope, WalkFrame frame)
     -> diag::Result<void> {
   for (const auto& member : slang_scope.members()) {

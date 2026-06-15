@@ -18,6 +18,7 @@
 namespace lyra::mir {
 
 struct Stmt;
+struct ProceduralScope;
 
 struct StmtId {
   std::uint32_t value;
@@ -30,21 +31,6 @@ struct ProceduralScopeId {
 
   auto operator<=>(const ProceduralScopeId&) const
       -> std::strong_ordering = default;
-};
-
-struct ProceduralScope {
-  std::vector<ProceduralVarDecl> vars;
-  std::vector<Expr> exprs;
-  std::vector<Stmt> stmts;
-  std::vector<StmtId> root_stmts;
-
-  [[nodiscard]] auto GetExpr(ExprId id) const -> const Expr& {
-    return exprs.at(id.value);
-  }
-
-  [[nodiscard]] auto GetExprType(ExprId id) const -> TypeId {
-    return GetExpr(id).type;
-  }
 };
 
 // A static-lifetime body local (LRM 13.3.1). It does not live in the
@@ -82,7 +68,7 @@ enum class JoinMode : std::uint8_t {
 };
 
 // LRM 9.3.2 parallel block. The fork is itself a procedural scope: `scope`
-// (in the owning stmt's child_procedural_scopes) holds the
+// (in the enclosing procedural scope's child_scopes) holds the
 // block_item_declaration locals, which are initialized at block entry -- in the
 // parent, before any branch spawns -- giving each spawned branch a by-value
 // snapshot. Each branch is a closure (a captured callable value) in `scope`'s
@@ -208,7 +194,103 @@ using StmtData = std::variant<
 struct Stmt {
   std::optional<std::string> label;
   StmtData data;
-  std::vector<ProceduralScope> child_procedural_scopes;
+};
+
+// `{...}` in MIR: an arena for the four kinds of locally-owned IR nodes (vars,
+// exprs, stmts, child scopes) plus the ordered execution sequence at this
+// brace level (`root_stmts`). All four IDs are scope-local: `ExprId`, `StmtId`,
+// `ProceduralVarId`, and `ProceduralScopeId` resolve against the same
+// ProceduralScope that introduces them. Cross-scope variable references carry
+// hops; cross-scope statement / expression / scope references do not exist --
+// each ProceduralScope is a self-contained subtree.
+struct ProceduralScope {
+  std::vector<ProceduralVarDecl> vars;
+  std::vector<Expr> exprs;
+  std::vector<Stmt> stmts;
+  std::vector<ProceduralScope> child_scopes;
+  std::vector<StmtId> root_stmts;
+
+  [[nodiscard]] auto GetExpr(ExprId id) const -> const Expr& {
+    return exprs.at(id.value);
+  }
+
+  [[nodiscard]] auto GetExprType(ExprId id) const -> TypeId {
+    return GetExpr(id).type;
+  }
+
+  [[nodiscard]] auto GetStmt(StmtId id) const -> const Stmt& {
+    return stmts.at(id.value);
+  }
+
+  [[nodiscard]] auto GetChildScope(ProceduralScopeId id) const
+      -> const ProceduralScope& {
+    return child_scopes.at(id.value);
+  }
+
+  auto AddProceduralVar(ProceduralVarDecl decl) -> ProceduralVarId {
+    const ProceduralVarId id{static_cast<std::uint32_t>(vars.size())};
+    vars.push_back(std::move(decl));
+    return id;
+  }
+  [[nodiscard]] auto GetProceduralVar(ProceduralVarId id) const
+      -> const ProceduralVarDecl& {
+    return vars.at(id.value);
+  }
+  auto AddExpr(Expr expr) -> ExprId {
+    const ExprId id{static_cast<std::uint32_t>(exprs.size())};
+    exprs.push_back(std::move(expr));
+    return id;
+  }
+  auto AddStmt(Stmt stmt) -> StmtId {
+    const StmtId id{static_cast<std::uint32_t>(stmts.size())};
+    stmts.push_back(std::move(stmt));
+    return id;
+  }
+  auto AddChildScope(ProceduralScope scope) -> ProceduralScopeId {
+    const ProceduralScopeId id{static_cast<std::uint32_t>(child_scopes.size())};
+    child_scopes.push_back(std::move(scope));
+    return id;
+  }
+  void AddRootStmt(StmtId id) {
+    root_stmts.push_back(id);
+  }
+  auto AppendStmt(Stmt stmt) -> StmtId {
+    const StmtId id = AddStmt(std::move(stmt));
+    root_stmts.push_back(id);
+    return id;
+  }
+
+  // Append a label-less statement to the body in one step: stage it in the
+  // stmts arena and register it as a root statement. Encapsulates the
+  // AddStmt-then-push pairing so a synthesized statement cannot be added to
+  // the arena yet left out of the executed sequence.
+  auto AppendStmt(StmtData data) -> StmtId {
+    return AppendStmt(Stmt{.label = std::nullopt, .data = std::move(data)});
+  }
+
+  // Declare a body-local variable: register it in the var arena and emit its
+  // declaration statement in the body. The two must co-occur for a genuine
+  // local, so they are exposed as one operation. (A subroutine formal is a
+  // ProceduralVar declared in the signature, not the body, and uses bare
+  // AddProceduralVar instead.)
+  auto AppendLocal(ProceduralVarDecl decl, ExprId init) -> ProceduralVarRef {
+    const ProceduralVarId var = AddProceduralVar(std::move(decl));
+    const ProceduralVarRef ref{.hops = ProceduralHops{.value = 0}, .var = var};
+    AppendStmt(ProceduralVarDeclStmt{.target = ref, .init = init});
+    return ref;
+  }
+
+  // Append an `if (cond) <then_body>` statement, registering `then_body` as a
+  // child scope of this scope and consuming it. The IfStmt's then_scope id
+  // resolves against this scope's child_scopes.
+  auto AppendIfThen(ExprId cond, ProceduralScope then_body) -> StmtId {
+    const ProceduralScopeId then_scope_id = AddChildScope(std::move(then_body));
+    return AppendStmt(
+        IfStmt{
+            .condition = cond,
+            .then_scope = then_scope_id,
+            .else_scope = std::nullopt});
+  }
 };
 
 }  // namespace lyra::mir

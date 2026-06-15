@@ -28,6 +28,23 @@ struct ProceduralBody {
       -> const ProceduralVarDecl& {
     return procedural_vars.at(id.value);
   }
+
+  auto AddExpr(Expr expr) -> ExprId {
+    const ExprId id{static_cast<std::uint32_t>(exprs.size())};
+    exprs.push_back(std::move(expr));
+    return id;
+  }
+  auto AddStmt(Stmt stmt) -> StmtId {
+    const StmtId id{static_cast<std::uint32_t>(stmts.size())};
+    stmts.push_back(std::move(stmt));
+    return id;
+  }
+  auto AddProceduralVar(ProceduralVarDecl decl) -> ProceduralVarId {
+    const ProceduralVarId id{
+        static_cast<std::uint32_t>(procedural_vars.size())};
+    procedural_vars.push_back(std::move(decl));
+    return id;
+  }
 };
 
 }  // namespace lyra::hir

@@ -17,7 +17,7 @@
 #include "lyra/hir/structural_scope.hpp"
 #include "lyra/lowering/ast_to_hir/expression/slang_atoms.hpp"
 #include "lyra/lowering/ast_to_hir/module_lowerer.hpp"
-#include "lyra/lowering/ast_to_hir/scope_lowerer.hpp"
+#include "lyra/lowering/ast_to_hir/structural_scope_lowerer.hpp"
 
 namespace lyra::lowering::ast_to_hir {
 
@@ -67,35 +67,30 @@ auto DeriveLoopVariableSubstitution(
   return found;
 }
 
-// Adds a generate child scope: constructs a fresh ScopeLowerer for the slang
-// block, runs it, registers the owned-child binding.
+// Adds a generate child scope: lowers it into a fresh `hir::StructuralScope`,
+// installs it into the generate, and registers the owned-child binding.
 auto AddChildScope(
     ModuleLowerer& module, hir::Generate& generate, ScopeFrameId home_frame,
     hir::GenerateId generate_id, const slang::ast::GenerateBlockSymbol& block,
     WalkFrame frame) -> diag::Result<hir::StructuralScopeId> {
-  hir::StructuralScope scope;
-  scope.source_name = std::string{block.name};
+  StructuralScopeLowerer child(module, block);
+  auto scope_or = child.Run(frame);
+  if (!scope_or) return std::unexpected(std::move(scope_or.error()));
+  scope_or->source_name = std::string{block.name};
 
-  // Insert the scope first so we can pass its inner reference to the child
-  // lowerer; child writes go into the inserted scope.
   const hir::StructuralScopeId scope_id =
-      AddChildStructuralScope(generate, std::move(scope));
-  auto& inserted_scope = generate.child_scopes.at(scope_id.value);
-
-  ScopeLowerer child(module, inserted_scope, block);
+      AddChildStructuralScope(generate, *std::move(scope_or));
   module.MapOwnedChildBinding(
       block, home_frame,
       hir::DownwardHead{
           .child = hir::GenerateChildRef{
               .generate = generate_id, .scope = scope_id}});
-  auto r = child.Run(frame);
-  if (!r) return std::unexpected(std::move(r.error()));
   return scope_id;
 }
 
 }  // namespace
 
-auto ScopeLowerer::BuildIfGenerate(
+auto StructuralScopeLowerer::BuildIfGenerate(
     std::span<const slang::ast::GenerateBlockSymbol* const> siblings,
     WalkFrame frame) -> diag::Result<hir::Generate> {
   const slang::ast::GenerateBlockSymbol* then_block = nullptr;
@@ -110,34 +105,39 @@ auto ScopeLowerer::BuildIfGenerate(
         break;
       default:
         throw InternalError(
-            "ScopeLowerer::BuildIfGenerate: unexpected branch kind in "
+            "StructuralScopeLowerer::BuildIfGenerate: unexpected branch kind "
+            "in "
             "if-generate sibling group");
     }
   }
   if (then_block == nullptr) {
     throw InternalError(
-        "ScopeLowerer::BuildIfGenerate: if-generate group has no IfTrue "
+        "StructuralScopeLowerer::BuildIfGenerate: if-generate group has no "
+        "IfTrue "
         "branch");
   }
   const auto* cond = then_block->getConditionExpression();
   if (cond == nullptr) {
     throw InternalError(
-        "ScopeLowerer::BuildIfGenerate: IfTrue branch has no bound "
+        "StructuralScopeLowerer::BuildIfGenerate: IfTrue branch has no bound "
         "condition expression");
   }
   if (else_block != nullptr && else_block->getConditionExpression() != cond) {
     throw InternalError(
-        "ScopeLowerer::BuildIfGenerate: sibling branches have mismatched "
+        "StructuralScopeLowerer::BuildIfGenerate: sibling branches have "
+        "mismatched "
         "condition expressions");
   }
 
   auto cond_expr = LowerExpr(*cond, frame);
   if (!cond_expr) return std::unexpected(std::move(cond_expr.error()));
-  const hir::ExprId cond_id = AddExpr(*std::move(cond_expr));
+  const hir::ExprId cond_id =
+      frame.current_structural_scope->AddExpr(*std::move(cond_expr));
 
   hir::Generate gen{};
   const ScopeFrameId gen_frame = frame_;
-  const hir::GenerateId gen_id = NextGenerateId();
+  const hir::GenerateId gen_id =
+      frame.current_structural_scope->NextGenerateId();
 
   auto then_id =
       AddChildScope(*module_, gen, gen_frame, gen_id, *then_block, frame);
@@ -156,34 +156,38 @@ auto ScopeLowerer::BuildIfGenerate(
   return gen;
 }
 
-auto ScopeLowerer::BuildCaseGenerate(
+auto StructuralScopeLowerer::BuildCaseGenerate(
     std::span<const slang::ast::GenerateBlockSymbol* const> siblings,
     WalkFrame frame) -> diag::Result<hir::Generate> {
   if (siblings.empty()) {
     throw InternalError(
-        "ScopeLowerer::BuildCaseGenerate: case-generate sibling group is "
+        "StructuralScopeLowerer::BuildCaseGenerate: case-generate sibling "
+        "group is "
         "empty");
   }
   const auto* discriminator = siblings.front()->getConditionExpression();
   if (discriminator == nullptr) {
     throw InternalError(
-        "ScopeLowerer::BuildCaseGenerate: sibling has no condition expression");
+        "StructuralScopeLowerer::BuildCaseGenerate: sibling has no condition "
+        "expression");
   }
   for (const auto* block : siblings) {
     if (block->getConditionExpression() != discriminator) {
       throw InternalError(
-          "ScopeLowerer::BuildCaseGenerate: siblings have mismatched "
+          "StructuralScopeLowerer::BuildCaseGenerate: siblings have mismatched "
           "condition expressions");
     }
   }
 
   auto cond_expr = LowerExpr(*discriminator, frame);
   if (!cond_expr) return std::unexpected(std::move(cond_expr.error()));
-  const hir::ExprId cond_id = AddExpr(*std::move(cond_expr));
+  const hir::ExprId cond_id =
+      frame.current_structural_scope->AddExpr(*std::move(cond_expr));
 
   hir::Generate gen{};
   const ScopeFrameId gen_frame = frame_;
-  const hir::GenerateId gen_id = NextGenerateId();
+  const hir::GenerateId gen_id =
+      frame.current_structural_scope->NextGenerateId();
 
   std::vector<hir::CaseGenerateItem> items;
   std::optional<hir::StructuralScopeId> default_id;
@@ -198,7 +202,8 @@ auto ScopeLowerer::BuildCaseGenerate(
           if (!label_expr_lowered) {
             return std::unexpected(std::move(label_expr_lowered.error()));
           }
-          labels.push_back(AddExpr(*std::move(label_expr_lowered)));
+          labels.push_back(frame.current_structural_scope->AddExpr(
+              *std::move(label_expr_lowered)));
         }
         auto item_id =
             AddChildScope(*module_, gen, gen_frame, gen_id, *block, frame);
@@ -211,7 +216,8 @@ auto ScopeLowerer::BuildCaseGenerate(
       case slang::ast::GenerateBranchKind::CaseDefault: {
         if (default_id.has_value()) {
           throw InternalError(
-              "ScopeLowerer::BuildCaseGenerate: case-generate has more than "
+              "StructuralScopeLowerer::BuildCaseGenerate: case-generate has "
+              "more than "
               "one default branch");
         }
         auto built =
@@ -222,7 +228,8 @@ auto ScopeLowerer::BuildCaseGenerate(
       }
       default:
         throw InternalError(
-            "ScopeLowerer::BuildCaseGenerate: unexpected branch kind in "
+            "StructuralScopeLowerer::BuildCaseGenerate: unexpected branch kind "
+            "in "
             "case-generate");
     }
   }
@@ -239,7 +246,7 @@ namespace {
 // Lower the iter expression of a loop_generate header into the loop's
 // next-value expression for its loop variable (LRM 27.5).
 auto LowerLoopIterNextValue(
-    ScopeLowerer& parent, ModuleLowerer& module,
+    StructuralScopeLowerer& parent, ModuleLowerer& module,
     const slang::ast::Expression& iter, WalkFrame frame)
     -> diag::Result<hir::Expr> {
   const auto& mapper = module.SourceMapper();
@@ -259,14 +266,16 @@ auto LowerLoopIterNextValue(
 
   auto read = parent.LowerExpr(assign.left(), frame);
   if (!read) return std::unexpected(std::move(read.error()));
-  const hir::ExprId read_id = parent.AddExpr(*std::move(read));
+  const hir::ExprId read_id =
+      frame.current_structural_scope->AddExpr(*std::move(read));
 
   const auto& bare_rhs = BareCompoundUserRhs(assign.right());
   auto rhs = parent.LowerExpr(bare_rhs, frame);
   if (!rhs) return std::unexpected(std::move(rhs.error()));
-  const hir::ExprId rhs_id = parent.AddExpr(*std::move(rhs));
+  const hir::ExprId rhs_id =
+      frame.current_structural_scope->AddExpr(*std::move(rhs));
 
-  auto type_id = module.GetTypeId(*iter.type, span);
+  auto type_id = module.InternType(*iter.type, span);
   if (!type_id) return std::unexpected(std::move(type_id.error()));
   return hir::Expr{
       .type = *type_id,
@@ -279,51 +288,51 @@ auto LowerLoopIterNextValue(
 
 }  // namespace
 
-auto ScopeLowerer::BuildLoopGenerate(
+auto StructuralScopeLowerer::BuildLoopGenerate(
     const slang::ast::GenerateBlockArraySymbol& array, WalkFrame frame)
     -> diag::Result<hir::Generate> {
   const auto* loop_var_sym = array.loopVariable;
   if (loop_var_sym == nullptr || array.initialExpression == nullptr ||
       array.stopExpression == nullptr || array.iterExpression == nullptr) {
     throw InternalError(
-        "ScopeLowerer::BuildLoopGenerate: GenerateBlockArraySymbol is "
+        "StructuralScopeLowerer::BuildLoopGenerate: GenerateBlockArraySymbol "
+        "is "
         "missing loopVariable or bound header expressions");
   }
 
   const auto var_span =
       module_->SourceMapper().PointSpanOf(loop_var_sym->location);
-  auto loop_var_type_or = module_->GetTypeId(loop_var_sym->getType(), var_span);
+  auto loop_var_type_or =
+      module_->InternType(loop_var_sym->getType(), var_span);
   if (!loop_var_type_or) {
     return std::unexpected(std::move(loop_var_type_or.error()));
   }
 
   const hir::LoopVarDeclId loop_var_id =
-      AddLoopVarDecl(*loop_var_sym, *loop_var_type_or);
+      frame.current_structural_scope->AddLoopVarDecl(
+          hir::LoopVarDecl{
+              .name = std::string{loop_var_sym->name},
+              .type = *loop_var_type_or});
+  module_->MapLoopVarBinding(
+      *loop_var_sym, frame_, loop_var_id, *loop_var_type_or);
 
   auto initial_expr = LowerExpr(*array.initialExpression, frame);
   if (!initial_expr) return std::unexpected(std::move(initial_expr.error()));
-  const hir::ExprId initial_id = AddExpr(*std::move(initial_expr));
+  const hir::ExprId initial_id =
+      frame.current_structural_scope->AddExpr(*std::move(initial_expr));
 
   auto stop_expr = LowerExpr(*array.stopExpression, frame);
   if (!stop_expr) return std::unexpected(std::move(stop_expr.error()));
-  const hir::ExprId stop_id = AddExpr(*std::move(stop_expr));
+  const hir::ExprId stop_id =
+      frame.current_structural_scope->AddExpr(*std::move(stop_expr));
 
   auto iter_expr =
       LowerLoopIterNextValue(*this, *module_, *array.iterExpression, frame);
   if (!iter_expr) return std::unexpected(std::move(iter_expr.error()));
-  const hir::ExprId iter_id = AddExpr(*std::move(iter_expr));
+  const hir::ExprId iter_id =
+      frame.current_structural_scope->AddExpr(*std::move(iter_expr));
 
-  hir::Generate gen{};
-  hir::StructuralScope loop_scope_seed;
-  loop_scope_seed.source_name = std::string{array.name};
-  const hir::StructuralScopeId loop_scope_id =
-      AddChildStructuralScope(gen, std::move(loop_scope_seed));
-  module_->MapOwnedChildBinding(
-      array, frame_,
-      hir::DownwardHead{
-          .child = hir::GenerateChildRef{
-              .generate = NextGenerateId(), .scope = loop_scope_id}});
-
+  hir::StructuralScope loop_scope;
   if (!array.entries.empty()) {
     const auto& canonical_entry = *array.entries.front();
     const auto* body_param =
@@ -337,12 +346,23 @@ auto ScopeLowerer::BuildLoopGenerate(
             .type = *loop_var_type_or,
         }};
 
-    auto& loop_scope = gen.child_scopes.at(loop_scope_id.value);
-    ScopeLowerer child(
-        *module_, loop_scope, canonical_entry, std::move(body_bindings));
-    auto r = child.Run(frame);
-    if (!r) return std::unexpected(std::move(r.error()));
+    StructuralScopeLowerer child(
+        *module_, canonical_entry, std::move(body_bindings));
+    auto child_or = child.Run(frame);
+    if (!child_or) return std::unexpected(std::move(child_or.error()));
+    loop_scope = *std::move(child_or);
   }
+  loop_scope.source_name = std::string{array.name};
+
+  hir::Generate gen{};
+  const hir::StructuralScopeId loop_scope_id =
+      AddChildStructuralScope(gen, std::move(loop_scope));
+  module_->MapOwnedChildBinding(
+      array, frame_,
+      hir::DownwardHead{
+          .child = hir::GenerateChildRef{
+              .generate = frame.current_structural_scope->NextGenerateId(),
+              .scope = loop_scope_id}});
 
   gen.data = hir::LoopGenerate{
       .loop_var = loop_var_id,

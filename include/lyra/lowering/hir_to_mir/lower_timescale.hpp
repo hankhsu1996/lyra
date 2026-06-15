@@ -3,8 +3,8 @@
 #include "lyra/diag/diagnostic.hpp"
 #include "lyra/diag/source_span.hpp"
 #include "lyra/hir/expr.hpp"
-#include "lyra/hir/procedural_body.hpp"
-#include "lyra/lowering/hir_to_mir/state.hpp"
+#include "lyra/lowering/hir_to_mir/process_lowerer.hpp"
+#include "lyra/lowering/hir_to_mir/walk_frame.hpp"
 #include "lyra/mir/expr.hpp"
 
 namespace lyra::lowering::hir_to_mir {
@@ -14,18 +14,13 @@ namespace lyra::lowering::hir_to_mir {
 // expressions (the runtime narrows them); the no-argument form restores the
 // defaults.
 auto LowerTimeFormatSystemSubroutineCall(
-    const UnitLoweringState& unit_state,
-    const StructuralScopeLoweringState& scope_state,
-    ProcessLoweringState& proc_state,
-    ProceduralScopeLoweringState& proc_scope_state,
-    const hir::ProceduralBody& hir_proc, const hir::CallExpr& call,
+    ProcessLowerer& process, WalkFrame frame, const hir::CallExpr& call,
     diag::SourceSpan span) -> diag::Result<mir::Expr>;
 
 // Lower `$printtimescale` (LRM 20.4.2, no-argument form) into a void
 // `mir::RuntimeCallExpr` carrying a `RuntimePrintTimescaleCall` with the
 // enclosing scope's name.
-auto LowerPrintTimescaleSystemSubroutineCall(
-    const UnitLoweringState& unit_state,
-    const StructuralScopeLoweringState& scope_state) -> diag::Result<mir::Expr>;
+auto LowerPrintTimescaleSystemSubroutineCall(const ProcessLowerer& process)
+    -> diag::Result<mir::Expr>;
 
 }  // namespace lyra::lowering::hir_to_mir

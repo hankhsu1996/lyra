@@ -22,79 +22,27 @@
 #include "lyra/diag/source_span.hpp"
 #include "lyra/hir/expr.hpp"
 #include "lyra/hir/module_unit.hpp"
-#include "lyra/hir/type.hpp"
 #include "lyra/hir/value_ref.hpp"
-#include "lyra/lowering/ast_to_hir/scope_lowerer.hpp"
 #include "lyra/lowering/ast_to_hir/sensitivity.hpp"
+#include "lyra/lowering/ast_to_hir/structural_scope_lowerer.hpp"
 #include "lyra/lowering/ast_to_hir/walk_frame.hpp"
 
 namespace lyra::lowering::ast_to_hir {
 
 ModuleLowerer::ModuleLowerer(
     const LoweringFacts& facts, const slang::ast::InstanceBodySymbol& body)
-    : facts_(facts), body_(&body) {
-  hir_unit_.name = std::string{body.name};
-  // Intrinsic types are pre-registered so callers reference them by a stable
-  // id rather than re-adding entries on demand. Extend this section when more
-  // synthesized types accumulate (1-bit logic, etc.).
-  builtins_.void_type = AddType(hir::TypeData{hir::VoidType{}});
-  builtins_.int32 = AddType(
-      hir::TypeData{hir::PackedArrayType{
-          .atom = hir::BitAtom::kBit,
-          .signedness = hir::Signedness::kSigned,
-          .dims = {hir::PackedRange{.left = 31, .right = 0}},
-          .form = hir::PackedArrayForm::kInt}});
-  builtins_.integer = AddType(
-      hir::TypeData{hir::PackedArrayType{
-          .atom = hir::BitAtom::kLogic,
-          .signedness = hir::Signedness::kSigned,
-          .dims = {hir::PackedRange{.left = 31, .right = 0}},
-          .form = hir::PackedArrayForm::kInteger}});
-  builtins_.string = AddType(hir::TypeData{hir::StringType{}});
-  builtins_.time = AddType(
-      hir::TypeData{hir::PackedArrayType{
-          .atom = hir::BitAtom::kLogic,
-          .signedness = hir::Signedness::kUnsigned,
-          .dims = {hir::PackedRange{.left = 63, .right = 0}},
-          .form = hir::PackedArrayForm::kTime}});
-  builtins_.realtime = AddType(hir::TypeData{hir::RealTimeType{}});
+    : facts_(facts), body_(&body), unit_{std::string{body.name}} {
 }
 
 auto ModuleLowerer::Run() -> diag::Result<hir::ModuleUnit> {
-  ScopeLowerer root(*this, hir_unit_.root_scope, *body_);
-  auto r = root.Run(WalkFrame{});
-  if (!r) return std::unexpected(std::move(r.error()));
-  return std::move(hir_unit_);
-}
-
-auto ModuleLowerer::AddType(hir::TypeData data) -> hir::TypeId {
-  const hir::TypeId id{static_cast<std::uint32_t>(hir_unit_.types.size())};
-  hir_unit_.types.push_back(hir::Type{.data = std::move(data)});
-  return id;
-}
-
-auto ModuleLowerer::GetType(hir::TypeId id) const -> const hir::Type& {
-  return hir_unit_.GetType(id);
-}
-
-auto ModuleLowerer::GetTypeId(
-    const slang::ast::Type& type, diag::SourceSpan span)
-    -> diag::Result<hir::TypeId> {
-  const auto* canonical = &type.getCanonicalType();
-  const auto it = type_cache_.find(canonical);
-  if (it != type_cache_.end()) {
-    return it->second;
+  WalkFrame frame;
+  StructuralScopeLowerer root(*this, *body_);
+  auto root_scope_or = root.Run(frame);
+  if (!root_scope_or) {
+    return std::unexpected(std::move(root_scope_or.error()));
   }
-  auto data_or = LowerType(type, span);
-  if (!data_or) return std::unexpected(std::move(data_or.error()));
-  const hir::TypeId id = AddType(*std::move(data_or));
-  type_cache_.emplace(canonical, id);
-  return id;
-}
-
-auto ModuleLowerer::GetTypeIdOf(const slang::ast::Expression& e)
-    -> diag::Result<hir::TypeId> {
-  return GetTypeId(*e.type, SourceMapper().SpanOf(e.sourceRange));
+  unit_.root_scope = *std::move(root_scope_or);
+  return std::move(unit_);
 }
 
 auto ModuleLowerer::NextScopeFrameId() -> ScopeFrameId {

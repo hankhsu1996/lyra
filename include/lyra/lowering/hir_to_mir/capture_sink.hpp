@@ -5,9 +5,9 @@
 #include <vector>
 
 #include "lyra/lowering/hir_to_mir/procedural_depth.hpp"
-#include "lyra/lowering/hir_to_mir/state.hpp"
 #include "lyra/mir/expr.hpp"
 #include "lyra/mir/procedural_var.hpp"
+#include "lyra/mir/stmt.hpp"
 
 namespace lyra::lowering::hir_to_mir {
 
@@ -27,7 +27,7 @@ struct CaptureRequest {
 };
 
 // Identity-only capture collector for a closure body. Installed on
-// ProcessLoweringState for the duration of a single closure construction:
+// ProcessLowerer for the duration of a single closure construction:
 // during the body's lowering, any procedural-var reference that resolves above
 // the sink's boundary is rerouted here -- a binding in the body scope is
 // allocated (deduplicated by identity), the reference is rewritten to read that
@@ -40,8 +40,8 @@ struct CaptureRequest {
 class CaptureSink {
  public:
   CaptureSink(
-      ProceduralDepth boundary_depth, ProceduralScopeLoweringState& body,
-      ProceduralScopeLoweringState& outer)
+      ProceduralDepth boundary_depth, mir::ProceduralScope& body,
+      mir::ProceduralScope& outer)
       : boundary_depth_(boundary_depth), body_(&body), outer_(&outer) {
   }
 
@@ -94,8 +94,8 @@ class CaptureSink {
   }
 
   ProceduralDepth boundary_depth_;
-  ProceduralScopeLoweringState* body_;
-  ProceduralScopeLoweringState* outer_;
+  mir::ProceduralScope* body_;
+  mir::ProceduralScope* outer_;
   std::vector<CaptureRequest> requests_;
 };
 

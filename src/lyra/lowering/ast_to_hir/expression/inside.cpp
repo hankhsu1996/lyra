@@ -9,18 +9,19 @@
 
 #include "lyra/diag/diag_code.hpp"
 #include "lyra/diag/kind.hpp"
-#include "lyra/lowering/ast_to_hir/expression/dispatch.hpp"
 #include "lyra/lowering/ast_to_hir/module_lowerer.hpp"
+#include "lyra/lowering/ast_to_hir/process_lowerer.hpp"
 
 namespace lyra::lowering::ast_to_hir {
 
 auto LowerInsideExprProc(
     ProcessLowerer& proc, WalkFrame frame,
-    const slang::ast::InsideExpression& in, const slang::ast::Expression& expr,
-    diag::SourceSpan span) -> diag::Result<hir::Expr> {
-  auto lhs_or = LowerProcExpr(proc, frame, in.left());
+    const slang::ast::InsideExpression& in, diag::SourceSpan span)
+    -> diag::Result<hir::Expr> {
+  auto lhs_or = proc.LowerExpr(in.left(), frame);
   if (!lhs_or) return std::unexpected(std::move(lhs_or.error()));
-  const hir::ExprId lhs_id = proc.AddExpr(*std::move(lhs_or));
+  const hir::ExprId lhs_id =
+      frame.current_procedural_body->AddExpr(*std::move(lhs_or));
 
   std::vector<hir::InsideItem> items;
   items.reserve(in.rangeList().size());
@@ -30,7 +31,7 @@ auto LowerInsideExprProc(
     items.push_back(*std::move(item_or));
   }
 
-  auto type_id = proc.Module().GetTypeIdOf(expr);
+  auto type_id = proc.Module().InternType(*in.type, span);
   if (!type_id) return std::unexpected(std::move(type_id.error()));
   return hir::Expr{
       .type = *type_id,
@@ -52,17 +53,19 @@ auto LowerInsideItemImpl(
           "tolerance-range form in inside operator is not yet supported",
           diag::UnsupportedCategory::kFeature);
     }
-    auto lo_or = LowerProcExpr(proc, frame, vr.left());
+    auto lo_or = proc.LowerExpr(vr.left(), frame);
     if (!lo_or) return std::unexpected(std::move(lo_or.error()));
-    const hir::ExprId lo_id = proc.AddExpr(*std::move(lo_or));
-    auto hi_or = LowerProcExpr(proc, frame, vr.right());
+    const hir::ExprId lo_id =
+        frame.current_procedural_body->AddExpr(*std::move(lo_or));
+    auto hi_or = proc.LowerExpr(vr.right(), frame);
     if (!hi_or) return std::unexpected(std::move(hi_or.error()));
-    const hir::ExprId hi_id = proc.AddExpr(*std::move(hi_or));
+    const hir::ExprId hi_id =
+        frame.current_procedural_body->AddExpr(*std::move(hi_or));
     return hir::InsideRangePair{.lo = lo_id, .hi = hi_id};
   }
-  auto val_or = LowerProcExpr(proc, frame, item_expr);
+  auto val_or = proc.LowerExpr(item_expr, frame);
   if (!val_or) return std::unexpected(std::move(val_or.error()));
-  return proc.AddExpr(*std::move(val_or));
+  return frame.current_procedural_body->AddExpr(*std::move(val_or));
 }
 
 }  // namespace lyra::lowering::ast_to_hir

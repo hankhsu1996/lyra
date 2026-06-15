@@ -11,15 +11,15 @@
 #include "lyra/base/internal_error.hpp"
 #include "lyra/diag/diag_code.hpp"
 #include "lyra/diag/kind.hpp"
-#include "lyra/lowering/ast_to_hir/expression/dispatch.hpp"
 #include "lyra/lowering/ast_to_hir/module_lowerer.hpp"
+#include "lyra/lowering/ast_to_hir/process_lowerer.hpp"
+#include "lyra/lowering/ast_to_hir/structural_scope_lowerer.hpp"
 
 namespace lyra::lowering::ast_to_hir {
 
 auto LowerElementSelectExprProc(
     ProcessLowerer& proc, WalkFrame frame,
-    const slang::ast::ElementSelectExpression& sel,
-    const slang::ast::Expression& expr, diag::SourceSpan span)
+    const slang::ast::ElementSelectExpression& sel, diag::SourceSpan span)
     -> diag::Result<hir::Expr> {
   if (!sel.value().type->isIntegral() && !sel.value().type->isUnpackedArray()) {
     return diag::Unsupported(
@@ -27,15 +27,17 @@ auto LowerElementSelectExprProc(
         "element-select on non-integral operand is not yet supported",
         diag::UnsupportedCategory::kOperation);
   }
-  auto base_or = LowerProcExpr(proc, frame, sel.value());
+  auto base_or = proc.LowerExpr(sel.value(), frame);
   if (!base_or) return std::unexpected(std::move(base_or.error()));
-  const hir::ExprId base_id = proc.AddExpr(*std::move(base_or));
+  const hir::ExprId base_id =
+      frame.current_procedural_body->AddExpr(*std::move(base_or));
 
-  auto idx_or = LowerProcExpr(proc, frame, sel.selector());
+  auto idx_or = proc.LowerExpr(sel.selector(), frame);
   if (!idx_or) return std::unexpected(std::move(idx_or.error()));
-  const hir::ExprId idx_id = proc.AddExpr(*std::move(idx_or));
+  const hir::ExprId idx_id =
+      frame.current_procedural_body->AddExpr(*std::move(idx_or));
 
-  auto type_id = proc.Module().GetTypeIdOf(expr);
+  auto type_id = proc.Module().InternType(*sel.type, span);
   if (!type_id) return std::unexpected(std::move(type_id.error()));
   return hir::Expr{
       .type = *type_id,
@@ -50,8 +52,7 @@ auto LowerElementSelectExprProc(
 
 auto LowerRangeSelectExprProc(
     ProcessLowerer& proc, WalkFrame frame,
-    const slang::ast::RangeSelectExpression& sel,
-    const slang::ast::Expression& expr, diag::SourceSpan span)
+    const slang::ast::RangeSelectExpression& sel, diag::SourceSpan span)
     -> diag::Result<hir::Expr> {
   if (!sel.value().type->isIntegral() && !sel.value().type->isUnpackedArray()) {
     return diag::Unsupported(
@@ -61,17 +62,20 @@ auto LowerRangeSelectExprProc(
         diag::UnsupportedCategory::kOperation);
   }
 
-  auto base_or = LowerProcExpr(proc, frame, sel.value());
+  auto base_or = proc.LowerExpr(sel.value(), frame);
   if (!base_or) return std::unexpected(std::move(base_or.error()));
-  const hir::ExprId base_id = proc.AddExpr(*std::move(base_or));
+  const hir::ExprId base_id =
+      frame.current_procedural_body->AddExpr(*std::move(base_or));
 
-  auto left_or = LowerProcExpr(proc, frame, sel.left());
+  auto left_or = proc.LowerExpr(sel.left(), frame);
   if (!left_or) return std::unexpected(std::move(left_or.error()));
-  const hir::ExprId left_id = proc.AddExpr(*std::move(left_or));
+  const hir::ExprId left_id =
+      frame.current_procedural_body->AddExpr(*std::move(left_or));
 
-  auto right_or = LowerProcExpr(proc, frame, sel.right());
+  auto right_or = proc.LowerExpr(sel.right(), frame);
   if (!right_or) return std::unexpected(std::move(right_or.error()));
-  const hir::ExprId right_id = proc.AddExpr(*std::move(right_or));
+  const hir::ExprId right_id =
+      frame.current_procedural_body->AddExpr(*std::move(right_or));
 
   hir::RangeBounds bounds = [&]() -> hir::RangeBounds {
     switch (sel.getSelectionKind()) {
@@ -89,7 +93,7 @@ auto LowerRangeSelectExprProc(
         "LowerRangeSelectExprProc: unknown slang RangeSelectionKind");
   }();
 
-  auto type_id = proc.Module().GetTypeIdOf(expr);
+  auto type_id = proc.Module().InternType(*sel.type, span);
   if (!type_id) return std::unexpected(std::move(type_id.error()));
   return hir::Expr{
       .type = *type_id,
@@ -104,8 +108,7 @@ auto LowerRangeSelectExprProc(
 
 auto LowerMemberAccessExprProc(
     ProcessLowerer& proc, WalkFrame frame,
-    const slang::ast::MemberAccessExpression& sel,
-    const slang::ast::Expression& expr, diag::SourceSpan span)
+    const slang::ast::MemberAccessExpression& sel, diag::SourceSpan span)
     -> diag::Result<hir::Expr> {
   const auto* field = &sel.member.as<slang::ast::FieldSymbol>();
   if (sel.member.kind != slang::ast::SymbolKind::Field) {
@@ -114,10 +117,11 @@ auto LowerMemberAccessExprProc(
         "member access target is not a struct field",
         diag::UnsupportedCategory::kOperation);
   }
-  auto base_or = LowerProcExpr(proc, frame, sel.value());
+  auto base_or = proc.LowerExpr(sel.value(), frame);
   if (!base_or) return std::unexpected(std::move(base_or.error()));
-  const hir::ExprId base_id = proc.AddExpr(*std::move(base_or));
-  auto type_id = proc.Module().GetTypeIdOf(expr);
+  const hir::ExprId base_id =
+      frame.current_procedural_body->AddExpr(*std::move(base_or));
+  auto type_id = proc.Module().InternType(*sel.type, span);
   if (!type_id) return std::unexpected(std::move(type_id.error()));
   return hir::Expr{
       .type = *type_id,
@@ -131,9 +135,8 @@ auto LowerMemberAccessExprProc(
 }
 
 auto LowerElementSelectExprStructural(
-    ScopeLowerer& scope, WalkFrame frame,
-    const slang::ast::ElementSelectExpression& sel,
-    const slang::ast::Expression& expr, diag::SourceSpan span)
+    StructuralScopeLowerer& scope, WalkFrame frame,
+    const slang::ast::ElementSelectExpression& sel, diag::SourceSpan span)
     -> diag::Result<hir::Expr> {
   if (!sel.value().type->isIntegral()) {
     return diag::Unsupported(
@@ -141,13 +144,15 @@ auto LowerElementSelectExprStructural(
         "element-select on non-integral operand is not yet supported",
         diag::UnsupportedCategory::kOperation);
   }
-  auto base_or = LowerStructuralExpr(scope, frame, sel.value());
+  auto base_or = scope.LowerExpr(sel.value(), frame);
   if (!base_or) return std::unexpected(std::move(base_or.error()));
-  const hir::ExprId base_id = scope.AddExpr(*std::move(base_or));
-  auto idx_or = LowerStructuralExpr(scope, frame, sel.selector());
+  const hir::ExprId base_id =
+      frame.current_structural_scope->AddExpr(*std::move(base_or));
+  auto idx_or = scope.LowerExpr(sel.selector(), frame);
   if (!idx_or) return std::unexpected(std::move(idx_or.error()));
-  const hir::ExprId idx_id = scope.AddExpr(*std::move(idx_or));
-  auto type_id = scope.Module().GetTypeIdOf(expr);
+  const hir::ExprId idx_id =
+      frame.current_structural_scope->AddExpr(*std::move(idx_or));
+  auto type_id = scope.Module().InternType(*sel.type, span);
   if (!type_id) return std::unexpected(std::move(type_id.error()));
   return hir::Expr{
       .type = *type_id,
@@ -157,9 +162,8 @@ auto LowerElementSelectExprStructural(
 }
 
 auto LowerRangeSelectExprStructural(
-    ScopeLowerer& scope, WalkFrame frame,
-    const slang::ast::RangeSelectExpression& sel,
-    const slang::ast::Expression& expr, diag::SourceSpan span)
+    StructuralScopeLowerer& scope, WalkFrame frame,
+    const slang::ast::RangeSelectExpression& sel, diag::SourceSpan span)
     -> diag::Result<hir::Expr> {
   if (!sel.value().type->isIntegral() && !sel.value().type->isUnpackedArray()) {
     return diag::Unsupported(
@@ -168,15 +172,18 @@ auto LowerRangeSelectExprStructural(
         "supported",
         diag::UnsupportedCategory::kOperation);
   }
-  auto base_or = LowerStructuralExpr(scope, frame, sel.value());
+  auto base_or = scope.LowerExpr(sel.value(), frame);
   if (!base_or) return std::unexpected(std::move(base_or.error()));
-  const hir::ExprId base_id = scope.AddExpr(*std::move(base_or));
-  auto left_or = LowerStructuralExpr(scope, frame, sel.left());
+  const hir::ExprId base_id =
+      frame.current_structural_scope->AddExpr(*std::move(base_or));
+  auto left_or = scope.LowerExpr(sel.left(), frame);
   if (!left_or) return std::unexpected(std::move(left_or.error()));
-  const hir::ExprId left_id = scope.AddExpr(*std::move(left_or));
-  auto right_or = LowerStructuralExpr(scope, frame, sel.right());
+  const hir::ExprId left_id =
+      frame.current_structural_scope->AddExpr(*std::move(left_or));
+  auto right_or = scope.LowerExpr(sel.right(), frame);
   if (!right_or) return std::unexpected(std::move(right_or.error()));
-  const hir::ExprId right_id = scope.AddExpr(*std::move(right_or));
+  const hir::ExprId right_id =
+      frame.current_structural_scope->AddExpr(*std::move(right_or));
   hir::RangeBounds bounds = [&]() -> hir::RangeBounds {
     switch (sel.getSelectionKind()) {
       case slang::ast::RangeSelectionKind::Simple:
@@ -192,7 +199,7 @@ auto LowerRangeSelectExprStructural(
     throw InternalError(
         "LowerRangeSelectExprStructural: unknown slang RangeSelectionKind");
   }();
-  auto type_id = scope.Module().GetTypeIdOf(expr);
+  auto type_id = scope.Module().InternType(*sel.type, span);
   if (!type_id) return std::unexpected(std::move(type_id.error()));
   return hir::Expr{
       .type = *type_id,
@@ -204,9 +211,8 @@ auto LowerRangeSelectExprStructural(
 }
 
 auto LowerMemberAccessExprStructural(
-    ScopeLowerer& scope, WalkFrame frame,
-    const slang::ast::MemberAccessExpression& sel,
-    const slang::ast::Expression& expr, diag::SourceSpan span)
+    StructuralScopeLowerer& scope, WalkFrame frame,
+    const slang::ast::MemberAccessExpression& sel, diag::SourceSpan span)
     -> diag::Result<hir::Expr> {
   if (sel.member.kind != slang::ast::SymbolKind::Field) {
     return diag::Unsupported(
@@ -215,10 +221,11 @@ auto LowerMemberAccessExprStructural(
         diag::UnsupportedCategory::kOperation);
   }
   const auto& field = sel.member.as<slang::ast::FieldSymbol>();
-  auto base_or = LowerStructuralExpr(scope, frame, sel.value());
+  auto base_or = scope.LowerExpr(sel.value(), frame);
   if (!base_or) return std::unexpected(std::move(base_or.error()));
-  const hir::ExprId base_id = scope.AddExpr(*std::move(base_or));
-  auto type_id = scope.Module().GetTypeIdOf(expr);
+  const hir::ExprId base_id =
+      frame.current_structural_scope->AddExpr(*std::move(base_or));
+  auto type_id = scope.Module().InternType(*sel.type, span);
   if (!type_id) return std::unexpected(std::move(type_id.error()));
   return hir::Expr{
       .type = *type_id,

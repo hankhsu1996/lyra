@@ -1,7 +1,6 @@
 #pragma once
 
 #include <optional>
-#include <string_view>
 #include <unordered_map>
 
 #include <slang/ast/Expression.h>
@@ -18,42 +17,41 @@
 #include "lyra/hir/procedural_var.hpp"
 #include "lyra/hir/process.hpp"
 #include "lyra/hir/stmt.hpp"
+#include "lyra/hir/type_id.hpp"
 #include "lyra/lowering/ast_to_hir/module_lowerer.hpp"
 #include "lyra/lowering/ast_to_hir/walk_frame.hpp"
 
 namespace lyra::lowering::ast_to_hir {
 
-// Per-process-body lowerer: builds one hir::ProceduralBody from a slang
-// procedural block or subroutine body. Constructed in two contexts:
-// (1) for an `initial`/`final`/`always*` block by ScopeLowerer; (2) for a
-// subroutine body by ScopeLowerer's subroutine member handler. Runs once via
-// Run(WalkFrame); a subroutine path lowers the body via LowerStmt+AddStmt.
+// Per-process-body lowerer: walks a slang procedural block or subroutine body
+// into a hir::ProceduralBody. Constructed once per process / subroutine; runs
+// once via Run for a procedural block, or used as a helper for subroutine
+// lowering by StructuralScopeLowerer (which owns the body stack allocation in
+// that case). Holds the procedural-var binding registry; the in-flight body is
+// reached through `frame.current_procedural_body`.
 class ProcessLowerer {
  public:
   ProcessLowerer(
       ModuleLowerer& module, const slang::ast::Symbol& containing_symbol);
 
   // Lowers a procedural block to a complete hir::Process (initial / final /
-  // always / always_comb / always_latch / always_ff).
-  auto Run(const slang::ast::ProceduralBlockSymbol& proc, WalkFrame frame)
+  // always / always_comb / always_latch / always_ff). Stack-allocates the
+  // body on entry, walks the slang body into it, and returns the assembled
+  // Process by value.
+  auto Run(
+      const slang::ast::ProceduralBlockSymbol& proc, WalkFrame parent_frame)
       -> diag::Result<hir::Process>;
 
-  // Finalizes and moves the accumulated body out for return.
-  auto FinalizeBody(hir::StmtId root_stmt) -> hir::ProceduralBody;
+  // Composite: appends a `ProceduralVarDecl` to `body` and registers the
+  // slang-to-HIR binding for `var` in the procedural-var registry. The two
+  // halves stay atomic so no caller forgets to register a binding it later
+  // looks up.
+  auto AddProceduralVar(
+      hir::ProceduralBody& body, const slang::ast::VariableSymbol& var,
+      hir::TypeId type) -> hir::ProceduralVarId;
 
-  // Public body-building API used by helper passes that construct sub-exprs
-  // or sub-stmts directly (foreach desugar, scan/print/file-io desugars from
-  // the HIR-to-MIR side that reuse this builder, etc.).
-  auto AddExpr(hir::Expr expr) -> hir::ExprId;
-  auto AddStmt(hir::Stmt stmt) -> hir::StmtId;
-  auto AddProceduralVar(const slang::ast::VariableSymbol& var, hir::TypeId type)
-      -> hir::ProceduralVarId;
-  auto AddSyntheticProceduralVar(std::string_view name, hir::TypeId type)
-      -> hir::ProceduralVarId;
   [[nodiscard]] auto LookupProceduralVar(const slang::ast::VariableSymbol& var)
       const -> std::optional<hir::ProceduralVarId>;
-  [[nodiscard]] auto GetProceduralVarType(hir::ProceduralVarId id) const
-      -> hir::TypeId;
 
   // Accessors.
   [[nodiscard]] auto Module() -> ModuleLowerer& {
@@ -83,9 +81,6 @@ class ProcessLowerer {
   // Facts.
   ModuleLowerer* module_;
   const slang::ast::Symbol* containing_symbol_;
-
-  // Builder.
-  hir::ProceduralBody body_;
 
   // Registry.
   std::unordered_map<const slang::ast::VariableSymbol*, hir::ProceduralVarId>

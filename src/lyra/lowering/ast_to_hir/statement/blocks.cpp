@@ -13,7 +13,6 @@
 #include "lyra/base/internal_error.hpp"
 #include "lyra/diag/diag_code.hpp"
 #include "lyra/diag/kind.hpp"
-#include "lyra/lowering/ast_to_hir/statement/dispatch.hpp"
 
 namespace lyra::lowering::ast_to_hir {
 
@@ -78,11 +77,12 @@ auto LowerForkStmt(
   std::vector<const slang::ast::Statement*> branch_stmts;
   for (const auto* child : body_stmts) {
     if (child->kind == slang::ast::StatementKind::VariableDeclaration) {
-      auto local_stmt = LowerStatement(proc, frame, *child);
+      auto local_stmt = proc.LowerStmt(*child, frame);
       if (!local_stmt) {
         return std::unexpected(std::move(local_stmt.error()));
       }
-      locals.push_back(proc.AddStmt(*std::move(local_stmt)));
+      locals.push_back(
+          frame.current_procedural_body->AddStmt(*std::move(local_stmt)));
     } else {
       branch_stmts.push_back(child);
     }
@@ -92,9 +92,10 @@ auto LowerForkStmt(
   branches.reserve(branch_stmts.size());
   const WalkFrame branch_frame = frame.WithForkBranch();
   for (const auto* child : branch_stmts) {
-    auto child_stmt = LowerStatement(proc, branch_frame, *child);
+    auto child_stmt = proc.LowerStmt(*child, branch_frame);
     if (!child_stmt) return std::unexpected(std::move(child_stmt.error()));
-    branches.push_back(proc.AddStmt(*std::move(child_stmt)));
+    branches.push_back(
+        branch_frame.current_procedural_body->AddStmt(*std::move(child_stmt)));
   }
 
   return hir::Stmt{
@@ -116,9 +117,10 @@ auto LowerStatementListStmt(
   std::vector<hir::StmtId> kids;
   kids.reserve(list.list.size());
   for (const auto* child : list.list) {
-    auto child_stmt = LowerStatement(proc, frame, *child);
+    auto child_stmt = proc.LowerStmt(*child, frame);
     if (!child_stmt) return std::unexpected(std::move(child_stmt.error()));
-    kids.push_back(proc.AddStmt(*std::move(child_stmt)));
+    kids.push_back(
+        frame.current_procedural_body->AddStmt(*std::move(child_stmt)));
   }
   return hir::Stmt{
       .label = std::nullopt,
@@ -138,14 +140,16 @@ auto LowerBlockStmt(
     const auto& list = block.body.as<slang::ast::StatementList>();
     kids.reserve(list.list.size());
     for (const auto* child : list.list) {
-      auto child_stmt = LowerStatement(proc, frame, *child);
+      auto child_stmt = proc.LowerStmt(*child, frame);
       if (!child_stmt) return std::unexpected(std::move(child_stmt.error()));
-      kids.push_back(proc.AddStmt(*std::move(child_stmt)));
+      kids.push_back(
+          frame.current_procedural_body->AddStmt(*std::move(child_stmt)));
     }
   } else {
-    auto child_stmt = LowerStatement(proc, frame, block.body);
+    auto child_stmt = proc.LowerStmt(block.body, frame);
     if (!child_stmt) return std::unexpected(std::move(child_stmt.error()));
-    kids.push_back(proc.AddStmt(*std::move(child_stmt)));
+    kids.push_back(
+        frame.current_procedural_body->AddStmt(*std::move(child_stmt)));
   }
   return hir::Stmt{
       .label = std::nullopt,

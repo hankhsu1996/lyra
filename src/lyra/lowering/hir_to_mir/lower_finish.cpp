@@ -6,12 +6,14 @@
 #include <string>
 #include <variant>
 
+#include "lyra/base/internal_error.hpp"
 #include "lyra/diag/diag_code.hpp"
 #include "lyra/diag/diagnostic.hpp"
 #include "lyra/hir/expr.hpp"
 #include "lyra/hir/integral_constant.hpp"
 #include "lyra/hir/primary.hpp"
 #include "lyra/hir/procedural_body.hpp"
+#include "lyra/lowering/hir_to_mir/process_lowerer.hpp"
 #include "lyra/mir/expr.hpp"
 #include "lyra/mir/runtime_finish.hpp"
 #include "lyra/support/system_subroutine.hpp"
@@ -35,10 +37,10 @@ auto TryExtractLiteralInt(const hir::Expr& expr)
 }  // namespace
 
 auto LowerFinishSystemSubroutineCall(
-    const UnitLoweringState& unit_state, const hir::ProceduralBody& hir_proc,
-    const hir::CallExpr& call, const support::SystemSubroutineDesc& desc,
-    const support::TerminationSystemSubroutineInfo& info, diag::SourceSpan span)
-    -> diag::Result<mir::Expr> {
+    const ProcessLowerer& process, const hir::CallExpr& call,
+    std::string_view name, const support::TerminationSystemSubroutineInfo& info,
+    diag::SourceSpan span) -> diag::Result<mir::Expr> {
+  const auto& hir_proc = process.HirBody();
   int level = info.default_level;
   if (!call.arguments.empty()) {
     if (!call.arguments.front().has_value()) {
@@ -52,13 +54,13 @@ auto LowerFinishSystemSubroutineCall(
           span, diag::DiagCode::kUnsupportedExpressionForm,
           std::format(
               "{} argument must be an integer literal in this build",
-              std::string{desc.name}),
+              std::string{name}),
           diag::UnsupportedCategory::kFeature);
     }
     if (*literal != 0 && *literal != 1 && *literal != 2) {
       return diag::Unsupported(
           span, diag::DiagCode::kUnsupportedExpressionForm,
-          std::format("{} argument must be 0, 1, or 2", std::string{desc.name}),
+          std::format("{} argument must be 0, 1, or 2", std::string{name}),
           diag::UnsupportedCategory::kFeature);
     }
     level = static_cast<int>(*literal);
@@ -66,7 +68,7 @@ auto LowerFinishSystemSubroutineCall(
   return mir::Expr{
       .data =
           mir::RuntimeCallExpr{.call = mir::RuntimeFinishCall{.level = level}},
-      .type = unit_state.Builtins().void_type};
+      .type = process.Module().Unit().builtins.void_type};
 }
 
 }  // namespace lyra::lowering::hir_to_mir

@@ -13,19 +13,17 @@
 #include "lyra/hir/expr.hpp"
 #include "lyra/hir/procedural_body.hpp"
 #include "lyra/lowering/hir_to_mir/lower_expr.hpp"
-#include "lyra/lowering/hir_to_mir/state.hpp"
+#include "lyra/lowering/hir_to_mir/process_lowerer.hpp"
 #include "lyra/mir/expr.hpp"
 #include "lyra/mir/runtime_timescale.hpp"
 
 namespace lyra::lowering::hir_to_mir {
 
 auto LowerTimeFormatSystemSubroutineCall(
-    const UnitLoweringState& unit_state,
-    const StructuralScopeLoweringState& scope_state,
-    ProcessLoweringState& proc_state,
-    ProceduralScopeLoweringState& proc_scope_state,
-    const hir::ProceduralBody& hir_proc, const hir::CallExpr& call,
+    ProcessLowerer& process, WalkFrame frame, const hir::CallExpr& call,
     diag::SourceSpan span) -> diag::Result<mir::Expr> {
+  const auto& hir_proc = process.HirBody();
+  auto& proc_scope = *frame.current_procedural_scope;
   const auto& args = call.arguments;
   std::optional<mir::TimeFormatArgExprs> arg_exprs;
   if (!args.empty()) {
@@ -41,11 +39,10 @@ auto LowerTimeFormatSystemSubroutineCall(
         throw InternalError(
             "$timeformat positional argument unexpectedly elided");
       }
-      auto lowered = LowerExpr(
-          unit_state, scope_state, proc_state, proc_scope_state, hir_proc,
-          hir_proc.exprs.at(args[i]->value));
+      auto lowered =
+          LowerExpr(process, frame, hir_proc.exprs.at(args[i]->value));
       if (!lowered) return std::unexpected(std::move(lowered.error()));
-      ids.at(i) = proc_scope_state.AddExpr(*std::move(lowered));
+      ids.at(i) = proc_scope.AddExpr(*std::move(lowered));
     }
     arg_exprs = mir::TimeFormatArgExprs{
         .units = ids[0],
@@ -58,20 +55,18 @@ auto LowerTimeFormatSystemSubroutineCall(
           mir::RuntimeCallExpr{
               .call =
                   mir::RuntimeSetTimeFormatCall{.args = std::move(arg_exprs)}},
-      .type = unit_state.Builtins().void_type};
+      .type = process.Module().Unit().builtins.void_type};
 }
 
-auto LowerPrintTimescaleSystemSubroutineCall(
-    const UnitLoweringState& unit_state,
-    const StructuralScopeLoweringState& scope_state)
+auto LowerPrintTimescaleSystemSubroutineCall(const ProcessLowerer& process)
     -> diag::Result<mir::Expr> {
   return mir::Expr{
       .data =
           mir::RuntimeCallExpr{
               .call =
                   mir::RuntimePrintTimescaleCall{
-                      .scope_name = std::string(scope_state.Scope().name)}},
-      .type = unit_state.Builtins().void_type};
+                      .scope_name = process.Scope().Name()}},
+      .type = process.Module().Unit().builtins.void_type};
 }
 
 }  // namespace lyra::lowering::hir_to_mir

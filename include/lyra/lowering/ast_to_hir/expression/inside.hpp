@@ -19,8 +19,8 @@ namespace lyra::lowering::ast_to_hir {
 
 auto LowerInsideExprProc(
     ProcessLowerer& proc, WalkFrame frame,
-    const slang::ast::InsideExpression& in, const slang::ast::Expression& expr,
-    diag::SourceSpan span) -> diag::Result<hir::Expr>;
+    const slang::ast::InsideExpression& in, diag::SourceSpan span)
+    -> diag::Result<hir::Expr>;
 
 // Lower one slang range_list entry. A ValueRange entry becomes an
 // InsideRangePair; any other expression becomes a plain ExprId. Used by

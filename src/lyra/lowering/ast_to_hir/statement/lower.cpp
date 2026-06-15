@@ -15,7 +15,6 @@
 #include "lyra/lowering/ast_to_hir/process_lowerer.hpp"
 #include "lyra/lowering/ast_to_hir/statement/blocks.hpp"
 #include "lyra/lowering/ast_to_hir/statement/branches.hpp"
-#include "lyra/lowering/ast_to_hir/statement/dispatch.hpp"
 #include "lyra/lowering/ast_to_hir/statement/loops.hpp"
 #include "lyra/lowering/ast_to_hir/statement/timing.hpp"
 
@@ -48,14 +47,15 @@ auto LowerVariableDeclStmt(
   const auto& mapper = proc.Module().SourceMapper();
   const auto& sym = vd.symbol;
   auto type_id_or =
-      proc.Module().GetTypeId(sym.getType(), mapper.PointSpanOf(sym.location));
+      proc.Module().InternType(sym.getType(), mapper.PointSpanOf(sym.location));
   if (!type_id_or) return std::unexpected(std::move(type_id_or.error()));
-  const auto local_id = proc.AddProceduralVar(sym, *type_id_or);
+  const auto local_id =
+      proc.AddProceduralVar(*frame.current_procedural_body, sym, *type_id_or);
   std::optional<hir::ExprId> init_id;
   if (const auto* init_expr = sym.getInitializer()) {
     auto init_or = proc.LowerExpr(*init_expr, frame);
     if (!init_or) return std::unexpected(std::move(init_or.error()));
-    init_id = proc.AddExpr(*std::move(init_or));
+    init_id = frame.current_procedural_body->AddExpr(*std::move(init_or));
   }
   return hir::Stmt{
       .label = std::nullopt,
@@ -69,7 +69,8 @@ auto LowerExpressionStmt(
     -> diag::Result<hir::Stmt> {
   auto expr = proc.LowerExpr(es.expr, frame);
   if (!expr) return std::unexpected(std::move(expr.error()));
-  const hir::ExprId id = proc.AddExpr(*std::move(expr));
+  const hir::ExprId id =
+      frame.current_procedural_body->AddExpr(*std::move(expr));
   return hir::Stmt{
       .label = std::nullopt, .data = hir::ExprStmt{.expr = id}, .span = span};
 }
@@ -85,7 +86,7 @@ auto LowerReturnStmt(
   if (rs.expr != nullptr) {
     auto expr_or = proc.LowerExpr(*rs.expr, frame);
     if (!expr_or) return std::unexpected(std::move(expr_or.error()));
-    value = proc.AddExpr(*std::move(expr_or));
+    value = frame.current_procedural_body->AddExpr(*std::move(expr_or));
   }
   return hir::Stmt{
       .label = std::nullopt,

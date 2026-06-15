@@ -22,7 +22,6 @@
 #include "lyra/lowering/ast_to_hir/expression/aggregates.hpp"
 #include "lyra/lowering/ast_to_hir/expression/assignment.hpp"
 #include "lyra/lowering/ast_to_hir/expression/calls.hpp"
-#include "lyra/lowering/ast_to_hir/expression/dispatch.hpp"
 #include "lyra/lowering/ast_to_hir/expression/inside.hpp"
 #include "lyra/lowering/ast_to_hir/expression/operators.hpp"
 #include "lyra/lowering/ast_to_hir/expression/references.hpp"
@@ -114,14 +113,14 @@ auto LowerProcExpr(
 
   switch (expr.kind) {
     case slang::ast::ExpressionKind::IntegerLiteral: {
-      auto type_id = module.GetTypeIdOf(expr);
+      auto type_id = module.InternType(*expr.type, span);
       if (!type_id) return std::unexpected(std::move(type_id.error()));
       return MakeIntegerLiteralExpr(
           expr.as<slang::ast::IntegerLiteral>(), *type_id, span);
     }
 
     case slang::ast::ExpressionKind::UnbasedUnsizedIntegerLiteral: {
-      auto type_id = module.GetTypeIdOf(expr);
+      auto type_id = module.InternType(*expr.type, span);
       if (!type_id) return std::unexpected(std::move(type_id.error()));
       return MakeUnbasedUnsizedLiteralExpr(
           expr.as<slang::ast::UnbasedUnsizedIntegerLiteral>(), *type_id, span);
@@ -129,14 +128,14 @@ auto LowerProcExpr(
 
     case slang::ast::ExpressionKind::StringLiteral: {
       const auto& sl = expr.as<slang::ast::StringLiteral>();
-      auto type_id = module.GetTypeIdOf(expr);
+      auto type_id = module.InternType(*expr.type, span);
       if (!type_id) return std::unexpected(std::move(type_id.error()));
       return MakeStringLiteralExpr(std::string{sl.getValue()}, *type_id, span);
     }
 
     case slang::ast::ExpressionKind::TimeLiteral: {
       const auto& tl = expr.as<slang::ast::TimeLiteral>();
-      auto type_id = module.GetTypeIdOf(expr);
+      auto type_id = module.InternType(*expr.type, span);
       if (!type_id) return std::unexpected(std::move(type_id.error()));
       return MakeTimeLiteralExpr(
           tl.getValue(), LowerTimeUnit(tl.getScale().base.unit), *type_id,
@@ -145,7 +144,7 @@ auto LowerProcExpr(
 
     case slang::ast::ExpressionKind::RealLiteral: {
       const auto& rl = expr.as<slang::ast::RealLiteral>();
-      auto type_id = module.GetTypeIdOf(expr);
+      auto type_id = module.InternType(*expr.type, span);
       if (!type_id) return std::unexpected(std::move(type_id.error()));
       return MakeRealLiteralExpr(rl.getValue(), *type_id, span);
     }
@@ -167,61 +166,55 @@ auto LowerProcExpr(
 
     case slang::ast::ExpressionKind::Conversion:
       return LowerConversionExprProc(
-          proc, frame, expr.as<slang::ast::ConversionExpression>(), expr, span);
+          proc, frame, expr.as<slang::ast::ConversionExpression>(), span);
 
     case slang::ast::ExpressionKind::UnaryOp: {
       const auto& un = expr.as<slang::ast::UnaryExpression>();
       if (slang::ast::OpInfo::isLValue(un.op)) {
-        return LowerIncDecExprProc(proc, frame, un, expr, span);
+        return LowerIncDecExprProc(proc, frame, un, span);
       }
-      return LowerUnaryExprProc(proc, frame, un, expr, span);
+      return LowerUnaryExprProc(proc, frame, un, span);
     }
 
     case slang::ast::ExpressionKind::BinaryOp:
       return LowerBinaryExprProc(
-          proc, frame, expr.as<slang::ast::BinaryExpression>(), expr, span);
+          proc, frame, expr.as<slang::ast::BinaryExpression>(), span);
 
     case slang::ast::ExpressionKind::ConditionalOp:
       return LowerConditionalExprProc(
-          proc, frame, expr.as<slang::ast::ConditionalExpression>(), expr,
-          span);
+          proc, frame, expr.as<slang::ast::ConditionalExpression>(), span);
 
     case slang::ast::ExpressionKind::Call:
       return LowerCallExprProc(
-          proc, frame, expr.as<slang::ast::CallExpression>(), expr, span);
+          proc, frame, expr.as<slang::ast::CallExpression>(), span);
 
     case slang::ast::ExpressionKind::Assignment:
       return LowerAssignmentExprProc(
-          proc, frame, expr.as<slang::ast::AssignmentExpression>(), expr, span);
+          proc, frame, expr.as<slang::ast::AssignmentExpression>(), span);
 
     case slang::ast::ExpressionKind::Inside:
       return LowerInsideExprProc(
-          proc, frame, expr.as<slang::ast::InsideExpression>(), expr, span);
+          proc, frame, expr.as<slang::ast::InsideExpression>(), span);
 
     case slang::ast::ExpressionKind::ElementSelect:
       return LowerElementSelectExprProc(
-          proc, frame, expr.as<slang::ast::ElementSelectExpression>(), expr,
-          span);
+          proc, frame, expr.as<slang::ast::ElementSelectExpression>(), span);
 
     case slang::ast::ExpressionKind::RangeSelect:
       return LowerRangeSelectExprProc(
-          proc, frame, expr.as<slang::ast::RangeSelectExpression>(), expr,
-          span);
+          proc, frame, expr.as<slang::ast::RangeSelectExpression>(), span);
 
     case slang::ast::ExpressionKind::MemberAccess:
       return LowerMemberAccessExprProc(
-          proc, frame, expr.as<slang::ast::MemberAccessExpression>(), expr,
-          span);
+          proc, frame, expr.as<slang::ast::MemberAccessExpression>(), span);
 
     case slang::ast::ExpressionKind::Concatenation:
       return LowerConcatExprProc(
-          proc, frame, expr.as<slang::ast::ConcatenationExpression>(), expr,
-          span);
+          proc, frame, expr.as<slang::ast::ConcatenationExpression>(), span);
 
     case slang::ast::ExpressionKind::Replication:
       return LowerReplicationExprProc(
-          proc, frame, expr.as<slang::ast::ReplicationExpression>(), expr,
-          span);
+          proc, frame, expr.as<slang::ast::ReplicationExpression>(), span);
 
     case slang::ast::ExpressionKind::SimpleAssignmentPattern: {
       const auto& sap =
@@ -232,8 +225,7 @@ auto LowerProcExpr(
             "assignment pattern as LHS destructuring is not yet supported",
             diag::UnsupportedCategory::kOperation);
       }
-      return LowerAssignmentPatternFromElementsProc(
-          proc, frame, sap, expr, span);
+      return LowerAssignmentPatternFromElementsProc(proc, frame, sap, span);
     }
 
     case slang::ast::ExpressionKind::StructuredAssignmentPattern: {
@@ -251,19 +243,17 @@ auto LowerProcExpr(
       }
       return LowerAssignmentPatternFromElementsProc(
           proc, frame,
-          expr.as<slang::ast::StructuredAssignmentPatternExpression>(), expr,
-          span);
+          expr.as<slang::ast::StructuredAssignmentPatternExpression>(), span);
     }
 
     case slang::ast::ExpressionKind::ReplicatedAssignmentPattern:
       return LowerReplicatedAssignmentPatternExprProc(
           proc, frame,
-          expr.as<slang::ast::ReplicatedAssignmentPatternExpression>(), expr,
-          span);
+          expr.as<slang::ast::ReplicatedAssignmentPatternExpression>(), span);
 
     case slang::ast::ExpressionKind::NewArray:
       return LowerNewArrayExprProc(
-          proc, frame, expr.as<slang::ast::NewArrayExpression>(), expr, span);
+          proc, frame, expr.as<slang::ast::NewArrayExpression>(), span);
 
     default:
       return diag::Unsupported(
@@ -274,21 +264,21 @@ auto LowerProcExpr(
 }
 
 auto LowerStructuralExpr(
-    ScopeLowerer& scope, WalkFrame frame, const slang::ast::Expression& expr)
-    -> diag::Result<hir::Expr> {
+    StructuralScopeLowerer& scope, WalkFrame frame,
+    const slang::ast::Expression& expr) -> diag::Result<hir::Expr> {
   auto& module = scope.Module();
   const auto span = module.SourceMapper().SpanOf(expr.sourceRange);
 
   switch (expr.kind) {
     case slang::ast::ExpressionKind::IntegerLiteral: {
-      auto type_id = module.GetTypeIdOf(expr);
+      auto type_id = module.InternType(*expr.type, span);
       if (!type_id) return std::unexpected(std::move(type_id.error()));
       return MakeIntegerLiteralExpr(
           expr.as<slang::ast::IntegerLiteral>(), *type_id, span);
     }
 
     case slang::ast::ExpressionKind::UnbasedUnsizedIntegerLiteral: {
-      auto type_id = module.GetTypeIdOf(expr);
+      auto type_id = module.InternType(*expr.type, span);
       if (!type_id) return std::unexpected(std::move(type_id.error()));
       return MakeUnbasedUnsizedLiteralExpr(
           expr.as<slang::ast::UnbasedUnsizedIntegerLiteral>(), *type_id, span);
@@ -296,14 +286,14 @@ auto LowerStructuralExpr(
 
     case slang::ast::ExpressionKind::RealLiteral: {
       const auto& rl = expr.as<slang::ast::RealLiteral>();
-      auto type_id = module.GetTypeIdOf(expr);
+      auto type_id = module.InternType(*expr.type, span);
       if (!type_id) return std::unexpected(std::move(type_id.error()));
       return MakeRealLiteralExpr(rl.getValue(), *type_id, span);
     }
 
     case slang::ast::ExpressionKind::StringLiteral: {
       const auto& sl = expr.as<slang::ast::StringLiteral>();
-      auto type_id = module.GetTypeIdOf(expr);
+      auto type_id = module.InternType(*expr.type, span);
       if (!type_id) return std::unexpected(std::move(type_id.error()));
       return MakeStringLiteralExpr(std::string{sl.getValue()}, *type_id, span);
     }
@@ -320,8 +310,7 @@ auto LowerStructuralExpr(
 
     case slang::ast::ExpressionKind::Conversion:
       return LowerConversionExprStructural(
-          scope, frame, expr.as<slang::ast::ConversionExpression>(), expr,
-          span);
+          scope, frame, expr.as<slang::ast::ConversionExpression>(), span);
 
     case slang::ast::ExpressionKind::UnaryOp: {
       const auto& un = expr.as<slang::ast::UnaryExpression>();
@@ -332,37 +321,32 @@ auto LowerStructuralExpr(
             "(LRM 11.3.6, 11.4.2)",
             diag::UnsupportedCategory::kOperation);
       }
-      return LowerUnaryExprStructural(scope, frame, un, expr, span);
+      return LowerUnaryExprStructural(scope, frame, un, span);
     }
 
     case slang::ast::ExpressionKind::BinaryOp:
       return LowerBinaryExprStructural(
-          scope, frame, expr.as<slang::ast::BinaryExpression>(), expr, span);
+          scope, frame, expr.as<slang::ast::BinaryExpression>(), span);
 
     case slang::ast::ExpressionKind::ConditionalOp:
       return LowerConditionalExprStructural(
-          scope, frame, expr.as<slang::ast::ConditionalExpression>(), expr,
-          span);
+          scope, frame, expr.as<slang::ast::ConditionalExpression>(), span);
 
     case slang::ast::ExpressionKind::ElementSelect:
       return LowerElementSelectExprStructural(
-          scope, frame, expr.as<slang::ast::ElementSelectExpression>(), expr,
-          span);
+          scope, frame, expr.as<slang::ast::ElementSelectExpression>(), span);
 
     case slang::ast::ExpressionKind::RangeSelect:
       return LowerRangeSelectExprStructural(
-          scope, frame, expr.as<slang::ast::RangeSelectExpression>(), expr,
-          span);
+          scope, frame, expr.as<slang::ast::RangeSelectExpression>(), span);
 
     case slang::ast::ExpressionKind::MemberAccess:
       return LowerMemberAccessExprStructural(
-          scope, frame, expr.as<slang::ast::MemberAccessExpression>(), expr,
-          span);
+          scope, frame, expr.as<slang::ast::MemberAccessExpression>(), span);
 
     case slang::ast::ExpressionKind::Concatenation:
       return LowerConcatExprStructural(
-          scope, frame, expr.as<slang::ast::ConcatenationExpression>(), expr,
-          span);
+          scope, frame, expr.as<slang::ast::ConcatenationExpression>(), span);
 
     case slang::ast::ExpressionKind::SimpleAssignmentPattern: {
       const auto& sap =
@@ -374,7 +358,7 @@ auto LowerStructuralExpr(
             diag::UnsupportedCategory::kOperation);
       }
       return LowerAssignmentPatternFromElementsStructural(
-          scope, frame, sap, expr, span);
+          scope, frame, sap, span);
     }
 
     case slang::ast::ExpressionKind::StructuredAssignmentPattern: {
@@ -388,15 +372,13 @@ auto LowerStructuralExpr(
       }
       return LowerAssignmentPatternFromElementsStructural(
           scope, frame,
-          expr.as<slang::ast::StructuredAssignmentPatternExpression>(), expr,
-          span);
+          expr.as<slang::ast::StructuredAssignmentPatternExpression>(), span);
     }
 
     case slang::ast::ExpressionKind::ReplicatedAssignmentPattern:
       return LowerReplicatedAssignmentPatternExprStructural(
           scope, frame,
-          expr.as<slang::ast::ReplicatedAssignmentPatternExpression>(), expr,
-          span);
+          expr.as<slang::ast::ReplicatedAssignmentPatternExpression>(), span);
 
     default:
       return diag::Unsupported(
@@ -427,13 +409,13 @@ auto ProcessLowerer::ValidateAssignableProcedural(
   return ValidateAssignableImpl(*module_, true, expr);
 }
 
-auto ScopeLowerer::LowerExpr(
+auto StructuralScopeLowerer::LowerExpr(
     const slang::ast::Expression& expr, WalkFrame frame)
     -> diag::Result<hir::Expr> {
   return LowerStructuralExpr(*this, frame, expr);
 }
 
-auto ScopeLowerer::ValidateAssignableStructural(
+auto StructuralScopeLowerer::ValidateAssignableStructural(
     const slang::ast::Expression& expr) -> diag::Result<void> {
   return ValidateAssignableImpl(*module_, false, expr);
 }

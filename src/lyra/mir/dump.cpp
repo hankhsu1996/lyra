@@ -1057,25 +1057,23 @@ class MirDumper {
               DumpProceduralVarDeclStmt(enclosing, id, s);
             },
             [&](const ExprStmt& s) { DumpExprStmt(s, enclosing, id); },
-            [&](const BlockStmt& s) { DumpBlockStmt(stmt, s, id); },
-            [&](const ForkStmt& s) { DumpForkStmt(stmt, s, id); },
-            [&](const IfStmt& s) { DumpIfStmt(stmt, s, enclosing, id); },
+            [&](const BlockStmt& s) { DumpBlockStmt(enclosing, s, id); },
+            [&](const ForkStmt& s) { DumpForkStmt(enclosing, s, id); },
+            [&](const IfStmt& s) { DumpIfStmt(enclosing, s, id); },
             [&](const ConstructOwnedObjectStmt& s) {
               DumpConstructOwnedObjectStmt(id, s);
             },
             [&](const ConstructExternalUnitStmt& s) {
               DumpConstructExternalUnitStmt(id, s);
             },
-            [&](const ForStmt& s) { DumpForStmt(stmt, s, enclosing, id); },
+            [&](const ForStmt& s) { DumpForStmt(enclosing, s, id); },
             [&](const DelayStmt& d) {
               Line(
                   std::format(
                       "Stmt[{}] DelayStmt ticks={}", id.value, d.duration));
             },
-            [&](const WhileStmt& s) { DumpWhileStmt(stmt, s, enclosing, id); },
-            [&](const DoWhileStmt& s) {
-              DumpDoWhileStmt(stmt, s, enclosing, id);
-            },
+            [&](const WhileStmt& s) { DumpWhileStmt(enclosing, s, id); },
+            [&](const DoWhileStmt& s) { DumpDoWhileStmt(enclosing, s, id); },
             [&](const BreakStmt&) {
               Line(std::format("Stmt[{}] BreakStmt", id.value));
             },
@@ -1117,8 +1115,7 @@ class MirDumper {
   }
 
   void DumpWhileStmt(
-      const Stmt& parent, const WhileStmt& s, const ProceduralScope& enclosing,
-      StmtId id) {
+      const ProceduralScope& enclosing, const WhileStmt& s, StmtId id) {
     Line(std::format("Stmt[{}] WhileStmt", id.value));
     Indent();
     Line(
@@ -1127,14 +1124,13 @@ class MirDumper {
             FormatExpr(enclosing, s.condition)));
     Line(std::format("scope (ProceduralScopeId={}):", s.scope.value));
     Indent();
-    DumpProceduralScope(parent.child_procedural_scopes.at(s.scope.value));
+    DumpProceduralScope(enclosing.GetChildScope(s.scope));
     Dedent();
     Dedent();
   }
 
   void DumpDoWhileStmt(
-      const Stmt& parent, const DoWhileStmt& s,
-      const ProceduralScope& enclosing, StmtId id) {
+      const ProceduralScope& enclosing, const DoWhileStmt& s, StmtId id) {
     Line(std::format("Stmt[{}] DoWhileStmt", id.value));
     Indent();
     Line(
@@ -1143,7 +1139,7 @@ class MirDumper {
             FormatExpr(enclosing, s.condition)));
     Line(std::format("scope (ProceduralScopeId={}):", s.scope.value));
     Indent();
-    DumpProceduralScope(parent.child_procedural_scopes.at(s.scope.value));
+    DumpProceduralScope(enclosing.GetChildScope(s.scope));
     Dedent();
     Dedent();
   }
@@ -1381,8 +1377,7 @@ class MirDumper {
   }
 
   void DumpForStmt(
-      const Stmt& parent, const ForStmt& s, const ProceduralScope& enclosing,
-      StmtId id) {
+      const ProceduralScope& enclosing, const ForStmt& s, StmtId id) {
     Line(std::format("Stmt[{}] ForStmt", id.value));
     Indent();
     Line("init:");
@@ -1432,22 +1427,24 @@ class MirDumper {
     Dedent();
     Line(std::format("scope (ProceduralScopeId={}):", s.scope.value));
     Indent();
-    DumpProceduralScope(parent.child_procedural_scopes.at(s.scope.value));
+    DumpProceduralScope(enclosing.GetChildScope(s.scope));
     Dedent();
     Dedent();
   }
 
-  void DumpBlockStmt(const Stmt& parent, const BlockStmt& s, StmtId id) {
+  void DumpBlockStmt(
+      const ProceduralScope& enclosing, const BlockStmt& s, StmtId id) {
     Line(
         std::format(
             "Stmt[{}] BlockStmt scope=ProceduralScopeId{{{}}}", id.value,
             s.scope.value));
     Indent();
-    DumpProceduralScope(parent.child_procedural_scopes.at(s.scope.value));
+    DumpProceduralScope(enclosing.GetChildScope(s.scope));
     Dedent();
   }
 
-  void DumpForkStmt(const Stmt& parent, const ForkStmt& s, StmtId id) {
+  void DumpForkStmt(
+      const ProceduralScope& enclosing, const ForkStmt& s, StmtId id) {
     Line(
         std::format(
             "Stmt[{}] ForkStmt {} (branches={})", id.value,
@@ -1458,7 +1455,7 @@ class MirDumper {
     }
     Line(std::format("scope (ProceduralScopeId={}):", s.scope.value));
     Indent();
-    DumpProceduralScope(parent.child_procedural_scopes.at(s.scope.value));
+    DumpProceduralScope(enclosing.GetChildScope(s.scope));
     Dedent();
     Dedent();
   }
@@ -1475,8 +1472,7 @@ class MirDumper {
   }
 
   void DumpIfStmt(
-      const Stmt& parent, const IfStmt& s, const ProceduralScope& enclosing,
-      StmtId id) {
+      const ProceduralScope& enclosing, const IfStmt& s, StmtId id) {
     Line(
         std::format(
             "Stmt[{}] IfStmt cond=Expr[{}] {}", id.value, s.condition.value,
@@ -1484,15 +1480,14 @@ class MirDumper {
     Indent();
     Line(std::format("then_scope (ProceduralScopeId={}):", s.then_scope.value));
     Indent();
-    DumpProceduralScope(parent.child_procedural_scopes.at(s.then_scope.value));
+    DumpProceduralScope(enclosing.GetChildScope(s.then_scope));
     Dedent();
     if (s.else_scope.has_value()) {
       Line(
           std::format(
               "else_scope (ProceduralScopeId={}):", s.else_scope->value));
       Indent();
-      DumpProceduralScope(
-          parent.child_procedural_scopes.at(s.else_scope->value));
+      DumpProceduralScope(enclosing.GetChildScope(*s.else_scope));
       Dedent();
     } else {
       Line("else_scope: <none>");

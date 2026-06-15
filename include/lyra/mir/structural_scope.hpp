@@ -47,6 +47,40 @@ struct StructuralScope {
       -> const StructuralSubroutineDecl& {
     return structural_subroutines.at(id.value);
   }
+
+  auto AddStructuralParam(StructuralParamDecl decl) -> StructuralParamId {
+    const StructuralParamId id{
+        static_cast<std::uint32_t>(structural_params.size())};
+    structural_params.push_back(std::move(decl));
+    return id;
+  }
+  auto AddStructuralVar(StructuralVarDecl decl) -> StructuralVarId {
+    const StructuralVarId id{
+        static_cast<std::uint32_t>(structural_vars.size())};
+    structural_vars.push_back(std::move(decl));
+    return id;
+  }
+  auto AddProcess(Process process) -> ProcessId {
+    const ProcessId id{static_cast<std::uint32_t>(processes.size())};
+    processes.push_back(std::move(process));
+    return id;
+  }
+  auto AddChildStructuralScope(StructuralScope child) -> StructuralScopeId {
+    const StructuralScopeId id{
+        static_cast<std::uint32_t>(child_structural_scopes.size())};
+    child_structural_scopes.push_back(std::move(child));
+    return id;
+  }
+  auto AddStructuralSubroutine(StructuralSubroutineDecl decl)
+      -> StructuralSubroutineId {
+    const StructuralSubroutineId id{
+        static_cast<std::uint32_t>(structural_subroutines.size())};
+    structural_subroutines.push_back(std::move(decl));
+    return id;
+  }
+  void AddTypeAlias(TypeAliasDecl decl) {
+    type_aliases.push_back(std::move(decl));
+  }
 };
 
 }  // namespace lyra::mir

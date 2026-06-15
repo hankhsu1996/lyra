@@ -3,7 +3,9 @@
 #include <cstddef>
 #include <expected>
 #include <format>
+#include <optional>
 #include <string>
+#include <string_view>
 #include <utility>
 #include <vector>
 
@@ -12,10 +14,9 @@
 #include "lyra/diag/diagnostic.hpp"
 #include "lyra/hir/expr.hpp"
 #include "lyra/hir/procedural_body.hpp"
-#include "lyra/hir/stmt.hpp"
 #include "lyra/lowering/hir_to_mir/lower_expr.hpp"
 #include "lyra/lowering/hir_to_mir/print_items.hpp"
-#include "lyra/lowering/hir_to_mir/state.hpp"
+#include "lyra/lowering/hir_to_mir/process_lowerer.hpp"
 #include "lyra/mir/expr.hpp"
 #include "lyra/mir/runtime_sformat.hpp"
 #include "lyra/mir/stmt.hpp"
@@ -27,30 +28,24 @@ namespace lyra::lowering::hir_to_mir {
 namespace {
 
 auto BuildSFormatCallExpr(
-    const UnitLoweringState& unit_state,
-    const StructuralScopeLoweringState& scope_state,
-    ProcessLoweringState& proc_state,
-    ProceduralScopeLoweringState& proc_scope_state,
-    const hir::ProceduralBody& hir_proc, const hir::CallExpr& call,
+    ProcessLowerer& process, WalkFrame frame, const hir::CallExpr& call,
     const support::SFormatSystemSubroutineInfo& info, std::size_t arg_offset,
     diag::SourceSpan span) -> diag::Result<mir::Expr> {
   const FormatStringRequirement fmt_req =
       info.expects_format_string ? FormatStringRequirement::kRequired
                                  : FormatStringRequirement::kOptional;
   auto items_or = BuildRuntimePrintItemsFromCallArgs(
-      unit_state, scope_state, proc_state, proc_scope_state, hir_proc, call,
-      info.radix, arg_offset, fmt_req, span);
+      process, frame, call, info.radix, arg_offset, fmt_req, span);
   if (!items_or) return std::unexpected(std::move(items_or.error()));
 
   return mir::Expr{
       .data =
           mir::RuntimeCallExpr{
               .call = mir::RuntimeSFormatCall(std::move(*items_or))},
-      .type = unit_state.Builtins().string};
+      .type = process.Module().Unit().builtins.string};
 }
 
-auto RejectNonStringOutput(
-    const support::SystemSubroutineDesc& desc, diag::SourceSpan span)
+auto RejectNonStringOutput(std::string_view name, diag::SourceSpan span)
     -> diag::Result<mir::Stmt> {
   return diag::Unsupported(
       span, diag::DiagCode::kUnsupportedSubroutineArgument,
@@ -58,18 +53,14 @@ auto RejectNonStringOutput(
           "{} output_var must be string-typed in this build (LRM 21.3.3 "
           "allows integral and unpacked-byte-array outputs via LRM 5.9 "
           "assignment rules; deferred)",
-          std::string{desc.name}),
+          std::string{name}),
       diag::UnsupportedCategory::kFeature);
 }
 
 }  // namespace
 
 auto LowerSFormatSystemSubroutineCall(
-    const UnitLoweringState& unit_state,
-    const StructuralScopeLoweringState& scope_state,
-    ProcessLoweringState& proc_state,
-    ProceduralScopeLoweringState& proc_scope_state,
-    const hir::ProceduralBody& hir_proc, const hir::CallExpr& call,
+    ProcessLowerer& process, WalkFrame frame, const hir::CallExpr& call,
     const support::SFormatSystemSubroutineInfo& info, diag::SourceSpan span)
     -> diag::Result<mir::Expr> {
   if (info.has_output_arg) {
@@ -78,32 +69,24 @@ auto LowerSFormatSystemSubroutineCall(
         "expression-position lowering; slang's task binding should reject "
         "them outside statement position");
   }
-  return BuildSFormatCallExpr(
-      unit_state, scope_state, proc_state, proc_scope_state, hir_proc, call,
-      info, 0, span);
+  return BuildSFormatCallExpr(process, frame, call, info, 0, span);
 }
 
 auto LowerSFormatSystemSubroutineCallStmt(
-    const UnitLoweringState& unit_state,
-    const StructuralScopeLoweringState& scope_state,
-    ProcessLoweringState& proc_state,
-    ProceduralScopeLoweringState& proc_scope_state,
-    const hir::ProceduralBody& hir_proc, const hir::Stmt& stmt,
-    diag::SourceSpan span, const hir::CallExpr& call,
-    const support::SystemSubroutineDesc& desc,
+    ProcessLowerer& process, WalkFrame frame, std::optional<std::string> label,
+    diag::SourceSpan span, const hir::CallExpr& call, std::string_view name,
     const support::SFormatSystemSubroutineInfo& info)
     -> diag::Result<mir::Stmt> {
+  const auto& hir_proc = process.HirBody();
+  auto& proc_scope = *frame.current_procedural_scope;
+
   if (!info.has_output_arg) {
-    auto call_expr_or = BuildSFormatCallExpr(
-        unit_state, scope_state, proc_state, proc_scope_state, hir_proc, call,
-        info, 0, span);
+    auto call_expr_or =
+        BuildSFormatCallExpr(process, frame, call, info, 0, span);
     if (!call_expr_or) return std::unexpected(std::move(call_expr_or.error()));
-    const mir::ExprId expr_id =
-        proc_scope_state.AddExpr(*std::move(call_expr_or));
+    const mir::ExprId expr_id = proc_scope.AddExpr(*std::move(call_expr_or));
     return mir::Stmt{
-        .label = stmt.label,
-        .data = mir::ExprStmt{.expr = expr_id},
-        .child_procedural_scopes = {}};
+        .label = std::move(label), .data = mir::ExprStmt{.expr = expr_id}};
   }
 
   if (call.arguments.empty()) {
@@ -118,32 +101,27 @@ auto LowerSFormatSystemSubroutineCallStmt(
         "LowerSFormatSystemSubroutineCallStmt: output_var arg unexpectedly "
         "elided");
   }
-  auto out_or = LowerExpr(
-      unit_state, scope_state, proc_state, proc_scope_state, hir_proc,
-      hir_proc.exprs.at(call.arguments[0]->value));
+  auto out_or =
+      LowerExpr(process, frame, hir_proc.exprs.at(call.arguments[0]->value));
   if (!out_or) return std::unexpected(std::move(out_or.error()));
   const mir::TypeId out_type = out_or->type;
-  if (unit_state.GetType(out_type).Kind() != mir::TypeKind::kString) {
-    return RejectNonStringOutput(desc, span);
+  if (process.Module().Unit().GetType(out_type).Kind() !=
+      mir::TypeKind::kString) {
+    return RejectNonStringOutput(name, span);
   }
-  const mir::ExprId out_id = proc_scope_state.AddExpr(*std::move(out_or));
+  const mir::ExprId out_id = proc_scope.AddExpr(*std::move(out_or));
 
-  auto call_expr_or = BuildSFormatCallExpr(
-      unit_state, scope_state, proc_state, proc_scope_state, hir_proc, call,
-      info, 1, span);
+  auto call_expr_or = BuildSFormatCallExpr(process, frame, call, info, 1, span);
   if (!call_expr_or) return std::unexpected(std::move(call_expr_or.error()));
-  const mir::ExprId call_id =
-      proc_scope_state.AddExpr(*std::move(call_expr_or));
+  const mir::ExprId call_id = proc_scope.AddExpr(*std::move(call_expr_or));
 
-  const mir::ExprId assign_id = proc_scope_state.AddExpr(
+  const mir::ExprId assign_id = proc_scope.AddExpr(
       mir::Expr{
           .data = mir::AssignExpr{.target = out_id, .value = call_id},
           .type = out_type});
 
   return mir::Stmt{
-      .label = stmt.label,
-      .data = mir::ExprStmt{.expr = assign_id},
-      .child_procedural_scopes = {}};
+      .label = std::move(label), .data = mir::ExprStmt{.expr = assign_id}};
 }
 
 }  // namespace lyra::lowering::hir_to_mir

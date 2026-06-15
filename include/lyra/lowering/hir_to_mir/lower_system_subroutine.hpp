@@ -3,9 +3,9 @@
 #include "lyra/diag/diagnostic.hpp"
 #include "lyra/diag/source_span.hpp"
 #include "lyra/hir/expr.hpp"
-#include "lyra/hir/procedural_body.hpp"
 #include "lyra/hir/subroutine_ref.hpp"
-#include "lyra/lowering/hir_to_mir/state.hpp"
+#include "lyra/lowering/hir_to_mir/process_lowerer.hpp"
+#include "lyra/lowering/hir_to_mir/walk_frame.hpp"
 #include "lyra/mir/expr.hpp"
 
 namespace lyra::lowering::hir_to_mir {
@@ -15,11 +15,7 @@ namespace lyra::lowering::hir_to_mir {
 // exhaustive over `support::SystemSubroutineSemantic`; new arms force a
 // compile-time update here.
 auto LowerSystemSubroutineCall(
-    const UnitLoweringState& unit_state,
-    const StructuralScopeLoweringState& scope_state,
-    ProcessLoweringState& proc_state,
-    ProceduralScopeLoweringState& proc_scope_state,
-    const hir::ProceduralBody& hir_proc, const hir::CallExpr& call,
+    ProcessLowerer& process, WalkFrame frame, const hir::CallExpr& call,
     const hir::SystemSubroutineRef& ref, diag::SourceSpan span)
     -> diag::Result<mir::Expr>;
 

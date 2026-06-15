@@ -10,12 +10,14 @@
 #include <vector>
 
 #include "lyra/base/internal_error.hpp"
+#include "lyra/hir/procedural_body.hpp"
+#include "lyra/hir/stmt.hpp"
 #include "lyra/lowering/hir_to_mir/default_value.hpp"
 #include "lyra/lowering/hir_to_mir/lower_expr.hpp"
 #include "lyra/lowering/hir_to_mir/lower_stmt.hpp"
-#include "lyra/lowering/hir_to_mir/procedural_scope_helpers.hpp"
 #include "lyra/mir/binary_op.hpp"
 #include "lyra/mir/closure.hpp"
+#include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/expr_id.hpp"
 #include "lyra/mir/procedural_hops.hpp"
 #include "lyra/mir/procedural_var.hpp"
@@ -92,59 +94,39 @@ auto VerdictFor(hir::UniquePriorityCheck check, std::size_t branch_count)
   throw InternalError("VerdictFor: unknown HIR UniquePriorityCheck");
 }
 
-auto AppendExpr(mir::ProceduralScope& scope, mir::Expr expr) -> mir::ExprId {
-  const mir::ExprId id{static_cast<std::uint32_t>(scope.exprs.size())};
-  scope.exprs.push_back(std::move(expr));
-  return id;
-}
-
-auto AppendStmt(mir::ProceduralScope& scope, mir::Stmt stmt) -> mir::StmtId {
-  const mir::StmtId id{static_cast<std::uint32_t>(scope.stmts.size())};
-  scope.stmts.push_back(std::move(stmt));
-  return id;
-}
-
 auto SnapshotPredicate(
-    const UnitLoweringState& unit_state,
-    ProceduralScopeLoweringState& wrapper_state, std::size_t index,
-    mir::TypeId predicate_type, mir::ExprId predicate_expr_id)
-    -> mir::ProceduralVarId {
+    const ModuleLowerer& module, WalkFrame frame, mir::ProceduralScope& wrapper,
+    std::size_t index, mir::TypeId predicate_type,
+    mir::ExprId predicate_expr_id) -> mir::ProceduralVarId {
   const std::string var_name = std::format("_lyra_unique_cond_{}", index);
-  const mir::ProceduralVarId snap_var = wrapper_state.AddProceduralVar(
+  const mir::ProceduralVarId snap_var = wrapper.AddProceduralVar(
       mir::ProceduralVarDecl{.name = var_name, .type = predicate_type});
   const mir::ExprId snap_default_init =
-      SynthesizeDefaultValueExpr(unit_state, wrapper_state, predicate_type);
-  const mir::StmtId decl_id = wrapper_state.AddStmt(
+      SynthesizeDefaultValueExpr(module, frame, predicate_type);
+  wrapper.AppendStmt(
       mir::Stmt{
           .label = std::nullopt,
-          .data =
-              mir::ProceduralVarDeclStmt{
-                  .target =
-                      mir::ProceduralVarRef{
-                          .hops = mir::ProceduralHops{.value = 0},
-                          .var = snap_var},
-                  .init = snap_default_init},
-          .child_procedural_scopes = {}});
-  wrapper_state.AddRootStmt(decl_id);
+          .data = mir::ProceduralVarDeclStmt{
+              .target =
+                  mir::ProceduralVarRef{
+                      .hops = mir::ProceduralHops{.value = 0}, .var = snap_var},
+              .init = snap_default_init}});
 
-  const mir::ExprId snap_target_id = wrapper_state.AddExpr(
+  const mir::ExprId snap_target_id = wrapper.AddExpr(
       mir::Expr{
           .data =
               mir::ProceduralVarRef{
                   .hops = mir::ProceduralHops{.value = 0}, .var = snap_var},
           .type = predicate_type});
-  const mir::ExprId assign_id = wrapper_state.AddExpr(
+  const mir::ExprId assign_id = wrapper.AddExpr(
       mir::Expr{
           .data =
               mir::AssignExpr{
                   .target = snap_target_id, .value = predicate_expr_id},
           .type = predicate_type});
-  const mir::StmtId assign_stmt_id = wrapper_state.AddStmt(
+  wrapper.AppendStmt(
       mir::Stmt{
-          .label = std::nullopt,
-          .data = mir::ExprStmt{.expr = assign_id},
-          .child_procedural_scopes = {}});
-  wrapper_state.AddRootStmt(assign_stmt_id);
+          .label = std::nullopt, .data = mir::ExprStmt{.expr = assign_id}});
 
   return snap_var;
 }
@@ -158,8 +140,7 @@ auto BuildDiagnosticThenScope(
   std::vector<mir::RuntimePrintItem> items;
   items.emplace_back(mir::RuntimePrintLiteral{.text = verdict.prefix_text});
   if (verdict.include_count_value) {
-    const mir::ExprId count_read_id = AppendExpr(
-        scope,
+    const mir::ExprId count_read_id = scope.AddExpr(
         mir::Expr{
             .data =
                 mir::ProceduralVarRef{
@@ -173,26 +154,20 @@ auto BuildDiagnosticThenScope(
     items.emplace_back(mir::RuntimePrintLiteral{.text = verdict.suffix_text});
   }
 
-  const mir::ExprId diag_call_id = AppendExpr(
-      scope, mir::Expr{
-                 .data =
-                     mir::RuntimeCallExpr{
-                         .call = mir::RuntimeDiagnosticCall(
-                             mir::DiagnosticSeverity::kWarning, std::nullopt,
-                             std::move(items))},
-                 .type = void_type});
-  const mir::StmtId diag_stmt_id = AppendStmt(
-      scope, mir::Stmt{
-                 .label = std::nullopt,
-                 .data = mir::ExprStmt{.expr = diag_call_id},
-                 .child_procedural_scopes = {}});
-  scope.root_stmts.push_back(diag_stmt_id);
+  const mir::ExprId diag_call_id = scope.AddExpr(
+      mir::Expr{
+          .data =
+              mir::RuntimeCallExpr{
+                  .call = mir::RuntimeDiagnosticCall(
+                      mir::DiagnosticSeverity::kWarning, std::nullopt,
+                      std::move(items))},
+          .type = void_type});
+  scope.AppendStmt(mir::ExprStmt{.expr = diag_call_id});
   return scope;
 }
 
 auto BuildUniqueCheckClosure(
-    const UnitLoweringState& unit_state,
-    ProceduralScopeLoweringState& wrapper_state, mir::TypeId int32_type,
+    mir::ProceduralScope& wrapper, mir::TypeId int32_type,
     mir::TypeId void_type, hir::UniquePriorityCheck check,
     const std::vector<mir::ProceduralVarId>& snapshot_vars)
     -> mir::ClosureExpr {
@@ -204,8 +179,8 @@ auto BuildUniqueCheckClosure(
   inner_reads.reserve(snapshot_vars.size());
   for (std::size_t i = 0; i < snapshot_vars.size(); ++i) {
     const mir::TypeId snap_type =
-        wrapper_state.GetProceduralVar(snapshot_vars[i]).type;
-    const mir::ExprId outer_read_id = wrapper_state.AddExpr(
+        wrapper.GetProceduralVar(snapshot_vars[i]).type;
+    const mir::ExprId outer_read_id = wrapper.AddExpr(
         mir::Expr{
             .data =
                 mir::ProceduralVarRef{
@@ -213,16 +188,13 @@ auto BuildUniqueCheckClosure(
                     .var = snapshot_vars[i]},
             .type = snap_type});
 
-    const mir::ProceduralVarId binding{
-        static_cast<std::uint32_t>(body.vars.size())};
-    body.vars.emplace_back(
+    const mir::ProceduralVarId binding = body.AddProceduralVar(
         mir::ProceduralVarDecl{
             .name = std::format("_lyra_unique_bind_{}", i), .type = snap_type});
     closure.captures.emplace_back(
         mir::ByValueCapture{.value = outer_read_id, .binding = binding});
 
-    const mir::ExprId inner_read_id = AppendExpr(
-        body,
+    const mir::ExprId inner_read_id = body.AddExpr(
         mir::Expr{
             .data =
                 mir::ProceduralVarRef{
@@ -231,112 +203,89 @@ auto BuildUniqueCheckClosure(
     inner_reads.push_back(inner_read_id);
   }
 
-  const mir::ProceduralVarId count_var{
-      static_cast<std::uint32_t>(body.vars.size())};
-  body.vars.push_back(
+  const mir::ProceduralVarId count_var = body.AddProceduralVar(
       mir::ProceduralVarDecl{.name = "_lyra_unique_count", .type = int32_type});
 
   const mir::ExprId zero_init_id =
-      AppendExpr(body, unit_state.MakeInt32LiteralExpr(0));
-  const mir::StmtId count_decl_id = AppendStmt(
-      body, mir::Stmt{
-                .label = std::nullopt,
-                .data =
-                    mir::ProceduralVarDeclStmt{
-                        .target =
-                            mir::ProceduralVarRef{
-                                .hops = mir::ProceduralHops{.value = 0},
-                                .var = count_var},
-                        .init = zero_init_id},
-                .child_procedural_scopes = {}});
-  body.root_stmts.push_back(count_decl_id);
+      body.AddExpr(mir::MakeInt32Literal(int32_type, 0));
+  body.AppendStmt(
+      mir::ProceduralVarDeclStmt{
+          .target =
+              mir::ProceduralVarRef{
+                  .hops = mir::ProceduralHops{.value = 0}, .var = count_var},
+          .init = zero_init_id});
 
   for (const mir::ExprId bit_read : inner_reads) {
     const mir::ExprId one_lit =
-        AppendExpr(body, unit_state.MakeInt32LiteralExpr(1));
+        body.AddExpr(mir::MakeInt32Literal(int32_type, 1));
     const mir::ExprId zero_lit =
-        AppendExpr(body, unit_state.MakeInt32LiteralExpr(0));
-    const mir::ExprId cond_value = AppendExpr(
-        body, mir::Expr{
-                  .data =
-                      mir::ConditionalExpr{
-                          .condition = bit_read,
-                          .then_value = one_lit,
-                          .else_value = zero_lit},
-                  .type = int32_type});
-    const mir::ExprId count_read = AppendExpr(
-        body,
+        body.AddExpr(mir::MakeInt32Literal(int32_type, 0));
+    const mir::ExprId cond_value = body.AddExpr(
+        mir::Expr{
+            .data =
+                mir::ConditionalExpr{
+                    .condition = bit_read,
+                    .then_value = one_lit,
+                    .else_value = zero_lit},
+            .type = int32_type});
+    const mir::ExprId count_read = body.AddExpr(
         mir::Expr{
             .data =
                 mir::ProceduralVarRef{
                     .hops = mir::ProceduralHops{.value = 0}, .var = count_var},
             .type = int32_type});
-    const mir::ExprId added = AppendExpr(
-        body, mir::Expr{
-                  .data =
-                      mir::BinaryExpr{
-                          .op = mir::BinaryOp::kAdd,
-                          .lhs = count_read,
-                          .rhs = cond_value},
-                  .type = int32_type});
-    const mir::ExprId count_target = AppendExpr(
-        body,
+    const mir::ExprId added = body.AddExpr(
+        mir::Expr{
+            .data =
+                mir::BinaryExpr{
+                    .op = mir::BinaryOp::kAdd,
+                    .lhs = count_read,
+                    .rhs = cond_value},
+            .type = int32_type});
+    const mir::ExprId count_target = body.AddExpr(
         mir::Expr{
             .data =
                 mir::ProceduralVarRef{
                     .hops = mir::ProceduralHops{.value = 0}, .var = count_var},
             .type = int32_type});
-    const mir::ExprId assign = AppendExpr(
-        body,
+    const mir::ExprId assign = body.AddExpr(
         mir::Expr{
             .data = mir::AssignExpr{.target = count_target, .value = added},
             .type = int32_type});
-    const mir::StmtId step_id = AppendStmt(
-        body, mir::Stmt{
-                  .label = std::nullopt,
-                  .data = mir::ExprStmt{.expr = assign},
-                  .child_procedural_scopes = {}});
-    body.root_stmts.push_back(step_id);
+    body.AppendStmt(mir::ExprStmt{.expr = assign});
   }
 
   const CheckVerdict verdict = VerdictFor(check, snapshot_vars.size());
 
-  const mir::ExprId final_count_read = AppendExpr(
-      body,
+  const mir::ExprId final_count_read = body.AddExpr(
       mir::Expr{
           .data =
               mir::ProceduralVarRef{
                   .hops = mir::ProceduralHops{.value = 0}, .var = count_var},
           .type = int32_type});
-  const mir::ExprId expected_lit = AppendExpr(
-      body, unit_state.MakeInt32LiteralExpr(
-                static_cast<std::int64_t>(verdict.expected)));
-  const mir::ExprId predicate_id = AppendExpr(
-      body, mir::Expr{
-                .data =
-                    mir::BinaryExpr{
-                        .op = verdict.violation_op,
-                        .lhs = final_count_read,
-                        .rhs = expected_lit},
-                .type = int32_type});
+  const mir::ExprId expected_lit = body.AddExpr(
+      mir::MakeInt32Literal(
+          int32_type, static_cast<std::int64_t>(verdict.expected)));
+  const mir::ExprId predicate_id = body.AddExpr(
+      mir::Expr{
+          .data =
+              mir::BinaryExpr{
+                  .op = verdict.violation_op,
+                  .lhs = final_count_read,
+                  .rhs = expected_lit},
+          .type = int32_type});
 
   mir::ProceduralScope diag_scope =
       BuildDiagnosticThenScope(count_var, int32_type, void_type, verdict);
 
-  std::vector<mir::ProceduralScope> if_children;
   const mir::ProceduralScopeId diag_scope_id =
-      AddChildProceduralScope(if_children, std::move(diag_scope));
+      body.AddChildScope(std::move(diag_scope));
 
-  const mir::StmtId if_stmt_id = AppendStmt(
-      body, mir::Stmt{
-                .label = std::nullopt,
-                .data =
-                    mir::IfStmt{
-                        .condition = predicate_id,
-                        .then_scope = diag_scope_id,
-                        .else_scope = std::nullopt},
-                .child_procedural_scopes = std::move(if_children)});
-  body.root_stmts.push_back(if_stmt_id);
+  body.AppendStmt(
+      mir::IfStmt{
+          .condition = predicate_id,
+          .then_scope = diag_scope_id,
+          .else_scope = std::nullopt});
 
   return closure;
 }
@@ -344,32 +293,37 @@ auto BuildUniqueCheckClosure(
 }  // namespace
 
 auto BuildDeferredCheckCascade(
-    const UnitLoweringState& unit_state,
-    ProceduralScopeLoweringState wrapper_state,
+    ModuleLowerer& module, WalkFrame frame, mir::ProceduralScope wrapper,
     std::vector<DeferredCheckBranch> branches,
     std::optional<mir::ProceduralScope> tail_else,
     hir::UniquePriorityCheck check, std::optional<std::string> outer_label)
     -> mir::Stmt {
-  const mir::TypeId void_type = unit_state.Builtins().void_type;
-  const mir::TypeId int32_type = unit_state.Builtins().int32;
+  const mir::TypeId void_type = module.Unit().builtins.void_type;
+  const mir::TypeId int32_type = module.Unit().builtins.int32;
+
+  // SnapshotPredicate / SynthesizeDefaultValueExpr append to wrapper, so
+  // route through a wrapper-local frame; the cascade levels each derive their
+  // own local frames below.
+  const WalkFrame wrapper_frame = frame.WithProceduralScope(&wrapper);
 
   std::vector<mir::ProceduralVarId> snapshot_vars;
   snapshot_vars.reserve(branches.size());
   for (std::size_t i = 0; i < branches.size(); ++i) {
     const mir::TypeId predicate_type =
-        wrapper_state.GetExpr(branches[i].predicate).type;
+        wrapper.GetExpr(branches[i].predicate).type;
     snapshot_vars.push_back(SnapshotPredicate(
-        unit_state, wrapper_state, i, predicate_type, branches[i].predicate));
+        module, wrapper_frame, wrapper, i, predicate_type,
+        branches[i].predicate));
   }
 
   mir::ClosureExpr closure = BuildUniqueCheckClosure(
-      unit_state, wrapper_state, int32_type, void_type, check, snapshot_vars);
-  const mir::ExprId closure_expr_id = wrapper_state.AddExpr(
-      mir::Expr{.data = std::move(closure), .type = void_type});
+      wrapper, int32_type, void_type, check, snapshot_vars);
+  const mir::ExprId closure_expr_id =
+      wrapper.AddExpr(mir::Expr{.data = std::move(closure), .type = void_type});
 
   const mir::DeferredCheckSiteId site_id =
-      unit_state.AllocateDeferredCheckSiteId();
-  const mir::ExprId submit_expr_id = wrapper_state.AddExpr(
+      module.Unit().AllocateDeferredCheckSiteId();
+  const mir::ExprId submit_expr_id = wrapper.AddExpr(
       mir::Expr{
           .data =
               mir::RuntimeCallExpr{
@@ -377,18 +331,16 @@ auto BuildDeferredCheckCascade(
                       mir::RuntimeSubmitObservedCall{
                           .site_id = site_id, .closure = closure_expr_id}},
           .type = void_type});
-  const mir::StmtId submit_stmt_id = wrapper_state.AddStmt(
+  wrapper.AppendStmt(
       mir::Stmt{
           .label = std::nullopt,
-          .data = mir::ExprStmt{.expr = submit_expr_id},
-          .child_procedural_scopes = {}});
-  wrapper_state.AddRootStmt(submit_stmt_id);
+          .data = mir::ExprStmt{.expr = submit_expr_id}});
 
   // Cascade level i sits i scopes deeper than wrapper, so the read uses hops=i.
   std::optional<mir::ProceduralScope> tail = std::move(tail_else);
   for (std::size_t i = branches.size(); i-- > 1;) {
-    ProceduralScopeLoweringState level_state;
-    const mir::ExprId cond_read = level_state.AddExpr(
+    mir::ProceduralScope level_scope;
+    const mir::ExprId cond_read = level_scope.AddExpr(
         mir::Expr{
             .data =
                 mir::ProceduralVarRef{
@@ -398,30 +350,25 @@ auto BuildDeferredCheckCascade(
                     .var = snapshot_vars[i]},
             .type = int32_type});
 
-    std::vector<mir::ProceduralScope> if_child_scopes;
     const mir::ProceduralScopeId body_scope_id =
-        AddChildProceduralScope(if_child_scopes, std::move(branches[i].body));
+        level_scope.AddChildScope(std::move(branches[i].body));
     std::optional<mir::ProceduralScopeId> else_scope_id;
     if (tail.has_value()) {
-      else_scope_id =
-          AddChildProceduralScope(if_child_scopes, std::move(*tail));
+      else_scope_id = level_scope.AddChildScope(std::move(*tail));
     }
 
-    const mir::StmtId if_id = level_state.AddStmt(
+    level_scope.AppendStmt(
         mir::Stmt{
             .label = std::nullopt,
-            .data =
-                mir::IfStmt{
-                    .condition = cond_read,
-                    .then_scope = body_scope_id,
-                    .else_scope = else_scope_id},
-            .child_procedural_scopes = std::move(if_child_scopes)});
-    level_state.AddRootStmt(if_id);
-    tail = level_state.Finish();
+            .data = mir::IfStmt{
+                .condition = cond_read,
+                .then_scope = body_scope_id,
+                .else_scope = else_scope_id}});
+    tail = std::move(level_scope);
   }
 
   if (!branches.empty()) {
-    const mir::ExprId cond_read0 = wrapper_state.AddExpr(
+    const mir::ExprId cond_read0 = wrapper.AddExpr(
         mir::Expr{
             .data =
                 mir::ProceduralVarRef{
@@ -429,76 +376,65 @@ auto BuildDeferredCheckCascade(
                     .var = snapshot_vars[0]},
             .type = int32_type});
 
-    std::vector<mir::ProceduralScope> if0_child_scopes;
     const mir::ProceduralScopeId body0_id =
-        AddChildProceduralScope(if0_child_scopes, std::move(branches[0].body));
+        wrapper.AddChildScope(std::move(branches[0].body));
     std::optional<mir::ProceduralScopeId> else0_id;
     if (tail.has_value()) {
-      else0_id = AddChildProceduralScope(if0_child_scopes, std::move(*tail));
+      else0_id = wrapper.AddChildScope(std::move(*tail));
     }
 
-    const mir::StmtId if0_id = wrapper_state.AddStmt(
+    wrapper.AppendStmt(
         mir::Stmt{
             .label = std::nullopt,
-            .data =
-                mir::IfStmt{
-                    .condition = cond_read0,
-                    .then_scope = body0_id,
-                    .else_scope = else0_id},
-            .child_procedural_scopes = std::move(if0_child_scopes)});
-    wrapper_state.AddRootStmt(if0_id);
+            .data = mir::IfStmt{
+                .condition = cond_read0,
+                .then_scope = body0_id,
+                .else_scope = else0_id}});
   }
 
-  std::vector<mir::ProceduralScope> outer_child_scopes;
   const mir::ProceduralScopeId wrapper_scope_id =
-      AddChildProceduralScope(outer_child_scopes, wrapper_state.Finish());
+      frame.current_procedural_scope->AddChildScope(std::move(wrapper));
 
   return mir::Stmt{
       .label = std::move(outer_label),
-      .data = mir::BlockStmt{.scope = wrapper_scope_id},
-      .child_procedural_scopes = std::move(outer_child_scopes)};
+      .data = mir::BlockStmt{.scope = wrapper_scope_id}};
 }
 
 auto LowerUniqueIfStmt(
-    const UnitLoweringState& unit_state,
-    const StructuralScopeLoweringState& scope_state,
-    ProcessLoweringState& proc_state, const hir::ProceduralBody& hir_proc,
-    const hir::Stmt& stmt, const hir::IfStmt& root) -> diag::Result<mir::Stmt> {
+    ProcessLowerer& process, WalkFrame frame, std::optional<std::string> label,
+    const hir::IfStmt& root) -> diag::Result<mir::Stmt> {
+  const auto& hir_proc = process.HirBody();
   const auto cascade = FlattenUniqueCascade(hir_proc, root);
 
-  ProceduralScopeLoweringState wrapper_state;
-  ProceduralDepthGuard wrapper_depth_guard{proc_state};
+  mir::ProceduralScope wrapper;
+  const WalkFrame wrapper_frame = frame.WithProceduralScope(&wrapper).Deeper();
 
-  // Lower each branch condition into wrapper_state; these are the predicates
+  // Lower each branch condition into wrapper; these are the predicates
   // that BuildDeferredCheckCascade will snapshot.
   std::vector<mir::ExprId> predicates;
   predicates.reserve(cascade.conditions.size());
   for (const hir::ExprId hir_cond : cascade.conditions) {
-    auto cond_or = LowerExpr(
-        unit_state, scope_state, proc_state, wrapper_state, hir_proc,
-        hir_proc.exprs.at(hir_cond.value));
+    auto cond_or =
+        LowerExpr(process, wrapper_frame, hir_proc.exprs.at(hir_cond.value));
     if (!cond_or) return std::unexpected(std::move(cond_or.error()));
-    predicates.push_back(wrapper_state.AddExpr(*std::move(cond_or)));
+    predicates.push_back(wrapper.AddExpr(*std::move(cond_or)));
   }
 
-  // Lower each body into its own child scope, with depth guards mirroring
-  // the cascade structure (level i sits i scopes deeper than wrapper).
-  auto with_extra_depth = [&](std::size_t extras, auto fn) {
-    std::vector<std::unique_ptr<ProceduralDepthGuard>> guards;
-    guards.reserve(extras);
+  // Lower each body into its own child scope. Cascade level i sits i scopes
+  // deeper than wrapper, so each body lowering descends i extra frames before
+  // opening its own child scope (LowerStmtIntoChildScope adds one more).
+  auto deeper_by = [](WalkFrame f, std::size_t extras) {
     for (std::size_t i = 0; i < extras; ++i) {
-      guards.push_back(std::make_unique<ProceduralDepthGuard>(proc_state));
+      f = f.Deeper();
     }
-    return fn();
+    return f;
   };
 
   std::vector<DeferredCheckBranch> branches;
   branches.reserve(cascade.bodies.size());
   for (std::size_t i = 0; i < cascade.bodies.size(); ++i) {
-    auto body_or = with_extra_depth(i, [&] {
-      return LowerStmtIntoChildScope(
-          unit_state, scope_state, proc_state, hir_proc, cascade.bodies[i]);
-    });
+    auto body_or = LowerStmtIntoChildScope(
+        process, deeper_by(wrapper_frame, i), cascade.bodies[i]);
     if (!body_or) return std::unexpected(std::move(body_or.error()));
     branches.push_back(
         DeferredCheckBranch{
@@ -507,17 +443,16 @@ auto LowerUniqueIfStmt(
 
   std::optional<mir::ProceduralScope> tail_scope;
   if (cascade.tail_else.has_value()) {
-    auto tail_or = with_extra_depth(cascade.bodies.size(), [&] {
-      return LowerStmtIntoChildScope(
-          unit_state, scope_state, proc_state, hir_proc, *cascade.tail_else);
-    });
+    auto tail_or = LowerStmtIntoChildScope(
+        process, deeper_by(wrapper_frame, cascade.bodies.size()),
+        *cascade.tail_else);
     if (!tail_or) return std::unexpected(std::move(tail_or.error()));
     tail_scope = std::move(*tail_or);
   }
 
   return BuildDeferredCheckCascade(
-      unit_state, std::move(wrapper_state), std::move(branches),
-      std::move(tail_scope), *root.check, stmt.label);
+      process.Module(), frame, std::move(wrapper), std::move(branches),
+      std::move(tail_scope), *root.check, std::move(label));
 }
 
 }  // namespace lyra::lowering::hir_to_mir

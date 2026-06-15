@@ -7,7 +7,7 @@
 #include "lyra/base/internal_error.hpp"
 #include "lyra/base/overloaded.hpp"
 #include "lyra/hir/stmt.hpp"
-#include "lyra/lowering/hir_to_mir/state.hpp"
+#include "lyra/lowering/hir_to_mir/structural_scope_lowerer.hpp"
 #include "lyra/mir/stmt.hpp"
 #include "lyra/mir/value_ref.hpp"
 
@@ -32,7 +32,7 @@ auto LowerEventEdge(hir::EventEdge edge) -> mir::EventEdge {
 }  // namespace
 
 auto BuildSensitivityWaitStmt(
-    const StructuralScopeLoweringState& scope_state,
+    const StructuralScopeLowerer& scope,
     const std::vector<hir::SensitivityEntry>& sensitivity_list) -> mir::Stmt {
   std::vector<mir::SensitivityRead> reads;
   reads.reserve(sensitivity_list.size());
@@ -40,10 +40,10 @@ auto BuildSensitivityWaitStmt(
     mir::SensitivityRef ref = std::visit(
         Overloaded{
             [&](const hir::StructuralVarRef& r) -> mir::SensitivityRef {
-              return scope_state.TranslateStructuralVar(r.hops, r.var);
+              return scope.TranslateStructuralVar(r.hops, r.var);
             },
             [&](const hir::CrossUnitVarRef& r) -> mir::SensitivityRef {
-              return scope_state.CrossUnitRefTarget(r.id);
+              return scope.CrossUnitRefTarget(r.id).target;
             },
         },
         entry.ref);
@@ -55,8 +55,7 @@ auto BuildSensitivityWaitStmt(
   }
   return mir::Stmt{
       .label = std::nullopt,
-      .data = mir::SensitivityWaitStmt{.reads = std::move(reads)},
-      .child_procedural_scopes = {}};
+      .data = mir::SensitivityWaitStmt{.reads = std::move(reads)}};
 }
 
 }  // namespace lyra::lowering::hir_to_mir

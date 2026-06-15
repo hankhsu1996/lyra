@@ -5,7 +5,6 @@
 #include "lyra/base/overloaded.hpp"
 #include "lyra/diag/diagnostic.hpp"
 #include "lyra/hir/expr.hpp"
-#include "lyra/hir/procedural_body.hpp"
 #include "lyra/hir/subroutine_ref.hpp"
 #include "lyra/lowering/hir_to_mir/lower_diagnostic.hpp"
 #include "lyra/lowering/hir_to_mir/lower_file_io.hpp"
@@ -14,18 +13,14 @@
 #include "lyra/lowering/hir_to_mir/lower_scan.hpp"
 #include "lyra/lowering/hir_to_mir/lower_sformat.hpp"
 #include "lyra/lowering/hir_to_mir/lower_timescale.hpp"
-#include "lyra/lowering/hir_to_mir/state.hpp"
+#include "lyra/lowering/hir_to_mir/process_lowerer.hpp"
 #include "lyra/mir/expr.hpp"
 #include "lyra/support/system_subroutine.hpp"
 
 namespace lyra::lowering::hir_to_mir {
 
 auto LowerSystemSubroutineCall(
-    const UnitLoweringState& unit_state,
-    const StructuralScopeLoweringState& scope_state,
-    ProcessLoweringState& proc_state,
-    ProceduralScopeLoweringState& proc_scope_state,
-    const hir::ProceduralBody& hir_proc, const hir::CallExpr& call,
+    ProcessLowerer& process, WalkFrame frame, const hir::CallExpr& call,
     const hir::SystemSubroutineRef& ref, diag::SourceSpan span)
     -> diag::Result<mir::Expr> {
   const auto& desc = support::LookupSystemSubroutine(ref.id);
@@ -34,37 +29,32 @@ auto LowerSystemSubroutineCall(
           [&](const support::PrintSystemSubroutineInfo& print)
               -> diag::Result<mir::Expr> {
             return LowerPrintSystemSubroutineCall(
-                unit_state, scope_state, proc_state, proc_scope_state, hir_proc,
-                call, print, span);
+                process, frame, call, print, span);
           },
           [&](const support::TerminationSystemSubroutineInfo& term)
               -> diag::Result<mir::Expr> {
             return LowerFinishSystemSubroutineCall(
-                unit_state, hir_proc, call, desc, term, span);
+                process, call, desc.name, term, span);
           },
           [&](const support::DiagnosticSystemSubroutineInfo& diag_info)
               -> diag::Result<mir::Expr> {
             return LowerDiagnosticSystemSubroutineCall(
-                unit_state, scope_state, proc_state, proc_scope_state, hir_proc,
-                call, diag_info, span);
+                process, frame, call, diag_info, span);
           },
           [&](const support::FileIOSystemSubroutineInfo& file_io)
               -> diag::Result<mir::Expr> {
             return LowerFileIOSystemSubroutineCall(
-                unit_state, scope_state, proc_state, proc_scope_state, hir_proc,
-                call, desc, file_io, span);
+                process, frame, call, desc.name, file_io, span);
           },
           [&](const support::ScanSystemSubroutineInfo& scan_info)
               -> diag::Result<mir::Expr> {
             return LowerScanSystemSubroutineCall(
-                unit_state, scope_state, proc_state, proc_scope_state, hir_proc,
-                call, scan_info, span);
+                process, frame, call, scan_info, span);
           },
           [&](const support::SFormatSystemSubroutineInfo& sformat)
               -> diag::Result<mir::Expr> {
             return LowerSFormatSystemSubroutineCall(
-                unit_state, scope_state, proc_state, proc_scope_state, hir_proc,
-                call, sformat, span);
+                process, frame, call, sformat, span);
           },
           [&](const support::TimeSystemSubroutineInfo& time_info)
               -> diag::Result<mir::Expr> {
@@ -72,16 +62,16 @@ auto LowerSystemSubroutineCall(
             // scaling happens at render time against the emitted
             // `kTimeUnitPower`, so the node carries only the kind. The result
             // type is fixed by the function (LRM 20.3.1/.2/.3).
-            mir::TypeId result_type = unit_state.Builtins().time;
+            mir::TypeId result_type = process.Module().Unit().builtins.time;
             switch (time_info.kind) {
               case support::TimeKind::kTime:
-                result_type = unit_state.Builtins().time;
+                result_type = process.Module().Unit().builtins.time;
                 break;
               case support::TimeKind::kStime:
-                result_type = unit_state.Builtins().int32;
+                result_type = process.Module().Unit().builtins.int32;
                 break;
               case support::TimeKind::kRealtime:
-                result_type = unit_state.Builtins().realtime;
+                result_type = process.Module().Unit().builtins.realtime;
                 break;
             }
             return mir::Expr{
@@ -93,13 +83,11 @@ auto LowerSystemSubroutineCall(
           [&](const support::TimeFormatSystemSubroutineInfo&)
               -> diag::Result<mir::Expr> {
             return LowerTimeFormatSystemSubroutineCall(
-                unit_state, scope_state, proc_state, proc_scope_state, hir_proc,
-                call, span);
+                process, frame, call, span);
           },
           [&](const support::PrintTimescaleSystemSubroutineInfo&)
               -> diag::Result<mir::Expr> {
-            return LowerPrintTimescaleSystemSubroutineCall(
-                unit_state, scope_state);
+            return LowerPrintTimescaleSystemSubroutineCall(process);
           },
       },
       desc.semantic);

@@ -20,7 +20,6 @@
 #include "lyra/hir/module_unit.hpp"
 #include "lyra/hir/structural_scope.hpp"
 #include "lyra/hir/structural_var.hpp"
-#include "lyra/hir/type.hpp"
 #include "lyra/lowering/ast_to_hir/sensitivity.hpp"
 #include "lyra/lowering/ast_to_hir/walk_frame.hpp"
 
@@ -29,18 +28,6 @@ class Expression;
 }  // namespace slang::ast
 
 namespace lyra::lowering::ast_to_hir {
-
-// Canonical HIR TypeIds for the synthesized types ModuleLowerer pre-registers
-// during construction. After construction these IDs are fixed; the struct
-// itself is exposed only via const accessors.
-struct BuiltinHirTypes {
-  hir::TypeId void_type;
-  hir::TypeId int32;
-  hir::TypeId integer;
-  hir::TypeId string;
-  hir::TypeId time;
-  hir::TypeId realtime;
-};
 
 struct StructuralVarBinding {
   ScopeFrameId home_frame{};
@@ -119,22 +106,39 @@ class LoweringFacts {
   SensitivityAnalyzer* sensitivity_analyzer_;
 };
 
-// Per-module lowerer: owns the HIR unit being built, the type translation
-// cache, and every binding table that resolves slang symbols to HIR ids
-// within this module. Constructed once per module / instance body; runs once
-// via Run() and is destroyed when the module's lowering completes.
+// Per-module lowerer.
+//
+// Facts: the shared lowering facts (source mapper + sensitivity analyzer) and
+// a reference to the slang instance body being walked.
+// Registries: type cache (slang canonical type -> hir TypeId), structural-var
+// / subroutine / loop-var / owned-child binding tables, per-frame cross-unit
+// ref slot tables, and a scope-frame counter.
+// Root output: the in-progress `hir::ModuleUnit`. Constructed in the ctor with
+// the module's name and an initial builtins table; populated by `Run`; moved
+// out by `Run`'s return. After `Run` returns the class holds no IR pointer.
 class ModuleLowerer {
  public:
   ModuleLowerer(
       const LoweringFacts& facts, const slang::ast::InstanceBodySymbol& body);
 
-  // Public entry: lowers the module body to a complete HIR ModuleUnit.
   auto Run() -> diag::Result<hir::ModuleUnit>;
 
-  // Facts.
-  [[nodiscard]] auto Builtins() const -> const BuiltinHirTypes& {
-    return builtins_;
+  // Read access to the in-progress unit. Handlers reach the unit's type vocab
+  // and builtins through this accessor; downstream consumers post-Run use the
+  // same `hir::ModuleUnit` interface.
+  [[nodiscard]] auto Unit() const -> const hir::ModuleUnit& {
+    return unit_;
   }
+
+  // Lowers a slang type to a HIR TypeId, memoizing by slang canonical pointer.
+  // The slang-keyed cache and the unit's type table are coordinated together:
+  // the dedup invariant (same slang canonical -> same HIR TypeId) is enforced
+  // structurally here, so callers cannot bypass it by writing to the unit
+  // directly.
+  auto InternType(const slang::ast::Type& type, diag::SourceSpan span)
+      -> diag::Result<hir::TypeId>;
+
+  // Facts.
   [[nodiscard]] auto SourceMapper() const
       -> const frontend::SlangSourceMapper& {
     return facts_.SourceMapper();
@@ -142,17 +146,6 @@ class ModuleLowerer {
   [[nodiscard]] auto Sensitivity() const -> SensitivityAnalyzer& {
     return facts_.Sensitivity();
   }
-
-  // Type translation. Canonical entry point for slang-driven types: the same
-  // slang canonical type always returns the same hir::TypeId via the cache.
-  auto GetTypeId(const slang::ast::Type& type, diag::SourceSpan span)
-      -> diag::Result<hir::TypeId>;
-  // Convenience: get the HIR TypeId of a slang expression's result type, using
-  // the expression's source range for the diagnostic span. Equivalent to
-  // GetTypeId(*e.type, mapper.SpanOf(e.sourceRange)).
-  auto GetTypeIdOf(const slang::ast::Expression& e)
-      -> diag::Result<hir::TypeId>;
-  [[nodiscard]] auto GetType(hir::TypeId id) const -> const hir::Type&;
 
   // Binding registries. Each Map* asserts no double-mapping for the same
   // slang symbol.
@@ -183,7 +176,7 @@ class ModuleLowerer {
       const -> std::optional<OwnedChildBinding>;
 
   // Cross-unit reference dedup. The slot itself is accumulated keyed by its
-  // owning scope's frame; the owning ScopeLowerer drains it via
+  // owning scope's frame; the owning StructuralScopeLowerer drains it via
   // TakeCrossUnitRefsForFrame at scope finalization.
   auto MapOrGetCrossUnitRef(
       const slang::ast::ValueSymbol& target, ScopeFrameId home_frame,
@@ -210,13 +203,6 @@ class ModuleLowerer {
       -> std::vector<hir::SensitivityEntry>;
 
  private:
-  // Translates a freshly-encountered slang type into HIR TypeData, recursing
-  // through element / field types via GetTypeId. Internal: GetTypeId is the
-  // only caller, and it caches by canonical slang pointer.
-  auto LowerType(const slang::ast::Type& type, diag::SourceSpan decl_span)
-      -> diag::Result<hir::TypeData>;
-  // Registers a freshly-built TypeData; returns its id.
-  auto AddType(hir::TypeData data) -> hir::TypeId;
   // Cross-unit ref dedup lookup. Private: TranslateSensitivityReads is the
   // only caller; external code uses MapOrGetCrossUnitRef.
   [[nodiscard]] auto LookupCrossUnitRef(
@@ -226,10 +212,9 @@ class ModuleLowerer {
   // Facts.
   LoweringFacts facts_;
   const slang::ast::InstanceBodySymbol* body_;
-  BuiltinHirTypes builtins_{};
 
-  // Builder.
-  hir::ModuleUnit hir_unit_;
+  // Root output.
+  hir::ModuleUnit unit_;
 
   // Registries.
   std::unordered_map<const slang::ast::Type*, hir::TypeId> type_cache_;
