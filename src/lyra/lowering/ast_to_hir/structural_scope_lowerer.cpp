@@ -269,8 +269,8 @@ auto StructuralScopeLowerer::PopulateSubroutineMember(
     const slang::ast::SubroutineSymbol& sym, WalkFrame frame)
     -> diag::Result<void> {
   const auto& mapper = module_->SourceMapper();
-  auto return_type_id_or =
-      module_->InternType(sym.getReturnType(), mapper.PointSpanOf(sym.location));
+  auto return_type_id_or = module_->InternType(
+      sym.getReturnType(), mapper.PointSpanOf(sym.location));
   if (!return_type_id_or) {
     return std::unexpected(std::move(return_type_id_or.error()));
   }

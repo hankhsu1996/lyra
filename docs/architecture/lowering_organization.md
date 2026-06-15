@@ -291,11 +291,11 @@ The three kinds of class members correspond to distinct access patterns:
   pass) -- the same interface downstream consumers use after `Run` returns. Writes that affect only
   one member are forbidden as trivial wrappers; writes that coordinate multiple pieces of class
   state are exposed as narrow methods that encapsulate the invariant (the canonical example:
-  `InternType` ties the output's type table together with a slang-keyed cache, so the dedup invariant
-  is enforced structurally). `Run` moves the root output out at the end; after `Run` returns, the
-  class holds no IR pointer. This keeps the legitimate no-leak constraint while putting the root in
-  the same scope as the registries that index into it, and keeps `WalkFrame` free of any "current vs
-  other" pointer for something that has only ever been one.
+  `InternType` ties the output's type table together with a slang-keyed cache, so the dedup
+  invariant is enforced structurally). `Run` moves the root output out at the end; after `Run`
+  returns, the class holds no IR pointer. This keeps the legitimate no-leak constraint while putting
+  the root in the same scope as the registries that index into it, and keeps `WalkFrame` free of any
+  "current vs other" pointer for something that has only ever been one.
 
 Nested builders are not class members. They are the mutable IR scopes opened during the walk (e.g.,
 a `mir::ProceduralScope` for an if-branch body, a closure body, a fork-branch body). Each is

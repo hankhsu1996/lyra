@@ -302,7 +302,8 @@ auto StructuralScopeLowerer::BuildLoopGenerate(
 
   const auto var_span =
       module_->SourceMapper().PointSpanOf(loop_var_sym->location);
-  auto loop_var_type_or = module_->InternType(loop_var_sym->getType(), var_span);
+  auto loop_var_type_or =
+      module_->InternType(loop_var_sym->getType(), var_span);
   if (!loop_var_type_or) {
     return std::unexpected(std::move(loop_var_type_or.error()));
   }
