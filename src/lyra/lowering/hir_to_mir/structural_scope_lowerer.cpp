@@ -741,8 +741,12 @@ auto StructuralScopeLowerer::Run(
   }
 
   mir::ProceduralScope ctor_scope;
-  const WalkFrame scope_frame =
-      frame.WithStructuralScope(&mir_scope).WithProceduralScope(&ctor_scope);
+  const mir::ProceduralVarId self_id = ctor_scope.AddProceduralVar(
+      mir::ProceduralVarDecl{
+          .name = "self", .type = module.Unit().builtins.self_pointer});
+  const WalkFrame scope_frame = frame.WithStructuralScope(&mir_scope)
+                                    .WithProceduralScope(&ctor_scope)
+                                    .WithSelfBinding(self_id);
   const mir::TypeId scope_ptr_type = module.Unit().AddType(
       mir::PointerType{
           .pointee = module.Unit().AddType(mir::ScopeType{}),

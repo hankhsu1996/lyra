@@ -12,10 +12,8 @@
 #include "lyra/diag/diagnostic.hpp"
 #include "lyra/hir/expr.hpp"
 #include "lyra/hir/procedural_body.hpp"
-#include "lyra/hir/structural_scope.hpp"
 #include "lyra/hir/subroutine.hpp"
 #include "lyra/hir/subroutine_ref.hpp"
-#include "lyra/hir/value_ref.hpp"
 #include "lyra/lowering/hir_to_mir/capture_sink.hpp"
 #include "lyra/lowering/hir_to_mir/expression/system/control.hpp"
 #include "lyra/lowering/hir_to_mir/expression/system/diagnostic.hpp"
@@ -32,7 +30,6 @@
 #include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/expr.hpp"
 #include "lyra/mir/procedural_hops.hpp"
-#include "lyra/mir/runtime_timescale.hpp"
 #include "lyra/support/system_subroutine.hpp"
 
 namespace lyra::lowering::hir_to_mir {
@@ -175,10 +172,20 @@ auto BuildArrayMethodClosure(
   const auto& iterator_decl =
       hir_process.procedural_vars.at(with_clause.iterator.value);
 
+  const mir::TypeId self_ptr_type = module.Unit().builtins.self_pointer;
   mir::ProceduralScope body_scope;
   const WalkFrame body_frame = frame.WithProceduralScope(&body_scope).Deeper();
   const ProceduralDepth body_depth = body_frame.procedural_depth;
 
+  const mir::ProceduralVarId self_binding = body_scope.AddProceduralVar(
+      mir::ProceduralVarDecl{.name = "self", .type = self_ptr_type});
+  const mir::ExprId outer_self_read = outer_scope.AddExpr(
+      mir::Expr{
+          .data =
+              mir::ProceduralVarRef{
+                  .hops = frame.procedural_depth - ProceduralDepth{},
+                  .var = *frame.self_binding},
+          .type = self_ptr_type});
   const mir::ProceduralVarId item_binding = body_scope.AddProceduralVar(
       mir::ProceduralVarDecl{.name = iterator_decl.name, .type = item_type});
   const mir::ProceduralVarId index_binding = body_scope.AddProceduralVar(
@@ -189,8 +196,9 @@ auto BuildArrayMethodClosure(
           .declaration_procedural_depth = body_depth, .var = item_binding});
 
   CaptureSink sink{body_depth, body_scope, outer_scope};
-  const WalkFrame closure_frame =
-      body_frame.WithClosure(&sink).WithIndexBinding(index_binding);
+  const WalkFrame closure_frame = body_frame.WithClosure(&sink)
+                                      .WithIndexBinding(index_binding)
+                                      .WithSelfBinding(self_binding);
 
   auto body_expr_or = process.LowerExpr(
       hir_process.exprs.at(with_clause.expr.value), closure_frame);
@@ -205,6 +213,8 @@ auto BuildArrayMethodClosure(
           .data = mir::ReturnStmt{.value = body_return_value}});
 
   std::vector<mir::Capture> captures;
+  captures.emplace_back(
+      mir::ByValueCapture{.value = outer_self_read, .binding = self_binding});
   for (const CaptureRequest& request : sink.TakeRequests()) {
     captures.emplace_back(
         mir::ByReferenceCapture{

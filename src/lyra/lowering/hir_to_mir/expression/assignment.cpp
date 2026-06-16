@@ -212,9 +212,22 @@ auto LowerHirAssignExprProc(
 auto BuildNbaSubmitClosureExpr(
     const ModuleLowerer& module, WalkFrame frame, mir::ExprId lhs_in_outer,
     mir::ExprId rhs_id_in_outer, mir::TypeId rhs_type) -> mir::Expr {
-  const auto& outer_scope = *frame.current_procedural_scope;
+  auto& outer_scope = *frame.current_procedural_scope;
   mir::ProceduralScope body;
   std::vector<mir::Capture> captures;
+
+  const mir::TypeId self_ptr_type = module.Unit().builtins.self_pointer;
+  const mir::ProceduralVarId self_id = body.AddProceduralVar(
+      mir::ProceduralVarDecl{.name = "self", .type = self_ptr_type});
+  const mir::ExprId outer_self_read = outer_scope.AddExpr(
+      mir::Expr{
+          .data =
+              mir::ProceduralVarRef{
+                  .hops = frame.procedural_depth - ProceduralDepth{},
+                  .var = *frame.self_binding},
+          .type = self_ptr_type});
+  captures.emplace_back(
+      mir::ByValueCapture{.value = outer_self_read, .binding = self_id});
 
   const mir::ProceduralVarId rhs_binding = body.AddProceduralVar(
       mir::ProceduralVarDecl{.name = "_lyra_nba_rhs", .type = rhs_type});

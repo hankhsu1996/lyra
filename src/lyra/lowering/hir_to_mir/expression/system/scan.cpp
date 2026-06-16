@@ -219,10 +219,21 @@ auto LowerScanSystemSubroutineCall(
   // it is captured by reference (sync IIFE -- aliasing is correct for both
   // reads and writes because the caller's storage is live throughout the
   // closure's evaluation).
+  const mir::TypeId self_ptr_type = module.Unit().builtins.self_pointer;
   mir::ProceduralScope body;
   const WalkFrame body_frame = frame.WithProceduralScope(&body).Deeper();
+  const mir::ProceduralVarId self_binding = body.AddProceduralVar(
+      mir::ProceduralVarDecl{.name = "self", .type = self_ptr_type});
+  const mir::ExprId outer_self_read = outer_scope.AddExpr(
+      mir::Expr{
+          .data =
+              mir::ProceduralVarRef{
+                  .hops = frame.procedural_depth - ProceduralDepth{},
+                  .var = *frame.self_binding},
+          .type = self_ptr_type});
   CaptureSink sink{body_frame.procedural_depth, body, outer_scope};
-  const WalkFrame closure_frame = body_frame.WithClosure(&sink);
+  const WalkFrame closure_frame =
+      body_frame.WithClosure(&sink).WithSelfBinding(self_binding);
 
   // Source / format are rvalues inside the body. The leaf lowering routes
   // procedural-var leaves through the sink, producing body-side bindings.
@@ -352,6 +363,8 @@ auto LowerScanSystemSubroutineCall(
   // closure's evaluation -- so every captured identity is a by-reference
   // capture.
   std::vector<mir::Capture> captures;
+  captures.emplace_back(
+      mir::ByValueCapture{.value = outer_self_read, .binding = self_binding});
   for (const CaptureRequest& request : sink.TakeRequests()) {
     captures.emplace_back(
         mir::ByReferenceCapture{

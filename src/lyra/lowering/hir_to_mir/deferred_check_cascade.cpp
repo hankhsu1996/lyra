@@ -10,7 +10,6 @@
 #include <vector>
 
 #include "lyra/base/internal_error.hpp"
-#include "lyra/hir/expr.hpp"
 #include "lyra/hir/procedural_body.hpp"
 #include "lyra/hir/stmt.hpp"
 #include "lyra/lowering/hir_to_mir/default_value.hpp"
@@ -167,6 +166,7 @@ auto BuildDiagnosticThenScope(
 }
 
 auto BuildUniqueCheckClosure(
+    const ModuleLowerer& module, const WalkFrame& wrapper_frame,
     mir::ProceduralScope& wrapper, mir::TypeId int32_type,
     mir::TypeId void_type, hir::UniquePriorityCheck check,
     const std::vector<mir::ProceduralVarId>& snapshot_vars)
@@ -174,6 +174,19 @@ auto BuildUniqueCheckClosure(
   mir::ClosureExpr closure;
   closure.body = std::make_unique<mir::ProceduralScope>();
   auto& body = *closure.body;
+
+  const mir::TypeId self_ptr_type = module.Unit().builtins.self_pointer;
+  const mir::ProceduralVarId self_binding = body.AddProceduralVar(
+      mir::ProceduralVarDecl{.name = "self", .type = self_ptr_type});
+  const mir::ExprId outer_self_read = wrapper.AddExpr(
+      mir::Expr{
+          .data =
+              mir::ProceduralVarRef{
+                  .hops = wrapper_frame.procedural_depth - ProceduralDepth{},
+                  .var = *wrapper_frame.self_binding},
+          .type = self_ptr_type});
+  closure.captures.emplace_back(
+      mir::ByValueCapture{.value = outer_self_read, .binding = self_binding});
 
   std::vector<mir::ExprId> inner_reads;
   inner_reads.reserve(snapshot_vars.size());
@@ -317,7 +330,8 @@ auto BuildDeferredCheckCascade(
   }
 
   mir::ClosureExpr closure = BuildUniqueCheckClosure(
-      wrapper, int32_type, void_type, check, snapshot_vars);
+      module, wrapper_frame, wrapper, int32_type, void_type, check,
+      snapshot_vars);
   const mir::ExprId closure_expr_id =
       wrapper.AddExpr(mir::Expr{.data = std::move(closure), .type = void_type});
 
