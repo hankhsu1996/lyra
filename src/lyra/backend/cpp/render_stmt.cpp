@@ -175,9 +175,12 @@ auto RenderForkStmtNode(
       params += ", " + *type_or + ref_marker + bind.name;
       args += ", " + arg;
     }
+    // The branch closure's coroutine-ness comes from MIR (HIR-to-MIR sets
+    // `is_coroutine = true` on every fork-branch ClosureExpr); the render
+    // does not hardcode the assumption.
     const RenderContext branch_ctx =
         fork_ctx.WithProceduralScope(*closure->body)
-            .WithCoroutine(true)
+            .WithCoroutine(closure->is_coroutine)
             .WithReceiver("self");
     auto body_or = RenderProceduralScopeStatements(branch_ctx, indent + 2);
     if (!body_or) return std::unexpected(std::move(body_or.error()));

@@ -1594,9 +1594,14 @@ auto RenderClosureExpr(
     return_clause = " -> " + *ret_ty_or;
   }
 
+  // The closure's coroutine-ness comes from MIR; every closure flowing
+  // through this path (NBA / `$strobe` / `$sscanf` IIFE / with-clause /
+  // deferred check) has `is_coroutine = false`, but the render reads the
+  // flag rather than assuming.
   const RenderContext body_ctx =
       RenderContext::ForRoot(ctx.Unit(), ctx.StructuralScope(), *closure.body)
-          .WithReceiver(ctx.ReceiverObject());
+          .WithReceiver(ctx.ReceiverObject())
+          .WithCoroutine(closure.is_coroutine);
   auto body_or = RenderProceduralScopeStatements(body_ctx, 1);
   if (!body_or) return std::unexpected(std::move(body_or.error()));
 

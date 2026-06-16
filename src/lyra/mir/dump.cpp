@@ -556,8 +556,9 @@ class MirDumper {
             },
             [](const ClosureExpr& cl) -> std::string {
               return std::format(
-                  "ClosureExpr captures={} params={}", cl.captures.size(),
-                  cl.params.size());
+                  "ClosureExpr captures={} params={} is_coroutine={}",
+                  cl.captures.size(), cl.params.size(),
+                  cl.is_coroutine ? "true" : "false");
             },
             [](const ElementSelectExpr& sel) -> std::string {
               return std::format(
