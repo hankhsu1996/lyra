@@ -5,7 +5,6 @@
 #include <utility>
 
 #include "lyra/hir/continuous_assign.hpp"
-#include "lyra/hir/expr.hpp"
 #include "lyra/hir/structural_scope.hpp"
 #include "lyra/lowering/hir_to_mir/sensitivity_wait.hpp"
 #include "lyra/lowering/hir_to_mir/walk_frame.hpp"
@@ -27,8 +26,12 @@ auto LowerContinuousAssign(
     const StructuralScopeLowerer& scope, WalkFrame frame, std::string name,
     const hir::ContinuousAssign& src) -> diag::Result<mir::Process> {
   mir::ProceduralScope process_scope;
+  const mir::ProceduralVarId self_id = process_scope.AddProceduralVar(
+      mir::ProceduralVarDecl{
+          .name = "self", .type = scope.Module().Unit().builtins.self_pointer});
   mir::ProceduralScope body_scope;
-  const WalkFrame body_frame = frame.WithProceduralScope(&body_scope).Deeper();
+  const WalkFrame body_frame =
+      frame.WithProceduralScope(&body_scope).WithSelfBinding(self_id).Deeper();
 
   const hir::StructuralScope& hir_scope = scope.HirScope();
 

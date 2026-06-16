@@ -181,8 +181,13 @@ auto LowerStraightLineProcess(
   // local lands here (instance-owned, LRM 6.21 / 9.3.4) instead of in the
   // coroutine activation, the same shape a subroutine uses.
   mir::ProceduralScope process_scope;
+  const mir::ProceduralVarId self_id = process_scope.AddProceduralVar(
+      mir::ProceduralVarDecl{
+          .name = "self",
+          .type = process.Module().Unit().builtins.self_pointer});
   const WalkFrame body_frame = frame.WithProceduralScope(&process_scope)
-                                   .WithStaticFrameScope(&process_scope);
+                                   .WithStaticFrameScope(&process_scope)
+                                   .WithSelfBinding(self_id);
   auto lowered = LowerStraightLineBodyInto(process, body_frame);
   if (!lowered) return std::unexpected(std::move(lowered.error()));
   return mir::Process{
@@ -205,10 +210,15 @@ auto LowerForeverProcess(
   // that model successive activations (LRM 6.21). The loop body lowers one
   // depth in, so a body reference reaches the frame by one hop.
   mir::ProceduralScope process_scope;
+  const mir::ProceduralVarId self_id = process_scope.AddProceduralVar(
+      mir::ProceduralVarDecl{
+          .name = "self",
+          .type = process.Module().Unit().builtins.self_pointer});
   mir::ProceduralScope body_scope;
   {
     const WalkFrame body_frame = frame.WithStaticFrameScope(&process_scope)
                                      .WithProceduralScope(&body_scope)
+                                     .WithSelfBinding(self_id)
                                      .Deeper();
     auto lowered = LowerStraightLineBodyInto(process, body_frame);
     if (!lowered) return std::unexpected(std::move(lowered.error()));
@@ -289,8 +299,12 @@ auto ProcessLowerer::Run(
     WalkFrame parent_frame, const hir::StructuralSubroutineDecl& src)
     -> diag::Result<mir::StructuralSubroutineDecl> {
   mir::ProceduralScope body_scope;
+  const mir::ProceduralVarId self_id = body_scope.AddProceduralVar(
+      mir::ProceduralVarDecl{
+          .name = "self", .type = module_->Unit().builtins.self_pointer});
   const WalkFrame body_frame = parent_frame.WithProceduralScope(&body_scope)
-                                   .WithStaticFrameScope(&body_scope);
+                                   .WithStaticFrameScope(&body_scope)
+                                   .WithSelfBinding(self_id);
 
   // Formals are procedural vars of the body with no VarDeclStmt: pre-register
   // them in the body scope at depth 0 so the body's references resolve. The
