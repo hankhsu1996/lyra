@@ -101,8 +101,8 @@ Entries get checked off as their PRs land. When the last entry lands, the file i
 - [ ] R6 -- Consolidate the "synthesize an expression of canonical type X" helpers that lowerings
       reach for whenever they need a temporary, sentinel, or computed bound. The HIR -> MIR side
       already exposes `UnitLoweringState::MakeInt32LiteralExpr(int64)` and has ~8 consumers across
-      `lower_expr.cpp`, `lower_stmt.cpp`, and `lower_deferred_check.cpp`. The AST -> HIR side has no
-      equivalent public helper: `expression/lower.cpp` carries an anonymous-namespace
+      the `expression/`, `statement/`, and `deferred_check_cascade` files. The AST -> HIR side has
+      no equivalent public helper: `expression/lower.cpp` carries an anonymous-namespace
       `MakeIntegerLiteralExpr` that takes a slang `IntegerLiteral&` (no raw-int64 entry point) and
       an anonymous `MakeRefExpr` for procedural / structural / loop var refs. New consumers that
       can't see those private helpers (most recently `statement/foreach.cpp`) reroll their own
@@ -229,22 +229,17 @@ Entries get checked off as their PRs land. When the last entry lands, the file i
       type; R2 makes the wrap uniform and capability-honest -- done together they remove
       `IsObservableScalarType` entirely and leave the backend a pure renderer.
 
-- [ ] R13 -- HIR-to-MIR per-LRM-family subsystem split. Today every expression and statement handler
-      lives in flat `lower_*.cpp` files (`lower_expr.cpp`, `lower_stmt.cpp`, `lower_print.cpp`,
-      etc.). Invariants 10-11 in `docs/architecture/lowering_organization.md` require the per-kind
-      handlers to group by semantic family in subsystem header/implementation pairs alongside a
-      single central dispatcher:
-      `expression/{operators,calls,references,selects,     aggregates,inside}.{hpp,cpp}`,
-      `expression/system/{print,scan,sformat,file_io,diagnostic,     timescale,control}.{hpp,cpp}`,
-      `statement/{blocks,branches,loops,timing,fork_join,assignment,     flow}.{hpp,cpp}`, plus one
-      `dispatch.hpp` per family root that declares the recursive dispatcher entries (`LowerProcExpr`
-      / `LowerStructuralExpr` / `LowerStatement`). The class shape (`ModuleLowerer`,
-      `StructuralScopeLowerer`, `ProcessLowerer`), the `WalkFrame` value type, the IR-as-builder
-      construction methods, and the handler signatures `(Lowerer&, WalkFrame, node)` already landed
-      in R10; what remains is the file-tree reorganization and the dispatcher consolidation. **Why
-      deferred**: the moves cross-cut every handler file and produce a large diff for a
-      behavior-preserving reshape; landing it as a focused cut keeps the diff legible and avoids
-      interleaving with semantic work. **Trigger**: scheduled with R10.
+- [x] R13 -- HIR-to-MIR per-LRM-family subsystem split. Per-kind handlers are now grouped by
+      semantic family in
+      `include/lyra/lowering/hir_to_mir/expression/{operators, calls, references,     selects, aggregates, assignment, inside}.{hpp,cpp}`,
+      `expression/system/{print, scan, sformat,     file_io, diagnostic, timescale, control}.{hpp,cpp}`,
+      and `statement/{blocks, branches, loops,     timing, fork_join, assignment, flow}.{hpp,cpp}`.
+      The procedural and scope-level expression dispatchers are class methods
+      (`ProcessLowerer::LowerExpr` / `LowerStmt`, `StructuralScopeLowerer::LowerExpr`); the
+      for-generate-header vs generate-control distinction lives on `WalkFrame::loop_var_mode`.
+      Subsystem files include only the pass-class headers and their own family header, so adding a
+      kind touches three files (subsystem header, subsystem implementation, dispatcher switch) and
+      leaves the pass-class header untouched.
 
 ## Out of Scope
 

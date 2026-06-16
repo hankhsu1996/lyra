@@ -6,11 +6,27 @@
 #include <vector>
 
 #include "lyra/base/internal_error.hpp"
+#include "lyra/base/overloaded.hpp"
+#include "lyra/diag/diagnostic.hpp"
+#include "lyra/hir/expr.hpp"
 #include "lyra/hir/process.hpp"
 #include "lyra/hir/stmt.hpp"
 #include "lyra/lowering/hir_to_mir/default_value.hpp"
-#include "lyra/lowering/hir_to_mir/lower_stmt.hpp"
+#include "lyra/lowering/hir_to_mir/expression/aggregates.hpp"
+#include "lyra/lowering/hir_to_mir/expression/assignment.hpp"
+#include "lyra/lowering/hir_to_mir/expression/calls.hpp"
+#include "lyra/lowering/hir_to_mir/expression/inside.hpp"
+#include "lyra/lowering/hir_to_mir/expression/operators.hpp"
+#include "lyra/lowering/hir_to_mir/expression/references.hpp"
+#include "lyra/lowering/hir_to_mir/expression/selects.hpp"
 #include "lyra/lowering/hir_to_mir/sensitivity_wait.hpp"
+#include "lyra/lowering/hir_to_mir/statement/assignment.hpp"
+#include "lyra/lowering/hir_to_mir/statement/blocks.hpp"
+#include "lyra/lowering/hir_to_mir/statement/branches.hpp"
+#include "lyra/lowering/hir_to_mir/statement/flow.hpp"
+#include "lyra/lowering/hir_to_mir/statement/fork_join.hpp"
+#include "lyra/lowering/hir_to_mir/statement/loops.hpp"
+#include "lyra/lowering/hir_to_mir/statement/timing.hpp"
 #include "lyra/lowering/hir_to_mir/walk_frame.hpp"
 #include "lyra/mir/expr.hpp"
 #include "lyra/mir/process.hpp"
@@ -18,12 +34,140 @@
 
 namespace lyra::lowering::hir_to_mir {
 
+auto ProcessLowerer::LowerExpr(const hir::Expr& expr, WalkFrame frame)
+    -> diag::Result<mir::Expr> {
+  const mir::TypeId result_type = module_->TranslateType(expr.type);
+  return std::visit(
+      Overloaded{
+          [&](const hir::PrimaryExpr& p) -> diag::Result<mir::Expr> {
+            return LowerHirPrimaryExprProc(*this, frame, p.data, result_type);
+          },
+          [&](const hir::UnaryExpr& u) -> diag::Result<mir::Expr> {
+            return LowerHirUnaryExprProc(*this, frame, u, result_type);
+          },
+          [&](const hir::BinaryExpr& b) -> diag::Result<mir::Expr> {
+            return LowerHirBinaryExprProc(*this, frame, b, result_type);
+          },
+          [&](const hir::ConditionalExpr& c) -> diag::Result<mir::Expr> {
+            return LowerHirConditionalExprProc(*this, frame, c, result_type);
+          },
+          [&](const hir::AssignExpr& a) -> diag::Result<mir::Expr> {
+            return LowerHirAssignExprProc(
+                *this, frame, a, expr.span, result_type);
+          },
+          [&](const hir::IncDecExpr& inc) -> diag::Result<mir::Expr> {
+            return LowerHirIncDecExprProc(*this, frame, inc, result_type);
+          },
+          [&](const hir::ConversionExpr& cv) -> diag::Result<mir::Expr> {
+            return LowerHirConversionExprProc(*this, frame, cv, result_type);
+          },
+          [&](const hir::CallExpr& c) -> diag::Result<mir::Expr> {
+            return LowerHirCallExprProc(
+                *this, frame, c, expr.span, result_type);
+          },
+          [&](const hir::InsideExpr& in) -> diag::Result<mir::Expr> {
+            return LowerHirInsideExprProc(*this, frame, in, result_type);
+          },
+          [&](const hir::ElementSelectExpr& sel) -> diag::Result<mir::Expr> {
+            return LowerHirElementSelectExprProc(
+                *this, frame, sel, result_type);
+          },
+          [&](const hir::RangeSelectExpr& sel) -> diag::Result<mir::Expr> {
+            return LowerHirRangeSelectExprProc(*this, frame, sel, result_type);
+          },
+          [&](const hir::MemberAccessExpr& sel) -> diag::Result<mir::Expr> {
+            return LowerHirMemberAccessExprProc(*this, frame, sel, result_type);
+          },
+          [&](const hir::ConcatExpr& c) -> diag::Result<mir::Expr> {
+            return LowerHirConcatExprProc(*this, frame, c, result_type);
+          },
+          [&](const hir::ReplicationExpr& r) -> diag::Result<mir::Expr> {
+            return LowerHirReplicationExprProc(*this, frame, r, result_type);
+          },
+          [&](const hir::AssignmentPatternExpr& a) -> diag::Result<mir::Expr> {
+            return LowerHirAssignmentPatternExprProc(
+                *this, frame, a, result_type);
+          },
+          [&](const hir::AssignmentPatternReplicationExpr& a)
+              -> diag::Result<mir::Expr> {
+            return LowerHirAssignmentPatternReplicationExprProc(
+                *this, frame, a, result_type);
+          },
+          [&](const hir::DynamicArrayNewExpr& n) -> diag::Result<mir::Expr> {
+            return LowerHirDynamicArrayNewExprProc(
+                *this, frame, n, result_type);
+          },
+      },
+      expr.data);
+}
+
+auto ProcessLowerer::LowerStmt(const hir::Stmt& stmt, WalkFrame frame)
+    -> diag::Result<mir::Stmt> {
+  return std::visit(
+      Overloaded{
+          [&](const hir::EmptyStmt&) { return LowerEmptyStmt(stmt.label); },
+          [&](const hir::VarDeclStmt& v) {
+            return LowerVarDeclStmt(*this, frame, stmt.label, v);
+          },
+          [&](const hir::ExprStmt& e) {
+            return LowerExprStmt(*this, frame, stmt.label, e);
+          },
+          [&](const hir::BlockStmt& b) {
+            return LowerBlockStmt(*this, frame, stmt.label, b);
+          },
+          [&](const hir::ForkStmt& f) {
+            return LowerForkStmt(*this, frame, stmt.label, f);
+          },
+          [&](const hir::IfStmt& i) {
+            return LowerIfStmt(*this, frame, stmt.label, i);
+          },
+          [&](const hir::CaseStmt& c) {
+            return LowerCaseStmt(*this, frame, stmt.label, c);
+          },
+          [&](const hir::CaseInsideStmt& c) {
+            return LowerCaseInsideStmt(*this, frame, stmt.label, c);
+          },
+          [&](const hir::ForStmt& f) {
+            return LowerForStmt(*this, frame, stmt.label, f);
+          },
+          [&](const hir::WhileStmt& w) {
+            return LowerWhileStmt(*this, frame, stmt.label, w);
+          },
+          [&](const hir::RepeatStmt& r) {
+            return LowerRepeatStmt(*this, frame, stmt.label, r);
+          },
+          [&](const hir::DoWhileStmt& d) {
+            return LowerDoWhileStmt(*this, frame, stmt.label, d);
+          },
+          [&](const hir::ForeverStmt& f) {
+            return LowerForeverStmt(*this, frame, stmt.label, f);
+          },
+          [&](const hir::BreakStmt&) { return LowerBreakStmt(stmt.label); },
+          [&](const hir::ContinueStmt&) {
+            return LowerContinueStmt(stmt.label);
+          },
+          [&](const hir::ReturnStmt& r) {
+            return LowerReturnStmt(*this, frame, stmt.label, r);
+          },
+          [&](const hir::TimedStmt& t) {
+            return LowerTimedStmt(*this, frame, stmt.label, stmt.span, t);
+          },
+          [&](const hir::EventTriggerStmt& et) {
+            return LowerEventTriggerStmt(*this, frame, stmt.label, et);
+          },
+          [&](const hir::WaitStmt& w) {
+            return LowerWaitStmt(*this, frame, stmt.label, w);
+          },
+      },
+      stmt.data);
+}
+
 namespace {
 
 auto LowerStraightLineBodyInto(ProcessLowerer& process, WalkFrame frame)
     -> diag::Result<void> {
   const hir::ProceduralBody& body = process.HirBody();
-  auto lowered = LowerStmt(process, frame, body.stmts.at(body.root_stmt.value));
+  auto lowered = process.LowerStmt(body.stmts.at(body.root_stmt.value), frame);
   if (!lowered) return std::unexpected(std::move(lowered.error()));
   auto& body_scope = *frame.current_procedural_scope;
   body_scope.AppendStmt(*std::move(lowered));
@@ -49,8 +193,9 @@ auto LowerStraightLineProcess(
 
 // Wraps the body in a `forever` loop. `tail_stmt`, if present, is appended
 // after the lowered body inside the loop -- carries the materialised
-// SensitivityWaitStmt for always_comb / always_latch (LRM 9.2.2.2.1), nullopt
-// for `always` / `always_ff` where the body itself carries any timing.
+// SensitivityWaitStmt for always_comb / always_latch (LRM 9.2.2.2.1),
+// nullopt for `always` / `always_ff` where the body itself carries any
+// timing.
 auto LowerForeverProcess(
     ProcessLowerer& process, WalkFrame frame,
     std::optional<mir::Stmt> tail_stmt) -> diag::Result<mir::Process> {
@@ -177,10 +322,10 @@ auto ProcessLowerer::Run(
   // the current value of its implicit same-name variable on fall-through; an
   // assignment to the function name is a write to that variable, and an
   // explicit `return expr` overrides it because it exits before the trailing
-  // read. Materialize the variable as a default-initialized body local (named
-  // distinctly from the C++ method so a self-recursive call still resolves to
-  // the method), then close the body with `return <result>`. void functions
-  // and tasks have no result variable and no trailing return.
+  // read. Materialize the variable as a default-initialized body local
+  // (named distinctly from the C++ method so a self-recursive call still
+  // resolves to the method), then close the body with `return <result>`.
+  // void functions and tasks have no result variable and no trailing return.
   const mir::TypeId result_type = module_->TranslateType(src.result_type);
   std::optional<mir::ProceduralVarRef> result_ref;
   if (src.result_var.has_value()) {

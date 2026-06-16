@@ -1,4 +1,4 @@
-#include "lyra/lowering/hir_to_mir/lower_deferred_check.hpp"
+#include "lyra/lowering/hir_to_mir/deferred_check_cascade.hpp"
 
 #include <cstdint>
 #include <expected>
@@ -10,11 +10,11 @@
 #include <vector>
 
 #include "lyra/base/internal_error.hpp"
+#include "lyra/hir/expr.hpp"
 #include "lyra/hir/procedural_body.hpp"
 #include "lyra/hir/stmt.hpp"
 #include "lyra/lowering/hir_to_mir/default_value.hpp"
-#include "lyra/lowering/hir_to_mir/lower_expr.hpp"
-#include "lyra/lowering/hir_to_mir/lower_stmt.hpp"
+#include "lyra/lowering/hir_to_mir/statement/blocks.hpp"
 #include "lyra/mir/binary_op.hpp"
 #include "lyra/mir/closure.hpp"
 #include "lyra/mir/compilation_unit.hpp"
@@ -415,7 +415,7 @@ auto LowerUniqueIfStmt(
   predicates.reserve(cascade.conditions.size());
   for (const hir::ExprId hir_cond : cascade.conditions) {
     auto cond_or =
-        LowerExpr(process, wrapper_frame, hir_proc.exprs.at(hir_cond.value));
+        process.LowerExpr(hir_proc.exprs.at(hir_cond.value), wrapper_frame);
     if (!cond_or) return std::unexpected(std::move(cond_or.error()));
     predicates.push_back(wrapper.AddExpr(*std::move(cond_or)));
   }

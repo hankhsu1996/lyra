@@ -1,4 +1,4 @@
-#include "lyra/lowering/hir_to_mir/lower_print.hpp"
+#include "lyra/lowering/hir_to_mir/expression/system/print.hpp"
 
 #include <cstddef>
 #include <expected>
@@ -10,7 +10,6 @@
 #include "lyra/diag/source_span.hpp"
 #include "lyra/hir/expr.hpp"
 #include "lyra/hir/procedural_body.hpp"
-#include "lyra/lowering/hir_to_mir/lower_expr.hpp"
 #include "lyra/lowering/hir_to_mir/print_items.hpp"
 #include "lyra/lowering/hir_to_mir/process_lowerer.hpp"
 #include "lyra/mir/expr.hpp"
@@ -51,7 +50,7 @@ auto LowerPrintSystemSubroutineCall(
       throw InternalError("$f-print descriptor argument unexpectedly elided");
     }
     auto lowered_or =
-        LowerExpr(process, frame, hir_proc.exprs.at(call.arguments[0]->value));
+        process.LowerExpr(hir_proc.exprs.at(call.arguments[0]->value), frame);
     if (!lowered_or) return std::unexpected(std::move(lowered_or.error()));
     descriptor = proc_scope.AddExpr(*std::move(lowered_or));
     arg_offset = 1;
