@@ -1,7 +1,5 @@
 #pragma once
 
-#include <cstddef>
-#include <format>
 #include <string>
 #include <string_view>
 
@@ -27,23 +25,16 @@ class RenderContext {
 
   [[nodiscard]] auto WithProceduralScope(
       const mir::ProceduralScope& child) const -> RenderContext {
-    return RenderContext{*unit_,
-                         *scope_,
-                         child,
-                         this,
-                         structural_parent_,
-                         temp_counter_,
-                         static_frame_,
-                         in_coroutine_,
-                         receiver_};
+    return RenderContext{
+        *unit_,        *scope_,       child,    this, structural_parent_,
+        static_frame_, in_coroutine_, receiver_};
   }
 
   [[nodiscard]] auto WithStructuralScope(
       const mir::StructuralScope& child_scope,
       const mir::ProceduralScope& root_proc_scope) const -> RenderContext {
-    return RenderContext{*unit_,  child_scope, root_proc_scope,
-                         nullptr, this,        temp_counter_,
-                         {},      false,       "this"};
+    return RenderContext{*unit_, child_scope, root_proc_scope, nullptr,
+                         this,   {},          false,           "this"};
   }
 
   // A subroutine body renders its static locals through this per-instance frame
@@ -55,7 +46,6 @@ class RenderContext {
                          *proc_scope_,
                          procedural_parent_,
                          structural_parent_,
-                         temp_counter_,
                          accessor,
                          in_coroutine_,
                          receiver_};
@@ -71,7 +61,6 @@ class RenderContext {
         *proc_scope_,
         procedural_parent_,
         structural_parent_,
-        temp_counter_,
         static_frame_,
         in_coroutine,
         receiver_};
@@ -90,7 +79,6 @@ class RenderContext {
         *proc_scope_,
         procedural_parent_,
         structural_parent_,
-        temp_counter_,
         static_frame_,
         in_coroutine_,
         object};
@@ -152,11 +140,6 @@ class RenderContext {
     return proc_scope_->GetExpr(id);
   }
 
-  [[nodiscard]] auto AllocateTemp(std::string_view prefix) const
-      -> std::string {
-    return std::format("{}_{}", prefix, (*temp_counter_)++);
-  }
-
   // The object the current body reaches the enclosing scope instance through:
   // `this` in a method body, `self` in a fork-branch closure body. Named where
   // the object itself is spelled -- a spawned inner closure is invoked with it
@@ -194,23 +177,20 @@ class RenderContext {
         scope_(&scope),
         proc_scope_(&proc_scope),
         procedural_parent_(nullptr),
-        structural_parent_(nullptr),
-        temp_counter_(&owned_temp_counter_) {
+        structural_parent_(nullptr) {
   }
 
   RenderContext(
       const mir::CompilationUnit& unit, const mir::StructuralScope& scope,
       const mir::ProceduralScope& proc_scope,
       const RenderContext* procedural_parent,
-      const RenderContext* structural_parent, std::size_t* temp_counter,
-      std::string_view static_frame, bool in_coroutine,
-      std::string_view receiver)
+      const RenderContext* structural_parent, std::string_view static_frame,
+      bool in_coroutine, std::string_view receiver)
       : unit_(&unit),
         scope_(&scope),
         proc_scope_(&proc_scope),
         procedural_parent_(procedural_parent),
         structural_parent_(structural_parent),
-        temp_counter_(temp_counter),
         static_frame_(static_frame),
         in_coroutine_(in_coroutine),
         receiver_(receiver) {
@@ -221,11 +201,9 @@ class RenderContext {
   const mir::ProceduralScope* proc_scope_;
   const RenderContext* procedural_parent_;
   const RenderContext* structural_parent_;
-  std::size_t* temp_counter_;
   std::string_view static_frame_;
   bool in_coroutine_ = false;
   std::string_view receiver_ = "this";
-  mutable std::size_t owned_temp_counter_ = 0;
 };
 
 }  // namespace lyra::backend::cpp

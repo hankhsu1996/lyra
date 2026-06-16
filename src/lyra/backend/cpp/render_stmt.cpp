@@ -123,7 +123,11 @@ auto RenderForkJoinModeLiteral(mir::JoinMode mode) -> std::string_view {
 auto RenderForkStmtNode(
     const RenderContext& ctx, const mir::ForkStmt& s, std::size_t indent)
     -> diag::Result<std::string> {
-  const std::string vec = ctx.AllocateTemp("fork_branches");
+  // The fork-branches vector lives in this fork's own `{...}` block scope
+  // (opened just below), so a fixed name suffices -- a sibling fork in the
+  // surrounding scope, or a nested fork in a branch lambda body, each has
+  // its own `fork_branches` in its own C++ scope.
+  const std::string vec = "fork_branches";
   const std::string& class_name = ctx.StructuralScope().name;
   const std::string receiver_object{ctx.ReceiverObject()};
   const RenderContext fork_ctx =
