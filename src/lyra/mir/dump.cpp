@@ -177,6 +177,7 @@ class MirDumper {
                   "ExternalUnitObject(unit=\"{}\")", e.unit_name);
             },
             [](const ScopeType&) -> std::string { return "Scope"; },
+            [](const SelfType&) -> std::string { return "Self"; },
             [](const PointerType& p) -> std::string {
               switch (p.ownership) {
                 case PointerOwnership::kUnique:
