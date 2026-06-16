@@ -14,15 +14,17 @@ several possible backend targets for MIR, and does not define MIR's semantics.
 - The type system: value types (integral, real, string, event, ...); object types in two forms -- an
   intra-unit object (a structural scope of this unit) and an external-unit object (another
   compilation unit, named); and two composing wrappers, owning pointer and vector.
-- Callables: functions, tasks, constructors, processes, and assertion actions.
+- Callables: functions, tasks, constructors, processes, and assertion actions. Every callable's
+  parameter list begins with `self`, a pointer to the enclosing structural scope; the body reaches
+  every value it needs through its parameter list and captures, never through implicit context.
 - The identity of each object and member within a compilation unit.
 - Lightweight structured control flow inside a callable body: `if`, loop, and sequence. No basic
   blocks at this layer.
 - A primitive expression set: literals, references, unary / binary / conditional operators, calls,
-  conversions, closures, access primitives for element and range selection, and value-build
-  primitives for aggregate construction. SystemVerilog syntactic sugar that decomposes into this set
-  (`case`, `inside`, `casez` / `casex`, `foreach`) is lowered at the HIR-to-MIR boundary and never
-  carried as a MIR node.
+  conversions, closures, member access through an explicit receiver expression, access primitives
+  for element and range selection, and value-build primitives for aggregate construction.
+  SystemVerilog syntactic sugar that decomposes into this set (`case`, `inside`, `casez` / `casex`,
+  `foreach`) is lowered at the HIR-to-MIR boundary and never carried as a MIR node.
 - Action shapes for constructs that bind behavior to schedule events (always blocks, continuous
   assignments, deferred assertions, concurrent assertions).
 - A textual dumper that serializes MIR for inspection, validation, and golden testing. The dumper is
@@ -67,6 +69,14 @@ several possible backend targets for MIR, and does not define MIR's semantics.
     same behaviour from the same MIR: anything they would otherwise have to infer must already be
     stated.
 
+11. Every callable body's first parameter is `self`, a pointer to its enclosing structural scope.
+    Access to any class member -- a structural variable, a service call, a child instance -- flows
+    through `MemberAccess` whose receiver expression reaches the scope by traversing from `self`. A
+    callable has no implicit access to its enclosing state; the receiver is on the parameter list,
+    not on the expression. The shape is identical across process, task, function, constructor body,
+    and closure -- a backend reads it once and renders it the same way each time. See
+    `docs/decisions/callable-receiver.md`.
+
 ## Boundary to Adjacent Layers
 
 - Consumes HIR. HIR-to-MIR lowering produces MIR objects and members from HIR declarations and MIR
@@ -109,6 +119,11 @@ several possible backend targets for MIR, and does not define MIR's semantics.
   belongs there as structure) or already present (and the field is noise). The falsifiable check on
   a new field is: does every backend's realization read it, and does it state something the
   structure does not?
+- An expression node whose meaning depends on which callable encloses it. A node that resolves to
+  "the current receiver, whatever that is" carries an implicit context the consumer must walk
+  surroundings to discover. Receiver semantics live on the callable's parameter list as `self`, not
+  on a context-dependent expression node; member access reads the receiver from the containing
+  `MemberAccess`'s receiver field, never from a node that means "look around and figure it out".
 
 ## Notes / Examples
 
@@ -142,16 +157,17 @@ expression set that decomposes the ternary. Value-build primitives for aggregate
 expressions are access primitives. Each of these stays in MIR for the same reason: removing it would
 require expanding into a statement-form rewrite that does not fit the expression context.
 
-A closure is a captured callable value: a capture list plus a procedural-scope body, the one IR
-shape for "a body bound to a snapshot of its environment, run later." A closure is synthesized only
-by HIR-to-MIR lowering; no source construct produces one. Its body reaches enclosing procedural
-state only through the captures, and reaches module-scope storage directly -- the way a lambda
-references globals without capture. The closure node carries nothing about how it executes: like a
+A closure is a captured callable value: a parameter list, a capture list, and a procedural-scope
+body, the one IR shape for "a body bound to a snapshot of its environment, run later." A closure is
+synthesized only by HIR-to-MIR lowering; no source construct produces one. Its body reaches every
+value it needs through its parameter list -- captures for enclosing procedural state, the `self`
+parameter (shared by every callable, invariant 11) for enclosing module-scope storage. Nothing
+reaches the body implicitly. The closure node carries nothing about how it executes: like a
 language-level lambda, it has no "suspends" property. Whether a closure runs synchronously or as a
 coroutine follows from its use, which is itself explicit in MIR -- a closure submitted as a deferred
 effect (a non-blocking assignment, a postponed `$strobe`) runs to completion in a later scheduling
 region; a closure referenced by a parallel block (a fork-join branch, LRM 9.3.2) is spawned as a
 concurrent process and therefore a coroutine. The capture model and the body are identical across
 both. A process, a subroutine, and a closure are the three callable forms whose bodies are all the
-same procedural scope; they differ only in how the body binds its environment and in how it is
-invoked.
+same procedural scope; they differ only in how each is invoked. They share the same shape at the
+parameter list -- `self` first, then any closure captures and parameters or subroutine formals.

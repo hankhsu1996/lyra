@@ -1821,6 +1821,11 @@ auto RenderExprNatural(const RenderContext& ctx, const mir::Expr& expr)
           [&](const mir::SelfScopeExpr&) -> diag::Result<std::string> {
             return std::string(ctx.ReceiverObject());
           },
+          [&](const mir::MemberAccessExpr&) -> diag::Result<std::string> {
+            throw InternalError(
+                "MemberAccessExpr rendering not implemented yet -- HIR-to-MIR "
+                "has not migrated to producing it");
+          },
           [&](const mir::ClosureExpr& cl) -> diag::Result<std::string> {
             return RenderClosureExpr(ctx, cl);
           },

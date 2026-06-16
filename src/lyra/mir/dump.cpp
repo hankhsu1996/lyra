@@ -546,6 +546,12 @@ class MirDumper {
               return "RuntimeCallExpr";
             },
             [](const SelfScopeExpr&) -> std::string { return "SelfScopeExpr"; },
+            [](const MemberAccessExpr& m) -> std::string {
+              return std::format(
+                  "MemberAccessExpr receiver=Expr[{}] hops={} "
+                  "var=StructuralVar[{}]",
+                  m.receiver.value, m.member.hops.value, m.member.var.value);
+            },
             [](const DerefExpr& d) -> std::string {
               return std::format("DerefExpr pointer=Expr[{}]", d.pointer.value);
             },
