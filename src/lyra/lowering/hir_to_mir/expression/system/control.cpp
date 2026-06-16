@@ -1,4 +1,4 @@
-#include "lyra/lowering/hir_to_mir/lower_finish.hpp"
+#include "lyra/lowering/hir_to_mir/expression/system/control.hpp"
 
 #include <cstdint>
 #include <format>

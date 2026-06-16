@@ -1,12 +1,14 @@
-#include "lyra/lowering/hir_to_mir/lower_continuous_assign.hpp"
+#include "lyra/lowering/hir_to_mir/continuous_assign.hpp"
 
 #include <expected>
 #include <optional>
 #include <utility>
 
 #include "lyra/hir/continuous_assign.hpp"
-#include "lyra/lowering/hir_to_mir/lower_expr.hpp"
+#include "lyra/hir/expr.hpp"
+#include "lyra/hir/structural_scope.hpp"
 #include "lyra/lowering/hir_to_mir/sensitivity_wait.hpp"
+#include "lyra/lowering/hir_to_mir/walk_frame.hpp"
 #include "lyra/mir/expr.hpp"
 #include "lyra/mir/process.hpp"
 #include "lyra/mir/stmt.hpp"
@@ -30,14 +32,12 @@ auto LowerContinuousAssign(
 
   const hir::StructuralScope& hir_scope = scope.HirScope();
 
-  auto rhs_or =
-      LowerStructuralExpr(scope, body_frame, hir_scope.GetExpr(src.rhs));
+  auto rhs_or = scope.LowerExpr(hir_scope.GetExpr(src.rhs), body_frame);
   if (!rhs_or) return std::unexpected(std::move(rhs_or.error()));
   const mir::TypeId assign_type = (*rhs_or).type;
   const mir::ExprId rhs_id = body_scope.AddExpr(*std::move(rhs_or));
 
-  auto lhs_or =
-      LowerStructuralExpr(scope, body_frame, hir_scope.GetExpr(src.lhs));
+  auto lhs_or = scope.LowerExpr(hir_scope.GetExpr(src.lhs), body_frame);
   if (!lhs_or) return std::unexpected(std::move(lhs_or.error()));
   const mir::ExprId lhs_id = body_scope.AddExpr(*std::move(lhs_or));
 

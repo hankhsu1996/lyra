@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstdint>
 #include <optional>
 
 #include "lyra/lowering/hir_to_mir/procedural_depth.hpp"
@@ -13,6 +14,18 @@ struct ProceduralScope;
 namespace lyra::lowering::hir_to_mir {
 
 class CaptureSink;
+
+// How a HIR `LoopVarRef` resolves at the structural-scope dispatcher. The two
+// values correspond to the two structural contexts a constructor expression
+// can sit in: a for-generate header (where the loop variable lowers to the
+// constructor's procedural induction var) and a generate-control / continuous
+// assign (where the loop variable lowers to a structural param on the
+// constructed child object). Meaningful only in `StructuralScopeLowerer::
+// LowerExpr`; ignored by the procedural-side dispatcher.
+enum class LoopVarLoweringMode : std::uint8_t {
+  kProceduralInduction,
+  kStructuralParam,
+};
 
 // Per-recursion traversal context for HIR-to-MIR. Carried by value through
 // every dispatcher method and per-kind handler. Walk-invariant facts (the
@@ -61,6 +74,13 @@ struct WalkFrame {
   // lowering. Empty outside a with-clause body.
   std::optional<mir::ProceduralVarId> active_index_binding;
 
+  // How a `LoopVarRef` resolves in `StructuralScopeLowerer::LowerExpr`. Set
+  // by the caller before dispatching a constructor expression. The default
+  // (`kStructuralParam`) matches the common generate-control / continuous
+  // assign context; for-generate header lowering switches to
+  // `kProceduralInduction`. Ignored by `ProcessLowerer::LowerExpr`.
+  LoopVarLoweringMode loop_var_mode = LoopVarLoweringMode::kStructuralParam;
+
   [[nodiscard]] auto WithStructuralScope(mir::StructuralScope* scope) const
       -> WalkFrame {
     WalkFrame next = *this;
@@ -101,9 +121,10 @@ struct WalkFrame {
     return next;
   }
 
-  [[nodiscard]] auto ClearIndexBinding() const -> WalkFrame {
+  [[nodiscard]] auto WithLoopVarMode(LoopVarLoweringMode mode) const
+      -> WalkFrame {
     WalkFrame next = *this;
-    next.active_index_binding.reset();
+    next.loop_var_mode = mode;
     return next;
   }
 };

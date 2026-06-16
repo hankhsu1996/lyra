@@ -4,9 +4,10 @@
 #include <utility>
 
 #include "lyra/base/overloaded.hpp"
+#include "lyra/hir/expr.hpp"
 #include "lyra/hir/inside_item.hpp"
 #include "lyra/hir/procedural_body.hpp"
-#include "lyra/lowering/hir_to_mir/lower_expr.hpp"
+#include "lyra/lowering/hir_to_mir/process_lowerer.hpp"
 #include "lyra/mir/binary_op.hpp"
 #include "lyra/mir/expr.hpp"
 #include "lyra/mir/stmt.hpp"
@@ -20,7 +21,7 @@ auto BuildHirInsideItemPredicate(
   const auto& hir_body = proc.HirBody();
   auto& scope = *frame.current_procedural_scope;
   auto lower_id = [&](hir::ExprId id) -> diag::Result<mir::ExprId> {
-    auto lowered = LowerExpr(proc, frame, hir_body.exprs.at(id.value));
+    auto lowered = proc.LowerExpr(hir_body.exprs.at(id.value), frame);
     if (!lowered) {
       return std::unexpected(std::move(lowered.error()));
     }

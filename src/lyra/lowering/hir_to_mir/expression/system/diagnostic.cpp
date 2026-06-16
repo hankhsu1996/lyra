@@ -1,4 +1,4 @@
-#include "lyra/lowering/hir_to_mir/lower_diagnostic.hpp"
+#include "lyra/lowering/hir_to_mir/expression/system/diagnostic.hpp"
 
 #include <expected>
 #include <optional>

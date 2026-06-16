@@ -16,7 +16,6 @@
 #include "lyra/hir/expr.hpp"
 #include "lyra/hir/primary.hpp"
 #include "lyra/hir/procedural_body.hpp"
-#include "lyra/lowering/hir_to_mir/lower_expr.hpp"
 #include "lyra/lowering/hir_to_mir/process_lowerer.hpp"
 #include "lyra/mir/conversion.hpp"
 #include "lyra/mir/expr.hpp"
@@ -71,7 +70,7 @@ auto BuildPrintValueItem(
     mir::FormatSpec spec) -> diag::Result<mir::RuntimePrintItem> {
   const auto& hir_proc = process.HirBody();
   auto& proc_scope = *frame.current_procedural_scope;
-  auto lowered_or = LowerExpr(process, frame, hir_proc.exprs.at(hir_arg.value));
+  auto lowered_or = process.LowerExpr(hir_proc.exprs.at(hir_arg.value), frame);
   if (!lowered_or) return std::unexpected(std::move(lowered_or.error()));
   mir::Expr lowered = *std::move(lowered_or);
 

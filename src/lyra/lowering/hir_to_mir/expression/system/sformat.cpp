@@ -1,4 +1,4 @@
-#include "lyra/lowering/hir_to_mir/lower_sformat.hpp"
+#include "lyra/lowering/hir_to_mir/expression/system/sformat.hpp"
 
 #include <cstddef>
 #include <expected>
@@ -14,7 +14,6 @@
 #include "lyra/diag/diagnostic.hpp"
 #include "lyra/hir/expr.hpp"
 #include "lyra/hir/procedural_body.hpp"
-#include "lyra/lowering/hir_to_mir/lower_expr.hpp"
 #include "lyra/lowering/hir_to_mir/print_items.hpp"
 #include "lyra/lowering/hir_to_mir/process_lowerer.hpp"
 #include "lyra/mir/expr.hpp"
@@ -102,7 +101,7 @@ auto LowerSFormatSystemSubroutineCallStmt(
         "elided");
   }
   auto out_or =
-      LowerExpr(process, frame, hir_proc.exprs.at(call.arguments[0]->value));
+      process.LowerExpr(hir_proc.exprs.at(call.arguments[0]->value), frame);
   if (!out_or) return std::unexpected(std::move(out_or.error()));
   const mir::TypeId out_type = out_or->type;
   if (process.Module().Unit().GetType(out_type).Kind() !=

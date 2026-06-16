@@ -1,10 +1,9 @@
-#include "lyra/lowering/hir_to_mir/lower_timescale.hpp"
+#include "lyra/lowering/hir_to_mir/expression/system/timescale.hpp"
 
 #include <array>
 #include <cstddef>
 #include <expected>
 #include <optional>
-#include <string>
 #include <utility>
 
 #include "lyra/base/internal_error.hpp"
@@ -12,7 +11,6 @@
 #include "lyra/diag/diagnostic.hpp"
 #include "lyra/hir/expr.hpp"
 #include "lyra/hir/procedural_body.hpp"
-#include "lyra/lowering/hir_to_mir/lower_expr.hpp"
 #include "lyra/lowering/hir_to_mir/process_lowerer.hpp"
 #include "lyra/mir/expr.hpp"
 #include "lyra/mir/runtime_timescale.hpp"
@@ -40,7 +38,7 @@ auto LowerTimeFormatSystemSubroutineCall(
             "$timeformat positional argument unexpectedly elided");
       }
       auto lowered =
-          LowerExpr(process, frame, hir_proc.exprs.at(args[i]->value));
+          process.LowerExpr(hir_proc.exprs.at(args[i]->value), frame);
       if (!lowered) return std::unexpected(std::move(lowered.error()));
       ids.at(i) = proc_scope.AddExpr(*std::move(lowered));
     }

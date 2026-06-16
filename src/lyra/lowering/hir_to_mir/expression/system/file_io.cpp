@@ -1,4 +1,4 @@
-#include "lyra/lowering/hir_to_mir/lower_file_io.hpp"
+#include "lyra/lowering/hir_to_mir/expression/system/file_io.hpp"
 
 #include <expected>
 #include <format>
@@ -14,7 +14,6 @@
 #include "lyra/hir/expr.hpp"
 #include "lyra/hir/procedural_body.hpp"
 #include "lyra/lowering/hir_to_mir/copy_out_desugar.hpp"
-#include "lyra/lowering/hir_to_mir/lower_expr.hpp"
 #include "lyra/lowering/hir_to_mir/process_lowerer.hpp"
 #include "lyra/mir/expr.hpp"
 #include "lyra/mir/runtime_file_io.hpp"
@@ -32,14 +31,14 @@ auto LowerFileOpenCall(
   auto& proc_scope = *frame.current_procedural_scope;
 
   auto name_or =
-      LowerExpr(process, frame, hir_proc.exprs.at(call.arguments[0]->value));
+      process.LowerExpr(hir_proc.exprs.at(call.arguments[0]->value), frame);
   if (!name_or) return std::unexpected(std::move(name_or.error()));
   const mir::ExprId name_id = proc_scope.AddExpr(*std::move(name_or));
 
   std::optional<mir::ExprId> mode_id = std::nullopt;
   if (call.arguments.size() == 2) {
     auto mode_or =
-        LowerExpr(process, frame, hir_proc.exprs.at(call.arguments[1]->value));
+        process.LowerExpr(hir_proc.exprs.at(call.arguments[1]->value), frame);
     if (!mode_or) return std::unexpected(std::move(mode_or.error()));
     mode_id = proc_scope.AddExpr(*std::move(mode_or));
   }
@@ -59,7 +58,7 @@ auto LowerFileCloseCall(
   auto& proc_scope = *frame.current_procedural_scope;
 
   auto desc_or =
-      LowerExpr(process, frame, hir_proc.exprs.at(call.arguments[0]->value));
+      process.LowerExpr(hir_proc.exprs.at(call.arguments[0]->value), frame);
   if (!desc_or) return std::unexpected(std::move(desc_or.error()));
   const mir::ExprId descriptor_id = proc_scope.AddExpr(*std::move(desc_or));
 
@@ -76,7 +75,7 @@ auto LowerFileGetcCall(
   const auto& hir_proc = process.HirBody();
   auto& proc_scope = *frame.current_procedural_scope;
   auto fd_or =
-      LowerExpr(process, frame, hir_proc.exprs.at(call.arguments[0]->value));
+      process.LowerExpr(hir_proc.exprs.at(call.arguments[0]->value), frame);
   if (!fd_or) return std::unexpected(std::move(fd_or.error()));
   const mir::ExprId fd_id = proc_scope.AddExpr(*std::move(fd_or));
   return mir::Expr{
@@ -91,11 +90,11 @@ auto LowerFileUngetcCall(
   const auto& hir_proc = process.HirBody();
   auto& proc_scope = *frame.current_procedural_scope;
   auto c_or =
-      LowerExpr(process, frame, hir_proc.exprs.at(call.arguments[0]->value));
+      process.LowerExpr(hir_proc.exprs.at(call.arguments[0]->value), frame);
   if (!c_or) return std::unexpected(std::move(c_or.error()));
   const mir::ExprId c_id = proc_scope.AddExpr(*std::move(c_or));
   auto fd_or =
-      LowerExpr(process, frame, hir_proc.exprs.at(call.arguments[1]->value));
+      process.LowerExpr(hir_proc.exprs.at(call.arguments[1]->value), frame);
   if (!fd_or) return std::unexpected(std::move(fd_or.error()));
   const mir::ExprId fd_id = proc_scope.AddExpr(*std::move(fd_or));
   return mir::Expr{
@@ -111,15 +110,15 @@ auto LowerFileSeekCall(
   const auto& hir_proc = process.HirBody();
   auto& proc_scope = *frame.current_procedural_scope;
   auto fd_or =
-      LowerExpr(process, frame, hir_proc.exprs.at(call.arguments[0]->value));
+      process.LowerExpr(hir_proc.exprs.at(call.arguments[0]->value), frame);
   if (!fd_or) return std::unexpected(std::move(fd_or.error()));
   const mir::ExprId fd_id = proc_scope.AddExpr(*std::move(fd_or));
   auto off_or =
-      LowerExpr(process, frame, hir_proc.exprs.at(call.arguments[1]->value));
+      process.LowerExpr(hir_proc.exprs.at(call.arguments[1]->value), frame);
   if (!off_or) return std::unexpected(std::move(off_or.error()));
   const mir::ExprId off_id = proc_scope.AddExpr(*std::move(off_or));
   auto op_or =
-      LowerExpr(process, frame, hir_proc.exprs.at(call.arguments[2]->value));
+      process.LowerExpr(hir_proc.exprs.at(call.arguments[2]->value), frame);
   if (!op_or) return std::unexpected(std::move(op_or.error()));
   const mir::ExprId op_id = proc_scope.AddExpr(*std::move(op_or));
   return mir::Expr{
@@ -137,7 +136,7 @@ auto LowerFileRewindCall(
   const auto& hir_proc = process.HirBody();
   auto& proc_scope = *frame.current_procedural_scope;
   auto fd_or =
-      LowerExpr(process, frame, hir_proc.exprs.at(call.arguments[0]->value));
+      process.LowerExpr(hir_proc.exprs.at(call.arguments[0]->value), frame);
   if (!fd_or) return std::unexpected(std::move(fd_or.error()));
   const mir::ExprId fd_id = proc_scope.AddExpr(*std::move(fd_or));
   return mir::Expr{
@@ -152,7 +151,7 @@ auto LowerFileTellCall(
   const auto& hir_proc = process.HirBody();
   auto& proc_scope = *frame.current_procedural_scope;
   auto fd_or =
-      LowerExpr(process, frame, hir_proc.exprs.at(call.arguments[0]->value));
+      process.LowerExpr(hir_proc.exprs.at(call.arguments[0]->value), frame);
   if (!fd_or) return std::unexpected(std::move(fd_or.error()));
   const mir::ExprId fd_id = proc_scope.AddExpr(*std::move(fd_or));
   return mir::Expr{
@@ -167,7 +166,7 @@ auto LowerFileEofCall(
   const auto& hir_proc = process.HirBody();
   auto& proc_scope = *frame.current_procedural_scope;
   auto fd_or =
-      LowerExpr(process, frame, hir_proc.exprs.at(call.arguments[0]->value));
+      process.LowerExpr(hir_proc.exprs.at(call.arguments[0]->value), frame);
   if (!fd_or) return std::unexpected(std::move(fd_or.error()));
   const mir::ExprId fd_id = proc_scope.AddExpr(*std::move(fd_or));
   return mir::Expr{
@@ -184,7 +183,7 @@ auto LowerFileFlushCall(
   std::optional<mir::ExprId> descriptor = std::nullopt;
   if (!call.arguments.empty()) {
     auto fd_or =
-        LowerExpr(process, frame, hir_proc.exprs.at(call.arguments[0]->value));
+        process.LowerExpr(hir_proc.exprs.at(call.arguments[0]->value), frame);
     if (!fd_or) return std::unexpected(std::move(fd_or.error()));
     descriptor = proc_scope.AddExpr(*std::move(fd_or));
   }
@@ -244,7 +243,8 @@ auto LowerFileIOSystemSubroutineCall(
       // Output-arg tasks land here only when invoked in a nested expression
       // context (e.g., `if ($fgets(s, fd)) ...`). Statement-position calls
       // (`code = $fgets(s, fd);` / `$fgets(s, fd);`) get desugared upstream
-      // in lower_stmt.cpp before reaching this dispatch.
+      // in `statement/assignment.cpp` (ExprStmt path) before reaching this
+      // dispatch.
       return RejectOutputArgFileCallInExprPosition(name, span);
   }
   throw InternalError("LowerFileIOSystemSubroutineCall: unknown FileIOKind");
@@ -276,8 +276,8 @@ auto LowerFileIOSystemSubroutineCallStmt(
           process, wrapper_frame, *call.arguments[0], "_lyra_fgets_dest");
       if (!slot_or) return std::unexpected(std::move(slot_or.error()));
       slots.push_back(*slot_or);
-      auto fd_or = LowerExpr(
-          process, wrapper_frame, hir_proc.exprs.at(call.arguments[1]->value));
+      auto fd_or = process.LowerExpr(
+          hir_proc.exprs.at(call.arguments[1]->value), wrapper_frame);
       if (!fd_or) return std::unexpected(std::move(fd_or.error()));
       const mir::ExprId fd_id = wrapper.AddExpr(*std::move(fd_or));
       const mir::ExprId temp_ref = wrapper.AddExpr(
@@ -296,8 +296,8 @@ auto LowerFileIOSystemSubroutineCallStmt(
       // (integral form) or an unpacked array (memory form).
       const auto& dest_hir = hir_proc.exprs.at(call.arguments[0]->value);
       const auto& dest_hir_ty = module.Hir().GetType(dest_hir.type);
-      auto fd_or = LowerExpr(
-          process, wrapper_frame, hir_proc.exprs.at(call.arguments[1]->value));
+      auto fd_or = process.LowerExpr(
+          hir_proc.exprs.at(call.arguments[1]->value), wrapper_frame);
       if (!fd_or) return std::unexpected(std::move(fd_or.error()));
       const mir::ExprId fd_id = wrapper.AddExpr(*std::move(fd_or));
 
@@ -350,7 +350,7 @@ auto LowerFileIOSystemSubroutineCallStmt(
         if (call.arguments.size() <= idx) return std::nullopt;
         if (!call.arguments[idx].has_value()) return std::nullopt;
         const auto& a = hir_proc.exprs.at(call.arguments[idx]->value);
-        auto lowered = LowerExpr(process, wrapper_frame, a);
+        auto lowered = process.LowerExpr(a, wrapper_frame);
         if (!lowered) return std::unexpected(std::move(lowered.error()));
         return wrapper.AddExpr(*std::move(lowered));
       };
@@ -361,7 +361,7 @@ auto LowerFileIOSystemSubroutineCallStmt(
       // The unpacked-array lvalue flows in without copy-out: the runtime
       // helper mutates elements through the live reference, so the
       // BuildOutputArgSlot temp the integral path uses isn't needed here.
-      auto dest_or = LowerExpr(process, wrapper_frame, dest_hir);
+      auto dest_or = process.LowerExpr(dest_hir, wrapper_frame);
       if (!dest_or) return std::unexpected(std::move(dest_or.error()));
       const mir::ExprId dest_id = wrapper.AddExpr(*std::move(dest_or));
       call_expr = mir::Expr{
@@ -382,8 +382,8 @@ auto LowerFileIOSystemSubroutineCallStmt(
     }
     case support::FileIOKind::kError: {
       // $ferror(fd, str_lvalue) -- arg[1] is the output string lvalue.
-      auto fd_or = LowerExpr(
-          process, wrapper_frame, hir_proc.exprs.at(call.arguments[0]->value));
+      auto fd_or = process.LowerExpr(
+          hir_proc.exprs.at(call.arguments[0]->value), wrapper_frame);
       if (!fd_or) return std::unexpected(std::move(fd_or.error()));
       const mir::ExprId fd_id = wrapper.AddExpr(*std::move(fd_or));
       auto slot_or = BuildOutputArgSlot(
@@ -408,8 +408,8 @@ auto LowerFileIOSystemSubroutineCallStmt(
 
   std::optional<mir::ExprId> assign_target_id = std::nullopt;
   if (assign_target.has_value()) {
-    auto lhs_or = LowerExpr(
-        process, wrapper_frame, hir_proc.exprs.at(assign_target->value));
+    auto lhs_or = process.LowerExpr(
+        hir_proc.exprs.at(assign_target->value), wrapper_frame);
     if (!lhs_or) return std::unexpected(std::move(lhs_or.error()));
     assign_target_id = wrapper.AddExpr(*std::move(lhs_or));
   }

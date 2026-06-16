@@ -1,4 +1,4 @@
-#include "lyra/lowering/hir_to_mir/lower_scan.hpp"
+#include "lyra/lowering/hir_to_mir/expression/system/scan.hpp"
 
 #include <cstdint>
 #include <expected>
@@ -15,7 +15,6 @@
 #include "lyra/hir/procedural_body.hpp"
 #include "lyra/lowering/hir_to_mir/capture_sink.hpp"
 #include "lyra/lowering/hir_to_mir/default_value.hpp"
-#include "lyra/lowering/hir_to_mir/lower_expr.hpp"
 #include "lyra/lowering/hir_to_mir/process_lowerer.hpp"
 #include "lyra/mir/binary_op.hpp"
 #include "lyra/mir/closure.hpp"
@@ -231,8 +230,8 @@ auto LowerScanSystemSubroutineCall(
   // integral) -> conversion lift to string. The guard reads the raw
   // PackedArray; the lift is post-guard because conversion to string
   // silently drops x/z bits and would defeat the LRM 21.3.4.3 EOF rule.
-  auto source_or = LowerExpr(
-      process, closure_frame, hir_proc.exprs.at(call.arguments[0]->value));
+  auto source_or = process.LowerExpr(
+      hir_proc.exprs.at(call.arguments[0]->value), closure_frame);
   if (!source_or) return std::unexpected(std::move(source_or.error()));
   const mir::TypeId source_type = source_or->type;
   mir::ExprId source_id = body.AddExpr(*std::move(source_or));
@@ -246,8 +245,8 @@ auto LowerScanSystemSubroutineCall(
         "LowerScanSystemSubroutineCall: $fscanf fd is not packed-integer");
   }
 
-  auto format_or = LowerExpr(
-      process, closure_frame, hir_proc.exprs.at(call.arguments[1]->value));
+  auto format_or = process.LowerExpr(
+      hir_proc.exprs.at(call.arguments[1]->value), closure_frame);
   if (!format_or) return std::unexpected(std::move(format_or.error()));
   const mir::TypeId format_type = format_or->type;
   mir::ExprId format_id = body.AddExpr(*std::move(format_or));
@@ -329,8 +328,8 @@ auto LowerScanSystemSubroutineCall(
     mir::ProceduralScope then_body;
     const WalkFrame then_frame =
         closure_frame.WithProceduralScope(&then_body).Deeper();
-    auto lvalue_or = LowerExpr(
-        process, then_frame, hir_proc.exprs.at(call.arguments[k + 2]->value));
+    auto lvalue_or = process.LowerExpr(
+        hir_proc.exprs.at(call.arguments[k + 2]->value), then_frame);
     if (!lvalue_or) return std::unexpected(std::move(lvalue_or.error()));
     const mir::ExprId lvalue_id = then_body.AddExpr(*std::move(lvalue_or));
     const mir::ExprId temp_read_id =
