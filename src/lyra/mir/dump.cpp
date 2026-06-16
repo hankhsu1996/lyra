@@ -477,13 +477,6 @@ class MirDumper {
                   "StructuralParamRef[hops={}, param={}] \"{}\"", r.hops.value,
                   r.param.value, param.name);
             },
-            [this](const StructuralVarRef& r) -> std::string {
-              const auto& owner = ResolveScopeAtHops(r.hops.value);
-              const auto& var = owner.GetStructuralVar(r.var);
-              return std::format(
-                  "StructuralVarRef[hops={}, var={}] \"{}\"", r.hops.value,
-                  r.var.value, var.name);
-            },
             [this](const ProceduralVarRef& r) -> std::string {
               const auto& owner = ResolveProceduralScopeAtHops(r.hops.value);
               const auto& var = owner.vars.at(r.var.value);
@@ -546,7 +539,6 @@ class MirDumper {
             [](const RuntimeCallExpr&) -> std::string {
               return "RuntimeCallExpr";
             },
-            [](const SelfScopeExpr&) -> std::string { return "SelfScopeExpr"; },
             [](const MemberAccessExpr& m) -> std::string {
               return std::format(
                   "MemberAccessExpr receiver=Expr[{}] hops={} "

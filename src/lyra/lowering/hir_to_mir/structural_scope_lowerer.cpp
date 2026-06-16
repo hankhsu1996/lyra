@@ -308,6 +308,7 @@ auto BuildDownwardNavValue(
     const std::vector<hir::PathStep>& path, mir::TypeId slot_type,
     mir::TypeId scope_ptr_type) -> mir::ExprId {
   mir::ProceduralScope& ctor_scope = *frame.current_procedural_scope;
+  const mir::TypeId self_ptr_type = module.Unit().builtins.self_pointer;
   struct NavHop {
     std::string name;
     std::vector<mir::ExprId> indices;
@@ -331,7 +332,12 @@ auto BuildDownwardNavValue(
   }
 
   mir::ExprId cur = ctor_scope.AddExpr(
-      mir::Expr{.data = mir::SelfScopeExpr{}, .type = scope_ptr_type});
+      mir::Expr{
+          .data =
+              mir::ProceduralVarRef{
+                  .hops = frame.procedural_depth - frame.self_decl_depth,
+                  .var = *frame.self_binding},
+          .type = self_ptr_type});
   for (std::size_t i = 0; i + 1 < hops.size(); ++i) {
     std::vector<mir::ExprId> args;
     args.push_back(cur);
@@ -400,9 +406,21 @@ void InstallCrossUnitRefs(
     const mir::TypeId slot_type = mir_scope.GetStructuralVar(slot).type;
     const mir::ExprId nav = BuildDownwardNavValue(
         module, frame, head_name, cu.path, slot_type, scope_ptr_type);
+    const mir::ExprId self_for_target = ctor_scope.AddExpr(
+        mir::Expr{
+            .data =
+                mir::ProceduralVarRef{
+                    .hops = frame.procedural_depth - frame.self_decl_depth,
+                    .var = *frame.self_binding},
+            .type = module.Unit().builtins.self_pointer});
     const mir::ExprId target = ctor_scope.AddExpr(
         mir::Expr{
-            .data = mir::StructuralVarRef{.hops = {.value = 0}, .var = slot},
+            .data =
+                mir::MemberAccessExpr{
+                    .receiver = self_for_target,
+                    .member =
+                        mir::StructuralVarRef{
+                            .hops = {.value = 0}, .var = slot}},
             .type = slot_type});
     const mir::ExprId assign = ctor_scope.AddExpr(
         mir::Expr{
@@ -744,13 +762,10 @@ auto StructuralScopeLowerer::Run(
   const mir::ProceduralVarId self_id = ctor_scope.AddProceduralVar(
       mir::ProceduralVarDecl{
           .name = "self", .type = module.Unit().builtins.self_pointer});
-  const WalkFrame scope_frame = frame.WithStructuralScope(&mir_scope)
-                                    .WithProceduralScope(&ctor_scope)
-                                    .WithSelfBinding(self_id);
-  const mir::TypeId scope_ptr_type = module.Unit().AddType(
-      mir::PointerType{
-          .pointee = module.Unit().AddType(mir::ScopeType{}),
-          .ownership = mir::PointerOwnership::kBorrowed});
+  const WalkFrame scope_frame =
+      frame.WithStructuralScope(&mir_scope)
+          .WithProceduralScope(&ctor_scope)
+          .WithSelfBinding(self_id, frame.procedural_depth);
   const mir::TypeId void_type = module.Unit().AddType(mir::VoidType{});
   for (std::size_t i = 0; i < hir_scope.structural_vars.size(); ++i) {
     const hir::StructuralVarId hir_id{static_cast<std::uint32_t>(i)};
@@ -781,12 +796,31 @@ auto StructuralScopeLowerer::Run(
         !std::holds_alternative<mir::ObjectType>(var_data) &&
         !std::holds_alternative<mir::ExternalUnitObjectType>(var_data);
     if (is_signal) {
+      const mir::TypeId self_ptr_type = module.Unit().builtins.self_pointer;
       const mir::ExprId self = ctor_scope.AddExpr(
-          mir::Expr{.data = mir::SelfScopeExpr{}, .type = scope_ptr_type});
+          mir::Expr{
+              .data =
+                  mir::ProceduralVarRef{
+                      .hops = scope_frame.procedural_depth -
+                              scope_frame.self_decl_depth,
+                      .var = *scope_frame.self_binding},
+              .type = self_ptr_type});
+      const mir::ExprId self_for_member = ctor_scope.AddExpr(
+          mir::Expr{
+              .data =
+                  mir::ProceduralVarRef{
+                      .hops = scope_frame.procedural_depth -
+                              scope_frame.self_decl_depth,
+                      .var = *scope_frame.self_binding},
+              .type = self_ptr_type});
       const mir::ExprId var_ref = ctor_scope.AddExpr(
           mir::Expr{
               .data =
-                  mir::StructuralVarRef{.hops = {.value = 0}, .var = mir_id},
+                  mir::MemberAccessExpr{
+                      .receiver = self_for_member,
+                      .member =
+                          mir::StructuralVarRef{
+                              .hops = {.value = 0}, .var = mir_id}},
               .type = mir_type});
       const mir::ExprId call = ctor_scope.AddExpr(
           mir::Expr{

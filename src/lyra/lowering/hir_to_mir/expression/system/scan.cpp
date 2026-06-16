@@ -228,12 +228,12 @@ auto LowerScanSystemSubroutineCall(
       mir::Expr{
           .data =
               mir::ProceduralVarRef{
-                  .hops = frame.procedural_depth - ProceduralDepth{},
+                  .hops = frame.procedural_depth - frame.self_decl_depth,
                   .var = *frame.self_binding},
           .type = self_ptr_type});
   CaptureSink sink{body_frame.procedural_depth, body, outer_scope};
-  const WalkFrame closure_frame =
-      body_frame.WithClosure(&sink).WithSelfBinding(self_binding);
+  const WalkFrame closure_frame = body_frame.WithClosure(&sink).WithSelfBinding(
+      self_binding, body_frame.procedural_depth);
 
   // Source / format are rvalues inside the body. The leaf lowering routes
   // procedural-var leaves through the sink, producing body-side bindings.

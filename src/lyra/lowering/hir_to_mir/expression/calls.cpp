@@ -183,7 +183,7 @@ auto BuildArrayMethodClosure(
       mir::Expr{
           .data =
               mir::ProceduralVarRef{
-                  .hops = frame.procedural_depth - ProceduralDepth{},
+                  .hops = frame.procedural_depth - frame.self_decl_depth,
                   .var = *frame.self_binding},
           .type = self_ptr_type});
   const mir::ProceduralVarId item_binding = body_scope.AddProceduralVar(
@@ -196,9 +196,10 @@ auto BuildArrayMethodClosure(
           .declaration_procedural_depth = body_depth, .var = item_binding});
 
   CaptureSink sink{body_depth, body_scope, outer_scope};
-  const WalkFrame closure_frame = body_frame.WithClosure(&sink)
-                                      .WithIndexBinding(index_binding)
-                                      .WithSelfBinding(self_binding);
+  const WalkFrame closure_frame =
+      body_frame.WithClosure(&sink)
+          .WithIndexBinding(index_binding)
+          .WithSelfBinding(self_binding, body_depth);
 
   auto body_expr_or = process.LowerExpr(
       hir_process.exprs.at(with_clause.expr.value), closure_frame);

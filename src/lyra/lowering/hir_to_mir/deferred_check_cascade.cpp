@@ -182,7 +182,8 @@ auto BuildUniqueCheckClosure(
       mir::Expr{
           .data =
               mir::ProceduralVarRef{
-                  .hops = wrapper_frame.procedural_depth - ProceduralDepth{},
+                  .hops = wrapper_frame.procedural_depth -
+                          wrapper_frame.self_decl_depth,
                   .var = *wrapper_frame.self_binding},
           .type = self_ptr_type});
   closure.captures.emplace_back(
@@ -316,8 +317,10 @@ auto BuildDeferredCheckCascade(
 
   // SnapshotPredicate / SynthesizeDefaultValueExpr append to wrapper, so
   // route through a wrapper-local frame; the cascade levels each derive their
-  // own local frames below.
-  const WalkFrame wrapper_frame = frame.WithProceduralScope(&wrapper);
+  // own local frames below. The wrapper itself sits one procedural scope
+  // deeper than the caller, so any read of an enclosing binding (e.g. the
+  // process body's `self`) climbs through that extra level.
+  const WalkFrame wrapper_frame = frame.WithProceduralScope(&wrapper).Deeper();
 
   std::vector<mir::ProceduralVarId> snapshot_vars;
   snapshot_vars.reserve(branches.size());
@@ -455,11 +458,17 @@ auto LowerUniqueIfStmt(
             .predicate = predicates[i], .body = std::move(*body_or)});
   }
 
+  // The trailing else sits at the same MIR depth as the last branch body
+  // (their if-then-else share an enclosing level scope), so the lowering
+  // walks one fewer level than `bodies.size()` extras.
   std::optional<mir::ProceduralScope> tail_scope;
   if (cascade.tail_else.has_value()) {
-    auto tail_or = LowerStmtIntoChildScope(
-        process, deeper_by(wrapper_frame, cascade.bodies.size()),
-        *cascade.tail_else);
+    const WalkFrame tail_enter_frame =
+        cascade.bodies.empty()
+            ? wrapper_frame
+            : deeper_by(wrapper_frame, cascade.bodies.size() - 1);
+    auto tail_or =
+        LowerStmtIntoChildScope(process, tail_enter_frame, *cascade.tail_else);
     if (!tail_or) return std::unexpected(std::move(tail_or.error()));
     tail_scope = std::move(*tail_or);
   }

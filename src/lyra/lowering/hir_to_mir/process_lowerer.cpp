@@ -185,9 +185,10 @@ auto LowerStraightLineProcess(
       mir::ProceduralVarDecl{
           .name = "self",
           .type = process.Module().Unit().builtins.self_pointer});
-  const WalkFrame body_frame = frame.WithProceduralScope(&process_scope)
-                                   .WithStaticFrameScope(&process_scope)
-                                   .WithSelfBinding(self_id);
+  const WalkFrame body_frame =
+      frame.WithProceduralScope(&process_scope)
+          .WithStaticFrameScope(&process_scope)
+          .WithSelfBinding(self_id, frame.procedural_depth);
   auto lowered = LowerStraightLineBodyInto(process, body_frame);
   if (!lowered) return std::unexpected(std::move(lowered.error()));
   return mir::Process{
@@ -216,10 +217,11 @@ auto LowerForeverProcess(
           .type = process.Module().Unit().builtins.self_pointer});
   mir::ProceduralScope body_scope;
   {
-    const WalkFrame body_frame = frame.WithStaticFrameScope(&process_scope)
-                                     .WithProceduralScope(&body_scope)
-                                     .WithSelfBinding(self_id)
-                                     .Deeper();
+    const WalkFrame body_frame =
+        frame.WithStaticFrameScope(&process_scope)
+            .WithProceduralScope(&body_scope)
+            .WithSelfBinding(self_id, frame.procedural_depth)
+            .Deeper();
     auto lowered = LowerStraightLineBodyInto(process, body_frame);
     if (!lowered) return std::unexpected(std::move(lowered.error()));
     if (tail_stmt.has_value()) {
@@ -302,9 +304,10 @@ auto ProcessLowerer::Run(
   const mir::ProceduralVarId self_id = body_scope.AddProceduralVar(
       mir::ProceduralVarDecl{
           .name = "self", .type = module_->Unit().builtins.self_pointer});
-  const WalkFrame body_frame = parent_frame.WithProceduralScope(&body_scope)
-                                   .WithStaticFrameScope(&body_scope)
-                                   .WithSelfBinding(self_id);
+  const WalkFrame body_frame =
+      parent_frame.WithProceduralScope(&body_scope)
+          .WithStaticFrameScope(&body_scope)
+          .WithSelfBinding(self_id, parent_frame.procedural_depth);
 
   // Formals are procedural vars of the body with no VarDeclStmt: pre-register
   // them in the body scope at depth 0 so the body's references resolve. The

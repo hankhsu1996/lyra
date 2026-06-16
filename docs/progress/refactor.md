@@ -192,7 +192,7 @@ Entries get checked off as their PRs land. When the last entry lands, the file i
       `scope_state` -> `scope`, `proc_state` -> `process`, `proc_scope_state` -> `proc_scope`,
       etc.). The per-LRM-family subsystem split ships as its own focused cut; see R13.
 
-- [ ] R11 -- Remove the `mutable owned_temp_counter_` escape hatch on `RenderContext`. Today the C++
+- [x] R11 -- Remove the `mutable owned_temp_counter_` escape hatch on `RenderContext`. Today the C++
       backend's temp-name counter is a `mutable` field reached through a pointer from every
       `With*()` descendant; the escape hatch exists because every `Render*` helper takes the context
       by `const&`, but the counter genuinely mutates. Target shape: pull the counter out of
@@ -246,7 +246,7 @@ Entries get checked off as their PRs land. When the last entry lands, the file i
       kind touches three files (subsystem header, subsystem implementation, dispatcher switch) and
       leaves the pass-class header untouched.
 
-- [ ] R14 -- Move the "is this callable a coroutine" decision off `RenderContext` and onto MIR.
+- [x] R14 -- Move the "is this callable a coroutine" decision off `RenderContext` and onto MIR.
       Today the cpp backend reads `RenderContext::InCoroutine()` -- a walk-state flag installed via
       `WithCoroutine(...)` at every callable-body entry -- to decide whether a `mir::ReturnStmt`
       lowers to `return` or `co_return`. The distinction is not semantic at the MIR or LIR level:
@@ -265,7 +265,7 @@ Entries get checked off as their PRs land. When the last entry lands, the file i
       propagation flag from `RenderContext` ships in R18, when the whole walk frame is dissolved.
       **Trigger**: scheduled in front of R18 (the render-layer rewrite).
 
-- [ ] R15 -- Give `mir::Process` a `name` field, so the C++ method name, static-frame struct name,
+- [x] R15 -- Give `mir::Process` a `name` field, so the C++ method name, static-frame struct name,
       static-frame field name, and any future LLVM-IR function symbol all flow from a single
       MIR-level identifier instead of each backend re-deriving "process_N" from a position-in-scope
       iteration index. `mir::StructuralSubroutineDecl::name` already plays this role for
@@ -276,7 +276,7 @@ Entries get checked off as their PRs land. When the last entry lands, the file i
       walker-state propagation of the frame field name continues until R18 dissolves the walk frame.
       **Trigger**: scheduled in front of R18.
 
-- [ ] R16 -- Give every MIR callable body an explicit `self` first binding -- `body.vars[0]` is a
+- [x] R16 -- Give every MIR callable body an explicit `self` first binding -- `body.vars[0]` is a
       procedural-var of borrowed-pointer-to-enclosing-scope type, named `self`. Route every
       class-member access through a new `mir::MemberAccessExpr { receiver, var }` whose receiver
       reaches `self` via `DerefExpr(ProceduralVarRef(self))`. Today four distinct receiver
@@ -325,6 +325,66 @@ Entries get checked off as their PRs land. When the last entry lands, the file i
       same pattern) is updated in this cut to reflect that the patterns are distinct -- lowering
       makes semantic decisions, rendering doesn't. **Trigger**: scheduled after R11, R12, R14, R15,
       R16, R17 all land.
+
+- [ ] R19 -- Move structural-var initializers from inline C++ class-member-init to constructor body
+      statements. Today a structural var's `.initializer` ExprId is rendered as an inline
+      `Var<T> y{<init>};` at the C++ class body; the initializer expression lives in
+      `constructor_scope` but the render emits it at class-body scope where neither `this` nor
+      `self` is available. R16 worked around this by adding an `in_class_member_init_` flag to
+      `RenderContext` so `MemberAccessExpr` and `StructuralParamRef` render bare field names instead
+      of the body-context `self->name`. That flag is exactly the kind of render-time walker state
+      R18 wants gone. Target shape: HIR-to-MIR appends an `AssignExpr` statement to the constructor
+      scope for each structural var with an initializer (matching how a body local with init is
+      lowered); the cpp emit declares the class member with no inline initializer and the ctor body
+      runs the assignment in init-list order. The `in_class_member_init_` flag and the inline-init
+      handling in `RenderField` both disappear. As a follow-on, the `init(M* self)` static helper
+      the C++ ctor currently delegates to can collapse back into the ctor body proper -- a single
+      `Top* self = this;` preamble at the top of the ctor body gives every callable form the same
+      "body opens by binding self" shape (process / subroutine become instance methods with the same
+      preamble; the `static` keyword disappears from method-form callables, which were only static
+      so `self` could be an explicit formal). **Why deferred**: orthogonal to landing R16; requires
+      touching HIR-to-MIR's constructor-scope wiring and the emit shape for class members.
+      **Trigger**: scheduled in front of R18, to ensure the render layer has no class-scope vs
+      body-scope flag left when R18 collapses the render walk.
+
+- [ ] R20 -- Turn runtime-scope method calls (`Services()`, `RegisterChild(name, indices, child)`,
+      `RegisterSignal(name, var)`, `AddProcess(kind, coroutine)`,
+      `SubmitObserved(site_id,     closure)`, etc.) into MIR-modeled expressions so the cpp render
+      stops hardcoding `"self->Services()"`, `"self->RegisterChild(\"...\", ...)"`,
+      `"std::make_unique<Child>(self,     ...)"` and similar literals in `render_print.cpp` /
+      `render_stmt.cpp`. Today each runtime method has bespoke render code that string-concatenates
+      the receiver name with the method name; every argument is rendered uniformly through
+      `RenderExpr` except the implicit receiver, which is spelled out as a literal. Target shape:
+      each runtime call is a `mir::CallExpr` whose callee is a `RuntimeServicesCallee` (or sibling
+      variants for scope-level methods like RegisterChild) carrying the method identity, and whose
+      `arguments[0]` is the receiver expression (`ProceduralVarRef(self)`). The render becomes one
+      rule for every call shape: "render the callee name, open paren, render each argument as an
+      expression separated by commas, close paren". No render handler knows the literal string
+      `"self"` or the literal `"Services()"` anywhere. **Why deferred**: cross-cuts every
+      runtime-method call site (~30 across `render_print.cpp` / `render_stmt.cpp`) and requires MIR
+      vocabulary additions on the Callee variant. **Trigger**: scheduled in front of R18.
+
+- [ ] R21 -- Rename `LowerStructuralVarRefExpr` (the central HIR-to-MIR helper) to reflect what it
+      actually does post-R16: translate an HIR implicit-receiver structural-var read into a MIR
+      `MemberAccessExpr` whose receiver reaches `self`. The current name still refers to
+      `mir::StructuralVarRef` even though that node is no longer a top-level `ExprData` arm. As a
+      follow-on, consider whether HIR should also retire its own `hir::StructuralVarRef` primary in
+      favour of a unified `hir::MemberAccessExpr` -- SV's `x` (implicit-receiver) and `obj.x`
+      (explicit-receiver) are the same operation at the IR level, and a unified shape would push the
+      implicit-vs-explicit distinction back to the slang front-end. **Trigger**: standalone -- the
+      rename is mechanical; the HIR unification is a separate design discussion.
+
+- [ ] R22 -- Reconsider the procedural-vs-structural variable naming and structure now that
+      "structural variable" no longer appears as an `ExprData` arm. With class-member access
+      generalised to `MemberAccessExpr(receiver, member)`, "structural var" is just "a member of the
+      class" -- a fully general concept -- while "procedural var" is the body-local concept. The two
+      were named as a symmetric pair when both were specialised expression forms; now the structural
+      side has been abstracted into general member access, the asymmetry is awkward. Open questions:
+      does `mir::StructuralVarDecl` need a different name (e.g. `ClassMemberDecl`)? Do shared
+      structures that paralleled the two (e.g. `*VarRef`, `Lookup*Var`) still need to be parallel,
+      or did some of them only exist to mirror an axis that no longer divides? **Trigger**: design
+      discussion -- requires walking the structural / procedural axis across MIR vocabulary, dumper,
+      lowering helpers, and backend, deciding what stays paired and what merges.
 
 ## Out of Scope
 

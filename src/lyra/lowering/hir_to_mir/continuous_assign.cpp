@@ -31,7 +31,9 @@ auto LowerContinuousAssign(
           .name = "self", .type = scope.Module().Unit().builtins.self_pointer});
   mir::ProceduralScope body_scope;
   const WalkFrame body_frame =
-      frame.WithProceduralScope(&body_scope).WithSelfBinding(self_id).Deeper();
+      frame.WithProceduralScope(&body_scope)
+          .WithSelfBinding(self_id, frame.procedural_depth)
+          .Deeper();
 
   const hir::StructuralScope& hir_scope = scope.HirScope();
 

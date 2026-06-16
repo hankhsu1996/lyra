@@ -73,16 +73,19 @@ auto LowerForkStmt(
         mir::Expr{
             .data =
                 mir::ProceduralVarRef{
-                    .hops = fork_frame.procedural_depth - ProceduralDepth{},
+                    .hops = fork_frame.procedural_depth -
+                            fork_frame.self_decl_depth,
                     .var = *fork_frame.self_binding},
             .type = self_ptr_type});
 
     CaptureSink sink{
         fork_frame.procedural_depth.Inner(), branch_scope, fork_scope};
-    const WalkFrame branch_frame = fork_frame.WithClosure(&sink)
-                                       .WithProceduralScope(&branch_scope)
-                                       .WithSelfBinding(branch_self_id)
-                                       .Deeper();
+    const WalkFrame branch_frame =
+        fork_frame.WithClosure(&sink)
+            .WithProceduralScope(&branch_scope)
+            .WithSelfBinding(
+                branch_self_id, fork_frame.procedural_depth.Inner())
+            .Deeper();
     auto lowered = process.LowerStmt(branch, branch_frame);
     if (!lowered) {
       return std::unexpected(std::move(lowered.error()));

@@ -1,6 +1,5 @@
 #pragma once
 
-#include <string>
 #include <string_view>
 
 #include "lyra/base/internal_error.hpp"
@@ -26,29 +25,36 @@ class RenderContext {
   [[nodiscard]] auto WithProceduralScope(
       const mir::ProceduralScope& child) const -> RenderContext {
     return RenderContext{
-        *unit_,        *scope_,       child,    this, structural_parent_,
-        static_frame_, in_coroutine_, receiver_};
+        *unit_,
+        *scope_,
+        child,
+        this,
+        structural_parent_,
+        static_frame_,
+        in_coroutine_,
+        in_class_member_init_};
   }
 
   [[nodiscard]] auto WithStructuralScope(
       const mir::StructuralScope& child_scope,
       const mir::ProceduralScope& root_proc_scope) const -> RenderContext {
     return RenderContext{*unit_, child_scope, root_proc_scope, nullptr,
-                         this,   {},          false,           "this"};
+                         this,   {},          false,           false};
   }
 
   // A subroutine body renders its static locals through this per-instance frame
   // member (LRM 13.3.1). Empty when the current callable has no static locals.
   [[nodiscard]] auto WithStaticFrame(std::string_view accessor) const
       -> RenderContext {
-    return RenderContext{*unit_,
-                         *scope_,
-                         *proc_scope_,
-                         procedural_parent_,
-                         structural_parent_,
-                         accessor,
-                         in_coroutine_,
-                         receiver_};
+    return RenderContext{
+        *unit_,
+        *scope_,
+        *proc_scope_,
+        procedural_parent_,
+        structural_parent_,
+        accessor,
+        in_coroutine_,
+        in_class_member_init_};
   }
 
   // Marks the current body as a coroutine (a process or a task), where `return`
@@ -63,16 +69,14 @@ class RenderContext {
         structural_parent_,
         static_frame_,
         in_coroutine,
-        receiver_};
+        in_class_member_init_};
   }
 
-  // Names the object the body reaches module state and Services() through. A
-  // method body leaves this "this" and emits implicit-`this` access; a fork
-  // branch (LRM 9.3.2) renders as an inline coroutine closure with no implicit
-  // `this`, so its body names the frame-copied receiver parameter `self`
-  // explicitly.
-  [[nodiscard]] auto WithReceiver(std::string_view object) const
-      -> RenderContext {
+  // A class-member initializer is rendered without `self`: there is no instance
+  // in scope at C++ class body init time, so structural-param / structural-var
+  // accesses spell the field name directly. Method bodies leave this false and
+  // qualify accesses with `self->`.
+  [[nodiscard]] auto WithClassMemberInit() const -> RenderContext {
     return RenderContext{
         *unit_,
         *scope_,
@@ -81,7 +85,7 @@ class RenderContext {
         structural_parent_,
         static_frame_,
         in_coroutine_,
-        object};
+        true};
   }
 
   RenderContext(const RenderContext&) = delete;
@@ -140,33 +144,8 @@ class RenderContext {
     return proc_scope_->GetExpr(id);
   }
 
-  // The object the current body reaches the enclosing scope instance through:
-  // `this` in a method body, `self` in a fork-branch closure body. Named where
-  // the object itself is spelled -- a spawned inner closure is invoked with it
-  // and captures it, so a nested fork passes `self` on down.
-  [[nodiscard]] auto ReceiverObject() const -> std::string_view {
-    return receiver_;
-  }
-
-  // The prefix every scope-member access carries. Always explicit -- `this->`
-  // in a method body, `self->` in a fork-branch closure body -- so a process
-  // body and a branch body render identically up to the receiver name.
-  [[nodiscard]] auto MemberPrefix() const -> std::string {
-    return std::string(receiver_) + "->";
-  }
-
-  // The C++ expression naming the RuntimeServices the body submits effects
-  // through (`this->Services()` / `self->Services()`).
-  [[nodiscard]] auto ServicesRef() const -> std::string {
-    return MemberPrefix() + "Services()";
-  }
-
-  // The capture clause of a `[=]`-default deferred lambda (NBA / `$strobe`)
-  // that also grabs the receiver. A `self` pointer is a local captured by the
-  // bare `[=]`; the `this` keyword must be named explicitly because C++20
-  // deprecates `[=]` capture of `this`.
-  [[nodiscard]] auto DeferredByValueCapture() const -> std::string_view {
-    return receiver_ == "this" ? "[=, this]" : "[=]";
+  [[nodiscard]] auto InClassMemberInit() const -> bool {
+    return in_class_member_init_;
   }
 
  private:
@@ -185,7 +164,7 @@ class RenderContext {
       const mir::ProceduralScope& proc_scope,
       const RenderContext* procedural_parent,
       const RenderContext* structural_parent, std::string_view static_frame,
-      bool in_coroutine, std::string_view receiver)
+      bool in_coroutine, bool in_class_member_init)
       : unit_(&unit),
         scope_(&scope),
         proc_scope_(&proc_scope),
@@ -193,7 +172,7 @@ class RenderContext {
         structural_parent_(structural_parent),
         static_frame_(static_frame),
         in_coroutine_(in_coroutine),
-        receiver_(receiver) {
+        in_class_member_init_(in_class_member_init) {
   }
 
   const mir::CompilationUnit* unit_;
@@ -203,7 +182,7 @@ class RenderContext {
   const RenderContext* structural_parent_;
   std::string_view static_frame_;
   bool in_coroutine_ = false;
-  std::string_view receiver_ = "this";
+  bool in_class_member_init_ = false;
 };
 
 }  // namespace lyra::backend::cpp

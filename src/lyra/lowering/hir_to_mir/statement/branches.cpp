@@ -11,7 +11,6 @@
 
 #include "lyra/base/internal_error.hpp"
 #include "lyra/diag/diagnostic.hpp"
-#include "lyra/hir/expr.hpp"
 #include "lyra/hir/procedural_body.hpp"
 #include "lyra/hir/stmt.hpp"
 #include "lyra/lowering/hir_to_mir/case_cascade.hpp"
@@ -25,7 +24,6 @@
 #include "lyra/mir/conversion.hpp"
 #include "lyra/mir/expr.hpp"
 #include "lyra/mir/procedural_hops.hpp"
-#include "lyra/mir/procedural_var.hpp"
 #include "lyra/mir/stmt.hpp"
 
 namespace lyra::lowering::hir_to_mir {
@@ -140,10 +138,17 @@ auto LowerCaseStmt(
     body_scopes.push_back(std::move(*body_or));
   }
 
+  // The cascade places the default at the same depth as the last item's body
+  // (their if-then-else share an enclosing level scope), so the default
+  // lowers at `items.size() - 1` extras; an empty item list is the cascade's
+  // degenerate `if (true) default` form at the wrapper depth.
+  const WalkFrame default_enter_frame =
+      c.items.empty() ? wrapper_frame
+                      : deeper_by(wrapper_frame, c.items.size() - 1);
   std::optional<mir::ProceduralScope> default_scope;
   if (c.default_stmt.has_value()) {
-    auto def_or = LowerStmtIntoChildScope(
-        process, deeper_by(wrapper_frame, c.items.size()), *c.default_stmt);
+    auto def_or =
+        LowerStmtIntoChildScope(process, default_enter_frame, *c.default_stmt);
     if (!def_or) {
       return std::unexpected(std::move(def_or.error()));
     }
@@ -246,10 +251,13 @@ auto LowerCaseInsideStmt(
     body_scopes.push_back(std::move(*body_or));
   }
 
+  const WalkFrame default_enter_frame =
+      c.items.empty() ? wrapper_frame
+                      : deeper_by(wrapper_frame, c.items.size() - 1);
   std::optional<mir::ProceduralScope> default_scope;
   if (c.default_stmt.has_value()) {
-    auto def_or = LowerStmtIntoChildScope(
-        process, deeper_by(wrapper_frame, c.items.size()), *c.default_stmt);
+    auto def_or =
+        LowerStmtIntoChildScope(process, default_enter_frame, *c.default_stmt);
     if (!def_or) {
       return std::unexpected(std::move(def_or.error()));
     }

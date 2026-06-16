@@ -54,7 +54,9 @@ auto RenderField(
     return Indent(indent) + *type_or + " " + var.name + "{this, \"" +
            er->ancestor + "\", " + tail + ", \"" + er->signal + "\"};\n";
   }
-  auto value_expr_or = RenderExpr(ctor_ctx, ctor_ctx.Expr(var.initializer));
+  const RenderContext field_init_ctx = ctor_ctx.WithClassMemberInit();
+  auto value_expr_or =
+      RenderExpr(field_init_ctx, field_init_ctx.Expr(var.initializer));
   if (!value_expr_or) {
     return std::unexpected(std::move(value_expr_or.error()));
   }
@@ -102,7 +104,8 @@ auto RenderConstructor(
     return Indent(indent) + sig + " {}\n";
   }
   std::string out;
-  out += Indent(indent) + sig + " {\n";
+  out += Indent(indent) + sig + " { init(this); }\n";
+  out += Indent(indent) + "static void init(" + s.name + "* self) {\n";
   auto rendered_or = RenderProceduralScopeStatements(scope_ctx, indent + 1);
   if (!rendered_or) return std::unexpected(std::move(rendered_or.error()));
   out += *rendered_or;
@@ -143,8 +146,8 @@ auto RenderProcessMethod(
   }
   out += Indent(indent) + "} " + frame_field + "{};\n";
 
-  out += Indent(indent) + "auto " + process.name +
-         "() -> lyra::runtime::Coroutine {\n";
+  out += Indent(indent) + "static auto " + process.name + "(" + s.name +
+         "* self) -> lyra::runtime::Coroutine {\n";
   auto rendered_or = RenderProceduralScopeStatements(proc_ctx, indent + 1);
   if (!rendered_or) return std::unexpected(std::move(rendered_or.error()));
   out += *rendered_or;
@@ -181,12 +184,12 @@ auto RenderSubroutineMethod(
     return_type = *std::move(result_or);
   }
 
-  std::string sig = return_type + " " + sub.name + "(";
-  for (std::size_t i = 0; i < sub.params.size(); ++i) {
-    const auto& param = sub.params[i];
+  std::string sig =
+      "static " + return_type + " " + sub.name + "(" + s.name + "* self";
+  for (const auto& param : sub.params) {
     auto type_or = RenderTypeAsCpp(unit, s, param.type);
     if (!type_or) return std::unexpected(std::move(type_or.error()));
-    if (i != 0) sig += ", ";
+    sig += ", ";
     // An `input` formal is a by-value copy (LRM 13.5.1). An `output` / `inout`
     // formal binds to the caller's writeback temp by reference (`T&`) so body
     // writes flow back at the copy-out. A `ref` / `const ref` formal aliases
@@ -266,7 +269,7 @@ auto RenderCreateProcesses(const mir::StructuralScope& s, std::size_t indent)
   out += Indent(indent) + "void CreateProcesses() override {\n";
   for (const auto& p : s.processes) {
     out += Indent(indent + 1) + "AddProcess(" +
-           RenderProcessKindLiteral(p.kind) + ", " + p.name + "());\n";
+           RenderProcessKindLiteral(p.kind) + ", " + p.name + "(this));\n";
   }
   out += Indent(indent) + "}\n";
   return out;
