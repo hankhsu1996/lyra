@@ -14,9 +14,9 @@ several possible backend targets for MIR, and does not define MIR's semantics.
 - The type system: value types (integral, real, string, event, ...); object types in two forms -- an
   intra-unit object (a structural scope of this unit) and an external-unit object (another
   compilation unit, named); and two composing wrappers, owning pointer and vector.
-- Callables: functions, tasks, constructors, processes, and assertion actions. Every callable's
-  parameter list begins with `self`, a pointer to the enclosing structural scope; the body reaches
-  every value it needs through its parameter list and captures, never through implicit context.
+- Callables: functions, tasks, constructors, processes, and assertion actions. Every callable body's
+  first binding is `self`, a pointer to the enclosing structural scope; the body reaches every value
+  it needs through its parameter list and captures, never through implicit context.
 - The identity of each object and member within a compilation unit.
 - Lightweight structured control flow inside a callable body: `if`, loop, and sequence. No basic
   blocks at this layer.
@@ -69,13 +69,22 @@ several possible backend targets for MIR, and does not define MIR's semantics.
     same behaviour from the same MIR: anything they would otherwise have to infer must already be
     stated.
 
-11. Every callable body's first parameter is `self`, a pointer to its enclosing structural scope.
-    Access to any class member -- a structural variable, a service call, a child instance -- flows
-    through `MemberAccess` whose receiver expression reaches the scope by traversing from `self`. A
-    callable has no implicit access to its enclosing state; the receiver is on the parameter list,
-    not on the expression. The shape is identical across process, task, function, constructor body,
-    and closure -- a backend reads it once and renders it the same way each time. See
-    `docs/decisions/callable-receiver.md`.
+11. Every callable body's first binding is `self`, a pointer to its enclosing structural scope --
+    `body.vars[0]` is a procedural-var declaration of that pointer type, named `self`. Access to any
+    class member -- a structural variable, a service call, a child instance -- flows through
+    `MemberAccess` whose receiver expression reaches the scope by traversing from `self`. A callable
+    has no implicit access to its enclosing state; the receiver is reached through an explicit
+    binding, never through an expression that means "look around and figure it out". The body's view
+    of `self` is uniform across every callable form -- the read site reads `vars[0]` the same way in
+    a process, a task, a function, a constructor body, and a closure.
+
+    Where `self`'s value comes from differs by callable form, following the natural binding shape of
+    each: process, structural subroutine, and constructor bodies receive `self` as their first
+    formal parameter (each caller -- the runtime, a call site, the instance constructor -- supplies
+    it); a closure receives `self` as its first by-value capture (the enclosing scope snapshots its
+    own self at closure construction, because no runtime invoker of the closure value knows which
+    receiver to pass). Both supply mechanisms land the same binding at `body.vars[0]`; the body code
+    does not know or care which mechanism filled it. See `docs/decisions/callable-receiver.md`.
 
 ## Boundary to Adjacent Layers
 
@@ -121,9 +130,9 @@ several possible backend targets for MIR, and does not define MIR's semantics.
   structure does not?
 - An expression node whose meaning depends on which callable encloses it. A node that resolves to
   "the current receiver, whatever that is" carries an implicit context the consumer must walk
-  surroundings to discover. Receiver semantics live on the callable's parameter list as `self`, not
-  on a context-dependent expression node; member access reads the receiver from the containing
-  `MemberAccess`'s receiver field, never from a node that means "look around and figure it out".
+  surroundings to discover. Receiver semantics live on `body.vars[0]` as the `self` binding, reached
+  through `ProceduralVarRef`; member access reads the receiver from the containing `MemberAccess`'s
+  receiver field, never from a node that means "look around and figure it out".
 
 ## Notes / Examples
 
@@ -160,14 +169,17 @@ require expanding into a statement-form rewrite that does not fit the expression
 A closure is a captured callable value: a parameter list, a capture list, and a procedural-scope
 body, the one IR shape for "a body bound to a snapshot of its environment, run later." A closure is
 synthesized only by HIR-to-MIR lowering; no source construct produces one. Its body reaches every
-value it needs through its parameter list -- captures for enclosing procedural state, the `self`
-parameter (shared by every callable, invariant 11) for enclosing module-scope storage. Nothing
-reaches the body implicitly. The closure node carries nothing about how it executes: like a
-language-level lambda, it has no "suspends" property. Whether a closure runs synchronously or as a
-coroutine follows from its use, which is itself explicit in MIR -- a closure submitted as a deferred
-effect (a non-blocking assignment, a postponed `$strobe`) runs to completion in a later scheduling
-region; a closure referenced by a parallel block (a fork-join branch, LRM 9.3.2) is spawned as a
-concurrent process and therefore a coroutine. The capture model and the body are identical across
-both. A process, a subroutine, and a closure are the three callable forms whose bodies are all the
-same procedural scope; they differ only in how each is invoked. They share the same shape at the
-parameter list -- `self` first, then any closure captures and parameters or subroutine formals.
+value it needs through its captures and parameters -- captures snapshot the enclosing scope's values
+at construction (including `self`, captured by value as the first capture; see invariant 11),
+parameters carry per-invocation values. Nothing reaches the body implicitly. The closure node
+carries nothing about how it executes: like a language-level lambda, it has no "suspends" property.
+Whether a closure runs synchronously or as a coroutine follows from its use, which is itself
+explicit in MIR -- a closure submitted as a deferred effect (a non-blocking assignment, a postponed
+`$strobe`) runs to completion in a later scheduling region; a closure referenced by a parallel block
+(a fork-join branch, LRM 9.3.2) is spawned as a concurrent process and therefore a coroutine. The
+capture model and the body are identical across both. Process, structural subroutine, and closure
+are three callable forms whose bodies are all the same procedural scope; they differ in how each is
+invoked and in how `self` is supplied -- a process / subroutine / constructor body receives `self`
+as its first formal parameter at every invocation, a closure captures `self` by value at
+construction. Both supply paths end at the same place: `body.vars[0]` is `self`, read identically by
+every member access in the body.

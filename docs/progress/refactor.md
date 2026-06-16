@@ -276,22 +276,26 @@ Entries get checked off as their PRs land. When the last entry lands, the file i
       walker-state propagation of the frame field name continues until R18 dissolves the walk frame.
       **Trigger**: scheduled in front of R18.
 
-- [ ] R16 -- Give every MIR callable an explicit `self` first parameter (a pointer to its enclosing
-      structural scope) and route every class-member access through a new
-      `mir::MemberAccessExpr { receiver, var }`. Today four distinct receiver mechanisms coexist --
-      method `this` (process / subroutine / constructor bodies), fork-branch `(M* self)` parameter,
-      NBA / `$strobe` / scan closures' `[this]` or `[=, this]` capture, and
+- [ ] R16 -- Give every MIR callable body an explicit `self` first binding -- `body.vars[0]` is a
+      procedural-var of borrowed-pointer-to-enclosing-scope type, named `self`. Route every
+      class-member access through a new `mir::MemberAccessExpr { receiver, var }` whose receiver
+      reaches `self` via `DerefExpr(ProceduralVarRef(self))`. Today four distinct receiver
+      mechanisms coexist -- method `this` (process / subroutine / constructor bodies), fork-branch
+      `(M* self)` parameter, NBA / `$strobe` / scan closures' `[this]` or `[=, this]` capture, and
       `mir::StructuralVarRef`'s implicit-receiver render -- and the cpp backend dispatches between
       them through `RenderContext` walker state (`ReceiverObject()` / `WithReceiver(...)` /
       `DeferredByValueCapture()` / `MemberPrefix()`). The same dispatch would have to be re-derived
-      by every future backend (LIR / LLVM-IR). Target shape: `self` lives on the callable's
-      parameter list, the body reaches every class member through `MemberAccessExpr` whose receiver
-      is some expression reaching from `self`, and `mir::SelfScopeExpr` is removed (its job was to
-      denote "the current receiver, whatever that is" -- precisely the implicit-context shape this
-      refactor eliminates). C++ emit becomes uniform: closure bodies emit as
-      `[](M* self, ...) -> ... { ... }(self, ...)` with an empty `[]` capture clause; process /
-      subroutine / constructor bodies emit as `static auto <name>(M* self, ...) -> ... { ... }` with
-      the constructor delegating its body to a `init(this)` call from the real C++ constructor;
+      by every future backend (LIR / LLVM-IR). Target shape: `body.vars[0]` is uniformly `self`
+      across every callable form, but how it is supplied follows each form's natural binding
+      mechanism -- a process / subroutine / constructor body receives `self` as its first formal
+      parameter (the caller supplies), while a closure carries `self` as its first by-value capture
+      (the enclosing scope snapshots its own self at construction). `mir::SelfScopeExpr` is removed
+      (its job was to denote "the current receiver, whatever that is" -- precisely the
+      implicit-context shape this refactor eliminates). C++ emit per form: process / subroutine /
+      constructor bodies as `static auto <name>(M* self, ...) -> ... { ... }`, with the C++
+      constructor delegating its body to a `static init(this)` call; closures as
+      `[self = <enclosing self>, cap1 = ..., &cap2 = ...](closure_params) -> R { ... }` -- every
+      capture is name-explicit, the clause never contains `[this]`, `[=]`, or `[&]`.
       `CreateProcesses()` remains a virtual instance method (C++ requires it) and emits
       `AddProcess(kind, process_N(this))`. The receiver-related `RenderContext` machinery disappears
       in lockstep. See `docs/decisions/callable-receiver.md`. **Trigger**: scheduled in front of

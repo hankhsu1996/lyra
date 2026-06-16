@@ -1,4 +1,4 @@
-# Callable receiver (explicit `self` first parameter)
+# Callable receiver (explicit `self` first binding)
 
 Date: 2026-06-15 Status: accepted
 
@@ -37,23 +37,47 @@ Three forces made the receiver model a real decision:
 
 ## Decision
 
-**Every MIR callable carries a first parameter `self : Pointer<EnclosingScope>`. The parameter is
-added unconditionally -- not derived from whether the body happens to touch class state. The body
-reaches every class member through
-`MemberAccessExpr(receiver = DerefExpr(ProceduralVarRef(self)), var = ...)`.**
+**Every MIR callable body's first binding is `self : Pointer<Self>` -- `body.vars[0]` is a
+procedural-var declaration of that pointer type, named `self`. The binding is added unconditionally,
+not derived from whether the body happens to touch class state. The body reaches every class member
+through `MemberAccessExpr(receiver = DerefExpr(ProceduralVarRef(self)), var = ...)`. The body's read
+of `self` is identical across every callable form -- a backend reads `vars[0]` the same way in a
+process, a subroutine, a constructor body, and a closure.**
+
+Where `self`'s value comes from differs by callable form, following each form's natural binding
+shape:
+
+- **Method-form callables** (process, structural subroutine, constructor body) take `self` as the
+  first formal parameter. Each caller knows its own receiver -- the runtime constructing a process
+  coroutine, a call site invoking a subroutine, the C++ constructor running the init body -- and
+  supplies it at invocation. The body's binding is filled by the call.
+- **Closure** carries `self` as the first by-value capture (`captures[0]` is a `ByValueCapture`
+  whose `value` is the enclosing scope's read of its own `self` and whose `binding` points at the
+  closure body's `vars[0]`). No invoker of a closure value -- the NBA / postponed-`$strobe` /
+  deferred-check region runner, the fork scheduler, the with-clause iterator, an IIFE call site --
+  can be relied on to know which receiver belongs in the body, because a closure value can outlive
+  the enclosing-scope frame that knows. The enclosing scope snapshots its own `self` into the
+  closure at construction; the closure body reads the captured value.
+
+This partition is not a stylistic choice -- it follows from "who knows the receiver?". A method-form
+callable has a caller-who-knows; a closure does not. Forcing both forms onto one supply mechanism
+would either require the closure caller to learn a receiver it cannot know, or require
+`std::bind_front`-style wrapping at every closure submit site that re-encodes the same snapshot
+under a different name. Each form using its natural mechanism yields one C++ idiom per form and zero
+special-case wrapping.
 
 This holds for `mir::Process`, `mir::StructuralSubroutineDecl`, `mir::ClosureExpr`, and the
-constructor-body callable. The shape is uniform; no callable form is special.
+constructor-body callable. The body shape is uniform; the supply mechanism differs.
 
-The C++ backend renders the receiver shape with the most idiomatic C++ form available, but the form
-is fixed by callable kind, not derived from context:
+The C++ backend renders each form in its natural idiom:
 
-- **Closure** -> lambda whose explicit first parameter is `M* self`. Lambda capture clause is `[]`
-  (empty); every value the lambda needs flows through its parameter list, not through implicit
-  capture.
-- **Process / subroutine / constructor-body** -> static method on the enclosing class whose first
-  parameter is `M* self`. The class still owns the storage; method body lives on the class so it can
-  name private members. The body sees `self->X`, never implicit `this`.
+- **Method-form callable** -> static method on the enclosing class whose first formal is `M* self`.
+  The class still owns the storage; the method body lives on the class so it can name private
+  members. The body sees `self->X`, never implicit `this`.
+- **Closure** -> lambda whose capture clause is
+  `[self = <enclosing self expr>, cap1 = ..., &cap2 = ...]`. Every capture is name-explicit; the
+  clause never contains `[this]`, `[=]`, or `[&]`. The body sees `self->X` through the captured
+  binding, never implicit `this`.
 
 The constructor body is the only callable whose corresponding C++ entry cannot be static (the real
 C++ constructor must be an instance constructor for instance creation to work). The constructor body
@@ -81,7 +105,7 @@ The render today carries walker state for the receiver (`ctx.ReceiverObject()`,
 `ctx.MemberPrefix()`, `ctx.DeferredByValueCapture()`) and switches between four C++ mechanisms based
 on which kind of body it has entered. Every future backend faces the same dispatch. Every
 maintenance change risks the four-way switch going out of sync. MIR carrying the receiver as a real
-parameter pushes the answer up to one place that every backend just reads.
+binding pushes the answer up to one place that every backend just reads.
 
 ## Rejected alternatives
 
@@ -106,7 +130,7 @@ parameter pushes the answer up to one place that every backend just reads.
   been the existing shape for fork-branch / NBA / scan closure bodies and is what the current
   `mir::SelfScopeExpr` is. The node's meaning is context-dependent -- it renders to `this` in a
   method body and `self` in a fork-branch body -- which is precisely the walker-state smell. The
-  cleaner replacement is the explicit `self` parameter plus `ProceduralVarRef`.
+  cleaner replacement is the explicit `self` binding plus `ProceduralVarRef`.
 
 - **A struct of free functions, no class membership at all.** Removes C++ implicit `this` entirely
   (process / subroutine bodies become free functions friended into the class). Plausible but breaks
@@ -114,12 +138,31 @@ parameter pushes the answer up to one place that every backend just reads.
   methods through `Scope*` polymorphism. Static methods give the same explicit-receiver shape
   without losing class membership.
 
+- **`self` as a closure parameter, supplied at invocation via `std::bind_front` at every deferred
+  submit site.** The literal "every callable receives self the same way" path: closures get an
+  `M* self` formal, lambda capture is `[]`, deferred submission wraps with
+  `std::bind_front(lambda, this, ...)` to bind the receiver before the runtime invokes the (now
+  zero-arg) callable. Looks uniform on paper but mistakes the question. The closure value's receiver
+  is fixed at the moment the value is built -- the runtime that later invokes it has no other
+  receiver to choose. Calling that fixed value a "parameter supplied at invocation" forces a
+  wrapping layer (`std::bind_front`) at every submit site whose only job is to re-encode
+  "construction-time snapshot" under the name "parameter". Semantically the closure's receiver IS a
+  capture; insisting on the parameter shape is shape-fitting, not modeling, and the wrapping shows
+  up at every deferred site. The chosen shape -- `self` as the closure's first by-value capture --
+  models the actual lifetime: the enclosing scope holds the receiver, the closure snapshots it at
+  construction, and the body reads the snapshot. No `std::bind_front`, no `[this]`, no parameter
+  that never varies.
+
 ## Consequences
 
 - `mir::Process`, `mir::StructuralSubroutineDecl`, `mir::ClosureExpr`, and the constructor body each
-  declare a `self` binding at `body.vars[0]` whose type is the unique-pointer / borrowed- pointer to
-  the enclosing structural scope. The binding's name is `self`; the type makes the pointee
-  unambiguous.
+  declare a `self` binding at `body.vars[0]` whose type is the borrowed-pointer to the enclosing
+  structural scope. The binding's name is `self`; the type makes the pointee unambiguous.
+
+- For method-form callables (process, subroutine, constructor body) the `self` binding is the first
+  formal parameter; the caller supplies it at invocation. For a closure, the `self` binding is the
+  first by-value capture (`captures[0]`); the enclosing scope's read of its own `self` supplies the
+  capture value at construction.
 
 - A new MIR expression `MemberAccessExpr { receiver: ExprId, var: StructuralVarRef-fields }`
   replaces today's implicit-receiver `StructuralVarRef`. The receiver expression is rendered before
@@ -133,15 +176,18 @@ parameter pushes the answer up to one place that every backend just reads.
 
 - C++ emit shape changes: process / subroutine / constructor bodies emit as
   `static auto <name>(M* self, ...) -> ... { ... }`; the C++ constructor delegates the body to a
-  static `init(this)` call. Lambda capture clauses are `[]` -- every captured value flows through
-  the lambda's parameter list. `CreateProcesses()` adapts: where it previously emitted
-  `AddProcess(kind, process_N())` it now emits `AddProcess(kind, process_N(this))`.
+  static `init(this)` call. Closures emit as
+  `[self = <enclosing self expr>, cap1 = ..., &cap2 = ...](closure_params) -> R { ... }` -- every
+  capture is name-explicit; the clause never contains `[this]`, `[=]`, or `[&]`. `CreateProcesses()`
+  adapts: where it previously emitted `AddProcess(kind, process_N())` it now emits
+  `AddProcess(kind, process_N(this))`.
 
-- LIR / LLVM-IR lowering reads the receiver parameter directly off MIR. No backend re-derives
-  receiver semantics.
+- LIR / LLVM-IR lowering reads the `self` binding directly off MIR. No backend re-derives receiver
+  semantics.
 
 - Forbidden Shape: a MIR expression whose meaning depends on which callable encloses it. The
-  receiver is on the callable's parameter list, not on the expression.
+  receiver is reached through `body.vars[0]` as the `self` binding, not through an expression that
+  means "look around and figure it out".
 
 ## Cross-references
 
