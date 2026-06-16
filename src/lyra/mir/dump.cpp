@@ -686,7 +686,9 @@ class MirDumper {
   }
 
   void DumpProcess(const Process& p, std::size_t index) {
-    Line(std::format("Process[{}] {}", index, FormatProcessKind(p)));
+    Line(
+        std::format(
+            "Process[{}] {} name={}", index, FormatProcessKind(p), p.name));
     Indent();
     for (std::size_t i = 0; i < p.static_locals.size(); ++i) {
       const auto& sl = p.static_locals[i];

@@ -265,13 +265,15 @@ Entries get checked off as their PRs land. When the last entry lands, the file i
       propagation flag from `RenderContext` ships in R18, when the whole walk frame is dissolved.
       **Trigger**: scheduled in front of R18 (the render-layer rewrite).
 
-- [ ] R15 -- Lift the static-frame field path into `mir::ProceduralVarRef`. Today a procedural-var
-      ref with `lifetime == kStatic` renders as `<receiver>-><frame_field>.<member>` where the frame
-      field name (`process_N__static`, `subroutine_name__static`) is constructed at render time from
-      "which callable body I am rendering". HIR-to-MIR knows which callable owns the static; encode
-      the field path directly on the static-bearing ref kind, so the render is a mechanical
-      structural map with no "which callable am I in" question. The `StaticFrame()` accessor on
-      `RenderContext` (and its `WithStaticFrame(...)` install path) disappear in lockstep.
+- [ ] R15 -- Give `mir::Process` a `name` field, so the C++ method name, static-frame struct name,
+      static-frame field name, and any future LLVM-IR function symbol all flow from a single
+      MIR-level identifier instead of each backend re-deriving "process_N" from a position-in-scope
+      iteration index. `mir::StructuralSubroutineDecl::name` already plays this role for
+      subroutines; processes are anonymous in SV (LRM 9.2) so HIR-to-MIR synthesises a positional
+      identifier (`"process_0"` etc.) and threads it into the lowering so the returned `Process` is
+      constant -- no post-hoc mutation. The `WithStaticFrame(...)` install in the cpp backend now
+      reads `process.name + "__static"` rather than computing from an iteration index; the
+      walker-state propagation of the frame field name continues until R18 dissolves the walk frame.
       **Trigger**: scheduled in front of R18.
 
 - [ ] R16 -- Model the fork-branch receiver as an explicit closure capture, so a structural-var

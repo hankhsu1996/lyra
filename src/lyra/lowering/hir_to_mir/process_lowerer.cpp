@@ -175,8 +175,8 @@ auto LowerStraightLineBodyInto(ProcessLowerer& process, WalkFrame frame)
 }
 
 auto LowerStraightLineProcess(
-    ProcessLowerer& process, WalkFrame frame, mir::ProcessKind kind)
-    -> diag::Result<mir::Process> {
+    ProcessLowerer& process, WalkFrame frame, std::string name,
+    mir::ProcessKind kind) -> diag::Result<mir::Process> {
   // The process root scope is also its static frame: a static-lifetime body
   // local lands here (instance-owned, LRM 6.21 / 9.3.4) instead of in the
   // coroutine activation, the same shape a subroutine uses.
@@ -187,6 +187,7 @@ auto LowerStraightLineProcess(
   if (!lowered) return std::unexpected(std::move(lowered.error()));
   return mir::Process{
       .kind = kind,
+      .name = std::move(name),
       .root_procedural_scope = std::move(process_scope),
       .static_locals = process.TakeStaticLocals()};
 }
@@ -197,7 +198,7 @@ auto LowerStraightLineProcess(
 // nullopt for `always` / `always_ff` where the body itself carries any
 // timing.
 auto LowerForeverProcess(
-    ProcessLowerer& process, WalkFrame frame,
+    ProcessLowerer& process, WalkFrame frame, std::string name,
     std::optional<mir::Stmt> tail_stmt) -> diag::Result<mir::Process> {
   // The static frame is the process root scope, which sits outside the
   // forever loop, so a static body local persists across the loop iterations
@@ -228,6 +229,7 @@ auto LowerForeverProcess(
               .scope = body_scope_id}});
   return mir::Process{
       .kind = mir::ProcessKind::kInitial,
+      .name = std::move(name),
       .root_procedural_scope = std::move(process_scope),
       .static_locals = process.TakeStaticLocals()};
 }
@@ -260,22 +262,24 @@ auto LowerParamDirection(hir::ParamDirection dir) -> mir::ParamDirection {
 
 }  // namespace
 
-auto ProcessLowerer::Run(WalkFrame parent_frame, const hir::Process& src)
+auto ProcessLowerer::Run(
+    WalkFrame parent_frame, std::string name, const hir::Process& src)
     -> diag::Result<mir::Process> {
   switch (src.kind) {
     case hir::ProcessKind::kInitial:
       return LowerStraightLineProcess(
-          *this, parent_frame, mir::ProcessKind::kInitial);
+          *this, parent_frame, std::move(name), mir::ProcessKind::kInitial);
     case hir::ProcessKind::kFinal:
       return LowerStraightLineProcess(
-          *this, parent_frame, mir::ProcessKind::kFinal);
+          *this, parent_frame, std::move(name), mir::ProcessKind::kFinal);
     case hir::ProcessKind::kAlways:
     case hir::ProcessKind::kAlwaysFf:
-      return LowerForeverProcess(*this, parent_frame, std::nullopt);
+      return LowerForeverProcess(
+          *this, parent_frame, std::move(name), std::nullopt);
     case hir::ProcessKind::kAlwaysComb:
     case hir::ProcessKind::kAlwaysLatch:
       return LowerForeverProcess(
-          *this, parent_frame,
+          *this, parent_frame, std::move(name),
           BuildSensitivityWaitStmt(*scope_, src.implicit_sensitivity_list));
   }
   throw InternalError("ProcessLowerer::Run: unknown HIR ProcessKind");

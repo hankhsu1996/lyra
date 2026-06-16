@@ -834,13 +834,16 @@ auto StructuralScopeLowerer::Run(
   for (const auto& p : hir_scope.processes) {
     ProcessLowerer process_lowerer(
         module, scope, hir_scope.time_resolution, p.body);
-    auto proc_or = process_lowerer.Run(scope_frame, p);
+    std::string name = std::format("process_{}", mir_scope.processes.size());
+    auto proc_or = process_lowerer.Run(scope_frame, std::move(name), p);
     if (!proc_or) return std::unexpected(std::move(proc_or.error()));
     mir_scope.AddProcess(*std::move(proc_or));
   }
 
   for (const auto& ca : hir_scope.continuous_assigns) {
-    auto proc_or = LowerContinuousAssign(scope, scope_frame, ca);
+    std::string name = std::format("process_{}", mir_scope.processes.size());
+    auto proc_or =
+        LowerContinuousAssign(scope, scope_frame, std::move(name), ca);
     if (!proc_or) return std::unexpected(std::move(proc_or.error()));
     mir_scope.AddProcess(*std::move(proc_or));
   }

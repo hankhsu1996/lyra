@@ -24,7 +24,7 @@ namespace lyra::lowering::hir_to_mir {
 // natural fall-through of the eternal loop) before the first wait, matching
 // LRM 9.2.2.2's "evaluate at time 0" requirement for inferred sensitivity.
 auto LowerContinuousAssign(
-    const StructuralScopeLowerer& scope, WalkFrame frame,
+    const StructuralScopeLowerer& scope, WalkFrame frame, std::string name,
     const hir::ContinuousAssign& src) -> diag::Result<mir::Process> {
   mir::ProceduralScope process_scope;
   mir::ProceduralScope body_scope;
@@ -63,6 +63,7 @@ auto LowerContinuousAssign(
               .scope = body_scope_id}});
   return mir::Process{
       .kind = mir::ProcessKind::kInitial,
+      .name = std::move(name),
       .root_procedural_scope = std::move(process_scope),
       .static_locals = {}};
 }

@@ -110,15 +110,11 @@ auto RenderConstructor(
   return out;
 }
 
-auto RenderProcessMethodName(std::size_t index) -> std::string {
-  return "process_" + std::to_string(index);
-}
-
 auto RenderProcessMethod(
     const RenderContext* parent_struct_ctx, const mir::CompilationUnit& unit,
     const mir::StructuralScope& s, const mir::Process& process,
-    std::size_t index, std::size_t indent) -> diag::Result<std::string> {
-  const std::string frame_field = RenderProcessMethodName(index) + "__static";
+    std::size_t indent) -> diag::Result<std::string> {
+  const std::string frame_field = process.name + "__static";
   const RenderContext proc_ctx =
       ((parent_struct_ctx == nullptr)
            ? RenderContext::ForRoot(unit, s, process.root_procedural_scope)
@@ -133,8 +129,7 @@ auto RenderProcessMethod(
   // it, and a detached fork branch reaches it by reference past the activation.
   // A process with no static locals yields a fieldless frame -- harmless, and
   // it keeps the emit a uniform walk with no presence decision.
-  out += Indent(indent) + "struct " + RenderProcessMethodName(index) +
-         "_StaticFrame {\n";
+  out += Indent(indent) + "struct " + process.name + "_StaticFrame {\n";
   for (const auto& sl : process.static_locals) {
     const auto& var = process.root_procedural_scope.vars.at(sl.var.value);
     auto type_or = RenderTypeAsCpp(unit, s, var.type);
@@ -148,7 +143,7 @@ auto RenderProcessMethod(
   }
   out += Indent(indent) + "} " + frame_field + "{};\n";
 
-  out += Indent(indent) + "auto " + RenderProcessMethodName(index) +
+  out += Indent(indent) + "auto " + process.name +
          "() -> lyra::runtime::Coroutine {\n";
   auto rendered_or = RenderProceduralScopeStatements(proc_ctx, indent + 1);
   if (!rendered_or) return std::unexpected(std::move(rendered_or.error()));
@@ -269,11 +264,9 @@ auto RenderCreateProcesses(const mir::StructuralScope& s, std::size_t indent)
     -> std::string {
   std::string out;
   out += Indent(indent) + "void CreateProcesses() override {\n";
-  for (std::size_t i = 0; i < s.processes.size(); ++i) {
-    const auto& p = s.processes[i];
+  for (const auto& p : s.processes) {
     out += Indent(indent + 1) + "AddProcess(" +
-           RenderProcessKindLiteral(p.kind) + ", " +
-           RenderProcessMethodName(i) + "());\n";
+           RenderProcessKindLiteral(p.kind) + ", " + p.name + "());\n";
   }
   out += Indent(indent) + "}\n";
   return out;
@@ -376,10 +369,10 @@ auto RenderScopeAsClass(
   out += "\n";
   out += Indent(indent) + " private:\n";
 
-  for (std::size_t i = 0; i < s.processes.size(); ++i) {
+  for (const auto& p : s.processes) {
     out += "\n";
-    auto method_or = RenderProcessMethod(
-        parent_struct_ctx, unit, s, s.processes[i], i, indent + 1);
+    auto method_or =
+        RenderProcessMethod(parent_struct_ctx, unit, s, p, indent + 1);
     if (!method_or) return std::unexpected(std::move(method_or.error()));
     out += *method_or;
   }
