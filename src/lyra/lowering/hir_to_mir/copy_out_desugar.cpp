@@ -8,8 +8,8 @@
 #include <vector>
 
 #include "lyra/diag/diagnostic.hpp"
+#include "lyra/hir/expr.hpp"
 #include "lyra/hir/procedural_body.hpp"
-#include "lyra/lowering/hir_to_mir/lower_expr.hpp"
 #include "lyra/lowering/hir_to_mir/process_lowerer.hpp"
 #include "lyra/mir/conversion.hpp"
 #include "lyra/mir/expr.hpp"
@@ -22,7 +22,7 @@ auto BuildOutputArgSlot(
     std::string_view temp_name) -> diag::Result<OutputArgSlot> {
   const auto& hir_body = proc.HirBody();
   auto& wrapper = *frame.current_procedural_scope;
-  auto actual_or = LowerExpr(proc, frame, hir_body.exprs.at(actual_hir.value));
+  auto actual_or = proc.LowerExpr(hir_body.exprs.at(actual_hir.value), frame);
   if (!actual_or) return std::unexpected(std::move(actual_or.error()));
   const mir::TypeId actual_type = actual_or->type;
   const mir::ExprId actual_id = wrapper.AddExpr(*std::move(actual_or));

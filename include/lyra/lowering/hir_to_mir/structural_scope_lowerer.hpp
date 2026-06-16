@@ -9,12 +9,14 @@
 
 #include "lyra/base/internal_error.hpp"
 #include "lyra/diag/diagnostic.hpp"
+#include "lyra/hir/expr.hpp"
 #include "lyra/hir/loop_var.hpp"
 #include "lyra/hir/structural_hops.hpp"
 #include "lyra/hir/structural_scope.hpp"
 #include "lyra/hir/structural_var.hpp"
 #include "lyra/lowering/hir_to_mir/module_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/walk_frame.hpp"
+#include "lyra/mir/expr.hpp"
 #include "lyra/mir/structural_hops.hpp"
 #include "lyra/mir/structural_param.hpp"
 #include "lyra/mir/structural_scope.hpp"
@@ -67,6 +69,16 @@ class StructuralScopeLowerer {
       WalkFrame parent_frame,
       std::span<const ScopeEntryStructuralParamBinding> entry_bindings = {})
       -> diag::Result<mir::StructuralScope>;
+
+  // Central scope-level expression dispatcher. One switch over `hir::Expr::
+  // data` routing each kind to the per-family handler in `expression/*.cpp`.
+  // `LoopVarRef` resolution is selected by `frame.loop_var_mode` so the same
+  // recursion path serves both generate-header (procedural induction) and
+  // generate-control (structural-param) contexts. Per-kind handlers reach
+  // recursion back through this method, so the mode persists across
+  // sub-expressions until the caller resets it.
+  [[nodiscard]] auto LowerExpr(const hir::Expr& expr, WalkFrame frame) const
+      -> diag::Result<mir::Expr>;
 
   [[nodiscard]] auto Module() -> ModuleLowerer& {
     return *module_;

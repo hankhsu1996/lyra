@@ -6,14 +6,17 @@
 #include "lyra/base/internal_error.hpp"
 #include "lyra/base/time.hpp"
 #include "lyra/diag/diagnostic.hpp"
+#include "lyra/hir/expr.hpp"
 #include "lyra/hir/procedural_body.hpp"
 #include "lyra/hir/procedural_var.hpp"
 #include "lyra/hir/process.hpp"
+#include "lyra/hir/stmt.hpp"
 #include "lyra/hir/subroutine.hpp"
 #include "lyra/lowering/hir_to_mir/module_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/procedural_depth.hpp"
 #include "lyra/lowering/hir_to_mir/structural_scope_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/walk_frame.hpp"
+#include "lyra/mir/expr.hpp"
 #include "lyra/mir/procedural_var.hpp"
 #include "lyra/mir/process.hpp"
 #include "lyra/mir/stmt.hpp"
@@ -55,6 +58,19 @@ class ProcessLowerer {
   // trailing `return` of the implicit result variable.
   auto Run(WalkFrame parent_frame, const hir::StructuralSubroutineDecl& src)
       -> diag::Result<mir::StructuralSubroutineDecl>;
+
+  // Central expression dispatcher. One switch over `hir::Expr::data` routing
+  // each kind to the per-family handler in `expression/{operators, calls,
+  // references, selects, aggregates, assignment, inside}.cpp`. Handlers
+  // recurse through this method; sub-expressions reach `frame` through it.
+  auto LowerExpr(const hir::Expr& expr, WalkFrame frame)
+      -> diag::Result<mir::Expr>;
+
+  // Central statement dispatcher. One switch over `hir::Stmt::data` routing
+  // each kind to the per-family handler in `statement/{blocks, branches,
+  // loops, timing, fork_join, assignment, flow}.cpp`.
+  auto LowerStmt(const hir::Stmt& stmt, WalkFrame frame)
+      -> diag::Result<mir::Stmt>;
 
   [[nodiscard]] auto HirBody() const -> const hir::ProceduralBody& {
     return *hir_body_;

@@ -13,12 +13,17 @@
 
 #include "lyra/base/internal_error.hpp"
 #include "lyra/base/overloaded.hpp"
+#include "lyra/diag/diag_code.hpp"
 #include "lyra/diag/diagnostic.hpp"
+#include "lyra/hir/expr.hpp"
 #include "lyra/hir/structural_scope.hpp"
 #include "lyra/lowering/hir_to_mir/case_cascade.hpp"
+#include "lyra/lowering/hir_to_mir/continuous_assign.hpp"
 #include "lyra/lowering/hir_to_mir/default_value.hpp"
-#include "lyra/lowering/hir_to_mir/lower_continuous_assign.hpp"
-#include "lyra/lowering/hir_to_mir/lower_expr.hpp"
+#include "lyra/lowering/hir_to_mir/expression/aggregates.hpp"
+#include "lyra/lowering/hir_to_mir/expression/operators.hpp"
+#include "lyra/lowering/hir_to_mir/expression/references.hpp"
+#include "lyra/lowering/hir_to_mir/expression/selects.hpp"
 #include "lyra/lowering/hir_to_mir/process_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/walk_frame.hpp"
 #include "lyra/mir/compilation_unit.hpp"
@@ -495,8 +500,8 @@ auto LowerIfGenerate(
   const hir::StructuralScope& enclosing_scope = scope.HirScope();
   mir::ProceduralScope& proc_scope = *frame.current_procedural_scope;
 
-  auto cond_or = LowerStructuralExpr(
-      scope, frame, enclosing_scope.GetExpr(if_gen.condition));
+  auto cond_or =
+      scope.LowerExpr(enclosing_scope.GetExpr(if_gen.condition), frame);
   if (!cond_or) return std::unexpected(std::move(cond_or.error()));
   const mir::ExprId cond_id = proc_scope.AddExpr(*std::move(cond_or));
 
@@ -526,8 +531,8 @@ auto LowerCaseGenerate(
   mir::ProceduralScope wrapper_scope;
   const WalkFrame wrapper_frame = frame.WithProceduralScope(&wrapper_scope);
 
-  auto cond_or = LowerStructuralExpr(
-      scope, wrapper_frame, enclosing_scope.GetExpr(case_gen.condition));
+  auto cond_or = scope.LowerExpr(
+      enclosing_scope.GetExpr(case_gen.condition), wrapper_frame);
   if (!cond_or) return std::unexpected(std::move(cond_or.error()));
   const mir::ExprId cond_expr_id = wrapper_scope.AddExpr(*std::move(cond_or));
 
@@ -555,9 +560,9 @@ auto LowerCaseGenerate(
         case_gen.items[item_idx].labels.size(),
         [&](WalkFrame label_frame,
             std::size_t li) -> diag::Result<mir::ExprId> {
-          auto lab_or = LowerStructuralExpr(
-              scope, label_frame,
-              enclosing_scope.GetExpr(case_gen.items[item_idx].labels[li]));
+          auto lab_or = scope.LowerExpr(
+              enclosing_scope.GetExpr(case_gen.items[item_idx].labels[li]),
+              label_frame);
           if (!lab_or) {
             return std::unexpected(std::move(lab_or.error()));
           }
@@ -588,20 +593,22 @@ auto LowerLoopGenerate(
 
   scope.MapLoopVarAsProcedural(loop.loop_var, loop_local);
 
+  const WalkFrame proc_frame =
+      frame.WithLoopVarMode(LoopVarLoweringMode::kProceduralInduction);
   auto init_or =
-      LowerProceduralExpr(scope, frame, enclosing_scope.GetExpr(loop.initial));
+      scope.LowerExpr(enclosing_scope.GetExpr(loop.initial), proc_frame);
   if (!init_or) return std::unexpected(std::move(init_or.error()));
   const mir::ExprId init_id = proc_scope.AddExpr(*std::move(init_or));
 
   auto cond_or =
-      LowerProceduralExpr(scope, frame, enclosing_scope.GetExpr(loop.stop));
+      scope.LowerExpr(enclosing_scope.GetExpr(loop.stop), proc_frame);
   if (!cond_or) return std::unexpected(std::move(cond_or.error()));
   const mir::ExprId cond_id = proc_scope.AddExpr(*std::move(cond_or));
 
   // HIR carries the iter as the next-value expression for the loop variable;
   // the loop semantic (this lowering) owns the actual write back.
   auto step_value_or =
-      LowerProceduralExpr(scope, frame, enclosing_scope.GetExpr(loop.iter));
+      scope.LowerExpr(enclosing_scope.GetExpr(loop.iter), proc_frame);
   if (!step_value_or) {
     return std::unexpected(std::move(step_value_or.error()));
   }
@@ -747,8 +754,8 @@ auto StructuralScopeLowerer::Run(
     const mir::TypeId mir_type = module.TranslateType(d.type);
     mir::ExprId mir_init{};
     if (d.initializer.has_value()) {
-      auto init_or = LowerStructuralExpr(
-          scope, scope_frame, hir_scope.GetExpr(*d.initializer));
+      auto init_or =
+          scope.LowerExpr(hir_scope.GetExpr(*d.initializer), scope_frame);
       if (!init_or) return std::unexpected(std::move(init_or.error()));
       mir_init = ctor_scope.AddExpr(*std::move(init_or));
     } else {
@@ -856,6 +863,94 @@ auto StructuralScopeLowerer::Run(
   mir_scope.constructor_scope = std::move(ctor_scope);
 
   return mir_scope;
+}
+
+auto StructuralScopeLowerer::LowerExpr(
+    const hir::Expr& expr, WalkFrame frame) const -> diag::Result<mir::Expr> {
+  const mir::TypeId result_type = module_->TranslateType(expr.type);
+  return std::visit(
+      Overloaded{
+          [&](const hir::PrimaryExpr& p) -> diag::Result<mir::Expr> {
+            return LowerHirPrimaryExprStructural(
+                *this, frame, p.data, result_type);
+          },
+          [&](const hir::UnaryExpr& u) -> diag::Result<mir::Expr> {
+            return LowerHirUnaryExprStructural(*this, frame, u, result_type);
+          },
+          [&](const hir::BinaryExpr& b) -> diag::Result<mir::Expr> {
+            return LowerHirBinaryExprStructural(*this, frame, b, result_type);
+          },
+          [&](const hir::ConditionalExpr& c) -> diag::Result<mir::Expr> {
+            return LowerHirConditionalExprStructural(
+                *this, frame, c, result_type);
+          },
+          [](const hir::AssignExpr&) -> diag::Result<mir::Expr> {
+            throw InternalError(
+                "StructuralScopeLowerer::LowerExpr: HIR AssignExpr does not "
+                "appear in constructor-side expressions; structural code has "
+                "no general assignment");
+          },
+          [](const hir::IncDecExpr&) -> diag::Result<mir::Expr> {
+            throw InternalError(
+                "StructuralScopeLowerer::LowerExpr: HIR IncDecExpr does not "
+                "appear in constructor-side expressions; structural code has "
+                "no increment / decrement");
+          },
+          [&](const hir::ConversionExpr& cv) -> diag::Result<mir::Expr> {
+            return LowerHirConversionExprStructural(
+                *this, frame, cv, result_type);
+          },
+          [](const hir::CallExpr&) -> diag::Result<mir::Expr> {
+            return diag::Unsupported(
+                diag::DiagCode::kUnsupportedStructuralExpressionForm,
+                "calls are not allowed in constructor expressions",
+                diag::UnsupportedCategory::kFeature);
+          },
+          [](const hir::InsideExpr&) -> diag::Result<mir::Expr> {
+            return diag::Unsupported(
+                diag::DiagCode::kUnsupportedStructuralExpressionForm,
+                "inside operator is not allowed in constructor expressions",
+                diag::UnsupportedCategory::kFeature);
+          },
+          [&](const hir::ElementSelectExpr& s) -> diag::Result<mir::Expr> {
+            return LowerHirElementSelectExprStructural(
+                *this, frame, s, result_type);
+          },
+          [&](const hir::RangeSelectExpr& s) -> diag::Result<mir::Expr> {
+            return LowerHirRangeSelectExprStructural(
+                *this, frame, s, result_type);
+          },
+          [&](const hir::MemberAccessExpr& s) -> diag::Result<mir::Expr> {
+            return LowerHirMemberAccessExprStructural(
+                *this, frame, s, result_type);
+          },
+          [&](const hir::ConcatExpr& c) -> diag::Result<mir::Expr> {
+            return LowerHirConcatExprStructural(*this, frame, c, result_type);
+          },
+          [](const hir::ReplicationExpr&) -> diag::Result<mir::Expr> {
+            return diag::Unsupported(
+                diag::DiagCode::kUnsupportedStructuralExpressionForm,
+                "replication in constructor expressions is not yet supported",
+                diag::UnsupportedCategory::kFeature);
+          },
+          [&](const hir::AssignmentPatternExpr& a) -> diag::Result<mir::Expr> {
+            return LowerHirAssignmentPatternExprStructural(
+                *this, frame, a, result_type);
+          },
+          [&](const hir::AssignmentPatternReplicationExpr& a)
+              -> diag::Result<mir::Expr> {
+            return LowerHirAssignmentPatternReplicationExprStructural(
+                *this, frame, a, result_type);
+          },
+          [](const hir::DynamicArrayNewExpr&) -> diag::Result<mir::Expr> {
+            return diag::Unsupported(
+                diag::DiagCode::kUnsupportedStructuralExpressionForm,
+                "dynamic-array new[] is not allowed in constructor "
+                "expressions; LRM 7.5.1 restricts it to blocking assignments",
+                diag::UnsupportedCategory::kFeature);
+          },
+      },
+      expr.data);
 }
 
 }  // namespace lyra::lowering::hir_to_mir
