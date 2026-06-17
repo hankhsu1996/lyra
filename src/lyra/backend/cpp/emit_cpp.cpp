@@ -114,8 +114,7 @@ auto RenderProcessMethod(
            ? RenderContext::ForRoot(unit, s, process.root_procedural_scope)
            : parent_struct_ctx->WithStructuralScope(
                  s, process.root_procedural_scope))
-          .WithStaticFrame(frame_field)
-          .WithCoroutine(true);
+          .WithStaticFrame(frame_field);
 
   std::string out;
   // LRM 6.21 / 9.3.4 static body locals: one per-instance frame member,
@@ -211,8 +210,7 @@ auto RenderSubroutineMethod(
            ? RenderContext::ForRoot(unit, s, sub.root_procedural_scope)
            : parent_struct_ctx->WithStructuralScope(
                  s, sub.root_procedural_scope))
-          .WithStaticFrame(frame_field)
-          .WithCoroutine(is_task);
+          .WithStaticFrame(frame_field);
 
   std::string out;
   // LRM 13.3.1 static locals: one per-instance frame member, default-evaluated

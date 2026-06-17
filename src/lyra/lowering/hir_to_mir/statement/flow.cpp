@@ -98,7 +98,9 @@ auto LowerReturnStmt(
     value = proc_scope.AddExpr(*std::move(value_or));
   }
   return mir::Stmt{
-      .label = std::move(label), .data = mir::ReturnStmt{.value = value}};
+      .label = std::move(label),
+      .data = mir::ReturnStmt{
+          .value = value, .is_coroutine_return = frame.is_coroutine_body}};
 }
 
 auto LowerBreakStmt(std::optional<std::string> label)

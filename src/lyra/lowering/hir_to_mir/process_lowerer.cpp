@@ -188,7 +188,8 @@ auto LowerStraightLineProcess(
   const WalkFrame body_frame =
       frame.WithProceduralScope(&process_scope)
           .WithStaticFrameScope(&process_scope)
-          .WithSelfBinding(self_id, frame.procedural_depth);
+          .WithSelfBinding(self_id, frame.procedural_depth)
+          .WithCoroutineBody(true);
   auto lowered = LowerStraightLineBodyInto(process, body_frame);
   if (!lowered) return std::unexpected(std::move(lowered.error()));
   return mir::Process{
@@ -221,6 +222,7 @@ auto LowerForeverProcess(
         frame.WithStaticFrameScope(&process_scope)
             .WithProceduralScope(&body_scope)
             .WithSelfBinding(self_id, frame.procedural_depth)
+            .WithCoroutineBody(true)
             .Deeper();
     auto lowered = LowerStraightLineBodyInto(process, body_frame);
     if (!lowered) return std::unexpected(std::move(lowered.error()));
@@ -304,10 +306,14 @@ auto ProcessLowerer::Run(
   const mir::ProceduralVarId self_id = body_scope.AddProceduralVar(
       mir::ProceduralVarDecl{
           .name = "self", .type = module_->Unit().builtins.self_pointer});
+  // A task body suspends on timing controls and renders as a coroutine; a
+  // function body executes synchronously.
+  const bool body_is_coroutine = src.kind == hir::SubroutineKind::kTask;
   const WalkFrame body_frame =
       parent_frame.WithProceduralScope(&body_scope)
           .WithStaticFrameScope(&body_scope)
-          .WithSelfBinding(self_id, parent_frame.procedural_depth);
+          .WithSelfBinding(self_id, parent_frame.procedural_depth)
+          .WithCoroutineBody(body_is_coroutine);
 
   // Formals are procedural vars of the body with no VarDeclStmt: pre-register
   // them in the body scope at depth 0 so the body's references resolve. The
@@ -368,7 +374,10 @@ auto ProcessLowerer::Run(
   if (result_ref.has_value()) {
     const mir::ExprId result_read =
         body_scope.AddExpr(mir::Expr{.data = *result_ref, .type = result_type});
-    body_scope.AppendStmt(mir::ReturnStmt{.value = result_read});
+    body_scope.AppendStmt(
+        mir::ReturnStmt{
+            .value = result_read,
+            .is_coroutine_return = body_frame.is_coroutine_body});
   }
 
   return mir::StructuralSubroutineDecl{

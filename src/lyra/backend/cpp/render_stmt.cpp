@@ -178,12 +178,8 @@ auto RenderForkStmtNode(
       params += *type_or + ref_marker + bind.name;
       args += arg;
     }
-    // The branch closure's coroutine-ness comes from MIR (HIR-to-MIR sets
-    // `is_coroutine = true` on every fork-branch ClosureExpr); the render
-    // does not hardcode the assumption.
     const RenderContext branch_ctx =
-        fork_ctx.WithProceduralScope(*closure->body)
-            .WithCoroutine(closure->is_coroutine);
+        fork_ctx.WithProceduralScope(*closure->body);
     auto body_or = RenderProceduralScopeStatements(branch_ctx, indent + 2);
     if (!body_or) return std::unexpected(std::move(body_or.error()));
     out += Indent(indent + 1) + vec + ".push_back([](" + params +
@@ -479,10 +475,11 @@ auto RenderStmt(
             return Indent(indent) + "continue;\n";
           },
           [&](const mir::ReturnStmt& s) -> diag::Result<std::string> {
-            // A task body is a coroutine, so its early `return` is
-            // `co_return`; a task carries no return value (LRM 13.3). A
-            // function body is a plain method.
-            if (ctx.InCoroutine()) {
+            // The `is_coroutine_return` attribute (set at HIR-to-MIR from the
+            // enclosing callable's coroutine-ness, mir/stmt.hpp) is a C++
+            // render hint -- LIR / LLVM ignore it. A task's `return` is
+            // `co_return` and carries no value (LRM 13.3 / 13.4.1).
+            if (s.is_coroutine_return) {
               return Indent(indent) + "co_return;\n";
             }
             if (!s.value.has_value()) {

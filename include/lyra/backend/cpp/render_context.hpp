@@ -24,43 +24,24 @@ class RenderContext {
 
   [[nodiscard]] auto WithProceduralScope(
       const mir::ProceduralScope& child) const -> RenderContext {
-    return RenderContext{
-        *unit_,        *scope_,      child, this, structural_parent_,
-        static_frame_, in_coroutine_};
+    return RenderContext{*unit_,       *scope_, child, this, structural_parent_,
+                         static_frame_};
   }
 
   [[nodiscard]] auto WithStructuralScope(
       const mir::StructuralScope& child_scope,
       const mir::ProceduralScope& root_proc_scope) const -> RenderContext {
-    return RenderContext{*unit_, child_scope, root_proc_scope, nullptr, this,
-                         {},     false};
+    return RenderContext{*unit_,  child_scope, root_proc_scope,
+                         nullptr, this,        {}};
   }
 
   // A subroutine body renders its static locals through this per-instance frame
   // member (LRM 13.3.1). Empty when the current callable has no static locals.
   [[nodiscard]] auto WithStaticFrame(std::string_view accessor) const
       -> RenderContext {
-    return RenderContext{*unit_,
-                         *scope_,
-                         *proc_scope_,
-                         procedural_parent_,
-                         structural_parent_,
-                         accessor,
-                         in_coroutine_};
-  }
-
-  // Marks the current body as a coroutine (a process or a task), where `return`
-  // is spelled `co_return`. A function body leaves this false and uses plain
-  // `return`.
-  [[nodiscard]] auto WithCoroutine(bool in_coroutine) const -> RenderContext {
     return RenderContext{
-        *unit_,
-        *scope_,
-        *proc_scope_,
-        procedural_parent_,
-        structural_parent_,
-        static_frame_,
-        in_coroutine};
+        *unit_,  *scope_, *proc_scope_, procedural_parent_, structural_parent_,
+        accessor};
   }
 
   RenderContext(const RenderContext&) = delete;
@@ -111,10 +92,6 @@ class RenderContext {
     return static_frame_;
   }
 
-  [[nodiscard]] auto InCoroutine() const -> bool {
-    return in_coroutine_;
-  }
-
   [[nodiscard]] auto Expr(mir::ExprId id) const -> const mir::Expr& {
     return proc_scope_->GetExpr(id);
   }
@@ -134,15 +111,13 @@ class RenderContext {
       const mir::CompilationUnit& unit, const mir::StructuralScope& scope,
       const mir::ProceduralScope& proc_scope,
       const RenderContext* procedural_parent,
-      const RenderContext* structural_parent, std::string_view static_frame,
-      bool in_coroutine)
+      const RenderContext* structural_parent, std::string_view static_frame)
       : unit_(&unit),
         scope_(&scope),
         proc_scope_(&proc_scope),
         procedural_parent_(procedural_parent),
         structural_parent_(structural_parent),
-        static_frame_(static_frame),
-        in_coroutine_(in_coroutine) {
+        static_frame_(static_frame) {
   }
 
   const mir::CompilationUnit* unit_;
@@ -151,7 +126,6 @@ class RenderContext {
   const RenderContext* procedural_parent_;
   const RenderContext* structural_parent_;
   std::string_view static_frame_;
-  bool in_coroutine_ = false;
 };
 
 }  // namespace lyra::backend::cpp
