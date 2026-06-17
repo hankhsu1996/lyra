@@ -13,6 +13,11 @@ layer directly.
 - [x] D4 -- Emitting the C++ backend produces a self-contained project that rebuilds and runs on
       another machine of the same platform without a Lyra checkout.
 
+- [ ] D5 -- A failing end-to-end case surfaces its underlying cause -- the emitted-C++ compile error
+      or the runtime message -- directly from the test command. Today that detail is truncated in
+      the test summary and the full text lives only in per-shard log files outside the readable
+      path, so finding why a case failed takes several manual reruns of the same suite.
+
 ## Out of Scope
 
 - New SystemVerilog feature coverage. This file tracks the developer feedback loop, not language
