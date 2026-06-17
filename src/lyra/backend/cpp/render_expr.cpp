@@ -1051,6 +1051,56 @@ auto RenderQueueMethodCall(
   return member_call;
 }
 
+auto AssociativeMethodMemberName(mir::AssociativeMethodKind k)
+    -> std::string_view {
+  switch (k) {
+    case mir::AssociativeMethodKind::kNum:
+    case mir::AssociativeMethodKind::kSize:
+      return "Size";
+    case mir::AssociativeMethodKind::kExists:
+      return "Exists";
+    case mir::AssociativeMethodKind::kDelete:
+      return "Delete";
+  }
+  throw InternalError("AssociativeMethodMemberName: unknown kind");
+}
+
+// LRM 7.9 associative-array methods. The receiver is arguments[0] and the key
+// (exists / delete-by-index) follows as a real C++ argument, so the overload
+// set on `AssociativeArray<K, V>` resolves arity (`Delete()` vs `Delete(key)`).
+auto RenderAssociativeMethodCall(
+    const RenderContext& ctx, const mir::CallExpr& call,
+    const mir::AssociativeMethodInfo& m) -> diag::Result<std::string> {
+  if (call.arguments.empty()) {
+    throw InternalError(
+        "RenderAssociativeMethodCall: associative method expects a receiver "
+        "argument");
+  }
+  auto receiver_or = RenderExpr(ctx, ctx.Expr(call.arguments[0]));
+  if (!receiver_or) {
+    return std::unexpected(std::move(receiver_or.error()));
+  }
+  std::string args;
+  for (std::size_t i = 1; i < call.arguments.size(); ++i) {
+    auto arg_or = RenderExpr(ctx, ctx.Expr(call.arguments[i]));
+    if (!arg_or) {
+      return std::unexpected(std::move(arg_or.error()));
+    }
+    if (i != 1) {
+      args += ", ";
+    }
+    args += *arg_or;
+  }
+  const std::string member_call = std::format(
+      "({}).{}({})", *receiver_or, AssociativeMethodMemberName(m.kind), args);
+  // LRM 7.9.1 / 7.9.3: num / size / exists yield an int; wrap the C++
+  // std::size_t / bool in the runtime integral. delete returns void.
+  if (m.kind != mir::AssociativeMethodKind::kDelete) {
+    return std::format("lyra::value::PackedArray::Int({})", member_call);
+  }
+  return member_call;
+}
+
 // Side-effect-free per-value queries. Dispatch by the receiver's MIR
 // type because the answer is type-static for everything except 4-state
 // integral packed: a string (LRM 6.16) and a byte-element unpacked array
@@ -1166,6 +1216,9 @@ auto RenderCallExpr(
                     [&](const mir::QueueMethodInfo& m) {
                       return RenderQueueMethodCall(ctx, call, m);
                     },
+                    [&](const mir::AssociativeMethodInfo& m) {
+                      return RenderAssociativeMethodCall(ctx, call, m);
+                    },
                     [&](const mir::ValueMethodInfo& m) {
                       return RenderValueMethodCall(ctx, call, m);
                     },
@@ -1247,21 +1300,33 @@ auto RenderCallExpr(
       call.callee);
 }
 
+enum class ElementAccessMode : std::uint8_t { kRead, kWrite };
+
 // Indexed element access shared by rvalue `RenderElementSelectExpr` and the
 // lvalue `RenderLhsExpr` ElementSelect arm. `PackedArray`, `UnpackedArray`,
 // `DynamicArray`, and `Queue` expose a symmetric `ElementAt(const
 // PackedArray&)` so the emit string is substrate-agnostic; declared-range
 // translation and `ToInt64` canonicalize inside the runtime type.
+//
+// The associative array splits read from write (LRM 7.8.6 / 7.8.7): a read
+// never allocates and returns the element default for a missing key, while a
+// write allocates the entry. The access mode selects `Read` vs `ElementRef`.
 auto RenderIndexedElementAccess(
-    const mir::Type& base_ty, std::string_view base, std::string_view idx)
-    -> std::string {
+    const mir::Type& base_ty, std::string_view base, std::string_view idx,
+    ElementAccessMode mode) -> std::string {
+  if (std::holds_alternative<mir::AssociativeArrayType>(base_ty.data)) {
+    const std::string_view member =
+        mode == ElementAccessMode::kWrite ? "ElementRef" : "Read";
+    return std::format("({}).{}({})", base, member, idx);
+  }
   if (!std::holds_alternative<mir::PackedArrayType>(base_ty.data) &&
       !std::holds_alternative<mir::UnpackedArrayType>(base_ty.data) &&
       !std::holds_alternative<mir::DynamicArrayType>(base_ty.data) &&
       !std::holds_alternative<mir::QueueType>(base_ty.data)) {
     throw InternalError(
         "RenderIndexedElementAccess: base type must be PackedArrayType, "
-        "UnpackedArrayType, DynamicArrayType, or QueueType");
+        "UnpackedArrayType, DynamicArrayType, QueueType, or "
+        "AssociativeArrayType");
   }
   return std::format("({}).ElementAt({})", base, idx);
 }
@@ -1275,7 +1340,8 @@ auto RenderElementSelectExpr(
   auto idx_or = RenderExpr(ctx, ctx.Expr(sel.index));
   if (!idx_or) return std::unexpected(std::move(idx_or.error()));
   const auto& base_ty = ctx.Unit().GetType(base_expr.type);
-  return RenderIndexedElementAccess(base_ty, *base_or, *idx_or);
+  return RenderIndexedElementAccess(
+      base_ty, *base_or, *idx_or, ElementAccessMode::kRead);
 }
 
 // Renders an LHS-shaped expression for use as an assignment target. The
@@ -1318,7 +1384,8 @@ auto RenderLhsExpr(
             auto idx = RenderExpr(ctx, ctx.Expr(s.index));
             if (!idx) return std::unexpected(std::move(idx.error()));
             const auto& base_ty = ctx.Unit().GetType(base_expr.type);
-            return RenderIndexedElementAccess(base_ty, *base, *idx);
+            return RenderIndexedElementAccess(
+                base_ty, *base, *idx, ElementAccessMode::kWrite);
           },
           [&](const mir::RangeSelectExpr& s) -> diag::Result<std::string> {
             auto base =

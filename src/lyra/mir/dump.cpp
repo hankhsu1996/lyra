@@ -383,6 +383,11 @@ class MirDumper {
                             "QueueMethodInfo[kind={}]",
                             static_cast<int>(m.kind));
                       },
+                      [](const AssociativeMethodInfo& m) -> std::string {
+                        return std::format(
+                            "AssociativeMethodInfo[kind={}]",
+                            static_cast<int>(m.kind));
+                      },
                       [](const ValueMethodInfo& m) -> std::string {
                         return std::format(
                             "ValueMethodInfo[kind={}]",

@@ -1,0 +1,12 @@
+id: cpp.assoc_invalid_index
+tags: [cpp_run]
+input:
+  command: [run, cpp]
+  project: false
+  top: Top
+  files: [main.sv]
+expect:
+  exit: 0
+  variables:
+    sz: 1
+    rd: "32'hxxxxxxxx"

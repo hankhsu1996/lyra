@@ -1,0 +1,26 @@
+id: cpp.assoc_basic
+tags: [cpp_run]
+input:
+  command: [run, cpp]
+  project: false
+  top: Top
+  files: [main.sv]
+expect:
+  exit: 0
+  variables:
+    va: 1
+    vb: 2
+    ex_a: 1
+    ex_z: 0
+    sz1: 2
+    vmiss: 0
+    sz2: 2
+    vc: 5
+    sz3: 3
+    sz4: 2
+    ex_b: 0
+    nv10: 100
+    nv3: 30
+    nsz: 2
+    nmiss: 0
+    nsz2: 2

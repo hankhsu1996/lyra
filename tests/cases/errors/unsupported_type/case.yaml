@@ -12,8 +12,8 @@ expect:
     contains:
       - "main.sv:2:"
       - "unsupported:"
-      - "associative array types are not supported"
-      - "int m [string];"
+      - "unpacked struct types are not supported"
+      - "struct { int a; int b; } s;"
     not_contains:
       - "internal error"
       - "\x1b["

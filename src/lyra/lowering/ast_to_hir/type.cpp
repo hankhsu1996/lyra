@@ -337,11 +337,33 @@ auto TranslateTypeData(
                            : std::optional<std::uint64_t>{q.maxBound},
       }};
     }
-    case slang::ast::SymbolKind::AssociativeArrayType:
-      return diag::Unsupported(
-          decl_span, diag::DiagCode::kUnsupportedAssociativeArrayType,
-          "associative array types are not supported",
-          diag::UnsupportedCategory::kType);
+    case slang::ast::SymbolKind::AssociativeArrayType: {
+      const auto& aa = canonical.as<slang::ast::AssociativeArrayType>();
+      // LRM 7.8.1 wildcard index (`[*]`) carries no index type and has its own
+      // minimal-length normalization rules; LRM 7.8.3 / 7.8.5 class and other
+      // user-defined indices have their own ordering contracts. Only the string
+      // (LRM 7.8.2) and integral (LRM 7.8.4) index families are in scope.
+      if (aa.indexType == nullptr ||
+          !(aa.indexType->isIntegral() || aa.indexType->isString())) {
+        return diag::Unsupported(
+            decl_span, diag::DiagCode::kUnsupportedAssociativeArrayType,
+            "associative arrays are only supported with a string or integral "
+            "index type",
+            diag::UnsupportedCategory::kType);
+      }
+      auto elem_id_or = module.InternType(aa.elementType, decl_span);
+      if (!elem_id_or) {
+        return std::unexpected(std::move(elem_id_or.error()));
+      }
+      auto key_id_or = module.InternType(*aa.indexType, decl_span);
+      if (!key_id_or) {
+        return std::unexpected(std::move(key_id_or.error()));
+      }
+      return hir::TypeData{hir::AssociativeArrayType{
+          .element_type = *elem_id_or,
+          .key_type = *key_id_or,
+      }};
+    }
     case slang::ast::SymbolKind::UnpackedStructType:
       return diag::Unsupported(
           decl_span, diag::DiagCode::kUnsupportedUnpackedStructType,
