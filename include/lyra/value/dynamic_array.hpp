@@ -209,6 +209,22 @@ class DynamicArray {
     return result;
   }
 
+  // LRM 11.4.5 `===` predicate form (host bool): the Var change-detection
+  // counterpart of `CaseEqual`. A size mismatch is a change; matching empties
+  // are equal; otherwise recurse into each element's own predicate (LRM 9.4.2
+  // update event).
+  [[nodiscard]] auto IsCaseEqual(const DynamicArray& other) const -> bool {
+    if (data_.size() != other.data_.size()) {
+      return false;
+    }
+    for (std::size_t i = 0; i < data_.size(); ++i) {
+      if (!data_[i].IsCaseEqual(other.data_[i])) {
+        return false;
+      }
+    }
+    return true;
+  }
+
   // LRM 7.5.3: empties the array, resulting in a zero-sized array. Body is
   // identical to ResetToDefault (LRM Table 6-7 default for dynamic array is
   // the empty array), but the two surface names track distinct contracts:

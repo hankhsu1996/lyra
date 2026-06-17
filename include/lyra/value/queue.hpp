@@ -66,6 +66,22 @@ class Queue {
     return *this;
   }
 
+  // LRM 11.4.5 `===` predicate form (host bool): the Var change-detection
+  // counterpart used when a queue is an observable signal. A size mismatch is
+  // a change; otherwise recurse into each element's own predicate (LRM 9.4.2
+  // update event).
+  [[nodiscard]] auto IsCaseEqual(const Queue& other) const -> bool {
+    if (data_.size() != other.data_.size()) {
+      return false;
+    }
+    for (std::size_t i = 0; i < data_.size(); ++i) {
+      if (!data_[i].IsCaseEqual(other.data_[i])) {
+        return false;
+      }
+    }
+    return true;
+  }
+
   // LRM Table 6-7: a queue's default is the empty queue. When this container
   // is itself an OOB shield slot of an outer container, the outer calls this
   // to restore canonical state before handing out a reference.
