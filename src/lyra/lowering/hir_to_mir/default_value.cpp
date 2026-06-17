@@ -134,7 +134,7 @@ auto AddDefaultValueExpr(
           // entry reads, LRM 7.8.6) while storage starts empty.
           [&](const mir::AssociativeArrayType& a) -> mir::ExprId {
             const mir::ExprId element_default =
-                SynthesizeDefaultValueExpr(module, frame, a.element_type);
+                AddDefaultValueExpr(module, frame, a.element_type);
             return scope.AddExpr(
                 mir::Expr{
                     .data = mir::ConstructExpr{.args = {element_default}},
