@@ -174,7 +174,14 @@ Unlocks `refs/hierarchical_refs`, `refs/upward_refs`, and `instantiation/hierarc
       variable-typed ports; both endpoints keep their own storage.
 - [ ] E7 -- A `ref` port aliases the connected variable as a hierarchical reference, sharing its
       storage with no separate continuous assignment (LRM 23.3.3.2).
-- [ ] E8 -- An input port left unconnected takes its declared default value (LRM 23.2.2.4).
+- [x] E8 -- An input port left unconnected takes its declared default value (LRM 23.2.2.4). A
+      declared default is a constant expression whose names resolve in the module that declares the
+      port, not the instantiating scope; like a default argument at a call site, its value is
+      materialized into the connection wherever the port is omitted. Omitting a port inserts its
+      default; an explicit empty connection (`.port()`) suppresses the default and leaves the port
+      at the data type's default initial value (LRM 23.3.2.2 / 23.3.3.2), as does an unconnected
+      port with no default; an explicit expression overrides. Defaults are permitted only on input
+      ports (LRM 23.2.2.4), which the frontend enforces.
 - [ ] E9 -- A port connection on an instance array drives each element.
 - [ ] E10 -- A port connection whose type is non-integral (an unpacked struct or array).
 
