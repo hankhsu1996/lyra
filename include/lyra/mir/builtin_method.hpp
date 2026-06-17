@@ -48,8 +48,10 @@ enum class EventMethodKind : std::uint8_t {
   kTriggered,
 };
 
-// LRM 7.5.2 / 7.5.3 dynamic-array methods plus the LRM 7.12.2 / 7.12.3
-// no-`with`, no-queue-return subset of the array-method family.
+// LRM 7.5.2 / 7.5.3 dynamic-array methods plus the LRM 7.12 array-method
+// family (ordering, reduction, and the 7.12.1 locator methods). The locator
+// arms (`kFind` onward) return a queue -- an element queue for the value
+// locators and an `int` queue for the index locators.
 enum class ArrayMethodKind : std::uint8_t {
   kSize,
   kDelete,
@@ -61,6 +63,16 @@ enum class ArrayMethodKind : std::uint8_t {
   kAnd,
   kOr,
   kXor,
+  kFind,
+  kFindIndex,
+  kFindFirst,
+  kFindFirstIndex,
+  kFindLast,
+  kFindLastIndex,
+  kMin,
+  kMax,
+  kUnique,
+  kUniqueIndex,
 };
 
 // Side-effect-free queries that are defined for every runtime value type
