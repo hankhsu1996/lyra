@@ -5,7 +5,6 @@
 #include <utility>
 
 #include "lyra/hir/continuous_assign.hpp"
-#include "lyra/hir/expr.hpp"
 #include "lyra/hir/structural_scope.hpp"
 #include "lyra/lowering/hir_to_mir/sensitivity_wait.hpp"
 #include "lyra/lowering/hir_to_mir/walk_frame.hpp"
@@ -24,11 +23,17 @@ namespace lyra::lowering::hir_to_mir {
 // natural fall-through of the eternal loop) before the first wait, matching
 // LRM 9.2.2.2's "evaluate at time 0" requirement for inferred sensitivity.
 auto LowerContinuousAssign(
-    const StructuralScopeLowerer& scope, WalkFrame frame,
+    const StructuralScopeLowerer& scope, WalkFrame frame, std::string name,
     const hir::ContinuousAssign& src) -> diag::Result<mir::Process> {
   mir::ProceduralScope process_scope;
+  const mir::ProceduralVarId self_id = process_scope.AddProceduralVar(
+      mir::ProceduralVarDecl{
+          .name = "self", .type = scope.Module().Unit().builtins.self_pointer});
   mir::ProceduralScope body_scope;
-  const WalkFrame body_frame = frame.WithProceduralScope(&body_scope).Deeper();
+  const WalkFrame body_frame =
+      frame.WithProceduralScope(&body_scope)
+          .WithSelfBinding(self_id, frame.procedural_depth)
+          .Deeper();
 
   const hir::StructuralScope& hir_scope = scope.HirScope();
 
@@ -63,6 +68,7 @@ auto LowerContinuousAssign(
               .scope = body_scope_id}});
   return mir::Process{
       .kind = mir::ProcessKind::kInitial,
+      .name = std::move(name),
       .root_procedural_scope = std::move(process_scope),
       .static_locals = {}};
 }

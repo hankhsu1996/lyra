@@ -21,6 +21,7 @@ enum class ProcessKind : std::uint8_t {
 
 struct Process {
   ProcessKind kind = ProcessKind::kInitial;
+  std::string name;
   ProceduralScope root_procedural_scope;
   std::vector<StaticLocal> static_locals;
 };

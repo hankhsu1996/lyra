@@ -2,7 +2,6 @@
 
 #include "lyra/base/internal_error.hpp"
 #include "lyra/base/overloaded.hpp"
-#include "lyra/hir/expr.hpp"
 #include "lyra/hir/integral_constant.hpp"
 #include "lyra/hir/primary.hpp"
 #include "lyra/hir/value_ref.hpp"
@@ -95,10 +94,21 @@ auto LowerHirRealLiteral(const hir::RealLiteral& r, mir::TypeId type)
 }
 
 auto LowerStructuralVarRefExpr(
-    const StructuralScopeLowerer& scope, const hir::StructuralVarRef& m,
-    mir::TypeId type) -> mir::Expr {
+    const StructuralScopeLowerer& scope, const WalkFrame& frame,
+    const hir::StructuralVarRef& m, mir::TypeId type) -> mir::Expr {
+  const mir::StructuralVarRef member =
+      scope.TranslateStructuralVar(m.hops, m.var);
+  const mir::TypeId self_ptr_type = scope.Module().Unit().builtins.self_pointer;
+  const mir::ExprId receiver = frame.current_procedural_scope->AddExpr(
+      mir::Expr{
+          .data =
+              mir::ProceduralVarRef{
+                  .hops = frame.procedural_depth - frame.self_decl_depth,
+                  .var = *frame.self_binding},
+          .type = self_ptr_type});
   return mir::Expr{
-      .data = scope.TranslateStructuralVar(m.hops, m.var), .type = type};
+      .data = mir::MemberAccessExpr{.receiver = receiver, .member = member},
+      .type = type};
 }
 
 auto LowerProceduralVarRefExpr(
@@ -123,14 +133,27 @@ auto LowerCrossUnitVarRefExpr(
     const hir::CrossUnitVarRef& c, mir::TypeId type) -> mir::Expr {
   const auto& meta = scope.CrossUnitRefTarget(c.id);
   const mir::StructuralVarRef target = meta.target;
+  const mir::TypeId self_ptr_type = scope.Module().Unit().builtins.self_pointer;
+  const mir::ExprId self_ref = frame.current_procedural_scope->AddExpr(
+      mir::Expr{
+          .data =
+              mir::ProceduralVarRef{
+                  .hops = frame.procedural_depth - frame.self_decl_depth,
+                  .var = *frame.self_binding},
+          .type = self_ptr_type});
   const auto* ptr = std::get_if<mir::PointerType>(
       &scope.Module().Unit().GetType(meta.slot_type).data);
   if (ptr != nullptr && ptr->ownership == mir::PointerOwnership::kBorrowed) {
     const mir::ExprId pointer = frame.current_procedural_scope->AddExpr(
-        mir::Expr{.data = target, .type = meta.slot_type});
+        mir::Expr{
+            .data =
+                mir::MemberAccessExpr{.receiver = self_ref, .member = target},
+            .type = meta.slot_type});
     return mir::Expr{.data = mir::DerefExpr{.pointer = pointer}, .type = type};
   }
-  return mir::Expr{.data = target, .type = type};
+  return mir::Expr{
+      .data = mir::MemberAccessExpr{.receiver = self_ref, .member = target},
+      .type = type};
 }
 
 auto LowerLoopVarRefExprAsProcedural(
@@ -169,7 +192,7 @@ auto LowerHirPrimaryExprProc(
             return LowerHirRealLiteral(r, result_type);
           },
           [&](const hir::StructuralVarRef& m) -> mir::Expr {
-            return LowerStructuralVarRefExpr(scope, m, result_type);
+            return LowerStructuralVarRefExpr(scope, frame, m, result_type);
           },
           [&](const hir::ProceduralVarRef& l) -> mir::Expr {
             return LowerProceduralVarRefExpr(process, frame, l, result_type);
@@ -202,7 +225,7 @@ auto LowerHirPrimaryExprStructural(
             return LowerHirRealLiteral(r, result_type);
           },
           [&](const hir::StructuralVarRef& m) -> mir::Expr {
-            return LowerStructuralVarRefExpr(scope, m, result_type);
+            return LowerStructuralVarRefExpr(scope, frame, m, result_type);
           },
           [](const hir::ProceduralVarRef&) -> mir::Expr {
             throw InternalError(

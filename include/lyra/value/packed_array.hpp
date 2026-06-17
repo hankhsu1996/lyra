@@ -51,6 +51,13 @@ struct PackedRange {
 // the API contract.
 class PackedArray {
  public:
+  // Default constructor: 0-bit unsigned 2-state. A 0-bit PackedArray is not a
+  // valid SV value -- it serves as the "uninitialized" sentinel state that lets
+  // `Var<PackedArray>` be declared without an inline initializer; the first
+  // assignment into a 0-bit destination adopts the source's shape (see
+  // `AssignFrom`).
+  PackedArray();
+
   // Primary constructor: declared dim stack + sign + 4-state. Total bit
   // width is the product of dim sizes (cached internally as `bit_width_`).
   PackedArray(

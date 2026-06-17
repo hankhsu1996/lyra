@@ -192,10 +192,20 @@ auto BuildArrayMethodClosure(
   const auto& iterator_decl =
       hir_process.procedural_vars.at(with_clause.iterator.value);
 
+  const mir::TypeId self_ptr_type = module.Unit().builtins.self_pointer;
   mir::ProceduralScope body_scope;
   const WalkFrame body_frame = frame.WithProceduralScope(&body_scope).Deeper();
   const ProceduralDepth body_depth = body_frame.procedural_depth;
 
+  const mir::ProceduralVarId self_binding = body_scope.AddProceduralVar(
+      mir::ProceduralVarDecl{.name = "self", .type = self_ptr_type});
+  const mir::ExprId outer_self_read = outer_scope.AddExpr(
+      mir::Expr{
+          .data =
+              mir::ProceduralVarRef{
+                  .hops = frame.procedural_depth - frame.self_decl_depth,
+                  .var = *frame.self_binding},
+          .type = self_ptr_type});
   const mir::ProceduralVarId item_binding = body_scope.AddProceduralVar(
       mir::ProceduralVarDecl{.name = iterator_decl.name, .type = item_type});
   const mir::ProceduralVarId index_binding = body_scope.AddProceduralVar(
@@ -207,7 +217,9 @@ auto BuildArrayMethodClosure(
 
   CaptureSink sink{body_depth, body_scope, outer_scope};
   const WalkFrame closure_frame =
-      body_frame.WithClosure(&sink).WithIndexBinding(index_binding);
+      body_frame.WithClosure(&sink)
+          .WithIndexBinding(index_binding)
+          .WithSelfBinding(self_binding, body_depth);
 
   auto body_expr_or = process.LowerExpr(
       hir_process.exprs.at(with_clause.expr.value), closure_frame);
@@ -222,6 +234,8 @@ auto BuildArrayMethodClosure(
           .data = mir::ReturnStmt{.value = body_return_value}});
 
   std::vector<mir::Capture> captures;
+  captures.emplace_back(
+      mir::ByValueCapture{.value = outer_self_read, .binding = self_binding});
   for (const CaptureRequest& request : sink.TakeRequests()) {
     captures.emplace_back(
         mir::ByReferenceCapture{

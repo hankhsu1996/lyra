@@ -42,10 +42,10 @@ void Engine::BindDesign(std::span<const TopBinding> tops) {
     throw InternalError("Engine::BindDesign called more than once");
   }
   bound_ = true;
-  root_ = std::make_unique<Scope>(nullptr, "$root");
+  root_ = std::make_unique<Scope>(nullptr, "$root", services_);
   for (const auto& top : tops) {
     root_->AddChild(*top.scope);
-    top.scope->Bind(services_);
+    top.scope->Bind();
   }
 }
 

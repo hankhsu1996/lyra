@@ -1,5 +1,7 @@
 #pragma once
 
+#include <string>
+
 #include "lyra/diag/diagnostic.hpp"
 #include "lyra/hir/continuous_assign.hpp"
 #include "lyra/lowering/hir_to_mir/structural_scope_lowerer.hpp"
@@ -9,7 +11,7 @@
 namespace lyra::lowering::hir_to_mir {
 
 auto LowerContinuousAssign(
-    const StructuralScopeLowerer& scope, WalkFrame frame,
+    const StructuralScopeLowerer& scope, WalkFrame frame, std::string name,
     const hir::ContinuousAssign& src) -> diag::Result<mir::Process>;
 
 }  // namespace lyra::lowering::hir_to_mir

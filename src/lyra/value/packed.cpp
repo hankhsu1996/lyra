@@ -11,9 +11,8 @@
 namespace lyra::value {
 
 auto WordCountForBits(std::uint64_t bit_width) -> std::size_t {
-  if (bit_width == 0U) {
-    throw InternalError("WordCountForBits: zero bit_width");
-  }
+  // 0 bits is the `PackedArray()` sentinel "uninitialized" shape; an empty
+  // storage vector matches it. Non-zero widths round up to whole words.
   // Overflow-safe form: never compute `bit_width + 63`.
   const std::uint64_t whole = bit_width / 64U;
   const std::uint64_t remainder = bit_width % 64U;
@@ -54,9 +53,6 @@ auto ValidateViewRange(
 PackedWords::PackedWords(std::uint64_t bit_width)
     : bit_width_(bit_width),
       words_(WordCountForBits(bit_width), std::uint64_t{0}) {
-  if (bit_width == 0U) {
-    throw InternalError("PackedWords: zero bit_width");
-  }
 }
 
 auto PackedWords::BitWidth() const -> std::uint64_t {

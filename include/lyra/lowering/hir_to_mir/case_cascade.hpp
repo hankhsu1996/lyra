@@ -111,7 +111,8 @@ auto BuildCaseCascade(
 
   for (std::size_t i = item_count; i-- > 1;) {
     mir::ProceduralScope level_scope;
-    const WalkFrame level_frame = frame.WithProceduralScope(&level_scope);
+    const WalkFrame level_frame =
+        frame.WithProceduralScope(&level_scope).Deeper();
     auto pred_or = std::forward<PredicateBuilder>(build_predicate)(
         level_frame, i, static_cast<std::uint32_t>(i));
     if (!pred_or) {
@@ -137,7 +138,8 @@ auto BuildCaseCascade(
   }
 
   if (item_count > 0) {
-    const WalkFrame wrapper_frame = frame.WithProceduralScope(&wrapper_scope);
+    const WalkFrame wrapper_frame =
+        frame.WithProceduralScope(&wrapper_scope).Deeper();
     auto pred0_or =
         std::forward<PredicateBuilder>(build_predicate)(wrapper_frame, 0, 0);
     if (!pred0_or) {

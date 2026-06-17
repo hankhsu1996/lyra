@@ -75,6 +75,7 @@ auto Type::Kind() const -> TypeKind {
             return TypeKind::kExternalUnitObject;
           },
           [](const ScopeType&) { return TypeKind::kScope; },
+          [](const SelfType&) { return TypeKind::kSelf; },
           [](const PointerType&) { return TypeKind::kPointer; },
           [](const VectorType&) { return TypeKind::kVector; },
           [](const ExternalRefType&) { return TypeKind::kExternalRef; },

@@ -39,6 +39,12 @@ class UnpackedArray {
  public:
   using ElementType = T;
 
+  // Sentinel "uninitialized" form -- empty container with default-constructed
+  // OOB slot. Used as the declared default state of a `Var<UnpackedArray<T>>`
+  // field; the first MIR-level assignment overwrites the whole array (LRM
+  // 10.5 variable initialization).
+  UnpackedArray() = default;
+
   // Empty container with the shield slot seeded. Internal use only -- SV
   // fixed-size arrays are always non-empty; this form serves `Slice` and
   // similar paths that build a fresh `UnpackedArray` element-by-element.

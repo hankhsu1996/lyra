@@ -73,6 +73,14 @@ auto TotalBitWidthOf(std::span<const PackedRange> dims) -> std::uint64_t {
 
 }  // namespace
 
+PackedArray::PackedArray()
+    : bit_width_(0),
+      is_signed_(false),
+      is_four_state_(false),
+      storage_(BitValue{0}),
+      dims_() {
+}
+
 PackedArray::PackedArray(
     std::initializer_list<PackedRange> dims, bool is_signed, bool is_four_state)
     : bit_width_(TotalBitWidthOf(
@@ -359,6 +367,18 @@ auto PackedArray::operator=(PackedArray&& other) noexcept(false)
 }
 
 auto PackedArray::AssignFrom(const PackedArray& other) -> void {
+  // A 0-bit destination is the default-constructed "uninitialized" sentinel
+  // state (e.g., an `Var<PackedArray>` field that has not yet received its
+  // first MIR-level assignment). Adopt the source's shape entirely so the
+  // first store into a freshly declared variable succeeds; subsequent stores
+  // run through the normal LRM 10.6.1 shape-preserving path.
+  if (bit_width_ == 0) {
+    bit_width_ = other.bit_width_;
+    is_signed_ = other.is_signed_;
+    is_four_state_ = other.is_four_state_;
+    storage_ = MakeStorage(bit_width_, is_four_state_);
+    dims_ = other.dims_;
+  }
   ExpectSameShape(*this, other, "PackedArray::AssignFrom");
   auto dst = std::visit(
       [](auto& v) { return detail::PackedAccess::ValueWords(v.View()); },

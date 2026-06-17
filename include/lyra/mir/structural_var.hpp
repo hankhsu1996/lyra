@@ -4,7 +4,6 @@
 #include <cstdint>
 #include <string>
 
-#include "lyra/mir/expr_id.hpp"
 #include "lyra/mir/type_id.hpp"
 
 namespace lyra::mir {
@@ -16,9 +15,11 @@ struct StructuralVarId {
       -> std::strong_ordering = default;
 };
 
-// HIR distinguishes "no user initializer" from "explicit zero initializer";
-// MIR does not -- the LRM Table 6-7 default is materialised as a primitive
-// expression at the HIR-to-MIR boundary, so every variable carries one.
+// A declaration carries name and type only. LRM 10.5 variable initialization
+// (the user-supplied `= value` or the LRM Table 6-7 type default) lowers to
+// an `AssignExpr` statement at the top of the enclosing scope's
+// `constructor_scope.root_stmts`; every backend renders construction-time
+// state from that single statement list.
 struct StructuralVarDecl {
   std::string name;
   // By-name lookup key; differs from the unique physical `name` only for a
@@ -26,7 +27,6 @@ struct StructuralVarDecl {
   // Empty when it equals `name`.
   std::string source_name = {};
   TypeId type;
-  ExprId initializer;
 };
 
 }  // namespace lyra::mir

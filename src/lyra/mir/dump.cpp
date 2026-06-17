@@ -177,6 +177,7 @@ class MirDumper {
                   "ExternalUnitObject(unit=\"{}\")", e.unit_name);
             },
             [](const ScopeType&) -> std::string { return "Scope"; },
+            [](const SelfType&) -> std::string { return "Self"; },
             [](const PointerType& p) -> std::string {
               switch (p.ownership) {
                 case PointerOwnership::kUnique:
@@ -476,13 +477,6 @@ class MirDumper {
                   "StructuralParamRef[hops={}, param={}] \"{}\"", r.hops.value,
                   r.param.value, param.name);
             },
-            [this](const StructuralVarRef& r) -> std::string {
-              const auto& owner = ResolveScopeAtHops(r.hops.value);
-              const auto& var = owner.GetStructuralVar(r.var);
-              return std::format(
-                  "StructuralVarRef[hops={}, var={}] \"{}\"", r.hops.value,
-                  r.var.value, var.name);
-            },
             [this](const ProceduralVarRef& r) -> std::string {
               const auto& owner = ResolveProceduralScopeAtHops(r.hops.value);
               const auto& var = owner.vars.at(r.var.value);
@@ -545,7 +539,12 @@ class MirDumper {
             [](const RuntimeCallExpr&) -> std::string {
               return "RuntimeCallExpr";
             },
-            [](const SelfScopeExpr&) -> std::string { return "SelfScopeExpr"; },
+            [](const MemberAccessExpr& m) -> std::string {
+              return std::format(
+                  "MemberAccessExpr receiver=Expr[{}] hops={} "
+                  "var=StructuralVar[{}]",
+                  m.receiver.value, m.member.hops.value, m.member.var.value);
+            },
             [](const DerefExpr& d) -> std::string {
               return std::format("DerefExpr pointer=Expr[{}]", d.pointer.value);
             },
@@ -556,8 +555,9 @@ class MirDumper {
             },
             [](const ClosureExpr& cl) -> std::string {
               return std::format(
-                  "ClosureExpr captures={} params={}", cl.captures.size(),
-                  cl.params.size());
+                  "ClosureExpr captures={} params={} is_coroutine={}",
+                  cl.captures.size(), cl.params.size(),
+                  cl.is_coroutine ? "true" : "false");
             },
             [](const ElementSelectExpr& sel) -> std::string {
               return std::format(
@@ -656,8 +656,7 @@ class MirDumper {
           v.source_name.empty() ? "" : std::format(" as \"{}\"", v.source_name);
       Line(
           std::format(
-              "[{}] \"{}\"{} : {} init=Expr[{}]", i, v.name, as,
-              FormatVarType(v.type), v.initializer.value));
+              "[{}] \"{}\"{} : {}", i, v.name, as, FormatVarType(v.type)));
     }
     Dedent();
 
@@ -685,7 +684,9 @@ class MirDumper {
   }
 
   void DumpProcess(const Process& p, std::size_t index) {
-    Line(std::format("Process[{}] {}", index, FormatProcessKind(p)));
+    Line(
+        std::format(
+            "Process[{}] {} name={}", index, FormatProcessKind(p), p.name));
     Indent();
     for (std::size_t i = 0; i < p.static_locals.size(); ++i) {
       const auto& sl = p.static_locals[i];
