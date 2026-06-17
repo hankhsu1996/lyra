@@ -6,6 +6,7 @@
 #include <functional>
 #include <span>
 #include <string>
+#include <type_traits>
 #include <utility>
 #include <vector>
 
@@ -13,8 +14,34 @@
 #include "lyra/value/array_case_equal.hpp"
 #include "lyra/value/format.hpp"
 #include "lyra/value/packed_array.hpp"
+#include "lyra/value/queue.hpp"
 
 namespace lyra::value {
+
+namespace detail {
+
+// LRM 7.12.1 locator comparisons over a key type (the element itself for the
+// no-`with` form, or the `with`-expression result otherwise). `PackedArray`
+// returns a 1-bit truth value whose X/Z collapses to false in a boolean
+// context; `String` / `double` return a plain `bool`.
+template <typename K>
+[[nodiscard]] auto LocatorKeyLess(const K& a, const K& b) -> bool {
+  return static_cast<bool>(a < b);
+}
+
+// Uniqueness equality. 4-state integral keys compare bit-exact (LRM 11.4.5
+// `===`), so two X-valued keys are the same value while X never equals a
+// known bit; non-integral keys have no unknown plane and use value equality.
+template <typename K>
+[[nodiscard]] auto LocatorKeySame(const K& a, const K& b) -> bool {
+  if constexpr (std::is_same_v<K, PackedArray>) {
+    return static_cast<bool>(a.CaseEqual(b));
+  } else {
+    return a == b;
+  }
+}
+
+}  // namespace detail
 
 // SystemVerilog dynamic array (LRM 7.5). Size set at run time via `new[N]` /
 // `new[N](other)` constructors; default is the empty array (LRM Table 6-7).
@@ -278,7 +305,217 @@ class DynamicArray {
         std::forward<F>(key), [](auto& acc, auto& v) { acc = acc ^ v; });
   }
 
+  // LRM 7.12.1 locator methods. Each returns a queue: the value locators
+  // (`find`, `find_first`, `find_last`, `min`, `max`, `unique`) return a
+  // queue of elements; the index locators (`find_index`, ...) return a queue
+  // of `int`. No match or an empty receiver yields an empty queue. The `with`
+  // clause is mandatory for the find family (a Boolean predicate) and
+  // optional for `min` / `max` / `unique` (a comparison key; omitted means the
+  // element itself). The closure receives each element and its index, matching
+  // the ordering / reduction `*By` convention above.
+
+  template <typename F>
+  [[nodiscard]] auto FindBy(F pred) const -> Queue<T> {
+    std::vector<T> out;
+    for (std::size_t i = 0; i < data_.size(); ++i) {
+      if (static_cast<bool>(
+              pred(data_[i], PackedArray::Int(static_cast<int>(i))))) {
+        out.push_back(data_[i]);
+      }
+    }
+    return Queue<T>(oob_slot_, out);
+  }
+
+  template <typename F>
+  [[nodiscard]] auto FindIndexBy(F pred) const -> Queue<PackedArray> {
+    std::vector<PackedArray> out;
+    for (std::size_t i = 0; i < data_.size(); ++i) {
+      if (static_cast<bool>(
+              pred(data_[i], PackedArray::Int(static_cast<int>(i))))) {
+        out.push_back(PackedArray::Int(static_cast<int>(i)));
+      }
+    }
+    return {PackedArray::Int(0), out};
+  }
+
+  template <typename F>
+  [[nodiscard]] auto FindFirstBy(F pred) const -> Queue<T> {
+    std::vector<T> out;
+    for (std::size_t i = 0; i < data_.size(); ++i) {
+      if (static_cast<bool>(
+              pred(data_[i], PackedArray::Int(static_cast<int>(i))))) {
+        out.push_back(data_[i]);
+        break;
+      }
+    }
+    return Queue<T>(oob_slot_, out);
+  }
+
+  template <typename F>
+  [[nodiscard]] auto FindFirstIndexBy(F pred) const -> Queue<PackedArray> {
+    std::vector<PackedArray> out;
+    for (std::size_t i = 0; i < data_.size(); ++i) {
+      if (static_cast<bool>(
+              pred(data_[i], PackedArray::Int(static_cast<int>(i))))) {
+        out.push_back(PackedArray::Int(static_cast<int>(i)));
+        break;
+      }
+    }
+    return {PackedArray::Int(0), out};
+  }
+
+  template <typename F>
+  [[nodiscard]] auto FindLastBy(F pred) const -> Queue<T> {
+    std::vector<T> out;
+    for (std::size_t i = data_.size(); i-- > 0;) {
+      if (static_cast<bool>(
+              pred(data_[i], PackedArray::Int(static_cast<int>(i))))) {
+        out.push_back(data_[i]);
+        break;
+      }
+    }
+    return Queue<T>(oob_slot_, out);
+  }
+
+  template <typename F>
+  [[nodiscard]] auto FindLastIndexBy(F pred) const -> Queue<PackedArray> {
+    std::vector<PackedArray> out;
+    for (std::size_t i = data_.size(); i-- > 0;) {
+      if (static_cast<bool>(
+              pred(data_[i], PackedArray::Int(static_cast<int>(i))))) {
+        out.push_back(PackedArray::Int(static_cast<int>(i)));
+        break;
+      }
+    }
+    return {PackedArray::Int(0), out};
+  }
+
+  [[nodiscard]] auto Min() const -> Queue<T> {
+    return ExtremumElement(
+        [](const T& a, const T& b) { return detail::LocatorKeyLess(a, b); });
+  }
+  [[nodiscard]] auto Max() const -> Queue<T> {
+    return ExtremumElement(
+        [](const T& a, const T& b) { return detail::LocatorKeyLess(b, a); });
+  }
+  template <typename F>
+  [[nodiscard]] auto MinBy(F&& key) const -> Queue<T> {
+    return ExtremumByKey(
+        std::forward<F>(key), [](const auto& a, const auto& b) {
+          return detail::LocatorKeyLess(a, b);
+        });
+  }
+  template <typename F>
+  [[nodiscard]] auto MaxBy(F&& key) const -> Queue<T> {
+    return ExtremumByKey(
+        std::forward<F>(key), [](const auto& a, const auto& b) {
+          return detail::LocatorKeyLess(b, a);
+        });
+  }
+
+  [[nodiscard]] auto Unique() const -> Queue<T> {
+    std::vector<T> out;
+    std::vector<T> seen;
+    for (const auto& elem : data_) {
+      if (!SeenContains(seen, elem)) {
+        seen.push_back(elem);
+        out.push_back(elem);
+      }
+    }
+    return Queue<T>(oob_slot_, out);
+  }
+  template <typename F>
+  [[nodiscard]] auto UniqueBy(F key) const -> Queue<T> {
+    using KeyT = std::invoke_result_t<F&, const T&, const PackedArray&>;
+    std::vector<T> out;
+    std::vector<KeyT> seen;
+    for (std::size_t i = 0; i < data_.size(); ++i) {
+      auto k = key(data_[i], PackedArray::Int(static_cast<int>(i)));
+      if (!SeenContains(seen, k)) {
+        seen.push_back(k);
+        out.push_back(data_[i]);
+      }
+    }
+    return Queue<T>(oob_slot_, out);
+  }
+
+  [[nodiscard]] auto UniqueIndex() const -> Queue<PackedArray> {
+    std::vector<PackedArray> out;
+    std::vector<T> seen;
+    for (std::size_t i = 0; i < data_.size(); ++i) {
+      if (!SeenContains(seen, data_[i])) {
+        seen.push_back(data_[i]);
+        out.push_back(PackedArray::Int(static_cast<int>(i)));
+      }
+    }
+    return {PackedArray::Int(0), out};
+  }
+  template <typename F>
+  [[nodiscard]] auto UniqueIndexBy(F key) const -> Queue<PackedArray> {
+    using KeyT = std::invoke_result_t<F&, const T&, const PackedArray&>;
+    std::vector<PackedArray> out;
+    std::vector<KeyT> seen;
+    for (std::size_t i = 0; i < data_.size(); ++i) {
+      auto k = key(data_[i], PackedArray::Int(static_cast<int>(i)));
+      if (!SeenContains(seen, k)) {
+        seen.push_back(k);
+        out.push_back(PackedArray::Int(static_cast<int>(i)));
+      }
+    }
+    return {PackedArray::Int(0), out};
+  }
+
  private:
+  // Returns a one-element queue holding the element ranked first by `prefer`
+  // (`prefer(candidate, current)` true means the candidate replaces the
+  // current pick), or an empty queue when the receiver is empty. Min and Max
+  // differ only in the direction of `prefer`.
+  template <typename Prefer>
+  [[nodiscard]] auto ExtremumElement(Prefer prefer) const -> Queue<T> {
+    std::vector<T> out;
+    if (!data_.empty()) {
+      std::size_t pick = 0;
+      for (std::size_t i = 1; i < data_.size(); ++i) {
+        if (prefer(data_[i], data_[pick])) {
+          pick = i;
+        }
+      }
+      out.push_back(data_[pick]);
+    }
+    return Queue<T>(oob_slot_, out);
+  }
+
+  // Keyed sibling of ExtremumElement: ranks by the closure's key but returns
+  // the element itself (LRM 7.12.1 `min` / `max with`).
+  template <typename F, typename Prefer>
+  [[nodiscard]] auto ExtremumByKey(F key, Prefer prefer) const -> Queue<T> {
+    std::vector<T> out;
+    if (!data_.empty()) {
+      std::size_t pick = 0;
+      auto best_key = key(data_[0], PackedArray::Int(0));
+      for (std::size_t i = 1; i < data_.size(); ++i) {
+        auto k = key(data_[i], PackedArray::Int(static_cast<int>(i)));
+        if (prefer(k, best_key)) {
+          best_key = k;
+          pick = i;
+        }
+      }
+      out.push_back(data_[pick]);
+    }
+    return Queue<T>(oob_slot_, out);
+  }
+
+  template <typename K>
+  [[nodiscard]] static auto SeenContains(const std::vector<K>& seen, const K& k)
+      -> bool {
+    for (const auto& s : seen) {
+      if (detail::LocatorKeySame(k, s)) {
+        return true;
+      }
+    }
+    return false;
+  }
+
   template <typename Compare>
   auto SelectionSortBy(Compare cmp) -> void {
     using std::swap;

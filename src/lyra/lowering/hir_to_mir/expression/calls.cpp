@@ -12,10 +12,8 @@
 #include "lyra/diag/diagnostic.hpp"
 #include "lyra/hir/expr.hpp"
 #include "lyra/hir/procedural_body.hpp"
-#include "lyra/hir/structural_scope.hpp"
 #include "lyra/hir/subroutine.hpp"
 #include "lyra/hir/subroutine_ref.hpp"
-#include "lyra/hir/value_ref.hpp"
 #include "lyra/lowering/hir_to_mir/capture_sink.hpp"
 #include "lyra/lowering/hir_to_mir/expression/system/control.hpp"
 #include "lyra/lowering/hir_to_mir/expression/system/diagnostic.hpp"
@@ -32,7 +30,6 @@
 #include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/expr.hpp"
 #include "lyra/mir/procedural_hops.hpp"
-#include "lyra/mir/runtime_timescale.hpp"
 #include "lyra/support/system_subroutine.hpp"
 
 namespace lyra::lowering::hir_to_mir {
@@ -133,6 +130,26 @@ auto LowerArrayMethodKind(hir::ArrayMethodKind k) -> mir::ArrayMethodKind {
       return mir::ArrayMethodKind::kOr;
     case hir::ArrayMethodKind::kXor:
       return mir::ArrayMethodKind::kXor;
+    case hir::ArrayMethodKind::kFind:
+      return mir::ArrayMethodKind::kFind;
+    case hir::ArrayMethodKind::kFindIndex:
+      return mir::ArrayMethodKind::kFindIndex;
+    case hir::ArrayMethodKind::kFindFirst:
+      return mir::ArrayMethodKind::kFindFirst;
+    case hir::ArrayMethodKind::kFindFirstIndex:
+      return mir::ArrayMethodKind::kFindFirstIndex;
+    case hir::ArrayMethodKind::kFindLast:
+      return mir::ArrayMethodKind::kFindLast;
+    case hir::ArrayMethodKind::kFindLastIndex:
+      return mir::ArrayMethodKind::kFindLastIndex;
+    case hir::ArrayMethodKind::kMin:
+      return mir::ArrayMethodKind::kMin;
+    case hir::ArrayMethodKind::kMax:
+      return mir::ArrayMethodKind::kMax;
+    case hir::ArrayMethodKind::kUnique:
+      return mir::ArrayMethodKind::kUnique;
+    case hir::ArrayMethodKind::kUniqueIndex:
+      return mir::ArrayMethodKind::kUniqueIndex;
   }
   throw InternalError("LowerArrayMethodKind: unknown hir::ArrayMethodKind");
 }

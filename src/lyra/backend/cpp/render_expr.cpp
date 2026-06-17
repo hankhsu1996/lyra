@@ -813,6 +813,26 @@ auto ArrayMethodMemberName(mir::ArrayMethodKind k) -> std::string_view {
       return "Or";
     case mir::ArrayMethodKind::kXor:
       return "Xor";
+    case mir::ArrayMethodKind::kFind:
+      return "Find";
+    case mir::ArrayMethodKind::kFindIndex:
+      return "FindIndex";
+    case mir::ArrayMethodKind::kFindFirst:
+      return "FindFirst";
+    case mir::ArrayMethodKind::kFindFirstIndex:
+      return "FindFirstIndex";
+    case mir::ArrayMethodKind::kFindLast:
+      return "FindLast";
+    case mir::ArrayMethodKind::kFindLastIndex:
+      return "FindLastIndex";
+    case mir::ArrayMethodKind::kMin:
+      return "Min";
+    case mir::ArrayMethodKind::kMax:
+      return "Max";
+    case mir::ArrayMethodKind::kUnique:
+      return "Unique";
+    case mir::ArrayMethodKind::kUniqueIndex:
+      return "UniqueIndex";
   }
   throw InternalError("ArrayMethodMemberName: unknown kind");
 }
