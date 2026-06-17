@@ -237,8 +237,8 @@ auto RenderConstructOwnedObjectStmt(
     trailing_args += ", " + *arg_or;
   }
   const std::string make = "std::make_unique<" + target_scope.name +
-                           ">(self, \"" + target_scope.name + "\"" +
-                           trailing_args + ")";
+                           ">(self, \"" + target_scope.name +
+                           "\", self->Services()" + trailing_args + ")";
   const auto child = mir::GetChildScope(ctx.Unit(), var.type);
   if (!child.has_value() ||
       !std::holds_alternative<mir::GenerateScopeChild>(*child)) {
@@ -283,7 +283,8 @@ auto RenderExternalUnitFill(
     return out;
   }
   std::string out = Indent(indent) + lvalue + " = std::make_unique<" +
-                    unit_name + ">(self, \"" + label + "\");\n";
+                    unit_name + ">(self, \"" + label +
+                    "\", self->Services());\n";
   std::string idx = "{}";
   if (depth > 0) {
     idx = "std::array{";

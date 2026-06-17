@@ -20,8 +20,8 @@
 
 namespace lyra::runtime {
 
-Scope::Scope(Scope* parent, std::string name)
-    : parent_(parent), name_(std::move(name)) {
+Scope::Scope(Scope* parent, std::string name, RuntimeServices& services)
+    : parent_(parent), name_(std::move(name)), services_(&services) {
   if (parent_ != nullptr) {
     parent_->AddChild(*this);
   }
@@ -77,15 +77,14 @@ auto Scope::Name() const -> std::string_view {
   return name_;
 }
 
-void Scope::Bind(RuntimeServices& services) {
-  services_ = &services;
+void Scope::Bind() {
   // The whole tree is constructed before Bind runs, so every ancestor and the
   // full parent chain exist when an ExternUp member relocates by climbing.
   for (ExternBase* member : externs_) {
     member->Relocate();
   }
   CreateProcesses();
-  ForEachChild([&services](Scope& child) { child.Bind(services); });
+  ForEachChild([](Scope& child) { child.Bind(); });
 }
 
 void Scope::RegisterExtern(ExternBase* member) {
@@ -106,9 +105,6 @@ auto Scope::ResolveUpwardScope(std::string_view ancestor) -> Scope* {
 }
 
 auto Scope::Services() -> RuntimeServices& {
-  if (services_ == nullptr) {
-    throw InternalError("Scope::Services: scope not bound");
-  }
   return *services_;
 }
 

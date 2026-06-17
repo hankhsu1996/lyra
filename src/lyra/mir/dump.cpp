@@ -656,8 +656,7 @@ class MirDumper {
           v.source_name.empty() ? "" : std::format(" as \"{}\"", v.source_name);
       Line(
           std::format(
-              "[{}] \"{}\"{} : {} init=Expr[{}]", i, v.name, as,
-              FormatVarType(v.type), v.initializer.value));
+              "[{}] \"{}\"{} : {}", i, v.name, as, FormatVarType(v.type)));
     }
     Dedent();
 

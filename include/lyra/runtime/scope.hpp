@@ -33,7 +33,7 @@ class Scope {
  public:
   using ChildVisitor = std::function<void(Scope&)>;
 
-  Scope(Scope* parent, std::string name);
+  Scope(Scope* parent, std::string name, RuntimeServices& services);
   virtual ~Scope() = default;
   Scope(const Scope&) = delete;
   auto operator=(const Scope&) -> Scope& = delete;
@@ -93,10 +93,11 @@ class Scope {
     return kUnspecifiedTimePrecisionPower;
   }
 
-  // Wires the services handle, creates this scope's processes, then recurses
-  // into the children. Identity (name, parent, kind-as-type) is already fixed
-  // at construction; bind only installs runtime behavior.
-  void Bind(RuntimeServices& services);
+  // Relocates any registered `ExternUp` members, creates this scope's
+  // processes, then recurses into the children. Services are already wired in
+  // the constructor; Bind only installs runtime behavior that requires the
+  // whole tree to exist.
+  void Bind();
 
   // Last-write-wins per site within a time slot: re-submit at the same site
   // overwrites the prior closure, which suppresses settle-time glitches.
@@ -142,7 +143,7 @@ class Scope {
 
   Scope* parent_ = nullptr;
   std::string name_;
-  RuntimeServices* services_ = nullptr;
+  RuntimeServices* services_ = nullptr;  // borrowed; set in ctor.
   // Non-owning child links; the typed members on the derived class own the
   // children. This is the object tree's own structure, not a parallel one.
   std::vector<Scope*> children_;

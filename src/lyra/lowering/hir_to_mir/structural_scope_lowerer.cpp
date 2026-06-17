@@ -199,11 +199,8 @@ auto InstallInstanceMembers(StructuralScopeLowerer& scope, WalkFrame frame)
     }
     const mir::TypeId var_type = MakeExternalUnitMemberType(
         scope.Module(), im.target_unit, im.array_dims.size());
-    const mir::ExprId init =
-        SynthesizeDefaultValueExpr(scope.Module(), frame, var_type);
     const mir::StructuralVarId var_id = mir_scope.AddStructuralVar(
-        mir::StructuralVarDecl{
-            .name = im.instance_name, .type = var_type, .initializer = init});
+        mir::StructuralVarDecl{.name = im.instance_name, .type = var_type});
     instance_member_vars.push_back(var_id);
 
     ctor_scope.AppendStmt(
@@ -267,12 +264,9 @@ auto MaterializeCrossUnitRefTargets(
               .ancestor = up->ancestor_name,
               .tail = std::move(tail),
               .signal = std::move(signal)});
-      const mir::ExprId init = SynthesizeDefaultValueExpr(module, frame, leaf);
       const mir::StructuralVarId var = mir_scope.AddStructuralVar(
           mir::StructuralVarDecl{
-              .name = std::move(member_name),
-              .type = ext_type,
-              .initializer = init});
+              .name = std::move(member_name), .type = ext_type});
       scope.AddCrossUnitRefTarget(
           mir::StructuralVarRef{.hops = {.value = 0}, .var = var}, ext_type);
       slot_vars.emplace_back(std::nullopt);
@@ -281,13 +275,10 @@ auto MaterializeCrossUnitRefTargets(
       const mir::TypeId slot_type = module.Unit().AddType(
           mir::PointerType{
               .pointee = leaf, .ownership = mir::PointerOwnership::kBorrowed});
-      const mir::ExprId init =
-          SynthesizeDefaultValueExpr(module, frame, slot_type);
       const mir::StructuralVarId slot = mir_scope.AddStructuralVar(
           mir::StructuralVarDecl{
               .name = "xref" + std::to_string(downward_slot),
-              .type = slot_type,
-              .initializer = init});
+              .type = slot_type});
       scope.AddCrossUnitRefTarget(
           mir::StructuralVarRef{.hops = {.value = 0}, .var = slot}, slot_type);
       slot_vars.emplace_back(slot);
@@ -708,14 +699,11 @@ auto InstallGenerateOwnedChildScopes(
       if (spec.is_repeated) {
         var_type = module.Unit().AddType(mir::VectorType{.element = var_type});
       }
-      const mir::ExprId companion_init =
-          SynthesizeDefaultValueExpr(module, frame, var_type);
       const mir::StructuralVarId var_id = mir_scope.AddStructuralVar(
           mir::StructuralVarDecl{
               .name = companion_name,
               .source_name = spec.scope->source_name,
-              .type = var_type,
-              .initializer = companion_init});
+              .type = var_type});
 
       gen_bindings.by_scope_id.at(spec.scope_id.value) =
           ChildStructuralScopeBinding{.scope_id = child_id, .var_id = var_id};
@@ -767,28 +755,69 @@ auto StructuralScopeLowerer::Run(
           .WithProceduralScope(&ctor_scope)
           .WithSelfBinding(self_id, frame.procedural_depth);
   const mir::TypeId void_type = module.Unit().AddType(mir::VoidType{});
+  const mir::TypeId self_ptr_type = module.Unit().builtins.self_pointer;
+  const auto self_read = [&]() -> mir::ExprId {
+    return ctor_scope.AddExpr(
+        mir::Expr{
+            .data =
+                mir::ProceduralVarRef{
+                    .hops = scope_frame.procedural_depth -
+                            scope_frame.self_decl_depth,
+                    .var = *scope_frame.self_binding},
+            .type = self_ptr_type});
+  };
   for (std::size_t i = 0; i < hir_scope.structural_vars.size(); ++i) {
     const hir::StructuralVarId hir_id{static_cast<std::uint32_t>(i)};
     const auto& d = hir_scope.structural_vars[i];
     const mir::TypeId mir_type = module.TranslateType(d.type);
-    mir::ExprId mir_init{};
-    if (d.initializer.has_value()) {
-      auto init_or =
-          scope.LowerExpr(hir_scope.GetExpr(*d.initializer), scope_frame);
-      if (!init_or) return std::unexpected(std::move(init_or.error()));
-      mir_init = ctor_scope.AddExpr(*std::move(init_or));
-    } else {
-      mir_init = SynthesizeDefaultValueExpr(module, scope_frame, mir_type);
-    }
     const mir::StructuralVarId mir_id = mir_scope.AddStructuralVar(
-        mir::StructuralVarDecl{
-            .name = d.name, .type = mir_type, .initializer = mir_init});
+        mir::StructuralVarDecl{.name = d.name, .type = mir_type});
     scope.MapStructuralVar(hir_id, mir_id);
+
+    const auto& var_data = module.Unit().GetType(mir_type).data;
+    // Owned children (pointer / vector / object), resolution slots, upward
+    // refs, and named events have no "value assignment" -- their declaration
+    // shape itself fixes the field at construction. Value-typed signals
+    // (integral, string, real, unpacked / dynamic array) receive an LRM 10.5
+    // initialization statement before any RegisterSignal / CreateProcesses.
+    const bool is_assignable_value =
+        !std::holds_alternative<mir::PointerType>(var_data) &&
+        !std::holds_alternative<mir::VectorType>(var_data) &&
+        !std::holds_alternative<mir::ExternalRefType>(var_data) &&
+        !std::holds_alternative<mir::ObjectType>(var_data) &&
+        !std::holds_alternative<mir::ExternalUnitObjectType>(var_data) &&
+        !std::holds_alternative<mir::EventType>(var_data);
+    if (is_assignable_value) {
+      mir::ExprId value_id{};
+      if (d.initializer.has_value()) {
+        auto value_or =
+            scope.LowerExpr(hir_scope.GetExpr(*d.initializer), scope_frame);
+        if (!value_or) return std::unexpected(std::move(value_or.error()));
+        value_id = ctor_scope.AddExpr(*std::move(value_or));
+      } else {
+        value_id = SynthesizeDefaultValueExpr(module, scope_frame, mir_type);
+      }
+      const mir::ExprId init_target = ctor_scope.AddExpr(
+          mir::Expr{
+              .data =
+                  mir::MemberAccessExpr{
+                      .receiver = self_read(),
+                      .member =
+                          mir::StructuralVarRef{
+                              .hops = {.value = 0}, .var = mir_id}},
+              .type = mir_type});
+      const mir::ExprId assign_id = ctor_scope.AddExpr(
+          mir::Expr{
+              .data = mir::AssignExpr{.target = init_target, .value = value_id},
+              .type = mir_type});
+      ctor_scope.AppendStmt(
+          mir::Stmt{
+              .label = std::nullopt, .data = mir::ExprStmt{.expr = assign_id}});
+    }
 
     // A value-typed var is a signal: record its address under its name so a
     // cross-unit referrer resolves it by name at construction. Owned children
     // (pointer / vector / object) and resolution slots register differently.
-    const auto& var_data = module.Unit().GetType(mir_type).data;
     const bool is_signal =
         !std::holds_alternative<mir::PointerType>(var_data) &&
         !std::holds_alternative<mir::VectorType>(var_data) &&
@@ -796,28 +825,11 @@ auto StructuralScopeLowerer::Run(
         !std::holds_alternative<mir::ObjectType>(var_data) &&
         !std::holds_alternative<mir::ExternalUnitObjectType>(var_data);
     if (is_signal) {
-      const mir::TypeId self_ptr_type = module.Unit().builtins.self_pointer;
-      const mir::ExprId self = ctor_scope.AddExpr(
-          mir::Expr{
-              .data =
-                  mir::ProceduralVarRef{
-                      .hops = scope_frame.procedural_depth -
-                              scope_frame.self_decl_depth,
-                      .var = *scope_frame.self_binding},
-              .type = self_ptr_type});
-      const mir::ExprId self_for_member = ctor_scope.AddExpr(
-          mir::Expr{
-              .data =
-                  mir::ProceduralVarRef{
-                      .hops = scope_frame.procedural_depth -
-                              scope_frame.self_decl_depth,
-                      .var = *scope_frame.self_binding},
-              .type = self_ptr_type});
       const mir::ExprId var_ref = ctor_scope.AddExpr(
           mir::Expr{
               .data =
                   mir::MemberAccessExpr{
-                      .receiver = self_for_member,
+                      .receiver = self_read(),
                       .member =
                           mir::StructuralVarRef{
                               .hops = {.value = 0}, .var = mir_id}},
@@ -830,7 +842,7 @@ auto StructuralScopeLowerer::Run(
                           mir::RuntimeNavCallee{
                               .fn = mir::RuntimeFn::kRegisterSignal,
                               .name = d.name},
-                      .arguments = {self, var_ref}},
+                      .arguments = {self_read(), var_ref}},
               .type = void_type});
       ctor_scope.AppendStmt(
           mir::Stmt{

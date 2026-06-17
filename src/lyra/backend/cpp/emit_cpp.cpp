@@ -34,10 +34,9 @@ auto RenderField(
   const auto& unit = ctor_ctx.Unit();
   auto type_or = RenderTypeAsCpp(unit, ctor_ctx.StructuralScope(), var.type);
   if (!type_or) return std::unexpected(std::move(type_or.error()));
-  // An upward reference is an ExternUp member constructed with its symbol --
-  // the ancestor name, the by-name tail down through its owned children, and
-  // the leaf signal. It registers itself and relocates at Bind, so it has no
-  // value initializer.
+  // An upward reference is an ExternUp member: its constructor takes the
+  // symbol payload (ancestor, by-name tail, leaf signal) rather than a value
+  // initializer; it registers itself and relocates at Bind.
   if (const auto* er =
           std::get_if<mir::ExternalRefType>(&unit.GetType(var.type).data)) {
     std::string tail = "{";
@@ -54,21 +53,11 @@ auto RenderField(
     return Indent(indent) + *type_or + " " + var.name + "{this, \"" +
            er->ancestor + "\", " + tail + ", \"" + er->signal + "\"};\n";
   }
-  const RenderContext field_init_ctx = ctor_ctx.WithClassMemberInit();
-  auto value_expr_or =
-      RenderExpr(field_init_ctx, field_init_ctx.Expr(var.initializer));
-  if (!value_expr_or) {
-    return std::unexpected(std::move(value_expr_or.error()));
-  }
-  // Var<T> forwards its single payload through a variadic-of-1 ctor to T's
-  // copy ctor. Plain T uses copy-init because `T n(args);` at class scope
-  // would parse as a member-function declaration.
   if (IsObservableScalarType(unit.GetType(var.type))) {
     return Indent(indent) + "lyra::runtime::Var<" + *type_or + "> " + var.name +
-           "{" + *value_expr_or + "};\n";
+           "{};\n";
   }
-  return Indent(indent) + *type_or + " " + var.name + " = " + *value_expr_or +
-         ";\n";
+  return Indent(indent) + *type_or + " " + var.name + "{};\n";
 }
 
 auto RenderParamField(
@@ -88,8 +77,10 @@ auto RenderConstructor(
     const RenderContext& scope_ctx, const mir::StructuralScope& s,
     const std::string& base_class, std::size_t indent)
     -> diag::Result<std::string> {
-  std::string sig = s.name + "(lyra::runtime::Scope* parent, std::string name";
-  std::string init_list = base_class + "(parent, std::move(name))";
+  std::string sig = s.name +
+                    "(lyra::runtime::Scope* parent, std::string name, "
+                    "lyra::runtime::RuntimeServices& services";
+  std::string init_list = base_class + "(parent, std::move(name), services)";
   for (std::size_t i = 0; i < s.structural_params.size(); ++i) {
     const auto& p = s.structural_params[i];
     const auto param_name = CtorParamName(i);
@@ -517,11 +508,12 @@ auto RenderHostMain(std::span<const TopInstance> tops) -> std::string {
   }
   out += "\n";
   out += "auto main() -> int {\n";
+  out += "  lyra::runtime::Engine engine;\n";
   for (std::size_t i = 0; i < tops.size(); ++i) {
     out += "  " + tops[i].unit->structural_scope.name + " top" +
-           std::to_string(i) + "{nullptr, \"" + tops[i].name + "\"};\n";
+           std::to_string(i) + "{nullptr, \"" + tops[i].name +
+           "\", engine.Services()};\n";
   }
-  out += "  lyra::runtime::Engine engine;\n";
   out += "  std::vector<lyra::runtime::TopBinding> tops = {\n";
   for (std::size_t i = 0; i < tops.size(); ++i) {
     out += "      {&top" + std::to_string(i) + "},\n";

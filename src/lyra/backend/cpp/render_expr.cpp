@@ -196,7 +196,7 @@ auto RenderStructuralParamExpr(
   }
   const std::string& name =
       ctx.StructuralScope().GetStructuralParam(r.param).name;
-  return ctx.InClassMemberInit() ? name : "self->" + name;
+  return "self->" + name;
 }
 
 auto LookupProceduralVarName(
@@ -1803,16 +1803,11 @@ auto RenderExprNatural(const RenderContext& ctx, const mir::Expr& expr)
           [&](const mir::MemberAccessExpr& m) -> diag::Result<std::string> {
             const auto& scope = ctx.StructuralScopeAtHops(m.member.hops);
             const auto& var = scope.GetStructuralVar(m.member.var);
-            std::string base;
-            if (ctx.InClassMemberInit()) {
-              base = var.name;
-            } else {
-              auto receiver_or = RenderExpr(ctx, ctx.Expr(m.receiver));
-              if (!receiver_or) {
-                return std::unexpected(std::move(receiver_or.error()));
-              }
-              base = *receiver_or + "->" + var.name;
+            auto receiver_or = RenderExpr(ctx, ctx.Expr(m.receiver));
+            if (!receiver_or) {
+              return std::unexpected(std::move(receiver_or.error()));
             }
+            std::string base = *receiver_or + "->" + var.name;
             if (ctx.Unit().GetType(expr.type).IsIntegralPacked()) {
               base += ".Get()";
             }

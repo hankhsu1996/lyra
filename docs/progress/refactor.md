@@ -326,26 +326,19 @@ Entries get checked off as their PRs land. When the last entry lands, the file i
       makes semantic decisions, rendering doesn't. **Trigger**: scheduled after R11, R12, R14, R15,
       R16, R17 all land.
 
-- [ ] R19 -- Move structural-var initializers from inline C++ class-member-init to constructor body
-      statements. Today a structural var's `.initializer` ExprId is rendered as an inline
-      `Var<T> y{<init>};` at the C++ class body; the initializer expression lives in
-      `constructor_scope` but the render emits it at class-body scope where neither `this` nor
-      `self` is available. R16 worked around this by adding an `in_class_member_init_` flag to
-      `RenderContext` so `MemberAccessExpr` and `StructuralParamRef` render bare field names instead
-      of the body-context `self->name`. That flag is exactly the kind of render-time walker state
-      R18 wants gone. Target shape: HIR-to-MIR appends an `AssignExpr` statement to the constructor
-      scope for each structural var with an initializer (matching how a body local with init is
-      lowered); the cpp emit declares the class member with no inline initializer and the ctor body
-      runs the assignment in init-list order. The `in_class_member_init_` flag and the inline-init
-      handling in `RenderField` both disappear. As a follow-on, the `init(M* self)` static helper
-      the C++ ctor currently delegates to can collapse back into the ctor body proper -- a single
-      `Top* self = this;` preamble at the top of the ctor body gives every callable form the same
-      "body opens by binding self" shape (process / subroutine become instance methods with the same
-      preamble; the `static` keyword disappears from method-form callables, which were only static
-      so `self` could be an explicit formal). **Why deferred**: orthogonal to landing R16; requires
-      touching HIR-to-MIR's constructor-scope wiring and the emit shape for class members.
-      **Trigger**: scheduled in front of R18, to ensure the render layer has no class-scope vs
-      body-scope flag left when R18 collapses the render walk.
+- [x] R19 -- LRM 10.5 variable initialization lowers to an `AssignExpr` statement at the top of
+      `constructor_scope.root_stmts`, with the value being the user-supplied expression when present
+      or the LRM Table 6-7 type default. `mir::StructuralVarDecl.initializer` is removed; MIR has
+      exactly one mechanism for construction-time work (the statement list). `RenderField` emits a
+      pure value-init declaration (`Var<T> name{};` or `T name{};`) with no inline initializer;
+      `RenderContext::in_class_member_init_` and `WithClassMemberInit` are removed. The C++ runtime
+      takes `RuntimeServices&` at `Scope` construction (Bind no longer wires services), and
+      `PackedArray` / `UnpackedArray<T>` / `DynamicArray<T>` gain default constructors with a 0-bit
+      sentinel shape that the first `AssignFrom` adopts -- so a constructor-body `Set` works without
+      the deferred-bind dance. Vars whose MIR type is non-assignable (pointer / vector / object /
+      external-unit-object / external-ref / event) are filtered out of the init-statement path --
+      their declaration shape itself fixes the field at construction. See
+      `docs/decisions/variable-initialization.md`.
 
 - [ ] R20 -- Turn runtime-scope method calls (`Services()`, `RegisterChild(name, indices, child)`,
       `RegisterSignal(name, var)`, `AddProcess(kind, coroutine)`,
