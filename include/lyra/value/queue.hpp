@@ -26,6 +26,12 @@ class Queue {
  public:
   using ElementType = T;
 
+  // Sentinel "uninitialized" form -- empty queue with a default-constructed
+  // OOB slot. Used as the declared default state of a queue field; the first
+  // MIR-level assignment overwrites the whole queue (LRM 10.5 variable
+  // initialization).
+  Queue() = default;
+
   // Empty queue with the shield slot seeded. Used for declarations like
   // `int q[$];` where the queue starts empty but the element shape is known
   // at lowering time.
