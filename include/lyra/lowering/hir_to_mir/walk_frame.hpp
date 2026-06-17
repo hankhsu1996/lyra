@@ -74,6 +74,15 @@ struct WalkFrame {
   // lowering. Empty outside a with-clause body.
   std::optional<mir::ProceduralVarId> active_index_binding;
 
+  // The `self` binding (mir.md invariant 11) at the root of the current body.
+  // Set at body entry (process / subroutine / constructor / closure) and
+  // unchanged through the body walk; updated on entry into a fresh body to
+  // that body's own self id. Empty before any body has been entered. The
+  // declaration depth records where the binding was declared so a deeper
+  // reader can compute hops as `current_depth - self_decl_depth`.
+  std::optional<mir::ProceduralVarId> self_binding;
+  ProceduralDepth self_decl_depth{};
+
   // How a `LoopVarRef` resolves in `StructuralScopeLowerer::LowerExpr`. Set
   // by the caller before dispatching a constructor expression. The default
   // (`kStructuralParam`) matches the common generate-control / continuous
@@ -125,6 +134,14 @@ struct WalkFrame {
       -> WalkFrame {
     WalkFrame next = *this;
     next.loop_var_mode = mode;
+    return next;
+  }
+
+  [[nodiscard]] auto WithSelfBinding(
+      mir::ProceduralVarId id, ProceduralDepth decl_depth) const -> WalkFrame {
+    WalkFrame next = *this;
+    next.self_binding = id;
+    next.self_decl_depth = decl_depth;
     return next;
   }
 };

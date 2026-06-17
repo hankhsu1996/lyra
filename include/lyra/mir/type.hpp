@@ -28,6 +28,7 @@ enum class TypeKind {
   kObject,
   kExternalUnitObject,
   kScope,
+  kSelf,
   kPointer,
   kVector,
   kExternalRef,
@@ -146,6 +147,13 @@ struct ScopeType {
   auto operator==(const ScopeType&) const -> bool = default;
 };
 
+// Pointee of `self` (mir.md invariant 11). Distinct from `ScopeType` (the
+// type-erased runtime base) and `ObjectType` (a child of the owner): names
+// the concrete scope this declaration sits in, resolved lexically.
+struct SelfType {
+  auto operator==(const SelfType&) const -> bool = default;
+};
+
 enum class PointerOwnership {
   kUnique,
   kShared,
@@ -201,7 +209,7 @@ using TypeData = std::variant<
     PackedArrayType, EnumType, UnpackedArrayType, DynamicArrayType, QueueType,
     AssociativeArrayType, StringType, EventType, RealType, ShortRealType,
     RealTimeType, ChandleType, VoidType, ObjectType, ExternalUnitObjectType,
-    ScopeType, PointerType, VectorType, ExternalRefType>;
+    ScopeType, SelfType, PointerType, VectorType, ExternalRefType>;
 
 struct Type {
   TypeData data;

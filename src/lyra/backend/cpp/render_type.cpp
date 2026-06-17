@@ -110,6 +110,9 @@ auto RenderTypeAsCpp(
           [](const mir::ScopeType&) -> diag::Result<std::string> {
             return std::string{"lyra::runtime::Scope"};
           },
+          [&](const mir::SelfType&) -> diag::Result<std::string> {
+            return std::string{owner_scope.name};
+          },
           [&](const mir::PointerType& p) -> diag::Result<std::string> {
             auto inner_or = RenderTypeAsCpp(unit, owner_scope, p.pointee);
             if (!inner_or) return std::unexpected(std::move(inner_or.error()));

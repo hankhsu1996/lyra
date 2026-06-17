@@ -48,8 +48,10 @@ class ProcessLowerer {
 
   // Lowers an entire HIR process (initial / final / always / always_ff /
   // always_comb / always_latch) into a `mir::Process`. Constructs the process
-  // root scope on the stack and walks `src`'s body into it.
-  auto Run(WalkFrame parent_frame, const hir::Process& src)
+  // root scope on the stack and walks `src`'s body into it. `name` is the
+  // identifier the enclosing scope chose for this process (LRM processes are
+  // anonymous, so the caller synthesises a positional identifier).
+  auto Run(WalkFrame parent_frame, std::string name, const hir::Process& src)
       -> diag::Result<mir::Process>;
 
   // Lowers a HIR subroutine declaration into a `mir::StructuralSubroutineDecl`.

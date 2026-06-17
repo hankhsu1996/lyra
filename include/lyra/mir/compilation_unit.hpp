@@ -26,6 +26,7 @@ struct BuiltinMirTypes {
   TypeId void_type;
   TypeId realtime;
   TypeId time;
+  TypeId self_pointer;
 };
 
 struct CompilationUnit {
@@ -63,6 +64,10 @@ struct CompilationUnit {
                     .signedness = Signedness::kUnsigned,
                     .dims = {PackedRange{.left = 63, .right = 0}},
                     .form = PackedArrayForm::kTime}}),
+            .self_pointer = AddType(
+                TypeData{PointerType{
+                    .pointee = AddType(TypeData{SelfType{}}),
+                    .ownership = PointerOwnership::kBorrowed}}),
         } {
   }
 

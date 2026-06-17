@@ -178,7 +178,7 @@ auto RenderRuntimePrintCall(
   if (call.items.empty()) {
     return std::format(
         "{}({}, {}, {}std::span<const lyra::value::PrintItem>{{}})",
-        call_target, ctx.ServicesRef(), kind_literal, descriptor_arg);
+        call_target, "self->Services()", kind_literal, descriptor_arg);
   }
 
   // The PrintItem array is built inline via `std::array<PrintItem, N>{...}`;
@@ -195,7 +195,7 @@ auto RenderRuntimePrintCall(
 
   std::string out = std::format(
       "{}({}, {}, {}std::array<lyra::value::PrintItem, {}>{{", call_target,
-      ctx.ServicesRef(), kind_literal, descriptor_arg, call.items.size());
+      "self->Services()", kind_literal, descriptor_arg, call.items.size());
   for (std::size_t i = 0; i < item_inits.size(); ++i) {
     if (i != 0) {
       out += ", ";
@@ -206,11 +206,10 @@ auto RenderRuntimePrintCall(
   return out;
 }
 
-auto RenderRuntimeFinishCall(
-    const RenderContext& ctx, const mir::RuntimeFinishCall& call)
+auto RenderRuntimeFinishCall(const mir::RuntimeFinishCall& call)
     -> std::string {
   return std::format(
-      "co_await lyra::runtime::Finish({}, {})", ctx.ServicesRef(), call.level);
+      "co_await lyra::runtime::Finish(self->Services(), {})", call.level);
 }
 
 auto RenderRuntimeDiagnosticSeverity(mir::DiagnosticSeverity s)
@@ -248,7 +247,7 @@ auto RenderRuntimeDiagnosticCall(
     return std::format(
         "lyra::runtime::LyraDiagnostic({}, {}, {}, "
         "std::span<const lyra::value::PrintItem>{{}})",
-        ctx.ServicesRef(), sev_literal, origin_init);
+        "self->Services()", sev_literal, origin_init);
   }
 
   std::vector<std::string> item_inits;
@@ -262,7 +261,7 @@ auto RenderRuntimeDiagnosticCall(
   std::string out = std::format(
       "lyra::runtime::LyraDiagnostic({}, {}, {}, "
       "std::array<lyra::value::PrintItem, {}>{{",
-      ctx.ServicesRef(), sev_literal, origin_init, call.items.size());
+      "self->Services()", sev_literal, origin_init, call.items.size());
   for (std::size_t i = 0; i < item_inits.size(); ++i) {
     if (i != 0) {
       out += ", ";
@@ -288,7 +287,7 @@ auto RenderRuntimeCallExpr(
             return RenderRuntimeDiagnosticCall(ctx, dc);
           },
           [&](const mir::RuntimeFinishCall& fc) -> diag::Result<std::string> {
-            return RenderRuntimeFinishCall(ctx, fc);
+            return RenderRuntimeFinishCall(fc);
           },
           [&](const mir::RuntimeSubmitObservedCall& sc)
               -> diag::Result<std::string> {
@@ -297,8 +296,8 @@ auto RenderRuntimeCallExpr(
               return std::unexpected(std::move(closure_or.error()));
             }
             return std::format(
-                "{}SubmitObserved({}, {})", ctx.MemberPrefix(),
-                sc.site_id.value, *closure_or);
+                "{}SubmitObserved({}, {})", "self->", sc.site_id.value,
+                *closure_or);
           },
           [&](const mir::RuntimeSubmitNbaCall& nc)
               -> diag::Result<std::string> {
@@ -307,7 +306,7 @@ auto RenderRuntimeCallExpr(
               return std::unexpected(std::move(closure_or.error()));
             }
             return std::format(
-                "{}.SubmitNba({})", ctx.ServicesRef(), *closure_or);
+                "{}.SubmitNba({})", "self->Services()", *closure_or);
           },
           [&](const mir::RuntimeSubmitPostponedCall& pc)
               -> diag::Result<std::string> {
@@ -315,13 +314,11 @@ auto RenderRuntimeCallExpr(
             // matching $strobe-family runtime entry. The lambda captures
             // procedural locals and the receiver by value -- NBAs do not touch
             // the locals and the snapshot is frame-death-safe for `initial`
-            // bodies; structural signals resolve through the receiver at fire
-            // time and so see NBA-committed values. A method body captures
-            // `this` explicitly (`[=]`-capture of `this` is deprecated); a
-            // fork-branch body's `self` pointer is captured by the bare `[=]`.
-            // LRM 21.3.2 cancellation on $fclose is the file-sink entry's
-            // responsibility.
-            const std::string_view capture = ctx.DeferredByValueCapture();
+            // The closure captures every referenced local by value (`[=]`)
+            // including `self`, so it can reach scope members and Services()
+            // at fire time. LRM 21.3.2 cancellation on $fclose is the
+            // file-sink entry's responsibility.
+            const std::string_view capture{"[=]"};
             auto print_or = RenderRuntimePrintCall(ctx, pc.print);
             if (!print_or) {
               return std::unexpected(std::move(print_or.error()));
@@ -329,7 +326,7 @@ auto RenderRuntimeCallExpr(
             if (!pc.print.descriptor.has_value()) {
               return std::format(
                   "lyra::runtime::LyraSubmitStrobe({}, {}() {{ {}; }})",
-                  ctx.ServicesRef(), capture, *print_or);
+                  "self->Services()", capture, *print_or);
             }
             auto desc_or = RenderExpr(ctx, ctx.Expr(*pc.print.descriptor));
             if (!desc_or) {
@@ -337,7 +334,7 @@ auto RenderRuntimeCallExpr(
             }
             return std::format(
                 "lyra::runtime::LyraSubmitFStrobe({}, {}, {}() {{ {}; }})",
-                ctx.ServicesRef(), *desc_or, capture, *print_or);
+                "self->Services()", *desc_or, capture, *print_or);
           },
           [&](const mir::RuntimeFileOpenCall& fo) -> diag::Result<std::string> {
             auto name_or = RenderExpr(ctx, ctx.Expr(fo.name));
@@ -346,26 +343,26 @@ auto RenderRuntimeCallExpr(
               auto mode_or = RenderExpr(ctx, ctx.Expr(*fo.mode));
               if (!mode_or) return std::unexpected(std::move(mode_or.error()));
               return std::format(
-                  "lyra::runtime::LyraFOpen({}, {}, {})", ctx.ServicesRef(),
+                  "lyra::runtime::LyraFOpen({}, {}, {})", "self->Services()",
                   *name_or, *mode_or);
             }
             return std::format(
                 "lyra::runtime::LyraFOpen({}, {}, std::nullopt)",
-                ctx.ServicesRef(), *name_or);
+                "self->Services()", *name_or);
           },
           [&](const mir::RuntimeFileCloseCall& fc)
               -> diag::Result<std::string> {
             auto desc_or = RenderExpr(ctx, ctx.Expr(fc.descriptor));
             if (!desc_or) return std::unexpected(std::move(desc_or.error()));
             return std::format(
-                "lyra::runtime::LyraFClose({}, {})", ctx.ServicesRef(),
+                "lyra::runtime::LyraFClose({}, {})", "self->Services()",
                 *desc_or);
           },
           [&](const mir::RuntimeFileGetcCall& fg) -> diag::Result<std::string> {
             auto fd_or = RenderExpr(ctx, ctx.Expr(fg.fd));
             if (!fd_or) return std::unexpected(std::move(fd_or.error()));
             return std::format(
-                "lyra::runtime::LyraFGetc({}, {})", ctx.ServicesRef(), *fd_or);
+                "lyra::runtime::LyraFGetc({}, {})", "self->Services()", *fd_or);
           },
           [&](const mir::RuntimeFileUngetcCall& fu)
               -> diag::Result<std::string> {
@@ -374,7 +371,7 @@ auto RenderRuntimeCallExpr(
             auto fd_or = RenderExpr(ctx, ctx.Expr(fu.fd));
             if (!fd_or) return std::unexpected(std::move(fd_or.error()));
             return std::format(
-                "lyra::runtime::LyraFUngetc({}, {}, {})", ctx.ServicesRef(),
+                "lyra::runtime::LyraFUngetc({}, {}, {})", "self->Services()",
                 *c_or, *fd_or);
           },
           [&](const mir::RuntimeFileGetsCall& fg) -> diag::Result<std::string> {
@@ -386,7 +383,7 @@ auto RenderRuntimeCallExpr(
             auto fd_or = RenderExpr(ctx, ctx.Expr(fg.fd));
             if (!fd_or) return std::unexpected(std::move(fd_or.error()));
             return std::format(
-                "lyra::runtime::LyraFGets({}, {}, {})", ctx.ServicesRef(),
+                "lyra::runtime::LyraFGets({}, {}, {})", "self->Services()",
                 *dest_or, *fd_or);
           },
           [&](const mir::RuntimeFileReadCall& fr) -> diag::Result<std::string> {
@@ -402,7 +399,7 @@ auto RenderRuntimeCallExpr(
                       }
                       return std::format(
                           "lyra::runtime::LyraFRead({}, {}, {})",
-                          ctx.ServicesRef(), *dest_or, *fd_or);
+                          "self->Services()", *dest_or, *fd_or);
                     },
                     [&](const mir::RuntimeFileReadCall::UnpackedTarget& ut)
                         -> diag::Result<std::string> {
@@ -436,7 +433,7 @@ auto RenderRuntimeCallExpr(
                       return std::format(
                           "lyra::runtime::LyraFRead({}, {}, {}, "
                           "{}, {}, {}LL, {}LL)",
-                          ctx.ServicesRef(), *dest_or, *fd_or, *start_or,
+                          "self->Services()", *dest_or, *fd_or, *start_or,
                           *count_or, ut.declared_left, ut.declared_right);
                     },
                 },
@@ -450,7 +447,7 @@ auto RenderRuntimeCallExpr(
             auto op_or = RenderExpr(ctx, ctx.Expr(fs.operation));
             if (!op_or) return std::unexpected(std::move(op_or.error()));
             return std::format(
-                "lyra::runtime::LyraFSeek({}, {}, {}, {})", ctx.ServicesRef(),
+                "lyra::runtime::LyraFSeek({}, {}, {}, {})", "self->Services()",
                 *fd_or, *off_or, *op_or);
           },
           [&](const mir::RuntimeFileRewindCall& fr)
@@ -458,20 +455,20 @@ auto RenderRuntimeCallExpr(
             auto fd_or = RenderExpr(ctx, ctx.Expr(fr.fd));
             if (!fd_or) return std::unexpected(std::move(fd_or.error()));
             return std::format(
-                "lyra::runtime::LyraFRewind({}, {})", ctx.ServicesRef(),
+                "lyra::runtime::LyraFRewind({}, {})", "self->Services()",
                 *fd_or);
           },
           [&](const mir::RuntimeFileTellCall& ft) -> diag::Result<std::string> {
             auto fd_or = RenderExpr(ctx, ctx.Expr(ft.fd));
             if (!fd_or) return std::unexpected(std::move(fd_or.error()));
             return std::format(
-                "lyra::runtime::LyraFTell({}, {})", ctx.ServicesRef(), *fd_or);
+                "lyra::runtime::LyraFTell({}, {})", "self->Services()", *fd_or);
           },
           [&](const mir::RuntimeFileEofCall& fe) -> diag::Result<std::string> {
             auto fd_or = RenderExpr(ctx, ctx.Expr(fe.fd));
             if (!fd_or) return std::unexpected(std::move(fd_or.error()));
             return std::format(
-                "lyra::runtime::LyraFEof({}, {})", ctx.ServicesRef(), *fd_or);
+                "lyra::runtime::LyraFEof({}, {})", "self->Services()", *fd_or);
           },
           [&](const mir::RuntimeFileErrorCall& fe)
               -> diag::Result<std::string> {
@@ -480,7 +477,7 @@ auto RenderRuntimeCallExpr(
             auto dest_or = RenderExpr(ctx, ctx.Expr(fe.str_dest));
             if (!dest_or) return std::unexpected(std::move(dest_or.error()));
             return std::format(
-                "lyra::runtime::LyraFError({}, {}, {})", ctx.ServicesRef(),
+                "lyra::runtime::LyraFError({}, {}, {})", "self->Services()",
                 *fd_or, *dest_or);
           },
           [&](const mir::RuntimeFileFlushCall& ff)
@@ -488,12 +485,13 @@ auto RenderRuntimeCallExpr(
             if (!ff.descriptor.has_value()) {
               return std::format(
                   "lyra::runtime::LyraFFlush({}, std::nullopt)",
-                  ctx.ServicesRef());
+                  "self->Services()");
             }
             auto fd_or = RenderExpr(ctx, ctx.Expr(*ff.descriptor));
             if (!fd_or) return std::unexpected(std::move(fd_or.error()));
             return std::format(
-                "lyra::runtime::LyraFFlush({}, {})", ctx.ServicesRef(), *fd_or);
+                "lyra::runtime::LyraFFlush({}, {})", "self->Services()",
+                *fd_or);
           },
           [&](const mir::RuntimeScanCall& ss) -> diag::Result<std::string> {
             auto source_or = RenderExpr(ctx, ctx.Expr(ss.source));
@@ -555,7 +553,7 @@ auto RenderRuntimeCallExpr(
               case support::ScanSourceKind::kFile:
                 return std::format(
                     "lyra::runtime::LyraFScanf({}, {}, {}, {{{}}})",
-                    ctx.ServicesRef(), *source_or, *format_or, slot_pieces);
+                    "self->Services()", *source_or, *format_or, slot_pieces);
             }
             throw InternalError(
                 "RuntimeScanCall: unknown ScanSourceKind in render");
@@ -565,7 +563,7 @@ auto RenderRuntimeCallExpr(
               return std::format(
                   "lyra::runtime::LyraSFormat({}, "
                   "std::span<const lyra::value::PrintItem>{{}})",
-                  ctx.ServicesRef());
+                  "self->Services()");
             }
             std::vector<std::string> item_pieces;
             item_pieces.reserve(sf.items.size());
@@ -586,7 +584,7 @@ auto RenderRuntimeCallExpr(
             return std::format(
                 "lyra::runtime::LyraSFormat({}, "
                 "std::array<lyra::value::PrintItem, {}>{{{{{}}}}})",
-                ctx.ServicesRef(), sf.items.size(), body);
+                "self->Services()", sf.items.size(), body);
           },
           [&](const mir::RuntimeTimeCall& tc) -> diag::Result<std::string> {
             // The scaling target is the enclosing scope's time unit, read
@@ -598,22 +596,22 @@ auto RenderRuntimeCallExpr(
               case support::TimeKind::kTime:
                 return std::format(
                     "lyra::runtime::SimTimeInUnit({}, kTimeUnitPower)",
-                    ctx.ServicesRef());
+                    "self->Services()");
               case support::TimeKind::kStime:
                 return std::format(
                     "lyra::runtime::STimeInUnit({}, kTimeUnitPower)",
-                    ctx.ServicesRef());
+                    "self->Services()");
               case support::TimeKind::kRealtime:
                 return std::format(
                     "lyra::runtime::RealTimeInUnit({}, kTimeUnitPower)",
-                    ctx.ServicesRef());
+                    "self->Services()");
             }
             throw InternalError("RenderRuntimeCallExpr: unknown TimeKind");
           },
           [&](const mir::RuntimeSetTimeFormatCall& tf)
               -> diag::Result<std::string> {
             if (!tf.args.has_value()) {
-              return ctx.ServicesRef() + ".ResetTimeFormat()";
+              return std::string{"self->Services().ResetTimeFormat()"};
             }
             auto units = RenderExpr(ctx, ctx.Expr(tf.args->units));
             if (!units) return std::unexpected(std::move(units.error()));
@@ -626,7 +624,7 @@ auto RenderRuntimeCallExpr(
             auto width = RenderExpr(ctx, ctx.Expr(tf.args->min_width));
             if (!width) return std::unexpected(std::move(width.error()));
             return std::format(
-                "{}.SetTimeFormat({}, {}, {}, {})", ctx.ServicesRef(), *units,
+                "{}.SetTimeFormat({}, {}, {}, {})", "self->Services()", *units,
                 *precision, *suffix, *width);
           },
           [&](const mir::RuntimePrintTimescaleCall& pt)
@@ -636,7 +634,7 @@ auto RenderRuntimeCallExpr(
             return std::format(
                 "lyra::runtime::LyraPrintTimescale({}, {}, "
                 "kTimeUnitPower, kTimePrecisionPower)",
-                ctx.ServicesRef(), RenderCStringLiteral(pt.scope_name));
+                "self->Services()", RenderCStringLiteral(pt.scope_name));
           },
       },
       expr.call);

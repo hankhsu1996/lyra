@@ -154,10 +154,15 @@ struct DerefExpr {
   ExprId pointer;
 };
 
-// The enclosing scope object (`this` in a method body, `self` in a fork-branch
-// closure). The starting handle of an object-tree navigation; `Expr::type` is a
-// borrowed pointer to ScopeType.
-struct SelfScopeExpr {};
+// Class-member access through an explicit receiver expression. `receiver`
+// evaluates to a class-instance value (typically `ProceduralVarRef(self)`);
+// `member` names which structural var of the receiver's class to reach. The
+// receiver is explicit -- a backend never asks "what is the current receiver?"
+// (mir.md invariant 11).
+struct MemberAccessExpr {
+  ExprId receiver;
+  StructuralVarRef member;
+};
 
 struct ElementSelectExpr {
   ExprId base_value;
@@ -215,8 +220,8 @@ struct ConstructExpr {
 
 using ExprData = std::variant<
     IntegerLiteral, StringLiteral, TimeLiteral, RealLiteral, StructuralParamRef,
-    StructuralVarRef, ProceduralVarRef, UnaryExpr, BinaryExpr, ConditionalExpr,
-    AssignExpr, IncDecExpr, CallExpr, RuntimeCallExpr, DerefExpr, SelfScopeExpr,
+    ProceduralVarRef, UnaryExpr, BinaryExpr, ConditionalExpr, AssignExpr,
+    IncDecExpr, CallExpr, RuntimeCallExpr, DerefExpr, MemberAccessExpr,
     ConversionExpr, ClosureExpr, ElementSelectExpr, RangeSelectExpr, ConcatExpr,
     ReplicationExpr, ArrayLiteralExpr, ConstructExpr>;
 

@@ -123,9 +123,11 @@ auto RenderForkJoinModeLiteral(mir::JoinMode mode) -> std::string_view {
 auto RenderForkStmtNode(
     const RenderContext& ctx, const mir::ForkStmt& s, std::size_t indent)
     -> diag::Result<std::string> {
-  const std::string vec = ctx.AllocateTemp("fork_branches");
-  const std::string& class_name = ctx.StructuralScope().name;
-  const std::string receiver_object{ctx.ReceiverObject()};
+  // The fork-branches vector lives in this fork's own `{...}` block scope
+  // (opened just below), so a fixed name suffices -- a sibling fork in the
+  // surrounding scope, or a nested fork in a branch lambda body, each has
+  // its own `fork_branches` in its own C++ scope.
+  const std::string vec = "fork_branches";
   const RenderContext fork_ctx =
       ctx.WithProceduralScope(ctx.ProceduralScope().GetChildScope(s.scope));
   std::string out = Indent(indent) + "{\n";
@@ -144,9 +146,10 @@ auto RenderForkStmtNode(
       throw InternalError(
           "RenderForkStmtNode: fork branch closure has no body");
     }
-    std::string params = class_name + "* self";
-    std::string args{receiver_object};
-    for (const auto& capture : closure->captures) {
+    std::string params;
+    std::string args;
+    for (std::size_t ci = 0; ci < closure->captures.size(); ++ci) {
+      const auto& capture = closure->captures[ci];
       mir::ProceduralVarId binding{};
       std::string ref_marker;
       std::string arg;
@@ -168,13 +171,19 @@ auto RenderForkStmtNode(
       auto type_or =
           RenderTypeAsCpp(ctx.Unit(), ctx.StructuralScope(), bind.type);
       if (!type_or) return std::unexpected(std::move(type_or.error()));
-      params += ", " + *type_or + ref_marker + bind.name;
-      args += ", " + arg;
+      if (ci != 0) {
+        params += ", ";
+        args += ", ";
+      }
+      params += *type_or + ref_marker + bind.name;
+      args += arg;
     }
+    // The branch closure's coroutine-ness comes from MIR (HIR-to-MIR sets
+    // `is_coroutine = true` on every fork-branch ClosureExpr); the render
+    // does not hardcode the assumption.
     const RenderContext branch_ctx =
         fork_ctx.WithProceduralScope(*closure->body)
-            .WithCoroutine(true)
-            .WithReceiver("self");
+            .WithCoroutine(closure->is_coroutine);
     auto body_or = RenderProceduralScopeStatements(branch_ctx, indent + 2);
     if (!body_or) return std::unexpected(std::move(body_or.error()));
     out += Indent(indent + 1) + vec + ".push_back([](" + params +
@@ -184,7 +193,7 @@ auto RenderForkStmtNode(
     out += Indent(indent + 1) + "}(" + args + "));\n";
   }
   out += Indent(indent + 1) + "co_await lyra::runtime::Fork(" +
-         ctx.ServicesRef() + ", std::move(" + vec + "), " +
+         "self->Services()" + ", std::move(" + vec + "), " +
          std::string(RenderForkJoinModeLiteral(s.mode)) + ");\n";
   out += Indent(indent) + "}\n";
   return out;
@@ -228,26 +237,25 @@ auto RenderConstructOwnedObjectStmt(
     trailing_args += ", " + *arg_or;
   }
   const std::string make = "std::make_unique<" + target_scope.name +
-                           ">(this, \"" + target_scope.name + "\"" +
-                           trailing_args + ")";
+                           ">(self, \"" + target_scope.name +
+                           "\", self->Services()" + trailing_args + ")";
   const auto child = mir::GetChildScope(ctx.Unit(), var.type);
   if (!child.has_value() ||
       !std::holds_alternative<mir::GenerateScopeChild>(*child)) {
     throw InternalError(
         "ConstructOwnedObjectStmt target is not an owned object var");
   }
-  const std::string lhs = ctx.MemberPrefix() + var.name;
+  const std::string lhs = "self->" + var.name;
   const std::string reg_name =
       var.source_name.empty() ? var.name : var.source_name;
   if (std::holds_alternative<mir::VectorType>(
           ctx.Unit().GetType(var.type).data)) {
     return Indent(indent) + lhs + ".push_back(" + make + ");\n" +
-           Indent(indent) + ctx.MemberPrefix() + "RegisterChild(\"" + reg_name +
+           Indent(indent) + "self->RegisterChild(\"" + reg_name +
            "\", std::array{" + lhs + ".size() - 1}, *" + lhs + ".back());\n";
   }
   return Indent(indent) + lhs + " = " + make + ";\n" + Indent(indent) +
-         ctx.MemberPrefix() + "RegisterChild(\"" + reg_name + "\", {}, *" +
-         lhs + ");\n";
+         "self->RegisterChild(\"" + reg_name + "\", {}, *" + lhs + ");\n";
 }
 
 // Materializes an external-unit member by recursing on its type, mirroring the
@@ -275,7 +283,8 @@ auto RenderExternalUnitFill(
     return out;
   }
   std::string out = Indent(indent) + lvalue + " = std::make_unique<" +
-                    unit_name + ">(this, \"" + label + "\");\n";
+                    unit_name + ">(self, \"" + label +
+                    "\", self->Services());\n";
   std::string idx = "{}";
   if (depth > 0) {
     idx = "std::array{";
@@ -285,8 +294,8 @@ auto RenderExternalUnitFill(
     }
     idx += "}";
   }
-  out += Indent(indent) + ctx.MemberPrefix() + "RegisterChild(\"" + label +
-         "\", " + idx + ", *" + lvalue + ");\n";
+  out += Indent(indent) + "self->RegisterChild(\"" + label + "\", " + idx +
+         ", *" + lvalue + ");\n";
   return out;
 }
 
@@ -295,8 +304,8 @@ auto RenderConstructExternalUnitStmt(
     std::size_t indent) -> diag::Result<std::string> {
   const auto& var = ctx.StructuralScope().GetStructuralVar(s.target);
   return RenderExternalUnitFill(
-      ctx, ctx.MemberPrefix() + var.name, var.type, s.unit_name, var.name,
-      s.dims, 0, indent);
+      ctx, "self->" + var.name, var.type, s.unit_name, var.name, s.dims, 0,
+      indent);
 }
 
 auto RenderForStmtNode(
@@ -427,7 +436,7 @@ auto RenderStmt(
           },
           [&](const mir::DelayStmt& s) -> diag::Result<std::string> {
             return Indent(indent) + "co_await lyra::runtime::Delay(" +
-                   ctx.ServicesRef() + ", " + std::to_string(s.duration) +
+                   "self->Services()" + ", " + std::to_string(s.duration) +
                    ", kTimePrecisionPower);\n";
           },
           [&](const mir::ProceduralVarDeclStmt& s)

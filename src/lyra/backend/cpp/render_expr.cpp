@@ -194,7 +194,9 @@ auto RenderStructuralParamExpr(
         "cpp emit",
         diag::UnsupportedCategory::kFeature);
   }
-  return ctx.StructuralScope().GetStructuralParam(r.param).name;
+  const std::string& name =
+      ctx.StructuralScope().GetStructuralParam(r.param).name;
+  return "self->" + name;
 }
 
 auto LookupProceduralVarName(
@@ -202,7 +204,7 @@ auto LookupProceduralVarName(
   const auto& var = ctx.ProceduralScopeAtHops(ref.hops).vars.at(ref.var.value);
   if (var.lifetime == mir::VariableLifetime::kStatic) {
     return std::format(
-        "{}{}.{}", ctx.MemberPrefix(), ctx.StaticFrame(),
+        "{}{}.{}", "self->", ctx.StaticFrame(),
         StaticFrameMemberName(var.name, ref.var.value));
   }
   return var.name;
@@ -229,28 +231,10 @@ auto RenderStructuralVarName(
         "emit",
         diag::UnsupportedCategory::kFeature);
   }
-  return ctx.MemberPrefix() +
-         ctx.StructuralScope().GetStructuralVar(ref.var).name;
+  return "self->" + ctx.StructuralScope().GetStructuralVar(ref.var).name;
 }
 
 namespace {
-
-// Read-side render for a structural var ref. Integral packed vars wrap in
-// `Var<PackedArray>` whose held value is observed via `.Get()`; all other
-// storage types (real-family, string, ObjectType) expose the value directly,
-// so the bare field name is the C++ read expression. Writes use
-// `RenderStructuralVarName` directly (no `.Get()`); the read/write split is
-// intentional and lives at this boundary.
-auto RenderStructuralVarReadExpr(
-    const RenderContext& ctx, const mir::Expr& expr,
-    const mir::StructuralVarRef& m) -> diag::Result<std::string> {
-  auto name_or = RenderStructuralVarName(ctx, m);
-  if (!name_or) return std::unexpected(std::move(name_or.error()));
-  if (ctx.Unit().GetType(expr.type).IsIntegralPacked()) {
-    return *name_or + ".Get()";
-  }
-  return *name_or;
-}
 
 // Builds the C++ literal that materializes a 1-bit PackedArray of the SV-typed
 // shape carried by `result_ty`. Used to wrap the C++ `bool` result of a
@@ -966,7 +950,7 @@ auto RenderEventMethodCall(
   }
   const std::string args = (m.kind == mir::EventMethodKind::kTrigger ||
                             m.kind == mir::EventMethodKind::kTriggered)
-                               ? ctx.ServicesRef()
+                               ? "self->Services()"
                                : std::string{};
   const std::string raw_call = std::format(
       "({}).{}({})", *receiver_or, EventMethodMemberName(m.kind), args);
@@ -1098,8 +1082,9 @@ auto RenderCallExpr(
               if (i != 0) args += ", ";
               args += rendered;
             }
-            std::string call =
-                std::format("{}{}({})", ctx.MemberPrefix(), decl.name, args);
+            std::string call_args{std::string_view{"self"}};
+            if (!args.empty()) call_args += ", " + args;
+            std::string call = std::format("{}({})", decl.name, call_args);
             // A task is a coroutine enabled with `co_await`; the only legal
             // callers are process / task bodies, which are themselves
             // coroutines (LRM 13.4 b forbids a function enabling a task).
@@ -1255,10 +1240,14 @@ auto RenderLhsExpr(
     std::string_view mutate_adapter) -> diag::Result<std::string> {
   return std::visit(
       Overloaded{
-          [&](const mir::StructuralVarRef& r) -> diag::Result<std::string> {
-            auto name = RenderStructuralVarName(ctx, r);
-            if (!name) return std::unexpected(std::move(name.error()));
-            return *name + std::string{mutate_adapter};
+          [&](const mir::MemberAccessExpr& m) -> diag::Result<std::string> {
+            auto receiver_or = RenderExpr(ctx, ctx.Expr(m.receiver));
+            if (!receiver_or) {
+              return std::unexpected(std::move(receiver_or.error()));
+            }
+            const auto& scope = ctx.StructuralScopeAtHops(m.member.hops);
+            const auto& var = scope.GetStructuralVar(m.member.var);
+            return *receiver_or + "->" + var.name + std::string{mutate_adapter};
           },
           [&](const mir::ProceduralVarRef& l) -> diag::Result<std::string> {
             return LookupProceduralVarName(ctx, l);
@@ -1322,9 +1311,10 @@ auto LhsRootPrimary(const RenderContext& ctx, const mir::Expr& expr)
 auto LhsRootIsObservableScalar(const RenderContext& ctx, const mir::Expr& expr)
     -> bool {
   const mir::Expr& root = LhsRootPrimary(ctx, expr);
-  if (const auto* sv = std::get_if<mir::StructuralVarRef>(&root.data)) {
-    return IsObservableScalarType(ctx.Unit().GetType(
-        ctx.StructuralScope().GetStructuralVar(sv->var).type));
+  if (const auto* m = std::get_if<mir::MemberAccessExpr>(&root.data)) {
+    const auto& scope = ctx.StructuralScopeAtHops(m->member.hops);
+    return IsObservableScalarType(
+        ctx.Unit().GetType(scope.GetStructuralVar(m->member.var).type));
   }
   if (std::holds_alternative<mir::DerefExpr>(root.data)) {
     return IsObservableScalarType(ctx.Unit().GetType(root.type));
@@ -1333,7 +1323,7 @@ auto LhsRootIsObservableScalar(const RenderContext& ctx, const mir::Expr& expr)
 }
 
 auto IsLhsBarePrimary(const mir::Expr& expr) -> bool {
-  return std::holds_alternative<mir::StructuralVarRef>(expr.data) ||
+  return std::holds_alternative<mir::MemberAccessExpr>(expr.data) ||
          std::holds_alternative<mir::DerefExpr>(expr.data) ||
          std::holds_alternative<mir::ProceduralVarRef>(expr.data);
 }
@@ -1411,7 +1401,7 @@ auto RenderAssignExpr(const RenderContext& ctx, const mir::AssignExpr& a)
           diag::UnsupportedCategory::kFeature);
     }
     return LookupProceduralVarName(ctx, *ref_root) + ".Set(" +
-           ctx.ServicesRef() + ", " + *value_or + ")";
+           "self->Services()" + ", " + *value_or + ")";
   }
 
   const bool observable = LhsRootIsObservableScalar(ctx, lhs_expr);
@@ -1428,12 +1418,12 @@ auto RenderAssignExpr(const RenderContext& ctx, const mir::AssignExpr& a)
       // Procedural-local compounds operate on the underlying PackedArray
       // directly via its own `op=` overloads.
       const std::string chain =
-          observable ? *root_or + ".Mutate(" + ctx.ServicesRef() + ")"
+          observable ? *root_or + ".Mutate(" + "self->Services()" + ")"
                      : *root_or;
       return "(" + RenderCompoundAssign(*a.compound_op, chain, *value_or) + ")";
     }
     if (observable) {
-      return *root_or + ".Set(" + ctx.ServicesRef() + ", " + *value_or + ")";
+      return *root_or + ".Set(" + "self->Services()" + ", " + *value_or + ")";
     }
     return "(" + *root_or + " = " + *value_or + ")";
   }
@@ -1451,7 +1441,7 @@ auto RenderAssignExpr(const RenderContext& ctx, const mir::AssignExpr& a)
   // destructor commits the snapshot through `Var::Set` so subscribers fire.
   // Same shape inside or outside an NBA closure body -- no nested lambda.
   const std::string mutate_adapter =
-      observable ? ".Mutate(" + ctx.ServicesRef() + ")" : std::string{};
+      observable ? std::string{".Mutate(self->Services())"} : std::string{};
   auto chain_or = RenderLhsExpr(ctx, lhs_expr, mutate_adapter);
   if (!chain_or) return std::unexpected(std::move(chain_or.error()));
   if (a.compound_op.has_value()) {
@@ -1477,11 +1467,10 @@ auto RenderIncDecExpr(const RenderContext& ctx, const mir::IncDecExpr& inc)
   if (IsLhsBarePrimary(target_expr)) {
     auto root_or = RenderLhsExpr(ctx, target_expr, std::string_view{});
     if (!root_or) return std::unexpected(std::move(root_or.error()));
-    lhs =
-        observable ? *root_or + ".Mutate(" + ctx.ServicesRef() + ")" : *root_or;
+    lhs = observable ? *root_or + ".Mutate(self->Services())" : *root_or;
   } else {
     const std::string mutate_adapter =
-        observable ? ".Mutate(" + ctx.ServicesRef() + ")" : std::string{};
+        observable ? std::string{".Mutate(self->Services())"} : std::string{};
     auto chain_or = RenderLhsExpr(ctx, target_expr, mutate_adapter);
     if (!chain_or) return std::unexpected(std::move(chain_or.error()));
     lhs = *std::move(chain_or);
@@ -1536,15 +1525,12 @@ auto RenderClosureExpr(
     throw InternalError("RenderClosureExpr: closure has no body");
   }
 
-  // Capture the receiver by value so the deferred body can reach scope members
-  // (the Scope base's Services() accessor and SubmitObserved interface, plus
-  // the emitted class's structural vars) when it later runs: `this` in a method
-  // body, or the branch's `self` pointer when the closure is nested in a
-  // fork-branch closure (LRM 9.3.2). The explicit by-value captures from the
-  // MIR list go after.
-  std::string captures_text{ctx.ReceiverObject()};
+  // Every captured value flows through `closure.captures` as a named
+  // by-value or by-reference entry; the receiver `self` is captures[0] (mir.md
+  // invariant 11). The clause never contains `[this]`, `[=]`, or `[&]`.
+  std::string captures_text;
   for (std::size_t i = 0; i < closure.captures.size(); ++i) {
-    captures_text += ", ";
+    if (i != 0) captures_text += ", ";
     auto rendered_or = std::visit(
         Overloaded{
             [&](const mir::ByValueCapture& bv) -> diag::Result<std::string> {
@@ -1614,9 +1600,13 @@ auto RenderClosureExpr(
     return_clause = " -> " + *ret_ty_or;
   }
 
+  // The closure's coroutine-ness comes from MIR; every closure flowing
+  // through this path (NBA / `$strobe` / `$sscanf` IIFE / with-clause /
+  // deferred check) has `is_coroutine = false`, but the render reads the
+  // flag rather than assuming.
   const RenderContext body_ctx =
       RenderContext::ForRoot(ctx.Unit(), ctx.StructuralScope(), *closure.body)
-          .WithReceiver(ctx.ReceiverObject());
+          .WithCoroutine(closure.is_coroutine);
   auto body_or = RenderProceduralScopeStatements(body_ctx, 1);
   if (!body_or) return std::unexpected(std::move(body_or.error()));
 
@@ -1801,9 +1791,6 @@ auto RenderExprNatural(const RenderContext& ctx, const mir::Expr& expr)
           [&](const mir::StructuralParamRef& r) -> diag::Result<std::string> {
             return RenderStructuralParamExpr(ctx, r);
           },
-          [&](const mir::StructuralVarRef& m) -> diag::Result<std::string> {
-            return RenderStructuralVarReadExpr(ctx, expr, m);
-          },
           [&](const mir::ProceduralVarRef& l) -> diag::Result<std::string> {
             const std::string name = LookupProceduralVarName(ctx, l);
             return IsReferenceProceduralVar(ctx, l) ? name + ".Get()" : name;
@@ -1835,8 +1822,18 @@ auto RenderExprNatural(const RenderContext& ctx, const mir::Expr& expr)
           [&](const mir::DerefExpr& d) -> diag::Result<std::string> {
             return RenderDerefExpr(ctx, expr, d);
           },
-          [&](const mir::SelfScopeExpr&) -> diag::Result<std::string> {
-            return std::string(ctx.ReceiverObject());
+          [&](const mir::MemberAccessExpr& m) -> diag::Result<std::string> {
+            const auto& scope = ctx.StructuralScopeAtHops(m.member.hops);
+            const auto& var = scope.GetStructuralVar(m.member.var);
+            auto receiver_or = RenderExpr(ctx, ctx.Expr(m.receiver));
+            if (!receiver_or) {
+              return std::unexpected(std::move(receiver_or.error()));
+            }
+            std::string base = *receiver_or + "->" + var.name;
+            if (ctx.Unit().GetType(expr.type).IsIntegralPacked()) {
+              base += ".Get()";
+            }
+            return base;
           },
           [&](const mir::ClosureExpr& cl) -> diag::Result<std::string> {
             return RenderClosureExpr(ctx, cl);

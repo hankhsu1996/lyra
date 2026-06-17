@@ -58,6 +58,12 @@ class DynamicArray {
  public:
   using ElementType = T;
 
+  // Sentinel "uninitialized" form -- empty container with default-constructed
+  // OOB slot. Used as the declared default state of a `Var<DynamicArray<T>>`
+  // field; the first MIR-level assignment overwrites the whole array (LRM
+  // 10.5 variable initialization).
+  DynamicArray() = default;
+
   // Empty container with the shield slot seeded. Used for declarations like
   // `int arr[];` where the array starts empty but the element shape is
   // known at lowering time.

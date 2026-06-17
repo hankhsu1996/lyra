@@ -61,15 +61,31 @@ auto LowerForkStmt(
 
   std::vector<mir::ExprId> branch_ids;
   branch_ids.reserve(f.branches.size());
+  const mir::TypeId self_ptr_type =
+      process.Module().Unit().builtins.self_pointer;
   for (const hir::StmtId branch_hir_id : f.branches) {
     const hir::Stmt& branch = hir_proc.stmts.at(branch_hir_id.value);
     mir::ProceduralScope branch_scope;
 
+    const mir::ProceduralVarId branch_self_id = branch_scope.AddProceduralVar(
+        mir::ProceduralVarDecl{.name = "self", .type = self_ptr_type});
+    const mir::ExprId outer_self_read = fork_scope.AddExpr(
+        mir::Expr{
+            .data =
+                mir::ProceduralVarRef{
+                    .hops = fork_frame.procedural_depth -
+                            fork_frame.self_decl_depth,
+                    .var = *fork_frame.self_binding},
+            .type = self_ptr_type});
+
     CaptureSink sink{
         fork_frame.procedural_depth.Inner(), branch_scope, fork_scope};
-    const WalkFrame branch_frame = fork_frame.WithClosure(&sink)
-                                       .WithProceduralScope(&branch_scope)
-                                       .Deeper();
+    const WalkFrame branch_frame =
+        fork_frame.WithClosure(&sink)
+            .WithProceduralScope(&branch_scope)
+            .WithSelfBinding(
+                branch_self_id, fork_frame.procedural_depth.Inner())
+            .Deeper();
     auto lowered = process.LowerStmt(branch, branch_frame);
     if (!lowered) {
       return std::unexpected(std::move(lowered.error()));
@@ -77,6 +93,9 @@ auto LowerForkStmt(
     branch_scope.AppendStmt(*std::move(lowered));
 
     std::vector<mir::Capture> captures;
+    captures.emplace_back(
+        mir::ByValueCapture{
+            .value = outer_self_read, .binding = branch_self_id});
     for (const CaptureRequest& request : sink.TakeRequests()) {
       if (request.decl_depth == fork_depth) {
         captures.emplace_back(
@@ -92,6 +111,9 @@ auto LowerForkStmt(
     closure.captures = std::move(captures);
     closure.body =
         std::make_unique<mir::ProceduralScope>(std::move(branch_scope));
+    // LRM 9.3.2 fork branch: each branch is a concurrent thread that may
+    // suspend on timing controls / event waits inside its body.
+    closure.is_coroutine = true;
     branch_ids.push_back(fork_scope.AddExpr(
         mir::Expr{
             .data = std::move(closure),

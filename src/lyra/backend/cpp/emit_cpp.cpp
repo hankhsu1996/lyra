@@ -34,10 +34,9 @@ auto RenderField(
   const auto& unit = ctor_ctx.Unit();
   auto type_or = RenderTypeAsCpp(unit, ctor_ctx.StructuralScope(), var.type);
   if (!type_or) return std::unexpected(std::move(type_or.error()));
-  // An upward reference is an ExternUp member constructed with its symbol --
-  // the ancestor name, the by-name tail down through its owned children, and
-  // the leaf signal. It registers itself and relocates at Bind, so it has no
-  // value initializer.
+  // An upward reference is an ExternUp member: its constructor takes the
+  // symbol payload (ancestor, by-name tail, leaf signal) rather than a value
+  // initializer; it registers itself and relocates at Bind.
   if (const auto* er =
           std::get_if<mir::ExternalRefType>(&unit.GetType(var.type).data)) {
     std::string tail = "{";
@@ -54,19 +53,11 @@ auto RenderField(
     return Indent(indent) + *type_or + " " + var.name + "{this, \"" +
            er->ancestor + "\", " + tail + ", \"" + er->signal + "\"};\n";
   }
-  auto value_expr_or = RenderExpr(ctor_ctx, ctor_ctx.Expr(var.initializer));
-  if (!value_expr_or) {
-    return std::unexpected(std::move(value_expr_or.error()));
-  }
-  // Var<T> forwards its single payload through a variadic-of-1 ctor to T's
-  // copy ctor. Plain T uses copy-init because `T n(args);` at class scope
-  // would parse as a member-function declaration.
   if (IsObservableScalarType(unit.GetType(var.type))) {
     return Indent(indent) + "lyra::runtime::Var<" + *type_or + "> " + var.name +
-           "{" + *value_expr_or + "};\n";
+           "{};\n";
   }
-  return Indent(indent) + *type_or + " " + var.name + " = " + *value_expr_or +
-         ";\n";
+  return Indent(indent) + *type_or + " " + var.name + "{};\n";
 }
 
 auto RenderParamField(
@@ -86,8 +77,10 @@ auto RenderConstructor(
     const RenderContext& scope_ctx, const mir::StructuralScope& s,
     const std::string& base_class, std::size_t indent)
     -> diag::Result<std::string> {
-  std::string sig = s.name + "(lyra::runtime::Scope* parent, std::string name";
-  std::string init_list = base_class + "(parent, std::move(name))";
+  std::string sig = s.name +
+                    "(lyra::runtime::Scope* parent, std::string name, "
+                    "lyra::runtime::RuntimeServices& services";
+  std::string init_list = base_class + "(parent, std::move(name), services)";
   for (std::size_t i = 0; i < s.structural_params.size(); ++i) {
     const auto& p = s.structural_params[i];
     const auto param_name = CtorParamName(i);
@@ -102,7 +95,8 @@ auto RenderConstructor(
     return Indent(indent) + sig + " {}\n";
   }
   std::string out;
-  out += Indent(indent) + sig + " {\n";
+  out += Indent(indent) + sig + " { init(this); }\n";
+  out += Indent(indent) + "static void init(" + s.name + "* self) {\n";
   auto rendered_or = RenderProceduralScopeStatements(scope_ctx, indent + 1);
   if (!rendered_or) return std::unexpected(std::move(rendered_or.error()));
   out += *rendered_or;
@@ -110,15 +104,11 @@ auto RenderConstructor(
   return out;
 }
 
-auto RenderProcessMethodName(std::size_t index) -> std::string {
-  return "process_" + std::to_string(index);
-}
-
 auto RenderProcessMethod(
     const RenderContext* parent_struct_ctx, const mir::CompilationUnit& unit,
     const mir::StructuralScope& s, const mir::Process& process,
-    std::size_t index, std::size_t indent) -> diag::Result<std::string> {
-  const std::string frame_field = RenderProcessMethodName(index) + "__static";
+    std::size_t indent) -> diag::Result<std::string> {
+  const std::string frame_field = process.name + "__static";
   const RenderContext proc_ctx =
       ((parent_struct_ctx == nullptr)
            ? RenderContext::ForRoot(unit, s, process.root_procedural_scope)
@@ -133,8 +123,7 @@ auto RenderProcessMethod(
   // it, and a detached fork branch reaches it by reference past the activation.
   // A process with no static locals yields a fieldless frame -- harmless, and
   // it keeps the emit a uniform walk with no presence decision.
-  out += Indent(indent) + "struct " + RenderProcessMethodName(index) +
-         "_StaticFrame {\n";
+  out += Indent(indent) + "struct " + process.name + "_StaticFrame {\n";
   for (const auto& sl : process.static_locals) {
     const auto& var = process.root_procedural_scope.vars.at(sl.var.value);
     auto type_or = RenderTypeAsCpp(unit, s, var.type);
@@ -148,8 +137,8 @@ auto RenderProcessMethod(
   }
   out += Indent(indent) + "} " + frame_field + "{};\n";
 
-  out += Indent(indent) + "auto " + RenderProcessMethodName(index) +
-         "() -> lyra::runtime::Coroutine {\n";
+  out += Indent(indent) + "static auto " + process.name + "(" + s.name +
+         "* self) -> lyra::runtime::Coroutine {\n";
   auto rendered_or = RenderProceduralScopeStatements(proc_ctx, indent + 1);
   if (!rendered_or) return std::unexpected(std::move(rendered_or.error()));
   out += *rendered_or;
@@ -186,12 +175,12 @@ auto RenderSubroutineMethod(
     return_type = *std::move(result_or);
   }
 
-  std::string sig = return_type + " " + sub.name + "(";
-  for (std::size_t i = 0; i < sub.params.size(); ++i) {
-    const auto& param = sub.params[i];
+  std::string sig =
+      "static " + return_type + " " + sub.name + "(" + s.name + "* self";
+  for (const auto& param : sub.params) {
     auto type_or = RenderTypeAsCpp(unit, s, param.type);
     if (!type_or) return std::unexpected(std::move(type_or.error()));
-    if (i != 0) sig += ", ";
+    sig += ", ";
     // An `input` formal is a by-value copy (LRM 13.5.1). An `output` / `inout`
     // formal binds to the caller's writeback temp by reference (`T&`) so body
     // writes flow back at the copy-out. A `ref` / `const ref` formal aliases
@@ -269,11 +258,9 @@ auto RenderCreateProcesses(const mir::StructuralScope& s, std::size_t indent)
     -> std::string {
   std::string out;
   out += Indent(indent) + "void CreateProcesses() override {\n";
-  for (std::size_t i = 0; i < s.processes.size(); ++i) {
-    const auto& p = s.processes[i];
+  for (const auto& p : s.processes) {
     out += Indent(indent + 1) + "AddProcess(" +
-           RenderProcessKindLiteral(p.kind) + ", " +
-           RenderProcessMethodName(i) + "());\n";
+           RenderProcessKindLiteral(p.kind) + ", " + p.name + "(this));\n";
   }
   out += Indent(indent) + "}\n";
   return out;
@@ -376,10 +363,10 @@ auto RenderScopeAsClass(
   out += "\n";
   out += Indent(indent) + " private:\n";
 
-  for (std::size_t i = 0; i < s.processes.size(); ++i) {
+  for (const auto& p : s.processes) {
     out += "\n";
-    auto method_or = RenderProcessMethod(
-        parent_struct_ctx, unit, s, s.processes[i], i, indent + 1);
+    auto method_or =
+        RenderProcessMethod(parent_struct_ctx, unit, s, p, indent + 1);
     if (!method_or) return std::unexpected(std::move(method_or.error()));
     out += *method_or;
   }
@@ -521,11 +508,12 @@ auto RenderHostMain(std::span<const TopInstance> tops) -> std::string {
   }
   out += "\n";
   out += "auto main() -> int {\n";
+  out += "  lyra::runtime::Engine engine;\n";
   for (std::size_t i = 0; i < tops.size(); ++i) {
     out += "  " + tops[i].unit->structural_scope.name + " top" +
-           std::to_string(i) + "{nullptr, \"" + tops[i].name + "\"};\n";
+           std::to_string(i) + "{nullptr, \"" + tops[i].name +
+           "\", engine.Services()};\n";
   }
-  out += "  lyra::runtime::Engine engine;\n";
   out += "  std::vector<lyra::runtime::TopBinding> tops = {\n";
   for (std::size_t i = 0; i < tops.size(); ++i) {
     out += "      {&top" + std::to_string(i) + "},\n";

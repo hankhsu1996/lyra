@@ -192,16 +192,21 @@ Entries get checked off as their PRs land. When the last entry lands, the file i
       `scope_state` -> `scope`, `proc_state` -> `process`, `proc_scope_state` -> `proc_scope`,
       etc.). The per-LRM-family subsystem split ships as its own focused cut; see R13.
 
-- [ ] R11 -- MIR-to-C++ backend migration to the class-based organization defined in
-      `docs/architecture/lowering_organization.md`. Replaces `RenderContext` plus the `With*()`
-      copy-on-descend convention with per-task-instance classes (`CppProcessRenderer` and analogues
-      at scope and unit levels) whose walker methods take `(node, WalkFrame)`. The
-      `mutable owned_temp_counter_` escape hatch becomes a class-owned registry; the ambient
-      `indent` parameter (currently threaded through every `Render*` signature) moves into
-      `WalkFrame`. All `~51` free `Render*` functions across `render_expr.cpp` and `render_stmt.cpp`
-      become class methods in one cut; no transitional shape coexists. **Why deferred**: large-scope
-      migration; the backend is `~80%` aligned today but moving the last 20% requires touching every
-      renderer in one pass. **Trigger**: scheduled with R10.
+- [x] R11 -- Remove the `mutable owned_temp_counter_` escape hatch on `RenderContext`. Today the C++
+      backend's temp-name counter is a `mutable` field reached through a pointer from every
+      `With*()` descendant; the escape hatch exists because every `Render*` helper takes the context
+      by `const&`, but the counter genuinely mutates. Target shape: pull the counter out of
+      `RenderContext` entirely. Each callable-body render entry (`RenderProcessMethod`,
+      `RenderSubroutineMethod`, `RenderConstructor`) declares a local
+      `std::size_t temp_counter = 0;` and threads `std::size_t& temp_counter` down the
+      statement-handler chain. `RenderClosureExpr` opens its own fresh counter for the closure body.
+      The `mutable` keyword disappears from the backend; const-correctness on `RenderContext`
+      matches reality (it carries facts and walk position, both immutable per descent). **Why this
+      minimal scope**: the rest of the lowering-organization contract (class-based pass shape with
+      `WalkFrame`) does not transfer cleanly to the render layer -- rendering is mechanical
+      translation, not semantic lowering, so the per-task state model is fundamentally different
+      (see R18). The mutable escape hatch is the one shape that is unambiguously wrong from any
+      vantage. **Trigger**: standalone -- can be picked up at any time.
 
 - [ ] R12 -- Model the observable (`Var<T>`) storage as a first-class MIR wrapper type so the cpp
       backend stops re-deriving "is this observable storage" at render time. Today a signal's MIR
@@ -240,6 +245,139 @@ Entries get checked off as their PRs land. When the last entry lands, the file i
       Subsystem files include only the pass-class headers and their own family header, so adding a
       kind touches three files (subsystem header, subsystem implementation, dispatcher switch) and
       leaves the pass-class header untouched.
+
+- [x] R14 -- Move the "is this callable a coroutine" decision off `RenderContext` and onto MIR.
+      Today the cpp backend reads `RenderContext::InCoroutine()` -- a walk-state flag installed via
+      `WithCoroutine(...)` at every callable-body entry -- to decide whether a `mir::ReturnStmt`
+      lowers to `return` or `co_return`. The distinction is not semantic at the MIR or LIR level:
+      `return` and `co_return` describe the same operation (exit the callable); "how" depends purely
+      on whether the surrounding callable is a coroutine. That fact is already captured by every
+      callable MIR node except `mir::ClosureExpr` (Process is implicit; `StructuralSubroutineDecl`'s
+      `kind` distinguishes task / function; constructor body is implicit). `ClosureExpr` is the gap:
+      the same node is constructed for fork-branch closures (concurrent coroutines that may suspend)
+      and for NBA / `$strobe` / `$sscanf` IIFE / with-clause iterator / deferred-check closures
+      (synchronous lambdas), with no field to say which. Target shape: `mir::ClosureExpr` gains an
+      `is_coroutine` flag set at HIR-to-MIR construction; the cpp backend reads it directly at every
+      closure entry instead of inheriting a walk-state assumption.
+      `RenderContext::WithCoroutine(...)` / `InCoroutine()` remain (the bool still propagates across
+      nested if / loop / block scopes within a body) but the install path is MIR-sourced -- the
+      render no longer "decides" coroutine-ness, it only reads. The eventual removal of the
+      propagation flag from `RenderContext` ships in R18, when the whole walk frame is dissolved.
+      **Trigger**: scheduled in front of R18 (the render-layer rewrite).
+
+- [x] R15 -- Give `mir::Process` a `name` field, so the C++ method name, static-frame struct name,
+      static-frame field name, and any future LLVM-IR function symbol all flow from a single
+      MIR-level identifier instead of each backend re-deriving "process_N" from a position-in-scope
+      iteration index. `mir::StructuralSubroutineDecl::name` already plays this role for
+      subroutines; processes are anonymous in SV (LRM 9.2) so HIR-to-MIR synthesises a positional
+      identifier (`"process_0"` etc.) and threads it into the lowering so the returned `Process` is
+      constant -- no post-hoc mutation. The `WithStaticFrame(...)` install in the cpp backend now
+      reads `process.name + "__static"` rather than computing from an iteration index; the
+      walker-state propagation of the frame field name continues until R18 dissolves the walk frame.
+      **Trigger**: scheduled in front of R18.
+
+- [x] R16 -- Give every MIR callable body an explicit `self` first binding -- `body.vars[0]` is a
+      procedural-var of borrowed-pointer-to-enclosing-scope type, named `self`. Route every
+      class-member access through a new `mir::MemberAccessExpr { receiver, var }` whose receiver
+      reaches `self` via `DerefExpr(ProceduralVarRef(self))`. Today four distinct receiver
+      mechanisms coexist -- method `this` (process / subroutine / constructor bodies), fork-branch
+      `(M* self)` parameter, NBA / `$strobe` / scan closures' `[this]` or `[=, this]` capture, and
+      `mir::StructuralVarRef`'s implicit-receiver render -- and the cpp backend dispatches between
+      them through `RenderContext` walker state (`ReceiverObject()` / `WithReceiver(...)` /
+      `DeferredByValueCapture()` / `MemberPrefix()`). The same dispatch would have to be re-derived
+      by every future backend (LIR / LLVM-IR). Target shape: `body.vars[0]` is uniformly `self`
+      across every callable form, but how it is supplied follows each form's natural binding
+      mechanism -- a process / subroutine / constructor body receives `self` as its first formal
+      parameter (the caller supplies), while a closure carries `self` as its first by-value capture
+      (the enclosing scope snapshots its own self at construction). `mir::SelfScopeExpr` is removed
+      (its job was to denote "the current receiver, whatever that is" -- precisely the
+      implicit-context shape this refactor eliminates). C++ emit per form: process / subroutine /
+      constructor bodies as `static auto <name>(M* self, ...) -> ... { ... }`, with the C++
+      constructor delegating its body to a `static init(this)` call; closures as
+      `[self = <enclosing self>, cap1 = ..., &cap2 = ...](closure_params) -> R { ... }` -- every
+      capture is name-explicit, the clause never contains `[this]`, `[=]`, or `[&]`.
+      `CreateProcesses()` remains a virtual instance method (C++ requires it) and emits
+      `AddProcess(kind, process_N(this))`. The receiver-related `RenderContext` machinery disappears
+      in lockstep. See `docs/decisions/callable-receiver.md`. **Trigger**: scheduled in front of
+      R18.
+
+- [ ] R17 -- Make the ref-vs-value distinction explicit in MIR for selector expressions. Today
+      `mir::ElementSelectExpr` and `mir::RangeSelectExpr` render to runtime `PackedArrayRef` view
+      values; the public `RenderExpr` wraps the rendered string in `.Clone()` when the expression
+      yields a ref so consumers see an owning value. The wrap decision lives in the render
+      (`ProducesPackedArrayRef`). Either lift ref-producing expressions into an explicit MIR shape
+      (e.g. an explicit `CloneExpr` inserted by HIR-to-MIR at the value-context boundary, or a
+      separate ref-vs-value type-level distinction), so the render is a mechanical one-form-per-
+      node mapping with no post-process wrap. **Trigger**: design decision pending -- the exact
+      shape (explicit `CloneExpr` versus type-level ref/value split) is to be discussed before this
+      entry is sharpened.
+
+- [ ] R18 -- Rewrite the MIR-to-C++ backend to free functions per node kind, with no
+      `RenderContext`, no class hierarchy, and no `WalkFrame`. Once R11 has removed the mutable
+      escape hatch, and R14 + R15 + R16 + R17 + R12 have closed every render-time decision that
+      currently lives on the context, the render layer's per-task state collapses to a
+      procedural-scope chain (for hops resolution within one callable body) and a temp counter --
+      both local to one callable body, both plain locals in the callable's render function. Each
+      callable kind (process, task, function, constructor, fork-branch, deferred closure) becomes
+      one render function; per-node-kind handlers are free functions taking only what they read. The
+      result is the mechanical-translation shape rendering should always have had;
+      `lowering_organization.md` invariant 9 (which today claims lowering and rendering share the
+      same pattern) is updated in this cut to reflect that the patterns are distinct -- lowering
+      makes semantic decisions, rendering doesn't. **Trigger**: scheduled after R11, R12, R14, R15,
+      R16, R17 all land.
+
+- [x] R19 -- LRM 10.5 variable initialization lowers to an `AssignExpr` statement at the top of
+      `constructor_scope.root_stmts`, with the value being the user-supplied expression when present
+      or the LRM Table 6-7 type default. `mir::StructuralVarDecl.initializer` is removed; MIR has
+      exactly one mechanism for construction-time work (the statement list). `RenderField` emits a
+      pure value-init declaration (`Var<T> name{};` or `T name{};`) with no inline initializer;
+      `RenderContext::in_class_member_init_` and `WithClassMemberInit` are removed. The C++ runtime
+      takes `RuntimeServices&` at `Scope` construction (Bind no longer wires services), and
+      `PackedArray` / `UnpackedArray<T>` / `DynamicArray<T>` gain default constructors with a 0-bit
+      sentinel shape that the first `AssignFrom` adopts -- so a constructor-body `Set` works without
+      the deferred-bind dance. Vars whose MIR type is non-assignable (pointer / vector / object /
+      external-unit-object / external-ref / event) are filtered out of the init-statement path --
+      their declaration shape itself fixes the field at construction. See
+      `docs/decisions/variable-initialization.md`.
+
+- [ ] R20 -- Turn runtime-scope method calls (`Services()`, `RegisterChild(name, indices, child)`,
+      `RegisterSignal(name, var)`, `AddProcess(kind, coroutine)`,
+      `SubmitObserved(site_id,     closure)`, etc.) into MIR-modeled expressions so the cpp render
+      stops hardcoding `"self->Services()"`, `"self->RegisterChild(\"...\", ...)"`,
+      `"std::make_unique<Child>(self,     ...)"` and similar literals in `render_print.cpp` /
+      `render_stmt.cpp`. Today each runtime method has bespoke render code that string-concatenates
+      the receiver name with the method name; every argument is rendered uniformly through
+      `RenderExpr` except the implicit receiver, which is spelled out as a literal. Target shape:
+      each runtime call is a `mir::CallExpr` whose callee is a `RuntimeServicesCallee` (or sibling
+      variants for scope-level methods like RegisterChild) carrying the method identity, and whose
+      `arguments[0]` is the receiver expression (`ProceduralVarRef(self)`). The render becomes one
+      rule for every call shape: "render the callee name, open paren, render each argument as an
+      expression separated by commas, close paren". No render handler knows the literal string
+      `"self"` or the literal `"Services()"` anywhere. **Why deferred**: cross-cuts every
+      runtime-method call site (~30 across `render_print.cpp` / `render_stmt.cpp`) and requires MIR
+      vocabulary additions on the Callee variant. **Trigger**: scheduled in front of R18.
+
+- [ ] R21 -- Rename `LowerStructuralVarRefExpr` (the central HIR-to-MIR helper) to reflect what it
+      actually does post-R16: translate an HIR implicit-receiver structural-var read into a MIR
+      `MemberAccessExpr` whose receiver reaches `self`. The current name still refers to
+      `mir::StructuralVarRef` even though that node is no longer a top-level `ExprData` arm. As a
+      follow-on, consider whether HIR should also retire its own `hir::StructuralVarRef` primary in
+      favour of a unified `hir::MemberAccessExpr` -- SV's `x` (implicit-receiver) and `obj.x`
+      (explicit-receiver) are the same operation at the IR level, and a unified shape would push the
+      implicit-vs-explicit distinction back to the slang front-end. **Trigger**: standalone -- the
+      rename is mechanical; the HIR unification is a separate design discussion.
+
+- [ ] R22 -- Reconsider the procedural-vs-structural variable naming and structure now that
+      "structural variable" no longer appears as an `ExprData` arm. With class-member access
+      generalised to `MemberAccessExpr(receiver, member)`, "structural var" is just "a member of the
+      class" -- a fully general concept -- while "procedural var" is the body-local concept. The two
+      were named as a symmetric pair when both were specialised expression forms; now the structural
+      side has been abstracted into general member access, the asymmetry is awkward. Open questions:
+      does `mir::StructuralVarDecl` need a different name (e.g. `ClassMemberDecl`)? Do shared
+      structures that paralleled the two (e.g. `*VarRef`, `Lookup*Var`) still need to be parallel,
+      or did some of them only exist to mirror an axis that no longer divides? **Trigger**: design
+      discussion -- requires walking the structural / procedural axis across MIR vocabulary, dumper,
+      lowering helpers, and backend, deciding what stays paired and what merges.
 
 ## Out of Scope
 
