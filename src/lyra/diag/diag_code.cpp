@@ -36,12 +36,6 @@ constexpr std::array kEntries{
             .category = UnsupportedCategory::kType,
             .name = "unsupported_dynamic_array_type"}},
     std::pair{
-        DiagCode::kUnsupportedQueueType,
-        DiagCodeInfo{
-            .kind = DiagKind::kUnsupported,
-            .category = UnsupportedCategory::kType,
-            .name = "unsupported_queue_type"}},
-    std::pair{
         DiagCode::kUnsupportedAssociativeArrayType,
         DiagCodeInfo{
             .kind = DiagKind::kUnsupported,

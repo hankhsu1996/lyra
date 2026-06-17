@@ -1,3 +1,3 @@
 module Top;
-  logic q [$];
+  int m [string];
 endmodule

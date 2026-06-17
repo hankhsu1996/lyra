@@ -14,7 +14,6 @@ enum class DiagCode : std::uint32_t {
   kUnsupportedTaggedPackedUnion,
   kUnsupportedFixedSizeUnpackedArrayType,
   kUnsupportedDynamicArrayType,
-  kUnsupportedQueueType,
   kUnsupportedAssociativeArrayType,
   kUnsupportedUnpackedStructType,
   kUnsupportedUnpackedUnionType,

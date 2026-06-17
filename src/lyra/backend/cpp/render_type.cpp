@@ -96,6 +96,11 @@ auto RenderTypeAsCpp(
             if (!inner_or) return std::unexpected(std::move(inner_or.error()));
             return "lyra::value::DynamicArray<" + *inner_or + ">";
           },
+          [&](const mir::QueueType& q) -> diag::Result<std::string> {
+            auto inner_or = RenderTypeAsCpp(unit, owner_scope, q.element_type);
+            if (!inner_or) return std::unexpected(std::move(inner_or.error()));
+            return "lyra::value::Queue<" + *inner_or + ">";
+          },
           [&](const mir::ObjectType& o) -> diag::Result<std::string> {
             return std::string{
                 owner_scope.GetChildStructuralScope(o.target).name};

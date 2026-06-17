@@ -57,7 +57,8 @@ auto BuildArrayReplicationFlatList(
 
 auto IsArrayContainerType(const mir::Type& ty) -> bool {
   return std::holds_alternative<mir::UnpackedArrayType>(ty.data) ||
-         std::holds_alternative<mir::DynamicArrayType>(ty.data);
+         std::holds_alternative<mir::DynamicArrayType>(ty.data) ||
+         std::holds_alternative<mir::QueueType>(ty.data);
 }
 
 }  // namespace
@@ -98,8 +99,8 @@ auto LowerHirReplicationExprProc(
 
 // Lowers an HIR AssignmentPatternExpr by dispatching on the destination
 // type's runtime shape: packed targets fold into MIR `ConcatExpr` (bit
-// concatenation matches the packed bit plane), array containers (unpacked
-// and dynamic) land as `ArrayLiteralExpr` over distinct `std::vector` slots
+// concatenation matches the packed bit plane), array containers (unpacked,
+// dynamic, queue) land as `ArrayLiteralExpr` over distinct element slots
 // wrapped by a `ConstructExpr` against the container ctor.
 auto LowerHirAssignmentPatternExprProc(
     ProcessLowerer& process, WalkFrame frame,

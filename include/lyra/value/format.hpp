@@ -12,6 +12,8 @@ template <typename T>
 class UnpackedArray;
 template <typename T>
 class DynamicArray;
+template <typename T>
+class Queue;
 
 enum class PrintKind : std::uint8_t {
   kDisplay,
@@ -197,6 +199,11 @@ template <typename T>
 }
 template <typename T>
 [[nodiscard]] auto PrintValue(const DynamicArray<T>& value, FormatSpec spec)
+    -> PrintItem {
+  return PrintValueItem{.spec = spec, .arg = MakeFormatArg(value)};
+}
+template <typename T>
+[[nodiscard]] auto PrintValue(const Queue<T>& value, FormatSpec spec)
     -> PrintItem {
   return PrintValueItem{.spec = spec, .arg = MakeFormatArg(value)};
 }

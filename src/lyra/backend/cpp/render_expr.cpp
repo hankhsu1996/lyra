@@ -1636,8 +1636,9 @@ auto RenderConcatExpr(
 
 // LRM 10.9.1 array assignment pattern: renders as `std::array<T, N>{e1, ...}`.
 // `expr.type` is the parent container type (`UnpackedArrayType` /
-// `DynamicArrayType`); the element type is read off it and emitted as the
-// `std::array` element parameter. The resulting `std::array<T, N>` implicitly
+// `DynamicArrayType` / `QueueType`); the element type is read off it and
+// emitted as the `std::array` element parameter. The resulting
+// `std::array<T, N>` implicitly
 // converts to the container ctor's `std::span<const T>` parameter, so this
 // rendering is context-independent: the same string is correct standalone
 // and as a `ConstructExpr` argument.
@@ -1650,12 +1651,13 @@ auto RenderArrayLiteralExpr(
         using TyT = std::decay_t<decltype(ty)>;
         if constexpr (
             std::same_as<TyT, mir::UnpackedArrayType> ||
-            std::same_as<TyT, mir::DynamicArrayType>) {
+            std::same_as<TyT, mir::DynamicArrayType> ||
+            std::same_as<TyT, mir::QueueType>) {
           return ty.element_type;
         } else {
           throw InternalError(
-              "RenderArrayLiteralExpr: result type must be UnpackedArrayType "
-              "or DynamicArrayType");
+              "RenderArrayLiteralExpr: result type must be UnpackedArrayType, "
+              "DynamicArrayType, or QueueType");
         }
       },
       container_ty.data);
