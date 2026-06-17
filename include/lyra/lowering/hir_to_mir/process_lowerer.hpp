@@ -1,6 +1,8 @@
 #pragma once
 
+#include <string>
 #include <utility>
+#include <variant>
 #include <vector>
 
 #include "lyra/base/internal_error.hpp"
@@ -21,44 +23,62 @@
 #include "lyra/mir/process.hpp"
 #include "lyra/mir/stmt.hpp"
 #include "lyra/mir/structural_subroutine.hpp"
+#include "lyra/mir/structural_var.hpp"
 
 namespace lyra::lowering::hir_to_mir {
 
-struct ProceduralVarBinding {
+struct AutomaticVarBinding {
   ProceduralDepth declaration_procedural_depth;
   mir::ProceduralVarId var;
 };
 
+struct StaticVarBinding {
+  mir::StructuralVarId var;
+};
+
+// LRM 13.3.1: a static-lifetime body local is realized as a structural var on
+// the callable's owner scope, so a HIR procedural-var-ref dispatches to a
+// MemberAccess instead of a ProceduralVarRef
+// (`docs/decisions/variable-lifetime-storage.md`).
+using ProceduralVarBinding =
+    std::variant<AutomaticVarBinding, StaticVarBinding>;
+
 // Per-process / subroutine lowering registries. Carries facts to the
-// surrounding module and structural scope, time resolution, the HIR body,
-// the procedural-var binding table, and the static-locals collection.
-// Traversal state (current procedural depth, active closure capture sink,
-// active with-clause index binding) and the static-frame scope pointer live
-// on `WalkFrame`, not on the lowerer.
+// surrounding module and structural scope, time resolution, the HIR body, and
+// the procedural-var binding table. Traversal state (current procedural depth,
+// active closure capture sink, active with-clause index binding) lives on
+// `WalkFrame`, not on the lowerer.
 class ProcessLowerer {
  public:
+  // Facts: every parameter is set once at construction and never mutated for
+  // the lowerer's lifetime. `callable_name` is the synthesized identifier the
+  // enclosing scope chose for this callable (LRM processes are anonymous, so
+  // the caller passes `"process_N"`; subroutines pass `src.name`). The
+  // `owner_ctor_frame` is the enclosing structural-scope's constructor-time
+  // frame -- the static-local lowering reads it to place per-instance storage
+  // and its init AssignExpr into the owner's constructor_scope.
   ProcessLowerer(
       ModuleLowerer& module, const StructuralScopeLowerer& scope,
-      TimeResolution time_resolution, const hir::ProceduralBody& hir_body)
+      TimeResolution time_resolution, const hir::ProceduralBody& hir_body,
+      std::string callable_name, WalkFrame owner_ctor_frame)
       : module_(&module),
         scope_(&scope),
         time_resolution_(time_resolution),
-        hir_body_(&hir_body) {
+        hir_body_(&hir_body),
+        callable_name_(std::move(callable_name)),
+        owner_ctor_frame_(std::move(owner_ctor_frame)) {
   }
 
   // Lowers an entire HIR process (initial / final / always / always_ff /
   // always_comb / always_latch) into a `mir::Process`. Constructs the process
-  // root scope on the stack and walks `src`'s body into it. `name` is the
-  // identifier the enclosing scope chose for this process (LRM processes are
-  // anonymous, so the caller synthesises a positional identifier).
-  auto Run(WalkFrame parent_frame, std::string name, const hir::Process& src)
-      -> diag::Result<mir::Process>;
+  // root scope on the stack and walks `src`'s body into it.
+  auto Run(const hir::Process& src) -> diag::Result<mir::Process>;
 
   // Lowers a HIR subroutine declaration into a `mir::StructuralSubroutineDecl`.
   // Pre-registers the formal params as body locals so call references resolve,
   // then walks the body. Functions with a non-void result close with a
   // trailing `return` of the implicit result variable.
-  auto Run(WalkFrame parent_frame, const hir::StructuralSubroutineDecl& src)
+  auto Run(const hir::StructuralSubroutineDecl& src)
       -> diag::Result<mir::StructuralSubroutineDecl>;
 
   // Central expression dispatcher. One switch over `hir::Expr::data` routing
@@ -93,13 +113,6 @@ class ProcessLowerer {
     return time_resolution_;
   }
 
-  void AddStaticLocal(mir::StaticLocal local) {
-    static_locals_.push_back(local);
-  }
-  auto TakeStaticLocals() -> std::vector<mir::StaticLocal> {
-    return std::move(static_locals_);
-  }
-
   void MapProceduralVar(
       hir::ProceduralVarId hir_id, ProceduralVarBinding binding) {
     if (hir_id.value != bindings_.size()) {
@@ -120,23 +133,23 @@ class ProcessLowerer {
     return bindings_[hir_id.value];
   }
 
-  // Computes a `mir::ProceduralVarRef` to `hir_id` from the current walker
-  // position. `frame.procedural_depth` is the reading depth; the declaration
-  // depth comes from the registry. A forward reference into a child scope is
-  // a lowering bug.
-  [[nodiscard]] auto TranslateProceduralVar(
-      const WalkFrame& frame, hir::ProceduralVarId hir_id) const
-      -> mir::ProceduralVarRef {
-    const auto& binding = LookupProceduralVar(hir_id);
-    if (binding.declaration_procedural_depth > frame.procedural_depth) {
-      throw InternalError(
-          "ProcessLowerer::TranslateProceduralVar: declaration depth "
-          "exceeds current depth (forward reference into a child scope)");
-    }
-    return mir::ProceduralVarRef{
-        .hops = frame.procedural_depth - binding.declaration_procedural_depth,
-        .var = binding.var,
-    };
+  // The synthesized identifier for the callable being lowered (e.g.
+  // `"process_3"`, or a subroutine's user-given name). Consumed by the
+  // static-local lowering to mangle the structural-var name on the owner
+  // scope so that sibling callables sharing a source name (`static int x;` in
+  // two processes of the same module) do not collide.
+  [[nodiscard]] auto CallableName() const -> std::string_view {
+    return callable_name_;
+  }
+
+  // The owner structural scope's constructor-time frame. The static-local
+  // lowering reads it to place the per-instance storage's init AssignExpr
+  // into the owner's constructor scope using the owner's own `self` binding,
+  // not the body's. Body-walking edits override `current_procedural_scope` /
+  // `self_binding` for the body, while this snapshot stays at the owner's
+  // construction-time vantage.
+  [[nodiscard]] auto OwnerCtorFrame() const -> const WalkFrame& {
+    return owner_ctor_frame_;
   }
 
  private:
@@ -144,8 +157,9 @@ class ProcessLowerer {
   const StructuralScopeLowerer* scope_;
   TimeResolution time_resolution_;
   const hir::ProceduralBody* hir_body_;
+  std::string callable_name_;
+  WalkFrame owner_ctor_frame_;
   std::vector<ProceduralVarBinding> bindings_;
-  std::vector<mir::StaticLocal> static_locals_;
 };
 
 }  // namespace lyra::lowering::hir_to_mir

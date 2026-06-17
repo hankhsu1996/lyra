@@ -44,11 +44,19 @@ local at its source position.** A process and a subroutine use the identical mec
 
 - The body reaches the static local by the same scoped reference it uses for any local; the backend
   resolves that reference to the per-instance member.
-- Flattening nested blocks into one per-instance frame can repeat a source name (the same identifier
-  in sibling or nested blocks). Member names are therefore made unique **uniformly** by appending
-  the frame-local id to every static member -- not "append only on collision". A degenerate id
-  suffix on a non-colliding name is harmless, and a uniform rule removes a presence decision from
-  the emitter.
+- The per-instance member is a flat structural var on the owner scope's structural-var arena -- not
+  a sub-struct grouping per callable. SystemVerilog's per-callable scoping is already settled by HIR
+  name-binding before MIR sees the program; MIR has no visibility dimension, so the callable
+  grouping is not a MIR-level fact to preserve. Modeling each static local as a plain structural var
+  collapses static-local storage and access onto the same paths the rest of MIR already uses for
+  module-level signals (one type of decl, one MemberAccess shape, one render path, no static-frame
+  walker state on the backend).
+- Names are made unique **uniformly** by appending an id to every static member -- not "append only
+  on collision". Sibling callables in the same owner scope (`static int x;` in two processes) and
+  nested blocks repeating an identifier can both claim the same source name; the suffix removes the
+  collision without a presence decision. HIR-to-MIR mangles the name as
+  `<callable_name>__<source_name>_<hir_var_id>` before adding the decl to the owner scope, so the
+  structural-var name is unique within the class's structural-var arena.
 
 ### Why honor the frontend, and not reclassify bare to automatic
 

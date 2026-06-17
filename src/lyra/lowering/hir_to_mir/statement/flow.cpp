@@ -1,11 +1,11 @@
 #include "lyra/lowering/hir_to_mir/statement/flow.hpp"
 
 #include <expected>
+#include <format>
 #include <optional>
 #include <string>
 #include <utility>
 
-#include "lyra/hir/expr.hpp"
 #include "lyra/hir/procedural_body.hpp"
 #include "lyra/hir/procedural_var.hpp"
 #include "lyra/hir/stmt.hpp"
@@ -17,73 +17,111 @@
 #include "lyra/mir/procedural_hops.hpp"
 #include "lyra/mir/procedural_var.hpp"
 #include "lyra/mir/stmt.hpp"
+#include "lyra/mir/structural_hops.hpp"
+#include "lyra/mir/structural_scope.hpp"
+#include "lyra/mir/structural_var.hpp"
+#include "lyra/mir/value_ref.hpp"
 
 namespace lyra::lowering::hir_to_mir {
 
-auto LowerVarDeclStmt(
-    ProcessLowerer& process, WalkFrame frame, std::optional<std::string> label,
-    const hir::VarDeclStmt& v) -> diag::Result<mir::Stmt> {
-  const hir::ProceduralBody& hir_proc = process.HirBody();
-  const auto& hir_local = hir_proc.procedural_vars.at(v.var.value);
-  const mir::TypeId type = process.Module().TranslateType(hir_local.type);
+namespace {
 
-  // LRM 13.3.1: a static body local does not live in the activation. Its
-  // storage and init go into the subroutine's frame scope (the root
-  // procedural scope), so a body reference reaches it by hops and the init
-  // is evaluated once when the instance is built. The body declaration
-  // itself emits nothing.
-  const bool is_static = hir_local.lifetime == hir::VariableLifetime::kStatic;
-  if (is_static && frame.static_frame_scope != nullptr) {
-    auto& frame_scope = *frame.static_frame_scope;
-    const mir::ProceduralVarId static_id = frame_scope.AddProceduralVar(
-        mir::ProceduralVarDecl{
-            .name = hir_local.name,
-            .type = type,
-            .lifetime = mir::VariableLifetime::kStatic});
-    process.MapProceduralVar(
-        v.var, ProceduralVarBinding{
-                   .declaration_procedural_depth = ProceduralDepth{.value = 0},
-                   .var = static_id});
-    mir::ExprId static_init{};
-    if (v.init.has_value()) {
-      auto init_or = process.LowerExpr(
-          hir_proc.exprs.at(v.init->value),
-          frame.WithProceduralScope(&frame_scope));
-      if (!init_or) return std::unexpected(std::move(init_or.error()));
-      static_init = frame_scope.AddExpr(*std::move(init_or));
-    } else {
-      static_init = SynthesizeDefaultValueExpr(
-          process.Module(), frame.WithProceduralScope(&frame_scope), type);
-    }
-    process.AddStaticLocal(
-        mir::StaticLocal{.var = static_id, .init = static_init});
-    return mir::Stmt{.label = std::move(label), .data = mir::EmptyStmt{}};
+// LRM 13.3.1: a static-lifetime body local has per-instance storage that
+// outlives every activation of the body. Realize it as a structural var on
+// the callable's owner scope; the init AssignExpr lands in that owner's
+// constructor_scope (LRM Table 6-7 variable-initialization). The body
+// declaration itself emits nothing. The mangled name carries
+// `<callable>__<source>_<hir_var_id>` so sibling callables sharing a source
+// name (`static int x;` in two processes of the same module) and nested
+// blocks repeating an identifier do not collide on the owner's
+// structural-var arena (`docs/decisions/variable-lifetime-storage.md`).
+auto LowerStaticVarDeclStmt(
+    ProcessLowerer& process, WalkFrame frame, std::optional<std::string> label,
+    const hir::VarDeclStmt& v, const hir::ProceduralVarDecl& hir_local,
+    mir::TypeId type) -> diag::Result<mir::Stmt> {
+  auto* owner_scope = frame.current_structural_scope;
+  const auto& ctor_frame = process.OwnerCtorFrame();
+  auto& ctor_scope = *ctor_frame.current_procedural_scope;
+  const mir::TypeId self_ptr_type =
+      process.Module().Unit().builtins.self_pointer;
+
+  const std::string mangled = std::format(
+      "{}__{}_{}", process.CallableName(), hir_local.name, v.var.value);
+  const mir::StructuralVarId static_var = owner_scope->AddStructuralVar(
+      mir::StructuralVarDecl{.name = mangled, .type = type});
+  process.MapProceduralVar(v.var, StaticVarBinding{.var = static_var});
+
+  mir::ExprId init_value{};
+  if (v.init.has_value()) {
+    auto init_or = process.LowerExpr(
+        process.HirBody().exprs.at(v.init->value), ctor_frame);
+    if (!init_or) return std::unexpected(std::move(init_or.error()));
+    init_value = ctor_scope.AddExpr(*std::move(init_or));
+  } else {
+    init_value = AddDefaultValueExpr(process.Module(), ctor_frame, type);
   }
 
+  const mir::ExprId ctor_self_read = ctor_scope.AddExpr(
+      mir::MakeProceduralVarRefExpr(
+          ctor_frame.procedural_depth - ctor_frame.self_decl_depth,
+          *ctor_frame.self_binding, self_ptr_type));
+  const mir::ExprId target = ctor_scope.AddExpr(
+      mir::MakeMemberAccessExpr(
+          ctor_self_read,
+          mir::StructuralVarRef{
+              .hops = mir::StructuralHops{.value = 0}, .var = static_var},
+          type));
+  const mir::ExprId assign =
+      ctor_scope.AddExpr(mir::MakeAssignExpr(target, init_value, type));
+  ctor_scope.AppendStmt(
+      mir::Stmt{.label = std::nullopt, .data = mir::ExprStmt{.expr = assign}});
+  return mir::Stmt{.label = std::move(label), .data = mir::EmptyStmt{}};
+}
+
+auto LowerAutomaticVarDeclStmt(
+    ProcessLowerer& process, WalkFrame frame, std::optional<std::string> label,
+    const hir::VarDeclStmt& v, const hir::ProceduralVarDecl& hir_local,
+    mir::TypeId type) -> diag::Result<mir::Stmt> {
   auto& proc_scope = *frame.current_procedural_scope;
   const mir::ProceduralVarId local_id = proc_scope.AddProceduralVar(
       mir::ProceduralVarDecl{.name = hir_local.name, .type = type});
   process.MapProceduralVar(
-      v.var, ProceduralVarBinding{
+      v.var, AutomaticVarBinding{
                  .declaration_procedural_depth = frame.procedural_depth,
                  .var = local_id});
-  mir::ExprId init_id{};
+
+  mir::ExprId init_value{};
   if (v.init.has_value()) {
-    auto init_or = process.LowerExpr(hir_proc.exprs.at(v.init->value), frame);
-    if (!init_or) {
-      return std::unexpected(std::move(init_or.error()));
-    }
-    init_id = proc_scope.AddExpr(*std::move(init_or));
+    auto init_or =
+        process.LowerExpr(process.HirBody().exprs.at(v.init->value), frame);
+    if (!init_or) return std::unexpected(std::move(init_or.error()));
+    init_value = proc_scope.AddExpr(*std::move(init_or));
   } else {
-    init_id = SynthesizeDefaultValueExpr(process.Module(), frame, type);
+    init_value = AddDefaultValueExpr(process.Module(), frame, type);
   }
+
   return mir::Stmt{
       .label = std::move(label),
       .data = mir::ProceduralVarDeclStmt{
           .target =
               mir::ProceduralVarRef{
                   .hops = mir::ProceduralHops{.value = 0}, .var = local_id},
-          .init = init_id}};
+          .init = init_value}};
+}
+
+}  // namespace
+
+auto LowerVarDeclStmt(
+    ProcessLowerer& process, WalkFrame frame, std::optional<std::string> label,
+    const hir::VarDeclStmt& v) -> diag::Result<mir::Stmt> {
+  const auto& hir_local = process.HirBody().procedural_vars.at(v.var.value);
+  const mir::TypeId type = process.Module().TranslateType(hir_local.type);
+  if (hir_local.lifetime == hir::VariableLifetime::kStatic) {
+    return LowerStaticVarDeclStmt(
+        process, frame, std::move(label), v, hir_local, type);
+  }
+  return LowerAutomaticVarDeclStmt(
+      process, frame, std::move(label), v, hir_local, type);
 }
 
 auto LowerReturnStmt(

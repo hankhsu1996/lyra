@@ -33,17 +33,6 @@ struct ProceduralScopeId {
       -> std::strong_ordering = default;
 };
 
-// A static-lifetime body local (LRM 13.3.1). It does not live in the
-// activation; the backend gives it one storage slot per module instance. `var`
-// indexes the owning scope's frame `vars` (body references reach it through
-// that id by hops); `init` indexes the frame scope's `exprs` and is evaluated
-// once when the instance is built, not on each activation. A process and a
-// subroutine carry these identically.
-struct StaticLocal {
-  ProceduralVarId var;
-  ExprId init;
-};
-
 struct EmptyStmt {};
 
 struct ProceduralVarDeclStmt {

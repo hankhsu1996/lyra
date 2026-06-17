@@ -81,7 +81,7 @@ auto LowerDestructuringAssign(
           .form = mir::PackedArrayForm::kExplicit}});
 
   const mir::ExprId temp_default_init =
-      SynthesizeDefaultValueExpr(process.Module(), wrapper_frame, temp_type);
+      AddDefaultValueExpr(process.Module(), wrapper_frame, temp_type);
   const mir::ProceduralVarRef snapshot_ref = wrapper.AppendLocal(
       mir::ProceduralVarDecl{.name = "_lyra_destruct_rhs", .type = temp_type},
       temp_default_init);
@@ -260,8 +260,7 @@ auto LowerSubroutineCallWithWritebacks(
     const mir::ExprId init =
         dir == hir::ParamDirection::kInOut
             ? actual_id
-            : SynthesizeDefaultValueExpr(
-                  process.Module(), wrapper_frame, formal_type);
+            : AddDefaultValueExpr(process.Module(), wrapper_frame, formal_type);
     const mir::ProceduralVarRef temp = wrapper.AppendLocal(
         mir::ProceduralVarDecl{
             .name = "_lyra_arg" + std::to_string(i), .type = formal_type},

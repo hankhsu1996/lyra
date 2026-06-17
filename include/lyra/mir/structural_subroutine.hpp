@@ -38,16 +38,15 @@ struct SubroutineParam {
 
 // A subroutine is a callable peer of a process: its body is a ProceduralScope,
 // the same shape a process body uses. `params` names which of the scope's vars
-// are formals (the rest are body locals). `static_locals` lists the body locals
-// whose lifetime is static; the backend stores them per instance instead of in
-// the activation.
+// are formals (the rest are body locals). Static-lifetime body locals are
+// realized as structural vars on the enclosing structural scope at HIR -> MIR;
+// they do not appear here.
 struct StructuralSubroutineDecl {
   std::string name;
   SubroutineKind kind;
   TypeId result_type;
   std::vector<SubroutineParam> params;
   ProceduralScope root_procedural_scope;
-  std::vector<StaticLocal> static_locals;
 };
 
 }  // namespace lyra::mir
