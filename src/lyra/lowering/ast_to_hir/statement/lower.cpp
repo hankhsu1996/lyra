@@ -30,9 +30,20 @@ auto LowerEmptyStmt(diag::SourceSpan span) -> diag::Result<hir::Stmt> {
       .label = std::nullopt, .data = hir::EmptyStmt{}, .span = span};
 }
 
-auto LowerBreakStmt(diag::SourceSpan span) -> diag::Result<hir::Stmt> {
+auto LowerBreakStmt(const WalkFrame& frame, diag::SourceSpan span)
+    -> diag::Result<hir::Stmt> {
+  // A break whose innermost SystemVerilog loop is a `foreach` must leave every
+  // nested dimension, so it carries that foreach's loop label; consuming the
+  // label marks the outer loop a landing target. An ordinary innermost break
+  // (no foreach label in scope) stays plain.
+  std::optional<hir::LoopLabelId> target = frame.innermost_break_label;
+  if (target.has_value() && frame.innermost_break_used != nullptr) {
+    *frame.innermost_break_used = true;
+  }
   return hir::Stmt{
-      .label = std::nullopt, .data = hir::BreakStmt{}, .span = span};
+      .label = std::nullopt,
+      .data = hir::BreakStmt{.target = target},
+      .span = span};
 }
 
 auto LowerContinueStmt(diag::SourceSpan span) -> diag::Result<hir::Stmt> {
@@ -158,7 +169,7 @@ auto LowerStatement(
           stmt.as<slang::ast::ForeachLoopStatement>(), frame);
 
     case slang::ast::StatementKind::Break:
-      return LowerBreakStmt(span);
+      return LowerBreakStmt(frame, span);
 
     case slang::ast::StatementKind::Continue:
       return LowerContinueStmt(span);

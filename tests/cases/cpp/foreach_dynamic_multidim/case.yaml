@@ -1,0 +1,14 @@
+id: cpp.foreach_dynamic_multidim
+tags: [cpp_run]
+input:
+  command: [run, cpp]
+  project: false
+  top: Top
+  files: [main.sv]
+expect:
+  exit: 0
+  variables:
+    sum_jag: 28
+    sum_rect: 100
+    sum_fixouter: 163
+    sum_break: 6

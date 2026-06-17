@@ -304,6 +304,13 @@ auto RenderConstructExternalUnitStmt(
       indent);
 }
 
+// C++ has no labeled break, so a `foreach` break that must leave every nested
+// dimension lowers to a `goto` aimed at a label after the outermost loop. Both
+// the landing label and the jump derive their name from the loop's LoopLabelId.
+auto BreakLandingLabel(mir::LoopLabelId label) -> std::string {
+  return "__lyra_break_" + std::to_string(label.value);
+}
+
 auto RenderForStmtNode(
     const RenderContext& ctx, const mir::ForStmt& s, std::size_t indent)
     -> diag::Result<std::string> {
@@ -336,6 +343,9 @@ auto RenderForStmtNode(
       Indent(indent) + "for (" + init + "; " + cond + "; " + step + ") {\n";
   result += *body_or;
   result += Indent(indent) + "}\n";
+  if (s.break_label.has_value()) {
+    result += Indent(indent) + BreakLandingLabel(*s.break_label) + ":;\n";
+  }
   return result;
 }
 
@@ -468,7 +478,11 @@ auto RenderStmt(
           [&](const mir::DoWhileStmt& s) -> diag::Result<std::string> {
             return RenderDoWhileStmtNode(ctx, s, indent);
           },
-          [&](const mir::BreakStmt&) -> diag::Result<std::string> {
+          [&](const mir::BreakStmt& s) -> diag::Result<std::string> {
+            if (s.target.has_value()) {
+              return Indent(indent) + "goto " + BreakLandingLabel(*s.target) +
+                     ";\n";
+            }
             return Indent(indent) + "break;\n";
           },
           [&](const mir::ContinueStmt&) -> diag::Result<std::string> {

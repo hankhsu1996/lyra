@@ -11,6 +11,7 @@
 #include "lyra/diag/source_span.hpp"
 #include "lyra/hir/expr_id.hpp"
 #include "lyra/hir/inside_item.hpp"
+#include "lyra/hir/loop_label_id.hpp"
 #include "lyra/hir/procedural_var.hpp"
 #include "lyra/hir/value_ref.hpp"
 
@@ -133,6 +134,7 @@ struct ForStmt {
   std::optional<ExprId> condition;
   std::vector<ExprId> step;
   StmtId body;
+  std::optional<LoopLabelId> break_label = std::nullopt;
 };
 
 struct WhileStmt {
@@ -154,7 +156,9 @@ struct ForeverStmt {
   StmtId body;
 };
 
-struct BreakStmt {};
+struct BreakStmt {
+  std::optional<LoopLabelId> target = std::nullopt;
+};
 
 struct ContinueStmt {};
 
