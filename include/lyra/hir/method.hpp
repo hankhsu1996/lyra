@@ -80,6 +80,21 @@ enum class ArrayMethodKind : std::uint8_t {
   kUniqueIndex,
 };
 
+// LRM 7.10.2 queue-native methods. These are exclusive to the queue container
+// (no dynamic-array / fixed-unpacked analogue): they mutate the receiver in
+// place, and `pop_front` / `pop_back` also return the removed element. The
+// LRM 7.12 ordering / reduction / locator family that queues share with the
+// other unpacked arrays stays in `ArrayMethodKind`.
+enum class QueueMethodKind : std::uint8_t {
+  kSize,
+  kInsert,
+  kDelete,
+  kPopFront,
+  kPopBack,
+  kPushFront,
+  kPushBack,
+};
+
 // LRM 7.12.4 iterator intrinsic methods (only `index` is in scope today;
 // extends naturally if SV adds more iterator methods).
 enum class IteratorMethodKind : std::uint8_t {
@@ -89,7 +104,7 @@ enum class IteratorMethodKind : std::uint8_t {
 struct BuiltinMethodRef {
   std::variant<
       EnumMethodKind, StringMethodKind, EventMethodKind, ArrayMethodKind,
-      IteratorMethodKind>
+      QueueMethodKind, IteratorMethodKind>
       method;
 };
 

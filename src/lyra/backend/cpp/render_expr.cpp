@@ -996,6 +996,61 @@ auto RenderArrayMethodCall(
   return raw_call;
 }
 
+auto QueueMethodMemberName(mir::QueueMethodKind k) -> std::string_view {
+  switch (k) {
+    case mir::QueueMethodKind::kSize:
+      return "Size";
+    case mir::QueueMethodKind::kInsert:
+      return "Insert";
+    case mir::QueueMethodKind::kDelete:
+      return "Delete";
+    case mir::QueueMethodKind::kPopFront:
+      return "PopFront";
+    case mir::QueueMethodKind::kPopBack:
+      return "PopBack";
+    case mir::QueueMethodKind::kPushFront:
+      return "PushFront";
+    case mir::QueueMethodKind::kPushBack:
+      return "PushBack";
+  }
+  throw InternalError("QueueMethodMemberName: unknown kind");
+}
+
+// LRM 7.10.2 queue-native methods. The receiver is arguments[0] and any SV
+// method parameters follow as real C++ arguments, so the overload set on
+// `Queue<T>` resolves arity (`Delete()` vs `Delete(index)`) directly.
+auto RenderQueueMethodCall(
+    const RenderContext& ctx, const mir::CallExpr& call,
+    const mir::QueueMethodInfo& m) -> diag::Result<std::string> {
+  if (call.arguments.empty()) {
+    throw InternalError(
+        "RenderQueueMethodCall: queue method expects a receiver argument");
+  }
+  auto receiver_or = RenderExpr(ctx, ctx.Expr(call.arguments[0]));
+  if (!receiver_or) {
+    return std::unexpected(std::move(receiver_or.error()));
+  }
+  std::string args;
+  for (std::size_t i = 1; i < call.arguments.size(); ++i) {
+    auto arg_or = RenderExpr(ctx, ctx.Expr(call.arguments[i]));
+    if (!arg_or) {
+      return std::unexpected(std::move(arg_or.error()));
+    }
+    if (i != 1) {
+      args += ", ";
+    }
+    args += *arg_or;
+  }
+  const std::string member_call = std::format(
+      "({}).{}({})", *receiver_or, QueueMethodMemberName(m.kind), args);
+  // LRM 7.10.2.1: size() returns an int; wrap the C++ std::size_t in the
+  // runtime integral so it composes with the rest of the value model.
+  if (m.kind == mir::QueueMethodKind::kSize) {
+    return std::format("lyra::value::PackedArray::Int({})", member_call);
+  }
+  return member_call;
+}
+
 // Side-effect-free per-value queries. Dispatch by the receiver's MIR
 // type because the answer is type-static for everything except 4-state
 // integral packed: a string (LRM 6.16) and a byte-element unpacked array
@@ -1108,6 +1163,9 @@ auto RenderCallExpr(
                     [&](const mir::ArrayMethodInfo& m) {
                       return RenderArrayMethodCall(ctx, call, m);
                     },
+                    [&](const mir::QueueMethodInfo& m) {
+                      return RenderQueueMethodCall(ctx, call, m);
+                    },
                     [&](const mir::ValueMethodInfo& m) {
                       return RenderValueMethodCall(ctx, call, m);
                     },
@@ -1191,18 +1249,19 @@ auto RenderCallExpr(
 
 // Indexed element access shared by rvalue `RenderElementSelectExpr` and the
 // lvalue `RenderLhsExpr` ElementSelect arm. `PackedArray`, `UnpackedArray`,
-// and `DynamicArray` expose a symmetric `ElementAt(const PackedArray&)` so
-// the emit string is substrate-agnostic; declared-range translation and
-// `ToInt64` canonicalize inside the runtime type.
+// `DynamicArray`, and `Queue` expose a symmetric `ElementAt(const
+// PackedArray&)` so the emit string is substrate-agnostic; declared-range
+// translation and `ToInt64` canonicalize inside the runtime type.
 auto RenderIndexedElementAccess(
     const mir::Type& base_ty, std::string_view base, std::string_view idx)
     -> std::string {
   if (!std::holds_alternative<mir::PackedArrayType>(base_ty.data) &&
       !std::holds_alternative<mir::UnpackedArrayType>(base_ty.data) &&
-      !std::holds_alternative<mir::DynamicArrayType>(base_ty.data)) {
+      !std::holds_alternative<mir::DynamicArrayType>(base_ty.data) &&
+      !std::holds_alternative<mir::QueueType>(base_ty.data)) {
     throw InternalError(
         "RenderIndexedElementAccess: base type must be PackedArrayType, "
-        "UnpackedArrayType, or DynamicArrayType");
+        "UnpackedArrayType, DynamicArrayType, or QueueType");
   }
   return std::format("({}).ElementAt({})", base, idx);
 }

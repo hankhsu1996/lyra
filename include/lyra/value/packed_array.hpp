@@ -10,6 +10,7 @@
 #include <vector>
 
 #include "lyra/value/packed.hpp"
+#include "lyra/value/value_concept.hpp"
 
 namespace lyra::value {
 
@@ -225,25 +226,24 @@ class PackedArray {
   [[nodiscard]] auto AsLogicView() -> LogicView;
   [[nodiscard]] auto AsLogicView() const -> ConstLogicView;
 
-  // Width-aware copy. The destination's attributes drive sign-extension,
-  // zero-extension, or truncation as appropriate.
-  auto AssignFrom(const PackedArray& other) -> void;
-
-  // Variable assignment in SystemVerilog preserves the destination's declared
-  // shape; the producer is expected to insert any width/state conversion (the
-  // cpp backend lowers slang's ConversionExpr into PackedArray::ConvertFrom).
-  // Both copy- and move-assignment route through AssignFrom, which throws
-  // InternalError on shape mismatch. This makes "(target = value)" the single
-  // emit shape for variable assignment and surfaces any missing conversion as
-  // a backend bug rather than silently relayout-ing the destination.
-  // Construction (copy/move ctor) does the opposite: a freshly-constructed
-  // PackedArray adopts the source's shape, since there is no declared shape
-  // to preserve.
+  // Construction adopts the source's shape (a fresh object has no declared
+  // shape to preserve). Assignment is the opposite -- it preserves this
+  // variable's declared shape via AssignFrom, because a SystemVerilog variable
+  // keeps its type across assignment. The move constructor leaves the source a
+  // valid zero-of-the-same-shape (not an empty husk), so PackedArray relocates
+  // correctly inside STL containers (queue / vector / deque insert and erase).
   PackedArray(const PackedArray&) = default;
-  PackedArray(PackedArray&&) noexcept = default;
+  PackedArray(PackedArray&& other) noexcept;
   auto operator=(const PackedArray& other) -> PackedArray&;
   auto operator=(PackedArray&& other) noexcept(false) -> PackedArray&;
   ~PackedArray() = default;
+
+  // Width-aware copy preserving THIS object's shape. The shape
+  // (bit_width / signedness / 4-state / dims) is declared type information
+  // fixed at construction; assignment keeps it and copies the source's bits
+  // in (docs/decisions/integral-representation.md). ExpectSameShape guards a
+  // missing upstream ConvertFrom.
+  auto AssignFrom(const PackedArray& other) -> void;
 
   // Storage-level swap, bypassing AssignFrom's shape-preservation rule.
   // Found by ADL so STL element-relocation primitives (`std::ranges::sort`,
@@ -586,5 +586,7 @@ class PackedArrayRef {
   std::uint32_t bit_width_;
   std::vector<PackedRange> dims_;
 };
+
+static_assert(LyraValue<PackedArray>);
 
 }  // namespace lyra::value

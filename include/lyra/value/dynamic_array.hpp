@@ -15,6 +15,7 @@
 #include "lyra/value/format.hpp"
 #include "lyra/value/packed_array.hpp"
 #include "lyra/value/queue.hpp"
+#include "lyra/value/value_concept.hpp"
 
 namespace lyra::value {
 
@@ -630,5 +631,7 @@ struct Formatter<DynamicArray<T>> {
     return out;
   }
 };
+
+static_assert(LyraValue<DynamicArray<PackedArray>>);
 
 }  // namespace lyra::value

@@ -52,6 +52,9 @@ auto LowerStringMethodName(std::string_view name)
 auto LowerArrayMethodName(std::string_view name)
     -> std::optional<hir::ArrayMethodKind>;
 
+auto LowerQueueMethodName(std::string_view name)
+    -> std::optional<hir::QueueMethodKind>;
+
 // Recover the original user-written rhs from slang's compound expansion:
 // slang lowers `lhs op= e` to `right = Conv(lhs.type) { BinaryOp(op) {
 // Conv(common, LValueRef), Conv(common, e) } }`. This helper peels the
