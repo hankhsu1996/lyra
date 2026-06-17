@@ -1087,11 +1087,13 @@ class MirDumper {
               Line(std::format("Stmt[{}] ContinueStmt", id.value));
             },
             [&](const ReturnStmt& s) {
+              const std::string flavor =
+                  s.is_coroutine_return ? " coroutine" : "";
               if (s.value.has_value()) {
                 Line(
                     std::format(
-                        "Stmt[{}] ReturnStmt value=Expr[{}]", id.value,
-                        s.value->value));
+                        "Stmt[{}] ReturnStmt{} value=Expr[{}]", id.value,
+                        flavor, s.value->value));
                 Indent();
                 Line(
                     std::format(
@@ -1099,7 +1101,7 @@ class MirDumper {
                         FormatExpr(enclosing, *s.value)));
                 Dedent();
               } else {
-                Line(std::format("Stmt[{}] ReturnStmt", id.value));
+                Line(std::format("Stmt[{}] ReturnStmt{}", id.value, flavor));
               }
             },
             [&](const SensitivityWaitStmt& s) {

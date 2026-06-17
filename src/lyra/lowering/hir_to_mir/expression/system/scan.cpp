@@ -232,8 +232,11 @@ auto LowerScanSystemSubroutineCall(
                   .var = *frame.self_binding},
           .type = self_ptr_type});
   CaptureSink sink{body_frame.procedural_depth, body, outer_scope};
-  const WalkFrame closure_frame = body_frame.WithClosure(&sink).WithSelfBinding(
-      self_binding, body_frame.procedural_depth);
+  // The scan IIFE is a synchronous body that returns a count -- no suspends.
+  const WalkFrame closure_frame =
+      body_frame.WithClosure(&sink)
+          .WithSelfBinding(self_binding, body_frame.procedural_depth)
+          .WithCoroutineBody(false);
 
   // Source / format are rvalues inside the body. The leaf lowering routes
   // procedural-var leaves through the sink, producing body-side bindings.

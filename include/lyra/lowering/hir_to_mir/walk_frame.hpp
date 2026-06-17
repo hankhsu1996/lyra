@@ -83,6 +83,14 @@ struct WalkFrame {
   std::optional<mir::ProceduralVarId> self_binding;
   ProceduralDepth self_decl_depth{};
 
+  // Whether the enclosing callable body suspends -- a process, a task, or a
+  // closure synthesized to run as a separate concurrent process (fork branch).
+  // Set at body entry and inherited unchanged through nested procedural scopes;
+  // a closure entry re-establishes it from the closure's own `is_coroutine`.
+  // The `ReturnStmt` lowering reads this to fill the stmt's
+  // `is_coroutine_return` attribute (a C++ render hint, ignored by LIR / LLVM).
+  bool is_coroutine_body = false;
+
   // How a `LoopVarRef` resolves in `StructuralScopeLowerer::LowerExpr`. Set
   // by the caller before dispatching a constructor expression. The default
   // (`kStructuralParam`) matches the common generate-control / continuous
@@ -142,6 +150,12 @@ struct WalkFrame {
     WalkFrame next = *this;
     next.self_binding = id;
     next.self_decl_depth = decl_depth;
+    return next;
+  }
+
+  [[nodiscard]] auto WithCoroutineBody(bool is_coroutine) const -> WalkFrame {
+    WalkFrame next = *this;
+    next.is_coroutine_body = is_coroutine;
     return next;
   }
 };
