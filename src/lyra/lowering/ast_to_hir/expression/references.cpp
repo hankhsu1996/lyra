@@ -25,6 +25,7 @@
 #include "lyra/diag/kind.hpp"
 #include "lyra/hir/primary.hpp"
 #include "lyra/hir/value_ref.hpp"
+#include "lyra/lowering/ast_to_hir/constant_value.hpp"
 #include "lyra/lowering/ast_to_hir/integral_constant.hpp"
 
 namespace lyra::lowering::ast_to_hir {
@@ -49,67 +50,7 @@ auto MakeEnumValueExpr(
   if (!cv.isInteger()) {
     throw InternalError("MakeEnumValueExpr: enum value is not integral");
   }
-  return hir::Expr{
-      .type = type,
-      .data =
-          hir::PrimaryExpr{
-              .data =
-                  hir::IntegerLiteral{
-                      .value = LowerSVIntToIntegralConstant(cv.integer()),
-                      .base = hir::IntegerLiteralBase::kDecimal,
-                      .declared_unsized = false,
-                  }},
-      .span = span,
-  };
-}
-
-auto MakeParameterValueExpr(
-    const slang::ast::ParameterSymbol& sym, hir::TypeId type,
-    diag::SourceSpan span) -> diag::Result<hir::Expr> {
-  const auto& cv = sym.getValue();
-  if (cv.isInteger()) {
-    return hir::Expr{
-        .type = type,
-        .data =
-            hir::PrimaryExpr{
-                .data =
-                    hir::IntegerLiteral{
-                        .value = LowerSVIntToIntegralConstant(cv.integer()),
-                        .base = hir::IntegerLiteralBase::kDecimal,
-                        .declared_unsized = false,
-                    }},
-        .span = span,
-    };
-  }
-  if (cv.isReal()) {
-    return hir::Expr{
-        .type = type,
-        .data = hir::PrimaryExpr{.data = hir::RealLiteral{.value = cv.real()}},
-        .span = span,
-    };
-  }
-  if (cv.isShortReal()) {
-    return hir::Expr{
-        .type = type,
-        .data =
-            hir::PrimaryExpr{
-                .data =
-                    hir::RealLiteral{
-                        .value = static_cast<double>(cv.shortReal())}},
-        .span = span,
-    };
-  }
-  if (cv.isString()) {
-    return hir::Expr{
-        .type = type,
-        .data = hir::PrimaryExpr{.data = hir::StringLiteral{.value = cv.str()}},
-        .span = span,
-    };
-  }
-  return diag::Unsupported(
-      span, diag::DiagCode::kUnsupportedExpressionForm,
-      "parameter of aggregate type is not yet supported",
-      diag::UnsupportedCategory::kFeature);
+  return MakeIntegralLiteralExpr(cv.integer(), type, span);
 }
 
 }  // namespace
@@ -148,8 +89,8 @@ auto LowerNamedValueProc(
   if (sym.kind == slang::ast::SymbolKind::Parameter) {
     auto type_id = module.InternType(*named.type, span);
     if (!type_id) return std::unexpected(std::move(type_id.error()));
-    return MakeParameterValueExpr(
-        sym.as<slang::ast::ParameterSymbol>(), *type_id, span);
+    return MakeConstantValueExpr(
+        sym.as<slang::ast::ParameterSymbol>().getValue(), *type_id, span);
   }
 
   // Subroutine formals (LRM 13.5) and foreach iterators (LRM 12.7.3) are
@@ -354,8 +295,8 @@ auto LowerNamedValueStructural(
   if (sym.kind == slang::ast::SymbolKind::Parameter) {
     auto type_id = module.InternType(*named.type, span);
     if (!type_id) return std::unexpected(std::move(type_id.error()));
-    return MakeParameterValueExpr(
-        sym.as<slang::ast::ParameterSymbol>(), *type_id, span);
+    return MakeConstantValueExpr(
+        sym.as<slang::ast::ParameterSymbol>().getValue(), *type_id, span);
   }
   if (sym.kind != slang::ast::SymbolKind::Variable) {
     return diag::Unsupported(

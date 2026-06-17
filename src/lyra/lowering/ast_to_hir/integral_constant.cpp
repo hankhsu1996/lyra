@@ -72,4 +72,21 @@ auto LowerSVIntToIntegralConstant(const slang::SVInt& sv)
   return out;
 }
 
+auto MakeIntegralLiteralExpr(
+    const slang::SVInt& sv, hir::TypeId type, diag::SourceSpan span)
+    -> hir::Expr {
+  return hir::Expr{
+      .type = type,
+      .data =
+          hir::PrimaryExpr{
+              .data =
+                  hir::IntegerLiteral{
+                      .value = LowerSVIntToIntegralConstant(sv),
+                      .base = hir::IntegerLiteralBase::kDecimal,
+                      .declared_unsized = false,
+                  }},
+      .span = span,
+  };
+}
+
 }  // namespace lyra::lowering::ast_to_hir

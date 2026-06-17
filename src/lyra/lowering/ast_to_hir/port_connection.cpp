@@ -12,6 +12,7 @@
 #include <slang/ast/symbols/PortSymbols.h>
 #include <slang/ast/symbols/ValueSymbol.h>
 #include <slang/ast/types/Type.h>
+#include <slang/numeric/ConstantValue.h>
 
 #include "lyra/base/internal_error.hpp"
 #include "lyra/diag/diag_code.hpp"
@@ -19,6 +20,7 @@
 #include "lyra/diag/kind.hpp"
 #include "lyra/hir/continuous_assign.hpp"
 #include "lyra/hir/structural_scope.hpp"
+#include "lyra/lowering/ast_to_hir/constant_value.hpp"
 #include "lyra/lowering/ast_to_hir/module_lowerer.hpp"
 #include "lyra/lowering/ast_to_hir/sensitivity.hpp"
 #include "lyra/lowering/ast_to_hir/structural_scope_lowerer.hpp"
@@ -97,8 +99,10 @@ auto PopulateInstancePortConnections(
     }
     const auto* expr = conn->getExpression();
     if (expr == nullptr) {
-      return PortConnectionUnsupported(
-          span, "unconnected port default value is not yet supported");
+      // Unconnected: an explicit empty connection (`.port()`) or a port omitted
+      // with no default. The child's storage holds the data type's default
+      // initial value (LRM 23.3.3.2); no parent driver is installed.
+      continue;
     }
 
     auto type_id = module.InternType(port_type, span);
@@ -108,14 +112,35 @@ auto PopulateInstancePortConnections(
         {hir::MemberHop{std::string{internal->name}}}, *type_id, span);
 
     if (port.direction == slang::ast::ArgumentDirection::In) {
-      // Input: the parent-side source drives the child port.
-      auto rhs_or = scope.LowerExpr(*expr, frame);
-      if (!rhs_or) return std::unexpected(std::move(rhs_or.error()));
+      // The child port is driven by the connection's value: the parent-side
+      // expression, or -- when the port was omitted -- the declared default
+      // (LRM 23.2.2.4), which slang surfaces through getExpression() as the
+      // port's own getInitializer() pointer. The default's names resolve in the
+      // child, so it cannot be lowered in the parent frame; like a C++ default
+      // argument, its already-evaluated constant is spliced in here and driven
+      // once with no sensitivity.
+      hir::Expr rhs;
+      std::vector<SensitivityRead> reads;
+      if (expr == port.getInitializer()) {
+        const auto* constant = expr->getConstant();
+        if (constant == nullptr) {
+          throw InternalError(
+              "PopulateInstancePortConnections: port default did not fold to a "
+              "constant");
+        }
+        auto rhs_or = MakeConstantValueExpr(*constant, *type_id, span);
+        if (!rhs_or) return std::unexpected(std::move(rhs_or.error()));
+        rhs = *std::move(rhs_or);
+      } else {
+        auto rhs_or = scope.LowerExpr(*expr, frame);
+        if (!rhs_or) return std::unexpected(std::move(rhs_or.error()));
+        rhs = *std::move(rhs_or);
+        reads = module.Sensitivity().AnalyzeReads(*expr, inst);
+      }
       const hir::ExprId lhs_id =
           frame.current_structural_scope->AddExpr(std::move(child_ref));
       const hir::ExprId rhs_id =
-          frame.current_structural_scope->AddExpr(*std::move(rhs_or));
-      const auto& reads = module.Sensitivity().AnalyzeReads(*expr, inst);
+          frame.current_structural_scope->AddExpr(std::move(rhs));
       frame.current_structural_scope->AddContinuousAssign(
           hir::ContinuousAssign{
               .span = span,
