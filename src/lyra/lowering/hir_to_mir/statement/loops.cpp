@@ -113,7 +113,11 @@ auto LowerForStmt(
           .init = std::move(mir_init),
           .condition = cond_id,
           .step = std::move(step_ids),
-          .scope = body_scope_id}};
+          .scope = body_scope_id,
+          .break_label =
+              f.break_label.has_value()
+                  ? std::optional{mir::LoopLabelId{f.break_label->value}}
+                  : std::nullopt}};
 }
 
 auto LowerWhileStmt(

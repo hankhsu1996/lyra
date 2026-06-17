@@ -1,6 +1,6 @@
-#include <cstdint>
 #include <expected>
-#include <ranges>
+#include <optional>
+#include <string>
 #include <string_view>
 #include <utility>
 #include <vector>
@@ -11,16 +11,16 @@
 #include <slang/ast/types/AllTypes.h>
 #include <slang/ast/types/Type.h>
 
-#include "lyra/base/internal_error.hpp"
 #include "lyra/diag/diag_code.hpp"
 #include "lyra/diag/diagnostic.hpp"
 #include "lyra/diag/kind.hpp"
 #include "lyra/hir/binary_op.hpp"
 #include "lyra/hir/expr.hpp"
-#include "lyra/hir/integral_constant.hpp"
-#include "lyra/hir/primary.hpp"
+#include "lyra/hir/expr_builders.hpp"
+#include "lyra/hir/inc_dec_op.hpp"
+#include "lyra/hir/method.hpp"
 #include "lyra/hir/stmt.hpp"
-#include "lyra/hir/value_ref.hpp"
+#include "lyra/hir/subroutine_ref.hpp"
 #include "lyra/lowering/ast_to_hir/module_lowerer.hpp"
 #include "lyra/lowering/ast_to_hir/process_lowerer.hpp"
 
@@ -28,119 +28,215 @@ namespace lyra::lowering::ast_to_hir {
 
 namespace {
 
-constexpr std::string_view kFlatCounterName = "__lyra_foreach_n";
+constexpr std::string_view kLastIndexName = "__lyra_foreach_last";
 
-auto MakeInt32Constant(std::int64_t value) -> hir::IntegralConstant {
-  return hir::IntegralConstant{
-      .value_words = {static_cast<std::uint64_t>(value) & 0xFFFFFFFFULL},
-      .state_words = {},
-      .width = 32,
-      .signedness = hir::Signedness::kSigned,
-      .state_kind = hir::IntegralStateKind::kTwoState,
-  };
-}
+// slang already describes each `foreach` dimension: a fixed dimension carries a
+// constant `range` (its declared bounds and direction); a dynamically sized one
+// (queue / dynamic array) has no `range` and takes its bounds from `.size()` at
+// run time. `DescribeRange` turns either form into a uniform
+// `(first, last, direction)`.
+using LoopDim = slang::ast::ForeachLoopStatement::LoopDim;
 
-auto MakeInt32LiteralExpr(
-    std::int64_t value, hir::TypeId int32_type, diag::SourceSpan span)
-    -> hir::Expr {
-  return hir::Expr{
-      .type = int32_type,
-      .data =
-          hir::PrimaryExpr{
-              .data =
-                  hir::IntegerLiteral{
-                      .value = MakeInt32Constant(value),
-                      .base = hir::IntegerLiteralBase::kDecimal,
-                      .declared_unsized = false,
-                  }},
-      .span = span,
-  };
-}
-
-auto MakeProcVarRefExpr(
-    hir::ProceduralVarId var, hir::TypeId type, diag::SourceSpan span)
-    -> hir::Expr {
-  return hir::Expr{
-      .type = type,
-      .data = hir::PrimaryExpr{.data = hir::ProceduralVarRef{.var = var}},
-      .span = span,
-  };
-}
-
-// Ordered outer-to-inner per LRM 12.7.3 cardinality. `inner_product` is the
-// product of `count` for every later (more-inner) entry; the innermost has
-// inner_product = 1.
-struct DimMeta {
-  const slang::ast::IteratorSymbol* loop_var;
-  std::int64_t lo;
-  std::int64_t count;
-  std::int64_t inner_product;
+// A dimension's iteration range: iterate the loop variable from `first` to
+// `last` inclusive, ascending or descending. `first` and `last` are HIR
+// expressions, so a fixed dimension and a dynamically sized one (whose `last`
+// is `size - 1`) are described the same way and iterated by the same loop.
+struct DimensionRange {
+  hir::ExprId first;
+  hir::ExprId last;
   bool ascending;
 };
 
-// lo +/- ((counter / inner_product) % count)
-auto BuildDecomposeExpr(
-    WalkFrame frame, hir::TypeId int32_type, diag::SourceSpan span,
-    hir::ProceduralVarId counter_var, const DimMeta& dim) -> hir::ExprId {
-  const auto counter_ref_id = frame.current_procedural_body->AddExpr(
-      MakeProcVarRefExpr(counter_var, int32_type, span));
+// Describes one iterated dimension's index range. The only place a dimension's
+// type is consulted: a fixed dimension yields its declared range and direction;
+// a dynamically sized one yields 0..size-1 ascending, with the count sampled
+// once on entry (LRM 12.7.3) into a local that `setup` declares. `array` is the
+// receiver whose `.size()` bounds a dynamic dimension (queue and dynamic array
+// both expose it; the type only names the builtin-method kind).
+auto DescribeRange(
+    hir::ProceduralBody& body, const LoopDim& dim,
+    std::optional<hir::ExprId> array, const slang::ast::Type* array_type,
+    hir::TypeId int32_type, diag::SourceSpan span,
+    std::vector<hir::StmtId>& setup) -> DimensionRange {
+  if (dim.range.has_value()) {
+    const auto& declared = *dim.range;
+    return DimensionRange{
+        .first = body.AddExpr(
+            hir::MakeInt32Literal(declared.left, int32_type, span)),
+        .last = body.AddExpr(
+            hir::MakeInt32Literal(declared.right, int32_type, span)),
+        .ascending = declared.left <= declared.right};
+  }
 
-  hir::ExprId divided_id = counter_ref_id;
-  if (dim.inner_product != 1) {
-    const auto inner_id = frame.current_procedural_body->AddExpr(
-        MakeInt32LiteralExpr(dim.inner_product, int32_type, span));
-    divided_id = frame.current_procedural_body->AddExpr(
+  hir::SubroutineRef size_callee =
+      array_type->isQueue() ? hir::SubroutineRef{hir::BuiltinMethodRef{
+                                  .method = hir::QueueMethodKind::kSize}}
+                            : hir::SubroutineRef{hir::BuiltinMethodRef{
+                                  .method = hir::ArrayMethodKind::kSize}};
+  const hir::ExprId size_id = body.AddExpr(
+      hir::Expr{
+          .type = int32_type,
+          .data =
+              hir::CallExpr{
+                  .callee = std::move(size_callee), .arguments = {*array}},
+          .span = span});
+  const hir::ExprId one_id =
+      body.AddExpr(hir::MakeInt32Literal(1, int32_type, span));
+  const hir::ExprId last_value_id = body.AddExpr(
+      hir::Expr{
+          .type = int32_type,
+          .data =
+              hir::BinaryExpr{
+                  .op = hir::BinaryOp::kSub, .lhs = size_id, .rhs = one_id},
+          .span = span});
+  const hir::ProceduralVarId last_var = body.AddProceduralVar(
+      hir::ProceduralVarDecl{
+          .name = std::string{kLastIndexName},
+          .type = int32_type,
+          .lifetime = hir::VariableLifetime::kAutomatic});
+  setup.push_back(body.AddStmt(
+      hir::Stmt{
+          .label = std::nullopt,
+          .data = hir::VarDeclStmt{.var = last_var, .init = last_value_id},
+          .span = span}));
+  return DimensionRange{
+      .first = body.AddExpr(hir::MakeInt32Literal(0, int32_type, span)),
+      .last = body.AddExpr(hir::MakeProcVarRefExpr(last_var, int32_type, span)),
+      .ascending = true};
+}
+
+// Recursively wraps the loop body in one nested loop per remaining dimension.
+//
+// `array` is `arrayRef` indexed by the enclosing loop variables -- the receiver
+// whose `.size()` bounds a dynamic dimension -- with `array_type` its slang
+// type; both are absent when no dimension at or below is dynamically sized (a
+// purely fixed nest never touches the array). Descending one level indexes
+// `array` by this level's loop variable and peels `array_type` once, so the
+// type flows down naturally rather than being recomputed from the root.
+//
+// Procedural-var ids are minted top to bottom (each level's `last` local before
+// its loop variable, then the body's own locals), matching the order HIR-to-MIR
+// encounters the declarations. The outermost loop (level 0) is the break
+// landing target, marked only when a break in the body actually used the label.
+//
+// Returns the statements realizing this level: a lone `for`, or a dynamic
+// dimension's sampled-`last` declaration followed by its `for`.
+auto BuildForeachNest(
+    ProcessLowerer& proc, const slang::ast::ForeachLoopStatement& fs,
+    WalkFrame frame, const std::vector<const LoopDim*>& levels,
+    std::size_t level, std::optional<hir::ExprId> array,
+    const slang::ast::Type* array_type, hir::TypeId int32_type,
+    diag::SourceSpan span, hir::LoopLabelId foreach_label, bool* label_used)
+    -> diag::Result<std::vector<hir::StmtId>> {
+  auto& body = *frame.current_procedural_body;
+
+  if (level == levels.size()) {
+    // Innermost: the user body, lowered with the foreach label in scope so a
+    // `break` that exits the whole nest (LRM 12.8) targets the outermost loop.
+    auto body_or = proc.LowerStmt(
+        fs.body, frame.WithBreakLabel(foreach_label, label_used));
+    if (!body_or) return std::unexpected(std::move(body_or.error()));
+    return std::vector<hir::StmtId>{body.AddStmt(*std::move(body_or))};
+  }
+
+  const LoopDim& dim = *levels[level];
+
+  // Describe this dimension's range -- the one type-dependent step. Any setup
+  // (a dynamic dimension samples its `last` once into a local) lands in `stmts`
+  // before the loop.
+  std::vector<hir::StmtId> stmts;
+  const DimensionRange range =
+      DescribeRange(body, dim, array, array_type, int32_type, span, stmts);
+
+  const hir::ProceduralVarId loop_var =
+      proc.AddProceduralVar(body, *dim.loopVar, int32_type);
+
+  // Descend: the inner levels iterate `array[loop_var]`, one type peel deeper.
+  // Only built while the array is being threaded (some inner level is dynamic);
+  // a deeper fixed-only tail leaves it absent.
+  std::optional<hir::ExprId> inner_array;
+  const slang::ast::Type* inner_array_type = nullptr;
+  if (array.has_value()) {
+    inner_array_type = array_type->getCanonicalType().getArrayElementType();
+    auto inner_hir_type = proc.Module().InternType(*inner_array_type, span);
+    if (!inner_hir_type) {
+      return std::unexpected(std::move(inner_hir_type.error()));
+    }
+    const hir::ExprId index_id =
+        body.AddExpr(hir::MakeProcVarRefExpr(loop_var, int32_type, span));
+    inner_array = body.AddExpr(
         hir::Expr{
-            .type = int32_type,
+            .type = *inner_hir_type,
             .data =
-                hir::BinaryExpr{
-                    .op = hir::BinaryOp::kDiv,
-                    .lhs = counter_ref_id,
-                    .rhs = inner_id},
+                hir::ElementSelectExpr{.base_value = *array, .index = index_id},
             .span = span});
   }
 
-  const auto count_id = frame.current_procedural_body->AddExpr(
-      MakeInt32LiteralExpr(dim.count, int32_type, span));
-  const auto offset_id = frame.current_procedural_body->AddExpr(
+  auto inner_or = BuildForeachNest(
+      proc, fs, frame, levels, level + 1, inner_array, inner_array_type,
+      int32_type, span, foreach_label, label_used);
+  if (!inner_or) return std::unexpected(std::move(inner_or.error()));
+  const hir::StmtId inner_body =
+      inner_or->size() == 1
+          ? inner_or->front()
+          : body.AddStmt(
+                hir::Stmt{
+                    .label = std::nullopt,
+                    .data = hir::BlockStmt{.statements = std::move(*inner_or)},
+                    .span = span});
+
+  // Iterate the range: one loop shape for every dimension, driven only by
+  // (first, last, direction) -- no dynamic-vs-fixed branch here.
+  const hir::ExprId cond_ref =
+      body.AddExpr(hir::MakeProcVarRefExpr(loop_var, int32_type, span));
+  const hir::ExprId cond_id = body.AddExpr(
       hir::Expr{
           .type = int32_type,
           .data =
               hir::BinaryExpr{
-                  .op = hir::BinaryOp::kMod,
-                  .lhs = divided_id,
-                  .rhs = count_id},
+                  .op = range.ascending ? hir::BinaryOp::kLessEqual
+                                        : hir::BinaryOp::kGreaterEqual,
+                  .lhs = cond_ref,
+                  .rhs = range.last},
+          .span = span});
+  const hir::ExprId step_ref =
+      body.AddExpr(hir::MakeProcVarRefExpr(loop_var, int32_type, span));
+  const hir::ExprId step_id = body.AddExpr(
+      hir::Expr{
+          .type = int32_type,
+          .data =
+              hir::IncDecExpr{
+                  .op = range.ascending ? hir::IncDecOp::kPreInc
+                                        : hir::IncDecOp::kPreDec,
+                  .target = step_ref},
           .span = span});
 
-  const auto lo_id = frame.current_procedural_body->AddExpr(
-      MakeInt32LiteralExpr(dim.lo, int32_type, span));
-  return frame.current_procedural_body->AddExpr(
-      hir::Expr{
-          .type = int32_type,
+  std::vector<hir::ForInit> init;
+  init.emplace_back(hir::ForInitDecl{.var = loop_var, .init = range.first});
+  stmts.push_back(body.AddStmt(
+      hir::Stmt{
+          .label = std::nullopt,
           .data =
-              hir::BinaryExpr{
-                  .op =
-                      dim.ascending ? hir::BinaryOp::kAdd : hir::BinaryOp::kSub,
-                  .lhs = lo_id,
-                  .rhs = offset_id},
-          .span = span});
+              hir::ForStmt{
+                  .init = std::move(init),
+                  .condition = cond_id,
+                  .step = {step_id},
+                  .body = inner_body,
+                  .break_label = (level == 0 && *label_used)
+                                     ? std::optional{foreach_label}
+                                     : std::nullopt},
+          .span = span}));
+  return stmts;
 }
 
+// The associative array iterates by key and the string by byte (LRM 7.9 /
+// 6.16), distinct iteration models from the index-counted dynamic array and
+// queue handled here. Both stay rejected until their own lowering lands.
 auto RejectUnsupportedArrayType(
     const slang::ast::Type& canonical, diag::SourceSpan span)
     -> diag::Result<void> {
   using slang::ast::SymbolKind;
   switch (canonical.kind) {
-    case SymbolKind::DynamicArrayType:
-      return diag::Unsupported(
-          span, diag::DiagCode::kUnsupportedStatementForm,
-          "foreach over dynamic array is not yet supported",
-          diag::UnsupportedCategory::kFeature);
-    case SymbolKind::QueueType:
-      return diag::Unsupported(
-          span, diag::DiagCode::kUnsupportedStatementForm,
-          "foreach over queue is not yet supported",
-          diag::UnsupportedCategory::kFeature);
     case SymbolKind::AssociativeArrayType:
       return diag::Unsupported(
           span, diag::DiagCode::kUnsupportedStatementForm,
@@ -163,6 +259,7 @@ auto ProcessLowerer::LowerForeachStmt(
     -> diag::Result<hir::Stmt> {
   auto& proc = *this;
   auto& module = proc.Module();
+  auto& body = *frame.current_procedural_body;
   const auto span = module.SourceMapper().SpanOf(fs.sourceRange);
   const auto& canonical = fs.arrayRef.type->getCanonicalType();
   if (auto check = RejectUnsupportedArrayType(canonical, span); !check) {
@@ -171,142 +268,62 @@ auto ProcessLowerer::LowerForeachStmt(
 
   const hir::TypeId int32_type = module.Unit().builtins.int32;
 
-  std::vector<DimMeta> dims;
-  dims.reserve(fs.loopDims.size());
+  // Collect the iterated (non-skipped) dimensions in cardinal order. A
+  // dimension with no constant range is dynamically sized (LRM 7.5 / 7.10).
+  std::vector<const LoopDim*> levels;
+  levels.reserve(fs.loopDims.size());
+  bool any_dynamic = false;
   for (const auto& dim : fs.loopDims) {
     if (dim.loopVar == nullptr) {
       continue;
     }
-    if (!dim.range.has_value()) {
-      throw InternalError(
-          "ProcessLowerer::LowerForeachStmt: non-skipped dim has no constant "
-          "range; the type-level rejection above should have caught dynamic / "
-          "queue / associative element types");
-    }
-    const auto& range = *dim.range;
-    const bool ascending = range.left <= range.right;
-    const std::int64_t count = ascending ? (range.right - range.left + 1)
-                                         : (range.left - range.right + 1);
-    dims.push_back(
-        DimMeta{
-            .loop_var = dim.loopVar,
-            .lo = range.left,
-            .count = count,
-            .inner_product = 1,
-            .ascending = ascending});
+    any_dynamic = any_dynamic || !dim.range.has_value();
+    levels.push_back(&dim);
   }
 
-  // All-dims-skipped: arrayRef still needs evaluation for side effects, body
-  // runs once.
-  if (dims.empty()) {
+  // All dimensions skipped (`foreach (a[])`): the array reference is still
+  // evaluated for side effects and the body runs once. No loop, so a break in
+  // the body is a plain innermost exit.
+  if (levels.empty()) {
     auto array_or = proc.LowerExpr(fs.arrayRef, frame);
     if (!array_or) return std::unexpected(std::move(array_or.error()));
-    const auto array_eval_id =
-        frame.current_procedural_body->AddExpr(*std::move(array_or));
-    const auto array_eval_stmt = frame.current_procedural_body->AddStmt(
+    const auto array_eval_stmt = body.AddStmt(
         hir::Stmt{
             .label = std::nullopt,
-            .data = hir::ExprStmt{.expr = array_eval_id},
+            .data = hir::ExprStmt{.expr = body.AddExpr(*std::move(array_or))},
             .span = span});
-    auto body_or = proc.LowerStmt(fs.body, frame);
+    auto body_or = proc.LowerStmt(fs.body, frame.WithoutBreakLabel());
     if (!body_or) return std::unexpected(std::move(body_or.error()));
-    const auto body_stmt_id =
-        frame.current_procedural_body->AddStmt(*std::move(body_or));
+    const auto body_stmt_id = body.AddStmt(*std::move(body_or));
     return hir::Stmt{
         .label = std::nullopt,
         .data = hir::BlockStmt{.statements = {array_eval_stmt, body_stmt_id}},
         .span = span};
   }
 
-  std::int64_t inner = 1;
-  for (auto& dim : dims | std::views::reverse) {
-    dim.inner_product = inner;
-    inner *= dim.count;
-  }
-  const std::int64_t total = inner;
-
-  // HIR -> MIR maps procedural vars in HIR-id order driven by VarDecl
-  // encounter order. The counter's ForInitDecl is the first VarDecl in the
-  // lowered body, so the counter must claim the lowest id; loop variables
-  // follow in the same outer-to-inner order their VarDeclStmts appear in.
-  const hir::ProceduralVarId counter_var =
-      frame.current_procedural_body->AddProceduralVar(
-          hir::ProceduralVarDecl{
-              .name = std::string{kFlatCounterName},
-              .type = int32_type,
-              .lifetime = hir::VariableLifetime::kAutomatic});
-  for (const auto& dim : dims) {
-    proc.AddProceduralVar(
-        *frame.current_procedural_body, *dim.loop_var, int32_type);
+  // Thread `arrayRef` into the nest only when some dimension needs a runtime
+  // size; a purely fixed foreach lowers to plain range loops that never read
+  // the array.
+  std::optional<hir::ExprId> array;
+  const slang::ast::Type* array_type = nullptr;
+  if (any_dynamic) {
+    auto array_or = proc.LowerExpr(fs.arrayRef, frame);
+    if (!array_or) return std::unexpected(std::move(array_or.error()));
+    array = body.AddExpr(*std::move(array_or));
+    array_type = fs.arrayRef.type;
   }
 
-  const auto zero_id = frame.current_procedural_body->AddExpr(
-      MakeInt32LiteralExpr(0, int32_type, span));
-  std::vector<hir::ForInit> init;
-  init.emplace_back(hir::ForInitDecl{.var = counter_var, .init = zero_id});
-
-  const auto cond_counter_ref_id = frame.current_procedural_body->AddExpr(
-      MakeProcVarRefExpr(counter_var, int32_type, span));
-  const auto total_id = frame.current_procedural_body->AddExpr(
-      MakeInt32LiteralExpr(total, int32_type, span));
-  const auto cond_id = frame.current_procedural_body->AddExpr(
-      hir::Expr{
-          .type = int32_type,
-          .data =
-              hir::BinaryExpr{
-                  .op = hir::BinaryOp::kLessThan,
-                  .lhs = cond_counter_ref_id,
-                  .rhs = total_id},
-          .span = span});
-
-  const auto step_counter_ref_id = frame.current_procedural_body->AddExpr(
-      MakeProcVarRefExpr(counter_var, int32_type, span));
-  const auto step_id = frame.current_procedural_body->AddExpr(
-      hir::Expr{
-          .type = int32_type,
-          .data =
-              hir::IncDecExpr{
-                  .op = hir::IncDecOp::kPreInc, .target = step_counter_ref_id},
-          .span = span});
-
-  std::vector<hir::StmtId> inner_stmts;
-  inner_stmts.reserve(dims.size() + 1);
-  for (const auto& dim : dims) {
-    const auto local_id = *proc.LookupProceduralVar(*dim.loop_var);
-    const auto init_expr_id =
-        BuildDecomposeExpr(frame, int32_type, span, counter_var, dim);
-    inner_stmts.push_back(frame.current_procedural_body->AddStmt(
-        hir::Stmt{
-            .label = std::nullopt,
-            .data = hir::VarDeclStmt{.var = local_id, .init = init_expr_id},
-            .span = span}));
-  }
-  auto body_or = proc.LowerStmt(fs.body, frame);
-  if (!body_or) return std::unexpected(std::move(body_or.error()));
-  inner_stmts.push_back(
-      frame.current_procedural_body->AddStmt(*std::move(body_or)));
-
-  const auto inner_block_id = frame.current_procedural_body->AddStmt(
-      hir::Stmt{
-          .label = std::nullopt,
-          .data = hir::BlockStmt{.statements = std::move(inner_stmts)},
-          .span = span});
-
-  const auto for_stmt_id = frame.current_procedural_body->AddStmt(
-      hir::Stmt{
-          .label = std::nullopt,
-          .data =
-              hir::ForStmt{
-                  .init = std::move(init),
-                  .condition = cond_id,
-                  .step = {step_id},
-                  .body = inner_block_id},
-          .span = span});
+  const hir::LoopLabelId foreach_label = body.AddLoopLabel();
+  bool label_used = false;
+  auto top = BuildForeachNest(
+      proc, fs, frame, levels, 0, array, array_type, int32_type, span,
+      foreach_label, &label_used);
+  if (!top) return std::unexpected(std::move(top.error()));
 
   // LRM 12.7.3 implicit begin-end around the foreach.
   return hir::Stmt{
       .label = std::nullopt,
-      .data = hir::BlockStmt{.statements = {for_stmt_id}},
+      .data = hir::BlockStmt{.statements = std::move(*top)},
       .span = span};
 }
 

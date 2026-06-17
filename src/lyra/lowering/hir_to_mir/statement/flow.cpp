@@ -141,9 +141,15 @@ auto LowerReturnStmt(
           .value = value, .is_coroutine_return = frame.is_coroutine_body}};
 }
 
-auto LowerBreakStmt(std::optional<std::string> label)
+auto LowerBreakStmt(
+    std::optional<std::string> label, std::optional<hir::LoopLabelId> target)
     -> diag::Result<mir::Stmt> {
-  return mir::Stmt{.label = std::move(label), .data = mir::BreakStmt{}};
+  return mir::Stmt{
+      .label = std::move(label),
+      .data = mir::BreakStmt{
+          .target = target.has_value()
+                        ? std::optional{mir::LoopLabelId{target->value}}
+                        : std::nullopt}};
 }
 
 auto LowerContinueStmt(std::optional<std::string> label)

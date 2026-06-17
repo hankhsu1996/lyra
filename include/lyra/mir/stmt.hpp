@@ -26,6 +26,16 @@ struct StmtId {
   auto operator<=>(const StmtId&) const -> std::strong_ordering = default;
 };
 
+// Identifies a loop as a non-local break target (the outermost loop of a
+// multi-dimensional `foreach`). The universal labeled-break primitive; the C++
+// backend renders it as a `goto` to a label after the loop, an LLVM backend as
+// a branch. See `docs/decisions/foreach-lowering.md`.
+struct LoopLabelId {
+  std::uint32_t value;
+
+  auto operator<=>(const LoopLabelId&) const -> std::strong_ordering = default;
+};
+
 struct ProceduralScopeId {
   std::uint32_t value;
 
@@ -111,6 +121,7 @@ struct ForStmt {
   std::optional<ExprId> condition;
   std::vector<ExprId> step;
   ProceduralScopeId scope;
+  std::optional<LoopLabelId> break_label = std::nullopt;
 };
 
 enum class EventEdge : std::uint8_t {
@@ -143,7 +154,9 @@ struct DoWhileStmt {
   ProceduralScopeId scope;
 };
 
-struct BreakStmt {};
+struct BreakStmt {
+  std::optional<LoopLabelId> target = std::nullopt;
+};
 
 struct ContinueStmt {};
 

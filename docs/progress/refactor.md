@@ -379,6 +379,61 @@ Entries get checked off as their PRs land. When the last entry lands, the file i
       discussion -- requires walking the structural / procedural axis across MIR vocabulary, dumper,
       lowering helpers, and backend, deciding what stays paired and what merges.
 
+- [ ] R23 -- Make the "materialize a reference into an owning value" (`.Clone()`) a node in MIR
+      instead of a render-time decision. Today a reference-producing read -- an element / range /
+      field select that yields a `PackedArrayRef` view into packed bit storage, or a container `T&`
+      for an unpacked / dynamic / queue element -- is materialized by the C++ backend: `RenderExpr`
+      wraps the result in `.Clone()` when `ProducesPackedArrayRef(expr)` holds, while
+      `RenderExprNatural` leaves the bare reference for lvalue / write contexts. So the same MIR
+      node (e.g. `ElementSelectExpr`) emits two different C++ strings (`x` vs `(x).Clone()`)
+      depending on which render entry point reaches it -- a semantic decision made in the backend.
+      `.Clone()` is a real operation (a method call that copies a borrowed reference / view into an
+      independent owning value); it must be represented in MIR so that every backend renders it. A
+      future LIR / LLVM backend that mechanically lowers MIR would not know to clone -- the decision
+      lives only in the C++ renderer -- so the two backends would diverge on value / aliasing
+      semantics (the LIR path would alias storage that the C++ path snapshots). Target shape: an
+      explicit MIR materialize node inserted at the HIR -> MIR boundary wherever a
+      reference-producing read is used in a value position (a read that escapes, is stored, or could
+      alias a subsequent mutation); the backend then renders mechanically -- a select renders to its
+      reference form, the materialize node renders to `.Clone()` -- with the `RenderExpr` /
+      `RenderExprNatural` split and the `ProducesPackedArrayRef` predicate both deleted. The
+      decision returns to the semantic layer that owns it, and "two different MIR -> two different
+      emit" holds. **Why surfaced**: pre-existing, not caused by the foreach work; foreach's
+      synthetic `.size()` on a jagged dynamic-of-dynamic array made it visible
+      (`jag[i].Clone().Size()` copies a whole row just to read its size). **Why deferred**: a
+      cross-cutting change to the backend value model -- MIR vocabulary, the HIR -> MIR
+      value-vs-reference context decision, the dumper, and the backend -- far larger than, and
+      orthogonal to, any feature that surfaces it. **Trigger**: the LIR / LLVM backend work (when
+      cross-backend divergence becomes real), or any change to the backend's clone / reference
+      rendering.
+
+- [ ] R24 -- Dispatch the "sized collection" concept (`.size()` / `.num()`) through one resolver
+      instead of branching on the concrete container at each call site. Today the element-count
+      query is a separate enum value on every container's method family (`ArrayMethodKind::kSize`,
+      `QueueMethodKind::kSize`, `AssociativeMethodKind::kSize` / `kNum`), and a caller that wants a
+      count branches on the receiver type to pick the right one -- the `foreach` synthetic bound
+      does exactly this (`isQueue() ? QueueMethodKind::kSize : ArrayMethodKind::kSize`). The concept
+      is "any collection with an element count exposes `size()`", and the key modeling point (from
+      how Rust generics, C++ templates + concepts, TypeScript interfaces, and Python protocols are
+      implemented) is that under **static dispatch** -- which is our regime, the receiver's concrete
+      type is always known at lowering -- the concept is a **compile-time resolver that is erased in
+      the backend IR**, not a persistent IR node. So the per-container method enums stay (they are
+      the concrete implementations, like Rust `impl` blocks / C++ members), and MIR keeps carrying
+      the concrete per-type method; the concept lives only as a single lowering-time
+      `ResolveSized(type) -> that type's size method` table -- the one place the type-to-method
+      branch lives. The earlier mistake to avoid: extracting `size` into a flat
+      `CollectionMethodKind` that removed it from each container's method set (that loses dimension
+      one -- an array genuinely has a `size` method -- and persists a concept node in MIR, which the
+      static-dispatch model says should be erased). **Why deferred**: only one consumer (`foreach`)
+      today, so the resolver is a one-caller function -- the interface payoff is multiple generic
+      callers sharing the table, which do not exist yet. **Trigger**: a second generic consumer of
+      collection-size dispatch (a locator / reduction lowering, an array-querying system function,
+      or a generic-algorithm pass). A separate, structural sub-question rides along: whether fixed
+      unpacked and packed arrays should also be "sized collections" with a runtime `.size()` (a
+      type-model decision, distinct from how `foreach` iterates them -- `foreach` over a fixed array
+      uses its declared range and direction, not a count, so that split is a real semantic
+      difference, not the same redundancy).
+
 ## Out of Scope
 
 - Per-feature workstreams. Those live in the dedicated feature files (`control-flow.md`,
