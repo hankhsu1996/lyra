@@ -1,0 +1,13 @@
+id: cpp.queue_basic_type
+tags: [cpp_run]
+input:
+  command: [run, cpp]
+  project: false
+  top: Top
+  files: [main.sv]
+expect:
+  exit: 0
+  variables:
+    q: [1, 2, 3]
+    r: [7, 7, 7, 7]
+    e: []
