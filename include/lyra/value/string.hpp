@@ -10,6 +10,7 @@
 
 #include "lyra/value/packed_array.hpp"
 #include "lyra/value/unpacked_array.hpp"
+#include "lyra/value/value_concept.hpp"
 
 namespace lyra::value {
 
@@ -247,5 +248,7 @@ class String {
 
   std::string impl_;
 };
+
+static_assert(LyraValue<String>);
 
 }  // namespace lyra::value

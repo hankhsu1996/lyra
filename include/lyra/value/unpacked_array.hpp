@@ -10,6 +10,7 @@
 #include "lyra/value/array_case_equal.hpp"
 #include "lyra/value/format.hpp"
 #include "lyra/value/packed_array.hpp"
+#include "lyra/value/value_concept.hpp"
 
 namespace lyra::value {
 
@@ -275,5 +276,7 @@ struct Formatter<UnpackedArray<T>> {
     return out;
   }
 };
+
+static_assert(LyraValue<UnpackedArray<PackedArray>>);
 
 }  // namespace lyra::value

@@ -1,0 +1,18 @@
+id: cpp.queue_methods
+tags: [cpp_run]
+input:
+  command: [run, cpp]
+  project: false
+  top: Top
+  files: [main.sv]
+expect:
+  exit: 0
+  variables:
+    q: [1, 9, 3]
+    sz: 5
+    pf: 0
+    pb: 4
+    pe: 0
+    eq: []
+    cq: []
+    badq: [1, 2]
