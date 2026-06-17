@@ -236,10 +236,12 @@ auto BuildArrayMethodClosure(
           .declaration_procedural_depth = body_depth, .var = item_binding});
 
   CaptureSink sink{body_depth, body_scope, outer_scope};
-  const WalkFrame closure_frame =
-      body_frame.WithClosure(&sink)
-          .WithIndexBinding(index_binding)
-          .WithSelfBinding(self_binding, body_depth);
+  // A with-clause body is a synchronous predicate / projection closure -- it
+  // never suspends; its trailing `return` renders as a plain `return`.
+  const WalkFrame closure_frame = body_frame.WithClosure(&sink)
+                                      .WithIndexBinding(index_binding)
+                                      .WithSelfBinding(self_binding, body_depth)
+                                      .WithCoroutineBody(false);
 
   auto body_expr_or = process.LowerExpr(
       hir_process.exprs.at(with_clause.expr.value), closure_frame);

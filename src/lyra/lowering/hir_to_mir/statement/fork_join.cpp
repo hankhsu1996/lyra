@@ -80,11 +80,14 @@ auto LowerForkStmt(
 
     CaptureSink sink{
         fork_frame.procedural_depth.Inner(), branch_scope, fork_scope};
+    // LRM 9.3.2 fork branch: each branch is a concurrent thread that may
+    // suspend on timing controls / event waits inside its body.
     const WalkFrame branch_frame =
         fork_frame.WithClosure(&sink)
             .WithProceduralScope(&branch_scope)
             .WithSelfBinding(
                 branch_self_id, fork_frame.procedural_depth.Inner())
+            .WithCoroutineBody(true)
             .Deeper();
     auto lowered = process.LowerStmt(branch, branch_frame);
     if (!lowered) {
