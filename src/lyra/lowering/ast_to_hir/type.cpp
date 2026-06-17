@@ -1,6 +1,7 @@
 #include "lyra/hir/type.hpp"
 
 #include <cstdint>
+#include <optional>
 #include <string>
 #include <utility>
 #include <vector>
@@ -321,10 +322,21 @@ auto TranslateTypeData(
       }
       return hir::TypeData{hir::DynamicArrayType{.element_type = *elem_id_or}};
     }
-    case slang::ast::SymbolKind::QueueType:
-      return diag::Unsupported(
-          decl_span, diag::DiagCode::kUnsupportedQueueType,
-          "queue types are not supported", diag::UnsupportedCategory::kType);
+    case slang::ast::SymbolKind::QueueType: {
+      const auto& q = canonical.as<slang::ast::QueueType>();
+      auto elem_id_or = module.InternType(q.elementType, decl_span);
+      if (!elem_id_or) {
+        return std::unexpected(std::move(elem_id_or.error()));
+      }
+      // slang encodes the unbounded queue (`[$]`) as maxBound == 0; a bounded
+      // queue (`[$:N]`) carries the bound (LRM 7.10.4).
+      return hir::TypeData{hir::QueueType{
+          .element_type = *elem_id_or,
+          .max_bound = q.maxBound == 0
+                           ? std::nullopt
+                           : std::optional<std::uint64_t>{q.maxBound},
+      }};
+    }
     case slang::ast::SymbolKind::AssociativeArrayType:
       return diag::Unsupported(
           decl_span, diag::DiagCode::kUnsupportedAssociativeArrayType,

@@ -57,6 +57,7 @@
 #include "lyra/value/packed_convert.hpp"       // IWYU pragma: keep
 #include "lyra/value/packed_reduction.hpp"     // IWYU pragma: keep
 #include "lyra/value/packed_type.hpp"          // IWYU pragma: keep
+#include "lyra/value/queue.hpp"                // IWYU pragma: keep
 #include "lyra/value/string.hpp"               // IWYU pragma: keep
 #include "lyra/value/string_op.hpp"            // IWYU pragma: keep
 #include "lyra/value/unpacked_array.hpp"       // IWYU pragma: keep

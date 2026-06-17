@@ -118,6 +118,17 @@ auto SynthesizeDefaultValueExpr(
                     .data = mir::ConstructExpr{.args = {element_default}},
                     .type = type});
           },
+          // LRM Table 6-7: a queue's default is the empty queue. Same emit
+          // chain as the dynamic array -- the element default seeds the
+          // wrapper's shield slot while storage starts empty.
+          [&](const mir::QueueType& q) -> mir::ExprId {
+            const mir::ExprId element_default =
+                SynthesizeDefaultValueExpr(module, frame, q.element_type);
+            return scope.AddExpr(
+                mir::Expr{
+                    .data = mir::ConstructExpr{.args = {element_default}},
+                    .type = type});
+          },
           // Types whose runtime default is the C++ language-level default
           // (named-event handle, child module instance, `unique_ptr<Child>`,
           // `vector<Child>`). The constructor scope is the real populator
@@ -163,12 +174,13 @@ auto BuildArrayConstructExpr(
         using TyT = std::decay_t<decltype(t)>;
         if constexpr (
             std::same_as<TyT, mir::UnpackedArrayType> ||
-            std::same_as<TyT, mir::DynamicArrayType>) {
+            std::same_as<TyT, mir::DynamicArrayType> ||
+            std::same_as<TyT, mir::QueueType>) {
           return t.element_type;
         } else {
           throw InternalError(
-              "BuildArrayConstructExpr: type is not UnpackedArrayType or "
-              "DynamicArrayType");
+              "BuildArrayConstructExpr: type is not UnpackedArrayType, "
+              "DynamicArrayType, or QueueType");
         }
       },
       ty.data);
