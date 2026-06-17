@@ -49,18 +49,10 @@ struct WalkFrame {
   // procedural context.
   mir::ProceduralScope* current_procedural_scope = nullptr;
 
-  // The process's static-frame scope. Static-lifetime locals are collected
-  // here (LRM 6.21 / 13.3.1), regardless of which nested block declared them.
-  // Set once at process / subroutine entry and unchanged through the body
-  // walk. Null for a synthesized continuous-assign process that declares no
-  // locals.
-  mir::ProceduralScope* static_frame_scope = nullptr;
-
   // The current procedural-block-nesting depth measured from the process root
   // (depth 0). Increments when a walker descends into a nested
-  // `mir::ProceduralScope`. Used by `ProcessLowerer::TranslateProceduralVar`
-  // to compute the hop count from the reading site back to the declaration
-  // depth.
+  // `mir::ProceduralScope`. Used by `LowerProceduralVarRefExpr` to compute the
+  // hop count from the reading site back to the declaration depth.
   ProceduralDepth procedural_depth{};
 
   // The active closure capture sink while a closure body is being lowered. A
@@ -109,13 +101,6 @@ struct WalkFrame {
       -> WalkFrame {
     WalkFrame next = *this;
     next.current_procedural_scope = scope;
-    return next;
-  }
-
-  [[nodiscard]] auto WithStaticFrameScope(mir::ProceduralScope* scope) const
-      -> WalkFrame {
-    WalkFrame next = *this;
-    next.static_frame_scope = scope;
     return next;
   }
 

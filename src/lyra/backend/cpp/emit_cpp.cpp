@@ -11,7 +11,6 @@
 #include "lyra/backend/cpp/artifact.hpp"
 #include "lyra/backend/cpp/formatting.hpp"
 #include "lyra/backend/cpp/render_context.hpp"
-#include "lyra/backend/cpp/render_expr.hpp"
 #include "lyra/backend/cpp/render_stmt.hpp"
 #include "lyra/backend/cpp/render_type.hpp"
 #include "lyra/backend/cpp/string_literal.hpp"
@@ -108,34 +107,13 @@ auto RenderProcessMethod(
     const RenderContext* parent_struct_ctx, const mir::CompilationUnit& unit,
     const mir::StructuralScope& s, const mir::Process& process,
     std::size_t indent) -> diag::Result<std::string> {
-  const std::string frame_field = process.name + "__static";
   const RenderContext proc_ctx =
-      ((parent_struct_ctx == nullptr)
-           ? RenderContext::ForRoot(unit, s, process.root_procedural_scope)
-           : parent_struct_ctx->WithStructuralScope(
-                 s, process.root_procedural_scope))
-          .WithStaticFrame(frame_field);
+      (parent_struct_ctx == nullptr)
+          ? RenderContext::ForRoot(unit, s, process.root_procedural_scope)
+          : parent_struct_ctx->WithStructuralScope(
+                s, process.root_procedural_scope);
 
   std::string out;
-  // LRM 6.21 / 9.3.4 static body locals: one per-instance frame member,
-  // default-evaluated once at construction; the process body reads and writes
-  // it, and a detached fork branch reaches it by reference past the activation.
-  // A process with no static locals yields a fieldless frame -- harmless, and
-  // it keeps the emit a uniform walk with no presence decision.
-  out += Indent(indent) + "struct " + process.name + "_StaticFrame {\n";
-  for (const auto& sl : process.static_locals) {
-    const auto& var = process.root_procedural_scope.vars.at(sl.var.value);
-    auto type_or = RenderTypeAsCpp(unit, s, var.type);
-    if (!type_or) return std::unexpected(std::move(type_or.error()));
-    auto init_or =
-        RenderExpr(proc_ctx, process.root_procedural_scope.GetExpr(sl.init));
-    if (!init_or) return std::unexpected(std::move(init_or.error()));
-    out += Indent(indent + 1) + *type_or + " " +
-           StaticFrameMemberName(var.name, sl.var.value) + " = " + *init_or +
-           ";\n";
-  }
-  out += Indent(indent) + "} " + frame_field + "{};\n";
-
   out += Indent(indent) + "static auto " + process.name + "(" + s.name +
          "* self) -> lyra::runtime::Coroutine {\n";
   auto rendered_or = RenderProceduralScopeStatements(proc_ctx, indent + 1);
@@ -204,33 +182,13 @@ auto RenderSubroutineMethod(
   }
   sig += ")";
 
-  const std::string frame_field = sub.name + "__static";
   const RenderContext sub_ctx =
-      (parent_struct_ctx == nullptr
-           ? RenderContext::ForRoot(unit, s, sub.root_procedural_scope)
-           : parent_struct_ctx->WithStructuralScope(
-                 s, sub.root_procedural_scope))
-          .WithStaticFrame(frame_field);
+      parent_struct_ctx == nullptr
+          ? RenderContext::ForRoot(unit, s, sub.root_procedural_scope)
+          : parent_struct_ctx->WithStructuralScope(
+                s, sub.root_procedural_scope);
 
   std::string out;
-  // LRM 13.3.1 static locals: one per-instance frame member, default-evaluated
-  // once at construction; the body reads and writes it across activations. A
-  // subroutine with no static locals yields a fieldless frame -- harmless, and
-  // it keeps the emit a uniform walk with no presence decision.
-  out += Indent(indent) + "struct " + sub.name + "_StaticFrame {\n";
-  for (const auto& sl : sub.static_locals) {
-    const auto& var = sub.root_procedural_scope.vars.at(sl.var.value);
-    auto type_or = RenderTypeAsCpp(unit, s, var.type);
-    if (!type_or) return std::unexpected(std::move(type_or.error()));
-    auto init_or =
-        RenderExpr(sub_ctx, sub.root_procedural_scope.GetExpr(sl.init));
-    if (!init_or) return std::unexpected(std::move(init_or.error()));
-    out += Indent(indent + 1) + *type_or + " " +
-           StaticFrameMemberName(var.name, sl.var.value) + " = " + *init_or +
-           ";\n";
-  }
-  out += Indent(indent) + "} " + frame_field + "{};\n";
-
   out += Indent(indent) + sig + " {\n";
   auto rendered_or = RenderProceduralScopeStatements(sub_ctx, indent + 1);
   if (!rendered_or) return std::unexpected(std::move(rendered_or.error()));

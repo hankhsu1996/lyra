@@ -758,13 +758,9 @@ auto StructuralScopeLowerer::Run(
   const mir::TypeId self_ptr_type = module.Unit().builtins.self_pointer;
   const auto self_read = [&]() -> mir::ExprId {
     return ctor_scope.AddExpr(
-        mir::Expr{
-            .data =
-                mir::ProceduralVarRef{
-                    .hops = scope_frame.procedural_depth -
-                            scope_frame.self_decl_depth,
-                    .var = *scope_frame.self_binding},
-            .type = self_ptr_type});
+        mir::MakeProceduralVarRefExpr(
+            scope_frame.procedural_depth - scope_frame.self_decl_depth,
+            *scope_frame.self_binding, self_ptr_type));
   };
   for (std::size_t i = 0; i < hir_scope.structural_vars.size(); ++i) {
     const hir::StructuralVarId hir_id{static_cast<std::uint32_t>(i)};
@@ -795,21 +791,15 @@ auto StructuralScopeLowerer::Run(
         if (!value_or) return std::unexpected(std::move(value_or.error()));
         value_id = ctor_scope.AddExpr(*std::move(value_or));
       } else {
-        value_id = SynthesizeDefaultValueExpr(module, scope_frame, mir_type);
+        value_id = AddDefaultValueExpr(module, scope_frame, mir_type);
       }
       const mir::ExprId init_target = ctor_scope.AddExpr(
-          mir::Expr{
-              .data =
-                  mir::MemberAccessExpr{
-                      .receiver = self_read(),
-                      .member =
-                          mir::StructuralVarRef{
-                              .hops = {.value = 0}, .var = mir_id}},
-              .type = mir_type});
+          mir::MakeMemberAccessExpr(
+              self_read(),
+              mir::StructuralVarRef{.hops = {.value = 0}, .var = mir_id},
+              mir_type));
       const mir::ExprId assign_id = ctor_scope.AddExpr(
-          mir::Expr{
-              .data = mir::AssignExpr{.target = init_target, .value = value_id},
-              .type = mir_type});
+          mir::MakeAssignExpr(init_target, value_id, mir_type));
       ctor_scope.AppendStmt(
           mir::Stmt{
               .label = std::nullopt, .data = mir::ExprStmt{.expr = assign_id}});
@@ -826,14 +816,10 @@ auto StructuralScopeLowerer::Run(
         !std::holds_alternative<mir::ExternalUnitObjectType>(var_data);
     if (is_signal) {
       const mir::ExprId var_ref = ctor_scope.AddExpr(
-          mir::Expr{
-              .data =
-                  mir::MemberAccessExpr{
-                      .receiver = self_read(),
-                      .member =
-                          mir::StructuralVarRef{
-                              .hops = {.value = 0}, .var = mir_id}},
-              .type = mir_type});
+          mir::MakeMemberAccessExpr(
+              self_read(),
+              mir::StructuralVarRef{.hops = {.value = 0}, .var = mir_id},
+              mir_type));
       const mir::ExprId call = ctor_scope.AddExpr(
           mir::Expr{
               .data =
@@ -869,8 +855,9 @@ auto StructuralScopeLowerer::Run(
   for (std::size_t i = 0; i < hir_scope.structural_subroutines.size(); ++i) {
     const auto& src = hir_scope.structural_subroutines[i];
     ProcessLowerer subroutine_lowerer(
-        module, scope, hir_scope.time_resolution, src.body);
-    auto decl_or = subroutine_lowerer.Run(scope_frame, src);
+        module, scope, hir_scope.time_resolution, src.body, src.name,
+        scope_frame);
+    auto decl_or = subroutine_lowerer.Run(src);
     if (!decl_or) return std::unexpected(std::move(decl_or.error()));
     const mir::StructuralSubroutineId added =
         mir_scope.AddStructuralSubroutine(*std::move(decl_or));
@@ -882,10 +869,11 @@ auto StructuralScopeLowerer::Run(
   }
 
   for (const auto& p : hir_scope.processes) {
-    ProcessLowerer process_lowerer(
-        module, scope, hir_scope.time_resolution, p.body);
     std::string name = std::format("process_{}", mir_scope.processes.size());
-    auto proc_or = process_lowerer.Run(scope_frame, std::move(name), p);
+    ProcessLowerer process_lowerer(
+        module, scope, hir_scope.time_resolution, p.body, std::move(name),
+        scope_frame);
+    auto proc_or = process_lowerer.Run(p);
     if (!proc_or) return std::unexpected(std::move(proc_or.error()));
     mir_scope.AddProcess(*std::move(proc_or));
   }

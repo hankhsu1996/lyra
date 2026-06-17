@@ -8,7 +8,6 @@
 #include <vector>
 
 #include "lyra/base/overloaded.hpp"
-#include "lyra/hir/expr.hpp"
 #include "lyra/hir/procedural_body.hpp"
 #include "lyra/hir/stmt.hpp"
 #include "lyra/lowering/hir_to_mir/default_value.hpp"
@@ -19,7 +18,6 @@
 #include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/conversion.hpp"
 #include "lyra/mir/expr.hpp"
-#include "lyra/mir/integral_constant.hpp"
 #include "lyra/mir/procedural_hops.hpp"
 #include "lyra/mir/procedural_var.hpp"
 #include "lyra/mir/stmt.hpp"
@@ -45,7 +43,7 @@ auto LowerForStmt(
                   mir::ProceduralVarDecl{.name = hir_local.name, .type = type});
               process.MapProceduralVar(
                   d.var,
-                  ProceduralVarBinding{
+                  AutomaticVarBinding{
                       .declaration_procedural_depth = frame.procedural_depth,
                       .var = local_id});
               mir::ExprId init_id{};
@@ -57,8 +55,7 @@ auto LowerForStmt(
                 }
                 init_id = proc_scope.AddExpr(*std::move(init_or));
               } else {
-                init_id =
-                    SynthesizeDefaultValueExpr(process.Module(), frame, type);
+                init_id = AddDefaultValueExpr(process.Module(), frame, type);
               }
               return mir::ForInit{mir::ForInitDecl{
                   .induction_var =

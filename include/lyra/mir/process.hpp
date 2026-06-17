@@ -2,7 +2,7 @@
 
 #include <compare>
 #include <cstdint>
-#include <vector>
+#include <string>
 
 #include "lyra/mir/stmt.hpp"
 
@@ -23,7 +23,6 @@ struct Process {
   ProcessKind kind = ProcessKind::kInitial;
   std::string name;
   ProceduralScope root_procedural_scope;
-  std::vector<StaticLocal> static_locals;
 };
 
 }  // namespace lyra::mir

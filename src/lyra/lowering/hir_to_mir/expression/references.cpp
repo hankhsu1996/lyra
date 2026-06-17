@@ -100,32 +100,51 @@ auto LowerStructuralVarRefExpr(
       scope.TranslateStructuralVar(m.hops, m.var);
   const mir::TypeId self_ptr_type = scope.Module().Unit().builtins.self_pointer;
   const mir::ExprId receiver = frame.current_procedural_scope->AddExpr(
-      mir::Expr{
-          .data =
-              mir::ProceduralVarRef{
-                  .hops = frame.procedural_depth - frame.self_decl_depth,
-                  .var = *frame.self_binding},
-          .type = self_ptr_type});
-  return mir::Expr{
-      .data = mir::MemberAccessExpr{.receiver = receiver, .member = member},
-      .type = type};
+      mir::MakeProceduralVarRefExpr(
+          frame.procedural_depth - frame.self_decl_depth, *frame.self_binding,
+          self_ptr_type));
+  return mir::MakeMemberAccessExpr(receiver, member, type);
 }
 
 auto LowerProceduralVarRefExpr(
     ProcessLowerer& process, const WalkFrame& frame,
     const hir::ProceduralVarRef& l, mir::TypeId type) -> mir::Expr {
+  const auto& binding = process.LookupProceduralVar(l.var);
+  // A static-lifetime local lives as a per-instance structural var on the
+  // owner scope (LRM 13.3.1); body access is a `MemberAccess` through `self`,
+  // identical inside the body, inside a nested block, and inside any closure
+  // -- no hops, no closure capture, the closure's captured `self` is the
+  // receiver.
+  if (const auto* sb = std::get_if<StaticVarBinding>(&binding)) {
+    const mir::TypeId self_ptr_type =
+        process.Module().Unit().builtins.self_pointer;
+    const mir::ExprId receiver = frame.current_procedural_scope->AddExpr(
+        mir::MakeProceduralVarRefExpr(
+            frame.procedural_depth - frame.self_decl_depth, *frame.self_binding,
+            self_ptr_type));
+    return mir::MakeMemberAccessExpr(
+        receiver,
+        mir::StructuralVarRef{
+            .hops = mir::StructuralHops{.value = 0}, .var = sb->var},
+        type);
+  }
+  const auto& ab = std::get<AutomaticVarBinding>(binding);
   if (auto* sink = frame.active_closure) {
-    const auto& binding = process.LookupProceduralVar(l.var);
-    if (binding.declaration_procedural_depth < sink->BoundaryDepth()) {
+    if (ab.declaration_procedural_depth < sink->BoundaryDepth()) {
       return mir::Expr{
           .data = sink->Capture(
-              binding.var, binding.declaration_procedural_depth, type,
+              ab.var, ab.declaration_procedural_depth, type,
               frame.procedural_depth),
           .type = type};
     }
   }
-  return mir::Expr{
-      .data = process.TranslateProceduralVar(frame, l.var), .type = type};
+  if (ab.declaration_procedural_depth > frame.procedural_depth) {
+    throw InternalError(
+        "LowerProceduralVarRefExpr: declaration depth exceeds current depth "
+        "(forward reference into a child scope)");
+  }
+  return mir::MakeProceduralVarRefExpr(
+      frame.procedural_depth - ab.declaration_procedural_depth, ab.var, type);
 }
 
 auto LowerCrossUnitVarRefExpr(
@@ -135,25 +154,17 @@ auto LowerCrossUnitVarRefExpr(
   const mir::StructuralVarRef target = meta.target;
   const mir::TypeId self_ptr_type = scope.Module().Unit().builtins.self_pointer;
   const mir::ExprId self_ref = frame.current_procedural_scope->AddExpr(
-      mir::Expr{
-          .data =
-              mir::ProceduralVarRef{
-                  .hops = frame.procedural_depth - frame.self_decl_depth,
-                  .var = *frame.self_binding},
-          .type = self_ptr_type});
+      mir::MakeProceduralVarRefExpr(
+          frame.procedural_depth - frame.self_decl_depth, *frame.self_binding,
+          self_ptr_type));
   const auto* ptr = std::get_if<mir::PointerType>(
       &scope.Module().Unit().GetType(meta.slot_type).data);
   if (ptr != nullptr && ptr->ownership == mir::PointerOwnership::kBorrowed) {
     const mir::ExprId pointer = frame.current_procedural_scope->AddExpr(
-        mir::Expr{
-            .data =
-                mir::MemberAccessExpr{.receiver = self_ref, .member = target},
-            .type = meta.slot_type});
+        mir::MakeMemberAccessExpr(self_ref, target, meta.slot_type));
     return mir::Expr{.data = mir::DerefExpr{.pointer = pointer}, .type = type};
   }
-  return mir::Expr{
-      .data = mir::MemberAccessExpr{.receiver = self_ref, .member = target},
-      .type = type};
+  return mir::MakeMemberAccessExpr(self_ref, target, type);
 }
 
 auto LowerLoopVarRefExprAsProcedural(

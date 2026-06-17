@@ -10,7 +10,6 @@
 #include <utility>
 #include <variant>
 
-#include "lyra/backend/cpp/formatting.hpp"
 #include "lyra/backend/cpp/render_context.hpp"
 #include "lyra/backend/cpp/render_print.hpp"
 #include "lyra/backend/cpp/render_stmt.hpp"
@@ -201,13 +200,7 @@ auto RenderStructuralParamExpr(
 
 auto LookupProceduralVarName(
     const RenderContext& ctx, const mir::ProceduralVarRef& ref) -> std::string {
-  const auto& var = ctx.ProceduralScopeAtHops(ref.hops).vars.at(ref.var.value);
-  if (var.lifetime == mir::VariableLifetime::kStatic) {
-    return std::format(
-        "{}{}.{}", "self->", ctx.StaticFrame(),
-        StaticFrameMemberName(var.name, ref.var.value));
-  }
-  return var.name;
+  return ctx.ProceduralScopeAtHops(ref.hops).vars.at(ref.var.value).name;
 }
 
 // True iff the procedural var is a `ref` / `const ref` formal, rendered as a
