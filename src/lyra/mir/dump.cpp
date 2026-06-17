@@ -1070,8 +1070,13 @@ class MirDumper {
             },
             [&](const WhileStmt& s) { DumpWhileStmt(enclosing, s, id); },
             [&](const DoWhileStmt& s) { DumpDoWhileStmt(enclosing, s, id); },
-            [&](const BreakStmt&) {
-              Line(std::format("Stmt[{}] BreakStmt", id.value));
+            [&](const BreakStmt& s) {
+              Line(
+                  std::format(
+                      "Stmt[{}] BreakStmt{}", id.value,
+                      s.target.has_value()
+                          ? std::format(" -> label {}", s.target->value)
+                          : ""));
             },
             [&](const ContinueStmt&) {
               Line(std::format("Stmt[{}] ContinueStmt", id.value));
@@ -1376,7 +1381,12 @@ class MirDumper {
 
   void DumpForStmt(
       const ProceduralScope& enclosing, const ForStmt& s, StmtId id) {
-    Line(std::format("Stmt[{}] ForStmt", id.value));
+    Line(
+        std::format(
+            "Stmt[{}] ForStmt{}", id.value,
+            s.break_label.has_value()
+                ? std::format(" break_label={}", s.break_label->value)
+                : ""));
     Indent();
     Line("init:");
     Indent();

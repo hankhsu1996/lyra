@@ -1,125 +1,106 @@
 # `foreach` lowering shape
 
-Date: 2026-06-02 Status: accepted
+Date: 2026-06-02 (flat-counter); 2026-06-17 (revised to nested loops + labeled break) Status:
+accepted
 
 ## Context
 
 LRM 12.7.3 defines `foreach` uniformly over "any type of packed or unpacked array" with arbitrary
-dimensionality, optional skipped dims, and optional trailing-dim omission. LRM 12.8 adds two
-semantics that are critical to the lowering choice:
+dimensionality, optional skipped dims, and optional trailing-dim omission. Two LRM 12.8 semantics
+constrain the lowering:
 
-- `continue` jumps to the end of the loop for the **current set of loop variable values**, i.e.
-  advances the iteration to the next combined `(i, j, k, ...)` tuple.
-- `break` jumps out of the **entire foreach**, not just the innermost dimension.
+- `continue` advances the iteration to the next combined `(i, j, k, ...)` tuple.
+- `break` exits the **entire** foreach, not just the innermost dimension.
 
-The pre-reset archived implementation desugared `foreach (arr[i, j])` to N nested for-loops
-(`for (int i = ...) for (int j = ...) BODY`) and let plain SV `break` lower to plain C++ `break`.
-That shape is structurally close to the SV source but is subtly wrong on LRM 12.8: a `break` inside
-the body terminates only the inner `for`, after which the outer `for` continues to its next
-iteration. None of the archived test cases happened to expose the gap, but it is a real LRM
-correctness defect.
+Two further requirements surfaced once variable-size arrays entered scope:
 
-This is also a forcing function on a broader design choice: how do we express "non-local exit out of
-N enclosing scopes" in the emitted C++? C++ has no first-class labeled break (the construct in Java
-/ Rust / Kotlin and the natural primitive in LLVM IR / WebAssembly).
+- A dynamically sized dimension's element count is known only at run time (LRM 7.5 / 7.10). For a
+  **jagged** array (`int a[][]`) an inner dimension's length depends on the enclosing index --
+  `a[i].size()` differs per `i` -- so the iteration space is not a rectangle.
+- LRM 12.7.3 samples each bound once on entry to its dimension (the construct "is similar to a
+  repeat-loop", and a repeat-loop evaluates its count once).
+
+The hard design question is how to express "exit out of N enclosing loops" in the emitted C++. C++
+has no labeled break -- the construct Java, JavaScript, Go, Rust, Kotlin, Swift, and Perl all
+provide natively, and the natural primitive in LLVM IR and WebAssembly.
 
 ## Decision
 
-1. **Every `foreach` lowers to a single flattened `hir::ForStmt`.** The iteration space is the
-   Cartesian product of the non-skipped dimensions. A synthetic procedural variable
-   `__lyra_foreach_n` is declared in the loop's `ForInitDecl` and counts from `0` to `total - 1`,
-   where `total` is the product of the non-skipped dim counts. The loop body begins by computing
-   each loop variable's per-iteration value by decomposing the counter, then continues with the
-   lowered user body. There is exactly one for-loop level in the lowered HIR regardless of
-   dimensionality.
+**`foreach` lowers to one ordinary nested loop per iterated dimension, and a break that must leave
+the whole foreach is modeled as a labeled break -- the universal multi-level-exit primitive.**
 
-2. **Per-dim decompose formula.** Each non-skipped loop variable is computed as
+1. **Nested loops, size sampled per level.** The non-skipped dimensions become nested `for` loops in
+   cardinal order (outer to inner). A fixed dimension loops over its declared range and direction. A
+   dynamically sized dimension samples its element count once into a synthetic local on entry to
+   that level -- `a.size()` for the outermost dimension, `a[i].size()` for the next, and so on --
+   then counts `0..count-1`. Because the inner count is read inside the enclosing loop, a jagged
+   array iterates correctly with no special case: the inner bound simply reads the current row.
 
-   ```
-   var = base + sign * ((__n / inner_product) % count)
-   ```
+2. **Labeled break.** HIR and MIR carry a `LoopLabelId`: a loop may be a break target, and a `break`
+   may name the loop it exits. A `break` whose innermost SystemVerilog loop is the foreach carries
+   the outermost loop's label; an ordinary innermost break carries none. The AST-to-HIR walk threads
+   the current foreach label through the body and clears it on entering any nested loop, so a break
+   binds to the nearest enclosing loop exactly as SystemVerilog requires. `continue` and `return`
+   stay plain: a plain innermost `continue` already advances to the next tuple, and a plain `return`
+   already exits the enclosing subroutine.
 
-   where `inner_product` is the product of all non-skipped dim counts to its right (1 for the
-   innermost), `count = abs(range.right - range.left) + 1`, and `(base, sign) = (range.left, +1)`
-   for an ascending range, `(range.left, -1)` for a descending range. Slang's `LoopDim` order is
-   already outer->inner per LRM cardinality, so no reordering is needed.
+3. **Each backend renders the primitive its own way.** The C++ backend, lacking labeled break, emits
+   a `goto` to a label placed after the outermost loop -- the canonical C idiom for leaving a loop
+   nest. An LLVM backend would emit a branch to the loop's merge block directly. The labeled break
+   lives in the semantic layers (HIR/MIR); the exit mechanism is a backend concern.
 
-3. **Plain SV `break` / `continue` / `return` lower to plain HIR `BreakStmt` / `ContinueStmt` /
-   `ReturnStmt`, with no foreach-aware rewriting.** Because the lowered HIR has exactly one
-   for-loop, plain `break` exits the entire foreach (matching LRM 12.8), plain `continue` advances
-   `__n` to the next tuple (matching LRM 12.8 "current set of loop variable values"), and `return`
-   exits the enclosing subroutine without any wrapper interception. This is the design's payoff: no
-   special primitive, no flag, no rewrite, no lint exception.
+## History: why not a flat counter
 
-_Rejected alternatives:_
+The first implementation (2026-06-02) desugared every `foreach` to a **single** flattened loop: a
+synthetic counter ran `0..total-1` over the Cartesian product of the dimension counts, and each loop
+variable was recovered by decomposing the counter
+(`var = base + sign * ((n / inner_product) % count)`). Its appeal was that a single loop makes
+`break` / `continue` / `return` map one-to-one to the plain C++ statements with no labeled-exit
+mechanism at all.
 
-- **Nested for-loops + plain `break`** (archived shape): LRM-incorrect for break -- terminates only
-  the innermost dim.
+That shape has a fatal limitation: the flat counter assumes a **rectangular** iteration space (a
+single `total` and per-dimension `inner_product`). It cannot represent a jagged array, where an
+inner count depends on the outer index. The flat counter was, in effect, a workaround that avoided
+modeling multi-level break by collapsing the nest -- and the collapse is only possible when every
+dimension's bound is independent of the others. Once jagged dynamic arrays were in scope, the
+workaround could not generalize, so the nested-loop model with an explicit labeled break replaced
+it.
 
-- **Nested for-loops + flag-based break propagation**: each outer loop tail checks a synthetic
-  `__break` flag and re-breaks if set; the body's `break` becomes `__break = 1; break;`. Correct but
-  adds N+1 places per dim that must stay coherent across edits, and pays a per-iteration branch cost
-  at every level. Mechanism does not collapse with dim count.
+The earlier rejected alternatives to plain nested loops were re-examined and the
+labeled-break-via-`goto` choice (item 3 above) is the resolution:
 
-- **Nested for-loops + `goto label;` after the outermost closing brace**: matches structure 1:1 and
-  is the natural emit for "break to labeled block" in C++. Rejected because a single `goto`
-  exception in emitted code undermines a clean project-wide rule against `goto` and invites future
-  misuse (anywhere else where someone wants a "controlled" jump). The cost of the rule violation
-  outweighs the structural fidelity gain.
-
-- **Nested for-loops wrapped in an IIFE; SV `break` -> C++ `return`**: cleanly handles `break` by
-  returning from the lambda, but corrupts SV `return` from inside the foreach body -- the C++
-  `return` exits the lambda, not the enclosing SV function. Modeling the difference would require
-  separating "break-style return" from "function-style return" at every emit site, defeating the
-  simplicity.
-
-- **`std::views::cartesian_product` (C++23 ranges)**: conceptually correct -- analogous to Python's
-  `itertools.product`. Rejected because `cartesian_product` is a libc++ 19+ (Sept 2024) / libstdc++
-  13+ stdlib feature; requiring it pushes the toolchain floor for the emitted C++ beyond what the
-  project will commit to (see `docs/progress/refactor.md` R5 for the toolchain-baseline workstream).
-  The same _semantic_ -- flattening the product space -- is captured by the manual flat-index
-  decompose without any stdlib dependency.
+- **Nested loops + a `__break` flag** ANDed into every loop condition: correct but pays a
+  per-iteration branch at every level and spreads the break logic across N+1 sites that must stay
+  coherent. The single `goto` is simpler and costs nothing per iteration.
+- **`goto` after the nest** was originally rejected purely on a project-wide "no goto" preference.
+  With jagged support now required, that preference is the thing in tension, and a _generated_,
+  localized `goto` -- the faithful rendering of a labeled break that no hand-written code ever sees
+  -- is the right trade. The MIR models the labeled break; only the C++ backend spells it `goto`.
+- **IIFE / lambda with `return` for break** corrupts SystemVerilog `return` from inside the body,
+  which must exit the enclosing function, not the lambda.
+- **`std::views::cartesian_product`** only models rectangular spaces and pushes the emitted-code
+  toolchain floor higher; rejected for the same jagged limitation as the flat counter plus a
+  dependency cost.
 
 ## Consequences
 
-- The lowering is **uniform across dimensionality**. 1D / 2D / N-D / mixed packed-unpacked /
-  ascending / descending / skipped-dim cases share one code path. The dispatch over packed vs
-  unpacked element access happens entirely in the body's existing `ElementSelectExpr` lowering,
-  which the foreach itself never touches.
-
-- Per-iteration cost is **N-1 divisions and N modulos on `__n`** for an N-dim foreach. All divisors
-  are compile-time constants for fixed-bound arrays (always the case in C9's scope), so modern C++
-  compilers fold them to multiply-by-magic-number sequences (~2-3 instructions per dim). The emitted
-  C++ for-loop has no flag overhead and no lambda boundary, so the only excess vs nested for-loops
-  is the index arithmetic. `foreach` is not a typical simulator hot path.
-
-- Skipped dimensions (`arr[i, , k]`) and trailing-dim omission (`int arr[2][3]; foreach (arr[i])`)
-  fall out of the same model: skipped dims contribute neither a loop variable nor a factor to the
-  product, and the body simply never references them. No special-case code paths required.
-
-- The lowering reaches the body via the usual recursive `LowerStatement`, so `break` inside a `for`
-  / `while` / `do-while` nested in the foreach body still targets the nested loop (standard C
-  nesting). The "exit the entire foreach" semantic is structural -- there is only one for-loop --
-  not contextual.
-
-- Dynamic-array / queue / associative-array element types are rejected with
-  `kUnsupportedStatementForm` until `datatypes/general` brings procedural support for those types.
-  When that lands, the same flat-index model extends naturally: the iteration count becomes a
-  runtime query (`arr.size()`) instead of a compile-time literal, and the decompose formula stays
-  identical.
-
-- The slang `IteratorSymbol` for a foreach loop variable derives from `VariableSymbol` but carries
-  its own `SymbolKind::Iterator`. The AST -> HIR name resolution at
-  `src/lyra/lowering/ast_to_hir/expression/lower.cpp` was extended to accept `Iterator` alongside
-  `Variable` and `FormalArgument`; all three route through
-  `ProcessLoweringState::LookupProceduralVar`.
+- The lowering is uniform across dimensionality, direction, skipped and trailing-omitted dims, and
+  across fixed, dynamic, queue, and jagged element containers. Each dimension is an ordinary `for`;
+  nothing about the foreach touches element access, which the body's existing index lowering
+  handles.
+- Per-iteration cost is a plain nested loop. A dynamic level pays one `.size()` read on entry
+  (sampled into a local, not re-queried each iteration).
+- The labeled break is the only new IR concept, and it is the same primitive every other
+  multi-level-exit language and IR uses, so the model transfers directly to a future LLVM backend (a
+  branch) rather than baking in a C++-specific trick.
+- Associative-array and string `foreach` remain rejected: they iterate by key (LRM 7.9) and by byte
+  (LRM 6.16), distinct iteration models with their own lowering.
 
 ## Cross-references
 
-- LRM 12.7.3 (foreach syntax, dim cardinality, implicit begin-end, read-only loop vars).
-- LRM 12.8 (break exits whole foreach; continue advances current loop var values).
-- Conceptual analogue: Python `itertools.product`, C++23 `std::views::cartesian_product`,
-  WebAssembly `br N`, LLVM IR labeled blocks. None used directly; all express the same
-  flatten-the-product-space idea.
-- `docs/progress/refactor.md` R5 -- emit-CPP smoke suite and toolchain baseline (the reason
-  `cartesian_product` was rejected).
+- LRM 12.7.3 (foreach syntax, dim cardinality, bound sampled once, read-only loop vars), 12.8 (break
+  exits whole foreach; continue advances loop vars), 7.5 / 7.10 (dynamic array / queue runtime
+  size).
+- Multi-level-exit primitives surveyed: Java / JavaScript / Go / Rust / Kotlin / Swift labeled
+  break, Perl `last LABEL`, LLVM IR branch to merge block, WebAssembly `br N`. C is the outlier with
+  no labeled break; its idiom is the `goto` the C++ backend emits.

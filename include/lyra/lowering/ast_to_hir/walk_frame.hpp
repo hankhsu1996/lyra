@@ -8,6 +8,7 @@
 #include <vector>
 
 #include "lyra/base/internal_error.hpp"
+#include "lyra/hir/loop_label_id.hpp"
 #include "lyra/hir/structural_hops.hpp"
 
 namespace lyra::hir {
@@ -64,6 +65,16 @@ struct WalkFrame {
   // outside a process body.
   std::uint32_t fork_branch_depth = 0;
 
+  // Non-local break target for the innermost enclosing loop. A `foreach`
+  // lowers to nested loops, so a `break` whose innermost SystemVerilog loop is
+  // that foreach must leave the whole nest -- it carries the outermost loop's
+  // label. Set while lowering a foreach body; reset to nullopt while lowering
+  // an ordinary loop body (whose break is a plain innermost exit). When a break
+  // consumes the label, `innermost_break_used` is flipped so the foreach knows
+  // to mark the outer loop as a landing target.
+  std::optional<hir::LoopLabelId> innermost_break_label = std::nullopt;
+  bool* innermost_break_used = nullptr;
+
   [[nodiscard]] auto Current() const -> ScopeFrameId {
     if (structural_chain.empty()) {
       throw InternalError("WalkFrame::Current: empty structural chain");
@@ -115,6 +126,27 @@ struct WalkFrame {
   [[nodiscard]] auto WithForkBranch() const -> WalkFrame {
     WalkFrame next = *this;
     ++next.fork_branch_depth;
+    return next;
+  }
+
+  // Establishes `label` as the break target for the body being lowered. `used`
+  // points at a flag the foreach owns; a break that consumes the label flips
+  // it. Used by the foreach lowering for its nested loop body.
+  [[nodiscard]] auto WithBreakLabel(hir::LoopLabelId label, bool* used) const
+      -> WalkFrame {
+    WalkFrame next = *this;
+    next.innermost_break_label = label;
+    next.innermost_break_used = used;
+    return next;
+  }
+
+  // Clears the foreach break target. An ordinary loop body uses this so a break
+  // inside it is the plain innermost exit, not an escape to an enclosing
+  // foreach.
+  [[nodiscard]] auto WithoutBreakLabel() const -> WalkFrame {
+    WalkFrame next = *this;
+    next.innermost_break_label = std::nullopt;
+    next.innermost_break_used = nullptr;
     return next;
   }
 

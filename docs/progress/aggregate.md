@@ -51,10 +51,8 @@ The numeric IDs are stable references and do not imply execution order beyond DA
       Newly constructed slots default to the element type's LRM Table 6-7 value (recursively, so
       nested dynamic arrays default to empty). Multi-dimensional forms fall out from the recursive
       element-type representation; no dim-count-specific scope is needed. `foreach` over a dynamic
-      array stays rejected because the existing `foreach` flat-index lowering is keyed on
-      compile-time per-dim counts; the runtime-count adaptation is its own step (`control-flow.md`
-      C10 dynamic-array subset). SV-callable methods, including `.size()`, are not part of DA1 and
-      ship with the method family in DA6.
+      array (including jagged nests) is handled by `control-flow.md` C10. SV-callable methods,
+      including `.size()`, are not part of DA1 and ship with the method family in DA6.
 
 - [x] DA2 -- Aggregate write paths. Compound element write per LRM 11.4.1, whole-array assignment
       `A = B` which grows A to B's size per LRM 7.6, and the NBA form of whole-array assignment.

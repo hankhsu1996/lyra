@@ -142,7 +142,9 @@ auto ProcessLowerer::LowerStmt(const hir::Stmt& stmt, WalkFrame frame)
           [&](const hir::ForeverStmt& f) {
             return LowerForeverStmt(*this, frame, stmt.label, f);
           },
-          [&](const hir::BreakStmt&) { return LowerBreakStmt(stmt.label); },
+          [&](const hir::BreakStmt& b) {
+            return LowerBreakStmt(stmt.label, b.target);
+          },
           [&](const hir::ContinueStmt&) {
             return LowerContinueStmt(stmt.label);
           },

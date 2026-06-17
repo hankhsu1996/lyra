@@ -1295,8 +1295,11 @@ class HirDumper {
   void DumpForStmtNode(const ProceduralBody& p, StmtId id, const ForStmt& f) {
     Line(
         std::format(
-            "Stmt[{}] ForStmt (init={}, step={})", id.value, f.init.size(),
-            f.step.size()));
+            "Stmt[{}] ForStmt (init={}, step={}{})", id.value, f.init.size(),
+            f.step.size(),
+            f.break_label.has_value()
+                ? std::format(", break_label={}", f.break_label->value)
+                : ""));
     Indent();
     for (std::size_t k = 0; k < f.init.size(); ++k) {
       std::visit(
@@ -1446,8 +1449,13 @@ class HirDumper {
             [&](const RepeatStmt& r) { DumpRepeatStmtNode(p, id, r); },
             [&](const DoWhileStmt& d) { DumpDoWhileStmtNode(p, id, d); },
             [&](const ForeverStmt& f) { DumpForeverStmtNode(p, id, f); },
-            [&](const BreakStmt&) {
-              Line(std::format("Stmt[{}] BreakStmt", id.value));
+            [&](const BreakStmt& b) {
+              Line(
+                  std::format(
+                      "Stmt[{}] BreakStmt{}", id.value,
+                      b.target.has_value()
+                          ? std::format(" -> label {}", b.target->value)
+                          : ""));
             },
             [&](const ContinueStmt&) {
               Line(std::format("Stmt[{}] ContinueStmt", id.value));

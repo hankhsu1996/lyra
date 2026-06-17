@@ -43,7 +43,7 @@ auto LowerForLoopStmt(
     step_ids.push_back(
         frame.current_procedural_body->AddExpr(*std::move(step_or)));
   }
-  auto body_stmt = proc.LowerStmt(fs.body, frame);
+  auto body_stmt = proc.LowerStmt(fs.body, frame.WithoutBreakLabel());
   if (!body_stmt) return std::unexpected(std::move(body_stmt.error()));
   const hir::StmtId body_id =
       frame.current_procedural_body->AddStmt(*std::move(body_stmt));
@@ -66,7 +66,7 @@ auto LowerWhileLoopStmt(
   if (!cond_or) return std::unexpected(std::move(cond_or.error()));
   const hir::ExprId cond_id =
       frame.current_procedural_body->AddExpr(*std::move(cond_or));
-  auto body_or = proc.LowerStmt(ws.body, frame);
+  auto body_or = proc.LowerStmt(ws.body, frame.WithoutBreakLabel());
   if (!body_or) return std::unexpected(std::move(body_or.error()));
   const hir::StmtId body_id =
       frame.current_procedural_body->AddStmt(*std::move(body_or));
@@ -84,7 +84,7 @@ auto LowerRepeatLoopStmt(
   if (!count_or) return std::unexpected(std::move(count_or.error()));
   const hir::ExprId count_id =
       frame.current_procedural_body->AddExpr(*std::move(count_or));
-  auto body_or = proc.LowerStmt(rs.body, frame);
+  auto body_or = proc.LowerStmt(rs.body, frame.WithoutBreakLabel());
   if (!body_or) return std::unexpected(std::move(body_or.error()));
   const hir::StmtId body_id =
       frame.current_procedural_body->AddStmt(*std::move(body_or));
@@ -98,7 +98,7 @@ auto LowerDoWhileLoopStmt(
     ProcessLowerer& proc, WalkFrame frame,
     const slang::ast::DoWhileLoopStatement& ds, diag::SourceSpan span)
     -> diag::Result<hir::Stmt> {
-  auto body_or = proc.LowerStmt(ds.body, frame);
+  auto body_or = proc.LowerStmt(ds.body, frame.WithoutBreakLabel());
   if (!body_or) return std::unexpected(std::move(body_or.error()));
   const hir::StmtId body_id =
       frame.current_procedural_body->AddStmt(*std::move(body_or));
@@ -116,7 +116,7 @@ auto LowerForeverLoopStmt(
     ProcessLowerer& proc, WalkFrame frame,
     const slang::ast::ForeverLoopStatement& fs, diag::SourceSpan span)
     -> diag::Result<hir::Stmt> {
-  auto body_or = proc.LowerStmt(fs.body, frame);
+  auto body_or = proc.LowerStmt(fs.body, frame.WithoutBreakLabel());
   if (!body_or) return std::unexpected(std::move(body_or.error()));
   const hir::StmtId body_id =
       frame.current_procedural_body->AddStmt(*std::move(body_or));

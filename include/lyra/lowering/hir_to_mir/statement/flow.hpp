@@ -23,7 +23,8 @@ auto LowerReturnStmt(
     ProcessLowerer& process, WalkFrame frame, std::optional<std::string> label,
     const hir::ReturnStmt& r) -> diag::Result<mir::Stmt>;
 
-auto LowerBreakStmt(std::optional<std::string> label)
+auto LowerBreakStmt(
+    std::optional<std::string> label, std::optional<hir::LoopLabelId> target)
     -> diag::Result<mir::Stmt>;
 
 auto LowerContinueStmt(std::optional<std::string> label)

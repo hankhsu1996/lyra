@@ -8,13 +8,13 @@ order.
 
 ## Actionable
 
-C9 is done. C10's skipped-dimension and trailing-dim subset rides on C9 because the lowering shape
-is uniform across dim counts; the dynamic-array, queue, and associative-array subset stays open and
-remains blocked on `datatypes/general`.
+C9 and C10 are done for packed, unpacked, dynamic-array, and queue arrays of any dimensionality,
+including jagged dynamic-of-dynamic nests. The associative-array case stays open (it iterates by
+key, a distinct model).
 
-| Item | Status                                                              |
-| ---- | ------------------------------------------------------------------- |
-| C10  | Blocked on `datatypes/general` (dynamic array, queue, associative). |
+| Item | Status                                                                     |
+| ---- | -------------------------------------------------------------------------- |
+| C10  | Done: dynamic array / queue, any dimensionality incl. jagged. Open: assoc. |
 
 ## Sub-Steps
 
@@ -41,17 +41,21 @@ remains blocked on `datatypes/general`.
 - [x] C8 -- `forever`. Loops until `break` or `$finish` exits. Includes `$finish` termination,
       `break` termination, `continue`, single-statement body, nested forever with inner `break`, and
       `if`-guarded forever.
-- [x] C9 -- `foreach` over fixed packed and unpacked arrays of any dimensionality. Single lowering
+- [x] C9 -- `foreach` over fixed packed and unpacked arrays of any dimensionality. One lowering
       handles 1D, 2D, N-D, mixed packed/unpacked nests, ascending and descending ranges, non-zero
-      and negative bases. The lowered HIR is a single flattened `ForStmt` whose body computes per-
-      iteration loop-variable values from a synthetic flat counter, so plain SV `break` / `continue`
-      / `return` map 1:1 to LRM 12.8 semantics without any rewrite. See
-      `../decisions/foreach-lowering.md`.
-- [ ] C10 -- `foreach` skipped dimensions, dynamic-array, queue. Skipped dims and trailing dim
-      omission (`int arr[2][3]; foreach (arr[i])`) ship with C9 because they fall out of the same
-      uniform lowering. Dynamic-array, queue, and associative-array foreach are rejected with
-      `kUnsupportedStatementForm` until `datatypes/general` brings procedural support for those
-      types and the `.size()` runtime query.
+      and negative bases: each iterated dimension becomes a nested `for` over its range and
+      direction. Plain SV `continue` / `return` map 1:1 to LRM 12.8 (a plain innermost `continue`
+      advances to the next tuple; `return` exits the subroutine); a `break` that must leave the
+      whole foreach is a labeled break (shared with C10). See `../decisions/foreach-lowering.md`.
+- [x] C10 -- `foreach` skipped dimensions plus dynamic-array and queue iteration of any
+      dimensionality. Skipped dims and trailing-dim omission (`int arr[2][3]; foreach (arr[i])`)
+      fall out of the same lowering. Every iterated dimension becomes a nested loop in cardinal
+      order; a dynamically sized dimension samples its element count once on entry to that level
+      (LRM 12.7.3), so a jagged dynamic-of-dynamic array (`int a[][]`, inner length per row)
+      iterates correctly. A `break` that must leave the whole foreach (LRM 12.8) is modeled as a
+      labeled break and rendered as a `goto` past the outermost loop. `foreach` over an associative
+      array stays rejected with `kUnsupportedStatementForm` (it iterates by key, a distinct model).
+      See `../decisions/foreach-lowering.md`.
 - [x] C11 -- `casez` / `casex` (LRM 12.5.1 do-not-care forms). Bidirectional wildcard compare:
       `casez` treats Z as don't-care on either operand; `casex` treats Z or X as don't-care on
       either operand. Result is deterministic, distinct from the asymmetric `==?` operator (LRM

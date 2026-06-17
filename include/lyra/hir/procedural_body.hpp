@@ -17,6 +17,7 @@ struct ProceduralBody {
   std::vector<Expr> exprs;
   std::vector<Stmt> stmts;
   std::vector<ProceduralVarDecl> procedural_vars;
+  std::uint32_t loop_label_count = 0;
 
   [[nodiscard]] auto GetExpr(ExprId id) const -> const Expr& {
     return exprs.at(id.value);
@@ -44,6 +45,9 @@ struct ProceduralBody {
         static_cast<std::uint32_t>(procedural_vars.size())};
     procedural_vars.push_back(std::move(decl));
     return id;
+  }
+  auto AddLoopLabel() -> LoopLabelId {
+    return LoopLabelId{loop_label_count++};
   }
 };
 

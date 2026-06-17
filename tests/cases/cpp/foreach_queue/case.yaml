@@ -1,0 +1,12 @@
+id: cpp.foreach_queue
+tags: [cpp_run]
+input:
+  command: [run, cpp]
+  project: false
+  top: Top
+  files: [main.sv]
+expect:
+  exit: 0
+  variables:
+    sum_read: 18
+    sum_after_write: 21
