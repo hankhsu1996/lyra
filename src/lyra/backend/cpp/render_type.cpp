@@ -101,6 +101,19 @@ auto RenderTypeAsCpp(
             if (!inner_or) return std::unexpected(std::move(inner_or.error()));
             return "lyra::value::Queue<" + *inner_or + ">";
           },
+          [&](const mir::AssociativeArrayType& a) -> diag::Result<std::string> {
+            if (!a.key_type.has_value()) {
+              throw InternalError(
+                  "RenderTypeAsCpp: associative array with a wildcard index "
+                  "type reached the backend; AST -> HIR rejects it");
+            }
+            auto key_or = RenderTypeAsCpp(unit, owner_scope, *a.key_type);
+            if (!key_or) return std::unexpected(std::move(key_or.error()));
+            auto elem_or = RenderTypeAsCpp(unit, owner_scope, a.element_type);
+            if (!elem_or) return std::unexpected(std::move(elem_or.error()));
+            return "lyra::value::AssociativeArray<" + *key_or + ", " +
+                   *elem_or + ">";
+          },
           [&](const mir::ObjectType& o) -> diag::Result<std::string> {
             return std::string{
                 owner_scope.GetChildStructuralScope(o.target).name};

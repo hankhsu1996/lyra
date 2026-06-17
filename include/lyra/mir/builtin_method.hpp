@@ -88,6 +88,17 @@ enum class QueueMethodKind : std::uint8_t {
   kPushBack,
 };
 
+// LRM 7.9 associative-array methods. Exclusive to the associative container:
+// `num` / `size` query the entry count, `exists` tests a key, `delete` removes
+// one entry or clears the array. The shared LRM 7.12 family stays in
+// `ArrayMethodKind`.
+enum class AssociativeMethodKind : std::uint8_t {
+  kNum,
+  kSize,
+  kExists,
+  kDelete,
+};
+
 // Side-effect-free queries that are defined for every runtime value type
 // (string, packed integral, unpacked array, ...). The receiver's MIR type
 // alone determines the emit shape; lowering passes the operand uniformly.
@@ -124,6 +135,10 @@ struct QueueMethodInfo {
   QueueMethodKind kind;
 };
 
+struct AssociativeMethodInfo {
+  AssociativeMethodKind kind;
+};
+
 struct ValueMethodInfo {
   ValueMethodKind kind;
 };
@@ -142,7 +157,8 @@ struct IteratorMethodInfo {
 struct BuiltinMethodCallee {
   std::variant<
       EnumMethodInfo, StringMethodInfo, EventMethodInfo, ArrayMethodInfo,
-      QueueMethodInfo, ValueMethodInfo, IteratorMethodInfo>
+      QueueMethodInfo, AssociativeMethodInfo, ValueMethodInfo,
+      IteratorMethodInfo>
       method;
 };
 

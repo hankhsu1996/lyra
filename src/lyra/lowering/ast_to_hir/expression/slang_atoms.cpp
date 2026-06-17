@@ -256,6 +256,15 @@ auto LowerQueueMethodName(std::string_view name)
   return std::nullopt;
 }
 
+auto LowerAssociativeMethodName(std::string_view name)
+    -> std::optional<hir::AssociativeMethodKind> {
+  if (name == "num") return hir::AssociativeMethodKind::kNum;
+  if (name == "size") return hir::AssociativeMethodKind::kSize;
+  if (name == "exists") return hir::AssociativeMethodKind::kExists;
+  if (name == "delete") return hir::AssociativeMethodKind::kDelete;
+  return std::nullopt;
+}
+
 auto BareCompoundUserRhs(const slang::ast::Expression& slang_expanded_rhs)
     -> const slang::ast::Expression& {
   // Slang's `convertAssignment` adds at most one outer Conversion when the

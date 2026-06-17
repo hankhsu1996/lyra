@@ -30,7 +30,8 @@ follow once dynamic array's storage and runtime conventions are settled and prov
 | DA6c | Open: queue runtime + locator family (find\*, min, max, unique\*).   |
 | DA7  | Open: invalid-index handling.                                        |
 | Q1.. | Not yet scoped: queue.                                               |
-| A1.. | Not yet scoped: associative array.                                   |
+| A1   | Done: string / integral index, element read / write, query methods.  |
+| A2.. | Open: iteration protocol, literals, whole-array assignment.          |
 
 ## Dynamic Array
 
@@ -121,9 +122,24 @@ queue-specific method family (LRM 7.10: `push_back`, `push_front`, `pop_back`, `
 
 ## Associative Array
 
-Not yet scoped. Sub-steps A1.. open when dynamic array's runtime conventions are settled. Key type
-can be any singular type or `string` (LRM 7.8); storage is sparse; the iteration protocol
-(`.first()`, `.next()`, `.exists()` -- LRM 7.9) has no analogue in the other two families.
+LRM 7.8: a sparse lookup table whose entries are allocated on first write. The index data type is
+the lookup key and imposes an ordering.
+
+- [x] A1 -- Type infrastructure plus the core element and query surface for string-indexed (LRM
+      7.8.2, lexicographical order) and integral-indexed (LRM 7.8.4, signed/unsigned numerical
+      order) arrays. Element read returns the element default for a nonexistent or invalid index
+      without allocating (LRM 7.8.6); element write, including the read-modify-write compound form,
+      allocates the entry with the element default first (LRM 7.8.7); an integral index carrying x/z
+      is invalid, so a read returns the default and a write is ignored (LRM 7.8.6). Query methods
+      `num` / `size` / `exists` / `delete` (LRM 7.9.1 -- 7.9.3), with the no-argument `delete`
+      clearing the array. `%p` formatting prints entries in key order (LRM 21.2.1.6).
+
+- [ ] A2 -- The iteration protocol `first` / `last` / `next` / `prev` (LRM 7.9.4 -- 7.9.8), which
+      assigns through a `ref` index out-parameter and has no analogue in the other two families;
+      `foreach` over an associative array (`control-flow.md` C10); associative-array literals with
+      an optional default (LRM 7.9.11) and whole-array associative assignment (LRM 7.9.9); the
+      wildcard `[*]`, class, and other user-defined index families (LRM 7.8.1 / 7.8.3 / 7.8.5); and
+      the locator-family methods that return an index queue of the key type (LRM 7.12.1).
 
 ## Cross-references
 

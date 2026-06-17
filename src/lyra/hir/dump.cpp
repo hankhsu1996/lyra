@@ -244,6 +244,23 @@ class HirDumper {
         "HirDumper::FormatQueueMethodKind: unknown QueueMethodKind");
   }
 
+  static auto FormatAssociativeMethodKind(AssociativeMethodKind k)
+      -> std::string_view {
+    switch (k) {
+      case AssociativeMethodKind::kNum:
+        return "num";
+      case AssociativeMethodKind::kSize:
+        return "size";
+      case AssociativeMethodKind::kExists:
+        return "exists";
+      case AssociativeMethodKind::kDelete:
+        return "delete";
+    }
+    throw InternalError(
+        "HirDumper::FormatAssociativeMethodKind: unknown "
+        "AssociativeMethodKind");
+  }
+
   static auto FormatPackedForm(PackedArrayForm f) -> std::string_view {
     switch (f) {
       case PackedArrayForm::kExplicit:
@@ -680,6 +697,11 @@ class HirDumper {
                       [](QueueMethodKind k) -> std::string {
                         return std::format(
                             "QueueMethod \"{}\"", FormatQueueMethodKind(k));
+                      },
+                      [](AssociativeMethodKind k) -> std::string {
+                        return std::format(
+                            "AssociativeMethod \"{}\"",
+                            FormatAssociativeMethodKind(k));
                       },
                       [](IteratorMethodKind k) -> std::string {
                         return std::format(

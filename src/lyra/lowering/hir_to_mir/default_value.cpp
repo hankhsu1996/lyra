@@ -129,6 +129,17 @@ auto SynthesizeDefaultValueExpr(
                     .data = mir::ConstructExpr{.args = {element_default}},
                     .type = type});
           },
+          // LRM Table 6-7: an associative array's default is empty. The element
+          // default seeds the wrapper's shield slot (the source of nonexistent-
+          // entry reads, LRM 7.8.6) while storage starts empty.
+          [&](const mir::AssociativeArrayType& a) -> mir::ExprId {
+            const mir::ExprId element_default =
+                SynthesizeDefaultValueExpr(module, frame, a.element_type);
+            return scope.AddExpr(
+                mir::Expr{
+                    .data = mir::ConstructExpr{.args = {element_default}},
+                    .type = type});
+          },
           // Types whose runtime default is the C++ language-level default
           // (named-event handle, child module instance, `unique_ptr<Child>`,
           // `vector<Child>`). The constructor scope is the real populator

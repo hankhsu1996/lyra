@@ -95,6 +95,19 @@ enum class QueueMethodKind : std::uint8_t {
   kPushBack,
 };
 
+// LRM 7.9 associative-array methods. Exclusive to the associative container:
+// `num` / `size` query the entry count, `exists` tests a key, and `delete`
+// removes one entry (with index) or clears the array (without). Like the
+// queue-native family they mutate or query the receiver and have no analogue
+// in the other containers; the shared LRM 7.12 family stays in
+// `ArrayMethodKind`.
+enum class AssociativeMethodKind : std::uint8_t {
+  kNum,
+  kSize,
+  kExists,
+  kDelete,
+};
+
 // LRM 7.12.4 iterator intrinsic methods (only `index` is in scope today;
 // extends naturally if SV adds more iterator methods).
 enum class IteratorMethodKind : std::uint8_t {
@@ -104,7 +117,7 @@ enum class IteratorMethodKind : std::uint8_t {
 struct BuiltinMethodRef {
   std::variant<
       EnumMethodKind, StringMethodKind, EventMethodKind, ArrayMethodKind,
-      QueueMethodKind, IteratorMethodKind>
+      QueueMethodKind, AssociativeMethodKind, IteratorMethodKind>
       method;
 };
 

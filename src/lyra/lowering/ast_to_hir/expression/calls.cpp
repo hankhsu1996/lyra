@@ -228,6 +228,27 @@ auto LowerCallExprProc(
       }
     }
 
+    if (receiver_type.has_value() &&
+        std::holds_alternative<hir::AssociativeArrayType>(
+            module.Unit().GetType(*receiver_type).data)) {
+      if (auto kind = LowerAssociativeMethodName(name); kind.has_value()) {
+        // LRM 7.9 associative-array methods. The receiver is arguments[0]; the
+        // key (exists / delete-by-index) follows as the next argument. The
+        // no-argument `delete` clears the array.
+        auto type_id = module.InternType(*call.type, span);
+        if (!type_id) return std::unexpected(std::move(type_id.error()));
+        return hir::Expr{
+            .type = *type_id,
+            .data =
+                hir::CallExpr{
+                    .callee = hir::BuiltinMethodRef{.method = *kind},
+                    .arguments = std::move(arg_ids),
+                },
+            .span = span,
+        };
+      }
+    }
+
     // LRM 7.12.4 `item.index`: slang resolves to a SystemSubroutine with
     // `KnownSystemName::Index`. Only legal inside an array-method `with`
     // body; the call lowers to a `BuiltinMethodRef{IteratorMethodKind::

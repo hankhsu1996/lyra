@@ -124,7 +124,8 @@ auto RenderPrintValueArg(
       type.Kind() == mir::TypeKind::kString ||
       type.Kind() == mir::TypeKind::kUnpackedArray ||
       type.Kind() == mir::TypeKind::kDynamicArray ||
-      type.Kind() == mir::TypeKind::kQueue) {
+      type.Kind() == mir::TypeKind::kQueue ||
+      type.Kind() == mir::TypeKind::kAssociativeArray) {
     return *operand_or;
   }
   throw InternalError("RenderPrintValueArg: unsupported display operand type");
