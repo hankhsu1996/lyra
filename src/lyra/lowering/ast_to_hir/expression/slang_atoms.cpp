@@ -231,6 +231,16 @@ auto LowerArrayMethodName(std::string_view name)
   if (name == "and") return hir::ArrayMethodKind::kAnd;
   if (name == "or") return hir::ArrayMethodKind::kOr;
   if (name == "xor") return hir::ArrayMethodKind::kXor;
+  if (name == "find") return hir::ArrayMethodKind::kFind;
+  if (name == "find_index") return hir::ArrayMethodKind::kFindIndex;
+  if (name == "find_first") return hir::ArrayMethodKind::kFindFirst;
+  if (name == "find_first_index") return hir::ArrayMethodKind::kFindFirstIndex;
+  if (name == "find_last") return hir::ArrayMethodKind::kFindLast;
+  if (name == "find_last_index") return hir::ArrayMethodKind::kFindLastIndex;
+  if (name == "min") return hir::ArrayMethodKind::kMin;
+  if (name == "max") return hir::ArrayMethodKind::kMax;
+  if (name == "unique") return hir::ArrayMethodKind::kUnique;
+  if (name == "unique_index") return hir::ArrayMethodKind::kUniqueIndex;
   return std::nullopt;
 }
 
