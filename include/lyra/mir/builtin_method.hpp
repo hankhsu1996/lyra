@@ -75,6 +75,19 @@ enum class ArrayMethodKind : std::uint8_t {
   kUniqueIndex,
 };
 
+// LRM 7.10.2 queue-native methods. Exclusive to the queue container: they
+// mutate the receiver, and `pop_front` / `pop_back` also return the removed
+// element. The shared LRM 7.12 family stays in `ArrayMethodKind`.
+enum class QueueMethodKind : std::uint8_t {
+  kSize,
+  kInsert,
+  kDelete,
+  kPopFront,
+  kPopBack,
+  kPushFront,
+  kPushBack,
+};
+
 // Side-effect-free queries that are defined for every runtime value type
 // (string, packed integral, unpacked array, ...). The receiver's MIR type
 // alone determines the emit shape; lowering passes the operand uniformly.
@@ -107,6 +120,10 @@ struct ArrayMethodInfo {
   ArrayMethodKind kind;
 };
 
+struct QueueMethodInfo {
+  QueueMethodKind kind;
+};
+
 struct ValueMethodInfo {
   ValueMethodKind kind;
 };
@@ -125,7 +142,7 @@ struct IteratorMethodInfo {
 struct BuiltinMethodCallee {
   std::variant<
       EnumMethodInfo, StringMethodInfo, EventMethodInfo, ArrayMethodInfo,
-      ValueMethodInfo, IteratorMethodInfo>
+      QueueMethodInfo, ValueMethodInfo, IteratorMethodInfo>
       method;
 };
 

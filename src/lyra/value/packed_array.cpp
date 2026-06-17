@@ -351,6 +351,23 @@ auto PackedArray::AsLogicView() const -> ConstLogicView {
   return lv->View();
 }
 
+// A moved-from PackedArray must stay a fully formed value of the same shape,
+// not an empty husk: STL relocation (deque / vector insert / erase)
+// move-constructs an element and then assigns into the vacated slot, and
+// AssignFrom requires valid storage and dims on its destination. So the source
+// keeps its dims (copied, not moved) and its storage is rebuilt to the
+// canonical zero of its width. ResetToDefault can allocate for wide values; on
+// allocation failure the noexcept move terminates, which is the codebase's
+// treatment of OOM anyway.
+PackedArray::PackedArray(PackedArray&& other) noexcept
+    : bit_width_(other.bit_width_),
+      is_signed_(other.is_signed_),
+      is_four_state_(other.is_four_state_),
+      storage_(std::move(other.storage_)),
+      dims_(other.dims_) {
+  other.ResetToDefault();
+}
+
 auto PackedArray::operator=(const PackedArray& other) -> PackedArray& {
   if (this != &other) {
     AssignFrom(other);

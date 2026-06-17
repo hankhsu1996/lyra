@@ -207,6 +207,27 @@ auto LowerCallExprProc(
       }
     }
 
+    if (receiver_type.has_value() &&
+        std::holds_alternative<hir::QueueType>(
+            module.Unit().GetType(*receiver_type).data)) {
+      if (auto kind = LowerQueueMethodName(name); kind.has_value()) {
+        // LRM 7.10.2 queue-native methods. The receiver is arguments[0]; any
+        // method parameters (insert's index and item, push's item) follow as
+        // the remaining arguments. These methods take no `with` clause.
+        auto type_id = module.InternType(*call.type, span);
+        if (!type_id) return std::unexpected(std::move(type_id.error()));
+        return hir::Expr{
+            .type = *type_id,
+            .data =
+                hir::CallExpr{
+                    .callee = hir::BuiltinMethodRef{.method = *kind},
+                    .arguments = std::move(arg_ids),
+                },
+            .span = span,
+        };
+      }
+    }
+
     // LRM 7.12.4 `item.index`: slang resolves to a SystemSubroutine with
     // `KnownSystemName::Index`. Only legal inside an array-method `with`
     // body; the call lowers to a `BuiltinMethodRef{IteratorMethodKind::

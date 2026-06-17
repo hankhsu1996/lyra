@@ -1,0 +1,14 @@
+id: cpp.queue_indexing
+tags: [cpp_run]
+input:
+  command: [run, cpp]
+  project: false
+  top: Top
+  files: [main.sv]
+expect:
+  exit: 0
+  variables:
+    q: [10, 99, 30]
+    a: 10
+    b: 99
+    oob: 0

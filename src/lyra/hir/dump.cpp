@@ -198,9 +198,50 @@ class HirDumper {
         return "or";
       case ArrayMethodKind::kXor:
         return "xor";
+      case ArrayMethodKind::kFind:
+        return "find";
+      case ArrayMethodKind::kFindIndex:
+        return "find_index";
+      case ArrayMethodKind::kFindFirst:
+        return "find_first";
+      case ArrayMethodKind::kFindFirstIndex:
+        return "find_first_index";
+      case ArrayMethodKind::kFindLast:
+        return "find_last";
+      case ArrayMethodKind::kFindLastIndex:
+        return "find_last_index";
+      case ArrayMethodKind::kMin:
+        return "min";
+      case ArrayMethodKind::kMax:
+        return "max";
+      case ArrayMethodKind::kUnique:
+        return "unique";
+      case ArrayMethodKind::kUniqueIndex:
+        return "unique_index";
     }
     throw InternalError(
         "HirDumper::FormatArrayMethodKind: unknown ArrayMethodKind");
+  }
+
+  static auto FormatQueueMethodKind(QueueMethodKind k) -> std::string_view {
+    switch (k) {
+      case QueueMethodKind::kSize:
+        return "size";
+      case QueueMethodKind::kInsert:
+        return "insert";
+      case QueueMethodKind::kDelete:
+        return "delete";
+      case QueueMethodKind::kPopFront:
+        return "pop_front";
+      case QueueMethodKind::kPopBack:
+        return "pop_back";
+      case QueueMethodKind::kPushFront:
+        return "push_front";
+      case QueueMethodKind::kPushBack:
+        return "push_back";
+    }
+    throw InternalError(
+        "HirDumper::FormatQueueMethodKind: unknown QueueMethodKind");
   }
 
   static auto FormatPackedForm(PackedArrayForm f) -> std::string_view {
@@ -635,6 +676,10 @@ class HirDumper {
                       [](ArrayMethodKind k) -> std::string {
                         return std::format(
                             "ArrayMethod \"{}\"", FormatArrayMethodKind(k));
+                      },
+                      [](QueueMethodKind k) -> std::string {
+                        return std::format(
+                            "QueueMethod \"{}\"", FormatQueueMethodKind(k));
                       },
                       [](IteratorMethodKind k) -> std::string {
                         return std::format(

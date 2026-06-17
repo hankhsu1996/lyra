@@ -1,12 +1,15 @@
 #pragma once
 
 #include <cstddef>
+#include <cstdint>
 #include <deque>
 #include <span>
 #include <string>
 #include <utility>
 
 #include "lyra/value/format.hpp"
+#include "lyra/value/packed_array.hpp"
+#include "lyra/value/value_concept.hpp"
 
 namespace lyra::value {
 
@@ -70,7 +73,94 @@ class Queue {
     data_.clear();
   }
 
+  // LRM 7.10.1 / 7.4.5: an index outside 0..size-1 (or carrying x/z) routes
+  // the access through `oob_slot_`, restored to its canonical default first so
+  // an OOB write lands on the shield and is erased on the next access.
+  // TODO(hankhsu): LRM 7.10.1 makes a write to Q[$+1] a legal append; the
+  // shared read/write `ElementAt` cannot distinguish it from an invalid write,
+  // so that one append corner is deferred (push_back covers the same need).
+  [[nodiscard]] auto ElementAt(const PackedArray& idx) -> T& {
+    if (IsInvalidIndex(idx)) {
+      oob_slot_.ResetToDefault();
+      return oob_slot_;
+    }
+    return data_[static_cast<std::size_t>(idx.ToInt64())];
+  }
+
+  [[nodiscard]] auto ElementAt(const PackedArray& idx) const -> const T& {
+    if (IsInvalidIndex(idx)) {
+      oob_slot_.ResetToDefault();
+      return oob_slot_;
+    }
+    return data_[static_cast<std::size_t>(idx.ToInt64())];
+  }
+
+  // LRM 7.10.2.7 / 7.10.2.6: append / prepend a single element.
+  auto PushBack(const T& item) -> void {
+    data_.push_back(item);
+  }
+  auto PushFront(const T& item) -> void {
+    data_.push_front(item);
+  }
+
+  // LRM 7.10.2.4 / 7.10.2.5: remove and return the first / last element. On an
+  // empty queue the result is the element type's LRM Table 7-1 default (the
+  // canonical seed held by `oob_slot_`) and the queue is left unchanged.
+  auto PopFront() -> T {
+    if (data_.empty()) {
+      oob_slot_.ResetToDefault();
+      return oob_slot_;
+    }
+    T front = std::move(data_.front());
+    data_.pop_front();
+    return front;
+  }
+  auto PopBack() -> T {
+    if (data_.empty()) {
+      oob_slot_.ResetToDefault();
+      return oob_slot_;
+    }
+    T back = std::move(data_.back());
+    data_.pop_back();
+    return back;
+  }
+
+  // LRM 7.10.2.2: insert before `index`. The index is `integer` (4-state) so
+  // x/z, negative, or `> size` is detectable and makes the call a no-op;
+  // `index == size` is a valid append.
+  auto Insert(const PackedArray& index, const T& item) -> void {
+    if (index.HasUnknown()) {
+      return;
+    }
+    const auto v = index.ToInt64();
+    if (v < 0 || static_cast<std::uint64_t>(v) > data_.size()) {
+      return;
+    }
+    data_.insert(data_.begin() + static_cast<std::ptrdiff_t>(v), item);
+  }
+
+  // LRM 7.10.2.3: with no index, clear the queue; with an index, remove that
+  // element. An x/z, negative, or `>= size` index is a no-op.
+  auto Delete() -> void {
+    data_.clear();
+  }
+  auto Delete(const PackedArray& index) -> void {
+    if (IsInvalidIndex(index)) {
+      return;
+    }
+    data_.erase(data_.begin() + static_cast<std::ptrdiff_t>(index.ToInt64()));
+  }
+
  private:
+  [[nodiscard]] auto IsInvalidIndex(const PackedArray& idx) const -> bool {
+    if (idx.HasUnknown()) {
+      return true;
+    }
+    const auto v = idx.ToInt64();
+    return v < 0 || static_cast<std::uint64_t>(v) >=
+                        static_cast<std::uint64_t>(data_.size());
+  }
+
   mutable T oob_slot_;
   std::deque<T> data_;
 };
@@ -93,5 +183,7 @@ struct Formatter<Queue<T>> {
     return out;
   }
 };
+
+static_assert(LyraValue<Queue<PackedArray>>);
 
 }  // namespace lyra::value

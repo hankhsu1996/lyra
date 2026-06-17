@@ -244,6 +244,18 @@ auto LowerArrayMethodName(std::string_view name)
   return std::nullopt;
 }
 
+auto LowerQueueMethodName(std::string_view name)
+    -> std::optional<hir::QueueMethodKind> {
+  if (name == "size") return hir::QueueMethodKind::kSize;
+  if (name == "insert") return hir::QueueMethodKind::kInsert;
+  if (name == "delete") return hir::QueueMethodKind::kDelete;
+  if (name == "pop_front") return hir::QueueMethodKind::kPopFront;
+  if (name == "pop_back") return hir::QueueMethodKind::kPopBack;
+  if (name == "push_front") return hir::QueueMethodKind::kPushFront;
+  if (name == "push_back") return hir::QueueMethodKind::kPushBack;
+  return std::nullopt;
+}
+
 auto BareCompoundUserRhs(const slang::ast::Expression& slang_expanded_rhs)
     -> const slang::ast::Expression& {
   // Slang's `convertAssignment` adds at most one outer Conversion when the

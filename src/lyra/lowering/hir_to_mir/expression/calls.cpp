@@ -154,6 +154,26 @@ auto LowerArrayMethodKind(hir::ArrayMethodKind k) -> mir::ArrayMethodKind {
   throw InternalError("LowerArrayMethodKind: unknown hir::ArrayMethodKind");
 }
 
+auto LowerQueueMethodKind(hir::QueueMethodKind k) -> mir::QueueMethodKind {
+  switch (k) {
+    case hir::QueueMethodKind::kSize:
+      return mir::QueueMethodKind::kSize;
+    case hir::QueueMethodKind::kInsert:
+      return mir::QueueMethodKind::kInsert;
+    case hir::QueueMethodKind::kDelete:
+      return mir::QueueMethodKind::kDelete;
+    case hir::QueueMethodKind::kPopFront:
+      return mir::QueueMethodKind::kPopFront;
+    case hir::QueueMethodKind::kPopBack:
+      return mir::QueueMethodKind::kPopBack;
+    case hir::QueueMethodKind::kPushFront:
+      return mir::QueueMethodKind::kPushFront;
+    case hir::QueueMethodKind::kPushBack:
+      return mir::QueueMethodKind::kPushBack;
+  }
+  throw InternalError("LowerQueueMethodKind: unknown hir::QueueMethodKind");
+}
+
 auto LowerIteratorMethodKind(hir::IteratorMethodKind k)
     -> mir::IteratorMethodKind {
   switch (k) {
@@ -449,6 +469,11 @@ auto LowerHirCallExprProc(
                       return {
                           .method = mir::ArrayMethodInfo{
                               .kind = LowerArrayMethodKind(k)}};
+                    },
+                    [&](hir::QueueMethodKind k) -> mir::BuiltinMethodCallee {
+                      return {
+                          .method = mir::QueueMethodInfo{
+                              .kind = LowerQueueMethodKind(k)}};
                     },
                     [&](hir::IteratorMethodKind k) -> mir::BuiltinMethodCallee {
                       return {
