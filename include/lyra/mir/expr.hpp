@@ -230,4 +230,22 @@ struct Expr {
   TypeId type;
 };
 
+[[nodiscard]] inline auto MakeProceduralVarRefExpr(
+    ProceduralHops hops, ProceduralVarId var, TypeId type) -> Expr {
+  return Expr{.data = ProceduralVarRef{.hops = hops, .var = var}, .type = type};
+}
+
+[[nodiscard]] inline auto MakeMemberAccessExpr(
+    ExprId receiver, StructuralVarRef member, TypeId type) -> Expr {
+  return Expr{
+      .data = MemberAccessExpr{.receiver = receiver, .member = member},
+      .type = type};
+}
+
+[[nodiscard]] inline auto MakeAssignExpr(
+    ExprId target, ExprId value, TypeId type) -> Expr {
+  return Expr{
+      .data = AssignExpr{.target = target, .value = value}, .type = type};
+}
+
 }  // namespace lyra::mir

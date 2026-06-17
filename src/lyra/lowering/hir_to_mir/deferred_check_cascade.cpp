@@ -101,7 +101,7 @@ auto SnapshotPredicate(
   const mir::ProceduralVarId snap_var = wrapper.AddProceduralVar(
       mir::ProceduralVarDecl{.name = var_name, .type = predicate_type});
   const mir::ExprId snap_default_init =
-      SynthesizeDefaultValueExpr(module, frame, predicate_type);
+      AddDefaultValueExpr(module, frame, predicate_type);
   wrapper.AppendStmt(
       mir::Stmt{
           .label = std::nullopt,
@@ -315,7 +315,7 @@ auto BuildDeferredCheckCascade(
   const mir::TypeId void_type = module.Unit().builtins.void_type;
   const mir::TypeId int32_type = module.Unit().builtins.int32;
 
-  // SnapshotPredicate / SynthesizeDefaultValueExpr append to wrapper, so
+  // SnapshotPredicate / AddDefaultValueExpr append to wrapper, so
   // route through a wrapper-local frame; the cascade levels each derive their
   // own local frames below. The wrapper itself sits one procedural scope
   // deeper than the caller, so any read of an enclosing binding (e.g. the

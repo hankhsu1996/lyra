@@ -19,7 +19,7 @@ auto AppendCaseSnapshot(
   const mir::ProceduralVarId sel_var = wrapper.AddProceduralVar(
       mir::ProceduralVarDecl{.name = "_lyra_case_sel", .type = sel_type});
   const mir::ExprId sel_default_init =
-      SynthesizeDefaultValueExpr(module, frame, sel_type);
+      AddDefaultValueExpr(module, frame, sel_type);
   wrapper.AppendStmt(
       mir::Stmt{
           .label = std::nullopt,

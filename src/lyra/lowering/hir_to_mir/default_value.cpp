@@ -50,7 +50,7 @@ auto DefaultIntegralConstant(const mir::PackedArrayType& pa)
 
 }  // namespace
 
-auto SynthesizeDefaultValueExpr(
+auto AddDefaultValueExpr(
     const ModuleLowerer& module, WalkFrame frame, mir::TypeId type)
     -> mir::ExprId {
   auto& scope = *frame.current_procedural_scope;
@@ -99,7 +99,7 @@ auto SynthesizeDefaultValueExpr(
             elements.reserve(ua.size);
             for (std::uint64_t i = 0; i < ua.size; ++i) {
               elements.push_back(
-                  SynthesizeDefaultValueExpr(module, frame, ua.element_type));
+                  AddDefaultValueExpr(module, frame, ua.element_type));
             }
             return scope.AddExpr(BuildArrayConstructExpr(
                 module, frame, type, std::move(elements)));
@@ -112,7 +112,7 @@ auto SynthesizeDefaultValueExpr(
           // ctor that stores the value and leaves `data_` empty.
           [&](const mir::DynamicArrayType& da) -> mir::ExprId {
             const mir::ExprId element_default =
-                SynthesizeDefaultValueExpr(module, frame, da.element_type);
+                AddDefaultValueExpr(module, frame, da.element_type);
             return scope.AddExpr(
                 mir::Expr{
                     .data = mir::ConstructExpr{.args = {element_default}},
@@ -123,7 +123,7 @@ auto SynthesizeDefaultValueExpr(
           // wrapper's shield slot while storage starts empty.
           [&](const mir::QueueType& q) -> mir::ExprId {
             const mir::ExprId element_default =
-                SynthesizeDefaultValueExpr(module, frame, q.element_type);
+                AddDefaultValueExpr(module, frame, q.element_type);
             return scope.AddExpr(
                 mir::Expr{
                     .data = mir::ConstructExpr{.args = {element_default}},
@@ -168,7 +168,7 @@ auto SynthesizeDefaultValueExpr(
           },
           [&](const auto&) -> mir::ExprId {
             throw InternalError(
-                "SynthesizeDefaultValueExpr: type kind has no default-value "
+                "AddDefaultValueExpr: type kind has no default-value "
                 "representation");
           },
       },
@@ -196,7 +196,7 @@ auto BuildArrayConstructExpr(
       },
       ty.data);
   const mir::ExprId element_default =
-      SynthesizeDefaultValueExpr(module, frame, element_type);
+      AddDefaultValueExpr(module, frame, element_type);
   const mir::ExprId list_id = scope.AddExpr(
       mir::Expr{
           .data = mir::ArrayLiteralExpr{.elements = std::move(elements)},

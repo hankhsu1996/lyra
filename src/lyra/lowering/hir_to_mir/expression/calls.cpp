@@ -248,7 +248,7 @@ auto BuildArrayMethodClosure(
       mir::ProceduralVarDecl{.name = "index", .type = index_type});
   process.MapProceduralVar(
       with_clause.iterator,
-      ProceduralVarBinding{
+      AutomaticVarBinding{
           .declaration_procedural_depth = body_depth, .var = item_binding});
 
   CaptureSink sink{body_depth, body_scope, outer_scope};

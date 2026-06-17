@@ -275,7 +275,7 @@ auto LowerScanSystemSubroutineCall(
   temp_ids.reserve(metas.size());
   for (std::size_t k = 0; k < metas.size(); ++k) {
     const mir::ExprId init_id =
-        SynthesizeDefaultValueExpr(module, closure_frame, metas[k].mir_type);
+        AddDefaultValueExpr(module, closure_frame, metas[k].mir_type);
     const mir::ProceduralVarRef temp_ref = body.AppendLocal(
         mir::ProceduralVarDecl{
             .name = std::format("_lyra_scan_temp_{}", k),
