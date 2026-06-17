@@ -1,3 +1,3 @@
 module Top;
-  int m [string];
+  struct { int a; int b; } s;
 endmodule

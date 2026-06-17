@@ -174,6 +174,22 @@ auto LowerQueueMethodKind(hir::QueueMethodKind k) -> mir::QueueMethodKind {
   throw InternalError("LowerQueueMethodKind: unknown hir::QueueMethodKind");
 }
 
+auto LowerAssociativeMethodKind(hir::AssociativeMethodKind k)
+    -> mir::AssociativeMethodKind {
+  switch (k) {
+    case hir::AssociativeMethodKind::kNum:
+      return mir::AssociativeMethodKind::kNum;
+    case hir::AssociativeMethodKind::kSize:
+      return mir::AssociativeMethodKind::kSize;
+    case hir::AssociativeMethodKind::kExists:
+      return mir::AssociativeMethodKind::kExists;
+    case hir::AssociativeMethodKind::kDelete:
+      return mir::AssociativeMethodKind::kDelete;
+  }
+  throw InternalError(
+      "LowerAssociativeMethodKind: unknown hir::AssociativeMethodKind");
+}
+
 auto LowerIteratorMethodKind(hir::IteratorMethodKind k)
     -> mir::IteratorMethodKind {
   switch (k) {
@@ -476,6 +492,12 @@ auto LowerHirCallExprProc(
                       return {
                           .method = mir::QueueMethodInfo{
                               .kind = LowerQueueMethodKind(k)}};
+                    },
+                    [&](hir::AssociativeMethodKind k)
+                        -> mir::BuiltinMethodCallee {
+                      return {
+                          .method = mir::AssociativeMethodInfo{
+                              .kind = LowerAssociativeMethodKind(k)}};
                     },
                     [&](hir::IteratorMethodKind k) -> mir::BuiltinMethodCallee {
                       return {
