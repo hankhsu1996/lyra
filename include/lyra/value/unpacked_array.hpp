@@ -172,6 +172,23 @@ class UnpackedArray {
     return result;
   }
 
+  // LRM 11.4.5 `===` predicate form (host bool): the Var change-detection
+  // counterpart of `CaseEqual`, recursing into each element's own predicate
+  // (LRM 9.4.2 update event). A size mismatch is a change -- this is how the
+  // empty default of a fresh `Var<UnpackedArray>` is detected as different from
+  // the first sized write, so the declared-shape initializer commits.
+  [[nodiscard]] auto IsCaseEqual(const UnpackedArray& other) const -> bool {
+    if (data_.size() != other.data_.size()) {
+      return false;
+    }
+    for (std::size_t i = 0; i < data_.size(); ++i) {
+      if (!data_[i].IsCaseEqual(other.data_[i])) {
+        return false;
+      }
+    }
+    return true;
+  }
+
  private:
   [[nodiscard]] auto IsInvalidIndex(const PackedArray& idx) const -> bool {
     if (idx.HasUnknown()) return true;

@@ -89,6 +89,13 @@ class String {
   [[nodiscard]] auto operator!=(const String& o) const -> bool {
     return impl_ != o.impl_;
   }
+
+  // LRM 11.4.5 `===` predicate form (host bool): a string has no unknown
+  // plane, so case equality is exact content equality. The Var change-detection
+  // counterpart for an observable string signal (LRM 9.4.2 update event).
+  [[nodiscard]] auto IsCaseEqual(const String& o) const -> bool {
+    return impl_ == o.impl_;
+  }
   [[nodiscard]] auto operator<(const String& o) const -> bool {
     return impl_ < o.impl_;
   }
