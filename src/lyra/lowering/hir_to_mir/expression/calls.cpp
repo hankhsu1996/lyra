@@ -25,7 +25,8 @@
 #include "lyra/lowering/hir_to_mir/expression/system/timescale.hpp"
 #include "lyra/lowering/hir_to_mir/procedural_depth.hpp"
 #include "lyra/lowering/hir_to_mir/process_lowerer.hpp"
-#include "lyra/lowering/hir_to_mir/services_arg.hpp"
+#include "lyra/lowering/hir_to_mir/self_ref.hpp"
+#include "lyra/lowering/hir_to_mir/services_call.hpp"
 #include "lyra/lowering/hir_to_mir/structural_scope_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/walk_frame.hpp"
 #include "lyra/mir/closure.hpp"
@@ -282,13 +283,8 @@ auto BuildArrayMethodClosure(
 
   const mir::ProceduralVarId self_binding = body_scope.AddProceduralVar(
       mir::ProceduralVarDecl{.name = "self", .type = self_ptr_type});
-  const mir::ExprId outer_self_read = outer_scope.AddExpr(
-      mir::Expr{
-          .data =
-              mir::ProceduralVarRef{
-                  .hops = frame.procedural_depth - frame.self_decl_depth,
-                  .var = *frame.self_binding},
-          .type = self_ptr_type});
+  const mir::ExprId outer_self_read =
+      outer_scope.AddExpr(BuildSelfRefExpr(frame, self_ptr_type));
   const mir::ProceduralVarId item_binding = body_scope.AddProceduralVar(
       mir::ProceduralVarDecl{.name = iterator_name, .type = item_type});
   const mir::ProceduralVarId index_binding = body_scope.AddProceduralVar(
@@ -437,8 +433,12 @@ auto LowerHirCallExprProc(
                     diag::UnsupportedCategory::kFeature);
               }
             }
+            // The callee body takes its instance handle as `arguments[0]`
+            // (mir.md invariant 11); the SV actuals follow.
             std::vector<mir::ExprId> args;
-            args.reserve(c.arguments.size());
+            args.reserve(c.arguments.size() + 1);
+            args.push_back(proc_scope.AddExpr(
+                BuildSelfRefExpr(frame, module.Unit().builtins.self_pointer)));
             for (const auto& arg : c.arguments) {
               if (!arg.has_value()) {
                 throw InternalError(
@@ -517,15 +517,18 @@ auto LowerHirCallExprProc(
                   "BuiltinMethodRef with-clause on a method kind that does "
                   "not accept a with-clause (LRM 7.12.1 family only)");
             }
-            // LRM 15.5: `Trigger` and `Triggered` reach into RuntimeServices
-            // (Trigger schedules the wake; Triggered samples the
-            // slot-persistent triggered state). The engine handle threads as an
-            // explicit argument per
-            // `decisions/runtime-effects-as-generic-calls.md`.
-            if (const auto* ek = std::get_if<hir::EventMethodKind>(&b.method);
-                ek != nullptr && (*ek == hir::EventMethodKind::kTrigger ||
-                                  *ek == hir::EventMethodKind::kTriggered)) {
-              args.push_back(BuildServicesArg(process, frame));
+            // LRM 15.5.3: `e.triggered` reads the triggered flag out of
+            // RuntimeServices. The engine handle is a real trailing argument,
+            // threaded the same way every runtime effect threads it
+            // (docs/decisions/runtime-effects-as-generic-calls.md), not a
+            // backend-fabricated one. (`-> e` is the only producer of the
+            // trigger kind and lowers through LowerEventTriggerStmt; `await`
+            // takes no services.)
+            if (const auto* ev = std::get_if<hir::EventMethodKind>(&b.method)) {
+              if (*ev == hir::EventMethodKind::kTriggered) {
+                args.push_back(
+                    proc_scope.AddExpr(BuildServicesCallExpr(process, frame)));
+              }
             }
             auto callee = std::visit(
                 Overloaded{

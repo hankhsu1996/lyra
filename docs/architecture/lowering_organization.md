@@ -215,6 +215,11 @@ rules that keep new concepts cheap to add and the class bounded.
   multiple members in coordination is encapsulating an invariant and is allowed.
 - An ambient setter / getter pair on the class whose only purpose is install / restore of a
   walk-position concept.
+- An `Add*Expr` helper that wraps `scope.AddExpr(Make...(...))` for a freshly built node and returns
+  its `mir::ExprId`. A freshly built node is returned as a detached `mir::Expr` by a `Make*` /
+  `Build*` factory and interned by the caller; `mir::ExprId`-returning helpers are reserved for
+  transforms keyed on an input `mir::ExprId` (which read or pass through an existing arena node).
+  See "Expression-Builder Helpers".
 - A shared base class spanning lowering and rendering pass classes. The pattern is shared; types are
   per pass.
 - A dispatcher method or per-kind handler that mutates the class's fact members. Facts are mutated
@@ -270,6 +275,31 @@ The pass class header's public surface is bounded: the dispatcher methods (one p
 the registry operations, the fact accessors, and the `Run` entry. Per-kind handlers are not methods
 on the pass class -- they are free functions in subsystem files, so adding a kind does not bloat the
 class header or trigger a header-level recompile cascade.
+
+## Expression-Builder Helpers
+
+Helpers that construct MIR expressions come in two shapes, distinguished by whether the helper is
+keyed on an input `mir::ExprId`:
+
+- **Factory** -- builds a fresh node (or a subtree whose top is a fresh node) from inputs that are
+  not an arena handle: a `mir::TypeId`, an HIR node, a literal value, or the body's `self`. A
+  factory returns the top node as a detached `mir::Expr`; the caller interns it with
+  `scope.AddExpr(...)`. A composite factory interns its own children into
+  `frame.current_procedural_scope` as it builds and returns only the top detached, so interning the
+  result yields a self-contained arena subtree. The `mir::Make*Expr` family (pure structural
+  constructors) and the lowering `Build*Expr` family (frame-aware) are factories. Examples:
+  `MakeProceduralVarRefExpr`, `BuildSelfRefExpr`, `BuildServicesCallExpr`, `BuildDefaultValueExpr`,
+  `BuildArrayConstructExpr`.
+- **Transform** -- keyed on an input `mir::ExprId`: it reads `scope.GetExpr(id)` to decide what to
+  build, or may return the input unchanged (pass-through). A transform returns a `mir::ExprId`,
+  because it operates on already-interned arena nodes. Examples: `WrapUnpackedIndex` (returns its
+  index input unchanged when the declared range needs no rebase), `CloneLhsExprForNbaBody` (rebuilds
+  an lvalue node's structure into a closure body).
+
+The rule follows from the dispatcher contract: `LowerExpr` returns a detached `mir::Expr` whose
+children are already interned, so every hand-written expression builder obeys the same shape. The
+only way to obtain a `mir::ExprId` is `scope.AddExpr(<an Expr produced by a factory>)`; a freshly
+built node is never interned behind an `Add*` helper that hands back the id.
 
 ## Notes
 

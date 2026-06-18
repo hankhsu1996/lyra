@@ -50,59 +50,52 @@ auto DefaultIntegralConstant(const mir::PackedArrayType& pa)
 
 }  // namespace
 
-auto AddDefaultValueExpr(
+auto BuildDefaultValueExpr(
     const ModuleLowerer& module, WalkFrame frame, mir::TypeId type)
-    -> mir::ExprId {
+    -> mir::Expr {
   auto& scope = *frame.current_procedural_scope;
   const auto& ty = module.Unit().GetType(type);
   return std::visit(
       Overloaded{
-          [&](const mir::PackedArrayType& pa) -> mir::ExprId {
-            return scope.AddExpr(
-                mir::Expr{
-                    .data =
-                        mir::IntegerLiteral{
-                            .value = DefaultIntegralConstant(pa)},
-                    .type = type});
+          [&](const mir::PackedArrayType& pa) -> mir::Expr {
+            return mir::Expr{
+                .data =
+                    mir::IntegerLiteral{.value = DefaultIntegralConstant(pa)},
+                .type = type};
           },
-          [&](const mir::EnumType& e) -> mir::ExprId {
-            return scope.AddExpr(
-                mir::Expr{
-                    .data =
-                        mir::IntegerLiteral{
-                            .value = DefaultIntegralConstant(e.base)},
-                    .type = type});
+          [&](const mir::EnumType& e) -> mir::Expr {
+            return mir::Expr{
+                .data =
+                    mir::IntegerLiteral{
+                        .value = DefaultIntegralConstant(e.base)},
+                .type = type};
           },
-          [&](const mir::StringType&) -> mir::ExprId {
-            return scope.AddExpr(
-                mir::Expr{
-                    .data = mir::StringLiteral{.value = std::string{}},
-                    .type = type});
+          [&](const mir::StringType&) -> mir::Expr {
+            return mir::Expr{
+                .data = mir::StringLiteral{.value = std::string{}},
+                .type = type};
           },
-          [&](const mir::RealType&) -> mir::ExprId {
-            return scope.AddExpr(
-                mir::Expr{
-                    .data = mir::RealLiteral{.value = 0.0}, .type = type});
+          [&](const mir::RealType&) -> mir::Expr {
+            return mir::Expr{
+                .data = mir::RealLiteral{.value = 0.0}, .type = type};
           },
-          [&](const mir::ShortRealType&) -> mir::ExprId {
-            return scope.AddExpr(
-                mir::Expr{
-                    .data = mir::RealLiteral{.value = 0.0}, .type = type});
+          [&](const mir::ShortRealType&) -> mir::Expr {
+            return mir::Expr{
+                .data = mir::RealLiteral{.value = 0.0}, .type = type};
           },
-          [&](const mir::RealTimeType&) -> mir::ExprId {
-            return scope.AddExpr(
-                mir::Expr{
-                    .data = mir::RealLiteral{.value = 0.0}, .type = type});
+          [&](const mir::RealTimeType&) -> mir::Expr {
+            return mir::Expr{
+                .data = mir::RealLiteral{.value = 0.0}, .type = type};
           },
-          [&](const mir::UnpackedArrayType& ua) -> mir::ExprId {
+          [&](const mir::UnpackedArrayType& ua) -> mir::Expr {
             std::vector<mir::ExprId> elements;
             elements.reserve(ua.size);
             for (std::uint64_t i = 0; i < ua.size; ++i) {
-              elements.push_back(
-                  AddDefaultValueExpr(module, frame, ua.element_type));
+              elements.push_back(scope.AddExpr(
+                  BuildDefaultValueExpr(module, frame, ua.element_type)));
             }
-            return scope.AddExpr(BuildArrayConstructExpr(
-                module, frame, type, std::move(elements)));
+            return BuildArrayConstructExpr(
+                module, frame, type, std::move(elements));
           },
           // LRM Table 6-7: a dynamic array's default is the empty array.
           // The wrapper still needs the element type's default supplied at
@@ -110,35 +103,32 @@ auto AddDefaultValueExpr(
           // see `docs/decisions/runtime-shape-and-default-value.md`. Emit
           // chain: ConstructExpr{element_default} -> `DynamicArray<T>(...)`
           // ctor that stores the value and leaves `data_` empty.
-          [&](const mir::DynamicArrayType& da) -> mir::ExprId {
-            const mir::ExprId element_default =
-                AddDefaultValueExpr(module, frame, da.element_type);
-            return scope.AddExpr(
-                mir::Expr{
-                    .data = mir::ConstructExpr{.args = {element_default}},
-                    .type = type});
+          [&](const mir::DynamicArrayType& da) -> mir::Expr {
+            const mir::ExprId element_default = scope.AddExpr(
+                BuildDefaultValueExpr(module, frame, da.element_type));
+            return mir::Expr{
+                .data = mir::ConstructExpr{.args = {element_default}},
+                .type = type};
           },
           // LRM Table 6-7: a queue's default is the empty queue. Same emit
           // chain as the dynamic array -- the element default seeds the
           // wrapper's shield slot while storage starts empty.
-          [&](const mir::QueueType& q) -> mir::ExprId {
-            const mir::ExprId element_default =
-                AddDefaultValueExpr(module, frame, q.element_type);
-            return scope.AddExpr(
-                mir::Expr{
-                    .data = mir::ConstructExpr{.args = {element_default}},
-                    .type = type});
+          [&](const mir::QueueType& q) -> mir::Expr {
+            const mir::ExprId element_default = scope.AddExpr(
+                BuildDefaultValueExpr(module, frame, q.element_type));
+            return mir::Expr{
+                .data = mir::ConstructExpr{.args = {element_default}},
+                .type = type};
           },
           // LRM Table 6-7: an associative array's default is empty. The element
           // default seeds the wrapper's shield slot (the source of nonexistent-
           // entry reads, LRM 7.8.6) while storage starts empty.
-          [&](const mir::AssociativeArrayType& a) -> mir::ExprId {
-            const mir::ExprId element_default =
-                AddDefaultValueExpr(module, frame, a.element_type);
-            return scope.AddExpr(
-                mir::Expr{
-                    .data = mir::ConstructExpr{.args = {element_default}},
-                    .type = type});
+          [&](const mir::AssociativeArrayType& a) -> mir::Expr {
+            const mir::ExprId element_default = scope.AddExpr(
+                BuildDefaultValueExpr(module, frame, a.element_type));
+            return mir::Expr{
+                .data = mir::ConstructExpr{.args = {element_default}},
+                .type = type};
           },
           // Types whose runtime default is the C++ language-level default
           // (named-event handle, child module instance, `unique_ptr<Child>`,
@@ -146,29 +136,25 @@ auto AddDefaultValueExpr(
           // for the object family; named-events have no SV initializer
           // grammar at all. Empty `ConstructExpr` renders as `T()` and
           // invokes the type's default ctor.
-          [&](const mir::EventType&) -> mir::ExprId {
-            return scope.AddExpr(
-                mir::Expr{
-                    .data = mir::ConstructExpr{.args = {}}, .type = type});
+          [&](const mir::EventType&) -> mir::Expr {
+            return mir::Expr{
+                .data = mir::ConstructExpr{.args = {}}, .type = type};
           },
-          [&](const mir::ObjectType&) -> mir::ExprId {
-            return scope.AddExpr(
-                mir::Expr{
-                    .data = mir::ConstructExpr{.args = {}}, .type = type});
+          [&](const mir::ObjectType&) -> mir::Expr {
+            return mir::Expr{
+                .data = mir::ConstructExpr{.args = {}}, .type = type};
           },
-          [&](const mir::PointerType&) -> mir::ExprId {
-            return scope.AddExpr(
-                mir::Expr{
-                    .data = mir::ConstructExpr{.args = {}}, .type = type});
+          [&](const mir::PointerType&) -> mir::Expr {
+            return mir::Expr{
+                .data = mir::ConstructExpr{.args = {}}, .type = type};
           },
-          [&](const mir::VectorType&) -> mir::ExprId {
-            return scope.AddExpr(
-                mir::Expr{
-                    .data = mir::ConstructExpr{.args = {}}, .type = type});
+          [&](const mir::VectorType&) -> mir::Expr {
+            return mir::Expr{
+                .data = mir::ConstructExpr{.args = {}}, .type = type};
           },
-          [&](const auto&) -> mir::ExprId {
+          [&](const auto&) -> mir::Expr {
             throw InternalError(
-                "AddDefaultValueExpr: type kind has no default-value "
+                "BuildDefaultValueExpr: type kind has no default-value "
                 "representation");
           },
       },
@@ -196,7 +182,7 @@ auto BuildArrayConstructExpr(
       },
       ty.data);
   const mir::ExprId element_default =
-      AddDefaultValueExpr(module, frame, element_type);
+      scope.AddExpr(BuildDefaultValueExpr(module, frame, element_type));
   const mir::ExprId list_id = scope.AddExpr(
       mir::Expr{
           .data = mir::ArrayLiteralExpr{.elements = std::move(elements)},

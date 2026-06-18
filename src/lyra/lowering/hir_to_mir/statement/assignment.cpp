@@ -21,6 +21,7 @@
 #include "lyra/lowering/hir_to_mir/expression/system/file_io.hpp"
 #include "lyra/lowering/hir_to_mir/expression/system/sformat.hpp"
 #include "lyra/lowering/hir_to_mir/process_lowerer.hpp"
+#include "lyra/lowering/hir_to_mir/self_ref.hpp"
 #include "lyra/lowering/hir_to_mir/structural_scope_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/walk_frame.hpp"
 #include "lyra/mir/compilation_unit.hpp"
@@ -80,8 +81,8 @@ auto LowerDestructuringAssign(
               .left = static_cast<std::int64_t>(total_width) - 1, .right = 0}},
           .form = mir::PackedArrayForm::kExplicit}});
 
-  const mir::ExprId temp_default_init =
-      AddDefaultValueExpr(process.Module(), wrapper_frame, temp_type);
+  const mir::ExprId temp_default_init = wrapper.AddExpr(
+      BuildDefaultValueExpr(process.Module(), wrapper_frame, temp_type));
   const mir::ProceduralVarRef snapshot_ref = wrapper.AppendLocal(
       mir::ProceduralVarDecl{.name = "_lyra_destruct_rhs", .type = temp_type},
       temp_default_init);
@@ -231,8 +232,12 @@ auto LowerSubroutineCallWithWritebacks(
   mir::ProceduralScope wrapper;
   const WalkFrame wrapper_frame = frame.WithProceduralScope(&wrapper).Deeper();
 
+  // The callee body takes its instance handle as `arguments[0]` (mir.md
+  // invariant 11); the SV actuals (with output / inout temps) follow.
   std::vector<mir::ExprId> call_args;
-  call_args.reserve(call.arguments.size());
+  call_args.reserve(call.arguments.size() + 1);
+  call_args.push_back(wrapper.AddExpr(BuildSelfRefExpr(
+      wrapper_frame, process.Module().Unit().builtins.self_pointer)));
   std::vector<OutputArgSlot> writebacks;
 
   for (std::size_t i = 0; i < call.arguments.size(); ++i) {
@@ -260,7 +265,8 @@ auto LowerSubroutineCallWithWritebacks(
     const mir::ExprId init =
         dir == hir::ParamDirection::kInOut
             ? actual_id
-            : AddDefaultValueExpr(process.Module(), wrapper_frame, formal_type);
+            : wrapper.AddExpr(BuildDefaultValueExpr(
+                  process.Module(), wrapper_frame, formal_type));
     const mir::ProceduralVarRef temp = wrapper.AppendLocal(
         mir::ProceduralVarDecl{
             .name = "_lyra_arg" + std::to_string(i), .type = formal_type},
