@@ -32,7 +32,8 @@ follow once dynamic array's storage and runtime conventions are settled and prov
 | Q1.. | Not yet scoped: queue.                                               |
 | A1   | Done: string / integral index, element read / write, query methods.  |
 | A2   | Done: traversal protocol (`first` / `last` / `next` / `prev`).       |
-| A3.. | Open: foreach, literals, whole-array assignment, locators.           |
+| A3   | Done: `foreach` over an associative array (any dimensionality).      |
+| A4.. | Open: literals, whole-array assignment, locators.                    |
 
 ## Dynamic Array
 
@@ -142,10 +143,16 @@ the lookup key and imposes an ordering.
       variable and return -1) is unreachable: the frontend requires the index argument to be
       type-equivalent to the array's index type and rejects a narrower one before lowering.
 
-- [ ] A3 -- `foreach` over an associative array (`control-flow.md` C10); associative-array literals
-      with an optional default (LRM 7.9.11) and whole-array associative assignment (LRM 7.9.9); the
-      wildcard `[*]`, class, and other user-defined index families (LRM 7.8.1 / 7.8.3 / 7.8.5); and
-      the locator-family methods that return an index queue of the key type (LRM 7.12.1).
+- [x] A3 -- `foreach` over an associative array (`control-flow.md` C10), iterating the entries in
+      LRM 7.8 index order (lexicographic for string keys, signed numeric for integral). The
+      dimension walks by key via the traversal protocol rather than counting an index, and an
+      associative dimension nests freely with index-counted dimensions in one foreach (associative
+      of associative, associative of fixed, and the reverse).
+
+- [ ] A4 -- Associative-array literals with an optional default (LRM 7.9.11) and whole-array
+      associative assignment (LRM 7.9.9); the wildcard `[*]`, class, and other user-defined index
+      families (LRM 7.8.1 / 7.8.3 / 7.8.5); and the locator-family methods that return an index
+      queue of the key type (LRM 7.12.1).
 
 ## Cross-references
 

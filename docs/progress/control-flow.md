@@ -8,13 +8,13 @@ order.
 
 ## Actionable
 
-C9 and C10 are done for packed, unpacked, dynamic-array, and queue arrays of any dimensionality,
-including jagged dynamic-of-dynamic nests. The associative-array case stays open (it iterates by
-key, a distinct model).
+C9 and C10 are done for packed, unpacked, dynamic-array, queue, and associative arrays of any
+dimensionality, including jagged dynamic-of-dynamic nests and mixed key-walked / index-counted
+nests. Only `foreach` over a string (by byte, LRM 6.16) stays open.
 
-| Item | Status                                                                     |
-| ---- | -------------------------------------------------------------------------- |
-| C10  | Done: dynamic array / queue, any dimensionality incl. jagged. Open: assoc. |
+| Item | Status                                                                      |
+| ---- | --------------------------------------------------------------------------- |
+| C10  | Done: dynamic array / queue / associative, any dimensionality incl. jagged. |
 
 ## Sub-Steps
 
@@ -54,8 +54,11 @@ key, a distinct model).
       (LRM 12.7.3), so a jagged dynamic-of-dynamic array (`int a[][]`, inner length per row)
       iterates correctly. A `break` that must leave the whole foreach (LRM 12.8) is modeled as a
       labeled break and rendered as a `goto` past the outermost loop. `foreach` over an associative
-      array stays rejected with `kUnsupportedStatementForm` (it iterates by key, a distinct model).
-      See `../decisions/foreach-lowering.md`.
+      array iterates its entries in index order (LRM 7.8: lexicographic for string keys, signed
+      numeric for integral): the dimension walks by key via the traversal protocol rather than
+      counting an index, and key-walked and index-counted dimensions nest freely in one foreach.
+      `foreach` over a string (by byte) stays rejected with `kUnsupportedStatementForm`. See
+      `../decisions/foreach-lowering.md`.
 - [x] C11 -- `casez` / `casex` (LRM 12.5.1 do-not-care forms). Bidirectional wildcard compare:
       `casez` treats Z as don't-care on either operand; `casex` treats Z or X as don't-care on
       either operand. Result is deterministic, distinct from the asymmetric `==?` operator (LRM
