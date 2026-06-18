@@ -25,6 +25,7 @@
 #include "lyra/lowering/hir_to_mir/expression/references.hpp"
 #include "lyra/lowering/hir_to_mir/expression/selects.hpp"
 #include "lyra/lowering/hir_to_mir/process_lowerer.hpp"
+#include "lyra/lowering/hir_to_mir/self_ref.hpp"
 #include "lyra/lowering/hir_to_mir/walk_frame.hpp"
 #include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/expr.hpp"
@@ -323,7 +324,7 @@ auto MaterializeCrossUnitRefTargets(
 auto BuildDownwardNavValue(
     const ModuleLowerer& module, WalkFrame frame, const std::string& head_name,
     const std::vector<hir::PathStep>& path, mir::TypeId slot_type,
-    mir::TypeId scope_ptr_type) -> mir::ExprId {
+    mir::TypeId scope_ptr_type) -> mir::Expr {
   mir::ProceduralScope& ctor_scope = *frame.current_procedural_scope;
   const mir::TypeId self_ptr_type = module.Unit().builtins.self_pointer;
   struct NavHop {
@@ -348,13 +349,7 @@ auto BuildDownwardNavValue(
         "owned child");
   }
 
-  mir::ExprId cur = ctor_scope.AddExpr(
-      mir::Expr{
-          .data =
-              mir::ProceduralVarRef{
-                  .hops = frame.procedural_depth - frame.self_decl_depth,
-                  .var = *frame.self_binding},
-          .type = self_ptr_type});
+  mir::ExprId cur = ctor_scope.AddExpr(BuildSelfRefExpr(frame, self_ptr_type));
   for (std::size_t i = 0; i + 1 < hops.size(); ++i) {
     std::vector<mir::ExprId> args;
     args.push_back(cur);
@@ -372,16 +367,15 @@ auto BuildDownwardNavValue(
                     .arguments = std::move(args)},
             .type = scope_ptr_type});
   }
-  return ctor_scope.AddExpr(
-      mir::Expr{
-          .data =
-              mir::CallExpr{
-                  .callee =
-                      mir::RuntimeNavCallee{
-                          .fn = mir::RuntimeFn::kGetSignal,
-                          .name = hops.back().name},
-                  .arguments = {cur}},
-          .type = slot_type});
+  return mir::Expr{
+      .data =
+          mir::CallExpr{
+              .callee =
+                  mir::RuntimeNavCallee{
+                      .fn = mir::RuntimeFn::kGetSignal,
+                      .name = hops.back().name},
+              .arguments = {cur}},
+      .type = slot_type};
 }
 
 // A downward slot resolves in the constructor by navigating from the enclosing
@@ -421,15 +415,10 @@ void InstallCrossUnitRefs(
     const std::string head_name =
         head.source_name.empty() ? head.name : head.source_name;
     const mir::TypeId slot_type = mir_scope.GetStructuralVar(slot).type;
-    const mir::ExprId nav = BuildDownwardNavValue(
-        module, frame, head_name, cu.path, slot_type, scope_ptr_type);
+    const mir::ExprId nav = ctor_scope.AddExpr(BuildDownwardNavValue(
+        module, frame, head_name, cu.path, slot_type, scope_ptr_type));
     const mir::ExprId self_for_target = ctor_scope.AddExpr(
-        mir::Expr{
-            .data =
-                mir::ProceduralVarRef{
-                    .hops = frame.procedural_depth - frame.self_decl_depth,
-                    .var = *frame.self_binding},
-            .type = module.Unit().builtins.self_pointer});
+        BuildSelfRefExpr(frame, module.Unit().builtins.self_pointer));
     const mir::ExprId target = ctor_scope.AddExpr(
         mir::Expr{
             .data =
@@ -783,10 +772,7 @@ auto StructuralScopeLowerer::Run(
   const mir::TypeId void_type = module.Unit().AddType(mir::VoidType{});
   const mir::TypeId self_ptr_type = module.Unit().builtins.self_pointer;
   const auto self_read = [&]() -> mir::ExprId {
-    return ctor_scope.AddExpr(
-        mir::MakeProceduralVarRefExpr(
-            scope_frame.procedural_depth - scope_frame.self_decl_depth,
-            *scope_frame.self_binding, self_ptr_type));
+    return ctor_scope.AddExpr(BuildSelfRefExpr(scope_frame, self_ptr_type));
   };
   for (std::size_t i = 0; i < hir_scope.structural_vars.size(); ++i) {
     const hir::StructuralVarId hir_id{static_cast<std::uint32_t>(i)};
@@ -822,7 +808,8 @@ auto StructuralScopeLowerer::Run(
         if (!value_or) return std::unexpected(std::move(value_or.error()));
         value_id = ctor_scope.AddExpr(*std::move(value_or));
       } else {
-        value_id = AddDefaultValueExpr(module, scope_frame, mir_value_type);
+        value_id = ctor_scope.AddExpr(
+            BuildDefaultValueExpr(module, scope_frame, mir_value_type));
       }
       const mir::ExprId init_target = ctor_scope.AddExpr(
           mir::MakeMemberAccessExpr(

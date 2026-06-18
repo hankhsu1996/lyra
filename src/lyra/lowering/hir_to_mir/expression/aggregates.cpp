@@ -180,8 +180,8 @@ auto LowerHirDynamicArrayNewExprProc(
     throw InternalError(
         "LowerHirDynamicArrayNewExprProc: result type is not DynamicArrayType");
   }
-  const mir::ExprId prototype_id =
-      AddDefaultValueExpr(process.Module(), frame, da->element_type);
+  const mir::ExprId prototype_id = proc_scope.AddExpr(
+      BuildDefaultValueExpr(process.Module(), frame, da->element_type));
 
   std::vector<mir::ExprId> args;
   args.reserve(n.initializer.has_value() ? 3U : 2U);

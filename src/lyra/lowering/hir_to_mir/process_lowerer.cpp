@@ -343,8 +343,8 @@ auto ProcessLowerer::Run(const hir::StructuralSubroutineDecl& src)
   const mir::TypeId result_type = module_->TranslateType(src.result_type);
   std::optional<mir::ProceduralVarRef> result_ref;
   if (src.result_var.has_value()) {
-    const mir::ExprId default_init =
-        AddDefaultValueExpr(*module_, body_frame, result_type);
+    const mir::ExprId default_init = body_scope.AddExpr(
+        BuildDefaultValueExpr(*module_, body_frame, result_type));
     result_ref = body_scope.AppendLocal(
         mir::ProceduralVarDecl{.name = "_lyra_result", .type = result_type},
         default_init);

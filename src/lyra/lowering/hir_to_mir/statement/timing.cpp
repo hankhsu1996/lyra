@@ -19,7 +19,7 @@
 #include "lyra/lowering/hir_to_mir/delay_time_resolver.hpp"
 #include "lyra/lowering/hir_to_mir/process_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/sensitivity_wait.hpp"
-#include "lyra/lowering/hir_to_mir/services_arg.hpp"
+#include "lyra/lowering/hir_to_mir/services_call.hpp"
 #include "lyra/lowering/hir_to_mir/walk_frame.hpp"
 #include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/expr.hpp"
@@ -251,10 +251,12 @@ auto LowerEventTriggerStmt(
       process.LowerExpr(process.HirBody().exprs.at(et.event.value), frame);
   if (!receiver_or) return std::unexpected(std::move(receiver_or.error()));
   const mir::ExprId receiver_id = proc_scope.AddExpr(*std::move(receiver_or));
-  // LRM 15.5 `Trigger` reaches into RuntimeServices to schedule the wake; the
-  // engine handle threads as an explicit argument per
-  // `decisions/runtime-effects-as-generic-calls.md`.
-  const mir::ExprId services_id = BuildServicesArg(process, frame);
+  // LRM 15.5.1: triggering reaches RuntimeServices to wake subscribers. The
+  // engine handle is a real trailing argument, threaded the same way every
+  // runtime effect threads it
+  // (docs/decisions/runtime-effects-as-generic-calls.md).
+  const mir::ExprId services_id =
+      proc_scope.AddExpr(BuildServicesCallExpr(process, frame));
   mir::Expr call{
       .data =
           mir::CallExpr{

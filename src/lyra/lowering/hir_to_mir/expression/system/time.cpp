@@ -2,7 +2,7 @@
 
 #include <cstdint>
 
-#include "lyra/lowering/hir_to_mir/expression/system/services_arg.hpp"
+#include "lyra/lowering/hir_to_mir/services_call.hpp"
 #include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/expr.hpp"
 
@@ -26,7 +26,8 @@ auto LowerTimeSystemSubroutineCall(
       break;
   }
   auto& body = *frame.current_procedural_scope;
-  const mir::ExprId services_id = BuildServicesArg(process, frame);
+  const mir::ExprId services_id =
+      body.AddExpr(BuildServicesCallExpr(process, frame));
   const mir::ExprId unit_power_id = body.AddExpr(
       mir::MakeInt32Literal(
           builtins.int32,

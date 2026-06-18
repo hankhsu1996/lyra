@@ -10,8 +10,8 @@
 #include "lyra/hir/procedural_var.hpp"
 #include "lyra/hir/stmt.hpp"
 #include "lyra/lowering/hir_to_mir/default_value.hpp"
-#include "lyra/lowering/hir_to_mir/procedural_depth.hpp"
 #include "lyra/lowering/hir_to_mir/process_lowerer.hpp"
+#include "lyra/lowering/hir_to_mir/self_ref.hpp"
 #include "lyra/lowering/hir_to_mir/walk_frame.hpp"
 #include "lyra/mir/expr.hpp"
 #include "lyra/mir/procedural_hops.hpp"
@@ -58,13 +58,12 @@ auto LowerStaticVarDeclStmt(
     if (!init_or) return std::unexpected(std::move(init_or.error()));
     init_value = ctor_scope.AddExpr(*std::move(init_or));
   } else {
-    init_value = AddDefaultValueExpr(process.Module(), ctor_frame, type);
+    init_value = ctor_scope.AddExpr(
+        BuildDefaultValueExpr(process.Module(), ctor_frame, type));
   }
 
-  const mir::ExprId ctor_self_read = ctor_scope.AddExpr(
-      mir::MakeProceduralVarRefExpr(
-          ctor_frame.procedural_depth - ctor_frame.self_decl_depth,
-          *ctor_frame.self_binding, self_ptr_type));
+  const mir::ExprId ctor_self_read =
+      ctor_scope.AddExpr(BuildSelfRefExpr(ctor_frame, self_ptr_type));
   const mir::ExprId target = ctor_scope.AddExpr(
       mir::MakeMemberAccessExpr(
           ctor_self_read,
@@ -97,7 +96,8 @@ auto LowerAutomaticVarDeclStmt(
     if (!init_or) return std::unexpected(std::move(init_or.error()));
     init_value = proc_scope.AddExpr(*std::move(init_or));
   } else {
-    init_value = AddDefaultValueExpr(process.Module(), frame, type);
+    init_value = proc_scope.AddExpr(
+        BuildDefaultValueExpr(process.Module(), frame, type));
   }
 
   return mir::Stmt{
