@@ -1,8 +1,11 @@
 #pragma once
 
+#include <concepts>
 #include <cstddef>
 #include <functional>
+#include <iterator>
 #include <map>
+#include <optional>
 #include <string>
 #include <utility>
 
@@ -142,6 +145,40 @@ class AssociativeArray {
     for (const auto& [key, value] : data_) {
       fn(key, value);
     }
+  }
+
+  // LRM 7.9.4 / 7.9.5: the smallest / largest stored key, or absent when the
+  // array is empty.
+  [[nodiscard]] auto FirstKey() const -> std::optional<K> {
+    if (data_.empty()) {
+      return std::nullopt;
+    }
+    return data_.begin()->first;
+  }
+  [[nodiscard]] auto LastKey() const -> std::optional<K> {
+    if (data_.empty()) {
+      return std::nullopt;
+    }
+    return data_.rbegin()->first;
+  }
+
+  // LRM 7.9.6 / 7.9.7: the smallest stored key strictly greater than `probe`
+  // (next) or the largest strictly less (prev), or absent when none exists.
+  // `probe` shares the stored keys' index type, so the bound lookup runs
+  // directly in key space.
+  [[nodiscard]] auto NextKey(const K& probe) const -> std::optional<K> {
+    auto it = data_.upper_bound(probe);
+    if (it == data_.end()) {
+      return std::nullopt;
+    }
+    return it->first;
+  }
+  [[nodiscard]] auto PrevKey(const K& probe) const -> std::optional<K> {
+    auto it = data_.lower_bound(probe);
+    if (it == data_.begin()) {
+      return std::nullopt;
+    }
+    return std::prev(it)->first;
   }
 
  private:

@@ -1055,8 +1055,67 @@ auto AssociativeMethodMemberName(mir::AssociativeMethodKind k)
       return "Exists";
     case mir::AssociativeMethodKind::kDelete:
       return "Delete";
+    case mir::AssociativeMethodKind::kFirst:
+    case mir::AssociativeMethodKind::kLast:
+    case mir::AssociativeMethodKind::kNext:
+    case mir::AssociativeMethodKind::kPrev:
+      throw InternalError(
+          "AssociativeMethodMemberName: traversal methods render as runtime "
+          "calls, not member calls");
   }
   throw InternalError("AssociativeMethodMemberName: unknown kind");
+}
+
+auto AssociativeTraversalFunctionName(mir::AssociativeMethodKind k)
+    -> std::optional<std::string_view> {
+  switch (k) {
+    case mir::AssociativeMethodKind::kFirst:
+      return "AssocFirst";
+    case mir::AssociativeMethodKind::kLast:
+      return "AssocLast";
+    case mir::AssociativeMethodKind::kNext:
+      return "AssocNext";
+    case mir::AssociativeMethodKind::kPrev:
+      return "AssocPrev";
+    case mir::AssociativeMethodKind::kNum:
+    case mir::AssociativeMethodKind::kSize:
+    case mir::AssociativeMethodKind::kExists:
+    case mir::AssociativeMethodKind::kDelete:
+      return std::nullopt;
+  }
+  throw InternalError("AssociativeTraversalFunctionName: unknown kind");
+}
+
+// LRM 7.9.4 -- 7.9.7 traversal: `m.first(idx)` etc. The index argument is a
+// `ref` that the method writes the visited key into and whose observable
+// update event must fire (LRM 4.3), so it lowers to a runtime call carrying
+// the index lvalue as a `Ref<K>` -- the same by-reference shape a user `ref`
+// argument uses -- and `Services()` as the leading argument.
+auto RenderAssociativeTraversalCall(
+    const RenderContext& ctx, const mir::CallExpr& call,
+    std::string_view function_name) -> diag::Result<std::string> {
+  if (call.arguments.size() != 2) {
+    throw InternalError(
+        "RenderAssociativeTraversalCall: traversal method expects a receiver "
+        "and an index argument");
+  }
+  auto receiver_or = RenderExpr(ctx, ctx.Expr(call.arguments[0]));
+  if (!receiver_or) {
+    return std::unexpected(std::move(receiver_or.error()));
+  }
+  const mir::Expr& index = ctx.Expr(call.arguments[1]);
+  auto index_or = RenderLhsExpr(ctx, index, std::string_view{});
+  if (!index_or) {
+    return std::unexpected(std::move(index_or.error()));
+  }
+  auto key_type_or =
+      RenderTypeAsCpp(ctx.Unit(), ctx.StructuralScope(), index.type);
+  if (!key_type_or) {
+    return std::unexpected(std::move(key_type_or.error()));
+  }
+  return std::format(
+      "lyra::runtime::{}(self->Services(), {}, lyra::runtime::Ref<{}>({}))",
+      function_name, *receiver_or, *key_type_or, *index_or);
 }
 
 // LRM 7.9 associative-array methods. The receiver is arguments[0] and the key
@@ -1069,6 +1128,9 @@ auto RenderAssociativeMethodCall(
     throw InternalError(
         "RenderAssociativeMethodCall: associative method expects a receiver "
         "argument");
+  }
+  if (auto traversal = AssociativeTraversalFunctionName(m.kind)) {
+    return RenderAssociativeTraversalCall(ctx, call, *traversal);
   }
   auto receiver_or = RenderExpr(ctx, ctx.Expr(call.arguments[0]));
   if (!receiver_or) {

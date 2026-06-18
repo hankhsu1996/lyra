@@ -1,0 +1,21 @@
+id: cpp.assoc_iteration
+tags: [cpp_run]
+input:
+  command: [run, cpp]
+  project: false
+  top: Top
+  files: [main.sv]
+expect:
+  exit: 0
+  variables:
+    s_first: 1
+    s_last: 1
+    sum_fwd: 123
+    prod_bwd: 321
+    s_next_end: 0
+    s_prev_begin: 0
+    s_empty_status: 0
+    sum_int_order: 123
+    last_int_key: 30
+    neg_first: 1
+    nk: -5
