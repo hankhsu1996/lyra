@@ -271,7 +271,7 @@ auto PackedArray::UnknownWords() const -> std::span<const std::uint64_t> {
   return {};
 }
 
-auto PackedArray::IsCaseEqual(const PackedArray& other) const -> bool {
+auto PackedArray::IsBitIdentical(const PackedArray& other) const -> bool {
   if (bit_width_ != other.bit_width_) return false;
   if (is_four_state_ != other.is_four_state_) return false;
   const auto vw_a = ValueWords();
@@ -282,7 +282,7 @@ auto PackedArray::IsCaseEqual(const PackedArray& other) const -> bool {
 }
 
 auto PackedArray::CaseEqual(const PackedArray& other) const -> PackedArray {
-  return FromInt(IsCaseEqual(other) ? 1 : 0, 1, false, false);
+  return FromInt(IsBitIdentical(other) ? 1 : 0, 1, false, false);
 }
 
 auto PackedArray::Lsb() const -> FourStateBit {

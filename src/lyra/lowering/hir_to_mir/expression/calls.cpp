@@ -25,6 +25,7 @@
 #include "lyra/lowering/hir_to_mir/expression/system/timescale.hpp"
 #include "lyra/lowering/hir_to_mir/procedural_depth.hpp"
 #include "lyra/lowering/hir_to_mir/process_lowerer.hpp"
+#include "lyra/lowering/hir_to_mir/services_arg.hpp"
 #include "lyra/lowering/hir_to_mir/structural_scope_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/walk_frame.hpp"
 #include "lyra/mir/closure.hpp"
@@ -107,6 +108,37 @@ auto LowerEventMethodKind(hir::EventMethodKind k) -> mir::EventMethodKind {
       return mir::EventMethodKind::kTriggered;
   }
   throw InternalError("LowerEventMethodKind: unknown hir::EventMethodKind");
+}
+
+// LRM 7.12.1: reduction / ordering / locator family takes a closure
+// (explicit `with` clause or implicit `with (item)`). `kSize`, `kDelete`,
+// `kReverse` do not.
+auto ArrayMethodTakesClosure(hir::ArrayMethodKind k) -> bool {
+  switch (k) {
+    case hir::ArrayMethodKind::kSize:
+    case hir::ArrayMethodKind::kDelete:
+    case hir::ArrayMethodKind::kReverse:
+      return false;
+    case hir::ArrayMethodKind::kSort:
+    case hir::ArrayMethodKind::kRsort:
+    case hir::ArrayMethodKind::kSum:
+    case hir::ArrayMethodKind::kProduct:
+    case hir::ArrayMethodKind::kAnd:
+    case hir::ArrayMethodKind::kOr:
+    case hir::ArrayMethodKind::kXor:
+    case hir::ArrayMethodKind::kFind:
+    case hir::ArrayMethodKind::kFindIndex:
+    case hir::ArrayMethodKind::kFindFirst:
+    case hir::ArrayMethodKind::kFindFirstIndex:
+    case hir::ArrayMethodKind::kFindLast:
+    case hir::ArrayMethodKind::kFindLastIndex:
+    case hir::ArrayMethodKind::kMin:
+    case hir::ArrayMethodKind::kMax:
+    case hir::ArrayMethodKind::kUnique:
+    case hir::ArrayMethodKind::kUniqueIndex:
+      return true;
+  }
+  throw InternalError("ArrayMethodTakesClosure: unknown hir::ArrayMethodKind");
 }
 
 auto LowerArrayMethodKind(hir::ArrayMethodKind k) -> mir::ArrayMethodKind {
@@ -215,14 +247,18 @@ auto LowerUserCallee(
   return scope.TranslateStructuralSubroutine(u.hops, u.subroutine);
 }
 
-// LRM 7.12.2 / 7.12.3 with-clause closure synthesis. The body is a normal
-// expression lowered through `process.LowerExpr`; only the closure-specific
-// leaf behaviour lives elsewhere -- captures via `CaptureSink`, iterator and
-// index resolution via pre-allocated body procedural-var bindings remapped
-// for the iterator HIR id and tracked on the walk frame for the kIndex call.
+// LRM 7.12.1 / 7.12.2 / 7.12.3 with-clause closure synthesis. The body is a
+// normal expression lowered through `process.LowerExpr`; only the
+// closure-specific leaf behaviour lives elsewhere -- captures via
+// `CaptureSink`, iterator and index resolution via pre-allocated body
+// procedural-var bindings remapped for the iterator HIR id and tracked on
+// the walk frame for the kIndex call. When the source has no `with` clause
+// LRM 7.12.1 defines the default as `with (item)`; this synthesises the
+// identity closure (body returns the iterator binding) so MIR always carries
+// the closure argument and downstream consumers see one uniform shape.
 auto BuildArrayMethodClosure(
     ProcessLowerer& process, WalkFrame frame, hir::TypeId hir_receiver_type,
-    const hir::WithClause& with_clause) -> diag::Result<mir::Expr> {
+    const hir::WithClause* with_clause) -> diag::Result<mir::Expr> {
   const auto& module = process.Module();
   const auto& hir_process = process.HirBody();
   auto& outer_scope = *frame.current_procedural_scope;
@@ -234,8 +270,10 @@ auto BuildArrayMethodClosure(
   }
   const mir::TypeId item_type = module.TranslateType(hir_da->element_type);
   const mir::TypeId index_type = process.Module().Unit().builtins.int32;
-  const auto& iterator_decl =
-      hir_process.procedural_vars.at(with_clause.iterator.value);
+  const std::string iterator_name =
+      with_clause != nullptr
+          ? hir_process.procedural_vars.at(with_clause->iterator.value).name
+          : std::string{"item"};
 
   const mir::TypeId self_ptr_type = module.Unit().builtins.self_pointer;
   mir::ProceduralScope body_scope;
@@ -252,13 +290,15 @@ auto BuildArrayMethodClosure(
                   .var = *frame.self_binding},
           .type = self_ptr_type});
   const mir::ProceduralVarId item_binding = body_scope.AddProceduralVar(
-      mir::ProceduralVarDecl{.name = iterator_decl.name, .type = item_type});
+      mir::ProceduralVarDecl{.name = iterator_name, .type = item_type});
   const mir::ProceduralVarId index_binding = body_scope.AddProceduralVar(
       mir::ProceduralVarDecl{.name = "index", .type = index_type});
-  process.MapProceduralVar(
-      with_clause.iterator,
-      AutomaticVarBinding{
-          .declaration_procedural_depth = body_depth, .var = item_binding});
+  if (with_clause != nullptr) {
+    process.MapProceduralVar(
+        with_clause->iterator,
+        AutomaticVarBinding{
+            .declaration_procedural_depth = body_depth, .var = item_binding});
+  }
 
   CaptureSink sink{body_depth, body_scope, outer_scope};
   // A with-clause body is a synchronous predicate / projection closure -- it
@@ -268,13 +308,21 @@ auto BuildArrayMethodClosure(
                                       .WithSelfBinding(self_binding, body_depth)
                                       .WithCoroutineBody(false);
 
-  auto body_expr_or = process.LowerExpr(
-      hir_process.exprs.at(with_clause.expr.value), closure_frame);
-
-  if (!body_expr_or) return std::unexpected(std::move(body_expr_or.error()));
-
-  const mir::ExprId body_return_value =
-      body_scope.AddExpr(*std::move(body_expr_or));
+  mir::ExprId body_return_value{};
+  if (with_clause != nullptr) {
+    auto body_expr_or = process.LowerExpr(
+        hir_process.exprs.at(with_clause->expr.value), closure_frame);
+    if (!body_expr_or) return std::unexpected(std::move(body_expr_or.error()));
+    body_return_value = body_scope.AddExpr(*std::move(body_expr_or));
+  } else {
+    body_return_value = body_scope.AddExpr(
+        mir::Expr{
+            .data =
+                mir::ProceduralVarRef{
+                    .hops = mir::ProceduralHops{.value = 0},
+                    .var = item_binding},
+            .type = item_type});
+  }
   body_scope.AppendStmt(
       mir::Stmt{
           .label = std::nullopt,
@@ -450,13 +498,34 @@ auto LowerHirCallExprProc(
               }
               args.push_back(proc_scope.AddExpr(*std::move(arg_or)));
             }
-            if (c.with_clause.has_value()) {
+            // LRM 7.12.1: reduction / ordering / locator array methods take a
+            // closure. The user's `with` clause is used if present; otherwise
+            // LRM defines the default as `with (item)`, which HIR-to-MIR
+            // synthesises so MIR always carries the closure argument and
+            // downstream consumers see one uniform shape per kind.
+            if (const auto* ak = std::get_if<hir::ArrayMethodKind>(&b.method);
+                ak != nullptr && ArrayMethodTakesClosure(*ak)) {
               auto closure_or = BuildArrayMethodClosure(
-                  process, frame, hir_receiver_type, *c.with_clause);
+                  process, frame, hir_receiver_type,
+                  c.with_clause.has_value() ? &*c.with_clause : nullptr);
               if (!closure_or) {
                 return std::unexpected(std::move(closure_or.error()));
               }
               args.push_back(proc_scope.AddExpr(*std::move(closure_or)));
+            } else if (c.with_clause.has_value()) {
+              throw InternalError(
+                  "BuiltinMethodRef with-clause on a method kind that does "
+                  "not accept a with-clause (LRM 7.12.1 family only)");
+            }
+            // LRM 15.5: `Trigger` and `Triggered` reach into RuntimeServices
+            // (Trigger schedules the wake; Triggered samples the
+            // slot-persistent triggered state). The engine handle threads as an
+            // explicit argument per
+            // `decisions/runtime-effects-as-generic-calls.md`.
+            if (const auto* ek = std::get_if<hir::EventMethodKind>(&b.method);
+                ek != nullptr && (*ek == hir::EventMethodKind::kTrigger ||
+                                  *ek == hir::EventMethodKind::kTriggered)) {
+              args.push_back(BuildServicesArg(process, frame));
             }
             auto callee = std::visit(
                 Overloaded{

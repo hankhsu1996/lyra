@@ -84,30 +84,42 @@ class String {
     return String{std::move(out)};
   }
 
-  [[nodiscard]] auto operator==(const String& o) const -> bool {
-    return impl_ == o.impl_;
+  // LRM 11.4.5 `==` / `!=`: string equality is exact content equality (strings
+  // are 2-state, no x/z to propagate). The result is a 1-bit 2-state
+  // `PackedArray` so callers do not branch on the operand type.
+  [[nodiscard]] auto operator==(const String& o) const -> PackedArray {
+    return PackedArray::FromInt(impl_ == o.impl_ ? 1 : 0, 1, false, false);
   }
-  [[nodiscard]] auto operator!=(const String& o) const -> bool {
-    return impl_ != o.impl_;
+  [[nodiscard]] auto operator!=(const String& o) const -> PackedArray {
+    return PackedArray::FromInt(impl_ != o.impl_ ? 1 : 0, 1, false, false);
   }
 
-  // LRM 11.4.5 `===` predicate form (host bool): a string has no unknown
-  // plane, so case equality is exact content equality. The Var change-detection
-  // counterpart for an observable string signal (LRM 9.4.2 update event).
-  [[nodiscard]] auto IsCaseEqual(const String& o) const -> bool {
+  // LRM 11.4.5 `===`: a string has no unknown plane, so case equality is exact
+  // content equality and matches `==`. Returned as a 1-bit `PackedArray` for
+  // uniform handling at SV expression sites.
+  [[nodiscard]] auto CaseEqual(const String& o) const -> PackedArray {
+    return PackedArray::FromInt(impl_ == o.impl_ ? 1 : 0, 1, false, false);
+  }
+
+  // LRM 9.4.2 update event predicate (engine change-detection hook): host bool
+  // form of bit-pattern identity. Distinct from `CaseEqual` only in role.
+  [[nodiscard]] auto IsBitIdentical(const String& o) const -> bool {
     return impl_ == o.impl_;
   }
-  [[nodiscard]] auto operator<(const String& o) const -> bool {
-    return impl_ < o.impl_;
+
+  // LRM 11.4.4 relational operators on `String` (LRM 6.16). The result is
+  // 2-state.
+  [[nodiscard]] auto operator<(const String& o) const -> PackedArray {
+    return PackedArray::FromInt(impl_ < o.impl_ ? 1 : 0, 1, false, false);
   }
-  [[nodiscard]] auto operator<=(const String& o) const -> bool {
-    return impl_ <= o.impl_;
+  [[nodiscard]] auto operator<=(const String& o) const -> PackedArray {
+    return PackedArray::FromInt(impl_ <= o.impl_ ? 1 : 0, 1, false, false);
   }
-  [[nodiscard]] auto operator>(const String& o) const -> bool {
-    return impl_ > o.impl_;
+  [[nodiscard]] auto operator>(const String& o) const -> PackedArray {
+    return PackedArray::FromInt(impl_ > o.impl_ ? 1 : 0, 1, false, false);
   }
-  [[nodiscard]] auto operator>=(const String& o) const -> bool {
-    return impl_ >= o.impl_;
+  [[nodiscard]] auto operator>=(const String& o) const -> PackedArray {
+    return PackedArray::FromInt(impl_ >= o.impl_ ? 1 : 0, 1, false, false);
   }
 
   [[nodiscard]] auto operator+(const String& o) const -> String {

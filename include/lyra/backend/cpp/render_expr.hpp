@@ -25,6 +25,13 @@ auto RenderLhsExpr(
     const RenderContext& ctx, const mir::Expr& expr,
     std::string_view mutate_adapter) -> diag::Result<std::string>;
 
+// Reports whether the lvalue chain `expr` ultimately writes through an
+// observable cell (a `mir::ObservableType`-wrapped structural var or an
+// extern-ref slot). Sites that need to bind the cell for `Var<T>::Mutate`
+// dispatch consult this before choosing the lvalue render path.
+[[nodiscard]] auto LhsRootIsObservableScalar(
+    const RenderContext& ctx, const mir::Expr& expr) -> bool;
+
 // Renders `expr` for use in a C++ boolean context (`if`, `while`, `do`, `for`
 // condition, ternary cond, `&&` / `||` / `!`). When the expression's MIR type
 // is a packed array, `PackedArray`'s `explicit operator bool` fires on the
