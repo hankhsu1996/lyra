@@ -8,7 +8,6 @@
 #include <vector>
 
 #include "lyra/diag/diagnostic.hpp"
-#include "lyra/hir/expr.hpp"
 #include "lyra/hir/procedural_body.hpp"
 #include "lyra/lowering/hir_to_mir/process_lowerer.hpp"
 #include "lyra/mir/conversion.hpp"
@@ -36,7 +35,8 @@ auto BuildOutputArgSlot(
 auto BuildCopyOutBlock(
     WalkFrame parent_frame, mir::ProceduralScope wrapper,
     std::optional<std::string> label, mir::TypeId result_type,
-    mir::Expr call_expr, std::optional<mir::ExprId> assign_target_id,
+    mir::Expr call_expr, bool call_suspends,
+    std::optional<mir::ExprId> assign_target_id,
     const std::vector<OutputArgSlot>& slots) -> mir::Stmt {
   const mir::TypeId call_type = call_expr.type;
   const mir::ExprId call_id = wrapper.AddExpr(std::move(call_expr));
@@ -58,6 +58,8 @@ auto BuildCopyOutBlock(
                 mir::AssignExpr{.target = *assign_target_id, .value = value_id},
             .type = result_type});
     wrapper.AppendStmt(mir::ExprStmt{.expr = assign_id});
+  } else if (call_suspends) {
+    wrapper.AppendStmt(mir::AwaitStmt{.awaitable = call_id});
   } else {
     wrapper.AppendStmt(mir::ExprStmt{.expr = call_id});
   }

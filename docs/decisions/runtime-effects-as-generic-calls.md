@@ -68,11 +68,13 @@ the argument vector.
 - One generic `CallExpr` is MIR's only call shape; `RuntimeCallExpr` and the ~22 payload structs
   retire. Runtime free functions (`LyraPrint(RuntimeServices&, ...)`, etc.) stay unchanged.
 - Both backends eat the same generic input; the LLVM optimizer reaches through.
-- **Implementation in progress.** `$finish` is the first effect on this shape: it lowers to a
-  generic `CallExpr` whose first argument is `self.Services()` and renders through one generic
-  system-subroutine path with no injection. The remaining effects still use `RuntimeCallExpr` +
-  payload structs and still splice `self->Services()`; that is transitional tech debt to converge to
-  this decision. Flattening `$display` items into value-build expressions is the largest piece.
+- **Implementation in progress.** `$finish` and the `$time` / `$stime` / `$realtime` family are on
+  this shape: each lowers to a generic `CallExpr` whose first argument is `self.Services()` (the
+  time reads carry the calling scope's time-unit power as a second literal argument) and renders
+  through one generic system-subroutine path with no injection. The remaining effects still use
+  `RuntimeCallExpr` + payload structs and still splice `self->Services()`; that is transitional tech
+  debt to converge to this decision. Flattening `$display` items into value-build expressions is the
+  largest piece.
 
 ## Cross-references
 

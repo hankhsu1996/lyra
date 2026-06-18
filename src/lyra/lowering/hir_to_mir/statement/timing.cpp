@@ -77,9 +77,9 @@ auto ResolveDelayTicks(ProcessLowerer& process, const hir::DelayControl& d)
 }
 
 // LRM 15.5.2 `@e body;`. HIR -> MIR expands the timed statement into a
-// Block { ExprStmt(MethodCall(Await)); body; } inside a fresh child scope --
+// Block { AwaitStmt(MethodCall(Await)); body; } inside a fresh child scope --
 // the same shape used for `@*` (LRM 9.4.2.2), substituting a suspending
-// method call in place of SensitivityWaitStmt.
+// named-event await in place of SensitivityWaitStmt.
 auto LowerNamedEventTimedStmt(
     ProcessLowerer& process, WalkFrame frame, std::optional<std::string> label,
     const hir::TimedStmt& t, const hir::NamedEventControl& nec)
@@ -107,7 +107,8 @@ auto LowerNamedEventTimedStmt(
   const mir::ExprId await_id = child_proc_scope.AddExpr(std::move(await_call));
   child_proc_scope.AppendStmt(
       mir::Stmt{
-          .label = std::nullopt, .data = mir::ExprStmt{.expr = await_id}});
+          .label = std::nullopt,
+          .data = mir::AwaitStmt{.awaitable = await_id}});
   const hir::Stmt& inner_hir = hir_proc.stmts.at(t.stmt.value);
   auto inner_or = process.LowerStmt(inner_hir, child_frame);
   if (!inner_or) {

@@ -21,6 +21,7 @@
 #include "lyra/lowering/hir_to_mir/expression/system/print.hpp"
 #include "lyra/lowering/hir_to_mir/expression/system/scan.hpp"
 #include "lyra/lowering/hir_to_mir/expression/system/sformat.hpp"
+#include "lyra/lowering/hir_to_mir/expression/system/time.hpp"
 #include "lyra/lowering/hir_to_mir/expression/system/timescale.hpp"
 #include "lyra/lowering/hir_to_mir/procedural_depth.hpp"
 #include "lyra/lowering/hir_to_mir/process_lowerer.hpp"
@@ -339,23 +340,8 @@ auto LowerSystemSubroutineCall(
           },
           [&](const support::TimeSystemSubroutineInfo& time_info)
               -> diag::Result<mir::Expr> {
-            mir::TypeId result_type = process.Module().Unit().builtins.time;
-            switch (time_info.kind) {
-              case support::TimeKind::kTime:
-                result_type = process.Module().Unit().builtins.time;
-                break;
-              case support::TimeKind::kStime:
-                result_type = process.Module().Unit().builtins.int32;
-                break;
-              case support::TimeKind::kRealtime:
-                result_type = process.Module().Unit().builtins.realtime;
-                break;
-            }
-            return mir::Expr{
-                .data =
-                    mir::RuntimeCallExpr{
-                        .call = mir::RuntimeTimeCall{.kind = time_info.kind}},
-                .type = result_type};
+            return LowerTimeSystemSubroutineCall(
+                process, frame, desc.id, time_info);
           },
           [&](const support::TimeFormatSystemSubroutineInfo&)
               -> diag::Result<mir::Expr> {

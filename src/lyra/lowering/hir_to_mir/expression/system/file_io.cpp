@@ -416,7 +416,7 @@ auto LowerFileIOSystemSubroutineCallStmt(
 
   return BuildCopyOutBlock(
       frame, std::move(wrapper), std::move(label), result_type,
-      std::move(call_expr), assign_target_id, slots);
+      std::move(call_expr), false, assign_target_id, slots);
 }
 
 }  // namespace lyra::lowering::hir_to_mir

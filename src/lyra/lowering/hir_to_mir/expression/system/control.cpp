@@ -13,6 +13,7 @@
 #include "lyra/hir/integral_constant.hpp"
 #include "lyra/hir/primary.hpp"
 #include "lyra/hir/procedural_body.hpp"
+#include "lyra/lowering/hir_to_mir/expression/system/services_arg.hpp"
 #include "lyra/lowering/hir_to_mir/process_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/walk_frame.hpp"
 #include "lyra/mir/compilation_unit.hpp"
@@ -33,20 +34,6 @@ auto TryExtractLiteralInt(const hir::Expr& expr)
   if (c.state_kind == hir::IntegralStateKind::kFourState) return std::nullopt;
   if (c.value_words.empty()) return 0;
   return static_cast<std::int64_t>(c.value_words[0]);
-}
-
-// Builds the `self.Services()` argument: a `ProceduralVarRef` to `self`
-// (mir.md invariant 11) wrapped in the `Services` scope-method call. Every
-// runtime-effect call threads its result as the engine handle.
-auto BuildServicesArg(const ProcessLowerer& process, const WalkFrame& frame)
-    -> mir::ExprId {
-  auto& body = *frame.current_procedural_scope;
-  const auto& builtins = process.Module().Unit().builtins;
-  const mir::ExprId self_id = body.AddExpr(
-      mir::MakeProceduralVarRefExpr(
-          frame.procedural_depth - frame.self_decl_depth, *frame.self_binding,
-          builtins.self_pointer));
-  return body.AddExpr(mir::MakeServicesCallExpr(self_id, builtins.services));
 }
 
 }  // namespace

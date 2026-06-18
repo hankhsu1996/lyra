@@ -165,13 +165,6 @@ struct ScopeMethodInfo {
   ScopeMethodKind kind;
 };
 
-// True for methods whose backend emission must wrap the call site in
-// `co_await`. The runtime returns an awaitable that suspends the calling
-// coroutine and reschedules it through RuntimeServices when the event fires.
-[[nodiscard]] inline auto IsSuspending(const EventMethodInfo& info) -> bool {
-  return info.kind == EventMethodKind::kAwait;
-}
-
 struct BuiltinMethodCallee {
   std::variant<
       EnumMethodInfo, StringMethodInfo, EventMethodInfo, ArrayMethodInfo,

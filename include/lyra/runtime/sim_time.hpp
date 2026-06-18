@@ -24,20 +24,25 @@ inline auto TimeUnitDivisor(
 
 // $time (LRM 20.3.1): the current time scaled to `unit_power` and rounded to
 // the nearest integer (only the unit conversion rounds; precision does not).
-inline auto SimTimeInUnit(RuntimeServices& services, std::int8_t unit_power)
+// `unit_power` arrives as a Lyra value, the same as any other call argument.
+inline auto SimTimeInUnit(
+    RuntimeServices& services, const value::PackedArray& unit_power)
     -> value::PackedArray {
+  const auto power = static_cast<std::int8_t>(unit_power.ToInt64());
   const SimDuration divisor =
-      TimeUnitDivisor(unit_power, services.GlobalPrecisionPower());
+      TimeUnitDivisor(power, services.GlobalPrecisionPower());
   const SimTime scaled = (services.Now() + divisor / 2) / divisor;
   return value::PackedArray::FromInt(
       static_cast<std::int64_t>(scaled), 64, false, true);
 }
 
 // $stime (LRM 20.3.2): the low 32 bits of the $time value.
-inline auto STimeInUnit(RuntimeServices& services, std::int8_t unit_power)
+inline auto STimeInUnit(
+    RuntimeServices& services, const value::PackedArray& unit_power)
     -> value::PackedArray {
+  const auto power = static_cast<std::int8_t>(unit_power.ToInt64());
   const SimDuration divisor =
-      TimeUnitDivisor(unit_power, services.GlobalPrecisionPower());
+      TimeUnitDivisor(power, services.GlobalPrecisionPower());
   const SimTime scaled = (services.Now() + divisor / 2) / divisor;
   return value::PackedArray::FromInt(
       static_cast<std::int64_t>(static_cast<std::uint32_t>(scaled)), 32, true,
@@ -46,10 +51,11 @@ inline auto STimeInUnit(RuntimeServices& services, std::int8_t unit_power)
 
 // $realtime (LRM 20.3.3): the current time scaled to `unit_power` as a real,
 // keeping any fractional part.
-inline auto RealTimeInUnit(RuntimeServices& services, std::int8_t unit_power)
-    -> double {
+inline auto RealTimeInUnit(
+    RuntimeServices& services, const value::PackedArray& unit_power) -> double {
+  const auto power = static_cast<std::int8_t>(unit_power.ToInt64());
   const SimDuration divisor =
-      TimeUnitDivisor(unit_power, services.GlobalPrecisionPower());
+      TimeUnitDivisor(power, services.GlobalPrecisionPower());
   return static_cast<double>(services.Now()) / static_cast<double>(divisor);
 }
 
