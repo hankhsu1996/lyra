@@ -33,6 +33,7 @@ enum class TypeKind {
   kPointer,
   kVector,
   kExternalRef,
+  kObservable,
 };
 
 enum class BitAtom {
@@ -185,6 +186,22 @@ struct VectorType {
   auto operator==(const VectorType&) const -> bool = default;
 };
 
+// Observable storage wrapper around a value type. Declares that a structural
+// variable's storage is a module-scope cell that exposes Set / Get / Mutate
+// (LRM 9.4.2 update event) -- writes route through the engine so subscribers
+// wake. HIR-to-MIR wraps a structural-var declaration whose value type is a
+// SystemVerilog data type (not a handle, child instance, or external ref) in
+// this wrapper. The C++ backend renders the wrapper as `lyra::runtime::Var<T>`
+// where T is the inner value type; the C++ template requires `T` to satisfy
+// `lyra::value::LyraValueType`, so a value type that forgot to implement the
+// contract fails at template instantiation. See
+// `docs/decisions/value-type-concepts.md`.
+struct ObservableType {
+  TypeId value;
+
+  auto operator==(const ObservableType&) const -> bool = default;
+};
+
 // One by-name step from a resolved scope into an owned child it answers for:
 // the child member's name plus one index per array dimension (empty for a
 // scalar child). The ancestor answers by name from the children it registered,
@@ -218,8 +235,8 @@ using TypeData = std::variant<
     PackedArrayType, EnumType, UnpackedArrayType, DynamicArrayType, QueueType,
     AssociativeArrayType, StringType, EventType, RealType, ShortRealType,
     RealTimeType, ChandleType, VoidType, ObjectType, ExternalUnitObjectType,
-    ScopeType, SelfType, ServicesType, PointerType, VectorType,
-    ExternalRefType>;
+    ScopeType, SelfType, ServicesType, PointerType, VectorType, ExternalRefType,
+    ObservableType>;
 
 struct Type {
   TypeData data;

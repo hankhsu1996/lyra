@@ -9,6 +9,7 @@
 #include <string>
 #include <utility>
 
+#include "lyra/value/array_case_equal.hpp"
 #include "lyra/value/format.hpp"
 #include "lyra/value/packed_array.hpp"
 #include "lyra/value/string.hpp"
@@ -28,13 +29,22 @@ struct PackedArrayKeyLess {
   }
 };
 
+// LRM 7.8.2 string-keyed associative array: keys order lexicographically. The
+// value-type `<` returns a 1-bit `PackedArray`; the host predicate `std::map`
+// needs is recovered with the explicit-bool conversion.
+struct StringKeyLess {
+  [[nodiscard]] auto operator()(const String& a, const String& b) const
+      -> bool {
+    return static_cast<bool>(a < b);
+  }
+};
+
 template <typename K>
 struct AssocKeyTraits;
 
-// LRM 7.8.2: string keys order lexicographically.
 template <>
 struct AssocKeyTraits<String> {
-  using Less = std::less<String>;
+  using Less = StringKeyLess;
 };
 
 // LRM 7.8.4: integral keys order by signed/unsigned numerical value.
@@ -179,6 +189,71 @@ class AssociativeArray {
       return std::nullopt;
     }
     return std::prev(it)->first;
+  }
+
+  // LRM 11.2.2 aggregate equality / 11.4.5: same key set and each paired value
+  // compares equal. A different key set or a different size yields 0; matching
+  // empties yield 1. `==` / `!=` propagate X / Z through the per-value `==`;
+  // `CaseEqual` matches X / Z as values and is deterministic.
+  [[nodiscard]] auto operator==(const AssociativeArray& other) const
+      -> PackedArray {
+    if (data_.size() != other.data_.size()) {
+      return PackedArray::FromInt(0, 1, false, false);
+    }
+    if (data_.empty()) {
+      return PackedArray::FromInt(1, 1, false, false);
+    }
+    PackedArray result = PackedArray::FromInt(1, 1, false, false);
+    for (const auto& [k, v] : data_) {
+      auto it = other.data_.find(k);
+      if (it == other.data_.end()) {
+        return PackedArray::FromInt(0, 1, false, false);
+      }
+      result = result && (v == it->second);
+    }
+    return result;
+  }
+  [[nodiscard]] auto operator!=(const AssociativeArray& other) const
+      -> PackedArray {
+    return !(*this == other);
+  }
+
+  [[nodiscard]] auto CaseEqual(const AssociativeArray& other) const
+      -> PackedArray {
+    if (data_.size() != other.data_.size()) {
+      return PackedArray::FromInt(0, 1, false, false);
+    }
+    if (data_.empty()) {
+      return PackedArray::FromInt(1, 1, false, false);
+    }
+    PackedArray result = PackedArray::FromInt(1, 1, false, false);
+    for (const auto& [k, v] : data_) {
+      auto it = other.data_.find(k);
+      if (it == other.data_.end()) {
+        return PackedArray::FromInt(0, 1, false, false);
+      }
+      result = result && detail::ArrayCaseEqElement(v, it->second);
+    }
+    return result;
+  }
+
+  // LRM 9.4.2 update event predicate (engine change-detection hook): same key
+  // set and each paired value is bit-identical.
+  [[nodiscard]] auto IsBitIdentical(const AssociativeArray& other) const
+      -> bool {
+    if (data_.size() != other.data_.size()) {
+      return false;
+    }
+    for (const auto& [k, v] : data_) {
+      auto it = other.data_.find(k);
+      if (it == other.data_.end()) {
+        return false;
+      }
+      if (!v.IsBitIdentical(it->second)) {
+        return false;
+      }
+    }
+    return true;
   }
 
  private:

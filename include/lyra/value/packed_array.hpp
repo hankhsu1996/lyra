@@ -186,8 +186,12 @@ class PackedArray {
   // a freshly-defaulted element would read as.
   auto ResetToDefault() -> void;
 
-  // LRM 11.4.5 `===` predicate form (host bool). Operator form: `CaseEqual`.
-  [[nodiscard]] auto IsCaseEqual(const PackedArray& other) const -> bool;
+  // LRM 9.4.2 update event predicate (engine change-detection hook): are the
+  // two values bit-identical, considering both the value plane and the
+  // unknown plane. Distinct from the SV `===` operator (`CaseEqual`) only in
+  // role -- the algorithm is the same, but this is the host-bool form the
+  // runtime uses, named after what it answers rather than after the operator.
+  [[nodiscard]] auto IsBitIdentical(const PackedArray& other) const -> bool;
 
   // LRM 9.4.2 LSB: edge transitions are detected only on bit 0. Returns the
   // bit as a 4-state code so the caller can apply Table 9-2 (0/x/z to 1

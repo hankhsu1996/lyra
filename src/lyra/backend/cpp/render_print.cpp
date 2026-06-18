@@ -380,11 +380,26 @@ auto RenderRuntimeCallExpr(
           [&](const mir::RuntimeFileReadCall& fr) -> diag::Result<std::string> {
             auto fd_or = RenderExpr(ctx, ctx.Expr(fr.fd));
             if (!fd_or) return std::unexpected(std::move(fd_or.error()));
+            // LyraFRead writes through a non-const reference. When the
+            // destination is an observable cell the call must run against
+            // `Var<T>::Mutate(svc)`'s snapshot so the destructor commits via
+            // `Var::Set` and subscribers fire; the bare cell rejects the
+            // reference because `.Get()` is const.
+            auto render_dest =
+                [&](const mir::Expr& dest_expr) -> diag::Result<std::string> {
+              if (LhsRootIsObservableScalar(ctx, dest_expr)) {
+                auto lhs_or =
+                    RenderLhsExpr(ctx, dest_expr, ".Mutate(self->Services())");
+                if (!lhs_or) return std::unexpected(std::move(lhs_or.error()));
+                return "*" + *lhs_or;
+              }
+              return RenderExpr(ctx, dest_expr);
+            };
             return std::visit(
                 Overloaded{
                     [&](const mir::RuntimeFileReadCall::PackedTarget& it)
                         -> diag::Result<std::string> {
-                      auto dest_or = RenderExpr(ctx, ctx.Expr(it.dest));
+                      auto dest_or = render_dest(ctx.Expr(it.dest));
                       if (!dest_or) {
                         return std::unexpected(std::move(dest_or.error()));
                       }
@@ -394,7 +409,7 @@ auto RenderRuntimeCallExpr(
                     },
                     [&](const mir::RuntimeFileReadCall::UnpackedTarget& ut)
                         -> diag::Result<std::string> {
-                      auto dest_or = RenderExpr(ctx, ctx.Expr(ut.dest));
+                      auto dest_or = render_dest(ctx.Expr(ut.dest));
                       if (!dest_or) {
                         return std::unexpected(std::move(dest_or.error()));
                       }

@@ -230,6 +230,17 @@ auto RenderStructuralVarName(
 
 namespace {
 
+// True iff the type exposes the observable cell surface (`Set` / `Get` /
+// `Mutate`) to the backend -- an explicit `mir::ObservableType` wrapper or an
+// `mir::ExternalRefType` (intrinsic upward-reference cell). Transitional
+// residue: every callsite uses the result to inject a `.Get()` / `.Mutate()`
+// at render time, which the Phase D follow-up retires by lifting those calls
+// into MIR.
+[[nodiscard]] auto IsObservableCell(const mir::Type& ty) -> bool {
+  return std::holds_alternative<mir::ObservableType>(ty.data) ||
+         std::holds_alternative<mir::ExternalRefType>(ty.data);
+}
+
 // Builds the C++ literal that materializes a 1-bit PackedArray of the SV-typed
 // shape carried by `result_ty`. Used to wrap the C++ `bool` result of a
 // real-operand relational / equality / logical operator into the 1-bit
@@ -878,6 +889,48 @@ auto RenderEnumMethodCall(
 // in a PackedArray at the call site and project to std::int32_t / std::int64_t
 // via ToInt64. Integral return values are wrapped back into the appropriate
 // PackedArray shape.
+// LRM 6.16: `Putc` and the integer-to-string family (`Itoa`, `Hextoa`,
+// `Octtoa`, `Bintoa`, `Realtoa`) mutate the receiver string in place.
+auto StringMethodMutatesReceiver(mir::StringMethodKind k) -> bool {
+  return k == mir::StringMethodKind::kPutc ||
+         k == mir::StringMethodKind::kItoa ||
+         k == mir::StringMethodKind::kHextoa ||
+         k == mir::StringMethodKind::kOcttoa ||
+         k == mir::StringMethodKind::kBintoa ||
+         k == mir::StringMethodKind::kRealtoa;
+}
+
+auto IsLhsBarePrimary(const mir::Expr& expr) -> bool;
+
+// Render the receiver of an instance-method call. When the method mutates the
+// receiver in place and the receiver is an observable cell, the call must
+// route through `Var<T>::Mutate(svc)` so the destructor commits exactly once
+// and subscribers fire; the snapshot is reached through `operator->`. Returns
+// the receiver text and a flag selecting the C++ member-access syntax (`->`
+// vs `.`).
+struct MethodReceiverText {
+  std::string text;
+  std::string_view sep;
+};
+auto RenderMethodReceiver(
+    const RenderContext& ctx, const mir::Expr& receiver_expr, bool mutates)
+    -> diag::Result<MethodReceiverText> {
+  if (mutates && LhsRootIsObservableScalar(ctx, receiver_expr)) {
+    auto lhs_or =
+        RenderLhsExpr(ctx, receiver_expr, ".Mutate(self->Services())");
+    if (!lhs_or) return std::unexpected(std::move(lhs_or.error()));
+    // The Mutate adapter yields a `ScopedMutation` whose members are reached
+    // via `operator->`. Selector chains past it (`.ElementRef(...)`,
+    // `.ElementAt(...)`) decay back to the wrapped value's reference type, so
+    // the trailing method call dots through C++ as usual.
+    const std::string_view sep = IsLhsBarePrimary(receiver_expr) ? "->" : ".";
+    return MethodReceiverText{.text = std::move(*lhs_or), .sep = sep};
+  }
+  auto receiver_or = RenderExpr(ctx, receiver_expr);
+  if (!receiver_or) return std::unexpected(std::move(receiver_or.error()));
+  return MethodReceiverText{.text = std::move(*receiver_or), .sep = "."};
+}
+
 auto RenderStringMethodCall(
     const RenderContext& ctx, const mir::CallExpr& call,
     const mir::StringMethodInfo& m) -> diag::Result<std::string> {
@@ -886,10 +939,10 @@ auto RenderStringMethodCall(
         "RenderStringMethodCall: instance method expects a receiver "
         "argument");
   }
-  auto receiver_or = RenderExpr(ctx, ctx.Expr(call.arguments[0]));
-  if (!receiver_or) {
-    return std::unexpected(std::move(receiver_or.error()));
-  }
+  auto recv_or = RenderMethodReceiver(
+      ctx, ctx.Expr(call.arguments[0]), StringMethodMutatesReceiver(m.kind));
+  if (!recv_or) return std::unexpected(std::move(recv_or.error()));
+  const std::string& receiver_text = recv_or->text;
   std::string args_text;
   for (std::size_t i = 1; i < call.arguments.size(); ++i) {
     auto arg_or = RenderExpr(ctx, ctx.Expr(call.arguments[i]));
@@ -905,7 +958,8 @@ auto RenderStringMethodCall(
     args_text += rendered;
   }
   const std::string raw_call = std::format(
-      "({}).{}({})", *receiver_or, StringMethodMemberName(m.kind), args_text);
+      "({}){}{}({})", receiver_text, recv_or->sep,
+      StringMethodMemberName(m.kind), args_text);
   switch (m.kind) {
     case mir::StringMethodKind::kLen:
     case mir::StringMethodKind::kCompare:
@@ -929,8 +983,10 @@ auto RenderStringMethodCall(
   }
 }
 
-// LRM 15.5 named-event methods. Trigger and Triggered reach into
-// RuntimeServices, hence the services argument; Await takes none.
+// LRM 15.5: `Trigger` / `Triggered` reach into RuntimeServices through an
+// explicit services argument supplied by HIR-to-MIR. The render walks
+// arguments uniformly with no per-kind special-case; statement-level callers
+// wrap the result in `co_await` for `Await`.
 auto RenderEventMethodCall(
     const RenderContext& ctx, const mir::CallExpr& call,
     const mir::EventMethodInfo& m) -> diag::Result<std::string> {
@@ -942,12 +998,15 @@ auto RenderEventMethodCall(
   if (!receiver_or) {
     return std::unexpected(std::move(receiver_or.error()));
   }
-  const std::string args = (m.kind == mir::EventMethodKind::kTrigger ||
-                            m.kind == mir::EventMethodKind::kTriggered)
-                               ? "self->Services()"
-                               : std::string{};
+  std::string args_text;
+  for (std::size_t i = 1; i < call.arguments.size(); ++i) {
+    auto arg_or = RenderExpr(ctx, ctx.Expr(call.arguments[i]));
+    if (!arg_or) return std::unexpected(std::move(arg_or.error()));
+    if (i > 1) args_text += ", ";
+    args_text += *arg_or;
+  }
   return std::format(
-      "({}).{}({})", *receiver_or, EventMethodMemberName(m.kind), args);
+      "({}).{}({})", *receiver_or, EventMethodMemberName(m.kind), args_text);
 }
 
 // LRM 7.5.2 / 7.5.3 / 7.12.2 / 7.12.3: dispatch on the receiver
@@ -956,6 +1015,14 @@ auto RenderEventMethodCall(
 // `PackedArray::Int` to land in SV `int` shape (mirrors EnumMethod::kNum).
 // All other methods either return void (in-place mutators) or already return
 // the receiver's element type (reductions); no wrap.
+// LRM 7.5.3 / 7.12.1: array methods that mutate the receiver in place. The
+// rest of the family is read-only (queries, reductions, locators).
+auto ArrayMethodMutatesReceiver(mir::ArrayMethodKind k) -> bool {
+  return k == mir::ArrayMethodKind::kDelete ||
+         k == mir::ArrayMethodKind::kReverse ||
+         k == mir::ArrayMethodKind::kSort || k == mir::ArrayMethodKind::kRsort;
+}
+
 auto RenderArrayMethodCall(
     const RenderContext& ctx, const mir::CallExpr& call,
     const mir::ArrayMethodInfo& m) -> diag::Result<std::string> {
@@ -963,25 +1030,19 @@ auto RenderArrayMethodCall(
     throw InternalError(
         "RenderArrayMethodCall: array method expects a receiver argument");
   }
-  auto receiver_or = RenderExpr(ctx, ctx.Expr(call.arguments[0]));
-  if (!receiver_or) {
-    return std::unexpected(std::move(receiver_or.error()));
+  auto recv_or = RenderMethodReceiver(
+      ctx, ctx.Expr(call.arguments[0]), ArrayMethodMutatesReceiver(m.kind));
+  if (!recv_or) return std::unexpected(std::move(recv_or.error()));
+  std::string args_text;
+  for (std::size_t i = 1; i < call.arguments.size(); ++i) {
+    auto arg_or = RenderExpr(ctx, ctx.Expr(call.arguments[i]));
+    if (!arg_or) return std::unexpected(std::move(arg_or.error()));
+    if (i > 1) args_text += ", ";
+    args_text += *arg_or;
   }
-  // LRM 7.12.2 / 7.12.3 with-clause: HIR -> MIR appends the closure as the
-  // second positional argument. The runtime exposes a parallel `*By`
-  // overload that takes the closure; both members share the no-with
-  // base name in `ArrayMethodMemberName`.
-  if (call.arguments.size() == 2) {
-    auto closure_or = RenderExpr(ctx, ctx.Expr(call.arguments[1]));
-    if (!closure_or) {
-      return std::unexpected(std::move(closure_or.error()));
-    }
-    return std::format(
-        "({}).{}By({})", *receiver_or, ArrayMethodMemberName(m.kind),
-        *closure_or);
-  }
-  const std::string raw_call =
-      std::format("({}).{}()", *receiver_or, ArrayMethodMemberName(m.kind));
+  const std::string raw_call = std::format(
+      "({}){}{}({})", recv_or->text, recv_or->sep,
+      ArrayMethodMemberName(m.kind), args_text);
   if (m.kind == mir::ArrayMethodKind::kSize) {
     return std::format("lyra::value::PackedArray::Int({})", raw_call);
   }
@@ -1008,6 +1069,11 @@ auto QueueMethodMemberName(mir::QueueMethodKind k) -> std::string_view {
   throw InternalError("QueueMethodMemberName: unknown kind");
 }
 
+// LRM 7.10.2: every queue method except `Size` mutates the receiver.
+auto QueueMethodMutatesReceiver(mir::QueueMethodKind k) -> bool {
+  return k != mir::QueueMethodKind::kSize;
+}
+
 // LRM 7.10.2 queue-native methods. The receiver is arguments[0] and any SV
 // method parameters follow as real C++ arguments, so the overload set on
 // `Queue<T>` resolves arity (`Delete()` vs `Delete(index)`) directly.
@@ -1018,10 +1084,9 @@ auto RenderQueueMethodCall(
     throw InternalError(
         "RenderQueueMethodCall: queue method expects a receiver argument");
   }
-  auto receiver_or = RenderExpr(ctx, ctx.Expr(call.arguments[0]));
-  if (!receiver_or) {
-    return std::unexpected(std::move(receiver_or.error()));
-  }
+  auto recv_or = RenderMethodReceiver(
+      ctx, ctx.Expr(call.arguments[0]), QueueMethodMutatesReceiver(m.kind));
+  if (!recv_or) return std::unexpected(std::move(recv_or.error()));
   std::string args;
   for (std::size_t i = 1; i < call.arguments.size(); ++i) {
     auto arg_or = RenderExpr(ctx, ctx.Expr(call.arguments[i]));
@@ -1034,7 +1099,8 @@ auto RenderQueueMethodCall(
     args += *arg_or;
   }
   const std::string member_call = std::format(
-      "({}).{}({})", *receiver_or, QueueMethodMemberName(m.kind), args);
+      "({}){}{}({})", recv_or->text, recv_or->sep,
+      QueueMethodMemberName(m.kind), args);
   // LRM 7.10.2.1: size() returns an int; wrap the C++ std::size_t in the
   // runtime integral so it composes with the rest of the value model.
   if (m.kind == mir::QueueMethodKind::kSize) {
@@ -1089,8 +1155,10 @@ auto AssociativeTraversalFunctionName(mir::AssociativeMethodKind k)
 // update event must fire (LRM 4.3), so it lowers to a runtime call carrying
 // the index lvalue as a `Ref<K>` -- the same by-reference shape a user `ref`
 // argument uses -- and `Services()` as the leading argument. The receiver is
-// rendered as an lvalue so the call reads the array in place: a nested receiver
-// such as `mm[i]` must reach the stored sub-map, not a detached clone.
+// read-only (traversal methods are `const`): a plain read renders it through
+// `Var<T>::Get` for observable members and through `Read(...)` for nested
+// receivers such as `mm[i]`, so the call lands on the stored sub-map without a
+// detached clone.
 auto RenderAssociativeTraversalCall(
     const RenderContext& ctx, const mir::CallExpr& call,
     std::string_view function_name) -> diag::Result<std::string> {
@@ -1099,8 +1167,7 @@ auto RenderAssociativeTraversalCall(
         "RenderAssociativeTraversalCall: traversal method expects a receiver "
         "and an index argument");
   }
-  auto receiver_or =
-      RenderLhsExpr(ctx, ctx.Expr(call.arguments[0]), std::string_view{});
+  auto receiver_or = RenderExpr(ctx, ctx.Expr(call.arguments[0]));
   if (!receiver_or) {
     return std::unexpected(std::move(receiver_or.error()));
   }
@@ -1133,14 +1200,13 @@ auto RenderAssociativeMethodCall(
   if (auto traversal = AssociativeTraversalFunctionName(m.kind)) {
     return RenderAssociativeTraversalCall(ctx, call, *traversal);
   }
-  // The receiver is rendered as an lvalue: every method reads (and `delete`
-  // mutates) the array in place, so a nested receiver such as `mm[i]` must
-  // reach the stored sub-map, not a detached clone.
-  auto receiver_or =
-      RenderLhsExpr(ctx, ctx.Expr(call.arguments[0]), std::string_view{});
-  if (!receiver_or) {
-    return std::unexpected(std::move(receiver_or.error()));
-  }
+  // LRM 7.9.2: only `delete` mutates the associative array; the rest are
+  // read-only queries (traversal methods are routed above through a runtime
+  // shim).
+  const bool mutates = m.kind == mir::AssociativeMethodKind::kDelete;
+  auto recv_or =
+      RenderMethodReceiver(ctx, ctx.Expr(call.arguments[0]), mutates);
+  if (!recv_or) return std::unexpected(std::move(recv_or.error()));
   std::string args;
   for (std::size_t i = 1; i < call.arguments.size(); ++i) {
     auto arg_or = RenderExpr(ctx, ctx.Expr(call.arguments[i]));
@@ -1153,7 +1219,8 @@ auto RenderAssociativeMethodCall(
     args += *arg_or;
   }
   const std::string member_call = std::format(
-      "({}).{}({})", *receiver_or, AssociativeMethodMemberName(m.kind), args);
+      "({}){}{}({})", recv_or->text, recv_or->sep,
+      AssociativeMethodMemberName(m.kind), args);
   // LRM 7.9.1 / 7.9.3: num / size / exists yield an int; wrap the C++
   // std::size_t / bool in the runtime integral. delete returns void.
   if (m.kind != mir::AssociativeMethodKind::kDelete) {
@@ -1312,8 +1379,18 @@ auto RenderCallExpr(
                 // its lvalue and wrap it in a `Ref<T>`. Constructor overload
                 // picks the observable (`Var<T>`), plain (`T`), or
                 // unpacked-element backing; a ref formal passed on forwards via
-                // the copy ctor (LRM 13.5.2).
-                auto lhs_or = RenderLhsExpr(ctx, actual, std::string_view{});
+                // the copy ctor (LRM 13.5.2). When the actual is rooted in an
+                // observable cell and points at an element (not the whole
+                // cell), route through `Var<T>::Mutate(svc)` so the
+                // ScopedMutation snapshot lives for the call's full expression
+                // and commits via `Var::Set` on return.
+                const bool needs_mutate =
+                    LhsRootIsObservableScalar(ctx, actual) &&
+                    !IsLhsBarePrimary(actual);
+                auto lhs_or = RenderLhsExpr(
+                    ctx, actual,
+                    needs_mutate ? std::string_view{".Mutate(self->Services())"}
+                                 : std::string_view{});
                 if (!lhs_or) return std::unexpected(std::move(lhs_or.error()));
                 auto type_or = RenderTypeAsCpp(
                     ctx.Unit(), ctx.StructuralScope(), decl.params[i].type);
@@ -1566,24 +1643,6 @@ auto LhsRootPrimary(const RenderContext& ctx, const mir::Expr& expr)
     }
     return *current;
   }
-}
-
-// Whether the LHS root is an observable scalar -- a structural var, or a
-// dereferenced borrowed-pointer slot whose pointee is an observable scalar
-// type. A write to such a root routes through `Var::Set` / `Var::Mutate` so
-// subscribers fire.
-auto LhsRootIsObservableScalar(const RenderContext& ctx, const mir::Expr& expr)
-    -> bool {
-  const mir::Expr& root = LhsRootPrimary(ctx, expr);
-  if (const auto* m = std::get_if<mir::MemberAccessExpr>(&root.data)) {
-    const auto& scope = ctx.StructuralScopeAtHops(m->member.hops);
-    return IsObservableScalarType(
-        ctx.Unit().GetType(scope.GetStructuralVar(m->member.var).type));
-  }
-  if (std::holds_alternative<mir::DerefExpr>(root.data)) {
-    return IsObservableScalarType(ctx.Unit().GetType(root.type));
-  }
-  return false;
 }
 
 auto IsLhsBarePrimary(const mir::Expr& expr) -> bool {
@@ -1997,33 +2056,64 @@ auto RenderReplicationExpr(
       "RenderReplicationExpr: result type must be PackedArrayType or string");
 }
 
-auto ProducesPackedArrayRef(const mir::Expr& expr) -> bool {
-  return std::holds_alternative<mir::ElementSelectExpr>(expr.data) ||
-         std::holds_alternative<mir::RangeSelectExpr>(expr.data);
+auto ProducesPackedArrayRef(const RenderContext& ctx, const mir::Expr& expr)
+    -> bool {
+  if (!std::holds_alternative<mir::ElementSelectExpr>(expr.data) &&
+      !std::holds_alternative<mir::RangeSelectExpr>(expr.data)) {
+    return false;
+  }
+  const auto& result_ty = ctx.Unit().GetType(expr.type);
+  return std::holds_alternative<mir::PackedArrayType>(result_ty.data);
 }
 
 }  // namespace
+
+// Defined at file scope (matching the header's declaration with external
+// linkage) so callsites in other translation units -- e.g.
+// `RenderRuntimeCallExpr` for `LyraFRead` in `render_print.cpp` -- can route
+// observable destinations through `Var<T>::Mutate(svc)`. `LhsRootPrimary` is
+// visible at file scope via the anonymous-namespace's implicit using.
+auto LhsRootIsObservableScalar(const RenderContext& ctx, const mir::Expr& expr)
+    -> bool {
+  const mir::Expr& root = LhsRootPrimary(ctx, expr);
+  if (const auto* m = std::get_if<mir::MemberAccessExpr>(&root.data)) {
+    const auto& scope = ctx.StructuralScopeAtHops(m->member.hops);
+    return IsObservableCell(
+        ctx.Unit().GetType(scope.GetStructuralVar(m->member.var).type));
+  }
+  if (const auto* d = std::get_if<mir::DerefExpr>(&root.data)) {
+    const mir::Expr& ptr_expr = ctx.Expr(d->pointer);
+    const auto& ptr_data = ctx.Unit().GetType(ptr_expr.type).data;
+    if (const auto* ptr_t = std::get_if<mir::PointerType>(&ptr_data)) {
+      return IsObservableCell(ctx.Unit().GetType(ptr_t->pointee));
+    }
+  }
+  return false;
+}
 
 auto RenderExpr(const RenderContext& ctx, const mir::Expr& expr)
     -> diag::Result<std::string> {
   auto rendered_or = RenderExprNatural(ctx, expr);
   if (!rendered_or) return rendered_or;
-  if (ProducesPackedArrayRef(expr)) {
+  if (ProducesPackedArrayRef(ctx, expr)) {
     return "(" + *std::move(rendered_or) + ").Clone()";
   }
   return rendered_or;
 }
 
 // Read-side render of a borrowed-pointer dereference: the cell is reached with
-// `(*ptr)` and observed via `.Get()` for an integral packed pointee, mirroring
-// the structural-var read split.
-auto RenderDerefExpr(
-    const RenderContext& ctx, const mir::Expr& expr, const mir::DerefExpr& d)
+// `(*ptr)` and observed via `.Get()` when the pointer points at an observable
+// cell, mirroring the structural-var read split.
+auto RenderDerefExpr(const RenderContext& ctx, const mir::DerefExpr& d)
     -> diag::Result<std::string> {
-  auto ptr_or = RenderExpr(ctx, ctx.Expr(d.pointer));
+  const mir::Expr& ptr_expr = ctx.Expr(d.pointer);
+  auto ptr_or = RenderExpr(ctx, ptr_expr);
   if (!ptr_or) return std::unexpected(std::move(ptr_or.error()));
-  if (ctx.Unit().GetType(expr.type).IsIntegralPacked()) {
-    return "(*" + *ptr_or + ").Get()";
+  const auto& ptr_data = ctx.Unit().GetType(ptr_expr.type).data;
+  if (const auto* ptr_t = std::get_if<mir::PointerType>(&ptr_data)) {
+    if (IsObservableCell(ctx.Unit().GetType(ptr_t->pointee))) {
+      return "(*" + *ptr_or + ").Get()";
+    }
   }
   return "(*" + *ptr_or + ")";
 }
@@ -2079,7 +2169,7 @@ auto RenderExprNatural(const RenderContext& ctx, const mir::Expr& expr)
             return RenderRuntimeCallExpr(ctx, rc);
           },
           [&](const mir::DerefExpr& d) -> diag::Result<std::string> {
-            return RenderDerefExpr(ctx, expr, d);
+            return RenderDerefExpr(ctx, d);
           },
           [&](const mir::MemberAccessExpr& m) -> diag::Result<std::string> {
             const auto& scope = ctx.StructuralScopeAtHops(m.member.hops);
@@ -2089,7 +2179,11 @@ auto RenderExprNatural(const RenderContext& ctx, const mir::Expr& expr)
               return std::unexpected(std::move(receiver_or.error()));
             }
             std::string base = *receiver_or + "->" + var.name;
-            if (ctx.Unit().GetType(expr.type).IsIntegralPacked()) {
+            // A read of an observable-storage member unwraps the value
+            // through `Var<T>::Get`; a plain field is the value itself. The
+            // wrap lives on the member's declared type, not on the
+            // expression's apparent type.
+            if (IsObservableCell(ctx.Unit().GetType(var.type))) {
               base += ".Get()";
             }
             return base;

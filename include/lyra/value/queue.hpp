@@ -7,6 +7,7 @@
 #include <string>
 #include <utility>
 
+#include "lyra/value/array_case_equal.hpp"
 #include "lyra/value/format.hpp"
 #include "lyra/value/packed_array.hpp"
 #include "lyra/value/value_concept.hpp"
@@ -66,16 +67,49 @@ class Queue {
     return *this;
   }
 
-  // LRM 11.4.5 `===` predicate form (host bool): the Var change-detection
-  // counterpart used when a queue is an observable signal. A size mismatch is
-  // a change; otherwise recurse into each element's own predicate (LRM 9.4.2
-  // update event).
-  [[nodiscard]] auto IsCaseEqual(const Queue& other) const -> bool {
+  // LRM 11.2.2 aggregate equality / 11.4.5: element-wise reduction over
+  // matching positions. A size mismatch yields 0; matching empties yield 1
+  // (LRM is silent on both, matching industry convention). `==` / `!=`
+  // propagate X / Z; `CaseEqual` matches X / Z as values and is deterministic.
+  [[nodiscard]] auto operator==(const Queue& other) const -> PackedArray {
+    if (data_.size() != other.data_.size()) {
+      return PackedArray::FromInt(0, 1, false, false);
+    }
+    if (data_.empty()) {
+      return PackedArray::FromInt(1, 1, false, false);
+    }
+    PackedArray result = data_[0] == other.data_[0];
+    for (std::size_t i = 1; i < data_.size(); ++i) {
+      result = result && (data_[i] == other.data_[i]);
+    }
+    return result;
+  }
+  [[nodiscard]] auto operator!=(const Queue& other) const -> PackedArray {
+    return !(*this == other);
+  }
+
+  [[nodiscard]] auto CaseEqual(const Queue& other) const -> PackedArray {
+    if (data_.size() != other.data_.size()) {
+      return PackedArray::FromInt(0, 1, false, false);
+    }
+    if (data_.empty()) {
+      return PackedArray::FromInt(1, 1, false, false);
+    }
+    PackedArray result = detail::ArrayCaseEqElement(data_[0], other.data_[0]);
+    for (std::size_t i = 1; i < data_.size(); ++i) {
+      result = result && detail::ArrayCaseEqElement(data_[i], other.data_[i]);
+    }
+    return result;
+  }
+
+  // LRM 9.4.2 update event predicate (engine change-detection hook): are the
+  // two queues element-wise bit-identical. A size mismatch is a change.
+  [[nodiscard]] auto IsBitIdentical(const Queue& other) const -> bool {
     if (data_.size() != other.data_.size()) {
       return false;
     }
     for (std::size_t i = 0; i < data_.size(); ++i) {
-      if (!data_[i].IsCaseEqual(other.data_[i])) {
+      if (!data_[i].IsBitIdentical(other.data_[i])) {
         return false;
       }
     }

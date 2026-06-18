@@ -39,6 +39,27 @@ namespace lyra::lowering::hir_to_mir {
 
 namespace {
 
+// Wrap a value type in `ObservableType` iff it is a SystemVerilog value-storage
+// data type (LRM 6.5 / 7.x). Handle / wrapper types (pointer / vector / object
+// / external ref / external unit object), named events (LRM 15 -- carry their
+// own subscribe mechanism), and presently `real` / `shortreal` / `realtime`
+// (deferred until `lyra::value::Real` lands -- see
+// `docs/decisions/value-type-concepts.md`) pass through unwrapped.
+auto MaybeWrapObservable(ModuleLowerer& module, mir::TypeId t) -> mir::TypeId {
+  const auto& data = module.Unit().GetType(t).data;
+  const bool wrap = std::holds_alternative<mir::PackedArrayType>(data) ||
+                    std::holds_alternative<mir::EnumType>(data) ||
+                    std::holds_alternative<mir::StringType>(data) ||
+                    std::holds_alternative<mir::UnpackedArrayType>(data) ||
+                    std::holds_alternative<mir::DynamicArrayType>(data) ||
+                    std::holds_alternative<mir::QueueType>(data) ||
+                    std::holds_alternative<mir::AssociativeArrayType>(data);
+  if (!wrap) {
+    return t;
+  }
+  return module.Unit().AddType(mir::TypeData{mir::ObservableType{.value = t}});
+}
+
 auto ChildScopeNameFor(std::size_t gen_index, std::string_view arm_tag)
     -> std::string {
   return std::format("gen{}_{}", gen_index, arm_tag);
@@ -271,7 +292,12 @@ auto MaterializeCrossUnitRefTargets(
           mir::StructuralVarRef{.hops = {.value = 0}, .var = var}, ext_type);
       slot_vars.emplace_back(std::nullopt);
     } else {
-      const mir::TypeId leaf = module.TranslateType(cu.type);
+      // The pointee matches the producer's storage cell. A producer-side
+      // value-storage signal is wrapped in `ObservableType` at its declaration
+      // (so a write fires subscribers), and the cross-unit pointer must point
+      // at the same wrapped cell -- otherwise the C++ types mismatch.
+      const mir::TypeId leaf =
+          MaybeWrapObservable(module, module.TranslateType(cu.type));
       const mir::TypeId slot_type = module.Unit().AddType(
           mir::PointerType{
               .pointee = leaf, .ownership = mir::PointerOwnership::kBorrowed});
@@ -765,12 +791,17 @@ auto StructuralScopeLowerer::Run(
   for (std::size_t i = 0; i < hir_scope.structural_vars.size(); ++i) {
     const hir::StructuralVarId hir_id{static_cast<std::uint32_t>(i)};
     const auto& d = hir_scope.structural_vars[i];
-    const mir::TypeId mir_type = module.TranslateType(d.type);
+    const mir::TypeId mir_value_type = module.TranslateType(d.type);
+
+    const auto& var_data = module.Unit().GetType(mir_value_type).data;
+    // A module-scope value-storage signal becomes an observable cell so
+    // writes route through `Var<T>::Set` and subscribers fire.
+    const mir::TypeId mir_field_type =
+        MaybeWrapObservable(module, mir_value_type);
     const mir::StructuralVarId mir_id = mir_scope.AddStructuralVar(
-        mir::StructuralVarDecl{.name = d.name, .type = mir_type});
+        mir::StructuralVarDecl{.name = d.name, .type = mir_field_type});
     scope.MapStructuralVar(hir_id, mir_id);
 
-    const auto& var_data = module.Unit().GetType(mir_type).data;
     // Owned children (pointer / vector / object), resolution slots, upward
     // refs, and named events have no "value assignment" -- their declaration
     // shape itself fixes the field at construction. Value-typed signals
@@ -791,15 +822,15 @@ auto StructuralScopeLowerer::Run(
         if (!value_or) return std::unexpected(std::move(value_or.error()));
         value_id = ctor_scope.AddExpr(*std::move(value_or));
       } else {
-        value_id = AddDefaultValueExpr(module, scope_frame, mir_type);
+        value_id = AddDefaultValueExpr(module, scope_frame, mir_value_type);
       }
       const mir::ExprId init_target = ctor_scope.AddExpr(
           mir::MakeMemberAccessExpr(
               self_read(),
               mir::StructuralVarRef{.hops = {.value = 0}, .var = mir_id},
-              mir_type));
+              mir_field_type));
       const mir::ExprId assign_id = ctor_scope.AddExpr(
-          mir::MakeAssignExpr(init_target, value_id, mir_type));
+          mir::MakeAssignExpr(init_target, value_id, mir_value_type));
       ctor_scope.AppendStmt(
           mir::Stmt{
               .label = std::nullopt, .data = mir::ExprStmt{.expr = assign_id}});
@@ -819,7 +850,7 @@ auto StructuralScopeLowerer::Run(
           mir::MakeMemberAccessExpr(
               self_read(),
               mir::StructuralVarRef{.hops = {.value = 0}, .var = mir_id},
-              mir_type));
+              mir_field_type));
       const mir::ExprId call = ctor_scope.AddExpr(
           mir::Expr{
               .data =

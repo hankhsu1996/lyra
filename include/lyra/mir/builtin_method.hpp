@@ -52,6 +52,14 @@ enum class EventMethodKind : std::uint8_t {
 // family (ordering, reduction, and the 7.12.1 locator methods). The locator
 // arms (`kFind` onward) return a queue -- an element queue for the value
 // locators and an `int` queue for the index locators.
+//
+// Reduction, ordering, and locator methods carry a single closure as their
+// second argument. LRM 7.12.1 defines that "if a `with` clause is not given,
+// the method behaves as if `with (item)` were specified", so HIR-to-MIR
+// synthesises the identity closure when the source has none. At MIR each
+// method is exactly one kind with one signature (receiver plus closure); the
+// SV-source distinction between implicit and explicit `with` is a reading of
+// the source, not a MIR-level fact.
 enum class ArrayMethodKind : std::uint8_t {
   kSize,
   kDelete,

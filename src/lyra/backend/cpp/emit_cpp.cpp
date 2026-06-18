@@ -52,10 +52,6 @@ auto RenderField(
     return Indent(indent) + *type_or + " " + var.name + "{this, \"" +
            er->ancestor + "\", " + tail + ", \"" + er->signal + "\"};\n";
   }
-  if (IsObservableScalarType(unit.GetType(var.type))) {
-    return Indent(indent) + "lyra::runtime::Var<" + *type_or + "> " + var.name +
-           "{};\n";
-  }
   return Indent(indent) + *type_or + " " + var.name + "{};\n";
 }
 

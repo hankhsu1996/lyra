@@ -13,6 +13,7 @@
 #include "lyra/runtime/trigger.hpp"
 #include "lyra/value/packed.hpp"
 #include "lyra/value/packed_array.hpp"
+#include "lyra/value/value_concept.hpp"
 
 namespace lyra::runtime {
 
@@ -123,15 +124,10 @@ class Observable {
   std::vector<Waiter> waiters_;
 };
 
-template <typename T>
-concept CaseEqualComparable = requires(const T& a, const T& b) {
-  { a.IsCaseEqual(b) } -> std::same_as<bool>;
-};
-
-template <CaseEqualComparable T>
+template <value::LyraValueType T>
 class ScopedMutation;
 
-template <CaseEqualComparable T>
+template <value::LyraValueType T>
 class Var : public Observable {
  public:
   Var() = default;
@@ -146,18 +142,22 @@ class Var : public Observable {
   auto operator=(Var&&) -> Var& = delete;
   ~Var() = default;
 
-  // Returns true iff `v` is bit-pattern-different (LRM 9.4.2 `===` semantics
-  // for @() detection, not 4-state `==`); caller dispatches on the result.
+  // Records the new value and reports whether it differs from the old (LRM
+  // 9.4.2 `===` semantics for @() detection -- the engine fires subscribers
+  // only on a real change). The store always happens so a freshly-defaulted
+  // cell adopts shape and implementation-side seeds (e.g. an
+  // `AssociativeArray`'s `oob_slot_`) from the source on the first write,
+  // even when the SV-visible content compares identical (both empty).
   auto AssignIfChanged(const T& v) -> bool {
-    if (value_.IsCaseEqual(v)) return false;
+    const bool changed = !value_.IsBitIdentical(v);
     value_ = v;
-    return true;
+    return changed;
   }
 
   auto AssignIfChanged(T&& v) -> bool {
-    if (value_.IsCaseEqual(v)) return false;
+    const bool changed = !value_.IsBitIdentical(v);
     value_ = std::move(v);
-    return true;
+    return changed;
   }
 
   [[nodiscard]] auto Get() const noexcept -> const T& {
@@ -187,7 +187,7 @@ class Var : public Observable {
 // event fires and subscribers wake), or a plain `T` cell (raw read / write,
 // no observers). Copyable, so a ref formal can be forwarded as a ref
 // argument to a nested call.
-template <CaseEqualComparable T>
+template <value::LyraValueType T>
 class Ref {
  public:
   explicit Ref(Var<T>& cell) : signal_(&cell) {
@@ -282,7 +282,7 @@ inline auto MakePackedArrayEdgeClassifier(
           old_val.ExtractBits(lsb_arg, static_cast<std::uint32_t>(width));
       const auto new_slice =
           new_val.ExtractBits(lsb_arg, static_cast<std::uint32_t>(width));
-      return !old_slice.IsCaseEqual(new_slice);
+      return !old_slice.IsBitIdentical(new_slice);
     }
     const value::FourStateBit old_bit =
         (width == 0U) ? old_val.Lsb() : old_val.GetBit(lsb);
@@ -292,7 +292,7 @@ inline auto MakePackedArrayEdgeClassifier(
   };
 }
 
-template <CaseEqualComparable T>
+template <value::LyraValueType T>
 void Var<T>::Set(RuntimeServices& services, const T& new_val) {
   // A PackedArray write classifies the LSB transition per waiter (LRM 9.4.2
   // Table 9-2); every other cell type only has any-change waiters.
@@ -320,7 +320,7 @@ void Var<T>::Set(RuntimeServices& services, const T& new_val) {
 // until the end of the constructing full expression. Returning it by value
 // from `Var<T>::Mutate` relies on C++17 mandatory copy elision (prvalues are
 // materialized in the caller's storage with no copy/move).
-template <CaseEqualComparable T>
+template <value::LyraValueType T>
 class ScopedMutation {
  public:
   ScopedMutation(RuntimeServices& services, Var<T>& var)
@@ -336,14 +336,26 @@ class ScopedMutation {
     var_->Set(*services_, std::move(snapshot_));
   }
 
-  // Chain forwards. The returned `PackedArrayRef` holds a pointer into this
-  // ScopedMutation's snapshot_; both have the same full-expression lifetime,
-  // so the ref stays valid for the rest of the statement.
-  auto ElementAt(const value::PackedArray& idx) {
+  // Chain forwards. For a packed-storage snapshot the returned
+  // `PackedArrayRef` holds a pointer into this ScopedMutation's snapshot_; for
+  // an unpacked-storage snapshot (`DynamicArray<T>`, `Queue<T>`, etc.) the
+  // forwarder must preserve the reference so the assignment lands in the
+  // snapshot (not in a returned-by-value copy).
+  auto ElementAt(const value::PackedArray& idx) -> decltype(auto) {
     return snapshot_.ElementAt(idx);
   }
-  auto Slice(const value::PackedArray& lsb, std::uint32_t count) {
+  auto Slice(const value::PackedArray& lsb, std::uint32_t count)
+      -> decltype(auto) {
     return snapshot_.Slice(lsb, count);
+  }
+  // LRM 7.8.7 write-side index access on associative arrays: distinct from
+  // `ElementAt` because the AA splits read from write (`Read` for missing
+  // keys, `ElementRef` for allocation on write). Member-template so SFINAE
+  // suppresses the declaration on `T` types without `ElementRef`.
+  template <typename Key, typename U = T>
+    requires requires(U& u, const Key& k) { u.ElementRef(k); }
+  auto ElementRef(const Key& key) -> decltype(auto) {
+    return snapshot_.ElementRef(key);
   }
 
   // LRM 11.4 whole-var compound. Mirrors `x op= rhs` directly: snapshot is
@@ -424,13 +436,27 @@ class ScopedMutation {
     return prior;
   }
 
+  // Drilldown to the underlying snapshot for instance methods on `T` that
+  // mutate the value in place (e.g. `String::Itoa`). The chain becomes
+  // `var.Mutate(svc)->Method(...)` and the destructor commits the mutated
+  // snapshot exactly once.
+  auto operator->() -> T* {
+    return &snapshot_;
+  }
+  // The dereference form for free-function callees that take a mutable
+  // reference (e.g. `LyraFRead(svc, var.Mutate(svc), ...)` -- spelled
+  // `*var.Mutate(svc)` at the call site).
+  auto operator*() -> T& {
+    return snapshot_;
+  }
+
  private:
   RuntimeServices* services_;
   Var<T>* var_;
   T snapshot_;
 };
 
-template <CaseEqualComparable T>
+template <value::LyraValueType T>
 auto Var<T>::Mutate(RuntimeServices& services) -> ScopedMutation<T> {
   return ScopedMutation<T>{services, *this};
 }
