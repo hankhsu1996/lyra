@@ -185,6 +185,14 @@ auto LowerAssociativeMethodKind(hir::AssociativeMethodKind k)
       return mir::AssociativeMethodKind::kExists;
     case hir::AssociativeMethodKind::kDelete:
       return mir::AssociativeMethodKind::kDelete;
+    case hir::AssociativeMethodKind::kFirst:
+      return mir::AssociativeMethodKind::kFirst;
+    case hir::AssociativeMethodKind::kLast:
+      return mir::AssociativeMethodKind::kLast;
+    case hir::AssociativeMethodKind::kNext:
+      return mir::AssociativeMethodKind::kNext;
+    case hir::AssociativeMethodKind::kPrev:
+      return mir::AssociativeMethodKind::kPrev;
   }
   throw InternalError(
       "LowerAssociativeMethodKind: unknown hir::AssociativeMethodKind");

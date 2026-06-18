@@ -90,13 +90,19 @@ enum class QueueMethodKind : std::uint8_t {
 
 // LRM 7.9 associative-array methods. Exclusive to the associative container:
 // `num` / `size` query the entry count, `exists` tests a key, `delete` removes
-// one entry or clears the array. The shared LRM 7.12 family stays in
+// one entry or clears the array. The traversal family (`first` / `last` /
+// `next` / `prev`, LRM 7.9.4 -- 7.9.7) assigns the visited key through a `ref`
+// index argument and returns 0 / 1 / -1. The shared LRM 7.12 family stays in
 // `ArrayMethodKind`.
 enum class AssociativeMethodKind : std::uint8_t {
   kNum,
   kSize,
   kExists,
   kDelete,
+  kFirst,
+  kLast,
+  kNext,
+  kPrev,
 };
 
 // Side-effect-free queries that are defined for every runtime value type

@@ -31,7 +31,8 @@ follow once dynamic array's storage and runtime conventions are settled and prov
 | DA7  | Open: invalid-index handling.                                        |
 | Q1.. | Not yet scoped: queue.                                               |
 | A1   | Done: string / integral index, element read / write, query methods.  |
-| A2.. | Open: iteration protocol, literals, whole-array assignment.          |
+| A2   | Done: traversal protocol (`first` / `last` / `next` / `prev`).       |
+| A3.. | Open: foreach, literals, whole-array assignment, locators.           |
 
 ## Dynamic Array
 
@@ -132,10 +133,17 @@ the lookup key and imposes an ordering.
       `num` / `size` / `exists` / `delete` (LRM 7.9.1 -- 7.9.3), with the no-argument `delete`
       clearing the array. `%p` formatting prints entries in key order (LRM 21.2.1.6).
 
-- [ ] A2 -- The iteration protocol `first` / `last` / `next` / `prev` (LRM 7.9.4 -- 7.9.8), which
-      assigns through a `ref` index out-parameter and has no analogue in the other two families;
-      `foreach` over an associative array (`control-flow.md` C10); associative-array literals with
-      an optional default (LRM 7.9.11) and whole-array associative assignment (LRM 7.9.9); the
+- [x] A2 -- The traversal protocol `first` / `last` / `next` / `prev` (LRM 7.9.4 -- 7.9.7), which
+      assigns the visited key through a `ref` index out-parameter and returns 1 when an entry is
+      found or 0 when none is (empty array, or no next / prev, leaving the index unchanged).
+      Traversal follows LRM 7.8 key order: lexicographic for string indices, signed numerical for
+      integral indices. The index write observes LRM 4.3, so an observable index variable fires its
+      update event. The LRM 7.9.8 narrow-argument case (truncate the key into a smaller index
+      variable and return -1) is unreachable: the frontend requires the index argument to be
+      type-equivalent to the array's index type and rejects a narrower one before lowering.
+
+- [ ] A3 -- `foreach` over an associative array (`control-flow.md` C10); associative-array literals
+      with an optional default (LRM 7.9.11) and whole-array associative assignment (LRM 7.9.9); the
       wildcard `[*]`, class, and other user-defined index families (LRM 7.8.1 / 7.8.3 / 7.8.5); and
       the locator-family methods that return an index queue of the key type (LRM 7.12.1).
 

@@ -262,6 +262,10 @@ auto LowerAssociativeMethodName(std::string_view name)
   if (name == "size") return hir::AssociativeMethodKind::kSize;
   if (name == "exists") return hir::AssociativeMethodKind::kExists;
   if (name == "delete") return hir::AssociativeMethodKind::kDelete;
+  if (name == "first") return hir::AssociativeMethodKind::kFirst;
+  if (name == "last") return hir::AssociativeMethodKind::kLast;
+  if (name == "next") return hir::AssociativeMethodKind::kNext;
+  if (name == "prev") return hir::AssociativeMethodKind::kPrev;
   return std::nullopt;
 }
 

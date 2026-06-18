@@ -106,6 +106,10 @@ enum class AssociativeMethodKind : std::uint8_t {
   kSize,
   kExists,
   kDelete,
+  kFirst,
+  kLast,
+  kNext,
+  kPrev,
 };
 
 // LRM 7.12.4 iterator intrinsic methods (only `index` is in scope today;

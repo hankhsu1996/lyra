@@ -255,6 +255,14 @@ class HirDumper {
         return "exists";
       case AssociativeMethodKind::kDelete:
         return "delete";
+      case AssociativeMethodKind::kFirst:
+        return "first";
+      case AssociativeMethodKind::kLast:
+        return "last";
+      case AssociativeMethodKind::kNext:
+        return "next";
+      case AssociativeMethodKind::kPrev:
+        return "prev";
     }
     throw InternalError(
         "HirDumper::FormatAssociativeMethodKind: unknown "
