@@ -13,6 +13,7 @@
 #include "lyra/hir/procedural_body.hpp"
 #include "lyra/hir/stmt.hpp"
 #include "lyra/lowering/hir_to_mir/default_value.hpp"
+#include "lyra/lowering/hir_to_mir/self_ref.hpp"
 #include "lyra/lowering/hir_to_mir/statement/blocks.hpp"
 #include "lyra/mir/binary_op.hpp"
 #include "lyra/mir/closure.hpp"
@@ -101,7 +102,7 @@ auto SnapshotPredicate(
   const mir::ProceduralVarId snap_var = wrapper.AddProceduralVar(
       mir::ProceduralVarDecl{.name = var_name, .type = predicate_type});
   const mir::ExprId snap_default_init =
-      AddDefaultValueExpr(module, frame, predicate_type);
+      wrapper.AddExpr(BuildDefaultValueExpr(module, frame, predicate_type));
   wrapper.AppendStmt(
       mir::Stmt{
           .label = std::nullopt,
@@ -178,14 +179,8 @@ auto BuildUniqueCheckClosure(
   const mir::TypeId self_ptr_type = module.Unit().builtins.self_pointer;
   const mir::ProceduralVarId self_binding = body.AddProceduralVar(
       mir::ProceduralVarDecl{.name = "self", .type = self_ptr_type});
-  const mir::ExprId outer_self_read = wrapper.AddExpr(
-      mir::Expr{
-          .data =
-              mir::ProceduralVarRef{
-                  .hops = wrapper_frame.procedural_depth -
-                          wrapper_frame.self_decl_depth,
-                  .var = *wrapper_frame.self_binding},
-          .type = self_ptr_type});
+  const mir::ExprId outer_self_read =
+      wrapper.AddExpr(BuildSelfRefExpr(wrapper_frame, self_ptr_type));
   closure.captures.emplace_back(
       mir::ByValueCapture{.value = outer_self_read, .binding = self_binding});
 
@@ -315,7 +310,7 @@ auto BuildDeferredCheckCascade(
   const mir::TypeId void_type = module.Unit().builtins.void_type;
   const mir::TypeId int32_type = module.Unit().builtins.int32;
 
-  // SnapshotPredicate / AddDefaultValueExpr append to wrapper, so
+  // SnapshotPredicate / BuildDefaultValueExpr append to wrapper, so
   // route through a wrapper-local frame; the cascade levels each derive their
   // own local frames below. The wrapper itself sits one procedural scope
   // deeper than the caller, so any read of an enclosing binding (e.g. the

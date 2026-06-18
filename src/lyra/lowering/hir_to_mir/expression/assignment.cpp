@@ -19,6 +19,7 @@
 #include "lyra/lowering/hir_to_mir/expression/operators.hpp"
 #include "lyra/lowering/hir_to_mir/module_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/process_lowerer.hpp"
+#include "lyra/lowering/hir_to_mir/self_ref.hpp"
 #include "lyra/lowering/hir_to_mir/walk_frame.hpp"
 #include "lyra/mir/binary_op.hpp"
 #include "lyra/mir/closure.hpp"
@@ -239,13 +240,8 @@ auto BuildNbaSubmitClosureExpr(
   const mir::TypeId self_ptr_type = module.Unit().builtins.self_pointer;
   const mir::ProceduralVarId self_id = body.AddProceduralVar(
       mir::ProceduralVarDecl{.name = "self", .type = self_ptr_type});
-  const mir::ExprId outer_self_read = outer_scope.AddExpr(
-      mir::Expr{
-          .data =
-              mir::ProceduralVarRef{
-                  .hops = frame.procedural_depth - frame.self_decl_depth,
-                  .var = *frame.self_binding},
-          .type = self_ptr_type});
+  const mir::ExprId outer_self_read =
+      outer_scope.AddExpr(BuildSelfRefExpr(frame, self_ptr_type));
   captures.emplace_back(
       mir::ByValueCapture{.value = outer_self_read, .binding = self_id});
 

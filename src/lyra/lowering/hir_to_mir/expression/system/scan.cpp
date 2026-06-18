@@ -16,6 +16,7 @@
 #include "lyra/lowering/hir_to_mir/capture_sink.hpp"
 #include "lyra/lowering/hir_to_mir/default_value.hpp"
 #include "lyra/lowering/hir_to_mir/process_lowerer.hpp"
+#include "lyra/lowering/hir_to_mir/self_ref.hpp"
 #include "lyra/mir/binary_op.hpp"
 #include "lyra/mir/closure.hpp"
 #include "lyra/mir/compilation_unit.hpp"
@@ -163,18 +164,6 @@ auto ComputeSlotMeta(
       diag::UnsupportedCategory::kFeature);
 }
 
-// `body.AddExpr(ProceduralVarRef{hops, var}, type)` shorthand.
-auto AppendVarRef(
-    mir::ProceduralScope& scope, mir::ProceduralVarId var, std::uint32_t hops,
-    mir::TypeId type) -> mir::ExprId {
-  return scope.AddExpr(
-      mir::Expr{
-          .data =
-              mir::ProceduralVarRef{
-                  .hops = mir::ProceduralHops{.value = hops}, .var = var},
-          .type = type});
-}
-
 }  // namespace
 
 auto LowerScanSystemSubroutineCall(
@@ -224,13 +213,8 @@ auto LowerScanSystemSubroutineCall(
   const WalkFrame body_frame = frame.WithProceduralScope(&body).Deeper();
   const mir::ProceduralVarId self_binding = body.AddProceduralVar(
       mir::ProceduralVarDecl{.name = "self", .type = self_ptr_type});
-  const mir::ExprId outer_self_read = outer_scope.AddExpr(
-      mir::Expr{
-          .data =
-              mir::ProceduralVarRef{
-                  .hops = frame.procedural_depth - frame.self_decl_depth,
-                  .var = *frame.self_binding},
-          .type = self_ptr_type});
+  const mir::ExprId outer_self_read =
+      outer_scope.AddExpr(BuildSelfRefExpr(frame, self_ptr_type));
   CaptureSink sink{body_frame.procedural_depth, body, outer_scope};
   // The scan IIFE is a synchronous body that returns a count -- no suspends.
   const WalkFrame closure_frame =
@@ -274,8 +258,8 @@ auto LowerScanSystemSubroutineCall(
   std::vector<mir::ProceduralVarId> temp_ids;
   temp_ids.reserve(metas.size());
   for (std::size_t k = 0; k < metas.size(); ++k) {
-    const mir::ExprId init_id =
-        AddDefaultValueExpr(module, closure_frame, metas[k].mir_type);
+    const mir::ExprId init_id = body.AddExpr(
+        BuildDefaultValueExpr(module, closure_frame, metas[k].mir_type));
     const mir::ProceduralVarRef temp_ref = body.AppendLocal(
         mir::ProceduralVarDecl{
             .name = std::format("_lyra_scan_temp_{}", k),
@@ -289,8 +273,9 @@ auto LowerScanSystemSubroutineCall(
   std::vector<mir::ScanSlotDesc> mir_slots;
   mir_slots.reserve(metas.size());
   for (std::size_t k = 0; k < metas.size(); ++k) {
-    const mir::ExprId temp_ref_id =
-        AppendVarRef(body, temp_ids[k], 0, metas[k].mir_type);
+    const mir::ExprId temp_ref_id = body.AddExpr(
+        mir::MakeProceduralVarRefExpr(
+            mir::ProceduralHops{.value = 0}, temp_ids[k], metas[k].mir_type));
     if (metas[k].is_string) {
       mir_slots.emplace_back(mir::StringScanSlot{.temp = temp_ref_id});
     } else {
@@ -346,8 +331,9 @@ auto LowerScanSystemSubroutineCall(
         hir_proc.exprs.at(call.arguments[k + 2]->value), then_frame);
     if (!lvalue_or) return std::unexpected(std::move(lvalue_or.error()));
     const mir::ExprId lvalue_id = then_body.AddExpr(*std::move(lvalue_or));
-    const mir::ExprId temp_read_id =
-        AppendVarRef(then_body, temp_ids[k], 1, metas[k].mir_type);
+    const mir::ExprId temp_read_id = then_body.AddExpr(
+        mir::MakeProceduralVarRefExpr(
+            mir::ProceduralHops{.value = 1}, temp_ids[k], metas[k].mir_type));
     const mir::ExprId assign_id = then_body.AddExpr(
         mir::Expr{
             .data = mir::AssignExpr{.target = lvalue_id, .value = temp_read_id},

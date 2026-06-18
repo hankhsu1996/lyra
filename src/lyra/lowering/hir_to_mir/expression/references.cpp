@@ -9,6 +9,7 @@
 #include "lyra/lowering/hir_to_mir/module_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/procedural_depth.hpp"
 #include "lyra/lowering/hir_to_mir/process_lowerer.hpp"
+#include "lyra/lowering/hir_to_mir/self_ref.hpp"
 #include "lyra/lowering/hir_to_mir/structural_scope_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/walk_frame.hpp"
 #include "lyra/mir/compilation_unit.hpp"
@@ -100,9 +101,7 @@ auto LowerStructuralVarRefExpr(
       scope.TranslateStructuralVar(m.hops, m.var);
   const mir::TypeId self_ptr_type = scope.Module().Unit().builtins.self_pointer;
   const mir::ExprId receiver = frame.current_procedural_scope->AddExpr(
-      mir::MakeProceduralVarRefExpr(
-          frame.procedural_depth - frame.self_decl_depth, *frame.self_binding,
-          self_ptr_type));
+      BuildSelfRefExpr(frame, self_ptr_type));
   return mir::MakeMemberAccessExpr(receiver, member, type);
 }
 
@@ -119,9 +118,7 @@ auto LowerProceduralVarRefExpr(
     const mir::TypeId self_ptr_type =
         process.Module().Unit().builtins.self_pointer;
     const mir::ExprId receiver = frame.current_procedural_scope->AddExpr(
-        mir::MakeProceduralVarRefExpr(
-            frame.procedural_depth - frame.self_decl_depth, *frame.self_binding,
-            self_ptr_type));
+        BuildSelfRefExpr(frame, self_ptr_type));
     return mir::MakeMemberAccessExpr(
         receiver,
         mir::StructuralVarRef{
@@ -154,9 +151,7 @@ auto LowerCrossUnitVarRefExpr(
   const mir::StructuralVarRef target = meta.target;
   const mir::TypeId self_ptr_type = scope.Module().Unit().builtins.self_pointer;
   const mir::ExprId self_ref = frame.current_procedural_scope->AddExpr(
-      mir::MakeProceduralVarRefExpr(
-          frame.procedural_depth - frame.self_decl_depth, *frame.self_binding,
-          self_ptr_type));
+      BuildSelfRefExpr(frame, self_ptr_type));
   const auto* ptr = std::get_if<mir::PointerType>(
       &scope.Module().Unit().GetType(meta.slot_type).data);
   if (ptr != nullptr && ptr->ownership == mir::PointerOwnership::kBorrowed) {

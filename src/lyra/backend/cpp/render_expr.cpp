@@ -983,30 +983,30 @@ auto RenderStringMethodCall(
   }
 }
 
-// LRM 15.5: `Trigger` / `Triggered` reach into RuntimeServices through an
-// explicit services argument supplied by HIR-to-MIR. The render walks
-// arguments uniformly with no per-kind special-case; statement-level callers
-// wrap the result in `co_await` for `Await`.
-auto RenderEventMethodCall(
+// A method call renders generically as `(receiver).name(args)`: the receiver is
+// arguments[0]; every following argument renders uniformly. Nothing here is
+// method-family specific -- the only per-call input beyond the operands is the
+// member name, which the caller derives from the callee kind. Any engine handle
+// a method needs is one of the arguments, supplied by lowering.
+auto RenderMethodCall(
     const RenderContext& ctx, const mir::CallExpr& call,
-    const mir::EventMethodInfo& m) -> diag::Result<std::string> {
+    std::string_view member_name) -> diag::Result<std::string> {
   if (call.arguments.empty()) {
     throw InternalError(
-        "RenderEventMethodCall: event method expects a receiver argument");
+        "RenderMethodCall: a method call expects a receiver argument");
   }
   auto receiver_or = RenderExpr(ctx, ctx.Expr(call.arguments[0]));
   if (!receiver_or) {
     return std::unexpected(std::move(receiver_or.error()));
   }
-  std::string args_text;
+  std::string args;
   for (std::size_t i = 1; i < call.arguments.size(); ++i) {
     auto arg_or = RenderExpr(ctx, ctx.Expr(call.arguments[i]));
     if (!arg_or) return std::unexpected(std::move(arg_or.error()));
-    if (i > 1) args_text += ", ";
-    args_text += *arg_or;
+    if (i != 1) args += ", ";
+    args += *std::move(arg_or);
   }
-  return std::format(
-      "({}).{}({})", *receiver_or, EventMethodMemberName(m.kind), args_text);
+  return std::format("({}).{}({})", *receiver_or, member_name, args);
 }
 
 // LRM 7.5.2 / 7.5.3 / 7.12.2 / 7.12.3: dispatch on the receiver
@@ -1371,44 +1371,55 @@ auto RenderCallExpr(
             std::string args;
             for (std::size_t i = 0; i < call.arguments.size(); ++i) {
               const mir::Expr& actual = ctx.Expr(call.arguments[i]);
-              const mir::ParamDirection dir = decl.params[i].direction;
               std::string rendered;
-              if (dir == mir::ParamDirection::kRef ||
-                  dir == mir::ParamDirection::kConstRef) {
-                // A ref / const ref actual binds the variable's cell: render
-                // its lvalue and wrap it in a `Ref<T>`. Constructor overload
-                // picks the observable (`Var<T>`), plain (`T`), or
-                // unpacked-element backing; a ref formal passed on forwards via
-                // the copy ctor (LRM 13.5.2). When the actual is rooted in an
-                // observable cell and points at an element (not the whole
-                // cell), route through `Var<T>::Mutate(svc)` so the
-                // ScopedMutation snapshot lives for the call's full expression
-                // and commits via `Var::Set` on return.
-                const bool needs_mutate =
-                    LhsRootIsObservableScalar(ctx, actual) &&
-                    !IsLhsBarePrimary(actual);
-                auto lhs_or = RenderLhsExpr(
-                    ctx, actual,
-                    needs_mutate ? std::string_view{".Mutate(self->Services())"}
-                                 : std::string_view{});
-                if (!lhs_or) return std::unexpected(std::move(lhs_or.error()));
-                auto type_or = RenderTypeAsCpp(
-                    ctx.Unit(), ctx.StructuralScope(), decl.params[i].type);
-                if (!type_or)
-                  return std::unexpected(std::move(type_or.error()));
-                rendered =
-                    "lyra::runtime::Ref<" + *type_or + ">(" + *lhs_or + ")";
+              if (i == 0) {
+                // arguments[0] is the callee's `self` instance handle (mir.md
+                // invariant 11) -- a plain pointer value with no formal.
+                auto self_or = RenderExpr(ctx, actual);
+                if (!self_or)
+                  return std::unexpected(std::move(self_or.error()));
+                rendered = *std::move(self_or);
               } else {
-                auto arg_or = RenderExpr(ctx, actual);
-                if (!arg_or) return std::unexpected(std::move(arg_or.error()));
-                rendered = *std::move(arg_or);
+                const mir::ParamDirection dir = decl.params[i - 1].direction;
+                if (dir == mir::ParamDirection::kRef ||
+                    dir == mir::ParamDirection::kConstRef) {
+                  // A ref / const ref actual binds the variable's cell: render
+                  // its lvalue and wrap it in a `Ref<T>`. Constructor overload
+                  // picks the observable (`Var<T>`), plain (`T`), or
+                  // unpacked-element backing; a ref formal passed on forwards
+                  // via the copy ctor (LRM 13.5.2). When the actual is rooted
+                  // in an observable cell and points at an element (not the
+                  // whole cell), route through `Var<T>::Mutate(svc)` so the
+                  // ScopedMutation snapshot lives for the call's full
+                  // expression and commits via `Var::Set` on return.
+                  const bool needs_mutate =
+                      LhsRootIsObservableScalar(ctx, actual) &&
+                      !IsLhsBarePrimary(actual);
+                  auto lhs_or = RenderLhsExpr(
+                      ctx, actual,
+                      needs_mutate
+                          ? std::string_view{".Mutate(self->Services())"}
+                          : std::string_view{});
+                  if (!lhs_or)
+                    return std::unexpected(std::move(lhs_or.error()));
+                  auto type_or = RenderTypeAsCpp(
+                      ctx.Unit(), ctx.StructuralScope(),
+                      decl.params[i - 1].type);
+                  if (!type_or)
+                    return std::unexpected(std::move(type_or.error()));
+                  rendered =
+                      "lyra::runtime::Ref<" + *type_or + ">(" + *lhs_or + ")";
+                } else {
+                  auto arg_or = RenderExpr(ctx, actual);
+                  if (!arg_or)
+                    return std::unexpected(std::move(arg_or.error()));
+                  rendered = *std::move(arg_or);
+                }
               }
               if (i != 0) args += ", ";
               args += rendered;
             }
-            std::string call_args{std::string_view{"self"}};
-            if (!args.empty()) call_args += ", " + args;
-            return std::format("{}({})", decl.name, call_args);
+            return std::format("{}({})", decl.name, args);
           },
           [&](const mir::BuiltinMethodCallee& b) -> diag::Result<std::string> {
             return std::visit(
@@ -1420,7 +1431,8 @@ auto RenderCallExpr(
                       return RenderStringMethodCall(ctx, call, m);
                     },
                     [&](const mir::EventMethodInfo& m) {
-                      return RenderEventMethodCall(ctx, call, m);
+                      return RenderMethodCall(
+                          ctx, call, EventMethodMemberName(m.kind));
                     },
                     [&](const mir::ArrayMethodInfo& m) {
                       return RenderArrayMethodCall(ctx, call, m);

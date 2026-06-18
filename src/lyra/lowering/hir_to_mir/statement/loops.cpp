@@ -55,7 +55,8 @@ auto LowerForStmt(
                 }
                 init_id = proc_scope.AddExpr(*std::move(init_or));
               } else {
-                init_id = AddDefaultValueExpr(process.Module(), frame, type);
+                init_id = proc_scope.AddExpr(
+                    BuildDefaultValueExpr(process.Module(), frame, type));
               }
               return mir::ForInit{mir::ForInitDecl{
                   .induction_var =

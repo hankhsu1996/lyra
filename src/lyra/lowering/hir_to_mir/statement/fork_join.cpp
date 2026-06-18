@@ -12,6 +12,7 @@
 #include "lyra/hir/stmt.hpp"
 #include "lyra/lowering/hir_to_mir/capture_sink.hpp"
 #include "lyra/lowering/hir_to_mir/process_lowerer.hpp"
+#include "lyra/lowering/hir_to_mir/self_ref.hpp"
 #include "lyra/lowering/hir_to_mir/walk_frame.hpp"
 #include "lyra/mir/closure.hpp"
 #include "lyra/mir/compilation_unit.hpp"
@@ -69,14 +70,8 @@ auto LowerForkStmt(
 
     const mir::ProceduralVarId branch_self_id = branch_scope.AddProceduralVar(
         mir::ProceduralVarDecl{.name = "self", .type = self_ptr_type});
-    const mir::ExprId outer_self_read = fork_scope.AddExpr(
-        mir::Expr{
-            .data =
-                mir::ProceduralVarRef{
-                    .hops = fork_frame.procedural_depth -
-                            fork_frame.self_decl_depth,
-                    .var = *fork_frame.self_binding},
-            .type = self_ptr_type});
+    const mir::ExprId outer_self_read =
+        fork_scope.AddExpr(BuildSelfRefExpr(fork_frame, self_ptr_type));
 
     CaptureSink sink{
         fork_frame.procedural_depth.Inner(), branch_scope, fork_scope};
