@@ -20,6 +20,12 @@ module Top;
   int nmiss;
   int nsz2;
 
+  // A method on a nested receiver (`mm[i]`) must reach the stored sub-map: a
+  // const query reads it and `delete` mutates it in place.
+  int mm [string][int];
+  int nest_ex;
+  int nest_after_delete;
+
   initial begin
     m["a"] = 1;
     m["b"] = 2;
@@ -51,5 +57,11 @@ module Top;
     nsz = n.num();
     nmiss = n[7];
     nsz2 = n.num();
+
+    mm["x"][1] = 10;
+    mm["x"][2] = 20;
+    nest_ex = mm["x"].exists(2);
+    mm["x"].delete(1);
+    nest_after_delete = mm["x"].num();
   end
 endmodule
