@@ -307,7 +307,7 @@ auto LowerSystemSubroutineCall(
           [&](const support::TerminationSystemSubroutineInfo& term)
               -> diag::Result<mir::Expr> {
             return LowerFinishSystemSubroutineCall(
-                process, call, desc.name, term, span);
+                process, frame, call, desc.id, desc.name, term, span);
           },
           [&](const support::DiagnosticSystemSubroutineInfo& diag_info)
               -> diag::Result<mir::Expr> {

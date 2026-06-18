@@ -114,6 +114,14 @@ enum class IteratorMethodKind : std::uint8_t {
   kIndex,
 };
 
+// Methods on the runtime scope handle (the `self` receiver). `kServices`
+// reaches the engine facade `RuntimeServices` -- the engine handle every
+// runtime-effect call threads as a plain argument
+// (docs/decisions/runtime-effects-as-generic-calls.md).
+enum class ScopeMethodKind : std::uint8_t {
+  kServices,
+};
+
 struct EnumMethodInfo {
   TypeId enum_type;
   EnumMethodKind kind;
@@ -147,6 +155,10 @@ struct IteratorMethodInfo {
   IteratorMethodKind kind;
 };
 
+struct ScopeMethodInfo {
+  ScopeMethodKind kind;
+};
+
 // True for methods whose backend emission must wrap the call site in
 // `co_await`. The runtime returns an awaitable that suspends the calling
 // coroutine and reschedules it through RuntimeServices when the event fires.
@@ -158,7 +170,7 @@ struct BuiltinMethodCallee {
   std::variant<
       EnumMethodInfo, StringMethodInfo, EventMethodInfo, ArrayMethodInfo,
       QueueMethodInfo, AssociativeMethodInfo, ValueMethodInfo,
-      IteratorMethodInfo>
+      IteratorMethodInfo, ScopeMethodInfo>
       method;
 };
 
