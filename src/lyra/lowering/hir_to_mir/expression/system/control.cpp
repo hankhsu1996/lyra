@@ -15,6 +15,7 @@
 #include "lyra/hir/procedural_body.hpp"
 #include "lyra/lowering/hir_to_mir/expression/system/services_arg.hpp"
 #include "lyra/lowering/hir_to_mir/process_lowerer.hpp"
+#include "lyra/lowering/hir_to_mir/services_arg.hpp"
 #include "lyra/lowering/hir_to_mir/walk_frame.hpp"
 #include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/expr.hpp"

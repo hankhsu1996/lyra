@@ -41,13 +41,6 @@ auto RenderPackedArrayCtorArgs(const mir::PackedArrayType& pa) -> std::string {
   return dim_list + ", " + signed_lit + ", " + four_state_lit;
 }
 
-auto IsObservableScalarType(const mir::Type& ty) -> bool {
-  // An ExternalRef member is a Var-like observable: it forwards reads, writes,
-  // and subscription to its resolved cell, so a write routes through Set.
-  return ty.IsIntegralPacked() ||
-         std::holds_alternative<mir::ExternalRefType>(ty.data);
-}
-
 auto RenderEnumClassName(
     const mir::StructuralScope& owner_scope, mir::TypeId id) -> std::string {
   // First TypeAlias targeting `id` supplies the canonical class name. SV
@@ -137,16 +130,12 @@ auto RenderTypeAsCpp(
                 return "std::unique_ptr<" + *inner_or + ">";
               case mir::PointerOwnership::kShared:
                 return "std::shared_ptr<" + *inner_or + ">";
-              case mir::PointerOwnership::kBorrowed: {
-                // A borrowed pointer refers to the pointee's storage cell: a
-                // `Var<T>` for an observable scalar, the bare type otherwise
-                // (e.g. a `Scope`), so the slot mirrors what it points at.
-                const std::string storage =
-                    IsObservableScalarType(unit.GetType(p.pointee))
-                        ? "lyra::runtime::Var<" + *inner_or + ">"
-                        : *inner_or;
-                return storage + "*";
-              }
+              case mir::PointerOwnership::kBorrowed:
+                // A borrowed pointer refers to the pointee's storage cell --
+                // a `Var<T>` if the pointee is an observable wrapper, the
+                // bare type otherwise -- so the slot mirrors what it points
+                // at by recursing.
+                return *inner_or + "*";
             }
             throw InternalError("RenderTypeAsCpp: unknown PointerOwnership");
           },
@@ -159,6 +148,11 @@ auto RenderTypeAsCpp(
             auto inner_or = RenderTypeAsCpp(unit, owner_scope, e.element);
             if (!inner_or) return std::unexpected(std::move(inner_or.error()));
             return "lyra::runtime::ExternUp<" + *inner_or + ">";
+          },
+          [&](const mir::ObservableType& o) -> diag::Result<std::string> {
+            auto inner_or = RenderTypeAsCpp(unit, owner_scope, o.value);
+            if (!inner_or) return std::unexpected(std::move(inner_or.error()));
+            return "lyra::runtime::Var<" + *inner_or + ">";
           },
           [](const auto&) -> diag::Result<std::string> {
             throw InternalError(

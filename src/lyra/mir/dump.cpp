@@ -208,6 +208,9 @@ class MirDumper {
                   "ExternalRef(elem=Type[{}], ancestor={}, tail={}, signal={})",
                   e.element.value, e.ancestor, tail, e.signal);
             },
+            [](const ObservableType& o) -> std::string {
+              return std::format("Observable(value=Type[{}])", o.value.value);
+            },
         },
         t.data);
   }
