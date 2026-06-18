@@ -52,11 +52,14 @@ auto BuildOutputArgSlot(
 // is the LHS for an `lhs = f(...)` shape; `nullopt` produces a bare-call
 // statement. The completed `wrapper` is installed as a child of
 // `*parent_frame.current_procedural_scope`, and the returned Stmt's BlockStmt
-// references it by id.
+// references it by id. When `call_suspends` (a bare task call -- LRM 13.4), the
+// call statement is emitted as a suspension (`AwaitStmt`); an `lhs = f(...)`
+// shape is a function and never suspends.
 auto BuildCopyOutBlock(
     WalkFrame parent_frame, mir::ProceduralScope wrapper,
     std::optional<std::string> label, mir::TypeId result_type,
-    mir::Expr call_expr, std::optional<mir::ExprId> assign_target_id,
+    mir::Expr call_expr, bool call_suspends,
+    std::optional<mir::ExprId> assign_target_id,
     const std::vector<OutputArgSlot>& slots) -> mir::Stmt;
 
 }  // namespace lyra::lowering::hir_to_mir

@@ -944,21 +944,6 @@ class MirDumper {
                         std::format(
                             "RuntimeSFormatCall items={}", sf.items.size()));
                   },
-                  [&](const RuntimeTimeCall& tc) {
-                    std::string_view kind_text = "time";
-                    switch (tc.kind) {
-                      case support::TimeKind::kTime:
-                        kind_text = "time";
-                        break;
-                      case support::TimeKind::kStime:
-                        kind_text = "stime";
-                        break;
-                      case support::TimeKind::kRealtime:
-                        kind_text = "realtime";
-                        break;
-                    }
-                    Line(std::format("RuntimeTimeCall kind={}", kind_text));
-                  },
                   [&](const RuntimeSetTimeFormatCall& tf) {
                     Line(
                         std::format(
@@ -1101,6 +1086,18 @@ class MirDumper {
               } else {
                 Line(std::format("Stmt[{}] ReturnStmt{}", id.value, flavor));
               }
+            },
+            [&](const AwaitStmt& s) {
+              Line(
+                  std::format(
+                      "Stmt[{}] AwaitStmt awaitable=Expr[{}]", id.value,
+                      s.awaitable.value));
+              Indent();
+              Line(
+                  std::format(
+                      "Expr[{}] {}", s.awaitable.value,
+                      FormatExpr(enclosing, s.awaitable)));
+              Dedent();
             },
             [&](const SensitivityWaitStmt& s) {
               Line(std::format("Stmt[{}] SensitivityWaitStmt", id.value));

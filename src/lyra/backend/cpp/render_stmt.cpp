@@ -85,6 +85,18 @@ auto RenderExprStmt(
   return Indent(indent) + *rendered_or + ";\n";
 }
 
+// The C++ realization of a suspension point (mir/stmt.hpp): `co_await` the
+// awaitable operand. One uniform site for every suspending construct ($finish,
+// task call, named-event await).
+auto RenderAwaitStmt(
+    const RenderContext& ctx, const mir::AwaitStmt& s, std::size_t indent)
+    -> diag::Result<std::string> {
+  const auto& expr = ctx.ProceduralScope().exprs.at(s.awaitable.value);
+  auto rendered_or = RenderExpr(ctx, expr);
+  if (!rendered_or) return std::unexpected(std::move(rendered_or.error()));
+  return Indent(indent) + "co_await " + *rendered_or + ";\n";
+}
+
 auto RenderBlockStmtNode(
     const RenderContext& ctx, const mir::BlockStmt& s, std::size_t indent)
     -> diag::Result<std::string> {
@@ -502,6 +514,9 @@ auto RenderStmt(
             auto value_or = RenderExpr(ctx, ctx.Expr(*s.value));
             if (!value_or) return std::unexpected(std::move(value_or.error()));
             return Indent(indent) + "return " + *value_or + ";\n";
+          },
+          [&](const mir::AwaitStmt& s) -> diag::Result<std::string> {
+            return RenderAwaitStmt(ctx, s, indent);
           },
           [&](const mir::SensitivityWaitStmt& s) -> diag::Result<std::string> {
             return RenderSensitivityWaitStmt(ctx, s, indent);
