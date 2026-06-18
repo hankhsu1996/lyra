@@ -24,3 +24,5 @@ expect:
     nsz: 2
     nmiss: 0
     nsz2: 2
+    nest_ex: 1
+    nest_after_delete: 1

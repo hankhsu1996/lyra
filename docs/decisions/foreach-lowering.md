@@ -1,7 +1,7 @@
 # `foreach` lowering shape
 
-Date: 2026-06-02 (flat-counter); 2026-06-17 (revised to nested loops + labeled break) Status:
-accepted
+Date: 2026-06-02 (flat-counter); 2026-06-17 (revised to nested loops + labeled break; extended to
+associative key-walk dimensions) Status: accepted
 
 ## Context
 
@@ -29,12 +29,19 @@ provide natively, and the natural primitive in LLVM IR and WebAssembly.
 **`foreach` lowers to one ordinary nested loop per iterated dimension, and a break that must leave
 the whole foreach is modeled as a labeled break -- the universal multi-level-exit primitive.**
 
-1. **Nested loops, size sampled per level.** The non-skipped dimensions become nested `for` loops in
-   cardinal order (outer to inner). A fixed dimension loops over its declared range and direction. A
-   dynamically sized dimension samples its element count once into a synthetic local on entry to
-   that level -- `a.size()` for the outermost dimension, `a[i].size()` for the next, and so on --
-   then counts `0..count-1`. Because the inner count is read inside the enclosing loop, a jagged
-   array iterates correctly with no special case: the inner bound simply reads the current row.
+1. **Nested loops, one `for` per dimension.** The non-skipped dimensions become nested `for` loops
+   in cardinal order (outer to inner). Each dimension supplies the `for`'s init / condition / step;
+   that is the sole type-dependent step, and the three families all fit the one shape. A fixed
+   dimension loops over its declared range and direction. A dynamically sized dimension samples its
+   element count once into a synthetic local on entry to that level -- `a.size()` for the outermost
+   dimension, `a[i].size()` for the next, and so on -- then counts `0..count-1`. Because the inner
+   count is read inside the enclosing loop, a jagged array iterates correctly with no special case:
+   the inner bound simply reads the current row. An associative dimension walks by key (LRM 7.9.4 --
+   7.9.7) instead of counting an index: the `for`'s counter holds the first / next return, its step
+   advances the key, and its loop variable is the key the body indexes by. `continue` lands on the
+   step, so it advances to the next key (LRM 12.8); an empty array returns 0 from `first`, so the
+   body never runs. Key-walked and index-counted dimensions nest freely in one foreach, since both
+   are just a `for`.
 
 2. **Labeled break.** HIR and MIR carry a `LoopLabelId`: a loop may be a break target, and a `break`
    may name the loop it exits. A `break` whose innermost SystemVerilog loop is the foreach carries
@@ -93,8 +100,9 @@ labeled-break-via-`goto` choice (item 3 above) is the resolution:
 - The labeled break is the only new IR concept, and it is the same primitive every other
   multi-level-exit language and IR uses, so the model transfers directly to a future LLVM backend (a
   branch) rather than baking in a C++-specific trick.
-- Associative-array and string `foreach` remain rejected: they iterate by key (LRM 7.9) and by byte
-  (LRM 6.16), distinct iteration models with their own lowering.
+- Associative-array `foreach` fits the same nested-`for` model with no new construct: its dimension
+  is just a `for` whose pieces are a key walk instead of an index count. String `foreach` remains
+  rejected: it iterates by byte (LRM 6.16), a distinct model with its own lowering.
 
 ## Cross-references
 

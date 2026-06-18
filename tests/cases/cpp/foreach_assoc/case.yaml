@@ -1,0 +1,18 @@
+id: cpp.foreach_assoc
+tags: [cpp_run]
+input:
+  command: [run, cpp]
+  project: false
+  top: Top
+  files: [main.sv]
+expect:
+  exit: 0
+  variables:
+    order_str: 123
+    order_int: 213
+    empty_iters: 0
+    sum_2d: 60
+    sum_mixed: 7
+    break_count: 1
+    cont_sum: 4
+    sum_fixed_assoc: 7

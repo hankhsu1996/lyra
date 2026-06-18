@@ -1090,7 +1090,9 @@ auto AssociativeTraversalFunctionName(mir::AssociativeMethodKind k)
 // `ref` that the method writes the visited key into and whose observable
 // update event must fire (LRM 4.3), so it lowers to a runtime call carrying
 // the index lvalue as a `Ref<K>` -- the same by-reference shape a user `ref`
-// argument uses -- and `Services()` as the leading argument.
+// argument uses -- and `Services()` as the leading argument. The receiver is
+// rendered as an lvalue so the call reads the array in place: a nested receiver
+// such as `mm[i]` must reach the stored sub-map, not a detached clone.
 auto RenderAssociativeTraversalCall(
     const RenderContext& ctx, const mir::CallExpr& call,
     std::string_view function_name) -> diag::Result<std::string> {
@@ -1099,7 +1101,8 @@ auto RenderAssociativeTraversalCall(
         "RenderAssociativeTraversalCall: traversal method expects a receiver "
         "and an index argument");
   }
-  auto receiver_or = RenderExpr(ctx, ctx.Expr(call.arguments[0]));
+  auto receiver_or =
+      RenderLhsExpr(ctx, ctx.Expr(call.arguments[0]), std::string_view{});
   if (!receiver_or) {
     return std::unexpected(std::move(receiver_or.error()));
   }
@@ -1132,7 +1135,11 @@ auto RenderAssociativeMethodCall(
   if (auto traversal = AssociativeTraversalFunctionName(m.kind)) {
     return RenderAssociativeTraversalCall(ctx, call, *traversal);
   }
-  auto receiver_or = RenderExpr(ctx, ctx.Expr(call.arguments[0]));
+  // The receiver is rendered as an lvalue: every method reads (and `delete`
+  // mutates) the array in place, so a nested receiver such as `mm[i]` must
+  // reach the stored sub-map, not a detached clone.
+  auto receiver_or =
+      RenderLhsExpr(ctx, ctx.Expr(call.arguments[0]), std::string_view{});
   if (!receiver_or) {
     return std::unexpected(std::move(receiver_or.error()));
   }

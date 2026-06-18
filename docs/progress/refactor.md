@@ -405,12 +405,19 @@ Entries get checked off as their PRs land. When the last entry lands, the file i
       decision returns to the semantic layer that owns it, and "two different MIR -> two different
       emit" holds. **Why surfaced**: pre-existing, not caused by the foreach work; foreach's
       synthetic `.size()` on a jagged dynamic-of-dynamic array made it visible
-      (`jag[i].Clone().Size()` copies a whole row just to read its size). **Why deferred**: a
-      cross-cutting change to the backend value model -- MIR vocabulary, the HIR -> MIR
-      value-vs-reference context decision, the dumper, and the backend -- far larger than, and
-      orthogonal to, any feature that surfaces it. **Trigger**: the LIR / LLVM backend work (when
-      cross-backend divergence becomes real), or any change to the backend's clone / reference
-      rendering.
+      (`jag[i].Clone().Size()` copies a whole row just to read its size). The associative-array work
+      surfaced it more sharply: a builtin-method **receiver** rendered through the value path
+      clones, and a nested associative receiver (`mm[i].exists(j)`, `mm[i].delete(j)`, or the
+      traversal `mm[i].first(k)`) has element type `AssociativeArray`, which has no `Clone()` -- so
+      the split is a hard compile error there, and for `delete` it would also be a silent
+      correctness bug (mutating a throwaway copy). Interim: associative method receivers render
+      through the reference path, which is the value model R23 will generalize, so this is
+      alignment, not a new band-aid; the remaining R23 scope is value-position reads that genuinely
+      escape. **Why deferred**: a cross-cutting change to the backend value model -- MIR vocabulary,
+      the HIR -> MIR value-vs-reference context decision, the dumper, and the backend -- far larger
+      than, and orthogonal to, any feature that surfaces it. **Trigger**: the LIR / LLVM backend
+      work (when cross-backend divergence becomes real), or any change to the backend's clone /
+      reference rendering.
 
 - [ ] R24 -- Dispatch the "sized collection" concept (`.size()` / `.num()`) through one resolver
       instead of branching on the concrete container at each call site. Today the element-count
