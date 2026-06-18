@@ -289,7 +289,8 @@ auto LowerSubroutineCallWithWritebacks(
 
   return BuildCopyOutBlock(
       frame, std::move(wrapper), std::move(label), result_type,
-      std::move(call_expr), assign_target_id, writebacks);
+      std::move(call_expr), decl.kind == hir::SubroutineKind::kTask,
+      assign_target_id, writebacks);
 }
 
 }  // namespace
@@ -316,10 +317,11 @@ auto LowerExprStmt(
     }
   }
 
-  // LRM 13.5: a subroutine call with output / inout actuals desugars to
-  // copy-in-copy-out. Two statement shapes carry it: a bare call (void
-  // function / discarded result) and a blocking assignment whose right side
-  // is the call itself.
+  // A call statement. Resolving the callee here -- once -- decides both the
+  // output-arg desugar shape (LRM 13.5) and whether the call is a suspension
+  // point. A suspending callee ($finish, a task) lowers to `AwaitStmt`; LRM
+  // 13.4 keeps every suspending call void and statement-positioned, so a bare
+  // call is the only place suspension arises.
   if (const auto* call = std::get_if<hir::CallExpr>(&inner.data)) {
     if (const auto* decl = SubroutineWithWritebacks(process.Scope(), *call)) {
       return LowerSubroutineCallWithWritebacks(
@@ -327,12 +329,13 @@ auto LowerExprStmt(
           std::get<hir::StructuralSubroutineRef>(call->callee), *decl,
           std::nullopt, process.Module().TranslateType(inner.type));
     }
-    // System-subroutine tasks with an output arg ($fgets / $fread / $ferror)
-    // ride the same copy-out shape but build a RuntimeFileXxxCall MIR node
-    // instead of a user-function CallExpr.
+    bool suspends = false;
     if (const auto* sys_ref =
             std::get_if<hir::SystemSubroutineRef>(&call->callee)) {
       const auto& desc = support::LookupSystemSubroutine(sys_ref->id);
+      // System-subroutine tasks with an output arg ($fgets / $fread / $ferror)
+      // ride the copy-out shape but build a RuntimeFileXxxCall MIR node instead
+      // of a user-function CallExpr.
       if (const auto* file_info = support::GetFileIOInfo(desc)) {
         if (support::FileIOHasOutputArg(file_info->kind)) {
           return LowerFileIOSystemSubroutineCallStmt(
@@ -345,7 +348,25 @@ auto LowerExprStmt(
             process, frame, std::move(label), inner.span, *call, desc.name,
             *sformat_info);
       }
+      suspends = desc.suspends;
+    } else if (
+        const auto* struct_ref =
+            std::get_if<hir::StructuralSubroutineRef>(&call->callee)) {
+      suspends =
+          process.Scope()
+              .LookupHirSubroutine(struct_ref->hops, struct_ref->subroutine)
+              .kind == hir::SubroutineKind::kTask;
     }
+    auto call_or = process.LowerExpr(inner, frame);
+    if (!call_or) return std::unexpected(std::move(call_or.error()));
+    const mir::ExprId call_id = proc_scope.AddExpr(*std::move(call_or));
+    if (suspends) {
+      return mir::Stmt{
+          .label = std::move(label),
+          .data = mir::AwaitStmt{.awaitable = call_id}};
+    }
+    return mir::Stmt{
+        .label = std::move(label), .data = mir::ExprStmt{.expr = call_id}};
   }
   if (const auto* assign = std::get_if<hir::AssignExpr>(&inner.data)) {
     if (!assign->compound_op.has_value() &&

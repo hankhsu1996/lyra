@@ -929,8 +929,8 @@ auto RenderStringMethodCall(
   }
 }
 
-// LRM 15.5: Trigger and Triggered reach into RuntimeServices; Await is
-// suspending and must be wrapped in co_await.
+// LRM 15.5 named-event methods. Trigger and Triggered reach into
+// RuntimeServices, hence the services argument; Await takes none.
 auto RenderEventMethodCall(
     const RenderContext& ctx, const mir::CallExpr& call,
     const mir::EventMethodInfo& m) -> diag::Result<std::string> {
@@ -946,10 +946,8 @@ auto RenderEventMethodCall(
                             m.kind == mir::EventMethodKind::kTriggered)
                                ? "self->Services()"
                                : std::string{};
-  const std::string raw_call = std::format(
+  return std::format(
       "({}).{}({})", *receiver_or, EventMethodMemberName(m.kind), args);
-  if (mir::IsSuspending(m)) return "co_await " + raw_call;
-  return raw_call;
 }
 
 // LRM 7.5.2 / 7.5.3 / 7.12.2 / 7.12.3: dispatch on the receiver
@@ -1219,35 +1217,58 @@ auto RenderScopeMethodCall(
   throw InternalError("RenderScopeMethodCall: unknown ScopeMethodKind");
 }
 
+// The C++ runtime entry this backend realizes a system subroutine with. Pure
+// representation -- this backend's spelling of the stated id; a LIR -> LLVM
+// backend resolves the same id to its own entry. An id whose family is not yet
+// on the generic-call shape returns a feature diagnostic.
+auto RenderSystemSubroutineEntryName(const support::SystemSubroutineDesc& desc)
+    -> diag::Result<std::string_view> {
+  return std::visit(
+      Overloaded{
+          [](const support::TerminationSystemSubroutineInfo&)
+              -> diag::Result<std::string_view> {
+            return std::string_view{"lyra::runtime::Finish"};
+          },
+          [](const support::TimeSystemSubroutineInfo& time)
+              -> diag::Result<std::string_view> {
+            switch (time.kind) {
+              case support::TimeKind::kTime:
+                return std::string_view{"lyra::runtime::SimTimeInUnit"};
+              case support::TimeKind::kStime:
+                return std::string_view{"lyra::runtime::STimeInUnit"};
+              case support::TimeKind::kRealtime:
+                return std::string_view{"lyra::runtime::RealTimeInUnit"};
+            }
+            throw InternalError(
+                "RenderSystemSubroutineEntryName: unknown TimeKind");
+          },
+          [&](const auto&) -> diag::Result<std::string_view> {
+            return diag::Unsupported(
+                diag::DiagCode::kCppEmitExpressionFormNotImplemented,
+                std::format(
+                    "system subroutine '{}' is not yet lowered to a generic "
+                    "call",
+                    desc.name),
+                diag::UnsupportedCategory::kFeature);
+          },
+      },
+      desc.semantic);
+}
+
 // A system subroutine renders as one generic call: the runtime entry name
 // followed by every argument rendered uniformly. The engine handle is not
 // injected here -- it is `arguments[0]` (a `self.Services()` expression) and
-// renders like any other argument. Which runtime entry an id maps to, and
-// whether the call suspends the caller (a suspending effect must be co_awaited
-// at the site, since a plain function cannot suspend its calling coroutine),
-// are the backend's fixed realization of the stated id.
+// renders like any other argument.
 auto RenderSystemSubroutineCall(
     const RenderContext& ctx, const mir::CallExpr& call,
     const mir::SystemSubroutineCallee& callee) -> diag::Result<std::string> {
   const support::SystemSubroutineDesc& desc =
       support::LookupSystemSubroutine(callee.id);
-  std::string name;
-  bool suspends = false;
-  if (std::holds_alternative<support::TerminationSystemSubroutineInfo>(
-          desc.semantic)) {
-    name = "lyra::runtime::Finish";
-    suspends = true;
-  } else {
-    return diag::Unsupported(
-        diag::DiagCode::kCppEmitExpressionFormNotImplemented,
-        std::format(
-            "system subroutine '{}' is not yet lowered to a generic call",
-            desc.name),
-        diag::UnsupportedCategory::kFeature);
-  }
+  auto name_or = RenderSystemSubroutineEntryName(desc);
+  if (!name_or) return std::unexpected(std::move(name_or.error()));
 
-  std::string out = suspends ? "co_await " : "";
-  out += name;
+  std::string out;
+  out += *name_or;
   out += "(";
   for (std::size_t i = 0; i < call.arguments.size(); ++i) {
     auto arg_or = RenderExpr(ctx, ctx.Expr(call.arguments[i]));
@@ -1310,14 +1331,7 @@ auto RenderCallExpr(
             }
             std::string call_args{std::string_view{"self"}};
             if (!args.empty()) call_args += ", " + args;
-            std::string call = std::format("{}({})", decl.name, call_args);
-            // A task is a coroutine enabled with `co_await`; the only legal
-            // callers are process / task bodies, which are themselves
-            // coroutines (LRM 13.4 b forbids a function enabling a task).
-            if (decl.kind == mir::SubroutineKind::kTask) {
-              return "co_await " + std::move(call);
-            }
-            return call;
+            return std::format("{}({})", decl.name, call_args);
           },
           [&](const mir::BuiltinMethodCallee& b) -> diag::Result<std::string> {
             return std::visit(

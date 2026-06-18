@@ -183,6 +183,13 @@ struct SystemSubroutineDesc {
   ReturnConvention result_conv;
   ArgCountPolicy arg_policy;
   SystemSubroutineSemantic semantic;
+  // Invoking this subroutine suspends the calling process ($finish suspends and
+  // never resumes; the engine drops the process on the next dispatch, LRM
+  // 20.2). Stated as a fact so HIR-to-MIR lowers a suspending call to a
+  // suspension point (`mir::AwaitStmt`) rather than inferring it from the
+  // subroutine's semantic kind (mir.md invariant 10); each backend then
+  // realizes the await in its target (C++ `co_await`, LLVM's own mechanism).
+  bool suspends = false;
 };
 
 namespace detail {
@@ -422,6 +429,7 @@ inline constexpr std::array kSystemSubroutines = {
         .semantic =
             TerminationSystemSubroutineInfo{
                 .kind = TerminationKind::kFinish, .default_level = 1},
+        .suspends = true,
     },
     SystemSubroutineDesc{
         .id = SystemSubroutineId{17},
