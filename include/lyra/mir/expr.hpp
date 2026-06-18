@@ -15,7 +15,6 @@
 #include "lyra/mir/integral_constant.hpp"
 #include "lyra/mir/runtime_diagnostic.hpp"
 #include "lyra/mir/runtime_file_io.hpp"
-#include "lyra/mir/runtime_finish.hpp"
 #include "lyra/mir/runtime_print.hpp"
 #include "lyra/mir/runtime_scan.hpp"
 #include "lyra/mir/runtime_sformat.hpp"
@@ -134,14 +133,14 @@ struct CallExpr {
 };
 
 using RuntimeCall = std::variant<
-    RuntimePrintCall, RuntimeDiagnosticCall, RuntimeFinishCall,
-    RuntimeSubmitObservedCall, RuntimeSubmitNbaCall, RuntimeSubmitPostponedCall,
-    RuntimeFileOpenCall, RuntimeFileCloseCall, RuntimeFileGetcCall,
-    RuntimeFileUngetcCall, RuntimeFileGetsCall, RuntimeFileReadCall,
-    RuntimeFileSeekCall, RuntimeFileRewindCall, RuntimeFileTellCall,
-    RuntimeFileEofCall, RuntimeFileErrorCall, RuntimeFileFlushCall,
-    RuntimeScanCall, RuntimeSFormatCall, RuntimeTimeCall,
-    RuntimeSetTimeFormatCall, RuntimePrintTimescaleCall>;
+    RuntimePrintCall, RuntimeDiagnosticCall, RuntimeSubmitObservedCall,
+    RuntimeSubmitNbaCall, RuntimeSubmitPostponedCall, RuntimeFileOpenCall,
+    RuntimeFileCloseCall, RuntimeFileGetcCall, RuntimeFileUngetcCall,
+    RuntimeFileGetsCall, RuntimeFileReadCall, RuntimeFileSeekCall,
+    RuntimeFileRewindCall, RuntimeFileTellCall, RuntimeFileEofCall,
+    RuntimeFileErrorCall, RuntimeFileFlushCall, RuntimeScanCall,
+    RuntimeSFormatCall, RuntimeTimeCall, RuntimeSetTimeFormatCall,
+    RuntimePrintTimescaleCall>;
 
 struct RuntimeCallExpr {
   RuntimeCall call;
@@ -246,6 +245,23 @@ struct Expr {
     ExprId target, ExprId value, TypeId type) -> Expr {
   return Expr{
       .data = AssignExpr{.target = target, .value = value}, .type = type};
+}
+
+// `self.Services()` -- reaches the engine facade from the scope handle.
+// `self` is the receiver ExprId; `services` is ServicesType. The caller does
+// the AddExpr. Every runtime-effect call threads the result as its engine
+// handle (docs/decisions/runtime-effects-as-generic-calls.md).
+[[nodiscard]] inline auto MakeServicesCallExpr(ExprId self, TypeId services)
+    -> Expr {
+  return Expr{
+      .data =
+          CallExpr{
+              .callee =
+                  BuiltinMethodCallee{
+                      .method =
+                          ScopeMethodInfo{.kind = ScopeMethodKind::kServices}},
+              .arguments = {self}},
+      .type = services};
 }
 
 }  // namespace lyra::mir

@@ -17,7 +17,6 @@
 #include "lyra/mir/expr.hpp"
 #include "lyra/mir/runtime_diagnostic.hpp"
 #include "lyra/mir/runtime_file_io.hpp"
-#include "lyra/mir/runtime_finish.hpp"
 #include "lyra/mir/runtime_print.hpp"
 #include "lyra/mir/runtime_submit.hpp"
 #include "lyra/mir/runtime_timescale.hpp"
@@ -207,12 +206,6 @@ auto RenderRuntimePrintCall(
   return out;
 }
 
-auto RenderRuntimeFinishCall(const mir::RuntimeFinishCall& call)
-    -> std::string {
-  return std::format(
-      "co_await lyra::runtime::Finish(self->Services(), {})", call.level);
-}
-
 auto RenderRuntimeDiagnosticSeverity(mir::DiagnosticSeverity s)
     -> std::string_view {
   switch (s) {
@@ -286,9 +279,6 @@ auto RenderRuntimeCallExpr(
           [&](const mir::RuntimeDiagnosticCall& dc)
               -> diag::Result<std::string> {
             return RenderRuntimeDiagnosticCall(ctx, dc);
-          },
-          [&](const mir::RuntimeFinishCall& fc) -> diag::Result<std::string> {
-            return RenderRuntimeFinishCall(fc);
           },
           [&](const mir::RuntimeSubmitObservedCall& sc)
               -> diag::Result<std::string> {

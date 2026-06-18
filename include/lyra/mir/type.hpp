@@ -29,6 +29,7 @@ enum class TypeKind {
   kExternalUnitObject,
   kScope,
   kSelf,
+  kServices,
   kPointer,
   kVector,
   kExternalRef,
@@ -154,6 +155,14 @@ struct SelfType {
   auto operator==(const SelfType&) const -> bool = default;
 };
 
+// The engine facade `lyra::runtime::RuntimeServices`. A callable body reaches
+// it from `self` through the `Services` scope method; it is the engine handle
+// every runtime-effect call threads as a plain argument
+// (docs/decisions/runtime-effects-as-generic-calls.md).
+struct ServicesType {
+  auto operator==(const ServicesType&) const -> bool = default;
+};
+
 enum class PointerOwnership {
   kUnique,
   kShared,
@@ -209,7 +218,8 @@ using TypeData = std::variant<
     PackedArrayType, EnumType, UnpackedArrayType, DynamicArrayType, QueueType,
     AssociativeArrayType, StringType, EventType, RealType, ShortRealType,
     RealTimeType, ChandleType, VoidType, ObjectType, ExternalUnitObjectType,
-    ScopeType, SelfType, PointerType, VectorType, ExternalRefType>;
+    ScopeType, SelfType, ServicesType, PointerType, VectorType,
+    ExternalRefType>;
 
 struct Type {
   TypeData data;

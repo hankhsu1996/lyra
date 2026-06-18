@@ -178,6 +178,7 @@ class MirDumper {
             },
             [](const ScopeType&) -> std::string { return "Scope"; },
             [](const SelfType&) -> std::string { return "Self"; },
+            [](const ServicesType&) -> std::string { return "Services"; },
             [](const PointerType& p) -> std::string {
               switch (p.ownership) {
                 case PointerOwnership::kUnique:
@@ -396,6 +397,11 @@ class MirDumper {
                       [](const IteratorMethodInfo& m) -> std::string {
                         return std::format(
                             "IteratorMethodInfo[kind={}]",
+                            static_cast<int>(m.kind));
+                      },
+                      [](const ScopeMethodInfo& m) -> std::string {
+                        return std::format(
+                            "ScopeMethodInfo[kind={}]",
                             static_cast<int>(m.kind));
                       },
                   },
@@ -780,9 +786,6 @@ class MirDumper {
                   },
                   [&](const RuntimeDiagnosticCall& dc) {
                     DumpRuntimeDiagnosticCallItems(dc, scope);
-                  },
-                  [&](const RuntimeFinishCall& fc) {
-                    Line(std::format("RuntimeFinishCall level={}", fc.level));
                   },
                   [&](const RuntimeSubmitObservedCall& sc) {
                     Line(

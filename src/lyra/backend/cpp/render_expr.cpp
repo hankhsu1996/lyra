@@ -27,6 +27,7 @@
 #include "lyra/mir/integral_constant.hpp"
 #include "lyra/mir/type.hpp"
 #include "lyra/mir/unary_op.hpp"
+#include "lyra/support/system_subroutine.hpp"
 
 namespace lyra::backend::cpp {
 
@@ -1128,17 +1129,75 @@ auto RenderValueMethodCall(
   throw InternalError("RenderValueMethodCall: unknown kind");
 }
 
+// `self.Services()` -- reaches the engine facade from the scope handle. The
+// receiver (arguments[0]) is the `self` pointer, so the call is `->`. This is
+// the engine handle every runtime-effect call threads as a plain argument.
+auto RenderScopeMethodCall(
+    const RenderContext& ctx, const mir::CallExpr& call,
+    const mir::ScopeMethodInfo& m) -> diag::Result<std::string> {
+  if (call.arguments.empty()) {
+    throw InternalError(
+        "RenderScopeMethodCall: scope method expects a receiver argument");
+  }
+  auto receiver_or = RenderExpr(ctx, ctx.Expr(call.arguments[0]));
+  if (!receiver_or) {
+    return std::unexpected(std::move(receiver_or.error()));
+  }
+  switch (m.kind) {
+    case mir::ScopeMethodKind::kServices:
+      return std::format("({})->Services()", *receiver_or);
+  }
+  throw InternalError("RenderScopeMethodCall: unknown ScopeMethodKind");
+}
+
+// A system subroutine renders as one generic call: the runtime entry name
+// followed by every argument rendered uniformly. The engine handle is not
+// injected here -- it is `arguments[0]` (a `self.Services()` expression) and
+// renders like any other argument. Which runtime entry an id maps to, and
+// whether the call suspends the caller (a suspending effect must be co_awaited
+// at the site, since a plain function cannot suspend its calling coroutine),
+// are the backend's fixed realization of the stated id.
+auto RenderSystemSubroutineCall(
+    const RenderContext& ctx, const mir::CallExpr& call,
+    const mir::SystemSubroutineCallee& callee) -> diag::Result<std::string> {
+  const support::SystemSubroutineDesc& desc =
+      support::LookupSystemSubroutine(callee.id);
+  std::string name;
+  bool suspends = false;
+  if (std::holds_alternative<support::TerminationSystemSubroutineInfo>(
+          desc.semantic)) {
+    name = "lyra::runtime::Finish";
+    suspends = true;
+  } else {
+    return diag::Unsupported(
+        diag::DiagCode::kCppEmitExpressionFormNotImplemented,
+        std::format(
+            "system subroutine '{}' is not yet lowered to a generic call",
+            desc.name),
+        diag::UnsupportedCategory::kFeature);
+  }
+
+  std::string out = suspends ? "co_await " : "";
+  out += name;
+  out += "(";
+  for (std::size_t i = 0; i < call.arguments.size(); ++i) {
+    auto arg_or = RenderExpr(ctx, ctx.Expr(call.arguments[i]));
+    if (!arg_or) return std::unexpected(std::move(arg_or.error()));
+    if (i != 0) out += ", ";
+    out += *std::move(arg_or);
+  }
+  out += ")";
+  return out;
+}
+
 auto RenderCallExpr(
     const RenderContext& ctx, const mir::CallExpr& call,
     mir::TypeId result_type) -> diag::Result<std::string> {
   return std::visit(
       Overloaded{
-          [](const mir::SystemSubroutineCallee&) -> diag::Result<std::string> {
-            return diag::Unsupported(
-                diag::DiagCode::kCppEmitExpressionFormNotImplemented,
-                "system subroutine call as expression is not yet implemented "
-                "in cpp emit",
-                diag::UnsupportedCategory::kFeature);
+          [&](const mir::SystemSubroutineCallee& s)
+              -> diag::Result<std::string> {
+            return RenderSystemSubroutineCall(ctx, call, s);
           },
           [&](const mir::StructuralSubroutineRef& ref)
               -> diag::Result<std::string> {
@@ -1226,6 +1285,9 @@ auto RenderCallExpr(
                           "backend (LRM 7.12.4 -- HIR -> MIR should have "
                           "rewritten `item.index` to a ProceduralVarRef on "
                           "the closure parameter binding)");
+                    },
+                    [&](const mir::ScopeMethodInfo& m) {
+                      return RenderScopeMethodCall(ctx, call, m);
                     },
                 },
                 b.method);

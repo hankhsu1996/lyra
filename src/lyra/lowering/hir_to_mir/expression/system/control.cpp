@@ -14,8 +14,9 @@
 #include "lyra/hir/primary.hpp"
 #include "lyra/hir/procedural_body.hpp"
 #include "lyra/lowering/hir_to_mir/process_lowerer.hpp"
+#include "lyra/lowering/hir_to_mir/walk_frame.hpp"
+#include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/expr.hpp"
-#include "lyra/mir/runtime_finish.hpp"
 #include "lyra/support/system_subroutine.hpp"
 
 namespace lyra::lowering::hir_to_mir {
@@ -34,10 +35,25 @@ auto TryExtractLiteralInt(const hir::Expr& expr)
   return static_cast<std::int64_t>(c.value_words[0]);
 }
 
+// Builds the `self.Services()` argument: a `ProceduralVarRef` to `self`
+// (mir.md invariant 11) wrapped in the `Services` scope-method call. Every
+// runtime-effect call threads its result as the engine handle.
+auto BuildServicesArg(const ProcessLowerer& process, const WalkFrame& frame)
+    -> mir::ExprId {
+  auto& body = *frame.current_procedural_scope;
+  const auto& builtins = process.Module().Unit().builtins;
+  const mir::ExprId self_id = body.AddExpr(
+      mir::MakeProceduralVarRefExpr(
+          frame.procedural_depth - frame.self_decl_depth, *frame.self_binding,
+          builtins.self_pointer));
+  return body.AddExpr(mir::MakeServicesCallExpr(self_id, builtins.services));
+}
+
 }  // namespace
 
 auto LowerFinishSystemSubroutineCall(
-    const ProcessLowerer& process, const hir::CallExpr& call,
+    const ProcessLowerer& process, const WalkFrame& frame,
+    const hir::CallExpr& call, support::SystemSubroutineId id,
     std::string_view name, const support::TerminationSystemSubroutineInfo& info,
     diag::SourceSpan span) -> diag::Result<mir::Expr> {
   const auto& hir_proc = process.HirBody();
@@ -65,10 +81,16 @@ auto LowerFinishSystemSubroutineCall(
     }
     level = static_cast<int>(*literal);
   }
+  const auto& builtins = process.Module().Unit().builtins;
+  const mir::ExprId services_id = BuildServicesArg(process, frame);
+  const mir::ExprId level_id = frame.current_procedural_scope->AddExpr(
+      mir::MakeInt32Literal(builtins.int32, static_cast<std::int64_t>(level)));
   return mir::Expr{
       .data =
-          mir::RuntimeCallExpr{.call = mir::RuntimeFinishCall{.level = level}},
-      .type = process.Module().Unit().builtins.void_type};
+          mir::CallExpr{
+              .callee = mir::SystemSubroutineCallee{.id = id},
+              .arguments = {services_id, level_id}},
+      .type = builtins.void_type};
 }
 
 }  // namespace lyra::lowering::hir_to_mir

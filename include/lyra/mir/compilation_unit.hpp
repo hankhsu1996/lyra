@@ -27,6 +27,7 @@ struct BuiltinMirTypes {
   TypeId realtime;
   TypeId time;
   TypeId self_pointer;
+  TypeId services;
 };
 
 struct CompilationUnit {
@@ -68,6 +69,7 @@ struct CompilationUnit {
                 TypeData{PointerType{
                     .pointee = AddType(TypeData{SelfType{}}),
                     .ownership = PointerOwnership::kBorrowed}}),
+            .services = AddType(TypeData{ServicesType{}}),
         } {
   }
 
