@@ -1,0 +1,14 @@
+id: cpp.queue_append
+tags: [cpp_run]
+input:
+  command: [run, cpp]
+  project: false
+  top: Top
+  files: [main.sv]
+expect:
+  exit: 0
+  variables:
+    q: [2, 20, 8, 4, 5]
+    last: 5
+    oob_read: 0
+    size_after: 5

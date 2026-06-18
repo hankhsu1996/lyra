@@ -213,6 +213,83 @@ auto UnfoldHirRangeBoundsForUnpacked(
       bounds);
 }
 
+struct QueueSliceBounds {
+  mir::ExprId lo;
+  mir::ExprId hi;
+};
+
+// LRM 7.10.1 queue slice low / high indices. The three source bound forms
+// differ only in how they derive them: `q[a:b]` is `(a, b)`, `q[base+:w]` is
+// `(base, base+w-1)`, and `q[base-:w]` is `(base-w+1, base)`. The width is a
+// constant but is left as an expression -- the runtime `Slice` clamps either
+// bound, so no folding is required here.
+template <typename LowerOne>
+auto QueueSliceLoHi(
+    const ModuleLowerer& module, mir::ProceduralScope& proc_scope,
+    const hir::RangeBounds& bounds, LowerOne lower_one)
+    -> diag::Result<QueueSliceBounds> {
+  const mir::TypeId int32_type = module.Unit().builtins.int32;
+  auto binop = [&](mir::ExprId lhs, mir::ExprId rhs,
+                   mir::BinaryOp op) -> mir::ExprId {
+    const auto type = proc_scope.GetExpr(lhs).type;
+    return proc_scope.AddExpr(
+        mir::Expr{
+            .data = mir::BinaryExpr{.op = op, .lhs = lhs, .rhs = rhs},
+            .type = type});
+  };
+  auto width_minus_one = [&](mir::ExprId width) -> mir::ExprId {
+    const auto one = proc_scope.AddExpr(mir::MakeInt32Literal(int32_type, 1));
+    return binop(width, one, mir::BinaryOp::kSub);
+  };
+  return std::visit(
+      Overloaded{
+          [&](const hir::RangeConstantBounds& b)
+              -> diag::Result<QueueSliceBounds> {
+            auto lo = lower_one(b.msb_expr);
+            if (!lo) return std::unexpected(std::move(lo.error()));
+            auto hi = lower_one(b.lsb_expr);
+            if (!hi) return std::unexpected(std::move(hi.error()));
+            return QueueSliceBounds{.lo = *lo, .hi = *hi};
+          },
+          [&](const hir::RangeIndexedUpBounds& b)
+              -> diag::Result<QueueSliceBounds> {
+            auto base = lower_one(b.base_index);
+            if (!base) return std::unexpected(std::move(base.error()));
+            auto width = lower_one(b.width);
+            if (!width) return std::unexpected(std::move(width.error()));
+            const auto hi =
+                binop(*base, width_minus_one(*width), mir::BinaryOp::kAdd);
+            return QueueSliceBounds{.lo = *base, .hi = hi};
+          },
+          [&](const hir::RangeIndexedDownBounds& b)
+              -> diag::Result<QueueSliceBounds> {
+            auto base = lower_one(b.base_index);
+            if (!base) return std::unexpected(std::move(base.error()));
+            auto width = lower_one(b.width);
+            if (!width) return std::unexpected(std::move(width.error()));
+            const auto lo =
+                binop(*base, width_minus_one(*width), mir::BinaryOp::kSub);
+            return QueueSliceBounds{.lo = lo, .hi = *base};
+          },
+      },
+      bounds);
+}
+
+auto BuildQueueSliceCall(
+    mir::ExprId base, const QueueSliceBounds& bounds, mir::TypeId result_type)
+    -> mir::Expr {
+  return mir::Expr{
+      .data =
+          mir::CallExpr{
+              .callee =
+                  mir::BuiltinMethodCallee{
+                      .method =
+                          mir::QueueMethodInfo{
+                              .kind = mir::QueueMethodKind::kSlice}},
+              .arguments = {base, bounds.lo, bounds.hi}},
+      .type = result_type};
+}
+
 }  // namespace
 
 auto LowerHirElementSelectExprProc(
@@ -221,17 +298,34 @@ auto LowerHirElementSelectExprProc(
   const auto& module = process.Module();
   const auto& hir_process = process.HirBody();
   auto& proc_scope = *frame.current_procedural_scope;
+  const bool is_write = frame.is_lvalue_target;
+  const WalkFrame sub_frame = frame.WithLvalueTarget(false);
   const auto& hir_base = hir_process.exprs.at(sel.base_value.value);
-  auto base_or = process.LowerExpr(hir_base, frame);
+  auto base_or = process.LowerExpr(hir_base, sub_frame);
   if (!base_or) return std::unexpected(std::move(base_or.error()));
   const mir::ExprId base_id = proc_scope.AddExpr(*std::move(base_or));
 
   const auto& hir_idx = hir_process.exprs.at(sel.index.value);
-  auto idx_or = process.LowerExpr(hir_idx, frame);
+  auto idx_or = process.LowerExpr(hir_idx, sub_frame);
   if (!idx_or) return std::unexpected(std::move(idx_or.error()));
   mir::ExprId idx_id = proc_scope.AddExpr(*std::move(idx_or));
 
   const auto& hir_base_ty = module.Hir().GetType(hir_base.type);
+  // LRM 7.10.1: a queue has no native indexing expression -- `q[i]` realizes as
+  // a built-in method call. A write target takes the append-aware `WriteRef`, a
+  // read the default-on-miss `ElementAt` (the index stays a plain argument).
+  if (std::holds_alternative<hir::QueueType>(hir_base_ty.data)) {
+    const auto kind = is_write ? mir::QueueMethodKind::kWriteRef
+                               : mir::QueueMethodKind::kElementAt;
+    return mir::Expr{
+        .data =
+            mir::CallExpr{
+                .callee =
+                    mir::BuiltinMethodCallee{
+                        .method = mir::QueueMethodInfo{.kind = kind}},
+                .arguments = {base_id, idx_id}},
+        .type = result_type};
+  }
   if (const auto* ua = std::get_if<hir::UnpackedArrayType>(&hir_base_ty.data)) {
     idx_id = WrapUnpackedIndex(
         module, proc_scope, ua->dim, idx_id,
@@ -264,6 +358,13 @@ auto LowerHirRangeSelectExprProc(
     return proc_scope.AddExpr(*std::move(lowered));
   };
   const auto& hir_base_ty = module.Hir().GetType(hir_base.type);
+  // LRM 7.10.1: a queue slice is a built-in method call; all three bound forms
+  // (`a:b`, `base+:w`, `base-:w`) reduce to a low / high pair fed to `Slice`.
+  if (std::holds_alternative<hir::QueueType>(hir_base_ty.data)) {
+    auto bounds_or = QueueSliceLoHi(module, proc_scope, sel.bounds, lower_one);
+    if (!bounds_or) return std::unexpected(std::move(bounds_or.error()));
+    return BuildQueueSliceCall(base_id, *bounds_or, result_type);
+  }
   auto unfolded = [&]() {
     if (const auto* ua =
             std::get_if<hir::UnpackedArrayType>(&hir_base_ty.data)) {
@@ -340,6 +441,9 @@ auto LowerHirElementSelectExprStructural(
   if (!idx_or) return std::unexpected(std::move(idx_or.error()));
   mir::ExprId idx_id = proc_scope.AddExpr(*std::move(idx_or));
 
+  // A queue element select cannot reach the structural path: slang forbids
+  // referencing an element of a dynamic-typed variable outside a procedural
+  // context, so no queue method-call lowering is needed here.
   const auto& hir_base_ty = module.Hir().GetType(hir_base.type);
   if (const auto* ua = std::get_if<hir::UnpackedArrayType>(&hir_base_ty.data)) {
     idx_id = WrapUnpackedIndex(
@@ -369,6 +473,9 @@ auto LowerHirRangeSelectExprStructural(
     if (!lowered) return std::unexpected(std::move(lowered.error()));
     return proc_scope.AddExpr(*std::move(lowered));
   };
+  // A queue slice cannot reach the structural path: slang forbids referencing
+  // an element of a dynamic-typed variable outside a procedural context, so a
+  // queue base never appears here. Only packed and fixed-unpacked slices do.
   const auto& hir_base_ty = module.Hir().GetType(hir_base.type);
   auto unfolded = [&]() {
     if (const auto* ua =

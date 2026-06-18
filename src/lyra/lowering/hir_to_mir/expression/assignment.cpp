@@ -187,7 +187,8 @@ auto LowerHirAssignExprProc(
   if (!rhs_or) return std::unexpected(std::move(rhs_or.error()));
   const mir::TypeId rhs_type = (*rhs_or).type;
   const mir::ExprId rhs_id = proc_scope.AddExpr(*std::move(rhs_or));
-  auto lhs_or = process.LowerExpr(hir_process.exprs.at(a.lhs.value), frame);
+  auto lhs_or = process.LowerExpr(
+      hir_process.exprs.at(a.lhs.value), frame.WithLvalueTarget(true));
   if (!lhs_or) return std::unexpected(std::move(lhs_or.error()));
   const mir::ExprId lhs_id = proc_scope.AddExpr(*std::move(lhs_or));
 

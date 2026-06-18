@@ -116,8 +116,17 @@ auto BuildDefaultValueExpr(
           [&](const mir::QueueType& q) -> mir::Expr {
             const mir::ExprId element_default = scope.AddExpr(
                 BuildDefaultValueExpr(module, frame, q.element_type));
+            std::vector<mir::ExprId> args = {element_default};
+            // LRM 7.10.5: a bounded queue `int q[$:N]` carries its max index N
+            // as a second construction argument so the runtime can enforce it.
+            if (q.max_bound.has_value()) {
+              args.push_back(scope.AddExpr(
+                  mir::MakeInt32Literal(
+                      module.Unit().builtins.int32,
+                      static_cast<std::int64_t>(*q.max_bound))));
+            }
             return mir::Expr{
-                .data = mir::ConstructExpr{.args = {element_default}},
+                .data = mir::ConstructExpr{.args = std::move(args)},
                 .type = type};
           },
           // LRM Table 6-7: an associative array's default is empty. The element
@@ -187,9 +196,19 @@ auto BuildArrayConstructExpr(
       mir::Expr{
           .data = mir::ArrayLiteralExpr{.elements = std::move(elements)},
           .type = array_type});
+  std::vector<mir::ExprId> args = {element_default, list_id};
+  // LRM 7.10.5: a bounded queue initialized by an assignment pattern still
+  // carries its max index, so the bound rides as a third construction argument
+  // and the runtime trims an over-long initializer.
+  if (const auto* q = std::get_if<mir::QueueType>(&ty.data);
+      q != nullptr && q->max_bound.has_value()) {
+    args.push_back(scope.AddExpr(
+        mir::MakeInt32Literal(
+            module.Unit().builtins.int32,
+            static_cast<std::int64_t>(*q->max_bound))));
+  }
   return mir::Expr{
-      .data = mir::ConstructExpr{.args = {element_default, list_id}},
-      .type = array_type};
+      .data = mir::ConstructExpr{.args = std::move(args)}, .type = array_type};
 }
 
 }  // namespace lyra::lowering::hir_to_mir

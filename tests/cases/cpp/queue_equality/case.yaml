@@ -1,0 +1,26 @@
+id: cpp.queue_equality
+tags: [cpp_run]
+input:
+  command: [run, cpp]
+  project: false
+  top: Top
+  files: [main.sv]
+expect:
+  exit: 0
+  variables:
+    eq_1d: 1
+    ne_1d: 0
+    eq_size_mismatch: 0
+    ne_size_mismatch: 1
+    eq_diff_val: 0
+    ne_diff_val: 1
+    eq_empty_empty: 1
+    ne_empty_empty: 0
+    eq_empty_nonempty: 0
+    eq_with_x: "1'bx"
+    ne_with_x: "1'bx"
+    ce_1d: 1
+    nce_1d: 0
+    ce_size_mismatch: 0
+    ce_x_match: 1
+    ce_x_mismatch: 0

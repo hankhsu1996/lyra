@@ -1065,13 +1065,35 @@ auto QueueMethodMemberName(mir::QueueMethodKind k) -> std::string_view {
       return "PushFront";
     case mir::QueueMethodKind::kPushBack:
       return "PushBack";
+    case mir::QueueMethodKind::kElementAt:
+      return "ElementAt";
+    case mir::QueueMethodKind::kWriteRef:
+      return "WriteRef";
+    case mir::QueueMethodKind::kSlice:
+      return "Slice";
   }
   throw InternalError("QueueMethodMemberName: unknown kind");
 }
 
-// LRM 7.10.2: every queue method except `Size` mutates the receiver.
+// The queue methods that write the receiver (LRM 7.10.2 insert / delete / pop /
+// push, and the LRM 7.10.1 element-write `WriteRef`) take the mutating receiver
+// path; the read accessors (`Size`, `ElementAt`, `Slice`) do not.
 auto QueueMethodMutatesReceiver(mir::QueueMethodKind k) -> bool {
-  return k != mir::QueueMethodKind::kSize;
+  switch (k) {
+    case mir::QueueMethodKind::kSize:
+    case mir::QueueMethodKind::kElementAt:
+    case mir::QueueMethodKind::kSlice:
+      return false;
+    case mir::QueueMethodKind::kInsert:
+    case mir::QueueMethodKind::kDelete:
+    case mir::QueueMethodKind::kPopFront:
+    case mir::QueueMethodKind::kPopBack:
+    case mir::QueueMethodKind::kPushFront:
+    case mir::QueueMethodKind::kPushBack:
+    case mir::QueueMethodKind::kWriteRef:
+      return true;
+  }
+  throw InternalError("QueueMethodMutatesReceiver: unknown kind");
 }
 
 // LRM 7.10.2 queue-native methods. The receiver is arguments[0] and any SV
@@ -1548,12 +1570,10 @@ auto RenderIndexedElementAccess(
   }
   if (!std::holds_alternative<mir::PackedArrayType>(base_ty.data) &&
       !std::holds_alternative<mir::UnpackedArrayType>(base_ty.data) &&
-      !std::holds_alternative<mir::DynamicArrayType>(base_ty.data) &&
-      !std::holds_alternative<mir::QueueType>(base_ty.data)) {
+      !std::holds_alternative<mir::DynamicArrayType>(base_ty.data)) {
     throw InternalError(
         "RenderIndexedElementAccess: base type must be PackedArrayType, "
-        "UnpackedArrayType, DynamicArrayType, QueueType, or "
-        "AssociativeArrayType");
+        "UnpackedArrayType, DynamicArrayType, or AssociativeArrayType");
   }
   return std::format("({}).ElementAt({})", base, idx);
 }
@@ -1627,10 +1647,17 @@ auto RenderLhsExpr(
             if (!ptr) return std::unexpected(std::move(ptr.error()));
             return "(*" + *ptr + ")" + std::string{mutate_adapter};
           },
+          [&](const mir::CallExpr& call) -> diag::Result<std::string> {
+            // LRM 7.10.1: a queue element write lowers to a `WriteRef` built-in
+            // method call that returns the element reference, so the call site
+            // is itself the assignable lvalue.
+            return RenderCallExpr(ctx, call, expr.type);
+          },
           [&](const auto&) -> diag::Result<std::string> {
             throw InternalError(
-                "RenderLhsExpr: expression form is not addressable; "
-                "ValidateAssignableProcExpr should have rejected it");
+                "RenderLhsExpr: expression form is not addressable; the "
+                "assignment target lowering should have produced an "
+                "addressable form");
           },
       },
       expr.data);
@@ -1944,13 +1971,48 @@ auto RenderClosureExpr(
          " {\n" + *body_or + "}";
 }
 
+// LRM 10.10 unpacked array concatenation into a queue. Each operand is spliced
+// (an unpacked container of the element type) or appended as a single element
+// (anything else); the empty `{}` is the empty queue. The result is unseeded --
+// the assignment destination keeps its own element shape (LRM 10.6.1) -- so no
+// element default is threaded.
+auto RenderQueueConcat(
+    const RenderContext& ctx, const mir::Type& result_ty,
+    const mir::ConcatExpr& c) -> diag::Result<std::string> {
+  const mir::TypeId elem_type_id =
+      std::get<mir::QueueType>(result_ty.data).element_type;
+  auto elem_cpp =
+      RenderTypeAsCpp(ctx.Unit(), ctx.StructuralScope(), elem_type_id);
+  if (!elem_cpp) return std::unexpected(std::move(elem_cpp.error()));
+  std::string out = "lyra::value::MakeQueueConcat<" + *elem_cpp + ">(";
+  for (std::size_t i = 0; i < c.operands.size(); ++i) {
+    const auto& op_expr = ctx.Expr(c.operands[i]);
+    const auto& op_ty = ctx.Unit().GetType(op_expr.type);
+    const bool spread =
+        std::holds_alternative<mir::QueueType>(op_ty.data) ||
+        std::holds_alternative<mir::DynamicArrayType>(op_ty.data) ||
+        std::holds_alternative<mir::UnpackedArrayType>(op_ty.data);
+    auto rendered =
+        spread ? RenderExprNatural(ctx, op_expr) : RenderExpr(ctx, op_expr);
+    if (!rendered) return std::unexpected(std::move(rendered.error()));
+    if (i != 0) out += ", ";
+    out += spread ? "lyra::value::QSpread(" + *rendered + ")"
+                  : "lyra::value::QElem(" + *rendered + ")";
+  }
+  out += ")";
+  return out;
+}
+
 auto RenderConcatExpr(
     const RenderContext& ctx, const mir::Expr& expr, const mir::ConcatExpr& c)
     -> diag::Result<std::string> {
+  const auto& result_ty = ctx.Unit().GetType(expr.type);
+  if (std::holds_alternative<mir::QueueType>(result_ty.data)) {
+    return RenderQueueConcat(ctx, result_ty, c);
+  }
   if (c.operands.empty()) {
     throw InternalError("RenderConcatExpr: hir lowering produced empty concat");
   }
-  const auto& result_ty = ctx.Unit().GetType(expr.type);
   const auto join = [&](std::string_view open, std::string_view sep,
                         std::string_view close) -> diag::Result<std::string> {
     std::string out{open};
