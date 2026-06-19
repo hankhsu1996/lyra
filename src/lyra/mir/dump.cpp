@@ -799,9 +799,6 @@ class MirDumper {
                   [&](const RuntimePrintCall& pc) {
                     DumpRuntimePrintCallItems(pc, scope);
                   },
-                  [&](const RuntimeDiagnosticCall& dc) {
-                    DumpRuntimeDiagnosticCallItems(dc, scope);
-                  },
                   [&](const RuntimeSubmitObservedCall& sc) {
                     Line(
                         std::format(
@@ -1149,25 +1146,6 @@ class MirDumper {
     Dedent();
   }
 
-  void DumpRuntimeDiagnosticCallItems(
-      const RuntimeDiagnosticCall& call, const ProceduralScope& enclosing) {
-    const std::string origin_text =
-        call.origin.has_value() ? std::format(
-                                      "{}:{}:{}", call.origin->file,
-                                      call.origin->line, call.origin->col)
-                                : std::string{"<none>"};
-    Line(
-        std::format(
-            "RuntimeDiagnosticCall severity={} origin={} items={}",
-            FormatMirDiagnosticSeverity(call.severity), origin_text,
-            call.items.size()));
-    Indent();
-    for (std::size_t i = 0; i < call.items.size(); ++i) {
-      DumpRuntimePrintItem(i, call.items[i], enclosing);
-    }
-    Dedent();
-  }
-
   void DumpRuntimePrintItem(
       std::size_t i, const RuntimePrintItem& item,
       const ProceduralScope& enclosing) {
@@ -1199,19 +1177,6 @@ class MirDumper {
             },
         },
         item);
-  }
-
-  static auto FormatMirDiagnosticSeverity(DiagnosticSeverity s)
-      -> std::string_view {
-    switch (s) {
-      case DiagnosticSeverity::kInfo:
-        return "kInfo";
-      case DiagnosticSeverity::kWarning:
-        return "kWarning";
-      case DiagnosticSeverity::kError:
-        return "kError";
-    }
-    throw InternalError("FormatMirDiagnosticSeverity: unknown severity");
   }
 
   static auto ForkJoinModeLabel(JoinMode mode) -> std::string_view {

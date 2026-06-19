@@ -13,7 +13,6 @@
 #include "lyra/mir/expr_id.hpp"
 #include "lyra/mir/inc_dec_op.hpp"
 #include "lyra/mir/integral_constant.hpp"
-#include "lyra/mir/runtime_diagnostic.hpp"
 #include "lyra/mir/runtime_print.hpp"
 #include "lyra/mir/runtime_scan.hpp"
 #include "lyra/mir/runtime_sformat.hpp"
@@ -132,9 +131,9 @@ struct CallExpr {
 };
 
 using RuntimeCall = std::variant<
-    RuntimePrintCall, RuntimeDiagnosticCall, RuntimeSubmitObservedCall,
-    RuntimeSubmitNbaCall, RuntimeSubmitPostponedCall, RuntimeScanCall,
-    RuntimeSFormatCall, RuntimeSetTimeFormatCall, RuntimePrintTimescaleCall>;
+    RuntimePrintCall, RuntimeSubmitObservedCall, RuntimeSubmitNbaCall,
+    RuntimeSubmitPostponedCall, RuntimeScanCall, RuntimeSFormatCall,
+    RuntimeSetTimeFormatCall, RuntimePrintTimescaleCall>;
 
 struct RuntimeCallExpr {
   RuntimeCall call;
