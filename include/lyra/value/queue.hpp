@@ -416,6 +416,13 @@ class Queue {
         PackedArray::Int(0), detail::ArrayUniqueIndex(data_, std::move(key))};
   }
 
+  // LRM 7.12.5 projection into a same-shape queue; `shield` seeds the result
+  // element type's canonical default.
+  template <typename F, typename U>
+  [[nodiscard]] auto Map(F closure, U shield) const -> Queue<U> {
+    return Queue<U>(std::move(shield), detail::ArrayMap(data_, closure));
+  }
+
  private:
   [[nodiscard]] auto IsInvalidIndex(const PackedArray& idx) const -> bool {
     if (idx.HasUnknown()) {

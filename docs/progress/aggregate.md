@@ -28,6 +28,10 @@ follow once dynamic array's storage and runtime conventions are settled and prov
 | DA6a | Done: method dispatch + no-`with` subset.                               |
 | DA6b | Done: `with` clause + iterator on sort / rsort / reduction methods.     |
 | DA6c | Done: locator family (find\*, min, max, unique\*).                      |
+| DA6d | Done: `map` projection (LRM 7.12.5) on the sequence containers.         |
+| DA6e | Open: `shuffle` (LRM 7.12.2); needs a seeded simulation RNG.            |
+| DA6f | Open: two-name iterator / index argument form (LRM 7.12.4).             |
+| DA6g | Open: `real` / `shortreal` / `string` as an unpacked-array element.     |
 | DA7  | Done: invalid-index handling.                                           |
 | Q1   | Done: type, element read/write, native methods, default, case-equality. |
 | Q2   | Done: operator surface (`$`, slice, concat, equality, bound, append).   |
@@ -109,8 +113,32 @@ The numeric IDs are stable references and do not imply execution order beyond DA
 
 - [x] DA6c -- The locator-family methods that return an index or element queue (`find` family,
       `min`, `max`, `unique`, `unique_index`), including the optional `with` clause for `min` /
-      `max` / `unique`. `shuffle()` (needs RNG model) and `map()` (SV2023, needs a version gate) are
-      standalone follow-ups.
+      `max` / `unique`. `shuffle()` (needs an RNG model) remains the standalone follow-up.
+
+- [x] DA6d -- The `map()` projection (LRM 7.12.5) with its mandatory `with` clause. Each element and
+      its index pass through the expression into a result whose shape and index type match the
+      receiver (dynamic array, queue, or fixed unpacked) and whose element type is the expression's
+      self-determined type, so it may differ from the source. An empty receiver yields an empty
+      result. A result element type that is itself a non-class value (`real`, `string`) lowers
+      correctly but is unusable until those types can be unpacked-array elements (see DA6g), the
+      same pre-existing gap that blocks `real` / `string` dynamic arrays generally.
+
+- [ ] DA6e -- `shuffle()` (LRM 7.12.2) on every unpacked container. Needs a seeded simulation RNG;
+      none exists yet (`$random` / `$urandom` are unimplemented), and that same RNG is the
+      foundation for those system functions. `shuffle` is the first array method that consumes
+      simulation state rather than being a pure function of its receiver, so it also introduces
+      threading that state into an array-method call.
+
+- [ ] DA6f -- The two-name iterator / index argument form of the LRM 7.12 family
+      (`a.method(item, idx) with (...)`, LRM 7.12.4), which renames the iterator and the index-query
+      method to avoid clashes with member names of the stored elements. Shared across find / sort /
+      map / reductions; none support it yet.
+
+- [ ] DA6g -- `real` / `shortreal` / `string` as an unpacked-array element (dynamic array, queue,
+      fixed unpacked). These value types do not satisfy the container-element contract -- canonical-
+      default reset and bit-identity change detection -- so `real []` / `string []` cannot be
+      declared, read, or produced as a `map()` result element today. Cross-cutting value-type gap,
+      also surfaced from `unpacked.md`; not specific to one container.
 
 - [x] DA7 -- Invalid-index handling (LRM 7.4.5). Read on an out-of-range index returns the element
       type's Table 7-1 default; write on an out-of-range index is a silent no-op; X / Z bits in the
@@ -146,8 +174,8 @@ optional right bound (`q[$:N]`).
       optional / mandatory `with` clause per LRM 7.12.1 -- 7.12.3 and the `item.index` iterator (LRM
       7.12.4). Locator methods return a queue of elements or of `int` per LRM 7.12.1; reduction
       result width follows the `with`-expression type. The semantics and the `with`-clause closure
-      are the same as for the dynamic-array receiver; `shuffle` and `map` remain the shared
-      follow-ups noted under DA6c.
+      are the same as for the dynamic-array receiver. The `map` projection (LRM 7.12.5) is shared
+      and done on a queue receiver too; `shuffle` remains the shared follow-up noted under DA6c.
 
 ## Associative Array
 
@@ -180,8 +208,9 @@ the lookup key and imposes an ordering.
 
 - [ ] A4 -- Associative-array literals with an optional default (LRM 7.9.11) and whole-array
       associative assignment (LRM 7.9.9); the wildcard `[*]`, class, and other user-defined index
-      families (LRM 7.8.1 / 7.8.3 / 7.8.5); and the locator-family methods that return an index
-      queue of the key type (LRM 7.12.1).
+      families (LRM 7.8.1 / 7.8.3 / 7.8.5); the locator-family methods that return an index queue of
+      the key type (LRM 7.12.1); and the `map` projection (LRM 7.12.5), whose result is a same-key
+      associative array.
 
 ## Cross-references
 
@@ -189,8 +218,9 @@ the lookup key and imposes an ordering.
   arrays), 7.5.2 (`size()`), 7.5.3 (`delete()`), 7.6 (Array assignments), 7.8 (Associative arrays),
   7.9 (Associative array methods), 7.10 (Queues), 7.11 (Array querying functions), 7.12 (Array
   manipulation methods), 7.12.1 (Locator), 7.12.2 (Ordering), 7.12.3 (Reduction), 7.12.4 (Iterator
-  index), 10.9 (Assignment patterns), 11.4.1 (Assignment operators), 11.4.5 (Equality operators),
-  Table 6-7 (Default initial values), Table 7-1 (Value read from a nonexistent array entry).
+  index), 7.12.5 (Mapping), 10.9 (Assignment patterns), 11.4.1 (Assignment operators), 11.4.5
+  (Equality operators), Table 6-7 (Default initial values), Table 7-1 (Value read from a nonexistent
+  array entry).
 - Archive items: `datatypes/general/*`.
 - Unblocks: `control-flow.md` C10 (foreach over dynamic / queue / associative subset).
 - Decision: `../decisions/runtime-shape-and-default-value.md` -- runtime shape is retained on
