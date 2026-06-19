@@ -5,6 +5,7 @@
 #include "lyra/base/time.hpp"
 #include "lyra/runtime/runtime_services.hpp"
 #include "lyra/value/packed_array.hpp"
+#include "lyra/value/real.hpp"
 
 namespace lyra::runtime {
 
@@ -52,11 +53,13 @@ inline auto STimeInUnit(
 // $realtime (LRM 20.3.3): the current time scaled to `unit_power` as a real,
 // keeping any fractional part.
 inline auto RealTimeInUnit(
-    RuntimeServices& services, const value::PackedArray& unit_power) -> double {
+    RuntimeServices& services, const value::PackedArray& unit_power)
+    -> value::Real {
   const auto power = static_cast<std::int8_t>(unit_power.ToInt64());
   const SimDuration divisor =
       TimeUnitDivisor(power, services.GlobalPrecisionPower());
-  return static_cast<double>(services.Now()) / static_cast<double>(divisor);
+  return value::Real{
+      static_cast<double>(services.Now()) / static_cast<double>(divisor)};
 }
 
 }  // namespace lyra::runtime

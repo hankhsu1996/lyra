@@ -21,8 +21,8 @@ void String::Bintoa(const PackedArray& i) {
   impl_ = std::format("{:b}", static_cast<std::uint32_t>(i.ToInt64()));
 }
 
-void String::Realtoa(double r) {
-  impl_ = std::format("{}", r);
+void String::Realtoa(const Real& r) {
+  impl_ = std::format("{}", r.Value());
 }
 
 }  // namespace lyra::value

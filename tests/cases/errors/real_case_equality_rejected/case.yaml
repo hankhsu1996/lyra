@@ -1,4 +1,4 @@
-id: errors.real_case_equality_unsupported
+id: errors.real_case_equality_rejected
 tags: [errors, diag]
 input:
   command: [emit, cpp]
@@ -10,7 +10,8 @@ expect:
   exit: 1
   stderr:
     contains:
-      - "unsupported:"
+      - "error:"
+      - "case equality"
       - "real"
     not_contains:
       - "internal error"

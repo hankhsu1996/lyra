@@ -156,9 +156,9 @@ auto RenderRealLiteralExpr(
     -> std::string {
   // `std::format` with `{:.{}g}` and precision=17 round-trips a double;
   // precision=9 round-trips a float (IEEE 754 minimum representable-pair
-  // widths). The trailing 'f' suffix on the float form keeps the C++ literal
-  // type matched to the destination `float` so overload resolution and
-  // initialization both land on the shortreal path.
+  // widths). The trailing 'f' suffix keeps the shortreal body a `float` literal
+  // so the wrapping `ShortReal{...}` constructs from a float, with no
+  // double -> float narrowing.
   //
   // `g` strips trailing zeros and the decimal point for whole-number values,
   // which would produce literals like `0f` or `42e3f` that the C++ lexer
@@ -175,7 +175,8 @@ auto RenderRealLiteralExpr(
   if (is_short) {
     body += "f";
   }
-  return body;
+  return std::format(
+      "lyra::value::{}{{{}}}", is_short ? "ShortReal" : "Real", body);
 }
 
 auto RenderStructuralParamExpr(
@@ -271,11 +272,10 @@ auto RenderBinaryOpString(
 auto RenderBinaryOpReal(
     mir::BinaryOp op, const std::string& lhs, const std::string& rhs,
     const mir::Type& result_ty) -> diag::Result<std::string> {
-  // LRM 11.3.1 + Table 11-1: arithmetic on real produces real; relational /
-  // logical / equality produce a 1-bit integral that the runtime sees as a
-  // PackedArray view. `std::pow` overload resolution picks (float, float) ->
-  // float and (double, double) -> double, matching LRM 11.3.1's result type
-  // for shortreal-only vs any-real expressions.
+  // LRM 11.3.1 + Table 11-1: arithmetic on real produces real; relational and
+  // equality return a 1-bit `PackedArray` directly from the `RealValue`
+  // operator. Logical operators reduce each operand to a host bool first, then
+  // re-shape into the result's integral type.
   switch (op) {
     case mir::BinaryOp::kAdd:
       return "(" + lhs + " + " + rhs + ")";
@@ -286,19 +286,19 @@ auto RenderBinaryOpReal(
     case mir::BinaryOp::kDiv:
       return "(" + lhs + " / " + rhs + ")";
     case mir::BinaryOp::kPower:
-      return "std::pow(" + lhs + ", " + rhs + ")";
+      return "(" + lhs + ").Pow(" + rhs + ")";
     case mir::BinaryOp::kLessThan:
-      return WrapBoolAsResultShape(result_ty, lhs + " < " + rhs);
+      return "(" + lhs + " < " + rhs + ")";
     case mir::BinaryOp::kLessEqual:
-      return WrapBoolAsResultShape(result_ty, lhs + " <= " + rhs);
+      return "(" + lhs + " <= " + rhs + ")";
     case mir::BinaryOp::kGreaterThan:
-      return WrapBoolAsResultShape(result_ty, lhs + " > " + rhs);
+      return "(" + lhs + " > " + rhs + ")";
     case mir::BinaryOp::kGreaterEqual:
-      return WrapBoolAsResultShape(result_ty, lhs + " >= " + rhs);
+      return "(" + lhs + " >= " + rhs + ")";
     case mir::BinaryOp::kEquality:
-      return WrapBoolAsResultShape(result_ty, lhs + " == " + rhs);
+      return "(" + lhs + " == " + rhs + ")";
     case mir::BinaryOp::kInequality:
-      return WrapBoolAsResultShape(result_ty, lhs + " != " + rhs);
+      return "(" + lhs + " != " + rhs + ")";
     case mir::BinaryOp::kLogicalAnd:
       return WrapBoolAsResultShape(
           result_ty, "bool(" + lhs + ") && bool(" + rhs + ")");
@@ -535,10 +535,10 @@ auto RenderConditionalExpr(
   return "(" + *cond_or + " ? " + *then_or + " : " + *else_or + ")";
 }
 
-// SV LRM 6.12.1 + 6.22: real-family conversions are pure float-precision
-// reshape. `realtime` is a synonym for `real`, so both share `double`. The
-// only emit-time work is on shortreal <-> real: insert an explicit
-// `static_cast` so the C++ compiler does not flag the narrowing direction.
+// SV LRM 6.12.1 + 6.22: real-family conversions are a pure float-precision
+// reshape. `realtime` is a synonym for `real`, so both are `lyra::value::Real`
+// and need no conversion; only a `shortreal` <-> `real` change crosses the two
+// `RealValue` instantiations, expressed through the cross-precision ctor.
 auto RenderRealConversion(
     std::string operand, const mir::Type& src_ty, const mir::Type& dst_ty)
     -> std::string {
@@ -548,7 +548,7 @@ auto RenderRealConversion(
     return operand;
   }
   return std::format(
-      "static_cast<{}>({})", dst_is_short ? "float" : "double", operand);
+      "lyra::value::{}{{{}}}", dst_is_short ? "ShortReal" : "Real", operand);
 }
 
 // Integral-to-integral conversions reshape a PackedArray to a possibly-
@@ -584,27 +584,28 @@ auto RenderIntegralConversion(
 
 // LRM 6.12.1: integer-to-real implicit conversion treats X/Z bits as 0.
 // `PackedArray::ToInt64` already collapses X/Z bits to 0 (packed_array.hpp
-// docstring), so a plain `static_cast` to the destination real precision is
-// the full conversion. `shortreal` casts to `float`; `real` and `realtime`
-// (LRM 6.12 synonyms) cast to `double`.
+// docstring), so the integer value feeds `RealValue::FromInt64`. `shortreal`
+// builds a `ShortReal`; `real` and `realtime` (LRM 6.12 synonyms) build a
+// `Real`.
 auto RenderIntegralToRealConversion(
     std::string operand, const mir::Type& dst_ty) -> std::string {
-  const auto* cpp_ty =
-      dst_ty.Kind() == mir::TypeKind::kShortReal ? "float" : "double";
-  return std::format("static_cast<{}>(({}).ToInt64())", cpp_ty, operand);
+  const auto* real_ty =
+      dst_ty.Kind() == mir::TypeKind::kShortReal ? "ShortReal" : "Real";
+  return std::format(
+      "lyra::value::{}::FromInt64(({}).ToInt64())", real_ty, operand);
 }
 
 // LRM 6.12.1: real-to-integer implicit conversion rounds the real to the
 // nearest integer with ties rounded away from zero (35.5 -> 36, -1.5 -> -2).
-// `std::llround` is the standard library function with exactly that rounding
-// rule; it returns `long long` (>= 64 bits), which feeds `PackedArray::FromInt`
-// to land the rounded value into the destination shape. Destination widths >
-// 64 bits would need a wide-int conversion path; that is currently caught by
-// `FromInt`'s own width invariant.
+// `RealValue::Round` applies that rule (via `std::llround`) and returns a
+// `long long` (>= 64 bits), which feeds `PackedArray::FromInt` to land the
+// rounded value into the destination shape. Destination widths > 64 bits would
+// need a wide-int conversion path; that is currently caught by `FromInt`'s own
+// width invariant.
 auto RenderRealToIntegralConversion(
     std::string operand, const mir::PackedArrayType& dst_pa) -> std::string {
   return std::format(
-      "lyra::value::PackedArray::FromInt(std::llround({}), {})", operand,
+      "lyra::value::PackedArray::FromInt(({}).Round(), {})", operand,
       RenderPackedArrayCtorArgs(dst_pa));
 }
 

@@ -43,15 +43,17 @@ namespace {
 
 // Wrap a value type in `ObservableType` iff it is a SystemVerilog value-storage
 // data type (LRM 6.5 / 7.x). Handle / wrapper types (pointer / vector / object
-// / external ref / external unit object), named events (LRM 15 -- carry their
-// own subscribe mechanism), and presently `real` / `shortreal` / `realtime`
-// (deferred until `lyra::value::Real` lands -- see
-// `docs/decisions/value-type-concepts.md`) pass through unwrapped.
+// / external ref / external unit object) and named events (LRM 15 -- carry
+// their own subscribe mechanism) pass through unwrapped. See
+// `docs/decisions/value-type-concepts.md`.
 auto MaybeWrapObservable(ModuleLowerer& module, mir::TypeId t) -> mir::TypeId {
   const auto& data = module.Unit().GetType(t).data;
   const bool wrap = std::holds_alternative<mir::PackedArrayType>(data) ||
                     std::holds_alternative<mir::EnumType>(data) ||
                     std::holds_alternative<mir::StringType>(data) ||
+                    std::holds_alternative<mir::RealType>(data) ||
+                    std::holds_alternative<mir::ShortRealType>(data) ||
+                    std::holds_alternative<mir::RealTimeType>(data) ||
                     std::holds_alternative<mir::UnpackedArrayType>(data) ||
                     std::holds_alternative<mir::DynamicArrayType>(data) ||
                     std::holds_alternative<mir::QueueType>(data) ||

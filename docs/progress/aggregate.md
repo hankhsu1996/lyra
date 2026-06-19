@@ -31,7 +31,7 @@ follow once dynamic array's storage and runtime conventions are settled and prov
 | DA6d | Done: `map` projection (LRM 7.12.5) on the sequence containers.         |
 | DA6e | Open: `shuffle` (LRM 7.12.2); needs a seeded simulation RNG.            |
 | DA6f | Open: two-name iterator / index argument form (LRM 7.12.4).             |
-| DA6g | Open: `real` / `shortreal` / `string` as an unpacked-array element.     |
+| DA6g | Done: `string` / `real` / `shortreal` as an unpacked-array element.     |
 | DA7  | Done: invalid-index handling.                                           |
 | Q1   | Done: type, element read/write, native methods, default, case-equality. |
 | Q2   | Done: operator surface (`$`, slice, concat, equality, bound, append).   |
@@ -118,10 +118,8 @@ The numeric IDs are stable references and do not imply execution order beyond DA
 - [x] DA6d -- The `map()` projection (LRM 7.12.5) with its mandatory `with` clause. Each element and
       its index pass through the expression into a result whose shape and index type match the
       receiver (dynamic array, queue, or fixed unpacked) and whose element type is the expression's
-      self-determined type, so it may differ from the source. An empty receiver yields an empty
-      result. A result element type that is itself a non-class value (`real`, `string`) lowers
-      correctly but is unusable until those types can be unpacked-array elements (see DA6g), the
-      same pre-existing gap that blocks `real` / `string` dynamic arrays generally.
+      self-determined type, so it may differ from the source (e.g. `int` to `bit`, `string`, or
+      `real`). An empty receiver yields an empty result.
 
 - [ ] DA6e -- `shuffle()` (LRM 7.12.2) on every unpacked container. Needs a seeded simulation RNG;
       none exists yet (`$random` / `$urandom` are unimplemented), and that same RNG is the
@@ -134,11 +132,15 @@ The numeric IDs are stable references and do not imply execution order beyond DA
       method to avoid clashes with member names of the stored elements. Shared across find / sort /
       map / reductions; none support it yet.
 
-- [ ] DA6g -- `real` / `shortreal` / `string` as an unpacked-array element (dynamic array, queue,
-      fixed unpacked). These value types do not satisfy the container-element contract -- canonical-
-      default reset and bit-identity change detection -- so `real []` / `string []` cannot be
-      declared, read, or produced as a `map()` result element today. Cross-cutting value-type gap,
-      also surfaced from `unpacked.md`; not specific to one container.
+- [x] DA6g -- `string`, `real`, and `shortreal` as unpacked-array elements (dynamic array, queue,
+      fixed unpacked): declaration, element read / write, the element-type OOB default (LRM Table
+      6-7: `""` for string, 0.0 for real), aggregate equality, `%p` formatting, and as a `map()`
+      result element type. `string` only needed its canonical-default reset. `real` / `shortreal`
+      first needed to become value types at all -- they were bare host `double` / `float` -- so the
+      `lyra::value::Real` value type was introduced (see `../decisions/value-type-concepts.md`),
+      after which the element support falls out through the same shield pattern as every other type.
+      Case equality (`===` / `!==`) on a real or real-element aggregate is rejected in lowering: LRM
+      Table 11-1 excludes real / shortreal from case equality.
 
 - [x] DA7 -- Invalid-index handling (LRM 7.4.5). Read on an out-of-range index returns the element
       type's Table 7-1 default; write on an out-of-range index is a silent no-op; X / Z bits in the

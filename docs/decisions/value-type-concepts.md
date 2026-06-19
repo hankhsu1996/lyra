@@ -83,12 +83,17 @@ subset LRM defines for it.
 | `AssociativeArray<K,V>` | yes                   | yes                                 | no                   | no                       |
 | `lyra::value::Real`     | yes                   | **no (LRM excludes real from ===)** | no                   | yes                      |
 
-`Real`'s row is the load-bearing case: LRM Table 11-1 says `===` / `!==` apply to "Any except real
-and shortreal". The composable design records this exclusion structurally -- `Real` satisfies
-`LyraValueType` (so `Var<Real>` works and a module-level real signal is observable) but does not
-satisfy `CaseEqualComparable` (so an SV expression `r1 === r2` fails to lower at the C++ emit
-boundary, reflecting that the source program itself is LRM-illegal). The exclusion is not enforced
-by ad-hoc predicates; it follows from which concepts the type declares.
+`Real`'s row is the load-bearing case: LRM Table 11-1 excludes `real` / `shortreal` from `===` /
+`!==`, and the backend follows that strictly -- `Real` does not satisfy `CaseEqualComparable` and
+has no `CaseEqual`. The exclusion is principled, not an oversight: LRM 12.5 defines case equality as
+a bit-by-bit match, but a real has no x/z plane and its two natural readings disagree -- a
+bit-pattern match makes `+0.0 === -0.0` false and `NaN === NaN` true, while a value match makes them
+true and false respectively. The LRM declines to pick, so the operator is simply not defined on
+real. (slang and Verilator accept `r1 === r2` and evaluate it as `r1 == r2`, a value comparison;
+that is a documented deviation from Table 11-1 that the backend does not adopt.) Because the
+frontend does not reject the form, HIR-to-MIR lowering does: a `===` / `!==` whose operand is real,
+or an unpacked array with a real leaf, is an error (LRM Table 11-1). Nothing
+real-case-equality-shaped reaches the backend, so the render path stays mechanical.
 
 ### Universal-equality return type
 
@@ -111,10 +116,12 @@ These are separate methods on a value type even when they share an internal algo
   participates in further SV expression evaluation.
 
 For types that satisfy both concepts the two methods share an internal helper (bit-by-bit identity
-check). For `Real` only `IsBitIdentical` exists -- it implements bit-pattern equality via
+check), because for integral values case equality _is_ bit identity. `Real` satisfies only
+`LyraValueType`, so only `IsBitIdentical` exists -- it implements bit-pattern equality via
 `std::bit_cast<std::uint64_t>(double)` so that `+0.0` and `-0.0` are distinct and NaN bit-patterns
-classify by identity, both required for "did the storage cell's bits change" semantics. No
-`CaseEqual` exists on `Real`; the LRM gives no source-level syntax that would call it.
+classify by identity, both required for "did the storage cell's bits change". There is no
+`Real::CaseEqual`: `===` / `!==` are not defined on real (Table 11-1), and lowering rejects the
+source-level form before it could reach a value-type method.
 
 ### `Var<T>` and `ObservableType{T}` gating
 
@@ -186,7 +193,7 @@ mechanism as a module-level `int` signal.
 ## Implementation status
 
 - `LyraValueType`, `CaseEqualComparable`, `WildcardComparable`, `Ordered` defined in
-  `include/lyra/value/concepts.hpp`.
+  `include/lyra/value/value_concept.hpp`.
 - `PackedArray`, `String`, `UnpackedArray`, `DynamicArray`, `Queue`, `AssociativeArray` updated to
   satisfy the concepts LRM requires. Naming aligned: the host-bool predicate is `IsBitIdentical`
   across every type.
@@ -201,8 +208,13 @@ mechanism as a module-level `int` signal.
   (`IsObservableCell`, `LhsRootIsObservableScalar`, the four `MethodMutatesReceiver` tables,
   `RenderMethodReceiver`). These predicates are transitional residue and retire with the lowering
   change.
-- `lyra::value::Real` / `ShortReal` value classes and the corresponding HIR-to-MIR wrap-rule update
-  have not yet landed.
+- `lyra::value::Real` / `ShortReal` (a single `RealValue<Host>` template, with `RealTime` an alias
+  of `Real`) have landed and back every SV `real` / `shortreal` / `realtime`; the C++ backend
+  renders the real family as these value types rather than bare `double` / `float`. HIR-to-MIR's
+  wrap rule treats them as observable value-storage, so a module-level real signal is a `Var<Real>`,
+  and a real is a legal unpacked-array element. `===` / `!==` on a real (or real-leaf aggregate)
+  operand is rejected in HIR-to-MIR lowering with an error (LRM Table 11-1); the render path is
+  unchanged and never sees the form.
 
 ## Forbidden shapes
 
@@ -214,7 +226,9 @@ mechanism as a module-level `int` signal.
   fact (`ObservableType` wrapping); eligibility to be wrapped is a C++ concept fact
   (`LyraValueType`). The backend reads one or the other; it does not synthesise either.
 - A value type that satisfies `CaseEqualComparable` but whose `CaseEqual` and `IsBitIdentical` give
-  different answers. The two methods may share an internal helper; they may not diverge.
+  different answers. The two methods may share an internal helper; they may not diverge. (`Real`
+  sidesteps this by not satisfying `CaseEqualComparable` at all -- it has no `CaseEqual`, only the
+  engine's bit-pattern `IsBitIdentical`.)
 - A value type that implements an LRM operator method (e.g., `WildcardEquals`) without declaring the
   corresponding concept membership. The concept system is the contract; the methods exist to satisfy
   the concept.
