@@ -1,0 +1,15 @@
+id: cpp.queue_method_order
+tags: [cpp_run]
+input:
+  command: [run, cpp]
+  project: false
+  top: Top
+  files: [main.sv]
+expect:
+  exit: 0
+  variables:
+    qs: [-5, -1, 2, 3]
+    qr: [3, 2, -1, -5]
+    qrev: [3, 2, 1]
+    qkey: [3, 2, -1, -5]
+    qempty: []
