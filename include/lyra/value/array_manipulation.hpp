@@ -271,4 +271,50 @@ template <typename Seq, typename T, typename F, typename Combine>
   return acc;
 }
 
+// LRM 7.4.5 contiguous-range gather. The slice is `count` elements starting at
+// `offset`; an out-of-range position yields `canonical` and an x / z offset
+// (an invalid position) makes the whole result canonical. The flat vector is
+// wrapped by the caller as a fixed-size unpacked array.
+template <typename T>
+[[nodiscard]] auto ArraySliceGather(
+    const std::vector<T>& data, const T& canonical, const PackedArray& offset,
+    std::uint32_t count) -> std::vector<T> {
+  std::vector<T> result;
+  if (offset.HasUnknown()) {
+    result.assign(count, canonical);
+    return result;
+  }
+  result.reserve(count);
+  const auto base = offset.ToInt64();
+  const auto size = static_cast<std::int64_t>(data.size());
+  for (std::uint32_t i = 0; i < count; ++i) {
+    const auto pos = base + static_cast<std::int64_t>(i);
+    const bool in_bounds = pos >= 0 && pos < size;
+    result.push_back(
+        in_bounds ? data[static_cast<std::size_t>(pos)] : canonical);
+  }
+  return result;
+}
+
+// LRM 7.6 + 7.4.5 whole-slice scatter. Each of the `count` values lands at
+// `offset + i`; an out-of-range position is skipped and an x / z offset
+// performs no operation, matching the invalid-index write contract.
+template <typename T>
+auto ArraySliceScatter(
+    std::vector<T>& data, const PackedArray& offset, std::uint32_t count,
+    const std::vector<T>& values) -> void {
+  if (offset.HasUnknown()) {
+    return;
+  }
+  const auto base = offset.ToInt64();
+  const auto size = static_cast<std::int64_t>(data.size());
+  for (std::uint32_t i = 0; i < count; ++i) {
+    const auto pos = base + static_cast<std::int64_t>(i);
+    if (pos < 0 || pos >= size) {
+      continue;
+    }
+    data[static_cast<std::size_t>(pos)] = values[i];
+  }
+}
+
 }  // namespace lyra::value::detail
