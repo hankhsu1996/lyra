@@ -68,7 +68,8 @@ struct ConditionalExpr {
 // `nullopt` is a simple write. `value` is already typed to match `target`.
 //
 // `target` is an ExprId pointing at one of: a PrimaryExpr var reference,
-// ElementSelectExpr / RangeSelectExpr on an addressable base. The
+// ElementSelectExpr / RangeSelectExpr on an addressable base, or a queue
+// access method call (`WriteRef`) that returns the element reference. The
 // ConcatExpr-as-target form (LRM 11.4.12 destructuring LHS) is desugared
 // upstream into a snapshot + per-part assignment sequence, so render does
 // not encounter it.
@@ -80,8 +81,8 @@ struct AssignExpr {
 
 // LRM 11.4.2: `++a`, `a++`, `--a`, `a--`. Mirrors hir::IncDecExpr. The
 // `target` ExprId points at an addressable expression (PrimaryExpr var ref,
-// ElementSelectExpr, or RangeSelectExpr); ConcatExpr-as-target is illegal
-// per slang.
+// ElementSelectExpr, RangeSelectExpr, or a queue access method call returning
+// an element reference); ConcatExpr-as-target is illegal per slang.
 struct IncDecExpr {
   IncDecOp op;
   ExprId target;

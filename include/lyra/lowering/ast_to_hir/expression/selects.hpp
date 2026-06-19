@@ -20,6 +20,12 @@ class RangeSelectExpression;
 
 namespace lyra::lowering::ast_to_hir {
 
+// LRM 7.10 `$` (UnboundedLiteral) in a queue index / slice bound. Resolves to
+// the queue's last index via the base bound on the walk frame.
+auto LowerUnboundedLiteralProc(
+    ProcessLowerer& proc, WalkFrame frame, diag::SourceSpan span)
+    -> diag::Result<hir::Expr>;
+
 // Procedural-context handlers.
 auto LowerElementSelectExprProc(
     ProcessLowerer& proc, WalkFrame frame,
