@@ -1,0 +1,20 @@
+id: cpp.dynamic_array_slice
+tags: [cpp_run]
+input:
+  command: [run, cpp]
+  project: false
+  top: Top
+  files: [main.sv]
+expect:
+  exit: 0
+  variables:
+    up: [20, 30, 40]
+    down: [20, 30, 40]
+    cst: [30, 40]
+    oob: [40, 50, 0]
+    oob4: ["8'h33", "8'bxxxxxxxx", "8'bxxxxxxxx"]
+    xoff: [0, 0]
+    sub: [[1, 2], [3, 4]]
+    warr: [10, 100, 200, 300, 50]
+    woob: [10, 20, 30, 100, 200]
+    wx: [10, 20, 30, 40, 50]
