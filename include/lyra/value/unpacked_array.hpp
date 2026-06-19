@@ -67,12 +67,18 @@ class UnpackedArray {
   auto operator=(UnpackedArray&&) noexcept -> UnpackedArray& = default;
   ~UnpackedArray() = default;
 
-  [[nodiscard]] auto Size() const -> std::size_t {
+  // LRM 7.4.2: size() yields an SV int.
+  [[nodiscard]] auto Size() const -> PackedArray {
+    return PackedArray::Int(static_cast<std::int32_t>(RawSize()));
+  }
+
+  [[nodiscard]] auto RawSize() const -> std::size_t {
     return data_.size();
   }
 
-  // Flat-storage element read. `i` is in [0, Size()); no SV-index translation,
-  // no invalid-index handling. Sole consumer is the aggregate-format path
+  // Flat-storage element read. `i` is in [0, RawSize()); no SV-index
+  // translation, no invalid-index handling. Sole consumer is the
+  // aggregate-format path
   // (`Formatter<UnpackedArray<T>>::Format`), which traverses storage to defer
   // each element to its own `Formatter` specialization. SV-semantics access
   // goes through `ElementAt(PackedArray)`.
@@ -283,7 +289,7 @@ struct Formatter<UnpackedArray<T>> {
   static auto Format(const FormatSpec& spec, const UnpackedArray<T>& value)
       -> std::string {
     std::string out = "'{";
-    for (std::size_t i = 0; i < value.Size(); ++i) {
+    for (std::size_t i = 0; i < value.RawSize(); ++i) {
       if (i != 0) {
         out += ", ";
       }

@@ -37,8 +37,8 @@ class String {
   [[nodiscard]] static auto FromByteArray(
       const UnpackedArray<PackedArray>& bytes) -> String {
     std::string out;
-    out.reserve(bytes.Size());
-    for (std::size_t i = 0; i < bytes.Size(); ++i) {
+    out.reserve(bytes.RawSize());
+    for (std::size_t i = 0; i < bytes.RawSize(); ++i) {
       const auto byte =
           static_cast<unsigned char>(bytes.RawAt(i).ToInt64() & 0xFF);
       out.push_back(static_cast<char>(byte));
@@ -126,22 +126,28 @@ class String {
     return String{impl_ + o.impl_};
   }
 
-  // LRM 6.16.1
-  [[nodiscard]] auto Len() const -> std::int32_t {
-    return static_cast<std::int32_t>(impl_.size());
+  // LRM 6.16.1: len() yields an SV int.
+  [[nodiscard]] auto Len() const -> PackedArray {
+    return PackedArray::Int(static_cast<std::int32_t>(impl_.size()));
   }
 
   // LRM 6.16.2. Out-of-range index or zero byte -- no change.
-  void Putc(std::int32_t i, std::int8_t c) {
+  void Putc(const PackedArray& i_arg, const PackedArray& c_arg) {
+    const auto c = static_cast<std::int8_t>(c_arg.ToInt64());
     if (c == 0) return;
+    const auto i = i_arg.ToInt64();
     if (i < 0 || static_cast<std::size_t>(i) >= impl_.size()) return;
     impl_[static_cast<std::size_t>(i)] = static_cast<char>(c);
   }
 
-  // LRM 6.16.3. Out-of-range index returns 0.
-  [[nodiscard]] auto Getc(std::int32_t i) const -> std::int8_t {
-    if (i < 0 || static_cast<std::size_t>(i) >= impl_.size()) return 0;
-    return static_cast<std::int8_t>(impl_[static_cast<std::size_t>(i)]);
+  // LRM 6.16.3: getc() yields an SV byte. Out-of-range index returns 0.
+  [[nodiscard]] auto Getc(const PackedArray& i_arg) const -> PackedArray {
+    const auto i = i_arg.ToInt64();
+    if (i < 0 || static_cast<std::size_t>(i) >= impl_.size()) {
+      return PackedArray::Byte(0);
+    }
+    return PackedArray::Byte(
+        static_cast<std::int8_t>(impl_[static_cast<std::size_t>(i)]));
   }
 
   // LRM 6.16.4. Receiver unchanged.
@@ -162,47 +168,51 @@ class String {
     return String{std::move(out)};
   }
 
-  // LRM 6.16.6. ANSI C strcmp semantics: negative / zero / positive.
-  [[nodiscard]] auto Compare(const String& s) const -> std::int32_t {
+  // LRM 6.16.6: compare() yields an SV int. ANSI C strcmp semantics:
+  // negative / zero / positive.
+  [[nodiscard]] auto Compare(const String& s) const -> PackedArray {
     const int r = impl_.compare(s.impl_);
-    if (r < 0) return -1;
-    if (r > 0) return 1;
-    return 0;
+    if (r < 0) return PackedArray::Int(-1);
+    if (r > 0) return PackedArray::Int(1);
+    return PackedArray::Int(0);
   }
 
-  // LRM 6.16.7. Case-insensitive strcmp.
-  [[nodiscard]] auto Icompare(const String& s) const -> std::int32_t {
+  // LRM 6.16.7: icompare() yields an SV int. Case-insensitive strcmp.
+  [[nodiscard]] auto Icompare(const String& s) const -> PackedArray {
     const std::size_t n = std::min(impl_.size(), s.impl_.size());
     for (std::size_t k = 0; k < n; ++k) {
       const int a = std::tolower(static_cast<unsigned char>(impl_[k]));
       const int b = std::tolower(static_cast<unsigned char>(s.impl_[k]));
-      if (a != b) return (a < b) ? -1 : 1;
+      if (a != b) return PackedArray::Int((a < b) ? -1 : 1);
     }
-    if (impl_.size() == s.impl_.size()) return 0;
-    return (impl_.size() < s.impl_.size()) ? -1 : 1;
+    if (impl_.size() == s.impl_.size()) return PackedArray::Int(0);
+    return PackedArray::Int((impl_.size() < s.impl_.size()) ? -1 : 1);
   }
 
   // LRM 6.16.8. i..j inclusive. Returns "" if i<0, j<i, or j>=len.
-  [[nodiscard]] auto Substr(std::int32_t i, std::int32_t j) const -> String {
+  [[nodiscard]] auto Substr(
+      const PackedArray& i_arg, const PackedArray& j_arg) const -> String {
+    const auto i = static_cast<std::int32_t>(i_arg.ToInt64());
+    const auto j = static_cast<std::int32_t>(j_arg.ToInt64());
     const auto n = static_cast<std::int32_t>(impl_.size());
     if (i < 0 || j < i || j >= n) return String{};
     return String{impl_.substr(
         static_cast<std::size_t>(i), static_cast<std::size_t>(j - i + 1))};
   }
 
-  // LRM 6.16.9. Parse leading optional sign and digits (with `_` skipped).
-  // Returns 0 if no digits were consumed.
-  [[nodiscard]] auto Atoi() const -> std::int32_t {
-    return ParseInt(10);
+  // LRM 6.16.9: the ato* family yields an SV integer (4-state). Parse leading
+  // optional sign and digits (with `_` skipped); 0 if no digits were consumed.
+  [[nodiscard]] auto Atoi() const -> PackedArray {
+    return PackedArray::Integer(ParseInt(10));
   }
-  [[nodiscard]] auto Atohex() const -> std::int32_t {
-    return ParseInt(16);
+  [[nodiscard]] auto Atohex() const -> PackedArray {
+    return PackedArray::Integer(ParseInt(16));
   }
-  [[nodiscard]] auto Atooct() const -> std::int32_t {
-    return ParseInt(8);
+  [[nodiscard]] auto Atooct() const -> PackedArray {
+    return PackedArray::Integer(ParseInt(8));
   }
-  [[nodiscard]] auto Atobin() const -> std::int32_t {
-    return ParseInt(2);
+  [[nodiscard]] auto Atobin() const -> PackedArray {
+    return PackedArray::Integer(ParseInt(2));
   }
 
   // LRM 6.16.10. Parse leading real-number syntax; 0.0 if none.
@@ -218,10 +228,10 @@ class String {
   // representation of the argument in the corresponding base / format.
   // Out-of-line so std::format does not leak into every translation unit
   // that includes this header.
-  void Itoa(std::int32_t i);
-  void Hextoa(std::int32_t i);
-  void Octtoa(std::int32_t i);
-  void Bintoa(std::int32_t i);
+  void Itoa(const PackedArray& i);
+  void Hextoa(const PackedArray& i);
+  void Octtoa(const PackedArray& i);
+  void Bintoa(const PackedArray& i);
   void Realtoa(double r);
 
   [[nodiscard]] auto View() const -> std::string_view {

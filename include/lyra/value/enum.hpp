@@ -56,12 +56,15 @@ class Enum : public PackedArray {
     return {};
   }
 
-  [[nodiscard]] auto Next(unsigned step = 1) const -> Derived {
-    return StepBy(static_cast<std::int64_t>(step));
+  // LRM 6.19.5.3 / 6.19.5.4: the step is an SV int (default 1).
+  [[nodiscard]] auto Next(const PackedArray& step = PackedArray::Int(1)) const
+      -> Derived {
+    return StepBy(step.ToInt64());
   }
 
-  [[nodiscard]] auto Prev(unsigned step = 1) const -> Derived {
-    return StepBy(-static_cast<std::int64_t>(step));
+  [[nodiscard]] auto Prev(const PackedArray& step = PackedArray::Int(1)) const
+      -> Derived {
+    return StepBy(-step.ToInt64());
   }
 
   static auto First() -> Derived {
@@ -73,8 +76,10 @@ class Enum : public PackedArray {
     return Derived{MakeFromInt64(Derived::kMembers[kLastIdx].value)};
   }
 
-  static constexpr auto Num() -> std::int32_t {
-    return static_cast<std::int32_t>(std::size(Derived::kMembers));
+  // LRM 6.19.5.1: num() yields an SV int.
+  [[nodiscard]] static auto Num() -> PackedArray {
+    return PackedArray::Int(
+        static_cast<std::int32_t>(std::size(Derived::kMembers)));
   }
 
  private:

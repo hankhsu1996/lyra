@@ -1,8 +1,6 @@
 #pragma once
 
 #include <concepts>
-#include <cstddef>
-#include <functional>
 #include <iterator>
 #include <map>
 #include <optional>
@@ -86,18 +84,18 @@ class AssociativeArray {
   auto operator=(AssociativeArray&&) noexcept -> AssociativeArray& = default;
   ~AssociativeArray() = default;
 
-  // LRM 7.9.1: num() and size() both return the number of entries.
-  [[nodiscard]] auto Size() const -> std::size_t {
-    return data_.size();
+  // LRM 7.9.1: num() and size() both return the entry count as an SV int.
+  [[nodiscard]] auto Size() const -> PackedArray {
+    return PackedArray::Int(static_cast<std::int32_t>(data_.size()));
   }
 
-  // LRM 7.9.3: an element exists at this key. An invalid integral key never
+  // LRM 7.9.3: exists() yields an SV int 1 / 0. An invalid integral key never
   // matches an entry, so it reports absent.
-  [[nodiscard]] auto Exists(const K& key) const -> bool {
+  [[nodiscard]] auto Exists(const K& key) const -> PackedArray {
     if (IsInvalidKey(key)) {
-      return false;
+      return PackedArray::Int(0);
     }
-    return data_.contains(key);
+    return PackedArray::Int(data_.contains(key) ? 1 : 0);
   }
 
   // LRM 7.9.2: delete a single entry (no warning if absent) or, via the

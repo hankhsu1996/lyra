@@ -838,57 +838,29 @@ auto EventMethodMemberName(mir::EventMethodKind k) -> std::string_view {
   throw InternalError("EventMethodMemberName: unknown kind");
 }
 
-// LRM 6.19.5: first/last/num are static on the enum class; name/next/prev
-// dispatch on the receiver. num returns std::int32_t and wraps into the SV
-// `int` shape via PackedArray::Int.
+auto RenderMethodCall(
+    const RenderContext& ctx, const mir::CallExpr& call,
+    std::string_view member_name, bool mutates) -> diag::Result<std::string>;
+
+// LRM 6.19.5: first / last / num are static on the enum class (no receiver);
+// next / prev dispatch on the receiver and render through the generic method
+// call. num() yields the SV `int` shape from the runtime, so no wrap here; the
+// optional next / prev step is a plain SV argument the runtime takes by value.
 auto RenderEnumMethodCall(
     const RenderContext& ctx, const mir::CallExpr& call,
     const mir::EnumMethodInfo& m) -> diag::Result<std::string> {
   const auto member = EnumMethodMemberName(m.kind);
-  const auto class_name =
-      RenderEnumClassName(ctx.StructuralScope(), m.enum_type);
   const bool is_static = m.kind == mir::EnumMethodKind::kFirst ||
                          m.kind == mir::EnumMethodKind::kLast ||
                          m.kind == mir::EnumMethodKind::kNum;
-  const bool takes_step = m.kind == mir::EnumMethodKind::kNext ||
-                          m.kind == mir::EnumMethodKind::kPrev;
-  std::string raw_call;
   if (is_static) {
-    raw_call = std::format("{}::{}()", class_name, member);
-  } else {
-    if (call.arguments.empty()) {
-      throw InternalError(
-          "RenderEnumMethodCall: instance method expects a receiver "
-          "argument");
-    }
-    auto receiver_or = RenderExpr(ctx, ctx.Expr(call.arguments[0]));
-    if (!receiver_or) {
-      return std::unexpected(std::move(receiver_or.error()));
-    }
-    // next / prev have an optional step. Omitted at the SV call site ->
-    // omit at the C++ call site too; the Enum<Derived> method's default
-    // argument supplies 1.
-    std::string step_arg;
-    if (takes_step && call.arguments.size() >= 2) {
-      auto step_or = RenderExpr(ctx, ctx.Expr(call.arguments[1]));
-      if (!step_or) {
-        return std::unexpected(std::move(step_or.error()));
-      }
-      step_arg = std::format("static_cast<unsigned>(({}).ToInt64())", *step_or);
-    }
-    raw_call = std::format("({}).{}({})", *receiver_or, member, step_arg);
+    return std::format(
+        "{}::{}()", RenderEnumClassName(ctx.StructuralScope(), m.enum_type),
+        member);
   }
-  if (m.kind == mir::EnumMethodKind::kNum) {
-    return std::format("lyra::value::PackedArray::Int({})", raw_call);
-  }
-  return raw_call;
+  return RenderMethodCall(ctx, call, member, false);
 }
 
-// LRM 6.16: dispatch on the receiver (arguments[0]); subsequent SV args are
-// the method parameters. Integral-typed args (SV int / integer / byte) live
-// in a PackedArray at the call site and project to std::int32_t / std::int64_t
-// via ToInt64. Integral return values are wrapped back into the appropriate
-// PackedArray shape.
 // LRM 6.16: `Putc` and the integer-to-string family (`Itoa`, `Hextoa`,
 // `Octtoa`, `Bintoa`, `Realtoa`) mutate the receiver string in place.
 auto StringMethodMutatesReceiver(mir::StringMethodKind k) -> bool {
@@ -931,74 +903,24 @@ auto RenderMethodReceiver(
   return MethodReceiverText{.text = std::move(*receiver_or), .sep = "."};
 }
 
-auto RenderStringMethodCall(
-    const RenderContext& ctx, const mir::CallExpr& call,
-    const mir::StringMethodInfo& m) -> diag::Result<std::string> {
-  if (call.arguments.empty()) {
-    throw InternalError(
-        "RenderStringMethodCall: instance method expects a receiver "
-        "argument");
-  }
-  auto recv_or = RenderMethodReceiver(
-      ctx, ctx.Expr(call.arguments[0]), StringMethodMutatesReceiver(m.kind));
-  if (!recv_or) return std::unexpected(std::move(recv_or.error()));
-  const std::string& receiver_text = recv_or->text;
-  std::string args_text;
-  for (std::size_t i = 1; i < call.arguments.size(); ++i) {
-    auto arg_or = RenderExpr(ctx, ctx.Expr(call.arguments[i]));
-    if (!arg_or) return std::unexpected(std::move(arg_or.error()));
-    const auto& arg_ty = ctx.Unit().GetType(ctx.Expr(call.arguments[i]).type);
-    std::string rendered = arg_ty.IsIntegralPacked()
-                               ? std::format(
-                                     "static_cast<std::int32_t>("
-                                     "({}).ToInt64())",
-                                     *arg_or)
-                               : std::move(*arg_or);
-    if (i > 1) args_text += ", ";
-    args_text += rendered;
-  }
-  const std::string raw_call = std::format(
-      "({}){}{}({})", receiver_text, recv_or->sep,
-      StringMethodMemberName(m.kind), args_text);
-  switch (m.kind) {
-    case mir::StringMethodKind::kLen:
-    case mir::StringMethodKind::kCompare:
-    case mir::StringMethodKind::kIcompare:
-      // Returns SV int (32-bit signed 2-state).
-      return std::format("lyra::value::PackedArray::Int({})", raw_call);
-    case mir::StringMethodKind::kGetc:
-      // Returns SV byte (8-bit signed 2-state).
-      return std::format("lyra::value::PackedArray::Byte({})", raw_call);
-    case mir::StringMethodKind::kAtoi:
-    case mir::StringMethodKind::kAtohex:
-    case mir::StringMethodKind::kAtooct:
-    case mir::StringMethodKind::kAtobin:
-      // Returns SV integer (32-bit signed 4-state).
-      return std::format("lyra::value::PackedArray::Integer({})", raw_call);
-    // Atoreal returns C++ double, matching SV real.
-    // Toupper / Tolower / Substr return lyra::value::String.
-    // Putc / Itoa / Hextoa / Octtoa / Bintoa / Realtoa are void.
-    default:
-      return raw_call;
-  }
-}
-
 // A method call renders generically as `(receiver).name(args)`: the receiver is
 // arguments[0]; every following argument renders uniformly. Nothing here is
 // method-family specific -- the only per-call input beyond the operands is the
-// member name, which the caller derives from the callee kind. Any engine handle
-// a method needs is one of the arguments, supplied by lowering.
+// member name and whether the call mutates its receiver. Any engine handle a
+// method needs, and any representation shaping of arguments or result, lives in
+// the runtime method's signature; the backend reads the call and emits it.
+// When `mutates` is set and the receiver is an observable cell, the receiver
+// routes through `Var<T>::Mutate(svc)` so the destructor commits once.
 auto RenderMethodCall(
     const RenderContext& ctx, const mir::CallExpr& call,
-    std::string_view member_name) -> diag::Result<std::string> {
+    std::string_view member_name, bool mutates) -> diag::Result<std::string> {
   if (call.arguments.empty()) {
     throw InternalError(
         "RenderMethodCall: a method call expects a receiver argument");
   }
-  auto receiver_or = RenderExpr(ctx, ctx.Expr(call.arguments[0]));
-  if (!receiver_or) {
-    return std::unexpected(std::move(receiver_or.error()));
-  }
+  auto recv_or =
+      RenderMethodReceiver(ctx, ctx.Expr(call.arguments[0]), mutates);
+  if (!recv_or) return std::unexpected(std::move(recv_or.error()));
   std::string args;
   for (std::size_t i = 1; i < call.arguments.size(); ++i) {
     auto arg_or = RenderExpr(ctx, ctx.Expr(call.arguments[i]));
@@ -1006,47 +928,16 @@ auto RenderMethodCall(
     if (i != 1) args += ", ";
     args += *std::move(arg_or);
   }
-  return std::format("({}).{}({})", *receiver_or, member_name, args);
+  return std::format(
+      "({}){}{}({})", recv_or->text, recv_or->sep, member_name, args);
 }
 
-// LRM 7.5.2 / 7.5.3 / 7.12.2 / 7.12.3: dispatch on the receiver
-// (arguments[0]); none of the no-`with` methods in this PR take additional
-// arguments. `Size()` returns std::size_t and gets wrapped in
-// `PackedArray::Int` to land in SV `int` shape (mirrors EnumMethod::kNum).
-// All other methods either return void (in-place mutators) or already return
-// the receiver's element type (reductions); no wrap.
 // LRM 7.5.3 / 7.12.1: array methods that mutate the receiver in place. The
 // rest of the family is read-only (queries, reductions, locators).
 auto ArrayMethodMutatesReceiver(mir::ArrayMethodKind k) -> bool {
   return k == mir::ArrayMethodKind::kDelete ||
          k == mir::ArrayMethodKind::kReverse ||
          k == mir::ArrayMethodKind::kSort || k == mir::ArrayMethodKind::kRsort;
-}
-
-auto RenderArrayMethodCall(
-    const RenderContext& ctx, const mir::CallExpr& call,
-    const mir::ArrayMethodInfo& m) -> diag::Result<std::string> {
-  if (call.arguments.empty()) {
-    throw InternalError(
-        "RenderArrayMethodCall: array method expects a receiver argument");
-  }
-  auto recv_or = RenderMethodReceiver(
-      ctx, ctx.Expr(call.arguments[0]), ArrayMethodMutatesReceiver(m.kind));
-  if (!recv_or) return std::unexpected(std::move(recv_or.error()));
-  std::string args_text;
-  for (std::size_t i = 1; i < call.arguments.size(); ++i) {
-    auto arg_or = RenderExpr(ctx, ctx.Expr(call.arguments[i]));
-    if (!arg_or) return std::unexpected(std::move(arg_or.error()));
-    if (i > 1) args_text += ", ";
-    args_text += *arg_or;
-  }
-  const std::string raw_call = std::format(
-      "({}){}{}({})", recv_or->text, recv_or->sep,
-      ArrayMethodMemberName(m.kind), args_text);
-  if (m.kind == mir::ArrayMethodKind::kSize) {
-    return std::format("lyra::value::PackedArray::Int({})", raw_call);
-  }
-  return raw_call;
 }
 
 auto QueueMethodMemberName(mir::QueueMethodKind k) -> std::string_view {
@@ -1094,41 +985,6 @@ auto QueueMethodMutatesReceiver(mir::QueueMethodKind k) -> bool {
       return true;
   }
   throw InternalError("QueueMethodMutatesReceiver: unknown kind");
-}
-
-// LRM 7.10.2 queue-native methods. The receiver is arguments[0] and any SV
-// method parameters follow as real C++ arguments, so the overload set on
-// `Queue<T>` resolves arity (`Delete()` vs `Delete(index)`) directly.
-auto RenderQueueMethodCall(
-    const RenderContext& ctx, const mir::CallExpr& call,
-    const mir::QueueMethodInfo& m) -> diag::Result<std::string> {
-  if (call.arguments.empty()) {
-    throw InternalError(
-        "RenderQueueMethodCall: queue method expects a receiver argument");
-  }
-  auto recv_or = RenderMethodReceiver(
-      ctx, ctx.Expr(call.arguments[0]), QueueMethodMutatesReceiver(m.kind));
-  if (!recv_or) return std::unexpected(std::move(recv_or.error()));
-  std::string args;
-  for (std::size_t i = 1; i < call.arguments.size(); ++i) {
-    auto arg_or = RenderExpr(ctx, ctx.Expr(call.arguments[i]));
-    if (!arg_or) {
-      return std::unexpected(std::move(arg_or.error()));
-    }
-    if (i != 1) {
-      args += ", ";
-    }
-    args += *arg_or;
-  }
-  const std::string member_call = std::format(
-      "({}){}{}({})", recv_or->text, recv_or->sep,
-      QueueMethodMemberName(m.kind), args);
-  // LRM 7.10.2.1: size() returns an int; wrap the C++ std::size_t in the
-  // runtime integral so it composes with the rest of the value model.
-  if (m.kind == mir::QueueMethodKind::kSize) {
-    return std::format("lyra::value::PackedArray::Int({})", member_call);
-  }
-  return member_call;
 }
 
 auto AssociativeMethodMemberName(mir::AssociativeMethodKind k)
@@ -1214,11 +1070,6 @@ auto RenderAssociativeTraversalCall(
 auto RenderAssociativeMethodCall(
     const RenderContext& ctx, const mir::CallExpr& call,
     const mir::AssociativeMethodInfo& m) -> diag::Result<std::string> {
-  if (call.arguments.empty()) {
-    throw InternalError(
-        "RenderAssociativeMethodCall: associative method expects a receiver "
-        "argument");
-  }
   if (auto traversal = AssociativeTraversalFunctionName(m.kind)) {
     return RenderAssociativeTraversalCall(ctx, call, *traversal);
   }
@@ -1226,29 +1077,8 @@ auto RenderAssociativeMethodCall(
   // read-only queries (traversal methods are routed above through a runtime
   // shim).
   const bool mutates = m.kind == mir::AssociativeMethodKind::kDelete;
-  auto recv_or =
-      RenderMethodReceiver(ctx, ctx.Expr(call.arguments[0]), mutates);
-  if (!recv_or) return std::unexpected(std::move(recv_or.error()));
-  std::string args;
-  for (std::size_t i = 1; i < call.arguments.size(); ++i) {
-    auto arg_or = RenderExpr(ctx, ctx.Expr(call.arguments[i]));
-    if (!arg_or) {
-      return std::unexpected(std::move(arg_or.error()));
-    }
-    if (i != 1) {
-      args += ", ";
-    }
-    args += *arg_or;
-  }
-  const std::string member_call = std::format(
-      "({}){}{}({})", recv_or->text, recv_or->sep,
-      AssociativeMethodMemberName(m.kind), args);
-  // LRM 7.9.1 / 7.9.3: num / size / exists yield an int; wrap the C++
-  // std::size_t / bool in the runtime integral. delete returns void.
-  if (m.kind != mir::AssociativeMethodKind::kDelete) {
-    return std::format("lyra::value::PackedArray::Int({})", member_call);
-  }
-  return member_call;
+  return RenderMethodCall(
+      ctx, call, AssociativeMethodMemberName(m.kind), mutates);
 }
 
 // Side-effect-free per-value queries. Dispatch by the receiver's MIR
@@ -1450,17 +1280,23 @@ auto RenderCallExpr(
                       return RenderEnumMethodCall(ctx, call, m);
                     },
                     [&](const mir::StringMethodInfo& m) {
-                      return RenderStringMethodCall(ctx, call, m);
+                      return RenderMethodCall(
+                          ctx, call, StringMethodMemberName(m.kind),
+                          StringMethodMutatesReceiver(m.kind));
                     },
                     [&](const mir::EventMethodInfo& m) {
                       return RenderMethodCall(
-                          ctx, call, EventMethodMemberName(m.kind));
+                          ctx, call, EventMethodMemberName(m.kind), false);
                     },
                     [&](const mir::ArrayMethodInfo& m) {
-                      return RenderArrayMethodCall(ctx, call, m);
+                      return RenderMethodCall(
+                          ctx, call, ArrayMethodMemberName(m.kind),
+                          ArrayMethodMutatesReceiver(m.kind));
                     },
                     [&](const mir::QueueMethodInfo& m) {
-                      return RenderQueueMethodCall(ctx, call, m);
+                      return RenderMethodCall(
+                          ctx, call, QueueMethodMemberName(m.kind),
+                          QueueMethodMutatesReceiver(m.kind));
                     },
                     [&](const mir::AssociativeMethodInfo& m) {
                       return RenderAssociativeMethodCall(ctx, call, m);

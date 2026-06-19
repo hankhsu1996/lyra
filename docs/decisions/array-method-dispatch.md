@@ -29,8 +29,9 @@ A new `ArrayMethodKind` enum joins the existing variant arms (`EnumMethodKind`, 
 `EventMethodKind`). AST -> HIR detects the receiver type in `LowerCallExprProc` and routes the call
 to `BuiltinMethodRef{ArrayMethodKind::kXxx}`. HIR -> MIR translates the kind through the existing
 `Overloaded` visitor on the `BuiltinMethodRef` callee. The backend renders `(receiver).MethodName()`
-and wraps the result in `lyra::value::PackedArray::Int(...)` for the one method whose C++ return
-type is `std::size_t` (`size`).
+through the one generic method-call rule, doing no representation work: an SV-facing query yields
+the SV value type directly from the runtime method's signature (`size` returns the SV `int` shape; a
+separate `RawSize` serves internal native-count callers).
 
 The enum is named `ArrayMethodKind` (not `DynArrayMethodKind`) because LRM 7.12 defines the
 semantics uniformly across container kinds; only the AST -> HIR receiver-detection block differs per

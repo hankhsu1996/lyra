@@ -308,7 +308,7 @@ auto LyraFRead(
     Stamp(services, fd, EBADF, "$fread: file not open for reading");
     return MakeInt(0);
   }
-  if (dest.Size() == 0U) return MakeInt(0);
+  if (dest.RawSize() == 0U) return MakeInt(0);
 
   const bool ascending = declared_left <= declared_right;
   const auto lowest_sv = std::min(declared_left, declared_right);

@@ -448,29 +448,26 @@ Entries get checked off as their PRs land. When the last entry lands, the file i
 
 - [ ] R25 -- Collapse the per-data-type builtin-method render handlers onto the single generic
       `(receiver).name(args)` rule (R20's rule, now also carrying user-subroutine calls and the
-      event family). Each remaining per-type handler (string, queue, array, associative, enum,
-      value) still bakes in coercions the render rule should not know: (1) **Return-type coercion**
-      -- a method returning a native C++ type (container `size()` -> `size_t`, `getc` -> byte,
-      `atoi` family -> integer, `$isunknown` -> bit, enum `num` -> int) is wrapped to an SV value at
-      the call site. This should be an explicit MIR conversion node on the call result so the
-      backend stops fabricating the wrap. **Open design question (settle before coding)**: is a
-      `size_t`-to-SV-int wrap an SV-level `ConversionExpr`, or a representation bridge that belongs
-      to the runtime method's return type? The two give very different MIR -- cross-check
-      `decisions/` (integral-representation) before touching code. (2) **Argument coercion** --
-      string integral args (`SV int` -> `static_cast<int32>(ToInt64())`) and the enum next/prev step
-      are wrapped at the call site; same treatment as (1), a MIR conversion on the argument. (3)
-      **Non-member shapes** -- three families do not fit `(receiver).name(args)` at all and need
-      their own decision: enum static methods (`Class::first()`, no receiver), associative traversal
-      (`AssocFirst(services, recv, Ref<K>(idx))`, a free runtime call -- note its `self->Services()`
-      is still spliced, the one remaining services fabrication), and value `$isunknown`
-      (type-static, no call in the all-2-state case). Decide whether each stays a distinct handler
-      or is remodeled. Once (1)-(3) are resolved, the member-shaped families reduce to one handler
-      whose only per-kind input is the `kind -> member name` table. **Why deferred**: (1)/(2) are a
-      value-model decision (where representation wraps live), not a mechanical refactor.
-      **Trigger**: continuation of `decisions/runtime-effects-as-generic-calls.md`. Landed so far on
-      this thread -- user calls carry `self` as `arguments[0]`, and event trigger / triggered carry
-      the engine handle as a real argument; both now render through the generic rule with no
-      fabricated argument.
+      event family). **Value-model decision settled** (it was the blocker): an SV-facing runtime
+      method's return and parameter types _are_ the SV value types; the representation bridge lives
+      inside the method body, compiled once, an internal detail of the value layer. It is neither a
+      MIR `ConversionExpr` (the call's SV type does not change, so there is nothing to convert) nor
+      an emit-side wrap (forbidden by `decisions/integral-representation.md`: no native-scalar
+      bridges in emit). This follows from `mir.md` invariant 10 -- the backend reads the call's
+      stated result type and emits it, never re-deciding a representation. Internal native-count
+      callers use a separate `Raw*` accessor. **Landed on this thread**: the integral-query surface
+      (container `size`, associative `num` / `size` / `exists`, string `len` / `getc` / `compare` /
+      `atoi` family, enum `num`) and the integral-argument surface (string index / byte args, enum
+      next / prev step) now return / take SV value types directly; the member-shaped families
+      (string, array, queue, associative non-traversal, enum instance) render through one generic
+      handler whose only per-kind inputs are the member name and a mutates flag; all
+      `PackedArray::Int(...)` result wraps and `static_cast<...>(ToInt64())` argument casts are gone
+      from emit; user calls carry `self` and event trigger / triggered carry the engine handle as
+      real arguments. **Remaining**: three families do not fit `(receiver).name(args)` and still
+      need their own decision -- enum static methods (`Class::first()`, no receiver), associative
+      traversal (a free runtime call still splicing the engine handle, the one remaining services
+      fabrication), and value `$isunknown` (type-static, no call in the all-2-state case).
+      **Trigger**: continuation of `decisions/runtime-effects-as-generic-calls.md`.
 
 ## Out of Scope
 
