@@ -185,14 +185,19 @@ auto LowerCallExprProc(
       }
     }
 
-    // LRM 7.12 array-manipulation family. LRM 7.10.1 makes it available on a
-    // queue (which supports the same operations as an unpacked array) as well
-    // as a dynamic array, whose LRM 7.5.2 / 7.5.3 `size` / `delete` share the
-    // same family enum. The no-`with` form takes only the receiver; the `with`
-    // form (LRM 7.12.4) binds an iterator and a body expression carried as the
-    // optional `WithClause`, which HIR -> MIR turns into a closure argument.
+    // LRM 7.12 array-manipulation family, defined for any unpacked array: a
+    // fixed-size unpacked array (LRM 7.12.1 / 7.12.2 operate on "any unpacked
+    // array"), a dynamic array, and a queue (LRM 7.10.1 gives it the same
+    // operations as an unpacked array). For dynamic array and queue the LRM
+    // 7.5.2 / 7.5.3 / 7.10.2 `size` / `delete` are resolved earlier as native
+    // methods; slang rejects them on a fixed array. The no-`with` form takes
+    // only the receiver; the `with` form (LRM 7.12.4) binds an iterator and a
+    // body expression carried as the optional `WithClause`, which HIR -> MIR
+    // turns into a closure argument.
     if (receiver_type.has_value() &&
-        (std::holds_alternative<hir::DynamicArrayType>(
+        (std::holds_alternative<hir::UnpackedArrayType>(
+             module.Unit().GetType(*receiver_type).data) ||
+         std::holds_alternative<hir::DynamicArrayType>(
              module.Unit().GetType(*receiver_type).data) ||
          std::holds_alternative<hir::QueueType>(
              module.Unit().GetType(*receiver_type).data))) {

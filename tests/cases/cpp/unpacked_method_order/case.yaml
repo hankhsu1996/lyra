@@ -1,0 +1,14 @@
+id: cpp.unpacked_method_order
+tags: [cpp_run]
+input:
+  command: [run, cpp]
+  project: false
+  top: Top
+  files: [main.sv]
+expect:
+  exit: 0
+  variables:
+    a_sort: [-5, -1, 2, 3]
+    a_rsort: [3, 2, -1, -5]
+    a_rev: [3, 2, 1]
+    a_key: [3, 2, -1, -5]

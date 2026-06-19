@@ -2,14 +2,18 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <functional>
 #include <span>
 #include <string>
+#include <type_traits>
 #include <utility>
 #include <vector>
 
 #include "lyra/value/array_case_equal.hpp"
+#include "lyra/value/array_manipulation.hpp"
 #include "lyra/value/format.hpp"
 #include "lyra/value/packed_array.hpp"
+#include "lyra/value/queue.hpp"
 #include "lyra/value/value_concept.hpp"
 
 namespace lyra::value {
@@ -194,6 +198,116 @@ class UnpackedArray {
       }
     }
     return true;
+  }
+
+  // LRM 7.12 ordering and reduction, each a thin wrapper over the shared
+  // `detail::Array*` algorithms. HIR-to-MIR always supplies the closure (the
+  // `with`-clause body or the LRM-default identity), so the runtime exposes
+  // only the closure-taking form; `reverse` takes none -- its `with` clause is
+  // a compiler error filtered upstream by slang. Ordering mutates in place at
+  // constant size (a fixed array never grows or shrinks). The closure receives
+  // each element and its index and returns a key (ordering) or a summand
+  // (reduction); the reduction result type follows the closure's return type,
+  // so a width-widening `with`-expression widens the result.
+  auto Reverse() -> void {
+    detail::ArrayReverse(data_);
+  }
+  template <typename F>
+  auto Sort(F&& key) -> void {
+    detail::ArraySortByKey(data_, std::forward<F>(key), std::less<>{});
+  }
+  template <typename F>
+  auto Rsort(F&& key) -> void {
+    detail::ArraySortByKey(data_, std::forward<F>(key), std::greater<>{});
+  }
+  template <typename F>
+  [[nodiscard]] auto Sum(F&& key) const
+      -> std::invoke_result_t<F&, const T&, const PackedArray&> {
+    return detail::ArrayFold(
+        data_, oob_slot_, std::forward<F>(key),
+        [](auto& acc, auto& v) { acc = acc + v; });
+  }
+  template <typename F>
+  [[nodiscard]] auto Product(F&& key) const
+      -> std::invoke_result_t<F&, const T&, const PackedArray&> {
+    return detail::ArrayFold(
+        data_, oob_slot_, std::forward<F>(key),
+        [](auto& acc, auto& v) { acc = acc * v; });
+  }
+  template <typename F>
+  [[nodiscard]] auto And(F&& key) const
+      -> std::invoke_result_t<F&, const T&, const PackedArray&> {
+    return detail::ArrayFold(
+        data_, oob_slot_, std::forward<F>(key),
+        [](auto& acc, auto& v) { acc = acc & v; });
+  }
+  template <typename F>
+  [[nodiscard]] auto Or(F&& key) const
+      -> std::invoke_result_t<F&, const T&, const PackedArray&> {
+    return detail::ArrayFold(
+        data_, oob_slot_, std::forward<F>(key),
+        [](auto& acc, auto& v) { acc = acc | v; });
+  }
+  template <typename F>
+  [[nodiscard]] auto Xor(F&& key) const
+      -> std::invoke_result_t<F&, const T&, const PackedArray&> {
+    return detail::ArrayFold(
+        data_, oob_slot_, std::forward<F>(key),
+        [](auto& acc, auto& v) { acc = acc ^ v; });
+  }
+
+  // LRM 7.12.1 locator methods, thin wrappers over the shared `detail::Array*`
+  // algorithms. The value locators (`find`, `find_first`, `find_last`, `min`,
+  // `max`, `unique`) return a queue of elements carrying this array's element
+  // shape via `oob_slot_`; the index locators return a queue of `int` whose
+  // shield is a plain zero. No match yields an empty queue. The `with` clause
+  // is mandatory for the find family (a Boolean predicate) and optional for
+  // `min` / `max` / `unique` (a comparison key, defaulting to the element).
+  template <typename F>
+  [[nodiscard]] auto Find(F pred) const -> Queue<T> {
+    return Queue<T>(oob_slot_, detail::ArrayFind(data_, std::move(pred)));
+  }
+  template <typename F>
+  [[nodiscard]] auto FindIndex(F pred) const -> Queue<PackedArray> {
+    return {
+        PackedArray::Int(0), detail::ArrayFindIndex(data_, std::move(pred))};
+  }
+  template <typename F>
+  [[nodiscard]] auto FindFirst(F pred) const -> Queue<T> {
+    return Queue<T>(oob_slot_, detail::ArrayFindFirst(data_, std::move(pred)));
+  }
+  template <typename F>
+  [[nodiscard]] auto FindFirstIndex(F pred) const -> Queue<PackedArray> {
+    return {
+        PackedArray::Int(0),
+        detail::ArrayFindFirstIndex(data_, std::move(pred))};
+  }
+  template <typename F>
+  [[nodiscard]] auto FindLast(F pred) const -> Queue<T> {
+    return Queue<T>(oob_slot_, detail::ArrayFindLast(data_, std::move(pred)));
+  }
+  template <typename F>
+  [[nodiscard]] auto FindLastIndex(F pred) const -> Queue<PackedArray> {
+    return {
+        PackedArray::Int(0),
+        detail::ArrayFindLastIndex(data_, std::move(pred))};
+  }
+  template <typename F>
+  [[nodiscard]] auto Min(F&& key) const -> Queue<T> {
+    return Queue<T>(oob_slot_, detail::ArrayMin(data_, std::forward<F>(key)));
+  }
+  template <typename F>
+  [[nodiscard]] auto Max(F&& key) const -> Queue<T> {
+    return Queue<T>(oob_slot_, detail::ArrayMax(data_, std::forward<F>(key)));
+  }
+  template <typename F>
+  [[nodiscard]] auto Unique(F key) const -> Queue<T> {
+    return Queue<T>(oob_slot_, detail::ArrayUnique(data_, std::move(key)));
+  }
+  template <typename F>
+  [[nodiscard]] auto UniqueIndex(F key) const -> Queue<PackedArray> {
+    return {
+        PackedArray::Int(0), detail::ArrayUniqueIndex(data_, std::move(key))};
   }
 
  private:

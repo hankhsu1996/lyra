@@ -259,6 +259,9 @@ auto LowerUserCallee(
 // as `element_type`.
 auto ArrayMethodReceiverElementType(const hir::Type& ty)
     -> std::optional<hir::TypeId> {
+  if (const auto* ua = std::get_if<hir::UnpackedArrayType>(&ty.data)) {
+    return ua->element_type;
+  }
   if (const auto* da = std::get_if<hir::DynamicArrayType>(&ty.data)) {
     return da->element_type;
   }
