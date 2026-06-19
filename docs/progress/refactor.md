@@ -122,27 +122,20 @@ Entries get checked off as their PRs land. When the last entry lands, the file i
       the IR (`mir::CompilationUnit` and the AST -> HIR analogue) -- R6 is the prerequisite cleanup;
       R1 is the architectural promotion.
 
-- [ ] R7 -- Move the literal-fold peephole from the C++ backend into HIR-to-MIR. Today
-      `RenderConversionExpr` in `src/lyra/backend/cpp/render_expr.cpp` carries a
-      `TryFoldLiteralIntegerConversion` helper that detects "MIR `ConversionExpr` wrapping a
-      `mir::IntegerLiteral` whose source and destination shapes are equivalent (same width, same
-      signedness, no X/Z loss)" and renders the literal directly in the destination shape, skipping
-      the runtime `PackedArray::ConvertFrom` call. That fold is a pure semantic decision driven
-      entirely by MIR data, so per `lowering_boundaries.md` Core Invariant 5 ("downstream layers do
-      not re-derive upstream decisions") and `mir.md` Core Invariant 5 ("dumper is the golden-test
-      surface, lossless wrt MIR structure"), it belongs at the HIR -> MIR boundary, not in the
-      backend. Target shape: `LowerHirConversionExprProc` (and its structural twin) recognises a HIR
-      `ConversionExpr` whose operand is a `hir::IntegerLiteral` with a foldable shape pair and emits
-      a `mir::IntegerLiteral` directly in the destination shape -- no `mir::ConversionExpr` node is
-      ever materialised for the no-op case. The backend's render path then becomes pure
-      `(src_kind, dst_kind)` dispatch with no peephole; the MIR dumper shows exactly what the
-      backend will emit (no "node exists but renders to nothing" surprises). **Why deferred**: the
-      current backend-side fold is correct and the scan-family PR that exposed it
-      (`feature/     scan-family-corners`) should not also rewrite the conversion-lowering path --
-      the MIR dump goldens that exercise this fold need separate scrutiny. **Trigger**: standalone
-      -- can be picked up at any time. Highest leverage is just before any other change to
-      `LowerHirConversionExprProc` (or any new constant-folding pass on MIR), because both want a
-      MIR free of redundant `ConversionExpr` nodes.
+- [x] R7 -- The literal conversion keeps its faithful shape in MIR; constant folding is the
+      downstream optimizer's job, not HIR-to-MIR's. A conversion of an integer literal to a
+      same-width / same-signedness destination (e.g. a 2-state literal feeding a 4-state target) is
+      the same operation as the conversion of a non-literal value to that destination, so MIR
+      represents both the same way -- a `mir::ConversionExpr` over the operand -- rather than
+      folding the literal case into a re-typed literal. Folding only the constant case would
+      special-case it on whether the operand happens to be a literal, which is an optimizer's
+      concern, not a MIR structural one; MIR is the program in primitives, and the LLVM backend (the
+      load-bearing target) folds the constant conversion for free. What was wrong was the C++
+      backend's render-time peephole that inspected a conversion's operand to decide whether to fold
+      -- a renderer making a semantic decision; that peephole is removed, and `RenderConversionExpr`
+      is now a pure `(src_kind, dst_kind)` map. The C++ medium may emit a runtime conversion for the
+      constant case, which is acceptable -- it faithfully mirrors the MIR. See
+      `decisions/conversion-folding.md`.
 
 - [ ] R8 -- Unify the callable forms onto one concept. Today a process (`mir::Process`), a
       subroutine (`mir::StructuralSubroutineDecl`), and a closure (`mir::ClosureExpr`) are three
