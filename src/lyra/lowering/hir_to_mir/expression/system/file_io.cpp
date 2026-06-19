@@ -1,5 +1,7 @@
 #include "lyra/lowering/hir_to_mir/expression/system/file_io.hpp"
 
+#include <algorithm>
+#include <cstddef>
 #include <expected>
 #include <format>
 #include <optional>
@@ -15,8 +17,9 @@
 #include "lyra/hir/procedural_body.hpp"
 #include "lyra/lowering/hir_to_mir/copy_out_desugar.hpp"
 #include "lyra/lowering/hir_to_mir/process_lowerer.hpp"
+#include "lyra/lowering/hir_to_mir/services_call.hpp"
+#include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/expr.hpp"
-#include "lyra/mir/runtime_file_io.hpp"
 #include "lyra/mir/stmt.hpp"
 #include "lyra/support/system_subroutine.hpp"
 
@@ -24,174 +27,87 @@ namespace lyra::lowering::hir_to_mir {
 
 namespace {
 
+// Assembles the generic file-IO call: the engine handle (self.Services()) as
+// argument 0, then the task operands in runtime-signature order. Every file-IO
+// runtime entry takes RuntimeServices& first, so the handle is a leading
+// argument, not a backend-injected fact
+// (docs/decisions/runtime-effects-as-generic-calls.md).
+auto BuildFileIoCall(
+    const ProcessLowerer& process, const WalkFrame& frame,
+    support::SystemSubroutineId id, std::vector<mir::ExprId> operands,
+    mir::TypeId result_type) -> mir::Expr {
+  auto& scope = *frame.current_procedural_scope;
+  std::vector<mir::ExprId> args;
+  args.reserve(operands.size() + 1);
+  args.push_back(scope.AddExpr(BuildServicesCallExpr(process, frame)));
+  for (const mir::ExprId operand : operands) {
+    args.push_back(operand);
+  }
+  return mir::Expr{
+      .data =
+          mir::CallExpr{
+              .callee = mir::SystemSubroutineCallee{.id = id},
+              .arguments = std::move(args)},
+      .type = result_type};
+}
+
+auto LowerOperand(
+    ProcessLowerer& process, const WalkFrame& frame, const hir::CallExpr& call,
+    std::size_t index) -> diag::Result<mir::Expr> {
+  const auto& hir_proc = process.HirBody();
+  return process.LowerExpr(
+      hir_proc.exprs.at(call.arguments[index]->value), frame);
+}
+
+auto LowerFixedOperandCall(
+    ProcessLowerer& process, WalkFrame frame, const hir::CallExpr& call,
+    support::SystemSubroutineId id, std::size_t operand_count,
+    mir::TypeId result_type) -> diag::Result<mir::Expr> {
+  auto& scope = *frame.current_procedural_scope;
+  std::vector<mir::ExprId> operands;
+  operands.reserve(operand_count);
+  for (std::size_t i = 0; i < operand_count; ++i) {
+    auto operand_or = LowerOperand(process, frame, call, i);
+    if (!operand_or) return std::unexpected(std::move(operand_or.error()));
+    operands.push_back(scope.AddExpr(*std::move(operand_or)));
+  }
+  return BuildFileIoCall(process, frame, id, std::move(operands), result_type);
+}
+
+// LRM 21.3.1: the one-argument MCD form and the two-argument FD form select the
+// runtime overload by argument count alone.
 auto LowerFileOpenCall(
-    ProcessLowerer& process, WalkFrame frame, const hir::CallExpr& call)
-    -> diag::Result<mir::Expr> {
-  const auto& hir_proc = process.HirBody();
-  auto& proc_scope = *frame.current_procedural_scope;
-
-  auto name_or =
-      process.LowerExpr(hir_proc.exprs.at(call.arguments[0]->value), frame);
+    ProcessLowerer& process, WalkFrame frame, const hir::CallExpr& call,
+    support::SystemSubroutineId id) -> diag::Result<mir::Expr> {
+  auto& scope = *frame.current_procedural_scope;
+  auto name_or = LowerOperand(process, frame, call, 0);
   if (!name_or) return std::unexpected(std::move(name_or.error()));
-  const mir::ExprId name_id = proc_scope.AddExpr(*std::move(name_or));
-
-  std::optional<mir::ExprId> mode_id = std::nullopt;
+  std::vector<mir::ExprId> operands{scope.AddExpr(*std::move(name_or))};
   if (call.arguments.size() == 2) {
-    auto mode_or =
-        process.LowerExpr(hir_proc.exprs.at(call.arguments[1]->value), frame);
+    auto mode_or = LowerOperand(process, frame, call, 1);
     if (!mode_or) return std::unexpected(std::move(mode_or.error()));
-    mode_id = proc_scope.AddExpr(*std::move(mode_or));
+    operands.push_back(scope.AddExpr(*std::move(mode_or)));
   }
-
-  return mir::Expr{
-      .data =
-          mir::RuntimeCallExpr{
-              .call =
-                  mir::RuntimeFileOpenCall{.name = name_id, .mode = mode_id}},
-      .type = process.Module().Unit().builtins.int32};
+  return BuildFileIoCall(
+      process, frame, id, std::move(operands),
+      process.Module().Unit().builtins.int32);
 }
 
-auto LowerFileCloseCall(
-    ProcessLowerer& process, WalkFrame frame, const hir::CallExpr& call)
-    -> diag::Result<mir::Expr> {
-  const auto& hir_proc = process.HirBody();
-  auto& proc_scope = *frame.current_procedural_scope;
-
-  auto desc_or =
-      process.LowerExpr(hir_proc.exprs.at(call.arguments[0]->value), frame);
-  if (!desc_or) return std::unexpected(std::move(desc_or.error()));
-  const mir::ExprId descriptor_id = proc_scope.AddExpr(*std::move(desc_or));
-
-  return mir::Expr{
-      .data =
-          mir::RuntimeCallExpr{
-              .call = mir::RuntimeFileCloseCall{.descriptor = descriptor_id}},
-      .type = process.Module().Unit().builtins.void_type};
-}
-
-auto LowerFileGetcCall(
-    ProcessLowerer& process, WalkFrame frame, const hir::CallExpr& call)
-    -> diag::Result<mir::Expr> {
-  const auto& hir_proc = process.HirBody();
-  auto& proc_scope = *frame.current_procedural_scope;
-  auto fd_or =
-      process.LowerExpr(hir_proc.exprs.at(call.arguments[0]->value), frame);
-  if (!fd_or) return std::unexpected(std::move(fd_or.error()));
-  const mir::ExprId fd_id = proc_scope.AddExpr(*std::move(fd_or));
-  return mir::Expr{
-      .data =
-          mir::RuntimeCallExpr{.call = mir::RuntimeFileGetcCall{.fd = fd_id}},
-      .type = process.Module().Unit().builtins.int32};
-}
-
-auto LowerFileUngetcCall(
-    ProcessLowerer& process, WalkFrame frame, const hir::CallExpr& call)
-    -> diag::Result<mir::Expr> {
-  const auto& hir_proc = process.HirBody();
-  auto& proc_scope = *frame.current_procedural_scope;
-  auto c_or =
-      process.LowerExpr(hir_proc.exprs.at(call.arguments[0]->value), frame);
-  if (!c_or) return std::unexpected(std::move(c_or.error()));
-  const mir::ExprId c_id = proc_scope.AddExpr(*std::move(c_or));
-  auto fd_or =
-      process.LowerExpr(hir_proc.exprs.at(call.arguments[1]->value), frame);
-  if (!fd_or) return std::unexpected(std::move(fd_or.error()));
-  const mir::ExprId fd_id = proc_scope.AddExpr(*std::move(fd_or));
-  return mir::Expr{
-      .data =
-          mir::RuntimeCallExpr{
-              .call = mir::RuntimeFileUngetcCall{.c = c_id, .fd = fd_id}},
-      .type = process.Module().Unit().builtins.int32};
-}
-
-auto LowerFileSeekCall(
-    ProcessLowerer& process, WalkFrame frame, const hir::CallExpr& call)
-    -> diag::Result<mir::Expr> {
-  const auto& hir_proc = process.HirBody();
-  auto& proc_scope = *frame.current_procedural_scope;
-  auto fd_or =
-      process.LowerExpr(hir_proc.exprs.at(call.arguments[0]->value), frame);
-  if (!fd_or) return std::unexpected(std::move(fd_or.error()));
-  const mir::ExprId fd_id = proc_scope.AddExpr(*std::move(fd_or));
-  auto off_or =
-      process.LowerExpr(hir_proc.exprs.at(call.arguments[1]->value), frame);
-  if (!off_or) return std::unexpected(std::move(off_or.error()));
-  const mir::ExprId off_id = proc_scope.AddExpr(*std::move(off_or));
-  auto op_or =
-      process.LowerExpr(hir_proc.exprs.at(call.arguments[2]->value), frame);
-  if (!op_or) return std::unexpected(std::move(op_or.error()));
-  const mir::ExprId op_id = proc_scope.AddExpr(*std::move(op_or));
-  return mir::Expr{
-      .data =
-          mir::RuntimeCallExpr{
-              .call =
-                  mir::RuntimeFileSeekCall{
-                      .fd = fd_id, .offset = off_id, .operation = op_id}},
-      .type = process.Module().Unit().builtins.int32};
-}
-
-auto LowerFileRewindCall(
-    ProcessLowerer& process, WalkFrame frame, const hir::CallExpr& call)
-    -> diag::Result<mir::Expr> {
-  const auto& hir_proc = process.HirBody();
-  auto& proc_scope = *frame.current_procedural_scope;
-  auto fd_or =
-      process.LowerExpr(hir_proc.exprs.at(call.arguments[0]->value), frame);
-  if (!fd_or) return std::unexpected(std::move(fd_or.error()));
-  const mir::ExprId fd_id = proc_scope.AddExpr(*std::move(fd_or));
-  return mir::Expr{
-      .data =
-          mir::RuntimeCallExpr{.call = mir::RuntimeFileRewindCall{.fd = fd_id}},
-      .type = process.Module().Unit().builtins.int32};
-}
-
-auto LowerFileTellCall(
-    ProcessLowerer& process, WalkFrame frame, const hir::CallExpr& call)
-    -> diag::Result<mir::Expr> {
-  const auto& hir_proc = process.HirBody();
-  auto& proc_scope = *frame.current_procedural_scope;
-  auto fd_or =
-      process.LowerExpr(hir_proc.exprs.at(call.arguments[0]->value), frame);
-  if (!fd_or) return std::unexpected(std::move(fd_or.error()));
-  const mir::ExprId fd_id = proc_scope.AddExpr(*std::move(fd_or));
-  return mir::Expr{
-      .data =
-          mir::RuntimeCallExpr{.call = mir::RuntimeFileTellCall{.fd = fd_id}},
-      .type = process.Module().Unit().builtins.int32};
-}
-
-auto LowerFileEofCall(
-    ProcessLowerer& process, WalkFrame frame, const hir::CallExpr& call)
-    -> diag::Result<mir::Expr> {
-  const auto& hir_proc = process.HirBody();
-  auto& proc_scope = *frame.current_procedural_scope;
-  auto fd_or =
-      process.LowerExpr(hir_proc.exprs.at(call.arguments[0]->value), frame);
-  if (!fd_or) return std::unexpected(std::move(fd_or.error()));
-  const mir::ExprId fd_id = proc_scope.AddExpr(*std::move(fd_or));
-  return mir::Expr{
-      .data =
-          mir::RuntimeCallExpr{.call = mir::RuntimeFileEofCall{.fd = fd_id}},
-      .type = process.Module().Unit().builtins.int32};
-}
-
+// LRM 21.3.6: the no-argument flush-all form and the addressed form select the
+// runtime overload by argument count alone.
 auto LowerFileFlushCall(
-    ProcessLowerer& process, WalkFrame frame, const hir::CallExpr& call)
-    -> diag::Result<mir::Expr> {
-  const auto& hir_proc = process.HirBody();
-  auto& proc_scope = *frame.current_procedural_scope;
-  std::optional<mir::ExprId> descriptor = std::nullopt;
+    ProcessLowerer& process, WalkFrame frame, const hir::CallExpr& call,
+    support::SystemSubroutineId id) -> diag::Result<mir::Expr> {
+  std::vector<mir::ExprId> operands;
   if (!call.arguments.empty()) {
-    auto fd_or =
-        process.LowerExpr(hir_proc.exprs.at(call.arguments[0]->value), frame);
+    auto fd_or = LowerOperand(process, frame, call, 0);
     if (!fd_or) return std::unexpected(std::move(fd_or.error()));
-    descriptor = proc_scope.AddExpr(*std::move(fd_or));
+    operands.push_back(
+        frame.current_procedural_scope->AddExpr(*std::move(fd_or)));
   }
-  return mir::Expr{
-      .data =
-          mir::RuntimeCallExpr{
-              .call = mir::RuntimeFileFlushCall{.descriptor = descriptor}},
-      .type = process.Module().Unit().builtins.void_type};
+  return BuildFileIoCall(
+      process, frame, id, std::move(operands),
+      process.Module().Unit().builtins.void_type);
 }
 
 // LRM 13.5: $fgets / $fread / $ferror write into an actual lvalue argument
@@ -216,27 +132,30 @@ auto RejectOutputArgFileCallInExprPosition(
 
 auto LowerFileIOSystemSubroutineCall(
     ProcessLowerer& process, WalkFrame frame, const hir::CallExpr& call,
-    std::string_view name, const support::FileIOSystemSubroutineInfo& info,
-    diag::SourceSpan span) -> diag::Result<mir::Expr> {
+    support::SystemSubroutineId id, std::string_view name,
+    const support::FileIOSystemSubroutineInfo& info, diag::SourceSpan span)
+    -> diag::Result<mir::Expr> {
+  const auto& builtins = process.Module().Unit().builtins;
   switch (info.kind) {
     case support::FileIOKind::kOpen:
-      return LowerFileOpenCall(process, frame, call);
+      return LowerFileOpenCall(process, frame, call, id);
     case support::FileIOKind::kClose:
-      return LowerFileCloseCall(process, frame, call);
+      return LowerFixedOperandCall(
+          process, frame, call, id, 1, builtins.void_type);
     case support::FileIOKind::kGetc:
-      return LowerFileGetcCall(process, frame, call);
+      return LowerFixedOperandCall(process, frame, call, id, 1, builtins.int32);
     case support::FileIOKind::kUngetc:
-      return LowerFileUngetcCall(process, frame, call);
+      return LowerFixedOperandCall(process, frame, call, id, 2, builtins.int32);
     case support::FileIOKind::kSeek:
-      return LowerFileSeekCall(process, frame, call);
+      return LowerFixedOperandCall(process, frame, call, id, 3, builtins.int32);
     case support::FileIOKind::kRewind:
-      return LowerFileRewindCall(process, frame, call);
+      return LowerFixedOperandCall(process, frame, call, id, 1, builtins.int32);
     case support::FileIOKind::kTell:
-      return LowerFileTellCall(process, frame, call);
+      return LowerFixedOperandCall(process, frame, call, id, 1, builtins.int32);
     case support::FileIOKind::kEof:
-      return LowerFileEofCall(process, frame, call);
+      return LowerFixedOperandCall(process, frame, call, id, 1, builtins.int32);
     case support::FileIOKind::kFlush:
-      return LowerFileFlushCall(process, frame, call);
+      return LowerFileFlushCall(process, frame, call, id);
     case support::FileIOKind::kGets:
     case support::FileIOKind::kRead:
     case support::FileIOKind::kError:
@@ -252,7 +171,8 @@ auto LowerFileIOSystemSubroutineCall(
 
 auto LowerFileIOSystemSubroutineCallStmt(
     ProcessLowerer& process, WalkFrame frame, std::optional<std::string> label,
-    const hir::CallExpr& call, const support::FileIOSystemSubroutineInfo& info,
+    const hir::CallExpr& call, support::SystemSubroutineId id,
+    const support::FileIOSystemSubroutineInfo& info,
     std::optional<hir::ExprId> assign_target, mir::TypeId result_type)
     -> diag::Result<mir::Stmt> {
   if (!support::FileIOHasOutputArg(info.kind)) {
@@ -282,32 +202,27 @@ auto LowerFileIOSystemSubroutineCallStmt(
       const mir::ExprId fd_id = wrapper.AddExpr(*std::move(fd_or));
       const mir::ExprId temp_ref = wrapper.AddExpr(
           mir::Expr{.data = slots[0].temp, .type = slots[0].type});
-      call_expr = mir::Expr{
-          .data =
-              mir::RuntimeCallExpr{
-                  .call =
-                      mir::RuntimeFileGetsCall{
-                          .str_dest = temp_ref, .fd = fd_id}},
-          .type = process.Module().Unit().builtins.int32};
+      call_expr = BuildFileIoCall(
+          process, wrapper_frame, id, {temp_ref, fd_id},
+          process.Module().Unit().builtins.int32);
       break;
     }
     case support::FileIOKind::kRead: {
-      // LRM 21.3.4.4: arg[0] is either a packed integral lvalue
-      // (integral form) or an unpacked array (memory form).
+      // LRM 21.3.4.4: arg[0] is either a packed integral lvalue (integral
+      // form) or an unpacked array (memory form). Both write the destination,
+      // so both round-trip through a copy-out temp; the runtime call is a
+      // generic CallExpr whose operands are the temp, the descriptor, and --
+      // for the memory form -- the declared bounds plus start / count.
       const auto& dest_hir = hir_proc.exprs.at(call.arguments[0]->value);
       const auto& dest_hir_ty = module.Hir().GetType(dest_hir.type);
-      auto fd_or = process.LowerExpr(
-          hir_proc.exprs.at(call.arguments[1]->value), wrapper_frame);
-      if (!fd_or) return std::unexpected(std::move(fd_or.error()));
-      const mir::ExprId fd_id = wrapper.AddExpr(*std::move(fd_or));
-
+      const auto& builtins = process.Module().Unit().builtins;
       const auto* unpacked =
           std::get_if<hir::UnpackedArrayType>(&dest_hir_ty.data);
+
       if (unpacked == nullptr) {
         // Integral form. LRM "start and count are ignored if $fread is
-        // loading an integral variable" -- we reject the tolerant case
-        // outright so the user gets a clear diagnostic instead of silent
-        // arg-dropping.
+        // loading an integral variable" -- reject the tolerant case so the
+        // user gets a clear diagnostic instead of silent arg-dropping.
         if (call.arguments.size() != 2) {
           return diag::Unsupported(
               diag::DiagCode::kUnsupportedSubroutineArgument,
@@ -316,68 +231,61 @@ auto LowerFileIOSystemSubroutineCallStmt(
               "to surface the mistake)",
               diag::UnsupportedCategory::kFeature);
         }
-        auto slot_or = BuildOutputArgSlot(
-            process, wrapper_frame, *call.arguments[0], "_lyra_fread_dest");
-        if (!slot_or) return std::unexpected(std::move(slot_or.error()));
-        slots.push_back(*slot_or);
-        const mir::ExprId temp_ref = wrapper.AddExpr(
-            mir::Expr{.data = slots[0].temp, .type = slots[0].type});
-        call_expr = mir::Expr{
-            .data =
-                mir::RuntimeCallExpr{
-                    .call =
-                        mir::RuntimeFileReadCall{
-                            .target =
-                                mir::RuntimeFileReadCall::PackedTarget{
-                                    .dest = temp_ref},
-                            .fd = fd_id}},
-            .type = process.Module().Unit().builtins.int32};
-        break;
+      } else {
+        // Memory form. Only 1D unpacked of integral packed elements is in
+        // scope; struct / union / multi-dim / dynamic-array element types
+        // are deferred.
+        const auto& elem_ty = module.Hir().GetType(unpacked->element_type);
+        if (!std::holds_alternative<hir::PackedArrayType>(elem_ty.data)) {
+          return diag::Unsupported(
+              diag::DiagCode::kUnsupportedSubroutineArgument,
+              "$fread memory form: only 1D unpacked arrays of integral "
+              "packed elements are supported (LRM 21.3.4.4)",
+              diag::UnsupportedCategory::kFeature);
+        }
       }
-      // Unpacked-array destination (LRM 21.3.4.4 "memory form"). Only 1D
-      // unpacked of integral packed elements is in scope; struct / union /
-      // multi-dim / dynamic-array element types are deferred.
-      const auto& elem_ty = module.Hir().GetType(unpacked->element_type);
-      if (!std::holds_alternative<hir::PackedArrayType>(elem_ty.data)) {
-        return diag::Unsupported(
-            diag::DiagCode::kUnsupportedSubroutineArgument,
-            "$fread memory form: only 1D unpacked arrays of integral "
-            "packed elements are supported (LRM 21.3.4.4)",
-            diag::UnsupportedCategory::kFeature);
+
+      auto fd_or = process.LowerExpr(
+          hir_proc.exprs.at(call.arguments[1]->value), wrapper_frame);
+      if (!fd_or) return std::unexpected(std::move(fd_or.error()));
+      const mir::ExprId fd_id = wrapper.AddExpr(*std::move(fd_or));
+
+      auto slot_or = BuildOutputArgSlot(
+          process, wrapper_frame, *call.arguments[0], "_lyra_fread_dest");
+      if (!slot_or) return std::unexpected(std::move(slot_or.error()));
+      slots.push_back(*slot_or);
+      const mir::ExprId temp_ref = wrapper.AddExpr(
+          mir::Expr{.data = slots[0].temp, .type = slots[0].type});
+
+      std::vector<mir::ExprId> operands{temp_ref, fd_id};
+      if (unpacked != nullptr) {
+        operands.push_back(wrapper.AddExpr(
+            mir::MakeInt32Literal(builtins.int32, unpacked->dim.left)));
+        operands.push_back(wrapper.AddExpr(
+            mir::MakeInt32Literal(builtins.int32, unpacked->dim.right)));
+        // start: the SV index, or the lowest declared index when omitted
+        // (LRM 21.3.4.4 default). Synthesizing it keeps count the only
+        // trailing-optional operand.
+        if (call.arguments.size() > 2 && call.arguments[2].has_value()) {
+          auto start_or = process.LowerExpr(
+              hir_proc.exprs.at(call.arguments[2]->value), wrapper_frame);
+          if (!start_or) return std::unexpected(std::move(start_or.error()));
+          operands.push_back(wrapper.AddExpr(*std::move(start_or)));
+        } else {
+          operands.push_back(wrapper.AddExpr(
+              mir::MakeInt32Literal(
+                  builtins.int32,
+                  std::min(unpacked->dim.left, unpacked->dim.right))));
+        }
+        if (call.arguments.size() > 3 && call.arguments[3].has_value()) {
+          auto count_or = process.LowerExpr(
+              hir_proc.exprs.at(call.arguments[3]->value), wrapper_frame);
+          if (!count_or) return std::unexpected(std::move(count_or.error()));
+          operands.push_back(wrapper.AddExpr(*std::move(count_or)));
+        }
       }
-      auto extract_optional =
-          [&](std::size_t idx) -> diag::Result<std::optional<mir::ExprId>> {
-        if (call.arguments.size() <= idx) return std::nullopt;
-        if (!call.arguments[idx].has_value()) return std::nullopt;
-        const auto& a = hir_proc.exprs.at(call.arguments[idx]->value);
-        auto lowered = process.LowerExpr(a, wrapper_frame);
-        if (!lowered) return std::unexpected(std::move(lowered.error()));
-        return wrapper.AddExpr(*std::move(lowered));
-      };
-      auto start_or = extract_optional(2);
-      if (!start_or) return std::unexpected(std::move(start_or.error()));
-      auto count_or = extract_optional(3);
-      if (!count_or) return std::unexpected(std::move(count_or.error()));
-      // The unpacked-array lvalue flows in without copy-out: the runtime
-      // helper mutates elements through the live reference, so the
-      // BuildOutputArgSlot temp the integral path uses isn't needed here.
-      auto dest_or = process.LowerExpr(dest_hir, wrapper_frame);
-      if (!dest_or) return std::unexpected(std::move(dest_or.error()));
-      const mir::ExprId dest_id = wrapper.AddExpr(*std::move(dest_or));
-      call_expr = mir::Expr{
-          .data =
-              mir::RuntimeCallExpr{
-                  .call =
-                      mir::RuntimeFileReadCall{
-                          .target =
-                              mir::RuntimeFileReadCall::UnpackedTarget{
-                                  .dest = dest_id,
-                                  .start = *start_or,
-                                  .count = *count_or,
-                                  .declared_left = unpacked->dim.left,
-                                  .declared_right = unpacked->dim.right},
-                          .fd = fd_id}},
-          .type = process.Module().Unit().builtins.int32};
+      call_expr = BuildFileIoCall(
+          process, wrapper_frame, id, std::move(operands), builtins.int32);
       break;
     }
     case support::FileIOKind::kError: {
@@ -392,13 +300,9 @@ auto LowerFileIOSystemSubroutineCallStmt(
       slots.push_back(*slot_or);
       const mir::ExprId temp_ref = wrapper.AddExpr(
           mir::Expr{.data = slots[0].temp, .type = slots[0].type});
-      call_expr = mir::Expr{
-          .data =
-              mir::RuntimeCallExpr{
-                  .call =
-                      mir::RuntimeFileErrorCall{
-                          .fd = fd_id, .str_dest = temp_ref}},
-          .type = process.Module().Unit().builtins.int32};
+      call_expr = BuildFileIoCall(
+          process, wrapper_frame, id, {fd_id, temp_ref},
+          process.Module().Unit().builtins.int32);
       break;
     }
     default:

@@ -1127,6 +1127,37 @@ auto RenderSystemSubroutineEntryName(const support::SystemSubroutineDesc& desc)
             throw InternalError(
                 "RenderSystemSubroutineEntryName: unknown TimeKind");
           },
+          [](const support::FileIOSystemSubroutineInfo& file_io)
+              -> diag::Result<std::string_view> {
+            switch (file_io.kind) {
+              case support::FileIOKind::kOpen:
+                return std::string_view{"lyra::runtime::LyraFOpen"};
+              case support::FileIOKind::kClose:
+                return std::string_view{"lyra::runtime::LyraFClose"};
+              case support::FileIOKind::kGetc:
+                return std::string_view{"lyra::runtime::LyraFGetc"};
+              case support::FileIOKind::kUngetc:
+                return std::string_view{"lyra::runtime::LyraFUngetc"};
+              case support::FileIOKind::kGets:
+                return std::string_view{"lyra::runtime::LyraFGets"};
+              case support::FileIOKind::kSeek:
+                return std::string_view{"lyra::runtime::LyraFSeek"};
+              case support::FileIOKind::kRewind:
+                return std::string_view{"lyra::runtime::LyraFRewind"};
+              case support::FileIOKind::kTell:
+                return std::string_view{"lyra::runtime::LyraFTell"};
+              case support::FileIOKind::kEof:
+                return std::string_view{"lyra::runtime::LyraFEof"};
+              case support::FileIOKind::kError:
+                return std::string_view{"lyra::runtime::LyraFError"};
+              case support::FileIOKind::kFlush:
+                return std::string_view{"lyra::runtime::LyraFFlush"};
+              case support::FileIOKind::kRead:
+                return std::string_view{"lyra::runtime::LyraFRead"};
+            }
+            throw InternalError(
+                "RenderSystemSubroutineEntryName: unknown FileIOKind");
+          },
           [&](const auto&) -> diag::Result<std::string_view> {
             return diag::Unsupported(
                 diag::DiagCode::kCppEmitExpressionFormNotImplemented,

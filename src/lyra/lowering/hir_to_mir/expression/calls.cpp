@@ -393,7 +393,7 @@ auto LowerSystemSubroutineCall(
           [&](const support::FileIOSystemSubroutineInfo& file_io)
               -> diag::Result<mir::Expr> {
             return LowerFileIOSystemSubroutineCall(
-                process, frame, call, desc.name, file_io, span);
+                process, frame, call, desc.id, desc.name, file_io, span);
           },
           [&](const support::ScanSystemSubroutineInfo& scan_info)
               -> diag::Result<mir::Expr> {
