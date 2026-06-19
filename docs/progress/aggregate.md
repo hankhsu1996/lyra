@@ -27,10 +27,11 @@ follow once dynamic array's storage and runtime conventions are settled and prov
 | DA5  | Open: constant-width slice (subject to LRM check).                      |
 | DA6a | Done: method dispatch + no-`with` subset.                               |
 | DA6b | Done: `with` clause + iterator on sort / rsort / reduction methods.     |
-| DA6c | Open: locator family (find\*, min, max, unique\*).                      |
+| DA6c | Done: locator family (find\*, min, max, unique\*).                      |
 | DA7  | Open: invalid-index handling.                                           |
 | Q1   | Done: type, element read/write, native methods, default, case-equality. |
 | Q2   | Done: operator surface (`$`, slice, concat, equality, bound, append).   |
+| Q3   | Done: array-manipulation method family (LRM 7.12).                      |
 | A1   | Done: string / integral index, element read / write, query methods.     |
 | A2   | Done: traversal protocol (`first` / `last` / `next` / `prev`).          |
 | A3   | Done: `foreach` over an associative array (any dimensionality).         |
@@ -98,18 +99,16 @@ The numeric IDs are stable references and do not imply execution order beyond DA
       Slang gates element-type constraints upstream (integral element for reductions, comparable for
       sort).
 
-- [x] DA6b -- `with`-clause variants of the methods that accept one (`sort`, `rsort`, reductions),
-      plus the LRM 7.12.4 `item.index` iterator method. AST -> HIR consumes slang's
-      `IteratorCallInfo` and binds the iterator HIR id; HIR -> MIR synthesises a `mir::ClosureExpr`
-      using main's existing `CaptureSink` (so non-iterator outer reads in the body become
-      by-reference captures automatically) and adds parameter bindings for `item` and `index`. The
-      backend renders the closure as a lambda-with-captures and routes the call to the runtime's
-      `*By` overloads.
+- [x] DA6b -- The `with`-clause variants of the methods that accept one (`sort`, `rsort`, and the
+      reductions), plus the LRM 7.12.4 `item.index` iterator method. The `with` expression is
+      evaluated as a closure over each element and its index; an outer variable read inside the body
+      is captured by reference so the body observes live values, and an omitted `with` clause
+      applies the LRM-default `with (item)`.
 
-- [ ] DA6c -- The locator-family methods that return an index or element queue (`find` family,
-      `min`, `max`, `unique`, `unique_index`). The queue return container now exists (see Queue
-      below). `shuffle()` (needs RNG model) and `map()` (SV2023, needs `with` infra + version gate)
-      are standalone follow-ups after DA6c lands.
+- [x] DA6c -- The locator-family methods that return an index or element queue (`find` family,
+      `min`, `max`, `unique`, `unique_index`), including the optional `with` clause for `min` /
+      `max` / `unique`. `shuffle()` (needs RNG model) and `map()` (SV2023, needs a version gate) are
+      standalone follow-ups.
 
 - [ ] DA7 -- Invalid-index handling. Read on an out-of-range index returns the element type's LRM
       Table 7-1 default; write on an out-of-range index is a silent no-op; X / Z bits in the index
@@ -136,6 +135,16 @@ optional right bound (`q[$:N]`).
       equality operators (`==` / `!=` / `===` / `!==`); bounded-queue discard with a warning (LRM
       7.10.5); and the legal append write `q[$+1] = v` (LRM 7.10.1). One narrow form remains open:
       an unpacked concatenation whose result is a dynamic or fixed array rather than a queue.
+
+- [x] Q3 -- The array-manipulation method family (LRM 7.12) on a queue receiver, available because a
+      queue supports every unpacked-array operation (LRM 7.10.1). The ordering family (`reverse`,
+      `sort`, `rsort`), the reduction family (`sum`, `product`, `and`, `or`, `xor`), and the locator
+      family (`find` and its variants, `min`, `max`, `unique`, `unique_index`), each with the
+      optional / mandatory `with` clause per LRM 7.12.1 -- 7.12.3 and the `item.index` iterator (LRM
+      7.12.4). Locator methods return a queue of elements or of `int` per LRM 7.12.1; reduction
+      result width follows the `with`-expression type. The semantics and the `with`-clause closure
+      are the same as for the dynamic-array receiver; `shuffle` and `map` remain the shared
+      follow-ups noted under DA6c.
 
 ## Associative Array
 

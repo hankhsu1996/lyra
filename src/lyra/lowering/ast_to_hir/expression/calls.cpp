@@ -163,14 +163,40 @@ auto LowerCallExprProc(
     }
 
     if (receiver_type.has_value() &&
-        std::holds_alternative<hir::DynamicArrayType>(
+        std::holds_alternative<hir::QueueType>(
             module.Unit().GetType(*receiver_type).data)) {
+      // LRM 7.10.2 queue-native methods. The receiver is arguments[0]; any
+      // method parameters (insert's index and item, push's item) follow as the
+      // remaining arguments. These methods take no `with` clause and are tried
+      // before the array-manipulation family so `size` / `delete` resolve to
+      // the queue-native form rather than the LRM 7.12 one.
+      if (auto kind = LowerQueueMethodName(name); kind.has_value()) {
+        auto type_id = module.InternType(*call.type, span);
+        if (!type_id) return std::unexpected(std::move(type_id.error()));
+        return hir::Expr{
+            .type = *type_id,
+            .data =
+                hir::CallExpr{
+                    .callee = hir::BuiltinMethodRef{.method = *kind},
+                    .arguments = std::move(arg_ids),
+                },
+            .span = span,
+        };
+      }
+    }
+
+    // LRM 7.12 array-manipulation family. LRM 7.10.1 makes it available on a
+    // queue (which supports the same operations as an unpacked array) as well
+    // as a dynamic array, whose LRM 7.5.2 / 7.5.3 `size` / `delete` share the
+    // same family enum. The no-`with` form takes only the receiver; the `with`
+    // form (LRM 7.12.4) binds an iterator and a body expression carried as the
+    // optional `WithClause`, which HIR -> MIR turns into a closure argument.
+    if (receiver_type.has_value() &&
+        (std::holds_alternative<hir::DynamicArrayType>(
+             module.Unit().GetType(*receiver_type).data) ||
+         std::holds_alternative<hir::QueueType>(
+             module.Unit().GetType(*receiver_type).data))) {
       if (auto kind = LowerArrayMethodName(name); kind.has_value()) {
-        // LRM 7.5.2 / 7.5.3 dynamic-array methods plus LRM 7.12.2 / 7.12.3
-        // family. The no-`with` form takes only the receiver. The `with`
-        // form (LRM 7.12.4) binds an iterator and a body expression which
-        // HIR carries as the optional `WithClause` -- HIR -> MIR turns it
-        // into a closure argument.
         auto type_id = module.InternType(*call.type, span);
         if (!type_id) return std::unexpected(std::move(type_id.error()));
         std::optional<hir::WithClause> with_clause;
@@ -201,27 +227,6 @@ auto LowerCallExprProc(
                     .callee = hir::BuiltinMethodRef{.method = *kind},
                     .arguments = std::move(arg_ids),
                     .with_clause = std::move(with_clause),
-                },
-            .span = span,
-        };
-      }
-    }
-
-    if (receiver_type.has_value() &&
-        std::holds_alternative<hir::QueueType>(
-            module.Unit().GetType(*receiver_type).data)) {
-      if (auto kind = LowerQueueMethodName(name); kind.has_value()) {
-        // LRM 7.10.2 queue-native methods. The receiver is arguments[0]; any
-        // method parameters (insert's index and item, push's item) follow as
-        // the remaining arguments. These methods take no `with` clause.
-        auto type_id = module.InternType(*call.type, span);
-        if (!type_id) return std::unexpected(std::move(type_id.error()));
-        return hir::Expr{
-            .type = *type_id,
-            .data =
-                hir::CallExpr{
-                    .callee = hir::BuiltinMethodRef{.method = *kind},
-                    .arguments = std::move(arg_ids),
                 },
             .span = span,
         };
