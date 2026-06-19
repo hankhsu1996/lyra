@@ -109,9 +109,6 @@ auto LowerForkStmt(
     closure.captures = std::move(captures);
     closure.body =
         std::make_unique<mir::ProceduralScope>(std::move(branch_scope));
-    // LRM 9.3.2 fork branch: each branch is a concurrent thread that may
-    // suspend on timing controls / event waits inside its body.
-    closure.is_coroutine = true;
     branch_ids.push_back(fork_scope.AddExpr(
         mir::Expr{
             .data = std::move(closure),

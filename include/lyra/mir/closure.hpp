@@ -64,14 +64,6 @@ struct Parameter {
 //      carrying the result expression. An empty-`params` closure is invoked
 //      once (fork branch / deferred IIFE) and renders as a captures-as-args
 //      IIFE.
-//   5. `is_coroutine` declares whether the body may suspend (LRM 9.4 timing
-//      controls / event waits) -- equivalent to asking "is the body lowered
-//      as a C++20 coroutine vs a plain lambda". A fork branch (LRM 9.3.2)
-//      spawns its body as a concurrent coroutine; all other closure shapes
-//      (NBA submit / `$strobe` / `$sscanf` IIFE / with-clause iterator /
-//      deferred check) run their body synchronously without suspending.
-//      HIR-to-MIR encodes the value at construction; the backend renders
-//      the body purely by reading it -- no surrounding context lookup.
 //
 // StructuralVarRef inside body may carry hops that reach module-scope storage
 // directly, the same way C++ lambdas may reference globals without capture.
@@ -79,7 +71,6 @@ struct ClosureExpr {
   std::vector<Capture> captures;
   std::vector<Parameter> params;
   std::unique_ptr<ProceduralScope> body;
-  bool is_coroutine = false;
 
   ClosureExpr();
   ~ClosureExpr();

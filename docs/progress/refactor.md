@@ -239,24 +239,15 @@ Entries get checked off as their PRs land. When the last entry lands, the file i
       kind touches three files (subsystem header, subsystem implementation, dispatcher switch) and
       leaves the pass-class header untouched.
 
-- [x] R14 -- Move the "is this callable a coroutine" decision off `RenderContext` and onto MIR.
-      Today the cpp backend reads `RenderContext::InCoroutine()` -- a walk-state flag installed via
-      `WithCoroutine(...)` at every callable-body entry -- to decide whether a `mir::ReturnStmt`
-      lowers to `return` or `co_return`. The distinction is not semantic at the MIR or LIR level:
-      `return` and `co_return` describe the same operation (exit the callable); "how" depends purely
-      on whether the surrounding callable is a coroutine. That fact is already captured by every
-      callable MIR node except `mir::ClosureExpr` (Process is implicit; `StructuralSubroutineDecl`'s
-      `kind` distinguishes task / function; constructor body is implicit). `ClosureExpr` is the gap:
-      the same node is constructed for fork-branch closures (concurrent coroutines that may suspend)
-      and for NBA / `$strobe` / `$sscanf` IIFE / with-clause iterator / deferred-check closures
-      (synchronous lambdas), with no field to say which. Target shape: `mir::ClosureExpr` gains an
-      `is_coroutine` flag set at HIR-to-MIR construction; the cpp backend reads it directly at every
-      closure entry instead of inheriting a walk-state assumption.
-      `RenderContext::WithCoroutine(...)` / `InCoroutine()` remain (the bool still propagates across
-      nested if / loop / block scopes within a body) but the install path is MIR-sourced -- the
-      render no longer "decides" coroutine-ness, it only reads. The eventual removal of the
-      propagation flag from `RenderContext` ships in R18, when the whole walk frame is dissolved.
-      **Trigger**: scheduled in front of R18 (the render-layer rewrite).
+- [x] R14 -- The `return` / `co_return` choice is carried by MIR, not re-decided in the backend.
+      `return` and `co_return` describe the same operation (exit the callable); whether a given
+      `mir::ReturnStmt` renders as one or the other depends only on whether its enclosing callable
+      is a coroutine. `mir::ReturnStmt` carries that as `is_coroutine_return`, set at HIR-to-MIR
+      from the enclosing callable body's coroutine kind; the cpp backend reads it at each return
+      rather than inheriting a render-time walk-state flag. A closure needs no coroutine field of
+      its own -- whether a closure body suspends follows from how the closure is used (a fork-branch
+      reference spawns it as a coroutine; a deferred submit runs it synchronously), which is itself
+      explicit in MIR per `architecture/mir.md`.
 
 - [x] R15 -- Give `mir::Process` a `name` field, so the C++ method name, static-frame struct name,
       static-frame field name, and any future LLVM-IR function symbol all flow from a single
