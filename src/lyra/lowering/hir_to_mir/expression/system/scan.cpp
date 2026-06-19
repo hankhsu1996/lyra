@@ -15,8 +15,10 @@
 #include "lyra/hir/procedural_body.hpp"
 #include "lyra/lowering/hir_to_mir/capture_sink.hpp"
 #include "lyra/lowering/hir_to_mir/default_value.hpp"
+#include "lyra/lowering/hir_to_mir/lhs_observable.hpp"
 #include "lyra/lowering/hir_to_mir/process_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/self_ref.hpp"
+#include "lyra/lowering/hir_to_mir/services_call.hpp"
 #include "lyra/mir/binary_op.hpp"
 #include "lyra/mir/closure.hpp"
 #include "lyra/mir/compilation_unit.hpp"
@@ -327,17 +329,20 @@ auto LowerScanSystemSubroutineCall(
     mir::ProceduralScope then_body;
     const WalkFrame then_frame =
         closure_frame.WithProceduralScope(&then_body).Deeper();
-    auto lvalue_or = process.LowerExpr(
+    auto lvalue_or = process.LowerLhsExpr(
         hir_proc.exprs.at(call.arguments[k + 2]->value), then_frame);
     if (!lvalue_or) return std::unexpected(std::move(lvalue_or.error()));
     const mir::ExprId lvalue_id = then_body.AddExpr(*std::move(lvalue_or));
     const mir::ExprId temp_read_id = then_body.AddExpr(
         mir::MakeProceduralVarRefExpr(
             mir::ProceduralHops{.value = 1}, temp_ids[k], metas[k].mir_type));
-    const mir::ExprId assign_id = then_body.AddExpr(
-        mir::Expr{
-            .data = mir::AssignExpr{.target = lvalue_id, .value = temp_read_id},
-            .type = metas[k].mir_type});
+    const mir::ExprId services_id_then =
+        then_body.AddExpr(BuildServicesCallExpr(process, then_frame));
+    const mir::Expr assign_expr = BuildObservableAssignExpr(
+        process.Module().Unit(), then_body, services_id_then, lvalue_id,
+        temp_read_id, std::nullopt, metas[k].mir_type,
+        process.Module().Unit().builtins.void_type);
+    const mir::ExprId assign_id = then_body.AddExpr(assign_expr);
     then_body.AppendStmt(mir::ExprStmt{.expr = assign_id});
 
     body.AppendIfThen(cond_id, std::move(then_body));

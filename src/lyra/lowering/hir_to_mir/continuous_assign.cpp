@@ -6,6 +6,7 @@
 
 #include "lyra/hir/continuous_assign.hpp"
 #include "lyra/hir/structural_scope.hpp"
+#include "lyra/lowering/hir_to_mir/lhs_observable.hpp"
 #include "lyra/lowering/hir_to_mir/sensitivity_wait.hpp"
 #include "lyra/lowering/hir_to_mir/walk_frame.hpp"
 #include "lyra/mir/expr.hpp"
@@ -42,14 +43,28 @@ auto LowerContinuousAssign(
   const mir::TypeId assign_type = (*rhs_or).type;
   const mir::ExprId rhs_id = body_scope.AddExpr(*std::move(rhs_or));
 
-  auto lhs_or = scope.LowerExpr(hir_scope.GetExpr(src.lhs), body_frame);
+  auto lhs_or = scope.LowerLhsExpr(hir_scope.GetExpr(src.lhs), body_frame);
   if (!lhs_or) return std::unexpected(std::move(lhs_or.error()));
   const mir::ExprId lhs_id = body_scope.AddExpr(*std::move(lhs_or));
 
-  const mir::ExprId assign_id = body_scope.AddExpr(
-      mir::Expr{
-          .data = mir::AssignExpr{.target = lhs_id, .value = rhs_id},
-          .type = assign_type});
+  // Build `self.Services()` in the body so an observable LHS routes through
+  // `Var<T>::Set` (or `Mutate` for a selector chain). The body's `self` is
+  // already bound at depth 0 via `WithSelfBinding(self_id, ...)` above.
+  const mir::TypeId self_ptr_type = scope.Module().Unit().builtins.self_pointer;
+  const mir::ExprId body_self_ref = body_scope.AddExpr(
+      mir::MakeProceduralVarRefExpr(
+          mir::ProceduralHops{
+              .value = body_frame.procedural_depth.value -
+                       body_frame.self_decl_depth.value},
+          self_id, self_ptr_type));
+  const mir::ExprId body_services_id = body_scope.AddExpr(
+      mir::MakeServicesCallExpr(
+          body_self_ref, scope.Module().Unit().builtins.services));
+
+  const mir::Expr assign_expr = BuildObservableAssignExpr(
+      scope.Module().Unit(), body_scope, body_services_id, lhs_id, rhs_id,
+      std::nullopt, assign_type, scope.Module().Unit().builtins.void_type);
+  const mir::ExprId assign_id = body_scope.AddExpr(assign_expr);
   body_scope.AppendStmt(
       mir::Stmt{
           .label = std::nullopt, .data = mir::ExprStmt{.expr = assign_id}});

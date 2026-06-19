@@ -80,10 +80,12 @@ class StructuralScopeLowerer {
   [[nodiscard]] auto LowerExpr(const hir::Expr& expr, WalkFrame frame) const
       -> diag::Result<mir::Expr>;
 
-  [[nodiscard]] auto Module() -> ModuleLowerer& {
-    return *module_;
-  }
-  [[nodiscard]] auto Module() const -> const ModuleLowerer& {
+  // LHS-context expression dispatcher: addressable kinds only, no auto-Get
+  // wrap. Mirrors `ProcessLowerer::LowerLhsExpr`.
+  [[nodiscard]] auto LowerLhsExpr(const hir::Expr& expr, WalkFrame frame) const
+      -> diag::Result<mir::Expr>;
+
+  [[nodiscard]] auto Module() const -> ModuleLowerer& {
     return *module_;
   }
 

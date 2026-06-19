@@ -208,11 +208,12 @@ class PackedArray {
   // and propagates X, this returns deterministic 0 or 1.
   [[nodiscard]] auto CaseEqual(const PackedArray& other) const -> PackedArray;
 
-  // Mirror of `PackedArrayRef::Clone`. A chain that ends on a const path
-  // (e.g. `var.Get().Slice(...)`) materializes to `PackedArray` directly, so
-  // the emit-side `.Clone()` wrap needs to compile on both sides; here it is
-  // just an explicit copy.
-  [[nodiscard]] auto Clone() const -> PackedArray {
+  // Mirror of `PackedArrayRef::ToOwned`. A chain that ends on a const path
+  // (e.g. `var.Get().Slice(...)`) materialises to `PackedArray` directly, so
+  // the emit-side `.ToOwned()` wrap needs to compile on both sides; here it
+  // is just an explicit copy. Mirrors Rust's `<T as ToOwned>::to_owned()`
+  // for `T = PackedArray`, where `&T -> T` is a copy.
+  [[nodiscard]] auto ToOwned() const -> PackedArray {
     return *this;
   }
 
@@ -497,9 +498,10 @@ class PackedArrayRef {
 
   // Allocate an independent `PackedArray` holding the bits this view
   // currently projects. There is no implicit conversion from ref to value;
-  // every materialization is spelled `.Clone()` so the allocation cost is
+  // every materialisation is spelled `.ToOwned()` (Rust's `ToOwned` trait
+  // semantics: borrowed view -> owning value) so the allocation cost is
   // visible at the call site.
-  [[nodiscard]] auto Clone() const -> PackedArray;
+  [[nodiscard]] auto ToOwned() const -> PackedArray;
 
   // Write-side: route through AssignSlice on root.
   auto operator=(const PackedArray& value) -> PackedArrayRef&;
@@ -511,37 +513,37 @@ class PackedArrayRef {
   // caller, the proxy captures the position, and both the read and write
   // here use that same position with no re-evaluation of indices.
   auto operator+=(const PackedArray& rhs) -> PackedArrayRef& {
-    return *this = Clone() + rhs;
+    return *this = ToOwned() + rhs;
   }
   auto operator-=(const PackedArray& rhs) -> PackedArrayRef& {
-    return *this = Clone() - rhs;
+    return *this = ToOwned() - rhs;
   }
   auto operator*=(const PackedArray& rhs) -> PackedArrayRef& {
-    return *this = Clone() * rhs;
+    return *this = ToOwned() * rhs;
   }
   auto operator/=(const PackedArray& rhs) -> PackedArrayRef& {
-    return *this = Clone() / rhs;
+    return *this = ToOwned() / rhs;
   }
   auto operator%=(const PackedArray& rhs) -> PackedArrayRef& {
-    return *this = Clone() % rhs;
+    return *this = ToOwned() % rhs;
   }
   auto operator&=(const PackedArray& rhs) -> PackedArrayRef& {
-    return *this = Clone() & rhs;
+    return *this = ToOwned() & rhs;
   }
   auto operator|=(const PackedArray& rhs) -> PackedArrayRef& {
-    return *this = Clone() | rhs;
+    return *this = ToOwned() | rhs;
   }
   auto operator^=(const PackedArray& rhs) -> PackedArrayRef& {
-    return *this = Clone() ^ rhs;
+    return *this = ToOwned() ^ rhs;
   }
   auto ShiftLeftAssign(const PackedArray& rhs) -> PackedArrayRef& {
-    return *this = Clone().ShiftLeft(rhs);
+    return *this = ToOwned().ShiftLeft(rhs);
   }
   auto LogicalShiftRightAssign(const PackedArray& rhs) -> PackedArrayRef& {
-    return *this = Clone().LogicalShiftRight(rhs);
+    return *this = ToOwned().LogicalShiftRight(rhs);
   }
   auto ArithmeticShiftRightAssign(const PackedArray& rhs) -> PackedArrayRef& {
-    return *this = Clone().ArithmeticShiftRight(rhs);
+    return *this = ToOwned().ArithmeticShiftRight(rhs);
   }
 
   // LRM 11.4.2 inc/dec on a partial-write proxy. Both forms return PackedArray
@@ -549,7 +551,7 @@ class PackedArrayRef {
   // so an outer rvalue use (`b = ++var[3:0]`) consumes a materialized value
   // instead of holding a transient proxy past the end of the full expression.
   auto operator++() -> PackedArray {
-    PackedArray current = Clone();
+    PackedArray current = ToOwned();
     auto updated =
         current + PackedArray::FromInt(
                       1, bit_width_, current.IsSigned(), current.IsFourState());
@@ -557,13 +559,13 @@ class PackedArrayRef {
     return updated;
   }
   auto operator++(int) -> PackedArray {
-    PackedArray prior = Clone();
+    PackedArray prior = ToOwned();
     *this = prior + PackedArray::FromInt(
                         1, bit_width_, prior.IsSigned(), prior.IsFourState());
     return prior;
   }
   auto operator--() -> PackedArray {
-    PackedArray current = Clone();
+    PackedArray current = ToOwned();
     auto updated =
         current - PackedArray::FromInt(
                       1, bit_width_, current.IsSigned(), current.IsFourState());
@@ -571,7 +573,7 @@ class PackedArrayRef {
     return updated;
   }
   auto operator--(int) -> PackedArray {
-    PackedArray prior = Clone();
+    PackedArray prior = ToOwned();
     *this = prior - PackedArray::FromInt(
                         1, bit_width_, prior.IsSigned(), prior.IsFourState());
     return prior;

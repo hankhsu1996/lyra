@@ -48,19 +48,24 @@ enum class EventMethodKind : std::uint8_t {
   kTriggered,
 };
 
-// LRM 7.5.2 / 7.5.3 dynamic-array methods plus the LRM 7.12 array-method
-// family (ordering, reduction, and the 7.12.1 locator methods). The locator
-// arms (`kFind` onward) return a queue -- an element queue for the value
-// locators and an `int` queue for the index locators.
+// Methods on the array-shaped containers (`PackedArray`, `UnpackedArray<T>`,
+// `DynamicArray<T>`, `Queue<T>`).
 //
-// Reduction, ordering, and locator methods carry a single closure as their
-// second argument. LRM 7.12.1 defines that "if a `with` clause is not given,
-// the method behaves as if `with (item)` were specified", so HIR-to-MIR
-// synthesises the identity closure when the source has none. At MIR each
-// method is exactly one kind with one signature (receiver plus closure); the
-// SV-source distinction between implicit and explicit `with` is a reading of
-// the source, not a MIR-level fact.
+// LRM 11.5 container access: `kElementAt` is `arr[i]` and `kSlice` is
+// `arr[hi:lo]` (LRM 7.4.5 / 11.5.1); both yield a borrowed view.
+// `kToOwned` materialises that view into an owning value (Rust's `ToOwned`
+// trait: `&str::to_owned() -> String`); needed only when the storage uses a
+// distinct ref type (PackedArrayRef), since other containers' `T&` is
+// implicitly materialised by the C++ copy constructor.
+//
+// `kSize` is the LRM 7.9.1 element count. The shared LRM 7.12 family
+// (ordering, reduction, locator) carries one closure as the second argument
+// -- the source `with` clause or the LRM 7.12.1 default `with (item)`. The
+// locator arms (`kFind` onward) return a queue.
 enum class ArrayMethodKind : std::uint8_t {
+  kElementAt,
+  kSlice,
+  kToOwned,
   kSize,
   kDelete,
   kReverse,
@@ -101,13 +106,15 @@ enum class QueueMethodKind : std::uint8_t {
   kSlice,
 };
 
-// LRM 7.9 associative-array methods. Exclusive to the associative container:
-// `num` / `size` query the entry count, `exists` tests a key, `delete` removes
-// one entry or clears the array. The traversal family (`first` / `last` /
-// `next` / `prev`, LRM 7.9.4 -- 7.9.7) assigns the visited key through a `ref`
-// index argument and returns 0 / 1 / -1. The shared LRM 7.12 family stays in
-// `ArrayMethodKind`.
+// LRM 7.9 associative-array methods. LRM 7.8.6 / 7.8.7: container access
+// splits read from write because the AA allocates on the write-side path --
+// `kRead` returns the element default when the key is absent; `kElementRef`
+// allocates the key with the element default before yielding a write target.
+// The traversal family (LRM 7.9.4 -- 7.9.7) assigns the visited key through
+// a `ref` index argument and returns 0 / 1 / -1.
 enum class AssociativeMethodKind : std::uint8_t {
+  kRead,
+  kElementRef,
   kNum,
   kSize,
   kExists,
@@ -139,6 +146,16 @@ enum class IteratorMethodKind : std::uint8_t {
 // (docs/decisions/runtime-effects-as-generic-calls.md).
 enum class ScopeMethodKind : std::uint8_t {
   kServices,
+};
+
+// Operations on an observable storage cell (`ObservableType` /
+// `ExternalRefType`). The cell is the first argument; `kSet` / `kMutate`
+// thread the engine handle as the second. See
+// docs/decisions/value-type-concepts.md.
+enum class ObservableMethodKind : std::uint8_t {
+  kGet,
+  kSet,
+  kMutate,
 };
 
 struct EnumMethodInfo {
@@ -178,12 +195,26 @@ struct ScopeMethodInfo {
   ScopeMethodKind kind;
 };
 
+struct ObservableMethodInfo {
+  ObservableMethodKind kind;
+};
+
 struct BuiltinMethodCallee {
   std::variant<
       EnumMethodInfo, StringMethodInfo, EventMethodInfo, ArrayMethodInfo,
       QueueMethodInfo, AssociativeMethodInfo, ValueMethodInfo,
-      IteratorMethodInfo, ScopeMethodInfo>
+      IteratorMethodInfo, ScopeMethodInfo, ObservableMethodInfo>
       method;
 };
+
+// Whether the method mutates its receiver in place.
+[[nodiscard]] auto IsMutatingBuiltinMethod(const BuiltinMethodCallee& callee)
+    -> bool;
+
+// Whether `callee` is a container-access method (`kElementAt`, `kSlice`,
+// `kRead`, `kElementRef`) whose first argument is the container being
+// accessed.
+[[nodiscard]] auto IsContainerAccessCall(const BuiltinMethodCallee& callee)
+    -> bool;
 
 }  // namespace lyra::mir

@@ -16,11 +16,13 @@
 #include "lyra/hir/expr.hpp"
 #include "lyra/hir/procedural_body.hpp"
 #include "lyra/lowering/hir_to_mir/copy_out_desugar.hpp"
+#include "lyra/lowering/hir_to_mir/lhs_observable.hpp"
 #include "lyra/lowering/hir_to_mir/process_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/services_call.hpp"
 #include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/expr.hpp"
 #include "lyra/mir/stmt.hpp"
+#include "lyra/mir/type.hpp"
 #include "lyra/support/system_subroutine.hpp"
 
 namespace lyra::lowering::hir_to_mir {
@@ -312,15 +314,18 @@ auto LowerFileIOSystemSubroutineCallStmt(
 
   std::optional<mir::ExprId> assign_target_id = std::nullopt;
   if (assign_target.has_value()) {
-    auto lhs_or = process.LowerExpr(
+    auto lhs_or = process.LowerLhsExpr(
         hir_proc.exprs.at(assign_target->value), wrapper_frame);
     if (!lhs_or) return std::unexpected(std::move(lhs_or.error()));
     assign_target_id = wrapper.AddExpr(*std::move(lhs_or));
   }
 
+  const mir::ExprId services_id =
+      wrapper.AddExpr(BuildServicesCallExpr(process, wrapper_frame));
   return BuildCopyOutBlock(
-      frame, std::move(wrapper), std::move(label), result_type,
-      std::move(call_expr), false, assign_target_id, slots);
+      process.Module().Unit(), services_id, frame, std::move(wrapper),
+      std::move(label), result_type, std::move(call_expr), false,
+      assign_target_id, slots);
 }
 
 }  // namespace lyra::lowering::hir_to_mir

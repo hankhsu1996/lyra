@@ -17,11 +17,99 @@
 #include "lyra/lowering/hir_to_mir/structural_scope_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/walk_frame.hpp"
 #include "lyra/mir/binary_op.hpp"
+#include "lyra/mir/builtin_method.hpp"
 #include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/expr.hpp"
 #include "lyra/mir/integral_constant.hpp"
+#include "lyra/mir/type.hpp"
 
 namespace lyra::lowering::hir_to_mir {
+
+namespace {
+
+enum class AccessSide : std::uint8_t { kRead, kLhs };
+
+// Picks the right runtime container method for `arr[i]`. `kRead` /
+// `kElementRef` for an associative array (LRM 7.8.6 / 7.8.7 splits read from
+// write); `kElementAt` for every other container (the read / write surface
+// coincides at runtime).
+auto ElementAccessCallee(const hir::Type& base_hir_type, AccessSide side)
+    -> mir::BuiltinMethodCallee {
+  if (std::holds_alternative<hir::AssociativeArrayType>(base_hir_type.data)) {
+    return mir::BuiltinMethodCallee{
+        .method = mir::AssociativeMethodInfo{
+            .kind = side == AccessSide::kLhs
+                        ? mir::AssociativeMethodKind::kElementRef
+                        : mir::AssociativeMethodKind::kRead}};
+  }
+  if (std::holds_alternative<hir::QueueType>(base_hir_type.data)) {
+    return mir::BuiltinMethodCallee{
+        .method = mir::QueueMethodInfo{
+            .kind = side == AccessSide::kLhs
+                        ? mir::QueueMethodKind::kWriteRef
+                        : mir::QueueMethodKind::kElementAt}};
+  }
+  return mir::BuiltinMethodCallee{
+      .method = mir::ArrayMethodInfo{.kind = mir::ArrayMethodKind::kElementAt}};
+}
+
+// Wraps a `kElementAt` / `kSlice` result with `kToOwned` so the borrowed
+// `PackedArrayRef` materialises into an owning `PackedArray` (Rust's
+// `&[T]::to_owned() -> Vec<T>` pattern). Required in read context; LHS chains
+// keep the view because they write through it.
+auto WrapPackedAsOwned(
+    const mir::CompilationUnit& unit, mir::ProceduralScope& scope,
+    mir::Expr access_call, mir::TypeId result_type) -> mir::Expr {
+  if (!std::holds_alternative<mir::PackedArrayType>(
+          unit.GetType(result_type).data)) {
+    return access_call;
+  }
+  const mir::ExprId access_id = scope.AddExpr(std::move(access_call));
+  return mir::Expr{
+      .data =
+          mir::CallExpr{
+              .callee =
+                  mir::BuiltinMethodCallee{
+                      .method =
+                          mir::ArrayMethodInfo{
+                              .kind = mir::ArrayMethodKind::kToOwned}},
+              .arguments = {access_id}},
+      .type = result_type};
+}
+
+// LRM 7.4.1: part-select returns unsigned. The runtime `Slice` honours this
+// (always returns an unsigned `PackedArrayRef`). When the consumer's MIR type
+// is signed -- a `logic signed [...]` packed-struct / union field per LRM
+// 7.2.1 -- return the unsigned-signedness counterpart so the slice's MIR
+// `.type` matches what the runtime produces; an explicit `ConversionExpr`
+// then re-tags to the consumer's signed type.
+auto UnsignedPackedCounterpart(
+    mir::CompilationUnit& unit, mir::TypeId result_type) -> mir::TypeId {
+  const auto& ty = unit.GetType(result_type);
+  if (!ty.IsPackedArray()) return result_type;
+  const auto& pa = ty.AsPackedArray();
+  if (pa.signedness == mir::Signedness::kUnsigned) return result_type;
+  auto unsigned_pa = pa;
+  unsigned_pa.signedness = mir::Signedness::kUnsigned;
+  return unit.AddType(mir::TypeData{std::move(unsigned_pa)});
+}
+
+// Wraps a slice result that was rendered at `slice_type` (unsigned) with an
+// explicit `ConversionExpr` to `final_type` when the two differ. No-op when
+// the slice already matches the consumer's MIR type.
+auto WrapSliceSignReTag(
+    mir::ProceduralScope& scope, mir::Expr owned, mir::TypeId slice_type,
+    mir::TypeId final_type) -> mir::Expr {
+  if (slice_type == final_type) return owned;
+  const mir::ExprId owned_id = scope.AddExpr(std::move(owned));
+  return mir::Expr{
+      .data =
+          mir::ConversionExpr{
+              .operand = owned_id, .kind = mir::ConversionKind::kImplicit},
+      .type = final_type};
+}
+
+}  // namespace
 
 namespace {
 
@@ -338,13 +426,14 @@ auto LowerHirElementSelectExprProc(
         module.TranslateType(hir_idx.type));
   }
 
-  return mir::Expr{
+  mir::Expr access_call{
       .data =
-          mir::ElementSelectExpr{
-              .base_value = base_id,
-              .index = idx_id,
-          },
+          mir::CallExpr{
+              .callee = ElementAccessCallee(hir_base_ty, AccessSide::kRead),
+              .arguments = {base_id, idx_id}},
       .type = result_type};
+  return WrapPackedAsOwned(
+      module.Unit(), proc_scope, std::move(access_call), result_type);
 }
 
 auto LowerHirRangeSelectExprProc(
@@ -385,24 +474,33 @@ auto LowerHirRangeSelectExprProc(
   }();
   if (!unfolded) return std::unexpected(std::move(unfolded.error()));
 
-  return mir::Expr{
+  const mir::ExprId count_id = proc_scope.AddExpr(
+      mir::MakeInt32Literal(
+          module.Unit().builtins.int32,
+          static_cast<std::int64_t>(unfolded->count)));
+  mir::Expr slice_call{
       .data =
-          mir::RangeSelectExpr{
-              .base_value = base_id,
-              .offset_expr = unfolded->offset_expr,
-              .count = unfolded->count,
-          },
+          mir::CallExpr{
+              .callee =
+                  mir::BuiltinMethodCallee{
+                      .method =
+                          mir::ArrayMethodInfo{
+                              .kind = mir::ArrayMethodKind::kSlice}},
+              .arguments = {base_id, unfolded->offset_expr, count_id}},
       .type = result_type};
+  return WrapPackedAsOwned(
+      module.Unit(), proc_scope, std::move(slice_call), result_type);
 }
 
-// LRM 7.2.1: packed struct field access "can be selected as if it were a
-// packed array". HIR -> MIR resolves the field-table index to a concrete
-// (offset, count) RangeSelectExpr -- the same MIR shape `s[hi:lo]` produces.
-// MIR carries no struct-specific node.
+// LRM 7.2.1: packed struct / union field access "can be selected as if it
+// were a packed array". HIR -> MIR resolves the field-table index to a
+// concrete (offset, count) slice -- the same MIR shape `s[hi:lo]` produces.
+// Signedness is preserved through an explicit `ConversionExpr` because the
+// slice itself returns unsigned bits (LRM 7.4.1).
 auto LowerHirMemberAccessExprProc(
     ProcessLowerer& process, WalkFrame frame, const hir::MemberAccessExpr& sel,
     mir::TypeId result_type) -> diag::Result<mir::Expr> {
-  const auto& module = process.Module();
+  auto& module = process.Module();
   const auto& hir_process = process.HirBody();
   auto& proc_scope = *frame.current_procedural_scope;
   const auto& base_hir_expr = hir_process.exprs.at(sel.base_value.value);
@@ -420,13 +518,140 @@ auto LowerHirMemberAccessExprProc(
       mir::MakeInt32Literal(
           module.Unit().builtins.int32,
           static_cast<std::int64_t>(field.bit_offset)));
+  const auto count_id = proc_scope.AddExpr(
+      mir::MakeInt32Literal(
+          module.Unit().builtins.int32,
+          static_cast<std::int64_t>(field.bit_width)));
+  const mir::TypeId slice_type =
+      UnsignedPackedCounterpart(module.Unit(), result_type);
+  mir::Expr slice_call{
+      .data =
+          mir::CallExpr{
+              .callee =
+                  mir::BuiltinMethodCallee{
+                      .method =
+                          mir::ArrayMethodInfo{
+                              .kind = mir::ArrayMethodKind::kSlice}},
+              .arguments = {base_id, offset_id, count_id}},
+      .type = slice_type};
+  mir::Expr owned = WrapPackedAsOwned(
+      module.Unit(), proc_scope, std::move(slice_call), slice_type);
+  return WrapSliceSignReTag(
+      proc_scope, std::move(owned), slice_type, result_type);
+}
+
+auto LowerHirElementSelectExprProcLhs(
+    ProcessLowerer& process, WalkFrame frame, const hir::ElementSelectExpr& sel,
+    mir::TypeId result_type) -> diag::Result<mir::Expr> {
+  const auto& module = process.Module();
+  const auto& hir_process = process.HirBody();
+  auto& proc_scope = *frame.current_procedural_scope;
+  const auto& hir_base = hir_process.exprs.at(sel.base_value.value);
+  auto base_or = process.LowerLhsExpr(hir_base, frame);
+  if (!base_or) return std::unexpected(std::move(base_or.error()));
+  const mir::ExprId base_id = proc_scope.AddExpr(*std::move(base_or));
+
+  const auto& hir_idx = hir_process.exprs.at(sel.index.value);
+  auto idx_or = process.LowerExpr(hir_idx, frame);
+  if (!idx_or) return std::unexpected(std::move(idx_or.error()));
+  mir::ExprId idx_id = proc_scope.AddExpr(*std::move(idx_or));
+
+  const auto& hir_base_ty = module.Hir().GetType(hir_base.type);
+  if (const auto* ua = std::get_if<hir::UnpackedArrayType>(&hir_base_ty.data)) {
+    idx_id = WrapUnpackedIndex(
+        module, proc_scope, ua->dim, idx_id,
+        module.TranslateType(hir_idx.type));
+  }
+
   return mir::Expr{
       .data =
-          mir::RangeSelectExpr{
-              .base_value = base_id,
-              .offset_expr = offset_id,
-              .count = static_cast<std::uint32_t>(field.bit_width),
-          },
+          mir::CallExpr{
+              .callee = ElementAccessCallee(hir_base_ty, AccessSide::kLhs),
+              .arguments = {base_id, idx_id}},
+      .type = result_type};
+}
+
+auto LowerHirRangeSelectExprProcLhs(
+    ProcessLowerer& process, WalkFrame frame, const hir::RangeSelectExpr& sel,
+    mir::TypeId result_type) -> diag::Result<mir::Expr> {
+  const auto& module = process.Module();
+  const auto& hir_process = process.HirBody();
+  auto& proc_scope = *frame.current_procedural_scope;
+  const auto& hir_base = hir_process.exprs.at(sel.base_value.value);
+  auto base_or = process.LowerLhsExpr(hir_base, frame);
+  if (!base_or) return std::unexpected(std::move(base_or.error()));
+  const mir::ExprId base_id = proc_scope.AddExpr(*std::move(base_or));
+
+  auto lower_one = [&](hir::ExprId id) -> diag::Result<mir::ExprId> {
+    auto lowered = process.LowerExpr(hir_process.exprs.at(id.value), frame);
+    if (!lowered) return std::unexpected(std::move(lowered.error()));
+    return proc_scope.AddExpr(*std::move(lowered));
+  };
+  const auto& hir_base_ty = module.Hir().GetType(hir_base.type);
+  auto unfolded = [&]() {
+    if (const auto* ua =
+            std::get_if<hir::UnpackedArrayType>(&hir_base_ty.data)) {
+      const auto& result_ty = module.Unit().GetType(result_type);
+      const auto count = static_cast<std::uint32_t>(
+          std::get<mir::UnpackedArrayType>(result_ty.data).size);
+      return UnfoldHirRangeBoundsForUnpacked(
+          module, proc_scope, sel.bounds, ua->dim, count, lower_one);
+    }
+    return UnfoldHirRangeBoundsToOffsetCount(
+        module, proc_scope, sel.bounds, lower_one);
+  }();
+  if (!unfolded) return std::unexpected(std::move(unfolded.error()));
+
+  const mir::ExprId count_id = proc_scope.AddExpr(
+      mir::MakeInt32Literal(
+          module.Unit().builtins.int32,
+          static_cast<std::int64_t>(unfolded->count)));
+  return mir::Expr{
+      .data =
+          mir::CallExpr{
+              .callee =
+                  mir::BuiltinMethodCallee{
+                      .method =
+                          mir::ArrayMethodInfo{
+                              .kind = mir::ArrayMethodKind::kSlice}},
+              .arguments = {base_id, unfolded->offset_expr, count_id}},
+      .type = result_type};
+}
+
+auto LowerHirMemberAccessExprProcLhs(
+    ProcessLowerer& process, WalkFrame frame, const hir::MemberAccessExpr& sel,
+    mir::TypeId result_type) -> diag::Result<mir::Expr> {
+  const auto& module = process.Module();
+  const auto& hir_process = process.HirBody();
+  auto& proc_scope = *frame.current_procedural_scope;
+  const auto& base_hir_expr = hir_process.exprs.at(sel.base_value.value);
+  const auto& base_hir_type = module.Hir().GetType(base_hir_expr.type);
+  const auto& fields = GetAggregateFields(base_hir_type);
+  if (sel.field_index >= fields.size()) {
+    throw InternalError(
+        "LowerHirMemberAccessExprProcLhs: field_index out of range");
+  }
+  const auto& field = fields[sel.field_index];
+  auto base_or = process.LowerLhsExpr(base_hir_expr, frame);
+  if (!base_or) return std::unexpected(std::move(base_or.error()));
+  const mir::ExprId base_id = proc_scope.AddExpr(*std::move(base_or));
+  const auto offset_id = proc_scope.AddExpr(
+      mir::MakeInt32Literal(
+          module.Unit().builtins.int32,
+          static_cast<std::int64_t>(field.bit_offset)));
+  const auto count_id = proc_scope.AddExpr(
+      mir::MakeInt32Literal(
+          module.Unit().builtins.int32,
+          static_cast<std::int64_t>(field.bit_width)));
+  return mir::Expr{
+      .data =
+          mir::CallExpr{
+              .callee =
+                  mir::BuiltinMethodCallee{
+                      .method =
+                          mir::ArrayMethodInfo{
+                              .kind = mir::ArrayMethodKind::kSlice}},
+              .arguments = {base_id, offset_id, count_id}},
       .type = result_type};
 }
 
@@ -457,9 +682,14 @@ auto LowerHirElementSelectExprStructural(
         module.TranslateType(hir_idx.type));
   }
 
-  return mir::Expr{
-      .data = mir::ElementSelectExpr{.base_value = base_id, .index = idx_id},
+  mir::Expr access_call{
+      .data =
+          mir::CallExpr{
+              .callee = ElementAccessCallee(hir_base_ty, AccessSide::kRead),
+              .arguments = {base_id, idx_id}},
       .type = result_type};
+  return WrapPackedAsOwned(
+      module.Unit(), proc_scope, std::move(access_call), result_type);
 }
 
 auto LowerHirRangeSelectExprStructural(
@@ -497,21 +727,29 @@ auto LowerHirRangeSelectExprStructural(
   }();
   if (!unfolded) return std::unexpected(std::move(unfolded.error()));
 
-  return mir::Expr{
+  const mir::ExprId count_id = proc_scope.AddExpr(
+      mir::MakeInt32Literal(
+          module.Unit().builtins.int32,
+          static_cast<std::int64_t>(unfolded->count)));
+  mir::Expr slice_call{
       .data =
-          mir::RangeSelectExpr{
-              .base_value = base_id,
-              .offset_expr = unfolded->offset_expr,
-              .count = unfolded->count,
-          },
+          mir::CallExpr{
+              .callee =
+                  mir::BuiltinMethodCallee{
+                      .method =
+                          mir::ArrayMethodInfo{
+                              .kind = mir::ArrayMethodKind::kSlice}},
+              .arguments = {base_id, unfolded->offset_expr, count_id}},
       .type = result_type};
+  return WrapPackedAsOwned(
+      module.Unit(), proc_scope, std::move(slice_call), result_type);
 }
 
 auto LowerHirMemberAccessExprStructural(
     const StructuralScopeLowerer& scope, WalkFrame frame,
     const hir::MemberAccessExpr& sel, mir::TypeId result_type)
     -> diag::Result<mir::Expr> {
-  const auto& module = scope.Module();
+  auto& module = scope.Module();
   const auto& hir_scope = scope.HirScope();
   auto& proc_scope = *frame.current_procedural_scope;
   const auto& base_hir_expr = hir_scope.GetExpr(sel.base_value);
@@ -529,13 +767,143 @@ auto LowerHirMemberAccessExprStructural(
       mir::MakeInt32Literal(
           module.Unit().builtins.int32,
           static_cast<std::int64_t>(field.bit_offset)));
+  const auto count_id = proc_scope.AddExpr(
+      mir::MakeInt32Literal(
+          module.Unit().builtins.int32,
+          static_cast<std::int64_t>(field.bit_width)));
+  const mir::TypeId slice_type =
+      UnsignedPackedCounterpart(module.Unit(), result_type);
+  mir::Expr slice_call{
+      .data =
+          mir::CallExpr{
+              .callee =
+                  mir::BuiltinMethodCallee{
+                      .method =
+                          mir::ArrayMethodInfo{
+                              .kind = mir::ArrayMethodKind::kSlice}},
+              .arguments = {base_id, offset_id, count_id}},
+      .type = slice_type};
+  mir::Expr owned = WrapPackedAsOwned(
+      module.Unit(), proc_scope, std::move(slice_call), slice_type);
+  return WrapSliceSignReTag(
+      proc_scope, std::move(owned), slice_type, result_type);
+}
+
+auto LowerHirElementSelectExprStructuralLhs(
+    const StructuralScopeLowerer& scope, WalkFrame frame,
+    const hir::ElementSelectExpr& sel, mir::TypeId result_type)
+    -> diag::Result<mir::Expr> {
+  const auto& module = scope.Module();
+  const auto& hir_scope = scope.HirScope();
+  auto& proc_scope = *frame.current_procedural_scope;
+  const auto& hir_base = hir_scope.GetExpr(sel.base_value);
+  auto base_or = scope.LowerLhsExpr(hir_base, frame);
+  if (!base_or) return std::unexpected(std::move(base_or.error()));
+  const mir::ExprId base_id = proc_scope.AddExpr(*std::move(base_or));
+
+  const auto& hir_idx = hir_scope.GetExpr(sel.index);
+  auto idx_or = scope.LowerExpr(hir_idx, frame);
+  if (!idx_or) return std::unexpected(std::move(idx_or.error()));
+  mir::ExprId idx_id = proc_scope.AddExpr(*std::move(idx_or));
+
+  const auto& hir_base_ty = module.Hir().GetType(hir_base.type);
+  if (const auto* ua = std::get_if<hir::UnpackedArrayType>(&hir_base_ty.data)) {
+    idx_id = WrapUnpackedIndex(
+        module, proc_scope, ua->dim, idx_id,
+        module.TranslateType(hir_idx.type));
+  }
+
   return mir::Expr{
       .data =
-          mir::RangeSelectExpr{
-              .base_value = base_id,
-              .offset_expr = offset_id,
-              .count = static_cast<std::uint32_t>(field.bit_width),
-          },
+          mir::CallExpr{
+              .callee = ElementAccessCallee(hir_base_ty, AccessSide::kLhs),
+              .arguments = {base_id, idx_id}},
+      .type = result_type};
+}
+
+auto LowerHirRangeSelectExprStructuralLhs(
+    const StructuralScopeLowerer& scope, WalkFrame frame,
+    const hir::RangeSelectExpr& sel, mir::TypeId result_type)
+    -> diag::Result<mir::Expr> {
+  const auto& module = scope.Module();
+  const auto& hir_scope = scope.HirScope();
+  auto& proc_scope = *frame.current_procedural_scope;
+  const auto& hir_base = hir_scope.GetExpr(sel.base_value);
+  auto base_or = scope.LowerLhsExpr(hir_base, frame);
+  if (!base_or) return std::unexpected(std::move(base_or.error()));
+  const mir::ExprId base_id = proc_scope.AddExpr(*std::move(base_or));
+
+  auto lower_one = [&](hir::ExprId id) -> diag::Result<mir::ExprId> {
+    auto lowered = scope.LowerExpr(hir_scope.GetExpr(id), frame);
+    if (!lowered) return std::unexpected(std::move(lowered.error()));
+    return proc_scope.AddExpr(*std::move(lowered));
+  };
+  const auto& hir_base_ty = module.Hir().GetType(hir_base.type);
+  auto unfolded = [&]() {
+    if (const auto* ua =
+            std::get_if<hir::UnpackedArrayType>(&hir_base_ty.data)) {
+      const auto& result_ty = module.Unit().GetType(result_type);
+      const auto count = static_cast<std::uint32_t>(
+          std::get<mir::UnpackedArrayType>(result_ty.data).size);
+      return UnfoldHirRangeBoundsForUnpacked(
+          module, proc_scope, sel.bounds, ua->dim, count, lower_one);
+    }
+    return UnfoldHirRangeBoundsToOffsetCount(
+        module, proc_scope, sel.bounds, lower_one);
+  }();
+  if (!unfolded) return std::unexpected(std::move(unfolded.error()));
+
+  const mir::ExprId count_id = proc_scope.AddExpr(
+      mir::MakeInt32Literal(
+          module.Unit().builtins.int32,
+          static_cast<std::int64_t>(unfolded->count)));
+  return mir::Expr{
+      .data =
+          mir::CallExpr{
+              .callee =
+                  mir::BuiltinMethodCallee{
+                      .method =
+                          mir::ArrayMethodInfo{
+                              .kind = mir::ArrayMethodKind::kSlice}},
+              .arguments = {base_id, unfolded->offset_expr, count_id}},
+      .type = result_type};
+}
+
+auto LowerHirMemberAccessExprStructuralLhs(
+    const StructuralScopeLowerer& scope, WalkFrame frame,
+    const hir::MemberAccessExpr& sel, mir::TypeId result_type)
+    -> diag::Result<mir::Expr> {
+  const auto& module = scope.Module();
+  const auto& hir_scope = scope.HirScope();
+  auto& proc_scope = *frame.current_procedural_scope;
+  const auto& base_hir_expr = hir_scope.GetExpr(sel.base_value);
+  const auto& base_hir_type = module.Hir().GetType(base_hir_expr.type);
+  const auto& fields = GetAggregateFields(base_hir_type);
+  if (sel.field_index >= fields.size()) {
+    throw InternalError(
+        "LowerHirMemberAccessExprStructuralLhs: field_index out of range");
+  }
+  const auto& field = fields[sel.field_index];
+  auto base_or = scope.LowerLhsExpr(base_hir_expr, frame);
+  if (!base_or) return std::unexpected(std::move(base_or.error()));
+  const mir::ExprId base_id = proc_scope.AddExpr(*std::move(base_or));
+  const auto offset_id = proc_scope.AddExpr(
+      mir::MakeInt32Literal(
+          module.Unit().builtins.int32,
+          static_cast<std::int64_t>(field.bit_offset)));
+  const auto count_id = proc_scope.AddExpr(
+      mir::MakeInt32Literal(
+          module.Unit().builtins.int32,
+          static_cast<std::int64_t>(field.bit_width)));
+  return mir::Expr{
+      .data =
+          mir::CallExpr{
+              .callee =
+                  mir::BuiltinMethodCallee{
+                      .method =
+                          mir::ArrayMethodInfo{
+                              .kind = mir::ArrayMethodKind::kSlice}},
+              .arguments = {base_id, offset_id, count_id}},
       .type = result_type};
 }
 

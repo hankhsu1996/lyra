@@ -285,16 +285,47 @@ Entries get checked off as their PRs land. When the last entry lands, the file i
       in lockstep. See `docs/decisions/callable-receiver.md`. **Trigger**: scheduled in front of
       R18.
 
-- [ ] R17 -- Make the ref-vs-value distinction explicit in MIR for selector expressions. Today
-      `mir::ElementSelectExpr` and `mir::RangeSelectExpr` render to runtime `PackedArrayRef` view
-      values; the public `RenderExpr` wraps the rendered string in `.Clone()` when the expression
-      yields a ref so consumers see an owning value. The wrap decision lives in the render
-      (`ProducesPackedArrayRef`). Either lift ref-producing expressions into an explicit MIR shape
-      (e.g. an explicit `CloneExpr` inserted by HIR-to-MIR at the value-context boundary, or a
-      separate ref-vs-value type-level distinction), so the render is a mechanical one-form-per-
-      node mapping with no post-process wrap. **Trigger**: design decision pending -- the exact
-      shape (explicit `CloneExpr` versus type-level ref/value split) is to be discussed before this
-      entry is sharpened.
+- [x] R17 -- Selector and packed-struct field access lower to explicit
+      `Call(ArrayMethod{kElementAt|kSlice})` / `Call(AssociativeMethod{kRead|kElementRef})`, and
+      HIR-to-MIR materialises a borrowed `PackedArrayRef` chain with an explicit
+      `Call(ArrayMethod{kToOwned})` wrap. `mir::ElementSelectExpr` and `mir::RangeSelectExpr` are
+      retired; the render decides the emit shape from the callee alone. The runtime mirrors Rust's
+      `ToOwned` trait -- ref types expose `ToOwned()` for materialisation, owning types expose the
+      same name as an explicit copy.
+
+- [x] R17a -- Signed-slice re-interpretation is explicit in MIR. HIR-to-MIR types a packed struct /
+      union field slice with the runtime-honest unsigned signedness and wraps signed-field accesses
+      with an explicit `ConversionExpr` re-tag to the declared field type. Render is a pure
+      mechanical translation of `Call(kSlice)` / `Call(kToOwned)` / `ConversionExpr` independently.
+
+- [ ] R17b -- Stop window-projecting the `kSlice` `count` argument from an `IntegerLiteral` in the
+      C++ backend. Today `RenderArrayMethodCall` peeks at the third argument of a
+      `Call(ArrayMethod{kSlice})` and -- only when that argument is a literal -- emits a raw `N U`
+      integer, because the runtime `Slice` signature takes `std::uint32_t`. The peek is a backend
+      re-derivation that no other backend will replicate uniformly, violating `mir.md` Core
+      Invariant 10. Target shape: the runtime `Slice` accepts a `PackedArray` for `count` and
+      projects to `std::uint32_t` internally (matching how the `offset` argument already flows);
+      render renders the `Call` mechanically with no peek. **Trigger**: standalone, batches with
+      R17a as one render-cleanup cut.
+
+- [x] R17c -- Render-side method-receiver dispatch is gone. `RenderMethodReceiver` retired and every
+      method-call render path (`String` / `Array` / `Queue` / `Associative` / `Observable`) renders
+      its receiver through plain `RenderExpr`. The read-vs-write decision lives entirely on the MIR
+      receiver chain (LHS-side callees, `Deref(Mutate)` wraps) produced by HIR-to-MIR.
+
+- [ ] R17d -- Lift the remaining backend-side post-process wraps in the method-call render paths
+      into explicit MIR. Today `RenderArrayMethodCall` / `RenderQueueMethodCall` /
+      `RenderAssociativeMethodCall` synthesise `lyra::value::PackedArray::Int(...)` around the
+      result of size-style methods (`kSize` on Array / Queue; `kNum` / `kSize` / `kExists` on
+      Associative) because the runtime returns `std::size_t` / `bool`, and `RenderStringMethodCall`
+      projects integral string-method arguments through `static_cast<std::int32_t>((...).ToInt64())`
+      because the runtime method takes `std::int32_t`. Both are backend re-derivations of facts MIR
+      did not state, violating `mir.md` Core Invariant 10. Target shape: either the runtime APIs
+      change to take and return `PackedArray` uniformly (the cleanest bridge), or HIR-to-MIR wraps
+      the corresponding `Call(...)` with an explicit `ConversionExpr` so render is purely
+      mechanical. After this, the five method-call render paths share an identical 5-step shape
+      (receiver / `.` / name+`(` / args / `)`) and can collapse into one shared helper parameterised
+      by the per-family member-name table. **Trigger**: batches with R17b as one render-cleanup cut.
 
 - [ ] R18 -- Rewrite the MIR-to-C++ backend to free functions per node kind, with no
       `RenderContext`, no class hierarchy, and no `WalkFrame`. Once R11 has removed the mutable
@@ -368,40 +399,10 @@ Entries get checked off as their PRs land. When the last entry lands, the file i
       discussion -- requires walking the structural / procedural axis across MIR vocabulary, dumper,
       lowering helpers, and backend, deciding what stays paired and what merges.
 
-- [ ] R23 -- Make the "materialize a reference into an owning value" (`.Clone()`) a node in MIR
-      instead of a render-time decision. Today a reference-producing read -- an element / range /
-      field select that yields a `PackedArrayRef` view into packed bit storage, or a container `T&`
-      for an unpacked / dynamic / queue element -- is materialized by the C++ backend: `RenderExpr`
-      wraps the result in `.Clone()` when `ProducesPackedArrayRef(expr)` holds, while
-      `RenderExprNatural` leaves the bare reference for lvalue / write contexts. So the same MIR
-      node (e.g. `ElementSelectExpr`) emits two different C++ strings (`x` vs `(x).Clone()`)
-      depending on which render entry point reaches it -- a semantic decision made in the backend.
-      `.Clone()` is a real operation (a method call that copies a borrowed reference / view into an
-      independent owning value); it must be represented in MIR so that every backend renders it. A
-      future LIR / LLVM backend that mechanically lowers MIR would not know to clone -- the decision
-      lives only in the C++ renderer -- so the two backends would diverge on value / aliasing
-      semantics (the LIR path would alias storage that the C++ path snapshots). Target shape: an
-      explicit MIR materialize node inserted at the HIR -> MIR boundary wherever a
-      reference-producing read is used in a value position (a read that escapes, is stored, or could
-      alias a subsequent mutation); the backend then renders mechanically -- a select renders to its
-      reference form, the materialize node renders to `.Clone()` -- with the `RenderExpr` /
-      `RenderExprNatural` split and the `ProducesPackedArrayRef` predicate both deleted. The
-      decision returns to the semantic layer that owns it, and "two different MIR -> two different
-      emit" holds. **Why surfaced**: pre-existing, not caused by the foreach work; foreach's
-      synthetic `.size()` on a jagged dynamic-of-dynamic array made it visible
-      (`jag[i].Clone().Size()` copies a whole row just to read its size). The associative-array work
-      surfaced it more sharply: a builtin-method **receiver** rendered through the value path
-      clones, and a nested associative receiver (`mm[i].exists(j)`, `mm[i].delete(j)`, or the
-      traversal `mm[i].first(k)`) has element type `AssociativeArray`, which has no `Clone()` -- so
-      the split is a hard compile error there, and for `delete` it would also be a silent
-      correctness bug (mutating a throwaway copy). Interim: associative method receivers render
-      through the reference path, which is the value model R23 will generalize, so this is
-      alignment, not a new band-aid; the remaining R23 scope is value-position reads that genuinely
-      escape. **Why deferred**: a cross-cutting change to the backend value model -- MIR vocabulary,
-      the HIR -> MIR value-vs-reference context decision, the dumper, and the backend -- far larger
-      than, and orthogonal to, any feature that surfaces it. **Trigger**: the LIR / LLVM backend
-      work (when cross-backend divergence becomes real), or any change to the backend's clone /
-      reference rendering.
+- [x] R23 -- "Materialise a reference into an owning value" is an explicit
+      `Call(ArrayMethod{kToOwned})` node in MIR (Rust's `ToOwned` trait). HIR-to-MIR inserts the
+      wrap at the read boundary; render is a mechanical translation. The `RenderExpr` /
+      `RenderExprNatural` split and `ProducesPackedArrayRef` predicate are gone.
 
 - [ ] R24 -- Dispatch the "sized collection" concept (`.size()` / `.num()`) through one resolver
       instead of branching on the concrete container at each call site. Today the element-count
