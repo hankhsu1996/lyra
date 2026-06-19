@@ -10,3 +10,4 @@ expect:
   variables:
     weighted_sum: 80
     first_two_sum: 30
+    weighted_sum_renamed: 80
