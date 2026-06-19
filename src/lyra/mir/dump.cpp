@@ -846,12 +846,6 @@ class MirDumper {
                             kind_text, ss.source.value, ss.format.value,
                             slot_list));
                   },
-                  [&](const RuntimeSetTimeFormatCall& tf) {
-                    Line(
-                        std::format(
-                            "RuntimeSetTimeFormatCall args={}",
-                            tf.args.has_value() ? "4" : "default"));
-                  },
               },
               rc->call);
           Dedent();

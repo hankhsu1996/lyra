@@ -361,11 +361,11 @@ Entries get checked off as their PRs land. When the last entry lands, the file i
       an argument vector, with services threaded as a plain `self.Services()` argument), then retire
       `RuntimeCallExpr` and its payloads entirely. **Done**: `$finish`, the `$time` family, file
       I/O, the print-to-sink family, diagnostics (`$info` / `$warning` / `$error`), the
-      string-format family (`$sformat` / `$swrite` / `$sformatf`), and `$printtimescale`.
-      **Remaining (closure-free)**: `$timeformat` (the no-argument reset form restores a
-      design-global default the runtime resolves, so set and reset select different runtime
-      entries). The closure-bearing effects are carved out to R26 below; retiring `RuntimeCallExpr`
-      entirely depends on both this and R26.
+      string-format family (`$sformat` / `$swrite` / `$sformatf`), `$printtimescale`, and
+      `$timeformat` (the no-argument reset form restores a design-global default the runtime
+      resolves, so set and reset select different runtime entries). The closure-free effects are all
+      on the generic shape now; the closure-bearing effects are carved out to R26 below, and
+      retiring `RuntimeCallExpr` entirely depends on R26.
 
 - [ ] R21 -- Rename `LowerStructuralVarRefExpr` (the central HIR-to-MIR helper) to reflect what it
       actually does post-R16: translate an HIR implicit-receiver structural-var read into a MIR

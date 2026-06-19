@@ -17,7 +17,6 @@
 #include "lyra/mir/expr.hpp"
 #include "lyra/mir/runtime_print.hpp"
 #include "lyra/mir/runtime_submit.hpp"
-#include "lyra/mir/runtime_timescale.hpp"
 #include "lyra/mir/type.hpp"
 
 namespace lyra::backend::cpp {
@@ -289,25 +288,6 @@ auto RenderRuntimeCallExpr(
             }
             throw InternalError(
                 "RuntimeScanCall: unknown ScanSourceKind in render");
-          },
-          [&](const mir::RuntimeSetTimeFormatCall& tf)
-              -> diag::Result<std::string> {
-            if (!tf.args.has_value()) {
-              return std::string{"self->Services().ResetTimeFormat()"};
-            }
-            auto units = RenderExpr(ctx, ctx.Expr(tf.args->units));
-            if (!units) return std::unexpected(std::move(units.error()));
-            auto precision = RenderExpr(ctx, ctx.Expr(tf.args->precision));
-            if (!precision) {
-              return std::unexpected(std::move(precision.error()));
-            }
-            auto suffix = RenderExpr(ctx, ctx.Expr(tf.args->suffix));
-            if (!suffix) return std::unexpected(std::move(suffix.error()));
-            auto width = RenderExpr(ctx, ctx.Expr(tf.args->min_width));
-            if (!width) return std::unexpected(std::move(width.error()));
-            return std::format(
-                "{}.SetTimeFormat({}, {}, {}, {})", "self->Services()", *units,
-                *precision, *suffix, *width);
           },
       },
       expr.call);

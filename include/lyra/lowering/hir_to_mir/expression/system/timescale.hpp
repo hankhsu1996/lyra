@@ -10,13 +10,15 @@
 
 namespace lyra::lowering::hir_to_mir {
 
-// Lower `$timeformat` (LRM 20.4.3) into a void `mir::RuntimeCallExpr` carrying
-// a `RuntimeSetTimeFormatCall`. The four-argument form lowers its arguments as
-// expressions (the runtime narrows them); the no-argument form restores the
-// defaults.
+// Lower `$timeformat` (LRM 20.4.3) into a generic `CallExpr`. The four-argument
+// form passes its lowered argument expressions to the set entry (the runtime
+// narrows them); the no-argument form carries only `self.Services()` and
+// selects the reset entry, which restores the design-global default the runtime
+// resolves. Render picks set vs reset from the argument count.
 auto LowerTimeFormatSystemSubroutineCall(
     ProcessLowerer& process, WalkFrame frame, const hir::CallExpr& call,
-    diag::SourceSpan span) -> diag::Result<mir::Expr>;
+    support::SystemSubroutineId id, diag::SourceSpan span)
+    -> diag::Result<mir::Expr>;
 
 // Lower `$printtimescale` (LRM 20.4.2, no-argument form) into a generic
 // `CallExpr`. The enclosing scope's name, time unit, and precision are all
