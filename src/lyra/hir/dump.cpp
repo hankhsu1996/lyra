@@ -218,6 +218,8 @@ class HirDumper {
         return "unique";
       case ArrayMethodKind::kUniqueIndex:
         return "unique_index";
+      case ArrayMethodKind::kMap:
+        return "map";
     }
     throw InternalError(
         "HirDumper::FormatArrayMethodKind: unknown ArrayMethodKind");

@@ -777,6 +777,8 @@ auto ArrayMethodMemberName(mir::ArrayMethodKind k) -> std::string_view {
       return "Unique";
     case mir::ArrayMethodKind::kUniqueIndex:
       return "UniqueIndex";
+    case mir::ArrayMethodKind::kMap:
+      return "Map";
   }
   throw InternalError("ArrayMethodMemberName: unknown kind");
 }

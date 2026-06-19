@@ -241,6 +241,7 @@ auto LowerArrayMethodName(std::string_view name)
   if (name == "max") return hir::ArrayMethodKind::kMax;
   if (name == "unique") return hir::ArrayMethodKind::kUnique;
   if (name == "unique_index") return hir::ArrayMethodKind::kUniqueIndex;
+  if (name == "map") return hir::ArrayMethodKind::kMap;
   return std::nullopt;
 }
 

@@ -46,17 +46,8 @@ enum class EventMethodKind : std::uint8_t {
   kTriggered,
 };
 
-// LRM 7.5.2 / 7.5.3 dynamic-array methods plus the LRM 7.12 array-method
-// family (ordering, reduction, and the 7.12.1 locator methods). The arms
-// are named for "array" rather than "dynamic array" because the method
-// semantics are LRM-uniform across container kinds (fixed unpacked, queue);
-// only the AST -> HIR receiver-detection block differs per container, and
-// other containers will extend the routing without renaming this enum.
-//
-// The 7.12.1 locator arms (`kFind` onward) return a queue: an element queue
-// for the value locators (`find`, `find_first`, `find_last`, `min`, `max`,
-// `unique`) and an `int` queue for the index locators (`find_index`,
-// `find_first_index`, `find_last_index`, `unique_index`).
+// LRM 7.5.2 / 7.5.3 plus the LRM 7.12 array-method family, uniform across
+// container kinds -- hence "array", not "dynamic array".
 enum class ArrayMethodKind : std::uint8_t {
   kSize,
   kDelete,
@@ -78,16 +69,13 @@ enum class ArrayMethodKind : std::uint8_t {
   kMax,
   kUnique,
   kUniqueIndex,
+  kMap,
 };
 
-// LRM 7.10.2 queue-native methods plus the compiler-internal access methods a
-// queue's operators lower to. The named methods (`size` .. `push_back`) are the
-// SV-callable family; `kElementAt` / `kWriteRef` / `kSlice` carry no SV syntax
-// but realize `q[i]` (read), `q[i] = v` (write / `q[$+1]` append), and `q[a:b]`
-// as ordinary built-in method calls -- the operators have no native C++
-// expression, so they are function calls like `size` (LRM 7.10.1). The LRM 7.12
-// ordering / reduction / locator family shared with other unpacked arrays stays
-// in `ArrayMethodKind`.
+// LRM 7.10.2 queue methods. `kElementAt` / `kWriteRef` / `kSlice` have no SV
+// method syntax -- they carry `q[i]` read, `q[i] = v` write, and `q[a:b]`
+// slice, which lower to calls because a queue has no native C++ subscript
+// (LRM 7.10.1).
 enum class QueueMethodKind : std::uint8_t {
   kSize,
   kInsert,
@@ -101,12 +89,7 @@ enum class QueueMethodKind : std::uint8_t {
   kSlice,
 };
 
-// LRM 7.9 associative-array methods. Exclusive to the associative container:
-// `num` / `size` query the entry count, `exists` tests a key, and `delete`
-// removes one entry (with index) or clears the array (without). Like the
-// queue-native family they mutate or query the receiver and have no analogue
-// in the other containers; the shared LRM 7.12 family stays in
-// `ArrayMethodKind`.
+// LRM 7.9 associative-array query and traversal methods.
 enum class AssociativeMethodKind : std::uint8_t {
   kNum,
   kSize,
@@ -118,8 +101,7 @@ enum class AssociativeMethodKind : std::uint8_t {
   kPrev,
 };
 
-// LRM 7.12.4 iterator intrinsic methods (only `index` is in scope today;
-// extends naturally if SV adds more iterator methods).
+// LRM 7.12.4 iterator intrinsic methods.
 enum class IteratorMethodKind : std::uint8_t {
   kIndex,
 };
