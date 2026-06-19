@@ -625,43 +625,9 @@ auto RenderRealToIntegralConversion(
       RenderPackedArrayCtorArgs(dst_pa));
 }
 
-// Peephole: a same-width / same-signedness integer-literal conversion that
-// only flips the state axis (4-state <-> 2-state, no X/Z loss) folds to the
-// literal in the destination shape -- no runtime ConvertFrom needed. Returns
-// nullopt when the conversion is not eligible; the main dispatch then runs.
-auto TryFoldLiteralIntegerConversion(
-    const RenderContext& ctx, const mir::Expr& expr,
-    const mir::ConversionExpr& cv) -> std::optional<std::string> {
-  const auto& src_expr = ctx.Expr(cv.operand);
-  const auto* lit = std::get_if<mir::IntegerLiteral>(&src_expr.data);
-  if (lit == nullptr) return std::nullopt;
-  const auto& src_ty = ctx.Unit().GetType(src_expr.type);
-  const auto& dst_ty = ctx.Unit().GetType(expr.type);
-  if (!src_ty.IsIntegralPacked() || !dst_ty.IsIntegralPacked() ||
-      src_ty.IsEnum() || dst_ty.IsEnum()) {
-    return std::nullopt;
-  }
-  const auto& src_pa = src_ty.AsIntegralPacked();
-  const auto& dst_pa = dst_ty.AsIntegralPacked();
-  if (src_pa.BitWidth() != dst_pa.BitWidth() ||
-      src_pa.signedness != dst_pa.signedness) {
-    return std::nullopt;
-  }
-  const bool literal_has_xz =
-      !lit->value.state_words.empty() && lit->value.state_words[0] != 0U;
-  const bool dst_two_state = dst_pa.atom == mir::BitAtom::kBit;
-  if (literal_has_xz && dst_two_state) return std::nullopt;
-  return RenderPackedArrayIntegerLiteral(dst_pa, lit->value);
-}
-
 auto RenderConversionExpr(
     const RenderContext& ctx, const mir::Expr& expr,
     const mir::ConversionExpr& cv) -> diag::Result<std::string> {
-  if (auto folded = TryFoldLiteralIntegerConversion(ctx, expr, cv);
-      folded.has_value()) {
-    return *std::move(folded);
-  }
-
   const auto& src_expr = ctx.Expr(cv.operand);
   const auto& src_ty = ctx.Unit().GetType(src_expr.type);
   const auto& dst_ty = ctx.Unit().GetType(expr.type);
