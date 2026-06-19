@@ -475,7 +475,7 @@ auto AppendConcatPart(Queue<T>& out, const ConcatElemArg<T>& part) -> void {
 }
 template <typename T, typename C>
 auto AppendConcatPart(Queue<T>& out, const ConcatSpreadArg<C>& part) -> void {
-  for (std::size_t i = 0; i < part.array->Size(); ++i) {
+  for (std::size_t i = 0; i < part.array->RawSize(); ++i) {
     out.PushBack(part.array->RawAt(i));
   }
 }
