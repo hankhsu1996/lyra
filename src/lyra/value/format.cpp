@@ -123,4 +123,25 @@ auto Formatter<float>::Format(
       FormatRealBody(spec, static_cast<double>(value)), spec);
 }
 
+FormatSpec::FormatSpec(const PackedArray& kind)
+    : kind(static_cast<FormatKind>(kind.ToInt64())) {
+}
+
+FormatSpec::FormatSpec(
+    const PackedArray& kind, const PackedArray& width,
+    const PackedArray& precision, const PackedArray& zero_pad,
+    const PackedArray& left_align, const PackedArray& timeunit_power)
+    : kind(static_cast<FormatKind>(kind.ToInt64())),
+      width(static_cast<std::int32_t>(width.ToInt64())),
+      precision(static_cast<std::int32_t>(precision.ToInt64())),
+      zero_pad(zero_pad.ToInt64() != 0),
+      left_align(left_align.ToInt64() != 0),
+      timeunit_power(static_cast<std::int32_t>(timeunit_power.ToInt64())) {
+}
+
+PrintLiteralItem::PrintLiteralItem(const String& text)
+    : data(text.View().data()),
+      size(static_cast<std::uint32_t>(text.View().size())) {
+}
+
 }  // namespace lyra::value

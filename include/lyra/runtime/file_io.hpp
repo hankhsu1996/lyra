@@ -37,11 +37,12 @@ auto LyraFOpen(
 void LyraFClose(
     RuntimeServices& services, const value::PackedArray& descriptor);
 
-// $fdisplay / $fwrite with descriptor. Iterates set bits per LRM 21.3.1.
-// Bit 0 of an MCD (or the pre-bound STDOUT FD 32'h8000_0001) routes through
-// RuntimeServices::Stream() so test-harness stdout matching stays
+// Writes the formatted record to a descriptor's sink, iterating set bits per
+// LRM 21.3.1. Bit 0 of an MCD (or the pre-bound STDOUT FD 32'h8000_0001) routes
+// through RuntimeServices::Stream() so test-harness stdout matching stays
 // consistent with $display output ordering; other bits go directly to
-// FileTable's owned FILE* handles. Invalid bits silently no-op.
+// FileTable's owned FILE* handles. Invalid bits silently no-op. A trailing
+// newline is appended for the newline kind (kFDisplay, LRM 21.2.1.1).
 void LyraFPrint(
     RuntimeServices& services, value::PrintKind kind,
     const value::PackedArray& descriptor,

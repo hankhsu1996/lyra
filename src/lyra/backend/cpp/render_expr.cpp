@@ -1114,6 +1114,17 @@ auto RenderSystemSubroutineEntryName(const support::SystemSubroutineDesc& desc)
               -> diag::Result<std::string_view> {
             return std::string_view{"lyra::runtime::Finish"};
           },
+          [](const support::PrintSystemSubroutineInfo& print)
+              -> diag::Result<std::string_view> {
+            if (print.sink_kind == support::PrintSinkKind::kStdout) {
+              return print.append_newline
+                         ? std::string_view{"lyra::runtime::LyraDisplay"}
+                         : std::string_view{"lyra::runtime::LyraWrite"};
+            }
+            return print.append_newline
+                       ? std::string_view{"lyra::runtime::LyraFDisplay"}
+                       : std::string_view{"lyra::runtime::LyraFWrite"};
+          },
           [](const support::TimeSystemSubroutineInfo& time)
               -> diag::Result<std::string_view> {
             switch (time.kind) {

@@ -122,6 +122,19 @@ auto RenderTypeAsCpp(
           [](const mir::ServicesType&) -> diag::Result<std::string> {
             return std::string{"lyra::runtime::RuntimeServices&"};
           },
+          [](const mir::RuntimeLibraryType& r) -> diag::Result<std::string> {
+            switch (r.kind) {
+              case mir::RuntimeLibraryKind::kPrintItem:
+                return std::string{"lyra::value::PrintItem"};
+              case mir::RuntimeLibraryKind::kPrintLiteralItem:
+                return std::string{"lyra::value::PrintLiteralItem"};
+              case mir::RuntimeLibraryKind::kPrintValueItem:
+                return std::string{"lyra::value::PrintValueItem"};
+              case mir::RuntimeLibraryKind::kFormatSpec:
+                return std::string{"lyra::value::FormatSpec"};
+            }
+            throw InternalError("RenderTypeAsCpp: unknown RuntimeLibraryKind");
+          },
           [&](const mir::PointerType& p) -> diag::Result<std::string> {
             auto inner_or = RenderTypeAsCpp(unit, owner_scope, p.pointee);
             if (!inner_or) return std::unexpected(std::move(inner_or.error()));

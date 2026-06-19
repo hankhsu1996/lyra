@@ -179,6 +179,19 @@ class MirDumper {
             [](const ScopeType&) -> std::string { return "Scope"; },
             [](const SelfType&) -> std::string { return "Self"; },
             [](const ServicesType&) -> std::string { return "Services"; },
+            [](const RuntimeLibraryType& r) -> std::string {
+              switch (r.kind) {
+                case RuntimeLibraryKind::kPrintItem:
+                  return "RuntimeLibrary(PrintItem)";
+                case RuntimeLibraryKind::kPrintLiteralItem:
+                  return "RuntimeLibrary(PrintLiteralItem)";
+                case RuntimeLibraryKind::kPrintValueItem:
+                  return "RuntimeLibrary(PrintValueItem)";
+                case RuntimeLibraryKind::kFormatSpec:
+                  return "RuntimeLibrary(FormatSpec)";
+              }
+              throw InternalError("dump: unknown RuntimeLibraryKind");
+            },
             [](const PointerType& p) -> std::string {
               switch (p.ownership) {
                 case PointerOwnership::kUnique:

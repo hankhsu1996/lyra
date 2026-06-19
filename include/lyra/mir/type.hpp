@@ -30,6 +30,7 @@ enum class TypeKind {
   kScope,
   kSelf,
   kServices,
+  kRuntimeLibrary,
   kPointer,
   kVector,
   kExternalRef,
@@ -164,6 +165,26 @@ struct ServicesType {
   auto operator==(const ServicesType&) const -> bool = default;
 };
 
+// A pass-through value type from the runtime library that MIR never inspects:
+// it is constructed (via ConstructExpr) and forwarded to a runtime-effect call,
+// and MIR makes no decision on its contents. The branch selects which library
+// type, and the backend maps the branch to the concrete library name. Distinct
+// from ServicesType / ScopeType, which are runtime object-model handles the
+// receiver semantics reason about; these are inert payloads
+// (docs/decisions/runtime-effects-as-generic-calls.md).
+enum class RuntimeLibraryKind : std::uint8_t {
+  kPrintItem,
+  kPrintLiteralItem,
+  kPrintValueItem,
+  kFormatSpec,
+};
+
+struct RuntimeLibraryType {
+  RuntimeLibraryKind kind;
+
+  auto operator==(const RuntimeLibraryType&) const -> bool = default;
+};
+
 enum class PointerOwnership {
   kUnique,
   kShared,
@@ -235,8 +256,8 @@ using TypeData = std::variant<
     PackedArrayType, EnumType, UnpackedArrayType, DynamicArrayType, QueueType,
     AssociativeArrayType, StringType, EventType, RealType, ShortRealType,
     RealTimeType, ChandleType, VoidType, ObjectType, ExternalUnitObjectType,
-    ScopeType, SelfType, ServicesType, PointerType, VectorType, ExternalRefType,
-    ObservableType>;
+    ScopeType, SelfType, ServicesType, RuntimeLibraryType, PointerType,
+    VectorType, ExternalRefType, ObservableType>;
 
 struct Type {
   TypeData data;

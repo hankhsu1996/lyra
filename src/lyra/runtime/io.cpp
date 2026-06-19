@@ -7,9 +7,11 @@
 #include <variant>
 
 #include "lyra/base/overloaded.hpp"
+#include "lyra/runtime/file_io.hpp"
 #include "lyra/runtime/runtime_services.hpp"
 #include "lyra/runtime/stream_dispatcher.hpp"
 #include "lyra/value/format.hpp"
+#include "lyra/value/packed_array.hpp"
 
 namespace lyra::runtime {
 
@@ -37,6 +39,28 @@ void LyraPrint(
   const bool append_newline =
       kind == value::PrintKind::kDisplay || kind == value::PrintKind::kFDisplay;
   stream.FinishRecord(append_newline);
+}
+
+void LyraDisplay(
+    RuntimeServices& services, std::span<const value::PrintItem> items) {
+  LyraPrint(services, value::PrintKind::kDisplay, items);
+}
+
+void LyraWrite(
+    RuntimeServices& services, std::span<const value::PrintItem> items) {
+  LyraPrint(services, value::PrintKind::kWrite, items);
+}
+
+void LyraFDisplay(
+    RuntimeServices& services, const value::PackedArray& descriptor,
+    std::span<const value::PrintItem> items) {
+  LyraFPrint(services, value::PrintKind::kFDisplay, descriptor, items);
+}
+
+void LyraFWrite(
+    RuntimeServices& services, const value::PackedArray& descriptor,
+    std::span<const value::PrintItem> items) {
+  LyraFPrint(services, value::PrintKind::kFWrite, descriptor, items);
 }
 
 void LyraSubmitStrobe(
