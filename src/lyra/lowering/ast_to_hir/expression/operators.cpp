@@ -4,8 +4,12 @@
 #include <utility>
 
 #include <slang/ast/Expression.h>
+#include <slang/ast/Symbol.h>
 #include <slang/ast/expressions/ConversionExpression.h>
 #include <slang/ast/expressions/OperatorExpressions.h>
+#include <slang/ast/symbols/VariableSymbols.h>
+#include <slang/ast/types/AllTypes.h>
+#include <slang/ast/types/Type.h>
 
 #include "lyra/diag/diag_code.hpp"
 #include "lyra/diag/kind.hpp"
@@ -15,6 +19,68 @@
 #include "lyra/lowering/ast_to_hir/structural_scope_lowerer.hpp"
 
 namespace lyra::lowering::ast_to_hir {
+
+namespace {
+
+// Whether `type` is a real-family type, or a composite (any depth) with a
+// real-family leaf. Recurses the two ways a value type nests other value types:
+// unpacked array elements and unpacked struct / union members. A packed
+// struct / union cannot hold a real (packed members are integral); a class is a
+// handle whose `===` compares identity, not members, so neither is recursed.
+auto TypeHasRealLeaf(const slang::ast::Type& type) -> bool {
+  const auto& canonical = type.getCanonicalType();
+  if (canonical.kind == slang::ast::SymbolKind::FloatingType) {
+    return true;
+  }
+  if (const auto* element = canonical.getArrayElementType();
+      element != nullptr) {
+    return TypeHasRealLeaf(*element);
+  }
+  if (canonical.isUnpackedStruct()) {
+    for (const auto* field :
+         canonical.as<slang::ast::UnpackedStructType>().fields) {
+      if (TypeHasRealLeaf(field->getType())) {
+        return true;
+      }
+    }
+    return false;
+  }
+  if (canonical.isUnpackedUnion()) {
+    for (const auto* field :
+         canonical.as<slang::ast::UnpackedUnionType>().fields) {
+      if (TypeHasRealLeaf(field->getType())) {
+        return true;
+      }
+    }
+    return false;
+  }
+  return false;
+}
+
+// LRM Table 11-1: case equality (`===` / `!==`) is not defined on real /
+// shortreal operands. slang accepts the form and evaluates it as a value
+// comparison, but that is a deviation from the standard the backend does not
+// follow: for a real there is no x/z plane, so the bit-matching the case
+// operators specify (LRM 12.5) has no single correct meaning. Lowering rejects
+// it here -- including a real-element aggregate, where case equality would
+// recurse element-wise into the same undefined comparison.
+auto CheckBinaryOperands(
+    const slang::ast::BinaryExpression& bin, diag::SourceSpan span)
+    -> diag::Result<void> {
+  const bool is_case_equality =
+      bin.op == slang::ast::BinaryOperator::CaseEquality ||
+      bin.op == slang::ast::BinaryOperator::CaseInequality;
+  if (is_case_equality && (TypeHasRealLeaf(*bin.left().type) ||
+                           TypeHasRealLeaf(*bin.right().type))) {
+    return diag::Error(
+        span, diag::DiagCode::kCaseEqualityOnRealOperand,
+        "case equality (=== / !==) is not defined on real or shortreal "
+        "operands (LRM Table 11-1)");
+  }
+  return {};
+}
+
+}  // namespace
 
 auto LowerConversionExprProc(
     ProcessLowerer& proc, WalkFrame frame,
@@ -59,6 +125,9 @@ auto LowerBinaryExprProc(
     ProcessLowerer& proc, WalkFrame frame,
     const slang::ast::BinaryExpression& bin, diag::SourceSpan span)
     -> diag::Result<hir::Expr> {
+  if (auto check = CheckBinaryOperands(bin, span); !check) {
+    return std::unexpected(std::move(check.error()));
+  }
   auto lhs_or = proc.LowerExpr(bin.left(), frame);
   if (!lhs_or) return std::unexpected(std::move(lhs_or.error()));
   const hir::ExprId lhs_id =
@@ -167,6 +236,9 @@ auto LowerBinaryExprStructural(
     StructuralScopeLowerer& scope, WalkFrame frame,
     const slang::ast::BinaryExpression& bin, diag::SourceSpan span)
     -> diag::Result<hir::Expr> {
+  if (auto check = CheckBinaryOperands(bin, span); !check) {
+    return std::unexpected(std::move(check.error()));
+  }
   auto lhs_or = scope.LowerExpr(bin.left(), frame);
   if (!lhs_or) return std::unexpected(std::move(lhs_or.error()));
   const hir::ExprId lhs_id =

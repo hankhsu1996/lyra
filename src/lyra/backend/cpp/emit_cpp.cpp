@@ -388,6 +388,7 @@ auto RenderScopeHeaderFile(
   out += "#include \"lyra/value/packed_bitwise.hpp\"\n";
   out += "#include \"lyra/value/packed_convert.hpp\"\n";
   out += "#include \"lyra/value/packed_reduction.hpp\"\n";
+  out += "#include \"lyra/value/real.hpp\"\n";
   out += "#include \"lyra/value/string.hpp\"\n";
   out += "#include \"lyra/value/string_op.hpp\"\n";
   out += "#include \"lyra/value/unpacked_array.hpp\"\n";

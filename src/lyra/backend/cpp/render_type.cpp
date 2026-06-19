@@ -71,13 +71,13 @@ auto RenderTypeAsCpp(
             return std::string{"lyra::runtime::NamedEvent"};
           },
           [](const mir::RealType&) -> diag::Result<std::string> {
-            return std::string{"double"};
+            return std::string{"lyra::value::Real"};
           },
           [](const mir::ShortRealType&) -> diag::Result<std::string> {
-            return std::string{"float"};
+            return std::string{"lyra::value::ShortReal"};
           },
           [](const mir::RealTimeType&) -> diag::Result<std::string> {
-            return std::string{"double"};
+            return std::string{"lyra::value::Real"};
           },
           [&](const mir::UnpackedArrayType& ua) -> diag::Result<std::string> {
             auto inner_or = RenderTypeAsCpp(unit, owner_scope, ua.element_type);
