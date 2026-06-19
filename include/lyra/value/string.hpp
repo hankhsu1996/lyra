@@ -107,6 +107,14 @@ class String {
     return impl_ == o.impl_;
   }
 
+  // LRM Table 6-7: the string default is the empty string. This is the
+  // container OOB-shield contract shared with the other value types
+  // (docs/decisions/runtime-shape-and-default-value.md), so a `string` can be
+  // an unpacked-array element.
+  auto ResetToDefault() -> void {
+    impl_.clear();
+  }
+
   // LRM 11.4.4 relational operators on `String` (LRM 6.16). The result is
   // 2-state.
   [[nodiscard]] auto operator<(const String& o) const -> PackedArray {
