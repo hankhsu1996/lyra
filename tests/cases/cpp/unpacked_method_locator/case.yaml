@@ -1,0 +1,21 @@
+id: cpp.unpacked_method_locator
+tags: [cpp_run]
+input:
+  command: [run, cpp]
+  project: false
+  top: Top
+  files: [main.sv]
+expect:
+  exit: 0
+  variables:
+    a_find: [5, 8, 8]
+    a_find_idx: [0, 2, 5]
+    a_first: [5]
+    a_first_idx: [0]
+    a_last: [8]
+    a_last_idx: [5]
+    a_nomatch: []
+    a_min: [1]
+    a_max: [8]
+    a_unique: [5, 3, 8, 1]
+    a_unique_idx: [0, 1, 2, 4]
