@@ -15,7 +15,6 @@
 #include "lyra/mir/integral_constant.hpp"
 #include "lyra/mir/runtime_print.hpp"
 #include "lyra/mir/runtime_scan.hpp"
-#include "lyra/mir/runtime_sformat.hpp"
 #include "lyra/mir/runtime_submit.hpp"
 #include "lyra/mir/runtime_timescale.hpp"
 #include "lyra/mir/structural_param.hpp"
@@ -132,8 +131,8 @@ struct CallExpr {
 
 using RuntimeCall = std::variant<
     RuntimePrintCall, RuntimeSubmitObservedCall, RuntimeSubmitNbaCall,
-    RuntimeSubmitPostponedCall, RuntimeScanCall, RuntimeSFormatCall,
-    RuntimeSetTimeFormatCall, RuntimePrintTimescaleCall>;
+    RuntimeSubmitPostponedCall, RuntimeScanCall, RuntimeSetTimeFormatCall,
+    RuntimePrintTimescaleCall>;
 
 struct RuntimeCallExpr {
   RuntimeCall call;

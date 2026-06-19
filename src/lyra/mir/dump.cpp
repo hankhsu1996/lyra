@@ -846,11 +846,6 @@ class MirDumper {
                             kind_text, ss.source.value, ss.format.value,
                             slot_list));
                   },
-                  [&](const RuntimeSFormatCall& sf) {
-                    Line(
-                        std::format(
-                            "RuntimeSFormatCall items={}", sf.items.size()));
-                  },
                   [&](const RuntimeSetTimeFormatCall& tf) {
                     Line(
                         std::format(

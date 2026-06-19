@@ -22,20 +22,19 @@ namespace lyra::lowering::hir_to_mir {
 // violation and raises `InternalError`.
 auto LowerSFormatSystemSubroutineCall(
     ProcessLowerer& process, WalkFrame frame, const hir::CallExpr& call,
+    support::SystemSubroutineId id,
     const support::SFormatSystemSubroutineInfo& info, diag::SourceSpan span)
     -> diag::Result<mir::Expr>;
 
-// LRM 21.3.3 statement-position entry. Two shapes:
-//   - `$sformat` / `$swrite*` (has_output_arg == true): build
-//       AssignStmt { lhs = out_var, rhs = LyraSFormat(items) }.
-//   - `$sformatf(...)` as a discard statement (has_output_arg == false):
-//       build ExprStmt { expr = LyraSFormat(items) }.
-// No copy-out wrapper -- the output_var is a single string-typed lvalue
-// fully overwritten by the call result, so the standard AssignStmt
-// covers LRM 13.5 lvalue-binding order naturally.
+// LRM 21.3.3 statement-position entry. The `$sformat` / `$swrite*` output_var
+// needs no copy-out wrapper -- it is a single string-typed lvalue fully
+// overwritten by the call result, so a plain `AssignExpr` covers LRM 13.5
+// lvalue-binding order; `$sformatf` in statement position is an ordinary
+// discard.
 auto LowerSFormatSystemSubroutineCallStmt(
     ProcessLowerer& process, WalkFrame frame, std::optional<std::string> label,
-    diag::SourceSpan span, const hir::CallExpr& call, std::string_view name,
+    diag::SourceSpan span, const hir::CallExpr& call,
+    support::SystemSubroutineId id, std::string_view name,
     const support::SFormatSystemSubroutineInfo& info)
     -> diag::Result<mir::Stmt>;
 

@@ -474,7 +474,7 @@ auto LowerSystemSubroutineCall(
           [&](const support::SFormatSystemSubroutineInfo& sformat)
               -> diag::Result<mir::Expr> {
             return LowerSFormatSystemSubroutineCall(
-                process, frame, call, sformat, span);
+                process, frame, call, desc.id, sformat, span);
           },
           [&](const support::TimeSystemSubroutineInfo& time_info)
               -> diag::Result<mir::Expr> {
