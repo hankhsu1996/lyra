@@ -557,7 +557,7 @@ auto PackedArray::ConvertFrom(
     const PackedArrayRef& src, std::uint64_t dst_bit_width, bool dst_is_signed,
     bool dst_is_four_state) -> PackedArray {
   return ConvertFrom(
-      src.Clone(), dst_bit_width, dst_is_signed, dst_is_four_state);
+      src.ToOwned(), dst_bit_width, dst_is_signed, dst_is_four_state);
 }
 
 auto PackedArray::ConvertFrom(
@@ -1423,7 +1423,7 @@ PackedArrayRef::PackedArrayRef(
       dims_(std::move(dims)) {
 }
 
-auto PackedArrayRef::Clone() const -> PackedArray {
+auto PackedArrayRef::ToOwned() const -> PackedArray {
   return std::as_const(*root_).ExtractBits(bit_offset_, bit_width_);
 }
 

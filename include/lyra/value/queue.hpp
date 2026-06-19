@@ -130,7 +130,7 @@ class Queue {
     return data_[i];
   }
 
-  [[nodiscard]] auto Clone() const -> Queue {
+  [[nodiscard]] auto ToOwned() const -> Queue {
     return *this;
   }
 

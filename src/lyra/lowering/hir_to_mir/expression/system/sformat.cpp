@@ -14,8 +14,10 @@
 #include "lyra/diag/diagnostic.hpp"
 #include "lyra/hir/expr.hpp"
 #include "lyra/hir/procedural_body.hpp"
+#include "lyra/lowering/hir_to_mir/lhs_observable.hpp"
 #include "lyra/lowering/hir_to_mir/print_items.hpp"
 #include "lyra/lowering/hir_to_mir/process_lowerer.hpp"
+#include "lyra/lowering/hir_to_mir/services_call.hpp"
 #include "lyra/mir/expr.hpp"
 #include "lyra/mir/runtime_sformat.hpp"
 #include "lyra/mir/stmt.hpp"
@@ -101,9 +103,10 @@ auto LowerSFormatSystemSubroutineCallStmt(
         "elided");
   }
   auto out_or =
-      process.LowerExpr(hir_proc.exprs.at(call.arguments[0]->value), frame);
+      process.LowerLhsExpr(hir_proc.exprs.at(call.arguments[0]->value), frame);
   if (!out_or) return std::unexpected(std::move(out_or.error()));
-  const mir::TypeId out_type = out_or->type;
+  const mir::TypeId out_type = process.Module().TranslateType(
+      hir_proc.exprs.at(call.arguments[0]->value).type);
   if (process.Module().Unit().GetType(out_type).Kind() !=
       mir::TypeKind::kString) {
     return RejectNonStringOutput(name, span);
@@ -114,10 +117,12 @@ auto LowerSFormatSystemSubroutineCallStmt(
   if (!call_expr_or) return std::unexpected(std::move(call_expr_or.error()));
   const mir::ExprId call_id = proc_scope.AddExpr(*std::move(call_expr_or));
 
-  const mir::ExprId assign_id = proc_scope.AddExpr(
-      mir::Expr{
-          .data = mir::AssignExpr{.target = out_id, .value = call_id},
-          .type = out_type});
+  const mir::ExprId services_id =
+      proc_scope.AddExpr(BuildServicesCallExpr(process, frame));
+  const mir::Expr assign_expr = BuildObservableAssignExpr(
+      process.Module().Unit(), proc_scope, services_id, out_id, call_id,
+      std::nullopt, out_type, process.Module().Unit().builtins.void_type);
+  const mir::ExprId assign_id = proc_scope.AddExpr(assign_expr);
 
   return mir::Stmt{
       .label = std::move(label), .data = mir::ExprStmt{.expr = assign_id}};

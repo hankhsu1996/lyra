@@ -1,7 +1,6 @@
 #pragma once
 
 #include <string>
-#include <string_view>
 
 #include "lyra/backend/cpp/render_context.hpp"
 #include "lyra/diag/diagnostic.hpp"
@@ -18,19 +17,13 @@ auto RenderStructuralVarName(
     const RenderContext& ctx, const mir::StructuralVarRef& ref)
     -> diag::Result<std::string>;
 
-// Renders `expr` as an lvalue: bare root + optional `mutate_adapter`
-// (e.g. `.Mutate(svc)` for partial-write chains) + element / range select
-// suffixes. Throws InternalError on non-addressable forms.
-auto RenderLhsExpr(
-    const RenderContext& ctx, const mir::Expr& expr,
-    std::string_view mutate_adapter) -> diag::Result<std::string>;
-
-// Reports whether the lvalue chain `expr` ultimately writes through an
-// observable cell (a `mir::ObservableType`-wrapped structural var or an
-// extern-ref slot). Sites that need to bind the cell for `Var<T>::Mutate`
-// dispatch consult this before choosing the lvalue render path.
-[[nodiscard]] auto LhsRootIsObservableScalar(
-    const RenderContext& ctx, const mir::Expr& expr) -> bool;
+// Renders `expr` as an lvalue: bare root + element / range select suffixes.
+// Throws InternalError on non-addressable forms. The cell's `Mutate(svc)`
+// adapter (if any) is encoded explicitly in MIR as a
+// `DerefExpr(CallExpr(ObservableMethod{kMutate}, ...))` node by HIR-to-MIR,
+// so this render is purely structural -- it does not inject any wrapper.
+auto RenderLhsExpr(const RenderContext& ctx, const mir::Expr& expr)
+    -> diag::Result<std::string>;
 
 // Renders `expr` for use in a C++ boolean context (`if`, `while`, `do`, `for`
 // condition, ternary cond, `&&` / `||` / `!`). When the expression's MIR type

@@ -420,6 +420,11 @@ class MirDumper {
                             "ScopeMethodInfo[kind={}]",
                             static_cast<int>(m.kind));
                       },
+                      [](const ObservableMethodInfo& m) -> std::string {
+                        return std::format(
+                            "ObservableMethodInfo[kind={}]",
+                            static_cast<int>(m.kind));
+                      },
                   },
                   b.method);
             },
@@ -589,16 +594,6 @@ class MirDumper {
               return std::format(
                   "ClosureExpr captures={} params={}", cl.captures.size(),
                   cl.params.size());
-            },
-            [](const ElementSelectExpr& sel) -> std::string {
-              return std::format(
-                  "ElementSelectExpr base=Expr[{}] index=Expr[{}]",
-                  sel.base_value.value, sel.index.value);
-            },
-            [](const RangeSelectExpr& sel) -> std::string {
-              return std::format(
-                  "RangeSelectExpr base=Expr[{}] offset=Expr[{}] count={}",
-                  sel.base_value.value, sel.offset_expr.value, sel.count);
             },
             [](const ConcatExpr& c) -> std::string {
               std::string operands;
