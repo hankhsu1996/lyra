@@ -68,18 +68,21 @@ the argument vector.
 - One generic `CallExpr` is MIR's only call shape; `RuntimeCallExpr` and the ~22 payload structs
   retire. Runtime free functions (`LyraPrint(RuntimeServices&, ...)`, etc.) stay unchanged.
 - Both backends eat the same generic input; the LLVM optimizer reaches through.
-- **Implementation in progress.** `$finish`, the `$time` / `$stime` / `$realtime` family, and the
-  whole file I/O family (`$fopen` / `$fclose` / `$fgetc` / `$ungetc` / `$fgets` / `$fread` /
-  `$fseek` / `$rewind` / `$ftell` / `$feof` / `$ferror` / `$fflush`) are on this shape: each lowers
-  to a generic `CallExpr` whose first argument is `self.Services()` and renders through one generic
-  system-subroutine path with no injection. A runtime entry that takes a write-through destination
-  (`$fread`, `$fgets`, `$ferror`) receives a copy-out temp as an ordinary argument, so the call
-  carries no live-reference or mutate-routing concept; an effect whose SV form omits optional
-  arguments either materializes the default at lowering or selects a shorter runtime overload, so
-  the argument vector is always complete. The print / scan / `$sformat` / diagnostic / submit
-  effects still use `RuntimeCallExpr` + payload structs and still splice `self->Services()`; that is
-  transitional tech debt to converge to this decision. Flattening `$display` items into value-build
-  expressions is the largest remaining piece.
+- **Implementation in progress.** `$finish`, the `$time` / `$stime` / `$realtime` family, the whole
+  file I/O family (`$fopen` / `$fclose` / `$fgetc` / `$ungetc` / `$fgets` / `$fread` / `$fseek` /
+  `$rewind` / `$ftell` / `$feof` / `$ferror` / `$fflush`), and the print-to-sink family (`$display`
+  / `$write` / `$fdisplay` / `$fwrite`) are on this shape: each lowers to a generic `CallExpr` whose
+  first argument is `self.Services()` and renders through one generic system-subroutine path with no
+  injection. A runtime entry that takes a write-through destination (`$fread`, `$fgets`, `$ferror`)
+  receives a copy-out temp as an ordinary argument, so the call carries no live-reference or
+  mutate-routing concept; an effect whose SV form omits optional arguments either materializes the
+  default at lowering or selects a shorter runtime overload, so the argument vector is always
+  complete. The print family flattens its `$display` items into a constructed `PrintItem` array:
+  each item is a value-build `ConstructExpr` over a runtime-library value type (`PrintItem` /
+  `FormatSpec`), and the print/newline discipline is encoded by the selected runtime entry rather
+  than carried as a `kind` argument. The `$strobe`-family (deferred print), scan, `$sformat`,
+  diagnostic, and NBA / observed submit effects still use `RuntimeCallExpr` + payload structs; that
+  is transitional tech debt to converge to this decision.
 
 ## Cross-references
 

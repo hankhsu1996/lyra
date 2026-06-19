@@ -53,6 +53,17 @@ struct FormatSpec {
   bool zero_pad = false;
   bool left_align = false;
   std::int32_t timeunit_power = 0;
+
+  FormatSpec() = default;
+
+  // Each field arrives as a PackedArray literal -- the value model routes
+  // compile-time scalars as SV values, the same way the file-IO runtime entries
+  // take their int args -- and converts to its native field type here.
+  explicit FormatSpec(const PackedArray& kind);
+  FormatSpec(
+      const PackedArray& kind, const PackedArray& width,
+      const PackedArray& precision, const PackedArray& zero_pad,
+      const PackedArray& left_align, const PackedArray& timeunit_power);
 };
 
 // LRM 20.4.3 / Table 20-3: the design-wide settings that drive every `%t`. The
@@ -162,57 +173,63 @@ struct Formatter<float> {
 };
 
 struct PrintLiteralItem {
-  const char* data;
-  std::uint32_t size;
+  const char* data = nullptr;
+  std::uint32_t size = 0;
+
+  PrintLiteralItem() = default;
+  PrintLiteralItem(const char* data, std::uint32_t size)
+      : data(data), size(size) {
+  }
+
+  // Borrows the text bytes of `text`. The caller materializes `text` as a
+  // temporary in the same full-expression as the runtime print call, so the
+  // borrowed bytes outlive the walk (the same lifetime contract FormatArg
+  // relies on; see docs/decisions/format-dispatch.md).
+  explicit PrintLiteralItem(const String& text);
 };
 
 struct PrintValueItem {
   FormatSpec spec;
   FormatArg arg;
+
+  // The emit side constructs this directly (`PrintValueItem(x, spec)`). The
+  // overload set is closed on the leaf formattable types rather than a single
+  // greedy template so an operand that is not itself formattable but converts
+  // to one -- an `Enum<T>` decaying to `PackedArray` -- selects the converted
+  // overload instead of instantiating an undefined `Formatter`. `const T&` so
+  // a caller-side temporary (an arithmetic rvalue) binds via lifetime
+  // extension through the full expression that contains the runtime print
+  // call.
+  PrintValueItem(const PackedArray& value, FormatSpec spec)
+      : spec(spec), arg(MakeFormatArg(value)) {
+  }
+  PrintValueItem(const String& value, FormatSpec spec)
+      : spec(spec), arg(MakeFormatArg(value)) {
+  }
+  PrintValueItem(const double& value, FormatSpec spec)
+      : spec(spec), arg(MakeFormatArg(value)) {
+  }
+  PrintValueItem(const float& value, FormatSpec spec)
+      : spec(spec), arg(MakeFormatArg(value)) {
+  }
+  template <typename T>
+  PrintValueItem(const UnpackedArray<T>& value, FormatSpec spec)
+      : spec(spec), arg(MakeFormatArg(value)) {
+  }
+  template <typename T>
+  PrintValueItem(const DynamicArray<T>& value, FormatSpec spec)
+      : spec(spec), arg(MakeFormatArg(value)) {
+  }
+  template <typename T>
+  PrintValueItem(const Queue<T>& value, FormatSpec spec)
+      : spec(spec), arg(MakeFormatArg(value)) {
+  }
+  template <typename K, typename V>
+  PrintValueItem(const AssociativeArray<K, V>& value, FormatSpec spec)
+      : spec(spec), arg(MakeFormatArg(value)) {
+  }
 };
 
 using PrintItem = std::variant<PrintLiteralItem, PrintValueItem>;
-
-// Convenience constructors -- the emit side reads as
-// `PrintValue(x, spec)` and the overload set selects the right `Formatter`
-// from the operand's type. `const T&` everywhere so a caller-side temporary
-// (e.g. an arithmetic rvalue) binds via lifetime extension through the full
-// expression that contains the runtime print call.
-[[nodiscard]] inline auto PrintValue(const PackedArray& value, FormatSpec spec)
-    -> PrintItem {
-  return PrintValueItem{.spec = spec, .arg = MakeFormatArg(value)};
-}
-[[nodiscard]] inline auto PrintValue(const String& value, FormatSpec spec)
-    -> PrintItem {
-  return PrintValueItem{.spec = spec, .arg = MakeFormatArg(value)};
-}
-[[nodiscard]] inline auto PrintValue(const double& value, FormatSpec spec)
-    -> PrintItem {
-  return PrintValueItem{.spec = spec, .arg = MakeFormatArg(value)};
-}
-[[nodiscard]] inline auto PrintValue(const float& value, FormatSpec spec)
-    -> PrintItem {
-  return PrintValueItem{.spec = spec, .arg = MakeFormatArg(value)};
-}
-template <typename T>
-[[nodiscard]] auto PrintValue(const UnpackedArray<T>& value, FormatSpec spec)
-    -> PrintItem {
-  return PrintValueItem{.spec = spec, .arg = MakeFormatArg(value)};
-}
-template <typename T>
-[[nodiscard]] auto PrintValue(const DynamicArray<T>& value, FormatSpec spec)
-    -> PrintItem {
-  return PrintValueItem{.spec = spec, .arg = MakeFormatArg(value)};
-}
-template <typename T>
-[[nodiscard]] auto PrintValue(const Queue<T>& value, FormatSpec spec)
-    -> PrintItem {
-  return PrintValueItem{.spec = spec, .arg = MakeFormatArg(value)};
-}
-template <typename K, typename V>
-[[nodiscard]] auto PrintValue(
-    const AssociativeArray<K, V>& value, FormatSpec spec) -> PrintItem {
-  return PrintValueItem{.spec = spec, .arg = MakeFormatArg(value)};
-}
 
 }  // namespace lyra::value
