@@ -15,6 +15,7 @@
 #include "lyra/hir/subroutine.hpp"
 #include "lyra/hir/subroutine_ref.hpp"
 #include "lyra/lowering/hir_to_mir/capture_sink.hpp"
+#include "lyra/lowering/hir_to_mir/default_value.hpp"
 #include "lyra/lowering/hir_to_mir/expression/system/control.hpp"
 #include "lyra/lowering/hir_to_mir/expression/system/diagnostic.hpp"
 #include "lyra/lowering/hir_to_mir/expression/system/file_io.hpp"
@@ -136,6 +137,7 @@ auto ArrayMethodTakesClosure(hir::ArrayMethodKind k) -> bool {
     case hir::ArrayMethodKind::kMax:
     case hir::ArrayMethodKind::kUnique:
     case hir::ArrayMethodKind::kUniqueIndex:
+    case hir::ArrayMethodKind::kMap:
       return true;
   }
   throw InternalError("ArrayMethodTakesClosure: unknown hir::ArrayMethodKind");
@@ -183,6 +185,8 @@ auto LowerArrayMethodKind(hir::ArrayMethodKind k) -> mir::ArrayMethodKind {
       return mir::ArrayMethodKind::kUnique;
     case hir::ArrayMethodKind::kUniqueIndex:
       return mir::ArrayMethodKind::kUniqueIndex;
+    case hir::ArrayMethodKind::kMap:
+      return mir::ArrayMethodKind::kMap;
   }
   throw InternalError("LowerArrayMethodKind: unknown hir::ArrayMethodKind");
 }
@@ -316,6 +320,26 @@ auto ArrayMethodReceiverElementType(const hir::Type& ty)
     return q->element_type;
   }
   return std::nullopt;
+}
+
+// The element type of `map`'s result container (LRM 7.12.5), used to build its
+// shield.
+auto ArrayContainerElementType(const mir::Type& ty) -> mir::TypeId {
+  return std::visit(
+      [](const auto& t) -> mir::TypeId {
+        using TyT = std::decay_t<decltype(t)>;
+        if constexpr (
+            std::same_as<TyT, mir::UnpackedArrayType> ||
+            std::same_as<TyT, mir::DynamicArrayType> ||
+            std::same_as<TyT, mir::QueueType>) {
+          return t.element_type;
+        } else {
+          throw InternalError(
+              "ArrayContainerElementType: map result is not an unpacked-array "
+              "container type");
+        }
+      },
+      ty.data);
 }
 
 // LRM 7.12.1 / 7.12.2 / 7.12.3 with-clause closure synthesis. The body is a
@@ -680,6 +704,16 @@ auto LowerHirCallExprProc(
                 return std::unexpected(std::move(closure_or.error()));
               }
               args.push_back(proc_scope.AddExpr(*std::move(closure_or)));
+              // LRM 7.12.5: `map`'s result element type may differ from the
+              // receiver's, so its shield is supplied here as that type's
+              // canonical default -- the runtime shape is not recoverable from
+              // the C++ type alone.
+              if (*ak == hir::ArrayMethodKind::kMap) {
+                const mir::TypeId result_elem = ArrayContainerElementType(
+                    module.Unit().GetType(result_type));
+                args.push_back(proc_scope.AddExpr(
+                    BuildDefaultValueExpr(module, frame, result_elem)));
+              }
             } else if (c.with_clause.has_value()) {
               throw InternalError(
                   "BuiltinMethodRef with-clause on a method kind that does "

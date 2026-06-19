@@ -1,0 +1,16 @@
+id: cpp.array_map
+tags: [cpp_run]
+input:
+  command: [run, cpp]
+  project: false
+  top: Top
+  files: [main.sv]
+expect:
+  exit: 0
+  variables:
+    sum_ab: [11, 22, 33]
+    gt: [0, 1, 1]
+    qd: [8, 10]
+    fad: [8, 9, 10]
+    em: []
+    rowsum: [6, 9]

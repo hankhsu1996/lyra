@@ -271,6 +271,23 @@ template <typename Seq, typename T, typename F, typename Combine>
   return acc;
 }
 
+// LRM 7.12.5 projection into the closure's return type. The caller seeds the
+// result container with a producer-supplied shield because that element type's
+// runtime shape is not recoverable from the C++ type alone.
+template <typename Seq, typename F>
+[[nodiscard]] auto ArrayMap(const Seq& data, F& closure)
+    -> std::vector<std::invoke_result_t<
+        F&, const typename Seq::value_type&, const PackedArray&>> {
+  using U = std::invoke_result_t<
+      F&, const typename Seq::value_type&, const PackedArray&>;
+  std::vector<U> out;
+  out.reserve(data.size());
+  for (std::size_t i = 0; i < data.size(); ++i) {
+    out.push_back(closure(data[i], LocatorIndex(i)));
+  }
+  return out;
+}
+
 // LRM 7.4.5 contiguous-range gather. The slice is `count` elements starting at
 // `offset`; an out-of-range position yields `canonical` and an x / z offset
 // (an invalid position) makes the whole result canonical. The flat vector is

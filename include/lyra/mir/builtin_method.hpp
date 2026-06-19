@@ -59,9 +59,10 @@ enum class EventMethodKind : std::uint8_t {
 // implicitly materialised by the C++ copy constructor.
 //
 // `kSize` is the LRM 7.9.1 element count. The shared LRM 7.12 family
-// (ordering, reduction, locator) carries one closure as the second argument
-// -- the source `with` clause or the LRM 7.12.1 default `with (item)`. The
-// locator arms (`kFind` onward) return a queue.
+// (ordering, reduction, locator, `kMap`) carries one closure as the second
+// argument -- the source `with` clause or the LRM 7.12.1 default `with (item)`.
+// The locator arms (`kFind` onward) return a queue; `kMap` returns a same-shape
+// container of the closure's result type.
 enum class ArrayMethodKind : std::uint8_t {
   kElementAt,
   kSlice,
@@ -86,13 +87,13 @@ enum class ArrayMethodKind : std::uint8_t {
   kMax,
   kUnique,
   kUniqueIndex,
+  kMap,
 };
 
-// LRM 7.10.2 queue-native methods plus the compiler-internal access methods the
-// queue operators lower to. `size` .. `push_back` are SV-callable; `kElementAt`
-// / `kWriteRef` / `kSlice` realize `q[i]` read, `q[i] = v` write (and `q[$+1]`
-// append), and `q[a:b]` as built-in method calls (LRM 7.10.1). The shared LRM
-// 7.12 family stays in `ArrayMethodKind`.
+// LRM 7.10.2 queue methods. `kElementAt` / `kWriteRef` / `kSlice` have no SV
+// method syntax -- they carry `q[i]` read, `q[i] = v` write, and `q[a:b]`
+// slice, which lower to calls because a queue has no native C++ subscript
+// (LRM 7.10.1).
 enum class QueueMethodKind : std::uint8_t {
   kSize,
   kInsert,

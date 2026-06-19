@@ -343,6 +343,13 @@ class DynamicArray {
         PackedArray::Int(0), detail::ArrayUniqueIndex(data_, std::move(key))};
   }
 
+  // LRM 7.12.5 projection into a same-shape dynamic array; `shield` seeds the
+  // result element type's canonical default.
+  template <typename F, typename U>
+  [[nodiscard]] auto Map(F closure, U shield) const -> DynamicArray<U> {
+    return DynamicArray<U>(std::move(shield), detail::ArrayMap(data_, closure));
+  }
+
  private:
   [[nodiscard]] auto IsInvalidIndex(const PackedArray& idx) const -> bool {
     if (idx.HasUnknown()) return true;
