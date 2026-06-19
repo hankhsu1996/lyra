@@ -127,7 +127,12 @@ class DynamicArray {
     swap(a.data_, b.data_);
   }
 
-  [[nodiscard]] auto Size() const -> std::size_t {
+  // LRM 7.5.1: size() yields an SV int.
+  [[nodiscard]] auto Size() const -> PackedArray {
+    return PackedArray::Int(static_cast<std::int32_t>(RawSize()));
+  }
+
+  [[nodiscard]] auto RawSize() const -> std::size_t {
     return data_.size();
   }
 
@@ -534,7 +539,7 @@ struct Formatter<DynamicArray<T>> {
   static auto Format(const FormatSpec& spec, const DynamicArray<T>& value)
       -> std::string {
     std::string out = "'{";
-    for (std::size_t i = 0; i < value.Size(); ++i) {
+    for (std::size_t i = 0; i < value.RawSize(); ++i) {
       if (i != 0) {
         out += ", ";
       }
