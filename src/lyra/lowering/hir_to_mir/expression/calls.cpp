@@ -254,6 +254,20 @@ auto LowerUserCallee(
   return scope.TranslateStructuralSubroutine(u.hops, u.subroutine);
 }
 
+// The LRM 7.12 family shares one closure shape across every unpacked-array
+// receiver; only the element type differs, and each such HIR type exposes it
+// as `element_type`.
+auto ArrayMethodReceiverElementType(const hir::Type& ty)
+    -> std::optional<hir::TypeId> {
+  if (const auto* da = std::get_if<hir::DynamicArrayType>(&ty.data)) {
+    return da->element_type;
+  }
+  if (const auto* q = std::get_if<hir::QueueType>(&ty.data)) {
+    return q->element_type;
+  }
+  return std::nullopt;
+}
+
 // LRM 7.12.1 / 7.12.2 / 7.12.3 with-clause closure synthesis. The body is a
 // normal expression lowered through `process.LowerExpr`; only the
 // closure-specific leaf behaviour lives elsewhere -- captures via
@@ -270,13 +284,13 @@ auto BuildArrayMethodClosure(
   const auto& hir_process = process.HirBody();
   auto& outer_scope = *frame.current_procedural_scope;
   const auto& hir_recv_ty = module.Hir().GetType(hir_receiver_type);
-  const auto* hir_da = std::get_if<hir::DynamicArrayType>(&hir_recv_ty.data);
-  if (hir_da == nullptr) {
+  const auto element_type = ArrayMethodReceiverElementType(hir_recv_ty);
+  if (!element_type.has_value()) {
     throw InternalError(
-        "BuildArrayMethodClosure: receiver is not a dynamic-array type");
+        "BuildArrayMethodClosure: receiver is not an unpacked-array type");
   }
-  const mir::TypeId item_type = module.TranslateType(hir_da->element_type);
-  const mir::TypeId index_type = process.Module().Unit().builtins.int32;
+  const mir::TypeId item_type = module.TranslateType(*element_type);
+  const mir::TypeId index_type = module.Unit().builtins.int32;
   const std::string iterator_name =
       with_clause != nullptr
           ? hir_process.procedural_vars.at(with_clause->iterator.value).name

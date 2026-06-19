@@ -1,0 +1,15 @@
+id: cpp.queue_method_reduction
+tags: [cpp_run]
+input:
+  command: [run, cpp]
+  project: false
+  top: Top
+  files: [main.sv]
+expect:
+  exit: 0
+  variables:
+    s: 10
+    p: 24
+    x: 4
+    sw: 10
+    qidx_sum: 13

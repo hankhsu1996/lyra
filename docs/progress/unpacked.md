@@ -14,7 +14,7 @@ Done when:
 ## Actionable
 
 U1..U7 are done. U8 records a cross-cutting observability gap surfaced by the unpacked-vs-packed
-asymmetry; the implementation lives under `refactor.md` R2.
+asymmetry; the implementation lives under `refactor.md` R2. U9 records the array-manipulation gap.
 
 | Item | Status                                                         |
 | ---- | -------------------------------------------------------------- |
@@ -26,6 +26,7 @@ asymmetry; the implementation lives under `refactor.md` R2.
 | U6   | Done: constant-width slice (read and write)                    |
 | U7   | Done: invalid-index handling and non-canonical declared ranges |
 | U8   | Open: unpacked vars participate in value-change observability  |
+| U9   | Open: array manipulation methods (LRM 7.12)                    |
 
 ## Sub-Steps
 
@@ -105,11 +106,24 @@ The numeric IDs are stable references and do not imply execution order beyond U1
       item exists for visibility from the unpacked workstream. Triggered when a concrete consumer
       needs the capability.
 
+### Array manipulation methods
+
+- [ ] U9 -- Array manipulation methods (LRM 7.12) on fixed-size unpacked arrays: the ordering family
+      (`reverse`, `sort`, `rsort`), the reduction family (`sum`, `product`, `and`, `or`, `xor`), and
+      the locator family (`find` and its variants, `min`, `max`, `unique`, `unique_index`), with the
+      optional / mandatory `with` clause per LRM 7.12.1 -- 7.12.3 and the `item.index` iterator (LRM
+      7.12.4). LRM 7.12 defines these uniformly for any unpacked array (fixed or dynamically sized)
+      except associative; today the family is wired only for dynamic array and queue receivers, so a
+      fixed unpacked receiver (`int arr[5]; arr.sort();`) is not yet accepted. The method semantics
+      and the shared element-walking algorithms already exist; closing this needs the fixed-unpacked
+      receiver routed into the same family plus the thin per-container method surface.
+
 ## Cross-references
 
 - LRM anchors: 7.4.2 (Unpacked arrays), 7.4.4 (Multidimensional arrays), 7.4.5 (Indexing and
-  slicing), 7.4.6 (Operations on arrays), 7.6 (Array assignments), 10.9 (Assignment patterns), Table
-  6-7 (Default initial values), Table 7-1 (Value read from a nonexistent array entry).
+  slicing), 7.4.6 (Operations on arrays), 7.6 (Array assignments), 7.12 (Array manipulation
+  methods), 10.9 (Assignment patterns), Table 6-7 (Default initial values), Table 7-1 (Value read
+  from a nonexistent array entry).
 - Archive items: `datatypes/unpacked/{unpacked_arrays, unpacked_array_constants}`, the unpacked
   subset of `oob_bounds`.
 - Decision: `../decisions/unpacked-array-representation.md`.
