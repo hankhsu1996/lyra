@@ -111,10 +111,12 @@ suspect, not the analysis (`lowering_organization.md` states this discipline in 
     set. MIR is consumed by more than one backend; each chooses only how to represent MIR's stated
     semantics in its target, by a fixed function of the node kind. A backend reads a semantic fact
     from a MIR node or reference; it never re-derives or re-decides one, and it never expects MIR to
-    grow a new node kind to express a fact -- if the fact is missing, HIR-to-MIR is incomplete and
-    should emit the corresponding combination of existing primitives instead. _Programming-language
-    consequence: the program text is the program; consumers do not invent vocabulary the language
-    does not have._
+    grow a node kind that carries a backend storage realization, a runtime library's shape, or
+    source-language sugar -- a fact of that kind is already expressible by combining existing
+    primitives, so if it is missing, HIR-to-MIR is incomplete and should emit that combination
+    instead. The primitive set does grow, but only for a genuinely new generic-language concept,
+    never to model a backend / library / sugar shape (see Owns). _Programming-language consequence:
+    the program text is the program; consumers do not invent vocabulary the language does not have._
 11. Every callable body's first binding is `self`, a pointer to its enclosing structural scope --
     `body.vars[0]` is a procedural-var declaration of that pointer type, named `self`. Access to any
     class member -- a structural variable, a service call, a child instance -- flows through

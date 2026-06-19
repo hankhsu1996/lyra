@@ -61,12 +61,17 @@ void WriteToStream(
 
 }  // namespace
 
+auto LyraFOpen(RuntimeServices& services, const value::String& name)
+    -> value::PackedArray {
+  return value::PackedArray::Int(
+      services.Files().Open(name.View(), std::nullopt));
+}
+
 auto LyraFOpen(
     RuntimeServices& services, const value::String& name,
-    std::optional<value::String> mode) -> value::PackedArray {
-  std::optional<std::string_view> mode_view = std::nullopt;
-  if (mode.has_value()) mode_view = mode->View();
-  return value::PackedArray::Int(services.Files().Open(name.View(), mode_view));
+    const value::String& mode) -> value::PackedArray {
+  return value::PackedArray::Int(
+      services.Files().Open(name.View(), mode.View()));
 }
 
 void LyraFClose(
@@ -293,11 +298,13 @@ auto LyraFRead(
   return MakeInt(static_cast<std::int32_t>(got));
 }
 
-auto LyraFRead(
+namespace {
+
+auto FReadUnpackedImpl(
     RuntimeServices& services, value::UnpackedArray<value::PackedArray>& dest,
-    const value::PackedArray& fd_pa, std::optional<std::int64_t> sv_start,
-    std::optional<std::int64_t> count, std::int64_t declared_left,
-    std::int64_t declared_right) -> value::PackedArray {
+    const value::PackedArray& fd_pa, std::int64_t declared_left,
+    std::int64_t declared_right, std::int64_t start_sv,
+    std::optional<std::int64_t> count) -> value::PackedArray {
   const std::int32_t fd = AsInt32(fd_pa);
   auto* slot = services.Files().ResolveSlot(fd);
   if (slot == nullptr) {
@@ -313,7 +320,6 @@ auto LyraFRead(
   const bool ascending = declared_left <= declared_right;
   const auto lowest_sv = std::min(declared_left, declared_right);
   const auto highest_sv = std::max(declared_left, declared_right);
-  const auto start_sv = sv_start.value_or(lowest_sv);
   // LRM 21.3.4.4: out-of-range start has no defined behaviour. Stamp EBADF
   // and return 0 so the user sees the failure rather than a silent no-op.
   if (start_sv < lowest_sv || start_sv > highest_sv) {
@@ -363,6 +369,29 @@ auto LyraFRead(
     if (got_this < bytes_per_elem) break;
   }
   return MakeInt(static_cast<std::int32_t>(total_bytes));
+}
+
+}  // namespace
+
+auto LyraFRead(
+    RuntimeServices& services, value::UnpackedArray<value::PackedArray>& dest,
+    const value::PackedArray& fd, const value::PackedArray& declared_left,
+    const value::PackedArray& declared_right,
+    const value::PackedArray& sv_start) -> value::PackedArray {
+  return FReadUnpackedImpl(
+      services, dest, fd, declared_left.ToInt64(), declared_right.ToInt64(),
+      sv_start.ToInt64(), std::nullopt);
+}
+
+auto LyraFRead(
+    RuntimeServices& services, value::UnpackedArray<value::PackedArray>& dest,
+    const value::PackedArray& fd, const value::PackedArray& declared_left,
+    const value::PackedArray& declared_right,
+    const value::PackedArray& sv_start, const value::PackedArray& count)
+    -> value::PackedArray {
+  return FReadUnpackedImpl(
+      services, dest, fd, declared_left.ToInt64(), declared_right.ToInt64(),
+      sv_start.ToInt64(), count.ToInt64());
 }
 
 auto LyraFSeek(
@@ -448,20 +477,19 @@ auto LyraFError(
   return MakeInt(errno_value);
 }
 
-void LyraFFlush(
-    RuntimeServices& services,
-    std::optional<value::PackedArray> descriptor_pa) {
+void LyraFFlush(RuntimeServices& services) {
   // Flush-all path: iterate every set bit in the entire 1..30 MCD range and
   // every reserved+pool FD index. Cheap enough vs disk cost.
-  if (!descriptor_pa.has_value()) {
-    for (std::uint32_t bit = 1; bit <= 30U; ++bit) {
-      std::fstream* s =
-          services.Files().Resolve(static_cast<std::int32_t>(1U << bit));
-      if (s != nullptr) s->flush();
-    }
-    return;
+  for (std::uint32_t bit = 1; bit <= 30U; ++bit) {
+    std::fstream* s =
+        services.Files().Resolve(static_cast<std::int32_t>(1U << bit));
+    if (s != nullptr) s->flush();
   }
-  const std::int32_t descriptor = AsInt32(*descriptor_pa);
+}
+
+void LyraFFlush(
+    RuntimeServices& services, const value::PackedArray& descriptor_pa) {
+  const std::int32_t descriptor = AsInt32(descriptor_pa);
   if (descriptor == 0) return;
   const auto raw = static_cast<std::uint32_t>(descriptor);
   if ((raw & (1U << 31U)) != 0U) {

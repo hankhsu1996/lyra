@@ -16,16 +16,17 @@
 namespace lyra::lowering::hir_to_mir {
 
 // Lower a file IO system subroutine call ($fopen / $fclose / $fgetc /
-// $ungetc / $fseek / $rewind / $ftell / $feof / $fflush) into a mir::Expr
-// carrying a mir::RuntimeCallExpr with the kind-specific payload.
-// Output-arg tasks ($fgets / $fread / $ferror) reach this path only when
-// nested inside a larger expression and return diag::Unsupported -- the
-// statement-position desugaring runs upstream via
-// LowerFileIOSystemSubroutineCallStmt.
+// $ungetc / $fseek / $rewind / $ftell / $feof / $fflush) into a generic
+// mir::CallExpr whose first argument is the engine handle (self.Services())
+// and whose remaining arguments are the task operands. Output-arg tasks
+// ($fgets / $fread / $ferror) reach this path only when nested inside a
+// larger expression and return diag::Unsupported -- the statement-position
+// desugaring runs upstream via LowerFileIOSystemSubroutineCallStmt.
 auto LowerFileIOSystemSubroutineCall(
     ProcessLowerer& process, WalkFrame frame, const hir::CallExpr& call,
-    std::string_view name, const support::FileIOSystemSubroutineInfo& info,
-    diag::SourceSpan span) -> diag::Result<mir::Expr>;
+    support::SystemSubroutineId id, std::string_view name,
+    const support::FileIOSystemSubroutineInfo& info, diag::SourceSpan span)
+    -> diag::Result<mir::Expr>;
 
 // LRM 13.5 copy-out at the statement boundary for the three file IO tasks
 // that write through an output argument. Synthesizes the BlockStmt that UDF
@@ -36,7 +37,8 @@ auto LowerFileIOSystemSubroutineCall(
 // result_type is the call's int32 return slot.
 auto LowerFileIOSystemSubroutineCallStmt(
     ProcessLowerer& process, WalkFrame frame, std::optional<std::string> label,
-    const hir::CallExpr& call, const support::FileIOSystemSubroutineInfo& info,
+    const hir::CallExpr& call, support::SystemSubroutineId id,
+    const support::FileIOSystemSubroutineInfo& info,
     std::optional<hir::ExprId> assign_target, mir::TypeId result_type)
     -> diag::Result<mir::Stmt>;
 
