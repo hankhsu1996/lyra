@@ -1,11 +1,13 @@
 #include "lyra/runtime/timescale.hpp"
 
 #include <array>
+#include <cstdint>
 #include <format>
 #include <string>
 
 #include "lyra/runtime/runtime_services.hpp"
 #include "lyra/runtime/stream_dispatcher.hpp"
+#include "lyra/value/format.hpp"
 
 namespace lyra::runtime {
 
@@ -33,14 +35,34 @@ auto TimeUnitText(std::int8_t power) -> std::string {
 }  // namespace
 
 void LyraPrintTimescale(
-    RuntimeServices& services, std::string_view scope_name,
-    std::int8_t unit_power, std::int8_t precision_power) {
+    RuntimeServices& services, const value::String& scope_name,
+    const value::PackedArray& unit_power,
+    const value::PackedArray& precision_power) {
   auto& stream = services.Stream();
   stream.Append(
       std::format(
-          "Time scale of ({}) is {} / {}", scope_name, TimeUnitText(unit_power),
-          TimeUnitText(precision_power)));
+          "Time scale of ({}) is {} / {}", scope_name.View(),
+          TimeUnitText(static_cast<std::int8_t>(unit_power.ToInt64())),
+          TimeUnitText(static_cast<std::int8_t>(precision_power.ToInt64()))));
   stream.FinishRecord(true);
+}
+
+void LyraTimeFormat(
+    RuntimeServices& services, const value::PackedArray& units_power,
+    const value::PackedArray& precision, const value::String& suffix,
+    const value::PackedArray& min_width) {
+  services.SetTimeFormat(
+      value::TimeFormat{
+          .units_power = static_cast<std::int8_t>(units_power.ToInt64()),
+          .precision = static_cast<std::int32_t>(precision.ToInt64()),
+          .suffix = std::string(suffix.View()),
+          .min_width = static_cast<std::int32_t>(min_width.ToInt64())});
+}
+
+void LyraTimeFormat(RuntimeServices& services) {
+  value::TimeFormat time_format;
+  time_format.units_power = services.GlobalPrecisionPower();
+  services.SetTimeFormat(time_format);
 }
 
 }  // namespace lyra::runtime

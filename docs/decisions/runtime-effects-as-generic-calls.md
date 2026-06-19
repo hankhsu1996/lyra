@@ -1,6 +1,6 @@
 # Runtime effects as generic calls
 
-Date: 2026-06-17 Status: accepted (implementation pending)
+Date: 2026-06-17 Status: accepted
 
 ## Context
 
@@ -65,25 +65,21 @@ the argument vector.
 
 ## Consequences
 
-- One generic `CallExpr` is MIR's only call shape; `RuntimeCallExpr` and the ~22 payload structs
-  retire. Runtime free functions (`LyraPrint(RuntimeServices&, ...)`, etc.) stay unchanged.
+- One generic `CallExpr` is MIR's only call shape; `RuntimeCallExpr` and its payload structs do not
+  exist. Runtime free functions (`LyraPrint(RuntimeServices&, ...)`, etc.) stay unchanged.
 - Both backends eat the same generic input; the LLVM optimizer reaches through.
-- **Implementation in progress.** `$finish`, the `$time` / `$stime` / `$realtime` family, the whole
-  file I/O family (`$fopen` / `$fclose` / `$fgetc` / `$ungetc` / `$fgets` / `$fread` / `$fseek` /
-  `$rewind` / `$ftell` / `$feof` / `$ferror` / `$fflush`), the print-to-sink family (`$display` /
-  `$write` / `$fdisplay` / `$fwrite`), and the diagnostic family (`$info` / `$warning` / `$error`)
-  are on this shape: each lowers to a generic `CallExpr` whose first argument is `self.Services()`
-  and renders through one generic system-subroutine path with no injection. A runtime entry that
-  takes a write-through destination (`$fread`, `$fgets`, `$ferror`) receives a copy-out temp as an
-  ordinary argument, so the call carries no live-reference or mutate-routing concept; an effect
-  whose SV form omits optional arguments either materializes the default at lowering or selects a
-  shorter runtime overload, so the argument vector is always complete. The print and diagnostic
-  families flatten their items into a constructed `PrintItem` array: each item is a value-build
-  `ConstructExpr` over a runtime-library value type (`PrintItem` / `FormatSpec`), and the
-  print/newline discipline (print) or severity (diagnostic) is encoded by the selected runtime entry
-  rather than carried as an argument. The `$strobe`-family (deferred print), scan, `$sformat`, and
-  NBA / observed submit effects still use `RuntimeCallExpr` + payload structs; that is transitional
-  tech debt to converge to this decision.
+- Each runtime effect lowers to a generic `CallExpr` whose first argument is `self.Services()` and
+  renders through one generic path with no injection. An entry that takes a write-through
+  destination (a `$fread` / `$fgets`-style output) receives a copy-out temp as an ordinary argument,
+  so the call carries no live-reference or mutate-routing concept; an effect whose SV form omits
+  optional arguments either materializes the default at lowering or selects a shorter runtime
+  overload, so the argument vector is always complete.
+- An item-bearing effect (the `$display`, diagnostic, and `$sformat` families) flattens its items
+  into a constructed `PrintItem` array -- each item a value-build `ConstructExpr` over a
+  runtime-library value type (`PrintItem` / `FormatSpec`) -- and encodes any discrete mode (a
+  print's newline discipline, a diagnostic's severity) in the selected runtime entry rather than as
+  an argument. An effect that yields a value (`$sformat`) produces it as the call's rvalue for the
+  surrounding statement to place.
 
 ## Cross-references
 
@@ -94,5 +90,5 @@ the argument vector.
   item still uses at execution time).
 - `decisions/callable-receiver.md` (`self` binding; `self.Services()` reaches the engine through
   it).
-- `progress/refactor.md` R20 (superseded: R20's "runtime call becomes a method call" framing is
-  replaced by this generic-call form).
+- `progress/refactor.md` R20 (tracks which runtime-effect families have moved onto this shape and
+  which remain).

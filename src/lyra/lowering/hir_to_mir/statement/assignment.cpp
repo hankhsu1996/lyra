@@ -403,8 +403,8 @@ auto LowerExprStmt(
       }
       if (const auto* sformat_info = support::GetSFormatInfo(desc)) {
         return LowerSFormatSystemSubroutineCallStmt(
-            process, frame, std::move(label), inner.span, *call, desc.name,
-            *sformat_info);
+            process, frame, std::move(label), inner.span, *call, desc.id,
+            desc.name, *sformat_info);
       }
       suspends = desc.suspends;
     } else if (

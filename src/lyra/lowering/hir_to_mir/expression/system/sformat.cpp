@@ -1,6 +1,7 @@
 #include "lyra/lowering/hir_to_mir/expression/system/sformat.hpp"
 
 #include <cstddef>
+#include <cstdint>
 #include <expected>
 #include <format>
 #include <optional>
@@ -18,8 +19,8 @@
 #include "lyra/lowering/hir_to_mir/print_items.hpp"
 #include "lyra/lowering/hir_to_mir/process_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/services_call.hpp"
+#include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/expr.hpp"
-#include "lyra/mir/runtime_sformat.hpp"
 #include "lyra/mir/stmt.hpp"
 #include "lyra/mir/type.hpp"
 #include "lyra/support/system_subroutine.hpp"
@@ -30,6 +31,7 @@ namespace {
 
 auto BuildSFormatCallExpr(
     ProcessLowerer& process, WalkFrame frame, const hir::CallExpr& call,
+    support::SystemSubroutineId id,
     const support::SFormatSystemSubroutineInfo& info, std::size_t arg_offset,
     diag::SourceSpan span) -> diag::Result<mir::Expr> {
   const FormatStringRequirement fmt_req =
@@ -39,11 +41,23 @@ auto BuildSFormatCallExpr(
       process, frame, call, info.radix, arg_offset, fmt_req, span);
   if (!items_or) return std::unexpected(std::move(items_or.error()));
 
+  auto& unit = process.Module().Unit();
+  auto& proc_scope = *frame.current_procedural_scope;
+  const auto time_unit_power =
+      static_cast<std::int64_t>(process.Resolution().unit_power);
+  const mir::ExprId items_array = proc_scope.AddExpr(
+      BuildPrintItemsArray(unit, proc_scope, *items_or, time_unit_power));
+
+  std::vector<mir::ExprId> args;
+  args.push_back(proc_scope.AddExpr(BuildServicesCallExpr(process, frame)));
+  args.push_back(items_array);
+
   return mir::Expr{
       .data =
-          mir::RuntimeCallExpr{
-              .call = mir::RuntimeSFormatCall(std::move(*items_or))},
-      .type = process.Module().Unit().builtins.string};
+          mir::CallExpr{
+              .callee = mir::SystemSubroutineCallee{.id = id},
+              .arguments = std::move(args)},
+      .type = unit.builtins.string};
 }
 
 auto RejectNonStringOutput(std::string_view name, diag::SourceSpan span)
@@ -62,6 +76,7 @@ auto RejectNonStringOutput(std::string_view name, diag::SourceSpan span)
 
 auto LowerSFormatSystemSubroutineCall(
     ProcessLowerer& process, WalkFrame frame, const hir::CallExpr& call,
+    support::SystemSubroutineId id,
     const support::SFormatSystemSubroutineInfo& info, diag::SourceSpan span)
     -> diag::Result<mir::Expr> {
   if (info.has_output_arg) {
@@ -70,12 +85,13 @@ auto LowerSFormatSystemSubroutineCall(
         "expression-position lowering; slang's task binding should reject "
         "them outside statement position");
   }
-  return BuildSFormatCallExpr(process, frame, call, info, 0, span);
+  return BuildSFormatCallExpr(process, frame, call, id, info, 0, span);
 }
 
 auto LowerSFormatSystemSubroutineCallStmt(
     ProcessLowerer& process, WalkFrame frame, std::optional<std::string> label,
-    diag::SourceSpan span, const hir::CallExpr& call, std::string_view name,
+    diag::SourceSpan span, const hir::CallExpr& call,
+    support::SystemSubroutineId id, std::string_view name,
     const support::SFormatSystemSubroutineInfo& info)
     -> diag::Result<mir::Stmt> {
   const auto& hir_proc = process.HirBody();
@@ -83,7 +99,7 @@ auto LowerSFormatSystemSubroutineCallStmt(
 
   if (!info.has_output_arg) {
     auto call_expr_or =
-        BuildSFormatCallExpr(process, frame, call, info, 0, span);
+        BuildSFormatCallExpr(process, frame, call, id, info, 0, span);
     if (!call_expr_or) return std::unexpected(std::move(call_expr_or.error()));
     const mir::ExprId expr_id = proc_scope.AddExpr(*std::move(call_expr_or));
     return mir::Stmt{
@@ -113,7 +129,8 @@ auto LowerSFormatSystemSubroutineCallStmt(
   }
   const mir::ExprId out_id = proc_scope.AddExpr(*std::move(out_or));
 
-  auto call_expr_or = BuildSFormatCallExpr(process, frame, call, info, 1, span);
+  auto call_expr_or =
+      BuildSFormatCallExpr(process, frame, call, id, info, 1, span);
   if (!call_expr_or) return std::unexpected(std::move(call_expr_or.error()));
   const mir::ExprId call_id = proc_scope.AddExpr(*std::move(call_expr_or));
 
