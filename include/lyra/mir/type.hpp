@@ -289,4 +289,13 @@ using ChildScope = std::variant<GenerateScopeChild, ModuleInstanceChild>;
 [[nodiscard]] auto GetChildScope(const CompilationUnit& unit, TypeId type)
     -> std::optional<ChildScope>;
 
+// True for storage forms that expose the observable-cell surface
+// (`Get` / `Set` / `Mutate`): the explicit `ObservableType` wrapper and the
+// intrinsic `ExternalRefType` (upward hierarchical reference).
+[[nodiscard]] auto IsObservableCellType(const Type& ty) -> bool;
+
+// The inner value type of an observable storage wrapper -- the `value` of
+// an `ObservableType`, the `element` of an `ExternalRefType`.
+[[nodiscard]] auto ObservableInnerValueType(const Type& ty) -> TypeId;
+
 }  // namespace lyra::mir

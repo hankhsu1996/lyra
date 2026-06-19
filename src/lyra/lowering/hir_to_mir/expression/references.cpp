@@ -15,6 +15,8 @@
 #include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/expr.hpp"
 #include "lyra/mir/integral_constant.hpp"
+#include "lyra/mir/structural_scope.hpp"
+#include "lyra/mir/type.hpp"
 
 namespace lyra::lowering::hir_to_mir {
 
@@ -94,15 +96,23 @@ auto LowerHirRealLiteral(const hir::RealLiteral& r, mir::TypeId type)
   return mir::Expr{.data = mir::RealLiteral{.value = r.value}, .type = type};
 }
 
+// Reach the storage cell of a structural var: `MemberAccess(self, member)`.
+// `Expr.type` is the var's declared MIR type -- a wrapper
+// (`ObservableType` / `ExternalRefType`) for observable storage, the plain
+// value type otherwise. The dispatcher decides whether to wrap the result
+// in an `ObservableMethod{kGet}` call to unwrap to a value.
 auto LowerStructuralVarRefExpr(
     const StructuralScopeLowerer& scope, const WalkFrame& frame,
-    const hir::StructuralVarRef& m, mir::TypeId type) -> mir::Expr {
+    const hir::StructuralVarRef& m) -> mir::Expr {
   const mir::StructuralVarRef member =
       scope.TranslateStructuralVar(m.hops, m.var);
+  const mir::TypeId field_type = frame.StructuralScopeAtHops(member.hops)
+                                     .GetStructuralVar(member.var)
+                                     .type;
   const mir::TypeId self_ptr_type = scope.Module().Unit().builtins.self_pointer;
   const mir::ExprId receiver = frame.current_procedural_scope->AddExpr(
       BuildSelfRefExpr(frame, self_ptr_type));
-  return mir::MakeMemberAccessExpr(receiver, member, type);
+  return mir::MakeMemberAccessExpr(receiver, member, field_type);
 }
 
 auto LowerProceduralVarRefExpr(
@@ -110,20 +120,19 @@ auto LowerProceduralVarRefExpr(
     const hir::ProceduralVarRef& l, mir::TypeId type) -> mir::Expr {
   const auto& binding = process.LookupProceduralVar(l.var);
   // A static-lifetime local lives as a per-instance structural var on the
-  // owner scope (LRM 13.3.1); body access is a `MemberAccess` through `self`,
-  // identical inside the body, inside a nested block, and inside any closure
-  // -- no hops, no closure capture, the closure's captured `self` is the
-  // receiver.
+  // owner scope (LRM 13.3.1); the read reaches it through `self` like any
+  // structural-var ref.
   if (const auto* sb = std::get_if<StaticVarBinding>(&binding)) {
+    const mir::StructuralVarRef member{
+        .hops = mir::StructuralHops{.value = 0}, .var = sb->var};
+    const mir::TypeId field_type = frame.StructuralScopeAtHops(member.hops)
+                                       .GetStructuralVar(member.var)
+                                       .type;
     const mir::TypeId self_ptr_type =
         process.Module().Unit().builtins.self_pointer;
     const mir::ExprId receiver = frame.current_procedural_scope->AddExpr(
         BuildSelfRefExpr(frame, self_ptr_type));
-    return mir::MakeMemberAccessExpr(
-        receiver,
-        mir::StructuralVarRef{
-            .hops = mir::StructuralHops{.value = 0}, .var = sb->var},
-        type);
+    return mir::MakeMemberAccessExpr(receiver, member, field_type);
   }
   const auto& ab = std::get<AutomaticVarBinding>(binding);
   if (auto* sink = frame.active_closure) {
@@ -146,7 +155,7 @@ auto LowerProceduralVarRefExpr(
 
 auto LowerCrossUnitVarRefExpr(
     const StructuralScopeLowerer& scope, const WalkFrame& frame,
-    const hir::CrossUnitVarRef& c, mir::TypeId type) -> mir::Expr {
+    const hir::CrossUnitVarRef& c) -> mir::Expr {
   const auto& meta = scope.CrossUnitRefTarget(c.id);
   const mir::StructuralVarRef target = meta.target;
   const mir::TypeId self_ptr_type = scope.Module().Unit().builtins.self_pointer;
@@ -157,9 +166,10 @@ auto LowerCrossUnitVarRefExpr(
   if (ptr != nullptr && ptr->ownership == mir::PointerOwnership::kBorrowed) {
     const mir::ExprId pointer = frame.current_procedural_scope->AddExpr(
         mir::MakeMemberAccessExpr(self_ref, target, meta.slot_type));
-    return mir::Expr{.data = mir::DerefExpr{.pointer = pointer}, .type = type};
+    return mir::Expr{
+        .data = mir::DerefExpr{.pointer = pointer}, .type = ptr->pointee};
   }
-  return mir::MakeMemberAccessExpr(self_ref, target, type);
+  return mir::MakeMemberAccessExpr(self_ref, target, meta.slot_type);
 }
 
 auto LowerLoopVarRefExprAsProcedural(
@@ -198,7 +208,7 @@ auto LowerHirPrimaryExprProc(
             return LowerHirRealLiteral(r, result_type);
           },
           [&](const hir::StructuralVarRef& m) -> mir::Expr {
-            return LowerStructuralVarRefExpr(scope, frame, m, result_type);
+            return LowerStructuralVarRefExpr(scope, frame, m);
           },
           [&](const hir::ProceduralVarRef& l) -> mir::Expr {
             return LowerProceduralVarRefExpr(process, frame, l, result_type);
@@ -207,7 +217,7 @@ auto LowerHirPrimaryExprProc(
             return LowerLoopVarRefExprAsStructuralParam(scope, lv, result_type);
           },
           [&](const hir::CrossUnitVarRef& c) -> mir::Expr {
-            return LowerCrossUnitVarRefExpr(scope, frame, c, result_type);
+            return LowerCrossUnitVarRefExpr(scope, frame, c);
           },
       },
       p);
@@ -231,7 +241,7 @@ auto LowerHirPrimaryExprStructural(
             return LowerHirRealLiteral(r, result_type);
           },
           [&](const hir::StructuralVarRef& m) -> mir::Expr {
-            return LowerStructuralVarRefExpr(scope, frame, m, result_type);
+            return LowerStructuralVarRefExpr(scope, frame, m);
           },
           [](const hir::ProceduralVarRef&) -> mir::Expr {
             throw InternalError(
@@ -246,7 +256,7 @@ auto LowerHirPrimaryExprStructural(
             return LowerLoopVarRefExprAsStructuralParam(scope, lv, result_type);
           },
           [&](const hir::CrossUnitVarRef& c) -> mir::Expr {
-            return LowerCrossUnitVarRefExpr(scope, frame, c, result_type);
+            return LowerCrossUnitVarRefExpr(scope, frame, c);
           },
       },
       p);

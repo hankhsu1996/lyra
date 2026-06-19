@@ -23,6 +23,7 @@
 #include "lyra/lowering/hir_to_mir/expression/system/sformat.hpp"
 #include "lyra/lowering/hir_to_mir/expression/system/time.hpp"
 #include "lyra/lowering/hir_to_mir/expression/system/timescale.hpp"
+#include "lyra/lowering/hir_to_mir/lhs_observable.hpp"
 #include "lyra/lowering/hir_to_mir/procedural_depth.hpp"
 #include "lyra/lowering/hir_to_mir/process_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/self_ref.hpp"
@@ -33,6 +34,7 @@
 #include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/expr.hpp"
 #include "lyra/mir/procedural_hops.hpp"
+#include "lyra/mir/type.hpp"
 #include "lyra/support/system_subroutine.hpp"
 
 namespace lyra::lowering::hir_to_mir {
@@ -111,9 +113,6 @@ auto LowerEventMethodKind(hir::EventMethodKind k) -> mir::EventMethodKind {
   throw InternalError("LowerEventMethodKind: unknown hir::EventMethodKind");
 }
 
-// LRM 7.12.1: reduction / ordering / locator family takes a closure
-// (explicit `with` clause or implicit `with (item)`). `kSize`, `kDelete`,
-// `kReverse` do not.
 auto ArrayMethodTakesClosure(hir::ArrayMethodKind k) -> bool {
   switch (k) {
     case hir::ArrayMethodKind::kSize:
@@ -246,6 +245,54 @@ auto LowerIteratorMethodKind(hir::IteratorMethodKind k)
   }
   throw InternalError(
       "LowerIteratorMethodKind: unknown hir::IteratorMethodKind");
+}
+
+// Translates a HIR builtin-method ref to its MIR `BuiltinMethodCallee`. The
+// receiver type is the original HIR type of `c.arguments[0]` so the enum-
+// method case can carry the enum type id MIR needs.
+auto BuildMirBuiltinMethodCallee(
+    const ModuleLowerer& module, const hir::BuiltinMethodRef& b,
+    hir::TypeId hir_receiver_type) -> mir::BuiltinMethodCallee {
+  return std::visit(
+      Overloaded{
+          [&](hir::EnumMethodKind k) -> mir::BuiltinMethodCallee {
+            return {
+                .method = mir::EnumMethodInfo{
+                    .enum_type = module.TranslateType(hir_receiver_type),
+                    .kind = LowerEnumMethodKind(k)}};
+          },
+          [](hir::StringMethodKind k) -> mir::BuiltinMethodCallee {
+            return {
+                .method =
+                    mir::StringMethodInfo{.kind = LowerStringMethodKind(k)}};
+          },
+          [](hir::EventMethodKind k) -> mir::BuiltinMethodCallee {
+            return {
+                .method =
+                    mir::EventMethodInfo{.kind = LowerEventMethodKind(k)}};
+          },
+          [](hir::ArrayMethodKind k) -> mir::BuiltinMethodCallee {
+            return {
+                .method =
+                    mir::ArrayMethodInfo{.kind = LowerArrayMethodKind(k)}};
+          },
+          [](hir::QueueMethodKind k) -> mir::BuiltinMethodCallee {
+            return {
+                .method =
+                    mir::QueueMethodInfo{.kind = LowerQueueMethodKind(k)}};
+          },
+          [](hir::AssociativeMethodKind k) -> mir::BuiltinMethodCallee {
+            return {
+                .method = mir::AssociativeMethodInfo{
+                    .kind = LowerAssociativeMethodKind(k)}};
+          },
+          [](hir::IteratorMethodKind k) -> mir::BuiltinMethodCallee {
+            return {
+                .method = mir::IteratorMethodInfo{
+                    .kind = LowerIteratorMethodKind(k)}};
+          },
+      },
+      b.method);
 }
 
 auto LowerUserCallee(
@@ -462,15 +509,51 @@ auto LowerHirCallExprProc(
             args.reserve(c.arguments.size() + 1);
             args.push_back(proc_scope.AddExpr(
                 BuildSelfRefExpr(frame, module.Unit().builtins.self_pointer)));
-            for (const auto& arg : c.arguments) {
-              if (!arg.has_value()) {
+            for (std::size_t i = 0; i < c.arguments.size(); ++i) {
+              if (!c.arguments[i].has_value()) {
                 throw InternalError(
                     "user-function call argument unexpectedly elided");
               }
-              auto arg_or =
-                  process.LowerExpr(hir_process.exprs.at(arg->value), frame);
-              if (!arg_or) return std::unexpected(std::move(arg_or.error()));
-              args.push_back(proc_scope.AddExpr(*std::move(arg_or)));
+              // A ref / const-ref formal aliases the actual's cell. The
+              // body's `Ref<T>` either binds the wrapped cell directly
+              // (bare observable actual) or holds a `ScopedMutation` snapshot
+              // (selector / range on an observable actual) -- both routed by
+              // the LHS-form lowering plus the observable mutate rewrite.
+              const bool is_ref_formal =
+                  i < decl.params.size() &&
+                  (decl.params[i].direction == hir::ParamDirection::kRef ||
+                   decl.params[i].direction == hir::ParamDirection::kConstRef);
+              mir::ExprId actual_id{};
+              if (is_ref_formal) {
+                auto arg_or = process.LowerLhsExpr(
+                    hir_process.exprs.at(c.arguments[i]->value), frame);
+                if (!arg_or) {
+                  return std::unexpected(std::move(arg_or.error()));
+                }
+                actual_id = proc_scope.AddExpr(*std::move(arg_or));
+                const mir::ExprId root_id =
+                    FindLhsRootId(proc_scope, actual_id);
+                const bool root_is_cell = mir::IsObservableCellType(
+                    module.Unit().GetType(proc_scope.GetExpr(root_id).type));
+                if (root_is_cell && root_id != actual_id) {
+                  // Selector / range on an observable cell -- the body sees
+                  // a `Ref<T>` bound to a `ScopedMutation` snapshot of the
+                  // selected element. Bare cells stay as-is so the body's
+                  // `Ref<T>` binds the underlying `Var<T>` directly.
+                  const mir::ExprId services_id =
+                      proc_scope.AddExpr(BuildServicesCallExpr(process, frame));
+                  actual_id = RewriteLhsRootWithMutate(
+                      module.Unit(), proc_scope, actual_id, services_id);
+                }
+              } else {
+                auto arg_or = process.LowerExpr(
+                    hir_process.exprs.at(c.arguments[i]->value), frame);
+                if (!arg_or) {
+                  return std::unexpected(std::move(arg_or.error()));
+                }
+                actual_id = proc_scope.AddExpr(*std::move(arg_or));
+              }
+              args.push_back(actual_id);
             }
             return mir::Expr{
                 .data =
@@ -509,13 +592,75 @@ auto LowerHirCallExprProc(
                 hir_process.exprs.at(c.arguments.front()->value).type;
             std::vector<mir::ExprId> args;
             args.reserve(c.arguments.size() + 1);
-            for (const auto& arg : c.arguments) {
-              if (!arg.has_value()) {
+
+            // Translate to the MIR callee up front so the same trait
+            // (`mir::IsMutatingBuiltinMethod`) drives both lowering and
+            // backend rendering.
+            const mir::BuiltinMethodCallee mir_callee =
+                BuildMirBuiltinMethodCallee(module, b, hir_receiver_type);
+
+            // Lower the receiver. A mutating method against an observable
+            // cell routes through `Var<T>::Mutate` -- the receiver is the
+            // bare cell expression wrapped in
+            // `DerefExpr(CallExpr(ObservableMethod{kMutate}, [cell,
+            // services]))` so the method body operates on the snapshot and the
+            // destructor commits via `Var::Set`. A non-mutating method consumes
+            // the value, so the default `LowerExpr` path (which auto-wraps in
+            // `Get`) is correct.
+            const bool method_mutates =
+                mir::IsMutatingBuiltinMethod(mir_callee);
+            mir::ExprId receiver_id{};
+            if (method_mutates) {
+              auto recv_or = process.LowerLhsExpr(
+                  hir_process.exprs.at(c.arguments.front()->value), frame);
+              if (!recv_or) {
+                return std::unexpected(std::move(recv_or.error()));
+              }
+              receiver_id = proc_scope.AddExpr(*std::move(recv_or));
+              const mir::ExprId root_id =
+                  FindLhsRootId(proc_scope, receiver_id);
+              const bool root_is_cell = mir::IsObservableCellType(
+                  module.Unit().GetType(proc_scope.GetExpr(root_id).type));
+              if (root_is_cell) {
+                const mir::ExprId services_id =
+                    proc_scope.AddExpr(BuildServicesCallExpr(process, frame));
+                receiver_id = RewriteLhsRootWithMutate(
+                    module.Unit(), proc_scope, receiver_id, services_id);
+              }
+            } else {
+              auto recv_or = process.LowerExpr(
+                  hir_process.exprs.at(c.arguments.front()->value), frame);
+              if (!recv_or) {
+                return std::unexpected(std::move(recv_or.error()));
+              }
+              receiver_id = proc_scope.AddExpr(*std::move(recv_or));
+            }
+            args.push_back(receiver_id);
+
+            // LRM 7.9.4 -- 7.9.7 associative-array traversal methods
+            // (`first` / `last` / `next` / `prev`) take their index argument
+            // as a `ref` so the visited key writes through to the actual --
+            // lower it cell-rooted like any other ref formal.
+            const auto* assoc_kind =
+                std::get_if<hir::AssociativeMethodKind>(&b.method);
+            const bool index_is_ref =
+                assoc_kind != nullptr &&
+                (*assoc_kind == hir::AssociativeMethodKind::kFirst ||
+                 *assoc_kind == hir::AssociativeMethodKind::kLast ||
+                 *assoc_kind == hir::AssociativeMethodKind::kNext ||
+                 *assoc_kind == hir::AssociativeMethodKind::kPrev);
+            for (std::size_t i = 1; i < c.arguments.size(); ++i) {
+              if (!c.arguments[i].has_value()) {
                 throw InternalError(
                     "builtin-method call argument unexpectedly elided");
               }
+              const bool lower_as_lhs = index_is_ref && i == 1;
               auto arg_or =
-                  process.LowerExpr(hir_process.exprs.at(arg->value), frame);
+                  lower_as_lhs
+                      ? process.LowerLhsExpr(
+                            hir_process.exprs.at(c.arguments[i]->value), frame)
+                      : process.LowerExpr(
+                            hir_process.exprs.at(c.arguments[i]->value), frame);
               if (!arg_or) {
                 return std::unexpected(std::move(arg_or.error()));
               }
@@ -553,53 +698,10 @@ auto LowerHirCallExprProc(
                     proc_scope.AddExpr(BuildServicesCallExpr(process, frame)));
               }
             }
-            auto callee = std::visit(
-                Overloaded{
-                    [&](hir::EnumMethodKind k) -> mir::BuiltinMethodCallee {
-                      return {
-                          .method = mir::EnumMethodInfo{
-                              .enum_type =
-                                  module.TranslateType(hir_receiver_type),
-                              .kind = LowerEnumMethodKind(k)}};
-                    },
-                    [&](hir::StringMethodKind k) -> mir::BuiltinMethodCallee {
-                      return {
-                          .method = mir::StringMethodInfo{
-                              .kind = LowerStringMethodKind(k)}};
-                    },
-                    [&](hir::EventMethodKind k) -> mir::BuiltinMethodCallee {
-                      return {
-                          .method = mir::EventMethodInfo{
-                              .kind = LowerEventMethodKind(k)}};
-                    },
-                    [&](hir::ArrayMethodKind k) -> mir::BuiltinMethodCallee {
-                      return {
-                          .method = mir::ArrayMethodInfo{
-                              .kind = LowerArrayMethodKind(k)}};
-                    },
-                    [&](hir::QueueMethodKind k) -> mir::BuiltinMethodCallee {
-                      return {
-                          .method = mir::QueueMethodInfo{
-                              .kind = LowerQueueMethodKind(k)}};
-                    },
-                    [&](hir::AssociativeMethodKind k)
-                        -> mir::BuiltinMethodCallee {
-                      return {
-                          .method = mir::AssociativeMethodInfo{
-                              .kind = LowerAssociativeMethodKind(k)}};
-                    },
-                    [&](hir::IteratorMethodKind k) -> mir::BuiltinMethodCallee {
-                      return {
-                          .method = mir::IteratorMethodInfo{
-                              .kind = LowerIteratorMethodKind(k)}};
-                    },
-                },
-                b.method);
             return mir::Expr{
                 .data =
                     mir::CallExpr{
-                        .callee = std::move(callee),
-                        .arguments = std::move(args)},
+                        .callee = mir_callee, .arguments = std::move(args)},
                 .type = result_type};
           },
       },

@@ -116,7 +116,7 @@ class DynamicArray {
     return data_[i];
   }
 
-  [[nodiscard]] auto Clone() const -> DynamicArray {
+  [[nodiscard]] auto ToOwned() const -> DynamicArray {
     return *this;
   }
 

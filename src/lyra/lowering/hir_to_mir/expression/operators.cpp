@@ -11,12 +11,16 @@
 #include "lyra/hir/procedural_body.hpp"
 #include "lyra/hir/structural_scope.hpp"
 #include "lyra/hir/unary_op.hpp"
+#include "lyra/lowering/hir_to_mir/lhs_observable.hpp"
 #include "lyra/lowering/hir_to_mir/process_lowerer.hpp"
+#include "lyra/lowering/hir_to_mir/services_call.hpp"
 #include "lyra/lowering/hir_to_mir/structural_scope_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/walk_frame.hpp"
 #include "lyra/mir/binary_op.hpp"
+#include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/conversion.hpp"
 #include "lyra/mir/expr.hpp"
+#include "lyra/mir/type.hpp"
 #include "lyra/mir/type_id.hpp"
 #include "lyra/mir/unary_op.hpp"
 
@@ -210,13 +214,26 @@ auto LowerHirIncDecExprProc(
     ProcessLowerer& process, WalkFrame frame, const hir::IncDecExpr& inc,
     mir::TypeId result_type) -> diag::Result<mir::Expr> {
   const auto& hir_process = process.HirBody();
+  auto& proc_scope = *frame.current_procedural_scope;
   // The target is written in place, so a queue element resolves to its write
   // access method (`WriteRef`) just as an assignment target does.
-  auto target_or = process.LowerExpr(
+  auto target_or = process.LowerLhsExpr(
       hir_process.exprs.at(inc.target.value), frame.WithLvalueTarget(true));
   if (!target_or) return std::unexpected(std::move(target_or.error()));
-  const mir::ExprId target_id =
-      frame.current_procedural_scope->AddExpr(*std::move(target_or));
+  mir::ExprId target_id = proc_scope.AddExpr(*std::move(target_or));
+
+  // If the LHS reaches an observable storage cell, the mutation runs inside
+  // a `ScopedMutation` snapshot so subscribers fire once on destructor commit
+  // (`docs/decisions/value-type-concepts.md`).
+  const mir::ExprId root_id = FindLhsRootId(proc_scope, target_id);
+  if (mir::IsObservableCellType(
+          process.Module().Unit().GetType(proc_scope.GetExpr(root_id).type))) {
+    const mir::ExprId services_id =
+        proc_scope.AddExpr(BuildServicesCallExpr(process, frame));
+    target_id = RewriteLhsRootWithMutate(
+        process.Module().Unit(), proc_scope, target_id, services_id);
+  }
+
   return mir::Expr{
       .data = mir::IncDecExpr{.op = LowerIncDecOp(inc.op), .target = target_id},
       .type = result_type};

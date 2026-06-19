@@ -20,8 +20,10 @@
 #include "lyra/lowering/hir_to_mir/expression/assignment.hpp"
 #include "lyra/lowering/hir_to_mir/expression/system/file_io.hpp"
 #include "lyra/lowering/hir_to_mir/expression/system/sformat.hpp"
+#include "lyra/lowering/hir_to_mir/lhs_observable.hpp"
 #include "lyra/lowering/hir_to_mir/process_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/self_ref.hpp"
+#include "lyra/lowering/hir_to_mir/services_call.hpp"
 #include "lyra/lowering/hir_to_mir/structural_scope_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/walk_frame.hpp"
 #include "lyra/mir/compilation_unit.hpp"
@@ -118,18 +120,23 @@ auto LowerDestructuringAssign(
     const std::uint64_t w = part_widths[i];
     offset -= w;
 
-    auto part_lhs_or = process.LowerExpr(
+    auto part_lhs_or = process.LowerLhsExpr(
         hir_proc.exprs.at(lhs_concat.operands[i].value), wrapper_frame);
     if (!part_lhs_or) {
       return std::unexpected(std::move(part_lhs_or.error()));
     }
-    const mir::TypeId part_mir_type = (*part_lhs_or).type;
+    const mir::TypeId part_mir_type = process.Module().TranslateType(
+        hir_proc.exprs.at(lhs_concat.operands[i].value).type);
     const mir::ExprId part_lhs_id = wrapper.AddExpr(*std::move(part_lhs_or));
 
     const mir::ExprId offset_id = wrapper.AddExpr(
         mir::MakeInt32Literal(
             process.Module().Unit().builtins.int32,
             static_cast<std::int64_t>(offset)));
+    const mir::ExprId count_id = wrapper.AddExpr(
+        mir::MakeInt32Literal(
+            process.Module().Unit().builtins.int32,
+            static_cast<std::int64_t>(w)));
     const mir::ExprId temp_ref =
         wrapper.AddExpr(mir::Expr{.data = snapshot_ref, .type = temp_type});
     const mir::TypeId slice_type = process.Module().Unit().AddType(
@@ -139,13 +146,27 @@ auto LowerDestructuringAssign(
             .dims = {mir::PackedRange{
                 .left = static_cast<std::int64_t>(w) - 1, .right = 0}},
             .form = mir::PackedArrayForm::kExplicit}});
+    const mir::ExprId raw_slice_id = wrapper.AddExpr(
+        mir::Expr{
+            .data =
+                mir::CallExpr{
+                    .callee =
+                        mir::BuiltinMethodCallee{
+                            .method =
+                                mir::ArrayMethodInfo{
+                                    .kind = mir::ArrayMethodKind::kSlice}},
+                    .arguments = {temp_ref, offset_id, count_id}},
+            .type = slice_type});
     const mir::ExprId slice_id = wrapper.AddExpr(
         mir::Expr{
             .data =
-                mir::RangeSelectExpr{
-                    .base_value = temp_ref,
-                    .offset_expr = offset_id,
-                    .count = static_cast<std::uint32_t>(w)},
+                mir::CallExpr{
+                    .callee =
+                        mir::BuiltinMethodCallee{
+                            .method =
+                                mir::ArrayMethodInfo{
+                                    .kind = mir::ArrayMethodKind::kToOwned}},
+                    .arguments = {raw_slice_id}},
             .type = slice_type});
     mir::ExprId rhs_for_part = slice_id;
     if (part_mir_type != slice_type) {
@@ -160,11 +181,13 @@ auto LowerDestructuringAssign(
 
     mir::ExprId per_part_expr_id{};
     if (assign.kind == hir::AssignKind::kBlocking) {
-      per_part_expr_id = wrapper.AddExpr(
-          mir::Expr{
-              .data =
-                  mir::AssignExpr{.target = part_lhs_id, .value = rhs_for_part},
-              .type = part_mir_type});
+      const mir::ExprId services_id =
+          wrapper.AddExpr(BuildServicesCallExpr(process, wrapper_frame));
+      const mir::Expr part_assign_expr = BuildObservableAssignExpr(
+          process.Module().Unit(), wrapper, services_id, part_lhs_id,
+          rhs_for_part, std::nullopt, part_mir_type,
+          process.Module().Unit().builtins.void_type);
+      per_part_expr_id = wrapper.AddExpr(part_assign_expr);
     } else {
       mir::Expr closure_expr = BuildNbaSubmitClosureExpr(
           process.Module(), wrapper_frame, part_lhs_id, rhs_for_part,
@@ -250,6 +273,27 @@ auto LowerSubroutineCallWithWritebacks(
     const hir::Expr& hir_arg = hir_proc.exprs.at(call.arguments[i]->value);
 
     if (!hir::RequiresWriteback(dir)) {
+      // A ref / const-ref formal aliases the actual's cell -- pass the cell
+      // (or a `ScopedMutation` for selector / range chains on an observable
+      // cell) so the body's `Ref<T>` binds the underlying storage.
+      const bool is_ref = dir == hir::ParamDirection::kRef ||
+                          dir == hir::ParamDirection::kConstRef;
+      if (is_ref) {
+        auto arg_or = process.LowerLhsExpr(hir_arg, wrapper_frame);
+        if (!arg_or) return std::unexpected(std::move(arg_or.error()));
+        mir::ExprId actual_id = wrapper.AddExpr(*std::move(arg_or));
+        const mir::ExprId root_id = FindLhsRootId(wrapper, actual_id);
+        const bool root_is_cell = mir::IsObservableCellType(
+            process.Module().Unit().GetType(wrapper.GetExpr(root_id).type));
+        if (root_is_cell && root_id != actual_id) {
+          const mir::ExprId services_id =
+              wrapper.AddExpr(BuildServicesCallExpr(process, wrapper_frame));
+          actual_id = RewriteLhsRootWithMutate(
+              process.Module().Unit(), wrapper, actual_id, services_id);
+        }
+        call_args.push_back(actual_id);
+        continue;
+      }
       auto arg_or = process.LowerExpr(hir_arg, wrapper_frame);
       if (!arg_or) return std::unexpected(std::move(arg_or.error()));
       call_args.push_back(wrapper.AddExpr(*std::move(arg_or)));
@@ -258,15 +302,21 @@ auto LowerSubroutineCallWithWritebacks(
 
     const mir::TypeId formal_type = process.Module().TranslateType(
         decl.body.GetProceduralVar(decl.params[i].var).type);
-    auto actual_or = process.LowerExpr(hir_arg, wrapper_frame);
-    if (!actual_or) return std::unexpected(std::move(actual_or.error()));
-    const mir::ExprId actual_id = wrapper.AddExpr(*std::move(actual_or));
+    // The actual is the writeback target: lower it as a cell-typed lvalue
+    // so an observable destination's writeback fires `Var<T>::Set`.
+    auto target_or = process.LowerLhsExpr(hir_arg, wrapper_frame);
+    if (!target_or) return std::unexpected(std::move(target_or.error()));
+    const mir::ExprId actual_id = wrapper.AddExpr(*std::move(target_or));
 
-    const mir::ExprId init =
-        dir == hir::ParamDirection::kInOut
-            ? actual_id
-            : wrapper.AddExpr(BuildDefaultValueExpr(
-                  process.Module(), wrapper_frame, formal_type));
+    mir::ExprId init{};
+    if (dir == hir::ParamDirection::kInOut) {
+      auto value_or = process.LowerExpr(hir_arg, wrapper_frame);
+      if (!value_or) return std::unexpected(std::move(value_or.error()));
+      init = wrapper.AddExpr(*std::move(value_or));
+    } else {
+      init = wrapper.AddExpr(
+          BuildDefaultValueExpr(process.Module(), wrapper_frame, formal_type));
+    }
     const mir::ProceduralVarRef temp = wrapper.AppendLocal(
         mir::ProceduralVarDecl{
             .name = "_lyra_arg" + std::to_string(i), .type = formal_type},
@@ -287,16 +337,18 @@ auto LowerSubroutineCallWithWritebacks(
 
   std::optional<mir::ExprId> assign_target_id = std::nullopt;
   if (assign_target.has_value()) {
-    auto lhs_or = process.LowerExpr(
+    auto lhs_or = process.LowerLhsExpr(
         hir_proc.exprs.at(assign_target->value), wrapper_frame);
     if (!lhs_or) return std::unexpected(std::move(lhs_or.error()));
     assign_target_id = wrapper.AddExpr(*std::move(lhs_or));
   }
 
+  const mir::ExprId services_id =
+      wrapper.AddExpr(BuildServicesCallExpr(process, wrapper_frame));
   return BuildCopyOutBlock(
-      frame, std::move(wrapper), std::move(label), result_type,
-      std::move(call_expr), decl.kind == hir::SubroutineKind::kTask,
-      assign_target_id, writebacks);
+      process.Module().Unit(), services_id, frame, std::move(wrapper),
+      std::move(label), result_type, std::move(call_expr),
+      decl.kind == hir::SubroutineKind::kTask, assign_target_id, writebacks);
 }
 
 }  // namespace

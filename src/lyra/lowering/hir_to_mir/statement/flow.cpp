@@ -10,6 +10,8 @@
 #include "lyra/hir/procedural_var.hpp"
 #include "lyra/hir/stmt.hpp"
 #include "lyra/lowering/hir_to_mir/default_value.hpp"
+#include "lyra/lowering/hir_to_mir/lhs_observable.hpp"
+#include "lyra/lowering/hir_to_mir/procedural_depth.hpp"
 #include "lyra/lowering/hir_to_mir/process_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/self_ref.hpp"
 #include "lyra/lowering/hir_to_mir/walk_frame.hpp"
@@ -70,8 +72,17 @@ auto LowerStaticVarDeclStmt(
           mir::StructuralVarRef{
               .hops = mir::StructuralHops{.value = 0}, .var = static_var},
           type));
-  const mir::ExprId assign =
-      ctor_scope.AddExpr(mir::MakeAssignExpr(target, init_value, type));
+  // A static-lifetime local lives as a structural var on the owner; if its
+  // declared type is an observable cell wrapper the init must route through
+  // `Var<T>::Set` so subscribers fire on its initial value (LRM 13.3.1 +
+  // `docs/decisions/value-type-concepts.md`).
+  const mir::ExprId services_id = ctor_scope.AddExpr(
+      mir::MakeServicesCallExpr(
+          ctor_self_read, process.Module().Unit().builtins.services));
+  const mir::Expr assign_expr = BuildObservableAssignExpr(
+      process.Module().Unit(), ctor_scope, services_id, target, init_value,
+      std::nullopt, type, process.Module().Unit().builtins.void_type);
+  const mir::ExprId assign = ctor_scope.AddExpr(assign_expr);
   ctor_scope.AppendStmt(
       mir::Stmt{.label = std::nullopt, .data = mir::ExprStmt{.expr = assign}});
   return mir::Stmt{.label = std::move(label), .data = mir::EmptyStmt{}};

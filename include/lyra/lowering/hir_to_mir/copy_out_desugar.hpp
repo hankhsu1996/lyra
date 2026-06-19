@@ -8,7 +8,9 @@
 #include "lyra/diag/diagnostic.hpp"
 #include "lyra/lowering/hir_to_mir/process_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/walk_frame.hpp"
+#include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/expr.hpp"
+#include "lyra/mir/expr_id.hpp"
 #include "lyra/mir/stmt.hpp"
 
 namespace lyra::lowering::hir_to_mir {
@@ -56,6 +58,7 @@ auto BuildOutputArgSlot(
 // call statement is emitted as a suspension (`AwaitStmt`); an `lhs = f(...)`
 // shape is a function and never suspends.
 auto BuildCopyOutBlock(
+    const mir::CompilationUnit& unit, mir::ExprId services_id,
     WalkFrame parent_frame, mir::ProceduralScope wrapper,
     std::optional<std::string> label, mir::TypeId result_type,
     mir::Expr call_expr, bool call_suspends,

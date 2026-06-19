@@ -90,7 +90,7 @@ class UnpackedArray {
     return data_[i];
   }
 
-  [[nodiscard]] auto Clone() const -> UnpackedArray {
+  [[nodiscard]] auto ToOwned() const -> UnpackedArray {
     return *this;
   }
 
@@ -324,7 +324,7 @@ class UnpackedArray {
 // entire slice. The proxy aliases the source storage (a non-owning pointer to
 // its element vector) plus the (offset, count) window, so a fixed-size unpacked
 // array and a dynamic array share one slice-write surface. X / Z offset makes
-// `Clone()` a wholly-default sub-array and `operator=` a no-op; partial-OOB
+// `ToOwned()` a wholly-default sub-array and `operator=` a no-op; partial-OOB
 // behaves per-element. Move-only so the proxy cannot outlive what it aliases.
 template <typename T>
 class ArraySliceRef {
@@ -343,7 +343,7 @@ class ArraySliceRef {
   auto operator=(ArraySliceRef&&) noexcept -> ArraySliceRef& = default;
   ~ArraySliceRef() = default;
 
-  [[nodiscard]] auto Clone() const -> UnpackedArray<T> {
+  [[nodiscard]] auto ToOwned() const -> UnpackedArray<T> {
     return UnpackedArray<T>(
         canonical_,
         detail::ArraySliceGather(*data_, canonical_, offset_, count_));

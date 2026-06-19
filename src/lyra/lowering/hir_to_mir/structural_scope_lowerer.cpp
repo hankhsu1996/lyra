@@ -24,6 +24,7 @@
 #include "lyra/lowering/hir_to_mir/expression/operators.hpp"
 #include "lyra/lowering/hir_to_mir/expression/references.hpp"
 #include "lyra/lowering/hir_to_mir/expression/selects.hpp"
+#include "lyra/lowering/hir_to_mir/lhs_observable.hpp"
 #include "lyra/lowering/hir_to_mir/process_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/self_ref.hpp"
 #include "lyra/lowering/hir_to_mir/walk_frame.hpp"
@@ -765,8 +766,9 @@ auto StructuralScopeLowerer::Run(
   const mir::ProceduralVarId self_id = ctor_scope.AddProceduralVar(
       mir::ProceduralVarDecl{
           .name = "self", .type = module.Unit().builtins.self_pointer});
+  ScopeChainNode outer_scope_link{};
   const WalkFrame scope_frame =
-      frame.WithStructuralScope(&mir_scope)
+      frame.WithStructuralScope(&mir_scope, outer_scope_link)
           .WithProceduralScope(&ctor_scope)
           .WithSelfBinding(self_id, frame.procedural_depth);
   const mir::TypeId void_type = module.Unit().AddType(mir::VoidType{});
@@ -816,8 +818,17 @@ auto StructuralScopeLowerer::Run(
               self_read(),
               mir::StructuralVarRef{.hops = {.value = 0}, .var = mir_id},
               mir_field_type));
-      const mir::ExprId assign_id = ctor_scope.AddExpr(
-          mir::MakeAssignExpr(init_target, value_id, mir_value_type));
+      // An observable cell init routes through `Var<T>::Set` so the field's
+      // engine-side change-tracking sees the initial value
+      // (`docs/decisions/value-type-concepts.md`). Plain fields use a regular
+      // `AssignExpr`.
+      const mir::ExprId services_id = ctor_scope.AddExpr(
+          mir::MakeServicesCallExpr(
+              self_read(), module.Unit().builtins.services));
+      const mir::Expr init_expr = BuildObservableAssignExpr(
+          module.Unit(), ctor_scope, services_id, init_target, value_id,
+          std::nullopt, mir_value_type, module.Unit().builtins.void_type);
+      const mir::ExprId assign_id = ctor_scope.AddExpr(init_expr);
       ctor_scope.AppendStmt(
           mir::Stmt{
               .label = std::nullopt, .data = mir::ExprStmt{.expr = assign_id}});
@@ -927,7 +938,7 @@ auto StructuralScopeLowerer::Run(
 auto StructuralScopeLowerer::LowerExpr(
     const hir::Expr& expr, WalkFrame frame) const -> diag::Result<mir::Expr> {
   const mir::TypeId result_type = module_->TranslateType(expr.type);
-  return std::visit(
+  auto raw_or = std::visit(
       Overloaded{
           [&](const hir::PrimaryExpr& p) -> diag::Result<mir::Expr> {
             return LowerHirPrimaryExprStructural(
@@ -1007,6 +1018,49 @@ auto StructuralScopeLowerer::LowerExpr(
                 "dynamic-array new[] is not allowed in constructor "
                 "expressions; LRM 7.5.1 restricts it to blocking assignments",
                 diag::UnsupportedCategory::kFeature);
+          },
+      },
+      expr.data);
+  if (!raw_or) return raw_or;
+  // Same as ProcessLowerer::LowerExpr: unwrap an observable cell leaf with
+  // an explicit `Get` call so the surrounding structural expression sees
+  // the value (e.g. a continuous assign whose RHS reads a signal).
+  if (mir::IsObservableCellType(module_->Unit().GetType(raw_or->type))) {
+    const mir::ExprId cell_id =
+        frame.current_procedural_scope->AddExpr(*std::move(raw_or));
+    return mir::MakeObservableGetCallExpr(cell_id, result_type);
+  }
+  return raw_or;
+}
+
+auto StructuralScopeLowerer::LowerLhsExpr(
+    const hir::Expr& expr, WalkFrame frame) const -> diag::Result<mir::Expr> {
+  const mir::TypeId result_type = module_->TranslateType(expr.type);
+  return std::visit(
+      Overloaded{
+          [&](const hir::PrimaryExpr& p) -> diag::Result<mir::Expr> {
+            return LowerHirPrimaryExprStructural(
+                *this, frame, p.data, result_type);
+          },
+          [&](const hir::ElementSelectExpr& s) -> diag::Result<mir::Expr> {
+            return LowerHirElementSelectExprStructuralLhs(
+                *this, frame, s, result_type);
+          },
+          [&](const hir::RangeSelectExpr& s) -> diag::Result<mir::Expr> {
+            return LowerHirRangeSelectExprStructuralLhs(
+                *this, frame, s, result_type);
+          },
+          [&](const hir::MemberAccessExpr& s) -> diag::Result<mir::Expr> {
+            return LowerHirMemberAccessExprStructuralLhs(
+                *this, frame, s, result_type);
+          },
+          [&](const hir::ConcatExpr& c) -> diag::Result<mir::Expr> {
+            return LowerHirConcatExprStructural(*this, frame, c, result_type);
+          },
+          [](const auto&) -> diag::Result<mir::Expr> {
+            throw InternalError(
+                "StructuralScopeLowerer::LowerLhsExpr: non-addressable HIR "
+                "expression in LHS context");
           },
       },
       expr.data);

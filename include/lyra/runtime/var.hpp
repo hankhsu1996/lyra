@@ -313,13 +313,15 @@ void Var<T>::Set(RuntimeServices& services, const T& new_val) {
 }
 
 // RAII handle that owns a snapshot of `var.Get()` for the lifetime of one
-// partial-write expression. Forwards chain methods to the snapshot so emitted
-// code reads like a normal `PackedArrayRef` chain. The destructor calls
-// `Var::Set` with the (possibly mutated) snapshot -- subscribers fire on
-// change. Non-copyable and non-movable: the contract is that it lives only
-// until the end of the constructing full expression. Returning it by value
-// from `Var<T>::Mutate` relies on C++17 mandatory copy elision (prvalues are
-// materialized in the caller's storage with no copy/move).
+// partial-write expression. The destructor calls `Var::Set` with the
+// (possibly mutated) snapshot -- subscribers fire on change. Non-copyable
+// and non-movable: the contract is that it lives only until the end of the
+// constructing full expression. Returning it by value from `Var<T>::Mutate`
+// relies on C++17 mandatory copy elision (prvalues are materialized in the
+// caller's storage with no copy/move).
+//
+// `operator*` is the single access point -- all chain methods, operators,
+// and selectors are reached through the deref'd T directly.
 template <value::LyraValueType T>
 class ScopedMutation {
  public:
@@ -336,116 +338,6 @@ class ScopedMutation {
     var_->Set(*services_, std::move(snapshot_));
   }
 
-  // Chain forwards. For a packed-storage snapshot the returned
-  // `PackedArrayRef` holds a pointer into this ScopedMutation's snapshot_; for
-  // an unpacked-storage snapshot (`DynamicArray<T>`, `Queue<T>`, etc.) the
-  // forwarder must preserve the reference so the assignment lands in the
-  // snapshot (not in a returned-by-value copy).
-  auto ElementAt(const value::PackedArray& idx) -> decltype(auto) {
-    return snapshot_.ElementAt(idx);
-  }
-  auto Slice(const value::PackedArray& lsb, std::uint32_t count)
-      -> decltype(auto) {
-    return snapshot_.Slice(lsb, count);
-  }
-  // LRM 7.8.7 write-side index access on associative arrays: distinct from
-  // `ElementAt` because the AA splits read from write (`Read` for missing
-  // keys, `ElementRef` for allocation on write). Member-template so SFINAE
-  // suppresses the declaration on `T` types without `ElementRef`.
-  template <typename Key, typename U = T>
-    requires requires(U& u, const Key& k) { u.ElementRef(k); }
-  auto ElementRef(const Key& key) -> decltype(auto) {
-    return snapshot_.ElementRef(key);
-  }
-
-  // LRM 11.4 whole-var compound. Mirrors `x op= rhs` directly: snapshot is
-  // mutated through the underlying type's own `op=`, and the destructor
-  // commits via Var::Set. Keeping the emit shape `x.Mutate(svc) op= rhs`
-  // (instead of expanding to `x.Set(svc, x.Get() op rhs)`) preserves
-  // the compound intent end-to-end and mirrors the selector form
-  // `x.Mutate(svc).Chain(...) op= rhs`.
-  auto operator+=(const value::PackedArray& rhs) -> ScopedMutation& {
-    snapshot_ += rhs;
-    return *this;
-  }
-  auto operator-=(const value::PackedArray& rhs) -> ScopedMutation& {
-    snapshot_ -= rhs;
-    return *this;
-  }
-  auto operator*=(const value::PackedArray& rhs) -> ScopedMutation& {
-    snapshot_ *= rhs;
-    return *this;
-  }
-  auto operator/=(const value::PackedArray& rhs) -> ScopedMutation& {
-    snapshot_ /= rhs;
-    return *this;
-  }
-  auto operator%=(const value::PackedArray& rhs) -> ScopedMutation& {
-    snapshot_ %= rhs;
-    return *this;
-  }
-  auto operator&=(const value::PackedArray& rhs) -> ScopedMutation& {
-    snapshot_ &= rhs;
-    return *this;
-  }
-  auto operator|=(const value::PackedArray& rhs) -> ScopedMutation& {
-    snapshot_ |= rhs;
-    return *this;
-  }
-  auto operator^=(const value::PackedArray& rhs) -> ScopedMutation& {
-    snapshot_ ^= rhs;
-    return *this;
-  }
-  auto ShiftLeftAssign(const value::PackedArray& rhs) -> ScopedMutation& {
-    snapshot_.ShiftLeftAssign(rhs);
-    return *this;
-  }
-  auto LogicalShiftRightAssign(const value::PackedArray& rhs)
-      -> ScopedMutation& {
-    snapshot_.LogicalShiftRightAssign(rhs);
-    return *this;
-  }
-  auto ArithmeticShiftRightAssign(const value::PackedArray& rhs)
-      -> ScopedMutation& {
-    snapshot_.ArithmeticShiftRightAssign(rhs);
-    return *this;
-  }
-
-  // LRM 11.4.2 inc/dec on an observable whole-var. The snapshot is mutated
-  // in place; the destructor commits via Var::Set so subscribers fire exactly
-  // once. Prefix returns the new value; postfix returns the old. Both return
-  // by value (not `ScopedMutation&`) so outer rvalue use such as
-  // `b = ++observable_var` routes a materialized PackedArray through the
-  // outer Var::Set instead of a transient proxy.
-  auto operator++() -> value::PackedArray {
-    ++snapshot_;
-    return snapshot_;
-  }
-  auto operator++(int) -> value::PackedArray {
-    value::PackedArray prior = snapshot_;
-    ++snapshot_;
-    return prior;
-  }
-  auto operator--() -> value::PackedArray {
-    --snapshot_;
-    return snapshot_;
-  }
-  auto operator--(int) -> value::PackedArray {
-    value::PackedArray prior = snapshot_;
-    --snapshot_;
-    return prior;
-  }
-
-  // Drilldown to the underlying snapshot for instance methods on `T` that
-  // mutate the value in place (e.g. `String::Itoa`). The chain becomes
-  // `var.Mutate(svc)->Method(...)` and the destructor commits the mutated
-  // snapshot exactly once.
-  auto operator->() -> T* {
-    return &snapshot_;
-  }
-  // The dereference form for free-function callees that take a mutable
-  // reference (e.g. `LyraFRead(svc, var.Mutate(svc), ...)` -- spelled
-  // `*var.Mutate(svc)` at the call site).
   auto operator*() -> T& {
     return snapshot_;
   }

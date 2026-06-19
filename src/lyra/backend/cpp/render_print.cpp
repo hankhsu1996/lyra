@@ -246,8 +246,7 @@ auto RenderRuntimeCallExpr(
                   Overloaded{
                       [&](const mir::IntegralScanSlot& s)
                           -> diag::Result<std::string> {
-                        auto temp_or = RenderLhsExpr(
-                            ctx, ctx.Expr(s.temp), std::string_view{});
+                        auto temp_or = RenderLhsExpr(ctx, ctx.Expr(s.temp));
                         if (!temp_or) {
                           return std::unexpected(std::move(temp_or.error()));
                         }
@@ -261,8 +260,7 @@ auto RenderRuntimeCallExpr(
                       },
                       [&](const mir::StringScanSlot& s)
                           -> diag::Result<std::string> {
-                        auto temp_or = RenderLhsExpr(
-                            ctx, ctx.Expr(s.temp), std::string_view{});
+                        auto temp_or = RenderLhsExpr(ctx, ctx.Expr(s.temp));
                         if (!temp_or) {
                           return std::unexpected(std::move(temp_or.error()));
                         }

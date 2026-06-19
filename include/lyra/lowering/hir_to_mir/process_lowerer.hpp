@@ -85,7 +85,15 @@ class ProcessLowerer {
   // each kind to the per-family handler in `expression/{operators, calls,
   // references, selects, aggregates, assignment, inside}.cpp`. Handlers
   // recurse through this method; sub-expressions reach `frame` through it.
+  // An observable-cell leaf is auto-wrapped in an `ObservableMethod{kGet}`
+  // call so the result is a value-typed expression.
   auto LowerExpr(const hir::Expr& expr, WalkFrame frame)
+      -> diag::Result<mir::Expr>;
+
+  // LHS-context expression dispatcher: same dispatch as `LowerExpr` but
+  // without the `ObservableMethod{kGet}` auto-wrap, so an observable-cell
+  // leaf flows out as the bare cell expression.
+  auto LowerLhsExpr(const hir::Expr& expr, WalkFrame frame)
       -> diag::Result<mir::Expr>;
 
   // Central statement dispatcher. One switch over `hir::Stmt::data` routing

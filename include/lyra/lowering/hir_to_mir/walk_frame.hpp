@@ -3,8 +3,10 @@
 #include <cstdint>
 #include <optional>
 
+#include "lyra/base/internal_error.hpp"
 #include "lyra/lowering/hir_to_mir/procedural_depth.hpp"
 #include "lyra/mir/procedural_var.hpp"
+#include "lyra/mir/structural_hops.hpp"
 
 namespace lyra::mir {
 struct StructuralScope;
@@ -14,6 +16,17 @@ struct ProceduralScope;
 namespace lyra::lowering::hir_to_mir {
 
 class CaptureSink;
+
+// Singly-linked node carrying a structural scope's parent chain so a leaf
+// reference can read the declared type of a `StructuralVar` at `hops > 0`.
+// Each node lives on the stack of the `StructuralScopeLowerer::Run` that
+// pushed it; the chain extends one node per scope opened during traversal.
+// Mirrors `RenderContext`'s `structural_parent_` link so lowering and render
+// reach the same `mir::StructuralVarDecl` for any (hops, var) reference.
+struct ScopeChainNode {
+  const mir::StructuralScope* scope;
+  const ScopeChainNode* parent;
+};
 
 // How a HIR `LoopVarRef` resolves at the structural-scope dispatcher. The two
 // values correspond to the two structural contexts a constructor expression
@@ -42,6 +55,13 @@ struct WalkFrame {
   // task constructs its scope and entered via `WithStructuralScope`. Null
   // outside structural-scope handlers.
   mir::StructuralScope* current_structural_scope = nullptr;
+
+  // Outer structural scopes reached by climbing `parent` links, in the same
+  // order as the lowerer `parent_` chain. Populated by `WithStructuralScope`
+  // when a `StructuralScopeLowerer::Run` opens a new scope. Read via
+  // `StructuralScopeAtHops` to resolve a `StructuralVar` reference at
+  // `hops > 0`.
+  const ScopeChainNode* outer_structural_scopes = nullptr;
 
   // The current procedural-scope write target. Set when a walker opens a new
   // procedural scope (process body, nested block body, fork branch body,
@@ -97,11 +117,42 @@ struct WalkFrame {
   // lowering; no other access form distinguishes read from write at this layer.
   bool is_lvalue_target = false;
 
-  [[nodiscard]] auto WithStructuralScope(mir::StructuralScope* scope) const
+  // Pushes `scope` as the current structural scope and links the previous
+  // `current_structural_scope` into the outer chain through `chain_node`,
+  // which the caller stack-allocates so its lifetime spans the descent.
+  [[nodiscard]] auto WithStructuralScope(
+      mir::StructuralScope* scope, ScopeChainNode& chain_node) const
       -> WalkFrame {
+    chain_node.scope = current_structural_scope;
+    chain_node.parent = outer_structural_scopes;
     WalkFrame next = *this;
     next.current_structural_scope = scope;
+    next.outer_structural_scopes = current_structural_scope != nullptr
+                                       ? &chain_node
+                                       : outer_structural_scopes;
     return next;
+  }
+
+  // Resolves the structural scope at `hops`: 0 yields the current one, N
+  // walks N steps through `outer_structural_scopes`.
+  [[nodiscard]] auto StructuralScopeAtHops(mir::StructuralHops hops) const
+      -> const mir::StructuralScope& {
+    if (hops.value == 0) {
+      if (current_structural_scope == nullptr) {
+        throw InternalError(
+            "WalkFrame::StructuralScopeAtHops: no current structural scope");
+      }
+      return *current_structural_scope;
+    }
+    const ScopeChainNode* node = outer_structural_scopes;
+    for (std::uint32_t step = 1; step < hops.value && node != nullptr; ++step) {
+      node = node->parent;
+    }
+    if (node == nullptr || node->scope == nullptr) {
+      throw InternalError(
+          "WalkFrame::StructuralScopeAtHops: hops exceed chain depth");
+    }
+    return *node->scope;
   }
 
   [[nodiscard]] auto WithProceduralScope(mir::ProceduralScope* scope) const

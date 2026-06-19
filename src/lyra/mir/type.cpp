@@ -138,6 +138,22 @@ auto AsUniquePointee(const CompilationUnit& unit, TypeId type)
 
 }  // namespace
 
+auto IsObservableCellType(const Type& ty) -> bool {
+  return std::holds_alternative<ObservableType>(ty.data) ||
+         std::holds_alternative<ExternalRefType>(ty.data);
+}
+
+auto ObservableInnerValueType(const Type& ty) -> TypeId {
+  if (const auto* ob = std::get_if<ObservableType>(&ty.data)) {
+    return ob->value;
+  }
+  if (const auto* er = std::get_if<ExternalRefType>(&ty.data)) {
+    return er->element;
+  }
+  throw InternalError(
+      "ObservableInnerValueType: type is not an observable cell wrapper");
+}
+
 auto GetChildScope(const CompilationUnit& unit, TypeId type)
     -> std::optional<ChildScope> {
   TypeId leaf = type;

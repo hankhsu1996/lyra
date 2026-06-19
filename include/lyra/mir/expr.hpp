@@ -156,28 +156,6 @@ struct MemberAccessExpr {
   StructuralVarRef member;
 };
 
-struct ElementSelectExpr {
-  ExprId base_value;
-  ExprId index;
-};
-
-// Contiguous slice of `count` outer elements starting at `offset_expr`.
-// HIR's three source-faithful forms (`m:n`, `i +: w`, `i -: w`) collapse to
-// this single shape at HIR -> MIR; `count` is the LRM 7.4.5 compile-time
-// constant width, `offset_expr` is the lsb in outer-element units.
-//
-// LRM 7.2.1 packed struct field access has no MIR-level distinct shape: it
-// lowers at HIR -> MIR into this same slice form (since "a packed structure
-// can be selected as if it were a packed array", LRM 7.2.1). A future MIR
-// node for *unpacked* struct named access is a genuinely different shape (it
-// maps to C++ `s.member`, not bit math) and will get its own variant when
-// that work lands.
-struct RangeSelectExpr {
-  ExprId base_value;
-  ExprId offset_expr;
-  std::uint32_t count;
-};
-
 struct ConcatExpr {
   std::vector<ExprId> operands;
 };
@@ -214,8 +192,8 @@ using ExprData = std::variant<
     IntegerLiteral, StringLiteral, TimeLiteral, RealLiteral, StructuralParamRef,
     ProceduralVarRef, UnaryExpr, BinaryExpr, ConditionalExpr, AssignExpr,
     IncDecExpr, CallExpr, RuntimeCallExpr, DerefExpr, MemberAccessExpr,
-    ConversionExpr, ClosureExpr, ElementSelectExpr, RangeSelectExpr, ConcatExpr,
-    ReplicationExpr, ArrayLiteralExpr, ConstructExpr>;
+    ConversionExpr, ClosureExpr, ConcatExpr, ReplicationExpr, ArrayLiteralExpr,
+    ConstructExpr>;
 
 struct Expr {
   ExprData data;
@@ -255,6 +233,54 @@ struct Expr {
                           ScopeMethodInfo{.kind = ScopeMethodKind::kServices}},
               .arguments = {self}},
       .type = services};
+}
+
+// `cell.Get()` -- unwraps an observable cell to its inner value.
+[[nodiscard]] inline auto MakeObservableGetCallExpr(
+    ExprId cell, TypeId value_type) -> Expr {
+  return Expr{
+      .data =
+          CallExpr{
+              .callee =
+                  BuiltinMethodCallee{
+                      .method =
+                          ObservableMethodInfo{
+                              .kind = ObservableMethodKind::kGet}},
+              .arguments = {cell}},
+      .type = value_type};
+}
+
+// `cell.Set(services, value)` -- whole-cell write that fires subscribers
+// on change.
+[[nodiscard]] inline auto MakeObservableSetCallExpr(
+    ExprId cell, ExprId services, ExprId value, TypeId void_type) -> Expr {
+  return Expr{
+      .data =
+          CallExpr{
+              .callee =
+                  BuiltinMethodCallee{
+                      .method =
+                          ObservableMethodInfo{
+                              .kind = ObservableMethodKind::kSet}},
+              .arguments = {cell, services, value}},
+      .type = void_type};
+}
+
+// `cell.Mutate(services)` -- opens a partial-write proxy. The MIR result
+// type is the inner value T; consumers wrap the call in a `DerefExpr` so
+// downstream selectors / operators run on T directly.
+[[nodiscard]] inline auto MakeObservableMutateCallExpr(
+    ExprId cell, ExprId services, TypeId value_type) -> Expr {
+  return Expr{
+      .data =
+          CallExpr{
+              .callee =
+                  BuiltinMethodCallee{
+                      .method =
+                          ObservableMethodInfo{
+                              .kind = ObservableMethodKind::kMutate}},
+              .arguments = {cell, services}},
+      .type = value_type};
 }
 
 }  // namespace lyra::mir
