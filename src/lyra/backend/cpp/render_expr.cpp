@@ -1125,6 +1125,19 @@ auto RenderSystemSubroutineEntryName(const support::SystemSubroutineDesc& desc)
                        ? std::string_view{"lyra::runtime::LyraFDisplay"}
                        : std::string_view{"lyra::runtime::LyraFWrite"};
           },
+          [](const support::DiagnosticSystemSubroutineInfo& diagnostic)
+              -> diag::Result<std::string_view> {
+            switch (diagnostic.severity) {
+              case support::DiagnosticSeverityKind::kInfo:
+                return std::string_view{"lyra::runtime::LyraInfo"};
+              case support::DiagnosticSeverityKind::kWarning:
+                return std::string_view{"lyra::runtime::LyraWarning"};
+              case support::DiagnosticSeverityKind::kError:
+                return std::string_view{"lyra::runtime::LyraError"};
+            }
+            throw InternalError(
+                "RenderSystemSubroutineEntryName: unknown DiagnosticSeverity");
+          },
           [](const support::TimeSystemSubroutineInfo& time)
               -> diag::Result<std::string_view> {
             switch (time.kind) {

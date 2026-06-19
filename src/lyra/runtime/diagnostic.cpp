@@ -112,4 +112,19 @@ void LyraDiagnostic(
           .body = std::move(body)});
 }
 
+void LyraInfo(
+    RuntimeServices& services, std::span<const value::PrintItem> items) {
+  LyraDiagnostic(services, Severity::kInfo, std::nullopt, items);
+}
+
+void LyraWarning(
+    RuntimeServices& services, std::span<const value::PrintItem> items) {
+  LyraDiagnostic(services, Severity::kWarning, std::nullopt, items);
+}
+
+void LyraError(
+    RuntimeServices& services, std::span<const value::PrintItem> items) {
+  LyraDiagnostic(services, Severity::kError, std::nullopt, items);
+}
+
 }  // namespace lyra::runtime

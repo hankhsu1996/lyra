@@ -73,4 +73,15 @@ void LyraDiagnostic(
     std::optional<SourceLocation> origin,
     std::span<const value::PrintItem> items);
 
+// The severity-fixed diagnostic entries for $info / $warning / $error. The
+// severity is encoded by the entry, so the call carries none -- the lowering
+// selects the entry. Source location is not yet resolved at lowering, so these
+// emit with no origin (LRM 20.10).
+void LyraInfo(
+    RuntimeServices& services, std::span<const value::PrintItem> items);
+void LyraWarning(
+    RuntimeServices& services, std::span<const value::PrintItem> items);
+void LyraError(
+    RuntimeServices& services, std::span<const value::PrintItem> items);
+
 }  // namespace lyra::runtime

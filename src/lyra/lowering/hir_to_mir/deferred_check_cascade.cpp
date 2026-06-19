@@ -13,19 +13,21 @@
 #include "lyra/hir/procedural_body.hpp"
 #include "lyra/hir/stmt.hpp"
 #include "lyra/lowering/hir_to_mir/default_value.hpp"
+#include "lyra/lowering/hir_to_mir/print_items.hpp"
 #include "lyra/lowering/hir_to_mir/self_ref.hpp"
 #include "lyra/lowering/hir_to_mir/statement/blocks.hpp"
 #include "lyra/mir/binary_op.hpp"
 #include "lyra/mir/closure.hpp"
 #include "lyra/mir/compilation_unit.hpp"
+#include "lyra/mir/expr.hpp"
 #include "lyra/mir/expr_id.hpp"
 #include "lyra/mir/procedural_hops.hpp"
 #include "lyra/mir/procedural_var.hpp"
-#include "lyra/mir/runtime_diagnostic.hpp"
 #include "lyra/mir/runtime_print.hpp"
 #include "lyra/mir/runtime_submit.hpp"
 #include "lyra/mir/stmt.hpp"
 #include "lyra/mir/value_ref.hpp"
+#include "lyra/support/system_subroutine.hpp"
 
 namespace lyra::lowering::hir_to_mir {
 
@@ -132,10 +134,11 @@ auto SnapshotPredicate(
 }
 
 auto BuildDiagnosticThenScope(
-    mir::ProceduralVarId count_var, mir::TypeId int32_type,
-    mir::TypeId void_type, const CheckVerdict& verdict)
+    mir::CompilationUnit& unit, mir::ProceduralVarId self_binding,
+    mir::ProceduralVarId count_var, const CheckVerdict& verdict)
     -> mir::ProceduralScope {
   mir::ProceduralScope scope;
+  const mir::TypeId int32_type = unit.builtins.int32;
 
   std::vector<mir::RuntimePrintItem> items;
   items.emplace_back(mir::RuntimePrintLiteral{.text = verdict.prefix_text});
@@ -154,28 +157,51 @@ auto BuildDiagnosticThenScope(
     items.emplace_back(mir::RuntimePrintLiteral{.text = verdict.suffix_text});
   }
 
+  // The verdict text is fixed-format decimal, so no %t directive is possible
+  // and the time-unit power is unread.
+  const mir::ExprId items_array =
+      scope.AddExpr(BuildPrintItemsArray(unit, scope, items, 0));
+
+  // `self` lives in the enclosing closure body; this then-scope sits one level
+  // deeper, so the read climbs one hop -- matching the count_var read above.
+  const mir::ExprId self_read = scope.AddExpr(
+      mir::Expr{
+          .data =
+              mir::ProceduralVarRef{
+                  .hops = mir::ProceduralHops{.value = 1}, .var = self_binding},
+          .type = unit.builtins.self_pointer});
+  const mir::ExprId services = scope.AddExpr(
+      mir::MakeServicesCallExpr(self_read, unit.builtins.services));
+
+  const support::SystemSubroutineDesc* warning_desc =
+      support::FindSystemSubroutine("$warning");
+  if (warning_desc == nullptr) {
+    throw InternalError(
+        "BuildDiagnosticThenScope: $warning system subroutine not registered");
+  }
+
+  std::vector<mir::ExprId> args{services, items_array};
   const mir::ExprId diag_call_id = scope.AddExpr(
       mir::Expr{
           .data =
-              mir::RuntimeCallExpr{
-                  .call = mir::RuntimeDiagnosticCall(
-                      mir::DiagnosticSeverity::kWarning, std::nullopt,
-                      std::move(items))},
-          .type = void_type});
+              mir::CallExpr{
+                  .callee = mir::SystemSubroutineCallee{.id = warning_desc->id},
+                  .arguments = std::move(args)},
+          .type = unit.builtins.void_type});
   scope.AppendStmt(mir::ExprStmt{.expr = diag_call_id});
   return scope;
 }
 
 auto BuildUniqueCheckClosure(
-    const ModuleLowerer& module, const WalkFrame& wrapper_frame,
-    mir::ProceduralScope& wrapper, mir::TypeId int32_type,
-    mir::TypeId void_type, hir::UniquePriorityCheck check,
+    ModuleLowerer& module, const WalkFrame& wrapper_frame,
+    mir::ProceduralScope& wrapper, hir::UniquePriorityCheck check,
     const std::vector<mir::ProceduralVarId>& snapshot_vars)
     -> mir::ClosureExpr {
   mir::ClosureExpr closure;
   closure.body = std::make_unique<mir::ProceduralScope>();
   auto& body = *closure.body;
 
+  const mir::TypeId int32_type = module.Unit().builtins.int32;
   const mir::TypeId self_ptr_type = module.Unit().builtins.self_pointer;
   const mir::ProceduralVarId self_binding = body.AddProceduralVar(
       mir::ProceduralVarDecl{.name = "self", .type = self_ptr_type});
@@ -285,7 +311,7 @@ auto BuildUniqueCheckClosure(
           .type = int32_type});
 
   mir::ProceduralScope diag_scope =
-      BuildDiagnosticThenScope(count_var, int32_type, void_type, verdict);
+      BuildDiagnosticThenScope(module.Unit(), self_binding, count_var, verdict);
 
   const mir::ProceduralScopeId diag_scope_id =
       body.AddChildScope(std::move(diag_scope));
@@ -328,8 +354,7 @@ auto BuildDeferredCheckCascade(
   }
 
   mir::ClosureExpr closure = BuildUniqueCheckClosure(
-      module, wrapper_frame, wrapper, int32_type, void_type, check,
-      snapshot_vars);
+      module, wrapper_frame, wrapper, check, snapshot_vars);
   const mir::ExprId closure_expr_id =
       wrapper.AddExpr(mir::Expr{.data = std::move(closure), .type = void_type});
 
