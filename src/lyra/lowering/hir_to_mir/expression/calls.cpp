@@ -204,6 +204,12 @@ auto LowerQueueMethodKind(hir::QueueMethodKind k) -> mir::QueueMethodKind {
       return mir::QueueMethodKind::kPushFront;
     case hir::QueueMethodKind::kPushBack:
       return mir::QueueMethodKind::kPushBack;
+    case hir::QueueMethodKind::kElementAt:
+      return mir::QueueMethodKind::kElementAt;
+    case hir::QueueMethodKind::kWriteRef:
+      return mir::QueueMethodKind::kWriteRef;
+    case hir::QueueMethodKind::kSlice:
+      return mir::QueueMethodKind::kSlice;
   }
   throw InternalError("LowerQueueMethodKind: unknown hir::QueueMethodKind");
 }

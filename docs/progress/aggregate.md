@@ -18,22 +18,23 @@ element-access shape is closest to fixed unpacked (already complete in U1..U7), 
 natural reuse for procedural read / write and aggregate operations. Queue and associative array
 follow once dynamic array's storage and runtime conventions are settled and proven against tests.
 
-| Item | Status                                                               |
-| ---- | -------------------------------------------------------------------- |
-| DA1  | Done: construction, element read, blocking element write, multi-dim. |
-| DA2  | Done: NBA, compound element write, whole-array assignment.           |
-| DA3  | Done: positional and replicated assignment patterns (LRM 10.9.1).    |
-| DA4  | Done: aggregate equality, inequality, case-equality.                 |
-| DA5  | Open: constant-width slice (subject to LRM check).                   |
-| DA6a | Done: method dispatch + no-`with` subset.                            |
-| DA6b | Done: `with` clause + iterator on sort / rsort / reduction methods.  |
-| DA6c | Open: queue runtime + locator family (find\*, min, max, unique\*).   |
-| DA7  | Open: invalid-index handling.                                        |
-| Q1.. | Not yet scoped: queue.                                               |
-| A1   | Done: string / integral index, element read / write, query methods.  |
-| A2   | Done: traversal protocol (`first` / `last` / `next` / `prev`).       |
-| A3   | Done: `foreach` over an associative array (any dimensionality).      |
-| A4.. | Open: literals, whole-array assignment, locators.                    |
+| Item | Status                                                                  |
+| ---- | ----------------------------------------------------------------------- |
+| DA1  | Done: construction, element read, blocking element write, multi-dim.    |
+| DA2  | Done: NBA, compound element write, whole-array assignment.              |
+| DA3  | Done: positional and replicated assignment patterns (LRM 10.9.1).       |
+| DA4  | Done: aggregate equality, inequality, case-equality.                    |
+| DA5  | Open: constant-width slice (subject to LRM check).                      |
+| DA6a | Done: method dispatch + no-`with` subset.                               |
+| DA6b | Done: `with` clause + iterator on sort / rsort / reduction methods.     |
+| DA6c | Open: locator family (find\*, min, max, unique\*).                      |
+| DA7  | Open: invalid-index handling.                                           |
+| Q1   | Done: type, element read/write, native methods, default, case-equality. |
+| Q2   | Done: operator surface (`$`, slice, concat, equality, bound, append).   |
+| A1   | Done: string / integral index, element read / write, query methods.     |
+| A2   | Done: traversal protocol (`first` / `last` / `next` / `prev`).          |
+| A3   | Done: `foreach` over an associative array (any dimensionality).         |
+| A4.. | Open: literals, whole-array assignment, locators.                       |
 
 ## Dynamic Array
 
@@ -105,10 +106,10 @@ The numeric IDs are stable references and do not imply execution order beyond DA
       backend renders the closure as a lambda-with-captures and routes the call to the runtime's
       `*By` overloads.
 
-- [ ] DA6c + Q1 -- Queue\<T\> runtime and the locator-family methods that return one (`find` family,
-      `min`, `max`, `unique`, `unique_index`). Opens the queue workstream. `shuffle()` (needs RNG
-      model) and `map()` (SV2023, needs `with` infra + version gate) are standalone follow-ups after
-      DA6c lands.
+- [ ] DA6c -- The locator-family methods that return an index or element queue (`find` family,
+      `min`, `max`, `unique`, `unique_index`). The queue return container now exists (see Queue
+      below). `shuffle()` (needs RNG model) and `map()` (SV2023, needs `with` infra + version gate)
+      are standalone follow-ups after DA6c lands.
 
 - [ ] DA7 -- Invalid-index handling. Read on an out-of-range index returns the element type's LRM
       Table 7-1 default; write on an out-of-range index is a silent no-op; X / Z bits in the index
@@ -116,9 +117,25 @@ The numeric IDs are stable references and do not imply execution order beyond DA
 
 ## Queue
 
-Not yet scoped. Sub-steps Q1.. open when dynamic array's runtime conventions are settled and the
-queue-specific method family (LRM 7.10: `push_back`, `push_front`, `pop_back`, `pop_front`,
-`insert`, `delete(i)`) is ready to be sequenced.
+LRM 7.10: a queue is a variable-size, ordered unpacked array with constant-time access and growth at
+both ends. The index `0` is the first element and `$` the last; a queue may be bounded by an
+optional right bound (`q[$:N]`).
+
+- [x] Q1 -- Type infrastructure plus the element and native-method surface. Declaration `int q[$]`
+      with the empty queue as default (LRM Table 6-7), element read and blocking element write on an
+      ordinal index, the native methods of LRM 7.10.2 (`size`, `insert`, `delete` with and without
+      an index, `pop_front`, `pop_back`, `push_front`, `push_back`), assignment-pattern
+      initialization, whole-queue assignment, `%p` formatting (LRM 21.2.1.6), and the case-equality
+      predicate used when a queue is an observable signal.
+
+- [x] Q2 -- The operator surface that treats a queue as an unpacked array (LRM 7.10.1 / 10.10). `$`
+      as the last-element index and as a slice bound (including `$-1` and friends); the slice in all
+      three forms `q[a:b]` / `q[base+:w]` / `q[base-:w]` with the LRM 7.10.1 clamping and
+      empty-result rules; unpacked array concatenation `{...}` including the empty queue `{}` (LRM
+      10.10), which also expresses the push / pop / insert idioms of LRM 7.10.4; the aggregate
+      equality operators (`==` / `!=` / `===` / `!==`); bounded-queue discard with a warning (LRM
+      7.10.5); and the legal append write `q[$+1] = v` (LRM 7.10.1). One narrow form remains open:
+      an unpacked concatenation whose result is a dynamic or fixed array rather than a queue.
 
 ## Associative Array
 

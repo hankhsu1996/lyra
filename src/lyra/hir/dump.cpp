@@ -239,6 +239,12 @@ class HirDumper {
         return "push_front";
       case QueueMethodKind::kPushBack:
         return "push_back";
+      case QueueMethodKind::kElementAt:
+        return "element_at";
+      case QueueMethodKind::kWriteRef:
+        return "write_ref";
+      case QueueMethodKind::kSlice:
+        return "slice";
     }
     throw InternalError(
         "HirDumper::FormatQueueMethodKind: unknown QueueMethodKind");

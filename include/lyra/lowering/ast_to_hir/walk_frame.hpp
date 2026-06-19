@@ -8,6 +8,7 @@
 #include <vector>
 
 #include "lyra/base/internal_error.hpp"
+#include "lyra/hir/expr_id.hpp"
 #include "lyra/hir/loop_label_id.hpp"
 #include "lyra/hir/structural_hops.hpp"
 
@@ -75,6 +76,12 @@ struct WalkFrame {
   std::optional<hir::LoopLabelId> innermost_break_label = std::nullopt;
   bool* innermost_break_used = nullptr;
 
+  // The queue base whose `$` (LRM 7.10 last index) is resolved while lowering
+  // an element-select index or slice bound: `$` lowers to `size(base) - 1`.
+  // Null outside a queue index / bound expression. Re-set per select, so each
+  // `$` in a nested `q[r[$]]` binds to the array its own select indexes.
+  std::optional<hir::ExprId> dollar_base = std::nullopt;
+
   [[nodiscard]] auto Current() const -> ScopeFrameId {
     if (structural_chain.empty()) {
       throw InternalError("WalkFrame::Current: empty structural chain");
@@ -126,6 +133,14 @@ struct WalkFrame {
   [[nodiscard]] auto WithForkBranch() const -> WalkFrame {
     WalkFrame next = *this;
     ++next.fork_branch_depth;
+    return next;
+  }
+
+  // Binds `base` as the queue whose `$` resolves to its last index while the
+  // index / slice-bound subtree is lowered (LRM 7.10).
+  [[nodiscard]] auto WithDollarBase(hir::ExprId base) const -> WalkFrame {
+    WalkFrame next = *this;
+    next.dollar_base = base;
     return next;
   }
 

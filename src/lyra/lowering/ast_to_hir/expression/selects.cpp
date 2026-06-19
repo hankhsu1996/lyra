@@ -11,11 +11,49 @@
 #include "lyra/base/internal_error.hpp"
 #include "lyra/diag/diag_code.hpp"
 #include "lyra/diag/kind.hpp"
+#include "lyra/hir/binary_op.hpp"
+#include "lyra/hir/expr.hpp"
+#include "lyra/hir/expr_builders.hpp"
+#include "lyra/hir/method.hpp"
+#include "lyra/hir/subroutine_ref.hpp"
 #include "lyra/lowering/ast_to_hir/module_lowerer.hpp"
 #include "lyra/lowering/ast_to_hir/process_lowerer.hpp"
 #include "lyra/lowering/ast_to_hir/structural_scope_lowerer.hpp"
 
 namespace lyra::lowering::ast_to_hir {
+
+// LRM 7.10: `$` in a queue index or slice bound denotes the last element, i.e.
+// `size(base) - 1`. The base whose `$` this resolves is threaded on the walk
+// frame by the enclosing queue select; outside that context `$` has no value.
+auto LowerUnboundedLiteralProc(
+    ProcessLowerer& proc, WalkFrame frame, diag::SourceSpan span)
+    -> diag::Result<hir::Expr> {
+  if (!frame.dollar_base.has_value()) {
+    return diag::Unsupported(
+        span, diag::DiagCode::kUnsupportedExpressionForm,
+        "`$` is only supported as a queue index or slice bound (LRM 7.10)",
+        diag::UnsupportedCategory::kOperation);
+  }
+  auto& body = *frame.current_procedural_body;
+  const hir::TypeId int32_type = proc.Module().Unit().builtins.int32;
+  const hir::ExprId size_id = body.AddExpr(
+      hir::Expr{
+          .type = int32_type,
+          .data =
+              hir::CallExpr{
+                  .callee = hir::SubroutineRef{hir::BuiltinMethodRef{
+                      .method = hir::QueueMethodKind::kSize}},
+                  .arguments = {*frame.dollar_base}},
+          .span = span});
+  const hir::ExprId one_id =
+      body.AddExpr(hir::MakeInt32Literal(1, int32_type, span));
+  return hir::Expr{
+      .type = int32_type,
+      .data =
+          hir::BinaryExpr{
+              .op = hir::BinaryOp::kSub, .lhs = size_id, .rhs = one_id},
+      .span = span};
+}
 
 auto LowerElementSelectExprProc(
     ProcessLowerer& proc, WalkFrame frame,
@@ -32,7 +70,9 @@ auto LowerElementSelectExprProc(
   const hir::ExprId base_id =
       frame.current_procedural_body->AddExpr(*std::move(base_or));
 
-  auto idx_or = proc.LowerExpr(sel.selector(), frame);
+  const WalkFrame idx_frame =
+      sel.value().type->isQueue() ? frame.WithDollarBase(base_id) : frame;
+  auto idx_or = proc.LowerExpr(sel.selector(), idx_frame);
   if (!idx_or) return std::unexpected(std::move(idx_or.error()));
   const hir::ExprId idx_id =
       frame.current_procedural_body->AddExpr(*std::move(idx_or));
@@ -67,12 +107,14 @@ auto LowerRangeSelectExprProc(
   const hir::ExprId base_id =
       frame.current_procedural_body->AddExpr(*std::move(base_or));
 
-  auto left_or = proc.LowerExpr(sel.left(), frame);
+  const WalkFrame bound_frame =
+      sel.value().type->isQueue() ? frame.WithDollarBase(base_id) : frame;
+  auto left_or = proc.LowerExpr(sel.left(), bound_frame);
   if (!left_or) return std::unexpected(std::move(left_or.error()));
   const hir::ExprId left_id =
       frame.current_procedural_body->AddExpr(*std::move(left_or));
 
-  auto right_or = proc.LowerExpr(sel.right(), frame);
+  auto right_or = proc.LowerExpr(sel.right(), bound_frame);
   if (!right_or) return std::unexpected(std::move(right_or.error()));
   const hir::ExprId right_id =
       frame.current_procedural_body->AddExpr(*std::move(right_or));

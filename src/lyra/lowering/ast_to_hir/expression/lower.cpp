@@ -208,6 +208,9 @@ auto LowerProcExpr(
       return LowerMemberAccessExprProc(
           proc, frame, expr.as<slang::ast::MemberAccessExpression>(), span);
 
+    case slang::ast::ExpressionKind::UnboundedLiteral:
+      return LowerUnboundedLiteralProc(proc, frame, span);
+
     case slang::ast::ExpressionKind::Concatenation:
       return LowerConcatExprProc(
           proc, frame, expr.as<slang::ast::ConcatenationExpression>(), span);

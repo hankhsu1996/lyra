@@ -1,0 +1,24 @@
+id: cpp.queue_slice
+tags: [cpp_run]
+input:
+  command: [run, cpp]
+  project: false
+  top: Top
+  files: [main.sv]
+expect:
+  exit: 0
+  variables:
+    last: 50
+    second_last: 40
+    s_const: [20, 30, 40]
+    s_to_end: [20, 30, 40, 50]
+    s_drop_last: [10, 20, 30, 40]
+    s_empty_rev: []
+    s_clamp_lo: [10, 20]
+    s_clamp_hi: [40, 50]
+    xz: []
+    up: [20, 30, 40]
+    down: [30, 40]
+    up_clamp: [40, 50]
+    down_clamp: [10, 20]
+    pf: [3, 4]

@@ -80,11 +80,14 @@ enum class ArrayMethodKind : std::uint8_t {
   kUniqueIndex,
 };
 
-// LRM 7.10.2 queue-native methods. These are exclusive to the queue container
-// (no dynamic-array / fixed-unpacked analogue): they mutate the receiver in
-// place, and `pop_front` / `pop_back` also return the removed element. The
-// LRM 7.12 ordering / reduction / locator family that queues share with the
-// other unpacked arrays stays in `ArrayMethodKind`.
+// LRM 7.10.2 queue-native methods plus the compiler-internal access methods a
+// queue's operators lower to. The named methods (`size` .. `push_back`) are the
+// SV-callable family; `kElementAt` / `kWriteRef` / `kSlice` carry no SV syntax
+// but realize `q[i]` (read), `q[i] = v` (write / `q[$+1]` append), and `q[a:b]`
+// as ordinary built-in method calls -- the operators have no native C++
+// expression, so they are function calls like `size` (LRM 7.10.1). The LRM 7.12
+// ordering / reduction / locator family shared with other unpacked arrays stays
+// in `ArrayMethodKind`.
 enum class QueueMethodKind : std::uint8_t {
   kSize,
   kInsert,
@@ -93,6 +96,9 @@ enum class QueueMethodKind : std::uint8_t {
   kPopBack,
   kPushFront,
   kPushBack,
+  kElementAt,
+  kWriteRef,
+  kSlice,
 };
 
 // LRM 7.9 associative-array methods. Exclusive to the associative container:

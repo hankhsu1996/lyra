@@ -90,6 +90,13 @@ struct WalkFrame {
   // `kProceduralInduction`. Ignored by `ProcessLowerer::LowerExpr`.
   LoopVarLoweringMode loop_var_mode = LoopVarLoweringMode::kStructuralParam;
 
+  // True while lowering an assignment's left-hand side. A queue element-select
+  // resolves to its write access method (`WriteRef`, append-aware) under this
+  // flag and to its read access method (`ElementAt`) otherwise; the index and
+  // other rvalue subexpressions clear it. Read only by the queue element-select
+  // lowering; no other access form distinguishes read from write at this layer.
+  bool is_lvalue_target = false;
+
   [[nodiscard]] auto WithStructuralScope(mir::StructuralScope* scope) const
       -> WalkFrame {
     WalkFrame next = *this;
@@ -141,6 +148,12 @@ struct WalkFrame {
   [[nodiscard]] auto WithCoroutineBody(bool is_coroutine) const -> WalkFrame {
     WalkFrame next = *this;
     next.is_coroutine_body = is_coroutine;
+    return next;
+  }
+
+  [[nodiscard]] auto WithLvalueTarget(bool is_target) const -> WalkFrame {
+    WalkFrame next = *this;
+    next.is_lvalue_target = is_target;
     return next;
   }
 };

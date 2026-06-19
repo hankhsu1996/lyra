@@ -1,0 +1,16 @@
+id: cpp.queue_concat
+tags: [cpp_run]
+input:
+  command: [run, cpp]
+  project: false
+  top: Top
+  files: [main.sv]
+expect:
+  exit: 0
+  variables:
+    pb: [1, 2, 3, 4]
+    pf: [0, 1, 2, 3]
+    ins: [1, 2, 99, 3, 4]
+    cat: [10, 20, 30, 40]
+    emptied: []
+    reseed: [5]

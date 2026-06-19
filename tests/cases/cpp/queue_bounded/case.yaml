@@ -1,0 +1,18 @@
+id: cpp.queue_bounded
+tags: [cpp_run]
+input:
+  command: [run, cpp]
+  project: false
+  top: Top
+  files: [main.sv]
+expect:
+  exit: 0
+  variables:
+    grow: [10, 20, 30, 40]
+    s_grow: 4
+    init_big: [1, 2, 3]
+    s_init: 3
+    assigned: [1, 2, 3]
+    s_assigned: 3
+    retained: [1, 2, 3, 4]
+    s_retained: 4

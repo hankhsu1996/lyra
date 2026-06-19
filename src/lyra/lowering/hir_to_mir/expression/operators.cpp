@@ -210,8 +210,10 @@ auto LowerHirIncDecExprProc(
     ProcessLowerer& process, WalkFrame frame, const hir::IncDecExpr& inc,
     mir::TypeId result_type) -> diag::Result<mir::Expr> {
   const auto& hir_process = process.HirBody();
-  auto target_or =
-      process.LowerExpr(hir_process.exprs.at(inc.target.value), frame);
+  // The target is written in place, so a queue element resolves to its write
+  // access method (`WriteRef`) just as an assignment target does.
+  auto target_or = process.LowerExpr(
+      hir_process.exprs.at(inc.target.value), frame.WithLvalueTarget(true));
   if (!target_or) return std::unexpected(std::move(target_or.error()));
   const mir::ExprId target_id =
       frame.current_procedural_scope->AddExpr(*std::move(target_or));
