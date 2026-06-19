@@ -10,6 +10,7 @@
 #include <vector>
 
 #include "lyra/base/internal_error.hpp"
+#include "lyra/base/overloaded.hpp"
 #include "lyra/diag/diag_code.hpp"
 #include "lyra/diag/diagnostic.hpp"
 #include "lyra/diag/source_span.hpp"
@@ -17,9 +18,11 @@
 #include "lyra/hir/primary.hpp"
 #include "lyra/hir/procedural_body.hpp"
 #include "lyra/lowering/hir_to_mir/process_lowerer.hpp"
+#include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/conversion.hpp"
 #include "lyra/mir/expr.hpp"
 #include "lyra/mir/runtime_print.hpp"
+#include "lyra/mir/stmt.hpp"
 #include "lyra/mir/type.hpp"
 #include "lyra/support/format.hpp"
 
@@ -157,6 +160,60 @@ auto TryGetHirStringLiteral(
   return LiteralFormatStringRef{.text = sl->value, .span = expr.span};
 }
 
+// LRM 21.2.1.3: a %t directive scales by the enclosing scope's time unit, known
+// only at lowering -- so its power is materialized here as the spec's sixth
+// field rather than read from the directive like the others. Fields pass as
+// `int` literals the runtime FormatSpec constructor converts; the modifier
+// fields are omitted when none differs from its default.
+auto BuildFormatSpecExpr(
+    mir::CompilationUnit& unit, mir::ProceduralScope& scope,
+    const mir::FormatSpec& spec, std::int64_t time_unit_power) -> mir::Expr {
+  const auto int_lit = [&](std::int64_t v) {
+    return scope.AddExpr(mir::MakeInt32Literal(unit.builtins.int32, v));
+  };
+  std::vector<mir::ExprId> args;
+  args.push_back(int_lit(static_cast<std::int64_t>(spec.kind)));
+  const bool is_time = spec.kind == value::FormatKind::kTime;
+  const bool all_default =
+      spec.modifiers.width == -1 && spec.modifiers.precision == -1 &&
+      !spec.modifiers.zero_pad && !spec.modifiers.left_align && !is_time;
+  if (!all_default) {
+    args.push_back(int_lit(spec.modifiers.width));
+    args.push_back(int_lit(spec.modifiers.precision));
+    args.push_back(int_lit(spec.modifiers.zero_pad ? 1 : 0));
+    args.push_back(int_lit(spec.modifiers.left_align ? 1 : 0));
+    args.push_back(int_lit(is_time ? time_unit_power : 0));
+  }
+  return mir::Expr{
+      .data = mir::ConstructExpr{.args = std::move(args)},
+      .type = unit.builtins.format_spec};
+}
+
+auto BuildPrintItemExpr(
+    mir::CompilationUnit& unit, mir::ProceduralScope& scope,
+    const mir::RuntimePrintItem& item, std::int64_t time_unit_power)
+    -> mir::Expr {
+  return std::visit(
+      Overloaded{
+          [&](const mir::RuntimePrintLiteral& lit) -> mir::Expr {
+            const mir::ExprId text = scope.AddExpr(
+                mir::Expr{
+                    .data = mir::StringLiteral{.value = lit.text},
+                    .type = unit.builtins.string});
+            return mir::Expr{
+                .data = mir::ConstructExpr{.args = {text}},
+                .type = unit.builtins.print_literal_item};
+          },
+          [&](const mir::RuntimePrintValue& v) -> mir::Expr {
+            const mir::ExprId spec = scope.AddExpr(
+                BuildFormatSpecExpr(unit, scope, v.spec, time_unit_power));
+            return mir::Expr{
+                .data = mir::ConstructExpr{.args = {v.value, spec}},
+                .type = unit.builtins.print_value_item};
+          }},
+      item);
+}
+
 }  // namespace
 
 auto RadixToFormatKind(support::PrintRadix r) -> value::FormatKind {
@@ -239,6 +296,24 @@ auto BuildRuntimePrintItemsFromCallArgs(
     ++cursor;
   }
   return items;
+}
+
+auto BuildPrintItemsArray(
+    mir::CompilationUnit& unit, mir::ProceduralScope& scope,
+    const std::vector<mir::RuntimePrintItem>& items,
+    std::int64_t time_unit_power) -> mir::Expr {
+  std::vector<mir::ExprId> elements;
+  elements.reserve(items.size());
+  for (const mir::RuntimePrintItem& item : items) {
+    elements.push_back(
+        scope.AddExpr(BuildPrintItemExpr(unit, scope, item, time_unit_power)));
+  }
+  const mir::TypeId array_type = unit.AddType(
+      mir::TypeData{mir::UnpackedArrayType{
+          .element_type = unit.builtins.print_item, .size = items.size()}});
+  return mir::Expr{
+      .data = mir::ArrayLiteralExpr{.elements = std::move(elements)},
+      .type = array_type};
 }
 
 }  // namespace lyra::lowering::hir_to_mir
