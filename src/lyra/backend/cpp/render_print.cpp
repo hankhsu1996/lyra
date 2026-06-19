@@ -39,68 +39,34 @@ auto RenderPrintKindLiteral(value::PrintKind k) -> std::string_view {
   throw InternalError("RenderPrintKindLiteral: unknown PrintKind");
 }
 
-auto RenderFormatKindLiteral(value::FormatKind k) -> std::string_view {
-  switch (k) {
-    case value::FormatKind::kDecimal:
-      return "lyra::value::FormatKind::kDecimal";
-    case value::FormatKind::kHex:
-      return "lyra::value::FormatKind::kHex";
-    case value::FormatKind::kBinary:
-      return "lyra::value::FormatKind::kBinary";
-    case value::FormatKind::kOctal:
-      return "lyra::value::FormatKind::kOctal";
-    case value::FormatKind::kString:
-      return "lyra::value::FormatKind::kString";
-    case value::FormatKind::kChar:
-      return "lyra::value::FormatKind::kChar";
-    case value::FormatKind::kRealDecimal:
-      return "lyra::value::FormatKind::kRealDecimal";
-    case value::FormatKind::kRealExponential:
-      return "lyra::value::FormatKind::kRealExponential";
-    case value::FormatKind::kRealGeneral:
-      return "lyra::value::FormatKind::kRealGeneral";
-    case value::FormatKind::kAssignmentPattern:
-      return "lyra::value::FormatKind::kAssignmentPattern";
-    case value::FormatKind::kTime:
-      return "lyra::value::FormatKind::kTime";
-  }
-  throw InternalError("RenderFormatKindLiteral: unknown FormatKind");
-}
-
+// Each FormatSpec field travels to the runtime as a PackedArray, the value
+// model the runtime constructor converts internally. The kind-only overload
+// covers the common all-default spec; the full overload spells out all six.
+// LRM 21.2.1.3 / 3.14.2: `%t` scales from the enclosing scope's time unit, the
+// scope class constant `kTimeUnitPower`, resolved by unqualified C++ name
+// lookup -- mirrors how $time reads it, so a `%t` inside a subroutine uses its
+// declaration scope's unit.
 auto RenderFormatSpecInit(const mir::FormatSpec& spec) -> std::string {
-  // Emit only the fields that differ from value::FormatSpec's in-class
-  // defaults; an omitted field designated-initializes to that same default, so
-  // the spec is identical but far terser than spelling out all six.
-  std::vector<std::string> fields;
-  if (spec.kind != value::FormatKind::kDecimal) {
-    fields.push_back(
-        std::format(".kind = {}", RenderFormatKindLiteral(spec.kind)));
+  const auto from_int = [](std::string_view e) {
+    return std::format(
+        "lyra::value::PackedArray::FromInt({}, 32, true, false)", e);
+  };
+  const std::string kind_arg =
+      from_int(std::format("{}LL", static_cast<std::int64_t>(spec.kind)));
+  const bool is_time = spec.kind == value::FormatKind::kTime;
+  const bool all_default =
+      spec.modifiers.width == -1 && spec.modifiers.precision == -1 &&
+      !spec.modifiers.zero_pad && !spec.modifiers.left_align && !is_time;
+  if (all_default) {
+    return std::format("lyra::value::FormatSpec({})", kind_arg);
   }
-  if (spec.modifiers.width != -1) {
-    fields.push_back(std::format(".width = {}", spec.modifiers.width));
-  }
-  if (spec.modifiers.precision != -1) {
-    fields.push_back(std::format(".precision = {}", spec.modifiers.precision));
-  }
-  if (spec.modifiers.zero_pad) {
-    fields.emplace_back(".zero_pad = true");
-  }
-  if (spec.modifiers.left_align) {
-    fields.emplace_back(".left_align = true");
-  }
-  // LRM 21.2.1.3 / 3.14.2: `%t` scales from the enclosing scope's time unit.
-  // The unit is the scope class constant, resolved by unqualified C++ name
-  // lookup to the lexically enclosing design element -- mirrors how $time
-  // reads it, so a `%t` inside a subroutine uses its declaration scope's unit.
-  if (spec.kind == value::FormatKind::kTime) {
-    fields.emplace_back(".timeunit_power = kTimeUnitPower");
-  }
-  std::string joined;
-  for (const auto& field : fields) {
-    if (!joined.empty()) joined += ", ";
-    joined += field;
-  }
-  return std::format("lyra::value::FormatSpec{{{}}}", joined);
+  return std::format(
+      "lyra::value::FormatSpec({}, {}, {}, {}, {}, {})", kind_arg,
+      from_int(std::format("{}LL", spec.modifiers.width)),
+      from_int(std::format("{}LL", spec.modifiers.precision)),
+      from_int(spec.modifiers.zero_pad ? "1LL" : "0LL"),
+      from_int(spec.modifiers.left_align ? "1LL" : "0LL"),
+      from_int(is_time ? "kTimeUnitPower" : "0LL"));
 }
 
 auto RenderPrintValueArg(
@@ -144,7 +110,7 @@ auto RenderPrintItemInit(
             auto arg_or = RenderPrintValueArg(ctx, v);
             if (!arg_or) return std::unexpected(std::move(arg_or.error()));
             return std::format(
-                "lyra::value::PrintValue({}, {})", *arg_or,
+                "lyra::value::PrintValueItem({}, {})", *arg_or,
                 RenderFormatSpecInit(v.spec));
           },
       },

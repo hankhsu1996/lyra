@@ -9,11 +9,27 @@ namespace lyra::runtime {
 
 class RuntimeServices;
 
-// Single high-level runtime print API. The compiler emits one call per
-// $display/$write/...; the runtime walks the items, formats values via
-// value::Format, and finalizes the record (newline for kDisplay/kFDisplay).
+// Walks the item sequence, formats each value via value::Format, and writes the
+// record to stdout, appending a trailing newline for the newline kind
+// (kDisplay, LRM 21.2.1.1).
 void LyraPrint(
     RuntimeServices& services, value::PrintKind kind,
+    std::span<const value::PrintItem> items);
+
+// The print-to-sink entries for $display / $write / $fdisplay / $fwrite. The
+// Display / FDisplay pair append a trailing newline (LRM 21.2.1.1); Write /
+// FWrite do not. The F-prefixed pair writes to the descriptor's sink (LRM
+// 21.3.2); the others write to stdout. Each formats the item sequence and
+// emits it.
+void LyraDisplay(
+    RuntimeServices& services, std::span<const value::PrintItem> items);
+void LyraWrite(
+    RuntimeServices& services, std::span<const value::PrintItem> items);
+void LyraFDisplay(
+    RuntimeServices& services, const value::PackedArray& descriptor,
+    std::span<const value::PrintItem> items);
+void LyraFWrite(
+    RuntimeServices& services, const value::PackedArray& descriptor,
     std::span<const value::PrintItem> items);
 
 // LRM 21.2.2 $strobe-family runtime entry. Defers `print_action` to the

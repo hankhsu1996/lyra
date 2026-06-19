@@ -28,6 +28,10 @@ struct BuiltinMirTypes {
   TypeId time;
   TypeId self_pointer;
   TypeId services;
+  TypeId print_item;
+  TypeId print_literal_item;
+  TypeId print_value_item;
+  TypeId format_spec;
 };
 
 struct CompilationUnit {
@@ -70,6 +74,18 @@ struct CompilationUnit {
                     .pointee = AddType(TypeData{SelfType{}}),
                     .ownership = PointerOwnership::kBorrowed}}),
             .services = AddType(TypeData{ServicesType{}}),
+            .print_item = AddType(
+                TypeData{RuntimeLibraryType{
+                    .kind = RuntimeLibraryKind::kPrintItem}}),
+            .print_literal_item = AddType(
+                TypeData{RuntimeLibraryType{
+                    .kind = RuntimeLibraryKind::kPrintLiteralItem}}),
+            .print_value_item = AddType(
+                TypeData{RuntimeLibraryType{
+                    .kind = RuntimeLibraryKind::kPrintValueItem}}),
+            .format_spec = AddType(
+                TypeData{RuntimeLibraryType{
+                    .kind = RuntimeLibraryKind::kFormatSpec}}),
         } {
   }
 
