@@ -14,9 +14,9 @@
 
 #include "lyra/value/array_case_equal.hpp"
 #include "lyra/value/array_manipulation.hpp"
+#include "lyra/value/concepts.hpp"
 #include "lyra/value/format.hpp"
 #include "lyra/value/packed_array.hpp"
-#include "lyra/value/value_concept.hpp"
 
 namespace lyra::value {
 
@@ -518,5 +518,11 @@ struct Formatter<Queue<T>> {
 };
 
 static_assert(LyraValue<Queue<PackedArray>>);
+static_assert(Sized<Queue<PackedArray>>);
+static_assert(Indexable<Queue<PackedArray>>);
+static_assert(Sliceable<Queue<PackedArray>>);
+static_assert(Ownable<Queue<PackedArray>>);
+static_assert(Defaultable<Queue<PackedArray>>);
+static_assert(Sortable<Queue<PackedArray>>);
 
 }  // namespace lyra::value

@@ -800,26 +800,14 @@ auto RenderMethodCall(
     const RenderContext& ctx, const mir::CallExpr& call,
     std::string_view member_name) -> diag::Result<std::string>;
 
-// LRM 6.19.5: first / last / num are static on the enum class (no receiver);
-// next / prev dispatch on the receiver and render through the generic method
-// call. num() yields the SV `int` shape from the runtime, so no wrap here; the
-// optional next / prev step is a plain SV argument the runtime takes by value.
-auto RenderEnumMethodCall(
-    const RenderContext& ctx, const mir::CallExpr& call,
-    const mir::EnumMethodInfo& m) -> diag::Result<std::string> {
-  const auto member = EnumMethodMemberName(m.kind);
-  const bool is_static = m.kind == mir::EnumMethodKind::kFirst ||
-                         m.kind == mir::EnumMethodKind::kLast ||
-                         m.kind == mir::EnumMethodKind::kNum;
-  if (is_static) {
-    return std::format(
-        "{}::{}()", RenderEnumClassName(ctx.StructuralScope(), m.enum_type),
-        member);
-  }
-  return RenderMethodCall(ctx, call, member);
+// True iff the enum method is a class-level static (LRM 6.19.5 `first` /
+// `last` / `num`). The other enum methods (`name` / `next` / `prev`) dispatch
+// on the receiver and render through the generic `(receiver).name(args)`
+// shape.
+auto IsStaticEnumMethod(mir::EnumMethodKind k) -> bool {
+  return k == mir::EnumMethodKind::kFirst || k == mir::EnumMethodKind::kLast ||
+         k == mir::EnumMethodKind::kNum;
 }
-
-auto IsLhsBarePrimary(const mir::Expr& expr) -> bool;
 
 // A method call renders generically as `(receiver).name(args)`: the receiver
 // is arguments[0]; every following argument renders uniformly. The decision
@@ -846,55 +834,6 @@ auto RenderMethodCall(
   return std::format("({}).{}({})", *recv_or, member_name, args);
 }
 
-auto RenderStringMethodCall(
-    const RenderContext& ctx, const mir::CallExpr& call,
-    const mir::StringMethodInfo& m) -> diag::Result<std::string> {
-  return RenderMethodCall(ctx, call, StringMethodMemberName(m.kind));
-}
-
-// LRM 7.5.2 / 7.5.3 / 7.12.2 / 7.12.3: dispatch on the receiver
-// (arguments[0]); none of the no-`with` methods in this PR take additional
-// arguments. `Size()` returns std::size_t and gets wrapped in
-// `PackedArray::Int` to land in SV `int` shape (mirrors EnumMethod::kNum).
-// All other methods either return void (in-place mutators) or already return
-// the receiver's element type (reductions); no wrap.
-auto RenderArrayMethodCall(
-    const RenderContext& ctx, const mir::CallExpr& call,
-    const mir::ArrayMethodInfo& m) -> diag::Result<std::string> {
-  if (call.arguments.empty()) {
-    throw InternalError(
-        "RenderArrayMethodCall: array method expects a receiver argument");
-  }
-  auto recv_or = RenderExpr(ctx, ctx.Expr(call.arguments[0]));
-  if (!recv_or) return std::unexpected(std::move(recv_or.error()));
-  std::string args_text;
-  for (std::size_t i = 1; i < call.arguments.size(); ++i) {
-    // LRM 7.4.5 + 11.5.1: Slice's `count` argument is a compile-time outer-
-    // element count -- HIR-to-MIR lowers it as an `IntegerLiteral` and the
-    // runtime API takes `std::uint32_t`. Render the literal as a raw integer
-    // so the C++ overload resolves without a `.ToInt64()` projection at the
-    // call site.
-    if (m.kind == mir::ArrayMethodKind::kSlice && i == 2) {
-      const auto& count_expr = ctx.Expr(call.arguments[i]);
-      const auto* lit = std::get_if<mir::IntegerLiteral>(&count_expr.data);
-      if (lit == nullptr) {
-        throw InternalError(
-            "RenderArrayMethodCall: Slice count must be an IntegerLiteral");
-      }
-      if (i > 1) args_text += ", ";
-      args_text += std::format(
-          "{}U", static_cast<std::uint32_t>(lit->value.value_words.front()));
-      continue;
-    }
-    auto arg_or = RenderExpr(ctx, ctx.Expr(call.arguments[i]));
-    if (!arg_or) return std::unexpected(std::move(arg_or.error()));
-    if (i > 1) args_text += ", ";
-    args_text += *arg_or;
-  }
-  return std::format(
-      "({}).{}({})", *recv_or, ArrayMethodMemberName(m.kind), args_text);
-}
-
 auto QueueMethodMemberName(mir::QueueMethodKind k) -> std::string_view {
   switch (k) {
     case mir::QueueMethodKind::kSize:
@@ -919,33 +858,6 @@ auto QueueMethodMemberName(mir::QueueMethodKind k) -> std::string_view {
       return "Slice";
   }
   throw InternalError("QueueMethodMemberName: unknown kind");
-}
-
-// LRM 7.10.2 queue-native methods. The receiver is arguments[0] and any SV
-// method parameters follow as real C++ arguments, so the overload set on
-// `Queue<T>` resolves arity (`Delete()` vs `Delete(index)`) directly.
-auto RenderQueueMethodCall(
-    const RenderContext& ctx, const mir::CallExpr& call,
-    const mir::QueueMethodInfo& m) -> diag::Result<std::string> {
-  if (call.arguments.empty()) {
-    throw InternalError(
-        "RenderQueueMethodCall: queue method expects a receiver argument");
-  }
-  auto recv_or = RenderExpr(ctx, ctx.Expr(call.arguments[0]));
-  if (!recv_or) return std::unexpected(std::move(recv_or.error()));
-  std::string args;
-  for (std::size_t i = 1; i < call.arguments.size(); ++i) {
-    auto arg_or = RenderExpr(ctx, ctx.Expr(call.arguments[i]));
-    if (!arg_or) {
-      return std::unexpected(std::move(arg_or.error()));
-    }
-    if (i != 1) {
-      args += ", ";
-    }
-    args += *arg_or;
-  }
-  return std::format(
-      "({}).{}({})", *recv_or, QueueMethodMemberName(m.kind), args);
 }
 
 auto AssociativeMethodMemberName(mir::AssociativeMethodKind k)
@@ -1038,85 +950,44 @@ auto RenderAssociativeTraversalCall(
       function_name, *receiver_or, *key_type_or, *index_or);
 }
 
-// LRM 7.9 associative-array methods. The receiver is arguments[0] and the key
-// (exists / delete-by-index) follows as a real C++ argument, so the overload
-// set on `AssociativeArray<K, V>` resolves arity (`Delete()` vs `Delete(key)`).
-auto RenderAssociativeMethodCall(
-    const RenderContext& ctx, const mir::CallExpr& call,
-    const mir::AssociativeMethodInfo& m) -> diag::Result<std::string> {
-  if (auto traversal = AssociativeTraversalFunctionName(m.kind)) {
-    return RenderAssociativeTraversalCall(ctx, call, *traversal);
-  }
-  auto recv_or = RenderExpr(ctx, ctx.Expr(call.arguments[0]));
-  if (!recv_or) return std::unexpected(std::move(recv_or.error()));
-  std::string args;
-  for (std::size_t i = 1; i < call.arguments.size(); ++i) {
-    auto arg_or = RenderExpr(ctx, ctx.Expr(call.arguments[i]));
-    if (!arg_or) {
-      return std::unexpected(std::move(arg_or.error()));
-    }
-    if (i != 1) {
-      args += ", ";
-    }
-    args += *arg_or;
-  }
-  return std::format(
-      "({}).{}({})", *recv_or, AssociativeMethodMemberName(m.kind), args);
-}
-
-// Side-effect-free per-value queries. Dispatch by the receiver's MIR
-// type because the answer is type-static for everything except 4-state
-// integral packed: a string (LRM 6.16) and a byte-element unpacked array
-// have no unknown plane, and a 2-state packed has its unknown plane fixed
-// at zero. Emitting `Bit(false)` for those cases keeps the closure-IIFE
-// body shape uniform (`if (.IsUnknown()) return -1;`) while making the
-// guard a trivial constant the C++ optimizer dead-code-eliminates.
-auto RenderValueMethodCall(
-    const RenderContext& ctx, const mir::CallExpr& call,
-    const mir::ValueMethodInfo& m) -> diag::Result<std::string> {
+// LRM 20.9 `$isunknown`: side-effect-free per-value query. The result is
+// type-static for everything except 4-state integral packed: a string (LRM
+// 6.16) and a byte-element unpacked array have no unknown plane, and a
+// 2-state packed has its unknown plane fixed at zero. Emitting `Bit(false)`
+// for those cases keeps the closure-IIFE body shape uniform (`if
+// (.IsUnknown()) return -1;`) while making the guard a trivial constant the
+// C++ optimizer dead-code-eliminates. The runtime helper retains its
+// historical `HasUnknown` spelling.
+auto RenderIsUnknownCall(const RenderContext& ctx, const mir::CallExpr& call)
+    -> diag::Result<std::string> {
   if (call.arguments.empty()) {
     throw InternalError(
-        "RenderValueMethodCall: value method expects a receiver argument");
+        "RenderIsUnknownCall: $isunknown expects a receiver argument");
   }
   const mir::Expr& receiver = ctx.Expr(call.arguments[0]);
-  switch (m.kind) {
-    case mir::ValueMethodKind::kIsUnknown: {
-      const auto& ty = ctx.Unit().GetType(receiver.type);
-      if (ty.IsIntegralPacked() && ty.AsIntegralPacked().IsFourState()) {
-        auto receiver_or = RenderExpr(ctx, receiver);
-        if (!receiver_or) {
-          return std::unexpected(std::move(receiver_or.error()));
-        }
-        // Runtime helper retains its historical `HasUnknown` spelling;
-        // the MIR enum tracks LRM 20.9 `$isunknown` naming.
-        return std::format(
-            "lyra::value::PackedArray::Bit(({}).HasUnknown())", *receiver_or);
-      }
-      return std::string{"lyra::value::PackedArray::Bit(false)"};
-    }
+  const auto& ty = ctx.Unit().GetType(receiver.type);
+  if (!(ty.IsIntegralPacked() && ty.AsIntegralPacked().IsFourState())) {
+    return std::string{"lyra::value::PackedArray::Bit(false)"};
   }
-  throw InternalError("RenderValueMethodCall: unknown kind");
+  auto receiver_or = RenderExpr(ctx, receiver);
+  if (!receiver_or) return std::unexpected(std::move(receiver_or.error()));
+  return std::format(
+      "lyra::value::PackedArray::Bit(({}).HasUnknown())", *receiver_or);
 }
 
 // `self.Services()` -- reaches the engine facade from the scope handle. The
-// receiver (arguments[0]) is the `self` pointer, so the call is `->`. This is
-// the engine handle every runtime-effect call threads as a plain argument.
-auto RenderScopeMethodCall(
-    const RenderContext& ctx, const mir::CallExpr& call,
-    const mir::ScopeMethodInfo& m) -> diag::Result<std::string> {
+// receiver (arguments[0]) is the `self` pointer, so the call is `->`. This
+// is the engine handle every runtime-effect call threads as a plain
+// argument.
+auto RenderServicesCall(const RenderContext& ctx, const mir::CallExpr& call)
+    -> diag::Result<std::string> {
   if (call.arguments.empty()) {
     throw InternalError(
-        "RenderScopeMethodCall: scope method expects a receiver argument");
+        "RenderServicesCall: services accessor expects a receiver argument");
   }
   auto receiver_or = RenderExpr(ctx, ctx.Expr(call.arguments[0]));
-  if (!receiver_or) {
-    return std::unexpected(std::move(receiver_or.error()));
-  }
-  switch (m.kind) {
-    case mir::ScopeMethodKind::kServices:
-      return std::format("({})->Services()", *receiver_or);
-  }
-  throw InternalError("RenderScopeMethodCall: unknown ScopeMethodKind");
+  if (!receiver_or) return std::unexpected(std::move(receiver_or.error()));
+  return std::format("({})->Services()", *receiver_or);
 }
 
 auto ObservableMethodMemberName(mir::ObservableMethodKind k)
@@ -1130,22 +1001,6 @@ auto ObservableMethodMemberName(mir::ObservableMethodKind k)
       return "Mutate";
   }
   throw InternalError("ObservableMethodMemberName: unknown kind");
-}
-
-auto RenderObservableMethodCall(
-    const RenderContext& ctx, const mir::CallExpr& call,
-    const mir::ObservableMethodInfo& m) -> diag::Result<std::string> {
-  auto recv_or = RenderExpr(ctx, ctx.Expr(call.arguments[0]));
-  if (!recv_or) return std::unexpected(std::move(recv_or.error()));
-  std::string args_text;
-  for (std::size_t i = 1; i < call.arguments.size(); ++i) {
-    auto arg_or = RenderExpr(ctx, ctx.Expr(call.arguments[i]));
-    if (!arg_or) return std::unexpected(std::move(arg_or.error()));
-    if (i > 1) args_text += ", ";
-    args_text += *arg_or;
-  }
-  return std::format(
-      "({}).{}({})", *recv_or, ObservableMethodMemberName(m.kind), args_text);
 }
 
 // The C++ runtime entry this backend realizes a system subroutine with. Pure
@@ -1344,29 +1199,63 @@ auto RenderCallExpr(
             return std::format("{}({})", decl.name, args);
           },
           [&](const mir::BuiltinMethodCallee& b) -> diag::Result<std::string> {
+            // Most method families fit the generic `(receiver).name(args)`
+            // shape and resolve through `RenderMethodCall` with a per-kind
+            // member-name table. Four families need different shapes:
+            //   - enum static methods (LRM 6.19.5 `first`/`last`/`num`):
+            //     `EnumClass::Method()` with no receiver
+            //   - associative traversal (LRM 7.9.4-7.9.7): a free runtime
+            //     call splicing services + `Ref<K>`
+            //   - value `$isunknown` (LRM 20.9): type-static optimization
+            //   - scope services accessor: `({receiver})->Services()`
             return std::visit(
                 Overloaded{
-                    [&](const mir::EnumMethodInfo& m) {
-                      return RenderEnumMethodCall(ctx, call, m);
+                    [&](const mir::EnumMethodInfo& m)
+                        -> diag::Result<std::string> {
+                      const auto member = EnumMethodMemberName(m.kind);
+                      if (IsStaticEnumMethod(m.kind)) {
+                        return std::format(
+                            "{}::{}()",
+                            RenderEnumClassName(
+                                ctx.StructuralScope(), m.enum_type),
+                            member);
+                      }
+                      return RenderMethodCall(ctx, call, member);
                     },
                     [&](const mir::StringMethodInfo& m) {
-                      return RenderStringMethodCall(ctx, call, m);
+                      return RenderMethodCall(
+                          ctx, call, StringMethodMemberName(m.kind));
                     },
                     [&](const mir::EventMethodInfo& m) {
                       return RenderMethodCall(
                           ctx, call, EventMethodMemberName(m.kind));
                     },
                     [&](const mir::ArrayMethodInfo& m) {
-                      return RenderArrayMethodCall(ctx, call, m);
+                      return RenderMethodCall(
+                          ctx, call, ArrayMethodMemberName(m.kind));
                     },
                     [&](const mir::QueueMethodInfo& m) {
-                      return RenderQueueMethodCall(ctx, call, m);
+                      return RenderMethodCall(
+                          ctx, call, QueueMethodMemberName(m.kind));
                     },
-                    [&](const mir::AssociativeMethodInfo& m) {
-                      return RenderAssociativeMethodCall(ctx, call, m);
+                    [&](const mir::AssociativeMethodInfo& m)
+                        -> diag::Result<std::string> {
+                      if (auto traversal =
+                              AssociativeTraversalFunctionName(m.kind)) {
+                        return RenderAssociativeTraversalCall(
+                            ctx, call, *traversal);
+                      }
+                      return RenderMethodCall(
+                          ctx, call, AssociativeMethodMemberName(m.kind));
                     },
-                    [&](const mir::ValueMethodInfo& m) {
-                      return RenderValueMethodCall(ctx, call, m);
+                    [&](const mir::ValueMethodInfo& m)
+                        -> diag::Result<std::string> {
+                      switch (m.kind) {
+                        case mir::ValueMethodKind::kIsUnknown:
+                          return RenderIsUnknownCall(ctx, call);
+                      }
+                      throw InternalError(
+                          "RenderCallExpr: unknown ValueMethodKind");
                     },
                     [](const mir::IteratorMethodInfo&)
                         -> diag::Result<std::string> {
@@ -1380,11 +1269,18 @@ auto RenderCallExpr(
                           "rewritten `item.index` to a ProceduralVarRef on "
                           "the closure parameter binding)");
                     },
-                    [&](const mir::ScopeMethodInfo& m) {
-                      return RenderScopeMethodCall(ctx, call, m);
+                    [&](const mir::ScopeMethodInfo& m)
+                        -> diag::Result<std::string> {
+                      switch (m.kind) {
+                        case mir::ScopeMethodKind::kServices:
+                          return RenderServicesCall(ctx, call);
+                      }
+                      throw InternalError(
+                          "RenderCallExpr: unknown ScopeMethodKind");
                     },
                     [&](const mir::ObservableMethodInfo& m) {
-                      return RenderObservableMethodCall(ctx, call, m);
+                      return RenderMethodCall(
+                          ctx, call, ObservableMethodMemberName(m.kind));
                     },
                 },
                 b.method);
@@ -1454,10 +1350,12 @@ auto RenderCallExpr(
 
 }  // namespace
 
-// Output shape: <root>{ .ElementAt(idx) | .ElementRef(idx) | .Slice(offset,
-// count) }* The observable-cell `Mutate(svc)` adapter, if needed, is already in
-// MIR as `DerefExpr(CallExpr(ObservableMethod{kMutate}, ...))` -- this render
-// emits nothing implicit on top of the explicit MIR shape.
+// LHS expression render: produces a write-target reference (a name, a
+// dereference, or a chain of container-access `CallExpr`s -- the runtime's
+// `ElementAt` / `ElementRef` / `WriteRef` / `Slice` overloads return
+// write-through references). The observable-cell `Mutate(svc)` adapter is
+// already in MIR as `DerefExpr(CallExpr(ObservableMethod{kMutate}, ...))` --
+// this render emits nothing implicit on top of the explicit MIR shape.
 auto RenderLhsExpr(const RenderContext& ctx, const mir::Expr& expr)
     -> diag::Result<std::string> {
   return std::visit(

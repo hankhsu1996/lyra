@@ -11,9 +11,9 @@
 #include "lyra/runtime/coroutine.hpp"
 #include "lyra/runtime/runtime_services.hpp"
 #include "lyra/runtime/trigger.hpp"
+#include "lyra/value/concepts.hpp"
 #include "lyra/value/packed.hpp"
 #include "lyra/value/packed_array.hpp"
-#include "lyra/value/value_concept.hpp"
 
 namespace lyra::runtime {
 

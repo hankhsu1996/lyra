@@ -9,8 +9,8 @@
 #include <variant>
 #include <vector>
 
+#include "lyra/value/concepts.hpp"
 #include "lyra/value/packed.hpp"
-#include "lyra/value/value_concept.hpp"
 
 namespace lyra::value {
 
@@ -399,15 +399,17 @@ class PackedArray {
   // selectors and routes a final `operator=` through `AssignSlice`. Const
   // overloads materialize the sub-slice as a fresh `PackedArray` for
   // read-side use. Uniformly method-style (no `operator[]`) so a chain is
-  // visually consistent: `data.ElementAt(idx).Slice(offset, count)`.
+  // visually consistent: `data.ElementAt(idx).Slice(offset, count)`. The
+  // `Sliceable` protocol's second argument is the type-fixed element count
+  // (LRM 11.5.2 constrains the slice width); see `container_protocols.hpp`.
   [[nodiscard]] auto ElementAt(const PackedArray& idx) -> PackedArrayRef;
   [[nodiscard]] auto ElementAt(const PackedArray& idx) const -> PackedArray;
   [[nodiscard]] auto Slice(
       const PackedArray& offset_in_outer_elements,
-      std::uint32_t count_in_outer_elements) -> PackedArrayRef;
+      const PackedArray& count_in_outer_elements) -> PackedArrayRef;
   [[nodiscard]] auto Slice(
       const PackedArray& offset_in_outer_elements,
-      std::uint32_t count_in_outer_elements) const -> PackedArray;
+      const PackedArray& count_in_outer_elements) const -> PackedArray;
   [[nodiscard]] auto operator<(const PackedArray& other) const -> PackedArray;
   [[nodiscard]] auto operator<=(const PackedArray& other) const -> PackedArray;
   [[nodiscard]] auto operator>(const PackedArray& other) const -> PackedArray;
@@ -580,11 +582,12 @@ class PackedArrayRef {
   }
 
   // Chain composition. Positions are in the current sub-view's outer-element
-  // units; the proxy scales internally based on `dims_`.
+  // units; the proxy scales internally based on `dims_`. The `Sliceable`
+  // protocol's second argument is the type-fixed element count.
   [[nodiscard]] auto ElementAt(const PackedArray& idx) const -> PackedArrayRef;
   [[nodiscard]] auto Slice(
       const PackedArray& offset_in_outer_elements,
-      std::uint32_t count_in_outer_elements) const -> PackedArrayRef;
+      const PackedArray& count_in_outer_elements) const -> PackedArrayRef;
 
  private:
   PackedArray* root_;
@@ -594,5 +597,9 @@ class PackedArrayRef {
 };
 
 static_assert(LyraValue<PackedArray>);
+static_assert(Indexable<PackedArray>);
+static_assert(Sliceable<PackedArray>);
+static_assert(Ownable<PackedArray>);
+static_assert(Defaultable<PackedArray>);
 
 }  // namespace lyra::value

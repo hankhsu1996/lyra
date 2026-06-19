@@ -11,10 +11,10 @@
 
 #include "lyra/value/array_case_equal.hpp"
 #include "lyra/value/array_manipulation.hpp"
+#include "lyra/value/concepts.hpp"
 #include "lyra/value/format.hpp"
 #include "lyra/value/packed_array.hpp"
 #include "lyra/value/queue.hpp"
-#include "lyra/value/value_concept.hpp"
 
 namespace lyra::value {
 
@@ -128,20 +128,25 @@ class UnpackedArray {
     return data_[static_cast<std::size_t>(idx.ToInt64())];
   }
 
-  // LRM 7.4.5 contiguous-range selector. The const overload materializes a
-  // fresh sub-array; partial-OOB positions yield the canonical default,
-  // X / Z offset yields a wholly-default sub-array. The non-const overload
-  // returns a write-back proxy with the same invalid-index policy on
-  // `operator=`.
-  [[nodiscard]] auto Slice(const PackedArray& offset, std::uint32_t count) const
+  // LRM 7.4.5 contiguous-range selector. The `Sliceable` protocol's second
+  // argument is the type-fixed element count (see `concepts.hpp`).
+  // The const overload materializes a fresh sub-array; partial-OOB positions
+  // yield the canonical default, X / Z offset yields a wholly-default
+  // sub-array at the count-supplied width. The non-const overload returns a
+  // write-back proxy with the same invalid-index policy on `operator=`.
+  [[nodiscard]] auto Slice(
+      const PackedArray& offset, const PackedArray& count_pa) const
       -> UnpackedArray {
+    const auto count = static_cast<std::uint32_t>(count_pa.ToInt64());
     const T canonical = MakeCanonicalElement();
     return UnpackedArray(
         canonical, detail::ArraySliceGather(data_, canonical, offset, count));
   }
 
-  [[nodiscard]] auto Slice(const PackedArray& offset, std::uint32_t count)
+  [[nodiscard]] auto Slice(
+      const PackedArray& offset, const PackedArray& count_pa)
       -> ArraySliceRef<T> {
+    const auto count = static_cast<std::uint32_t>(count_pa.ToInt64());
     return ArraySliceRef<T>{data_, MakeCanonicalElement(), offset, count};
   }
 
@@ -394,5 +399,11 @@ struct Formatter<UnpackedArray<T>> {
 };
 
 static_assert(LyraValue<UnpackedArray<PackedArray>>);
+static_assert(Sized<UnpackedArray<PackedArray>>);
+static_assert(Indexable<UnpackedArray<PackedArray>>);
+static_assert(Sliceable<UnpackedArray<PackedArray>>);
+static_assert(Ownable<UnpackedArray<PackedArray>>);
+static_assert(Defaultable<UnpackedArray<PackedArray>>);
+static_assert(Sortable<UnpackedArray<PackedArray>>);
 
 }  // namespace lyra::value

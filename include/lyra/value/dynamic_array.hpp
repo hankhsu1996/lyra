@@ -12,11 +12,11 @@
 #include "lyra/base/internal_error.hpp"
 #include "lyra/value/array_case_equal.hpp"
 #include "lyra/value/array_manipulation.hpp"
+#include "lyra/value/concepts.hpp"
 #include "lyra/value/format.hpp"
 #include "lyra/value/packed_array.hpp"
 #include "lyra/value/queue.hpp"
 #include "lyra/value/unpacked_array.hpp"
-#include "lyra/value/value_concept.hpp"
 
 namespace lyra::value {
 
@@ -153,20 +153,25 @@ class DynamicArray {
   }
 
   // LRM 7.4.5 / 7.4.6 contiguous-range selector. A dynamic array slices like
-  // any unpacked array; the constant width makes the result a fixed-size
-  // unpacked array. The const overload materializes a fresh sub-array
-  // (partial-OOB positions and an x / z offset yield the canonical default);
+  // any unpacked array; the `Sliceable` protocol's second argument is the
+  // type-fixed element count (see `concepts.hpp`). The const
+  // overload materializes a fresh sub-array (partial-OOB positions and an
+  // x / z offset yield the canonical default at the count-supplied width);
   // the non-const overload returns the shared write-back proxy with the same
   // invalid-index policy on `operator=`.
-  [[nodiscard]] auto Slice(const PackedArray& offset, std::uint32_t count) const
+  [[nodiscard]] auto Slice(
+      const PackedArray& offset, const PackedArray& count_pa) const
       -> UnpackedArray<T> {
+    const auto count = static_cast<std::uint32_t>(count_pa.ToInt64());
     const T canonical = MakeCanonicalElement();
     return UnpackedArray<T>(
         canonical, detail::ArraySliceGather(data_, canonical, offset, count));
   }
 
-  [[nodiscard]] auto Slice(const PackedArray& offset, std::uint32_t count)
+  [[nodiscard]] auto Slice(
+      const PackedArray& offset, const PackedArray& count_pa)
       -> ArraySliceRef<T> {
+    const auto count = static_cast<std::uint32_t>(count_pa.ToInt64());
     return ArraySliceRef<T>{data_, MakeCanonicalElement(), offset, count};
   }
 
@@ -390,5 +395,11 @@ struct Formatter<DynamicArray<T>> {
 };
 
 static_assert(LyraValue<DynamicArray<PackedArray>>);
+static_assert(Sized<DynamicArray<PackedArray>>);
+static_assert(Indexable<DynamicArray<PackedArray>>);
+static_assert(Sliceable<DynamicArray<PackedArray>>);
+static_assert(Ownable<DynamicArray<PackedArray>>);
+static_assert(Defaultable<DynamicArray<PackedArray>>);
+static_assert(Sortable<DynamicArray<PackedArray>>);
 
 }  // namespace lyra::value
