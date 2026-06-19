@@ -1,8 +1,6 @@
 #pragma once
 
-#include <cstdint>
 #include <functional>
-#include <optional>
 #include <span>
 
 #include "lyra/value/format.hpp"
@@ -15,18 +13,24 @@ namespace lyra::runtime {
 class RuntimeServices;
 
 // Runtime entry points for LRM 21.3 file I/O system tasks. The backend emits
-// these calls from MIR RuntimeFileOpenCall / RuntimeFileCloseCall /
-// RuntimePrintCall-with-descriptor; the runtime owns the descriptor table
-// (see FileTable) and dispatches per LRM 21.3.1 MCD/FD bit encoding.
+// these as ordinary calls from MIR (a generic CallExpr whose first argument is
+// the engine handle); the runtime owns the descriptor table (see FileTable)
+// and dispatches per LRM 21.3.1 MCD/FD bit encoding.
 //
 // Descriptors arrive and leave as 32-bit signed PackedArray values so the
 // emitted code can route them through SV's `int` carrier without
 // per-call-site conversion code. Internally the runtime narrows to int32.
 
-// $fopen(name [, mode]). Returns descriptor per LRM 21.3.1 or 0 on failure.
+// $fopen(name). LRM 21.3.1 MCD form: returns a multichannel descriptor or 0
+// on failure.
+auto LyraFOpen(RuntimeServices& services, const value::String& name)
+    -> value::PackedArray;
+
+// $fopen(name, mode). LRM 21.3.1 FD form: returns a single file descriptor or
+// 0 on failure.
 auto LyraFOpen(
     RuntimeServices& services, const value::String& name,
-    std::optional<value::String> mode) -> value::PackedArray;
+    const value::String& mode) -> value::PackedArray;
 
 // $fclose(descriptor). No-op for 0 / pre-bound stdin/stdout/stderr; for an
 // MCD closes every set-bit channel.
@@ -80,18 +84,28 @@ auto LyraFRead(
     RuntimeServices& services, value::PackedArray& dest,
     const value::PackedArray& fd) -> value::PackedArray;
 
-// LRM 21.3.4.4 $fread into an unpacked destination. Iterates `dest`
-// elements starting at SV index `sv_start` (default = lowest declared
-// index) for at most `count` (default = until EOF / highest index),
-// always advancing toward the highest numerical SV index (LRM "shall
-// continue upward toward the highest address"); descending ranges
-// therefore walk storage backwards. EOF mid-element zero-pads that
-// element's LSBs, matching the packed form's "as much as available".
+// LRM 21.3.4.4 $fread into an unpacked destination. Iterates `dest` elements
+// from SV index `sv_start` toward the highest numerical SV index (LRM "shall
+// continue upward toward the highest address"), reading until EOF or the
+// highest declared index. `declared_left` / `declared_right` are the
+// destination's declared bounds, used to map an SV index to a storage offset
+// (descending ranges walk storage backwards). EOF mid-element zero-pads that
+// element's LSBs, matching the packed form's "as much as available". The
+// caller always supplies `sv_start` (the lowest declared index when the SV
+// call omits it).
 auto LyraFRead(
     RuntimeServices& services, value::UnpackedArray<value::PackedArray>& dest,
-    const value::PackedArray& fd, std::optional<std::int64_t> sv_start,
-    std::optional<std::int64_t> count, std::int64_t declared_left,
-    std::int64_t declared_right) -> value::PackedArray;
+    const value::PackedArray& fd, const value::PackedArray& declared_left,
+    const value::PackedArray& declared_right,
+    const value::PackedArray& sv_start) -> value::PackedArray;
+
+// As above, loading at most `count` elements (LRM 21.3.4.4 explicit count).
+auto LyraFRead(
+    RuntimeServices& services, value::UnpackedArray<value::PackedArray>& dest,
+    const value::PackedArray& fd, const value::PackedArray& declared_left,
+    const value::PackedArray& declared_right,
+    const value::PackedArray& sv_start, const value::PackedArray& count)
+    -> value::PackedArray;
 
 // LRM 21.3.5 $fseek(fd, offset, operation). `operation` is 0/1/2 for
 // SEEK_SET/SEEK_CUR/SEEK_END. Returns 0 on success or -1 on error.
@@ -119,10 +133,12 @@ auto LyraFError(
     RuntimeServices& services, const value::PackedArray& fd,
     value::String& dest) -> value::PackedArray;
 
-// LRM 21.3.6 $fflush(descriptor). When `descriptor` is nullopt the runtime
-// flushes every open file; otherwise it flushes the addressed channels (MCD
-// fan-out or single FD).
+// LRM 21.3.6 $fflush(). Flushes every open file.
+void LyraFFlush(RuntimeServices& services);
+
+// LRM 21.3.6 $fflush(descriptor). Flushes the addressed channels (MCD fan-out
+// or single FD).
 void LyraFFlush(
-    RuntimeServices& services, std::optional<value::PackedArray> descriptor);
+    RuntimeServices& services, const value::PackedArray& descriptor);
 
 }  // namespace lyra::runtime
