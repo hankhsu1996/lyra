@@ -30,7 +30,7 @@ follow once dynamic array's storage and runtime conventions are settled and prov
 | DA6c | Done: locator family (find\*, min, max, unique\*).                      |
 | DA6d | Done: `map` projection (LRM 7.12.5) on the sequence containers.         |
 | DA6e | Open: `shuffle` (LRM 7.12.2); needs a seeded simulation RNG.            |
-| DA6f | Open: two-name iterator / index argument form (LRM 7.12.4).             |
+| DA6f | Done: two-name iterator / index argument form (LRM 7.12.4).             |
 | DA6g | Done: `string` / `real` / `shortreal` as an unpacked-array element.     |
 | DA7  | Done: invalid-index handling.                                           |
 | Q1   | Done: type, element read/write, native methods, default, case-equality. |
@@ -127,10 +127,14 @@ The numeric IDs are stable references and do not imply execution order beyond DA
       simulation state rather than being a pure function of its receiver, so it also introduces
       threading that state into an array-method call.
 
-- [ ] DA6f -- The two-name iterator / index argument form of the LRM 7.12 family
+- [x] DA6f -- The two-name iterator / index argument form of the LRM 7.12 family
       (`a.method(item, idx) with (...)`, LRM 7.12.4), which renames the iterator and the index-query
-      method to avoid clashes with member names of the stored elements. Shared across find / sort /
-      map / reductions; none support it yet.
+      method to avoid clashes with member names of the stored elements. The frontend normalizes the
+      form away: the renamed iterator flows through as the with-clause iterator name, and a renamed
+      index method resolves back to the canonical index query, so the existing closure synthesis
+      handles it with no new lowering. Shared across find / sort / map / reductions. The clash it
+      exists to resolve only arises once an element type has its own members (struct / class /
+      union), which the array-method family does not yet take.
 
 - [x] DA6g -- `string`, `real`, and `shortreal` as unpacked-array elements (dynamic array, queue,
       fixed unpacked): declaration, element read / write, the element-type OOB default (LRM Table
