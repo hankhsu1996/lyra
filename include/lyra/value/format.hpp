@@ -8,6 +8,8 @@ namespace lyra::value {
 
 class PackedArray;
 class String;
+template <typename Host>
+class RealValue;
 template <typename T>
 class UnpackedArray;
 template <typename T>
@@ -206,10 +208,8 @@ struct PrintValueItem {
   PrintValueItem(const String& value, FormatSpec spec)
       : spec(spec), arg(MakeFormatArg(value)) {
   }
-  PrintValueItem(const double& value, FormatSpec spec)
-      : spec(spec), arg(MakeFormatArg(value)) {
-  }
-  PrintValueItem(const float& value, FormatSpec spec)
+  template <typename Host>
+  PrintValueItem(const RealValue<Host>& value, FormatSpec spec)
       : spec(spec), arg(MakeFormatArg(value)) {
   }
   template <typename T>

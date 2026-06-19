@@ -158,6 +158,12 @@ constexpr std::array kEntries{
             .category = std::nullopt,
             .name = "delay_value_out_of_range"}},
     std::pair{
+        DiagCode::kCaseEqualityOnRealOperand,
+        DiagCodeInfo{
+            .kind = DiagKind::kError,
+            .category = std::nullopt,
+            .name = "case_equality_on_real_operand"}},
+    std::pair{
         DiagCode::kFormatStringTrailingPercent,
         DiagCodeInfo{
             .kind = DiagKind::kError,

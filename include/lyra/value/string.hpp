@@ -9,6 +9,7 @@
 #include <utility>
 
 #include "lyra/value/packed_array.hpp"
+#include "lyra/value/real.hpp"
 #include "lyra/value/unpacked_array.hpp"
 #include "lyra/value/value_concept.hpp"
 
@@ -105,6 +106,14 @@ class String {
   // form of bit-pattern identity. Distinct from `CaseEqual` only in role.
   [[nodiscard]] auto IsBitIdentical(const String& o) const -> bool {
     return impl_ == o.impl_;
+  }
+
+  // LRM Table 6-7: the string default is the empty string. This is the
+  // container OOB-shield contract shared with the other value types
+  // (docs/decisions/runtime-shape-and-default-value.md), so a `string` can be
+  // an unpacked-array element.
+  auto ResetToDefault() -> void {
+    impl_.clear();
   }
 
   // LRM 11.4.4 relational operators on `String` (LRM 6.16). The result is
@@ -216,12 +225,12 @@ class String {
   }
 
   // LRM 6.16.10. Parse leading real-number syntax; 0.0 if none.
-  [[nodiscard]] auto Atoreal() const -> double {
-    if (impl_.empty()) return 0.0;
+  [[nodiscard]] auto Atoreal() const -> Real {
+    if (impl_.empty()) return Real{0.0};
     char* end_ptr = nullptr;
     const double v = std::strtod(impl_.c_str(), &end_ptr);
-    if (end_ptr == impl_.c_str()) return 0.0;
-    return v;
+    if (end_ptr == impl_.c_str()) return Real{0.0};
+    return Real{v};
   }
 
   // LRM 6.16.11 through 6.16.15. Each replaces receiver with the ASCII
@@ -232,7 +241,7 @@ class String {
   void Hextoa(const PackedArray& i);
   void Octtoa(const PackedArray& i);
   void Bintoa(const PackedArray& i);
-  void Realtoa(double r);
+  void Realtoa(const Real& r);
 
   [[nodiscard]] auto View() const -> std::string_view {
     return impl_;

@@ -10,6 +10,7 @@ module Top;
   int fa[3] = '{7, 8, 9};
   int empty[];
   int m[][] = '{'{1, 2, 3}, '{4, 5}};
+  string names[] = '{"a", "bb"};
 
   int sum_ab[];
   bit gt[];
@@ -17,6 +18,7 @@ module Top;
   int fad[3];
   int em[];
   int rowsum[];
+  string upper[];
 
   initial begin
     // LRM 7.12.4 item.index, reaching across to a sibling array.
@@ -31,5 +33,7 @@ module Top;
     em = empty.map(x) with (x + 1);
     // The element is itself an array; the closure reduces each row.
     rowsum = m.map(row) with (row.sum());
+    // The result element type is itself a value type other than the source's.
+    upper = names.map(s) with (s.toupper());
   end
 endmodule

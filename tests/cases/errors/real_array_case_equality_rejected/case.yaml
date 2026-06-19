@@ -1,0 +1,17 @@
+id: errors.real_array_case_equality_rejected
+tags: [errors, diag]
+input:
+  command: [emit, cpp]
+  project: false
+  top: Top
+  files: [main.sv]
+  args: ["--no-color"]
+expect:
+  exit: 1
+  stderr:
+    contains:
+      - "error:"
+      - "case equality"
+      - "real"
+    not_contains:
+      - "internal error"
