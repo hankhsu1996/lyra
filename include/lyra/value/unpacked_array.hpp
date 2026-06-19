@@ -21,7 +21,7 @@ namespace lyra::value {
 template <typename T>
 class UnpackedArray;
 template <typename T>
-class UnpackedArrayRef;
+class ArraySliceRef;
 
 // SystemVerilog fixed-size unpacked array (LRM 7.4.2). One C++ container layer
 // per declared unpacked dimension; multi-dim composes as
@@ -136,26 +136,13 @@ class UnpackedArray {
   [[nodiscard]] auto Slice(const PackedArray& offset, std::uint32_t count) const
       -> UnpackedArray {
     const T canonical = MakeCanonicalElement();
-    UnpackedArray result(canonical);
-    if (offset.HasUnknown()) {
-      result.data_.assign(count, canonical);
-      return result;
-    }
-    result.data_.reserve(count);
-    const auto base = offset.ToInt64();
-    const auto size = static_cast<std::int64_t>(data_.size());
-    for (std::uint32_t i = 0; i < count; ++i) {
-      const auto pos = base + static_cast<std::int64_t>(i);
-      const bool in_bounds = pos >= 0 && pos < size;
-      result.data_.push_back(
-          in_bounds ? data_[static_cast<std::size_t>(pos)] : canonical);
-    }
-    return result;
+    return UnpackedArray(
+        canonical, detail::ArraySliceGather(data_, canonical, offset, count));
   }
 
   [[nodiscard]] auto Slice(const PackedArray& offset, std::uint32_t count)
-      -> UnpackedArrayRef<T> {
-    return UnpackedArrayRef<T>{*this, offset, count};
+      -> ArraySliceRef<T> {
+    return ArraySliceRef<T>{data_, MakeCanonicalElement(), offset, count};
   }
 
   // LRM 11.2.2 + 11.4.5 aggregate equality / case-equality. Slang's binding
@@ -330,63 +317,47 @@ class UnpackedArray {
   mutable T oob_slot_;
   std::vector<T> data_;
 
-  friend class UnpackedArrayRef<T>;
+  friend class ArraySliceRef<T>;
 };
 
 // LRM 7.6: an assignment to an unpacked slice is a single assignment to the
-// entire slice. The proxy holds a non-owning pointer back to the source array
-// plus the (offset, count) window. X / Z offset makes `Clone()` return a
-// wholly-default sub-array and `operator=` a no-op; partial-OOB behaves
-// per-element. Move-only so the proxy cannot outlive the source it aliases.
+// entire slice. The proxy aliases the source storage (a non-owning pointer to
+// its element vector) plus the (offset, count) window, so a fixed-size unpacked
+// array and a dynamic array share one slice-write surface. X / Z offset makes
+// `Clone()` a wholly-default sub-array and `operator=` a no-op; partial-OOB
+// behaves per-element. Move-only so the proxy cannot outlive what it aliases.
 template <typename T>
-class UnpackedArrayRef {
+class ArraySliceRef {
  public:
-  UnpackedArrayRef(
-      UnpackedArray<T>& base, const PackedArray& offset, std::uint32_t count)
-      : base_(&base),
-        offset_unknown_(offset.HasUnknown()),
-        offset_(offset_unknown_ ? 0 : offset.ToInt64()),
+  ArraySliceRef(
+      std::vector<T>& data, T canonical, PackedArray offset,
+      std::uint32_t count)
+      : data_(&data),
+        canonical_(std::move(canonical)),
+        offset_(std::move(offset)),
         count_(count) {
   }
-  UnpackedArrayRef(const UnpackedArrayRef&) = delete;
-  auto operator=(const UnpackedArrayRef&) -> UnpackedArrayRef& = delete;
-  UnpackedArrayRef(UnpackedArrayRef&&) noexcept = default;
-  auto operator=(UnpackedArrayRef&&) noexcept -> UnpackedArrayRef& = default;
-  ~UnpackedArrayRef() = default;
+  ArraySliceRef(const ArraySliceRef&) = delete;
+  auto operator=(const ArraySliceRef&) -> ArraySliceRef& = delete;
+  ArraySliceRef(ArraySliceRef&&) noexcept = default;
+  auto operator=(ArraySliceRef&&) noexcept -> ArraySliceRef& = default;
+  ~ArraySliceRef() = default;
 
   [[nodiscard]] auto Clone() const -> UnpackedArray<T> {
-    const T canonical = base_->MakeCanonicalElement();
-    UnpackedArray<T> result(canonical);
-    if (offset_unknown_) {
-      result.data_.assign(count_, canonical);
-      return result;
-    }
-    result.data_.reserve(count_);
-    const auto size = static_cast<std::int64_t>(base_->data_.size());
-    for (std::uint32_t i = 0; i < count_; ++i) {
-      const auto pos = offset_ + static_cast<std::int64_t>(i);
-      const bool in_bounds = pos >= 0 && pos < size;
-      result.data_.push_back(
-          in_bounds ? base_->data_[static_cast<std::size_t>(pos)] : canonical);
-    }
-    return result;
+    return UnpackedArray<T>(
+        canonical_,
+        detail::ArraySliceGather(*data_, canonical_, offset_, count_));
   }
 
-  auto operator=(const UnpackedArray<T>& value) -> UnpackedArrayRef& {
-    if (offset_unknown_) return *this;
-    const auto size = static_cast<std::int64_t>(base_->data_.size());
-    for (std::uint32_t i = 0; i < count_; ++i) {
-      const auto pos = offset_ + static_cast<std::int64_t>(i);
-      if (pos < 0 || pos >= size) continue;
-      base_->data_[static_cast<std::size_t>(pos)] = value.data_[i];
-    }
+  auto operator=(const UnpackedArray<T>& value) -> ArraySliceRef& {
+    detail::ArraySliceScatter(*data_, offset_, count_, value.data_);
     return *this;
   }
 
  private:
-  UnpackedArray<T>* base_;
-  bool offset_unknown_;
-  std::int64_t offset_;
+  std::vector<T>* data_;
+  T canonical_;
+  PackedArray offset_;
   std::uint32_t count_;
 };
 

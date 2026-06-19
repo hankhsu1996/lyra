@@ -58,6 +58,27 @@ auto IntConstFromMirExpr(const mir::Expr& expr) -> std::int64_t {
       "IntConstFromMirExpr: expression is not an IntegerLiteral");
 }
 
+// Builds the `base <op> value` expression for a slice-bound offset. The delta
+// literal matches `base`'s state-kind so the runtime arithmetic never mixes a
+// 2-state literal with a 4-state index; an x / z index then propagates into the
+// offset and invalidates the whole slice (LRM 7.4.5). The caller adds the
+// returned expression to its scope.
+auto BuildOffsetDelta(
+    const ModuleLowerer& module, mir::ProceduralScope& proc_scope,
+    mir::ExprId base, std::int64_t value, mir::BinaryOp op) -> mir::Expr {
+  const auto base_type = proc_scope.GetExpr(base).type;
+  const auto& base_ty = module.Unit().GetType(base_type);
+  const bool four_state =
+      base_ty.IsIntegralPacked() && base_ty.AsIntegralPacked().IsFourState();
+  const auto delta_lit = proc_scope.AddExpr(
+      four_state
+          ? mir::MakeIntegerLiteral(module.Unit().builtins.integer, value)
+          : mir::MakeInt32Literal(module.Unit().builtins.int32, value));
+  return mir::Expr{
+      .data = mir::BinaryExpr{.op = op, .lhs = base, .rhs = delta_lit},
+      .type = base_type};
+}
+
 // LRM 7.4.5 + 11.5.1: the three source-faithful bound forms collapse to a
 // single (offset, count) shape at HIR -> MIR. ConstantBounds reduce by
 // reading both folded literals; IndexedUp uses base/width directly;
@@ -105,18 +126,9 @@ auto UnfoldHirRangeBoundsToOffsetCount(
             if (!width) return std::unexpected(std::move(width.error()));
             const auto count = static_cast<std::uint32_t>(
                 IntConstFromMirExpr(proc_scope.GetExpr(*width)));
-            const auto base_type = proc_scope.GetExpr(*base).type;
-            const auto sub_lit = proc_scope.AddExpr(
-                mir::MakeInt32Literal(
-                    int32_type, static_cast<std::int64_t>(count) - 1));
-            const auto offset = proc_scope.AddExpr(
-                mir::Expr{
-                    .data =
-                        mir::BinaryExpr{
-                            .op = mir::BinaryOp::kSub,
-                            .lhs = *base,
-                            .rhs = sub_lit},
-                    .type = base_type});
+            const auto offset = proc_scope.AddExpr(BuildOffsetDelta(
+                module, proc_scope, *base, static_cast<std::int64_t>(count) - 1,
+                mir::BinaryOp::kSub));
             return RangeOffsetCount{.offset_expr = offset, .count = count};
           },
       },
@@ -158,17 +170,11 @@ auto UnfoldHirRangeBoundsForUnpacked(
     const ModuleLowerer& module, mir::ProceduralScope& proc_scope,
     const hir::RangeBounds& bounds, const hir::UnpackedRange& declared,
     std::uint32_t count, LowerOne lower_one) -> diag::Result<RangeOffsetCount> {
-  const mir::TypeId int32_type = module.Unit().builtins.int32;
   const bool descending = declared.left >= declared.right;
   auto with_delta = [&](mir::ExprId base, std::int64_t delta,
                         mir::BinaryOp op) -> mir::ExprId {
-    const auto base_type = proc_scope.GetExpr(base).type;
-    const auto delta_lit =
-        proc_scope.AddExpr(mir::MakeInt32Literal(int32_type, delta));
     return proc_scope.AddExpr(
-        mir::Expr{
-            .data = mir::BinaryExpr{.op = op, .lhs = base, .rhs = delta_lit},
-            .type = base_type});
+        BuildOffsetDelta(module, proc_scope, base, delta, op));
   };
   return std::visit(
       Overloaded{

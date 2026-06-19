@@ -61,6 +61,10 @@ If you are looking for a concept, this table points to the canonical doc.
 | Locating/bundling the C++ runtime; run output contract                    | `runtime_distribution.md`   |
 | Test categories; suite layout; expectation forms                          | `testing_strategy.md`       |
 
+These docs are the contracts. For the trade-off records behind them -- rejected alternatives and
+load-bearing invariants, grouped by subject -- see the Index in
+[`../decisions/README.md`](../decisions/README.md).
+
 ## Required Reading by Decision
 
 Before designing a change, **read `north_star.md` first -- always**. Then read the docs that govern

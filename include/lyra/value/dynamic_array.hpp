@@ -15,6 +15,7 @@
 #include "lyra/value/format.hpp"
 #include "lyra/value/packed_array.hpp"
 #include "lyra/value/queue.hpp"
+#include "lyra/value/unpacked_array.hpp"
 #include "lyra/value/value_concept.hpp"
 
 namespace lyra::value {
@@ -149,6 +150,24 @@ class DynamicArray {
       return oob_slot_;
     }
     return data_[static_cast<std::size_t>(idx.ToInt64())];
+  }
+
+  // LRM 7.4.5 / 7.4.6 contiguous-range selector. A dynamic array slices like
+  // any unpacked array; the constant width makes the result a fixed-size
+  // unpacked array. The const overload materializes a fresh sub-array
+  // (partial-OOB positions and an x / z offset yield the canonical default);
+  // the non-const overload returns the shared write-back proxy with the same
+  // invalid-index policy on `operator=`.
+  [[nodiscard]] auto Slice(const PackedArray& offset, std::uint32_t count) const
+      -> UnpackedArray<T> {
+    const T canonical = MakeCanonicalElement();
+    return UnpackedArray<T>(
+        canonical, detail::ArraySliceGather(data_, canonical, offset, count));
+  }
+
+  [[nodiscard]] auto Slice(const PackedArray& offset, std::uint32_t count)
+      -> ArraySliceRef<T> {
+    return ArraySliceRef<T>{data_, MakeCanonicalElement(), offset, count};
   }
 
   // LRM 11.2.2 + 11.4.5 aggregate equality. Runtime size mismatch yields
@@ -330,6 +349,14 @@ class DynamicArray {
     const auto v = idx.ToInt64();
     return v < 0 || static_cast<std::uint64_t>(v) >=
                         static_cast<std::uint64_t>(data_.size());
+  }
+
+  // Returns a fresh `T` at this container's element shape in LRM Table 7-1
+  // canonical state, disconnected from the OOB shield identity (slice fill).
+  [[nodiscard]] auto MakeCanonicalElement() const -> T {
+    T fresh = oob_slot_;
+    fresh.ResetToDefault();
+    return fresh;
   }
 
   mutable T oob_slot_;

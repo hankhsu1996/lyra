@@ -24,7 +24,7 @@ follow once dynamic array's storage and runtime conventions are settled and prov
 | DA2  | Done: NBA, compound element write, whole-array assignment.              |
 | DA3  | Done: positional and replicated assignment patterns (LRM 10.9.1).       |
 | DA4  | Done: aggregate equality, inequality, case-equality.                    |
-| DA5  | Open: constant-width slice (subject to LRM check).                      |
+| DA5  | Done: constant-width slice (read and write).                            |
 | DA6a | Done: method dispatch + no-`with` subset.                               |
 | DA6b | Done: `with` clause + iterator on sort / rsort / reduction methods.     |
 | DA6c | Done: locator family (find\*, min, max, unique\*).                      |
@@ -83,11 +83,13 @@ The numeric IDs are stable references and do not imply execution order beyond DA
       values and are deterministic. Multi-dimensional and mixed-container nesting (`int [3][]`,
       `int [][3]`) compose through the recursive element type.
 
-- [ ] DA5 -- Constant-width slice (read and write), subject to LRM confirmation. If the LRM permits
-      the `+:` / `-:` indexed-part-select form on `T []`, the in-scope subset mirrors U6:
-      compile-time width, runtime base, lvalue treated as a single assignment to the slice;
-      direction and OOB semantics carry over from U6 / U7. If the LRM forbids slicing on dynamic
-      arrays, DA5 closes by emitting the rejection diagnostic instead.
+- [x] DA5 -- Constant-width slice (read and write). LRM 7.4.6 permits slicing on any unpacked array
+      except associative, so a dynamic array slices like a fixed unpacked array: the constant width
+      makes the result a fixed-size unpacked array, the position may be runtime, and a slice write
+      (LRM 7.6) is a single assignment to the whole slice. All three bound forms (`a:b`, `+:`, `-:`)
+      and multi-dimensional receivers are covered. Direction and out-of-range / x-z semantics carry
+      over from U6 / U7: an out-of-range position reads the element default and is skipped on write,
+      while an x / z position makes the whole slice default on read and a no-op on write.
 
 - [x] DA6a -- Method dispatch infrastructure plus the no-`with`, no-queue-return method subset.
       `.size()` and `.delete()` (LRM 7.5.2 / 7.5.3); the LRM 7.12.2 ordering subset that takes no
