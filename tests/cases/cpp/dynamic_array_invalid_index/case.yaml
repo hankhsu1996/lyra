@@ -1,0 +1,21 @@
+id: cpp.dynamic_array_invalid_index
+tags: [cpp_run]
+input:
+  command: [run, cpp]
+  project: false
+  top: Top
+  files: [main.sv]
+expect:
+  exit: 0
+  variables:
+    oob_2s_pos: 0
+    oob_2s_neg: 0
+    from_empty: 0
+    in_range_2s: 20
+    oob_4s_pos: "8'bxxxxxxxx"
+    x_idx_4s: "8'bxxxxxxxx"
+    z_idx_4s: "8'bxxxxxxxx"
+    in_range_4s: "8'h22"
+    int_arr: [10, 20, 30]
+    logic_arr: ["8'h11", "8'h22", "8'h33"]
+    empty_arr: []

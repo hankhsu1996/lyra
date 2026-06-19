@@ -28,7 +28,7 @@ follow once dynamic array's storage and runtime conventions are settled and prov
 | DA6a | Done: method dispatch + no-`with` subset.                               |
 | DA6b | Done: `with` clause + iterator on sort / rsort / reduction methods.     |
 | DA6c | Done: locator family (find\*, min, max, unique\*).                      |
-| DA7  | Open: invalid-index handling.                                           |
+| DA7  | Done: invalid-index handling.                                           |
 | Q1   | Done: type, element read/write, native methods, default, case-equality. |
 | Q2   | Done: operator surface (`$`, slice, concat, equality, bound, append).   |
 | Q3   | Done: array-manipulation method family (LRM 7.12).                      |
@@ -110,9 +110,10 @@ The numeric IDs are stable references and do not imply execution order beyond DA
       `max` / `unique`. `shuffle()` (needs RNG model) and `map()` (SV2023, needs a version gate) are
       standalone follow-ups.
 
-- [ ] DA7 -- Invalid-index handling. Read on an out-of-range index returns the element type's LRM
-      Table 7-1 default; write on an out-of-range index is a silent no-op; X / Z bits in the index
-      follow the same default-on-read, no-op-on-write contract. Mirrors U7 for fixed unpacked.
+- [x] DA7 -- Invalid-index handling (LRM 7.4.5). Read on an out-of-range index returns the element
+      type's Table 7-1 default; write on an out-of-range index is a silent no-op; X / Z bits in the
+      index follow the same default-on-read, no-op-on-write contract, as does every index into a
+      zero-size array. Same contract as U7 for fixed unpacked.
 
 ## Queue
 
