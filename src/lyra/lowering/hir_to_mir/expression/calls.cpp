@@ -488,7 +488,8 @@ auto LowerSystemSubroutineCall(
           },
           [&](const support::PrintTimescaleSystemSubroutineInfo&)
               -> diag::Result<mir::Expr> {
-            return LowerPrintTimescaleSystemSubroutineCall(process);
+            return LowerPrintTimescaleSystemSubroutineCall(
+                process, frame, desc.id);
           },
       },
       desc.semantic);

@@ -309,15 +309,6 @@ auto RenderRuntimeCallExpr(
                 "{}.SetTimeFormat({}, {}, {}, {})", "self->Services()", *units,
                 *precision, *suffix, *width);
           },
-          [&](const mir::RuntimePrintTimescaleCall& pt)
-              -> diag::Result<std::string> {
-            // Unit and precision come from the enclosing scope class constants
-            // (LRM 20.4.2, current-scope form); the name is baked at lowering.
-            return std::format(
-                "lyra::runtime::LyraPrintTimescale({}, {}, "
-                "kTimeUnitPower, kTimePrecisionPower)",
-                "self->Services()", RenderCStringLiteral(pt.scope_name));
-          },
       },
       expr.call);
 }

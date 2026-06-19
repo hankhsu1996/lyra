@@ -131,8 +131,7 @@ struct CallExpr {
 
 using RuntimeCall = std::variant<
     RuntimePrintCall, RuntimeSubmitObservedCall, RuntimeSubmitNbaCall,
-    RuntimeSubmitPostponedCall, RuntimeScanCall, RuntimeSetTimeFormatCall,
-    RuntimePrintTimescaleCall>;
+    RuntimeSubmitPostponedCall, RuntimeScanCall, RuntimeSetTimeFormatCall>;
 
 struct RuntimeCallExpr {
   RuntimeCall call;

@@ -852,12 +852,6 @@ class MirDumper {
                             "RuntimeSetTimeFormatCall args={}",
                             tf.args.has_value() ? "4" : "default"));
                   },
-                  [&](const RuntimePrintTimescaleCall& pt) {
-                    Line(
-                        std::format(
-                            "RuntimePrintTimescaleCall scope={}",
-                            pt.scope_name));
-                  },
               },
               rc->call);
           Dedent();

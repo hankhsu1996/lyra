@@ -1,6 +1,7 @@
 #include "lyra/runtime/timescale.hpp"
 
 #include <array>
+#include <cstdint>
 #include <format>
 #include <string>
 
@@ -33,13 +34,15 @@ auto TimeUnitText(std::int8_t power) -> std::string {
 }  // namespace
 
 void LyraPrintTimescale(
-    RuntimeServices& services, std::string_view scope_name,
-    std::int8_t unit_power, std::int8_t precision_power) {
+    RuntimeServices& services, const value::String& scope_name,
+    const value::PackedArray& unit_power,
+    const value::PackedArray& precision_power) {
   auto& stream = services.Stream();
   stream.Append(
       std::format(
-          "Time scale of ({}) is {} / {}", scope_name, TimeUnitText(unit_power),
-          TimeUnitText(precision_power)));
+          "Time scale of ({}) is {} / {}", scope_name.View(),
+          TimeUnitText(static_cast<std::int8_t>(unit_power.ToInt64())),
+          TimeUnitText(static_cast<std::int8_t>(precision_power.ToInt64()))));
   stream.FinishRecord(true);
 }
 

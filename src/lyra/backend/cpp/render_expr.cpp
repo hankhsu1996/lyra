@@ -1187,6 +1187,10 @@ auto RenderSystemSubroutineEntryName(const support::SystemSubroutineDesc& desc)
               -> diag::Result<std::string_view> {
             return std::string_view{"lyra::runtime::LyraSFormat"};
           },
+          [](const support::PrintTimescaleSystemSubroutineInfo&)
+              -> diag::Result<std::string_view> {
+            return std::string_view{"lyra::runtime::LyraPrintTimescale"};
+          },
           [](const support::TimeSystemSubroutineInfo& time)
               -> diag::Result<std::string_view> {
             switch (time.kind) {

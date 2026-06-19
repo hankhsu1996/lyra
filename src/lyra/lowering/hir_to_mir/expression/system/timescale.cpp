@@ -2,8 +2,10 @@
 
 #include <array>
 #include <cstddef>
+#include <cstdint>
 #include <expected>
 #include <optional>
+#include <string>
 #include <utility>
 
 #include "lyra/base/internal_error.hpp"
@@ -12,6 +14,8 @@
 #include "lyra/hir/expr.hpp"
 #include "lyra/hir/procedural_body.hpp"
 #include "lyra/lowering/hir_to_mir/process_lowerer.hpp"
+#include "lyra/lowering/hir_to_mir/services_call.hpp"
+#include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/expr.hpp"
 #include "lyra/mir/runtime_timescale.hpp"
 
@@ -56,15 +60,36 @@ auto LowerTimeFormatSystemSubroutineCall(
       .type = process.Module().Unit().builtins.void_type};
 }
 
-auto LowerPrintTimescaleSystemSubroutineCall(const ProcessLowerer& process)
-    -> diag::Result<mir::Expr> {
+auto LowerPrintTimescaleSystemSubroutineCall(
+    const ProcessLowerer& process, const WalkFrame& frame,
+    support::SystemSubroutineId id) -> diag::Result<mir::Expr> {
+  const auto& builtins = process.Module().Unit().builtins;
+  auto& body = *frame.current_procedural_scope;
+  const auto resolution = process.Resolution();
+
+  const mir::ExprId services_id =
+      body.AddExpr(BuildServicesCallExpr(process, frame));
+  const mir::ExprId scope_name_id = body.AddExpr(
+      mir::Expr{
+          .data =
+              mir::StringLiteral{.value = std::string(process.Scope().Name())},
+          .type = builtins.string});
+  const mir::ExprId unit_power_id = body.AddExpr(
+      mir::MakeInt32Literal(
+          builtins.int32, static_cast<std::int64_t>(resolution.unit_power)));
+  const mir::ExprId precision_power_id = body.AddExpr(
+      mir::MakeInt32Literal(
+          builtins.int32,
+          static_cast<std::int64_t>(resolution.precision_power)));
+
   return mir::Expr{
       .data =
-          mir::RuntimeCallExpr{
-              .call =
-                  mir::RuntimePrintTimescaleCall{
-                      .scope_name = process.Scope().Name()}},
-      .type = process.Module().Unit().builtins.void_type};
+          mir::CallExpr{
+              .callee = mir::SystemSubroutineCallee{.id = id},
+              .arguments =
+                  {services_id, scope_name_id, unit_power_id,
+                   precision_power_id}},
+      .type = builtins.void_type};
 }
 
 }  // namespace lyra::lowering::hir_to_mir

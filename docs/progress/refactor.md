@@ -360,13 +360,12 @@ Entries get checked off as their PRs land. When the last entry lands, the file i
       `RuntimeCallExpr` + payload-struct shape onto the one generic `CallExpr` (callee symbol plus
       an argument vector, with services threaded as a plain `self.Services()` argument), then retire
       `RuntimeCallExpr` and its payloads entirely. **Done**: `$finish`, the `$time` family, file
-      I/O, the print-to-sink family, diagnostics (`$info` / `$warning` / `$error`), and the
-      string-format family (`$sformat` / `$swrite` / `$sformatf`). **Remaining**: the `$strobe`
-      family (deferred print -- the last effect whose print items the backend still constructs
-      inline, so its move removes that special case), the scan family (`$sscanf` / `$fscanf`, with
-      write-through output slots), `$timeformat` / `$printtimescale`, and the synthesized
-      non-blocking-assignment and deferred-assertion submits (no system-subroutine id -- these need
-      a callee for compiler-synthesized effects).
+      I/O, the print-to-sink family, diagnostics (`$info` / `$warning` / `$error`), the
+      string-format family (`$sformat` / `$swrite` / `$sformatf`), and `$printtimescale`.
+      **Remaining (closure-free)**: `$timeformat` (the no-argument reset form restores a
+      design-global default the runtime resolves, so set and reset select different runtime
+      entries). The closure-bearing effects are carved out to R26 below; retiring `RuntimeCallExpr`
+      entirely depends on both this and R26.
 
 - [ ] R21 -- Rename `LowerStructuralVarRefExpr` (the central HIR-to-MIR helper) to reflect what it
       actually does post-R16: translate an HIR implicit-receiver structural-var read into a MIR
@@ -444,6 +443,16 @@ Entries get checked off as their PRs land. When the last entry lands, the file i
       traversal (a free runtime call still splicing the engine handle, the one remaining services
       fabrication), and value `$isunknown` (type-static, no call in the all-2-state case).
       **Trigger**: continuation of `decisions/runtime-effects-as-generic-calls.md`.
+
+- [ ] R26 -- **Runtime effects as generic calls: the closure-bearing subset** (carve-out of R20,
+      same decision). Each of these lowers to a generic `CallExpr` over a compiler-synthesized
+      closure: the `$strobe` family (deferred print -- the last effect whose print items the backend
+      still constructs inline), the scan family (`$sscanf` / `$fscanf`, whose write-through output
+      slots are captured into the closure), and the synthesized non-blocking-assignment and
+      deferred-assertion submits (no system-subroutine id -- these need a callee for
+      compiler-synthesized effects). **Blocked**: the MIR closure representation is mid-refactor on
+      a separate thread; reworking these now would collide. Resume once that lands. **Trigger**:
+      continuation of `decisions/runtime-effects-as-generic-calls.md`.
 
 ## Out of Scope
 

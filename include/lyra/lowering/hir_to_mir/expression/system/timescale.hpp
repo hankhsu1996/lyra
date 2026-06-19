@@ -6,6 +6,7 @@
 #include "lyra/lowering/hir_to_mir/process_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/walk_frame.hpp"
 #include "lyra/mir/expr.hpp"
+#include "lyra/support/system_subroutine.hpp"
 
 namespace lyra::lowering::hir_to_mir {
 
@@ -17,10 +18,12 @@ auto LowerTimeFormatSystemSubroutineCall(
     ProcessLowerer& process, WalkFrame frame, const hir::CallExpr& call,
     diag::SourceSpan span) -> diag::Result<mir::Expr>;
 
-// Lower `$printtimescale` (LRM 20.4.2, no-argument form) into a void
-// `mir::RuntimeCallExpr` carrying a `RuntimePrintTimescaleCall` with the
-// enclosing scope's name.
-auto LowerPrintTimescaleSystemSubroutineCall(const ProcessLowerer& process)
-    -> diag::Result<mir::Expr>;
+// Lower `$printtimescale` (LRM 20.4.2, no-argument form) into a generic
+// `CallExpr`. The enclosing scope's name, time unit, and precision are all
+// resolved at lowering and passed as ordinary value arguments, so the runtime
+// entry reads stated facts rather than the backend splicing scope constants.
+auto LowerPrintTimescaleSystemSubroutineCall(
+    const ProcessLowerer& process, const WalkFrame& frame,
+    support::SystemSubroutineId id) -> diag::Result<mir::Expr>;
 
 }  // namespace lyra::lowering::hir_to_mir

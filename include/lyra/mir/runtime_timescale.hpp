@@ -1,7 +1,6 @@
 #pragma once
 
 #include <optional>
-#include <string>
 
 #include "lyra/mir/expr_id.hpp"
 
@@ -22,13 +21,6 @@ struct TimeFormatArgExprs {
 // and the runtime narrows them, matching how file descriptors flow.
 struct RuntimeSetTimeFormatCall {
   std::optional<TimeFormatArgExprs> args;
-};
-
-// LRM 20.4.2: `$printtimescale` (no-argument form). The scope name is the
-// lexically enclosing design element, resolved at lowering; the unit and
-// precision come from the scope class constants at render time.
-struct RuntimePrintTimescaleCall {
-  std::string scope_name;
 };
 
 }  // namespace lyra::mir
