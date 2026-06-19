@@ -5,7 +5,9 @@
 // up by 10^3 to 5000 and pads to the default field width of 20. After
 // $timeformat(-9, 2, " ns", 0) the display unit is ns, so the same time prints
 // "5.00 ns" -- and $sformatf produces the identical text, proving the
-// string-format path reads the same design-wide state.
+// string-format path reads the same design-wide state. The no-argument
+// $timeformat then restores the defaults (LRM Table 20-3), so %t returns to the
+// design-global precision unit and field width 20.
 `timescale 1ns / 1ps
 module Top;
   string s;
@@ -16,5 +18,7 @@ module Top;
     $display("%t", $time);
     s = $sformatf("%t", $time);
     $display("s=%s", s);
+    $timeformat;
+    $display("[%t]", $time);
   end
 endmodule

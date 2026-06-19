@@ -2,13 +2,10 @@
 
 #include <cstdint>
 #include <functional>
-#include <string>
 #include <utility>
 
 #include "lyra/base/internal_error.hpp"
 #include "lyra/runtime/engine.hpp"
-#include "lyra/value/packed_array.hpp"
-#include "lyra/value/string.hpp"
 
 namespace lyra::runtime {
 
@@ -91,24 +88,11 @@ auto RuntimeServices::TimeFormat() const -> const value::TimeFormat& {
   return engine_->TimeFormat();
 }
 
-void RuntimeServices::SetTimeFormat(
-    const value::PackedArray& units_power, const value::PackedArray& precision,
-    const value::String& suffix, const value::PackedArray& min_width) {
+void RuntimeServices::SetTimeFormat(const value::TimeFormat& time_format) {
   if (engine_ == nullptr) {
     throw InternalError("RuntimeServices::SetTimeFormat: no Engine bound");
   }
-  engine_->SetTimeFormat(
-      static_cast<std::int8_t>(units_power.ToInt64()),
-      static_cast<std::int32_t>(precision.ToInt64()),
-      std::string(suffix.View()),
-      static_cast<std::int32_t>(min_width.ToInt64()));
-}
-
-void RuntimeServices::ResetTimeFormat() {
-  if (engine_ == nullptr) {
-    throw InternalError("RuntimeServices::ResetTimeFormat: no Engine bound");
-  }
-  engine_->ResetTimeFormat();
+  engine_->SetTimeFormat(time_format);
 }
 
 }  // namespace lyra::runtime

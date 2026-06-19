@@ -17,7 +17,6 @@
 #include "lyra/mir/expr.hpp"
 #include "lyra/mir/runtime_print.hpp"
 #include "lyra/mir/runtime_submit.hpp"
-#include "lyra/mir/runtime_timescale.hpp"
 #include "lyra/mir/type.hpp"
 
 namespace lyra::backend::cpp {
@@ -289,62 +288,6 @@ auto RenderRuntimeCallExpr(
             }
             throw InternalError(
                 "RuntimeScanCall: unknown ScanSourceKind in render");
-          },
-          [&](const mir::RuntimeSFormatCall& sf) -> diag::Result<std::string> {
-            if (sf.items.empty()) {
-              return std::format(
-                  "lyra::runtime::LyraSFormat({}, "
-                  "std::span<const lyra::value::PrintItem>{{}})",
-                  "self->Services()");
-            }
-            std::vector<std::string> item_pieces;
-            item_pieces.reserve(sf.items.size());
-            for (const mir::RuntimePrintItem& item : sf.items) {
-              auto piece_or = RenderPrintItemInit(ctx, item);
-              if (!piece_or) {
-                return std::unexpected(std::move(piece_or.error()));
-              }
-              item_pieces.push_back(*std::move(piece_or));
-            }
-            std::string body;
-            for (std::size_t k = 0; k < item_pieces.size(); ++k) {
-              if (k != 0) {
-                body += ", ";
-              }
-              body += item_pieces[k];
-            }
-            return std::format(
-                "lyra::runtime::LyraSFormat({}, "
-                "std::array<lyra::value::PrintItem, {}>{{{{{}}}}})",
-                "self->Services()", sf.items.size(), body);
-          },
-          [&](const mir::RuntimeSetTimeFormatCall& tf)
-              -> diag::Result<std::string> {
-            if (!tf.args.has_value()) {
-              return std::string{"self->Services().ResetTimeFormat()"};
-            }
-            auto units = RenderExpr(ctx, ctx.Expr(tf.args->units));
-            if (!units) return std::unexpected(std::move(units.error()));
-            auto precision = RenderExpr(ctx, ctx.Expr(tf.args->precision));
-            if (!precision) {
-              return std::unexpected(std::move(precision.error()));
-            }
-            auto suffix = RenderExpr(ctx, ctx.Expr(tf.args->suffix));
-            if (!suffix) return std::unexpected(std::move(suffix.error()));
-            auto width = RenderExpr(ctx, ctx.Expr(tf.args->min_width));
-            if (!width) return std::unexpected(std::move(width.error()));
-            return std::format(
-                "{}.SetTimeFormat({}, {}, {}, {})", "self->Services()", *units,
-                *precision, *suffix, *width);
-          },
-          [&](const mir::RuntimePrintTimescaleCall& pt)
-              -> diag::Result<std::string> {
-            // Unit and precision come from the enclosing scope class constants
-            // (LRM 20.4.2, current-scope form); the name is baked at lowering.
-            return std::format(
-                "lyra::runtime::LyraPrintTimescale({}, {}, "
-                "kTimeUnitPower, kTimePrecisionPower)",
-                "self->Services()", RenderCStringLiteral(pt.scope_name));
           },
       },
       expr.call);

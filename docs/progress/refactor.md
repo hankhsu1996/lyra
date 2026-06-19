@@ -355,27 +355,17 @@ Entries get checked off as their PRs land. When the last entry lands, the file i
       their declaration shape itself fixes the field at construction. See
       `docs/decisions/variable-initialization.md`.
 
-- [ ] R20 -- **SUPERSEDED by `decisions/runtime-effects-as-generic-calls.md`.** The framing below
-      ("runtime call becomes a method call with a RuntimeServicesCallee / receiver") is replaced by:
-      a runtime effect is a generic `CallExpr` (callee symbol + a `vector<Expr>` of arguments), and
-      services is just one of those arguments -- a plain `self.Services()` expression -- not a
-      receiver and not a special node. Original text retained for history: Turn runtime-scope method
-      calls (`Services()`, `RegisterChild(name, indices, child)`, `RegisterSignal(name, var)`,
-      `AddProcess(kind, coroutine)`, `SubmitObserved(site_id,     closure)`, etc.) into MIR-modeled
-      expressions so the cpp render stops hardcoding `"self->Services()"`,
-      `"self->RegisterChild(\"...\", ...)"`, `"std::make_unique<Child>(self,     ...)"` and similar
-      literals in `render_print.cpp` / `render_stmt.cpp`. Today each runtime method has bespoke
-      render code that string-concatenates the receiver name with the method name; every argument is
-      rendered uniformly through `RenderExpr` except the implicit receiver, which is spelled out as
-      a literal. Target shape: each runtime call is a `mir::CallExpr` whose callee is a
-      `RuntimeServicesCallee` (or sibling variants for scope-level methods like RegisterChild)
-      carrying the method identity, and whose `arguments[0]` is the receiver expression
-      (`ProceduralVarRef(self)`). The render becomes one rule for every call shape: "render the
-      callee name, open paren, render each argument as an expression separated by commas, close
-      paren". No render handler knows the literal string `"self"` or the literal `"Services()"`
-      anywhere. **Why deferred**: cross-cuts every runtime-method call site (~30 across
-      `render_print.cpp` / `render_stmt.cpp`) and requires MIR vocabulary additions on the Callee
-      variant. **Trigger**: scheduled in front of R18.
+- [ ] R20 -- **Runtime effects as generic calls** (design settled in
+      `decisions/runtime-effects-as-generic-calls.md`). Move every runtime effect off the dedicated
+      `RuntimeCallExpr` + payload-struct shape onto the one generic `CallExpr` (callee symbol plus
+      an argument vector, with services threaded as a plain `self.Services()` argument), then retire
+      `RuntimeCallExpr` and its payloads entirely. **Done**: `$finish`, the `$time` family, file
+      I/O, the print-to-sink family, diagnostics (`$info` / `$warning` / `$error`), the
+      string-format family (`$sformat` / `$swrite` / `$sformatf`), `$printtimescale`, and
+      `$timeformat` (the no-argument reset form restores a design-global default the runtime
+      resolves, so set and reset select different runtime entries). The closure-free effects are all
+      on the generic shape now; the closure-bearing effects are carved out to R26 below, and
+      retiring `RuntimeCallExpr` entirely depends on R26.
 
 - [ ] R21 -- Rename `LowerStructuralVarRefExpr` (the central HIR-to-MIR helper) to reflect what it
       actually does post-R16: translate an HIR implicit-receiver structural-var read into a MIR
@@ -453,6 +443,16 @@ Entries get checked off as their PRs land. When the last entry lands, the file i
       traversal (a free runtime call still splicing the engine handle, the one remaining services
       fabrication), and value `$isunknown` (type-static, no call in the all-2-state case).
       **Trigger**: continuation of `decisions/runtime-effects-as-generic-calls.md`.
+
+- [ ] R26 -- **Runtime effects as generic calls: the closure-bearing subset** (carve-out of R20,
+      same decision). Each of these lowers to a generic `CallExpr` over a compiler-synthesized
+      closure: the `$strobe` family (deferred print -- the last effect whose print items the backend
+      still constructs inline), the scan family (`$sscanf` / `$fscanf`, whose write-through output
+      slots are captured into the closure), and the synthesized non-blocking-assignment and
+      deferred-assertion submits (no system-subroutine id -- these need a callee for
+      compiler-synthesized effects). **Blocked**: the MIR closure representation is mid-refactor on
+      a separate thread; reworking these now would collide. Resume once that lands. **Trigger**:
+      continuation of `decisions/runtime-effects-as-generic-calls.md`.
 
 ## Out of Scope
 

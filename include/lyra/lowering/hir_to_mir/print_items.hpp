@@ -62,7 +62,7 @@ auto BuildRuntimePrintItemsFromCallArgs(
 // `print_item`. The element subtrees are interned into `scope`; the returned
 // array root is left for the caller to intern. `time_unit_power` scales a %t
 // directive (LRM 21.2.1.3) and is unread when no item carries a kTime spec.
-// Shared by every print-bearing effect ($display family, diagnostics).
+// The canonical item-array builder every print-item-bearing effect reuses.
 auto BuildPrintItemsArray(
     mir::CompilationUnit& unit, mir::ProceduralScope& scope,
     const std::vector<mir::RuntimePrintItem>& items,

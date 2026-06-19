@@ -1183,6 +1183,21 @@ auto RenderSystemSubroutineEntryName(const support::SystemSubroutineDesc& desc)
             throw InternalError(
                 "RenderSystemSubroutineEntryName: unknown DiagnosticSeverity");
           },
+          [](const support::SFormatSystemSubroutineInfo&)
+              -> diag::Result<std::string_view> {
+            return std::string_view{"lyra::runtime::LyraSFormat"};
+          },
+          [](const support::PrintTimescaleSystemSubroutineInfo&)
+              -> diag::Result<std::string_view> {
+            return std::string_view{"lyra::runtime::LyraPrintTimescale"};
+          },
+          [](const support::TimeFormatSystemSubroutineInfo&)
+              -> diag::Result<std::string_view> {
+            // LRM 20.4.3: one entry; the set (four-argument) and reset
+            // (no-argument) forms are arity overloads the emitted call
+            // resolves.
+            return std::string_view{"lyra::runtime::LyraTimeFormat"};
+          },
           [](const support::TimeSystemSubroutineInfo& time)
               -> diag::Result<std::string_view> {
             switch (time.kind) {
