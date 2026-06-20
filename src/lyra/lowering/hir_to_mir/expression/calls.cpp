@@ -15,6 +15,7 @@
 #include "lyra/hir/subroutine.hpp"
 #include "lyra/hir/subroutine_ref.hpp"
 #include "lyra/lowering/hir_to_mir/capture_sink.hpp"
+#include "lyra/lowering/hir_to_mir/closure_builder.hpp"
 #include "lyra/lowering/hir_to_mir/default_value.hpp"
 #include "lyra/lowering/hir_to_mir/expression/system/control.hpp"
 #include "lyra/lowering/hir_to_mir/expression/system/diagnostic.hpp"
@@ -241,6 +242,89 @@ auto LowerAssociativeMethodKind(hir::AssociativeMethodKind k)
       "LowerAssociativeMethodKind: unknown hir::AssociativeMethodKind");
 }
 
+auto IsAssociativeTraversalKind(hir::AssociativeMethodKind k) -> bool {
+  return k == hir::AssociativeMethodKind::kFirst ||
+         k == hir::AssociativeMethodKind::kLast ||
+         k == hir::AssociativeMethodKind::kNext ||
+         k == hir::AssociativeMethodKind::kPrev;
+}
+
+// LRM 7.9.4 -- 7.9.7 associative traversal (`m.first(idx)` / `last` / `next` /
+// `prev`). The method writes the visited key into `idx` and returns SV int
+// 1 / 0. The call sits in expression position (the canonical
+// `do ... while (m.next(idx))` idiom) yet must run a statement sequence -- read
+// the probe, query, then write the index back so its LRM 4.3 update event
+// fires -- so it lowers to an immediately-invoked closure. The query is a pure
+// value member that mutates a plain body-local probe; the event-firing lives in
+// the ordinary observable write-back assignment, not in the query.
+auto LowerAssociativeTraversal(
+    ProcessLowerer& process, WalkFrame frame, const hir::CallExpr& c,
+    mir::AssociativeMethodKind kind, mir::TypeId result_type)
+    -> diag::Result<mir::Expr> {
+  if (!c.arguments[1].has_value()) {
+    throw InternalError(
+        "LowerAssociativeTraversal: index argument unexpectedly elided");
+  }
+  const auto& module = process.Module();
+  const auto& hir_proc = process.HirBody();
+  const auto recv_hir = c.arguments[0]->value;
+  const auto idx_hir = c.arguments[1]->value;
+  const mir::TypeId key_type =
+      module.TranslateType(hir_proc.exprs.at(idx_hir).type);
+  const mir::TypeId void_t = module.Unit().builtins.void_type;
+
+  ClosureBuilder closure(process.Module().Unit(), frame, result_type);
+  mir::ProceduralScope& body = closure.Body();
+  const WalkFrame& closure_frame = closure.Frame();
+
+  // probe = idx -- snapshot the current index value into a plain local.
+  auto idx_read_or =
+      process.LowerExpr(hir_proc.exprs.at(idx_hir), closure_frame);
+  if (!idx_read_or) return std::unexpected(std::move(idx_read_or.error()));
+  const mir::ProceduralVarRef probe_ref = body.AppendLocal(
+      mir::ProceduralVarDecl{.name = "_lyra_trav_probe", .type = key_type},
+      body.AddExpr(*std::move(idx_read_or)));
+
+  // found = (map).<kind>(probe) -- pure query: mutates probe, yields 1/0.
+  auto map_read_or =
+      process.LowerExpr(hir_proc.exprs.at(recv_hir), closure_frame);
+  if (!map_read_or) return std::unexpected(std::move(map_read_or.error()));
+  const mir::ExprId map_read_id = body.AddExpr(*std::move(map_read_or));
+  const mir::ExprId probe_read_id =
+      body.AddExpr(mir::Expr{.data = probe_ref, .type = key_type});
+  const mir::ExprId query_id = body.AddExpr(
+      mir::Expr{
+          .data =
+              mir::CallExpr{
+                  .callee =
+                      mir::BuiltinMethodCallee{
+                          .method = mir::AssociativeMethodInfo{.kind = kind}},
+                  .arguments = {map_read_id, probe_read_id}},
+          .type = result_type});
+  const mir::ProceduralVarRef found_ref = body.AppendLocal(
+      mir::ProceduralVarDecl{.name = "_lyra_trav_found", .type = result_type},
+      query_id);
+
+  // idx = probe -- observable write-back fires the LRM 4.3 update event.
+  auto idx_lhs_or =
+      process.LowerLhsExpr(hir_proc.exprs.at(idx_hir), closure_frame);
+  if (!idx_lhs_or) return std::unexpected(std::move(idx_lhs_or.error()));
+  const mir::ExprId idx_lhs_id = body.AddExpr(*std::move(idx_lhs_or));
+  const mir::ExprId probe_writeback_id =
+      body.AddExpr(mir::Expr{.data = probe_ref, .type = key_type});
+  const mir::ExprId services_id =
+      body.AddExpr(BuildServicesCallExpr(process, closure_frame));
+  const mir::Expr assign_expr = BuildObservableAssignExpr(
+      module.Unit(), body, services_id, idx_lhs_id, probe_writeback_id,
+      std::nullopt, key_type, void_t);
+  body.AppendStmt(mir::ExprStmt{.expr = body.AddExpr(assign_expr)});
+
+  const mir::ExprId found_id =
+      body.AddExpr(mir::Expr{.data = found_ref, .type = result_type});
+  return BuildClosureCallExpr(
+      *frame.current_procedural_scope, closure.Build(found_id));
+}
+
 auto LowerIteratorMethodKind(hir::IteratorMethodKind k)
     -> mir::IteratorMethodKind {
   switch (k) {
@@ -394,7 +478,7 @@ auto BuildArrayMethodClosure(
       body_depth, body_scope, outer_scope, process.Module().Unit()};
   // A with-clause body is a synchronous predicate / projection closure -- it
   // never suspends; its trailing `return` renders as a plain `return`.
-  const WalkFrame closure_frame = body_frame.WithClosure(&sink)
+  const WalkFrame closure_frame = body_frame.WithCaptureSink(&sink)
                                       .WithIndexBinding(index_binding)
                                       .WithSelfBinding(self_binding, body_depth)
                                       .WithCoroutineBody(false);
@@ -621,6 +705,17 @@ auto LowerHirCallExprProc(
               throw InternalError(
                   "BuiltinMethodRef receiver unexpectedly elided");
             }
+            // LRM 7.9.4 -- 7.9.7 traversal lowers to an immediately-invoked
+            // closure: it writes the index back through an observable assign
+            // and runs in expression position. The other associative methods
+            // are plain member calls handled by the generic path below.
+            if (const auto* assoc =
+                    std::get_if<hir::AssociativeMethodKind>(&b.method);
+                assoc != nullptr && IsAssociativeTraversalKind(*assoc)) {
+              return LowerAssociativeTraversal(
+                  process, frame, c, LowerAssociativeMethodKind(*assoc),
+                  result_type);
+            }
             const hir::TypeId hir_receiver_type =
                 hir_process.exprs.at(c.arguments.front()->value).type;
             std::vector<mir::ExprId> args;
@@ -670,30 +765,13 @@ auto LowerHirCallExprProc(
             }
             args.push_back(receiver_id);
 
-            // LRM 7.9.4 -- 7.9.7 associative-array traversal methods
-            // (`first` / `last` / `next` / `prev`) take their index argument
-            // as a `ref` so the visited key writes through to the actual --
-            // lower it cell-rooted like any other ref formal.
-            const auto* assoc_kind =
-                std::get_if<hir::AssociativeMethodKind>(&b.method);
-            const bool index_is_ref =
-                assoc_kind != nullptr &&
-                (*assoc_kind == hir::AssociativeMethodKind::kFirst ||
-                 *assoc_kind == hir::AssociativeMethodKind::kLast ||
-                 *assoc_kind == hir::AssociativeMethodKind::kNext ||
-                 *assoc_kind == hir::AssociativeMethodKind::kPrev);
             for (std::size_t i = 1; i < c.arguments.size(); ++i) {
               if (!c.arguments[i].has_value()) {
                 throw InternalError(
                     "builtin-method call argument unexpectedly elided");
               }
-              const bool lower_as_lhs = index_is_ref && i == 1;
-              auto arg_or =
-                  lower_as_lhs
-                      ? process.LowerLhsExpr(
-                            hir_process.exprs.at(c.arguments[i]->value), frame)
-                      : process.LowerExpr(
-                            hir_process.exprs.at(c.arguments[i]->value), frame);
+              auto arg_or = process.LowerExpr(
+                  hir_process.exprs.at(c.arguments[i]->value), frame);
               if (!arg_or) {
                 return std::unexpected(std::move(arg_or.error()));
               }

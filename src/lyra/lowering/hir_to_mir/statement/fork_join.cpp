@@ -83,7 +83,7 @@ auto LowerForkStmt(
     // timing controls / event waits, so it lowers as a coroutine body --
     // returns inside it become `co_return`.
     const WalkFrame branch_frame =
-        fork_frame.WithClosure(&sink)
+        fork_frame.WithCaptureSink(&sink)
             .WithProceduralScope(&branch_scope)
             .WithSelfBinding(
                 branch_self_id, fork_frame.procedural_depth.Inner())

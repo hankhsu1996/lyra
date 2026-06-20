@@ -18,6 +18,15 @@ layer directly.
       the test summary and the full text lives only in per-shard log files outside the readable
       path, so finding why a case failed takes several manual reruns of the same suite.
 
+- [ ] D6 -- A test run reports its true pass/fail outcome even when its output is filtered. Piping a
+      `bazel test` through `tail` (or any filter) makes the pipeline's exit status that of the
+      filter, not of bazel, so a failing suite looks like it passed -- and a backgrounded run's
+      completion status is then a false green that can hide a regression until an unfiltered run
+      catches it. Target: a test command, wrapper, or convention whose exit status reflects the
+      actual test outcome regardless of output handling (e.g. `pipefail`, or a runner that records
+      the bazel result separately from the streamed text). Related to D5 but more fundamental: D5 is
+      about seeing _why_ a case failed; this is about not missing _that_ it failed.
+
 ## Out of Scope
 
 - New SystemVerilog feature coverage. This file tracks the developer feedback loop, not language
