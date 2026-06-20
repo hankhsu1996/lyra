@@ -19,19 +19,20 @@ Read top to bottom on first pass:
 5. `specialization_model.md` -- how parameter values refine a unit into specializations
 6. `hir.md` -- source-near semantic IR
 7. `mir.md` -- object-oriented semantic IR (objects, members, callables)
-8. `lir.md` -- execution-oriented IR (CFG, basic blocks, storage)
-9. `scheduling.md` -- stratified event scheduler, regions, suspension protocol
-10. `hierarchy_and_generate.md` -- hierarchy and generate ownership
-11. `reference_resolution.md` -- intra-unit vs cross-unit references; compile-time vs
+8. `closure.md` -- the captured callable value; capture model; references as a field type
+9. `lir.md` -- execution-oriented IR (CFG, basic blocks, storage)
+10. `scheduling.md` -- stratified event scheduler, regions, suspension protocol
+11. `hierarchy_and_generate.md` -- hierarchy and generate ownership
+12. `reference_resolution.md` -- intra-unit vs cross-unit references; compile-time vs
     construction-time resolution
-12. `emission_model.md` -- how a backend emits independent per-unit artifacts and realizes
+13. `emission_model.md` -- how a backend emits independent per-unit artifacts and realizes
     cross-unit resolution through the SDK
-13. `identity_and_ownership.md` -- identity rules and forbidden shapes
-14. `lowering_boundaries.md` -- what each lowering may and may not do
-15. `lowering_organization.md` -- how lowering passes organize their internal objects (facts,
+14. `identity_and_ownership.md` -- identity rules and forbidden shapes
+15. `lowering_boundaries.md` -- what each lowering may and may not do
+16. `lowering_organization.md` -- how lowering passes organize their internal objects (facts,
     registries, builders, walk frame)
-16. `incremental_build.md` -- query-based incremental compilation and caching
-17. `testing_strategy.md` -- test categories and structure
+17. `incremental_build.md` -- query-based incremental compilation and caching
+18. `testing_strategy.md` -- test categories and structure
 
 ## Concept Index
 
@@ -53,8 +54,9 @@ If you are looking for a concept, this table points to the canonical doc.
 | Lowering permissions (what each lowering may and may not do)              | `lowering_boundaries.md`    |
 | Lowering pass organization (facts / registry / builder / walk frame)      | `lowering_organization.md`  |
 | HIR shape (statements, expressions, primaries)                            | `hir.md`                    |
-| MIR shape (objects, members, callables, closures)                         | `mir.md`                    |
+| MIR shape (objects, members, callables)                                   | `mir.md`                    |
 | Member and type model; object types; owning pointer; vector wrapper       | `mir.md`                    |
+| Closure model; captures; by-value vs by-reference as a field type         | `closure.md`                |
 | LIR shape (CFG, basic blocks, storage)                                    | `lir.md`                    |
 | Stratified scheduler; regions; suspension protocol; NBA / closure submit  | `scheduling.md`             |
 | Incremental compilation; query-based caching                              | `incremental_build.md`      |

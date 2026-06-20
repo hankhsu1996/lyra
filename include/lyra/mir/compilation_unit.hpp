@@ -32,6 +32,7 @@ struct BuiltinMirTypes {
   TypeId print_literal_item;
   TypeId print_value_item;
   TypeId format_spec;
+  TypeId coroutine;
 };
 
 struct CompilationUnit {
@@ -86,6 +87,7 @@ struct CompilationUnit {
             .format_spec = AddType(
                 TypeData{RuntimeLibraryType{
                     .kind = RuntimeLibraryKind::kFormatSpec}}),
+            .coroutine = AddType(TypeData{CoroutineType{}}),
         } {
   }
 

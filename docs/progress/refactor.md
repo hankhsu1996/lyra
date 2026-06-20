@@ -142,26 +142,22 @@ Entries get checked off as their PRs land. When the last entry lands, the file i
       separate types whose bodies are all the same `ProceduralScope`; the code already notes the
       duplication ("a subroutine is a callable peer of a process"). Each hardcodes a fixed point in
       three orthogonal axes: how the body binds outer state (the enclosing object only / named
-      parameters / captured values), whether the body suspends (coroutine vs plain), and whether it
-      is an anonymous value or a named declaration. The combinations in use today are partial --
-      process is (object-only, suspends, value-spawned-at-startup), function is (params, no-suspend,
-      named, returns), task is (params, suspends, named), closure is (captures, no-suspend,
-      anonymous value). A fork-join branch is the missing fourth-axis combination -- an anonymous
-      value, with captured state, that suspends -- which no form provides. This cut fills it the
-      minimal way, by completing `ClosureExpr` with a suspend axis (so a closure value may be
-      suspending or not), which unifies the NBA / `$strobe` closure and the fork branch under one
-      type but leaves the three-way duplication between process, subroutine, and closure standing.
-      Target shape: a single callable concept carrying a `ProceduralScope` body, a list of bound
-      inputs that unifies parameters and captures behind one binding-mode axis, a suspend flag, and
-      an optional result type; the five forms become instances differing only in their axis values
-      and in how the referencing site invokes them (spawn at startup, call, submit, spawn
-      concurrently). **Why deferred**: this rebases the whole process / subroutine / closure
-      machinery across lowering, MIR, the dumper, and the backend; the fork cut needs only the
-      suspend axis on `ClosureExpr` and reaches it without touching processes or subroutines, so
-      folding the full merge into a feature cut is scope explosion. **Trigger**: when a further
-      feature needs yet another axis combination, or when a change has to be made three times across
-      the duplicated forms; the suspending closure this cut introduces is the first concrete
-      cross-form driver, so the unification now has a real motivation rather than being speculative.
+      parameters / captured values), whether the body is a coroutine, and whether it is an anonymous
+      value or a named declaration. The combinations in use today are partial -- process is
+      (object-only, coroutine, value-spawned-at-startup), function is (params, plain, named,
+      returns), task is (params, coroutine, named), closure is (captures or params, anonymous
+      value). A fork-join branch is a closure with a coroutine result type, distinguished from a
+      synchronous closure by that type, not by a flag on the node -- so a closure already spans both
+      coroutine and plain without a suspend axis. Target shape: a single callable concept carrying a
+      `ProceduralScope` body, a list of bound inputs that unifies parameters and captures behind one
+      binding-mode axis, and a result type (the coroutine type when the body suspends); the five
+      forms become instances differing only in their axis values and in how the referencing site
+      invokes them (spawn at startup, call, submit, spawn concurrently). **Why deferred**: this
+      rebases the whole process / subroutine / closure machinery across lowering, MIR, the dumper,
+      and the backend; the fork work needed only a coroutine result type on the closure and reached
+      it without touching processes or subroutines, so folding the full merge in would be scope
+      explosion. **Trigger**: when a further feature needs yet another axis combination, or when a
+      change has to be made three times across the duplicated forms.
 
 - [x] R9 -- AST-to-HIR migration to the class-based organization defined in
       `docs/architecture/lowering_organization.md`. The `*LoweringState` god-objects are gone;
@@ -201,31 +197,27 @@ Entries get checked off as their PRs land. When the last entry lands, the file i
       (see R18). The mutable escape hatch is the one shape that is unambiguously wrong from any
       vantage. **Trigger**: standalone -- can be picked up at any time.
 
-- [ ] R12 -- Model the observable (`Var<T>`) storage as a first-class MIR wrapper type so the cpp
-      backend stops re-deriving "is this observable storage" at render time. Today a signal's MIR
-      type is its value type (`PackedArray`, `string`, ...); whether the field is stored as
-      `lyra::runtime::Var<T>` is a backend predicate (`IsObservableScalarType`) computed at render
-      and consulted at every value access -- the field declaration wraps in `Var<T>`, a read appends
-      `.Get()`, a write routes through `.Set()` / `.Mutate()`, and sensitivity subscribes to the
-      cell. `Var<T>` is a template storage wrapper exactly analogous to the `unique_ptr` / `vector`
-      wrappers MIR already models as `PointerType` / `VectorType`, yet it has no MIR type of its
-      own, so the backend keeps asking the value type "are you observable?" in several places
-      instead of reading a concept off the type. Target shape: a first-class observable wrapper type
-      in MIR (sibling to `PointerType` / `VectorType`); a signal field's type becomes that wrapper,
-      `RenderTypeAsCpp` maps it straight to `Var<T>`, and every value access becomes a mechanical
-      switch on the wrapper variant (a read unwraps to the value type, a write targets the cell)
-      rather than an `IsObservableScalarType` call. The one wrinkle the pointer / vector wrappers do
-      not have is the value/storage duality -- a signal is also read as a value, so the wrapper read
-      must unwrap to `T` -- which the read / write nodes resolve by switching on the wrapper type.
-      The backend then never asks "is this observable" anywhere; the type carries it, and render is
-      a pure structural map. **Why deferred**: orthogonal to the cross-unit hierarchical-reference
-      work in flight; it cross-cuts all signal value access (field declaration, read, write,
-      sensitivity) and is its own focused cut, and the current predicate is behaviorally correct.
+- [ ] R12 -- A signal read / write is an explicit access call in MIR, not a render-time decision.
+      The observable-storage wrapper is already a first-class MIR type (sibling to the
+      owning-pointer and vector wrappers): a signal field's type is the wrapper and
+      `RenderTypeAsCpp` maps it straight to `lyra::runtime::Var<T>`. What remains is the access
+      half. The wrapper's `Get` / `Set` / `Mutate` are still injected by the backend -- a value read
+      appends `.Get()`, a write routes through `.Set()` / `.Mutate()`, each gated on the backend
+      reading the wrapper type at the access site. Per the mir.md boundary note these are
+      library-API method calls and belong in MIR: HIR-to-MIR should emit a `Get` call for a value
+      read and a `Set` / `Mutate` call for a write, so the backend renders the call like any other
+      and never asks "is this observable" at access time. The value/storage duality -- a signal is
+      read as a value but its cell is the target of a write or a reference binding -- is then
+      carried by which call wraps the cell, not by a render-time branch. **Known consequence
+      today**: pass-by-reference of an observable scalar (LRM 13.5.2) needs the bare cell, not a
+      value read, so its argument is currently routed through a backend lvalue render to dodge the
+      injected `.Get()`; once reads are explicit calls a bare cell renders directly and that route
+      collapses. **Why deferred**: cross-cuts all signal value access (read, write, sensitivity) and
+      is its own focused cut, and the current render-time decision is behaviorally correct.
       **Trigger**: standalone -- highest leverage taken together with R2, which reworks the same
-      `IsObservableScalarType` decision from the capability-gating angle (wrap every value type
-      uniformly, push unsupported change-tracking to explicit diagnostics). R12 makes the wrapper a
-      type; R2 makes the wrap uniform and capability-honest -- done together they remove
-      `IsObservableScalarType` entirely and leave the backend a pure renderer.
+      observable decision from the capability-gating angle (wrap every value type uniformly, push
+      unsupported change-tracking to explicit diagnostics). Done together they leave the backend a
+      pure renderer of explicit calls.
 
 - [x] R13 -- HIR-to-MIR per-LRM-family subsystem split. Per-kind handlers are now grouped by
       semantic family in

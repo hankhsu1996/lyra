@@ -192,6 +192,12 @@ class MirDumper {
               }
               throw InternalError("dump: unknown RuntimeLibraryKind");
             },
+            [](const CoroutineType&) -> std::string { return "Coroutine"; },
+            [](const RefType& r) -> std::string {
+              return std::format(
+                  "Ref({}pointee=Type[{}])", r.is_const ? "const, " : "",
+                  r.pointee.value);
+            },
             [](const PointerType& p) -> std::string {
               switch (p.ownership) {
                 case PointerOwnership::kUnique:
@@ -428,6 +434,9 @@ class MirDumper {
                   },
                   b.method);
             },
+            [](const ConstructorCallee&) -> std::string {
+              return "ConstructorCallee";
+            },
         },
         callee);
   }
@@ -620,16 +629,6 @@ class MirDumper {
               }
               return std::format("ArrayLiteralExpr elements=[{}]", elements);
             },
-            [](const ConstructExpr& c) -> std::string {
-              std::string args;
-              for (std::size_t i = 0; i < c.args.size(); ++i) {
-                if (i != 0) {
-                  args += ", ";
-                }
-                args += std::format("Expr[{}]", c.args[i].value);
-              }
-              return std::format("ConstructExpr args=[{}]", args);
-            },
         },
         e.data);
     return std::format("{} type=Type[{}]", formatted, e.type.value);
@@ -738,10 +737,6 @@ class MirDumper {
         return "output";
       case ParamDirection::kInOut:
         return "inout";
-      case ParamDirection::kRef:
-        return "ref";
-      case ParamDirection::kConstRef:
-        return "const ref";
     }
     throw InternalError("FormatParamDirection: unknown mir::ParamDirection");
   }
@@ -774,9 +769,8 @@ class MirDumper {
         const auto& v = scope.vars[i];
         Line(
             std::format(
-                "ProceduralVar[{}] \"{}\" : Type[{}]{}", i, v.name,
-                v.type.value,
-                v.binding == VariableBinding::kReference ? " ref" : ""));
+                "ProceduralVar[{}] \"{}\" : Type[{}]", i, v.name,
+                v.type.value));
       }
       Dedent();
     }
@@ -1075,36 +1069,16 @@ class MirDumper {
   void DumpCapture(
       std::size_t index, const Capture& capture,
       const ProceduralScope& enclosing) {
-    std::visit(
-        Overloaded{
-            [&](const ByValueCapture& bv) {
-              Line(
-                  std::format(
-                      "[{}] ByValueCapture value=Expr[{}] binding="
-                      "ProceduralVarId{{{}}}",
-                      index, bv.value.value, bv.binding.value));
-              Indent();
-              Line(
-                  std::format(
-                      "Expr[{}] {}", bv.value.value,
-                      FormatExpr(enclosing, bv.value)));
-              Dedent();
-            },
-            [&](const ByReferenceCapture& br) {
-              Line(
-                  std::format(
-                      "[{}] ByReferenceCapture target=Expr[{}] binding="
-                      "ProceduralVarId{{{}}}",
-                      index, br.target.value, br.binding.value));
-              Indent();
-              Line(
-                  std::format(
-                      "Expr[{}] {}", br.target.value,
-                      FormatExpr(enclosing, br.target)));
-              Dedent();
-            },
-        },
-        capture);
+    Line(
+        std::format(
+            "[{}] Capture value=Expr[{}] binding=ProceduralVarId{{{}}}", index,
+            capture.value.value, capture.binding.value));
+    Indent();
+    Line(
+        std::format(
+            "Expr[{}] {}", capture.value.value,
+            FormatExpr(enclosing, capture.value)));
+    Dedent();
   }
 
   void DumpRuntimePrintCallItems(

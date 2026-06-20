@@ -31,6 +31,8 @@ enum class TypeKind {
   kSelf,
   kServices,
   kRuntimeLibrary,
+  kCoroutine,
+  kReference,
   kPointer,
   kVector,
   kExternalRef,
@@ -185,6 +187,30 @@ struct RuntimeLibraryType {
   auto operator==(const RuntimeLibraryType&) const -> bool = default;
 };
 
+// The runtime coroutine handle `lyra::runtime::Coroutine`: the value a
+// suspending callable yields when invoked. A fork branch (LRM 9.3.2) is a
+// closure whose result type is this -- invoking it produces a spawned-process
+// coroutine the parent collects and joins. Opaque, like ScopeType /
+// ServicesType; it names a runtime type, never a layout.
+struct CoroutineType {
+  auto operator==(const CoroutineType&) const -> bool = default;
+};
+
+// A reference value aliasing a storage cell of `pointee` type (LRM 13.5.2
+// pass-by-reference; a fork branch / `$sscanf` / with-clause body sharing
+// enclosing storage). The runtime wrapper `lyra::runtime::Ref<T>` routes reads
+// through `Get` and writes through the cell's `Set` (its update-event path), so
+// a value of this type is read and written like an observable cell. `is_const`
+// marks a `const ref` formal (read-only). A library wrapper, like
+// ObservableType; constructing one from a cell is an explicit MIR operation,
+// not a backend-synthesized wrap.
+struct RefType {
+  TypeId pointee;
+  bool is_const = false;
+
+  auto operator==(const RefType&) const -> bool = default;
+};
+
 enum class PointerOwnership {
   kUnique,
   kShared,
@@ -256,8 +282,8 @@ using TypeData = std::variant<
     PackedArrayType, EnumType, UnpackedArrayType, DynamicArrayType, QueueType,
     AssociativeArrayType, StringType, EventType, RealType, ShortRealType,
     RealTimeType, ChandleType, VoidType, ObjectType, ExternalUnitObjectType,
-    ScopeType, SelfType, ServicesType, RuntimeLibraryType, PointerType,
-    VectorType, ExternalRefType, ObservableType>;
+    ScopeType, SelfType, ServicesType, RuntimeLibraryType, CoroutineType,
+    RefType, PointerType, VectorType, ExternalRefType, ObservableType>;
 
 struct Type {
   TypeData data;

@@ -86,8 +86,7 @@ auto SnapshotNonLhsSubexpr(
           .name =
               std::format("_lyra_{}_arg{}", name_prefix, snapshot_counter++),
           .type = outer_expr.type});
-  captures.emplace_back(
-      mir::ByValueCapture{.value = outer_id, .binding = binding});
+  captures.emplace_back(mir::Capture{.value = outer_id, .binding = binding});
   return body.AddExpr(
       mir::Expr{
           .data =
@@ -249,12 +248,12 @@ auto BuildNbaSubmitClosureExpr(
   const mir::ExprId outer_self_read =
       outer_scope.AddExpr(BuildSelfRefExpr(frame, self_ptr_type));
   captures.emplace_back(
-      mir::ByValueCapture{.value = outer_self_read, .binding = self_id});
+      mir::Capture{.value = outer_self_read, .binding = self_id});
 
   const mir::ProceduralVarId rhs_binding = body.AddProceduralVar(
       mir::ProceduralVarDecl{.name = "_lyra_nba_rhs", .type = rhs_type});
   captures.emplace_back(
-      mir::ByValueCapture{.value = rhs_id_in_outer, .binding = rhs_binding});
+      mir::Capture{.value = rhs_id_in_outer, .binding = rhs_binding});
   const mir::ExprId rhs_ref_id = body.AddExpr(
       mir::Expr{
           .data =

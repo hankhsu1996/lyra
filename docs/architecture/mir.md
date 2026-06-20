@@ -129,10 +129,11 @@ suspect, not the analysis (`lowering_organization.md` states this discipline in 
     Where `self`'s value comes from differs by callable form, following the natural binding shape of
     each: process, structural subroutine, and constructor bodies receive `self` as their first
     formal parameter (each caller -- the runtime, a call site, the instance constructor -- supplies
-    it); a closure receives `self` as its first by-value capture (the enclosing scope snapshots its
-    own self at closure construction, because no runtime invoker of the closure value knows which
-    receiver to pass). Both supply mechanisms land the same binding at `body.vars[0]`; the body code
-    does not know or care which mechanism filled it. See `docs/decisions/callable-receiver.md`.
+    it); every closure -- including a fork branch -- carries `self` as its first by-value capture
+    (the enclosing scope snapshots its own `self` at construction, because no later invoker of the
+    closure value can be relied on to know the receiver). Both supply mechanisms land the same
+    binding at `body.vars[0]`; the body code does not know or care which one filled it. See
+    `docs/decisions/callable-receiver.md`.
 
     _Programming-language consequence: methods take `self` explicitly. This is the C++ `this`, the
     Python `self`, the Rust `&self`. Languages that hide it behind keyword sugar at source level
@@ -241,23 +242,19 @@ expression set that decomposes the ternary. Value-build primitives for aggregate
 expressions are access primitives. Each of these stays in MIR for the same reason: removing it would
 require expanding into a statement-form rewrite that does not fit the expression context.
 
-A closure is a captured callable value: a parameter list, a capture list, and a procedural-scope
-body, the one IR shape for "a body bound to a snapshot of its environment, run later." A closure is
-synthesized only by HIR-to-MIR lowering; no source construct produces one. Its body reaches every
-value it needs through its captures and parameters -- captures snapshot the enclosing scope's values
-at construction (including `self`, captured by value as the first capture; see invariant 11),
-parameters carry per-invocation values. Nothing reaches the body implicitly. The closure node
-carries nothing about how it executes: like a language-level lambda, it has no "suspends" property.
-Whether a closure runs synchronously or as a coroutine follows from its use, which is itself
-explicit in MIR -- a closure submitted as a deferred effect (a non-blocking assignment, a postponed
-`$strobe`) runs to completion in a later scheduling region; a closure referenced by a parallel block
-(a fork-join branch, LRM 9.3.2) is spawned as a concurrent process and therefore a coroutine. The
-capture model and the body are identical across both. Process, structural subroutine, and closure
-are three callable forms whose bodies are all the same procedural scope; they differ in how each is
-invoked and in how `self` is supplied -- a process / subroutine / constructor body receives `self`
-as its first formal parameter at every invocation, a closure captures `self` by value at
-construction. Both supply paths end at the same place: `body.vars[0]` is `self`, read identically by
-every member access in the body.
+A closure is a captured callable value: a capture list, a parameter list, a result type (the closure
+expression's own type), and a procedural-scope body. It is the one IR shape for "a body bound to its
+environment, run later," synthesized only by HIR-to-MIR. `closure.md` is the canonical contract: the
+capture model, snapshot-versus-alias as a captured field's type, and coroutine-ness as the result
+type all live there.
+
+Process, structural subroutine, and closure are three callable forms whose bodies are all the same
+procedural scope; they differ in how each is invoked and in how `self` is supplied. A process /
+subroutine / constructor body receives `self` as its first formal parameter at every invocation.
+Every closure -- including a fork branch -- carries `self` as its first by-value capture
+(`captures[0]`): the enclosing scope snapshots its own `self` at construction, because no later
+invoker of the closure value can be relied on to know the receiver. Both supply paths end at the
+same place: `body.vars[0]` is `self`, read identically by every member access in the body.
 
 An access through a runtime library wrapper type illustrates the boundary between MIR's vocabulary
 and a backend's storage realization. The C++ backend wraps an observable signal's storage in

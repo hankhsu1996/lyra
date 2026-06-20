@@ -185,7 +185,9 @@ auto BuildFormatSpecExpr(
     args.push_back(int_lit(is_time ? time_unit_power : 0));
   }
   return mir::Expr{
-      .data = mir::ConstructExpr{.args = std::move(args)},
+      .data =
+          mir::CallExpr{
+              .callee = mir::ConstructorCallee{}, .arguments = std::move(args)},
       .type = unit.builtins.format_spec};
 }
 
@@ -201,14 +203,20 @@ auto BuildPrintItemExpr(
                     .data = mir::StringLiteral{.value = lit.text},
                     .type = unit.builtins.string});
             return mir::Expr{
-                .data = mir::ConstructExpr{.args = {text}},
+                .data =
+                    mir::CallExpr{
+                        .callee = mir::ConstructorCallee{},
+                        .arguments = {text}},
                 .type = unit.builtins.print_literal_item};
           },
           [&](const mir::RuntimePrintValue& v) -> mir::Expr {
             const mir::ExprId spec = scope.AddExpr(
                 BuildFormatSpecExpr(unit, scope, v.spec, time_unit_power));
             return mir::Expr{
-                .data = mir::ConstructExpr{.args = {v.value, spec}},
+                .data =
+                    mir::CallExpr{
+                        .callee = mir::ConstructorCallee{},
+                        .arguments = {v.value, spec}},
                 .type = unit.builtins.print_value_item};
           }},
       item);

@@ -52,7 +52,8 @@ auto BuildArrayReplicationFlatList(
   for (std::uint64_t i = 0; i < count; ++i) {
     flat.insert(flat.end(), items_ids.begin(), items_ids.end());
   }
-  return BuildArrayConstructExpr(module, frame, result_type, std::move(flat));
+  return BuildArrayConstructionCall(
+      module, frame, result_type, std::move(flat));
 }
 
 auto IsArrayContainerType(const mir::Type& ty) -> bool {
@@ -101,7 +102,7 @@ auto LowerHirReplicationExprProc(
 // type's runtime shape: packed targets fold into MIR `ConcatExpr` (bit
 // concatenation matches the packed bit plane), array containers (unpacked,
 // dynamic, queue) land as `ArrayLiteralExpr` over distinct element slots
-// wrapped by a `ConstructExpr` against the container ctor.
+// wrapped by a construction call against the container ctor.
 auto LowerHirAssignmentPatternExprProc(
     ProcessLowerer& process, WalkFrame frame,
     const hir::AssignmentPatternExpr& a, mir::TypeId result_type)
@@ -116,7 +117,7 @@ auto LowerHirAssignmentPatternExprProc(
     element_ids.push_back(proc_scope.AddExpr(*std::move(lowered)));
   }
   if (IsArrayContainerType(process.Module().Unit().GetType(result_type))) {
-    return BuildArrayConstructExpr(
+    return BuildArrayConstructionCall(
         process.Module(), frame, result_type, std::move(element_ids));
   }
   return mir::Expr{
@@ -160,7 +161,7 @@ auto LowerHirAssignmentPatternReplicationExprProc(
 }
 
 // LRM 7.5.1 `new[N]` / `new[N](other)`. The argument list on the lowered
-// `ConstructExpr` is `[size, element-default prototype, optional copy
+// construction call is `[size, element-default prototype, optional copy
 // source]`: the prototype carries the element type's LRM Table 6-7 default
 // so the runtime ctor populates new slots without re-querying the type, and
 // the optional copy source feeds the LRM 7.5.1 truncate / pad behaviour on
@@ -194,7 +195,10 @@ auto LowerHirDynamicArrayNewExprProc(
     args.push_back(proc_scope.AddExpr(*std::move(init_or)));
   }
   return mir::Expr{
-      .data = mir::ConstructExpr{.args = std::move(args)}, .type = result_type};
+      .data =
+          mir::CallExpr{
+              .callee = mir::ConstructorCallee{}, .arguments = std::move(args)},
+      .type = result_type};
 }
 
 auto LowerHirConcatExprStructural(
@@ -229,7 +233,7 @@ auto LowerHirAssignmentPatternExprStructural(
     element_ids.push_back(proc_scope.AddExpr(*std::move(lowered)));
   }
   if (IsArrayContainerType(scope.Module().Unit().GetType(result_type))) {
-    return BuildArrayConstructExpr(
+    return BuildArrayConstructionCall(
         scope.Module(), frame, result_type, std::move(element_ids));
   }
   return mir::Expr{

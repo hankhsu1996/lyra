@@ -390,7 +390,8 @@ auto BuildArrayMethodClosure(
             .declaration_procedural_depth = body_depth, .var = item_binding});
   }
 
-  CaptureSink sink{body_depth, body_scope, outer_scope};
+  CaptureSink sink{
+      body_depth, body_scope, outer_scope, process.Module().Unit()};
   // A with-clause body is a synchronous predicate / projection closure -- it
   // never suspends; its trailing `return` renders as a plain `return`.
   const WalkFrame closure_frame = body_frame.WithClosure(&sink)
@@ -399,12 +400,15 @@ auto BuildArrayMethodClosure(
                                       .WithCoroutineBody(false);
 
   mir::ExprId body_return_value{};
+  mir::TypeId return_type{};
   if (with_clause != nullptr) {
     auto body_expr_or = process.LowerExpr(
         hir_process.exprs.at(with_clause->expr.value), closure_frame);
     if (!body_expr_or) return std::unexpected(std::move(body_expr_or.error()));
+    return_type = body_expr_or->type;
     body_return_value = body_scope.AddExpr(*std::move(body_expr_or));
   } else {
+    return_type = item_type;
     body_return_value = body_scope.AddExpr(
         mir::Expr{
             .data =
@@ -419,20 +423,18 @@ auto BuildArrayMethodClosure(
           .data = mir::ReturnStmt{.value = body_return_value}});
 
   std::vector<mir::Capture> captures;
-  captures.emplace_back(
-      mir::ByValueCapture{.value = outer_self_read, .binding = self_binding});
+  captures.push_back(
+      mir::Capture{.value = outer_self_read, .binding = self_binding});
   for (const CaptureRequest& request : sink.TakeRequests()) {
-    captures.emplace_back(
-        mir::ByReferenceCapture{
-            .target = request.source, .binding = request.binding});
+    captures.push_back(
+        mir::Capture{.value = request.source, .binding = request.binding});
   }
   mir::ClosureExpr closure;
   closure.captures = std::move(captures);
   closure.params.push_back(mir::Parameter{.binding = item_binding});
   closure.params.push_back(mir::Parameter{.binding = index_binding});
   closure.body = std::make_unique<mir::ProceduralScope>(std::move(body_scope));
-  return mir::Expr{
-      .data = std::move(closure), .type = module.Unit().builtins.void_type};
+  return mir::Expr{.data = std::move(closure), .type = return_type};
 }
 
 // Fans out a system-subroutine call to the per-family handler under
@@ -578,7 +580,13 @@ auto LowerHirCallExprProc(
                 }
                 actual_id = proc_scope.AddExpr(*std::move(arg_or));
               }
-              args.push_back(actual_id);
+              if (is_ref_formal) {
+                args.push_back(BuildReferenceArg(
+                    process.Module().Unit(), proc_scope, actual_id,
+                    proc_scope.GetExpr(actual_id).type));
+              } else {
+                args.push_back(actual_id);
+              }
             }
             return mir::Expr{
                 .data =

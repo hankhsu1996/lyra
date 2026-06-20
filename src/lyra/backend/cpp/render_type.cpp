@@ -135,6 +135,18 @@ auto RenderTypeAsCpp(
             }
             throw InternalError("RenderTypeAsCpp: unknown RuntimeLibraryKind");
           },
+          [](const mir::CoroutineType&) -> diag::Result<std::string> {
+            return std::string{"lyra::runtime::Coroutine"};
+          },
+          [&](const mir::RefType& r) -> diag::Result<std::string> {
+            auto inner_or = RenderTypeAsCpp(unit, owner_scope, r.pointee);
+            if (!inner_or) return std::unexpected(std::move(inner_or.error()));
+            std::string ref = "lyra::runtime::Ref<" + *inner_or + ">";
+            return r.is_const ? "const " + ref : ref;
+          },
+          [](const mir::VoidType&) -> diag::Result<std::string> {
+            return std::string{"void"};
+          },
           [&](const mir::PointerType& p) -> diag::Result<std::string> {
             auto inner_or = RenderTypeAsCpp(unit, owner_scope, p.pointee);
             if (!inner_or) return std::unexpected(std::move(inner_or.error()));

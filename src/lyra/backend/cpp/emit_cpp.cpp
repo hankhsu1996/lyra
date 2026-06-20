@@ -154,12 +154,10 @@ auto RenderSubroutineMethod(
     auto type_or = RenderTypeAsCpp(unit, s, param.type);
     if (!type_or) return std::unexpected(std::move(type_or.error()));
     sig += ", ";
-    // An `input` formal is a by-value copy (LRM 13.5.1). An `output` / `inout`
-    // formal binds to the caller's writeback temp by reference (`T&`) so body
-    // writes flow back at the copy-out. A `ref` / `const ref` formal aliases
-    // the actual's cell through a `Ref<T>` so writes route through that cell's
-    // update-event path (LRM 13.5.2); `const ref` is `const Ref<T>`, which
-    // makes `Set` ill-formed and enforces the read-only promise.
+    // An `input` formal is by value (LRM 13.5.1); a `ref` / `const ref` formal
+    // is also passed by value, but its type is a `RefType` so `*type_or` is
+    // already `(const) lyra::runtime::Ref<T>` (LRM 13.5.2). An `output` /
+    // `inout` formal binds the caller's writeback temp by reference (`T&`).
     switch (param.direction) {
       case mir::ParamDirection::kInput:
         sig += *type_or + " " + param.name;
@@ -167,12 +165,6 @@ auto RenderSubroutineMethod(
       case mir::ParamDirection::kOutput:
       case mir::ParamDirection::kInOut:
         sig += *type_or + "& " + param.name;
-        break;
-      case mir::ParamDirection::kRef:
-        sig += "lyra::runtime::Ref<" + *type_or + "> " + param.name;
-        break;
-      case mir::ParamDirection::kConstRef:
-        sig += "const lyra::runtime::Ref<" + *type_or + "> " + param.name;
         break;
     }
   }

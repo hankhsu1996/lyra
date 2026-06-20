@@ -94,20 +94,24 @@ auto BuildDefaultValueExpr(
               elements.push_back(scope.AddExpr(
                   BuildDefaultValueExpr(module, frame, ua.element_type)));
             }
-            return BuildArrayConstructExpr(
+            return BuildArrayConstructionCall(
                 module, frame, type, std::move(elements));
           },
           // LRM Table 6-7: a dynamic array's default is the empty array.
           // The wrapper still needs the element type's default supplied at
           // construction so OOB reads and resize-fills have a shape source --
           // see `docs/decisions/runtime-shape-and-default-value.md`. Emit
-          // chain: ConstructExpr{element_default} -> `DynamicArray<T>(...)`
-          // ctor that stores the value and leaves `data_` empty.
+          // chain: a construction call on `element_default` -> the
+          // `DynamicArray<T>(...)` ctor that stores the value and leaves
+          // `data_` empty.
           [&](const mir::DynamicArrayType& da) -> mir::Expr {
             const mir::ExprId element_default = scope.AddExpr(
                 BuildDefaultValueExpr(module, frame, da.element_type));
             return mir::Expr{
-                .data = mir::ConstructExpr{.args = {element_default}},
+                .data =
+                    mir::CallExpr{
+                        .callee = mir::ConstructorCallee{},
+                        .arguments = {element_default}},
                 .type = type};
           },
           // LRM Table 6-7: a queue's default is the empty queue. Same emit
@@ -126,7 +130,10 @@ auto BuildDefaultValueExpr(
                       static_cast<std::int64_t>(*q.max_bound))));
             }
             return mir::Expr{
-                .data = mir::ConstructExpr{.args = std::move(args)},
+                .data =
+                    mir::CallExpr{
+                        .callee = mir::ConstructorCallee{},
+                        .arguments = std::move(args)},
                 .type = type};
           },
           // LRM Table 6-7: an associative array's default is empty. The element
@@ -136,30 +143,45 @@ auto BuildDefaultValueExpr(
             const mir::ExprId element_default = scope.AddExpr(
                 BuildDefaultValueExpr(module, frame, a.element_type));
             return mir::Expr{
-                .data = mir::ConstructExpr{.args = {element_default}},
+                .data =
+                    mir::CallExpr{
+                        .callee = mir::ConstructorCallee{},
+                        .arguments = {element_default}},
                 .type = type};
           },
           // Types whose runtime default is the C++ language-level default
           // (named-event handle, child module instance, `unique_ptr<Child>`,
           // `vector<Child>`). The constructor scope is the real populator
           // for the object family; named-events have no SV initializer
-          // grammar at all. Empty `ConstructExpr` renders as `T()` and
-          // invokes the type's default ctor.
+          // grammar at all. An empty-argument construction call renders as
+          // `T()` and invokes the type's default ctor.
           [&](const mir::EventType&) -> mir::Expr {
             return mir::Expr{
-                .data = mir::ConstructExpr{.args = {}}, .type = type};
+                .data =
+                    mir::CallExpr{
+                        .callee = mir::ConstructorCallee{}, .arguments = {}},
+                .type = type};
           },
           [&](const mir::ObjectType&) -> mir::Expr {
             return mir::Expr{
-                .data = mir::ConstructExpr{.args = {}}, .type = type};
+                .data =
+                    mir::CallExpr{
+                        .callee = mir::ConstructorCallee{}, .arguments = {}},
+                .type = type};
           },
           [&](const mir::PointerType&) -> mir::Expr {
             return mir::Expr{
-                .data = mir::ConstructExpr{.args = {}}, .type = type};
+                .data =
+                    mir::CallExpr{
+                        .callee = mir::ConstructorCallee{}, .arguments = {}},
+                .type = type};
           },
           [&](const mir::VectorType&) -> mir::Expr {
             return mir::Expr{
-                .data = mir::ConstructExpr{.args = {}}, .type = type};
+                .data =
+                    mir::CallExpr{
+                        .callee = mir::ConstructorCallee{}, .arguments = {}},
+                .type = type};
           },
           [&](const auto&) -> mir::Expr {
             throw InternalError(
@@ -170,7 +192,7 @@ auto BuildDefaultValueExpr(
       ty.data);
 }
 
-auto BuildArrayConstructExpr(
+auto BuildArrayConstructionCall(
     const ModuleLowerer& module, WalkFrame frame, mir::TypeId array_type,
     std::vector<mir::ExprId> elements) -> mir::Expr {
   auto& scope = *frame.current_procedural_scope;
@@ -185,7 +207,7 @@ auto BuildArrayConstructExpr(
           return t.element_type;
         } else {
           throw InternalError(
-              "BuildArrayConstructExpr: type is not UnpackedArrayType, "
+              "BuildArrayConstructionCall: type is not UnpackedArrayType, "
               "DynamicArrayType, or QueueType");
         }
       },
@@ -208,7 +230,10 @@ auto BuildArrayConstructExpr(
             static_cast<std::int64_t>(*q->max_bound))));
   }
   return mir::Expr{
-      .data = mir::ConstructExpr{.args = std::move(args)}, .type = array_type};
+      .data =
+          mir::CallExpr{
+              .callee = mir::ConstructorCallee{}, .arguments = std::move(args)},
+      .type = array_type};
 }
 
 }  // namespace lyra::lowering::hir_to_mir

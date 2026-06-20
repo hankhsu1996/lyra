@@ -208,7 +208,7 @@ auto BuildUniqueCheckClosure(
   const mir::ExprId outer_self_read =
       wrapper.AddExpr(BuildSelfRefExpr(wrapper_frame, self_ptr_type));
   closure.captures.emplace_back(
-      mir::ByValueCapture{.value = outer_self_read, .binding = self_binding});
+      mir::Capture{.value = outer_self_read, .binding = self_binding});
 
   std::vector<mir::ExprId> inner_reads;
   inner_reads.reserve(snapshot_vars.size());
@@ -227,7 +227,7 @@ auto BuildUniqueCheckClosure(
         mir::ProceduralVarDecl{
             .name = std::format("_lyra_unique_bind_{}", i), .type = snap_type});
     closure.captures.emplace_back(
-        mir::ByValueCapture{.value = outer_read_id, .binding = binding});
+        mir::Capture{.value = outer_read_id, .binding = binding});
 
     const mir::ExprId inner_read_id = body.AddExpr(
         mir::Expr{

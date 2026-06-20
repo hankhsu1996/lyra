@@ -39,10 +39,11 @@ auto LowerJoinMode(hir::JoinMode mode) -> mir::JoinMode {
 
 // LRM 9.3.2: a fork is a procedural scope. Its block_item_declarations lower
 // into that scope and initialize at block entry -- in the parent, before any
-// branch spawns. Each branch lowers to a closure composed into the fork
-// scope's expr arena. The capture sink collects every enclosing reference
-// the body makes as an identity; fork then assigns each capture's kind based
-// on its declaration depth (LRM 6.21).
+// branch spawns. Each branch lowers to a coroutine-typed closure composed into
+// the fork scope's expr arena. The capture sink collects every enclosing
+// reference the body makes; a fork-scope-local snapshots by value, a
+// deeper-declared enclosing variable aliases the live cell by reference (LRM
+// 6.21). The receiver `self` is the closure's first by-value capture.
 auto LowerForkStmt(
     ProcessLowerer& process, WalkFrame frame, std::optional<std::string> label,
     const hir::ForkStmt& f) -> diag::Result<mir::Stmt> {
@@ -60,8 +61,8 @@ auto LowerForkStmt(
     fork_scope.AppendStmt(*std::move(lowered));
   }
 
-  std::vector<mir::ExprId> branch_ids;
-  branch_ids.reserve(f.branches.size());
+  std::vector<mir::ExprId> branches;
+  branches.reserve(f.branches.size());
   const mir::TypeId self_ptr_type =
       process.Module().Unit().builtins.self_pointer;
   for (const hir::StmtId branch_hir_id : f.branches) {
@@ -73,10 +74,14 @@ auto LowerForkStmt(
     const mir::ExprId outer_self_read =
         fork_scope.AddExpr(BuildSelfRefExpr(fork_frame, self_ptr_type));
 
+    // A fork-scope local is snapshotted by value; a deeper enclosing variable
+    // aliases through a reference capture (LRM 6.21).
     CaptureSink sink{
-        fork_frame.procedural_depth.Inner(), branch_scope, fork_scope};
-    // LRM 9.3.2 fork branch: each branch is a concurrent thread that may
-    // suspend on timing controls / event waits inside its body.
+        fork_frame.procedural_depth.Inner(), branch_scope, fork_scope,
+        process.Module().Unit(), fork_depth};
+    // LRM 9.3.2: a branch is a concurrent thread whose body may suspend on
+    // timing controls / event waits, so it lowers as a coroutine body --
+    // returns inside it become `co_return`.
     const WalkFrame branch_frame =
         fork_frame.WithClosure(&sink)
             .WithProceduralScope(&branch_scope)
@@ -89,30 +94,24 @@ auto LowerForkStmt(
       return std::unexpected(std::move(lowered.error()));
     }
     branch_scope.AppendStmt(*std::move(lowered));
+    branch_scope.AppendStmt(
+        mir::ReturnStmt{.value = std::nullopt, .is_coroutine_return = true});
 
     std::vector<mir::Capture> captures;
-    captures.emplace_back(
-        mir::ByValueCapture{
-            .value = outer_self_read, .binding = branch_self_id});
+    captures.push_back(
+        mir::Capture{.value = outer_self_read, .binding = branch_self_id});
     for (const CaptureRequest& request : sink.TakeRequests()) {
-      if (request.decl_depth == fork_depth) {
-        captures.emplace_back(
-            mir::ByValueCapture{
-                .value = request.source, .binding = request.binding});
-      } else {
-        captures.emplace_back(
-            mir::ByReferenceCapture{
-                .target = request.source, .binding = request.binding});
-      }
+      captures.push_back(
+          mir::Capture{.value = request.source, .binding = request.binding});
     }
     mir::ClosureExpr closure;
     closure.captures = std::move(captures);
     closure.body =
         std::make_unique<mir::ProceduralScope>(std::move(branch_scope));
-    branch_ids.push_back(fork_scope.AddExpr(
+    branches.push_back(fork_scope.AddExpr(
         mir::Expr{
             .data = std::move(closure),
-            .type = process.Module().Unit().builtins.void_type}));
+            .type = process.Module().Unit().builtins.coroutine}));
   }
 
   const mir::ProceduralScopeId scope_id =
@@ -122,7 +121,7 @@ auto LowerForkStmt(
       .data = mir::ForkStmt{
           .mode = LowerJoinMode(f.mode),
           .scope = scope_id,
-          .branches = std::move(branch_ids)}};
+          .branches = std::move(branches)}};
 }
 
 }  // namespace lyra::lowering::hir_to_mir

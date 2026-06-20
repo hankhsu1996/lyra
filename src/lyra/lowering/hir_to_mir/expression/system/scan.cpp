@@ -217,7 +217,8 @@ auto LowerScanSystemSubroutineCall(
       mir::ProceduralVarDecl{.name = "self", .type = self_ptr_type});
   const mir::ExprId outer_self_read =
       outer_scope.AddExpr(BuildSelfRefExpr(frame, self_ptr_type));
-  CaptureSink sink{body_frame.procedural_depth, body, outer_scope};
+  CaptureSink sink{
+      body_frame.procedural_depth, body, outer_scope, process.Module().Unit()};
   // The scan IIFE is a synchronous body that returns a count -- no suspends.
   const WalkFrame closure_frame =
       body_frame.WithClosure(&sink)
@@ -353,16 +354,14 @@ auto LowerScanSystemSubroutineCall(
       body.AddExpr(mir::Expr{.data = count_ref, .type = integer_t});
   body.AppendStmt(mir::ReturnStmt{.value = return_value_id});
 
-  // The sync IIFE aliases the caller's storage, which is live throughout the
-  // closure's evaluation -- so every captured identity is a by-reference
-  // capture.
+  // The sync IIFE aliases the caller's storage (live throughout the closure's
+  // evaluation), so the sink gives every captured identity a reference binding.
   std::vector<mir::Capture> captures;
-  captures.emplace_back(
-      mir::ByValueCapture{.value = outer_self_read, .binding = self_binding});
+  captures.push_back(
+      mir::Capture{.value = outer_self_read, .binding = self_binding});
   for (const CaptureRequest& request : sink.TakeRequests()) {
-    captures.emplace_back(
-        mir::ByReferenceCapture{
-            .target = request.source, .binding = request.binding});
+    captures.push_back(
+        mir::Capture{.value = request.source, .binding = request.binding});
   }
   mir::ClosureExpr closure;
   closure.captures = std::move(captures);

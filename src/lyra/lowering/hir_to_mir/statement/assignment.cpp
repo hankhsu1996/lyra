@@ -291,7 +291,9 @@ auto LowerSubroutineCallWithWritebacks(
           actual_id = RewriteLhsRootWithMutate(
               process.Module().Unit(), wrapper, actual_id, services_id);
         }
-        call_args.push_back(actual_id);
+        call_args.push_back(BuildReferenceArg(
+            process.Module().Unit(), wrapper, actual_id,
+            wrapper.GetExpr(actual_id).type));
         continue;
       }
       auto arg_or = process.LowerExpr(hir_arg, wrapper_frame);
