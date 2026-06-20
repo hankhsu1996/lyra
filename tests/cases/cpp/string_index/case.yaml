@@ -1,0 +1,14 @@
+id: cpp.string_index
+tags: [cpp_run]
+input:
+  command: [run, cpp]
+  project: false
+  top: Top
+  files: [main.sv]
+expect:
+  exit: 0
+  variables:
+    first: 101
+    mid: 108
+    oob: 0
+    s: "Hellp"

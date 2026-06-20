@@ -364,6 +364,18 @@ auto FormatCharBody(const PackedArray& pa) -> std::string {
   return out;
 }
 
+auto FormatStringBody(const PackedArray& pa) -> std::string {
+  // LRM 21.2.1.7: the value's bytes render as ASCII characters, most
+  // significant byte first. The LRM leaves a NUL byte's rendering unpinned;
+  // match the de-facto convention -- a NUL (and an x/z byte, which reaches here
+  // as 0x00) renders as a space, so it stays one column rather than vanishing.
+  std::string out = pa.ByteString();
+  for (char& c : out) {
+    if (c == '\0') c = ' ';
+  }
+  return out;
+}
+
 auto FormatDecimalBody(const PackedArray& pa) -> std::string {
   switch (SummarizeUnknowns(pa)) {
     case UnknownSummary::kNone:
@@ -463,8 +475,8 @@ auto FormatIntegral(const FormatSpec& spec, const PackedArray& value)
       body = FormatCharBody(value);
       break;
     case FormatKind::kString:
-      throw InternalError(
-          "FormatIntegral: kString must route through Formatter<String>");
+      body = FormatStringBody(value);
+      break;
     case FormatKind::kRealDecimal:
     case FormatKind::kRealExponential:
     case FormatKind::kRealGeneral:

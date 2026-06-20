@@ -644,30 +644,17 @@ auto RenderConversionExpr(
     return std::format(
         "lyra::value::String::FromByteArray({})", *std::move(operand_or));
   }
-  // LRM 5.9 / 21.3.4.3: packed integral source / format lifts to string by
-  // viewing the bit vector as an MSB-first byte sequence. The $sscanf /
-  // $fscanf body emits an unknown-bits guard before this conversion runs,
-  // so x/z is never observed in the scan path; $display "%s" on an x/z-
-  // bearing packed operand sees `'\0'` per the policy documented at the
-  // String::FromPackedArray declaration.
-  //
-  // SV string literals are typed by slang as `bit[N:0]` packed (LRM 5.9)
-  // but the emitter renders them directly as `lyra::value::String{"..."}`,
-  // so the operand at C++ level is already a String when the source is a
-  // StringLiteral node -- the conversion is a slang-typing artifact, not a
-  // real byte-unpacking need. Skip the wrap in that case; the rendered
-  // operand is the lift's result.
+  // LRM 6.16: build a string value from packed bits. FromPackedArray strips
+  // every NUL, so the empty (`8'h00`) and embedded-NUL cases need no operand
+  // special-case -- the render stays a pure type map (conversion-folding.md;
+  // decisions/string-packed-conversion.md).
   if (src_ty.IsIntegralPacked() && dst_ty.Kind() == mir::TypeKind::kString) {
-    if (std::holds_alternative<mir::StringLiteral>(src_expr.data)) {
-      return *std::move(operand_or);
-    }
     return std::format(
         "lyra::value::String::FromPackedArray({})", *std::move(operand_or));
   }
   // Identity / no-op rendering: the conversion exists in MIR but the
-  // operand's already-rendered C++ matches the destination shape. Covers
-  // string -> string identity, and slang's `bit[N-1:0]` string literal ->
-  // `string` lift where RenderExpr already returns a `value::String{...}`.
+  // operand's already-rendered C++ matches the destination shape (e.g. a
+  // string -> string lift).
   return *std::move(operand_or);
 }
 
@@ -1731,7 +1718,7 @@ auto RenderExpr(const ScopeView& view, const mir::Expr& expr)
             return RenderIntegerLiteralExpr(view, expr, lit);
           },
           [&](const mir::StringLiteral& s) -> diag::Result<std::string> {
-            return RenderSvStringLiteral(s.value);
+            return RenderCStringLiteral(s.value);
           },
           [](const mir::TimeLiteral&) -> diag::Result<std::string> {
             return diag::Unsupported(

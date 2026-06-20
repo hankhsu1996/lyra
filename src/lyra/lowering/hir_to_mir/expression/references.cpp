@@ -1,5 +1,10 @@
 #include "lyra/lowering/hir_to_mir/expression/references.hpp"
 
+#include <cstdint>
+#include <string_view>
+#include <utility>
+#include <vector>
+
 #include "lyra/base/internal_error.hpp"
 #include "lyra/base/overloaded.hpp"
 #include "lyra/hir/integral_constant.hpp"
@@ -15,7 +20,6 @@
 #include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/expr.hpp"
 #include "lyra/mir/integral_constant.hpp"
-#include "lyra/mir/structural_scope.hpp"
 #include "lyra/mir/type.hpp"
 
 namespace lyra::lowering::hir_to_mir {
@@ -78,9 +82,54 @@ auto LowerHirIntegerLiteral(const hir::IntegerLiteral& i, mir::TypeId type)
       .type = type};
 }
 
-auto LowerHirStringLiteral(const hir::StringLiteral& s, mir::TypeId type)
-    -> mir::Expr {
-  return mir::Expr{.data = mir::StringLiteral{.value = s.value}, .type = type};
+// LRM 5.9: pack a string literal's bytes into the integer constant they denote,
+// the first byte most significant. A byte is 8-bit-aligned, so it never
+// straddles a 64-bit word.
+auto StringBytesToConstant(
+    std::string_view text, const mir::PackedArrayType& pa)
+    -> mir::IntegralConstant {
+  const auto width = static_cast<std::uint32_t>(pa.BitWidth());
+  std::vector<std::uint64_t> value_words((width + 63U) / 64U, 0U);
+  for (std::size_t i = 0; i < text.size(); ++i) {
+    const std::uint64_t bit_offset = width - (8U * (i + 1U));
+    value_words[bit_offset / 64U] |=
+        static_cast<std::uint64_t>(static_cast<unsigned char>(text[i]))
+        << (bit_offset % 64U);
+  }
+  return mir::IntegralConstant{
+      .value_words = std::move(value_words),
+      .state_words = {},
+      .width = width,
+      .signedness = pa.signedness,
+      .state_kind = mir::IntegralStateKind::kTwoState,
+  };
+}
+
+// An SV string literal is a packed bit-vector constant (LRM 5.9), so MIR
+// carries it as the integer constant of its bytes. A string-typed literal (a
+// string parameter's value) instead builds a `value::String` via the
+// constructor. See decisions/string-packed-conversion.md.
+auto LowerHirStringLiteral(
+    const ModuleLowerer& module, const WalkFrame& frame,
+    const hir::StringLiteral& s, mir::TypeId type) -> mir::Expr {
+  const auto& ty = module.Unit().GetType(type);
+  if (ty.IsIntegralPacked()) {
+    return mir::Expr{
+        .data =
+            mir::IntegerLiteral{
+                .value = StringBytesToConstant(s.value, ty.AsIntegralPacked())},
+        .type = type};
+  }
+  // A string-typed literal (e.g. a string parameter's value) builds a
+  // `value::String` from the software literal via the constructor, on the
+  // procedural scope that holds the surrounding expression.
+  auto& scope = *frame.current_procedural_scope;
+  const mir::ExprId lit = scope.AddExpr(
+      mir::Expr{.data = mir::StringLiteral{.value = s.value}, .type = type});
+  return mir::Expr{
+      .data =
+          mir::CallExpr{.callee = mir::ConstructorCallee{}, .arguments = {lit}},
+      .type = type};
 }
 
 auto LowerHirTimeLiteral(const ModuleLowerer& module, const hir::TimeLiteral& t)
@@ -187,7 +236,8 @@ auto LowerHirPrimaryExprProc(
             return LowerHirIntegerLiteral(i, result_type);
           },
           [&](const hir::StringLiteral& s) -> mir::Expr {
-            return LowerHirStringLiteral(s, result_type);
+            return LowerHirStringLiteral(
+                process.Module(), frame, s, result_type);
           },
           [&](const hir::TimeLiteral& t) -> mir::Expr {
             return LowerHirTimeLiteral(process.Module(), t);
@@ -220,7 +270,7 @@ auto LowerHirPrimaryExprStructural(
             return LowerHirIntegerLiteral(i, result_type);
           },
           [&](const hir::StringLiteral& s) -> mir::Expr {
-            return LowerHirStringLiteral(s, result_type);
+            return LowerHirStringLiteral(scope.Module(), frame, s, result_type);
           },
           [&](const hir::TimeLiteral& t) -> mir::Expr {
             return LowerHirTimeLiteral(scope.Module(), t);

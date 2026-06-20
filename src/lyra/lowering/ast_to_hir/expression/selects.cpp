@@ -59,6 +59,31 @@ auto LowerElementSelectExprProc(
     ProcessLowerer& proc, WalkFrame frame,
     const slang::ast::ElementSelectExpression& sel, diag::SourceSpan span)
     -> diag::Result<hir::Expr> {
+  if (sel.value().type->getCanonicalType().isString()) {
+    // LRM 6.16.3: a string is a byte sequence with no element lvalue, so an
+    // index read is the getc query, not an addressed element select. The
+    // write side lowers symmetrically to putc in the assignment path.
+    auto base_or = proc.LowerExpr(sel.value(), frame);
+    if (!base_or) return std::unexpected(std::move(base_or.error()));
+    const hir::ExprId base_id =
+        frame.current_procedural_body->AddExpr(*std::move(base_or));
+    auto idx_or = proc.LowerExpr(sel.selector(), frame);
+    if (!idx_or) return std::unexpected(std::move(idx_or.error()));
+    const hir::ExprId idx_id =
+        frame.current_procedural_body->AddExpr(*std::move(idx_or));
+    auto type_id = proc.Module().InternType(*sel.type, span);
+    if (!type_id) return std::unexpected(std::move(type_id.error()));
+    return hir::Expr{
+        .type = *type_id,
+        .data =
+            hir::CallExpr{
+                .callee =
+                    hir::BuiltinMethodRef{
+                        .method = hir::StringMethodKind::kGetc},
+                .arguments = {base_id, idx_id}},
+        .span = span,
+    };
+  }
   if (!sel.value().type->isIntegral() && !sel.value().type->isUnpackedArray()) {
     return diag::Unsupported(
         span, diag::DiagCode::kUnsupportedExpressionForm,

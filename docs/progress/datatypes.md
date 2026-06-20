@@ -106,6 +106,19 @@ frontend inserts an implicit conversion when a literal participates in an expres
       Out-of-range indices and zero-byte writes follow LRM no-op rules; `substr(i, j)` returns the
       empty string for `i < 0`, `j < i`, or `j >= len`.
 
+- [x] SC4 -- Indexing operator `s[i]` (LRM 6.16, Table 6-9) as a byte read and byte write, sharing
+      the out-of-range no-op semantics of the `getc` / `putc` methods, plus `foreach (s[i])` which
+      walks the string by byte (LRM 6.16). A blocking write and its compound forms are covered; a
+      nonblocking write to a single byte is permitted by LRM 10.4.2 but diagnosed as not yet
+      supported.
+
+- [x] SC5 -- A string literal carries its LRM 5.9 dual nature: slang types it as a packed bit vector
+      in every context except a `string`-typed one, so it serves both as an integral constant (a
+      direct operand of an integral operator such as `byte == "x"`, an integral assignment, or a
+      `byte` element write `s[i] = "x"`) and as text (a `string` value or a format / `%s` argument).
+      The empty literal `""` stays the empty string through a `string` conversion, where the packed
+      encoding alone would lose it.
+
 ### Cross-references
 
 - LRM 6.16 (String data type), Table 6-9 (String operators), 6.16.1 -- 6.16.15 (String methods),

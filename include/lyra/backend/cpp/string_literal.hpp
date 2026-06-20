@@ -6,13 +6,9 @@
 namespace lyra::backend::cpp {
 
 // Render a string as a C string literal: `"..."` with control characters,
-// quotes, and backslashes escaped. Used for `PrintItem::Literal(...)` arguments
-// and as the inner form of `RenderSvStringLiteral`.
+// quotes, and backslashes escaped. This is how a `mir::StringLiteral` renders
+// -- a software string literal -- which a `ConstructorCallee` then turns into a
+// `value::String` (see decisions/string-packed-conversion.md).
 auto RenderCStringLiteral(std::string_view s) -> std::string;
-
-// Render a string as a `lyra::value::String{"..."}` initializer expression.
-// Used for `mir::StringLiteral` operand emission so the resulting value
-// matches the SystemVerilog `string` data type's runtime representation.
-auto RenderSvStringLiteral(std::string_view s) -> std::string;
 
 }  // namespace lyra::backend::cpp
