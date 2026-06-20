@@ -1,24 +1,29 @@
 #pragma once
 
+#include <optional>
 #include <string>
 #include <utility>
 #include <vector>
 
 #include "lyra/lowering/hir_to_mir/procedural_depth.hpp"
+#include "lyra/lowering/hir_to_mir/self_ref.hpp"
 #include "lyra/mir/expr.hpp"
 #include "lyra/mir/procedural_var.hpp"
 #include "lyra/mir/stmt.hpp"
 
+namespace lyra::mir {
+class CompilationUnit;
+}  // namespace lyra::mir
+
 namespace lyra::lowering::hir_to_mir {
 
 // One captured variable, identified while a closure body is lowered. The sink
-// has already allocated `binding` in the body and rewritten the body's
-// references to read it; `source` reaches the captured variable from the
-// enclosing scope and is the same expression whichever way the caller uses it
-// (aliased for a by-reference capture, read for a by-value one). `decl_depth`
-// is the captured variable's declaration depth -- the metadata a caller reads
-// to decide the capture kind. Turning a request into a `mir::Capture` is the
-// caller's job; the sink never decides by value versus by reference.
+// has allocated `binding` in the body and rewritten the body's references to
+// read it; `source` is the enclosing-scope expression bound into the closure --
+// a plain read of the captured variable for a by-value snapshot, or a
+// reference-construct (`Ref<T>`) for a by-reference alias. The caller binds
+// `source` to `binding` uniformly; the snapshot-versus-alias choice is already
+// realized in `binding`'s type and in `source`.
 struct CaptureRequest {
   mir::ProceduralVarId var;
   ProceduralDepth decl_depth;
@@ -27,22 +32,29 @@ struct CaptureRequest {
 };
 
 // Identity-only capture collector for a closure body. Installed on
-// ProcessLowerer for the duration of a single closure construction:
-// during the body's lowering, any procedural-var reference that resolves above
-// the sink's boundary is rerouted here -- a binding in the body scope is
-// allocated (deduplicated by identity), the reference is rewritten to read that
-// binding, and a CaptureRequest is recorded. The sink never inspects how the
-// reference is used or which storage the capture should hold; that is the
-// caller's concern. A fork branch snapshots its block_item_declarations by
-// value and aliases enclosing-process variables by reference; the
-// `$sscanf` / `$fscanf` sync IIFE aliases everything by reference -- each reads
-// the requests and assembles its own captures.
+// ProcessLowerer for the duration of a single closure construction: during the
+// body's lowering, any procedural-var reference that resolves above the sink's
+// boundary is rerouted here -- a binding in the body scope is allocated
+// (deduplicated by identity), the reference is rewritten to read that binding,
+// and a CaptureRequest is recorded. A capture declared at `by_value_depth` is a
+// by-value snapshot (a value-typed binding); any other capture aliases the
+// enclosing storage, so its binding is a `RefType` and its `source` is a
+// reference-construct, and the body's reads / writes route through the live
+// cell (LRM 6.21). A fork branch passes its block_item_declaration depth (those
+// locals snapshot; deeper enclosing variables alias); the `$sscanf` / `$fscanf`
+// sync IIFE and the with-clause body pass no by-value depth (every capture
+// aliases).
 class CaptureSink {
  public:
   CaptureSink(
       ProceduralDepth boundary_depth, mir::ProceduralScope& body,
-      mir::ProceduralScope& outer)
-      : boundary_depth_(boundary_depth), body_(&body), outer_(&outer) {
+      mir::ProceduralScope& outer, mir::CompilationUnit& unit,
+      std::optional<ProceduralDepth> by_value_depth = std::nullopt)
+      : boundary_depth_(boundary_depth),
+        body_(&body),
+        outer_(&outer),
+        unit_(&unit),
+        by_value_depth_(by_value_depth) {
   }
 
   [[nodiscard]] auto BoundaryDepth() const -> ProceduralDepth {
@@ -72,18 +84,30 @@ class CaptureSink {
         return request.binding;
       }
     }
-    const mir::ProceduralVarId binding = body_->AddProceduralVar(
-        mir::ProceduralVarDecl{
-            .name = "_lyra_cap_" + std::to_string(requests_.size()),
-            .type = type});
-    // The source is evaluated one scope outside the body (where the capture is
-    // spawned), so its hops run from there down to the variable.
-    const mir::ExprId source = outer_->AddExpr(
+    // The cell read is evaluated one scope outside the body (where the capture
+    // is spawned), so its hops run from there down to the variable.
+    const mir::ExprId cell = outer_->AddExpr(
         mir::Expr{
             .data =
                 mir::ProceduralVarRef{
                     .hops = boundary_depth_.Outer() - decl_depth, .var = var},
             .type = type});
+    const std::string name = "_lyra_cap_" + std::to_string(requests_.size());
+    mir::ProceduralVarId binding{};
+    mir::ExprId source{};
+    if (by_value_depth_ == decl_depth) {
+      // By-value snapshot: the binding owns a copy; the source is the read.
+      binding = body_->AddProceduralVar(
+          mir::ProceduralVarDecl{.name = name, .type = type});
+      source = cell;
+    } else {
+      // By-reference alias: the source constructs a reference to the cell and
+      // the binding holds that reference (its `RefType`).
+      source = BuildReferenceArg(*unit_, *outer_, cell, type);
+      binding = body_->AddProceduralVar(
+          mir::ProceduralVarDecl{
+              .name = name, .type = outer_->GetExpr(source).type});
+    }
     requests_.push_back(
         CaptureRequest{
             .var = var,
@@ -96,6 +120,8 @@ class CaptureSink {
   ProceduralDepth boundary_depth_;
   mir::ProceduralScope* body_;
   mir::ProceduralScope* outer_;
+  mir::CompilationUnit* unit_;
+  std::optional<ProceduralDepth> by_value_depth_;
   std::vector<CaptureRequest> requests_;
 };
 

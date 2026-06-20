@@ -53,11 +53,12 @@ shape:
   supplies it at invocation. The body's binding is filled by the call.
 - **Closure** carries `self` as the first by-value capture (`captures[0]` is a `ByValueCapture`
   whose `value` is the enclosing scope's read of its own `self` and whose `binding` points at the
-  closure body's `vars[0]`). No invoker of a closure value -- the NBA / postponed-`$strobe` /
-  deferred-check region runner, the fork scheduler, the with-clause iterator, an IIFE call site --
-  can be relied on to know which receiver belongs in the body, because a closure value can outlive
-  the enclosing-scope frame that knows. The enclosing scope snapshots its own `self` into the
-  closure at construction; the closure body reads the captured value.
+  closure body's `vars[0]`). This holds for every closure form, the fork branch included. No invoker
+  of a closure value -- the NBA / postponed-`$strobe` / deferred-check region runner, the fork
+  scheduler, the with-clause iterator -- can be relied on to know which receiver belongs in the
+  body, because a closure value can outlive the enclosing-scope frame that knows. The enclosing
+  scope snapshots its own `self` into the closure at construction; the body reads the captured
+  value.
 
 This partition is not a stylistic choice -- it follows from "who knows the receiver?". A method-form
 callable has a caller-who-knows; a closure does not. Forcing both forms onto one supply mechanism
@@ -75,9 +76,13 @@ The C++ backend renders each form in its natural idiom:
   The class still owns the storage; the method body lives on the class so it can name private
   members. The body sees `self->X`, never implicit `this`.
 - **Closure** -> lambda whose capture clause is
-  `[self = <enclosing self expr>, cap1 = ..., &cap2 = ...]`. Every capture is name-explicit; the
+  `[self = <enclosing self expr>, cap1 = ..., cap2 = lyra::runtime::Ref<T>(<lvalue>)]` -- a
+  by-reference capture binds a `Ref<T>` rather than a snapshot. Every capture is name-explicit; the
   clause never contains `[this]`, `[=]`, or `[&]`. The body sees `self->X` through the captured
-  binding, never implicit `this`.
+  binding, never implicit `this`. A coroutine closure (a fork branch) is realized as a stateless
+  lambda whose captures pass as frame-copied parameters supplied by an immediate call -- a backend
+  realization of the same captures, since a capturing coroutine lambda would dangle; the MIR closure
+  still carries `self` and the rest as captures.
 
 The constructor body is the only callable whose corresponding C++ entry cannot be static (the real
 C++ constructor must be an instance constructor for instance creation to work). The constructor body
@@ -160,9 +165,10 @@ binding pushes the answer up to one place that every backend just reads.
   structural scope. The binding's name is `self`; the type makes the pointee unambiguous.
 
 - For method-form callables (process, subroutine, constructor body) the `self` binding is the first
-  formal parameter; the caller supplies it at invocation. For a closure, the `self` binding is the
-  first by-value capture (`captures[0]`); the enclosing scope's read of its own `self` supplies the
-  capture value at construction.
+  formal parameter; the caller supplies it at invocation. For a closure -- every closure, the fork
+  branch included -- the `self` binding is the first by-value capture (`captures[0]`); the enclosing
+  scope's read of its own `self` supplies the capture value at construction. Both land at
+  `body.vars[0]`.
 
 - A new MIR expression `MemberAccessExpr { receiver: ExprId, var: StructuralVarRef-fields }`
   replaces today's implicit-receiver `StructuralVarRef`. The receiver expression is rendered before
@@ -177,9 +183,10 @@ binding pushes the answer up to one place that every backend just reads.
 - C++ emit shape changes: process / subroutine / constructor bodies emit as
   `static auto <name>(M* self, ...) -> ... { ... }`; the C++ constructor delegates the body to a
   static `init(this)` call. Closures emit as
-  `[self = <enclosing self expr>, cap1 = ..., &cap2 = ...](closure_params) -> R { ... }` -- every
-  capture is name-explicit; the clause never contains `[this]`, `[=]`, or `[&]`. `CreateProcesses()`
-  adapts: where it previously emitted `AddProcess(kind, process_N())` it now emits
+  `[self = <enclosing self expr>, cap1 = ..., cap2 = <reference value>](closure_params) -> R { ... }`
+  -- every capture is name-explicit and by-value; an alias capture binds a reference value, never a
+  C++ `[&]` reference (see `docs/architecture/closure.md` for why). `CreateProcesses()` adapts:
+  where it previously emitted `AddProcess(kind, process_N())` it now emits
   `AddProcess(kind, process_N(this))`.
 
 - LIR / LLVM-IR lowering reads the `self` binding directly off MIR. No backend re-derives receiver
@@ -191,5 +198,7 @@ binding pushes the answer up to one place that every backend just reads.
 
 ## Cross-references
 
+- `docs/architecture/closure.md` (closure model: capture, references as a field type,
+  coroutine-ness)
 - `docs/architecture/mir.md` (callable shape, expression set)
 - `docs/progress/refactor.md` R16

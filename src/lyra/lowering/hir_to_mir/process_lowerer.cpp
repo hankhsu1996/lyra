@@ -312,15 +312,15 @@ auto LowerSubroutineKind(hir::SubroutineKind kind) -> mir::SubroutineKind {
 auto LowerParamDirection(hir::ParamDirection dir) -> mir::ParamDirection {
   switch (dir) {
     case hir::ParamDirection::kInput:
+    // A ref / const ref formal is passed by value as a `Ref<T>`; the aliasing
+    // lives in the formal's `RefType`, not in the direction (LRM 13.5.2).
+    case hir::ParamDirection::kRef:
+    case hir::ParamDirection::kConstRef:
       return mir::ParamDirection::kInput;
     case hir::ParamDirection::kOutput:
       return mir::ParamDirection::kOutput;
     case hir::ParamDirection::kInOut:
       return mir::ParamDirection::kInOut;
-    case hir::ParamDirection::kRef:
-      return mir::ParamDirection::kRef;
-    case hir::ParamDirection::kConstRef:
-      return mir::ParamDirection::kConstRef;
   }
   throw InternalError("LowerParamDirection: unknown hir::ParamDirection");
 }
@@ -368,17 +368,21 @@ auto ProcessLowerer::Run(const hir::StructuralSubroutineDecl& src)
   params.reserve(src.params.size());
   for (const auto& param : src.params) {
     const auto& hir_var = src.body.procedural_vars.at(param.var.value);
-    const mir::TypeId type = module_->TranslateType(hir_var.type);
-    // A ref / const ref formal aliases the actual's cell, so its body var is a
-    // reference binding the backend renders as `Ref<T>` (LRM 13.5.2).
-    const mir::VariableBinding binding =
-        (param.direction == hir::ParamDirection::kRef ||
-         param.direction == hir::ParamDirection::kConstRef)
-            ? mir::VariableBinding::kReference
-            : mir::VariableBinding::kValue;
+    const mir::TypeId value_type = module_->TranslateType(hir_var.type);
+    // A `ref` / `const ref` formal's type is a `Ref<T>` over the value type
+    // (LRM 13.5.2) -- the reference is itself the data type, so the direction
+    // stays `kInput`. Every other direction keeps the value type.
+    const bool by_reference = param.direction == hir::ParamDirection::kRef ||
+                              param.direction == hir::ParamDirection::kConstRef;
+    const mir::TypeId type =
+        by_reference ? module_->Unit().AddType(
+                           mir::TypeData{mir::RefType{
+                               .pointee = value_type,
+                               .is_const = param.direction ==
+                                           hir::ParamDirection::kConstRef}})
+                     : value_type;
     const mir::ProceduralVarId mir_var = body_scope.AddProceduralVar(
-        mir::ProceduralVarDecl{
-            .name = hir_var.name, .type = type, .binding = binding});
+        mir::ProceduralVarDecl{.name = hir_var.name, .type = type});
     MapProceduralVar(
         param.var,
         AutomaticVarBinding{

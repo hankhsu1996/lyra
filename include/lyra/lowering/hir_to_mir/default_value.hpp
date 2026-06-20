@@ -27,15 +27,15 @@ namespace lyra::lowering::hir_to_mir {
     -> mir::Expr;
 
 // Wraps a list of element ExprIds destined for an array container constructor
-// (`UnpackedArrayType` or `DynamicArrayType`) in
-// `ConstructExpr{[element_default, ArrayLiteralExpr{elements}]}`. This is the
+// (`UnpackedArrayType` or `DynamicArrayType`) in a construction call whose
+// arguments are `[element_default, ArrayLiteralExpr{elements}]`. This is the
 // construction shape every site that produces an array-container value must
 // use: the canonical-default element required by the wrapper's runtime ctor
 // (to seed `oob_slot_`) is supplied here via `BuildDefaultValueExpr` on
 // the element type, and the elements ride in an `ArrayLiteralExpr` that the
 // renderer emits as `std::array<T, N>{...}`. See
 // `docs/decisions/runtime-shape-and-default-value.md`.
-[[nodiscard]] auto BuildArrayConstructExpr(
+[[nodiscard]] auto BuildArrayConstructionCall(
     const ModuleLowerer& module, WalkFrame frame, mir::TypeId array_type,
     std::vector<mir::ExprId> elements) -> mir::Expr;
 
