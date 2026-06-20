@@ -242,7 +242,8 @@ auto BuildNbaSubmitClosureExpr(
   mir::ProceduralScope body;
   std::vector<mir::Capture> captures;
 
-  const mir::TypeId self_ptr_type = module.Unit().builtins.self_pointer;
+  const mir::TypeId self_ptr_type =
+      frame.current_structural_scope->self_pointer_type;
   const mir::ProceduralVarId self_id = body.AddProceduralVar(
       mir::ProceduralVarDecl{.name = "self", .type = self_ptr_type});
   const mir::ExprId outer_self_read =

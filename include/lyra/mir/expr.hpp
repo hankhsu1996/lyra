@@ -157,8 +157,7 @@ struct DerefExpr {
 // Class-member access through an explicit receiver expression. `receiver`
 // evaluates to a class-instance value (typically `ProceduralVarRef(self)`);
 // `member` names which structural var of the receiver's class to reach. The
-// receiver is explicit -- a backend never asks "what is the current receiver?"
-// (mir.md invariant 11).
+// receiver is explicit -- a backend never asks "what is the current receiver?".
 struct MemberAccessExpr {
   ExprId receiver;
   StructuralVarRef member;
@@ -217,7 +216,7 @@ struct Expr {
 // `self.Services()` -- reaches the engine facade from the scope handle.
 // `self` is the receiver ExprId; `services` is ServicesType. The caller does
 // the AddExpr. Every runtime-effect call threads the result as its engine
-// handle (docs/decisions/runtime-effects-as-generic-calls.md).
+// handle.
 [[nodiscard]] inline auto MakeServicesCallExpr(ExprId self, TypeId services)
     -> Expr {
   return Expr{

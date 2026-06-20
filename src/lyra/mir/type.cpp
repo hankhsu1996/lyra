@@ -75,7 +75,6 @@ auto Type::Kind() const -> TypeKind {
             return TypeKind::kExternalUnitObject;
           },
           [](const ScopeType&) { return TypeKind::kScope; },
-          [](const SelfType&) { return TypeKind::kSelf; },
           [](const ServicesType&) { return TypeKind::kServices; },
           [](const RuntimeLibraryType&) { return TypeKind::kRuntimeLibrary; },
           [](const CoroutineType&) { return TypeKind::kCoroutine; },
@@ -168,7 +167,7 @@ auto GetChildScope(const CompilationUnit& unit, TypeId type)
   }
   const auto& data = unit.GetType(*pointee).data;
   if (const auto* obj = std::get_if<ObjectType>(&data)) {
-    return ChildScope{GenerateScopeChild{.target = obj->target}};
+    return ChildScope{GenerateScopeChild{.name = obj->name}};
   }
   if (std::holds_alternative<ExternalUnitObjectType>(data)) {
     return ChildScope{ModuleInstanceChild{}};

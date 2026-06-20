@@ -169,15 +169,13 @@ class MirDumper {
             [](const ChandleType&) -> std::string { return "ChandleType"; },
             [](const VoidType&) -> std::string { return "VoidType"; },
             [](const ObjectType& o) -> std::string {
-              return std::format(
-                  "Object(scope=ChildStructuralScope[{}])", o.target.value);
+              return std::format("Object(name=\"{}\")", o.name);
             },
             [](const ExternalUnitObjectType& e) -> std::string {
               return std::format(
                   "ExternalUnitObject(unit=\"{}\")", e.unit_name);
             },
             [](const ScopeType&) -> std::string { return "Scope"; },
-            [](const SelfType&) -> std::string { return "Self"; },
             [](const ServicesType&) -> std::string { return "Services"; },
             [](const RuntimeLibraryType& r) -> std::string {
               switch (r.kind) {
