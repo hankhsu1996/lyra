@@ -24,6 +24,9 @@ Grouped by subject so a decision is findable by concept, not only by filename. O
 - [runtime-shape-and-default-value](runtime-shape-and-default-value.md) -- runtime shape lives on
   `PackedArray`; collections carry one OOB shield slot that is both the canonical-default source and
   the out-of-bounds-write discard target.
+- [string-packed-conversion](string-packed-conversion.md) -- a `value::String` holds no NUL;
+  packed-to-string conversion strips NUL (LRM 6.16) while `%s` formats bits without building a
+  string value (LRM 21.2.1.7).
 
 ### Aggregate types and access
 

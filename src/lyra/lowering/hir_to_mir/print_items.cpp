@@ -77,17 +77,14 @@ auto BuildPrintValueItem(
   if (!lowered_or) return std::unexpected(std::move(lowered_or.error()));
   mir::Expr lowered = *std::move(lowered_or);
 
-  // %s consumes a runtime String. Slang types SV string literals as packed
-  // bit vectors (LRM 5.9), so a `$display("%s", "hello")` arg arrives here
-  // with a packed-array type. Insert an implicit ConversionExpr targeting
-  // StringType so the backend's RuntimePrintValue rendering stays purely
-  // type-driven. Non-literal integral operands also flow through this same
-  // path -- when slang's bit-vector-to-string conversion lands at the
-  // operand level, this becomes a no-op; until then the conversion is the
-  // single chokepoint that records the semantic.
+  // %s formats by operand type (LRM 21.2.1.7,
+  // decisions/string-packed-conversion.md): a String and a packed value each
+  // format directly, without building a string value. Only an unpacked byte
+  // array is not directly formattable, so it lifts to a string value here.
+  const auto& value_type = process.Module().Unit().GetType(lowered.type);
   if (spec.kind == value::FormatKind::kString &&
-      process.Module().Unit().GetType(lowered.type).Kind() !=
-          mir::TypeKind::kString) {
+      value_type.Kind() != mir::TypeKind::kString &&
+      !value_type.IsIntegralPacked()) {
     const mir::ExprId inner = proc_scope.AddExpr(std::move(lowered));
     lowered = mir::Expr{
         .data =
@@ -198,9 +195,16 @@ auto BuildPrintItemExpr(
   return std::visit(
       Overloaded{
           [&](const mir::RuntimePrintLiteral& lit) -> mir::Expr {
-            const mir::ExprId text = scope.AddExpr(
+            const mir::ExprId text_lit = scope.AddExpr(
                 mir::Expr{
                     .data = mir::StringLiteral{.value = lit.text},
+                    .type = unit.builtins.string});
+            const mir::ExprId text = scope.AddExpr(
+                mir::Expr{
+                    .data =
+                        mir::CallExpr{
+                            .callee = mir::ConstructorCallee{},
+                            .arguments = {text_lit}},
                     .type = unit.builtins.string});
             return mir::Expr{
                 .data =

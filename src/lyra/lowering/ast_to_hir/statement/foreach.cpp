@@ -11,9 +11,7 @@
 #include <slang/ast/types/AllTypes.h>
 #include <slang/ast/types/Type.h>
 
-#include "lyra/diag/diag_code.hpp"
 #include "lyra/diag/diagnostic.hpp"
-#include "lyra/diag/kind.hpp"
 #include "lyra/hir/binary_op.hpp"
 #include "lyra/hir/expr.hpp"
 #include "lyra/hir/expr_builders.hpp"
@@ -48,13 +46,24 @@ struct LevelLoop {
   std::vector<hir::ExprId> step;
 };
 
+// The element-count query for a runtime-sized dimension: queue and dynamic
+// array expose `size`; a string exposes `len` (LRM 6.16.1).
+auto SizeMethodFor(const slang::ast::Type& array_type)
+    -> hir::BuiltinMethodRef {
+  if (array_type.getCanonicalType().isString()) {
+    return {.method = hir::StringMethodKind::kLen};
+  }
+  if (array_type.isQueue()) {
+    return {.method = hir::QueueMethodKind::kSize};
+  }
+  return {.method = hir::ArrayMethodKind::kSize};
+}
+
 // Build the loop for one index-counted dimension. A fixed dimension iterates
 // its declared range and direction; a dynamically sized one (queue / dynamic
-// array) counts 0..size-1 ascending, sampling the count once on entry
+// array / string) counts 0..size-1 ascending, sampling the count once on entry
 // (LRM 12.7.3) into a `setup` local that the condition then reads. The loop
-// variable is the counter, declared in the `for`. `array` is the receiver whose
-// `.size()` bounds a dynamic dimension (queue and dynamic array both expose it;
-// the type only names the builtin-method kind).
+// variable is the counter, declared in the `for`.
 auto BuildIntegerLevel(
     ProcessLowerer& proc, hir::ProceduralBody& body, const LoopDim& dim,
     std::optional<hir::ExprId> array, const slang::ast::Type* array_type,
@@ -71,11 +80,7 @@ auto BuildIntegerLevel(
         body.AddExpr(hir::MakeInt32Literal(declared.right, int32_type, span));
     ascending = declared.left <= declared.right;
   } else {
-    hir::SubroutineRef size_callee =
-        array_type->isQueue() ? hir::SubroutineRef{hir::BuiltinMethodRef{
-                                    .method = hir::QueueMethodKind::kSize}}
-                              : hir::SubroutineRef{hir::BuiltinMethodRef{
-                                    .method = hir::ArrayMethodKind::kSize}};
+    hir::SubroutineRef size_callee = SizeMethodFor(*array_type);
     const hir::ExprId size_id = body.AddExpr(
         hir::Expr{
             .type = int32_type,
@@ -271,10 +276,12 @@ auto BuildForeachNest(
 
   // Descend: the inner levels iterate `array[loop_var]`, one type peel deeper.
   // Only built while the array is being threaded (some inner level is runtime
-  // sized); a deeper fixed-only tail leaves it absent.
+  // sized) and a deeper iterated level remains; the innermost level peels no
+  // element type, which also keeps a string (a terminal byte sequence with no
+  // array element type) from descending.
   std::optional<hir::ExprId> inner_array;
   const slang::ast::Type* inner_array_type = nullptr;
-  if (array.has_value()) {
+  if (array.has_value() && level + 1 < levels.size()) {
     inner_array_type = array_type->getCanonicalType().getArrayElementType();
     auto inner_hir_type = proc.Module().InternType(*inner_array_type, span);
     if (!inner_hir_type) {
@@ -319,24 +326,6 @@ auto BuildForeachNest(
   return stmts;
 }
 
-// Iterating a string itself walks by byte (LRM 6.16), a distinct model from the
-// index-counted and key-walked array families handled here; it stays rejected
-// until its own lowering lands.
-auto RejectUnsupportedArrayType(
-    const slang::ast::Type& canonical, diag::SourceSpan span)
-    -> diag::Result<void> {
-  using slang::ast::SymbolKind;
-  switch (canonical.kind) {
-    case SymbolKind::StringType:
-      return diag::Unsupported(
-          span, diag::DiagCode::kUnsupportedStatementForm,
-          "foreach over string is not yet supported",
-          diag::UnsupportedCategory::kFeature);
-    default:
-      return {};
-  }
-}
-
 }  // namespace
 
 auto ProcessLowerer::LowerForeachStmt(
@@ -346,10 +335,6 @@ auto ProcessLowerer::LowerForeachStmt(
   auto& module = proc.Module();
   auto& body = *frame.current_procedural_body;
   const auto span = module.SourceMapper().SpanOf(fs.sourceRange);
-  const auto& canonical = fs.arrayRef.type->getCanonicalType();
-  if (auto check = RejectUnsupportedArrayType(canonical, span); !check) {
-    return std::unexpected(std::move(check.error()));
-  }
 
   const hir::TypeId int32_type = module.Unit().builtins.int32;
 

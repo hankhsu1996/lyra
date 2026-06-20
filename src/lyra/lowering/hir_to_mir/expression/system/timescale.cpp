@@ -61,10 +61,17 @@ auto LowerPrintTimescaleSystemSubroutineCall(
 
   const mir::ExprId services_id =
       body.AddExpr(BuildServicesCallExpr(process, frame));
-  const mir::ExprId scope_name_id = body.AddExpr(
+  const mir::ExprId scope_name_lit = body.AddExpr(
       mir::Expr{
           .data =
               mir::StringLiteral{.value = std::string(process.Scope().Name())},
+          .type = builtins.string});
+  const mir::ExprId scope_name_id = body.AddExpr(
+      mir::Expr{
+          .data =
+              mir::CallExpr{
+                  .callee = mir::ConstructorCallee{},
+                  .arguments = {scope_name_lit}},
           .type = builtins.string});
   const mir::ExprId unit_power_id = body.AddExpr(
       mir::MakeInt32Literal(

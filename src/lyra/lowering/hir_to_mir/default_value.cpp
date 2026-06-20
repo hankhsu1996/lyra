@@ -71,8 +71,16 @@ auto BuildDefaultValueExpr(
                 .type = type};
           },
           [&](const mir::StringType&) -> mir::Expr {
+            // Software string literal -> `value::String("")` via the
+            // constructor.
+            const mir::ExprId lit = scope.AddExpr(
+                mir::Expr{
+                    .data = mir::StringLiteral{.value = std::string{}},
+                    .type = type});
             return mir::Expr{
-                .data = mir::StringLiteral{.value = std::string{}},
+                .data =
+                    mir::CallExpr{
+                        .callee = mir::ConstructorCallee{}, .arguments = {lit}},
                 .type = type};
           },
           [&](const mir::RealType&) -> mir::Expr {
