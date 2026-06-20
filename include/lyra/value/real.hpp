@@ -5,9 +5,9 @@
 #include <cstdint>
 #include <type_traits>
 
+#include "lyra/value/concepts.hpp"
 #include "lyra/value/format.hpp"
 #include "lyra/value/packed_array.hpp"
-#include "lyra/value/concepts.hpp"
 
 namespace lyra::value {
 
