@@ -44,10 +44,10 @@ namespace lyra::lowering::hir_to_mir {
 
 namespace {
 
-// Side dispatch for `arr[i]` callee selection. `kRead` resolves to the
-// const-overload form (`kElementAt` / `kRead`); `kLhs` resolves to the
-// write-side form (`kWriteRef` / `kElementRef`) where the runtime container
-// distinguishes (LRM 7.8.6 / 7.8.7 for AA, LRM 7.10.1 for queue).
+// Read vs LHS side dispatch for `arr[i]`. The split is uniform across all
+// container kinds (LRM 7.8.6 / 7.8.7 AA, LRM 7.10.1 queue, LRM 7.4 packed /
+// unpacked) and mirrors the runtime API's bare-vs-`Ref`-suffix protocol;
+// see `include/lyra/value/concepts.hpp`.
 enum class AccessSide : std::uint8_t { kRead, kLhs };
 
 auto ElementAccessCallee(const hir::Type& base_hir_type, AccessSide side)
@@ -57,17 +57,18 @@ auto ElementAccessCallee(const hir::Type& base_hir_type, AccessSide side)
         .method = mir::AssociativeMethodInfo{
             .kind = side == AccessSide::kLhs
                         ? mir::AssociativeMethodKind::kElementRef
-                        : mir::AssociativeMethodKind::kRead}};
+                        : mir::AssociativeMethodKind::kElement}};
   }
   if (std::holds_alternative<hir::QueueType>(base_hir_type.data)) {
     return mir::BuiltinMethodCallee{
         .method = mir::QueueMethodInfo{
-            .kind = side == AccessSide::kLhs
-                        ? mir::QueueMethodKind::kWriteRef
-                        : mir::QueueMethodKind::kElementAt}};
+            .kind = side == AccessSide::kLhs ? mir::QueueMethodKind::kElementRef
+                                             : mir::QueueMethodKind::kElement}};
   }
   return mir::BuiltinMethodCallee{
-      .method = mir::ArrayMethodInfo{.kind = mir::ArrayMethodKind::kElementAt}};
+      .method = mir::ArrayMethodInfo{
+          .kind = side == AccessSide::kLhs ? mir::ArrayMethodKind::kElementRef
+                                           : mir::ArrayMethodKind::kElement}};
 }
 
 // LRM 7.2.1 / 7.2.2: packed struct or union field table accessor. Used by
@@ -80,12 +81,11 @@ auto GetAggregateFields(const hir::Type& t)
       "GetAggregateFields: base type is not a packed struct or union");
 }
 
-// Wraps a `kElementAt` / `kSlice` result with `kToOwned` so the borrowed
-// `PackedArrayRef` materialises into an owning `PackedArray` (Rust's
-// `&[T]::to_owned() -> Vec<T>` pattern). Required in read context; LHS
-// chains keep the view because they write through it. Non-packed receivers
-// (queue, AA) fall through unchanged because their `Slice` / `ElementAt`
-// already return owning values.
+// Read-side wrap that materialises a borrowed `PackedArrayRef` result into
+// an owning `PackedArray` (Rust's `&[T]::to_owned() -> Vec<T>` pattern).
+// LHS chains keep the view because they write through it; non-packed
+// receivers fall through unchanged because their access already returns an
+// owning value.
 auto WrapPackedAsOwned(
     const mir::CompilationUnit& unit, mir::ProceduralScope& scope,
     mir::Expr access_call, mir::TypeId result_type) -> mir::Expr {
@@ -468,19 +468,17 @@ auto BuildElementAccessCallExpr(
 }
 
 // `arr[hi:lo]` / `arr[base+:w]` / `arr[base-:w]` range select. Queue
-// receivers dispatch to `QueueMethodKind::kSlice` carrying `[base, lo, hi]`
-// (the queue runtime derives the dynamic count from the bounds, LRM
-// 7.10.1). Every other container kind uses `ArrayMethodKind::kSlice` and
-// carries `[base, offset, count]` where `count` is the type-fixed slice
-// width: SV LRM 7.4.5 / 11.5.2 require the runtime to canonical-fill at
-// the type-determined width even when bounds carry X/Z, so the width
-// cannot be derived from `(lo, hi)` alone.
+// carries `[base, lo, hi]` because LRM 7.10.1 derives the dynamic count
+// from the bounds; every other container carries `[base, offset, count]`
+// because LRM 7.4.5 / 11.5.2 require the runtime to canonical-fill at the
+// type-determined width even when bounds carry X/Z, and that width is not
+// derivable from `(lo, hi)` alone.
 template <typename LowerOne>
 auto BuildRangeSliceCallExpr(
     const ModuleLowerer& module, mir::ProceduralScope& proc_scope,
     const hir::Type& hir_base_ty, const hir::RangeBounds& bounds,
-    mir::ExprId base_id, mir::TypeId result_type, LowerOne lower_one)
-    -> diag::Result<mir::Expr> {
+    mir::ExprId base_id, mir::TypeId result_type, AccessSide side,
+    LowerOne lower_one) -> diag::Result<mir::Expr> {
   RangeStrategy strategy;
   const bool is_queue =
       std::holds_alternative<hir::QueueType>(hir_base_ty.data);
@@ -500,6 +498,8 @@ auto BuildRangeSliceCallExpr(
       UnfoldRangeBoundsToLoHi(module, proc_scope, bounds, strategy, lower_one);
   if (!bounds_or) return std::unexpected(std::move(bounds_or.error()));
   if (is_queue) {
+    // LRM 7.10 defines no write-side queue slice; slang rejects a queue
+    // slice in lvalue context, so the LHS path never reaches here.
     return mir::Expr{
         .data =
             mir::CallExpr{
@@ -522,19 +522,21 @@ auto BuildRangeSliceCallExpr(
                   mir::BuiltinMethodCallee{
                       .method =
                           mir::ArrayMethodInfo{
-                              .kind = mir::ArrayMethodKind::kSlice}},
+                              .kind = side == AccessSide::kLhs
+                                          ? mir::ArrayMethodKind::kSliceRef
+                                          : mir::ArrayMethodKind::kSlice}},
               .arguments = {base_id, bounds_or->lo, count_id}},
       .type = result_type};
 }
 
 // LRM 7.2.1 packed struct / union field-as-slice. The field's
-// `(bit_offset, bit_width)` projects to the same `Call(ArrayMethod{kSlice},
-// [base, offset, count])` shape range-selects emit on the packed path, so
-// the runtime sees one slice form regardless of source form.
+// `(bit_offset, bit_width)` projects to the same packed-path slice shape a
+// range-select emits, so the runtime sees one slice form regardless of
+// whether the source was `s.field` or `s[hi:lo]`.
 auto BuildFieldSliceCallExpr(
     const ModuleLowerer& module, mir::ProceduralScope& proc_scope,
     mir::ExprId base_id, std::uint32_t bit_offset, std::uint32_t bit_width,
-    mir::TypeId result_type) -> mir::Expr {
+    mir::TypeId result_type, AccessSide side) -> mir::Expr {
   const mir::TypeId int32_type = module.Unit().builtins.int32;
   const auto offset_id = proc_scope.AddExpr(
       mir::MakeInt32Literal(int32_type, static_cast<std::int64_t>(bit_offset)));
@@ -547,7 +549,9 @@ auto BuildFieldSliceCallExpr(
                   mir::BuiltinMethodCallee{
                       .method =
                           mir::ArrayMethodInfo{
-                              .kind = mir::ArrayMethodKind::kSlice}},
+                              .kind = side == AccessSide::kLhs
+                                          ? mir::ArrayMethodKind::kSliceRef
+                                          : mir::ArrayMethodKind::kSlice}},
               .arguments = {base_id, offset_id, count_id}},
       .type = result_type};
 }
@@ -575,11 +579,12 @@ auto LowerRangeSelectInner(
     const ModuleLowerer& module, mir::ProceduralScope& proc_scope,
     const hir::Type& hir_base_ty, const hir::RangeBounds& bounds,
     mir::ExprId base_id, mir::TypeId result_type, LowerOne lower_one,
-    bool wrap_packed_as_owned) -> diag::Result<mir::Expr> {
+    AccessSide side) -> diag::Result<mir::Expr> {
   auto slice_or = BuildRangeSliceCallExpr(
-      module, proc_scope, hir_base_ty, bounds, base_id, result_type, lower_one);
+      module, proc_scope, hir_base_ty, bounds, base_id, result_type, side,
+      lower_one);
   if (!slice_or) return std::unexpected(std::move(slice_or.error()));
-  if (!wrap_packed_as_owned) return *std::move(slice_or);
+  if (side == AccessSide::kLhs) return *std::move(slice_or);
   return WrapPackedAsOwned(
       module.Unit(), proc_scope, *std::move(slice_or), result_type);
 }
@@ -592,17 +597,17 @@ auto LowerRangeSelectInner(
 auto LowerMemberAccessInner(
     ModuleLowerer& module, mir::ProceduralScope& proc_scope,
     const hir::PackedAggregateField& field, mir::ExprId base_id,
-    mir::TypeId result_type, bool wrap_packed_as_owned) -> mir::Expr {
-  if (!wrap_packed_as_owned) {
+    mir::TypeId result_type, AccessSide side) -> mir::Expr {
+  if (side == AccessSide::kLhs) {
     return BuildFieldSliceCallExpr(
         module, proc_scope, base_id, field.bit_offset, field.bit_width,
-        result_type);
+        result_type, side);
   }
   const mir::TypeId slice_type =
       UnsignedPackedCounterpart(module.Unit(), result_type);
   mir::Expr slice_call = BuildFieldSliceCallExpr(
       module, proc_scope, base_id, field.bit_offset, field.bit_width,
-      slice_type);
+      slice_type, side);
   mir::Expr owned = WrapPackedAsOwned(
       module.Unit(), proc_scope, std::move(slice_call), slice_type);
   return WrapSliceSignReTag(
@@ -639,10 +644,11 @@ auto LowerHirElementSelectExprProc(
   const mir::ExprId idx_id = proc_scope.AddExpr(*std::move(idx_or));
 
   const auto& hir_base_ty = module.Hir().GetType(hir_base.type);
-  // LRM 7.10.1: queue's `q[i] = ...` realises as `kWriteRef` (the
-  // append-aware write path); the lvalue-target marker carried on the walk
-  // frame distinguishes this from the read form. AA / packed / unpacked
-  // already route their write side through the explicit LHS lowerers below.
+  // LRM 7.10.1: queue's `q[$+1] = v` appends, so a queue element write
+  // must dispatch as LHS even from this RHS entry point. The lvalue-target
+  // marker carried on the walk frame surfaces that case. AA / packed /
+  // unpacked already route their write side through the explicit LHS
+  // lowerers below.
   const AccessSide side =
       (is_write && std::holds_alternative<hir::QueueType>(hir_base_ty.data))
           ? AccessSide::kLhs
@@ -672,7 +678,7 @@ auto LowerHirRangeSelectExprProc(
   const auto& hir_base_ty = module.Hir().GetType(hir_base.type);
   return LowerRangeSelectInner(
       module, proc_scope, hir_base_ty, sel.bounds, base_id, result_type,
-      lower_one, true);
+      lower_one, AccessSide::kRead);
 }
 
 // LRM 7.2.1: packed struct / union field access "can be selected as if it
@@ -696,7 +702,8 @@ auto LowerHirMemberAccessExprProc(
   if (!base_or) return std::unexpected(std::move(base_or.error()));
   const mir::ExprId base_id = proc_scope.AddExpr(*std::move(base_or));
   return LowerMemberAccessInner(
-      module, proc_scope, fields[sel.field_index], base_id, result_type, true);
+      module, proc_scope, fields[sel.field_index], base_id, result_type,
+      AccessSide::kRead);
 }
 
 auto LowerHirElementSelectExprProcLhs(
@@ -742,7 +749,7 @@ auto LowerHirRangeSelectExprProcLhs(
   const auto& hir_base_ty = module.Hir().GetType(hir_base.type);
   return LowerRangeSelectInner(
       module, proc_scope, hir_base_ty, sel.bounds, base_id, result_type,
-      lower_one, false);
+      lower_one, AccessSide::kLhs);
 }
 
 auto LowerHirMemberAccessExprProcLhs(
@@ -762,7 +769,8 @@ auto LowerHirMemberAccessExprProcLhs(
   if (!base_or) return std::unexpected(std::move(base_or.error()));
   const mir::ExprId base_id = proc_scope.AddExpr(*std::move(base_or));
   return LowerMemberAccessInner(
-      module, proc_scope, fields[sel.field_index], base_id, result_type, false);
+      module, proc_scope, fields[sel.field_index], base_id, result_type,
+      AccessSide::kLhs);
 }
 
 auto LowerHirElementSelectExprStructural(
@@ -815,7 +823,7 @@ auto LowerHirRangeSelectExprStructural(
   const auto& hir_base_ty = module.Hir().GetType(hir_base.type);
   return LowerRangeSelectInner(
       module, proc_scope, hir_base_ty, sel.bounds, base_id, result_type,
-      lower_one, true);
+      lower_one, AccessSide::kRead);
 }
 
 auto LowerHirMemberAccessExprStructural(
@@ -836,7 +844,8 @@ auto LowerHirMemberAccessExprStructural(
   if (!base_or) return std::unexpected(std::move(base_or.error()));
   const mir::ExprId base_id = proc_scope.AddExpr(*std::move(base_or));
   return LowerMemberAccessInner(
-      module, proc_scope, fields[sel.field_index], base_id, result_type, true);
+      module, proc_scope, fields[sel.field_index], base_id, result_type,
+      AccessSide::kRead);
 }
 
 auto LowerHirElementSelectExprStructuralLhs(
@@ -884,7 +893,7 @@ auto LowerHirRangeSelectExprStructuralLhs(
   const auto& hir_base_ty = module.Hir().GetType(hir_base.type);
   return LowerRangeSelectInner(
       module, proc_scope, hir_base_ty, sel.bounds, base_id, result_type,
-      lower_one, false);
+      lower_one, AccessSide::kLhs);
 }
 
 auto LowerHirMemberAccessExprStructuralLhs(
@@ -905,7 +914,8 @@ auto LowerHirMemberAccessExprStructuralLhs(
   if (!base_or) return std::unexpected(std::move(base_or.error()));
   const mir::ExprId base_id = proc_scope.AddExpr(*std::move(base_or));
   return LowerMemberAccessInner(
-      module, proc_scope, fields[sel.field_index], base_id, result_type, false);
+      module, proc_scope, fields[sel.field_index], base_id, result_type,
+      AccessSide::kLhs);
 }
 
 }  // namespace lyra::lowering::hir_to_mir

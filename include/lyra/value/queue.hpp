@@ -190,10 +190,11 @@ class Queue {
     data_.clear();
   }
 
-  // LRM 7.10.1 / 7.4.5 read: an index outside 0..size-1 (or carrying x/z)
-  // returns the element default via `oob_slot_`, restored to canonical state
-  // first. Reads never grow the queue; the backend routes writes to `WriteRef`.
-  [[nodiscard]] auto ElementAt(const PackedArray& idx) -> T& {
+  // LRM 7.10.1 / 7.4.5 read: an index outside `0..size-1` (or carrying
+  // x/z) routes through `oob_slot_`, restored to canonical state first.
+  // Reads never grow the queue -- the write path owns the `q[$+1]` append
+  // semantic.
+  [[nodiscard]] auto Element(const PackedArray& idx) -> T& {
     if (IsInvalidIndex(idx)) {
       oob_slot_.ResetToDefault();
       return oob_slot_;
@@ -201,7 +202,7 @@ class Queue {
     return data_[static_cast<std::size_t>(idx.ToInt64())];
   }
 
-  [[nodiscard]] auto ElementAt(const PackedArray& idx) const -> const T& {
+  [[nodiscard]] auto Element(const PackedArray& idx) const -> const T& {
     if (IsInvalidIndex(idx)) {
       oob_slot_.ResetToDefault();
       return oob_slot_;
@@ -210,11 +211,11 @@ class Queue {
   }
 
   // LRM 7.10.1 write: `q[$+1] = v` (index == size) appends a default-shaped
-  // slot and returns it. An x/z, negative, or beyond-`$+1` index lands on the
-  // discarded shield so the write is ignored. The backend takes this path only
-  // for an element-write lvalue, so a read of index == size still returns the
-  // default rather than growing the queue.
-  [[nodiscard]] auto WriteRef(const PackedArray& idx) -> T& {
+  // slot and returns it. An x/z, negative, or beyond-`$+1` index lands on
+  // the discarded shield so the write is ignored. The backend routes here
+  // only for an element-write lvalue, so a read of `index == size` still
+  // sees the default rather than growing the queue.
+  [[nodiscard]] auto ElementRef(const PackedArray& idx) -> T& {
     if (!idx.HasUnknown()) {
       const auto v = idx.ToInt64();
       if (v >= 0 && static_cast<std::uint64_t>(v) < data_.size()) {

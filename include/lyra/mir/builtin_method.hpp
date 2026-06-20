@@ -48,24 +48,16 @@ enum class EventMethodKind : std::uint8_t {
   kTriggered,
 };
 
-// Methods on the array-shaped containers (`PackedArray`, `UnpackedArray<T>`,
-// `DynamicArray<T>`, `Queue<T>`).
-//
-// LRM 11.5 container access: `kElementAt` is `arr[i]` and `kSlice` is
-// `arr[hi:lo]` (LRM 7.4.5 / 11.5.1); both yield a borrowed view.
-// `kToOwned` materialises that view into an owning value (Rust's `ToOwned`
-// trait: `&str::to_owned() -> String`); needed only when the storage uses a
-// distinct ref type (PackedArrayRef), since other containers' `T&` is
-// implicitly materialised by the C++ copy constructor.
-//
-// `kSize` is the LRM 7.9.1 element count. The shared LRM 7.12 family
-// (ordering, reduction, locator, `kMap`) carries one closure as the second
-// argument -- the source `with` clause or the LRM 7.12.1 default `with (item)`.
-// The locator arms (`kFind` onward) return a queue; `kMap` returns a same-shape
-// container of the closure's result type.
+// Methods on the array-shaped containers (LRM 7.4 / 11.5 / 7.12). Bare
+// vs `Ref` suffix encodes value-form vs reference-form access -- see
+// `include/lyra/value/concepts.hpp` for the runtime API protocol. The LRM
+// 7.12 `with`-clause family carries one closure as the second argument
+// (the source `with` clause or the LRM 7.12.1 default `with (item)`).
 enum class ArrayMethodKind : std::uint8_t {
-  kElementAt,
+  kElement,
+  kElementRef,
   kSlice,
+  kSliceRef,
   kToOwned,
   kSize,
   kDelete,
@@ -90,10 +82,11 @@ enum class ArrayMethodKind : std::uint8_t {
   kMap,
 };
 
-// LRM 7.10.2 queue methods. `kElementAt` / `kWriteRef` / `kSlice` have no SV
-// method syntax -- they carry `q[i]` read, `q[i] = v` write, and `q[a:b]`
-// slice, which lower to calls because a queue has no native C++ subscript
-// (LRM 7.10.1).
+// LRM 7.10 queue-native methods plus the compiler-internal access methods
+// that queue operators lower to. LRM 7.10.1 bakes the `q[$+1]` append
+// semantic into the write-side element access; LRM 7.10 defines no
+// write-side queue slice. The shared LRM 7.12 family stays in
+// `ArrayMethodKind`.
 enum class QueueMethodKind : std::uint8_t {
   kSize,
   kInsert,
@@ -102,19 +95,18 @@ enum class QueueMethodKind : std::uint8_t {
   kPopBack,
   kPushFront,
   kPushBack,
-  kElementAt,
-  kWriteRef,
+  kElement,
+  kElementRef,
   kSlice,
 };
 
-// LRM 7.9 associative-array methods. LRM 7.8.6 / 7.8.7: container access
-// splits read from write because the AA allocates on the write-side path --
-// `kRead` returns the element default when the key is absent; `kElementRef`
-// allocates the key with the element default before yielding a write target.
-// The traversal family (LRM 7.9.4 -- 7.9.7) assigns the visited key through
-// a `ref` index argument and returns 0 / 1 / -1.
+// LRM 7.9 associative-array methods. LRM 7.8.6 / 7.8.7 split read from
+// write because the AA allocates on the write-side path (the key is created
+// with the element default before the write target is yielded). The
+// traversal family (LRM 7.9.4 -- 7.9.7) assigns the visited key through a
+// `ref` index argument and returns 0 / 1 / -1.
 enum class AssociativeMethodKind : std::uint8_t {
-  kRead,
+  kElement,
   kElementRef,
   kNum,
   kSize,
@@ -212,9 +204,9 @@ struct BuiltinMethodCallee {
 [[nodiscard]] auto IsMutatingBuiltinMethod(const BuiltinMethodCallee& callee)
     -> bool;
 
-// Whether `callee` is a container-access method (`kElementAt`, `kSlice`,
-// `kRead`, `kElementRef`) whose first argument is the container being
-// accessed.
+// Whether `callee` is an indexed / sliced container access whose first
+// argument is the container being accessed. Used by LHS-chain walkers to
+// reach the root primary.
 [[nodiscard]] auto IsContainerAccessCall(const BuiltinMethodCallee& callee)
     -> bool;
 

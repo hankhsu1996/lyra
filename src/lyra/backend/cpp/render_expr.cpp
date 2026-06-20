@@ -732,10 +732,14 @@ auto StringMethodMemberName(mir::StringMethodKind k) -> std::string_view {
 
 auto ArrayMethodMemberName(mir::ArrayMethodKind k) -> std::string_view {
   switch (k) {
-    case mir::ArrayMethodKind::kElementAt:
-      return "ElementAt";
+    case mir::ArrayMethodKind::kElement:
+      return "Element";
+    case mir::ArrayMethodKind::kElementRef:
+      return "ElementRef";
     case mir::ArrayMethodKind::kSlice:
       return "Slice";
+    case mir::ArrayMethodKind::kSliceRef:
+      return "SliceRef";
     case mir::ArrayMethodKind::kToOwned:
       return "ToOwned";
     case mir::ArrayMethodKind::kSize:
@@ -850,10 +854,10 @@ auto QueueMethodMemberName(mir::QueueMethodKind k) -> std::string_view {
       return "PushFront";
     case mir::QueueMethodKind::kPushBack:
       return "PushBack";
-    case mir::QueueMethodKind::kElementAt:
-      return "ElementAt";
-    case mir::QueueMethodKind::kWriteRef:
-      return "WriteRef";
+    case mir::QueueMethodKind::kElement:
+      return "Element";
+    case mir::QueueMethodKind::kElementRef:
+      return "ElementRef";
     case mir::QueueMethodKind::kSlice:
       return "Slice";
   }
@@ -863,8 +867,8 @@ auto QueueMethodMemberName(mir::QueueMethodKind k) -> std::string_view {
 auto AssociativeMethodMemberName(mir::AssociativeMethodKind k)
     -> std::string_view {
   switch (k) {
-    case mir::AssociativeMethodKind::kRead:
-      return "Read";
+    case mir::AssociativeMethodKind::kElement:
+      return "Element";
     case mir::AssociativeMethodKind::kElementRef:
       return "ElementRef";
     case mir::AssociativeMethodKind::kNum:
@@ -896,7 +900,7 @@ auto AssociativeTraversalFunctionName(mir::AssociativeMethodKind k)
       return "AssocNext";
     case mir::AssociativeMethodKind::kPrev:
       return "AssocPrev";
-    case mir::AssociativeMethodKind::kRead:
+    case mir::AssociativeMethodKind::kElement:
     case mir::AssociativeMethodKind::kElementRef:
     case mir::AssociativeMethodKind::kNum:
     case mir::AssociativeMethodKind::kSize:
@@ -1351,11 +1355,11 @@ auto RenderCallExpr(
 }  // namespace
 
 // LHS expression render: produces a write-target reference (a name, a
-// dereference, or a chain of container-access `CallExpr`s -- the runtime's
-// `ElementAt` / `ElementRef` / `WriteRef` / `Slice` overloads return
-// write-through references). The observable-cell `Mutate(svc)` adapter is
-// already in MIR as `DerefExpr(CallExpr(ObservableMethod{kMutate}, ...))` --
-// this render emits nothing implicit on top of the explicit MIR shape.
+// dereference, or a chain of container-access `CallExpr`s whose runtime
+// overloads return write-through references). The observable-cell
+// `Mutate(svc)` adapter is already in MIR as a `DerefExpr` wrapping an
+// `ObservableMethod{kMutate}` call -- this render emits nothing implicit
+// on top of the explicit MIR shape.
 auto RenderLhsExpr(const RenderContext& ctx, const mir::Expr& expr)
     -> diag::Result<std::string> {
   return std::visit(
@@ -1372,10 +1376,10 @@ auto RenderLhsExpr(const RenderContext& ctx, const mir::Expr& expr)
           [&](const mir::ProceduralVarRef& l) -> diag::Result<std::string> {
             return LookupProceduralVarName(ctx, l);
           },
-          // HIR-to-MIR lowers an LHS selector chain (AA's `kElementRef`,
-          // others' `kElementAt` / `kSlice`, queue's `kWriteRef`) to a
-          // `CallExpr`. The C++ surface returns a write-through reference,
-          // so the natural value-side rendering is itself the assignment
+          // HIR-to-MIR lowers an LHS selector chain to a container-access
+          // `CallExpr` (per `mir::IsContainerAccessCall`). The C++ surface
+          // returns a write-through reference, so the natural value-side
+          // rendering is itself the assignment
           // target; LHS context needs no extra fix-up.
           [&](const mir::CallExpr&) -> diag::Result<std::string> {
             return RenderExpr(ctx, expr);
@@ -1397,9 +1401,9 @@ auto RenderLhsExpr(const RenderContext& ctx, const mir::Expr& expr)
 
 namespace {
 
-// Walks an LHS expression through container-access calls
-// (`kElementAt` / `kSlice` / `kRead` / `kElementRef`) to its root primary.
-// Whether a write touches a reference formal is decided by what that root is.
+// Walks an LHS expression through container-access calls (per
+// `mir::IsContainerAccessCall`) to its root primary. Whether a write
+// touches a reference formal is decided by what that root is.
 auto LhsRootPrimary(const RenderContext& ctx, const mir::Expr& expr)
     -> const mir::Expr& {
   const mir::Expr* current = &expr;

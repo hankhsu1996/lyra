@@ -7,7 +7,7 @@
 
 #include "lyra/value/format.hpp"
 #include "lyra/value/packed_array.hpp"
-#include "lyra/value/value_concept.hpp"
+#include "lyra/value/concepts.hpp"
 
 namespace lyra::value {
 

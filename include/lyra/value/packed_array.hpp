@@ -388,23 +388,19 @@ class PackedArray {
       const PackedArray& lsb_bit, std::uint32_t bit_width,
       const PackedArray& value) -> void;
 
-  // Proxy-chain entry points. Both methods take positions in the operand's
-  // outer-element units; PackedArray's `dims_` decides the element bit width
-  // internally. For a 1D operand (`dims_.size() == 1`), one "element" is one
-  // bit, so `ElementAt` is the LRM 11.5.1 bit-select and `Slice` is the LRM
-  // 11.5.1 part-select at bit level. For a multi-dim operand, one "element"
-  // is the inner subtype, and the API scales positions internally.
+  // Proxy-chain entry points. Positions are in the operand's outer-element
+  // units; `dims_` decides the element bit width internally. For a 1D
+  // operand (`dims_.size() == 1`), one "element" is one bit, so the chain
+  // realises LRM 11.5.1 bit-select / part-select directly. For a multi-dim
+  // operand, one "element" is the inner subtype, and the API scales
+  // positions internally.
   //
-  // Non-const overloads return a `PackedArrayRef` that composes further
-  // selectors and routes a final `operator=` through `AssignSlice`. Const
-  // overloads materialize the sub-slice as a fresh `PackedArray` for
-  // read-side use. Uniformly method-style (no `operator[]`) so a chain is
-  // visually consistent: `data.ElementAt(idx).Slice(offset, count)`. The
-  // `Sliceable` protocol's second argument is the type-fixed element count
-  // (LRM 11.5.2 constrains the slice width); see `container_protocols.hpp`.
-  [[nodiscard]] auto ElementAt(const PackedArray& idx) -> PackedArrayRef;
-  [[nodiscard]] auto ElementAt(const PackedArray& idx) const -> PackedArray;
-  [[nodiscard]] auto Slice(
+  // The write-side reference form routes its final `operator=` through
+  // `AssignSlice`. LRM 11.5.2 constrains the slice width to a constant; see
+  // `concepts.hpp` for the `Indexable` / `Sliceable` protocol shape.
+  [[nodiscard]] auto ElementRef(const PackedArray& idx) -> PackedArrayRef;
+  [[nodiscard]] auto Element(const PackedArray& idx) const -> PackedArray;
+  [[nodiscard]] auto SliceRef(
       const PackedArray& offset_in_outer_elements,
       const PackedArray& count_in_outer_elements) -> PackedArrayRef;
   [[nodiscard]] auto Slice(
@@ -581,11 +577,12 @@ class PackedArrayRef {
     return prior;
   }
 
-  // Chain composition. Positions are in the current sub-view's outer-element
-  // units; the proxy scales internally based on `dims_`. The `Sliceable`
-  // protocol's second argument is the type-fixed element count.
-  [[nodiscard]] auto ElementAt(const PackedArray& idx) const -> PackedArrayRef;
-  [[nodiscard]] auto Slice(
+  // Chain composition. Every chained selector stays in the reference form
+  // (returns another `PackedArrayRef`) so a tail `operator=` routes through
+  // `AssignSlice`. Positions are in the current sub-view's outer-element
+  // units; the proxy scales internally based on `dims_`.
+  [[nodiscard]] auto ElementRef(const PackedArray& idx) const -> PackedArrayRef;
+  [[nodiscard]] auto SliceRef(
       const PackedArray& offset_in_outer_elements,
       const PackedArray& count_in_outer_elements) const -> PackedArrayRef;
 
@@ -599,6 +596,7 @@ class PackedArrayRef {
 static_assert(LyraValue<PackedArray>);
 static_assert(Indexable<PackedArray>);
 static_assert(Sliceable<PackedArray>);
+static_assert(SliceableRef<PackedArray>);
 static_assert(Ownable<PackedArray>);
 static_assert(Defaultable<PackedArray>);
 

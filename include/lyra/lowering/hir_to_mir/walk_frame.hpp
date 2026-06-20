@@ -110,11 +110,11 @@ struct WalkFrame {
   // `kProceduralInduction`. Ignored by `ProcessLowerer::LowerExpr`.
   LoopVarLoweringMode loop_var_mode = LoopVarLoweringMode::kStructuralParam;
 
-  // True while lowering an assignment's left-hand side. A queue element-select
-  // resolves to its write access method (`WriteRef`, append-aware) under this
-  // flag and to its read access method (`ElementAt`) otherwise; the index and
-  // other rvalue subexpressions clear it. Read only by the queue element-select
-  // lowering; no other access form distinguishes read from write at this layer.
+  // True while lowering an assignment's left-hand side. A queue
+  // element-select dispatches to its write-side callee (LRM 7.10.1
+  // append-aware) under this flag; the index and other rvalue
+  // sub-expressions clear it. Read only by the queue element-select
+  // lowering -- the other selector forms have explicit LHS entry points.
   bool is_lvalue_target = false;
 
   // Pushes `scope` as the current structural scope and links the previous

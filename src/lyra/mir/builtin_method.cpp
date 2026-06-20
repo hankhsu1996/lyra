@@ -25,11 +25,10 @@ auto IsMutatingBuiltinMethod(const BuiltinMethodCallee& callee) -> bool {
           // through the wrapper API.
           [](const EventMethodInfo&) { return false; },
           [](const ArrayMethodInfo& m) {
-            // Container-access (`kElementAt`, `kSlice`) and ref-to-value
-            // (`kToOwned`) are non-mutating themselves -- they return a
-            // borrowed view or an owning value; whether the chain ends in a
-            // write is determined by what consumes the result, not by these
-            // methods.
+            // Container access (including the write-side reference forms)
+            // is non-mutating at the call itself; whether the chain ends in
+            // a write is decided by the outer `AssignExpr`. Only the in-
+            // place mutators below name themselves as receiver mutators.
             return m.kind == ArrayMethodKind::kDelete ||
                    m.kind == ArrayMethodKind::kReverse ||
                    m.kind == ArrayMethodKind::kSort ||
@@ -39,19 +38,17 @@ auto IsMutatingBuiltinMethod(const BuiltinMethodCallee& callee) -> bool {
             return m.kind != QueueMethodKind::kSize;
           },
           [](const AssociativeMethodInfo& m) {
-            // `kRead` returns a borrowed view; `kElementRef` allocates on
-            // miss but the mutation pipeline is closed by an outer
-            // `AssignExpr`, so they read as non-mutating receivers from the
-            // observable-mutate / LHS-render dispatch's point of view.
+            // Reads and the write-side reference both surface as
+            // non-mutating receivers here; mutation is pinned by the outer
+            // `AssignExpr` in the LHS-render dispatch.
             return m.kind == AssociativeMethodKind::kDelete;
           },
           [](const ValueMethodInfo&) { return false; },
           [](const IteratorMethodInfo&) { return false; },
           [](const ScopeMethodInfo&) { return false; },
-          // Get / Set / Mutate are the observable cell API itself -- their
-          // mutating nature is encoded by which kind is invoked, not by a
-          // surrounding wrapper. The wrap rule that drives this trait does
-          // not recurse into them.
+          // The observable-cell methods carry their mutating intent on the
+          // kind itself; the wrap rule that drives this trait does not
+          // recurse into them.
           [](const ObservableMethodInfo&) { return false; },
       },
       callee.method);
@@ -61,16 +58,18 @@ auto IsContainerAccessCall(const BuiltinMethodCallee& callee) -> bool {
   return std::visit(
       Overloaded{
           [](const ArrayMethodInfo& m) {
-            return m.kind == ArrayMethodKind::kElementAt ||
-                   m.kind == ArrayMethodKind::kSlice;
+            return m.kind == ArrayMethodKind::kElement ||
+                   m.kind == ArrayMethodKind::kElementRef ||
+                   m.kind == ArrayMethodKind::kSlice ||
+                   m.kind == ArrayMethodKind::kSliceRef;
           },
           [](const AssociativeMethodInfo& m) {
-            return m.kind == AssociativeMethodKind::kRead ||
+            return m.kind == AssociativeMethodKind::kElement ||
                    m.kind == AssociativeMethodKind::kElementRef;
           },
           [](const QueueMethodInfo& m) {
-            return m.kind == QueueMethodKind::kElementAt ||
-                   m.kind == QueueMethodKind::kWriteRef ||
+            return m.kind == QueueMethodKind::kElement ||
+                   m.kind == QueueMethodKind::kElementRef ||
                    m.kind == QueueMethodKind::kSlice;
           },
           [](const auto&) { return false; },

@@ -1359,7 +1359,7 @@ auto ReplaceOuterDimCount(
 
 }  // namespace
 
-auto PackedArray::ElementAt(const PackedArray& idx) -> PackedArrayRef {
+auto PackedArray::ElementRef(const PackedArray& idx) -> PackedArrayRef {
   const auto element_bw = OuterElementBitWidth(bit_width_, dims_);
   return PackedArrayRef{
       *this,
@@ -1372,7 +1372,7 @@ auto PackedArray::ElementAt(const PackedArray& idx) -> PackedArrayRef {
       element_bw, PopOuterDim(dims_)};
 }
 
-auto PackedArray::ElementAt(const PackedArray& idx) const -> PackedArray {
+auto PackedArray::Element(const PackedArray& idx) const -> PackedArray {
   const auto element_bw = OuterElementBitWidth(bit_width_, dims_);
   const auto bit_offset =
       element_bw == 1U
@@ -1384,7 +1384,7 @@ auto PackedArray::ElementAt(const PackedArray& idx) const -> PackedArray {
   return ExtractBits(bit_offset, element_bw);
 }
 
-auto PackedArray::Slice(
+auto PackedArray::SliceRef(
     const PackedArray& offset_in_outer_elements,
     const PackedArray& count_in_outer_elements) -> PackedArrayRef {
   const auto count =
@@ -1435,7 +1435,8 @@ auto PackedArrayRef::operator=(const PackedArray& value) -> PackedArrayRef& {
   return *this;
 }
 
-auto PackedArrayRef::ElementAt(const PackedArray& idx) const -> PackedArrayRef {
+auto PackedArrayRef::ElementRef(const PackedArray& idx) const
+    -> PackedArrayRef {
   const auto element_bw = OuterElementBitWidth(bit_width_, dims_);
   return PackedArrayRef{
       *root_,
@@ -1449,7 +1450,7 @@ auto PackedArrayRef::ElementAt(const PackedArray& idx) const -> PackedArrayRef {
       element_bw, PopOuterDim(dims_)};
 }
 
-auto PackedArrayRef::Slice(
+auto PackedArrayRef::SliceRef(
     const PackedArray& offset_in_outer_elements,
     const PackedArray& count_in_outer_elements) const -> PackedArrayRef {
   const auto count =

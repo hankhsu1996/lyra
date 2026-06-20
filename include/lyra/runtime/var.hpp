@@ -169,13 +169,14 @@ class Var : public Observable {
   // it can reach the PackedArray edge classifier.
   void Set(RuntimeServices& services, const T& new_val);
 
-  // RAII entry to partial-write context. Construct via `var.Mutate(services)`
-  // at the start of a chain; the returned handle snapshots the current value,
-  // forwards chain methods so `var.Mutate(svc)[idx].Slice(...) = v` works as a
-  // single expression, and commits the mutated snapshot through `Var::Set` in
-  // its destructor (fires subscribers on change). Lifetime is C++ standard
-  // full-expression temporary lifetime -- the handle is non-copyable and
-  // non-movable, so storing it past the statement is rejected at compile time.
+  // RAII entry to partial-write context. Construct via `var.Mutate(svc)`
+  // at the start of a chain; the returned handle snapshots the current
+  // value, forwards chain methods so a partial write expressed as a single
+  // selector chain (e.g. ending in a `SliceRef = v`) lands in the snapshot,
+  // and commits the mutated snapshot through `Var::Set` in its destructor
+  // (fires subscribers on change). Lifetime is C++ standard full-expression
+  // temporary lifetime -- the handle is non-copyable and non-movable, so
+  // storing it past the statement is rejected at compile time.
   auto Mutate(RuntimeServices& services) -> ScopedMutation<T>;
 
  private:

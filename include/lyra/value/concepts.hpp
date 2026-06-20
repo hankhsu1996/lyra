@@ -110,22 +110,28 @@ concept Lengthable = requires(const T& t) {
   { t.Len() } -> std::same_as<PackedArray>;
 };
 
-// Indexable: read-side single-element access by integer position. Position
-// is always carried as a PackedArray regardless of receiver, so the call
-// site does not need to know the receiver's element type to materialise the
-// index. String's LRM-named sibling is `Getc(pos)` (LRM 6.16.3); both
-// protocols share the position-as-PackedArray shape.
+// Indexable: single-element access by integer position. The container
+// exposes a value-form (`Element`) returning a snapshot or const view, and
+// a reference-form (`ElementRef`) returning a write-through reference. The
+// pair models the bare-vs-`Ref`-suffix naming convention: the bare method
+// hands you the element, the `Ref` method hands you a handle to it. String
+// uses LRM-mandated `Getc` / `Putc` (LRM 6.16.2 / 6.16.3) instead and does
+// not claim Indexable directly.
 template <typename T>
-concept Indexable = requires(const T& t, const PackedArray& pos) {
-  { t.ElementAt(pos) };
+concept Indexable = requires(T& t, const PackedArray& pos) {
+  { t.Element(pos) };
+  { t.ElementRef(pos) };
 };
 
-// AssocRead: associative-array read-side access by key. Key is a free type
-// parameter -- AA's key type is the template argument, not a position. The
-// shape is the AA-only sibling of `Indexable`.
+// AssocIndexable: associative-array indexed access by key. Same bare-vs-Ref
+// pair as `Indexable`, but the key type is a free template parameter rather
+// than the universal position type. AA's `Element(K)` reads with the LRM
+// 7.5 default-on-miss policy; `ElementRef(K)` creates the key on missing
+// access (LRM 7.5).
 template <typename T, typename K>
-concept AssocRead = requires(const T& t, const K& key) {
-  { t.Read(key) };
+concept AssocIndexable = requires(T& t, const K& key) {
+  { t.Element(key) };
+  { t.ElementRef(key) };
 };
 
 // Sliceable: extract a sub-window via two integer arguments. Conforming
@@ -143,6 +149,8 @@ concept AssocRead = requires(const T& t, const K& key) {
 //   type-determined width even when the offset carries X/Z, and that width
 //   is not derivable from `(lo, hi)` alone.
 //
+// Bare `Slice` returns the value form (an owned snapshot, materialised via
+// gather); a separate `SliceableRef` concept covers the reference form.
 // String's LRM-named sibling is `Substr(i, j)` (LRM 6.16.8); it uses the
 // queue's `(lo, hi)` shape and does not claim Sliceable (the method name
 // differs per LRM 6.16.8).
@@ -150,6 +158,16 @@ template <typename T>
 concept Sliceable =
     requires(const T& t, const PackedArray& p1, const PackedArray& p2) {
       { t.Slice(p1, p2) };
+    };
+
+// SliceableRef: the reference-form counterpart of `Sliceable`. `SliceRef`
+// returns a write-through proxy that, on `operator=`, scatters the value
+// back into the receiver's storage. Queue does not satisfy this protocol
+// because LRM 7.10 does not define a write-side queue slice.
+template <typename T>
+concept SliceableRef =
+    requires(T& t, const PackedArray& p1, const PackedArray& p2) {
+      { t.SliceRef(p1, p2) };
     };
 
 // Ownable: materialise a borrowed view into an owning value. Models Rust's
@@ -202,7 +220,7 @@ concept KeyTraversal = requires(const T& t, const K& probe) {
 //
 // The Writable protocol (write-side analogue of Indexable) is intentionally
 // absent from this header: the three array containers today overload
-// `ElementAt`'s non-const form for the write role; once R28 renames it to
-// `WriteRef` to match Queue's and AA's naming, the protocol lands here.
+// the write-side overload of `ElementRef`; the runtime-side protocol shape
+// is documented by the `Indexable` concept above.
 
 }  // namespace lyra::value
